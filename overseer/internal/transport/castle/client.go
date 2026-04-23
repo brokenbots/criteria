@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/coder/websocket"
@@ -33,11 +34,18 @@ type Client struct {
 
 	wsMu sync.Mutex
 	ws   *websocket.Conn
+	wMu  sync.Mutex
+
+	runCtx context.Context
 
 	// outbound buffer used for bounded reconnect-replay (best-effort, in-memory only)
 	bufMu  sync.Mutex
 	buffer []events.Envelope
 	maxBuf int
+
+	reconnectRunning atomic.Bool
+
+	runCancelCh chan string
 }
 
 func NewClient(castleURL string, log *slog.Logger) (*Client, error) {
@@ -46,10 +54,11 @@ func NewClient(castleURL string, log *slog.Logger) (*Client, error) {
 		return nil, fmt.Errorf("invalid castle url: %w", err)
 	}
 	return &Client{
-		baseURL:    u,
-		httpClient: &http.Client{Timeout: 30 * time.Second},
-		log:        log,
-		maxBuf:     1024,
+		baseURL:     u,
+		httpClient:  &http.Client{Timeout: 30 * time.Second},
+		log:         log,
+		maxBuf:      1024,
+		runCancelCh: make(chan string, 32),
 	}, nil
 }
 
@@ -154,27 +163,11 @@ func (c *Client) heartbeat(ctx context.Context) {
 // ConnectWS opens the bidi WebSocket and starts the write pump. It does not
 // auto-reconnect in Phase 0; a future enhancement is to retry with replay.
 func (c *Client) ConnectWS(ctx context.Context) error {
-	wsURL := *c.baseURL
-	switch wsURL.Scheme {
-	case "https":
-		wsURL.Scheme = "wss"
-	default:
-		wsURL.Scheme = "ws"
+	c.runCtx = ctx
+	if err := c.connectOnce(ctx); err != nil {
+		return err
 	}
-	wsURL.Path = "/api/v0/ws"
-	q := wsURL.Query()
-	q.Set("overseer_id", c.overseerID)
-	q.Set("token", c.token)
-	wsURL.RawQuery = q.Encode()
-
-	conn, _, err := websocket.Dial(ctx, wsURL.String(), nil)
-	if err != nil {
-		return fmt.Errorf("ws dial: %w", err)
-	}
-	c.wsMu.Lock()
-	c.ws = conn
-	c.wsMu.Unlock()
-	c.log.Info("websocket connected")
+	c.replayBuffered(context.Background())
 	return nil
 }
 
@@ -186,11 +179,17 @@ func (c *Client) Publish(ctx context.Context, env events.Envelope) {
 	c.wsMu.Unlock()
 	if conn == nil {
 		c.bufferEvent(env)
+		c.ensureReconnect()
 		return
 	}
-	if err := wsjson.Write(ctx, conn, env); err != nil {
+	c.wMu.Lock()
+	err := wsjson.Write(ctx, conn, env)
+	c.wMu.Unlock()
+	if err != nil {
 		c.log.Warn("ws write failed", "error", err)
+		c.detachConn(conn)
 		c.bufferEvent(env)
+		c.ensureReconnect()
 	}
 }
 
@@ -213,6 +212,147 @@ func (c *Client) Close() error {
 	err := c.ws.Close(websocket.StatusNormalClosure, "shutdown")
 	c.ws = nil
 	return err
+}
+
+func (c *Client) RunCancelCh() <-chan string {
+	return c.runCancelCh
+}
+
+type controlMessage struct {
+	Type   string `json:"type"`
+	RunID  string `json:"run_id"`
+	Reason string `json:"reason,omitempty"`
+}
+
+func (c *Client) connectOnce(ctx context.Context) error {
+	wsURL := *c.baseURL
+	switch wsURL.Scheme {
+	case "https":
+		wsURL.Scheme = "wss"
+	default:
+		wsURL.Scheme = "ws"
+	}
+	wsURL.Path = "/api/v0/ws"
+	q := wsURL.Query()
+	q.Set("overseer_id", c.overseerID)
+	q.Set("token", c.token)
+	wsURL.RawQuery = q.Encode()
+	headers := http.Header{}
+	headers.Set("X-Overseer-Token", c.token)
+	conn, _, err := websocket.Dial(ctx, wsURL.String(), &websocket.DialOptions{HTTPHeader: headers})
+	if err != nil {
+		return fmt.Errorf("ws dial: %w", err)
+	}
+	c.wsMu.Lock()
+	c.ws = conn
+	c.wsMu.Unlock()
+	c.log.Info("websocket connected")
+	go c.readLoop(ctx, conn)
+	return nil
+}
+
+func (c *Client) readLoop(ctx context.Context, conn *websocket.Conn) {
+	for {
+		var msg controlMessage
+		if err := wsjson.Read(ctx, conn, &msg); err != nil {
+			if !errors.Is(err, context.Canceled) {
+				c.log.Info("ws read closed", "error", err)
+			}
+			c.detachConn(conn)
+			c.ensureReconnect()
+			return
+		}
+		if msg.Type == "run.cancel" && msg.RunID != "" {
+			select {
+			case c.runCancelCh <- msg.RunID:
+			default:
+				c.log.Warn("dropping run.cancel control message", "run_id", msg.RunID)
+			}
+		}
+	}
+}
+
+func (c *Client) detachConn(conn *websocket.Conn) {
+	c.wsMu.Lock()
+	if c.ws == conn {
+		c.ws = nil
+	}
+	c.wsMu.Unlock()
+	_ = conn.Close(websocket.StatusNormalClosure, "reconnect")
+}
+
+func (c *Client) ensureReconnect() {
+	if c.runCtx == nil || c.runCtx.Err() != nil {
+		return
+	}
+	if !c.reconnectRunning.CompareAndSwap(false, true) {
+		return
+	}
+	go func() {
+		defer c.reconnectRunning.Store(false)
+		t := time.NewTicker(1 * time.Second)
+		defer t.Stop()
+		for {
+			if c.runCtx.Err() != nil {
+				return
+			}
+			c.wsMu.Lock()
+			connected := c.ws != nil
+			c.wsMu.Unlock()
+			if connected {
+				return
+			}
+
+			ctx, cancel := context.WithTimeout(c.runCtx, 5*time.Second)
+			err := c.connectOnce(ctx)
+			cancel()
+			if err == nil {
+				c.replayBuffered(context.Background())
+				return
+			}
+			c.log.Warn("ws reconnect failed", "error", err)
+			select {
+			case <-c.runCtx.Done():
+				return
+			case <-t.C:
+			}
+		}
+	}()
+}
+
+func (c *Client) replayBuffered(ctx context.Context) {
+	c.bufMu.Lock()
+	if len(c.buffer) == 0 {
+		c.bufMu.Unlock()
+		return
+	}
+	replay := make([]events.Envelope, len(c.buffer))
+	copy(replay, c.buffer)
+	c.bufMu.Unlock()
+
+	for i, env := range replay {
+		c.wsMu.Lock()
+		conn := c.ws
+		c.wsMu.Unlock()
+		if conn == nil {
+			return
+		}
+		c.wMu.Lock()
+		err := wsjson.Write(ctx, conn, env)
+		c.wMu.Unlock()
+		if err != nil {
+			c.log.Warn("buffer replay interrupted", "error", err)
+			c.detachConn(conn)
+			c.ensureReconnect()
+			return
+		}
+		c.bufMu.Lock()
+		if len(c.buffer) > 0 {
+			c.buffer = c.buffer[1:]
+		}
+		c.bufMu.Unlock()
+		_ = i
+	}
 }
 
 func (c *Client) url(p string) string {

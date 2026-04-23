@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 
 	"github.com/spf13/cobra"
@@ -12,8 +13,11 @@ func NewStatusCmd() *cobra.Command {
 	var castleURL string
 	cmd := &cobra.Command{
 		Use:   "status",
-		Short: "Show registered Overseers known to a Castle",
+		Short: "Show registered Overseers and local in-flight run details",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if st, err := readLocalRunState(); err == nil {
+				fmt.Printf("local run: %-36s  %-20s  pid=%d\n", st.RunID, st.Workflow, st.PID)
+			}
 			resp, err := http.Get(castleURL + "/api/v0/overseers")
 			if err != nil {
 				return err
@@ -34,11 +38,32 @@ func NewStatusCmd() *cobra.Command {
 }
 
 func NewStopCmd() *cobra.Command {
-	return &cobra.Command{
+	var (
+		castleURL string
+		runID     string
+	)
+	cmd := &cobra.Command{
 		Use:   "stop",
-		Short: "Stop the Overseer (Phase 0: send SIGTERM to the running process)",
+		Short: "Request run cancellation via Castle -> Overseer WS control message",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return fmt.Errorf("stop: send SIGINT/SIGTERM to the overseer process directly in Phase 0")
+			if runID == "" {
+				return fmt.Errorf("--run-id is required")
+			}
+			req, _ := http.NewRequest(http.MethodPost, fmt.Sprintf("%s/api/v0/runs/%s/stop", castleURL, runID), nil)
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				return err
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode/100 != 2 {
+				b, _ := io.ReadAll(resp.Body)
+				return fmt.Errorf("stop: %s: %s", resp.Status, string(b))
+			}
+			fmt.Printf("stop requested for run %s\n", runID)
+			return nil
 		},
 	}
+	cmd.Flags().StringVar(&castleURL, "castle", "http://localhost:8080", "Castle base URL")
+	cmd.Flags().StringVar(&runID, "run-id", "", "Run ID to cancel")
+	return cmd
 }

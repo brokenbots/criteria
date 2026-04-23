@@ -79,6 +79,20 @@ func NewRunCmd() *cobra.Command {
 			defer client.Close()
 			client.StartHeartbeat(ctx, 10*time.Second)
 
+			go func() {
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case cancelRunID := <-client.RunCancelCh():
+						if cancelRunID == runID {
+							log.Info("received run.cancel control", "run_id", runID)
+							cancel()
+						}
+					}
+				}
+			}()
+
 			// Wire dispatcher.
 			disp := dispatcher.New()
 			disp.Register(shell.New())
@@ -95,6 +109,16 @@ func NewRunCmd() *cobra.Command {
 				"run_id", runID,
 				"workflow", graph.Name,
 				"file", filepath.Base(workflowPath))
+
+			state := &localRunState{
+				PID:       os.Getpid(),
+				RunID:     runID,
+				Workflow:  graph.Name,
+				CastleURL: castleURL,
+				StartedAt: time.Now().UTC(),
+			}
+			_ = writeLocalRunState(state)
+			defer removeLocalRunState()
 
 			eng := engine.New(graph, disp, sink)
 			if err := eng.Run(ctx); err != nil {
