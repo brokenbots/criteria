@@ -10,7 +10,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 
 	"github.com/brokenbots/overlord/overseer/internal/adapters/copilot"
@@ -27,6 +26,11 @@ func NewRunCmd() *cobra.Command {
 		workflowPath string
 		castleURL    string
 		name         string
+		codec        string
+		tlsMode      string
+		tlsCA        string
+		tlsCert      string
+		tlsKey       string
 	)
 	cmd := &cobra.Command{
 		Use:   "run",
@@ -57,8 +61,15 @@ func NewRunCmd() *cobra.Command {
 				return fmt.Errorf("compile: %s", diags.Error())
 			}
 
-			// Set up Castle transport.
-			client, err := castletrans.NewClient(castleURL, log)
+			// Set up Castle Connect transport.
+			clientOpts := castletrans.Options{
+				Codec:    castletrans.Codec(codec),
+				TLSMode:  castletrans.TLSMode(tlsMode),
+				CAFile:   tlsCA,
+				CertFile: tlsCert,
+				KeyFile:  tlsKey,
+			}
+			client, err := castletrans.NewClient(castleURL, log, clientOpts)
 			if err != nil {
 				return err
 			}
@@ -73,8 +84,8 @@ func NewRunCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("create run: %w", err)
 			}
-			if err := client.ConnectWS(ctx); err != nil {
-				return fmt.Errorf("ws connect: %w", err)
+			if err := client.StartStreams(ctx, runID); err != nil {
+				return fmt.Errorf("castle streams: %w", err)
 			}
 			defer client.Close()
 			client.StartHeartbeat(ctx, 10*time.Second)
@@ -99,10 +110,9 @@ func NewRunCmd() *cobra.Command {
 			disp.Register(copilot.New())
 
 			sink := &run.Sink{
-				RunID:         runID,
-				CorrelationID: uuid.NewString(),
-				Client:        client,
-				Log:           log.With("run_id", runID),
+				RunID:  runID,
+				Client: client,
+				Log:    log.With("run_id", runID),
 			}
 
 			log.Info("starting run",
@@ -126,13 +136,22 @@ func NewRunCmd() *cobra.Command {
 				return err
 			}
 			log.Info("run completed", "run_id", runID)
-			// Give the WS a moment to flush trailing events.
-			time.Sleep(200 * time.Millisecond)
+			// Deterministically drain any trailing envelopes before Close()
+			// tears the SubmitEvents stream down. Bounded by a short timeout
+			// so a stalled Castle cannot hang shutdown.
+			drainCtx, drainCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			client.Drain(drainCtx)
+			drainCancel()
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&workflowPath, "workflow", envOrDefault("OVERSEER_WORKFLOW", ""), "Path to workflow .hcl file (or OVERSEER_WORKFLOW)")
 	cmd.Flags().StringVar(&castleURL, "castle", envOrDefault("OVERSEER_CASTLE_URL", "http://localhost:8080"), "Castle base URL (or OVERSEER_CASTLE_URL)")
 	cmd.Flags().StringVar(&name, "name", envOrDefault("OVERSEER_NAME", ""), "Overseer name (defaults to hostname, or OVERSEER_NAME)")
+	cmd.Flags().StringVar(&codec, "castle-codec", envOrDefault("OVERSEER_CASTLE_CODEC", "proto"), "Connect codec: 'proto' (default) or 'json' (or OVERSEER_CASTLE_CODEC)")
+	cmd.Flags().StringVar(&tlsMode, "castle-tls", envOrDefault("OVERSEER_CASTLE_TLS", ""), "TLS mode: 'disable' | 'tls' | 'mtls'. Defaults to 'disable' for http:// and 'tls' for https:// (or OVERSEER_CASTLE_TLS)")
+	cmd.Flags().StringVar(&tlsCA, "tls-ca", envOrDefault("OVERSEER_TLS_CA", ""), "Path to CA bundle PEM (or OVERSEER_TLS_CA)")
+	cmd.Flags().StringVar(&tlsCert, "tls-cert", envOrDefault("OVERSEER_TLS_CERT", ""), "Path to client cert PEM for mTLS (or OVERSEER_TLS_CERT)")
+	cmd.Flags().StringVar(&tlsKey, "tls-key", envOrDefault("OVERSEER_TLS_KEY", ""), "Path to client key PEM for mTLS (or OVERSEER_TLS_KEY)")
 	return cmd
 }

@@ -1,136 +1,235 @@
 // Package castletrans implements the Overseer side of the Castle wire
-// protocol: REST register/heartbeat + a single bidirectional WebSocket per
-// run for events.
+// protocol. Since Phase 1.1 §6 the transport is Connect (bidi SubmitEvents
+// stream + server-stream Control) replacing the Phase 0 REST + WebSocket
+// implementation.
 package castletrans
 
 import (
-	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/coder/websocket"
-	"github.com/coder/websocket/wsjson"
+	"connectrpc.com/connect"
+	"github.com/google/uuid"
+	"golang.org/x/net/http2"
+	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/structpb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/brokenbots/overlord/shared/events"
+	pb "github.com/brokenbots/overlord/shared/pb/overlord/v1"
+	"github.com/brokenbots/overlord/shared/pb/overlord/v1/overlordv1connect"
 )
 
-// Client talks to a Castle.
+// Codec selects the Connect codec.
+type Codec string
+
+const (
+	CodecProto Codec = "proto"
+	CodecJSON  Codec = "json"
+)
+
+// TLSMode selects transport security.
+type TLSMode string
+
+const (
+	TLSDisable TLSMode = "disable"
+	TLSEnable  TLSMode = "tls"
+	TLSMutual  TLSMode = "mtls"
+)
+
+// Options configures a Client.
+type Options struct {
+	// Codec selects the Connect codec. Defaults to CodecProto.
+	Codec Codec
+	// TLSMode overrides the default TLS mode. When empty the mode is
+	// inferred from the Castle URL scheme (http -> disable, https -> tls).
+	TLSMode TLSMode
+	// CAFile, CertFile, KeyFile configure TLS/mTLS. Paths are PEM.
+	CAFile   string
+	CertFile string
+	KeyFile  string
+	// SendBuffer is the size of the bounded channel between Publish() and
+	// the SubmitEvents sender goroutine. Defaults to 64.
+	SendBuffer int
+}
+
+// Client talks to a Castle via Connect.
 type Client struct {
-	baseURL    *url.URL
-	httpClient *http.Client
-	log        *slog.Logger
+	baseURL *url.URL
+	http    *http.Client
+	grpc    overlordv1connect.OverseerServiceClient
+	log     *slog.Logger
+	opts    Options
 
 	overseerID string
 	token      string
 
-	wsMu sync.Mutex
-	ws   *websocket.Conn
-	wMu  sync.Mutex
+	// publish stream state
+	// sendCh is allocated in NewClient and is immutable for the client's
+	// lifetime so concurrent Publish/sendLoop don't race on the field.
+	runID         string
+	sendCh        chan *pb.Envelope
+	lastAckedSeq  atomic.Uint64
+	pendingMu     sync.Mutex
+	pending       []*pb.Envelope // ordered by send; matched on ack by correlation_id
+	streamStarted atomic.Bool
 
-	runCtx context.Context
+	// control stream
+	controlStarted atomic.Bool
+	runCancelCh    chan string
 
-	// outbound buffer used for bounded reconnect-replay (best-effort, in-memory only)
-	bufMu  sync.Mutex
-	buffer []events.Envelope
-	maxBuf int
-
-	reconnectRunning atomic.Bool
-
-	runCancelCh chan string
+	closeOnce sync.Once
+	closed    chan struct{}
 }
 
-func NewClient(castleURL string, log *slog.Logger) (*Client, error) {
+// NewClient builds a Castle Connect client.
+func NewClient(castleURL string, log *slog.Logger, opts ...Options) (*Client, error) {
 	u, err := url.Parse(castleURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid castle url: %w", err)
 	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return nil, fmt.Errorf("castle url must be http(s): %q", castleURL)
+	}
+
+	o := Options{}
+	if len(opts) > 0 {
+		o = opts[0]
+	}
+	if o.Codec == "" {
+		o.Codec = CodecProto
+	}
+	if o.SendBuffer <= 0 {
+		o.SendBuffer = 64
+	}
+	if o.TLSMode == "" {
+		if u.Scheme == "https" {
+			o.TLSMode = TLSEnable
+		} else {
+			o.TLSMode = TLSDisable
+		}
+	}
+
+	httpClient, err := buildHTTPClient(u, o)
+	if err != nil {
+		return nil, err
+	}
+
+	var copts []connect.ClientOption
+	if o.Codec == CodecJSON {
+		copts = append(copts, connect.WithProtoJSON())
+	}
+
+	grpc := overlordv1connect.NewOverseerServiceClient(httpClient, u.String(), copts...)
+
 	return &Client{
 		baseURL:     u,
-		httpClient:  &http.Client{Timeout: 30 * time.Second},
+		http:        httpClient,
+		grpc:        grpc,
 		log:         log,
-		maxBuf:      1024,
+		opts:        o,
+		sendCh:      make(chan *pb.Envelope, o.SendBuffer),
 		runCancelCh: make(chan string, 32),
+		closed:      make(chan struct{}),
 	}, nil
 }
 
-type registerReq struct {
-	Name     string `json:"name"`
-	Hostname string `json:"hostname,omitempty"`
-	Version  string `json:"version,omitempty"`
-}
-type registerResp struct {
-	OverseerID string `json:"overseer_id"`
-	Token      string `json:"token"`
+func buildHTTPClient(u *url.URL, o Options) (*http.Client, error) {
+	switch o.TLSMode {
+	case TLSDisable:
+		if u.Scheme == "https" {
+			return nil, errors.New("tls=disable incompatible with https URL")
+		}
+		return &http.Client{Transport: &http2.Transport{
+			AllowHTTP: true,
+			DialTLSContext: func(ctx context.Context, network, addr string, _ *tls.Config) (net.Conn, error) {
+				return (&net.Dialer{}).DialContext(ctx, network, addr)
+			},
+		}}, nil
+	case TLSEnable, TLSMutual:
+		cfg := &tls.Config{MinVersion: tls.VersionTLS12}
+		if o.CAFile != "" {
+			pemBytes, err := os.ReadFile(o.CAFile)
+			if err != nil {
+				return nil, fmt.Errorf("read ca: %w", err)
+			}
+			pool := x509.NewCertPool()
+			if !pool.AppendCertsFromPEM(pemBytes) {
+				return nil, errors.New("invalid ca bundle")
+			}
+			cfg.RootCAs = pool
+		}
+		if o.TLSMode == TLSMutual {
+			if o.CertFile == "" || o.KeyFile == "" {
+				return nil, errors.New("mtls requires --tls-cert and --tls-key")
+			}
+			crt, err := tls.LoadX509KeyPair(o.CertFile, o.KeyFile)
+			if err != nil {
+				return nil, fmt.Errorf("load client cert: %w", err)
+			}
+			cfg.Certificates = []tls.Certificate{crt}
+		}
+		tr := &http2.Transport{TLSClientConfig: cfg}
+		return &http.Client{Transport: tr}, nil
+	default:
+		return nil, fmt.Errorf("unknown tls mode %q", o.TLSMode)
+	}
 }
 
+// Register performs the unary Register RPC.
 func (c *Client) Register(ctx context.Context, name, hostname, version string) error {
-	body, _ := json.Marshal(registerReq{Name: name, Hostname: hostname, Version: version})
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, c.url("/api/v0/overseers/register"), bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := c.httpClient.Do(req)
+	req := connect.NewRequest(&pb.RegisterRequest{
+		Name:   name,
+		Labels: map[string]string{"hostname": hostname, "version": version},
+	})
+	resp, err := c.grpc.Register(ctx, req)
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode/100 != 2 {
-		b, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("register: %s: %s", resp.Status, string(b))
-	}
-	var r registerResp
-	if err := json.NewDecoder(resp.Body).Decode(&r); err != nil {
-		return err
-	}
-	c.overseerID = r.OverseerID
-	c.token = r.Token
+	c.overseerID = resp.Msg.OverseerId
+	c.token = resp.Msg.Token
 	c.log.Info("registered with castle", "overseer_id", c.overseerID)
 	return nil
 }
 
+// OverseerID returns the Castle-assigned overseer id after Register.
 func (c *Client) OverseerID() string { return c.overseerID }
 
-type createRunReq struct {
-	WorkflowName string `json:"workflow_name"`
-	WorkflowHCL  string `json:"workflow_hcl"`
-}
-type createRunResp struct {
-	ID string `json:"id"`
-}
-
-// CreateRun registers a new run with the Castle and returns the run id.
+// CreateRun registers a new run and returns its Castle-assigned id.
 func (c *Client) CreateRun(ctx context.Context, workflowName, workflowHCL string) (string, error) {
 	if c.overseerID == "" {
 		return "", errors.New("not registered")
 	}
-	body, _ := json.Marshal(createRunReq{WorkflowName: workflowName, WorkflowHCL: workflowHCL})
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, c.url(fmt.Sprintf("/api/v0/overseers/%s/runs", c.overseerID)), bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Overseer-Token", c.token)
-	resp, err := c.httpClient.Do(req)
+	req := connect.NewRequest(&pb.CreateRunRequest{
+		OverseerId:   c.overseerID,
+		WorkflowName: workflowName,
+		WorkflowHash: workflowHCL,
+	})
+	c.authorize(req.Header())
+	resp, err := c.grpc.CreateRun(ctx, req)
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode/100 != 2 {
-		b, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("create run: %s: %s", resp.Status, string(b))
-	}
-	var r createRunResp
-	if err := json.NewDecoder(resp.Body).Decode(&r); err != nil {
-		return "", err
-	}
-	return r.ID, nil
+	return resp.Msg.RunId, nil
 }
 
-// StartHeartbeat fires periodic heartbeat POSTs in the background.
+// StartHeartbeat fires Heartbeat RPCs periodically until ctx is done.
 func (c *Client) StartHeartbeat(ctx context.Context, every time.Duration) {
 	go func() {
 		t := time.NewTicker(every)
@@ -150,213 +249,464 @@ func (c *Client) heartbeat(ctx context.Context) {
 	if c.overseerID == "" {
 		return
 	}
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, c.url(fmt.Sprintf("/api/v0/overseers/%s/heartbeat", c.overseerID)), nil)
-	req.Header.Set("X-Overseer-Token", c.token)
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
+	req := connect.NewRequest(&pb.HeartbeatRequest{OverseerId: c.overseerID})
+	c.authorize(req.Header())
+	if _, err := c.grpc.Heartbeat(ctx, req); err != nil {
 		c.log.Warn("heartbeat failed", "error", err)
-		return
-	}
-	resp.Body.Close()
-}
-
-// ConnectWS opens the bidi WebSocket and starts the write pump. It does not
-// auto-reconnect in Phase 0; a future enhancement is to retry with replay.
-func (c *Client) ConnectWS(ctx context.Context) error {
-	c.runCtx = ctx
-	if err := c.connectOnce(ctx); err != nil {
-		return err
-	}
-	c.replayBuffered(context.Background())
-	return nil
-}
-
-// Publish sends an event over the WebSocket. If the WS is not connected the
-// event is buffered (bounded ring) and dropped on overflow.
-func (c *Client) Publish(ctx context.Context, env events.Envelope) {
-	c.wsMu.Lock()
-	conn := c.ws
-	c.wsMu.Unlock()
-	if conn == nil {
-		c.bufferEvent(env)
-		c.ensureReconnect()
-		return
-	}
-	c.wMu.Lock()
-	err := wsjson.Write(ctx, conn, env)
-	c.wMu.Unlock()
-	if err != nil {
-		c.log.Warn("ws write failed", "error", err)
-		c.detachConn(conn)
-		c.bufferEvent(env)
-		c.ensureReconnect()
 	}
 }
 
-func (c *Client) bufferEvent(env events.Envelope) {
-	c.bufMu.Lock()
-	defer c.bufMu.Unlock()
-	if len(c.buffer) >= c.maxBuf {
-		c.buffer = c.buffer[1:]
+// RunCancelCh returns the channel carrying run ids that Castle has asked the
+// Overseer to cancel via the Control server-stream.
+func (c *Client) RunCancelCh() <-chan string { return c.runCancelCh }
+
+// StartStreams attaches the Control server-stream (if not already) and starts
+// the long-running SubmitEvents bidi for runID.
+func (c *Client) StartStreams(ctx context.Context, runID string) error {
+	if c.overseerID == "" {
+		return errors.New("not registered")
 	}
-	c.buffer = append(c.buffer, env)
+	if err := c.startControl(ctx); err != nil {
+		return fmt.Errorf("control stream: %w", err)
+	}
+	return c.startPublish(ctx, runID)
 }
 
-// Close shuts down the WS.
-func (c *Client) Close() error {
-	c.wsMu.Lock()
-	defer c.wsMu.Unlock()
-	if c.ws == nil {
+func (c *Client) startControl(ctx context.Context) error {
+	if !c.controlStarted.CompareAndSwap(false, true) {
 		return nil
 	}
-	err := c.ws.Close(websocket.StatusNormalClosure, "shutdown")
-	c.ws = nil
-	return err
-}
-
-func (c *Client) RunCancelCh() <-chan string {
-	return c.runCancelCh
-}
-
-type controlMessage struct {
-	Type   string `json:"type"`
-	RunID  string `json:"run_id"`
-	Reason string `json:"reason,omitempty"`
-}
-
-func (c *Client) connectOnce(ctx context.Context) error {
-	wsURL := *c.baseURL
-	switch wsURL.Scheme {
-	case "https":
-		wsURL.Scheme = "wss"
-	default:
-		wsURL.Scheme = "ws"
+	ready := make(chan error, 1)
+	go c.controlLoop(ctx, ready)
+	select {
+	case err := <-ready:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(10 * time.Second):
+		return errors.New("control stream: timed out waiting for ready")
 	}
-	wsURL.Path = "/api/v0/ws"
-	q := wsURL.Query()
-	q.Set("overseer_id", c.overseerID)
-	q.Set("token", c.token)
-	wsURL.RawQuery = q.Encode()
-	headers := http.Header{}
-	headers.Set("X-Overseer-Token", c.token)
-	conn, _, err := websocket.Dial(ctx, wsURL.String(), &websocket.DialOptions{HTTPHeader: headers})
-	if err != nil {
-		return fmt.Errorf("ws dial: %w", err)
+}
+
+func (c *Client) controlLoop(ctx context.Context, ready chan<- error) {
+	backoff := 500 * time.Millisecond
+	firstAttempt := true
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+		req := connect.NewRequest(&pb.ControlSubscribeRequest{OverseerId: c.overseerID})
+		c.authorize(req.Header())
+		stream, err := c.grpc.Control(ctx, req)
+		if err != nil {
+			if firstAttempt {
+				ready <- err
+				return
+			}
+			c.log.Warn("control stream dial failed", "error", err)
+			if !c.backoffSleep(ctx, &backoff) {
+				return
+			}
+			continue
+		}
+
+		readySent := false
+		for stream.Receive() {
+			msg := stream.Msg()
+			if msg.GetControlReady() != nil {
+				if firstAttempt && !readySent {
+					ready <- nil
+					readySent = true
+					firstAttempt = false
+				}
+				c.log.Debug("control stream attached")
+				continue
+			}
+			if rc := msg.GetRunCancel(); rc != nil && rc.RunId != "" {
+				select {
+				case c.runCancelCh <- rc.RunId:
+				default:
+					c.log.Warn("dropping run.cancel control message", "run_id", rc.RunId)
+				}
+			}
+		}
+		if firstAttempt && !readySent {
+			ready <- fmt.Errorf("control stream closed before ready: %w", stream.Err())
+			return
+		}
+		firstAttempt = false
+		if err := stream.Err(); err != nil && !errors.Is(err, context.Canceled) {
+			c.log.Warn("control stream closed", "error", err)
+		}
+		backoff = 500 * time.Millisecond
+		if !c.backoffSleep(ctx, &backoff) {
+			return
+		}
 	}
-	c.wsMu.Lock()
-	c.ws = conn
-	c.wsMu.Unlock()
-	c.log.Info("websocket connected")
-	go c.readLoop(ctx, conn)
+}
+
+func (c *Client) startPublish(ctx context.Context, runID string) error {
+	if !c.streamStarted.CompareAndSwap(false, true) {
+		return errors.New("publish stream already started")
+	}
+	c.runID = runID
+	go c.publishLoop(ctx)
 	return nil
 }
 
-func (c *Client) readLoop(ctx context.Context, conn *websocket.Conn) {
+func (c *Client) publishLoop(ctx context.Context) {
+	backoff := 500 * time.Millisecond
 	for {
-		var msg controlMessage
-		if err := wsjson.Read(ctx, conn, &msg); err != nil {
-			if !errors.Is(err, context.Canceled) {
-				c.log.Info("ws read closed", "error", err)
-			}
-			c.detachConn(conn)
-			c.ensureReconnect()
+		if ctx.Err() != nil || c.isClosed() {
 			return
 		}
-		if msg.Type == "run.cancel" && msg.RunID != "" {
-			select {
-			case c.runCancelCh <- msg.RunID:
-			default:
-				c.log.Warn("dropping run.cancel control message", "run_id", msg.RunID)
+		if err := c.runSubmitEvents(ctx); err != nil {
+			if errors.Is(err, context.Canceled) {
+				return
 			}
+			c.log.Warn("submit events stream ended", "run_id", c.runID, "error", err)
+		}
+		if ctx.Err() != nil || c.isClosed() {
+			return
+		}
+		if !c.backoffSleep(ctx, &backoff) {
+			return
 		}
 	}
 }
 
-func (c *Client) detachConn(conn *websocket.Conn) {
-	c.wsMu.Lock()
-	if c.ws == conn {
-		c.ws = nil
+func (c *Client) isClosed() bool {
+	select {
+	case <-c.closed:
+		return true
+	default:
+		return false
 	}
-	c.wsMu.Unlock()
-	_ = conn.Close(websocket.StatusNormalClosure, "reconnect")
 }
 
-func (c *Client) ensureReconnect() {
-	if c.runCtx == nil || c.runCtx.Err() != nil {
-		return
+// runSubmitEvents opens one SubmitEvents stream and runs until it errors.
+func (c *Client) runSubmitEvents(ctx context.Context) error {
+	streamCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	stream := c.grpc.SubmitEvents(streamCtx)
+	c.authorize(stream.RequestHeader())
+	pendingSnap := c.snapshotPending()
+	if lastAck := c.lastAckedSeq.Load(); lastAck > 0 {
+		stream.RequestHeader().Set("since_seq", strconv.FormatUint(lastAck, 10))
+	} else if len(pendingSnap) > 0 {
+		// Even with lastAckedSeq == 0 we request replay so Castle can tell
+		// us about acks it persisted on a previous connection before our
+		// ack reader saw them.
+		stream.RequestHeader().Set("since_seq", "0")
 	}
-	if !c.reconnectRunning.CompareAndSwap(false, true) {
-		return
-	}
+
+	recvErr := make(chan error, 1)
 	go func() {
-		defer c.reconnectRunning.Store(false)
-		t := time.NewTicker(1 * time.Second)
-		defer t.Stop()
-		for {
-			if c.runCtx.Err() != nil {
-				return
-			}
-			c.wsMu.Lock()
-			connected := c.ws != nil
-			c.wsMu.Unlock()
-			if connected {
-				return
-			}
-
-			ctx, cancel := context.WithTimeout(c.runCtx, 5*time.Second)
-			err := c.connectOnce(ctx)
-			cancel()
-			if err == nil {
-				c.replayBuffered(context.Background())
-				return
-			}
-			c.log.Warn("ws reconnect failed", "error", err)
-			select {
-			case <-c.runCtx.Done():
-				return
-			case <-t.C:
-			}
-		}
+		err := c.recvAcks(stream)
+		// When the receive side ends (EOF or error), unblock sendLoop so
+		// runSubmitEvents can return promptly and publishLoop can
+		// reconnect.
+		cancel()
+		recvErr <- err
 	}()
+
+	// Resend any pending envelopes (sent on the prior stream but not yet
+	// acknowledged), preserving submission order.
+	for _, env := range pendingSnap {
+		if err := stream.Send(env); err != nil {
+			cancel()
+			<-recvErr
+			_ = stream.CloseRequest()
+			return err
+		}
+	}
+
+	sendErr := c.sendLoop(streamCtx, stream)
+	_ = stream.CloseRequest()
+	cancel()
+	rerr := <-recvErr
+	_ = stream.CloseResponse()
+	if sendErr != nil && !errors.Is(sendErr, context.Canceled) {
+		return sendErr
+	}
+	if rerr != nil && !errors.Is(rerr, io.EOF) && !errors.Is(rerr, context.Canceled) {
+		return rerr
+	}
+	return nil
 }
 
-func (c *Client) replayBuffered(ctx context.Context) {
-	c.bufMu.Lock()
-	if len(c.buffer) == 0 {
-		c.bufMu.Unlock()
+func (c *Client) sendLoop(ctx context.Context, stream *connect.BidiStreamForClient[pb.Envelope, pb.Ack]) error {
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-c.closed:
+			return nil
+		case env, ok := <-c.sendCh:
+			if !ok {
+				return nil
+			}
+			c.appendPending(env)
+			if err := stream.Send(env); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+func (c *Client) recvAcks(stream *connect.BidiStreamForClient[pb.Envelope, pb.Ack]) error {
+	for {
+		ack, err := stream.Receive()
+		if err != nil {
+			return err
+		}
+		if ack.Seq > c.lastAckedSeq.Load() {
+			c.lastAckedSeq.Store(ack.Seq)
+		}
+		c.clearPending(ack.CorrelationId)
+	}
+}
+
+// Publish converts an events.Envelope to a pb.Envelope and enqueues it on the
+// SubmitEvents stream. It blocks (bounded by ctx and client shutdown) rather
+// than dropping events silently. Publish always overwrites the envelope's
+// correlation id with a per-envelope UUID so Castle can deduplicate on
+// (run_id, correlation_id) during reconnect replay.
+func (c *Client) Publish(ctx context.Context, env events.Envelope) {
+	pbEnv, err := toProtoEnvelope(env)
+	if err != nil {
+		c.log.Error("event marshal failed", "type", env.Type, "error", err)
 		return
 	}
-	replay := make([]events.Envelope, len(c.buffer))
-	copy(replay, c.buffer)
-	c.bufMu.Unlock()
-
-	for i, env := range replay {
-		c.wsMu.Lock()
-		conn := c.ws
-		c.wsMu.Unlock()
-		if conn == nil {
-			return
-		}
-		c.wMu.Lock()
-		err := wsjson.Write(ctx, conn, env)
-		c.wMu.Unlock()
-		if err != nil {
-			c.log.Warn("buffer replay interrupted", "error", err)
-			c.detachConn(conn)
-			c.ensureReconnect()
-			return
-		}
-		c.bufMu.Lock()
-		if len(c.buffer) > 0 {
-			c.buffer = c.buffer[1:]
-		}
-		c.bufMu.Unlock()
-		_ = i
+	// Per-envelope id is required for reconnect dedup; any caller-supplied
+	// value (e.g. the sink's run-scoped UUID) is intentionally replaced.
+	pbEnv.CorrelationId = uuid.NewString()
+	select {
+	case c.sendCh <- pbEnv:
+	case <-ctx.Done():
+		c.log.Warn("publish dropped (ctx done)", "type", env.Type)
+	case <-c.closed:
+		c.log.Warn("publish dropped (client closed)", "type", env.Type)
 	}
 }
 
-func (c *Client) url(p string) string {
-	u := *c.baseURL
-	u.Path = p
-	return u.String()
+// Drain blocks until every published envelope has been acknowledged, ctx is
+// done, or the client is closed. It is intended for deterministic shutdown
+// at the end of a run so trailing events aren't dropped.
+func (c *Client) Drain(ctx context.Context) {
+	t := time.NewTicker(10 * time.Millisecond)
+	defer t.Stop()
+	for {
+		if len(c.snapshotPending()) == 0 && len(c.sendCh) == 0 {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-c.closed:
+			return
+		case <-t.C:
+		}
+	}
+}
+
+// Close stops the streams and releases resources. It is safe to call
+// concurrently with Publish; Close signals shutdown via c.closed and never
+// closes sendCh, so an in-flight Publish select unblocks cleanly.
+func (c *Client) Close() error {
+	c.closeOnce.Do(func() {
+		close(c.closed)
+	})
+	return nil
+}
+
+// --- helpers -----------------------------------------------------------------
+
+func (c *Client) authorize(h http.Header) {
+	if c.token == "" {
+		return
+	}
+	h.Set("Authorization", "Bearer "+c.token)
+}
+
+func (c *Client) backoffSleep(ctx context.Context, d *time.Duration) bool {
+	cur := *d
+	t := time.NewTimer(cur)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-c.closed:
+		return false
+	case <-t.C:
+	}
+	*d = min(cur*2, 5*time.Second)
+	return true
+}
+
+func (c *Client) appendPending(env *pb.Envelope) {
+	c.pendingMu.Lock()
+	c.pending = append(c.pending, env)
+	c.pendingMu.Unlock()
+}
+
+func (c *Client) snapshotPending() []*pb.Envelope {
+	c.pendingMu.Lock()
+	defer c.pendingMu.Unlock()
+	if len(c.pending) == 0 {
+		return nil
+	}
+	out := make([]*pb.Envelope, len(c.pending))
+	copy(out, c.pending)
+	return out
+}
+
+func (c *Client) clearPending(correlationID string) {
+	if correlationID == "" {
+		return
+	}
+	c.pendingMu.Lock()
+	defer c.pendingMu.Unlock()
+	for i, env := range c.pending {
+		if env.CorrelationId == correlationID {
+			c.pending = append(c.pending[:i], c.pending[i+1:]...)
+			return
+		}
+	}
+}
+
+// --- event <-> proto mapping -------------------------------------------------
+
+func toProtoEnvelope(env events.Envelope) (*pb.Envelope, error) {
+	sv := int32(env.SchemaVersion)
+	if sv == 0 {
+		sv = int32(events.SchemaVersion)
+	}
+	ts := env.Timestamp
+	if ts.IsZero() {
+		ts = time.Now().UTC()
+	}
+	out := &pb.Envelope{
+		SchemaVersion: sv,
+		RunId:         env.RunID,
+		Seq:           env.Seq,
+		Ts:            timestamppb.New(ts.UTC()),
+		CorrelationId: env.CorrelationID,
+	}
+	if err := setProtoPayload(out, env.Type, env.Payload); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func setProtoPayload(out *pb.Envelope, typ events.Type, payload []byte) error {
+	unmarshal := func(msg proto.Message) error {
+		if len(payload) == 0 {
+			payload = []byte("{}")
+		}
+		return protojson.Unmarshal(payload, msg)
+	}
+	switch typ {
+	case events.TypeRunStarted:
+		msg := &pb.RunStarted{}
+		if err := unmarshal(msg); err != nil {
+			return err
+		}
+		out.Payload = &pb.Envelope_RunStarted{RunStarted: msg}
+	case events.TypeRunCompleted:
+		msg := &pb.RunCompleted{}
+		if err := unmarshal(msg); err != nil {
+			return err
+		}
+		out.Payload = &pb.Envelope_RunCompleted{RunCompleted: msg}
+	case events.TypeRunFailed:
+		msg := &pb.RunFailed{}
+		if err := unmarshal(msg); err != nil {
+			return err
+		}
+		out.Payload = &pb.Envelope_RunFailed{RunFailed: msg}
+	case events.TypeStepEntered:
+		msg := &pb.StepEntered{}
+		if err := unmarshal(msg); err != nil {
+			return err
+		}
+		out.Payload = &pb.Envelope_StepEntered{StepEntered: msg}
+	case events.TypeStepOutcome:
+		msg := &pb.StepOutcome{}
+		if err := unmarshal(msg); err != nil {
+			return err
+		}
+		out.Payload = &pb.Envelope_StepOutcome{StepOutcome: msg}
+	case events.TypeStepTransition:
+		msg := &pb.StepTransition{}
+		if err := unmarshal(msg); err != nil {
+			return err
+		}
+		out.Payload = &pb.Envelope_StepTransition{StepTransition: msg}
+	case events.TypeStepLog:
+		// events.StepLog.Stream is a lowercase string ("stdout"/"stderr"/
+		// "agent"), but the proto enum requires LOG_STREAM_STDOUT style
+		// names. Translate manually.
+		var legacy events.StepLog
+		if len(payload) > 0 {
+			if err := json.Unmarshal(payload, &legacy); err != nil {
+				return err
+			}
+		}
+		msg := &pb.StepLog{Step: legacy.Step, Chunk: legacy.Chunk}
+		switch legacy.Stream {
+		case events.StreamStdout:
+			msg.Stream = pb.LogStream_LOG_STREAM_STDOUT
+		case events.StreamStderr:
+			msg.Stream = pb.LogStream_LOG_STREAM_STDERR
+		case events.StreamAgent:
+			msg.Stream = pb.LogStream_LOG_STREAM_AGENT
+		default:
+			msg.Stream = pb.LogStream_LOG_STREAM_UNSPECIFIED
+		}
+		out.Payload = &pb.Envelope_StepLog{StepLog: msg}
+	case events.TypeAdapterEvent:
+		// events.AdapterEvent.Data is json.RawMessage; the wire type is
+		// google.protobuf.Struct which only accepts JSON objects at its
+		// top level. Contract: adapter sinks SHOULD emit object payloads.
+		// For backward compatibility with Phase 0 adapters that emit
+		// scalars or arrays we wrap non-object payloads under a "value"
+		// key; subscribers MUST handle this shape.
+		var legacy events.AdapterEvent
+		if len(payload) > 0 {
+			if err := json.Unmarshal(payload, &legacy); err != nil {
+				return err
+			}
+		}
+		msg := &pb.AdapterEvent{Step: legacy.Step, Adapter: legacy.Adapter, Kind: legacy.Kind}
+		if len(legacy.Data) > 0 {
+			data := legacy.Data
+			trimmed := strings.TrimSpace(string(data))
+			if !strings.HasPrefix(trimmed, "{") {
+				data = []byte(`{"value":` + trimmed + `}`)
+			}
+			s := &structpb.Struct{}
+			if err := protojson.Unmarshal(data, s); err != nil {
+				return err
+			}
+			msg.Data = s
+		}
+		out.Payload = &pb.Envelope_AdapterEvent{AdapterEvent: msg}
+	case events.TypeOverseerHeartbeat:
+		msg := &pb.OverseerHeartbeat{}
+		if err := unmarshal(msg); err != nil {
+			return err
+		}
+		out.Payload = &pb.Envelope_OverseerHeartbeat{OverseerHeartbeat: msg}
+	case events.TypeOverseerDisconnected:
+		msg := &pb.OverseerDisconnected{}
+		if err := unmarshal(msg); err != nil {
+			return err
+		}
+		out.Payload = &pb.Envelope_OverseerDisconnected{OverseerDisconnected: msg}
+	default:
+		return fmt.Errorf("unsupported event type %q", typ)
+	}
+	return nil
 }

@@ -14,11 +14,15 @@ import (
 )
 
 // Sink implements engine.Sink by forwarding to a Castle client.
+//
+// Envelope identity is assigned by the transport: Client.Publish overwrites
+// CorrelationID with a per-envelope UUID so Castle can dedup on
+// (run_id, correlation_id) across reconnects. Sink therefore carries only
+// the RunID; no run-scoped trace id is stamped here.
 type Sink struct {
-	RunID         string
-	CorrelationID string
-	Client        *castletrans.Client
-	Log           *slog.Logger
+	RunID  string
+	Client *castletrans.Client
+	Log    *slog.Logger
 }
 
 func (s *Sink) publish(t events.Type, payload any) {
@@ -27,7 +31,6 @@ func (s *Sink) publish(t events.Type, payload any) {
 		s.Log.Error("event marshal failed", "type", t, "error", err)
 		return
 	}
-	env.CorrelationID = s.CorrelationID
 	// Always publish on a fresh background context — engine cancellation must
 	// not prevent terminal events from leaving the buffer.
 	s.Client.Publish(context.Background(), env)
