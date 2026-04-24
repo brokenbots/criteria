@@ -5,7 +5,6 @@ package copilot
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"strings"
 	"sync"
 
@@ -48,7 +47,6 @@ func (a *Adapter) Execute(ctx context.Context, step *workflow.StepNode, sink ada
 	if model == "" {
 		model = "claude-sonnet-4.5"
 	}
-	_ = parseMaxTurns(step.Config["max_turns"]) // reserved for future use
 
 	client, err := a.ensureClient(ctx)
 	if err != nil {
@@ -101,12 +99,4 @@ func parseOutcome(content string) string {
 		}
 	}
 	return "needs_review"
-}
-
-func parseMaxTurns(s string) int {
-	if s == "" {
-		return 0
-	}
-	n, _ := strconv.Atoi(s)
-	return n
 }

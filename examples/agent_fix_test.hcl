@@ -21,9 +21,8 @@ workflow "agent_fix_test" {
   step "fix" {
     adapter = "copilot"
     config = {
-      model     = "claude-sonnet-4.5"
-      max_turns = "20"
-      prompt    = "The test suite is failing. Investigate, fix the failing tests (do not modify the assertions themselves), and confirm by running `go test ./...`. Reply ending with one line: RESULT: success | needs_review | failure"
+      model  = "claude-sonnet-4.5"
+      prompt = "The test suite is failing. Investigate, fix the failing tests (do not modify the assertions themselves), and confirm by running `go test ./...`. Reply ending with one line: RESULT: success | needs_review | failure"
     }
     timeout = "30m"
 
