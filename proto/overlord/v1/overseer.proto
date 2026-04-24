@@ -102,6 +102,11 @@ message ControlMessage {
   oneof command {
     RunCancel run_cancel = 1;
     AgentPrompt agent_prompt = 2; // Phase 2.3; stub in 1.1.
+    // ControlReady is sent once, immediately after the server accepts the
+    // Control subscription. It flushes the response headers so the Connect
+    // client's call returns to the caller, and signals that subsequent
+    // ControlMessages can be delivered. Clients must ignore it.
+    ControlReady control_ready = 3;
   }
 }
 
@@ -116,4 +121,9 @@ message AgentPrompt {
   string run_id = 1;
   string step = 2;
   string prompt = 3;
+}
+
+// ControlReady is an attach acknowledgement sent once at stream start.
+// It carries no payload.
+message ControlReady {
 }
