@@ -33,7 +33,7 @@ func NewStatusCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&castleURL, "castle", "http://localhost:8080", "Castle base URL")
+	cmd.Flags().StringVar(&castleURL, "castle", envOrDefault("OVERSEER_CASTLE_URL", "http://localhost:8080"), "Castle base URL (or OVERSEER_CASTLE_URL)")
 	return cmd
 }
 
@@ -63,7 +63,7 @@ func NewStopCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&castleURL, "castle", "http://localhost:8080", "Castle base URL")
+	cmd.Flags().StringVar(&castleURL, "castle", envOrDefault("OVERSEER_CASTLE_URL", "http://localhost:8080"), "Castle base URL (or OVERSEER_CASTLE_URL)")
 	cmd.Flags().StringVar(&runID, "run-id", "", "Run ID to cancel")
 	return cmd
 }

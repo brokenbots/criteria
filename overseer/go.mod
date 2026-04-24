@@ -1,6 +1,6 @@
 module github.com/brokenbots/overlord/overseer
 
-go 1.24
+go 1.26
 
 require (
 	github.com/brokenbots/overlord/shared v0.0.0

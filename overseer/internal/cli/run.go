@@ -131,8 +131,8 @@ func NewRunCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&workflowPath, "workflow", "", "Path to workflow .hcl file")
-	cmd.Flags().StringVar(&castleURL, "castle", "http://localhost:8080", "Castle base URL")
-	cmd.Flags().StringVar(&name, "name", "", "Overseer name (defaults to hostname)")
+	cmd.Flags().StringVar(&workflowPath, "workflow", envOrDefault("OVERSEER_WORKFLOW", ""), "Path to workflow .hcl file (or OVERSEER_WORKFLOW)")
+	cmd.Flags().StringVar(&castleURL, "castle", envOrDefault("OVERSEER_CASTLE_URL", "http://localhost:8080"), "Castle base URL (or OVERSEER_CASTLE_URL)")
+	cmd.Flags().StringVar(&name, "name", envOrDefault("OVERSEER_NAME", ""), "Overseer name (defaults to hostname, or OVERSEER_NAME)")
 	return cmd
 }

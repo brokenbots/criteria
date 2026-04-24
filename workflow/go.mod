@@ -1,6 +1,6 @@
 module github.com/brokenbots/overlord/workflow
 
-go 1.23
+go 1.26
 
 require github.com/hashicorp/hcl/v2 v2.20.1
 
