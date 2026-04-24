@@ -1,42 +1,92 @@
-package events
+package events_test
 
 import (
-	"encoding/json"
 	"testing"
+
+	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
+
+	"github.com/brokenbots/overlord/shared/events"
+	pb "github.com/brokenbots/overlord/shared/pb/overlord/v1"
 )
 
 func TestNewEnvelopeRoundTrip(t *testing.T) {
-	env, err := New("run-1", TypeStepOutcome, StepOutcome{
+	env := events.NewEnvelope("run-1", &pb.StepOutcome{
 		Step:       "build",
 		Outcome:    "success",
-		DurationMS: 123,
+		DurationMs: 123,
 	})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	if env.SchemaVersion != SchemaVersion {
+	if env.SchemaVersion != events.SchemaVersion {
 		t.Fatalf("schema version: got %d", env.SchemaVersion)
 	}
-	if env.Type != TypeStepOutcome {
-		t.Fatalf("type: got %s", env.Type)
+	if env.RunId != "run-1" {
+		t.Fatalf("run id: %q", env.RunId)
+	}
+	if events.TypeString(env) != "step.outcome" {
+		t.Fatalf("type string: %q", events.TypeString(env))
+	}
+	if events.IsTerminal(env) {
+		t.Fatalf("step.outcome should not be terminal")
 	}
 
-	raw, err := json.Marshal(env)
+	raw, err := protojson.Marshal(env)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	var back Envelope
-	if err := json.Unmarshal(raw, &back); err != nil {
+	var back pb.Envelope
+	if err := protojson.Unmarshal(raw, &back); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if back.RunID != "run-1" {
-		t.Fatalf("run id: %s", back.RunID)
+	if !proto.Equal(env, &back) {
+		t.Fatalf("round trip mismatch:\nwant: %+v\nback: %+v", env, &back)
 	}
-	var p StepOutcome
-	if err := json.Unmarshal(back.Payload, &p); err != nil {
-		t.Fatalf("payload: %v", err)
+	if got := back.GetStepOutcome(); got == nil || got.Outcome != "success" {
+		t.Fatalf("payload: %+v", got)
 	}
-	if p.Outcome != "success" {
-		t.Fatalf("outcome: %s", p.Outcome)
+}
+
+func TestTypeStringExhaustive(t *testing.T) {
+	cases := []struct {
+		payload any
+		want    string
+	}{
+		{&pb.RunStarted{}, "run.started"},
+		{&pb.RunCompleted{}, "run.completed"},
+		{&pb.RunFailed{}, "run.failed"},
+		{&pb.StepEntered{}, "step.entered"},
+		{&pb.StepOutcome{}, "step.outcome"},
+		{&pb.StepTransition{}, "step.transition"},
+		{&pb.StepLog{}, "step.log"},
+		{&pb.AdapterEvent{}, "adapter.event"},
+		{&pb.OverseerHeartbeat{}, "overseer.heartbeat"},
+		{&pb.OverseerDisconnected{}, "overseer.disconnected"},
+		{&pb.WatchReady{}, "watch.ready"},
+	}
+	for _, tc := range cases {
+		env := events.NewEnvelope("r", tc.payload)
+		if got := events.TypeString(env); got != tc.want {
+			t.Errorf("type for %T: got %q want %q", tc.payload, got, tc.want)
+		}
+	}
+	if events.TypeString(nil) != "" {
+		t.Fatalf("nil envelope should return empty type string")
+	}
+	if events.TypeString(&pb.Envelope{}) != "" {
+		t.Fatalf("empty envelope should return empty type string")
+	}
+}
+
+func TestIsTerminal(t *testing.T) {
+	if !events.IsTerminal(events.NewEnvelope("r", &pb.RunCompleted{})) {
+		t.Fatal("run.completed should be terminal")
+	}
+	if !events.IsTerminal(events.NewEnvelope("r", &pb.RunFailed{})) {
+		t.Fatal("run.failed should be terminal")
+	}
+	if events.IsTerminal(events.NewEnvelope("r", &pb.StepEntered{})) {
+		t.Fatal("step.entered should not be terminal")
+	}
+	if events.IsTerminal(nil) {
+		t.Fatal("nil envelope should not be terminal")
 	}
 }

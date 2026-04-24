@@ -242,10 +242,7 @@ func TestClientHappyPath(t *testing.T) {
 	}
 
 	// Publish a single envelope and verify it is persisted and acknowledged.
-	env, err := events.New(runID, events.TypeStepEntered, events.StepEntered{Step: "s1", Adapter: "shell", Attempt: 1})
-	if err != nil {
-		t.Fatal(err)
-	}
+	env := events.NewEnvelope(runID, &pb.StepEntered{Step: "s1", Adapter: "shell", Attempt: 1})
 	c.Publish(ctx, env)
 
 	if !waitForCond(t, 2*time.Second, func() bool {
@@ -291,7 +288,7 @@ func TestClientReconnectSendsSinceSeq(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	env1, _ := events.New(runID, events.TypeStepEntered, events.StepEntered{Step: "s1", Adapter: "shell", Attempt: 1})
+	env1 := events.NewEnvelope(runID, &pb.StepEntered{Step: "s1", Adapter: "shell", Attempt: 1})
 	c.Publish(ctx, env1)
 	if !waitForCond(t, 2*time.Second, func() bool { return c.lastAckedSeq.Load() == 1 }) {
 		t.Fatalf("first ack not observed")
@@ -299,7 +296,7 @@ func TestClientReconnectSendsSinceSeq(t *testing.T) {
 
 	// Second publish after forced disconnect should be delivered after the
 	// client reconnects with since_seq=1.
-	env2, _ := events.New(runID, events.TypeStepEntered, events.StepEntered{Step: "s2", Adapter: "shell", Attempt: 1})
+	env2 := events.NewEnvelope(runID, &pb.StepEntered{Step: "s2", Adapter: "shell", Attempt: 1})
 	c.Publish(ctx, env2)
 
 	if !waitForCond(t, 5*time.Second, func() bool {
@@ -423,7 +420,7 @@ func TestClientPersistBeforeAckReconnect(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	env, _ := events.New(runID, events.TypeStepEntered, events.StepEntered{Step: "s1", Adapter: "shell", Attempt: 1})
+	env := events.NewEnvelope(runID, &pb.StepEntered{Step: "s1", Adapter: "shell", Attempt: 1})
 	c.Publish(ctx, env)
 
 	if !waitForCond(t, 5*time.Second, func() bool { return c.lastAckedSeq.Load() == 1 }) {
@@ -465,12 +462,12 @@ func TestClientPublishBlocksWhenBufferFull(t *testing.T) {
 
 	// Fill the buffer *before* starting the streams so nothing drains it.
 	for i := 0; i < 2; i++ {
-		env, _ := events.New(runID, events.TypeStepEntered, events.StepEntered{Step: "s", Adapter: "shell", Attempt: 1})
+		env := events.NewEnvelope(runID, &pb.StepEntered{Step: "s", Adapter: "shell", Attempt: 1})
 		c.Publish(ctx, env)
 	}
 
 	done := make(chan struct{})
-	extra, _ := events.New(runID, events.TypeStepEntered, events.StepEntered{Step: "s", Adapter: "shell", Attempt: 1})
+	extra := events.NewEnvelope(runID, &pb.StepEntered{Step: "s", Adapter: "shell", Attempt: 1})
 	go func() {
 		c.Publish(ctx, extra)
 		close(done)
@@ -528,7 +525,7 @@ func TestClientCloseWithConcurrentPublish(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < 32; j++ {
-				env, _ := events.New(runID, events.TypeStepEntered, events.StepEntered{Step: "s", Adapter: "shell", Attempt: 1})
+				env := events.NewEnvelope(runID, &pb.StepEntered{Step: "s", Adapter: "shell", Attempt: 1})
 				c.Publish(ctx, env)
 			}
 		}()

@@ -8,7 +8,6 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -18,7 +17,6 @@ import (
 	"net/url"
 	"os"
 	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -26,12 +24,8 @@ import (
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"golang.org/x/net/http2"
-	"google.golang.org/protobuf/encoding/protojson"
-	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/brokenbots/overlord/shared/events"
 	pb "github.com/brokenbots/overlord/shared/pb/overlord/v1"
 	"github.com/brokenbots/overlord/shared/pb/overlord/v1/overlordv1connect"
 )
@@ -468,26 +462,30 @@ func (c *Client) recvAcks(stream *connect.BidiStreamForClient[pb.Envelope, pb.Ac
 	}
 }
 
-// Publish converts an events.Envelope to a pb.Envelope and enqueues it on the
-// SubmitEvents stream. It blocks (bounded by ctx and client shutdown) rather
-// than dropping events silently. Publish always overwrites the envelope's
-// correlation id with a per-envelope UUID so Castle can deduplicate on
-// (run_id, correlation_id) during reconnect replay.
-func (c *Client) Publish(ctx context.Context, env events.Envelope) {
-	pbEnv, err := toProtoEnvelope(env)
-	if err != nil {
-		c.log.Error("event marshal failed", "type", env.Type, "error", err)
+// Publish enqueues env on the SubmitEvents stream. It blocks (bounded by ctx
+// and client shutdown) rather than dropping events silently. Publish always
+// overwrites the envelope's correlation id with a per-envelope UUID so
+// Castle can deduplicate on (run_id, correlation_id) during reconnect replay.
+// The timestamp is filled in if unset.
+func (c *Client) Publish(ctx context.Context, env *pb.Envelope) {
+	if env == nil {
 		return
+	}
+	if env.Ts == nil || env.Ts.AsTime().IsZero() {
+		env.Ts = timestamppb.New(time.Now().UTC())
+	}
+	if env.SchemaVersion == 0 {
+		env.SchemaVersion = 1
 	}
 	// Per-envelope id is required for reconnect dedup; any caller-supplied
 	// value (e.g. the sink's run-scoped UUID) is intentionally replaced.
-	pbEnv.CorrelationId = uuid.NewString()
+	env.CorrelationId = uuid.NewString()
 	select {
-	case c.sendCh <- pbEnv:
+	case c.sendCh <- env:
 	case <-ctx.Done():
-		c.log.Warn("publish dropped (ctx done)", "type", env.Type)
+		c.log.Warn("publish dropped (ctx done)")
 	case <-c.closed:
-		c.log.Warn("publish dropped (client closed)", "type", env.Type)
+		c.log.Warn("publish dropped (client closed)")
 	}
 }
 
@@ -578,135 +576,5 @@ func (c *Client) clearPending(correlationID string) {
 
 // --- event <-> proto mapping -------------------------------------------------
 
-func toProtoEnvelope(env events.Envelope) (*pb.Envelope, error) {
-	sv := int32(env.SchemaVersion)
-	if sv == 0 {
-		sv = int32(events.SchemaVersion)
-	}
-	ts := env.Timestamp
-	if ts.IsZero() {
-		ts = time.Now().UTC()
-	}
-	out := &pb.Envelope{
-		SchemaVersion: sv,
-		RunId:         env.RunID,
-		Seq:           env.Seq,
-		Ts:            timestamppb.New(ts.UTC()),
-		CorrelationId: env.CorrelationID,
-	}
-	if err := setProtoPayload(out, env.Type, env.Payload); err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func setProtoPayload(out *pb.Envelope, typ events.Type, payload []byte) error {
-	unmarshal := func(msg proto.Message) error {
-		if len(payload) == 0 {
-			payload = []byte("{}")
-		}
-		return protojson.Unmarshal(payload, msg)
-	}
-	switch typ {
-	case events.TypeRunStarted:
-		msg := &pb.RunStarted{}
-		if err := unmarshal(msg); err != nil {
-			return err
-		}
-		out.Payload = &pb.Envelope_RunStarted{RunStarted: msg}
-	case events.TypeRunCompleted:
-		msg := &pb.RunCompleted{}
-		if err := unmarshal(msg); err != nil {
-			return err
-		}
-		out.Payload = &pb.Envelope_RunCompleted{RunCompleted: msg}
-	case events.TypeRunFailed:
-		msg := &pb.RunFailed{}
-		if err := unmarshal(msg); err != nil {
-			return err
-		}
-		out.Payload = &pb.Envelope_RunFailed{RunFailed: msg}
-	case events.TypeStepEntered:
-		msg := &pb.StepEntered{}
-		if err := unmarshal(msg); err != nil {
-			return err
-		}
-		out.Payload = &pb.Envelope_StepEntered{StepEntered: msg}
-	case events.TypeStepOutcome:
-		msg := &pb.StepOutcome{}
-		if err := unmarshal(msg); err != nil {
-			return err
-		}
-		out.Payload = &pb.Envelope_StepOutcome{StepOutcome: msg}
-	case events.TypeStepTransition:
-		msg := &pb.StepTransition{}
-		if err := unmarshal(msg); err != nil {
-			return err
-		}
-		out.Payload = &pb.Envelope_StepTransition{StepTransition: msg}
-	case events.TypeStepLog:
-		// events.StepLog.Stream is a lowercase string ("stdout"/"stderr"/
-		// "agent"), but the proto enum requires LOG_STREAM_STDOUT style
-		// names. Translate manually.
-		var legacy events.StepLog
-		if len(payload) > 0 {
-			if err := json.Unmarshal(payload, &legacy); err != nil {
-				return err
-			}
-		}
-		msg := &pb.StepLog{Step: legacy.Step, Chunk: legacy.Chunk}
-		switch legacy.Stream {
-		case events.StreamStdout:
-			msg.Stream = pb.LogStream_LOG_STREAM_STDOUT
-		case events.StreamStderr:
-			msg.Stream = pb.LogStream_LOG_STREAM_STDERR
-		case events.StreamAgent:
-			msg.Stream = pb.LogStream_LOG_STREAM_AGENT
-		default:
-			msg.Stream = pb.LogStream_LOG_STREAM_UNSPECIFIED
-		}
-		out.Payload = &pb.Envelope_StepLog{StepLog: msg}
-	case events.TypeAdapterEvent:
-		// events.AdapterEvent.Data is json.RawMessage; the wire type is
-		// google.protobuf.Struct which only accepts JSON objects at its
-		// top level. Contract: adapter sinks SHOULD emit object payloads.
-		// For backward compatibility with Phase 0 adapters that emit
-		// scalars or arrays we wrap non-object payloads under a "value"
-		// key; subscribers MUST handle this shape.
-		var legacy events.AdapterEvent
-		if len(payload) > 0 {
-			if err := json.Unmarshal(payload, &legacy); err != nil {
-				return err
-			}
-		}
-		msg := &pb.AdapterEvent{Step: legacy.Step, Adapter: legacy.Adapter, Kind: legacy.Kind}
-		if len(legacy.Data) > 0 {
-			data := legacy.Data
-			trimmed := strings.TrimSpace(string(data))
-			if !strings.HasPrefix(trimmed, "{") {
-				data = []byte(`{"value":` + trimmed + `}`)
-			}
-			s := &structpb.Struct{}
-			if err := protojson.Unmarshal(data, s); err != nil {
-				return err
-			}
-			msg.Data = s
-		}
-		out.Payload = &pb.Envelope_AdapterEvent{AdapterEvent: msg}
-	case events.TypeOverseerHeartbeat:
-		msg := &pb.OverseerHeartbeat{}
-		if err := unmarshal(msg); err != nil {
-			return err
-		}
-		out.Payload = &pb.Envelope_OverseerHeartbeat{OverseerHeartbeat: msg}
-	case events.TypeOverseerDisconnected:
-		msg := &pb.OverseerDisconnected{}
-		if err := unmarshal(msg); err != nil {
-			return err
-		}
-		out.Payload = &pb.Envelope_OverseerDisconnected{OverseerDisconnected: msg}
-	default:
-		return fmt.Errorf("unsupported event type %q", typ)
-	}
-	return nil
-}
+// Production code builds *pb.Envelope values directly via the shared events
+// helpers; no legacy conversion layer remains here.

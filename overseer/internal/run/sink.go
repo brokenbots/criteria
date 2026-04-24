@@ -3,20 +3,25 @@
 package run
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"log/slog"
 	"time"
 
+	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/types/known/structpb"
+
 	"github.com/brokenbots/overlord/overseer/internal/adapter"
 	castletrans "github.com/brokenbots/overlord/overseer/internal/transport/castle"
 	"github.com/brokenbots/overlord/shared/events"
+	pb "github.com/brokenbots/overlord/shared/pb/overlord/v1"
 )
 
 // Sink implements engine.Sink by forwarding to a Castle client.
 //
 // Envelope identity is assigned by the transport: Client.Publish overwrites
-// CorrelationID with a per-envelope UUID so Castle can dedup on
+// CorrelationId with a per-envelope UUID so Castle can dedup on
 // (run_id, correlation_id) across reconnects. Sink therefore carries only
 // the RunID; no run-scoped trace id is stamped here.
 type Sink struct {
@@ -25,43 +30,39 @@ type Sink struct {
 	Log    *slog.Logger
 }
 
-func (s *Sink) publish(t events.Type, payload any) {
-	env, err := events.New(s.RunID, t, payload)
-	if err != nil {
-		s.Log.Error("event marshal failed", "type", t, "error", err)
-		return
-	}
+func (s *Sink) publish(payload any) {
+	env := events.NewEnvelope(s.RunID, payload)
 	// Always publish on a fresh background context — engine cancellation must
 	// not prevent terminal events from leaving the buffer.
 	s.Client.Publish(context.Background(), env)
 }
 
 func (s *Sink) OnRunStarted(workflowName, initialStep string) {
-	s.publish(events.TypeRunStarted, events.RunStarted{WorkflowName: workflowName, InitialStep: initialStep})
+	s.publish(&pb.RunStarted{WorkflowName: workflowName, InitialStep: initialStep})
 }
 
 func (s *Sink) OnRunCompleted(finalState string, success bool) {
-	s.publish(events.TypeRunCompleted, events.RunCompleted{FinalState: finalState, Success: success})
+	s.publish(&pb.RunCompleted{FinalState: finalState, Success: success})
 }
 
 func (s *Sink) OnRunFailed(reason, step string) {
-	s.publish(events.TypeRunFailed, events.RunFailed{Reason: reason, Step: step})
+	s.publish(&pb.RunFailed{Reason: reason, Step: step})
 }
 
 func (s *Sink) OnStepEntered(step, adapterName string, attempt int) {
-	s.publish(events.TypeStepEntered, events.StepEntered{Step: step, Adapter: adapterName, Attempt: attempt})
+	s.publish(&pb.StepEntered{Step: step, Adapter: adapterName, Attempt: int32(attempt)})
 }
 
 func (s *Sink) OnStepOutcome(step, outcome string, duration time.Duration, err error) {
-	p := events.StepOutcome{Step: step, Outcome: outcome, DurationMS: duration.Milliseconds()}
+	p := &pb.StepOutcome{Step: step, Outcome: outcome, DurationMs: duration.Milliseconds()}
 	if err != nil {
 		p.Error = err.Error()
 	}
-	s.publish(events.TypeStepOutcome, p)
+	s.publish(p)
 }
 
 func (s *Sink) OnStepTransition(from, to, viaOutcome string) {
-	s.publish(events.TypeStepTransition, events.StepTransition{From: from, To: to, ViaOutcome: viaOutcome})
+	s.publish(&pb.StepTransition{From: from, To: to, ViaOutcome: viaOutcome})
 }
 
 // StepEventSink returns a per-step adapter sink that wraps Log/Adapter into
@@ -76,10 +77,68 @@ type stepSink struct {
 }
 
 func (ss *stepSink) Log(stream string, chunk []byte) {
-	ss.parent.publish(events.TypeStepLog, events.StepLog{Step: ss.step, Stream: events.LogStream(stream), Chunk: string(chunk)})
+	ss.parent.publish(&pb.StepLog{Step: ss.step, Stream: logStreamFromString(stream), Chunk: string(chunk)})
 }
 
+// Adapter records a structured adapter-specific event. `data` must serialise
+// to a JSON value; non-object values are wrapped under a `value` key before
+// being stored as a google.protobuf.Struct, matching the Phase 0 adapter
+// compatibility contract documented on AdapterEvent in events.proto.
+//
+// If `data` cannot be encoded (json.Marshal fails or the resulting JSON
+// cannot be decoded into a google.protobuf.Struct) the failure is captured
+// under an `_encode_error` key on the event so adapter diagnostics are not
+// silently dropped.
 func (ss *stepSink) Adapter(kind string, data any) {
-	raw, _ := json.Marshal(data)
-	ss.parent.publish(events.TypeAdapterEvent, events.AdapterEvent{Step: ss.step, Adapter: "", Kind: kind, Data: raw})
+	msg := &pb.AdapterEvent{Step: ss.step, Kind: kind}
+	if data != nil {
+		msg.Data = encodeAdapterData(data)
+	}
+	ss.parent.publish(msg)
+}
+
+// encodeAdapterData converts an arbitrary Go value into a
+// google.protobuf.Struct by round-tripping through JSON. Non-object JSON
+// values (scalars, arrays) are wrapped under `value`. On any encode/decode
+// failure the returned struct carries `_encode_error` with the failure
+// reason and `raw` with the best-effort JSON string (when available).
+func encodeAdapterData(data any) *structpb.Struct {
+	raw, err := json.Marshal(data)
+	if err != nil {
+		return errorStruct("marshal: "+err.Error(), "")
+	}
+	if len(raw) == 0 {
+		return nil
+	}
+	if !bytes.HasPrefix(bytes.TrimSpace(raw), []byte("{")) {
+		raw = []byte(`{"value":` + string(raw) + `}`)
+	}
+	st := &structpb.Struct{}
+	if err := protojson.Unmarshal(raw, st); err != nil {
+		return errorStruct("unmarshal: "+err.Error(), string(raw))
+	}
+	return st
+}
+
+func errorStruct(reason, raw string) *structpb.Struct {
+	fields := map[string]*structpb.Value{
+		"_encode_error": structpb.NewStringValue(reason),
+	}
+	if raw != "" {
+		fields["raw"] = structpb.NewStringValue(raw)
+	}
+	return &structpb.Struct{Fields: fields}
+}
+
+func logStreamFromString(s string) pb.LogStream {
+	switch s {
+	case "stdout":
+		return pb.LogStream_LOG_STREAM_STDOUT
+	case "stderr":
+		return pb.LogStream_LOG_STREAM_STDERR
+	case "agent":
+		return pb.LogStream_LOG_STREAM_AGENT
+	default:
+		return pb.LogStream_LOG_STREAM_UNSPECIFIED
+	}
 }
