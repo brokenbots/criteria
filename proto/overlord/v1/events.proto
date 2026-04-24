@@ -44,6 +44,11 @@ message Envelope {
     AdapterEvent adapter_event = 17;
     OverseerHeartbeat overseer_heartbeat = 18;
     OverseerDisconnected overseer_disconnected = 19;
+    // WatchReady is a protocol-level sentinel sent once at the start of a
+    // WatchRun server-stream, after any persisted-event replay, to flush
+    // response headers so the client's WatchRun call can return. It has no
+    // associated run state; clients MUST ignore it.
+    WatchReady watch_ready = 99;
   }
 }
 
@@ -119,4 +124,11 @@ message OverseerHeartbeat {
 message OverseerDisconnected {
   string overseer_id = 1;
   string reason = 2;
+}
+
+// WatchReady is a protocol-level sentinel payload sent by WatchRun once at
+// stream start. It has no fields and no run-semantic meaning; it exists
+// solely to flush Connect server-stream response headers so the client's
+// WatchRun call can return before any real event is published.
+message WatchReady {
 }
