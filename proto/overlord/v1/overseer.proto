@@ -1,0 +1,119 @@
+// OverseerService — RPCs served by Castle and consumed by Overseer.
+//
+// Authentication: all RPCs except `Register` require a token (Bearer header,
+// `X-Overseer-Token` header, or `overseer-token` Connect metadata). Tokens are
+// SHA-256 compared against `overseers.token_hash` in the Castle store.
+syntax = "proto3";
+
+package overlord.v1;
+
+import "google/protobuf/timestamp.proto";
+import "overlord/v1/events.proto";
+
+option go_package = "github.com/brokenbots/overlord/shared/pb/overlord/v1;overlordv1";
+
+service OverseerService {
+  // Register an Overseer with Castle. Returns the assigned overseer id and an
+  // auth token that the Overseer must present on every subsequent RPC.
+  rpc Register(RegisterRequest) returns (RegisterResponse);
+
+  // Heartbeat advances the Overseer's `last_seen_at`. Castle marks Overseers
+  // offline whose heartbeat is older than 30s.
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+
+  // CreateRun mints a new run id for the Overseer. Castle is the sole source
+  // of run ids.
+  rpc CreateRun(CreateRunRequest) returns (Run);
+
+  // SubmitEvents is a bidirectional stream. The client writes Envelopes and
+  // the server replies with an Ack per persisted envelope (run_id, seq,
+  // correlation_id). On reconnect the client may include `since_seq` in
+  // request metadata to request replay of events that were persisted but not
+  // yet acknowledged.
+  rpc SubmitEvents(stream Envelope) returns (stream Ack);
+
+  // Control is a long-lived server-stream that Castle uses to push commands
+  // to a connected Overseer (cancel a run, send a prompt to an agent, ...).
+  rpc Control(ControlSubscribeRequest) returns (stream ControlMessage);
+}
+
+// --- Unary request/response types ---
+
+message RegisterRequest {
+  // Friendly name for the Overseer instance.
+  string name = 1;
+  // Free-form labels (e.g. "host=laptop", "os=darwin").
+  map<string, string> labels = 2;
+}
+
+message RegisterResponse {
+  string overseer_id = 1;
+  // One-time token. Clients should persist this securely and send it on all
+  // subsequent RPCs.
+  string token = 2;
+}
+
+message HeartbeatRequest {
+  string overseer_id = 1;
+}
+
+message HeartbeatResponse {
+  google.protobuf.Timestamp server_time = 1;
+}
+
+message CreateRunRequest {
+  string overseer_id = 1;
+  string workflow_name = 2;
+  // Hash of the compiled workflow; used by Castle for de-duplication/tracing.
+  string workflow_hash = 3;
+}
+
+// Run is the persisted record of a run (mirrors Phase 0 REST DTO).
+message Run {
+  string run_id = 1;
+  string overseer_id = 2;
+  string workflow_name = 3;
+  string workflow_hash = 4;
+  string status = 5; // "pending" | "running" | "succeeded" | "failed" | "cancelled"
+  google.protobuf.Timestamp created_at = 6;
+  google.protobuf.Timestamp started_at = 7;
+  google.protobuf.Timestamp ended_at = 8;
+  string final_state = 9;
+  string failure_reason = 10;
+}
+
+// --- Streaming types ---
+
+// Ack is the server's reply on SubmitEvents. One Ack per persisted Envelope.
+message Ack {
+  string run_id = 1;
+  uint64 seq = 2;
+  string correlation_id = 3;
+}
+
+// ControlSubscribeRequest is the single message an Overseer sends to open the
+// Control server-stream.
+message ControlSubscribeRequest {
+  string overseer_id = 1;
+}
+
+// ControlMessage is a command from Castle to a connected Overseer.
+message ControlMessage {
+  oneof command {
+    RunCancel run_cancel = 1;
+    AgentPrompt agent_prompt = 2; // Phase 2.3; stub in 1.1.
+  }
+}
+
+// RunCancel asks the Overseer to cancel an in-flight run.
+message RunCancel {
+  string run_id = 1;
+  string reason = 2;
+}
+
+// AgentPrompt forwards a user prompt to a running agent step. Phase 2.3.
+message AgentPrompt {
+  string run_id = 1;
+  string step = 2;
+  string prompt = 3;
+}
