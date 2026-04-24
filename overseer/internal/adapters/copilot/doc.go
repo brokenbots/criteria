@@ -19,8 +19,13 @@
 // adapter fail fast in dev environments.
 package copilot
 
+import "errors"
+
 const Name = "copilot"
 
 // resultPrefix is the conventional marker the agent must emit to signal the
 // final outcome of the step.
 const resultPrefix = "RESULT:"
+
+// ErrNotEnabled is returned by the non-copilot-build stub adapter.
+var ErrNotEnabled = errors.New("copilot adapter not enabled")

@@ -4,7 +4,6 @@ package copilot
 
 import (
 	"context"
-	"errors"
 
 	"github.com/brokenbots/overlord/overseer/internal/adapter"
 	"github.com/brokenbots/overlord/workflow"
@@ -20,5 +19,5 @@ func (a *Adapter) Name() string { return Name }
 
 func (a *Adapter) Execute(ctx context.Context, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
 	sink.Log("agent", []byte("copilot adapter is not enabled in this build (rebuild with `-tags copilot`)\n"))
-	return adapter.Result{Outcome: "failure"}, errors.New("copilot adapter not enabled")
+	return adapter.Result{Outcome: "failure"}, ErrNotEnabled
 }

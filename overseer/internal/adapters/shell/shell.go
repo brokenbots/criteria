@@ -57,6 +57,9 @@ func (a *Adapter) Execute(ctx context.Context, step *workflow.StepNode, sink ada
 	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return adapter.Result{Outcome: "failure"}, ctxErr
+			}
 			return adapter.Result{Outcome: "failure"}, nil
 		}
 		return adapter.Result{Outcome: "failure"}, err
