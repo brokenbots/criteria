@@ -297,6 +297,46 @@ workflow "x" {
 `,
 			wantSummary: `agent "worker": invalid on_crash "explode"`,
 		},
+		{
+			name: "invalid agent adapter name",
+			src: `
+workflow "x" {
+	version = "0.1"
+	initial_state = "a"
+	target_state = "done"
+
+	agent "worker" {
+		adapter = "../copilot"
+	}
+
+	step "a" {
+		agent = "worker"
+		outcome "ok" { transition_to = "done" }
+	}
+
+	state "done" { terminal = true }
+}
+`,
+			wantSummary: `agent "worker": invalid adapter "../copilot"`,
+		},
+		{
+			name: "invalid step adapter name",
+			src: `
+workflow "x" {
+	version = "0.1"
+	initial_state = "a"
+	target_state = "done"
+
+	step "a" {
+		adapter = "plugins/noop"
+		outcome "ok" { transition_to = "done" }
+	}
+
+	state "done" { terminal = true }
+}
+`,
+			wantSummary: `step "a": invalid adapter "plugins/noop"`,
+		},
 	}
 
 	for _, tc := range tests {

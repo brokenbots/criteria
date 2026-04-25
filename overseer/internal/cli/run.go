@@ -12,10 +12,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/brokenbots/overlord/overseer/internal/adapters/copilot"
 	"github.com/brokenbots/overlord/overseer/internal/adapters/shell"
-	"github.com/brokenbots/overlord/overseer/internal/dispatcher"
 	"github.com/brokenbots/overlord/overseer/internal/engine"
+	"github.com/brokenbots/overlord/overseer/internal/plugin"
 	"github.com/brokenbots/overlord/overseer/internal/run"
 	castletrans "github.com/brokenbots/overlord/overseer/internal/transport/castle"
 	"github.com/brokenbots/overlord/workflow"
@@ -110,10 +109,8 @@ func NewRunCmd() *cobra.Command {
 				}
 			}()
 
-			// Wire dispatcher.
-			disp := dispatcher.New()
-			disp.Register(shell.New())
-			disp.Register(copilot.New())
+			loader := plugin.NewLoader()
+			loader.RegisterBuiltin(shell.Name, plugin.BuiltinFactoryForAdapter(shell.New()))
 
 			sink := &run.Sink{
 				RunID:  runID,
@@ -153,7 +150,7 @@ func NewRunCmd() *cobra.Command {
 			defer removeLocalRunState()
 			defer RemoveStepCheckpoint(runID)
 
-			eng := engine.New(graph, disp, sink)
+			eng := engine.New(graph, loader, sink)
 			if err := eng.Run(ctx); err != nil {
 				log.Error("run failed", "error", err)
 				return err

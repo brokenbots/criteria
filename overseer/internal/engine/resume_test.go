@@ -6,6 +6,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/brokenbots/overlord/overseer/internal/plugin"
 )
 
 const multiStepWorkflow = `
@@ -41,9 +43,9 @@ func (s *trackSink) OnStepResumed(step string, attempt int, reason string) {
 func TestResume_HappyPath(t *testing.T) {
 	g := compile(t, multiStepWorkflow)
 	sink := &trackSink{}
-	disp := fakeDispatcher{"fake": &fakeAdapter{name: "fake", outcome: "success"}}
+	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": &fakePlugin{name: "fake", outcome: "success"}}}
 
-	eng := New(g, disp, sink)
+	eng := New(g, loader, sink)
 	// Simulate crash at step2 attempt 1 — resume from step2 at attempt 2.
 	// RunFrom does NOT call OnRunStarted; it starts execution from step2.
 	if err := eng.RunFrom(context.Background(), "step2", 2); err != nil {
@@ -83,8 +85,8 @@ func TestResume_RunFrom_AttemptOffsetApplied(t *testing.T) {
 		},
 	}
 
-	disp := fakeDispatcher{"fake": &fakeAdapter{name: "fake", outcome: "success"}}
-	eng := New(g, disp, sink)
+	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": &fakePlugin{name: "fake", outcome: "success"}}}
+	eng := New(g, loader, sink)
 	// Resume from step1 at attempt 2 (already failed once).
 	if err := eng.RunFrom(context.Background(), "step1", 2); err != nil {
 		t.Fatalf("RunFrom: %v", err)
@@ -108,9 +110,9 @@ func TestResume_RespectsMaxRetries(t *testing.T) {
 
 	sink := &fakeSink{}
 	// Adapter always fails.
-	disp := fakeDispatcher{"fake": &fakeAdapter{name: "fake", err: errors.New("always fails")}}
+	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": &fakePlugin{name: "fake", err: errors.New("always fails")}}}
 
-	eng := New(g, disp, sink)
+	eng := New(g, loader, sink)
 	// Resume at attempt 3 (= maxAttempts): only 1 attempt allowed; it fails.
 	err := eng.RunFrom(context.Background(), "step1", 3)
 	if err == nil {
@@ -125,9 +127,9 @@ func TestResume_ExceedsMaxRetries_FailsImmediately(t *testing.T) {
 	g := compile(t, multiStepWorkflow) // max_step_retries = 2, maxAttempts = 3
 
 	sink := &fakeSink{}
-	disp := fakeDispatcher{"fake": &fakeAdapter{name: "fake", outcome: "success"}}
+	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": &fakePlugin{name: "fake", outcome: "success"}}}
 
-	eng := New(g, disp, sink)
+	eng := New(g, loader, sink)
 	// Resume at attempt 4 (exceeds maxAttempts=3): no attempts possible.
 	err := eng.RunFrom(context.Background(), "step1", 4)
 	if err == nil {

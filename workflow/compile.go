@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/hashicorp/hcl/v2"
@@ -56,6 +57,9 @@ func Compile(spec *Spec) (*FSMGraph, hcl.Diagnostics) {
 			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("duplicate agent %q", name)})
 			continue
 		}
+		if !isValidAdapterName(ag.Adapter) {
+			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("agent %q: invalid adapter %q", name, ag.Adapter)})
+		}
 		effectiveOnCrash := ag.OnCrash
 		if effectiveOnCrash == "" {
 			effectiveOnCrash = onCrashFail
@@ -96,6 +100,9 @@ func Compile(spec *Spec) (*FSMGraph, hcl.Diagnostics) {
 		hasAgent := sp.Agent != ""
 		if hasAdapter == hasAgent {
 			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q: exactly one of adapter or agent must be set", sp.Name)})
+		}
+		if hasAdapter && !isValidAdapterName(sp.Adapter) {
+			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q: invalid adapter %q", sp.Name, sp.Adapter)})
 		}
 		if hasAgent {
 			if _, ok := g.Agents[sp.Agent]; !ok {
@@ -245,4 +252,18 @@ func isValidLifecycle(v string) bool {
 	default:
 		return false
 	}
+}
+
+func isValidAdapterName(v string) bool {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return false
+	}
+	for _, r := range v {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+			continue
+		}
+		return false
+	}
+	return true
 }
