@@ -10,18 +10,34 @@ type Spec struct {
 	Version      string      `hcl:"version"`
 	InitialState string      `hcl:"initial_state"`
 	TargetState  string      `hcl:"target_state"`
+	Agents       []AgentSpec `hcl:"agent,block"`
 	Steps        []StepSpec  `hcl:"step,block"`
 	States       []StateSpec `hcl:"state,block"`
 	Policy       *PolicySpec `hcl:"policy,block"`
 }
 
+// HCL extensions for session-aware workflows:
+// - Top-level `agent "name" { adapter = "..." }` declarations bind names to adapters.
+// - Steps use `agent = "name"` to route work to an agent-backed session.
+// - Steps with `lifecycle = "open"|"close"` explicitly manage session lifetime.
+//   `open` may carry config, while `close` must not include config.
+// AgentSpec declares a named long-lived adapter session target.
+type AgentSpec struct {
+	Name    string `hcl:"name,label"`
+	Adapter string `hcl:"adapter"`
+	OnCrash string `hcl:"on_crash,optional"`
+}
+
 // StepSpec describes a single step in the workflow.
 type StepSpec struct {
-	Name     string            `hcl:"name,label"`
-	Adapter  string            `hcl:"adapter"`
-	Config   map[string]string `hcl:"config,optional"`
-	Timeout  string            `hcl:"timeout,optional"`
-	Outcomes []OutcomeSpec     `hcl:"outcome,block"`
+	Name      string            `hcl:"name,label"`
+	Adapter   string            `hcl:"adapter,optional"`
+	Agent     string            `hcl:"agent,optional"`
+	Lifecycle string            `hcl:"lifecycle,optional"`
+	OnCrash   string            `hcl:"on_crash,optional"`
+	Config    map[string]string `hcl:"config,optional"`
+	Timeout   string            `hcl:"timeout,optional"`
+	Outcomes  []OutcomeSpec     `hcl:"outcome,block"`
 }
 
 // OutcomeSpec maps an adapter outcome name to a transition target.
@@ -49,6 +65,7 @@ type FSMGraph struct {
 	Name         string
 	InitialState string
 	TargetState  string
+	Agents       map[string]*AgentNode
 	Steps        map[string]*StepNode  // by step name
 	States       map[string]*StateNode // by state name (terminal etc.)
 	Policy       Policy
@@ -56,13 +73,23 @@ type FSMGraph struct {
 	stepOrder []string
 }
 
+// AgentNode is a compiled long-lived adapter declaration.
+type AgentNode struct {
+	Name    string
+	Adapter string
+	OnCrash string
+}
+
 // StepNode is a compiled step with resolved transitions.
 type StepNode struct {
-	Name     string
-	Adapter  string
-	Config   map[string]string
-	Timeout  time.Duration     // zero = no timeout
-	Outcomes map[string]string // outcome name -> target node name (step or state)
+	Name      string
+	Adapter   string
+	Agent     string
+	Lifecycle string
+	OnCrash   string
+	Config    map[string]string
+	Timeout   time.Duration     // zero = no timeout
+	Outcomes  map[string]string // outcome name -> target node name (step or state)
 }
 
 // StateNode is a compiled (non-step) state.

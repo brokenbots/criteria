@@ -7,6 +7,15 @@ import (
 	"github.com/hashicorp/hcl/v2"
 )
 
+const (
+	onCrashFail     = "fail"
+	onCrashRespawn  = "respawn"
+	onCrashAbortRun = "abort_run"
+
+	lifecycleOpen  = "open"
+	lifecycleClose = "close"
+)
+
 // Compile validates a Spec and returns an executable FSMGraph. All errors are
 // returned as HCL diagnostics so callers can surface file/line context.
 func Compile(spec *Spec) (*FSMGraph, hcl.Diagnostics) {
@@ -26,6 +35,7 @@ func Compile(spec *Spec) (*FSMGraph, hcl.Diagnostics) {
 		Name:         spec.Name,
 		InitialState: spec.InitialState,
 		TargetState:  spec.TargetState,
+		Agents:       map[string]*AgentNode{},
 		Steps:        map[string]*StepNode{},
 		States:       map[string]*StateNode{},
 		Policy:       DefaultPolicy,
@@ -39,7 +49,26 @@ func Compile(spec *Spec) (*FSMGraph, hcl.Diagnostics) {
 		}
 	}
 
-	// First pass: declare nodes, detect duplicates.
+	// First pass: declare agents and states, detect duplicates.
+	for _, ag := range spec.Agents {
+		name := ag.Name
+		if _, dup := g.Agents[name]; dup {
+			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("duplicate agent %q", name)})
+			continue
+		}
+		effectiveOnCrash := ag.OnCrash
+		if effectiveOnCrash == "" {
+			effectiveOnCrash = onCrashFail
+		} else if !isValidOnCrash(effectiveOnCrash) {
+			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("agent %q: invalid on_crash %q", name, ag.OnCrash)})
+		}
+		g.Agents[name] = &AgentNode{
+			Name:    name,
+			Adapter: ag.Adapter,
+			OnCrash: effectiveOnCrash,
+		}
+	}
+
 	for _, st := range spec.States {
 		name := st.Name
 		if _, dup := g.States[name]; dup {
@@ -63,8 +92,43 @@ func Compile(spec *Spec) (*FSMGraph, hcl.Diagnostics) {
 			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q clashes with state of the same name", sp.Name)})
 			continue
 		}
-		if sp.Adapter == "" {
-			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q: adapter is required", sp.Name)})
+		hasAdapter := sp.Adapter != ""
+		hasAgent := sp.Agent != ""
+		if hasAdapter == hasAgent {
+			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q: exactly one of adapter or agent must be set", sp.Name)})
+		}
+		if hasAgent {
+			if _, ok := g.Agents[sp.Agent]; !ok {
+				diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q: unknown agent %q", sp.Name, sp.Agent)})
+			}
+		}
+		if sp.Lifecycle != "" {
+			// Compile validates lifecycle syntax only. Runtime is responsible for
+			// enforcing use-before-open/double-open and other session state rules.
+			if !isValidLifecycle(sp.Lifecycle) {
+				diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q: invalid lifecycle %q", sp.Name, sp.Lifecycle)})
+			}
+			if !hasAgent {
+				diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q: lifecycle requires agent", sp.Name)})
+			}
+			if sp.Lifecycle == lifecycleClose && len(sp.Config) > 0 {
+				diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q: lifecycle \"close\" must not include config", sp.Name)})
+			}
+		}
+		effectiveOnCrash := sp.OnCrash
+		if effectiveOnCrash != "" && !isValidOnCrash(effectiveOnCrash) {
+			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q: invalid on_crash %q", sp.Name, sp.OnCrash)})
+		}
+		if effectiveOnCrash == "" {
+			if hasAgent {
+				if agent, ok := g.Agents[sp.Agent]; ok {
+					effectiveOnCrash = agent.OnCrash
+				} else {
+					effectiveOnCrash = onCrashFail
+				}
+			} else {
+				effectiveOnCrash = onCrashFail
+			}
 		}
 		var timeout time.Duration
 		if sp.Timeout != "" {
@@ -75,11 +139,14 @@ func Compile(spec *Spec) (*FSMGraph, hcl.Diagnostics) {
 			timeout = d
 		}
 		node := &StepNode{
-			Name:     sp.Name,
-			Adapter:  sp.Adapter,
-			Config:   sp.Config,
-			Timeout:  timeout,
-			Outcomes: map[string]string{},
+			Name:      sp.Name,
+			Adapter:   sp.Adapter,
+			Agent:     sp.Agent,
+			Lifecycle: sp.Lifecycle,
+			OnCrash:   effectiveOnCrash,
+			Config:    sp.Config,
+			Timeout:   timeout,
+			Outcomes:  map[string]string{},
 		}
 		seenOutcome := map[string]bool{}
 		for _, o := range sp.Outcomes {
@@ -160,4 +227,22 @@ func Compile(spec *Spec) (*FSMGraph, hcl.Diagnostics) {
 		return nil, diags
 	}
 	return g, diags
+}
+
+func isValidOnCrash(v string) bool {
+	switch v {
+	case onCrashFail, onCrashRespawn, onCrashAbortRun:
+		return true
+	default:
+		return false
+	}
+}
+
+func isValidLifecycle(v string) bool {
+	switch v {
+	case lifecycleOpen, lifecycleClose:
+		return true
+	default:
+		return false
+	}
 }
