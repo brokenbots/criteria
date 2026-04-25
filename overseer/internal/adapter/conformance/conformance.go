@@ -21,6 +21,8 @@ import (
 
 // Options configures adapter-specific conformance expectations.
 type Options struct {
+	// OpenConfig is optional plugin OpenSession config for RunPlugin tests.
+	OpenConfig map[string]string
 	// StepConfig is the HCL-style config passed to the step node under test.
 	StepConfig map[string]string
 	// PermissionConfig optionally overrides StepConfig for permission_request_shape.
@@ -89,7 +91,7 @@ func RunPlugin(t *testing.T, name, binaryPath string, opts Options) {
 	}
 	probe.Kill()
 
-	runContractTests(t, name, opts, newPluginTargetFactory(name, loader))
+	runContractTests(t, name, opts, newPluginTargetFactory(name, loader, opts))
 
 	t.Run("session_lifecycle", func(t *testing.T) {
 		testSessionLifecycle(t, name, loader, opts, info)
@@ -310,7 +312,7 @@ func executeNoPanic(t *testing.T, target executeTarget, ctx context.Context, ste
 	return target.Execute(ctx, step, sink)
 }
 
-func newPluginTargetFactory(name string, loader plugin.Loader) targetFactory {
+func newPluginTargetFactory(name string, loader plugin.Loader, opts Options) targetFactory {
 	return func(t *testing.T) executeTarget {
 		t.Helper()
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -327,7 +329,7 @@ func newPluginTargetFactory(name string, loader plugin.Loader) targetFactory {
 		}
 
 		sessionID := newSessionID("conformance")
-		if err := plug.OpenSession(ctx, sessionID, nil); err != nil {
+		if err := plug.OpenSession(ctx, sessionID, cloneConfig(opts.OpenConfig)); err != nil {
 			plug.Kill()
 			t.Fatalf("open session %q: %v", sessionID, err)
 		}
@@ -356,7 +358,7 @@ func testSessionLifecycle(t *testing.T, name string, loader plugin.Loader, opts 
 	defer plug.Kill()
 
 	sessionID := newSessionID("lifecycle")
-	if err := plug.OpenSession(ctx, sessionID, nil); err != nil {
+	if err := plug.OpenSession(ctx, sessionID, cloneConfig(opts.OpenConfig)); err != nil {
 		t.Fatalf("open session: %v", err)
 	}
 
@@ -409,10 +411,10 @@ func testConcurrentSessions(t *testing.T, name string, loader plugin.Loader, opt
 
 	sessionA := newSessionID("concurrent-a")
 	sessionB := newSessionID("concurrent-b")
-	if err := plugA.OpenSession(ctx, sessionA, nil); err != nil {
+	if err := plugA.OpenSession(ctx, sessionA, cloneConfig(opts.OpenConfig)); err != nil {
 		t.Fatalf("open session A: %v", err)
 	}
-	if err := plugB.OpenSession(ctx, sessionB, nil); err != nil {
+	if err := plugB.OpenSession(ctx, sessionB, cloneConfig(opts.OpenConfig)); err != nil {
 		t.Fatalf("open session B: %v", err)
 	}
 	defer func() {
@@ -478,7 +480,7 @@ func testSessionCrashDetection(t *testing.T, name string, loader plugin.Loader, 
 	defer plug.Kill()
 
 	sessionID := newSessionID("crash")
-	if err := plug.OpenSession(ctx, sessionID, nil); err != nil {
+	if err := plug.OpenSession(ctx, sessionID, cloneConfig(opts.OpenConfig)); err != nil {
 		t.Fatalf("open session: %v", err)
 	}
 	defer func() {
@@ -527,7 +529,7 @@ func testPermissionRequestShape(t *testing.T, name string, loader plugin.Loader,
 	defer plug.Kill()
 
 	sessionID := newSessionID("permission")
-	if err := plug.OpenSession(ctx, sessionID, nil); err != nil {
+	if err := plug.OpenSession(ctx, sessionID, cloneConfig(opts.OpenConfig)); err != nil {
 		t.Fatalf("open session: %v", err)
 	}
 	defer func() {
