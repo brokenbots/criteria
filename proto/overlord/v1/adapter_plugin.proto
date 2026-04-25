@@ -1,0 +1,76 @@
+syntax = "proto3";
+
+package overlord.v1;
+
+import "overlord/v1/events.proto";
+
+option go_package = "github.com/brokenbots/overlord/shared/pb/overlord/v1;overlordv1";
+
+// AdapterPluginService defines the out-of-process adapter contract.
+service AdapterPluginService {
+  rpc Info(InfoRequest) returns (InfoResponse);
+  rpc OpenSession(OpenSessionRequest) returns (OpenSessionResponse);
+  rpc Execute(ExecuteRequest) returns (stream ExecuteEvent);
+  rpc Permit(PermitRequest) returns (PermitResponse);
+  rpc CloseSession(CloseSessionRequest) returns (CloseSessionResponse);
+}
+
+message InfoRequest {}
+
+message InfoResponse {
+  string name = 1; // permanent
+  string version = 2; // permanent
+  repeated string capabilities = 3; // permanent
+}
+
+message OpenSessionRequest {
+  string session_id = 1; // permanent
+  map<string, string> config = 2; // permanent
+}
+
+message OpenSessionResponse {}
+
+message ExecuteRequest {
+  string session_id = 1; // permanent
+  string step_name = 2; // permanent
+  map<string, string> config = 3; // permanent
+}
+
+message ExecuteEvent {
+  oneof event {
+    LogEvent log = 1; // permanent
+    AdapterEvent adapter = 2; // permanent
+    PermissionRequest permission = 3; // permanent
+    ExecuteResult result = 4; // permanent
+  }
+}
+
+message LogEvent {
+  string stream = 1; // permanent
+  bytes chunk = 2; // permanent
+}
+
+message PermissionRequest {
+  string id = 1; // permanent
+  string permission = 2; // permanent
+  map<string, string> details = 3; // permanent
+}
+
+message ExecuteResult {
+  string outcome = 1; // permanent
+}
+
+message PermitRequest {
+  string session_id = 1; // permanent
+  string permission_id = 2; // permanent
+  bool allow = 3; // permanent
+  string reason = 4; // permanent
+}
+
+message PermitResponse {}
+
+message CloseSessionRequest {
+  string session_id = 1; // permanent
+}
+
+message CloseSessionResponse {}
