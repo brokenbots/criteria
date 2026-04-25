@@ -28,6 +28,10 @@ type Sink struct {
 	RunID  string
 	Client *castletrans.Client
 	Log    *slog.Logger
+	// CheckpointFn, if non-nil, is called synchronously inside OnStepEntered
+	// before the event is published. Use this to write a durable step
+	// checkpoint for crash recovery.
+	CheckpointFn func(step string, attempt int)
 }
 
 func (s *Sink) publish(payload any) {
@@ -50,6 +54,9 @@ func (s *Sink) OnRunFailed(reason, step string) {
 }
 
 func (s *Sink) OnStepEntered(step, adapterName string, attempt int) {
+	if s.CheckpointFn != nil {
+		s.CheckpointFn(step, attempt)
+	}
 	s.publish(&pb.StepEntered{Step: step, Adapter: adapterName, Attempt: int32(attempt)})
 }
 
@@ -63,6 +70,10 @@ func (s *Sink) OnStepOutcome(step, outcome string, duration time.Duration, err e
 
 func (s *Sink) OnStepTransition(from, to, viaOutcome string) {
 	s.publish(&pb.StepTransition{From: from, To: to, ViaOutcome: viaOutcome})
+}
+
+func (s *Sink) OnStepResumed(step string, attempt int, reason string) {
+	s.publish(&pb.StepResumed{Step: step, Attempt: int32(attempt), Reason: reason})
 }
 
 // StepEventSink returns a per-step adapter sink that wraps Log/Adapter into

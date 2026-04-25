@@ -40,6 +40,7 @@ func (s *fakeSink) OnStepTransition(from, to, via string) {
 	s.transitions = append(s.transitions, from+"->"+to)
 	s.mu.Unlock()
 }
+func (s *fakeSink) OnStepResumed(string, int, string)           {}
 func (s *fakeSink) StepEventSink(step string) adapter.EventSink { return noopSink{} }
 
 type noopSink struct{}

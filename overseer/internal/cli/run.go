@@ -80,6 +80,12 @@ func NewRunCmd() *cobra.Command {
 			if err := client.Register(ctx, name, hostname, "0.1.0"); err != nil {
 				return fmt.Errorf("register: %w", err)
 			}
+
+			// Before starting a new run, attempt to resume any runs that were
+			// in-flight when the Overseer last crashed. This is a no-op when
+			// there are no checkpoint files under OVERSEER_STATE_DIR.
+			resumeInFlightRuns(ctx, log, clientOpts)
+
 			runID, err := client.CreateRun(ctx, graph.Name, string(src))
 			if err != nil {
 				return fmt.Errorf("create run: %w", err)
@@ -113,6 +119,22 @@ func NewRunCmd() *cobra.Command {
 				RunID:  runID,
 				Client: client,
 				Log:    log.With("run_id", runID),
+				CheckpointFn: func(step string, attempt int) {
+					cp := &StepCheckpoint{
+						RunID:        runID,
+						Workflow:     graph.Name,
+						WorkflowPath: workflowPath,
+						CurrentStep:  step,
+						Attempt:      attempt,
+						StartedAt:    time.Now().UTC(),
+						CastleURL:    castleURL,
+						OverseerID:   client.OverseerID(),
+						Token:        client.Token(),
+					}
+					if cpErr := WriteStepCheckpoint(cp); cpErr != nil {
+						log.Warn("failed to write step checkpoint; crash recovery may not work", "error", cpErr)
+					}
+				},
 			}
 
 			log.Info("starting run",
@@ -129,6 +151,7 @@ func NewRunCmd() *cobra.Command {
 			}
 			_ = writeLocalRunState(state)
 			defer removeLocalRunState()
+			defer RemoveStepCheckpoint(runID)
 
 			eng := engine.New(graph, disp, sink)
 			if err := eng.Run(ctx); err != nil {

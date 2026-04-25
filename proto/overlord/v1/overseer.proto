@@ -25,6 +25,11 @@ service OverseerService {
   // of run ids.
   rpc CreateRun(CreateRunRequest) returns (Run);
 
+  // ReattachRun lets an Overseer query Castle about an in-flight run after a
+  // crash or restart. Castle returns the current status, last active step,
+  // and whether the Overseer may resume execution.
+  rpc ReattachRun(ReattachRunRequest) returns (ReattachRunResponse);
+
   // SubmitEvents is a bidirectional stream. The client writes Envelopes and
   // the server replies with an Ack per persisted envelope (run_id, seq,
   // correlation_id). On reconnect the client may include `since_seq` in
@@ -80,6 +85,28 @@ message Run {
   google.protobuf.Timestamp ended_at = 8;
   string final_state = 9;
   string failure_reason = 10;
+}
+
+// ReattachRunRequest is sent by an Overseer on startup to query the state of
+// a run it believes was in-flight before a crash.
+message ReattachRunRequest {
+  string run_id = 1;
+  string overseer_id = 2;
+}
+
+// ReattachRunResponse tells the Overseer whether it may resume a run.
+message ReattachRunResponse {
+  // Current status of the run: "running" | "succeeded" | "failed" | "cancelled".
+  string status = 1;
+  // Empty when the run is terminal.
+  string current_step = 2;
+  // Last started attempt for current_step. 0 if no attempt has been recorded.
+  int32 attempt = 3;
+  // Last persisted envelope seq for the run.
+  uint64 last_seq = 4;
+  // Server's judgment: false when the run is terminal or belongs to a different
+  // overseer.
+  bool can_resume = 5;
 }
 
 // --- Streaming types ---

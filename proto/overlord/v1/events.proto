@@ -44,6 +44,7 @@ message Envelope {
     AdapterEvent adapter_event = 17;
     OverseerHeartbeat overseer_heartbeat = 18;
     OverseerDisconnected overseer_disconnected = 19;
+    StepResumed step_resumed = 20;
     // WatchReady is a protocol-level sentinel sent once at the start of a
     // WatchRun server-stream, after any persisted-event replay, to flush
     // response headers so the client's WatchRun call can return. It has no
@@ -132,6 +133,16 @@ message OverseerHeartbeat {
 message OverseerDisconnected {
   string overseer_id = 1;
   string reason = 2;
+}
+
+// StepResumed is emitted by an Overseer before re-executing a step after a
+// crash. It distinguishes a crash-restart rerun from a normal retry after a
+// step failure. Castle stores and fans out this event identically to other
+// envelopes; it has no run-status side-effects.
+message StepResumed {
+  string step = 1;
+  int32 attempt = 2;
+  string reason = 3;
 }
 
 // WatchReady is a protocol-level sentinel payload sent by WatchRun once at

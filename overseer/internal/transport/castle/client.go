@@ -205,6 +205,27 @@ func (c *Client) Register(ctx context.Context, name, hostname, version string) e
 // OverseerID returns the Castle-assigned overseer id after Register.
 func (c *Client) OverseerID() string { return c.overseerID }
 
+// Token returns the auth token assigned during Register.
+func (c *Client) Token() string { return c.token }
+
+// SetCredentials configures a pre-existing overseer identity on the client
+// so that crash-recovery resumptions can authenticate without re-registering.
+// Must be called before StartStreams.
+func (c *Client) SetCredentials(overseerID, token string) {
+	c.overseerID = overseerID
+	c.token = token
+}
+
+// StartPublishStream starts the SubmitEvents bidi stream for runID without
+// starting the Control stream. Used by crash-recovery resumptions where the
+// main client owns the Control subscription.
+func (c *Client) StartPublishStream(ctx context.Context, runID string) error {
+	if c.overseerID == "" {
+		return errors.New("credentials not set")
+	}
+	return c.startPublish(ctx, runID)
+}
+
 // CreateRun registers a new run and returns its Castle-assigned id.
 func (c *Client) CreateRun(ctx context.Context, workflowName, workflowHCL string) (string, error) {
 	if c.overseerID == "" {
@@ -487,6 +508,21 @@ func (c *Client) Publish(ctx context.Context, env *pb.Envelope) {
 	case <-c.closed:
 		c.log.Warn("publish dropped (client closed)")
 	}
+}
+
+// ReattachRun queries Castle about the state of a run that may have been
+// in-flight before a crash. Returns the response or an error.
+func (c *Client) ReattachRun(ctx context.Context, runID, overseerID string) (*pb.ReattachRunResponse, error) {
+	req := connect.NewRequest(&pb.ReattachRunRequest{
+		RunId:      runID,
+		OverseerId: overseerID,
+	})
+	c.authorize(req.Header())
+	resp, err := c.grpc.ReattachRun(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return resp.Msg, nil
 }
 
 // Drain blocks until every published envelope has been acknowledged, ctx is

@@ -27,6 +27,7 @@ type Sink interface {
 	OnStepEntered(step, adapterName string, attempt int)
 	OnStepOutcome(step, outcome string, duration time.Duration, err error)
 	OnStepTransition(from, to, viaOutcome string)
+	OnStepResumed(step string, attempt int, reason string)
 	// StepEventSink returns the per-step adapter sink (logs + adapter events).
 	StepEventSink(step string) adapter.EventSink
 }
@@ -47,8 +48,23 @@ func New(graph *workflow.FSMGraph, dispatcher Dispatcher, sink Sink) *Engine {
 func (e *Engine) Run(ctx context.Context) error {
 	current := e.graph.InitialState
 	e.sink.OnRunStarted(e.graph.Name, current)
+	return e.runLoop(ctx, current, 0)
+}
 
+// RunFrom resumes a workflow at startStep with the given initialAttempt
+// number as the first attempt for that step (subsequent retries increment
+// from there). It does NOT emit OnRunStarted (the run already started).
+// If initialAttempt would already exceed max_step_retries, it emits
+// OnRunFailed instead of attempting the step.
+func (e *Engine) RunFrom(ctx context.Context, startStep string, initialAttempt int) error {
+	return e.runLoop(ctx, startStep, initialAttempt-1)
+}
+
+// runLoop is the shared execution loop. attemptOffset is added to the
+// attempt counter of the first step only; subsequent steps start at attempt 1.
+func (e *Engine) runLoop(ctx context.Context, current string, firstStepAttemptOffset int) error {
 	totalSteps := 0
+	firstStep := true
 	for {
 		// Reached a state node: terminal => done; non-terminal => awaiting external input (treat as terminal for Phase 0).
 		if state, ok := e.graph.States[current]; ok {
@@ -69,8 +85,17 @@ func (e *Engine) Run(ctx context.Context) error {
 			return err
 		}
 
-		// Run the step (with retries).
-		outcome, err := e.runStepWithRetry(ctx, step)
+		var (
+			outcome string
+			err     error
+		)
+		if firstStep && firstStepAttemptOffset > 0 {
+			firstStep = false
+			outcome, err = e.runStepFromAttempt(ctx, step, firstStepAttemptOffset+1)
+		} else {
+			firstStep = false
+			outcome, err = e.runStepFromAttempt(ctx, step, 1)
+		}
 		if err != nil {
 			e.sink.OnRunFailed(err.Error(), step.Name)
 			return err
@@ -87,14 +112,17 @@ func (e *Engine) Run(ctx context.Context) error {
 	}
 }
 
-func (e *Engine) runStepWithRetry(ctx context.Context, step *workflow.StepNode) (string, error) {
+func (e *Engine) runStepFromAttempt(ctx context.Context, step *workflow.StepNode, startAttempt int) (string, error) {
 	ad, ok := e.dispatcher.Adapter(step.Adapter)
 	if !ok {
 		return "", fmt.Errorf("no adapter named %q", step.Adapter)
 	}
 	maxAttempts := 1 + e.graph.Policy.MaxStepRetries
+	if startAttempt > maxAttempts {
+		return "", fmt.Errorf("step %q has no remaining attempts (start attempt %d exceeds max %d)", step.Name, startAttempt, maxAttempts)
+	}
 	var lastErr error
-	for attempt := 1; attempt <= maxAttempts; attempt++ {
+	for attempt := startAttempt; attempt <= maxAttempts; attempt++ {
 		if err := ctx.Err(); err != nil {
 			return "", err
 		}
@@ -126,7 +154,7 @@ func (e *Engine) runStepWithRetry(ctx context.Context, step *workflow.StepNode) 
 		e.sink.OnStepOutcome(step.Name, "", dur, err)
 		// no-op; loop until retries exhausted
 	}
-	return "", fmt.Errorf("step %q failed after %d attempts: %w", step.Name, maxAttempts, lastErr)
+	return "", fmt.Errorf("step %q failed after %d attempts: %w", step.Name, maxAttempts-startAttempt+1, lastErr)
 }
 
 // ErrCancelled is returned when the run context is cancelled mid-step.

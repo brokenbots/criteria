@@ -72,6 +72,8 @@ func setPayload(env *pb.Envelope, payload any) {
 		env.Payload = &pb.Envelope_OverseerHeartbeat{OverseerHeartbeat: p}
 	case *pb.OverseerDisconnected:
 		env.Payload = &pb.Envelope_OverseerDisconnected{OverseerDisconnected: p}
+	case *pb.StepResumed:
+		env.Payload = &pb.Envelope_StepResumed{StepResumed: p}
 	case *pb.WatchReady:
 		env.Payload = &pb.Envelope_WatchReady{WatchReady: p}
 	default:
@@ -108,6 +110,8 @@ func TypeString(env *pb.Envelope) string {
 		return "overseer.heartbeat"
 	case *pb.Envelope_OverseerDisconnected:
 		return "overseer.disconnected"
+	case *pb.Envelope_StepResumed:
+		return "step.resumed"
 	case *pb.Envelope_WatchReady:
 		return "watch.ready"
 	default:
