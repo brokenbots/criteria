@@ -6,7 +6,7 @@ require (
 	connectrpc.com/connect v1.19.2
 	github.com/brokenbots/overlord/shared v0.0.0
 	github.com/brokenbots/overlord/workflow v0.0.0
-	github.com/github/copilot-sdk/go v0.2.2
+	github.com/github/copilot-sdk/go v0.3.0
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/go-plugin v1.7.0
 	github.com/spf13/cobra v1.8.1
