@@ -109,6 +109,9 @@ func Compile(spec *Spec) (*FSMGraph, hcl.Diagnostics) {
 				diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q: unknown agent %q", sp.Name, sp.Agent)})
 			}
 		}
+		if len(sp.AllowTools) > 0 && !hasAgent {
+			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q: allow_tools requires agent", sp.Name)})
+		}
 		if sp.Lifecycle != "" {
 			// Compile validates lifecycle syntax only. Runtime is responsible for
 			// enforcing use-before-open/double-open and other session state rules.
@@ -120,6 +123,9 @@ func Compile(spec *Spec) (*FSMGraph, hcl.Diagnostics) {
 			}
 			if sp.Lifecycle == lifecycleClose && len(sp.Config) > 0 {
 				diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q: lifecycle \"close\" must not include config", sp.Name)})
+			}
+			if len(sp.AllowTools) > 0 {
+				diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q: allow_tools is only valid on execute-shape steps (not lifecycle open/close)", sp.Name)})
 			}
 		}
 		effectiveOnCrash := sp.OnCrash
@@ -146,14 +152,15 @@ func Compile(spec *Spec) (*FSMGraph, hcl.Diagnostics) {
 			timeout = d
 		}
 		node := &StepNode{
-			Name:      sp.Name,
-			Adapter:   sp.Adapter,
-			Agent:     sp.Agent,
-			Lifecycle: sp.Lifecycle,
-			OnCrash:   effectiveOnCrash,
-			Config:    sp.Config,
-			Timeout:   timeout,
-			Outcomes:  map[string]string{},
+			Name:       sp.Name,
+			Adapter:    sp.Adapter,
+			Agent:      sp.Agent,
+			Lifecycle:  sp.Lifecycle,
+			OnCrash:    effectiveOnCrash,
+			Config:     sp.Config,
+			Timeout:    timeout,
+			Outcomes:   map[string]string{},
+			AllowTools: allowToolsForStep(sp, spec),
 		}
 		seenOutcome := map[string]bool{}
 		for _, o := range sp.Outcomes {
@@ -266,4 +273,34 @@ func isValidAdapterName(v string) bool {
 		return false
 	}
 	return true
+}
+
+// allowToolsForStep returns the effective AllowTools for a step. Lifecycle
+// steps (open/close) never receive allow_tools — permission gating is only
+// meaningful on execute-shape steps.
+func allowToolsForStep(sp StepSpec, spec *Spec) []string {
+	if sp.Lifecycle != "" {
+		return nil
+	}
+	return unionAllowTools(sp.AllowTools, workflowAllowTools(spec))
+}
+
+// workflowAllowTools extracts the workflow-level AllowTools list from a Spec.
+func workflowAllowTools(spec *Spec) []string {
+	if spec.Permissions == nil {
+		return nil
+	}
+	return spec.Permissions.AllowTools
+}
+
+// unionAllowTools returns the union of step-level and workflow-level patterns.
+// Duplicates are not removed — first-match-wins semantics make them harmless.
+func unionAllowTools(stepTools, workflowTools []string) []string {
+	if len(stepTools) == 0 && len(workflowTools) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(stepTools)+len(workflowTools))
+	out = append(out, stepTools...)
+	out = append(out, workflowTools...)
+	return out
 }

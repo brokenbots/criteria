@@ -14,6 +14,7 @@ import (
 
 	"github.com/brokenbots/overlord/overseer/internal/adapter"
 	"github.com/brokenbots/overlord/overseer/internal/plugin"
+	"github.com/brokenbots/overlord/overseer/internal/testutil"
 	"github.com/brokenbots/overlord/workflow"
 )
 
@@ -221,8 +222,13 @@ func TestEngineLifecycleOpenTimeoutKeepsSessionAlive(t *testing.T) {
 type captureStepEventSink struct {
 	fakeSink
 
-	mu          sync.Mutex
-	adapterKind []string
+	mu     sync.Mutex
+	events []adapterEventRecord
+}
+
+type adapterEventRecord struct {
+	kind string
+	data map[string]any
 }
 
 func (s *captureStepEventSink) StepEventSink(string) adapter.EventSink {
@@ -232,12 +238,23 @@ func (s *captureStepEventSink) StepEventSink(string) adapter.EventSink {
 func (s *captureStepEventSink) sawAdapterKind(kind string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for _, k := range s.adapterKind {
-		if k == kind {
+	for _, evt := range s.events {
+		if evt.kind == kind {
 			return true
 		}
 	}
 	return false
+}
+
+func (s *captureStepEventSink) firstAdapterEvent(kind string) (map[string]any, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, evt := range s.events {
+		if evt.kind == kind {
+			return evt.data, true
+		}
+	}
+	return nil, false
 }
 
 type captureEventSink struct {
@@ -246,10 +263,14 @@ type captureEventSink struct {
 
 func (s captureEventSink) Log(string, []byte) {}
 
-func (s captureEventSink) Adapter(kind string, _ any) {
+func (s captureEventSink) Adapter(kind string, data any) {
 	s.s.mu.Lock()
 	defer s.s.mu.Unlock()
-	s.s.adapterKind = append(s.s.adapterKind, kind)
+	var payload map[string]any
+	if m, ok := data.(map[string]any); ok {
+		payload = m
+	}
+	s.s.events = append(s.s.events, adapterEventRecord{kind: kind, data: payload})
 }
 
 func compileFile(t *testing.T, rel string) *workflow.FSMGraph {
@@ -291,4 +312,179 @@ func buildNoopPlugin(t *testing.T) string {
 	}
 
 	return pluginBin
+}
+
+// TestEnginePermissionGrantAndDeny verifies the full permission-gating flow:
+// a step with allow_tools=["read_file"] against the permissive test plugin
+// that requests two tools produces exactly one permission.granted event for
+// read_file and one permission.denied event for write_file, and the run ends
+// in needs_review (because the plugin returns needs_review on any denial).
+func TestEnginePermissionGrantAndDeny(t *testing.T) {
+	pluginBin := testutil.BuildPermissivePlugin(t)
+	loader := plugin.NewLoaderWithDiscovery(func(string) (string, error) {
+		return pluginBin, nil
+	})
+	t.Cleanup(func() { _ = loader.Shutdown(context.Background()) })
+
+	g := compile(t, `
+workflow "perm" {
+  version       = "0.1"
+  initial_state = "open"
+  target_state  = "done"
+
+  agent "bot" { adapter = "permissive" }
+
+  step "open" {
+    agent     = "bot"
+    lifecycle = "open"
+    outcome "success" { transition_to = "run" }
+  }
+  step "run" {
+    agent       = "bot"
+    config      = { perm_tools = "read_file,write_file" }
+    allow_tools = ["read_file"]
+    outcome "success"      { transition_to = "close" }
+    outcome "needs_review" { transition_to = "close" }
+  }
+  step "close" {
+    agent     = "bot"
+    lifecycle = "close"
+    outcome "success" { transition_to = "done" }
+  }
+  state "done" { terminal = true }
+}`)
+
+	sink := &captureStepEventSink{}
+	if err := New(g, loader, sink).Run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if sink.terminal != "done" || !sink.terminalOK {
+		t.Fatalf("terminal: %s ok=%v", sink.terminal, sink.terminalOK)
+	}
+	if !sink.sawAdapterKind("permission.granted") {
+		t.Error("expected permission.granted event")
+	}
+	if !sink.sawAdapterKind("permission.denied") {
+		t.Error("expected permission.denied event")
+	}
+	if sink.sawAdapterKind("permission.request") {
+		t.Error("unexpected legacy permission.request event: policy should emit granted/denied instead")
+	}
+	granted, ok := sink.firstAdapterEvent("permission.granted")
+	if !ok {
+		t.Fatal("expected permission.granted payload")
+	}
+	if granted["pattern"] != "read_file" {
+		t.Fatalf("permission.granted pattern=%v want read_file", granted["pattern"])
+	}
+	if granted["request_id"] == "" {
+		t.Fatal("permission.granted request_id must be non-empty")
+	}
+	denied, ok := sink.firstAdapterEvent("permission.denied")
+	if !ok {
+		t.Fatal("expected permission.denied payload")
+	}
+	if denied["reason"] == "" {
+		t.Fatal("permission.denied reason must be non-empty")
+	}
+}
+
+// TestEngineDefaultPolicyDeniesAll verifies that a workflow without allow_tools
+// produces a permission.denied event for every tool request and no
+// permission.granted events.
+func TestEngineDefaultPolicyDeniesAll(t *testing.T) {
+	pluginBin := testutil.BuildPermissivePlugin(t)
+	loader := plugin.NewLoaderWithDiscovery(func(string) (string, error) {
+		return pluginBin, nil
+	})
+	t.Cleanup(func() { _ = loader.Shutdown(context.Background()) })
+
+	g := compile(t, `
+workflow "perm-deny" {
+  version       = "0.1"
+  initial_state = "open"
+  target_state  = "done"
+
+  agent "bot" { adapter = "permissive" }
+
+  step "open" {
+    agent     = "bot"
+    lifecycle = "open"
+    outcome "success" { transition_to = "run" }
+  }
+  step "run" {
+    agent  = "bot"
+    config = { perm_tools = "read_file" }
+    outcome "needs_review" { transition_to = "close" }
+    outcome "success"      { transition_to = "close" }
+  }
+  step "close" {
+    agent     = "bot"
+    lifecycle = "close"
+    outcome "success" { transition_to = "done" }
+  }
+  state "done" { terminal = true }
+}`)
+
+	sink := &captureStepEventSink{}
+	if err := New(g, loader, sink).Run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if sink.sawAdapterKind("permission.granted") {
+		t.Error("expected no permission.granted events when allow_tools is empty")
+	}
+	if !sink.sawAdapterKind("permission.denied") {
+		t.Error("expected permission.denied event from default deny policy")
+	}
+}
+
+func TestEngineShellFingerprintAllowlist(t *testing.T) {
+	pluginBin := testutil.BuildPermissivePlugin(t)
+	loader := plugin.NewLoaderWithDiscovery(func(string) (string, error) {
+		return pluginBin, nil
+	})
+	t.Cleanup(func() { _ = loader.Shutdown(context.Background()) })
+
+	g := compile(t, `
+workflow "perm-shell" {
+  version       = "0.1"
+  initial_state = "open"
+  target_state  = "done"
+
+  agent "bot" { adapter = "permissive" }
+
+  step "open" {
+    agent     = "bot"
+    lifecycle = "open"
+    outcome "success" { transition_to = "run" }
+  }
+  step "run" {
+    agent       = "bot"
+    config      = { perm_tools = "shell|git status,shell|rm -rf /" }
+    allow_tools = ["shell:git *"]
+    outcome "success"      { transition_to = "close" }
+    outcome "needs_review" { transition_to = "close" }
+  }
+  step "close" {
+    agent     = "bot"
+    lifecycle = "close"
+    outcome "success" { transition_to = "done" }
+  }
+  state "done" { terminal = true }
+}`)
+
+	sink := &captureStepEventSink{}
+	if err := New(g, loader, sink).Run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	granted, ok := sink.firstAdapterEvent("permission.granted")
+	if !ok {
+		t.Fatal("expected permission.granted for shell|git status")
+	}
+	if granted["pattern"] != "shell:git *" {
+		t.Fatalf("permission.granted pattern=%v want shell:git *", granted["pattern"])
+	}
+	if !sink.sawAdapterKind("permission.denied") {
+		t.Fatal("expected permission.denied for shell|rm -rf /")
+	}
 }

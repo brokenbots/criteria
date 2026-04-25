@@ -159,3 +159,133 @@ workflow "x" {
 		t.Fatal("expected error for missing outcomes")
 	}
 }
+
+func TestCompileAllowToolsOnLifecycleStepIsError(t *testing.T) {
+	src := `
+workflow "x" {
+  version       = "0.1"
+  initial_state = "open"
+  target_state  = "done"
+
+  agent "bot" { adapter = "copilot" }
+
+  step "open" {
+    agent       = "bot"
+    lifecycle   = "open"
+    allow_tools = ["read_file"]
+    outcome "success" { transition_to = "done" }
+  }
+  step "close" {
+    agent     = "bot"
+    lifecycle = "close"
+    outcome "success" { transition_to = "done" }
+  }
+  state "done" { terminal = true }
+}
+`
+	spec, diags := Parse("t.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	_, diags = Compile(spec)
+	if !diags.HasErrors() {
+		t.Fatal("expected compile error for allow_tools on lifecycle step")
+	}
+	if !strings.Contains(diags.Error(), "allow_tools") {
+		t.Errorf("expected error mentioning allow_tools, got: %s", diags.Error())
+	}
+}
+
+func TestCompileAllowToolsWithoutAgentIsError(t *testing.T) {
+	src := `
+workflow "x" {
+  version       = "0.1"
+  initial_state = "run"
+  target_state  = "done"
+
+  step "run" {
+    adapter     = "shell"
+    allow_tools = ["shell:git status"]
+    outcome "success" { transition_to = "done" }
+  }
+  state "done" { terminal = true }
+}
+`
+	spec, diags := Parse("t.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	_, diags = Compile(spec)
+	if !diags.HasErrors() {
+		t.Fatal("expected compile error for allow_tools without agent")
+	}
+	if !strings.Contains(diags.Error(), "allow_tools requires agent") {
+		t.Fatalf("expected allow_tools-without-agent error, got: %s", diags.Error())
+	}
+}
+
+func TestCompileAllowToolsUnionedWithWorkflowLevel(t *testing.T) {
+	src := `
+workflow "x" {
+  version       = "0.1"
+  initial_state = "open"
+  target_state  = "done"
+
+  agent "bot" { adapter = "copilot" }
+
+  step "open" {
+    agent     = "bot"
+    lifecycle = "open"
+    outcome "success" { transition_to = "run" }
+  }
+  step "run" {
+    agent       = "bot"
+    allow_tools = ["read_file"]
+    outcome "success" { transition_to = "close" }
+  }
+  step "close" {
+    agent     = "bot"
+    lifecycle = "close"
+    outcome "success" { transition_to = "done" }
+  }
+  state "done" { terminal = true }
+
+  permissions {
+    allow_tools = ["shell:echo *"]
+  }
+}
+`
+	spec, diags := Parse("t.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	g, diags := Compile(spec)
+	if diags.HasErrors() {
+		t.Fatalf("compile: %s", diags.Error())
+	}
+	run := g.Steps["run"]
+	if run == nil {
+		t.Fatal("step 'run' not found")
+	}
+	// Expect step-level + workflow-level merged
+	found := map[string]bool{}
+	for _, p := range run.AllowTools {
+		found[p] = true
+	}
+	if !found["read_file"] {
+		t.Errorf("AllowTools missing step-level 'read_file': %v", run.AllowTools)
+	}
+	if !found["shell:echo *"] {
+		t.Errorf("AllowTools missing workflow-level 'shell:echo *': %v", run.AllowTools)
+	}
+	// Lifecycle steps must not get AllowTools (even from workflow-level)
+	for _, name := range []string{"open", "close"} {
+		step := g.Steps[name]
+		if step == nil {
+			continue
+		}
+		if len(step.AllowTools) != 0 {
+			t.Errorf("lifecycle step %q should have empty AllowTools, got %v", name, step.AllowTools)
+		}
+	}
+}

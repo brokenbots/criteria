@@ -538,6 +538,7 @@ func testPermissionRequestShape(t *testing.T, name string, loader plugin.Loader,
 	if len(cfg) == 0 {
 		cfg = opts.StepConfig
 	}
+	// No allow_tools on the step → default deny-all policy applies.
 	step := baseStep(name, info.Name, cfg)
 	sink := &recordingSink{}
 	res, err := executeNoPanic(t, pluginSessionTarget{plugin: plug, sessionID: sessionID, name: info.Name}, context.Background(), step, sink)
@@ -548,17 +549,20 @@ func testPermissionRequestShape(t *testing.T, name string, loader plugin.Loader,
 		t.Fatalf("permission denial must end with needs_review, got %q", res.Outcome)
 	}
 
-	permissionEvent, ok := sink.firstAdapterEvent("permission.request")
+	// The host policy emits permission.denied (not the legacy permission.request)
+	// for every denied request. Verify the event carries the request_id so the
+	// plugin's original request can be correlated.
+	deniedEvent, ok := sink.firstAdapterEvent("permission.denied")
 	if !ok {
-		t.Fatal("expected permission.request adapter event")
+		t.Fatal("expected permission.denied adapter event from host deny policy")
 	}
-	id := strings.TrimSpace(fmt.Sprint(permissionEvent["id"]))
-	tool := strings.TrimSpace(fmt.Sprint(permissionEvent["tool"]))
-	if id == "" {
-		t.Fatal("permission request id must be non-empty")
+	requestID := strings.TrimSpace(fmt.Sprint(deniedEvent["request_id"]))
+	tool := strings.TrimSpace(fmt.Sprint(deniedEvent["tool"]))
+	if requestID == "" {
+		t.Fatal("permission.denied event must include non-empty request_id")
 	}
 	if tool == "" {
-		t.Fatal("permission request tool must be non-empty")
+		t.Fatal("permission.denied event must include non-empty tool")
 	}
 }
 

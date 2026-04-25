@@ -6,21 +6,23 @@ import "time"
 
 // Spec is the parsed (but unvalidated) HCL workflow document.
 type Spec struct {
-	Name         string      `hcl:"name,label"`
-	Version      string      `hcl:"version"`
-	InitialState string      `hcl:"initial_state"`
-	TargetState  string      `hcl:"target_state"`
-	Agents       []AgentSpec `hcl:"agent,block"`
-	Steps        []StepSpec  `hcl:"step,block"`
-	States       []StateSpec `hcl:"state,block"`
-	Policy       *PolicySpec `hcl:"policy,block"`
+	Name         string           `hcl:"name,label"`
+	Version      string           `hcl:"version"`
+	InitialState string           `hcl:"initial_state"`
+	TargetState  string           `hcl:"target_state"`
+	Agents       []AgentSpec      `hcl:"agent,block"`
+	Steps        []StepSpec       `hcl:"step,block"`
+	States       []StateSpec      `hcl:"state,block"`
+	Policy       *PolicySpec      `hcl:"policy,block"`
+	Permissions  *PermissionsSpec `hcl:"permissions,block"`
 }
 
 // HCL extensions for session-aware workflows:
-// - Top-level `agent "name" { adapter = "..." }` declarations bind names to adapters.
-// - Steps use `agent = "name"` to route work to an agent-backed session.
-// - Steps with `lifecycle = "open"|"close"` explicitly manage session lifetime.
-//   `open` may carry config, while `close` must not include config.
+//   - Top-level `agent "name" { adapter = "..." }` declarations bind names to adapters.
+//   - Steps use `agent = "name"` to route work to an agent-backed session.
+//   - Steps with `lifecycle = "open"|"close"` explicitly manage session lifetime.
+//     `open` may carry config, while `close` must not include config.
+//
 // AgentSpec declares a named long-lived adapter session target.
 type AgentSpec struct {
 	Name    string `hcl:"name,label"`
@@ -30,14 +32,15 @@ type AgentSpec struct {
 
 // StepSpec describes a single step in the workflow.
 type StepSpec struct {
-	Name      string            `hcl:"name,label"`
-	Adapter   string            `hcl:"adapter,optional"`
-	Agent     string            `hcl:"agent,optional"`
-	Lifecycle string            `hcl:"lifecycle,optional"`
-	OnCrash   string            `hcl:"on_crash,optional"`
-	Config    map[string]string `hcl:"config,optional"`
-	Timeout   string            `hcl:"timeout,optional"`
-	Outcomes  []OutcomeSpec     `hcl:"outcome,block"`
+	Name       string            `hcl:"name,label"`
+	Adapter    string            `hcl:"adapter,optional"`
+	Agent      string            `hcl:"agent,optional"`
+	Lifecycle  string            `hcl:"lifecycle,optional"`
+	OnCrash    string            `hcl:"on_crash,optional"`
+	Config     map[string]string `hcl:"config,optional"`
+	Timeout    string            `hcl:"timeout,optional"`
+	AllowTools []string          `hcl:"allow_tools,optional"`
+	Outcomes   []OutcomeSpec     `hcl:"outcome,block"`
 }
 
 // OutcomeSpec maps an adapter outcome name to a transition target.
@@ -58,6 +61,14 @@ type StateSpec struct {
 type PolicySpec struct {
 	MaxTotalSteps  int `hcl:"max_total_steps,optional"`
 	MaxStepRetries int `hcl:"max_step_retries,optional"`
+}
+
+// PermissionsSpec defines workflow-level permission allowlists applied to all steps.
+type PermissionsSpec struct {
+	// AllowTools is the workflow-wide list of glob patterns for permitted tool
+	// invocations. Step-level allow_tools is unioned with this list.
+	// See StepSpec.AllowTools for matching semantics.
+	AllowTools []string `hcl:"allow_tools,optional"`
 }
 
 // FSMGraph is the validated, executable representation of a workflow.
@@ -90,6 +101,10 @@ type StepNode struct {
 	Config    map[string]string
 	Timeout   time.Duration     // zero = no timeout
 	Outcomes  map[string]string // outcome name -> target node name (step or state)
+	// AllowTools is the union of step-level and workflow-level allow_tools glob
+	// patterns. An empty slice means deny-all (default). Only valid on
+	// execute-shape steps (Lifecycle == "").
+	AllowTools []string
 }
 
 // StateNode is a compiled (non-step) state.

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"strings"
 	"sync"
 	"time"
 
@@ -176,6 +177,7 @@ func (p *rpcPlugin) Execute(ctx context.Context, sessionID string, step *workflo
 	if err != nil {
 		return adapter.Result{Outcome: "failure"}, err
 	}
+	policy := NewPolicy(step.AllowTools)
 	for {
 		evt, recvErr := recv.Recv()
 		if recvErr != nil {
@@ -197,15 +199,26 @@ func (p *rpcPlugin) Execute(ctx context.Context, sessionID string, step *workflo
 			continue
 		}
 		if req := evt.GetPermission(); req != nil {
-			sink.Adapter("permission.request", map[string]any{
-				"id":            req.GetId(),
-				"tool":          req.GetPermission(),
-				"permission_id": req.GetId(),
-				"permission":    req.GetPermission(),
-				"details":       req.GetDetails(),
-				"decision":      "deny",
-			})
-			if permitErr := p.Permit(ctx, sessionID, req.GetId(), false, "permission gating not implemented"); permitErr != nil {
+			pr := PermissionRequest{
+				ID:      req.GetId(),
+				Tool:    req.GetPermission(),
+				Details: req.GetDetails(),
+			}
+			allow, reason := policy.Decide(pr)
+			if allow {
+				sink.Adapter("permission.granted", map[string]any{
+					"tool":       pr.Tool,
+					"pattern":    strings.TrimPrefix(reason, "matched: "),
+					"request_id": pr.ID,
+				})
+			} else {
+				sink.Adapter("permission.denied", map[string]any{
+					"tool":       pr.Tool,
+					"reason":     reason,
+					"request_id": pr.ID,
+				})
+			}
+			if permitErr := p.Permit(ctx, sessionID, req.GetId(), allow, reason); permitErr != nil {
 				return adapter.Result{Outcome: "failure"}, permitErr
 			}
 			continue
