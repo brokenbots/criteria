@@ -49,11 +49,12 @@ workflow "two_agent_loop" {
     allow_tools = ["read_file", "shell:git diff"]
     config = {
       max_turns = "8"
-      prompt    = "You are the reviewer in a two-agent engineering loop. Review the latest changes for correctness and clarity. End your final line with exactly one of: RESULT: approved | RESULT: changes_requested | RESULT: failure."
+      prompt    = "You are the reviewer in a two-agent engineering loop. Review the latest changes for correctness and clarity. End your final line with exactly one of: RESULT: approved | RESULT: changes_requested | RESULT: needs_review | RESULT: failure. Use RESULT: approved only when the changes are acceptable. Use RESULT: needs_review when more executor work or human attention is needed."
     }
 
     outcome "approved"          { transition_to = "close_reviewer_done" }
     outcome "changes_requested" { transition_to = "execute" }
+    outcome "needs_review"      { transition_to = "execute" }
     outcome "failure"           { transition_to = "close_reviewer_failed" }
   }
 

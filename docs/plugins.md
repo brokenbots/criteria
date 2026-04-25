@@ -165,7 +165,7 @@ Key traits:
 - Both sessions are opened once per outer loop and explicitly closed on both success and failure paths.
 - The executor gets a wider allowlist (`read_file`, `write_file`, `shell:git diff`, `shell:go build*`, `shell:go test*`).
 - The reviewer gets a narrow allowlist (`read_file`, `shell:git diff`).
-- The review step drives the loop with `approved` or `changes_requested` outcomes.
+- The review step drives the loop with `approved`, `changes_requested`, or the conservative `needs_review` fallback used by the Copilot plugin when a turn needs more work or human attention.
 - `policy { max_total_steps = 50 }` prevents an infinite reviewer loop.
 
 The control flow is:
@@ -174,7 +174,7 @@ The control flow is:
 2. Open reviewer.
 3. Execute implementation work.
 4. Review.
-5. If review returns `changes_requested`, go back to execute.
+5. If review returns `changes_requested` or `needs_review`, go back to execute.
 6. If review returns `approved`, close reviewer, close executor, and finish.
 
 This is the right pattern when you want long-lived agent context, distinct tool budgets per role, and an explicit safety brake on the conversation.

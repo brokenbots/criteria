@@ -68,7 +68,7 @@ func (s *permissiveService) OpenSession(_ context.Context, req *pb.OpenSessionRe
 // Execute emits one PermissionRequest event per configured tool and waits for
 // the host to respond via Permit before proceeding to the next tool. The final
 // result is "needs_review" if any request was denied, "success" otherwise.
-func (s *permissiveService) Execute(req *pb.ExecuteRequest, sink pluginpkg.ExecuteEventSender) error {
+func (s *permissiveService) Execute(ctx context.Context, req *pb.ExecuteRequest, sink pluginpkg.ExecuteEventSender) error {
 	s.mu.Lock()
 	_, ok := s.sessions[req.GetSessionId()]
 	s.mu.Unlock()
@@ -102,7 +102,15 @@ func (s *permissiveService) Execute(req *pb.ExecuteRequest, sink pluginpkg.Execu
 			return fmt.Errorf("send permission request: %w", err)
 		}
 
-		decision := <-ch
+		var decision permitDecision
+		select {
+		case decision = <-ch:
+		case <-ctx.Done():
+			s.mu.Lock()
+			delete(s.pending, id)
+			s.mu.Unlock()
+			return ctx.Err()
+		}
 
 		if !decision.allow {
 			anyDenied = true

@@ -26,7 +26,7 @@ const (
 type Service interface {
 	Info(context.Context, *pb.InfoRequest) (*pb.InfoResponse, error)
 	OpenSession(context.Context, *pb.OpenSessionRequest) (*pb.OpenSessionResponse, error)
-	Execute(*pb.ExecuteRequest, ExecuteEventSender) error
+	Execute(context.Context, *pb.ExecuteRequest, ExecuteEventSender) error
 	Permit(context.Context, *pb.PermitRequest) (*pb.PermitResponse, error)
 	CloseSession(context.Context, *pb.CloseSessionRequest) (*pb.CloseSessionResponse, error)
 }
@@ -89,7 +89,7 @@ type grpcAdapterServer struct {
 type adapterPluginGRPCServer interface {
 	Info(context.Context, *pb.InfoRequest) (*pb.InfoResponse, error)
 	OpenSession(context.Context, *pb.OpenSessionRequest) (*pb.OpenSessionResponse, error)
-	Execute(*pb.ExecuteRequest, ExecuteEventSender) error
+	Execute(context.Context, *pb.ExecuteRequest, ExecuteEventSender) error
 	Permit(context.Context, *pb.PermitRequest) (*pb.PermitResponse, error)
 	CloseSession(context.Context, *pb.CloseSessionRequest) (*pb.CloseSessionResponse, error)
 }
@@ -102,8 +102,8 @@ func (s *grpcAdapterServer) OpenSession(ctx context.Context, req *pb.OpenSession
 	return s.impl.OpenSession(ctx, req)
 }
 
-func (s *grpcAdapterServer) Execute(req *pb.ExecuteRequest, sink ExecuteEventSender) error {
-	return s.impl.Execute(req, sink)
+func (s *grpcAdapterServer) Execute(ctx context.Context, req *pb.ExecuteRequest, sink ExecuteEventSender) error {
+	return s.impl.Execute(ctx, req, sink)
 }
 
 func (s *grpcAdapterServer) Permit(ctx context.Context, req *pb.PermitRequest) (*pb.PermitResponse, error) {
@@ -201,7 +201,7 @@ func adapterPluginExecuteHandler(srv interface{}, stream grpc.ServerStream) erro
 	if err := stream.RecvMsg(in); err != nil {
 		return err
 	}
-	return srv.(adapterPluginGRPCServer).Execute(in, &grpcExecuteEventServer{stream: stream})
+	return srv.(adapterPluginGRPCServer).Execute(stream.Context(), in, &grpcExecuteEventServer{stream: stream})
 }
 
 type grpcAdapterClient struct {

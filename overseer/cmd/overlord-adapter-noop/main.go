@@ -30,7 +30,7 @@ func (s *noopService) OpenSession(_ context.Context, request *pb.OpenSessionRequ
 	return &pb.OpenSessionResponse{}, nil
 }
 
-func (s *noopService) Execute(request *pb.ExecuteRequest, sink pluginpkg.ExecuteEventSender) error {
+func (s *noopService) Execute(ctx context.Context, request *pb.ExecuteRequest, sink pluginpkg.ExecuteEventSender) error {
 	s.mu.Lock()
 	_, ok := s.sessions[request.GetSessionId()]
 	s.mu.Unlock()
@@ -43,7 +43,13 @@ func (s *noopService) Execute(request *pb.ExecuteRequest, sink pluginpkg.Execute
 			return fmt.Errorf("invalid delay_ms %q", rawDelay)
 		}
 		if delayMS > 0 {
-			time.Sleep(time.Duration(delayMS) * time.Millisecond)
+			timer := time.NewTimer(time.Duration(delayMS) * time.Millisecond)
+			defer timer.Stop()
+			select {
+			case <-timer.C:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
 		}
 	}
 

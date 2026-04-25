@@ -159,7 +159,7 @@ func (p *copilotPlugin) OpenSession(ctx context.Context, req *pb.OpenSessionRequ
 	return &pb.OpenSessionResponse{}, nil
 }
 
-func (p *copilotPlugin) Execute(req *pb.ExecuteRequest, sink pluginpkg.ExecuteEventSender) error {
+func (p *copilotPlugin) Execute(ctx context.Context, req *pb.ExecuteRequest, sink pluginpkg.ExecuteEventSender) error {
 	s := p.getSession(req.GetSessionId())
 	if s == nil {
 		return fmt.Errorf("copilot: unknown session %q", req.GetSessionId())
@@ -279,17 +279,19 @@ func (p *copilotPlugin) Execute(req *pb.ExecuteRequest, sink pluginpkg.ExecuteEv
 	defer unsubscribe()
 
 	if model := strings.TrimSpace(req.GetConfig()["model"]); model != "" {
-		if err := s.session.SetModel(context.Background(), model, nil); err != nil {
+		if err := s.session.SetModel(ctx, model, nil); err != nil {
 			return fmt.Errorf("copilot: set model %q: %w", model, err)
 		}
 	}
 
-	if _, err := s.session.Send(context.Background(), copilot.MessageOptions{Prompt: prompt}); err != nil {
+	if _, err := s.session.Send(ctx, copilot.MessageOptions{Prompt: prompt}); err != nil {
 		return fmt.Errorf("copilot: send prompt: %w", err)
 	}
 
 	for {
 		select {
+		case <-ctx.Done():
+			return ctx.Err()
 		case err := <-errCh:
 			if errors.Is(err, errMaxTurnsReached) {
 				return sink.Send(resultEvent("needs_review"))

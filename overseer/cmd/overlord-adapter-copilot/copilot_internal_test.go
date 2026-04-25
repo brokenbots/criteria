@@ -300,7 +300,7 @@ func TestExecuteMaxTurnsLimit(t *testing.T) {
 	}}
 	sender := &recordingSender{}
 
-	err := p.Execute(&pb.ExecuteRequest{SessionId: "s1", Config: map[string]string{"prompt": "hi", "max_turns": "1"}}, sender)
+	err := p.Execute(context.Background(), &pb.ExecuteRequest{SessionId: "s1", Config: map[string]string{"prompt": "hi", "max_turns": "1"}}, sender)
 	if err != nil {
 		t.Fatalf("Execute returned error: %v", err)
 	}

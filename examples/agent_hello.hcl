@@ -17,7 +17,7 @@ workflow "agent_hello" {
 
   step "ask" {
     agent       = "assistant"
-    allow_tools = ["shell:git status"]
+    allow_tools = ["shell:git*status*"]
     config = {
       max_turns = "4"
       prompt    = "Run `git status` in the current directory. Summarize the result in one short paragraph. End your final line with exactly one of: RESULT: success | RESULT: needs_review | RESULT: failure. Use RESULT: success only if you successfully ran `git status`."

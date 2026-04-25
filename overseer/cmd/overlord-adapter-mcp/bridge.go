@@ -164,7 +164,7 @@ func (b *MCPBridge) OpenSession(ctx context.Context, req *pb.OpenSessionRequest)
 	return &pb.OpenSessionResponse{}, nil
 }
 
-func (b *MCPBridge) Execute(req *pb.ExecuteRequest, sink pluginpkg.ExecuteEventSender) error {
+func (b *MCPBridge) Execute(ctx context.Context, req *pb.ExecuteRequest, sink pluginpkg.ExecuteEventSender) error {
 	s := b.getSession(req.GetSessionId())
 	if s == nil {
 		return fmt.Errorf("mcp: unknown session %q", req.GetSessionId())
@@ -191,7 +191,7 @@ func (b *MCPBridge) Execute(req *pb.ExecuteRequest, sink pluginpkg.ExecuteEventS
 	s.setSink(sink, true)
 	defer s.clearSink()
 
-	result, err := s.client.CallTool(context.Background(), toolName, arguments)
+	result, err := s.client.CallTool(ctx, toolName, arguments)
 	if err != nil {
 		return fmt.Errorf("mcp: tools/call %q: %w", toolName, err)
 	}

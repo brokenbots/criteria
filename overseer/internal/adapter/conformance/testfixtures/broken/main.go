@@ -17,7 +17,7 @@ func (brokenService) OpenSession(context.Context, *pb.OpenSessionRequest) (*pb.O
 	return &pb.OpenSessionResponse{}, nil
 }
 
-func (brokenService) Execute(_ *pb.ExecuteRequest, sink pluginpkg.ExecuteEventSender) error {
+func (brokenService) Execute(_ context.Context, _ *pb.ExecuteRequest, sink pluginpkg.ExecuteEventSender) error {
 	return sink.Send(&pb.ExecuteEvent{
 		Event: &pb.ExecuteEvent_Result{Result: &pb.ExecuteResult{Outcome: ""}},
 	})
