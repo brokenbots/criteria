@@ -198,6 +198,8 @@ func (p *rpcPlugin) Execute(ctx context.Context, sessionID string, step *workflo
 		}
 		if req := evt.GetPermission(); req != nil {
 			sink.Adapter("permission.request", map[string]any{
+				"id":            req.GetId(),
+				"tool":          req.GetPermission(),
 				"permission_id": req.GetId(),
 				"permission":    req.GetPermission(),
 				"details":       req.GetDetails(),

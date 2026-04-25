@@ -12,9 +12,9 @@ func runBrokenAdapterFixtureAssertion(t *testing.T) {
 		"test",
 		"-tags",
 		"conformancefail",
-		"./internal/adapter/conformance/testfixtures/broken",
+		"./internal/adapter/conformance",
 		"-run",
-		"TestBrokenAdapterConformance",
+		"TestBrokenPluginConformanceFixture",
 	)
 	cmd.Dir = "../../.."
 	out, err := cmd.CombinedOutput()
@@ -28,9 +28,5 @@ func runBrokenAdapterFixtureAssertion(t *testing.T) {
 }
 
 func TestConformanceHarnessDetectsBrokenAdapterFixture(t *testing.T) {
-	runBrokenAdapterFixtureAssertion(t)
-}
-
-func TestHarnessDetectsBrokenAdapterFixture(t *testing.T) {
 	runBrokenAdapterFixtureAssertion(t)
 }
