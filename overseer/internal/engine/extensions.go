@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"strings"
 
 	"github.com/brokenbots/overlord/workflow"
 	"github.com/zclconf/go-cty/cty"
@@ -16,6 +17,16 @@ type Option func(*Engine)
 func WithResumedVars(vars map[string]cty.Value) Option {
 	return func(e *Engine) {
 		e.resumedVars = vars
+	}
+}
+
+// WithResumedIter sets the IterCursor to restore at run start. Used during
+// crash recovery when a for_each was active at the time of the crash (W07).
+// The cursor's Items field may be nil; the for_each node re-evaluates the
+// items expression on first entry.
+func WithResumedIter(cursor *workflow.IterCursor) Option {
+	return func(e *Engine) {
+		e.resumedIter = cursor
 	}
 }
 
@@ -51,6 +62,17 @@ func WithBranchScheduler(s BranchScheduler) Option {
 	return func(e *Engine) {
 		e.branchScheduler = s
 	}
+}
+
+// isSuccessOutcome returns true when the outcome name indicates a successful
+// iteration. By convention, outcome names that equal "success" (case-
+// insensitive) are treated as successes; all other names set AnyFailed=true
+// when transitioning back via _continue. This matches the canonical naming
+// in workstream examples ("success" vs "failure"). Workflows that use
+// non-standard names should route non-success outcomes to a non-_continue
+// target for explicit abort-on-failure behaviour.
+func isSuccessOutcome(outcome string) bool {
+	return strings.EqualFold(outcome, "success")
 }
 
 type BranchSpec struct{}

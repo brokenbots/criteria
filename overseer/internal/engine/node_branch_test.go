@@ -57,7 +57,11 @@ func (s *branchSink) OnBranchEvaluated(node, matchedArm, target, condition strin
 	s.branchEvents = append(s.branchEvents, branchEvent{node: node, matchedArm: matchedArm, target: target, condition: condition})
 	s.mu.Unlock()
 }
-func (s *branchSink) StepEventSink(string) adapter.EventSink { return noopAdapterSink{} }
+func (s *branchSink) OnForEachEntered(string, int)                 {}
+func (s *branchSink) OnForEachIteration(string, int, string, bool) {}
+func (s *branchSink) OnForEachOutcome(string, string, string)      {}
+func (s *branchSink) OnScopeIterCursorSet(string)                  {}
+func (s *branchSink) StepEventSink(string) adapter.EventSink       { return noopAdapterSink{} }
 
 // --- Unit tests for branchNode.Evaluate ---
 

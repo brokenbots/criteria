@@ -47,6 +47,7 @@ func Compile(spec *Spec, schemas map[string]AdapterInfo) (*FSMGraph, hcl.Diagnos
 		Waits:        map[string]*WaitNode{},
 		Approvals:    map[string]*ApprovalNode{},
 		Branches:     map[string]*BranchNode{},
+		ForEachs:     map[string]*ForEachNode{},
 		Policy:       DefaultPolicy,
 	}
 	if spec.Policy != nil {
@@ -498,6 +499,141 @@ func Compile(spec *Spec, schemas map[string]AdapterInfo) (*FSMGraph, hcl.Diagnos
 		g.Branches[name] = node
 	}
 
+	// Compile for_each blocks (W07).
+	for _, fs := range spec.ForEachs {
+		name := fs.Name
+		// Clash checks against every existing node kind.
+		if _, dup := g.Steps[name]; dup {
+			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("for_each %q clashes with step of the same name", name)})
+			continue
+		}
+		if _, dup := g.States[name]; dup {
+			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("for_each %q clashes with state of the same name", name)})
+			continue
+		}
+		if _, dup := g.Waits[name]; dup {
+			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("for_each %q clashes with wait of the same name", name)})
+			continue
+		}
+		if _, dup := g.Approvals[name]; dup {
+			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("for_each %q clashes with approval of the same name", name)})
+			continue
+		}
+		if _, dup := g.Branches[name]; dup {
+			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("for_each %q clashes with branch of the same name", name)})
+			continue
+		}
+		if _, dup := g.ForEachs[name]; dup {
+			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("duplicate for_each %q", name)})
+			continue
+		}
+
+		// `do` must reference an existing step.
+		if fs.Do == "" {
+			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("for_each %q: do is required", name)})
+			continue
+		}
+		doStep, doKnown := g.Steps[fs.Do]
+		if !doKnown {
+			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("for_each %q: do = %q does not reference a known step", name, fs.Do)})
+		}
+
+		// Extract the `items` expression from the remain body.
+		var itemsExpr hcl.Expression
+		if fs.Remain != nil {
+			// Use PartialContent to fetch only the "items" attribute, so that
+			// the "outcome" blocks that gohcl placed in Remain do not cause
+			// "Blocks are not allowed here" diagnostics from JustAttributes.
+			content, _, d := fs.Remain.PartialContent(&hcl.BodySchema{
+				Attributes: []hcl.AttributeSchema{
+					{Name: "items", Required: false},
+				},
+			})
+			diags = append(diags, d...)
+			if content != nil {
+				if itemsAttr, ok := content.Attributes["items"]; ok {
+					itemsExpr = itemsAttr.Expr
+				}
+			}
+		}
+		if itemsExpr == nil {
+			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("for_each %q: items is required", name)})
+		}
+
+		// Compile outcomes.
+		node := &ForEachNode{
+			Name:     name,
+			Items:    itemsExpr,
+			Do:       fs.Do,
+			Outcomes: map[string]string{},
+		}
+		for _, o := range fs.Outcomes {
+			if o.TransitionTo == "" {
+				diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("for_each %q outcome %q: transition_to required", name, o.Name)})
+				continue
+			}
+			node.Outcomes[o.Name] = o.TransitionTo
+		}
+
+		// all_succeeded is required.
+		if _, ok := node.Outcomes["all_succeeded"]; !ok {
+			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("for_each %q: outcome \"all_succeeded\" is required", name)})
+		}
+		// any_failed is recommended (warning if absent).
+		if _, ok := node.Outcomes["any_failed"]; !ok {
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagWarning,
+				Summary:  fmt.Sprintf("for_each %q: outcome \"any_failed\" is not declared; failed iterations will fall through to \"all_succeeded\"", name),
+			})
+		}
+
+		// Warn if the do step has no _continue transition (implies single-iteration only).
+		if doKnown {
+			hasContinue := false
+			for _, target := range doStep.Outcomes {
+				if target == "_continue" {
+					hasContinue = true
+					break
+				}
+			}
+			if !hasContinue {
+				diags = append(diags, &hcl.Diagnostic{
+					Severity: hcl.DiagWarning,
+					Summary:  fmt.Sprintf("for_each %q: step %q has no outcome transitioning to \"_continue\"; the loop will execute at most one iteration", name, fs.Do),
+				})
+			}
+		}
+
+		g.ForEachs[name] = node
+	}
+
+	// Validate that _continue is not declared as a state name (it is engine-internal).
+	for _, st := range spec.States {
+		if st.Name == "_continue" {
+			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: `"_continue" is a reserved engine-internal target and may not be declared as a state`})
+		}
+	}
+	for _, st := range spec.Steps {
+		if st.Name == "_continue" {
+			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: `"_continue" is a reserved engine-internal target and may not be declared as a step`})
+		}
+	}
+	for _, w := range spec.Waits {
+		if w.Name == "_continue" {
+			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: `"_continue" is a reserved engine-internal target and may not be declared as a wait`})
+		}
+	}
+	for _, a := range spec.Approvals {
+		if a.Name == "_continue" {
+			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: `"_continue" is a reserved engine-internal target and may not be declared as an approval`})
+		}
+	}
+	for _, fe := range spec.ForEachs {
+		if fe.Name == "_continue" {
+			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: `"_continue" is a reserved engine-internal target and may not be declared as a for_each`})
+		}
+	}
+
 	// Second pass: resolve transitions, ensure initial/target exist and reachable.
 	if g.InitialState != "" {
 		if _, ok := g.Lookup(g.InitialState); !ok {
@@ -514,6 +650,12 @@ func Compile(spec *Spec, schemas map[string]AdapterInfo) (*FSMGraph, hcl.Diagnos
 	}
 	for _, step := range g.Steps {
 		for outcome, target := range step.Outcomes {
+			if target == "_continue" {
+				// _continue is a synthetic engine-internal target, not a graph node.
+				// It is only valid inside for_each do-steps; reachability validation
+				// is deferred to runtime.
+				continue
+			}
 			if _, ok := g.Lookup(target); !ok {
 				diags = append(diags, &hcl.Diagnostic{
 					Severity: hcl.DiagError,
@@ -558,6 +700,16 @@ func Compile(spec *Spec, schemas map[string]AdapterInfo) (*FSMGraph, hcl.Diagnos
 			})
 		}
 	}
+	for _, fe := range g.ForEachs {
+		for outcome, target := range fe.Outcomes {
+			if _, ok := g.Lookup(target); !ok {
+				diags = append(diags, &hcl.Diagnostic{
+					Severity: hcl.DiagError,
+					Summary:  fmt.Sprintf("for_each %q outcome %q -> unknown target %q", fe.Name, outcome, target),
+				})
+			}
+		}
+	}
 
 	// Reachability from initial state.
 	if g.InitialState != "" && !diags.HasErrors() {
@@ -566,6 +718,11 @@ func Compile(spec *Spec, schemas map[string]AdapterInfo) (*FSMGraph, hcl.Diagnos
 		walk = func(name string) {
 			if step, isStep := g.Steps[name]; isStep {
 				for _, target := range step.Outcomes {
+					if target == "_continue" {
+						// _continue is synthetic; mark the owning for_each node reachable
+						// by letting the for_each's outgoing edges drive reachability.
+						continue
+					}
 					if !reachable[target] {
 						reachable[target] = true
 						walk(target)
@@ -602,6 +759,21 @@ func Compile(spec *Spec, schemas map[string]AdapterInfo) (*FSMGraph, hcl.Diagnos
 					reachable[br.DefaultTarget] = true
 					walk(br.DefaultTarget)
 				}
+				return
+			}
+			if fe, isForEach := g.ForEachs[name]; isForEach {
+				// Mark the do-step reachable via the for_each.
+				if !reachable[fe.Do] {
+					reachable[fe.Do] = true
+					walk(fe.Do)
+				}
+				// Mark all aggregate outcome targets reachable.
+				for _, target := range fe.Outcomes {
+					if !reachable[target] {
+						reachable[target] = true
+						walk(target)
+					}
+				}
 			}
 		}
 		walk(g.InitialState)
@@ -623,6 +795,11 @@ func Compile(spec *Spec, schemas map[string]AdapterInfo) (*FSMGraph, hcl.Diagnos
 		for name := range g.Branches {
 			if !reachable[name] {
 				diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagWarning, Summary: fmt.Sprintf("branch %q is unreachable from initial_state", name)})
+			}
+		}
+		for name := range g.ForEachs {
+			if !reachable[name] {
+				diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagWarning, Summary: fmt.Sprintf("for_each %q is unreachable from initial_state", name)})
 			}
 		}
 		for name := range g.States {

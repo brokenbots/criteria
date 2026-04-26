@@ -55,6 +55,16 @@ message Envelope {
     // BranchEvaluated — emitted when a branch node selects a transition arm (W06).
     // Overseer-owned event; permanent field numbers.
     BranchEvaluated branch_evaluated = 27;
+    // ForEach events — emitted by Overseer during for_each node execution (W07).
+    // Overseer-owned events; permanent field numbers.
+    ForEachEntered for_each_entered = 28;
+    ForEachIteration for_each_iteration = 29;
+    ForEachOutcome for_each_outcome = 30;
+    // ScopeIterCursorSet — emitted by Overseer whenever the for_each iteration
+    // cursor changes. Castle stores cursor_json verbatim into the
+    // runs.variable_scope "iter" field without interpreting its contents,
+    // preserving 1.6 split independence (W07). Permanent field number.
+    ScopeIterCursorSet scope_iter_cursor_set = 31;
     // WatchReady is a protocol-level sentinel sent once at the start of a
     // WatchRun server-stream, after any persisted-event replay, to flush
     // response headers so the client's WatchRun call can return. It has no
@@ -220,4 +230,38 @@ message BranchEvaluated {
   string matched_arm = 2;    // "arm[<index>]" | "default"; permanent
   string target = 3;         // transition target node name; permanent
   string condition = 4;      // string-rendered condition for the matched arm; empty for default; permanent
+}
+
+// ForEachEntered — emitted when a for_each node begins iterating (W07).
+// Overseer-owned event; permanent field numbers.
+message ForEachEntered {
+  string node = 1;   // for_each node name; permanent
+  int32 count = 2;   // number of items; permanent
+}
+
+// ForEachIteration — emitted at the start of each per-item iteration (W07).
+// Overseer-owned event; permanent field numbers.
+message ForEachIteration {
+  string node = 1;       // for_each node name; permanent
+  int32 index = 2;       // zero-based iteration index; permanent
+  string value = 3;      // string-rendered cty value of the current item; permanent
+  bool any_failed = 4;   // true if any prior iteration produced a failure outcome; permanent.
+                         // Retained for log/UI consumers; cursor persistence uses ScopeIterCursorSet instead.
+}
+
+// ForEachOutcome — emitted when a for_each node finishes iterating (W07).
+// Overseer-owned event; permanent field numbers.
+message ForEachOutcome {
+  string node = 1;      // for_each node name; permanent
+  string outcome = 2;   // "all_succeeded" | "any_failed"; permanent
+  string target = 3;    // transition target node name; permanent
+}
+
+// ScopeIterCursorSet — emitted by Overseer whenever the for_each iteration
+// cursor is created, advanced, or cleared. cursor_json is the JSON-encoded
+// IterCursor blob; an empty string means the cursor has been cleared.
+// Castle stores this verbatim into the runs.variable_scope "iter" field
+// without parsing it, preserving schema independence at the 1.6 split (W07).
+message ScopeIterCursorSet {
+  string cursor_json = 1;   // JSON-encoded IterCursor or "" to clear; permanent
 }

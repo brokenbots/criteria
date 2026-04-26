@@ -118,6 +118,27 @@ func (s *LocalSink) OnBranchEvaluated(node, matchedArm, target, condition string
 	s.emit("BranchEvaluated", &pb.BranchEvaluated{Node: node, MatchedArm: matchedArm, Target: target, Condition: condition})
 }
 
+// OnForEachEntered emits a ForEachEntered event when a for_each node begins iterating (W07).
+func (s *LocalSink) OnForEachEntered(node string, count int) {
+	s.emit("ForEachEntered", &pb.ForEachEntered{Node: node, Count: int32(count)})
+}
+
+// OnForEachIteration emits a ForEachIteration event at the start of each per-item iteration (W07).
+func (s *LocalSink) OnForEachIteration(node string, index int, value string, anyFailed bool) {
+	s.emit("ForEachIteration", &pb.ForEachIteration{Node: node, Index: int32(index), Value: value, AnyFailed: anyFailed})
+}
+
+// OnForEachOutcome emits a ForEachOutcome event when a for_each node finishes iterating (W07).
+func (s *LocalSink) OnForEachOutcome(node, outcome, target string) {
+	s.emit("ForEachOutcome", &pb.ForEachOutcome{Node: node, Outcome: outcome, Target: target})
+}
+
+// OnScopeIterCursorSet emits a ScopeIterCursorSet event when the for_each
+// cursor is created, advanced, or cleared (W07).
+func (s *LocalSink) OnScopeIterCursorSet(cursorJSON string) {
+	s.emit("ScopeIterCursorSet", &pb.ScopeIterCursorSet{CursorJson: cursorJSON})
+}
+
 func (s *LocalSink) StepEventSink(step string) adapter.EventSink {
 	return &localStepSink{parent: s, step: step}
 }

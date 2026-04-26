@@ -58,6 +58,9 @@ func (n *stepNode) Evaluate(ctx context.Context, st *RunState, deps Deps) (strin
 	if !ok {
 		return "", fmt.Errorf("step %q produced unmapped outcome %q", n.step.Name, result.Outcome)
 	}
+	// Record the outcome name so the engine loop can inspect it when
+	// intercepting a _continue transition (W07 for_each support).
+	st.LastOutcome = result.Outcome
 	deps.Sink.OnStepTransition(n.step.Name, next, result.Outcome)
 	return next, nil
 }

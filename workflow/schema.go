@@ -22,6 +22,7 @@ type Spec struct {
 	Waits        []WaitSpec       `hcl:"wait,block"`
 	Approvals    []ApprovalSpec   `hcl:"approval,block"`
 	Branches     []BranchSpec     `hcl:"branch,block"`
+	ForEachs     []ForEachSpec    `hcl:"for_each,block"`
 	Policy       *PolicySpec      `hcl:"policy,block"`
 	Permissions  *PermissionsSpec `hcl:"permissions,block"`
 	// SourceBytes holds the raw HCL source that was parsed to produce this Spec.
@@ -167,6 +168,20 @@ type DefaultArmSpec struct {
 	TransitionTo string `hcl:"transition_to"`
 }
 
+// ForEachSpec declares a for_each node. It iterates the `items` expression
+// (which must evaluate to a list or tuple at runtime) and runs the `do` step
+// once per item. The `items` attribute and any other attributes not explicitly
+// decoded are captured via the Remain body and extracted by the compiler.
+type ForEachSpec struct {
+	Name     string        `hcl:"name,label"`
+	Do       string        `hcl:"do"`
+	Outcomes []OutcomeSpec `hcl:"outcome,block"`
+	// Remain captures the `items` expression attribute (and any unknown attrs)
+	// for lazy extraction by the compiler. gohcl does not support hcl.Expression
+	// as a direct decode target, so the remain pattern is used instead.
+	Remain hcl.Body `hcl:",remain"`
+}
+
 // PolicySpec defines global execution guards.
 type PolicySpec struct {
 	MaxTotalSteps  int `hcl:"max_total_steps,optional"`
@@ -193,6 +208,7 @@ type FSMGraph struct {
 	Waits        map[string]*WaitNode     // by wait node name (W05)
 	Approvals    map[string]*ApprovalNode // by approval node name (W05)
 	Branches     map[string]*BranchNode   // by branch node name (W06)
+	ForEachs     map[string]*ForEachNode  // by for_each node name (W07)
 	Policy       Policy
 	// Order of step declarations (stable for diagnostics).
 	stepOrder []string
@@ -288,6 +304,23 @@ type BranchArm struct {
 	Target       string // transition_to target node name
 }
 
+// ForEachNode is a compiled for_each loop node (W07).
+// It iterates Items (evaluated at runtime from the Items expression) and
+// invokes the Do step once per item. The aggregate outcome is determined by
+// whether any iteration produced a non-success (AnyFailed) result.
+type ForEachNode struct {
+	// Name is the node identifier used in the FSM.
+	Name string
+	// Items is the raw HCL expression that must evaluate to a list or tuple.
+	// Evaluated at runtime inside the engine using BuildEvalContext(rs.Vars).
+	Items hcl.Expression
+	// Do is the name of the step to invoke for each item.
+	Do string
+	// Outcomes maps aggregate outcome names to target node names.
+	// "all_succeeded" is required; "any_failed" is recommended.
+	Outcomes map[string]string
+}
+
 // Policy holds resolved engine guards. Defaults are applied during compile.
 type Policy struct {
 	MaxTotalSteps  int
@@ -308,7 +341,7 @@ func (g *FSMGraph) IsTerminal(name string) bool {
 	return false
 }
 
-// Lookup returns ("step"|"state"|"wait"|"approval"|"branch", true) if name exists in the graph.
+// Lookup returns ("step"|"state"|"wait"|"approval"|"branch"|"for_each", true) if name exists in the graph.
 func (g *FSMGraph) Lookup(name string) (kind string, ok bool) {
 	if _, ok := g.Steps[name]; ok {
 		return "step", true
@@ -324,6 +357,9 @@ func (g *FSMGraph) Lookup(name string) (kind string, ok bool) {
 	}
 	if _, ok := g.Branches[name]; ok {
 		return "branch", true
+	}
+	if _, ok := g.ForEachs[name]; ok {
+		return "for_each", true
 	}
 	return "", false
 }

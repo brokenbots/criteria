@@ -151,6 +151,28 @@ func (s *Sink) OnBranchEvaluated(node, matchedArm, target, condition string) {
 	s.publish(&pb.BranchEvaluated{Node: node, MatchedArm: matchedArm, Target: target, Condition: condition})
 }
 
+// OnForEachEntered emits a for_each.entered event when a for_each node begins iterating (W07).
+func (s *Sink) OnForEachEntered(node string, count int) {
+	s.publish(&pb.ForEachEntered{Node: node, Count: int32(count)})
+}
+
+// OnForEachIteration emits a for_each.iteration event at the start of each per-item iteration (W07).
+func (s *Sink) OnForEachIteration(node string, index int, value string, anyFailed bool) {
+	s.publish(&pb.ForEachIteration{Node: node, Index: int32(index), Value: value, AnyFailed: anyFailed})
+}
+
+// OnForEachOutcome emits a for_each.outcome event when a for_each node finishes iterating (W07).
+func (s *Sink) OnForEachOutcome(node, outcome, target string) {
+	s.publish(&pb.ForEachOutcome{Node: node, Outcome: outcome, Target: target})
+}
+
+// OnScopeIterCursorSet emits a scope.iter_cursor_set event when the for_each
+// cursor is created, advanced, or cleared (W07). Castle stores cursorJSON
+// verbatim without interpreting field names.
+func (s *Sink) OnScopeIterCursorSet(cursorJSON string) {
+	s.publish(&pb.ScopeIterCursorSet{CursorJson: cursorJSON})
+}
+
 // StepEventSink returns a per-step adapter sink that wraps Log/Adapter into
 // step.log / adapter.event envelopes.
 func (s *Sink) StepEventSink(step string) adapter.EventSink {

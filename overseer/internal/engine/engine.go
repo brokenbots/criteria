@@ -53,6 +53,21 @@ type Sink interface {
 	// matchedArm is "arm[<index>]" or "default"; target is the transition target.
 	// condition is the source text of the matched arm expression; empty for default.
 	OnBranchEvaluated(node, matchedArm, target, condition string)
+	// OnForEachEntered is emitted when a for_each node begins iterating (W07).
+	// count is the total number of items in the list.
+	OnForEachEntered(node string, count int)
+	// OnForEachIteration is emitted at the start of each per-item iteration (W07).
+	// index is zero-based; value is the string-rendered cty value of the current
+	// item; anyFailed reports whether any prior iteration produced a failure outcome.
+	OnForEachIteration(node string, index int, value string, anyFailed bool)
+	// OnForEachOutcome is emitted when a for_each node finishes iterating (W07).
+	// outcome is "all_succeeded" or "any_failed"; target is the transition target.
+	OnForEachOutcome(node, outcome, target string)
+	// OnScopeIterCursorSet is emitted whenever the for_each cursor is created,
+	// advanced, or cleared (W07). cursorJSON is the JSON-encoded IterCursor; an
+	// empty string signals cursor cleared. Castle stores this verbatim without
+	// interpreting field names, preserving 1.6 split independence.
+	OnScopeIterCursorSet(cursorJSON string)
 	// StepEventSink returns the per-step adapter sink (logs + adapter events).
 	StepEventSink(step string) adapter.EventSink
 }
@@ -66,6 +81,9 @@ type Engine struct {
 	branchScheduler     BranchScheduler
 	// resumedVars, when non-nil, overrides SeedVarsFromGraph at run start (W04).
 	resumedVars map[string]cty.Value
+	// resumedIter, when non-nil, sets RunState.Iter at run start (W07).
+	// Used during crash-recovery reattach when a for_each was active.
+	resumedIter *workflow.IterCursor
 	// pendingSignal, when non-empty, is placed into RunState at run start (W05).
 	// Used during crash-recovery reattach when the run was paused mid-signal-wait.
 	pendingSignal string
@@ -137,7 +155,7 @@ func (e *Engine) runLoop(ctx context.Context, sessions *plugin.SessionManager, c
 		Vars:             vars,
 		PendingSignal:    e.pendingSignal,
 		ResumePayload:    e.resumePayload,
-		Iter:             nil,
+		Iter:             e.resumedIter,
 		ParentRunID:      "",
 		BranchID:         "",
 		firstStep:        true,
@@ -159,6 +177,44 @@ func (e *Engine) runLoop(ctx context.Context, sessions *plugin.SessionManager, c
 
 		next, err := node.Evaluate(ctx, st, deps)
 		if err == nil {
+			// Intercept _continue transitions for for_each iteration (W07).
+			// When a per-iteration step transitions to "_continue", advance the
+			// cursor and route back to the for_each node rather than resolving
+			// "_continue" as a real graph node.
+			// Guard: only intercept when the current node is NOT the for_each
+			// node itself (to avoid matching the dispatch return from
+			// forEachNode.Evaluate which sets InProgress before returning the
+			// do-step name).
+			if next == "_continue" && st.Iter != nil && st.Iter.InProgress && st.Current != st.Iter.NodeName {
+				// A non-success outcome sets AnyFailed. Convention: outcome
+				// names that are not exactly "success" (case-insensitive) are
+				// treated as failures. This matches the canonical outcome naming
+				// used in workstream examples ("success" vs "failure").
+				if !isSuccessOutcome(st.LastOutcome) {
+					st.Iter.AnyFailed = true
+				}
+				st.Iter.Index++
+				st.Iter.InProgress = false
+				// Clear each.* bindings now that the iteration step is done.
+				st.Vars = workflow.ClearEachBinding(st.Vars)
+				if cursorJSON, curErr := workflow.SerializeIterCursor(st.Iter); curErr == nil {
+					e.sink.OnScopeIterCursorSet(cursorJSON)
+				}
+				st.Current = st.Iter.NodeName
+				continue
+			}
+			// If a per-iteration step exits via a non-_continue target while
+			// Iter is active, abort the loop: clear the cursor and follow the
+			// step's transition target directly (early-exit semantics).
+			if st.Iter != nil && st.Iter.InProgress && st.Current != st.Iter.NodeName {
+				iterName := st.Iter.NodeName
+				st.Iter = nil
+				st.Vars = workflow.ClearEachBinding(st.Vars)
+				e.sink.OnScopeIterCursorSet("") // cursor cleared
+				deps.Sink.OnForEachOutcome(iterName, "any_failed", next)
+				st.Current = next
+				continue
+			}
 			st.Current = next
 			continue
 		}

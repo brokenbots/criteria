@@ -105,13 +105,14 @@ func resumeOneRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint, cli
 		loader := plugin.NewLoader()
 		loader.RegisterBuiltin(shell.Name, plugin.BuiltinFactoryForAdapter(shell.New()))
 
-		restoredVars, restoreErr := workflow.RestoreVarScope(resp.VariableScope, graph)
+		restoredVars, restoredIter, restoreErr := workflow.RestoreVarScope(resp.VariableScope, graph)
 		if restoreErr != nil {
 			log.Warn("could not restore variable scope after pause reattach; starting with defaults", "error", restoreErr)
 		}
 
 		eng := engine.New(graph, loader, sink,
 			engine.WithResumedVars(restoredVars),
+			engine.WithResumedIter(restoredIter),
 			engine.WithPendingSignal(resp.PendingSignal),
 		)
 		if runErr := eng.RunFrom(resumeCtx, resp.CurrentStep, int(resp.Attempt)); runErr != nil {
@@ -208,12 +209,16 @@ func resumeOneRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint, cli
 
 	// Restore the variable scope from Castle so expressions referencing
 	// prior step outputs are evaluated correctly after crash recovery (W04).
-	restoredVars, restoreErr := workflow.RestoreVarScope(resp.VariableScope, graph)
+	// Also restore the iter cursor if a for_each was active at crash time (W07).
+	restoredVars, restoredIter, restoreErr := workflow.RestoreVarScope(resp.VariableScope, graph)
 	if restoreErr != nil {
 		log.Warn("could not restore variable scope; starting with defaults", "error", restoreErr)
 	}
 
-	eng := engine.New(graph, loader, sink, engine.WithResumedVars(restoredVars))
+	eng := engine.New(graph, loader, sink,
+		engine.WithResumedVars(restoredVars),
+		engine.WithResumedIter(restoredIter),
+	)
 	if runErr := eng.RunFrom(resumeCtx, resp.CurrentStep, nextAttempt); runErr != nil {
 		log.Error("resumed run failed", "error", runErr)
 	} else {

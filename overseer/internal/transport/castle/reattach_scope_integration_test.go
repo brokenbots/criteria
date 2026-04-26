@@ -130,7 +130,7 @@ func TestReattachRun_RestoresVarScope(t *testing.T) {
 	}
 
 	// Restore the scope returned by Castle.
-	restoredVars, err := workflow.RestoreVarScope(resp.VariableScope, graph)
+	restoredVars, _, err := workflow.RestoreVarScope(resp.VariableScope, graph)
 	if err != nil {
 		t.Fatalf("RestoreVarScope: %v", err)
 	}
@@ -214,6 +214,10 @@ func (s *integrationSink) OnApprovalRequested(node string, approvers []string, r
 func (s *integrationSink) OnApprovalDecision(node, decision, actor string, payload map[string]string) {
 }
 func (s *integrationSink) OnBranchEvaluated(node, matchedArm, target, condition string) {}
+func (s *integrationSink) OnForEachEntered(string, int)                                 {}
+func (s *integrationSink) OnForEachIteration(string, int, string, bool)                 {}
+func (s *integrationSink) OnForEachOutcome(string, string, string)                      {}
+func (s *integrationSink) OnScopeIterCursorSet(string)                                  {}
 func (s *integrationSink) StepEventSink(step string) adapter.EventSink                  { return s }
 func (s *integrationSink) Log(stream string, line []byte)                               {}
 func (s *integrationSink) Adapter(kind string, data any)                                {}

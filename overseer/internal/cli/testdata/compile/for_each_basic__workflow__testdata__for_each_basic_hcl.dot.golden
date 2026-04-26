@@ -1,0 +1,14 @@
+digraph "for_each_basic" {
+  rankdir=LR;
+
+  "deploy_one" [shape=box];
+  "deploy_all" [shape=parallelogram];
+  "done" [shape=doublecircle];
+  "failed" [shape=doublecircle];
+
+  "__start__" [shape=point,width=0.12,label=""];
+  "__start__" -> "deploy_all" [label="initial"];
+  "deploy_all" -> "deploy_one" [label="do"];
+  "deploy_all" -> "done" [label="all_succeeded"];
+  "deploy_all" -> "failed" [label="any_failed"];
+}

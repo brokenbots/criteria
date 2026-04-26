@@ -16,10 +16,12 @@ import (
 //
 //   - var.<name>          from vars["var"] object
 //   - steps.<step>.<out>  from vars["steps"] object
+//   - each.value          from vars["each"] object, when inside a for_each iteration (W07)
+//   - each.index          from vars["each"] object, when inside a for_each iteration (W07)
 //
-// "each" is intentionally omitted. ResolveInputExprs detects each.* references
-// via expression variable analysis and emits the planned message
-// "each is only valid inside for_each" before evaluation. W07 adds real bindings.
+// When vars["each"] is absent, the "each" variable is not included in the
+// context. ResolveInputExprs detects each.* references in that case and emits
+// "each is only valid inside for_each".
 func BuildEvalContext(vars map[string]cty.Value) *hcl.EvalContext {
 	varObj := cty.EmptyObjectVal
 	stepsObj := cty.EmptyObjectVal
@@ -31,11 +33,18 @@ func BuildEvalContext(vars map[string]cty.Value) *hcl.EvalContext {
 		stepsObj = s
 	}
 
+	ctxVars := map[string]cty.Value{
+		"var":   varObj,
+		"steps": stepsObj,
+	}
+
+	// Include "each" bindings when inside a for_each iteration (W07).
+	if each, ok := vars["each"]; ok && each != cty.NilVal && each.Type().IsObjectType() {
+		ctxVars["each"] = each
+	}
+
 	return &hcl.EvalContext{
-		Variables: map[string]cty.Value{
-			"var":   varObj,
-			"steps": stepsObj,
-		},
+		Variables: ctxVars,
 	}
 }
 
@@ -53,10 +62,15 @@ func ResolveInputExprs(exprs map[string]hcl.Expression, vars map[string]cty.Valu
 	result := make(map[string]string, len(exprs))
 	var errs []string
 	for k, expr := range exprs {
-		// Check for each.* references before evaluation.
+		// Check for each.* references before evaluation. Only error when the
+		// "each" binding is absent from the context (outside a for_each
+		// iteration). When each is present, BuildEvalContext has already
+		// included it and evaluation will succeed normally (W07).
 		if refsEach(expr) {
-			errs = append(errs, fmt.Sprintf("input.%s: each is only valid inside for_each", k))
-			continue
+			if _, hasEach := vars["each"]; !hasEach {
+				errs = append(errs, fmt.Sprintf("input.%s: each is only valid inside for_each", k))
+				continue
+			}
 		}
 		val, diags := expr.Value(ctx)
 		if diags.HasErrors() {
@@ -182,11 +196,47 @@ func WithStepOutputs(vars map[string]cty.Value, stepName string, outputs map[str
 	return newVars
 }
 
-// SerializeVarScope encodes the run vars map into a JSON string for persistence
-// in Castle. The format is:
+// WithEachBinding returns a new vars map with each.value and each.index bound
+// for the current for_each iteration (W07). Called by the for_each engine node
+// before dispatching the per-iteration step so that input expressions can
+// reference each.value and each.index.
+func WithEachBinding(vars map[string]cty.Value, value cty.Value, index int) map[string]cty.Value {
+	newVars := make(map[string]cty.Value, len(vars)+1)
+	for k, v := range vars {
+		newVars[k] = v
+	}
+	newVars["each"] = cty.ObjectVal(map[string]cty.Value{
+		"value": value,
+		"index": cty.NumberIntVal(int64(index)),
+	})
+	return newVars
+}
+
+// ClearEachBinding returns a new vars map with the each bindings removed.
+// Called by the engine loop after a _continue interception to ensure each.*
+// is not accessible outside the per-iteration step.
+func ClearEachBinding(vars map[string]cty.Value) map[string]cty.Value {
+	if _, ok := vars["each"]; !ok {
+		return vars
+	}
+	newVars := make(map[string]cty.Value, len(vars))
+	for k, v := range vars {
+		if k != "each" {
+			newVars[k] = v
+		}
+	}
+	return newVars
+}
+
+// SerializeVarScope encodes the run vars map and optional iteration cursor
+// into a JSON string for persistence in Castle. The format is:
 //
-//	{"var": {"name": "value"}, "steps": {"step": {"key": "value"}}}
-func SerializeVarScope(vars map[string]cty.Value) (string, error) {
+//	{"var": {"name": "value"}, "steps": {"step": {"key": "value"}}, "iter": {...}}
+//
+// The iter field is only present when cursor is non-nil. Castle stores this
+// blob verbatim and does not interpret the iter shape. See IterCursor for the
+// field documentation (authoritative for Phase 1.6 SDK extraction).
+func SerializeVarScope(vars map[string]cty.Value, cursor ...*IterCursor) (string, error) {
 	scope := map[string]interface{}{}
 	if varObj, ok := vars["var"]; ok && varObj != cty.NilVal && varObj.Type().IsObjectType() {
 		varMap := map[string]string{}
@@ -211,25 +261,43 @@ func SerializeVarScope(vars map[string]cty.Value) (string, error) {
 		}
 		scope["steps"] = stepsMap
 	}
+	// Encode the iteration cursor when provided (W07). Castle stores the iter
+	// blob verbatim; Items are intentionally omitted (re-evaluated on reattach).
+	var cur *IterCursor
+	if len(cursor) > 0 {
+		cur = cursor[0]
+	}
+	if cur != nil {
+		scope["iter"] = map[string]interface{}{
+			"node":        cur.NodeName,
+			"index":       cur.Index,
+			"any_failed":  cur.AnyFailed,
+			"in_progress": cur.InProgress,
+		}
+	}
 	b, err := json.Marshal(scope)
 	return string(b), err
 }
 
-// RestoreVarScope rebuilds a run's vars map from a JSON-encoded scope snapshot
-// and the compiled workflow graph. Variable defaults come from the graph;
-// step outputs are restored from the JSON scope.
-func RestoreVarScope(scopeJSON string, g *FSMGraph) (map[string]cty.Value, error) {
+// RestoreVarScope rebuilds a run's vars map and optional iteration cursor from
+// a JSON-encoded scope snapshot and the compiled workflow graph. Variable
+// defaults come from the graph; step outputs are restored from the JSON scope.
+// The returned IterCursor is non-nil only when the scope JSON contains an
+// "iter" field (i.e. a for_each was active when the scope was last persisted).
+// The cursor's Items field is intentionally nil; the for_each engine node
+// re-evaluates the items expression on re-entry (W07).
+func RestoreVarScope(scopeJSON string, g *FSMGraph) (map[string]cty.Value, *IterCursor, error) {
 	// Start from graph defaults so any new variables added since the crash
 	// are seeded correctly.
 	vars := SeedVarsFromGraph(g)
 
 	if scopeJSON == "" {
-		return vars, nil
+		return vars, nil, nil
 	}
 
 	var raw map[string]interface{}
 	if err := json.Unmarshal([]byte(scopeJSON), &raw); err != nil {
-		return vars, fmt.Errorf("restore scope: %w", err)
+		return vars, nil, fmt.Errorf("restore scope: %w", err)
 	}
 
 	// Restore steps outputs. Variable values come from graph defaults (read-only
@@ -254,5 +322,24 @@ func RestoreVarScope(scopeJSON string, g *FSMGraph) (map[string]cty.Value, error
 		}
 	}
 
-	return vars, nil
+	// Restore iteration cursor if present (W07). Items are intentionally not
+	// persisted; the for_each node re-evaluates them on re-entry.
+	var cursor *IterCursor
+	if iterData, ok := raw["iter"].(map[string]interface{}); ok {
+		cursor = &IterCursor{}
+		if v, ok := iterData["node"].(string); ok {
+			cursor.NodeName = v
+		}
+		if v, ok := iterData["index"].(float64); ok {
+			cursor.Index = int(v)
+		}
+		if v, ok := iterData["any_failed"].(bool); ok {
+			cursor.AnyFailed = v
+		}
+		if v, ok := iterData["in_progress"].(bool); ok {
+			cursor.InProgress = v
+		}
+	}
+
+	return vars, cursor, nil
 }

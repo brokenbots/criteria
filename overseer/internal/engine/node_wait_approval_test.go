@@ -125,6 +125,10 @@ func (s *pauseSink) OnWaitResumed(string, string, string, map[string]string)    
 func (s *pauseSink) OnApprovalRequested(string, []string, string)                 {}
 func (s *pauseSink) OnApprovalDecision(string, string, string, map[string]string) {}
 func (s *pauseSink) OnBranchEvaluated(string, string, string, string)             {}
+func (s *pauseSink) OnForEachEntered(string, int)                                 {}
+func (s *pauseSink) OnForEachIteration(string, int, string, bool)                 {}
+func (s *pauseSink) OnForEachOutcome(string, string, string)                      {}
+func (s *pauseSink) OnScopeIterCursorSet(string)                                  {}
 func (s *pauseSink) StepEventSink(string) adapter.EventSink                       { return noopAdapterSink{} }
 
 type noopAdapterSink struct{}
