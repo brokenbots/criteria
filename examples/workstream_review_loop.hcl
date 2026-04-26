@@ -2,19 +2,17 @@
 #
 # Workstream Review Loop
 # ======================
-# Runs a three-agent review loop against a single workstream file.
+# Runs a two-agent review loop against a single workstream file.
 # Pass the target file via the workstream_file variable default, or override
 # it by editing the default value before running.
 #
 #   executor  — implements workstream tasks in focused passes
 #   reviewer  — reviews executor changes for correctness and completeness
-#   cleanup   — commits approved changes and performs final clean-up
 #
 # Loop mechanics:
 #   • Executor and reviewer iterate until the reviewer is satisfied.
-#   • The reviewer signals "approved" to hand off to the cleanup agent.
-#   • Cleanup runs once; if it finds issues it returns to the executor for a
-#     single fix pass. A second cleanup failure fails the workflow.
+#   • Once approved, reviewer hands back to executor for a final commit pass.
+#   • After commit success, the workflow closes both sessions and ends.
 #
 # Usage (run once per workstream file):
 #   bin/overseer apply examples/workstream_review_loop.hcl
@@ -29,12 +27,12 @@ workflow "workstream_review_loop" {
   target_state  = "done"
 
   policy {
-    max_total_steps = 2000
+    max_total_steps = 1000
   }
 
   variable "workstream_file" {
     type        = "string"
-    default     = "workstreams/01-event-contract-repair.md"
+    default     = "workstreams/02-castle-mode-integration.md"
     description = "Path to the workstream file to process. Change default or re-run for each file."
   }
 
@@ -51,13 +49,6 @@ workflow "workstream_review_loop" {
     adapter = "copilot"
     config {
       max_turns = 10
-    }
-  }
-
-  agent "cleanup" {
-    adapter = "copilot"
-    config {
-      max_turns = 8
     }
   }
 
@@ -79,16 +70,6 @@ workflow "workstream_review_loop" {
       command = "awk 'NR==1 && $0==\"---\"{f=1;next} f && $0==\"---\"{f=0;next} !f{if(!s){if($0 ~ /^[[:space:]]*$/) next; s=1} print}' .github/agents/workstream-reviewer.agent.md"
     }
     timeout = "10s"
-    outcome "success" { transition_to = "load_cleanup_agent_file" }
-    outcome "failure" { transition_to = "failed" }
-  }
-
-  step "load_cleanup_agent_file" {
-    adapter = "shell"
-    input {
-      command = "awk 'NR==1 && $0==\"---\"{f=1;next} f && $0==\"---\"{f=0;next} !f{if(!s){if($0 ~ /^[[:space:]]*$/) next; s=1} print}' .github/agents/workstream-cleanup.agent.md"
-    }
-    timeout = "10s"
     outcome "success" { transition_to = "open_executor" }
     outcome "failure" { transition_to = "failed" }
   }
@@ -106,15 +87,8 @@ workflow "workstream_review_loop" {
   step "open_reviewer" {
     agent     = "reviewer"
     lifecycle = "open"
-    outcome "success" { transition_to = "open_cleanup" }
-    outcome "failure" { transition_to = "close_executor_abort" }
-  }
-
-  step "open_cleanup" {
-    agent     = "cleanup"
-    lifecycle = "open"
     outcome "success" { transition_to = "execute" }
-    outcome "failure" { transition_to = "close_reviewer_abort" }
+    outcome "failure" { transition_to = "close_executor_abort" }
   }
 
   # ── Per-workstream: executor / reviewer loop ───────────────────────────────
@@ -132,7 +106,7 @@ workflow "workstream_review_loop" {
     }
     outcome "needs_review"   { transition_to = "review" }
     outcome "needs_approval" { transition_to = "review" }
-    outcome "failure"        { transition_to = "close_cleanup_abort" }
+    outcome "failure"        { transition_to = "close_reviewer_abort" }
   }
 
   step "review" {
@@ -144,39 +118,18 @@ workflow "workstream_review_loop" {
       "mcp",
     ]
     input {
-      prompt = "Agent profile (.github/agents/workstream-reviewer.agent.md):\n${steps.load_reviewer_agent_file.stdout}\n\nCurrent workstream file: ${var.workstream_file}\n\nReview the latest executor changes against this workstream. If fully acceptable, approve. If more work is needed, request changes. End your final line with exactly one of:\nRESULT: approved\nRESULT: changes_requested\nRESULT: failure"
+      prompt = "Agent profile (.github/agents/workstream-reviewer.agent.md):\n${steps.load_reviewer_agent_file.stdout}\n\nCurrent workstream file: ${var.workstream_file}\n\nReview the latest executor changes against this workstream. If more work is needed, request changes and send the executor back for another pass. If fully acceptable, approve and hand off for a final executor commit step. End your final line with exactly one of:\nRESULT: approved\nRESULT: changes_requested\nRESULT: failure"
     }
-    outcome "approved"          { transition_to = "run_cleanup" }
+    outcome "approved"          { transition_to = "commit_and_finish" }
     outcome "changes_requested" { transition_to = "execute" }
     outcome "needs_review"      { transition_to = "execute" }
     outcome "needs_approval"    { transition_to = "execute" }
-    outcome "failure"           { transition_to = "close_cleanup_abort" }
+    outcome "failure"           { transition_to = "close_reviewer_abort" }
   }
 
-  # ── Cleanup: commit, verify, and finalize ──────────────────────────────────
+  # ── Finalize: executor commit and close-out ────────────────────────────────
 
-  step "run_cleanup" {
-    agent       = "cleanup"
-    allow_tools = [
-      "read",
-      "write",
-      "shell:*",
-      "mcp",
-    ]
-    input {
-      prompt = "Agent profile (.github/agents/workstream-cleanup.agent.md):\n${steps.load_cleanup_agent_file.stdout}\n\nCurrent workstream file: ${var.workstream_file}\n\nReviewer approved the implementation. Perform cleanup and close-out for this workstream. End your final line with exactly one of:\nRESULT: success\nRESULT: needs_fix\nRESULT: failure"
-    }
-    outcome "success"   { transition_to = "close_cleanup_done" }
-    outcome "needs_fix" { transition_to = "execute_fix_once" }
-    outcome "failure"   { transition_to = "close_cleanup_abort" }
-  }
-
-  # ── Cleanup retry: one executor fix pass ──────────────────────────────────
-  #
-  # The cleanup agent found issues after approval. The executor gets exactly one
-  # pass to address them. A second cleanup failure aborts the workstream.
-
-  step "execute_fix_once" {
+  step "commit_and_finish" {
     agent       = "executor"
     allow_tools = [
       "read",
@@ -185,35 +138,13 @@ workflow "workstream_review_loop" {
       "mcp",
     ]
     input {
-      prompt = "Agent profile (.github/agents/workstream-executor.agent.md):\n${steps.load_executor_agent_file.stdout}\n\nCurrent workstream file: ${var.workstream_file}\n\nThe cleanup agent found issues after approval. Apply a single focused fix pass to resolve those issues only. End your final line with exactly one of:\nRESULT: fixed\nRESULT: failure"
+      prompt = "Agent profile (.github/agents/workstream-executor.agent.md):\n${steps.load_executor_agent_file.stdout}\n\nCurrent workstream file: ${var.workstream_file}\n\nThe reviewer approved the implementation. Commit only the intended workstream changes and use this exact commit message format:\nworkstream: complete ${var.workstream_file}\n\nThen run only minimal final verification needed for those changes. If commit or verification fails, report failure. End your final line with exactly one of:\nRESULT: success\nRESULT: failure"
     }
-    outcome "fixed"   { transition_to = "run_cleanup_final" }
-    outcome "failure" { transition_to = "close_cleanup_abort" }
-  }
-
-  step "run_cleanup_final" {
-    agent       = "cleanup"
-    allow_tools = [
-      "read",
-      "write",
-      "shell:*",
-      "mcp",
-    ]
-    input {
-      prompt = "Agent profile (.github/agents/workstream-cleanup.agent.md):\n${steps.load_cleanup_agent_file.stdout}\n\nCurrent workstream file: ${var.workstream_file}\n\nFinal cleanup pass after the one allowed executor fix. If any issue remains, fail the workflow. End your final line with exactly one of:\nRESULT: success\nRESULT: failure"
-    }
-    outcome "success" { transition_to = "close_cleanup_done" }
-    outcome "failure" { transition_to = "close_cleanup_abort" }
+    outcome "success" { transition_to = "close_reviewer_done" }
+    outcome "failure" { transition_to = "close_reviewer_abort" }
   }
 
   # ── Close agents: success path ──────────────────────────────────────────────
-
-  step "close_cleanup_done" {
-    agent     = "cleanup"
-    lifecycle = "close"
-    outcome "success" { transition_to = "close_reviewer_done" }
-    outcome "failure" { transition_to = "close_reviewer_done" }
-  }
 
   step "close_reviewer_done" {
     agent     = "reviewer"
@@ -231,13 +162,6 @@ workflow "workstream_review_loop" {
 
   # ── Close agents: abort path ─────────────────────────────────────────────────
   # Each step chains to the next so all open sessions are closed before failing.
-
-  step "close_cleanup_abort" {
-    agent     = "cleanup"
-    lifecycle = "close"
-    outcome "success" { transition_to = "close_reviewer_abort" }
-    outcome "failure" { transition_to = "close_reviewer_abort" }
-  }
 
   step "close_reviewer_abort" {
     agent     = "reviewer"
