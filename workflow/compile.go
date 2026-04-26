@@ -44,6 +44,8 @@ func Compile(spec *Spec, schemas map[string]AdapterInfo) (*FSMGraph, hcl.Diagnos
 		Agents:       map[string]*AgentNode{},
 		Steps:        map[string]*StepNode{},
 		States:       map[string]*StateNode{},
+		Waits:        map[string]*WaitNode{},
+		Approvals:    map[string]*ApprovalNode{},
 		Policy:       DefaultPolicy,
 	}
 	if spec.Policy != nil {
@@ -297,6 +299,95 @@ func Compile(spec *Spec, schemas map[string]AdapterInfo) (*FSMGraph, hcl.Diagnos
 		g.stepOrder = append(g.stepOrder, sp.Name)
 	}
 
+	// Compile wait blocks (W05).
+	for _, ws := range spec.Waits {
+		name := ws.Name
+		if _, dup := g.Steps[name]; dup {
+			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("wait %q clashes with step of the same name", name)})
+			continue
+		}
+		if _, dup := g.States[name]; dup {
+			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("wait %q clashes with state of the same name", name)})
+			continue
+		}
+		if _, dup := g.Waits[name]; dup {
+			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("duplicate wait %q", name)})
+			continue
+		}
+		hasDuration := ws.Duration != ""
+		hasSignal := ws.Signal != ""
+		if hasDuration == hasSignal { // both or neither
+			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("wait %q: exactly one of duration or signal must be set", name)})
+			continue
+		}
+		node := &WaitNode{
+			Name:     name,
+			Signal:   ws.Signal,
+			Outcomes: map[string]string{},
+		}
+		if hasDuration {
+			d, err := time.ParseDuration(ws.Duration)
+			if err != nil {
+				diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("wait %q: invalid duration %q: %v", name, ws.Duration, err)})
+				continue
+			}
+			node.Duration = d
+		}
+		if len(ws.Outcomes) == 0 {
+			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("wait %q: at least one outcome is required", name)})
+		}
+		for _, o := range ws.Outcomes {
+			if o.TransitionTo == "" {
+				diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("wait %q outcome %q: transition_to required", name, o.Name)})
+				continue
+			}
+			node.Outcomes[o.Name] = o.TransitionTo
+		}
+		g.Waits[name] = node
+	}
+
+	// Compile approval blocks (W05).
+	for _, as := range spec.Approvals {
+		name := as.Name
+		if _, dup := g.Steps[name]; dup {
+			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("approval %q clashes with step of the same name", name)})
+			continue
+		}
+		if _, dup := g.States[name]; dup {
+			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("approval %q clashes with state of the same name", name)})
+			continue
+		}
+		if _, dup := g.Waits[name]; dup {
+			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("approval %q clashes with wait of the same name", name)})
+			continue
+		}
+		if _, dup := g.Approvals[name]; dup {
+			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("duplicate approval %q", name)})
+			continue
+		}
+		node := &ApprovalNode{
+			Name:      name,
+			Approvers: as.Approvers,
+			Reason:    as.Reason,
+			Outcomes:  map[string]string{},
+		}
+		for _, o := range as.Outcomes {
+			if o.TransitionTo == "" {
+				diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("approval %q outcome %q: transition_to required", name, o.Name)})
+				continue
+			}
+			node.Outcomes[o.Name] = o.TransitionTo
+		}
+		// Enforce required outcomes: approved and rejected must both be present.
+		if _, ok := node.Outcomes["approved"]; !ok {
+			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("approval %q: outcome \"approved\" is required", name)})
+		}
+		if _, ok := node.Outcomes["rejected"]; !ok {
+			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("approval %q: outcome \"rejected\" is required", name)})
+		}
+		g.Approvals[name] = node
+	}
+
 	// Second pass: resolve transitions, ensure initial/target exist and reachable.
 	if g.InitialState != "" {
 		if _, ok := g.Lookup(g.InitialState); !ok {
@@ -321,20 +412,56 @@ func Compile(spec *Spec, schemas map[string]AdapterInfo) (*FSMGraph, hcl.Diagnos
 			}
 		}
 	}
+	for _, wait := range g.Waits {
+		for outcome, target := range wait.Outcomes {
+			if _, ok := g.Lookup(target); !ok {
+				diags = append(diags, &hcl.Diagnostic{
+					Severity: hcl.DiagError,
+					Summary:  fmt.Sprintf("wait %q outcome %q -> unknown target %q", wait.Name, outcome, target),
+				})
+			}
+		}
+	}
+	for _, appr := range g.Approvals {
+		for outcome, target := range appr.Outcomes {
+			if _, ok := g.Lookup(target); !ok {
+				diags = append(diags, &hcl.Diagnostic{
+					Severity: hcl.DiagError,
+					Summary:  fmt.Sprintf("approval %q outcome %q -> unknown target %q", appr.Name, outcome, target),
+				})
+			}
+		}
+	}
 
 	// Reachability from initial state.
 	if g.InitialState != "" && !diags.HasErrors() {
 		reachable := map[string]bool{g.InitialState: true}
 		var walk func(name string)
 		walk = func(name string) {
-			step, isStep := g.Steps[name]
-			if !isStep {
+			if step, isStep := g.Steps[name]; isStep {
+				for _, target := range step.Outcomes {
+					if !reachable[target] {
+						reachable[target] = true
+						walk(target)
+					}
+				}
 				return
 			}
-			for _, target := range step.Outcomes {
-				if !reachable[target] {
-					reachable[target] = true
-					walk(target)
+			if wait, isWait := g.Waits[name]; isWait {
+				for _, target := range wait.Outcomes {
+					if !reachable[target] {
+						reachable[target] = true
+						walk(target)
+					}
+				}
+				return
+			}
+			if appr, isAppr := g.Approvals[name]; isAppr {
+				for _, target := range appr.Outcomes {
+					if !reachable[target] {
+						reachable[target] = true
+						walk(target)
+					}
 				}
 			}
 		}
@@ -342,6 +469,16 @@ func Compile(spec *Spec, schemas map[string]AdapterInfo) (*FSMGraph, hcl.Diagnos
 		for _, name := range g.stepOrder {
 			if !reachable[name] {
 				diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q is unreachable from initial_state", name)})
+			}
+		}
+		for name := range g.Waits {
+			if !reachable[name] {
+				diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagWarning, Summary: fmt.Sprintf("wait %q is unreachable from initial_state", name)})
+			}
+		}
+		for name := range g.Approvals {
+			if !reachable[name] {
+				diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagWarning, Summary: fmt.Sprintf("approval %q is unreachable from initial_state", name)})
 			}
 		}
 		for name := range g.States {

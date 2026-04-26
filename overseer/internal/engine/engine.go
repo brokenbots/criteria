@@ -35,6 +35,20 @@ type Sink interface {
 	OnVariableSet(name, value, source string)
 	// OnStepOutputCaptured is emitted after a step produces captured outputs (W04).
 	OnStepOutputCaptured(step string, outputs map[string]string)
+	// OnRunPaused is called when the engine pauses at a wait or approval node
+	// (W05). node is the node name, mode is "duration"|"signal", signal is the
+	// pending signal name (empty for duration mode).
+	OnRunPaused(node, mode, signal string)
+	// OnWaitEntered is emitted when the engine enters a wait node (W05).
+	OnWaitEntered(node, mode, duration, signal string)
+	// OnWaitResumed is emitted when a wait node resolves (W05). payload is nil
+	// for duration-mode waits; carries the resume payload for signal-mode waits.
+	OnWaitResumed(node, mode, signal string, payload map[string]string)
+	// OnApprovalRequested is emitted when the engine enters an approval node (W05).
+	OnApprovalRequested(node string, approvers []string, reason string)
+	// OnApprovalDecision is emitted when an approval node resolves via Resume (W05).
+	// decision is "approved" or "rejected". actor is audit metadata.
+	OnApprovalDecision(node, decision, actor string, payload map[string]string)
 	// StepEventSink returns the per-step adapter sink (logs + adapter events).
 	StepEventSink(step string) adapter.EventSink
 }
@@ -48,6 +62,15 @@ type Engine struct {
 	branchScheduler     BranchScheduler
 	// resumedVars, when non-nil, overrides SeedVarsFromGraph at run start (W04).
 	resumedVars map[string]cty.Value
+	// pendingSignal, when non-empty, is placed into RunState at run start (W05).
+	// Used during crash-recovery reattach when the run was paused mid-signal-wait.
+	pendingSignal string
+	// resumePayload, when non-nil, is placed into RunState at run start (W05).
+	// Used when the orchestrator delivers a resume signal to a paused run.
+	resumePayload map[string]string
+	// lastVars captures the Vars map from RunState when execution pauses so
+	// the caller can pass them to the resumed engine via WithResumedVars (W05).
+	lastVars map[string]cty.Value
 }
 
 func New(graph *workflow.FSMGraph, loader plugin.Loader, sink Sink, opts ...Option) *Engine {
@@ -59,6 +82,11 @@ func New(graph *workflow.FSMGraph, loader plugin.Loader, sink Sink, opts ...Opti
 	}
 	return e
 }
+
+// VarScope returns the variable scope captured when the last run paused.
+// Returns nil if the engine has not yet paused. Used by the CLI pause/resume
+// loop to carry variable state across a resume boundary (W05).
+func (e *Engine) VarScope() map[string]cty.Value { return e.lastVars }
 
 // Run executes the workflow until a terminal state is reached, the global
 // step limit is exceeded, or ctx is cancelled.
@@ -103,7 +131,8 @@ func (e *Engine) runLoop(ctx context.Context, sessions *plugin.SessionManager, c
 	st := &RunState{
 		Current:          current,
 		Vars:             vars,
-		PendingSignal:    "",
+		PendingSignal:    e.pendingSignal,
+		ResumePayload:    e.resumePayload,
 		Iter:             nil,
 		ParentRunID:      "",
 		BranchID:         "",
@@ -140,6 +169,15 @@ func (e *Engine) runLoop(ctx context.Context, sessions *plugin.SessionManager, c
 			return nil
 		}
 		if errors.Is(err, engineruntime.ErrPaused) {
+			// The node has already set st.PendingSignal and emitted WaitEntered/
+			// ApprovalRequested. Notify the sink so it can update run status and
+			// then yield control back to the orchestrator.
+			mode := "signal"
+			if wait, ok := e.graph.Waits[st.Current]; ok && wait.Duration > 0 {
+				mode = "duration"
+			}
+			e.lastVars = st.Vars
+			e.sink.OnRunPaused(st.Current, mode, st.PendingSignal)
 			return nil
 		}
 		e.sink.OnRunFailed(err.Error(), st.Current)

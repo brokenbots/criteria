@@ -11,6 +11,10 @@ type RunState struct {
 	TotalSteps    int
 	Vars          map[string]cty.Value
 	PendingSignal string
+	// ResumePayload carries the key/value payload delivered by a Resume RPC.
+	// Non-nil when the engine is re-entered after a signal wait or approval.
+	// The wait/approval node consumes it and clears it. Nil on first entry.
+	ResumePayload map[string]string
 	Iter          *IterCursor
 	ParentRunID   string
 	BranchID      string

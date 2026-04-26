@@ -47,6 +47,11 @@ message Envelope {
     StepResumed step_resumed = 20;
     VariableSet variable_set = 21;                          // permanent (W04)
     StepOutputCaptured step_output_captured = 22;           // permanent (W04)
+    // W05 wait/approval events — overseer-emitted; permanent (W05).
+    WaitEntered wait_entered = 23;            // permanent (W05)
+    WaitResumed wait_resumed = 24;            // permanent (W05)
+    ApprovalRequested approval_requested = 25; // permanent (W05)
+    ApprovalDecision approval_decision = 26;   // permanent (W05)
     // WatchReady is a protocol-level sentinel sent once at the start of a
     // WatchRun server-stream, after any persisted-event replay, to flush
     // response headers so the client's WatchRun call can return. It has no
@@ -168,4 +173,39 @@ message VariableSet {
 message StepOutputCaptured {
   string step = 1;                  // permanent
   map<string, string> outputs = 2;  // permanent
+}
+
+// WaitEntered — emitted when the engine enters a wait node (W05).
+// Overseer-owned event; permanent field numbers.
+message WaitEntered {
+  string node = 1;
+  string mode = 2;      // "duration" | "signal"
+  string duration = 3;  // present when mode=duration; e.g. "30s"
+  string signal = 4;    // present when mode=signal
+}
+
+// WaitResumed — emitted when a wait node is satisfied and execution continues (W05).
+// Overseer-owned event; permanent field numbers.
+message WaitResumed {
+  string node = 1;
+  string mode = 2;
+  string signal = 3;
+  map<string, string> payload = 4;
+}
+
+// ApprovalRequested — emitted when the engine enters an approval node (W05).
+// Overseer-owned event; permanent field numbers.
+message ApprovalRequested {
+  string node = 1;
+  repeated string approvers = 2;
+  string reason = 3;
+}
+
+// ApprovalDecision — emitted when an approval node is resolved via Resume (W05).
+// Overseer-owned event; permanent field numbers.
+message ApprovalDecision {
+  string node = 1;
+  string decision = 2;              // "approved" | "rejected"
+  string actor = 3;                 // audit metadata; not semantically load-bearing
+  map<string, string> payload = 4;
 }

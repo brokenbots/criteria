@@ -21,6 +21,7 @@ import (
 	"github.com/brokenbots/overlord/overseer/internal/plugin"
 	"github.com/brokenbots/overlord/overseer/internal/run"
 	castletrans "github.com/brokenbots/overlord/overseer/internal/transport/castle"
+	pb "github.com/brokenbots/overlord/shared/pb/overlord/v1"
 	"github.com/brokenbots/overlord/workflow"
 )
 
@@ -209,6 +210,37 @@ func runApplyCastle(ctx context.Context, opts applyOptions) error {
 	}
 	log.Info("run completed", "run_id", runID)
 
+	// If the run paused (ErrPaused would have been handled by the engine
+	// loop; the Sink records the paused node for us), wait for a ResumeRun
+	// control message then restart the engine from the paused node.
+	for sink.IsPaused() {
+		log.Info("run paused; waiting for resume signal", "run_id", runID, "node", sink.PausedAt())
+		var resumeMsg *pb.ResumeRun
+		select {
+		case <-runCtx.Done():
+			return runCtx.Err()
+		case resumeMsg = <-client.ResumeCh():
+		}
+		if resumeMsg.RunId != runID {
+			// Message for a different run; re-queue and continue waiting.
+			log.Warn("received resume for unexpected run", "expected", runID, "got", resumeMsg.RunId)
+			continue
+		}
+		log.Info("received resume signal", "run_id", runID, "signal", resumeMsg.Signal)
+		pausedNode := sink.PausedAt()
+		sink.ClearPaused()
+		resumedEng := engine.New(graph, loader, sink,
+			engine.WithResumedVars(eng.VarScope()),
+			engine.WithResumePayload(resumeMsg.Payload),
+		)
+		if err := resumedEng.RunFrom(runCtx, pausedNode, 1); err != nil {
+			log.Error("run failed after resume", "error", err)
+			return err
+		}
+		eng = resumedEng
+		log.Info("run resumed and completed", "run_id", runID)
+	}
+
 	drainCtx, drainCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	client.Drain(drainCtx)
 	drainCancel()
@@ -295,21 +327,32 @@ func localEventsWriter(eventsPath string) (io.Writer, func(), error) {
 }
 
 func ensureLocalModeSupported(graph *workflow.FSMGraph) error {
+	// Signal-based wait nodes require an orchestrator to deliver the signal.
+	for _, wn := range graph.Waits {
+		if wn.Signal != "" {
+			return errors.New("signal waits require an orchestrator (e.g. --castle <url>)")
+		}
+	}
+	// Approval nodes always require an orchestrator.
+	if len(graph.Approvals) > 0 {
+		return errors.New("approval nodes require an orchestrator (e.g. --castle <url>)")
+	}
+	// Legacy step lifecycle checks kept for forward-compat.
 	for _, step := range graph.Steps {
 		if step.Lifecycle == "wait" {
-			return errors.New("signal waits require --castle <url>")
+			return errors.New("signal waits require an orchestrator (e.g. --castle <url>)")
 		}
 		if step.Lifecycle == "approval" {
-			return errors.New("approval waits require --castle <url>")
+			return errors.New("approval nodes require an orchestrator (e.g. --castle <url>)")
 		}
 	}
 	for _, state := range graph.States {
 		requires := strings.ToLower(strings.TrimSpace(state.Requires))
 		switch requires {
 		case "signal", "wait_signal", "wait.signal":
-			return errors.New("signal waits require --castle <url>")
+			return errors.New("signal waits require an orchestrator (e.g. --castle <url>)")
 		case "approval", "wait_approval", "wait.approval":
-			return errors.New("approval waits require --castle <url>")
+			return errors.New("approval nodes require an orchestrator (e.g. --castle <url>)")
 		}
 	}
 	return nil

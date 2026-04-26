@@ -82,6 +82,37 @@ func (s *LocalSink) OnStepOutputCaptured(step string, outputs map[string]string)
 	s.emit("StepOutputCaptured", &pb.StepOutputCaptured{Step: step, Outputs: outputs})
 }
 
+// OnRunPaused is called by the engine loop when execution pauses at a wait or
+// approval node (W05). In local mode, signal-based pauses are not resumable
+// (local mode blocks at compile time for signal/approval nodes), so this is
+// only reached for duration-based waits where it is a no-op. OnWaitEntered
+// has already emitted the structured event; emitting again here would produce
+// a duplicate with a non-standard key that confuses ND-JSON consumers. (F-07)
+func (s *LocalSink) OnRunPaused(node, mode, signal string) {
+	// No-op: OnWaitEntered / OnApprovalRequested have already emitted the
+	// structured event. A log line is sufficient here.
+}
+
+// OnWaitEntered emits a WaitEntered event (W05).
+func (s *LocalSink) OnWaitEntered(node, mode, duration, signal string) {
+	s.emit("WaitEntered", &pb.WaitEntered{Node: node, Mode: mode, Duration: duration, Signal: signal})
+}
+
+// OnWaitResumed emits a WaitResumed event (W05).
+func (s *LocalSink) OnWaitResumed(node, mode, signal string, payload map[string]string) {
+	s.emit("WaitResumed", &pb.WaitResumed{Node: node, Mode: mode, Signal: signal, Payload: payload})
+}
+
+// OnApprovalRequested emits an ApprovalRequested event (W05).
+func (s *LocalSink) OnApprovalRequested(node string, approvers []string, reason string) {
+	s.emit("ApprovalRequested", &pb.ApprovalRequested{Node: node, Approvers: approvers, Reason: reason})
+}
+
+// OnApprovalDecision emits an ApprovalDecision event (W05).
+func (s *LocalSink) OnApprovalDecision(node, decision, actor string, payload map[string]string) {
+	s.emit("ApprovalDecision", &pb.ApprovalDecision{Node: node, Decision: decision, Actor: actor, Payload: payload})
+}
+
 func (s *LocalSink) StepEventSink(step string) adapter.EventSink {
 	return &localStepSink{parent: s, step: step}
 }

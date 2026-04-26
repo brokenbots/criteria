@@ -19,6 +19,26 @@ func WithResumedVars(vars map[string]cty.Value) Option {
 	}
 }
 
+// WithPendingSignal seeds RunState.PendingSignal at the start of RunFrom.
+// Use this when re-attaching an Overseer to a run that was paused mid-signal-
+// wait: the wait node sees PendingSignal set and immediately re-issues
+// ErrPaused so the run stays blocked until the real Resume RPC arrives (W05).
+func WithPendingSignal(signal string) Option {
+	return func(e *Engine) {
+		e.pendingSignal = signal
+	}
+}
+
+// WithResumePayload seeds RunState.ResumePayload at the start of RunFrom.
+// Use this when re-entering a paused run after the orchestrator delivers a
+// resume signal. The wait/approval node reads the payload to resolve its
+// outcome and then clears the field (W05).
+func WithResumePayload(payload map[string]string) Option {
+	return func(e *Engine) {
+		e.resumePayload = payload
+	}
+}
+
 // WithSubWorkflowResolver configures sub-workflow resolution support.
 func WithSubWorkflowResolver(r SubWorkflowResolver) Option {
 	return func(e *Engine) {

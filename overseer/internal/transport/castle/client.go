@@ -87,6 +87,7 @@ type Client struct {
 	// control stream
 	controlStarted atomic.Bool
 	runCancelCh    chan string
+	resumeCh       chan *pb.ResumeRun
 
 	closeOnce sync.Once
 	closed    chan struct{}
@@ -140,6 +141,7 @@ func NewClient(castleURL string, log *slog.Logger, opts ...Options) (*Client, er
 		opts:        o,
 		sendCh:      make(chan *pb.Envelope, o.SendBuffer),
 		runCancelCh: make(chan string, 32),
+		resumeCh:    make(chan *pb.ResumeRun, 32),
 		closed:      make(chan struct{}),
 	}, nil
 }
@@ -275,6 +277,10 @@ func (c *Client) heartbeat(ctx context.Context) {
 // Overseer to cancel via the Control server-stream.
 func (c *Client) RunCancelCh() <-chan string { return c.runCancelCh }
 
+// ResumeCh returns the channel carrying ResumeRun messages from Castle (W05).
+// The caller should drain this channel while a run is paused.
+func (c *Client) ResumeCh() <-chan *pb.ResumeRun { return c.resumeCh }
+
 // StartStreams attaches the Control server-stream (if not already) and starts
 // the long-running SubmitEvents bidi for runID.
 func (c *Client) StartStreams(ctx context.Context, runID string) error {
@@ -342,6 +348,13 @@ func (c *Client) controlLoop(ctx context.Context, ready chan<- error) {
 				case c.runCancelCh <- rc.RunId:
 				default:
 					c.log.Warn("dropping run.cancel control message", "run_id", rc.RunId)
+				}
+			}
+			if rr := msg.GetResumeRun(); rr != nil && rr.RunId != "" {
+				select {
+				case c.resumeCh <- rr:
+				default:
+					c.log.Warn("dropping resume_run control message", "run_id", rr.RunId)
 				}
 			}
 		}
@@ -519,6 +532,21 @@ func (c *Client) ReattachRun(ctx context.Context, runID, overseerID string) (*pb
 	})
 	c.authorize(req.Header())
 	resp, err := c.grpc.ReattachRun(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return resp.Msg, nil
+}
+
+// Resume calls the Castle Resume RPC to deliver a signal to a paused run (W05).
+func (c *Client) Resume(ctx context.Context, runID, signal string, payload map[string]string) (*pb.ResumeResponse, error) {
+	req := connect.NewRequest(&pb.ResumeRequest{
+		RunId:   runID,
+		Signal:  signal,
+		Payload: payload,
+	})
+	c.authorize(req.Header())
+	resp, err := c.grpc.Resume(ctx, req)
 	if err != nil {
 		return nil, err
 	}

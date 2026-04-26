@@ -50,7 +50,14 @@ func (s *fakeSink) OnStepTransition(from, to, via string) {
 func (s *fakeSink) OnStepResumed(string, int, string)              {}
 func (s *fakeSink) OnVariableSet(string, string, string)           {}
 func (s *fakeSink) OnStepOutputCaptured(string, map[string]string) {}
-func (s *fakeSink) StepEventSink(step string) adapter.EventSink    { return noopSink{} }
+func (s *fakeSink) OnRunPaused(string, string, string)             {}
+func (s *fakeSink) OnWaitEntered(string, string, string, string)   {}
+func (s *fakeSink) OnWaitResumed(string, string, string, map[string]string) {
+}
+func (s *fakeSink) OnApprovalRequested(string, []string, string) {}
+func (s *fakeSink) OnApprovalDecision(string, string, string, map[string]string) {
+}
+func (s *fakeSink) StepEventSink(step string) adapter.EventSink { return noopSink{} }
 
 type noopSink struct{}
 

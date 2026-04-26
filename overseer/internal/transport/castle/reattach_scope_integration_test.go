@@ -206,9 +206,16 @@ func (s *integrationSink) OnStepTransition(from, to, viaOutcome string)         
 func (s *integrationSink) OnStepResumed(step string, attempt int, reason string)            {}
 func (s *integrationSink) OnVariableSet(name, value, source string)                         {}
 func (s *integrationSink) OnStepOutputCaptured(step string, outputs map[string]string)      {}
-func (s *integrationSink) StepEventSink(step string) adapter.EventSink                      { return s }
-func (s *integrationSink) Log(stream string, line []byte)                                   {}
-func (s *integrationSink) Adapter(kind string, data any)                                    {}
+func (s *integrationSink) OnRunPaused(node, mode, signal string)                            {}
+func (s *integrationSink) OnWaitEntered(node, mode, duration, signal string)                {}
+func (s *integrationSink) OnWaitResumed(node, mode, signal string, payload map[string]string) {
+}
+func (s *integrationSink) OnApprovalRequested(node string, approvers []string, reason string) {}
+func (s *integrationSink) OnApprovalDecision(node, decision, actor string, payload map[string]string) {
+}
+func (s *integrationSink) StepEventSink(step string) adapter.EventSink { return s }
+func (s *integrationSink) Log(stream string, line []byte)              {}
+func (s *integrationSink) Adapter(kind string, data any)               {}
 
 // recordingAdapter wraps an adapter.Adapter and records the resolved "command"
 // input so tests can assert interpolation produced the expected string.

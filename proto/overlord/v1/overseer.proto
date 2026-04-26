@@ -30,6 +30,11 @@ service OverseerService {
   // and whether the Overseer may resume execution.
   rpc ReattachRun(ReattachRunRequest) returns (ReattachRunResponse);
 
+  // Resume delivers a named signal (or an approval decision) to a paused run.
+  // This RPC is SDK contract surface: field names, payload semantics, and
+  // error-reason strings are stable for third-party orchestrators.
+  rpc Resume(ResumeRequest) returns (ResumeResponse);
+
   // SubmitEvents is a bidirectional stream. The client writes Envelopes and
   // the server replies with an Ack per persisted envelope (run_id, seq,
   // correlation_id). On reconnect the client may include `since_seq` in
@@ -96,7 +101,7 @@ message ReattachRunRequest {
 
 // ReattachRunResponse tells the Overseer whether it may resume a run.
 message ReattachRunResponse {
-  // Current status of the run: "running" | "succeeded" | "failed" | "cancelled".
+  // Current status of the run: "running" | "paused" | "succeeded" | "failed" | "cancelled".
   string status = 1;
   // Empty when the run is terminal.
   string current_step = 2;
@@ -111,6 +116,11 @@ message ReattachRunResponse {
   // StepOutputCaptured or VariableSet event. Empty string means no scope has
   // been persisted yet. Field is permanent (W04).
   string variable_scope = 6; // permanent (W04)
+  // pending_signal is the signal name the run is waiting for when status="paused".
+  // The Overseer must re-enter the wait/approval node with this value set in
+  // RunState so it immediately re-issues ErrPaused (waiting for the signal
+  // to arrive via Resume). Empty when not paused. Permanent (W05).
+  string pending_signal = 7; // permanent (W05)
 }
 
 // --- Streaming types ---
@@ -128,7 +138,7 @@ message ControlSubscribeRequest {
   string overseer_id = 1;
 }
 
-// ControlMessage is a command from Castle to a connected Overseer.
+// ControlMessage is a command from the orchestrator to a connected Overseer.
 message ControlMessage {
   oneof command {
     RunCancel run_cancel = 1;
@@ -138,6 +148,10 @@ message ControlMessage {
     // client's call returns to the caller, and signals that subsequent
     // ControlMessages can be delivered. Clients must ignore it.
     ControlReady control_ready = 3;
+    // ResumeRun delivers a resume signal from the orchestrator to the Overseer
+    // that owns the run. The Overseer should re-enter the paused node with the
+    // supplied payload. Permanent (W05).
+    ResumeRun resume_run = 4; // permanent (W05)
   }
 }
 
@@ -157,4 +171,36 @@ message AgentPrompt {
 // ControlReady is an attach acknowledgement sent once at stream start.
 // It carries no payload.
 message ControlReady {
+}
+
+// ResumeRun delivers a resume signal from the orchestrator to the Overseer (W05).
+// The Overseer should re-enter the paused wait/approval node with the supplied
+// payload and continue execution.
+message ResumeRun {
+  string run_id = 1;
+  // signal matches the run's pending_signal; the Overseer should verify this.
+  string signal = 2;
+  // payload carries decision metadata (e.g. {"decision":"approved","actor":"alice"}).
+  map<string, string> payload = 3;
+}
+
+// ResumeRequest delivers a named signal (or an approval decision) to a paused
+// run. This message is SDK contract surface: avoid orchestrator-specific names.
+message ResumeRequest {
+  string run_id = 1;
+  // signal is the name of the pending signal to satisfy. For wait nodes with
+  // signal=<name> this is that signal name. For approval nodes this is the
+  // approval node name.
+  string signal = 2;
+  // payload carries optional key/value metadata.
+  // For approval: payload["decision"] = "approved" | "rejected"
+  //               payload["actor"]    = identity of approver (audit metadata).
+  map<string, string> payload = 3;
+}
+
+// ResumeResponse reports whether the Resume RPC was accepted.
+message ResumeResponse {
+  bool accepted = 1;
+  // reason is one of: "ok" | "run_not_paused" | "signal_mismatch" | "no_pending_signal"
+  string reason = 2;
 }

@@ -19,6 +19,8 @@ type Spec struct {
 	Agents       []AgentSpec      `hcl:"agent,block"`
 	Steps        []StepSpec       `hcl:"step,block"`
 	States       []StateSpec      `hcl:"state,block"`
+	Waits        []WaitSpec       `hcl:"wait,block"`
+	Approvals    []ApprovalSpec   `hcl:"approval,block"`
 	Policy       *PolicySpec      `hcl:"policy,block"`
 	Permissions  *PermissionsSpec `hcl:"permissions,block"`
 }
@@ -115,6 +117,23 @@ type OutcomeSpec struct {
 	TransitionTo string `hcl:"transition_to"`
 }
 
+// WaitSpec declares a wait node. Exactly one of duration or signal must be set.
+type WaitSpec struct {
+	Name     string        `hcl:"name,label"`
+	Duration string        `hcl:"duration,optional"`
+	Signal   string        `hcl:"signal,optional"`
+	Outcomes []OutcomeSpec `hcl:"outcome,block"`
+}
+
+// ApprovalSpec declares an approval node. Must have both "approved" and
+// "rejected" outcomes.
+type ApprovalSpec struct {
+	Name      string        `hcl:"name,label"`
+	Approvers []string      `hcl:"approvers"`
+	Reason    string        `hcl:"reason"`
+	Outcomes  []OutcomeSpec `hcl:"outcome,block"`
+}
+
 // StateSpec declares a non-step state (typically terminal or human-gated).
 type StateSpec struct {
 	Name     string `hcl:"name,label"`
@@ -144,8 +163,10 @@ type FSMGraph struct {
 	TargetState  string
 	Variables    map[string]*VariableNode // compiled variable declarations (W04)
 	Agents       map[string]*AgentNode
-	Steps        map[string]*StepNode  // by step name
-	States       map[string]*StateNode // by state name (terminal etc.)
+	Steps        map[string]*StepNode     // by step name
+	States       map[string]*StateNode    // by state name (terminal etc.)
+	Waits        map[string]*WaitNode     // by wait node name (W05)
+	Approvals    map[string]*ApprovalNode // by approval node name (W05)
 	Policy       Policy
 	// Order of step declarations (stable for diagnostics).
 	stepOrder []string
@@ -202,6 +223,25 @@ type StateNode struct {
 	Requires string
 }
 
+// WaitNode is a compiled wait node. Exactly one of Duration or Signal is set.
+// Duration form resumes automatically after the specified time.
+// Signal form pauses until an external Resume RPC fires.
+type WaitNode struct {
+	Name     string
+	Duration time.Duration     // zero means signal mode
+	Signal   string            // empty means duration mode
+	Outcomes map[string]string // outcome name -> target node name
+}
+
+// ApprovalNode is a compiled approval node. It pauses until a Resume RPC
+// delivers a decision of "approved" or "rejected".
+type ApprovalNode struct {
+	Name      string
+	Approvers []string
+	Reason    string
+	Outcomes  map[string]string // "approved" -> target, "rejected" -> target
+}
+
 // Policy holds resolved engine guards. Defaults are applied during compile.
 type Policy struct {
 	MaxTotalSteps  int
@@ -222,13 +262,19 @@ func (g *FSMGraph) IsTerminal(name string) bool {
 	return false
 }
 
-// Lookup returns ("step"|"state", true) if name exists in the graph.
+// Lookup returns ("step"|"state"|"wait"|"approval", true) if name exists in the graph.
 func (g *FSMGraph) Lookup(name string) (kind string, ok bool) {
 	if _, ok := g.Steps[name]; ok {
 		return "step", true
 	}
 	if _, ok := g.States[name]; ok {
 		return "state", true
+	}
+	if _, ok := g.Waits[name]; ok {
+		return "wait", true
+	}
+	if _, ok := g.Approvals[name]; ok {
+		return "approval", true
 	}
 	return "", false
 }

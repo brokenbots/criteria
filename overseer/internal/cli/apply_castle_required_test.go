@@ -42,48 +42,69 @@ workflow "requires_signal" {
 	if err == nil {
 		t.Fatal("expected error for signal wait in local mode")
 	}
-	if !strings.Contains(err.Error(), "signal waits require --castle <url>") {
+	if !strings.Contains(err.Error(), "signal waits require an orchestrator") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
-func TestApplyLocal_CastleRequiredWaitLifecycle(t *testing.T) {
-	// TODO(W05): lifecycle="wait" is not yet a valid HCL value; the compiler
-	// rejects it before ensureLocalModeSupported is reached.  Expand this test
-	// once W05 adds wait/approval lifecycle support to the workflow schema.
-	t.Skip("requires W05 lifecycle=wait compiler support")
+func TestApplyLocal_WaitSignalNode(t *testing.T) {
+	// W05: first-class wait { signal } node must be rejected in local mode.
+	t.Setenv("OVERSEER_STATE_DIR", t.TempDir())
 	workflowPath := writeWorkflowFile(t, `
-workflow "requires_wait_lifecycle" {
-  version = "0.1"
-  initial_state = "pause"
+workflow "wait_signal" {
+  version       = "0.1"
+  initial_state = "gate"
   target_state  = "done"
 
-  step "pause" {
-    adapter   = "shell"
-    lifecycle = "wait"
-    input {
-      command = "echo waiting"
-    }
-    outcome "success" { transition_to = "done" }
-    outcome "failure" { transition_to = "failed" }
+  wait "gate" {
+    signal = "ready"
+    outcome "received" { transition_to = "done" }
   }
 
   state "done" {
     terminal = true
-  }
-
-  state "failed" {
-    terminal = true
-    success = false
+    success  = true
   }
 }
 `)
 
 	err := runApply(context.Background(), applyOptions{workflowPath: workflowPath})
 	if err == nil {
-		t.Fatal("expected error for wait lifecycle step in local mode")
+		t.Fatal("expected error for wait { signal } in local mode")
 	}
-	if !strings.Contains(err.Error(), "signal waits require --castle <url>") {
+	if !strings.Contains(err.Error(), "signal waits require an orchestrator") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestApplyLocal_ApprovalNode(t *testing.T) {
+	// W05: approval nodes must be rejected in local mode.
+	t.Setenv("OVERSEER_STATE_DIR", t.TempDir())
+	workflowPath := writeWorkflowFile(t, `
+workflow "needs_approval" {
+  version       = "0.1"
+  initial_state = "review"
+  target_state  = "done"
+
+  approval "review" {
+    approvers = ["alice"]
+    reason    = "ship it?"
+    outcome "approved" { transition_to = "done" }
+    outcome "rejected" { transition_to = "done" }
+  }
+
+  state "done" {
+    terminal = true
+    success  = true
+  }
+}
+`)
+
+	err := runApply(context.Background(), applyOptions{workflowPath: workflowPath})
+	if err == nil {
+		t.Fatal("expected error for approval node in local mode")
+	}
+	if !strings.Contains(err.Error(), "approval nodes require an orchestrator") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

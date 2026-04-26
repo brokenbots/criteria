@@ -80,6 +80,14 @@ func setPayload(env *pb.Envelope, payload any) {
 		env.Payload = &pb.Envelope_VariableSet{VariableSet: p}
 	case *pb.StepOutputCaptured:
 		env.Payload = &pb.Envelope_StepOutputCaptured{StepOutputCaptured: p}
+	case *pb.WaitEntered:
+		env.Payload = &pb.Envelope_WaitEntered{WaitEntered: p}
+	case *pb.WaitResumed:
+		env.Payload = &pb.Envelope_WaitResumed{WaitResumed: p}
+	case *pb.ApprovalRequested:
+		env.Payload = &pb.Envelope_ApprovalRequested{ApprovalRequested: p}
+	case *pb.ApprovalDecision:
+		env.Payload = &pb.Envelope_ApprovalDecision{ApprovalDecision: p}
 	default:
 		panic(fmt.Sprintf("events.NewEnvelope: unsupported payload type %T", payload))
 	}
@@ -122,6 +130,14 @@ func TypeString(env *pb.Envelope) string {
 		return "variable.set"
 	case *pb.Envelope_StepOutputCaptured:
 		return "step.output_captured"
+	case *pb.Envelope_WaitEntered:
+		return "wait.entered"
+	case *pb.Envelope_WaitResumed:
+		return "wait.resumed"
+	case *pb.Envelope_ApprovalRequested:
+		return "approval.requested"
+	case *pb.Envelope_ApprovalDecision:
+		return "approval.decision"
 	default:
 		return ""
 	}

@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"sync"
 	"time"
 
 	"google.golang.org/protobuf/encoding/protojson"
@@ -32,6 +33,11 @@ type Sink struct {
 	// before the event is published. Use this to write a durable step
 	// checkpoint for crash recovery.
 	CheckpointFn func(step string, attempt int)
+	// pausedNode is set by OnRunPaused when the engine pauses execution (W05).
+	// Protected by pauseMu to guard against future concurrent access (e.g. W06
+	// parallel branch execution).
+	pauseMu    sync.Mutex
+	pausedNode string
 }
 
 func (s *Sink) publish(payload any) {
@@ -86,6 +92,58 @@ func (s *Sink) OnVariableSet(name, value, source string) {
 // records outputs (W04).
 func (s *Sink) OnStepOutputCaptured(step string, outputs map[string]string) {
 	s.publish(&pb.StepOutputCaptured{Step: step, Outputs: outputs})
+}
+
+// OnRunPaused is called by the engine loop when execution pauses at a wait
+// or approval node (W05). The Castle sink does not publish a separate event
+// here because WaitEntered / ApprovalRequested were already emitted; this
+// hook exists so the CLI pause/resume loop can detect the paused node.
+func (s *Sink) OnRunPaused(node, mode, signal string) {
+	s.Log.Info("run paused", "run_id", s.RunID, "node", node, "mode", mode, "signal", signal)
+	s.pauseMu.Lock()
+	s.pausedNode = node
+	s.pauseMu.Unlock()
+}
+
+// IsPaused returns true if the engine paused at a node waiting for a signal (W05).
+func (s *Sink) IsPaused() bool {
+	s.pauseMu.Lock()
+	defer s.pauseMu.Unlock()
+	return s.pausedNode != ""
+}
+
+// PausedAt returns the node name the engine is paused at (W05).
+func (s *Sink) PausedAt() string {
+	s.pauseMu.Lock()
+	defer s.pauseMu.Unlock()
+	return s.pausedNode
+}
+
+// ClearPaused clears the paused state after the resume signal is delivered (W05).
+func (s *Sink) ClearPaused() {
+	s.pauseMu.Lock()
+	s.pausedNode = ""
+	s.pauseMu.Unlock()
+}
+
+// OnWaitEntered emits a wait.entered event when the engine enters a wait node (W05).
+func (s *Sink) OnWaitEntered(node, mode, duration, signal string) {
+	s.publish(&pb.WaitEntered{Node: node, Mode: mode, Duration: duration, Signal: signal})
+}
+
+// OnWaitResumed emits a wait.resumed event when a wait node resolves (W05).
+func (s *Sink) OnWaitResumed(node, mode, signal string, payload map[string]string) {
+	s.publish(&pb.WaitResumed{Node: node, Mode: mode, Signal: signal, Payload: payload})
+}
+
+// OnApprovalRequested emits an approval.requested event (W05).
+func (s *Sink) OnApprovalRequested(node string, approvers []string, reason string) {
+	s.publish(&pb.ApprovalRequested{Node: node, Approvers: approvers, Reason: reason})
+}
+
+// OnApprovalDecision emits an approval.decision event (W05).
+func (s *Sink) OnApprovalDecision(node, decision, actor string, payload map[string]string) {
+	s.publish(&pb.ApprovalDecision{Node: node, Decision: decision, Actor: actor, Payload: payload})
 }
 
 // StepEventSink returns a per-step adapter sink that wraps Log/Adapter into

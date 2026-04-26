@@ -16,10 +16,10 @@ type Node interface {
 
 // Deps carries interpreter runtime dependencies shared by node implementations.
 type Deps struct {
-	Sessions           *plugin.SessionManager
-	Sink               Sink
+	Sessions            *plugin.SessionManager
+	Sink                Sink
 	SubWorkflowResolver SubWorkflowResolver
-	BranchScheduler    BranchScheduler
+	BranchScheduler     BranchScheduler
 }
 
 // UnknownNodeError indicates the graph does not contain the requested node.
@@ -34,6 +34,12 @@ func (e *UnknownNodeError) Error() string {
 func nodeFor(graph *workflow.FSMGraph, name string) (Node, error) {
 	if step, ok := graph.Steps[name]; ok {
 		return &stepNode{graph: graph, step: step}, nil
+	}
+	if wait, ok := graph.Waits[name]; ok {
+		return &waitNode{node: wait}, nil
+	}
+	if approval, ok := graph.Approvals[name]; ok {
+		return &approvalNode{node: approval}, nil
 	}
 	// TODO(1.6): parallelNode would call deps.BranchScheduler.Run(...).
 	if state, ok := graph.States[name]; ok {

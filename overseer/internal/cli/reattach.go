@@ -12,6 +12,7 @@ import (
 	"github.com/brokenbots/overlord/overseer/internal/plugin"
 	"github.com/brokenbots/overlord/overseer/internal/run"
 	castletrans "github.com/brokenbots/overlord/overseer/internal/transport/castle"
+	pb "github.com/brokenbots/overlord/shared/pb/overlord/v1"
 	"github.com/brokenbots/overlord/workflow"
 )
 
@@ -74,9 +75,8 @@ func resumeOneRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint, cli
 
 	log.Info("resuming run after crash",
 		"current_step", resp.CurrentStep,
-		"last_attempt", resp.Attempt)
-
-	nextAttempt := int(resp.Attempt) + 1
+		"last_attempt", resp.Attempt,
+		"status", resp.Status)
 
 	// Re-parse the workflow from the checkpoint path.
 	graph, parseErr := parseWorkflowFromPath(cp.WorkflowPath)
@@ -85,6 +85,82 @@ func resumeOneRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint, cli
 		RemoveStepCheckpoint(cp.RunID)
 		return
 	}
+
+	// If the run was paused when the Overseer crashed, re-enter the wait/approval
+	// node with WithPendingSignal so it immediately re-issues ErrPaused and waits
+	// for the real resume signal (W05).
+	if resp.Status == "paused" {
+		if streamErr := recoverClient.StartStreams(resumeCtx, cp.RunID); streamErr != nil {
+			log.Warn("failed to start Castle streams for paused run", "error", streamErr)
+			RemoveStepCheckpoint(cp.RunID)
+			return
+		}
+
+		sink := &run.Sink{
+			RunID:  cp.RunID,
+			Client: recoverClient,
+			Log:    log,
+		}
+
+		loader := plugin.NewLoader()
+		loader.RegisterBuiltin(shell.Name, plugin.BuiltinFactoryForAdapter(shell.New()))
+
+		restoredVars, restoreErr := workflow.RestoreVarScope(resp.VariableScope, graph)
+		if restoreErr != nil {
+			log.Warn("could not restore variable scope after pause reattach; starting with defaults", "error", restoreErr)
+		}
+
+		eng := engine.New(graph, loader, sink,
+			engine.WithResumedVars(restoredVars),
+			engine.WithPendingSignal(resp.PendingSignal),
+		)
+		if runErr := eng.RunFrom(resumeCtx, resp.CurrentStep, int(resp.Attempt)); runErr != nil {
+			log.Error("paused run re-entry failed", "error", runErr)
+			drainCtx, drainCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			recoverClient.Drain(drainCtx)
+			drainCancel()
+			RemoveStepCheckpoint(cp.RunID)
+			return
+		}
+
+		// If still paused after re-entry, wait for resume signal from Castle.
+		for sink.IsPaused() {
+			log.Info("run remains paused after reattach; waiting for resume",
+				"run_id", cp.RunID, "node", sink.PausedAt())
+			var resumeMsg *pb.ResumeRun
+			select {
+			case <-resumeCtx.Done():
+				drainCtx, drainCancel := context.WithTimeout(context.Background(), 5*time.Second)
+				recoverClient.Drain(drainCtx)
+				drainCancel()
+				return
+			case resumeMsg = <-recoverClient.ResumeCh():
+			}
+			if resumeMsg.RunId != cp.RunID {
+				log.Warn("received resume for unexpected run", "expected", cp.RunID, "got", resumeMsg.RunId)
+				continue
+			}
+			pausedNode := sink.PausedAt()
+			sink.ClearPaused()
+			resumedEng := engine.New(graph, loader, sink,
+				engine.WithResumedVars(eng.VarScope()),
+				engine.WithResumePayload(resumeMsg.Payload),
+			)
+			if runErr := resumedEng.RunFrom(resumeCtx, pausedNode, 1); runErr != nil {
+				log.Error("run failed after resume", "error", runErr)
+				break
+			}
+			eng = resumedEng
+		}
+
+		drainCtx, drainCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		recoverClient.Drain(drainCtx)
+		drainCancel()
+		RemoveStepCheckpoint(cp.RunID)
+		return
+	}
+
+	nextAttempt := int(resp.Attempt) + 1
 
 	// Check max_step_retries: if resuming would exceed policy, fail the run.
 	maxAttempts := 1 + graph.Policy.MaxStepRetries
