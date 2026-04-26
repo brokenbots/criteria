@@ -76,6 +76,18 @@ func (s *Sink) OnStepResumed(step string, attempt int, reason string) {
 	s.publish(&pb.StepResumed{Step: step, Attempt: int32(attempt), Reason: reason})
 }
 
+// OnVariableSet emits a variable.set event when a workflow variable is
+// established (W04). source is "default" for HCL-declared defaults.
+func (s *Sink) OnVariableSet(name, value, source string) {
+	s.publish(&pb.VariableSet{Name: name, Value: value, Source: source})
+}
+
+// OnStepOutputCaptured emits a step.output_captured event after a step
+// records outputs (W04).
+func (s *Sink) OnStepOutputCaptured(step string, outputs map[string]string) {
+	s.publish(&pb.StepOutputCaptured{Step: step, Outputs: outputs})
+}
+
 // StepEventSink returns a per-step adapter sink that wraps Log/Adapter into
 // step.log / adapter.event envelopes.
 func (s *Sink) StepEventSink(step string) adapter.EventSink {

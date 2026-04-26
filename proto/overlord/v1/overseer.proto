@@ -107,6 +107,10 @@ message ReattachRunResponse {
   // Server's judgment: false when the run is terminal or belongs to a different
   // overseer.
   bool can_resume = 5;
+  // JSON-encoded variable scope snapshot at the time of the last persisted
+  // StepOutputCaptured or VariableSet event. Empty string means no scope has
+  // been persisted yet. Field is permanent (W04).
+  string variable_scope = 6; // permanent (W04)
 }
 
 // --- Streaming types ---

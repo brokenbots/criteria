@@ -12,6 +12,7 @@ import (
 	engineruntime "github.com/brokenbots/overlord/overseer/internal/engine/runtime"
 	"github.com/brokenbots/overlord/overseer/internal/plugin"
 	"github.com/brokenbots/overlord/workflow"
+	"github.com/zclconf/go-cty/cty"
 )
 
 // Sink receives engine-level events. Implementations (typically the Castle
@@ -19,6 +20,9 @@ import (
 // streaming. The engine never blocks waiting for the sink. The interpreter
 // loop invokes OnRunStarted/OnRunCompleted/OnRunFailed. stepNode invokes
 // OnStepEntered/OnStepOutcome/OnStepTransition and StepEventSink.
+//
+// OnVariableSet and OnStepOutputCaptured were added in W04. This is an
+// internal interface; only Castle and Local sinks implement it.
 type Sink interface {
 	OnRunStarted(workflowName, initialStep string)
 	OnRunCompleted(finalState string, success bool)
@@ -27,6 +31,10 @@ type Sink interface {
 	OnStepOutcome(step, outcome string, duration time.Duration, err error)
 	OnStepTransition(from, to, viaOutcome string)
 	OnStepResumed(step string, attempt int, reason string)
+	// OnVariableSet is emitted when a workflow variable value is established (W04).
+	OnVariableSet(name, value, source string)
+	// OnStepOutputCaptured is emitted after a step produces captured outputs (W04).
+	OnStepOutputCaptured(step string, outputs map[string]string)
 	// StepEventSink returns the per-step adapter sink (logs + adapter events).
 	StepEventSink(step string) adapter.EventSink
 }
@@ -38,6 +46,8 @@ type Engine struct {
 	sink                Sink
 	subWorkflowResolver SubWorkflowResolver
 	branchScheduler     BranchScheduler
+	// resumedVars, when non-nil, overrides SeedVarsFromGraph at run start (W04).
+	resumedVars map[string]cty.Value
 }
 
 func New(graph *workflow.FSMGraph, loader plugin.Loader, sink Sink, opts ...Option) *Engine {
@@ -79,9 +89,20 @@ func (e *Engine) RunFrom(ctx context.Context, startStep string, initialAttempt i
 // runLoop is the shared execution loop. firstStepAttempt is the attempt index
 // used for the initial step when resuming; subsequent steps start at attempt 1.
 func (e *Engine) runLoop(ctx context.Context, sessions *plugin.SessionManager, current string, firstStepAttempt int) error {
+	vars := workflow.SeedVarsFromGraph(e.graph)
+	if e.resumedVars != nil {
+		vars = e.resumedVars
+	} else {
+		// Fresh run: emit OnVariableSet for each variable that has a default.
+		for name, node := range e.graph.Variables {
+			if node.Default != cty.NilVal {
+				e.sink.OnVariableSet(name, workflow.CtyValueToString(node.Default), "default")
+			}
+		}
+	}
 	st := &RunState{
 		Current:          current,
-		Vars:             nil,
+		Vars:             vars,
 		PendingSignal:    "",
 		Iter:             nil,
 		ParentRunID:      "",

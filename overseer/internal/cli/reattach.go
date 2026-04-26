@@ -130,7 +130,14 @@ func resumeOneRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint, cli
 	loader := plugin.NewLoader()
 	loader.RegisterBuiltin(shell.Name, plugin.BuiltinFactoryForAdapter(shell.New()))
 
-	eng := engine.New(graph, loader, sink)
+	// Restore the variable scope from Castle so expressions referencing
+	// prior step outputs are evaluated correctly after crash recovery (W04).
+	restoredVars, restoreErr := workflow.RestoreVarScope(resp.VariableScope, graph)
+	if restoreErr != nil {
+		log.Warn("could not restore variable scope; starting with defaults", "error", restoreErr)
+	}
+
+	eng := engine.New(graph, loader, sink, engine.WithResumedVars(restoredVars))
 	if runErr := eng.RunFrom(resumeCtx, resp.CurrentStep, nextAttempt); runErr != nil {
 		log.Error("resumed run failed", "error", runErr)
 	} else {

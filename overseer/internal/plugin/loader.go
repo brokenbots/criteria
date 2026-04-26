@@ -230,7 +230,14 @@ func (p *rpcPlugin) Execute(ctx context.Context, sessionID string, step *workflo
 			continue
 		}
 		if resultEvt := evt.GetResult(); resultEvt != nil {
-			return adapter.Result{Outcome: resultEvt.GetOutcome()}, nil
+			result := adapter.Result{Outcome: resultEvt.GetOutcome()}
+			if outs := resultEvt.GetOutputs(); len(outs) > 0 {
+				result.Outputs = make(map[string]string, len(outs))
+				for k, v := range outs {
+					result.Outputs[k] = v
+				}
+			}
+			return result, nil
 		}
 	}
 }

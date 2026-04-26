@@ -40,6 +40,7 @@ func Compile(spec *Spec, schemas map[string]AdapterInfo) (*FSMGraph, hcl.Diagnos
 		Name:         spec.Name,
 		InitialState: spec.InitialState,
 		TargetState:  spec.TargetState,
+		Variables:    map[string]*VariableNode{},
 		Agents:       map[string]*AgentNode{},
 		Steps:        map[string]*StepNode{},
 		States:       map[string]*StateNode{},
@@ -54,7 +55,50 @@ func Compile(spec *Spec, schemas map[string]AdapterInfo) (*FSMGraph, hcl.Diagnos
 		}
 	}
 
-	// First pass: declare agents and states, detect duplicates.
+	// First pass: compile variables, detect duplicates and type errors.
+	for _, vs := range spec.Variables {
+		name := vs.Name
+		if _, dup := g.Variables[name]; dup {
+			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("duplicate variable %q", name)})
+			continue
+		}
+		typ, err := parseVariableType(vs.TypeStr)
+		if err != nil {
+			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("variable %q: %v", name, err)})
+			continue
+		}
+		defaultVal := cty.NilVal
+		if vs.Remain != nil {
+			attrs, d := vs.Remain.JustAttributes()
+			diags = append(diags, d...)
+			if defAttr, ok := attrs["default"]; ok {
+				var defDiags hcl.Diagnostics
+				defaultVal, defDiags = defAttr.Expr.Value(nil)
+				if defDiags.HasErrors() {
+					diags = append(diags, defDiags...)
+					defaultVal = cty.NilVal
+				} else {
+					// Coerce to declared type.
+					defaultVal, err = convertCtyValue(defaultVal, typ)
+					if err != nil {
+						diags = append(diags, &hcl.Diagnostic{
+							Severity: hcl.DiagError,
+							Summary:  fmt.Sprintf("variable %q: default value does not match declared type %q: %v", name, vs.TypeStr, err),
+						})
+						defaultVal = cty.NilVal
+					}
+				}
+			}
+		}
+		g.Variables[name] = &VariableNode{
+			Name:        name,
+			Type:        typ,
+			Default:     defaultVal,
+			Description: vs.Description,
+		}
+	}
+
+	// Second pass: declare agents and states, detect duplicates.
 	for _, ag := range spec.Agents {
 		name := ag.Name
 		if _, dup := g.Agents[name]; dup {
@@ -185,8 +229,13 @@ func Compile(spec *Spec, schemas map[string]AdapterInfo) (*FSMGraph, hcl.Diagnos
 			}
 			timeout = d
 		}
-		// Decode input { } block into a string map.
+		// Decode input { } block into a string map and collect raw expressions.
+		// Attributes with variable references (e.g. "${var.env}") cannot be
+		// evaluated at compile time; validateSchemaAttrs skips value evaluation
+		// for them (see permissive expression handling). The engine re-evaluates
+		// all InputExprs at step entry via BuildEvalContext(rs.Vars).
 		var inputMap map[string]string
+		var inputExprs map[string]hcl.Expression
 		if sp.Input != nil {
 			attrs, d := sp.Input.Remain.JustAttributes()
 			diags = append(diags, d...)
@@ -210,6 +259,11 @@ func Compile(spec *Spec, schemas map[string]AdapterInfo) (*FSMGraph, hcl.Diagnos
 				inputMap, d = decodeAttrsToStringMap(attrs)
 			}
 			diags = append(diags, d...)
+			// Collect all attribute expressions for runtime evaluation (W04).
+			inputExprs = make(map[string]hcl.Expression, len(attrs))
+			for k, attr := range attrs {
+				inputExprs[k] = attr.Expr
+			}
 		}
 		node := &StepNode{
 			Name:       sp.Name,
@@ -218,6 +272,7 @@ func Compile(spec *Spec, schemas map[string]AdapterInfo) (*FSMGraph, hcl.Diagnos
 			Lifecycle:  sp.Lifecycle,
 			OnCrash:    effectiveOnCrash,
 			Input:      inputMap,
+			InputExprs: inputExprs,
 			Timeout:    timeout,
 			Outcomes:   map[string]string{},
 			AllowTools: allowToolsForStep(sp, spec),
@@ -367,15 +422,21 @@ func unionAllowTools(stepTools, workflowTools []string) []string {
 
 // decodeAttrsToStringMap converts pre-fetched hcl.Attributes into a map[string]string.
 // Numbers and bools are converted to their string representations.
+// Attributes that cannot be evaluated without an EvalContext (e.g. variable
+// references like "${var.env}") are stored as empty strings and deferred to
+// runtime evaluation via InputExprs / BuildEvalContext (W04).
 func decodeAttrsToStringMap(attrs hcl.Attributes) (map[string]string, hcl.Diagnostics) {
 	var diags hcl.Diagnostics
 	result := make(map[string]string, len(attrs))
 	for k, attr := range attrs {
 		val, d := attr.Expr.Value(nil)
-		diags = append(diags, d...)
 		if d.HasErrors() {
+			// Expression needs an EvalContext (e.g. variable references).
+			// Store an empty placeholder; the engine evaluates at step entry.
+			result[k] = ""
 			continue
 		}
+		diags = append(diags, d...)
 		switch val.Type() {
 		case cty.String:
 			result[k] = val.AsString()
@@ -440,10 +501,14 @@ func validateSchemaAttrs(context string, attrs hcl.Attributes, schema map[string
 			continue
 		}
 		val, d := attr.Expr.Value(nil)
-		diags = append(diags, d...)
 		if d.HasErrors() {
+			// Expression needs an EvalContext (e.g. variable references).
+			// Store an empty placeholder; the engine evaluates at step entry.
+			// Unknown-key check already ran above; type check is deferred to runtime.
+			result[k] = ""
 			continue
 		}
+		diags = append(diags, d...)
 		// Type check against declared schema type.
 		if len(schema) > 0 {
 			r := attr.Expr.StartRange()
@@ -504,11 +569,11 @@ func validateSchemaAttrs(context string, attrs hcl.Attributes, schema map[string
 		}
 	}
 
-	// Check required fields.
+	// Check required fields. Use attrs for presence check so that expression-
+	// valued attributes (deferred to runtime) are not reported as missing.
 	for k, field := range schema {
 		if field.Required {
-			v, present := result[k]
-			if !present || strings.TrimSpace(v) == "" {
+			if _, present := attrs[k]; !present {
 				var subject *hcl.Range
 				if missingRange.Filename != "" {
 					r := missingRange
@@ -540,4 +605,37 @@ func isListStringValue(val cty.Value) bool {
 		}
 	}
 	return true
+}
+
+// parseVariableType converts a type string from a variable declaration into
+// a cty.Type. Only the subset documented in W04 is supported.
+func parseVariableType(typeStr string) (cty.Type, error) {
+	switch strings.TrimSpace(typeStr) {
+	case "", "string":
+		return cty.String, nil
+	case "number":
+		return cty.Number, nil
+	case "bool":
+		return cty.Bool, nil
+	case "list(string)":
+		return cty.List(cty.String), nil
+	case "list(number)":
+		return cty.List(cty.Number), nil
+	case "list(bool)":
+		return cty.List(cty.Bool), nil
+	case "map(string)":
+		return cty.Map(cty.String), nil
+	default:
+		return cty.NilType, fmt.Errorf("unsupported type %q; supported: string, number, bool, list(string), list(number), list(bool), map(string)", typeStr)
+	}
+}
+
+// convertCtyValue verifies that v matches typ exactly. No implicit coercions
+// are performed: a number default declared on a string variable is an error,
+// matching the W04 rule that "default must match declared type".
+func convertCtyValue(v cty.Value, typ cty.Type) (cty.Value, error) {
+	if v.Type().Equals(typ) {
+		return v, nil
+	}
+	return cty.NilVal, fmt.Errorf("default value is %s but variable is declared as %s", v.Type().FriendlyName(), typ.FriendlyName())
 }

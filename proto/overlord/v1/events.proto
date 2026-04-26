@@ -45,6 +45,8 @@ message Envelope {
     OverseerHeartbeat overseer_heartbeat = 18;
     OverseerDisconnected overseer_disconnected = 19;
     StepResumed step_resumed = 20;
+    VariableSet variable_set = 21;                          // permanent (W04)
+    StepOutputCaptured step_output_captured = 22;           // permanent (W04)
     // WatchReady is a protocol-level sentinel sent once at the start of a
     // WatchRun server-stream, after any persisted-event replay, to flush
     // response headers so the client's WatchRun call can return. It has no
@@ -150,4 +152,20 @@ message StepResumed {
 // solely to flush Connect server-stream response headers so the client's
 // WatchRun call can return before any real event is published.
 message WatchReady {
+}
+
+// VariableSet — emitted when a workflow variable value is established.
+// In W04 this fires at run start for each variable's default value.
+// All field numbers are permanent.
+message VariableSet {
+  string name = 1;   // permanent
+  string value = 2;  // string-rendered cty value for log/UI; permanent
+  string source = 3; // "default" | "step_output:<step>"; permanent
+}
+
+// StepOutputCaptured — emitted after a step completes with captured outputs.
+// All field numbers are permanent.
+message StepOutputCaptured {
+  string step = 1;                  // permanent
+  map<string, string> outputs = 2;  // permanent
 }

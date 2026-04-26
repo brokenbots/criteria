@@ -76,6 +76,10 @@ func setPayload(env *pb.Envelope, payload any) {
 		env.Payload = &pb.Envelope_StepResumed{StepResumed: p}
 	case *pb.WatchReady:
 		env.Payload = &pb.Envelope_WatchReady{WatchReady: p}
+	case *pb.VariableSet:
+		env.Payload = &pb.Envelope_VariableSet{VariableSet: p}
+	case *pb.StepOutputCaptured:
+		env.Payload = &pb.Envelope_StepOutputCaptured{StepOutputCaptured: p}
 	default:
 		panic(fmt.Sprintf("events.NewEnvelope: unsupported payload type %T", payload))
 	}
@@ -114,6 +118,10 @@ func TypeString(env *pb.Envelope) string {
 		return "step.resumed"
 	case *pb.Envelope_WatchReady:
 		return "watch.ready"
+	case *pb.Envelope_VariableSet:
+		return "variable.set"
+	case *pb.Envelope_StepOutputCaptured:
+		return "step.output_captured"
 	default:
 		return ""
 	}

@@ -72,6 +72,16 @@ func (s *LocalSink) OnStepResumed(step string, attempt int, reason string) {
 	s.emit("StepResumed", &pb.StepResumed{Step: step, Attempt: int32(attempt), Reason: reason})
 }
 
+// OnVariableSet emits a VariableSet event (W04).
+func (s *LocalSink) OnVariableSet(name, value, source string) {
+	s.emit("VariableSet", &pb.VariableSet{Name: name, Value: value, Source: source})
+}
+
+// OnStepOutputCaptured emits a StepOutputCaptured event (W04).
+func (s *LocalSink) OnStepOutputCaptured(step string, outputs map[string]string) {
+	s.emit("StepOutputCaptured", &pb.StepOutputCaptured{Step: step, Outputs: outputs})
+}
+
 func (s *LocalSink) StepEventSink(step string) adapter.EventSink {
 	return &localStepSink{parent: s, step: step}
 }

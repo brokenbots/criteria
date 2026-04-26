@@ -76,7 +76,8 @@ message PermissionRequest {
 }
 
 message ExecuteResult {
-  string outcome = 1; // permanent
+  string outcome = 1;                     // permanent
+  map<string, string> outputs = 2;        // permanent (W04)
 }
 
 message PermitRequest {

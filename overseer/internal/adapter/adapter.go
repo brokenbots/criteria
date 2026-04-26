@@ -28,6 +28,9 @@ type Result struct {
 	// On error, the engine treats the result as the conventional "failure"
 	// outcome (if mapped) regardless of this value.
 	Outcome string
+	// Outputs carries key/value pairs captured from the step execution (W04).
+	// Keys are defined by the adapter's OutputSchema. Nil means no outputs.
+	Outputs map[string]string
 }
 
 // Adapter executes a single step. The engine calls Execute once per step

@@ -4,10 +4,20 @@ import (
 	"context"
 
 	"github.com/brokenbots/overlord/workflow"
+	"github.com/zclconf/go-cty/cty"
 )
 
 // Option applies optional engine configuration.
 type Option func(*Engine)
+
+// WithResumedVars sets the vars map to use at run start instead of
+// SeedVarsFromGraph. Used during crash recovery to restore captured step
+// outputs and variable state (W04).
+func WithResumedVars(vars map[string]cty.Value) Option {
+	return func(e *Engine) {
+		e.resumedVars = vars
+	}
+}
 
 // WithSubWorkflowResolver configures sub-workflow resolution support.
 func WithSubWorkflowResolver(r SubWorkflowResolver) Option {

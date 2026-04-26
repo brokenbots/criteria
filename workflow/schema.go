@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/hcl/v2"
+	"github.com/zclconf/go-cty/cty"
 )
 
 // Spec is the parsed (but unvalidated) HCL workflow document.
@@ -14,11 +15,21 @@ type Spec struct {
 	Version      string           `hcl:"version"`
 	InitialState string           `hcl:"initial_state"`
 	TargetState  string           `hcl:"target_state"`
+	Variables    []VariableSpec   `hcl:"variable,block"`
 	Agents       []AgentSpec      `hcl:"agent,block"`
 	Steps        []StepSpec       `hcl:"step,block"`
 	States       []StateSpec      `hcl:"state,block"`
 	Policy       *PolicySpec      `hcl:"policy,block"`
 	Permissions  *PermissionsSpec `hcl:"permissions,block"`
+}
+
+// VariableSpec is the parsed (but unvalidated) variable declaration.
+// The `type` and `default` attributes are decoded by the compiler.
+type VariableSpec struct {
+	Name        string   `hcl:"name,label"`
+	TypeStr     string   `hcl:"type,optional"`
+	Description string   `hcl:"description,optional"`
+	Remain      hcl.Body `hcl:",remain"` // captures the "default" expression
 }
 
 // ConfigSpec holds the raw HCL body of an `agent.config { ... }` block.
@@ -95,6 +106,7 @@ type ConfigField struct {
 type AdapterInfo struct {
 	ConfigSchema map[string]ConfigField // schema for agent-level `config { }` blocks
 	InputSchema  map[string]ConfigField // schema for per-step `input { }` blocks
+	OutputSchema map[string]ConfigField // declared outputs the adapter promises to populate (W04)
 }
 
 // OutcomeSpec maps an adapter outcome name to a transition target.
@@ -130,12 +142,22 @@ type FSMGraph struct {
 	Name         string
 	InitialState string
 	TargetState  string
+	Variables    map[string]*VariableNode // compiled variable declarations (W04)
 	Agents       map[string]*AgentNode
 	Steps        map[string]*StepNode  // by step name
 	States       map[string]*StateNode // by state name (terminal etc.)
 	Policy       Policy
 	// Order of step declarations (stable for diagnostics).
 	stepOrder []string
+}
+
+// VariableNode is a compiled variable declaration.
+// Variables are read-only in W04; write support is tracked as future work.
+type VariableNode struct {
+	Name        string
+	Type        cty.Type
+	Default     cty.Value // cty.NilVal when no default was declared
+	Description string
 }
 
 // AgentNode is a compiled long-lived adapter declaration.
@@ -155,10 +177,17 @@ type StepNode struct {
 	OnCrash   string
 	// Input holds the per-step adapter input from the `input { }` block.
 	// Wire name on ExecuteRequest proto remains "config" to avoid breaking changes;
-	// only the Go-side field is renamed here. W04 will upgrade to map[string]cty.Value.
-	Input    map[string]string
-	Timeout  time.Duration     // zero = no timeout
-	Outcomes map[string]string // outcome name -> target node name (step or state)
+	// only the Go-side field is renamed here.
+	// For steps with variable expressions, Input may contain empty strings for
+	// expression-valued attributes; the engine evaluates InputExprs at step entry.
+	Input map[string]string
+	// InputExprs holds the raw HCL attribute expressions from the input{} block.
+	// The engine evaluates these at step entry via BuildEvalContext(rs.Vars) to
+	// produce the effective input map passed to the adapter. If nil, Input is
+	// used directly (static-only inputs, e.g. lifecycle steps).
+	InputExprs map[string]hcl.Expression
+	Timeout    time.Duration     // zero = no timeout
+	Outcomes   map[string]string // outcome name -> target node name (step or state)
 	// AllowTools is the union of step-level and workflow-level allow_tools glob
 	// patterns. An empty slice means deny-all (default). Only valid on
 	// execute-shape steps (Lifecycle == "").
