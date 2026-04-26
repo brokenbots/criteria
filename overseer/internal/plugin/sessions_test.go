@@ -233,7 +233,7 @@ func TestSessionManagerPermissionGrantAndDeny(t *testing.T) {
 	// allow_tools = ["read_file"]; plugin requests read_file + write_file
 	step := &workflow.StepNode{
 		Name:       "run",
-		Config:     map[string]string{"perm_tools": "read_file,write_file"},
+		Input:      map[string]string{"perm_tools": "read_file,write_file"},
 		AllowTools: []string{"read_file"},
 	}
 	sink := &adapterEventCollector{}
@@ -293,7 +293,7 @@ func TestSessionManagerDefaultDenyAll(t *testing.T) {
 	// No AllowTools — default deny policy
 	step := &workflow.StepNode{
 		Name:   "run",
-		Config: map[string]string{"perm_tools": "read_file"},
+		Input: map[string]string{"perm_tools": "read_file"},
 	}
 	sink := &adapterEventCollector{}
 	result, err := sm.Execute(context.Background(), "agent", step, sink)
@@ -332,7 +332,7 @@ func TestSessionManagerShellFingerprintAllowlist(t *testing.T) {
 
 	step := &workflow.StepNode{
 		Name:       "run",
-		Config:     map[string]string{"perm_tools": "shell|git status,shell|rm -rf /"},
+		Input:      map[string]string{"perm_tools": "shell|git status,shell|rm -rf /"},
 		AllowTools: []string{"shell:git *"},
 	}
 	sink := &adapterEventCollector{}

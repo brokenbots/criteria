@@ -17,10 +17,29 @@ service AdapterPluginService {
 
 message InfoRequest {}
 
+// ConfigFieldProto describes a single field in an adapter's config or input schema.
+// Added in W02; all field numbers are permanent.
+message ConfigFieldProto {
+  bool required = 1; // permanent
+  // type is one of: "string", "number", "bool", "list_string"
+  string type = 2; // permanent
+  string doc = 3; // permanent
+}
+
+// AdapterSchemaProto holds a named set of config fields for schema validation.
+// Added in W02; all field numbers are permanent.
+message AdapterSchemaProto {
+  map<string, ConfigFieldProto> fields = 1; // permanent
+}
+
 message InfoResponse {
   string name = 1; // permanent
   string version = 2; // permanent
   repeated string capabilities = 3; // permanent
+  // config_schema and input_schema were added in W02. Legacy plugins that do
+  // not return these fields will be treated as permissive (any keys accepted).
+  AdapterSchemaProto config_schema = 4; // permanent (W02)
+  AdapterSchemaProto input_schema = 5; // permanent (W02)
 }
 
 message OpenSessionRequest {

@@ -55,7 +55,13 @@ func NewRunCmd() *cobra.Command {
 			if diags.HasErrors() {
 				return fmt.Errorf("parse: %s", diags.Error())
 			}
-			graph, diags := workflow.Compile(spec)
+
+			// Build loader early so we can collect adapter schemas for compile-time validation.
+			loader := plugin.NewLoader()
+			loader.RegisterBuiltin(shell.Name, plugin.BuiltinFactoryForAdapter(shell.New()))
+			schemas := collectSchemas(ctx, loader, spec, log)
+
+			graph, diags := workflow.Compile(spec, schemas)
 			if diags.HasErrors() {
 				return fmt.Errorf("compile: %s", diags.Error())
 			}
@@ -108,9 +114,6 @@ func NewRunCmd() *cobra.Command {
 					}
 				}
 			}()
-
-			loader := plugin.NewLoader()
-			loader.RegisterBuiltin(shell.Name, plugin.BuiltinFactoryForAdapter(shell.New()))
 
 			sink := &run.Sink{
 				RunID:  runID,

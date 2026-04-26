@@ -155,7 +155,15 @@ func parseWorkflowFromPath(path string) (*workflow.FSMGraph, error) {
 	if diags.HasErrors() {
 		return nil, fmt.Errorf("parse workflow: %s", diags.Error())
 	}
-	graph, diags := workflow.Compile(spec)
+
+	// Collect adapter schemas for compile-time validation.
+	ctx := context.Background()
+	loader := plugin.NewLoader()
+	loader.RegisterBuiltin(shell.Name, plugin.BuiltinFactoryForAdapter(shell.New()))
+	schemas := collectSchemas(ctx, loader, spec, nil)
+	_ = loader.Shutdown(ctx)
+
+	graph, diags := workflow.Compile(spec, schemas)
 	if diags.HasErrors() {
 		return nil, fmt.Errorf("compile workflow: %s", diags.Error())
 	}

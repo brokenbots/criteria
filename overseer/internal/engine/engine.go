@@ -144,7 +144,7 @@ func (e *Engine) bootstrapSessionsForResume(ctx context.Context, sessions *plugi
 			if !ok {
 				return fmt.Errorf("unknown agent %q in step %q", step.Agent, step.Name)
 			}
-			if err := sessions.Open(ctx, step.Agent, agent.Adapter, step.OnCrash, step.Config); err != nil && !errors.Is(err, plugin.ErrSessionAlreadyOpen) {
+			if err := sessions.Open(ctx, step.Agent, agent.Adapter, step.OnCrash, agent.Config); err != nil && !errors.Is(err, plugin.ErrSessionAlreadyOpen) {
 				return fmt.Errorf("restore session for agent %q: %w", step.Agent, err)
 			}
 		case "close":

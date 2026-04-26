@@ -9,10 +9,20 @@ workflow "two_agent_loop" {
 
   agent "executor" {
     adapter = "copilot"
+    # Session-open config moves from the open-step body to the agent block (W02).
+    # The open lifecycle step no longer carries config.
+    config {
+      max_turns     = 8
+      system_prompt = "You are the executor in a two-agent engineering loop. Implement the next item from the task list using small focused changes, then stop."
+    }
   }
 
   agent "reviewer" {
     adapter = "copilot"
+    config {
+      max_turns     = 8
+      system_prompt = "You are the reviewer in a two-agent engineering loop. Review the latest changes for correctness and clarity."
+    }
   }
 
   step "open_executor" {
@@ -34,9 +44,8 @@ workflow "two_agent_loop" {
   step "execute" {
     agent       = "executor"
     allow_tools = ["read_file", "write_file", "shell:git diff", "shell:go build*", "shell:go test*"]
-    config = {
-      max_turns = "8"
-      prompt    = "You are the executor in a two-agent engineering loop. Implement the next item from the task list using small focused changes, then stop. End your final line with exactly one of: RESULT: needs_review | RESULT: success | RESULT: failure. Use RESULT: needs_review when you are ready for review."
+    input {
+      prompt = "Implement the next item from the task list using small focused changes, then stop. End your final line with exactly one of: RESULT: needs_review | RESULT: success | RESULT: failure. Use RESULT: needs_review when you are ready for review."
     }
 
     outcome "needs_review" { transition_to = "review" }
@@ -47,9 +56,8 @@ workflow "two_agent_loop" {
   step "review" {
     agent       = "reviewer"
     allow_tools = ["read_file", "shell:git diff"]
-    config = {
-      max_turns = "8"
-      prompt    = "You are the reviewer in a two-agent engineering loop. Review the latest changes for correctness and clarity. End your final line with exactly one of: RESULT: approved | RESULT: changes_requested | RESULT: needs_review | RESULT: failure. Use RESULT: approved only when the changes are acceptable. Use RESULT: needs_review when more executor work or human attention is needed."
+    input {
+      prompt = "Review the latest changes for correctness and clarity. End your final line with exactly one of: RESULT: approved | RESULT: changes_requested | RESULT: needs_review | RESULT: failure. Use RESULT: approved only when the changes are acceptable. Use RESULT: needs_review when more executor work or human attention is needed."
     }
 
     outcome "approved"          { transition_to = "close_reviewer_done" }

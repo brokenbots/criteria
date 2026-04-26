@@ -120,6 +120,16 @@ func (p *copilotPlugin) Info(_ context.Context, _ *pb.InfoRequest) (*pb.InfoResp
 			"permission_gating",
 			"structured_events",
 		},
+		ConfigSchema: &pb.AdapterSchemaProto{Fields: map[string]*pb.ConfigFieldProto{
+			"model":             {Type: "string", Doc: "Copilot model to use for this session."},
+			"working_directory": {Type: "string", Doc: "Working directory for tool invocations."},
+			"max_turns":         {Type: "number", Doc: "Maximum assistant turns per Execute call (default: unlimited)."},
+			"system_prompt":     {Type: "string", Doc: "System prompt prepended at session open."},
+		}},
+		InputSchema: &pb.AdapterSchemaProto{Fields: map[string]*pb.ConfigFieldProto{
+			"prompt":    {Required: true, Type: "string", Doc: "User prompt to send to the assistant."},
+			"max_turns": {Type: "number", Doc: "Per-step override for max assistant turns."},
+		}},
 	}, nil
 }
 
@@ -140,6 +150,9 @@ func (p *copilotPlugin) OpenSession(ctx context.Context, req *pb.OpenSessionRequ
 	}
 	if wd := strings.TrimSpace(cfg["working_directory"]); wd != "" {
 		sessionConfig.WorkingDirectory = wd
+	}
+	if sp := strings.TrimSpace(cfg["system_prompt"]); sp != "" {
+		sessionConfig.SystemMessage = &copilot.SystemMessageConfig{Content: sp}
 	}
 
 	session, err := client.CreateSession(ctx, sessionConfig)

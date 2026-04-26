@@ -6,7 +6,7 @@ workflow "perf_1000_logs" {
 
   step "generate_logs" {
     adapter = "shell"
-    config = {
+    input {
       command = "for i in {1..1000}; do echo \"Log line $i: This is a test log entry to measure throughput and latency.\"; done"
     }
 

@@ -6,21 +6,21 @@ workflow "agent_lifecycle_noop" {
   agent "demo" {
     adapter  = "noop"
     on_crash = "fail"
+    config {
+      bootstrap = "true"
+    }
   }
 
   step "open_agent" {
     agent     = "demo"
     lifecycle = "open"
-    config = {
-      bootstrap = "true"
-    }
     outcome "success" { transition_to = "run_agent" }
     outcome "failure" { transition_to = "failed" }
   }
 
   step "run_agent" {
     agent = "demo"
-    config = {
+    input {
       prompt = "hello"
     }
     outcome "success" { transition_to = "close_agent" }

@@ -37,6 +37,7 @@ type Info struct {
 	Name         string
 	Version      string
 	Capabilities []string
+	AdapterInfo  workflow.AdapterInfo
 }
 
 type DiscoveryFunc func(name string) (string, error)
@@ -164,7 +165,12 @@ func (p *rpcPlugin) Info(ctx context.Context) (Info, error) {
 	if err != nil {
 		return Info{}, err
 	}
-	return Info{Name: resp.GetName(), Version: resp.GetVersion(), Capabilities: append([]string(nil), resp.GetCapabilities()...)}, nil
+	return Info{
+		Name:         resp.GetName(),
+		Version:      resp.GetVersion(),
+		Capabilities: append([]string(nil), resp.GetCapabilities()...),
+		AdapterInfo:  AdapterInfoFromProto(resp),
+	}, nil
 }
 
 func (p *rpcPlugin) OpenSession(ctx context.Context, id string, config map[string]string) error {
@@ -173,7 +179,7 @@ func (p *rpcPlugin) OpenSession(ctx context.Context, id string, config map[strin
 }
 
 func (p *rpcPlugin) Execute(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
-	recv, err := p.rpc.Execute(ctx, &pb.ExecuteRequest{SessionId: sessionID, StepName: step.Name, Config: cloneConfig(step.Config)})
+	recv, err := p.rpc.Execute(ctx, &pb.ExecuteRequest{SessionId: sessionID, StepName: step.Name, Config: cloneConfig(step.Input)})
 	if err != nil {
 		return adapter.Result{Outcome: "failure"}, err
 	}
@@ -278,4 +284,42 @@ func stringsTrim(s string) string {
 		s = s[:len(s)-1]
 	}
 	return s
+}
+
+// AdapterInfoFromProto translates a proto InfoResponse into a workflow.AdapterInfo.
+// Legacy plugins that do not populate config_schema or input_schema will yield
+// an empty AdapterInfo (permissive: any keys accepted by the compiler).
+func AdapterInfoFromProto(resp *pb.InfoResponse) workflow.AdapterInfo {
+	return workflow.AdapterInfo{
+		ConfigSchema: protoToConfigSchema(resp.GetConfigSchema()),
+		InputSchema:  protoToConfigSchema(resp.GetInputSchema()),
+	}
+}
+
+func protoToConfigSchema(s *pb.AdapterSchemaProto) map[string]workflow.ConfigField {
+	if s == nil || len(s.GetFields()) == 0 {
+		return nil
+	}
+	out := make(map[string]workflow.ConfigField, len(s.GetFields()))
+	for k, f := range s.GetFields() {
+		out[k] = workflow.ConfigField{
+			Required: f.GetRequired(),
+			Type:     protoToConfigFieldType(f.GetType()),
+			Doc:      f.GetDoc(),
+		}
+	}
+	return out
+}
+
+func protoToConfigFieldType(t string) workflow.ConfigFieldType {
+	switch t {
+	case "number":
+		return workflow.ConfigFieldNumber
+	case "bool":
+		return workflow.ConfigFieldBool
+	case "list_string":
+		return workflow.ConfigFieldListString
+	default:
+		return workflow.ConfigFieldString
+	}
 }

@@ -97,7 +97,7 @@ func compile(t *testing.T, src string) *workflow.FSMGraph {
 	if diags.HasErrors() {
 		t.Fatalf("parse: %s", diags.Error())
 	}
-	g, diags := workflow.Compile(spec)
+	g, diags := workflow.Compile(spec, nil)
 	if diags.HasErrors() {
 		t.Fatalf("compile: %s", diags.Error())
 	}
@@ -288,7 +288,7 @@ func compileFile(t *testing.T, rel string) *workflow.FSMGraph {
 	if diags.HasErrors() {
 		t.Fatalf("parse: %s", diags.Error())
 	}
-	g, diags := workflow.Compile(spec)
+	g, diags := workflow.Compile(spec, nil)
 	if diags.HasErrors() {
 		t.Fatalf("compile: %s", diags.Error())
 	}
@@ -341,7 +341,7 @@ workflow "perm" {
   }
   step "run" {
     agent       = "bot"
-    config      = { perm_tools = "read_file,write_file" }
+    input { perm_tools = "read_file,write_file" }
     allow_tools = ["read_file"]
     outcome "success"      { transition_to = "close" }
     outcome "needs_review" { transition_to = "close" }
@@ -414,7 +414,7 @@ workflow "perm-deny" {
   }
   step "run" {
     agent  = "bot"
-    config = { perm_tools = "read_file" }
+    input { perm_tools = "read_file" }
     outcome "needs_review" { transition_to = "close" }
     outcome "success"      { transition_to = "close" }
   }
@@ -460,7 +460,7 @@ workflow "perm-shell" {
   }
   step "run" {
     agent       = "bot"
-    config      = { perm_tools = "shell|git status,shell|rm -rf /" }
+    input { perm_tools = "shell|git status,shell|rm -rf /" }
     allow_tools = ["shell:git *"]
     outcome "success"      { transition_to = "close" }
     outcome "needs_review" { transition_to = "close" }

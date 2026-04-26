@@ -2,11 +2,14 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
 
+	"github.com/brokenbots/overlord/overseer/internal/adapters/shell"
+	"github.com/brokenbots/overlord/overseer/internal/plugin"
 	"github.com/brokenbots/overlord/workflow"
 )
 
@@ -17,6 +20,7 @@ func NewValidateCmd() *cobra.Command {
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			anyErr := false
+			ctx := context.Background()
 			for _, path := range args {
 				spec, diags := workflow.ParseFile(path)
 				if diags.HasErrors() {
@@ -24,7 +28,12 @@ func NewValidateCmd() *cobra.Command {
 					fmt.Fprintf(os.Stderr, "%s: parse failed:\n%s\n", path, diags.Error())
 					continue
 				}
-				_, diags = workflow.Compile(spec)
+				loader := plugin.NewLoader()
+				loader.RegisterBuiltin(shell.Name, plugin.BuiltinFactoryForAdapter(shell.New()))
+				schemas := collectSchemas(ctx, loader, spec, nil)
+				_ = loader.Shutdown(ctx)
+
+				_, diags = workflow.Compile(spec, schemas)
 				if diags.HasErrors() {
 					anyErr = true
 					fmt.Fprintf(os.Stderr, "%s: compile failed:\n%s\n", path, diags.Error())

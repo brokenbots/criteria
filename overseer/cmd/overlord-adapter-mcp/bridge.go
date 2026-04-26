@@ -80,6 +80,16 @@ func (b *MCPBridge) Info(_ context.Context, _ *pb.InfoRequest) (*pb.InfoResponse
 		Name:         pluginName,
 		Version:      pluginVersion,
 		Capabilities: []string{"single_shot"},
+		ConfigSchema: &pb.AdapterSchemaProto{Fields: map[string]*pb.ConfigFieldProto{
+			"command": {Required: true, Type: "string", Doc: "MCP server binary to launch."},
+			"args":    {Type: "string", Doc: "Comma-separated argument list for the server binary."},
+			"env":     {Type: "string", Doc: "Comma-separated KEY=VALUE environment variable pairs."},
+			"cwd":     {Type: "string", Doc: "Working directory for the MCP server process."},
+		}},
+		InputSchema: &pb.AdapterSchemaProto{Fields: map[string]*pb.ConfigFieldProto{
+			"tool":            {Required: true, Type: "string", Doc: "MCP tool name to invoke."},
+			"success_outcome": {Type: "string", Doc: "Outcome to report on success (default: success)."},
+		}},
 	}, nil
 }
 

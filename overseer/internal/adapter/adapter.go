@@ -35,5 +35,9 @@ type Result struct {
 // step timeouts and run cancellation).
 type Adapter interface {
 	Name() string
+	// Info returns the adapter's declared configuration schema. The compiler
+	// uses this to validate agent config and step input blocks at compile time.
+	// Return a zero-value AdapterInfo to opt out of validation (permissive mode).
+	Info() workflow.AdapterInfo
 	Execute(ctx context.Context, step *workflow.StepNode, sink EventSink) (Result, error)
 }

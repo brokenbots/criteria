@@ -103,7 +103,7 @@ func (n *stepNode) executeStep(ctx context.Context, deps Deps) (adapter.Result, 
 		if !ok {
 			return adapter.Result{Outcome: "failure"}, fmt.Errorf("unknown agent %q", n.step.Agent)
 		}
-		if err := deps.Sessions.Open(ctx, n.step.Agent, agent.Adapter, n.step.OnCrash, n.step.Config); err != nil {
+		if err := deps.Sessions.Open(ctx, n.step.Agent, agent.Adapter, n.step.OnCrash, agent.Config); err != nil {
 			return adapter.Result{Outcome: "failure"}, err
 		}
 		return adapter.Result{Outcome: "success"}, nil

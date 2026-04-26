@@ -33,7 +33,12 @@ func (p *builtinAdapterPlugin) Info(context.Context) (Info, error) {
 	if p.adapter == nil {
 		return Info{}, fmt.Errorf("builtin adapter implementation is nil")
 	}
-	return Info{Name: p.adapter.Name(), Version: "builtin", Capabilities: nil}, nil
+	return Info{
+		Name:         p.adapter.Name(),
+		Version:      "builtin",
+		Capabilities: nil,
+		AdapterInfo:  p.adapter.Info(),
+	}, nil
 }
 
 func (p *builtinAdapterPlugin) OpenSession(_ context.Context, id string, config map[string]string) error {

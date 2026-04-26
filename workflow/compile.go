@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/hcl/v2"
+	"github.com/zclconf/go-cty/cty"
 )
 
 const (
@@ -19,7 +20,10 @@ const (
 
 // Compile validates a Spec and returns an executable FSMGraph. All errors are
 // returned as HCL diagnostics so callers can surface file/line context.
-func Compile(spec *Spec) (*FSMGraph, hcl.Diagnostics) {
+// schemas maps adapter name to its declared AdapterInfo for compile-time
+// validation of agent config and step input blocks. Pass nil to skip schema
+// validation (permissive mode: any keys accepted).
+func Compile(spec *Spec, schemas map[string]AdapterInfo) (*FSMGraph, hcl.Diagnostics) {
 	var diags hcl.Diagnostics
 
 	if spec.Version == "" {
@@ -66,10 +70,26 @@ func Compile(spec *Spec) (*FSMGraph, hcl.Diagnostics) {
 		} else if !isValidOnCrash(effectiveOnCrash) {
 			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("agent %q: invalid on_crash %q", name, ag.OnCrash)})
 		}
+		var agentConfig map[string]string
+		if ag.Config != nil {
+			attrs, d := ag.Config.Remain.JustAttributes()
+			diags = append(diags, d...)
+			ctxLabel := fmt.Sprintf("agent %q config", name)
+			missingRange := ag.Config.Remain.MissingItemRange()
+			if info, ok := adapterInfo(schemas, ag.Adapter); ok {
+				// Schema-aware decode: validates types, unknown keys, required fields.
+				agentConfig, d = validateSchemaAttrs(ctxLabel, attrs, info.ConfigSchema, missingRange)
+			} else {
+				// Permissive decode: no schema available.
+				agentConfig, d = decodeAttrsToStringMap(attrs)
+			}
+			diags = append(diags, d...)
+		}
 		g.Agents[name] = &AgentNode{
 			Name:    name,
 			Adapter: ag.Adapter,
 			OnCrash: effectiveOnCrash,
+			Config:  agentConfig,
 		}
 	}
 
@@ -121,12 +141,26 @@ func Compile(spec *Spec) (*FSMGraph, hcl.Diagnostics) {
 			if !hasAgent {
 				diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q: lifecycle requires agent", sp.Name)})
 			}
-			if sp.Lifecycle == lifecycleClose && len(sp.Config) > 0 {
-				diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q: lifecycle \"close\" must not include config", sp.Name)})
+			if sp.Input != nil {
+				diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q: lifecycle %q must not include input", sp.Name, sp.Lifecycle)})
 			}
 			if len(sp.AllowTools) > 0 {
 				diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q: allow_tools is only valid on execute-shape steps (not lifecycle open/close)", sp.Name)})
 			}
+		}
+		// Legacy config = { ... } attribute: emit a helpful migration diagnostic.
+		if len(sp.Config) > 0 {
+			var subject *hcl.Range
+			if sp.LegacyConfigRange != nil {
+				r := *sp.LegacyConfigRange
+				subject = &r
+			}
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  fmt.Sprintf("step %q: \"config\" attribute removed; use \"input { }\" block instead (Phase 1.5)", sp.Name),
+				Detail:   "Replace `config = { key = \"value\" }` with `input { key = \"value\" }` in your workflow.",
+				Subject:  subject,
+			})
 		}
 		effectiveOnCrash := sp.OnCrash
 		if effectiveOnCrash != "" && !isValidOnCrash(effectiveOnCrash) {
@@ -151,13 +185,39 @@ func Compile(spec *Spec) (*FSMGraph, hcl.Diagnostics) {
 			}
 			timeout = d
 		}
+		// Decode input { } block into a string map.
+		var inputMap map[string]string
+		if sp.Input != nil {
+			attrs, d := sp.Input.Remain.JustAttributes()
+			diags = append(diags, d...)
+			ctxLabel := fmt.Sprintf("step %q input", sp.Name)
+			missingRange := sp.Input.Remain.MissingItemRange()
+			adapterName := sp.Adapter
+			if hasAgent {
+				if agent, ok := g.Agents[sp.Agent]; ok {
+					adapterName = agent.Adapter
+				}
+			}
+			if adapterName != "" {
+				if info, ok := adapterInfo(schemas, adapterName); ok {
+					// Schema-aware decode: validates types, unknown keys, required fields.
+					inputMap, d = validateSchemaAttrs(ctxLabel, attrs, info.InputSchema, missingRange)
+				} else {
+					// Permissive decode.
+					inputMap, d = decodeAttrsToStringMap(attrs)
+				}
+			} else {
+				inputMap, d = decodeAttrsToStringMap(attrs)
+			}
+			diags = append(diags, d...)
+		}
 		node := &StepNode{
 			Name:       sp.Name,
 			Adapter:    sp.Adapter,
 			Agent:      sp.Agent,
 			Lifecycle:  sp.Lifecycle,
 			OnCrash:    effectiveOnCrash,
-			Config:     sp.Config,
+			Input:      inputMap,
 			Timeout:    timeout,
 			Outcomes:   map[string]string{},
 			AllowTools: allowToolsForStep(sp, spec),
@@ -303,4 +363,181 @@ func unionAllowTools(stepTools, workflowTools []string) []string {
 	out = append(out, stepTools...)
 	out = append(out, workflowTools...)
 	return out
+}
+
+// decodeAttrsToStringMap converts pre-fetched hcl.Attributes into a map[string]string.
+// Numbers and bools are converted to their string representations.
+func decodeAttrsToStringMap(attrs hcl.Attributes) (map[string]string, hcl.Diagnostics) {
+	var diags hcl.Diagnostics
+	result := make(map[string]string, len(attrs))
+	for k, attr := range attrs {
+		val, d := attr.Expr.Value(nil)
+		diags = append(diags, d...)
+		if d.HasErrors() {
+			continue
+		}
+		switch val.Type() {
+		case cty.String:
+			result[k] = val.AsString()
+		case cty.Number:
+			bf := val.AsBigFloat()
+			result[k] = bf.Text('f', -1)
+		case cty.Bool:
+			if val.True() {
+				result[k] = "true"
+			} else {
+				result[k] = "false"
+			}
+		default:
+			result[k] = val.GoString()
+		}
+	}
+	return result, diags
+}
+
+// decodeBodyToStringMap converts an hcl.Body of key = "value" attributes into
+// a map[string]string. Numbers and bools are converted to their string
+// representations. Expression references (variables, functions) that cannot be
+// evaluated without a context are deferred to W04.
+func decodeBodyToStringMap(body hcl.Body) (map[string]string, hcl.Diagnostics) {
+	if body == nil {
+		return nil, nil
+	}
+	attrs, diags := body.JustAttributes()
+	if diags.HasErrors() {
+		return nil, diags
+	}
+	return decodeAttrsToStringMap(attrs)
+}
+
+// adapterInfo looks up the AdapterInfo for a given adapter name in the schemas
+// map. Returns (info, true) when found and the schema is non-empty (i.e. the
+// adapter declared schemas). Returns (zero, false) when permissive mode applies.
+func adapterInfo(schemas map[string]AdapterInfo, adapterName string) (AdapterInfo, bool) {
+	if schemas == nil {
+		return AdapterInfo{}, false
+	}
+	info, ok := schemas[adapterName]
+	return info, ok
+}
+
+// validateSchemaAttrs validates raw HCL attributes against a ConfigField schema,
+// attaching source ranges to diagnostics. It handles required/unknown key checks
+// and type mismatch checks. Returns (decoded string map, diagnostics).
+func validateSchemaAttrs(context string, attrs hcl.Attributes, schema map[string]ConfigField, missingRange hcl.Range) (map[string]string, hcl.Diagnostics) {
+	var diags hcl.Diagnostics
+	result := make(map[string]string, len(attrs))
+
+	for k, attr := range attrs {
+		field, known := schema[k]
+		if len(schema) > 0 && !known {
+			r := attr.NameRange
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  fmt.Sprintf("%s: unknown field %q", context, k),
+				Subject:  &r,
+			})
+			continue
+		}
+		val, d := attr.Expr.Value(nil)
+		diags = append(diags, d...)
+		if d.HasErrors() {
+			continue
+		}
+		// Type check against declared schema type.
+		if len(schema) > 0 {
+			r := attr.Expr.StartRange()
+			switch field.Type {
+			case ConfigFieldNumber:
+				if val.Type() != cty.Number {
+					diags = append(diags, &hcl.Diagnostic{
+						Severity: hcl.DiagError,
+						Summary:  fmt.Sprintf("%s: field %q must be a number", context, k),
+						Subject:  &r,
+					})
+					continue
+				}
+			case ConfigFieldBool:
+				if val.Type() != cty.Bool {
+					diags = append(diags, &hcl.Diagnostic{
+						Severity: hcl.DiagError,
+						Summary:  fmt.Sprintf("%s: field %q must be a bool", context, k),
+						Subject:  &r,
+					})
+					continue
+				}
+			case ConfigFieldListString:
+				if !isListStringValue(val) {
+					diags = append(diags, &hcl.Diagnostic{
+						Severity: hcl.DiagError,
+						Summary:  fmt.Sprintf("%s: field %q must be a list of strings", context, k),
+						Subject:  &r,
+					})
+					continue
+				}
+			case ConfigFieldString:
+				if val.Type() != cty.String {
+					diags = append(diags, &hcl.Diagnostic{
+						Severity: hcl.DiagError,
+						Summary:  fmt.Sprintf("%s: field %q must be a string", context, k),
+						Subject:  &r,
+					})
+					continue
+				}
+			}
+		}
+		// Coerce to string for the output map.
+		switch val.Type() {
+		case cty.String:
+			result[k] = val.AsString()
+		case cty.Number:
+			bf := val.AsBigFloat()
+			result[k] = bf.Text('f', -1)
+		case cty.Bool:
+			if val.True() {
+				result[k] = "true"
+			} else {
+				result[k] = "false"
+			}
+		default:
+			result[k] = val.GoString()
+		}
+	}
+
+	// Check required fields.
+	for k, field := range schema {
+		if field.Required {
+			v, present := result[k]
+			if !present || strings.TrimSpace(v) == "" {
+				var subject *hcl.Range
+				if missingRange.Filename != "" {
+					r := missingRange
+					subject = &r
+				}
+				diags = append(diags, &hcl.Diagnostic{
+					Severity: hcl.DiagError,
+					Summary:  fmt.Sprintf("%s: required field %q is missing", context, k),
+					Subject:  subject,
+				})
+			}
+		}
+	}
+
+	return result, diags
+}
+
+func isListStringValue(val cty.Value) bool {
+	t := val.Type()
+	if t.IsListType() {
+		return t.ElementType() == cty.String
+	}
+	if !t.IsTupleType() {
+		return false
+	}
+	for _, et := range t.TupleElementTypes() {
+		if et != cty.String {
+			return false
+		}
+	}
+	return true
 }

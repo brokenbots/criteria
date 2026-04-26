@@ -38,6 +38,9 @@ workflow "session_flow" {
   agent "exec" {
     adapter  = "copilot"
     on_crash = "respawn"
+    config {
+      mode = "executor"
+    }
   }
 
   agent "review" {
@@ -47,9 +50,6 @@ workflow "session_flow" {
   step "open_exec" {
     agent     = "exec"
     lifecycle = "open"
-    config = {
-      mode = "executor"
-    }
     outcome "success" { transition_to = "run" }
   }
 
@@ -72,7 +72,7 @@ workflow "session_flow" {
 	if diags.HasErrors() {
 		t.Fatalf("parse: %s", diags.Error())
 	}
-	g, diags := Compile(spec)
+	g, diags := Compile(spec, nil)
 	if diags.HasErrors() {
 		t.Fatalf("compile: %s", diags.Error())
 	}
@@ -263,7 +263,7 @@ workflow "x" {
   step "a" {
     agent = "worker"
     lifecycle = "close"
-    config = {
+    input {
       nope = "1"
     }
     outcome "ok" { transition_to = "done" }
@@ -272,7 +272,7 @@ workflow "x" {
   state "done" { terminal = true }
 }
 `,
-			wantSummary: `step "a": lifecycle "close" must not include config`,
+			wantSummary: `step "a": lifecycle "close" must not include input`,
 		},
 		{
 			name: "invalid agent on_crash enum",
@@ -346,7 +346,7 @@ workflow "x" {
 			if diags.HasErrors() {
 				t.Fatalf("parse: %s", diags.Error())
 			}
-			_, diags = Compile(spec)
+			_, diags = Compile(spec, nil)
 			requireExactErrorSummary(t, diags, tc.wantSummary)
 		})
 	}
@@ -380,7 +380,7 @@ workflow "x" {
 	if diags.HasErrors() {
 		t.Fatalf("parse: %s", diags.Error())
 	}
-	_, diags = Compile(spec)
+	_, diags = Compile(spec, nil)
 	requireExactErrorSummary(t, diags, `step "run" outcome "ok" -> unknown target "missing"`)
 }
 
@@ -404,7 +404,7 @@ workflow "x" {
 	if diags.HasErrors() {
 		t.Fatalf("parse: %s", diags.Error())
 	}
-	g, diags := Compile(spec)
+	g, diags := Compile(spec, nil)
 	if diags.HasErrors() {
 		t.Fatalf("compile: %s", diags.Error())
 	}
@@ -424,7 +424,7 @@ func TestTwoAgentLoopFixtureCompiles(t *testing.T) {
 	if diags.HasErrors() {
 		t.Fatalf("parse: %s", diags.Error())
 	}
-	g, diags := Compile(spec)
+	g, diags := Compile(spec, nil)
 	if diags.HasErrors() {
 		t.Fatalf("compile: %s", diags.Error())
 	}

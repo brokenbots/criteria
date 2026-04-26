@@ -13,7 +13,7 @@ workflow "build_and_test" {
 
   step "build" {
     adapter = "shell"
-    config = {
+    input {
       command = "echo build"
     }
     timeout = "30s"
@@ -24,7 +24,7 @@ workflow "build_and_test" {
 
   step "test" {
     adapter = "shell"
-    config = {
+    input {
       command = "echo test"
     }
 
@@ -50,7 +50,7 @@ func TestParseAndCompileValid(t *testing.T) {
 	if diags.HasErrors() {
 		t.Fatalf("parse: %s", diags.Error())
 	}
-	g, diags := Compile(spec)
+	g, diags := Compile(spec, nil)
 	if diags.HasErrors() {
 		t.Fatalf("compile: %s", diags.Error())
 	}
@@ -88,7 +88,7 @@ workflow "x" {
 	if diags.HasErrors() {
 		t.Fatalf("parse: %s", diags.Error())
 	}
-	_, diags = Compile(spec)
+	_, diags = Compile(spec, nil)
 	if !diags.HasErrors() {
 		t.Fatal("expected error for dangling transition")
 	}
@@ -111,7 +111,7 @@ workflow "x" {
 }
 `
 	spec, _ := Parse("t.hcl", []byte(src))
-	_, diags := Compile(spec)
+	_, diags := Compile(spec, nil)
 	if !diags.HasErrors() {
 		t.Fatal("expected error for non-terminal target")
 	}
@@ -135,7 +135,7 @@ workflow "x" {
 }
 `
 	spec, _ := Parse("t.hcl", []byte(src))
-	_, diags := Compile(spec)
+	_, diags := Compile(spec, nil)
 	if !diags.HasErrors() {
 		t.Fatal("expected error for unreachable step")
 	}
@@ -154,7 +154,7 @@ workflow "x" {
 }
 `
 	spec, _ := Parse("t.hcl", []byte(src))
-	_, diags := Compile(spec)
+	_, diags := Compile(spec, nil)
 	if !diags.HasErrors() {
 		t.Fatal("expected error for missing outcomes")
 	}
@@ -187,7 +187,7 @@ workflow "x" {
 	if diags.HasErrors() {
 		t.Fatalf("parse: %s", diags.Error())
 	}
-	_, diags = Compile(spec)
+	_, diags = Compile(spec, nil)
 	if !diags.HasErrors() {
 		t.Fatal("expected compile error for allow_tools on lifecycle step")
 	}
@@ -215,7 +215,7 @@ workflow "x" {
 	if diags.HasErrors() {
 		t.Fatalf("parse: %s", diags.Error())
 	}
-	_, diags = Compile(spec)
+	_, diags = Compile(spec, nil)
 	if !diags.HasErrors() {
 		t.Fatal("expected compile error for allow_tools without agent")
 	}
@@ -259,7 +259,7 @@ workflow "x" {
 	if diags.HasErrors() {
 		t.Fatalf("parse: %s", diags.Error())
 	}
-	g, diags := Compile(spec)
+	g, diags := Compile(spec, nil)
 	if diags.HasErrors() {
 		t.Fatalf("compile: %s", diags.Error())
 	}

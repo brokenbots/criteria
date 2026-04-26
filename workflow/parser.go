@@ -46,5 +46,70 @@ func Parse(filename string, src []byte) (*Spec, hcl.Diagnostics) {
 			Detail:   fmt.Sprintf("got %d", len(file.Workflows)),
 		}}
 	}
-	return &file.Workflows[0], nil
+	spec := &file.Workflows[0]
+	if d := annotateLegacyConfigRanges(spec, f.Body); d.HasErrors() {
+		diags = append(diags, d...)
+		return nil, diags
+	}
+	return spec, diags
+}
+
+// annotateLegacyConfigRanges records source ranges for legacy step
+// `config = { ... }` attributes so compile-time diagnostics can include
+// file/line context.
+func annotateLegacyConfigRanges(spec *Spec, body hcl.Body) hcl.Diagnostics {
+	if spec == nil || body == nil {
+		return nil
+	}
+
+	rootSchema := &hcl.BodySchema{Blocks: []hcl.BlockHeaderSchema{{Type: "workflow", LabelNames: []string{"name"}}}}
+	root, _, diags := body.PartialContent(rootSchema)
+	if diags.HasErrors() || len(root.Blocks) == 0 {
+		return diags
+	}
+
+	workflowBody := root.Blocks[0].Body
+	workflowSchema := &hcl.BodySchema{Blocks: []hcl.BlockHeaderSchema{{Type: "step", LabelNames: []string{"name"}}}}
+	content, _, d := workflowBody.PartialContent(workflowSchema)
+	diags = append(diags, d...)
+	if d.HasErrors() {
+		return diags
+	}
+
+	// Preserve ordering by assigning ranges to matching step names in sequence.
+	nameToIdx := map[string][]int{}
+	for i, st := range spec.Steps {
+		nameToIdx[st.Name] = append(nameToIdx[st.Name], i)
+	}
+
+	consumed := map[string]int{}
+	for _, blk := range content.Blocks {
+		if len(blk.Labels) != 1 {
+			continue
+		}
+		name := blk.Labels[0]
+		indices := nameToIdx[name]
+		if len(indices) == 0 {
+			continue
+		}
+		seq := consumed[name]
+		if seq >= len(indices) {
+			continue
+		}
+		idx := indices[seq]
+		consumed[name] = seq + 1
+
+		cfgOnly := &hcl.BodySchema{Attributes: []hcl.AttributeSchema{{Name: "config"}}}
+		attrs, _, d := blk.Body.PartialContent(cfgOnly)
+		diags = append(diags, d...)
+		if d.HasErrors() {
+			continue
+		}
+		if attr, ok := attrs.Attributes["config"]; ok {
+			r := attr.NameRange
+			spec.Steps[idx].LegacyConfigRange = &r
+		}
+	}
+
+	return diags
 }

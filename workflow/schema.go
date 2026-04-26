@@ -2,7 +2,11 @@
 // FSM graph that the Overseer engine executes.
 package workflow
 
-import "time"
+import (
+	"time"
+
+	"github.com/hashicorp/hcl/v2"
+)
 
 // Spec is the parsed (but unvalidated) HCL workflow document.
 type Spec struct {
@@ -17,30 +21,80 @@ type Spec struct {
 	Permissions  *PermissionsSpec `hcl:"permissions,block"`
 }
 
+// ConfigSpec holds the raw HCL body of an `agent.config { ... }` block.
+// Attributes are decoded into string values by the compiler.
+// W04 will upgrade to expression-aware decoding (var.<name>, each.value).
+type ConfigSpec struct {
+	Remain hcl.Body `hcl:",remain"`
+}
+
+// InputSpec holds the raw HCL body of a `step.input { ... }` block.
+// Attributes are decoded into string values by the compiler.
+// W04 will upgrade to expression-aware decoding (var.<name>, each.value).
+// TODO(W04): replace Remain decode with hcl.EvalContext for expression interpolation.
+type InputSpec struct {
+	Remain hcl.Body `hcl:",remain"`
+}
+
 // HCL extensions for session-aware workflows:
 //   - Top-level `agent "name" { adapter = "..." }` declarations bind names to adapters.
 //   - Steps use `agent = "name"` to route work to an agent-backed session.
 //   - Steps with `lifecycle = "open"|"close"` explicitly manage session lifetime.
-//     `open` may carry config, while `close` must not include config.
+//     `open` and `close` must not include `input { }`.
+//   - Agent-level `config { }` block carries session-open config (replaces open-step config).
 //
 // AgentSpec declares a named long-lived adapter session target.
 type AgentSpec struct {
-	Name    string `hcl:"name,label"`
-	Adapter string `hcl:"adapter"`
-	OnCrash string `hcl:"on_crash,optional"`
+	Name    string      `hcl:"name,label"`
+	Adapter string      `hcl:"adapter"`
+	OnCrash string      `hcl:"on_crash,optional"`
+	Config  *ConfigSpec `hcl:"config,block"`
 }
 
 // StepSpec describes a single step in the workflow.
 type StepSpec struct {
-	Name       string            `hcl:"name,label"`
-	Adapter    string            `hcl:"adapter,optional"`
-	Agent      string            `hcl:"agent,optional"`
-	Lifecycle  string            `hcl:"lifecycle,optional"`
-	OnCrash    string            `hcl:"on_crash,optional"`
+	Name      string `hcl:"name,label"`
+	Adapter   string `hcl:"adapter,optional"`
+	Agent     string `hcl:"agent,optional"`
+	Lifecycle string `hcl:"lifecycle,optional"`
+	OnCrash   string `hcl:"on_crash,optional"`
+	// Config is the legacy map attribute; retained for parse-time detection so the
+	// compiler can emit a helpful "use input { } block" diagnostic.
 	Config     map[string]string `hcl:"config,optional"`
+	Input      *InputSpec        `hcl:"input,block"`
 	Timeout    string            `hcl:"timeout,optional"`
 	AllowTools []string          `hcl:"allow_tools,optional"`
 	Outcomes   []OutcomeSpec     `hcl:"outcome,block"`
+	// LegacyConfigRange, when set by Parse, points at the source range for a
+	// legacy config = { ... } attribute so compile diagnostics can include
+	// file/line context.
+	LegacyConfigRange *hcl.Range
+}
+
+// ConfigFieldType enumerates the types a config or input field may carry.
+type ConfigFieldType int
+
+const (
+	ConfigFieldString     ConfigFieldType = iota // "string"
+	ConfigFieldNumber                            // "number"
+	ConfigFieldBool                              // "bool"
+	ConfigFieldListString                        // "list_string"
+)
+
+// ConfigField describes a single field in an adapter's config or input schema.
+type ConfigField struct {
+	Required bool
+	Type     ConfigFieldType
+	Doc      string
+}
+
+// AdapterInfo describes an adapter's declared configuration schema.
+// It is used during workflow compilation to validate agent config blocks and
+// step input blocks against the adapter's declared requirements.
+// An empty (zero-value) AdapterInfo means "any keys accepted" (permissive).
+type AdapterInfo struct {
+	ConfigSchema map[string]ConfigField // schema for agent-level `config { }` blocks
+	InputSchema  map[string]ConfigField // schema for per-step `input { }` blocks
 }
 
 // OutcomeSpec maps an adapter outcome name to a transition target.
@@ -89,6 +143,7 @@ type AgentNode struct {
 	Name    string
 	Adapter string
 	OnCrash string
+	Config  map[string]string // session-open config from agent.config { }
 }
 
 // StepNode is a compiled step with resolved transitions.
@@ -98,9 +153,12 @@ type StepNode struct {
 	Agent     string
 	Lifecycle string
 	OnCrash   string
-	Config    map[string]string
-	Timeout   time.Duration     // zero = no timeout
-	Outcomes  map[string]string // outcome name -> target node name (step or state)
+	// Input holds the per-step adapter input from the `input { }` block.
+	// Wire name on ExecuteRequest proto remains "config" to avoid breaking changes;
+	// only the Go-side field is renamed here. W04 will upgrade to map[string]cty.Value.
+	Input    map[string]string
+	Timeout  time.Duration     // zero = no timeout
+	Outcomes map[string]string // outcome name -> target node name (step or state)
 	// AllowTools is the union of step-level and workflow-level allow_tools glob
 	// patterns. An empty slice means deny-all (default). Only valid on
 	// execute-shape steps (Lifecycle == "").

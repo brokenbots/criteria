@@ -6,7 +6,7 @@ workflow "hello" {
 
   step "say_hello" {
     adapter = "shell"
-    config = {
+    input {
       command = "echo hello from overlord"
     }
 

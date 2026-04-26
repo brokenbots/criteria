@@ -25,10 +25,18 @@ func New() *Adapter { return &Adapter{} }
 
 func (a *Adapter) Name() string { return Name }
 
+func (a *Adapter) Info() workflow.AdapterInfo {
+	return workflow.AdapterInfo{
+		InputSchema: map[string]workflow.ConfigField{
+			"command": {Required: true, Type: workflow.ConfigFieldString, Doc: "Shell command to execute."},
+		},
+	}
+}
+
 func (a *Adapter) Execute(ctx context.Context, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
-	cmdStr, ok := step.Config["command"]
+	cmdStr, ok := step.Input["command"]
 	if !ok || cmdStr == "" {
-		return adapter.Result{Outcome: "failure"}, errors.New("shell adapter: config.command is required")
+		return adapter.Result{Outcome: "failure"}, errors.New("shell adapter: input.command is required")
 	}
 
 	shell, flag := defaultShell()

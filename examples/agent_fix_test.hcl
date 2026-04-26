@@ -9,7 +9,7 @@ workflow "agent_fix_test" {
 
   step "test" {
     adapter = "shell"
-    config = {
+    input {
       command = "go test ./..."
     }
     timeout = "5m"
@@ -20,7 +20,7 @@ workflow "agent_fix_test" {
 
   step "fix" {
     adapter = "copilot"
-    config = {
+    input {
       model  = "claude-sonnet-4.5"
       prompt = "The test suite is failing. Investigate, fix the failing tests (do not modify the assertions themselves), and confirm by running `go test ./...`. Reply ending with one line: RESULT: success | needs_review | failure"
     }

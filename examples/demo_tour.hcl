@@ -18,7 +18,7 @@ workflow "demo_tour" {
 
   step "boot" {
     adapter = "shell"
-    config = {
+    input {
       command = "printf '=== Overlord demo tour ===\\n'; printf 'phase 1: setup\\n'; rm -f /tmp/overlord-demo-counter /tmp/overlord-demo-retry; echo 0 > /tmp/overlord-demo-counter; sleep 1; printf 'ready.\\n'"
     }
     timeout = "30s"
@@ -28,7 +28,7 @@ workflow "demo_tour" {
 
   step "discover" {
     adapter = "shell"
-    config = {
+    input {
       command = "printf 'phase 2: discovering work...\\n'; for t in alpha beta gamma; do printf '  -> queued task %s\\n' \"$t\"; sleep 0.4; done"
     }
     timeout = "30s"
@@ -42,7 +42,7 @@ workflow "demo_tour" {
 
   step "work" {
     adapter = "shell"
-    config = {
+    input {
       command = "n=$(cat /tmp/overlord-demo-counter); n=$((n+1)); echo $n > /tmp/overlord-demo-counter; printf '\\n=== iteration %s ===\\n' \"$n\"; printf 'computing'; for i in 1 2 3; do printf '.'; sleep 0.3; done; printf '\\ncompleted iteration %s\\n' \"$n\""
     }
     timeout = "30s"
@@ -56,7 +56,7 @@ workflow "demo_tour" {
   # routing.
   step "loop_check" {
     adapter = "shell"
-    config = {
+    input {
       command = "n=$(cat /tmp/overlord-demo-counter); if [ $n -lt 3 ]; then printf 'loop_check: n=%s < 3, looping\\n' \"$n\"; exit 0; else printf 'loop_check: n=%s, exiting loop\\n' \"$n\"; exit 9; fi"
     }
     timeout = "10s"
@@ -70,7 +70,7 @@ workflow "demo_tour" {
 
   step "verify" {
     adapter = "shell"
-    config = {
+    input {
       command = "printf 'phase 3: verifying...\\n'; if [ ! -f /tmp/overlord-demo-retry ]; then touch /tmp/overlord-demo-retry; printf 'verify: simulated transient failure (will retry)\\n'; exit 1; else printf 'verify: ok\\n'; rm -f /tmp/overlord-demo-retry; fi"
     }
     timeout = "10s"
@@ -82,7 +82,7 @@ workflow "demo_tour" {
 
   step "celebrate" {
     adapter = "shell"
-    config = {
+    input {
       command = "printf '\\n=== ALL DONE ===\\n'; printf 'Counter reached: %s\\n' \"$(cat /tmp/overlord-demo-counter)\"; rm -f /tmp/overlord-demo-counter; sleep 1; printf 'celebration complete.\\n'"
     }
     timeout = "10s"

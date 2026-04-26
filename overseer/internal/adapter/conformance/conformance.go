@@ -610,7 +610,11 @@ func isDeadlineLikeError(err error) bool {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return true
 	}
-	return strings.Contains(strings.ToLower(err.Error()), "deadline exceeded")
+	s := strings.ToLower(err.Error())
+	return strings.Contains(s, "deadline exceeded") ||
+		// gRPC surfaces deadline as DeadlineExceeded status code even when the
+		// transport layer delivers it as RST_STREAM CANCEL.
+		strings.Contains(s, "code = deadlineexceeded")
 }
 
 func newSessionID(prefix string) string {
@@ -651,7 +655,7 @@ func baseStep(name, adapterName string, config map[string]string) *workflow.Step
 	return &workflow.StepNode{
 		Name:    name,
 		Adapter: adapterName,
-		Config:  cfg,
+		Input:   cfg,
 		Outcomes: map[string]string{
 			"success": "done",
 			"failure": "done",

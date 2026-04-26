@@ -7,7 +7,7 @@ workflow "build_and_test" {
 
   step "build" {
     adapter = "shell"
-    config = {
+    input {
       command = "go build ./..."
     }
     timeout = "5m"
@@ -18,7 +18,7 @@ workflow "build_and_test" {
 
   step "test" {
     adapter = "shell"
-    config = {
+    input {
       command = "go test ./..."
     }
     timeout = "10m"

@@ -6,18 +6,21 @@ workflow "two_agent_loop" {
   agent "executor" {
     adapter  = "copilot"
     on_crash = "respawn"
+    config {
+      role = "executor"
+    }
   }
 
   agent "reviewer" {
     adapter = "copilot"
+    config {
+      role = "reviewer"
+    }
   }
 
   step "open_executor" {
     agent     = "executor"
     lifecycle = "open"
-    config = {
-      role = "executor"
-    }
 
     outcome "success" { transition_to = "open_reviewer" }
   }
@@ -25,9 +28,6 @@ workflow "two_agent_loop" {
   step "open_reviewer" {
     agent     = "reviewer"
     lifecycle = "open"
-    config = {
-      role = "reviewer"
-    }
 
     outcome "success" { transition_to = "execute" }
   }
