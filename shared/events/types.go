@@ -88,6 +88,8 @@ func setPayload(env *pb.Envelope, payload any) {
 		env.Payload = &pb.Envelope_ApprovalRequested{ApprovalRequested: p}
 	case *pb.ApprovalDecision:
 		env.Payload = &pb.Envelope_ApprovalDecision{ApprovalDecision: p}
+	case *pb.BranchEvaluated:
+		env.Payload = &pb.Envelope_BranchEvaluated{BranchEvaluated: p}
 	default:
 		panic(fmt.Sprintf("events.NewEnvelope: unsupported payload type %T", payload))
 	}
@@ -138,6 +140,8 @@ func TypeString(env *pb.Envelope) string {
 		return "approval.requested"
 	case *pb.Envelope_ApprovalDecision:
 		return "approval.decision"
+	case *pb.Envelope_BranchEvaluated:
+		return "branch.evaluated"
 	default:
 		return ""
 	}

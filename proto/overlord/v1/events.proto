@@ -52,6 +52,9 @@ message Envelope {
     WaitResumed wait_resumed = 24;            // permanent (W05)
     ApprovalRequested approval_requested = 25; // permanent (W05)
     ApprovalDecision approval_decision = 26;   // permanent (W05)
+    // BranchEvaluated — emitted when a branch node selects a transition arm (W06).
+    // Overseer-owned event; permanent field numbers.
+    BranchEvaluated branch_evaluated = 27;
     // WatchReady is a protocol-level sentinel sent once at the start of a
     // WatchRun server-stream, after any persisted-event replay, to flush
     // response headers so the client's WatchRun call can return. It has no
@@ -208,4 +211,13 @@ message ApprovalDecision {
   string decision = 2;              // "approved" | "rejected"
   string actor = 3;                 // audit metadata; not semantically load-bearing
   map<string, string> payload = 4;
+}
+
+// BranchEvaluated — emitted when a branch node selects a transition arm (W06).
+// Overseer-owned event; permanent field numbers.
+message BranchEvaluated {
+  string node = 1;           // branch node name; permanent
+  string matched_arm = 2;    // "arm[<index>]" | "default"; permanent
+  string target = 3;         // transition target node name; permanent
+  string condition = 4;      // string-rendered condition for the matched arm; empty for default; permanent
 }

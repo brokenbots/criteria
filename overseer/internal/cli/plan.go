@@ -98,6 +98,7 @@ func renderPlanOutput(ctx context.Context, workflowPath string) (string, error) 
 		b.WriteString(fmt.Sprintf("  %s    terminal=%t   success=%t%s\n", state.Name, state.Terminal, state.Success, requires))
 	}
 	b.WriteString("\n")
+	// TODO(W10): render branch nodes in plan output for human review.
 
 	b.WriteString("plugins required:\n")
 	plugs := requiredPlugins(graph)

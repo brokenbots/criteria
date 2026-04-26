@@ -1,0 +1,18 @@
+digraph "branch_basic" {
+  rankdir=LR;
+
+  "build" [shape=box];
+  "decide" [shape=diamond];
+  "deploy" [shape=doublecircle];
+  "deploy_staging" [shape=doublecircle];
+  "done" [shape=doublecircle];
+  "skip_deploy" [shape=doublecircle];
+
+  "__start__" [shape=point,width=0.12,label=""];
+  "__start__" -> "build" [label="initial"];
+  "build" -> "decide" [label="success"];
+  "decide" -> "deploy" [label="arm[0]"];
+  "decide" -> "deploy_staging" [label="arm[1]"];
+  "decide" -> "deploy_staging" [label="arm[2]"];
+  "decide" -> "skip_deploy" [label="default"];
+}

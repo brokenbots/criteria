@@ -152,6 +152,7 @@ func buildCompileJSON(graph *workflow.FSMGraph) compileJSON {
 		states = append(states, compileState{Name: st.Name, Terminal: st.Terminal, Success: st.Success})
 	}
 
+	// TODO(W10): add a Branches field to compileJSON for tooling completeness.
 	return compileJSON{
 		Name:         graph.Name,
 		InitialState: graph.InitialState,
@@ -175,6 +176,9 @@ func renderDOT(graph *workflow.FSMGraph) string {
 	for _, name := range graph.StepOrder() {
 		b.WriteString(fmt.Sprintf("  %q [shape=box];\n", name))
 	}
+	for _, name := range sortedBranchNames(graph) {
+		b.WriteString(fmt.Sprintf("  %q [shape=diamond];\n", name))
+	}
 	for _, name := range sortedStateNames(graph) {
 		state := graph.States[name]
 		shape := "ellipse"
@@ -193,6 +197,14 @@ func renderDOT(graph *workflow.FSMGraph) string {
 			target := step.Outcomes[outcomeName]
 			b.WriteString(fmt.Sprintf("  %q -> %q [label=%q];\n", step.Name, target, outcomeName))
 		}
+	}
+	for _, branchName := range sortedBranchNames(graph) {
+		br := graph.Branches[branchName]
+		for i, arm := range br.Arms {
+			label := fmt.Sprintf("arm[%d]", i)
+			b.WriteString(fmt.Sprintf("  %q -> %q [label=%q];\n", branchName, arm.Target, label))
+		}
+		b.WriteString(fmt.Sprintf("  %q -> %q [label=%q];\n", branchName, br.DefaultTarget, "default"))
 	}
 	b.WriteString("}\n")
 	return b.String()
@@ -247,6 +259,10 @@ func sortedAgentNames(graph *workflow.FSMGraph) []string {
 
 func sortedStateNames(graph *workflow.FSMGraph) []string {
 	return sortedMapKeys(graph.States)
+}
+
+func sortedBranchNames(graph *workflow.FSMGraph) []string {
+	return sortedMapKeys(graph.Branches)
 }
 
 func requiredPlugins(graph *workflow.FSMGraph) []string {

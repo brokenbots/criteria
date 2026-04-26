@@ -146,6 +146,11 @@ func (s *Sink) OnApprovalDecision(node, decision, actor string, payload map[stri
 	s.publish(&pb.ApprovalDecision{Node: node, Decision: decision, Actor: actor, Payload: payload})
 }
 
+// OnBranchEvaluated emits a branch.evaluated event when a branch node selects a transition arm (W06).
+func (s *Sink) OnBranchEvaluated(node, matchedArm, target, condition string) {
+	s.publish(&pb.BranchEvaluated{Node: node, MatchedArm: matchedArm, Target: target, Condition: condition})
+}
+
 // StepEventSink returns a per-step adapter sink that wraps Log/Adapter into
 // step.log / adapter.event envelopes.
 func (s *Sink) StepEventSink(step string) adapter.EventSink {

@@ -1,0 +1,55 @@
+{
+  "name": "branch_basic",
+  "initial_state": "build",
+  "target_state": "done",
+  "policy": {
+    "MaxTotalSteps": 100,
+    "MaxStepRetries": 0
+  },
+  "agents": [],
+  "steps": [
+    {
+      "name": "build",
+      "adapter": "noop",
+      "input_keys": null,
+      "allow_tools": null,
+      "outcomes": [
+        {
+          "name": "success",
+          "transition_to": "decide"
+        }
+      ]
+    }
+  ],
+  "states": [
+    {
+      "name": "deploy",
+      "terminal": true,
+      "success": true
+    },
+    {
+      "name": "deploy_staging",
+      "terminal": true,
+      "success": true
+    },
+    {
+      "name": "done",
+      "terminal": true,
+      "success": true
+    },
+    {
+      "name": "skip_deploy",
+      "terminal": true,
+      "success": true
+    }
+  ],
+  "step_order": [
+    "build"
+  ],
+  "plugins_required": [
+    "noop"
+  ],
+  "metadata": {
+    "schema_version": 1
+  }
+}

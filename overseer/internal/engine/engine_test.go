@@ -57,7 +57,8 @@ func (s *fakeSink) OnWaitResumed(string, string, string, map[string]string) {
 func (s *fakeSink) OnApprovalRequested(string, []string, string) {}
 func (s *fakeSink) OnApprovalDecision(string, string, string, map[string]string) {
 }
-func (s *fakeSink) StepEventSink(step string) adapter.EventSink { return noopSink{} }
+func (s *fakeSink) OnBranchEvaluated(string, string, string, string) {}
+func (s *fakeSink) StepEventSink(step string) adapter.EventSink      { return noopSink{} }
 
 type noopSink struct{}
 

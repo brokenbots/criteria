@@ -49,6 +49,10 @@ type Sink interface {
 	// OnApprovalDecision is emitted when an approval node resolves via Resume (W05).
 	// decision is "approved" or "rejected". actor is audit metadata.
 	OnApprovalDecision(node, decision, actor string, payload map[string]string)
+	// OnBranchEvaluated is emitted when a branch node selects a transition arm (W06).
+	// matchedArm is "arm[<index>]" or "default"; target is the transition target.
+	// condition is the source text of the matched arm expression; empty for default.
+	OnBranchEvaluated(node, matchedArm, target, condition string)
 	// StepEventSink returns the per-step adapter sink (logs + adapter events).
 	StepEventSink(step string) adapter.EventSink
 }

@@ -46,6 +46,7 @@ func Compile(spec *Spec, schemas map[string]AdapterInfo) (*FSMGraph, hcl.Diagnos
 		States:       map[string]*StateNode{},
 		Waits:        map[string]*WaitNode{},
 		Approvals:    map[string]*ApprovalNode{},
+		Branches:     map[string]*BranchNode{},
 		Policy:       DefaultPolicy,
 	}
 	if spec.Policy != nil {
@@ -388,6 +389,115 @@ func Compile(spec *Spec, schemas map[string]AdapterInfo) (*FSMGraph, hcl.Diagnos
 		g.Approvals[name] = node
 	}
 
+	// Compile branch blocks (W06).
+	for _, bs := range spec.Branches {
+		name := bs.Name
+		// Clash checks: must not duplicate any existing node kind.
+		if _, dup := g.Steps[name]; dup {
+			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("branch %q clashes with step of the same name", name)})
+			continue
+		}
+		if _, dup := g.States[name]; dup {
+			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("branch %q clashes with state of the same name", name)})
+			continue
+		}
+		if _, dup := g.Waits[name]; dup {
+			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("branch %q clashes with wait of the same name", name)})
+			continue
+		}
+		if _, dup := g.Approvals[name]; dup {
+			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("branch %q clashes with approval of the same name", name)})
+			continue
+		}
+		if _, dup := g.Branches[name]; dup {
+			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("duplicate branch %q", name)})
+			continue
+		}
+		// Default block is required.
+		if bs.Default == nil {
+			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("branch %q: default block is required", name)})
+			continue
+		}
+		if bs.Default.TransitionTo == "" {
+			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("branch %q: default transition_to is required", name)})
+			continue
+		}
+		// Compile arms.
+		node := &BranchNode{
+			Name:          name,
+			DefaultTarget: bs.Default.TransitionTo,
+		}
+		for i, arm := range bs.Arms {
+			if arm.TransitionTo == "" {
+				diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("branch %q arm[%d]: transition_to is required", name, i)})
+				continue
+			}
+			// Extract the `when` expression from the remain body.
+			var condExpr hcl.Expression
+			if arm.Remain != nil {
+				attrs, d := arm.Remain.JustAttributes()
+				diags = append(diags, d...)
+				if whenAttr, ok := attrs["when"]; ok {
+					condExpr = whenAttr.Expr
+				}
+			}
+			if condExpr == nil {
+				diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("branch %q arm[%d]: when expression is required", name, i)})
+				continue
+			}
+			// Walk the expression traversals: validate that referenced var/<name>
+			// and steps/<name> names exist in the graph. This is a best-effort
+			// static check; full type evaluation is a runtime concern.
+			for _, traversal := range condExpr.Variables() {
+				if len(traversal) < 2 {
+					continue
+				}
+				root, rootOK := traversal[0].(hcl.TraverseRoot)
+				if !rootOK {
+					continue
+				}
+				attr, attrOK := traversal[1].(hcl.TraverseAttr)
+				if !attrOK {
+					continue
+				}
+				switch root.Name {
+				case "var":
+					if _, known := g.Variables[attr.Name]; !known {
+						diags = append(diags, &hcl.Diagnostic{
+							Severity: hcl.DiagError,
+							Summary:  fmt.Sprintf("branch %q arm[%d]: undefined variable %q", name, i, attr.Name),
+						})
+					}
+				case "steps":
+					if _, known := g.Steps[attr.Name]; !known {
+						diags = append(diags, &hcl.Diagnostic{
+							Severity: hcl.DiagError,
+							Summary:  fmt.Sprintf("branch %q arm[%d]: unknown step %q referenced in condition", name, i, attr.Name),
+						})
+					}
+				}
+			}
+			// Capture the source text of the condition expression so it can be
+			// surfaced in BranchEvaluated events (W06).
+			condSrc := ""
+			if spec.SourceBytes != nil {
+				type noder interface{ Range() hcl.Range }
+				if nr, ok := condExpr.(noder); ok {
+					r := nr.Range()
+					if r.Start.Byte < r.End.Byte && r.End.Byte <= len(spec.SourceBytes) {
+						condSrc = string(spec.SourceBytes[r.Start.Byte:r.End.Byte])
+					}
+				}
+			}
+			node.Arms = append(node.Arms, BranchArm{
+				Condition:    condExpr,
+				ConditionSrc: condSrc,
+				Target:       arm.TransitionTo,
+			})
+		}
+		g.Branches[name] = node
+	}
+
 	// Second pass: resolve transitions, ensure initial/target exist and reachable.
 	if g.InitialState != "" {
 		if _, ok := g.Lookup(g.InitialState); !ok {
@@ -432,6 +542,22 @@ func Compile(spec *Spec, schemas map[string]AdapterInfo) (*FSMGraph, hcl.Diagnos
 			}
 		}
 	}
+	for _, br := range g.Branches {
+		for i, arm := range br.Arms {
+			if _, ok := g.Lookup(arm.Target); !ok {
+				diags = append(diags, &hcl.Diagnostic{
+					Severity: hcl.DiagError,
+					Summary:  fmt.Sprintf("branch %q arm[%d] -> unknown target %q", br.Name, i, arm.Target),
+				})
+			}
+		}
+		if _, ok := g.Lookup(br.DefaultTarget); !ok {
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  fmt.Sprintf("branch %q default -> unknown target %q", br.Name, br.DefaultTarget),
+			})
+		}
+	}
 
 	// Reachability from initial state.
 	if g.InitialState != "" && !diags.HasErrors() {
@@ -463,6 +589,19 @@ func Compile(spec *Spec, schemas map[string]AdapterInfo) (*FSMGraph, hcl.Diagnos
 						walk(target)
 					}
 				}
+				return
+			}
+			if br, isBranch := g.Branches[name]; isBranch {
+				for _, arm := range br.Arms {
+					if !reachable[arm.Target] {
+						reachable[arm.Target] = true
+						walk(arm.Target)
+					}
+				}
+				if !reachable[br.DefaultTarget] {
+					reachable[br.DefaultTarget] = true
+					walk(br.DefaultTarget)
+				}
 			}
 		}
 		walk(g.InitialState)
@@ -479,6 +618,11 @@ func Compile(spec *Spec, schemas map[string]AdapterInfo) (*FSMGraph, hcl.Diagnos
 		for name := range g.Approvals {
 			if !reachable[name] {
 				diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagWarning, Summary: fmt.Sprintf("approval %q is unreachable from initial_state", name)})
+			}
+		}
+		for name := range g.Branches {
+			if !reachable[name] {
+				diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagWarning, Summary: fmt.Sprintf("branch %q is unreachable from initial_state", name)})
 			}
 		}
 		for name := range g.States {

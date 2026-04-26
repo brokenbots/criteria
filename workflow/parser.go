@@ -47,6 +47,7 @@ func Parse(filename string, src []byte) (*Spec, hcl.Diagnostics) {
 		}}
 	}
 	spec := &file.Workflows[0]
+	spec.SourceBytes = src
 	if d := annotateLegacyConfigRanges(spec, f.Body); d.HasErrors() {
 		diags = append(diags, d...)
 		return nil, diags

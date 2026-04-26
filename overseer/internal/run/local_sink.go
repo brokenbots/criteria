@@ -113,6 +113,11 @@ func (s *LocalSink) OnApprovalDecision(node, decision, actor string, payload map
 	s.emit("ApprovalDecision", &pb.ApprovalDecision{Node: node, Decision: decision, Actor: actor, Payload: payload})
 }
 
+// OnBranchEvaluated emits a BranchEvaluated event (W06).
+func (s *LocalSink) OnBranchEvaluated(node, matchedArm, target, condition string) {
+	s.emit("BranchEvaluated", &pb.BranchEvaluated{Node: node, MatchedArm: matchedArm, Target: target, Condition: condition})
+}
+
 func (s *LocalSink) StepEventSink(step string) adapter.EventSink {
 	return &localStepSink{parent: s, step: step}
 }
