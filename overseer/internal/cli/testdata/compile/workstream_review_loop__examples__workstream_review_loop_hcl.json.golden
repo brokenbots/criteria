@@ -1,0 +1,420 @@
+{
+  "name": "workstream_review_loop",
+  "initial_state": "load_executor_agent_file",
+  "target_state": "done",
+  "policy": {
+    "MaxTotalSteps": 2000,
+    "MaxStepRetries": 0
+  },
+  "agents": [
+    {
+      "name": "cleanup",
+      "adapter": "copilot",
+      "on_crash": "fail",
+      "config_keys": [
+        "max_turns"
+      ]
+    },
+    {
+      "name": "executor",
+      "adapter": "copilot",
+      "on_crash": "fail",
+      "config_keys": [
+        "max_turns"
+      ]
+    },
+    {
+      "name": "reviewer",
+      "adapter": "copilot",
+      "on_crash": "fail",
+      "config_keys": [
+        "max_turns"
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "name": "load_executor_agent_file",
+      "adapter": "shell",
+      "timeout": "10s",
+      "input_keys": [
+        "command"
+      ],
+      "allow_tools": null,
+      "outcomes": [
+        {
+          "name": "failure",
+          "transition_to": "failed"
+        },
+        {
+          "name": "success",
+          "transition_to": "load_reviewer_agent_file"
+        }
+      ]
+    },
+    {
+      "name": "load_reviewer_agent_file",
+      "adapter": "shell",
+      "timeout": "10s",
+      "input_keys": [
+        "command"
+      ],
+      "allow_tools": null,
+      "outcomes": [
+        {
+          "name": "failure",
+          "transition_to": "failed"
+        },
+        {
+          "name": "success",
+          "transition_to": "load_cleanup_agent_file"
+        }
+      ]
+    },
+    {
+      "name": "load_cleanup_agent_file",
+      "adapter": "shell",
+      "timeout": "10s",
+      "input_keys": [
+        "command"
+      ],
+      "allow_tools": null,
+      "outcomes": [
+        {
+          "name": "failure",
+          "transition_to": "failed"
+        },
+        {
+          "name": "success",
+          "transition_to": "open_executor"
+        }
+      ]
+    },
+    {
+      "name": "open_executor",
+      "agent": "executor",
+      "lifecycle": "open",
+      "input_keys": null,
+      "allow_tools": null,
+      "outcomes": [
+        {
+          "name": "failure",
+          "transition_to": "failed"
+        },
+        {
+          "name": "success",
+          "transition_to": "open_reviewer"
+        }
+      ]
+    },
+    {
+      "name": "open_reviewer",
+      "agent": "reviewer",
+      "lifecycle": "open",
+      "input_keys": null,
+      "allow_tools": null,
+      "outcomes": [
+        {
+          "name": "failure",
+          "transition_to": "close_executor_abort"
+        },
+        {
+          "name": "success",
+          "transition_to": "open_cleanup"
+        }
+      ]
+    },
+    {
+      "name": "open_cleanup",
+      "agent": "cleanup",
+      "lifecycle": "open",
+      "input_keys": null,
+      "allow_tools": null,
+      "outcomes": [
+        {
+          "name": "failure",
+          "transition_to": "close_reviewer_abort"
+        },
+        {
+          "name": "success",
+          "transition_to": "execute"
+        }
+      ]
+    },
+    {
+      "name": "execute",
+      "agent": "executor",
+      "input_keys": [
+        "prompt"
+      ],
+      "allow_tools": [
+        "read",
+        "write",
+        "shell:*",
+        "mcp"
+      ],
+      "outcomes": [
+        {
+          "name": "failure",
+          "transition_to": "close_cleanup_abort"
+        },
+        {
+          "name": "needs_approval",
+          "transition_to": "review"
+        },
+        {
+          "name": "needs_review",
+          "transition_to": "review"
+        }
+      ]
+    },
+    {
+      "name": "review",
+      "agent": "reviewer",
+      "input_keys": [
+        "prompt"
+      ],
+      "allow_tools": [
+        "read",
+        "write",
+        "shell:*",
+        "mcp"
+      ],
+      "outcomes": [
+        {
+          "name": "approved",
+          "transition_to": "run_cleanup"
+        },
+        {
+          "name": "changes_requested",
+          "transition_to": "execute"
+        },
+        {
+          "name": "failure",
+          "transition_to": "close_cleanup_abort"
+        },
+        {
+          "name": "needs_approval",
+          "transition_to": "execute"
+        },
+        {
+          "name": "needs_review",
+          "transition_to": "execute"
+        }
+      ]
+    },
+    {
+      "name": "run_cleanup",
+      "agent": "cleanup",
+      "input_keys": [
+        "prompt"
+      ],
+      "allow_tools": [
+        "read",
+        "write",
+        "shell:*",
+        "mcp"
+      ],
+      "outcomes": [
+        {
+          "name": "failure",
+          "transition_to": "close_cleanup_abort"
+        },
+        {
+          "name": "needs_fix",
+          "transition_to": "execute_fix_once"
+        },
+        {
+          "name": "success",
+          "transition_to": "close_cleanup_done"
+        }
+      ]
+    },
+    {
+      "name": "execute_fix_once",
+      "agent": "executor",
+      "input_keys": [
+        "prompt"
+      ],
+      "allow_tools": [
+        "read",
+        "write",
+        "shell:*",
+        "mcp"
+      ],
+      "outcomes": [
+        {
+          "name": "failure",
+          "transition_to": "close_cleanup_abort"
+        },
+        {
+          "name": "fixed",
+          "transition_to": "run_cleanup_final"
+        }
+      ]
+    },
+    {
+      "name": "run_cleanup_final",
+      "agent": "cleanup",
+      "input_keys": [
+        "prompt"
+      ],
+      "allow_tools": [
+        "read",
+        "write",
+        "shell:*",
+        "mcp"
+      ],
+      "outcomes": [
+        {
+          "name": "failure",
+          "transition_to": "close_cleanup_abort"
+        },
+        {
+          "name": "success",
+          "transition_to": "close_cleanup_done"
+        }
+      ]
+    },
+    {
+      "name": "close_cleanup_done",
+      "agent": "cleanup",
+      "lifecycle": "close",
+      "input_keys": null,
+      "allow_tools": null,
+      "outcomes": [
+        {
+          "name": "failure",
+          "transition_to": "close_reviewer_done"
+        },
+        {
+          "name": "success",
+          "transition_to": "close_reviewer_done"
+        }
+      ]
+    },
+    {
+      "name": "close_reviewer_done",
+      "agent": "reviewer",
+      "lifecycle": "close",
+      "input_keys": null,
+      "allow_tools": null,
+      "outcomes": [
+        {
+          "name": "failure",
+          "transition_to": "close_executor_done"
+        },
+        {
+          "name": "success",
+          "transition_to": "close_executor_done"
+        }
+      ]
+    },
+    {
+      "name": "close_executor_done",
+      "agent": "executor",
+      "lifecycle": "close",
+      "input_keys": null,
+      "allow_tools": null,
+      "outcomes": [
+        {
+          "name": "failure",
+          "transition_to": "done"
+        },
+        {
+          "name": "success",
+          "transition_to": "done"
+        }
+      ]
+    },
+    {
+      "name": "close_cleanup_abort",
+      "agent": "cleanup",
+      "lifecycle": "close",
+      "input_keys": null,
+      "allow_tools": null,
+      "outcomes": [
+        {
+          "name": "failure",
+          "transition_to": "close_reviewer_abort"
+        },
+        {
+          "name": "success",
+          "transition_to": "close_reviewer_abort"
+        }
+      ]
+    },
+    {
+      "name": "close_reviewer_abort",
+      "agent": "reviewer",
+      "lifecycle": "close",
+      "input_keys": null,
+      "allow_tools": null,
+      "outcomes": [
+        {
+          "name": "failure",
+          "transition_to": "close_executor_abort"
+        },
+        {
+          "name": "success",
+          "transition_to": "close_executor_abort"
+        }
+      ]
+    },
+    {
+      "name": "close_executor_abort",
+      "agent": "executor",
+      "lifecycle": "close",
+      "input_keys": null,
+      "allow_tools": null,
+      "outcomes": [
+        {
+          "name": "failure",
+          "transition_to": "failed"
+        },
+        {
+          "name": "success",
+          "transition_to": "failed"
+        }
+      ]
+    }
+  ],
+  "states": [
+    {
+      "name": "done",
+      "terminal": true,
+      "success": true
+    },
+    {
+      "name": "failed",
+      "terminal": true,
+      "success": false
+    }
+  ],
+  "step_order": [
+    "load_executor_agent_file",
+    "load_reviewer_agent_file",
+    "load_cleanup_agent_file",
+    "open_executor",
+    "open_reviewer",
+    "open_cleanup",
+    "execute",
+    "review",
+    "run_cleanup",
+    "execute_fix_once",
+    "run_cleanup_final",
+    "close_cleanup_done",
+    "close_reviewer_done",
+    "close_executor_done",
+    "close_cleanup_abort",
+    "close_reviewer_abort",
+    "close_executor_abort"
+  ],
+  "plugins_required": [
+    "copilot",
+    "shell"
+  ],
+  "metadata": {
+    "schema_version": 1
+  }
+}

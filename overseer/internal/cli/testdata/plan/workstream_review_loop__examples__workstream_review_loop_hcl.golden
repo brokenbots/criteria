@@ -1,0 +1,92 @@
+workflow: workstream_review_loop  (version 1)
+initial_state: load_executor_agent_file   target_state: done
+policy: max_total_steps=2000  max_step_retries=0
+
+variables:
+  workstream_file: string = workstreams/01-event-contract-repair.md
+
+agents:
+  cleanup   adapter=copilot   on_crash=fail
+    config: max_turns=8
+  executor   adapter=copilot   on_crash=fail
+    config: max_turns=12
+  reviewer   adapter=copilot   on_crash=fail
+    config: max_turns=10
+
+steps (declaration order):
+  load_executor_agent_file   adapter=shell   timeout=10s
+    input keys: command
+    allow_tools: (none)
+    outcomes: success -> load_reviewer_agent_file, failure -> failed
+  load_reviewer_agent_file   adapter=shell   timeout=10s
+    input keys: command
+    allow_tools: (none)
+    outcomes: success -> load_cleanup_agent_file, failure -> failed
+  load_cleanup_agent_file   adapter=shell   timeout=10s
+    input keys: command
+    allow_tools: (none)
+    outcomes: success -> open_executor, failure -> failed
+  open_executor   agent=executor   lifecycle=open
+    input keys: (none)
+    allow_tools: (none)
+    outcomes: success -> open_reviewer, failure -> failed
+  open_reviewer   agent=reviewer   lifecycle=open
+    input keys: (none)
+    allow_tools: (none)
+    outcomes: success -> open_cleanup, failure -> close_executor_abort
+  open_cleanup   agent=cleanup   lifecycle=open
+    input keys: (none)
+    allow_tools: (none)
+    outcomes: success -> execute, failure -> close_reviewer_abort
+  execute   agent=executor
+    input keys: prompt
+    allow_tools: read, write, shell:*, mcp
+    outcomes: needs_review -> review, needs_approval -> review, failure -> close_cleanup_abort
+  review   agent=reviewer
+    input keys: prompt
+    allow_tools: read, write, shell:*, mcp
+    outcomes: approved -> run_cleanup, changes_requested -> execute, needs_review -> execute, needs_approval -> execute, failure -> close_cleanup_abort
+  run_cleanup   agent=cleanup
+    input keys: prompt
+    allow_tools: read, write, shell:*, mcp
+    outcomes: success -> close_cleanup_done, needs_fix -> execute_fix_once, failure -> close_cleanup_abort
+  execute_fix_once   agent=executor
+    input keys: prompt
+    allow_tools: read, write, shell:*, mcp
+    outcomes: fixed -> run_cleanup_final, failure -> close_cleanup_abort
+  run_cleanup_final   agent=cleanup
+    input keys: prompt
+    allow_tools: read, write, shell:*, mcp
+    outcomes: success -> close_cleanup_done, failure -> close_cleanup_abort
+  close_cleanup_done   agent=cleanup   lifecycle=close
+    input keys: (none)
+    allow_tools: (none)
+    outcomes: success -> close_reviewer_done, failure -> close_reviewer_done
+  close_reviewer_done   agent=reviewer   lifecycle=close
+    input keys: (none)
+    allow_tools: (none)
+    outcomes: success -> close_executor_done, failure -> close_executor_done
+  close_executor_done   agent=executor   lifecycle=close
+    input keys: (none)
+    allow_tools: (none)
+    outcomes: success -> done, failure -> done
+  close_cleanup_abort   agent=cleanup   lifecycle=close
+    input keys: (none)
+    allow_tools: (none)
+    outcomes: success -> close_reviewer_abort, failure -> close_reviewer_abort
+  close_reviewer_abort   agent=reviewer   lifecycle=close
+    input keys: (none)
+    allow_tools: (none)
+    outcomes: success -> close_executor_abort, failure -> close_executor_abort
+  close_executor_abort   agent=executor   lifecycle=close
+    input keys: (none)
+    allow_tools: (none)
+    outcomes: success -> failed, failure -> failed
+
+states:
+  done    terminal=true   success=true
+  failed    terminal=true   success=false
+
+plugins required:
+  copilot   (search: $OVERLORD_PLUGINS, ~/.overlord/plugins)
+  shell   (search: $OVERLORD_PLUGINS, ~/.overlord/plugins)

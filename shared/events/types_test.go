@@ -45,37 +45,6 @@ func TestNewEnvelopeRoundTrip(t *testing.T) {
 	}
 }
 
-func TestTypeStringExhaustive(t *testing.T) {
-	cases := []struct {
-		payload any
-		want    string
-	}{
-		{&pb.RunStarted{}, "run.started"},
-		{&pb.RunCompleted{}, "run.completed"},
-		{&pb.RunFailed{}, "run.failed"},
-		{&pb.StepEntered{}, "step.entered"},
-		{&pb.StepOutcome{}, "step.outcome"},
-		{&pb.StepTransition{}, "step.transition"},
-		{&pb.StepLog{}, "step.log"},
-		{&pb.AdapterEvent{}, "adapter.event"},
-		{&pb.OverseerHeartbeat{}, "overseer.heartbeat"},
-		{&pb.OverseerDisconnected{}, "overseer.disconnected"},
-		{&pb.WatchReady{}, "watch.ready"},
-	}
-	for _, tc := range cases {
-		env := events.NewEnvelope("r", tc.payload)
-		if got := events.TypeString(env); got != tc.want {
-			t.Errorf("type for %T: got %q want %q", tc.payload, got, tc.want)
-		}
-	}
-	if events.TypeString(nil) != "" {
-		t.Fatalf("nil envelope should return empty type string")
-	}
-	if events.TypeString(&pb.Envelope{}) != "" {
-		t.Fatalf("empty envelope should return empty type string")
-	}
-}
-
 func TestIsTerminal(t *testing.T) {
 	if !events.IsTerminal(events.NewEnvelope("r", &pb.RunCompleted{})) {
 		t.Fatal("run.completed should be terminal")

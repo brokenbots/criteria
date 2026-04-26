@@ -90,6 +90,14 @@ func setPayload(env *pb.Envelope, payload any) {
 		env.Payload = &pb.Envelope_ApprovalDecision{ApprovalDecision: p}
 	case *pb.BranchEvaluated:
 		env.Payload = &pb.Envelope_BranchEvaluated{BranchEvaluated: p}
+	case *pb.ForEachEntered:
+		env.Payload = &pb.Envelope_ForEachEntered{ForEachEntered: p}
+	case *pb.ForEachIteration:
+		env.Payload = &pb.Envelope_ForEachIteration{ForEachIteration: p}
+	case *pb.ForEachOutcome:
+		env.Payload = &pb.Envelope_ForEachOutcome{ForEachOutcome: p}
+	case *pb.ScopeIterCursorSet:
+		env.Payload = &pb.Envelope_ScopeIterCursorSet{ScopeIterCursorSet: p}
 	default:
 		panic(fmt.Sprintf("events.NewEnvelope: unsupported payload type %T", payload))
 	}
@@ -142,6 +150,14 @@ func TypeString(env *pb.Envelope) string {
 		return "approval.decision"
 	case *pb.Envelope_BranchEvaluated:
 		return "branch.evaluated"
+	case *pb.Envelope_ForEachEntered:
+		return "for_each.entered"
+	case *pb.Envelope_ForEachIteration:
+		return "for_each.iteration"
+	case *pb.Envelope_ForEachOutcome:
+		return "for_each.outcome"
+	case *pb.Envelope_ScopeIterCursorSet:
+		return "scope.iter_cursor_set"
 	default:
 		return ""
 	}
