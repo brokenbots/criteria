@@ -1,0 +1,44 @@
+workflow: two_agent_loop  (version 0.1)
+initial_state: open_executor   target_state: done
+policy: max_total_steps=100  max_step_retries=0
+
+variables:
+  (none)
+
+agents:
+  executor   adapter=copilot   on_crash=respawn
+    config: role=executor
+  reviewer   adapter=copilot   on_crash=fail
+    config: role=reviewer
+
+steps (declaration order):
+  open_executor   agent=executor   lifecycle=open
+    input keys: (none)
+    allow_tools: (none)
+    outcomes: success -> open_reviewer
+  open_reviewer   agent=reviewer   lifecycle=open
+    input keys: (none)
+    allow_tools: (none)
+    outcomes: success -> execute
+  execute   agent=executor
+    input keys: (none)
+    allow_tools: (none)
+    outcomes: approved -> close_reviewer, retry -> review
+  review   agent=reviewer
+    input keys: (none)
+    allow_tools: (none)
+    outcomes: approved -> close_reviewer, changes -> execute
+  close_reviewer   agent=reviewer   lifecycle=close
+    input keys: (none)
+    allow_tools: (none)
+    outcomes: success -> close_executor
+  close_executor   agent=executor   lifecycle=close
+    input keys: (none)
+    allow_tools: (none)
+    outcomes: success -> done
+
+states:
+  done    terminal=true   success=true
+
+plugins required:
+  copilot   (search: $OVERLORD_PLUGINS, ~/.overlord/plugins)

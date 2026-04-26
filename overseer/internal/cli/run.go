@@ -3,21 +3,11 @@ package cli
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"syscall"
-	"time"
 
 	"github.com/spf13/cobra"
-
-	"github.com/brokenbots/overlord/overseer/internal/adapters/shell"
-	"github.com/brokenbots/overlord/overseer/internal/engine"
-	"github.com/brokenbots/overlord/overseer/internal/plugin"
-	"github.com/brokenbots/overlord/overseer/internal/run"
-	castletrans "github.com/brokenbots/overlord/overseer/internal/transport/castle"
-	"github.com/brokenbots/overlord/workflow"
 )
 
 func NewRunCmd() *cobra.Command {
@@ -33,8 +23,10 @@ func NewRunCmd() *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:   "run",
-		Short: "Execute a workflow against a Castle",
+		Short: "Deprecated alias for apply --castle",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			fmt.Fprintln(os.Stderr, "warning: `overseer run` is deprecated; use `overseer apply <workflow.hcl> --castle <url>`")
+
 			if workflowPath == "" {
 				return fmt.Errorf("--workflow is required")
 			}
@@ -42,130 +34,19 @@ func NewRunCmd() *cobra.Command {
 				return fmt.Errorf("--castle is required")
 			}
 
-			log := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 			ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer cancel()
 
-			// Parse + compile workflow.
-			src, err := os.ReadFile(workflowPath)
-			if err != nil {
-				return err
-			}
-			spec, diags := workflow.Parse(workflowPath, src)
-			if diags.HasErrors() {
-				return fmt.Errorf("parse: %s", diags.Error())
-			}
-
-			// Build loader early so we can collect adapter schemas for compile-time validation.
-			loader := plugin.NewLoader()
-			loader.RegisterBuiltin(shell.Name, plugin.BuiltinFactoryForAdapter(shell.New()))
-			schemas := collectSchemas(ctx, loader, spec, log)
-
-			graph, diags := workflow.Compile(spec, schemas)
-			if diags.HasErrors() {
-				return fmt.Errorf("compile: %s", diags.Error())
-			}
-
-			// Set up Castle Connect transport.
-			clientOpts := castletrans.Options{
-				Codec:    castletrans.Codec(codec),
-				TLSMode:  castletrans.TLSMode(tlsMode),
-				CAFile:   tlsCA,
-				CertFile: tlsCert,
-				KeyFile:  tlsKey,
-			}
-			client, err := castletrans.NewClient(castleURL, log, clientOpts)
-			if err != nil {
-				return err
-			}
-			hostname, _ := os.Hostname()
-			if name == "" {
-				name = hostname
-			}
-			if err := client.Register(ctx, name, hostname, "0.1.0"); err != nil {
-				return fmt.Errorf("register: %w", err)
-			}
-
-			// Before starting a new run, attempt to resume any runs that were
-			// in-flight when the Overseer last crashed. This is a no-op when
-			// there are no checkpoint files under OVERSEER_STATE_DIR.
-			resumeInFlightRuns(ctx, log, clientOpts)
-
-			runID, err := client.CreateRun(ctx, graph.Name, string(src))
-			if err != nil {
-				return fmt.Errorf("create run: %w", err)
-			}
-			if err := client.StartStreams(ctx, runID); err != nil {
-				return fmt.Errorf("castle streams: %w", err)
-			}
-			defer client.Close()
-			client.StartHeartbeat(ctx, 10*time.Second)
-
-			go func() {
-				for {
-					select {
-					case <-ctx.Done():
-						return
-					case cancelRunID := <-client.RunCancelCh():
-						if cancelRunID == runID {
-							log.Info("received run.cancel control", "run_id", runID)
-							cancel()
-						}
-					}
-				}
-			}()
-
-			sink := &run.Sink{
-				RunID:  runID,
-				Client: client,
-				Log:    log.With("run_id", runID),
-				CheckpointFn: func(step string, attempt int) {
-					cp := &StepCheckpoint{
-						RunID:        runID,
-						Workflow:     graph.Name,
-						WorkflowPath: workflowPath,
-						CurrentStep:  step,
-						Attempt:      attempt,
-						StartedAt:    time.Now().UTC(),
-						CastleURL:    castleURL,
-						OverseerID:   client.OverseerID(),
-						Token:        client.Token(),
-					}
-					if cpErr := WriteStepCheckpoint(cp); cpErr != nil {
-						log.Warn("failed to write step checkpoint; crash recovery may not work", "error", cpErr)
-					}
-				},
-			}
-
-			log.Info("starting run",
-				"run_id", runID,
-				"workflow", graph.Name,
-				"file", filepath.Base(workflowPath))
-
-			state := &localRunState{
-				PID:       os.Getpid(),
-				RunID:     runID,
-				Workflow:  graph.Name,
-				CastleURL: castleURL,
-				StartedAt: time.Now().UTC(),
-			}
-			_ = writeLocalRunState(state)
-			defer removeLocalRunState()
-			defer RemoveStepCheckpoint(runID)
-
-			eng := engine.New(graph, loader, sink)
-			if err := eng.Run(ctx); err != nil {
-				log.Error("run failed", "error", err)
-				return err
-			}
-			log.Info("run completed", "run_id", runID)
-			// Deterministically drain any trailing envelopes before Close()
-			// tears the SubmitEvents stream down. Bounded by a short timeout
-			// so a stalled Castle cannot hang shutdown.
-			drainCtx, drainCancel := context.WithTimeout(context.Background(), 5*time.Second)
-			client.Drain(drainCtx)
-			drainCancel()
-			return nil
+			return runApply(ctx, applyOptions{
+				workflowPath: workflowPath,
+				castleURL:    castleURL,
+				name:         name,
+				codec:        codec,
+				tlsMode:      tlsMode,
+				tlsCA:        tlsCA,
+				tlsCert:      tlsCert,
+				tlsKey:       tlsKey,
+			})
 		},
 	}
 	cmd.Flags().StringVar(&workflowPath, "workflow", envOrDefault("OVERSEER_WORKFLOW", ""), "Path to workflow .hcl file (or OVERSEER_WORKFLOW)")

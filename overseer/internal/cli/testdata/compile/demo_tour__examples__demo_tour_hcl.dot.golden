@@ -1,0 +1,27 @@
+digraph "demo_tour" {
+  rankdir=LR;
+
+  "boot" [shape=box];
+  "discover" [shape=box];
+  "work" [shape=box];
+  "loop_check" [shape=box];
+  "verify" [shape=box];
+  "celebrate" [shape=box];
+  "aborted" [shape=doublecircle];
+  "done" [shape=doublecircle];
+
+  "__start__" [shape=point,width=0.12,label=""];
+  "__start__" -> "boot" [label="initial"];
+  "boot" -> "aborted" [label="failure"];
+  "boot" -> "discover" [label="success"];
+  "discover" -> "aborted" [label="failure"];
+  "discover" -> "work" [label="success"];
+  "work" -> "aborted" [label="failure"];
+  "work" -> "loop_check" [label="success"];
+  "loop_check" -> "verify" [label="failure"];
+  "loop_check" -> "work" [label="success"];
+  "verify" -> "verify" [label="failure"];
+  "verify" -> "celebrate" [label="success"];
+  "celebrate" -> "aborted" [label="failure"];
+  "celebrate" -> "done" [label="success"];
+}

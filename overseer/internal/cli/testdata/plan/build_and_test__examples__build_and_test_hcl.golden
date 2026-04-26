@@ -1,0 +1,26 @@
+workflow: build_and_test  (version 0.1)
+initial_state: build   target_state: verified
+policy: max_total_steps=20  max_step_retries=0
+
+variables:
+  (none)
+
+agents:
+  (none)
+
+steps (declaration order):
+  build   adapter=shell   timeout=5m0s
+    input keys: command
+    allow_tools: (none)
+    outcomes: success -> test, failure -> failed
+  test   adapter=shell   timeout=10m0s
+    input keys: command
+    allow_tools: (none)
+    outcomes: success -> verified, failure -> failed
+
+states:
+  failed    terminal=true   success=false
+  verified    terminal=true   success=true
+
+plugins required:
+  shell   (search: $OVERLORD_PLUGINS, ~/.overlord/plugins)

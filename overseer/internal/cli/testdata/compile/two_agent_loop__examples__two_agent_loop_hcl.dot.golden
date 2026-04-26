@@ -1,0 +1,36 @@
+digraph "two_agent_loop" {
+  rankdir=LR;
+
+  "open_executor" [shape=box];
+  "open_reviewer" [shape=box];
+  "execute" [shape=box];
+  "review" [shape=box];
+  "close_reviewer_done" [shape=box];
+  "close_reviewer_failed" [shape=box];
+  "close_executor_done" [shape=box];
+  "close_executor_failed" [shape=box];
+  "done" [shape=doublecircle];
+  "failed" [shape=doublecircle];
+
+  "__start__" [shape=point,width=0.12,label=""];
+  "__start__" -> "open_executor" [label="initial"];
+  "open_executor" -> "failed" [label="failure"];
+  "open_executor" -> "open_reviewer" [label="success"];
+  "open_reviewer" -> "close_executor_failed" [label="failure"];
+  "open_reviewer" -> "execute" [label="success"];
+  "execute" -> "close_reviewer_failed" [label="failure"];
+  "execute" -> "review" [label="needs_review"];
+  "execute" -> "review" [label="success"];
+  "review" -> "close_reviewer_done" [label="approved"];
+  "review" -> "execute" [label="changes_requested"];
+  "review" -> "close_reviewer_failed" [label="failure"];
+  "review" -> "execute" [label="needs_review"];
+  "close_reviewer_done" -> "close_executor_failed" [label="failure"];
+  "close_reviewer_done" -> "close_executor_done" [label="success"];
+  "close_reviewer_failed" -> "close_executor_failed" [label="failure"];
+  "close_reviewer_failed" -> "close_executor_failed" [label="success"];
+  "close_executor_done" -> "failed" [label="failure"];
+  "close_executor_done" -> "done" [label="success"];
+  "close_executor_failed" -> "failed" [label="failure"];
+  "close_executor_failed" -> "failed" [label="success"];
+}

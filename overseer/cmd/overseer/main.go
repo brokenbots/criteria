@@ -15,6 +15,9 @@ func main() {
 		Use:   "overseer",
 		Short: "Overlord Overseer — local workflow executor",
 	}
+	root.AddCommand(cli.NewCompileCmd())
+	root.AddCommand(cli.NewPlanCmd())
+	root.AddCommand(cli.NewApplyCmd())
 	root.AddCommand(cli.NewRunCmd())
 	root.AddCommand(cli.NewValidateCmd())
 	root.AddCommand(cli.NewStatusCmd())

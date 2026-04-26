@@ -1,0 +1,12 @@
+digraph "hello" {
+  rankdir=LR;
+
+  "say_hello" [shape=box];
+  "done" [shape=doublecircle];
+  "failed" [shape=doublecircle];
+
+  "__start__" [shape=point,width=0.12,label=""];
+  "__start__" -> "say_hello" [label="initial"];
+  "say_hello" -> "failed" [label="failure"];
+  "say_hello" -> "done" [label="success"];
+}

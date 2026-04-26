@@ -1,0 +1,26 @@
+digraph "agent_hello" {
+  rankdir=LR;
+
+  "open_assistant" [shape=box];
+  "ask" [shape=box];
+  "close_done" [shape=box];
+  "close_needs_review" [shape=box];
+  "close_failed" [shape=box];
+  "done" [shape=doublecircle];
+  "failed" [shape=doublecircle];
+  "needs_review" [shape=doublecircle];
+
+  "__start__" [shape=point,width=0.12,label=""];
+  "__start__" -> "open_assistant" [label="initial"];
+  "open_assistant" -> "failed" [label="failure"];
+  "open_assistant" -> "ask" [label="success"];
+  "ask" -> "close_failed" [label="failure"];
+  "ask" -> "close_needs_review" [label="needs_review"];
+  "ask" -> "close_done" [label="success"];
+  "close_done" -> "failed" [label="failure"];
+  "close_done" -> "done" [label="success"];
+  "close_needs_review" -> "failed" [label="failure"];
+  "close_needs_review" -> "needs_review" [label="success"];
+  "close_failed" -> "failed" [label="failure"];
+  "close_failed" -> "failed" [label="success"];
+}

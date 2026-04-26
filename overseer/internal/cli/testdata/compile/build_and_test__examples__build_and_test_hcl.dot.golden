@@ -1,0 +1,15 @@
+digraph "build_and_test" {
+  rankdir=LR;
+
+  "build" [shape=box];
+  "test" [shape=box];
+  "failed" [shape=doublecircle];
+  "verified" [shape=doublecircle];
+
+  "__start__" [shape=point,width=0.12,label=""];
+  "__start__" -> "build" [label="initial"];
+  "build" -> "failed" [label="failure"];
+  "build" -> "test" [label="success"];
+  "test" -> "failed" [label="failure"];
+  "test" -> "verified" [label="success"];
+}

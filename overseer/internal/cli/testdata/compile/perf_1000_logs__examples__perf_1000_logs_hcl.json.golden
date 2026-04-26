@@ -1,0 +1,51 @@
+{
+  "name": "perf_1000_logs",
+  "initial_state": "generate_logs",
+  "target_state": "done",
+  "policy": {
+    "MaxTotalSteps": 100,
+    "MaxStepRetries": 0
+  },
+  "agents": [],
+  "steps": [
+    {
+      "name": "generate_logs",
+      "adapter": "shell",
+      "input_keys": [
+        "command"
+      ],
+      "allow_tools": null,
+      "outcomes": [
+        {
+          "name": "failure",
+          "transition_to": "failed"
+        },
+        {
+          "name": "success",
+          "transition_to": "done"
+        }
+      ]
+    }
+  ],
+  "states": [
+    {
+      "name": "done",
+      "terminal": true,
+      "success": true
+    },
+    {
+      "name": "failed",
+      "terminal": true,
+      "success": false
+    }
+  ],
+  "step_order": [
+    "generate_logs"
+  ],
+  "plugins_required": [
+    "shell"
+  ],
+  "metadata": {
+    "schema_version": 1
+  }
+}

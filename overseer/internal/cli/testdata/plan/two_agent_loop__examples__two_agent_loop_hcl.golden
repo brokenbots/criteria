@@ -1,0 +1,53 @@
+workflow: two_agent_loop  (version 1)
+initial_state: open_executor   target_state: done
+policy: max_total_steps=50  max_step_retries=0
+
+variables:
+  (none)
+
+agents:
+  executor   adapter=copilot   on_crash=fail
+    config: max_turns=8, system_prompt=You are the executor in a two-agent engineering loop. Implement the next item from the task list using small focused changes, then stop.
+  reviewer   adapter=copilot   on_crash=fail
+    config: max_turns=8, system_prompt=You are the reviewer in a two-agent engineering loop. Review the latest changes for correctness and clarity.
+
+steps (declaration order):
+  open_executor   agent=executor   lifecycle=open
+    input keys: (none)
+    allow_tools: (none)
+    outcomes: success -> open_reviewer, failure -> failed
+  open_reviewer   agent=reviewer   lifecycle=open
+    input keys: (none)
+    allow_tools: (none)
+    outcomes: success -> execute, failure -> close_executor_failed
+  execute   agent=executor
+    input keys: prompt
+    allow_tools: read_file, write_file, shell:git diff, shell:go build*, shell:go test*
+    outcomes: needs_review -> review, success -> review, failure -> close_reviewer_failed
+  review   agent=reviewer
+    input keys: prompt
+    allow_tools: read_file, shell:git diff
+    outcomes: approved -> close_reviewer_done, changes_requested -> execute, needs_review -> execute, failure -> close_reviewer_failed
+  close_reviewer_done   agent=reviewer   lifecycle=close
+    input keys: (none)
+    allow_tools: (none)
+    outcomes: success -> close_executor_done, failure -> close_executor_failed
+  close_reviewer_failed   agent=reviewer   lifecycle=close
+    input keys: (none)
+    allow_tools: (none)
+    outcomes: success -> close_executor_failed, failure -> close_executor_failed
+  close_executor_done   agent=executor   lifecycle=close
+    input keys: (none)
+    allow_tools: (none)
+    outcomes: success -> done, failure -> failed
+  close_executor_failed   agent=executor   lifecycle=close
+    input keys: (none)
+    allow_tools: (none)
+    outcomes: success -> failed, failure -> failed
+
+states:
+  done    terminal=true   success=true
+  failed    terminal=true   success=false
+
+plugins required:
+  copilot   (search: $OVERLORD_PLUGINS, ~/.overlord/plugins)

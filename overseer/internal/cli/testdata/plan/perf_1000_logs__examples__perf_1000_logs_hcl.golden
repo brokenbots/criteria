@@ -1,0 +1,22 @@
+workflow: perf_1000_logs  (version 0.1)
+initial_state: generate_logs   target_state: done
+policy: max_total_steps=100  max_step_retries=0
+
+variables:
+  (none)
+
+agents:
+  (none)
+
+steps (declaration order):
+  generate_logs   adapter=shell
+    input keys: command
+    allow_tools: (none)
+    outcomes: success -> done, failure -> failed
+
+states:
+  done    terminal=true   success=true
+  failed    terminal=true   success=false
+
+plugins required:
+  shell   (search: $OVERLORD_PLUGINS, ~/.overlord/plugins)

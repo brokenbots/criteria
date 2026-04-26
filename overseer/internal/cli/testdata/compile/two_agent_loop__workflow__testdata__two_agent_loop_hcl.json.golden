@@ -1,0 +1,134 @@
+{
+  "name": "two_agent_loop",
+  "initial_state": "open_executor",
+  "target_state": "done",
+  "policy": {
+    "MaxTotalSteps": 100,
+    "MaxStepRetries": 0
+  },
+  "agents": [
+    {
+      "name": "executor",
+      "adapter": "copilot",
+      "on_crash": "respawn",
+      "config_keys": [
+        "role"
+      ]
+    },
+    {
+      "name": "reviewer",
+      "adapter": "copilot",
+      "on_crash": "fail",
+      "config_keys": [
+        "role"
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "name": "open_executor",
+      "agent": "executor",
+      "lifecycle": "open",
+      "input_keys": null,
+      "allow_tools": null,
+      "outcomes": [
+        {
+          "name": "success",
+          "transition_to": "open_reviewer"
+        }
+      ]
+    },
+    {
+      "name": "open_reviewer",
+      "agent": "reviewer",
+      "lifecycle": "open",
+      "input_keys": null,
+      "allow_tools": null,
+      "outcomes": [
+        {
+          "name": "success",
+          "transition_to": "execute"
+        }
+      ]
+    },
+    {
+      "name": "execute",
+      "agent": "executor",
+      "input_keys": null,
+      "allow_tools": null,
+      "outcomes": [
+        {
+          "name": "approved",
+          "transition_to": "close_reviewer"
+        },
+        {
+          "name": "retry",
+          "transition_to": "review"
+        }
+      ]
+    },
+    {
+      "name": "review",
+      "agent": "reviewer",
+      "input_keys": null,
+      "allow_tools": null,
+      "outcomes": [
+        {
+          "name": "approved",
+          "transition_to": "close_reviewer"
+        },
+        {
+          "name": "changes",
+          "transition_to": "execute"
+        }
+      ]
+    },
+    {
+      "name": "close_reviewer",
+      "agent": "reviewer",
+      "lifecycle": "close",
+      "input_keys": null,
+      "allow_tools": null,
+      "outcomes": [
+        {
+          "name": "success",
+          "transition_to": "close_executor"
+        }
+      ]
+    },
+    {
+      "name": "close_executor",
+      "agent": "executor",
+      "lifecycle": "close",
+      "input_keys": null,
+      "allow_tools": null,
+      "outcomes": [
+        {
+          "name": "success",
+          "transition_to": "done"
+        }
+      ]
+    }
+  ],
+  "states": [
+    {
+      "name": "done",
+      "terminal": true,
+      "success": true
+    }
+  ],
+  "step_order": [
+    "open_executor",
+    "open_reviewer",
+    "execute",
+    "review",
+    "close_reviewer",
+    "close_executor"
+  ],
+  "plugins_required": [
+    "copilot"
+  ],
+  "metadata": {
+    "schema_version": 1
+  }
+}
