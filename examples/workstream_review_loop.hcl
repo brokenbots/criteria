@@ -96,13 +96,15 @@ workflow "workstream_review_loop" {
   step "execute" {
     agent       = "executor"
     allow_tools = [
-      "read",
-      "write",
-      "shell:*",
-      "mcp",
+      "read_file",
+      "write_file",
+      "shell:git diff",
+      "shell:go build*",
+      "shell:go test*",
+      "shell:make*",
     ]
     input {
-      prompt = "Agent profile (.github/agents/workstream-executor.agent.md):\n${steps.load_executor_agent_file.stdout}\n\nCurrent workstream file: ${var.workstream_file}\n\nExecute the next batch of implementation tasks for this workstream only. Keep changes focused and verifiable. End your final line with exactly one of:\nRESULT: needs_review\nRESULT: failure"
+      prompt = "Agent profile (.github/agents/workstream-executor.agent.md):\n${steps.load_executor_agent_file.stdout}\n\nCurrent workstream file: ${var.workstream_file}\n\nStart by reading ${var.workstream_file} with read_file and extracting the next unchecked items. Then execute the next focused implementation batch for this workstream only, including code + tests where applicable. Keep changes verifiable and scoped. End your final line with exactly one of:\nRESULT: needs_review\nRESULT: failure"
     }
     outcome "needs_review"   { transition_to = "review" }
     outcome "needs_approval" { transition_to = "review" }
@@ -112,10 +114,10 @@ workflow "workstream_review_loop" {
   step "review" {
     agent       = "reviewer"
     allow_tools = [
-      "read",
-      "write",
-      "shell:*",
-      "mcp",
+      "read_file",
+      "shell:git diff",
+      "shell:go test*",
+      "shell:make test*",
     ]
     input {
       prompt = "Agent profile (.github/agents/workstream-reviewer.agent.md):\n${steps.load_reviewer_agent_file.stdout}\n\nCurrent workstream file: ${var.workstream_file}\n\nReview the latest executor changes against this workstream. If more work is needed, request changes and send the executor back for another pass. If fully acceptable, approve and hand off for a final executor commit step. End your final line with exactly one of:\nRESULT: approved\nRESULT: changes_requested\nRESULT: failure"
@@ -132,10 +134,14 @@ workflow "workstream_review_loop" {
   step "commit_and_finish" {
     agent       = "executor"
     allow_tools = [
-      "read",
-      "write",
-      "shell:*",
-      "mcp",
+      "read_file",
+      "write_file",
+      "shell:git status",
+      "shell:git diff",
+      "shell:git add*",
+      "shell:git commit*",
+      "shell:go test*",
+      "shell:make test*",
     ]
     input {
       prompt = "Agent profile (.github/agents/workstream-executor.agent.md):\n${steps.load_executor_agent_file.stdout}\n\nCurrent workstream file: ${var.workstream_file}\n\nThe reviewer approved the implementation. Commit only the intended workstream changes and use this exact commit message format:\nworkstream: complete ${var.workstream_file}\n\nThen run only minimal final verification needed for those changes. If commit or verification fails, report failure. End your final line with exactly one of:\nRESULT: success\nRESULT: failure"
