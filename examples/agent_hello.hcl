@@ -1,3 +1,4 @@
+# mode: orchestrator-required (uses agent adapters; requires --castle)
 workflow "agent_hello" {
   version       = "1"
   initial_state = "open_assistant"

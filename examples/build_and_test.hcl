@@ -1,5 +1,6 @@
 # Example: shell-only build → test → terminal
 # Demonstrates linear flow with two terminal states.
+# mode: standalone
 workflow "build_and_test" {
   version       = "0.1"
   initial_state = "build"

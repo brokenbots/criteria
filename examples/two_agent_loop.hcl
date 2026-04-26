@@ -1,3 +1,4 @@
+# mode: orchestrator-required (uses agent adapters; requires --castle)
 workflow "two_agent_loop" {
   version       = "1"
   initial_state = "open_executor"

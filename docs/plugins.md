@@ -1,6 +1,6 @@
 # Plugins and Agent Workflows
 
-This document is the Phase 1.4 baseline for running agent-backed workflows in Overlord.
+This document is the Phase 1.4+ baseline for running agent-backed workflows in Overlord. For the full workflow language reference (variables, step outputs, branching, iteration, wait nodes, approval gates), see [workflow.md](workflow.md).
 
 ## What Plugins Are
 
@@ -77,7 +77,7 @@ workflow "agent_hello" {
   step "ask" {
     agent       = "assistant"
     allow_tools = ["shell:git status"]
-    config = {
+    input = {
       max_turns = "4"
       prompt    = "Run `git status` in the current directory. Summarize the result in one short paragraph. End your final line with exactly one of: RESULT: success | RESULT: needs_review | RESULT: failure. Use RESULT: success only if you successfully ran `git status`."
     }
@@ -93,7 +93,7 @@ The important parts are:
 
 - `agent "assistant"` binds a stable session name to the `copilot` plugin.
 - `open_assistant` creates the session. The current Copilot plugin accepts plugin-specific config such as `model` or `working_directory`, but the hello example does not need any open-time options.
-- `ask` is the only execute step. For the Copilot plugin, `config.prompt` is required. `max_turns` is optional and forces a `needs_review` outcome if the plugin hits that limit.
+- `ask` is the only execute step. For the Copilot plugin, `input.prompt` is required (Phase 1.5: step-level input moved from `config` to `input` block). `max_turns` is optional and forces a `needs_review` outcome if the plugin hits that limit.
 - The prompt uses the `RESULT: <outcome>` convention. The plugin parses the final assistant message and maps that line onto the step outcome.
 - Separate close steps let the workflow clean up the session and still terminate in the right state for `success`, `needs_review`, or `failure`.
 
@@ -134,10 +134,7 @@ chmod +x ~/.overlord/plugins/overlord-adapter-copilot
 In a second terminal, run:
 
 ```bash
-./bin/overseer run \
-  --workflow examples/agent_hello.hcl \
-  --castle http://127.0.0.1:8080 \
-  --castle-codec proto
+./bin/overseer apply examples/agent_hello.hcl --castle http://127.0.0.1:8080 --castle-codec proto
 ```
 
 Expected result on the success path:
@@ -178,6 +175,48 @@ The control flow is:
 6. If review returns `approved`, close reviewer, close executor, and finish.
 
 This is the right pattern when you want long-lived agent context, distinct tool budgets per role, and an explicit safety brake on the conversation.
+
+## Adapter Contract and Step Outputs (Phase 1.5)
+
+Adapters implement the `AdapterPlugin` gRPC service defined in `proto/overlord/v1/adapter_plugin.proto`. The `Info()` RPC returns metadata about the adapter including:
+
+- `ConfigSchema` — JSON schema for agent-level configuration (on the `agent { }` block)
+- `InputSchema` — JSON schema for step-level input (in the `input { }` block on each step)
+- `OutputSchema` — JSON schema for outputs the adapter may return after execution
+
+When an adapter completes execution, it returns a `Result` containing:
+
+- `Outcome` — the named outcome that determines the FSM transition (e.g., `"success"`, `"failure"`, `"needs_review"`)
+- `Outputs` — a `map[string]string` of key-value pairs that flow into the run's variable scope
+
+Outputs are accessible in downstream workflow expressions as `steps.<step_name>.<output_key>`. For example:
+
+```hcl
+step "get_version" {
+  adapter = "shell"
+  input = {
+    command = "git describe --tags --always"
+  }
+  outcome "success" { transition_to = "check_version" }
+}
+
+branch "check_version" {
+  when "startswith(steps.get_version.stdout, 'v1.')" {
+    transition_to = "deploy_v1"
+  }
+  default {
+    transition_to = "deploy_next"
+  }
+}
+```
+
+In this example:
+- The `get_version` step runs a shell command and captures its output
+- The shell adapter returns `stdout` as an output key
+- The `branch` node evaluates `steps.get_version.stdout` to decide which path to take
+- HCL expression functions like `startswith()` work against step outputs
+
+Step outputs also flow into `for_each` iteration contexts. See [workflow.md](workflow.md) for the full expression reference.
 
 ## Writing Your Own Plugin
 

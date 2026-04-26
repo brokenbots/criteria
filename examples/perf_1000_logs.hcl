@@ -1,4 +1,5 @@
 # Performance baseline workflow: generates 1000 StepLog events
+# mode: standalone
 workflow "perf_1000_logs" {
   version       = "0.1"
   initial_state = "generate_logs"

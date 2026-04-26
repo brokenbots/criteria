@@ -1,3 +1,4 @@
+# mode: standalone
 # Example: trivial single-step workflow used by smoke tests.
 workflow "hello" {
   version       = "0.1"

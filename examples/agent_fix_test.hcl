@@ -1,3 +1,4 @@
+# mode: orchestrator-required (uses agent adapters; requires --castle)
 # Example: shell + Copilot adapter
 # The agent step instructs the model to end its final message with a
 # `RESULT: success|needs_review|failure` line; the copilot adapter parses
