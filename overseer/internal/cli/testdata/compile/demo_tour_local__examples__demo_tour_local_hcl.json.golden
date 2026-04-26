@@ -1,5 +1,5 @@
 {
-  "name": "demo_tour",
+  "name": "demo_tour_local",
   "initial_state": "boot",
   "target_state": "done",
   "policy": {
@@ -80,7 +80,7 @@
         },
         {
           "name": "success",
-          "transition_to": "wait_for_window"
+          "transition_to": "wait_brief"
         }
       ]
     },

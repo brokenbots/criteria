@@ -1,4 +1,4 @@
-digraph "demo_tour" {
+digraph "demo_tour_local" {
   rankdir=LR;
 
   "boot" [shape=box];
@@ -6,7 +6,7 @@ digraph "demo_tour" {
   "process" [shape=box];
   "review" [shape=box];
   "celebrate" [shape=box];
-  "decide_release" [shape=diamond];
+  "decide" [shape=diamond];
   "process_each" [shape=parallelogram];
   "aborted" [shape=doublecircle];
   "done" [shape=doublecircle];
@@ -18,11 +18,11 @@ digraph "demo_tour" {
   "discover" -> "aborted" [label="failure"];
   "discover" -> "process_each" [label="success"];
   "review" -> "aborted" [label="failure"];
-  "review" -> "wait_for_window" [label="success"];
+  "review" -> "wait_brief" [label="success"];
   "celebrate" -> "aborted" [label="failure"];
   "celebrate" -> "done" [label="success"];
-  "decide_release" -> "ship_approval" [label="arm[0]"];
-  "decide_release" -> "aborted" [label="default"];
+  "decide" -> "celebrate" [label="arm[0]"];
+  "decide" -> "aborted" [label="default"];
   "process_each" -> "process" [label="do"];
   "process_each" -> "review" [label="all_succeeded"];
   "process_each" -> "aborted" [label="any_failed"];

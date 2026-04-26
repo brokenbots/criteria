@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/zclconf/go-cty/cty"
 
 	"github.com/brokenbots/overlord/workflow"
 )
@@ -41,7 +42,21 @@ func renderPlanOutput(ctx context.Context, workflowPath string) (string, error) 
 	b.WriteString("\n")
 
 	b.WriteString("variables:\n")
-	b.WriteString("  (none)\n\n")
+	varNames := sortedVariableNames(graph)
+	if len(varNames) == 0 {
+		b.WriteString("  (none)\n")
+	} else {
+		for _, name := range varNames {
+			v := graph.Variables[name]
+			typeName := v.Type.FriendlyName()
+			defaultVal := "(required)"
+			if v.Default != cty.NilVal {
+				defaultVal = workflow.CtyValueToString(v.Default)
+			}
+			b.WriteString(fmt.Sprintf("  %s: %s = %s\n", name, typeName, defaultVal))
+		}
+	}
+	b.WriteString("\n")
 
 	b.WriteString("agents:\n")
 	agentNames := sortedAgentNames(graph)

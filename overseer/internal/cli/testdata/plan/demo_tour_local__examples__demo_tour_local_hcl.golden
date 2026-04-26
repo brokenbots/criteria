@@ -1,10 +1,9 @@
-workflow: demo_tour  (version 1)
+workflow: demo_tour_local  (version 1)
 initial_state: boot   target_state: done
 policy: max_total_steps=40  max_step_retries=0
 
 variables:
-  mode: string = v1.5
-  phase_count: number = 3
+  mode: string = local
 
 agents:
   (none)
@@ -25,7 +24,7 @@ steps (declaration order):
   review   adapter=shell   timeout=10s
     input keys: command
     allow_tools: (none)
-    outcomes: success -> wait_for_window, failure -> aborted
+    outcomes: success -> wait_brief, failure -> aborted
   celebrate   adapter=shell   timeout=10s
     input keys: command
     allow_tools: (none)

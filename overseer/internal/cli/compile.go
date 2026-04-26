@@ -268,6 +268,10 @@ func sortedMapKeys[V any](m map[string]V) []string {
 	return out
 }
 
+func sortedVariableNames(graph *workflow.FSMGraph) []string {
+	return sortedMapKeys(graph.Variables)
+}
+
 func sortedAgentNames(graph *workflow.FSMGraph) []string {
 	return sortedMapKeys(graph.Agents)
 }
