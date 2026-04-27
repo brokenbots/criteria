@@ -243,3 +243,19 @@ go test -race -v -run TestAdapterPluginWireNames ./internal/plugin/
                              → PASS
 go vet ./...                 → PASS (no issues)
 ```
+
+---
+
+### Remediation 2026-04-27
+
+All four findings addressed:
+
+**[REQUIRED] Import-lint exception narrowed:** `sdk/pluginhost` is now only permitted from `internal/*/testfixtures/` paths. Production `internal/` code (e.g. `internal/engine/`) correctly produces a violation. Added `TestInternalNonFixtureImportsSDKPluginhost_Forbidden` to confirm; updated doc comment to accurately describe the restricted scope.
+
+**[REQUIRED] publicsdk fixture now runs context_cancellation and step_timeout:** Added `delay_ms` support to `Execute` (mirrors the noop adapter pattern — `strconv.Atoi`, ctx-aware `select`). `StepConfig: map[string]string{"delay_ms": "0"}` passed to `RunPlugin` so `longRunningConfig` activates. Both sub-tests now run and pass (`context_cancellation` PASS, `step_timeout` PASS).
+
+**[NIT] GRPCServer nil-impl guard tested:** `TestGRPCServerNilImpl` added to `sdk/pluginhost/serve_test.go`; constructs `grpcPlugin{Impl: nil}`, calls `GRPCServer`, asserts non-nil error.
+
+**[NIT] HandshakeConfig drift comment corrected:** `internal/plugin/handshake.go` now notes that drift with `sdk/pluginhost.MagicCookieValue` is an integration-level guard caught by `TestHandshakeInfo`, not a unit-level test.
+
+Validation: `make build && make lint-imports && make test` all green. `context_cancellation` and `step_timeout` pass; 0 skipped sub-tests except `permission_request_shape` (legitimately skipped — fixture does not advertise `permission_gating`).
