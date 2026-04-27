@@ -27,7 +27,7 @@ workflow "workstream_review_loop" {
   target_state  = "done"
 
   policy {
-    max_total_steps = 1000
+    max_total_steps = 50  # ~15 review cycles plus setup/teardown; increase if workstream is large
   }
 
   variable "workstream_file" {
@@ -169,11 +169,10 @@ workflow "workstream_review_loop" {
       "*",
     ]
     input {
-      prompt = "Approved. Commit all workstream changes with message:\nworkstream: complete ${var.workstream_file}"
+      prompt = "Approved. Commit all workstream changes with message:\nworkstream: complete ${var.workstream_file}\n\nEnd your final line with exactly one of:\nRESULT: success\nRESULT: failure"
     }
-    outcome "success"      { transition_to = "close_reviewer_done" }
-    outcome "needs_review" { transition_to = "review" }
-    outcome "failure"      { transition_to = "close_reviewer_abort" }
+    outcome "success" { transition_to = "close_reviewer_done" }
+    outcome "failure" { transition_to = "close_reviewer_abort" }
   }
 
   # ── Close agents: success path ──────────────────────────────────────────────
