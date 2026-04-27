@@ -5,7 +5,7 @@ import (
 	"errors"
 	"io"
 
-	pb "github.com/brokenbots/overseer/sdk/pb/v1"
+	pb "github.com/brokenbots/overseer/sdk/pb/overseer/v1"
 	hplugin "github.com/hashicorp/go-plugin"
 	"google.golang.org/grpc"
 )

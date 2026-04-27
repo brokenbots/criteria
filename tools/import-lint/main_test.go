@@ -36,7 +36,7 @@ import _ "github.com/brokenbots/overseer/sdk/somepkg"
 `
 
 const internalImportsSDKPb = `package foo
-import _ "github.com/brokenbots/overseer/sdk/pb/v1"
+import _ "github.com/brokenbots/overseer/sdk/pb/overseer/v1"
 `
 
 const workflowImportsInternal = `package foo
@@ -44,7 +44,7 @@ import _ "github.com/brokenbots/overseer/internal/engine"
 `
 
 const workflowImportsSDKPb = `package foo
-import _ "github.com/brokenbots/overseer/sdk/pb/v1"
+import _ "github.com/brokenbots/overseer/sdk/pb/overseer/v1"
 `
 
 // TestInternalImportsSDKTop_Forbidden checks that internal/ importing sdk root is caught.

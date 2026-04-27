@@ -12,7 +12,7 @@ import (
 
 	"github.com/brokenbots/overseer/internal/adapter"
 	"github.com/brokenbots/overseer/events"
-	pb "github.com/brokenbots/overseer/sdk/pb/v1"
+	pb "github.com/brokenbots/overseer/sdk/pb/overseer/v1"
 )
 
 // LocalSink emits engine events as newline-delimited JSON envelopes.

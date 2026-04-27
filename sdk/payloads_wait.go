@@ -1,6 +1,6 @@
 package overseer
 
-import pb "github.com/brokenbots/overseer/sdk/pb/v1"
+import pb "github.com/brokenbots/overseer/sdk/pb/overseer/v1"
 
 // WaitEntered is emitted when execution reaches a wait node.
 type WaitEntered = pb.WaitEntered

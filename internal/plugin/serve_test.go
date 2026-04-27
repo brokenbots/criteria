@@ -3,14 +3,14 @@ package plugin
 import (
 	"testing"
 
-	pb "github.com/brokenbots/overseer/sdk/pb/v1"
+	pb "github.com/brokenbots/overseer/sdk/pb/overseer/v1"
 )
 
 // TestAdapterPluginWireNames verifies that the hard-coded wire-name constants
 // match the names declared in the compiled proto descriptor. A mismatch causes
 // host/plugin negotiation to fail at runtime.
 func TestAdapterPluginWireNames(t *testing.T) {
-	svc := pb.File_v1_adapter_plugin_proto.Services().ByName("AdapterPluginService")
+	svc := pb.File_overseer_v1_adapter_plugin_proto.Services().ByName("AdapterPluginService")
 	if svc == nil {
 		t.Fatal("AdapterPluginService not found in proto descriptor")
 	}

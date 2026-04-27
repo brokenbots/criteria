@@ -7,7 +7,7 @@ import (
 
 	"connectrpc.com/connect"
 
-	pb "github.com/brokenbots/overseer/sdk/pb/v1"
+	pb "github.com/brokenbots/overseer/sdk/pb/overseer/v1"
 	overseer "github.com/brokenbots/overseer/sdk"
 )
 

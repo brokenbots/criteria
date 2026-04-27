@@ -8,7 +8,7 @@ import (
 	"time"
 
 	pluginpkg "github.com/brokenbots/overseer/internal/plugin"
-	pb "github.com/brokenbots/overseer/sdk/pb/v1"
+	pb "github.com/brokenbots/overseer/sdk/pb/overseer/v1"
 )
 
 type noopService struct {

@@ -5,10 +5,10 @@ syntax = "proto3";
 package overseer.v1;
 
 import "google/protobuf/timestamp.proto";
-import "v1/events.proto";
-import "v1/overseer.proto";
+import "overseer/v1/events.proto";
+import "overseer/v1/overseer.proto";
 
-option go_package = "github.com/brokenbots/overseer/sdk/pb/v1;overseerv1";
+option go_package = "github.com/brokenbots/overseer/sdk/pb/overseer/v1;overseerv1";
 
 service CastleService {
   rpc ListOverseers(ListOverseersRequest) returns (ListOverseersResponse);

@@ -22,7 +22,7 @@ import (
 	"google.golang.org/protobuf/reflect/protoregistry"
 
 	"github.com/brokenbots/overseer/events"
-	pb "github.com/brokenbots/overseer/sdk/pb/v1"
+	pb "github.com/brokenbots/overseer/sdk/pb/overseer/v1"
 )
 
 // payloadOneof returns the "payload" oneof descriptor from the Envelope message.
@@ -57,7 +57,7 @@ func concreteMsg(t *testing.T, fd protoreflect.FieldDescriptor) proto.Message {
 //  3. All TypeString values are unique (no two arms share a discriminator).
 //
 // This test fails as soon as a new oneof arm is added to events.proto without
-// updating setPayload and TypeString in shared/events/types.go.
+// updating setPayload and TypeString in events/types.go.
 func TestExhaustive_setPayload_TypeString(t *testing.T) {
 	oo := payloadOneof(t)
 	fields := oo.Fields()
@@ -138,9 +138,9 @@ func TestExhaustive_ProtoRoundTrip(t *testing.T) {
 
 // Negative-case simulation example (kept as documentation so the suite remains
 // green by default): temporarily remove one payload case from
-// shared/events/types.go and rerun TestExhaustive_setPayload_TypeString. The
-// test should fail for the missing oneof arm with either a panic (setPayload)
-// or an empty/colliding discriminator (TypeString).
+// events/types.go and rerun TestExhaustive_setPayload_TypeString. The test
+// should fail for the missing oneof arm with either a panic (setPayload) or
+// an empty/colliding discriminator (TypeString).
 
 // populateMessage sets every field of m to a deterministic non-zero value.
 // depth guards against infinite recursion in self-referential message types.

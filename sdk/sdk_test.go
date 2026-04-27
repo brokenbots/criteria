@@ -3,7 +3,7 @@ package overseer_test
 import (
 	"testing"
 
-	pb "github.com/brokenbots/overseer/sdk/pb/v1"
+	pb "github.com/brokenbots/overseer/sdk/pb/overseer/v1"
 	"github.com/brokenbots/overseer/events"
 	overseer "github.com/brokenbots/overseer/sdk"
 )

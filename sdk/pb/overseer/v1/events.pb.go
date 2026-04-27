@@ -9,7 +9,7 @@
 // versions:
 // 	protoc-gen-go v1.36.11
 // 	protoc        (unknown)
-// source: v1/events.proto
+// source: overseer/v1/events.proto
 
 package overseerv1
 
@@ -67,11 +67,11 @@ func (x LogStream) String() string {
 }
 
 func (LogStream) Descriptor() protoreflect.EnumDescriptor {
-	return file_v1_events_proto_enumTypes[0].Descriptor()
+	return file_overseer_v1_events_proto_enumTypes[0].Descriptor()
 }
 
 func (LogStream) Type() protoreflect.EnumType {
-	return &file_v1_events_proto_enumTypes[0]
+	return &file_overseer_v1_events_proto_enumTypes[0]
 }
 
 func (x LogStream) Number() protoreflect.EnumNumber {
@@ -80,7 +80,7 @@ func (x LogStream) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use LogStream.Descriptor instead.
 func (LogStream) EnumDescriptor() ([]byte, []int) {
-	return file_v1_events_proto_rawDescGZIP(), []int{0}
+	return file_overseer_v1_events_proto_rawDescGZIP(), []int{0}
 }
 
 // Envelope is the wire format for every event.
@@ -132,7 +132,7 @@ type Envelope struct {
 
 func (x *Envelope) Reset() {
 	*x = Envelope{}
-	mi := &file_v1_events_proto_msgTypes[0]
+	mi := &file_overseer_v1_events_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -144,7 +144,7 @@ func (x *Envelope) String() string {
 func (*Envelope) ProtoMessage() {}
 
 func (x *Envelope) ProtoReflect() protoreflect.Message {
-	mi := &file_v1_events_proto_msgTypes[0]
+	mi := &file_overseer_v1_events_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -157,7 +157,7 @@ func (x *Envelope) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Envelope.ProtoReflect.Descriptor instead.
 func (*Envelope) Descriptor() ([]byte, []int) {
-	return file_v1_events_proto_rawDescGZIP(), []int{0}
+	return file_overseer_v1_events_proto_rawDescGZIP(), []int{0}
 }
 
 func (x *Envelope) GetSchemaVersion() int32 {
@@ -575,7 +575,7 @@ type RunStarted struct {
 
 func (x *RunStarted) Reset() {
 	*x = RunStarted{}
-	mi := &file_v1_events_proto_msgTypes[1]
+	mi := &file_overseer_v1_events_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -587,7 +587,7 @@ func (x *RunStarted) String() string {
 func (*RunStarted) ProtoMessage() {}
 
 func (x *RunStarted) ProtoReflect() protoreflect.Message {
-	mi := &file_v1_events_proto_msgTypes[1]
+	mi := &file_overseer_v1_events_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -600,7 +600,7 @@ func (x *RunStarted) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RunStarted.ProtoReflect.Descriptor instead.
 func (*RunStarted) Descriptor() ([]byte, []int) {
-	return file_v1_events_proto_rawDescGZIP(), []int{1}
+	return file_overseer_v1_events_proto_rawDescGZIP(), []int{1}
 }
 
 func (x *RunStarted) GetWorkflowName() string {
@@ -628,7 +628,7 @@ type RunCompleted struct {
 
 func (x *RunCompleted) Reset() {
 	*x = RunCompleted{}
-	mi := &file_v1_events_proto_msgTypes[2]
+	mi := &file_overseer_v1_events_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -640,7 +640,7 @@ func (x *RunCompleted) String() string {
 func (*RunCompleted) ProtoMessage() {}
 
 func (x *RunCompleted) ProtoReflect() protoreflect.Message {
-	mi := &file_v1_events_proto_msgTypes[2]
+	mi := &file_overseer_v1_events_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -653,7 +653,7 @@ func (x *RunCompleted) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RunCompleted.ProtoReflect.Descriptor instead.
 func (*RunCompleted) Descriptor() ([]byte, []int) {
-	return file_v1_events_proto_rawDescGZIP(), []int{2}
+	return file_overseer_v1_events_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *RunCompleted) GetFinalState() string {
@@ -681,7 +681,7 @@ type RunFailed struct {
 
 func (x *RunFailed) Reset() {
 	*x = RunFailed{}
-	mi := &file_v1_events_proto_msgTypes[3]
+	mi := &file_overseer_v1_events_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -693,7 +693,7 @@ func (x *RunFailed) String() string {
 func (*RunFailed) ProtoMessage() {}
 
 func (x *RunFailed) ProtoReflect() protoreflect.Message {
-	mi := &file_v1_events_proto_msgTypes[3]
+	mi := &file_overseer_v1_events_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -706,7 +706,7 @@ func (x *RunFailed) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RunFailed.ProtoReflect.Descriptor instead.
 func (*RunFailed) Descriptor() ([]byte, []int) {
-	return file_v1_events_proto_rawDescGZIP(), []int{3}
+	return file_overseer_v1_events_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *RunFailed) GetReason() string {
@@ -735,7 +735,7 @@ type StepEntered struct {
 
 func (x *StepEntered) Reset() {
 	*x = StepEntered{}
-	mi := &file_v1_events_proto_msgTypes[4]
+	mi := &file_overseer_v1_events_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -747,7 +747,7 @@ func (x *StepEntered) String() string {
 func (*StepEntered) ProtoMessage() {}
 
 func (x *StepEntered) ProtoReflect() protoreflect.Message {
-	mi := &file_v1_events_proto_msgTypes[4]
+	mi := &file_overseer_v1_events_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -760,7 +760,7 @@ func (x *StepEntered) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StepEntered.ProtoReflect.Descriptor instead.
 func (*StepEntered) Descriptor() ([]byte, []int) {
-	return file_v1_events_proto_rawDescGZIP(), []int{4}
+	return file_overseer_v1_events_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *StepEntered) GetStep() string {
@@ -797,7 +797,7 @@ type StepOutcome struct {
 
 func (x *StepOutcome) Reset() {
 	*x = StepOutcome{}
-	mi := &file_v1_events_proto_msgTypes[5]
+	mi := &file_overseer_v1_events_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -809,7 +809,7 @@ func (x *StepOutcome) String() string {
 func (*StepOutcome) ProtoMessage() {}
 
 func (x *StepOutcome) ProtoReflect() protoreflect.Message {
-	mi := &file_v1_events_proto_msgTypes[5]
+	mi := &file_overseer_v1_events_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -822,7 +822,7 @@ func (x *StepOutcome) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StepOutcome.ProtoReflect.Descriptor instead.
 func (*StepOutcome) Descriptor() ([]byte, []int) {
-	return file_v1_events_proto_rawDescGZIP(), []int{5}
+	return file_overseer_v1_events_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *StepOutcome) GetStep() string {
@@ -865,7 +865,7 @@ type StepTransition struct {
 
 func (x *StepTransition) Reset() {
 	*x = StepTransition{}
-	mi := &file_v1_events_proto_msgTypes[6]
+	mi := &file_overseer_v1_events_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -877,7 +877,7 @@ func (x *StepTransition) String() string {
 func (*StepTransition) ProtoMessage() {}
 
 func (x *StepTransition) ProtoReflect() protoreflect.Message {
-	mi := &file_v1_events_proto_msgTypes[6]
+	mi := &file_overseer_v1_events_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -890,7 +890,7 @@ func (x *StepTransition) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StepTransition.ProtoReflect.Descriptor instead.
 func (*StepTransition) Descriptor() ([]byte, []int) {
-	return file_v1_events_proto_rawDescGZIP(), []int{6}
+	return file_overseer_v1_events_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *StepTransition) GetFrom() string {
@@ -926,7 +926,7 @@ type StepLog struct {
 
 func (x *StepLog) Reset() {
 	*x = StepLog{}
-	mi := &file_v1_events_proto_msgTypes[7]
+	mi := &file_overseer_v1_events_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -938,7 +938,7 @@ func (x *StepLog) String() string {
 func (*StepLog) ProtoMessage() {}
 
 func (x *StepLog) ProtoReflect() protoreflect.Message {
-	mi := &file_v1_events_proto_msgTypes[7]
+	mi := &file_overseer_v1_events_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -951,7 +951,7 @@ func (x *StepLog) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StepLog.ProtoReflect.Descriptor instead.
 func (*StepLog) Descriptor() ([]byte, []int) {
-	return file_v1_events_proto_rawDescGZIP(), []int{7}
+	return file_overseer_v1_events_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *StepLog) GetStep() string {
@@ -996,7 +996,7 @@ type AdapterEvent struct {
 
 func (x *AdapterEvent) Reset() {
 	*x = AdapterEvent{}
-	mi := &file_v1_events_proto_msgTypes[8]
+	mi := &file_overseer_v1_events_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1008,7 +1008,7 @@ func (x *AdapterEvent) String() string {
 func (*AdapterEvent) ProtoMessage() {}
 
 func (x *AdapterEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_v1_events_proto_msgTypes[8]
+	mi := &file_overseer_v1_events_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1021,7 +1021,7 @@ func (x *AdapterEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AdapterEvent.ProtoReflect.Descriptor instead.
 func (*AdapterEvent) Descriptor() ([]byte, []int) {
-	return file_v1_events_proto_rawDescGZIP(), []int{8}
+	return file_overseer_v1_events_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *AdapterEvent) GetStep() string {
@@ -1062,7 +1062,7 @@ type OverseerHeartbeat struct {
 
 func (x *OverseerHeartbeat) Reset() {
 	*x = OverseerHeartbeat{}
-	mi := &file_v1_events_proto_msgTypes[9]
+	mi := &file_overseer_v1_events_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1074,7 +1074,7 @@ func (x *OverseerHeartbeat) String() string {
 func (*OverseerHeartbeat) ProtoMessage() {}
 
 func (x *OverseerHeartbeat) ProtoReflect() protoreflect.Message {
-	mi := &file_v1_events_proto_msgTypes[9]
+	mi := &file_overseer_v1_events_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1087,7 +1087,7 @@ func (x *OverseerHeartbeat) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OverseerHeartbeat.ProtoReflect.Descriptor instead.
 func (*OverseerHeartbeat) Descriptor() ([]byte, []int) {
-	return file_v1_events_proto_rawDescGZIP(), []int{9}
+	return file_overseer_v1_events_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *OverseerHeartbeat) GetOverseerId() string {
@@ -1108,7 +1108,7 @@ type OverseerDisconnected struct {
 
 func (x *OverseerDisconnected) Reset() {
 	*x = OverseerDisconnected{}
-	mi := &file_v1_events_proto_msgTypes[10]
+	mi := &file_overseer_v1_events_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1120,7 +1120,7 @@ func (x *OverseerDisconnected) String() string {
 func (*OverseerDisconnected) ProtoMessage() {}
 
 func (x *OverseerDisconnected) ProtoReflect() protoreflect.Message {
-	mi := &file_v1_events_proto_msgTypes[10]
+	mi := &file_overseer_v1_events_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1133,7 +1133,7 @@ func (x *OverseerDisconnected) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OverseerDisconnected.ProtoReflect.Descriptor instead.
 func (*OverseerDisconnected) Descriptor() ([]byte, []int) {
-	return file_v1_events_proto_rawDescGZIP(), []int{10}
+	return file_overseer_v1_events_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *OverseerDisconnected) GetOverseerId() string {
@@ -1165,7 +1165,7 @@ type StepResumed struct {
 
 func (x *StepResumed) Reset() {
 	*x = StepResumed{}
-	mi := &file_v1_events_proto_msgTypes[11]
+	mi := &file_overseer_v1_events_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1177,7 +1177,7 @@ func (x *StepResumed) String() string {
 func (*StepResumed) ProtoMessage() {}
 
 func (x *StepResumed) ProtoReflect() protoreflect.Message {
-	mi := &file_v1_events_proto_msgTypes[11]
+	mi := &file_overseer_v1_events_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1190,7 +1190,7 @@ func (x *StepResumed) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StepResumed.ProtoReflect.Descriptor instead.
 func (*StepResumed) Descriptor() ([]byte, []int) {
-	return file_v1_events_proto_rawDescGZIP(), []int{11}
+	return file_overseer_v1_events_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *StepResumed) GetStep() string {
@@ -1226,7 +1226,7 @@ type WatchReady struct {
 
 func (x *WatchReady) Reset() {
 	*x = WatchReady{}
-	mi := &file_v1_events_proto_msgTypes[12]
+	mi := &file_overseer_v1_events_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1238,7 +1238,7 @@ func (x *WatchReady) String() string {
 func (*WatchReady) ProtoMessage() {}
 
 func (x *WatchReady) ProtoReflect() protoreflect.Message {
-	mi := &file_v1_events_proto_msgTypes[12]
+	mi := &file_overseer_v1_events_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1251,7 +1251,7 @@ func (x *WatchReady) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WatchReady.ProtoReflect.Descriptor instead.
 func (*WatchReady) Descriptor() ([]byte, []int) {
-	return file_v1_events_proto_rawDescGZIP(), []int{12}
+	return file_overseer_v1_events_proto_rawDescGZIP(), []int{12}
 }
 
 // VariableSet — emitted when a workflow variable value is established.
@@ -1268,7 +1268,7 @@ type VariableSet struct {
 
 func (x *VariableSet) Reset() {
 	*x = VariableSet{}
-	mi := &file_v1_events_proto_msgTypes[13]
+	mi := &file_overseer_v1_events_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1280,7 +1280,7 @@ func (x *VariableSet) String() string {
 func (*VariableSet) ProtoMessage() {}
 
 func (x *VariableSet) ProtoReflect() protoreflect.Message {
-	mi := &file_v1_events_proto_msgTypes[13]
+	mi := &file_overseer_v1_events_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1293,7 +1293,7 @@ func (x *VariableSet) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VariableSet.ProtoReflect.Descriptor instead.
 func (*VariableSet) Descriptor() ([]byte, []int) {
-	return file_v1_events_proto_rawDescGZIP(), []int{13}
+	return file_overseer_v1_events_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *VariableSet) GetName() string {
@@ -1329,7 +1329,7 @@ type StepOutputCaptured struct {
 
 func (x *StepOutputCaptured) Reset() {
 	*x = StepOutputCaptured{}
-	mi := &file_v1_events_proto_msgTypes[14]
+	mi := &file_overseer_v1_events_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1341,7 +1341,7 @@ func (x *StepOutputCaptured) String() string {
 func (*StepOutputCaptured) ProtoMessage() {}
 
 func (x *StepOutputCaptured) ProtoReflect() protoreflect.Message {
-	mi := &file_v1_events_proto_msgTypes[14]
+	mi := &file_overseer_v1_events_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1354,7 +1354,7 @@ func (x *StepOutputCaptured) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StepOutputCaptured.ProtoReflect.Descriptor instead.
 func (*StepOutputCaptured) Descriptor() ([]byte, []int) {
-	return file_v1_events_proto_rawDescGZIP(), []int{14}
+	return file_overseer_v1_events_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *StepOutputCaptured) GetStep() string {
@@ -1385,7 +1385,7 @@ type WaitEntered struct {
 
 func (x *WaitEntered) Reset() {
 	*x = WaitEntered{}
-	mi := &file_v1_events_proto_msgTypes[15]
+	mi := &file_overseer_v1_events_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1397,7 +1397,7 @@ func (x *WaitEntered) String() string {
 func (*WaitEntered) ProtoMessage() {}
 
 func (x *WaitEntered) ProtoReflect() protoreflect.Message {
-	mi := &file_v1_events_proto_msgTypes[15]
+	mi := &file_overseer_v1_events_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1410,7 +1410,7 @@ func (x *WaitEntered) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WaitEntered.ProtoReflect.Descriptor instead.
 func (*WaitEntered) Descriptor() ([]byte, []int) {
-	return file_v1_events_proto_rawDescGZIP(), []int{15}
+	return file_overseer_v1_events_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *WaitEntered) GetNode() string {
@@ -1455,7 +1455,7 @@ type WaitResumed struct {
 
 func (x *WaitResumed) Reset() {
 	*x = WaitResumed{}
-	mi := &file_v1_events_proto_msgTypes[16]
+	mi := &file_overseer_v1_events_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1467,7 +1467,7 @@ func (x *WaitResumed) String() string {
 func (*WaitResumed) ProtoMessage() {}
 
 func (x *WaitResumed) ProtoReflect() protoreflect.Message {
-	mi := &file_v1_events_proto_msgTypes[16]
+	mi := &file_overseer_v1_events_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1480,7 +1480,7 @@ func (x *WaitResumed) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WaitResumed.ProtoReflect.Descriptor instead.
 func (*WaitResumed) Descriptor() ([]byte, []int) {
-	return file_v1_events_proto_rawDescGZIP(), []int{16}
+	return file_overseer_v1_events_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *WaitResumed) GetNode() string {
@@ -1524,7 +1524,7 @@ type ApprovalRequested struct {
 
 func (x *ApprovalRequested) Reset() {
 	*x = ApprovalRequested{}
-	mi := &file_v1_events_proto_msgTypes[17]
+	mi := &file_overseer_v1_events_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1536,7 +1536,7 @@ func (x *ApprovalRequested) String() string {
 func (*ApprovalRequested) ProtoMessage() {}
 
 func (x *ApprovalRequested) ProtoReflect() protoreflect.Message {
-	mi := &file_v1_events_proto_msgTypes[17]
+	mi := &file_overseer_v1_events_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1549,7 +1549,7 @@ func (x *ApprovalRequested) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ApprovalRequested.ProtoReflect.Descriptor instead.
 func (*ApprovalRequested) Descriptor() ([]byte, []int) {
-	return file_v1_events_proto_rawDescGZIP(), []int{17}
+	return file_overseer_v1_events_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *ApprovalRequested) GetNode() string {
@@ -1587,7 +1587,7 @@ type ApprovalDecision struct {
 
 func (x *ApprovalDecision) Reset() {
 	*x = ApprovalDecision{}
-	mi := &file_v1_events_proto_msgTypes[18]
+	mi := &file_overseer_v1_events_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1599,7 +1599,7 @@ func (x *ApprovalDecision) String() string {
 func (*ApprovalDecision) ProtoMessage() {}
 
 func (x *ApprovalDecision) ProtoReflect() protoreflect.Message {
-	mi := &file_v1_events_proto_msgTypes[18]
+	mi := &file_overseer_v1_events_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1612,7 +1612,7 @@ func (x *ApprovalDecision) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ApprovalDecision.ProtoReflect.Descriptor instead.
 func (*ApprovalDecision) Descriptor() ([]byte, []int) {
-	return file_v1_events_proto_rawDescGZIP(), []int{18}
+	return file_overseer_v1_events_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *ApprovalDecision) GetNode() string {
@@ -1657,7 +1657,7 @@ type BranchEvaluated struct {
 
 func (x *BranchEvaluated) Reset() {
 	*x = BranchEvaluated{}
-	mi := &file_v1_events_proto_msgTypes[19]
+	mi := &file_overseer_v1_events_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1669,7 +1669,7 @@ func (x *BranchEvaluated) String() string {
 func (*BranchEvaluated) ProtoMessage() {}
 
 func (x *BranchEvaluated) ProtoReflect() protoreflect.Message {
-	mi := &file_v1_events_proto_msgTypes[19]
+	mi := &file_overseer_v1_events_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1682,7 +1682,7 @@ func (x *BranchEvaluated) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BranchEvaluated.ProtoReflect.Descriptor instead.
 func (*BranchEvaluated) Descriptor() ([]byte, []int) {
-	return file_v1_events_proto_rawDescGZIP(), []int{19}
+	return file_overseer_v1_events_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *BranchEvaluated) GetNode() string {
@@ -1725,7 +1725,7 @@ type ForEachEntered struct {
 
 func (x *ForEachEntered) Reset() {
 	*x = ForEachEntered{}
-	mi := &file_v1_events_proto_msgTypes[20]
+	mi := &file_overseer_v1_events_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1737,7 +1737,7 @@ func (x *ForEachEntered) String() string {
 func (*ForEachEntered) ProtoMessage() {}
 
 func (x *ForEachEntered) ProtoReflect() protoreflect.Message {
-	mi := &file_v1_events_proto_msgTypes[20]
+	mi := &file_overseer_v1_events_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1750,7 +1750,7 @@ func (x *ForEachEntered) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ForEachEntered.ProtoReflect.Descriptor instead.
 func (*ForEachEntered) Descriptor() ([]byte, []int) {
-	return file_v1_events_proto_rawDescGZIP(), []int{20}
+	return file_overseer_v1_events_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *ForEachEntered) GetNode() string {
@@ -1781,7 +1781,7 @@ type ForEachIteration struct {
 
 func (x *ForEachIteration) Reset() {
 	*x = ForEachIteration{}
-	mi := &file_v1_events_proto_msgTypes[21]
+	mi := &file_overseer_v1_events_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1793,7 +1793,7 @@ func (x *ForEachIteration) String() string {
 func (*ForEachIteration) ProtoMessage() {}
 
 func (x *ForEachIteration) ProtoReflect() protoreflect.Message {
-	mi := &file_v1_events_proto_msgTypes[21]
+	mi := &file_overseer_v1_events_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1806,7 +1806,7 @@ func (x *ForEachIteration) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ForEachIteration.ProtoReflect.Descriptor instead.
 func (*ForEachIteration) Descriptor() ([]byte, []int) {
-	return file_v1_events_proto_rawDescGZIP(), []int{21}
+	return file_overseer_v1_events_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *ForEachIteration) GetNode() string {
@@ -1850,7 +1850,7 @@ type ForEachOutcome struct {
 
 func (x *ForEachOutcome) Reset() {
 	*x = ForEachOutcome{}
-	mi := &file_v1_events_proto_msgTypes[22]
+	mi := &file_overseer_v1_events_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1862,7 +1862,7 @@ func (x *ForEachOutcome) String() string {
 func (*ForEachOutcome) ProtoMessage() {}
 
 func (x *ForEachOutcome) ProtoReflect() protoreflect.Message {
-	mi := &file_v1_events_proto_msgTypes[22]
+	mi := &file_overseer_v1_events_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1875,7 +1875,7 @@ func (x *ForEachOutcome) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ForEachOutcome.ProtoReflect.Descriptor instead.
 func (*ForEachOutcome) Descriptor() ([]byte, []int) {
-	return file_v1_events_proto_rawDescGZIP(), []int{22}
+	return file_overseer_v1_events_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *ForEachOutcome) GetNode() string {
@@ -1913,7 +1913,7 @@ type ScopeIterCursorSet struct {
 
 func (x *ScopeIterCursorSet) Reset() {
 	*x = ScopeIterCursorSet{}
-	mi := &file_v1_events_proto_msgTypes[23]
+	mi := &file_overseer_v1_events_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1925,7 +1925,7 @@ func (x *ScopeIterCursorSet) String() string {
 func (*ScopeIterCursorSet) ProtoMessage() {}
 
 func (x *ScopeIterCursorSet) ProtoReflect() protoreflect.Message {
-	mi := &file_v1_events_proto_msgTypes[23]
+	mi := &file_overseer_v1_events_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1938,7 +1938,7 @@ func (x *ScopeIterCursorSet) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ScopeIterCursorSet.ProtoReflect.Descriptor instead.
 func (*ScopeIterCursorSet) Descriptor() ([]byte, []int) {
-	return file_v1_events_proto_rawDescGZIP(), []int{23}
+	return file_overseer_v1_events_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *ScopeIterCursorSet) GetCursorJson() string {
@@ -1948,11 +1948,11 @@ func (x *ScopeIterCursorSet) GetCursorJson() string {
 	return ""
 }
 
-var File_v1_events_proto protoreflect.FileDescriptor
+var File_overseer_v1_events_proto protoreflect.FileDescriptor
 
-const file_v1_events_proto_rawDesc = "" +
+const file_overseer_v1_events_proto_rawDesc = "" +
 	"\n" +
-	"\x0fv1/events.proto\x12\voverseer.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\x83\x0e\n" +
+	"\x18overseer/v1/events.proto\x12\voverseer.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\x83\x0e\n" +
 	"\bEnvelope\x12%\n" +
 	"\x0eschema_version\x18\x01 \x01(\x05R\rschemaVersion\x12\x15\n" +
 	"\x06run_id\x18\x02 \x01(\tR\x05runId\x12\x10\n" +
@@ -2096,23 +2096,23 @@ const file_v1_events_proto_rawDesc = "" +
 	"\x16LOG_STREAM_UNSPECIFIED\x10\x00\x12\x15\n" +
 	"\x11LOG_STREAM_STDOUT\x10\x01\x12\x15\n" +
 	"\x11LOG_STREAM_STDERR\x10\x02\x12\x14\n" +
-	"\x10LOG_STREAM_AGENT\x10\x03B5Z3github.com/brokenbots/overseer/sdk/pb/v1;overseerv1b\x06proto3"
+	"\x10LOG_STREAM_AGENT\x10\x03B>Z<github.com/brokenbots/overseer/sdk/pb/overseer/v1;overseerv1b\x06proto3"
 
 var (
-	file_v1_events_proto_rawDescOnce sync.Once
-	file_v1_events_proto_rawDescData []byte
+	file_overseer_v1_events_proto_rawDescOnce sync.Once
+	file_overseer_v1_events_proto_rawDescData []byte
 )
 
-func file_v1_events_proto_rawDescGZIP() []byte {
-	file_v1_events_proto_rawDescOnce.Do(func() {
-		file_v1_events_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_v1_events_proto_rawDesc), len(file_v1_events_proto_rawDesc)))
+func file_overseer_v1_events_proto_rawDescGZIP() []byte {
+	file_overseer_v1_events_proto_rawDescOnce.Do(func() {
+		file_overseer_v1_events_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_overseer_v1_events_proto_rawDesc), len(file_overseer_v1_events_proto_rawDesc)))
 	})
-	return file_v1_events_proto_rawDescData
+	return file_overseer_v1_events_proto_rawDescData
 }
 
-var file_v1_events_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_v1_events_proto_msgTypes = make([]protoimpl.MessageInfo, 27)
-var file_v1_events_proto_goTypes = []any{
+var file_overseer_v1_events_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
+var file_overseer_v1_events_proto_msgTypes = make([]protoimpl.MessageInfo, 27)
+var file_overseer_v1_events_proto_goTypes = []any{
 	(LogStream)(0),                // 0: overseer.v1.LogStream
 	(*Envelope)(nil),              // 1: overseer.v1.Envelope
 	(*RunStarted)(nil),            // 2: overseer.v1.RunStarted
@@ -2144,7 +2144,7 @@ var file_v1_events_proto_goTypes = []any{
 	(*timestamppb.Timestamp)(nil), // 28: google.protobuf.Timestamp
 	(*structpb.Struct)(nil),       // 29: google.protobuf.Struct
 }
-var file_v1_events_proto_depIdxs = []int32{
+var file_overseer_v1_events_proto_depIdxs = []int32{
 	28, // 0: overseer.v1.Envelope.ts:type_name -> google.protobuf.Timestamp
 	2,  // 1: overseer.v1.Envelope.run_started:type_name -> overseer.v1.RunStarted
 	3,  // 2: overseer.v1.Envelope.run_completed:type_name -> overseer.v1.RunCompleted
@@ -2181,12 +2181,12 @@ var file_v1_events_proto_depIdxs = []int32{
 	0,  // [0:29] is the sub-list for field type_name
 }
 
-func init() { file_v1_events_proto_init() }
-func file_v1_events_proto_init() {
-	if File_v1_events_proto != nil {
+func init() { file_overseer_v1_events_proto_init() }
+func file_overseer_v1_events_proto_init() {
+	if File_overseer_v1_events_proto != nil {
 		return
 	}
-	file_v1_events_proto_msgTypes[0].OneofWrappers = []any{
+	file_overseer_v1_events_proto_msgTypes[0].OneofWrappers = []any{
 		(*Envelope_RunStarted)(nil),
 		(*Envelope_RunCompleted)(nil),
 		(*Envelope_RunFailed)(nil),
@@ -2215,18 +2215,18 @@ func file_v1_events_proto_init() {
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
-			RawDescriptor: unsafe.Slice(unsafe.StringData(file_v1_events_proto_rawDesc), len(file_v1_events_proto_rawDesc)),
+			RawDescriptor: unsafe.Slice(unsafe.StringData(file_overseer_v1_events_proto_rawDesc), len(file_overseer_v1_events_proto_rawDesc)),
 			NumEnums:      1,
 			NumMessages:   27,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
-		GoTypes:           file_v1_events_proto_goTypes,
-		DependencyIndexes: file_v1_events_proto_depIdxs,
-		EnumInfos:         file_v1_events_proto_enumTypes,
-		MessageInfos:      file_v1_events_proto_msgTypes,
+		GoTypes:           file_overseer_v1_events_proto_goTypes,
+		DependencyIndexes: file_overseer_v1_events_proto_depIdxs,
+		EnumInfos:         file_overseer_v1_events_proto_enumTypes,
+		MessageInfos:      file_overseer_v1_events_proto_msgTypes,
 	}.Build()
-	File_v1_events_proto = out.File
-	file_v1_events_proto_goTypes = nil
-	file_v1_events_proto_depIdxs = nil
+	File_overseer_v1_events_proto = out.File
+	file_overseer_v1_events_proto_goTypes = nil
+	file_overseer_v1_events_proto_depIdxs = nil
 }

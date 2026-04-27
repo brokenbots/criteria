@@ -24,8 +24,8 @@ import (
 
 overseer "github.com/brokenbots/overseer/sdk"
 "github.com/brokenbots/overseer/sdk/conformance"
-pb "github.com/brokenbots/overseer/sdk/pb/v1"
-"github.com/brokenbots/overseer/sdk/pb/v1/overseerv1connect"
+pb "github.com/brokenbots/overseer/sdk/pb/overseer/v1"
+"github.com/brokenbots/overseer/sdk/pb/overseer/v1/overseerv1connect"
 )
 
 // TestConformance runs the full SDK conformance suite against the in-memory

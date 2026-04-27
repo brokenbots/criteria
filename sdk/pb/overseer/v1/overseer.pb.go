@@ -11,7 +11,7 @@
 // versions:
 // 	protoc-gen-go v1.36.11
 // 	protoc        (unknown)
-// source: v1/overseer.proto
+// source: overseer/v1/overseer.proto
 
 package overseerv1
 
@@ -43,7 +43,7 @@ type RegisterRequest struct {
 
 func (x *RegisterRequest) Reset() {
 	*x = RegisterRequest{}
-	mi := &file_v1_overseer_proto_msgTypes[0]
+	mi := &file_overseer_v1_overseer_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -55,7 +55,7 @@ func (x *RegisterRequest) String() string {
 func (*RegisterRequest) ProtoMessage() {}
 
 func (x *RegisterRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_v1_overseer_proto_msgTypes[0]
+	mi := &file_overseer_v1_overseer_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -68,7 +68,7 @@ func (x *RegisterRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RegisterRequest.ProtoReflect.Descriptor instead.
 func (*RegisterRequest) Descriptor() ([]byte, []int) {
-	return file_v1_overseer_proto_rawDescGZIP(), []int{0}
+	return file_overseer_v1_overseer_proto_rawDescGZIP(), []int{0}
 }
 
 func (x *RegisterRequest) GetName() string {
@@ -97,7 +97,7 @@ type RegisterResponse struct {
 
 func (x *RegisterResponse) Reset() {
 	*x = RegisterResponse{}
-	mi := &file_v1_overseer_proto_msgTypes[1]
+	mi := &file_overseer_v1_overseer_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -109,7 +109,7 @@ func (x *RegisterResponse) String() string {
 func (*RegisterResponse) ProtoMessage() {}
 
 func (x *RegisterResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_v1_overseer_proto_msgTypes[1]
+	mi := &file_overseer_v1_overseer_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -122,7 +122,7 @@ func (x *RegisterResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RegisterResponse.ProtoReflect.Descriptor instead.
 func (*RegisterResponse) Descriptor() ([]byte, []int) {
-	return file_v1_overseer_proto_rawDescGZIP(), []int{1}
+	return file_overseer_v1_overseer_proto_rawDescGZIP(), []int{1}
 }
 
 func (x *RegisterResponse) GetOverseerId() string {
@@ -148,7 +148,7 @@ type HeartbeatRequest struct {
 
 func (x *HeartbeatRequest) Reset() {
 	*x = HeartbeatRequest{}
-	mi := &file_v1_overseer_proto_msgTypes[2]
+	mi := &file_overseer_v1_overseer_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -160,7 +160,7 @@ func (x *HeartbeatRequest) String() string {
 func (*HeartbeatRequest) ProtoMessage() {}
 
 func (x *HeartbeatRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_v1_overseer_proto_msgTypes[2]
+	mi := &file_overseer_v1_overseer_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -173,7 +173,7 @@ func (x *HeartbeatRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HeartbeatRequest.ProtoReflect.Descriptor instead.
 func (*HeartbeatRequest) Descriptor() ([]byte, []int) {
-	return file_v1_overseer_proto_rawDescGZIP(), []int{2}
+	return file_overseer_v1_overseer_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *HeartbeatRequest) GetOverseerId() string {
@@ -192,7 +192,7 @@ type HeartbeatResponse struct {
 
 func (x *HeartbeatResponse) Reset() {
 	*x = HeartbeatResponse{}
-	mi := &file_v1_overseer_proto_msgTypes[3]
+	mi := &file_overseer_v1_overseer_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -204,7 +204,7 @@ func (x *HeartbeatResponse) String() string {
 func (*HeartbeatResponse) ProtoMessage() {}
 
 func (x *HeartbeatResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_v1_overseer_proto_msgTypes[3]
+	mi := &file_overseer_v1_overseer_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -217,7 +217,7 @@ func (x *HeartbeatResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HeartbeatResponse.ProtoReflect.Descriptor instead.
 func (*HeartbeatResponse) Descriptor() ([]byte, []int) {
-	return file_v1_overseer_proto_rawDescGZIP(), []int{3}
+	return file_overseer_v1_overseer_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *HeartbeatResponse) GetServerTime() *timestamppb.Timestamp {
@@ -239,7 +239,7 @@ type CreateRunRequest struct {
 
 func (x *CreateRunRequest) Reset() {
 	*x = CreateRunRequest{}
-	mi := &file_v1_overseer_proto_msgTypes[4]
+	mi := &file_overseer_v1_overseer_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -251,7 +251,7 @@ func (x *CreateRunRequest) String() string {
 func (*CreateRunRequest) ProtoMessage() {}
 
 func (x *CreateRunRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_v1_overseer_proto_msgTypes[4]
+	mi := &file_overseer_v1_overseer_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -264,7 +264,7 @@ func (x *CreateRunRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateRunRequest.ProtoReflect.Descriptor instead.
 func (*CreateRunRequest) Descriptor() ([]byte, []int) {
-	return file_v1_overseer_proto_rawDescGZIP(), []int{4}
+	return file_overseer_v1_overseer_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *CreateRunRequest) GetOverseerId() string {
@@ -307,7 +307,7 @@ type Run struct {
 
 func (x *Run) Reset() {
 	*x = Run{}
-	mi := &file_v1_overseer_proto_msgTypes[5]
+	mi := &file_overseer_v1_overseer_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -319,7 +319,7 @@ func (x *Run) String() string {
 func (*Run) ProtoMessage() {}
 
 func (x *Run) ProtoReflect() protoreflect.Message {
-	mi := &file_v1_overseer_proto_msgTypes[5]
+	mi := &file_overseer_v1_overseer_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -332,7 +332,7 @@ func (x *Run) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Run.ProtoReflect.Descriptor instead.
 func (*Run) Descriptor() ([]byte, []int) {
-	return file_v1_overseer_proto_rawDescGZIP(), []int{5}
+	return file_overseer_v1_overseer_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *Run) GetRunId() string {
@@ -417,7 +417,7 @@ type ReattachRunRequest struct {
 
 func (x *ReattachRunRequest) Reset() {
 	*x = ReattachRunRequest{}
-	mi := &file_v1_overseer_proto_msgTypes[6]
+	mi := &file_overseer_v1_overseer_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -429,7 +429,7 @@ func (x *ReattachRunRequest) String() string {
 func (*ReattachRunRequest) ProtoMessage() {}
 
 func (x *ReattachRunRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_v1_overseer_proto_msgTypes[6]
+	mi := &file_overseer_v1_overseer_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -442,7 +442,7 @@ func (x *ReattachRunRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReattachRunRequest.ProtoReflect.Descriptor instead.
 func (*ReattachRunRequest) Descriptor() ([]byte, []int) {
-	return file_v1_overseer_proto_rawDescGZIP(), []int{6}
+	return file_overseer_v1_overseer_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *ReattachRunRequest) GetRunId() string {
@@ -488,7 +488,7 @@ type ReattachRunResponse struct {
 
 func (x *ReattachRunResponse) Reset() {
 	*x = ReattachRunResponse{}
-	mi := &file_v1_overseer_proto_msgTypes[7]
+	mi := &file_overseer_v1_overseer_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -500,7 +500,7 @@ func (x *ReattachRunResponse) String() string {
 func (*ReattachRunResponse) ProtoMessage() {}
 
 func (x *ReattachRunResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_v1_overseer_proto_msgTypes[7]
+	mi := &file_overseer_v1_overseer_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -513,7 +513,7 @@ func (x *ReattachRunResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReattachRunResponse.ProtoReflect.Descriptor instead.
 func (*ReattachRunResponse) Descriptor() ([]byte, []int) {
-	return file_v1_overseer_proto_rawDescGZIP(), []int{7}
+	return file_overseer_v1_overseer_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *ReattachRunResponse) GetStatus() string {
@@ -577,7 +577,7 @@ type Ack struct {
 
 func (x *Ack) Reset() {
 	*x = Ack{}
-	mi := &file_v1_overseer_proto_msgTypes[8]
+	mi := &file_overseer_v1_overseer_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -589,7 +589,7 @@ func (x *Ack) String() string {
 func (*Ack) ProtoMessage() {}
 
 func (x *Ack) ProtoReflect() protoreflect.Message {
-	mi := &file_v1_overseer_proto_msgTypes[8]
+	mi := &file_overseer_v1_overseer_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -602,7 +602,7 @@ func (x *Ack) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Ack.ProtoReflect.Descriptor instead.
 func (*Ack) Descriptor() ([]byte, []int) {
-	return file_v1_overseer_proto_rawDescGZIP(), []int{8}
+	return file_overseer_v1_overseer_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *Ack) GetRunId() string {
@@ -637,7 +637,7 @@ type ControlSubscribeRequest struct {
 
 func (x *ControlSubscribeRequest) Reset() {
 	*x = ControlSubscribeRequest{}
-	mi := &file_v1_overseer_proto_msgTypes[9]
+	mi := &file_overseer_v1_overseer_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -649,7 +649,7 @@ func (x *ControlSubscribeRequest) String() string {
 func (*ControlSubscribeRequest) ProtoMessage() {}
 
 func (x *ControlSubscribeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_v1_overseer_proto_msgTypes[9]
+	mi := &file_overseer_v1_overseer_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -662,7 +662,7 @@ func (x *ControlSubscribeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ControlSubscribeRequest.ProtoReflect.Descriptor instead.
 func (*ControlSubscribeRequest) Descriptor() ([]byte, []int) {
-	return file_v1_overseer_proto_rawDescGZIP(), []int{9}
+	return file_overseer_v1_overseer_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *ControlSubscribeRequest) GetOverseerId() string {
@@ -688,7 +688,7 @@ type ControlMessage struct {
 
 func (x *ControlMessage) Reset() {
 	*x = ControlMessage{}
-	mi := &file_v1_overseer_proto_msgTypes[10]
+	mi := &file_overseer_v1_overseer_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -700,7 +700,7 @@ func (x *ControlMessage) String() string {
 func (*ControlMessage) ProtoMessage() {}
 
 func (x *ControlMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_v1_overseer_proto_msgTypes[10]
+	mi := &file_overseer_v1_overseer_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -713,7 +713,7 @@ func (x *ControlMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ControlMessage.ProtoReflect.Descriptor instead.
 func (*ControlMessage) Descriptor() ([]byte, []int) {
-	return file_v1_overseer_proto_rawDescGZIP(), []int{10}
+	return file_overseer_v1_overseer_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *ControlMessage) GetCommand() isControlMessage_Command {
@@ -805,7 +805,7 @@ type RunCancel struct {
 
 func (x *RunCancel) Reset() {
 	*x = RunCancel{}
-	mi := &file_v1_overseer_proto_msgTypes[11]
+	mi := &file_overseer_v1_overseer_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -817,7 +817,7 @@ func (x *RunCancel) String() string {
 func (*RunCancel) ProtoMessage() {}
 
 func (x *RunCancel) ProtoReflect() protoreflect.Message {
-	mi := &file_v1_overseer_proto_msgTypes[11]
+	mi := &file_overseer_v1_overseer_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -830,7 +830,7 @@ func (x *RunCancel) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RunCancel.ProtoReflect.Descriptor instead.
 func (*RunCancel) Descriptor() ([]byte, []int) {
-	return file_v1_overseer_proto_rawDescGZIP(), []int{11}
+	return file_overseer_v1_overseer_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *RunCancel) GetRunId() string {
@@ -859,7 +859,7 @@ type AgentPrompt struct {
 
 func (x *AgentPrompt) Reset() {
 	*x = AgentPrompt{}
-	mi := &file_v1_overseer_proto_msgTypes[12]
+	mi := &file_overseer_v1_overseer_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -871,7 +871,7 @@ func (x *AgentPrompt) String() string {
 func (*AgentPrompt) ProtoMessage() {}
 
 func (x *AgentPrompt) ProtoReflect() protoreflect.Message {
-	mi := &file_v1_overseer_proto_msgTypes[12]
+	mi := &file_overseer_v1_overseer_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -884,7 +884,7 @@ func (x *AgentPrompt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AgentPrompt.ProtoReflect.Descriptor instead.
 func (*AgentPrompt) Descriptor() ([]byte, []int) {
-	return file_v1_overseer_proto_rawDescGZIP(), []int{12}
+	return file_overseer_v1_overseer_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *AgentPrompt) GetRunId() string {
@@ -918,7 +918,7 @@ type ControlReady struct {
 
 func (x *ControlReady) Reset() {
 	*x = ControlReady{}
-	mi := &file_v1_overseer_proto_msgTypes[13]
+	mi := &file_overseer_v1_overseer_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -930,7 +930,7 @@ func (x *ControlReady) String() string {
 func (*ControlReady) ProtoMessage() {}
 
 func (x *ControlReady) ProtoReflect() protoreflect.Message {
-	mi := &file_v1_overseer_proto_msgTypes[13]
+	mi := &file_overseer_v1_overseer_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -943,7 +943,7 @@ func (x *ControlReady) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ControlReady.ProtoReflect.Descriptor instead.
 func (*ControlReady) Descriptor() ([]byte, []int) {
-	return file_v1_overseer_proto_rawDescGZIP(), []int{13}
+	return file_overseer_v1_overseer_proto_rawDescGZIP(), []int{13}
 }
 
 // ResumeRun delivers a resume signal from the orchestrator to the Overseer (W05).
@@ -962,7 +962,7 @@ type ResumeRun struct {
 
 func (x *ResumeRun) Reset() {
 	*x = ResumeRun{}
-	mi := &file_v1_overseer_proto_msgTypes[14]
+	mi := &file_overseer_v1_overseer_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -974,7 +974,7 @@ func (x *ResumeRun) String() string {
 func (*ResumeRun) ProtoMessage() {}
 
 func (x *ResumeRun) ProtoReflect() protoreflect.Message {
-	mi := &file_v1_overseer_proto_msgTypes[14]
+	mi := &file_overseer_v1_overseer_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -987,7 +987,7 @@ func (x *ResumeRun) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResumeRun.ProtoReflect.Descriptor instead.
 func (*ResumeRun) Descriptor() ([]byte, []int) {
-	return file_v1_overseer_proto_rawDescGZIP(), []int{14}
+	return file_overseer_v1_overseer_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *ResumeRun) GetRunId() string {
@@ -1031,7 +1031,7 @@ type ResumeRequest struct {
 
 func (x *ResumeRequest) Reset() {
 	*x = ResumeRequest{}
-	mi := &file_v1_overseer_proto_msgTypes[15]
+	mi := &file_overseer_v1_overseer_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1043,7 +1043,7 @@ func (x *ResumeRequest) String() string {
 func (*ResumeRequest) ProtoMessage() {}
 
 func (x *ResumeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_v1_overseer_proto_msgTypes[15]
+	mi := &file_overseer_v1_overseer_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1056,7 +1056,7 @@ func (x *ResumeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResumeRequest.ProtoReflect.Descriptor instead.
 func (*ResumeRequest) Descriptor() ([]byte, []int) {
-	return file_v1_overseer_proto_rawDescGZIP(), []int{15}
+	return file_overseer_v1_overseer_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *ResumeRequest) GetRunId() string {
@@ -1092,7 +1092,7 @@ type ResumeResponse struct {
 
 func (x *ResumeResponse) Reset() {
 	*x = ResumeResponse{}
-	mi := &file_v1_overseer_proto_msgTypes[16]
+	mi := &file_overseer_v1_overseer_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1104,7 +1104,7 @@ func (x *ResumeResponse) String() string {
 func (*ResumeResponse) ProtoMessage() {}
 
 func (x *ResumeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_v1_overseer_proto_msgTypes[16]
+	mi := &file_overseer_v1_overseer_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1117,7 +1117,7 @@ func (x *ResumeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResumeResponse.ProtoReflect.Descriptor instead.
 func (*ResumeResponse) Descriptor() ([]byte, []int) {
-	return file_v1_overseer_proto_rawDescGZIP(), []int{16}
+	return file_overseer_v1_overseer_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *ResumeResponse) GetAccepted() bool {
@@ -1134,11 +1134,11 @@ func (x *ResumeResponse) GetReason() string {
 	return ""
 }
 
-var File_v1_overseer_proto protoreflect.FileDescriptor
+var File_overseer_v1_overseer_proto protoreflect.FileDescriptor
 
-const file_v1_overseer_proto_rawDesc = "" +
+const file_overseer_v1_overseer_proto_rawDesc = "" +
 	"\n" +
-	"\x11v1/overseer.proto\x12\voverseer.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x0fv1/events.proto\"\xa2\x01\n" +
+	"\x1aoverseer/v1/overseer.proto\x12\voverseer.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x18overseer/v1/events.proto\"\xa2\x01\n" +
 	"\x0fRegisterRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12@\n" +
 	"\x06labels\x18\x02 \x03(\v2(.overseer.v1.RegisterRequest.LabelsEntryR\x06labels\x1a9\n" +
@@ -1236,22 +1236,22 @@ const file_v1_overseer_proto_rawDesc = "" +
 	"\vReattachRun\x12\x1f.overseer.v1.ReattachRunRequest\x1a .overseer.v1.ReattachRunResponse\x12A\n" +
 	"\x06Resume\x12\x1a.overseer.v1.ResumeRequest\x1a\x1b.overseer.v1.ResumeResponse\x12;\n" +
 	"\fSubmitEvents\x12\x15.overseer.v1.Envelope\x1a\x10.overseer.v1.Ack(\x010\x01\x12N\n" +
-	"\aControl\x12$.overseer.v1.ControlSubscribeRequest\x1a\x1b.overseer.v1.ControlMessage0\x01B5Z3github.com/brokenbots/overseer/sdk/pb/v1;overseerv1b\x06proto3"
+	"\aControl\x12$.overseer.v1.ControlSubscribeRequest\x1a\x1b.overseer.v1.ControlMessage0\x01B>Z<github.com/brokenbots/overseer/sdk/pb/overseer/v1;overseerv1b\x06proto3"
 
 var (
-	file_v1_overseer_proto_rawDescOnce sync.Once
-	file_v1_overseer_proto_rawDescData []byte
+	file_overseer_v1_overseer_proto_rawDescOnce sync.Once
+	file_overseer_v1_overseer_proto_rawDescData []byte
 )
 
-func file_v1_overseer_proto_rawDescGZIP() []byte {
-	file_v1_overseer_proto_rawDescOnce.Do(func() {
-		file_v1_overseer_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_v1_overseer_proto_rawDesc), len(file_v1_overseer_proto_rawDesc)))
+func file_overseer_v1_overseer_proto_rawDescGZIP() []byte {
+	file_overseer_v1_overseer_proto_rawDescOnce.Do(func() {
+		file_overseer_v1_overseer_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_overseer_v1_overseer_proto_rawDesc), len(file_overseer_v1_overseer_proto_rawDesc)))
 	})
-	return file_v1_overseer_proto_rawDescData
+	return file_overseer_v1_overseer_proto_rawDescData
 }
 
-var file_v1_overseer_proto_msgTypes = make([]protoimpl.MessageInfo, 20)
-var file_v1_overseer_proto_goTypes = []any{
+var file_overseer_v1_overseer_proto_msgTypes = make([]protoimpl.MessageInfo, 20)
+var file_overseer_v1_overseer_proto_goTypes = []any{
 	(*RegisterRequest)(nil),         // 0: overseer.v1.RegisterRequest
 	(*RegisterResponse)(nil),        // 1: overseer.v1.RegisterResponse
 	(*HeartbeatRequest)(nil),        // 2: overseer.v1.HeartbeatRequest
@@ -1275,7 +1275,7 @@ var file_v1_overseer_proto_goTypes = []any{
 	(*timestamppb.Timestamp)(nil),   // 20: google.protobuf.Timestamp
 	(*Envelope)(nil),                // 21: overseer.v1.Envelope
 }
-var file_v1_overseer_proto_depIdxs = []int32{
+var file_overseer_v1_overseer_proto_depIdxs = []int32{
 	17, // 0: overseer.v1.RegisterRequest.labels:type_name -> overseer.v1.RegisterRequest.LabelsEntry
 	20, // 1: overseer.v1.HeartbeatResponse.server_time:type_name -> google.protobuf.Timestamp
 	20, // 2: overseer.v1.Run.created_at:type_name -> google.protobuf.Timestamp
@@ -1308,13 +1308,13 @@ var file_v1_overseer_proto_depIdxs = []int32{
 	0,  // [0:11] is the sub-list for field type_name
 }
 
-func init() { file_v1_overseer_proto_init() }
-func file_v1_overseer_proto_init() {
-	if File_v1_overseer_proto != nil {
+func init() { file_overseer_v1_overseer_proto_init() }
+func file_overseer_v1_overseer_proto_init() {
+	if File_overseer_v1_overseer_proto != nil {
 		return
 	}
-	file_v1_events_proto_init()
-	file_v1_overseer_proto_msgTypes[10].OneofWrappers = []any{
+	file_overseer_v1_events_proto_init()
+	file_overseer_v1_overseer_proto_msgTypes[10].OneofWrappers = []any{
 		(*ControlMessage_RunCancel)(nil),
 		(*ControlMessage_AgentPrompt)(nil),
 		(*ControlMessage_ControlReady)(nil),
@@ -1324,17 +1324,17 @@ func file_v1_overseer_proto_init() {
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
-			RawDescriptor: unsafe.Slice(unsafe.StringData(file_v1_overseer_proto_rawDesc), len(file_v1_overseer_proto_rawDesc)),
+			RawDescriptor: unsafe.Slice(unsafe.StringData(file_overseer_v1_overseer_proto_rawDesc), len(file_overseer_v1_overseer_proto_rawDesc)),
 			NumEnums:      0,
 			NumMessages:   20,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
-		GoTypes:           file_v1_overseer_proto_goTypes,
-		DependencyIndexes: file_v1_overseer_proto_depIdxs,
-		MessageInfos:      file_v1_overseer_proto_msgTypes,
+		GoTypes:           file_overseer_v1_overseer_proto_goTypes,
+		DependencyIndexes: file_overseer_v1_overseer_proto_depIdxs,
+		MessageInfos:      file_overseer_v1_overseer_proto_msgTypes,
 	}.Build()
-	File_v1_overseer_proto = out.File
-	file_v1_overseer_proto_goTypes = nil
-	file_v1_overseer_proto_depIdxs = nil
+	File_overseer_v1_overseer_proto = out.File
+	file_overseer_v1_overseer_proto_goTypes = nil
+	file_overseer_v1_overseer_proto_depIdxs = nil
 }

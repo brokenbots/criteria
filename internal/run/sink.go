@@ -16,7 +16,7 @@ import (
 	"github.com/brokenbots/overseer/internal/adapter"
 	castletrans "github.com/brokenbots/overseer/internal/transport/castle"
 	"github.com/brokenbots/overseer/events"
-	pb "github.com/brokenbots/overseer/sdk/pb/v1"
+	pb "github.com/brokenbots/overseer/sdk/pb/overseer/v1"
 )
 
 // Sink implements engine.Sink by forwarding to a Castle client.

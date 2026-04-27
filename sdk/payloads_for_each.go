@@ -1,6 +1,6 @@
 package overseer
 
-import pb "github.com/brokenbots/overseer/sdk/pb/v1"
+import pb "github.com/brokenbots/overseer/sdk/pb/overseer/v1"
 
 // ForEachEntered is emitted when execution enters a for_each node.
 type ForEachEntered = pb.ForEachEntered

@@ -11,7 +11,7 @@ package overseer.v1;
 import "google/protobuf/struct.proto";
 import "google/protobuf/timestamp.proto";
 
-option go_package = "github.com/brokenbots/overseer/sdk/pb/v1;overseerv1";
+option go_package = "github.com/brokenbots/overseer/sdk/pb/overseer/v1;overseerv1";
 
 // Envelope is the wire format for every event.
 message Envelope {
