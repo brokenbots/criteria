@@ -3,6 +3,7 @@ digraph "workstream_review_loop" {
 
   "load_executor_agent_file" [shape=box];
   "load_reviewer_agent_file" [shape=box];
+  "checkout_branch" [shape=box];
   "open_executor" [shape=box];
   "open_reviewer" [shape=box];
   "execute_init" [shape=box];
@@ -24,7 +25,9 @@ digraph "workstream_review_loop" {
   "load_executor_agent_file" -> "failed" [label="failure"];
   "load_executor_agent_file" -> "load_reviewer_agent_file" [label="success"];
   "load_reviewer_agent_file" -> "failed" [label="failure"];
-  "load_reviewer_agent_file" -> "open_executor" [label="success"];
+  "load_reviewer_agent_file" -> "checkout_branch" [label="success"];
+  "checkout_branch" -> "failed" [label="failure"];
+  "checkout_branch" -> "open_executor" [label="success"];
   "open_executor" -> "failed" [label="failure"];
   "open_executor" -> "open_reviewer" [label="success"];
   "open_reviewer" -> "close_executor_abort" [label="failure"];

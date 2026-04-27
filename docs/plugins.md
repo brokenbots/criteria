@@ -56,6 +56,7 @@ Agent-backed workflows use three concepts:
 
 The canonical example is `examples/agent_hello.hcl`:
 
+<!-- validator: skip: illustrative excerpt only; full workflow in examples/agent_hello.hcl -->
 ```hcl
 workflow "agent_hello" {
   version       = "1"
@@ -77,7 +78,7 @@ workflow "agent_hello" {
   step "ask" {
     agent       = "assistant"
     allow_tools = ["shell:git status"]
-    input = {
+    input {
       max_turns = "4"
       prompt    = "Run `git status` in the current directory. Summarize the result in one short paragraph. End your final line with exactly one of: RESULT: success | RESULT: needs_review | RESULT: failure. Use RESULT: success only if you successfully ran `git status`."
     }
@@ -113,6 +114,7 @@ The host evaluates plugin permission requests against those patterns. When a req
 
 The hello example uses the narrowest possible allowlist:
 
+<!-- validator: skip: bare attribute snippet, not a standalone HCL workflow -->
 ```hcl
 allow_tools = ["shell:git status"]
 ```
@@ -191,17 +193,19 @@ When an adapter completes execution, it returns a `Result` containing:
 
 Outputs are accessible in downstream workflow expressions as `steps.<step_name>.<output_key>`. For example:
 
+<!-- validator: fragment -->
 ```hcl
 step "get_version" {
   adapter = "shell"
-  input = {
+  input {
     command = "git describe --tags --always"
   }
   outcome "success" { transition_to = "check_version" }
 }
 
 branch "check_version" {
-  when "startswith(steps.get_version.stdout, 'v1.')" {
+  arm {
+    when          = startswith(steps.get_version.stdout, "v1.")
     transition_to = "deploy_v1"
   }
   default {

@@ -30,6 +30,7 @@ See [Standalone CLI](#standalone-cli) for command reference.
 
 Every workflow begins with a `workflow` block:
 
+<!-- validator: skip: illustrative header showing structure only; initial_state and target_state reference nodes not defined in this excerpt -->
 ```hcl
 workflow "deploy_pipeline" {
   version       = "1"
@@ -55,7 +56,7 @@ workflow "deploy_pipeline" {
 - **`initial_state`** (required): The starting node or state name.
 - **`target_state`** (required): The intended terminal state. Must reference a terminal state.
 - **`policy`** (optional): Execution guards.
-  - **`max_total_steps`** (default 0 = unlimited): Abort run if total step count exceeds this limit.
+  - **`max_total_steps`** (default 100): Caps the total number of step executions across the run, including retries and `for_each` iterations. Set to `0` for no cap (use with care for unbounded `for_each` or recursive workflows).
   - **`max_step_retries`** (default 0 = no retries): Per-step retry limit for transient failures.
 - **`permissions`** (optional): Workflow-level permission allowlist.
   - **`allow_tools`**: List of glob patterns for tool invocations. Step-level `allow_tools` is unioned with this list.
@@ -66,6 +67,7 @@ workflow "deploy_pipeline" {
 
 Variables are typed, read-only values declared at the workflow level and optionally overridden at runtime (per-run override support is a future enhancement in v1.5; currently defaults are the only source).
 
+<!-- validator: fragment -->
 ```hcl
 variable "env" {
   type        = "string"
@@ -102,6 +104,7 @@ The `default` attribute is optional. If omitted, the variable must be provided a
 
 Reference variables with `var.<name>`:
 
+<!-- validator: fragment -->
 ```hcl
 step "deploy" {
   adapter = "shell"
@@ -120,6 +123,7 @@ See [Expressions](#expressions) for interpolation rules.
 
 Agents are long-lived adapter sessions that maintain state across multiple step executions. Declare agents at the workflow level and reference them from steps.
 
+<!-- validator: fragment -->
 ```hcl
 agent "assistant" {
   adapter  = "copilot"
@@ -185,6 +189,7 @@ See [plugins.md](plugins.md) for the plugin wire protocol and adapter developmen
 
 Steps are the primary execution units. Each step invokes an adapter (either directly or via an agent) and transitions to the next node based on the adapter's outcome.
 
+<!-- validator: fragment -->
 ```hcl
 step "build" {
   adapter = "shell"
@@ -211,6 +216,7 @@ step "build" {
 
 The `input { }` block passes adapter-specific configuration. Attributes support string interpolation for variables and step outputs:
 
+<!-- validator: fragment -->
 ```hcl
 step "publish" {
   adapter = "shell"
@@ -242,6 +248,7 @@ Each `outcome` block maps an adapter-emitted outcome name to a transition target
 
 States are named targets, typically terminal nodes:
 
+<!-- validator: fragment -->
 ```hcl
 state "done" {
   terminal = true
@@ -270,6 +277,7 @@ Wait nodes pause execution for a duration or external signal.
 
 ### Duration-based wait
 
+<!-- validator: fragment -->
 ```hcl
 wait "cool_down" {
   duration = "10s"
@@ -284,6 +292,7 @@ wait "cool_down" {
 
 ### Signal-based wait
 
+<!-- validator: fragment -->
 ```hcl
 wait "approval_gate" {
   signal = "deploy_approved"
@@ -303,6 +312,7 @@ wait "approval_gate" {
 
 Approval nodes are human decision gates. Paused runs wait for an approver to submit a decision via Castle (Parapet UI or RPC).
 
+<!-- validator: fragment -->
 ```hcl
 approval "ship_to_prod" {
   approvers = ["alice", "bob"]
@@ -326,6 +336,7 @@ approval "ship_to_prod" {
 
 Branch nodes evaluate conditions and transition to the first matching arm or the default.
 
+<!-- validator: skip: branch arms reference var.env and steps.build which are declared outside this excerpt -->
 ```hcl
 branch "check_env" {
   arm {
@@ -368,6 +379,7 @@ See [Expressions](#expressions) for syntax rules.
 
 For-each nodes iterate over a list, executing a child step once per item.
 
+<!-- validator: fragment -->
 ```hcl
 for_each "deploy_services" {
   items = ["api", "web", "worker"]
@@ -427,6 +439,7 @@ Expressions are used in `when` conditions, `items` lists, and `input { }` attrib
 
 Use `${...}` inside string literals:
 
+<!-- validator: skip: bare input block; sub-block of step, not valid at workflow level -->
 ```hcl
 input {
   command = "deploy --env ${var.env} --build ${steps.build.stdout}"
@@ -460,6 +473,7 @@ Overseer enforces a deny-by-default permission model for tool invocations (curre
 
 ### Workflow-level permissions
 
+<!-- validator: skip: incomplete workflow block, missing version/initial_state/target_state -->
 ```hcl
 workflow "secure_build" {
   permissions {
@@ -473,6 +487,7 @@ Applies to all agent steps unless overridden.
 
 ### Step-level permissions
 
+<!-- validator: skip: step uses agent = "assistant" which is declared outside this excerpt -->
 ```hcl
 step "build" {
   agent       = "assistant"
@@ -585,6 +600,47 @@ For examples demonstrating each command, see:
 
 ---
 
+## Doc-Example Validation
+
+The `make validate-docs` CI gate extracts every fenced HCL code block from `docs/*.md` and runs `bin/overseer validate` against each. This catches syntax regressions before they reach users.
+
+### Directives
+
+Place these HTML comment directives on the line immediately before the opening ` ```hcl ` fence (no blank line between the directive and the fence):
+
+- **`<!-- validator: fragment -->`** — the block is a partial workflow (a step, state, agent, or other node declaration without a surrounding `workflow { }` block). The validator wraps it in a synthetic `workflow "doc_example" { ... }` shell and adds state stubs for any transition targets not defined in the fragment.
+
+- **`<!-- validator: skip: <reason> -->`** — skip this block entirely. Use sparingly. Always document why each skip exists. Valid reasons: the block is an incomplete `workflow { }` excerpt that references undeclared nodes; the block is a bare attribute or sub-block not valid at workflow level; the block shows a future language feature not yet implemented.
+
+### Examples
+
+Fragment wrapping (most step/state/agent snippets):
+
+```
+<!-- validator: fragment -->
+` ``` `hcl
+step "build" {
+  adapter = "shell"
+  ...
+}
+` ``` `
+```
+
+Explicit skip (when fragment wrapping cannot resolve references):
+
+```
+<!-- validator: skip: branch references var.env declared outside this excerpt -->
+` ``` `hcl
+branch "check_env" {
+  ...
+}
+` ``` `
+```
+
+Blocks with no directive and a top-level `workflow { }` are validated as-is. Blocks with no directive and no top-level `workflow { }` are automatically treated as fragments.
+
+---
+
 ## Future Shape (Appendix)
 
 This section outlines language features planned for post-1.5 phases. **None of these are implemented in v1.5**; they are noted here to set expectations and demonstrate forward-thinking design.
@@ -593,6 +649,7 @@ This section outlines language features planned for post-1.5 phases. **None of t
 
 Parallel execution of independent step sequences:
 
+<!-- validator: skip: not implemented in v1.5; parallel block is not a recognized workflow node type -->
 ```hcl
 parallel "build_and_test" {
   region "build" {
@@ -612,6 +669,7 @@ parallel "build_and_test" {
 
 Embed reusable workflow fragments:
 
+<!-- validator: skip: not implemented in v1.5; sub_workflow block is not a recognized workflow node type -->
 ```hcl
 sub_workflow "smoke_test" {
   source = "workflows/smoke.hcl"

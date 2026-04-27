@@ -19,6 +19,10 @@ steps (declaration order):
   load_reviewer_agent_file   adapter=shell   timeout=10s
     input keys: command
     allow_tools: (none)
+    outcomes: success -> checkout_branch, failure -> failed
+  checkout_branch   adapter=shell   timeout=10s
+    input keys: command
+    allow_tools: (none)
     outcomes: success -> open_executor, failure -> failed
   open_executor   agent=executor   lifecycle=open
     input keys: (none)

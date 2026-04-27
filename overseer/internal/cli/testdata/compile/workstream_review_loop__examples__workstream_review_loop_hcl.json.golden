@@ -63,6 +63,25 @@
         },
         {
           "name": "success",
+          "transition_to": "checkout_branch"
+        }
+      ]
+    },
+    {
+      "name": "checkout_branch",
+      "adapter": "shell",
+      "timeout": "10s",
+      "input_keys": [
+        "command"
+      ],
+      "allow_tools": null,
+      "outcomes": [
+        {
+          "name": "failure",
+          "transition_to": "failed"
+        },
+        {
+          "name": "success",
           "transition_to": "open_executor"
         }
       ]
@@ -360,6 +379,7 @@
   "step_order": [
     "load_executor_agent_file",
     "load_reviewer_agent_file",
+    "checkout_branch",
     "open_executor",
     "open_reviewer",
     "execute_init",
