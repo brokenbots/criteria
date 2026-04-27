@@ -44,7 +44,7 @@ make proto
 
 ## Adapter plugins
 
-Adapter plugins are discovered as `overlord-adapter-<name>` binaries from `${OVERLORD_PLUGINS}/` or `~/.overlord/plugins/`. Build the bundled adapters with:
+Adapter plugins are discovered as `overseer-adapter-<name>` binaries from `${OVERSEER_PLUGINS}/` or `~/.overseer/plugins/`. Build the bundled adapters with:
 
 ```bash
 make plugins

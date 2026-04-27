@@ -67,12 +67,12 @@ Commit both the `.proto` changes and the regenerated `sdk/pb/` files together.
 
 ## Adapter plugins
 
-Plugin binaries are named `overlord-adapter-<name>` and must be placed in
-`${OVERLORD_PLUGINS}/` or `~/.overlord/plugins/`. See [docs/plugins.md](docs/plugins.md).
+Plugin binaries are named `overseer-adapter-<name>` and must be placed in
+`${OVERSEER_PLUGINS}/` or `~/.overseer/plugins/`. See [docs/plugins.md](docs/plugins.md).
 
 ## Code conventions
 
 - Backend: structured logging with `slog` (JSON in production entrypoints).
 - Avoid CGO — use pure-Go packages (e.g. `modernc.org/sqlite` if storage is needed).
-- Keep plugin adapter code in `cmd/overlord-adapter-*/` and internal adapter
+- Keep plugin adapter code in `cmd/overseer-adapter-*/` and internal adapter
   loader code in `internal/adapter*/`.
