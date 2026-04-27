@@ -259,3 +259,30 @@ All four findings addressed:
 **[NIT] HandshakeConfig drift comment corrected:** `internal/plugin/handshake.go` now notes that drift with `sdk/pluginhost.MagicCookieValue` is an integration-level guard caught by `TestHandshakeInfo`, not a unit-level test.
 
 Validation: `make build && make lint-imports && make test` all green. `context_cancellation` and `step_timeout` pass; 0 skipped sub-tests except `permission_request_shape` (legitimately skipped — fixture does not advertise `permission_gating`).
+
+---
+
+### Review 2026-04-27-02 — approved
+
+#### Summary
+
+All four required remediations from the first review pass have been correctly implemented. The import-lint exception is now properly restricted to `testfixtures/` paths with a matching negative-case test. The `publicsdk` fixture exercises `context_cancellation` and `step_timeout` via `delay_ms` support, proving context propagation across the subprocess boundary using only the public API. The nil-impl guard has a unit test. The handshake drift comment accurately describes its integration-level guarantee. All make targets pass; no sub-tests are skipped except the legitimately inapplicable `permission_request_shape`. Workstream is approved.
+
+#### Plan Adherence
+
+All checklist items verified complete with no outstanding deviations.
+
+#### Validation Performed
+
+```
+make build                          → PASS
+make lint-imports                   → PASS
+make test (-race, all modules)      → PASS
+go test -race -count=1 -v -run TestPublicSDKFixtureConformance ./internal/plugin/
+                                    → PASS (context_cancellation PASS, step_timeout PASS,
+                                            permission_request_shape SKIP — expected)
+go test -race -count=1 -v -run "TestGRPCServerNilImpl|TestHandshakeConfigValues|TestAdapterPluginWireNames" ./sdk/pluginhost/
+                                    → PASS
+go test -race -count=1 -v -run TestInternalNonFixtureImportsSDKPluginhost_Forbidden ./tools/import-lint/
+                                    → PASS
+```
