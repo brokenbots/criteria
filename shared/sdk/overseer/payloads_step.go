@@ -14,6 +14,17 @@ type StepTransition = pb.StepTransition
 // StepLog carries a log line produced during step execution.
 type StepLog = pb.StepLog
 
+// LogStream identifies which output stream a StepLog chunk came from.
+type LogStream = pb.LogStream
+
+// LogStream enum constants (original generated names preserved for drop-in compatibility).
+const (
+	LogStream_LOG_STREAM_UNSPECIFIED LogStream = pb.LogStream_LOG_STREAM_UNSPECIFIED
+	LogStream_LOG_STREAM_STDOUT      LogStream = pb.LogStream_LOG_STREAM_STDOUT
+	LogStream_LOG_STREAM_STDERR      LogStream = pb.LogStream_LOG_STREAM_STDERR
+	LogStream_LOG_STREAM_AGENT       LogStream = pb.LogStream_LOG_STREAM_AGENT
+)
+
 // StepResumed is emitted when a paused step resumes execution.
 type StepResumed = pb.StepResumed
 
