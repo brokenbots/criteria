@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	pluginpkg "github.com/brokenbots/overseer/internal/plugin"
+	pluginhost "github.com/brokenbots/overseer/sdk/pluginhost"
 	pb "github.com/brokenbots/overseer/sdk/pb/overseer/v1"
 )
 
@@ -30,7 +30,7 @@ func (s *noopService) OpenSession(_ context.Context, request *pb.OpenSessionRequ
 	return &pb.OpenSessionResponse{}, nil
 }
 
-func (s *noopService) Execute(ctx context.Context, request *pb.ExecuteRequest, sink pluginpkg.ExecuteEventSender) error {
+func (s *noopService) Execute(ctx context.Context, request *pb.ExecuteRequest, sink pluginhost.ExecuteEventSender) error {
 	s.mu.Lock()
 	_, ok := s.sessions[request.GetSessionId()]
 	s.mu.Unlock()
@@ -70,5 +70,5 @@ func (s *noopService) CloseSession(_ context.Context, request *pb.CloseSessionRe
 }
 
 func main() {
-	pluginpkg.Serve(&noopService{sessions: map[string]struct{}{}})
+	pluginhost.Serve(&noopService{sessions: map[string]struct{}{}})
 }

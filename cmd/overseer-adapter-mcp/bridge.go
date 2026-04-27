@@ -15,7 +15,7 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/brokenbots/overseer/cmd/overseer-adapter-mcp/mcpclient"
-	pluginpkg "github.com/brokenbots/overseer/internal/plugin"
+	pluginhost "github.com/brokenbots/overseer/sdk/pluginhost"
 	pb "github.com/brokenbots/overseer/sdk/pb/overseer/v1"
 )
 
@@ -46,18 +46,18 @@ type sessionState struct {
 
 	mu       sync.Mutex
 	tools    map[string]struct{}
-	sink     pluginpkg.ExecuteEventSender
+	sink     pluginhost.ExecuteEventSender
 	inFlight bool
 }
 
-func (s *sessionState) setSink(sink pluginpkg.ExecuteEventSender, inFlight bool) {
+func (s *sessionState) setSink(sink pluginhost.ExecuteEventSender, inFlight bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.sink = sink
 	s.inFlight = inFlight
 }
 
-func (s *sessionState) currentSink() (pluginpkg.ExecuteEventSender, bool) {
+func (s *sessionState) currentSink() (pluginhost.ExecuteEventSender, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.sink, s.inFlight
@@ -174,7 +174,7 @@ func (b *MCPBridge) OpenSession(ctx context.Context, req *pb.OpenSessionRequest)
 	return &pb.OpenSessionResponse{}, nil
 }
 
-func (b *MCPBridge) Execute(ctx context.Context, req *pb.ExecuteRequest, sink pluginpkg.ExecuteEventSender) error {
+func (b *MCPBridge) Execute(ctx context.Context, req *pb.ExecuteRequest, sink pluginhost.ExecuteEventSender) error {
 	s := b.getSession(req.GetSessionId())
 	if s == nil {
 		return fmt.Errorf("mcp: unknown session %q", req.GetSessionId())

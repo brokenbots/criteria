@@ -78,6 +78,24 @@ func TestInternalImportsSDKOther_Forbidden(t *testing.T) {
 	}
 }
 
+// TestInternalImportsSDKPluginhost_Clean checks that internal/ importing
+// sdk/pluginhost is allowed (test fixtures are plugin processes and must use
+// the public surface).
+func TestInternalImportsSDKPluginhost_Clean(t *testing.T) {
+	root := tempRepoWith(t, map[string]string{
+		"internal/plugin/testfixtures/foo.go": `package foo
+import _ "github.com/brokenbots/overseer/sdk/pluginhost"
+`,
+	})
+	vs, err := lint(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(vs) != 0 {
+		t.Fatalf("expected no violations for sdk/pluginhost import from internal/, got %d: %+v", len(vs), vs)
+	}
+}
+
 // TestInternalImportsSDKPb_Clean checks that internal/ importing sdk/pb is allowed.
 func TestInternalImportsSDKPb_Clean(t *testing.T) {
 	root := tempRepoWith(t, map[string]string{

@@ -1,11 +1,11 @@
 package main
 
 import (
-	pluginpkg "github.com/brokenbots/overseer/internal/plugin"
+	pluginhost "github.com/brokenbots/overseer/sdk/pluginhost"
 )
 
 func main() {
-	pluginpkg.Serve(&copilotPlugin{
+	pluginhost.Serve(&copilotPlugin{
 		sessions: map[string]*sessionState{},
 	})
 }

@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 
-	pluginpkg "github.com/brokenbots/overseer/internal/plugin"
+	pluginhost "github.com/brokenbots/overseer/sdk/pluginhost"
 	pb "github.com/brokenbots/overseer/sdk/pb/overseer/v1"
 )
 
@@ -17,7 +17,7 @@ func (brokenService) OpenSession(context.Context, *pb.OpenSessionRequest) (*pb.O
 	return &pb.OpenSessionResponse{}, nil
 }
 
-func (brokenService) Execute(_ context.Context, _ *pb.ExecuteRequest, sink pluginpkg.ExecuteEventSender) error {
+func (brokenService) Execute(_ context.Context, _ *pb.ExecuteRequest, sink pluginhost.ExecuteEventSender) error {
 	return sink.Send(&pb.ExecuteEvent{
 		Event: &pb.ExecuteEvent_Result{Result: &pb.ExecuteResult{Outcome: ""}},
 	})
@@ -32,5 +32,5 @@ func (brokenService) CloseSession(context.Context, *pb.CloseSessionRequest) (*pb
 }
 
 func main() {
-	pluginpkg.Serve(brokenService{})
+	pluginhost.Serve(brokenService{})
 }

@@ -17,7 +17,7 @@ func TestHandshakeInfo(t *testing.T) {
 
 	client := hplugin.NewClient(&hplugin.ClientConfig{
 		HandshakeConfig:  HandshakeConfig,
-		Plugins:          PluginMap(nil),
+		Plugins:          PluginMap(),
 		Cmd:              exec.Command(pluginBin),
 		AllowedProtocols: []hplugin.Protocol{hplugin.ProtocolGRPC},
 		StartTimeout:     2 * time.Second,

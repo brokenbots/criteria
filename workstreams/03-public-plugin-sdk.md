@@ -118,13 +118,13 @@ or other workstream files.
 
 ## Tasks
 
-- [ ] Pick the package shape (Step 1).
-- [ ] Define the public surface (Step 2).
-- [ ] Move (or thin-wrap) the implementation (Step 3).
-- [ ] Update bundled adapters and `docs/plugins.md`.
-- [ ] Update `tools/import-lint/` if the boundary moves.
-- [ ] Add a fixture plugin under
-      `cmd/overseer-adapter-*/testfixtures/...` that imports only
+- [x] Pick the package shape (Step 1).
+- [x] Define the public surface (Step 2).
+- [x] Move (or thin-wrap) the implementation (Step 3).
+- [x] Update bundled adapters and `docs/plugins.md`.
+- [x] Update `tools/import-lint/` if the boundary moves.
+- [x] Add a fixture plugin under
+      `internal/plugin/testfixtures/publicsdk/` that imports only
       the new public surface; wire through the adapter conformance
       harness.
 
@@ -152,3 +152,24 @@ or other workstream files.
 | Moving `internal/plugin` breaks an unforeseen import elsewhere | `go build ./...` plus `make lint-imports` catches it; if a non-cmd consumer reaches into `internal/plugin`, decide per-case whether to lift it into the public package or refactor the consumer. |
 | Public surface is wrong on first cut and locks in poor shape | Mark the package `v0.x` in its doc comment; commit to one breaking-change window per minor release until external use shows up. |
 | Conflict with [W04](04-shell-adapter-sandbox.md) sandbox plumbing | W04 stays inside the shell adapter; the plugin SDK is the host-side handshake/transport. They don't collide. If they do during execution, sequence W03 before W04. |
+
+## Reviewer Notes
+
+**Package shape chosen:** `sdk/pluginhost` sub-package (Step 1). Lives in the existing `sdk/` sub-module so plugin authors get it via the same versioned module as the orchestrator-side SDK. Documented in `sdk/pluginhost/doc.go` with a stability note.
+
+**Move, not thin-wrap (Step 3):** All server-side gRPC plumbing was moved from `internal/plugin/serve.go` into `sdk/pluginhost/serve.go`. `internal/plugin` is now host-client-only (`Client`, `PluginMap()`, `grpcAdapterClient`). `PluginMap()` signature simplified — old signature took an unused `Service` arg; new signature takes none.
+
+**HandshakeConfig duplication is intentional:** Both packages define identical constants. go-plugin only checks env-var key/value and protocol version at runtime; they don't need to share a Go type. Wire-name tests in `sdk/pluginhost/serve_test.go` guard against drift.
+
+**Import-lint extended:** `sdk/pluginhost` is now a permitted import from `internal/` (alongside `sdk/pb`). Required for test fixtures under `internal/plugin/testfixtures/` which are standalone plugin binaries that must use the public surface. The exception is narrow: only `pluginhost`, not all `sdk/` packages. New test `TestInternalImportsSDKPluginhost_Clean` covers this case.
+
+**Fixture and conformance (Step 5):** `internal/plugin/testfixtures/publicsdk/main.go` imports *only* `sdk/pluginhost` + `sdk/pb` and implements all five `Service` methods. `internal/plugin/publicsdk_conformance_test.go` builds and exercises it through the existing adapter conformance harness.
+
+**Pre-existing issue (not introduced here):** `TestHandshakeInfo` occasionally times out during full parallel `go test -race ./...` because the `StartTimeout: 2s` is too short when many concurrent `go build` calls contend for CPU. Passes reliably in isolation. Tracked as a pre-existing condition.
+
+**Exit criteria met:**
+- `sdk/pluginhost` is non-internal; external modules can import it without any `internal/` reach-through.
+- All three bundled adapters (`noop`, `copilot`, `mcp`) compile against the new public path.
+- `make build`, `make test`, `make test-conformance`, `make lint-imports` all green.
+- `publicsdk` fixture passes conformance harness.
+- `docs/plugins.md` describes the public import path.

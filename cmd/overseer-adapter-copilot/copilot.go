@@ -34,7 +34,7 @@ import (
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/types/known/structpb"
 
-	pluginpkg "github.com/brokenbots/overseer/internal/plugin"
+	pluginhost "github.com/brokenbots/overseer/sdk/pluginhost"
 	pb "github.com/brokenbots/overseer/sdk/pb/overseer/v1"
 )
 
@@ -99,7 +99,7 @@ type sessionState struct {
 	pending        map[string]chan permDecision
 	active         bool
 	activeCh       chan struct{}
-	sink           pluginpkg.ExecuteEventSender
+	sink           pluginhost.ExecuteEventSender
 	permissionDeny bool
 }
 
@@ -183,7 +183,7 @@ func (p *copilotPlugin) OpenSession(ctx context.Context, req *pb.OpenSessionRequ
 	return &pb.OpenSessionResponse{}, nil
 }
 
-func (p *copilotPlugin) Execute(ctx context.Context, req *pb.ExecuteRequest, sink pluginpkg.ExecuteEventSender) error {
+func (p *copilotPlugin) Execute(ctx context.Context, req *pb.ExecuteRequest, sink pluginhost.ExecuteEventSender) error {
 	s := p.getSession(req.GetSessionId())
 	if s == nil {
 		return fmt.Errorf("copilot: unknown session %q", req.GetSessionId())

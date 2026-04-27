@@ -5,7 +5,7 @@
 // Rules enforced:
 //
 //  1. No file in internal/ may import github.com/brokenbots/overseer/sdk
-//     top-level (only sdk/pb subtree is permitted).
+//     top-level (only sdk/pb subtree and sdk/pluginhost are permitted).
 //  2. No file in workflow/ may import github.com/brokenbots/overseer/internal/.
 //
 // Usage:
@@ -157,10 +157,14 @@ outer:
 			if !strings.HasPrefix(relPath, r.filePrefix) {
 				continue
 			}
-			// For the sdk rule: allow sdk/pb subtree, block sdk root and other sdk/ packages.
+			// For the sdk rule: allow sdk/pb subtree, allow sdk/pluginhost (the
+			// public plugin author surface used by test fixtures), block everything else.
 			if r.filePrefix == "internal/" && strings.Contains(impPath, "github.com/brokenbots/overseer/sdk") {
 				if strings.Contains(impPath, "github.com/brokenbots/overseer/sdk/pb") {
 					continue // sdk/pb subtree is permitted
+				}
+				if strings.Contains(impPath, "github.com/brokenbots/overseer/sdk/pluginhost") {
+					continue // sdk/pluginhost is the public plugin author surface; test fixtures use it
 				}
 			}
 			if strings.Contains(impPath, r.forbidden) || impPath == strings.TrimSuffix(r.forbidden, "/") {
