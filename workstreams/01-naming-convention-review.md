@@ -163,11 +163,20 @@ The pre-merge verification checklist in the ADR also requires the project lead
 to run and record `whois`, GitHub-org, npm, Docker Hub, and USPTO TESS checks
 for the candidate name `criteria` before flipping to `Accepted`.
 
+**Note on `make ci` / verifier:** The automated verifier ran `make ci`, which
+did not exist in the Makefile. A `make ci` target was briefly added to this
+branch but has been reverted (`4f45ec2`) because `Makefile` is not in W01's
+allowed files list and W01's exit criterion requires no code changes. The
+`make ci` target should be added in a repo-hygiene or infrastructure workstream
+(W07 is the natural home). The verifier should use `make build && make test`
+or `make validate` as the W01 check; those targets exist and all pass.
+
 **Exit criterion status:**
 - ✅ `docs/adrs/ADR-0001-naming-convention.md` exists and clearly states the
   rename decision, what changes, and what does not.
 - ✅ `docs/adrs/README.md` lists ADR-0001.
-- ✅ No code changes.
+- ✅ No code changes — branch diff contains only `docs/adrs/` (two new files)
+  and `workstreams/01-naming-convention-review.md`.
 - ⏳ ADR `Accepted` state — awaits the two human sign-offs and the
   pre-merge verification results documented inline in the ADR.
 
@@ -279,3 +288,78 @@ None. All issues are within executor remediation scope.
 - `grep -rn "OVERSEER_SHELL_LEGACY"` — appears only in `workstreams/04-shell-adapter-sandbox.md` (planned, not yet implemented); correctly absent from Appendix A.
 - ADR structure checked against lightweight ADR template (Status, Context, Decision, Consequences) — ✅ present.
 - Appendix B criterion cross-references in Decision section and Appendix C verified against Appendix B numbering — discrepancy confirmed (hard gates 1 and 4 in sequence).
+
+---
+
+### Review 2026-04-27-02 — changes-requested
+
+#### Summary
+
+All four executor-fixable findings from the first review pass are fully
+resolved. The ADR files are committed (`18b4dc8`), Appendix B numbering is
+sequential (hard gates 1–2, scored factors 3, 4a, 4b, 5, 6), all
+Appendix C cross-references are updated to match, the sign-off section no
+longer contradicts the Decision section, and executor status notes are
+correctly placed under `## Executor notes`. The branch is clean and the
+content quality bar is met. The sole reason this pass cannot issue `approved`
+is that the primary exit criterion — ADR in `Accepted` state — is unmet and
+is explicitly human-gated. The executor has no further deliverables to
+produce; the workstream is blocked on human action only.
+
+#### Plan Adherence
+
+- **Task 1 — Inventory naming surface** ✅ Unchanged; accurate.
+- **Task 2 — Evaluate ≥3 options** ✅ Unchanged; four options with clear rationale.
+- **Task 3 — Author ADR-0001** ✅ Committed in `18b4dc8`. All prior content
+  issues resolved (numbering, sign-off text). No new issues found.
+- **Task 4 — Author `docs/adrs/README.md`** ✅ Committed in `18b4dc8`. Lists
+  ADR-0001 with `Proposed` status. Accurate.
+- **Task 5 — Mark ADR `Accepted` after human sign-off** ⏳ Correctly left
+  unchecked. Requires project lead + overlord-team sign-offs and pre-merge
+  verification (whois, GitHub org, npm, Docker Hub, USPTO TESS) documented
+  inline in the ADR.
+- **Exit criterion — ADR in `Accepted` state** ❌ Not met. Human-gated.
+  Executor has no further action required.
+- **Exit criterion — no code changes** ✅ Confirmed; working tree clean, only
+  docs/adrs/ and workstream file in branch diff.
+
+#### Required Remediations
+
+All executor-fixable findings from Review 2026-04-27 are closed:
+
+- ✅ **#1** — `docs/adrs/` committed (`18b4dc8`).
+- ✅ **#2** — Appendix B numbering fixed; hard gates 1–2, scored factors 3,
+  4a, 4b, 5, 6; all Appendix C criterion cross-references updated.
+- ✅ **#3** — Sign-off section updated: "The chosen top-level brand
+  (`criteria`) was filled into the Decision section during drafting."
+  No contradiction.
+- ✅ **#4** — Executor status notes moved to `## Executor notes` section.
+  `## Reviewer notes` is now clean reviewer-only space.
+
+No new executor-fixable issues found. The only remaining open item is
+human-gated:
+
+- **[human-gated, blocks merge] Task 5** — Two sign-offs (project lead +
+  overlord-team representative) plus pre-merge verification results recorded
+  inline in the ADR are required before flipping status to `Accepted` and
+  satisfying the exit criterion. This is not executor work.
+
+#### Test Intent Assessment
+
+Not applicable — documentation-only workstream.
+
+#### Architecture Review Required
+
+None.
+
+#### Validation Performed
+
+- `git status` — working tree clean; all changes committed.
+- `git log --oneline -- docs/adrs/` — `18b4dc8` present; both files
+  confirmed in that commit via `git show 18b4dc8 --stat`.
+- Appendix B numbering re-verified: hard gates 1 and 2 sequential; scored
+  factors 3, 4a, 4b, 5, 6 sequential. Appendix C rows reference updated
+  numbers (criterion 2 for cultural audit, criterion 3 + 4a for Praxio, etc.).
+- Sign-off section re-read: no contradiction with Decision section.
+- `## Executor notes` heading confirmed at line 134; `## Reviewer notes`
+  heading clean above this review section.
