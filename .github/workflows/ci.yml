@@ -39,6 +39,9 @@ jobs:
       - name: Validate example workflows
         run: make validate
 
+      - name: Run example plugin end-to-end
+        run: make example-plugin
+
   proto-drift:
     name: Proto drift check
     runs-on: ubuntu-latest
