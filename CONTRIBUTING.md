@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Go 1.23+
+- Go 1.26+
 - [buf](https://buf.build/docs/installation) (for proto regeneration)
 - git
 
@@ -49,14 +49,14 @@ See [`sdk/conformance/`](sdk/conformance/) for the interface and the in-memory r
 
 - Any change to the `conformance.Subject` interface.
 - Any change to `ServiceHandler` or `ServiceClient` method signatures.
-- Any change to event proto field numbers in `proto/v1/events.proto` (field numbers are permanent).
+- Any change to event proto field numbers in `proto/overseer/v1/events.proto` (field numbers are permanent).
 - Removal or rename of exported SDK functions or types.
 
 Additive changes (new fields, new events, new conformance test cases) are non-breaking at minor or patch level.
 
 ## Proto changes
 
-Proto source files live in `proto/v1/`. After editing them:
+Proto source files live in `proto/overseer/v1/`. After editing them:
 
 ```bash
 make proto       # regenerate Go bindings

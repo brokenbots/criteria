@@ -9,14 +9,14 @@ Overseer is the standalone execution engine for [Overlord](https://github.com/br
 | `cmd/overseer` | CLI entrypoint (`compile`, `plan`, `apply`, `validate`) |
 | `sdk/` | Go client SDK, event helpers, and conformance test suite |
 | `workflow/` | HCL parser and FSM compiler |
-| `proto/v1/` | Proto source files (`overseer.v1` package) |
-| `sdk/pb/v1/` | Generated Go bindings |
+| `proto/overseer/v1/` | Proto source files (`overseer.v1` package) |
+| `sdk/pb/overseer/v1/` | Generated Go bindings |
 | `events/` | Shared event helpers |
 
 ## Quickstart
 
 ```bash
-# Install (requires Go 1.23+)
+# Install (requires Go 1.26+)
 go install github.com/brokenbots/overseer/cmd/overseer@latest
 
 # Or build from source
