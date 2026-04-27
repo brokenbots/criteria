@@ -76,6 +76,16 @@ workflow "workstream_review_loop" {
       command = "awk 'NR==1 && $0==\"---\"{f=1;next} f && $0==\"---\"{f=0;next} !f{if(!s){if($0 ~ /^[[:space:]]*$/) next; s=1} print}' .github/agents/workstream-reviewer.agent.md"
     }
     timeout = "10s"
+    outcome "success" { transition_to = "checkout_branch" }
+    outcome "failure" { transition_to = "failed" }
+  }
+
+  step "checkout_branch" {
+    adapter = "shell"
+    input {
+      command = "branch=$(basename '${var.workstream_file}' .md) && current=$(git branch --show-current) && if [ \"$current\" = \"main\" ]; then git checkout -b \"$branch\"; else echo \"already on branch: $current\"; fi"
+    }
+    timeout = "10s"
     outcome "success" { transition_to = "open_executor" }
     outcome "failure" { transition_to = "failed" }
   }
