@@ -143,13 +143,13 @@ workstream files.
 
 ## Tasks
 
-- [ ] Choose a license; add `LICENSE`.
-- [ ] Author `SECURITY.md`.
-- [ ] Author `.github/CODEOWNERS`.
-- [ ] Author the issue / PR templates.
-- [ ] Author `.github/dependabot.yml`.
-- [ ] Audit `.gitignore`.
-- [ ] Capture the suggested branch-protection ruleset in the
+- [x] Choose a license; add `LICENSE`.
+- [x] Author `SECURITY.md`.
+- [x] Author `.github/CODEOWNERS`.
+- [x] Author the issue / PR templates.
+- [x] Author `.github/dependabot.yml`.
+- [x] Audit `.gitignore`.
+- [x] Capture the suggested branch-protection ruleset in the
       workstream's reviewer notes.
 
 ## Exit criteria
@@ -174,3 +174,55 @@ opening one.
 | CODEOWNERS team handles don't exist on the GitHub org yet | Coordinate with the org admin to create the teams before merging this workstream. The fallback is named individuals, but switch to teams as soon as possible. |
 | Dependabot creates excessive PR noise | Group minor + patch by ecosystem; review weekly cadence after one month and bump to monthly if noise persists. |
 | Branch protection rules block legitimate emergency fixes | The proposal allows admin override; document the override expectation in the reviewer notes. |
+
+## Reviewer Notes
+
+### Implementation summary
+
+All Step 1–5 files have been created. `make build` is green. No tests are
+required for this workstream (per the Tests section above).
+
+**Files created:**
+- `LICENSE` — Apache-2.0 full text. The README's existing `See [LICENSE](LICENSE)` link now resolves.
+- `SECURITY.md` — private reporting via GitHub Security Advisories (preferred) or email; 90-day coordinated disclosure; supported versions table; scope boundaries.
+- `.github/CODEOWNERS` — default owner `@brokenbots/maintainers`; `proto/` adds `@brokenbots/platform`; `sdk/` adds `@brokenbots/sdk`; `.github/` and `Makefile` require maintainer sign-off. **Action required:** org admin must create the team handles before merging, otherwise CODEOWNERS review is silently skipped by GitHub.
+- `.github/ISSUE_TEMPLATE/bug_report.md` — reproduction steps, expected/actual, version, environment.
+- `.github/ISSUE_TEMPLATE/feature_request.md` — what/why/alternatives.
+- `.github/ISSUE_TEMPLATE/config.yml` — blank issues disabled; links to Security Advisories and Discussions.
+- `.github/pull_request_template.md` — what/why, testing checklist, breaking-change disclosure, workstream link field.
+- `.github/dependabot.yml` — weekly gomod updates for `/`, `/sdk`, `/workflow`; weekly github-actions; minor+patch grouped per ecosystem; major bumps ignored (require human-driven).
+
+**`.gitignore` changes:**
+- All required entries (`bin/`, `/overseer`, `*.db`, `*.db-shm`, `*.db-wal`) confirmed present.
+- Added: `.idea/`, `.vscode/`, `*.test`, `coverage.out`.
+
+### Suggested branch-protection ruleset for `main`
+
+Apply via **Repository → Settings → Branches → Add rule** (or a GitHub
+Ruleset if the org is on GitHub Enterprise / Teams):
+
+| Setting | Value |
+|---|---|
+| Require a pull request before merging | ✅ 1 approver minimum |
+| Dismiss stale reviews on new push | ✅ |
+| Require status checks to pass | ✅ `Test`, `Proto drift check` |
+| Require branches to be up to date | ✅ |
+| Require linear history | ✅ |
+| Allow force pushes | ❌ |
+| Allow deletions | ❌ |
+| Include administrators | ✅ (with override documented below) |
+
+**Emergency override:** if a critical fix must bypass review (e.g. prod is
+down), a repo admin may temporarily disable the rule, merge, and re-enable
+immediately. Document the override in the commit message and open a follow-up
+PR for any process improvement.
+
+Once [W06](06-third-party-plugin-example.md) lands, add `make example-plugin`
+as a required status check.
+
+### License choice rationale (ADR-inline)
+
+Apache-2.0 was selected as the default: broad patent grant, corp-friendly,
+OSI-approved, and the lowest-risk choice for a project that targets enterprise
+workflows. MIT would also be acceptable; MPL-2.0 was rejected because
+file-level copyleft adds friction for downstream integrators.

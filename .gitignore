@@ -6,3 +6,11 @@ bin/
 *.db-shm
 *.db-wal
 go.work.sum
+
+# Editor directories
+.idea/
+.vscode/
+
+# Go test artifacts
+*.test
+coverage.out

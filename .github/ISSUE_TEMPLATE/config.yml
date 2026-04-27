@@ -1,0 +1,12 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/brokenbots/overseer/security/advisories/new
+    about: >
+      Please report security vulnerabilities privately via GitHub Security
+      Advisories rather than opening a public issue.
+  - name: Questions and discussion
+    url: https://github.com/brokenbots/overseer/discussions
+    about: >
+      For questions, design discussions, and general help, use GitHub
+      Discussions rather than issues.
