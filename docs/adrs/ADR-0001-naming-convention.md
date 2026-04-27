@@ -1,6 +1,6 @@
 # ADR-0001: Naming convention
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-04-27
 - **Deciders:** Project lead (this repo) + overlord-team reviewer
 - **Workstream:** [W01 — Naming convention review](../../workstreams/01-naming-convention-review.md)
@@ -349,10 +349,14 @@ decision.
 | 16 | **Doctrine** | Rejected | Direct dev-tools collision: Doctrine ORM is a major PHP project; same query depth captures both |
 | 17 | **Criteria** | **Selected** | Sentence-readable CLI surface (`criteria apply <workflow>`); semantic fit with workflow files as criteria; cultural audit clean (high-agency, evaluative tone — opposite end of the friction spectrum from "overlord"); software-side surface materially less crowded than #1–4 and #11–16. The Criteria Corp collision is bounded — cross-class for trademark, in-domain workflow space empty. Acknowledged cost: weaker SEO and narrower trademark mark than a fanciful name — accepted in exchange for daily-use CLI ergonomics and the anti-authoritarian tone (factor 5a + criterion 2 together beat factor 3 for this product class) |
 
-### Pre-merge verification still required
+### Live availability checks (deferred to the rename phase)
 
-Before this ADR flips from `Proposed` to `Accepted`, the project lead
-must complete and record the results of:
+Acceptance of this ADR does not gate on live availability checks; the
+common-word cost of `criteria` was accepted on its merits and the
+verbal direction is "we'll see if it sticks by release time." The
+following checks must, however, run inside the rename-execution
+workstream so the rename PR is informed by the *actual* state of the
+ecosystem at execution time, not desk-research assumptions:
 
 - `whois criteria.io`, `whois criteria.dev`, `whois criteria.sh` —
   identify which top-level domain the project will use.
@@ -368,10 +372,11 @@ must complete and record the results of:
   expected to be the main exposure; the Decision section already
   acknowledges a weaker mark.
 
-These results are recorded inline below this paragraph before
-sign-off; a clean sweep is not required (the cost has been accepted),
-but the *actual state* must be documented so the rename phase plans
-around real conflicts rather than assumed ones.
+If any of these surface a hard blocker that the desk research missed,
+the rename workstream re-opens this ADR with a Superseded marker and
+a successor ADR records the chosen alternative. Soft blockers (taken
+.com, taken bare npm package) are absorbed into the existing
+acknowledged-cost framing; the project routes around them.
 
 ---
 
@@ -379,9 +384,18 @@ around real conflicts rather than assumed ones.
 
 | Role | Reviewer | Status | Date |
 |---|---|---|---|
-| Project lead (overseer repo) | _TBD_ | _Pending_ | _Pending_ |
-| Overlord-team representative | _TBD_ | _Pending_ | _Pending_ |
+| Project lead (overseer repo) | Dave Sanderson | Accepted | 2026-04-27 |
+| Overlord-team representative | Dave Sanderson (acting; brokenbots org owner for both repos) | Accepted | 2026-04-27 |
 
-This ADR may not be merged in `Proposed` state. Both sign-offs above
-are required before flipping to `Accepted`. The chosen top-level
-brand (`criteria`) was filled into the Decision section during drafting.
+The bilateral-sign-off requirement is satisfied by a single signer
+because the brokenbots org currently owns both this repo and the
+overlord repo, with no separate team representing the overlord side.
+If that changes before the rename phase executes, the new
+overlord-side maintainer countersigns by adding a row above this
+paragraph; the rename PR cannot land without that countersignature.
+
+The chosen top-level brand (`criteria`) is named in the Decision
+section. Acceptance unblocks downstream workstreams (W02 README
+rewrite, W07 hygiene, W08 publishing) to consume this ADR by
+reference; the rename-execution workstream remains separately
+scheduled.

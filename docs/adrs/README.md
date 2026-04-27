@@ -13,6 +13,6 @@ final.
 
 | ADR | Title | Status |
 |---|---|---|
-| [ADR-0001](ADR-0001-naming-convention.md) | Naming convention — adopt `criteria` as the top-level brand | Proposed |
+| [ADR-0001](ADR-0001-naming-convention.md) | Naming convention — adopt `criteria` as the top-level brand | Accepted |
 
 [template]: https://github.com/joelparkerhenderson/architecture-decision-record
