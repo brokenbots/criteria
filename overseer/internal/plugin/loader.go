@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -13,8 +14,27 @@ import (
 	"github.com/brokenbots/overlord/overseer/internal/adapter"
 	pb "github.com/brokenbots/overlord/shared/pb/overlord/v1"
 	"github.com/brokenbots/overlord/workflow"
+	"github.com/hashicorp/go-hclog"
 	hplugin "github.com/hashicorp/go-plugin"
 )
+
+// pluginClientLogger returns the hclog logger handed to go-plugin clients.
+// go-plugin's default logger emits TRACE/DEBUG lines for every handshake and
+// stdio frame, which dominates standalone output. Default to WARN; allow
+// override via OVERSEER_LOG_LEVEL=trace|debug|info|warn|error.
+func pluginClientLogger() hclog.Logger {
+	level := hclog.Warn
+	if v := strings.TrimSpace(os.Getenv("OVERSEER_LOG_LEVEL")); v != "" {
+		if parsed := hclog.LevelFromString(v); parsed != hclog.NoLevel {
+			level = parsed
+		}
+	}
+	return hclog.New(&hclog.LoggerOptions{
+		Name:   "plugin",
+		Output: os.Stderr,
+		Level:  level,
+	})
+}
 
 type Loader interface {
 	// Resolve returns a Plugin handle for the named adapter, spawning
@@ -104,6 +124,7 @@ func (l *DefaultLoader) Resolve(ctx context.Context, name string) (Plugin, error
 		Cmd:              exec.Command(path),
 		AllowedProtocols: []hplugin.Protocol{hplugin.ProtocolGRPC},
 		StartTimeout:     5 * time.Second,
+		Logger:           pluginClientLogger(),
 	})
 
 	rpcClient, err := client.Client()
