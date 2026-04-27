@@ -105,10 +105,10 @@ themselves run.
 
 ## Tasks
 
-- [ ] Inventory the user-visible naming surface.
-- [ ] Evaluate at least three options against the criteria above.
-- [ ] Author `docs/adrs/ADR-0001-naming-convention.md`.
-- [ ] Author `docs/adrs/README.md` as a one-line ADR index.
+- [x] Inventory the user-visible naming surface.
+- [x] Evaluate at least three options against the criteria above.
+- [x] Author `docs/adrs/ADR-0001-naming-convention.md`.
+- [x] Author `docs/adrs/README.md` as a one-line ADR index.
 - [ ] Mark the ADR `Accepted` once a human reviewer signs off; do not
       merge in `Proposed` state.
 
@@ -130,3 +130,152 @@ None. This workstream is documentation-only.
 | Bikeshed risk: naming discussions go in circles | Time-box to one round of options + one round of feedback. The reviewer signing off the ADR is the tiebreaker. |
 | ADR claims "no rename needed" but a downstream workstream still uses the wrong tone | W02 (README) explicitly checks the ADR's conclusions when it lands, even if the conclusion is "keep current names". |
 | Recommending a rename without the overlord team agreeing | Loop the overlord team in before marking the ADR Accepted. The decision is bilateral. |
+
+## Executor notes
+
+**Tasks 1–4 complete.** All four executable tasks were already delivered:
+
+- **Naming surface inventory** — `docs/adrs/ADR-0001-naming-convention.md`
+  Appendix A catalogues every user-visible surface: Go module paths, binary
+  names, all 15 `OVERSEER_*` env vars, default state dir, proto package and
+  service names, docs prose, HCL DSL keywords (none brand-coupled), and
+  cross-repo references. Confirmed by `grep -r "OVERSEER_"` sweep of the tree.
+- **Options evaluated** — Four options are on the table (keep as-is;
+  Branded House rename; rename user-visible surface only; descriptivize
+  sub-components only). Options 3 and 4 are explicitly rejected with
+  rationale; Option 2 is recommended.
+- **ADR-0001 authored** — `docs/adrs/ADR-0001-naming-convention.md` exists,
+  covers Context, Considered options, Decision (brand: `criteria`),
+  Consequences (rename surface table + merge-gate command), Migration phase
+  placeholder, and three appendices (inventory, selection criteria, candidate
+  shortlist with 17 entries).
+- **ADR index authored** — `docs/adrs/README.md` exists and lists ADR-0001
+  with title and `Proposed` status.
+
+**Remaining blocker — Task 5 (sign-off):**  
+The ADR is in `Proposed` state. Per the workstream rules, it must not be
+merged as `Proposed`. The sign-off table in the ADR requires two reviewers:
+
+1. Project lead (overseer repo) — _Pending_
+2. Overlord-team representative — _Pending_
+
+The pre-merge verification checklist in the ADR also requires the project lead
+to run and record `whois`, GitHub-org, npm, Docker Hub, and USPTO TESS checks
+for the candidate name `criteria` before flipping to `Accepted`.
+
+**Exit criterion status:**
+- ✅ `docs/adrs/ADR-0001-naming-convention.md` exists and clearly states the
+  rename decision, what changes, and what does not.
+- ✅ `docs/adrs/README.md` lists ADR-0001.
+- ✅ No code changes.
+- ⏳ ADR `Accepted` state — awaits the two human sign-offs and the
+  pre-merge verification results documented inline in the ADR.
+
+---
+
+## Reviewer notes
+
+### Review 2026-04-27 — changes-requested
+
+#### Summary
+
+The executor delivered a thorough, substantive ADR and index — content quality
+is high and the naming surface inventory is accurate (15 env vars confirmed by
+grep). However, four executor-fixable issues must be resolved before this
+workstream can be considered ready for the human sign-off gate: the ADR files
+are not yet committed to the branch; Appendix B has broken non-sequential
+numbering; the sign-off section contradicts the Decision section; and the
+executor added status notes under the reserved `## Reviewer notes` heading.
+The `Accepted`-state exit criterion is a human-gated blocker that no executor
+action can fully close — both sign-offs and the pre-merge verification results
+must be recorded before the workstream is complete.
+
+#### Plan Adherence
+
+- **Task 1 — Inventory naming surface** ✅ Appendix A is thorough; 15
+  `OVERSEER_*` env vars confirmed against codebase grep. HCL DSL keyword check
+  (zero brand coupling) confirmed. Cross-repo refs included.
+- **Task 2 — Evaluate ≥3 options** ✅ Four options evaluated; options 3 and 4
+  explicitly rejected with rationale. Meets the "at least three" requirement.
+- **Task 3 — Author ADR-0001** ✅ File exists at `docs/adrs/ADR-0001-naming-convention.md`,
+  follows the lightweight ADR template (Status, Context, Decision,
+  Consequences), includes migration-phase placeholder and candidate shortlist.
+  **Blocked from merge**: file is untracked — not staged or committed to the
+  branch (see Required Remediations #1).
+- **Task 4 — Author `docs/adrs/README.md`** ✅ File exists and lists ADR-0001
+  with status `Proposed`. **Same commit blocker as Task 3** (see #1).
+- **Task 5 — Mark ADR `Accepted` after human sign-off** ⏳ Not complete;
+  correctly left unchecked. Requires project lead + overlord-team sign-off and
+  pre-merge verification results. Executor cannot close this unilaterally.
+- **Exit criterion — ADR in `Accepted` state** ❌ ADR is in `Proposed` state.
+  Human-gated; executor must prepare the branch so humans can proceed, but
+  cannot flip the status autonomously.
+- **Exit criterion — no code changes** ✅ Confirmed; only docs/adrs/ files and
+  workstream changes present.
+
+#### Required Remediations
+
+- **[blocker] #1 — ADR files are untracked / uncommitted.**
+  `git status` shows `docs/adrs/` as untracked files; no commit in git log
+  references either file. The deliverables are invisible to reviewers until
+  committed.
+  _Acceptance criteria_: `git log -- docs/adrs/` shows at least one commit on
+  the `01-naming-convention-review` branch containing both
+  `docs/adrs/ADR-0001-naming-convention.md` and `docs/adrs/README.md`.
+
+- **[nit] #2 — Appendix B hard-gate numbering is non-sequential.**
+  Hard gates are numbered 1 and **4** (skipping 2 and 3); scored factors are
+  numbered 2, 3a, 3b, 5, 6. The Decision section and Appendix C both
+  cross-reference "criterion 4" for the cultural audit, which is confusing
+  when it immediately follows gate 1 in the Hard gates section. The numbering
+  appears to be a carry-over from a flat list that was later split into
+  sections without renumbering.
+  _File_: `docs/adrs/ADR-0001-naming-convention.md`, Appendix B.
+  _Acceptance criteria_: Hard gates are numbered consecutively starting at 1
+  (e.g., gates 1 and 2); scored factors are numbered consecutively starting
+  from the next unused integer (or clearly separated and re-started at 1 with
+  a note). All criterion cross-references in the Decision section and Appendix
+  C are updated to match the renumbered system.
+
+- **[nit] #3 — Sign-off section contradicts the Decision section.**
+  The Sign-off section states: "The chosen top-level brand is filled into the
+  Decision section at the same time [as the sign-offs]." The Decision section
+  already contains the chosen brand (`criteria`). Readers attempting to follow
+  the sign-off process will be confused.
+  _File_: `docs/adrs/ADR-0001-naming-convention.md`, Sign-off section.
+  _Acceptance criteria_: Either (a) the Decision section leaves the brand as
+  a placeholder (`<TBD>`) until sign-off and the sign-off section instruction
+  stays as written, or (b) the sign-off section instruction is updated to
+  reflect that the brand was filled in during drafting and only the sign-off
+  table itself remains to be completed. The two sections must not contradict
+  each other.
+
+- **[nit] #4 — Executor status notes placed under the reviewer-reserved
+  `## Reviewer notes` heading.**
+  The `## Reviewer notes` section in workstream files is reserved for the
+  Workstream Reviewer to append dated review passes. The executor appended a
+  progress/status summary directly under that heading (lines 136–173 of the
+  current workstream file). This conflates executor status reporting with the
+  review log and makes the review log harder to navigate.
+  _Acceptance criteria_: The executor's status summary is moved to a separate
+  `## Executor Notes` section (above `## Reviewer notes`) or removed in favour
+  of a PR description entry. The `## Reviewer notes` heading is left clean for
+  reviewer-only content.
+
+#### Test Intent Assessment
+
+Not applicable — this workstream is documentation-only. No tests are required
+or present.
+
+#### Architecture Review Required
+
+None. All issues are within executor remediation scope.
+
+#### Validation Performed
+
+- `git status` — confirmed `docs/adrs/` is untracked; `workstreams/01-naming-convention-review.md` is modified.
+- `git log --oneline -- docs/adrs/` — returned no commits; confirms deliverables are uncommitted.
+- `grep -r "OVERSEER_" --include="*.go"` — returned exactly 15 distinct `OVERSEER_*` variables; matches Appendix A count.
+- `grep -rn "OVERSEER_SHELL_LEGACY"` — appears only in `workstreams/04-shell-adapter-sandbox.md` (planned, not yet implemented); correctly absent from Appendix A.
+- ADR structure checked against lightweight ADR template (Status, Context, Decision, Consequences) — ✅ present.
+- Appendix B criterion cross-references in Decision section and Appendix C verified against Appendix B numbering — discrepancy confirmed (hard gates 1 and 4 in sequence).
