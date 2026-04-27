@@ -141,8 +141,31 @@ workflow "workstream_review_loop" {
     input {
       prompt = "Reviewer requested changes. Notes are in ${var.workstream_file}."
     }
-    outcome "needs_review"   { transition_to = "review" }
-    outcome "needs_approval" { transition_to = "review" }
+    outcome "needs_review"   { transition_to = "verify" }
+    outcome "needs_approval" { transition_to = "verify" }
+    outcome "failure"        { transition_to = "close_reviewer_abort" }
+  }
+
+  step "verify" {
+    adapter = "shell"
+    input {
+      command = "make ci 2>&1"
+    }
+    timeout = "120s"
+    outcome "success" { transition_to = "review" }
+    outcome "failure" { transition_to = "fix_verify" }
+  }
+
+  step "fix_verify" {
+    agent       = "executor"
+    allow_tools = [
+      "*",
+    ]
+    input {
+      prompt = "Build/test verification failed. Fix all failures before this goes to review.\n\n--- verify output ---\n${steps.verify.stdout}\n--- end ---"
+    }
+    outcome "needs_review"   { transition_to = "verify" }
+    outcome "needs_approval" { transition_to = "verify" }
     outcome "failure"        { transition_to = "close_reviewer_abort" }
   }
 
