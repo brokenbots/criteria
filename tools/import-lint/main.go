@@ -5,7 +5,10 @@
 // Rules enforced:
 //
 //  1. No file in internal/ may import github.com/brokenbots/overseer/sdk
-//     top-level (only sdk/pb subtree and sdk/pluginhost are permitted).
+//     top-level; only sdk/pb subtree is permitted for production code.
+//     Exception: sdk/pluginhost is permitted from internal/*/testfixtures/
+//     paths only (these are standalone plugin binaries that must use the
+//     public surface to prove external authors need no internal/ reach-through).
 //  2. No file in workflow/ may import github.com/brokenbots/overseer/internal/.
 //
 // Usage:
@@ -157,14 +160,17 @@ outer:
 			if !strings.HasPrefix(relPath, r.filePrefix) {
 				continue
 			}
-			// For the sdk rule: allow sdk/pb subtree, allow sdk/pluginhost (the
-			// public plugin author surface used by test fixtures), block everything else.
+			// For the sdk rule: allow sdk/pb subtree everywhere in internal/; allow
+			// sdk/pluginhost only from testfixtures/ plugin binaries (which are
+			// standalone processes that must use the public surface). Block all other
+			// sdk imports from production internal/ code.
 			if r.filePrefix == "internal/" && strings.Contains(impPath, "github.com/brokenbots/overseer/sdk") {
 				if strings.Contains(impPath, "github.com/brokenbots/overseer/sdk/pb") {
-					continue // sdk/pb subtree is permitted
+					continue // sdk/pb subtree is permitted everywhere in internal/
 				}
-				if strings.Contains(impPath, "github.com/brokenbots/overseer/sdk/pluginhost") {
-					continue // sdk/pluginhost is the public plugin author surface; test fixtures use it
+				if strings.Contains(impPath, "github.com/brokenbots/overseer/sdk/pluginhost") &&
+					strings.Contains(relPath, "testfixtures/") {
+					continue // sdk/pluginhost is permitted only in testfixture plugin binaries
 				}
 			}
 			if strings.Contains(impPath, r.forbidden) || impPath == strings.TrimSuffix(r.forbidden, "/") {

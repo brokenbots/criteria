@@ -7,7 +7,9 @@ package main
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"sync"
+	"time"
 
 	pluginhost "github.com/brokenbots/overseer/sdk/pluginhost"
 	pb "github.com/brokenbots/overseer/sdk/pb/overseer/v1"
@@ -34,12 +36,29 @@ func (p *publicSDKPlugin) OpenSession(_ context.Context, req *pb.OpenSessionRequ
 	return &pb.OpenSessionResponse{}, nil
 }
 
-func (p *publicSDKPlugin) Execute(_ context.Context, req *pb.ExecuteRequest, sink pluginhost.ExecuteEventSender) error {
+func (p *publicSDKPlugin) Execute(ctx context.Context, req *pb.ExecuteRequest, sink pluginhost.ExecuteEventSender) error {
 	p.mu.Lock()
 	_, ok := p.sessions[req.GetSessionId()]
 	p.mu.Unlock()
 	if !ok {
 		return fmt.Errorf("unknown session %q", req.GetSessionId())
+	}
+	// delay_ms support allows context_cancellation and step_timeout conformance
+	// tests to exercise cross-process cancellation propagation.
+	if raw := req.GetConfig()["delay_ms"]; raw != "" {
+		ms, err := strconv.Atoi(raw)
+		if err != nil || ms < 0 {
+			return fmt.Errorf("invalid delay_ms %q", raw)
+		}
+		if ms > 0 {
+			timer := time.NewTimer(time.Duration(ms) * time.Millisecond)
+			defer timer.Stop()
+			select {
+			case <-timer.C:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
 	}
 	return sink.Send(&pb.ExecuteEvent{
 		Event: &pb.ExecuteEvent_Result{

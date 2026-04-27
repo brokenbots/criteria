@@ -20,6 +20,10 @@ func TestPublicSDKFixtureConformance(t *testing.T) {
 		"public-sdk-fixture",
 		bin,
 		conformance.Options{
+			// StepConfig with delay_ms enables context_cancellation and step_timeout
+			// sub-tests, proving context propagation works across the plugin subprocess
+			// boundary when using only the public sdk/pluginhost surface.
+			StepConfig:      map[string]string{"delay_ms": "0"},
 			AllowedOutcomes: []string{"success", "failure", "needs_review"},
 		},
 	)

@@ -63,3 +63,14 @@ func TestHandshakeConfigValues(t *testing.T) {
 		t.Errorf("HandshakeConfig.ProtocolVersion = %d; want 1", HandshakeConfig.ProtocolVersion)
 	}
 }
+
+// TestGRPCServerNilImpl confirms that calling GRPCServer with a nil Impl
+// returns an error rather than panicking. This guard prevents a subtle
+// misconfigured-plugin failure mode.
+func TestGRPCServerNilImpl(t *testing.T) {
+	p := &grpcPlugin{Impl: nil}
+	err := p.GRPCServer(nil, nil)
+	if err == nil {
+		t.Fatal("expected non-nil error from GRPCServer with nil Impl, got nil")
+	}
+}

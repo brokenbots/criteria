@@ -173,3 +173,73 @@ or other workstream files.
 - `make build`, `make test`, `make test-conformance`, `make lint-imports` all green.
 - `publicsdk` fixture passes conformance harness.
 - `docs/plugins.md` describes the public import path.
+
+---
+
+### Review 2026-04-27 — changes-requested
+
+#### Summary
+
+The core deliverable is correctly implemented: `sdk/pluginhost` is a clean public package with `Serve`, `Service`, `ExecuteEventSender`, `HandshakeConfig`, and `PluginName` exported; `internal/plugin` is correctly thinned to the host-client side; all three bundled adapters compile against the new path; `docs/plugins.md` is updated; import-lint and all make targets are green. Two required remediations block approval: (1) the import-lint exception for `sdk/pluginhost` is overbroad — it permits any `internal/` file to import it, contradicting AGENTS.md and the executor's own "narrow exception" claim; (2) the `publicsdk` conformance fixture skips `context_cancellation` and `step_timeout` tests because it has no delay support, failing to prove the public surface is sufficient for those critical protocol behaviors. Two nits must also be resolved before approval.
+
+#### Plan Adherence
+
+- **Step 1 (package shape):** ✅ `sdk/pluginhost` chosen and documented in `doc.go` with stability note. ADR-0002 not created; workstream permits omission when the choice is non-obvious — the executor followed the explicitly recommended option, which is acceptable.
+- **Step 2 (public surface):** ✅ `Serve`, `Service`, `ExecuteEventSender`, `HandshakeConfig`, `MagicCookieKey/Value`, `PluginName` all exported. `ExecuteEventSender` is correctly placed in `service.go` alongside `Service`.
+- **Step 3 (move, not thin-wrap):** ✅ gRPC server plumbing relocated from `internal/plugin/serve.go` to `sdk/pluginhost/serve.go`. `internal/plugin` is now host-client-only. `PluginMap()` signature correctly simplified.
+- **Step 4 (docs and rename):** ✅ All three adapter `main.go` files updated. `docs/plugins.md` no longer references `internal/plugin` as the import path. No residual `internal/plugin` import advice remains.
+- **Step 5 (fixture + conformance):** ⚠️ Fixture exists and runs; however, `context_cancellation` and `step_timeout` sub-tests are skipped because the fixture's `Execute` has no delay mechanism. See Required Remediations.
+- **Import-lint update:** ⚠️ Exception added but is broader than stated. See Required Remediations.
+
+#### Required Remediations
+
+- **[REQUIRED — import-lint exception is overbroad]**
+  `tools/import-lint/main.go` lines 162–168: the `sdk/pluginhost` exception applies to every file under `internal/`, not just to testfixture plugin binaries. AGENTS.md states "sdk/pb/... is the only permitted reach into the SDK tree." The executor's own notes say "The exception is narrow" but the implementation does not restrict by path. A future change to production code in, say, `internal/engine/` could silently import `sdk/pluginhost` with no lint failure.
+  
+  **Fix:** restrict the exception to testfixture plugin binary paths. The simplest approach is to additionally require `strings.Contains(relPath, "testfixtures/")` before allowing the `sdk/pluginhost` import from `internal/`. Add a test case `TestInternalNonFixtureImportsSDKPluginhost_Forbidden` (e.g., `"internal/engine/foo.go"` importing `sdk/pluginhost`) that asserts a violation is raised, confirming the narrowed rule blocks production code. Update the code comment to accurately reflect the restricted scope.
+
+- **[REQUIRED — publicsdk fixture skips context_cancellation and step_timeout]**
+  `internal/plugin/testfixtures/publicsdk/main.go`: the `Execute` method always returns immediately, so `longRunningConfig` returns `false` for this fixture and both `context_cancellation` and `step_timeout` conformance sub-tests are skipped. Context cancellation propagation through a plugin subprocess is a critical protocol invariant. The workstream exit criterion requires the fixture to pass the conformance harness, not just partially run it.
+  
+  **Fix:** Add `delay_ms` support to the `publicsdk` fixture's `Execute` method (check `req.GetConfig()["delay_ms"]`, parse as `time.Duration`, then `time.Sleep` with `ctx`-awareness via `select { case <-time.After(d): case <-ctx.Done(): return ctx.Err() }`). Pass a `StepConfig: map[string]string{"delay_ms": "0"}` in the `RunPlugin` call so `longRunningConfig` picks it up. The two skipped sub-tests should now run and pass.
+
+- **[NIT — `grpcPlugin.GRPCServer` nil-impl guard is untested]**
+  `sdk/pluginhost/serve.go`: `GRPCServer` returns an error when `p.Impl == nil`, but there is no unit test for this path. A future refactor could remove the guard silently.
+  
+  **Fix:** Add a test in `sdk/pluginhost/serve_test.go` that constructs `grpcPlugin{Impl: nil}`, calls `GRPCServer(nil, grpc.NewServer())`, and asserts a non-nil error is returned.
+
+- **[NIT — HandshakeConfig cross-package drift guard comment is incorrect]**
+  `internal/plugin/serve.go` line 19 comment: "Validated by TestAdapterPluginWireNames against the compiled descriptor." This comment describes the wire-name constants; it appears after the `PluginName` constant and before the wire-name const block. The comment is not incorrect per se, but the *handshake* config drift (between `internal/plugin/handshake.go` and `sdk/pluginhost/handshake.go`) is guarded only by the end-to-end `TestHandshakeInfo` integration test, not by the `TestAdapterPluginWireNames` referenced. The executor notes say "Wire-name tests in `sdk/pluginhost/serve_test.go` guard against drift" — this is accurate for wire names but overstated for HandshakeConfig constants.
+  
+  **Fix:** Add an inline comment on `internal/plugin/handshake.go` (near `MagicCookieValue`) noting that drift with `sdk/pluginhost.MagicCookieValue` is detected at runtime by `TestHandshakeInfo` (which builds the noop plugin using `sdk/pluginhost` and connects using `internal/plugin`'s config). Update the executor notes or in-code comment to accurately state this is an integration-level guard, not a unit-level one.
+
+#### Test Intent Assessment
+
+**Strong:**
+- `TestAdapterPluginWireNames` in both `sdk/pluginhost` and `internal/plugin` independently validates hardcoded gRPC method constants against the compiled proto descriptor — regression-sensitive and correct.
+- `TestHandshakeConfigValues` validates `HandshakeConfig` struct fields against constants within the same package.
+- `TestPublicSDKFixtureConformance` exercises session lifecycle, session isolation, crash detection, outcome domain, and the happy path through an actual subprocess IPC channel using only the public API — strong behavioral proof.
+- `TestInternalImportsSDKPluginhost_Clean` proves testfixtures can import `sdk/pluginhost`.
+- CLI contract tests for `import-lint` (exit codes 0/1/2) are correct and deterministic.
+
+**Weak / Gaps:**
+- `context_cancellation` and `step_timeout` are skipped for the `publicsdk` fixture. These test that the plugin process respects context/deadline propagation — exactly the kind of cross-process behavior that could silently break. Required to be fixed.
+- `TestInternalImportsSDKPluginhost_Clean` has no complementary negative case for non-testfixture paths. Once the import-lint exception is narrowed, a `_Forbidden` test for non-testfixture `internal/` code must be added.
+- `grpcPlugin.GRPCServer` nil-impl guard: plausible regression (someone removes the nil check) would pass all current tests; a unit test would catch it.
+
+#### Validation Performed
+
+```
+make build                   → PASS (bin/overseer built)
+make lint-imports            → PASS (Import boundaries OK)
+make test                    → PASS (all packages, -race)
+make test-conformance        → PASS (sdk/conformance)
+go test -race -v -run TestPublicSDKFixtureConformance ./internal/plugin/
+                             → PASS (7 sub-tests; context_cancellation and step_timeout SKIPPED,
+                                    permission_request_shape SKIPPED; no failures)
+go test -race -v -run TestAdapterPluginWireNames ./sdk/pluginhost/
+                             → PASS
+go test -race -v -run TestAdapterPluginWireNames ./internal/plugin/
+                             → PASS
+go vet ./...                 → PASS (no issues)
+```
