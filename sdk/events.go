@@ -1,6 +1,6 @@
 package overseer
 
-import pb "github.com/brokenbots/overlord/shared/pb/overlord/v1"
+import pb "github.com/brokenbots/overseer/sdk/pb/v1"
 
 // Envelope is the top-level event container sent over the wire.
 // Every event published by an overseer is wrapped in an Envelope.

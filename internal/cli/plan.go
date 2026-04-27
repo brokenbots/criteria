@@ -10,7 +10,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/zclconf/go-cty/cty"
 
-	"github.com/brokenbots/overlord/workflow"
+	"github.com/brokenbots/overseer/workflow"
 )
 
 func NewPlanCmd() *cobra.Command {

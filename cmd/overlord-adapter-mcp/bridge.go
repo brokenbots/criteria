@@ -14,9 +14,9 @@ import (
 
 	"google.golang.org/protobuf/types/known/structpb"
 
-	"github.com/brokenbots/overlord/overseer/cmd/overlord-adapter-mcp/mcpclient"
-	pluginpkg "github.com/brokenbots/overlord/overseer/internal/plugin"
-	pb "github.com/brokenbots/overlord/shared/pb/overlord/v1"
+	"github.com/brokenbots/overseer/cmd/overlord-adapter-mcp/mcpclient"
+	pluginpkg "github.com/brokenbots/overseer/internal/plugin"
+	pb "github.com/brokenbots/overseer/sdk/pb/v1"
 )
 
 const (

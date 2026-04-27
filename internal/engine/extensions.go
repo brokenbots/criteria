@@ -4,7 +4,7 @@ import (
 	"context"
 	"strings"
 
-	"github.com/brokenbots/overlord/workflow"
+	"github.com/brokenbots/overseer/workflow"
 	"github.com/zclconf/go-cty/cty"
 )
 

@@ -8,8 +8,8 @@ import (
 
 	"connectrpc.com/connect"
 
-	pb "github.com/brokenbots/overlord/shared/pb/overlord/v1"
-	overseer "github.com/brokenbots/overlord/shared/sdk/overseer"
+	pb "github.com/brokenbots/overseer/sdk/pb/v1"
+	overseer "github.com/brokenbots/overseer/sdk"
 )
 
 // testCallerOwnership asserts the caller-ownership contract for every mutating

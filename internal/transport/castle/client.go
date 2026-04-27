@@ -26,8 +26,8 @@ import (
 	"golang.org/x/net/http2"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	pb "github.com/brokenbots/overlord/shared/pb/overlord/v1"
-	"github.com/brokenbots/overlord/shared/pb/overlord/v1/overlordv1connect"
+	pb "github.com/brokenbots/overseer/sdk/pb/v1"
+	"github.com/brokenbots/overseer/sdk/pb/v1/overseerv1connect"
 )
 
 // Codec selects the Connect codec.
@@ -67,7 +67,7 @@ type Options struct {
 type Client struct {
 	baseURL *url.URL
 	http    *http.Client
-	grpc    overlordv1connect.OverseerServiceClient
+	grpc    overseerv1connect.OverseerServiceClient
 	log     *slog.Logger
 	opts    Options
 
@@ -131,7 +131,7 @@ func NewClient(castleURL string, log *slog.Logger, opts ...Options) (*Client, er
 		copts = append(copts, connect.WithProtoJSON())
 	}
 
-	grpc := overlordv1connect.NewOverseerServiceClient(httpClient, u.String(), copts...)
+	grpc := overseerv1connect.NewOverseerServiceClient(httpClient, u.String(), copts...)
 
 	return &Client{
 		baseURL:     u,

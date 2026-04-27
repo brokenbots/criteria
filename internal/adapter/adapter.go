@@ -5,7 +5,7 @@ package adapter
 import (
 	"context"
 
-	"github.com/brokenbots/overlord/workflow"
+	"github.com/brokenbots/overseer/workflow"
 )
 
 // EventSink is what an adapter uses to stream incremental output and

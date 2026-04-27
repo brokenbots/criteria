@@ -9,9 +9,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/zclconf/go-cty/cty"
 
-	"github.com/brokenbots/overlord/overseer/internal/adapter"
-	"github.com/brokenbots/overlord/overseer/internal/plugin"
-	"github.com/brokenbots/overlord/workflow"
+	"github.com/brokenbots/overseer/internal/adapter"
+	"github.com/brokenbots/overseer/internal/plugin"
+	"github.com/brokenbots/overseer/workflow"
 )
 
 type stepNode struct {

@@ -3,8 +3,8 @@ package engine
 import (
 	"context"
 
-	engineruntime "github.com/brokenbots/overlord/overseer/internal/engine/runtime"
-	"github.com/brokenbots/overlord/workflow"
+	engineruntime "github.com/brokenbots/overseer/internal/engine/runtime"
+	"github.com/brokenbots/overseer/workflow"
 )
 
 type stateNode struct {

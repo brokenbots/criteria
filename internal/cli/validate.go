@@ -8,9 +8,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/brokenbots/overlord/overseer/internal/adapters/shell"
-	"github.com/brokenbots/overlord/overseer/internal/plugin"
-	"github.com/brokenbots/overlord/workflow"
+	"github.com/brokenbots/overseer/internal/adapters/shell"
+	"github.com/brokenbots/overseer/internal/plugin"
+	"github.com/brokenbots/overseer/workflow"
 )
 
 func NewValidateCmd() *cobra.Command {

@@ -6,8 +6,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/brokenbots/overlord/overseer/internal/engine"
-	"github.com/brokenbots/overlord/overseer/internal/run"
+	"github.com/brokenbots/overseer/internal/engine"
+	"github.com/brokenbots/overseer/internal/run"
 )
 
 type outputMode int

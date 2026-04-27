@@ -1,7 +1,7 @@
 package main
 
 import (
-	pluginpkg "github.com/brokenbots/overlord/overseer/internal/plugin"
+	pluginpkg "github.com/brokenbots/overseer/internal/plugin"
 )
 
 func main() {

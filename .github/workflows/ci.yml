@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Sync workspace
+        run: go work sync
+
+      - name: Build binary
+        run: make build
+
+      - name: Run tests (root + sdk + workflow)
+        run: make test
+
+      - name: Validate example workflows
+        run: make validate
+
+  proto-drift:
+    name: Proto drift check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: bufbuild/buf-setup-action@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Lint proto files
+        run: buf lint
+        # Non-zero exit on lint failures; drift check is advisory on first run.
+        continue-on-error: false
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Check proto drift
+        # Regenerate and fail if generated files differ from what is committed.
+        run: make proto-check-drift

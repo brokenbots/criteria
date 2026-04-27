@@ -12,7 +12,7 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/structpb"
 
-	"github.com/brokenbots/overlord/overseer/internal/adapter"
+	"github.com/brokenbots/overseer/internal/adapter"
 )
 
 // ConsoleSink renders engine events as concise human-readable output. It is

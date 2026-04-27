@@ -6,7 +6,7 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/brokenbots/overlord/overseer/internal/adapter/conformance"
+	"github.com/brokenbots/overseer/internal/adapter/conformance"
 )
 
 func TestNoopPluginConformance(t *testing.T) {

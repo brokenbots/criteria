@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	pb "github.com/brokenbots/overlord/shared/pb/overlord/v1"
+	pb "github.com/brokenbots/overseer/sdk/pb/v1"
 	copilot "github.com/github/copilot-sdk/go"
 )
 

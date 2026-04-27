@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/brokenbots/overlord/overseer/internal/adapter"
-	"github.com/brokenbots/overlord/overseer/internal/engine"
+	"github.com/brokenbots/overseer/internal/adapter"
+	"github.com/brokenbots/overseer/internal/engine"
 )
 
 type recordingSink struct {

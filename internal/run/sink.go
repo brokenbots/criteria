@@ -13,10 +13,10 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/structpb"
 
-	"github.com/brokenbots/overlord/overseer/internal/adapter"
-	castletrans "github.com/brokenbots/overlord/overseer/internal/transport/castle"
-	"github.com/brokenbots/overlord/shared/events"
-	pb "github.com/brokenbots/overlord/shared/pb/overlord/v1"
+	"github.com/brokenbots/overseer/internal/adapter"
+	castletrans "github.com/brokenbots/overseer/internal/transport/castle"
+	"github.com/brokenbots/overseer/events"
+	pb "github.com/brokenbots/overseer/sdk/pb/v1"
 )
 
 // Sink implements engine.Sink by forwarding to a Castle client.

@@ -12,13 +12,13 @@ import (
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
 
-	"github.com/brokenbots/overlord/overseer/internal/adapter"
-	"github.com/brokenbots/overlord/overseer/internal/adapters/shell"
-	"github.com/brokenbots/overlord/overseer/internal/engine"
-	"github.com/brokenbots/overlord/overseer/internal/plugin"
-	pb "github.com/brokenbots/overlord/shared/pb/overlord/v1"
-	"github.com/brokenbots/overlord/shared/pb/overlord/v1/overlordv1connect"
-	"github.com/brokenbots/overlord/workflow"
+	"github.com/brokenbots/overseer/internal/adapter"
+	"github.com/brokenbots/overseer/internal/adapters/shell"
+	"github.com/brokenbots/overseer/internal/engine"
+	"github.com/brokenbots/overseer/internal/plugin"
+	pb "github.com/brokenbots/overseer/sdk/pb/v1"
+	"github.com/brokenbots/overseer/sdk/pb/v1/overseerv1connect"
+	"github.com/brokenbots/overseer/workflow"
 	"github.com/zclconf/go-cty/cty"
 )
 
@@ -168,10 +168,10 @@ func TestReattachRun_RestoresVarScope(t *testing.T) {
 }
 
 // startScopeServer starts an httptest Connect server using any service handler.
-func startScopeServer(t *testing.T, h overlordv1connect.OverseerServiceHandler) string {
+func startScopeServer(t *testing.T, h overseerv1connect.OverseerServiceHandler) string {
 	t.Helper()
 	mux := http.NewServeMux()
-	path, handler := overlordv1connect.NewOverseerServiceHandler(h)
+	path, handler := overseerv1connect.NewOverseerServiceHandler(h)
 	mux.Handle(path, handler)
 	srv := httptest.NewUnstartedServer(h2c.NewHandler(mux, &http2.Server{}))
 	srv.Start()

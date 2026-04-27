@@ -14,7 +14,7 @@ import (
 
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	pb "github.com/brokenbots/overlord/shared/pb/overlord/v1"
+	pb "github.com/brokenbots/overseer/sdk/pb/v1"
 )
 
 // SchemaVersion is the current event protocol version. Bump only with a new

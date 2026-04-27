@@ -8,7 +8,7 @@
 // service stubs, envelope and payload types, and a small set of helper
 // functions that every implementation needs.
 //
-// Pre-split module path:  github.com/brokenbots/overlord/shared/sdk/overseer
+// Pre-split module path:  github.com/brokenbots/overseer/sdk
 // Post-split module path: github.com/brokenbots/overseer/sdk
 // (The import path changes in W08/W09; call sites in the orchestrator
 // migrate then. Until that point, this in-monorepo path is canonical.)

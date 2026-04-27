@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/brokenbots/overlord/overseer/internal/adapter"
-	"github.com/brokenbots/overlord/overseer/internal/engine"
-	"github.com/brokenbots/overlord/overseer/internal/plugin"
-	"github.com/brokenbots/overlord/workflow"
+	"github.com/brokenbots/overseer/internal/adapter"
+	"github.com/brokenbots/overseer/internal/engine"
+	"github.com/brokenbots/overseer/internal/plugin"
+	"github.com/brokenbots/overseer/workflow"
 )
 
 // branchSink records branch events and terminal state.

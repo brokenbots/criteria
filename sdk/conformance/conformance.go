@@ -28,7 +28,7 @@ import (
 	"net/http"
 	"testing"
 
-	overseer "github.com/brokenbots/overlord/shared/sdk/overseer"
+	overseer "github.com/brokenbots/overseer/sdk"
 )
 
 // Subject describes how to bring up an SDK-conformant ServiceHandler for

@@ -9,8 +9,8 @@ import (
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/proto"
 
-	pb "github.com/brokenbots/overlord/shared/pb/overlord/v1"
-	overseer "github.com/brokenbots/overlord/shared/sdk/overseer"
+	pb "github.com/brokenbots/overseer/sdk/pb/v1"
+	overseer "github.com/brokenbots/overseer/sdk"
 )
 
 // testEnvelopeRoundTrip verifies that every Envelope.payload variant submitted

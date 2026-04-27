@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	pluginpkg "github.com/brokenbots/overlord/overseer/internal/plugin"
-	pb "github.com/brokenbots/overlord/shared/pb/overlord/v1"
+	pluginpkg "github.com/brokenbots/overseer/internal/plugin"
+	pb "github.com/brokenbots/overseer/sdk/pb/v1"
 )
 
 type noopService struct {

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	pb "github.com/brokenbots/overlord/shared/pb/overlord/v1"
+	pb "github.com/brokenbots/overseer/sdk/pb/v1"
 	hplugin "github.com/hashicorp/go-plugin"
 )
 

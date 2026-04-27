@@ -6,8 +6,8 @@ import (
 	"connectrpc.com/connect"
 	"github.com/spf13/cobra"
 
-	pb "github.com/brokenbots/overlord/shared/pb/overlord/v1"
-	"github.com/brokenbots/overlord/shared/pb/overlord/v1/overlordv1connect"
+	pb "github.com/brokenbots/overseer/sdk/pb/v1"
+	"github.com/brokenbots/overseer/sdk/pb/v1/overseerv1connect"
 )
 
 // castleClientFlags groups the transport flags shared by every CLI command
@@ -26,12 +26,12 @@ func (f *castleClientFlags) bind(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&f.KeyFile, "tls-key", envOrDefault("OVERSEER_TLS_KEY", ""), "PEM client key for mTLS (or OVERSEER_TLS_KEY)")
 }
 
-func (f *castleClientFlags) client() (overlordv1connect.CastleServiceClient, error) {
+func (f *castleClientFlags) client() (overseerv1connect.CastleServiceClient, error) {
 	hc, err := castleHTTPClient(f.URL, f.CAFile, f.CertFile, f.KeyFile)
 	if err != nil {
 		return nil, err
 	}
-	return overlordv1connect.NewCastleServiceClient(hc, f.URL), nil
+	return overseerv1connect.NewCastleServiceClient(hc, f.URL), nil
 }
 
 func NewStatusCmd() *cobra.Command {

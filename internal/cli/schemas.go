@@ -4,8 +4,8 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/brokenbots/overlord/overseer/internal/plugin"
-	"github.com/brokenbots/overlord/workflow"
+	"github.com/brokenbots/overseer/internal/plugin"
+	"github.com/brokenbots/overseer/workflow"
 )
 
 // collectSchemas resolves Info() for every adapter referenced in spec and

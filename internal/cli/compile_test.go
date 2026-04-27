@@ -50,7 +50,7 @@ func workflowFixtures(t *testing.T) (string, []string) {
 	if !ok {
 		t.Fatal("resolve caller")
 	}
-	repoRoot := filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..", ".."))
+	repoRoot := filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
 	dirs := []string{
 		filepath.Join(repoRoot, "examples"),
 		filepath.Join(repoRoot, "workflow", "testdata"),

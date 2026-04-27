@@ -11,9 +11,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/brokenbots/overlord/overseer/internal/adapter"
-	pb "github.com/brokenbots/overlord/shared/pb/overlord/v1"
-	"github.com/brokenbots/overlord/workflow"
+	"github.com/brokenbots/overseer/internal/adapter"
+	pb "github.com/brokenbots/overseer/sdk/pb/v1"
+	"github.com/brokenbots/overseer/workflow"
 	"github.com/hashicorp/go-hclog"
 	hplugin "github.com/hashicorp/go-plugin"
 )

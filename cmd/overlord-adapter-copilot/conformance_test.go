@@ -7,7 +7,7 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/brokenbots/overlord/overseer/internal/adapter/conformance"
+	"github.com/brokenbots/overseer/internal/adapter/conformance"
 )
 
 var testPluginBin string

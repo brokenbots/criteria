@@ -1,10 +1,10 @@
 syntax = "proto3";
 
-package overlord.v1;
+package overseer.v1;
 
-import "overlord/v1/events.proto";
+import "v1/events.proto";
 
-option go_package = "github.com/brokenbots/overlord/shared/pb/overlord/v1;overlordv1";
+option go_package = "github.com/brokenbots/overseer/sdk/pb/v1;overseerv1";
 
 // AdapterPluginService defines the out-of-process adapter contract.
 service AdapterPluginService {

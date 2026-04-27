@@ -3,7 +3,7 @@ package workflow_test
 import (
 	"testing"
 
-	"github.com/brokenbots/overlord/workflow"
+	"github.com/brokenbots/overseer/workflow"
 )
 
 func TestCompile_WaitDurationOnly(t *testing.T) {

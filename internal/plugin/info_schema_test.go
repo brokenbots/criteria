@@ -3,9 +3,9 @@ package plugin_test
 import (
 	"testing"
 
-	pluginpkg "github.com/brokenbots/overlord/overseer/internal/plugin"
-	pb "github.com/brokenbots/overlord/shared/pb/overlord/v1"
-	"github.com/brokenbots/overlord/workflow"
+	pluginpkg "github.com/brokenbots/overseer/internal/plugin"
+	pb "github.com/brokenbots/overseer/sdk/pb/v1"
+	"github.com/brokenbots/overseer/workflow"
 )
 
 // TestInfoResponseSchemaRoundTrip exercises the production AdapterInfoFromProto

@@ -7,13 +7,13 @@ import (
 	"os"
 	"time"
 
-	"github.com/brokenbots/overlord/overseer/internal/adapters/shell"
-	"github.com/brokenbots/overlord/overseer/internal/engine"
-	"github.com/brokenbots/overlord/overseer/internal/plugin"
-	"github.com/brokenbots/overlord/overseer/internal/run"
-	castletrans "github.com/brokenbots/overlord/overseer/internal/transport/castle"
-	pb "github.com/brokenbots/overlord/shared/pb/overlord/v1"
-	"github.com/brokenbots/overlord/workflow"
+	"github.com/brokenbots/overseer/internal/adapters/shell"
+	"github.com/brokenbots/overseer/internal/engine"
+	"github.com/brokenbots/overseer/internal/plugin"
+	"github.com/brokenbots/overseer/internal/run"
+	castletrans "github.com/brokenbots/overseer/internal/transport/castle"
+	pb "github.com/brokenbots/overseer/sdk/pb/v1"
+	"github.com/brokenbots/overseer/workflow"
 )
 
 // resumeInFlightRuns scans the local checkpoint directory and, for each

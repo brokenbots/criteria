@@ -7,7 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/brokenbots/overlord/overseer/internal/cli"
+	"github.com/brokenbots/overseer/internal/cli"
 )
 
 func main() {

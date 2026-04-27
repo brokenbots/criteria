@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	engineruntime "github.com/brokenbots/overlord/overseer/internal/engine/runtime"
-	"github.com/brokenbots/overlord/workflow"
+	engineruntime "github.com/brokenbots/overseer/internal/engine/runtime"
+	"github.com/brokenbots/overseer/workflow"
 )
 
 type approvalNode struct {

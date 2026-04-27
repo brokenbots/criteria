@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/brokenbots/overlord/overseer/internal/adapter"
-	"github.com/brokenbots/overlord/overseer/internal/adapters/shell"
-	"github.com/brokenbots/overlord/workflow"
+	"github.com/brokenbots/overseer/internal/adapter"
+	"github.com/brokenbots/overseer/internal/adapters/shell"
+	"github.com/brokenbots/overseer/workflow"
 )
 
 type noopSink struct{}

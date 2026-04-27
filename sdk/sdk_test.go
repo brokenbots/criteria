@@ -3,9 +3,9 @@ package overseer_test
 import (
 	"testing"
 
-	pb "github.com/brokenbots/overlord/shared/pb/overlord/v1"
-	"github.com/brokenbots/overlord/shared/events"
-	overseer "github.com/brokenbots/overlord/shared/sdk/overseer"
+	pb "github.com/brokenbots/overseer/sdk/pb/v1"
+	"github.com/brokenbots/overseer/events"
+	overseer "github.com/brokenbots/overseer/sdk"
 )
 
 // TestPayloadAliasIdentity verifies that the SDK type aliases are truly

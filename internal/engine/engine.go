@@ -8,10 +8,10 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/brokenbots/overlord/overseer/internal/adapter"
-	engineruntime "github.com/brokenbots/overlord/overseer/internal/engine/runtime"
-	"github.com/brokenbots/overlord/overseer/internal/plugin"
-	"github.com/brokenbots/overlord/workflow"
+	"github.com/brokenbots/overseer/internal/adapter"
+	engineruntime "github.com/brokenbots/overseer/internal/engine/runtime"
+	"github.com/brokenbots/overseer/internal/plugin"
+	"github.com/brokenbots/overseer/workflow"
 	"github.com/zclconf/go-cty/cty"
 )
 

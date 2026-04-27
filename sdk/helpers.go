@@ -1,6 +1,6 @@
 package overseer
 
-import "github.com/brokenbots/overlord/shared/events"
+import "github.com/brokenbots/overseer/events"
 
 // SchemaVersion is the current event protocol version. It matches the proto
 // package major version (overlord.v1). A bump requires a new proto package

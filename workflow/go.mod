@@ -1,4 +1,4 @@
-module github.com/brokenbots/overlord/workflow
+module github.com/brokenbots/overseer/workflow
 
 go 1.26
 

@@ -6,12 +6,12 @@
 // unused field number and never reuse an old one.
 syntax = "proto3";
 
-package overlord.v1;
+package overseer.v1;
 
 import "google/protobuf/struct.proto";
 import "google/protobuf/timestamp.proto";
 
-option go_package = "github.com/brokenbots/overlord/shared/pb/overlord/v1;overlordv1";
+option go_package = "github.com/brokenbots/overseer/sdk/pb/v1;overseerv1";
 
 // Envelope is the wire format for every event.
 message Envelope {

@@ -6,9 +6,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/brokenbots/overlord/overseer/internal/adapter"
-	"github.com/brokenbots/overlord/overseer/internal/testutil"
-	"github.com/brokenbots/overlord/workflow"
+	"github.com/brokenbots/overseer/internal/adapter"
+	"github.com/brokenbots/overseer/internal/testutil"
+	"github.com/brokenbots/overseer/workflow"
 )
 
 type recordingLoader struct {

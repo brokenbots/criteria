@@ -18,15 +18,15 @@ import (
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
 
-	"github.com/brokenbots/overlord/shared/events"
-	pb "github.com/brokenbots/overlord/shared/pb/overlord/v1"
-	"github.com/brokenbots/overlord/shared/pb/overlord/v1/overlordv1connect"
+	"github.com/brokenbots/overseer/events"
+	pb "github.com/brokenbots/overseer/sdk/pb/v1"
+	"github.com/brokenbots/overseer/sdk/pb/v1/overseerv1connect"
 )
 
 // --- Fake Connect server -----------------------------------------------------
 
 type fakeServer struct {
-	overlordv1connect.UnimplementedOverseerServiceHandler
+	overseerv1connect.UnimplementedOverseerServiceHandler
 
 	mu          sync.Mutex
 	overseerID  string
@@ -192,7 +192,7 @@ func (f *fakeServer) Control(ctx context.Context, _ *connect.Request[pb.ControlS
 func startFakeServer(t *testing.T, f *fakeServer) string {
 	t.Helper()
 	mux := http.NewServeMux()
-	path, handler := overlordv1connect.NewOverseerServiceHandler(f)
+	path, handler := overseerv1connect.NewOverseerServiceHandler(f)
 	mux.Handle(path, handler)
 	srv := httptest.NewUnstartedServer(h2c.NewHandler(mux, &http2.Server{}))
 	srv.Start()

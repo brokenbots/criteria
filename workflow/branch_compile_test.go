@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/brokenbots/overlord/workflow"
+	"github.com/brokenbots/overseer/workflow"
 )
 
 // parseAndCompile is a test helper that parses src and compiles it.
