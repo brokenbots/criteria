@@ -276,3 +276,24 @@ git diff main..HEAD --stat → 10 files changed, 488 insertions(+), 7 deletions(
 git ls-files LICENSE SECURITY.md .github/CODEOWNERS .github/dependabot.yml .github/pull_request_template.md .github/ISSUE_TEMPLATE/bug_report.md .github/ISSUE_TEMPLATE/feature_request.md .github/ISSUE_TEMPLATE/config.yml → all 8 files present
 README.md line 149 grep for LICENSE → resolves to newly added file
 ```
+
+### Review 2026-04-27-02 — approved
+
+#### Summary
+
+All three required remediations from the previous pass are closed. R1: the Discussions link was removed from `config.yml` entirely — the file now only contains the Security Advisory entry, which is always reachable. R2: `SECURITY.md` line 23 now provides a concrete `security@brokenbots.net` address, making the email fallback deterministic and actionable. R3: the branch-protection proposal note was updated to correctly state that W06 has already merged and `make example-plugin` is already covered by the `Test` status check. All exit criteria are met. `make build` and `make test` remain green. No outstanding issues.
+
+#### Plan Adherence
+
+All Step 1–7 items implemented and verified. All findings from the 2026-04-27 pass are closed. No deviations remain.
+
+#### Validation Performed
+
+```
+make build   → success
+make test    → all packages pass (cached)
+git diff main..HEAD --stat → 10 files changed, 533 insertions(+), 7 deletions(-)
+SECURITY.md line 23: security@brokenbots.net — concrete, actionable ✅
+.github/ISSUE_TEMPLATE/config.yml: Discussions entry removed; only Security Advisory link remains ✅
+workstreams/07-repo-hygiene.md branch-protection proposal: W06 deferral replaced with accurate statement ✅
+```
