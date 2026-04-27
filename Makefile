@@ -1,5 +1,5 @@
 .PHONY: help bootstrap tidy build plugins proto proto-lint proto-check-drift \
-	test test-conformance lint-imports validate ci clean
+	test test-conformance lint-imports validate example-plugin ci clean
 
 # Default target: list available targets.
 help:
@@ -51,13 +51,35 @@ lint-imports: ## Enforce import-graph boundaries (see tools/import-lint/)
 	@echo "Import boundaries OK."
 
 validate: build ## Validate all standalone example workflows
-	@for f in examples/*.hcl; do \
+	@for f in examples/*.hcl examples/plugins/*/*.hcl; do \
 		echo "Validating $$f..."; \
 		./bin/overseer validate "$$f" || exit 1; \
 	done
 	@echo "All examples validated."
 
-ci: build test lint-imports validate ## Run all CI gates (build, test, lint-imports, validate)
+example-plugin: build ## Build and run the greeter example plugin end-to-end
+	@echo "Building greeter example plugin..."
+	cd examples/plugins/greeter && GOWORK=off go build -o ../../../bin/overseer-adapter-greeter .
+	@tmpdir=$$(mktemp -d); \
+	cp bin/overseer-adapter-greeter "$$tmpdir/"; \
+	chmod +x "$$tmpdir/overseer-adapter-greeter"; \
+	eventsfile=$$(mktemp); \
+	OVERSEER_PLUGINS="$$tmpdir" ./bin/overseer apply examples/plugins/greeter/example.hcl \
+		--events-file "$$eventsfile" 2>&1; \
+	rc=$$?; \
+	if [ $$rc -ne 0 ]; then \
+		echo "ERROR: overseer apply failed"; \
+		rm -rf "$$tmpdir" "$$eventsfile"; exit 1; \
+	fi; \
+	if ! grep -q '"hello, world"' "$$eventsfile"; then \
+		echo "ERROR: expected greeting not found in events"; \
+		cat "$$eventsfile"; \
+		rm -rf "$$tmpdir" "$$eventsfile"; exit 1; \
+	fi; \
+	rm -rf "$$tmpdir" "$$eventsfile"; \
+	echo "example-plugin: OK"
+
+ci: build test lint-imports validate example-plugin ## Run all CI gates (build, test, lint-imports, validate, example-plugin)
 
 clean: ## Remove build artifacts
 	rm -rf bin conformance.test

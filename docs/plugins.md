@@ -225,6 +225,8 @@ Step outputs also flow into `for_each` iteration contexts. See [workflow.md](wor
 
 ## Writing Your Own Plugin
 
+The canonical third-party plugin example is [`examples/plugins/greeter/`](../examples/plugins/greeter/). It lives in its own Go module (no `replace` directive once an SDK tag exists), imports only `sdk/pluginhost` and the generated proto bindings, and demonstrates the full workflow from `go build` to `overseer apply`. Read that directory first — it is the minimum viable plugin.
+
 The public plugin SDK lives in `sdk/pluginhost`. External authors import:
 
 ```
@@ -259,7 +261,7 @@ Implement `pluginhost.Service` and call `pluginhost.Serve` from `main()`. The
 `Execute` method receives a `pluginhost.ExecuteEventSender`; send at least one
 `*pb.ExecuteResult` event before returning `nil`, or return a non-nil error.
 
-Use the existing plugin mains as references:
+See [`examples/plugins/greeter/main.go`](../examples/plugins/greeter/main.go) for a complete, runnable example. For more complex references:
 
 - `cmd/overseer-adapter-copilot/main.go`
 - `cmd/overseer-adapter-mcp/main.go`
