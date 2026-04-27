@@ -20,9 +20,9 @@ Please report security vulnerabilities through one of these channels:
    [Security Advisories](../../security/advisories/new) page to file a
    private report. This is the fastest path to a coordinated fix.
 
-2. **Email:** Send details to the maintainers at the address listed in
-   the GitHub org contact page. Encrypt with the maintainer's public PGP
-   key if the details are sensitive.
+2. **Email:** `security@brokenbots.net` — use this only if you cannot
+   use GitHub Security Advisories. Encrypt with the maintainer's public
+   PGP key if the details are sensitive.
 
 Include as much detail as you can:
 
