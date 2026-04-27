@@ -1,6 +1,6 @@
 # Workstream 6 — Third-party plugin example
 
-**Owner:** Doc / engine agent · **Depends on:** [W03](03-public-plugin-sdk.md) · **Unblocks:** [W08](08-phase0-cleanup-gate.md).
+**Owner:** Doc / engine agent · **Depends on:** [W03](03-public-plugin-sdk.md) · **Unblocks:** [W08](09-phase0-cleanup-gate.md).
 
 ## Context
 
@@ -115,7 +115,7 @@ or other workstream files.
 - `examples/plugins/greeter/` exists and builds with no `replace`
   directive in its committed `go.mod` (or, if the published SDK
   version doesn't yet exist, a documented temporary `replace`
-  with a follow-up to remove it after [W08](08-phase0-cleanup-gate.md)
+  with a follow-up to remove it after [W08](09-phase0-cleanup-gate.md)
   cuts the first tag).
 - `make example-plugin` runs end-to-end and asserts output.
 - CI gates `make example-plugin` on every PR.

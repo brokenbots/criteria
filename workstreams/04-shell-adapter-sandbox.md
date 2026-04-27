@@ -1,6 +1,6 @@
 # Workstream 4 — Shell adapter sandbox plan
 
-**Owner:** Security agent · **Depends on:** none · **Unblocks:** [W08](08-phase0-cleanup-gate.md).
+**Owner:** Security agent · **Depends on:** none · **Unblocks:** [W08](09-phase0-cleanup-gate.md).
 
 ## Context
 
@@ -104,7 +104,7 @@ overlord-side runbook.
 
 This workstream may **not** edit `README.md`, `PLAN.md`, `AGENTS.md`,
 or other workstream files. If the security work needs CHANGELOG
-entries or release-note coordination, defer to [W08](08-phase0-cleanup-gate.md).
+entries or release-note coordination, defer to [W08](09-phase0-cleanup-gate.md).
 
 ## Tasks
 

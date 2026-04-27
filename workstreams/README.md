@@ -42,10 +42,16 @@ up in parallel.
 - [W06](06-third-party-plugin-example.md) — Standalone third-party
   plugin example outside the repo (depends on [W03](03-public-plugin-sdk.md)).
 
-**E. Phase close-out**
+**E. Brand rename (depends on A, runs after B/C/D)**
 
-- [W08](08-phase0-cleanup-gate.md) — Phase 0 cleanup gate: validation,
-  archive, tag `v0.1.0`.
+- [W08](08-brand-rename-execution.md) — Execute the ADR-0001 rename:
+  legacy-name eradication across module path, binaries, env vars,
+  proto package, docs.
+
+**F. Phase close-out**
+
+- [W09](09-phase0-cleanup-gate.md) — Phase 0 cleanup gate: validation,
+  legacy-name merge gate, archive, tag `v0.1.0`.
 
 ## Files NOT editable by workstream-executor or workstream-reviewer
 
@@ -60,12 +66,14 @@ file they are executing**. They may not edit:
 
 A workstream that needs changes to those files declares them in its
 "Files this workstream may modify" list and either (a) is the cleanup
-gate (W08), or (b) defers the edit to W08 with a forward-pointer note
-in its reviewer log.
+gate (W09), or (b) defers the edit to W09 with a forward-pointer note
+in its reviewer log. W08's brand-rename sweep is the documented
+exception: it makes mechanical rebrand edits across the
+coordination-set files but does not touch their structure.
 
 ## Archived
 
 There is no archived phase yet. The pre-separation v1.x phases live
 in the overlord repo's `workstreams/archived/`; they are not copied
 here. Phase 0 will be the first archived phase under
-`workstreams/archived/v0/` once W08 lands.
+`workstreams/archived/v0/` once W09 lands.

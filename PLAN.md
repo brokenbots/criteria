@@ -42,10 +42,14 @@ v1.6 plan deferred.
   third-party plugin example outside the repo (depends on W03).
 - [W07](workstreams/07-repo-hygiene.md) — LICENSE, SECURITY.md,
   CODEOWNERS, issue/PR templates, dependabot config.
-- [W08](workstreams/08-phase0-cleanup-gate.md) — Phase 0 close-out:
-  validation, archive, tag `v0.1.0`.
+- [W08](workstreams/08-brand-rename-execution.md) — Execute the
+  ADR-0001 rename: eradicate the legacy `overseer`/`overlord`/`castle`/
+  `parapet` names across module path, binaries, env vars, proto
+  package, and docs.
+- [W09](workstreams/09-phase0-cleanup-gate.md) — Phase 0 close-out:
+  validation, legacy-name merge gate, archive, tag `v0.1.0`.
 
-Phase 0 closes when W08 lands. After that, this file gets a Phase 1
+Phase 0 closes when W09 lands. After that, this file gets a Phase 1
 section pointing at the next planning artifact (workstream set or
 tech evaluation).
 
@@ -72,4 +76,4 @@ These items are known but not in Phase 0 scope:
   than the one currently being executed. The cleanup agent (or a
   human) is the only writer for those.
 - Phase close-out uses `workstreams/archived/<phase>/`. Phase 0
-  archives to `workstreams/archived/v0/` when W08 lands.
+  archives to `workstreams/archived/v0/` when W09 lands.

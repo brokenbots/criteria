@@ -1,6 +1,6 @@
 # Workstream 2 — README and contributor docs
 
-**Owner:** Doc agent (or human committer) · **Depends on:** [W01](01-naming-convention-review.md) · **Unblocks:** [W08](08-phase0-cleanup-gate.md).
+**Owner:** Doc agent (or human committer) · **Depends on:** [W01](01-naming-convention-review.md) · **Unblocks:** [W08](09-phase0-cleanup-gate.md).
 
 ## Context
 
@@ -131,7 +131,7 @@ If the ADR is "no rename", skip this step.
 
 This workstream may **not** edit `AGENTS.md`, `PLAN.md`, or any
 other workstream file. If something must change in those, defer it
-to [W08](08-phase0-cleanup-gate.md) with a forward-pointer note.
+to [W08](09-phase0-cleanup-gate.md) with a forward-pointer note.
 
 ## Tasks
 

@@ -1,6 +1,6 @@
 # Workstream 3 — Public plugin SDK
 
-**Owner:** Engine agent · **Depends on:** none · **Unblocks:** [W06](06-third-party-plugin-example.md), [W08](08-phase0-cleanup-gate.md).
+**Owner:** Engine agent · **Depends on:** none · **Unblocks:** [W06](06-third-party-plugin-example.md), [W08](09-phase0-cleanup-gate.md).
 
 ## Context
 

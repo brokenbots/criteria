@@ -1,6 +1,6 @@
 # Workstream 7 — Repo hygiene
 
-**Owner:** Repo maintainer agent · **Depends on:** [W01](01-naming-convention-review.md) · **Unblocks:** [W08](08-phase0-cleanup-gate.md).
+**Owner:** Repo maintainer agent · **Depends on:** [W01](01-naming-convention-review.md) · **Unblocks:** [W08](09-phase0-cleanup-gate.md).
 
 ## Context
 
@@ -37,7 +37,7 @@ patent grant), **MPL-2.0** (file-level copyleft).
 Add `LICENSE` at repo root. Add a `// SPDX-License-Identifier: …`
 header expectation to `CONTRIBUTING.md`'s Step 5 in [W02](02-readme-and-contributor-docs.md)
 (or, if W02 hasn't run yet, defer the header expectation to
-[W08](08-phase0-cleanup-gate.md)).
+[W08](09-phase0-cleanup-gate.md)).
 
 ### Step 2 — SECURITY.md
 
@@ -120,7 +120,7 @@ Audit `.gitignore`:
 
 - Setting up a documentation site (Hugo, Docusaurus, etc.).
 - Setting up a release-automation workflow (goreleaser, etc.) —
-  that's part of [W08](08-phase0-cleanup-gate.md).
+  that's part of [W08](09-phase0-cleanup-gate.md).
 - Code-of-conduct authoring. (Optional; if added, follow the
   Contributor Covenant.)
 - Renaming the GitHub repo or org.

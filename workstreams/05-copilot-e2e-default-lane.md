@@ -1,6 +1,6 @@
 # Workstream 5 — Copilot E2E in default lane
 
-**Owner:** Test-infra agent · **Depends on:** none · **Unblocks:** [W08](08-phase0-cleanup-gate.md).
+**Owner:** Test-infra agent · **Depends on:** none · **Unblocks:** [W08](09-phase0-cleanup-gate.md).
 
 ## Context
 
