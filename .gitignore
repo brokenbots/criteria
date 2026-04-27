@@ -1,5 +1,7 @@
 bin/
 /overseer
+/fake-copilot
+/overseer-adapter-copilot
 *.db
 *.db-shm
 *.db-wal
