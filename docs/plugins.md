@@ -1,6 +1,6 @@
 # Plugins and Agent Workflows
 
-This document is the Phase 1.4+ baseline for running agent-backed workflows in Overlord. For the full workflow language reference (variables, step outputs, branching, iteration, wait nodes, approval gates), see [workflow.md](workflow.md).
+This document is the reference for running agent-backed workflows with Overseer. For the full workflow language reference (variables, step outputs, branching, iteration, wait nodes, approval gates), see [workflow.md](workflow.md).
 
 ## What Plugins Are
 
@@ -130,7 +130,8 @@ make build
 mkdir -p ~/.overseer/plugins
 cp bin/overseer-adapter-copilot ~/.overseer/plugins/
 chmod +x ~/.overseer/plugins/overseer-adapter-copilot
-./bin/castle --addr 127.0.0.1:8080 --db ./castle/demo.db
+# Start a Castle-compatible orchestrator server (e.g., from github.com/brokenbots/overlord)
+# listening on 127.0.0.1:8080
 ```
 
 In a second terminal, run:
@@ -242,6 +243,6 @@ Use the existing plugin mains as references:
 
 - `cmd/overseer-adapter-copilot/main.go`
 - `cmd/overseer-adapter-mcp/main.go`
-- `overseer/cmd/overseer-adapter-noop/main.go`
+- `cmd/overseer-adapter-noop/main.go`
 
 If you add a new plugin, wire it through the conformance harness before relying on it in a real workflow. That is the fastest way to confirm `Info`, `OpenSession`, `Execute`, `Permit`, and `CloseSession` all obey the host contract.

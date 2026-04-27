@@ -520,8 +520,8 @@ Overseer provides three commands for workflow operations:
 Parses and validates a workflow, outputs JSON or DOT graph.
 
 ```bash
-bin/overseer compile examples/demo_tour.hcl
-bin/overseer compile examples/demo_tour.hcl --format dot --out workflow.dot
+bin/overseer compile examples/demo_tour_local.hcl
+bin/overseer compile examples/demo_tour_local.hcl --format dot --out workflow.dot
 ```
 
 **Outputs**:
@@ -533,7 +533,7 @@ bin/overseer compile examples/demo_tour.hcl --format dot --out workflow.dot
 Human-readable summary of the workflow structure.
 
 ```bash
-bin/overseer plan examples/demo_tour.hcl
+bin/overseer plan examples/demo_tour_local.hcl
 ```
 
 Prints:
@@ -556,7 +556,7 @@ Streams ND-JSON events to stdout. Duration waits work; signal waits and approval
 **Orchestrator mode** (with Castle):
 
 ```bash
-bin/overseer apply examples/demo_tour.hcl --castle http://localhost:8080
+bin/overseer apply <workflow.hcl> --castle http://localhost:8080
 ```
 
 Connects to Castle, persists run state, supports resumption and approvals.
@@ -585,7 +585,7 @@ All events are schema-versioned ND-JSON objects:
 - `ApprovalRequested`, `ApprovalDecided`
 - `BranchEvaluated`
 
-See [api/README.md](../api/README.md) for proto definitions and event schemas.
+See [`proto/overseer/v1/`](../proto/overseer/v1/) for proto definitions and event schemas.
 
 ### Local-mode constraints
 
@@ -596,7 +596,7 @@ See [api/README.md](../api/README.md) for proto definitions and event schemas.
 
 For examples demonstrating each command, see:
 - Local-only workflow: [examples/build_and_test.hcl](../examples/build_and_test.hcl)
-- Orchestrator-required workflow: [examples/demo_tour.hcl](../examples/demo_tour.hcl)
+- Full-featured local demo: [examples/demo_tour_local.hcl](../examples/demo_tour_local.hcl)
 
 ---
 
@@ -694,5 +694,5 @@ The overseer project ships as a single repository:
 - **`github.com/brokenbots/overseer`** — workflow engine, compiler, and standalone CLI (this document); the `cmd/overseer-adapter-*` plugin binaries live here too.
 - **`github.com/brokenbots/overseer/sdk`** — published Go SDK; shared protobuf contracts and event schemas live under `sdk/pb/overseer/v1`.
 
-The orchestrator side (Castle server + Parapet UI) is developed separately at `github.com/brokenbots/overlord` and consumes the published SDK. Parallel regions and sub-workflow composition are targeted as future language work — see [PLAN.md](../PLAN.md).
+The orchestrator side is developed separately at [github.com/brokenbots/overlord](https://github.com/brokenbots/overlord) and consumes the published SDK. Parallel regions and sub-workflow composition are targeted as future language work — see [PLAN.md](../PLAN.md).
 
