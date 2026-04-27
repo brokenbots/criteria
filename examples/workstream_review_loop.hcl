@@ -56,7 +56,9 @@ workflow "workstream_review_loop" {
     }
   }
 
-  # ── Load agent instruction files + open agent sessions ──────────────────────
+  # ── Load agent profiles (once) ─────────────────────────────────────────────
+  # Profile text is injected into the first user turn of each agent's session.
+  # It is never re-sent; all subsequent loop turns are short coordination signals.
 
   step "load_executor_agent_file" {
     adapter = "shell"
@@ -91,11 +93,45 @@ workflow "workstream_review_loop" {
   step "open_reviewer" {
     agent     = "reviewer"
     lifecycle = "open"
-    outcome "success" { transition_to = "execute" }
+    outcome "success" { transition_to = "execute_init" }
     outcome "failure" { transition_to = "close_executor_abort" }
   }
 
-  # ── Per-workstream: executor / reviewer loop ───────────────────────────────
+  # ── Init pass: bootstrap agent context ─────────────────────────────────────
+  # Each agent reads its own profile and the workstream file on its first turn.
+  # That context persists in the live session for all subsequent loop turns.
+
+  step "execute_init" {
+    agent       = "executor"
+    allow_tools = [
+      "*",
+    ]
+    input {
+      prompt = "${steps.load_executor_agent_file.stdout}\n\nRead ${var.workstream_file} for the full task scope.\n\nExecute the first implementation batch: complete the next unchecked items, write code and tests as needed, keep changes scoped and verifiable. Record your progress and notes in ${var.workstream_file}.\n\nEnd your final line with exactly one of:\nRESULT: needs_review\nRESULT: failure"
+    }
+    outcome "needs_review"   { transition_to = "review_init" }
+    outcome "needs_approval" { transition_to = "review_init" }
+    outcome "failure"        { transition_to = "close_reviewer_abort" }
+  }
+
+  step "review_init" {
+    agent       = "reviewer"
+    allow_tools = [
+      "*",
+    ]
+    input {
+      prompt = "${steps.load_reviewer_agent_file.stdout}\n\nRead ${var.workstream_file} for the workstream scope and the executor's latest work.\n\nReview the executor's changes against the acceptance bar. Write all findings and your verdict into the reviewer notes section of ${var.workstream_file}.\n\nEnd your final line with exactly one of:\nRESULT: approved\nRESULT: changes_requested\nRESULT: failure"
+    }
+    outcome "approved"          { transition_to = "commit_and_finish" }
+    outcome "changes_requested" { transition_to = "execute" }
+    outcome "needs_review"      { transition_to = "execute" }
+    outcome "needs_approval"    { transition_to = "execute" }
+    outcome "failure"           { transition_to = "close_reviewer_abort" }
+  }
+
+  # ── Review loop: minimal signal prompts ─────────────────────────────────────
+  # Agent context is fully established after the init pass.
+  # These prompts are coordination signals only — not instructions.
 
   step "execute" {
     agent       = "executor"
@@ -103,7 +139,7 @@ workflow "workstream_review_loop" {
       "*",
     ]
     input {
-      prompt = "Agent profile (.github/agents/workstream-executor.agent.md):\n${steps.load_executor_agent_file.stdout}\n\nCurrent workstream file: ${var.workstream_file}\n\nStart by reading ${var.workstream_file} with read_file and extracting the next unchecked items. Then execute the next focused implementation batch for this workstream only, including code + tests where applicable. Keep changes verifiable and scoped. End your final line with exactly one of:\nRESULT: needs_review\nRESULT: failure"
+      prompt = "Reviewer requested changes. Notes are in ${var.workstream_file}."
     }
     outcome "needs_review"   { transition_to = "review" }
     outcome "needs_approval" { transition_to = "review" }
@@ -116,7 +152,7 @@ workflow "workstream_review_loop" {
       "*",
     ]
     input {
-      prompt = "Agent profile (.github/agents/workstream-reviewer.agent.md):\n${steps.load_reviewer_agent_file.stdout}\n\nCurrent workstream file: ${var.workstream_file}\n\nReview the latest executor changes against this workstream. If more work is needed, request changes and send the executor back for another pass. If fully acceptable, approve and hand off for a final executor commit step. End your final line with exactly one of:\nRESULT: approved\nRESULT: changes_requested\nRESULT: failure"
+      prompt = "Ready for review. Latest work is in ${var.workstream_file}."
     }
     outcome "approved"          { transition_to = "commit_and_finish" }
     outcome "changes_requested" { transition_to = "execute" }
@@ -125,7 +161,7 @@ workflow "workstream_review_loop" {
     outcome "failure"           { transition_to = "close_reviewer_abort" }
   }
 
-  # ── Finalize: executor commit and close-out ────────────────────────────────
+  # ── Finalize: executor commit ──────────────────────────────────────────────
 
   step "commit_and_finish" {
     agent       = "executor"
@@ -133,10 +169,11 @@ workflow "workstream_review_loop" {
       "*",
     ]
     input {
-      prompt = "Agent profile (.github/agents/workstream-executor.agent.md):\n${steps.load_executor_agent_file.stdout}\n\nCurrent workstream file: ${var.workstream_file}\n\nThe reviewer approved the implementation. Commit only the intended workstream changes and use this exact commit message format:\nworkstream: complete ${var.workstream_file}\n\nThen run only minimal final verification needed for those changes. If commit or verification fails, report failure. End your final line with exactly one of:\nRESULT: success\nRESULT: failure"
+      prompt = "Approved. Commit all workstream changes with message:\nworkstream: complete ${var.workstream_file}"
     }
-    outcome "success" { transition_to = "close_reviewer_done" }
-    outcome "failure" { transition_to = "close_reviewer_abort" }
+    outcome "success"      { transition_to = "close_reviewer_done" }
+    outcome "needs_review" { transition_to = "review" }
+    outcome "failure"      { transition_to = "close_reviewer_abort" }
   }
 
   # ── Close agents: success path ──────────────────────────────────────────────

@@ -122,7 +122,7 @@ func (p *copilotPlugin) Info(_ context.Context, _ *pb.InfoRequest) (*pb.InfoResp
 		},
 		ConfigSchema: &pb.AdapterSchemaProto{Fields: map[string]*pb.ConfigFieldProto{
 			"model":             {Type: "string", Doc: "Copilot model to use for this session."},
-			"reasoning_effort": {Type: "string", Doc: "Reasoning effort level for the model: low, medium, high, xhigh."},
+			"reasoning_effort":  {Type: "string", Doc: "Reasoning effort level for the model: low, medium, high, xhigh."},
 			"working_directory": {Type: "string", Doc: "Working directory for tool invocations."},
 			"max_turns":         {Type: "number", Doc: "Maximum assistant turns per Execute call (default: unlimited)."},
 			"system_prompt":     {Type: "string", Doc: "System prompt prepended at session open."},
