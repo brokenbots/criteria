@@ -1,5 +1,5 @@
 .PHONY: help bootstrap tidy build plugins proto proto-lint proto-check-drift \
-	test test-conformance lint-imports validate ci clean
+	test test-conformance lint-imports validate clean
 
 # Default target: list available targets.
 help:
@@ -56,8 +56,6 @@ validate: build ## Validate all standalone example workflows
 		./bin/overseer validate "$$f" || exit 1; \
 	done
 	@echo "All examples validated."
-
-ci: build lint-imports test validate ## Run all CI checks (build, lint-imports, test, validate)
 
 clean: ## Remove build artifacts
 	rm -rf bin conformance.test
