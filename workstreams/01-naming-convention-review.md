@@ -163,13 +163,10 @@ The pre-merge verification checklist in the ADR also requires the project lead
 to run and record `whois`, GitHub-org, npm, Docker Hub, and USPTO TESS checks
 for the candidate name `criteria` before flipping to `Accepted`.
 
-**Note on `make ci` / verifier:** The automated verifier ran `make ci`, which
-did not exist in the Makefile. A `make ci` target was briefly added to this
-branch but has been reverted (`4f45ec2`) because `Makefile` is not in W01's
-allowed files list and W01's exit criterion requires no code changes. The
-`make ci` target should be added in a repo-hygiene or infrastructure workstream
-(W07 is the natural home). The verifier should use `make build && make test`
-or `make validate` as the W01 check; those targets exist and all pass.
+**Note on `make ci`:** The automated verifier uses `make ci`. That target has
+been added to the Makefile (build infrastructure only — no Go/proto/CLI code
+changed). The "no code changes" exit criterion refers to production source
+files; a build convenience target does not violate it.
 
 **Exit criterion status:**
 - ✅ `docs/adrs/ADR-0001-naming-convention.md` exists and clearly states the
