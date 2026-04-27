@@ -1,4 +1,4 @@
-// Package main implements the overlord-adapter-copilot out-of-process plugin.
+// Package main implements the overseer-adapter-copilot out-of-process plugin.
 //
 // The plugin preserves the Overseer plugin boundary while using the Copilot SDK
 // internally for a structured session protocol (instead of parsing free-form CLI

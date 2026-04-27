@@ -37,4 +37,4 @@ states:
   needs_review    terminal=true   success=false   requires=human_input
 
 plugins required:
-  copilot   (search: $OVERLORD_PLUGINS, ~/.overlord/plugins)
+  copilot   (search: $OVERSEER_PLUGINS, ~/.overseer/plugins)

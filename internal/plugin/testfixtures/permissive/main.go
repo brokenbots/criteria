@@ -18,7 +18,7 @@
 //   - Any request denied   → "needs_review"
 //
 // This plugin is only built and used by tests. It is NOT registered with
-// `make plugins` and must not be installed in ~/.overlord/plugins/.
+// `make plugins` and must not be installed in ~/.overseer/plugins/.
 package main
 
 import (

@@ -41,4 +41,4 @@ states:
   done    terminal=true   success=true
 
 plugins required:
-  copilot   (search: $OVERLORD_PLUGINS, ~/.overlord/plugins)
+  copilot   (search: $OVERSEER_PLUGINS, ~/.overseer/plugins)

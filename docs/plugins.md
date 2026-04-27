@@ -4,14 +4,14 @@ This document is the Phase 1.4+ baseline for running agent-backed workflows in O
 
 ## What Plugins Are
 
-An Overlord plugin is an out-of-process binary named `overlord-adapter-<name>`. Overseer discovers plugins in this order:
+An Overseer plugin is an out-of-process binary named `overseer-adapter-<name>`. Overseer discovers plugins in this order:
 
-1. `${OVERLORD_PLUGINS}/overlord-adapter-<name>`
-2. `~/.overlord/plugins/overlord-adapter-<name>`
+1. `${OVERSEER_PLUGINS}/overseer-adapter-<name>`
+2. `~/.overseer/plugins/overseer-adapter-<name>`
 
 Overseer does not look on `PATH`. The host starts the plugin with HashiCorp `go-plugin`; the plugin then speaks the shared gRPC adapter protocol over a local transport. The binary stays outside the Overseer process boundary, so adapter-specific runtime failures are isolated from the engine.
 
-The first production plugin in this repo is `copilot`, shipped as `bin/overlord-adapter-copilot`.
+The first production plugin in this repo is `copilot`, shipped as `bin/overseer-adapter-copilot`.
 
 ## Installing a Plugin
 
@@ -24,18 +24,18 @@ make build
 Install the plugin by copying the built binary into a plugin directory:
 
 ```bash
-mkdir -p ~/.overlord/plugins
-cp bin/overlord-adapter-copilot ~/.overlord/plugins/
-chmod +x ~/.overlord/plugins/overlord-adapter-copilot
+mkdir -p ~/.overseer/plugins
+cp bin/overseer-adapter-copilot ~/.overseer/plugins/
+chmod +x ~/.overseer/plugins/overseer-adapter-copilot
 ```
 
 To use a temporary plugin directory instead, point Overseer at it explicitly:
 
 ```bash
 tmpdir="$(mktemp -d)"
-cp bin/overlord-adapter-copilot "$tmpdir/"
-chmod +x "$tmpdir/overlord-adapter-copilot"
-OVERLORD_PLUGINS="$tmpdir" ./bin/overseer status --castle http://localhost:8080
+cp bin/overseer-adapter-copilot "$tmpdir/"
+chmod +x "$tmpdir/overseer-adapter-copilot"
+OVERSEER_PLUGINS="$tmpdir" ./bin/overseer status --castle http://localhost:8080
 ```
 
 For local Copilot-backed runs you also need the `copilot` CLI available. The repo helper script documents the expected setup:
@@ -127,9 +127,9 @@ The shortest manual path for `examples/agent_hello.hcl` is:
 
 ```bash
 make build
-mkdir -p ~/.overlord/plugins
-cp bin/overlord-adapter-copilot ~/.overlord/plugins/
-chmod +x ~/.overlord/plugins/overlord-adapter-copilot
+mkdir -p ~/.overseer/plugins
+cp bin/overseer-adapter-copilot ~/.overseer/plugins/
+chmod +x ~/.overseer/plugins/overseer-adapter-copilot
 ./bin/castle --addr 127.0.0.1:8080 --db ./castle/demo.db
 ```
 
@@ -180,7 +180,7 @@ This is the right pattern when you want long-lived agent context, distinct tool 
 
 ## Adapter Contract and Step Outputs (Phase 1.5)
 
-Adapters implement the `AdapterPlugin` gRPC service defined in `proto/overlord/v1/adapter_plugin.proto`. The `Info()` RPC returns metadata about the adapter including:
+Adapters implement the `AdapterPlugin` gRPC service defined in `proto/v1/adapter_plugin.proto`. The `Info()` RPC returns metadata about the adapter including:
 
 - `ConfigSchema` — JSON schema for agent-level configuration (on the `agent { }` block)
 - `InputSchema` — JSON schema for step-level input (in the `input { }` block on each step)
@@ -240,8 +240,8 @@ func main() {
 
 Use the existing plugin mains as references:
 
-- `overseer/cmd/overlord-adapter-copilot/main.go`
-- `overseer/cmd/overlord-adapter-mcp/main.go`
-- `overseer/cmd/overlord-adapter-noop/main.go`
+- `overseer/cmd/overseer-adapter-copilot/main.go`
+- `overseer/cmd/overseer-adapter-mcp/main.go`
+- `overseer/cmd/overseer-adapter-noop/main.go`
 
 If you add a new plugin, wire it through the conformance harness before relying on it in a real workflow. That is the fastest way to confirm `Info`, `OpenSession`, `Execute`, `Permit`, and `CloseSession` all obey the host contract.

@@ -23,4 +23,4 @@ states:
   verified    terminal=true   success=true
 
 plugins required:
-  shell   (search: $OVERLORD_PLUGINS, ~/.overlord/plugins)
+  shell   (search: $OVERSEER_PLUGINS, ~/.overseer/plugins)

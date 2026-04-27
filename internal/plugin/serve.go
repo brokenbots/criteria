@@ -14,12 +14,12 @@ const (
 	// PluginName is the dispenser key shared between host and plugin process.
 	PluginName = "adapter"
 
-	adapterPluginServiceName        = "overlord.v1.AdapterPluginService"
-	adapterPluginInfoMethod         = "/overlord.v1.AdapterPluginService/Info"
-	adapterPluginOpenSessionMethod  = "/overlord.v1.AdapterPluginService/OpenSession"
-	adapterPluginExecuteMethod      = "/overlord.v1.AdapterPluginService/Execute"
-	adapterPluginPermitMethod       = "/overlord.v1.AdapterPluginService/Permit"
-	adapterPluginCloseSessionMethod = "/overlord.v1.AdapterPluginService/CloseSession"
+	adapterPluginServiceName        = "overseer.v1.AdapterPluginService"
+	adapterPluginInfoMethod         = "/overseer.v1.AdapterPluginService/Info"
+	adapterPluginOpenSessionMethod  = "/overseer.v1.AdapterPluginService/OpenSession"
+	adapterPluginExecuteMethod      = "/overseer.v1.AdapterPluginService/Execute"
+	adapterPluginPermitMethod       = "/overseer.v1.AdapterPluginService/Permit"
+	adapterPluginCloseSessionMethod = "/overseer.v1.AdapterPluginService/CloseSession"
 )
 
 // Service is the host-facing contract for an adapter plugin implementation.

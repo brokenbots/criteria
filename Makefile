@@ -1,5 +1,5 @@
 .PHONY: help bootstrap tidy build plugins proto proto-lint proto-check-drift \
-	test validate clean
+	test test-conformance lint-imports validate clean
 
 # Default target: list available targets.
 help:
@@ -17,9 +17,9 @@ build: ## Build the overseer binary (output: bin/overseer)
 	mkdir -p bin
 	go build -o bin/overseer ./cmd/overseer
 
-plugins: ## Build adapter plugin binaries (output: bin/overlord-adapter-*)
+plugins: ## Build adapter plugin binaries (output: bin/overseer-adapter-*)
 	mkdir -p bin
-	@for d in ./cmd/overlord-adapter-*; do \
+	@for d in ./cmd/overseer-adapter-*; do \
 		if [ -d "$$d" ]; then \
 			name=$${d##*/}; \
 			go build -o bin/$$name $$d; \
@@ -42,6 +42,13 @@ test: ## Run all unit tests
 	go test -race ./...
 	cd sdk      && go test -race ./...
 	cd workflow && go test -race ./...
+
+test-conformance: ## Run SDK conformance suite (in-memory Subject)
+	cd sdk && go test -race -run TestConformance ./conformance/...
+
+lint-imports: ## Enforce import-graph boundaries (see tools/import-lint/)
+	go run ./tools/import-lint .
+	@echo "Import boundaries OK."
 
 validate: build ## Validate all standalone example workflows
 	@for f in examples/*.hcl; do \

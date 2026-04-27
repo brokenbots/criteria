@@ -14,7 +14,7 @@ import (
 
 	"google.golang.org/protobuf/types/known/structpb"
 
-	"github.com/brokenbots/overseer/cmd/overlord-adapter-mcp/mcpclient"
+	"github.com/brokenbots/overseer/cmd/overseer-adapter-mcp/mcpclient"
 	pluginpkg "github.com/brokenbots/overseer/internal/plugin"
 	pb "github.com/brokenbots/overseer/sdk/pb/v1"
 )
@@ -146,7 +146,7 @@ func (b *MCPBridge) OpenSession(ctx context.Context, req *pb.OpenSessionRequest)
 
 	handshakeCtx, cancel := context.WithTimeout(ctx, initTimeout)
 	defer cancel()
-	if err := state.client.Initialize(handshakeCtx, "overlord-adapter-mcp", pluginVersion); err != nil {
+	if err := state.client.Initialize(handshakeCtx, "overseer-adapter-mcp", pluginVersion); err != nil {
 		_ = shutdownSession(state)
 		return nil, fmt.Errorf("mcp: initialize: %w", err)
 	}

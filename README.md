@@ -16,14 +16,17 @@ Overseer is the standalone execution engine for [Overlord](https://github.com/br
 ## Quickstart
 
 ```bash
-# Build
+# Install (requires Go 1.23+)
+go install github.com/brokenbots/overseer/cmd/overseer@latest
+
+# Or build from source
 make build
 
-# Validate an example workflow
-./bin/overseer validate examples/hello.hcl
-
 # Run a workflow locally (no Castle required)
-./bin/overseer apply examples/hello.hcl
+overseer apply examples/hello.hcl
+
+# With event output captured
+overseer apply examples/hello.hcl --events-file /tmp/events.ndjson
 ```
 
 ## Development

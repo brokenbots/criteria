@@ -30,9 +30,9 @@ func buildNoopPlugin(t *testing.T) string {
 		t.Fatal("resolve caller path")
 	}
 	moduleRoot := filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
-	pluginBin := filepath.Join(t.TempDir(), "overlord-adapter-noop")
+	pluginBin := filepath.Join(t.TempDir(), "overseer-adapter-noop")
 
-	cmd := exec.Command("go", "build", "-o", pluginBin, "./cmd/overlord-adapter-noop")
+	cmd := exec.Command("go", "build", "-o", pluginBin, "./cmd/overseer-adapter-noop")
 	cmd.Dir = moduleRoot
 	output, err := cmd.CombinedOutput()
 	if err != nil {

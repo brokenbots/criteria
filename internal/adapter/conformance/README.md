@@ -40,7 +40,7 @@ func TestMyAdapter_Conformance(t *testing.T) {
 ```go
 func TestMyPlugin_Conformance(t *testing.T) {
     conformance.RunPlugin(t, "myplugin",
-        filepath.Join("..", "..", "..", "bin", "overlord-adapter-myplugin"),
+        filepath.Join("..", "..", "..", "bin", "overseer-adapter-myplugin"),
         conformance.Options{
             StepConfig: map[string]string{"prompt": "hello"},
             AllowedOutcomes: []string{"success", "failure", "needs_review"},

@@ -126,7 +126,7 @@ func renderPlanOutput(ctx context.Context, workflowPath string, overrides map[st
 		b.WriteString("  (none)\n")
 	} else {
 		for _, p := range plugs {
-			b.WriteString(fmt.Sprintf("  %s   (search: $OVERLORD_PLUGINS, ~/.overlord/plugins)\n", p))
+			b.WriteString(fmt.Sprintf("  %s   (search: $OVERSEER_PLUGINS, ~/.overseer/plugins)\n", p))
 		}
 	}
 

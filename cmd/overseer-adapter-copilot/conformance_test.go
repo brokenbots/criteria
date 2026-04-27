@@ -22,7 +22,7 @@ func TestMain(m *testing.M) {
 // and accessible (as OVERLORD_COPILOT_BIN or "copilot" on PATH). Gate with
 // COPILOT_E2E=1 to run in CI once the CLI is available:
 //
-//	COPILOT_E2E=1 go test ./cmd/overlord-adapter-copilot/... -run Conformance
+//	COPILOT_E2E=1 go test ./cmd/overseer-adapter-copilot/... -run Conformance
 //
 // Without the gate, only the plugin binary build and Info response are checked.
 func TestCopilotPluginConformance(t *testing.T) {
@@ -70,9 +70,9 @@ func buildCopilotPluginPath() string {
 		panic("resolve caller path")
 	}
 	moduleRoot := filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
-	pluginBin := filepath.Join(os.TempDir(), "overlord-adapter-copilot-test")
+	pluginBin := filepath.Join(os.TempDir(), "overseer-adapter-copilot-test")
 
-	cmd := exec.Command("go", "build", "-o", pluginBin, "./cmd/overlord-adapter-copilot")
+	cmd := exec.Command("go", "build", "-o", pluginBin, "./cmd/overseer-adapter-copilot")
 	cmd.Dir = moduleRoot
 	output, err := cmd.CombinedOutput()
 	if err != nil {

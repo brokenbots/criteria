@@ -1,9 +1,9 @@
-// Overlord event schema.
+// Overseer event schema.
 //
 // The `Envelope` message is the wire format for every event flowing between
 // Overseer, Castle, and Parapet. Field numbers in `payload` are **stable** once
-// assigned — see WORKSTREAM Phase 1.1 §3.1. A new event type must use the next
-// unused field number and never reuse an old one.
+// assigned (see CONTRIBUTING.md for the proto versioning policy). A new event
+// type must use the next unused field number and never reuse an old one.
 syntax = "proto3";
 
 package overseer.v1;
@@ -16,7 +16,7 @@ option go_package = "github.com/brokenbots/overseer/sdk/pb/v1;overseerv1";
 // Envelope is the wire format for every event.
 message Envelope {
   // Protocol version. Always 1 for this package; bump only with a new
-  // `overlord.vN` package.
+  // `overseer.vN` package.
   int32 schema_version = 1;
 
   // Run the event belongs to.

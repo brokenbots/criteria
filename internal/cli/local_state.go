@@ -37,7 +37,7 @@ type StepCheckpoint struct {
 
 // stateDir returns the base directory for Overseer state files.
 // It respects the OVERSEER_STATE_DIR environment variable; defaults to
-// ~/.overlord. If the directory cannot be resolved or created, writes are
+// ~/.overseer. If the directory cannot be resolved or created, writes are
 // soft-degraded (callers log the error and continue).
 func stateDir() (string, error) {
 	if d := os.Getenv("OVERSEER_STATE_DIR"); d != "" {
@@ -47,7 +47,7 @@ func stateDir() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".overlord"), nil
+	return filepath.Join(home, ".overseer"), nil
 }
 
 func stateFilePath() (string, error) {

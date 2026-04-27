@@ -21,4 +21,4 @@ states:
   skip_deploy    terminal=true   success=true
 
 plugins required:
-  noop   (search: $OVERLORD_PLUGINS, ~/.overlord/plugins)
+  noop   (search: $OVERSEER_PLUGINS, ~/.overseer/plugins)

@@ -50,4 +50,4 @@ states:
   failed    terminal=true   success=false
 
 plugins required:
-  copilot   (search: $OVERLORD_PLUGINS, ~/.overlord/plugins)
+  copilot   (search: $OVERSEER_PLUGINS, ~/.overseer/plugins)

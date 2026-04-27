@@ -14,7 +14,7 @@ An Overseer workflow defines:
 ### Architecture model
 
 - **Overseer** compiles HCL workflows to FSM graphs and executes them by invoking adapters.
-- **Adapters** are out-of-process plugins discovered from `$OVERLORD_PLUGINS` or `~/.overlord/plugins` (see [plugins.md](plugins.md)).
+- **Adapters** are out-of-process plugins discovered from `$OVERSEER_PLUGINS` or `~/.overseer/plugins` (see [plugins.md](plugins.md)).
 - **Castle** (optional) is the orchestrator server that persists runs, enables resumption after crashes, and provides UI (Parapet) and approval RPCs.
 
 ### Execution modes
@@ -176,10 +176,10 @@ A workflow that uses an agent must open it before use and close it when done. Th
 
 ### Plugin discovery
 
-Agents (and standalone adapter steps) resolve to plugin binaries named `overlord-adapter-<name>`. Discovery order:
+Agents (and standalone adapter steps) resolve to plugin binaries named `overseer-adapter-<name>`. Discovery order:
 
-1. `$OVERLORD_PLUGINS/<name>`
-2. `~/.overlord/plugins/<name>`
+1. `$OVERSEER_PLUGINS/<name>`
+2. `~/.overseer/plugins/<name>`
 
 See [plugins.md](plugins.md) for the plugin wire protocol and adapter development guide.
 
@@ -691,9 +691,9 @@ Currently, variable defaults are the only source. Per-run overrides (e.g., `over
 
 Phase 1.6 splits the monorepo into:
 
-- **`overlord-overseer`**: Workflow engine, compiler, and standalone CLI (this document).
-- **`overlord-castle`**: Orchestrator server, Parapet UI, and Castle RPC.
-- **`overlord-proto`**: Shared protobuf contracts and event schemas.
+- **`github.com/brokenbots/overseer`**: Workflow engine, compiler, and standalone CLI (this document).
+- **`github.com/brokenbots/overlord`** (castle): Orchestrator server, Parapet UI, and Castle RPC.
+- **`github.com/brokenbots/overseer/sdk/pb/v1`**: Shared protobuf contracts and event schemas.
 
 See [PLAN.md §1.6](../PLAN.md) for the split roadmap. Parallel regions and sub-workflow composition are targeted for post-split language work (likely Phase 1.7+).
 

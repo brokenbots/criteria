@@ -9,8 +9,8 @@ import (
 )
 
 const (
-	pluginBinaryPrefix = "overlord-adapter-"
-	pluginsEnvVar      = "OVERLORD_PLUGINS"
+	pluginBinaryPrefix = "overseer-adapter-"
+	pluginsEnvVar      = "OVERSEER_PLUGINS"
 )
 
 var ErrInvalidAdapterName = errors.New("invalid adapter name")
@@ -57,7 +57,7 @@ func DiscoverBinary(name string) (string, error) {
 
 	home, err := os.UserHomeDir()
 	if err == nil && strings.TrimSpace(home) != "" {
-		candidate := filepath.Join(home, ".overlord", "plugins", binary)
+		candidate := filepath.Join(home, ".overseer", "plugins", binary)
 		searched = append(searched, candidate)
 		if isRunnableFile(candidate) {
 			return candidate, nil

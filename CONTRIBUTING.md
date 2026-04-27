@@ -23,6 +23,37 @@ make bootstrap
 5. If you changed proto files, run `make proto` and commit the generated code.
 6. Open a pull request against `main`.
 
+## Conformance and integration tests
+
+`make test-conformance` runs the SDK conformance suite against the in-memory stub Subject:
+
+```bash
+make test-conformance   # fast; no external dependencies
+```
+
+The conformance suite is the authoritative proof that the `OverseerService` contract is implementable by any compliant orchestrator. If you build your own orchestrator, validate compliance by implementing `conformance.Subject` and running:
+
+```go
+import "github.com/brokenbots/overseer/sdk/conformance"
+
+func TestMyOverseer(t *testing.T) {
+    conformance.Run(t, &mySubject{})
+}
+```
+
+See [`sdk/conformance/`](sdk/conformance/) for the interface and the in-memory reference implementation.
+
+## Published SDK contract
+
+`sdk/` is a published Go sub-module at `github.com/brokenbots/overseer/sdk`. The following are **breaking SDK changes** requiring a version bump:
+
+- Any change to the `conformance.Subject` interface.
+- Any change to `ServiceHandler` or `ServiceClient` method signatures.
+- Any change to event proto field numbers in `proto/v1/events.proto` (field numbers are permanent).
+- Removal or rename of exported SDK functions or types.
+
+Additive changes (new fields, new events, new conformance test cases) are non-breaking at minor or patch level.
+
 ## Proto changes
 
 Proto source files live in `proto/v1/`. After editing them:
