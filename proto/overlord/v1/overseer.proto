@@ -2,7 +2,10 @@
 //
 // Authentication: all RPCs except `Register` require a token (Bearer header,
 // `X-Overseer-Token` header, or `overseer-token` Connect metadata). Tokens are
-// SHA-256 compared against `overseers.token_hash` in the Castle store.
+// SHA-256 compared against `overseers.token_hash` in the orchestrator store.
+//
+// Caller ownership: mutating RPCs enforce that the authenticated caller owns
+// the affected overseer or run. Implementations MUST enforce this contract.
 syntax = "proto3";
 
 package overlord.v1;
@@ -13,24 +16,46 @@ import "overlord/v1/events.proto";
 option go_package = "github.com/brokenbots/overlord/shared/pb/overlord/v1;overlordv1";
 
 service OverseerService {
-  // Register an Overseer with Castle. Returns the assigned overseer id and an
-  // auth token that the Overseer must present on every subsequent RPC.
+  // Register enrolls an Overseer with the orchestrator. Returns the assigned
+  // overseer id and an auth token the Overseer must present on all subsequent
+  // RPCs.
+  //
+  // Bootstrap gate: implementations MUST require a bootstrap token (e.g. via
+  // an `X-Castle-Bootstrap` header) before accepting Register. When no
+  // bootstrap mechanism is configured, implementations MUST return
+  // Unimplemented. This prevents open self-registration in production.
   rpc Register(RegisterRequest) returns (RegisterResponse);
 
-  // Heartbeat advances the Overseer's `last_seen_at`. Castle marks Overseers
-  // offline whose heartbeat is older than 30s.
+  // Heartbeat advances the Overseer's `last_seen_at`. The orchestrator marks
+  // Overseers offline whose heartbeat is older than a configurable threshold.
+  //
+  // The authenticated caller's identity is the canonical overseer being
+  // updated. Implementations MUST ignore any request-supplied overseer_id and
+  // use the caller's authenticated identity instead.
   rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
 
-  // CreateRun mints a new run id for the Overseer. Castle is the sole source
-  // of run ids.
+  // CreateRun mints a new run owned by the authenticated caller. The
+  // orchestrator is the sole source of run ids.
+  //
+  // The run is always recorded under the authenticated caller's overseer ID.
+  // The request's `overseer_id` field is informational only. Implementations
+  // MUST ignore any request-supplied overseer_id and use the caller's
+  // authenticated identity.
   rpc CreateRun(CreateRunRequest) returns (Run);
 
-  // ReattachRun lets an Overseer query Castle about an in-flight run after a
-  // crash or restart. Castle returns the current status, last active step,
-  // and whether the Overseer may resume execution.
+  // ReattachRun lets an Overseer query the orchestrator about an in-flight run
+  // after a crash or restart. The orchestrator returns the current status,
+  // last active step, and whether the Overseer may resume execution.
+  //
+  // Implementations MUST reject the request with PERMISSION_DENIED if the
+  // authenticated caller does not own the target run's overseer.
   rpc ReattachRun(ReattachRunRequest) returns (ReattachRunResponse);
 
   // Resume delivers a named signal (or an approval decision) to a paused run.
+  //
+  // Implementations MUST reject the request with PERMISSION_DENIED if the
+  // authenticated caller does not own the target run's overseer.
+  //
   // This RPC is SDK contract surface: field names, payload semantics, and
   // error-reason strings are stable for third-party orchestrators.
   rpc Resume(ResumeRequest) returns (ResumeResponse);
@@ -40,10 +65,19 @@ service OverseerService {
   // correlation_id). On reconnect the client may include `since_seq` in
   // request metadata to request replay of events that were persisted but not
   // yet acknowledged.
+  //
+  // Implementations MUST verify on every envelope that the authenticated caller
+  // owns the envelope's run_id. On the first violation the stream MUST be
+  // rejected with PERMISSION_DENIED; envelopes MUST NOT be silently dropped.
   rpc SubmitEvents(stream Envelope) returns (stream Ack);
 
-  // Control is a long-lived server-stream that Castle uses to push commands
-  // to a connected Overseer (cancel a run, send a prompt to an agent, ...).
+  // Control is a long-lived server-stream that the orchestrator uses to push
+  // commands to a connected Overseer (cancel a run, send a prompt to an
+  // agent, ...).
+  //
+  // The authenticated caller's identity determines the registry key for the
+  // Control subscription. Implementations MUST ignore any request-supplied
+  // overseer_id and use the caller's authenticated identity.
   rpc Control(ControlSubscribeRequest) returns (stream ControlMessage);
 }
 
