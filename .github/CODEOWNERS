@@ -1,0 +1,20 @@
+# CODEOWNERS — reviewed automatically on every pull request.
+#
+# GitHub team handles: replace @brokenbots/maintainers, @brokenbots/platform,
+# and @brokenbots/sdk with real team slugs once the org teams are created.
+# Coordinate with the org admin before merging — unresolved handles are
+# silently ignored by GitHub, so CODEOWNERS review will not be required
+# until the teams exist.
+
+# Default owner for everything not matched below.
+*                           @brokenbots/maintainers
+
+# Wire contract — changes ripple into the overlord repo; require platform review.
+/proto/                     @brokenbots/maintainers @brokenbots/platform
+
+# Published SDK surface — any change here is a potential breaking change.
+/sdk/                       @brokenbots/maintainers @brokenbots/sdk
+
+# CI / repo configuration — require maintainer sign-off.
+/.github/                   @brokenbots/maintainers
+/Makefile                   @brokenbots/maintainers
