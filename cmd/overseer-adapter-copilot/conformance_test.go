@@ -19,7 +19,7 @@ func TestMain(m *testing.M) {
 
 // TestCopilotPluginConformance runs the full W04 conformance suite against the
 // built copilot plugin binary. It requires the `copilot` CLI to be installed
-// and accessible (as OVERLORD_COPILOT_BIN or "copilot" on PATH). Gate with
+// and accessible (as OVERSEER_COPILOT_BIN or "copilot" on PATH). Gate with
 // COPILOT_E2E=1 to run in CI once the CLI is available:
 //
 //	COPILOT_E2E=1 go test ./cmd/overseer-adapter-copilot/... -run Conformance

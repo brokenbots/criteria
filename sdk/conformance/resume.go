@@ -7,7 +7,7 @@ import (
 
 	"connectrpc.com/connect"
 
-	pb "github.com/brokenbots/overseer/sdk/pb/v1"
+	pb "github.com/brokenbots/overseer/sdk/pb/overseer/v1"
 	overseer "github.com/brokenbots/overseer/sdk"
 )
 
@@ -22,9 +22,9 @@ import (
 //     reason="run_not_paused".
 //  4. Approval: ApprovalRequested puts run in paused state; Resume with
 //     decision=approved returns accepted=true and persists ApprovalDecision.
-//  5. (Skipped) Durable resume across orchestrator restart — deferred to
-//     overlord post-split cleanup. See workstream 02 (castle-mode-integration)
-//     and the overlord post-split durability work.
+//  5. (Skipped) Durable resume across orchestrator restart — deferred until
+//     the durable-resume capability lands (tracked in PLAN.md as a future
+//     conformance lane).
 func testResumeCorrectness(t *testing.T, s Subject) {
 	t.Run("WaitSignalResume", func(t *testing.T) {
 		testResumeWaitSignal(t, s)
@@ -40,11 +40,10 @@ func testResumeCorrectness(t *testing.T, s Subject) {
 		testResumeApprovalDecision(t, s)
 	})
 	t.Run("DurableAcrossRestart", func(t *testing.T) {
-		// Deferred to overlord post-split cleanup work.
-		// When the durability lane (W02) lands the reconnect-resume path,
-		// this skip lifts and the test asserts that a Resume call from a
-		// disconnected overseer can recover the signal on reconnect.
-		t.Skip("TODO(W02/durability): durable resume across orchestrator restart is not yet implemented; lift this skip when W02's durable resume path is merged")
+		// Deferred: when the durable-resume path lands, this skip lifts and
+		// the test asserts that a Resume call from a disconnected overseer
+		// can recover the signal on reconnect. Tracked in PLAN.md.
+		t.Skip("durable resume across orchestrator restart not yet implemented; tracked in PLAN.md")
 	})
 }
 

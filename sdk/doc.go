@@ -8,10 +8,7 @@
 // service stubs, envelope and payload types, and a small set of helper
 // functions that every implementation needs.
 //
-// Pre-split module path:  github.com/brokenbots/overseer/sdk
-// Post-split module path: github.com/brokenbots/overseer/sdk
-// (The import path changes in W08/W09; call sites in the orchestrator
-// migrate then. Until that point, this in-monorepo path is canonical.)
+// Module path: github.com/brokenbots/overseer/sdk
 //
 // # What this package exports
 //
@@ -22,10 +19,8 @@
 //     compatibility aliases for the same types; prefer the Service* forms for
 //     new code.
 //   - Envelope and payload type aliases for every event shape defined in
-//     proto/overlord/v1/events.proto.
-//   - [NewEnvelope], [TypeString], [IsTerminal] — thin wrappers over the
-//     shared/events helpers. After W08 the implementations move into this
-//     package; call sites do not change.
+//     proto/overseer/v1/events.proto.
+//   - [NewEnvelope], [TypeString], [IsTerminal] — event helpers.
 //   - [SchemaVersion] — the current event protocol version constant.
 //
 // # What this package does NOT export
@@ -38,20 +33,16 @@
 //   - Run-state machine helpers (the orchestrator decides what "paused" means
 //     from the semantic events it receives; the execution engine does not
 //     prescribe a state model).
-//   - Any type or symbol defined under castle/internal/, overseer/internal/,
-//     workflow/, or parapet/.
+//   - Any type or symbol defined under internal/ or workflow/.
 //
 // # Type alias vs wrapper function rule
 //
 // Types are re-exported as Go type aliases (type Foo = pb.Foo). Aliases
 // preserve assignability: code that already holds a *pb.RunStarted can pass
-// it as an *overseer.RunStarted without conversion. This is important during
-// the migration period (W07) before all consumers have moved to the SDK path.
+// it as an *overseer.RunStarted without conversion.
 //
 // Functions are re-exported as wrapper functions (func F(...) { return impl.F(...) }).
-// Wrappers allow the implementation to move from shared/events into this
-// package (W08) without requiring call sites to change. A wrapper adds one
-// stack frame; this is acceptable at the SDK boundary.
+// A wrapper adds one stack frame; this is acceptable at the SDK boundary.
 //
 // # Auth contract
 //
@@ -71,8 +62,8 @@
 // # Schema version semantics
 //
 // [SchemaVersion] = 1 is the v0.1 SDK. The value matches the proto package
-// major version (overlord.v1). A bump to SchemaVersion 2 introduces a new
-// proto package (overlord.v2) and a new SDK minor release; both sides must
+// major version (overseer.v1). A bump to SchemaVersion 2 introduces a new
+// proto package (overseer.v2) and a new SDK minor release; both sides must
 // coordinate. Until a real versioning need arises, schema negotiation helpers
 // are out of scope.
 package overseer

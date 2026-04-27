@@ -1,9 +1,9 @@
-// Package events provides thin helpers over the generated Overlord event
-// envelope type. The wire contract itself lives in proto/overlord/v1/*.proto
+// Package events provides thin helpers over the generated overseer event
+// envelope type. The wire contract itself lives in proto/overseer/v1/*.proto
 // and its generated Go code is the single source of truth for payload shapes.
 //
 // Callers that need to read or construct envelope payloads should work with
-// the generated types in shared/pb/overlord/v1 directly; the helpers here
+// the generated types in sdk/pb/overseer/v1 directly; the helpers here
 // cover the few cross-cutting concerns (schema version, envelope builder,
 // type discriminator, terminal-event check) that aren't generated.
 package events
@@ -14,11 +14,11 @@ import (
 
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	pb "github.com/brokenbots/overseer/sdk/pb/v1"
+	pb "github.com/brokenbots/overseer/sdk/pb/overseer/v1"
 )
 
 // SchemaVersion is the current event protocol version. Bump only with a new
-// overlord.vN proto package.
+// overseer.vN proto package.
 const SchemaVersion = 1
 
 // NewEnvelope builds a *pb.Envelope for runID with the given payload message.

@@ -44,7 +44,7 @@ For local Copilot-backed runs you also need the `copilot` CLI available. The rep
 gh extension install github/gh-copilot
 ```
 
-If the CLI is installed somewhere non-standard, set `OVERLORD_COPILOT_BIN=/path/to/copilot`.
+If the CLI is installed somewhere non-standard, set `OVERSEER_COPILOT_BIN=/path/to/copilot`.
 
 ## HCL Surface
 
@@ -224,14 +224,14 @@ Step outputs also flow into `for_each` iteration contexts. See [workflow.md](wor
 
 ## Writing Your Own Plugin
 
-The host-side plugin boundary lives in `overseer/internal/plugin/`. Adapter contract tests live in `overseer/internal/adapter/conformance/`.
+The host-side plugin boundary lives in `internal/plugin/`. Adapter contract tests live in `internal/adapter/conformance/`.
 
 The smallest plugin entrypoint is:
 
 ```go
 package main
 
-import pluginpkg "github.com/brokenbots/overlord/overseer/internal/plugin"
+import pluginpkg "github.com/brokenbots/overseer/internal/plugin"
 
 func main() {
     pluginpkg.Serve(&MyPlugin{})
@@ -240,8 +240,8 @@ func main() {
 
 Use the existing plugin mains as references:
 
-- `overseer/cmd/overseer-adapter-copilot/main.go`
-- `overseer/cmd/overseer-adapter-mcp/main.go`
+- `cmd/overseer-adapter-copilot/main.go`
+- `cmd/overseer-adapter-mcp/main.go`
 - `overseer/cmd/overseer-adapter-noop/main.go`
 
 If you add a new plugin, wire it through the conformance harness before relying on it in a real workflow. That is the fastest way to confirm `Info`, `OpenSession`, `Execute`, `Permit`, and `CloseSession` all obey the host contract.

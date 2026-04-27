@@ -12,16 +12,16 @@
 //
 // # Portability
 //
-// The conformance package imports only from shared/sdk/overseer, shared/pb,
-// and standard-library / third-party dependencies. It never imports from
-// castle/internal/ or any other orchestrator-specific package. Subject
-// implementations supply the implementation-specific plumbing.
+// The conformance package imports only from this module's published SDK
+// (sdk and sdk/pb) and standard-library / third-party dependencies. It never
+// imports from any orchestrator-specific package. Subject implementations
+// supply the implementation-specific plumbing.
 //
 // # Documented limitations (t.Skip)
 //
 // Some behavioural properties cannot be enforced at v0.1.0 because the
-// underlying capability is deferred to overlord post-split cleanup. Each skip
-// has a named test path and a forward-pointer comment.
+// underlying capability is deferred (e.g. durability across restarts, tracked
+// in PLAN.md). Each skip has a named test path and a forward-pointer comment.
 package conformance
 
 import (

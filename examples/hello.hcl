@@ -8,7 +8,7 @@ workflow "hello" {
   step "say_hello" {
     adapter = "shell"
     input {
-      command = "echo hello from overlord"
+      command = "echo hello from overseer"
     }
 
     outcome "success" { transition_to = "done" }

@@ -35,17 +35,17 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 
 	pluginpkg "github.com/brokenbots/overseer/internal/plugin"
-	pb "github.com/brokenbots/overseer/sdk/pb/v1"
+	pb "github.com/brokenbots/overseer/sdk/pb/overseer/v1"
 )
 
 const (
 	pluginName    = "copilot"
 	pluginVersion = "0.1.0"
 
-	defaultBinEnv = "OVERLORD_COPILOT_BIN"
+	defaultBinEnv = "OVERSEER_COPILOT_BIN"
 	defaultBin    = "copilot"
 
-	includeSensitivePermissionDetailsEnv = "OVERLORD_COPILOT_INCLUDE_SENSITIVE_PERMISSION_DETAILS"
+	includeSensitivePermissionDetailsEnv = "OVERSEER_COPILOT_INCLUDE_SENSITIVE_PERMISSION_DETAILS"
 
 	resultPrefix = "result:"
 )

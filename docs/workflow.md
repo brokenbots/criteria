@@ -687,13 +687,12 @@ sub_workflow "smoke_test" {
 
 Currently, variable defaults are the only source. Per-run overrides (e.g., `overseer apply --var env=prod`) are planned post-1.5.
 
-### Immediately-next work: Phase 1.6 repo split
+### Repository layout
 
-Phase 1.6 splits the monorepo into:
+The overseer project ships as a single repository:
 
-- **`github.com/brokenbots/overseer`**: Workflow engine, compiler, and standalone CLI (this document).
-- **`github.com/brokenbots/overlord`** (castle): Orchestrator server, Parapet UI, and Castle RPC.
-- **`github.com/brokenbots/overseer/sdk/pb/v1`**: Shared protobuf contracts and event schemas.
+- **`github.com/brokenbots/overseer`** — workflow engine, compiler, and standalone CLI (this document); the `cmd/overseer-adapter-*` plugin binaries live here too.
+- **`github.com/brokenbots/overseer/sdk`** — published Go SDK; shared protobuf contracts and event schemas live under `sdk/pb/overseer/v1`.
 
-See [PLAN.md §1.6](../PLAN.md) for the split roadmap. Parallel regions and sub-workflow composition are targeted for post-split language work (likely Phase 1.7+).
+The orchestrator side (Castle server + Parapet UI) is developed separately at `github.com/brokenbots/overlord` and consumes the published SDK. Parallel regions and sub-workflow composition are targeted as future language work — see [PLAN.md](../PLAN.md).
 

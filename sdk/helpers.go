@@ -3,8 +3,8 @@ package overseer
 import "github.com/brokenbots/overseer/events"
 
 // SchemaVersion is the current event protocol version. It matches the proto
-// package major version (overlord.v1). A bump requires a new proto package
-// (overlord.v2) and a coordinated SDK minor release.
+// package major version (overseer.v1). A bump requires a new proto package
+// (overseer.v2) and a coordinated SDK minor release.
 const SchemaVersion = events.SchemaVersion
 
 // NewEnvelope builds an [Envelope] for runID stamped with [SchemaVersion] and
