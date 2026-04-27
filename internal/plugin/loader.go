@@ -118,7 +118,7 @@ func (l *DefaultLoader) Resolve(ctx context.Context, name string) (Plugin, error
 
 	client := hplugin.NewClient(&hplugin.ClientConfig{
 		HandshakeConfig: HandshakeConfig,
-		Plugins:         PluginMap(nil),
+		Plugins:          PluginMap(),
 		// Use a process command decoupled from per-step timeout contexts.
 		// Session and loader shutdown are the only teardown mechanisms.
 		Cmd:              exec.Command(path),

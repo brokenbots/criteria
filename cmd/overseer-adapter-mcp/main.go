@@ -1,9 +1,9 @@
 package main
 
 import (
-	pluginpkg "github.com/brokenbots/overseer/internal/plugin"
+	pluginhost "github.com/brokenbots/overseer/sdk/pluginhost"
 )
 
 func main() {
-	pluginpkg.Serve(&MCPBridge{sessions: map[string]*sessionState{}})
+	pluginhost.Serve(&MCPBridge{sessions: map[string]*sessionState{}})
 }

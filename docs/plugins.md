@@ -225,19 +225,39 @@ Step outputs also flow into `for_each` iteration contexts. See [workflow.md](wor
 
 ## Writing Your Own Plugin
 
-The host-side plugin boundary lives in `internal/plugin/`. Adapter contract tests live in `internal/adapter/conformance/`.
+The public plugin SDK lives in `sdk/pluginhost`. External authors import:
+
+```
+github.com/brokenbots/overseer/sdk/pluginhost
+```
 
 The smallest plugin entrypoint is:
 
 ```go
 package main
 
-import pluginpkg "github.com/brokenbots/overseer/internal/plugin"
+import (
+    "context"
+    pluginhost "github.com/brokenbots/overseer/sdk/pluginhost"
+    pb "github.com/brokenbots/overseer/sdk/pb/overseer/v1"
+)
+
+type myPlugin struct{}
+
+func (p *myPlugin) Info(ctx context.Context, req *pb.InfoRequest) (*pb.InfoResponse, error) {
+    return &pb.InfoResponse{Name: "my-plugin", Version: "0.1.0"}, nil
+}
+
+// ... implement OpenSession, Execute, Permit, CloseSession ...
 
 func main() {
-    pluginpkg.Serve(&MyPlugin{})
+    pluginhost.Serve(&myPlugin{})
 }
 ```
+
+Implement `pluginhost.Service` and call `pluginhost.Serve` from `main()`. The
+`Execute` method receives a `pluginhost.ExecuteEventSender`; send at least one
+`*pb.ExecuteResult` event before returning `nil`, or return a non-nil error.
 
 Use the existing plugin mains as references:
 
