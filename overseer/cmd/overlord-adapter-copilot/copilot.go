@@ -122,6 +122,7 @@ func (p *copilotPlugin) Info(_ context.Context, _ *pb.InfoRequest) (*pb.InfoResp
 		},
 		ConfigSchema: &pb.AdapterSchemaProto{Fields: map[string]*pb.ConfigFieldProto{
 			"model":             {Type: "string", Doc: "Copilot model to use for this session."},
+			"reasoning_effort": {Type: "string", Doc: "Reasoning effort level for the model: low, medium, high, xhigh."},
 			"working_directory": {Type: "string", Doc: "Working directory for tool invocations."},
 			"max_turns":         {Type: "number", Doc: "Maximum assistant turns per Execute call (default: unlimited)."},
 			"system_prompt":     {Type: "string", Doc: "System prompt prepended at session open."},
@@ -168,6 +169,16 @@ func (p *copilotPlugin) OpenSession(ctx context.Context, req *pb.OpenSessionRequ
 	p.mu.Lock()
 	p.sessions[pluginSessionID] = s
 	p.mu.Unlock()
+
+	if model := strings.TrimSpace(cfg["model"]); model != "" {
+		var opts *copilot.SetModelOptions
+		if effort := strings.TrimSpace(cfg["reasoning_effort"]); effort != "" {
+			opts = &copilot.SetModelOptions{ReasoningEffort: &effort}
+		}
+		if err := s.session.SetModel(ctx, model, opts); err != nil {
+			return nil, fmt.Errorf("copilot: set model at open: %w", err)
+		}
+	}
 
 	return &pb.OpenSessionResponse{}, nil
 }
@@ -292,7 +303,11 @@ func (p *copilotPlugin) Execute(ctx context.Context, req *pb.ExecuteRequest, sin
 	defer unsubscribe()
 
 	if model := strings.TrimSpace(req.GetConfig()["model"]); model != "" {
-		if err := s.session.SetModel(ctx, model, nil); err != nil {
+		var opts *copilot.SetModelOptions
+		if effort := strings.TrimSpace(req.GetConfig()["reasoning_effort"]); effort != "" {
+			opts = &copilot.SetModelOptions{ReasoningEffort: &effort}
+		}
+		if err := s.session.SetModel(ctx, model, opts); err != nil {
 			return fmt.Errorf("copilot: set model %q: %w", model, err)
 		}
 	}
