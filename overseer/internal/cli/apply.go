@@ -36,6 +36,7 @@ type applyOptions struct {
 	tlsCert      string
 	tlsKey       string
 	varOverrides []string // raw "key=value" pairs from --var flags
+	output       string   // "auto" | "concise" | "json"
 }
 
 func NewApplyCmd() *cobra.Command {
@@ -55,7 +56,7 @@ func NewApplyCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&opts.castleURL, "castle", envOrDefault("OVERSEER_CASTLE_URL", ""), "Castle base URL (optional for local mode)")
-	cmd.Flags().StringVar(&opts.eventsPath, "events-file", "", "ND-JSON events output path in local mode (default stdout)")
+	cmd.Flags().StringVar(&opts.eventsPath, "events-file", "", "Write ND-JSON events to this path in local mode (always written when set, regardless of --output)")
 	cmd.Flags().StringVar(&opts.name, "name", envOrDefault("OVERSEER_NAME", ""), "Overseer name (Castle mode, defaults to hostname)")
 	cmd.Flags().StringVar(&opts.codec, "castle-codec", envOrDefault("OVERSEER_CASTLE_CODEC", "proto"), "Connect codec: proto or json")
 	cmd.Flags().StringVar(&opts.tlsMode, "castle-tls", envOrDefault("OVERSEER_CASTLE_TLS", ""), "TLS mode: disable|tls|mtls")
@@ -63,6 +64,7 @@ func NewApplyCmd() *cobra.Command {
 	cmd.Flags().StringVar(&opts.tlsCert, "tls-cert", envOrDefault("OVERSEER_TLS_CERT", ""), "Path to client cert PEM")
 	cmd.Flags().StringVar(&opts.tlsKey, "tls-key", envOrDefault("OVERSEER_TLS_KEY", ""), "Path to client key PEM")
 	cmd.Flags().StringArrayVar(&opts.varOverrides, "var", nil, "Override a workflow variable: key=value (repeatable)")
+	cmd.Flags().StringVar(&opts.output, "output", envOrDefault("OVERSEER_OUTPUT", "auto"), "Standalone output format: auto|concise|json (auto: concise on TTY, json when piped)")
 	return cmd
 }
 
@@ -78,13 +80,18 @@ func runApply(ctx context.Context, opts applyOptions) error {
 
 func runApplyLocal(ctx context.Context, opts applyOptions) error {
 	log := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	out, cleanup, err := localEventsWriter(opts.eventsPath)
+
+	mode, err := resolveOutputMode(opts.output, os.Stdout)
+	if err != nil {
+		return err
+	}
+	jsonOut, cleanup, err := openNDJSONWriter(opts.eventsPath, mode)
 	if err != nil {
 		return err
 	}
 	defer cleanup()
 
-	resumeLocalInFlightRuns(ctx, log, out)
+	resumeLocalInFlightRuns(ctx, log, jsonOut, mode)
 
 	src, graph, loader, err := compileForExecution(ctx, opts.workflowPath, log)
 	if err != nil {
@@ -97,23 +104,20 @@ func runApplyLocal(ctx context.Context, opts applyOptions) error {
 	}
 
 	runID := uuid.NewString()
-	sink := &run.LocalSink{
-		RunID: runID,
-		Out:   out,
-		CheckpointFn: func(step string, attempt int) {
-			cp := &StepCheckpoint{
-				RunID:        runID,
-				Workflow:     graph.Name,
-				WorkflowPath: opts.workflowPath,
-				CurrentStep:  step,
-				Attempt:      attempt,
-				StartedAt:    time.Now().UTC(),
-			}
-			if cpErr := WriteStepCheckpoint(cp); cpErr != nil {
-				log.Warn("failed to write step checkpoint; crash recovery may not work", "error", cpErr)
-			}
-		},
+	checkpointFn := func(step string, attempt int) {
+		cp := &StepCheckpoint{
+			RunID:        runID,
+			Workflow:     graph.Name,
+			WorkflowPath: opts.workflowPath,
+			CurrentStep:  step,
+			Attempt:      attempt,
+			StartedAt:    time.Now().UTC(),
+		}
+		if cpErr := WriteStepCheckpoint(cp); cpErr != nil {
+			log.Warn("failed to write step checkpoint; crash recovery may not work", "error", cpErr)
+		}
 	}
+	sink := buildLocalSink(runID, jsonOut, mode, graph.StepOrder(), checkpointFn)
 
 	log.Info("starting local run",
 		"run_id", runID,
@@ -317,17 +321,6 @@ func compileForExecution(ctx context.Context, workflowPath string, log *slog.Log
 	return src, graph, loader, nil
 }
 
-func localEventsWriter(eventsPath string) (io.Writer, func(), error) {
-	if strings.TrimSpace(eventsPath) == "" {
-		return os.Stdout, func() {}, nil
-	}
-	f, err := os.OpenFile(eventsPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
-	if err != nil {
-		return nil, nil, err
-	}
-	return f, func() { _ = f.Close() }, nil
-}
-
 func ensureLocalModeSupported(graph *workflow.FSMGraph) error {
 	// Signal-based wait nodes require an orchestrator to deliver the signal.
 	for _, wn := range graph.Waits {
@@ -360,7 +353,7 @@ func ensureLocalModeSupported(graph *workflow.FSMGraph) error {
 	return nil
 }
 
-func resumeLocalInFlightRuns(ctx context.Context, log *slog.Logger, out io.Writer) {
+func resumeLocalInFlightRuns(ctx context.Context, log *slog.Logger, out io.Writer, mode outputMode) {
 	checkpoints, err := ListStepCheckpoints()
 	if err != nil {
 		log.Warn("could not list step checkpoints; skipping local crash recovery", "error", err)
@@ -373,11 +366,11 @@ func resumeLocalInFlightRuns(ctx context.Context, log *slog.Logger, out io.Write
 		if strings.TrimSpace(cp.CastleURL) != "" {
 			continue
 		}
-		resumeOneLocalRun(ctx, log, cp, out)
+		resumeOneLocalRun(ctx, log, cp, out, mode)
 	}
 }
 
-func resumeOneLocalRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint, out io.Writer) {
+func resumeOneLocalRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint, out io.Writer, mode outputMode) {
 	graph, err := parseWorkflowFromPath(cp.WorkflowPath)
 	if err != nil {
 		log.Warn("cannot parse workflow for crashed local run; abandoning", "run_id", cp.RunID, "error", err)
@@ -393,7 +386,7 @@ func resumeOneLocalRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint
 	nextAttempt := cp.Attempt + 1
 	maxAttempts := 1 + graph.Policy.MaxStepRetries
 	if nextAttempt > maxAttempts {
-		sink := &run.LocalSink{RunID: cp.RunID, Out: out}
+		sink := buildLocalSink(cp.RunID, out, mode, graph.StepOrder(), nil)
 		reason := fmt.Sprintf("exceeded max_step_retries on resume at step %q (attempt %d)", cp.CurrentStep, nextAttempt)
 		sink.OnRunFailed(reason, cp.CurrentStep)
 		RemoveStepCheckpoint(cp.RunID)
@@ -404,19 +397,16 @@ func resumeOneLocalRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint
 	loader.RegisterBuiltin(shell.Name, plugin.BuiltinFactoryForAdapter(shell.New()))
 	defer loader.Shutdown(context.Background())
 
-	sink := &run.LocalSink{
-		RunID: cp.RunID,
-		Out:   out,
-		CheckpointFn: func(step string, attempt int) {
-			next := *cp
-			next.CurrentStep = step
-			next.Attempt = attempt
-			next.StartedAt = time.Now().UTC()
-			if cpErr := WriteStepCheckpoint(&next); cpErr != nil {
-				log.Warn("failed to update local checkpoint", "run_id", cp.RunID, "error", cpErr)
-			}
-		},
+	checkpointFn := func(step string, attempt int) {
+		next := *cp
+		next.CurrentStep = step
+		next.Attempt = attempt
+		next.StartedAt = time.Now().UTC()
+		if cpErr := WriteStepCheckpoint(&next); cpErr != nil {
+			log.Warn("failed to update local checkpoint", "run_id", cp.RunID, "error", cpErr)
+		}
 	}
+	sink := buildLocalSink(cp.RunID, out, mode, graph.StepOrder(), checkpointFn)
 	sink.OnStepResumed(cp.CurrentStep, nextAttempt, "overseer_restart")
 
 	eng := engine.New(graph, loader, sink)
