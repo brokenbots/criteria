@@ -6,16 +6,10 @@ workflow "two_agent_loop" {
   agent "executor" {
     adapter  = "copilot"
     on_crash = "respawn"
-    config {
-      role = "executor"
-    }
   }
 
   agent "reviewer" {
     adapter = "copilot"
-    config {
-      role = "reviewer"
-    }
   }
 
   step "open_executor" {

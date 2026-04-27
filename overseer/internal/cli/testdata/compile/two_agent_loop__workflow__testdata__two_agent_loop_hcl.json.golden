@@ -11,17 +11,13 @@
       "name": "executor",
       "adapter": "copilot",
       "on_crash": "respawn",
-      "config_keys": [
-        "role"
-      ]
+      "config_keys": null
     },
     {
       "name": "reviewer",
       "adapter": "copilot",
       "on_crash": "fail",
-      "config_keys": [
-        "role"
-      ]
+      "config_keys": null
     }
   ],
   "steps": [

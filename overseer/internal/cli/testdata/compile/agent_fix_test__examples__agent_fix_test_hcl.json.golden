@@ -32,7 +32,6 @@
       "adapter": "copilot",
       "timeout": "30m0s",
       "input_keys": [
-        "model",
         "prompt"
       ],
       "allow_tools": null,

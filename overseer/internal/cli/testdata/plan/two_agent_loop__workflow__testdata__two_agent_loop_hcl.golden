@@ -7,9 +7,9 @@ variables:
 
 agents:
   executor   adapter=copilot   on_crash=respawn
-    config: role=executor
+    config: (none)
   reviewer   adapter=copilot   on_crash=fail
-    config: role=reviewer
+    config: (none)
 
 steps (declaration order):
   open_executor   agent=executor   lifecycle=open

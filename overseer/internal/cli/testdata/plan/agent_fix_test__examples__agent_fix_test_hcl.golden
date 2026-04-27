@@ -14,7 +14,7 @@ steps (declaration order):
     allow_tools: (none)
     outcomes: success -> verified, failure -> fix
   fix   adapter=copilot   timeout=30m0s
-    input keys: model, prompt
+    input keys: prompt
     allow_tools: (none)
     outcomes: success -> test, needs_review -> awaiting_human, failure -> failed
 

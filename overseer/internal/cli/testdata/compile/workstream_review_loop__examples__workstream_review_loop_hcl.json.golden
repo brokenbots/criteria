@@ -3,24 +3,18 @@
   "initial_state": "load_executor_agent_file",
   "target_state": "done",
   "policy": {
-    "MaxTotalSteps": 2000,
+    "MaxTotalSteps": 50,
     "MaxStepRetries": 0
   },
   "agents": [
-    {
-      "name": "cleanup",
-      "adapter": "copilot",
-      "on_crash": "fail",
-      "config_keys": [
-        "max_turns"
-      ]
-    },
     {
       "name": "executor",
       "adapter": "copilot",
       "on_crash": "fail",
       "config_keys": [
-        "max_turns"
+        "max_turns",
+        "model",
+        "reasoning_effort"
       ]
     },
     {
@@ -28,7 +22,9 @@
       "adapter": "copilot",
       "on_crash": "fail",
       "config_keys": [
-        "max_turns"
+        "max_turns",
+        "model",
+        "reasoning_effort"
       ]
     }
   ],
@@ -54,25 +50,6 @@
     },
     {
       "name": "load_reviewer_agent_file",
-      "adapter": "shell",
-      "timeout": "10s",
-      "input_keys": [
-        "command"
-      ],
-      "allow_tools": null,
-      "outcomes": [
-        {
-          "name": "failure",
-          "transition_to": "failed"
-        },
-        {
-          "name": "success",
-          "transition_to": "load_cleanup_agent_file"
-        }
-      ]
-    },
-    {
-      "name": "load_cleanup_agent_file",
       "adapter": "shell",
       "timeout": "10s",
       "input_keys": [
@@ -120,23 +97,62 @@
         },
         {
           "name": "success",
-          "transition_to": "open_cleanup"
+          "transition_to": "execute_init"
         }
       ]
     },
     {
-      "name": "open_cleanup",
-      "agent": "cleanup",
-      "lifecycle": "open",
-      "input_keys": null,
-      "allow_tools": null,
+      "name": "execute_init",
+      "agent": "executor",
+      "input_keys": [
+        "prompt"
+      ],
+      "allow_tools": [
+        "*"
+      ],
       "outcomes": [
         {
           "name": "failure",
           "transition_to": "close_reviewer_abort"
         },
         {
-          "name": "success",
+          "name": "needs_approval",
+          "transition_to": "review_init"
+        },
+        {
+          "name": "needs_review",
+          "transition_to": "review_init"
+        }
+      ]
+    },
+    {
+      "name": "review_init",
+      "agent": "reviewer",
+      "input_keys": [
+        "prompt"
+      ],
+      "allow_tools": [
+        "*"
+      ],
+      "outcomes": [
+        {
+          "name": "approved",
+          "transition_to": "commit_and_finish"
+        },
+        {
+          "name": "changes_requested",
+          "transition_to": "execute"
+        },
+        {
+          "name": "failure",
+          "transition_to": "close_reviewer_abort"
+        },
+        {
+          "name": "needs_approval",
+          "transition_to": "execute"
+        },
+        {
+          "name": "needs_review",
           "transition_to": "execute"
         }
       ]
@@ -148,23 +164,63 @@
         "prompt"
       ],
       "allow_tools": [
-        "read",
-        "write",
-        "shell:*",
-        "mcp"
+        "*"
       ],
       "outcomes": [
         {
           "name": "failure",
-          "transition_to": "close_cleanup_abort"
+          "transition_to": "close_reviewer_abort"
         },
         {
           "name": "needs_approval",
-          "transition_to": "review"
+          "transition_to": "verify"
         },
         {
           "name": "needs_review",
+          "transition_to": "verify"
+        }
+      ]
+    },
+    {
+      "name": "verify",
+      "adapter": "shell",
+      "timeout": "2m0s",
+      "input_keys": [
+        "command"
+      ],
+      "allow_tools": null,
+      "outcomes": [
+        {
+          "name": "failure",
+          "transition_to": "fix_verify"
+        },
+        {
+          "name": "success",
           "transition_to": "review"
+        }
+      ]
+    },
+    {
+      "name": "fix_verify",
+      "agent": "executor",
+      "input_keys": [
+        "prompt"
+      ],
+      "allow_tools": [
+        "*"
+      ],
+      "outcomes": [
+        {
+          "name": "failure",
+          "transition_to": "close_reviewer_abort"
+        },
+        {
+          "name": "needs_approval",
+          "transition_to": "verify"
+        },
+        {
+          "name": "needs_review",
+          "transition_to": "verify"
         }
       ]
     },
@@ -175,15 +231,12 @@
         "prompt"
       ],
       "allow_tools": [
-        "read",
-        "write",
-        "shell:*",
-        "mcp"
+        "*"
       ],
       "outcomes": [
         {
           "name": "approved",
-          "transition_to": "run_cleanup"
+          "transition_to": "commit_and_finish"
         },
         {
           "name": "changes_requested",
@@ -191,7 +244,7 @@
         },
         {
           "name": "failure",
-          "transition_to": "close_cleanup_abort"
+          "transition_to": "close_reviewer_abort"
         },
         {
           "name": "needs_approval",
@@ -204,88 +257,18 @@
       ]
     },
     {
-      "name": "run_cleanup",
-      "agent": "cleanup",
-      "input_keys": [
-        "prompt"
-      ],
-      "allow_tools": [
-        "read",
-        "write",
-        "shell:*",
-        "mcp"
-      ],
-      "outcomes": [
-        {
-          "name": "failure",
-          "transition_to": "close_cleanup_abort"
-        },
-        {
-          "name": "needs_fix",
-          "transition_to": "execute_fix_once"
-        },
-        {
-          "name": "success",
-          "transition_to": "close_cleanup_done"
-        }
-      ]
-    },
-    {
-      "name": "execute_fix_once",
+      "name": "commit_and_finish",
       "agent": "executor",
       "input_keys": [
         "prompt"
       ],
       "allow_tools": [
-        "read",
-        "write",
-        "shell:*",
-        "mcp"
+        "*"
       ],
       "outcomes": [
         {
           "name": "failure",
-          "transition_to": "close_cleanup_abort"
-        },
-        {
-          "name": "fixed",
-          "transition_to": "run_cleanup_final"
-        }
-      ]
-    },
-    {
-      "name": "run_cleanup_final",
-      "agent": "cleanup",
-      "input_keys": [
-        "prompt"
-      ],
-      "allow_tools": [
-        "read",
-        "write",
-        "shell:*",
-        "mcp"
-      ],
-      "outcomes": [
-        {
-          "name": "failure",
-          "transition_to": "close_cleanup_abort"
-        },
-        {
-          "name": "success",
-          "transition_to": "close_cleanup_done"
-        }
-      ]
-    },
-    {
-      "name": "close_cleanup_done",
-      "agent": "cleanup",
-      "lifecycle": "close",
-      "input_keys": null,
-      "allow_tools": null,
-      "outcomes": [
-        {
-          "name": "failure",
-          "transition_to": "close_reviewer_done"
+          "transition_to": "close_reviewer_abort"
         },
         {
           "name": "success",
@@ -324,23 +307,6 @@
         {
           "name": "success",
           "transition_to": "done"
-        }
-      ]
-    },
-    {
-      "name": "close_cleanup_abort",
-      "agent": "cleanup",
-      "lifecycle": "close",
-      "input_keys": null,
-      "allow_tools": null,
-      "outcomes": [
-        {
-          "name": "failure",
-          "transition_to": "close_reviewer_abort"
-        },
-        {
-          "name": "success",
-          "transition_to": "close_reviewer_abort"
         }
       ]
     },
@@ -394,19 +360,17 @@
   "step_order": [
     "load_executor_agent_file",
     "load_reviewer_agent_file",
-    "load_cleanup_agent_file",
     "open_executor",
     "open_reviewer",
-    "open_cleanup",
+    "execute_init",
+    "review_init",
     "execute",
+    "verify",
+    "fix_verify",
     "review",
-    "run_cleanup",
-    "execute_fix_once",
-    "run_cleanup_final",
-    "close_cleanup_done",
+    "commit_and_finish",
     "close_reviewer_done",
     "close_executor_done",
-    "close_cleanup_abort",
     "close_reviewer_abort",
     "close_executor_abort"
   ],
