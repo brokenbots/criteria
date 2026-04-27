@@ -81,6 +81,9 @@ type Engine struct {
 	branchScheduler     BranchScheduler
 	// resumedVars, when non-nil, overrides SeedVarsFromGraph at run start (W04).
 	resumedVars map[string]cty.Value
+	// varOverrides, when non-nil, overlays CLI-supplied key=value pairs on top
+	// of the graph variable defaults at run start.
+	varOverrides map[string]string
 	// resumedIter, when non-nil, sets RunState.Iter at run start (W07).
 	// Used during crash-recovery reattach when a for_each was active.
 	resumedIter *workflow.IterCursor
@@ -143,9 +146,15 @@ func (e *Engine) runLoop(ctx context.Context, sessions *plugin.SessionManager, c
 	if e.resumedVars != nil {
 		vars = e.resumedVars
 	} else {
-		// Fresh run: emit OnVariableSet for each variable that has a default.
+		// Apply CLI var overrides on top of defaults.
+		if len(e.varOverrides) > 0 {
+			vars = workflow.ApplyVarOverrides(e.graph, vars, e.varOverrides)
+		}
+		// Fresh run: emit OnVariableSet for each variable that has a value.
 		for name, node := range e.graph.Variables {
-			if node.Default != cty.NilVal {
+			if ov, ok := e.varOverrides[name]; ok {
+				e.sink.OnVariableSet(name, ov, "override")
+			} else if node.Default != cty.NilVal {
 				e.sink.OnVariableSet(name, workflow.CtyValueToString(node.Default), "default")
 			}
 		}

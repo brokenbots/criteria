@@ -35,6 +35,7 @@ type applyOptions struct {
 	tlsCA        string
 	tlsCert      string
 	tlsKey       string
+	varOverrides []string // raw "key=value" pairs from --var flags
 }
 
 func NewApplyCmd() *cobra.Command {
@@ -61,6 +62,7 @@ func NewApplyCmd() *cobra.Command {
 	cmd.Flags().StringVar(&opts.tlsCA, "tls-ca", envOrDefault("OVERSEER_TLS_CA", ""), "Path to CA bundle PEM")
 	cmd.Flags().StringVar(&opts.tlsCert, "tls-cert", envOrDefault("OVERSEER_TLS_CERT", ""), "Path to client cert PEM")
 	cmd.Flags().StringVar(&opts.tlsKey, "tls-key", envOrDefault("OVERSEER_TLS_KEY", ""), "Path to client key PEM")
+	cmd.Flags().StringArrayVar(&opts.varOverrides, "var", nil, "Override a workflow variable: key=value (repeatable)")
 	return cmd
 }
 
@@ -132,7 +134,7 @@ func runApplyLocal(ctx context.Context, opts applyOptions) error {
 	// src (raw HCL bytes) is consumed only by Castle mode for signed payload delivery;
 	// local mode has no signing step, so src is intentionally unused here.
 	_ = src
-	eng := engine.New(graph, loader, sink)
+	eng := engine.New(graph, loader, sink, engine.WithVarOverrides(parseVarOverrides(opts.varOverrides)))
 	if err := eng.Run(ctx); err != nil {
 		log.Error("local run failed", "run_id", runID, "error", err)
 		return err
@@ -203,7 +205,7 @@ func runApplyCastle(ctx context.Context, opts applyOptions) error {
 	defer removeLocalRunState()
 	defer RemoveStepCheckpoint(runID)
 
-	eng := engine.New(graph, loader, sink)
+	eng := engine.New(graph, loader, sink, engine.WithVarOverrides(parseVarOverrides(opts.varOverrides)))
 	if err := eng.Run(runCtx); err != nil {
 		log.Error("run failed", "error", err)
 		return err

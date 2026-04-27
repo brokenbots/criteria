@@ -156,6 +156,47 @@ func SeedVarsFromGraph(g *FSMGraph) map[string]cty.Value {
 	return vars
 }
 
+// ApplyVarOverrides merges CLI-supplied key=value pairs into an existing vars
+// map produced by SeedVarsFromGraph. Only keys that match declared variables
+// are applied; unknown keys are silently ignored. Values are coerced to the
+// declared variable type (only string is supported today).
+func ApplyVarOverrides(g *FSMGraph, vars map[string]cty.Value, overrides map[string]string) map[string]cty.Value {
+	if len(overrides) == 0 {
+		return vars
+	}
+	varObj, _ := vars["var"]
+	existing := map[string]cty.Value{}
+	if varObj != cty.NilVal && varObj.Type().IsObjectType() {
+		for k := range varObj.Type().AttributeTypes() {
+			existing[k] = varObj.GetAttr(k)
+		}
+	}
+	for name, raw := range overrides {
+		node, ok := g.Variables[name]
+		if !ok {
+			continue
+		}
+		switch node.Type {
+		case cty.String:
+			existing[name] = cty.StringVal(raw)
+		case cty.Number:
+			var f float64
+			if _, err := fmt.Sscanf(raw, "%g", &f); err == nil {
+				existing[name] = cty.NumberFloatVal(f)
+			}
+		case cty.Bool:
+			existing[name] = cty.BoolVal(raw == "true" || raw == "1")
+		}
+	}
+	out := map[string]cty.Value{"steps": vars["steps"]}
+	if len(existing) > 0 {
+		out["var"] = cty.ObjectVal(existing)
+	} else {
+		out["var"] = cty.EmptyObjectVal
+	}
+	return out
+}
+
 // WithStepOutputs returns a new vars map with the given step's outputs merged
 // under vars["steps"][stepName]. Existing step entries are preserved.
 func WithStepOutputs(vars map[string]cty.Value, stepName string, outputs map[string]string) map[string]cty.Value {

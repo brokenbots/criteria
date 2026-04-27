@@ -64,6 +64,15 @@ func WithBranchScheduler(s BranchScheduler) Option {
 	}
 }
 
+// WithVarOverrides applies CLI-supplied key=value pairs on top of the
+// variable defaults at run start. Values are always treated as strings and
+// coerced to the declared variable type by the eval layer.
+func WithVarOverrides(overrides map[string]string) Option {
+	return func(e *Engine) {
+		e.varOverrides = overrides
+	}
+}
+
 // isSuccessOutcome returns true when the outcome name indicates a successful
 // iteration. By convention, outcome names that equal "success" (case-
 // insensitive) are treated as successes; all other names set AnyFailed=true

@@ -14,12 +14,13 @@ import (
 )
 
 func NewPlanCmd() *cobra.Command {
-	return &cobra.Command{
+	var varOverrides []string
+	cmd := &cobra.Command{
 		Use:   "plan <workflow.hcl>",
 		Short: "Render a human-readable execution preview",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			out, err := renderPlanOutput(cmd.Context(), args[0])
+			out, err := renderPlanOutput(cmd.Context(), args[0], parseVarOverrides(varOverrides))
 			if err != nil {
 				return err
 			}
@@ -27,9 +28,11 @@ func NewPlanCmd() *cobra.Command {
 			return err
 		},
 	}
+	cmd.Flags().StringArrayVar(&varOverrides, "var", nil, "Override a workflow variable: key=value (repeatable)")
+	return cmd
 }
 
-func renderPlanOutput(ctx context.Context, workflowPath string) (string, error) {
+func renderPlanOutput(ctx context.Context, workflowPath string, overrides map[string]string) (string, error) {
 	spec, graph, err := parseCompileForCli(ctx, workflowPath)
 	if err != nil {
 		return "", err
@@ -49,11 +52,13 @@ func renderPlanOutput(ctx context.Context, workflowPath string) (string, error) 
 		for _, name := range varNames {
 			v := graph.Variables[name]
 			typeName := v.Type.FriendlyName()
-			defaultVal := "(required)"
-			if v.Default != cty.NilVal {
-				defaultVal = workflow.CtyValueToString(v.Default)
+			displayVal := "(required)"
+			if ov, ok := overrides[name]; ok {
+				displayVal = ov + "  (override)"
+			} else if v.Default != cty.NilVal {
+				displayVal = workflow.CtyValueToString(v.Default)
 			}
-			b.WriteString(fmt.Sprintf("  %s: %s = %s\n", name, typeName, defaultVal))
+			b.WriteString(fmt.Sprintf("  %s: %s = %s\n", name, typeName, displayVal))
 		}
 	}
 	b.WriteString("\n")
