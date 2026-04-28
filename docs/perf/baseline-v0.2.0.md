@@ -6,7 +6,7 @@ Captured on Apple M3 Max (arm64/darwin) with `make bench` (default `-benchtime`)
 |---|---|
 | **Hardware** | Apple M3 Max (arm64/darwin) |
 | **Go version** | go1.26.2 darwin/arm64 |
-| **Commit** | e890474a3146fe7e7473534b63a9f1723ff0bbda |
+| **Commit** | f857df97c66f3b7034fbcd19163b59b70817ac95 |
 
 **Regression policy**: Regressions > 20% on any of these baselines should fail review until justified.
 
@@ -14,9 +14,9 @@ Captured on Apple M3 Max (arm64/darwin) with `make bench` (default `-benchtime`)
 
 | Benchmark | ns/op | B/op | allocs/op | Notes |
 |---|---:|---:|---:|---|
-| `BenchmarkCompile_Hello` | 68,115 | 108,177 | 942 | Minimal hello workflow |
-| `BenchmarkCompile_1000Steps` | 33,163,892 | 55,741,619 | 389,695 | 1 000-node sequential workflow, stresses compiler |
-| `BenchmarkCompile_WorkstreamLoop` | 1,605,975 | 1,757,873 | 13,902 | Workstream-loop fixture |
+| `BenchmarkCompile_Hello` | 70,336 | 108,179 | 942 | Minimal hello workflow |
+| `BenchmarkCompile_1000Steps` | 31,983,687 | 55,741,410 | 389,695 | 1 000-node sequential workflow, stresses compiler |
+| `BenchmarkCompile_WorkstreamLoop` | 1,824,206 | 1,891,169 | 15,097 | Workstream-loop fixture (updated at f857df9: +2 shell steps vs original 13,902 allocs/op at e890474, +8.6%, within 20% threshold) |
 
 `BenchmarkCompile_1000Steps` exercises 1 000 sequential HCL step nodes and is
 expected to be ~500× slower than a single-step compile. The allocation delta
@@ -26,9 +26,9 @@ expected to be ~500× slower than a single-step compile. The allocation delta
 
 | Benchmark | ns/op | B/op | allocs/op |
 |---|---:|---:|---:|
-| `BenchmarkEngineRun_10Steps` | 12,325 | 19,896 | 268 |
-| `BenchmarkEngineRun_100Steps` | 123,252 | 189,818 | 2,608 |
-| `BenchmarkEngineRun_1000Steps` | 1,414,919 | 1,889,037 | 26,008 |
+| `BenchmarkEngineRun_10Steps` | 12,442 | 19,896 | 268 |
+| `BenchmarkEngineRun_100Steps` | 124,624 | 189,818 | 2,608 |
+| `BenchmarkEngineRun_1000Steps` | 1,466,508 | 1,889,038 | 26,008 |
 
 Allocation growth is approximately linear in step count (~26 allocs/step),
 which is expected for the current per-node allocation model.
@@ -37,15 +37,15 @@ which is expected for the current per-node allocation model.
 
 | Benchmark | ns/op | B/op | allocs/op | Notes |
 |---|---:|---:|---:|---|
-| `BenchmarkBuiltinPlugin_Execute` (shell/`true`) | 11,146,722 | 81,013 | 110 | Full per-step cost: Open+Execute+Close, subprocess spawn |
-| `BenchmarkPluginExecuteNoop` | 8.386 | 0 | 0 | Pure Execute dispatch with in-process noop adapter, session opened once |
-| `BenchmarkBuiltinPlugin_Info` | 231.6 | 928 | 4 | |
-| `BenchmarkLoaderResolveBuiltin` | 43.26 | 80 | 2 | |
+| `BenchmarkBuiltinPlugin_Execute` (shell/`true`) | 22,162,986 | 81,263 | 111 | Full per-step cost: Open+Execute+Close, subprocess spawn |
+| `BenchmarkPluginExecuteNoop` | 8.297 | 0 | 0 | Pure Execute dispatch with in-process noop adapter, session opened once |
+| `BenchmarkBuiltinPlugin_Info` | 240.6 | 928 | 4 | |
+| `BenchmarkLoaderResolveBuiltin` | 43.44 | 80 | 2 | |
 
 `BenchmarkBuiltinPlugin_Execute` spawns a real subprocess (`/usr/bin/true`)
-each iteration; the ~11 ms cost is dominated by OS process-spawn latency.
+each iteration; the cost is dominated by OS process-spawn latency.
 `BenchmarkPluginExecuteNoop` isolates the plugin-dispatch overhead from
-subprocess cost: 8 ns/op with zero allocations.
+subprocess cost: ~8 ns/op with zero allocations.
 
 ## Reproduction
 

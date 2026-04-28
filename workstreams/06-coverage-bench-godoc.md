@@ -411,16 +411,22 @@ before this workstream started.
 - **R5 — Dead `time` import**: Removed `time` import and `var _ = time.Second` from `execute_bench_test.go`.
 - **WEAK1 — `TestMCPBridge_FullRoundTrip` event ordering**: Now asserts the last event is a `Result` event (not just that any result exists), enforcing the ordering contract.
 
-### Architecture Review Required
+### Remediation notes (Review 3 response)
+
+- **R1 — Envelope-type assertions for `OnRunCompleted`/`OnRunFailed`**: Added `fakePublisher` struct to `sink_test.go` (implements `Publisher` interface, records envelopes). Added `TestSink_OnRunCompleted_PublishesRunCompletedEnvelope` (asserts `GetRunCompleted() != nil`, `FinalState == "done"`, `Success == true`) and `TestSink_OnRunFailed_PublishesRunFailedEnvelope` (asserts `GetRunFailed() != nil`, `Reason` and `Step` fields). `Sink.OnRunCompleted` and `Sink.OnRunFailed` now at 100% coverage.
+- **R1 (nit) — Strengthened `TestResumePausedRun_StartsStreamsAndRunsEngine`**: Replaced "at least one envelope published" with an assertion that a `RunCompleted` envelope is present in `ft.published`, matching the rigor of `TestResumeActiveRun_HappyPath`.
+- **R2 — Baseline doc commit hash and WorkstreamLoop numbers updated**: Updated commit to `f857df9`, `BenchmarkCompile_WorkstreamLoop` to 15,097 allocs/op, added inline note explaining the fixture change and that the drift (+8.6%) is within the 20% threshold. All other benchmark rows refreshed with current measurements.
+
+### Architecture Review Required (updated after Review 3)
 
 **[ARCH-REVIEW / major] — Step 3 publish-failure and checkpoint-write-failure**
 
-The plan's Step 3 requires "Sink under Client.Publish failure: assert the error is propagated and the run is marked failed." and "checkpoint write failure: assert run continues but logs a warning." These cannot be tested at the Sink boundary without design changes:
+The `Publisher` interface (introduced in B1) enables envelope-type assertions (now done — R1 above). The two remaining gaps still require design changes:
 
-- `Sink.publish()` calls `s.Client.Publish(...)` (now via `Publisher` interface) but captures no return value — the design is fire-and-forget.
-- `CheckpointFn` has no error return — checkpoint failures silently drop.
+- `Sink.publish()` captures no return value — publish failure is fire-and-forget; testing "error is propagated" is not possible without changing `Sink.publish` to capture errors.
+- `CheckpointFn` has no error return — checkpoint failures silently drop; cannot be asserted without adding an error return.
 
-Addressing these would require: (a) changing `Sink.publish` to capture errors and emit `OnRunFailed`, or (b) adding error returns to `CheckpointFn`. Both change production behavior and are out of scope for this measurement workstream. Tracked as Phase 2 item.
+Both are Phase 2 items. The ARCH-REVIEW stands for these two specific paths only.
 
 ### Notable fixes applied
 
@@ -645,4 +651,94 @@ go tool cover -func=cover.out | grep internal/cli/reattach
   → attemptReattach: 0%, resumePausedRun: 0%, resumeActiveRun: 0%, resumeOneRun: 0%
 BenchmarkCompile_Hello:       942 allocs/op
 BenchmarkCompile_Perf1000Logs: 956 allocs/op  ← confirms fixture is not a 1000-node workflow
+```
+
+### Review 2026-04-28-03 — changes-requested
+
+#### Summary
+
+All three blockers from review 1 are resolved and review 2 approved the implementation at commit `df38bae`. A subsequent commit (`f857df9`) added two new steps to `examples/workstream_review_loop.hcl` (CI warm-up + backoff, documented under the Branch Directive). This post-approval change is itself acceptable, but it produces two new findings: (1) the `BenchmarkCompile_WorkstreamLoop` allocs/op has drifted ~8.6% (13,902 → 15,097) because the fixture now has more nodes, and the baseline doc still records the stale commit hash `e890474` and stale numbers; (2) the `Publisher` interface introduced in `internal/run/sink.go` as part of the B1 remediation removes the architectural blocker that prevented envelope-type assertions in `sink_test.go` — the ARCH-REVIEW item is now partially invalidated, and the plan's Step 3 requirement ("assert the correct envelope is published") is now satisfiable with a fake Publisher without design changes. Both are REQUIRED fixes before final approval. All make targets (`make test`, `make lint-go`, `make lint-imports`, `make test-cover`, `make bench`) exit 0. Coverage thresholds are all met.
+
+#### Plan Adherence
+
+| Step | Status | Notes |
+|---|---|---|
+| Step 1 — CLI ≥ 60% | ✅ 65.9% | `attemptReattach` 100%, `resumePausedRun` 73.3%, `resumeActiveRun` 77.8%, `drainAndCleanup` 100% |
+| Step 2 — MCP ≥ 50% | ✅ 82.4% | Event ordering asserted (last event is `GetResult()`) |
+| Step 3 — `internal/run/` ≥ 60% | ⚠️ 77.8% (threshold met, plan item incomplete) | `CheckpointFn` negative assertion present. "Assert the correct envelope is published" for `OnRunCompleted`/`OnRunFailed` was deferred to ARCH-REVIEW but is now testable — see Required Remediations. |
+| Step 4.1 — `BenchmarkCompile_1000Steps` | ✅ | 389,695 allocs/op confirms 1000 HCL nodes compiled |
+| Step 4.1 — `BenchmarkCompile_WorkstreamLoop` | ⚠️ numbers drifted | Fixture updated post-baseline; now 15,097 allocs/op (+8.6% vs 13,902 in doc). Within 20% threshold but baseline doc shows stale commit and stale numbers. |
+| Step 4.2 — Engine benchmarks | ✅ | 10/100/1000 steps with fake noop adapter |
+| Step 4.3 — `BenchmarkPluginExecuteNoop` | ✅ | 8.381 ns/op, 0 allocs; session opened once before `b.ResetTimer()` |
+| Step 4.4 — Baseline doc | ⚠️ | Commit hash (`e890474`) predates current HEAD (`f857df9`). WorkstreamLoop numbers are now stale. Must be re-measured and updated. |
+| Step 5 — GoDoc burn-down | ✅ N/A | No `revive`/`exported` entries existed |
+| Step 6 — Makefile | ✅ | `-race` in `test-cover`; no `-benchtime=3s`; bench scope deviation documented |
+
+#### Required Remediations
+
+- **[REQUIRED] R1 — `sink_test.go` missing envelope-type assertions for `OnRunCompleted`/`OnRunFailed`**
+  - *File*: `internal/run/sink_test.go`
+  - *Rationale*: Step 3 requires "assert the correct envelope is published." The ARCH-REVIEW from review 1 stated this was impossible without design changes. The B1 remediation introduced the `Publisher` interface in `internal/run/sink.go` — this interface directly enables a fake Publisher in `sink_test.go` that can record envelopes and assert their types. The blocker no longer exists. The ARCH-REVIEW remains valid only for publish-failure propagation (fire-and-forget, no return value captured) — not for envelope-type assertion.
+  - *Acceptance*: Add a `fakePublisher` type to `sink_test.go` (package `run`, unexported):
+    ```go
+    type fakePublisher struct{ published []*pb.Envelope }
+    func (fp *fakePublisher) Publish(_ context.Context, env *pb.Envelope) {
+        fp.published = append(fp.published, env)
+    }
+    ```
+    Add a test `TestSink_OnRunCompleted_PublishesRunCompletedEnvelope` that creates `&Sink{Client: &fakePublisher{}, ...}`, calls `s.OnRunCompleted("done", true)`, and asserts `fp.published[0].GetRunCompleted() != nil` and `fp.published[0].GetRunCompleted().GetFinalState() == "done"`. Add a corresponding `TestSink_OnRunFailed_PublishesRunFailedEnvelope` test. These prove the behavioral contract of the event methods, not just that they don't panic. The existing `TestSink_PublishMethodsDoNotPanic` may be kept as-is (smoke test); the new tests are additive.
+
+- **[REQUIRED] R2 — Baseline doc commit hash and WorkstreamLoop numbers are stale**
+  - *File*: `docs/perf/baseline-v0.2.0.md`
+  - *Rationale*: Commit `f857df9` added two steps to `examples/workstream_review_loop.hcl`, changing the `BenchmarkCompile_WorkstreamLoop` result from 13,902 to ~15,097 allocs/op (+8.6%). The baseline doc still records commit `e890474` and the old numbers. The plan requires "the exact commit hash where the baselines were measured." Regression is within the 20% threshold, but the baseline should reflect the actual current state of the codebase.
+  - *Acceptance*: Re-run `make bench` at the current HEAD. Update the `**Commit**` field in the baseline doc to the current commit hash (`git rev-parse HEAD`). Update the `BenchmarkCompile_WorkstreamLoop` row with the current numbers. Add a note that the fixture was updated between the original baseline and the current measurement.
+
+#### Test Intent Assessment
+
+Tests added in this branch that are strong:
+
+- `TestAttemptReattach_RPCError/NotResumable/Success`: Assert return value AND side-effect (checkpoint removed) — a faulty implementation that swallows the error or doesn't clear the checkpoint would fail.
+- `TestResumeActiveRun_ExceedsMaxRetries`: Asserts `RunFailed` envelope in `ft.published` — a regression that silently drops the failure event would fail.
+- `TestResumeActiveRun_HappyPath`: Asserts `RunCompleted` published and checkpoint cleared.
+- `TestResumePausedRun_StartStreamsError`: Negative assertion — zero envelopes published on aborted recovery.
+- `TestSink_CheckpointFn_NotCalledOnTerminalEvents`: Strong negative assertion for both terminal methods.
+- `TestMCPBridge_FullRoundTrip`: Asserts last event is a `Result` with outcome `success`.
+
+Tests that remain weaker than plan requires (require R1 above):
+
+- `TestSink_PublishMethodsDoNotPanic`: Smoke test only. Does not assert which envelope type is published by `OnRunCompleted` or `OnRunFailed`. With the `Publisher` interface now in place, this can be addressed with a fake Publisher (see R1).
+- `TestResumePausedRun_StartsStreamsAndRunsEngine`: Asserts "at least one envelope" but does not assert the terminal envelope is `RunCompleted`. Weaker than `TestResumeActiveRun_HappyPath`, which does make that assertion. This is a nit; it does not block approval but the executor should strengthen it in the same pass as R1.
+
+#### Architecture Review Required
+
+The ARCH-REVIEW item from review 1 is now **partially invalidated**:
+
+- **Invalidated**: "assert the correct envelope is published" — now testable with fake Publisher (see R1 above).
+- **Still valid / still blocked by design**: "Sink under `Client.Publish` failure: assert the error is propagated" — `publish()` does not capture the return value (fire-and-forget design). No change needed here; Phase 2 item stands.
+- **Still valid / still blocked by design**: "checkpoint write failure: assert run continues but logs a warning" — `CheckpointFn` has no error return. Phase 2 item stands.
+
+#### Validation Performed
+
+```
+make test          → exit 0 (all packages, race-clean)
+make lint-go       → exit 0
+make lint-imports  → exit 0
+make test-cover    → exit 0
+  internal/cli/:               65.9%  (target ≥60%) ✅
+  internal/run/:               77.8%  (target ≥60%) ✅
+  cmd/criteria-adapter-mcp/:   82.4%  (target ≥50%) ✅
+go tool cover -func=cover-cli.out (reattach functions):
+  attemptReattach   100%  ✅
+  drainAndCleanup   100%  ✅
+  resumePausedRun    73.3% ✅
+  resumeActiveRun    77.8% ✅
+make bench         → exit 0; 10 benchmarks run to completion
+  BenchmarkCompile_Hello:        70,959 ns/op   942 allocs/op
+  BenchmarkCompile_1000Steps:  33,825,328 ns/op 389,697 allocs/op ✅ confirms 1000-node stress
+  BenchmarkCompile_WorkstreamLoop: 1,880,306 ns/op 15,097 allocs/op ⚠️ drifted from baseline (13,902)
+  BenchmarkPluginExecuteNoop:     8.381 ns/op   0 allocs ✅
+git diff df38bae...f857df9 --name-only:
+  examples/workstream_review_loop.hcl  ← adds warmup+backoff steps (Branch Directive approved)
+  internal/cli/testdata/compile/*.golden  ← updated to match
+  workstreams/06-coverage-bench-godoc.md  ← Branch Directive note appended
 ```

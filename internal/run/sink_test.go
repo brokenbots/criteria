@@ -2,6 +2,7 @@ package run
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -10,7 +11,18 @@ import (
 	"time"
 
 	servertrans "github.com/brokenbots/criteria/internal/transport/server"
+	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 )
+
+// fakePublisher records all envelopes passed to Publish so tests can assert
+// envelope types without needing a live server transport.
+type fakePublisher struct {
+	published []*pb.Envelope
+}
+
+func (fp *fakePublisher) Publish(_ context.Context, env *pb.Envelope) {
+	fp.published = append(fp.published, env)
+}
 
 // newTestClient constructs a Client pointed at a non-existent server.
 // No actual connections are made at construction time; Publish puts
@@ -81,6 +93,52 @@ func TestSink_CheckpointFn_NotCalledOnTerminalEvents(t *testing.T) {
 	s.OnRunFailed("boom", "step1")
 	if called {
 		t.Error("CheckpointFn must NOT be called by OnRunFailed")
+	}
+}
+
+// TestSink_OnRunCompleted_PublishesRunCompletedEnvelope asserts that
+// OnRunCompleted publishes a RunCompleted envelope with the expected fields.
+func TestSink_OnRunCompleted_PublishesRunCompletedEnvelope(t *testing.T) {
+	fp := &fakePublisher{}
+	s := &Sink{RunID: "test-run", Client: fp, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	s.OnRunCompleted("done", true)
+
+	if len(fp.published) != 1 {
+		t.Fatalf("expected 1 published envelope, got %d", len(fp.published))
+	}
+	rc := fp.published[0].GetRunCompleted()
+	if rc == nil {
+		t.Fatal("expected RunCompleted payload in envelope")
+	}
+	if rc.GetFinalState() != "done" {
+		t.Errorf("FinalState: got %q want %q", rc.GetFinalState(), "done")
+	}
+	if !rc.GetSuccess() {
+		t.Error("Success: got false want true")
+	}
+}
+
+// TestSink_OnRunFailed_PublishesRunFailedEnvelope asserts that OnRunFailed
+// publishes a RunFailed envelope with the expected reason and step fields.
+func TestSink_OnRunFailed_PublishesRunFailedEnvelope(t *testing.T) {
+	fp := &fakePublisher{}
+	s := &Sink{RunID: "test-run", Client: fp, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	s.OnRunFailed("max retries exceeded", "compile")
+
+	if len(fp.published) != 1 {
+		t.Fatalf("expected 1 published envelope, got %d", len(fp.published))
+	}
+	rf := fp.published[0].GetRunFailed()
+	if rf == nil {
+		t.Fatal("expected RunFailed payload in envelope")
+	}
+	if rf.GetReason() != "max retries exceeded" {
+		t.Errorf("Reason: got %q want %q", rf.GetReason(), "max retries exceeded")
+	}
+	if rf.GetStep() != "compile" {
+		t.Errorf("Step: got %q want %q", rf.GetStep(), "compile")
 	}
 }
 

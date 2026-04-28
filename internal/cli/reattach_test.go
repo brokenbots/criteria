@@ -795,9 +795,20 @@ func TestResumePausedRun_StartsStreamsAndRunsEngine(t *testing.T) {
 			t.Error("checkpoint not removed after paused run completion")
 		}
 	}
-	// At least one envelope must have been published (OnRunCompleted).
+	// At least one envelope must have been published, and the terminal
+	// envelope must be RunCompleted (not just "something was published").
 	if len(ft.published) == 0 {
 		t.Fatal("expected at least one published envelope")
+	}
+	hasRunCompleted := false
+	for _, env := range ft.published {
+		if env.GetRunCompleted() != nil {
+			hasRunCompleted = true
+			break
+		}
+	}
+	if !hasRunCompleted {
+		t.Errorf("expected RunCompleted envelope; published envelopes: %d", len(ft.published))
 	}
 }
 
