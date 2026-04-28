@@ -1,5 +1,5 @@
 .PHONY: help bootstrap tidy build plugins proto proto-lint proto-check-drift \
-	test test-conformance lint-imports validate example-plugin ci clean
+	test test-conformance test-flake-watch lint-imports validate example-plugin ci clean
 
 # Default target: list available targets.
 help:
@@ -42,6 +42,9 @@ test: ## Run all unit tests
 	go test -race ./...
 	cd sdk      && go test -race ./...
 	cd workflow && go test -race ./...
+
+test-flake-watch: ## Re-run previously flaky packages under -count=20 -race (not a CI gate; use for local regression checks)
+	go test -race -count=20 ./internal/engine/... ./internal/plugin/...
 
 test-conformance: ## Run SDK conformance suite (in-memory Subject)
 	cd sdk && go test -race -run TestConformance ./conformance/...

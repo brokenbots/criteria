@@ -146,13 +146,19 @@ func (n *stepNode) executeStep(ctx context.Context, deps Deps, step *workflow.St
 		if !ok {
 			return adapter.Result{Outcome: "failure"}, fmt.Errorf("unknown agent %q", step.Agent)
 		}
-		if err := deps.Sessions.Open(ctx, step.Agent, agent.Adapter, step.OnCrash, agent.Config); err != nil {
+		// Plugin process startup is infrastructure, not step execution. Use an
+		// uncancellable context so a short step timeout does not race the process
+		// launch on a loaded host. Step timeouts govern plugin RPC execution;
+		// they must not cancel the session open itself.
+		if err := deps.Sessions.Open(context.WithoutCancel(ctx), step.Agent, agent.Adapter, step.OnCrash, agent.Config); err != nil {
 			return adapter.Result{Outcome: "failure"}, err
 		}
 		return adapter.Result{Outcome: "success"}, nil
 	}
 	if step.Lifecycle == "close" {
-		if err := deps.Sessions.Close(ctx, step.Agent); err != nil {
+		// Same rationale as "open": plugin teardown must complete regardless of
+		// any step-level deadline that may have already expired.
+		if err := deps.Sessions.Close(context.WithoutCancel(ctx), step.Agent); err != nil {
 			return adapter.Result{Outcome: "failure"}, err
 		}
 		return adapter.Result{Outcome: "success"}, nil
@@ -162,7 +168,9 @@ func (n *stepNode) executeStep(ctx context.Context, deps Deps, step *workflow.St
 	}
 
 	anonSessionID := "anon-" + uuid.NewString()
-	if err := deps.Sessions.Open(ctx, anonSessionID, step.Adapter, plugin.OnCrashFail, nil); err != nil {
+	// Anonymous sessions follow the same lifecycle semantics as named-agent
+	// open steps: process startup must not be bounded by the step deadline.
+	if err := deps.Sessions.Open(context.WithoutCancel(ctx), anonSessionID, step.Adapter, plugin.OnCrashFail, nil); err != nil {
 		return adapter.Result{Outcome: "failure"}, err
 	}
 	defer deps.Sessions.Close(context.Background(), anonSessionID)

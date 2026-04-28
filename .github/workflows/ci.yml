@@ -31,7 +31,10 @@ jobs:
         run: ./bin/criteria apply examples/hello.hcl --events-file /tmp/events.ndjson
 
       - name: Run tests (root + sdk + workflow)
-        run: make test
+        run: |
+          go test -race -count=2 ./...
+          (cd sdk      && go test -race -count=2 ./...)
+          (cd workflow && go test -race -count=2 ./...)
 
       - name: Run conformance tests
         run: make test-conformance
