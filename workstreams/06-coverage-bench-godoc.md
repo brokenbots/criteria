@@ -742,3 +742,46 @@ git diff df38bae...f857df9 --name-only:
   internal/cli/testdata/compile/*.golden  ← updated to match
   workstreams/06-coverage-bench-godoc.md  ← Branch Directive note appended
 ```
+
+### Review 2026-04-28-04 — approved
+
+#### Summary
+
+Both required remediations from review 3 are fully resolved. `TestSink_OnRunCompleted_PublishesRunCompletedEnvelope` and `TestSink_OnRunFailed_PublishesRunFailedEnvelope` are present in `internal/run/sink_test.go`, each using the `fakePublisher` type to assert envelope type and field values — `OnRunCompleted` and `OnRunFailed` in `sink.go` are now at 100% coverage. The nit in `TestResumePausedRun_StartsStreamsAndRunsEngine` is addressed: it now asserts a `RunCompleted` envelope is present, matching the rigor of `TestResumeActiveRun_HappyPath`. The baseline doc has been re-measured at commit `f857df97`, the `BenchmarkCompile_WorkstreamLoop` row is updated to 15,097 allocs/op with an inline note explaining the +8.6% fixture change, and all other rows are refreshed. The baseline doc commit `f857df97` is one commit behind HEAD `928c6a2` — this is acceptable because `928c6a2` adds only test code with no impact on benchmarked paths. All make targets exit 0. All exit criteria are met. The ARCH-REVIEW remainder (publish-failure propagation, CheckpointFn error return) is correctly carried as Phase 2.
+
+#### Plan Adherence
+
+| Step | Status | Notes |
+|---|---|---|
+| Step 1 — CLI ≥ 60% | ✅ 65.9% | All plan-named functions tested |
+| Step 2 — MCP ≥ 50% | ✅ 82.4% | |
+| Step 3 — `internal/run/` ≥ 60% | ✅ 77.8% | `OnRunCompleted`/`OnRunFailed` now at 100%; envelope-type assertions via `fakePublisher`; `CheckpointFn` negative assertion present |
+| Step 4 — Benchmarks | ✅ | All 10 benchmarks produce numbers |
+| Step 4.4 — Baseline doc | ✅ | Commit `f857df97`, numbers refreshed, WorkstreamLoop drift explained |
+| Step 5 — GoDoc burn-down | ✅ N/A | |
+| Step 6 — Makefile | ✅ | |
+
+#### Test Intent Assessment
+
+New tests prove behavioral contract, not just execution:
+
+- `TestSink_OnRunCompleted_PublishesRunCompletedEnvelope`: asserts exactly 1 envelope, `GetRunCompleted() != nil`, `FinalState == "done"`, `Success == true`. A faulty implementation that publishes the wrong payload type or wrong fields would fail.
+- `TestSink_OnRunFailed_PublishesRunFailedEnvelope`: asserts `GetRunFailed() != nil`, `Reason == "max retries exceeded"`, `Step == "compile"`. Same strength.
+- `TestResumePausedRun_StartsStreamsAndRunsEngine` (nit): now searches published envelopes for `GetRunCompleted() != nil`, matching the rigor of `TestResumeActiveRun_HappyPath`.
+
+#### Validation Performed
+
+```
+make test          → exit 0 (race-clean, all packages)
+make lint-go       → exit 0
+make lint-imports  → exit 0
+make test-cover    → exit 0
+  internal/cli/:               65.9%  ✅
+  internal/run/:               77.8%  ✅ (sink.go OnRunCompleted 100%, OnRunFailed 100%)
+  cmd/criteria-adapter-mcp/:   82.4%  ✅
+git diff f857df9...928c6a2 --name-only:
+  docs/perf/baseline-v0.2.0.md  (commit/numbers updated)
+  internal/cli/reattach_test.go (RunCompleted assertion strengthened)
+  internal/run/sink_test.go     (fakePublisher + 2 new behavioral tests)
+  workstreams/06-coverage-bench-godoc.md
+```
