@@ -1,0 +1,89 @@
+package conformance
+
+// conformance_outcomes.go — outcome domain and permission-request-shape tests.
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/brokenbots/criteria/internal/plugin"
+)
+
+func testOutcomeDomain(t *testing.T, name string, factory targetFactory, opts Options) {
+	t.Helper()
+	if len(opts.AllowedOutcomes) == 0 {
+		t.Skip("outcome-domain test skipped: no allowed outcomes configured")
+	}
+	allowed := make(map[string]struct{}, len(opts.AllowedOutcomes))
+	for _, outcome := range opts.AllowedOutcomes {
+		allowed[outcome] = struct{}{}
+	}
+
+	target := factory(t)
+	step := baseStep(name, target.Name(), opts.StepConfig)
+	res, err := executeNoPanic(t, target, context.Background(), step, &recordingSink{})
+	if err != nil {
+		return
+	}
+	if _, ok := allowed[res.Outcome]; !ok {
+		t.Fatalf("outcome %q not in allowed set %v", res.Outcome, opts.AllowedOutcomes)
+	}
+}
+
+func testPermissionRequestShape(t *testing.T, name string, loader plugin.Loader, opts Options, info plugin.Info) {
+	t.Helper()
+	if !hasCapability(info.Capabilities, "permission_gating") {
+		t.Skip("permission_request_shape skipped: plugin does not advertise permission_gating")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	plug, err := loader.Resolve(ctx, name)
+	if err != nil {
+		t.Fatalf("resolve plugin: %v", err)
+	}
+	defer plug.Kill()
+
+	sessionID := newSessionID("permission")
+	if err := plug.OpenSession(ctx, sessionID, cloneConfig(opts.OpenConfig)); err != nil {
+		t.Fatalf("open session: %v", err)
+	}
+	defer func() {
+		_ = plug.CloseSession(context.Background(), sessionID)
+	}()
+
+	cfg := opts.PermissionConfig
+	if len(cfg) == 0 {
+		cfg = opts.StepConfig
+	}
+	// No allow_tools on the step → default deny-all policy applies.
+	step := baseStep(name, info.Name, cfg)
+	sink := &recordingSink{}
+	res, err := executeNoPanic(t, pluginSessionTarget{plugin: plug, sessionID: sessionID, name: info.Name}, context.Background(), step, sink)
+	if err != nil {
+		t.Fatalf("execute with permission request config: %v", err)
+	}
+	if res.Outcome != "needs_review" {
+		t.Fatalf("permission denial must end with needs_review, got %q", res.Outcome)
+	}
+
+	// The host policy emits permission.denied (not the legacy permission.request)
+	// for every denied request. Verify the event carries the request_id so the
+	// plugin's original request can be correlated.
+	deniedEvent, ok := sink.firstAdapterEvent("permission.denied")
+	if !ok {
+		t.Fatal("expected permission.denied adapter event from host deny policy")
+	}
+	requestID := strings.TrimSpace(fmt.Sprint(deniedEvent["request_id"]))
+	tool := strings.TrimSpace(fmt.Sprint(deniedEvent["tool"]))
+	if requestID == "" {
+		t.Fatal("permission.denied event must include non-empty request_id")
+	}
+	if tool == "" {
+		t.Fatal("permission.denied event must include non-empty tool")
+	}
+}

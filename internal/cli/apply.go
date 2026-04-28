@@ -79,7 +79,7 @@ func runApply(ctx context.Context, opts applyOptions) error {
 }
 
 func runApplyLocal(ctx context.Context, opts applyOptions) error {
-	log := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	log := newApplyLogger()
 
 	mode, err := resolveOutputMode(opts.output, os.Stdout)
 	if err != nil {
@@ -147,110 +147,132 @@ func runApplyLocal(ctx context.Context, opts applyOptions) error {
 	return nil
 }
 
-func runApplyServer(ctx context.Context, opts applyOptions) error {
-	runCtx, cancelRun := context.WithCancel(ctx)
-	defer cancelRun()
+func newApplyLogger() *slog.Logger {
+	return slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+}
 
-	log := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	src, graph, loader, err := compileForExecution(runCtx, opts.workflowPath, log)
-	if err != nil {
-		return err
-	}
-	defer loader.Shutdown(context.Background())
-
-	clientOpts := servertrans.Options{
+func applyClientOptions(opts applyOptions) servertrans.Options {
+	return servertrans.Options{
 		Codec:    servertrans.Codec(opts.codec),
 		TLSMode:  servertrans.TLSMode(opts.tlsMode),
 		CAFile:   opts.tlsCA,
 		CertFile: opts.tlsCert,
 		KeyFile:  opts.tlsKey,
 	}
-	client, runID, err := setupServerRun(runCtx, log, graph, src, opts.serverURL, opts.name, clientOpts, cancelRun)
-	if err != nil {
-		return err
-	}
-	defer client.Close()
+}
 
-	sink := &run.Sink{
+func writeRunCheckpoint(log *slog.Logger, runID, graphName, workflowPath, serverURL, step string, attempt int, criteriaID, token string) {
+	cp := &StepCheckpoint{
+		RunID:        runID,
+		Workflow:     graphName,
+		WorkflowPath: workflowPath,
+		CurrentStep:  step,
+		Attempt:      attempt,
+		StartedAt:    time.Now().UTC(),
+		ServerURL:    serverURL,
+		CriteriaID:   criteriaID,
+		Token:        token,
+	}
+	if cpErr := WriteStepCheckpoint(cp); cpErr != nil {
+		log.Warn("failed to write step checkpoint; crash recovery may not work", "error", cpErr)
+	}
+}
+
+func buildServerSink(client *servertrans.Client, runID string, graph *workflow.FSMGraph, workflowPath, serverURL string, log *slog.Logger) *run.Sink {
+	return &run.Sink{
 		RunID:  runID,
 		Client: client,
 		Log:    log.With("run_id", runID),
 		CheckpointFn: func(step string, attempt int) {
-			cp := &StepCheckpoint{
-				RunID:        runID,
-				Workflow:     graph.Name,
-				WorkflowPath: opts.workflowPath,
-				CurrentStep:  step,
-				Attempt:      attempt,
-				StartedAt:    time.Now().UTC(),
-				ServerURL:    opts.serverURL,
-				CriteriaID:   client.CriteriaID(),
-				Token:        client.Token(),
-			}
-			if cpErr := WriteStepCheckpoint(cp); cpErr != nil {
-				log.Warn("failed to write step checkpoint; crash recovery may not work", "error", cpErr)
-			}
+			writeRunCheckpoint(log, runID, graph.Name, workflowPath, serverURL, step, attempt, client.CriteriaID(), client.Token())
 		},
 	}
+}
+
+func newLocalRunState(runID, graphName, serverURL string) *localRunState {
+	return &localRunState{
+		PID:       os.Getpid(),
+		RunID:     runID,
+		Workflow:  graphName,
+		ServerURL: serverURL,
+		StartedAt: time.Now().UTC(),
+	}
+}
+
+func executeServerRun(ctx context.Context, log *slog.Logger, loader plugin.Loader, sink *run.Sink, state *localRunState, graph *workflow.FSMGraph, opts applyOptions) error {
+	_ = writeLocalRunState(state)
+	defer removeLocalRunState()
+	defer RemoveStepCheckpoint(state.RunID)
 
 	log.Info("starting run",
-		"run_id", runID,
+		"run_id", state.RunID,
 		"workflow", graph.Name,
 		"file", filepath.Base(opts.workflowPath))
 
-	state := &localRunState{
-		PID:       os.Getpid(),
-		RunID:     runID,
-		Workflow:  graph.Name,
-		ServerURL: opts.serverURL,
-		StartedAt: time.Now().UTC(),
-	}
-	_ = writeLocalRunState(state)
-	defer removeLocalRunState()
-	defer RemoveStepCheckpoint(runID)
-
 	eng := engine.New(graph, loader, sink, engine.WithVarOverrides(parseVarOverrides(opts.varOverrides)))
-	if err := eng.Run(runCtx); err != nil {
+	if err := eng.Run(ctx); err != nil {
 		log.Error("run failed", "error", err)
 		return err
 	}
-	log.Info("run completed", "run_id", runID)
+	log.Info("run completed", "run_id", state.RunID)
 
-	// If the run paused (ErrPaused would have been handled by the engine
-	// loop; the Sink records the paused node for us), wait for a ResumeRun
-	// control message then restart the engine from the paused node.
+	// If the run paused (ErrPaused is handled by the engine loop; the Sink
+	// records the paused node), wait for a ResumeRun control message then
+	// restart the engine from the paused node.
 	for sink.IsPaused() {
-		log.Info("run paused; waiting for resume signal", "run_id", runID, "node", sink.PausedAt())
+		log.Info("run paused; waiting for resume signal", "run_id", state.RunID, "node", sink.PausedAt())
 		var resumeMsg *pb.ResumeRun
 		select {
-		case <-runCtx.Done():
-			return runCtx.Err()
-		case resumeMsg = <-client.ResumeCh():
+		case <-ctx.Done():
+			return ctx.Err()
+		case resumeMsg = <-sink.Client.ResumeCh():
 		}
-		if resumeMsg.RunId != runID {
-			// Message for a different run; re-queue and continue waiting.
-			log.Warn("received resume for unexpected run", "expected", runID, "got", resumeMsg.RunId)
+		if resumeMsg.RunId != state.RunID {
+			// Message for a different run; continue waiting.
+			log.Warn("received resume for unexpected run", "expected", state.RunID, "got", resumeMsg.RunId)
 			continue
 		}
-		log.Info("received resume signal", "run_id", runID, "signal", resumeMsg.Signal)
+		log.Info("received resume signal", "run_id", state.RunID, "signal", resumeMsg.Signal)
 		pausedNode := sink.PausedAt()
 		sink.ClearPaused()
 		resumedEng := engine.New(graph, loader, sink,
 			engine.WithResumedVars(eng.VarScope()),
 			engine.WithResumePayload(resumeMsg.Payload),
 		)
-		if err := resumedEng.RunFrom(runCtx, pausedNode, 1); err != nil {
+		if err := resumedEng.RunFrom(ctx, pausedNode, 1); err != nil {
 			log.Error("run failed after resume", "error", err)
 			return err
 		}
 		eng = resumedEng
-		log.Info("run resumed and completed", "run_id", runID)
+		log.Info("run resumed and completed", "run_id", state.RunID)
 	}
 
 	drainCtx, drainCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	client.Drain(drainCtx)
+	sink.Client.Drain(drainCtx)
 	drainCancel()
 	return nil
+}
+
+func runApplyServer(ctx context.Context, opts applyOptions) error {
+	runCtx, cancelRun := context.WithCancel(ctx)
+	defer cancelRun()
+
+	log := newApplyLogger()
+	src, graph, loader, err := compileForExecution(runCtx, opts.workflowPath, log)
+	if err != nil {
+		return err
+	}
+	defer loader.Shutdown(context.Background())
+
+	client, runID, err := setupServerRun(runCtx, log, graph, src, opts.serverURL, opts.name, applyClientOptions(opts), cancelRun)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+
+	sink := buildServerSink(client, runID, graph, opts.workflowPath, opts.serverURL, log)
+	state := newLocalRunState(runID, graph.Name, opts.serverURL)
+	return executeServerRun(runCtx, log, loader, sink, state, graph, opts)
 }
 
 func setupServerRun(ctx context.Context, log *slog.Logger, graph *workflow.FSMGraph, src []byte, serverURL, name string, clientOpts servertrans.Options, cancelRun func()) (*servertrans.Client, string, error) {

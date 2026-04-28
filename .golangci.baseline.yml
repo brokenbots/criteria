@@ -19,10 +19,6 @@ issues:
     - path: 'cmd/criteria-adapter-copilot/copilot.go'
       linters:
         - funlen
-      text: 'Function ''Execute''' # W03: refactor Execute
-    - path: 'cmd/criteria-adapter-copilot/copilot.go'
-      linters:
-        - funlen
       text: 'Function ''handlePermissionRequest''' # W03: refactor handlePermissionRequest
     - path: 'cmd/criteria-adapter-copilot/copilot.go'
       linters:
@@ -31,19 +27,11 @@ issues:
     - path: 'cmd/criteria-adapter-copilot/copilot.go'
       linters:
         - gocognit
-      text: '`\(\*copilotPlugin\)\.Execute`' # W03: simplify (*copilotPlugin).Execute
-    - path: 'cmd/criteria-adapter-copilot/copilot.go'
-      linters:
-        - gocognit
       text: '`permissionDetails`' # W03: simplify permissionDetails
     - path: 'cmd/criteria-adapter-copilot/copilot.go'
       linters:
         - gocritic
       text: 'hugeParam: request is heavy \(304 bytes\); consider passing it by pointer' # W06: gocritic finding
-    - path: 'cmd/criteria-adapter-copilot/copilot.go'
-      linters:
-        - gocyclo
-      text: '`\(\*copilotPlugin\)\.Execute`' # W03: simplify (*copilotPlugin).Execute
     - path: 'cmd/criteria-adapter-copilot/copilot.go'
       linters:
         - gocyclo
@@ -59,7 +47,7 @@ issues:
     - path: 'cmd/criteria-adapter-copilot/copilot.go'
       linters:
         - nilerr
-      text: 'error is not nil \(line 457\) but it returns nil' # W04: nilerr finding
+      text: 'error is not nil \(line 518\) but it returns nil' # W04: nilerr finding
     - path: 'cmd/criteria-adapter-copilot/copilot.go'
       linters:
         - staticcheck
@@ -152,39 +140,99 @@ issues:
       linters:
         - goimports
       text: File is not properly formatted # W04: goimports finding
+    - path: compile_validation.go
+      linters:
+        - funlen
+      text: 'Function ''validateSchemaAttrs''' # W03: refactor validateSchemaAttrs
+    - path: compile_validation.go
+      linters:
+        - gocognit
+      text: '`validateSchemaAttrs`' # W03: simplify validateSchemaAttrs
+    - path: compile_validation.go
+      linters:
+        - gocyclo
+      text: '`validateSchemaAttrs`' # W03: simplify validateSchemaAttrs
+    - path: compile_steps.go
+      linters:
+        - gocritic
+      text: 'hugeParam: sp is heavy \(168 bytes\); consider passing it by pointer' # W06: gocritic finding
+    - path: compile_steps.go
+      linters:
+        - gocritic
+      text: 'rangeValCopy: each iteration copies 168 bytes \(consider pointers or indexing\)' # W06: gocritic finding
+    - path: compile_lifecycle.go
+      linters:
+        - gocritic
+      text: 'rangeValCopy: each iteration copies 168 bytes \(consider pointers or indexing\)' # W06: gocritic finding
+    - path: compile_nodes.go
+      linters:
+        - gocognit
+      text: '`compileWaits`' # W04: compileWaits extracted from Compile
+    - path: compile_nodes.go
+      linters:
+        - gocognit
+      text: '`compileBranches`' # W04: compileBranches extracted from Compile
+    - path: compile_nodes.go
+      linters:
+        - gocognit
+      text: '`compileForEachs`' # W04: compileForEachs extracted from Compile
+    - path: compile_nodes.go
+      linters:
+        - funlen
+      text: 'Function ''compileBranches''' # W04: compileBranches extracted from Compile
+    - path: compile_nodes.go
+      linters:
+        - funlen
+      text: 'Function ''compileForEachs''' # W04: compileForEachs extracted from Compile
+    - path: compile_nodes.go
+      linters:
+        - gocyclo
+      text: '`compileBranches`' # W04: compileBranches extracted from Compile
+    - path: compile_nodes.go
+      linters:
+        - gocyclo
+      text: '`compileForEachs`' # W04: compileForEachs extracted from Compile
+    - path: compile_steps.go
+      linters:
+        - gocognit
+      text: '`compileSteps`' # W04: compileSteps extracted from Compile
+    - path: compile_steps.go
+      linters:
+        - funlen
+      text: 'Function ''compileSteps''' # W04: compileSteps extracted from Compile
+    - path: compile_steps.go
+      linters:
+        - gocyclo
+      text: '`compileSteps`' # W04: compileSteps extracted from Compile
+    - path: compile.go
+      linters:
+        - gocognit
+      text: '`resolveTransitions`' # W04: resolveTransitions extracted from Compile
+    - path: compile.go
+      linters:
+        - gocognit
+      text: '`checkReachability`' # W04: checkReachability extracted from Compile
+    - path: compile.go
+      linters:
+        - funlen
+      text: 'Function ''resolveTransitions''' # W04: resolveTransitions extracted from Compile
+    - path: compile.go
+      linters:
+        - funlen
+      text: 'Function ''checkReachability''' # W04: checkReachability extracted from Compile
+    - path: compile.go
+      linters:
+        - gocyclo
+      text: '`resolveTransitions`' # W04: resolveTransitions extracted from Compile
+    - path: compile.go
+      linters:
+        - gocyclo
+      text: '`checkReachability`' # W04: checkReachability extracted from Compile
     - path: compile.go
       linters:
         - funlen
       text: 'Function ''Compile''' # W03: refactor Compile
-    - path: compile.go
-      linters:
-        - funlen
-      text: 'Function ''validateSchemaAttrs''' # W03: refactor validateSchemaAttrs
-    - path: compile.go
-      linters:
-        - gocognit
-      text: '`Compile`' # W03: simplify Compile
-    - path: compile.go
-      linters:
-        - gocognit
-      text: '`validateSchemaAttrs`' # W03: simplify validateSchemaAttrs
-    - path: compile.go
-      linters:
-        - gocritic
-      text: 'hugeParam: sp is heavy \(168 bytes\); consider passing it by pointer' # W06: gocritic finding
-    - path: compile.go
-      linters:
-        - gocritic
-      text: 'rangeValCopy: each iteration copies 168 bytes \(consider pointers or indexing\)' # W06: gocritic finding
-    - path: compile.go
-      linters:
-        - gocyclo
-      text: '`Compile`' # W03: simplify Compile
-    - path: compile.go
-      linters:
-        - gocyclo
-      text: '`validateSchemaAttrs`' # W03: simplify validateSchemaAttrs
-    - path: compile.go
+    - path: compile_validation.go
       linters:
         - unused
       text: 'func `decodeBodyToStringMap` is unused' # W04: unused finding
@@ -508,15 +556,19 @@ issues:
       linters:
         - gocyclo
       text: '`setPayload`' # W03: simplify setPayload
-    - path: internal/adapter/conformance/conformance.go
+    - path: internal/adapter/conformance/conformance_lifecycle.go
       linters:
         - funlen
       text: 'Function ''testConcurrentSessions''' # W03: refactor testConcurrentSessions
-    - path: internal/adapter/conformance/conformance.go
+    - path: internal/adapter/conformance/conformance_lifecycle.go
       linters:
         - gocritic
       text: 'hugeParam: info is heavy \(80 bytes\); consider passing it by pointer' # W06: gocritic finding
-    - path: internal/adapter/conformance/conformance.go
+    - path: internal/adapter/conformance/conformance_outcomes.go
+      linters:
+        - gocritic
+      text: 'hugeParam: info is heavy \(80 bytes\); consider passing it by pointer' # W06: gocritic finding
+    - path: internal/adapter/conformance/conformance_happy.go
       linters:
         - gocritic
       text: 'unnamedResult: consider giving a name to these results' # W06: gocritic finding
@@ -556,10 +608,6 @@ issues:
       linters:
         - funlen
       text: 'Function ''runApplyLocal''' # W03: refactor runApplyLocal
-    - path: internal/cli/apply.go
-      linters:
-        - funlen
-      text: 'Function ''runApplyServer''' # W03: refactor runApplyServer
     - path: internal/cli/apply.go
       linters:
         - gocritic
@@ -635,27 +683,15 @@ issues:
     - path: internal/cli/reattach.go
       linters:
         - contextcheck
-      text: 'Function `parseWorkflowFromPath` should pass the context parameter' # W04: contextcheck finding
+      text: 'Function `loadCheckpointWorkflow->parseWorkflowFromPath` should pass the context parameter' # W04: contextcheck finding
     - path: internal/cli/reattach.go
       linters:
         - contextcheck
       text: 'Non-inherited new context, use function like `context\.WithXXX` instead' # W04: contextcheck finding
     - path: internal/cli/reattach.go
       linters:
-        - funlen
-      text: 'Function ''resumeOneRun''' # W03: refactor resumeOneRun
-    - path: internal/cli/reattach.go
-      linters:
-        - gocognit
-      text: '`resumeOneRun`' # W03: simplify resumeOneRun
-    - path: internal/cli/reattach.go
-      linters:
         - gocritic
       text: 'hugeParam: clientOpts is heavy \(88 bytes\); consider passing it by pointer' # W06: gocritic finding
-    - path: internal/cli/reattach.go
-      linters:
-        - gocyclo
-      text: '`resumeOneRun`' # W03: simplify resumeOneRun
     - path: internal/cli/run.go
       linters:
         - gofmt
@@ -692,18 +728,6 @@ issues:
       linters:
         - errcheck
       text: 'Error return value of `sessions\.Shutdown` is not checked' # W04: errcheck finding
-    - path: internal/engine/engine.go
-      linters:
-        - funlen
-      text: 'Function ''runLoop''' # W03: refactor runLoop
-    - path: internal/engine/engine.go
-      linters:
-        - gocognit
-      text: '`\(\*Engine\)\.runLoop`' # W03: simplify (*Engine).runLoop
-    - path: internal/engine/engine.go
-      linters:
-        - gocyclo
-      text: '`\(\*Engine\)\.runLoop`' # W03: simplify (*Engine).runLoop
     - path: internal/engine/engine.go
       linters:
         - goimports
@@ -860,11 +884,11 @@ issues:
       linters:
         - goimports
       text: File is not properly formatted # W04: goimports finding
-    - path: internal/transport/server/client.go
+    - path: internal/transport/server/client_streams.go
       linters:
         - funlen
       text: 'Function ''controlLoop''' # W03: refactor controlLoop
-    - path: internal/transport/server/client.go
+    - path: internal/transport/server/client_streams.go
       linters:
         - gocognit
       text: '`\(\*Client\)\.controlLoop`' # W03: simplify (*Client).controlLoop
@@ -872,7 +896,7 @@ issues:
       linters:
         - gocritic
       text: 'hugeParam: o is heavy \(88 bytes\); consider passing it by pointer' # W06: gocritic finding
-    - path: internal/transport/server/client.go
+    - path: internal/transport/server/client_streams.go
       linters:
         - gocyclo
       text: '`\(\*Client\)\.controlLoop`' # W03: simplify (*Client).controlLoop
