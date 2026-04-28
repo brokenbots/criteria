@@ -3,12 +3,22 @@
   "initial_state": "load_executor_agent_file",
   "target_state": "done",
   "policy": {
-    "MaxTotalSteps": 50,
+    "MaxTotalSteps": 120,
     "MaxStepRetries": 0
   },
   "agents": [
     {
       "name": "executor",
+      "adapter": "copilot",
+      "on_crash": "fail",
+      "config_keys": [
+        "max_turns",
+        "model",
+        "reasoning_effort"
+      ]
+    },
+    {
+      "name": "pr_manager",
       "adapter": "copilot",
       "on_crash": "fail",
       "config_keys": [
@@ -50,6 +60,25 @@
     },
     {
       "name": "load_reviewer_agent_file",
+      "adapter": "shell",
+      "timeout": "10s",
+      "input_keys": [
+        "command"
+      ],
+      "allow_tools": null,
+      "outcomes": [
+        {
+          "name": "failure",
+          "transition_to": "failed"
+        },
+        {
+          "name": "success",
+          "transition_to": "load_pr_manager_agent_file"
+        }
+      ]
+    },
+    {
+      "name": "load_pr_manager_agent_file",
       "adapter": "shell",
       "timeout": "10s",
       "input_keys": [
@@ -116,6 +145,23 @@
         },
         {
           "name": "success",
+          "transition_to": "open_pr_manager"
+        }
+      ]
+    },
+    {
+      "name": "open_pr_manager",
+      "agent": "pr_manager",
+      "lifecycle": "open",
+      "input_keys": null,
+      "allow_tools": null,
+      "outcomes": [
+        {
+          "name": "failure",
+          "transition_to": "close_reviewer_abort"
+        },
+        {
+          "name": "success",
           "transition_to": "execute_init"
         }
       ]
@@ -132,7 +178,7 @@
       "outcomes": [
         {
           "name": "failure",
-          "transition_to": "close_reviewer_abort"
+          "transition_to": "close_pr_manager_abort"
         },
         {
           "name": "needs_approval",
@@ -156,7 +202,7 @@
       "outcomes": [
         {
           "name": "approved",
-          "transition_to": "commit_and_finish"
+          "transition_to": "commit_and_prepare_pr"
         },
         {
           "name": "changes_requested",
@@ -164,7 +210,7 @@
         },
         {
           "name": "failure",
-          "transition_to": "close_reviewer_abort"
+          "transition_to": "close_pr_manager_abort"
         },
         {
           "name": "needs_approval",
@@ -188,7 +234,7 @@
       "outcomes": [
         {
           "name": "failure",
-          "transition_to": "close_reviewer_abort"
+          "transition_to": "close_pr_manager_abort"
         },
         {
           "name": "needs_approval",
@@ -231,7 +277,7 @@
       "outcomes": [
         {
           "name": "failure",
-          "transition_to": "close_reviewer_abort"
+          "transition_to": "close_pr_manager_abort"
         },
         {
           "name": "needs_approval",
@@ -255,7 +301,7 @@
       "outcomes": [
         {
           "name": "approved",
-          "transition_to": "commit_and_finish"
+          "transition_to": "commit_and_prepare_pr"
         },
         {
           "name": "changes_requested",
@@ -263,7 +309,7 @@
         },
         {
           "name": "failure",
-          "transition_to": "close_reviewer_abort"
+          "transition_to": "close_pr_manager_abort"
         },
         {
           "name": "needs_approval",
@@ -276,7 +322,7 @@
       ]
     },
     {
-      "name": "commit_and_finish",
+      "name": "commit_and_prepare_pr",
       "agent": "executor",
       "input_keys": [
         "prompt"
@@ -287,7 +333,146 @@
       "outcomes": [
         {
           "name": "failure",
-          "transition_to": "close_reviewer_abort"
+          "transition_to": "close_pr_manager_abort"
+        },
+        {
+          "name": "success",
+          "transition_to": "open_or_update_pr"
+        }
+      ]
+    },
+    {
+      "name": "open_or_update_pr",
+      "agent": "pr_manager",
+      "input_keys": [
+        "prompt"
+      ],
+      "allow_tools": [
+        "*"
+      ],
+      "outcomes": [
+        {
+          "name": "failure",
+          "transition_to": "close_pr_manager_abort"
+        },
+        {
+          "name": "needs_approval",
+          "transition_to": "watch_pr_gate"
+        },
+        {
+          "name": "needs_review",
+          "transition_to": "watch_pr_gate"
+        },
+        {
+          "name": "watch_pr",
+          "transition_to": "watch_pr_gate"
+        }
+      ]
+    },
+    {
+      "name": "watch_pr_gate",
+      "adapter": "shell",
+      "timeout": "45m0s",
+      "input_keys": [
+        "command"
+      ],
+      "allow_tools": null,
+      "outcomes": [
+        {
+          "name": "failure",
+          "transition_to": "triage_pr_feedback"
+        },
+        {
+          "name": "success",
+          "transition_to": "merge_pr_and_sync_main"
+        }
+      ]
+    },
+    {
+      "name": "triage_pr_feedback",
+      "agent": "pr_manager",
+      "input_keys": [
+        "prompt"
+      ],
+      "allow_tools": [
+        "*"
+      ],
+      "outcomes": [
+        {
+          "name": "failure",
+          "transition_to": "close_pr_manager_abort"
+        },
+        {
+          "name": "needs_approval",
+          "transition_to": "watch_pr_gate"
+        },
+        {
+          "name": "needs_executor",
+          "transition_to": "execute_pr_feedback"
+        },
+        {
+          "name": "needs_review",
+          "transition_to": "watch_pr_gate"
+        },
+        {
+          "name": "recheck",
+          "transition_to": "watch_pr_gate"
+        }
+      ]
+    },
+    {
+      "name": "execute_pr_feedback",
+      "agent": "executor",
+      "input_keys": [
+        "prompt"
+      ],
+      "allow_tools": [
+        "*"
+      ],
+      "outcomes": [
+        {
+          "name": "failure",
+          "transition_to": "close_pr_manager_abort"
+        },
+        {
+          "name": "needs_approval",
+          "transition_to": "verify"
+        },
+        {
+          "name": "needs_review",
+          "transition_to": "verify"
+        }
+      ]
+    },
+    {
+      "name": "merge_pr_and_sync_main",
+      "adapter": "shell",
+      "timeout": "5m0s",
+      "input_keys": [
+        "command"
+      ],
+      "allow_tools": null,
+      "outcomes": [
+        {
+          "name": "failure",
+          "transition_to": "triage_pr_feedback"
+        },
+        {
+          "name": "success",
+          "transition_to": "close_pr_manager_done"
+        }
+      ]
+    },
+    {
+      "name": "close_pr_manager_done",
+      "agent": "pr_manager",
+      "lifecycle": "close",
+      "input_keys": null,
+      "allow_tools": null,
+      "outcomes": [
+        {
+          "name": "failure",
+          "transition_to": "close_reviewer_done"
         },
         {
           "name": "success",
@@ -326,6 +511,23 @@
         {
           "name": "success",
           "transition_to": "done"
+        }
+      ]
+    },
+    {
+      "name": "close_pr_manager_abort",
+      "agent": "pr_manager",
+      "lifecycle": "close",
+      "input_keys": null,
+      "allow_tools": null,
+      "outcomes": [
+        {
+          "name": "failure",
+          "transition_to": "close_reviewer_abort"
+        },
+        {
+          "name": "success",
+          "transition_to": "close_reviewer_abort"
         }
       ]
     },
@@ -379,18 +581,27 @@
   "step_order": [
     "load_executor_agent_file",
     "load_reviewer_agent_file",
+    "load_pr_manager_agent_file",
     "checkout_branch",
     "open_executor",
     "open_reviewer",
+    "open_pr_manager",
     "execute_init",
     "review_init",
     "execute",
     "verify",
     "fix_verify",
     "review",
-    "commit_and_finish",
+    "commit_and_prepare_pr",
+    "open_or_update_pr",
+    "watch_pr_gate",
+    "triage_pr_feedback",
+    "execute_pr_feedback",
+    "merge_pr_and_sync_main",
+    "close_pr_manager_done",
     "close_reviewer_done",
     "close_executor_done",
+    "close_pr_manager_abort",
     "close_reviewer_abort",
     "close_executor_abort"
   ],
