@@ -1,9 +1,9 @@
-package overseer
+package criteria
 
-import pb "github.com/brokenbots/overseer/sdk/pb/overseer/v1"
+import pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 
 // Envelope is the top-level event container sent over the wire.
-// Every event published by an overseer is wrapped in an Envelope.
+// Every event published by an agent is wrapped in an Envelope.
 type Envelope = pb.Envelope
 
 // Oneof wrapper types for Envelope.Payload. These are the concrete types
@@ -18,8 +18,8 @@ type (
 	Envelope_StepTransition    = pb.Envelope_StepTransition
 	Envelope_StepLog           = pb.Envelope_StepLog
 	Envelope_AdapterEvent      = pb.Envelope_AdapterEvent
-	Envelope_OverseerHeartbeat = pb.Envelope_OverseerHeartbeat
-	Envelope_OverseerDisconnected = pb.Envelope_OverseerDisconnected
+	Envelope_CriteriaHeartbeat = pb.Envelope_CriteriaHeartbeat
+	Envelope_CriteriaDisconnected = pb.Envelope_CriteriaDisconnected
 	Envelope_StepResumed       = pb.Envelope_StepResumed
 	Envelope_VariableSet       = pb.Envelope_VariableSet
 	Envelope_StepOutputCaptured = pb.Envelope_StepOutputCaptured

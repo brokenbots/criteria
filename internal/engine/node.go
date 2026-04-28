@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/brokenbots/overseer/internal/plugin"
-	"github.com/brokenbots/overseer/workflow"
+	"github.com/brokenbots/criteria/internal/plugin"
+	"github.com/brokenbots/criteria/workflow"
 )
 
 // Node executes a graph node and returns the next node name.

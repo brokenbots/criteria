@@ -1,7 +1,7 @@
 // Package conformance_test — in-memory Subject for the SDK conformance suite.
 //
 // This file provides an in-memory implementation of the conformance.Subject
-// interface. It runs the full conformance suite without a Castle instance,
+// interface. It runs the full conformance suite without a server instance,
 // proving the SDK contract is implementable by any compliant orchestrator.
 package conformance_test
 
@@ -22,14 +22,14 @@ import (
 "golang.org/x/net/http2"
 "golang.org/x/net/http2/h2c"
 
-overseer "github.com/brokenbots/overseer/sdk"
-"github.com/brokenbots/overseer/sdk/conformance"
-pb "github.com/brokenbots/overseer/sdk/pb/overseer/v1"
-"github.com/brokenbots/overseer/sdk/pb/overseer/v1/overseerv1connect"
+criteria "github.com/brokenbots/criteria/sdk"
+"github.com/brokenbots/criteria/sdk/conformance"
+pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
+"github.com/brokenbots/criteria/sdk/pb/criteria/v1/criteriav1connect"
 )
 
 // TestConformance runs the full SDK conformance suite against the in-memory
-// Subject implementation, proving the contract is implementable without Castle.
+// Subject implementation, proving the contract is implementable without a server.
 func TestConformance(t *testing.T) {
 conformance.Run(t, &inMemSubject{handlers: make(map[string]*inMemHandler)})
 }
@@ -57,9 +57,9 @@ s.mu.Unlock()
 })
 
 mux := http.NewServeMux()
-oPath, oHandler := overseer.NewServiceHandler(h)
+oPath, oHandler := criteria.NewServiceHandler(h)
 mux.Handle(oPath, oHandler)
-cPath, cHandler := overseerv1connect.NewCastleServiceHandler(h)
+cPath, cHandler := criteriav1connect.NewServerServiceHandler(h)
 mux.Handle(cPath, cHandler)
 
 srv := httptest.NewUnstartedServer(h2c.NewHandler(mux, &http2.Server{}))
@@ -97,18 +97,18 @@ name = name[:idx]
 return nil
 }
 
-func (s *inMemSubject) RegisterOverseer(t *testing.T, name, token string) string {
+func (s *inMemSubject) RegisterAgent(t *testing.T, name, token string) string {
 t.Helper()
 h := s.handlerForTest(t)
 if h == nil {
-t.Fatal("RegisterOverseer: no handler found; call SetUp first")
+t.Fatal("RegisterAgent: no handler found; call SetUp first")
 }
-return h.registerOverseer(name, token)
+return h.registerAgent(name, token)
 }
 
 func (s *inMemSubject) ListRunEvents(t *testing.T, baseURL string, client *http.Client, token, runID string, sinceSeq uint64) []*pb.Envelope {
 t.Helper()
-cClient := overseerv1connect.NewCastleServiceClient(client, baseURL)
+cClient := criteriav1connect.NewServerServiceClient(client, baseURL)
 req := connect.NewRequest(&pb.ListRunEventsRequest{RunId: runID, SinceSeq: sinceSeq})
 req.Header().Set("Authorization", "Bearer "+token)
 resp, err := cClient.ListRunEvents(context.Background(), req)
@@ -120,7 +120,7 @@ return resp.Msg.Events
 
 func (s *inMemSubject) StopRun(t *testing.T, baseURL string, client *http.Client, token, runID string) error {
 t.Helper()
-cClient := overseerv1connect.NewCastleServiceClient(client, baseURL)
+cClient := criteriav1connect.NewServerServiceClient(client, baseURL)
 req := connect.NewRequest(&pb.StopRunRequest{RunId: runID})
 req.Header().Set("Authorization", "Bearer "+token)
 _, err := cClient.StopRun(context.Background(), req)
@@ -149,7 +149,7 @@ pauseKindApproval           // paused at an approval{} node
 
 type runRecord struct {
 runID      string
-overseerID string
+criteriaID string
 workflow   string
 
 state  runState
@@ -164,10 +164,10 @@ stopCh chan struct{}
 once   sync.Once
 }
 
-func newRunRecord(runID, overseerID, workflow string) *runRecord {
+func newRunRecord(runID, criteriaID, workflow string) *runRecord {
 return &runRecord{
 runID:      runID,
-overseerID: overseerID,
+criteriaID: criteriaID,
 workflow:   workflow,
 corrIndex:  make(map[string]uint64),
 stopCh:     make(chan struct{}),
@@ -177,25 +177,25 @@ stopCh:     make(chan struct{}),
 func (r *runRecord) stop() { r.once.Do(func() { close(r.stopCh) }) }
 
 // ---------------------------------------------------------------------------
-// inMemHandler — OverseerService + CastleService
+// inMemHandler — CriteriaService + ServerService
 // ---------------------------------------------------------------------------
 
 type controlSubscription struct {
-overseerID string
+criteriaID string
 ch         chan *pb.ControlMessage
 }
 
-type overseerRecord struct {
+type agentRecord struct {
 name  string
 token string
 }
 
 type inMemHandler struct {
-overseerv1connect.UnimplementedOverseerServiceHandler
-overseerv1connect.UnimplementedCastleServiceHandler
+criteriav1connect.UnimplementedCriteriaServiceHandler
+criteriav1connect.UnimplementedServerServiceHandler
 
 mu            sync.Mutex
-overseers     map[string]*overseerRecord // id → record
+agents     map[string]*agentRecord // id → record
 tokenToID     map[string]string          // token → id
 runs          map[string]*runRecord      // run_id → record
 subscriptions []*controlSubscription
@@ -204,22 +204,22 @@ runCounter    atomic.Uint64
 
 func newInMemHandler() *inMemHandler {
 return &inMemHandler{
-overseers: make(map[string]*overseerRecord),
+agents: make(map[string]*agentRecord),
 tokenToID: make(map[string]string),
 runs:      make(map[string]*runRecord),
 }
 }
 
-func (h *inMemHandler) registerOverseer(name, token string) string {
+func (h *inMemHandler) registerAgent(name, token string) string {
 id := "inmem-" + name
 h.mu.Lock()
-h.overseers[id] = &overseerRecord{name: name, token: token}
+h.agents[id] = &agentRecord{name: name, token: token}
 h.tokenToID[token] = id
 h.mu.Unlock()
 return id
 }
 
-func (h *inMemHandler) authOverseer(authHeader string) (string, error) {
+func (h *inMemHandler) authAgent(authHeader string) (string, error) {
 token := strings.TrimPrefix(authHeader, "Bearer ")
 h.mu.Lock()
 id, ok := h.tokenToID[token]
@@ -230,7 +230,7 @@ return "", connect.NewError(connect.CodeUnauthenticated, nil)
 return id, nil
 }
 
-func assertOwnsOverseer(callerID, ownerID string) error {
+func assertOwnsAgent(callerID, ownerID string) error {
 if callerID != ownerID {
 return connect.NewError(connect.CodePermissionDenied, nil)
 }
@@ -244,35 +244,35 @@ h.mu.Unlock()
 if !ok {
 return nil, connect.NewError(connect.CodeNotFound, nil)
 }
-if run.overseerID != callerID {
+if run.criteriaID != callerID {
 return nil, connect.NewError(connect.CodePermissionDenied, nil)
 }
 return run, nil
 }
 
-// OverseerService handlers
+// CriteriaService handlers
 
 func (h *inMemHandler) Register(_ context.Context, _ *connect.Request[pb.RegisterRequest]) (*connect.Response[pb.RegisterResponse], error) {
 return nil, connect.NewError(connect.CodeUnimplemented, nil)
 }
 
 func (h *inMemHandler) Heartbeat(_ context.Context, req *connect.Request[pb.HeartbeatRequest]) (*connect.Response[pb.HeartbeatResponse], error) {
-callerID, err := h.authOverseer(req.Header().Get("Authorization"))
+callerID, err := h.authAgent(req.Header().Get("Authorization"))
 if err != nil {
 return nil, err
 }
-if err := assertOwnsOverseer(callerID, req.Msg.OverseerId); err != nil {
+if err := assertOwnsAgent(callerID, req.Msg.CriteriaId); err != nil {
 return nil, err
 }
 return connect.NewResponse(&pb.HeartbeatResponse{}), nil
 }
 
 func (h *inMemHandler) CreateRun(_ context.Context, req *connect.Request[pb.CreateRunRequest]) (*connect.Response[pb.Run], error) {
-callerID, err := h.authOverseer(req.Header().Get("Authorization"))
+callerID, err := h.authAgent(req.Header().Get("Authorization"))
 if err != nil {
 return nil, err
 }
-if err := assertOwnsOverseer(callerID, req.Msg.OverseerId); err != nil {
+if err := assertOwnsAgent(callerID, req.Msg.CriteriaId); err != nil {
 return nil, err
 }
 c := h.runCounter.Add(1)
@@ -285,11 +285,11 @@ return connect.NewResponse(&pb.Run{RunId: runID, WorkflowName: req.Msg.WorkflowN
 }
 
 func (h *inMemHandler) ReattachRun(_ context.Context, req *connect.Request[pb.ReattachRunRequest]) (*connect.Response[pb.ReattachRunResponse], error) {
-callerID, err := h.authOverseer(req.Header().Get("Authorization"))
+callerID, err := h.authAgent(req.Header().Get("Authorization"))
 if err != nil {
 return nil, err
 }
-if err := assertOwnsOverseer(callerID, req.Msg.OverseerId); err != nil {
+if err := assertOwnsAgent(callerID, req.Msg.CriteriaId); err != nil {
 return nil, err
 }
 run, err := h.assertOwnsRun(callerID, req.Msg.RunId)
@@ -303,7 +303,7 @@ CanResume: run.state == runStatePaused,
 }
 
 func (h *inMemHandler) Resume(_ context.Context, req *connect.Request[pb.ResumeRequest]) (*connect.Response[pb.ResumeResponse], error) {
-callerID, err := h.authOverseer(req.Header().Get("Authorization"))
+callerID, err := h.authAgent(req.Header().Get("Authorization"))
 if err != nil {
 return nil, err
 }
@@ -347,7 +347,7 @@ return connect.NewResponse(&pb.ResumeResponse{Accepted: true}), nil
 }
 
 func (h *inMemHandler) SubmitEvents(ctx context.Context, stream *connect.BidiStream[pb.Envelope, pb.Ack]) error {
-callerID, err := h.authOverseer(stream.RequestHeader().Get("Authorization"))
+callerID, err := h.authAgent(stream.RequestHeader().Get("Authorization"))
 if err != nil {
 return err
 }
@@ -356,7 +356,7 @@ env, err := stream.Receive()
 if err != nil {
 return nil //nolint:nilerr // EOF is normal end-of-stream
 }
-if env.SchemaVersion != 0 && env.SchemaVersion != overseer.SchemaVersion {
+if env.SchemaVersion != 0 && env.SchemaVersion != criteria.SchemaVersion {
 return connect.NewError(connect.CodeFailedPrecondition, nil)
 }
 
@@ -366,7 +366,7 @@ if !ok {
 h.mu.Unlock()
 return connect.NewError(connect.CodeNotFound, nil)
 }
-if run.overseerID != callerID {
+if run.criteriaID != callerID {
 h.mu.Unlock()
 return connect.NewError(connect.CodePermissionDenied, nil)
 }
@@ -415,18 +415,18 @@ return err
 }
 
 func (h *inMemHandler) Control(ctx context.Context, req *connect.Request[pb.ControlSubscribeRequest], stream *connect.ServerStream[pb.ControlMessage]) error {
-overseerID, err := h.authOverseer(req.Header().Get("Authorization"))
+criteriaID, err := h.authAgent(req.Header().Get("Authorization"))
 if err != nil {
 return err
 }
-if req.Msg.OverseerId != "" {
-if err := assertOwnsOverseer(overseerID, req.Msg.OverseerId); err != nil {
+if req.Msg.CriteriaId != "" {
+if err := assertOwnsAgent(criteriaID, req.Msg.CriteriaId); err != nil {
 return err
 }
 }
 
 sub := &controlSubscription{
-overseerID: overseerID,
+criteriaID: criteriaID,
 ch:         make(chan *pb.ControlMessage, 16),
 }
 h.mu.Lock()
@@ -465,26 +465,26 @@ return err
 }
 }
 
-// CastleService handlers
+// ServerService handlers
 
-func (h *inMemHandler) ListOverseers(_ context.Context, _ *connect.Request[pb.ListOverseersRequest]) (*connect.Response[pb.ListOverseersResponse], error) {
+func (h *inMemHandler) ListAgents(_ context.Context, _ *connect.Request[pb.ListAgentsRequest]) (*connect.Response[pb.ListAgentsResponse], error) {
 h.mu.Lock()
 defer h.mu.Unlock()
-var out []*pb.Overseer
-for id, rec := range h.overseers {
-out = append(out, &pb.Overseer{OverseerId: id, Name: rec.name, Status: "online"})
+var out []*pb.Agent
+for id, rec := range h.agents {
+out = append(out, &pb.Agent{CriteriaId: id, Name: rec.name, Status: "online"})
 }
-return connect.NewResponse(&pb.ListOverseersResponse{Overseers: out}), nil
+return connect.NewResponse(&pb.ListAgentsResponse{Agents: out}), nil
 }
 
-func (h *inMemHandler) GetOverseer(_ context.Context, req *connect.Request[pb.GetOverseerRequest]) (*connect.Response[pb.Overseer], error) {
+func (h *inMemHandler) GetAgent(_ context.Context, req *connect.Request[pb.GetAgentRequest]) (*connect.Response[pb.Agent], error) {
 h.mu.Lock()
-rec, ok := h.overseers[req.Msg.OverseerId]
+rec, ok := h.agents[req.Msg.CriteriaId]
 h.mu.Unlock()
 if !ok {
 return nil, connect.NewError(connect.CodeNotFound, nil)
 }
-return connect.NewResponse(&pb.Overseer{OverseerId: req.Msg.OverseerId, Name: rec.name}), nil
+return connect.NewResponse(&pb.Agent{CriteriaId: req.Msg.CriteriaId, Name: rec.name}), nil
 }
 
 func (h *inMemHandler) ListRuns(_ context.Context, _ *connect.Request[pb.ListRunsRequest]) (*connect.Response[pb.ListRunsResponse], error) {
@@ -569,10 +569,10 @@ if !ok {
 h.mu.Unlock()
 return nil, connect.NewError(connect.CodeNotFound, nil)
 }
-ownerID := run.overseerID
+ownerID := run.criteriaID
 var target *controlSubscription
 for _, sub := range h.subscriptions {
-if sub.overseerID == ownerID {
+if sub.criteriaID == ownerID {
 target = sub
 break
 }

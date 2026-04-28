@@ -18,7 +18,7 @@
 //   - Any request denied   → "needs_review"
 //
 // This plugin is only built and used by tests. It is NOT registered with
-// `make plugins` and must not be installed in ~/.overseer/plugins/.
+// `make plugins` and must not be installed in ~/.criteria/plugins/.
 package main
 
 import (
@@ -30,8 +30,8 @@ import (
 
 	"github.com/google/uuid"
 
-	pluginhost "github.com/brokenbots/overseer/sdk/pluginhost"
-	pb "github.com/brokenbots/overseer/sdk/pb/overseer/v1"
+	pluginhost "github.com/brokenbots/criteria/sdk/pluginhost"
+	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 )
 
 type permitDecision struct {

@@ -7,22 +7,22 @@ import (
 	"os"
 	"time"
 
-	"github.com/brokenbots/overseer/internal/adapters/shell"
-	"github.com/brokenbots/overseer/internal/engine"
-	"github.com/brokenbots/overseer/internal/plugin"
-	"github.com/brokenbots/overseer/internal/run"
-	castletrans "github.com/brokenbots/overseer/internal/transport/castle"
-	pb "github.com/brokenbots/overseer/sdk/pb/overseer/v1"
-	"github.com/brokenbots/overseer/workflow"
+	"github.com/brokenbots/criteria/internal/adapters/shell"
+	"github.com/brokenbots/criteria/internal/engine"
+	"github.com/brokenbots/criteria/internal/plugin"
+	"github.com/brokenbots/criteria/internal/run"
+	servertrans "github.com/brokenbots/criteria/internal/transport/server"
+	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
+	"github.com/brokenbots/criteria/workflow"
 )
 
 // resumeInFlightRuns scans the local checkpoint directory and, for each
-// in-flight run, calls ReattachRun on Castle. Resumable runs are re-executed
+// in-flight run, calls ReattachRun on the server. Resumable runs are re-executed
 // from the recorded step. Non-resumable runs have their checkpoint cleared.
 //
 // The clientOpts are used to build temporary clients for each resumed run.
 // This function blocks until all resumable runs have completed (or failed).
-func resumeInFlightRuns(ctx context.Context, log *slog.Logger, clientOpts castletrans.Options) {
+func resumeInFlightRuns(ctx context.Context, log *slog.Logger, clientOpts servertrans.Options) {
 	checkpoints, err := ListStepCheckpoints()
 	if err != nil {
 		log.Warn("could not list step checkpoints; skipping crash recovery", "error", err)
@@ -37,37 +37,37 @@ func resumeInFlightRuns(ctx context.Context, log *slog.Logger, clientOpts castle
 	}
 }
 
-func resumeOneRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint, clientOpts castletrans.Options) {
+func resumeOneRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint, clientOpts servertrans.Options) {
 	log = log.With("run_id", cp.RunID, "step", cp.CurrentStep)
 	resumeCtx, resumeCancel := context.WithCancel(ctx)
 	defer resumeCancel()
 
-	if cp.OverseerID == "" || cp.Token == "" {
-		log.Warn("checkpoint missing overseer credentials; clearing", "run_id", cp.RunID)
+	if cp.CriteriaID == "" || cp.Token == "" {
+		log.Warn("checkpoint missing criteria credentials; clearing", "run_id", cp.RunID)
 		RemoveStepCheckpoint(cp.RunID)
 		return
 	}
 
 	// Build a temporary client for this resumed run using the persisted
-	// credentials. We do not Register (which would create a new overseer_id);
+	// credentials. We do not Register (which would create a new criteria_id);
 	// instead we re-use the original identity so ReattachRun ownership check passes.
-	recoverClient, err := castletrans.NewClient(cp.CastleURL, log, clientOpts)
+	recoverClient, err := servertrans.NewClient(cp.ServerURL, log, clientOpts)
 	if err != nil {
 		log.Warn("cannot build recovery client; abandoning checkpoint", "error", err)
 		RemoveStepCheckpoint(cp.RunID)
 		return
 	}
 	defer recoverClient.Close()
-	recoverClient.SetCredentials(cp.OverseerID, cp.Token)
+	recoverClient.SetCredentials(cp.CriteriaID, cp.Token)
 
-	resp, err := recoverClient.ReattachRun(resumeCtx, cp.RunID, cp.OverseerID)
+	resp, err := recoverClient.ReattachRun(resumeCtx, cp.RunID, cp.CriteriaID)
 	if err != nil {
 		log.Warn("reattach RPC failed; abandoning checkpoint", "error", err)
 		RemoveStepCheckpoint(cp.RunID)
 		return
 	}
 	if !resp.CanResume {
-		log.Info("run not resumable (terminal or owned by another overseer); clearing checkpoint",
+		log.Info("run not resumable (terminal or owned by another agent); clearing checkpoint",
 			"status", resp.Status)
 		RemoveStepCheckpoint(cp.RunID)
 		return
@@ -86,12 +86,12 @@ func resumeOneRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint, cli
 		return
 	}
 
-	// If the run was paused when the Overseer crashed, re-enter the wait/approval
+	// If the run was paused when the agent crashed, re-enter the wait/approval
 	// node with WithPendingSignal so it immediately re-issues ErrPaused and waits
 	// for the real resume signal (W05).
 	if resp.Status == "paused" {
 		if streamErr := recoverClient.StartStreams(resumeCtx, cp.RunID); streamErr != nil {
-			log.Warn("failed to start Castle streams for paused run", "error", streamErr)
+			log.Warn("failed to start server streams for paused run", "error", streamErr)
 			RemoveStepCheckpoint(cp.RunID)
 			return
 		}
@@ -124,7 +124,7 @@ func resumeOneRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint, cli
 			return
 		}
 
-		// If still paused after re-entry, wait for resume signal from Castle.
+		// If still paused after re-entry, wait for resume signal from the server.
 		for sink.IsPaused() {
 			log.Info("run remains paused after reattach; waiting for resume",
 				"run_id", cp.RunID, "node", sink.PausedAt())
@@ -190,7 +190,7 @@ func resumeOneRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint, cli
 	}
 
 	if streamErr := recoverClient.StartStreams(resumeCtx, cp.RunID); streamErr != nil {
-		log.Warn("failed to start Castle streams for resumed run", "error", streamErr)
+		log.Warn("failed to start server streams for resumed run", "error", streamErr)
 		RemoveStepCheckpoint(cp.RunID)
 		return
 	}
@@ -202,12 +202,12 @@ func resumeOneRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint, cli
 	}
 
 	// Emit StepResumed before the engine re-enters the step.
-	sink.OnStepResumed(resp.CurrentStep, nextAttempt, "overseer_restart")
+	sink.OnStepResumed(resp.CurrentStep, nextAttempt, "criteria_restart")
 
 	loader := plugin.NewLoader()
 	loader.RegisterBuiltin(shell.Name, plugin.BuiltinFactoryForAdapter(shell.New()))
 
-	// Restore the variable scope from Castle so expressions referencing
+	// Restore the variable scope from the server so expressions referencing
 	// prior step outputs are evaluated correctly after crash recovery (W04).
 	// Also restore the iter cursor if a for_each was active at crash time (W07).
 	restoredVars, restoredIter, restoreErr := workflow.RestoreVarScope(resp.VariableScope, graph)

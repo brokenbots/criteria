@@ -3,9 +3,9 @@ package shell_test
 import (
 	"testing"
 
-	"github.com/brokenbots/overseer/internal/adapter"
-	"github.com/brokenbots/overseer/internal/adapter/conformance"
-	"github.com/brokenbots/overseer/internal/adapters/shell"
+	"github.com/brokenbots/criteria/internal/adapter"
+	"github.com/brokenbots/criteria/internal/adapter/conformance"
+	"github.com/brokenbots/criteria/internal/adapters/shell"
 )
 
 func TestShellConformance(t *testing.T) {

@@ -1,7 +1,7 @@
 package engine
 
 import (
-	"github.com/brokenbots/overseer/workflow"
+	"github.com/brokenbots/criteria/workflow"
 	"github.com/zclconf/go-cty/cty"
 )
 

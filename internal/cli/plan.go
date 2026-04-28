@@ -10,7 +10,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/zclconf/go-cty/cty"
 
-	"github.com/brokenbots/overseer/workflow"
+	"github.com/brokenbots/criteria/workflow"
 )
 
 func NewPlanCmd() *cobra.Command {
@@ -126,7 +126,7 @@ func renderPlanOutput(ctx context.Context, workflowPath string, overrides map[st
 		b.WriteString("  (none)\n")
 	} else {
 		for _, p := range plugs {
-			b.WriteString(fmt.Sprintf("  %s   (search: $OVERSEER_PLUGINS, ~/.overseer/plugins)\n", p))
+			b.WriteString(fmt.Sprintf("  %s   (search: $CRITERIA_PLUGINS, ~/.criteria/plugins)\n", p))
 		}
 	}
 

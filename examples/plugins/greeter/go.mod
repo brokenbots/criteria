@@ -1,13 +1,13 @@
-module example.com/overseer-adapter-greeter
+module example.com/criteria-adapter-greeter
 
 go 1.26
 
-// TODO(W08): Remove this replace directive after the first overseer/sdk tag is cut.
+// TODO(W08): Remove this replace directive after the first criteria/sdk tag is cut.
 // Until then, the example builds against the in-tree SDK via this local path override.
 // External plugin authors should pin a published version instead of using replace.
-replace github.com/brokenbots/overseer/sdk => ../../../sdk
+replace github.com/brokenbots/criteria/sdk => ../../../sdk
 
-require github.com/brokenbots/overseer/sdk v0.0.0-00010101000000-000000000000
+require github.com/brokenbots/criteria/sdk v0.0.0-00010101000000-000000000000
 
 require (
 	github.com/fatih/color v1.13.0 // indirect

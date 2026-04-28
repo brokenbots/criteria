@@ -1,16 +1,16 @@
-// Package adapter defines the contract between the Overseer engine and the
+// Package adapter defines the contract between the Criteria engine and the
 // concrete code that runs a step (shell, Copilot agent, etc.).
 package adapter
 
 import (
 	"context"
 
-	"github.com/brokenbots/overseer/workflow"
+	"github.com/brokenbots/criteria/workflow"
 )
 
 // EventSink is what an adapter uses to stream incremental output and
 // adapter-specific events back to the engine. Implementations are responsible
-// for forwarding to the Castle transport.
+// for forwarding to the server transport.
 type EventSink interface {
 	// Log streams a chunk of output. `stream` is one of "stdout", "stderr",
 	// "agent".

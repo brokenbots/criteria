@@ -12,10 +12,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/brokenbots/overseer/internal/adapter"
-	"github.com/brokenbots/overseer/internal/plugin"
-	"github.com/brokenbots/overseer/internal/testutil"
-	"github.com/brokenbots/overseer/workflow"
+	"github.com/brokenbots/criteria/internal/adapter"
+	"github.com/brokenbots/criteria/internal/plugin"
+	"github.com/brokenbots/criteria/internal/testutil"
+	"github.com/brokenbots/criteria/workflow"
 )
 
 // fakeSink records engine callbacks for assertion.
@@ -316,9 +316,9 @@ func buildNoopPlugin(t *testing.T) string {
 		t.Fatal("resolve caller path")
 	}
 	moduleRoot := filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
-	pluginBin := filepath.Join(t.TempDir(), "overseer-adapter-noop")
+	pluginBin := filepath.Join(t.TempDir(), "criteria-adapter-noop")
 
-	cmd := exec.Command("go", "build", "-o", pluginBin, "./cmd/overseer-adapter-noop")
+	cmd := exec.Command("go", "build", "-o", pluginBin, "./cmd/criteria-adapter-noop")
 	cmd.Dir = moduleRoot
 	output, err := cmd.CombinedOutput()
 	if err != nil {

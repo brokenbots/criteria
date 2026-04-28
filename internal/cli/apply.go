@@ -16,18 +16,18 @@ import (
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 
-	"github.com/brokenbots/overseer/internal/adapters/shell"
-	"github.com/brokenbots/overseer/internal/engine"
-	"github.com/brokenbots/overseer/internal/plugin"
-	"github.com/brokenbots/overseer/internal/run"
-	castletrans "github.com/brokenbots/overseer/internal/transport/castle"
-	pb "github.com/brokenbots/overseer/sdk/pb/overseer/v1"
-	"github.com/brokenbots/overseer/workflow"
+	"github.com/brokenbots/criteria/internal/adapters/shell"
+	"github.com/brokenbots/criteria/internal/engine"
+	"github.com/brokenbots/criteria/internal/plugin"
+	"github.com/brokenbots/criteria/internal/run"
+	servertrans "github.com/brokenbots/criteria/internal/transport/server"
+	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
+	"github.com/brokenbots/criteria/workflow"
 )
 
 type applyOptions struct {
 	workflowPath string
-	castleURL    string
+	serverURL    string
 	eventsPath   string
 	name         string
 	codec        string
@@ -44,7 +44,7 @@ func NewApplyCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "apply <workflow.hcl>",
-		Short: "Execute a workflow locally or against Castle",
+		Short: "Execute a workflow locally or against a server",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.workflowPath = args[0]
@@ -55,16 +55,16 @@ func NewApplyCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&opts.castleURL, "castle", envOrDefault("OVERSEER_CASTLE_URL", ""), "Castle base URL (optional for local mode)")
+	cmd.Flags().StringVar(&opts.serverURL, "server", envOrDefault("CRITERIA_SERVER_URL", ""), "server base URL (optional for local mode)")
 	cmd.Flags().StringVar(&opts.eventsPath, "events-file", "", "Write ND-JSON events to this path in local mode (always written when set, regardless of --output)")
-	cmd.Flags().StringVar(&opts.name, "name", envOrDefault("OVERSEER_NAME", ""), "Overseer name (Castle mode, defaults to hostname)")
-	cmd.Flags().StringVar(&opts.codec, "castle-codec", envOrDefault("OVERSEER_CASTLE_CODEC", "proto"), "Connect codec: proto or json")
-	cmd.Flags().StringVar(&opts.tlsMode, "castle-tls", envOrDefault("OVERSEER_CASTLE_TLS", ""), "TLS mode: disable|tls|mtls")
-	cmd.Flags().StringVar(&opts.tlsCA, "tls-ca", envOrDefault("OVERSEER_TLS_CA", ""), "Path to CA bundle PEM")
-	cmd.Flags().StringVar(&opts.tlsCert, "tls-cert", envOrDefault("OVERSEER_TLS_CERT", ""), "Path to client cert PEM")
-	cmd.Flags().StringVar(&opts.tlsKey, "tls-key", envOrDefault("OVERSEER_TLS_KEY", ""), "Path to client key PEM")
+	cmd.Flags().StringVar(&opts.name, "name", envOrDefault("CRITERIA_NAME", ""), "Agent name (server mode, defaults to hostname)")
+	cmd.Flags().StringVar(&opts.codec, "server-codec", envOrDefault("CRITERIA_SERVER_CODEC", "proto"), "Connect codec: proto or json")
+	cmd.Flags().StringVar(&opts.tlsMode, "server-tls", envOrDefault("CRITERIA_SERVER_TLS", ""), "TLS mode: disable|tls|mtls")
+	cmd.Flags().StringVar(&opts.tlsCA, "tls-ca", envOrDefault("CRITERIA_TLS_CA", ""), "Path to CA bundle PEM")
+	cmd.Flags().StringVar(&opts.tlsCert, "tls-cert", envOrDefault("CRITERIA_TLS_CERT", ""), "Path to client cert PEM")
+	cmd.Flags().StringVar(&opts.tlsKey, "tls-key", envOrDefault("CRITERIA_TLS_KEY", ""), "Path to client key PEM")
 	cmd.Flags().StringArrayVar(&opts.varOverrides, "var", nil, "Override a workflow variable: key=value (repeatable)")
-	cmd.Flags().StringVar(&opts.output, "output", envOrDefault("OVERSEER_OUTPUT", "auto"), "Standalone output format: auto|concise|json (auto: concise on TTY, json when piped)")
+	cmd.Flags().StringVar(&opts.output, "output", envOrDefault("CRITERIA_OUTPUT", "auto"), "Standalone output format: auto|concise|json (auto: concise on TTY, json when piped)")
 	return cmd
 }
 
@@ -72,8 +72,8 @@ func runApply(ctx context.Context, opts applyOptions) error {
 	if strings.TrimSpace(opts.workflowPath) == "" {
 		return errors.New("workflow path is required")
 	}
-	if strings.TrimSpace(opts.castleURL) != "" {
-		return runApplyCastle(ctx, opts)
+	if strings.TrimSpace(opts.serverURL) != "" {
+		return runApplyServer(ctx, opts)
 	}
 	return runApplyLocal(ctx, opts)
 }
@@ -128,14 +128,14 @@ func runApplyLocal(ctx context.Context, opts applyOptions) error {
 		PID:       os.Getpid(),
 		RunID:     runID,
 		Workflow:  graph.Name,
-		CastleURL: "",
+		ServerURL: "",
 		StartedAt: time.Now().UTC(),
 	}
 	_ = writeLocalRunState(state)
 	defer removeLocalRunState()
 	defer RemoveStepCheckpoint(runID)
 
-	// src (raw HCL bytes) is consumed only by Castle mode for signed payload delivery;
+	// src (raw HCL bytes) is consumed only by server mode for signed payload delivery;
 	// local mode has no signing step, so src is intentionally unused here.
 	_ = src
 	eng := engine.New(graph, loader, sink, engine.WithVarOverrides(parseVarOverrides(opts.varOverrides)))
@@ -147,7 +147,7 @@ func runApplyLocal(ctx context.Context, opts applyOptions) error {
 	return nil
 }
 
-func runApplyCastle(ctx context.Context, opts applyOptions) error {
+func runApplyServer(ctx context.Context, opts applyOptions) error {
 	runCtx, cancelRun := context.WithCancel(ctx)
 	defer cancelRun()
 
@@ -158,14 +158,14 @@ func runApplyCastle(ctx context.Context, opts applyOptions) error {
 	}
 	defer loader.Shutdown(context.Background())
 
-	clientOpts := castletrans.Options{
-		Codec:    castletrans.Codec(opts.codec),
-		TLSMode:  castletrans.TLSMode(opts.tlsMode),
+	clientOpts := servertrans.Options{
+		Codec:    servertrans.Codec(opts.codec),
+		TLSMode:  servertrans.TLSMode(opts.tlsMode),
 		CAFile:   opts.tlsCA,
 		CertFile: opts.tlsCert,
 		KeyFile:  opts.tlsKey,
 	}
-	client, runID, err := setupCastleRun(runCtx, log, graph, src, opts.castleURL, opts.name, clientOpts, cancelRun)
+	client, runID, err := setupServerRun(runCtx, log, graph, src, opts.serverURL, opts.name, clientOpts, cancelRun)
 	if err != nil {
 		return err
 	}
@@ -183,8 +183,8 @@ func runApplyCastle(ctx context.Context, opts applyOptions) error {
 				CurrentStep:  step,
 				Attempt:      attempt,
 				StartedAt:    time.Now().UTC(),
-				CastleURL:    opts.castleURL,
-				OverseerID:   client.OverseerID(),
+				ServerURL:    opts.serverURL,
+				CriteriaID:   client.CriteriaID(),
 				Token:        client.Token(),
 			}
 			if cpErr := WriteStepCheckpoint(cp); cpErr != nil {
@@ -202,7 +202,7 @@ func runApplyCastle(ctx context.Context, opts applyOptions) error {
 		PID:       os.Getpid(),
 		RunID:     runID,
 		Workflow:  graph.Name,
-		CastleURL: opts.castleURL,
+		ServerURL: opts.serverURL,
 		StartedAt: time.Now().UTC(),
 	}
 	_ = writeLocalRunState(state)
@@ -253,8 +253,8 @@ func runApplyCastle(ctx context.Context, opts applyOptions) error {
 	return nil
 }
 
-func setupCastleRun(ctx context.Context, log *slog.Logger, graph *workflow.FSMGraph, src []byte, castleURL, name string, clientOpts castletrans.Options, cancelRun func()) (*castletrans.Client, string, error) {
-	client, err := castletrans.NewClient(castleURL, log, clientOpts)
+func setupServerRun(ctx context.Context, log *slog.Logger, graph *workflow.FSMGraph, src []byte, serverURL, name string, clientOpts servertrans.Options, cancelRun func()) (*servertrans.Client, string, error) {
+	client, err := servertrans.NewClient(serverURL, log, clientOpts)
 	if err != nil {
 		return nil, "", err
 	}
@@ -276,7 +276,7 @@ func setupCastleRun(ctx context.Context, log *slog.Logger, graph *workflow.FSMGr
 	}
 	if err := client.StartStreams(ctx, runID); err != nil {
 		client.Close()
-		return nil, "", fmt.Errorf("castle streams: %w", err)
+		return nil, "", fmt.Errorf("server streams: %w", err)
 	}
 	client.StartHeartbeat(ctx, 10*time.Second)
 
@@ -325,29 +325,29 @@ func ensureLocalModeSupported(graph *workflow.FSMGraph) error {
 	// Signal-based wait nodes require an orchestrator to deliver the signal.
 	for _, wn := range graph.Waits {
 		if wn.Signal != "" {
-			return errors.New("signal waits require an orchestrator (e.g. --castle <url>)")
+			return errors.New("signal waits require an orchestrator (e.g. --server <url>)")
 		}
 	}
 	// Approval nodes always require an orchestrator.
 	if len(graph.Approvals) > 0 {
-		return errors.New("approval nodes require an orchestrator (e.g. --castle <url>)")
+		return errors.New("approval nodes require an orchestrator (e.g. --server <url>)")
 	}
 	// Legacy step lifecycle checks kept for forward-compat.
 	for _, step := range graph.Steps {
 		if step.Lifecycle == "wait" {
-			return errors.New("signal waits require an orchestrator (e.g. --castle <url>)")
+			return errors.New("signal waits require an orchestrator (e.g. --server <url>)")
 		}
 		if step.Lifecycle == "approval" {
-			return errors.New("approval nodes require an orchestrator (e.g. --castle <url>)")
+			return errors.New("approval nodes require an orchestrator (e.g. --server <url>)")
 		}
 	}
 	for _, state := range graph.States {
 		requires := strings.ToLower(strings.TrimSpace(state.Requires))
 		switch requires {
 		case "signal", "wait_signal", "wait.signal":
-			return errors.New("signal waits require an orchestrator (e.g. --castle <url>)")
+			return errors.New("signal waits require an orchestrator (e.g. --server <url>)")
 		case "approval", "wait_approval", "wait.approval":
-			return errors.New("approval nodes require an orchestrator (e.g. --castle <url>)")
+			return errors.New("approval nodes require an orchestrator (e.g. --server <url>)")
 		}
 	}
 	return nil
@@ -363,7 +363,7 @@ func resumeLocalInFlightRuns(ctx context.Context, log *slog.Logger, out io.Write
 		return
 	}
 	for _, cp := range checkpoints {
-		if strings.TrimSpace(cp.CastleURL) != "" {
+		if strings.TrimSpace(cp.ServerURL) != "" {
 			continue
 		}
 		resumeOneLocalRun(ctx, log, cp, out, mode)
@@ -378,7 +378,7 @@ func resumeOneLocalRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint
 		return
 	}
 	if err := ensureLocalModeSupported(graph); err != nil {
-		log.Warn("local checkpoint requires castle; clearing", "run_id", cp.RunID, "error", err)
+		log.Warn("local checkpoint requires server; clearing", "run_id", cp.RunID, "error", err)
 		RemoveStepCheckpoint(cp.RunID)
 		return
 	}
@@ -407,7 +407,7 @@ func resumeOneLocalRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint
 		}
 	}
 	sink := buildLocalSink(cp.RunID, out, mode, graph.StepOrder(), checkpointFn)
-	sink.OnStepResumed(cp.CurrentStep, nextAttempt, "overseer_restart")
+	sink.OnStepResumed(cp.CurrentStep, nextAttempt, "criteria_restart")
 
 	eng := engine.New(graph, loader, sink)
 	if runErr := eng.RunFrom(ctx, cp.CurrentStep, nextAttempt); runErr != nil {

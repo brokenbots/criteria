@@ -12,7 +12,7 @@ import (
 func TestApplyLocal_NoopPlugin_EmitsExpectedEvents(t *testing.T) {
 	pluginBin := buildNoopPluginBinary(t)
 	pluginDir := t.TempDir()
-	pluginPath := filepath.Join(pluginDir, "overseer-adapter-noop")
+	pluginPath := filepath.Join(pluginDir, "criteria-adapter-noop")
 	b, err := os.ReadFile(pluginBin)
 	if err != nil {
 		t.Fatalf("read plugin binary: %v", err)
@@ -21,8 +21,8 @@ func TestApplyLocal_NoopPlugin_EmitsExpectedEvents(t *testing.T) {
 		t.Fatalf("write plugin binary: %v", err)
 	}
 
-	t.Setenv("OVERSEER_PLUGINS", pluginDir)
-	t.Setenv("OVERSEER_STATE_DIR", t.TempDir())
+	t.Setenv("CRITERIA_PLUGINS", pluginDir)
+	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
 
 	workflowPath := writeWorkflowFile(t, `
 workflow "local_apply_noop" {

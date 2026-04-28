@@ -8,8 +8,8 @@ import (
 
 // IterCursor tracks the active state of a for_each node's iteration loop.
 //
-// Castle stores the cursor opaquely as the "iter" field inside the
-// runs.variable_scope JSON blob; only Overseer interprets its contents.
+// The server stores the cursor opaquely as the "iter" field inside the
+// runs.variable_scope JSON blob; only the agent interprets its contents.
 // Field documentation is authoritative for the Phase 1.6 SDK extraction.
 //
 // Items is populated at runtime when the for_each node is first entered (or
@@ -37,7 +37,7 @@ type IterCursor struct {
 
 // SerializeIterCursor encodes the cursor to a JSON string suitable for
 // transmission via ScopeIterCursorSet. A nil cursor returns an empty string
-// (signals "clear the cursor"). Castle stores this verbatim without
+// (signals "clear the cursor"). The server stores this verbatim without
 // interpreting the field names, preserving 1.6 split independence.
 func SerializeIterCursor(cursor *IterCursor) (string, error) {
 	if cursor == nil {

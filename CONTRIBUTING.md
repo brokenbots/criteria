@@ -1,4 +1,4 @@
-# Contributing to Overseer
+# Contributing to Criteria
 
 ## Setup
 
@@ -9,17 +9,17 @@
 - git
 
 ```bash
-git clone https://github.com/brokenbots/overseer.git
-cd overseer
+git clone https://github.com/brokenbots/criteria.git
+cd criteria
 make bootstrap         # sync all three Go workspace modules
-make build             # produces bin/overseer and the bundled adapter binaries
+make build             # produces bin/criteria and the bundled adapter binaries
 ```
 
 The repo is a Go workspace containing three modules: the root module (engine + CLI), `sdk/` (published Go SDK), and `workflow/` (HCL compiler). `make bootstrap` handles all three.
 
 ## Project layout
 
-The CLI entrypoint is `cmd/overseer`; the engine, plugin loader, and adapters live under `internal/`; the HCL parser and FSM compiler are in `workflow/`; the published Go SDK is in `sdk/`; and out-of-process adapter plugins are in `cmd/overseer-adapter-*`. See [AGENTS.md](AGENTS.md) for the full component map, architecture notes, and agent-specific constraints.
+The CLI entrypoint is `cmd/criteria`; the engine, plugin loader, and adapters live under `internal/`; the HCL parser and FSM compiler are in `workflow/`; the published Go SDK is in `sdk/`; and out-of-process adapter plugins are in `cmd/criteria-adapter-*`. See [AGENTS.md](AGENTS.md) for the full component map, architecture notes, and agent-specific constraints.
 
 ## Development workflow
 
@@ -42,10 +42,10 @@ The CLI entrypoint is `cmd/overseer`; the engine, plugin loader, and adapters li
 
 ## Proto changes
 
-Proto source files live in `proto/overseer/v1/`. After editing them:
+Proto source files live in `proto/criteria/v1/`. After editing them:
 
 ```bash
-make proto       # regenerate sdk/pb/overseer/v1/ Go bindings
+make proto       # regenerate sdk/pb/criteria/v1/ Go bindings
 make proto-lint  # lint proto files with buf
 ```
 
@@ -63,23 +63,23 @@ Human contributors follow the same convention: pick up a workstream file, implem
 
 ## Published SDK contract
 
-`sdk/` is a published Go sub-module at `github.com/brokenbots/overseer/sdk`. The following are **breaking SDK changes** that require a version bump:
+`sdk/` is a published Go sub-module at `github.com/brokenbots/criteria/sdk`. The following are **breaking SDK changes** that require a version bump:
 
 - Any change to the `conformance.Subject` interface.
 - Any change to `ServiceHandler` or `ServiceClient` method signatures.
-- Any change to event proto field numbers in `proto/overseer/v1/events.proto` (field numbers are permanent once published).
+- Any change to event proto field numbers in `proto/criteria/v1/events.proto` (field numbers are permanent once published).
 - Removal or rename of exported SDK functions or types.
 
 Additive changes (new fields, new events, new conformance test cases) are non-breaking at minor or patch level.
 
 ## Adapter plugins
 
-Plugin binaries are named `overseer-adapter-<name>` and must be placed in `${OVERSEER_PLUGINS}/` or `~/.overseer/plugins/`. Build the bundled adapters with `make plugins`. See [docs/plugins.md](docs/plugins.md) for the plugin wire protocol and development guide.
+Plugin binaries are named `criteria-adapter-<name>` and must be placed in `${CRITERIA_PLUGINS}/` or `~/.criteria/plugins/`. Build the bundled adapters with `make plugins`. See [docs/plugins.md](docs/plugins.md) for the plugin wire protocol and development guide.
 
 ## Code style
 
 - Structured logging only: use `slog` (JSON output in production entrypoints).
 - No CGO: use pure-Go alternatives (e.g., `modernc.org/sqlite` if storage is needed).
-- Adapter plugin source lives in `cmd/overseer-adapter-*/`; the internal plugin loader lives in `internal/plugin/` and `internal/adapter*/`.
+- Adapter plugin source lives in `cmd/criteria-adapter-*/`; the internal plugin loader lives in `internal/plugin/` and `internal/adapter*/`.
 - `make lint-imports` enforces the import boundary: `sdk/pb/...` is the only permitted reach into the SDK tree from `internal/`.
 

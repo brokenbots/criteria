@@ -35,4 +35,4 @@ states:
   done    terminal=true   success=true
 
 plugins required:
-  shell   (search: $OVERSEER_PLUGINS, ~/.overseer/plugins)
+  shell   (search: $CRITERIA_PLUGINS, ~/.criteria/plugins)

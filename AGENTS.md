@@ -4,24 +4,24 @@ Repository guidance for AI coding agents working in this workspace.
 
 ## What this repo is
 
-Overseer is a standalone workflow execution engine: HCL → finite-state machine
-→ runner. It runs locally (no orchestrator) or against a Castle-compatible
-orchestrator over the published `overseer-sdk` Connect/gRPC contract. The
-sibling Castle/Parapet orchestrator lives in
-[github.com/brokenbots/overlord](https://github.com/brokenbots/overlord) and
+Criteria is a standalone workflow execution engine: HCL → finite-state machine
+→ runner. It runs locally (no orchestrator) or against a server-compatible
+orchestrator over the published `criteria-sdk` Connect/gRPC contract. The
+sibling orchestrator lives in
+[github.com/brokenbots/orchestrator](https://github.com/brokenbots/orchestrator) and
 consumes this repo's published SDK; nothing in that repo is editable from
 here.
 
 ## Scope and priorities
 
 - Keep changes small and targeted; avoid broad refactors unless requested.
-- Treat `proto/overseer/v1/` as the source of truth for the wire contract.
+- Treat `proto/criteria/v1/` as the source of truth for the wire contract.
 - Prefer linking existing docs over duplicating details.
 
 ## Quick start commands
 
 - Bootstrap dependencies: `make bootstrap`
-- Build the binary: `make build` (output at `bin/overseer`)
+- Build the binary: `make build` (output at `bin/criteria`)
 - Build adapter plugins: `make plugins`
 - Run all Go tests: `make test`
 - Run the SDK conformance suite alone: `make test-conformance`
@@ -32,9 +32,9 @@ here.
 
 ## Project map
 
-- Wire contract: `proto/overseer/v1/*.proto` — generated Go in
-  `sdk/pb/overseer/v1/`. Managed with `buf`.
-- CLI entrypoint: [cmd/overseer/main.go](cmd/overseer/main.go)
+- Wire contract: `proto/criteria/v1/*.proto` — generated Go in
+  `sdk/pb/criteria/v1/`. Managed with `buf`.
+- CLI entrypoint: [cmd/criteria/main.go](cmd/criteria/main.go)
 - CLI commands: [internal/cli/compile.go](internal/cli/compile.go),
   [internal/cli/plan.go](internal/cli/plan.go),
   [internal/cli/apply.go](internal/cli/apply.go),
@@ -52,9 +52,9 @@ here.
   in-memory reference Subject lives at
   [sdk/conformance/inmem_subject_test.go](sdk/conformance/inmem_subject_test.go).
 - Adapter plugin loader (host side): [internal/plugin/](internal/plugin/)
-- Bundled adapter plugins: [cmd/overseer-adapter-noop/](cmd/overseer-adapter-noop/),
-  [cmd/overseer-adapter-copilot/](cmd/overseer-adapter-copilot/),
-  [cmd/overseer-adapter-mcp/](cmd/overseer-adapter-mcp/)
+- Bundled adapter plugins: [cmd/criteria-adapter-noop/](cmd/criteria-adapter-noop/),
+  [cmd/criteria-adapter-copilot/](cmd/criteria-adapter-copilot/),
+  [cmd/criteria-adapter-mcp/](cmd/criteria-adapter-mcp/)
 - Project planning: [PLAN.md](PLAN.md), [workstreams/README.md](workstreams/README.md)
 
 ## Conventions agents should follow
@@ -62,20 +62,20 @@ here.
 - Go workspace uses three modules — root, `sdk/`, `workflow/` — wired
   through [go.work](go.work) plus `replace` directives in the root `go.mod`.
   Run commands from repo root using `make` targets when possible.
-- **Wire contract changes**: edit a file under `proto/overseer/v1/` first,
+- **Wire contract changes**: edit a file under `proto/criteria/v1/` first,
   run `make proto` to regenerate the Go bindings, then update the
   in-tree call sites. Any change to the `Subject`/`ServiceHandler`
   surface or to event field numbers is a **breaking SDK change** —
   see [CONTRIBUTING.md](CONTRIBUTING.md) for the bump policy.
 - **Plugin model**: adapter plugins run out-of-process and are discovered
-  as `overseer-adapter-<name>` from `${OVERSEER_PLUGINS}/` first, then
-  `~/.overseer/plugins/`. Use `make plugins` to build all bundled adapter
-  binaries. The plugin handshake cookie is `OVERSEER_PLUGIN`.
+  as `criteria-adapter-<name>` from `${CRITERIA_PLUGINS}/` first, then
+  `~/.criteria/plugins/`. Use `make plugins` to build all bundled adapter
+  binaries. The plugin handshake cookie is `CRITERIA_PLUGIN`.
 - **HCL workflow syntax**: step-level adapter input uses `input { ... }`
   blocks; agent-level configuration stays on the `agent { }` block.
   The legacy `config = {...}` shape for step input is not accepted.
 - **Local mode constraints**: `wait { signal = "..." }` and `approval { ... }`
-  nodes require a Castle-compatible orchestrator (`overseer apply --castle ...`).
+  nodes require a server-compatible orchestrator (`criteria apply --server ...`).
   Local-only execution rejects these node kinds with a clear error.
 - **Workstream Reviewer role**: the reviewer agent is an audit-only
   quality gate and must not edit code; it enforces quality, security, and
@@ -94,16 +94,16 @@ here.
 
 ## Common pitfalls
 
-- Copilot adapter execution requires installing `overseer-adapter-copilot`
-  into `${OVERSEER_PLUGINS}/` or `~/.overseer/plugins/`, plus the
-  `copilot` CLI on `PATH` (or pointed at via `OVERSEER_COPILOT_BIN`).
+- Copilot adapter execution requires installing `criteria-adapter-copilot`
+  into `${CRITERIA_PLUGINS}/` or `~/.criteria/plugins/`, plus the
+  `copilot` CLI on `PATH` (or pointed at via `CRITERIA_COPILOT_BIN`).
   There is no in-binary adapter code.
-- Castle run/event ordering depends on server-assigned monotonic `seq`
+- Server run/event ordering depends on server-assigned monotonic `seq`
   per `run_id`; avoid client-side ordering assumptions.
 - Avoid introducing CGO-only SQLite dependencies; current storage uses
   pure-Go `modernc.org/sqlite`.
 - Prefer `make test` over ad-hoc partial test runs unless task scope is
   clearly limited.
-- `proto/overseer/v1/castle.proto` exists in this repo because the CLI
-  client embeds CastleService stubs (`status`, `stop`); the orchestrator
-  side of CastleService is implemented in the overlord repo.
+- `proto/criteria/v1/server.proto` exists in this repo because the CLI
+  client embeds ServerService stubs (`status`, `stop`); the orchestrator
+  side of ServerService is implemented in the orchestrator repo.

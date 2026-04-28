@@ -1,4 +1,4 @@
-// Package run wires the engine, dispatcher, and Castle transport into a
+// Package run wires the engine, dispatcher, and server transport into a
 // single Sink that publishes events upstream.
 package run
 
@@ -13,21 +13,21 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/structpb"
 
-	"github.com/brokenbots/overseer/internal/adapter"
-	castletrans "github.com/brokenbots/overseer/internal/transport/castle"
-	"github.com/brokenbots/overseer/events"
-	pb "github.com/brokenbots/overseer/sdk/pb/overseer/v1"
+	"github.com/brokenbots/criteria/internal/adapter"
+	servertrans "github.com/brokenbots/criteria/internal/transport/server"
+	"github.com/brokenbots/criteria/events"
+	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 )
 
-// Sink implements engine.Sink by forwarding to a Castle client.
+// Sink implements engine.Sink by forwarding to a server client.
 //
 // Envelope identity is assigned by the transport: Client.Publish overwrites
-// CorrelationId with a per-envelope UUID so Castle can dedup on
+// CorrelationId with a per-envelope UUID so the server can dedup on
 // (run_id, correlation_id) across reconnects. Sink therefore carries only
 // the RunID; no run-scoped trace id is stamped here.
 type Sink struct {
 	RunID  string
-	Client *castletrans.Client
+	Client *servertrans.Client
 	Log    *slog.Logger
 	// CheckpointFn, if non-nil, is called synchronously inside OnStepEntered
 	// before the event is published. Use this to write a durable step
@@ -95,7 +95,7 @@ func (s *Sink) OnStepOutputCaptured(step string, outputs map[string]string) {
 }
 
 // OnRunPaused is called by the engine loop when execution pauses at a wait
-// or approval node (W05). The Castle sink does not publish a separate event
+// or approval node (W05). The server sink does not publish a separate event
 // here because WaitEntered / ApprovalRequested were already emitted; this
 // hook exists so the CLI pause/resume loop can detect the paused node.
 func (s *Sink) OnRunPaused(node, mode, signal string) {
@@ -167,7 +167,7 @@ func (s *Sink) OnForEachOutcome(node, outcome, target string) {
 }
 
 // OnScopeIterCursorSet emits a scope.iter_cursor_set event when the for_each
-// cursor is created, advanced, or cleared (W07). Castle stores cursorJSON
+// cursor is created, advanced, or cleared (W07). The server stores cursorJSON
 // verbatim without interpreting field names.
 func (s *Sink) OnScopeIterCursorSet(cursorJSON string) {
 	s.publish(&pb.ScopeIterCursorSet{CursorJson: cursorJSON})

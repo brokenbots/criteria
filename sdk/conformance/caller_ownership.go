@@ -8,18 +8,18 @@ import (
 
 	"connectrpc.com/connect"
 
-	pb "github.com/brokenbots/overseer/sdk/pb/overseer/v1"
-	overseer "github.com/brokenbots/overseer/sdk"
+	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
+	criteria "github.com/brokenbots/criteria/sdk"
 )
 
 // testCallerOwnership asserts the caller-ownership contract for every mutating
-// OverseerService RPC. Two overseers (A and B) are registered with distinct
+// CriteriaService RPC. Two agents (A and B) are registered with distinct
 // tokens. B-token calls against A-owned resources must return
 // connect.CodePermissionDenied.
 //
 // RPCs tested:
 //   - Heartbeat: B cannot heartbeat as A.
-//   - CreateRun: B cannot create a run claiming A's overseer_id.
+//   - CreateRun: B cannot create a run claiming A's criteria_id.
 //   - ReattachRun: B cannot reattach to A's run.
 //   - SubmitEvents: B cannot submit events for A's run.
 //   - Control: B cannot subscribe to A's control channel.
@@ -50,12 +50,12 @@ func testCallerOwnership(t *testing.T, s Subject) {
 	})
 }
 
-// ownershipSetup registers two overseers (owner A and attacker B) and creates
+// ownershipSetup registers two agents (owner A and attacker B) and creates
 // a run owned by A. It returns the clients and IDs needed for ownership tests.
 func ownershipSetup(t *testing.T, s Subject) (
 	baseURL string,
 	client *http.Client,
-	oClient overseer.ServiceClient,
+	oClient criteria.ServiceClient,
 	ownerID, ownerToken, attackerID, attackerToken, runID string,
 ) {
 	t.Helper()
@@ -65,12 +65,12 @@ func ownershipSetup(t *testing.T, s Subject) (
 
 	ownerToken = "tok-owner"
 	attackerToken = "tok-attacker"
-	ownerID = s.RegisterOverseer(t, "owner", ownerToken)
-	attackerID = s.RegisterOverseer(t, "attacker", attackerToken)
+	ownerID = s.RegisterAgent(t, "owner", ownerToken)
+	attackerID = s.RegisterAgent(t, "attacker", attackerToken)
 
-	oClient = overseer.NewServiceClient(client, baseURL)
+	oClient = criteria.NewServiceClient(client, baseURL)
 
-	createReq := connect.NewRequest(&pb.CreateRunRequest{OverseerId: ownerID, WorkflowName: "ownership-wf"})
+	createReq := connect.NewRequest(&pb.CreateRunRequest{CriteriaId: ownerID, WorkflowName: "ownership-wf"})
 	createReq.Header().Set("Authorization", "Bearer "+ownerToken)
 	runResp, err := oClient.CreateRun(context.Background(), createReq)
 	if err != nil {
@@ -82,7 +82,7 @@ func ownershipSetup(t *testing.T, s Subject) (
 
 func testOwnership_Heartbeat(t *testing.T, s Subject) {
 	_, _, oClient, ownerID, _, _, attackerToken, _ := ownershipSetup(t, s)
-	req := connect.NewRequest(&pb.HeartbeatRequest{OverseerId: ownerID})
+	req := connect.NewRequest(&pb.HeartbeatRequest{CriteriaId: ownerID})
 	req.Header().Set("Authorization", "Bearer "+attackerToken)
 	_, err := oClient.Heartbeat(context.Background(), req)
 	if connect.CodeOf(err) != connect.CodePermissionDenied {
@@ -93,7 +93,7 @@ func testOwnership_Heartbeat(t *testing.T, s Subject) {
 
 func testOwnership_CreateRun(t *testing.T, s Subject) {
 	_, _, oClient, ownerID, _, _, attackerToken, _ := ownershipSetup(t, s)
-	req := connect.NewRequest(&pb.CreateRunRequest{OverseerId: ownerID, WorkflowName: "wf"})
+	req := connect.NewRequest(&pb.CreateRunRequest{CriteriaId: ownerID, WorkflowName: "wf"})
 	req.Header().Set("Authorization", "Bearer "+attackerToken)
 	_, err := oClient.CreateRun(context.Background(), req)
 	if connect.CodeOf(err) != connect.CodePermissionDenied {
@@ -104,7 +104,7 @@ func testOwnership_CreateRun(t *testing.T, s Subject) {
 
 func testOwnership_ReattachRun(t *testing.T, s Subject) {
 	_, _, oClient, _, _, attackerID, attackerToken, runID := ownershipSetup(t, s)
-	req := connect.NewRequest(&pb.ReattachRunRequest{RunId: runID, OverseerId: attackerID})
+	req := connect.NewRequest(&pb.ReattachRunRequest{RunId: runID, CriteriaId: attackerID})
 	req.Header().Set("Authorization", "Bearer "+attackerToken)
 	_, err := oClient.ReattachRun(context.Background(), req)
 	if connect.CodeOf(err) != connect.CodePermissionDenied {
@@ -119,7 +119,7 @@ func testOwnership_SubmitEvents(t *testing.T, s Subject) {
 	defer cancel()
 	stream := oClient.SubmitEvents(ctx)
 	stream.RequestHeader().Set("Authorization", "Bearer "+attackerToken)
-	env := overseer.NewEnvelope(runID, &pb.StepLog{Step: "s", Stream: pb.LogStream_LOG_STREAM_STDOUT, Chunk: "x"})
+	env := criteria.NewEnvelope(runID, &pb.StepLog{Step: "s", Stream: pb.LogStream_LOG_STREAM_STDOUT, Chunk: "x"})
 	env.CorrelationId = "own-submit"
 	if err := stream.Send(env); err != nil {
 		// Server may close the stream before the client reads — validate the
@@ -140,7 +140,7 @@ func testOwnership_Control(t *testing.T, s Subject) {
 	_, _, oClient, ownerID, _, _, attackerToken, _ := ownershipSetup(t, s)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	req := connect.NewRequest(&pb.ControlSubscribeRequest{OverseerId: ownerID})
+	req := connect.NewRequest(&pb.ControlSubscribeRequest{CriteriaId: ownerID})
 	req.Header().Set("Authorization", "Bearer "+attackerToken)
 	stream, err := oClient.Control(ctx, req)
 	if err != nil {
@@ -163,11 +163,11 @@ func testOwnership_Resume(t *testing.T, s Subject) {
 
 	ownerToken := "tok-res-owner"
 	attackerToken := "tok-res-attacker"
-	ownerID := s.RegisterOverseer(t, "res-owner", ownerToken)
-	_ = s.RegisterOverseer(t, "res-attacker", attackerToken)
-	oClient := overseer.NewServiceClient(client, baseURL)
+	ownerID := s.RegisterAgent(t, "res-owner", ownerToken)
+	_ = s.RegisterAgent(t, "res-attacker", attackerToken)
+	oClient := criteria.NewServiceClient(client, baseURL)
 
-	createReq := connect.NewRequest(&pb.CreateRunRequest{OverseerId: ownerID, WorkflowName: "own-resume-wf"})
+	createReq := connect.NewRequest(&pb.CreateRunRequest{CriteriaId: ownerID, WorkflowName: "own-resume-wf"})
 	createReq.Header().Set("Authorization", "Bearer "+ownerToken)
 	runResp, err := oClient.CreateRun(context.Background(), createReq)
 	if err != nil {
@@ -192,13 +192,13 @@ func testOwnership_RegisterBootstrapGate(t *testing.T, s Subject) {
 	// Unauthenticated (bootstrap required but not provided). Both are acceptable
 	// per the SDK doc contract.
 	//
-	// Note: the Subject uses RegisterOverseer (direct store path) for test setup,
+	// Note: the Subject uses RegisterAgent (direct store path) for test setup,
 	// so the bootstrap mechanism is not exercised there. This test exercises the
 	// wire-level Register RPC directly.
 	baseURL, client, teardown := s.SetUp(t)
 	defer teardown()
 
-	oClient := overseer.NewServiceClient(client, baseURL)
+	oClient := criteria.NewServiceClient(client, baseURL)
 	_, err := oClient.Register(context.Background(), connect.NewRequest(&pb.RegisterRequest{Name: "x"}))
 	code := connect.CodeOf(err)
 	if code != connect.CodeUnimplemented && code != connect.CodeUnauthenticated {

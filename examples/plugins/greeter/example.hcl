@@ -1,6 +1,6 @@
 # mode: standalone
 # Example: greeter adapter — demonstrates a minimal third-party plugin.
-# Run with: OVERSEER_PLUGINS=<dir-with-overseer-adapter-greeter> overseer apply example.hcl
+# Run with: CRITERIA_PLUGINS=<dir-with-criteria-adapter-greeter> criteria apply example.hcl
 workflow "greeter_example" {
   version       = "0.1"
   initial_state = "greet"

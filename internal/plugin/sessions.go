@@ -7,8 +7,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/brokenbots/overseer/internal/adapter"
-	"github.com/brokenbots/overseer/workflow"
+	"github.com/brokenbots/criteria/internal/adapter"
+	"github.com/brokenbots/criteria/workflow"
 )
 
 const (

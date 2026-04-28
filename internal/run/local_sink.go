@@ -10,9 +10,9 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/brokenbots/overseer/internal/adapter"
-	"github.com/brokenbots/overseer/events"
-	pb "github.com/brokenbots/overseer/sdk/pb/overseer/v1"
+	"github.com/brokenbots/criteria/internal/adapter"
+	"github.com/brokenbots/criteria/events"
+	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 )
 
 // LocalSink emits engine events as newline-delimited JSON envelopes.

@@ -14,22 +14,22 @@ import (
 	"golang.org/x/net/http2"
 )
 
-// castleHTTPClient builds the HTTP/2 client used by `overseer` CLI commands
-// that talk to Castle. It mirrors the runtime Overseer transport: cleartext
+// serverHTTPClient builds the HTTP/2 client used by `criteria` CLI commands
+// that talk to the server. It mirrors the runtime agent transport: cleartext
 // h2c for plain `http://` URLs, standard TLS for `https://`, and mTLS when a
 // client cert+key are provided.
 //
-// castleURL selects the scheme. When caFile is non-empty it is loaded as the
+// serverURL selects the scheme. When caFile is non-empty it is loaded as the
 // root bundle for server verification; certFile/keyFile enable mTLS.
-func castleHTTPClient(castleURL, caFile, certFile, keyFile string) (*http.Client, error) {
-	u, err := url.Parse(castleURL)
+func serverHTTPClient(serverURL, caFile, certFile, keyFile string) (*http.Client, error) {
+	u, err := url.Parse(serverURL)
 	if err != nil {
-		return nil, fmt.Errorf("parse castle url: %w", err)
+		return nil, fmt.Errorf("parse server url: %w", err)
 	}
 	switch u.Scheme {
 	case "http":
 		if certFile != "" || keyFile != "" || caFile != "" {
-			return nil, errors.New("TLS flags require an https:// castle url")
+			return nil, errors.New("TLS flags require an https:// server url")
 		}
 		return &http.Client{Transport: &http2.Transport{
 			AllowHTTP: true,
@@ -62,6 +62,6 @@ func castleHTTPClient(castleURL, caFile, certFile, keyFile string) (*http.Client
 		}
 		return &http.Client{Transport: &http2.Transport{TLSClientConfig: cfg}}, nil
 	default:
-		return nil, fmt.Errorf("unsupported castle url scheme %q (want http or https)", u.Scheme)
+		return nil, fmt.Errorf("unsupported server url scheme %q (want http or https)", u.Scheme)
 	}
 }

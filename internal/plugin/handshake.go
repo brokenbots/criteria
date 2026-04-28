@@ -3,9 +3,9 @@ package plugin
 import hplugin "github.com/hashicorp/go-plugin"
 
 const (
-	// MagicCookieKey gates plugin startup to overseer-owned subprocesses.
-	MagicCookieKey = "OVERSEER_PLUGIN"
-	// MagicCookieValue is a fixed UUIDv4 used for overseer plugin handshakes.
+	// MagicCookieKey gates plugin startup to criteria-owned subprocesses.
+	MagicCookieKey = "CRITERIA_PLUGIN"
+	// MagicCookieValue is a fixed UUIDv4 used for criteria plugin handshakes.
 	// These constants must stay in sync with sdk/pluginhost.MagicCookieValue.
 	// Drift is caught at integration level by TestHandshakeInfo, which builds a
 	// plugin using sdk/pluginhost and connects to it using this package's config.

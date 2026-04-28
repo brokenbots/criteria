@@ -1,12 +1,12 @@
-# Overseer workstreams
+# Criteria workstreams
 
 The active phase's workstream files live at the top of this directory;
 prior phases are in [`archived/`](archived/).
 
 ## Status
 
-- **Phase 0** — post-separation cleanup; establishing overseer as its
-  own project after the v1.6 split from the overlord monorepo. **Active.**
+- **Phase 0** — post-separation cleanup; establishing criteria as its
+  own project after the v1.6 split from the orchestrator monorepo. **Active.**
 
 See [PLAN.md](../PLAN.md) for the project-level roadmap.
 
@@ -74,6 +74,6 @@ coordination-set files but does not touch their structure.
 ## Archived
 
 There is no archived phase yet. The pre-separation v1.x phases live
-in the overlord repo's `workstreams/archived/`; they are not copied
+in the orchestrator repo's `workstreams/archived/`; they are not copied
 here. Phase 0 will be the first archived phase under
 `workstreams/archived/v0/` once W09 lands.

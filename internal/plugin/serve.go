@@ -5,7 +5,7 @@ import (
 	"errors"
 	"io"
 
-	pb "github.com/brokenbots/overseer/sdk/pb/overseer/v1"
+	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 	hplugin "github.com/hashicorp/go-plugin"
 	"google.golang.org/grpc"
 )
@@ -18,12 +18,12 @@ const PluginName = "adapter"
 // These wire-name constants must match the proto service descriptor.
 // Validated by TestAdapterPluginWireNames against the compiled descriptor.
 const (
-	adapterPluginServiceName        = "overseer.v1.AdapterPluginService"
-	adapterPluginInfoMethod         = "/overseer.v1.AdapterPluginService/Info"
-	adapterPluginOpenSessionMethod  = "/overseer.v1.AdapterPluginService/OpenSession"
-	adapterPluginExecuteMethod      = "/overseer.v1.AdapterPluginService/Execute"
-	adapterPluginPermitMethod       = "/overseer.v1.AdapterPluginService/Permit"
-	adapterPluginCloseSessionMethod = "/overseer.v1.AdapterPluginService/CloseSession"
+	adapterPluginServiceName        = "criteria.v1.AdapterPluginService"
+	adapterPluginInfoMethod         = "/criteria.v1.AdapterPluginService/Info"
+	adapterPluginOpenSessionMethod  = "/criteria.v1.AdapterPluginService/OpenSession"
+	adapterPluginExecuteMethod      = "/criteria.v1.AdapterPluginService/Execute"
+	adapterPluginPermitMethod       = "/criteria.v1.AdapterPluginService/Permit"
+	adapterPluginCloseSessionMethod = "/criteria.v1.AdapterPluginService/CloseSession"
 )
 
 // Client is the host-side typed client returned from go-plugin dispense.
@@ -40,7 +40,7 @@ type ExecuteEventReceiver interface {
 	Recv() (*pb.ExecuteEvent, error)
 }
 
-// GRPCPlugin is the host-side go-plugin adapter for the Overseer adapter
+// GRPCPlugin is the host-side go-plugin adapter for the Criteria adapter
 // protocol. It only implements GRPCClient; GRPCServer is a no-op stub because
 // the host never acts as a plugin server.
 type GRPCPlugin struct {
@@ -54,7 +54,7 @@ func PluginMap() map[string]hplugin.Plugin {
 }
 
 func (p *GRPCPlugin) GRPCServer(_ *hplugin.GRPCBroker, _ *grpc.Server) error {
-	return errors.New("GRPCServer should not be called on the Overseer host")
+	return errors.New("GRPCServer should not be called on the Criteria host")
 }
 
 func (p *GRPCPlugin) GRPCClient(_ context.Context, _ *hplugin.GRPCBroker, cc *grpc.ClientConn) (interface{}, error) {

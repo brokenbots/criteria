@@ -1,19 +1,19 @@
-package overseer_test
+package criteria_test
 
 import (
 	"testing"
 
-	pb "github.com/brokenbots/overseer/sdk/pb/overseer/v1"
-	"github.com/brokenbots/overseer/events"
-	overseer "github.com/brokenbots/overseer/sdk"
+	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
+	"github.com/brokenbots/criteria/events"
+	criteria "github.com/brokenbots/criteria/sdk"
 )
 
 // TestPayloadAliasIdentity verifies that the SDK type aliases are truly
 // identical to the underlying pb types — no conversion needed.
 func TestPayloadAliasIdentity(t *testing.T) {
-	// Assign *pb.RunStarted to *overseer.RunStarted and back.
+	// Assign *pb.RunStarted to *criteria.RunStarted and back.
 	orig := &pb.RunStarted{WorkflowName: "test-workflow"}
-	var sdk *overseer.RunStarted = orig
+	var sdk *criteria.RunStarted = orig
 	var roundtrip *pb.RunStarted = sdk
 	if roundtrip != orig {
 		t.Fatal("round-trip pointer identity broken for RunStarted")
@@ -21,7 +21,7 @@ func TestPayloadAliasIdentity(t *testing.T) {
 
 	// Envelope alias
 	env := &pb.Envelope{RunId: "run-1"}
-	var sdkEnv *overseer.Envelope = env
+	var sdkEnv *criteria.Envelope = env
 	if sdkEnv.RunId != "run-1" {
 		t.Fatalf("Envelope alias field mismatch: got %q", sdkEnv.RunId)
 	}
@@ -35,29 +35,29 @@ func TestNewEnvelopeAcceptsAllSDKPayloads(t *testing.T) {
 		name    string
 		payload any
 	}{
-		{"RunStarted", &overseer.RunStarted{}},
-		{"RunCompleted", &overseer.RunCompleted{}},
-		{"RunFailed", &overseer.RunFailed{}},
-		{"StepEntered", &overseer.StepEntered{}},
-		{"StepOutcome", &overseer.StepOutcome{}},
-		{"StepTransition", &overseer.StepTransition{}},
-		{"StepLog", &overseer.StepLog{}},
-		{"StepResumed", &overseer.StepResumed{}},
-		{"StepOutputCaptured", &overseer.StepOutputCaptured{}},
-		{"WaitEntered", &overseer.WaitEntered{}},
-		{"WaitResumed", &overseer.WaitResumed{}},
-		{"ApprovalRequested", &overseer.ApprovalRequested{}},
-		{"ApprovalDecision", &overseer.ApprovalDecision{}},
-		{"BranchEvaluated", &overseer.BranchEvaluated{}},
-		{"ForEachEntered", &overseer.ForEachEntered{}},
-		{"ForEachIteration", &overseer.ForEachIteration{}},
-		{"ForEachOutcome", &overseer.ForEachOutcome{}},
-		{"ScopeIterCursorSet", &overseer.ScopeIterCursorSet{}},
-		{"VariableSet", &overseer.VariableSet{}},
-		{"OverseerHeartbeat", &overseer.OverseerHeartbeat{}},
-		{"OverseerDisconnected", &overseer.OverseerDisconnected{}},
-		{"WatchReady", &overseer.WatchReady{}},
-		{"AdapterEvent", &overseer.AdapterEvent{}},
+		{"RunStarted", &criteria.RunStarted{}},
+		{"RunCompleted", &criteria.RunCompleted{}},
+		{"RunFailed", &criteria.RunFailed{}},
+		{"StepEntered", &criteria.StepEntered{}},
+		{"StepOutcome", &criteria.StepOutcome{}},
+		{"StepTransition", &criteria.StepTransition{}},
+		{"StepLog", &criteria.StepLog{}},
+		{"StepResumed", &criteria.StepResumed{}},
+		{"StepOutputCaptured", &criteria.StepOutputCaptured{}},
+		{"WaitEntered", &criteria.WaitEntered{}},
+		{"WaitResumed", &criteria.WaitResumed{}},
+		{"ApprovalRequested", &criteria.ApprovalRequested{}},
+		{"ApprovalDecision", &criteria.ApprovalDecision{}},
+		{"BranchEvaluated", &criteria.BranchEvaluated{}},
+		{"ForEachEntered", &criteria.ForEachEntered{}},
+		{"ForEachIteration", &criteria.ForEachIteration{}},
+		{"ForEachOutcome", &criteria.ForEachOutcome{}},
+		{"ScopeIterCursorSet", &criteria.ScopeIterCursorSet{}},
+		{"VariableSet", &criteria.VariableSet{}},
+		{"CriteriaHeartbeat", &criteria.CriteriaHeartbeat{}},
+		{"CriteriaDisconnected", &criteria.CriteriaDisconnected{}},
+		{"WatchReady", &criteria.WatchReady{}},
+		{"AdapterEvent", &criteria.AdapterEvent{}},
 	}
 
 	for _, tc := range cases {
@@ -68,42 +68,42 @@ func TestNewEnvelopeAcceptsAllSDKPayloads(t *testing.T) {
 					t.Fatalf("NewEnvelope panicked for %s: %v", tc.name, r)
 				}
 			}()
-			env := overseer.NewEnvelope(runID, tc.payload)
+			env := criteria.NewEnvelope(runID, tc.payload)
 			if env == nil {
 				t.Fatal("NewEnvelope returned nil")
 			}
 			if env.RunId != runID {
 				t.Fatalf("expected RunId %q, got %q", runID, env.RunId)
 			}
-			if overseer.TypeString(env) == "" {
+			if criteria.TypeString(env) == "" {
 				t.Fatalf("TypeString empty for %s — payload likely not set", tc.name)
 			}
 		})
 	}
 }
 
-// TestTypeStringMatchesEvents verifies that overseer.TypeString delegates
+// TestTypeStringMatchesEvents verifies that criteria.TypeString delegates
 // faithfully to the underlying events.TypeString implementation.
 func TestTypeStringMatchesEvents(t *testing.T) {
 	cases := []struct {
 		payload  any
 		wantType string
 	}{
-		{&overseer.RunStarted{}, "run.started"},
-		{&overseer.RunCompleted{}, "run.completed"},
-		{&overseer.RunFailed{}, "run.failed"},
-		{&overseer.StepLog{}, "step.log"},
-		{&overseer.WaitEntered{}, "wait.entered"},
-		{&overseer.BranchEvaluated{}, "branch.evaluated"},
-		{&overseer.ForEachEntered{}, "for_each.entered"},
-		{&overseer.AdapterEvent{}, "adapter.event"},
+		{&criteria.RunStarted{}, "run.started"},
+		{&criteria.RunCompleted{}, "run.completed"},
+		{&criteria.RunFailed{}, "run.failed"},
+		{&criteria.StepLog{}, "step.log"},
+		{&criteria.WaitEntered{}, "wait.entered"},
+		{&criteria.BranchEvaluated{}, "branch.evaluated"},
+		{&criteria.ForEachEntered{}, "for_each.entered"},
+		{&criteria.AdapterEvent{}, "adapter.event"},
 	}
 
 	for _, tc := range cases {
 		tc := tc
 		t.Run(tc.wantType, func(t *testing.T) {
-			env := overseer.NewEnvelope("run-1", tc.payload)
-			got := overseer.TypeString(env)
+			env := criteria.NewEnvelope("run-1", tc.payload)
+			got := criteria.TypeString(env)
 			if got != tc.wantType {
 				t.Errorf("TypeString = %q, want %q", got, tc.wantType)
 			}
@@ -119,31 +119,31 @@ func TestTypeStringMatchesEvents(t *testing.T) {
 // TestSchemaVersionExportedAsConstant ensures SchemaVersion is exported as a
 // package-level constant equal to the underlying events.SchemaVersion.
 func TestSchemaVersionExportedAsConstant(t *testing.T) {
-	if overseer.SchemaVersion != events.SchemaVersion {
-		t.Errorf("overseer.SchemaVersion = %d, events.SchemaVersion = %d",
-			overseer.SchemaVersion, events.SchemaVersion)
+	if criteria.SchemaVersion != events.SchemaVersion {
+		t.Errorf("criteria.SchemaVersion = %d, events.SchemaVersion = %d",
+			criteria.SchemaVersion, events.SchemaVersion)
 	}
-	if overseer.SchemaVersion != 1 {
-		t.Errorf("expected SchemaVersion = 1, got %d", overseer.SchemaVersion)
+	if criteria.SchemaVersion != 1 {
+		t.Errorf("expected SchemaVersion = 1, got %d", criteria.SchemaVersion)
 	}
 }
 
-// TestIsTerminalDelegates verifies overseer.IsTerminal matches the underlying
+// TestIsTerminalDelegates verifies criteria.IsTerminal matches the underlying
 // events.IsTerminal for terminal and non-terminal payloads.
 func TestIsTerminalDelegates(t *testing.T) {
-	terminal := overseer.NewEnvelope("r", &overseer.RunCompleted{})
-	if !overseer.IsTerminal(terminal) {
+	terminal := criteria.NewEnvelope("r", &criteria.RunCompleted{})
+	if !criteria.IsTerminal(terminal) {
 		t.Error("expected RunCompleted to be terminal")
 	}
-	failed := overseer.NewEnvelope("r", &overseer.RunFailed{})
-	if !overseer.IsTerminal(failed) {
+	failed := criteria.NewEnvelope("r", &criteria.RunFailed{})
+	if !criteria.IsTerminal(failed) {
 		t.Error("expected RunFailed to be terminal")
 	}
-	nonTerminal := overseer.NewEnvelope("r", &overseer.StepLog{})
-	if overseer.IsTerminal(nonTerminal) {
+	nonTerminal := criteria.NewEnvelope("r", &criteria.StepLog{})
+	if criteria.IsTerminal(nonTerminal) {
 		t.Error("expected StepLog to be non-terminal")
 	}
-	if overseer.IsTerminal(nil) {
+	if criteria.IsTerminal(nil) {
 		t.Error("expected nil to be non-terminal")
 	}
 }

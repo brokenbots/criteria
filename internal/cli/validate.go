@@ -1,4 +1,4 @@
-// Package cli holds the cobra subcommands for the overseer binary.
+// Package cli holds the cobra subcommands for the criteria binary.
 package cli
 
 import (
@@ -8,9 +8,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/brokenbots/overseer/internal/adapters/shell"
-	"github.com/brokenbots/overseer/internal/plugin"
-	"github.com/brokenbots/overseer/workflow"
+	"github.com/brokenbots/criteria/internal/adapters/shell"
+	"github.com/brokenbots/criteria/internal/plugin"
+	"github.com/brokenbots/criteria/workflow"
 )
 
 func NewValidateCmd() *cobra.Command {

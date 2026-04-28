@@ -2,7 +2,7 @@
 
 ## Supported Versions
 
-Overseer is currently pre-v1.0. Security fixes are applied to the latest
+Criteria is currently pre-v1.0. Security fixes are applied to the latest
 minor release only. There is no long-term support promise before v1.0.
 
 | Version | Supported |
@@ -28,7 +28,7 @@ Include as much detail as you can:
 
 - A description of the vulnerability and its potential impact.
 - Steps to reproduce or a minimal proof-of-concept.
-- The version(s) affected (`overseer --version`).
+- The version(s) affected (`criteria --version`).
 - Any proposed remediation you have in mind.
 
 ## Disclosure Policy
@@ -45,11 +45,11 @@ Include as much detail as you can:
 
 ## Scope
 
-In scope: the `overseer` CLI, the workflow execution engine, adapter plugin
+In scope: the `criteria` CLI, the workflow execution engine, adapter plugin
 protocol, SDK surface, and any bundled adapter plugins
-(`overseer-adapter-noop`, `overseer-adapter-copilot`, `overseer-adapter-mcp`).
+(`criteria-adapter-noop`, `criteria-adapter-copilot`, `criteria-adapter-mcp`).
 
-Out of scope: the Castle/Parapet orchestrator (report those to the
-[overlord repo](https://github.com/brokenbots/overlord)), third-party
+Out of scope: the server/orchestrator (report those to the
+[orchestrator repo](https://github.com/brokenbots/orchestrator)), third-party
 dependencies (report those upstream), and issues in example workflows that
 do not affect the engine itself.

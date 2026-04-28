@@ -15,7 +15,7 @@ workflow "interpolate" {
 
   variable "repo" {
     type    = "string"
-    default = "overlord"
+    default = "orchestrator"
   }
   step "clone" {
     adapter = "shell"
@@ -79,8 +79,8 @@ func TestInputInterpolation_VarReference(t *testing.T) {
 		t.Fatalf("ResolveInputExprs: %v", err)
 	}
 	cmd := resolved["command"]
-	if cmd != "echo overlord" {
-		t.Errorf("resolved command = %q, want 'echo overlord'", cmd)
+	if cmd != "echo orchestrator" {
+		t.Errorf("resolved command = %q, want 'echo orchestrator'", cmd)
 	}
 }
 

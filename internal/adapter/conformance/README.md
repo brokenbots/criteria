@@ -1,6 +1,6 @@
 # Adapter conformance harness
 
-This package defines a reusable contract test for all Overseer adapters.
+This package defines a reusable contract test for all Criteria adapters.
 
 Use `conformance.Run` for in-process adapters, and `conformance.RunPlugin` for out-of-process plugin binaries.
 
@@ -40,7 +40,7 @@ func TestMyAdapter_Conformance(t *testing.T) {
 ```go
 func TestMyPlugin_Conformance(t *testing.T) {
     conformance.RunPlugin(t, "myplugin",
-        filepath.Join("..", "..", "..", "bin", "overseer-adapter-myplugin"),
+        filepath.Join("..", "..", "..", "bin", "criteria-adapter-myplugin"),
         conformance.Options{
             StepConfig: map[string]string{"prompt": "hello"},
             AllowedOutcomes: []string{"success", "failure", "needs_review"},

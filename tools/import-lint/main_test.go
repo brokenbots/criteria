@@ -28,23 +28,23 @@ func tempRepoWith(t *testing.T, files map[string]string) string {
 // --- violation cases ---
 
 const internalImportsSDKTop = `package foo
-import _ "github.com/brokenbots/overseer/sdk"
+import _ "github.com/brokenbots/criteria/sdk"
 `
 
 const internalImportsSDKOther = `package foo
-import _ "github.com/brokenbots/overseer/sdk/somepkg"
+import _ "github.com/brokenbots/criteria/sdk/somepkg"
 `
 
 const internalImportsSDKPb = `package foo
-import _ "github.com/brokenbots/overseer/sdk/pb/overseer/v1"
+import _ "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 `
 
 const workflowImportsInternal = `package foo
-import _ "github.com/brokenbots/overseer/internal/engine"
+import _ "github.com/brokenbots/criteria/internal/engine"
 `
 
 const workflowImportsSDKPb = `package foo
-import _ "github.com/brokenbots/overseer/sdk/pb/overseer/v1"
+import _ "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 `
 
 // TestInternalImportsSDKTop_Forbidden checks that internal/ importing sdk root is caught.
@@ -83,7 +83,7 @@ func TestInternalImportsSDKOther_Forbidden(t *testing.T) {
 func TestInternalImportsSDKPluginhost_Clean(t *testing.T) {
 	root := tempRepoWith(t, map[string]string{
 		"internal/plugin/testfixtures/foo.go": `package foo
-import _ "github.com/brokenbots/overseer/sdk/pluginhost"
+import _ "github.com/brokenbots/criteria/sdk/pluginhost"
 `,
 	})
 	vs, err := lint(root)
@@ -100,7 +100,7 @@ import _ "github.com/brokenbots/overseer/sdk/pluginhost"
 func TestInternalNonFixtureImportsSDKPluginhost_Forbidden(t *testing.T) {
 	root := tempRepoWith(t, map[string]string{
 		"internal/engine/foo.go": `package foo
-import _ "github.com/brokenbots/overseer/sdk/pluginhost"
+import _ "github.com/brokenbots/criteria/sdk/pluginhost"
 `,
 	})
 	vs, err := lint(root)
@@ -161,7 +161,7 @@ func TestWorkflowImportsSDKPb_Clean(t *testing.T) {
 func TestAllowDirective_Suppresses(t *testing.T) {
 	root := tempRepoWith(t, map[string]string{
 		"internal/engine/foo.go": `package foo
-import _ "github.com/brokenbots/overseer/sdk" // import-lint:allow needed for bootstrap (W08)
+import _ "github.com/brokenbots/criteria/sdk" // import-lint:allow needed for bootstrap (W08)
 `,
 	})
 	vs, err := lint(root)
@@ -176,7 +176,7 @@ import _ "github.com/brokenbots/overseer/sdk" // import-lint:allow needed for bo
 // TestNonGoFilesSkipped checks that non-.go files are not parsed.
 func TestNonGoFilesSkipped(t *testing.T) {
 	root := tempRepoWith(t, map[string]string{
-		"internal/engine/foo.txt": `import "github.com/brokenbots/overseer/sdk"`,
+		"internal/engine/foo.txt": `import "github.com/brokenbots/criteria/sdk"`,
 	})
 	vs, err := lint(root)
 	if err != nil {

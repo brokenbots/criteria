@@ -10,7 +10,7 @@ import (
 
 func TestLocalState_StepCheckpoint_ReadWrite(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("OVERSEER_STATE_DIR", dir)
+	t.Setenv("CRITERIA_STATE_DIR", dir)
 	workflowPath := filepath.Join(dir, "workflow.hcl")
 	if err := os.WriteFile(workflowPath, []byte("workflow \"w\" { version = \"0.1\" }"), 0o600); err != nil {
 		t.Fatal(err)
@@ -23,8 +23,8 @@ func TestLocalState_StepCheckpoint_ReadWrite(t *testing.T) {
 		CurrentStep:  "build",
 		Attempt:      1,
 		StartedAt:    time.Now().UTC().Truncate(time.Second),
-		CastleURL:    "http://localhost:8080",
-		OverseerID:   "overseer-xyz",
+		ServerURL:    "http://localhost:8080",
+		CriteriaID:   "criteria-xyz",
 		Token:        "secret-token",
 	}
 
@@ -56,8 +56,8 @@ func TestLocalState_StepCheckpoint_ReadWrite(t *testing.T) {
 	if got.Token != cp.Token {
 		t.Fatalf("token mismatch")
 	}
-	if got.OverseerID != cp.OverseerID {
-		t.Fatalf("overseer_id mismatch")
+	if got.CriteriaID != cp.CriteriaID {
+		t.Fatalf("criteria_id mismatch")
 	}
 
 	// Remove and verify it's gone.
@@ -73,7 +73,7 @@ func TestLocalState_StepCheckpoint_ReadWrite(t *testing.T) {
 
 func TestLocalState_StepCheckpoint_InaccessibleWorkflowPath(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("OVERSEER_STATE_DIR", dir)
+	t.Setenv("CRITERIA_STATE_DIR", dir)
 
 	cp := &StepCheckpoint{
 		RunID:        "run-missing-workflow",
@@ -86,7 +86,7 @@ func TestLocalState_StepCheckpoint_InaccessibleWorkflowPath(t *testing.T) {
 
 func TestLocalState_StepCheckpoint_ToleratesCorruptFile(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("OVERSEER_STATE_DIR", dir)
+	t.Setenv("CRITERIA_STATE_DIR", dir)
 
 	runsDir := filepath.Join(dir, "runs")
 	if err := os.MkdirAll(runsDir, 0o755); err != nil {
@@ -123,7 +123,7 @@ func TestLocalState_StepCheckpoint_ToleratesCorruptFile(t *testing.T) {
 func TestLocalState_NoStateDir_IsNoOp(t *testing.T) {
 	dir := t.TempDir()
 	// Point to a non-existent subdirectory.
-	t.Setenv("OVERSEER_STATE_DIR", filepath.Join(dir, "nonexistent"))
+	t.Setenv("CRITERIA_STATE_DIR", filepath.Join(dir, "nonexistent"))
 
 	checkpoints, err := ListStepCheckpoints()
 	if err != nil {

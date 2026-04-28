@@ -4,18 +4,18 @@ import (
 	"context"
 	"errors"
 
-	pb "github.com/brokenbots/overseer/sdk/pb/overseer/v1"
+	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 	hplugin "github.com/hashicorp/go-plugin"
 	"google.golang.org/grpc"
 )
 
 const (
-	adapterPluginServiceName        = "overseer.v1.AdapterPluginService"
-	adapterPluginInfoMethod         = "/overseer.v1.AdapterPluginService/Info"
-	adapterPluginOpenSessionMethod  = "/overseer.v1.AdapterPluginService/OpenSession"
-	adapterPluginExecuteMethod      = "/overseer.v1.AdapterPluginService/Execute"
-	adapterPluginPermitMethod       = "/overseer.v1.AdapterPluginService/Permit"
-	adapterPluginCloseSessionMethod = "/overseer.v1.AdapterPluginService/CloseSession"
+	adapterPluginServiceName        = "criteria.v1.AdapterPluginService"
+	adapterPluginInfoMethod         = "/criteria.v1.AdapterPluginService/Info"
+	adapterPluginOpenSessionMethod  = "/criteria.v1.AdapterPluginService/OpenSession"
+	adapterPluginExecuteMethod      = "/criteria.v1.AdapterPluginService/Execute"
+	adapterPluginPermitMethod       = "/criteria.v1.AdapterPluginService/Permit"
+	adapterPluginCloseSessionMethod = "/criteria.v1.AdapterPluginService/CloseSession"
 )
 
 // Serve starts the adapter plugin process using the shared [HandshakeConfig].

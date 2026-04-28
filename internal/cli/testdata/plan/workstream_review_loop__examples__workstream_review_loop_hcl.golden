@@ -3,7 +3,7 @@ initial_state: load_executor_agent_file   target_state: done
 policy: max_total_steps=50  max_step_retries=0
 
 variables:
-  workstream_file: string = workstreams/02-castle-mode-integration.md
+  workstream_file: string = workstreams/02-server-mode-integration.md
 
 agents:
   executor   adapter=copilot   on_crash=fail
@@ -82,5 +82,5 @@ states:
   failed    terminal=true   success=false
 
 plugins required:
-  copilot   (search: $OVERSEER_PLUGINS, ~/.overseer/plugins)
-  shell   (search: $OVERSEER_PLUGINS, ~/.overseer/plugins)
+  copilot   (search: $CRITERIA_PLUGINS, ~/.criteria/plugins)
+  shell   (search: $CRITERIA_PLUGINS, ~/.criteria/plugins)

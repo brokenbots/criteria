@@ -1,6 +1,6 @@
 // Package main is a minimal adapter plugin that imports only the public
 // sdk/pluginhost surface plus sdk/pb. It exists to prove that an external
-// author needs no internal/ reach-through to write a functioning Overseer
+// author needs no internal/ reach-through to write a functioning Criteria
 // plugin, and is exercised by the adapter conformance harness.
 package main
 
@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	pluginhost "github.com/brokenbots/overseer/sdk/pluginhost"
-	pb "github.com/brokenbots/overseer/sdk/pb/overseer/v1"
+	pluginhost "github.com/brokenbots/criteria/sdk/pluginhost"
+	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 )
 
 // publicSDKPlugin is the reference implementation that exercises every method

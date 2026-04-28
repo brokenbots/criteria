@@ -1,25 +1,25 @@
-// Package overseer is the overseer→orchestrator wire contract SDK.
+// Package criteria is the criteria→orchestrator wire contract SDK.
 //
 // # Overview
 //
-// This package is the single boundary surface between an overseer execution
+// This package is the single boundary surface between a criteria agent execution
 // engine and any orchestrator that stores and distributes run events. It
 // re-exports — without wrapping or transforming — the generated Connect/gRPC
 // service stubs, envelope and payload types, and a small set of helper
 // functions that every implementation needs.
 //
-// Module path: github.com/brokenbots/overseer/sdk
+// Module path: github.com/brokenbots/criteria/sdk
 //
 // # What this package exports
 //
 //   - [ServiceClient] / [ServiceHandler] — Connect interface aliases for the
-//     generated OverseerService stubs. Use [NewServiceClient] to construct a
+//     generated CriteriaService stubs. Use [NewServiceClient] to construct a
 //     client; implement [ServiceHandler] to expose the service.
-//     [OverseerServiceClient] and [OverseerServiceHandler] are migration-
+//     [CriteriaServiceClient] and [CriteriaServiceHandler] are migration-
 //     compatibility aliases for the same types; prefer the Service* forms for
 //     new code.
 //   - Envelope and payload type aliases for every event shape defined in
-//     proto/overseer/v1/events.proto.
+//     proto/criteria/v1/events.proto.
 //   - [NewEnvelope], [TypeString], [IsTerminal] — event helpers.
 //   - [SchemaVersion] — the current event protocol version constant.
 //
@@ -39,7 +39,7 @@
 //
 // Types are re-exported as Go type aliases (type Foo = pb.Foo). Aliases
 // preserve assignability: code that already holds a *pb.RunStarted can pass
-// it as an *overseer.RunStarted without conversion.
+// it as an *criteria.RunStarted without conversion.
 //
 // Functions are re-exported as wrapper functions (func F(...) { return impl.F(...) }).
 // A wrapper adds one stack frame; this is acceptable at the SDK boundary.
@@ -48,12 +48,12 @@
 //
 // All RPCs except [ServiceHandler.Register] require a bearer token in one of:
 //   - HTTP Authorization header (Bearer scheme)
-//   - X-Overseer-Token header
-//   - overseer-token Connect metadata key
+//   - X-Criteria-Token header
+//   - criteria-token Connect metadata key
 //
 // Tokens are SHA-256 compared against the orchestrator's stored token hash.
 // Implementations MUST enforce caller-ownership on every mutating RPC: the
-// authenticated caller's overseer ID must own the overseer or run being
+// authenticated caller's criteria ID must own the agent or run being
 // mutated. Register is bootstrap-only; implementations MUST gate it behind a
 // deployment-defined bootstrap credential (e.g. a pre-shared secret in a
 // deployment-defined header) or return Unimplemented when no bootstrap
@@ -62,8 +62,8 @@
 // # Schema version semantics
 //
 // [SchemaVersion] = 1 is the v0.1 SDK. The value matches the proto package
-// major version (overseer.v1). A bump to SchemaVersion 2 introduces a new
-// proto package (overseer.v2) and a new SDK minor release; both sides must
+// major version (criteria.v1). A bump to SchemaVersion 2 introduces a new
+// proto package (criteria.v2) and a new SDK minor release; both sides must
 // coordinate. Until a real versioning need arises, schema negotiation helpers
 // are out of scope.
-package overseer
+package criteria

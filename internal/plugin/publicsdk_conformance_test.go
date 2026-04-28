@@ -6,7 +6,7 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/brokenbots/overseer/internal/adapter/conformance"
+	"github.com/brokenbots/criteria/internal/adapter/conformance"
 )
 
 // TestPublicSDKFixtureConformance proves that a plugin built exclusively
@@ -37,7 +37,7 @@ func buildPublicSDKFixture(t *testing.T) string {
 		t.Fatal("resolve caller path")
 	}
 	moduleRoot := filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
-	pluginBin := filepath.Join(t.TempDir(), "overseer-adapter-public-sdk-fixture")
+	pluginBin := filepath.Join(t.TempDir(), "criteria-adapter-public-sdk-fixture")
 
 	cmd := exec.Command("go", "build", "-o", pluginBin,
 		"./internal/plugin/testfixtures/publicsdk")

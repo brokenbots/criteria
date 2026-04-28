@@ -1,8 +1,8 @@
-# Demo tour - local mode variant (no approval, for testing without Castle)
+# Demo tour - local mode variant (no approval, for testing without server)
 #
 # mode: standalone
 #
-# Demonstrates variables, for_each, wait (duration), and branch without requiring Castle.
+# Demonstrates variables, for_each, wait (duration), and branch without requiring a server.
 workflow "demo_tour_local" {
   version       = "1"
   initial_state = "boot"

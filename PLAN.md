@@ -1,15 +1,15 @@
-# Overseer roadmap
+# Criteria roadmap
 
 This file tracks active and upcoming phases for
-[github.com/brokenbots/overseer](https://github.com/brokenbots/overseer).
+[github.com/brokenbots/criteria](https://github.com/brokenbots/criteria).
 Workstream files for the active phase live at
 [workstreams/](workstreams/); prior phases archive into
 `workstreams/archived/<phase>/`.
 
 ## Status snapshot
 
-- **Phase 0 — Post-separation cleanup** (active). Establishing overseer as
-  its own project after the v1.6 split from the overlord monorepo. See
+- **Phase 0 — Post-separation cleanup** (active). Establishing criteria as
+  its own project after the v1.6 split from the orchestrator monorepo. See
   [workstreams/README.md](workstreams/README.md) for the workstream index.
 - **Phase 1 — TBD**. The first feature phase plans itself once Phase 0
   closes; candidate scope is captured in the Phase 0 close-out workstream.
@@ -22,7 +22,7 @@ needs, and make a deliberate decision about the naming convention before
 the project gains external visibility.
 
 The split itself is complete (history-preserving extraction, flat
-layout, `overseer.v1` proto package, conformance suite, `v0.1.0-rc1`
+layout, `criteria.v1` proto package, conformance suite, `v0.1.0-rc1`
 tag). What remains is the polish and the few structural follow-ups the
 v1.6 plan deferred.
 
@@ -43,8 +43,8 @@ v1.6 plan deferred.
 - [W07](workstreams/07-repo-hygiene.md) — LICENSE, SECURITY.md,
   CODEOWNERS, issue/PR templates, dependabot config.
 - [W08](workstreams/08-brand-rename-execution.md) — Execute the
-  ADR-0001 rename: eradicate the legacy `overseer`/`overlord`/`castle`/
-  `parapet` names across module path, binaries, env vars, proto
+  ADR-0001 rename: eradicated the legacy brand names across
+  module path, binaries, env vars, proto
   package, and docs.
 - [W09](workstreams/09-phase0-cleanup-gate.md) — Phase 0 close-out:
   validation, legacy-name merge gate, archive, tag `v0.1.0`.
@@ -60,10 +60,10 @@ These items are known but not in Phase 0 scope:
 - **Durable resume across orchestrator restart.** The conformance
   suite skips `DurableAcrossRestart` ([sdk/conformance/resume.go](sdk/conformance/resume.go))
   pending the durable-resume capability landing on the orchestrator
-  side. The skip lifts when overlord ships its durability work.
+  side. The skip lifts when the orchestrator ships its durability work.
 - **Parallel regions and sub-workflow composition** in HCL. Tracked
   for a future language phase.
-- **`@overseer/proto-ts` npm package.** No TypeScript consumers in
+- **`@criteria/proto-ts` npm package.** No TypeScript consumers in
   this repo; if a future consumer needs TS bindings, plan it then.
 
 ## Conventions

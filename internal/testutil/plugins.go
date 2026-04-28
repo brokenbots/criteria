@@ -17,7 +17,7 @@ func BuildPermissivePlugin(t *testing.T) string {
 		t.Fatal("resolve caller path")
 	}
 	moduleRoot := filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
-	pluginBin := filepath.Join(t.TempDir(), "overseer-adapter-permissive")
+	pluginBin := filepath.Join(t.TempDir(), "criteria-adapter-permissive")
 
 	cmd := exec.Command("go", "build", "-o", pluginBin, "./internal/plugin/testfixtures/permissive")
 	cmd.Dir = moduleRoot

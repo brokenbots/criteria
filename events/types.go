@@ -1,9 +1,9 @@
-// Package events provides thin helpers over the generated overseer event
-// envelope type. The wire contract itself lives in proto/overseer/v1/*.proto
+// Package events provides thin helpers over the generated criteria event
+// envelope type. The wire contract itself lives in proto/criteria/v1/*.proto
 // and its generated Go code is the single source of truth for payload shapes.
 //
 // Callers that need to read or construct envelope payloads should work with
-// the generated types in sdk/pb/overseer/v1 directly; the helpers here
+// the generated types in sdk/pb/criteria/v1 directly; the helpers here
 // cover the few cross-cutting concerns (schema version, envelope builder,
 // type discriminator, terminal-event check) that aren't generated.
 package events
@@ -14,16 +14,16 @@ import (
 
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	pb "github.com/brokenbots/overseer/sdk/pb/overseer/v1"
+	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 )
 
 // SchemaVersion is the current event protocol version. Bump only with a new
-// overseer.vN proto package.
+// criteria.vN proto package.
 const SchemaVersion = 1
 
 // NewEnvelope builds a *pb.Envelope for runID with the given payload message.
 // The schema version is stamped and the timestamp is set to now (UTC).
-// Seq is left at zero; Castle assigns the real value on ingest.
+// Seq is left at zero; the server assigns the real value on ingest.
 //
 // `payload` must be one of the generated payload message types (e.g.
 // *pb.RunStarted, *pb.StepLog). Passing a nil payload leaves env.Payload
@@ -31,8 +31,8 @@ const SchemaVersion = 1
 // silently producing an empty envelope — callers are expected to hand in
 // the concrete generated types.
 //
-// NewEnvelope does not set CorrelationId. The Overseer transport stamps a
-// fresh UUID on every Publish so Castle can deduplicate on
+// NewEnvelope does not set CorrelationId. The agent transport stamps a
+// fresh UUID on every Publish so the server can deduplicate on
 // (run_id, correlation_id) across reconnects; any caller-supplied
 // correlation id would be overwritten there anyway.
 func NewEnvelope(runID string, payload any) *pb.Envelope {
@@ -68,10 +68,10 @@ func setPayload(env *pb.Envelope, payload any) {
 		env.Payload = &pb.Envelope_StepLog{StepLog: p}
 	case *pb.AdapterEvent:
 		env.Payload = &pb.Envelope_AdapterEvent{AdapterEvent: p}
-	case *pb.OverseerHeartbeat:
-		env.Payload = &pb.Envelope_OverseerHeartbeat{OverseerHeartbeat: p}
-	case *pb.OverseerDisconnected:
-		env.Payload = &pb.Envelope_OverseerDisconnected{OverseerDisconnected: p}
+	case *pb.CriteriaHeartbeat:
+		env.Payload = &pb.Envelope_CriteriaHeartbeat{CriteriaHeartbeat: p}
+	case *pb.CriteriaDisconnected:
+		env.Payload = &pb.Envelope_CriteriaDisconnected{CriteriaDisconnected: p}
 	case *pb.StepResumed:
 		env.Payload = &pb.Envelope_StepResumed{StepResumed: p}
 	case *pb.WatchReady:
@@ -104,7 +104,7 @@ func setPayload(env *pb.Envelope, payload any) {
 }
 
 // TypeString returns a stable discriminator string for env's payload (e.g.
-// "step.log"). It is used as the `type` column in Castle's event store and
+// "step.log"). It is used as the `type` column in the server's event store and
 // by tests that want to inspect events without reaching into the oneof.
 // Envelopes with no payload return the empty string.
 func TypeString(env *pb.Envelope) string {
@@ -128,10 +128,10 @@ func TypeString(env *pb.Envelope) string {
 		return "step.log"
 	case *pb.Envelope_AdapterEvent:
 		return "adapter.event"
-	case *pb.Envelope_OverseerHeartbeat:
-		return "overseer.heartbeat"
-	case *pb.Envelope_OverseerDisconnected:
-		return "overseer.disconnected"
+	case *pb.Envelope_CriteriaHeartbeat:
+		return "criteria.heartbeat"
+	case *pb.Envelope_CriteriaDisconnected:
+		return "criteria.disconnected"
 	case *pb.Envelope_StepResumed:
 		return "step.resumed"
 	case *pb.Envelope_WatchReady:

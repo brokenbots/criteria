@@ -1,9 +1,9 @@
 // Package conformance provides an executable test suite for any implementation
-// of the OverseerService SDK contract.
+// of the CriteriaService SDK contract.
 //
 // # Usage
 //
-// An orchestrator implementation (e.g. Castle) wires the suite by providing a
+// An orchestrator implementation wires the suite by providing a
 // Subject and calling Run from its own test file:
 //
 //	func TestConformance(t *testing.T) {
@@ -28,7 +28,7 @@ import (
 	"net/http"
 	"testing"
 
-	overseer "github.com/brokenbots/overseer/sdk"
+	criteria "github.com/brokenbots/criteria/sdk"
 )
 
 // Subject describes how to bring up an SDK-conformant ServiceHandler for
@@ -41,27 +41,27 @@ import (
 type Subject interface {
 	// SetUp returns a freshly initialised HTTP server base URL, an HTTP client
 	// configured to speak to it (e.g. h2c-aware), and a teardown function.
-	// The handler must implement overseer.ServiceHandler and be reachable via
+	// The handler must implement criteria.ServiceHandler and be reachable via
 	// a Connect transport using the returned client.
 	//
 	// SetUp should register t.Cleanup to release server resources; the
 	// returned teardown is a belt-and-suspenders second cleanup path.
 	SetUp(t *testing.T) (baseURL string, client *http.Client, teardown func())
 
-	// RegisterOverseer creates an overseer record bound to the given raw token,
+	// RegisterAgent creates an agent record bound to the given raw token,
 	// bypassing whatever bootstrap mechanism the implementation uses. Returns
-	// the new overseer_id. Used to prepare auth state for tests without going
+	// the new criteria_id. Used to prepare auth state for tests without going
 	// through the Register RPC.
 	//
 	// The implementation must store the token such that subsequent wire calls
 	// with "Authorization: Bearer <token>" are authenticated as the returned
-	// overseer_id.
-	RegisterOverseer(t *testing.T, name, token string) string
+	// criteria_id.
+	RegisterAgent(t *testing.T, name, token string) string
 
 	// ListRunEvents returns the stored events for runID with seq > sinceSeq.
-	// overseerToken authenticates the caller. The conformance suite uses this
-	// to assert persistence without importing CastleService directly.
-	ListRunEvents(t *testing.T, baseURL string, client *http.Client, overseerToken, runID string, sinceSeq uint64) []*overseer.Envelope
+	// criteriaToken authenticates the caller. The conformance suite uses this
+	// to assert persistence without importing ServerService directly.
+	ListRunEvents(t *testing.T, baseURL string, client *http.Client, criteriaToken, runID string, sinceSeq uint64) []*criteria.Envelope
 
 	// StopRun sends a stop command for runID authenticated as ownerToken.
 	// Returns the error (if any) from the RPC; the conformance suite inspects
@@ -72,8 +72,8 @@ type Subject interface {
 // Run executes the full conformance suite against the given Subject. Call from
 // the implementation's own test file:
 //
-//	func TestCastleConformance(t *testing.T) {
-//	    conformance.Run(t, &castleSubject{})
+//	func TestServerConformance(t *testing.T) {
+//	    conformance.Run(t, &serverSubject{})
 //	}
 func Run(t *testing.T, s Subject) {
 	t.Run("EnvelopeRoundTrip", func(t *testing.T) { testEnvelopeRoundTrip(t, s) })

@@ -270,11 +270,11 @@ func ClearEachBinding(vars map[string]cty.Value) map[string]cty.Value {
 }
 
 // SerializeVarScope encodes the run vars map and optional iteration cursor
-// into a JSON string for persistence in Castle. The format is:
+// into a JSON string for persistence in the server. The format is:
 //
 //	{"var": {"name": "value"}, "steps": {"step": {"key": "value"}}, "iter": {...}}
 //
-// The iter field is only present when cursor is non-nil. Castle stores this
+// The iter field is only present when cursor is non-nil. The server stores this
 // blob verbatim and does not interpret the iter shape. See IterCursor for the
 // field documentation (authoritative for Phase 1.6 SDK extraction).
 func SerializeVarScope(vars map[string]cty.Value, cursor ...*IterCursor) (string, error) {
@@ -302,7 +302,7 @@ func SerializeVarScope(vars map[string]cty.Value, cursor ...*IterCursor) (string
 		}
 		scope["steps"] = stepsMap
 	}
-	// Encode the iteration cursor when provided (W07). Castle stores the iter
+	// Encode the iteration cursor when provided (W07). The server stores the iter
 	// blob verbatim; Items are intentionally omitted (re-evaluated on reattach).
 	var cur *IterCursor
 	if len(cursor) > 0 {
