@@ -1,13 +1,15 @@
 workflow: workstream_review_loop  (version 1)
 initial_state: load_executor_agent_file   target_state: done
-policy: max_total_steps=50  max_step_retries=0
+policy: max_total_steps=120  max_step_retries=0
 
 variables:
-  workstream_file: string = workstreams/02-server-mode-integration.md
+  workstream_file: string = workstreams/05-shell-adapter-sandbox.md
 
 agents:
   executor   adapter=copilot   on_crash=fail
     config: max_turns=12, model=claude-sonnet-4.6, reasoning_effort=medium
+  pr_manager   adapter=copilot   on_crash=fail
+    config: max_turns=10, model=claude-sonnet-4.6, reasoning_effort=high
   reviewer   adapter=copilot   on_crash=fail
     config: max_turns=10, model=claude-sonnet-4.6, reasoning_effort=high
 
@@ -17,6 +19,10 @@ steps (declaration order):
     allow_tools: (none)
     outcomes: success -> load_reviewer_agent_file, failure -> failed
   load_reviewer_agent_file   adapter=shell   timeout=10s
+    input keys: command
+    allow_tools: (none)
+    outcomes: success -> load_pr_manager_agent_file, failure -> failed
+  load_pr_manager_agent_file   adapter=shell   timeout=10s
     input keys: command
     allow_tools: (none)
     outcomes: success -> checkout_branch, failure -> failed
@@ -31,19 +37,23 @@ steps (declaration order):
   open_reviewer   agent=reviewer   lifecycle=open
     input keys: (none)
     allow_tools: (none)
-    outcomes: success -> execute_init, failure -> close_executor_abort
+    outcomes: success -> open_pr_manager, failure -> close_executor_abort
+  open_pr_manager   agent=pr_manager   lifecycle=open
+    input keys: (none)
+    allow_tools: (none)
+    outcomes: success -> execute_init, failure -> close_reviewer_abort
   execute_init   agent=executor
     input keys: prompt
     allow_tools: *
-    outcomes: needs_review -> review_init, needs_approval -> review_init, failure -> close_reviewer_abort
+    outcomes: needs_review -> review_init, needs_approval -> review_init, failure -> close_pr_manager_abort
   review_init   agent=reviewer
     input keys: prompt
     allow_tools: *
-    outcomes: approved -> commit_and_finish, changes_requested -> execute, needs_review -> execute, needs_approval -> execute, failure -> close_reviewer_abort
+    outcomes: approved -> commit_and_prepare_pr, changes_requested -> execute, needs_review -> execute, needs_approval -> execute, failure -> close_pr_manager_abort
   execute   agent=executor
     input keys: prompt
     allow_tools: *
-    outcomes: needs_review -> verify, needs_approval -> verify, failure -> close_reviewer_abort
+    outcomes: needs_review -> verify, needs_approval -> verify, failure -> close_pr_manager_abort
   verify   adapter=shell   timeout=2m0s
     input keys: command
     allow_tools: (none)
@@ -51,15 +61,39 @@ steps (declaration order):
   fix_verify   agent=executor
     input keys: prompt
     allow_tools: *
-    outcomes: needs_review -> verify, needs_approval -> verify, failure -> close_reviewer_abort
+    outcomes: needs_review -> verify, needs_approval -> verify, failure -> close_pr_manager_abort
   review   agent=reviewer
     input keys: prompt
     allow_tools: *
-    outcomes: approved -> commit_and_finish, changes_requested -> execute, needs_review -> execute, needs_approval -> execute, failure -> close_reviewer_abort
-  commit_and_finish   agent=executor
+    outcomes: approved -> commit_and_prepare_pr, changes_requested -> execute, needs_review -> execute, needs_approval -> execute, failure -> close_pr_manager_abort
+  commit_and_prepare_pr   agent=executor
     input keys: prompt
     allow_tools: *
-    outcomes: success -> close_reviewer_done, failure -> close_reviewer_abort
+    outcomes: success -> open_or_update_pr, failure -> close_pr_manager_abort
+  open_or_update_pr   agent=pr_manager
+    input keys: prompt
+    allow_tools: *
+    outcomes: watch_pr -> watch_pr_gate, needs_review -> watch_pr_gate, needs_approval -> watch_pr_gate, failure -> close_pr_manager_abort
+  watch_pr_gate   adapter=shell   timeout=45m0s
+    input keys: command
+    allow_tools: (none)
+    outcomes: success -> merge_pr_and_sync_main, failure -> triage_pr_feedback
+  triage_pr_feedback   agent=pr_manager
+    input keys: prompt
+    allow_tools: *
+    outcomes: needs_executor -> execute_pr_feedback, recheck -> watch_pr_gate, needs_review -> watch_pr_gate, needs_approval -> watch_pr_gate, failure -> close_pr_manager_abort
+  execute_pr_feedback   agent=executor
+    input keys: prompt
+    allow_tools: *
+    outcomes: needs_review -> verify, needs_approval -> verify, failure -> close_pr_manager_abort
+  merge_pr_and_sync_main   adapter=shell   timeout=5m0s
+    input keys: command
+    allow_tools: (none)
+    outcomes: success -> close_pr_manager_done, failure -> triage_pr_feedback
+  close_pr_manager_done   agent=pr_manager   lifecycle=close
+    input keys: (none)
+    allow_tools: (none)
+    outcomes: success -> close_reviewer_done, failure -> close_reviewer_done
   close_reviewer_done   agent=reviewer   lifecycle=close
     input keys: (none)
     allow_tools: (none)
@@ -68,6 +102,10 @@ steps (declaration order):
     input keys: (none)
     allow_tools: (none)
     outcomes: success -> done, failure -> done
+  close_pr_manager_abort   agent=pr_manager   lifecycle=close
+    input keys: (none)
+    allow_tools: (none)
+    outcomes: success -> close_reviewer_abort, failure -> close_reviewer_abort
   close_reviewer_abort   agent=reviewer   lifecycle=close
     input keys: (none)
     allow_tools: (none)

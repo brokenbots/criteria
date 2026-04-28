@@ -66,6 +66,21 @@ func (a *Adapter) Execute(ctx context.Context, step *workflow.StepNode, sink ada
 		return adapter.Result{Outcome: "failure"}, fmt.Errorf("start: %w", err)
 	}
 
+	// pumpsDone is closed once both pump goroutines have exited.  The pipe
+	// closer goroutine below watches ctx.Done() and closes the pipe read-ends
+	// so that pump goroutines unblock from their blocking Scanner.Scan calls
+	// promptly when the context is cancelled (e.g. the child was killed but
+	// grandchildren still hold the write-ends open).
+	pumpsDone := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			stdout.Close() //nolint:errcheck
+			stderr.Close() //nolint:errcheck
+		case <-pumpsDone:
+		}
+	}()
+
 	var (
 		wg        sync.WaitGroup
 		stdoutBuf bytes.Buffer
@@ -75,6 +90,7 @@ func (a *Adapter) Execute(ctx context.Context, step *workflow.StepNode, sink ada
 	go pumpCapture(&wg, stdout, "stdout", sink, &stdoutBuf, &stdoutMu)
 	go pump(&wg, stderr, "stderr", sink)
 	wg.Wait()
+	close(pumpsDone)
 
 	exitCode := 0
 	err = cmd.Wait()

@@ -27,12 +27,12 @@ workflow "workstream_review_loop" {
   target_state  = "done"
 
   policy {
-    max_total_steps = 50  # ~15 review cycles plus setup/teardown; increase if workstream is large
+    max_total_steps = 120  # caps execute/review/pr loops; fails safely if automation cannot converge
   }
 
   variable "workstream_file" {
     type        = "string"
-    default     = "workstreams/02-server-mode-integration.md"
+    default     = "workstreams/05-shell-adapter-sandbox.md"
     description = "Path to the workstream file to process. Change default or re-run for each file."
   }
 
@@ -48,6 +48,15 @@ workflow "workstream_review_loop" {
   }
 
   agent "reviewer" {
+    adapter = "copilot"
+    config {
+      model            = "claude-sonnet-4.6"
+      reasoning_effort = "high"
+      max_turns        = 10
+    }
+  }
+
+  agent "pr_manager" {
     adapter = "copilot"
     config {
       model            = "claude-sonnet-4.6"
@@ -74,6 +83,16 @@ workflow "workstream_review_loop" {
     adapter = "shell"
     input {
       command = "awk 'NR==1 && $0==\"---\"{f=1;next} f && $0==\"---\"{f=0;next} !f{if(!s){if($0 ~ /^[[:space:]]*$/) next; s=1} print}' .github/agents/workstream-reviewer.agent.md"
+    }
+    timeout = "10s"
+    outcome "success" { transition_to = "load_pr_manager_agent_file" }
+    outcome "failure" { transition_to = "failed" }
+  }
+
+  step "load_pr_manager_agent_file" {
+    adapter = "shell"
+    input {
+      command = "awk 'NR==1 && $0==\"---\"{f=1;next} f && $0==\"---\"{f=0;next} !f{if(!s){if($0 ~ /^[[:space:]]*$/) next; s=1} print}' .github/agents/workstream-pr-manager.agent.md"
     }
     timeout = "10s"
     outcome "success" { transition_to = "checkout_branch" }
@@ -103,8 +122,15 @@ workflow "workstream_review_loop" {
   step "open_reviewer" {
     agent     = "reviewer"
     lifecycle = "open"
-    outcome "success" { transition_to = "execute_init" }
+    outcome "success" { transition_to = "open_pr_manager" }
     outcome "failure" { transition_to = "close_executor_abort" }
+  }
+
+  step "open_pr_manager" {
+    agent     = "pr_manager"
+    lifecycle = "open"
+    outcome "success" { transition_to = "execute_init" }
+    outcome "failure" { transition_to = "close_reviewer_abort" }
   }
 
   # ── Init pass: bootstrap agent context ─────────────────────────────────────
@@ -121,7 +147,7 @@ workflow "workstream_review_loop" {
     }
     outcome "needs_review"   { transition_to = "review_init" }
     outcome "needs_approval" { transition_to = "review_init" }
-    outcome "failure"        { transition_to = "close_reviewer_abort" }
+    outcome "failure"        { transition_to = "close_pr_manager_abort" }
   }
 
   step "review_init" {
@@ -132,11 +158,11 @@ workflow "workstream_review_loop" {
     input {
       prompt = "${steps.load_reviewer_agent_file.stdout}\n\nRead ${var.workstream_file} for the workstream scope and the executor's latest work.\n\nReview the executor's changes against the acceptance bar. Write all findings and your verdict into the reviewer notes section of ${var.workstream_file}.\n\nEnd your final line with exactly one of:\nRESULT: approved\nRESULT: changes_requested\nRESULT: failure"
     }
-    outcome "approved"          { transition_to = "commit_and_finish" }
+    outcome "approved"          { transition_to = "commit_and_prepare_pr" }
     outcome "changes_requested" { transition_to = "execute" }
     outcome "needs_review"      { transition_to = "execute" }
     outcome "needs_approval"    { transition_to = "execute" }
-    outcome "failure"           { transition_to = "close_reviewer_abort" }
+    outcome "failure"           { transition_to = "close_pr_manager_abort" }
   }
 
   # ── Review loop: minimal signal prompts ─────────────────────────────────────
@@ -153,7 +179,7 @@ workflow "workstream_review_loop" {
     }
     outcome "needs_review"   { transition_to = "verify" }
     outcome "needs_approval" { transition_to = "verify" }
-    outcome "failure"        { transition_to = "close_reviewer_abort" }
+    outcome "failure"        { transition_to = "close_pr_manager_abort" }
   }
 
   step "verify" {
@@ -176,7 +202,7 @@ workflow "workstream_review_loop" {
     }
     outcome "needs_review"   { transition_to = "verify" }
     outcome "needs_approval" { transition_to = "verify" }
-    outcome "failure"        { transition_to = "close_reviewer_abort" }
+    outcome "failure"        { transition_to = "close_pr_manager_abort" }
   }
 
   step "review" {
@@ -187,16 +213,16 @@ workflow "workstream_review_loop" {
     input {
       prompt = "Ready for review. Latest work is in ${var.workstream_file}."
     }
-    outcome "approved"          { transition_to = "commit_and_finish" }
+    outcome "approved"          { transition_to = "commit_and_prepare_pr" }
     outcome "changes_requested" { transition_to = "execute" }
     outcome "needs_review"      { transition_to = "execute" }
     outcome "needs_approval"    { transition_to = "execute" }
-    outcome "failure"           { transition_to = "close_reviewer_abort" }
+    outcome "failure"           { transition_to = "close_pr_manager_abort" }
   }
 
   # ── Finalize: executor commit ──────────────────────────────────────────────
 
-  step "commit_and_finish" {
+  step "commit_and_prepare_pr" {
     agent       = "executor"
     allow_tools = [
       "*",
@@ -204,11 +230,84 @@ workflow "workstream_review_loop" {
     input {
       prompt = "Approved. Commit all workstream changes with message:\nworkstream: complete ${var.workstream_file}\n\nEnd your final line with exactly one of:\nRESULT: success\nRESULT: failure"
     }
-    outcome "success" { transition_to = "close_reviewer_done" }
-    outcome "failure" { transition_to = "close_reviewer_abort" }
+    outcome "success" { transition_to = "open_or_update_pr" }
+    outcome "failure" { transition_to = "close_pr_manager_abort" }
+  }
+
+  # ── PR automation loop ────────────────────────────────────────────────────
+  # PR manager owns creation/updates and comment replies.
+  # Shell step blocks on required checks and returns gate status.
+
+  step "open_or_update_pr" {
+    agent       = "pr_manager"
+    allow_tools = [
+      "*",
+    ]
+    input {
+      prompt = "${steps.load_pr_manager_agent_file.stdout}\n\nRead ${var.workstream_file}. Ensure branch is pushed, then create or update the PR from the current branch to main.\n\nInclude a concise summary and test evidence from the workstream notes/reviewer notes.\n\nEnd your final line with exactly one of:\nRESULT: watch_pr\nRESULT: failure"
+    }
+    outcome "watch_pr"      { transition_to = "watch_pr_gate" }
+    outcome "needs_review"  { transition_to = "watch_pr_gate" }
+    outcome "needs_approval" { transition_to = "watch_pr_gate" }
+    outcome "failure"       { transition_to = "close_pr_manager_abort" }
+  }
+
+  step "watch_pr_gate" {
+    adapter = "shell"
+    input {
+      command = "set -euo pipefail; exec 2>&1; branch=$(git branch --show-current); pr_number=$(gh pr view \"$branch\" --json number --jq '.number'); echo \"pr_number=$pr_number\"; if ! gh pr checks \"$pr_number\" --required --watch; then echo \"checks=failed\"; gh pr view \"$pr_number\" --json url,reviewDecision --template '{{.url}} review={{.reviewDecision}}\\n'; exit 1; fi; owner=$(gh repo view --json owner --jq '.owner.login'); repo=$(gh repo view --json name --jq '.name'); review_decision=$(gh pr view \"$pr_number\" --json reviewDecision --jq '.reviewDecision // \"REVIEW_REQUIRED\"'); review_threads_json=$(gh api graphql -f query='query($owner:String!, $repo:String!, $number:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$number){reviewThreads(first:100){totalCount pageInfo{hasNextPage endCursor} nodes{isResolved isOutdated}}}}}' -f owner=\"$owner\" -f repo=\"$repo\" -F number=\"$pr_number\"); review_threads_total=$(printf '%s' \"$review_threads_json\" | jq -r '.data.repository.pullRequest.reviewThreads.totalCount'); review_threads_has_next_page=$(printf '%s' \"$review_threads_json\" | jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage'); unresolved_threads=$(printf '%s' \"$review_threads_json\" | jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select((.isOutdated|not) and (.isResolved|not))] | length'); echo \"review_decision=$review_decision\"; echo \"review_threads_total=$review_threads_total\"; echo \"review_threads_has_next_page=$review_threads_has_next_page\"; echo \"unresolved_threads=$unresolved_threads\"; if [ \"$review_decision\" = \"APPROVED\" ] && [ \"$review_threads_has_next_page\" = \"false\" ] && [ \"$unresolved_threads\" -eq 0 ]; then echo \"ready_to_merge=true\"; exit 0; fi; if [ \"$review_threads_has_next_page\" = \"true\" ]; then echo \"review_threads_complete=false\"; fi; echo \"ready_to_merge=false\"; exit 1"
+    }
+    timeout = "45m"
+    outcome "success" { transition_to = "merge_pr_and_sync_main" }
+    outcome "failure" { transition_to = "triage_pr_feedback" }
+  }
+
+  step "triage_pr_feedback" {
+    agent       = "pr_manager"
+    allow_tools = [
+      "*",
+    ]
+    input {
+      prompt = "PR watch gate reported unresolved feedback or failed checks.\n\nUse this gate output as context:\n--- watch_pr_gate output ---\n${steps.watch_pr_gate.stdout}\n--- end ---\n\nInspect the PR reviews/comments/threads. If a comment is already addressed by code or reviewer notes, reply with evidence and resolve where possible.\n\nReturn RESULT: needs_executor only when new code changes are required. Return RESULT: recheck when you handled comments and we should re-run gate checks.\n\nEnd your final line with exactly one of:\nRESULT: needs_executor\nRESULT: recheck\nRESULT: failure"
+    }
+    outcome "needs_executor" { transition_to = "execute_pr_feedback" }
+    outcome "recheck"        { transition_to = "watch_pr_gate" }
+    outcome "needs_review"   { transition_to = "watch_pr_gate" }
+    outcome "needs_approval" { transition_to = "watch_pr_gate" }
+    outcome "failure"        { transition_to = "close_pr_manager_abort" }
+  }
+
+  step "execute_pr_feedback" {
+    agent       = "executor"
+    allow_tools = [
+      "*",
+    ]
+    input {
+      prompt = "PR manager determined code changes are required from review comments or check failures.\n\nUse this gate output as context:\n--- watch_pr_gate output ---\n${steps.watch_pr_gate.stdout}\n--- end ---\n\nInspect the PR feedback directly, implement all required fixes, update ${var.workstream_file} notes, and prepare for verification/re-review."
+    }
+    outcome "needs_review"   { transition_to = "verify" }
+    outcome "needs_approval" { transition_to = "verify" }
+    outcome "failure"        { transition_to = "close_pr_manager_abort" }
+  }
+
+  step "merge_pr_and_sync_main" {
+    adapter = "shell"
+    input {
+      command = "set -euo pipefail; exec 2>&1; branch=$(git branch --show-current); pr_number=$(gh pr view \"$branch\" --json number --jq '.number'); gh pr merge \"$pr_number\" --squash --delete-branch; git fetch origin main; git checkout main; git pull --ff-only origin main; echo \"merged_pr=$pr_number\""
+    }
+    timeout = "5m"
+    outcome "success" { transition_to = "close_pr_manager_done" }
+    outcome "failure" { transition_to = "triage_pr_feedback" }
   }
 
   # ── Close agents: success path ──────────────────────────────────────────────
+
+  step "close_pr_manager_done" {
+    agent     = "pr_manager"
+    lifecycle = "close"
+    outcome "success" { transition_to = "close_reviewer_done" }
+    outcome "failure" { transition_to = "close_reviewer_done" }
+  }
 
   step "close_reviewer_done" {
     agent     = "reviewer"
@@ -226,6 +325,13 @@ workflow "workstream_review_loop" {
 
   # ── Close agents: abort path ─────────────────────────────────────────────────
   # Each step chains to the next so all open sessions are closed before failing.
+
+  step "close_pr_manager_abort" {
+    agent     = "pr_manager"
+    lifecycle = "close"
+    outcome "success" { transition_to = "close_reviewer_abort" }
+    outcome "failure" { transition_to = "close_reviewer_abort" }
+  }
 
   step "close_reviewer_abort" {
     agent     = "reviewer"
