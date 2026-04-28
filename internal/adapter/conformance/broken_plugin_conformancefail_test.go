@@ -8,7 +8,7 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/brokenbots/overseer/internal/adapter/conformance"
+	"github.com/brokenbots/criteria/internal/adapter/conformance"
 )
 
 func TestBrokenPluginConformanceFixture(t *testing.T) {
@@ -32,7 +32,7 @@ func buildBrokenPlugin(t *testing.T) string {
 		t.Fatal("resolve caller path")
 	}
 	moduleRoot := filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..", ".."))
-	pluginBin := filepath.Join(t.TempDir(), "overseer-adapter-broken")
+	pluginBin := filepath.Join(t.TempDir(), "criteria-adapter-broken")
 
 	cmd := exec.Command("go", "build", "-o", pluginBin, "./internal/adapter/conformance/testfixtures/broken")
 	cmd.Dir = moduleRoot

@@ -9,8 +9,8 @@ import (
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/proto"
 
-	pb "github.com/brokenbots/overseer/sdk/pb/overseer/v1"
-	overseer "github.com/brokenbots/overseer/sdk"
+	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
+	criteria "github.com/brokenbots/criteria/sdk"
 )
 
 // testEnvelopeRoundTrip verifies that every Envelope.payload variant submitted
@@ -18,7 +18,7 @@ import (
 //
 // For each payload arm the test:
 //  1. Constructs a non-zero instance of the payload via PopulateMessage.
-//  2. Wraps it with overseer.NewEnvelope.
+//  2. Wraps it with criteria.NewEnvelope.
 //  3. Submits through SubmitEvents and waits for the ack.
 //  4. Reads back via Subject.ListRunEvents.
 //  5. Asserts proto.Equal on the payload message (ignoring server-assigned
@@ -27,20 +27,20 @@ import (
 // The descriptor walk is authoritative: adding a new oneof arm to events.proto
 // without updating the SDK's NewEnvelope or TypeString breaks this test.
 //
-// WatchReady is skipped: it is a server-synthetic event that Castle rejects
+// WatchReady is skipped: it is a server-synthetic event that the server rejects
 // on SubmitEvents ingestion (it has no persistence path).
 func testEnvelopeRoundTrip(t *testing.T, s Subject) {
 	baseURL, client, teardown := s.SetUp(t)
 	defer teardown()
 
-	const overseerName = "overseer-rt"
+	const agentName = "criteria-rt"
 	const token = "token-rt"
-	overseerID := s.RegisterOverseer(t, overseerName, token)
+	criteriaID := s.RegisterAgent(t, agentName, token)
 
-	oClient := overseer.NewServiceClient(client, baseURL)
+	oClient := criteria.NewServiceClient(client, baseURL)
 
 	// Create a dedicated run for this test.
-	createReq := connect.NewRequest(&pb.CreateRunRequest{OverseerId: overseerID, WorkflowName: "conformance-envelope-rt"})
+	createReq := connect.NewRequest(&pb.CreateRunRequest{CriteriaId: criteriaID, WorkflowName: "conformance-envelope-rt"})
 	createReq.Header().Set("Authorization", "Bearer "+token)
 	runResp, err := oClient.CreateRun(context.Background(), createReq)
 	if err != nil {
@@ -55,7 +55,7 @@ func testEnvelopeRoundTrip(t *testing.T, s Subject) {
 		fd := fields.Get(i)
 		armName := string(fd.Name())
 
-		// WatchReady is server-only; Castle rejects it on SubmitEvents.
+		// WatchReady is server-only; the server rejects it on SubmitEvents.
 		if armName == "watch_ready" {
 			continue
 		}
@@ -64,7 +64,7 @@ func testEnvelopeRoundTrip(t *testing.T, s Subject) {
 			msg := ConcreteMsg(t, fd)
 			PopulateMessage(msg.ProtoReflect(), 0)
 
-			env := overseer.NewEnvelope(runID, msg)
+			env := criteria.NewEnvelope(runID, msg)
 			corrID := fmt.Sprintf("rt-%s", armName)
 			env.CorrelationId = corrID
 
@@ -107,7 +107,7 @@ func testEnvelopeRoundTrip(t *testing.T, s Subject) {
 			}
 
 			// Compare the payload message (not the full envelope, because
-			// Castle mutates seq, ts, etc. on ingest).
+			// The server mutates seq, ts, etc. on ingest).
 			want := extractPayloadMsg(env)
 			got := extractPayloadMsg(found)
 			if want == nil {

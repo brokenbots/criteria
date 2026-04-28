@@ -16,9 +16,9 @@ func buildNoopPluginBinary(t *testing.T) string {
 		t.Fatal("resolve caller path")
 	}
 	moduleRoot := filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
-	binary := filepath.Join(t.TempDir(), "overseer-adapter-noop")
+	binary := filepath.Join(t.TempDir(), "criteria-adapter-noop")
 
-	cmd := exec.Command("go", "build", "-o", binary, "./cmd/overseer-adapter-noop")
+	cmd := exec.Command("go", "build", "-o", binary, "./cmd/criteria-adapter-noop")
 	cmd.Dir = moduleRoot
 	out, err := cmd.CombinedOutput()
 	if err != nil {

@@ -8,21 +8,21 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/brokenbots/overseer/internal/adapter"
-	engineruntime "github.com/brokenbots/overseer/internal/engine/runtime"
-	"github.com/brokenbots/overseer/internal/plugin"
-	"github.com/brokenbots/overseer/workflow"
+	"github.com/brokenbots/criteria/internal/adapter"
+	engineruntime "github.com/brokenbots/criteria/internal/engine/runtime"
+	"github.com/brokenbots/criteria/internal/plugin"
+	"github.com/brokenbots/criteria/workflow"
 	"github.com/zclconf/go-cty/cty"
 )
 
-// Sink receives engine-level events. Implementations (typically the Castle
+// Sink receives engine-level events. Implementations (typically the server
 // transport) are responsible for assigning sequence numbers, persisting, and
 // streaming. The engine never blocks waiting for the sink. The interpreter
 // loop invokes OnRunStarted/OnRunCompleted/OnRunFailed. stepNode invokes
 // OnStepEntered/OnStepOutcome/OnStepTransition and StepEventSink.
 //
 // OnVariableSet and OnStepOutputCaptured were added in W04. This is an
-// internal interface; only Castle and Local sinks implement it.
+// internal interface; only server and Local sinks implement it.
 type Sink interface {
 	OnRunStarted(workflowName, initialStep string)
 	OnRunCompleted(finalState string, success bool)
@@ -65,7 +65,7 @@ type Sink interface {
 	OnForEachOutcome(node, outcome, target string)
 	// OnScopeIterCursorSet is emitted whenever the for_each cursor is created,
 	// advanced, or cleared (W07). cursorJSON is the JSON-encoded IterCursor; an
-	// empty string signals cursor cleared. Castle stores this verbatim without
+	// empty string signals cursor cleared. The server stores this verbatim without
 	// interpreting field names, preserving 1.6 split independence.
 	OnScopeIterCursorSet(cursorJSON string)
 	// StepEventSink returns the per-step adapter sink (logs + adapter events).
@@ -255,7 +255,7 @@ func (e *Engine) runLoop(ctx context.Context, sessions *plugin.SessionManager, c
 }
 
 func (e *Engine) bootstrapSessionsForResume(ctx context.Context, sessions *plugin.SessionManager, startStep string) error {
-	// Sessions are process-local and do not survive Overseer restarts.
+	// Sessions are process-local and do not survive agent restarts.
 	// Crash recovery recreates them by replaying lifecycle steps declared before
 	// the resumed step in declaration order.
 	for _, name := range e.graph.StepOrder() {

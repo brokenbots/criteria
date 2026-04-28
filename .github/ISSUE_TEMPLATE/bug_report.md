@@ -24,7 +24,7 @@ labels: bug
 
 ## Version and environment
 
-- `overseer --version`:
+- `criteria --version`:
 - OS / arch:
 - Go version (if building from source):
 

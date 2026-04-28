@@ -13,12 +13,12 @@ type localRunState struct {
 	PID       int       `json:"pid"`
 	RunID     string    `json:"run_id"`
 	Workflow  string    `json:"workflow"`
-	CastleURL string    `json:"castle_url"`
+	ServerURL string    `json:"server_url"`
 	StartedAt time.Time `json:"started_at"`
 }
 
 // StepCheckpoint is written to disk before each step is executed so that a
-// restarted Overseer can resume from the last in-flight step.
+// restarted Criteria agent can resume from the last in-flight step.
 type StepCheckpoint struct {
 	RunID        string    `json:"run_id"`
 	Workflow     string    `json:"workflow"`
@@ -26,28 +26,28 @@ type StepCheckpoint struct {
 	CurrentStep  string    `json:"current_step"`
 	Attempt      int       `json:"attempt"`
 	StartedAt    time.Time `json:"started_at"`
-	CastleURL    string    `json:"castle_url"`
-	OverseerID   string    `json:"overseer_id"`
-	// Token is the bearer token for the overseer_id above. Stored so that
+	ServerURL    string    `json:"server_url"`
+	CriteriaID   string    `json:"criteria_id"`
+	// Token is the bearer token for the criteria_id above. Stored so that
 	// a restarted process can call ReattachRun and SubmitEvents without
 	// re-registering (which would assign a new id and fail the ownership
 	// check). The file is written with 0o600 permissions.
 	Token string `json:"token"`
 }
 
-// stateDir returns the base directory for Overseer state files.
-// It respects the OVERSEER_STATE_DIR environment variable; defaults to
-// ~/.overseer. If the directory cannot be resolved or created, writes are
+// stateDir returns the base directory for Criteria state files.
+// It respects the CRITERIA_STATE_DIR environment variable; defaults to
+// ~/.criteria. If the directory cannot be resolved or created, writes are
 // soft-degraded (callers log the error and continue).
 func stateDir() (string, error) {
-	if d := os.Getenv("OVERSEER_STATE_DIR"); d != "" {
+	if d := os.Getenv("CRITERIA_STATE_DIR"); d != "" {
 		return d, nil
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".overseer"), nil
+	return filepath.Join(home, ".criteria"), nil
 }
 
 func stateFilePath() (string, error) {
@@ -55,7 +55,7 @@ func stateFilePath() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(d, "overseer-state.json"), nil
+	return filepath.Join(d, "criteria-state.json"), nil
 }
 
 func checkpointFilePath(runID string) (string, error) {

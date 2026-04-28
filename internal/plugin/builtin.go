@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/brokenbots/overseer/internal/adapter"
-	"github.com/brokenbots/overseer/workflow"
+	"github.com/brokenbots/criteria/internal/adapter"
+	"github.com/brokenbots/criteria/workflow"
 )
 
 func BuiltinFactoryForAdapter(ad adapter.Adapter) BuiltinFactory {

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	pb "github.com/brokenbots/overseer/sdk/pb/overseer/v1"
+	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 	hplugin "github.com/hashicorp/go-plugin"
 )
 
@@ -62,9 +62,9 @@ func buildNoopPlugin(t *testing.T) string {
 		t.Fatal("resolve caller path")
 	}
 	moduleRoot := filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
-	pluginBin := filepath.Join(t.TempDir(), "overseer-adapter-noop")
+	pluginBin := filepath.Join(t.TempDir(), "criteria-adapter-noop")
 
-	cmd := exec.Command("go", "build", "-o", pluginBin, "./cmd/overseer-adapter-noop")
+	cmd := exec.Command("go", "build", "-o", pluginBin, "./cmd/criteria-adapter-noop")
 	cmd.Dir = moduleRoot
 	output, err := cmd.CombinedOutput()
 	if err != nil {

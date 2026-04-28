@@ -1,4 +1,4 @@
-module github.com/brokenbots/overseer/sdk
+module github.com/brokenbots/criteria/sdk
 
 go 1.26
 

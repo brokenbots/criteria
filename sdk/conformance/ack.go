@@ -8,8 +8,8 @@ import (
 
 	"connectrpc.com/connect"
 
-	pb "github.com/brokenbots/overseer/sdk/pb/overseer/v1"
-	overseer "github.com/brokenbots/overseer/sdk"
+	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
+	criteria "github.com/brokenbots/criteria/sdk"
 )
 
 // testAckOrdering verifies that SubmitEvents acks arrive with monotonically
@@ -41,10 +41,10 @@ func testAckOrderingSequential(t *testing.T, s Subject) {
 	defer teardown()
 
 	const token = "token-ack-seq"
-	overseerID := s.RegisterOverseer(t, "overseer-ack-seq", token)
-	oClient := overseer.NewServiceClient(client, baseURL)
+	criteriaID := s.RegisterAgent(t, "criteria-ack-seq", token)
+	oClient := criteria.NewServiceClient(client, baseURL)
 
-	createReq := connect.NewRequest(&pb.CreateRunRequest{OverseerId: overseerID, WorkflowName: "conformance-ack-seq"})
+	createReq := connect.NewRequest(&pb.CreateRunRequest{CriteriaId: criteriaID, WorkflowName: "conformance-ack-seq"})
 	createReq.Header().Set("Authorization", "Bearer "+token)
 	runResp, err := oClient.CreateRun(context.Background(), createReq)
 	if err != nil {
@@ -60,7 +60,7 @@ func testAckOrderingSequential(t *testing.T, s Subject) {
 	corrIDs := make([]string, ackTestN)
 	for i := 0; i < ackTestN; i++ {
 		corrIDs[i] = fmt.Sprintf("ack-seq-%d", i)
-		env := overseer.NewEnvelope(runID, &pb.StepLog{Step: "s", Stream: pb.LogStream_LOG_STREAM_STDOUT, Chunk: fmt.Sprintf("line %d", i)})
+		env := criteria.NewEnvelope(runID, &pb.StepLog{Step: "s", Stream: pb.LogStream_LOG_STREAM_STDOUT, Chunk: fmt.Sprintf("line %d", i)})
 		env.CorrelationId = corrIDs[i]
 		if err := stream.Send(env); err != nil {
 			t.Fatalf("Send[%d]: %v", i, err)
@@ -106,10 +106,10 @@ func testAckIdempotentDuplicate(t *testing.T, s Subject) {
 	defer teardown()
 
 	const token = "token-ack-idem"
-	overseerID := s.RegisterOverseer(t, "overseer-ack-idem", token)
-	oClient := overseer.NewServiceClient(client, baseURL)
+	criteriaID := s.RegisterAgent(t, "criteria-ack-idem", token)
+	oClient := criteria.NewServiceClient(client, baseURL)
 
-	createReq := connect.NewRequest(&pb.CreateRunRequest{OverseerId: overseerID, WorkflowName: "conformance-ack-idem"})
+	createReq := connect.NewRequest(&pb.CreateRunRequest{CriteriaId: criteriaID, WorkflowName: "conformance-ack-idem"})
 	createReq.Header().Set("Authorization", "Bearer "+token)
 	runResp, err := oClient.CreateRun(context.Background(), createReq)
 	if err != nil {
@@ -125,7 +125,7 @@ func testAckIdempotentDuplicate(t *testing.T, s Subject) {
 		defer cancel()
 		stream := oClient.SubmitEvents(ctx)
 		stream.RequestHeader().Set("Authorization", "Bearer "+token)
-		env := overseer.NewEnvelope(runID, &pb.StepLog{Step: "s", Stream: pb.LogStream_LOG_STREAM_STDOUT, Chunk: "hello"})
+		env := criteria.NewEnvelope(runID, &pb.StepLog{Step: "s", Stream: pb.LogStream_LOG_STREAM_STDOUT, Chunk: "hello"})
 		env.CorrelationId = corrID
 		if err := stream.Send(env); err != nil {
 			t.Fatalf("Send: %v", err)
@@ -182,11 +182,11 @@ func testAckConcurrentStreams(t *testing.T, s Subject) {
 	defer teardown()
 
 	const token = "token-ack-conc"
-	overseerID := s.RegisterOverseer(t, "overseer-ack-conc", token)
+	criteriaID := s.RegisterAgent(t, "criteria-ack-conc", token)
 
-	createReq := connect.NewRequest(&pb.CreateRunRequest{OverseerId: overseerID, WorkflowName: "conformance-ack-conc"})
+	createReq := connect.NewRequest(&pb.CreateRunRequest{CriteriaId: criteriaID, WorkflowName: "conformance-ack-conc"})
 	createReq.Header().Set("Authorization", "Bearer "+token)
-	runResp, err := overseer.NewServiceClient(client, baseURL).CreateRun(context.Background(), createReq)
+	runResp, err := criteria.NewServiceClient(client, baseURL).CreateRun(context.Background(), createReq)
 	if err != nil {
 		t.Fatalf("CreateRun: %v", err)
 	}
@@ -198,9 +198,9 @@ func testAckConcurrentStreams(t *testing.T, s Subject) {
 	defer cancelB()
 
 	// Both bidi streams open simultaneously, both targeting the same run_id.
-	streamA := overseer.NewServiceClient(client, baseURL).SubmitEvents(ctxA)
+	streamA := criteria.NewServiceClient(client, baseURL).SubmitEvents(ctxA)
 	streamA.RequestHeader().Set("Authorization", "Bearer "+token)
-	streamB := overseer.NewServiceClient(client, baseURL).SubmitEvents(ctxB)
+	streamB := criteria.NewServiceClient(client, baseURL).SubmitEvents(ctxB)
 	streamB.RequestHeader().Set("Authorization", "Bearer "+token)
 
 	const nPerStream = 3
@@ -211,7 +211,7 @@ func testAckConcurrentStreams(t *testing.T, s Subject) {
 		Receive() (*pb.Ack, error)
 	}, prefix string, i int) {
 		t.Helper()
-		env := overseer.NewEnvelope(runID, &pb.StepLog{
+		env := criteria.NewEnvelope(runID, &pb.StepLog{
 			Step:   "s",
 			Stream: pb.LogStream_LOG_STREAM_STDOUT,
 			Chunk:  fmt.Sprintf("%s-%d", prefix, i),

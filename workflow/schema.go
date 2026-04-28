@@ -1,5 +1,5 @@
 // Package workflow defines the HCL workflow schema, parser, and the compiled
-// FSM graph that the Overseer engine executes.
+// FSM graph that the Criteria engine executes.
 package workflow
 
 import (

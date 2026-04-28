@@ -7,8 +7,8 @@ import (
 
 	"connectrpc.com/connect"
 
-	pb "github.com/brokenbots/overseer/sdk/pb/overseer/v1"
-	overseer "github.com/brokenbots/overseer/sdk"
+	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
+	criteria "github.com/brokenbots/criteria/sdk"
 )
 
 // testControlLifecycle verifies the Control server-stream contract.
@@ -18,7 +18,7 @@ import (
 //  2. StopRun on the subscriber's run → RunCancel arrives on the stream.
 //  3. Re-subscribe after disconnect → ControlReady arrives again before any
 //     backlogged control messages.
-//  4. Overseer-A stream does not receive control messages for Overseer-B's
+//  4. Agent-A stream does not receive control messages for Agent-B's
 //     runs (isolation contract).
 func testControlLifecycle(t *testing.T, s Subject) {
 	t.Run("ControlReady", func(t *testing.T) {
@@ -30,8 +30,8 @@ func testControlLifecycle(t *testing.T, s Subject) {
 	t.Run("ResubscribeGetsControlReady", func(t *testing.T) {
 		testControlResubscribe(t, s)
 	})
-	t.Run("OverseerIsolation", func(t *testing.T) {
-		testControlOverseerIsolation(t, s)
+	t.Run("AgentIsolation", func(t *testing.T) {
+		testControlAgentIsolation(t, s)
 	})
 }
 
@@ -40,13 +40,13 @@ func testControlReady(t *testing.T, s Subject) {
 	defer teardown()
 
 	const token = "token-ctrl-rdy"
-	overseerID := s.RegisterOverseer(t, "overseer-ctrl-rdy", token)
-	oClient := overseer.NewServiceClient(client, baseURL)
+	criteriaID := s.RegisterAgent(t, "criteria-ctrl-rdy", token)
+	oClient := criteria.NewServiceClient(client, baseURL)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	req := connect.NewRequest(&pb.ControlSubscribeRequest{OverseerId: overseerID})
+	req := connect.NewRequest(&pb.ControlSubscribeRequest{CriteriaId: criteriaID})
 	req.Header().Set("Authorization", "Bearer "+token)
 	stream, err := oClient.Control(ctx, req)
 	if err != nil {
@@ -66,10 +66,10 @@ func testRunCancelDelivered(t *testing.T, s Subject) {
 	defer teardown()
 
 	const token = "token-ctrl-cancel"
-	overseerID := s.RegisterOverseer(t, "overseer-ctrl-cancel", token)
-	oClient := overseer.NewServiceClient(client, baseURL)
+	criteriaID := s.RegisterAgent(t, "criteria-ctrl-cancel", token)
+	oClient := criteria.NewServiceClient(client, baseURL)
 
-	createReq := connect.NewRequest(&pb.CreateRunRequest{OverseerId: overseerID, WorkflowName: "conformance-ctrl-cancel"})
+	createReq := connect.NewRequest(&pb.CreateRunRequest{CriteriaId: criteriaID, WorkflowName: "conformance-ctrl-cancel"})
 	createReq.Header().Set("Authorization", "Bearer "+token)
 	runResp, err := oClient.CreateRun(context.Background(), createReq)
 	if err != nil {
@@ -80,7 +80,7 @@ func testRunCancelDelivered(t *testing.T, s Subject) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	req := connect.NewRequest(&pb.ControlSubscribeRequest{OverseerId: overseerID})
+	req := connect.NewRequest(&pb.ControlSubscribeRequest{CriteriaId: criteriaID})
 	req.Header().Set("Authorization", "Bearer "+token)
 	stream, err := oClient.Control(ctx, req)
 	if err != nil {
@@ -95,7 +95,7 @@ func testRunCancelDelivered(t *testing.T, s Subject) {
 		t.Errorf("first message want ControlReady, got %T", stream.Msg().Command)
 	}
 
-	// Trigger a stop-run command via the Subject (abstracts over CastleService).
+	// Trigger a stop-run command via the Subject (abstracts over ServerService).
 	if err := s.StopRun(t, baseURL, client, token, runID); err != nil {
 		t.Fatalf("StopRun: %v", err)
 	}
@@ -118,14 +118,14 @@ func testControlResubscribe(t *testing.T, s Subject) {
 	defer teardown()
 
 	const token = "token-ctrl-resub"
-	overseerID := s.RegisterOverseer(t, "overseer-ctrl-resub", token)
-	oClient := overseer.NewServiceClient(client, baseURL)
+	criteriaID := s.RegisterAgent(t, "criteria-ctrl-resub", token)
+	oClient := criteria.NewServiceClient(client, baseURL)
 
 	subscribe := func(t *testing.T) *connect.ServerStreamForClient[pb.ControlMessage] {
 		t.Helper()
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		t.Cleanup(cancel)
-		req := connect.NewRequest(&pb.ControlSubscribeRequest{OverseerId: overseerID})
+		req := connect.NewRequest(&pb.ControlSubscribeRequest{CriteriaId: criteriaID})
 		req.Header().Set("Authorization", "Bearer "+token)
 		stream, err := oClient.Control(ctx, req)
 		if err != nil {
@@ -154,7 +154,7 @@ func testControlResubscribe(t *testing.T, s Subject) {
 	assertControlReady(t, stream2)
 }
 
-func testControlOverseerIsolation(t *testing.T, s Subject) {
+func testControlAgentIsolation(t *testing.T, s Subject) {
 	baseURL, client, teardown := s.SetUp(t)
 	defer teardown()
 
@@ -162,12 +162,12 @@ func testControlOverseerIsolation(t *testing.T, s Subject) {
 		tokenA = "token-ctrl-iso-a"
 		tokenB = "token-ctrl-iso-b"
 	)
-	overseerAID := s.RegisterOverseer(t, "overseer-iso-a", tokenA)
-	overseerBID := s.RegisterOverseer(t, "overseer-iso-b", tokenB)
-	oClient := overseer.NewServiceClient(client, baseURL)
+	criteriaAID := s.RegisterAgent(t, "criteria-iso-a", tokenA)
+	criteriaBID := s.RegisterAgent(t, "criteria-iso-b", tokenB)
+	oClient := criteria.NewServiceClient(client, baseURL)
 
-	// Create a run owned by overseer-A.
-	createReq := connect.NewRequest(&pb.CreateRunRequest{OverseerId: overseerAID, WorkflowName: "conformance-iso"})
+	// Create a run owned by agent-A.
+	createReq := connect.NewRequest(&pb.CreateRunRequest{CriteriaId: criteriaAID, WorkflowName: "conformance-iso"})
 	createReq.Header().Set("Authorization", "Bearer "+tokenA)
 	runResp, err := oClient.CreateRun(context.Background(), createReq)
 	if err != nil {
@@ -175,10 +175,10 @@ func testControlOverseerIsolation(t *testing.T, s Subject) {
 	}
 	runIDofA := runResp.Msg.RunId
 
-	// Subscribe BOTH overseers to their respective Control streams.
+	// Subscribe BOTH agents to their respective Control streams.
 	ctxA, cancelA := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancelA()
-	reqA := connect.NewRequest(&pb.ControlSubscribeRequest{OverseerId: overseerAID})
+	reqA := connect.NewRequest(&pb.ControlSubscribeRequest{CriteriaId: criteriaAID})
 	reqA.Header().Set("Authorization", "Bearer "+tokenA)
 	streamA, err := oClient.Control(ctxA, reqA)
 	if err != nil {
@@ -187,7 +187,7 @@ func testControlOverseerIsolation(t *testing.T, s Subject) {
 
 	ctxB, cancelB := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancelB()
-	reqB := connect.NewRequest(&pb.ControlSubscribeRequest{OverseerId: overseerBID})
+	reqB := connect.NewRequest(&pb.ControlSubscribeRequest{CriteriaId: criteriaBID})
 	reqB.Header().Set("Authorization", "Bearer "+tokenB)
 	streamB, err := oClient.Control(ctxB, reqB)
 	if err != nil {
@@ -216,7 +216,7 @@ func testControlOverseerIsolation(t *testing.T, s Subject) {
 	}
 
 	// B must NOT receive any message within a bounded timeout — the RunCancel
-	// for A's run must not cross overseer boundaries.
+	// for A's run must not cross agent boundaries.
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -228,7 +228,7 @@ func testControlOverseerIsolation(t *testing.T, s Subject) {
 		// broken) or the stream was closed with an error. Check which.
 		if streamB.Err() == nil {
 			// A message arrived on B's stream — isolation contract violated.
-			t.Errorf("OverseerIsolation: B received a message meant for A (got %T)", streamB.Msg().GetCommand())
+			t.Errorf("AgentIsolation: B received a message meant for A (got %T)", streamB.Msg().GetCommand())
 		}
 		// Error means stream was closed by context cancellation or server EOF;
 		// that is not a violation.

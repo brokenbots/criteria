@@ -1,11 +1,11 @@
-module github.com/brokenbots/overseer
+module github.com/brokenbots/criteria
 
 go 1.26
 
 require (
 	connectrpc.com/connect v1.19.2
-	github.com/brokenbots/overseer/sdk v0.0.0
-	github.com/brokenbots/overseer/workflow v0.0.0
+	github.com/brokenbots/criteria/sdk v0.0.0
+	github.com/brokenbots/criteria/workflow v0.0.0
 	github.com/github/copilot-sdk/go v0.3.0
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/go-hclog v1.6.3
@@ -49,6 +49,6 @@ require (
 )
 
 replace (
-	github.com/brokenbots/overseer/sdk => ./sdk
-	github.com/brokenbots/overseer/workflow => ./workflow
+	github.com/brokenbots/criteria/sdk => ./sdk
+	github.com/brokenbots/criteria/workflow => ./workflow
 )

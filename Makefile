@@ -13,13 +13,13 @@ tidy: ## Run go mod tidy across all modules
 	cd sdk      && go mod tidy
 	cd workflow && go mod tidy
 
-build: ## Build the overseer binary (output: bin/overseer)
+build: ## Build the criteria binary (output: bin/criteria)
 	mkdir -p bin
-	go build -o bin/overseer ./cmd/overseer
+	go build -o bin/criteria ./cmd/criteria
 
-plugins: ## Build adapter plugin binaries (output: bin/overseer-adapter-*)
+plugins: ## Build adapter plugin binaries (output: bin/criteria-adapter-*)
 	mkdir -p bin
-	@for d in ./cmd/overseer-adapter-*; do \
+	@for d in ./cmd/criteria-adapter-*; do \
 		if [ -d "$$d" ]; then \
 			name=$${d##*/}; \
 			go build -o bin/$$name $$d; \
@@ -53,22 +53,22 @@ lint-imports: ## Enforce import-graph boundaries (see tools/import-lint/)
 validate: build ## Validate all standalone example workflows
 	@for f in examples/*.hcl examples/plugins/*/*.hcl; do \
 		echo "Validating $$f..."; \
-		./bin/overseer validate "$$f" || exit 1; \
+		./bin/criteria validate "$$f" || exit 1; \
 	done
 	@echo "All examples validated."
 
 example-plugin: build ## Build and run the greeter example plugin end-to-end
 	@echo "Building greeter example plugin..."
-	cd examples/plugins/greeter && GOWORK=off go build -o ../../../bin/overseer-adapter-greeter .
+	cd examples/plugins/greeter && GOWORK=off go build -o ../../../bin/criteria-adapter-greeter .
 	@tmpdir=$$(mktemp -d); \
-	cp bin/overseer-adapter-greeter "$$tmpdir/"; \
-	chmod +x "$$tmpdir/overseer-adapter-greeter"; \
+	cp bin/criteria-adapter-greeter "$$tmpdir/"; \
+	chmod +x "$$tmpdir/criteria-adapter-greeter"; \
 	eventsfile=$$(mktemp); \
-	OVERSEER_PLUGINS="$$tmpdir" ./bin/overseer apply examples/plugins/greeter/example.hcl \
+	CRITERIA_PLUGINS="$$tmpdir" ./bin/criteria apply examples/plugins/greeter/example.hcl \
 		--events-file "$$eventsfile" 2>&1; \
 	rc=$$?; \
 	if [ $$rc -ne 0 ]; then \
-		echo "ERROR: overseer apply failed"; \
+		echo "ERROR: criteria apply failed"; \
 		rm -rf "$$tmpdir" "$$eventsfile"; exit 1; \
 	fi; \
 	if ! grep -q '"hello, world"' "$$eventsfile"; then \

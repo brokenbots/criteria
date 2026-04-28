@@ -6,8 +6,8 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/brokenbots/overseer/events"
-	pb "github.com/brokenbots/overseer/sdk/pb/overseer/v1"
+	"github.com/brokenbots/criteria/events"
+	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 )
 
 func TestNewEnvelopeRoundTrip(t *testing.T) {

@@ -19,4 +19,4 @@ states:
   failed    terminal=true   success=false
 
 plugins required:
-  noop   (search: $OVERSEER_PLUGINS, ~/.overseer/plugins)
+  noop   (search: $CRITERIA_PLUGINS, ~/.criteria/plugins)

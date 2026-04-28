@@ -1,4 +1,4 @@
-module github.com/brokenbots/overseer/workflow
+module github.com/brokenbots/criteria/workflow
 
 go 1.26
 

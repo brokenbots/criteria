@@ -1,10 +1,10 @@
 # Workflow Language Reference
 
-The Overseer workflow language is a declarative HCL-based language for orchestrating multi-step processes with complex control flow. Workflows compile to finite state machines (FSMs) that the Overseer execution engine interprets.
+The Criteria workflow language is a declarative HCL-based language for orchestrating multi-step processes with complex control flow. Workflows compile to finite state machines (FSMs) that the Criteria execution engine interprets.
 
 ## Overview
 
-An Overseer workflow defines:
+A Criteria workflow defines:
 
 - **Nodes**: steps (adapter invocations), waits (time or signal gates), approvals (human decisions), branches (conditional routing), and for-each loops (iteration over lists).
 - **States**: named terminal or intermediate targets. The workflow FSM transitions between nodes and states based on outcomes.
@@ -13,14 +13,14 @@ An Overseer workflow defines:
 
 ### Architecture model
 
-- **Overseer** compiles HCL workflows to FSM graphs and executes them by invoking adapters.
-- **Adapters** are out-of-process plugins discovered from `$OVERSEER_PLUGINS` or `~/.overseer/plugins` (see [plugins.md](plugins.md)).
-- **Castle** (optional) is the orchestrator server that persists runs, enables resumption after crashes, and provides UI (Parapet) and approval RPCs.
+- **Criteria** compiles HCL workflows to FSM graphs and executes them by invoking adapters.
+- **Adapters** are out-of-process plugins discovered from `$CRITERIA_PLUGINS` or `~/.criteria/plugins` (see [plugins.md](plugins.md)).
+- **Server** (optional) is the orchestrator server that persists runs, enables resumption after crashes, and provides UI and approval RPCs.
 
 ### Execution modes
 
-- **Local mode**: `overseer apply <workflow.hcl>` — runs in-process. Duration-based waits work; signal-based waits and approvals require `--castle`.
-- **Orchestrator mode**: `overseer apply <workflow.hcl> --castle <url>` — connects to a Castle instance for persistence, crash recovery, and approval support.
+- **Local mode**: `criteria apply <workflow.hcl>` — runs in-process. Duration-based waits work; signal-based waits and approvals require `--server`.
+- **Orchestrator mode**: `criteria apply <workflow.hcl> --server <url>` — connects to a server instance for persistence, crash recovery, and approval support.
 
 See [Standalone CLI](#standalone-cli) for command reference.
 
@@ -176,10 +176,10 @@ A workflow that uses an agent must open it before use and close it when done. Th
 
 ### Plugin discovery
 
-Agents (and standalone adapter steps) resolve to plugin binaries named `overseer-adapter-<name>`. Discovery order:
+Agents (and standalone adapter steps) resolve to plugin binaries named `criteria-adapter-<name>`. Discovery order:
 
-1. `$OVERSEER_PLUGINS/<name>`
-2. `~/.overseer/plugins/<name>`
+1. `$CRITERIA_PLUGINS/<name>`
+2. `~/.criteria/plugins/<name>`
 
 See [plugins.md](plugins.md) for the plugin wire protocol and adapter development guide.
 
@@ -288,7 +288,7 @@ wait "cool_down" {
 - **`duration`** (required if no `signal`): Duration string (e.g., `"5s"`, `"2m"`).
 - **`outcome "elapsed"`**: Fires after the duration elapses.
 
-**Local mode**: Duration waits work in `overseer apply` (no Castle required).
+**Local mode**: Duration waits work in `criteria apply` (no server required).
 
 ### Signal-based wait
 
@@ -301,16 +301,16 @@ wait "approval_gate" {
 }
 ```
 
-- **`signal`** (required if no `duration`): Signal name to wait for. External caller sends signal via Castle RPC.
+- **`signal`** (required if no `duration`): Signal name to wait for. External caller sends signal via server RPC.
 - **`outcome`**: Map signal values to transition targets.
 
-**Orchestrator mode required**: Signal waits require `--castle` for external signal delivery.
+**Orchestrator mode required**: Signal waits require `--server` for external signal delivery.
 
 ---
 
 ## Approval
 
-Approval nodes are human decision gates. Paused runs wait for an approver to submit a decision via Castle (Parapet UI or RPC).
+Approval nodes are human decision gates. Paused runs wait for an approver to submit a decision via the server (UI or RPC).
 
 <!-- validator: fragment -->
 ```hcl
@@ -328,7 +328,7 @@ approval "ship_to_prod" {
 - **`reason`** (required): Human-readable prompt displayed in the approval UI.
 - **`outcome "approved"`**, **`outcome "rejected"`** (both required): Transition targets for approve/reject decisions.
 
-**Orchestrator mode required**: Approvals require `--castle`. Local-mode runs abort at compile time if approval nodes are present.
+**Orchestrator mode required**: Approvals require `--server`. Local-mode runs abort at compile time if approval nodes are present.
 
 ---
 
@@ -469,7 +469,7 @@ Expressions that reference step outputs or `each.*` are stored as raw HCL expres
 
 ## Permissions
 
-Overseer enforces a deny-by-default permission model for tool invocations (currently agent-based steps only; future: all adapter tool use).
+Criteria enforces a deny-by-default permission model for tool invocations (currently agent-based steps only; future: all adapter tool use).
 
 ### Workflow-level permissions
 
@@ -513,27 +513,27 @@ See [plugins.md](plugins.md) for the tool invocation wire protocol.
 
 ## Standalone CLI
 
-Overseer provides three commands for workflow operations:
+Criteria provides three commands for workflow operations:
 
-### `overseer compile`
+### `criteria compile`
 
 Parses and validates a workflow, outputs JSON or DOT graph.
 
 ```bash
-bin/overseer compile examples/demo_tour_local.hcl
-bin/overseer compile examples/demo_tour_local.hcl --format dot --out workflow.dot
+bin/criteria compile examples/demo_tour_local.hcl
+bin/criteria compile examples/demo_tour_local.hcl --format dot --out workflow.dot
 ```
 
 **Outputs**:
 - **JSON** (default): FSM graph with nodes, outcomes, and metadata.
 - **DOT**: Graphviz-compatible directed graph for visualization.
 
-### `overseer plan`
+### `criteria plan`
 
 Human-readable summary of the workflow structure.
 
 ```bash
-bin/overseer plan examples/demo_tour_local.hcl
+bin/criteria plan examples/demo_tour_local.hcl
 ```
 
 Prints:
@@ -541,31 +541,31 @@ Prints:
 - States, wait nodes, approval nodes, branches, for-each loops.
 - Plugins required.
 
-### `overseer apply`
+### `criteria apply`
 
 Executes the workflow.
 
-**Local mode** (no Castle):
+**Local mode** (no server):
 
 ```bash
-bin/overseer apply examples/build_and_test.hcl
+bin/criteria apply examples/build_and_test.hcl
 ```
 
 Streams ND-JSON events to stdout. Duration waits work; signal waits and approvals abort.
 
-**Orchestrator mode** (with Castle):
+**Orchestrator mode** (with server):
 
 ```bash
-bin/overseer apply <workflow.hcl> --castle http://localhost:8080
+bin/criteria apply <workflow.hcl> --server http://localhost:8080
 ```
 
-Connects to Castle, persists run state, supports resumption and approvals.
+Connects to the server, persists run state, supports resumption and approvals.
 
 **Flags**:
-- **`--castle <url>`**: Castle base URL (orchestrator mode).
+- **`--server <url>`: Server base URL (orchestrator mode).
 - **`--events-file <path>`**: Write events to file instead of stdout (local mode).
-- **`--name <name>`**: Overseer instance identifier (defaults to hostname).
-- **`--castle-tls <mode>`**: TLS mode (`disable`, `tls`, `mtls`).
+- **`--name <name>`: Criteria instance identifier (defaults to hostname).
+- **`--server-tls <mode>`: TLS mode (`disable`, `tls`, `mtls`).
 
 ### ND-JSON event stream
 
@@ -585,12 +585,12 @@ All events are schema-versioned ND-JSON objects:
 - `ApprovalRequested`, `ApprovalDecided`
 - `BranchEvaluated`
 
-See [`proto/overseer/v1/`](../proto/overseer/v1/) for proto definitions and event schemas.
+See [`proto/criteria/v1/`](../proto/criteria/v1/) for proto definitions and event schemas.
 
 ### Local-mode constraints
 
 - Duration-based waits work.
-- Signal-based waits abort with "signal waits require --castle".
+- Signal-based waits abort with "signal waits require --server".
 - Approval nodes abort at workflow validation (before execution starts).
 - No crash recovery or run persistence.
 
@@ -602,7 +602,7 @@ For examples demonstrating each command, see:
 
 ## Doc-Example Validation
 
-The `make validate-docs` CI gate extracts every fenced HCL code block from `docs/*.md` and runs `bin/overseer validate` against each. This catches syntax regressions before they reach users.
+The `make validate-docs` CI gate extracts every fenced HCL code block from `docs/*.md` and runs `bin/criteria validate` against each. This catches syntax regressions before they reach users.
 
 ### Directives
 
@@ -685,14 +685,14 @@ sub_workflow "smoke_test" {
 
 ### Variable overrides at runtime (future enhancement)
 
-Currently, variable defaults are the only source. Per-run overrides (e.g., `overseer apply --var env=prod`) are planned post-1.5.
+Currently, variable defaults are the only source. Per-run overrides (e.g., `criteria apply --var env=prod`) are planned post-1.5.
 
 ### Repository layout
 
-The overseer project ships as a single repository:
+The criteria project ships as a single repository:
 
-- **`github.com/brokenbots/overseer`** — workflow engine, compiler, and standalone CLI (this document); the `cmd/overseer-adapter-*` plugin binaries live here too.
-- **`github.com/brokenbots/overseer/sdk`** — published Go SDK; shared protobuf contracts and event schemas live under `sdk/pb/overseer/v1`.
+- **`github.com/brokenbots/criteria`** — workflow engine, compiler, and standalone CLI (this document); the `cmd/criteria-adapter-*` plugin binaries live here too.
+- **`github.com/brokenbots/criteria/sdk`** — published Go SDK; shared protobuf contracts and event schemas live under `sdk/pb/criteria/v1`.
 
-The orchestrator side is developed separately at [github.com/brokenbots/overlord](https://github.com/brokenbots/overlord) and consumes the published SDK. Parallel regions and sub-workflow composition are targeted as future language work — see [PLAN.md](../PLAN.md).
+The orchestrator side is developed separately at [github.com/brokenbots/orchestrator](https://github.com/brokenbots/orchestrator) and consumes the published SDK. Parallel regions and sub-workflow composition are targeted as future language work — see [PLAN.md](../PLAN.md).
 

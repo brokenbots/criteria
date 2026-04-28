@@ -9,7 +9,7 @@
 # Default owner for everything not matched below.
 *                           @brokenbots/maintainers
 
-# Wire contract — changes ripple into the overlord repo; require platform review.
+# Wire contract — changes ripple into the orchestrator repo; require platform review.
 /proto/                     @brokenbots/maintainers @brokenbots/platform
 
 # Published SDK surface — any change here is a potential breaking change.

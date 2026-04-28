@@ -1,4 +1,4 @@
-# mode: standalone (uses agent adapters; Castle not required)
+# mode: standalone (uses agent adapters; server not required)
 #
 # Workstream Review Loop
 # ======================
@@ -15,7 +15,7 @@
 #   • After commit success, the workflow closes both sessions and ends.
 #
 # Usage (run once per workstream file):
-#   bin/overseer apply examples/workstream_review_loop.hcl
+#   bin/criteria apply examples/workstream_review_loop.hcl
 #
 # Note: for_each multi-step agent chains are not supported by the engine —
 # the do-step must return _continue to advance the loop. Use this single-file
@@ -32,7 +32,7 @@ workflow "workstream_review_loop" {
 
   variable "workstream_file" {
     type        = "string"
-    default     = "workstreams/02-castle-mode-integration.md"
+    default     = "workstreams/02-server-mode-integration.md"
     description = "Path to the workstream file to process. Change default or re-run for each file."
   }
 

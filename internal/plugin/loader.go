@@ -11,9 +11,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/brokenbots/overseer/internal/adapter"
-	pb "github.com/brokenbots/overseer/sdk/pb/overseer/v1"
-	"github.com/brokenbots/overseer/workflow"
+	"github.com/brokenbots/criteria/internal/adapter"
+	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
+	"github.com/brokenbots/criteria/workflow"
 	"github.com/hashicorp/go-hclog"
 	hplugin "github.com/hashicorp/go-plugin"
 )
@@ -21,10 +21,10 @@ import (
 // pluginClientLogger returns the hclog logger handed to go-plugin clients.
 // go-plugin's default logger emits TRACE/DEBUG lines for every handshake and
 // stdio frame, which dominates standalone output. Default to WARN; allow
-// override via OVERSEER_LOG_LEVEL=trace|debug|info|warn|error.
+// override via CRITERIA_LOG_LEVEL=trace|debug|info|warn|error.
 func pluginClientLogger() hclog.Logger {
 	level := hclog.Warn
-	if v := strings.TrimSpace(os.Getenv("OVERSEER_LOG_LEVEL")); v != "" {
+	if v := strings.TrimSpace(os.Getenv("CRITERIA_LOG_LEVEL")); v != "" {
 		if parsed := hclog.LevelFromString(v); parsed != hclog.NoLevel {
 			level = parsed
 		}

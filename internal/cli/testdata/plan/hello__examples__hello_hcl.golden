@@ -19,4 +19,4 @@ states:
   failed    terminal=true   success=false
 
 plugins required:
-  shell   (search: $OVERSEER_PLUGINS, ~/.overseer/plugins)
+  shell   (search: $CRITERIA_PLUGINS, ~/.criteria/plugins)

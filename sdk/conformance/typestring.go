@@ -9,16 +9,16 @@ import (
 
 	"connectrpc.com/connect"
 
-	pb "github.com/brokenbots/overseer/sdk/pb/overseer/v1"
-	overseer "github.com/brokenbots/overseer/sdk"
+	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
+	criteria "github.com/brokenbots/criteria/sdk"
 )
 
-// testTypeStringStability verifies that overseer.TypeString returns a stable,
+// testTypeStringStability verifies that criteria.TypeString returns a stable,
 // non-empty, deterministic discriminator for every Envelope.payload variant,
 // and that the discriminator survives a SubmitEvents → ListRunEvents round-trip.
 //
 // Assertions per variant:
-//  1. overseer.TypeString(env) is non-empty.
+//  1. criteria.TypeString(env) is non-empty.
 //  2. All TypeString values are unique across variants.
 //  3. TypeString follows the "domain.word" convention
 //     (lower-case, dot-separated — e.g. "run.started", "step.log").
@@ -30,10 +30,10 @@ func testTypeStringStability(t *testing.T, s Subject) {
 	defer teardown()
 
 	const token = "token-ts"
-	overseerID := s.RegisterOverseer(t, "overseer-ts", token)
-	oClient := overseer.NewServiceClient(client, baseURL)
+	criteriaID := s.RegisterAgent(t, "criteria-ts", token)
+	oClient := criteria.NewServiceClient(client, baseURL)
 
-	createReq := connect.NewRequest(&pb.CreateRunRequest{OverseerId: overseerID, WorkflowName: "conformance-typestring"})
+	createReq := connect.NewRequest(&pb.CreateRunRequest{CriteriaId: criteriaID, WorkflowName: "conformance-typestring"})
 	createReq.Header().Set("Authorization", "Bearer "+token)
 	runResp, err := oClient.CreateRun(context.Background(), createReq)
 	if err != nil {
@@ -55,12 +55,12 @@ func testTypeStringStability(t *testing.T, s Subject) {
 		t.Run(armName, func(t *testing.T) {
 			msg := ConcreteMsg(t, fd)
 			PopulateMessage(msg.ProtoReflect(), 0)
-			env := overseer.NewEnvelope(runID, msg)
+			env := criteria.NewEnvelope(runID, msg)
 			corrID := fmt.Sprintf("ts-%s", armName)
 			env.CorrelationId = corrID
 
 			// 1. TypeString must be non-empty.
-			ts := overseer.TypeString(env)
+			ts := criteria.TypeString(env)
 			if ts == "" {
 				t.Fatalf("TypeString returned empty string for arm %q", armName)
 			}
@@ -106,7 +106,7 @@ func testTypeStringStability(t *testing.T, s Subject) {
 			if found == nil {
 				t.Fatalf("event not found in ListRunEvents (arm=%s, corr=%s)", armName, corrID)
 			}
-			gotTS := overseer.TypeString(found)
+			gotTS := criteria.TypeString(found)
 			if gotTS != ts {
 				t.Errorf("TypeString stability failure for arm %q: submitted=%q retrieved=%q", armName, ts, gotTS)
 			}

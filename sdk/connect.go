@@ -1,49 +1,47 @@
-package overseer
+package criteria
 
 import (
-	"net/http"
+"net/http"
 
-	connect "connectrpc.com/connect"
-	"github.com/brokenbots/overseer/sdk/pb/overseer/v1/overseerv1connect"
+connect "connectrpc.com/connect"
+"github.com/brokenbots/criteria/sdk/pb/criteria/v1/criteriav1connect"
 )
 
-// ServiceClient is the Connect client interface for the OverseerService.
+// ServiceClient is the Connect client interface for the CriteriaService.
 // Use [NewServiceClient] to construct an implementation.
-type ServiceClient = overseerv1connect.OverseerServiceClient
+type ServiceClient = criteriav1connect.CriteriaServiceClient
 
-// ServiceHandler is the server-side handler interface for the OverseerService.
-// Orchestrators implement this interface to receive calls from an overseer.
-type ServiceHandler = overseerv1connect.OverseerServiceHandler
+// ServiceHandler is the server-side handler interface for the CriteriaService.
+// Orchestrators implement this interface to receive calls from a criteria agent.
+type ServiceHandler = criteriav1connect.CriteriaServiceHandler
 
-// OverseerServiceClient is an alias for [ServiceClient] for compatibility
-// with code that uses the fully-qualified form before migrating to the SDK path.
-type OverseerServiceClient = ServiceClient
+// CriteriaServiceClient is an alias for [ServiceClient].
+type CriteriaServiceClient = ServiceClient
 
-// OverseerServiceHandler is an alias for [ServiceHandler] for compatibility
-// with code that uses the fully-qualified form before migrating to the SDK path.
-type OverseerServiceHandler = ServiceHandler
+// CriteriaServiceHandler is an alias for [ServiceHandler].
+type CriteriaServiceHandler = ServiceHandler
 
 // NewServiceClient constructs a [ServiceClient] that speaks to baseURL.
 // By default it uses the Connect protocol with binary Protobuf encoding.
 // Pass connect.WithGRPC() or connect.WithGRPCWeb() to use those protocols.
-var NewServiceClient = overseerv1connect.NewOverseerServiceClient
+var NewServiceClient = criteriav1connect.NewCriteriaServiceClient
 
 // NewServiceHandler builds an HTTP handler from a [ServiceHandler] implementation.
 // It returns the URL path prefix and the handler itself, ready to mount on an
 // http.ServeMux. The handler supports Connect, gRPC, and gRPC-Web protocols.
 func NewServiceHandler(svc ServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
-	return overseerv1connect.NewOverseerServiceHandler(svc, opts...)
+return criteriav1connect.NewCriteriaServiceHandler(svc, opts...)
 }
 
 // Service name and procedure path constants forwarded from the generated package.
 const (
-	ServiceName = overseerv1connect.OverseerServiceName
+ServiceName = criteriav1connect.CriteriaServiceName
 
-	RegisterProcedure     = overseerv1connect.OverseerServiceRegisterProcedure
-	HeartbeatProcedure    = overseerv1connect.OverseerServiceHeartbeatProcedure
-	CreateRunProcedure    = overseerv1connect.OverseerServiceCreateRunProcedure
-	ReattachRunProcedure  = overseerv1connect.OverseerServiceReattachRunProcedure
-	ResumeProcedure       = overseerv1connect.OverseerServiceResumeProcedure
-	SubmitEventsProcedure = overseerv1connect.OverseerServiceSubmitEventsProcedure
-	ControlProcedure      = overseerv1connect.OverseerServiceControlProcedure
+RegisterProcedure     = criteriav1connect.CriteriaServiceRegisterProcedure
+HeartbeatProcedure    = criteriav1connect.CriteriaServiceHeartbeatProcedure
+CreateRunProcedure    = criteriav1connect.CriteriaServiceCreateRunProcedure
+ReattachRunProcedure  = criteriav1connect.CriteriaServiceReattachRunProcedure
+ResumeProcedure       = criteriav1connect.CriteriaServiceResumeProcedure
+SubmitEventsProcedure = criteriav1connect.CriteriaServiceSubmitEventsProcedure
+ControlProcedure      = criteriav1connect.CriteriaServiceControlProcedure
 )

@@ -1,7 +1,7 @@
 // Package main is the greeter adapter plugin — a minimal example of a
-// third-party Overseer adapter that lives in its own module, imports only
-// the public plugin SDK, and is discovered at runtime from OVERSEER_PLUGINS
-// or ~/.overseer/plugins/.
+// third-party Criteria adapter that lives in its own module, imports only
+// the public plugin SDK, and is discovered at runtime from CRITERIA_PLUGINS
+// or ~/.criteria/plugins/.
 //
 // The adapter accepts one input key, "name", and returns:
 //   - outcome:           "success"
@@ -14,8 +14,8 @@ import (
 	"context"
 	"fmt"
 
-	pluginhost "github.com/brokenbots/overseer/sdk/pluginhost"
-	pb "github.com/brokenbots/overseer/sdk/pb/overseer/v1"
+	pluginhost "github.com/brokenbots/criteria/sdk/pluginhost"
+	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 )
 
 type greeterService struct{}

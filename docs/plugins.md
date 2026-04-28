@@ -1,17 +1,17 @@
 # Plugins and Agent Workflows
 
-This document is the reference for running agent-backed workflows with Overseer. For the full workflow language reference (variables, step outputs, branching, iteration, wait nodes, approval gates), see [workflow.md](workflow.md).
+This document is the reference for running agent-backed workflows with Criteria. For the full workflow language reference (variables, step outputs, branching, iteration, wait nodes, approval gates), see [workflow.md](workflow.md).
 
 ## What Plugins Are
 
-An Overseer plugin is an out-of-process binary named `overseer-adapter-<name>`. Overseer discovers plugins in this order:
+A Criteria plugin is an out-of-process binary named `criteria-adapter-<name>`. Criteria discovers plugins in this order:
 
-1. `${OVERSEER_PLUGINS}/overseer-adapter-<name>`
-2. `~/.overseer/plugins/overseer-adapter-<name>`
+1. `${CRITERIA_PLUGINS}/criteria-adapter-<name>`
+2. `~/.criteria/plugins/criteria-adapter-<name>`
 
-Overseer does not look on `PATH`. The host starts the plugin with HashiCorp `go-plugin`; the plugin then speaks the shared gRPC adapter protocol over a local transport. The binary stays outside the Overseer process boundary, so adapter-specific runtime failures are isolated from the engine.
+Criteria does not look on `PATH`. The host starts the plugin with HashiCorp `go-plugin`; the plugin then speaks the shared gRPC adapter protocol over a local transport. The binary stays outside the Criteria process boundary, so adapter-specific runtime failures are isolated from the engine.
 
-The first production plugin in this repo is `copilot`, shipped as `bin/overseer-adapter-copilot`.
+The first production plugin in this repo is `copilot`, shipped as `bin/criteria-adapter-copilot`.
 
 ## Installing a Plugin
 
@@ -24,18 +24,18 @@ make build
 Install the plugin by copying the built binary into a plugin directory:
 
 ```bash
-mkdir -p ~/.overseer/plugins
-cp bin/overseer-adapter-copilot ~/.overseer/plugins/
-chmod +x ~/.overseer/plugins/overseer-adapter-copilot
+mkdir -p ~/.criteria/plugins
+cp bin/criteria-adapter-copilot ~/.criteria/plugins/
+chmod +x ~/.criteria/plugins/criteria-adapter-copilot
 ```
 
-To use a temporary plugin directory instead, point Overseer at it explicitly:
+To use a temporary plugin directory instead, point Criteria at it explicitly:
 
 ```bash
 tmpdir="$(mktemp -d)"
-cp bin/overseer-adapter-copilot "$tmpdir/"
-chmod +x "$tmpdir/overseer-adapter-copilot"
-OVERSEER_PLUGINS="$tmpdir" ./bin/overseer status --castle http://localhost:8080
+cp bin/criteria-adapter-copilot "$tmpdir/"
+chmod +x "$tmpdir/criteria-adapter-copilot"
+CRITERIA_PLUGINS="$tmpdir" ./bin/criteria status --server http://localhost:8080
 ```
 
 For local Copilot-backed runs you also need the `copilot` CLI available. The repo helper script documents the expected setup:
@@ -44,7 +44,7 @@ For local Copilot-backed runs you also need the `copilot` CLI available. The rep
 gh extension install github/gh-copilot
 ```
 
-If the CLI is installed somewhere non-standard, set `OVERSEER_COPILOT_BIN=/path/to/copilot`.
+If the CLI is installed somewhere non-standard, set `CRITERIA_COPILOT_BIN=/path/to/copilot`.
 
 ## HCL Surface
 
@@ -127,25 +127,25 @@ The shortest manual path for `examples/agent_hello.hcl` is:
 
 ```bash
 make build
-mkdir -p ~/.overseer/plugins
-cp bin/overseer-adapter-copilot ~/.overseer/plugins/
-chmod +x ~/.overseer/plugins/overseer-adapter-copilot
-# Start a Castle-compatible orchestrator server (e.g., from github.com/brokenbots/overlord)
+mkdir -p ~/.criteria/plugins
+cp bin/criteria-adapter-copilot ~/.criteria/plugins/
+chmod +x ~/.criteria/plugins/criteria-adapter-copilot
+# Start a Criteria-compatible orchestrator server (e.g., from github.com/brokenbots/orchestrator)
 # listening on 127.0.0.1:8080
 ```
 
 In a second terminal, run:
 
 ```bash
-./bin/overseer apply examples/agent_hello.hcl --castle http://127.0.0.1:8080 --castle-codec proto
+./bin/criteria apply examples/agent_hello.hcl --server http://127.0.0.1:8080 --server-codec proto
 ```
 
 Expected result on the success path:
 
-1. Overseer logs a `starting run` line with a `run_id`.
+1. Criteria logs a `starting run` line with a `run_id`.
 2. The Copilot plugin opens a session, requests permission for `shell:git status`, and receives a grant because the step allowlist matches.
 3. The assistant reports the repository status and ends with `RESULT: success`.
-4. Overseer closes the session and Castle records the run as `succeeded`.
+4. Criteria closes the session and the server records the run as `succeeded`.
 
 For a one-command smoke check, use:
 
@@ -153,7 +153,7 @@ For a one-command smoke check, use:
 COPILOT_E2E=1 ./scripts/smoke-agent-hello.sh
 ```
 
-That script builds the repo, installs the plugin into a temp directory, starts a local Castle, runs `agent_hello.hcl`, and asserts that the Castle run status becomes `succeeded`.
+That script builds the repo, installs the plugin into a temp directory, starts a local server, runs `agent_hello.hcl`, and asserts that the server run status becomes `succeeded`.
 
 ## The Two-Agent Loop Pattern
 
@@ -225,12 +225,12 @@ Step outputs also flow into `for_each` iteration contexts. See [workflow.md](wor
 
 ## Writing Your Own Plugin
 
-The canonical third-party plugin example is [`examples/plugins/greeter/`](../examples/plugins/greeter/). It lives in its own Go module (no `replace` directive once an SDK tag exists), imports only `sdk/pluginhost` and the generated proto bindings, and demonstrates the full workflow from `go build` to `overseer apply`. Read that directory first — it is the minimum viable plugin.
+The canonical third-party plugin example is [`examples/plugins/greeter/`](../examples/plugins/greeter/). It lives in its own Go module (no `replace` directive once an SDK tag exists), imports only `sdk/pluginhost` and the generated proto bindings, and demonstrates the full workflow from `go build` to `criteria apply`. Read that directory first — it is the minimum viable plugin.
 
 The public plugin SDK lives in `sdk/pluginhost`. External authors import:
 
 ```
-github.com/brokenbots/overseer/sdk/pluginhost
+github.com/brokenbots/criteria/sdk/pluginhost
 ```
 
 The smallest plugin entrypoint is:
@@ -240,8 +240,8 @@ package main
 
 import (
     "context"
-    pluginhost "github.com/brokenbots/overseer/sdk/pluginhost"
-    pb "github.com/brokenbots/overseer/sdk/pb/overseer/v1"
+    pluginhost "github.com/brokenbots/criteria/sdk/pluginhost"
+    pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 )
 
 type myPlugin struct{}
@@ -263,8 +263,8 @@ Implement `pluginhost.Service` and call `pluginhost.Serve` from `main()`. The
 
 See [`examples/plugins/greeter/main.go`](../examples/plugins/greeter/main.go) for a complete, runnable example. For more complex references:
 
-- `cmd/overseer-adapter-copilot/main.go`
-- `cmd/overseer-adapter-mcp/main.go`
-- `cmd/overseer-adapter-noop/main.go`
+- `cmd/criteria-adapter-copilot/main.go`
+- `cmd/criteria-adapter-mcp/main.go`
+- `cmd/criteria-adapter-noop/main.go`
 
 If you add a new plugin, wire it through the conformance harness before relying on it in a real workflow. That is the fastest way to confirm `Info`, `OpenSession`, `Execute`, `Permit`, and `CloseSession` all obey the host contract.

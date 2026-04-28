@@ -1,15 +1,15 @@
-// Command import-lint enforces the import-graph boundaries for the overseer
+// Command import-lint enforces the import-graph boundaries for the criteria
 // repository. It walks Go source files under the given root directory and
 // fails with a non-zero exit code when a disallowed import pattern is found.
 //
 // Rules enforced:
 //
-//  1. No file in internal/ may import github.com/brokenbots/overseer/sdk
+//  1. No file in internal/ may import github.com/brokenbots/criteria/sdk
 //     top-level; only sdk/pb subtree is permitted for production code.
 //     Exception: sdk/pluginhost is permitted from internal/*/testfixtures/
 //     paths only (these are standalone plugin binaries that must use the
 //     public surface to prove external authors need no internal/ reach-through).
-//  2. No file in workflow/ may import github.com/brokenbots/overseer/internal/.
+//  2. No file in workflow/ may import github.com/brokenbots/criteria/internal/.
 //
 // Usage:
 //
@@ -18,7 +18,7 @@
 // A forbidden import can be suppressed by adding an inline comment on the
 // same line as the import statement:
 //
-//	import _ "github.com/brokenbots/overseer/sdk" // import-lint:allow <reason>
+//	import _ "github.com/brokenbots/criteria/sdk" // import-lint:allow <reason>
 //
 // Use sparingly. Every suppressed import is a documented exception to the
 // boundary rules and should include a brief reason.
@@ -47,12 +47,12 @@ type rule struct {
 var rules = []rule{
 	{
 		filePrefix: "internal/",
-		forbidden:  "github.com/brokenbots/overseer/sdk",
+		forbidden:  "github.com/brokenbots/criteria/sdk",
 		message:    "internal/ must not import sdk/ top-level; only sdk/pb subtree is permitted",
 	},
 	{
 		filePrefix: "workflow/",
-		forbidden:  "github.com/brokenbots/overseer/internal/",
+		forbidden:  "github.com/brokenbots/criteria/internal/",
 		message:    "workflow/ must not import internal/",
 	},
 }
@@ -164,11 +164,11 @@ outer:
 			// sdk/pluginhost only from testfixtures/ plugin binaries (which are
 			// standalone processes that must use the public surface). Block all other
 			// sdk imports from production internal/ code.
-			if r.filePrefix == "internal/" && strings.Contains(impPath, "github.com/brokenbots/overseer/sdk") {
-				if strings.Contains(impPath, "github.com/brokenbots/overseer/sdk/pb") {
+			if r.filePrefix == "internal/" && strings.Contains(impPath, "github.com/brokenbots/criteria/sdk") {
+				if strings.Contains(impPath, "github.com/brokenbots/criteria/sdk/pb") {
 					continue // sdk/pb subtree is permitted everywhere in internal/
 				}
-				if strings.Contains(impPath, "github.com/brokenbots/overseer/sdk/pluginhost") &&
+				if strings.Contains(impPath, "github.com/brokenbots/criteria/sdk/pluginhost") &&
 					strings.Contains(relPath, "testfixtures/") {
 					continue // sdk/pluginhost is permitted only in testfixture plugin binaries
 				}

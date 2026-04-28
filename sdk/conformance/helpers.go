@@ -7,7 +7,7 @@ import (
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/reflect/protoregistry"
 
-	pb "github.com/brokenbots/overseer/sdk/pb/overseer/v1"
+	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 )
 
 // PayloadOneof returns the "payload" oneof descriptor from the Envelope message.

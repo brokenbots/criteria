@@ -14,9 +14,9 @@ import (
 
 	"go.uber.org/goleak"
 
-	"github.com/brokenbots/overseer/internal/adapter"
-	"github.com/brokenbots/overseer/internal/plugin"
-	"github.com/brokenbots/overseer/workflow"
+	"github.com/brokenbots/criteria/internal/adapter"
+	"github.com/brokenbots/criteria/internal/plugin"
+	"github.com/brokenbots/criteria/workflow"
 )
 
 // Options configures adapter-specific conformance expectations.

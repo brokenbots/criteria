@@ -1,6 +1,6 @@
-// Package pluginhost provides the public contract for Overseer adapter plugin
+// Package pluginhost provides the public contract for Criteria adapter plugin
 // authors. An out-of-process plugin binary that implements [Service] and calls
-// [Serve] will interoperate with any Overseer host without reaching through the
+// [Serve] will interoperate with any Criteria host without reaching through the
 // internal/ package tree.
 //
 // # Minimum entrypoint
@@ -9,8 +9,8 @@
 //
 //	import (
 //		"context"
-//		pluginhost "github.com/brokenbots/overseer/sdk/pluginhost"
-//		pb "github.com/brokenbots/overseer/sdk/pb/overseer/v1"
+//		pluginhost "github.com/brokenbots/criteria/sdk/pluginhost"
+//		pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 //	)
 //
 //	type myPlugin struct{}
@@ -23,6 +23,6 @@
 // # Package stability
 //
 // This package is v0. The [Service] interface and wire protocol are stable
-// across minor Overseer releases; breaking changes follow the SDK bump policy
+// across minor Criteria releases; breaking changes follow the SDK bump policy
 // in CONTRIBUTING.md before any external consumer depends on them.
 package pluginhost

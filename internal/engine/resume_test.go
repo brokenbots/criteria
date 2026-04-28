@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/brokenbots/overseer/internal/plugin"
+	"github.com/brokenbots/criteria/internal/plugin"
 )
 
 const multiStepWorkflow = `

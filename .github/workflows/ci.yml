@@ -28,7 +28,7 @@ jobs:
         run: make build
 
       - name: CLI smoke test
-        run: ./bin/overseer apply examples/hello.hcl --events-file /tmp/events.ndjson
+        run: ./bin/criteria apply examples/hello.hcl --events-file /tmp/events.ndjson
 
       - name: Run tests (root + sdk + workflow)
         run: make test

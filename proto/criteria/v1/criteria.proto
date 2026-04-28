@@ -1,0 +1,240 @@
+// CriteriaService — RPCs served by the server and consumed by Criteria agents.
+//
+// Authentication: all RPCs except `Register` require a token (Bearer header,
+// `X-Criteria-Token` header, or `criteria-token` Connect metadata). Tokens are
+// SHA-256 compared against `criteria.token_hash` in the orchestrator store.
+//
+// Caller ownership: mutating RPCs enforce that the authenticated caller owns
+// the affected criteria agent or run. Implementations MUST enforce this contract.
+syntax = "proto3";
+
+package criteria.v1;
+
+import "google/protobuf/timestamp.proto";
+import "criteria/v1/events.proto";
+
+option go_package = "github.com/brokenbots/criteria/sdk/pb/criteria/v1;criteriav1";
+
+service CriteriaService {
+  // Register enrolls a Criteria agent with the orchestrator. Returns the assigned
+  // criteria id and an auth token the agent must present on all subsequent
+  // RPCs.
+  //
+  // Bootstrap gate: implementations MUST require a bootstrap token (e.g. via
+  // an `X-Server-Bootstrap` header) before accepting Register. When no
+  // bootstrap mechanism is configured, implementations MUST return
+  // Unimplemented. This prevents open self-registration in production.
+  rpc Register(RegisterRequest) returns (RegisterResponse);
+
+  // Heartbeat advances the agent's `last_seen_at`. The orchestrator marks
+  // agents offline whose heartbeat is older than a configurable threshold.
+  //
+  // The authenticated caller's identity is the canonical criteria agent being
+  // updated. Implementations MUST ignore any request-supplied criteria_id and
+  // use the caller's authenticated identity instead.
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+
+  // CreateRun mints a new run owned by the authenticated caller. The
+  // orchestrator is the sole source of run ids.
+  //
+  // The run is always recorded under the authenticated caller's criteria ID.
+  // The request's `criteria_id` field is informational only. Implementations
+  // MUST ignore any request-supplied criteria_id and use the caller's
+  // authenticated identity.
+  rpc CreateRun(CreateRunRequest) returns (Run);
+
+  // ReattachRun lets a Criteria agent query the orchestrator about an in-flight run
+  // after a crash or restart. The orchestrator returns the current status,
+  // last active step, and whether the agent may resume execution.
+  //
+  // Implementations MUST reject the request with PERMISSION_DENIED if the
+  // authenticated caller does not own the target run's criteria agent.
+  rpc ReattachRun(ReattachRunRequest) returns (ReattachRunResponse);
+
+  // Resume delivers a named signal (or an approval decision) to a paused run.
+  //
+  // Implementations MUST reject the request with PERMISSION_DENIED if the
+  // authenticated caller does not own the target run's criteria agent.
+  //
+  // This RPC is SDK contract surface: field names, payload semantics, and
+  // error-reason strings are stable for third-party orchestrators.
+  rpc Resume(ResumeRequest) returns (ResumeResponse);
+
+  // SubmitEvents is a bidirectional stream. The client writes Envelopes and
+  // the server replies with an Ack per persisted envelope (run_id, seq,
+  // correlation_id). On reconnect the client may include `since_seq` in
+  // request metadata to request replay of events that were persisted but not
+  // yet acknowledged.
+  //
+  // Implementations MUST verify on every envelope that the authenticated caller
+  // owns the envelope's run_id. On the first violation the stream MUST be
+  // rejected with PERMISSION_DENIED; envelopes MUST NOT be silently dropped.
+  rpc SubmitEvents(stream Envelope) returns (stream Ack);
+
+  // Control is a long-lived server-stream that the orchestrator uses to push
+  // commands to a connected Criteria agent (cancel a run, send a prompt to an
+  // agent, ...).
+  //
+  // The authenticated caller's identity determines the registry key for the
+  // Control subscription. Implementations MUST ignore any request-supplied
+  // criteria_id and use the caller's authenticated identity.
+  rpc Control(ControlSubscribeRequest) returns (stream ControlMessage);
+}
+
+// --- Unary request/response types ---
+
+message RegisterRequest {
+  // Friendly name for the Criteria agent instance.
+  string name = 1;
+  // Free-form labels (e.g. "host=laptop", "os=darwin").
+  map<string, string> labels = 2;
+}
+
+message RegisterResponse {
+  string criteria_id = 1;
+  // One-time token. Clients should persist this securely and send it on all
+  // subsequent RPCs.
+  string token = 2;
+}
+
+message HeartbeatRequest {
+  string criteria_id = 1;
+}
+
+message HeartbeatResponse {
+  google.protobuf.Timestamp server_time = 1;
+}
+
+message CreateRunRequest {
+  string criteria_id = 1;
+  string workflow_name = 2;
+  // Hash of the compiled workflow; used by the server for de-duplication/tracing.
+  string workflow_hash = 3;
+}
+
+// Run is the persisted record of a run (mirrors Phase 0 REST DTO).
+message Run {
+  string run_id = 1;
+  string criteria_id = 2;
+  string workflow_name = 3;
+  string workflow_hash = 4;
+  string status = 5; // "pending" | "running" | "succeeded" | "failed" | "cancelled"
+  google.protobuf.Timestamp created_at = 6;
+  google.protobuf.Timestamp started_at = 7;
+  google.protobuf.Timestamp ended_at = 8;
+  string final_state = 9;
+  string failure_reason = 10;
+}
+
+// ReattachRunRequest is sent by a Criteria agent on startup to query the state of
+// a run it believes was in-flight before a crash.
+message ReattachRunRequest {
+  string run_id = 1;
+  string criteria_id = 2;
+}
+
+// ReattachRunResponse tells the agent whether it may resume a run.
+message ReattachRunResponse {
+  // Current status of the run: "running" | "paused" | "succeeded" | "failed" | "cancelled".
+  string status = 1;
+  // Empty when the run is terminal.
+  string current_step = 2;
+  // Last started attempt for current_step. 0 if no attempt has been recorded.
+  int32 attempt = 3;
+  // Last persisted envelope seq for the run.
+  uint64 last_seq = 4;
+  // Server's judgment: false when the run is terminal or belongs to a different
+  // criteria agent.
+  bool can_resume = 5;
+  // JSON-encoded variable scope snapshot at the time of the last persisted
+  // StepOutputCaptured or VariableSet event. Empty string means no scope has
+  // been persisted yet. Field is permanent (W04).
+  string variable_scope = 6; // permanent (W04)
+  // pending_signal is the signal name the run is waiting for when status="paused".
+  // The agent must re-enter the wait/approval node with this value set in
+  // RunState so it immediately re-issues ErrPaused (waiting for the signal
+  // to arrive via Resume). Empty when not paused. Permanent (W05).
+  string pending_signal = 7; // permanent (W05)
+}
+
+// --- Streaming types ---
+
+// Ack is the server's reply on SubmitEvents. One Ack per persisted Envelope.
+message Ack {
+  string run_id = 1;
+  uint64 seq = 2;
+  string correlation_id = 3;
+}
+
+// ControlSubscribeRequest is the single message a Criteria agent sends to open the
+// Control server-stream.
+message ControlSubscribeRequest {
+  string criteria_id = 1;
+}
+
+// ControlMessage is a command from the orchestrator to a connected Criteria agent.
+message ControlMessage {
+  oneof command {
+    RunCancel run_cancel = 1;
+    AgentPrompt agent_prompt = 2; // Phase 2.3; stub in 1.1.
+    // ControlReady is sent once, immediately after the server accepts the
+    // Control subscription. It flushes the response headers so the Connect
+    // client's call returns to the caller, and signals that subsequent
+    // ControlMessages can be delivered. Clients must ignore it.
+    ControlReady control_ready = 3;
+    // ResumeRun delivers a resume signal from the orchestrator to the Criteria agent
+    // that owns the run. The agent should re-enter the paused node with the
+    // supplied payload. Permanent (W05).
+    ResumeRun resume_run = 4; // permanent (W05)
+  }
+}
+
+// RunCancel asks the Criteria agent to cancel an in-flight run.
+message RunCancel {
+  string run_id = 1;
+  string reason = 2;
+}
+
+// AgentPrompt forwards a user prompt to a running agent step. Phase 2.3.
+message AgentPrompt {
+  string run_id = 1;
+  string step = 2;
+  string prompt = 3;
+}
+
+// ControlReady is an attach acknowledgement sent once at stream start.
+// It carries no payload.
+message ControlReady {
+}
+
+// ResumeRun delivers a resume signal from the orchestrator to the Criteria agent (W05).
+// The agent should re-enter the paused wait/approval node with the supplied
+// payload and continue execution.
+message ResumeRun {
+  string run_id = 1;
+  // signal matches the run's pending_signal; the agent should verify this.
+  string signal = 2;
+  // payload carries decision metadata (e.g. {"decision":"approved","actor":"alice"}).
+  map<string, string> payload = 3;
+}
+
+// ResumeRequest delivers a named signal (or an approval decision) to a paused
+// run. This message is SDK contract surface: avoid orchestrator-specific names.
+message ResumeRequest {
+  string run_id = 1;
+  // signal is the name of the pending signal to satisfy. For wait nodes with
+  // signal=<name> this is that signal name. For approval nodes this is the
+  // approval node name.
+  string signal = 2;
+  // payload carries optional key/value metadata.
+  // For approval: payload["decision"] = "approved" | "rejected"
+  //               payload["actor"]    = identity of approver (audit metadata).
+  map<string, string> payload = 3;
+}
+
+// ResumeResponse reports whether the Resume RPC was accepted.
+message ResumeResponse {
+  bool accepted = 1;
+  // reason is one of: "ok" | "run_not_paused" | "signal_mismatch" | "no_pending_signal"
+  string reason = 2;
+}

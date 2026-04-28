@@ -3,12 +3,12 @@
 // adding a new oneof arm to events.proto without updating setPayload or
 // TypeString will fail TestExhaustive_setPayload_TypeString on the next CI run.
 //
-// Note: sides 3 and 4 of the contract (Castle's payloadMessage /
-// unmarshalPayload) cannot be tested here because castle is a separate Go
+// Note: sides 3 and 4 of the contract (server's payloadMessage /
+// unmarshalPayload) cannot be tested here because the server is a separate Go
 // module. The equivalent descriptor-driven test for those functions lives in
-// castle/internal/store/sqlite/sqlite_test.go and must be kept in sync.
+// server/internal/store/sqlite/sqlite_test.go and must be kept in sync.
 // Unifying all four sides into a single test file would require exporting the
-// castle codec functions or restructuring module boundaries; reviewer notes in
+// server codec functions or restructuring module boundaries; reviewer notes in
 // the workstream file track that architecture constraint.
 package events_test
 
@@ -21,8 +21,8 @@ import (
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/reflect/protoregistry"
 
-	"github.com/brokenbots/overseer/events"
-	pb "github.com/brokenbots/overseer/sdk/pb/overseer/v1"
+	"github.com/brokenbots/criteria/events"
+	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 )
 
 // payloadOneof returns the "payload" oneof descriptor from the Envelope message.

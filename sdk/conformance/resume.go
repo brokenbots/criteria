@@ -7,8 +7,8 @@ import (
 
 	"connectrpc.com/connect"
 
-	pb "github.com/brokenbots/overseer/sdk/pb/overseer/v1"
-	overseer "github.com/brokenbots/overseer/sdk"
+	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
+	criteria "github.com/brokenbots/criteria/sdk"
 )
 
 // testResumeCorrectness verifies the Resume RPC contract.
@@ -41,19 +41,19 @@ func testResumeCorrectness(t *testing.T, s Subject) {
 	})
 	t.Run("DurableAcrossRestart", func(t *testing.T) {
 		// Deferred: when the durable-resume path lands, this skip lifts and
-		// the test asserts that a Resume call from a disconnected overseer
+		// the test asserts that a Resume call from a disconnected agent
 		// can recover the signal on reconnect. Tracked in PLAN.md.
 		t.Skip("durable resume across orchestrator restart not yet implemented; tracked in PLAN.md")
 	})
 }
 
-func pauseRunViaWaitEntered(t *testing.T, oClient overseer.ServiceClient, token, runID, signal string) {
+func pauseRunViaWaitEntered(t *testing.T, oClient criteria.ServiceClient, token, runID, signal string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	stream := oClient.SubmitEvents(ctx)
 	stream.RequestHeader().Set("Authorization", "Bearer "+token)
-	env := overseer.NewEnvelope(runID, &pb.WaitEntered{
+	env := criteria.NewEnvelope(runID, &pb.WaitEntered{
 		Node:   signal,
 		Signal: signal,
 		Mode:   "signal",
@@ -73,13 +73,13 @@ func pauseRunViaWaitEntered(t *testing.T, oClient overseer.ServiceClient, token,
 	}
 }
 
-func pauseRunViaApproval(t *testing.T, oClient overseer.ServiceClient, token, runID, node string) {
+func pauseRunViaApproval(t *testing.T, oClient criteria.ServiceClient, token, runID, node string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	stream := oClient.SubmitEvents(ctx)
 	stream.RequestHeader().Set("Authorization", "Bearer "+token)
-	env := overseer.NewEnvelope(runID, &pb.ApprovalRequested{
+	env := criteria.NewEnvelope(runID, &pb.ApprovalRequested{
 		Node: node,
 	})
 	env.CorrelationId = "pause-via-approval-" + node
@@ -105,10 +105,10 @@ func testResumeWaitSignal(t *testing.T, s Subject) {
 		token  = "token-resume-wait"
 		signal = "gate-alpha"
 	)
-	overseerID := s.RegisterOverseer(t, "overseer-resume-wait", token)
-	oClient := overseer.NewServiceClient(client, baseURL)
+	criteriaID := s.RegisterAgent(t, "criteria-resume-wait", token)
+	oClient := criteria.NewServiceClient(client, baseURL)
 
-	createReq := connect.NewRequest(&pb.CreateRunRequest{OverseerId: overseerID, WorkflowName: "conformance-resume-wait"})
+	createReq := connect.NewRequest(&pb.CreateRunRequest{CriteriaId: criteriaID, WorkflowName: "conformance-resume-wait"})
 	createReq.Header().Set("Authorization", "Bearer "+token)
 	runResp, err := oClient.CreateRun(context.Background(), createReq)
 	if err != nil {
@@ -159,10 +159,10 @@ func testResumeSignalMismatch(t *testing.T, s Subject) {
 		token  = "token-resume-mismatch"
 		signal = "gate-beta"
 	)
-	overseerID := s.RegisterOverseer(t, "overseer-resume-mismatch", token)
-	oClient := overseer.NewServiceClient(client, baseURL)
+	criteriaID := s.RegisterAgent(t, "criteria-resume-mismatch", token)
+	oClient := criteria.NewServiceClient(client, baseURL)
 
-	createReq := connect.NewRequest(&pb.CreateRunRequest{OverseerId: overseerID, WorkflowName: "conformance-resume-mismatch"})
+	createReq := connect.NewRequest(&pb.CreateRunRequest{CriteriaId: criteriaID, WorkflowName: "conformance-resume-mismatch"})
 	createReq.Header().Set("Authorization", "Bearer "+token)
 	runResp, err := oClient.CreateRun(context.Background(), createReq)
 	if err != nil {
@@ -195,10 +195,10 @@ func testResumeNotPaused_Pending(t *testing.T, s Subject) {
 	defer teardown()
 
 	const token = "token-resume-notpaused"
-	overseerID := s.RegisterOverseer(t, "overseer-resume-notpaused", token)
-	oClient := overseer.NewServiceClient(client, baseURL)
+	criteriaID := s.RegisterAgent(t, "criteria-resume-notpaused", token)
+	oClient := criteria.NewServiceClient(client, baseURL)
 
-	createReq := connect.NewRequest(&pb.CreateRunRequest{OverseerId: overseerID, WorkflowName: "conformance-resume-notpaused"})
+	createReq := connect.NewRequest(&pb.CreateRunRequest{CriteriaId: criteriaID, WorkflowName: "conformance-resume-notpaused"})
 	createReq.Header().Set("Authorization", "Bearer "+token)
 	runResp, err := oClient.CreateRun(context.Background(), createReq)
 	if err != nil {
@@ -221,10 +221,10 @@ func testResumeNotPaused_Terminal(t *testing.T, s Subject) {
 	defer teardown()
 
 	const token = "token-resume-terminal"
-	overseerID := s.RegisterOverseer(t, "overseer-resume-terminal", token)
-	oClient := overseer.NewServiceClient(client, baseURL)
+	criteriaID := s.RegisterAgent(t, "criteria-resume-terminal", token)
+	oClient := criteria.NewServiceClient(client, baseURL)
 
-	createReq := connect.NewRequest(&pb.CreateRunRequest{OverseerId: overseerID, WorkflowName: "conformance-resume-terminal"})
+	createReq := connect.NewRequest(&pb.CreateRunRequest{CriteriaId: criteriaID, WorkflowName: "conformance-resume-terminal"})
 	createReq.Header().Set("Authorization", "Bearer "+token)
 	runResp, err := oClient.CreateRun(context.Background(), createReq)
 	if err != nil {
@@ -237,7 +237,7 @@ func testResumeNotPaused_Terminal(t *testing.T, s Subject) {
 	defer cancel()
 	stream := oClient.SubmitEvents(ctx)
 	stream.RequestHeader().Set("Authorization", "Bearer "+token)
-	env := overseer.NewEnvelope(runID, &pb.RunCompleted{})
+	env := criteria.NewEnvelope(runID, &pb.RunCompleted{})
 	env.CorrelationId = "terminal-completed"
 	if err := stream.Send(env); err != nil {
 		t.Fatalf("Send RunCompleted: %v", err)
@@ -257,7 +257,7 @@ func testResumeNotPaused_Terminal(t *testing.T, s Subject) {
 
 // assertNotPaused calls Resume on runID and asserts the response is
 // accepted=false, reason="run_not_paused". Used by both NotPaused sub-tests.
-func assertNotPaused(t *testing.T, oClient overseer.ServiceClient, token, runID string) {
+func assertNotPaused(t *testing.T, oClient criteria.ServiceClient, token, runID string) {
 	t.Helper()
 	resumeReq := connect.NewRequest(&pb.ResumeRequest{
 		RunId:  runID,
@@ -284,10 +284,10 @@ func testResumeApprovalDecision(t *testing.T, s Subject) {
 		token = "token-resume-approval"
 		node  = "approve-gate"
 	)
-	overseerID := s.RegisterOverseer(t, "overseer-resume-approval", token)
-	oClient := overseer.NewServiceClient(client, baseURL)
+	criteriaID := s.RegisterAgent(t, "criteria-resume-approval", token)
+	oClient := criteria.NewServiceClient(client, baseURL)
 
-	createReq := connect.NewRequest(&pb.CreateRunRequest{OverseerId: overseerID, WorkflowName: "conformance-resume-approval"})
+	createReq := connect.NewRequest(&pb.CreateRunRequest{CriteriaId: criteriaID, WorkflowName: "conformance-resume-approval"})
 	createReq.Header().Set("Authorization", "Bearer "+token)
 	runResp, err := oClient.CreateRun(context.Background(), createReq)
 	if err != nil {

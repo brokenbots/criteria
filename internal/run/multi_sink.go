@@ -3,8 +3,8 @@ package run
 import (
 	"time"
 
-	"github.com/brokenbots/overseer/internal/adapter"
-	"github.com/brokenbots/overseer/internal/engine"
+	"github.com/brokenbots/criteria/internal/adapter"
+	"github.com/brokenbots/criteria/internal/engine"
 )
 
 // MultiSink fans engine events out to multiple child sinks. It is used in
