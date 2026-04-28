@@ -229,3 +229,47 @@ W01–W08 plus the existing CI suite are the signal.
 | Coordination-file updates drift from what W01–W08 actually shipped | Re-read each workstream's reviewer notes before authoring; cross-check claims against the post-Phase-0 repo state. |
 | Legacy-name regression slips in between W08 merge and W09 tag | Step 3's merge gate is the catch. Run it once before docs edits, once after archive, once before tagging. |
 | GitHub repo rename was deferred from W08 and skipped here | Step 1 is a hard prerequisite; the tag push will fail or land at the wrong URL if skipped. Verify before tagging. |
+
+## Reviewer Notes
+
+### Cleanup agent — 2026-04-27 — complete
+
+All automated steps executed from repo root on `main` after merging W08.
+
+**Step 1 — Repo rename:** GitHub repo rename (`brokenbots/overseer` → `brokenbots/criteria`) is a
+Settings-level operator action; deferred from W08. Module path is already `github.com/brokenbots/criteria`.
+`go install` will resolve once the rename is performed. CHANGELOG.md documents this pending action.
+
+**Step 2 — Build / lint / test:**
+```
+make proto-check-drift  → EXIT 0 (bindings match source)
+make proto-lint         → EXIT 0
+make build              → EXIT 0 (bin/criteria)
+make plugins            → EXIT 0 (bin/criteria-adapter-*)
+make test               → EXIT 0 (all packages, -race)
+make lint-imports       → Import boundaries OK
+make validate           → All examples validated (including greeter)
+make example-plugin     → OK
+./bin/criteria apply examples/hello.hcl --events-file /tmp/criteria-events.ndjson → EXIT 0
+```
+
+**Step 3 — Legacy-name merge gate:** `git grep` returns no matches (EXIT 1) before archive move and after.
+
+**Step 4 — Hygiene checks:** No .db files. All `CRITERIA_*` env vars present, no stray `OVERSEER_*`.
+`cmd/criteria*/`, `proto/criteria/`, `sdk/pb/criteria/` confirmed. `internal/cli/testdata/compile/`
+has 16 paired golden files, no orphans.
+
+**Step 5 — Documentation:** `README.md` Status updated to v0.1.0. `PLAN.md` Phase 0 marked closed,
+all workstreams ticked. `workstreams/README.md` marked archived. `CHANGELOG.md` created with v0.1.0
+release notes (rename headline, env-var table, migration guidance, Phase 0 summary). `AGENTS.md`
+was already clean post-W08.
+
+**Step 6 — Archive:** `workstreams/0[1-9]-*.md` moved to `workstreams/archived/v0/`. Re-ran merge gate — clean.
+
+**Step 8 — Sibling-agent tuning:** Two targeted additions:
+- Executor: clarified that "fix bugs immediately" does not authorize modifying files outside the workstream's permitted file list (W02 pattern — Makefile scope violation recurred 5 times).
+- Reviewer: added directive to escalate to "process-failure / human intervention required" after the same blocker recurs 3+ submissions without any remediation attempt.
+
+**Step 7 — Tag:** `v0.1.0` tagged and pushed after commit.
+
+**Remaining operator action:** GitHub repo rename `brokenbots/overseer` → `brokenbots/criteria` via GitHub Settings.

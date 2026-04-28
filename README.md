@@ -142,7 +142,7 @@ See [`sdk/conformance/`](sdk/conformance/) for the full interface and in-memory 
 
 ## Status
 
-Criteria is pre-release (`v0.x`), currently used internally. The HCL language and SDK contract are stabilizing. A public release is planned once the Phase 0 cleanup workstreams land; binary releases and Docker images will be published with the first tag.
+`v0.1.0` is the first public release. Phase 0 cleanup is complete: the project is renamed to Criteria, the HCL language and SDK contract are stabilizing, and the repo has full test coverage and public-repo hygiene. Binary releases will be published via GitHub Releases as they are cut; for now use `go install`.
 
 ## License
 

@@ -8,13 +8,13 @@ Workstream files for the active phase live at
 
 ## Status snapshot
 
-- **Phase 0 — Post-separation cleanup** (active). Establishing criteria as
-  its own project after the v1.6 split from the orchestrator monorepo. See
-  [workstreams/README.md](workstreams/README.md) for the workstream index.
+- **Phase 0 — Post-separation cleanup** — **closed 2026-04-27**. All nine
+  workstreams merged; legacy-name gate clean; `v0.1.0` tagged. Archived under
+  [workstreams/archived/v0/](workstreams/archived/v0/).
 - **Phase 1 — TBD**. The first feature phase plans itself once Phase 0
   closes; candidate scope is captured in the Phase 0 close-out workstream.
 
-## Phase 0 — Post-separation cleanup
+## Phase 0 — Post-separation cleanup ✅ closed 2026-04-27
 
 **Goal:** finish what the v1.6 split started — replace first-draft docs
 with real ones, give the project the public-repo hygiene a v0.1 release
@@ -26,32 +26,34 @@ layout, `criteria.v1` proto package, conformance suite, `v0.1.0-rc1`
 tag). What remains is the polish and the few structural follow-ups the
 v1.6 plan deferred.
 
-### Phase 0 workstreams
+### Phase 0 workstreams (archived to [workstreams/archived/v0/](workstreams/archived/v0/))
 
-- [W01](workstreams/01-naming-convention-review.md) — Naming convention
+- [W01](workstreams/archived/v0/01-naming-convention-review.md) ✅ — Naming convention
   review (corp-friendly evaluation; ADR output).
-- [W02](workstreams/02-readme-and-contributor-docs.md) — Replace v1.6
+- [W02](workstreams/archived/v0/02-readme-and-contributor-docs.md) ✅ — Replace v1.6
   first-draft README and CONTRIBUTING with real ones.
-- [W03](workstreams/03-public-plugin-sdk.md) — Extract a public
+- [W03](workstreams/archived/v0/03-public-plugin-sdk.md) ✅ — Extract a public
   plugin-author SDK from `internal/plugin/`.
-- [W04](workstreams/04-shell-adapter-sandbox.md) — Shell adapter
+- [W04](workstreams/archived/v0/04-shell-adapter-sandbox.md) ✅ — Shell adapter
   sandboxing plan and first hardening pass.
-- [W05](workstreams/05-copilot-e2e-default-lane.md) — Bring the Copilot
+- [W05](workstreams/archived/v0/05-copilot-e2e-default-lane.md) ✅ — Bring the Copilot
   adapter end-to-end suite into the default test lane.
-- [W06](workstreams/06-third-party-plugin-example.md) — Standalone
+- [W06](workstreams/archived/v0/06-third-party-plugin-example.md) ✅ — Standalone
   third-party plugin example outside the repo (depends on W03).
-- [W07](workstreams/07-repo-hygiene.md) — LICENSE, SECURITY.md,
+- [W07](workstreams/archived/v0/07-repo-hygiene.md) ✅ — LICENSE, SECURITY.md,
   CODEOWNERS, issue/PR templates, dependabot config.
-- [W08](workstreams/08-brand-rename-execution.md) — Execute the
+- [W08](workstreams/archived/v0/08-brand-rename-execution.md) ✅ — Execute the
   ADR-0001 rename: eradicated the legacy brand names across
-  module path, binaries, env vars, proto
-  package, and docs.
-- [W09](workstreams/09-phase0-cleanup-gate.md) — Phase 0 close-out:
+  module path, binaries, env vars, proto package, and docs.
+- [W09](workstreams/archived/v0/09-phase0-cleanup-gate.md) ✅ — Phase 0 close-out:
   validation, legacy-name merge gate, archive, tag `v0.1.0`.
 
-Phase 0 closes when W09 lands. After that, this file gets a Phase 1
-section pointing at the next planning artifact (workstream set or
-tech evaluation).
+*Phase 0 closed 2026-04-27. Archived under [workstreams/archived/v0/](workstreams/archived/v0/).*
+
+## Phase 1 — TBD
+
+Planning artifact TBD. Phase 1 scope will be defined in a new workstream set once
+the team identifies the next development priorities.
 
 ## Deferred / forward-pointers
 
