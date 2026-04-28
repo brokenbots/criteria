@@ -17,3 +17,4 @@ go.work.sum
 # Go test artifacts
 *.test
 coverage.out
+cover.out\ncover-sdk.out\ncover-workflow.out

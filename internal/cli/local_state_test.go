@@ -133,3 +133,128 @@ func TestLocalState_NoStateDir_IsNoOp(t *testing.T) {
 		t.Fatalf("expected 0 checkpoints, got %d", len(checkpoints))
 	}
 }
+
+func TestLocalState_WriteAndReadRunState(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", dir)
+
+	st := &localRunState{
+		PID:       12345,
+		RunID:     "run-xyz",
+		Workflow:  "my-workflow",
+		ServerURL: "",
+		StartedAt: time.Now().UTC().Truncate(time.Second),
+	}
+	if err := writeLocalRunState(st); err != nil {
+		t.Fatalf("writeLocalRunState: %v", err)
+	}
+
+	got, err := readLocalRunState()
+	if err != nil {
+		t.Fatalf("readLocalRunState: %v", err)
+	}
+	if got.RunID != st.RunID {
+		t.Fatalf("run_id=%q want %q", got.RunID, st.RunID)
+	}
+	if got.PID != st.PID {
+		t.Fatalf("pid=%d want %d", got.PID, st.PID)
+	}
+	if got.Workflow != st.Workflow {
+		t.Fatalf("workflow=%q want %q", got.Workflow, st.Workflow)
+	}
+}
+
+func TestLocalState_ReadRunState_Missing(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", dir)
+
+	_, err := readLocalRunState()
+	if err == nil {
+		t.Fatal("expected error reading missing state file")
+	}
+}
+
+func TestLocalState_RemoveRunState(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", dir)
+
+	st := &localRunState{PID: 1, RunID: "run-rm", Workflow: "w"}
+	if err := writeLocalRunState(st); err != nil {
+		t.Fatalf("writeLocalRunState: %v", err)
+	}
+	// Must not panic or error.
+	removeLocalRunState()
+	// Double-remove must be a no-op.
+	removeLocalRunState()
+}
+
+func TestLocalState_StateDir_EnvOverride(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", dir)
+
+	got, err := stateDir()
+	if err != nil {
+		t.Fatalf("stateDir: %v", err)
+	}
+	if got != dir {
+		t.Fatalf("stateDir=%q want %q", got, dir)
+	}
+}
+
+func TestLocalState_CheckpointFilePath(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", dir)
+
+	p, err := checkpointFilePath("run-abc")
+	if err != nil {
+		t.Fatalf("checkpointFilePath: %v", err)
+	}
+	want := filepath.Join(dir, "runs", "run-abc.json")
+	if p != want {
+		t.Fatalf("got %q want %q", p, want)
+	}
+}
+
+func TestLocalState_StepCheckpoint_NilErrors(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", dir)
+
+	if err := WriteStepCheckpoint(nil); err == nil {
+		t.Fatal("expected error for nil checkpoint")
+	}
+	if err := WriteStepCheckpoint(&StepCheckpoint{}); err == nil {
+		t.Fatal("expected error for empty run_id")
+	}
+}
+
+func TestLocalState_ListCheckpoints_SkipsDirectories(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", dir)
+
+	runsDir := filepath.Join(dir, "runs")
+	if err := os.MkdirAll(runsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A subdirectory inside runs/ must be silently skipped.
+	if err := os.Mkdir(filepath.Join(runsDir, "subdir"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A file with a non-.json extension must be silently skipped.
+	if err := os.WriteFile(filepath.Join(runsDir, "not-json.txt"), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// A valid checkpoint.
+	cp := &StepCheckpoint{RunID: "run-list", CurrentStep: "step1"}
+	b, _ := json.MarshalIndent(cp, "", "  ")
+	if err := os.WriteFile(filepath.Join(runsDir, "run-list.json"), b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	checkpoints, err := ListStepCheckpoints()
+	if err != nil {
+		t.Fatalf("ListStepCheckpoints: %v", err)
+	}
+	if len(checkpoints) != 1 {
+		t.Fatalf("expected 1, got %d", len(checkpoints))
+	}
+}

@@ -289,21 +289,21 @@ change behavior of any production code path.
 
 ## Tasks
 
-- [ ] Add CLI unit tests per Step 1; verify ≥ 60% coverage.
-- [ ] Add MCP adapter unit tests per Step 2; verify ≥ 50%
+- [x] Add CLI unit tests per Step 1; verify ≥ 60% coverage.
+- [x] Add MCP adapter unit tests per Step 2; verify ≥ 50%
       coverage.
-- [ ] Add `internal/run/` tests per Step 3; verify ≥ 60%
+- [x] Add `internal/run/` tests per Step 3; verify ≥ 60%
       coverage.
-- [ ] Add three benchmark suites per Step 4.
-- [ ] Author `docs/perf/baseline-v0.2.0.md` with measured
+- [x] Add three benchmark suites per Step 4.
+- [x] Author `docs/perf/baseline-v0.2.0.md` with measured
       numbers.
-- [ ] Add doc comments per Step 5 for public-package symbols.
-- [ ] Burn matching `.golangci.baseline.yml` entries (public
+- [x] Add doc comments per Step 5 for public-package symbols.
+- [x] Burn matching `.golangci.baseline.yml` entries (public
       packages only).
-- [ ] Add `make test-cover` and `make bench` targets.
-- [ ] `make ci` green; `make lint-go` green; `make test-cover`
+- [x] Add `make test-cover` and `make bench` targets.
+- [x] `make ci` green; `make lint-go` green; `make test-cover`
       reports the per-package thresholds met.
-- [ ] `make bench` runs to completion locally.
+- [x] `make bench` runs to completion locally.
 
 ## Exit criteria
 
@@ -338,7 +338,69 @@ here is on the workstream-itself ledger. Quality bar:
   rejected. Reviewer must be able to articulate what each test
   defends against.
 
-## Risks
+## Reviewer Notes
+
+### Coverage results (measured with `make test-cover`)
+
+| Package | Coverage | Target | Status |
+|---|---:|---:|---|
+| `internal/cli/` | 60.0% | ≥60% | ✅ |
+| `internal/run/` | 77.8% | ≥60% | ✅ |
+| `cmd/criteria-adapter-mcp/` | 82.4% | ≥50% | ✅ |
+
+### Benchmark baseline (Apple M3 Max, arm64/darwin, `make bench -benchtime=3s`)
+
+**Workflow compile:**
+
+| Benchmark | ns/op | allocs/op |
+|---|---:|---:|
+| `BenchmarkCompile_Hello` | 70,956 | 942 |
+| `BenchmarkCompile_Perf1000Logs` | 80,585 | 956 |
+| `BenchmarkCompile_WorkstreamLoop` | 1,658,581 | 13,902 |
+
+**Engine run (fake noop adapter, no plugin overhead):**
+
+| Benchmark | ns/op | allocs/op |
+|---|---:|---:|
+| `BenchmarkEngineRun_10Steps` | 12,687 | 268 |
+| `BenchmarkEngineRun_100Steps` | 136,371 | 2,608 |
+| `BenchmarkEngineRun_1000Steps` | 1,488,535 | 26,008 |
+
+**Plugin execution:**
+
+| Benchmark | ns/op | allocs/op |
+|---|---:|---:|
+| `BenchmarkBuiltinPlugin_Execute` (shell/`true`) | 17,875,147 | 110 |
+| `BenchmarkBuiltinPlugin_Info` | 255.7 | 4 |
+| `BenchmarkLoaderResolveBuiltin` | 44.46 | 2 |
+
+Full numbers captured in `docs/perf/baseline-v0.2.0.md`.
+
+### Step 5 (GoDoc burn-down) — no entries
+
+All `.golangci.baseline.yml` entries are `var-naming` suppressions for
+proto-generated code aliases in `sdk/pb/criteria/v1/`. There are **zero**
+`revive`/`exported` entries for public packages (`sdk/`, `workflow/`,
+`events/`, `cmd/criteria/`). Step 5 is a no-op — the baseline was clean
+before this workstream started.
+
+### Notable fixes applied
+
+- **HCL2 semicolons** in `reattach_test.go`: `state "done" { terminal = true; success = true }` is invalid HCL2. Fixed to multi-line syntax.
+- **`max_step_retries` placement**: must be inside `policy { }` block, not top-level. Fixed in test fixtures.
+- **Retry logic off-by-one**: `resumeOneLocalRun` with `Attempt=1` and default `MaxStepRetries=0` hits the retry-exceeded branch (nextAttempt=2 > maxAttempts=1). Fixed to `Attempt=0` for happy-path test.
+- **1000-step engine benchmark**: failed with `max_total_steps exceeded (100)` default. Fixed `buildNStepWorkflow` to set `policy { max_total_steps = n+10 }`.
+- **Lint nits**: `prealloc` in `sink_test.go`, unused `nolintlint` directives in MCP test, `stringXbytes` in `compile_test.go`, all resolved.
+
+### Validation
+
+- `make test`: all packages pass (race-clean)
+- `make lint-go`: exits 0
+- `make lint-imports`: exits 0
+- `make test-cover`: exits 0
+- `make bench`: all 9 benchmarks run to completion
+
+
 
 | Risk | Mitigation |
 |---|---|

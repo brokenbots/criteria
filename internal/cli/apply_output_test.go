@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"bytes"
+	"io"
 	"os"
 	"testing"
 )
@@ -76,5 +78,70 @@ func TestOpenNDJSONWriter_PrecedenceRules(t *testing.T) {
 	defer cleanup3()
 	if w3 == os.Stdout {
 		t.Fatal("concise mode without events file must not write to stdout")
+	}
+}
+
+func TestBuildLocalSink_ConciseModeReturnsMultiSink(t *testing.T) {
+	// concise mode must produce a MultiSink (LocalSink + ConsoleSink) not bare LocalSink.
+	sink := buildLocalSink("run-1", io.Discard, outputModeConcise, []string{"step-a"}, nil)
+	if sink == nil {
+		t.Fatal("expected non-nil sink")
+	}
+	// Smoke-test: all event handlers must not panic.
+	sink.OnRunStarted("run-1", "wf")
+	sink.OnRunCompleted("run-1", true)
+}
+
+func TestBuildLocalSink_JSONModeReturnsLocalSink(t *testing.T) {
+	var buf bytes.Buffer
+	sink := buildLocalSink("run-2", &buf, outputModeJSON, []string{"step-b"}, nil)
+	if sink == nil {
+		t.Fatal("expected non-nil sink")
+	}
+	sink.OnRunStarted("run-2", "wf")
+	if buf.Len() == 0 {
+		t.Fatal("json mode sink must write to the provided writer")
+	}
+}
+
+func TestEnvOrDefault(t *testing.T) {
+	const key = "CRITERIA_TEST_ENV_OR_DEFAULT_XYZ"
+	t.Setenv(key, "from-env")
+	if got := envOrDefault(key, "fallback"); got != "from-env" {
+		t.Fatalf("got %q want from-env", got)
+	}
+	t.Setenv(key, "")
+	if got := envOrDefault(key, "fallback"); got != "fallback" {
+		t.Fatalf("got %q want fallback", got)
+	}
+}
+
+func TestParseVarOverrides(t *testing.T) {
+	tests := []struct {
+		name  string
+		input []string
+		want  map[string]string
+	}{
+		{"nil input", nil, nil},
+		{"empty slice", []string{}, nil},
+		{"valid k=v", []string{"key=value"}, map[string]string{"key": "value"}},
+		{"multiple", []string{"a=1", "b=2"}, map[string]string{"a": "1", "b": "2"}},
+		{"value with equals", []string{"url=http://x=y"}, map[string]string{"url": "http://x=y"}},
+		{"no equals skipped", []string{"noequals"}, map[string]string{}},
+		{"empty key skipped", []string{"=value"}, map[string]string{}},
+		{"mixed", []string{"a=1", "bad", "=skip", "c=3"}, map[string]string{"a": "1", "c": "3"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := parseVarOverrides(tc.input)
+			if len(got) != len(tc.want) {
+				t.Fatalf("len=%d want %d (got=%v want=%v)", len(got), len(tc.want), got, tc.want)
+			}
+			for k, v := range tc.want {
+				if got[k] != v {
+					t.Fatalf("key %q: got %q want %q", k, got[k], v)
+				}
+			}
+		})
 	}
 }

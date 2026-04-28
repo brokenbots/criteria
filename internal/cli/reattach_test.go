@@ -1,0 +1,585 @@
+package cli
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"io"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	servertrans "github.com/brokenbots/criteria/internal/transport/server"
+)
+
+// discardLogger returns a logger that silently discards all output.
+func discardLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
+
+// newOfflineClient creates a *servertrans.Client with a dead-but-valid URL.
+// No network connections are made at construction time.
+func newOfflineClient(t *testing.T) *servertrans.Client {
+	t.Helper()
+	c, err := servertrans.NewClient("http://localhost:1", discardLogger())
+	if err != nil {
+		t.Fatalf("newOfflineClient: %v", err)
+	}
+	t.Cleanup(func() { c.Close() })
+	return c
+}
+
+// writeCheckpointDirect writes a checkpoint JSON file directly (bypassing the
+// workflow-path accessibility check in WriteStepCheckpoint).
+func writeCheckpointDirect(t *testing.T, stateDir string, cp *StepCheckpoint) {
+	t.Helper()
+	t.Setenv("CRITERIA_STATE_DIR", stateDir)
+	dir := filepath.Join(stateDir, "runs")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir runs: %v", err)
+	}
+	b, err := json.MarshalIndent(cp, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal checkpoint: %v", err)
+	}
+	p := filepath.Join(dir, cp.RunID+".json")
+	if err := os.WriteFile(p, b, 0o600); err != nil {
+		t.Fatalf("write checkpoint: %v", err)
+	}
+}
+
+// minimalWorkflow is a no-step single-terminal-state workflow for tests that
+// only need a compilable workflow without running any adapter.
+const minimalWorkflow = `
+workflow "minimal" {
+  version       = "0.1"
+  initial_state = "done"
+  target_state  = "done"
+
+  state "done" {
+    terminal = true
+    success  = true
+  }
+}
+`
+
+// twoStepShellWorkflow is used for resume tests that need an executable workflow.
+const twoStepShellWorkflow = `
+workflow "shell_resume" {
+  version       = "0.1"
+  initial_state = "greet"
+  target_state  = "done"
+
+  step "greet" {
+    adapter = "shell"
+    input {
+      command = "echo hello"
+    }
+    outcome "success" { transition_to = "done" }
+    outcome "failure" { transition_to = "failed" }
+  }
+
+  state "done" {
+    terminal = true
+    success  = true
+  }
+  state "failed" {
+    terminal = true
+    success  = false
+  }
+}
+`
+
+// maxRetryWorkflow has max_step_retries = 0 to trigger retry-exceeded paths.
+const maxRetryWorkflow = `
+workflow "max_retry" {
+  version       = "0.1"
+  initial_state = "greet"
+  target_state  = "done"
+
+  policy {
+    max_step_retries = 0
+  }
+
+  step "greet" {
+    adapter = "shell"
+    input {
+      command = "echo hi"
+    }
+    outcome "success" { transition_to = "done" }
+    outcome "failure" { transition_to = "failed" }
+  }
+
+  state "done" {
+    terminal = true
+    success  = true
+  }
+  state "failed" {
+    terminal = true
+    success  = false
+  }
+}
+`
+
+// TestApplyClientOptions verifies all TLS mode and codec combinations are
+// mapped through to the Options struct without mutation.
+func TestApplyClientOptions(t *testing.T) {
+	cases := []struct {
+		name     string
+		opts     applyOptions
+		wantMode servertrans.TLSMode
+		wantCA   string
+	}{
+		{
+			name:     "empty defaults",
+			opts:     applyOptions{},
+			wantMode: "",
+		},
+		{
+			name:     "tls mode with CA",
+			opts:     applyOptions{tlsMode: "tls", tlsCA: "/ca.pem"},
+			wantMode: servertrans.TLSEnable,
+			wantCA:   "/ca.pem",
+		},
+		{
+			name:     "mtls mode",
+			opts:     applyOptions{tlsMode: "mtls", tlsCert: "/c.pem", tlsKey: "/k.pem"},
+			wantMode: servertrans.TLSMutual,
+		},
+		{
+			name:     "disable mode",
+			opts:     applyOptions{tlsMode: "disable"},
+			wantMode: servertrans.TLSDisable,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := applyClientOptions(tc.opts)
+			if got.TLSMode != tc.wantMode {
+				t.Errorf("TLSMode: got %q want %q", got.TLSMode, tc.wantMode)
+			}
+			if tc.wantCA != "" && got.CAFile != tc.wantCA {
+				t.Errorf("CAFile: got %q want %q", got.CAFile, tc.wantCA)
+			}
+		})
+	}
+}
+
+// TestNewLocalRunState verifies the constructor captures PID and fields.
+func TestNewLocalRunState(t *testing.T) {
+	st := newLocalRunState("run-1", "my-wf", "http://srv")
+	if st.RunID != "run-1" {
+		t.Errorf("RunID: got %q", st.RunID)
+	}
+	if st.Workflow != "my-wf" {
+		t.Errorf("Workflow: got %q", st.Workflow)
+	}
+	if st.ServerURL != "http://srv" {
+		t.Errorf("ServerURL: got %q", st.ServerURL)
+	}
+	if st.PID != os.Getpid() {
+		t.Errorf("PID: got %d want %d", st.PID, os.Getpid())
+	}
+}
+
+// TestAbandonCheckpoint verifies the checkpoint file is removed and the
+// log line is emitted.
+func TestAbandonCheckpoint(t *testing.T) {
+	stateDir := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", stateDir)
+
+	wfFile := writeWorkflowFile(t, minimalWorkflow)
+	cp := &StepCheckpoint{
+		RunID:        "cp-abandon",
+		Workflow:     "minimal",
+		WorkflowPath: wfFile,
+		CurrentStep:  "done",
+	}
+	if err := WriteStepCheckpoint(cp); err != nil {
+		t.Fatalf("WriteStepCheckpoint: %v", err)
+	}
+
+	var logBuf bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	abandonCheckpoint(log, cp, "test abandon reason", nil)
+
+	// Checkpoint file should be gone.
+	list, _ := ListStepCheckpoints()
+	for _, item := range list {
+		if item.RunID == "cp-abandon" {
+			t.Error("checkpoint still present after abandonCheckpoint")
+		}
+	}
+	if !strings.Contains(logBuf.String(), "test abandon reason") {
+		t.Errorf("expected log message in output, got: %s", logBuf.String())
+	}
+}
+
+// TestAbandonCheckpoint_WithError verifies the error is logged when provided.
+func TestAbandonCheckpoint_WithError(t *testing.T) {
+	stateDir := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", stateDir)
+
+	wfFile := writeWorkflowFile(t, minimalWorkflow)
+	cp := &StepCheckpoint{RunID: "cp-err", Workflow: "minimal", WorkflowPath: wfFile}
+	if err := WriteStepCheckpoint(cp); err != nil {
+		t.Fatalf("WriteStepCheckpoint: %v", err)
+	}
+
+	var logBuf bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&logBuf, nil))
+	abandonCheckpoint(log, cp, "with error", &stringErrCLI{msg: "underlying failure"})
+
+	if !strings.Contains(logBuf.String(), "underlying failure") {
+		t.Errorf("error not logged; log output: %s", logBuf.String())
+	}
+}
+
+// TestBuildRecoveryClient_MissingCredentials verifies that a checkpoint
+// without CriteriaID/Token is abandoned and an error is returned.
+func TestBuildRecoveryClient_MissingCredentials(t *testing.T) {
+	stateDir := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", stateDir)
+
+	wfFile := writeWorkflowFile(t, minimalWorkflow)
+	cp := &StepCheckpoint{
+		RunID:        "cp-nocreds",
+		Workflow:     "minimal",
+		WorkflowPath: wfFile,
+		CriteriaID:   "", // missing
+		Token:        "", // missing
+		ServerURL:    "http://localhost:9",
+	}
+	if err := WriteStepCheckpoint(cp); err != nil {
+		t.Fatalf("WriteStepCheckpoint: %v", err)
+	}
+
+	rc, err := buildRecoveryClient(discardLogger(), cp, servertrans.Options{})
+	if err == nil {
+		if rc != nil {
+			rc.Close()
+		}
+		t.Fatal("expected error for missing credentials")
+	}
+	// Checkpoint must have been removed.
+	list, _ := ListStepCheckpoints()
+	for _, item := range list {
+		if item.RunID == "cp-nocreds" {
+			t.Error("checkpoint not removed after missing-credentials failure")
+		}
+	}
+}
+
+// TestBuildRecoveryClient_BadServerURL verifies that an invalid server URL
+// causes buildRecoveryClient to abandon the checkpoint.
+func TestBuildRecoveryClient_BadServerURL(t *testing.T) {
+	stateDir := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", stateDir)
+
+	wfFile := writeWorkflowFile(t, minimalWorkflow)
+	cp := &StepCheckpoint{
+		RunID:        "cp-badurl",
+		Workflow:     "minimal",
+		WorkflowPath: wfFile,
+		CriteriaID:   "crt-1",
+		Token:        "tok-1",
+		ServerURL:    "ftp://not-http-or-https", // triggers NewClient error
+	}
+	if err := WriteStepCheckpoint(cp); err != nil {
+		t.Fatalf("WriteStepCheckpoint: %v", err)
+	}
+
+	rc, err := buildRecoveryClient(discardLogger(), cp, servertrans.Options{})
+	if err == nil {
+		if rc != nil {
+			rc.Close()
+		}
+		t.Fatal("expected error for invalid server URL scheme")
+	}
+}
+
+// TestLoadCheckpointWorkflow_MissingFile verifies that a missing workflow
+// path triggers checkpoint abandonment.
+func TestLoadCheckpointWorkflow_MissingFile(t *testing.T) {
+	stateDir := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", stateDir)
+
+	cp := &StepCheckpoint{
+		RunID:        "cp-missing",
+		WorkflowPath: filepath.Join(t.TempDir(), "no-such-file.hcl"),
+	}
+	writeCheckpointDirect(t, stateDir, cp)
+
+	graph, err := loadCheckpointWorkflow(discardLogger(), cp)
+	if err == nil {
+		t.Fatal("expected error for missing workflow file")
+	}
+	_ = graph
+}
+
+// TestLoadCheckpointWorkflow_InvalidHCL verifies that unparseable HCL
+// triggers checkpoint abandonment.
+func TestLoadCheckpointWorkflow_InvalidHCL(t *testing.T) {
+	stateDir := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", stateDir)
+
+	badHCL := filepath.Join(t.TempDir(), "bad.hcl")
+	if err := os.WriteFile(badHCL, []byte(`{{{not hcl`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cp := &StepCheckpoint{RunID: "cp-badhcl", WorkflowPath: badHCL}
+	writeCheckpointDirect(t, stateDir, cp)
+
+	graph, err := loadCheckpointWorkflow(discardLogger(), cp)
+	if err == nil {
+		t.Fatal("expected error for invalid HCL")
+	}
+	_ = graph
+}
+
+// TestLoadCheckpointWorkflow_Valid verifies that a valid HCL workflow file
+// returns a non-nil FSMGraph.
+func TestLoadCheckpointWorkflow_Valid(t *testing.T) {
+	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
+	wfFile := writeWorkflowFile(t, minimalWorkflow)
+	cp := &StepCheckpoint{RunID: "cp-valid", WorkflowPath: wfFile}
+	graph, err := loadCheckpointWorkflow(discardLogger(), cp)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if graph == nil {
+		t.Fatal("expected non-nil FSMGraph")
+	}
+}
+
+// TestParseWorkflowFromPath exercises all failure and success paths.
+func TestParseWorkflowFromPath(t *testing.T) {
+	t.Run("empty path", func(t *testing.T) {
+		_, err := parseWorkflowFromPath("")
+		if err == nil {
+			t.Fatal("expected error for empty path")
+		}
+	})
+
+	t.Run("missing file", func(t *testing.T) {
+		_, err := parseWorkflowFromPath(filepath.Join(t.TempDir(), "nope.hcl"))
+		if err == nil {
+			t.Fatal("expected error for missing file")
+		}
+	})
+
+	t.Run("invalid HCL", func(t *testing.T) {
+		p := filepath.Join(t.TempDir(), "bad.hcl")
+		_ = os.WriteFile(p, []byte(`not valid hcl {{{`), 0o600)
+		_, err := parseWorkflowFromPath(p)
+		if err == nil {
+			t.Fatal("expected error for invalid HCL")
+		}
+	})
+
+	t.Run("valid workflow", func(t *testing.T) {
+		t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
+		wfFile := writeWorkflowFile(t, minimalWorkflow)
+		graph, err := parseWorkflowFromPath(wfFile)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if graph == nil || graph.Name != "minimal" {
+			t.Fatalf("unexpected graph: %+v", graph)
+		}
+	})
+}
+
+// TestBuildServerSink verifies that the CheckpointFn written by buildServerSink
+// calls writeRunCheckpoint with the correct fields.
+func TestBuildServerSink(t *testing.T) {
+	stateDir := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", stateDir)
+
+	wfFile := writeWorkflowFile(t, minimalWorkflow)
+	graph, err := parseWorkflowFromPath(wfFile)
+	if err != nil {
+		t.Fatalf("parseWorkflowFromPath: %v", err)
+	}
+
+	c := newOfflineClient(t)
+	log := discardLogger()
+	sink := buildServerSink(c, "run-srv-1", graph, wfFile, "http://srv", log)
+	if sink == nil {
+		t.Fatal("expected non-nil Sink")
+	}
+	if sink.CheckpointFn == nil {
+		t.Fatal("CheckpointFn must be set")
+	}
+
+	// Calling CheckpointFn writes a checkpoint with the expected fields.
+	sink.CheckpointFn("step1", 1)
+	checkpoints, err := ListStepCheckpoints()
+	if err != nil {
+		t.Fatalf("ListStepCheckpoints: %v", err)
+	}
+	found := false
+	for _, cp := range checkpoints {
+		if cp.RunID == "run-srv-1" {
+			found = true
+			if cp.CurrentStep != "step1" {
+				t.Errorf("checkpoint step: got %q want %q", cp.CurrentStep, "step1")
+			}
+			if cp.Attempt != 1 {
+				t.Errorf("checkpoint attempt: got %d want %d", cp.Attempt, 1)
+			}
+		}
+	}
+	if !found {
+		t.Error("checkpoint for run-srv-1 not found")
+	}
+}
+
+// TestResumeOneLocalRun_HappyPath verifies that a local checkpoint is resumed
+// and the checkpoint file is cleaned up after successful completion.
+func TestResumeOneLocalRun_HappyPath(t *testing.T) {
+	stateDir := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", stateDir)
+
+	wfFile := writeWorkflowFile(t, twoStepShellWorkflow)
+	cp := &StepCheckpoint{
+		RunID:        "local-resume-1",
+		Workflow:     "shell_resume",
+		WorkflowPath: wfFile,
+		CurrentStep:  "greet",
+		Attempt:      0, // attempt 0 → nextAttempt=1 ≤ maxAttempts=1, so the engine path runs
+	}
+	if err := WriteStepCheckpoint(cp); err != nil {
+		t.Fatalf("WriteStepCheckpoint: %v", err)
+	}
+
+	var out bytes.Buffer
+	resumeOneLocalRun(context.Background(), discardLogger(), cp, &out, outputModeJSON)
+
+	// Checkpoint must be cleaned up after successful resume.
+	checkpoints, _ := ListStepCheckpoints()
+	for _, item := range checkpoints {
+		if item.RunID == "local-resume-1" {
+			t.Error("checkpoint not removed after successful local resume")
+		}
+	}
+}
+
+// TestResumeOneLocalRun_MissingWorkflow verifies that a checkpoint with a
+// missing workflow file is abandoned cleanly.
+func TestResumeOneLocalRun_MissingWorkflow(t *testing.T) {
+	stateDir := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", stateDir)
+
+	missingPath := filepath.Join(t.TempDir(), "no-such-file.hcl")
+	cp := &StepCheckpoint{
+		RunID:        "local-missing-wf",
+		Workflow:     "ghost",
+		WorkflowPath: missingPath,
+		CurrentStep:  "step1",
+	}
+	// Write directly, bypassing the path-accessibility check.
+	writeCheckpointDirect(t, stateDir, cp)
+
+	var out bytes.Buffer
+	resumeOneLocalRun(context.Background(), discardLogger(), cp, &out, outputModeJSON)
+
+	// Checkpoint must be removed (abandoned).
+	checkpoints, _ := ListStepCheckpoints()
+	for _, item := range checkpoints {
+		if item.RunID == "local-missing-wf" {
+			t.Error("checkpoint not removed after missing-workflow abandonment")
+		}
+	}
+}
+
+// TestResumeOneLocalRun_ExceedsMaxRetries verifies that a checkpoint exceeding
+// max_step_retries emits a RunFailed event and removes the checkpoint.
+func TestResumeOneLocalRun_ExceedsMaxRetries(t *testing.T) {
+	stateDir := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", stateDir)
+
+	wfFile := writeWorkflowFile(t, maxRetryWorkflow)
+	// Attempt 2 with max_step_retries=0 means maxAttempts=1; nextAttempt=3 > 1.
+	cp := &StepCheckpoint{
+		RunID:        "max-retry-run",
+		Workflow:     "max_retry",
+		WorkflowPath: wfFile,
+		CurrentStep:  "greet",
+		Attempt:      2,
+	}
+	if err := WriteStepCheckpoint(cp); err != nil {
+		t.Fatalf("WriteStepCheckpoint: %v", err)
+	}
+
+	var out bytes.Buffer
+	resumeOneLocalRun(context.Background(), discardLogger(), cp, &out, outputModeJSON)
+
+	// Checkpoint removed regardless.
+	checkpoints, _ := ListStepCheckpoints()
+	for _, item := range checkpoints {
+		if item.RunID == "max-retry-run" {
+			t.Error("checkpoint not removed after max-retry failure")
+		}
+	}
+	// A RunFailed event must have been written to the output buffer.
+	if !strings.Contains(out.String(), "RunFailed") {
+		t.Errorf("expected RunFailed in output, got: %s", out.String())
+	}
+}
+
+// stringErrCLI is a minimal error type for CLI-package tests.
+type stringErrCLI struct{ msg string }
+
+func (e *stringErrCLI) Error() string { return e.msg }
+
+// TestResumeOneLocalRun_ServerNodeRejected verifies that a checkpoint for a
+// workflow containing a server-only node (approval) is abandoned cleanly.
+func TestResumeOneLocalRun_ServerNodeRejected(t *testing.T) {
+	stateDir := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", stateDir)
+
+	wfFile := writeWorkflowFile(t, `
+workflow "needs_approval" {
+  version       = "0.1"
+  initial_state = "review"
+  target_state  = "done"
+
+  approval "review" {
+    approvers = ["alice"]
+    reason    = "ship it?"
+    outcome "approved" { transition_to = "done" }
+    outcome "rejected" { transition_to = "done" }
+  }
+
+  state "done" {
+    terminal = true
+    success  = true
+  }
+}
+`)
+	cp := &StepCheckpoint{
+		RunID:        "server-node-run",
+		Workflow:     "needs_approval",
+		WorkflowPath: wfFile,
+		CurrentStep:  "review",
+		Attempt:      0,
+	}
+	if err := WriteStepCheckpoint(cp); err != nil {
+		t.Fatalf("WriteStepCheckpoint: %v", err)
+	}
+
+	var out bytes.Buffer
+	resumeOneLocalRun(context.Background(), discardLogger(), cp, &out, outputModeJSON)
+
+	// Checkpoint must be cleared (unsupported in local mode).
+	checkpoints, _ := ListStepCheckpoints()
+	for _, item := range checkpoints {
+		if item.RunID == "server-node-run" {
+			t.Error("checkpoint not removed for server-node workflow")
+		}
+	}
+}

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"flag"
 	"os"
@@ -98,5 +99,65 @@ func assertGoldenFile(t *testing.T, relativePath string, got []byte) {
 	}
 	if string(want) != string(got) {
 		t.Fatalf("golden mismatch for %s\nwant:\n%s\n\ngot:\n%s", relativePath, string(want), string(got))
+	}
+}
+
+func TestWriteOutput_ToStdout(t *testing.T) {
+	var buf strings.Builder
+	payload := []byte("hello output\n")
+	if err := writeOutput("", &buf, payload); err != nil {
+		t.Fatalf("writeOutput to writer: %v", err)
+	}
+	if buf.String() != string(payload) {
+		t.Fatalf("got %q want %q", buf.String(), string(payload))
+	}
+}
+
+func TestWriteOutput_ToFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "out.json")
+	payload := []byte(`{"ok":true}`)
+	if err := writeOutput(path, nil, payload); err != nil {
+		t.Fatalf("writeOutput to file: %v", err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read output file: %v", err)
+	}
+	if !bytes.Equal(got, payload) {
+		t.Fatalf("got %q want %q", string(got), string(payload))
+	}
+}
+
+func TestCompileWorkflowOutput_InvalidFormat(t *testing.T) {
+	_, fixtures := workflowFixtures(t)
+	if len(fixtures) == 0 {
+		t.Skip("no fixtures")
+	}
+	_, err := compileWorkflowOutput(context.Background(), fixtures[0], "xml")
+	if err == nil {
+		t.Fatal("expected error for unsupported format")
+	}
+}
+
+func TestParseCompileForCli_MissingFile(t *testing.T) {
+	_, _, err := parseCompileForCli(context.Background(), "/no/such/file.hcl")
+	if err == nil {
+		t.Fatal("expected error for missing file")
+	}
+}
+
+func TestNewValidateCmd_HappyPath(t *testing.T) {
+	_, fixtures := workflowFixtures(t)
+	if len(fixtures) == 0 {
+		t.Skip("no fixtures")
+	}
+	cmd := NewValidateCmd()
+	var out, errOut strings.Builder
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	cmd.SetArgs(fixtures[:1])
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("validate cmd: %v (stderr=%s)", err, errOut.String())
 	}
 }

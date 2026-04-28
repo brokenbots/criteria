@@ -1,12 +1,15 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	servertrans "github.com/brokenbots/criteria/internal/transport/server"
 )
 
 func TestApplyLocal_NoopPlugin_EmitsExpectedEvents(t *testing.T) {
@@ -137,4 +140,122 @@ func filterPayloadTypes(types []string, allowed map[string]bool) []string {
 		}
 	}
 	return out
+}
+
+func TestRunApply_EmptyWorkflowPath(t *testing.T) {
+	err := runApply(context.Background(), applyOptions{workflowPath: ""})
+	if err == nil {
+		t.Fatal("expected error for empty workflow path")
+	}
+}
+
+func TestResumeLocalInFlightRuns_EmptyCheckpoints(t *testing.T) {
+	stateDir := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", stateDir)
+
+	var buf bytes.Buffer
+	log := newApplyLogger()
+	// Must not panic or fail with no checkpoints.
+	resumeLocalInFlightRuns(context.Background(), log, &buf, outputModeJSON)
+	if buf.Len() != 0 {
+		t.Fatalf("expected no output with empty checkpoints, got %q", buf.String())
+	}
+}
+
+func TestResumeLocalInFlightRuns_SkipsServerCheckpoints(t *testing.T) {
+	stateDir := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", stateDir)
+
+	// Write a checkpoint with a ServerURL — must be skipped (no RunFailed emitted).
+	cp := &StepCheckpoint{
+		RunID:       "server-run",
+		CurrentStep: "build",
+		ServerURL:   "http://localhost:8080",
+	}
+	writeCheckpointDirect(t, stateDir, cp)
+
+	var buf bytes.Buffer
+	log := newApplyLogger()
+	resumeLocalInFlightRuns(context.Background(), log, &buf, outputModeJSON)
+	// Server checkpoint must not produce any ND-JSON output.
+	if buf.Len() != 0 {
+		t.Fatalf("expected no output for server checkpoint, got %q", buf.String())
+	}
+}
+
+func TestWriteRunCheckpoint_Success(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", dir)
+
+	wfFile := writeWorkflowFile(t, `workflow "w" { version = "0.1" }`)
+	log := newApplyLogger()
+
+	// Must not panic; checkpoint written to stateDir.
+	writeRunCheckpoint(log, "run-1", "my-workflow", wfFile, "", "build", 1, "cid-1", "tok-1")
+
+	checkpoints, err := ListStepCheckpoints()
+	if err != nil {
+		t.Fatalf("ListStepCheckpoints: %v", err)
+	}
+	if len(checkpoints) != 1 {
+		t.Fatalf("expected 1 checkpoint, got %d", len(checkpoints))
+	}
+	cp := checkpoints[0]
+	if cp.RunID != "run-1" || cp.CurrentStep != "build" || cp.CriteriaID != "cid-1" {
+		t.Fatalf("checkpoint fields wrong: %+v", cp)
+	}
+}
+
+func TestRunApply_InvalidWorkflow_ReturnsError(t *testing.T) {
+	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
+	wfFile := writeWorkflowFile(t, `this is not HCL at all {{{`)
+	err := runApply(context.Background(), applyOptions{workflowPath: wfFile})
+	if err == nil {
+		t.Fatal("expected error for invalid HCL")
+	}
+}
+
+func TestRunApply_BadEventsFile_ReturnsError(t *testing.T) {
+	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
+	wfFile := writeWorkflowFile(t, `workflow "w" {
+  version = "0.1"
+  initial_state = "done"
+  target_state  = "done"
+  state "done" {
+    terminal = true
+    success  = true
+  }
+}`)
+	err := runApply(context.Background(), applyOptions{
+		workflowPath: wfFile,
+		eventsPath:   "/nonexistent-dir/deeply/nested/events.ndjson",
+	})
+	if err == nil {
+		t.Fatal("expected error for unwritable events file")
+	}
+}
+
+func TestResumeInFlightRuns_ServerFn_EmptyCheckpoints(t *testing.T) {
+	// The server-side resumeInFlightRuns (reattach.go) must be a no-op when there
+	// are no checkpoints in the state dir.
+	dir := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", dir)
+	log := newApplyLogger()
+	// Must not panic.
+	resumeInFlightRuns(context.Background(), log, servertrans.Options{})
+}
+
+func TestRunApplyLocal_InvalidOutputMode_ReturnsError(t *testing.T) {
+	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
+	wfFile := writeWorkflowFile(t, `workflow "w" { version = "0.1" }`)
+	err := runApply(context.Background(), applyOptions{
+		workflowPath: wfFile,
+		output:       "verbose", // invalid → resolveOutputMode error
+	})
+	if err == nil {
+		t.Fatal("expected error for invalid output mode")
+	}
+	if !strings.Contains(err.Error(), "invalid --output") {
+		t.Fatalf("unexpected error: %v", err)
+	}
 }
