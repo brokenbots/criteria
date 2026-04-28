@@ -46,7 +46,64 @@ gh extension install github/gh-copilot
 
 If the CLI is installed somewhere non-standard, set `CRITERIA_COPILOT_BIN=/path/to/copilot`.
 
-## HCL Surface
+## HCL Surface — Shell Adapter
+
+The built-in `shell` adapter runs `input.command` via `sh -c` (Unix) or `cmd /C` (Windows).
+
+### New input attributes (W05 hardening)
+
+All attributes below are optional. `CRITERIA_SHELL_LEGACY=1` disables the security defaults
+(env allowlist, PATH sanitization, bounded capture, working-directory confinement) for a
+time-boxed migration window; it will be removed in `v0.3.0`.
+
+| Attribute | Type | Default | Description |
+|---|---|---|---|
+| `command` | `string` | (required) | Shell command to run. |
+| `env` | `string` | `""` (inherit allowlist only) | JSON-encoded `map[string]string` of additional env vars to pass to the child. Values starting with `$` inherit from the parent (e.g. `"$GOFLAGS"` → `os.Getenv("GOFLAGS")`). `PATH` is reserved — use `command_path` instead. Use `jsonencode({...})` in HCL. |
+| `command_path` | `string` | `""` (sanitized parent PATH) | OS path-list-separator delimited PATH for the child process (`:` on Unix, `;` on Windows). When set, replaces the inherited PATH entirely. When absent, the parent PATH is passed through with empty and non-absolute segments (including `.`) removed. |
+| `timeout` | `string` | `"5m"` | Hard step timeout (e.g. `"10m"`, `"1h"`). Range: `1s`–`1h`. On timeout the spawned shell receives SIGTERM; after 5 s it receives SIGKILL. |
+| `output_limit_bytes` | `string` | `"4194304"` (4 MiB) | Per-stream stdout/stderr capture limit. Range: `1024`–`67108864`. Overflow is non-fatal; a `_truncated_<stream>: "true"` sentinel is set in step outputs. |
+| `working_directory` | `string` | `""` (inherit operator CWD) | CWD for the spawned process. Must resolve under `$HOME` or `CRITERIA_SHELL_ALLOWED_PATHS` (OS path-list-separator delimited env var). |
+
+### Example with env and timeout
+
+<!-- validator: skip: illustrative excerpt only -->
+```hcl
+step "build" {
+  adapter = "shell"
+  input {
+    command = "make build"
+    env     = jsonencode({GOFLAGS: "$GOFLAGS", CGO_ENABLED: "0"})
+    timeout = "10m"
+  }
+  outcome "success" { transition_to = "test" }
+  outcome "failure" { transition_to = "failed" }
+}
+```
+
+### Security defaults
+
+The shell adapter applies five hardening defaults from W05. See
+[`docs/security/shell-adapter-threat-model.md`](security/shell-adapter-threat-model.md)
+for the full design.
+
+1. **Environment allowlist** — only `PATH`, `HOME`, `USER`, `LOGNAME`, `LANG`,
+   `LC_*`, `TZ`, and `TERM` (when stdin is a TTY) are inherited by default.
+   All other parent vars are dropped unless declared in `input.env`.
+2. **PATH sanitization** — empty and non-absolute segments (including `.`) are
+   removed from the inherited PATH before the child sees it. Use `command_path`
+   to declare an explicit PATH.
+3. **Hard timeout** — default 5 minutes. The spawned shell process receives
+   SIGTERM then (after 5 s) SIGKILL. Note that grandchildren spawned by `sh -c`
+   are not joined to a separate process group and may not be signalled directly;
+   pipe read-ends are closed on cancellation so capture goroutines unblock
+   promptly. A `timeout` adapter event is emitted in the run stream.
+4. **Bounded output capture** — default 4 MiB per stream. Overflow is truncated
+   (not fatal); an `output_truncated` adapter event records `dropped_bytes`.
+5. **Working-directory confinement** — `working_directory` must be under `$HOME`
+   or explicitly allowed via `CRITERIA_SHELL_ALLOWED_PATHS`.
+
+## HCL Surface — Agent-backed Workflows
 
 Agent-backed workflows use three concepts:
 
