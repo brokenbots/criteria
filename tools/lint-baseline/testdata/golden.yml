@@ -1,0 +1,22 @@
+issues:
+  exclude-rules:
+    - path: internal/adapters/copilot.go
+      linters:
+        - revive
+      text: exported function NewClient should have comment or be unexported # W06: revive finding
+    - path: internal/engine/engine.go
+      linters:
+        - funlen
+      text: 'Function ''RunWorkflow''' # W03: refactor RunWorkflow
+    - path: internal/engine/engine.go
+      linters:
+        - funlen
+      text: 'Function ''resumeOneRun''' # W03: refactor resumeOneRun
+    - path: internal/engine/engine.go
+      linters:
+        - gocyclo
+      text: '`\(\*Engine\)\.runLoop`' # W03: simplify (*Engine).runLoop
+    - path: internal/engine/engine.go
+      linters:
+        - gocyclo
+      text: '`runStep`' # W03: simplify runStep

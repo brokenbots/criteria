@@ -1,0 +1,91 @@
+{
+  "Issues": [
+    {
+      "FromLinter": "funlen",
+      "Text": "Function 'RunWorkflow' is too long (120 > 50 lines)",
+      "SourceCode": "func RunWorkflow(ctx context.Context) error {",
+      "Replacement": null,
+      "Pos": {
+        "Filename": "internal/engine/engine.go",
+        "Offset": 1234,
+        "Line": 45,
+        "Column": 1
+      },
+      "ExpectNoLint": false,
+      "ExpectedNoLintLinter": ""
+    },
+    {
+      "FromLinter": "gocyclo",
+      "Text": "cyclomatic complexity 18 of func `(*Engine).runLoop` is high (> 15)",
+      "SourceCode": "func (e *Engine) runLoop(ctx context.Context) error {",
+      "Replacement": null,
+      "Pos": {
+        "Filename": "internal/engine/engine.go",
+        "Offset": 3000,
+        "Line": 150,
+        "Column": 1
+      },
+      "ExpectNoLint": false,
+      "ExpectedNoLintLinter": ""
+    },
+    {
+      "FromLinter": "gocyclo",
+      "Text": "cyclomatic complexity 22 of func `runStep` is high (> 15)",
+      "SourceCode": "func runStep(ctx context.Context, s step) error {",
+      "Replacement": null,
+      "Pos": {
+        "Filename": "internal/engine/engine.go",
+        "Offset": 2000,
+        "Line": 200,
+        "Column": 1
+      },
+      "ExpectNoLint": false,
+      "ExpectedNoLintLinter": ""
+    },
+    {
+      "FromLinter": "revive",
+      "Text": "exported function NewClient should have comment or be unexported",
+      "SourceCode": "func NewClient(addr string) *Client {",
+      "Replacement": null,
+      "Pos": {
+        "Filename": "internal/adapters/copilot.go",
+        "Offset": 100,
+        "Line": 10,
+        "Column": 1
+      },
+      "ExpectNoLint": false,
+      "ExpectedNoLintLinter": ""
+    },
+    {
+      "FromLinter": "funlen",
+      "Text": "Function 'resumeOneRun' is too long (80 > 50 lines)",
+      "SourceCode": "func resumeOneRun(ctx context.Context, id string) error {",
+      "Replacement": null,
+      "Pos": {
+        "Filename": "internal/engine/engine.go",
+        "Offset": 5000,
+        "Line": 300,
+        "Column": 1
+      },
+      "ExpectNoLint": false,
+      "ExpectedNoLintLinter": ""
+    },
+    {
+      "FromLinter": "funlen",
+      "Text": "Function 'RunWorkflow' is too long (120 > 50 lines)",
+      "SourceCode": "func RunWorkflow(ctx context.Context) error {",
+      "Replacement": null,
+      "Pos": {
+        "Filename": "internal/engine/engine.go",
+        "Offset": 1234,
+        "Line": 45,
+        "Column": 1
+      },
+      "ExpectNoLint": false,
+      "ExpectedNoLintLinter": ""
+    }
+  ],
+  "Report": {
+    "Linters": []
+  }
+}

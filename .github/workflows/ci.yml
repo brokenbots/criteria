@@ -24,6 +24,9 @@ jobs:
       - name: Enforce import boundaries
         run: make lint-imports
 
+      - name: Lint Go (golangci-lint)
+        run: make lint-go
+
       - name: Build binary
         run: make build
 
