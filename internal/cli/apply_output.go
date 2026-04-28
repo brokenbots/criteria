@@ -73,4 +73,3 @@ func buildLocalSink(runID string, jsonOut io.Writer, mode outputMode, steps []st
 	console := run.NewConsoleSink(os.Stdout, steps, run.ColorEnabled(os.Stdout))
 	return run.NewMultiSink(local, console)
 }
-

@@ -357,14 +357,52 @@
         },
         {
           "name": "needs_approval",
-          "transition_to": "watch_pr_gate"
+          "transition_to": "watch_pr_warmup"
         },
         {
           "name": "needs_review",
-          "transition_to": "watch_pr_gate"
+          "transition_to": "watch_pr_warmup"
         },
         {
           "name": "watch_pr",
+          "transition_to": "watch_pr_warmup"
+        }
+      ]
+    },
+    {
+      "name": "watch_pr_warmup",
+      "adapter": "shell",
+      "timeout": "3m0s",
+      "input_keys": [
+        "command"
+      ],
+      "allow_tools": null,
+      "outcomes": [
+        {
+          "name": "failure",
+          "transition_to": "triage_pr_feedback"
+        },
+        {
+          "name": "success",
+          "transition_to": "watch_pr_gate"
+        }
+      ]
+    },
+    {
+      "name": "watch_pr_backoff",
+      "adapter": "shell",
+      "timeout": "5m0s",
+      "input_keys": [
+        "command"
+      ],
+      "allow_tools": null,
+      "outcomes": [
+        {
+          "name": "failure",
+          "transition_to": "triage_pr_feedback"
+        },
+        {
+          "name": "success",
           "transition_to": "watch_pr_gate"
         }
       ]
@@ -404,7 +442,7 @@
         },
         {
           "name": "needs_approval",
-          "transition_to": "watch_pr_gate"
+          "transition_to": "watch_pr_backoff"
         },
         {
           "name": "needs_executor",
@@ -412,11 +450,15 @@
         },
         {
           "name": "needs_review",
-          "transition_to": "watch_pr_gate"
+          "transition_to": "watch_pr_backoff"
         },
         {
           "name": "recheck",
-          "transition_to": "watch_pr_gate"
+          "transition_to": "watch_pr_backoff"
+        },
+        {
+          "name": "watch_pr",
+          "transition_to": "watch_pr_backoff"
         }
       ]
     },
@@ -594,6 +636,8 @@
     "review",
     "commit_and_prepare_pr",
     "open_or_update_pr",
+    "watch_pr_warmup",
+    "watch_pr_backoff",
     "watch_pr_gate",
     "triage_pr_feedback",
     "execute_pr_feedback",
