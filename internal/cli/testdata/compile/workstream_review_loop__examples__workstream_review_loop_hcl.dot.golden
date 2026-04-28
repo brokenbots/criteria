@@ -81,6 +81,7 @@ digraph "workstream_review_loop" {
   "watch_pr_gate" -> "triage_pr_feedback" [label="failure"];
   "watch_pr_gate" -> "merge_pr_and_sync_main" [label="success"];
   "triage_pr_feedback" -> "close_pr_manager_abort" [label="failure"];
+  "triage_pr_feedback" -> "merge_pr_and_sync_main" [label="merged"];
   "triage_pr_feedback" -> "watch_pr_backoff" [label="needs_approval"];
   "triage_pr_feedback" -> "execute_pr_feedback" [label="needs_executor"];
   "triage_pr_feedback" -> "watch_pr_backoff" [label="needs_review"];
