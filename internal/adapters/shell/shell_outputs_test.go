@@ -41,8 +41,9 @@ func TestShellAdapter_CapturesStdout(t *testing.T) {
 	if !ok {
 		t.Fatal("missing 'stdout' in Outputs")
 	}
-	if stdout != "hello world\n" {
-		t.Errorf("stdout = %q, want 'hello world\\n'", stdout)
+	// chunk-based reader preserves exact output; printf without \n produces no trailing newline.
+	if stdout != "hello world" {
+		t.Errorf("stdout = %q, want 'hello world'", stdout)
 	}
 	exitCode, ok := result.Outputs["exit_code"]
 	if !ok {
@@ -110,9 +111,9 @@ func TestShellAdapter_MissingCommand(t *testing.T) {
 // Verify that the adapter.Adapter interface is satisfied.
 var _ adapter.Adapter = (*shell.Adapter)(nil)
 
-func TestShellAdapter_StdoutCappedAt64KB(t *testing.T) {
-	// Generate > 64 KB of stdout via a shell here-string. Each iteration prints
-	// ~100 bytes; 700 iterations = 70 KB. We assert stdout is capped at 64 KB.
+func TestShellAdapter_StdoutCappedAtDefaultLimit(t *testing.T) {
+	// The default per-stream cap is 4 MiB (W05). We generate ~72 KB of output
+	// which is well under the cap; all of it should be captured without truncation.
 	a := shell.New()
 	// Print a 66-byte line 1100 times → ~72 KB raw.
 	result, err := a.Execute(context.Background(), makeStep(map[string]string{
@@ -122,32 +123,62 @@ func TestShellAdapter_StdoutCappedAt64KB(t *testing.T) {
 		t.Fatalf("Execute: %v", err)
 	}
 	stdout := result.Outputs["stdout"]
-	const capBytes = 64 * 1024
-	if len(stdout) > capBytes {
-		t.Errorf("stdout length %d exceeds cap of %d bytes", len(stdout), capBytes)
+	const defaultCap = 4 * 1024 * 1024
+	if len(stdout) > defaultCap {
+		t.Errorf("stdout length %d exceeds default cap of %d bytes", len(stdout), defaultCap)
 	}
 	if len(stdout) == 0 {
 		t.Error("stdout is empty; expected some captured output")
 	}
+	// No truncation sentinel should be present.
+	if result.Outputs["_truncated_stdout"] != "" {
+		t.Errorf("unexpected truncation sentinel; stdout len=%d", len(stdout))
+	}
 }
 
-func TestShellAdapter_StdoutLongLineCapped(t *testing.T) {
-	// A single stdout line that exceeds 64 KB must also be capped exactly.
-	// We emit one 128 KB line (python fills to known size, no trailing newline
-	// issues; fall back to awk if python3 absent).
+func TestShellAdapter_StdoutExplicitSmallCapTriggersEvent(t *testing.T) {
+	// Use an explicit output_limit_bytes well below the generated output so we
+	// can assert the truncation event and sentinel key are present.
 	a := shell.New()
+	// 1100 * ~65 bytes ≈ 72 KB; limit to 1 KiB to guarantee truncation.
+	var events []map[string]any
+	evSink := &collectSink{events: &events}
 	result, err := a.Execute(context.Background(), makeStep(map[string]string{
-		"command": `python3 -c "import sys; sys.stdout.write('x'*131072)"`,
-	}), noopSink{})
+		"command":            `python3 -c "import sys; sys.stdout.write('x'*131072)"`,
+		"output_limit_bytes": "1024",
+	}), evSink)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 	stdout := result.Outputs["stdout"]
-	const capBytes = 64 * 1024
-	if len(stdout) > capBytes {
-		t.Errorf("long-line stdout length %d exceeds cap of %d bytes", len(stdout), capBytes)
+	if len(stdout) > 1024 {
+		t.Errorf("stdout length %d exceeds explicit cap of 1024", len(stdout))
 	}
 	if len(stdout) == 0 {
 		t.Error("stdout is empty; expected some captured output")
+	}
+	if result.Outputs["_truncated_stdout"] != "true" {
+		t.Error("expected _truncated_stdout sentinel to be set")
+	}
+	found := false
+	for _, ev := range events {
+		if ev["event_type"] == "output_truncated" && ev["stream"] == "stdout" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected output_truncated adapter event; got: %v", events)
+	}
+}
+
+// collectSink records Adapter events for test assertions.
+type collectSink struct {
+	events *[]map[string]any
+}
+
+func (s *collectSink) Log(string, []byte) {}
+func (s *collectSink) Adapter(_ string, data any) {
+	if m, ok := data.(map[string]any); ok {
+		*s.events = append(*s.events, m)
 	}
 }

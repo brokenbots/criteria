@@ -582,10 +582,6 @@ issues:
       text: File is not properly formatted # W04: goimports finding
     - path: internal/adapters/shell/shell.go
       linters:
-        - funlen
-      text: 'Function ''Execute''' # W03: refactor Execute
-    - path: internal/adapters/shell/shell.go
-      linters:
         - gocritic
       text: 'unnamedResult: consider giving a name to these results' # W06: gocritic finding
     - path: internal/adapters/shell/shell_outputs_test.go

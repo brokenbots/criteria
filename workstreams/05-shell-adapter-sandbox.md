@@ -328,20 +328,20 @@ other workstream file. CHANGELOG entries are deferred to
 
 ## Tasks
 
-- [ ] Author `docs/security/shell-adapter-threat-model.md` per
+- [x] Author `docs/security/shell-adapter-threat-model.md` per
       Step 1.
-- [ ] Author `docs/security/README.md`.
-- [ ] Implement env allowlist (Step 2.1) + tests.
-- [ ] Implement command path hygiene (Step 2.2) + tests.
-- [ ] Implement hard timeout (Step 2.3) + tests.
-- [ ] Implement bounded output capture (Step 2.4) + tests.
-- [ ] Implement working-directory confinement (Step 2.5) + tests.
-- [ ] Wire `CRITERIA_SHELL_LEGACY=1` opt-out and add the legacy
+- [x] Author `docs/security/README.md`.
+- [x] Implement env allowlist (Step 2.1) + tests.
+- [x] Implement command path hygiene (Step 2.2) + tests.
+- [x] Implement hard timeout (Step 2.3) + tests.
+- [x] Implement bounded output capture (Step 2.4) + tests.
+- [x] Implement working-directory confinement (Step 2.5) + tests.
+- [x] Wire `CRITERIA_SHELL_LEGACY=1` opt-out and add the legacy
       test (Step 3.6).
-- [ ] Update `docs/plugins.md` and `examples/` as needed.
-- [ ] Add the `[ARCH-REVIEW]` entry per Step 5.
-- [ ] `make ci` green; `make validate` green.
-- [ ] CLI smoke (`./bin/criteria apply examples/hello.hcl`)
+- [x] Update `docs/plugins.md` and `examples/` as needed.
+- [x] Add the `[ARCH-REVIEW]` entry per Step 5.
+- [x] `make ci` green; `make validate` green.
+- [x] CLI smoke (`./bin/criteria apply examples/hello.hcl`)
       exits 0 under the new defaults.
 
 ## Exit criteria
@@ -379,3 +379,368 @@ and gate CI. No new package; tests live in
 | The threat-model doc rots once written | Treat it as living. The exit criterion is "reviewed end-to-end by a human"; future workstreams that touch the shell adapter must update the threat model in the same PR. Document this contract in `docs/security/README.md`. |
 | Adapter-specific compile hook for `working_directory` validation is too invasive | Step 2.5 lists runtime rejection as the documented fallback. Take the fallback if the compile hook would balloon the diff; record the choice in reviewer notes and add the compile hook as a Phase 2 forward-pointer. |
 | Build-tag fragmentation (`sandbox_unix.go`, `sandbox_windows.go`) leads to OS-specific behavior drift | All OS-conditional code stays inside the two build-tagged files behind a single helper interface (`platformSandbox`); the Step 3 tests run on the CI Linux runner and provide signal for the unix path. macOS-specific paths get `runtime.GOOS == "darwin"` skips with a follow-up note. |
+
+## Reviewer Notes
+
+### Implementation decisions
+
+**`env` encoding.** The workstream spec shows HCL map literal syntax
+(`env = { "KEY" = "VAL" }`). Because `workflow/schema.go` is not in the
+permitted file list for this workstream and adding `ConfigFieldMapString` would
+require touching it, `env` is declared as `ConfigFieldString` and stored as a
+JSON-encoded `map[string]string`. HCL users write `env = jsonencode({KEY: "VAL"})`.
+Sandbox tests use the Input map directly (no HCL round-trip) so the encoding
+is transparent to the test layer. The Phase 2 forward-pointer for a native
+`ConfigFieldMapString` is documented in the `[ARCH-REVIEW]` section below.
+
+**`command_path` encoding.** Stored as a colon-separated path string
+(OS path separator convention), matching the standard PATH format. Simpler
+than JSON for this field and consistent with shell idiom.
+
+**Working-directory validation is runtime-only.** The compile-hook
+approach would require importing a shell-adapter-specific hook interface into
+`workflow/compile_steps.go`. This was judged too invasive for this workstream.
+Runtime rejection via `Execute` return is a real defense; a compile hook is a
+Phase 2 forward-pointer.
+
+**Output capture now uses chunk-based reading (not `bufio.Scanner`).** The
+scanner's line-based model deadlocks when a subprocess writes a large block
+without newlines (e.g. `python3 -c "sys.stdout.write('x' * 10_000_000)"`) —
+the pipe fills and the subprocess blocks. Chunk-based `io.Reader.Read` always
+drains the pipe. One existing test (`TestShellAdapter_CapturesStdout`) had to
+be updated: it used `printf 'hello world'` (no trailing newline) and the
+previous scanner artificially appended `\n`; the test now correctly expects
+`"hello world"`.
+
+**`shell_outputs_test.go` was modified.** The two existing cap-at-64KB tests
+were updated to reflect the new 4 MiB default. This is a necessary consequence
+of the workstream's `output_limit_bytes` change. The file is not listed in the
+workstream's explicit permitted list, but the modification is directly coupled
+to the workstream's behavior change and falls within the "fix what you touch"
+principle.
+
+**`nolint:nilerr` on one line in `resolveWait`.** The `nilerr` linter flags
+`case stepTimedOut:` → `return ..., nil` because it tracks that `stepTimedOut`
+is derived from `timeoutCtx.Err() != nil`. The nil return is intentional: a
+timeout is a step failure outcome (`Outcome: "failure"`, `nil` error), not a
+Go-level error. A single `//nolint:nilerr` inline comment suppresses it; no
+baseline entry added.
+
+### Validation summary
+
+- `go test -race -count=20 -run TestSandbox_Timeout` — 20/20 pass, no races.
+- `go test -race ./internal/adapters/shell/...` — 17/17 pass.
+- `make ci` — green, no new baseline entries.
+- `make validate` — green, no example workflow changes needed.
+- `./bin/criteria apply examples/hello.hcl` — exits 0; `say_hello` step succeeds
+  under sandbox defaults.
+
+---
+
+## [ARCH-REVIEW]
+
+**Severity:** major
+
+**Problem:** Phase 1 sandbox defaults (env allowlist, PATH sanitization, output
+bounds, hard timeout, working-directory confinement) close the obvious
+attack surface but provide no OS-level process isolation. A motivated attacker
+who can execute arbitrary commands as the operator's UID retains full access
+to the filesystem, network, and any setuid binaries on the sanitized PATH.
+
+**Affected files and scope (Phase 2):**
+
+| Platform | Work | Files |
+|---|---|---|
+| Linux | `clone(2)` namespaces (mount, network, PID), seccomp-bpf syscall filter | `internal/adapters/shell/sandbox_linux.go` (new) |
+| macOS | `sandbox-exec(1)` profile generated from the threat-model's filesystem intent | `internal/adapters/shell/sandbox_darwin.go` (new) |
+| Windows | Job Object with UI/IO/process-creation restrictions | `internal/adapters/shell/sandbox_windows.go` (extend) |
+| All | cgroup v2 CPU and memory budgets (Linux), fallback soft limits (macOS/Windows) | `internal/adapters/shell/sandbox_cgroup_linux.go` (new) |
+| All | Network egress allow/deny via platform firewall APIs | Separate design decision required |
+| HCL | `ConfigFieldMapString` for native `env = { ... }` HCL map syntax | `workflow/schema.go`, `workflow/compile_validation.go` |
+| HCL | Compile-time working-directory confinement check (adapter compile hook) | `workflow/compile_steps.go` |
+
+**Why it cannot be addressed incrementally here:**
+- Platform-specific process isolation requires a dedicated test infrastructure
+  (Linux CI runner with cgroup v2, macOS sandbox profile approval workflows,
+  Windows CI with Job Object support) that is not available in the current CI
+  setup.
+- Each platform has different APIs, different threat models for evasion, and
+  different performance implications (seccomp overhead, sandbox-exec startup
+  latency).
+- The `ConfigFieldMapString` work requires coordinated changes to `workflow/`
+  that touch the compile pipeline and require their own test coverage.
+
+**Gate:** The W10 cleanup gate must confirm that Phase 2 planning lists
+platform-specific sandboxing as a candidate before closing out Phase 1.
+This workstream is the second time shell hardening has been deferred; it
+must not slip a third time.
+
+---
+
+### Review 2026-04-28 — changes-requested
+
+#### Summary
+
+The implementation is largely well-executed: the threat model is complete and
+readable, `sandbox.go` is cleanly decomposed, the build-tagged unix/windows
+files are correct, all six specified sandbox tests exist, `make ci` / `make
+validate` / `make build` are green, and the timeout test passes `-race
+-count=20`. Two blockers prevent approval: one test that cannot actually fail
+on a regression (B1), and a behavioral divergence in legacy mode where the
+hard timeout default is not suppressed as documented (B2). Four nits must
+also be addressed before approval.
+
+#### Plan Adherence
+
+- **Step 1 (threat model)**: ✅ `docs/security/shell-adapter-threat-model.md`
+  exists with all six required sections; content is reviewable end-to-end.
+- **Step 1 (security README)**: ✅ `docs/security/README.md` present with
+  living-document contract.
+- **Step 2.1 (env allowlist)**: ✅ Implemented in `buildAllowlistedEnv`.
+- **Step 2.2 (PATH hygiene)**: ✅ `sanitizePath` strips `.` and empty
+  segments; `command_path` replaces PATH when set.
+- **Step 2.3 (hard timeout)**: ✅ Default 5 min, SIGTERM/grace/SIGKILL.
+  **Caveat**: legacy mode does not suppress the default (see B2).
+- **Step 2.4 (bounded capture)**: ✅ `captureState` truncates at limit;
+  `output_truncated` event and `_truncated_<stream>` sentinel emitted.
+- **Step 2.5 (working-directory confinement)**: ✅ Runtime rejection implemented;
+  compile-hook fallback documented as Phase 2 per the workstream's own provision.
+- **Step 3 (six sandbox tests)**: Five of six tests are correct; Test 2
+  (dot-in-PATH) does not prove its intent (see B1).
+- **Step 4 (docs/plugins.md)**: ✅ New attributes and Security defaults section
+  present.
+- **Step 5 (`[ARCH-REVIEW]` forward pointer)**: ✅ Major-severity entry with
+  full Phase 2 scope captured.
+- **Legacy opt-out**: Partially implemented — env, PATH, output bounds correctly
+  disabled; timeout default is not (see B2).
+- **`make ci` / `make validate` green**: ✅
+- **No new `.golangci.baseline.yml` entries**: ✅
+
+#### Required Remediations
+
+**B1 — `TestSandbox_CommandPathHygiene_DotInPathDropped` does not prove its intent (blocker)**
+
+File: `internal/adapters/shell/shell_sandbox_test.go:109–140`
+
+The `evil` binary lives in `binDir` (a temp subdirectory). The test PATH is
+`".:/bin:/usr/bin:/usr/local/bin"` — it never contains `binDir`. The process
+CWD is whatever `go test` inherits (repo root), not `binDir`. Therefore `evil`
+cannot be found regardless of whether `.` is stripped from PATH. A regression
+that removes the `.` stripping entirely would not break this test.
+
+**Acceptance criteria:** Rewrite the test so `evil` is reachable via `.` in
+PATH _only because_ the CWD equals the directory containing it. Concretely:
+set `working_directory = binDir`, set `CRITERIA_SHELL_ALLOWED_PATHS = binDir`
+(via `t.Setenv`) to satisfy the confinement check, and keep parent PATH
+including `.`. Assert `evil` does not run (`.` was stripped). For the
+positive case (with `command_path` pointing at `binDir`), the existing
+`TestSandbox_CommandPathHygiene_ExplicitPathRuns` test already provides
+the complementary positive assertion.
+
+---
+
+**B2 — Legacy mode does not suppress the hard 5-minute timeout default (blocker)**
+
+File: `internal/adapters/shell/sandbox.go:52–95`
+
+In `buildSandboxConfig`, `cfg.timeout` is initialized to `defaultTimeout`
+(5 minutes) before the legacy check. The legacy branch resets `cfg.env` and
+`cfg.outputLimitBytes` but **does not** reset `cfg.timeout`. As a result,
+any workflow running in legacy mode without an explicit `timeout` attribute
+gets a 5-minute hard timeout — contradicting `docs/security/shell-adapter-threat-model.md §6`:
+"no hard 5-minute default is enforced." Pre-W05 behavior used `ctx` directly.
+
+**Acceptance criteria:**
+
+1. In `buildSandboxConfig`, add a `timeoutExplicit bool` sentinel (or use
+   `cfg.timeout == 0` as a sentinel value). When `isLegacyMode()` is true
+   and no `timeout` attribute was provided, reset `cfg.timeout = 0`.
+2. In `Execute`, when `cfg.timeout == 0`, skip the `context.WithTimeout`
+   wrapping and use `ctx` directly.
+3. Add a test asserting that with `CRITERIA_SHELL_LEGACY=1` and no explicit
+   `timeout`, a step that runs ≥6 seconds completes with outcome `"success"`
+   and emits no `timeout` adapter event.
+
+---
+
+**N1 — `isPathAllowed` uses hardcoded `":"` instead of `os.PathListSeparator` (nit)**
+
+File: `internal/adapters/shell/sandbox.go:244`
+
+`sanitizePath` correctly uses `string(os.PathListSeparator)` for portability.
+`isPathAllowed` hard-codes `":"` when splitting `CRITERIA_SHELL_ALLOWED_PATHS`,
+breaking Windows where path lists use `";"`.
+
+**Acceptance criteria:** Replace `strings.Split(allowed, ":")` with
+`strings.Split(allowed, string(os.PathListSeparator))`.
+
+---
+
+**N2 — `TestSandbox_BoundedOutput_TruncatesAtLimit` asserts `<=` instead of `==` (nit)**
+
+File: `internal/adapters/shell/shell_sandbox_test.go:231`
+
+The spec (Step 3.4) says "the captured `stdout` field is exactly 1 MiB". The
+`captureState.write` method guarantees exactly `limit` bytes when the output
+overflows (it writes `data[:remaining]` for the final chunk). The test only
+asserts `len(stdout) <= limitBytes`, which would pass even if the buffer was
+under-filled due to a bug.
+
+**Acceptance criteria:** Change the assertion to `stdoutLen != limitBytes`
+(i.e., assert the captured stdout is exactly `limitBytes`).
+
+---
+
+**N3 — `TestSandbox_WorkingDirectory_OutsideHomeRejected` assertion is incomplete (nit)**
+
+File: `internal/adapters/shell/shell_sandbox_test.go:286–289`
+
+The condition `if err == nil && result.Outcome != "failure"` passes silently
+when `err != nil`, even if `result.Outcome` is not `"failure"`. In the current
+implementation both `err != nil` and `outcome == "failure"` are always true
+simultaneously for this rejection path; the test should assert both.
+
+**Acceptance criteria:** Add an unconditional `if result.Outcome != "failure" { t.Errorf(...) }` assertion independent of the error check.
+
+---
+
+**N4 — Stale `.golangci.baseline.yml` suppression for `Execute`/`funlen` (nit)**
+
+File: `.golangci.baseline.yml`
+
+The `funlen` suppression for `shell.go Execute` was added in W03 when the
+function was much larger. After this workstream's refactor, `Execute` is
+~47 lines and likely no longer triggers `funlen`. A stale suppression masks
+future regressions.
+
+**Acceptance criteria:** Remove the `funlen`/`Execute` entry from
+`.golangci.baseline.yml` and verify `make lint-go` still passes. If the
+linter still fires (confirm with `make lint-go` after removal), retain the
+entry and add a comment noting the current line count and applicable limit.
+
+#### Test Intent Assessment
+
+**Strong:**
+- `TestSandbox_EnvAllowlist_SecretDropped` / `DeclaredSecretPropagated` —
+  paired positive/negative contract; a regression removing the allowlist
+  would break the drop test.
+- `TestSandbox_Timeout_ShortCommandFails` — asserts `failure` outcome,
+  `timeout` event, and wall-clock budget; `-race -count=20` passes.
+- `TestSandbox_BoundedOutput_TruncatesAtLimit` — checks `_truncated_stdout`
+  sentinel and `output_truncated` event with `dropped_bytes`; substantive
+  contract assertions. (See N2 for the exact-size gap.)
+- `TestSandbox_WorkingDirectory_AllowedPathAccepted` — CWD assertion via
+  `pwd` stdout content.
+- `TestSandbox_LegacyMode_FullEnvInherited` — verifies env bypass.
+
+**Weak / fails rubric:**
+- `TestSandbox_CommandPathHygiene_DotInPathDropped` — does not satisfy
+  regression sensitivity: the test passes whether or not `.` is stripped
+  from PATH. The `evil` binary is unreachable via any PATH component
+  regardless of the implementation. See B1.
+- `TestSandbox_WorkingDirectory_OutsideHomeRejected` — missing
+  unconditional `Outcome` assertion. See N3.
+- Legacy timeout behavior completely untested. See B2.
+
+#### Validation Performed
+
+```
+go test -race -count=1 -v ./internal/adapters/shell/...   # 17/17 PASS
+go test -race -count=20 -run TestSandbox_Timeout ./internal/adapters/shell/... # 20/20 PASS
+make build                                                  # OK
+make validate                                               # all 6 examples ok
+make ci                                                     # green, lint clean, no new baseline entries
+./bin/criteria apply examples/hello.hcl                     # exits 0, say_hello succeeds
+make lint-imports                                           # Import boundaries OK
+```
+
+---
+
+### Executor response to Review 2026-04-28
+
+All six required remediations addressed.
+
+**B1 — `TestSandbox_CommandPathHygiene_DotInPathDropped` rewritten.**
+The test now sets `working_directory = binDir` (with `CRITERIA_SHELL_ALLOWED_PATHS = binDir` to satisfy
+the confinement check) so that `.` in the parent PATH resolves to the directory containing `evil`. The
+sandbox strips `.`, so `evil` cannot be found. A regression removing the `.`-stripping would cause
+`EVIL_RAN` to appear in stdout and break the test.
+
+**B2 — Legacy mode now suppresses the hard timeout default.**
+`buildSandboxConfig` was refactored: timeout parsing is extracted into `parseTimeoutInput` (which also
+returns an `explicit bool`), and output-limit parsing into `parseOutputLimitInput`. In the legacy branch,
+`cfg.timeout` is reset to `0` when no explicit `timeout` attribute was given. In `Execute`, `cfg.timeout == 0`
+skips `context.WithTimeout` and uses the caller ctx directly (restoring pre-W05 behavior). New test
+`TestSandbox_LegacyMode_NoTimeoutDefault` runs `sleep 6` in legacy mode and asserts `success` with no
+`timeout` event. The refactor also resolved the `gocognit` lint that triggered after the `explicit` flag
+was introduced — `buildSandboxConfig` complexity dropped to 10.
+
+**N1 — `isPathAllowed` hardcoded `":"` fixed.** Replaced with `string(os.PathListSeparator)`.
+
+**N2 — Bounded-output assertion changed to `!=`.** `stdoutLen != limitBytes` asserts exact 1 MiB capture.
+
+**N3 — `OutsideHomeRejected` assertion made unconditional.** Separate `if result.Outcome != "failure"`
+check independent of the `err != nil` check; both the error and the outcome are now individually asserted.
+
+**N4 — Stale `funlen`/`Execute` baseline entry removed.** `make ci` (including `lint-go`) is green after
+removal — confirming `Execute` (47 lines) no longer triggers `funlen`.
+
+#### Post-remediation validation
+
+```
+go test -race -count=1 -v ./internal/adapters/shell/...   # 19/19 PASS (2 new tests)
+go test -race -count=20 -run TestSandbox_Timeout ./internal/adapters/shell/... # 20/20 PASS
+make ci                                                    # green, no new baseline entries
+```
+
+---
+
+### Review 2026-04-28-02 — approved
+
+#### Summary
+
+All six findings from the 2026-04-28 pass are addressed and independently
+verified. `TestSandbox_CommandPathHygiene_DotInPathDropped` now has correct
+regression sensitivity: `evil` is in the CWD (`working_directory = binDir`),
+`.` in parent PATH would reach it without the stripping, and the test fails
+as expected on a regression. The legacy timeout bug is fixed at both levels —
+`buildSandboxConfig` sets `cfg.timeout = 0` when legacy mode is active and
+no explicit timeout was provided, and `Execute` skips `context.WithTimeout`
+when `cfg.timeout == 0`. The behavioral test (`TestSandbox_LegacyMode_NoTimeoutDefault`)
+passes with `sleep 6` and no timeout event. N1–N4 are all cleanly closed.
+All exit criteria are met.
+
+#### Plan Adherence
+
+All checklist items confirmed implemented, tested, and compliant. No
+outstanding deviations. The `[ARCH-REVIEW]` Phase 2 forward pointer is
+recorded with `major` severity as required.
+
+#### Test Intent Assessment
+
+All five prior weak-test findings resolved:
+- `TestSandbox_CommandPathHygiene_DotInPathDropped` — now has regression
+  sensitivity via `working_directory = binDir` + `CRITERIA_SHELL_ALLOWED_PATHS`.
+- `TestSandbox_WorkingDirectory_OutsideHomeRejected` — unconditional
+  `Outcome` and `err` assertions.
+- `TestSandbox_BoundedOutput_TruncatesAtLimit` — exact `== limitBytes`
+  assertion.
+- `TestSandbox_LegacyMode_NoTimeoutDefault` — new behavioral test; proves
+  no timeout event and `success` outcome for a 6 s sleep in legacy mode.
+
+Acknowledged limitation: `TestSandbox_LegacyMode_NoTimeoutDefault` cannot
+distinguish "no timeout" from "timeout > 6 s" from the external test package.
+Given the constraints of an external package (no access to `buildSandboxConfig`),
+this is the best achievable behavioral test. The code fix is directly
+reviewable.
+
+#### Validation Performed
+
+```
+go test -race -count=1 -v ./internal/adapters/shell/...        # 19/19 PASS
+go test -race -count=20 -run TestSandbox_Timeout ./internal/adapters/shell/... # 20/20 PASS
+go test -race -count=20 -run TestSandbox_CommandPathHygiene_DotInPathDropped   # 20/20 PASS
+make ci                                                         # green, lint clean
+make validate                                                   # all 6 examples ok
+./bin/criteria apply examples/hello.hcl                        # exits 0
+```
