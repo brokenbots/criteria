@@ -89,7 +89,7 @@ steps (declaration order):
   triage_pr_feedback   agent=pr_manager
     input keys: prompt
     allow_tools: *
-    outcomes: needs_executor -> execute_pr_feedback, recheck -> watch_pr_backoff, watch_pr -> watch_pr_backoff, needs_review -> watch_pr_backoff, needs_approval -> watch_pr_backoff, failure -> close_pr_manager_abort
+    outcomes: merged -> merge_pr_and_sync_main, needs_executor -> execute_pr_feedback, recheck -> watch_pr_backoff, watch_pr -> watch_pr_backoff, needs_review -> watch_pr_backoff, needs_approval -> watch_pr_backoff, failure -> close_pr_manager_abort
   execute_pr_feedback   agent=executor
     input keys: prompt
     allow_tools: *

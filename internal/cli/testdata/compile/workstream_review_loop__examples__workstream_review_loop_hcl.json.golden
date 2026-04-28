@@ -441,6 +441,10 @@
           "transition_to": "close_pr_manager_abort"
         },
         {
+          "name": "merged",
+          "transition_to": "merge_pr_and_sync_main"
+        },
+        {
           "name": "needs_approval",
           "transition_to": "watch_pr_backoff"
         },
