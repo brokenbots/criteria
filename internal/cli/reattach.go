@@ -39,177 +39,194 @@ func resumeInFlightRuns(ctx context.Context, log *slog.Logger, clientOpts server
 
 func resumeOneRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint, clientOpts servertrans.Options) {
 	log = log.With("run_id", cp.RunID, "step", cp.CurrentStep)
-	resumeCtx, resumeCancel := context.WithCancel(ctx)
-	defer resumeCancel()
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 
+	rc, err := buildRecoveryClient(log, cp, clientOpts)
+	if err != nil {
+		return // buildRecoveryClient logged and cleared the checkpoint
+	}
+	defer rc.Close()
+
+	resp, err := attemptReattach(ctx, log, rc, cp)
+	if err != nil || resp == nil {
+		return
+	}
+
+	graph, err := loadCheckpointWorkflow(log, cp)
+	if err != nil {
+		return
+	}
+
+	if resp.Status == "paused" {
+		resumePausedRun(ctx, log, rc, cp, graph, resp)
+		return
+	}
+	resumeActiveRun(ctx, log, rc, cp, graph, resp)
+}
+
+// abandonCheckpoint logs a warning (with optional error) and removes the checkpoint.
+func abandonCheckpoint(log *slog.Logger, cp *StepCheckpoint, reason string, err error) {
+	if err != nil {
+		log.Warn(reason, "error", err)
+	} else {
+		log.Warn(reason)
+	}
+	RemoveStepCheckpoint(cp.RunID)
+}
+
+// buildRecoveryClient validates checkpoint credentials, builds a temporary
+// server client, and sets the persisted credentials on it. On any failure it
+// abandons the checkpoint and returns a non-nil error so the caller can return.
+func buildRecoveryClient(log *slog.Logger, cp *StepCheckpoint, clientOpts servertrans.Options) (*servertrans.Client, error) {
 	if cp.CriteriaID == "" || cp.Token == "" {
-		log.Warn("checkpoint missing criteria credentials; clearing", "run_id", cp.RunID)
-		RemoveStepCheckpoint(cp.RunID)
-		return
+		abandonCheckpoint(log, cp, "checkpoint missing criteria credentials; clearing", nil)
+		return nil, fmt.Errorf("missing credentials for run %q", cp.RunID)
 	}
-
-	// Build a temporary client for this resumed run using the persisted
-	// credentials. We do not Register (which would create a new criteria_id);
-	// instead we re-use the original identity so ReattachRun ownership check passes.
-	recoverClient, err := servertrans.NewClient(cp.ServerURL, log, clientOpts)
+	// We do not Register (which would create a new criteria_id); instead we
+	// re-use the original identity so ReattachRun ownership check passes.
+	rc, err := servertrans.NewClient(cp.ServerURL, log, clientOpts)
 	if err != nil {
-		log.Warn("cannot build recovery client; abandoning checkpoint", "error", err)
-		RemoveStepCheckpoint(cp.RunID)
-		return
+		abandonCheckpoint(log, cp, "cannot build recovery client; abandoning checkpoint", err)
+		return nil, err
 	}
-	defer recoverClient.Close()
-	recoverClient.SetCredentials(cp.CriteriaID, cp.Token)
+	rc.SetCredentials(cp.CriteriaID, cp.Token)
+	return rc, nil
+}
 
-	resp, err := recoverClient.ReattachRun(resumeCtx, cp.RunID, cp.CriteriaID)
+// attemptReattach calls ReattachRun and checks CanResume. Returns nil, nil
+// when the run is not resumable (checkpoint already cleared). Returns non-nil
+// error when the RPC fails (checkpoint already cleared).
+func attemptReattach(ctx context.Context, log *slog.Logger, rc *servertrans.Client, cp *StepCheckpoint) (*pb.ReattachRunResponse, error) {
+	resp, err := rc.ReattachRun(ctx, cp.RunID, cp.CriteriaID)
 	if err != nil {
-		log.Warn("reattach RPC failed; abandoning checkpoint", "error", err)
-		RemoveStepCheckpoint(cp.RunID)
-		return
+		abandonCheckpoint(log, cp, "reattach RPC failed; abandoning checkpoint", err)
+		return nil, err
 	}
 	if !resp.CanResume {
 		log.Info("run not resumable (terminal or owned by another agent); clearing checkpoint",
 			"status", resp.Status)
 		RemoveStepCheckpoint(cp.RunID)
-		return
+		return nil, nil
 	}
-
 	log.Info("resuming run after crash",
 		"current_step", resp.CurrentStep,
 		"last_attempt", resp.Attempt,
 		"status", resp.Status)
+	return resp, nil
+}
 
-	// Re-parse the workflow from the checkpoint path.
-	graph, parseErr := parseWorkflowFromPath(cp.WorkflowPath)
-	if parseErr != nil {
-		log.Warn("cannot parse workflow for crashed run; abandoning", "error", parseErr)
-		RemoveStepCheckpoint(cp.RunID)
+// loadCheckpointWorkflow re-parses and compiles the workflow recorded in cp.
+// On failure it abandons the checkpoint and returns a non-nil error.
+func loadCheckpointWorkflow(log *slog.Logger, cp *StepCheckpoint) (*workflow.FSMGraph, error) {
+	graph, err := parseWorkflowFromPath(cp.WorkflowPath)
+	if err != nil {
+		abandonCheckpoint(log, cp, "cannot parse workflow for crashed run; abandoning", err)
+		return nil, err
+	}
+	return graph, nil
+}
+
+// drainAndCleanup flushes pending server events then removes the checkpoint.
+// context.WithoutCancel ensures the 5-second drain window is honoured even
+// when ctx is already cancelled (e.g. after SIGTERM or a ctx.Done() select arm).
+func drainAndCleanup(ctx context.Context, rc *servertrans.Client, cp *StepCheckpoint) {
+	drainCtx, drainCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	rc.Drain(drainCtx)
+	drainCancel()
+	RemoveStepCheckpoint(cp.RunID)
+}
+
+// resumePausedRun re-enters a paused run using WithPendingSignal, then
+// services further resume signals until the run reaches a terminal state.
+func resumePausedRun(ctx context.Context, log *slog.Logger, rc *servertrans.Client, cp *StepCheckpoint, graph *workflow.FSMGraph, resp *pb.ReattachRunResponse) {
+	if streamErr := rc.StartStreams(ctx, cp.RunID); streamErr != nil {
+		abandonCheckpoint(log, cp, "failed to start server streams for paused run", streamErr)
 		return
 	}
+	sink := &run.Sink{RunID: cp.RunID, Client: rc, Log: log}
+	loader := plugin.NewLoader()
+	loader.RegisterBuiltin(shell.Name, plugin.BuiltinFactoryForAdapter(shell.New()))
 
-	// If the run was paused when the agent crashed, re-enter the wait/approval
-	// node with WithPendingSignal so it immediately re-issues ErrPaused and waits
-	// for the real resume signal (W05).
-	if resp.Status == "paused" {
-		if streamErr := recoverClient.StartStreams(resumeCtx, cp.RunID); streamErr != nil {
-			log.Warn("failed to start server streams for paused run", "error", streamErr)
-			RemoveStepCheckpoint(cp.RunID)
+	restoredVars, restoredIter, restoreErr := workflow.RestoreVarScope(resp.VariableScope, graph)
+	if restoreErr != nil {
+		log.Warn("could not restore variable scope after pause reattach; starting with defaults", "error", restoreErr)
+	}
+	eng := engine.New(graph, loader, sink,
+		engine.WithResumedVars(restoredVars),
+		engine.WithResumedIter(restoredIter),
+		engine.WithPendingSignal(resp.PendingSignal),
+	)
+	if runErr := eng.RunFrom(ctx, resp.CurrentStep, int(resp.Attempt)); runErr != nil {
+		log.Error("paused run re-entry failed", "error", runErr)
+		drainAndCleanup(ctx, rc, cp)
+		return
+	}
+	serviceResumeSignals(ctx, log, rc, cp, graph, loader, sink, eng)
+}
+
+// serviceResumeSignals waits for and dispatches resume signals while the run
+// remains paused, then drains and removes the checkpoint.
+func serviceResumeSignals(ctx context.Context, log *slog.Logger, rc *servertrans.Client, cp *StepCheckpoint, graph *workflow.FSMGraph, loader plugin.Loader, sink *run.Sink, initialEng *engine.Engine) {
+	eng := initialEng
+	for sink.IsPaused() {
+		log.Info("run remains paused after reattach; waiting for resume",
+			"run_id", cp.RunID, "node", sink.PausedAt())
+		var resumeMsg *pb.ResumeRun
+		select {
+		case <-ctx.Done():
+			drainAndCleanup(ctx, rc, cp)
 			return
+		case resumeMsg = <-rc.ResumeCh():
 		}
-
-		sink := &run.Sink{
-			RunID:  cp.RunID,
-			Client: recoverClient,
-			Log:    log,
+		if resumeMsg.RunId != cp.RunID {
+			log.Warn("received resume for unexpected run", "expected", cp.RunID, "got", resumeMsg.RunId)
+			continue
 		}
-
-		loader := plugin.NewLoader()
-		loader.RegisterBuiltin(shell.Name, plugin.BuiltinFactoryForAdapter(shell.New()))
-
-		restoredVars, restoredIter, restoreErr := workflow.RestoreVarScope(resp.VariableScope, graph)
-		if restoreErr != nil {
-			log.Warn("could not restore variable scope after pause reattach; starting with defaults", "error", restoreErr)
-		}
-
-		eng := engine.New(graph, loader, sink,
-			engine.WithResumedVars(restoredVars),
-			engine.WithResumedIter(restoredIter),
-			engine.WithPendingSignal(resp.PendingSignal),
+		pausedNode := sink.PausedAt()
+		sink.ClearPaused()
+		resumedEng := engine.New(graph, loader, sink,
+			engine.WithResumedVars(eng.VarScope()),
+			engine.WithResumePayload(resumeMsg.Payload),
 		)
-		if runErr := eng.RunFrom(resumeCtx, resp.CurrentStep, int(resp.Attempt)); runErr != nil {
-			log.Error("paused run re-entry failed", "error", runErr)
-			drainCtx, drainCancel := context.WithTimeout(context.Background(), 5*time.Second)
-			recoverClient.Drain(drainCtx)
-			drainCancel()
-			RemoveStepCheckpoint(cp.RunID)
-			return
+		if runErr := resumedEng.RunFrom(ctx, pausedNode, 1); runErr != nil {
+			log.Error("run failed after resume", "error", runErr)
+			break
 		}
-
-		// If still paused after re-entry, wait for resume signal from the server.
-		for sink.IsPaused() {
-			log.Info("run remains paused after reattach; waiting for resume",
-				"run_id", cp.RunID, "node", sink.PausedAt())
-			var resumeMsg *pb.ResumeRun
-			select {
-			case <-resumeCtx.Done():
-				drainCtx, drainCancel := context.WithTimeout(context.Background(), 5*time.Second)
-				recoverClient.Drain(drainCtx)
-				drainCancel()
-				return
-			case resumeMsg = <-recoverClient.ResumeCh():
-			}
-			if resumeMsg.RunId != cp.RunID {
-				log.Warn("received resume for unexpected run", "expected", cp.RunID, "got", resumeMsg.RunId)
-				continue
-			}
-			pausedNode := sink.PausedAt()
-			sink.ClearPaused()
-			resumedEng := engine.New(graph, loader, sink,
-				engine.WithResumedVars(eng.VarScope()),
-				engine.WithResumePayload(resumeMsg.Payload),
-			)
-			if runErr := resumedEng.RunFrom(resumeCtx, pausedNode, 1); runErr != nil {
-				log.Error("run failed after resume", "error", runErr)
-				break
-			}
-			eng = resumedEng
-		}
-
-		drainCtx, drainCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		recoverClient.Drain(drainCtx)
-		drainCancel()
-		RemoveStepCheckpoint(cp.RunID)
-		return
+		eng = resumedEng
 	}
+	drainAndCleanup(ctx, rc, cp)
+}
 
+// resumeActiveRun handles the normal (non-paused) resume path, including
+// max_step_retries policy enforcement.
+func resumeActiveRun(ctx context.Context, log *slog.Logger, rc *servertrans.Client, cp *StepCheckpoint, graph *workflow.FSMGraph, resp *pb.ReattachRunResponse) {
 	nextAttempt := int(resp.Attempt) + 1
-
-	// Check max_step_retries: if resuming would exceed policy, fail the run.
 	maxAttempts := 1 + graph.Policy.MaxStepRetries
 	if nextAttempt > maxAttempts {
 		log.Warn("exceeded max_step_retries on resume; failing run",
 			"next_attempt", nextAttempt, "max_attempts", maxAttempts)
-		if streamErr := recoverClient.StartStreams(resumeCtx, cp.RunID); streamErr != nil {
-			log.Warn("failed to start streams for failed resume", "error", streamErr)
-			RemoveStepCheckpoint(cp.RunID)
+		if streamErr := rc.StartStreams(ctx, cp.RunID); streamErr != nil {
+			abandonCheckpoint(log, cp, "failed to start streams for failed resume", streamErr)
 			return
 		}
-		sink := &run.Sink{
-			RunID:  cp.RunID,
-			Client: recoverClient,
-			Log:    log,
-		}
+		sink := &run.Sink{RunID: cp.RunID, Client: rc, Log: log}
 		reason := fmt.Sprintf("exceeded max_step_retries on resume at step %q (attempt %d)", resp.CurrentStep, nextAttempt)
 		sink.OnRunFailed(reason, resp.CurrentStep)
-		// Use a background context so terminal-event flush still runs even when
-		// the run context has already been cancelled (e.g. SIGTERM).
-		drainCtx, drainCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		recoverClient.Drain(drainCtx)
-		drainCancel()
-		RemoveStepCheckpoint(cp.RunID)
+		drainAndCleanup(ctx, rc, cp)
 		return
 	}
 
-	if streamErr := recoverClient.StartStreams(resumeCtx, cp.RunID); streamErr != nil {
-		log.Warn("failed to start server streams for resumed run", "error", streamErr)
-		RemoveStepCheckpoint(cp.RunID)
+	if streamErr := rc.StartStreams(ctx, cp.RunID); streamErr != nil {
+		abandonCheckpoint(log, cp, "failed to start server streams for resumed run", streamErr)
 		return
 	}
-
-	sink := &run.Sink{
-		RunID:  cp.RunID,
-		Client: recoverClient,
-		Log:    log,
-	}
-
-	// Emit StepResumed before the engine re-enters the step.
+	sink := &run.Sink{RunID: cp.RunID, Client: rc, Log: log}
 	sink.OnStepResumed(resp.CurrentStep, nextAttempt, "criteria_restart")
-
 	loader := plugin.NewLoader()
 	loader.RegisterBuiltin(shell.Name, plugin.BuiltinFactoryForAdapter(shell.New()))
 
-	// Restore the variable scope from the server so expressions referencing
-	// prior step outputs are evaluated correctly after crash recovery (W04).
-	// Also restore the iter cursor if a for_each was active at crash time (W07).
+	// Restore variable scope and iter cursor from the server (W04/W07).
 	restoredVars, restoredIter, restoreErr := workflow.RestoreVarScope(resp.VariableScope, graph)
 	if restoreErr != nil {
 		log.Warn("could not restore variable scope; starting with defaults", "error", restoreErr)
@@ -219,16 +236,12 @@ func resumeOneRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint, cli
 		engine.WithResumedVars(restoredVars),
 		engine.WithResumedIter(restoredIter),
 	)
-	if runErr := eng.RunFrom(resumeCtx, resp.CurrentStep, nextAttempt); runErr != nil {
+	if runErr := eng.RunFrom(ctx, resp.CurrentStep, nextAttempt); runErr != nil {
 		log.Error("resumed run failed", "error", runErr)
 	} else {
 		log.Info("resumed run completed")
 	}
-	// Use a background context so the flush is independent of run cancellation.
-	drainCtx, drainCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	recoverClient.Drain(drainCtx)
-	drainCancel()
-	RemoveStepCheckpoint(cp.RunID)
+	drainAndCleanup(ctx, rc, cp)
 }
 
 func parseWorkflowFromPath(path string) (*workflow.FSMGraph, error) {
