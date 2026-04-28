@@ -3,8 +3,8 @@ package main
 import (
 	"context"
 
-	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 	pluginhost "github.com/brokenbots/criteria/sdk/pluginhost"
+	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 )
 
 type brokenService struct{}
