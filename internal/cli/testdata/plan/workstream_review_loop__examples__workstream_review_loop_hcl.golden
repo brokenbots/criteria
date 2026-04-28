@@ -73,7 +73,15 @@ steps (declaration order):
   open_or_update_pr   agent=pr_manager
     input keys: prompt
     allow_tools: *
-    outcomes: watch_pr -> watch_pr_gate, needs_review -> watch_pr_gate, needs_approval -> watch_pr_gate, failure -> close_pr_manager_abort
+    outcomes: watch_pr -> watch_pr_warmup, needs_review -> watch_pr_warmup, needs_approval -> watch_pr_warmup, failure -> close_pr_manager_abort
+  watch_pr_warmup   adapter=shell   timeout=3m0s
+    input keys: command
+    allow_tools: (none)
+    outcomes: success -> watch_pr_gate, failure -> triage_pr_feedback
+  watch_pr_backoff   adapter=shell   timeout=5m0s
+    input keys: command
+    allow_tools: (none)
+    outcomes: success -> watch_pr_gate, failure -> triage_pr_feedback
   watch_pr_gate   adapter=shell   timeout=45m0s
     input keys: command
     allow_tools: (none)
@@ -81,7 +89,7 @@ steps (declaration order):
   triage_pr_feedback   agent=pr_manager
     input keys: prompt
     allow_tools: *
-    outcomes: needs_executor -> execute_pr_feedback, recheck -> watch_pr_gate, needs_review -> watch_pr_gate, needs_approval -> watch_pr_gate, failure -> close_pr_manager_abort
+    outcomes: needs_executor -> execute_pr_feedback, recheck -> watch_pr_backoff, watch_pr -> watch_pr_backoff, needs_review -> watch_pr_backoff, needs_approval -> watch_pr_backoff, failure -> close_pr_manager_abort
   execute_pr_feedback   agent=executor
     input keys: prompt
     allow_tools: *

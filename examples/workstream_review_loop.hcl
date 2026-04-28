@@ -246,16 +246,36 @@ workflow "workstream_review_loop" {
     input {
       prompt = "${steps.load_pr_manager_agent_file.stdout}\n\nRead ${var.workstream_file}. Ensure branch is pushed, then create or update the PR from the current branch to main.\n\nInclude a concise summary and test evidence from the workstream notes/reviewer notes.\n\nEnd your final line with exactly one of:\nRESULT: watch_pr\nRESULT: failure"
     }
-    outcome "watch_pr"      { transition_to = "watch_pr_gate" }
-    outcome "needs_review"  { transition_to = "watch_pr_gate" }
-    outcome "needs_approval" { transition_to = "watch_pr_gate" }
+    outcome "watch_pr"       { transition_to = "watch_pr_warmup" }
+    outcome "needs_review"   { transition_to = "watch_pr_warmup" }
+    outcome "needs_approval" { transition_to = "watch_pr_warmup" }
     outcome "failure"       { transition_to = "close_pr_manager_abort" }
+  }
+
+  step "watch_pr_warmup" {
+    adapter = "shell"
+    input {
+      command = "set -euo pipefail; branch=$(git branch --show-current | tr '/ ' '__'); mkdir -p .criteria/tmp; echo 0 > .criteria/tmp/pr_watch_backoff_$branch.txt; echo 'warming up CI checks before first poll (90s)'; sleep 90"
+    }
+    timeout = "3m"
+    outcome "success" { transition_to = "watch_pr_gate" }
+    outcome "failure" { transition_to = "triage_pr_feedback" }
+  }
+
+  step "watch_pr_backoff" {
+    adapter = "shell"
+    input {
+      command = "set -euo pipefail; branch=$(git branch --show-current | tr '/ ' '__'); mkdir -p .criteria/tmp; state=.criteria/tmp/pr_watch_backoff_$branch.txt; attempt=0; if [ -f \"$state\" ]; then attempt=$(cat \"$state\" 2>/dev/null || echo 0); fi; attempt=$((attempt + 1)); echo \"$attempt\" > \"$state\"; if [ \"$attempt\" -le 1 ]; then delay=20; elif [ \"$attempt\" -le 2 ]; then delay=40; elif [ \"$attempt\" -le 3 ]; then delay=80; elif [ \"$attempt\" -le 4 ]; then delay=120; else delay=180; fi; echo \"backoff_attempt=$attempt\"; echo \"sleep_seconds=$delay\"; sleep \"$delay\""
+    }
+    timeout = "5m"
+    outcome "success" { transition_to = "watch_pr_gate" }
+    outcome "failure" { transition_to = "triage_pr_feedback" }
   }
 
   step "watch_pr_gate" {
     adapter = "shell"
     input {
-      command = "set -euo pipefail; exec 2>&1; branch=$(git branch --show-current); pr_number=$(gh pr view \"$branch\" --json number --jq '.number'); echo \"pr_number=$pr_number\"; if ! gh pr checks \"$pr_number\" --required --watch; then echo \"checks=failed\"; gh pr view \"$pr_number\" --json url,reviewDecision --template '{{.url}} review={{.reviewDecision}}\\n'; exit 1; fi; owner=$(gh repo view --json owner --jq '.owner.login'); repo=$(gh repo view --json name --jq '.name'); review_decision=$(gh pr view \"$pr_number\" --json reviewDecision --jq '.reviewDecision // \"REVIEW_REQUIRED\"'); review_threads_json=$(gh api graphql -f query='query($owner:String!, $repo:String!, $number:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$number){reviewThreads(first:100){totalCount pageInfo{hasNextPage endCursor} nodes{isResolved isOutdated}}}}}' -f owner=\"$owner\" -f repo=\"$repo\" -F number=\"$pr_number\"); review_threads_total=$(printf '%s' \"$review_threads_json\" | jq -r '.data.repository.pullRequest.reviewThreads.totalCount'); review_threads_has_next_page=$(printf '%s' \"$review_threads_json\" | jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage'); unresolved_threads=$(printf '%s' \"$review_threads_json\" | jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select((.isOutdated|not) and (.isResolved|not))] | length'); echo \"review_decision=$review_decision\"; echo \"review_threads_total=$review_threads_total\"; echo \"review_threads_has_next_page=$review_threads_has_next_page\"; echo \"unresolved_threads=$unresolved_threads\"; if [ \"$review_decision\" = \"APPROVED\" ] && [ \"$review_threads_has_next_page\" = \"false\" ] && [ \"$unresolved_threads\" -eq 0 ]; then echo \"ready_to_merge=true\"; exit 0; fi; if [ \"$review_threads_has_next_page\" = \"true\" ]; then echo \"review_threads_complete=false\"; fi; echo \"ready_to_merge=false\"; exit 1"
+      command = "set -euo pipefail; exec 2>&1; branch=$(git branch --show-current); pr_number=$(gh pr view \"$branch\" --json number --jq '.number'); echo \"pr_number=$pr_number\"; checks_rc=0; checks_json=$(gh pr checks \"$pr_number\" --required --json bucket,name,state,workflow 2>&1) || checks_rc=$?; if [ \"$checks_rc\" -eq 8 ]; then echo \"checks=pending\"; printf '%s\n' \"$checks_json\" | jq -r 'group_by(.bucket) | map([.[0].bucket, (length|tostring)] | join(\"=\")) | .[]'; exit 1; fi; if [ \"$checks_rc\" -ne 0 ]; then echo \"checks=failed\"; printf '%s\n' \"$checks_json\"; exit 1; fi; echo \"checks=passed\"; printf '%s\n' \"$checks_json\" | jq -r 'group_by(.bucket) | map([.[0].bucket, (length|tostring)] | join(\"=\")) | .[]'; owner=$(gh repo view --json owner --jq '.owner.login'); repo=$(gh repo view --json name --jq '.name'); review_decision=$(gh pr view \"$pr_number\" --json reviewDecision --jq '.reviewDecision // \"REVIEW_REQUIRED\"'); review_threads_json=$(gh api graphql -f query='query($owner:String!, $repo:String!, $number:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$number){reviewThreads(first:100){totalCount pageInfo{hasNextPage endCursor} nodes{isResolved isOutdated}}}}}' -f owner=\"$owner\" -f repo=\"$repo\" -F number=\"$pr_number\"); review_threads_total=$(printf '%s' \"$review_threads_json\" | jq -r '.data.repository.pullRequest.reviewThreads.totalCount'); review_threads_has_next_page=$(printf '%s' \"$review_threads_json\" | jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage'); unresolved_threads=$(printf '%s' \"$review_threads_json\" | jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select((.isOutdated|not) and (.isResolved|not))] | length'); echo \"review_decision=$review_decision\"; echo \"review_threads_total=$review_threads_total\"; echo \"review_threads_has_next_page=$review_threads_has_next_page\"; echo \"unresolved_threads=$unresolved_threads\"; if [ \"$review_decision\" = \"APPROVED\" ] && [ \"$review_threads_has_next_page\" = \"false\" ] && [ \"$unresolved_threads\" -eq 0 ]; then echo \"ready_to_merge=true\"; exit 0; fi; if [ \"$review_threads_has_next_page\" = \"true\" ]; then echo \"review_threads_complete=false\"; fi; echo \"ready_to_merge=false\"; exit 1"
     }
     timeout = "45m"
     outcome "success" { transition_to = "merge_pr_and_sync_main" }
@@ -268,12 +288,13 @@ workflow "workstream_review_loop" {
       "*",
     ]
     input {
-      prompt = "PR watch gate reported unresolved feedback or failed checks.\n\nUse this gate output as context:\n--- watch_pr_gate output ---\n${steps.watch_pr_gate.stdout}\n--- end ---\n\nInspect the PR reviews/comments/threads. If a comment is already addressed by code or reviewer notes, reply with evidence and resolve where possible.\n\nReturn RESULT: needs_executor only when new code changes are required. Return RESULT: recheck when you handled comments and we should re-run gate checks.\n\nEnd your final line with exactly one of:\nRESULT: needs_executor\nRESULT: recheck\nRESULT: failure"
+      prompt = "PR watch gate reported unresolved feedback or failed checks.\n\nUse this gate output as context:\n--- watch_pr_gate output ---\n${steps.watch_pr_gate.stdout}\n--- end ---\n\nInspect the PR reviews/comments/threads. If a comment is already addressed by code or reviewer notes, reply with evidence and resolve where possible.\n\nReturn RESULT: needs_executor only when new code changes are required. Return RESULT: recheck when comments/checks were handled and we should poll checks again after backoff. Return RESULT: watch_pr when checks are still in progress and no action is needed yet.\n\nEnd your final line with exactly one of:\nRESULT: needs_executor\nRESULT: recheck\nRESULT: watch_pr\nRESULT: failure"
     }
     outcome "needs_executor" { transition_to = "execute_pr_feedback" }
-    outcome "recheck"        { transition_to = "watch_pr_gate" }
-    outcome "needs_review"   { transition_to = "watch_pr_gate" }
-    outcome "needs_approval" { transition_to = "watch_pr_gate" }
+    outcome "recheck"        { transition_to = "watch_pr_backoff" }
+    outcome "watch_pr"       { transition_to = "watch_pr_backoff" }
+    outcome "needs_review"   { transition_to = "watch_pr_backoff" }
+    outcome "needs_approval" { transition_to = "watch_pr_backoff" }
     outcome "failure"        { transition_to = "close_pr_manager_abort" }
   }
 
