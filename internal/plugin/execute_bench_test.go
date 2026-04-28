@@ -3,7 +3,6 @@ package plugin
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapters/shell"
@@ -18,6 +17,17 @@ func (benchEventSink) Adapter(string, any) {}
 
 var _ adapter.EventSink = benchEventSink{}
 
+// noopAdapter is an in-process adapter that returns "success" immediately
+// without spawning any subprocess. It lets BenchmarkPluginExecuteNoop
+// measure pure plugin-dispatch overhead.
+type noopAdapter struct{}
+
+func (noopAdapter) Name() string               { return "noop" }
+func (noopAdapter) Info() workflow.AdapterInfo { return workflow.AdapterInfo{} }
+func (noopAdapter) Execute(_ context.Context, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+	return adapter.Result{Outcome: "success"}, nil
+}
+
 // minimalStep returns a minimal StepNode for the shell adapter that runs a
 // no-op command (true(1)) so process spawn dominates, not command duration.
 func minimalStep(name string) *workflow.StepNode {
@@ -29,9 +39,9 @@ func minimalStep(name string) *workflow.StepNode {
 	}
 }
 
-// BenchmarkBuiltinPlugin_Execute measures the overhead of invoking the shell
-// adapter through the builtin plugin wrapper (OpenSession → Execute → CloseSession).
-// This captures the full per-step plugin dispatch cost in local mode.
+// BenchmarkBuiltinPlugin_Execute measures the full per-step dispatch cost
+// (OpenSession → Execute → CloseSession) through the shell builtin plugin.
+// Subprocess spawn dominates the ~18 ms cost.
 func BenchmarkBuiltinPlugin_Execute(b *testing.B) {
 	factory := BuiltinFactoryForAdapter(shell.New())
 	ctx := context.Background()
@@ -52,8 +62,33 @@ func BenchmarkBuiltinPlugin_Execute(b *testing.B) {
 	}
 }
 
-// BenchmarkBuiltinPlugin_Info measures the Info() call overhead — this is
-// called during schema collection before every workflow execution.
+// BenchmarkPluginExecuteNoop measures pure Execute throughput with an
+// in-process noop adapter. The session is opened once before b.ResetTimer()
+// so each iteration measures only dispatch overhead without session setup cost.
+func BenchmarkPluginExecuteNoop(b *testing.B) {
+	factory := BuiltinFactoryForAdapter(noopAdapter{})
+	ctx := context.Background()
+	step := &workflow.StepNode{
+		Name:     "noop-step",
+		Adapter:  "noop",
+		Outcomes: map[string]string{"success": "done"},
+	}
+	p := factory()
+	if err := p.OpenSession(ctx, "sess", nil); err != nil {
+		b.Fatalf("OpenSession: %v", err)
+	}
+	b.Cleanup(func() { _ = p.CloseSession(ctx, "sess") })
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		if _, err := p.Execute(ctx, "sess", step, benchEventSink{}); err != nil {
+			b.Fatalf("Execute: %v", err)
+		}
+	}
+}
+
+// BenchmarkBuiltinPlugin_Info measures the Info() call overhead — called
+// during schema collection before every workflow execution.
 func BenchmarkBuiltinPlugin_Info(b *testing.B) {
 	factory := BuiltinFactoryForAdapter(shell.New())
 	p := factory()
@@ -82,8 +117,3 @@ func BenchmarkLoaderResolveBuiltin(b *testing.B) {
 		}
 	}
 }
-
-// Ensure benchEventSink satisfies the interface at compile time (already done
-// via var _ above; this constant keeps the import of "time" used in the
-// interface method signature check below used elsewhere in this file).
-var _ = time.Second

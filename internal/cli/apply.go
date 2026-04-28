@@ -199,7 +199,7 @@ func newLocalRunState(runID, graphName, serverURL string) *localRunState {
 	}
 }
 
-func executeServerRun(ctx context.Context, log *slog.Logger, loader plugin.Loader, sink *run.Sink, state *localRunState, graph *workflow.FSMGraph, opts applyOptions) error {
+func executeServerRun(ctx context.Context, log *slog.Logger, loader plugin.Loader, sink *run.Sink, client *servertrans.Client, state *localRunState, graph *workflow.FSMGraph, opts applyOptions) error {
 	_ = writeLocalRunState(state)
 	defer removeLocalRunState()
 	defer RemoveStepCheckpoint(state.RunID)
@@ -225,7 +225,7 @@ func executeServerRun(ctx context.Context, log *slog.Logger, loader plugin.Loade
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case resumeMsg = <-sink.Client.ResumeCh():
+		case resumeMsg = <-client.ResumeCh():
 		}
 		if resumeMsg.RunId != state.RunID {
 			// Message for a different run; continue waiting.
@@ -248,7 +248,7 @@ func executeServerRun(ctx context.Context, log *slog.Logger, loader plugin.Loade
 	}
 
 	drainCtx, drainCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	sink.Client.Drain(drainCtx)
+	client.Drain(drainCtx)
 	drainCancel()
 	return nil
 }
@@ -272,7 +272,7 @@ func runApplyServer(ctx context.Context, opts applyOptions) error {
 
 	sink := buildServerSink(client, runID, graph, opts.workflowPath, opts.serverURL, log)
 	state := newLocalRunState(runID, graph.Name, opts.serverURL)
-	return executeServerRun(runCtx, log, loader, sink, state, graph, opts)
+	return executeServerRun(runCtx, log, loader, sink, client, state, graph, opts)
 }
 
 func setupServerRun(ctx context.Context, log *slog.Logger, graph *workflow.FSMGraph, src []byte, serverURL, name string, clientOpts servertrans.Options, cancelRun func()) (*servertrans.Client, string, error) {

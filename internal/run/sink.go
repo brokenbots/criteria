@@ -13,11 +13,17 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/structpb"
 
-	"github.com/brokenbots/criteria/internal/adapter"
-	servertrans "github.com/brokenbots/criteria/internal/transport/server"
 	"github.com/brokenbots/criteria/events"
+	"github.com/brokenbots/criteria/internal/adapter"
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 )
+
+// Publisher is the minimal transport interface required by Sink. The server
+// transport (*servertrans.Client) satisfies this interface; test fakes may
+// implement it directly without importing the transport package.
+type Publisher interface {
+	Publish(ctx context.Context, env *pb.Envelope)
+}
 
 // Sink implements engine.Sink by forwarding to a server client.
 //
@@ -27,7 +33,7 @@ import (
 // the RunID; no run-scoped trace id is stamped here.
 type Sink struct {
 	RunID  string
-	Client *servertrans.Client
+	Client Publisher
 	Log    *slog.Logger
 	// CheckpointFn, if non-nil, is called synchronously inside OnStepEntered
 	// before the event is published. Use this to write a durable step

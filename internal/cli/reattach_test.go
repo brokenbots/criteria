@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -12,7 +14,46 @@ import (
 	"testing"
 
 	servertrans "github.com/brokenbots/criteria/internal/transport/server"
+	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 )
+
+// fakeTransport is a test-only implementation of reattachTransport that lets
+// tests configure per-call responses and inspect recorded calls.
+type fakeTransport struct {
+	// reattachResp/reattachErr control ReattachRun return values.
+	reattachResp *pb.ReattachRunResponse
+	reattachErr  error
+
+	// startStreamsErr controls StartStreams return value.
+	startStreamsErr error
+
+	// resumeCh is returned by ResumeCh().
+	resumeCh chan *pb.ResumeRun
+
+	// published accumulates envelopes passed to Publish.
+	published []*pb.Envelope
+}
+
+func (f *fakeTransport) ReattachRun(_ context.Context, _, _ string) (*pb.ReattachRunResponse, error) {
+	return f.reattachResp, f.reattachErr
+}
+
+func (f *fakeTransport) StartStreams(_ context.Context, _ string) error {
+	return f.startStreamsErr
+}
+
+func (f *fakeTransport) Drain(_ context.Context) {}
+
+func (f *fakeTransport) ResumeCh() <-chan *pb.ResumeRun {
+	if f.resumeCh == nil {
+		f.resumeCh = make(chan *pb.ResumeRun)
+	}
+	return f.resumeCh
+}
+
+func (f *fakeTransport) Publish(_ context.Context, env *pb.Envelope) {
+	f.published = append(f.published, env)
+}
 
 // discardLogger returns a logger that silently discards all output.
 func discardLogger() *slog.Logger {
@@ -535,6 +576,262 @@ func TestResumeOneLocalRun_ExceedsMaxRetries(t *testing.T) {
 type stringErrCLI struct{ msg string }
 
 func (e *stringErrCLI) Error() string { return e.msg }
+
+// newCheckpointWithWorkflow is a test helper that writes a workflow to a temp
+// file and returns a StepCheckpoint pointing at it.
+func newCheckpointWithWorkflow(t *testing.T, stateDir, runID, hcl string) *StepCheckpoint {
+	t.Helper()
+	t.Setenv("CRITERIA_STATE_DIR", stateDir)
+	wfFile := writeWorkflowFile(t, hcl)
+	cp := &StepCheckpoint{
+		RunID:        runID,
+		WorkflowPath: wfFile,
+		CriteriaID:   "crt-test",
+		Token:        "tok-test",
+		ServerURL:    "http://localhost:9",
+	}
+	return cp
+}
+
+// TestAttemptReattach_RPCError verifies that an RPC failure abandons the
+// checkpoint and returns a non-nil error.
+func TestAttemptReattach_RPCError(t *testing.T) {
+	stateDir := t.TempDir()
+	cp := newCheckpointWithWorkflow(t, stateDir, "ra-rpc-err", minimalWorkflow)
+	writeCheckpointDirect(t, stateDir, cp)
+
+	ft := &fakeTransport{reattachErr: errors.New("connection refused")}
+	resp, err := attemptReattach(context.Background(), discardLogger(), ft, cp)
+	if err == nil {
+		t.Fatal("expected error for RPC failure")
+	}
+	if resp != nil {
+		t.Errorf("expected nil response, got %v", resp)
+	}
+	// Checkpoint must be removed.
+	list, _ := ListStepCheckpoints()
+	for _, item := range list {
+		if item.RunID == cp.RunID {
+			t.Error("checkpoint not removed after RPC error")
+		}
+	}
+}
+
+// TestAttemptReattach_NotResumable verifies that CanResume=false causes the
+// checkpoint to be removed and (nil, nil) to be returned.
+func TestAttemptReattach_NotResumable(t *testing.T) {
+	stateDir := t.TempDir()
+	cp := newCheckpointWithWorkflow(t, stateDir, "ra-not-resumable", minimalWorkflow)
+	writeCheckpointDirect(t, stateDir, cp)
+
+	ft := &fakeTransport{
+		reattachResp: &pb.ReattachRunResponse{CanResume: false, Status: "failed"},
+	}
+	resp, err := attemptReattach(context.Background(), discardLogger(), ft, cp)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp != nil {
+		t.Errorf("expected nil response for non-resumable run, got %v", resp)
+	}
+	// Checkpoint must be removed.
+	list, _ := ListStepCheckpoints()
+	for _, item := range list {
+		if item.RunID == cp.RunID {
+			t.Error("checkpoint not removed for non-resumable run")
+		}
+	}
+}
+
+// TestAttemptReattach_Success verifies that a resumable run returns the
+// response unchanged.
+func TestAttemptReattach_Success(t *testing.T) {
+	stateDir := t.TempDir()
+	cp := newCheckpointWithWorkflow(t, stateDir, "ra-success", minimalWorkflow)
+	writeCheckpointDirect(t, stateDir, cp)
+
+	want := &pb.ReattachRunResponse{
+		CanResume:   true,
+		Status:      "running",
+		CurrentStep: "greet",
+		Attempt:     1,
+	}
+	ft := &fakeTransport{reattachResp: want}
+	resp, err := attemptReattach(context.Background(), discardLogger(), ft, cp)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil {
+		t.Fatal("expected non-nil response")
+	}
+	if resp.CurrentStep != want.CurrentStep || resp.Attempt != want.Attempt {
+		t.Errorf("response mismatch: got %v want %v", resp, want)
+	}
+}
+
+// TestResumeActiveRun_ExceedsMaxRetries verifies that when nextAttempt exceeds
+// max_step_retries the run is failed and the checkpoint is removed.
+func TestResumeActiveRun_ExceedsMaxRetries(t *testing.T) {
+	stateDir := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", stateDir)
+
+	wfFile := writeWorkflowFile(t, maxRetryWorkflow)
+	cp := &StepCheckpoint{RunID: "rar-exceeded", WorkflowPath: wfFile}
+	writeCheckpointDirect(t, stateDir, cp)
+
+	// Attempt=1 with MaxStepRetries=0 means maxAttempts=1; nextAttempt=2 > 1.
+	resp := &pb.ReattachRunResponse{
+		CanResume:   true,
+		Status:      "running",
+		CurrentStep: "greet",
+		Attempt:     1,
+	}
+	graph, err := parseWorkflowFromPath(wfFile)
+	if err != nil {
+		t.Fatalf("parseWorkflowFromPath: %v", err)
+	}
+
+	ft := &fakeTransport{}
+	resumeActiveRun(context.Background(), discardLogger(), ft, cp, graph, resp)
+
+	// Checkpoint must be removed.
+	list, _ := ListStepCheckpoints()
+	for _, item := range list {
+		if item.RunID == cp.RunID {
+			t.Error("checkpoint not removed after retry-exceeded")
+		}
+	}
+	// A RunFailed envelope must have been published.
+	hasRunFailed := false
+	for _, env := range ft.published {
+		if env.GetRunFailed() != nil {
+			hasRunFailed = true
+		}
+	}
+	if !hasRunFailed {
+		t.Errorf("expected RunFailed event to be published, got %d envelopes", len(ft.published))
+	}
+}
+
+// TestResumeActiveRun_HappyPath verifies that a valid resume starts streams,
+// emits OnStepResumed, runs the engine, and cleans up the checkpoint.
+func TestResumeActiveRun_HappyPath(t *testing.T) {
+	stateDir := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", stateDir)
+
+	// Use the minimal workflow: initial_state = target_state = "done".
+	// RunFrom("done", 1) terminates immediately via ErrTerminal → OnRunCompleted.
+	wfFile := writeWorkflowFile(t, minimalWorkflow)
+	cp := &StepCheckpoint{RunID: "rar-happy", WorkflowPath: wfFile}
+	writeCheckpointDirect(t, stateDir, cp)
+
+	resp := &pb.ReattachRunResponse{
+		CanResume:   true,
+		Status:      "running",
+		CurrentStep: "done", // terminal state → engine finishes immediately
+		Attempt:     0,      // nextAttempt=1 ≤ maxAttempts=1 (MaxStepRetries=0 default)
+	}
+	graph, err := parseWorkflowFromPath(wfFile)
+	if err != nil {
+		t.Fatalf("parseWorkflowFromPath: %v", err)
+	}
+
+	ft := &fakeTransport{}
+	resumeActiveRun(context.Background(), discardLogger(), ft, cp, graph, resp)
+
+	// Checkpoint must be removed after the run completes.
+	list, _ := ListStepCheckpoints()
+	for _, item := range list {
+		if item.RunID == cp.RunID {
+			t.Error("checkpoint not removed after active resume")
+		}
+	}
+	// OnStepResumed must have been published (first publish call).
+	if len(ft.published) == 0 {
+		t.Fatal("expected at least one published envelope (OnStepResumed)")
+	}
+	// Verify OnRunCompleted was also published (terminal state reached).
+	hasCompleted := false
+	for _, env := range ft.published {
+		if env.GetRunCompleted() != nil {
+			hasCompleted = true
+		}
+	}
+	if !hasCompleted {
+		t.Errorf("expected RunCompleted event; published envelopes: %d", len(ft.published))
+	}
+}
+
+// TestResumePausedRun_StartsStreamsAndRunsEngine verifies that resumePausedRun
+// starts streams, restores state, and drives the engine for a paused run that
+// contains only a terminal state as the start node (immediate completion).
+func TestResumePausedRun_StartsStreamsAndRunsEngine(t *testing.T) {
+	stateDir := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", stateDir)
+
+	// minimal workflow: starting from "done" → engine exits immediately.
+	wfFile := writeWorkflowFile(t, minimalWorkflow)
+	cp := &StepCheckpoint{RunID: "rpr-happy", WorkflowPath: wfFile}
+	writeCheckpointDirect(t, stateDir, cp)
+
+	resp := &pb.ReattachRunResponse{
+		CanResume:     true,
+		Status:        "paused",
+		CurrentStep:   "done", // terminal → engine completes immediately
+		PendingSignal: "start",
+	}
+	graph, err := parseWorkflowFromPath(wfFile)
+	if err != nil {
+		t.Fatalf("parseWorkflowFromPath: %v", err)
+	}
+
+	ft := &fakeTransport{}
+	resumePausedRun(context.Background(), discardLogger(), ft, cp, graph, resp)
+
+	// Checkpoint must be removed.
+	list, _ := ListStepCheckpoints()
+	for _, item := range list {
+		if item.RunID == cp.RunID {
+			t.Error("checkpoint not removed after paused run completion")
+		}
+	}
+	// At least one envelope must have been published (OnRunCompleted).
+	if len(ft.published) == 0 {
+		t.Fatal("expected at least one published envelope")
+	}
+}
+
+// TestResumePausedRun_StartStreamsError verifies that a StartStreams failure
+// abandons the checkpoint without running the engine.
+func TestResumePausedRun_StartStreamsError(t *testing.T) {
+	stateDir := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", stateDir)
+
+	wfFile := writeWorkflowFile(t, minimalWorkflow)
+	cp := &StepCheckpoint{RunID: "rpr-streams-err", WorkflowPath: wfFile}
+	writeCheckpointDirect(t, stateDir, cp)
+
+	resp := &pb.ReattachRunResponse{Status: "paused", CurrentStep: "done"}
+	graph, err := parseWorkflowFromPath(wfFile)
+	if err != nil {
+		t.Fatalf("parseWorkflowFromPath: %v", err)
+	}
+
+	ft := &fakeTransport{startStreamsErr: fmt.Errorf("connection refused")}
+	resumePausedRun(context.Background(), discardLogger(), ft, cp, graph, resp)
+
+	// Checkpoint must be removed (abandoned on stream error).
+	list, _ := ListStepCheckpoints()
+	for _, item := range list {
+		if item.RunID == cp.RunID {
+			t.Error("checkpoint not removed after StartStreams failure")
+		}
+	}
+	// No engine events should have been published.
+	if len(ft.published) != 0 {
+		t.Errorf("expected no published envelopes, got %d", len(ft.published))
+	}
+}
 
 // TestResumeOneLocalRun_ServerNodeRejected verifies that a checkpoint for a
 // workflow containing a server-only node (approval) is abandoned cleanly.

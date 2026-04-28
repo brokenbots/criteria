@@ -16,6 +16,18 @@ import (
 	"github.com/brokenbots/criteria/workflow"
 )
 
+// reattachTransport is the minimal server-client interface required by the
+// crash-recovery functions. *servertrans.Client satisfies it. Defined here
+// (not in the transport package) so tests can supply lightweight fakes without
+// importing the production transport.
+type reattachTransport interface {
+	ReattachRun(ctx context.Context, runID, criteriaID string) (*pb.ReattachRunResponse, error)
+	StartStreams(ctx context.Context, runID string) error
+	Drain(ctx context.Context)
+	ResumeCh() <-chan *pb.ResumeRun
+	Publish(ctx context.Context, env *pb.Envelope)
+}
+
 // resumeInFlightRuns scans the local checkpoint directory and, for each
 // in-flight run, calls ReattachRun on the server. Resumable runs are re-executed
 // from the recorded step. Non-resumable runs have their checkpoint cleared.
@@ -97,7 +109,7 @@ func buildRecoveryClient(log *slog.Logger, cp *StepCheckpoint, clientOpts server
 // attemptReattach calls ReattachRun and checks CanResume. Returns nil, nil
 // when the run is not resumable (checkpoint already cleared). Returns non-nil
 // error when the RPC fails (checkpoint already cleared).
-func attemptReattach(ctx context.Context, log *slog.Logger, rc *servertrans.Client, cp *StepCheckpoint) (*pb.ReattachRunResponse, error) {
+func attemptReattach(ctx context.Context, log *slog.Logger, rc reattachTransport, cp *StepCheckpoint) (*pb.ReattachRunResponse, error) {
 	resp, err := rc.ReattachRun(ctx, cp.RunID, cp.CriteriaID)
 	if err != nil {
 		abandonCheckpoint(log, cp, "reattach RPC failed; abandoning checkpoint", err)
@@ -130,7 +142,7 @@ func loadCheckpointWorkflow(log *slog.Logger, cp *StepCheckpoint) (*workflow.FSM
 // drainAndCleanup flushes pending server events then removes the checkpoint.
 // context.WithoutCancel ensures the 5-second drain window is honoured even
 // when ctx is already cancelled (e.g. after SIGTERM or a ctx.Done() select arm).
-func drainAndCleanup(ctx context.Context, rc *servertrans.Client, cp *StepCheckpoint) {
+func drainAndCleanup(ctx context.Context, rc reattachTransport, cp *StepCheckpoint) {
 	drainCtx, drainCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	rc.Drain(drainCtx)
 	drainCancel()
@@ -139,7 +151,7 @@ func drainAndCleanup(ctx context.Context, rc *servertrans.Client, cp *StepCheckp
 
 // resumePausedRun re-enters a paused run using WithPendingSignal, then
 // services further resume signals until the run reaches a terminal state.
-func resumePausedRun(ctx context.Context, log *slog.Logger, rc *servertrans.Client, cp *StepCheckpoint, graph *workflow.FSMGraph, resp *pb.ReattachRunResponse) {
+func resumePausedRun(ctx context.Context, log *slog.Logger, rc reattachTransport, cp *StepCheckpoint, graph *workflow.FSMGraph, resp *pb.ReattachRunResponse) {
 	if streamErr := rc.StartStreams(ctx, cp.RunID); streamErr != nil {
 		abandonCheckpoint(log, cp, "failed to start server streams for paused run", streamErr)
 		return
@@ -167,7 +179,7 @@ func resumePausedRun(ctx context.Context, log *slog.Logger, rc *servertrans.Clie
 
 // serviceResumeSignals waits for and dispatches resume signals while the run
 // remains paused, then drains and removes the checkpoint.
-func serviceResumeSignals(ctx context.Context, log *slog.Logger, rc *servertrans.Client, cp *StepCheckpoint, graph *workflow.FSMGraph, loader plugin.Loader, sink *run.Sink, initialEng *engine.Engine) {
+func serviceResumeSignals(ctx context.Context, log *slog.Logger, rc reattachTransport, cp *StepCheckpoint, graph *workflow.FSMGraph, loader plugin.Loader, sink *run.Sink, initialEng *engine.Engine) {
 	eng := initialEng
 	for sink.IsPaused() {
 		log.Info("run remains paused after reattach; waiting for resume",
@@ -200,7 +212,7 @@ func serviceResumeSignals(ctx context.Context, log *slog.Logger, rc *servertrans
 
 // resumeActiveRun handles the normal (non-paused) resume path, including
 // max_step_retries policy enforcement.
-func resumeActiveRun(ctx context.Context, log *slog.Logger, rc *servertrans.Client, cp *StepCheckpoint, graph *workflow.FSMGraph, resp *pb.ReattachRunResponse) {
+func resumeActiveRun(ctx context.Context, log *slog.Logger, rc reattachTransport, cp *StepCheckpoint, graph *workflow.FSMGraph, resp *pb.ReattachRunResponse) {
 	nextAttempt := int(resp.Attempt) + 1
 	maxAttempts := 1 + graph.Policy.MaxStepRetries
 	if nextAttempt > maxAttempts {

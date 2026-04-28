@@ -66,6 +66,24 @@ func TestSink_PauseLifecycle(t *testing.T) {
 	}
 }
 
+// TestSink_CheckpointFn_NotCalledOnTerminalEvents asserts that CheckpointFn is
+// NOT called by OnRunCompleted or OnRunFailed — only OnStepEntered triggers it.
+func TestSink_CheckpointFn_NotCalledOnTerminalEvents(t *testing.T) {
+	s := newTestSink(t)
+	called := false
+	s.CheckpointFn = func(_ string, _ int) { called = true }
+
+	s.OnRunCompleted("done", true)
+	if called {
+		t.Error("CheckpointFn must NOT be called by OnRunCompleted")
+	}
+
+	s.OnRunFailed("boom", "step1")
+	if called {
+		t.Error("CheckpointFn must NOT be called by OnRunFailed")
+	}
+}
+
 // TestSink_CheckpointFnCalledOnStepEntered asserts that CheckpointFn is
 // invoked with the step name and attempt number before the event is published.
 func TestSink_CheckpointFnCalledOnStepEntered(t *testing.T) {

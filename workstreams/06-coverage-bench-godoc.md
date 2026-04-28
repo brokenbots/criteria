@@ -344,37 +344,44 @@ here is on the workstream-itself ledger. Quality bar:
 
 | Package | Coverage | Target | Status |
 |---|---:|---:|---|
-| `internal/cli/` | 60.0% | ≥60% | ✅ |
+| `internal/cli/` | 65.9% | ≥60% | ✅ (raised from 60.0% after B1 tests) |
 | `internal/run/` | 77.8% | ≥60% | ✅ |
 | `cmd/criteria-adapter-mcp/` | 82.4% | ≥50% | ✅ |
 
-### Benchmark baseline (Apple M3 Max, arm64/darwin, `make bench -benchtime=3s`)
+Key reattach function coverage after B1 remediation:
+- `attemptReattach`: 100%
+- `resumePausedRun`: 73.3%
+- `resumeActiveRun`: 77.8%
+- `drainAndCleanup`: 100%
+
+### Benchmark baseline (Apple M3 Max, arm64/darwin, go1.26.2, commit e890474, `make bench`)
 
 **Workflow compile:**
 
 | Benchmark | ns/op | allocs/op |
 |---|---:|---:|
-| `BenchmarkCompile_Hello` | 70,956 | 942 |
-| `BenchmarkCompile_Perf1000Logs` | 80,585 | 956 |
-| `BenchmarkCompile_WorkstreamLoop` | 1,658,581 | 13,902 |
+| `BenchmarkCompile_Hello` | 68,115 | 942 |
+| `BenchmarkCompile_1000Steps` | 33,163,892 | 389,695 |
+| `BenchmarkCompile_WorkstreamLoop` | 1,605,975 | 13,902 |
 
 **Engine run (fake noop adapter, no plugin overhead):**
 
 | Benchmark | ns/op | allocs/op |
 |---|---:|---:|
-| `BenchmarkEngineRun_10Steps` | 12,687 | 268 |
-| `BenchmarkEngineRun_100Steps` | 136,371 | 2,608 |
-| `BenchmarkEngineRun_1000Steps` | 1,488,535 | 26,008 |
+| `BenchmarkEngineRun_10Steps` | 12,325 | 268 |
+| `BenchmarkEngineRun_100Steps` | 123,252 | 2,608 |
+| `BenchmarkEngineRun_1000Steps` | 1,414,919 | 26,008 |
 
 **Plugin execution:**
 
 | Benchmark | ns/op | allocs/op |
 |---|---:|---:|
-| `BenchmarkBuiltinPlugin_Execute` (shell/`true`) | 17,875,147 | 110 |
-| `BenchmarkBuiltinPlugin_Info` | 255.7 | 4 |
-| `BenchmarkLoaderResolveBuiltin` | 44.46 | 2 |
+| `BenchmarkBuiltinPlugin_Execute` (shell/`true`) | 11,146,722 | 110 |
+| `BenchmarkPluginExecuteNoop` (in-process, session-once) | 8.386 | 0 |
+| `BenchmarkBuiltinPlugin_Info` | 231.6 | 4 |
+| `BenchmarkLoaderResolveBuiltin` | 43.26 | 2 |
 
-Full numbers captured in `docs/perf/baseline-v0.2.0.md`.
+Full details and regression policy in `docs/perf/baseline-v0.2.0.md`.
 
 ### Step 5 (GoDoc burn-down) — no entries
 
@@ -384,6 +391,29 @@ proto-generated code aliases in `sdk/pb/criteria/v1/`. There are **zero**
 `events/`, `cmd/criteria/`). Step 5 is a no-op — the baseline was clean
 before this workstream started.
 
+### Remediation notes (Review 2 response)
+
+- **B1 — `attemptReattach`/`resumePausedRun`/`resumeActiveRun`**: Introduced `reattachTransport` interface in `internal/cli/reattach.go`; changed function signatures; changed `run.Sink.Client` to `Publisher` interface (minimal: only `Publish`). `executeServerRun` in `apply.go` was updated to receive `*servertrans.Client` as a separate parameter (avoids promoting transport methods into `Publisher`). Added `fakeTransport` in `reattach_test.go` implementing the interface. Added 7 new tests covering all specified branches.
+- **B2 — `BenchmarkCompile_Perf1000Logs`**: Replaced with `BenchmarkCompile_1000Steps` using in-memory generated HCL with 1 000 sequential step nodes. New allocation count is 389,695 (vs 942 for Hello), confirming the benchmark exercises the compiler at scale.
+- **B3 — Baseline doc**: Added Go version (`go1.26.2`), commit hash (`e890474`), and verbatim 20% regression statement.
+- **R1 — CheckpointFn negative assertion**: Added `TestSink_CheckpointFn_NotCalledOnTerminalEvents` asserting the flag is NOT set after `OnRunCompleted` and `OnRunFailed`.
+- **R2 — `-race` in `test-cover`**: Restored; target now runs `-race -coverprofile`.
+- **R3 — `bench` target scope**: Documented deviation in `docs/perf/baseline-v0.2.0.md`. The `bench` target runs targeted packages instead of `./...` to avoid triggering `TestMain` setup in packages with no benchmarks (notably `cmd/criteria-adapter-mcp`).
+- **R4 — `BenchmarkPluginExecuteNoop`**: Added with `noopAdapter` (in-process, zero allocs). Session opened once before `b.ResetTimer()`; Execute called N times. Measures 8.386 ns/op (pure dispatch) vs ~11 ms for subprocess spawn.
+- **R5 — Dead `time` import**: Removed `time` import and `var _ = time.Second` from `execute_bench_test.go`.
+- **WEAK1 — `TestMCPBridge_FullRoundTrip` event ordering**: Now asserts the last event is a `Result` event (not just that any result exists), enforcing the ordering contract.
+
+### Architecture Review Required
+
+**[ARCH-REVIEW / major] — Step 3 publish-failure and checkpoint-write-failure**
+
+The plan's Step 3 requires "Sink under Client.Publish failure: assert the error is propagated and the run is marked failed." and "checkpoint write failure: assert run continues but logs a warning." These cannot be tested at the Sink boundary without design changes:
+
+- `Sink.publish()` calls `s.Client.Publish(...)` (now via `Publisher` interface) but captures no return value — the design is fire-and-forget.
+- `CheckpointFn` has no error return — checkpoint failures silently drop.
+
+Addressing these would require: (a) changing `Sink.publish` to capture errors and emit `OnRunFailed`, or (b) adding error returns to `CheckpointFn`. Both change production behavior and are out of scope for this measurement workstream. Tracked as Phase 2 item.
+
 ### Notable fixes applied
 
 - **HCL2 semicolons** in `reattach_test.go`: `state "done" { terminal = true; success = true }` is invalid HCL2. Fixed to multi-line syntax.
@@ -392,13 +422,13 @@ before this workstream started.
 - **1000-step engine benchmark**: failed with `max_total_steps exceeded (100)` default. Fixed `buildNStepWorkflow` to set `policy { max_total_steps = n+10 }`.
 - **Lint nits**: `prealloc` in `sink_test.go`, unused `nolintlint` directives in MCP test, `stringXbytes` in `compile_test.go`, all resolved.
 
-### Validation
+### Validation (Review 2)
 
 - `make test`: all packages pass (race-clean)
 - `make lint-go`: exits 0
 - `make lint-imports`: exits 0
-- `make test-cover`: exits 0
-- `make bench`: all 9 benchmarks run to completion
+- `make test-cover`: exits 0; internal/cli: 65.9%, internal/run: 77.8%, mcp: 82.4%
+- `make bench`: all 10 benchmarks run to completion
 
 
 
@@ -412,3 +442,142 @@ before this workstream started.
 | `internal/run/` coverage push exposes a latent bug | Fix the bug in this workstream **only if** the fix is mechanical (≤ 5 lines); larger fixes go to a Phase 2 forward-pointer with `[ARCH-REVIEW]` and the test marks the path as `t.Skip` with the pointer. Do not silently leave the bug uncovered. |
 | The MCP adapter's mock server fixture becomes its own maintenance burden | Cap the in-process MCP server at ~150 LOC. If it grows beyond, switch to a documented-skip strategy and rely on conformance for that path. |
 | Burning the `revive`/`exported` baseline entries reveals genuinely-confusing exports that should be unexported | Note them in `[ARCH-REVIEW]` rather than fixing in this workstream. Public API breaking changes are out of scope here and require deliberate Phase 2 deprecation. |
+
+## Reviewer Notes
+
+### Review 2026-04-28 — changes-requested
+
+#### Summary
+
+The implementation clears coverage thresholds (CLI 60.0%, run 77.8%, MCP 82.4%), all three benchmark suites produce numbers, the GoDoc burn-down is a no-op (baseline already clean), and `make test`, `make lint-go`, `make bench` all exit 0. However three blockers prevent approval: (1) `attemptReattach`, `resumePausedRun`, and `resumeActiveRun` are at 0% coverage despite being explicitly named as required test targets in Step 1; (2) the `perf_1000_logs.hcl` fixture has one shell step with a runtime loop rather than 1 000 HCL workflow nodes, so `BenchmarkCompile_Perf1000Logs` does not measure what the plan specifies and the baseline numbers are misleading; (3) `docs/perf/baseline-v0.2.0.md` is missing the Go version, commit hash, and the explicit 20 % regression threshold required by Step 4.4. Additionally, several test-intent gaps and Makefile deviations require remediation before approval.
+
+#### Plan Adherence
+
+**Step 1 — CLI coverage ≥ 60%**
+
+Coverage threshold met (60.0%). The following functions are explicitly named in the plan as required test targets and are at 0% coverage:
+
+- `attemptReattach`: 0%. Plan requires: RPC error → checkpoint removed; `CanResume = false` → checkpoint removed; success → response returned unchanged.
+- `resumePausedRun`: 0%. Plan requires: table test with fake server-transport client; assert `WithPendingSignal` path.
+- `resumeActiveRun`: 0%. Plan requires: table test with fake server-transport client; assert straight-resume path.
+- `resumeOneRun`, `drainAndCleanup`, `serviceResumeSignals`: 0% (depend on same seam).
+
+The plan was explicit: "Use a fake `servertrans.Client` interface where the existing code takes a concrete type — introduce a minimal interface in `internal/cli/` (not in `internal/transport/server/`) that the test fake implements." This test-only interface was never introduced.
+
+Covered as required: `buildRecoveryClient`, `loadCheckpointWorkflow`, `abandonCheckpoint`, `applyClientOptions`, `buildServerSink`/`CheckpointFn`. ✅
+
+**Step 2 — MCP adapter ≥ 50%**
+
+Coverage 82.4%. `Info`, `OpenSession` error paths, `Execute` unknown session, `CloseSession` unknown session, `FullRoundTrip`, `UnknownTool`, `MissingTool` are all present. Minor intent gap noted in Required Remediations. ✅ (threshold)
+
+**Step 3 — `internal/run/` ≥ 60%**
+
+Coverage 77.8%. Threshold met. However the plan's specific behavioral assertions are not present:
+
+- `Sink.OnRunFailed`/`Sink.OnRunCompleted`: plan says "assert the correct envelope is published and `CheckpointFn` is or is not called per contract." Tests only assert no panic; no assertion that `CheckpointFn` is NOT called on these terminal events.
+- Publish failure / checkpoint write failure paths: see Architecture Review Required section.
+
+**Step 4 — Benchmarks**
+
+4.1 `BenchmarkCompile_Hello` and `BenchmarkCompile_WorkstreamLoop` are valid. **`BenchmarkCompile_Perf1000Logs` is invalid**: the fixture (`examples/perf_1000_logs.hcl`) has a single shell step with a runtime loop, not 1 000 sequential HCL workflow nodes. The plan explicitly requires "1 000 sequential `log` steps" to stress the compiler. Evidence: `BenchmarkCompile_Hello` allocates 942 allocs/op; `BenchmarkCompile_Perf1000Logs` allocates 956 allocs/op — a delta of 14, confirming there is only one workflow node in the fixture. A proper 1 000-node workflow would show thousands of additional allocations.
+
+4.2 Engine benchmarks (10/100/1000 steps) are correct and use the fake noop adapter. ✅
+
+4.3 Plugin benchmark uses the shell adapter (not the noop adapter as specified) and spins up a full session on every iteration instead of once before `b.ResetTimer()`. The comment describes the intent as "full per-step dispatch cost" which is different from the plan's "spin up once, measure Execute throughput." Numbers are interesting but the benchmark does not implement what the plan specified.
+
+4.4 `docs/perf/baseline-v0.2.0.md` is missing: Go version, commit hash, and the explicit "regressions > 20% should fail review" statement.
+
+**Step 5 — GoDoc burn-down**
+
+No-op; executor correctly determined no `revive`/`exported` entries exist. ✅
+
+**Step 6 — Makefile targets**
+
+`test-cover` and `bench` targets added; `.PHONY` updated. However:
+- `test-cover` drops `-race` (plan spec includes `-race`).
+- `bench` runs only 3 targeted packages, not `./...` + sdk + workflow per plan spec; adds undocumented `-benchtime=3s`.
+
+#### Required Remediations
+
+- **[BLOCKER] B1 — Missing tests for `attemptReattach`, `resumePausedRun`, `resumeActiveRun`**
+  - *File*: `internal/cli/reattach.go` / `internal/cli/reattach_test.go`
+  - *Rationale*: Explicitly required by Step 1. These are the crash-recovery hot paths. The test-only interface described in the plan was never introduced.
+  - *Acceptance*: Introduce a minimal interface in `internal/cli/` (e.g., `reattachTransport` or similar) that `*servertrans.Client` satisfies. Implement a fake that records calls and returns configurable responses. Add tests for:
+    - `attemptReattach`: (a) RPC error → checkpoint removed, error returned; (b) `CanResume = false` → checkpoint removed, `(nil, nil)` returned; (c) success → response returned unchanged.
+    - `resumeActiveRun`: (a) nextAttempt ≤ maxAttempts → streams started, `OnStepResumed` called, engine runs; (b) nextAttempt > maxAttempts → `OnRunFailed` called, checkpoint removed.
+    - `resumePausedRun`: streams started, `WithPendingSignal` passed to engine, checkpoint removed on completion.
+  - The interface must stay in `internal/cli/` and must not be exported to `internal/transport/server/`.
+
+- **[BLOCKER] B2 — `perf_1000_logs.hcl` fixture has 1 step, not 1 000 nodes**
+  - *File*: `workflow/compile_bench_test.go`, `examples/perf_1000_logs.hcl`
+  - *Rationale*: `BenchmarkCompile_Perf1000Logs` allocates 956 allocs/op vs `BenchmarkCompile_Hello`'s 942 — a delta of 14. The fixture does not stress the compiler. The plan requires "1 000 sequential `log` steps" (HCL nodes, not shell lines).
+  - *Acceptance*: Either (a) commit `workflow/testdata/perf_1000_logs.hcl` containing 1 000 sequential HCL `step` nodes (using the `noop` adapter or `shell` with `echo`), update the benchmark to read from `workflow/testdata/`, and re-capture baseline numbers; or (b) rename the benchmark to `BenchmarkCompile_SingleShellStep` and add a new `BenchmarkCompile_1000Steps` benchmark using an in-memory generated HCL string with 1 000 steps. Re-capture and update `docs/perf/baseline-v0.2.0.md`.
+
+- **[BLOCKER] B3 — Baseline doc missing Go version, commit hash, and 20% threshold statement**
+  - *File*: `docs/perf/baseline-v0.2.0.md`
+  - *Rationale*: Step 4.4 explicitly requires these three items.
+  - *Acceptance*: Add Go version (output of `go version`), commit hash (output of `git rev-parse HEAD`), and the verbatim statement: "Regressions > 20% on any of these baselines should fail review until justified."
+
+- **[REQUIRED] R1 — `Sink.OnRunFailed`/`Sink.OnRunCompleted` missing CheckpointFn negative assertion**
+  - *File*: `internal/run/sink_test.go`
+  - *Rationale*: Step 3 requires "assert `CheckpointFn` is or is not called per contract." `TestSink_CheckpointFnCalledOnStepEntered` proves it IS called on step entry, but there is no test proving it is NOT called on run completion or failure.
+  - *Acceptance*: Add a test that sets `s.CheckpointFn` to a function that sets a flag, calls `s.OnRunCompleted(...)` and `s.OnRunFailed(...)`, and asserts the flag was NOT set.
+
+- **[REQUIRED] R2 — `test-cover` drops `-race` without plan justification**
+  - *File*: `Makefile`
+  - *Rationale*: The plan's `test-cover` spec explicitly includes `-race`. The deviation is undocumented in the plan; the comment says "no -race to keep it fast" but this was not an approved deviation.
+  - *Acceptance*: Restore `-race` in the `test-cover` target, or obtain explicit plan approval for the omission and document it in the workstream notes. If restoring `-race` causes a runtime penalty that is unacceptable, add a note here in the reviewer section explaining the trade-off and get it approved.
+
+- **[REQUIRED] R3 — `bench` target does not match plan spec**
+  - *File*: `Makefile`
+  - *Rationale*: Plan says `go test -bench=. -benchmem -run=^$ ./...` then SDK then workflow. Actual targets only 3 specific packages and adds undocumented `-benchtime=3s`.
+  - *Acceptance*: Either align the `bench` target with the plan (run `./...` then `cd sdk && ...` then `cd workflow && ...`), or document the deviation in these reviewer notes with justification and update the workstream.
+
+- **[REQUIRED] R4 — Plugin benchmark (4.3) deviates from plan spec**
+  - *File*: `internal/plugin/execute_bench_test.go`
+  - *Rationale*: Plan: "Spins up the noop adapter once (`b.ResetTimer()` after spin-up) and measures Execute throughput." Actual: spins up the shell adapter and creates a new session on every iteration. These measure different things.
+  - *Acceptance*: Add `BenchmarkPluginExecuteNoop` that opens one session before `b.ResetTimer()`, then calls `Execute` in the loop, then closes after the loop. Keep the existing `BenchmarkBuiltinPlugin_Execute` (renamed appropriately) if you wish to preserve the "full per-step dispatch cost" measurement as a second benchmark.
+
+- **[NIT] R5 — Dead `var _ = time.Second` in `execute_bench_test.go`**
+  - *File*: `internal/plugin/execute_bench_test.go` line 89
+  - *Rationale*: The `time` package is not used in the file except via this sentinel. The comment is incorrect — there is no interface signature check for time in this file.
+  - *Acceptance*: Remove the `time` import and the `var _ = time.Second` line.
+
+#### Test Intent Assessment
+
+**Strong tests:**
+- `TestParseCSVList`, `TestParseEnvPairs`: table-driven, cover all branches including boundary/error cases. Any mis-implementation of parse logic would fail them.
+- `TestBuildRecoveryClient_MissingCredentials`, `TestBuildRecoveryClient_BadServerURL`: verify the correct checkpoint removal side-effect, not just the error return.
+- `TestResumeOneLocalRun_ExceedsMaxRetries`: verifies ND-JSON output contains `RunFailed` — behavior-asserting, not just "no panic."
+- `TestSink_CheckpointFnCalledOnStepEntered`: verifies the step/attempt forwarding contract.
+- `TestEncodeAdapterData_*`: table-driven, cover object/scalar/array/error cases; cover the `_encode_error` field contract.
+- `TestLogStreamFromString`: table-driven enum mapping — regression-sensitive.
+- Engine benchmarks (`BenchmarkEngineRun_10/100/1000Steps`): proper fake adapter, no plugin process overhead.
+
+**Weak or missing tests (require remediation):**
+- `TestSink_PublishMethodsDoNotPanic`: a smoke test, not a behavioral test. The plan requires asserting that `CheckpointFn` is NOT called on terminal events and that the correct envelope type is published — neither is asserted.
+- `TestSink_PublishAfterClientClose_DoesNotPanic`: tests that the fire-and-forget design doesn't panic, which is correct given the architecture. But the plan's "assert the error is propagated" intent cannot be satisfied without design changes (see Architecture Review Required).
+- `TestMCPBridge_FullRoundTrip`: verifies a result event exists but does not check event ordering, which the plan lists as a requirement ("assert the resulting events ordering").
+- `BenchmarkCompile_Perf1000Logs`: does not measure what it claims (see B2 above).
+
+#### Architecture Review Required
+
+- **[ARCH-REVIEW / major] — Step 3 publish-failure and checkpoint-write-failure test requirements conflict with fire-and-forget Sink design**
+  - *Affected files*: `internal/run/sink.go`, plan Step 3
+  - *Problem*: The plan requires "Sink under `Client.Publish` failure: assert the error is propagated and the run is marked failed." The `Sink.publish()` method calls `s.Client.Publish(...)` without capturing or surfacing the return value — the design is intentionally fire-and-forget. Error propagation from the transport layer to the `Sink` caller is not architecturally supported. Similarly, `CheckpointFn` has no error return, so "checkpoint write failure: assert run continues but logs a warning" cannot be tested at the Sink level without a design change.
+  - *Why arch-review*: Addressing these test requirements requires either (a) changing `Sink.publish` to capture publish errors and take some action (changed behavior, out of scope for W06), or (b) accepting that these behaviors cannot be unit-tested at the Sink boundary and are instead covered by integration/conformance tests. A decision on whether to change the Sink design or formally accept the gap is needed before W06 can close Step 3 fully.
+  - *Suggested resolution*: Document in the workstream that these two paths are not unit-testable without Sink design changes, mark them as Phase 2 items, and adjust the Step 3 test requirement text accordingly.
+
+#### Validation Performed
+
+```
+make test          → exit 0 (all packages pass, race-clean, cached)
+make lint-go       → exit 0
+make lint-imports  → exit 0
+make test-cover    → exit 0; internal/cli: 60.0%, internal/run: 77.8%, cmd/criteria-adapter-mcp: 82.4%
+make bench         → exit 0; 9 benchmarks produce numbers
+go tool cover -func=cover.out | grep internal/cli/reattach
+  → attemptReattach: 0%, resumePausedRun: 0%, resumeActiveRun: 0%, resumeOneRun: 0%
+BenchmarkCompile_Hello:       942 allocs/op
+BenchmarkCompile_Perf1000Logs: 956 allocs/op  ← confirms fixture is not a 1000-node workflow
+```

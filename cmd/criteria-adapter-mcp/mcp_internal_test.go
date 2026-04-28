@@ -224,18 +224,17 @@ func TestMCPBridge_FullRoundTrip(t *testing.T) {
 		t.Fatalf("Execute: %v", err)
 	}
 
-	// Verify a result event was sent.
-	hasResult := false
-	for _, ev := range sender.events {
-		if r := ev.GetResult(); r != nil {
-			hasResult = true
-			if r.GetOutcome() != "success" {
-				t.Fatalf("outcome=%q want success", r.GetOutcome())
-			}
-		}
+	// Verify a result event was sent and it is the last event (ordering contract).
+	// The echo-mcp server emits Log events first, then a Result last.
+	if len(sender.events) == 0 {
+		t.Fatal("expected at least one event, got none")
 	}
-	if !hasResult {
-		t.Fatal("expected a Result event, got none")
+	last := sender.events[len(sender.events)-1]
+	if last.GetResult() == nil {
+		t.Fatalf("last event must be a Result; got %T", last.GetEvent())
+	}
+	if last.GetResult().GetOutcome() != "success" {
+		t.Fatalf("outcome=%q want success", last.GetResult().GetOutcome())
 	}
 
 	// CloseSession.
