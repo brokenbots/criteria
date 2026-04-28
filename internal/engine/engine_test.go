@@ -200,6 +200,7 @@ func TestEngineLifecycleWithNoopPlugin(t *testing.T) {
 	loader := plugin.NewLoaderWithDiscovery(func(string) (string, error) {
 		return pluginBin, nil
 	})
+	t.Cleanup(func() { _ = loader.Shutdown(context.Background()) })
 
 	g := compileFile(t, "testdata/agent_lifecycle_noop.hcl")
 	sink := &fakeSink{}
@@ -216,6 +217,7 @@ func TestEngineLifecycleOpenTimeoutKeepsSessionAlive(t *testing.T) {
 	loader := plugin.NewLoaderWithDiscovery(func(string) (string, error) {
 		return pluginBin, nil
 	})
+	t.Cleanup(func() { _ = loader.Shutdown(context.Background()) })
 
 	g := compileFile(t, "testdata/agent_lifecycle_noop_open_timeout.hcl")
 	sink := &captureStepEventSink{}
