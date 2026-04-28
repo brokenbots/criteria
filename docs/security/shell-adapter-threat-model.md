@@ -56,7 +56,7 @@ An attacker does **not**:
 | Goal | Mechanism (Phase 1) | Status |
 |---|---|---|
 | **Confidentiality of env secrets** | Environment allowlist — child inherits only `PATH`, `HOME`, `USER`, `LOGNAME`, `LANG`, `LC_*`, `TZ`, `TERM`(tty). All other parent vars are dropped unless explicitly declared in `input.env`. | ✅ Implemented in W05 |
-| **PATH integrity** | PATH sanitization — strips `.` and empty segments from inherited PATH; `command_path` replaces PATH entirely when set. | ✅ Implemented in W05 |
+| **PATH integrity** | PATH sanitization — strips empty and non-absolute segments (including `.`) from the inherited PATH; `command_path` replaces PATH entirely when set. Detection of world-writable directories is deferred to Phase 2. | ✅ Implemented in W05 |
 | **Working directory confinement** | `working_directory` must resolve under `$HOME` or `CRITERIA_SHELL_ALLOWED_PATHS`; `..` traversal is rejected at runtime. | ✅ Implemented in W05 |
 | **Unbounded resource consumption (CPU / wall clock)** | Hard timeout per step (default 5 min; 1s–1h range). On timeout: SIGTERM → 5 s grace → SIGKILL (Unix), Kill (Windows). | ✅ Implemented in W05 |
 | **Unbounded resource consumption (output buffer / memory)** | Bounded stdout+stderr capture (default 4 MiB per stream; 1 KiB–64 MiB range). Overflow emits `output_truncated` event; step still succeeds. | ✅ Implemented in W05 |
@@ -89,7 +89,7 @@ The following capabilities are explicitly NOT delivered by this workstream:
 | Threat | Attacker capability | Phase 1 mitigation | Phase 2 mitigation |
 |---|---|---|---|
 | **T1 — secret leakage via env** | Controls HCL env attribute | Allowlist: child inherits only safe vars; additional vars require explicit declaration | — (env allowlist is sufficient) |
-| **T2 — PATH hijacking** | Controls `command_path`; may inject `.` or empty segment via env | PATH sanitization strips `.` / empty; `command_path` replaces PATH entirely | seccomp restricts exec to declared paths |
+| **T2 — PATH hijacking** | Controls `command_path`; may inject `.` or relative segment via env | PATH sanitization strips empty / non-absolute segments (including `.`); `command_path` replaces PATH entirely; `PATH` is reserved in `input.env` | seccomp restricts exec to declared paths; world-writable-dir detection |
 | **T3 — arbitrary CWD escape** | Sets `working_directory` to `/etc`, `../../etc`, etc. | Runtime confinement: path must be under `$HOME` or `CRITERIA_SHELL_ALLOWED_PATHS`; `..` traversal rejected | Compile-time HCL diagnostic (adapter compile hook — Phase 2 forward pointer) |
 | **T4 — CPU / wall-clock denial** | Provides a `sleep 9999` or equivalent command | Hard timeout (default 5 min); SIGTERM + grace + SIGKILL | cgroup CPU quota (Linux) |
 | **T5 — memory / output denial** | Command that emits gigabytes of stdout/stderr | Bounded capture (default 4 MiB/stream); overflow truncated, step continues | cgroup memory limit (Linux) |

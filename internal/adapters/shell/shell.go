@@ -45,7 +45,7 @@ func (a *Adapter) Info() workflow.AdapterInfo {
 			},
 			"env": {
 				Type: workflow.ConfigFieldString,
-				Doc:  "JSON-encoded map[string]string of additional environment variables. Values starting with '$' inherit from the parent env (e.g. '$GOFLAGS'). Use jsonencode({KEY: \"$KEY\"}) in HCL.",
+				Doc:  "JSON-encoded map[string]string of additional environment variables. Values starting with '$' inherit from the parent env (e.g. '$GOFLAGS'). PATH is reserved — use command_path instead. Use jsonencode({KEY: \"$KEY\"}) in HCL.",
 			},
 			"command_path": {
 				Type: workflow.ConfigFieldString,
@@ -120,19 +120,29 @@ func (a *Adapter) Execute(ctx context.Context, step *workflow.StepNode, sink ada
 
 	stdoutCS := newCaptureState(cfg.outputLimitBytes)
 	stderrCS := newCaptureState(cfg.outputLimitBytes)
+	drainPumps(timeoutCtx, stdoutPipe, stderrPipe, sink, stdoutCS, stderrCS)
 
-	// pumpsDone is closed once both pump goroutines have exited. The pipe
-	// closer goroutine below watches timeoutCtx.Done() (which fires on caller
-	// cancellation or step timeout) and closes the pipe read-ends so the
-	// pumps unblock from their blocking Read calls promptly — necessary
-	// because grandchildren spawned by `sh -c` may hold the write-ends open
-	// after the parent sh has been killed, leaving wg.Wait() hung otherwise.
+	return resolveWait(cmd.Wait(), ctx, timeoutCtx, cfg, stdoutCS, stderrCS, sink)
+}
+
+// drainPumps starts both stream pumps and blocks until they exit. To unblock
+// pumps promptly when timeoutCtx fires (caller cancellation or step timeout),
+// it spawns a watcher goroutine that closes the pipe read-ends — necessary
+// because grandchildren spawned by `sh -c` may hold the write-ends open after
+// the parent sh has been killed, which would otherwise leave the pumps
+// blocked indefinitely on Read.
+func drainPumps(
+	timeoutCtx context.Context,
+	stdoutPipe, stderrPipe io.ReadCloser,
+	sink adapter.EventSink,
+	stdoutCS, stderrCS *captureState,
+) {
 	pumpsDone := make(chan struct{})
 	go func() {
 		select {
 		case <-timeoutCtx.Done():
-			stdoutPipe.Close() //nolint:errcheck
-			stderrPipe.Close() //nolint:errcheck
+			_ = stdoutPipe.Close()
+			_ = stderrPipe.Close()
 		case <-pumpsDone:
 		}
 	}()
@@ -143,8 +153,6 @@ func (a *Adapter) Execute(ctx context.Context, step *workflow.StepNode, sink ada
 	go pumpStream(&wg, stderrPipe, "stderr", sink, stderrCS)
 	wg.Wait()
 	close(pumpsDone)
-
-	return resolveWait(cmd.Wait(), ctx, timeoutCtx, cfg, stdoutCS, stderrCS, sink)
 }
 
 // buildCmd constructs and configures the exec.Cmd for the sandbox.

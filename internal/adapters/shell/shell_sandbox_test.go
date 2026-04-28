@@ -104,6 +104,24 @@ func TestSandbox_EnvAllowlist_DeclaredSecretPropagated(t *testing.T) {
 	}
 }
 
+func TestSandbox_EnvAllowlist_PATHInEnvRejected(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell adapter uses sh; skip on Windows")
+	}
+	envJSON, _ := json.Marshal(map[string]string{"PATH": "/tmp"})
+	a := shell.New()
+	_, err := a.Execute(context.Background(), makeSandboxStep(map[string]string{
+		"command": "true",
+		"env":     string(envJSON),
+	}), noopSink{})
+	if err == nil {
+		t.Fatal("expected error when PATH is set via env; got nil")
+	}
+	if !strings.Contains(err.Error(), "PATH") {
+		t.Errorf("expected error message to mention PATH; got %v", err)
+	}
+}
+
 // ── Test 2: command path hygiene ─────────────────────────────────────────────
 
 func TestSandbox_CommandPathHygiene_DotInPathDropped(t *testing.T) {
@@ -135,6 +153,17 @@ func TestSandbox_CommandPathHygiene_DotInPathDropped(t *testing.T) {
 	// "." was stripped from PATH; "evil" must not have run.
 	if strings.Contains(result.Outputs["stdout"], "EVIL_RAN") {
 		t.Error("expected 'evil' to not run; sandbox did not strip '.' from PATH")
+	}
+	// Missing command should produce a failure outcome with a non-zero exit code.
+	if result.Outcome != "failure" {
+		t.Errorf("expected outcome 'failure' for missing command; got %q", result.Outcome)
+	}
+	exitCode, ok := result.Outputs["exit_code"]
+	if !ok || exitCode == "" {
+		t.Fatalf("expected exit_code output for missing command; outputs=%v", result.Outputs)
+	}
+	if exitCode == "0" {
+		t.Fatalf("expected non-zero exit_code for missing command; outputs=%v", result.Outputs)
 	}
 }
 

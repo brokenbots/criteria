@@ -36,7 +36,7 @@ const (
 // sandboxConfig holds resolved sandbox parameters for one step execution.
 type sandboxConfig struct {
 	env              []string      // child process environment; nil = inherit all (legacy)
-	timeout          time.Duration // hard timeout; use defaultTimeout when not explicitly set
+	timeout          time.Duration // hard timeout; defaultTimeout in sandbox mode, or 0 (no hard timeout) in legacy mode when not explicitly set
 	outputLimitBytes int64         // per-stream capture limit; -1 = unbounded (legacy)
 	workingDir       string        // CWD for child; empty = inherit operator CWD
 }
@@ -131,6 +131,9 @@ func parseOutputLimitInput(raw string) (int64, error) {
 // parseEnvInput decodes the `env` input field. The field must be a
 // JSON-encoded map[string]string. An empty or absent value is allowed and
 // returns a nil map (no extra vars to pass).
+//
+// PATH is reserved: callers must use `command_path` to control PATH so the
+// sandbox-applied sanitized PATH cannot be silently overridden via `env`.
 func parseEnvInput(raw string) (map[string]string, error) {
 	if raw == "" {
 		return nil, nil
@@ -138,6 +141,11 @@ func parseEnvInput(raw string) (map[string]string, error) {
 	var m map[string]string
 	if err := json.Unmarshal([]byte(raw), &m); err != nil {
 		return nil, fmt.Errorf("env must be a JSON-encoded map[string]string: %w", err)
+	}
+	for k := range m {
+		if strings.EqualFold(k, "PATH") {
+			return nil, fmt.Errorf("env may not set PATH; use input.command_path instead")
+		}
 	}
 	return m, nil
 }
@@ -212,14 +220,18 @@ func buildSanitizedPath(commandPath string) string {
 	return sanitizePath(os.Getenv("PATH"))
 }
 
-// sanitizePath strips "." and empty segments from a PATH-style string.
-// These silently resolve to the current working directory and are a classic
-// privilege-escalation vector (see T2 in the threat model).
+// sanitizePath strips empty segments and any non-absolute segments from a
+// PATH-style string. Empty segments and "." silently resolve to the current
+// working directory; relative segments like "bin" do the same. All are a
+// classic privilege-escalation vector (see T2 in the threat model).
 func sanitizePath(path string) string {
 	segments := strings.Split(path, string(os.PathListSeparator))
 	out := make([]string, 0, len(segments))
 	for _, seg := range segments {
-		if seg == "" || seg == "." {
+		if seg == "" {
+			continue
+		}
+		if !filepath.IsAbs(seg) {
 			continue
 		}
 		out = append(out, seg)
@@ -253,7 +265,8 @@ func validateWorkingDirectory(wd string) error {
 }
 
 // isPathAllowed reports whether cleaned is under $HOME or any path listed in
-// CRITERIA_SHELL_ALLOWED_PATHS (colon-separated).
+// CRITERIA_SHELL_ALLOWED_PATHS (separated using os.PathListSeparator —
+// ':' on Unix-like systems and ';' on Windows).
 func isPathAllowed(cleaned string) bool {
 	if home := filepath.Clean(os.Getenv("HOME")); home != "" && home != "." {
 		if cleaned == home || strings.HasPrefix(cleaned, home+string(filepath.Separator)) {
