@@ -430,6 +430,63 @@ Addressing these would require: (a) changing `Sink.publish` to capture errors an
 - `make test-cover`: exits 0; internal/cli: 65.9%, internal/run: 77.8%, mcp: 82.4%
 - `make bench`: all 10 benchmarks run to completion
 
+---
+
+### Review 2026-04-28-02 — approved
+
+#### Summary
+
+All three blockers from the first review are fully resolved. `attemptReattach` is now at 100%, `resumePausedRun` at 73.3%, `resumeActiveRun` at 77.8%, and `drainAndCleanup` at 100% — the `reattachTransport` interface was correctly introduced in `internal/cli/` (not in the transport package) and the test fake implements it. `BenchmarkCompile_1000Steps` replaces the previous misleading fixture: 389,695 allocs/op confirms 1000 HCL nodes are compiled. The baseline doc now includes Go version, commit hash, and the verbatim 20% regression statement. All five required remediations (R1–R5) and the MCP ordering weakness are addressed. `make test` (race-clean), `make lint-go`, `make lint-imports`, `make test-cover`, and `make bench` all exit 0. The arch-review item (publish-failure / checkpoint-write-failure untestable without design changes) is correctly documented in the workstream and deferred to Phase 2.
+
+#### Plan Adherence
+
+| Step | Status | Notes |
+|---|---|---|
+| Step 1 — CLI ≥ 60% | ✅ 65.9% | `attemptReattach` 100%, `resumePausedRun` 73.3%, `resumeActiveRun` 77.8% — all plan-named functions now tested |
+| Step 2 — MCP ≥ 50% | ✅ 82.4% | Event ordering now asserted in `TestMCPBridge_FullRoundTrip` |
+| Step 3 — `internal/run/` ≥ 60% | ✅ 77.8% | CheckpointFn negative assertion added; arch-review item documented |
+| Step 4 — Benchmarks | ✅ | `BenchmarkCompile_1000Steps` correctly stresses compiler (389,695 allocs); `BenchmarkPluginExecuteNoop` 8 ns/op pure dispatch |
+| Step 4.4 — Baseline doc | ✅ | Go version, commit hash, 20% threshold all present |
+| Step 5 — GoDoc burn-down | ✅ N/A | No `revive`/`exported` entries existed |
+| Step 6 — Makefile targets | ✅ | `-race` restored; bench scope deviation documented |
+
+#### Test Intent Assessment
+
+Tests added in this pass that prove behavioral intent:
+
+- `TestAttemptReattach_RPCError`: asserts side-effect (checkpoint removed) and return value (`err != nil`, `resp == nil`) — a faulty implementation that doesn't clear the checkpoint or swallows the error would fail.
+- `TestAttemptReattach_NotResumable`: asserts `(nil, nil)` contract and checkpoint removal — a regression that returns the response would fail.
+- `TestAttemptReattach_Success`: asserts response payload forwarded unchanged — a regression that mutates the response would fail.
+- `TestResumeActiveRun_ExceedsMaxRetries`: asserts a `RunFailed` envelope is published via `ft.published` inspection — a regression that silently drops the failure would fail.
+- `TestResumeActiveRun_HappyPath`: asserts `RunCompleted` envelope is published and checkpoint is removed.
+- `TestResumePausedRun_StartsStreamsAndRunsEngine`: asserts engine drives to completion and checkpoint is cleaned up.
+- `TestResumePausedRun_StartStreamsError`: asserts no engine events are emitted when `StartStreams` fails — prevents accidental event emission on aborted recovery.
+- `TestSink_CheckpointFn_NotCalledOnTerminalEvents`: negative assertion — proves the contract that `CheckpointFn` is exclusively an `OnStepEntered` side-effect.
+
+Remaining low-coverage paths that are acceptable (not plan requirements):
+- `serviceResumeSignals` 16.7%: the wait-for-resume loop requires a live `ResumeCh` signal; testing would need concurrency scaffolding well beyond this workstream's scope. The happy-path (immediate paused exit) IS covered.
+- `resumeOneRun` 0%: outer orchestrator; fully tested via its components individually.
+
+#### Validation Performed
+
+```
+make test          → exit 0 (all packages, race-clean)
+make lint-go       → exit 0
+make lint-imports  → exit 0
+make test-cover    → exit 0
+  internal/cli/:               65.9%  (target ≥60%) ✅
+  internal/run/:               77.8%  (target ≥60%) ✅
+  cmd/criteria-adapter-mcp/:   82.4%  (target ≥50%) ✅
+go tool cover -func=cover.out (reattach functions):
+  attemptReattach   100%  ✅
+  drainAndCleanup   100%  ✅
+  resumePausedRun    73.3% ✅
+  resumeActiveRun    77.8% ✅
+make bench         → exit 0; 10 benchmarks (workflow ×3, engine ×3, plugin ×4)
+  BenchmarkCompile_1000Steps:  389,695 allocs/op  ← confirms 1000-node compiler stress
+  BenchmarkPluginExecuteNoop:    8.371 ns/op, 0 allocs ← confirms session-once dispatch
+```
+
 
 
 | Risk | Mitigation |
