@@ -6,9 +6,13 @@ on:
   pull_request:
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
-  test:
-    name: Test
+  lint:
+    name: Lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -17,6 +21,14 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+
+      - name: Cache Go build cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/go-build
+          key: go-build-lint-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            go-build-lint-${{ runner.os }}-
 
       - name: Sync workspace
         run: go work sync
@@ -27,11 +39,27 @@ jobs:
       - name: Lint Go (golangci-lint)
         run: make lint-go
 
-      - name: Build binary
-        run: make build
+  unit-tests:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
 
-      - name: CLI smoke test
-        run: ./bin/criteria apply examples/hello.hcl --events-file /tmp/events.ndjson
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Cache Go build cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/go-build
+          key: go-build-unit-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            go-build-unit-${{ runner.os }}-
+
+      - name: Sync workspace
+        run: go work sync
 
       - name: Run tests (root + sdk + workflow)
         run: |
@@ -41,6 +69,34 @@ jobs:
 
       - name: Run conformance tests
         run: make test-conformance
+
+  e2e:
+    name: Build & E2E
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Cache Go build cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/go-build
+          key: go-build-e2e-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            go-build-e2e-${{ runner.os }}-
+
+      - name: Sync workspace
+        run: go work sync
+
+      - name: Build binary
+        run: make build
+
+      - name: CLI smoke test
+        run: ./bin/criteria apply examples/hello.hcl --events-file /tmp/events.ndjson
 
       - name: Validate example workflows
         run: make validate
