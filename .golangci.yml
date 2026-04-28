@@ -1,0 +1,133 @@
+# golangci-lint configuration for the criteria repo.
+# See https://golangci-lint.run/usage/configuration/ for option docs.
+
+run:
+  timeout: 5m
+  # Lint all three modules in the workspace.
+  modules-download-mode: readonly
+  # Generated proto bindings are excluded via issues.exclude-dirs.
+
+linters:
+  disable-all: true
+  enable:
+    # Correctness
+    - govet              # standard vet checks
+    - staticcheck        # SA-series checks
+    - errcheck           # unchecked errors
+    - ineffassign        # ineffective assignments
+    - unused             # unused symbols
+    - gosimple           # simplifications
+    - typecheck          # always on; safety net
+    - bodyclose          # response.Body left open
+    - rowserrcheck       # sql.Rows.Err() not checked
+    - sqlclosecheck      # sql.Rows / sql.Stmt not closed
+    - contextcheck       # context not propagated
+    - nilerr             # returns nil after non-nil err check
+    - errorlint          # %w / errors.Is/As correctness
+    # Hygiene
+    - gofmt
+    - goimports
+    - misspell
+    - unconvert          # unnecessary type conversions
+    - unparam            # unused function parameters / return values
+    - prealloc           # slice prealloc opportunities
+    - dupword            # accidental "the the" in comments
+    # Complexity (hard-fail; suppressions are W03's punch-list)
+    - funlen
+    - gocyclo
+    - gocognit
+    # Style / API hygiene (hard-fail; revive carries doc-comment rule)
+    - revive
+    - gocritic
+    - nakedret
+    - nolintlint         # nolint directives must be specific + justified
+
+linters-settings:
+  funlen:
+    # Tech eval target: no function > 50 lines outside generated code.
+    lines: 50
+    statements: 40
+
+  gocyclo:
+    min-complexity: 15
+
+  gocognit:
+    min-complexity: 20
+
+  revive:
+    rules:
+      # GoDoc on exported symbols (drives W06).
+      - name: exported
+        arguments:
+          - "checkPrivateReceivers"
+          - "disableStutteringCheck"
+      - name: package-comments
+      - name: var-naming
+      - name: receiver-naming
+      - name: indent-error-flow
+      - name: error-return
+      - name: error-naming
+      - name: error-strings
+      - name: range-val-in-closure
+      - name: superfluous-else
+      - name: unreachable-code
+      - name: redefines-builtin-id
+
+  gocritic:
+    enabled-tags:
+      - diagnostic
+      - performance
+      - style
+    disabled-checks:
+      # ifElseChain fires too often on outcome-routing switches; keep them readable.
+      - ifElseChain
+      # whyNoLint is noisy in tandem with nolintlint.
+      - whyNoLint
+
+  nolintlint:
+    require-explanation: true
+    require-specific: true
+    allow-unused: false
+
+  errcheck:
+    # Common ignored returns; document them so we don't silently grow this list.
+    exclude-functions:
+      - (io.Closer).Close
+      - (*os.File).Close
+      - fmt.Fprint
+      - fmt.Fprintf
+      - fmt.Fprintln
+
+  goimports:
+    local-prefixes: github.com/brokenbots/criteria
+
+issues:
+  # Day-one baseline lives in .golangci.baseline.yml; W03/W04/W06 burn it down.
+  exclude-files:
+    - ".*\\.pb\\.go$"
+    - ".*\\.connect\\.go$"
+    - "sdk/pb/.*"
+  exclude-dirs:
+    - bin
+    - tools
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  new: false
+  # Static suppressions that are permanent (not burned down by any workstream).
+  # Per-file baseline suppressions are appended from .golangci.baseline.yml by
+  # the lint-go Makefile target — it strips the "issues:\n  exclude-rules:\n"
+  # header and appends the remaining items directly after this list.
+  exclude-rules:
+    # Test files: relax funlen/gocyclo/gocognit and require less GoDoc.
+    - path: _test\.go
+      linters:
+        - funlen
+        - gocyclo
+        - gocognit
+        - revive
+        - errcheck
+    # main.go for adapter binaries: short bootstrap, no GoDoc requirement.
+    - path: cmd/.*/main\.go
+      linters:
+        - revive
+        - funlen

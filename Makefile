@@ -1,5 +1,5 @@
 .PHONY: help bootstrap tidy build plugins proto proto-lint proto-check-drift \
-	test test-conformance test-flake-watch lint-imports validate example-plugin ci clean
+	test test-conformance test-flake-watch lint-imports lint-go lint validate example-plugin ci clean
 
 # Default target: list available targets.
 help:
@@ -53,6 +53,19 @@ lint-imports: ## Enforce import-graph boundaries (see tools/import-lint/)
 	go run ./tools/import-lint .
 	@echo "Import boundaries OK."
 
+lint-go: ## Run golangci-lint across all modules with the baseline allowlist
+	@# Merge configs: .golangci.yml ends with exclude-rules:; strip the
+	@# "issues:\n  exclude-rules:\n" header from .golangci.baseline.yml and
+	@# append the remaining items so they extend the exclude-rules list.
+	@cat .golangci.yml > .golangci.merged.yml
+	@tail -n +3 .golangci.baseline.yml >> .golangci.merged.yml
+	go tool golangci-lint run --config .golangci.merged.yml ./...             || { rm -f .golangci.merged.yml; exit 1; }
+	(cd sdk      && go tool golangci-lint run --config ../.golangci.merged.yml ./...) || { rm -f .golangci.merged.yml; exit 1; }
+	(cd workflow && go tool golangci-lint run --config ../.golangci.merged.yml ./...) || { rm -f .golangci.merged.yml; exit 1; }
+	@rm -f .golangci.merged.yml
+
+lint: lint-imports lint-go ## Run all linters
+
 validate: build ## Validate all standalone example workflows
 	@for f in examples/*.hcl examples/plugins/*/*.hcl; do \
 		echo "Validating $$f..."; \
@@ -82,7 +95,7 @@ example-plugin: build ## Build and run the greeter example plugin end-to-end
 	rm -rf "$$tmpdir" "$$eventsfile"; \
 	echo "example-plugin: OK"
 
-ci: build test lint-imports validate example-plugin ## Run all CI gates (build, test, lint-imports, validate, example-plugin)
+ci: build test lint-imports lint-go validate example-plugin ## Run all CI gates (build, test, lint-imports, lint-go, validate, example-plugin)
 
 clean: ## Remove build artifacts
 	rm -rf bin conformance.test

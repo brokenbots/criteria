@@ -7,6 +7,9 @@ bin/
 *.db-wal
 go.work.sum
 
+# Ephemeral lint config produced by make lint-go; never commit this.
+.golangci.merged.yml
+
 # Editor directories
 .idea/
 .vscode/
