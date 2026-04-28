@@ -1,0 +1,15 @@
+User Story: Allow approval in local mode (without Castle)
+Date: 2026-04-26
+
+As a workflow author running local workflows,
+I want approval nodes to work without requiring a Castle backend,
+so that human-in-the-loop checkpoints are available in standalone development.
+
+Current pain:
+- approval currently requires --castle mode.
+- local-only execution cannot use approval/wait gates, limiting iterative single-machine workflows.
+
+Acceptance criteria:
+- approval can run in local mode with a local prompt/ack flow.
+- local approval decisions are persisted in local run state for resume/restart safety.
+- behavior remains compatible with Castle-backed approval when orchestrated mode is used.

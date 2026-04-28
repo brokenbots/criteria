@@ -1,0 +1,29 @@
+User Story: Add per-step visit limit to bound loops in workflows
+
+AS A workflow author running agent review loops,
+I WANT to declare a maximum number of times a given step can be visited in a single run,
+SO THAT runaway loops fail fast and cleanly instead of exhausting the global step budget or running indefinitely.
+
+Background:
+The only current loop guard is `max_total_steps` in the policy block, which is a global budget
+shared across all steps. It cannot distinguish a setup step from a tight review loop, and setting
+it low enough to bound the loop also risks cutting off legitimate long workstreams.
+
+A dedicated per-step visit limit would let authors write:
+
+  step "execute" {
+    max_visits = 10   # fail the run if this step is reached more than 10 times
+    ...
+  }
+
+and leave `max_total_steps` as a coarse backstop.
+
+Acceptance criteria:
+- `max_visits` is an optional integer field on any step block (0 or omitted = unlimited).
+- When a step's visit count exceeds `max_visits`, the run transitions to the `failed` terminal state
+  with a clear error: `step "execute" exceeded max_visits (10)`.
+- The engine tracks visit counts per step per run, not per attempt (i.e. retries count toward the limit).
+- Compile-time warning if a step is reachable from its own outcome graph and no `max_visits` is set
+  and `max_total_steps` is > 200 (configurable threshold).
+- Existing `max_total_steps` behaviour is unchanged.
+- Unit tests cover: visit limit hit on loop step, visit limit not hit, omitted limit (unlimited).

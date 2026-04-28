@@ -1,0 +1,16 @@
+User Story: Align Copilot permission kinds with allow_tools ergonomics
+Date: 2026-04-26
+
+As a workflow author using the Copilot adapter,
+I want allow_tools values to be intuitive and consistent with documented tool names,
+so that permissions do not fail unexpectedly during execution.
+
+Current pain:
+- Copilot permission kinds are read/write/shell/mcp.
+- Using read_file/write_file in allow_tools caused tool-call denials and agent failure.
+- The workflow looked correct but runtime behavior failed due to naming mismatch.
+
+Acceptance criteria:
+- Either read_file/write_file map automatically to read/write, or docs and validation warn early.
+- Compile/plan surfaces adapter-specific permission name expectations.
+- Runtime denial messages explicitly suggest valid allow_tools patterns.
