@@ -11,8 +11,9 @@ Workstream files for the active phase live at
 - **Phase 0 — Post-separation cleanup** — **closed 2026-04-27**. All nine
   workstreams merged; legacy-name gate clean; `v0.1.0` tagged. Archived under
   [workstreams/archived/v0/](workstreams/archived/v0/).
-- **Phase 1 — TBD**. The first feature phase plans itself once Phase 0
-  closes; candidate scope is captured in the Phase 0 close-out workstream.
+- **Phase 1 — Stabilization and critical user fixes** — **in progress**.
+  Eleven workstreams: W01–W10 are the work, [W11](workstreams/11-phase1-cleanup-gate.md)
+  is the cleanup gate that closes the phase and tags `v0.2.0`.
 
 ## Phase 0 — Post-separation cleanup ✅ closed 2026-04-27
 
@@ -50,10 +51,27 @@ v1.6 plan deferred.
 
 *Phase 0 closed 2026-04-27. Archived under [workstreams/archived/v0/](workstreams/archived/v0/).*
 
-## Phase 1 — TBD
+## Phase 1 — Stabilization and critical user fixes
 
-Planning artifact TBD. Phase 1 scope will be defined in a new workstream set once
-the team identifies the next development priorities.
+**Goal:** harden CI, adopt golangci-lint with a per-workstream baseline
+burn-down, sandbox the shell adapter, ship coverage/benchmark/GoDoc
+baselines, and unblock four user-reported issues (the `file()`
+expression family, step-level iteration with a nested `workflow` step
+type, Copilot agent defaults, and a `count`-style construct).
+
+### Phase 1 workstreams
+
+- [W01](workstreams/01-flaky-test-fix.md) — flaky test fix (deterministic CI: `-count=2`, `goleak`).
+- [W02](workstreams/02-golangci-lint-adoption.md) — golangci-lint adoption with per-workstream baseline burn-down contract.
+- [W03](workstreams/03-god-function-refactor.md) — god-function refactor (no behavior change).
+- [W04](workstreams/04-split-oversized-files.md) — oversized-file splits in `workflow/`, `conformance/`, server transport.
+- [W05](workstreams/05-shell-adapter-sandbox.md) — shell adapter first-pass sandboxing + threat model + `CRITERIA_SHELL_LEGACY=1` opt-out.
+- [W06](workstreams/06-coverage-bench-godoc.md) — coverage thresholds, benchmark baselines, GoDoc on public packages.
+- [W07](workstreams/07-file-expression-function.md) — `file()` / `fileexists()` / `trimfrontmatter()` HCL functions.
+- [W08](workstreams/08-for-each-multistep.md) — multi-step `for_each` iteration bodies. **Superseded within Phase 1 by W10**: the runtime model is replaced; the user story stays satisfied via W10's `type = "workflow"` step.
+- [W09](workstreams/09-copilot-agent-defaults.md) — Copilot `reasoning_effort` no longer silently dropped; per-step override; targeted diagnostic for misplaced agent-config fields.
+- [W10](workstreams/10-step-iteration-and-workflow-step.md) — step-level `for_each` and `count` on any step type; new `type = "workflow"` step with inline or `workflow_file` body; indexed outputs; full `each.*` binding set (`value`, `key`, `_idx`, `_first`, `_last`, `_total`, `_prev`); `on_failure = "abort"|"continue"|"ignore"`; explicit `output` blocks for encapsulation. Removes W08's top-level `for_each` block.
+- [W11](workstreams/11-phase1-cleanup-gate.md) — Phase 1 cleanup gate: validation lanes, lint baseline burn-down gate, coverage gate, archive, tag `v0.2.0`.
 
 ## Deferred / forward-pointers
 

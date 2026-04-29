@@ -1,6 +1,6 @@
 # Workstream 6 — Coverage, benchmarks, GoDoc
 
-**Owner:** Workstream executor · **Depends on:** [W02](02-golangci-lint-adoption.md), [W03](03-god-function-refactor.md), [W04](04-split-oversized-files.md) · **Unblocks:** [W10 Phase 1 cleanup gate](10-phase1-cleanup-gate.md) (which gates `v0.2.0` on the coverage and GoDoc thresholds set here).
+**Owner:** Workstream executor · **Depends on:** [W02](02-golangci-lint-adoption.md), [W03](03-god-function-refactor.md), [W04](04-split-oversized-files.md) · **Unblocks:** [W11 Phase 1 cleanup gate](11-phase1-cleanup-gate.md) (which gates `v0.2.0` on the coverage and GoDoc thresholds set here).
 
 ## Context
 
@@ -23,7 +23,7 @@ This workstream is the **measurement and lock-in** workstream. It
 does not add new features or change behavior. It adds tests against
 existing behavior, baseline benchmarks against existing
 implementations, and doc comments against existing exported
-symbols. The cleanup gate ([W10](10-phase1-cleanup-gate.md)) gates
+symbols. The cleanup gate ([W11](11-phase1-cleanup-gate.md)) gates
 `v0.2.0` on the numeric thresholds defined here.
 
 ## Prerequisites
@@ -192,7 +192,7 @@ For each `revive`/`exported` baseline entry in those packages:
 For `internal/...` packages, **leave** the baseline entries in
 place unless they're trivially fixable while testing in Steps
 1–3. Internal packages do not need full GoDoc; the cleanup
-gate ([W10](10-phase1-cleanup-gate.md)) records the residual
+gate ([W11](11-phase1-cleanup-gate.md)) records the residual
 count as a Phase 2 backlog item.
 
 Doc comment style:
@@ -250,7 +250,7 @@ and inspecting per-package coverage.
   fixable while in the file. Internal-only doc coverage is a
   Phase 2 nice-to-have.
 - CI-gating coverage or benchmarks. The thresholds are documented
-  here and enforced manually by [W10](10-phase1-cleanup-gate.md).
+  here and enforced manually by [W11](11-phase1-cleanup-gate.md).
 - Adding test infrastructure (testify, gomock, etc.). Stick to
   the standard library + the existing fake patterns in the
   codebase.

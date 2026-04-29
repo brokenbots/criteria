@@ -114,7 +114,7 @@ Acceptance criteria:
 ```
 
 This file is referenced by the rest of the workstream and by
-[W10](10-phase1-cleanup-gate.md)'s archive accounting.
+[W11](11-phase1-cleanup-gate.md)'s archive accounting.
 
 ### Step 2 — Fix the silent `reasoning_effort` drop
 
@@ -367,7 +367,7 @@ this workstream rather than punting.
 This workstream may **not** edit `README.md`, `PLAN.md`,
 `AGENTS.md`, `CHANGELOG.md`, `workstreams/README.md`, or any
 other workstream file. CHANGELOG entries are deferred to
-[W10](10-phase1-cleanup-gate.md).
+[W11](11-phase1-cleanup-gate.md).
 
 ## Tasks
 

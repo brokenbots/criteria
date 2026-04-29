@@ -391,7 +391,7 @@ This workstream may **not** edit `README.md`, `PLAN.md`,
 `AGENTS.md`, `CHANGELOG.md`, `workstreams/README.md`, or any
 other workstream file. It may **not** introduce new exported
 SDK types beyond `OnForEachStep`. CHANGELOG entries are deferred
-to [W10](10-phase1-cleanup-gate.md).
+to [W11](11-phase1-cleanup-gate.md).
 
 ## Tasks
 

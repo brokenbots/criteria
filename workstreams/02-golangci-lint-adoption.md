@@ -285,7 +285,7 @@ Document in **`docs/contributing/lint-baseline.md`** (new):
 This file becomes the single source of truth for how the lint debt
 is paid down. Cross-link it from `CONTRIBUTING.md` only if W06 is
 also editing `CONTRIBUTING.md`; otherwise leave the cross-link to
-[W11 Phase 1 cleanup gate](10-phase1-cleanup-gate.md).
+[W11 Phase 1 cleanup gate](11-phase1-cleanup-gate.md).
 
 ## Out of scope
 
@@ -300,7 +300,7 @@ also editing `CONTRIBUTING.md`; otherwise leave the cross-link to
 - Linting generated proto code.
 - Editing `CHANGELOG.md`, `README.md`, `CONTRIBUTING.md`. Documentation
   beyond `docs/contributing/lint-baseline.md` is deferred to
-  [W10 Phase 1 cleanup gate](10-phase1-cleanup-gate.md).
+  [W11 Phase 1 cleanup gate](11-phase1-cleanup-gate.md).
 
 ## Files this workstream may modify
 
@@ -367,12 +367,12 @@ that work belongs to W03/W04/W06.
 
 | Risk | Mitigation |
 |---|---|
-| The baseline file becomes a permanent allowlist that nobody pays down | Every entry carries a workstream-pointer comment. Reviewer notes for W03/W04/W06 must show net-negative line counts in the baseline file. The cleanup gate ([W10](10-phase1-cleanup-gate.md)) refuses to tag `v0.2.0` if the baseline still contains any `funlen`/`gocyclo` entries pointed at W03. |
+| The baseline file becomes a permanent allowlist that nobody pays down | Every entry carries a workstream-pointer comment. Reviewer notes for W03/W04/W06 must show net-negative line counts in the baseline file. The cleanup gate ([W11](11-phase1-cleanup-gate.md)) refuses to tag `v0.2.0` if the baseline still contains any `funlen`/`gocyclo` entries pointed at W03. |
 | The pinned linter version drifts from contributors' local installs | The Makefile target uses `go tool` / `go run` against the pinned dep, never a global binary. CI uses the same path. Document in `docs/contributing/lint-baseline.md`. |
 | `.golangci.merged.yml` build artifact gets accidentally committed | `.gitignore` entry; the `make lint-go` target removes it after running. CI has no commit step that would push it. |
 | `revive`'s `exported` rule fires on legitimately internal-but-exported test helpers | The baseline absorbs day-one findings; W06 either documents the helper or moves it to a `_test.go` file. Do not silence `revive` globally. |
 | `funlen` / `gocyclo` thresholds (50 lines / 15) are too aggressive and force pointless extraction | The thresholds match the tech-evaluation target. If a function genuinely cannot fit in 50 lines and 15 complexity, the W03 reviewer can grant a per-function `//nolint:funlen,gocyclo // <reason>` with explicit justification. The justification is the gate, not the threshold. |
-| Lint runtime is slow enough to hurt PR feedback loop | Cache the linter binary in CI. If runtime > 90s, drop `gocritic`'s style tag (most expensive) and re-evaluate in [W10](10-phase1-cleanup-gate.md). |
+| Lint runtime is slow enough to hurt PR feedback loop | Cache the linter binary in CI. If runtime > 90s, drop `gocritic`'s style tag (most expensive) and re-evaluate in [W11](11-phase1-cleanup-gate.md). |
 | Pinned `golangci-lint` v1.64.x fails on `go 1.26` toolchain | Bump to the next v1.x patch that supports `go 1.26`; record the version in reviewer notes. If no v1.x supports `go 1.26`, escalate as `[ARCH-REVIEW]` with severity `blocker` — this changes the linter strategy. |
 | `tools/lint-baseline/` becomes its own maintenance burden | Cap it at ~200 LOC. If the JSON-to-YAML transformation grows beyond that, consider committing the YAML by hand instead and deleting the tool — the tool is a convenience, not load-bearing. |
 

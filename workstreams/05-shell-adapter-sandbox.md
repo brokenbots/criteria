@@ -324,7 +324,7 @@ planning; this workstream does not implement any of it.
 This workstream may **not** edit `README.md`, `PLAN.md`,
 `AGENTS.md`, `CHANGELOG.md`, `workstreams/README.md`, or any
 other workstream file. CHANGELOG entries are deferred to
-[W10](10-phase1-cleanup-gate.md).
+[W11](11-phase1-cleanup-gate.md).
 
 ## Tasks
 
