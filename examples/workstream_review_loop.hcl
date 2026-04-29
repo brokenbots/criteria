@@ -45,8 +45,8 @@ workflow "workstream_review_loop" {
   agent "executor" {
     adapter = "copilot"
     config {
-      model            = "claude-sonnet-4.6"
-      reasoning_effort = "medium"
+      model            = "gpt-5.3-codex"
+      reasoning_effort = "high"
       max_turns        = 12
     }
   }
@@ -63,8 +63,7 @@ workflow "workstream_review_loop" {
   agent "pr_manager" {
     adapter = "copilot"
     config {
-      model            = "claude-sonnet-4.6"
-      reasoning_effort = "high"
+      model            = "claude-haiku-4.5"
       max_turns        = 10
     }
   }
