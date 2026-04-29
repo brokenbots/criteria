@@ -36,7 +36,7 @@ const (
 //     CRITERIA_FILE_FUNC_MAX_BYTES; defaults to 1 MiB.
 //   - AllowedPaths is the list of directories that file() and fileexists()
 //     may access outside WorkflowDir. Sourced from
-//     CRITERIA_WORKFLOW_ALLOWED_PATHS (colon-separated).
+//     CRITERIA_WORKFLOW_ALLOWED_PATHS (OS path-list separator).
 type FunctionOptions struct {
 	WorkflowDir  string
 	MaxBytes     int64
@@ -52,7 +52,7 @@ type FunctionOptions struct {
 //
 // Environment variables read:
 //   - CRITERIA_FILE_FUNC_MAX_BYTES: integer, clamped to [1024, 64 MiB].
-//   - CRITERIA_WORKFLOW_ALLOWED_PATHS: colon-separated list of directories.
+//   - CRITERIA_WORKFLOW_ALLOWED_PATHS: OS path-list-separated list of directories (filepath.SplitList).
 func DefaultFunctionOptions(workflowDir string) FunctionOptions {
 	if workflowDir != "" {
 		if abs, err := filepath.Abs(workflowDir); err == nil {
@@ -75,7 +75,7 @@ func DefaultFunctionOptions(workflowDir string) FunctionOptions {
 
 	var allowed []string
 	if raw := os.Getenv("CRITERIA_WORKFLOW_ALLOWED_PATHS"); raw != "" {
-		for _, p := range strings.Split(raw, ":") {
+		for _, p := range filepath.SplitList(raw) {
 			if p == "" {
 				continue
 			}
