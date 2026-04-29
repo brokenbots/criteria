@@ -1069,3 +1069,106 @@ make proto-check-drift  → clean (exit 0)
 make validate           → clean, no warnings (exit 0)
 grep W08 symbols        → 0 hits in non-test Go code ✓
 ```
+
+---
+
+### Review 2026-04-29-05 — changes-requested
+
+#### Summary
+
+The implementation is functionally solid: `make ci` is clean, all W08 symbols are gone, the runtime correctly handles `count`/`for_each` on any step type, `type="workflow"` inline bodies, all 7 `each.*` bindings, `on_failure` policies, `output {}` blocks, indexed step outputs, `each._prev` carry-forward, and crash-resume cursor restoration. The prior reviewer's approval at `2026-04-29-04` is largely justified, but three items from the plan remain unimplemented and cannot be deferred: one explicitly named required test (Step 8), two explicitly required documentation examples (Step 10). Four nits must also be resolved before approval.
+
+---
+
+#### Plan Adherence
+
+- **Steps 1–7, 9, 11**: ✓ Implemented; all B-01 through B-16 blockers from prior passes are closed.
+- **Step 8 (tests)**: ⚠ `TestIter_OutputBlocks_NoneDeclared_AdapterStep` is named explicitly in the Step 8 acceptance criteria and is absent from `internal/engine/iteration_engine_test.go`. The nearest existing coverage (`TestIter_IndexedOutputs_StoredInStepsVar` via sink events; `TestIter_MapForEach_UsesKeyForIndexedOutput` via map-key expression access) does not cover the specific path: adapter step + list/count `for_each` → downstream step resolves `steps.<name>[0].<key>` through the cty expression evaluator.
+- **Step 10 (docs — `each._prev` reduce/scan example)**: ✗ The `each._prev` binding table row in `docs/workflow.md` describes semantics, but no code block demonstrates an accumulation/reduce pattern. Step 10 explicitly requires one.
+- **Step 10 (docs — indexed access patterns, numeric vs. keyed)**: ✗ The `output {}` section mentions `steps.<name>[idx].<key>` in prose, but no code example contrasts numeric-indexed access (`steps.foo[0].key`, list/count) against keyed access (`steps.foo["api"].key`, map). Step 10 explicitly requires this.
+- **Step 10 (docs — variable scope constraint)**: ✗ The Rules for workflow bodies section states "Body steps inherit `each.*`, `var.*`, and `steps.*` from the enclosing scope" but omits the plan-required constraint: "`variable` blocks cannot be re-declared inside a body."
+- **Step 10 (docs — cycle detection)**: Correctly deferred to W11 (only `workflow_file` triggers it; `workflow_file` is fully W11-scoped). ✓ accepted.
+- **Step 11 (workstream file)**: ✓ This workstream file and `PLAN.md` updated appropriately.
+
+---
+
+#### Required Remediations
+
+- **[blocker] B-17** — `TestIter_OutputBlocks_NoneDeclared_AdapterStep` absent  
+  File: `internal/engine/iteration_engine_test.go`  
+  The plan Step 8 names this test verbatim. The test must cover: (a) an adapter step with `for_each = ["x","y"]` or `count = 2`, (b) adapter outputs stored via `WithIndexedStepOutput`, (c) a subsequent step's `input {}` expression that references `steps.<stepname>[0].<key>` through the cty evaluator, and (d) an assertion that the resolved value equals the expected output. Using only sink-event assertions is insufficient — the test must prove that downstream input expression evaluation correctly resolves numeric-indexed adapter outputs.  
+  Acceptance criteria: Test is present by name, exercises expression-eval end-to-end, and would fail if `WithIndexedStepOutput` stored values under a different key format.
+
+- **[blocker] D-01** — `each._prev` reduce/scan example missing from `docs/workflow.md`  
+  File: `docs/workflow.md`, `each.*` bindings section  
+  Step 10 requires an accumulation example (e.g., a step that computes a running total using `each._prev != null ? each._prev.total + each._idx : 0`). The binding table row alone does not satisfy this requirement.  
+  Acceptance criteria: A fenced code block under or near the `each.*` bindings table (or in a "Patterns" subsection) demonstrates `each._prev` used for accumulation/reduce. The example must be runnable by the validator (or clearly marked `fragment`/`skip` if it uses undefined variables).
+
+- **[blocker] D-02** — Indexed access patterns code example missing from `docs/workflow.md`  
+  File: `docs/workflow.md`, `output {}` blocks section  
+  Step 10 requires explicitly contrasting numeric-indexed access (`steps.foo[0].summary`, list/count) with keyed access (`steps.foo["api"].summary`, map). Current prose describes storage but omits a code example.  
+  Acceptance criteria: A fenced code block or inline snippet shows both forms. Example must include at least `steps.<name>[0].<key>` and `steps.<name>["<key>"].<key>`.
+
+- **[nit] N-04** — `LoadStack []string` in `CompileOpts` is dead state  
+  Files: `workflow/compile.go:33–35`, all propagation sites in `workflow/compile_steps.go`  
+  `LoadStack` is declared with a comment saying it is "for cycle detection," populated at every recursive call site, but never read in any logic. Actual cycle detection uses `LoadedFiles`. Either (a) remove the field, its comment, and all propagation sites, or (b) actively use it for the intended cycle detection and remove the redundancy with `LoadedFiles`.  
+  Acceptance criteria: No propagated-but-never-read `LoadStack` field exists. If kept, at least one code path reads and acts on it.
+
+- **[nit] N-05** — `each._prev` failure-path semantics absent from `docs/workflow.md`  
+  File: `docs/workflow.md`, `each._prev` binding table row  
+  The plan Risks section required explicit documentation that under `on_failure = "continue"`, `each._prev` on iteration N+1 contains the output of iteration N regardless of whether iteration N succeeded or failed. The current table row does not state this. Authors building accumulation patterns need this guarantee.  
+  Acceptance criteria: A note or footnote in the `each._prev` row (or immediately below the bindings table) states the failure-path behavior.
+
+- **[nit] N-06** — "Cannot redeclare `variable` blocks" constraint missing from workflow body rules  
+  File: `docs/workflow.md`, Rules for workflow bodies section  
+  Step 10 requires documenting that `variable` blocks cannot be re-declared inside an iteration body. Current text only describes what is inherited.  
+  Acceptance criteria: The Rules section includes a bullet or sentence stating that `variable { }` blocks cannot be re-declared inside a body (compiler rejects them).
+
+- **[nit] N-07** — Exit-criterion grep produces a false positive in `docs/workflow.md`  
+  File: `docs/workflow.md:548` (`# for_each "deploy" {` in the migration guide)  
+  The plan exit criterion `grep -rn 'for_each "[^"]*"\s*{' .` matches this commented-out line. Either use an HTML comment or prefix the old-syntax example differently (e.g., `old:` prefix, code block label), or add an explicit acknowledgment in the workstream file that this false positive is accepted documentation. As-is, the exit criterion fails its literal grep.  
+  Acceptance criteria: Either the grep exits with 0 hits in non-documentation Go/HCL sources (docs allowed to be excluded or reformatted), or the workstream file records an explicit acceptance of the known false positive with rationale.
+
+---
+
+#### Test Intent Assessment
+
+**Strong coverage:**
+- `TestIter_Prev_NullOnFirst_ObjectAfter` / `TestIter_Prev_PersistsAcrossBodySteps` — correctly assert contract semantics, not just execution.
+- `TestIter_CrashResume_PrevRestoredFromJSON` — regression-sensitive round-trip test for serialization.
+- `TestIter_OnFailureContinue_AllIterationsRun` / `TestIter_OnFailureAbort_StopsEarly` — policy semantics validated against observable iteration counts.
+- `TestIter_MapForEach_UsesKeyForIndexedOutput` — end-to-end expression evaluation for map-keyed outputs; would fail if key format changed.
+- Reattach tests (26 functions) — cursor validity, `checkIterationCursorValidity`, body step existence: all structurally sound.
+
+**Weak / missing coverage (requiring executor action):**
+- `TestIter_OutputBlocks_NoneDeclared_AdapterStep` (see B-17): the list/count adapter-step → downstream expression eval path is untested end-to-end. `TestIter_IndexedOutputs_StoredInStepsVar` uses only sink events; it would not catch a key-format regression that still produced an event but made expression access fail with a cty null or type error.
+- No negative test for `each._prev` under `on_failure = "continue"` with a failed prior iteration confirming `_prev` is still populated (not null). The behavior is implemented correctly but is not regression-tested.
+
+---
+
+#### Validation Performed
+
+```
+make ci                 → exit 0 (build + test + lint + proto-check-drift + lint-imports) ✓
+make build              → bin/criteria built cleanly ✓
+make test               → all packages green, race detector enabled ✓
+make lint-go            → clean ✓
+make lint-imports       → import boundaries OK ✓
+make proto-check-drift  → clean ✓
+make proto-lint         → clean ✓
+make validate           → no validation warnings ✓
+make test-conformance   → SDK conformance suite passed ✓
+./bin/criteria apply examples/for_each_review_loop.hcl --events-file /tmp/events.ndjson
+  → exit 0; 3 iterations × 3 body steps (execute→review→cleanup→_continue);
+    terminal outcome "all_succeeded" ✓
+grep 'TestIter_OutputBlocks_NoneDeclared_AdapterStep' internal/engine/iteration_engine_test.go
+  → no match (confirms B-17) ✓
+grep 'for_each "[^"]*"' docs/workflow.md
+  → line 548: migration guide false positive (confirms N-07) ✓
+grep 'LoadStack' workflow/compile.go workflow/compile_steps.go
+  → 5 declaration/propagation sites, 0 read sites (confirms N-04) ✓
+grep 'reduce\|scan\|running.total\|accumul' docs/workflow.md
+  → 0 matches (confirms D-01) ✓
+grep 'steps\.\w\+\[0\]\|steps\.\w\+\["' docs/workflow.md
+  → 0 code-example matches (confirms D-02) ✓
+```

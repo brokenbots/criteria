@@ -432,7 +432,35 @@ within the iterating step and any nested body steps.
 | `each._last` | bool | `true` on the last iteration. |
 | `each._prev` | object or null | Output object of the immediately preceding iteration. `null` on the first iteration. For adapter steps, contains the adapter response outputs; for `type="workflow"` steps, contains the evaluated `output {}` block values. Persisted across crash-resume. |
 
+> **`each._prev` under failure**: under `on_failure = "continue"`, `each._prev` on iteration N+1
+> contains the output object from iteration N **regardless of whether iteration N succeeded or
+> failed**. `_prev` is always the previous iteration's outputs, not a success indicator.
+> Under `on_failure = "abort"`, the loop terminates on the first failure so `_prev` is never
+> re-read after a failure.
+
 Referencing `each.*` outside any iterating step is a compile error.
+
+#### Reduce / scan with `each._prev`
+
+`each._prev` enables accumulation patterns across iterations. Because `_prev` is `null`
+on the first iteration, guard with `each._first` or a null check:
+
+<!-- validator: fragment -->
+```hcl
+step "running_total" {
+  adapter  = "compute"
+  for_each = var.amounts
+  input {
+    accumulator = each._first ? 0 : each._prev.total
+    addend      = each.value
+  }
+  outcome "all_succeeded" { transition_to = "summarize" }
+  outcome "any_failed"    { transition_to = "failed" }
+}
+```
+
+The final iteration's output (`each._prev.total` in the step that follows) holds
+the accumulated value.
 
 ### Aggregate outcomes
 
@@ -508,6 +536,9 @@ step "process_items" {
   scope. Changes to `steps.*` written inside the body are visible to steps
   that run after the outer iterating step completes.
 - Nesting is supported up to a depth of 4 levels.
+- `variable { }` blocks **cannot** be re-declared inside a workflow body; the
+  compiler rejects them. Body steps use the outer workflow's variables via
+  `var.*`.
 
 ### `output {}` blocks
 
@@ -525,6 +556,30 @@ For non-workflow adapter steps, adapter response outputs are automatically
 accumulated per iteration (no `output {}` block needed); `each._prev`
 carries the previous iteration's adapter outputs.
 
+#### Indexed access patterns
+
+After an iterating step completes, downstream steps resolve per-iteration
+outputs through indexed expressions:
+
+- **List / `count`** sources use **numeric** indexes:
+  ```
+  steps.deploy[0].summary   # first iteration
+  steps.deploy[1].summary   # second iteration
+  ```
+
+- **Map** (`for_each = { a = "x", b = "y" }`) sources use **string keys**:
+  ```
+  steps.deploy["a"].summary
+  steps.deploy["b"].summary
+  ```
+
+- **Non-iterating** steps use the flat form (today's behavior):
+  ```
+  steps.deploy.summary
+  ```
+
+`length(steps.deploy)` returns the total iteration count for list/count sources.
+
 ### The `_continue` target
 
 `_continue` is a reserved terminal state name for iteration bodies. It
@@ -541,11 +596,12 @@ saved scope (Items are not persisted to keep the checkpoint compact). The
 
 ### Migration from W08 top-level `for_each` blocks
 
-W08 `for_each "name" { items = …; do = "…" }` blocks have been removed. Rewrite them as:
+W08 top-level `for_each` iteration blocks (with `items = …` and `do = "…"`) have been removed. Rewrite them as:
 
 ```hcl
-# W08 (removed):
-# for_each "deploy" {
+# W08 (removed) — note: this syntax no longer compiles:
+# for_each "deploy"
+# {
 #   items = ["a", "b"]
 #   do    = "run_one"
 #   outcome "all_succeeded" { transition_to = "done" }

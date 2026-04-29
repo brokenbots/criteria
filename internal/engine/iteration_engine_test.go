@@ -1179,7 +1179,122 @@ workflow "t" {
 	}
 }
 
-// TestIter_NestedIteration_CursorStack verifies that a type="workflow" step
+// TestIter_OutputBlocks_NoneDeclared_AdapterStep verifies the plan Step 8 requirement:
+// an adapter step with for_each (no output {} block) accumulates adapter response
+// outputs under steps.<name>[idx].<key>, and a downstream step can resolve
+// steps.<name>[0].<key> through the cty expression evaluator. This test would fail
+// if WithIndexedStepOutput stored values under a different key format or if the
+// expression evaluator could not resolve numeric-indexed adapter outputs.
+func TestIter_OutputBlocks_NoneDeclared_AdapterStep(t *testing.T) {
+	g := compile(t, `
+workflow "t" {
+  version       = "0.1"
+  initial_state = "produce"
+  target_state  = "done"
+
+  step "produce" {
+    adapter  = "fake_produce"
+    for_each = ["x", "y"]
+    outcome "all_succeeded" { transition_to = "consume" }
+    outcome "any_failed"    { transition_to = "done" }
+  }
+
+  step "consume" {
+    adapter = "fake_consume"
+    input {
+      first_val  = "${steps.produce[0].val}"
+      second_val = "${steps.produce[1].val}"
+    }
+    outcome "success" { transition_to = "done" }
+  }
+
+  state "done" {
+    terminal = true
+    success  = true
+  }
+}`)
+	producePlug := &captureOutputPlugin{
+		outcomes: []string{"success", "success"},
+		outputs:  []map[string]string{{"val": "result_x"}, {"val": "result_y"}},
+	}
+	var consumeInputs []map[string]string
+	consumePlug := &captureInputPlugin{outcome: "success", capture: &consumeInputs}
+	sink := &iterSink{}
+	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
+		"fake_produce": producePlug,
+		"fake_consume": consumePlug,
+	}}
+	if err := New(g, loader, sink).Run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	if len(consumeInputs) != 1 {
+		t.Fatalf("consume ran %d times; want 1", len(consumeInputs))
+	}
+	inp := consumeInputs[0]
+	if got := inp["first_val"]; got != "result_x" {
+		t.Errorf("first_val: got %q want %q", got, "result_x")
+	}
+	if got := inp["second_val"]; got != "result_y" {
+		t.Errorf("second_val: got %q want %q", got, "result_y")
+	}
+}
+
+// TestIter_Prev_PopulatedAfterFailedIterationContinue verifies that under
+// on_failure="continue", each._prev on iteration N+1 contains the step outputs
+// from iteration N even when iteration N failed. This is the plan Risks section
+// guarantee: authors building accumulation patterns can rely on _prev being
+// non-null after any completed iteration, regardless of its outcome.
+func TestIter_Prev_PopulatedAfterFailedIterationContinue(t *testing.T) {
+	g := compile(t, `
+workflow "t" {
+  version       = "0.1"
+  initial_state = "items"
+  target_state  = "done"
+
+  step "items" {
+    adapter    = "fake"
+    for_each   = ["a", "b"]
+    on_failure = "continue"
+    input {
+      label      = "${each.value}"
+      prev_null  = "${each._prev == null}"
+    }
+    outcome "all_succeeded" { transition_to = "done" }
+    outcome "any_failed"    { transition_to = "done" }
+  }
+
+  state "done" {
+    terminal = true
+    success  = true
+  }
+}`)
+	// Iteration 0 fails but returns outputs; iteration 1 should see _prev from iter 0.
+	combined := &captureOutputPlugin{
+		outcomes: []string{"failure", "success"},
+		outputs:  []map[string]string{{"result": "fail_out"}, nil},
+	}
+	var capturedInputs []map[string]string
+	combined.capture = &capturedInputs
+	sink := &iterSink{}
+	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": combined}}
+	if err := New(g, loader, sink).Run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	if len(capturedInputs) != 2 {
+		t.Fatalf("expected 2 captured inputs; got %d", len(capturedInputs))
+	}
+	// Iteration 0: _prev is null (first iteration).
+	if got := capturedInputs[0]["prev_null"]; got != "true" {
+		t.Errorf("iter 0 prev_null: got %q want %q", got, "true")
+	}
+	// Iteration 1: _prev is from iter 0's adapter outputs (even though iter 0 failed).
+	if got := capturedInputs[1]["prev_null"]; got != "false" {
+		t.Errorf("iter 1 prev_null: got %q want %q (expected _prev populated after failed iter 0)", got, "false")
+	}
+}
+
 // whose body contains its own for_each step pushes two cursors onto the
 // RunState.IterStack (outer for_each + inner for_each), producing the correct
 // number of inner-step executions.

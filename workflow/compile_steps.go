@@ -13,8 +13,8 @@ import (
 // compileSteps compiles all step blocks from spec into g.Steps and g.stepOrder.
 // Must be called after compileAgents so that agent references can be resolved.
 // opts carries compile options including WorkflowDir (for file() validation)
-// and LoadDepth/LoadStack (for nested workflow body compilation).
-func compileSteps(g *FSMGraph, spec *Spec, schemas map[string]AdapterInfo, opts CompileOpts) hcl.Diagnostics { //nolint:gocritic // CompileOpts passed by value intentionally; copy semantics prevent caller mutation
+// and LoadDepth (for nested workflow body compilation).
+func compileSteps(g *FSMGraph, spec *Spec, schemas map[string]AdapterInfo, opts CompileOpts) hcl.Diagnostics {
 	var diags hcl.Diagnostics
 	for _, sp := range spec.Steps {
 		if _, dup := g.Steps[sp.Name]; dup {
@@ -290,7 +290,7 @@ func compileSteps(g *FSMGraph, spec *Spec, schemas map[string]AdapterInfo, opts 
 
 // compileWorkflowBody compiles the inline workflow body for a type="workflow" step.
 // Returns the compiled FSMGraph, the body entry state name, and any diagnostics.
-func compileWorkflowBody(sp *StepSpec, schemas map[string]AdapterInfo, opts CompileOpts) (hcl.Diagnostics, *FSMGraph, string) { //nolint:gocritic // CompileOpts copy semantics are intentional
+func compileWorkflowBody(sp *StepSpec, schemas map[string]AdapterInfo, opts CompileOpts) (hcl.Diagnostics, *FSMGraph, string) {
 	const maxLoadDepth = 4
 	var diags hcl.Diagnostics
 
@@ -315,7 +315,7 @@ func compileWorkflowBody(sp *StepSpec, schemas map[string]AdapterInfo, opts Comp
 }
 
 // compileWorkflowBodyFromFile handles the workflow_file = "..." loading path.
-func compileWorkflowBodyFromFile(sp *StepSpec, schemas map[string]AdapterInfo, opts CompileOpts) (hcl.Diagnostics, *FSMGraph, string) { //nolint:gocritic // CompileOpts copy semantics are intentional
+func compileWorkflowBodyFromFile(sp *StepSpec, schemas map[string]AdapterInfo, opts CompileOpts) (hcl.Diagnostics, *FSMGraph, string) {
 	var diags hcl.Diagnostics
 	if sp.WorkflowFile == "" {
 		return append(diags, &hcl.Diagnostic{
@@ -347,7 +347,6 @@ func compileWorkflowBodyFromFile(sp *StepSpec, schemas map[string]AdapterInfo, o
 	childOpts := CompileOpts{
 		WorkflowDir:         opts.WorkflowDir,
 		LoadDepth:           opts.LoadDepth + 1,
-		LoadStack:           append(append([]string{}, opts.LoadStack...), sp.Name),
 		LoadedFiles:         append(append([]string{}, opts.LoadedFiles...), sp.WorkflowFile),
 		SubWorkflowResolver: opts.SubWorkflowResolver,
 	}
@@ -360,7 +359,7 @@ func compileWorkflowBodyFromFile(sp *StepSpec, schemas map[string]AdapterInfo, o
 }
 
 // compileWorkflowBodyInline handles the inline workflow { ... } block path.
-func compileWorkflowBodyInline(sp *StepSpec, schemas map[string]AdapterInfo, opts CompileOpts) (hcl.Diagnostics, *FSMGraph, string) { //nolint:gocritic // CompileOpts copy semantics are intentional
+func compileWorkflowBodyInline(sp *StepSpec, schemas map[string]AdapterInfo, opts CompileOpts) (hcl.Diagnostics, *FSMGraph, string) {
 	var diags hcl.Diagnostics
 	wb := sp.Workflow
 	if len(wb.Steps) == 0 {
@@ -379,7 +378,6 @@ func compileWorkflowBodyInline(sp *StepSpec, schemas map[string]AdapterInfo, opt
 	childOpts := CompileOpts{
 		WorkflowDir:         opts.WorkflowDir,
 		LoadDepth:           opts.LoadDepth + 1,
-		LoadStack:           append(append([]string{}, opts.LoadStack...), sp.Name),
 		LoadedFiles:         append([]string{}, opts.LoadedFiles...),
 		SubWorkflowResolver: opts.SubWorkflowResolver,
 	}
