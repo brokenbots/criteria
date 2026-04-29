@@ -1,6 +1,6 @@
-# Workstream 10 — Phase 1 cleanup gate
+# Workstream 11 — Phase 1 cleanup gate
 
-**Owner:** Cleanup agent (or human committer) · **Depends on:** [W01](01-flaky-test-fix.md)–[W09](09-copilot-agent-defaults.md) · **Unblocks:** Phase 2 planning + the `v0.2.0` tag.
+**Owner:** Cleanup agent (or human committer) · **Depends on:** [W01](01-flaky-test-fix.md)–[W10](10-step-iteration-and-workflow-step.md) · **Unblocks:** Phase 2 planning + the `v0.2.0` tag.
 
 ## Context
 
@@ -22,7 +22,7 @@ contract.
 ## Prerequisites
 
 - Every Phase 1 workstream
-  ([W01](01-flaky-test-fix.md)–[W09](09-copilot-agent-defaults.md))
+  ([W01](01-flaky-test-fix.md)–[W10](10-step-iteration-and-workflow-step.md))
   merged on `main`.
 - All exit criteria from each workstream verified.
 - `git status` clean on `main`.
@@ -45,7 +45,8 @@ contract.
       gate).
 - [ ] `make validate` green for every example HCL, including the
       new examples introduced by [W07](07-file-expression-function.md),
-      [W08](08-for-each-multistep.md), and [W09](09-copilot-agent-defaults.md).
+      [W08](08-for-each-multistep.md), [W09](09-copilot-agent-defaults.md),
+      and [W10](10-step-iteration-and-workflow-step.md).
 - [ ] `make example-plugin` green.
 - [ ] `make ci` green (the aggregate target).
 - [ ] CLI smoke: `./bin/criteria apply examples/hello.hcl
@@ -53,7 +54,11 @@ contract.
 - [ ] CLI smoke: `./bin/criteria apply examples/file_function.hcl`
       exits 0 (W07 example).
 - [ ] CLI smoke: `./bin/criteria apply
-      examples/for_each_review_loop.hcl` exits 0 (W08 example).
+      examples/for_each_review_loop.hcl` exits 0 (W08 example,
+      rewritten by W10 onto the step-level iteration model).
+- [ ] CLI smoke: `./bin/criteria apply
+      examples/workflow_step_compose.hcl` exits 0 (W10 example;
+      demonstrates `workflow_file` composition).
 
 ### Step 2 — Determinism gate
 
@@ -138,9 +143,17 @@ Phase 1 addressed three of the eight user-feedback files:
   [user_feedback/01-support-file-function-user-story.txt](../user_feedback/01-support-file-function-user-story.txt)
 - [W08](08-for-each-multistep.md) →
   [user_feedback/04-make-for-each-safe-for-multi-step-chains-user-story.txt](../user_feedback/04-make-for-each-safe-for-multi-step-chains-user-story.txt)
+  (subsequently superseded by [W10](10-step-iteration-and-workflow-step.md);
+  the user story remains satisfied — the implementation model
+  changed but the multi-step chain capability persists.)
 - [W09](09-copilot-agent-defaults.md) →
   `user_feedback/09-copilot-agent-defaults-user-story.txt`
   (authored by W09)
+- [W10](10-step-iteration-and-workflow-step.md) →
+  cross-functional feedback on the W08 syntax (architecture,
+  design, product, engineering) requesting step-level iteration
+  + nested workflow step type. Note this in reviewer notes; no
+  numbered user-feedback file existed prior.
 
 Tasks:
 
@@ -186,9 +199,10 @@ to:
       append; do not restructure existing content.
 - [ ] `CHANGELOG.md` — add the v0.2.0 release-notes entry.
       Headline: "Stabilization phase: deterministic CI,
-      golangci-lint, shell adapter hardening, and three
-      user-blocking fixes (file(), multi-step for_each,
-      Copilot agent defaults)." Cover, in order:
+      golangci-lint, shell adapter hardening, and four
+      user-blocking fixes (file(), step-level iteration with
+      nested workflow step, Copilot agent defaults)." Cover,
+      in order:
       - W01 — deterministic CI (`-count=2`, `goleak`).
       - W02 — golangci-lint adoption with documented
         burn-down contract.
@@ -202,19 +216,33 @@ to:
       - W07 — `file()`, `fileexists()`, `trimfrontmatter()`
         expression functions + `CRITERIA_FILE_FUNC_MAX_BYTES`
         + `CRITERIA_WORKFLOW_ALLOWED_PATHS`.
-      - W08 — multi-step `for_each` iteration bodies +
-        `OnForEachStep` event.
+      - W08 — multi-step `for_each` iteration bodies (top-level
+        `for_each "name" { ... }` block; subsequently superseded
+        within Phase 1 by W10).
       - W09 — Copilot `reasoning_effort` no longer silently
         dropped, per-step override semantics, targeted
         diagnostic for misplaced agent-config fields.
+      - W10 — `for_each` and `count` are now step-level fields
+        (any step type); new `type = "workflow"` step holds a
+        nested workflow body inline or via `workflow_file`;
+        indexed outputs (`steps.foo[i]` / `steps.foo["k"]`);
+        `each.value`/`key`/`_idx`/`_first`/`_last`/`_total`/`_prev`
+        bindings; `on_failure = "abort"|"continue"|"ignore"`;
+        explicit `output { name=...; value=... }` blocks for
+        encapsulation. **Removes** the W08 top-level `for_each`
+        block syntax; existing W08 workflows must migrate (see
+        the W10 migration note).
       - Migration notes for any HCL fixture that broke under
-        the new W05/W08/W09 validation.
+        the new W05/W09/W10 validation.
 
 ### Step 8 — Archive
 
 - [ ] `mkdir -p workstreams/archived/v1/`
 - [ ] `git mv workstreams/0[1-9]-*.md workstreams/archived/v1/`
 - [ ] `git mv workstreams/10-*.md workstreams/archived/v1/`
+- [ ] `git mv workstreams/11-*.md workstreams/archived/v1/`
+      (this workstream itself; do this last, in the final
+      archive commit).
 - [ ] Update intra-workstream links if any reviewer notes
       referenced sibling files; otherwise leave the moved files
       unchanged (relative links between archived files still
@@ -305,8 +333,9 @@ This is the **only** Phase 1 workstream that may edit:
 - `workstreams/README.md`
 - `CONTRIBUTING.md`
 - `CHANGELOG.md` (adds the v0.2.0 entry)
-- `workstreams/01-*.md` … `workstreams/10-*.md` (only to move
-  them into `archived/v1/`)
+- `workstreams/01-*.md` … `workstreams/11-*.md` (only to move
+  them into `archived/v1/`; this includes moving this
+  cleanup-gate file itself in the final archive commit)
 - `.github/agents/workstream-executor.agent.md` (Step 10, ≤ 2
   edits)
 - `.github/agents/workstream-reviewer.agent.md` (Step 10, ≤ 2
