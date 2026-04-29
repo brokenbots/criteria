@@ -183,8 +183,8 @@ func TestCopilotReasoningEffortOverride(t *testing.T) {
 // need to verify outcomes and errors rather than individual events.
 type discardSink struct{}
 
-func (*discardSink) Log(_ string, _ []byte)   {}
-func (*discardSink) Adapter(_ string, _ any)  {}
+func (*discardSink) Log(_ string, _ []byte)  {}
+func (*discardSink) Adapter(_ string, _ any) {}
 
 // buildBinary compiles the package at pkgPath in moduleRoot and writes the
 // binary to os.TempDir(). It panics if compilation fails.
@@ -197,4 +197,3 @@ func buildBinary(moduleRoot, pkgPath, binName string) string {
 	}
 	return out
 }
-

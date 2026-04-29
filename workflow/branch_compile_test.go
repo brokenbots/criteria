@@ -52,43 +52,6 @@ func compileExpectError(t *testing.T, src, want string) {
 	}
 }
 
-const branchBaseWorkflow = `
-workflow "w" {
-  version       = "0.1"
-  initial_state = "check"
-  target_state  = "done"
-
-  variable "env" {
-    type    = "string"
-    default = "staging"
-  }
-
-  step "prev" {
-    adapter = "noop"
-    outcome "success" { transition_to = "check" }
-  }
-
-  branch "check" {
-    arm {
-      when          = var.env == "prod"
-      transition_to = "deploy"
-    }
-    arm {
-      when          = var.env == "staging"
-      transition_to = "deploy_staging"
-    }
-    default {
-      transition_to = "skip"
-    }
-  }
-
-  state "deploy"         { terminal = true }
-  state "deploy_staging" { terminal = true }
-  state "skip"           { terminal = true }
-  state "done"           { terminal = true }
-}
-`
-
 func TestBranchCompile_HappyPath(t *testing.T) {
 	// Note: "prev" is unreachable from "check" (initial_state), but "check" is
 	// the initial state itself. Build a reachable workflow.

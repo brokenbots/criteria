@@ -23,8 +23,7 @@
       "on_crash": "fail",
       "config_keys": [
         "max_turns",
-        "model",
-        "reasoning_effort"
+        "model"
       ]
     },
     {

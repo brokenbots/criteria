@@ -35,8 +35,8 @@ import (
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/types/known/structpb"
 
-	pluginhost "github.com/brokenbots/criteria/sdk/pluginhost"
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
+	pluginhost "github.com/brokenbots/criteria/sdk/pluginhost"
 )
 
 const (
@@ -56,10 +56,10 @@ var closeSessionGrace = 5 * time.Second
 
 // validReasoningEfforts is the documented set of accepted reasoning effort values.
 var validReasoningEfforts = map[string]bool{
-	"low":   true,
+	"low":    true,
 	"medium": true,
-	"high":  true,
-	"xhigh": true,
+	"high":   true,
+	"xhigh":  true,
 }
 
 type copilotSession interface {

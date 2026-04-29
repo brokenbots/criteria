@@ -1,10 +1,11 @@
 package criteria
 
 import (
-"net/http"
+	"net/http"
 
-connect "connectrpc.com/connect"
-"github.com/brokenbots/criteria/sdk/pb/criteria/v1/criteriav1connect"
+	connect "connectrpc.com/connect"
+
+	"github.com/brokenbots/criteria/sdk/pb/criteria/v1/criteriav1connect"
 )
 
 // ServiceClient is the Connect client interface for the CriteriaService.
@@ -30,18 +31,18 @@ var NewServiceClient = criteriav1connect.NewCriteriaServiceClient
 // It returns the URL path prefix and the handler itself, ready to mount on an
 // http.ServeMux. The handler supports Connect, gRPC, and gRPC-Web protocols.
 func NewServiceHandler(svc ServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
-return criteriav1connect.NewCriteriaServiceHandler(svc, opts...)
+	return criteriav1connect.NewCriteriaServiceHandler(svc, opts...)
 }
 
 // Service name and procedure path constants forwarded from the generated package.
 const (
-ServiceName = criteriav1connect.CriteriaServiceName
+	ServiceName = criteriav1connect.CriteriaServiceName
 
-RegisterProcedure     = criteriav1connect.CriteriaServiceRegisterProcedure
-HeartbeatProcedure    = criteriav1connect.CriteriaServiceHeartbeatProcedure
-CreateRunProcedure    = criteriav1connect.CriteriaServiceCreateRunProcedure
-ReattachRunProcedure  = criteriav1connect.CriteriaServiceReattachRunProcedure
-ResumeProcedure       = criteriav1connect.CriteriaServiceResumeProcedure
-SubmitEventsProcedure = criteriav1connect.CriteriaServiceSubmitEventsProcedure
-ControlProcedure      = criteriav1connect.CriteriaServiceControlProcedure
+	RegisterProcedure     = criteriav1connect.CriteriaServiceRegisterProcedure
+	HeartbeatProcedure    = criteriav1connect.CriteriaServiceHeartbeatProcedure
+	CreateRunProcedure    = criteriav1connect.CriteriaServiceCreateRunProcedure
+	ReattachRunProcedure  = criteriav1connect.CriteriaServiceReattachRunProcedure
+	ResumeProcedure       = criteriav1connect.CriteriaServiceResumeProcedure
+	SubmitEventsProcedure = criteriav1connect.CriteriaServiceSubmitEventsProcedure
+	ControlProcedure      = criteriav1connect.CriteriaServiceControlProcedure
 )

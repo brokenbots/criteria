@@ -9,8 +9,8 @@ import (
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/proto"
 
-	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 	criteria "github.com/brokenbots/criteria/sdk"
+	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 )
 
 // testEnvelopeRoundTrip verifies that every Envelope.payload variant submitted

@@ -15,8 +15,8 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/brokenbots/criteria/cmd/criteria-adapter-mcp/mcpclient"
-	pluginhost "github.com/brokenbots/criteria/sdk/pluginhost"
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
+	pluginhost "github.com/brokenbots/criteria/sdk/pluginhost"
 )
 
 const (

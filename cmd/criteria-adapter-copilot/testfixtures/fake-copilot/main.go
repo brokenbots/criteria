@@ -53,8 +53,8 @@ var (
 	// pendingPerms maps a permRequestID to a channel that is closed
 	// when session.permissions.handlePendingPermissionRequest arrives.
 	pendingPerms = map[string]chan struct{}{}
-	evtSeq       int64  // monotonic counter for synthetic event IDs
-	permSeq      int64  // monotonic counter for permission request IDs
+	evtSeq       int64 // monotonic counter for synthetic event IDs
+	permSeq      int64 // monotonic counter for permission request IDs
 )
 
 func main() {

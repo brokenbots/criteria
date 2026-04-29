@@ -5,9 +5,10 @@ import (
 	"errors"
 	"io"
 
-	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 	hplugin "github.com/hashicorp/go-plugin"
 	"google.golang.org/grpc"
+
+	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 )
 
 // PluginName is the dispenser key shared between host and plugin process.

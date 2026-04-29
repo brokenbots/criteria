@@ -7,8 +7,9 @@ import (
 	"testing"
 	"time"
 
-	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 	copilot "github.com/github/copilot-sdk/go"
+
+	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 )
 
 type recordingSender struct {

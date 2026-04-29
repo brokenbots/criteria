@@ -9,11 +9,12 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/zclconf/go-cty/cty"
+
 	"github.com/brokenbots/criteria/internal/adapter"
 	engineruntime "github.com/brokenbots/criteria/internal/engine/runtime"
 	"github.com/brokenbots/criteria/internal/plugin"
 	"github.com/brokenbots/criteria/workflow"
-	"github.com/zclconf/go-cty/cty"
 )
 
 // Sink receives engine-level events. Implementations (typically the server

@@ -7,9 +7,9 @@ variables:
 
 agents:
   executor   adapter=copilot   on_crash=fail
-    config: max_turns=12, model=claude-sonnet-4.6, reasoning_effort=medium
+    config: max_turns=12, model=gpt-5.3-codex, reasoning_effort=high
   pr_manager   adapter=copilot   on_crash=fail
-    config: max_turns=10, model=claude-sonnet-4.6, reasoning_effort=high
+    config: max_turns=10, model=claude-haiku-4.5
   reviewer   adapter=copilot   on_crash=fail
     config: max_turns=10, model=claude-sonnet-4.6, reasoning_effort=high
 

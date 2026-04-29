@@ -4,8 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/brokenbots/criteria/workflow"
 	"github.com/zclconf/go-cty/cty"
+
+	"github.com/brokenbots/criteria/workflow"
 )
 
 type branchNode struct {

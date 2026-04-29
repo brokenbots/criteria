@@ -1,3 +1,4 @@
+//nolint:revive // Proto-generated LogStream_* constant names are wire-compatibility shims and cannot be renamed.
 package criteria
 
 import pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"

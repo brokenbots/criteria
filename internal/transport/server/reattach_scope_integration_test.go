@@ -12,6 +12,8 @@ import (
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
 
+	"github.com/zclconf/go-cty/cty"
+
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapters/shell"
 	"github.com/brokenbots/criteria/internal/engine"
@@ -19,7 +21,6 @@ import (
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 	"github.com/brokenbots/criteria/sdk/pb/criteria/v1/criteriav1connect"
 	"github.com/brokenbots/criteria/workflow"
-	"github.com/zclconf/go-cty/cty"
 )
 
 // scopeServer is a minimal fakeServer variant that returns a fixed
@@ -38,18 +39,6 @@ func (s *scopeServer) ReattachRun(_ context.Context, req *connect.Request[pb.Rea
 		VariableScope: s.scope,
 	}), nil
 }
-
-// captureInputSink records the resolved input that each step plugin receives.
-type captureInputSink struct {
-	inputs map[string]map[string]string
-}
-
-func (s *captureInputSink) OnStepEntered(step string, _ int, _ string)                      {}
-func (s *captureInputSink) OnStepOutcome(step string, _ int, _ string, _ map[string]string) {}
-func (s *captureInputSink) OnStepOutputCaptured(step string, outputs map[string]string)     {}
-func (s *captureInputSink) OnVariableSet(name, value, source string)                        {}
-func (s *captureInputSink) OnRunCompleted(status string)                                    {}
-func (s *captureInputSink) Log(stream string, line []byte)                                  {}
 
 // resumeWorkflow has a single "deploy" step whose command is interpolated from
 // a prior step output: ${steps.build.stdout}.

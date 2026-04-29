@@ -38,10 +38,10 @@ type report struct {
 
 // rule is one generated exclude-rules entry.
 type rule struct {
-	path      string
-	linter    string
-	text      string
-	comment   string
+	path    string
+	linter  string
+	text    string
+	comment string
 }
 
 // workstream returns the workstream identifier responsible for the given linter.
