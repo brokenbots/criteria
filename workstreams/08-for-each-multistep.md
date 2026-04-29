@@ -769,3 +769,43 @@ All addressed in commit `b8443f0`:
 2. **N2 (PRRT_kwDOSOBb1s5-UUhs) — slog global in `rebindEachOnResume`** (`internal/engine/engine.go` + `extensions.go`): Added `log *slog.Logger` field to `Engine` struct and `WithLogger(log)` Option. `rebindEachOnResume` now uses `e.log`, falling back to `slog.Default()` only if nil. Both `resumePausedRun` and `resumeActiveRun` in `reattach.go` pass `engine.WithLogger(log)` so the warning routes through the CLI's structured logger.
 
 3. **N3 (PRRT_kwDOSOBb1s5-UUhw) — BFS comment on DFS walk** (`workflow/compile_foreach_subgraph.go` line ~124): Changed "forward BFS" to "forward reachability walk ... recursive DFS-style traversal with a visited set".
+
+---
+
+### Review 2026-04-28-04 — approved
+
+#### Summary
+
+All three nits from the round-3 review (N1–N3) are fully resolved. Commits `110fcb0` and `b8443f0` address the header-comment circularity, the ambiguous "or" well-formedness clause, and the `" → "` separator. In addition, the executor fixed two correctness issues surfaced by PR #25 code review (not from my prior findings): a tautology in `checkIterationSubgraphMembership` and global-logger coupling in `rebindEachOnResume`. These are evaluated below. Build, full test suite, lint, and import checks are all clean.
+
+#### Plan Adherence
+
+| Change | Addresses |
+|--------|-----------|
+| Header comment rewritten with two-phase description (Phase 1 / Phase 2) | N1 — no circularity |
+| Well-formedness now two-level: loop-level (`validateOneForEach`) + step-level (`validateSubgraphWellFormedness`) | N2 — "or" ambiguity gone |
+| `emitWellFormednessErrors` separator `" → "` → `", "` | N3 |
+| `forwardReachableSteps` comment: "forward BFS" → "forward reachability walk…DFS-style traversal with a visited set" | Accurate description |
+| `checkIterationSubgraphMembership` rewritten to restore cursor from `variableScope` | Correctness fix: old implementation read `IterationOwner` from the newly compiled graph, which is always self-consistent — it could never detect the case where a workflow edit moved a step out of an iteration body while keeping the step as a plain step |
+| `engine.WithLogger(log)` threaded into `resumePausedRun` and `resumeActiveRun` | Eliminates global-logger coupling in `rebindEachOnResume` |
+
+#### Test Intent Assessment
+
+`checkIterationSubgraphMembership` tests updated for the new `(graph, variableScope, currentStep)` signature:
+
+- `StepNoLongerInSubgraph` — builds a serialized scope with in-progress cursor for "loop", verifies baseline (no error), removes "review" from `IterationSteps`, confirms error. The test now exercises the cursor-based code path; it would fail if the function still read `IterationOwner` from the graph. Regression-sensitive. ✅
+- `ForEachNoLongerExists` — same cursor scope, deletes the for_each node, confirms error. ✅
+- `NonIterationStep` — scope serialized with no `IterCursor` argument (variadic omitted → nil cursor on restore); confirms nil return. This covers both the "empty scope" and parse-error paths since both produce a nil cursor. ✅
+
+The `iterCursorScope` test helper correctly uses `SerializeVarScope` + `IterCursor{NodeName: nodeName, InProgress: true}` to simulate checkpoint state, matching the real engine path.
+
+No test is required for `WithLogger` routing (log routing is infrastructure, not behavioral; the actual `rebindEachOnResume` behavior is covered by Test 12).
+
+#### Validation Performed
+
+```
+make test          — all packages pass including internal/cli and internal/engine
+make lint-imports  — import boundaries OK
+make lint-go       — no lint errors (nilerr fix in 40d982b was prompted by linter)
+make validate      — all examples pass
+```
