@@ -31,7 +31,7 @@ func (n *forEachNode) Name() string { return n.node.Name }
 func (n *forEachNode) Evaluate(ctx context.Context, st *RunState, deps Deps) (string, error) {
 	// Entering the for_each fresh (no active cursor for this node).
 	if st.Iter == nil || st.Iter.NodeName != n.node.Name {
-		v, diags := n.node.Items.Value(workflow.BuildEvalContext(st.Vars))
+		v, diags := n.node.Items.Value(workflow.BuildEvalContextWithOpts(st.Vars, workflow.DefaultFunctionOptions(st.WorkflowDir)))
 		if diags.HasErrors() {
 			return "", fmt.Errorf("for_each %q: items evaluation failed: %s", n.node.Name, diags.Error())
 		}
@@ -53,7 +53,7 @@ func (n *forEachNode) Evaluate(ctx context.Context, st *RunState, deps Deps) (st
 	} else if st.Iter.Items == nil {
 		// Crash recovery: cursor was restored from scope JSON without Items.
 		// Re-evaluate the items expression with the current var scope.
-		v, diags := n.node.Items.Value(workflow.BuildEvalContext(st.Vars))
+		v, diags := n.node.Items.Value(workflow.BuildEvalContextWithOpts(st.Vars, workflow.DefaultFunctionOptions(st.WorkflowDir)))
 		if diags.HasErrors() {
 			return "", fmt.Errorf("for_each %q: items re-evaluation failed after recovery: %s", n.node.Name, diags.Error())
 		}

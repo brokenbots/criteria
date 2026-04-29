@@ -22,7 +22,19 @@ import (
 // When vars["each"] is absent, the "each" variable is not included in the
 // context. ResolveInputExprs detects each.* references in that case and emits
 // "each is only valid inside for_each".
+//
+// Expression functions (file, fileexists, trimfrontmatter) are registered with
+// default options (env-var sourced, empty workflow dir). Callers that need a
+// specific workflow directory should use BuildEvalContextWithOpts.
 func BuildEvalContext(vars map[string]cty.Value) *hcl.EvalContext {
+	return BuildEvalContextWithOpts(vars, DefaultFunctionOptions(""))
+}
+
+// BuildEvalContextWithOpts is like BuildEvalContext but accepts explicit
+// FunctionOptions so callers can provide a WorkflowDir for file() resolution.
+// Use DefaultFunctionOptions(dir) to source MaxBytes and AllowedPaths from
+// environment variables alongside the workflow directory.
+func BuildEvalContextWithOpts(vars map[string]cty.Value, opts FunctionOptions) *hcl.EvalContext {
 	varObj := cty.EmptyObjectVal
 	stepsObj := cty.EmptyObjectVal
 
@@ -45,20 +57,30 @@ func BuildEvalContext(vars map[string]cty.Value) *hcl.EvalContext {
 
 	return &hcl.EvalContext{
 		Variables: ctxVars,
+		Functions: workflowFunctions(opts),
 	}
 }
 
 // ResolveInputExprs evaluates a map of HCL expressions against the provided
-// vars map and returns the resulting string map. Each expression is evaluated
-// with BuildEvalContext(vars). If any expression fails to evaluate, the error
-// is returned so callers can fail fast. References to each.* are detected via
-// expression variable analysis and produce the planned message
-// "each is only valid inside for_each".
+// vars map and returns the resulting string map. It is equivalent to
+// ResolveInputExprsWithOpts with DefaultFunctionOptions("") — file() and
+// fileexists() will error with "workflow directory not configured" if invoked.
+// Callers with a known workflow path should use ResolveInputExprsWithOpts.
 func ResolveInputExprs(exprs map[string]hcl.Expression, vars map[string]cty.Value) (map[string]string, error) {
+	return ResolveInputExprsWithOpts(exprs, vars, DefaultFunctionOptions(""))
+}
+
+// ResolveInputExprsWithOpts evaluates a map of HCL expressions against the
+// provided vars map and returns the resulting string map. Each expression is
+// evaluated with BuildEvalContextWithOpts(vars, opts). If any expression fails
+// to evaluate, the error is returned so callers can fail fast. References to
+// each.* are detected via expression variable analysis and produce the planned
+// message "each is only valid inside for_each".
+func ResolveInputExprsWithOpts(exprs map[string]hcl.Expression, vars map[string]cty.Value, opts FunctionOptions) (map[string]string, error) {
 	if len(exprs) == 0 {
 		return nil, nil
 	}
-	ctx := BuildEvalContext(vars)
+	ctx := BuildEvalContextWithOpts(vars, opts)
 	result := make(map[string]string, len(exprs))
 	var errs []string
 	for k, expr := range exprs {

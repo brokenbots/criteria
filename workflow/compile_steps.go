@@ -12,7 +12,9 @@ import (
 
 // compileSteps compiles all step blocks from spec into g.Steps and g.stepOrder.
 // Must be called after compileAgents so that agent references can be resolved.
-func compileSteps(g *FSMGraph, spec *Spec, schemas map[string]AdapterInfo) hcl.Diagnostics {
+// workflowDir enables compile-time validation of constant file() arguments; pass
+// "" to skip.
+func compileSteps(g *FSMGraph, spec *Spec, schemas map[string]AdapterInfo, workflowDir string) hcl.Diagnostics {
 	var diags hcl.Diagnostics
 	for _, sp := range spec.Steps {
 		if _, dup := g.Steps[sp.Name]; dup {
@@ -126,6 +128,12 @@ func compileSteps(g *FSMGraph, spec *Spec, schemas map[string]AdapterInfo) hcl.D
 			inputExprs = make(map[string]hcl.Expression, len(attrs))
 			for k, attr := range attrs {
 				inputExprs[k] = attr.Expr
+			}
+			// Compile-time file() validation: constant-literal file() calls
+			// with a missing or path-escaping argument surface as diagnostics
+			// here rather than at runtime (W07).
+			if workflowDir != "" {
+				diags = append(diags, validateFileFunctionCalls(attrs, workflowDir)...)
 			}
 		}
 		node := &StepNode{

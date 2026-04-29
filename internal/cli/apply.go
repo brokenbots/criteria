@@ -138,7 +138,10 @@ func runApplyLocal(ctx context.Context, opts applyOptions) error {
 	// src (raw HCL bytes) is consumed only by server mode for signed payload delivery;
 	// local mode has no signing step, so src is intentionally unused here.
 	_ = src
-	eng := engine.New(graph, loader, sink, engine.WithVarOverrides(parseVarOverrides(opts.varOverrides)))
+	eng := engine.New(graph, loader, sink,
+		engine.WithVarOverrides(parseVarOverrides(opts.varOverrides)),
+		engine.WithWorkflowDir(filepath.Dir(opts.workflowPath)),
+	)
 	if err := eng.Run(ctx); err != nil {
 		log.Error("local run failed", "run_id", runID, "error", err)
 		return err
@@ -209,16 +212,30 @@ func executeServerRun(ctx context.Context, log *slog.Logger, loader plugin.Loade
 		"workflow", graph.Name,
 		"file", filepath.Base(opts.workflowPath))
 
-	eng := engine.New(graph, loader, sink, engine.WithVarOverrides(parseVarOverrides(opts.varOverrides)))
+	eng := engine.New(graph, loader, sink,
+		engine.WithVarOverrides(parseVarOverrides(opts.varOverrides)),
+		engine.WithWorkflowDir(filepath.Dir(opts.workflowPath)),
+	)
 	if err := eng.Run(ctx); err != nil {
 		log.Error("run failed", "error", err)
 		return err
 	}
 	log.Info("run completed", "run_id", state.RunID)
 
-	// If the run paused (ErrPaused is handled by the engine loop; the Sink
-	// records the paused node), wait for a ResumeRun control message then
-	// restart the engine from the paused node.
+	if err := drainResumeCycles(ctx, log, loader, sink, client, state, graph, opts, eng); err != nil {
+		return err
+	}
+
+	drainCtx, drainCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	client.Drain(drainCtx)
+	drainCancel()
+	return nil
+}
+
+// drainResumeCycles handles the pause/resume loop: each time the sink is
+// paused it waits for a matching ResumeRun message and restarts the engine
+// from the paused node, updating eng to the most recently completed engine.
+func drainResumeCycles(ctx context.Context, log *slog.Logger, loader plugin.Loader, sink *run.Sink, client *servertrans.Client, state *localRunState, graph *workflow.FSMGraph, opts applyOptions, eng *engine.Engine) error {
 	for sink.IsPaused() {
 		log.Info("run paused; waiting for resume signal", "run_id", state.RunID, "node", sink.PausedAt())
 		var resumeMsg *pb.ResumeRun
@@ -228,7 +245,6 @@ func executeServerRun(ctx context.Context, log *slog.Logger, loader plugin.Loade
 		case resumeMsg = <-client.ResumeCh():
 		}
 		if resumeMsg.RunId != state.RunID {
-			// Message for a different run; continue waiting.
 			log.Warn("received resume for unexpected run", "expected", state.RunID, "got", resumeMsg.RunId)
 			continue
 		}
@@ -238,6 +254,7 @@ func executeServerRun(ctx context.Context, log *slog.Logger, loader plugin.Loade
 		resumedEng := engine.New(graph, loader, sink,
 			engine.WithResumedVars(eng.VarScope()),
 			engine.WithResumePayload(resumeMsg.Payload),
+			engine.WithWorkflowDir(filepath.Dir(opts.workflowPath)),
 		)
 		if err := resumedEng.RunFrom(ctx, pausedNode, 1); err != nil {
 			log.Error("run failed after resume", "error", err)
@@ -246,10 +263,6 @@ func executeServerRun(ctx context.Context, log *slog.Logger, loader plugin.Loade
 		eng = resumedEng
 		log.Info("run resumed and completed", "run_id", state.RunID)
 	}
-
-	drainCtx, drainCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	client.Drain(drainCtx)
-	drainCancel()
 	return nil
 }
 
@@ -334,7 +347,7 @@ func compileForExecution(ctx context.Context, workflowPath string, log *slog.Log
 	loader := plugin.NewLoader()
 	loader.RegisterBuiltin(shell.Name, plugin.BuiltinFactoryForAdapter(shell.New()))
 	schemas := collectSchemas(ctx, loader, spec, log)
-	graph, diags := workflow.Compile(spec, schemas)
+	graph, diags := workflow.CompileWithOpts(spec, schemas, workflow.CompileOpts{WorkflowDir: filepath.Dir(workflowPath)})
 	if diags.HasErrors() {
 		loader.Shutdown(context.Background())
 		return nil, nil, nil, fmt.Errorf("compile: %s", diags.Error())
@@ -431,7 +444,7 @@ func resumeOneLocalRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint
 	sink := buildLocalSink(cp.RunID, out, mode, graph.StepOrder(), checkpointFn)
 	sink.OnStepResumed(cp.CurrentStep, nextAttempt, "criteria_restart")
 
-	eng := engine.New(graph, loader, sink)
+	eng := engine.New(graph, loader, sink, engine.WithWorkflowDir(filepath.Dir(cp.WorkflowPath)))
 	if runErr := eng.RunFrom(ctx, cp.CurrentStep, nextAttempt); runErr != nil {
 		log.Error("resumed local run failed", "run_id", cp.RunID, "error", runErr)
 	} else {

@@ -25,6 +25,10 @@ type RunState struct {
 	LastOutcome string
 	ParentRunID string
 	BranchID    string
+	// WorkflowDir is the directory containing the HCL workflow file. Used by
+	// file() and fileexists() expression functions to resolve relative paths.
+	// Set from Engine.workflowDir at run start.
+	WorkflowDir string
 
 	firstStep        bool
 	firstStepAttempt int

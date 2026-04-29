@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -241,7 +242,7 @@ func parseCompileForCli(ctx context.Context, workflowPath string) (*workflow.Spe
 	schemas := collectSchemas(ctx, loader, spec, nil)
 	defer loader.Shutdown(ctx)
 
-	graph, diags := workflow.Compile(spec, schemas)
+	graph, diags := workflow.CompileWithOpts(spec, schemas, workflow.CompileOpts{WorkflowDir: filepath.Dir(workflowPath)})
 	if diags.HasErrors() {
 		return nil, nil, fmt.Errorf("compile: %s", diags.Error())
 	}

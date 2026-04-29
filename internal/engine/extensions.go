@@ -73,6 +73,15 @@ func WithVarOverrides(overrides map[string]string) Option {
 	}
 }
 
+// WithWorkflowDir sets the directory containing the HCL workflow file.
+// When set, file() and fileexists() expression functions resolve relative
+// paths against this directory during workflow execution.
+func WithWorkflowDir(dir string) Option {
+	return func(e *Engine) {
+		e.workflowDir = dir
+	}
+}
+
 // isSuccessOutcome returns true when the outcome name indicates a successful
 // iteration. By convention, outcome names that equal "success" (case-
 // insensitive) are treated as successes; all other names set AnyFailed=true

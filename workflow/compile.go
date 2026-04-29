@@ -19,12 +19,30 @@ const (
 	lifecycleClose = "close"
 )
 
-// Compile validates a Spec and returns an executable FSMGraph. All errors are
-// returned as HCL diagnostics so callers can surface file/line context.
-// schemas maps adapter name to its declared AdapterInfo for compile-time
-// validation of agent config and step input blocks. Pass nil to skip schema
-// validation (permissive mode: any keys accepted).
+// CompileOpts carries optional configuration for the Compile pass.
+type CompileOpts struct {
+	// WorkflowDir is the directory containing the HCL file being compiled.
+	// When set, compile-time validation of constant file() arguments is
+	// enabled: missing files produce HCL diagnostics with source ranges.
+	WorkflowDir string
+}
+
+// Compile validates a Spec and returns an executable FSMGraph. It is a
+// convenience wrapper around CompileWithOpts with empty options (no
+// compile-time file() validation).
 func Compile(spec *Spec, schemas map[string]AdapterInfo) (*FSMGraph, hcl.Diagnostics) {
+	return CompileWithOpts(spec, schemas, CompileOpts{})
+}
+
+// CompileWithOpts validates a Spec and returns an executable FSMGraph. All
+// errors are returned as HCL diagnostics so callers can surface file/line
+// context. schemas maps adapter name to its declared AdapterInfo for
+// compile-time validation of agent config and step input blocks. Pass nil to
+// skip schema validation (permissive mode: any keys accepted).
+//
+// When opts.WorkflowDir is set, constant file() arguments in step input
+// expressions are validated at compile time (path existence + confinement).
+func CompileWithOpts(spec *Spec, schemas map[string]AdapterInfo, opts CompileOpts) (*FSMGraph, hcl.Diagnostics) {
 	var diags hcl.Diagnostics
 
 	if spec.Version == "" {
@@ -37,6 +55,29 @@ func Compile(spec *Spec, schemas map[string]AdapterInfo) (*FSMGraph, hcl.Diagnos
 		diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: "workflow.target_state is required"})
 	}
 
+	g := newFSMGraph(spec)
+	diags = append(diags, compileVariables(g, spec)...)
+	diags = append(diags, compileAgents(g, spec, schemas)...)
+	diags = append(diags, compileStates(g, spec)...)
+	diags = append(diags, compileSteps(g, spec, schemas, opts.WorkflowDir)...)
+	diags = append(diags, compileWaits(g, spec)...)
+	diags = append(diags, compileApprovals(g, spec)...)
+	diags = append(diags, compileBranches(g, spec)...)
+	diags = append(diags, compileForEachs(g, spec)...)
+	diags = append(diags, checkReservedNames(spec)...)
+	diags = append(diags, resolveTransitions(g)...)
+	if g.InitialState != "" && !diags.HasErrors() {
+		diags = append(diags, checkReachability(g)...)
+	}
+
+	if diags.HasErrors() {
+		return nil, diags
+	}
+	return g, diags
+}
+
+// newFSMGraph allocates a fresh FSMGraph seeded from spec's top-level fields.
+func newFSMGraph(spec *Spec) *FSMGraph {
 	g := &FSMGraph{
 		Name:         spec.Name,
 		InitialState: spec.InitialState,
@@ -59,25 +100,7 @@ func Compile(spec *Spec, schemas map[string]AdapterInfo) (*FSMGraph, hcl.Diagnos
 			g.Policy.MaxStepRetries = spec.Policy.MaxStepRetries
 		}
 	}
-
-	diags = append(diags, compileVariables(g, spec)...)
-	diags = append(diags, compileAgents(g, spec, schemas)...)
-	diags = append(diags, compileStates(g, spec)...)
-	diags = append(diags, compileSteps(g, spec, schemas)...)
-	diags = append(diags, compileWaits(g, spec)...)
-	diags = append(diags, compileApprovals(g, spec)...)
-	diags = append(diags, compileBranches(g, spec)...)
-	diags = append(diags, compileForEachs(g, spec)...)
-	diags = append(diags, checkReservedNames(spec)...)
-	diags = append(diags, resolveTransitions(g)...)
-	if g.InitialState != "" && !diags.HasErrors() {
-		diags = append(diags, checkReachability(g)...)
-	}
-
-	if diags.HasErrors() {
-		return nil, diags
-	}
-	return g, diags
+	return g
 }
 
 // resolveTransitions verifies that initial_state, target_state, and all

@@ -1,0 +1,11 @@
+digraph "file_function_demo" {
+  rankdir=LR;
+
+  "greet" [shape=box];
+  "done" [shape=doublecircle];
+
+  "__start__" [shape=point,width=0.12,label=""];
+  "__start__" -> "greet" [label="initial"];
+  "greet" -> "done" [label="failure"];
+  "greet" -> "done" [label="success"];
+}
