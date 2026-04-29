@@ -19,6 +19,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 // position is the source location reported by golangci-lint.
@@ -197,15 +199,15 @@ func countBaselineRules(path string) (int, error) {
 		return 0, fmt.Errorf("read %s: %w", path, err)
 	}
 
-	count := 0
-	for _, line := range strings.Split(string(data), "\n") {
-		// Baseline entries are top-level exclude-rules items rendered as:
-		// "    - path: <file>".
-		if strings.HasPrefix(line, "    - path:") {
-			count++
-		}
+	var doc struct {
+		Issues struct {
+			ExcludeRules []map[string]any `yaml:"exclude-rules"`
+		} `yaml:"issues"`
 	}
-	return count, nil
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return 0, fmt.Errorf("parse YAML: %w", err)
+	}
+	return len(doc.Issues.ExcludeRules), nil
 }
 
 func main() {

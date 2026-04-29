@@ -77,14 +77,19 @@ lint-go: ## Run golangci-lint across all modules with the baseline allowlist
 	@rm -f .golangci.merged.yml
 
 lint-baseline-check: ## Fail if .golangci.baseline.yml exceeds the cap in tools/lint-baseline/cap.txt
-	@cap=$$(cat tools/lint-baseline/cap.txt); \
+	@cap_file=tools/lint-baseline/cap.txt; \
+	if [ ! -r "$$cap_file" ]; then \
+		echo "ERROR: Cannot read $$cap_file"; \
+		exit 1; \
+	fi; \
+	cap=$$(cat "$$cap_file"); \
 	if ! printf '%s\n' "$$cap" | grep -qE '^[0-9]+$$'; then \
-		echo "ERROR: tools/lint-baseline/cap.txt must contain a single integer; got: $$cap"; \
+		echo "ERROR: $$cap_file must contain a single integer; got: $$cap"; \
 		exit 1; \
 	fi; \
 	count=$$(go run ./tools/lint-baseline -count .golangci.baseline.yml); \
 	if [ "$$count" -gt "$$cap" ]; then \
-		echo "ERROR: .golangci.baseline.yml has $$count entries; cap is $$cap (tools/lint-baseline/cap.txt)."; \
+		echo "ERROR: .golangci.baseline.yml has $$count entries; cap is $$cap ($$cap_file)."; \
 		echo "       Either fix the new findings or, with explicit reviewer agreement, raise the cap."; \
 		exit 1; \
 	fi; \

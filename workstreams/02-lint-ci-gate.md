@@ -207,7 +207,7 @@ validation in Step 6, captured in reviewer notes.
 | Branch protection is documented but never applied by an admin | [W14](14-phase2-cleanup-gate.md) verifies the setting is applied as part of the cleanup gate. If not applied by then, escalate. |
 | The cap check fails before `make lint-go` runs (ordering issue) | The cap check runs *after* `make lint-go` in CI; in `make ci` it is a separate target so execution order is determined by the dependency list. |
 
-## Reviewer notes
+## Review history
 
 ### Batch 1 implementation
 
@@ -264,7 +264,25 @@ validation in Step 6, captured in reviewer notes.
   Fails with clear integer-validation error.
 - `make ci` ✅
 
-## Reviewer Notes
+### Batch 3 remediation (review comments + unresolved threads)
+
+- Updated `lint-baseline-check` in `Makefile` to fail fast with
+  `ERROR: Cannot read tools/lint-baseline/cap.txt` when the cap file is
+  missing/unreadable before content validation.
+- Made `countBaselineRules` in `tools/lint-baseline/main.go` parse YAML
+  structurally (`issues.exclude-rules`) instead of relying on a fixed
+  whitespace prefix, preventing bypass via alternative indentation.
+- Expanded `TestCountBaselineRules` in
+  `tools/lint-baseline/main_test.go` with
+  `single entry with alternate valid indentation` to verify count behavior
+  remains correct with valid YAML indentation variants.
+- Consolidated review sections under one heading (`## Review history`) to
+  avoid duplicate reviewer-section headings.
+
+### Batch 3 validation evidence
+
+- `go test ./tools/lint-baseline/...` ✅
+- `make lint-baseline-check` ✅
 
 ### Review 2026-04-29 — changes-requested
 

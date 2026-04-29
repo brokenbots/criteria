@@ -168,6 +168,15 @@ func TestCountBaselineRules(t *testing.T) {
 				"      text: '- path: internal/foo.go'\n",
 			want: 1,
 		},
+		{
+			name: "single entry with alternate valid indentation",
+			content: "issues:\n" +
+				"  exclude-rules:\n" +
+				"  - path: a.go\n" +
+				"    linters:\n" +
+				"      - revive\n",
+			want: 1,
+		},
 	}
 
 	for _, tc := range tests {
