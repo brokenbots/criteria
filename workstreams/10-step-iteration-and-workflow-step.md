@@ -1220,3 +1220,42 @@ grep -rn 'for_each "[^"]*"\s*{' . --include="*.hcl" --include="*.go" --include="
 go test ./internal/engine/... -run "TestIter_OutputBlocks_NoneDeclared_AdapterStep|TestIter_Prev_PopulatedAfterFailed" -v
   → PASS (both tests) ✓
 ```
+
+---
+
+### Review 2026-04-29-06 — approved
+
+#### Summary
+
+All seven findings from Review 2026-04-29-05 (three blockers B-17/D-01/D-02; four nits N-04 through N-07) are fully resolved. `make ci` is clean. The two new engine tests pass under the race detector. No new issues found. The workstream is approved.
+
+#### Plan Adherence
+
+- **B-17 resolved** — `TestIter_OutputBlocks_NoneDeclared_AdapterStep` present and regression-sensitive: it uses a `captureInputPlugin` to assert that `steps.produce[0].val` and `steps.produce[1].val` resolve to the correct adapter output values through the cty expression evaluator. The test would fail if `WithIndexedStepOutput` stored values under a different key format.
+- **Extra coverage** — `TestIter_Prev_PopulatedAfterFailedIterationContinue` added; confirms `each._prev` is non-null on iteration N+1 when iteration N failed under `on_failure="continue"`. Fills the gap noted in the Test Intent Assessment of Review-05.
+- **N-04 resolved** — `LoadStack []string` removed entirely from `CompileOpts` in `workflow/compile.go` (field, comment, `//nolint:gocritic` directives, and all propagation sites in `compile_steps.go`). No dead state remains.
+- **D-01 resolved** — "Reduce / scan with `each._prev`" subsection added to `docs/workflow.md` under the `each.*` bindings section. Code example uses `<!-- validator: fragment -->` annotation; demonstrates the null-guard pattern with `each._first`. ✓
+- **D-02 resolved** — "Indexed access patterns" subsection added under `output {}` blocks. Documents numeric (`steps.deploy[0].summary`), string-keyed (`steps.deploy["a"].summary`), and flat (`steps.deploy.summary`) forms with a `length()` note. ✓
+- **N-05 resolved** — `each._prev` failure-path semantics documented as a blockquote immediately below the bindings table. States that `_prev` is populated regardless of prior iteration success/failure under `on_failure="continue"`. ✓
+- **N-06 resolved** — "`variable { }` blocks **cannot** be re-declared inside a workflow body" bullet added to the workflow body rules section. ✓
+- **N-07 resolved** — Migration guide comment reformatted (`# for_each "deploy"` / `# {` on separate lines); the exit-criterion grep `for_each "[^"]*"\s*{` produces zero hits outside workstream markdown files. ✓
+- **All Steps 1–11**: ✓ Fully implemented.
+
+#### Validation Performed
+
+```
+make ci                         → exit 0 ✓
+make validate                   → all examples validated, no warnings ✓
+go test ./internal/engine/ -count=1 -race → ok (4.883s) ✓
+go test ./internal/engine/ -run 'TestIter_OutputBlocks_NoneDeclared_AdapterStep'
+  → PASS ✓
+go test ./internal/engine/ -run 'TestIter_Prev_PopulatedAfterFailedIterationContinue'
+  → PASS ✓
+grep -rn 'LoadStack' workflow/compile.go workflow/compile_steps.go
+  → 0 hits ✓
+grep -rn 'for_each "[^"]*"\s*{' . | grep -v '\.md:'
+  → 0 hits in non-markdown files ✓
+docs/workflow.md: each._prev blockquote (N-05), reduce/scan example (D-01),
+  indexed access patterns section (D-02), variable redeclaration bullet (N-06)
+  — all verified in place ✓
+```
