@@ -6,6 +6,7 @@ bin/
 *.db-shm
 *.db-wal
 go.work.sum
+tmp/
 
 # Ephemeral lint config produced by make lint-go; never commit this.
 .golangci.merged.yml
