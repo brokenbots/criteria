@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/hashicorp/hcl/v2"
 	"github.com/zclconf/go-cty/cty"
 
 	"github.com/brokenbots/criteria/internal/adapter"
@@ -108,30 +109,42 @@ func (n *stepNode) repopulateCursorItems(ctx context.Context, st *RunState, cur 
 func (n *stepNode) buildIterItems(st *RunState) (items, keys []cty.Value, err error) {
 	evalCtx := workflow.BuildEvalContextWithOpts(st.Vars, workflow.DefaultFunctionOptions(st.WorkflowDir))
 	if n.step.Count != nil {
-		v, diags := n.step.Count.Value(evalCtx)
-		if diags.HasErrors() {
-			return nil, nil, fmt.Errorf("count expression error: %s", diags.Error())
-		}
-		if v.IsNull() || !v.IsKnown() {
-			return nil, nil, fmt.Errorf("count expression evaluated to null/unknown")
-		}
-		if !v.Type().Equals(cty.Number) {
-			return nil, nil, fmt.Errorf("count expression must be a number; got %s", v.Type().FriendlyName())
-		}
-		bf := v.AsBigFloat()
-		if !bf.IsInt() {
-			return nil, nil, fmt.Errorf("count expression must be a whole number; got fractional value")
-		}
-		n64, _ := bf.Int64()
-		if n64 < 0 {
-			return nil, nil, fmt.Errorf("count expression must be non-negative; got %d", n64)
-		}
-		for i := int64(0); i < n64; i++ {
-			items = append(items, cty.NumberIntVal(i))
-		}
-		return items, nil, nil
+		return buildCountItems(n.step.Count, evalCtx)
 	}
-	v, diags := n.step.ForEach.Value(evalCtx)
+	return buildForEachItems(n.step.ForEach, evalCtx)
+}
+
+// buildCountItems expands a count = N expression into N numeric iteration items.
+func buildCountItems(expr hcl.Expression, evalCtx *hcl.EvalContext) (items, keys []cty.Value, err error) {
+	v, diags := expr.Value(evalCtx)
+	if diags.HasErrors() {
+		return nil, nil, fmt.Errorf("count expression error: %s", diags.Error())
+	}
+	if v.IsNull() || !v.IsKnown() {
+		return nil, nil, fmt.Errorf("count expression evaluated to null/unknown")
+	}
+	if !v.Type().Equals(cty.Number) {
+		return nil, nil, fmt.Errorf("count expression must be a number; got %s", v.Type().FriendlyName())
+	}
+	bf := v.AsBigFloat()
+	if !bf.IsInt() {
+		return nil, nil, fmt.Errorf("count expression must be a whole number; got fractional value")
+	}
+	n64, _ := bf.Int64()
+	if n64 < 0 {
+		return nil, nil, fmt.Errorf("count expression must be non-negative; got %d", n64)
+	}
+	items = make([]cty.Value, n64)
+	for i := int64(0); i < n64; i++ {
+		items[i] = cty.NumberIntVal(i)
+	}
+	return items, nil, nil
+}
+
+// buildForEachItems expands a for_each = <expr> into ordered items and map keys.
+// Keys is non-nil only for map/object iteration.
+func buildForEachItems(expr hcl.Expression, evalCtx *hcl.EvalContext) (items, keys []cty.Value, err error) {
+	v, diags := expr.Value(evalCtx)
 	if diags.HasErrors() {
 		return nil, nil, fmt.Errorf("for_each expression error: %s", diags.Error())
 	}

@@ -1441,16 +1441,6 @@ func TestIter_Prev_NonStringValues_RoundTrip(t *testing.T) {
 	}
 }
 
-// containsStr is a simple substring check helper.
-func containsStr(s, sub string) bool {
-	for i := 0; i <= len(s)-len(sub); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
-	}
-	return false
-}
-
 // callbackPlugin is a test plugin whose Execute outcome is determined by an
 // arbitrary function, letting tests control per-call behavior.
 type callbackPlugin struct {
@@ -1485,6 +1475,7 @@ func (p *outputPlugin) Execute(_ context.Context, _ string, _ *workflow.StepNode
 func (p *outputPlugin) Permit(context.Context, string, string, bool, string) error { return nil }
 func (p *outputPlugin) CloseSession(context.Context, string) error                 { return nil }
 func (p *outputPlugin) Kill()                                                      {}
+
 // represent map iteration keys stored in the W07/W10 cursor JSON so the SDK
 // can expose each.key on resume.
 func TestIter_Keys_SerializeRestore(t *testing.T) {

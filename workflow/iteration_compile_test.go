@@ -622,4 +622,3 @@ workflow "w" {
 		t.Errorf("error = %q; want mention of 'each._idx'", msg)
 	}
 }
-

@@ -756,22 +756,6 @@ issues:
       linters:
         - goimports
       text: File is not properly formatted # W04: goimports finding
-    - path: internal/engine/node_for_each.go
-      linters:
-        - funlen
-      text: 'Function ''Evaluate''' # W03: refactor Evaluate
-    - path: internal/engine/node_for_each.go
-      linters:
-        - gocognit
-      text: '`\(\*forEachNode\)\.Evaluate`' # W03: simplify (*forEachNode).Evaluate
-    - path: internal/engine/node_for_each.go
-      linters:
-        - gocyclo
-      text: '`\(\*forEachNode\)\.Evaluate`' # W03: simplify (*forEachNode).Evaluate
-    - path: internal/engine/node_for_each.go
-      linters:
-        - goimports
-      text: File is not properly formatted # W04: goimports finding
     - path: internal/engine/node_step.go
       linters:
         - contextcheck

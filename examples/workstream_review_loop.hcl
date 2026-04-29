@@ -152,6 +152,7 @@ workflow "workstream_review_loop" {
     input {
       prompt = "Reviewer requested changes. Notes are in ${var.workstream_file}."
     }
+    outcome "success"        { transition_to = "verify" }
     outcome "needs_review"   { transition_to = "verify" }
     outcome "needs_approval" { transition_to = "verify" }
     outcome "failure"        { transition_to = "close_pr_manager_abort" }
@@ -282,6 +283,7 @@ workflow "workstream_review_loop" {
     input {
       prompt = "PR manager determined code changes are required from review comments or check failures.\n\nUse this gate output as context:\n--- watch_pr_gate output ---\n${steps.watch_pr_gate.stdout}\n--- end ---\n\nFor every unresolved (and not-outdated) review thread that requires a code change:\n  1. Implement the fix.\n  2. Update ${var.workstream_file} notes with the remediation.\n  3. Commit and push.\n  4. Reply on the thread citing the fix (commit SHA + file:line) and resolve the thread via the GraphQL resolveReviewThread mutation (`gh api graphql -f query='mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{isResolved}}}' -f id=<thread_id>`).\n\nThe repository requires zero unresolved threads before merge. Do not leave any addressed thread unresolved. Do not resolve threads you have not actually addressed."
     }
+    outcome "success"        { transition_to = "verify" }
     outcome "needs_review"   { transition_to = "verify" }
     outcome "needs_approval" { transition_to = "verify" }
     outcome "failure"        { transition_to = "close_pr_manager_abort" }

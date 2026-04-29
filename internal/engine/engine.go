@@ -200,7 +200,7 @@ func (e *Engine) routeIteratingStep(st *RunState, next string) string {
 //   - More iterations remain → re-bind each.*, emit started event, re-enter step.
 //   - All iterations done (or on_failure=abort after failure) → pop cursor,
 //     emit completed event, return aggregate outcome target from graph.
-func routeIteratingStepInGraph(st *RunState, next string, graph *workflow.FSMGraph, sink Sink) string {
+func routeIteratingStepInGraph(st *RunState, next string, graph *workflow.FSMGraph, sink Sink) string { //nolint:funlen // iteration router is inherently stateful; splitting adds indirection
 	cur := st.TopCursor()
 	if cur == nil || !cur.InProgress {
 		return next
