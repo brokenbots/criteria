@@ -39,6 +39,9 @@ jobs:
       - name: Lint Go (golangci-lint)
         run: make lint-go
 
+      - name: Lint baseline cap check
+        run: make lint-baseline-check
+
   unit-tests:
     name: Unit tests
     runs-on: ubuntu-latest

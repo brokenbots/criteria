@@ -166,16 +166,16 @@ This workstream may **not** edit `README.md`, `PLAN.md`, `AGENTS.md`,
 
 ## Tasks
 
-- [ ] Create `tools/lint-baseline/cap.txt` with W01's final count.
-- [ ] Add `make lint-baseline-check` target.
-- [ ] Add `.PHONY` entry; verify `make help` lists the target.
-- [ ] Update `make ci` to include `lint-baseline-check`.
-- [ ] Add the cap-check step to `.github/workflows/ci.yml` `lint` job.
-- [ ] Update `docs/contributing/lint-baseline.md` with cap mechanics
+- [x] Create `tools/lint-baseline/cap.txt` with W01's final count.
+- [x] Add `make lint-baseline-check` target.
+- [x] Add `.PHONY` entry; verify `make help` lists the target.
+- [x] Update `make ci` to include `lint-baseline-check`.
+- [x] Add the cap-check step to `.github/workflows/ci.yml` `lint` job.
+- [x] Update `docs/contributing/lint-baseline.md` with cap mechanics
       and branch-protection guidance.
-- [ ] Manual validation: cap fails when baseline exceeds; cap passes
+- [x] Manual validation: cap fails when baseline exceeds; cap passes
       when within. Document in reviewer notes.
-- [ ] `make ci` green on the workstream branch.
+- [x] `make ci` green on the workstream branch.
 - [ ] CI run on the PR shows the new step in the `lint` job.
 
 ## Exit criteria
@@ -193,7 +193,9 @@ This workstream may **not** edit `README.md`, `PLAN.md`, `AGENTS.md`,
 
 ## Tests
 
-This workstream does not add Go tests. Verification is the manual
+Unit coverage was added for `tools/lint-baseline` count mode
+(`TestCountBaselineRules`, `TestCountBaselineRulesMissingFile`).
+Behavioral verification for the Make/CI integration remains the manual
 validation in Step 6, captured in reviewer notes.
 
 ## Risks
@@ -204,3 +206,203 @@ validation in Step 6, captured in reviewer notes.
 | A legitimate burn-down PR fails the gate because lowering the cap requires a separate commit | Document in the contributor guide that lowering the cap is a one-line commit; offer to bundle the cap-lower into the burn-down PR. |
 | Branch protection is documented but never applied by an admin | [W14](14-phase2-cleanup-gate.md) verifies the setting is applied as part of the cleanup gate. If not applied by then, escalate. |
 | The cap check fails before `make lint-go` runs (ordering issue) | The cap check runs *after* `make lint-go` in CI; in `make ci` it is a separate target so execution order is determined by the dependency list. |
+
+## Reviewer notes
+
+### Batch 1 implementation
+
+- Added `tools/lint-baseline/cap.txt` with cap `117` (W01 final count).
+- Added `lint-baseline-check` Make target and `.PHONY` entry; `make help`
+  now lists `lint-baseline-check`.
+- Updated `ci` aggregate target dependencies to include
+  `lint-baseline-check`.
+- Added `Lint baseline cap check` step to `.github/workflows/ci.yml` `lint`
+  job.
+- Updated `docs/contributing/lint-baseline.md` with:
+  - cap-check mechanics,
+  - counting assumption (`- path:` entry counting via
+    `tools/lint-baseline -count`),
+  - branch-protection requirements.
+- Extended `tools/lint-baseline/main.go` with `-count` mode so cap checks use
+  a programmatic entry count instead of fragile grep heuristics.
+- Added unit tests for count mode in `tools/lint-baseline/main_test.go`.
+
+### Validation evidence
+
+- `go test ./tools/lint-baseline` ✅
+- `make lint-baseline-check` (baseline unchanged) ✅  
+  Output: `Lint baseline within cap (117 / 117).`
+- Synthetic growth test (temporary appended suppression, then reverted) ✅  
+  `make lint-baseline-check` failed as expected with:
+  `ERROR: .golangci.baseline.yml has 118 entries; cap is 117 (tools/lint-baseline/cap.txt).`
+- `make ci` ✅
+
+### Outstanding
+
+- `CI run on the PR shows the new step in the lint job` remains pending until
+  this branch is pushed and PR CI executes.
+
+### Batch 2 remediation (review changes-requested)
+
+- **[BLOCKER fixed]** `tools/lint-baseline/cap.txt` is now tracked in git.
+  Evidence: `git ls-files tools/lint-baseline/cap.txt` returns
+  `tools/lint-baseline/cap.txt`.
+- **[NIT fixed]** Expanded `TestCountBaselineRules` with a `header only` case
+  asserting a zero-entry baseline returns count `0`.
+- **[NIT fixed]** Expanded `TestCountBaselineRules` with
+  `text value starts with path token` case asserting a `text:` value of
+  `'- path: internal/foo.go'` does not inflate entry count.
+- **[NIT fixed]** Added numeric-cap validation in `make lint-baseline-check`.
+  If `cap.txt` is non-numeric, the target now fails with:
+  `ERROR: tools/lint-baseline/cap.txt must contain a single integer; got: <value>`.
+
+### Batch 2 validation evidence
+
+- `go test ./tools/lint-baseline/...` ✅
+- `make lint-baseline-check` (valid cap) ✅
+- `make lint-baseline-check` with temporary invalid cap (`not-a-number`) ✅  
+  Fails with clear integer-validation error.
+- `make ci` ✅
+
+## Reviewer Notes
+
+### Review 2026-04-29 — changes-requested
+
+#### Summary
+
+The implementation correctly covers every W02 plan item — the Makefile target,
+`.PHONY` entry, `make help` listing, `ci` aggregate update, CI YAML step,
+`-count` mode in `tools/lint-baseline/main.go`, unit tests, and branch-protection
+documentation. All exit criteria pass when verified locally. One blocker prevents
+approval: `tools/lint-baseline/cap.txt` is present in the working tree but
+**untracked** (not committed to git). Without this file in the repository,
+`make lint-baseline-check` fails in CI with "No such file or directory",
+defeating the entire enforcement mechanism. Three nits must also be resolved
+before the next review pass.
+
+#### Plan Adherence
+
+- **Step 1** (cap.txt): File exists with value `117`; passes `make lint-baseline-check`
+  locally. **NOT committed to git** — `git status` shows `?? tools/lint-baseline/cap.txt`.
+  This is a blocker.
+- **Step 2** (lint-baseline-check target): Implemented correctly. Uses
+  `go run ./tools/lint-baseline -count` rather than the plan's fallback
+  `grep -c` heuristic, which the plan explicitly preferred. `##` comment present;
+  `make help` lists the target. `.PHONY` updated. ✓
+- **Step 3** (CI YAML step): `Lint baseline cap check` step added after `make lint-go`
+  in the `lint` job. ✓
+- **Step 4** (`make ci` dependency): `lint-baseline-check` added to the `ci` target
+  after `lint-go`. Comment updated. ✓
+- **Step 5** (branch-protection docs): `docs/contributing/lint-baseline.md` updated
+  with cap-check mechanics, counting assumption, and "Branch protection" section. ✓
+- **Step 6** (validation): `make lint-baseline-check` exits 0 at 117/117; exits 1
+  with the documented error message when synthetically grown to 118. `make ci` green.
+  Reviewer independently verified all three checks. ✓
+- **Reuse requirement**: Inspected `tools/lint-baseline/main.go` for `--count` mode;
+  executor added it and used it in the Makefile target instead of `grep -c`. ✓
+- **Tests in workstream plan**: `TestCountBaselineRules` and
+  `TestCountBaselineRulesMissingFile` present and passing. ✓ (see test gap nits below)
+
+#### Required Remediations
+
+- **[BLOCKER] `tools/lint-baseline/cap.txt` must be committed to git.**
+  `git status` reports `?? tools/lint-baseline/cap.txt`. Without this file in the
+  repository, `make lint-baseline-check` (and therefore the CI `Lint` job) will fail
+  with "cat: tools/lint-baseline/cap.txt: No such file or directory" on every checkout.
+  The enforcement mechanism does not exist until this file is tracked.
+  *Acceptance criteria*: `git ls-files tools/lint-baseline/cap.txt` returns
+  `tools/lint-baseline/cap.txt`; `make lint-baseline-check` exits 0 immediately after
+  a clean checkout on a fresh machine.
+
+- **[NIT] `TestCountBaselineRules` is missing a count=0 subtest.**
+  The test only validates counting 2 entries. Add a subtest (or table-driven case)
+  that writes only the YAML header (`issues:\n  exclude-rules:\n`) and asserts the
+  count is `0`. This guards against an off-by-one regression where every parse
+  returns at least 1.
+  *Acceptance criteria*: `go test ./tools/lint-baseline/...` includes a passing case
+  that calls `countBaselineRules` on a header-only file and asserts `count == 0`.
+
+- **[NIT] `TestCountBaselineRules` does not verify resistance to `- path:` in text values.**
+  The `text:` field is regexp-quoted arbitrary content. A synthetic entry whose text
+  starts with `- path:` (e.g., manually edited baseline) would inflate the count.
+  Add one table-driven case: a single rule entry whose `text:` value is
+  `'- path: internal/foo.go'`, and assert the count is `1`, not `2`.
+  *Acceptance criteria*: test case present and passing; `countBaselineRules` returns
+  the correct count when a `text:` field value begins with `- path:`.
+
+- **[NIT] No validation that `cap.txt` contains a valid integer.**
+  If `cap.txt` is accidentally set to a non-numeric value (e.g., whitespace, a comment),
+  the shell arithmetic comparison `[ "$$count" -gt "$$cap" ]` fails with
+  "integer expression expected" — a confusing error for contributors. Add a guard in
+  the Makefile target after reading the cap:
+  ```make
+  if ! echo "$$cap" | grep -qE '^[0-9]+$$'; then \
+      echo "ERROR: tools/lint-baseline/cap.txt must contain a single integer; got: $$cap"; \
+      exit 1; \
+  fi; \
+  ```
+  *Acceptance criteria*: `make lint-baseline-check` prints a clear error and exits 1
+  when `cap.txt` contains non-numeric content.
+
+#### Test Intent Assessment
+
+**Strong**: `TestCountBaselineRules` (temp file, exact count), `TestCountBaselineRulesMissingFile`
+(error on absent file). Existing pre-W02 tests (`TestGoldenRoundTrip`, `TestDeduplication`,
+`TestEmptyInput`, `TestStableText`, `TestYAMLScalar`) remain solid.
+
+**Weak**: No zero-entry baseline test; no text-field false-positive guard (see nits above).
+The `make lint-baseline-check` integration is validated by manual steps in the workstream notes,
+which is acceptable per the workstream's stated behavioral-verification approach.
+
+#### Validation Performed
+
+```
+go test ./tools/lint-baseline/... -v -count=1   → PASS (8 tests)
+make lint-baseline-check                         → "Lint baseline within cap (117 / 117)." (exit 0)
+make lint-baseline-check (after synthetic +1)   → documented ERROR message (exit 1)
+git checkout .golangci.baseline.yml; make lint-baseline-check → exit 0
+make ci                                          → all gates green
+make help | grep lint                            → lint-baseline-check listed correctly
+git status tools/lint-baseline/cap.txt          → ?? tools/lint-baseline/cap.txt (UNTRACKED — blocker)
+```
+
+### Review 2026-04-29-02 — approved
+
+#### Summary
+
+All three nits and the blocker from the previous pass are fully resolved.
+`tools/lint-baseline/cap.txt` is now staged (`A` in `git status`);
+`git ls-files` confirms it is tracked. `TestCountBaselineRules` is now
+table-driven with three cases: `multiple entries` (count=2), `header only`
+(count=0), and `text value starts with path token` (count=1, proving no
+false-positive inflation). The Makefile integer-validation guard produces the
+expected clear error on non-numeric cap content. All exit criteria are met.
+`make ci` is green. Approved for merge.
+
+#### Plan Adherence
+
+- **Step 1** (cap.txt): `git ls-files tools/lint-baseline/cap.txt` → `tools/lint-baseline/cap.txt`. ✓
+- **Step 2** (lint-baseline-check target): Makefile target correct, `.PHONY` updated, `make help` lists target, integer-validation guard added. ✓
+- **Step 3** (CI YAML step): `Lint baseline cap check` step present after `make lint-go`. ✓
+- **Step 4** (`make ci` dependency): `lint-baseline-check` in dependency list after `lint-go`. ✓
+- **Step 5** (branch-protection docs): Cap mechanics, counting assumption, branch-protection section all present. ✓
+- **Step 6** (validation): Independently re-verified in this pass. ✓
+- **Tests**: Table-driven `TestCountBaselineRules` (3 subtests), `TestCountBaselineRulesMissingFile`. All pass with `-race`. ✓
+
+#### Test Intent Assessment
+
+**Strong**: All three `TestCountBaselineRules` subtests map to distinct behavioral
+invariants (normal count, zero count, no false-positive on text-field content).
+`TestCountBaselineRulesMissingFile` confirms the error path. Pre-existing tests
+unchanged and passing. Test suite is now regression-resistant against realistic
+faults in `countBaselineRules`.
+
+#### Validation Performed
+
+```
+git ls-files tools/lint-baseline/cap.txt          → tools/lint-baseline/cap.txt (tracked ✓)
+go test ./tools/lint-baseline/... -v -race -count=1 → PASS (10 tests: 3 subtests in TestCountBaselineRules) ✓
+make lint-baseline-check (cap=117, count=117)       → "Lint baseline within cap (117 / 117)." (exit 0) ✓
+make lint-baseline-check (cap=not-a-number)         → clear integer-validation error (exit 1) ✓
+make ci                                             → all gates green ✓
+```

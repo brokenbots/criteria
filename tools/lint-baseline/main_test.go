@@ -131,3 +131,76 @@ func TestYAMLScalar(t *testing.T) {
 		}
 	}
 }
+
+func TestCountBaselineRules(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		content string
+		want    int
+	}{
+		{
+			name: "multiple entries",
+			content: "issues:\n" +
+				"  exclude-rules:\n" +
+				"    - path: a.go\n" +
+				"      linters:\n" +
+				"        - funlen\n" +
+				"    - path: b.go\n" +
+				"      linters:\n" +
+				"        - gocyclo\n",
+			want: 2,
+		},
+		{
+			name: "header only",
+			content: "issues:\n" +
+				"  exclude-rules:\n",
+			want: 0,
+		},
+		{
+			name: "text value starts with path token",
+			content: "issues:\n" +
+				"  exclude-rules:\n" +
+				"    - path: a.go\n" +
+				"      linters:\n" +
+				"        - revive\n" +
+				"      text: '- path: internal/foo.go'\n",
+			want: 1,
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			f, err := os.CreateTemp(t.TempDir(), "baseline-*.yml")
+			if err != nil {
+				t.Fatalf("CreateTemp: %v", err)
+			}
+			if _, err := f.WriteString(tc.content); err != nil {
+				t.Fatalf("WriteString: %v", err)
+			}
+			if err := f.Close(); err != nil {
+				t.Fatalf("Close: %v", err)
+			}
+
+			got, err := countBaselineRules(f.Name())
+			if err != nil {
+				t.Fatalf("countBaselineRules: %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("countBaselineRules() = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestCountBaselineRulesMissingFile(t *testing.T) {
+	t.Parallel()
+
+	if _, err := countBaselineRules("testdata/does-not-exist.yml"); err == nil {
+		t.Fatal("countBaselineRules() expected error for missing file, got nil")
+	}
+}

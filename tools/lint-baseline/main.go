@@ -6,6 +6,8 @@
 //
 // Usage:
 //
+//	go run ./tools/lint-baseline -count .golangci.baseline.yml
+//
 //	go run ./tools/lint-baseline -in .lint-baseline.json -out .golangci.baseline.yml
 package main
 
@@ -188,13 +190,46 @@ func renderYAML(rules []rule) string {
 	return sb.String()
 }
 
+// countBaselineRules counts top-level exclude-rules entries from a baseline file.
+func countBaselineRules(path string) (int, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, fmt.Errorf("read %s: %w", path, err)
+	}
+
+	count := 0
+	for _, line := range strings.Split(string(data), "\n") {
+		// Baseline entries are top-level exclude-rules items rendered as:
+		// "    - path: <file>".
+		if strings.HasPrefix(line, "    - path:") {
+			count++
+		}
+	}
+	return count, nil
+}
+
 func main() {
 	inFile := flag.String("in", "", "input JSON from golangci-lint --out-format=json")
 	outFile := flag.String("out", "", "output YAML baseline file")
+	countFile := flag.String("count", "", "count baseline entries in a .golangci.baseline.yml file")
 	flag.Parse()
 
+	if *countFile != "" {
+		if *inFile != "" || *outFile != "" {
+			fmt.Fprintln(os.Stderr, "usage: lint-baseline -count <baseline.yml> | -in <input.json> -out <output.yml>")
+			os.Exit(1)
+		}
+		count, err := countBaselineRules(*countFile)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		fmt.Fprintln(os.Stdout, count)
+		return
+	}
+
 	if *inFile == "" || *outFile == "" {
-		fmt.Fprintln(os.Stderr, "usage: lint-baseline -in <input.json> -out <output.yml>")
+		fmt.Fprintln(os.Stderr, "usage: lint-baseline -count <baseline.yml> | -in <input.json> -out <output.yml>")
 		os.Exit(1)
 	}
 
