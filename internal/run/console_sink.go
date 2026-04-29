@@ -196,19 +196,19 @@ func (c *ConsoleSink) OnBranchEvaluated(node, matchedArm, target, condition stri
 }
 
 func (c *ConsoleSink) OnForEachEntered(node string, count int) {
-	c.writeln(fmt.Sprintf("  ↻ for_each %s (%d items)", node, count))
+	c.writeln(fmt.Sprintf("  ↻ iterating %s (%d items)", node, count))
 }
 
-func (c *ConsoleSink) OnForEachIteration(node string, index int, value string, anyFailed bool) {
-	c.writeln(fmt.Sprintf("  ↻ for_each %s [%d] = %s", node, index, truncate(value, 60)))
+func (c *ConsoleSink) OnStepIterationStarted(node string, index int, value string, anyFailed bool) {
+	c.writeln(fmt.Sprintf("  ↻ %s [%d] = %s", node, index, truncate(value, 60)))
 }
 
-func (c *ConsoleSink) OnForEachOutcome(node, outcome, target string) {
-	c.writeln(fmt.Sprintf("  ↻ for_each %s → %s (%s)", node, target, outcome))
+func (c *ConsoleSink) OnStepIterationCompleted(node, outcome, target string) {
+	c.writeln(fmt.Sprintf("  ↻ %s → %s (%s)", node, target, outcome))
 }
 
-func (c *ConsoleSink) OnForEachStep(node string, index int, step string) {
-	c.writeln(fmt.Sprintf("  ↻ for_each %s [%d] → %s", node, index, step))
+func (c *ConsoleSink) OnStepIterationItem(node string, index int, step string) {
+	c.writeln(fmt.Sprintf("  ↻ %s [%d] → %s", node, index, step))
 }
 
 func (c *ConsoleSink) OnScopeIterCursorSet(cursorJSON string) {}

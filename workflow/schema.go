@@ -22,7 +22,6 @@ type Spec struct {
 	Waits        []WaitSpec       `hcl:"wait,block"`
 	Approvals    []ApprovalSpec   `hcl:"approval,block"`
 	Branches     []BranchSpec     `hcl:"branch,block"`
-	ForEachs     []ForEachSpec    `hcl:"for_each,block"`
 	Policy       *PolicySpec      `hcl:"policy,block"`
 	Permissions  *PermissionsSpec `hcl:"permissions,block"`
 	// SourceBytes holds the raw HCL source that was parsed to produce this Spec.
@@ -77,17 +76,52 @@ type StepSpec struct {
 	Agent     string `hcl:"agent,optional"`
 	Lifecycle string `hcl:"lifecycle,optional"`
 	OnCrash   string `hcl:"on_crash,optional"`
+	// Type is the step kind: "" (default adapter/agent step) or "workflow" (sub-workflow body).
+	Type string `hcl:"type,optional"`
+	// WorkflowFile is a path to an HCL file whose body is used as the sub-workflow
+	// body for workflow-type steps. Mutually exclusive with Workflow.
+	WorkflowFile string `hcl:"workflow_file,optional"`
+	// OnFailure controls iteration failure behaviour: "continue" (default),
+	// "abort" (stop on first failure), or "ignore" (treat all as success).
+	OnFailure string `hcl:"on_failure,optional"`
 	// Config is the legacy map attribute; retained for parse-time detection so the
 	// compiler can emit a helpful "use input { } block" diagnostic.
 	Config     map[string]string `hcl:"config,optional"`
 	Input      *InputSpec        `hcl:"input,block"`
+	Workflow   *WorkflowBodySpec `hcl:"workflow,block"`
 	Timeout    string            `hcl:"timeout,optional"`
 	AllowTools []string          `hcl:"allow_tools,optional"`
 	Outcomes   []OutcomeSpec     `hcl:"outcome,block"`
+	// Remain captures for_each and count expressions (and any unknown attrs)
+	// for lazy extraction by the compiler. gohcl does not support hcl.Expression
+	// as a direct decode target, so the remain pattern is used instead.
+	Remain hcl.Body `hcl:",remain"`
 	// LegacyConfigRange, when set by Parse, points at the source range for a
 	// legacy config = { ... } attribute so compile diagnostics can include
 	// file/line context.
 	LegacyConfigRange *hcl.Range
+}
+
+// WorkflowBodySpec is the parsed body of an inline `workflow { ... }` block
+// inside a step. It defines an independent sub-workflow that runs as the step
+// body during each iteration. All fields mirror their top-level Spec counterparts.
+type WorkflowBodySpec struct {
+	Steps     []*StepSpec     `hcl:"step,block"`
+	States    []*StateSpec    `hcl:"state,block"`
+	Waits     []*WaitSpec     `hcl:"wait,block"`
+	Approvals []*ApprovalSpec `hcl:"approval,block"`
+	Branches  []*BranchSpec   `hcl:"branch,block"`
+	Outputs   []*OutputSpec   `hcl:"output,block"`
+	// Entry is the explicit initial step name. When empty the compiler uses the
+	// first declared step.
+	Entry string `hcl:"entry,optional"`
+}
+
+// OutputSpec declares a named output value exposed by a workflow-step body.
+// The value expression is extracted from Remain by the compiler.
+type OutputSpec struct {
+	Name   string   `hcl:"name,label"`
+	Remain hcl.Body `hcl:",remain"` // captures the "value" expression
 }
 
 // ConfigFieldType enumerates the types a config or input field may carry.
@@ -168,20 +202,6 @@ type DefaultArmSpec struct {
 	TransitionTo string `hcl:"transition_to"`
 }
 
-// ForEachSpec declares a for_each node. It iterates the `items` expression
-// (which must evaluate to a list or tuple at runtime) and runs the `do` step
-// once per item. The `items` attribute and any other attributes not explicitly
-// decoded are captured via the Remain body and extracted by the compiler.
-type ForEachSpec struct {
-	Name     string        `hcl:"name,label"`
-	Do       string        `hcl:"do"`
-	Outcomes []OutcomeSpec `hcl:"outcome,block"`
-	// Remain captures the `items` expression attribute (and any unknown attrs)
-	// for lazy extraction by the compiler. gohcl does not support hcl.Expression
-	// as a direct decode target, so the remain pattern is used instead.
-	Remain hcl.Body `hcl:",remain"`
-}
-
 // PolicySpec defines global execution guards.
 type PolicySpec struct {
 	MaxTotalSteps  int `hcl:"max_total_steps,optional"`
@@ -208,7 +228,6 @@ type FSMGraph struct {
 	Waits        map[string]*WaitNode     // by wait node name (W05)
 	Approvals    map[string]*ApprovalNode // by approval node name (W05)
 	Branches     map[string]*BranchNode   // by branch node name (W06)
-	ForEachs     map[string]*ForEachNode  // by for_each node name (W07)
 	Policy       Policy
 	// Order of step declarations (stable for diagnostics).
 	stepOrder []string
@@ -238,6 +257,11 @@ type StepNode struct {
 	Agent     string
 	Lifecycle string
 	OnCrash   string
+	// Type is the step kind: "" (default adapter/agent) or "workflow" (sub-workflow body).
+	Type string
+	// OnFailure controls iteration behaviour when an iteration produces a
+	// non-success outcome. Values: "continue" (default), "abort", "ignore".
+	OnFailure string
 	// Input holds the per-step adapter input from the `input { }` block.
 	// Wire name on ExecuteRequest proto remains "config" to avoid breaking changes;
 	// only the Go-side field is renamed here.
@@ -255,10 +279,21 @@ type StepNode struct {
 	// patterns. An empty slice means deny-all (default). Only valid on
 	// execute-shape steps (Lifecycle == "").
 	AllowTools []string
-	// IterationOwner is the name of the for_each node whose iteration subgraph
-	// this step belongs to, or empty if the step is not part of any subgraph.
-	// Set by computeIterationSubgraphs during compilation (W08).
-	IterationOwner string
+	// ForEach is the raw HCL expression for step-level iteration over a list or
+	// map. Evaluated at runtime on first step entry. Mutually exclusive with Count.
+	ForEach hcl.Expression
+	// Count is the raw HCL expression for step-level iteration by count.
+	// Evaluates to an integer N; iteration runs N times with each.value = 0..N-1.
+	// Mutually exclusive with ForEach.
+	Count hcl.Expression
+	// Body is the compiled FSMGraph for workflow-type steps. Nil for non-workflow steps.
+	Body *FSMGraph
+	// BodyEntry is the initial state name for the workflow body. Derived from
+	// the first declared step in the body when not explicitly set.
+	BodyEntry string
+	// Outputs maps output block names to their value HCL expressions. Evaluated
+	// after each body iteration completes to populate indexed step outputs.
+	Outputs map[string]hcl.Expression
 }
 
 // StateNode is a compiled (non-step) state.
@@ -308,30 +343,6 @@ type BranchArm struct {
 	Target       string // transition_to target node name
 }
 
-// ForEachNode is a compiled for_each loop node (W07).
-// It iterates Items (evaluated at runtime from the Items expression) and
-// invokes the Do step once per item. The aggregate outcome is determined by
-// whether any iteration produced a non-success (AnyFailed) result.
-type ForEachNode struct {
-	// Name is the node identifier used in the FSM.
-	Name string
-	// Items is the raw HCL expression that must evaluate to a list or tuple.
-	// Evaluated at runtime inside the engine using BuildEvalContext(rs.Vars).
-	Items hcl.Expression
-	// Do is the name of the step to invoke for each item.
-	Do string
-	// Outcomes maps aggregate outcome names to target node names.
-	// "all_succeeded" is required; "any_failed" is recommended.
-	Outcomes map[string]string
-	// IterationSteps is the set of step names that belong to this for_each's
-	// iteration subgraph. Computed in two phases by computeIterationSubgraphs
-	// (W08): Phase 1 walks step-to-step outcome transitions from Do, stopping at
-	// _continue, the for_each node name (legacy advance), or non-step targets;
-	// Phase 2 keeps only steps that can reach _continue or the legacy for_each
-	// node name (F.Name) from Phase 1.
-	IterationSteps map[string]struct{}
-}
-
 // Policy holds resolved engine guards. Defaults are applied during compile.
 type Policy struct {
 	MaxTotalSteps  int
@@ -352,7 +363,7 @@ func (g *FSMGraph) IsTerminal(name string) bool {
 	return false
 }
 
-// Lookup returns ("step"|"state"|"wait"|"approval"|"branch"|"for_each", true) if name exists in the graph.
+// Lookup returns ("step"|"state"|"wait"|"approval"|"branch", true) if name exists in the graph.
 func (g *FSMGraph) Lookup(name string) (kind string, ok bool) {
 	if _, ok := g.Steps[name]; ok {
 		return "step", true
@@ -368,9 +379,6 @@ func (g *FSMGraph) Lookup(name string) (kind string, ok bool) {
 	}
 	if _, ok := g.Branches[name]; ok {
 		return "branch", true
-	}
-	if _, ok := g.ForEachs[name]; ok {
-		return "for_each", true
 	}
 	return "", false
 }

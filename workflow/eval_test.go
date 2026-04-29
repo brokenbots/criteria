@@ -197,22 +197,22 @@ workflow "test" {
 
 // TestSerializeVarScope_WithIterCursor verifies that an IterCursor round-trips
 // through SerializeVarScope → RestoreVarScope. Items must NOT be persisted
-// (they are re-evaluated from the workflow expression on re-entry, W07).
+// (they are re-evaluated from the workflow expression on re-entry, W07/W10).
 func TestSerializeVarScope_WithIterCursor(t *testing.T) {
 	g := &FSMGraph{
 		Variables: map[string]*VariableNode{},
 	}
 	vars := SeedVarsFromGraph(g)
 
-	cursor := &IterCursor{
-		NodeName:   "each_item",
+	stack := []IterCursor{{
+		StepName:   "each_item",
 		Index:      2,
 		AnyFailed:  true,
 		InProgress: true,
 		Items:      nil, // never set — intentionally omitted from serialization
-	}
+	}}
 
-	scopeJSON, err := SerializeVarScope(vars, cursor)
+	scopeJSON, err := SerializeVarScope(vars, stack)
 	if err != nil {
 		t.Fatalf("SerializeVarScope: %v", err)
 	}
@@ -220,30 +220,31 @@ func TestSerializeVarScope_WithIterCursor(t *testing.T) {
 		t.Fatal("expected non-empty scope JSON")
 	}
 
-	restoredVars, restoredCursor, err := RestoreVarScope(scopeJSON, g)
+	restoredVars, restoredStack, err := RestoreVarScope(scopeJSON, g)
 	if err != nil {
 		t.Fatalf("RestoreVarScope: %v", err)
 	}
 	if restoredVars == nil {
 		t.Fatal("expected non-nil vars")
 	}
-	if restoredCursor == nil {
-		t.Fatal("expected non-nil cursor after restore")
+	if len(restoredStack) == 0 {
+		t.Fatal("expected non-empty cursor stack after restore")
 	}
-	if restoredCursor.NodeName != "each_item" {
-		t.Errorf("NodeName = %q; want \"each_item\"", restoredCursor.NodeName)
+	c := restoredStack[0]
+	if c.StepName != "each_item" {
+		t.Errorf("StepName = %q; want \"each_item\"", c.StepName)
 	}
-	if restoredCursor.Index != 2 {
-		t.Errorf("Index = %d; want 2", restoredCursor.Index)
+	if c.Index != 2 {
+		t.Errorf("Index = %d; want 2", c.Index)
 	}
-	if !restoredCursor.AnyFailed {
+	if !c.AnyFailed {
 		t.Error("AnyFailed = false; want true")
 	}
-	if !restoredCursor.InProgress {
+	if !c.InProgress {
 		t.Error("InProgress = false; want true")
 	}
 	// Items must NOT be persisted — always nil after restore.
-	if restoredCursor.Items != nil {
-		t.Errorf("Items = %v; want nil (Items are re-evaluated on re-entry)", restoredCursor.Items)
+	if c.Items != nil {
+		t.Errorf("Items = %v; want nil (Items are re-evaluated on re-entry)", c.Items)
 	}
 }

@@ -1,0 +1,21 @@
+workflow: iteration_workflow_step  (version 0.1)
+initial_state: run_items   target_state: done
+policy: max_total_steps=50  max_step_retries=0
+
+variables:
+  (none)
+
+agents:
+  (none)
+
+steps (declaration order):
+  run_items
+    input keys: (none)
+    allow_tools: (none)
+    outcomes: all_succeeded -> done, any_failed -> done
+
+states:
+  done    terminal=true   success=true
+
+plugins required:
+  (none)

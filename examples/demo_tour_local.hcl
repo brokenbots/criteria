@@ -38,21 +38,15 @@ workflow "demo_tour_local" {
     outcome "failure" { transition_to = "aborted" }
   }
 
-  for_each "process_each" {
-    items = ["alpha", "beta", "gamma"]
-    do    = "process"
-    outcome "all_succeeded" { transition_to = "review" }
-    outcome "any_failed"    { transition_to = "aborted" }
-  }
-
-  step "process" {
-    adapter = "shell"
+  step "process_each" {
+    adapter  = "shell"
+    for_each = ["alpha", "beta", "gamma"]
     input {
-      command = "printf 'processing %s (#%s)\\n' \"${each.value}\" \"${each.index}\"; sleep 0.3"
+      command = "printf 'processing %s (#%s)\\n' \"${each.value}\" \"${each._idx}\"; sleep 0.3"
     }
     timeout = "30s"
-    outcome "success" { transition_to = "_continue" }
-    outcome "failure" { transition_to = "_continue" }
+    outcome "all_succeeded" { transition_to = "review" }
+    outcome "any_failed"    { transition_to = "aborted" }
   }
 
   step "review" {

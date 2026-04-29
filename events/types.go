@@ -92,14 +92,14 @@ func setPayload(env *pb.Envelope, payload any) {
 		env.Payload = &pb.Envelope_BranchEvaluated{BranchEvaluated: p}
 	case *pb.ForEachEntered:
 		env.Payload = &pb.Envelope_ForEachEntered{ForEachEntered: p}
-	case *pb.ForEachIteration:
-		env.Payload = &pb.Envelope_ForEachIteration{ForEachIteration: p}
-	case *pb.ForEachOutcome:
-		env.Payload = &pb.Envelope_ForEachOutcome{ForEachOutcome: p}
+	case *pb.StepIterationStarted:
+		env.Payload = &pb.Envelope_StepIterationStarted{StepIterationStarted: p}
+	case *pb.StepIterationCompleted:
+		env.Payload = &pb.Envelope_StepIterationCompleted{StepIterationCompleted: p}
 	case *pb.ScopeIterCursorSet:
 		env.Payload = &pb.Envelope_ScopeIterCursorSet{ScopeIterCursorSet: p}
-	case *pb.ForEachStep:
-		env.Payload = &pb.Envelope_ForEachStep{ForEachStep: p}
+	case *pb.StepIterationItem:
+		env.Payload = &pb.Envelope_StepIterationItem{StepIterationItem: p}
 	default:
 		panic(fmt.Sprintf("events.NewEnvelope: unsupported payload type %T", payload))
 	}
@@ -154,14 +154,14 @@ func TypeString(env *pb.Envelope) string {
 		return "branch.evaluated"
 	case *pb.Envelope_ForEachEntered:
 		return "for_each.entered"
-	case *pb.Envelope_ForEachIteration:
-		return "for_each.iteration"
-	case *pb.Envelope_ForEachOutcome:
-		return "for_each.outcome"
+	case *pb.Envelope_StepIterationStarted:
+		return "step.iteration_started"
+	case *pb.Envelope_StepIterationCompleted:
+		return "step.iteration_completed"
 	case *pb.Envelope_ScopeIterCursorSet:
 		return "scope.iter_cursor_set"
-	case *pb.Envelope_ForEachStep:
-		return "for_each.step"
+	case *pb.Envelope_StepIterationItem:
+		return "step.iteration_item"
 	default:
 		return ""
 	}

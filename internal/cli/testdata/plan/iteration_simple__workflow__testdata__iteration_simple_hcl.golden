@@ -1,0 +1,25 @@
+workflow: iteration_simple  (version 0.1)
+initial_state: process   target_state: done
+policy: max_total_steps=30  max_step_retries=0
+
+variables:
+  (none)
+
+agents:
+  (none)
+
+steps (declaration order):
+  process   adapter=noop
+    input keys: label, result
+    allow_tools: (none)
+    outcomes: all_succeeded -> count_phase, any_failed -> done
+  count_phase   adapter=noop
+    input keys: label, result
+    allow_tools: (none)
+    outcomes: all_succeeded -> done, any_failed -> done
+
+states:
+  done    terminal=true   success=true
+
+plugins required:
+  noop   (search: $CRITERIA_PLUGINS, ~/.criteria/plugins)

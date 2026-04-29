@@ -29,7 +29,236 @@ func (n *stepNode) Evaluate(ctx context.Context, st *RunState, deps Deps) (strin
 		return "", fmt.Errorf("policy.max_total_steps exceeded (%d)", n.graph.Policy.MaxTotalSteps)
 	}
 
-	// Resolve input HCL expressions against current run vars (W04).
+	// Handle step-level iteration (for_each or count).
+	if n.step.ForEach != nil || n.step.Count != nil {
+		return n.evaluateIterating(ctx, st, deps)
+	}
+
+	// Non-iterating step: normal execution path.
+	return n.evaluateOnce(ctx, st, deps)
+}
+
+// evaluateIterating handles first-entry cursor setup and per-iteration
+// execution for steps with for_each or count.
+func (n *stepNode) evaluateIterating(ctx context.Context, st *RunState, deps Deps) (string, error) {
+	// Check for an existing cursor for this step (re-entry or resumed run).
+	cur := st.TopCursor()
+	if cur == nil || cur.StepName != n.step.Name {
+		// First entry: set up the cursor.
+		target, done, err := n.setupIterCursor(ctx, st, deps)
+		if err != nil || done {
+			return target, err
+		}
+		// Cursor pushed; cur now points to it.
+		cur = st.TopCursor()
+	} else if cur.InProgress && len(cur.Items) == 0 {
+		// Resumed with a cursor that has no items (crash-resume path).
+		// Re-evaluate the expression to repopulate Items.
+		if err := n.repopulateCursorItems(ctx, st, cur); err != nil {
+			return "", err
+		}
+	}
+
+	// Run one iteration (first or Nth); cur.InProgress is set by setupIterCursor
+	// or routeIteratingStep (on re-entry).
+	return n.runOneIteration(ctx, st, deps, cur)
+}
+
+// repopulateCursorItems re-evaluates the for_each/count expression and fills
+// cur.Items and cur.Keys. This is needed on crash-resume when the cursor was
+// serialized without items (items and keys are intentionally not persisted).
+func (n *stepNode) repopulateCursorItems(ctx context.Context, st *RunState, cur *workflow.IterCursor) error {
+	_ = ctx
+	items, keys, err := n.buildIterItems(st)
+	if err != nil {
+		return fmt.Errorf("step %q: expression error on resume: %w", n.step.Name, err)
+	}
+	cur.Items = items
+	if len(keys) > 0 {
+		cur.Keys = keys
+	}
+	if cur.Total == 0 {
+		cur.Total = len(items)
+	}
+	// Re-bind each.* for the current index.
+	var key cty.Value
+	if cur.Index < len(cur.Keys) {
+		key = cur.Keys[cur.Index]
+	} else {
+		key = cty.StringVal(fmt.Sprintf("%d", cur.Index))
+	}
+	if cur.Index < len(items) {
+		st.Vars = workflow.WithEachBinding(st.Vars, workflow.EachBinding{
+			Value: items[cur.Index],
+			Key:   key,
+			Index: cur.Index,
+			Total: cur.Total,
+			First: cur.Index == 0,
+			Last:  cur.Index == cur.Total-1,
+			Prev:  cur.Prev,
+		})
+	}
+	return nil
+}
+
+// buildIterItems evaluates the for_each/count expression and returns the
+// ordered list of iteration items along with the map keys (non-nil only when
+// iterating over an HCL object/map). Returns an error if the expression is
+// invalid or produces an unexpected type.
+func (n *stepNode) buildIterItems(st *RunState) (items, keys []cty.Value, err error) {
+	evalCtx := workflow.BuildEvalContextWithOpts(st.Vars, workflow.DefaultFunctionOptions(st.WorkflowDir))
+	if n.step.Count != nil {
+		v, diags := n.step.Count.Value(evalCtx)
+		if diags.HasErrors() {
+			return nil, nil, fmt.Errorf("count expression error: %s", diags.Error())
+		}
+		if v.IsNull() || !v.IsKnown() {
+			return nil, nil, fmt.Errorf("count expression evaluated to null/unknown")
+		}
+		bf := v.AsBigFloat()
+		n64, _ := bf.Int64()
+		for i := int64(0); i < n64; i++ {
+			items = append(items, cty.NumberIntVal(i))
+		}
+		return items, nil, nil
+	}
+	v, diags := n.step.ForEach.Value(evalCtx)
+	if diags.HasErrors() {
+		return nil, nil, fmt.Errorf("for_each expression error: %s", diags.Error())
+	}
+	if v.IsNull() || !v.IsKnown() {
+		return nil, nil, fmt.Errorf("for_each expression evaluated to null/unknown")
+	}
+	if !v.CanIterateElements() {
+		return nil, nil, fmt.Errorf("for_each expression must evaluate to a list, tuple, or map; got %s", v.Type().FriendlyName())
+	}
+	isMap := v.Type().IsObjectType() || v.Type().IsMapType()
+	for it := v.ElementIterator(); it.Next(); {
+		k, elem := it.Element()
+		items = append(items, elem)
+		if isMap {
+			keys = append(keys, k)
+		}
+	}
+	return items, keys, nil
+}
+
+// setupIterCursor evaluates the for_each/count expression, initialises the
+// IterCursor, and binds each.* for the first item. Returns (target, true, nil)
+// when the expression evaluates to an empty collection (no iterations needed).
+func (n *stepNode) setupIterCursor(ctx context.Context, st *RunState, deps Deps) (target string, done bool, err error) {
+	_ = ctx
+	items, keys, err := n.buildIterItems(st)
+	if err != nil {
+		return "", false, fmt.Errorf("step %q: %w", n.step.Name, err)
+	}
+
+	total := len(items)
+	deps.Sink.OnForEachEntered(n.step.Name, total)
+
+	if total == 0 {
+		// Empty collection: emit all_succeeded immediately.
+		t := n.step.Outcomes["all_succeeded"]
+		deps.Sink.OnStepIterationCompleted(n.step.Name, "all_succeeded", t)
+		return t, true, nil
+	}
+
+	// Determine the key for the first item.
+	var firstKey cty.Value
+	if len(keys) > 0 {
+		firstKey = keys[0]
+	} else {
+		firstKey = cty.StringVal("0")
+	}
+
+	// Build and push the cursor.
+	cursor := workflow.IterCursor{
+		StepName:   n.step.Name,
+		Items:      items,
+		Keys:       keys,
+		Index:      0,
+		Total:      total,
+		Key:        firstKey,
+		InProgress: true,
+		OnFailure:  n.step.OnFailure,
+	}
+	st.PushCursor(&cursor)
+
+	// Persist cursor so that a crash during the first iteration is recoverable.
+	if curJSON, serErr := workflow.SerializeIterCursor(st.TopCursor()); serErr == nil {
+		deps.Sink.OnScopeIterCursorSet(curJSON)
+	}
+
+	// Bind each.* for first item.
+	st.Vars = workflow.WithEachBinding(st.Vars, workflow.EachBinding{
+		Value: items[0],
+		Key:   firstKey,
+		Index: 0,
+		Total: total,
+		First: true,
+		Last:  total == 1,
+		Prev:  cty.NilVal,
+	})
+
+	deps.Sink.OnStepIterationStarted(n.step.Name, 0, workflow.CtyValueToString(items[0]), false)
+	return "", false, nil
+}
+
+// runOneIteration executes the step body/adapter for the current iteration
+// and returns the raw outcome (which routeIteratingStep will intercept).
+func (n *stepNode) runOneIteration(ctx context.Context, st *RunState, deps Deps, cur *workflow.IterCursor) (string, error) {
+	if n.step.Type == "workflow" {
+		return n.runWorkflowIteration(ctx, st, deps, cur)
+	}
+	return n.evaluateOnce(ctx, st, deps)
+}
+
+// runWorkflowIteration executes the inline workflow body for one iteration
+// and records output block values into vars and cur.Prev (B-05, B-06).
+func (n *stepNode) runWorkflowIteration(ctx context.Context, st *RunState, deps Deps, cur *workflow.IterCursor) (string, error) {
+	if n.step.Body == nil {
+		return "", fmt.Errorf("step %q: type=\"workflow\" but body is nil", n.step.Name)
+	}
+	bodyOutcome, err := runWorkflowBody(ctx, n.step.Body, n.step.BodyEntry, st, deps)
+	if err != nil {
+		return "", err
+	}
+	// "_continue" is the normal-completion signal from a workflow body.
+	// Translate it to "success" so that isSuccessOutcome works correctly in
+	// routeIteratingStep. Any other terminal state (e.g. "failed") is forwarded
+	// as-is and treated as a non-success outcome.
+	outcome := bodyOutcome
+	if outcome == "_continue" {
+		outcome = "success"
+	}
+	st.LastOutcome = outcome
+
+	// Evaluate output{} block expressions and record them as this iteration's
+	// indexed step output. Also store as cur.Prev for the next iteration's
+	// each._prev binding (B-05, B-06).
+	if len(n.step.Outputs) > 0 {
+		evalCtx := workflow.BuildEvalContextWithOpts(st.Vars, workflow.DefaultFunctionOptions(st.WorkflowDir))
+		stringOuts := make(map[string]string, len(n.step.Outputs))
+		ctyOuts := make(map[string]cty.Value, len(n.step.Outputs))
+		for k, expr := range n.step.Outputs {
+			v, diags := expr.Value(evalCtx)
+			if !diags.HasErrors() {
+				ctyOuts[k] = v
+				stringOuts[k] = workflow.CtyValueToString(v)
+			}
+		}
+		if len(stringOuts) > 0 {
+			st.Vars = workflow.WithIndexedStepOutput(st.Vars, n.step.Name, cty.NumberIntVal(int64(cur.Index)), stringOuts)
+			cur.Prev = cty.ObjectVal(ctyOuts)
+		}
+	}
+
+	return outcome, nil
+}
+
+// evaluateOnce executes the step for a single non-iterating invocation (or a
+// single iteration invocation for adapter/agent steps).
+func (n *stepNode) evaluateOnce(ctx context.Context, st *RunState, deps Deps) (string, error) {
 	effectiveStep, resolveErr := n.resolveInput(st.Vars, st.WorkflowDir)
 	if resolveErr != nil {
 		return "", fmt.Errorf("step %q: input expression error: %w", n.step.Name, resolveErr)
@@ -54,13 +283,26 @@ func (n *stepNode) Evaluate(ctx context.Context, st *RunState, deps Deps) (strin
 		deps.Sink.OnStepOutputCaptured(n.step.Name, result.Outputs)
 	}
 
+	st.LastOutcome = result.Outcome
+
+	// For iterating steps: skip the Outcomes lookup — routeIteratingStep
+	// handles routing based on st.LastOutcome. Record the step output as this
+	// iteration's indexed output and as cur.Prev for the next iteration's
+	// each._prev binding (B-05, B-06).
+	if st.TopCursor() != nil && st.TopCursor().StepName == n.step.Name {
+		cur := st.TopCursor()
+		if len(result.Outputs) > 0 {
+			st.Vars = workflow.WithIndexedStepOutput(st.Vars, n.step.Name, cty.NumberIntVal(int64(cur.Index)), result.Outputs)
+			cur.Prev = stringMapToCtyObject(result.Outputs)
+		}
+		deps.Sink.OnStepTransition(n.step.Name, result.Outcome, result.Outcome)
+		return result.Outcome, nil
+	}
+
 	next, ok := n.step.Outcomes[result.Outcome]
 	if !ok {
 		return "", fmt.Errorf("step %q produced unmapped outcome %q", n.step.Name, result.Outcome)
 	}
-	// Record the outcome name so the engine loop can inspect it when
-	// intercepting a _continue transition (W07 for_each support).
-	st.LastOutcome = result.Outcome
 	deps.Sink.OnStepTransition(n.step.Name, next, result.Outcome)
 	return next, nil
 }
@@ -185,4 +427,17 @@ func (n *stepNode) stepAdapterName() string {
 		}
 	}
 	return n.step.Adapter
+}
+
+// stringMapToCtyObject converts a string-keyed map to a cty object value.
+// Used to store adapter step outputs as cur.Prev for each._prev binding.
+func stringMapToCtyObject(m map[string]string) cty.Value {
+	if len(m) == 0 {
+		return cty.EmptyObjectVal
+	}
+	vals := make(map[string]cty.Value, len(m))
+	for k, v := range m {
+		vals[k] = cty.StringVal(v)
+	}
+	return cty.ObjectVal(vals)
 }

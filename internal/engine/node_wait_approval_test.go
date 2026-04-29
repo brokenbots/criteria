@@ -126,9 +126,9 @@ func (s *pauseSink) OnApprovalRequested(string, []string, string)               
 func (s *pauseSink) OnApprovalDecision(string, string, string, map[string]string) {}
 func (s *pauseSink) OnBranchEvaluated(string, string, string, string)             {}
 func (s *pauseSink) OnForEachEntered(string, int)                                 {}
-func (s *pauseSink) OnForEachIteration(string, int, string, bool)                 {}
-func (s *pauseSink) OnForEachOutcome(string, string, string)                      {}
-func (s *pauseSink) OnForEachStep(string, int, string)                            {}
+func (s *pauseSink) OnStepIterationStarted(string, int, string, bool)             {}
+func (s *pauseSink) OnStepIterationCompleted(string, string, string)              {}
+func (s *pauseSink) OnStepIterationItem(string, int, string)                      {}
 func (s *pauseSink) OnScopeIterCursorSet(string)                                  {}
 func (s *pauseSink) StepEventSink(string) adapter.EventSink                       { return noopAdapterSink{} }
 

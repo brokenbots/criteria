@@ -1,0 +1,11 @@
+digraph "iteration_workflow_step" {
+  rankdir=LR;
+
+  "run_items" [shape=box];
+  "done" [shape=doublecircle];
+
+  "__start__" [shape=point,width=0.12,label=""];
+  "__start__" -> "run_items" [label="initial"];
+  "run_items" -> "done" [label="all_succeeded"];
+  "run_items" -> "done" [label="any_failed"];
+}

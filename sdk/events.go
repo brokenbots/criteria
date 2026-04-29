@@ -22,15 +22,16 @@ type (
 	Envelope_CriteriaDisconnected = pb.Envelope_CriteriaDisconnected
 	Envelope_StepResumed       = pb.Envelope_StepResumed
 	Envelope_VariableSet       = pb.Envelope_VariableSet
-	Envelope_StepOutputCaptured = pb.Envelope_StepOutputCaptured
-	Envelope_WaitEntered       = pb.Envelope_WaitEntered
-	Envelope_WaitResumed       = pb.Envelope_WaitResumed
-	Envelope_ApprovalRequested = pb.Envelope_ApprovalRequested
-	Envelope_ApprovalDecision  = pb.Envelope_ApprovalDecision
-	Envelope_BranchEvaluated   = pb.Envelope_BranchEvaluated
-	Envelope_ForEachEntered    = pb.Envelope_ForEachEntered
-	Envelope_ForEachIteration  = pb.Envelope_ForEachIteration
-	Envelope_ForEachOutcome    = pb.Envelope_ForEachOutcome
-	Envelope_ScopeIterCursorSet = pb.Envelope_ScopeIterCursorSet
-	Envelope_WatchReady        = pb.Envelope_WatchReady
+	Envelope_StepOutputCaptured    = pb.Envelope_StepOutputCaptured
+	Envelope_WaitEntered           = pb.Envelope_WaitEntered
+	Envelope_WaitResumed           = pb.Envelope_WaitResumed
+	Envelope_ApprovalRequested     = pb.Envelope_ApprovalRequested
+	Envelope_ApprovalDecision      = pb.Envelope_ApprovalDecision
+	Envelope_BranchEvaluated       = pb.Envelope_BranchEvaluated
+	Envelope_ForEachEntered        = pb.Envelope_ForEachEntered
+	Envelope_StepIterationStarted  = pb.Envelope_StepIterationStarted
+	Envelope_StepIterationCompleted = pb.Envelope_StepIterationCompleted
+	Envelope_StepIterationItem     = pb.Envelope_StepIterationItem
+	Envelope_ScopeIterCursorSet    = pb.Envelope_ScopeIterCursorSet
+	Envelope_WatchReady            = pb.Envelope_WatchReady
 )

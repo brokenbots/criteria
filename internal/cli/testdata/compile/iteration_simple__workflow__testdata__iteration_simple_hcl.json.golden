@@ -1,30 +1,39 @@
 {
-  "name": "for_each_review_loop",
-  "initial_state": "init",
+  "name": "iteration_simple",
+  "initial_state": "process",
   "target_state": "done",
   "policy": {
-    "MaxTotalSteps": 50,
+    "MaxTotalSteps": 30,
     "MaxStepRetries": 0
   },
   "agents": [],
   "steps": [
     {
-      "name": "init",
+      "name": "process",
       "adapter": "noop",
       "input_keys": [
+        "label",
         "result"
       ],
       "allow_tools": null,
       "outcomes": [
         {
-          "name": "success",
-          "transition_to": "process_items"
+          "name": "all_succeeded",
+          "transition_to": "count_phase"
+        },
+        {
+          "name": "any_failed",
+          "transition_to": "done"
         }
       ]
     },
     {
-      "name": "process_items",
-      "input_keys": null,
+      "name": "count_phase",
+      "adapter": "noop",
+      "input_keys": [
+        "label",
+        "result"
+      ],
       "allow_tools": null,
       "outcomes": [
         {
@@ -33,7 +42,7 @@
         },
         {
           "name": "any_failed",
-          "transition_to": "failed"
+          "transition_to": "done"
         }
       ]
     }
@@ -43,16 +52,11 @@
       "name": "done",
       "terminal": true,
       "success": true
-    },
-    {
-      "name": "failed",
-      "terminal": true,
-      "success": false
     }
   ],
   "step_order": [
-    "init",
-    "process_items"
+    "process",
+    "count_phase"
   ],
   "plugins_required": [
     "noop"

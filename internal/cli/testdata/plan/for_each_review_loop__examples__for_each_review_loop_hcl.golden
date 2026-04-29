@@ -13,18 +13,10 @@ steps (declaration order):
     input keys: result
     allow_tools: (none)
     outcomes: success -> process_items
-  execute   adapter=noop
-    input keys: label, result
+  process_items
+    input keys: (none)
     allow_tools: (none)
-    outcomes: success -> review, failure -> cleanup
-  review   adapter=noop
-    input keys: label, result
-    allow_tools: (none)
-    outcomes: success -> cleanup, failure -> _continue
-  cleanup   adapter=noop
-    input keys: label, result
-    allow_tools: (none)
-    outcomes: success -> _continue, failure -> _continue
+    outcomes: all_succeeded -> done, any_failed -> failed
 
 states:
   done    terminal=true   success=true

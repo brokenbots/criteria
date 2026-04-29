@@ -71,8 +71,8 @@ func resumeOneRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint, cli
 		return
 	}
 
-	if err := checkIterationSubgraphMembership(graph, resp.VariableScope, resp.CurrentStep); err != nil {
-		abandonCheckpoint(log, cp, "checkpoint step is no longer in iteration subgraph; workflow changed incompatibly", err)
+	if err := checkIterationCursorValidity(graph, resp.VariableScope, resp.CurrentStep); err != nil {
+		abandonCheckpoint(log, cp, "checkpoint step is no longer valid after workflow edit", err)
 		return
 	}
 
@@ -219,31 +219,40 @@ func serviceResumeSignals(ctx context.Context, log *slog.Logger, rc reattachTran
 	drainAndCleanup(ctx, rc, cp)
 }
 
-// checkIterationSubgraphMembership verifies that if the checkpoint's iteration
-// cursor shows an in-progress for_each iteration, the current step is still a
-// member of that for_each's compiled subgraph in the (possibly edited) workflow.
+// checkIterationCursorValidity verifies that the active iteration cursor stack
+// (if any) is still consistent with the newly-compiled graph. This guards
+// against a checkpoint that was created while an iteration was in progress but
+// the workflow was subsequently edited in a way that removed the iterating step.
 //
-// The check is based on the serialised iteration cursor from variableScope (the
-// checkpoint's persisted state) rather than the step's IterationOwner field on
-// the newly compiled graph. This catches the real incompatibility case: a step
-// that was previously in the subgraph but was removed (or whose owning for_each
-// was deleted) by a workflow edit between crash and resume.
+// The check is based on the serialised iteration cursor stack from variableScope
+// (the checkpoint's persisted state). This catches the real incompatibility case:
+// a step that was previously iterating but was deleted by a workflow edit between
+// crash and resume.
 //
 // Returns a non-nil error (suitable for abandonCheckpoint) when the check fails.
-func checkIterationSubgraphMembership(graph *workflow.FSMGraph, variableScope, currentStep string) error {
-	// Discard the error: RestoreVarScope returns a nil cursor on parse failure,
+func checkIterationCursorValidity(graph *workflow.FSMGraph, variableScope, currentStep string) error {
+	// Discard the error: RestoreVarScope returns an empty stack on parse failure,
 	// which the check below handles correctly. A broken scope is not an
-	// iteration-subgraph incompatibility.
-	_, cursor, _ := workflow.RestoreVarScope(variableScope, graph)
-	if cursor == nil || !cursor.InProgress {
+	// iteration-cursor incompatibility.
+	_, stack, _ := workflow.RestoreVarScope(variableScope, graph)
+	if len(stack) == 0 {
 		return nil // no active iteration cursor; nothing to verify
 	}
-	fe, ok := graph.ForEachs[cursor.NodeName]
-	if !ok {
-		return fmt.Errorf("checkpoint for_each %q no longer exists in the workflow", cursor.NodeName)
+	top := stack[len(stack)-1]
+	if !top.InProgress {
+		return nil
 	}
-	if _, member := fe.IterationSteps[currentStep]; !member {
-		return fmt.Errorf("checkpoint step %q is no longer in the for_each %q iteration subgraph", currentStep, cursor.NodeName)
+	// Verify the step named by the cursor still exists in the graph.
+	stepNode, ok := graph.Steps[top.StepName]
+	if !ok {
+		return fmt.Errorf("checkpoint iterating step %q no longer exists in the workflow", top.StepName)
+	}
+	// For type="workflow" steps with a body, verify the currentStep still exists
+	// in the body graph (the body may have been edited between crash and resume).
+	if stepNode.Body != nil && currentStep != "" {
+		if _, inBody := stepNode.Body.Steps[currentStep]; !inBody {
+			return fmt.Errorf("checkpoint body step %q no longer exists in iterating step %q", currentStep, top.StepName)
+		}
 	}
 	return nil
 }

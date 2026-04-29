@@ -155,15 +155,15 @@ issues:
     - path: compile_steps.go
       linters:
         - gocritic
-      text: 'hugeParam: sp is heavy \(168 bytes\); consider passing it by pointer' # W06: gocritic finding
+      text: 'hugeParam: sp is heavy \(240 bytes\); consider passing it by pointer' # W10: StepSpec grew with W10 fields
     - path: compile_steps.go
       linters:
         - gocritic
-      text: 'rangeValCopy: each iteration copies 168 bytes \(consider pointers or indexing\)' # W06: gocritic finding
+      text: 'rangeValCopy: each iteration copies 240 bytes \(consider pointers or indexing\)' # W10: StepSpec grew with W10 fields
     - path: compile_lifecycle.go
       linters:
         - gocritic
-      text: 'rangeValCopy: each iteration copies 168 bytes \(consider pointers or indexing\)' # W06: gocritic finding
+      text: 'rangeValCopy: each iteration copies 240 bytes \(consider pointers or indexing\)' # W10: StepSpec grew with W10 fields
     - path: compile_nodes.go
       linters:
         - gocognit
@@ -438,6 +438,22 @@ issues:
       text: '`RestoreVarScope`' # W03: simplify RestoreVarScope
     - path: eval.go
       linters:
+        - gocognit
+      text: '`SerializeVarScope`' # W10: cursor-stack serialisation added complexity
+    - path: eval.go
+      linters:
+        - gocyclo
+      text: '`SerializeVarScope`' # W10: cursor-stack serialisation added complexity
+    - path: eval.go
+      linters:
+        - funlen
+      text: 'Function ''SerializeVarScope''' # W10: cursor-stack serialisation added length
+    - path: eval.go
+      linters:
+        - gocritic
+      text: 'hugeParam: b is heavy \(120 bytes\); consider passing it by pointer' # W10: EachBinding is a value-type aggregate
+    - path: eval.go
+      linters:
         - gosimple
       text: 'S1005: unnecessary assignment to the blank identifier' # W04: gosimple finding
     - path: events.go
@@ -479,11 +495,15 @@ issues:
     - path: events.go
       linters:
         - revive
-      text: 'var-naming: don''t use underscores in Go names; type Envelope_ForEachIteration should be EnvelopeForEachIteration' # W06: revive finding
+      text: 'var-naming: don''t use underscores in Go names; type Envelope_StepIterationCompleted should be EnvelopeStepIterationCompleted' # W10: proto alias
     - path: events.go
       linters:
         - revive
-      text: 'var-naming: don''t use underscores in Go names; type Envelope_ForEachOutcome should be EnvelopeForEachOutcome' # W06: revive finding
+      text: 'var-naming: don''t use underscores in Go names; type Envelope_StepIterationItem should be EnvelopeStepIterationItem' # W10: proto alias
+    - path: events.go
+      linters:
+        - revive
+      text: 'var-naming: don''t use underscores in Go names; type Envelope_StepIterationStarted should be EnvelopeStepIterationStarted' # W10: proto alias
     - path: events.go
       linters:
         - revive
@@ -662,10 +682,6 @@ issues:
       text: '`renderPlanOutput`' # W03: simplify renderPlanOutput
     - path: internal/cli/plan.go
       linters:
-        - gocritic
-      text: 'rangeValCopy: each iteration copies 168 bytes \(consider pointers or indexing\)' # W06: gocritic finding
-    - path: internal/cli/plan.go
-      linters:
         - gocyclo
       text: '`renderPlanOutput`' # W03: simplify renderPlanOutput
     - path: internal/cli/reattach.go
@@ -696,10 +712,6 @@ issues:
       linters:
         - goimports
       text: File is not properly formatted # W04: goimports finding
-    - path: internal/cli/schemas.go
-      linters:
-        - gocritic
-      text: 'rangeValCopy: each iteration copies 168 bytes \(consider pointers or indexing\)' # W06: gocritic finding
     - path: internal/cli/status.go
       linters:
         - gofmt
@@ -935,7 +947,7 @@ issues:
     - path: parser.go
       linters:
         - gocritic
-      text: 'rangeValCopy: each iteration copies 168 bytes \(consider pointers or indexing\)' # W06: gocritic finding
+      text: 'rangeValCopy: each iteration copies 240 bytes \(consider pointers or indexing\)' # W10: StepSpec grew with W10 fields
     - path: payloads_step.go
       linters:
         - revive

@@ -54,25 +54,27 @@ type Sink interface {
 	// matchedArm is "arm[<index>]" or "default"; target is the transition target.
 	// condition is the source text of the matched arm expression; empty for default.
 	OnBranchEvaluated(node, matchedArm, target, condition string)
-	// OnForEachEntered is emitted when a for_each node begins iterating (W07).
-	// count is the total number of items in the list.
+	// OnForEachEntered is emitted when a step begins iterating (for_each or count) (W07/W10).
+	// count is the total number of items.
 	OnForEachEntered(node string, count int)
-	// OnForEachIteration is emitted at the start of each per-item iteration (W07).
+	// OnStepIterationStarted is emitted at the start of each per-item iteration (W10).
+	// Formerly OnForEachIteration (W07); renamed for step-level semantics.
 	// index is zero-based; value is the string-rendered cty value of the current
 	// item; anyFailed reports whether any prior iteration produced a failure outcome.
-	OnForEachIteration(node string, index int, value string, anyFailed bool)
-	// OnForEachOutcome is emitted when a for_each node finishes iterating (W07).
+	OnStepIterationStarted(node string, index int, value string, anyFailed bool)
+	// OnStepIterationCompleted is emitted when a step finishes all iterations (W10).
+	// Formerly OnForEachOutcome (W07).
 	// outcome is "all_succeeded" or "any_failed"; target is the transition target.
-	OnForEachOutcome(node, outcome, target string)
-	// OnForEachStep is emitted when the engine routes to a step within an active
-	// iteration subgraph (other than the do-step at iteration start, which is
-	// covered by OnForEachIteration). node is the for_each node name, index is
-	// the zero-based iteration index, step is the step name being entered (W08).
-	OnForEachStep(node string, index int, step string)
-	// OnScopeIterCursorSet is emitted whenever the for_each cursor is created,
-	// advanced, or cleared (W07). cursorJSON is the JSON-encoded IterCursor; an
-	// empty string signals cursor cleared. The server stores this verbatim without
-	// interpreting field names, preserving 1.6 split independence.
+	OnStepIterationCompleted(node, outcome, target string)
+	// OnStepIterationItem is emitted when the engine is about to execute the
+	// step body for the next iteration item (W10). Formerly OnForEachStep (W08).
+	// node is the step name, index is the zero-based iteration index.
+	// step is reserved for workflow-type steps; empty for non-workflow steps.
+	OnStepIterationItem(node string, index int, step string)
+	// OnScopeIterCursorSet is emitted whenever the step iteration cursor stack
+	// is created, advanced, or cleared (W07/W10). cursorJSON is the JSON-encoded
+	// cursor stack; an empty string signals cursor cleared. The server stores
+	// this verbatim without interpreting field names.
 	OnScopeIterCursorSet(cursorJSON string)
 	// StepEventSink returns the per-step adapter sink (logs + adapter events).
 	StepEventSink(step string) adapter.EventSink
@@ -90,9 +92,9 @@ type Engine struct {
 	// varOverrides, when non-nil, overlays CLI-supplied key=value pairs on top
 	// of the graph variable defaults at run start.
 	varOverrides map[string]string
-	// resumedIter, when non-nil, sets RunState.Iter at run start (W07).
-	// Used during crash-recovery reattach when a for_each was active.
-	resumedIter *workflow.IterCursor
+	// resumedIterStack, when non-empty, seeds RunState.IterStack at run start
+	// (W10). Used during crash-recovery reattach when a step iteration was active.
+	resumedIterStack []workflow.IterCursor
 	// pendingSignal, when non-empty, is placed into RunState at run start (W05).
 	// Used during crash-recovery reattach when the run was paused mid-signal-wait.
 	pendingSignal string
@@ -105,8 +107,8 @@ type Engine struct {
 	// workflowDir is the directory containing the HCL workflow file. Passed to
 	// RunState so that file() and fileexists() can resolve relative paths.
 	workflowDir string
-	// log is an optional structured logger for internal engine warnings (e.g.,
-	// rebindEachOnResume failures). Falls back to slog.Default() when nil.
+	// log is an optional structured logger for internal engine warnings.
+	// Falls back to slog.Default() when nil.
 	log *slog.Logger
 }
 
@@ -160,12 +162,11 @@ func (e *Engine) runLoop(ctx context.Context, sessions *plugin.SessionManager, c
 		Vars:             vars,
 		PendingSignal:    e.pendingSignal,
 		ResumePayload:    e.resumePayload,
-		Iter:             e.resumedIter,
+		IterStack:        append([]workflow.IterCursor{}, e.resumedIterStack...),
 		WorkflowDir:      e.workflowDir,
 		firstStep:        true,
 		firstStepAttempt: firstStepAttempt,
 	}
-	e.rebindEachOnResume(st)
 	deps := e.buildDeps(sessions)
 
 	for {
@@ -178,45 +179,116 @@ func (e *Engine) runLoop(ctx context.Context, sessions *plugin.SessionManager, c
 		if err != nil {
 			return e.handleEvalError(st, err)
 		}
-		next = e.routeForEachStep(st, next)
+		next = e.routeIteratingStep(st, next)
 		e.advanceTo(st, next)
 	}
 }
 
-// rebindEachOnResume re-evaluates a for_each node's items expression and
-// re-binds each.* when resuming mid-subgraph (crash-resume). When the cursor
-// has InProgress=true but Items=nil, the items were not persisted and must be
-// re-evaluated from the graph so steps in the iteration body can access
-// each.value and each.index.
-func (e *Engine) rebindEachOnResume(st *RunState) {
-	if st.Iter == nil || !st.Iter.InProgress || st.Iter.Items != nil {
-		return
+// routeIteratingStep handles post-step routing for steps with active iteration
+// cursors (W10). After a step's Evaluate returns `next`, this method checks
+// whether the step has an active IterCursor (pushed by stepNode.Evaluate before
+// running the iteration body) and applies the appropriate semantics:
+//
+//   - If there is no active cursor, return next unchanged (passthrough).
+//   - If next == "_continue" (body completed normally) or the cursor step
+//     completed its body: record outcome, advance cursor, emit events.
+//   - If more iterations remain: re-bind each.*, return step name (re-enter).
+//   - If all iterations done: emit aggregate outcome, pop cursor, return target.
+//   - on_failure=abort and last outcome was failure: pop cursor, return target.
+//
+// The cursor is pushed by stepNode when it detects ForEach/Count on first entry,
+// and popped here when the iteration loop completes or aborts.
+func (e *Engine) routeIteratingStep(st *RunState, next string) string {
+	cur := st.TopCursor()
+	if cur == nil || !cur.InProgress {
+		return next
 	}
-	fe, ok := e.graph.ForEachs[st.Iter.NodeName]
-	if !ok {
-		return
+
+	stepName := cur.StepName
+	// Only intercept when the current node is the iterating step itself.
+	// When the step has a workflow body (_continue comes from the body's
+	// terminal state), next will be "_continue".
+	if st.Current != stepName && next != "_continue" {
+		return next
 	}
-	v, diags := fe.Items.Value(workflow.BuildEvalContextWithOpts(st.Vars, workflow.DefaultFunctionOptions(st.WorkflowDir)))
-	if diags.HasErrors() || (!v.Type().IsListType() && !v.Type().IsTupleType()) {
-		log := e.log
-		if log == nil {
-			log = slog.Default()
+
+	// Record outcome for this iteration.
+	outcomeIsSuccess := isSuccessOutcome(st.LastOutcome)
+	if !outcomeIsSuccess {
+		cur.AnyFailed = true
+	}
+
+	// on_failure=abort: stop after first failure.
+	if cur.OnFailure == "abort" && !outcomeIsSuccess {
+		return e.finishIteration(st, stepName, next)
+	}
+
+	cur.Index++
+	cur.InProgress = false
+
+	if cur.Index < cur.Total {
+		// More iterations remain: re-bind each.* and re-enter the step.
+		item := cur.Items[cur.Index]
+		// Use stored map key when available; otherwise use string(index).
+		var key cty.Value
+		if cur.Index < len(cur.Keys) {
+			key = cur.Keys[cur.Index]
+		} else {
+			key = cty.StringVal(fmt.Sprintf("%d", cur.Index))
 		}
-		log.Warn("rebindEachOnResume: failed to re-evaluate items, each.* bindings not restored",
-			"for_each", st.Iter.NodeName, "index", st.Iter.Index)
-		return
+		cur.Key = key
+		cur.InProgress = true
+		st.Vars = workflow.WithEachBinding(st.Vars, workflow.EachBinding{
+			Value: item,
+			Key:   key,
+			Index: cur.Index,
+			Total: cur.Total,
+			First: cur.Index == 0,
+			Last:  cur.Index == cur.Total-1,
+			Prev:  cur.Prev,
+		})
+		// Persist the updated cursor.
+		if curJSON, err := workflow.SerializeIterCursor(cur); err == nil {
+			e.sink.OnScopeIterCursorSet(curJSON)
+		}
+		e.sink.OnStepIterationStarted(stepName, cur.Index, workflow.CtyValueToString(item), cur.AnyFailed)
+		return stepName // re-enter the same step
 	}
-	items := v.AsValueSlice()
-	if items == nil {
-		items = []cty.Value{}
-	}
-	st.Iter.Items = items
-	if st.Iter.Index < len(items) {
-		st.Vars = workflow.WithEachBinding(st.Vars, items[st.Iter.Index], st.Iter.Index)
-	}
+
+	// All iterations done.
+	return e.finishIteration(st, stepName, next)
 }
 
-// seedRunVars returns the initial variable map for a run. For resumed runs it
+// finishIteration closes out an iteration loop and returns the aggregate
+// outcome transition target. It pops the cursor, clears each.* bindings,
+// emits OnStepIterationCompleted, and returns the appropriate target from
+// the step's Outcomes map.
+func (e *Engine) finishIteration(st *RunState, stepName, _ string) string {
+	cur := st.PopCursor()
+	st.Vars = workflow.ClearEachBinding(st.Vars)
+	e.sink.OnScopeIterCursorSet("") // cursor cleared
+
+	step, ok := e.graph.Steps[stepName]
+	if !ok {
+		return stepName
+	}
+
+	aggregateOutcome := "all_succeeded"
+	if cur.AnyFailed && cur.OnFailure != "ignore" {
+		aggregateOutcome = "any_failed"
+	}
+
+	target, ok := step.Outcomes[aggregateOutcome]
+	if !ok {
+		// Fall back to all_succeeded (required by compile; missing any_failed is
+		// a compile warning, not an error).
+		target = step.Outcomes["all_succeeded"]
+	}
+
+	e.sink.OnStepIterationCompleted(stepName, aggregateOutcome, target)
+	return target
+}
+
 // returns the restored scope unchanged. For fresh runs it seeds from graph
 // defaults, applies any CLI overrides, and emits OnVariableSet events.
 func (e *Engine) seedRunVars() map[string]cty.Value {
@@ -246,97 +318,6 @@ func (e *Engine) buildDeps(sessions *plugin.SessionManager) Deps {
 		SubWorkflowResolver: e.subWorkflowResolver,
 		BranchScheduler:     e.branchScheduler,
 	}
-}
-
-// iterAction classifies what the engine should do when routing a for_each transition.
-type iterAction int
-
-const (
-	actionPassthrough iterAction = iota // not in an iteration; behave normally
-	actionAdvance                       // _continue reached; advance cursor, route to for_each node
-	actionStayInLoop                    // transition to another step in the same subgraph
-	actionExitLoop                      // transition out of the subgraph; clear cursor
-)
-
-// routeForEachStep replaces the former interceptForEachContinue (W08).
-// It classifies the transition from st.Current to next and applies the
-// appropriate for_each semantics:
-//   - actionPassthrough: no active iteration; return next unchanged.
-//   - actionAdvance: _continue from any subgraph step; advance cursor.
-//   - actionStayInLoop: transition to a step still in the same subgraph.
-//   - actionExitLoop: transition to a target outside the subgraph.
-//
-// The decision uses the compiled IterationOwner and IterationSteps fields on
-// the graph nodes — no string parsing at runtime.
-func (e *Engine) routeForEachStep(st *RunState, next string) string {
-	action := e.iterationAction(st, next)
-	switch action {
-	case actionAdvance:
-		if !isSuccessOutcome(st.LastOutcome) {
-			st.Iter.AnyFailed = true
-		}
-		st.Iter.Index++
-		st.Iter.InProgress = false
-		st.Vars = workflow.ClearEachBinding(st.Vars)
-		if cursorJSON, err := workflow.SerializeIterCursor(st.Iter); err == nil {
-			e.sink.OnScopeIterCursorSet(cursorJSON)
-		}
-		return st.Iter.NodeName
-
-	case actionStayInLoop:
-		// Track failures across all steps in the iteration body, not just the
-		// final step that triggers _continue.
-		if !isSuccessOutcome(st.LastOutcome) {
-			st.Iter.AnyFailed = true
-		}
-		// Remain in the iteration; each.* stays bound. Emit OnForEachStep so
-		// observers can track which step in the iteration body is executing.
-		e.sink.OnForEachStep(st.Iter.NodeName, st.Iter.Index, next)
-		return next
-
-	case actionExitLoop:
-		iterName := st.Iter.NodeName
-		st.Iter = nil
-		st.Vars = workflow.ClearEachBinding(st.Vars)
-		e.sink.OnScopeIterCursorSet("") // cursor cleared
-		e.sink.OnForEachOutcome(iterName, "any_failed", next)
-		return next
-
-	default: // actionPassthrough
-		return next
-	}
-}
-
-// iterationAction returns the action the engine should take for the transition
-// from st.Current to next. Extracted to keep routeForEachStep narrow and to
-// enable direct testing of the decision logic.
-func (e *Engine) iterationAction(st *RunState, next string) iterAction {
-	if st.Iter == nil || !st.Iter.InProgress {
-		return actionPassthrough
-	}
-	// Guard: st.Current must not be the for_each node itself (the node returns
-	// the do-step name; that is not a subgraph transition).
-	if st.Current == st.Iter.NodeName {
-		return actionPassthrough
-	}
-
-	if next == "_continue" {
-		return actionAdvance
-	}
-	// Legacy: transitioning back to the for_each node itself == _continue.
-	if next == st.Iter.NodeName {
-		return actionAdvance
-	}
-
-	// Check subgraph membership.
-	fe, ok := e.graph.ForEachs[st.Iter.NodeName]
-	if !ok {
-		return actionExitLoop
-	}
-	if _, inSubgraph := fe.IterationSteps[next]; inSubgraph {
-		return actionStayInLoop
-	}
-	return actionExitLoop
 }
 
 // advanceTo sets st.Current to next, moving the run forward to the next node.

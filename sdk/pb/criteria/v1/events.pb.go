@@ -121,10 +121,10 @@ type Envelope struct {
 	//	*Envelope_ApprovalDecision
 	//	*Envelope_BranchEvaluated
 	//	*Envelope_ForEachEntered
-	//	*Envelope_ForEachIteration
-	//	*Envelope_ForEachOutcome
+	//	*Envelope_StepIterationStarted
+	//	*Envelope_StepIterationCompleted
 	//	*Envelope_ScopeIterCursorSet
-	//	*Envelope_ForEachStep
+	//	*Envelope_StepIterationItem
 	//	*Envelope_WatchReady
 	Payload       isEnvelope_Payload `protobuf_oneof:"payload"`
 	unknownFields protoimpl.UnknownFields
@@ -374,19 +374,19 @@ func (x *Envelope) GetForEachEntered() *ForEachEntered {
 	return nil
 }
 
-func (x *Envelope) GetForEachIteration() *ForEachIteration {
+func (x *Envelope) GetStepIterationStarted() *StepIterationStarted {
 	if x != nil {
-		if x, ok := x.Payload.(*Envelope_ForEachIteration); ok {
-			return x.ForEachIteration
+		if x, ok := x.Payload.(*Envelope_StepIterationStarted); ok {
+			return x.StepIterationStarted
 		}
 	}
 	return nil
 }
 
-func (x *Envelope) GetForEachOutcome() *ForEachOutcome {
+func (x *Envelope) GetStepIterationCompleted() *StepIterationCompleted {
 	if x != nil {
-		if x, ok := x.Payload.(*Envelope_ForEachOutcome); ok {
-			return x.ForEachOutcome
+		if x, ok := x.Payload.(*Envelope_StepIterationCompleted); ok {
+			return x.StepIterationCompleted
 		}
 	}
 	return nil
@@ -401,10 +401,10 @@ func (x *Envelope) GetScopeIterCursorSet() *ScopeIterCursorSet {
 	return nil
 }
 
-func (x *Envelope) GetForEachStep() *ForEachStep {
+func (x *Envelope) GetStepIterationItem() *StepIterationItem {
 	if x != nil {
-		if x, ok := x.Payload.(*Envelope_ForEachStep); ok {
-			return x.ForEachStep
+		if x, ok := x.Payload.(*Envelope_StepIterationItem); ok {
+			return x.StepIterationItem
 		}
 	}
 	return nil
@@ -499,32 +499,31 @@ type Envelope_BranchEvaluated struct {
 }
 
 type Envelope_ForEachEntered struct {
-	// ForEach events — emitted by the agent during for_each node execution (W07).
-	// Agent-owned events; permanent field numbers.
-	ForEachEntered *ForEachEntered `protobuf:"bytes,28,opt,name=for_each_entered,json=forEachEntered,proto3,oneof"`
+	// Step iteration events — emitted by the agent during per-step for_each/count
+	// iteration (W10). Agent-owned events; permanent field numbers.
+	ForEachEntered *ForEachEntered `protobuf:"bytes,28,opt,name=for_each_entered,json=forEachEntered,proto3,oneof"` // permanent (W07/W10)
 }
 
-type Envelope_ForEachIteration struct {
-	ForEachIteration *ForEachIteration `protobuf:"bytes,29,opt,name=for_each_iteration,json=forEachIteration,proto3,oneof"`
+type Envelope_StepIterationStarted struct {
+	StepIterationStarted *StepIterationStarted `protobuf:"bytes,29,opt,name=step_iteration_started,json=stepIterationStarted,proto3,oneof"` // permanent (W10; was ForEachIteration)
 }
 
-type Envelope_ForEachOutcome struct {
-	ForEachOutcome *ForEachOutcome `protobuf:"bytes,30,opt,name=for_each_outcome,json=forEachOutcome,proto3,oneof"`
+type Envelope_StepIterationCompleted struct {
+	StepIterationCompleted *StepIterationCompleted `protobuf:"bytes,30,opt,name=step_iteration_completed,json=stepIterationCompleted,proto3,oneof"` // permanent (W10; was ForEachOutcome)
 }
 
 type Envelope_ScopeIterCursorSet struct {
-	// ScopeIterCursorSet — emitted by the agent whenever the for_each iteration
+	// ScopeIterCursorSet — emitted by the agent whenever the step iteration
 	// cursor changes. The server stores cursor_json verbatim into the
 	// runs.variable_scope "iter" field without interpreting its contents,
 	// preserving 1.6 split independence (W07). Permanent field number.
 	ScopeIterCursorSet *ScopeIterCursorSet `protobuf:"bytes,31,opt,name=scope_iter_cursor_set,json=scopeIterCursorSet,proto3,oneof"`
 }
 
-type Envelope_ForEachStep struct {
-	// ForEachStep — emitted when the engine routes to a step within an active
-	// iteration subgraph (other than the do-step at iteration start, which is
-	// covered by ForEachIteration). Permanent field number (W08).
-	ForEachStep *ForEachStep `protobuf:"bytes,32,opt,name=for_each_step,json=forEachStep,proto3,oneof"`
+type Envelope_StepIterationItem struct {
+	// StepIterationItem — emitted when the engine is about to run the step body
+	// for the next iteration item. Permanent field number (W10; was ForEachStep).
+	StepIterationItem *StepIterationItem `protobuf:"bytes,32,opt,name=step_iteration_item,json=stepIterationItem,proto3,oneof"`
 }
 
 type Envelope_WatchReady struct {
@@ -573,13 +572,13 @@ func (*Envelope_BranchEvaluated) isEnvelope_Payload() {}
 
 func (*Envelope_ForEachEntered) isEnvelope_Payload() {}
 
-func (*Envelope_ForEachIteration) isEnvelope_Payload() {}
+func (*Envelope_StepIterationStarted) isEnvelope_Payload() {}
 
-func (*Envelope_ForEachOutcome) isEnvelope_Payload() {}
+func (*Envelope_StepIterationCompleted) isEnvelope_Payload() {}
 
 func (*Envelope_ScopeIterCursorSet) isEnvelope_Payload() {}
 
-func (*Envelope_ForEachStep) isEnvelope_Payload() {}
+func (*Envelope_StepIterationItem) isEnvelope_Payload() {}
 
 func (*Envelope_WatchReady) isEnvelope_Payload() {}
 
@@ -1732,11 +1731,11 @@ func (x *BranchEvaluated) GetCondition() string {
 	return ""
 }
 
-// ForEachEntered — emitted when a for_each node begins iterating (W07).
+// ForEachEntered — emitted when a step begins iterating (for_each or count) (W07/W10).
 // Agent-owned event; permanent field numbers.
 type ForEachEntered struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Node          string                 `protobuf:"bytes,1,opt,name=node,proto3" json:"node,omitempty"`    // for_each node name; permanent
+	Node          string                 `protobuf:"bytes,1,opt,name=node,proto3" json:"node,omitempty"`    // step name; permanent
 	Count         int32                  `protobuf:"varint,2,opt,name=count,proto3" json:"count,omitempty"` // number of items; permanent
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -1786,11 +1785,12 @@ func (x *ForEachEntered) GetCount() int32 {
 	return 0
 }
 
-// ForEachIteration — emitted at the start of each per-item iteration (W07).
+// StepIterationStarted — emitted at the start of each per-item iteration (W10).
+// Formerly ForEachIteration (W07); field numbers preserved for wire compatibility.
 // Agent-owned event; permanent field numbers.
-type ForEachIteration struct {
+type StepIterationStarted struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Node          string                 `protobuf:"bytes,1,opt,name=node,proto3" json:"node,omitempty"`                             // for_each node name; permanent
+	Node          string                 `protobuf:"bytes,1,opt,name=node,proto3" json:"node,omitempty"`                             // step name; permanent
 	Index         int32                  `protobuf:"varint,2,opt,name=index,proto3" json:"index,omitempty"`                          // zero-based iteration index; permanent
 	Value         string                 `protobuf:"bytes,3,opt,name=value,proto3" json:"value,omitempty"`                           // string-rendered cty value of the current item; permanent
 	AnyFailed     bool                   `protobuf:"varint,4,opt,name=any_failed,json=anyFailed,proto3" json:"any_failed,omitempty"` // true if any prior iteration produced a failure outcome; permanent.
@@ -1798,20 +1798,20 @@ type ForEachIteration struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *ForEachIteration) Reset() {
-	*x = ForEachIteration{}
+func (x *StepIterationStarted) Reset() {
+	*x = StepIterationStarted{}
 	mi := &file_criteria_v1_events_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *ForEachIteration) String() string {
+func (x *StepIterationStarted) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ForEachIteration) ProtoMessage() {}
+func (*StepIterationStarted) ProtoMessage() {}
 
-func (x *ForEachIteration) ProtoReflect() protoreflect.Message {
+func (x *StepIterationStarted) ProtoReflect() protoreflect.Message {
 	mi := &file_criteria_v1_events_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -1823,64 +1823,65 @@ func (x *ForEachIteration) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ForEachIteration.ProtoReflect.Descriptor instead.
-func (*ForEachIteration) Descriptor() ([]byte, []int) {
+// Deprecated: Use StepIterationStarted.ProtoReflect.Descriptor instead.
+func (*StepIterationStarted) Descriptor() ([]byte, []int) {
 	return file_criteria_v1_events_proto_rawDescGZIP(), []int{21}
 }
 
-func (x *ForEachIteration) GetNode() string {
+func (x *StepIterationStarted) GetNode() string {
 	if x != nil {
 		return x.Node
 	}
 	return ""
 }
 
-func (x *ForEachIteration) GetIndex() int32 {
+func (x *StepIterationStarted) GetIndex() int32 {
 	if x != nil {
 		return x.Index
 	}
 	return 0
 }
 
-func (x *ForEachIteration) GetValue() string {
+func (x *StepIterationStarted) GetValue() string {
 	if x != nil {
 		return x.Value
 	}
 	return ""
 }
 
-func (x *ForEachIteration) GetAnyFailed() bool {
+func (x *StepIterationStarted) GetAnyFailed() bool {
 	if x != nil {
 		return x.AnyFailed
 	}
 	return false
 }
 
-// ForEachOutcome — emitted when a for_each node finishes iterating (W07).
+// StepIterationCompleted — emitted when a step finishes iterating (W10).
+// Formerly ForEachOutcome (W07); field numbers preserved for wire compatibility.
 // Agent-owned event; permanent field numbers.
-type ForEachOutcome struct {
+type StepIterationCompleted struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Node          string                 `protobuf:"bytes,1,opt,name=node,proto3" json:"node,omitempty"`       // for_each node name; permanent
+	Node          string                 `protobuf:"bytes,1,opt,name=node,proto3" json:"node,omitempty"`       // step name; permanent
 	Outcome       string                 `protobuf:"bytes,2,opt,name=outcome,proto3" json:"outcome,omitempty"` // "all_succeeded" | "any_failed"; permanent
 	Target        string                 `protobuf:"bytes,3,opt,name=target,proto3" json:"target,omitempty"`   // transition target node name; permanent
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *ForEachOutcome) Reset() {
-	*x = ForEachOutcome{}
+func (x *StepIterationCompleted) Reset() {
+	*x = StepIterationCompleted{}
 	mi := &file_criteria_v1_events_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *ForEachOutcome) String() string {
+func (x *StepIterationCompleted) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ForEachOutcome) ProtoMessage() {}
+func (*StepIterationCompleted) ProtoMessage() {}
 
-func (x *ForEachOutcome) ProtoReflect() protoreflect.Message {
+func (x *StepIterationCompleted) ProtoReflect() protoreflect.Message {
 	mi := &file_criteria_v1_events_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -1892,33 +1893,33 @@ func (x *ForEachOutcome) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ForEachOutcome.ProtoReflect.Descriptor instead.
-func (*ForEachOutcome) Descriptor() ([]byte, []int) {
+// Deprecated: Use StepIterationCompleted.ProtoReflect.Descriptor instead.
+func (*StepIterationCompleted) Descriptor() ([]byte, []int) {
 	return file_criteria_v1_events_proto_rawDescGZIP(), []int{22}
 }
 
-func (x *ForEachOutcome) GetNode() string {
+func (x *StepIterationCompleted) GetNode() string {
 	if x != nil {
 		return x.Node
 	}
 	return ""
 }
 
-func (x *ForEachOutcome) GetOutcome() string {
+func (x *StepIterationCompleted) GetOutcome() string {
 	if x != nil {
 		return x.Outcome
 	}
 	return ""
 }
 
-func (x *ForEachOutcome) GetTarget() string {
+func (x *StepIterationCompleted) GetTarget() string {
 	if x != nil {
 		return x.Target
 	}
 	return ""
 }
 
-// ScopeIterCursorSet — emitted by the agent whenever the for_each iteration
+// ScopeIterCursorSet — emitted by the agent whenever the step iteration
 // cursor is created, advanced, or cleared. cursor_json is the JSON-encoded
 // IterCursor blob; an empty string means the cursor has been cleared.
 // The server stores this verbatim into the runs.variable_scope "iter" field
@@ -1967,34 +1968,32 @@ func (x *ScopeIterCursorSet) GetCursorJson() string {
 	return ""
 }
 
-// ForEachStep — emitted when the engine routes to a step within an active
-// iteration subgraph (other than the do-step at iteration start, which is
-// covered by ForEachIteration). Observers can correlate with the active
-// ForEachIteration event using node + index (W08).
+// StepIterationItem — emitted when the engine is about to execute the step body
+// for the next iteration item. Formerly ForEachStep (W08); field numbers preserved.
 // Agent-owned event; permanent field numbers.
-type ForEachStep struct {
+type StepIterationItem struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Node          string                 `protobuf:"bytes,1,opt,name=node,proto3" json:"node,omitempty"`    // for_each node name; permanent
+	Node          string                 `protobuf:"bytes,1,opt,name=node,proto3" json:"node,omitempty"`    // step name; permanent
 	Index         int32                  `protobuf:"varint,2,opt,name=index,proto3" json:"index,omitempty"` // zero-based iteration index; permanent
-	Step          string                 `protobuf:"bytes,3,opt,name=step,proto3" json:"step,omitempty"`    // step name being entered; permanent
+	Step          string                 `protobuf:"bytes,3,opt,name=step,proto3" json:"step,omitempty"`    // reserved; empty for non-workflow steps; permanent
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *ForEachStep) Reset() {
-	*x = ForEachStep{}
+func (x *StepIterationItem) Reset() {
+	*x = StepIterationItem{}
 	mi := &file_criteria_v1_events_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *ForEachStep) String() string {
+func (x *StepIterationItem) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ForEachStep) ProtoMessage() {}
+func (*StepIterationItem) ProtoMessage() {}
 
-func (x *ForEachStep) ProtoReflect() protoreflect.Message {
+func (x *StepIterationItem) ProtoReflect() protoreflect.Message {
 	mi := &file_criteria_v1_events_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -2006,26 +2005,26 @@ func (x *ForEachStep) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ForEachStep.ProtoReflect.Descriptor instead.
-func (*ForEachStep) Descriptor() ([]byte, []int) {
+// Deprecated: Use StepIterationItem.ProtoReflect.Descriptor instead.
+func (*StepIterationItem) Descriptor() ([]byte, []int) {
 	return file_criteria_v1_events_proto_rawDescGZIP(), []int{24}
 }
 
-func (x *ForEachStep) GetNode() string {
+func (x *StepIterationItem) GetNode() string {
 	if x != nil {
 		return x.Node
 	}
 	return ""
 }
 
-func (x *ForEachStep) GetIndex() int32 {
+func (x *StepIterationItem) GetIndex() int32 {
 	if x != nil {
 		return x.Index
 	}
 	return 0
 }
 
-func (x *ForEachStep) GetStep() string {
+func (x *StepIterationItem) GetStep() string {
 	if x != nil {
 		return x.Step
 	}
@@ -2036,7 +2035,7 @@ var File_criteria_v1_events_proto protoreflect.FileDescriptor
 
 const file_criteria_v1_events_proto_rawDesc = "" +
 	"\n" +
-	"\x18criteria/v1/events.proto\x12\vcriteria.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xc3\x0e\n" +
+	"\x18criteria/v1/events.proto\x12\vcriteria.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xf9\x0e\n" +
 	"\bEnvelope\x12%\n" +
 	"\x0eschema_version\x18\x01 \x01(\x05R\rschemaVersion\x12\x15\n" +
 	"\x06run_id\x18\x02 \x01(\tR\x05runId\x12\x10\n" +
@@ -2064,11 +2063,11 @@ const file_criteria_v1_events_proto_rawDesc = "" +
 	"\x12approval_requested\x18\x19 \x01(\v2\x1e.criteria.v1.ApprovalRequestedH\x00R\x11approvalRequested\x12L\n" +
 	"\x11approval_decision\x18\x1a \x01(\v2\x1d.criteria.v1.ApprovalDecisionH\x00R\x10approvalDecision\x12I\n" +
 	"\x10branch_evaluated\x18\x1b \x01(\v2\x1c.criteria.v1.BranchEvaluatedH\x00R\x0fbranchEvaluated\x12G\n" +
-	"\x10for_each_entered\x18\x1c \x01(\v2\x1b.criteria.v1.ForEachEnteredH\x00R\x0eforEachEntered\x12M\n" +
-	"\x12for_each_iteration\x18\x1d \x01(\v2\x1d.criteria.v1.ForEachIterationH\x00R\x10forEachIteration\x12G\n" +
-	"\x10for_each_outcome\x18\x1e \x01(\v2\x1b.criteria.v1.ForEachOutcomeH\x00R\x0eforEachOutcome\x12T\n" +
-	"\x15scope_iter_cursor_set\x18\x1f \x01(\v2\x1f.criteria.v1.ScopeIterCursorSetH\x00R\x12scopeIterCursorSet\x12>\n" +
-	"\rfor_each_step\x18  \x01(\v2\x18.criteria.v1.ForEachStepH\x00R\vforEachStep\x12:\n" +
+	"\x10for_each_entered\x18\x1c \x01(\v2\x1b.criteria.v1.ForEachEnteredH\x00R\x0eforEachEntered\x12Y\n" +
+	"\x16step_iteration_started\x18\x1d \x01(\v2!.criteria.v1.StepIterationStartedH\x00R\x14stepIterationStarted\x12_\n" +
+	"\x18step_iteration_completed\x18\x1e \x01(\v2#.criteria.v1.StepIterationCompletedH\x00R\x16stepIterationCompleted\x12T\n" +
+	"\x15scope_iter_cursor_set\x18\x1f \x01(\v2\x1f.criteria.v1.ScopeIterCursorSetH\x00R\x12scopeIterCursorSet\x12P\n" +
+	"\x13step_iteration_item\x18  \x01(\v2\x1e.criteria.v1.StepIterationItemH\x00R\x11stepIterationItem\x12:\n" +
 	"\vwatch_ready\x18c \x01(\v2\x17.criteria.v1.WatchReadyH\x00R\n" +
 	"watchReadyB\t\n" +
 	"\apayload\"T\n" +
@@ -2163,21 +2162,21 @@ const file_criteria_v1_events_proto_rawDesc = "" +
 	"\tcondition\x18\x04 \x01(\tR\tcondition\":\n" +
 	"\x0eForEachEntered\x12\x12\n" +
 	"\x04node\x18\x01 \x01(\tR\x04node\x12\x14\n" +
-	"\x05count\x18\x02 \x01(\x05R\x05count\"q\n" +
-	"\x10ForEachIteration\x12\x12\n" +
+	"\x05count\x18\x02 \x01(\x05R\x05count\"u\n" +
+	"\x14StepIterationStarted\x12\x12\n" +
 	"\x04node\x18\x01 \x01(\tR\x04node\x12\x14\n" +
 	"\x05index\x18\x02 \x01(\x05R\x05index\x12\x14\n" +
 	"\x05value\x18\x03 \x01(\tR\x05value\x12\x1d\n" +
 	"\n" +
-	"any_failed\x18\x04 \x01(\bR\tanyFailed\"V\n" +
-	"\x0eForEachOutcome\x12\x12\n" +
+	"any_failed\x18\x04 \x01(\bR\tanyFailed\"^\n" +
+	"\x16StepIterationCompleted\x12\x12\n" +
 	"\x04node\x18\x01 \x01(\tR\x04node\x12\x18\n" +
 	"\aoutcome\x18\x02 \x01(\tR\aoutcome\x12\x16\n" +
 	"\x06target\x18\x03 \x01(\tR\x06target\"5\n" +
 	"\x12ScopeIterCursorSet\x12\x1f\n" +
 	"\vcursor_json\x18\x01 \x01(\tR\n" +
-	"cursorJson\"K\n" +
-	"\vForEachStep\x12\x12\n" +
+	"cursorJson\"Q\n" +
+	"\x11StepIterationItem\x12\x12\n" +
 	"\x04node\x18\x01 \x01(\tR\x04node\x12\x14\n" +
 	"\x05index\x18\x02 \x01(\x05R\x05index\x12\x12\n" +
 	"\x04step\x18\x03 \x01(\tR\x04step*k\n" +
@@ -2202,37 +2201,37 @@ func file_criteria_v1_events_proto_rawDescGZIP() []byte {
 var file_criteria_v1_events_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
 var file_criteria_v1_events_proto_msgTypes = make([]protoimpl.MessageInfo, 28)
 var file_criteria_v1_events_proto_goTypes = []any{
-	(LogStream)(0),                // 0: criteria.v1.LogStream
-	(*Envelope)(nil),              // 1: criteria.v1.Envelope
-	(*RunStarted)(nil),            // 2: criteria.v1.RunStarted
-	(*RunCompleted)(nil),          // 3: criteria.v1.RunCompleted
-	(*RunFailed)(nil),             // 4: criteria.v1.RunFailed
-	(*StepEntered)(nil),           // 5: criteria.v1.StepEntered
-	(*StepOutcome)(nil),           // 6: criteria.v1.StepOutcome
-	(*StepTransition)(nil),        // 7: criteria.v1.StepTransition
-	(*StepLog)(nil),               // 8: criteria.v1.StepLog
-	(*AdapterEvent)(nil),          // 9: criteria.v1.AdapterEvent
-	(*CriteriaHeartbeat)(nil),     // 10: criteria.v1.CriteriaHeartbeat
-	(*CriteriaDisconnected)(nil),  // 11: criteria.v1.CriteriaDisconnected
-	(*StepResumed)(nil),           // 12: criteria.v1.StepResumed
-	(*WatchReady)(nil),            // 13: criteria.v1.WatchReady
-	(*VariableSet)(nil),           // 14: criteria.v1.VariableSet
-	(*StepOutputCaptured)(nil),    // 15: criteria.v1.StepOutputCaptured
-	(*WaitEntered)(nil),           // 16: criteria.v1.WaitEntered
-	(*WaitResumed)(nil),           // 17: criteria.v1.WaitResumed
-	(*ApprovalRequested)(nil),     // 18: criteria.v1.ApprovalRequested
-	(*ApprovalDecision)(nil),      // 19: criteria.v1.ApprovalDecision
-	(*BranchEvaluated)(nil),       // 20: criteria.v1.BranchEvaluated
-	(*ForEachEntered)(nil),        // 21: criteria.v1.ForEachEntered
-	(*ForEachIteration)(nil),      // 22: criteria.v1.ForEachIteration
-	(*ForEachOutcome)(nil),        // 23: criteria.v1.ForEachOutcome
-	(*ScopeIterCursorSet)(nil),    // 24: criteria.v1.ScopeIterCursorSet
-	(*ForEachStep)(nil),           // 25: criteria.v1.ForEachStep
-	nil,                           // 26: criteria.v1.StepOutputCaptured.OutputsEntry
-	nil,                           // 27: criteria.v1.WaitResumed.PayloadEntry
-	nil,                           // 28: criteria.v1.ApprovalDecision.PayloadEntry
-	(*timestamppb.Timestamp)(nil), // 29: google.protobuf.Timestamp
-	(*structpb.Struct)(nil),       // 30: google.protobuf.Struct
+	(LogStream)(0),                 // 0: criteria.v1.LogStream
+	(*Envelope)(nil),               // 1: criteria.v1.Envelope
+	(*RunStarted)(nil),             // 2: criteria.v1.RunStarted
+	(*RunCompleted)(nil),           // 3: criteria.v1.RunCompleted
+	(*RunFailed)(nil),              // 4: criteria.v1.RunFailed
+	(*StepEntered)(nil),            // 5: criteria.v1.StepEntered
+	(*StepOutcome)(nil),            // 6: criteria.v1.StepOutcome
+	(*StepTransition)(nil),         // 7: criteria.v1.StepTransition
+	(*StepLog)(nil),                // 8: criteria.v1.StepLog
+	(*AdapterEvent)(nil),           // 9: criteria.v1.AdapterEvent
+	(*CriteriaHeartbeat)(nil),      // 10: criteria.v1.CriteriaHeartbeat
+	(*CriteriaDisconnected)(nil),   // 11: criteria.v1.CriteriaDisconnected
+	(*StepResumed)(nil),            // 12: criteria.v1.StepResumed
+	(*WatchReady)(nil),             // 13: criteria.v1.WatchReady
+	(*VariableSet)(nil),            // 14: criteria.v1.VariableSet
+	(*StepOutputCaptured)(nil),     // 15: criteria.v1.StepOutputCaptured
+	(*WaitEntered)(nil),            // 16: criteria.v1.WaitEntered
+	(*WaitResumed)(nil),            // 17: criteria.v1.WaitResumed
+	(*ApprovalRequested)(nil),      // 18: criteria.v1.ApprovalRequested
+	(*ApprovalDecision)(nil),       // 19: criteria.v1.ApprovalDecision
+	(*BranchEvaluated)(nil),        // 20: criteria.v1.BranchEvaluated
+	(*ForEachEntered)(nil),         // 21: criteria.v1.ForEachEntered
+	(*StepIterationStarted)(nil),   // 22: criteria.v1.StepIterationStarted
+	(*StepIterationCompleted)(nil), // 23: criteria.v1.StepIterationCompleted
+	(*ScopeIterCursorSet)(nil),     // 24: criteria.v1.ScopeIterCursorSet
+	(*StepIterationItem)(nil),      // 25: criteria.v1.StepIterationItem
+	nil,                            // 26: criteria.v1.StepOutputCaptured.OutputsEntry
+	nil,                            // 27: criteria.v1.WaitResumed.PayloadEntry
+	nil,                            // 28: criteria.v1.ApprovalDecision.PayloadEntry
+	(*timestamppb.Timestamp)(nil),  // 29: google.protobuf.Timestamp
+	(*structpb.Struct)(nil),        // 30: google.protobuf.Struct
 }
 var file_criteria_v1_events_proto_depIdxs = []int32{
 	29, // 0: criteria.v1.Envelope.ts:type_name -> google.protobuf.Timestamp
@@ -2255,10 +2254,10 @@ var file_criteria_v1_events_proto_depIdxs = []int32{
 	19, // 17: criteria.v1.Envelope.approval_decision:type_name -> criteria.v1.ApprovalDecision
 	20, // 18: criteria.v1.Envelope.branch_evaluated:type_name -> criteria.v1.BranchEvaluated
 	21, // 19: criteria.v1.Envelope.for_each_entered:type_name -> criteria.v1.ForEachEntered
-	22, // 20: criteria.v1.Envelope.for_each_iteration:type_name -> criteria.v1.ForEachIteration
-	23, // 21: criteria.v1.Envelope.for_each_outcome:type_name -> criteria.v1.ForEachOutcome
+	22, // 20: criteria.v1.Envelope.step_iteration_started:type_name -> criteria.v1.StepIterationStarted
+	23, // 21: criteria.v1.Envelope.step_iteration_completed:type_name -> criteria.v1.StepIterationCompleted
 	24, // 22: criteria.v1.Envelope.scope_iter_cursor_set:type_name -> criteria.v1.ScopeIterCursorSet
-	25, // 23: criteria.v1.Envelope.for_each_step:type_name -> criteria.v1.ForEachStep
+	25, // 23: criteria.v1.Envelope.step_iteration_item:type_name -> criteria.v1.StepIterationItem
 	13, // 24: criteria.v1.Envelope.watch_ready:type_name -> criteria.v1.WatchReady
 	0,  // 25: criteria.v1.StepLog.stream:type_name -> criteria.v1.LogStream
 	30, // 26: criteria.v1.AdapterEvent.data:type_name -> google.protobuf.Struct
@@ -2297,10 +2296,10 @@ func file_criteria_v1_events_proto_init() {
 		(*Envelope_ApprovalDecision)(nil),
 		(*Envelope_BranchEvaluated)(nil),
 		(*Envelope_ForEachEntered)(nil),
-		(*Envelope_ForEachIteration)(nil),
-		(*Envelope_ForEachOutcome)(nil),
+		(*Envelope_StepIterationStarted)(nil),
+		(*Envelope_StepIterationCompleted)(nil),
 		(*Envelope_ScopeIterCursorSet)(nil),
-		(*Envelope_ForEachStep)(nil),
+		(*Envelope_StepIterationItem)(nil),
 		(*Envelope_WatchReady)(nil),
 	}
 	type x struct{}

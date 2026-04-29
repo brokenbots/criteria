@@ -55,20 +55,19 @@ message Envelope {
     // BranchEvaluated — emitted when a branch node selects a transition arm (W06).
     // Agent-owned event; permanent field numbers.
     BranchEvaluated branch_evaluated = 27;
-    // ForEach events — emitted by the agent during for_each node execution (W07).
-    // Agent-owned events; permanent field numbers.
-    ForEachEntered for_each_entered = 28;
-    ForEachIteration for_each_iteration = 29;
-    ForEachOutcome for_each_outcome = 30;
-    // ScopeIterCursorSet — emitted by the agent whenever the for_each iteration
+    // Step iteration events — emitted by the agent during per-step for_each/count
+    // iteration (W10). Agent-owned events; permanent field numbers.
+    ForEachEntered for_each_entered = 28;                              // permanent (W07/W10)
+    StepIterationStarted step_iteration_started = 29;                  // permanent (W10; was ForEachIteration)
+    StepIterationCompleted step_iteration_completed = 30;              // permanent (W10; was ForEachOutcome)
+    // ScopeIterCursorSet — emitted by the agent whenever the step iteration
     // cursor changes. The server stores cursor_json verbatim into the
     // runs.variable_scope "iter" field without interpreting its contents,
     // preserving 1.6 split independence (W07). Permanent field number.
     ScopeIterCursorSet scope_iter_cursor_set = 31;
-    // ForEachStep — emitted when the engine routes to a step within an active
-    // iteration subgraph (other than the do-step at iteration start, which is
-    // covered by ForEachIteration). Permanent field number (W08).
-    ForEachStep for_each_step = 32;
+    // StepIterationItem — emitted when the engine is about to run the step body
+    // for the next iteration item. Permanent field number (W10; was ForEachStep).
+    StepIterationItem step_iteration_item = 32;
     // WatchReady is a protocol-level sentinel sent once at the start of a
     // WatchRun server-stream, after any persisted-event replay, to flush
     // response headers so the client's WatchRun call can return. It has no
@@ -236,32 +235,34 @@ message BranchEvaluated {
   string condition = 4;      // string-rendered condition for the matched arm; empty for default; permanent
 }
 
-// ForEachEntered — emitted when a for_each node begins iterating (W07).
+// ForEachEntered — emitted when a step begins iterating (for_each or count) (W07/W10).
 // Agent-owned event; permanent field numbers.
 message ForEachEntered {
-  string node = 1;   // for_each node name; permanent
+  string node = 1;   // step name; permanent
   int32 count = 2;   // number of items; permanent
 }
 
-// ForEachIteration — emitted at the start of each per-item iteration (W07).
+// StepIterationStarted — emitted at the start of each per-item iteration (W10).
+// Formerly ForEachIteration (W07); field numbers preserved for wire compatibility.
 // Agent-owned event; permanent field numbers.
-message ForEachIteration {
-  string node = 1;       // for_each node name; permanent
+message StepIterationStarted {
+  string node = 1;       // step name; permanent
   int32 index = 2;       // zero-based iteration index; permanent
   string value = 3;      // string-rendered cty value of the current item; permanent
   bool any_failed = 4;   // true if any prior iteration produced a failure outcome; permanent.
                          // Retained for log/UI consumers; cursor persistence uses ScopeIterCursorSet instead.
 }
 
-// ForEachOutcome — emitted when a for_each node finishes iterating (W07).
+// StepIterationCompleted — emitted when a step finishes iterating (W10).
+// Formerly ForEachOutcome (W07); field numbers preserved for wire compatibility.
 // Agent-owned event; permanent field numbers.
-message ForEachOutcome {
-  string node = 1;      // for_each node name; permanent
+message StepIterationCompleted {
+  string node = 1;      // step name; permanent
   string outcome = 2;   // "all_succeeded" | "any_failed"; permanent
   string target = 3;    // transition target node name; permanent
 }
 
-// ScopeIterCursorSet — emitted by the agent whenever the for_each iteration
+// ScopeIterCursorSet — emitted by the agent whenever the step iteration
 // cursor is created, advanced, or cleared. cursor_json is the JSON-encoded
 // IterCursor blob; an empty string means the cursor has been cleared.
 // The server stores this verbatim into the runs.variable_scope "iter" field
@@ -270,13 +271,11 @@ message ScopeIterCursorSet {
   string cursor_json = 1;   // JSON-encoded IterCursor or "" to clear; permanent
 }
 
-// ForEachStep — emitted when the engine routes to a step within an active
-// iteration subgraph (other than the do-step at iteration start, which is
-// covered by ForEachIteration). Observers can correlate with the active
-// ForEachIteration event using node + index (W08).
+// StepIterationItem — emitted when the engine is about to execute the step body
+// for the next iteration item. Formerly ForEachStep (W08); field numbers preserved.
 // Agent-owned event; permanent field numbers.
-message ForEachStep {
-  string node = 1;    // for_each node name; permanent
+message StepIterationItem {
+  string node = 1;    // step name; permanent
   int32 index = 2;    // zero-based iteration index; permanent
-  string step = 3;    // step name being entered; permanent
+  string step = 3;    // reserved; empty for non-workflow steps; permanent
 }

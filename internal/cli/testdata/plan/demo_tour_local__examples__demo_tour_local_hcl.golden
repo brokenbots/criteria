@@ -17,10 +17,10 @@ steps (declaration order):
     input keys: command
     allow_tools: (none)
     outcomes: success -> process_each, failure -> aborted
-  process   adapter=shell   timeout=30s
+  process_each   adapter=shell   timeout=30s
     input keys: command
     allow_tools: (none)
-    outcomes: success -> _continue, failure -> _continue
+    outcomes: all_succeeded -> review, any_failed -> aborted
   review   adapter=shell   timeout=10s
     input keys: command
     allow_tools: (none)
