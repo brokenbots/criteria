@@ -136,7 +136,7 @@ workflow "agent_hello" {
     agent       = "assistant"
     allow_tools = ["shell:git status"]
     input {
-      max_turns = "4"
+      max_turns = 4
       prompt    = "Run `git status` in the current directory. Summarize the result in one short paragraph. End your final line with exactly one of: RESULT: success | RESULT: needs_review | RESULT: failure. Use RESULT: success only if you successfully ran `git status`."
     }
 
@@ -166,7 +166,7 @@ These fields are declared on the `agent { config { ... } }` block and apply for 
 | `model` | `string` | Copilot default | Model identifier (e.g. `"claude-sonnet-4.6"`). |
 | `reasoning_effort` | `string` | Copilot default | Reasoning budget for the session. One of `low`, `medium`, `high`, `xhigh`. |
 | `system_prompt` | `string` | `""` | System prompt injected at session open. |
-| `max_turns` | `string` | Copilot default | Maximum conversation turns per step before a `needs_review` outcome is forced. |
+| `max_turns` | `number` | Copilot default | Maximum conversation turns per step before a `needs_review` outcome is forced. |
 | `working_directory` | `string` | CWD of the criteria process | Working directory for tool invocations inside the agent session. |
 
 Example:
@@ -179,7 +179,7 @@ agent "planner" {
     model            = "claude-sonnet-4.6"
     reasoning_effort = "medium"
     system_prompt    = "You are a senior software engineer. Think carefully before writing code."
-    max_turns        = "8"
+    max_turns        = 8
   }
 }
 ```
@@ -191,7 +191,7 @@ Some fields can be overridden per step in the `input {}` block. The override app
 | Field | Type | Description |
 |---|---|---|
 | `prompt` | `string` | **(Required)** The user message sent to the agent for this step. |
-| `max_turns` | `string` | Per-step turn limit override. |
+| `max_turns` | `number` | Per-step turn limit override. |
 | `reasoning_effort` | `string` | Per-step reasoning effort override. One of `low`, `medium`, `high`, `xhigh`. |
 
 Example with per-step `reasoning_effort` override:
