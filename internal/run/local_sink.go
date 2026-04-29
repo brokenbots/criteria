@@ -133,6 +133,12 @@ func (s *LocalSink) OnForEachOutcome(node, outcome, target string) {
 	s.emit("ForEachOutcome", &pb.ForEachOutcome{Node: node, Outcome: outcome, Target: target})
 }
 
+// OnForEachStep emits a ForEachStep event when a multi-step iteration body advances
+// to the next step in the subgraph (W08).
+func (s *LocalSink) OnForEachStep(node string, index int, step string) {
+	s.emit("ForEachStep", &pb.ForEachStep{Node: node, Index: int32(index), Step: step})
+}
+
 // OnScopeIterCursorSet emits a ScopeIterCursorSet event when the for_each
 // cursor is created, advanced, or cleared (W07).
 func (s *LocalSink) OnScopeIterCursorSet(cursorJSON string) {

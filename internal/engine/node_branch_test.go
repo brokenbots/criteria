@@ -60,6 +60,7 @@ func (s *branchSink) OnBranchEvaluated(node, matchedArm, target, condition strin
 func (s *branchSink) OnForEachEntered(string, int)                 {}
 func (s *branchSink) OnForEachIteration(string, int, string, bool) {}
 func (s *branchSink) OnForEachOutcome(string, string, string)      {}
+func (s *branchSink) OnForEachStep(string, int, string)            {}
 func (s *branchSink) OnScopeIterCursorSet(string)                  {}
 func (s *branchSink) StepEventSink(string) adapter.EventSink       { return noopAdapterSink{} }
 

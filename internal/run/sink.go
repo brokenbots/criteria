@@ -172,6 +172,12 @@ func (s *Sink) OnForEachOutcome(node, outcome, target string) {
 	s.publish(&pb.ForEachOutcome{Node: node, Outcome: outcome, Target: target})
 }
 
+// OnForEachStep emits a for_each.step event when the engine routes to a step
+// within an active iteration subgraph (other than the do-step, W08).
+func (s *Sink) OnForEachStep(node string, index int, step string) {
+	s.publish(&pb.ForEachStep{Node: node, Index: int32(index), Step: step})
+}
+
 // OnScopeIterCursorSet emits a scope.iter_cursor_set event when the for_each
 // cursor is created, advanced, or cleared (W07). The server stores cursorJSON
 // verbatim without interpreting field names.

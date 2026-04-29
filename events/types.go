@@ -98,6 +98,8 @@ func setPayload(env *pb.Envelope, payload any) {
 		env.Payload = &pb.Envelope_ForEachOutcome{ForEachOutcome: p}
 	case *pb.ScopeIterCursorSet:
 		env.Payload = &pb.Envelope_ScopeIterCursorSet{ScopeIterCursorSet: p}
+	case *pb.ForEachStep:
+		env.Payload = &pb.Envelope_ForEachStep{ForEachStep: p}
 	default:
 		panic(fmt.Sprintf("events.NewEnvelope: unsupported payload type %T", payload))
 	}
@@ -158,6 +160,8 @@ func TypeString(env *pb.Envelope) string {
 		return "for_each.outcome"
 	case *pb.Envelope_ScopeIterCursorSet:
 		return "scope.iter_cursor_set"
+	case *pb.Envelope_ForEachStep:
+		return "for_each.step"
 	default:
 		return ""
 	}

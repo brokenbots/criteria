@@ -260,8 +260,7 @@ func compileForEachs(g *FSMGraph, spec *Spec) hcl.Diagnostics {
 			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("for_each %q: do is required", name)})
 			continue
 		}
-		doStep, doKnown := g.Steps[fs.Do]
-		if !doKnown {
+		if _, doKnown := g.Steps[fs.Do]; !doKnown {
 			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("for_each %q: do = %q does not reference a known step", name, fs.Do)})
 		}
 
@@ -312,23 +311,6 @@ func compileForEachs(g *FSMGraph, spec *Spec) hcl.Diagnostics {
 				Severity: hcl.DiagWarning,
 				Summary:  fmt.Sprintf("for_each %q: outcome \"any_failed\" is not declared; failed iterations will fall through to \"all_succeeded\"", name),
 			})
-		}
-
-		// Warn if the do step has no _continue transition (implies single-iteration only).
-		if doKnown {
-			hasContinue := false
-			for _, target := range doStep.Outcomes {
-				if target == "_continue" {
-					hasContinue = true
-					break
-				}
-			}
-			if !hasContinue {
-				diags = append(diags, &hcl.Diagnostic{
-					Severity: hcl.DiagWarning,
-					Summary:  fmt.Sprintf("for_each %q: step %q has no outcome transitioning to \"_continue\"; the loop will execute at most one iteration", name, fs.Do),
-				})
-			}
 		}
 
 		g.ForEachs[name] = node

@@ -124,6 +124,7 @@ type Envelope struct {
 	//	*Envelope_ForEachIteration
 	//	*Envelope_ForEachOutcome
 	//	*Envelope_ScopeIterCursorSet
+	//	*Envelope_ForEachStep
 	//	*Envelope_WatchReady
 	Payload       isEnvelope_Payload `protobuf_oneof:"payload"`
 	unknownFields protoimpl.UnknownFields
@@ -400,6 +401,15 @@ func (x *Envelope) GetScopeIterCursorSet() *ScopeIterCursorSet {
 	return nil
 }
 
+func (x *Envelope) GetForEachStep() *ForEachStep {
+	if x != nil {
+		if x, ok := x.Payload.(*Envelope_ForEachStep); ok {
+			return x.ForEachStep
+		}
+	}
+	return nil
+}
+
 func (x *Envelope) GetWatchReady() *WatchReady {
 	if x != nil {
 		if x, ok := x.Payload.(*Envelope_WatchReady); ok {
@@ -510,6 +520,13 @@ type Envelope_ScopeIterCursorSet struct {
 	ScopeIterCursorSet *ScopeIterCursorSet `protobuf:"bytes,31,opt,name=scope_iter_cursor_set,json=scopeIterCursorSet,proto3,oneof"`
 }
 
+type Envelope_ForEachStep struct {
+	// ForEachStep — emitted when the engine routes to a step within an active
+	// iteration subgraph (other than the do-step at iteration start, which is
+	// covered by ForEachIteration). Permanent field number (W08).
+	ForEachStep *ForEachStep `protobuf:"bytes,32,opt,name=for_each_step,json=forEachStep,proto3,oneof"`
+}
+
 type Envelope_WatchReady struct {
 	// WatchReady is a protocol-level sentinel sent once at the start of a
 	// WatchRun server-stream, after any persisted-event replay, to flush
@@ -561,6 +578,8 @@ func (*Envelope_ForEachIteration) isEnvelope_Payload() {}
 func (*Envelope_ForEachOutcome) isEnvelope_Payload() {}
 
 func (*Envelope_ScopeIterCursorSet) isEnvelope_Payload() {}
+
+func (*Envelope_ForEachStep) isEnvelope_Payload() {}
 
 func (*Envelope_WatchReady) isEnvelope_Payload() {}
 
@@ -1948,11 +1967,76 @@ func (x *ScopeIterCursorSet) GetCursorJson() string {
 	return ""
 }
 
+// ForEachStep — emitted when the engine routes to a step within an active
+// iteration subgraph (other than the do-step at iteration start, which is
+// covered by ForEachIteration). Observers can correlate with the active
+// ForEachIteration event using node + index (W08).
+// Agent-owned event; permanent field numbers.
+type ForEachStep struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Node          string                 `protobuf:"bytes,1,opt,name=node,proto3" json:"node,omitempty"`    // for_each node name; permanent
+	Index         int32                  `protobuf:"varint,2,opt,name=index,proto3" json:"index,omitempty"` // zero-based iteration index; permanent
+	Step          string                 `protobuf:"bytes,3,opt,name=step,proto3" json:"step,omitempty"`    // step name being entered; permanent
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ForEachStep) Reset() {
+	*x = ForEachStep{}
+	mi := &file_criteria_v1_events_proto_msgTypes[24]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ForEachStep) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ForEachStep) ProtoMessage() {}
+
+func (x *ForEachStep) ProtoReflect() protoreflect.Message {
+	mi := &file_criteria_v1_events_proto_msgTypes[24]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ForEachStep.ProtoReflect.Descriptor instead.
+func (*ForEachStep) Descriptor() ([]byte, []int) {
+	return file_criteria_v1_events_proto_rawDescGZIP(), []int{24}
+}
+
+func (x *ForEachStep) GetNode() string {
+	if x != nil {
+		return x.Node
+	}
+	return ""
+}
+
+func (x *ForEachStep) GetIndex() int32 {
+	if x != nil {
+		return x.Index
+	}
+	return 0
+}
+
+func (x *ForEachStep) GetStep() string {
+	if x != nil {
+		return x.Step
+	}
+	return ""
+}
+
 var File_criteria_v1_events_proto protoreflect.FileDescriptor
 
 const file_criteria_v1_events_proto_rawDesc = "" +
 	"\n" +
-	"\x18criteria/v1/events.proto\x12\vcriteria.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\x83\x0e\n" +
+	"\x18criteria/v1/events.proto\x12\vcriteria.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xc3\x0e\n" +
 	"\bEnvelope\x12%\n" +
 	"\x0eschema_version\x18\x01 \x01(\x05R\rschemaVersion\x12\x15\n" +
 	"\x06run_id\x18\x02 \x01(\tR\x05runId\x12\x10\n" +
@@ -1983,7 +2067,8 @@ const file_criteria_v1_events_proto_rawDesc = "" +
 	"\x10for_each_entered\x18\x1c \x01(\v2\x1b.criteria.v1.ForEachEnteredH\x00R\x0eforEachEntered\x12M\n" +
 	"\x12for_each_iteration\x18\x1d \x01(\v2\x1d.criteria.v1.ForEachIterationH\x00R\x10forEachIteration\x12G\n" +
 	"\x10for_each_outcome\x18\x1e \x01(\v2\x1b.criteria.v1.ForEachOutcomeH\x00R\x0eforEachOutcome\x12T\n" +
-	"\x15scope_iter_cursor_set\x18\x1f \x01(\v2\x1f.criteria.v1.ScopeIterCursorSetH\x00R\x12scopeIterCursorSet\x12:\n" +
+	"\x15scope_iter_cursor_set\x18\x1f \x01(\v2\x1f.criteria.v1.ScopeIterCursorSetH\x00R\x12scopeIterCursorSet\x12>\n" +
+	"\rfor_each_step\x18  \x01(\v2\x18.criteria.v1.ForEachStepH\x00R\vforEachStep\x12:\n" +
 	"\vwatch_ready\x18c \x01(\v2\x17.criteria.v1.WatchReadyH\x00R\n" +
 	"watchReadyB\t\n" +
 	"\apayload\"T\n" +
@@ -2091,7 +2176,11 @@ const file_criteria_v1_events_proto_rawDesc = "" +
 	"\x06target\x18\x03 \x01(\tR\x06target\"5\n" +
 	"\x12ScopeIterCursorSet\x12\x1f\n" +
 	"\vcursor_json\x18\x01 \x01(\tR\n" +
-	"cursorJson*k\n" +
+	"cursorJson\"K\n" +
+	"\vForEachStep\x12\x12\n" +
+	"\x04node\x18\x01 \x01(\tR\x04node\x12\x14\n" +
+	"\x05index\x18\x02 \x01(\x05R\x05index\x12\x12\n" +
+	"\x04step\x18\x03 \x01(\tR\x04step*k\n" +
 	"\tLogStream\x12\x1a\n" +
 	"\x16LOG_STREAM_UNSPECIFIED\x10\x00\x12\x15\n" +
 	"\x11LOG_STREAM_STDOUT\x10\x01\x12\x15\n" +
@@ -2111,7 +2200,7 @@ func file_criteria_v1_events_proto_rawDescGZIP() []byte {
 }
 
 var file_criteria_v1_events_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_criteria_v1_events_proto_msgTypes = make([]protoimpl.MessageInfo, 27)
+var file_criteria_v1_events_proto_msgTypes = make([]protoimpl.MessageInfo, 28)
 var file_criteria_v1_events_proto_goTypes = []any{
 	(LogStream)(0),                // 0: criteria.v1.LogStream
 	(*Envelope)(nil),              // 1: criteria.v1.Envelope
@@ -2138,14 +2227,15 @@ var file_criteria_v1_events_proto_goTypes = []any{
 	(*ForEachIteration)(nil),      // 22: criteria.v1.ForEachIteration
 	(*ForEachOutcome)(nil),        // 23: criteria.v1.ForEachOutcome
 	(*ScopeIterCursorSet)(nil),    // 24: criteria.v1.ScopeIterCursorSet
-	nil,                           // 25: criteria.v1.StepOutputCaptured.OutputsEntry
-	nil,                           // 26: criteria.v1.WaitResumed.PayloadEntry
-	nil,                           // 27: criteria.v1.ApprovalDecision.PayloadEntry
-	(*timestamppb.Timestamp)(nil), // 28: google.protobuf.Timestamp
-	(*structpb.Struct)(nil),       // 29: google.protobuf.Struct
+	(*ForEachStep)(nil),           // 25: criteria.v1.ForEachStep
+	nil,                           // 26: criteria.v1.StepOutputCaptured.OutputsEntry
+	nil,                           // 27: criteria.v1.WaitResumed.PayloadEntry
+	nil,                           // 28: criteria.v1.ApprovalDecision.PayloadEntry
+	(*timestamppb.Timestamp)(nil), // 29: google.protobuf.Timestamp
+	(*structpb.Struct)(nil),       // 30: google.protobuf.Struct
 }
 var file_criteria_v1_events_proto_depIdxs = []int32{
-	28, // 0: criteria.v1.Envelope.ts:type_name -> google.protobuf.Timestamp
+	29, // 0: criteria.v1.Envelope.ts:type_name -> google.protobuf.Timestamp
 	2,  // 1: criteria.v1.Envelope.run_started:type_name -> criteria.v1.RunStarted
 	3,  // 2: criteria.v1.Envelope.run_completed:type_name -> criteria.v1.RunCompleted
 	4,  // 3: criteria.v1.Envelope.run_failed:type_name -> criteria.v1.RunFailed
@@ -2168,17 +2258,18 @@ var file_criteria_v1_events_proto_depIdxs = []int32{
 	22, // 20: criteria.v1.Envelope.for_each_iteration:type_name -> criteria.v1.ForEachIteration
 	23, // 21: criteria.v1.Envelope.for_each_outcome:type_name -> criteria.v1.ForEachOutcome
 	24, // 22: criteria.v1.Envelope.scope_iter_cursor_set:type_name -> criteria.v1.ScopeIterCursorSet
-	13, // 23: criteria.v1.Envelope.watch_ready:type_name -> criteria.v1.WatchReady
-	0,  // 24: criteria.v1.StepLog.stream:type_name -> criteria.v1.LogStream
-	29, // 25: criteria.v1.AdapterEvent.data:type_name -> google.protobuf.Struct
-	25, // 26: criteria.v1.StepOutputCaptured.outputs:type_name -> criteria.v1.StepOutputCaptured.OutputsEntry
-	26, // 27: criteria.v1.WaitResumed.payload:type_name -> criteria.v1.WaitResumed.PayloadEntry
-	27, // 28: criteria.v1.ApprovalDecision.payload:type_name -> criteria.v1.ApprovalDecision.PayloadEntry
-	29, // [29:29] is the sub-list for method output_type
-	29, // [29:29] is the sub-list for method input_type
-	29, // [29:29] is the sub-list for extension type_name
-	29, // [29:29] is the sub-list for extension extendee
-	0,  // [0:29] is the sub-list for field type_name
+	25, // 23: criteria.v1.Envelope.for_each_step:type_name -> criteria.v1.ForEachStep
+	13, // 24: criteria.v1.Envelope.watch_ready:type_name -> criteria.v1.WatchReady
+	0,  // 25: criteria.v1.StepLog.stream:type_name -> criteria.v1.LogStream
+	30, // 26: criteria.v1.AdapterEvent.data:type_name -> google.protobuf.Struct
+	26, // 27: criteria.v1.StepOutputCaptured.outputs:type_name -> criteria.v1.StepOutputCaptured.OutputsEntry
+	27, // 28: criteria.v1.WaitResumed.payload:type_name -> criteria.v1.WaitResumed.PayloadEntry
+	28, // 29: criteria.v1.ApprovalDecision.payload:type_name -> criteria.v1.ApprovalDecision.PayloadEntry
+	30, // [30:30] is the sub-list for method output_type
+	30, // [30:30] is the sub-list for method input_type
+	30, // [30:30] is the sub-list for extension type_name
+	30, // [30:30] is the sub-list for extension extendee
+	0,  // [0:30] is the sub-list for field type_name
 }
 
 func init() { file_criteria_v1_events_proto_init() }
@@ -2209,6 +2300,7 @@ func file_criteria_v1_events_proto_init() {
 		(*Envelope_ForEachIteration)(nil),
 		(*Envelope_ForEachOutcome)(nil),
 		(*Envelope_ScopeIterCursorSet)(nil),
+		(*Envelope_ForEachStep)(nil),
 		(*Envelope_WatchReady)(nil),
 	}
 	type x struct{}
@@ -2217,7 +2309,7 @@ func file_criteria_v1_events_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_criteria_v1_events_proto_rawDesc), len(file_criteria_v1_events_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   27,
+			NumMessages:   28,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

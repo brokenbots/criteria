@@ -35,6 +35,7 @@ func (r *recordingSink) OnBranchEvaluated(string, string, string, string) { r.bu
 func (r *recordingSink) OnForEachEntered(string, int)                     { r.bump() }
 func (r *recordingSink) OnForEachIteration(string, int, string, bool)     { r.bump() }
 func (r *recordingSink) OnForEachOutcome(string, string, string)          { r.bump() }
+func (r *recordingSink) OnForEachStep(string, int, string)               { r.bump() }
 func (r *recordingSink) OnScopeIterCursorSet(string)                      { r.bump() }
 func (r *recordingSink) StepEventSink(step string) adapter.EventSink {
 	return &recordingStepSink{parent: r}

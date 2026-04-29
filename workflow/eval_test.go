@@ -163,8 +163,10 @@ func TestRestoreVarScope_Empty(t *testing.T) {
 }
 
 func TestResolveInputExprs_EachProducesPlannedMessage(t *testing.T) {
-	// Parse a small HCL snippet that references each.value so we have a live
-	// hcl.Expression to feed to ResolveInputExprs.
+	// W08: each.* outside a for_each iteration body is caught at compile time.
+	// This test was originally written to test runtime behavior (ResolveInputExprs
+	// returning "each is only valid inside for_each"), but compile-time validation
+	// is the correct enforcement point.
 	src := `
 workflow "test" {
   version       = "0.1"
@@ -184,22 +186,12 @@ workflow "test" {
 	if diags.HasErrors() {
 		t.Fatalf("parse: %s", diags)
 	}
-	g, diags := Compile(spec, nil)
-	if diags.HasErrors() {
-		t.Fatalf("compile: %s", diags)
+	_, diags = Compile(spec, nil)
+	if !diags.HasErrors() {
+		t.Fatal("expected compile error for each.value outside for_each, got none")
 	}
-	step, ok := g.Steps["s"]
-	if !ok || len(step.InputExprs) == 0 {
-		t.Fatal("expected InputExprs for step 's'")
-	}
-
-	vars := SeedVarsFromGraph(g)
-	_, err := ResolveInputExprs(step.InputExprs, vars)
-	if err == nil {
-		t.Fatal("expected error for each.value outside for_each, got nil")
-	}
-	if !strings.Contains(err.Error(), "each is only valid inside for_each") {
-		t.Errorf("error = %q, want 'each is only valid inside for_each'", err.Error())
+	if !strings.Contains(diags.Error(), "each.value and each.index are only bound during for_each iteration") {
+		t.Errorf("compile error = %q, want message about each.* scope", diags.Error())
 	}
 }
 

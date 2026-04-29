@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"log/slog"
 	"strings"
 
 	"github.com/brokenbots/criteria/workflow"
@@ -79,6 +80,16 @@ func WithVarOverrides(overrides map[string]string) Option {
 func WithWorkflowDir(dir string) Option {
 	return func(e *Engine) {
 		e.workflowDir = dir
+	}
+}
+
+// WithLogger sets the structured logger used for internal engine warnings
+// (e.g., rebindEachOnResume failures). When not set, slog.Default() is used.
+// Pass the same logger used by the surrounding CLI command for consistent
+// log routing.
+func WithLogger(log *slog.Logger) Option {
+	return func(e *Engine) {
+		e.log = log
 	}
 }
 

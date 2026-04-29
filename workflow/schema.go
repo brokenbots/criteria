@@ -255,6 +255,10 @@ type StepNode struct {
 	// patterns. An empty slice means deny-all (default). Only valid on
 	// execute-shape steps (Lifecycle == "").
 	AllowTools []string
+	// IterationOwner is the name of the for_each node whose iteration subgraph
+	// this step belongs to, or empty if the step is not part of any subgraph.
+	// Set by computeIterationSubgraphs during compilation (W08).
+	IterationOwner string
 }
 
 // StateNode is a compiled (non-step) state.
@@ -319,6 +323,13 @@ type ForEachNode struct {
 	// Outcomes maps aggregate outcome names to target node names.
 	// "all_succeeded" is required; "any_failed" is recommended.
 	Outcomes map[string]string
+	// IterationSteps is the set of step names that belong to this for_each's
+	// iteration subgraph. Computed in two phases by computeIterationSubgraphs
+	// (W08): Phase 1 walks step-to-step outcome transitions from Do, stopping at
+	// _continue, the for_each node name (legacy advance), or non-step targets;
+	// Phase 2 keeps only steps that can reach _continue or the legacy for_each
+	// node name (F.Name) from Phase 1.
+	IterationSteps map[string]struct{}
 }
 
 // Policy holds resolved engine guards. Defaults are applied during compile.

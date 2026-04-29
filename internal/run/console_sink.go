@@ -207,6 +207,10 @@ func (c *ConsoleSink) OnForEachOutcome(node, outcome, target string) {
 	c.writeln(fmt.Sprintf("  ↻ for_each %s → %s (%s)", node, target, outcome))
 }
 
+func (c *ConsoleSink) OnForEachStep(node string, index int, step string) {
+	c.writeln(fmt.Sprintf("  ↻ for_each %s [%d] → %s", node, index, step))
+}
+
 func (c *ConsoleSink) OnScopeIterCursorSet(cursorJSON string) {}
 
 func (c *ConsoleSink) StepEventSink(step string) adapter.EventSink {

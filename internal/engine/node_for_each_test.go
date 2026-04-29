@@ -88,6 +88,7 @@ func (s *forEachSink) OnForEachOutcome(node, outcome, target string) {
 	s.outcomes = append(s.outcomes, feOutcomeEvent{node: node, outcome: outcome, target: target})
 	s.mu.Unlock()
 }
+func (s *forEachSink) OnForEachStep(string, int, string) {}
 func (s *forEachSink) OnScopeIterCursorSet(v string) {
 	s.mu.Lock()
 	s.cursorSets = append(s.cursorSets, v)
