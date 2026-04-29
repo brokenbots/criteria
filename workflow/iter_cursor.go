@@ -97,6 +97,23 @@ func SerializeIterCursor(cursor *IterCursor) (string, error) {
 	return string(b), nil
 }
 
+// DeserializeIterCursor parses a JSON cursor string produced by
+// SerializeIterCursor and returns the reconstructed IterCursor. An empty
+// string returns a zero-value cursor without error (caller should treat it
+// as "no cursor"). Use this when you need to inspect the cursor outside the
+// workflow package (e.g. in tests).
+func DeserializeIterCursor(data string) (*IterCursor, error) {
+	if data == "" {
+		return &IterCursor{}, nil
+	}
+	var raw map[string]interface{}
+	if err := json.Unmarshal([]byte(data), &raw); err != nil {
+		return nil, err
+	}
+	cur := deserializeIterCursor(raw)
+	return &cur, nil
+}
+
 // deserializeIterCursor reconstructs an IterCursor from the wire JSON map
 // produced by SerializeIterCursor (or legacy W07 format with "node" key).
 func deserializeIterCursor(raw map[string]interface{}) IterCursor {
@@ -133,5 +150,27 @@ func deserializeIterCursor(raw map[string]interface{}) IterCursor {
 	if v, ok := raw["on_failure"].(string); ok {
 		cur.OnFailure = v
 	}
+	cur.Prev = deserializePrev(raw["prev"])
 	return cur
+}
+
+// deserializePrev rebuilds the each._prev cty object from the JSON "prev" map.
+// The value is always a flat map of string attributes (adapter outputs or
+// output{} block values), so we reconstruct a cty object with string attrs.
+// Returns cty.NilVal when prev is absent or empty.
+func deserializePrev(raw interface{}) cty.Value {
+	prevRaw, ok := raw.(map[string]interface{})
+	if !ok || len(prevRaw) == 0 {
+		return cty.NilVal
+	}
+	attrs := make(map[string]cty.Value, len(prevRaw))
+	for k, v := range prevRaw {
+		if s, ok := v.(string); ok {
+			attrs[k] = cty.StringVal(s)
+		}
+	}
+	if len(attrs) == 0 {
+		return cty.NilVal
+	}
+	return cty.ObjectVal(attrs)
 }

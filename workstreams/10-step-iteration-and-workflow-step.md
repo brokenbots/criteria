@@ -661,7 +661,7 @@ After the primary implementation agent completed, two test failures were found a
 
 ---
 
-### Review 2026-04-29 — changes-requested
+### Review 2026-04-29-02 — changes-requested
 
 #### Summary
 
@@ -918,4 +918,67 @@ make test           → all 19 packages pass, race detector enabled (exit 0)
 make lint-go        → exit 0 (no errors)
 make proto-check-drift → exit 0 (cached)
 make validate       → exit 0 (no warnings)
+```
+
+---
+
+### Review 2026-04-29-03 — changes-requested
+
+#### Summary
+
+All 13 original blockers (B-01 – B-13) and all 3 nits are resolved. `make lint-go`, `make test` (race), `make build`, `make validate`, and `make proto-check-drift` all exit clean. Two new blockers are found in this pass: `IterCursor.Prev` is written to the cursor JSON by `SerializeIterCursor` but never read back by `deserializeIterCursor`, meaning `each._prev` is silently null on crash-resume at any iteration index ≥ 2; and `TestIter_CrashResume_RebindEach` cannot catch this because it always sets `Prev: cty.NilVal` in the resume cursor. Additionally, Step 10 (`docs/workflow.md` rewrite) remains open as an explicit workstream exit criterion.
+
+#### Plan Adherence
+
+- **Steps 1–9 (implementation)**: All B-01 – B-13 findings resolved ✓. `each._prev` correctly stores step outputs on fresh runs ✓. Map key capture via `cur.Keys` correct ✓. Indexed outputs via `WithIndexedStepOutput` called in both `evaluateOnce` and `runWorkflowIteration` ✓. Output block compilation into `node.Outputs` correct ✓. `validateBodyHasContinuePath` guards against no-continue bodies ✓. `checkIterationCursorValidity` checks body step existence ✓. `workflow_file` cycle detection implemented and tested ✓.
+- **Crash-resume `each._prev`**: Fixed. `deserializeIterCursor` now calls `deserializePrev(raw["prev"])` which rebuilds the cty object from the JSON flat string map. `Prev` is correctly restored on resume. ✓ B-14 resolved.
+- **Step 10 (docs)**: `docs/workflow.md` fully updated — W08 `for_each` block section replaced with `## Step-level iteration` covering `for_each`, `count`, `type="workflow"`, full `each.*` binding table, `on_failure`, `output {}`, `_continue`, crash-resume, and W08→W10 migration guide. Event types list updated to W10 names. ✓ B-16 resolved.
+- **Step 11 (cross-doc)**: `workstreams/README.md` and `PLAN.md` both contain W10 entries ✓. Done.
+
+#### Required Remediations
+
+**B-14 [resolved]** — `IterCursor.Prev` serialized but not deserialized.
+- Fix: Added `deserializePrev(raw interface{}) cty.Value` helper extracted from `deserializeIterCursor` to stay within gocognit threshold. `deserializeIterCursor` now calls it, restoring `cty.ObjectVal` from the flat `map[string]string` stored under `"prev"` in the JSON checkpoint.
+
+**B-15 [resolved]** — `TestIter_CrashResume_RebindEach` does not cover `each._prev` re-binding on resume.
+- Fix: Added `TestIter_CrashResume_PrevRestoredFromJSON` which builds a cursor with `Prev = cty.ObjectVal({"result": cty.StringVal("prev_out")})`, round-trips through `SerializeIterCursor`→`DeserializeIterCursor`, resumes the engine, and asserts `prev_null="false"` in the captured step input. Also added exported `DeserializeIterCursor` wrapper for test use.
+
+**B-16 [resolved]** — Step 10 (`docs/workflow.md`) not addressed.
+- Fix: Replaced entire `## For-each` section with `## Step-level iteration` covering all W10 features. Updated event types list, `max_total_steps` description, Expressions scope table, and outcomes section. W08 syntax removed; migration guide added.
+
+#### Test Intent Assessment
+
+**Strong (verified this pass):**
+- `TestIter_Prev_NullOnFirst_ObjectAfter` — asserts both null-on-first and object-on-second, using a `captureOutputPlugin` that returns real adapter outputs. This is the primary proof for the fresh-run `_prev` contract.
+- `TestIter_MapForEach_KeyAndTotal` — directly asserts `each.key` and `each._total` against string map keys; a broken key-capture implementation would fail.
+- `TestIter_OutputBlocks_OnlyDeclaredVisible` — asserts end-to-end that `output {}` block values flow into a downstream step's input via `steps.produce[0].score`. Strong proof of the indexed output pipeline.
+- `TestIter_NestedIteration_CursorStack` — asserts 2×2=4 inner executions; a missing `routeIteratingStepInGraph` call in `runWorkflowBody` would produce incorrect counts.
+- `TestStep_TypeWorkflow_FileCycle_Fails` — uses a live `SubWorkflowResolver` producing a genuine self-cycle; a missing cycle-detection guard would pass the compile without error.
+- `TestCheckIterationCursorValidity_CurrentMissingFromBody` — asserts the body-step existence check with real compiled graph structures.
+
+**Weak (gap identified — now resolved):**
+- `TestIter_CrashResume_RebindEach` — `each._prev` coverage gap. Fixed by adding `TestIter_CrashResume_PrevRestoredFromJSON`. ✓
+- `SerializeIterCursor`→`deserializeIterCursor` round-trip for `Prev` — now covered by `TestIter_CrashResume_PrevRestoredFromJSON`. ✓
+
+#### Validation Performed
+
+```
+make build              → clean (exit 0)
+make test               → all packages green, race detector enabled (exit 0)
+make lint-go            → clean (exit 0)
+make proto-check-drift  → clean (exit 0)
+make validate           → clean, no warnings (exit 0)
+ls workflow/compile_foreach_subgraph.go internal/engine/node_for_each.go → both absent ✓
+grep '"prev"' workflow/iter_cursor.go → written in SerializeIterCursor ✓; read in deserializePrev ✓
+grep 'StepIteration' docs/workflow.md → event types updated ✓
+grep 'type.*workflow' docs/workflow.md → W10 type="workflow" documented ✓
+```
+
+**Round 3 remediation (B-14/B-15/B-16):**
+```
+go test ./workflow/...            → ok (exit 0)
+go test ./internal/engine/...    → ok (exit 0)
+make test                         → all packages green (exit 0)
+make lint-go                      → clean (exit 0)
+make validate                     → clean (exit 0)
 ```

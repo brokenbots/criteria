@@ -6,7 +6,7 @@ The Criteria workflow language is a declarative HCL-based language for orchestra
 
 A Criteria workflow defines:
 
-- **Nodes**: steps (adapter invocations), waits (time or signal gates), approvals (human decisions), branches (conditional routing), and for-each loops (iteration over lists).
+- **Nodes**: steps (adapter invocations), waits (time or signal gates), approvals (human decisions), branches (conditional routing), and iterating steps (for_each / count).
 - **States**: named terminal or intermediate targets. The workflow FSM transitions between nodes and states based on outcomes.
 - **Variables**: read-only typed values that seed the workflow execution. Per-run variable overrides are a future enhancement.
 - **Agents**: long-lived adapter sessions that maintain state across multiple steps.
@@ -56,7 +56,7 @@ workflow "deploy_pipeline" {
 - **`initial_state`** (required): The starting node or state name.
 - **`target_state`** (required): The intended terminal state. Must reference a terminal state.
 - **`policy`** (optional): Execution guards.
-  - **`max_total_steps`** (default 100): Caps the total number of step executions across the run, including retries and `for_each` iterations. Set to `0` for no cap (use with care for unbounded `for_each` or recursive workflows).
+  - **`max_total_steps`** (default 100): Caps the total number of step executions across the run, including retries and iteration steps. Set to `0` for no cap (use with care for unbounded `for_each` or deeply nested workflow bodies).
   - **`max_step_retries`** (default 0 = no retries): Per-step retry limit for transient failures.
 - **`permissions`** (optional): Workflow-level permission allowlist.
   - **`allow_tools`**: List of glob patterns for tool invocations. Step-level `allow_tools` is unioned with this list.
@@ -240,7 +240,7 @@ Outputs are available to downstream steps and branch conditions as `steps.<name>
 
 ### Outcomes
 
-Each `outcome` block maps an adapter-emitted outcome name to a transition target (step, state, wait, approval, branch, or for_each). For `for_each` child steps, the synthetic `_continue` target signals iteration continuation.
+Each `outcome` block maps an adapter-emitted outcome name to a transition target (step, state, wait, approval, branch, or another iterating step). For steps inside an iteration body, the synthetic `_continue` target signals iteration continuation.
 
 ---
 
@@ -375,109 +375,211 @@ See [Expressions](#expressions) for syntax rules.
 
 ---
 
-## For-each
+## Step-level iteration
 
-For-each nodes iterate over a list, executing one or more steps per item.
+Steps iterate over a list, tuple, map, or a fixed count using `for_each` or
+`count` fields. The step body runs once per item; the step acts as its own
+iteration container — there is no separate `for_each` block type.
+
+### `for_each` — iterate over a collection
 
 <!-- validator: fragment -->
 ```hcl
-for_each "deploy_services" {
-  items = ["api", "web", "worker"]
-  do    = "deploy_one"
+step "deploy_services" {
+  adapter  = "shell"
+  for_each = ["api", "web", "worker"]
+  input {
+    command = "deploy ${each.value} --index ${each._idx}"
+  }
   outcome "all_succeeded" { transition_to = "verify" }
   outcome "any_failed"    { transition_to = "rollback" }
 }
-
-step "deploy_one" {
-  adapter = "shell"
-  input {
-    command = "deploy ${each.value} --index ${each.index}"
-  }
-  outcome "success" { transition_to = "_continue" }
-  outcome "failure" { transition_to = "_continue" }
-}
 ```
 
-### Attributes
+- **`for_each`**: Expression evaluating to a list, tuple, or object/map. For
+  maps the iteration order is key-sorted; `each.key` is the map key and
+  `each.value` is the value.
 
-- **`items`** (required): Expression that evaluates to a list or tuple (e.g., `["a", "b"]`, `var.services`).
-- **`do`** (required): Entry step name to execute for each item.
-- **`outcome "all_succeeded"`** (required): Fires after all items complete when no item failed.
-- **`outcome "any_failed"`** (optional but recommended): Fires after all items complete when at least one item failed.
+### `count` — iterate N times
 
-### Iteration scope
-
-Within all steps that form the iteration body, the following variables are available:
-
-- **`each.value`**: Current item value (e.g., `"api"`, `"web"`).
-- **`each.index`**: Zero-based iteration index (`0`, `1`, `2`).
-
-Both are available in `input { }` blocks via string interpolation. Referencing `each.*` outside an iteration body is a compile error.
-
-### Multi-step iteration body
-
-An iteration body can span multiple steps. Steps chained together via `outcome` transitions that eventually reach `_continue` (or loop back to the `for_each` node name) are automatically grouped into the iteration body by the compiler.
-
+<!-- validator: fragment -->
 ```hcl
-# Three-step iteration body: execute → review → cleanup → _continue
-for_each "process_items" {
-  items = ["alpha", "beta", "gamma"]
-  do    = "execute"
+step "batch" {
+  adapter = "noop"
+  count   = 5
+  input {
+    index = "${each._idx}"
+  }
   outcome "all_succeeded" { transition_to = "done" }
-  outcome "any_failed"    { transition_to = "failed" }
-}
-
-step "execute" {
-  adapter = "noop"
-  input { result = "success" }
-  outcome "success" { transition_to = "review" }
-  outcome "failure" { transition_to = "cleanup" }
-}
-
-step "review" {
-  adapter = "noop"
-  input { result = "success" }
-  outcome "success" { transition_to = "cleanup" }
-  outcome "failure" { transition_to = "_continue" }
-}
-
-step "cleanup" {
-  adapter = "noop"
-  input { result = "success" }
-  outcome "success" { transition_to = "_continue" }
-  outcome "failure" { transition_to = "_continue" }
 }
 ```
 
-All steps whose outcomes can reach `_continue` (directly or transitively) are part of the iteration body. Steps reachable only through an early-exit path—one that transitions to a target outside the iteration subgraph, such as an external step or state—are not part of the body.
+- **`count`**: Expression evaluating to a non-negative integer. Items are the
+  integers `0` through `count - 1`.
 
-See `examples/for_each_review_loop.hcl` for a complete runnable example.
+### `each.*` bindings
 
-### `each.*` binding lifetime
+All `each.*` names are available in `input { }` blocks (and `when` conditions)
+within the iterating step and any nested body steps.
 
-- `each.value` and `each.index` are bound when the `do` step is dispatched for each item.
-- They remain bound for the duration of the entire iteration body — all steps from `do` through to `_continue`.
-- They are cleared on `_continue` (between iterations) and on early-exit (when a step transitions out of the subgraph).
-- Referencing `each.*` in a step outside any iteration subgraph is a compile error.
+| Name | Type | Description |
+|---|---|---|
+| `each.value` | any | Current item value. For `count`, the integer index. |
+| `each.key` | string | For `for_each` over a map: the map key. For lists/count: string representation of the index. |
+| `each._idx` | number | Zero-based index of the current iteration (`0`, `1`, …). |
+| `each._total` | number | Total number of items. |
+| `each._first` | bool | `true` on the first iteration. |
+| `each._last` | bool | `true` on the last iteration. |
+| `each._prev` | object or null | Output object of the immediately preceding iteration. `null` on the first iteration. For adapter steps, contains the adapter response outputs; for `type="workflow"` steps, contains the evaluated `output {}` block values. Persisted across crash-resume. |
 
-### The `_continue` target
-
-The synthetic `_continue` target signals iteration completion. `_continue` is not a declared node; it's an engine-internal marker that advances the for-each cursor to the next item (or triggers the aggregate outcome when all items have been processed).
-
-If a step transitions to any non-iteration target other than `_continue`, the for-each loop terminates early with the current item counted as failed. Early-exit transitions are allowed, but the compiler still requires the iteration body to have at least one path from `do` to `_continue`; otherwise the loop can never advance and the workflow fails to compile.
+Referencing `each.*` outside any iterating step is a compile error.
 
 ### Aggregate outcomes
 
-After all iterations complete (or early termination):
+After all iterations complete (or early exit via `on_failure`):
 
-- **`all_succeeded`**: Every step outcome in every iteration body was `"success"` (case-insensitive).
-- **`any_failed`**: At least one step in an iteration body returned a non-success outcome.
+- **`outcome "all_succeeded"`** (required): Fires when no iteration produced a non-success outcome, or when `on_failure = "ignore"`.
+- **`outcome "any_failed"`** (optional but recommended): Fires when at least one iteration produced a non-success outcome.
 
-If `any_failed` is not declared, failed iterations fall through to `all_succeeded` (compiler emits a warning).
+If `any_failed` is absent, failed iterations fall through to `all_succeeded` (compiler emits a warning).
 
-### Migrating from single-step for_each
+### `on_failure` — failure policy
 
-Existing single-step for_each loops continue to work without any changes. A workflow with `do = "process"` where `process` transitions to `_continue` has an iteration body of exactly one step (`{process}`), and the engine handles it identically to before. No opt-in flag or migration is required.
+Controls what happens when an iteration produces a non-success outcome.
+
+| Value | Behaviour |
+|---|---|
+| `"continue"` (default) | Run all remaining iterations. Route to `any_failed` at the end. |
+| `"abort"` | Stop immediately after the first failure. Route to `any_failed`. |
+| `"ignore"` | Run all iterations; treat all failures as successes. Always route to `all_succeeded`. |
+
+<!-- validator: fragment -->
+```hcl
+step "deploy" {
+  adapter    = "shell"
+  for_each   = var.targets
+  on_failure = "abort"
+  input { command = "deploy ${each.value}" }
+  outcome "all_succeeded" { transition_to = "done" }
+  outcome "any_failed"    { transition_to = "rollback" }
+}
+```
+
+### `type = "workflow"` — inline body
+
+A step with `type = "workflow"` embeds a multi-step iteration body declared
+inline. Each iteration runs the body as a sub-workflow; the body terminates
+by transitioning to the synthetic `_continue` state (normal completion) or
+to any other terminal state (early exit, counted as failure).
+
+<!-- validator: skip: uses agent "assistant" not defined in excerpt -->
+```hcl
+step "process_items" {
+  type     = "workflow"
+  for_each = var.items
+
+  workflow {
+    step "run" {
+      adapter = "shell"
+      input   { command = "process ${each.value}" }
+      outcome "success" { transition_to = "review" }
+      outcome "failure" { transition_to = "_continue" }
+    }
+
+    step "review" {
+      agent  = "assistant"
+      input  { prompt = "Review result for ${each.value}" }
+      outcome "approved" { transition_to = "_continue" }
+      outcome "rejected" { transition_to = "_continue" }
+    }
+  }
+
+  output "last_review" { value = steps.review.stdout }
+
+  outcome "all_succeeded" { transition_to = "done" }
+  outcome "any_failed"    { transition_to = "handle_errors" }
+}
+```
+
+**Rules for workflow bodies:**
+- The body must have at least one step with a path to `_continue`; a body
+  with no path to `_continue` is rejected at compile time.
+- Body steps inherit `each.*`, `var.*`, and `steps.*` from the enclosing
+  scope. Changes to `steps.*` written inside the body are visible to steps
+  that run after the outer iterating step completes.
+- Nesting is supported up to a depth of 4 levels.
+
+### `output {}` blocks
+
+An `output {}` block on a `type = "workflow"` step evaluates an expression
+after the body completes and stores the result as indexed step output under
+`steps.<name>[idx].<key>`. The most recent iteration's outputs are also
+stored as `steps.<name>.<key>` (overwriting each iteration).
+
+```hcl
+output "summary" { value = steps.run.stdout }
+output "score"   { value = steps.evaluate.result }
+```
+
+For non-workflow adapter steps, adapter response outputs are automatically
+accumulated per iteration (no `output {}` block needed); `each._prev`
+carries the previous iteration's adapter outputs.
+
+### The `_continue` target
+
+`_continue` is a reserved terminal state name for iteration bodies. It
+signals the engine to advance the cursor to the next item. It cannot be used
+as a transition target in non-iterating steps (compile error).
+
+### Crash-resume
+
+The engine persists the iteration cursor — including the current index,
+failure status, map keys, and `each._prev` — as part of the run variable
+scope. On resume, the `for_each`/`count` expression is re-evaluated from the
+saved scope (Items are not persisted to keep the checkpoint compact). The
+`each.*` bindings including `_prev` are fully restored.
+
+### Migration from W08 top-level `for_each` blocks
+
+W08 `for_each "name" { items = …; do = "…" }` blocks have been removed. Rewrite them as:
+
+```hcl
+# W08 (removed):
+# for_each "deploy" {
+#   items = ["a", "b"]
+#   do    = "run_one"
+#   outcome "all_succeeded" { transition_to = "done" }
+# }
+# step "run_one" {
+#   adapter = "noop"
+#   outcome "success" { transition_to = "_continue" }
+# }
+
+# W10 equivalent:
+step "deploy" {
+  adapter  = "noop"
+  for_each = ["a", "b"]
+  outcome "all_succeeded" { transition_to = "done" }
+}
+```
+
+For multi-step bodies, inline the body steps inside a `workflow { }` block:
+
+```hcl
+step "deploy" {
+  type     = "workflow"
+  for_each = ["a", "b"]
+  workflow {
+    step "run_one" {
+      adapter = "noop"
+      outcome "success" { transition_to = "_continue" }
+    }
+  }
+  outcome "all_succeeded" { transition_to = "done" }
+}
+```
+
+See `examples/for_each_review_loop.hcl` for a complete runnable example.
 
 ---
 
@@ -499,8 +601,8 @@ input {
 ### Available scopes
 
 - **`var.<name>`**: References workflow variables.
-- **`steps.<name>.<output>`**: References outputs from completed steps (e.g., `exit_code`, `stdout`).
-- **`each.value`**, **`each.index`**: Available within for-each child steps.
+- **`steps.<name>.<output>`**: References outputs from completed steps (e.g., `exit_code`, `stdout`). For iterating steps, `steps.<name>[idx].<output>` accesses a specific iteration's outputs.
+- **`each.value`**, **`each.key`**, **`each._idx`**, **`each._total`**, **`each._first`**, **`each._last`**, **`each._prev`**: Available within iterating steps and their bodies. See [Step-level iteration](#step-level-iteration) for the full binding table.
 
 ### Type rules
 
@@ -692,7 +794,7 @@ All events are schema-versioned ND-JSON objects:
 **Event types**:
 - `RunStarted`, `RunCompleted`
 - `StepEntered`, `StepOutcome`, `StepOutputCaptured`, `StepTransition`, `StepLog`
-- `ForEachEntered`, `ForEachIteration`, `ForEachOutcome`
+- `ForEachEntered`, `StepIterationStarted`, `StepIterationCompleted`, `StepIterationItem`
 - `WaitEntered`, `WaitResumed`
 - `ApprovalRequested`, `ApprovalDecided`
 - `BranchEvaluated`

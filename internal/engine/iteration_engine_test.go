@@ -1236,7 +1236,81 @@ workflow "t" {
 	}
 }
 
-// TestIter_Keys_SerializeRestore verifies that IterCursor.Keys (for map
+// TestIter_CrashResume_PrevRestoredFromJSON verifies that IterCursor.Prev
+// survives a serialize → deserialize round-trip so that each._prev is non-null
+// on the resumed iteration (B-14 / B-15 acceptance criterion). The test:
+//  1. Builds a cursor with Prev set to a real step-output object.
+//  2. Serializes the cursor via SerializeIterCursor.
+//  3. Resumes the engine using WithResumedIter with the deserialized cursor.
+//  4. Asserts that the resumed step receives each._prev == "first_out" (not null).
+func TestIter_CrashResume_PrevRestoredFromJSON(t *testing.T) {
+	g := compile(t, `
+workflow "t" {
+  version       = "0.1"
+  initial_state = "items"
+  target_state  = "done"
+  step "items" {
+    adapter  = "fake"
+    for_each = ["a", "b"]
+    input {
+      prev_null = "${each._prev == null}"
+    }
+    outcome "all_succeeded" { transition_to = "done" }
+    outcome "any_failed"    { transition_to = "done" }
+  }
+  state "done" {
+    terminal = true
+    success  = true
+  }
+}`)
+
+	// Build a cursor for the second iteration (index=1) with Prev set to a
+	// non-nil cty object simulating the first iteration's adapter output.
+	prevObj := cty.ObjectVal(map[string]cty.Value{
+		"result": cty.StringVal("first_out"),
+	})
+	cursor := &workflow.IterCursor{
+		StepName:   "items",
+		Index:      1,
+		Total:      2,
+		InProgress: true,
+		Prev:       prevObj,
+	}
+
+	// Serialize and deserialize the cursor to validate the round-trip (B-14).
+	data, err := workflow.SerializeIterCursor(cursor)
+	if err != nil {
+		t.Fatalf("serialize: %v", err)
+	}
+	restored, err := workflow.DeserializeIterCursor(data)
+	if err != nil {
+		t.Fatalf("deserialize: %v", err)
+	}
+	if restored.Prev == cty.NilVal {
+		t.Fatal("deserialized Prev is cty.NilVal; B-14 fix not effective")
+	}
+
+	// Resume the engine with the deserialized cursor (Items intentionally nil).
+	var capturedInputs []map[string]string
+	capturePlugin := &captureInputPlugin{outcome: "success", capture: &capturedInputs}
+	sink := &iterSink{}
+	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": capturePlugin}}
+
+	eng := New(g, loader, sink, WithResumedIter([]workflow.IterCursor{*restored}))
+	if err := eng.RunFrom(context.Background(), "items", 1); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	// Only iteration 1 (index=1) should execute (resume from mid-run).
+	if len(capturedInputs) != 1 {
+		t.Fatalf("expected 1 resumed iteration; got %d", len(capturedInputs))
+	}
+	// each._prev must be non-null: prev_null should be "false".
+	if got := capturedInputs[0]["prev_null"]; got != "false" {
+		t.Errorf("each._prev on resume: prev_null=%q, want \"false\" (B-15)", got)
+	}
+}
+
 // for_each) are correctly serialized by SerializeIterCursor into JSON. Keys
 // represent map iteration keys stored in the W07/W10 cursor JSON so the SDK
 // can expose each.key on resume.
