@@ -821,3 +821,27 @@ make validate      — all examples pass
 3. **PRRT_kwDOSOBb1s5-UY6G** (`workflow/schema.go` line 326): `IterationSteps` comment was circular. Rewrote to describe the two-phase computation explicitly.
 
 4. **PRRT_kwDOSOBb1s5-UY6J** (`workflow/compile_foreach_subgraph.go` line 7): Header still said "BFS" after the prior fix only updated the `forwardReachableSteps` function comment. Changed to "forward reachability walk" in the file header too.
+
+---
+
+### Review 2026-04-28-05 — approved
+
+#### Summary
+
+Four documentation/comment fixes from PR #25 review threads, no code or test changes. All four fixes are accurate against the implementation. Build, tests, and lint are clean.
+
+#### Plan Adherence
+
+| Fix | Accurate? |
+|-----|-----------|
+| `docs/workflow.md` — `each.index` shown as `0, 1, 2` (not `"0"`, `"1"`, `"2"`) | ✅ `WithEachBinding` uses `cty.NumberIntVal(int64(index))`; `each.index` is a cty number, not a string |
+| `docs/workflow.md` — aggregate outcomes rewritten to "every step outcome in every iteration body" / "at least one step in an iteration body" | ✅ Engine sets `AnyFailed` in both `actionStayInLoop` (mid-body steps) and `actionAdvance` (_continue transitions), matching the new wording. Old wording ("final outcomes") was incorrect for multi-step bodies |
+| `workflow/schema.go` — `IterationSteps` comment now describes two-phase algorithm | ✅ Matches `forwardReachableSteps` + `filterByContinueReachable` |
+| `workflow/compile_foreach_subgraph.go` header — "BFS" → "forward reachability walk" | ✅ Consistent with `forwardReachableSteps` comment fix from prior round |
+
+#### Validation Performed
+
+```
+make test    — all packages pass
+make lint-go — clean
+```
