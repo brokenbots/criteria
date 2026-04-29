@@ -4,9 +4,11 @@ package workflow
 // and well-formedness validation for for_each nodes (W08).
 //
 // The iteration subgraph of a for_each node F with do = "S" is the set of
-// steps reachable from S by following step-to-step outcome transitions,
-// stopping when a transition targets _continue (advance), the for_each node F
-// itself (legacy advance), or anything that is NOT a step (early exit).
+// steps reachable from S by following step-to-step outcome transitions within
+// the iteration body. Traversal stops when a transition targets _continue
+// (advance), the for_each node F itself (legacy advance), or a step that is
+// outside the iteration body. Well-formedness requires a path to _continue or
+// an exit from the iteration body to an external step.
 //
 // computeIterationSubgraphs must be called from CompileWithOpts after all
 // node maps have been populated (steps, for_each nodes, states, etc.).

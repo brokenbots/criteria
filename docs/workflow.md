@@ -449,7 +449,7 @@ step "cleanup" {
 }
 ```
 
-All steps whose outcomes lead (directly or transitively) to `_continue` are part of the iteration body. Steps reachable only through an early-exit path (transitioning to a non-iteration state) are not in the body.
+All steps whose outcomes can reach `_continue` (directly or transitively) are part of the iteration body. Steps reachable only through an early-exit path—one that transitions to a target outside the iteration subgraph, such as an external step or state—are not part of the body.
 
 See `examples/for_each_review_loop.hcl` for a complete runnable example.
 
@@ -464,7 +464,7 @@ See `examples/for_each_review_loop.hcl` for a complete runnable example.
 
 The synthetic `_continue` target signals iteration completion. `_continue` is not a declared node; it's an engine-internal marker that advances the for-each cursor to the next item (or triggers the aggregate outcome when all items have been processed).
 
-If a step transitions to any non-iteration target other than `_continue`, the for-each loop terminates early with the current item counted as failed.
+If a step transitions to any non-iteration target other than `_continue`, the for-each loop terminates early with the current item counted as failed. Early-exit transitions are allowed, but the compiler still requires the iteration body to have at least one path from `do` to `_continue`; otherwise the loop can never advance and the workflow fails to compile.
 
 ### Aggregate outcomes
 
