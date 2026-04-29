@@ -15,7 +15,11 @@
 #   • After commit success, the workflow closes both sessions and ends.
 #
 # Usage (run once per workstream file):
-#   bin/criteria apply examples/workstream_review_loop.hcl
+#   CRITERIA_WORKFLOW_ALLOWED_PATHS=.github/agents:workstreams \
+#     bin/criteria apply examples/workstream_review_loop.hcl
+#
+# The allowed-paths env var lets the file() expression function read the agent
+# profile markdown files in .github/agents/ (outside this workflow's directory).
 #
 # Note: for_each multi-step agent chains are not supported by the engine —
 # the do-step must return _continue to advance the loop. Use this single-file
@@ -23,7 +27,7 @@
 
 workflow "workstream_review_loop" {
   version       = "1"
-  initial_state = "load_executor_agent_file"
+  initial_state = "checkout_branch"
   target_state  = "done"
 
   policy {
@@ -65,39 +69,10 @@ workflow "workstream_review_loop" {
     }
   }
 
-  # ── Load agent profiles (once) ─────────────────────────────────────────────
-  # Profile text is injected into the first user turn of each agent's session.
-  # It is never re-sent; all subsequent loop turns are short coordination signals.
-
-  step "load_executor_agent_file" {
-    adapter = "shell"
-    input {
-      command = "awk 'NR==1 && $0==\"---\"{f=1;next} f && $0==\"---\"{f=0;next} !f{if(!s){if($0 ~ /^[[:space:]]*$/) next; s=1} print}' .github/agents/workstream-executor.agent.md"
-    }
-    timeout = "10s"
-    outcome "success" { transition_to = "load_reviewer_agent_file" }
-    outcome "failure" { transition_to = "failed" }
-  }
-
-  step "load_reviewer_agent_file" {
-    adapter = "shell"
-    input {
-      command = "awk 'NR==1 && $0==\"---\"{f=1;next} f && $0==\"---\"{f=0;next} !f{if(!s){if($0 ~ /^[[:space:]]*$/) next; s=1} print}' .github/agents/workstream-reviewer.agent.md"
-    }
-    timeout = "10s"
-    outcome "success" { transition_to = "load_pr_manager_agent_file" }
-    outcome "failure" { transition_to = "failed" }
-  }
-
-  step "load_pr_manager_agent_file" {
-    adapter = "shell"
-    input {
-      command = "awk 'NR==1 && $0==\"---\"{f=1;next} f && $0==\"---\"{f=0;next} !f{if(!s){if($0 ~ /^[[:space:]]*$/) next; s=1} print}' .github/agents/workstream-pr-manager.agent.md"
-    }
-    timeout = "10s"
-    outcome "success" { transition_to = "checkout_branch" }
-    outcome "failure" { transition_to = "failed" }
-  }
+  # ── Agent profiles ─────────────────────────────────────────────────────────
+  # Loaded inline via file()+trimfrontmatter() — no shell prelude needed.
+  # The profile string is injected into the first user turn of each agent
+  # session; subsequent loop turns are short coordination signals.
 
   step "checkout_branch" {
     adapter = "shell"
@@ -143,7 +118,7 @@ workflow "workstream_review_loop" {
       "*",
     ]
     input {
-      prompt = "${steps.load_executor_agent_file.stdout}\n\nRead ${var.workstream_file} for the full task scope.\n\nExecute the first implementation batch: complete the next unchecked items, write code and tests as needed, keep changes scoped and verifiable. Record your progress and notes in ${var.workstream_file}.\n\nEnd your final line with exactly one of:\nRESULT: needs_review\nRESULT: failure"
+      prompt = "${trimfrontmatter(file("../.github/agents/workstream-executor.agent.md"))}\n\nRead ${var.workstream_file} for the full task scope.\n\nExecute the first implementation batch: complete the next unchecked items, write code and tests as needed, keep changes scoped and verifiable. Record your progress and notes in ${var.workstream_file}.\n\nEnd your final line with exactly one of:\nRESULT: needs_review\nRESULT: failure"
     }
     outcome "needs_review"   { transition_to = "review_init" }
     outcome "needs_approval" { transition_to = "review_init" }
@@ -156,7 +131,7 @@ workflow "workstream_review_loop" {
       "*",
     ]
     input {
-      prompt = "${steps.load_reviewer_agent_file.stdout}\n\nRead ${var.workstream_file} for the workstream scope and the executor's latest work.\n\nReview the executor's changes against the acceptance bar. Write all findings and your verdict into the reviewer notes section of ${var.workstream_file}.\n\nEnd your final line with exactly one of:\nRESULT: approved\nRESULT: changes_requested\nRESULT: failure"
+      prompt = "${trimfrontmatter(file("../.github/agents/workstream-reviewer.agent.md"))}\n\nRead ${var.workstream_file} for the workstream scope and the executor's latest work.\n\nReview the executor's changes against the acceptance bar. Write all findings and your verdict into the reviewer notes section of ${var.workstream_file}.\n\nEnd your final line with exactly one of:\nRESULT: approved\nRESULT: changes_requested\nRESULT: failure"
     }
     outcome "approved"          { transition_to = "commit_and_prepare_pr" }
     outcome "changes_requested" { transition_to = "execute" }
@@ -244,7 +219,7 @@ workflow "workstream_review_loop" {
       "*",
     ]
     input {
-      prompt = "${steps.load_pr_manager_agent_file.stdout}\n\nRead ${var.workstream_file}. Ensure branch is pushed, then create or update the PR from the current branch to main.\n\nInclude a concise summary and test evidence from the workstream notes/reviewer notes.\n\nEnd your final line with exactly one of:\nRESULT: watch_pr\nRESULT: failure"
+      prompt = "${trimfrontmatter(file("../.github/agents/workstream-pr-manager.agent.md"))}\n\nRead ${var.workstream_file}. Ensure branch is pushed, then create or update the PR from the current branch to main.\n\nInclude a concise summary and test evidence from the workstream notes/reviewer notes.\n\nEnd your final line with exactly one of:\nRESULT: watch_pr\nRESULT: failure"
     }
     outcome "watch_pr"       { transition_to = "watch_pr_warmup" }
     outcome "needs_review"   { transition_to = "watch_pr_warmup" }
@@ -288,7 +263,7 @@ workflow "workstream_review_loop" {
       "*",
     ]
     input {
-      prompt = "PR watch gate reported unresolved feedback or failed checks.\n\nUse this gate output as context:\n--- watch_pr_gate output ---\n${steps.watch_pr_gate.stdout}\n--- end ---\n\nFirst: check the current PR state with gh pr view. If the PR state is MERGED, return RESULT: merged immediately — no further action needed.\n\nOtherwise: inspect the PR reviews/comments/threads. If a comment is already addressed by code or reviewer notes, reply with evidence and resolve where possible.\n\nReturn RESULT: needs_executor only when new code changes are required. Return RESULT: recheck when comments/checks were handled and we should poll checks again after backoff. Return RESULT: watch_pr when checks are still in progress and no action is needed yet.\n\nEnd your final line with exactly one of:\nRESULT: merged\nRESULT: needs_executor\nRESULT: recheck\nRESULT: watch_pr\nRESULT: failure"
+      prompt = "PR watch gate reported unresolved feedback or failed checks.\n\nUse this gate output as context:\n--- watch_pr_gate output ---\n${steps.watch_pr_gate.stdout}\n--- end ---\n\nHARD RULES:\n1. DO NOT run `gh pr merge` — the workflow's merge_pr_and_sync_main step owns merging. Self-merging breaks the workflow and bypasses required-resolution policy.\n2. The repository requires every review thread to be resolved before merge. You MUST drive every unresolved (and not-outdated) thread to a resolved state.\n\nFirst: `gh pr view <num> --json state` — if state is MERGED, return RESULT: merged immediately.\n\nOtherwise enumerate every review thread via the GraphQL API (reviewThreads.nodes) and process each one where isResolved=false AND isOutdated=false:\n  • If the comment is already addressed by code on the branch or by reviewer notes in the workstream file: reply on the thread with concrete evidence (commit SHA, file:line, or quoted reviewer note) and resolve the thread (resolveReviewThread mutation, or `gh api graphql` with resolveReviewThread).\n  • If the comment requires NEW code changes you cannot resolve by citation: leave the thread unresolved, return RESULT: needs_executor so the executor can fix it. Do not resolve threads you have not addressed.\n  • If a check (CI) failed: investigate via `gh pr checks` / `gh run view`. Reply on related threads with the diagnosis. If a code fix is needed, return RESULT: needs_executor.\n\nAfter processing, re-query reviewThreads to confirm zero unresolved+not-outdated threads remain before returning recheck.\n\nReturn values:\n  RESULT: merged          — PR is already MERGED on GitHub.\n  RESULT: needs_executor  — code changes are required (unresolved threads remain that need fixes, or checks failed needing a fix).\n  RESULT: recheck         — you replied to and resolved every addressable thread; gate should re-poll after backoff.\n  RESULT: watch_pr        — checks still running, no review action available yet.\n  RESULT: failure         — unrecoverable error.\n\nEnd your final line with exactly one of:\nRESULT: merged\nRESULT: needs_executor\nRESULT: recheck\nRESULT: watch_pr\nRESULT: failure"
     }
     outcome "merged"         { transition_to = "merge_pr_and_sync_main" }
     outcome "needs_executor" { transition_to = "execute_pr_feedback" }
@@ -305,7 +280,7 @@ workflow "workstream_review_loop" {
       "*",
     ]
     input {
-      prompt = "PR manager determined code changes are required from review comments or check failures.\n\nUse this gate output as context:\n--- watch_pr_gate output ---\n${steps.watch_pr_gate.stdout}\n--- end ---\n\nInspect the PR feedback directly, implement all required fixes, update ${var.workstream_file} notes, and prepare for verification/re-review."
+      prompt = "PR manager determined code changes are required from review comments or check failures.\n\nUse this gate output as context:\n--- watch_pr_gate output ---\n${steps.watch_pr_gate.stdout}\n--- end ---\n\nFor every unresolved (and not-outdated) review thread that requires a code change:\n  1. Implement the fix.\n  2. Update ${var.workstream_file} notes with the remediation.\n  3. Commit and push.\n  4. Reply on the thread citing the fix (commit SHA + file:line) and resolve the thread via the GraphQL resolveReviewThread mutation (`gh api graphql -f query='mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{isResolved}}}' -f id=<thread_id>`).\n\nThe repository requires zero unresolved threads before merge. Do not leave any addressed thread unresolved. Do not resolve threads you have not actually addressed."
     }
     outcome "needs_review"   { transition_to = "verify" }
     outcome "needs_approval" { transition_to = "verify" }
@@ -315,11 +290,11 @@ workflow "workstream_review_loop" {
   step "merge_pr_and_sync_main" {
     adapter = "shell"
     input {
-      command = "set -euo pipefail; exec 2>&1; branch=$(git branch --show-current); pr_number=$(gh pr view \"$branch\" --json number,state --jq '.number'); pr_state=$(gh pr view \"$branch\" --json state --jq '.state'); echo \"pr_number=$pr_number pr_state=$pr_state\"; if [ \"$pr_state\" != \"MERGED\" ]; then gh pr merge \"$pr_number\" --squash --delete-branch; else echo \"already_merged=true\"; fi; git fetch origin main; git checkout main; git pull --ff-only origin main; echo \"merged_pr=$pr_number\""
+      command = "set -uo pipefail; exec 2>&1; branch=$(git branch --show-current); pr_state=\"\"; pr_number=\"\"; if [ -n \"$branch\" ] && [ \"$branch\" != \"main\" ]; then pr_view=$(gh pr view \"$branch\" --json number,state 2>/dev/null || true); if [ -n \"$pr_view\" ]; then pr_number=$(printf '%s' \"$pr_view\" | jq -r '.number // empty'); pr_state=$(printf '%s' \"$pr_view\" | jq -r '.state // empty'); fi; fi; echo \"branch=$branch pr_number=$${pr_number:-unknown} pr_state=$${pr_state:-unknown}\"; if [ -n \"$pr_number\" ] && [ \"$pr_state\" != \"MERGED\" ] && [ \"$pr_state\" != \"CLOSED\" ]; then gh pr merge \"$pr_number\" --squash --delete-branch || { echo 'merge command failed'; exit 1; }; else echo 'skip_merge=true'; fi; git fetch origin main || exit 1; git checkout main || exit 1; git pull --ff-only origin main || exit 1; echo \"synced_main=true merged_pr=$${pr_number:-unknown}\"; exit 0"
     }
     timeout = "5m"
     outcome "success" { transition_to = "close_pr_manager_done" }
-    outcome "failure" { transition_to = "triage_pr_feedback" }
+    outcome "failure" { transition_to = "close_pr_manager_done" }
   }
 
   # ── Close agents: success path ──────────────────────────────────────────────

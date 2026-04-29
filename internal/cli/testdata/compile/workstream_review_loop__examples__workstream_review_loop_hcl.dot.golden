@@ -1,9 +1,6 @@
 digraph "workstream_review_loop" {
   rankdir=LR;
 
-  "load_executor_agent_file" [shape=box];
-  "load_reviewer_agent_file" [shape=box];
-  "load_pr_manager_agent_file" [shape=box];
   "checkout_branch" [shape=box];
   "open_executor" [shape=box];
   "open_reviewer" [shape=box];
@@ -32,13 +29,7 @@ digraph "workstream_review_loop" {
   "failed" [shape=doublecircle];
 
   "__start__" [shape=point,width=0.12,label=""];
-  "__start__" -> "load_executor_agent_file" [label="initial"];
-  "load_executor_agent_file" -> "failed" [label="failure"];
-  "load_executor_agent_file" -> "load_reviewer_agent_file" [label="success"];
-  "load_reviewer_agent_file" -> "failed" [label="failure"];
-  "load_reviewer_agent_file" -> "load_pr_manager_agent_file" [label="success"];
-  "load_pr_manager_agent_file" -> "failed" [label="failure"];
-  "load_pr_manager_agent_file" -> "checkout_branch" [label="success"];
+  "__start__" -> "checkout_branch" [label="initial"];
   "checkout_branch" -> "failed" [label="failure"];
   "checkout_branch" -> "open_executor" [label="success"];
   "open_executor" -> "failed" [label="failure"];
@@ -90,7 +81,7 @@ digraph "workstream_review_loop" {
   "execute_pr_feedback" -> "close_pr_manager_abort" [label="failure"];
   "execute_pr_feedback" -> "verify" [label="needs_approval"];
   "execute_pr_feedback" -> "verify" [label="needs_review"];
-  "merge_pr_and_sync_main" -> "triage_pr_feedback" [label="failure"];
+  "merge_pr_and_sync_main" -> "close_pr_manager_done" [label="failure"];
   "merge_pr_and_sync_main" -> "close_pr_manager_done" [label="success"];
   "close_pr_manager_done" -> "close_reviewer_done" [label="failure"];
   "close_pr_manager_done" -> "close_reviewer_done" [label="success"];

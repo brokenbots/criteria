@@ -1,6 +1,6 @@
 {
   "name": "workstream_review_loop",
-  "initial_state": "load_executor_agent_file",
+  "initial_state": "checkout_branch",
   "target_state": "done",
   "policy": {
     "MaxTotalSteps": 120,
@@ -39,63 +39,6 @@
     }
   ],
   "steps": [
-    {
-      "name": "load_executor_agent_file",
-      "adapter": "shell",
-      "timeout": "10s",
-      "input_keys": [
-        "command"
-      ],
-      "allow_tools": null,
-      "outcomes": [
-        {
-          "name": "failure",
-          "transition_to": "failed"
-        },
-        {
-          "name": "success",
-          "transition_to": "load_reviewer_agent_file"
-        }
-      ]
-    },
-    {
-      "name": "load_reviewer_agent_file",
-      "adapter": "shell",
-      "timeout": "10s",
-      "input_keys": [
-        "command"
-      ],
-      "allow_tools": null,
-      "outcomes": [
-        {
-          "name": "failure",
-          "transition_to": "failed"
-        },
-        {
-          "name": "success",
-          "transition_to": "load_pr_manager_agent_file"
-        }
-      ]
-    },
-    {
-      "name": "load_pr_manager_agent_file",
-      "adapter": "shell",
-      "timeout": "10s",
-      "input_keys": [
-        "command"
-      ],
-      "allow_tools": null,
-      "outcomes": [
-        {
-          "name": "failure",
-          "transition_to": "failed"
-        },
-        {
-          "name": "success",
-          "transition_to": "checkout_branch"
-        }
-      ]
-    },
     {
       "name": "checkout_branch",
       "adapter": "shell",
@@ -501,7 +444,7 @@
       "outcomes": [
         {
           "name": "failure",
-          "transition_to": "triage_pr_feedback"
+          "transition_to": "close_pr_manager_done"
         },
         {
           "name": "success",
@@ -625,9 +568,6 @@
     }
   ],
   "step_order": [
-    "load_executor_agent_file",
-    "load_reviewer_agent_file",
-    "load_pr_manager_agent_file",
     "checkout_branch",
     "open_executor",
     "open_reviewer",
