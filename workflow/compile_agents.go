@@ -35,7 +35,7 @@ func compileAgents(g *FSMGraph, spec *Spec, schemas map[string]AdapterInfo) hcl.
 			missingRange := ag.Config.Remain.MissingItemRange()
 			if info, ok := adapterInfo(schemas, ag.Adapter); ok {
 				// Schema-aware decode: validates types, unknown keys, required fields.
-				agentConfig, d = validateSchemaAttrs(ctxLabel, attrs, info.ConfigSchema, missingRange)
+				agentConfig, d = validateSchemaAttrs(ctxLabel, attrs, info.ConfigSchema, missingRange, "")
 			} else {
 				// Permissive decode: no schema available.
 				agentConfig, d = decodeAttrsToStringMap(attrs)

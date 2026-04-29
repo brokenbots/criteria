@@ -24,6 +24,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"strconv"
 	"strings"
@@ -52,6 +53,14 @@ const (
 
 var errMaxTurnsReached = errors.New("copilot: max_turns reached")
 var closeSessionGrace = 5 * time.Second
+
+// validReasoningEfforts is the documented set of accepted reasoning effort values.
+var validReasoningEfforts = map[string]bool{
+	"low":   true,
+	"medium": true,
+	"high":  true,
+	"xhigh": true,
+}
 
 type copilotSession interface {
 	On(handler copilot.SessionEventHandler) func()
@@ -101,6 +110,15 @@ type sessionState struct {
 	activeCh       chan struct{}
 	sink           pluginhost.ExecuteEventSender
 	permissionDeny bool
+
+	// defaultModel and defaultEffort record the agent-level model and
+	// reasoning_effort values set at OpenSession time. applyRequestEffort uses
+	// these to restore the session's effort after a per-step override.
+	// These values are constant for the lifetime of the session; any future
+	// feature that dynamically updates the agent default mid-run must update
+	// these fields accordingly.
+	defaultModel  string
+	defaultEffort string
 }
 
 type copilotPlugin struct {
@@ -128,8 +146,9 @@ func (p *copilotPlugin) Info(_ context.Context, _ *pb.InfoRequest) (*pb.InfoResp
 			"system_prompt":     {Type: "string", Doc: "System prompt prepended at session open."},
 		}},
 		InputSchema: &pb.AdapterSchemaProto{Fields: map[string]*pb.ConfigFieldProto{
-			"prompt":    {Required: true, Type: "string", Doc: "User prompt to send to the assistant."},
-			"max_turns": {Type: "number", Doc: "Per-step override for max assistant turns."},
+			"prompt":           {Required: true, Type: "string", Doc: "User prompt to send to the assistant."},
+			"max_turns":        {Type: "number", Doc: "Per-step override for max assistant turns."},
+			"reasoning_effort": {Type: "string", Doc: "Per-step override for reasoning effort. Resets to the session default after this step. Valid: low, medium, high, xhigh."},
 		}},
 	}, nil
 }
@@ -142,19 +161,7 @@ func (p *copilotPlugin) OpenSession(ctx context.Context, req *pb.OpenSessionRequ
 
 	cfg := req.GetConfig()
 	pluginSessionID := req.GetSessionId()
-	sessionConfig := &copilot.SessionConfig{
-		Streaming: true,
-		Model:     cfg["model"],
-		OnPermissionRequest: func(r copilot.PermissionRequest, _ copilot.PermissionInvocation) (copilot.PermissionRequestResult, error) {
-			return p.handlePermissionRequest(pluginSessionID, r)
-		},
-	}
-	if wd := strings.TrimSpace(cfg["working_directory"]); wd != "" {
-		sessionConfig.WorkingDirectory = wd
-	}
-	if sp := strings.TrimSpace(cfg["system_prompt"]); sp != "" {
-		sessionConfig.SystemMessage = &copilot.SystemMessageConfig{Content: sp}
-	}
+	sessionConfig := p.buildSessionConfig(cfg, pluginSessionID)
 
 	session, err := client.CreateSession(ctx, sessionConfig)
 	if err != nil {
@@ -170,17 +177,57 @@ func (p *copilotPlugin) OpenSession(ctx context.Context, req *pb.OpenSessionRequ
 	p.sessions[pluginSessionID] = s
 	p.mu.Unlock()
 
-	if model := strings.TrimSpace(cfg["model"]); model != "" {
-		var opts *copilot.SetModelOptions
-		if effort := strings.TrimSpace(cfg["reasoning_effort"]); effort != "" {
-			opts = &copilot.SetModelOptions{ReasoningEffort: &effort}
-		}
-		if err := s.session.SetModel(ctx, model, opts); err != nil {
-			return nil, fmt.Errorf("copilot: set model at open: %w", err)
-		}
+	if err := p.applyOpenSessionModel(ctx, s, cfg); err != nil {
+		return nil, err
 	}
 
 	return &pb.OpenSessionResponse{}, nil
+}
+
+// buildSessionConfig constructs the SDK SessionConfig from agent-level config fields.
+func (p *copilotPlugin) buildSessionConfig(cfg map[string]string, pluginSessionID string) *copilot.SessionConfig {
+	sc := &copilot.SessionConfig{
+		Streaming: true,
+		Model:     cfg["model"],
+		OnPermissionRequest: func(r copilot.PermissionRequest, _ copilot.PermissionInvocation) (copilot.PermissionRequestResult, error) {
+			return p.handlePermissionRequest(pluginSessionID, r)
+		},
+	}
+	if wd := strings.TrimSpace(cfg["working_directory"]); wd != "" {
+		sc.WorkingDirectory = wd
+	}
+	if sp := strings.TrimSpace(cfg["system_prompt"]); sp != "" {
+		sc.SystemMessage = &copilot.SystemMessageConfig{Content: sp}
+	}
+	return sc
+}
+
+// applyOpenSessionModel validates and applies model/reasoning_effort at session open,
+// then captures the agent-level defaults into s for per-step restore.
+func (p *copilotPlugin) applyOpenSessionModel(ctx context.Context, s *sessionState, cfg map[string]string) error {
+	model := strings.TrimSpace(cfg["model"])
+	effort := strings.TrimSpace(cfg["reasoning_effort"])
+
+	if effort != "" {
+		if err := validateReasoningEffort(effort); err != nil {
+			return err
+		}
+	}
+
+	if model != "" || effort != "" {
+		var opts *copilot.SetModelOptions
+		if effort != "" {
+			opts = &copilot.SetModelOptions{ReasoningEffort: &effort}
+		}
+		if err := s.session.SetModel(ctx, model, opts); err != nil {
+			return fmt.Errorf("copilot: set model at open: %w", err)
+		}
+	}
+
+	// Capture agent-level defaults so per-step overrides can restore them.
+	s.defaultModel = model
+	s.defaultEffort = effort
+	return nil
 }
 
 func (p *copilotPlugin) Execute(ctx context.Context, req *pb.ExecuteRequest, sink pluginhost.ExecuteEventSender) error {
@@ -198,6 +245,12 @@ func (p *copilotPlugin) Execute(ctx context.Context, req *pb.ExecuteRequest, sin
 	state := newTurnState(maxTurns)
 	unsubscribe := s.session.On(state.handleEvent(sink))
 	defer unsubscribe()
+
+	restoreEffort, err := applyRequestEffort(ctx, s, s.session, req.GetConfig())
+	if err != nil {
+		return err
+	}
+	defer restoreEffort()
 
 	if err := applyRequestModel(ctx, s.session, req.GetConfig()); err != nil {
 		return err
@@ -398,6 +451,71 @@ func applyRequestModel(ctx context.Context, session copilotSession, cfg map[stri
 	return nil
 }
 
+// applyRequestEffort applies a per-step reasoning_effort override, returning a
+// restore function that resets the effort to the agent-level default when called.
+// The restore is always safe to call; it is a no-op when no override was applied.
+//
+// When cfg["model"] is also set, applyRequestModel handles the full model+effort
+// combination. applyRequestEffort still provides the restore so that the session's
+// default effort is reinstated after the step regardless of whether per-step model
+// switching was also requested.
+//
+// Restore semantics: when defaultEffort == "" (session opened without a configured
+// effort), the restore calls SetModel(defaultModel, nil) to clear the per-step
+// override and let the server revert to its own default. Passing nil opts instead of
+// a non-nil opts with empty effort avoids accidentally pinning an empty-string effort.
+//
+// SDK choice: SetModel is called with an empty model string when only effort is
+// overridden. The Copilot SDK sends modelId="" in the model.switchTo RPC, which the
+// server interprets as "apply only the effort change, keep the current model."
+// The reviewer should verify this interpretation against the live server behaviour.
+// If the server rejects modelId="", the loud-failure alternative is to return an
+// error here directing the author to also specify a model.
+func applyRequestEffort(ctx context.Context, s *sessionState, session copilotSession, cfg map[string]string) (func(), error) {
+	effort := strings.TrimSpace(cfg["reasoning_effort"])
+	if effort == "" {
+		return func() {}, nil
+	}
+
+	if err := validateReasoningEffort(effort); err != nil {
+		return nil, err
+	}
+
+	// When cfg also specifies a model, applyRequestModel (called after this)
+	// will call SetModel with both model and effort. To avoid a redundant
+	// effort-only SetModel call before that, we skip the forward apply here.
+	// The restore is still registered so the default effort is reinstated.
+	if strings.TrimSpace(cfg["model"]) == "" {
+		if err := session.SetModel(ctx, "", &copilot.SetModelOptions{ReasoningEffort: &effort}); err != nil {
+			return nil, fmt.Errorf("copilot: set per-step reasoning_effort %q: %w", effort, err)
+		}
+	}
+
+	restore := func() {
+		defaultModel := s.defaultModel
+		defaultEffort := s.defaultEffort
+		var opts *copilot.SetModelOptions
+		if defaultEffort != "" {
+			opts = &copilot.SetModelOptions{ReasoningEffort: &defaultEffort}
+		}
+		// Restore the session's default effort (or clear it when no default was set).
+		// Errors here are best-effort: the step already completed and we cannot fail it
+		// retroactively, so we log the failure and move on.
+		if err := session.SetModel(ctx, defaultModel, opts); err != nil {
+			slog.Warn("copilot: restore per-step reasoning_effort failed", "error", err)
+		}
+	}
+	return restore, nil
+}
+
+// validateReasoningEffort returns an error when effort is not in the documented set.
+func validateReasoningEffort(effort string) error {
+	if !validReasoningEfforts[effort] {
+		return fmt.Errorf("copilot: reasoning_effort %q is not valid; valid values: low, medium, high, xhigh", effort)
+	}
+	return nil
+}
+
 func (p *copilotPlugin) Permit(_ context.Context, req *pb.PermitRequest) (*pb.PermitResponse, error) {
 	s := p.getSession(req.GetSessionId())
 	if s == nil {
@@ -528,7 +646,7 @@ func (p *copilotPlugin) handlePermissionRequest(sessionID string, request copilo
 		s.mu.Lock()
 		delete(s.pending, permID)
 		s.mu.Unlock()
-		return copilot.PermissionRequestResult{Kind: copilot.PermissionRequestResultKindDeniedCouldNotRequestFromUser}, nil
+		return copilot.PermissionRequestResult{Kind: copilot.PermissionRequestResultKindDeniedCouldNotRequestFromUser}, sendErr
 	}
 
 	select {

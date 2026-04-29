@@ -115,7 +115,7 @@ func compileSteps(g *FSMGraph, spec *Spec, schemas map[string]AdapterInfo, workf
 			if adapterName != "" {
 				if info, ok := adapterInfo(schemas, adapterName); ok {
 					// Schema-aware decode: validates types, unknown keys, required fields.
-					inputMap, d = validateSchemaAttrs(ctxLabel, attrs, info.InputSchema, missingRange)
+					inputMap, d = validateSchemaAttrs(ctxLabel, attrs, info.InputSchema, missingRange, adapterName)
 				} else {
 					// Permissive decode.
 					inputMap, d = decodeAttrsToStringMap(attrs)

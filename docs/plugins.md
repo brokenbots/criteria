@@ -136,7 +136,7 @@ workflow "agent_hello" {
     agent       = "assistant"
     allow_tools = ["shell:git status"]
     input {
-      max_turns = "4"
+      max_turns = 4
       prompt    = "Run `git status` in the current directory. Summarize the result in one short paragraph. End your final line with exactly one of: RESULT: success | RESULT: needs_review | RESULT: failure. Use RESULT: success only if you successfully ran `git status`."
     }
 
@@ -154,6 +154,95 @@ The important parts are:
 - `ask` is the only execute step. For the Copilot plugin, `input.prompt` is required (Phase 1.5: step-level input moved from `config` to `input` block). `max_turns` is optional and forces a `needs_review` outcome if the plugin hits that limit.
 - The prompt uses the `RESULT: <outcome>` convention. The plugin parses the final assistant message and maps that line onto the step outcome.
 - Separate close steps let the workflow clean up the session and still terminate in the right state for `success`, `needs_review`, or `failure`.
+
+## Copilot Adapter Reference
+
+### Agent-level configuration (`config {}` block)
+
+These fields are declared on the `agent { config { ... } }` block and apply for the lifetime of the session:
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `model` | `string` | Copilot default | Model identifier (e.g. `"claude-sonnet-4.6"`). |
+| `reasoning_effort` | `string` | Copilot default | Reasoning budget for the session. One of `low`, `medium`, `high`, `xhigh`. |
+| `system_prompt` | `string` | `""` | System prompt injected at session open. |
+| `max_turns` | `number` | Copilot default | Maximum conversation turns per step before a `needs_review` outcome is forced. |
+| `working_directory` | `string` | CWD of the criteria process | Working directory for tool invocations inside the agent session. |
+
+Example:
+
+<!-- validator: skip: illustrative excerpt only -->
+```hcl
+agent "planner" {
+  adapter = "copilot"
+  config {
+    model            = "claude-sonnet-4.6"
+    reasoning_effort = "medium"
+    system_prompt    = "You are a senior software engineer. Think carefully before writing code."
+    max_turns        = 8
+  }
+}
+```
+
+### Step-level input overrides (`input {}` block)
+
+Some fields can be overridden per step in the `input {}` block. The override applies only for that step; subsequent steps revert to the agent-level default.
+
+| Field | Type | Description |
+|---|---|---|
+| `prompt` | `string` | **(Required)** The user message sent to the agent for this step. |
+| `max_turns` | `number` | Per-step turn limit override. |
+| `reasoning_effort` | `string` | Per-step reasoning effort override. One of `low`, `medium`, `high`, `xhigh`. |
+
+Example with per-step `reasoning_effort` override:
+
+<!-- validator: skip: illustrative excerpt only -->
+```hcl
+agent "planner" {
+  adapter = "copilot"
+  config {
+    model            = "claude-sonnet-4.6"
+    reasoning_effort = "medium"  # default for all steps
+  }
+}
+
+# Planning step uses higher reasoning effort.
+step "plan" {
+  agent = "planner"
+  input {
+    prompt           = "Draft a step-by-step implementation plan."
+    reasoning_effort = "high"   # overrides "medium" for this step only
+  }
+  outcome "success" { transition_to = "execute" }
+  outcome "failure" { transition_to = "failed" }
+}
+
+# Execution steps inherit the agent default ("medium").
+step "execute" {
+  agent = "planner"
+  input {
+    prompt = "Implement the plan from the previous step."
+  }
+  outcome "success" { transition_to = "done" }
+  outcome "failure" { transition_to = "failed" }
+}
+```
+
+### Common mistake: agent config fields in step input
+
+Fields like `system_prompt`, `model`, and `working_directory` belong in the `agent { config { ... } }` block, not in a step's `input {}` block. Placing them in `input {}` is a compile error. For the Copilot adapter the diagnostic names the correct location:
+
+```
+step "plan" input: field "system_prompt" is not valid in step input for adapter "copilot"; it belongs in the agent config block:
+  agent "<name>" {
+    adapter = "copilot"
+    config {
+      system_prompt = ...
+    }
+  }
+```
+
+The only step-overrideable Copilot fields are `prompt`, `max_turns`, and `reasoning_effort`.
 
 ## Permission Gating
 

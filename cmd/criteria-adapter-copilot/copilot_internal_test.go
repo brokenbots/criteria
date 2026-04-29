@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -38,6 +39,14 @@ type fakeSession struct {
 	destroyed   bool
 	setModelErr error
 	sendErr     error
+
+	// setModelCalls records the (model, effort) pairs passed to SetModel in order.
+	setModelCalls []setModelCall
+}
+
+type setModelCall struct {
+	model  string
+	effort string // empty string when opts == nil or opts.ReasoningEffort == nil
 }
 
 func (f *fakeSession) On(handler copilot.SessionEventHandler) func() {
@@ -72,8 +81,23 @@ func (f *fakeSession) Send(_ context.Context, _ copilot.MessageOptions) (string,
 	return "msg-1", nil
 }
 
-func (f *fakeSession) SetModel(_ context.Context, _ string, _ *copilot.SetModelOptions) error {
+func (f *fakeSession) SetModel(_ context.Context, model string, opts *copilot.SetModelOptions) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	call := setModelCall{model: model}
+	if opts != nil && opts.ReasoningEffort != nil {
+		call.effort = *opts.ReasoningEffort
+	}
+	f.setModelCalls = append(f.setModelCalls, call)
 	return f.setModelErr
+}
+
+func (f *fakeSession) getSetModelCalls() []setModelCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]setModelCall, len(f.setModelCalls))
+	copy(out, f.setModelCalls)
+	return out
 }
 
 func (f *fakeSession) Disconnect() error {
@@ -353,4 +377,187 @@ func TestCloseSessionTimeoutEscalatesToDestroy(t *testing.T) {
 		t.Fatal("expected Destroy to be called after disconnect timeout")
 	}
 	close(release)
+}
+
+// ── W09 tests ────────────────────────────────────────────────────────────────
+
+// Test 6.1: OpenSession with reasoning_effort="high" and no model succeeds and
+// calls SetModel with the expected effort. Calls the production helper
+// applyOpenSessionModel so any regression in it fails this test.
+func TestOpenSessionReasoningEffortWithoutModel(t *testing.T) {
+	fake := &fakeSession{}
+	p := &copilotPlugin{sessions: map[string]*sessionState{}}
+
+	s := &sessionState{
+		session: fake,
+		pending: make(map[string]chan permDecision),
+	}
+
+	cfg := map[string]string{"reasoning_effort": "high"}
+	if err := p.applyOpenSessionModel(context.Background(), s, cfg); err != nil {
+		t.Fatalf("applyOpenSessionModel returned error: %v", err)
+	}
+
+	calls := fake.getSetModelCalls()
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 SetModel call, got %d", len(calls))
+	}
+	if calls[0].effort != "high" {
+		t.Errorf("SetModel called with effort=%q, want %q", calls[0].effort, "high")
+	}
+	if calls[0].model != "" {
+		t.Errorf("SetModel called with model=%q, want empty string", calls[0].model)
+	}
+	if s.defaultEffort != "high" {
+		t.Errorf("defaultEffort = %q, want %q", s.defaultEffort, "high")
+	}
+	if s.defaultModel != "" {
+		t.Errorf("defaultModel = %q, want empty string", s.defaultModel)
+	}
+}
+
+// Test 6.2: OpenSession with both reasoning_effort and model set (regression guard).
+// Calls the production helper applyOpenSessionModel so any regression in it fails this test.
+func TestOpenSessionReasoningEffortWithModel(t *testing.T) {
+	fake := &fakeSession{}
+	p := &copilotPlugin{sessions: map[string]*sessionState{}}
+
+	s := &sessionState{
+		session: fake,
+		pending: make(map[string]chan permDecision),
+	}
+
+	cfg := map[string]string{"model": "claude-sonnet-4.6", "reasoning_effort": "medium"}
+	if err := p.applyOpenSessionModel(context.Background(), s, cfg); err != nil {
+		t.Fatalf("applyOpenSessionModel returned error: %v", err)
+	}
+
+	calls := fake.getSetModelCalls()
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 SetModel call, got %d", len(calls))
+	}
+	if calls[0].model != "claude-sonnet-4.6" {
+		t.Errorf("SetModel called with model=%q, want %q", calls[0].model, "claude-sonnet-4.6")
+	}
+	if calls[0].effort != "medium" {
+		t.Errorf("SetModel called with effort=%q, want %q", calls[0].effort, "medium")
+	}
+	if s.defaultModel != "claude-sonnet-4.6" {
+		t.Errorf("defaultModel = %q, want %q", s.defaultModel, "claude-sonnet-4.6")
+	}
+	if s.defaultEffort != "medium" {
+		t.Errorf("defaultEffort = %q, want %q", s.defaultEffort, "medium")
+	}
+}
+
+// Test 6.3: OpenSession with reasoning_effort="invalid" fails with a clear error.
+func TestOpenSessionInvalidReasoningEffort(t *testing.T) {
+	err := validateReasoningEffort("invalid")
+	if err == nil {
+		t.Fatal("expected error for invalid reasoning_effort, got nil")
+	}
+	if !strings.Contains(err.Error(), "low, medium, high, xhigh") {
+		t.Errorf("error message should list valid values; got: %v", err)
+	}
+}
+
+// Test 6.4: Execute with per-step reasoning_effort="high" applies the override and
+// restores the agent default ("medium") after the step. Assert the SDK call sequence.
+func TestExecutePerStepReasoningEffortRestoresDefault(t *testing.T) {
+	fake := &fakeSession{
+		emitOnSend: []copilot.SessionEvent{
+			{Type: copilot.SessionEventTypeAssistantMessage, Data: &copilot.AssistantMessageData{MessageID: "m1", Content: "RESULT: success"}},
+			{Type: copilot.SessionEventTypeSessionIdle, Data: &copilot.SessionIdleData{}},
+		},
+	}
+
+	// Session has agent-level default effort "medium".
+	s := &sessionState{
+		session:       fake,
+		pending:       make(map[string]chan permDecision),
+		defaultEffort: "medium",
+		defaultModel:  "",
+	}
+	p := &copilotPlugin{sessions: map[string]*sessionState{"s1": s}}
+	sender := &recordingSender{}
+
+	err := p.Execute(context.Background(), &pb.ExecuteRequest{
+		SessionId: "s1",
+		Config:    map[string]string{"prompt": "hi", "reasoning_effort": "high"},
+	}, sender)
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+
+	// Expected call sequence:
+	//   1. applyRequestEffort: SetModel("", effort="high")
+	//   2. (applyRequestModel: no-op, no model in cfg)
+	//   3. Send
+	//   4. defer restoreEffort: SetModel("", effort="medium")
+	calls := fake.getSetModelCalls()
+	if len(calls) != 2 {
+		t.Fatalf("expected 2 SetModel calls (apply + restore), got %d: %+v", len(calls), calls)
+	}
+	if calls[0].effort != "high" {
+		t.Errorf("call[0].effort = %q, want %q (apply override)", calls[0].effort, "high")
+	}
+	if calls[1].effort != "medium" {
+		t.Errorf("call[1].effort = %q, want %q (restore default)", calls[1].effort, "medium")
+	}
+
+	// Confirm the step still produced a result event.
+	hasSuccess := false
+	for _, ev := range sender.snapshot() {
+		if r := ev.GetResult(); r != nil && r.GetOutcome() == "success" {
+			hasSuccess = true
+		}
+	}
+	if !hasSuccess {
+		t.Fatal("expected success result event")
+	}
+}
+
+// TestExecutePerStepEffortRestoresWhenNoDefault verifies B2 fix: when an agent
+// session was opened without a reasoning_effort default, a per-step override
+// must still be reversed at the end of the step by calling SetModel with a
+// nil opts (clearing the effort), not by being silently skipped.
+func TestExecutePerStepEffortRestoresWhenNoDefault(t *testing.T) {
+	fake := &fakeSession{
+		emitOnSend: []copilot.SessionEvent{
+			{Type: copilot.SessionEventTypeAssistantMessage, Data: &copilot.AssistantMessageData{MessageID: "m1", Content: "RESULT: success"}},
+			{Type: copilot.SessionEventTypeSessionIdle, Data: &copilot.SessionIdleData{}},
+		},
+	}
+
+	// Session has NO agent-level default effort (opened without reasoning_effort in config).
+	s := &sessionState{
+		session:       fake,
+		pending:       make(map[string]chan permDecision),
+		defaultEffort: "",
+		defaultModel:  "",
+	}
+	p := &copilotPlugin{sessions: map[string]*sessionState{"s1": s}}
+	sender := &recordingSender{}
+
+	if err := p.Execute(context.Background(), &pb.ExecuteRequest{
+		SessionId: "s1",
+		Config:    map[string]string{"prompt": "hi", "reasoning_effort": "high"},
+	}, sender); err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+
+	// Expected SDK call sequence:
+	//   1. applyRequestEffort:  SetModel("", effort="high")   — apply override
+	//   2. defer restoreEffort: SetModel("", nil)             — restore: clear effort
+	calls := fake.getSetModelCalls()
+	if len(calls) != 2 {
+		t.Fatalf("expected 2 SetModel calls (apply + restore), got %d: %+v", len(calls), calls)
+	}
+	if calls[0].effort != "high" {
+		t.Errorf("calls[0].effort = %q, want %q (apply override)", calls[0].effort, "high")
+	}
+	// Restore call must have empty effort (nil opts → "" effort in the fake).
+	if calls[1].effort != "" {
+		t.Errorf("calls[1].effort = %q, want empty string (restore: clear effort)", calls[1].effort)
+	}
 }

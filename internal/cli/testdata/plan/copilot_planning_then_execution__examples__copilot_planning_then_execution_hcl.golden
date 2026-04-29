@@ -1,0 +1,39 @@
+workflow: copilot_planning_then_execution  (version 1)
+initial_state: open_agent   target_state: done
+policy: max_total_steps=20  max_step_retries=0
+
+variables:
+  (none)
+
+agents:
+  engineer   adapter=copilot   on_crash=fail
+    config: max_turns=6, model=claude-sonnet-4.6, reasoning_effort=medium
+
+steps (declaration order):
+  open_agent   agent=engineer   lifecycle=open
+    input keys: (none)
+    allow_tools: (none)
+    outcomes: success -> plan, failure -> failed
+  plan   agent=engineer
+    input keys: prompt, reasoning_effort
+    allow_tools: read_file
+    outcomes: success -> execute, failure -> close_failed
+  execute   agent=engineer
+    input keys: prompt
+    allow_tools: read_file, write_file, shell:go build*, shell:go test*
+    outcomes: success -> close_done, failure -> close_failed
+  close_done   agent=engineer   lifecycle=close
+    input keys: (none)
+    allow_tools: (none)
+    outcomes: success -> done, failure -> done
+  close_failed   agent=engineer   lifecycle=close
+    input keys: (none)
+    allow_tools: (none)
+    outcomes: success -> failed, failure -> failed
+
+states:
+  done    terminal=true   success=true
+  failed    terminal=true   success=false
+
+plugins required:
+  copilot   (search: $CRITERIA_PLUGINS, ~/.criteria/plugins)
