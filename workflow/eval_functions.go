@@ -76,9 +76,13 @@ func DefaultFunctionOptions(workflowDir string) FunctionOptions {
 	var allowed []string
 	if raw := os.Getenv("CRITERIA_WORKFLOW_ALLOWED_PATHS"); raw != "" {
 		for _, p := range strings.Split(raw, ":") {
-			if p != "" {
-				allowed = append(allowed, p)
+			if p == "" {
+				continue
 			}
+			if abs, err := filepath.Abs(p); err == nil {
+				p = abs
+			}
+			allowed = append(allowed, p)
 		}
 	}
 

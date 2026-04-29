@@ -319,6 +319,34 @@ func TestFileFunction_AllowedPathsEnvVar(t *testing.T) {
 	}
 }
 
+// Test 17b: relative entries in CRITERIA_WORKFLOW_ALLOWED_PATHS are resolved
+// to absolute paths against the caller's CWD. Without this, file() calls fail
+// because the confinement check compares an absolute resolved path against a
+// relative allowed entry.
+func TestFileFunction_AllowedPathsEnvVarRelative(t *testing.T) {
+	parent := t.TempDir()
+	workflowDir := filepath.Join(parent, "workflow")
+	sharedDir := filepath.Join(parent, "shared")
+	if err := os.MkdirAll(workflowDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(sharedDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sharedDir, "extra.txt"), []byte("allowed\n"), 0o644); err != nil {
+		t.Fatalf("write extra.txt: %v", err)
+	}
+	t.Chdir(parent)
+	t.Setenv("CRITERIA_WORKFLOW_ALLOWED_PATHS", "shared")
+	val, diags := evalExpr(t, `file("../shared/extra.txt")`, workflow.DefaultFunctionOptions(workflowDir))
+	if diags.HasErrors() {
+		t.Fatalf("unexpected error: %s", diags.Error())
+	}
+	if got := val.AsString(); got != "allowed\n" {
+		t.Errorf("file() via relative env AllowedPaths = %q; want %q", got, "allowed\n")
+	}
+}
+
 // Test 18 (R7+R6): fileexists() confinement error says "fileexists()" not "file()".
 func TestFileExistsFunction_PathEscape(t *testing.T) {
 	_, diags := evalExpr(t, `fileexists("../../etc/passwd")`, opts(testdataDir))
