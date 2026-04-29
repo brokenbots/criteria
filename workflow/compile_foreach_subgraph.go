@@ -8,7 +8,7 @@ package workflow
 // from S over step-to-step outcome transitions, stopping at _continue,
 // F.Name (legacy advance), or any non-step target. Phase 2
 // (filterByContinueReachable): restricts to the subset of Phase-1 steps that
-// can reach _continue.
+// can reach _continue or F.Name (legacy advance).
 //
 // Well-formedness has two levels:
 //   - Loop level (validateOneForEach): F.Do must be in IterationSteps,

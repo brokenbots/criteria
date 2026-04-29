@@ -327,7 +327,8 @@ type ForEachNode struct {
 	// iteration subgraph. Computed in two phases by computeIterationSubgraphs
 	// (W08): Phase 1 walks step-to-step outcome transitions from Do, stopping at
 	// _continue, the for_each node name (legacy advance), or non-step targets;
-	// Phase 2 keeps only steps that can reach _continue from Phase 1.
+	// Phase 2 keeps only steps that can reach _continue or the legacy for_each
+	// node name (F.Name) from Phase 1.
 	IterationSteps map[string]struct{}
 }
 
