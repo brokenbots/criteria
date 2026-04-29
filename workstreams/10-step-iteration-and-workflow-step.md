@@ -1172,3 +1172,51 @@ grep 'reduce\|scan\|running.total\|accumul' docs/workflow.md
 grep 'steps\.\w\+\[0\]\|steps\.\w\+\["' docs/workflow.md
   → 0 code-example matches (confirms D-02) ✓
 ```
+
+---
+
+### Remediation 4 — Review 2026-04-29-05 findings
+
+**Addressed:**
+
+- **B-17** — `TestIter_OutputBlocks_NoneDeclared_AdapterStep` added to
+  `internal/engine/iteration_engine_test.go`. Uses two plugin instances
+  (`fake_produce`/`fake_consume`); asserts `steps.produce[0].val` and
+  `steps.produce[1].val` resolve correctly through the cty evaluator.
+- **Extra coverage** — `TestIter_Prev_PopulatedAfterFailedIterationContinue`
+  added; verifies `each._prev` is populated on iteration N+1 even when
+  iteration N's adapter returned a non-success outcome under
+  `on_failure = "continue"`.
+- **N-04** — `LoadStack []string` removed from `CompileOpts` in
+  `workflow/compile.go`; its two propagation sites in `compile_steps.go`
+  removed; four stale `//nolint:gocritic` directives removed from
+  `compile.go` and `compile_steps.go` (now below `hugeParam` threshold
+  after field removal).
+- **D-01** — Reduce/scan with `each._prev` code example added to
+  `docs/workflow.md` under the `each.*` bindings section
+  (`<!-- validator: fragment -->` annotation included).
+- **D-02** — "Indexed access patterns" subsection added to
+  `docs/workflow.md` under `output {}` blocks; shows numeric, keyed, and
+  flat forms with `length()` note.
+- **N-05** — `each._prev` failure-path semantics documented as a blockquote
+  directly below the bindings table.
+- **N-06** — "`variable {}` blocks cannot be re-declared inside a workflow
+  body" bullet added to the workflow body rules section.
+- **N-07** — Migration guide false positive fixed: `# for_each "deploy" {`
+  reformatted to `# for_each "deploy"` / `# {` so the exit-criterion grep
+  returns zero hits outside workstream files.
+- **gofmt** — `iteration_engine_test.go` re-formatted (new test function
+  closing brace was misaligned).
+
+**Validation:**
+
+```
+make test      → all green, race detector enabled ✓
+make lint-go   → clean ✓
+make validate  → all examples validated ✓
+make lint-imports → import boundaries OK ✓
+grep -rn 'for_each "[^"]*"\s*{' . --include="*.hcl" --include="*.go" --include="*.md"
+  | grep -v "workstreams/" → 0 hits ✓
+go test ./internal/engine/... -run "TestIter_OutputBlocks_NoneDeclared_AdapterStep|TestIter_Prev_PopulatedAfterFailed" -v
+  → PASS (both tests) ✓
+```
