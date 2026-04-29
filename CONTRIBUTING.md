@@ -83,3 +83,6 @@ Plugin binaries are named `criteria-adapter-<name>` and must be placed in `${CRI
 - Adapter plugin source lives in `cmd/criteria-adapter-*/`; the internal plugin loader lives in `internal/plugin/` and `internal/adapter*/`.
 - `make lint-imports` enforces the import boundary: `sdk/pb/...` is the only permitted reach into the SDK tree from `internal/`.
 
+## Lint baseline and burn-down contract
+
+`make lint-go` is a hard PR gate. Suppressions live in `.golangci.baseline.yml`; every entry is annotated with the workstream that will remove it. See [docs/contributing/lint-baseline.md](docs/contributing/lint-baseline.md) for the full burn-down contract: how to remove an entry, how to request a new exception, and what annotations are required. Do not add new entries to the baseline without explicit reviewer approval and a workstream annotation.

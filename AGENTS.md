@@ -43,7 +43,7 @@ here.
   [internal/engine/node_step.go](internal/engine/node_step.go),
   [internal/engine/node_wait.go](internal/engine/node_wait.go),
   [internal/engine/node_branch.go](internal/engine/node_branch.go),
-  [internal/engine/node_for_each.go](internal/engine/node_for_each.go),
+  [internal/engine/node_workflow.go](internal/engine/node_workflow.go),
   [internal/engine/node_approval.go](internal/engine/node_approval.go)
 - HCL parser / FSM compiler (Go sub-module): [workflow/](workflow/)
 - Published SDK (Go sub-module): [sdk/](sdk/) — see
