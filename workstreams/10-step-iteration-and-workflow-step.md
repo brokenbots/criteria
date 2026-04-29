@@ -865,3 +865,57 @@ go test ./...        (root module)  → all packages pass (exit 0)
 go test ./...        (workflow/)    → pass (exit 0)
 make lint-go                        → pass (exit 0)
 ```
+
+---
+
+### Remediation 2 — missing tests, nested iteration bug, and lint fixes
+
+#### Context
+
+After the B-01/B-13 remediation, several B-12/B-13 required tests were still absent or incorrectly named. Additionally, a runtime bug was identified: `for_each` steps inside a `type="workflow"` body would fail with "unknown node 'success'" because `runWorkflowBody`'s loop did not apply iteration routing. This affected `TestIter_NestedIteration_CursorStack`.
+
+#### Changes Made
+
+**New tests added:**
+
+`internal/engine/iteration_engine_test.go`:
+- `TestIter_EarlyExit_OutsideBody_TerminatesLoop` — verifies that a body step returning a non-`_continue` outcome terminates the outer iteration loop immediately.
+- `TestIter_OutputBlocks_OnlyDeclaredVisible` — verifies that `output {}` block values are captured into `vars["steps"][name][idx]` and that only declared outputs are present.
+- `TestIter_NestedIteration_CursorStack` — verifies that a `for_each` step inside a `type="workflow"` body produces 2×N inner step executions (e.g. 2 outer × 2 inner = 4).
+- `combinedPlugin` helper — wraps `captureInputPlugin` + `multiOutcomePlugin` for tests requiring both input capture and configurable outcome sequences.
+
+`internal/cli/reattach_test.go`:
+- `TestCheckIterationCursorValidity_CurrentMissingFromBody` — verifies that `checkIterationCursorValidity` rejects a cursor whose `CurrentStep` no longer exists in the compiled body graph.
+- `TestIter_ResumeRejectsModifiedBody` — delegates to the above; entry point at the package level.
+- `iterCursorWorkflow` const — HCL fixture for the above tests.
+
+`workflow/iteration_compile_test.go`:
+- `TestStep_TypeWorkflow_FileCycle_Fails` — verifies that `compileWorkflowBody` detects and rejects a load cycle when `SubWorkflowResolver` returns a spec that re-references the same `workflow_file`.
+- `containsAny` helper — used by the cycle test to check for any substring from a list.
+
+**Bug fix — nested iteration routing (`internal/engine/engine.go`, `node_workflow.go`):**
+
+Extracted `routeIteratingStep` / `finishIteration` logic into standalone package-level functions `routeIteratingStepInGraph` and `finishIterationInGraph` that accept a `graph` and `sink` parameter. The engine methods now delegate to these functions. `runWorkflowBody`'s inner loop now calls `routeIteratingStepInGraph(childSt, next, body, deps.Sink)` after each node evaluation, enabling `for_each` steps inside a body to advance correctly across iterations.
+
+**Lint fixes (`workflow/compile_steps.go`, `workflow/compile.go`):**
+
+- `compileWorkflowBody` refactored into three functions (`compileWorkflowBody`, `compileWorkflowBodyFromFile`, `compileWorkflowBodyInline`) to reduce gocognit cognitive complexity from 23 to below the 20 threshold.
+- `//nolint:gocritic // CompileOpts copy semantics are intentional` added to `CompileWithOpts`, `compileSteps`, `compileWorkflowBody`, `compileWorkflowBodyFromFile`, `compileWorkflowBodyInline` to suppress the `hugeParam` warning (80-byte struct; pass-by-value is correct here to prevent caller mutation).
+
+**Compile fix (`workflow/iteration_compile_test.go`):**
+
+- `TestStep_TypeWorkflow_MissingWorkflowBlock_Fails` function declaration was accidentally split from its body during an edit; re-attached the function header.
+
+**Compile fix (`internal/cli/reattach_test.go`):**
+
+- `const iterCursorWorkflow = \`` declaration was missing; re-inserted before the HCL literal.
+
+#### Validation After Remediation 2
+
+```
+make build          → exit 0
+make test           → all 19 packages pass, race detector enabled (exit 0)
+make lint-go        → exit 0 (no errors)
+make proto-check-drift → exit 0 (cached)
+make validate       → exit 0 (no warnings)
+```

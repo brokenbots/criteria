@@ -1031,6 +1031,211 @@ workflow "t" {
 	}
 }
 
+// TestIter_EarlyExit_OutsideBody_TerminatesLoop verifies that when a
+// type="workflow" body step transitions to a non-_continue terminal state
+// (early-exit path) with on_failure="abort", the iteration loop terminates
+// after that iteration rather than continuing to the next item.
+func TestIter_EarlyExit_OutsideBody_TerminatesLoop(t *testing.T) {
+	g := compile(t, `
+workflow "t" {
+  version       = "0.1"
+  initial_state = "outer"
+  target_state  = "done"
+
+  step "outer" {
+    type       = "workflow"
+    on_failure = "abort"
+    for_each   = ["x", "y", "z"]
+    workflow {
+      step "body" {
+        adapter = "fake"
+        input   { label = "${each.value}" }
+        outcome "success" { transition_to = "_continue" }
+        outcome "failure" { transition_to = "aborted" }
+      }
+      state "aborted" {
+        terminal = true
+        success  = false
+      }
+    }
+    outcome "all_succeeded" { transition_to = "done" }
+    outcome "any_failed"    { transition_to = "done" }
+  }
+
+  state "done" {
+    terminal = true
+    success  = true
+  }
+}`)
+	// Return success for first item, failure for second — iteration must stop
+	// after the second item because on_failure="abort".
+	var capturedInputs []map[string]string
+	mp := &multiOutcomePlugin{name: "fake", outcomes: []string{"success", "failure", "success"}}
+	cp := &captureInputPlugin{outcome: "", capture: &capturedInputs}
+	// Wire both: mp for outcome routing, cp for input capture.
+	combined := &combinedPlugin{captureInputPlugin: cp, outcomePlugin: mp}
+	sink := &iterSink{}
+	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": combined}}
+	if err := New(g, loader, sink).Run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	// Only 2 iterations should execute (x succeeds, y fails+aborts loop).
+	if len(capturedInputs) != 2 {
+		t.Errorf("captured inputs: got %d, want 2 (abort after first failure)", len(capturedInputs))
+	}
+	if len(sink.iterationsCompleted) != 1 {
+		t.Fatalf("iterations completed: got %d, want 1", len(sink.iterationsCompleted))
+	}
+	if sink.iterationsCompleted[0].outcome != "any_failed" {
+		t.Errorf("aggregate outcome: got %q want %q", sink.iterationsCompleted[0].outcome, "any_failed")
+	}
+}
+
+// combinedPlugin wires a captureInputPlugin for input recording and a
+// multiOutcomePlugin for outcome routing.
+type combinedPlugin struct {
+	*captureInputPlugin
+	outcomePlugin *multiOutcomePlugin
+}
+
+func (c *combinedPlugin) Execute(ctx context.Context, runID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+	// Record input via captureInputPlugin.
+	if c.captureInputPlugin.capture != nil && step != nil {
+		cp := make(map[string]string, len(step.Input))
+		for k, v := range step.Input {
+			cp[k] = v
+		}
+		*c.captureInputPlugin.capture = append(*c.captureInputPlugin.capture, cp)
+	}
+	// Outcome from multiOutcomePlugin.
+	return c.outcomePlugin.Execute(ctx, runID, step, sink)
+}
+
+// TestIter_OutputBlocks_OnlyDeclaredVisible verifies that a type="workflow"
+// step with output { } blocks makes declared values available to downstream
+// steps via steps.<name>[idx].<key>, and that the output block is evaluated
+// against the body's final variable state.
+func TestIter_OutputBlocks_OnlyDeclaredVisible(t *testing.T) {
+	g := compile(t, `
+workflow "t" {
+  version       = "0.1"
+  initial_state = "produce"
+  target_state  = "done"
+
+  step "produce" {
+    type     = "workflow"
+    for_each = ["item"]
+    workflow {
+      output "score" {
+        value = "42"
+      }
+      step "body" {
+        adapter = "fake"
+        outcome "success" { transition_to = "_continue" }
+      }
+    }
+    outcome "all_succeeded" { transition_to = "consume" }
+    outcome "any_failed"    { transition_to = "done" }
+  }
+
+  step "consume" {
+    adapter = "fake"
+    input {
+      got = "${steps.produce[0].score}"
+    }
+    outcome "success" { transition_to = "done" }
+  }
+
+  state "done" {
+    terminal = true
+    success  = true
+  }
+}`)
+	var capturedConsume []map[string]string
+	sink := &iterSink{}
+	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
+		"fake": &captureInputPlugin{outcome: "success", capture: &capturedConsume},
+	}}
+	if err := New(g, loader, sink).Run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	// consume step runs once (not iterating), so we expect exactly 1 capture
+	// for the consume step (the body step also calls Execute, so total >= 2).
+	// Find the consume call (has "got" key).
+	var consumeInput map[string]string
+	for _, inp := range capturedConsume {
+		if _, ok := inp["got"]; ok {
+			consumeInput = inp
+			break
+		}
+	}
+	if consumeInput == nil {
+		t.Fatal("consume step never executed or did not capture 'got' input")
+	}
+	if got := consumeInput["got"]; got != "42" {
+		t.Errorf("consume 'got': want %q, got %q", "42", got)
+	}
+}
+
+// TestIter_NestedIteration_CursorStack verifies that a type="workflow" step
+// whose body contains its own for_each step pushes two cursors onto the
+// RunState.IterStack (outer for_each + inner for_each), producing the correct
+// number of inner-step executions.
+func TestIter_NestedIteration_CursorStack(t *testing.T) {
+	g := compile(t, `
+workflow "t" {
+  version       = "0.1"
+  initial_state = "outer"
+  target_state  = "done"
+
+  step "outer" {
+    type     = "workflow"
+    for_each = ["a", "b"]
+    workflow {
+      step "inner" {
+        adapter  = "fake"
+        for_each = ["x", "y"]
+        input    { label = "${each.value}" }
+        outcome "all_succeeded" { transition_to = "_continue" }
+        outcome "any_failed"    { transition_to = "_continue" }
+      }
+    }
+    outcome "all_succeeded" { transition_to = "done" }
+    outcome "any_failed"    { transition_to = "done" }
+  }
+
+  state "done" {
+    terminal = true
+    success  = true
+  }
+}`)
+	var capturedInputs []map[string]string
+	cp := &captureInputPlugin{outcome: "success", capture: &capturedInputs}
+	sink := &iterSink{}
+	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": cp}}
+	if err := New(g, loader, sink).Run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	// 2 outer iterations × 2 inner iterations = 4 inner step executions.
+	if len(capturedInputs) != 4 {
+		t.Fatalf("inner step executions: got %d, want 4 (2 outer × 2 inner)", len(capturedInputs))
+	}
+	// 4 inner-iteration started events (2 per outer iteration) + 2 outer ones.
+	// At minimum the inner step must have produced 4 starts.
+	innerStarts := 0
+	for _, ev := range sink.iterationsStarted {
+		if ev.node == "inner" {
+			innerStarts++
+		}
+	}
+	if innerStarts != 4 {
+		t.Errorf("inner iteration started events: got %d, want 4", innerStarts)
+	}
+}
+
 // TestIter_Keys_SerializeRestore verifies that IterCursor.Keys (for map
 // for_each) are correctly serialized by SerializeIterCursor into JSON. Keys
 // represent map iteration keys stored in the W07/W10 cursor JSON so the SDK

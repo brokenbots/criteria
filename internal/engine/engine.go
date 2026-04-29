@@ -185,20 +185,22 @@ func (e *Engine) runLoop(ctx context.Context, sessions *plugin.SessionManager, c
 }
 
 // routeIteratingStep handles post-step routing for steps with active iteration
-// cursors (W10). After a step's Evaluate returns `next`, this method checks
-// whether the step has an active IterCursor (pushed by stepNode.Evaluate before
-// running the iteration body) and applies the appropriate semantics:
-//
-//   - If there is no active cursor, return next unchanged (passthrough).
-//   - If next == "_continue" (body completed normally) or the cursor step
-//     completed its body: record outcome, advance cursor, emit events.
-//   - If more iterations remain: re-bind each.*, return step name (re-enter).
-//   - If all iterations done: emit aggregate outcome, pop cursor, return target.
-//   - on_failure=abort and last outcome was failure: pop cursor, return target.
-//
-// The cursor is pushed by stepNode when it detects ForEach/Count on first entry,
-// and popped here when the iteration loop completes or aborts.
+// cursors (W10). Delegates to routeIteratingStepInGraph using the engine's
+// own graph and sink. See routeIteratingStepInGraph for full semantics.
 func (e *Engine) routeIteratingStep(st *RunState, next string) string {
+	return routeIteratingStepInGraph(st, next, e.graph, e.sink)
+}
+
+// routeIteratingStepInGraph is the graph-agnostic iteration router called by
+// both the engine's main loop and the workflow-body sub-loop. It checks
+// whether the top cursor belongs to the current step and applies the
+// appropriate iteration semantics:
+//
+//   - No active cursor → return next unchanged.
+//   - More iterations remain → re-bind each.*, emit started event, re-enter step.
+//   - All iterations done (or on_failure=abort after failure) → pop cursor,
+//     emit completed event, return aggregate outcome target from graph.
+func routeIteratingStepInGraph(st *RunState, next string, graph *workflow.FSMGraph, sink Sink) string {
 	cur := st.TopCursor()
 	if cur == nil || !cur.InProgress {
 		return next
@@ -220,7 +222,7 @@ func (e *Engine) routeIteratingStep(st *RunState, next string) string {
 
 	// on_failure=abort: stop after first failure.
 	if cur.OnFailure == "abort" && !outcomeIsSuccess {
-		return e.finishIteration(st, stepName, next)
+		return finishIterationInGraph(st, stepName, graph, sink)
 	}
 
 	cur.Index++
@@ -229,7 +231,6 @@ func (e *Engine) routeIteratingStep(st *RunState, next string) string {
 	if cur.Index < cur.Total {
 		// More iterations remain: re-bind each.* and re-enter the step.
 		item := cur.Items[cur.Index]
-		// Use stored map key when available; otherwise use string(index).
 		var key cty.Value
 		if cur.Index < len(cur.Keys) {
 			key = cur.Keys[cur.Index]
@@ -247,28 +248,26 @@ func (e *Engine) routeIteratingStep(st *RunState, next string) string {
 			Last:  cur.Index == cur.Total-1,
 			Prev:  cur.Prev,
 		})
-		// Persist the updated cursor.
 		if curJSON, err := workflow.SerializeIterCursor(cur); err == nil {
-			e.sink.OnScopeIterCursorSet(curJSON)
+			sink.OnScopeIterCursorSet(curJSON)
 		}
-		e.sink.OnStepIterationStarted(stepName, cur.Index, workflow.CtyValueToString(item), cur.AnyFailed)
+		sink.OnStepIterationStarted(stepName, cur.Index, workflow.CtyValueToString(item), cur.AnyFailed)
 		return stepName // re-enter the same step
 	}
 
 	// All iterations done.
-	return e.finishIteration(st, stepName, next)
+	return finishIterationInGraph(st, stepName, graph, sink)
 }
 
-// finishIteration closes out an iteration loop and returns the aggregate
-// outcome transition target. It pops the cursor, clears each.* bindings,
-// emits OnStepIterationCompleted, and returns the appropriate target from
-// the step's Outcomes map.
-func (e *Engine) finishIteration(st *RunState, stepName, _ string) string {
+// finishIterationInGraph closes out an iteration loop: pops the cursor, clears
+// each.* bindings, emits OnStepIterationCompleted, and returns the aggregate
+// outcome target looked up from graph.
+func finishIterationInGraph(st *RunState, stepName string, graph *workflow.FSMGraph, sink Sink) string {
 	cur := st.PopCursor()
 	st.Vars = workflow.ClearEachBinding(st.Vars)
-	e.sink.OnScopeIterCursorSet("") // cursor cleared
+	sink.OnScopeIterCursorSet("") // cursor cleared
 
-	step, ok := e.graph.Steps[stepName]
+	step, ok := graph.Steps[stepName]
 	if !ok {
 		return stepName
 	}
@@ -285,7 +284,7 @@ func (e *Engine) finishIteration(st *RunState, stepName, _ string) string {
 		target = step.Outcomes["all_succeeded"]
 	}
 
-	e.sink.OnStepIterationCompleted(stepName, aggregateOutcome, target)
+	sink.OnStepIterationCompleted(stepName, aggregateOutcome, target)
 	return target
 }
 

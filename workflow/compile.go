@@ -33,6 +33,16 @@ type CompileOpts struct {
 	// LoadStack records the names of workflow-step ancestors for cycle
 	// detection in file-based sub-workflows.
 	LoadStack []string
+	// LoadedFiles tracks file paths already in the load chain for
+	// workflow_file cycle detection. It is populated automatically by the
+	// compiler when SubWorkflowResolver is set.
+	LoadedFiles []string
+	// SubWorkflowResolver is an optional callback used to load an external
+	// workflow file referenced by workflow_file = "...". When nil, any step
+	// using workflow_file is rejected with a compile error. The resolver
+	// receives the file path and the WorkflowDir; it must return a parsed
+	// *Spec or an error.
+	SubWorkflowResolver func(filePath, workflowDir string) (*Spec, error)
 }
 
 // Compile validates a Spec and returns an executable FSMGraph. It is a
@@ -50,7 +60,7 @@ func Compile(spec *Spec, schemas map[string]AdapterInfo) (*FSMGraph, hcl.Diagnos
 //
 // When opts.WorkflowDir is set, constant file() arguments in step input
 // expressions are validated at compile time (path existence + confinement).
-func CompileWithOpts(spec *Spec, schemas map[string]AdapterInfo, opts CompileOpts) (*FSMGraph, hcl.Diagnostics) {
+func CompileWithOpts(spec *Spec, schemas map[string]AdapterInfo, opts CompileOpts) (*FSMGraph, hcl.Diagnostics) { //nolint:gocritic // CompileOpts passed by value intentionally; copy semantics prevent caller mutation
 	var diags hcl.Diagnostics
 
 	if spec.Version == "" {

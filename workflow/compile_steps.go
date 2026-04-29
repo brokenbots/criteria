@@ -14,7 +14,7 @@ import (
 // Must be called after compileAgents so that agent references can be resolved.
 // opts carries compile options including WorkflowDir (for file() validation)
 // and LoadDepth/LoadStack (for nested workflow body compilation).
-func compileSteps(g *FSMGraph, spec *Spec, schemas map[string]AdapterInfo, opts CompileOpts) hcl.Diagnostics {
+func compileSteps(g *FSMGraph, spec *Spec, schemas map[string]AdapterInfo, opts CompileOpts) hcl.Diagnostics { //nolint:gocritic // CompileOpts passed by value intentionally; copy semantics prevent caller mutation
 	var diags hcl.Diagnostics
 	for _, sp := range spec.Steps {
 		if _, dup := g.Steps[sp.Name]; dup {
@@ -290,48 +290,91 @@ func compileSteps(g *FSMGraph, spec *Spec, schemas map[string]AdapterInfo, opts 
 
 // compileWorkflowBody compiles the inline workflow body for a type="workflow" step.
 // Returns the compiled FSMGraph, the body entry state name, and any diagnostics.
-func compileWorkflowBody(sp *StepSpec, schemas map[string]AdapterInfo, opts CompileOpts) (hcl.Diagnostics, *FSMGraph, string) {
+func compileWorkflowBody(sp *StepSpec, schemas map[string]AdapterInfo, opts CompileOpts) (hcl.Diagnostics, *FSMGraph, string) { //nolint:gocritic // CompileOpts copy semantics are intentional
 	const maxLoadDepth = 4
 	var diags hcl.Diagnostics
 
 	if opts.LoadDepth >= maxLoadDepth {
-		diags = append(diags, &hcl.Diagnostic{
+		return append(diags, &hcl.Diagnostic{
 			Severity: hcl.DiagError,
 			Summary:  fmt.Sprintf("step %q: maximum workflow nesting depth (%d) exceeded", sp.Name, maxLoadDepth),
-		})
-		return diags, nil, ""
+		}), nil, ""
 	}
 
-	wb := sp.Workflow
-	if wb == nil {
-		// workflow_file not yet supported; require inline body.
-		diags = append(diags, &hcl.Diagnostic{
+	if sp.Workflow == nil {
+		return compileWorkflowBodyFromFile(sp, schemas, opts)
+	}
+	return compileWorkflowBodyInline(sp, schemas, opts)
+}
+
+// compileWorkflowBodyFromFile handles the workflow_file = "..." loading path.
+func compileWorkflowBodyFromFile(sp *StepSpec, schemas map[string]AdapterInfo, opts CompileOpts) (hcl.Diagnostics, *FSMGraph, string) { //nolint:gocritic // CompileOpts copy semantics are intentional
+	var diags hcl.Diagnostics
+	if sp.WorkflowFile == "" {
+		return append(diags, &hcl.Diagnostic{
 			Severity: hcl.DiagError,
 			Summary:  fmt.Sprintf("step %q: type=\"workflow\" requires a workflow { ... } block", sp.Name),
-		})
+		}), nil, ""
+	}
+	if opts.SubWorkflowResolver == nil {
+		return append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  fmt.Sprintf("step %q: workflow_file requires SubWorkflowResolver in CompileOpts", sp.Name),
+		}), nil, ""
+	}
+	for _, f := range opts.LoadedFiles {
+		if f == sp.WorkflowFile {
+			return append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  fmt.Sprintf("step %q: workflow_file %q creates a load cycle", sp.Name, sp.WorkflowFile),
+			}), nil, ""
+		}
+	}
+	loaded, err := opts.SubWorkflowResolver(sp.WorkflowFile, opts.WorkflowDir)
+	if err != nil {
+		return append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  fmt.Sprintf("step %q: failed to load workflow_file %q: %s", sp.Name, sp.WorkflowFile, err),
+		}), nil, ""
+	}
+	childOpts := CompileOpts{
+		WorkflowDir:         opts.WorkflowDir,
+		LoadDepth:           opts.LoadDepth + 1,
+		LoadStack:           append(append([]string{}, opts.LoadStack...), sp.Name),
+		LoadedFiles:         append(append([]string{}, opts.LoadedFiles...), sp.WorkflowFile),
+		SubWorkflowResolver: opts.SubWorkflowResolver,
+	}
+	body, d := CompileWithOpts(loaded, schemas, childOpts)
+	diags = append(diags, d...)
+	if diags.HasErrors() {
 		return diags, nil, ""
 	}
+	return diags, body, loaded.InitialState
+}
 
+// compileWorkflowBodyInline handles the inline workflow { ... } block path.
+func compileWorkflowBodyInline(sp *StepSpec, schemas map[string]AdapterInfo, opts CompileOpts) (hcl.Diagnostics, *FSMGraph, string) { //nolint:gocritic // CompileOpts copy semantics are intentional
+	var diags hcl.Diagnostics
+	wb := sp.Workflow
 	if len(wb.Steps) == 0 {
-		diags = append(diags, &hcl.Diagnostic{
+		return append(diags, &hcl.Diagnostic{
 			Severity: hcl.DiagError,
 			Summary:  fmt.Sprintf("step %q: workflow body must contain at least one step", sp.Name),
-		})
-		return diags, nil, ""
+		}), nil, ""
 	}
 
-	// Determine entry state.
 	entry := wb.Entry
 	if entry == "" {
 		entry = wb.Steps[0].Name
 	}
 
-	// Build a synthetic Spec for the body and compile it recursively.
 	bodySpec := buildBodySpec(sp.Name, entry, wb)
 	childOpts := CompileOpts{
-		WorkflowDir: opts.WorkflowDir,
-		LoadDepth:   opts.LoadDepth + 1,
-		LoadStack:   append(append([]string{}, opts.LoadStack...), sp.Name),
+		WorkflowDir:         opts.WorkflowDir,
+		LoadDepth:           opts.LoadDepth + 1,
+		LoadStack:           append(append([]string{}, opts.LoadStack...), sp.Name),
+		LoadedFiles:         append([]string{}, opts.LoadedFiles...),
+		SubWorkflowResolver: opts.SubWorkflowResolver,
 	}
 	body, d := CompileWithOpts(bodySpec, schemas, childOpts)
 	diags = append(diags, d...)

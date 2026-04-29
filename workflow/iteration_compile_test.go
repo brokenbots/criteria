@@ -441,9 +441,84 @@ workflow "w" {
 }`, `duplicate output name`)
 }
 
+// TestStep_TypeWorkflow_FileCycle_Fails verifies that workflow_file cycle
+// detection (A → B → A) produces a compile error when SubWorkflowResolver is
+// provided. The test simulates a self-cycle: the resolver for "cycle_a.hcl"
+// returns a Spec whose only step also specifies workflow_file = "cycle_a.hcl".
+func TestStep_TypeWorkflow_FileCycle_Fails(t *testing.T) {
+	// The inner spec mirrors the outer — it has a step referencing
+	// "cycle_a.hcl" again, creating a direct self-cycle.
+	innerSrc := `
+workflow "inner" {
+  version       = "0.1"
+  initial_state = "recurse"
+  target_state  = "done"
+  step "recurse" {
+    type          = "workflow"
+    workflow_file = "cycle_a.hcl"
+    for_each      = ["x"]
+    outcome "all_succeeded" { transition_to = "done" }
+    outcome "any_failed"    { transition_to = "done" }
+  }
+  state "done" { terminal = true }
+}`
+	innerSpec, diags := workflow.Parse("cycle_a.hcl", []byte(innerSrc))
+	if diags.HasErrors() {
+		t.Fatalf("parse inner: %s", diags.Error())
+	}
+
+	// Resolver always returns the same spec (simulates cycle_a.hcl → itself).
+	resolver := func(filePath, _ string) (*workflow.Spec, error) {
+		return innerSpec, nil
+	}
+
+	outerSrc := `
+workflow "outer" {
+  version       = "0.1"
+  initial_state = "step_a"
+  target_state  = "done"
+  step "step_a" {
+    type          = "workflow"
+    workflow_file = "cycle_a.hcl"
+    for_each      = ["x"]
+    outcome "all_succeeded" { transition_to = "done" }
+    outcome "any_failed"    { transition_to = "done" }
+  }
+  state "done" { terminal = true }
+}`
+	outerSpec, diags := workflow.Parse("outer.hcl", []byte(outerSrc))
+	if diags.HasErrors() {
+		t.Fatalf("parse outer: %s", diags.Error())
+	}
+
+	_, compDiags := workflow.CompileWithOpts(outerSpec, nil, workflow.CompileOpts{
+		SubWorkflowResolver: resolver,
+	})
+	if !compDiags.HasErrors() {
+		t.Fatal("expected compile error for workflow_file cycle, got none")
+	}
+	if got := compDiags.Error(); !containsAny(got, "cycle", "load cycle") {
+		t.Errorf("compile error = %q; expected cycle-related message", got)
+	}
+}
+
+// containsAny returns true when s contains any of the provided substrings.
+func containsAny(s string, subs ...string) bool {
+	for _, sub := range subs {
+		if len(s) >= len(sub) {
+			for i := 0; i <= len(s)-len(sub); i++ {
+				if s[i:i+len(sub)] == sub {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
 // TestStep_TypeWorkflow_MissingWorkflowBlock_Fails verifies that a step with
 // type="workflow" that omits the inline workflow { ... } block is rejected at
-// compile time. workflow_file is not yet supported.
+// compile time.
 func TestStep_TypeWorkflow_MissingWorkflowBlock_Fails(t *testing.T) {
 	compileExpectError(t, `
 workflow "w" {

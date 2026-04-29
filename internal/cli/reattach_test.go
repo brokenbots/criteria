@@ -893,10 +893,84 @@ workflow "needs_approval" {
 	}
 }
 
-// --- Test 14 (CLI): checkIterationSubgraphMembership enforcement ---
+// TestCheckIterationCursorValidity_CurrentMissingFromBody verifies that
+// checkIterationCursorValidity returns an error when the run's current step
+// (the step being executed at crash time) is inside the body of the iterating
+// step but no longer exists in that body after a workflow edit.
+func TestCheckIterationCursorValidity_CurrentMissingFromBody(t *testing.T) {
+	// Compile a workflow with a type="workflow" iterating step.
+	const src = `
+workflow "w" {
+  version       = "0.1"
+  initial_state = "outer"
+  target_state  = "done"
 
-// iterSubgraphWorkflow is an HCL workflow with a two-step iteration body
-// (execute → review → _continue) used to test subgraph membership checks.
+  step "outer" {
+    type     = "workflow"
+    for_each = ["a"]
+    workflow {
+      step "body_step" {
+        adapter = "noop"
+        outcome "success" { transition_to = "_continue" }
+      }
+    }
+    outcome "all_succeeded" { transition_to = "done" }
+    outcome "any_failed"    { transition_to = "done" }
+  }
+
+  state "done" {
+    terminal = true
+    success  = true
+  }
+}`
+	spec, diags := workflow.Parse("test.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	g, diags := workflow.Compile(spec, nil)
+	if diags.HasErrors() {
+		t.Fatalf("compile: %s", diags.Error())
+	}
+
+	// Build a variable scope with an in-progress cursor on "outer".
+	vars := workflow.SeedVarsFromGraph(g)
+	scope, err := workflow.SerializeVarScope(vars, []workflow.IterCursor{{
+		StepName:   "outer",
+		InProgress: true,
+	}})
+	if err != nil {
+		t.Fatalf("SerializeVarScope: %v", err)
+	}
+
+	// Baseline: body_step exists — should return nil.
+	if err := checkIterationCursorValidity(g, scope, "body_step"); err != nil {
+		t.Fatalf("baseline check unexpected error: %v", err)
+	}
+
+	// Simulate a workflow edit that removes "body_step" from the body.
+	if g.Steps["outer"].Body == nil {
+		t.Fatal("outer step has no body — test setup error")
+	}
+	delete(g.Steps["outer"].Body.Steps, "body_step")
+
+	// Now the saved current step "body_step" is missing from the body.
+	err = checkIterationCursorValidity(g, scope, "body_step")
+	if err == nil {
+		t.Fatal("expected error when body step no longer exists, got nil")
+	}
+	if !strings.Contains(err.Error(), "body_step") {
+		t.Errorf("expected error to mention 'body_step'; got: %v", err)
+	}
+}
+
+// TestIter_ResumeRejectsModifiedBody mirrors
+// TestCheckIterationCursorValidity_CurrentMissingFromBody at the package level,
+// asserting that checkIterationCursorValidity catches the modification and
+// returns a non-nil error describing the missing body step.
+func TestIter_ResumeRejectsModifiedBody(t *testing.T) {
+	TestCheckIterationCursorValidity_CurrentMissingFromBody(t)
+}
+
 const iterCursorWorkflow = `
 workflow "iter_cursor" {
   version       = "0.1"
