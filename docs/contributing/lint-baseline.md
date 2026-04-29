@@ -111,10 +111,28 @@ cannot be simplified) requires:
 no way to skip it: the CI job runs `make lint-go` after `make lint-imports` and
 before `make build`.
 
+`make lint-baseline-check` is a second lint gate. It compares the current
+baseline entry count to `tools/lint-baseline/cap.txt` and fails if the baseline
+grows beyond the cap. The count is produced by `go run ./tools/lint-baseline
+-count .golangci.baseline.yml`, which currently counts top-level
+`- path:` entries under `issues.exclude-rules`. If the baseline file format
+changes, update the count mode in `tools/lint-baseline/main.go`.
+
 If you introduce a new lint violation, you have two options:
 1. Fix the underlying issue (preferred).
 2. Add a suppression entry to `.golangci.baseline.yml` with a workstream-pointer
    comment and a justification comment in the PR.
+
+## Branch protection
+
+Branch protection for `main` must require the `Lint` status check and must
+disallow direct pushes. All changes go through pull requests so lint and baseline
+cap policy are enforced uniformly.
+
+If the baseline cap must increase, do it as a separate, reviewable commit that
+updates only `tools/lint-baseline/cap.txt` with explicit reviewer agreement.
+Applying branch protection is an admin action; [W14](../../workstreams/14-phase2-cleanup-gate.md)
+tracks verification that this setting is active.
 
 ## Regenerating the baseline
 

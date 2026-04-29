@@ -1,5 +1,5 @@
 .PHONY: help bootstrap tidy build plugins proto proto-lint proto-check-drift \
-	test test-cover test-conformance test-flake-watch lint-imports lint-go lint validate example-plugin bench ci clean
+	test test-cover test-conformance test-flake-watch lint-imports lint-go lint-baseline-check lint validate example-plugin bench ci clean
 
 # Default target: list available targets.
 help:
@@ -76,6 +76,25 @@ lint-go: ## Run golangci-lint across all modules with the baseline allowlist
 	(cd workflow && go tool golangci-lint run --config ../.golangci.merged.yml ./...) || { rm -f .golangci.merged.yml; exit 1; }
 	@rm -f .golangci.merged.yml
 
+lint-baseline-check: ## Fail if .golangci.baseline.yml exceeds the cap in tools/lint-baseline/cap.txt
+	@cap_file=tools/lint-baseline/cap.txt; \
+	if [ ! -r "$$cap_file" ]; then \
+		echo "ERROR: Cannot read $$cap_file"; \
+		exit 1; \
+	fi; \
+	cap=$$(cat "$$cap_file"); \
+	if ! printf '%s\n' "$$cap" | grep -qE '^[0-9]+$$'; then \
+		echo "ERROR: $$cap_file must contain a single integer; got: $$cap"; \
+		exit 1; \
+	fi; \
+	count=$$(go run ./tools/lint-baseline -count .golangci.baseline.yml); \
+	if [ "$$count" -gt "$$cap" ]; then \
+		echo "ERROR: .golangci.baseline.yml has $$count entries; cap is $$cap ($$cap_file)."; \
+		echo "       Either fix the new findings or, with explicit reviewer agreement, raise the cap."; \
+		exit 1; \
+	fi; \
+	echo "Lint baseline within cap ($$count / $$cap)."
+
 lint: lint-imports lint-go ## Run all linters
 
 validate: build ## Validate all standalone example workflows
@@ -107,7 +126,7 @@ example-plugin: build ## Build and run the greeter example plugin end-to-end
 	rm -rf "$$tmpdir" "$$eventsfile"; \
 	echo "example-plugin: OK"
 
-ci: build test lint-imports lint-go validate example-plugin ## Run all CI gates (build, test, lint-imports, lint-go, validate, example-plugin)
+ci: build test lint-imports lint-go lint-baseline-check validate example-plugin ## Run all CI gates (build, test, lint-imports, lint-go, lint-baseline-check, validate, example-plugin)
 
 clean: ## Remove build artifacts
 	rm -rf bin conformance.test
