@@ -33,6 +33,7 @@ func (benchSink) OnBranchEvaluated(string, string, string, string)             {
 func (benchSink) OnForEachEntered(string, int)                                 {}
 func (benchSink) OnForEachIteration(string, int, string, bool)                 {}
 func (benchSink) OnForEachOutcome(string, string, string)                      {}
+func (benchSink) OnForEachStep(string, int, string)                            {}
 func (benchSink) OnScopeIterCursorSet(string)                                  {}
 func (benchSink) StepEventSink(string) adapter.EventSink                       { return benchEventSink{} }
 

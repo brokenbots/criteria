@@ -61,6 +61,7 @@ func (s *fakeSink) OnBranchEvaluated(string, string, string, string) {}
 func (s *fakeSink) OnForEachEntered(string, int)                     {}
 func (s *fakeSink) OnForEachIteration(string, int, string, bool)     {}
 func (s *fakeSink) OnForEachOutcome(string, string, string)          {}
+func (s *fakeSink) OnForEachStep(string, int, string)                {}
 func (s *fakeSink) OnScopeIterCursorSet(string)                      {}
 func (s *fakeSink) StepEventSink(step string) adapter.EventSink      { return noopSink{} }
 

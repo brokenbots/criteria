@@ -377,7 +377,7 @@ See [Expressions](#expressions) for syntax rules.
 
 ## For-each
 
-For-each nodes iterate over a list, executing a child step once per item.
+For-each nodes iterate over a list, executing one or more steps per item.
 
 <!-- validator: fragment -->
 ```hcl
@@ -401,33 +401,83 @@ step "deploy_one" {
 ### Attributes
 
 - **`items`** (required): Expression that evaluates to a list or tuple (e.g., `["a", "b"]`, `var.services`).
-- **`do`** (required): Step name to execute for each item.
-- **`outcome "all_succeeded"`** (required): Fires if all iterations succeed.
-- **`outcome "any_failed"`** (optional but recommended): Fires if at least one iteration fails.
+- **`do`** (required): Entry step name to execute for each item.
+- **`outcome "all_succeeded"`** (required): Fires after all items complete when no item failed.
+- **`outcome "any_failed"`** (optional but recommended): Fires after all items complete when at least one item failed.
 
 ### Iteration scope
 
-Within the `do` step:
+Within all steps that form the iteration body, the following variables are available:
 
 - **`each.value`**: Current item value (e.g., `"api"`, `"web"`).
 - **`each.index`**: Zero-based iteration index (`"0"`, `"1"`, `"2"`).
 
-Both are available in `input { }` blocks via string interpolation.
+Both are available in `input { }` blocks via string interpolation. Referencing `each.*` outside an iteration body is a compile error.
+
+### Multi-step iteration body
+
+An iteration body can span multiple steps. Steps chained together via `outcome` transitions that eventually reach `_continue` (or loop back to the `for_each` node name) are automatically grouped into the iteration body by the compiler.
+
+```hcl
+# Three-step iteration body: execute → review → cleanup → _continue
+for_each "process_items" {
+  items = ["alpha", "beta", "gamma"]
+  do    = "execute"
+  outcome "all_succeeded" { transition_to = "done" }
+  outcome "any_failed"    { transition_to = "failed" }
+}
+
+step "execute" {
+  adapter = "noop"
+  input { result = "success" }
+  outcome "success" { transition_to = "review" }
+  outcome "failure" { transition_to = "cleanup" }
+}
+
+step "review" {
+  adapter = "noop"
+  input { result = "success" }
+  outcome "success" { transition_to = "cleanup" }
+  outcome "failure" { transition_to = "_continue" }
+}
+
+step "cleanup" {
+  adapter = "noop"
+  input { result = "success" }
+  outcome "success" { transition_to = "_continue" }
+  outcome "failure" { transition_to = "_continue" }
+}
+```
+
+All steps whose outcomes lead (directly or transitively) to `_continue` are part of the iteration body. Steps reachable only through an early-exit path (transitioning to a non-iteration state) are not in the body.
+
+See `examples/for_each_review_loop.hcl` for a complete runnable example.
+
+### `each.*` binding lifetime
+
+- `each.value` and `each.index` are bound when the `do` step is dispatched for each item.
+- They remain bound for the duration of the entire iteration body — all steps from `do` through to `_continue`.
+- They are cleared on `_continue` (between iterations) and on early-exit (when a step transitions out of the subgraph).
+- Referencing `each.*` in a step outside any iteration subgraph is a compile error.
 
 ### The `_continue` target
 
-The child step must transition to the synthetic `_continue` target to signal iteration completion. `_continue` is not a declared node; it's an engine-internal marker that advances the for-each cursor.
+The synthetic `_continue` target signals iteration completion. `_continue` is not a declared node; it's an engine-internal marker that advances the for-each cursor to the next item (or triggers the aggregate outcome when all items have been processed).
 
-If the child step transitions to any other target, the for-each loop terminates early.
+If a step transitions to any non-iteration target other than `_continue`, the for-each loop terminates early with the current item counted as failed.
 
 ### Aggregate outcomes
 
 After all iterations complete (or early termination):
 
-- **`all_succeeded`**: All iterations' final outcomes were non-error.
-- **`any_failed`**: At least one iteration failed.
+- **`all_succeeded`**: All iterations' final outcomes were `"success"` (case-insensitive).
+- **`any_failed`**: At least one iteration's final outcome was non-success.
 
 If `any_failed` is not declared, failed iterations fall through to `all_succeeded` (compiler emits a warning).
+
+### Migrating from single-step for_each
+
+Existing single-step for_each loops continue to work without any changes. A workflow with `do = "process"` where `process` transitions to `_continue` has an iteration body of exactly one step (`{process}`), and the engine handles it identically to before. No opt-in flag or migration is required.
 
 ---
 

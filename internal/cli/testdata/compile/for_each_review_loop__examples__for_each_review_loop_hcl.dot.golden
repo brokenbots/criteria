@@ -1,0 +1,21 @@
+digraph "for_each_review_loop" {
+  rankdir=LR;
+
+  "init" [shape=box];
+  "execute" [shape=box];
+  "review" [shape=box];
+  "cleanup" [shape=box];
+  "process_items" [shape=parallelogram];
+  "done" [shape=doublecircle];
+  "failed" [shape=doublecircle];
+
+  "__start__" [shape=point,width=0.12,label=""];
+  "__start__" -> "init" [label="initial"];
+  "init" -> "process_items" [label="success"];
+  "execute" -> "cleanup" [label="failure"];
+  "execute" -> "review" [label="success"];
+  "review" -> "cleanup" [label="success"];
+  "process_items" -> "execute" [label="do"];
+  "process_items" -> "done" [label="all_succeeded"];
+  "process_items" -> "failed" [label="any_failed"];
+}

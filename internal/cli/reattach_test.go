@@ -15,6 +15,7 @@ import (
 
 	servertrans "github.com/brokenbots/criteria/internal/transport/server"
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
+	"github.com/brokenbots/criteria/workflow"
 )
 
 // fakeTransport is a test-only implementation of reattachTransport that lets
@@ -889,5 +890,111 @@ workflow "needs_approval" {
 		if item.RunID == "server-node-run" {
 			t.Error("checkpoint not removed for server-node workflow")
 		}
+	}
+}
+
+// --- Test 14 (CLI): checkIterationSubgraphMembership enforcement ---
+
+// iterSubgraphWorkflow is an HCL workflow with a two-step iteration body
+// (execute → review → _continue) used to test subgraph membership checks.
+const iterSubgraphWorkflow = `
+workflow "iter_sub" {
+  version       = "0.1"
+  initial_state = "loop"
+  target_state  = "done"
+
+  for_each "loop" {
+    items = ["a"]
+    do    = "execute"
+    outcome "all_succeeded" { transition_to = "done" }
+    outcome "any_failed"    { transition_to = "done" }
+  }
+
+  step "execute" {
+    adapter = "noop"
+    outcome "success" { transition_to = "review" }
+  }
+
+  step "review" {
+    adapter = "noop"
+    outcome "success" { transition_to = "_continue" }
+  }
+
+  state "done" {
+    terminal = true
+    success  = true
+  }
+}
+`
+
+func compileIterSubgraphWorkflow(t *testing.T) *workflow.FSMGraph {
+	t.Helper()
+	spec, diags := workflow.Parse("iter_sub.hcl", []byte(iterSubgraphWorkflow))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	g, diags := workflow.Compile(spec, nil)
+	if diags.HasErrors() {
+		t.Fatalf("compile: %s", diags.Error())
+	}
+	return g
+}
+
+// TestCheckIterationSubgraphMembership_StepNoLongerInSubgraph verifies that
+// checkIterationSubgraphMembership returns an error when a checkpoint step has
+// IterationOwner set but is no longer listed in that for_each's IterationSteps.
+// This simulates a workflow edit that removes "review" from the iteration body.
+func TestCheckIterationSubgraphMembership_StepNoLongerInSubgraph(t *testing.T) {
+	g := compileIterSubgraphWorkflow(t)
+
+	// Confirm the baseline: "review" is in the subgraph.
+	if err := checkIterationSubgraphMembership(g, "review"); err != nil {
+		t.Fatalf("baseline check failed unexpectedly: %v", err)
+	}
+
+	// Simulate the workflow being edited: remove "review" from IterationSteps.
+	delete(g.ForEachs["loop"].IterationSteps, "review")
+
+	err := checkIterationSubgraphMembership(g, "review")
+	if err == nil {
+		t.Fatal("expected error when step is no longer in subgraph, got nil")
+	}
+	if !strings.Contains(err.Error(), "no longer in the for_each") {
+		t.Errorf("expected 'no longer in the for_each' in error; got: %v", err)
+	}
+}
+
+// TestCheckIterationSubgraphMembership_ForEachNoLongerExists verifies that
+// checkIterationSubgraphMembership returns an error when the owning for_each
+// node no longer exists in the compiled workflow. This simulates a workflow
+// edit that renames or removes the for_each entirely.
+func TestCheckIterationSubgraphMembership_ForEachNoLongerExists(t *testing.T) {
+	g := compileIterSubgraphWorkflow(t)
+
+	// Simulate the for_each being renamed/removed by deleting it from the graph.
+	delete(g.ForEachs, "loop")
+
+	err := checkIterationSubgraphMembership(g, "review")
+	if err == nil {
+		t.Fatal("expected error when owning for_each no longer exists, got nil")
+	}
+	if !strings.Contains(err.Error(), "no longer exists") {
+		t.Errorf("expected 'no longer exists' in error; got: %v", err)
+	}
+}
+
+// TestCheckIterationSubgraphMembership_NonIterationStep verifies that
+// checkIterationSubgraphMembership returns nil for a step that has no
+// IterationOwner (i.e. it is not part of any for_each subgraph).
+func TestCheckIterationSubgraphMembership_NonIterationStep(t *testing.T) {
+	g := compileIterSubgraphWorkflow(t)
+
+	// "execute" has IterationOwner = "loop" (it is the do-step).
+	// A step not in any subgraph would have IterationOwner = "".
+	// Manually clear one to simulate a plain step.
+	g.Steps["execute"].IterationOwner = ""
+
+	if err := checkIterationSubgraphMembership(g, "execute"); err != nil {
+		t.Errorf("expected nil for non-iteration step; got: %v", err)
 	}
 }

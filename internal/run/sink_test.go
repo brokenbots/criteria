@@ -194,6 +194,7 @@ func TestSink_PublishMethodsDoNotPanic(t *testing.T) {
 	s.OnBranchEvaluated("branch1", "arm[0]", "step2", "x == 1")
 	s.OnForEachEntered("each", 3)
 	s.OnForEachIteration("each", 0, "a", false)
+	s.OnForEachStep("each", 0, "review")
 	s.OnForEachOutcome("each", "all_succeeded", "done")
 	s.OnScopeIterCursorSet(`{"index":1}`)
 }
@@ -334,6 +335,7 @@ func TestLocalSink_AllRemainingEvents(t *testing.T) {
 	sink.OnBranchEvaluated("b", "arm[0]", "step2", "true")
 	sink.OnForEachEntered("each", 2)
 	sink.OnForEachIteration("each", 0, "a", false)
+	sink.OnForEachStep("each", 0, "review")
 	sink.OnForEachOutcome("each", "all_succeeded", "done")
 	sink.OnScopeIterCursorSet(`{"index":1}`)
 
@@ -342,7 +344,7 @@ func TestLocalSink_AllRemainingEvents(t *testing.T) {
 		"RunFailed", "StepResumed", "VariableSet", "StepOutputCaptured",
 		"WaitEntered", "WaitResumed", "ApprovalRequested",
 		"ApprovalDecision", "BranchEvaluated", "ForEachEntered",
-		"ForEachIteration", "ForEachOutcome", "ScopeIterCursorSet",
+		"ForEachIteration", "ForEachStep", "ForEachOutcome", "ScopeIterCursorSet",
 	}
 	gotTypes := decodeSinkPayloadTypes(t, buf.String())
 	if len(gotTypes) != len(wantTypes) {
@@ -393,10 +395,11 @@ func TestMultiSink_AllRemainingMethods(t *testing.T) {
 	sink.OnBranchEvaluated("b", "arm[0]", "step2", "true")
 	sink.OnForEachEntered("each", 2)
 	sink.OnForEachIteration("each", 0, "a", false)
+	sink.OnForEachStep("each", 0, "review")
 	sink.OnForEachOutcome("each", "all_succeeded", "done")
 	sink.OnScopeIterCursorSet(`{"index":1}`)
 
-	const want = 14
+	const want = 15
 	if got := a.calls.Load(); got != want {
 		t.Errorf("child a calls: got %d want %d", got, want)
 	}

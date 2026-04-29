@@ -1,0 +1,34 @@
+workflow: for_each_review_loop  (version 0.1)
+initial_state: init   target_state: done
+policy: max_total_steps=50  max_step_retries=0
+
+variables:
+  (none)
+
+agents:
+  (none)
+
+steps (declaration order):
+  init   adapter=noop
+    input keys: result
+    allow_tools: (none)
+    outcomes: success -> process_items
+  execute   adapter=noop
+    input keys: label, result
+    allow_tools: (none)
+    outcomes: success -> review, failure -> cleanup
+  review   adapter=noop
+    input keys: label, result
+    allow_tools: (none)
+    outcomes: success -> cleanup, failure -> _continue
+  cleanup   adapter=noop
+    input keys: label, result
+    allow_tools: (none)
+    outcomes: success -> _continue, failure -> _continue
+
+states:
+  done    terminal=true   success=true
+  failed    terminal=true   success=false
+
+plugins required:
+  noop   (search: $CRITERIA_PLUGINS, ~/.criteria/plugins)

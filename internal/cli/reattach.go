@@ -71,6 +71,11 @@ func resumeOneRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint, cli
 		return
 	}
 
+	if err := checkIterationSubgraphMembership(graph, resp.CurrentStep); err != nil {
+		abandonCheckpoint(log, cp, "checkpoint step is no longer in iteration subgraph; workflow changed incompatibly", err)
+		return
+	}
+
 	if resp.Status == "paused" {
 		resumePausedRun(ctx, log, rc, cp, graph, resp)
 		return
@@ -213,6 +218,26 @@ func serviceResumeSignals(ctx context.Context, log *slog.Logger, rc reattachTran
 	drainAndCleanup(ctx, rc, cp)
 }
 
+// checkIterationSubgraphMembership verifies that if currentStep belongs to a
+// for_each iteration subgraph in the checkpoint workflow, that for_each node's
+// compiled subgraph still contains the step. If the workflow was edited and the
+// step was removed from the subgraph, resuming would mis-route the iteration.
+// Returns a non-nil error (suitable for abandonCheckpoint) when the check fails.
+func checkIterationSubgraphMembership(graph *workflow.FSMGraph, currentStep string) error {
+	st, ok := graph.Steps[currentStep]
+	if !ok || st.IterationOwner == "" {
+		return nil // not an iteration subgraph step, nothing to verify
+	}
+	fe, ok := graph.ForEachs[st.IterationOwner]
+	if !ok {
+		return fmt.Errorf("checkpoint step %q has IterationOwner %q but that for_each no longer exists in the workflow", currentStep, st.IterationOwner)
+	}
+	if _, member := fe.IterationSteps[currentStep]; !member {
+		return fmt.Errorf("checkpoint step %q is no longer in the for_each %q iteration subgraph", currentStep, st.IterationOwner)
+	}
+	return nil
+}
+
 // resumeActiveRun handles the normal (non-paused) resume path, including
 // max_step_retries policy enforcement.
 func resumeActiveRun(ctx context.Context, log *slog.Logger, rc reattachTransport, cp *StepCheckpoint, graph *workflow.FSMGraph, resp *pb.ReattachRunResponse) {
@@ -236,6 +261,7 @@ func resumeActiveRun(ctx context.Context, log *slog.Logger, rc reattachTransport
 		abandonCheckpoint(log, cp, "failed to start server streams for resumed run", streamErr)
 		return
 	}
+
 	sink := &run.Sink{RunID: cp.RunID, Client: rc, Log: log}
 	sink.OnStepResumed(resp.CurrentStep, nextAttempt, "criteria_restart")
 	loader := plugin.NewLoader()

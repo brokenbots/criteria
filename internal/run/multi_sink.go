@@ -138,6 +138,12 @@ func (m *MultiSink) OnForEachOutcome(node, outcome, target string) {
 	}
 }
 
+func (m *MultiSink) OnForEachStep(node string, index int, step string) {
+	for _, c := range m.children {
+		c.OnForEachStep(node, index, step)
+	}
+}
+
 func (m *MultiSink) OnScopeIterCursorSet(cursorJSON string) {
 	for _, c := range m.children {
 		c.OnScopeIterCursorSet(cursorJSON)

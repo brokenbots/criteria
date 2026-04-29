@@ -217,6 +217,7 @@ func (s *integrationSink) OnBranchEvaluated(node, matchedArm, target, condition 
 func (s *integrationSink) OnForEachEntered(string, int)                                 {}
 func (s *integrationSink) OnForEachIteration(string, int, string, bool)                 {}
 func (s *integrationSink) OnForEachOutcome(string, string, string)                      {}
+func (s *integrationSink) OnForEachStep(string, int, string)                            {}
 func (s *integrationSink) OnScopeIterCursorSet(string)                                  {}
 func (s *integrationSink) StepEventSink(step string) adapter.EventSink                  { return s }
 func (s *integrationSink) Log(stream string, line []byte)                               {}

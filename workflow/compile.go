@@ -64,6 +64,8 @@ func CompileWithOpts(spec *Spec, schemas map[string]AdapterInfo, opts CompileOpt
 	diags = append(diags, compileApprovals(g, spec)...)
 	diags = append(diags, compileBranches(g, spec)...)
 	diags = append(diags, compileForEachs(g, spec)...)
+	diags = append(diags, computeIterationSubgraphs(g)...)
+	diags = append(diags, validateEachReferenceScope(g)...)
 	diags = append(diags, checkReservedNames(spec)...)
 	diags = append(diags, resolveTransitions(g)...)
 	if g.InitialState != "" && !diags.HasErrors() {

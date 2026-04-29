@@ -128,6 +128,7 @@ func (s *pauseSink) OnBranchEvaluated(string, string, string, string)           
 func (s *pauseSink) OnForEachEntered(string, int)                                 {}
 func (s *pauseSink) OnForEachIteration(string, int, string, bool)                 {}
 func (s *pauseSink) OnForEachOutcome(string, string, string)                      {}
+func (s *pauseSink) OnForEachStep(string, int, string)                            {}
 func (s *pauseSink) OnScopeIterCursorSet(string)                                  {}
 func (s *pauseSink) StepEventSink(string) adapter.EventSink                       { return noopAdapterSink{} }
 

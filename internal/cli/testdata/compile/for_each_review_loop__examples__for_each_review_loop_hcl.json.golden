@@ -1,0 +1,107 @@
+{
+  "name": "for_each_review_loop",
+  "initial_state": "init",
+  "target_state": "done",
+  "policy": {
+    "MaxTotalSteps": 50,
+    "MaxStepRetries": 0
+  },
+  "agents": [],
+  "steps": [
+    {
+      "name": "init",
+      "adapter": "noop",
+      "input_keys": [
+        "result"
+      ],
+      "allow_tools": null,
+      "outcomes": [
+        {
+          "name": "success",
+          "transition_to": "process_items"
+        }
+      ]
+    },
+    {
+      "name": "execute",
+      "adapter": "noop",
+      "input_keys": [
+        "label",
+        "result"
+      ],
+      "allow_tools": null,
+      "outcomes": [
+        {
+          "name": "failure",
+          "transition_to": "cleanup"
+        },
+        {
+          "name": "success",
+          "transition_to": "review"
+        }
+      ]
+    },
+    {
+      "name": "review",
+      "adapter": "noop",
+      "input_keys": [
+        "label",
+        "result"
+      ],
+      "allow_tools": null,
+      "outcomes": [
+        {
+          "name": "failure",
+          "transition_to": "_continue"
+        },
+        {
+          "name": "success",
+          "transition_to": "cleanup"
+        }
+      ]
+    },
+    {
+      "name": "cleanup",
+      "adapter": "noop",
+      "input_keys": [
+        "label",
+        "result"
+      ],
+      "allow_tools": null,
+      "outcomes": [
+        {
+          "name": "failure",
+          "transition_to": "_continue"
+        },
+        {
+          "name": "success",
+          "transition_to": "_continue"
+        }
+      ]
+    }
+  ],
+  "states": [
+    {
+      "name": "done",
+      "terminal": true,
+      "success": true
+    },
+    {
+      "name": "failed",
+      "terminal": true,
+      "success": false
+    }
+  ],
+  "step_order": [
+    "init",
+    "execute",
+    "review",
+    "cleanup"
+  ],
+  "plugins_required": [
+    "noop"
+  ],
+  "metadata": {
+    "schema_version": 1
+  }
+}

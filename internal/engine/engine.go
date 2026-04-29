@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/brokenbots/criteria/internal/adapter"
@@ -63,6 +64,11 @@ type Sink interface {
 	// OnForEachOutcome is emitted when a for_each node finishes iterating (W07).
 	// outcome is "all_succeeded" or "any_failed"; target is the transition target.
 	OnForEachOutcome(node, outcome, target string)
+	// OnForEachStep is emitted when the engine routes to a step within an active
+	// iteration subgraph (other than the do-step at iteration start, which is
+	// covered by OnForEachIteration). node is the for_each node name, index is
+	// the zero-based iteration index, step is the step name being entered (W08).
+	OnForEachStep(node string, index int, step string)
 	// OnScopeIterCursorSet is emitted whenever the for_each cursor is created,
 	// advanced, or cleared (W07). cursorJSON is the JSON-encoded IterCursor; an
 	// empty string signals cursor cleared. The server stores this verbatim without
@@ -156,6 +162,7 @@ func (e *Engine) runLoop(ctx context.Context, sessions *plugin.SessionManager, c
 		firstStep:        true,
 		firstStepAttempt: firstStepAttempt,
 	}
+	e.rebindEachOnResume(st)
 	deps := e.buildDeps(sessions)
 
 	for {
@@ -168,8 +175,37 @@ func (e *Engine) runLoop(ctx context.Context, sessions *plugin.SessionManager, c
 		if err != nil {
 			return e.handleEvalError(st, err)
 		}
-		next = e.interceptForEachContinue(st, next)
+		next = e.routeForEachStep(st, next)
 		e.advanceTo(st, next)
+	}
+}
+
+// rebindEachOnResume re-evaluates a for_each node's items expression and
+// re-binds each.* when resuming mid-subgraph (crash-resume). When the cursor
+// has InProgress=true but Items=nil, the items were not persisted and must be
+// re-evaluated from the graph so steps in the iteration body can access
+// each.value and each.index.
+func (e *Engine) rebindEachOnResume(st *RunState) {
+	if st.Iter == nil || !st.Iter.InProgress || st.Iter.Items != nil {
+		return
+	}
+	fe, ok := e.graph.ForEachs[st.Iter.NodeName]
+	if !ok {
+		return
+	}
+	v, diags := fe.Items.Value(workflow.BuildEvalContextWithOpts(st.Vars, workflow.DefaultFunctionOptions(st.WorkflowDir)))
+	if diags.HasErrors() || (!v.Type().IsListType() && !v.Type().IsTupleType()) {
+		slog.Warn("rebindEachOnResume: failed to re-evaluate items, each.* bindings not restored",
+			"for_each", st.Iter.NodeName, "index", st.Iter.Index)
+		return
+	}
+	items := v.AsValueSlice()
+	if items == nil {
+		items = []cty.Value{}
+	}
+	st.Iter.Items = items
+	if st.Iter.Index < len(items) {
+		st.Vars = workflow.WithEachBinding(st.Vars, items[st.Iter.Index], st.Iter.Index)
 	}
 }
 
@@ -205,38 +241,95 @@ func (e *Engine) buildDeps(sessions *plugin.SessionManager) Deps {
 	}
 }
 
-// interceptForEachContinue handles _continue transitions for for_each iteration
-// (W07). W08 changes the semantics of this helper; the narrow signature
-// (RunState + next string → next string) gives W08 an isolated edit point.
-func (e *Engine) interceptForEachContinue(st *RunState, next string) string {
-	// _continue: advance the iteration cursor and route back to the for_each node.
-	// Guard: only intercept when the current node is NOT the for_each node itself
-	// (to avoid matching the dispatch return from forEachNode.Evaluate).
-	if next == "_continue" && st.Iter != nil && st.Iter.InProgress && st.Current != st.Iter.NodeName {
-		// Non-success outcomes set AnyFailed. Convention: any outcome name that
-		// is not exactly "success" (case-insensitive) is treated as a failure.
+// iterAction classifies what the engine should do when routing a for_each transition.
+type iterAction int
+
+const (
+	actionPassthrough iterAction = iota // not in an iteration; behave normally
+	actionAdvance                       // _continue reached; advance cursor, route to for_each node
+	actionStayInLoop                    // transition to another step in the same subgraph
+	actionExitLoop                      // transition out of the subgraph; clear cursor
+)
+
+// routeForEachStep replaces the former interceptForEachContinue (W08).
+// It classifies the transition from st.Current to next and applies the
+// appropriate for_each semantics:
+//   - actionPassthrough: no active iteration; return next unchanged.
+//   - actionAdvance: _continue from any subgraph step; advance cursor.
+//   - actionStayInLoop: transition to a step still in the same subgraph.
+//   - actionExitLoop: transition to a target outside the subgraph.
+//
+// The decision uses the compiled IterationOwner and IterationSteps fields on
+// the graph nodes — no string parsing at runtime.
+func (e *Engine) routeForEachStep(st *RunState, next string) string {
+	action := e.iterationAction(st, next)
+	switch action {
+	case actionAdvance:
 		if !isSuccessOutcome(st.LastOutcome) {
 			st.Iter.AnyFailed = true
 		}
 		st.Iter.Index++
 		st.Iter.InProgress = false
-		// Clear each.* bindings now that the iteration step is done.
 		st.Vars = workflow.ClearEachBinding(st.Vars)
-		if cursorJSON, curErr := workflow.SerializeIterCursor(st.Iter); curErr == nil {
+		if cursorJSON, err := workflow.SerializeIterCursor(st.Iter); err == nil {
 			e.sink.OnScopeIterCursorSet(cursorJSON)
 		}
 		return st.Iter.NodeName
-	}
-	// Early-exit: a per-iteration step transitioned to a non-_continue target
-	// while Iter is active. Clear the cursor and follow the target directly.
-	if st.Iter != nil && st.Iter.InProgress && st.Current != st.Iter.NodeName {
+
+	case actionStayInLoop:
+		// Track failures across all steps in the iteration body, not just the
+		// final step that triggers _continue.
+		if !isSuccessOutcome(st.LastOutcome) {
+			st.Iter.AnyFailed = true
+		}
+		// Remain in the iteration; each.* stays bound. Emit OnForEachStep so
+		// observers can track which step in the iteration body is executing.
+		e.sink.OnForEachStep(st.Iter.NodeName, st.Iter.Index, next)
+		return next
+
+	case actionExitLoop:
 		iterName := st.Iter.NodeName
 		st.Iter = nil
 		st.Vars = workflow.ClearEachBinding(st.Vars)
 		e.sink.OnScopeIterCursorSet("") // cursor cleared
 		e.sink.OnForEachOutcome(iterName, "any_failed", next)
+		return next
+
+	default: // actionPassthrough
+		return next
 	}
-	return next
+}
+
+// iterationAction returns the action the engine should take for the transition
+// from st.Current to next. Extracted to keep routeForEachStep narrow and to
+// enable direct testing of the decision logic.
+func (e *Engine) iterationAction(st *RunState, next string) iterAction {
+	if st.Iter == nil || !st.Iter.InProgress {
+		return actionPassthrough
+	}
+	// Guard: st.Current must not be the for_each node itself (the node returns
+	// the do-step name; that is not a subgraph transition).
+	if st.Current == st.Iter.NodeName {
+		return actionPassthrough
+	}
+
+	if next == "_continue" {
+		return actionAdvance
+	}
+	// Legacy: transitioning back to the for_each node itself == _continue.
+	if next == st.Iter.NodeName {
+		return actionAdvance
+	}
+
+	// Check subgraph membership.
+	fe, ok := e.graph.ForEachs[st.Iter.NodeName]
+	if !ok {
+		return actionExitLoop
+	}
+	if _, inSubgraph := fe.IterationSteps[next]; inSubgraph {
+		return actionStayInLoop
+	}
+	return actionExitLoop
 }
 
 // advanceTo sets st.Current to next, moving the run forward to the next node.

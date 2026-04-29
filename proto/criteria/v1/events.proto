@@ -65,6 +65,10 @@ message Envelope {
     // runs.variable_scope "iter" field without interpreting its contents,
     // preserving 1.6 split independence (W07). Permanent field number.
     ScopeIterCursorSet scope_iter_cursor_set = 31;
+    // ForEachStep — emitted when the engine routes to a step within an active
+    // iteration subgraph (other than the do-step at iteration start, which is
+    // covered by ForEachIteration). Permanent field number (W08).
+    ForEachStep for_each_step = 32;
     // WatchReady is a protocol-level sentinel sent once at the start of a
     // WatchRun server-stream, after any persisted-event replay, to flush
     // response headers so the client's WatchRun call can return. It has no
@@ -264,4 +268,15 @@ message ForEachOutcome {
 // without parsing it, preserving schema independence at the 1.6 split (W07).
 message ScopeIterCursorSet {
   string cursor_json = 1;   // JSON-encoded IterCursor or "" to clear; permanent
+}
+
+// ForEachStep — emitted when the engine routes to a step within an active
+// iteration subgraph (other than the do-step at iteration start, which is
+// covered by ForEachIteration). Observers can correlate with the active
+// ForEachIteration event using node + index (W08).
+// Agent-owned event; permanent field numbers.
+message ForEachStep {
+  string node = 1;    // for_each node name; permanent
+  int32 index = 2;    // zero-based iteration index; permanent
+  string step = 3;    // step name being entered; permanent
 }
