@@ -982,3 +982,42 @@ make test                         → all packages green (exit 0)
 make lint-go                      → clean (exit 0)
 make validate                     → clean (exit 0)
 ```
+
+---
+
+### Review 2026-04-29-04 — approved
+
+#### Summary
+
+All blockers from the prior two review passes (B-01 – B-16) are resolved. `make test` (race), `make lint-go`, `make build`, `make validate`, `make proto-check-drift`, and `make lint-imports` all exit clean. The three blockers from the previous pass (B-14/B-15/B-16) are correctly remediated: `IterCursor.Prev` round-trips through JSON via `deserializePrev`; `TestIter_CrashResume_PrevRestoredFromJSON` provides explicit proof of the fix including engine resume behavior; and `docs/workflow.md` is fully rewritten for W10 with a migration note removing W08 syntax. Steps 1–11 are either implemented or explicitly marked deferred to W11 with forward-pointers. The workstream is approved.
+
+#### Plan Adherence
+
+- **Steps 1–9**: All implementation items complete. Compile-time validations (`on_failure` on non-iterating steps, `_continue` path, duplicate output names, cycle detection) correct. `each._prev` stores step outputs on fresh runs and on crash-resume. Map key capture correct. Indexed step outputs populated via `WithIndexedStepOutput`. `checkIterationCursorValidity` checks body step existence. ✓
+- **Step 10 (docs)**: `docs/workflow.md` fully rewritten for W10. W08 `for_each "name" { ... }` syntax removed; migration guide added. ✓
+- **Step 11 (cross-doc)**: `workstreams/README.md` and `PLAN.md` contain W10 entries. ✓
+- **Deferred (W11)**: `examples/workflow_step_compose.hcl`, `examples/lib/check.hcl`, and `workflow_file` resolver wiring are correctly deferred per executor notes with forward-pointers to the CLI `--load-path` insertion point.
+
+#### Test Intent Assessment
+
+Final test counts: 26 engine iteration tests, 18 compile iteration tests, 26 CLI reattach tests. All required tests from Steps 8/6 are present. Behavioral intent is strong across the suite:
+
+- `TestIter_CrashResume_PrevRestoredFromJSON` — three-step proof: serialize, explicit `restored.Prev != cty.NilVal` assertion, engine-level `prev_null="false"` assertion. Definitively catches B-14 regressions.
+- `TestIter_Prev_NullOnFirst_ObjectAfter` — complements the above for fresh runs.
+- `TestIter_OutputBlocks_OnlyDeclaredVisible` — end-to-end proof of the indexed output pipeline.
+- `TestStep_TypeWorkflow_FileCycle_Fails` — live resolver producing a genuine self-reference cycle.
+
+**Noted limitation (not a blocker)**: `deserializePrev` silently drops non-string attribute values from the JSON `prev` map (only `string`-typed JSON values are preserved). This is correct for all current documented use cases (`output {}` block values and adapter response outputs are both `map[string]string` in practice), but a future enhancement allowing numeric/boolean output block values would require a more complete deserialization scheme. Document this in `docs/workflow.md` or code comments if the scope widens. Not a blocker for this workstream.
+
+#### Validation Performed
+
+```
+make build              → clean (exit 0)
+make test               → all packages green, race detector enabled (exit 0)
+make lint-go            → clean (exit 0)
+make lint-imports       → Import boundaries OK (exit 0)
+make proto-check-drift  → clean (exit 0)
+make validate           → clean, no warnings (exit 0)
+grep W08 engine symbols → 0 hits in non-test Go code ✓
+ls compile_foreach_subgraph.go node_for_each.go → both absent ✓
+```
