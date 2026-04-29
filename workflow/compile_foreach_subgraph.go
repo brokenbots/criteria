@@ -3,12 +3,19 @@ package workflow
 // compile_foreach_subgraph.go — compile-time iteration-subgraph computation
 // and well-formedness validation for for_each nodes (W08).
 //
-// The iteration subgraph of a for_each node F with do = "S" is the set of
-// steps reachable from S by following step-to-step outcome transitions within
-// the iteration body. Traversal stops when a transition targets _continue
-// (advance), the for_each node F itself (legacy advance), or a step that is
-// outside the iteration body. Well-formedness requires a path to _continue or
-// an exit from the iteration body to an external step.
+// The iteration subgraph of a for_each node F with do = "S" is computed in
+// two phases. Phase 1 (forwardReachableSteps): BFS from S over step-to-step
+// outcome transitions, stopping at _continue, F.Name (legacy advance), or any
+// non-step target. Phase 2 (filterByContinueReachable): restricts to the
+// subset of Phase-1 steps that can reach _continue.
+//
+// Well-formedness has two levels:
+//   - Loop level (validateOneForEach): F.Do must be in IterationSteps,
+//     meaning at least one path from "do" must reach _continue. A loop whose
+//     "do" step only exits to external steps (no _continue path) is invalid.
+//   - Step level (validateSubgraphWellFormedness): each step in IterationSteps
+//     must individually have an outcome that reaches _continue or exits to an
+//     external step.
 //
 // computeIterationSubgraphs must be called from CompileWithOpts after all
 // node maps have been populated (steps, for_each nodes, states, etc.).
@@ -254,7 +261,7 @@ func seedCanExit(g *FSMGraph, fe *ForEachNode) map[string]bool {
 func emitWellFormednessErrors(fe *ForEachNode, canExit map[string]bool) hcl.Diagnostics {
 	var diags hcl.Diagnostics
 	sortedBody := sortedKeys(fe.IterationSteps)
-	bodyStr := strings.Join(sortedBody, " → ")
+	bodyStr := strings.Join(sortedBody, ", ")
 	for _, stepName := range sortedBody {
 		if canExit[stepName] {
 			continue
