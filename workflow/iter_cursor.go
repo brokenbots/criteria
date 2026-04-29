@@ -52,6 +52,11 @@ type IterCursor struct {
 	// evaluated output{} block values (for workflow-type steps). cty.NilVal
 	// before the first iteration completes.
 	Prev cty.Value
+	// EarlyExit is true when a workflow-type step body reached a terminal state
+	// other than "_continue". Causes routeIteratingStepInGraph to stop the
+	// iteration immediately rather than advancing the cursor. Not serialized:
+	// it applies only within a single live run, not across crash-resume.
+	EarlyExit bool
 }
 
 // SerializeIterCursor encodes the cursor to a JSON string suitable for
@@ -82,12 +87,11 @@ func SerializeIterCursor(cursor *IterCursor) (string, error) {
 		m["keys"] = keys
 	}
 	if cursor.Prev != cty.NilVal {
-		b, err := ctyjson.Marshal(cursor.Prev, cursor.Prev.Type())
-		if err == nil {
-			var v interface{}
-			if err2 := json.Unmarshal(b, &v); err2 == nil {
-				m["prev"] = v
-			}
+		typeBytes, err1 := ctyjson.MarshalType(cursor.Prev.Type())
+		valBytes, err2 := ctyjson.Marshal(cursor.Prev, cursor.Prev.Type())
+		if err1 == nil && err2 == nil {
+			m["prev"] = string(valBytes)
+			m["prev_type"] = string(typeBytes)
 		}
 	}
 	b, err := json.Marshal(m)
@@ -150,27 +154,43 @@ func deserializeIterCursor(raw map[string]interface{}) IterCursor {
 	if v, ok := raw["on_failure"].(string); ok {
 		cur.OnFailure = v
 	}
-	cur.Prev = deserializePrev(raw["prev"])
+	cur.Prev = deserializePrev(raw)
 	return cur
 }
 
-// deserializePrev rebuilds the each._prev cty object from the JSON "prev" map.
-// The value is always a flat map of string attributes (adapter outputs or
-// output{} block values), so we reconstruct a cty object with string attrs.
-// Returns cty.NilVal when prev is absent or empty.
-func deserializePrev(raw interface{}) cty.Value {
-	prevRaw, ok := raw.(map[string]interface{})
-	if !ok || len(prevRaw) == 0 {
-		return cty.NilVal
-	}
-	attrs := make(map[string]cty.Value, len(prevRaw))
-	for k, v := range prevRaw {
-		if s, ok := v.(string); ok {
-			attrs[k] = cty.StringVal(s)
+// deserializePrev rebuilds the each._prev cty value from the cursor JSON map.
+//
+// New format: raw["prev"] is a ctyjson-marshaled string and raw["prev_type"] is
+// the ctyjson-marshaled type string — faithful round-trip for any cty type.
+//
+// Legacy format (old checkpoints): raw["prev"] is a plain JSON object with
+// string values; parsed as a cty object with string attributes.
+//
+// Returns cty.NilVal when prev is absent or cannot be reconstructed.
+func deserializePrev(raw map[string]interface{}) cty.Value {
+	// New format: ctyjson-serialized type + value strings.
+	if typeStr, ok := raw["prev_type"].(string); ok {
+		if valStr, ok := raw["prev"].(string); ok {
+			ty, err := ctyjson.UnmarshalType([]byte(typeStr))
+			if err == nil {
+				v, err := ctyjson.Unmarshal([]byte(valStr), ty)
+				if err == nil {
+					return v
+				}
+			}
 		}
 	}
-	if len(attrs) == 0 {
-		return cty.NilVal
+	// Legacy format: plain JSON object with string values.
+	if prevRaw, ok := raw["prev"].(map[string]interface{}); ok && len(prevRaw) > 0 {
+		attrs := make(map[string]cty.Value, len(prevRaw))
+		for k, v := range prevRaw {
+			if s, ok := v.(string); ok {
+				attrs[k] = cty.StringVal(s)
+			}
+		}
+		if len(attrs) > 0 {
+			return cty.ObjectVal(attrs)
+		}
 	}
-	return cty.ObjectVal(attrs)
+	return cty.NilVal
 }

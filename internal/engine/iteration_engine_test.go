@@ -1311,7 +1311,180 @@ workflow "t" {
 	}
 }
 
-// for_each) are correctly serialized by SerializeIterCursor into JSON. Keys
+// TestIter_WorkflowBody_EarlyExit_StopsLoop verifies that when a type="workflow"
+// step body reaches a terminal state other than "_continue", the entire iteration
+// loop stops immediately (early-exit semantics) rather than advancing to the
+// next iteration.
+func TestIter_WorkflowBody_EarlyExit_StopsLoop(t *testing.T) {
+	n := 0
+	seqPlugin := &callbackPlugin{fn: func(_ map[string]string) (string, map[string]string) {
+		n++
+		if n == 1 {
+			return "success", nil
+		}
+		return "failure", nil
+	}}
+	g := compile(t, `
+workflow "t" {
+  version       = "0.1"
+  initial_state = "loop"
+  target_state  = "done"
+  step "loop" {
+    type     = "workflow"
+    for_each = ["a", "b", "c"]
+    workflow {
+      step "body" {
+        adapter = "seq"
+        outcome "success" { transition_to = "_continue" }
+        outcome "failure" { transition_to = "bail" }
+      }
+      state "bail" { terminal = true }
+    }
+    outcome "all_succeeded" { transition_to = "done" }
+    outcome "any_failed"    { transition_to = "done" }
+  }
+  state "done" {
+    terminal = true
+    success  = true
+  }
+}`)
+	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"seq": seqPlugin}}
+	eng := New(g, loader, &fakeSink{})
+	if err := eng.Run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	// Only 2 iterations should have run: iteration 0 (success → _continue)
+	// and iteration 1 (failure → bail → early-exit). Iteration 2 must not run.
+	if n != 2 {
+		t.Errorf("body executed %d times; want 2 (early-exit after second iteration)", n)
+	}
+}
+
+// TestIter_MapForEach_UsesKeyForIndexedOutput verifies that map-based for_each
+// populates steps.<name>["key"] rather than steps.<name>[0].
+func TestIter_MapForEach_UsesKeyForIndexedOutput(t *testing.T) {
+	outPlugin := &outputPlugin{outcome: "success", outputs: map[string]string{"val": "out"}}
+	g := compile(t, `
+workflow "t" {
+  version       = "0.1"
+  initial_state = "produce"
+  target_state  = "consume"
+  step "produce" {
+    adapter  = "out"
+    for_each = { alpha = "a", beta = "b" }
+    outcome "all_succeeded" { transition_to = "consume" }
+    outcome "any_failed"    { transition_to = "consume" }
+  }
+  step "consume" {
+    adapter = "capture"
+    input {
+      got_alpha = "${steps.produce.alpha.val}"
+    }
+    outcome "success" { transition_to = "done" }
+  }
+  state "done" {
+    terminal = true
+    success  = true
+  }
+}`)
+	var capturedInputs []map[string]string
+	capturePlugin := &captureInputPlugin{outcome: "success", capture: &capturedInputs}
+	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
+		"out":     outPlugin,
+		"capture": capturePlugin,
+	}}
+	eng := New(g, loader, &fakeSink{})
+	if err := eng.Run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if len(capturedInputs) == 0 {
+		t.Fatal("consume step never ran")
+	}
+	if got := capturedInputs[0]["got_alpha"]; got != "out" {
+		t.Errorf("steps.produce[\"alpha\"].val = %q; want %q", got, "out")
+	}
+}
+
+// TestIter_Prev_NonStringValues_RoundTrip verifies that non-string cty values
+// (e.g. numbers) in Prev survive the serialize/deserialize round-trip without
+// being silently dropped.
+func TestIter_Prev_NonStringValues_RoundTrip(t *testing.T) {
+	prevObj := cty.ObjectVal(map[string]cty.Value{
+		"label": cty.StringVal("hello"),
+		"count": cty.NumberIntVal(42),
+	})
+	cursor := &workflow.IterCursor{
+		StepName:   "step",
+		Index:      1,
+		Total:      3,
+		InProgress: true,
+		Prev:       prevObj,
+	}
+	data, err := workflow.SerializeIterCursor(cursor)
+	if err != nil {
+		t.Fatalf("serialize: %v", err)
+	}
+	restored, err := workflow.DeserializeIterCursor(data)
+	if err != nil {
+		t.Fatalf("deserialize: %v", err)
+	}
+	if restored.Prev == cty.NilVal {
+		t.Fatal("deserialized Prev is cty.NilVal")
+	}
+	// Both the string and number attributes must be faithfully restored.
+	if v := restored.Prev.GetAttr("label"); v.AsString() != "hello" {
+		t.Errorf("label = %q; want %q", v.AsString(), "hello")
+	}
+	countVal, _ := restored.Prev.GetAttr("count").AsBigFloat().Int64()
+	if countVal != 42 {
+		t.Errorf("count = %d; want 42", countVal)
+	}
+}
+
+// containsStr is a simple substring check helper.
+func containsStr(s, sub string) bool {
+	for i := 0; i <= len(s)-len(sub); i++ {
+		if s[i:i+len(sub)] == sub {
+			return true
+		}
+	}
+	return false
+}
+
+// callbackPlugin is a test plugin whose Execute outcome is determined by an
+// arbitrary function, letting tests control per-call behavior.
+type callbackPlugin struct {
+	fn func(map[string]string) (string, map[string]string)
+}
+
+func (p *callbackPlugin) Info(context.Context) (plugin.Info, error) {
+	return plugin.Info{Name: "callback", Version: "test"}, nil
+}
+func (p *callbackPlugin) OpenSession(context.Context, string, map[string]string) error { return nil }
+func (p *callbackPlugin) Execute(_ context.Context, _ string, step *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+	outcome, outputs := p.fn(step.Input)
+	return adapter.Result{Outcome: outcome, Outputs: outputs}, nil
+}
+func (p *callbackPlugin) Permit(context.Context, string, string, bool, string) error { return nil }
+func (p *callbackPlugin) CloseSession(context.Context, string) error                 { return nil }
+func (p *callbackPlugin) Kill()                                                      {}
+
+// outputPlugin is a test plugin that always returns a fixed outcome and outputs map.
+type outputPlugin struct {
+	outcome string
+	outputs map[string]string
+}
+
+func (p *outputPlugin) Info(context.Context) (plugin.Info, error) {
+	return plugin.Info{Name: "output", Version: "test"}, nil
+}
+func (p *outputPlugin) OpenSession(context.Context, string, map[string]string) error { return nil }
+func (p *outputPlugin) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+	return adapter.Result{Outcome: p.outcome, Outputs: p.outputs}, nil
+}
+func (p *outputPlugin) Permit(context.Context, string, string, bool, string) error { return nil }
+func (p *outputPlugin) CloseSession(context.Context, string) error                 { return nil }
+func (p *outputPlugin) Kill()                                                      {}
 // represent map iteration keys stored in the W07/W10 cursor JSON so the SDK
 // can expose each.key on resume.
 func TestIter_Keys_SerializeRestore(t *testing.T) {

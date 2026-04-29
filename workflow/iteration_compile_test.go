@@ -534,3 +534,92 @@ workflow "w" {
   state "done" { terminal = true }
 }`, `requires a workflow { ... } block`)
 }
+
+// TestStep_TypeWorkflow_BothWorkflowBlockAndFile_Fails verifies that providing
+// both a workflow { } block and workflow_file is rejected at compile time.
+func TestStep_TypeWorkflow_BothWorkflowBlockAndFile_Fails(t *testing.T) {
+	innerSrc := `
+workflow "inner" {
+  version       = "0.1"
+  initial_state = "body"
+  target_state  = "_continue"
+  step "body" {
+    adapter = "noop"
+    outcome "success" { transition_to = "_continue" }
+  }
+  state "_continue" { terminal = true }
+}`
+	innerSpec, diags := workflow.Parse("inner.hcl", []byte(innerSrc))
+	if diags.HasErrors() {
+		t.Fatalf("parse inner: %s", diags.Error())
+	}
+	resolver := func(_, _ string) (*workflow.Spec, error) { return innerSpec, nil }
+
+	outerSrc := `
+workflow "outer" {
+  version       = "0.1"
+  initial_state = "run"
+  target_state  = "done"
+  step "run" {
+    type          = "workflow"
+    workflow_file = "inner.hcl"
+    for_each      = ["a"]
+    workflow {
+      step "body" {
+        adapter = "noop"
+        outcome "success" { transition_to = "_continue" }
+      }
+      state "_continue" { terminal = true }
+    }
+    outcome "all_succeeded" { transition_to = "done" }
+    outcome "any_failed"    { transition_to = "done" }
+  }
+  state "done" { terminal = true }
+}`
+	outerSpec, diags := workflow.Parse("outer.hcl", []byte(outerSrc))
+	if diags.HasErrors() {
+		t.Fatalf("parse outer: %s", diags.Error())
+	}
+	_, compDiags := workflow.CompileWithOpts(outerSpec, nil, workflow.CompileOpts{
+		SubWorkflowResolver: resolver,
+	})
+	if !compDiags.HasErrors() {
+		t.Fatal("expected compile error for workflow_file + workflow{} conflict; got none")
+	}
+	if got := compDiags.Error(); !containsAny(got, "mutually exclusive") {
+		t.Errorf("compile error = %q; want 'mutually exclusive'", got)
+	}
+}
+
+// TestStep_EachRefs_NotInIteratingStep_ErrorMentionsBothForEachAndCount verifies
+// that the each.* compile-time error message references both for_each and count.
+func TestStep_EachRefs_NotInIteratingStep_ErrorMentionsBothForEachAndCount(t *testing.T) {
+	src := `
+workflow "w" {
+  version       = "0.1"
+  initial_state = "run"
+  target_state  = "done"
+  step "run" {
+    adapter = "noop"
+    input   { val = "${each.value}" }
+    outcome "success" { transition_to = "done" }
+  }
+  state "done" { terminal = true }
+}`
+	spec, diags := workflow.Parse("t.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	_, compDiags := workflow.Compile(spec, nil)
+	if !compDiags.HasErrors() {
+		t.Fatal("expected compile error for each.* on non-iterating step")
+	}
+	msg := compDiags.Error()
+	if !containsAny(msg, "for_each or count") {
+		t.Errorf("error = %q; want mention of 'for_each or count'", msg)
+	}
+	if !containsAny(msg, "each._idx") {
+		t.Errorf("error = %q; want mention of 'each._idx'", msg)
+	}
+}
+

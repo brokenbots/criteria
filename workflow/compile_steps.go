@@ -192,7 +192,7 @@ func compileSteps(g *FSMGraph, spec *Spec, schemas map[string]AdapterInfo, opts 
 				if refsEach(expr) {
 					diags = append(diags, &hcl.Diagnostic{
 						Severity: hcl.DiagError,
-						Summary:  fmt.Sprintf("step %q input.%s: each.value and each.index are only bound during for_each iteration", sp.Name, k),
+						Summary:  fmt.Sprintf("step %q input.%s: each._idx, each.key, each.value, each._prev, each._total, each._first, and each._last are only available inside iterating steps (for_each or count)", sp.Name, k),
 					})
 				}
 			}
@@ -298,6 +298,13 @@ func compileWorkflowBody(sp *StepSpec, schemas map[string]AdapterInfo, opts Comp
 		return append(diags, &hcl.Diagnostic{
 			Severity: hcl.DiagError,
 			Summary:  fmt.Sprintf("step %q: maximum workflow nesting depth (%d) exceeded", sp.Name, maxLoadDepth),
+		}), nil, ""
+	}
+
+	if sp.Workflow != nil && sp.WorkflowFile != "" {
+		return append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  fmt.Sprintf("step %q: workflow { } block and workflow_file are mutually exclusive; remove one", sp.Name),
 		}), nil, ""
 	}
 

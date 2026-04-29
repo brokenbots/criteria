@@ -115,8 +115,17 @@ func (n *stepNode) buildIterItems(st *RunState) (items, keys []cty.Value, err er
 		if v.IsNull() || !v.IsKnown() {
 			return nil, nil, fmt.Errorf("count expression evaluated to null/unknown")
 		}
+		if !v.Type().Equals(cty.Number) {
+			return nil, nil, fmt.Errorf("count expression must be a number; got %s", v.Type().FriendlyName())
+		}
 		bf := v.AsBigFloat()
+		if !bf.IsInt() {
+			return nil, nil, fmt.Errorf("count expression must be a whole number; got fractional value")
+		}
 		n64, _ := bf.Int64()
+		if n64 < 0 {
+			return nil, nil, fmt.Errorf("count expression must be non-negative; got %d", n64)
+		}
 		for i := int64(0); i < n64; i++ {
 			items = append(items, cty.NumberIntVal(i))
 		}
@@ -225,11 +234,13 @@ func (n *stepNode) runWorkflowIteration(ctx context.Context, st *RunState, deps 
 	}
 	// "_continue" is the normal-completion signal from a workflow body.
 	// Translate it to "success" so that isSuccessOutcome works correctly in
-	// routeIteratingStep. Any other terminal state (e.g. "failed") is forwarded
-	// as-is and treated as a non-success outcome.
+	// routeIteratingStep. Any other terminal state (e.g. "failed") is an
+	// early-exit that signals routeIteratingStep to stop the loop immediately.
 	outcome := bodyOutcome
 	if outcome == "_continue" {
 		outcome = "success"
+	} else {
+		cur.EarlyExit = true
 	}
 	st.LastOutcome = outcome
 
@@ -248,7 +259,7 @@ func (n *stepNode) runWorkflowIteration(ctx context.Context, st *RunState, deps 
 			}
 		}
 		if len(stringOuts) > 0 {
-			st.Vars = workflow.WithIndexedStepOutput(st.Vars, n.step.Name, cty.NumberIntVal(int64(cur.Index)), stringOuts)
+			st.Vars = workflow.WithIndexedStepOutput(st.Vars, n.step.Name, iterOutputKey(cur), stringOuts)
 			cur.Prev = cty.ObjectVal(ctyOuts)
 		}
 	}
@@ -277,26 +288,32 @@ func (n *stepNode) evaluateOnce(ctx context.Context, st *RunState, deps Deps) (s
 		return "", err
 	}
 
-	// Capture step outputs into run vars and notify sink (W04).
-	if len(result.Outputs) > 0 {
-		st.Vars = workflow.WithStepOutputs(st.Vars, n.step.Name, result.Outputs)
-		deps.Sink.OnStepOutputCaptured(n.step.Name, result.Outputs)
-	}
-
 	st.LastOutcome = result.Outcome
 
 	// For iterating steps: skip the Outcomes lookup — routeIteratingStep
 	// handles routing based on st.LastOutcome. Record the step output as this
 	// iteration's indexed output and as cur.Prev for the next iteration's
 	// each._prev binding (B-05, B-06).
+	//
+	// WithStepOutputs is intentionally skipped here: it stores a flat
+	// (non-indexed) object that would overwrite the accumulated indexed outputs
+	// from previous iterations. WithIndexedStepOutput accumulates correctly
+	// across iterations and is the only writer for iterating steps.
 	if st.TopCursor() != nil && st.TopCursor().StepName == n.step.Name {
 		cur := st.TopCursor()
 		if len(result.Outputs) > 0 {
-			st.Vars = workflow.WithIndexedStepOutput(st.Vars, n.step.Name, cty.NumberIntVal(int64(cur.Index)), result.Outputs)
+			st.Vars = workflow.WithIndexedStepOutput(st.Vars, n.step.Name, iterOutputKey(cur), result.Outputs)
 			cur.Prev = stringMapToCtyObject(result.Outputs)
 		}
+		deps.Sink.OnStepOutputCaptured(n.step.Name, result.Outputs)
 		deps.Sink.OnStepTransition(n.step.Name, result.Outcome, result.Outcome)
 		return result.Outcome, nil
+	}
+
+	// Capture step outputs into run vars and notify sink (W04).
+	if len(result.Outputs) > 0 {
+		st.Vars = workflow.WithStepOutputs(st.Vars, n.step.Name, result.Outputs)
+		deps.Sink.OnStepOutputCaptured(n.step.Name, result.Outputs)
 	}
 
 	next, ok := n.step.Outcomes[result.Outcome]
@@ -440,4 +457,14 @@ func stringMapToCtyObject(m map[string]string) cty.Value {
 		vals[k] = cty.StringVal(v)
 	}
 	return cty.ObjectVal(vals)
+}
+
+// iterOutputKey returns the key to use with WithIndexedStepOutput.
+// Map for_each iterations use the string key so callers can look up outputs
+// via steps.<name>["key"]. List/count iterations use the numeric index.
+func iterOutputKey(cur *workflow.IterCursor) cty.Value {
+	if len(cur.Keys) > 0 {
+		return cur.Key
+	}
+	return cty.NumberIntVal(int64(cur.Index))
 }

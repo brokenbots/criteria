@@ -190,7 +190,7 @@ workflow "test" {
 	if !diags.HasErrors() {
 		t.Fatal("expected compile error for each.value outside for_each, got none")
 	}
-	if !strings.Contains(diags.Error(), "each.value and each.index are only bound during for_each iteration") {
+	if !strings.Contains(diags.Error(), "for_each or count") {
 		t.Errorf("compile error = %q, want message about each.* scope", diags.Error())
 	}
 }

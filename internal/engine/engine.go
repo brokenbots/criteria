@@ -220,6 +220,12 @@ func routeIteratingStepInGraph(st *RunState, next string, graph *workflow.FSMGra
 		cur.AnyFailed = true
 	}
 
+	// Workflow-body early-exit: body reached a terminal state other than
+	// "_continue" — stop the entire iteration immediately.
+	if cur.EarlyExit {
+		return finishIterationInGraph(st, stepName, graph, sink)
+	}
+
 	// on_failure=abort: stop after first failure.
 	if cur.OnFailure == "abort" && !outcomeIsSuccess {
 		return finishIterationInGraph(st, stepName, graph, sink)
