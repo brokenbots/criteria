@@ -1,0 +1,27 @@
+User Story: Set system prompt and reasoning effort when defining
+a Copilot-backed agent
+Date: 2026-04-27
+
+As a workflow author using the Copilot adapter,
+I want to set system_prompt, reasoning_effort, and model directly
+on the agent definition,
+so that all sessions opened against that agent inherit the
+configuration without per-step boilerplate.
+
+Current pain:
+- reasoning_effort silently does nothing if model is not also set.
+- system_prompt and reasoning_effort cannot be overridden per
+  step; the only escape is defining a duplicate agent.
+- Setting these fields under "input" instead of "config" yields a
+  generic "unknown field" error rather than guidance.
+
+Acceptance criteria:
+- reasoning_effort applies even when model is omitted at the
+  agent level (uses the session's default model).
+- system_prompt applied at agent open time persists for the life
+  of the session.
+- Per-step overrides for system_prompt and reasoning_effort are
+  either accepted (with the documented scoping rule) or rejected
+  with a diagnostic suggesting the agent config block.
+- Validation surfaces a clear error when these fields appear in
+  the wrong block.

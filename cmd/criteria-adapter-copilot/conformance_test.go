@@ -1,13 +1,18 @@
 package main
 
 import (
+	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"testing"
+	"time"
 
 	"github.com/brokenbots/criteria/internal/adapter/conformance"
+	"github.com/brokenbots/criteria/internal/plugin"
+	"github.com/brokenbots/criteria/workflow"
 )
 
 var (
@@ -95,6 +100,91 @@ func TestCopilotPluginBuilds(t *testing.T) {
 		t.Fatalf("plugin binary not found at %q: %v", testPluginBin, err)
 	}
 }
+
+// TestCopilotReasoningEffortOverride (test 6.8) exercises the full
+// agent-open → per-step reasoning_effort override → restore flow end-to-end
+// against the fake copilot binary. It validates that:
+//   - Opening a session with reasoning_effort succeeds.
+//   - Executing a step with a per-step reasoning_effort override succeeds
+//     and returns a valid outcome.
+//   - Executing a follow-up step without per-step effort also succeeds
+//     (verifying the restore did not break session state).
+//
+// Run by make test-conformance.
+func TestCopilotReasoningEffortOverride(t *testing.T) {
+	applyFakeIfNeeded(t)
+
+	loader := plugin.NewLoaderWithDiscovery(func(requested string) (string, error) {
+		if requested != "copilot" {
+			return "", fmt.Errorf("unexpected plugin %q", requested)
+		}
+		return testPluginBin, nil
+	})
+	t.Cleanup(func() { _ = loader.Shutdown(context.Background()) })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	plug, err := loader.Resolve(ctx, "copilot")
+	if err != nil {
+		t.Fatalf("resolve plugin: %v", err)
+	}
+
+	sessionID := "effort-override-test-session"
+
+	// Open with agent-level reasoning_effort = "medium".
+	if err := plug.OpenSession(ctx, sessionID, map[string]string{
+		"reasoning_effort": "medium",
+	}); err != nil {
+		t.Fatalf("OpenSession with reasoning_effort=medium: %v", err)
+	}
+	t.Cleanup(func() {
+		closeCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		_ = plug.CloseSession(closeCtx, sessionID)
+		cancel()
+		plug.Kill()
+	})
+
+	// Step 1: execute with per-step reasoning_effort override "high".
+	step1 := &workflow.StepNode{
+		Name:  "planning",
+		Agent: "bot",
+		Input: map[string]string{
+			"prompt":           "Reply with only: RESULT: success",
+			"reasoning_effort": "high",
+		},
+	}
+	result1, err := plug.Execute(ctx, sessionID, step1, &discardSink{})
+	if err != nil {
+		t.Fatalf("Execute step1 (per-step effort override): %v", err)
+	}
+	if result1.Outcome == "" {
+		t.Fatal("step1 returned empty outcome")
+	}
+
+	// Step 2: execute without per-step effort (inherits agent default after restore).
+	step2 := &workflow.StepNode{
+		Name:  "execution",
+		Agent: "bot",
+		Input: map[string]string{
+			"prompt": "Reply with only: RESULT: success",
+		},
+	}
+	result2, err := plug.Execute(ctx, sessionID, step2, &discardSink{})
+	if err != nil {
+		t.Fatalf("Execute step2 (after effort restore): %v", err)
+	}
+	if result2.Outcome == "" {
+		t.Fatal("step2 returned empty outcome after effort restore")
+	}
+}
+
+// discardSink is a no-op adapter.EventSink used in conformance tests that only
+// need to verify outcomes and errors rather than individual events.
+type discardSink struct{}
+
+func (*discardSink) Log(_ string, _ []byte)   {}
+func (*discardSink) Adapter(_ string, _ any)  {}
 
 // buildBinary compiles the package at pkgPath in moduleRoot and writes the
 // binary to os.TempDir(). It panics if compilation fails.

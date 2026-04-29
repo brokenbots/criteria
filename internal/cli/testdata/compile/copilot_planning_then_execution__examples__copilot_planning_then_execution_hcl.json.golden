@@ -1,0 +1,143 @@
+{
+  "name": "copilot_planning_then_execution",
+  "initial_state": "open_agent",
+  "target_state": "done",
+  "policy": {
+    "MaxTotalSteps": 20,
+    "MaxStepRetries": 0
+  },
+  "agents": [
+    {
+      "name": "engineer",
+      "adapter": "copilot",
+      "on_crash": "fail",
+      "config_keys": [
+        "max_turns",
+        "model",
+        "reasoning_effort"
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "name": "open_agent",
+      "agent": "engineer",
+      "lifecycle": "open",
+      "input_keys": null,
+      "allow_tools": null,
+      "outcomes": [
+        {
+          "name": "failure",
+          "transition_to": "failed"
+        },
+        {
+          "name": "success",
+          "transition_to": "plan"
+        }
+      ]
+    },
+    {
+      "name": "plan",
+      "agent": "engineer",
+      "input_keys": [
+        "prompt",
+        "reasoning_effort"
+      ],
+      "allow_tools": [
+        "read_file"
+      ],
+      "outcomes": [
+        {
+          "name": "failure",
+          "transition_to": "close_failed"
+        },
+        {
+          "name": "success",
+          "transition_to": "execute"
+        }
+      ]
+    },
+    {
+      "name": "execute",
+      "agent": "engineer",
+      "input_keys": [
+        "prompt"
+      ],
+      "allow_tools": [
+        "read_file",
+        "write_file",
+        "shell:go build*",
+        "shell:go test*"
+      ],
+      "outcomes": [
+        {
+          "name": "failure",
+          "transition_to": "close_failed"
+        },
+        {
+          "name": "success",
+          "transition_to": "close_done"
+        }
+      ]
+    },
+    {
+      "name": "close_done",
+      "agent": "engineer",
+      "lifecycle": "close",
+      "input_keys": null,
+      "allow_tools": null,
+      "outcomes": [
+        {
+          "name": "failure",
+          "transition_to": "done"
+        },
+        {
+          "name": "success",
+          "transition_to": "done"
+        }
+      ]
+    },
+    {
+      "name": "close_failed",
+      "agent": "engineer",
+      "lifecycle": "close",
+      "input_keys": null,
+      "allow_tools": null,
+      "outcomes": [
+        {
+          "name": "failure",
+          "transition_to": "failed"
+        },
+        {
+          "name": "success",
+          "transition_to": "failed"
+        }
+      ]
+    }
+  ],
+  "states": [
+    {
+      "name": "done",
+      "terminal": true,
+      "success": true
+    },
+    {
+      "name": "failed",
+      "terminal": true,
+      "success": false
+    }
+  ],
+  "step_order": [
+    "open_agent",
+    "plan",
+    "execute",
+    "close_done",
+    "close_failed"
+  ],
+  "plugins_required": [
+    "copilot"
+  ],
+  "metadata": {
+    "schema_version": 1
+  }
+}

@@ -24,13 +24,16 @@ var listSchema = AdapterInfo{
 // copilotSchema mirrors the real copilot adapter schema.
 var copilotSchema = AdapterInfo{
 	ConfigSchema: map[string]ConfigField{
-		"max_turns":     {Type: ConfigFieldNumber},
-		"system_prompt": {Type: ConfigFieldString},
-		"model":         {Type: ConfigFieldString},
+		"max_turns":         {Type: ConfigFieldNumber},
+		"system_prompt":     {Type: ConfigFieldString},
+		"model":             {Type: ConfigFieldString},
+		"reasoning_effort":  {Type: ConfigFieldString},
+		"working_directory": {Type: ConfigFieldString},
 	},
 	InputSchema: map[string]ConfigField{
-		"prompt":    {Required: true, Type: ConfigFieldString},
-		"max_turns": {Type: ConfigFieldNumber},
+		"prompt":           {Required: true, Type: ConfigFieldString},
+		"max_turns":        {Type: ConfigFieldNumber},
+		"reasoning_effort": {Type: ConfigFieldString},
 	},
 }
 

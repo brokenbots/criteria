@@ -145,10 +145,27 @@ func decodeBodyToStringMap(body hcl.Body) (map[string]string, hcl.Diagnostics) {
 	return decodeAttrsToStringMap(attrs)
 }
 
+// knownAgentConfigFields maps adapter names to the set of fields that belong in
+// the agent config block rather than a step input block. When an unknown
+// step-input field matches this list, the diagnostic names the agent config
+// block as the correct location rather than emitting the generic "unknown field"
+// message.
+//
+// Adding a new adapter here costs one slice entry; adapters not in the map
+// continue to emit the generic diagnostic.
+var knownAgentConfigFields = map[string][]string{
+	"copilot": {"model", "reasoning_effort", "system_prompt", "max_turns", "working_directory"},
+	// future adapters extend this list
+}
+
 // validateSchemaAttrs validates raw HCL attributes against a ConfigField schema,
 // attaching source ranges to diagnostics. It handles required/unknown key checks
 // and type mismatch checks. Returns (decoded string map, diagnostics).
-func validateSchemaAttrs(context string, attrs hcl.Attributes, schema map[string]ConfigField, missingRange hcl.Range) (map[string]string, hcl.Diagnostics) {
+//
+// adapterName is used to produce a targeted misplacement diagnostic when an
+// unknown input field matches a known agent-config field for that adapter. Pass
+// "" to emit the generic "unknown field" diagnostic for all unknown keys.
+func validateSchemaAttrs(context string, attrs hcl.Attributes, schema map[string]ConfigField, missingRange hcl.Range, adapterName string) (map[string]string, hcl.Diagnostics) {
 	var diags hcl.Diagnostics
 	result := make(map[string]string, len(attrs))
 
@@ -156,11 +173,7 @@ func validateSchemaAttrs(context string, attrs hcl.Attributes, schema map[string
 		field, known := schema[k]
 		if len(schema) > 0 && !known {
 			r := attr.NameRange
-			diags = append(diags, &hcl.Diagnostic{
-				Severity: hcl.DiagError,
-				Summary:  fmt.Sprintf("%s: unknown field %q", context, k),
-				Subject:  &r,
-			})
+			diags = append(diags, unknownFieldDiagnostic(context, k, adapterName, r))
 			continue
 		}
 		val, d := attr.Expr.Value(nil)
@@ -252,4 +265,28 @@ func validateSchemaAttrs(context string, attrs hcl.Attributes, schema map[string
 	}
 
 	return result, diags
+}
+
+// unknownFieldDiagnostic returns the appropriate diagnostic for an unknown field
+// in a step input block. When the field is a known agent-config field for the
+// given adapter, the diagnostic names the agent config block as the fix. Otherwise
+// the generic "unknown field" message is returned.
+func unknownFieldDiagnostic(context, field, adapterName string, r hcl.Range) *hcl.Diagnostic {
+	if adapterName != "" {
+		for _, known := range knownAgentConfigFields[adapterName] {
+			if known == field {
+				return &hcl.Diagnostic{
+					Severity: hcl.DiagError,
+					Summary:  fmt.Sprintf("%s: field %q is not valid in step input for adapter %q; it belongs in the agent config block:", context, field, adapterName),
+					Detail:   fmt.Sprintf("  agent \"<name>\" {\n    adapter = %q\n    config {\n      %s = ...\n    }\n  }", adapterName, field),
+					Subject:  &r,
+				}
+			}
+		}
+	}
+	return &hcl.Diagnostic{
+		Severity: hcl.DiagError,
+		Summary:  fmt.Sprintf("%s: unknown field %q", context, field),
+		Subject:  &r,
+	}
 }
