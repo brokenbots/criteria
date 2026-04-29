@@ -717,3 +717,55 @@ Three documentation/comment threads required fixes; all addressed in commit `7a6
 3. **`docs/workflow.md` early-exit paragraph** (thread `PRRT_kwDOSOBb1s5-UPgK`): Added sentence clarifying that early-exit transitions are permitted but the compiler still requires at least one path from `do` to `_continue`; without it the loop can never advance and the workflow fails to compile. Thread resolved.
 
 All 3 threads replied to and resolved. No code behavior changes — documentation clarity only.
+
+---
+
+### Review 2026-04-28-03 — changes-requested
+
+#### Summary
+
+This pass covers only the two post-approval PR-comment-fix commits (`7a6d9a4`, `b953c08`). The `docs/workflow.md` sentences are accurate and well-written. However, the header comment in `workflow/compile_foreach_subgraph.go` (lines 6–11) — the very comment the PR thread asked to improve — now contains two inaccuracies introduced by the rewrite, and a third pre-existing nit in the same file was surfaced during adjacent-code review. All three are in `workflow/compile_foreach_subgraph.go` only. No code, tests, or behavior are affected; these are comment-only required fixes.
+
+#### Plan Adherence
+
+Prior pass items remain fully implemented and tested. No regression observed. `make test` passes clean; `make validate` passes.
+
+#### Required Remediations
+
+- **N1 (nit — required)** `workflow/compile_foreach_subgraph.go` lines 7–8 — circular self-reference.
+  "steps reachable from S by following step-to-step outcome transitions **within the iteration body**" — the iteration body is the entity being computed; you cannot describe its computation in terms of itself. Phase 1 (`forwardReachableSteps`) visits ALL forward-reachable step-to-step transitions, stopping at `_continue`, `fe.Name`, or non-step targets, with no notion of "the iteration body" during traversal; Phase 2 (`filterByContinueReachable`) then restricts to `_continue`-reachable members.
+  _Acceptance_: Replace with a non-circular description that names the two-phase structure. Phase 1 stop conditions must match the code in `forwardReachableSteps` (non-step target / `_continue` / `fe.Name`).
+
+- **N2 (nit — required)** `workflow/compile_foreach_subgraph.go` lines 10–11 — ambiguous "or" omits mandatory loop-level constraint.
+  "Well-formedness requires a path to `_continue` **or** an exit from the iteration body to an external step" is accurate only for the per-step check in `validateSubgraphWellFormedness` (each step must have some valid exit). It omits the separate loop-level constraint enforced by `validateOneForEach`: `fe.Do` must itself be in `IterationSteps`, meaning the loop must have at least one path from `do` to `_continue`. A loop where `do` only exits to external steps (no `_continue` path at all) is always invalid, even if per-step well-formedness passes. The "or" at the module-description level incorrectly implies early-exit-only loops are compilable.
+  `docs/workflow.md` line 467 correctly describes this constraint ("compiler still requires the iteration body to have at least one path from `do` to `_continue`"). The header comment should match.
+  _Acceptance_: The well-formedness description must state both: (a) `do` must have at least one path to `_continue` (loop-level, `validateOneForEach`), and (b) each step in the subgraph must individually reach `_continue` or exit to an external step (`validateSubgraphWellFormedness`). The "or" must not imply the former is optional.
+
+- **N3 (nit — required, adjacent/pre-existing)** `workflow/compile_foreach_subgraph.go` line 257 — `" → "` separator in `emitWellFormednessErrors`.
+  `bodyStr := strings.Join(sortedBody, " → ")` uses ` → ` on alphabetically-sorted step names, implying a graph traversal order that does not exist. The prior review's N3 fix changed `doStepNotReachableDiags` (line 75) to `", "` but missed this second occurrence in the same file.
+  _Acceptance_: Change `" → "` to `", "` at line 257, consistent with `doStepNotReachableDiags`.
+
+#### Test Intent Assessment
+
+No test changes in this submission. Prior test quality remains as approved.
+
+#### Validation Performed
+
+```
+make test    — all packages pass (workflow, engine, sdk, conformance, run, transport/server, tools)
+make validate — all examples pass including for_each_review_loop.hcl
+```
+
+Raw `go test ./...` shows `internal/plugin` timeout failures (TestHandshakeInfo, TestPublicSDKFixtureConformance) — these are pre-existing environment flakiness with plugin binary discovery and are unrelated to this submission. `make test` (which builds plugins first) is clean.
+
+---
+
+### Round 3 Reviewer Notes (PR #25 — three required fixes)
+
+All addressed in commit `b8443f0`:
+
+1. **N1 (PRRT_kwDOSOBb1s5-UUhj) — `checkIterationSubgraphMembership` tautology** (`internal/cli/reattach.go`): Prior implementation checked `IterationOwner` on the freshly compiled graph. Since `IterationOwner` is derived from `IterationSteps` at compile time, the check was always consistent on the new graph and could never detect a step removed by a workflow edit. Rewrote to restore the `IterCursor` from `resp.VariableScope` via `workflow.RestoreVarScope`. When `cursor.InProgress == true`, verifies `resp.CurrentStep` is in `graph.ForEachs[cursor.NodeName].IterationSteps`. Function signature updated to `(graph, variableScope, currentStep)`. Tests updated to supply a serialised scope with an in-progress cursor.
+
+2. **N2 (PRRT_kwDOSOBb1s5-UUhs) — slog global in `rebindEachOnResume`** (`internal/engine/engine.go` + `extensions.go`): Added `log *slog.Logger` field to `Engine` struct and `WithLogger(log)` Option. `rebindEachOnResume` now uses `e.log`, falling back to `slog.Default()` only if nil. Both `resumePausedRun` and `resumeActiveRun` in `reattach.go` pass `engine.WithLogger(log)` so the warning routes through the CLI's structured logger.
+
+3. **N3 (PRRT_kwDOSOBb1s5-UUhw) — BFS comment on DFS walk** (`workflow/compile_foreach_subgraph.go` line ~124): Changed "forward BFS" to "forward reachability walk ... recursive DFS-style traversal with a visited set".
