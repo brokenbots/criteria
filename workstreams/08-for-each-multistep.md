@@ -703,3 +703,17 @@ make validate        — all examples including for_each_review_loop.hcl pass
 make lint-go         — no new baseline entries, no lint errors
 git diff main -- .golangci.baseline.yml — empty (no baseline drift)
 ```
+
+---
+
+### Round 2 Reviewer Notes (PR #25 — final comment fixes)
+
+Three documentation/comment threads required fixes; all addressed in commit `7a6d9a4`:
+
+1. **`compile_foreach_subgraph.go` file header** (thread `PRRT_kwDOSOBb1s5-UPfz`): Rewrote the iteration subgraph definition comment. Old text said traversal stops at "anything that is NOT a step (early exit)", which was imprecise and didn't match the two-phase BFS. New text: traversal stops at `_continue`, the legacy `for_each` node name, or a step outside the iteration body; well-formedness requires a path to `_continue` or an exit to an external step. Thread resolved.
+
+2. **`docs/workflow.md` body definition paragraph** (thread `PRRT_kwDOSOBb1s5-UPgD`): Old wording said steps reachable via "transitioning to a non-iteration state" are excluded. New wording: iteration body is defined by `_continue`-reachability; early-exit paths are those transitioning to targets outside the subgraph (external steps or states). Thread resolved.
+
+3. **`docs/workflow.md` early-exit paragraph** (thread `PRRT_kwDOSOBb1s5-UPgK`): Added sentence clarifying that early-exit transitions are permitted but the compiler still requires at least one path from `do` to `_continue`; without it the loop can never advance and the workflow fails to compile. Thread resolved.
+
+All 3 threads replied to and resolved. No code behavior changes — documentation clarity only.
