@@ -292,7 +292,7 @@ func TestSessionManagerDefaultDenyAll(t *testing.T) {
 
 	// No AllowTools — default deny policy
 	step := &workflow.StepNode{
-		Name:   "run",
+		Name:  "run",
 		Input: map[string]string{"perm_tools": "read_file"},
 	}
 	sink := &adapterEventCollector{}

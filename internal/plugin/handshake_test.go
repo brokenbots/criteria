@@ -8,8 +8,9 @@ import (
 	"testing"
 	"time"
 
-	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 	hplugin "github.com/hashicorp/go-plugin"
+
+	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 )
 
 func TestHandshakeInfo(t *testing.T) {

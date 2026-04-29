@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/brokenbots/criteria/internal/plugin"
 	engineruntime "github.com/brokenbots/criteria/internal/engine/runtime"
+	"github.com/brokenbots/criteria/internal/plugin"
 )
 
 func TestNodeForDispatchesStepStateAndUnknown(t *testing.T) {

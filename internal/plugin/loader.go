@@ -11,11 +11,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hashicorp/go-hclog"
+	hplugin "github.com/hashicorp/go-plugin"
+
 	"github.com/brokenbots/criteria/internal/adapter"
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 	"github.com/brokenbots/criteria/workflow"
-	"github.com/hashicorp/go-hclog"
-	hplugin "github.com/hashicorp/go-plugin"
 )
 
 // pluginClientLogger returns the hclog logger handed to go-plugin clients.
@@ -118,7 +119,7 @@ func (l *DefaultLoader) Resolve(ctx context.Context, name string) (Plugin, error
 
 	client := hplugin.NewClient(&hplugin.ClientConfig{
 		HandshakeConfig: HandshakeConfig,
-		Plugins:          PluginMap(),
+		Plugins:         PluginMap(),
 		// Use a process command decoupled from per-step timeout contexts.
 		// Session and loader shutdown are the only teardown mechanisms.
 		Cmd:              exec.Command(path),

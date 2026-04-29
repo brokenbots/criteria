@@ -10,8 +10,8 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/events"
+	"github.com/brokenbots/criteria/internal/adapter"
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 )
 

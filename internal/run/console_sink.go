@@ -46,13 +46,6 @@ func NewConsoleSink(out io.Writer, steps []string, color bool) *ConsoleSink {
 	}
 }
 
-func (c *ConsoleSink) writef(format string, args ...any) {
-	if c == nil || c.Out == nil {
-		return
-	}
-	fmt.Fprintf(c.Out, format, args...)
-}
-
 func (c *ConsoleSink) writeln(s string) {
 	if c == nil || c.Out == nil {
 		return

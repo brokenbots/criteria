@@ -74,6 +74,32 @@ Concretely:
 The reviewer enforces this. A PR that fixes the underlying issue but leaves the
 baseline entry should not be merged.
 
+## W01 snapshot (mechanical burn-down)
+
+W01 removed mechanical suppressions (`gofmt`, `goimports`, `unused`) and moved
+proto-name `revive` suppressions for `sdk/events.go` and
+`sdk/payloads_step.go` to file-level `//nolint:revive` with wire-compatibility
+justification.
+
+| Snapshot | Total | W03 | W04 | W06 | W10 |
+|---|---:|---:|---:|---:|---:|
+| Before W01 | 240 | 42 | 133 | 54 | 11 |
+| After W01 | 117 | 42 | 38 | 29 | 8 |
+
+Residual baseline by linter after W01:
+
+| Linter | Count |
+|---|---:|
+| `funlen` | 30 |
+| `gocritic` | 25 |
+| `gocognit` | 18 |
+| `gocyclo` | 13 |
+| `contextcheck` | 9 |
+| `errcheck` | 9 |
+| `revive` | 9 |
+| `staticcheck` | 3 |
+| `nilerr` | 1 |
+
 **Adding new suppressions** (e.g., for a legitimately complex function that
 cannot be simplified) requires:
 - A workstream-pointer comment naming who removes it.

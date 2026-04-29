@@ -21,9 +21,9 @@ func TestAdapterPluginWireNames(t *testing.T) {
 	}
 
 	for _, tc := range []struct {
-		name    string
-		got     string
-		method  string
+		name   string
+		got    string
+		method string
 	}{
 		{"Info", adapterPluginInfoMethod, "Info"},
 		{"OpenSession", adapterPluginOpenSessionMethod, "OpenSession"},

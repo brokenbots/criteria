@@ -3,9 +3,9 @@ package criteria_test
 import (
 	"testing"
 
-	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 	"github.com/brokenbots/criteria/events"
 	criteria "github.com/brokenbots/criteria/sdk"
+	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 )
 
 // TestPayloadAliasIdentity verifies that the SDK type aliases are truly

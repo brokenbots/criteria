@@ -186,7 +186,7 @@ func ApplyVarOverrides(g *FSMGraph, vars map[string]cty.Value, overrides map[str
 	if len(overrides) == 0 {
 		return vars
 	}
-	varObj, _ := vars["var"]
+	varObj := vars["var"]
 	existing := map[string]cty.Value{}
 	if varObj != cty.NilVal && varObj.Type().IsObjectType() {
 		for k := range varObj.Type().AttributeTypes() {

@@ -80,18 +80,6 @@ func extractPayloadMsg(env *pb.Envelope) proto.Message {
 	return r.Get(fd).Message().Interface()
 }
 
-// payloadArmName returns the oneof field name for env's active payload arm
-// (e.g. "run_started"), or "" if no payload is set.
-func payloadArmName(env *pb.Envelope) string {
-	r := env.ProtoReflect()
-	oo := r.Descriptor().Oneofs().ByName("payload")
-	fd := r.WhichOneof(oo)
-	if fd == nil {
-		return ""
-	}
-	return string(fd.Name())
-}
-
 func deterministicValue(fd protoreflect.FieldDescriptor, parent protoreflect.Message, depth int) protoreflect.Value {
 	if fd.Kind() == protoreflect.MessageKind || fd.Kind() == protoreflect.GroupKind {
 		if isWellKnown(fd.Message().FullName()) {

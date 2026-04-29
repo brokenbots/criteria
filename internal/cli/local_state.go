@@ -161,7 +161,7 @@ func ListStepCheckpoints() ([]*StepCheckpoint, error) {
 		}
 		return nil, err
 	}
-	var out []*StepCheckpoint
+	out := make([]*StepCheckpoint, 0, len(entries))
 	for _, e := range entries {
 		if e.IsDir() || filepath.Ext(e.Name()) != ".json" {
 			continue

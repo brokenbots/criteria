@@ -7,8 +7,8 @@ import (
 
 	"connectrpc.com/connect"
 
-	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 	criteria "github.com/brokenbots/criteria/sdk"
+	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 )
 
 // testResumeCorrectness verifies the Resume RPC contract.

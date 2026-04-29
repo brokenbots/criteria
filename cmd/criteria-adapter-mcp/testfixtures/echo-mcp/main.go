@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -29,7 +30,7 @@ func main() {
 	for {
 		payload, err := readFrame(reader)
 		if err != nil {
-			if err == io.EOF {
+			if errors.Is(err, io.EOF) {
 				return
 			}
 			return
@@ -139,7 +140,7 @@ func readFrame(r *bufio.Reader) ([]byte, error) {
 	for {
 		line, err := r.ReadString('\n')
 		if err != nil {
-			if err == io.EOF && line == "" {
+			if errors.Is(err, io.EOF) && line == "" {
 				return nil, io.EOF
 			}
 			return nil, err

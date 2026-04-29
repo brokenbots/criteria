@@ -130,21 +130,6 @@ func fileValidateFunction(opts FunctionOptions) function.Function {
 	})
 }
 
-// decodeBodyToStringMap converts an hcl.Body of key = "value" attributes into
-// a map[string]string. Numbers and bools are converted to their string
-// representations. Expression references (variables, functions) that cannot be
-// evaluated without a context are deferred to W04.
-func decodeBodyToStringMap(body hcl.Body) (map[string]string, hcl.Diagnostics) {
-	if body == nil {
-		return nil, nil
-	}
-	attrs, diags := body.JustAttributes()
-	if diags.HasErrors() {
-		return nil, diags
-	}
-	return decodeAttrsToStringMap(attrs)
-}
-
 // knownAgentConfigFields maps adapter names to the set of fields that belong in
 // the agent config block rather than a step input block. When an unknown
 // step-input field matches this list, the diagnostic names the agent config

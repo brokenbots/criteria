@@ -7,8 +7,8 @@ import (
 
 	"connectrpc.com/connect"
 
-	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 	criteria "github.com/brokenbots/criteria/sdk"
+	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 )
 
 // testSchemaVersion verifies schema-version enforcement.

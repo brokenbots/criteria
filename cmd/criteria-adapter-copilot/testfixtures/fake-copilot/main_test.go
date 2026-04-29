@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"testing"
@@ -38,7 +39,7 @@ func TestReadWriteFrameRoundTrip(t *testing.T) {
 func TestReadFrameEOF(t *testing.T) {
 	r := bufio.NewReader(bytes.NewReader(nil))
 	_, err := readFrame(r)
-	if err != io.EOF {
+	if !errors.Is(err, io.EOF) {
 		t.Fatalf("expected io.EOF, got %v", err)
 	}
 }
@@ -136,4 +137,3 @@ func TestPermissionHandshakeSequencing(t *testing.T) {
 		t.Fatal("goroutine did not unblock after permission resolved")
 	}
 }
-

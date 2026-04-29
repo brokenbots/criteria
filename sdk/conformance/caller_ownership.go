@@ -2,14 +2,13 @@ package conformance
 
 import (
 	"context"
-	"net/http"
 	"testing"
 	"time"
 
 	"connectrpc.com/connect"
 
-	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 	criteria "github.com/brokenbots/criteria/sdk"
+	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 )
 
 // testCallerOwnership asserts the caller-ownership contract for every mutating
@@ -53,17 +52,14 @@ func testCallerOwnership(t *testing.T, s Subject) {
 // ownershipSetup registers two agents (owner A and attacker B) and creates
 // a run owned by A. It returns the clients and IDs needed for ownership tests.
 func ownershipSetup(t *testing.T, s Subject) (
-	baseURL string,
-	client *http.Client,
 	oClient criteria.ServiceClient,
-	ownerID, ownerToken, attackerID, attackerToken, runID string,
+	ownerID, attackerID, attackerToken, runID string,
 ) {
 	t.Helper()
-	var teardown func()
-	baseURL, client, teardown = s.SetUp(t)
+	baseURL, client, teardown := s.SetUp(t)
 	t.Cleanup(teardown)
 
-	ownerToken = "tok-owner"
+	ownerToken := "tok-owner"
 	attackerToken = "tok-attacker"
 	ownerID = s.RegisterAgent(t, "owner", ownerToken)
 	attackerID = s.RegisterAgent(t, "attacker", attackerToken)
@@ -77,11 +73,11 @@ func ownershipSetup(t *testing.T, s Subject) (
 		t.Fatalf("ownershipSetup: CreateRun: %v", err)
 	}
 	runID = runResp.Msg.RunId
-	return
+	return oClient, ownerID, attackerID, attackerToken, runID
 }
 
 func testOwnership_Heartbeat(t *testing.T, s Subject) {
-	_, _, oClient, ownerID, _, _, attackerToken, _ := ownershipSetup(t, s)
+	oClient, ownerID, _, attackerToken, _ := ownershipSetup(t, s)
 	req := connect.NewRequest(&pb.HeartbeatRequest{CriteriaId: ownerID})
 	req.Header().Set("Authorization", "Bearer "+attackerToken)
 	_, err := oClient.Heartbeat(context.Background(), req)
@@ -92,7 +88,7 @@ func testOwnership_Heartbeat(t *testing.T, s Subject) {
 }
 
 func testOwnership_CreateRun(t *testing.T, s Subject) {
-	_, _, oClient, ownerID, _, _, attackerToken, _ := ownershipSetup(t, s)
+	oClient, ownerID, _, attackerToken, _ := ownershipSetup(t, s)
 	req := connect.NewRequest(&pb.CreateRunRequest{CriteriaId: ownerID, WorkflowName: "wf"})
 	req.Header().Set("Authorization", "Bearer "+attackerToken)
 	_, err := oClient.CreateRun(context.Background(), req)
@@ -103,7 +99,7 @@ func testOwnership_CreateRun(t *testing.T, s Subject) {
 }
 
 func testOwnership_ReattachRun(t *testing.T, s Subject) {
-	_, _, oClient, _, _, attackerID, attackerToken, runID := ownershipSetup(t, s)
+	oClient, _, attackerID, attackerToken, runID := ownershipSetup(t, s)
 	req := connect.NewRequest(&pb.ReattachRunRequest{RunId: runID, CriteriaId: attackerID})
 	req.Header().Set("Authorization", "Bearer "+attackerToken)
 	_, err := oClient.ReattachRun(context.Background(), req)
@@ -114,7 +110,7 @@ func testOwnership_ReattachRun(t *testing.T, s Subject) {
 }
 
 func testOwnership_SubmitEvents(t *testing.T, s Subject) {
-	_, _, oClient, _, _, _, attackerToken, runID := ownershipSetup(t, s)
+	oClient, _, _, attackerToken, runID := ownershipSetup(t, s)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	stream := oClient.SubmitEvents(ctx)
@@ -137,7 +133,7 @@ func testOwnership_SubmitEvents(t *testing.T, s Subject) {
 }
 
 func testOwnership_Control(t *testing.T, s Subject) {
-	_, _, oClient, ownerID, _, _, attackerToken, _ := ownershipSetup(t, s)
+	oClient, ownerID, _, attackerToken, _ := ownershipSetup(t, s)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	req := connect.NewRequest(&pb.ControlSubscribeRequest{CriteriaId: ownerID})

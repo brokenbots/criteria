@@ -17,16 +17,16 @@ func (n *waitNode) Name() string { return n.node.Name }
 
 func (n *waitNode) Evaluate(ctx context.Context, st *RunState, deps Deps) (string, error) {
 	if n.node.Duration > 0 {
-		return n.evaluateDuration(ctx, st, deps)
+		return n.evaluateDuration(ctx, deps)
 	}
-	return n.evaluateSignal(ctx, st, deps)
+	return n.evaluateSignal(st, deps)
 }
 
 // evaluateDuration sleeps for the configured duration and then resumes.
 // ctx cancellation aborts the wait and propagates as run cancellation.
 // Duration mode enforces a single outcome at compile time (workflow.compile.go),
 // so we look up "elapsed" directly to avoid map-iteration non-determinism.
-func (n *waitNode) evaluateDuration(ctx context.Context, st *RunState, deps Deps) (string, error) {
+func (n *waitNode) evaluateDuration(ctx context.Context, deps Deps) (string, error) {
 	deps.Sink.OnWaitEntered(n.node.Name, "duration", n.node.Duration.String(), "")
 
 	select {
@@ -58,7 +58,7 @@ func (n *waitNode) evaluateDuration(ctx context.Context, st *RunState, deps Deps
 //     re-emits WaitEntered, returns ErrPaused so the run stays blocked.
 //   - Resume (ResumePayload != nil, PendingSignal cleared by orchestrator):
 //     emits WaitResumed, returns the single outcome target.
-func (n *waitNode) evaluateSignal(ctx context.Context, st *RunState, deps Deps) (string, error) {
+func (n *waitNode) evaluateSignal(st *RunState, deps Deps) (string, error) {
 	if st.ResumePayload != nil {
 		// Resumed: the orchestrator delivered the signal.
 		payload := st.ResumePayload

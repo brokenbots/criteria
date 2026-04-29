@@ -5,8 +5,9 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/brokenbots/criteria/workflow"
 	"github.com/zclconf/go-cty/cty"
+
+	"github.com/brokenbots/criteria/workflow"
 )
 
 // Option applies optional engine configuration.

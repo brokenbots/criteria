@@ -4,18 +4,6 @@ issues:
       linters:
         - gocritic
       text: 'builtinShadow: shadowing of predeclared identifier: close' # W06: gocritic finding
-    - path: branch_compile_test.go
-      linters:
-        - unused
-      text: 'const `branchBaseWorkflow` is unused' # W04: unused finding
-    - path: 'cmd/criteria-adapter-copilot/conformance_test.go'
-      linters:
-        - gofmt
-      text: File is not properly formatted # W04: gofmt finding
-    - path: 'cmd/criteria-adapter-copilot/conformance_test.go'
-      linters:
-        - goimports
-      text: File is not properly formatted # W04: goimports finding
     - path: 'cmd/criteria-adapter-copilot/copilot.go'
       linters:
         - funlen
@@ -38,14 +26,6 @@ issues:
       text: '`permissionDetails`' # W03: simplify permissionDetails
     - path: 'cmd/criteria-adapter-copilot/copilot.go'
       linters:
-        - gofmt
-      text: File is not properly formatted # W04: gofmt finding
-    - path: 'cmd/criteria-adapter-copilot/copilot.go'
-      linters:
-        - goimports
-      text: File is not properly formatted # W04: goimports finding
-    - path: 'cmd/criteria-adapter-copilot/copilot.go'
-      linters:
         - nilerr
       text: 'error is not nil \(line 518\) but it returns nil' # W04: nilerr finding
     - path: 'cmd/criteria-adapter-copilot/copilot.go'
@@ -60,34 +40,10 @@ issues:
       linters:
         - staticcheck
       text: 'SA1019: s\.inner\.Destroy is deprecated: Use \[Session\.Disconnect\] instead\. Destroy will be removed in a future release\.' # W04: staticcheck finding
-    - path: 'cmd/criteria-adapter-copilot/copilot_internal_test.go'
-      linters:
-        - goimports
-      text: File is not properly formatted # W04: goimports finding
     - path: 'cmd/criteria-adapter-copilot/testfixtures/fake-copilot/main.go'
       linters:
         - gocritic
       text: 'hugeParam: msg is heavy \(112 bytes\); consider passing it by pointer' # W06: gocritic finding
-    - path: 'cmd/criteria-adapter-copilot/testfixtures/fake-copilot/main.go'
-      linters:
-        - gofmt
-      text: File is not properly formatted # W04: gofmt finding
-    - path: 'cmd/criteria-adapter-copilot/testfixtures/fake-copilot/main.go'
-      linters:
-        - goimports
-      text: File is not properly formatted # W04: goimports finding
-    - path: 'cmd/criteria-adapter-copilot/testfixtures/fake-copilot/main_test.go'
-      linters:
-        - errorlint
-      text: 'comparing with != will fail on wrapped errors\. Use errors\.Is to check for a specific error' # W04: errorlint finding
-    - path: 'cmd/criteria-adapter-copilot/testfixtures/fake-copilot/main_test.go'
-      linters:
-        - gofmt
-      text: File is not properly formatted # W04: gofmt finding
-    - path: 'cmd/criteria-adapter-copilot/testfixtures/fake-copilot/main_test.go'
-      linters:
-        - goimports
-      text: File is not properly formatted # W04: goimports finding
     - path: 'cmd/criteria-adapter-mcp/bridge.go'
       linters:
         - contextcheck
@@ -108,14 +64,6 @@ issues:
       linters:
         - gocyclo
       text: '`\(\*MCPBridge\)\.OpenSession`' # W03: simplify (*MCPBridge).OpenSession
-    - path: 'cmd/criteria-adapter-mcp/bridge.go'
-      linters:
-        - gofmt
-      text: File is not properly formatted # W04: gofmt finding
-    - path: 'cmd/criteria-adapter-mcp/bridge.go'
-      linters:
-        - goimports
-      text: File is not properly formatted # W04: goimports finding
     - path: 'cmd/criteria-adapter-mcp/conformance_test.go'
       linters:
         - gocritic
@@ -128,18 +76,6 @@ issues:
       linters:
         - gocritic
       text: 'stringXbytes: suggestion: !bytes\.Equal\(got, payload\)' # W06: gocritic finding
-    - path: 'cmd/criteria-adapter-mcp/testfixtures/echo-mcp/main.go'
-      linters:
-        - errorlint
-      text: 'comparing with == will fail on wrapped errors\. Use errors\.Is to check for a specific error' # W04: errorlint finding
-    - path: 'cmd/criteria-adapter-noop/main.go'
-      linters:
-        - gofmt
-      text: File is not properly formatted # W04: gofmt finding
-    - path: 'cmd/criteria-adapter-noop/main.go'
-      linters:
-        - goimports
-      text: File is not properly formatted # W04: goimports finding
     - path: compile_validation.go
       linters:
         - funlen
@@ -232,14 +168,6 @@ issues:
       linters:
         - funlen
       text: 'Function ''Compile''' # W03: refactor Compile
-    - path: compile_validation.go
-      linters:
-        - unused
-      text: 'func `decodeBodyToStringMap` is unused' # W04: unused finding
-    - path: conformance/ack.go
-      linters:
-        - dupword
-      text: 'Duplicate words \(seq\[%d\]=%d\) found' # W04: dupword finding
     - path: conformance/ack.go
       linters:
         - errcheck
@@ -256,26 +184,10 @@ issues:
       linters:
         - funlen
       text: 'Function ''testAckOrderingSequential''' # W03: refactor testAckOrderingSequential
-    - path: conformance/ack.go
-      linters:
-        - gofmt
-      text: File is not properly formatted # W04: gofmt finding
-    - path: conformance/ack.go
-      linters:
-        - goimports
-      text: File is not properly formatted # W04: goimports finding
     - path: conformance/caller_ownership.go
       linters:
         - gocritic
       text: 'tooManyResultsChecker: function has more than 5 results, consider to simplify the function' # W06: gocritic finding
-    - path: conformance/caller_ownership.go
-      linters:
-        - gofmt
-      text: File is not properly formatted # W04: gofmt finding
-    - path: conformance/caller_ownership.go
-      linters:
-        - goimports
-      text: File is not properly formatted # W04: goimports finding
     - path: conformance/caller_ownership.go
       linters:
         - revive
@@ -304,30 +216,10 @@ issues:
       linters:
         - revive
       text: 'var-naming: don''t use underscores in Go names; func testOwnership_SubmitEvents should be testOwnershipSubmitEvents' # W06: revive finding
-    - path: conformance/caller_ownership.go
-      linters:
-        - unparam
-      text: 'ownershipSetup - result baseURL is never used' # W04: unparam finding
-    - path: conformance/caller_ownership.go
-      linters:
-        - unparam
-      text: 'ownershipSetup - result client is never used' # W04: unparam finding
-    - path: conformance/caller_ownership.go
-      linters:
-        - unparam
-      text: 'ownershipSetup - result ownerToken is never used' # W04: unparam finding
     - path: conformance/control.go
       linters:
         - funlen
       text: 'Function ''testControlAgentIsolation''' # W03: refactor testControlAgentIsolation
-    - path: conformance/control.go
-      linters:
-        - gofmt
-      text: File is not properly formatted # W04: gofmt finding
-    - path: conformance/control.go
-      linters:
-        - goimports
-      text: File is not properly formatted # W04: goimports finding
     - path: conformance/envelope.go
       linters:
         - errcheck
@@ -340,50 +232,10 @@ issues:
       linters:
         - gocognit
       text: '`testEnvelopeRoundTrip`' # W03: simplify testEnvelopeRoundTrip
-    - path: conformance/envelope.go
-      linters:
-        - gofmt
-      text: File is not properly formatted # W04: gofmt finding
-    - path: conformance/envelope.go
-      linters:
-        - goimports
-      text: File is not properly formatted # W04: goimports finding
-    - path: conformance/helpers.go
-      linters:
-        - unused
-      text: 'func `payloadArmName` is unused' # W04: unused finding
-    - path: conformance/inmem_subject_test.go
-      linters:
-        - gofmt
-      text: File is not properly formatted # W04: gofmt finding
-    - path: conformance/inmem_subject_test.go
-      linters:
-        - goimports
-      text: File is not properly formatted # W04: goimports finding
-    - path: conformance/inmem_subject_test.go
-      linters:
-        - prealloc
-      text: 'Consider pre-allocating `out`' # W04: prealloc finding
-    - path: conformance/inmem_subject_test.go
-      linters:
-        - unused
-      text: 'field `once` is unused' # W04: unused finding
-    - path: conformance/inmem_subject_test.go
-      linters:
-        - unused
-      text: 'func `\(\*runRecord\)\.stop` is unused' # W04: unused finding
     - path: conformance/resume.go
       linters:
         - errcheck
       text: 'Error return value of `stream\.CloseRequest` is not checked' # W04: errcheck finding
-    - path: conformance/resume.go
-      linters:
-        - gofmt
-      text: File is not properly formatted # W04: gofmt finding
-    - path: conformance/resume.go
-      linters:
-        - goimports
-      text: File is not properly formatted # W04: goimports finding
     - path: conformance/resume.go
       linters:
         - revive
@@ -396,14 +248,6 @@ issues:
       linters:
         - errcheck
       text: 'Error return value of `stream\.CloseRequest` is not checked' # W04: errcheck finding
-    - path: conformance/schema.go
-      linters:
-        - gofmt
-      text: File is not properly formatted # W04: gofmt finding
-    - path: conformance/schema.go
-      linters:
-        - goimports
-      text: File is not properly formatted # W04: goimports finding
     - path: conformance/typestring.go
       linters:
         - errcheck
@@ -416,22 +260,6 @@ issues:
       linters:
         - gocognit
       text: '`testTypeStringStability`' # W03: simplify testTypeStringStability
-    - path: conformance/typestring.go
-      linters:
-        - gofmt
-      text: File is not properly formatted # W04: gofmt finding
-    - path: conformance/typestring.go
-      linters:
-        - goimports
-      text: File is not properly formatted # W04: goimports finding
-    - path: connect.go
-      linters:
-        - gofmt
-      text: File is not properly formatted # W04: gofmt finding
-    - path: connect.go
-      linters:
-        - goimports
-      text: File is not properly formatted # W04: goimports finding
     - path: eval.go
       linters:
         - gocognit
@@ -452,114 +280,6 @@ issues:
       linters:
         - gocritic
       text: 'hugeParam: b is heavy \(120 bytes\); consider passing it by pointer' # W10: EachBinding is a value-type aggregate
-    - path: eval.go
-      linters:
-        - gosimple
-      text: 'S1005: unnecessary assignment to the blank identifier' # W04: gosimple finding
-    - path: events.go
-      linters:
-        - gofmt
-      text: File is not properly formatted # W04: gofmt finding
-    - path: events.go
-      linters:
-        - goimports
-      text: File is not properly formatted # W04: goimports finding
-    - path: events.go
-      linters:
-        - revive
-      text: 'var-naming: don''t use underscores in Go names; type Envelope_AdapterEvent should be EnvelopeAdapterEvent' # W06: revive finding
-    - path: events.go
-      linters:
-        - revive
-      text: 'var-naming: don''t use underscores in Go names; type Envelope_ApprovalDecision should be EnvelopeApprovalDecision' # W06: revive finding
-    - path: events.go
-      linters:
-        - revive
-      text: 'var-naming: don''t use underscores in Go names; type Envelope_ApprovalRequested should be EnvelopeApprovalRequested' # W06: revive finding
-    - path: events.go
-      linters:
-        - revive
-      text: 'var-naming: don''t use underscores in Go names; type Envelope_BranchEvaluated should be EnvelopeBranchEvaluated' # W06: revive finding
-    - path: events.go
-      linters:
-        - revive
-      text: 'var-naming: don''t use underscores in Go names; type Envelope_CriteriaDisconnected should be EnvelopeCriteriaDisconnected' # W06: revive finding
-    - path: events.go
-      linters:
-        - revive
-      text: 'var-naming: don''t use underscores in Go names; type Envelope_CriteriaHeartbeat should be EnvelopeCriteriaHeartbeat' # W06: revive finding
-    - path: events.go
-      linters:
-        - revive
-      text: 'var-naming: don''t use underscores in Go names; type Envelope_ForEachEntered should be EnvelopeForEachEntered' # W06: revive finding
-    - path: events.go
-      linters:
-        - revive
-      text: 'var-naming: don''t use underscores in Go names; type Envelope_StepIterationCompleted should be EnvelopeStepIterationCompleted' # W10: proto alias
-    - path: events.go
-      linters:
-        - revive
-      text: 'var-naming: don''t use underscores in Go names; type Envelope_StepIterationItem should be EnvelopeStepIterationItem' # W10: proto alias
-    - path: events.go
-      linters:
-        - revive
-      text: 'var-naming: don''t use underscores in Go names; type Envelope_StepIterationStarted should be EnvelopeStepIterationStarted' # W10: proto alias
-    - path: events.go
-      linters:
-        - revive
-      text: 'var-naming: don''t use underscores in Go names; type Envelope_RunCompleted should be EnvelopeRunCompleted' # W06: revive finding
-    - path: events.go
-      linters:
-        - revive
-      text: 'var-naming: don''t use underscores in Go names; type Envelope_RunFailed should be EnvelopeRunFailed' # W06: revive finding
-    - path: events.go
-      linters:
-        - revive
-      text: 'var-naming: don''t use underscores in Go names; type Envelope_RunStarted should be EnvelopeRunStarted' # W06: revive finding
-    - path: events.go
-      linters:
-        - revive
-      text: 'var-naming: don''t use underscores in Go names; type Envelope_ScopeIterCursorSet should be EnvelopeScopeIterCursorSet' # W06: revive finding
-    - path: events.go
-      linters:
-        - revive
-      text: 'var-naming: don''t use underscores in Go names; type Envelope_StepEntered should be EnvelopeStepEntered' # W06: revive finding
-    - path: events.go
-      linters:
-        - revive
-      text: 'var-naming: don''t use underscores in Go names; type Envelope_StepLog should be EnvelopeStepLog' # W06: revive finding
-    - path: events.go
-      linters:
-        - revive
-      text: 'var-naming: don''t use underscores in Go names; type Envelope_StepOutcome should be EnvelopeStepOutcome' # W06: revive finding
-    - path: events.go
-      linters:
-        - revive
-      text: 'var-naming: don''t use underscores in Go names; type Envelope_StepOutputCaptured should be EnvelopeStepOutputCaptured' # W06: revive finding
-    - path: events.go
-      linters:
-        - revive
-      text: 'var-naming: don''t use underscores in Go names; type Envelope_StepResumed should be EnvelopeStepResumed' # W06: revive finding
-    - path: events.go
-      linters:
-        - revive
-      text: 'var-naming: don''t use underscores in Go names; type Envelope_StepTransition should be EnvelopeStepTransition' # W06: revive finding
-    - path: events.go
-      linters:
-        - revive
-      text: 'var-naming: don''t use underscores in Go names; type Envelope_VariableSet should be EnvelopeVariableSet' # W06: revive finding
-    - path: events.go
-      linters:
-        - revive
-      text: 'var-naming: don''t use underscores in Go names; type Envelope_WaitEntered should be EnvelopeWaitEntered' # W06: revive finding
-    - path: events.go
-      linters:
-        - revive
-      text: 'var-naming: don''t use underscores in Go names; type Envelope_WaitResumed should be EnvelopeWaitResumed' # W06: revive finding
-    - path: events.go
-      linters:
-        - revive
-      text: 'var-naming: don''t use underscores in Go names; type Envelope_WatchReady should be EnvelopeWatchReady' # W06: revive finding
     - path: events/types.go
       linters:
         - funlen
@@ -592,14 +312,6 @@ issues:
       linters:
         - gocritic
       text: 'unnamedResult: consider giving a name to these results' # W06: gocritic finding
-    - path: internal/adapter/conformance/testfixtures/broken/main.go
-      linters:
-        - gofmt
-      text: File is not properly formatted # W04: gofmt finding
-    - path: internal/adapter/conformance/testfixtures/broken/main.go
-      linters:
-        - goimports
-      text: File is not properly formatted # W04: goimports finding
     - path: internal/adapters/shell/shell.go
       linters:
         - gocritic
@@ -632,14 +344,6 @@ issues:
       linters:
         - gocritic
       text: 'hugeParam: opts is heavy \(184 bytes\); consider passing it by pointer' # W06: gocritic finding
-    - path: internal/cli/apply_output.go
-      linters:
-        - gofmt
-      text: File is not properly formatted # W04: gofmt finding
-    - path: internal/cli/apply_output.go
-      linters:
-        - goimports
-      text: File is not properly formatted # W04: goimports finding
     - path: internal/cli/compile.go
       linters:
         - errcheck
@@ -664,10 +368,6 @@ issues:
       linters:
         - gocognit
       text: '`serverHTTPClient`' # W03: simplify serverHTTPClient
-    - path: internal/cli/local_state.go
-      linters:
-        - prealloc
-      text: 'Consider pre-allocating `out`' # W04: prealloc finding
     - path: internal/cli/plan.go
       linters:
         - funlen
@@ -704,30 +404,6 @@ issues:
       linters:
         - gocritic
       text: 'hugeParam: clientOpts is heavy \(88 bytes\); consider passing it by pointer' # W06: gocritic finding
-    - path: internal/cli/run.go
-      linters:
-        - gofmt
-      text: File is not properly formatted # W04: gofmt finding
-    - path: internal/cli/run.go
-      linters:
-        - goimports
-      text: File is not properly formatted # W04: goimports finding
-    - path: internal/cli/status.go
-      linters:
-        - gofmt
-      text: File is not properly formatted # W04: gofmt finding
-    - path: internal/cli/status.go
-      linters:
-        - goimports
-      text: File is not properly formatted # W04: goimports finding
-    - path: internal/cli/test_helpers_test.go
-      linters:
-        - gofmt
-      text: File is not properly formatted # W04: gofmt finding
-    - path: internal/cli/test_helpers_test.go
-      linters:
-        - goimports
-      text: File is not properly formatted # W04: goimports finding
     - path: internal/engine/engine.go
       linters:
         - contextcheck
@@ -736,46 +412,10 @@ issues:
       linters:
         - errcheck
       text: 'Error return value of `sessions\.Shutdown` is not checked' # W04: errcheck finding
-    - path: internal/engine/engine.go
-      linters:
-        - goimports
-      text: File is not properly formatted # W04: goimports finding
-    - path: internal/engine/extensions.go
-      linters:
-        - goimports
-      text: File is not properly formatted # W04: goimports finding
-    - path: internal/engine/node_branch.go
-      linters:
-        - goimports
-      text: File is not properly formatted # W04: goimports finding
-    - path: internal/engine/node_dispatch_test.go
-      linters:
-        - gofmt
-      text: File is not properly formatted # W04: gofmt finding
-    - path: internal/engine/node_dispatch_test.go
-      linters:
-        - goimports
-      text: File is not properly formatted # W04: goimports finding
     - path: internal/engine/node_step.go
       linters:
         - contextcheck
       text: 'Non-inherited new context, use function like `context\.WithXXX` instead' # W04: contextcheck finding
-    - path: internal/engine/node_wait.go
-      linters:
-        - unparam
-      text: '`\(\*waitNode\)\.evaluateDuration` - `st` is unused' # W04: unparam finding
-    - path: internal/engine/node_wait.go
-      linters:
-        - unparam
-      text: '`\(\*waitNode\)\.evaluateSignal` - `ctx` is unused' # W04: unparam finding
-    - path: internal/engine/runstate.go
-      linters:
-        - goimports
-      text: File is not properly formatted # W04: goimports finding
-    - path: internal/plugin/handshake_test.go
-      linters:
-        - goimports
-      text: File is not properly formatted # W04: goimports finding
     - path: internal/plugin/loader.go
       linters:
         - funlen
@@ -792,90 +432,18 @@ issues:
       linters:
         - gocritic
       text: 'emptyStringTest: replace `len\(s\) > 0` with `s != ""`' # W06: gocritic finding
-    - path: internal/plugin/loader.go
-      linters:
-        - gofmt
-      text: File is not properly formatted # W04: gofmt finding
-    - path: internal/plugin/loader.go
-      linters:
-        - goimports
-      text: File is not properly formatted # W04: goimports finding
     - path: internal/plugin/policy.go
       linters:
         - gocritic
       text: 'unnamedResult: consider giving a name to these results' # W06: gocritic finding
-    - path: internal/plugin/serve.go
-      linters:
-        - goimports
-      text: File is not properly formatted # W04: goimports finding
-    - path: internal/plugin/serve_test.go
-      linters:
-        - gofmt
-      text: File is not properly formatted # W04: gofmt finding
-    - path: internal/plugin/serve_test.go
-      linters:
-        - goimports
-      text: File is not properly formatted # W04: goimports finding
     - path: internal/plugin/sessions.go
       linters:
         - errcheck
       text: 'Error return value of `plug\.CloseSession` is not checked' # W04: errcheck finding
-    - path: internal/plugin/sessions_test.go
-      linters:
-        - gofmt
-      text: File is not properly formatted # W04: gofmt finding
-    - path: internal/plugin/sessions_test.go
-      linters:
-        - goimports
-      text: File is not properly formatted # W04: goimports finding
     - path: internal/plugin/testfixtures/permissive/main.go
       linters:
         - funlen
       text: 'Function ''Execute''' # W03: refactor Execute
-    - path: internal/plugin/testfixtures/permissive/main.go
-      linters:
-        - gofmt
-      text: File is not properly formatted # W04: gofmt finding
-    - path: internal/plugin/testfixtures/permissive/main.go
-      linters:
-        - goimports
-      text: File is not properly formatted # W04: goimports finding
-    - path: internal/plugin/testfixtures/publicsdk/main.go
-      linters:
-        - gofmt
-      text: File is not properly formatted # W04: gofmt finding
-    - path: internal/plugin/testfixtures/publicsdk/main.go
-      linters:
-        - goimports
-      text: File is not properly formatted # W04: goimports finding
-    - path: internal/run/console_sink.go
-      linters:
-        - unused
-      text: 'func `\(\*ConsoleSink\)\.writef` is unused' # W04: unused finding
-    - path: internal/run/local_sink.go
-      linters:
-        - gofmt
-      text: File is not properly formatted # W04: gofmt finding
-    - path: internal/run/local_sink.go
-      linters:
-        - goimports
-      text: File is not properly formatted # W04: goimports finding
-    - path: internal/run/multi_sink_test.go
-      linters:
-        - gofmt
-      text: File is not properly formatted # W04: gofmt finding
-    - path: internal/run/multi_sink_test.go
-      linters:
-        - goimports
-      text: File is not properly formatted # W04: goimports finding
-    - path: internal/run/sink.go
-      linters:
-        - gofmt
-      text: File is not properly formatted # W04: gofmt finding
-    - path: internal/run/sink.go
-      linters:
-        - goimports
-      text: File is not properly formatted # W04: goimports finding
     - path: internal/transport/server/client_streams.go
       linters:
         - funlen
@@ -892,38 +460,6 @@ issues:
       linters:
         - gocyclo
       text: '`\(\*Client\)\.controlLoop`' # W03: simplify (*Client).controlLoop
-    - path: internal/transport/server/reattach_scope_integration_test.go
-      linters:
-        - goimports
-      text: File is not properly formatted # W04: goimports finding
-    - path: internal/transport/server/reattach_scope_integration_test.go
-      linters:
-        - unused
-      text: 'func `\(\*captureInputSink\)\.Log` is unused' # W04: unused finding
-    - path: internal/transport/server/reattach_scope_integration_test.go
-      linters:
-        - unused
-      text: 'func `\(\*captureInputSink\)\.OnRunCompleted` is unused' # W04: unused finding
-    - path: internal/transport/server/reattach_scope_integration_test.go
-      linters:
-        - unused
-      text: 'func `\(\*captureInputSink\)\.OnStepEntered` is unused' # W04: unused finding
-    - path: internal/transport/server/reattach_scope_integration_test.go
-      linters:
-        - unused
-      text: 'func `\(\*captureInputSink\)\.OnStepOutcome` is unused' # W04: unused finding
-    - path: internal/transport/server/reattach_scope_integration_test.go
-      linters:
-        - unused
-      text: 'func `\(\*captureInputSink\)\.OnStepOutputCaptured` is unused' # W04: unused finding
-    - path: internal/transport/server/reattach_scope_integration_test.go
-      linters:
-        - unused
-      text: 'func `\(\*captureInputSink\)\.OnVariableSet` is unused' # W04: unused finding
-    - path: internal/transport/server/reattach_scope_integration_test.go
-      linters:
-        - unused
-      text: 'type `captureInputSink` is unused' # W04: unused finding
     - path: parser.go
       linters:
         - funlen
@@ -932,31 +468,3 @@ issues:
       linters:
         - gocritic
       text: 'rangeValCopy: each iteration copies 240 bytes \(consider pointers or indexing\)' # W10: StepSpec grew with W10 fields
-    - path: payloads_step.go
-      linters:
-        - revive
-      text: 'var-naming: don''t use underscores in Go names; const LogStream_LOG_STREAM_AGENT should be LogStreamLOGSTREAMAGENT' # W06: revive finding
-    - path: payloads_step.go
-      linters:
-        - revive
-      text: 'var-naming: don''t use underscores in Go names; const LogStream_LOG_STREAM_STDERR should be LogStreamLOGSTREAMSTDERR' # W06: revive finding
-    - path: payloads_step.go
-      linters:
-        - revive
-      text: 'var-naming: don''t use underscores in Go names; const LogStream_LOG_STREAM_STDOUT should be LogStreamLOGSTREAMSTDOUT' # W06: revive finding
-    - path: payloads_step.go
-      linters:
-        - revive
-      text: 'var-naming: don''t use underscores in Go names; const LogStream_LOG_STREAM_UNSPECIFIED should be LogStreamLOGSTREAMUNSPECIFIED' # W06: revive finding
-    - path: pluginhost/serve.go
-      linters:
-        - goimports
-      text: File is not properly formatted # W04: goimports finding
-    - path: sdk_test.go
-      linters:
-        - gofmt
-      text: File is not properly formatted # W04: gofmt finding
-    - path: sdk_test.go
-      linters:
-        - goimports
-      text: File is not properly formatted # W04: goimports finding

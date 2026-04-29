@@ -1,8 +1,9 @@
 package engine
 
 import (
-	"github.com/brokenbots/criteria/workflow"
 	"github.com/zclconf/go-cty/cty"
+
+	"github.com/brokenbots/criteria/workflow"
 )
 
 // RunState carries mutable run-scoped interpreter state.

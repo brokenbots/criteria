@@ -8,8 +8,8 @@ import (
 
 	"connectrpc.com/connect"
 
-	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 	criteria "github.com/brokenbots/criteria/sdk"
+	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 )
 
 // testAckOrdering verifies that SubmitEvents acks arrive with monotonically
@@ -84,7 +84,7 @@ func testAckOrderingSequential(t *testing.T, s Subject) {
 	// Verify monotonically increasing seq.
 	for i := 1; i < len(acks); i++ {
 		if acks[i].Seq <= acks[i-1].Seq {
-			t.Errorf("ack seq not monotonically increasing at index %d: seq[%d]=%d seq[%d]=%d",
+			t.Errorf("ack sequence not monotonically increasing at index %d: prev[%d]=%d curr[%d]=%d",
 				i, i-1, acks[i-1].Seq, i, acks[i].Seq)
 		}
 	}
