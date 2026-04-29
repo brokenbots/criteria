@@ -582,8 +582,8 @@ Deletes:
 - [x] Step 7 — proto + sink rename (keep field numbers).
 - [x] Step 8 — tests and fixtures: rewrite the W08 test surface.
 - [x] Step 9 — examples: rewrite `for_each_review_loop.hcl`; create `workflow_step_compose.hcl` (partial: `for_each_review_loop.hcl` + `demo_tour_local.hcl` updated; `workflow_step_compose.hcl` deferred to W11 scope as non-blocking).
-- [ ] Step 10 — `docs/workflow.md` rewrite.
-- [ ] Step 11 — `workstreams/README.md` and `PLAN.md` cross-doc updates.
+- [x] Step 10 — `docs/workflow.md` rewrite.
+- [x] Step 11 — `workstreams/README.md` and `PLAN.md` cross-doc updates.
 
 ## Exit criteria
 
@@ -1020,4 +1020,52 @@ make proto-check-drift  → clean (exit 0)
 make validate           → clean, no warnings (exit 0)
 grep W08 engine symbols → 0 hits in non-test Go code ✓
 ls compile_foreach_subgraph.go node_for_each.go → both absent ✓
+```
+
+---
+
+### Remediation 3 — lint clean-up, golden file sync, and task checklist finalization
+
+#### Context
+
+After the Review 2026-04-29-04 approval, three residual `make lint-go` failures were found in the working tree plus stale golden files in `internal/cli/testdata/`.
+
+#### Changes Made
+
+**Lint fixes (`internal/engine/iteration_engine_test.go`):**
+- Removed unused `containsStr` helper function.
+- Applied `gofmt -w` to fix formatting (missing blank line between `Kill()` and comment).
+
+**Lint fixes (`internal/engine/engine.go`):**
+- Added `//nolint:funlen // iteration router is inherently stateful; splitting adds indirection` to `routeIteratingStepInGraph` (52 lines, just over the 50-line threshold; the logic is cohesive and splitting would obscure control flow).
+
+**Refactor (`internal/engine/node_step.go`):**
+- Split `buildIterItems` (cognitive complexity 22 > threshold 20) into two package-level helpers: `buildCountItems` and `buildForEachItems`. Each is straightforward and well below the threshold.
+- Added `"github.com/hashicorp/hcl/v2"` import (needed by the new package-level helpers).
+
+**Lint fix (`workflow/iteration_compile_test.go`):**
+- Applied `gofmt -w` to fix formatting at line 625.
+
+**Baseline cleanup (`.golangci.baseline.yml`):**
+- Removed four stale entries for `internal/engine/node_for_each.go` (funlen, gocognit, gocyclo, goimports). The file was deleted in B-03; these entries only prevented the baseline tool from detecting future spurious suppressions.
+
+**Golden file sync (`internal/cli/testdata/`):**
+- Updated three golden files (`workstream_review_loop__examples__workstream_review_loop_hcl.json.golden`, `.dot.golden`, `.golden`) to reflect the `success` outcome additions to `examples/workstream_review_loop.hcl`. Run via `go test ./internal/cli/... -update`.
+
+**Example fix (`examples/workstream_review_loop.hcl`):**
+- Added missing `outcome "success" { transition_to = "verify" }` to two remediation steps (`executor_remediation` and `pr_manager_remediation`). Without this, a step returning `"success"` would be unrouted.
+
+**Task checklist:**
+- Ticked Steps 10 and 11 (both were fully implemented in remediation passes post review-03; only the checkboxes were left unchecked).
+
+#### Validation
+
+```
+make build              → clean (exit 0)
+make test               → all packages green, race detector enabled (exit 0)
+make lint-go            → clean (exit 0)
+make lint-imports       → Import boundaries OK (exit 0)
+make proto-check-drift  → clean (exit 0)
+make validate           → clean, no warnings (exit 0)
+grep W08 symbols        → 0 hits in non-test Go code ✓
 ```
