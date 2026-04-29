@@ -465,6 +465,68 @@ input {
 
 Expressions that reference step outputs or `each.*` are stored as raw HCL expressions in the compiled graph and evaluated at step entry.
 
+### Expression functions
+
+The following built-in functions are available in `input { }` blocks, `when` conditions, `items` lists, and anywhere else an expression is accepted.
+
+#### `file(path)`
+
+Reads the file at `path` (resolved relative to the workflow `.hcl` file's directory) and returns its content as a UTF-8 string. Equivalent to inlining a static file.
+
+```hcl
+input {
+  prompt = file("./prompts/classify.md")
+}
+```
+
+**Constraints:**
+- `path` must be relative to the workflow directory (absolute paths and `..` traversal that escapes the workflow directory are rejected). To permit access outside the workflow directory, add directories to the `CRITERIA_WORKFLOW_ALLOWED_PATHS` environment variable (colon-separated).
+- Files larger than `CRITERIA_FILE_FUNC_MAX_BYTES` bytes are rejected (default: 1 MiB; clamped to [1 KiB, 64 MiB]).
+- The file content must be valid UTF-8.
+- Compile-time validation: when the argument is a string literal (no variable references), `file()` is validated at `criteria compile`/`criteria validate`/`criteria apply` time. Missing or path-escaping files produce compile errors with source ranges.
+- When the argument contains variable references (e.g. `file(var.path)`), validation is deferred to runtime.
+
+#### `fileexists(path)`
+
+Returns `true` if `path` resolves to a readable regular file under the workflow directory; `false` for missing paths or directories. Path confinement rules are the same as `file()`.
+
+```hcl
+input {
+  use_custom = fileexists("./custom_prompt.md") ? "yes" : "no"
+}
+```
+
+#### `trimfrontmatter(content)`
+
+Strips a YAML frontmatter block from `content` and returns the remainder. If no frontmatter is present, or the closing `---` delimiter does not appear within the first 64 KiB, the input is returned unchanged.
+
+```hcl
+input {
+  command = trimfrontmatter(file("./run_script.md"))
+}
+```
+
+The frontmatter block must begin with `---\n` and be closed by a `\n---\n` within 64 KiB. Everything after the closing delimiter is returned.
+
+#### Combining functions
+
+`file()` and `trimfrontmatter()` compose naturally to load Markdown prompts with YAML metadata:
+
+```hcl
+input {
+  prompt = trimfrontmatter(file("./prompts/task.md"))
+}
+```
+
+The `examples/file_function.hcl` workflow demonstrates this pattern end-to-end.
+
+**Environment variables:**
+
+| Variable | Effect |
+|---|---|
+| `CRITERIA_FILE_FUNC_MAX_BYTES` | Integer; maximum bytes `file()` will read. Default 1 MiB. Clamped to [1024, 67108864]. |
+| `CRITERIA_WORKFLOW_ALLOWED_PATHS` | Colon-separated list of directories `file()` and `fileexists()` may access outside the workflow directory. |
+
 ---
 
 ## Permissions

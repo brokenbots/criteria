@@ -1,13 +1,17 @@
 package workflow
 
 // compile_validation.go — schema-aware and permissive HCL attribute decode,
-// plus field-type validation against declared AdapterInfo ConfigField schemas.
+// plus field-type validation against declared AdapterInfo ConfigField schemas,
+// and compile-time file() argument validation.
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 
 	"github.com/hashicorp/hcl/v2"
 	"github.com/zclconf/go-cty/cty"
+	"github.com/zclconf/go-cty/cty/function"
 )
 
 // decodeAttrsToStringMap converts pre-fetched hcl.Attributes into a map[string]string.
@@ -44,6 +48,86 @@ func decodeAttrsToStringMap(attrs hcl.Attributes) (map[string]string, hcl.Diagno
 		}
 	}
 	return result, diags
+}
+
+// validateFileFunctionCalls evaluates expressions that have no variable
+// references against a compile-time eval context. This catches constant-literal
+// file() calls that reference non-existent or path-escaping paths before the
+// workflow runs, producing HCL diagnostics with source ranges.
+//
+// Expressions that contain variable references (e.g. file(var.path)) are
+// skipped — they are evaluated at runtime.
+//
+// workflowDir must be non-empty; callers are responsible for this precondition.
+func validateFileFunctionCalls(attrs hcl.Attributes, workflowDir string) hcl.Diagnostics {
+	var diags hcl.Diagnostics
+	opts := DefaultFunctionOptions(workflowDir)
+	ctx := &hcl.EvalContext{
+		Functions: map[string]function.Function{
+			"file":            fileValidateFunction(opts),
+			"fileexists":      fileExistsFunction(opts),
+			"trimfrontmatter": trimFrontmatterFunction(),
+		},
+	}
+	for _, attr := range attrs {
+		// Skip expressions with variable references — runtime handles them.
+		if len(attr.Expr.Variables()) > 0 {
+			continue
+		}
+		_, evalDiags := attr.Expr.Value(ctx)
+		if evalDiags.HasErrors() {
+			for _, d := range evalDiags {
+				if d.Severity == hcl.DiagError {
+					r := attr.Expr.StartRange()
+					diags = append(diags, &hcl.Diagnostic{
+						Severity: hcl.DiagError,
+						Summary:  d.Summary,
+						Detail:   d.Detail,
+						Subject:  &r,
+					})
+				}
+			}
+		}
+	}
+	return diags
+}
+
+// fileValidateFunction is the compile-time variant of fileFunction. It
+// performs path resolution, confinement checking, and a stat call (existence
+// + readability) but does NOT read the file's content. This keeps compile-time
+// validation fast even for large files.
+func fileValidateFunction(opts FunctionOptions) function.Function {
+	return function.New(&function.Spec{
+		Params: []function.Parameter{{Name: "path", Type: cty.String}},
+		Type:   function.StaticReturnType(cty.String),
+		Impl: func(args []cty.Value, _ cty.Type) (cty.Value, error) {
+			if opts.WorkflowDir == "" {
+				return cty.StringVal(""), fmt.Errorf("file(): workflow directory not configured")
+			}
+			raw := args[0].AsString()
+			if filepath.IsAbs(raw) {
+				return cty.StringVal(""), fmt.Errorf("file(): absolute paths are not supported; use a path relative to the workflow directory")
+			}
+			abs := filepath.Clean(filepath.Join(opts.WorkflowDir, raw))
+			if err := checkConfinement("file()", raw, abs, opts.WorkflowDir, opts.AllowedPaths); err != nil {
+				return cty.StringVal(""), err
+			}
+			resolved, err := filepath.EvalSymlinks(abs)
+			if err != nil {
+				return cty.StringVal(""), mapOSError(raw, err)
+			}
+			resolved = filepath.Clean(resolved)
+			resolvedBase := evalSymlinksOrSelf(opts.WorkflowDir)
+			resolvedAllowed := evalSymlinksAll(opts.AllowedPaths)
+			if err := checkConfinement("file()", raw, resolved, resolvedBase, resolvedAllowed); err != nil {
+				return cty.StringVal(""), err
+			}
+			if _, err := os.Stat(resolved); err != nil {
+				return cty.StringVal(""), mapOSError(raw, err)
+			}
+			return cty.StringVal(""), nil
+		},
+	})
 }
 
 // decodeBodyToStringMap converts an hcl.Body of key = "value" attributes into

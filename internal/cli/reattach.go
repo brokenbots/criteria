@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/brokenbots/criteria/internal/adapters/shell"
@@ -168,6 +169,7 @@ func resumePausedRun(ctx context.Context, log *slog.Logger, rc reattachTransport
 		engine.WithResumedVars(restoredVars),
 		engine.WithResumedIter(restoredIter),
 		engine.WithPendingSignal(resp.PendingSignal),
+		engine.WithWorkflowDir(filepath.Dir(cp.WorkflowPath)),
 	)
 	if runErr := eng.RunFrom(ctx, resp.CurrentStep, int(resp.Attempt)); runErr != nil {
 		log.Error("paused run re-entry failed", "error", runErr)
@@ -200,6 +202,7 @@ func serviceResumeSignals(ctx context.Context, log *slog.Logger, rc reattachTran
 		resumedEng := engine.New(graph, loader, sink,
 			engine.WithResumedVars(eng.VarScope()),
 			engine.WithResumePayload(resumeMsg.Payload),
+			engine.WithWorkflowDir(filepath.Dir(cp.WorkflowPath)),
 		)
 		if runErr := resumedEng.RunFrom(ctx, pausedNode, 1); runErr != nil {
 			log.Error("run failed after resume", "error", runErr)
@@ -247,6 +250,7 @@ func resumeActiveRun(ctx context.Context, log *slog.Logger, rc reattachTransport
 	eng := engine.New(graph, loader, sink,
 		engine.WithResumedVars(restoredVars),
 		engine.WithResumedIter(restoredIter),
+		engine.WithWorkflowDir(filepath.Dir(cp.WorkflowPath)),
 	)
 	if runErr := eng.RunFrom(ctx, resp.CurrentStep, nextAttempt); runErr != nil {
 		log.Error("resumed run failed", "error", runErr)
@@ -276,7 +280,7 @@ func parseWorkflowFromPath(path string) (*workflow.FSMGraph, error) {
 	schemas := collectSchemas(ctx, loader, spec, nil)
 	_ = loader.Shutdown(ctx)
 
-	graph, diags := workflow.Compile(spec, schemas)
+	graph, diags := workflow.CompileWithOpts(spec, schemas, workflow.CompileOpts{WorkflowDir: filepath.Dir(path)})
 	if diags.HasErrors() {
 		return nil, fmt.Errorf("compile workflow: %s", diags.Error())
 	}

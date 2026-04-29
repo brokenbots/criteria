@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 
@@ -33,7 +34,9 @@ func NewValidateCmd() *cobra.Command {
 				schemas := collectSchemas(ctx, loader, spec, nil)
 				_ = loader.Shutdown(ctx)
 
-				_, diags = workflow.Compile(spec, schemas)
+				_, diags = workflow.CompileWithOpts(spec, schemas, workflow.CompileOpts{
+					WorkflowDir: filepath.Dir(path),
+				})
 				if diags.HasErrors() {
 					anyErr = true
 					fmt.Fprintf(os.Stderr, "%s: compile failed:\n%s\n", path, diags.Error())

@@ -96,6 +96,9 @@ type Engine struct {
 	// lastVars captures the Vars map from RunState when execution pauses so
 	// the caller can pass them to the resumed engine via WithResumedVars (W05).
 	lastVars map[string]cty.Value
+	// workflowDir is the directory containing the HCL workflow file. Passed to
+	// RunState so that file() and fileexists() can resolve relative paths.
+	workflowDir string
 }
 
 func New(graph *workflow.FSMGraph, loader plugin.Loader, sink Sink, opts ...Option) *Engine {
@@ -149,6 +152,7 @@ func (e *Engine) runLoop(ctx context.Context, sessions *plugin.SessionManager, c
 		PendingSignal:    e.pendingSignal,
 		ResumePayload:    e.resumePayload,
 		Iter:             e.resumedIter,
+		WorkflowDir:      e.workflowDir,
 		firstStep:        true,
 		firstStepAttempt: firstStepAttempt,
 	}

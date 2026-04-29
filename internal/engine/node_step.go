@@ -30,7 +30,7 @@ func (n *stepNode) Evaluate(ctx context.Context, st *RunState, deps Deps) (strin
 	}
 
 	// Resolve input HCL expressions against current run vars (W04).
-	effectiveStep, resolveErr := n.resolveInput(st.Vars)
+	effectiveStep, resolveErr := n.resolveInput(st.Vars, st.WorkflowDir)
 	if resolveErr != nil {
 		return "", fmt.Errorf("step %q: input expression error: %w", n.step.Name, resolveErr)
 	}
@@ -68,11 +68,11 @@ func (n *stepNode) Evaluate(ctx context.Context, st *RunState, deps Deps) (strin
 // resolveInput returns the step with Input populated from evaluated HCL
 // expressions. It returns an error if any expression fails to evaluate so
 // the caller can fail fast rather than silently using a placeholder value.
-func (n *stepNode) resolveInput(vars map[string]cty.Value) (*workflow.StepNode, error) {
+func (n *stepNode) resolveInput(vars map[string]cty.Value, workflowDir string) (*workflow.StepNode, error) {
 	if len(n.step.InputExprs) == 0 {
 		return n.step, nil
 	}
-	resolved, err := workflow.ResolveInputExprs(n.step.InputExprs, vars)
+	resolved, err := workflow.ResolveInputExprsWithOpts(n.step.InputExprs, vars, workflow.DefaultFunctionOptions(workflowDir))
 	if err != nil {
 		return nil, err
 	}

@@ -22,7 +22,7 @@ func (n *branchNode) Name() string { return n.node.Name }
 // If an arm condition fails to evaluate, an error is returned and the engine
 // surfaces it via OnRunFailed.
 func (n *branchNode) Evaluate(ctx context.Context, st *RunState, deps Deps) (string, error) {
-	ec := workflow.BuildEvalContext(st.Vars)
+	ec := workflow.BuildEvalContextWithOpts(st.Vars, workflow.DefaultFunctionOptions(st.WorkflowDir))
 
 	for i, arm := range n.node.Arms {
 		val, diags := arm.Condition.Value(ec)
