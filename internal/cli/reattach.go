@@ -231,8 +231,11 @@ func serviceResumeSignals(ctx context.Context, log *slog.Logger, rc reattachTran
 //
 // Returns a non-nil error (suitable for abandonCheckpoint) when the check fails.
 func checkIterationSubgraphMembership(graph *workflow.FSMGraph, variableScope, currentStep string) error {
-	_, cursor, err := workflow.RestoreVarScope(variableScope, graph)
-	if err != nil || cursor == nil || !cursor.InProgress {
+	// Discard the error: RestoreVarScope returns a nil cursor on parse failure,
+	// which the check below handles correctly. A broken scope is not an
+	// iteration-subgraph incompatibility.
+	_, cursor, _ := workflow.RestoreVarScope(variableScope, graph)
+	if cursor == nil || !cursor.InProgress {
 		return nil // no active iteration cursor; nothing to verify
 	}
 	fe, ok := graph.ForEachs[cursor.NodeName]
