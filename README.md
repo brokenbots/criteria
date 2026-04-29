@@ -142,7 +142,9 @@ See [`sdk/conformance/`](sdk/conformance/) for the full interface and in-memory 
 
 ## Status
 
-`v0.1.0` is the first public release. Phase 0 cleanup is complete: the project is renamed to Criteria, the HCL language and SDK contract are stabilizing, and the repo has full test coverage and public-repo hygiene. Binary releases will be published via GitHub Releases as they are cut; for now use `go install`.
+`v0.2.0` is the current release. Phase 1 (stabilization) is now closed: deterministic CI (`-count=2`, `goleak`), golangci-lint with a documented [burn-down contract](docs/contributing/lint-baseline.md), shell adapter first-pass hardening (see [threat model](docs/security/shell-adapter-threat-model.md)), coverage/benchmark/GoDoc baselines, and four user-blocking capability additions (`file()`/`fileexists()`/`trimfrontmatter()` expression functions, step-level `for_each`/`count` with a `type = "workflow"` nested step, Copilot `reasoning_effort` propagation, and targeted diagnostics for misplaced agent-config fields).
+
+Phase 0 cleanup is complete: the project is renamed to Criteria, the HCL language and SDK contract are stabilizing, and the repo has full test coverage and public-repo hygiene. Binary releases will be published via GitHub Releases as they are cut; for now use `go install`.
 
 ## License
 

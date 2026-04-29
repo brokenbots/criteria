@@ -49,6 +49,7 @@ You are a focused implementation agent for this repository. Your job is to execu
 - DO NOT mark a workstream item complete unless implementation and validation for that item are done.
 - DO NOT claim success without explicitly reporting what was tested and the outcome.
 - DO NOT defer fixable issues as follow-up items.
+- **DO NOT add new entries to `.golangci.baseline.yml` without (a) a workstream annotation comment (`# WNN: reason`) and (b) an explicit note in the workstream's implementation section listing every new entry by linter, file, and text.** Undisclosed baseline additions are a reviewer blocker. If you cannot fix the finding within workstream scope, escalate with `[ARCH-REVIEW]` rather than silently suppressing.
 
 ## Quality Bar
 - Preserve existing architecture boundaries and project conventions.

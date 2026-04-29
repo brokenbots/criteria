@@ -11,9 +11,10 @@ Workstream files for the active phase live at
 - **Phase 0 — Post-separation cleanup** — **closed 2026-04-27**. All nine
   workstreams merged; legacy-name gate clean; `v0.1.0` tagged. Archived under
   [workstreams/archived/v0/](workstreams/archived/v0/).
-- **Phase 1 — Stabilization and critical user fixes** — **in progress**.
-  Eleven workstreams: W01–W10 are the work, [W11](workstreams/11-phase1-cleanup-gate.md)
-  is the cleanup gate that closes the phase and tags `v0.2.0`.
+- **Phase 1 — Stabilization and critical user fixes** — **closed 2026-04-29**.
+  All eleven workstreams merged; lint baseline burn-down gate clean; `v0.2.0` tagged.
+  Archived under [workstreams/archived/v1/](workstreams/archived/v1/).
+- **Phase 2 — TBD.** See "Deferred / forward-pointers" below for the candidate scope list.
 
 ## Phase 0 — Post-separation cleanup ✅ closed 2026-04-27
 
@@ -51,7 +52,7 @@ v1.6 plan deferred.
 
 *Phase 0 closed 2026-04-27. Archived under [workstreams/archived/v0/](workstreams/archived/v0/).*
 
-## Phase 1 — Stabilization and critical user fixes
+## Phase 1 — Stabilization and critical user fixes ✅ closed 2026-04-29
 
 **Goal:** harden CI, adopt golangci-lint with a per-workstream baseline
 burn-down, sandbox the shell adapter, ship coverage/benchmark/GoDoc
@@ -59,32 +60,41 @@ baselines, and unblock four user-reported issues (the `file()`
 expression family, step-level iteration with a nested `workflow` step
 type, Copilot agent defaults, and a `count`-style construct).
 
-### Phase 1 workstreams
+### Phase 1 workstreams (archived to [workstreams/archived/v1/](workstreams/archived/v1/))
 
-- [W01](workstreams/01-flaky-test-fix.md) — flaky test fix (deterministic CI: `-count=2`, `goleak`).
-- [W02](workstreams/02-golangci-lint-adoption.md) — golangci-lint adoption with per-workstream baseline burn-down contract.
-- [W03](workstreams/03-god-function-refactor.md) — god-function refactor (no behavior change).
-- [W04](workstreams/04-split-oversized-files.md) — oversized-file splits in `workflow/`, `conformance/`, server transport.
-- [W05](workstreams/05-shell-adapter-sandbox.md) — shell adapter first-pass sandboxing + threat model + `CRITERIA_SHELL_LEGACY=1` opt-out.
-- [W06](workstreams/06-coverage-bench-godoc.md) — coverage thresholds, benchmark baselines, GoDoc on public packages.
-- [W07](workstreams/07-file-expression-function.md) — `file()` / `fileexists()` / `trimfrontmatter()` HCL functions.
-- [W08](workstreams/08-for-each-multistep.md) — multi-step `for_each` iteration bodies. **Superseded within Phase 1 by W10**: the runtime model is replaced; the user story stays satisfied via W10's `type = "workflow"` step.
-- [W09](workstreams/09-copilot-agent-defaults.md) — Copilot `reasoning_effort` no longer silently dropped; per-step override; targeted diagnostic for misplaced agent-config fields.
-- [W10](workstreams/10-step-iteration-and-workflow-step.md) — step-level `for_each` and `count` on any step type; new `type = "workflow"` step with inline or `workflow_file` body; indexed outputs; full `each.*` binding set (`value`, `key`, `_idx`, `_first`, `_last`, `_total`, `_prev`); `on_failure = "abort"|"continue"|"ignore"`; explicit `output` blocks for encapsulation. Removes W08's top-level `for_each` block.
-- [W11](workstreams/11-phase1-cleanup-gate.md) — Phase 1 cleanup gate: validation lanes, lint baseline burn-down gate, coverage gate, archive, tag `v0.2.0`.
+- [W01](workstreams/archived/v1/01-flaky-test-fix.md) ✅ — flaky test fix (deterministic CI: `-count=2`, `goleak`).
+- [W02](workstreams/archived/v1/02-golangci-lint-adoption.md) ✅ — golangci-lint adoption with per-workstream baseline burn-down contract.
+- [W03](workstreams/archived/v1/03-god-function-refactor.md) ✅ — god-function refactor (no behavior change).
+- [W04](workstreams/archived/v1/04-split-oversized-files.md) ✅ — oversized-file splits in `workflow/`, `conformance/`, server transport.
+- [W05](workstreams/archived/v1/05-shell-adapter-sandbox.md) ✅ — shell adapter first-pass sandboxing + threat model + `CRITERIA_SHELL_LEGACY=1` opt-out.
+- [W06](workstreams/archived/v1/06-coverage-bench-godoc.md) ✅ — coverage thresholds, benchmark baselines, GoDoc on public packages.
+- [W07](workstreams/archived/v1/07-file-expression-function.md) ✅ — `file()` / `fileexists()` / `trimfrontmatter()` HCL functions.
+- [W08](workstreams/archived/v1/08-for-each-multistep.md) ✅ — multi-step `for_each` iteration bodies. **Superseded within Phase 1 by W10**: the runtime model is replaced; the user story stays satisfied via W10's `type = "workflow"` step.
+- [W09](workstreams/archived/v1/09-copilot-agent-defaults.md) ✅ — Copilot `reasoning_effort` no longer silently dropped; per-step override; targeted diagnostic for misplaced agent-config fields.
+- [W10](workstreams/archived/v1/10-step-iteration-and-workflow-step.md) ✅ — step-level `for_each` and `count` on any step type; new `type = "workflow"` step with inline or `workflow_file` body; indexed outputs; full `each.*` binding set; `on_failure` modes; explicit `output` blocks. Removes W08's top-level `for_each` block.
+- [W11](workstreams/archived/v1/11-phase1-cleanup-gate.md) ✅ — Phase 1 cleanup gate: validation lanes, lint baseline burn-down gate, coverage gate, archive, tag `v0.2.0`.
+
+*Phase 1 closed 2026-04-29. Archived under [workstreams/archived/v1/](workstreams/archived/v1/).*
+
+## Phase 2 — TBD
 
 ## Deferred / forward-pointers
 
-These items are known but not in Phase 0 scope:
+Phase 2 candidate scope (triage list, not a commitment — Phase 2 planning prioritizes from this):
 
+- **Platform-specific shell sandboxing** (W05 `[ARCH-REVIEW]`): macOS `sandbox-exec` / Linux seccomp profiles. Deferred pending Phase 2 security prioritization.
+- **Remaining user-feedback files** (deferred by design in Phase 1): `02`, `03`, `05`, `06`, `07`, `08` in `user_feedback/`. No action on these in Phase 1.
 - **Durable resume across orchestrator restart.** The conformance
   suite skips `DurableAcrossRestart` ([sdk/conformance/resume.go](sdk/conformance/resume.go))
   pending the durable-resume capability landing on the orchestrator
-  side. The skip lifts when the orchestrator ships its durability work.
+  side. The skip lifts when the orchestrator ships its durability work. Carried over from Phase 0.
 - **Parallel regions and sub-workflow composition** in HCL. Tracked
   for a future language phase.
 - **`@criteria/proto-ts` npm package.** No TypeScript consumers in
-  this repo; if a future consumer needs TS bindings, plan it then.
+  this repo; if a future consumer needs TS bindings, plan it then. Carried over from Phase 0.
+- **`workflow_file` full runtime resolution** (W10 partial): `SubWorkflowResolver` is not wired into the CLI compile path; `workflow_file` validation requires a resolver at compile time. The example `examples/workflow_step_compose.hcl` is deferred until this wiring lands.
+- **Lint baseline burn-down (W03/W04 residual entries)**: 42 W03-tagged and 133 W04-tagged entries remain in `.golangci.baseline.yml`. W03 residual covers `handlePermissionRequest`, `permissionDetails`, and extracted helper functions outside the original four-function scope; W04 residual covers gofmt/goimports/unused findings on split files. These are approved exceptions for Phase 2 cleanup. See workstream reviewer notes for full accounting.
+- **Lint baseline enforcement in CI** (`make lint-go` is currently manual; CI enforcement as a permanent gate is a Phase 2 nice-to-have).
 
 ## Conventions
 
@@ -95,5 +105,5 @@ These items are known but not in Phase 0 scope:
   edit `README.md`, `PLAN.md`, `AGENTS.md`, or workstream files other
   than the one currently being executed. The cleanup agent (or a
   human) is the only writer for those.
-- Phase close-out uses `workstreams/archived/<phase>/`. Phase 0
-  archives to `workstreams/archived/v0/` when W09 lands.
+- Phase close-out uses `workstreams/archived/<phase>/`. Phase 1
+  archives to `workstreams/archived/v1/` when W11 lands.
