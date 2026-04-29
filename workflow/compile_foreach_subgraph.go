@@ -122,7 +122,8 @@ func tagIterationOwners(g *FSMGraph, fe *ForEachNode, feName string) hcl.Diagnos
 }
 
 // forwardReachableSteps performs Phase 1 of the subgraph computation: a
-// forward BFS from fe.Do following step-to-step outcome transitions. It
+// forward reachability walk from fe.Do following step-to-step outcome
+// transitions. It uses a recursive DFS-style traversal with a visited set and
 // returns ALL steps reachable from fe.Do, including early-exit destinations
 // that cannot reach _continue. Used for error reporting.
 func forwardReachableSteps(g *FSMGraph, fe *ForEachNode) map[string]struct{} {

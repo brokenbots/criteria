@@ -940,22 +940,39 @@ func compileIterSubgraphWorkflow(t *testing.T) *workflow.FSMGraph {
 	return g
 }
 
+// iterCursorScope returns a serialised variableScope JSON with an in-progress
+// iter cursor for nodeName. Used by the checkIterationSubgraphMembership tests
+// to simulate the checkpoint state that would be present on a crash-resume.
+func iterCursorScope(t *testing.T, g *workflow.FSMGraph, nodeName string) string {
+	t.Helper()
+	vars := workflow.SeedVarsFromGraph(g)
+	scope, err := workflow.SerializeVarScope(vars, &workflow.IterCursor{
+		NodeName:   nodeName,
+		InProgress: true,
+	})
+	if err != nil {
+		t.Fatalf("SerializeVarScope: %v", err)
+	}
+	return scope
+}
+
 // TestCheckIterationSubgraphMembership_StepNoLongerInSubgraph verifies that
-// checkIterationSubgraphMembership returns an error when a checkpoint step has
-// IterationOwner set but is no longer listed in that for_each's IterationSteps.
+// checkIterationSubgraphMembership returns an error when the checkpoint cursor
+// names a for_each that no longer contains the current step in its subgraph.
 // This simulates a workflow edit that removes "review" from the iteration body.
 func TestCheckIterationSubgraphMembership_StepNoLongerInSubgraph(t *testing.T) {
 	g := compileIterSubgraphWorkflow(t)
+	scope := iterCursorScope(t, g, "loop")
 
-	// Confirm the baseline: "review" is in the subgraph.
-	if err := checkIterationSubgraphMembership(g, "review"); err != nil {
+	// Confirm the baseline: scope with "review" still in subgraph returns nil.
+	if err := checkIterationSubgraphMembership(g, scope, "review"); err != nil {
 		t.Fatalf("baseline check failed unexpectedly: %v", err)
 	}
 
 	// Simulate the workflow being edited: remove "review" from IterationSteps.
 	delete(g.ForEachs["loop"].IterationSteps, "review")
 
-	err := checkIterationSubgraphMembership(g, "review")
+	err := checkIterationSubgraphMembership(g, scope, "review")
 	if err == nil {
 		t.Fatal("expected error when step is no longer in subgraph, got nil")
 	}
@@ -965,16 +982,17 @@ func TestCheckIterationSubgraphMembership_StepNoLongerInSubgraph(t *testing.T) {
 }
 
 // TestCheckIterationSubgraphMembership_ForEachNoLongerExists verifies that
-// checkIterationSubgraphMembership returns an error when the owning for_each
-// node no longer exists in the compiled workflow. This simulates a workflow
-// edit that renames or removes the for_each entirely.
+// checkIterationSubgraphMembership returns an error when the checkpoint cursor
+// references a for_each node that no longer exists in the compiled workflow.
+// This simulates a workflow edit that renames or removes the for_each entirely.
 func TestCheckIterationSubgraphMembership_ForEachNoLongerExists(t *testing.T) {
 	g := compileIterSubgraphWorkflow(t)
+	scope := iterCursorScope(t, g, "loop")
 
 	// Simulate the for_each being renamed/removed by deleting it from the graph.
 	delete(g.ForEachs, "loop")
 
-	err := checkIterationSubgraphMembership(g, "review")
+	err := checkIterationSubgraphMembership(g, scope, "review")
 	if err == nil {
 		t.Fatal("expected error when owning for_each no longer exists, got nil")
 	}
@@ -984,17 +1002,19 @@ func TestCheckIterationSubgraphMembership_ForEachNoLongerExists(t *testing.T) {
 }
 
 // TestCheckIterationSubgraphMembership_NonIterationStep verifies that
-// checkIterationSubgraphMembership returns nil for a step that has no
-// IterationOwner (i.e. it is not part of any for_each subgraph).
+// checkIterationSubgraphMembership returns nil when there is no in-progress
+// iteration cursor in the variable scope (i.e. the run was not inside a
+// for_each when the checkpoint was taken).
 func TestCheckIterationSubgraphMembership_NonIterationStep(t *testing.T) {
 	g := compileIterSubgraphWorkflow(t)
+	vars := workflow.SeedVarsFromGraph(g)
+	// Scope with no iter cursor — simulates a step outside any for_each.
+	scope, err := workflow.SerializeVarScope(vars)
+	if err != nil {
+		t.Fatalf("SerializeVarScope: %v", err)
+	}
 
-	// "execute" has IterationOwner = "loop" (it is the do-step).
-	// A step not in any subgraph would have IterationOwner = "".
-	// Manually clear one to simulate a plain step.
-	g.Steps["execute"].IterationOwner = ""
-
-	if err := checkIterationSubgraphMembership(g, "execute"); err != nil {
+	if err := checkIterationSubgraphMembership(g, scope, "execute"); err != nil {
 		t.Errorf("expected nil for non-iteration step; got: %v", err)
 	}
 }

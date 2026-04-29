@@ -71,7 +71,7 @@ func resumeOneRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint, cli
 		return
 	}
 
-	if err := checkIterationSubgraphMembership(graph, resp.CurrentStep); err != nil {
+	if err := checkIterationSubgraphMembership(graph, resp.VariableScope, resp.CurrentStep); err != nil {
 		abandonCheckpoint(log, cp, "checkpoint step is no longer in iteration subgraph; workflow changed incompatibly", err)
 		return
 	}
@@ -175,6 +175,7 @@ func resumePausedRun(ctx context.Context, log *slog.Logger, rc reattachTransport
 		engine.WithResumedIter(restoredIter),
 		engine.WithPendingSignal(resp.PendingSignal),
 		engine.WithWorkflowDir(filepath.Dir(cp.WorkflowPath)),
+		engine.WithLogger(log),
 	)
 	if runErr := eng.RunFrom(ctx, resp.CurrentStep, int(resp.Attempt)); runErr != nil {
 		log.Error("paused run re-entry failed", "error", runErr)
@@ -218,22 +219,28 @@ func serviceResumeSignals(ctx context.Context, log *slog.Logger, rc reattachTran
 	drainAndCleanup(ctx, rc, cp)
 }
 
-// checkIterationSubgraphMembership verifies that if currentStep belongs to a
-// for_each iteration subgraph in the checkpoint workflow, that for_each node's
-// compiled subgraph still contains the step. If the workflow was edited and the
-// step was removed from the subgraph, resuming would mis-route the iteration.
+// checkIterationSubgraphMembership verifies that if the checkpoint's iteration
+// cursor shows an in-progress for_each iteration, the current step is still a
+// member of that for_each's compiled subgraph in the (possibly edited) workflow.
+//
+// The check is based on the serialised iteration cursor from variableScope (the
+// checkpoint's persisted state) rather than the step's IterationOwner field on
+// the newly compiled graph. This catches the real incompatibility case: a step
+// that was previously in the subgraph but was removed (or whose owning for_each
+// was deleted) by a workflow edit between crash and resume.
+//
 // Returns a non-nil error (suitable for abandonCheckpoint) when the check fails.
-func checkIterationSubgraphMembership(graph *workflow.FSMGraph, currentStep string) error {
-	st, ok := graph.Steps[currentStep]
-	if !ok || st.IterationOwner == "" {
-		return nil // not an iteration subgraph step, nothing to verify
+func checkIterationSubgraphMembership(graph *workflow.FSMGraph, variableScope, currentStep string) error {
+	_, cursor, err := workflow.RestoreVarScope(variableScope, graph)
+	if err != nil || cursor == nil || !cursor.InProgress {
+		return nil // no active iteration cursor; nothing to verify
 	}
-	fe, ok := graph.ForEachs[st.IterationOwner]
+	fe, ok := graph.ForEachs[cursor.NodeName]
 	if !ok {
-		return fmt.Errorf("checkpoint step %q has IterationOwner %q but that for_each no longer exists in the workflow", currentStep, st.IterationOwner)
+		return fmt.Errorf("checkpoint for_each %q no longer exists in the workflow", cursor.NodeName)
 	}
 	if _, member := fe.IterationSteps[currentStep]; !member {
-		return fmt.Errorf("checkpoint step %q is no longer in the for_each %q iteration subgraph", currentStep, st.IterationOwner)
+		return fmt.Errorf("checkpoint step %q is no longer in the for_each %q iteration subgraph", currentStep, cursor.NodeName)
 	}
 	return nil
 }
@@ -277,6 +284,7 @@ func resumeActiveRun(ctx context.Context, log *slog.Logger, rc reattachTransport
 		engine.WithResumedVars(restoredVars),
 		engine.WithResumedIter(restoredIter),
 		engine.WithWorkflowDir(filepath.Dir(cp.WorkflowPath)),
+		engine.WithLogger(log),
 	)
 	if runErr := eng.RunFrom(ctx, resp.CurrentStep, nextAttempt); runErr != nil {
 		log.Error("resumed run failed", "error", runErr)

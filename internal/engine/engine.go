@@ -105,6 +105,9 @@ type Engine struct {
 	// workflowDir is the directory containing the HCL workflow file. Passed to
 	// RunState so that file() and fileexists() can resolve relative paths.
 	workflowDir string
+	// log is an optional structured logger for internal engine warnings (e.g.,
+	// rebindEachOnResume failures). Falls back to slog.Default() when nil.
+	log *slog.Logger
 }
 
 func New(graph *workflow.FSMGraph, loader plugin.Loader, sink Sink, opts ...Option) *Engine {
@@ -195,7 +198,11 @@ func (e *Engine) rebindEachOnResume(st *RunState) {
 	}
 	v, diags := fe.Items.Value(workflow.BuildEvalContextWithOpts(st.Vars, workflow.DefaultFunctionOptions(st.WorkflowDir)))
 	if diags.HasErrors() || (!v.Type().IsListType() && !v.Type().IsTupleType()) {
-		slog.Warn("rebindEachOnResume: failed to re-evaluate items, each.* bindings not restored",
+		log := e.log
+		if log == nil {
+			log = slog.Default()
+		}
+		log.Warn("rebindEachOnResume: failed to re-evaluate items, each.* bindings not restored",
 			"for_each", st.Iter.NodeName, "index", st.Iter.Index)
 		return
 	}
