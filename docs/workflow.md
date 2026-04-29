@@ -410,7 +410,7 @@ step "deploy_one" {
 Within all steps that form the iteration body, the following variables are available:
 
 - **`each.value`**: Current item value (e.g., `"api"`, `"web"`).
-- **`each.index`**: Zero-based iteration index (`"0"`, `"1"`, `"2"`).
+- **`each.index`**: Zero-based iteration index (`0`, `1`, `2`).
 
 Both are available in `input { }` blocks via string interpolation. Referencing `each.*` outside an iteration body is a compile error.
 
@@ -470,8 +470,8 @@ If a step transitions to any non-iteration target other than `_continue`, the fo
 
 After all iterations complete (or early termination):
 
-- **`all_succeeded`**: All iterations' final outcomes were `"success"` (case-insensitive).
-- **`any_failed`**: At least one iteration's final outcome was non-success.
+- **`all_succeeded`**: Every step outcome in every iteration body was `"success"` (case-insensitive).
+- **`any_failed`**: At least one step in an iteration body returned a non-success outcome.
 
 If `any_failed` is not declared, failed iterations fall through to `all_succeeded` (compiler emits a warning).
 

@@ -4,10 +4,11 @@ package workflow
 // and well-formedness validation for for_each nodes (W08).
 //
 // The iteration subgraph of a for_each node F with do = "S" is computed in
-// two phases. Phase 1 (forwardReachableSteps): BFS from S over step-to-step
-// outcome transitions, stopping at _continue, F.Name (legacy advance), or any
-// non-step target. Phase 2 (filterByContinueReachable): restricts to the
-// subset of Phase-1 steps that can reach _continue.
+// two phases. Phase 1 (forwardReachableSteps): a forward reachability walk
+// from S over step-to-step outcome transitions, stopping at _continue,
+// F.Name (legacy advance), or any non-step target. Phase 2
+// (filterByContinueReachable): restricts to the subset of Phase-1 steps that
+// can reach _continue.
 //
 // Well-formedness has two levels:
 //   - Loop level (validateOneForEach): F.Do must be in IterationSteps,

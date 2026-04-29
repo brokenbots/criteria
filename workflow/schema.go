@@ -324,9 +324,10 @@ type ForEachNode struct {
 	// "all_succeeded" is required; "any_failed" is recommended.
 	Outcomes map[string]string
 	// IterationSteps is the set of step names that belong to this for_each's
-	// iteration subgraph — all steps reachable from Do via step-to-step
-	// transitions, stopping at _continue or at transitions out of the subgraph.
-	// Computed at compile time by computeIterationSubgraphs (W08).
+	// iteration subgraph. Computed in two phases by computeIterationSubgraphs
+	// (W08): Phase 1 walks step-to-step outcome transitions from Do, stopping at
+	// _continue, the for_each node name (legacy advance), or non-step targets;
+	// Phase 2 keeps only steps that can reach _continue from Phase 1.
 	IterationSteps map[string]struct{}
 }
 
