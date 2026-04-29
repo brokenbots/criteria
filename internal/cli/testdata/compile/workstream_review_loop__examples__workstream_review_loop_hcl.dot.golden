@@ -49,6 +49,7 @@ digraph "workstream_review_loop" {
   "execute" -> "close_pr_manager_abort" [label="failure"];
   "execute" -> "verify" [label="needs_approval"];
   "execute" -> "verify" [label="needs_review"];
+  "execute" -> "verify" [label="success"];
   "verify" -> "fix_verify" [label="failure"];
   "verify" -> "review" [label="success"];
   "fix_verify" -> "close_pr_manager_abort" [label="failure"];
@@ -81,6 +82,7 @@ digraph "workstream_review_loop" {
   "execute_pr_feedback" -> "close_pr_manager_abort" [label="failure"];
   "execute_pr_feedback" -> "verify" [label="needs_approval"];
   "execute_pr_feedback" -> "verify" [label="needs_review"];
+  "execute_pr_feedback" -> "verify" [label="success"];
   "merge_pr_and_sync_main" -> "close_pr_manager_done" [label="failure"];
   "merge_pr_and_sync_main" -> "close_pr_manager_done" [label="success"];
   "close_pr_manager_done" -> "close_reviewer_done" [label="failure"];

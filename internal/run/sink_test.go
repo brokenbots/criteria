@@ -193,9 +193,9 @@ func TestSink_PublishMethodsDoNotPanic(t *testing.T) {
 	s.OnApprovalDecision("review", "approved", "alice", nil)
 	s.OnBranchEvaluated("branch1", "arm[0]", "step2", "x == 1")
 	s.OnForEachEntered("each", 3)
-	s.OnForEachIteration("each", 0, "a", false)
-	s.OnForEachStep("each", 0, "review")
-	s.OnForEachOutcome("each", "all_succeeded", "done")
+	s.OnStepIterationStarted("each", 0, "a", false)
+	s.OnStepIterationItem("each", 0, "review")
+	s.OnStepIterationCompleted("each", "all_succeeded", "done")
 	s.OnScopeIterCursorSet(`{"index":1}`)
 }
 
@@ -334,9 +334,9 @@ func TestLocalSink_AllRemainingEvents(t *testing.T) {
 	sink.OnApprovalDecision("review", "approved", "alice", nil)
 	sink.OnBranchEvaluated("b", "arm[0]", "step2", "true")
 	sink.OnForEachEntered("each", 2)
-	sink.OnForEachIteration("each", 0, "a", false)
-	sink.OnForEachStep("each", 0, "review")
-	sink.OnForEachOutcome("each", "all_succeeded", "done")
+	sink.OnStepIterationStarted("each", 0, "a", false)
+	sink.OnStepIterationItem("each", 0, "review")
+	sink.OnStepIterationCompleted("each", "all_succeeded", "done")
 	sink.OnScopeIterCursorSet(`{"index":1}`)
 
 	// OnRunPaused is a no-op on LocalSink — no ND-JSON line is emitted.
@@ -344,7 +344,7 @@ func TestLocalSink_AllRemainingEvents(t *testing.T) {
 		"RunFailed", "StepResumed", "VariableSet", "StepOutputCaptured",
 		"WaitEntered", "WaitResumed", "ApprovalRequested",
 		"ApprovalDecision", "BranchEvaluated", "ForEachEntered",
-		"ForEachIteration", "ForEachStep", "ForEachOutcome", "ScopeIterCursorSet",
+		"StepIterationStarted", "StepIterationItem", "StepIterationCompleted", "ScopeIterCursorSet",
 	}
 	gotTypes := decodeSinkPayloadTypes(t, buf.String())
 	if len(gotTypes) != len(wantTypes) {
@@ -394,9 +394,9 @@ func TestMultiSink_AllRemainingMethods(t *testing.T) {
 	sink.OnApprovalDecision("review", "approved", "alice", nil)
 	sink.OnBranchEvaluated("b", "arm[0]", "step2", "true")
 	sink.OnForEachEntered("each", 2)
-	sink.OnForEachIteration("each", 0, "a", false)
-	sink.OnForEachStep("each", 0, "review")
-	sink.OnForEachOutcome("each", "all_succeeded", "done")
+	sink.OnStepIterationStarted("each", 0, "a", false)
+	sink.OnStepIterationItem("each", 0, "review")
+	sink.OnStepIterationCompleted("each", "all_succeeded", "done")
 	sink.OnScopeIterCursorSet(`{"index":1}`)
 
 	const want = 15

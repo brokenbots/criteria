@@ -118,25 +118,27 @@ func (s *LocalSink) OnBranchEvaluated(node, matchedArm, target, condition string
 	s.emit("BranchEvaluated", &pb.BranchEvaluated{Node: node, MatchedArm: matchedArm, Target: target, Condition: condition})
 }
 
-// OnForEachEntered emits a ForEachEntered event when a for_each node begins iterating (W07).
+// OnForEachEntered emits a ForEachEntered event when a step begins iterating (W07/W10).
 func (s *LocalSink) OnForEachEntered(node string, count int) {
 	s.emit("ForEachEntered", &pb.ForEachEntered{Node: node, Count: int32(count)})
 }
 
-// OnForEachIteration emits a ForEachIteration event at the start of each per-item iteration (W07).
-func (s *LocalSink) OnForEachIteration(node string, index int, value string, anyFailed bool) {
-	s.emit("ForEachIteration", &pb.ForEachIteration{Node: node, Index: int32(index), Value: value, AnyFailed: anyFailed})
+// OnStepIterationStarted emits a StepIterationStarted event at the start of each
+// per-item iteration (W10). Formerly OnForEachIteration (W07).
+func (s *LocalSink) OnStepIterationStarted(node string, index int, value string, anyFailed bool) {
+	s.emit("StepIterationStarted", &pb.StepIterationStarted{Node: node, Index: int32(index), Value: value, AnyFailed: anyFailed})
 }
 
-// OnForEachOutcome emits a ForEachOutcome event when a for_each node finishes iterating (W07).
-func (s *LocalSink) OnForEachOutcome(node, outcome, target string) {
-	s.emit("ForEachOutcome", &pb.ForEachOutcome{Node: node, Outcome: outcome, Target: target})
+// OnStepIterationCompleted emits a StepIterationCompleted event when a step finishes
+// all iterations (W10). Formerly OnForEachOutcome (W07).
+func (s *LocalSink) OnStepIterationCompleted(node, outcome, target string) {
+	s.emit("StepIterationCompleted", &pb.StepIterationCompleted{Node: node, Outcome: outcome, Target: target})
 }
 
-// OnForEachStep emits a ForEachStep event when a multi-step iteration body advances
-// to the next step in the subgraph (W08).
-func (s *LocalSink) OnForEachStep(node string, index int, step string) {
-	s.emit("ForEachStep", &pb.ForEachStep{Node: node, Index: int32(index), Step: step})
+// OnStepIterationItem emits a StepIterationItem event when the engine is about to
+// execute the step body for the next iteration item (W10). Formerly OnForEachStep (W08).
+func (s *LocalSink) OnStepIterationItem(node string, index int, step string) {
+	s.emit("StepIterationItem", &pb.StepIterationItem{Node: node, Index: int32(index), Step: step})
 }
 
 // OnScopeIterCursorSet emits a ScopeIterCursorSet event when the for_each

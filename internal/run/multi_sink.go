@@ -126,21 +126,21 @@ func (m *MultiSink) OnForEachEntered(node string, count int) {
 	}
 }
 
-func (m *MultiSink) OnForEachIteration(node string, index int, value string, anyFailed bool) {
+func (m *MultiSink) OnStepIterationStarted(node string, index int, value string, anyFailed bool) {
 	for _, c := range m.children {
-		c.OnForEachIteration(node, index, value, anyFailed)
+		c.OnStepIterationStarted(node, index, value, anyFailed)
 	}
 }
 
-func (m *MultiSink) OnForEachOutcome(node, outcome, target string) {
+func (m *MultiSink) OnStepIterationCompleted(node, outcome, target string) {
 	for _, c := range m.children {
-		c.OnForEachOutcome(node, outcome, target)
+		c.OnStepIterationCompleted(node, outcome, target)
 	}
 }
 
-func (m *MultiSink) OnForEachStep(node string, index int, step string) {
+func (m *MultiSink) OnStepIterationItem(node string, index int, step string) {
 	for _, c := range m.children {
-		c.OnForEachStep(node, index, step)
+		c.OnStepIterationItem(node, index, step)
 	}
 }
 

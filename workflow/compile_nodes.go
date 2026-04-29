@@ -1,7 +1,7 @@
 package workflow
 
-// compile_nodes.go — compilation of wait, approval, branch, and for_each
-// blocks into their respective FSMGraph node maps.
+// compile_nodes.go — compilation of wait, approval, and branch blocks
+// into their respective FSMGraph node maps.
 
 import (
 	"fmt"
@@ -219,101 +219,6 @@ func compileBranches(g *FSMGraph, spec *Spec) hcl.Diagnostics {
 			})
 		}
 		g.Branches[name] = node
-	}
-	return diags
-}
-
-// compileForEachs compiles all for_each blocks from spec into g.ForEachs.
-// Must be called after compileBranches so that full clash checks work.
-func compileForEachs(g *FSMGraph, spec *Spec) hcl.Diagnostics {
-	var diags hcl.Diagnostics
-	for _, fs := range spec.ForEachs {
-		name := fs.Name
-		// Clash checks against every existing node kind.
-		if _, dup := g.Steps[name]; dup {
-			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("for_each %q clashes with step of the same name", name)})
-			continue
-		}
-		if _, dup := g.States[name]; dup {
-			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("for_each %q clashes with state of the same name", name)})
-			continue
-		}
-		if _, dup := g.Waits[name]; dup {
-			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("for_each %q clashes with wait of the same name", name)})
-			continue
-		}
-		if _, dup := g.Approvals[name]; dup {
-			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("for_each %q clashes with approval of the same name", name)})
-			continue
-		}
-		if _, dup := g.Branches[name]; dup {
-			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("for_each %q clashes with branch of the same name", name)})
-			continue
-		}
-		if _, dup := g.ForEachs[name]; dup {
-			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("duplicate for_each %q", name)})
-			continue
-		}
-
-		// `do` must reference an existing step.
-		if fs.Do == "" {
-			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("for_each %q: do is required", name)})
-			continue
-		}
-		if _, doKnown := g.Steps[fs.Do]; !doKnown {
-			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("for_each %q: do = %q does not reference a known step", name, fs.Do)})
-		}
-
-		// Extract the `items` expression from the remain body.
-		var itemsExpr hcl.Expression
-		if fs.Remain != nil {
-			// Use PartialContent to fetch only the "items" attribute, so that
-			// the "outcome" blocks that gohcl placed in Remain do not cause
-			// "Blocks are not allowed here" diagnostics from JustAttributes.
-			content, _, d := fs.Remain.PartialContent(&hcl.BodySchema{
-				Attributes: []hcl.AttributeSchema{
-					{Name: "items", Required: false},
-				},
-			})
-			diags = append(diags, d...)
-			if content != nil {
-				if itemsAttr, ok := content.Attributes["items"]; ok {
-					itemsExpr = itemsAttr.Expr
-				}
-			}
-		}
-		if itemsExpr == nil {
-			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("for_each %q: items is required", name)})
-		}
-
-		// Compile outcomes.
-		node := &ForEachNode{
-			Name:     name,
-			Items:    itemsExpr,
-			Do:       fs.Do,
-			Outcomes: map[string]string{},
-		}
-		for _, o := range fs.Outcomes {
-			if o.TransitionTo == "" {
-				diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("for_each %q outcome %q: transition_to required", name, o.Name)})
-				continue
-			}
-			node.Outcomes[o.Name] = o.TransitionTo
-		}
-
-		// all_succeeded is required.
-		if _, ok := node.Outcomes["all_succeeded"]; !ok {
-			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("for_each %q: outcome \"all_succeeded\" is required", name)})
-		}
-		// any_failed is recommended (warning if absent).
-		if _, ok := node.Outcomes["any_failed"]; !ok {
-			diags = append(diags, &hcl.Diagnostic{
-				Severity: hcl.DiagWarning,
-				Summary:  fmt.Sprintf("for_each %q: outcome \"any_failed\" is not declared; failed iterations will fall through to \"all_succeeded\"", name),
-			})
-		}
-
-		g.ForEachs[name] = node
 	}
 	return diags
 }

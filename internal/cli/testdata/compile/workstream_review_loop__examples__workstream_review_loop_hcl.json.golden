@@ -186,6 +186,10 @@
         {
           "name": "needs_review",
           "transition_to": "verify"
+        },
+        {
+          "name": "success",
+          "transition_to": "verify"
         }
       ]
     },
@@ -429,6 +433,10 @@
         },
         {
           "name": "needs_review",
+          "transition_to": "verify"
+        },
+        {
+          "name": "success",
           "transition_to": "verify"
         }
       ]

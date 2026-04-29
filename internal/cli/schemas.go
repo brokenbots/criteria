@@ -25,7 +25,8 @@ func collectSchemas(ctx context.Context, loader plugin.Loader, spec *workflow.Sp
 			seen[ag.Adapter] = true
 		}
 	}
-	for _, st := range spec.Steps {
+	for i := range spec.Steps {
+		st := &spec.Steps[i]
 		if st.Adapter != "" {
 			seen[st.Adapter] = true
 		}

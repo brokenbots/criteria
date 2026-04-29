@@ -6,6 +6,7 @@ package workflow
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/hashicorp/hcl/v2"
 )
@@ -25,6 +26,20 @@ type CompileOpts struct {
 	// When set, compile-time validation of constant file() arguments is
 	// enabled: missing files produce HCL diagnostics with source ranges.
 	WorkflowDir string
+	// LoadDepth tracks the current inline sub-workflow nesting depth. The
+	// compiler increments this for each recursive CompileWithOpts call when
+	// compiling a workflow-type step body. Maximum depth is 4.
+	LoadDepth int
+	// LoadedFiles tracks file paths already in the load chain for
+	// workflow_file cycle detection. It is populated automatically by the
+	// compiler when SubWorkflowResolver is set.
+	LoadedFiles []string
+	// SubWorkflowResolver is an optional callback used to load an external
+	// workflow file referenced by workflow_file = "...". When nil, any step
+	// using workflow_file is rejected with a compile error. The resolver
+	// receives the file path and the WorkflowDir; it must return a parsed
+	// *Spec or an error.
+	SubWorkflowResolver func(filePath, workflowDir string) (*Spec, error)
 }
 
 // Compile validates a Spec and returns an executable FSMGraph. It is a
@@ -59,14 +74,16 @@ func CompileWithOpts(spec *Spec, schemas map[string]AdapterInfo, opts CompileOpt
 	diags = append(diags, compileVariables(g, spec)...)
 	diags = append(diags, compileAgents(g, spec, schemas)...)
 	diags = append(diags, compileStates(g, spec)...)
-	diags = append(diags, compileSteps(g, spec, schemas, opts.WorkflowDir)...)
+	diags = append(diags, compileSteps(g, spec, schemas, opts)...)
 	diags = append(diags, compileWaits(g, spec)...)
 	diags = append(diags, compileApprovals(g, spec)...)
 	diags = append(diags, compileBranches(g, spec)...)
-	diags = append(diags, compileForEachs(g, spec)...)
-	diags = append(diags, computeIterationSubgraphs(g)...)
-	diags = append(diags, validateEachReferenceScope(g)...)
-	diags = append(diags, checkReservedNames(spec)...)
+	// Reserved-name checks only apply to user-authored top-level workflows.
+	// Sub-workflow bodies (LoadDepth > 0) are synthetic and intentionally use
+	// the "_continue" name as a terminal state.
+	if opts.LoadDepth == 0 {
+		diags = append(diags, checkReservedNames(spec)...)
+	}
 	diags = append(diags, resolveTransitions(g)...)
 	if g.InitialState != "" && !diags.HasErrors() {
 		diags = append(diags, checkReachability(g)...)
@@ -91,7 +108,6 @@ func newFSMGraph(spec *Spec) *FSMGraph {
 		Waits:        map[string]*WaitNode{},
 		Approvals:    map[string]*ApprovalNode{},
 		Branches:     map[string]*BranchNode{},
-		ForEachs:     map[string]*ForEachNode{},
 		Policy:       DefaultPolicy,
 	}
 	if spec.Policy != nil {
@@ -174,16 +190,6 @@ func resolveTransitions(g *FSMGraph) hcl.Diagnostics {
 			})
 		}
 	}
-	for _, fe := range g.ForEachs {
-		for outcome, target := range fe.Outcomes {
-			if _, ok := g.Lookup(target); !ok {
-				diags = append(diags, &hcl.Diagnostic{
-					Severity: hcl.DiagError,
-					Summary:  fmt.Sprintf("for_each %q outcome %q -> unknown target %q", fe.Name, outcome, target),
-				})
-			}
-		}
-	}
 	return diags
 }
 
@@ -238,20 +244,6 @@ func checkReachability(g *FSMGraph) hcl.Diagnostics {
 			}
 			return
 		}
-		if fe, isForEach := g.ForEachs[name]; isForEach {
-			// Mark the do-step reachable via the for_each.
-			if !reachable[fe.Do] {
-				reachable[fe.Do] = true
-				walk(fe.Do)
-			}
-			// Mark all aggregate outcome targets reachable.
-			for _, target := range fe.Outcomes {
-				if !reachable[target] {
-					reachable[target] = true
-					walk(target)
-				}
-			}
-		}
 	}
 	walk(g.InitialState)
 	for _, name := range g.stepOrder {
@@ -274,12 +266,12 @@ func checkReachability(g *FSMGraph) hcl.Diagnostics {
 			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagWarning, Summary: fmt.Sprintf("branch %q is unreachable from initial_state", name)})
 		}
 	}
-	for name := range g.ForEachs {
-		if !reachable[name] {
-			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagWarning, Summary: fmt.Sprintf("for_each %q is unreachable from initial_state", name)})
-		}
-	}
 	for name := range g.States {
+		if strings.HasPrefix(name, "_") {
+			// Synthetic states (e.g. _continue) are internal loop targets;
+			// skipping them here avoids spurious "unreachable" warnings.
+			continue
+		}
 		if !reachable[name] {
 			// Unreachable terminal states are a warning — they may be intentional placeholders.
 			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagWarning, Summary: fmt.Sprintf("state %q is unreachable from initial_state", name)})

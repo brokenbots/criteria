@@ -2,14 +2,20 @@ package criteria
 
 import pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 
-// ForEachEntered is emitted when execution enters a for_each node.
+// ForEachEntered is emitted when execution enters a step that is about to iterate.
 type ForEachEntered = pb.ForEachEntered
 
-// ForEachIteration is emitted at the start of each iteration of a for_each loop.
-type ForEachIteration = pb.ForEachIteration
+// StepIterationStarted is emitted at the start of each iteration of a step loop (W10).
+// Replaces ForEachIteration from W07.
+type StepIterationStarted = pb.StepIterationStarted
 
-// ForEachOutcome is emitted when a for_each loop completes.
-type ForEachOutcome = pb.ForEachOutcome
+// StepIterationCompleted is emitted when a step finishes all its iterations (W10).
+// Replaces ForEachOutcome from W07.
+type StepIterationCompleted = pb.StepIterationCompleted
+
+// StepIterationItem is emitted when the engine is about to execute the step body
+// for the next iteration item (W10). Replaces ForEachStep from W08.
+type StepIterationItem = pb.StepIterationItem
 
 // ScopeIterCursorSet is emitted when the loop-iteration cursor variable is written.
 type ScopeIterCursorSet = pb.ScopeIterCursorSet

@@ -3,11 +3,10 @@ digraph "demo_tour_local" {
 
   "boot" [shape=box];
   "discover" [shape=box];
-  "process" [shape=box];
+  "process_each" [shape=box];
   "review" [shape=box];
   "celebrate" [shape=box];
   "decide" [shape=diamond];
-  "process_each" [shape=parallelogram];
   "aborted" [shape=doublecircle];
   "done" [shape=doublecircle];
 
@@ -17,13 +16,12 @@ digraph "demo_tour_local" {
   "boot" -> "discover" [label="success"];
   "discover" -> "aborted" [label="failure"];
   "discover" -> "process_each" [label="success"];
+  "process_each" -> "review" [label="all_succeeded"];
+  "process_each" -> "aborted" [label="any_failed"];
   "review" -> "aborted" [label="failure"];
   "review" -> "wait_brief" [label="success"];
   "celebrate" -> "aborted" [label="failure"];
   "celebrate" -> "done" [label="success"];
   "decide" -> "celebrate" [label="arm[0]"];
   "decide" -> "aborted" [label="default"];
-  "process_each" -> "process" [label="do"];
-  "process_each" -> "review" [label="all_succeeded"];
-  "process_each" -> "aborted" [label="any_failed"];
 }

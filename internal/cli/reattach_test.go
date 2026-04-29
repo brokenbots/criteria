@@ -893,31 +893,95 @@ workflow "needs_approval" {
 	}
 }
 
-// --- Test 14 (CLI): checkIterationSubgraphMembership enforcement ---
-
-// iterSubgraphWorkflow is an HCL workflow with a two-step iteration body
-// (execute → review → _continue) used to test subgraph membership checks.
-const iterSubgraphWorkflow = `
-workflow "iter_sub" {
+// TestCheckIterationCursorValidity_CurrentMissingFromBody verifies that
+// checkIterationCursorValidity returns an error when the run's current step
+// (the step being executed at crash time) is inside the body of the iterating
+// step but no longer exists in that body after a workflow edit.
+func TestCheckIterationCursorValidity_CurrentMissingFromBody(t *testing.T) {
+	// Compile a workflow with a type="workflow" iterating step.
+	const src = `
+workflow "w" {
   version       = "0.1"
-  initial_state = "loop"
+  initial_state = "outer"
   target_state  = "done"
 
-  for_each "loop" {
-    items = ["a"]
-    do    = "execute"
+  step "outer" {
+    type     = "workflow"
+    for_each = ["a"]
+    workflow {
+      step "body_step" {
+        adapter = "noop"
+        outcome "success" { transition_to = "_continue" }
+      }
+    }
     outcome "all_succeeded" { transition_to = "done" }
     outcome "any_failed"    { transition_to = "done" }
   }
 
-  step "execute" {
-    adapter = "noop"
-    outcome "success" { transition_to = "review" }
+  state "done" {
+    terminal = true
+    success  = true
   }
+}`
+	spec, diags := workflow.Parse("test.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	g, diags := workflow.Compile(spec, nil)
+	if diags.HasErrors() {
+		t.Fatalf("compile: %s", diags.Error())
+	}
 
-  step "review" {
-    adapter = "noop"
-    outcome "success" { transition_to = "_continue" }
+	// Build a variable scope with an in-progress cursor on "outer".
+	vars := workflow.SeedVarsFromGraph(g)
+	scope, err := workflow.SerializeVarScope(vars, []workflow.IterCursor{{
+		StepName:   "outer",
+		InProgress: true,
+	}})
+	if err != nil {
+		t.Fatalf("SerializeVarScope: %v", err)
+	}
+
+	// Baseline: body_step exists — should return nil.
+	if err := checkIterationCursorValidity(g, scope, "body_step"); err != nil {
+		t.Fatalf("baseline check unexpected error: %v", err)
+	}
+
+	// Simulate a workflow edit that removes "body_step" from the body.
+	if g.Steps["outer"].Body == nil {
+		t.Fatal("outer step has no body — test setup error")
+	}
+	delete(g.Steps["outer"].Body.Steps, "body_step")
+
+	// Now the saved current step "body_step" is missing from the body.
+	err = checkIterationCursorValidity(g, scope, "body_step")
+	if err == nil {
+		t.Fatal("expected error when body step no longer exists, got nil")
+	}
+	if !strings.Contains(err.Error(), "body_step") {
+		t.Errorf("expected error to mention 'body_step'; got: %v", err)
+	}
+}
+
+// TestIter_ResumeRejectsModifiedBody mirrors
+// TestCheckIterationCursorValidity_CurrentMissingFromBody at the package level,
+// asserting that checkIterationCursorValidity catches the modification and
+// returns a non-nil error describing the missing body step.
+func TestIter_ResumeRejectsModifiedBody(t *testing.T) {
+	TestCheckIterationCursorValidity_CurrentMissingFromBody(t)
+}
+
+const iterCursorWorkflow = `
+workflow "iter_cursor" {
+  version       = "0.1"
+  initial_state = "execute"
+  target_state  = "done"
+
+  step "execute" {
+    adapter   = "noop"
+    for_each  = ["a", "b"]
+    outcome "all_succeeded" { transition_to = "done" }
+    outcome "any_failed"    { transition_to = "done" }
   }
 
   state "done" {
@@ -927,9 +991,9 @@ workflow "iter_sub" {
 }
 `
 
-func compileIterSubgraphWorkflow(t *testing.T) *workflow.FSMGraph {
+func compileIterCursorWorkflow(t *testing.T) *workflow.FSMGraph {
 	t.Helper()
-	spec, diags := workflow.Parse("iter_sub.hcl", []byte(iterSubgraphWorkflow))
+	spec, diags := workflow.Parse("iter_cursor.hcl", []byte(iterCursorWorkflow))
 	if diags.HasErrors() {
 		t.Fatalf("parse: %s", diags.Error())
 	}
@@ -940,81 +1004,62 @@ func compileIterSubgraphWorkflow(t *testing.T) *workflow.FSMGraph {
 	return g
 }
 
-// iterCursorScope returns a serialised variableScope JSON with an in-progress
-// iter cursor for nodeName. Used by the checkIterationSubgraphMembership tests
-// to simulate the checkpoint state that would be present on a crash-resume.
-func iterCursorScope(t *testing.T, g *workflow.FSMGraph, nodeName string) string {
+// iterCursorScopeForStep returns a serialised variableScope JSON with an
+// in-progress iter cursor for the given step name. Used by the
+// checkIterationCursorValidity tests to simulate a checkpoint taken during an
+// active iteration.
+func iterCursorScopeForStep(t *testing.T, g *workflow.FSMGraph, stepName string) string {
 	t.Helper()
 	vars := workflow.SeedVarsFromGraph(g)
-	scope, err := workflow.SerializeVarScope(vars, &workflow.IterCursor{
-		NodeName:   nodeName,
+	scope, err := workflow.SerializeVarScope(vars, []workflow.IterCursor{{
+		StepName:   stepName,
 		InProgress: true,
-	})
+	}})
 	if err != nil {
 		t.Fatalf("SerializeVarScope: %v", err)
 	}
 	return scope
 }
 
-// TestCheckIterationSubgraphMembership_StepNoLongerInSubgraph verifies that
-// checkIterationSubgraphMembership returns an error when the checkpoint cursor
-// names a for_each that no longer contains the current step in its subgraph.
-// This simulates a workflow edit that removes "review" from the iteration body.
-func TestCheckIterationSubgraphMembership_StepNoLongerInSubgraph(t *testing.T) {
-	g := compileIterSubgraphWorkflow(t)
-	scope := iterCursorScope(t, g, "loop")
+// TestCheckIterationCursorValidity_StepRemoved verifies that
+// checkIterationCursorValidity returns an error when the checkpoint cursor
+// names a step that no longer exists in the compiled workflow graph. This
+// simulates a workflow edit that deletes the iterating step between crash and resume.
+func TestCheckIterationCursorValidity_StepRemoved(t *testing.T) {
+	g := compileIterCursorWorkflow(t)
+	scope := iterCursorScopeForStep(t, g, "execute")
 
-	// Confirm the baseline: scope with "review" still in subgraph returns nil.
-	if err := checkIterationSubgraphMembership(g, scope, "review"); err != nil {
+	// Confirm the baseline: scope with "execute" still in the graph returns nil.
+	if err := checkIterationCursorValidity(g, scope, "execute"); err != nil {
 		t.Fatalf("baseline check failed unexpectedly: %v", err)
 	}
 
-	// Simulate the workflow being edited: remove "review" from IterationSteps.
-	delete(g.ForEachs["loop"].IterationSteps, "review")
+	// Simulate the workflow being edited: remove "execute" from the graph.
+	delete(g.Steps, "execute")
 
-	err := checkIterationSubgraphMembership(g, scope, "review")
+	err := checkIterationCursorValidity(g, scope, "execute")
 	if err == nil {
-		t.Fatal("expected error when step is no longer in subgraph, got nil")
-	}
-	if !strings.Contains(err.Error(), "no longer in the for_each") {
-		t.Errorf("expected 'no longer in the for_each' in error; got: %v", err)
-	}
-}
-
-// TestCheckIterationSubgraphMembership_ForEachNoLongerExists verifies that
-// checkIterationSubgraphMembership returns an error when the checkpoint cursor
-// references a for_each node that no longer exists in the compiled workflow.
-// This simulates a workflow edit that renames or removes the for_each entirely.
-func TestCheckIterationSubgraphMembership_ForEachNoLongerExists(t *testing.T) {
-	g := compileIterSubgraphWorkflow(t)
-	scope := iterCursorScope(t, g, "loop")
-
-	// Simulate the for_each being renamed/removed by deleting it from the graph.
-	delete(g.ForEachs, "loop")
-
-	err := checkIterationSubgraphMembership(g, scope, "review")
-	if err == nil {
-		t.Fatal("expected error when owning for_each no longer exists, got nil")
+		t.Fatal("expected error when iterating step no longer exists, got nil")
 	}
 	if !strings.Contains(err.Error(), "no longer exists") {
 		t.Errorf("expected 'no longer exists' in error; got: %v", err)
 	}
 }
 
-// TestCheckIterationSubgraphMembership_NonIterationStep verifies that
-// checkIterationSubgraphMembership returns nil when there is no in-progress
-// iteration cursor in the variable scope (i.e. the run was not inside a
-// for_each when the checkpoint was taken).
-func TestCheckIterationSubgraphMembership_NonIterationStep(t *testing.T) {
-	g := compileIterSubgraphWorkflow(t)
+// TestCheckIterationCursorValidity_NoActiveIteration verifies that
+// checkIterationCursorValidity returns nil when there is no in-progress
+// iteration cursor in the variable scope (i.e. the run was not iterating
+// when the checkpoint was taken).
+func TestCheckIterationCursorValidity_NoActiveIteration(t *testing.T) {
+	g := compileIterCursorWorkflow(t)
 	vars := workflow.SeedVarsFromGraph(g)
-	// Scope with no iter cursor — simulates a step outside any for_each.
+	// Scope with no iter cursor — simulates a step outside any iteration.
 	scope, err := workflow.SerializeVarScope(vars)
 	if err != nil {
 		t.Fatalf("SerializeVarScope: %v", err)
 	}
 
-	if err := checkIterationSubgraphMembership(g, scope, "execute"); err != nil {
+	if err := checkIterationCursorValidity(g, scope, "execute"); err != nil {
 		t.Errorf("expected nil for non-iteration step; got: %v", err)
 	}
 }

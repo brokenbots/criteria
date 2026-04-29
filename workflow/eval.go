@@ -259,18 +259,52 @@ func WithStepOutputs(vars map[string]cty.Value, stepName string, outputs map[str
 	return newVars
 }
 
-// WithEachBinding returns a new vars map with each.value and each.index bound
-// for the current for_each iteration (W07). Called by the for_each engine node
-// before dispatching the per-iteration step so that input expressions can
-// reference each.value and each.index.
-func WithEachBinding(vars map[string]cty.Value, value cty.Value, index int) map[string]cty.Value {
+// EachBinding carries the per-iteration binding values for step-level
+// for_each / count iteration (W10). The engine sets these on each step entry.
+type EachBinding struct {
+	// Value is the current item value (list element or map value).
+	Value cty.Value
+	// Key is the current item key. For lists/count this is the string
+	// representation of the zero-based index. For maps it is the map key.
+	Key cty.Value
+	// Index is the zero-based iteration index.
+	Index int
+	// Total is the total number of iterations.
+	Total int
+	// First is true on the first iteration (Index == 0).
+	First bool
+	// Last is true on the last iteration (Index == Total-1).
+	Last bool
+	// Prev is the cty.Value of the previous iteration's item, or cty.NilVal
+	// on the first iteration.
+	Prev cty.Value
+}
+
+// WithEachBinding returns a new vars map with each.* bound for the current
+// step-level iteration. Called by the engine node before executing the
+// iteration step so that input expressions can reference each.value, each.key,
+// each._idx, each._total, each._first, each._last, and each._prev.
+func WithEachBinding(vars map[string]cty.Value, b EachBinding) map[string]cty.Value {
 	newVars := make(map[string]cty.Value, len(vars)+1)
 	for k, v := range vars {
 		newVars[k] = v
 	}
+	key := b.Key
+	if key == cty.NilVal {
+		key = cty.StringVal(fmt.Sprintf("%d", b.Index))
+	}
+	prev := b.Prev
+	if prev == cty.NilVal {
+		prev = cty.NullVal(cty.DynamicPseudoType)
+	}
 	newVars["each"] = cty.ObjectVal(map[string]cty.Value{
-		"value": value,
-		"index": cty.NumberIntVal(int64(index)),
+		"value":  b.Value,
+		"key":    key,
+		"_idx":   cty.NumberIntVal(int64(b.Index)),
+		"_total": cty.NumberIntVal(int64(b.Total)),
+		"_first": cty.BoolVal(b.First),
+		"_last":  cty.BoolVal(b.Last),
+		"_prev":  prev,
 	})
 	return newVars
 }
@@ -291,15 +325,82 @@ func ClearEachBinding(vars map[string]cty.Value) map[string]cty.Value {
 	return newVars
 }
 
+// WithIndexedStepOutput returns a new vars map with an indexed step output
+// entry added. For list/count iteration, index is a cty.Number (the
+// zero-based iteration index). For map iteration, index is a cty.String (the
+// map key). The result allows expressions like steps.foo[0].x and
+// steps.foo["key"].x.
+//
+// Internally, indexed outputs are stored under vars["steps"][stepName] as a
+// cty map or tuple. The engine accumulates entries across iterations.
+func WithIndexedStepOutput(vars map[string]cty.Value, stepName string, index cty.Value, outputs map[string]string) map[string]cty.Value {
+	if vars == nil {
+		vars = map[string]cty.Value{
+			"var":   cty.EmptyObjectVal,
+			"steps": cty.EmptyObjectVal,
+		}
+	}
+
+	// Build the new entry object for this iteration's outputs.
+	entryVals := make(map[string]cty.Value, len(outputs))
+	for k, v := range outputs {
+		entryVals[k] = cty.StringVal(v)
+	}
+	var entry cty.Value
+	if len(entryVals) > 0 {
+		entry = cty.ObjectVal(entryVals)
+	} else {
+		entry = cty.EmptyObjectVal
+	}
+
+	// Retrieve existing step entry (if any) which may be an object (scalar),
+	// a list-in-progress (map[string]cty.Value with numeric string keys), or absent.
+	stepsAttrs := map[string]cty.Value{}
+	if existing, ok := vars["steps"]; ok && existing != cty.NilVal && existing.Type().IsObjectType() {
+		for k := range existing.Type().AttributeTypes() {
+			stepsAttrs[k] = existing.GetAttr(k)
+		}
+	}
+
+	// Store the indexed entry. We accumulate entries in an object keyed by the
+	// string representation of the index. This is later reconstructable by the
+	// engine into a cty tuple (numeric index) or map (string key).
+	indexKey := CtyValueToString(index)
+
+	// Get or create the accumulator object for this step.
+	accum := map[string]cty.Value{}
+	if existing, ok := stepsAttrs[stepName]; ok && existing != cty.NilVal && existing.Type().IsObjectType() {
+		for k := range existing.Type().AttributeTypes() {
+			accum[k] = existing.GetAttr(k)
+		}
+	}
+	accum[indexKey] = entry
+
+	if len(accum) > 0 {
+		stepsAttrs[stepName] = cty.ObjectVal(accum)
+	}
+
+	newVars := make(map[string]cty.Value, len(vars))
+	for k, v := range vars {
+		newVars[k] = v
+	}
+	if len(stepsAttrs) > 0 {
+		newVars["steps"] = cty.ObjectVal(stepsAttrs)
+	} else {
+		newVars["steps"] = cty.EmptyObjectVal
+	}
+	return newVars
+}
+
 // SerializeVarScope encodes the run vars map and optional iteration cursor
-// into a JSON string for persistence in the server. The format is:
+// stack into a JSON string for persistence. The format is:
 //
-//	{"var": {"name": "value"}, "steps": {"step": {"key": "value"}}, "iter": {...}}
+//	{"var": {"name": "value"}, "steps": {"step": {"key": "value"}}, "iter": [...]}
 //
-// The iter field is only present when cursor is non-nil. The server stores this
-// blob verbatim and does not interpret the iter shape. See IterCursor for the
-// field documentation (authoritative for Phase 1.6 SDK extraction).
-func SerializeVarScope(vars map[string]cty.Value, cursor ...*IterCursor) (string, error) {
+// The iter field is a JSON array of cursor objects; it is omitted when the
+// stack is empty. The server stores this blob verbatim without interpreting
+// cursor internals. See IterCursor for field documentation.
+func SerializeVarScope(vars map[string]cty.Value, cursorStack ...[]IterCursor) (string, error) {
 	scope := map[string]interface{}{}
 	if varObj, ok := vars["var"]; ok && varObj != cty.NilVal && varObj.Type().IsObjectType() {
 		varMap := map[string]string{}
@@ -324,34 +425,45 @@ func SerializeVarScope(vars map[string]cty.Value, cursor ...*IterCursor) (string
 		}
 		scope["steps"] = stepsMap
 	}
-	// Encode the iteration cursor when provided (W07). The server stores the iter
-	// blob verbatim; Items are intentionally omitted (re-evaluated on reattach).
-	var cur *IterCursor
-	if len(cursor) > 0 {
-		cur = cursor[0]
+	// Encode the iteration cursor stack when provided. Items are intentionally
+	// omitted from each cursor (re-evaluated on reattach).
+	var stack []IterCursor
+	if len(cursorStack) > 0 {
+		stack = cursorStack[0]
 	}
-	if cur != nil {
-		scope["iter"] = map[string]interface{}{
-			"node":        cur.NodeName,
-			"index":       cur.Index,
-			"any_failed":  cur.AnyFailed,
-			"in_progress": cur.InProgress,
+	if len(stack) > 0 {
+		cursorList := make([]interface{}, 0, len(stack))
+		for i := range stack {
+			c := &stack[i]
+			cm := map[string]interface{}{
+				"step":        c.StepName,
+				"index":       c.Index,
+				"total":       c.Total,
+				"any_failed":  c.AnyFailed,
+				"in_progress": c.InProgress,
+			}
+			if c.OnFailure != "" {
+				cm["on_failure"] = c.OnFailure
+			}
+			if c.Key != cty.NilVal {
+				cm["key"] = CtyValueToString(c.Key)
+			}
+			cursorList = append(cursorList, cm)
 		}
+		scope["iter"] = cursorList
 	}
 	b, err := json.Marshal(scope)
 	return string(b), err
 }
 
-// RestoreVarScope rebuilds a run's vars map and optional iteration cursor from
+// RestoreVarScope rebuilds a run's vars map and iteration cursor stack from
 // a JSON-encoded scope snapshot and the compiled workflow graph. Variable
 // defaults come from the graph; step outputs are restored from the JSON scope.
-// The returned IterCursor is non-nil only when the scope JSON contains an
-// "iter" field (i.e. a for_each was active when the scope was last persisted).
-// The cursor's Items field is intentionally nil; the for_each engine node
-// re-evaluates the items expression on re-entry (W07).
-func RestoreVarScope(scopeJSON string, g *FSMGraph) (map[string]cty.Value, *IterCursor, error) {
-	// Start from graph defaults so any new variables added since the crash
-	// are seeded correctly.
+//
+// The returned []IterCursor is non-nil only when the scope JSON contains an
+// "iter" field. Each cursor's Items field is nil; the step re-evaluates the
+// expression on re-entry.
+func RestoreVarScope(scopeJSON string, g *FSMGraph) (map[string]cty.Value, []IterCursor, error) {
 	vars := SeedVarsFromGraph(g)
 
 	if scopeJSON == "" {
@@ -363,8 +475,7 @@ func RestoreVarScope(scopeJSON string, g *FSMGraph) (map[string]cty.Value, *Iter
 		return vars, nil, fmt.Errorf("restore scope: %w", err)
 	}
 
-	// Restore steps outputs. Variable values come from graph defaults (read-only
-	// in W04), so the "var" section in the JSON is intentionally ignored.
+	// Restore steps outputs.
 	if stepsData, ok := raw["steps"].(map[string]interface{}); ok {
 		stepsAttrs := map[string]cty.Value{}
 		for stepName, stepOutputsRaw := range stepsData {
@@ -385,24 +496,22 @@ func RestoreVarScope(scopeJSON string, g *FSMGraph) (map[string]cty.Value, *Iter
 		}
 	}
 
-	// Restore iteration cursor if present (W07). Items are intentionally not
-	// persisted; the for_each node re-evaluates them on re-entry.
-	var cursor *IterCursor
-	if iterData, ok := raw["iter"].(map[string]interface{}); ok {
-		cursor = &IterCursor{}
-		if v, ok := iterData["node"].(string); ok {
-			cursor.NodeName = v
-		}
-		if v, ok := iterData["index"].(float64); ok {
-			cursor.Index = int(v)
-		}
-		if v, ok := iterData["any_failed"].(bool); ok {
-			cursor.AnyFailed = v
-		}
-		if v, ok := iterData["in_progress"].(bool); ok {
-			cursor.InProgress = v
+	// Restore iteration cursor stack.
+	// Support both W10 array format and W07 single-object format.
+	var stack []IterCursor
+	if iterRaw, ok := raw["iter"]; ok {
+		switch v := iterRaw.(type) {
+		case []interface{}:
+			for _, elem := range v {
+				if m, ok := elem.(map[string]interface{}); ok {
+					stack = append(stack, deserializeIterCursor(m))
+				}
+			}
+		case map[string]interface{}:
+			// Legacy W07 single-cursor format.
+			stack = []IterCursor{deserializeIterCursor(v)}
 		}
 	}
 
-	return vars, cursor, nil
+	return vars, stack, nil
 }

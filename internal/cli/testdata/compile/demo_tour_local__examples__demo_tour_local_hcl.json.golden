@@ -47,7 +47,7 @@
       ]
     },
     {
-      "name": "process",
+      "name": "process_each",
       "adapter": "shell",
       "timeout": "30s",
       "input_keys": [
@@ -56,12 +56,12 @@
       "allow_tools": null,
       "outcomes": [
         {
-          "name": "failure",
-          "transition_to": "_continue"
+          "name": "all_succeeded",
+          "transition_to": "review"
         },
         {
-          "name": "success",
-          "transition_to": "_continue"
+          "name": "any_failed",
+          "transition_to": "aborted"
         }
       ]
     },
@@ -119,7 +119,7 @@
   "step_order": [
     "boot",
     "discover",
-    "process",
+    "process_each",
     "review",
     "celebrate"
   ],

@@ -1,0 +1,14 @@
+digraph "iteration_simple" {
+  rankdir=LR;
+
+  "process" [shape=box];
+  "count_phase" [shape=box];
+  "done" [shape=doublecircle];
+
+  "__start__" [shape=point,width=0.12,label=""];
+  "__start__" -> "process" [label="initial"];
+  "process" -> "count_phase" [label="all_succeeded"];
+  "process" -> "done" [label="any_failed"];
+  "count_phase" -> "done" [label="all_succeeded"];
+  "count_phase" -> "done" [label="any_failed"];
+}

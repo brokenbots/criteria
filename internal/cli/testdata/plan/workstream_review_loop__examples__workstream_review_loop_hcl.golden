@@ -41,7 +41,7 @@ steps (declaration order):
   execute   agent=executor
     input keys: prompt
     allow_tools: *
-    outcomes: needs_review -> verify, needs_approval -> verify, failure -> close_pr_manager_abort
+    outcomes: success -> verify, needs_review -> verify, needs_approval -> verify, failure -> close_pr_manager_abort
   verify   adapter=shell   timeout=2m0s
     input keys: command
     allow_tools: (none)
@@ -81,7 +81,7 @@ steps (declaration order):
   execute_pr_feedback   agent=executor
     input keys: prompt
     allow_tools: *
-    outcomes: needs_review -> verify, needs_approval -> verify, failure -> close_pr_manager_abort
+    outcomes: success -> verify, needs_review -> verify, needs_approval -> verify, failure -> close_pr_manager_abort
   merge_pr_and_sync_main   adapter=shell   timeout=5m0s
     input keys: command
     allow_tools: (none)

@@ -166,7 +166,7 @@ workflow "x" {
   state "done" { terminal = true }
 }
 `,
-			wantSummary: `step "a": exactly one of adapter or agent must be set`,
+			wantSummary: `step "a": exactly one of adapter, agent, or type="workflow" must be set`,
 		},
 		{
 			name: "both adapter and agent",
@@ -187,7 +187,7 @@ workflow "x" {
   state "done" { terminal = true }
 }
 `,
-			wantSummary: `step "a": exactly one of adapter or agent must be set`,
+			wantSummary: `step "a": exactly one of adapter, agent, or type="workflow" must be set`,
 		},
 		{
 			name: "lifecycle requires agent",

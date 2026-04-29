@@ -21,13 +21,15 @@ func WithResumedVars(vars map[string]cty.Value) Option {
 	}
 }
 
-// WithResumedIter sets the IterCursor to restore at run start. Used during
-// crash recovery when a for_each was active at the time of the crash (W07).
-// The cursor's Items field may be nil; the for_each node re-evaluates the
-// items expression on first entry.
-func WithResumedIter(cursor *workflow.IterCursor) Option {
+// WithResumedIter sets the IterCursor stack to restore at run start. Used during
+// crash recovery when a step iteration was active at the time of the crash (W10).
+// Formerly WithResumedIter(*workflow.IterCursor) (W07); updated to accept a
+// slice for stack-based nested body support.
+// Each cursor's Items field may be nil; the step re-evaluates the expression on
+// first entry.
+func WithResumedIter(stack []workflow.IterCursor) Option {
 	return func(e *Engine) {
-		e.resumedIter = cursor
+		e.resumedIterStack = stack
 	}
 }
 
@@ -83,8 +85,8 @@ func WithWorkflowDir(dir string) Option {
 	}
 }
 
-// WithLogger sets the structured logger used for internal engine warnings
-// (e.g., rebindEachOnResume failures). When not set, slog.Default() is used.
+// WithLogger sets the structured logger used for internal engine warnings.
+// When not set, slog.Default() is used.
 // Pass the same logger used by the surrounding CLI command for consistent
 // log routing.
 func WithLogger(log *slog.Logger) Option {

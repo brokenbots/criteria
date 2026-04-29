@@ -157,25 +157,27 @@ func (s *Sink) OnBranchEvaluated(node, matchedArm, target, condition string) {
 	s.publish(&pb.BranchEvaluated{Node: node, MatchedArm: matchedArm, Target: target, Condition: condition})
 }
 
-// OnForEachEntered emits a for_each.entered event when a for_each node begins iterating (W07).
+// OnForEachEntered emits a for_each.entered event when a step begins iterating (W07/W10).
 func (s *Sink) OnForEachEntered(node string, count int) {
 	s.publish(&pb.ForEachEntered{Node: node, Count: int32(count)})
 }
 
-// OnForEachIteration emits a for_each.iteration event at the start of each per-item iteration (W07).
-func (s *Sink) OnForEachIteration(node string, index int, value string, anyFailed bool) {
-	s.publish(&pb.ForEachIteration{Node: node, Index: int32(index), Value: value, AnyFailed: anyFailed})
+// OnStepIterationStarted emits a step.iteration_started event at the start of each
+// per-item iteration (W10). Formerly OnForEachIteration (W07).
+func (s *Sink) OnStepIterationStarted(node string, index int, value string, anyFailed bool) {
+	s.publish(&pb.StepIterationStarted{Node: node, Index: int32(index), Value: value, AnyFailed: anyFailed})
 }
 
-// OnForEachOutcome emits a for_each.outcome event when a for_each node finishes iterating (W07).
-func (s *Sink) OnForEachOutcome(node, outcome, target string) {
-	s.publish(&pb.ForEachOutcome{Node: node, Outcome: outcome, Target: target})
+// OnStepIterationCompleted emits a step.iteration_completed event when a step finishes
+// all iterations (W10). Formerly OnForEachOutcome (W07).
+func (s *Sink) OnStepIterationCompleted(node, outcome, target string) {
+	s.publish(&pb.StepIterationCompleted{Node: node, Outcome: outcome, Target: target})
 }
 
-// OnForEachStep emits a for_each.step event when the engine routes to a step
-// within an active iteration subgraph (other than the do-step, W08).
-func (s *Sink) OnForEachStep(node string, index int, step string) {
-	s.publish(&pb.ForEachStep{Node: node, Index: int32(index), Step: step})
+// OnStepIterationItem emits a step.iteration_item event when the engine is about to
+// execute the step body for the next iteration item (W10). Formerly OnForEachStep (W08).
+func (s *Sink) OnStepIterationItem(node string, index int, step string) {
+	s.publish(&pb.StepIterationItem{Node: node, Index: int32(index), Step: step})
 }
 
 // OnScopeIterCursorSet emits a scope.iter_cursor_set event when the for_each

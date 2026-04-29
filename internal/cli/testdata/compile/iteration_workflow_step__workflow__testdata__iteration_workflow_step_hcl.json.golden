@@ -1,0 +1,41 @@
+{
+  "name": "iteration_workflow_step",
+  "initial_state": "run_items",
+  "target_state": "done",
+  "policy": {
+    "MaxTotalSteps": 50,
+    "MaxStepRetries": 0
+  },
+  "agents": [],
+  "steps": [
+    {
+      "name": "run_items",
+      "input_keys": null,
+      "allow_tools": null,
+      "outcomes": [
+        {
+          "name": "all_succeeded",
+          "transition_to": "done"
+        },
+        {
+          "name": "any_failed",
+          "transition_to": "done"
+        }
+      ]
+    }
+  ],
+  "states": [
+    {
+      "name": "done",
+      "terminal": true,
+      "success": true
+    }
+  ],
+  "step_order": [
+    "run_items"
+  ],
+  "plugins_required": null,
+  "metadata": {
+    "schema_version": 1
+  }
+}

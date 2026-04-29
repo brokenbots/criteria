@@ -153,7 +153,8 @@ func formatStepHeader(step *workflow.StepNode) string {
 func formatOutcomes(step *workflow.StepNode, spec *workflow.Spec) string {
 	ordered := make([]string, 0, len(step.Outcomes))
 	if spec != nil {
-		for _, st := range spec.Steps {
+		for i := range spec.Steps {
+			st := &spec.Steps[i]
 			if st.Name != step.Name {
 				continue
 			}
