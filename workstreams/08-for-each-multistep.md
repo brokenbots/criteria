@@ -809,3 +809,15 @@ make lint-imports  — import boundaries OK
 make lint-go       — no lint errors (nilerr fix in 40d982b was prompted by linter)
 make validate      — all examples pass
 ```
+
+---
+
+### Round 4 Reviewer Notes (PR #25 — four doc/comment fixes, commit `6820275`)
+
+1. **PRRT_kwDOSOBb1s5-UY5z** (`docs/workflow.md` line 413): `each.index` displayed as `("0","1","2")` with string quotes. Removed quotes; now `(0, 1, 2)` to reflect cty number type.
+
+2. **PRRT_kwDOSOBb1s5-UY6D** (`docs/workflow.md` line 473–474): Aggregate outcomes said "final outcomes were success", misleading for multi-step bodies where any step's non-success outcome contributes to `any_failed`. Rephrased to "Every step outcome in every iteration body" and "at least one step in an iteration body returned a non-success outcome".
+
+3. **PRRT_kwDOSOBb1s5-UY6G** (`workflow/schema.go` line 326): `IterationSteps` comment was circular. Rewrote to describe the two-phase computation explicitly.
+
+4. **PRRT_kwDOSOBb1s5-UY6J** (`workflow/compile_foreach_subgraph.go` line 7): Header still said "BFS" after the prior fix only updated the `forwardReachableSteps` function comment. Changed to "forward reachability walk" in the file header too.
