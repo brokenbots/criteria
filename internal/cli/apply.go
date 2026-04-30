@@ -195,7 +195,7 @@ func applyClientOptions(opts applyOptions) servertrans.Options {
 	}
 }
 
-func writeRunCheckpoint(log *slog.Logger, runID, graphName, workflowPath, serverURL, step string, attempt int, criteriaID, token string) {
+func writeRunCheckpoint(log *slog.Logger, runID, graphName, workflowPath, serverURL, step string, attempt int, criteriaID, token string, visits map[string]int) {
 	cp := &StepCheckpoint{
 		RunID:        runID,
 		Workflow:     graphName,
@@ -206,19 +206,27 @@ func writeRunCheckpoint(log *slog.Logger, runID, graphName, workflowPath, server
 		ServerURL:    serverURL,
 		CriteriaID:   criteriaID,
 		Token:        token,
+		Visits:       visits,
 	}
 	if cpErr := WriteStepCheckpoint(cp); cpErr != nil {
 		log.Warn("failed to write step checkpoint; crash recovery may not work", "error", cpErr)
 	}
 }
 
-func buildServerSink(client *servertrans.Client, runID string, graph *workflow.FSMGraph, workflowPath, serverURL string, log *slog.Logger) *run.Sink {
+// buildServerSink constructs a run.Sink wired to the given server client.
+// getVisits, if non-nil, is called on each checkpoint to capture the current
+// per-step visit counts for crash-recovery persistence (W07).
+func buildServerSink(client *servertrans.Client, runID string, graph *workflow.FSMGraph, workflowPath, serverURL string, log *slog.Logger, getVisits func() map[string]int) *run.Sink {
 	return &run.Sink{
 		RunID:  runID,
 		Client: client,
 		Log:    log.With("run_id", runID),
 		CheckpointFn: func(step string, attempt int) {
-			writeRunCheckpoint(log, runID, graph.Name, workflowPath, serverURL, step, attempt, client.CriteriaID(), client.Token())
+			var visits map[string]int
+			if getVisits != nil {
+				visits = getVisits()
+			}
+			writeRunCheckpoint(log, runID, graph.Name, workflowPath, serverURL, step, attempt, client.CriteriaID(), client.Token(), visits)
 		},
 	}
 }
@@ -233,7 +241,7 @@ func newLocalRunState(runID, graphName, serverURL string) *localRunState {
 	}
 }
 
-func executeServerRun(ctx context.Context, log *slog.Logger, loader plugin.Loader, sink *run.Sink, client *servertrans.Client, state *localRunState, graph *workflow.FSMGraph, opts applyOptions) error {
+func executeServerRun(ctx context.Context, log *slog.Logger, loader plugin.Loader, client *servertrans.Client, state *localRunState, graph *workflow.FSMGraph, opts applyOptions) error {
 	_ = writeLocalRunState(state)
 	defer removeLocalRunState()
 	defer RemoveStepCheckpoint(state.RunID)
@@ -243,7 +251,17 @@ func executeServerRun(ctx context.Context, log *slog.Logger, loader plugin.Loade
 		"workflow", graph.Name,
 		"file", filepath.Base(opts.workflowPath))
 
-	eng := engine.New(graph, loader, sink,
+	// Declare eng first so the checkpoint closure can capture live visit counts.
+	var eng *engine.Engine
+	sink := buildServerSink(client, state.RunID, graph, opts.workflowPath, opts.serverURL, log,
+		func() map[string]int {
+			if eng != nil {
+				return eng.VisitCounts()
+			}
+			return nil
+		})
+
+	eng = engine.New(graph, loader, sink,
 		engine.WithVarOverrides(parseVarOverrides(opts.varOverrides)),
 		engine.WithWorkflowDir(filepath.Dir(opts.workflowPath)),
 	)
@@ -315,9 +333,8 @@ func runApplyServer(ctx context.Context, opts applyOptions) error {
 	}
 	defer client.Close()
 
-	sink := buildServerSink(client, runID, graph, opts.workflowPath, opts.serverURL, log)
 	state := newLocalRunState(runID, graph.Name, opts.serverURL)
-	return executeServerRun(runCtx, log, loader, sink, client, state, graph, opts)
+	return executeServerRun(runCtx, log, loader, client, state, graph, opts)
 }
 
 func setupServerRun(ctx context.Context, log *slog.Logger, graph *workflow.FSMGraph, src []byte, serverURL, name string, clientOpts servertrans.Options, cancelRun func()) (*servertrans.Client, string, error) {

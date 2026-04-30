@@ -111,6 +111,10 @@ type Engine struct {
 	// lastVisits captures the Visits map from RunState when execution stops so
 	// the caller can pass them to a resumed engine via WithResumedVisits (W07).
 	lastVisits map[string]int
+	// liveRunState is set to the active RunState while runLoop is executing,
+	// allowing VisitCounts() to return live values for mid-run checkpoints (W07).
+	// Cleared by handleEvalError when the run ends.
+	liveRunState *RunState
 	// workflowDir is the directory containing the HCL workflow file. Passed to
 	// RunState so that file() and fileexists() can resolve relative paths.
 	workflowDir string
@@ -134,11 +138,18 @@ func New(graph *workflow.FSMGraph, loader plugin.Loader, sink Sink, opts ...Opti
 // loop to carry variable state across a resume boundary (W05).
 func (e *Engine) VarScope() map[string]cty.Value { return e.lastVars }
 
-// VisitCounts returns the per-step visit counts captured when the last run
-// stopped (paused, failed, or completed). Returns nil if the engine has not
-// yet run. Used by the CLI crash-recovery path to persist visit state across
-// a resume boundary (W07).
-func (e *Engine) VisitCounts() map[string]int { return e.lastVisits }
+// VisitCounts returns the per-step visit counts. During an active run it
+// returns the live values from the current RunState so that mid-run
+// checkpoints capture the correct counts. After the run ends it returns the
+// snapshot captured by handleEvalError. Returns nil if the engine has not yet
+// run. Used by the CLI crash-recovery path to persist visit state across a
+// resume boundary (W07).
+func (e *Engine) VisitCounts() map[string]int {
+	if e.liveRunState != nil {
+		return e.liveRunState.Visits
+	}
+	return e.lastVisits
+}
 
 // Run executes the workflow until a terminal state is reached, the global
 // step limit is exceeded, or ctx is cancelled.
@@ -183,6 +194,7 @@ func (e *Engine) runLoop(ctx context.Context, sessions *plugin.SessionManager, c
 	}
 	deps := e.buildDeps(sessions)
 
+	e.liveRunState = st
 	for {
 		node, err := nodeFor(e.graph, st.Current)
 		if err != nil {
@@ -347,8 +359,9 @@ func (e *Engine) advanceTo(st *RunState, next string) {
 // handleEvalError dispatches errors from node.Evaluate. It handles ErrTerminal
 // and ErrPaused specially; all other errors are propagated as run failures.
 func (e *Engine) handleEvalError(st *RunState, err error) error {
-	// Always capture the visit state so callers can retrieve it via VisitCounts()
-	// for crash-recovery reattach (W07).
+	// Capture the visit state and clear the live pointer so VisitCounts()
+	// returns a stable snapshot after the run ends (W07).
+	e.liveRunState = nil
 	e.lastVisits = st.Visits
 	if errors.Is(err, engineruntime.ErrTerminal) {
 		state, ok := e.graph.States[st.Current]

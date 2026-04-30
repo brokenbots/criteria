@@ -191,7 +191,7 @@ func TestWriteRunCheckpoint_Success(t *testing.T) {
 	log := newApplyLogger()
 
 	// Must not panic; checkpoint written to stateDir.
-	writeRunCheckpoint(log, "run-1", "my-workflow", wfFile, "", "build", 1, "cid-1", "tok-1")
+	writeRunCheckpoint(log, "run-1", "my-workflow", wfFile, "", "build", 1, "cid-1", "tok-1", nil)
 
 	checkpoints, err := ListStepCheckpoints()
 	if err != nil {

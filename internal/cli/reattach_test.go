@@ -449,7 +449,7 @@ func TestBuildServerSink(t *testing.T) {
 
 	c := newOfflineClient(t)
 	log := discardLogger()
-	sink := buildServerSink(c, "run-srv-1", graph, wfFile, "http://srv", log)
+	sink := buildServerSink(c, "run-srv-1", graph, wfFile, "http://srv", log, nil)
 	if sink == nil {
 		t.Fatal("expected non-nil Sink")
 	}
@@ -760,6 +760,80 @@ func TestResumeActiveRun_HappyPath(t *testing.T) {
 	}
 	if !hasCompleted {
 		t.Errorf("expected RunCompleted event; published envelopes: %d", len(ft.published))
+	}
+}
+
+// maxVisitsWorkflow has max_visits = 1 on step "work" for testing visit-count
+// persistence across reattach.
+const maxVisitsWorkflow = `
+workflow "max_visits_test" {
+  version       = "0.1"
+  initial_state = "work"
+  target_state  = "done"
+
+  step "work" {
+    adapter    = "shell"
+    max_visits = 1
+    input {
+      command = "echo hi"
+    }
+    outcome "success" { transition_to = "done" }
+    outcome "failure" { transition_to = "failed" }
+  }
+
+  state "done" {
+    terminal = true
+    success  = true
+  }
+  state "failed" {
+    terminal = true
+    success  = false
+  }
+}
+`
+
+// TestResumeActiveRun_VisitsRestored verifies that visit counts persisted in a
+// StepCheckpoint are seeded into the resumed engine and that max_visits is
+// enforced against the restored count. With Visits={"work":1} and
+// max_visits=1, the first incrementVisit call in the resumed engine must fail.
+func TestResumeActiveRun_VisitsRestored(t *testing.T) {
+	stateDir := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", stateDir)
+
+	wfFile := writeWorkflowFile(t, maxVisitsWorkflow)
+	cp := &StepCheckpoint{
+		RunID:        "rar-visits",
+		WorkflowPath: wfFile,
+		Visits:       map[string]int{"work": 1}, // already at the limit
+	}
+	writeCheckpointDirect(t, stateDir, cp)
+
+	resp := &pb.ReattachRunResponse{
+		CanResume:   true,
+		Status:      "running",
+		CurrentStep: "work",
+		Attempt:     0, // nextAttempt=1 ≤ maxAttempts=1
+	}
+	graph, err := parseWorkflowFromPath(wfFile)
+	if err != nil {
+		t.Fatalf("parseWorkflowFromPath: %v", err)
+	}
+
+	ft := &fakeTransport{}
+	resumeActiveRun(context.Background(), discardLogger(), ft, cp, graph, resp)
+
+	// The engine must emit RunFailed because visits["work"]=1 >= max_visits=1.
+	var gotFailed bool
+	for _, env := range ft.published {
+		if rf := env.GetRunFailed(); rf != nil {
+			gotFailed = true
+			if !strings.Contains(rf.GetReason(), "exceeded max_visits") {
+				t.Errorf("RunFailed reason %q should mention exceeded max_visits", rf.GetReason())
+			}
+		}
+	}
+	if !gotFailed {
+		t.Error("expected RunFailed event when checkpoint visits match max_visits limit")
 	}
 }
 
