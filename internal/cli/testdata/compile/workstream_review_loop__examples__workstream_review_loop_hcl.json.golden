@@ -14,7 +14,8 @@
       "config_keys": [
         "max_turns",
         "model",
-        "reasoning_effort"
+        "reasoning_effort",
+        "system_prompt"
       ]
     },
     {
@@ -23,7 +24,8 @@
       "on_crash": "fail",
       "config_keys": [
         "max_turns",
-        "model"
+        "model",
+        "system_prompt"
       ]
     },
     {
@@ -33,7 +35,8 @@
       "config_keys": [
         "max_turns",
         "model",
-        "reasoning_effort"
+        "reasoning_effort",
+        "system_prompt"
       ]
     }
   ],
