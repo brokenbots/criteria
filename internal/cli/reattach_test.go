@@ -522,6 +522,43 @@ func TestBuildServerSink_VisitsPersisted(t *testing.T) {
 	}
 }
 
+// TestBuildLocalCheckpointFn_VisitsPersisted verifies that buildLocalCheckpointFn
+// writes the visits returned by getVisits into the StepCheckpoint. Mirrors
+// TestBuildServerSink_VisitsPersisted for the initial-run local path. This would
+// fail if buildLocalCheckpointFn stopped calling getVisits() or stopped assigning
+// its result to cp.Visits.
+func TestBuildLocalCheckpointFn_VisitsPersisted(t *testing.T) {
+	stateDir := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", stateDir)
+
+	wfFile := writeWorkflowFile(t, maxVisitsWorkflow)
+	wantVisits := map[string]int{"work": 2, "review": 1}
+
+	fn := buildLocalCheckpointFn(discardLogger(), "local-fn-visits", "max_visits_test", wfFile,
+		func() map[string]int { return wantVisits })
+	fn("work", 1)
+
+	checkpoints, err := ListStepCheckpoints()
+	if err != nil {
+		t.Fatalf("ListStepCheckpoints: %v", err)
+	}
+	var found *StepCheckpoint
+	for _, cp := range checkpoints {
+		if cp.RunID == "local-fn-visits" {
+			found = cp
+			break
+		}
+	}
+	if found == nil {
+		t.Fatal("checkpoint not found; buildLocalCheckpointFn may not have written it")
+	}
+	for step, want := range wantVisits {
+		if got := found.Visits[step]; got != want {
+			t.Errorf("Visits[%q] = %d; want %d", step, got, want)
+		}
+	}
+}
+
 // TestBuildReattachTrackerAndEngine_VisitsPersisted proves that the local
 // checkpoint write path records live visit counts from the engine. It calls
 // buildReattachTrackerAndEngine directly, runs the returned engine, and asserts

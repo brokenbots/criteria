@@ -116,23 +116,13 @@ func runApplyLocal(ctx context.Context, opts applyOptions) error { //nolint:funl
 	}
 
 	runID := uuid.NewString()
-	var eng *engine.Engine // captured by checkpointFn closure below
-	checkpointFn := func(step string, attempt int) {
-		cp := &StepCheckpoint{
-			RunID:        runID,
-			Workflow:     graph.Name,
-			WorkflowPath: opts.workflowPath,
-			CurrentStep:  step,
-			Attempt:      attempt,
-			StartedAt:    time.Now().UTC(),
-		}
+	var eng *engine.Engine // captured by getVisits closure below
+	checkpointFn := buildLocalCheckpointFn(log, runID, graph.Name, opts.workflowPath, func() map[string]int {
 		if eng != nil {
-			cp.Visits = eng.VisitCounts()
+			return eng.VisitCounts()
 		}
-		if cpErr := WriteStepCheckpoint(cp); cpErr != nil {
-			log.Warn("failed to write step checkpoint; crash recovery may not work", "error", cpErr)
-		}
-	}
+		return nil
+	})
 	baseSink := buildLocalSink(runID, jsonOut, mode, graph.StepOrder(), checkpointFn)
 	tracker := &pauseTracker{
 		Sink: baseSink,
@@ -210,6 +200,29 @@ func writeRunCheckpoint(log *slog.Logger, runID, graphName, workflowPath, server
 	}
 	if cpErr := WriteStepCheckpoint(cp); cpErr != nil {
 		log.Warn("failed to write step checkpoint; crash recovery may not work", "error", cpErr)
+	}
+}
+
+// buildLocalCheckpointFn returns a CheckpointFn that writes a fresh StepCheckpoint
+// for crash-recovery persistence during an initial local run. getVisits, if non-nil,
+// is called at each write to capture current per-step visit counts (W07). Mirrors the
+// getVisits convention used by buildServerSink.
+func buildLocalCheckpointFn(log *slog.Logger, runID, workflowName, workflowPath string, getVisits func() map[string]int) func(string, int) {
+	return func(step string, attempt int) {
+		cp := &StepCheckpoint{
+			RunID:        runID,
+			Workflow:     workflowName,
+			WorkflowPath: workflowPath,
+			CurrentStep:  step,
+			Attempt:      attempt,
+			StartedAt:    time.Now().UTC(),
+		}
+		if getVisits != nil {
+			cp.Visits = getVisits()
+		}
+		if err := WriteStepCheckpoint(cp); err != nil {
+			log.Warn("failed to write step checkpoint; crash recovery may not work", "error", err)
+		}
 	}
 }
 

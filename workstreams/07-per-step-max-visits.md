@@ -615,6 +615,36 @@ The latest test set now covers server write/read persistence, local read-side re
 - `go test -race -count=1 -run 'TestResumeOneLocalRun_VisitsRestored|TestBuildServerSink_VisitsPersisted|TestResumeActiveRun_VisitsRestored|TestLocalState_StepCheckpoint_VisitsRoundTrip|TestLocalState_StepCheckpoint_VisitsOmittedWhenEmpty' ./internal/cli/...` — PASS
 - `make ci` — PASS
 
+### Remediation batch 7 — 2026-04-30
+
+#### Blocker — Initial local-run checkpoint write path
+
+Extracted `buildLocalCheckpointFn` from the inline closure in `runApplyLocal` (mirrors the `buildServerSink`/`getVisits` convention already tested by `TestBuildServerSink_VisitsPersisted`). The new helper takes `getVisits func() map[string]int` and is called by `runApplyLocal` with a lambda returning `eng.VisitCounts()`. This eliminates the code duplication between `runApplyLocal`'s closure and makes the initial-run checkpoint write path directly testable.
+
+Added `TestBuildLocalCheckpointFn_VisitsPersisted` to `internal/cli/reattach_test.go` (placed immediately after `TestBuildServerSink_VisitsPersisted` for symmetry). The test:
+
+- Calls `buildLocalCheckpointFn` with a static `getVisits` returning `{"work":2, "review":1}`.
+- Fires the returned function once (`fn("work", 1)`).
+- Reads back the checkpoint via `ListStepCheckpoints` and asserts both visit counts are present.
+
+**Regression sensitivity verified**: Commenting out `cp.Visits = getVisits()` inside `buildLocalCheckpointFn` causes the test to fail with `Visits["work"] = 0; want 2` and `Visits["review"] = 0; want 1`.
+
+The three local checkpoint write-path tests now cover all three closures:
+- `TestBuildLocalCheckpointFn_VisitsPersisted` — `runApplyLocal` initial-run path (via `buildLocalCheckpointFn`)
+- `TestBuildReattachTrackerAndEngine_VisitsPersisted` — `buildReattachTrackerAndEngine` resume path
+- `TestBuildServerSink_VisitsPersisted` — `buildServerSink` server path
+
+#### Files modified in this batch
+
+- `internal/cli/apply.go` — extracted `buildLocalCheckpointFn` helper; updated `runApplyLocal` to use it (11 lines removed from inline closure, 22 lines added as a named function + 6-line call site).
+- `internal/cli/reattach_test.go` — added `TestBuildLocalCheckpointFn_VisitsPersisted`.
+
+#### Validation
+
+- `go test -race -count=1 -run 'TestBuildLocalCheckpointFn_VisitsPersisted' ./internal/cli/...` — PASS
+- `go test -race -count=2 ./internal/engine/... ./workflow/... ./internal/cli/...` — PASS
+- `make ci` — PASS
+
 ### Remediation batch 6 — 2026-04-30
 
 #### Blocker — Local checkpoint write-path test
@@ -634,4 +664,28 @@ This closes the local write-side gap; both write (`TestBuildReattachTrackerAndEn
 
 - `go test -race -count=1 -run 'TestBuildReattachTrackerAndEngine_VisitsPersisted' ./internal/cli/...` — PASS
 - `go test -race -count=2 ./internal/engine/... ./workflow/... ./internal/cli/...` — PASS
+- `make ci` — PASS
+
+### Review 2026-04-30-07 — changes-requested
+
+#### Summary
+`TestBuildReattachTrackerAndEngine_VisitsPersisted` closes the **resume-time local checkpoint write** path and, together with `TestResumeOneLocalRun_VisitsRestored`, makes the local crash-recovery callback path regression-sensitive. I am still blocking approval because the suite still does not prove the **initial local run** checkpoint writer in `runApplyLocal` persists `Visits`. A regression in that closure would still allow the first crash on a fresh local run to lose visit history while all current tests stay green.
+
+#### Plan Adherence
+- **Step 1 — Schema:** Satisfied.
+- **Step 2 — Compile:** Satisfied.
+- **Step 3 — Runtime tracking:** Satisfied.
+- **Step 4 — Persistence:** Implemented in code for all intended paths. Proven by tests on the server write/read paths, the local resume-time write path, and the local restore/read path. The remaining unproven surface is the initial local apply checkpoint writer in `runApplyLocal`.
+- **Step 5 — Tests:** Still short of the full local CLI contract boundary. The new test exercises `buildReattachTrackerAndEngine`, but there is still no regression-sensitive test covering `runApplyLocal`'s separate checkpoint closure (`internal/cli/apply.go:120-134`).
+- **Step 6 — Documentation:** Satisfied.
+
+#### Required Remediations
+- **Blocker** — `internal/cli/apply.go:120-134`: the initial local-run checkpoint write path is still untested. `TestBuildReattachTrackerAndEngine_VisitsPersisted` covers the resume-time closure in `buildReattachTrackerAndEngine`, not the distinct closure used by `runApplyLocal` before the first crash. A regression that removed `cp.Visits = eng.VisitCounts()` from `runApplyLocal` would still pass the current suite. **Acceptance criteria:** add a regression-sensitive test that exercises local checkpoint creation from the initial local apply path and asserts the written checkpoint contains the expected `Visits`, or an equivalent end-to-end local run/restart test that would fail if the first-crash checkpoint dropped visit counts.
+
+#### Test Intent Assessment
+The tests now cover nearly all intended behavior with good sensitivity: compile warnings, retry counting, server persistence write/read, local restore, and local resume-time checkpoint writes. The one missing hole is very specific: nothing presently fails if the *first* local checkpoint emitted by `runApplyLocal` omits `Visits`, which is the first-hop persistence contract for local crash recovery.
+
+#### Validation Performed
+- `git --no-pager diff --unified=3 HEAD~1..HEAD -- internal/cli/reattach_test.go workstreams/07-per-step-max-visits.md` — reviewed latest remediation
+- `go test -race -count=1 -run 'TestBuildReattachTrackerAndEngine_VisitsPersisted|TestResumeOneLocalRun_VisitsRestored|TestBuildServerSink_VisitsPersisted|TestResumeActiveRun_VisitsRestored' ./internal/cli/...` — PASS
 - `make ci` — PASS
