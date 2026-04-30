@@ -250,24 +250,19 @@ workflow "t" {
 	}
 }
 
-// TestCompile_BackEdgeWarning_NegativeThresholdIgnored verifies that a negative
-// max_visits_warn_threshold is treated as not-set (preserves the default of 200),
-// so the back-edge warning still fires when max_total_steps exceeds 200.
-func TestCompile_BackEdgeWarning_NegativeThresholdIgnored(t *testing.T) {
-	// Negative threshold is invalid and must be ignored; the default of 200
-	// applies, so max_total_steps=500 > 200 triggers the warning.
+// TestCompile_NegativeMaxVisitsWarnThreshold_Rejected verifies that a negative
+// max_visits_warn_threshold is rejected at compile time with a clear diagnostic.
+func TestCompile_NegativeMaxVisitsWarnThreshold_Rejected(t *testing.T) {
 	src := `
 workflow "loop" {
   version       = "0.1"
   initial_state = "execute"
   target_state  = "done"
   policy {
-    max_total_steps           = 500
     max_visits_warn_threshold = -1
   }
   step "execute" {
     adapter = "fake"
-    outcome "again"   { transition_to = "execute" }
     outcome "success" { transition_to = "done" }
   }
   state "done" {
@@ -281,17 +276,17 @@ workflow "loop" {
 		t.Fatalf("parse: %s", diags.Error())
 	}
 	_, diags = Compile(spec, nil)
-	if diags.HasErrors() {
-		t.Fatalf("unexpected compile error: %s", diags.Error())
+	if !diags.HasErrors() {
+		t.Fatal("expected compile error for negative max_visits_warn_threshold; got none")
 	}
-	var warned bool
+	var found bool
 	for _, d := range diags {
-		if strings.Contains(d.Summary, "appears in a loop") {
-			warned = true
+		if strings.Contains(d.Summary, "max_visits_warn_threshold must be >= 0") {
+			found = true
 		}
 	}
-	if !warned {
-		t.Error("expected back-edge warning: negative threshold must be ignored, leaving default 200 in effect")
+	if !found {
+		t.Errorf("expected diagnostic containing \"max_visits_warn_threshold must be >= 0\"; got: %s", diags.Error())
 	}
 }
 

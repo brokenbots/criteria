@@ -58,7 +58,7 @@ workflow "deploy_pipeline" {
 - **`policy`** (optional): Execution guards.
   - **`max_total_steps`** (default 100): Caps the total number of step executions across the run, including retries and iteration steps. Set this to a positive integer to override the cap. If unset, or set to `0`, the default cap of `100` applies. Acts as a coarse backstop; for fine-grained loop control, prefer `max_visits` on individual steps.
   - **`max_step_retries`** (default 0 = no retries): Per-step retry limit for transient failures.
-  - **`max_visits_warn_threshold`** (default 200): Controls when the compiler emits a back-edge warning for steps without `max_visits`. When `max_total_steps` exceeds this threshold and a step has a back-edge (can reach itself via outcome transitions) but no `max_visits`, the compiler emits a warning suggesting `max_visits` be set. Set to `0` to disable warnings entirely. Unset means the default threshold (200) applies.
+  - **`max_visits_warn_threshold`** (default 200): Controls when the compiler emits a back-edge warning for steps without `max_visits`. When `max_total_steps` exceeds this threshold and a step has a back-edge (can reach itself via outcome transitions) but no `max_visits`, the compiler emits a warning suggesting `max_visits` be set. Supported values: omit (or leave unset) to use the default threshold of 200; set to `0` to disable warnings entirely; set to a positive integer to override the default. Negative values are invalid and cause a compile error.
 - **`permissions`** (optional): Workflow-level permission allowlist.
   - **`allow_tools`**: List of glob patterns for tool invocations. Step-level `allow_tools` is unioned with this list.
 

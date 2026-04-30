@@ -69,6 +69,9 @@ func CompileWithOpts(spec *Spec, schemas map[string]AdapterInfo, opts CompileOpt
 	if spec.TargetState == "" {
 		diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: "workflow.target_state is required"})
 	}
+	if spec.Policy != nil && spec.Policy.MaxVisitsWarnThreshold != nil && *spec.Policy.MaxVisitsWarnThreshold < 0 {
+		diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: "policy.max_visits_warn_threshold must be >= 0 (use 0 to disable warnings, omit to use the default of 200)"})
+	}
 
 	g := newFSMGraph(spec)
 	diags = append(diags, compileVariables(g, spec)...)
@@ -121,10 +124,9 @@ func newFSMGraph(spec *Spec) *FSMGraph {
 			g.Policy.MaxStepRetries = spec.Policy.MaxStepRetries
 		}
 		// MaxVisitsWarnThreshold: nil means "not set" (keep default of 200);
-		// a pointer to 0 explicitly disables the warning; any positive value
-		// overrides the default. Negative values are invalid and are ignored,
-		// preserving the default/non-negative policy behavior.
-		if spec.Policy.MaxVisitsWarnThreshold != nil && *spec.Policy.MaxVisitsWarnThreshold >= 0 {
+		// 0 explicitly disables the warning; positive values override the default.
+		// Negative values are rejected at compile time before this point.
+		if spec.Policy.MaxVisitsWarnThreshold != nil {
 			g.Policy.MaxVisitsWarnThreshold = *spec.Policy.MaxVisitsWarnThreshold
 		}
 	}
