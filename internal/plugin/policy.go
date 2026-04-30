@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -25,6 +26,25 @@ type PermissionPolicy interface {
 	Decide(req PermissionRequest) (allow bool, reason string)
 }
 
+// adapterPermissionAliases maps adapter name → (user-facing allow_tools name → canonical SDK kind).
+//
+// Background (UF#02): some adapters (e.g. Copilot) report short permission kinds
+// at runtime ("read", "write") while users naturally write tool names like
+// "read_file" or "write_file" in their allow_tools lists. This map lets the host
+// policy engine resolve those aliases so `allow_tools = ["read_file"]` grants the
+// "read" permission correctly.
+//
+// The workflow module (workflow/compile_steps.go) maintains a parallel static copy
+// of the copilot alias set for compile-time diagnostics. The workflow/ module cannot
+// import internal/ (import-boundary rule), so the two maps are intentionally separate.
+// When adding aliases here, also update copilotAllowToolsAliases in compile_steps.go.
+var adapterPermissionAliases = map[string]map[string]string{
+	"copilot": {
+		"read_file":  "read",
+		"write_file": "write",
+	},
+}
+
 // NewPolicy returns a PermissionPolicy that evaluates requests against the
 // given glob patterns. Patterns are matched against req.Tool using
 // path/filepath.Match semantics ('*' matches any sequence within a segment,
@@ -40,10 +60,38 @@ type PermissionPolicy interface {
 //	NewPolicy([]string{"shell:*"})            // allows any shell command
 //	NewPolicy(nil)                            // denies everything (default)
 func NewPolicy(patterns []string) PermissionPolicy {
+	return NewPolicyWithAliases(patterns, nil)
+}
+
+// NewPolicyWithAliases is like NewPolicy but also accepts an alias map (alias → canonical)
+// so user-facing names like "read_file" resolve to the canonical SDK kind "read" at
+// match time. Pass nil when the adapter reports no aliased kinds.
+func NewPolicyWithAliases(patterns []string, aliases map[string]string) PermissionPolicy {
 	if len(patterns) == 0 {
 		return denyAllPolicy{}
 	}
-	return &allowlistPolicy{patterns: append([]string(nil), patterns...)}
+	return &allowlistPolicy{
+		patterns: append([]string(nil), patterns...),
+		aliases:  aliases,
+	}
+}
+
+// PermissionDenialSuggestion returns a hint string for the permission.denied event,
+// suggesting what the operator should add to allow_tools. It includes known aliases
+// when the adapter reports any for the requested tool.
+// Returns an empty string when no suggestion is available.
+func PermissionDenialSuggestion(adapterName, tool string) string {
+	var aliases []string
+	for alias, canonical := range adapterPermissionAliases[adapterName] {
+		if canonical == tool {
+			aliases = append(aliases, alias)
+		}
+	}
+	if len(aliases) == 0 {
+		return ""
+	}
+	sort.Strings(aliases)
+	return "add '" + tool + "' to allow_tools (aliases: " + strings.Join(aliases, ", ") + ")"
 }
 
 // denyAllPolicy is the default when no allow_tools are configured.
@@ -56,19 +104,23 @@ func (denyAllPolicy) Decide(_ PermissionRequest) (bool, string) {
 // allowlistPolicy evaluates requests against a list of glob patterns.
 type allowlistPolicy struct {
 	patterns []string
+	aliases  map[string]string // user-facing name → canonical SDK kind
 }
 
 func (p *allowlistPolicy) Decide(req PermissionRequest) (bool, string) {
 	targets := permissionMatchTargets(req)
 	for _, pat := range p.patterns {
 		for _, target := range targets {
-			matched, err := filepath.Match(pat, target)
-			if err != nil {
-				// Invalid pattern: skip rather than panic or deny all.
-				continue
-			}
-			if matched {
+			if matched, err := filepath.Match(pat, target); err == nil && matched {
 				return true, "matched: " + pat
+			}
+			// If pat is an alias (e.g. "read_file" → "read"), also try matching
+			// the canonical form against the target so allow_tools entries using
+			// the friendly alias work transparently.
+			if canonical, ok := p.aliases[pat]; ok {
+				if matched, err := filepath.Match(canonical, target); err == nil && matched {
+					return true, "matched: " + pat + " (alias for " + canonical + ")"
+				}
 			}
 		}
 	}

@@ -274,12 +274,164 @@ func TestSessionManagerPermissionGrantAndDeny(t *testing.T) {
 	if denied["request_id"] == "" {
 		t.Fatal("permission.denied request_id must be non-empty")
 	}
+	// allow_tools must be echoed back in the denial payload.
+	allowTools, _ := denied["allow_tools"].([]string)
+	if len(allowTools) != 1 || allowTools[0] != "read_file" {
+		t.Fatalf("permission.denied allow_tools=%v want [read_file]", allowTools)
+	}
+
+	_ = sm.Close(context.Background(), "agent")
+}
+
+// TestSessionManagerDenialPayloadFullContract verifies the complete set of
+// fields that the host must include in every permission.denied event:
+// tool, reason, request_id, and allow_tools.
+func TestSessionManagerDenialPayloadFullContract(t *testing.T) {
+	pluginBin := testutil.BuildPermissivePlugin(t)
+	loader := NewLoaderWithDiscovery(func(string) (string, error) { return pluginBin, nil })
+	t.Cleanup(func() { _ = loader.Shutdown(context.Background()) })
+
+	sm := NewSessionManager(loader)
+	if err := sm.Open(context.Background(), "agent", "permissive", OnCrashFail, nil); err != nil {
+		t.Fatalf("open: %v", err)
+	}
+
+	step := &workflow.StepNode{
+		Name:       "run",
+		Input:      map[string]string{"perm_tools": "write_file"},
+		AllowTools: []string{"read_file", "shell:git *"},
+	}
+	sink := &adapterEventCollector{}
+	if _, err := sm.Execute(context.Background(), "agent", step, sink); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+
+	denied, ok := sink.first("permission.denied")
+	if !ok {
+		t.Fatal("expected permission.denied event")
+	}
+	if denied["tool"] == "" {
+		t.Fatal("permission.denied: tool must be non-empty")
+	}
+	if denied["reason"] == "" {
+		t.Fatal("permission.denied: reason must be non-empty")
+	}
+	if denied["request_id"] == "" {
+		t.Fatal("permission.denied: request_id must be non-empty")
+	}
+	allowTools, _ := denied["allow_tools"].([]string)
+	if len(allowTools) != 2 {
+		t.Fatalf("permission.denied allow_tools=%v want 2 entries", allowTools)
+	}
+
+	_ = sm.Close(context.Background(), "agent")
+}
+
+// TestSessionManagerCopilotAliasGrantAtHostBoundary verifies end-to-end alias
+// expansion at the host boundary: allow_tools=["read_file"] must grant a
+// plugin permission request for the canonical kind "read", because the host
+// expands "read_file" → "read" via the copilot adapter alias map.
+// A denied request for "write" must carry allow_tools and a non-empty
+// suggestion field in its payload.
+func TestSessionManagerCopilotAliasGrantAtHostBoundary(t *testing.T) {
+	pluginBin := testutil.BuildPermissivePlugin(t)
+	// Register the permissive test binary under the "copilot" adapter name so
+	// the host applies copilot alias expansion when evaluating permission kinds.
+	loader := NewLoaderWithDiscovery(func(string) (string, error) { return pluginBin, nil })
+	t.Cleanup(func() { _ = loader.Shutdown(context.Background()) })
+
+	sm := NewSessionManager(loader)
+	if err := sm.Open(context.Background(), "agent", "copilot", OnCrashFail, nil); err != nil {
+		t.Fatalf("open: %v", err)
+	}
+
+	// Plugin requests canonical kinds: "read" (should be granted via alias)
+	// and "write" (should be denied: no "write_file" in allow_tools).
+	step := &workflow.StepNode{
+		Name:       "run",
+		Input:      map[string]string{"perm_tools": "read,write"},
+		AllowTools: []string{"read_file"},
+	}
+	sink := &adapterEventCollector{}
+	if _, err := sm.Execute(context.Background(), "agent", step, sink); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+
+	// "read_file" in allow_tools aliases to "read" → must be granted.
+	if !sink.saw("permission.granted") {
+		t.Fatal("expected permission.granted for canonical kind 'read' via read_file alias")
+	}
+	granted, _ := sink.first("permission.granted")
+	if granted["tool"] != "read" {
+		t.Fatalf("granted tool=%v want read", granted["tool"])
+	}
+
+	// "write" has no match → must be denied.
+	if !sink.saw("permission.denied") {
+		t.Fatal("expected permission.denied for canonical kind 'write'")
+	}
+	denied, _ := sink.first("permission.denied")
+	if denied["tool"] != "write" {
+		t.Fatalf("denied tool=%v want write", denied["tool"])
+	}
+	allowTools, _ := denied["allow_tools"].([]string)
+	if len(allowTools) != 1 || allowTools[0] != "read_file" {
+		t.Fatalf("denied allow_tools=%v want [read_file]", allowTools)
+	}
+	if denied["suggestion"] == "" {
+		t.Fatal("permission.denied: suggestion must be non-empty for copilot adapter alias kinds")
+	}
 
 	_ = sm.Close(context.Background(), "agent")
 }
 
 // TestSessionManagerDefaultDenyAll verifies that a step without allow_tools
 // denies every permission request.
+// TestSessionManagerNilAllowToolsEmitsEmptyList verifies that when a step has
+// nil AllowTools, the host normalizes it to []string{} before embedding it in
+// the permission.denied payload so the field is always present and correctly
+// typed (not JSON null, not absent).
+func TestSessionManagerNilAllowToolsEmitsEmptyList(t *testing.T) {
+	pluginBin := testutil.BuildPermissivePlugin(t)
+	loader := NewLoaderWithDiscovery(func(string) (string, error) { return pluginBin, nil })
+	t.Cleanup(func() { _ = loader.Shutdown(context.Background()) })
+
+	sm := NewSessionManager(loader)
+	if err := sm.Open(context.Background(), "agent", "permissive", OnCrashFail, nil); err != nil {
+		t.Fatalf("open: %v", err)
+	}
+
+	// AllowTools intentionally omitted (nil) — triggers the normalization path.
+	step := &workflow.StepNode{
+		Name:  "run",
+		Input: map[string]string{"perm_tools": "read_file"},
+	}
+	sink := &adapterEventCollector{}
+	if _, err := sm.Execute(context.Background(), "agent", step, sink); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+
+	denied, ok := sink.first("permission.denied")
+	if !ok {
+		t.Fatal("expected permission.denied event")
+	}
+	// allow_tools must be present and typed []string even when the step
+	// declared no AllowTools — the host normalises nil → [].
+	raw, exists := denied["allow_tools"]
+	if !exists {
+		t.Fatal("permission.denied: allow_tools field must be present when AllowTools is nil")
+	}
+	allowTools, ok := raw.([]string)
+	if !ok {
+		t.Fatalf("permission.denied allow_tools type=%T want []string", raw)
+	}
+	if len(allowTools) != 0 {
+		t.Fatalf("permission.denied allow_tools=%v want empty slice", allowTools)
+	}
+
+	_ = sm.Close(context.Background(), "agent")
+}
+
 func TestSessionManagerDefaultDenyAll(t *testing.T) {
 	pluginBin := testutil.BuildPermissivePlugin(t)
 	loader := NewLoaderWithDiscovery(func(string) (string, error) { return pluginBin, nil })

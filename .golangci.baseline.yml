@@ -4,42 +4,6 @@ issues:
       linters:
         - gocritic
       text: 'builtinShadow: shadowing of predeclared identifier: close' # W06: gocritic finding
-    - path: 'cmd/criteria-adapter-copilot/copilot.go'
-      linters:
-        - funlen
-      text: 'Function ''handlePermissionRequest''' # W03: refactor handlePermissionRequest
-    - path: 'cmd/criteria-adapter-copilot/copilot.go'
-      linters:
-        - funlen
-      text: 'Function ''permissionDetails''' # W03: refactor permissionDetails
-    - path: 'cmd/criteria-adapter-copilot/copilot.go'
-      linters:
-        - gocognit
-      text: '`permissionDetails`' # W03: simplify permissionDetails
-    - path: 'cmd/criteria-adapter-copilot/copilot.go'
-      linters:
-        - gocritic
-      text: 'hugeParam: request is heavy \(304 bytes\); consider passing it by pointer' # W06: gocritic finding
-    - path: 'cmd/criteria-adapter-copilot/copilot.go'
-      linters:
-        - gocyclo
-      text: '`permissionDetails`' # W03: simplify permissionDetails
-    - path: 'cmd/criteria-adapter-copilot/copilot.go'
-      linters:
-        - nilerr
-      text: 'error is not nil \(line 518\) but it returns nil' # W04: nilerr finding
-    - path: 'cmd/criteria-adapter-copilot/copilot.go'
-      linters:
-        - staticcheck
-      text: 'SA1019: copilot\.PermissionRequestResultKindDeniedCouldNotRequestFromUser is deprecated: Use PermissionRequestResultKindUserNotAvailable instead\. ' # W04: staticcheck finding
-    - path: 'cmd/criteria-adapter-copilot/copilot.go'
-      linters:
-        - staticcheck
-      text: 'SA1019: copilot\.PermissionRequestResultKindDeniedInteractivelyByUser is deprecated: Use PermissionRequestResultKindRejected instead\. ' # W04: staticcheck finding
-    - path: 'cmd/criteria-adapter-copilot/copilot.go'
-      linters:
-        - staticcheck
-      text: 'SA1019: s\.inner\.Destroy is deprecated: Use \[Session\.Disconnect\] instead\. Destroy will be removed in a future release\.' # W04: staticcheck finding
     - path: 'cmd/criteria-adapter-copilot/testfixtures/fake-copilot/main.go'
       linters:
         - gocritic
@@ -48,22 +12,6 @@ issues:
       linters:
         - contextcheck
       text: 'Function `shutdownSession` should pass the context parameter' # W04: contextcheck finding
-    - path: 'cmd/criteria-adapter-mcp/bridge.go'
-      linters:
-        - funlen
-      text: 'Function ''Execute''' # W03: refactor Execute
-    - path: 'cmd/criteria-adapter-mcp/bridge.go'
-      linters:
-        - funlen
-      text: 'Function ''OpenSession''' # W03: refactor OpenSession
-    - path: 'cmd/criteria-adapter-mcp/bridge.go'
-      linters:
-        - gocognit
-      text: '`\(\*MCPBridge\)\.Execute`' # W03: simplify (*MCPBridge).Execute
-    - path: 'cmd/criteria-adapter-mcp/bridge.go'
-      linters:
-        - gocyclo
-      text: '`\(\*MCPBridge\)\.OpenSession`' # W03: simplify (*MCPBridge).OpenSession
     - path: 'cmd/criteria-adapter-mcp/conformance_test.go'
       linters:
         - gocritic
@@ -76,18 +24,6 @@ issues:
       linters:
         - gocritic
       text: 'stringXbytes: suggestion: !bytes\.Equal\(got, payload\)' # W06: gocritic finding
-    - path: compile_validation.go
-      linters:
-        - funlen
-      text: 'Function ''validateSchemaAttrs''' # W03: refactor validateSchemaAttrs
-    - path: compile_validation.go
-      linters:
-        - gocognit
-      text: '`validateSchemaAttrs`' # W03: simplify validateSchemaAttrs
-    - path: compile_validation.go
-      linters:
-        - gocyclo
-      text: '`validateSchemaAttrs`' # W03: simplify validateSchemaAttrs
     - path: compile_steps.go
       linters:
         - gocritic
@@ -164,26 +100,10 @@ issues:
       linters:
         - gocyclo
       text: '`checkReachability`' # W04: checkReachability extracted from Compile
-    - path: compile.go
-      linters:
-        - funlen
-      text: 'Function ''Compile''' # W03: refactor Compile
     - path: conformance/ack.go
       linters:
         - errcheck
       text: 'Error return value of `stream\.CloseRequest` is not checked' # W04: errcheck finding
-    - path: conformance/ack.go
-      linters:
-        - funlen
-      text: 'Function ''testAckConcurrentStreams''' # W03: refactor testAckConcurrentStreams
-    - path: conformance/ack.go
-      linters:
-        - funlen
-      text: 'Function ''testAckIdempotentDuplicate''' # W03: refactor testAckIdempotentDuplicate
-    - path: conformance/ack.go
-      linters:
-        - funlen
-      text: 'Function ''testAckOrderingSequential''' # W03: refactor testAckOrderingSequential
     - path: conformance/caller_ownership.go
       linters:
         - gocritic
@@ -216,22 +136,10 @@ issues:
       linters:
         - revive
       text: 'var-naming: don''t use underscores in Go names; func testOwnership_SubmitEvents should be testOwnershipSubmitEvents' # W06: revive finding
-    - path: conformance/control.go
-      linters:
-        - funlen
-      text: 'Function ''testControlAgentIsolation''' # W03: refactor testControlAgentIsolation
     - path: conformance/envelope.go
       linters:
         - errcheck
       text: 'Error return value of `stream\.CloseRequest` is not checked' # W04: errcheck finding
-    - path: conformance/envelope.go
-      linters:
-        - funlen
-      text: 'Function ''testEnvelopeRoundTrip''' # W03: refactor testEnvelopeRoundTrip
-    - path: conformance/envelope.go
-      linters:
-        - gocognit
-      text: '`testEnvelopeRoundTrip`' # W03: simplify testEnvelopeRoundTrip
     - path: conformance/resume.go
       linters:
         - errcheck
@@ -252,18 +160,6 @@ issues:
       linters:
         - errcheck
       text: 'Error return value of `stream\.CloseRequest` is not checked' # W04: errcheck finding
-    - path: conformance/typestring.go
-      linters:
-        - funlen
-      text: 'Function ''testTypeStringStability''' # W03: refactor testTypeStringStability
-    - path: conformance/typestring.go
-      linters:
-        - gocognit
-      text: '`testTypeStringStability`' # W03: simplify testTypeStringStability
-    - path: eval.go
-      linters:
-        - gocognit
-      text: '`RestoreVarScope`' # W03: simplify RestoreVarScope
     - path: eval.go
       linters:
         - gocognit
@@ -280,26 +176,6 @@ issues:
       linters:
         - gocritic
       text: 'hugeParam: b is heavy \(120 bytes\); consider passing it by pointer' # W10: EachBinding is a value-type aggregate
-    - path: events/types.go
-      linters:
-        - funlen
-      text: 'Function ''TypeString''' # W03: refactor TypeString
-    - path: events/types.go
-      linters:
-        - funlen
-      text: 'Function ''setPayload''' # W03: refactor setPayload
-    - path: events/types.go
-      linters:
-        - gocyclo
-      text: '`TypeString`' # W03: simplify TypeString
-    - path: events/types.go
-      linters:
-        - gocyclo
-      text: '`setPayload`' # W03: simplify setPayload
-    - path: internal/adapter/conformance/conformance_lifecycle.go
-      linters:
-        - funlen
-      text: 'Function ''testConcurrentSessions''' # W03: refactor testConcurrentSessions
     - path: internal/adapter/conformance/conformance_lifecycle.go
       linters:
         - gocritic
@@ -334,10 +210,6 @@ issues:
       text: 'Error return value of `loader\.Shutdown` is not checked' # W04: errcheck finding
     - path: internal/cli/apply.go
       linters:
-        - funlen
-      text: 'Function ''runApplyLocal''' # W03: refactor runApplyLocal
-    - path: internal/cli/apply.go
-      linters:
         - gocritic
       text: 'hugeParam: clientOpts is heavy \(88 bytes\); consider passing it by pointer' # W06: gocritic finding
     - path: internal/cli/apply.go
@@ -348,14 +220,6 @@ issues:
       linters:
         - errcheck
       text: 'Error return value of `loader\.Shutdown` is not checked' # W04: errcheck finding
-    - path: internal/cli/compile.go
-      linters:
-        - funlen
-      text: 'Function ''buildCompileJSON''' # W03: refactor buildCompileJSON
-    - path: internal/cli/compile.go
-      linters:
-        - funlen
-      text: 'Function ''renderDOT''' # W03: refactor renderDOT
     - path: internal/cli/compile_test.go
       linters:
         - gocritic
@@ -364,26 +228,6 @@ issues:
       linters:
         - gocritic
       text: 'unnamedResult: consider giving a name to these results' # W06: gocritic finding
-    - path: internal/cli/http.go
-      linters:
-        - gocognit
-      text: '`serverHTTPClient`' # W03: simplify serverHTTPClient
-    - path: internal/cli/plan.go
-      linters:
-        - funlen
-      text: 'Function ''renderPlanOutput''' # W03: refactor renderPlanOutput
-    - path: internal/cli/plan.go
-      linters:
-        - gocognit
-      text: '`formatOutcomes`' # W03: simplify formatOutcomes
-    - path: internal/cli/plan.go
-      linters:
-        - gocognit
-      text: '`renderPlanOutput`' # W03: simplify renderPlanOutput
-    - path: internal/cli/plan.go
-      linters:
-        - gocyclo
-      text: '`renderPlanOutput`' # W03: simplify renderPlanOutput
     - path: internal/cli/reattach.go
       linters:
         - contextcheck
@@ -418,18 +262,6 @@ issues:
       text: 'Non-inherited new context, use function like `context\.WithXXX` instead' # W04: contextcheck finding
     - path: internal/plugin/loader.go
       linters:
-        - funlen
-      text: 'Function ''Execute''' # W03: refactor Execute
-    - path: internal/plugin/loader.go
-      linters:
-        - funlen
-      text: 'Function ''Resolve''' # W03: refactor Resolve
-    - path: internal/plugin/loader.go
-      linters:
-        - gocognit
-      text: '`\(\*rpcPlugin\)\.Execute`' # W03: simplify (*rpcPlugin).Execute
-    - path: internal/plugin/loader.go
-      linters:
         - gocritic
       text: 'emptyStringTest: replace `len\(s\) > 0` with `s != ""`' # W06: gocritic finding
     - path: internal/plugin/policy.go
@@ -440,30 +272,10 @@ issues:
       linters:
         - errcheck
       text: 'Error return value of `plug\.CloseSession` is not checked' # W04: errcheck finding
-    - path: internal/plugin/testfixtures/permissive/main.go
-      linters:
-        - funlen
-      text: 'Function ''Execute''' # W03: refactor Execute
-    - path: internal/transport/server/client_streams.go
-      linters:
-        - funlen
-      text: 'Function ''controlLoop''' # W03: refactor controlLoop
-    - path: internal/transport/server/client_streams.go
-      linters:
-        - gocognit
-      text: '`\(\*Client\)\.controlLoop`' # W03: simplify (*Client).controlLoop
     - path: internal/transport/server/client.go
       linters:
         - gocritic
       text: 'hugeParam: o is heavy \(88 bytes\); consider passing it by pointer' # W06: gocritic finding
-    - path: internal/transport/server/client_streams.go
-      linters:
-        - gocyclo
-      text: '`\(\*Client\)\.controlLoop`' # W03: simplify (*Client).controlLoop
-    - path: parser.go
-      linters:
-        - funlen
-      text: 'Function ''annotateLegacyConfigRanges''' # W03: refactor annotateLegacyConfigRanges
     - path: parser.go
       linters:
         - gocritic

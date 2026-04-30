@@ -1,0 +1,183 @@
+// copilot_session.go — Copilot SDK session lifecycle: open, model setup, and close.
+
+package main
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"sync"
+	"time"
+
+	copilot "github.com/github/copilot-sdk/go"
+
+	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
+	pluginhost "github.com/brokenbots/criteria/sdk/pluginhost"
+)
+
+// copilotSession abstracts the Copilot SDK session for testing.
+type copilotSession interface {
+	On(handler copilot.SessionEventHandler) func()
+	Send(ctx context.Context, options copilot.MessageOptions) (string, error)
+	SetModel(ctx context.Context, model string, opts *copilot.SetModelOptions) error
+	Disconnect() error
+	// Destroy is a force-close path used when Disconnect stalls; the real SDK
+	// implementation delegates to Disconnect, so we follow suit below.
+	Destroy() error
+}
+
+// sdkSession wraps a real Copilot SDK session to satisfy copilotSession.
+type sdkSession struct {
+	inner *copilot.Session
+}
+
+func (s *sdkSession) On(handler copilot.SessionEventHandler) func() {
+	return s.inner.On(handler)
+}
+
+func (s *sdkSession) Send(ctx context.Context, options copilot.MessageOptions) (string, error) {
+	return s.inner.Send(ctx, options)
+}
+
+func (s *sdkSession) SetModel(ctx context.Context, model string, opts *copilot.SetModelOptions) error {
+	return s.inner.SetModel(ctx, model, opts)
+}
+
+func (s *sdkSession) Disconnect() error {
+	return s.inner.Disconnect()
+}
+
+// Destroy calls Disconnect, matching the SDK's own deprecated Destroy behaviour
+// without invoking the deprecated method.
+func (s *sdkSession) Destroy() error {
+	return s.inner.Disconnect()
+}
+
+// sessionState holds all per-session runtime state for the copilot adapter.
+type sessionState struct {
+	session copilotSession
+
+	execMu sync.Mutex
+
+	mu             sync.Mutex
+	pending        map[string]chan permDecision
+	active         bool
+	activeCh       chan struct{}
+	sink           pluginhost.ExecuteEventSender
+	permissionDeny bool
+
+	// defaultModel and defaultEffort record the agent-level model and
+	// reasoning_effort values set at OpenSession time. applyRequestEffort uses
+	// these to restore the session's effort after a per-step override.
+	// These values are constant for the lifetime of the session; any future
+	// feature that dynamically updates the agent default mid-run must update
+	// these fields accordingly.
+	defaultModel  string
+	defaultEffort string
+}
+
+func (p *copilotPlugin) OpenSession(ctx context.Context, req *pb.OpenSessionRequest) (*pb.OpenSessionResponse, error) {
+	client, err := p.ensureClient(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	cfg := req.GetConfig()
+	pluginSessionID := req.GetSessionId()
+	sessionConfig := p.buildSessionConfig(cfg, pluginSessionID)
+
+	session, err := client.CreateSession(ctx, sessionConfig)
+	if err != nil {
+		return nil, fmt.Errorf("copilot: create session: %w", err)
+	}
+
+	s := &sessionState{
+		session: &sdkSession{inner: session},
+		pending: make(map[string]chan permDecision),
+	}
+
+	p.mu.Lock()
+	p.sessions[pluginSessionID] = s
+	p.mu.Unlock()
+
+	if err := p.applyOpenSessionModel(ctx, s, cfg); err != nil {
+		return nil, err
+	}
+
+	return &pb.OpenSessionResponse{}, nil
+}
+
+// buildSessionConfig constructs the SDK SessionConfig from agent-level config fields.
+func (p *copilotPlugin) buildSessionConfig(cfg map[string]string, pluginSessionID string) *copilot.SessionConfig {
+	sc := &copilot.SessionConfig{
+		Streaming: true,
+		Model:     cfg["model"],
+		OnPermissionRequest: func(r copilot.PermissionRequest, _ copilot.PermissionInvocation) (copilot.PermissionRequestResult, error) {
+			return p.handlePermissionRequest(pluginSessionID, &r)
+		},
+	}
+	if wd := strings.TrimSpace(cfg["working_directory"]); wd != "" {
+		sc.WorkingDirectory = wd
+	}
+	if sp := strings.TrimSpace(cfg["system_prompt"]); sp != "" {
+		sc.SystemMessage = &copilot.SystemMessageConfig{Content: sp}
+	}
+	return sc
+}
+
+// applyOpenSessionModel validates and applies model/reasoning_effort at session open,
+// then captures the agent-level defaults into s for per-step restore.
+func (p *copilotPlugin) applyOpenSessionModel(ctx context.Context, s *sessionState, cfg map[string]string) error {
+	model := strings.TrimSpace(cfg["model"])
+	effort := strings.TrimSpace(cfg["reasoning_effort"])
+
+	if effort != "" {
+		if err := validateReasoningEffort(effort); err != nil {
+			return err
+		}
+	}
+
+	if model != "" || effort != "" {
+		var opts *copilot.SetModelOptions
+		if effort != "" {
+			opts = &copilot.SetModelOptions{ReasoningEffort: &effort}
+		}
+		if err := s.session.SetModel(ctx, model, opts); err != nil {
+			return fmt.Errorf("copilot: set model at open: %w", err)
+		}
+	}
+
+	// Capture agent-level defaults so per-step overrides can restore them.
+	s.defaultModel = model
+	s.defaultEffort = effort
+	return nil
+}
+
+func (p *copilotPlugin) CloseSession(_ context.Context, req *pb.CloseSessionRequest) (*pb.CloseSessionResponse, error) {
+	p.mu.Lock()
+	s, ok := p.sessions[req.GetSessionId()]
+	if ok {
+		delete(p.sessions, req.GetSessionId())
+	}
+	p.mu.Unlock()
+	if !ok {
+		return &pb.CloseSessionResponse{}, nil
+	}
+
+	disconnectDone := make(chan error, 1)
+	go func() {
+		disconnectDone <- s.session.Disconnect()
+	}()
+
+	select {
+	case err := <-disconnectDone:
+		if err != nil {
+			_ = s.session.Destroy()
+			return &pb.CloseSessionResponse{}, fmt.Errorf("copilot: disconnect session: %w", err)
+		}
+	case <-time.After(closeSessionGrace):
+		_ = s.session.Destroy()
+	}
+
+	return &pb.CloseSessionResponse{}, nil
+}

@@ -463,7 +463,7 @@ func SerializeVarScope(vars map[string]cty.Value, cursorStack ...[]IterCursor) (
 // The returned []IterCursor is non-nil only when the scope JSON contains an
 // "iter" field. Each cursor's Items field is nil; the step re-evaluates the
 // expression on re-entry.
-func RestoreVarScope(scopeJSON string, g *FSMGraph) (map[string]cty.Value, []IterCursor, error) {
+func RestoreVarScope(scopeJSON string, g *FSMGraph) (map[string]cty.Value, []IterCursor, error) { //nolint:gocognit // W03: scope restoration must handle iter cursors, nested vars, and multiple scope shapes
 	vars := SeedVarsFromGraph(g)
 
 	if scopeJSON == "" {

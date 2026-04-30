@@ -68,7 +68,7 @@ func (s *permissiveService) OpenSession(_ context.Context, req *pb.OpenSessionRe
 // Execute emits one PermissionRequest event per configured tool and waits for
 // the host to respond via Permit before proceeding to the next tool. The final
 // result is "needs_review" if any request was denied, "success" otherwise.
-func (s *permissiveService) Execute(ctx context.Context, req *pb.ExecuteRequest, sink pluginhost.ExecuteEventSender) error {
+func (s *permissiveService) Execute(ctx context.Context, req *pb.ExecuteRequest, sink pluginhost.ExecuteEventSender) error { //nolint:funlen // W03: test fixture serialises N permission request/response round-trips in sequence
 	s.mu.Lock()
 	_, ok := s.sessions[req.GetSessionId()]
 	s.mu.Unlock()

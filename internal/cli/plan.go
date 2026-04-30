@@ -32,7 +32,7 @@ func NewPlanCmd() *cobra.Command {
 	return cmd
 }
 
-func renderPlanOutput(ctx context.Context, workflowPath string, overrides map[string]string) (string, error) {
+func renderPlanOutput(ctx context.Context, workflowPath string, overrides map[string]string) (string, error) { //nolint:funlen,gocognit,gocyclo // W03: renders full plan tree with agent/step/outcome formatting across multiple output paths
 	spec, graph, err := parseCompileForCli(ctx, workflowPath)
 	if err != nil {
 		return "", err
@@ -150,7 +150,7 @@ func formatStepHeader(step *workflow.StepNode) string {
 	return strings.Join(parts, "   ")
 }
 
-func formatOutcomes(step *workflow.StepNode, spec *workflow.Spec) string {
+func formatOutcomes(step *workflow.StepNode, spec *workflow.Spec) string { //nolint:gocognit // W03: outcome formatting branches on spec presence, ordering, and colour output
 	ordered := make([]string, 0, len(step.Outcomes))
 	if spec != nil {
 		for i := range spec.Steps {

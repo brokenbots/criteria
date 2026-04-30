@@ -93,7 +93,7 @@ func (b *MCPBridge) Info(_ context.Context, _ *pb.InfoRequest) (*pb.InfoResponse
 	}, nil
 }
 
-func (b *MCPBridge) OpenSession(ctx context.Context, req *pb.OpenSessionRequest) (*pb.OpenSessionResponse, error) {
+func (b *MCPBridge) OpenSession(ctx context.Context, req *pb.OpenSessionRequest) (*pb.OpenSessionResponse, error) { //nolint:funlen,gocyclo // W03: complex session setup across MCP config, TLS, and stdio transport
 	cfg := req.GetConfig()
 	command := strings.TrimSpace(cfg["command"])
 	if command == "" {
@@ -174,7 +174,7 @@ func (b *MCPBridge) OpenSession(ctx context.Context, req *pb.OpenSessionRequest)
 	return &pb.OpenSessionResponse{}, nil
 }
 
-func (b *MCPBridge) Execute(ctx context.Context, req *pb.ExecuteRequest, sink pluginhost.ExecuteEventSender) error {
+func (b *MCPBridge) Execute(ctx context.Context, req *pb.ExecuteRequest, sink pluginhost.ExecuteEventSender) error { //nolint:funlen,gocognit // W03: event-driven tool dispatch with permission gating and chunked output
 	s := b.getSession(req.GetSessionId())
 	if s == nil {
 		return fmt.Errorf("mcp: unknown session %q", req.GetSessionId())

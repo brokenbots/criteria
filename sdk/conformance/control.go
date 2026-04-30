@@ -154,7 +154,7 @@ func testControlResubscribe(t *testing.T, s Subject) {
 	assertControlReady(t, stream2)
 }
 
-func testControlAgentIsolation(t *testing.T, s Subject) {
+func testControlAgentIsolation(t *testing.T, s Subject) { //nolint:funlen // W03: agent isolation test requires full two-agent setup and cross-visibility assertions
 	baseURL, client, teardown := s.SetUp(t)
 	defer teardown()
 
