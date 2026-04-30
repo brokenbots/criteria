@@ -522,6 +522,71 @@ func TestBuildServerSink_VisitsPersisted(t *testing.T) {
 	}
 }
 
+// TestBuildReattachTrackerAndEngine_VisitsPersisted proves that the local
+// checkpoint write path records live visit counts from the engine. It calls
+// buildReattachTrackerAndEngine directly, runs the returned engine, and asserts
+// that the checkpoint written to disk during OnStepEntered contains the
+// incremented visit count from eng.VisitCounts(). This would fail if the
+// checkpointFn closure removed the `cp.Visits = eng.VisitCounts()` assignment,
+// leaving the persisted checkpoint with nil/empty visits — which would cause
+// subsequent crash-recovery resumes to ignore prior visit history.
+func TestBuildReattachTrackerAndEngine_VisitsPersisted(t *testing.T) {
+	stateDir := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", stateDir)
+
+	// maxVisitsWorkflow: step "work" with max_visits=1 using shell "echo hi".
+	// With no prior visits (Visits=nil), the first attempt succeeds:
+	//   incrementVisit: nil → {"work":1} (0 < 1, gate passes)
+	//   OnStepEntered  → checkpointFn writes checkpoint with eng.VisitCounts()={"work":1}
+	//   shell succeeds → done.
+	wfFile := writeWorkflowFile(t, maxVisitsWorkflow)
+	cp := &StepCheckpoint{
+		RunID:        "brate-visits-written",
+		WorkflowPath: wfFile,
+		CurrentStep:  "work",
+		Attempt:      0,
+		// Visits deliberately nil: proves the closure reads from the live engine,
+		// not from the seed checkpoint.
+	}
+	if err := WriteStepCheckpoint(cp); err != nil {
+		t.Fatalf("WriteStepCheckpoint: %v", err)
+	}
+
+	graph, loader, _, ok := prepareReattach(context.Background(), discardLogger(), cp)
+	if !ok {
+		t.Fatal("prepareReattach failed")
+	}
+	defer loader.Shutdown(context.Background())
+
+	var out bytes.Buffer
+	_, _, eng := buildReattachTrackerAndEngine(cp, discardLogger(), graph, loader, &out, outputModeJSON, 1)
+
+	// Run the engine. checkpointFn fires from OnStepEntered with liveRunState.Visits={"work":1}.
+	if runErr := eng.RunFrom(context.Background(), "work", 1); runErr != nil {
+		t.Fatalf("unexpected RunFrom error: %v", runErr)
+	}
+
+	// buildReattachTrackerAndEngine writes checkpoints but never removes them;
+	// the file on disk must reflect the live visit count from eng.VisitCounts().
+	checkpoints, err := ListStepCheckpoints()
+	if err != nil {
+		t.Fatalf("ListStepCheckpoints: %v", err)
+	}
+	var found *StepCheckpoint
+	for _, item := range checkpoints {
+		if item.RunID == "brate-visits-written" {
+			found = item
+			break
+		}
+	}
+	if found == nil {
+		t.Fatal("checkpoint not found after run; checkpointFn may not have fired during OnStepEntered")
+	}
+	if got := found.Visits["work"]; got != 1 {
+		t.Errorf("checkpoint Visits[%q] = %d; want 1 — checkpointFn must assign eng.VisitCounts()", "work", got)
+	}
+}
+
 // TestResumeOneLocalRun_HappyPath verifies that a local checkpoint is resumed
 // and the checkpoint file is cleaned up after successful completion.
 func TestResumeOneLocalRun_HappyPath(t *testing.T) {

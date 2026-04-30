@@ -590,3 +590,48 @@ This would fail if `buildReattachTrackerAndEngine` dropped `cp.Visits` before `e
 - `go test -race -count=1 -run 'TestResumeOneLocalRun_VisitsRestored' ./internal/cli/...` — PASS
 - `go test -race -count=2 ./internal/engine/... ./workflow/... ./internal/cli/...` — PASS
 - `make ci` — PASS
+
+### Review 2026-04-30-06 — changes-requested
+
+#### Summary
+The new `TestResumeOneLocalRun_VisitsRestored` is a meaningful improvement and closes the local **restore/enforcement** half of the crash-recovery contract. I am still blocking approval because the local **checkpoint write** half remains unproven: the suite still has no regression-sensitive test that would fail if local checkpoint creation stopped persisting `eng.VisitCounts()` into `StepCheckpoint.Visits`.
+
+#### Plan Adherence
+- **Step 1 — Schema:** Satisfied.
+- **Step 2 — Compile:** Satisfied.
+- **Step 3 — Runtime tracking:** Satisfied.
+- **Step 4 — Persistence:** Implemented in code for local and server paths, and now proven on the server write/read paths plus the local read path. The remaining unproven edge is local checkpoint writing from the live engine state in `runApplyLocal` / local crash-recovery checkpoint callbacks.
+- **Step 5 — Tests:** Improved but still not complete at the full local CLI contract boundary. `TestResumeOneLocalRun_VisitsRestored` proves that a checkpoint *containing* visits is honored on local resume, but no test proves that local execution actually *writes* those visits into the checkpoint file.
+- **Step 6 — Documentation:** Satisfied.
+
+#### Required Remediations
+- **Blocker** — `internal/cli/apply.go:118-135`, `internal/cli/apply.go:692-700`, `internal/cli/reattach_test.go:617-663`: the local checkpoint write path is still untested. A regression that removed `cp.Visits = eng.VisitCounts()` from the local checkpoint closures would still pass the current suite because `TestResumeOneLocalRun_VisitsRestored` seeds `Visits` manually. **Acceptance criteria:** add a regression-sensitive local-path test that exercises checkpoint creation from a live local engine and asserts the written checkpoint contains the expected `Visits`, or an equivalent end-to-end local crash-recovery test that would fail if local checkpoint writing dropped visit counts before resume.
+
+#### Test Intent Assessment
+The latest test set now covers server write/read persistence, local read-side restoration, compile warnings, retry semantics, and runtime enforcement. The only remaining weakness is a precise one: local write-side persistence is still inferred from code structure rather than proven by a contract test. Right now the suite can still stay green if the local checkpoint writer silently stops recording `Visits`.
+
+#### Validation Performed
+- `git --no-pager diff --unified=3 HEAD~1..HEAD -- internal/cli/reattach_test.go workstreams/07-per-step-max-visits.md` — reviewed latest remediation
+- `go test -race -count=1 -run 'TestResumeOneLocalRun_VisitsRestored|TestBuildServerSink_VisitsPersisted|TestResumeActiveRun_VisitsRestored|TestLocalState_StepCheckpoint_VisitsRoundTrip|TestLocalState_StepCheckpoint_VisitsOmittedWhenEmpty' ./internal/cli/...` — PASS
+- `make ci` — PASS
+
+### Remediation batch 6 — 2026-04-30
+
+#### Blocker — Local checkpoint write-path test
+
+Added `TestBuildReattachTrackerAndEngine_VisitsPersisted` to `internal/cli/reattach_test.go` (placed immediately before `TestResumeOneLocalRun_HappyPath`, mirroring the server `TestBuildServerSink_VisitsPersisted`). The test:
+
+- Calls `prepareReattach` to obtain a real `graph` and `loader` (mirrors the actual crash-recovery path, same as `resumeOneLocalRun`).
+- Calls `buildReattachTrackerAndEngine` with a checkpoint that has `Visits=nil`.
+- Calls `eng.RunFrom` which triggers `incrementVisit` → `Visits["work"]=1`, then `OnStepEntered` → `checkpointFn` → `eng.VisitCounts()` → writes checkpoint with `Visits={"work":1}`.
+- After `RunFrom` returns, reads the checkpoint from disk via `ListStepCheckpoints` and asserts `Visits["work"] == 1`.
+
+**Regression sensitivity verified**: Temporarily removing `next.Visits = eng.VisitCounts()` from the `checkpointFn` closure causes the test to fail with `checkpoint Visits["work"] = 0; want 1`.
+
+This closes the local write-side gap; both write (`TestBuildReattachTrackerAndEngine_VisitsPersisted`) and read (`TestResumeOneLocalRun_VisitsRestored`) halves of the local crash-recovery contract are now regression-sensitive.
+
+#### Validation
+
+- `go test -race -count=1 -run 'TestBuildReattachTrackerAndEngine_VisitsPersisted' ./internal/cli/...` — PASS
+- `go test -race -count=2 ./internal/engine/... ./workflow/... ./internal/cli/...` — PASS
+- `make ci` — PASS
