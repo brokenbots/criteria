@@ -71,7 +71,7 @@ func writeLocalRunState(st *localRunState) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 		return err
 	}
 	b, err := json.MarshalIndent(st, "", "  ")
@@ -126,7 +126,7 @@ func WriteStepCheckpoint(cp *StepCheckpoint) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 		return err
 	}
 	b, err := json.MarshalIndent(cp, "", "  ")
