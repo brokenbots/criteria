@@ -38,19 +38,9 @@ func decodeAttrsToStringMap(attrs hcl.Attributes, evalCtx *hcl.EvalContext) (map
 				continue
 			}
 			// Compile-time-resolved mode: surface the failure rather than
-			// silently producing an empty value.
-			r := attr.Expr.StartRange()
-			for _, ed := range d {
-				if ed.Severity != hcl.DiagError {
-					continue
-				}
-				diags = append(diags, &hcl.Diagnostic{
-					Severity: hcl.DiagError,
-					Summary:  ed.Summary,
-					Detail:   ed.Detail,
-					Subject:  &r,
-				})
-			}
+			// silently producing an empty value. Preserve each diagnostic
+			// verbatim so the original Subject/Context from HCL is kept.
+			diags = append(diags, errorDiagsWithFallbackSubject(d, attr.Expr)...)
 			continue
 		}
 		diags = append(diags, d...)
@@ -71,6 +61,28 @@ func decodeAttrsToStringMap(attrs hcl.Attributes, evalCtx *hcl.EvalContext) (map
 		}
 	}
 	return result, diags
+}
+
+// errorDiagsWithFallbackSubject returns the error diagnostics from in,
+// preserving each diagnostic's original Subject and Context. When a diagnostic
+// has no Subject, the expression's full range is used as a fallback so the
+// reported error always points at a specific location in the source.
+func errorDiagsWithFallbackSubject(in hcl.Diagnostics, expr hcl.Expression) hcl.Diagnostics {
+	var out hcl.Diagnostics
+	for _, ed := range in {
+		if ed == nil || ed.Severity != hcl.DiagError {
+			continue
+		}
+		if ed.Subject != nil {
+			out = append(out, ed)
+			continue
+		}
+		fallback := expr.Range()
+		copy := *ed
+		copy.Subject = &fallback
+		out = append(out, &copy)
+	}
+	return out
 }
 
 // validateFileFunctionCalls evaluates expressions that have no variable
@@ -199,19 +211,9 @@ func validateSchemaAttrs(context string, attrs hcl.Attributes, schema map[string
 				continue
 			}
 			// Compile-time-resolved mode: surface the failure rather than
-			// silently producing an empty value.
-			r := attr.Expr.StartRange()
-			for _, ed := range d {
-				if ed.Severity != hcl.DiagError {
-					continue
-				}
-				diags = append(diags, &hcl.Diagnostic{
-					Severity: hcl.DiagError,
-					Summary:  ed.Summary,
-					Detail:   ed.Detail,
-					Subject:  &r,
-				})
-			}
+			// silently producing an empty value. Preserve the original
+			// diagnostic's Subject/Context where available.
+			diags = append(diags, errorDiagsWithFallbackSubject(d, attr.Expr)...)
 			continue
 		}
 		diags = append(diags, d...)

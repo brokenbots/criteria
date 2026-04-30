@@ -13,12 +13,13 @@ import (
 // attributes at compile time. file(), fileexists(), and trimfrontmatter() are
 // registered so prompt files can be inlined; var/steps/each are intentionally
 // absent because agent config has no runtime resolution path and must reduce
-// to a constant. Returns nil when workflowDir is empty so callers fall back to
-// the legacy nil-context decode (which silently empties on eval failure).
+// to a constant.
+//
+// Always returns a non-nil context — even when workflowDir is empty — so that
+// agent.config expressions are never silently emptied. file()/fileexists()
+// then produce a "workflow directory not configured" compile diagnostic for
+// callers that compile without a WorkflowDir.
 func agentConfigEvalContext(workflowDir string) *hcl.EvalContext {
-	if workflowDir == "" {
-		return nil
-	}
 	return &hcl.EvalContext{
 		Functions: workflowFunctions(DefaultFunctionOptions(workflowDir)),
 	}
