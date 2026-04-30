@@ -669,3 +669,20 @@ not during `criteria compile`.
 
 #### Validation
 - `make test && make lint` — all 20 packages pass, lint clean.
+
+### Review 2026-04-30-06 — approved
+
+#### Summary
+Approved. The stdin approval follow-up fixes the remaining error-handling edge case correctly: clean EOF still maps to a rejected local decision with reason `non-interactive input`, while non-EOF read failures now abort cleanly instead of manufacturing and persisting a rejection. The related wording cleanups in `docs/workflow.md` and `local_state.go` are also accurate.
+
+#### Plan Adherence
+- **Step 1 / Step 2:** Still met. The local resumer’s stdin approval path now distinguishes operator-meaningful EOF from actual reader failures.
+- **Step 6:** Still met. The approval-mode docs now accurately describe when rejection happens in `criteria apply`, not at compile time.
+
+#### Test Intent Assessment
+- The new stdin approval tests are contract-meaningful: they separately prove EOF rejection behavior, invalid interactive input behavior, and real read-error abort behavior.
+- That distinction matters for persistence safety, because only the EOF path should synthesize a stored rejection.
+
+#### Validation Performed
+- `make ci` — passed.
+- `go test ./internal/cli/localresume/... -run 'Test(StdinMode_Approval_EOF_Rejects|StdinMode_Approval_ReadError_Aborts|StdinMode_Approval_UnrecognizedInput_InvalidInputReason)' -v` — passed.
