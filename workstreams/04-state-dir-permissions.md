@@ -191,6 +191,7 @@ Every `MkdirAll` / `Mkdir` call in `internal/`, `cmd/`, `workflow/`, `sdk/`, `ev
 | `internal/cli/local_state.go:129` | `0o700` (was `0o755`) | **Fixed** — operator-private runs subdir |
 | `internal/cli/local_state_test.go:92` | `0o755` | OK — test scaffold (temp dir helper, not the production path being tested) |
 | `internal/cli/local_state_test.go:235` | `0o755` | OK — test scaffold (temp dir helper) |
+| `internal/cli/local_state_test.go:240` | `0o755` | OK — test scaffold: `os.Mkdir` creates a fake subdirectory inside the test runs dir to verify that `ListStepCheckpoints` silently skips directories; not operator state |
 | `internal/cli/compile_test.go:92` | `0o755` | OK — test-only temp path for HCL fixture |
 | `internal/cli/reattach_test.go:82` | `0o755` | OK — test-only temp dir |
 | `internal/plugin/discovery_test.go:27,30,52` | `0o755` | OK — plugin dirs hold public binaries; world-readable is correct (plugin discovery by filename) |
@@ -228,3 +229,26 @@ W14 must add a note under the v0.2.x section:
 > New invocations create `~/.criteria/` and `~/.criteria/runs/` at mode `0700` (operator-only).
 > Existing directories are not migrated. To tighten an existing installation: `chmod 700 ~/.criteria`.
 
+### Review 2026-04-29 — changes-requested
+
+#### Summary
+The implementation itself is correct: both production `MkdirAll` call sites now use `0o700`, the new regression test exercises both write paths and asserts `0o700` on directories plus `0o600` on files, and explicit CLI/manual validation succeeds. Approval is blocked on one workstream-deliverable gap: the Step 2 audit table is incomplete, so the workstream does not yet satisfy the requirement to document every `MkdirAll` / `os.Mkdir` match.
+
+#### Plan Adherence
+- Step 1: Met. `internal/cli/local_state.go:74` and `internal/cli/local_state.go:129` now use `0o700`.
+- Step 2: Not yet met. The recorded audit omits one grep hit: `internal/cli/local_state_test.go:240` (`os.Mkdir(..., 0o755)`), so the required "every match, file:line, chosen mode, and reason" deliverable is incomplete.
+- Step 3: Met. `TestStateDirPerms` covers both `writeLocalRunState` and `WriteStepCheckpoint`, skips on Windows, and asserts directory `0o700` plus file `0o600`.
+- Step 4: Met. No migration behavior was introduced.
+- Step 5: Validation passed, but the workstream cannot be approved until the Step 2 audit is complete.
+
+#### Required Remediations
+- **Blocker** — `internal/cli/local_state_test.go:240` is missing from the Step 2 audit recorded above. The workstream explicitly requires every `MkdirAll` / `os.Mkdir` match from the prescribed grep set to be documented with file:line, mode, and reason. **Acceptance:** add the missing `internal/cli/local_state_test.go:240` entry to the audit table with its `0o755` rationale (test-only scaffold), then re-check the table against the grep output so all matches are accounted for.
+
+#### Test Intent Assessment
+`TestStateDirPerms` is appropriately behavior-focused: it forces fresh directory creation, exercises both production writers, and asserts the externally meaningful permission bits on both directories and files. A faulty implementation that left either production directory at `0o755` would fail this test. I did not find additional test gaps for this scope.
+
+#### Validation Performed
+- `rg -n 'MkdirAll\(|os\.Mkdir\(' internal cmd workflow sdk events --glob '*.go'`: found 18 matches; the recorded audit covers 17 and omits `internal/cli/local_state_test.go:240`.
+- `go test -race -count=2 ./internal/cli/...`: passed.
+- `make ci`: passed.
+- Manual: `CRITERIA_STATE_DIR=<fresh tmpdir>/state bin/criteria apply examples/hello.hcl` created the state directory as `drwx------`.
