@@ -689,3 +689,24 @@ The tests now cover nearly all intended behavior with good sensitivity: compile 
 - `git --no-pager diff --unified=3 HEAD~1..HEAD -- internal/cli/reattach_test.go workstreams/07-per-step-max-visits.md` — reviewed latest remediation
 - `go test -race -count=1 -run 'TestBuildReattachTrackerAndEngine_VisitsPersisted|TestResumeOneLocalRun_VisitsRestored|TestBuildServerSink_VisitsPersisted|TestResumeActiveRun_VisitsRestored' ./internal/cli/...` — PASS
 - `make ci` — PASS
+
+### Review 2026-04-30-08 — approved
+
+#### Summary
+The remaining blocker is resolved. Extracting `buildLocalCheckpointFn` made the initial local-run checkpoint writer directly testable, and `TestBuildLocalCheckpointFn_VisitsPersisted` now closes the last uncovered persistence edge. With that in place, the workstream now has regression-sensitive coverage for compile behavior, runtime enforcement, retry counting, server write/read persistence, local initial-write persistence, local resume-write persistence, and local/server restore enforcement.
+
+#### Plan Adherence
+- **Step 1 — Schema:** Implemented as specified.
+- **Step 2 — Compile:** Implemented as specified, including non-step back-edge traversal and warning-threshold behavior.
+- **Step 3 — Runtime tracking:** Implemented as specified; retries count as visits and the runtime guard behavior matches the workstream requirements.
+- **Step 4 — Persistence:** Implemented end-to-end. `Visits` now flows through checkpoint serialization and is covered on the initial local apply path, local resume path, and server path.
+- **Step 5 — Tests:** Acceptance-bar coverage is now present across the required contract boundaries. `TestBuildLocalCheckpointFn_VisitsPersisted`, `TestBuildReattachTrackerAndEngine_VisitsPersisted`, `TestResumeOneLocalRun_VisitsRestored`, `TestBuildServerSink_VisitsPersisted`, and `TestResumeActiveRun_VisitsRestored` together close the prior persistence gaps.
+- **Step 6 — Documentation:** Updated and aligned with shipped semantics.
+
+#### Test Intent Assessment
+The test suite is now meaningfully regression-sensitive for the shipped behavior rather than merely green. The new local initial-write test would fail if the initial local checkpoint writer stopped recording `Visits`, while the existing local/server resume tests would fail if restored counts were not enforced. Combined with the compile and engine tests, this is sufficient coverage for the workstream's behavior and persistence contract.
+
+#### Validation Performed
+- `git --no-pager diff --unified=3 HEAD~1..HEAD -- internal/cli/apply.go internal/cli/reattach_test.go workstreams/07-per-step-max-visits.md` — reviewed latest remediation
+- `go test -race -count=1 -run 'TestBuildLocalCheckpointFn_VisitsPersisted|TestBuildReattachTrackerAndEngine_VisitsPersisted|TestResumeOneLocalRun_VisitsRestored|TestBuildServerSink_VisitsPersisted|TestResumeActiveRun_VisitsRestored' ./internal/cli/...` — PASS
+- `make ci` — PASS
