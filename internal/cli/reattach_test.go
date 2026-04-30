@@ -615,6 +615,49 @@ func TestResumeOneLocalRun_ExceedsMaxRetries(t *testing.T) {
 	}
 }
 
+// TestResumeOneLocalRun_VisitsRestored verifies that visit counts persisted in a
+// local StepCheckpoint are seeded into the resumed engine and that max_visits is
+// enforced against the restored count. With Visits={"work":1} and max_visits=1,
+// the first incrementVisit call in the resumed engine must fail immediately,
+// proving the local buildReattachTrackerAndEngine → WithResumedVisits path works
+// end-to-end. This would fail if the visits map were dropped before engine
+// construction or never written into the resumed engine options.
+func TestResumeOneLocalRun_VisitsRestored(t *testing.T) {
+	stateDir := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", stateDir)
+
+	wfFile := writeWorkflowFile(t, maxVisitsWorkflow)
+	cp := &StepCheckpoint{
+		RunID:        "local-visits-restored",
+		Workflow:     "max_visits_test",
+		WorkflowPath: wfFile,
+		CurrentStep:  "work",
+		Attempt:      0,                         // nextAttempt=1 ≤ maxAttempts=1
+		Visits:       map[string]int{"work": 1}, // already at the max_visits=1 limit
+	}
+	if err := WriteStepCheckpoint(cp); err != nil {
+		t.Fatalf("WriteStepCheckpoint: %v", err)
+	}
+
+	var out bytes.Buffer
+	resumeOneLocalRun(context.Background(), discardLogger(), cp, &out, outputModeJSON)
+
+	// Checkpoint must be cleaned up regardless of failure.
+	checkpoints, _ := ListStepCheckpoints()
+	for _, item := range checkpoints {
+		if item.RunID == "local-visits-restored" {
+			t.Error("checkpoint not removed after max_visits failure on local resume")
+		}
+	}
+	// Output must contain a RunFailed event that mentions exceeded max_visits.
+	if !strings.Contains(out.String(), "RunFailed") {
+		t.Errorf("expected RunFailed in output, got: %s", out.String())
+	}
+	if !strings.Contains(out.String(), "exceeded max_visits") {
+		t.Errorf("expected 'exceeded max_visits' in output, got: %s", out.String())
+	}
+}
+
 // stringErrCLI is a minimal error type for CLI-package tests.
 type stringErrCLI struct{ msg string }
 

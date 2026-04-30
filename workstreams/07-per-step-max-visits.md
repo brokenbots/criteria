@@ -546,3 +546,47 @@ The final test set now exercises both the write and read sides of persistence. `
 - `go test -race -count=1 -run 'TestMaxVisits_RetryCounts|TestMaxVisits_Persists' ./internal/engine/...` — PASS
 - `go test -race -count=1 -run 'TestCompile_BackEdgeWarning_ThroughBranch' ./workflow/...` — PASS
 - `make ci` — PASS
+
+### Review 2026-04-30-05 — changes-requested
+
+#### Summary
+The code changes are in good shape and the server-side persistence/reattach contract is now covered, but I am moving the verdict back to `changes-requested` because the local crash-recovery contract still lacks an end-to-end test for restored visit counts. The implementation paths in `internal/cli/apply.go` are present, yet the current test suite would stay green if local reattach stopped honoring `StepCheckpoint.Visits`, which is below the workstream's test bar for a CLI/storage boundary.
+
+#### Plan Adherence
+- **Step 1 — Schema:** Implemented as specified.
+- **Step 2 — Compile:** Implemented as specified, including warning threshold behavior and non-step back-edge traversal.
+- **Step 3 — Runtime tracking:** Implemented as specified; retries count as visits and the dedicated runtime coverage is solid.
+- **Step 4 — Persistence:** Implemented in code for both local and server paths (`internal/cli/apply.go:118-135`, `198-230`, `669-714`), but only the server path is proven end-to-end by a regression-sensitive reattach test.
+- **Step 5 — Tests:** Still incomplete at the local CLI reattach boundary. Current tests prove JSON round-trip (`internal/cli/local_state_test.go`) and generic local resume happy-path cleanup (`internal/cli/reattach_test.go:525-553`), but not that a resumed local run enforces `max_visits` from persisted `Visits`.
+- **Step 6 — Documentation:** Updated and aligned with shipped semantics.
+
+#### Required Remediations
+- **Blocker** — `internal/cli/apply.go:118-135`, `669-714`, `internal/cli/reattach_test.go:525-553`: the local crash-recovery contract is still unproven. A regression that dropped `cp.Visits` before `engine.WithResumedVisits(cp.Visits)` in `buildReattachTrackerAndEngine`, or that stopped writing `eng.VisitCounts()` into local checkpoints, would not fail the current suite. **Acceptance criteria:** add a local-path reattach test that starts from a checkpoint carrying non-zero `Visits` and proves `resumeOneLocalRun` (or the equivalent local crash-recovery entrypoint) enforces the restored count at the correct iteration/attempt boundary.
+
+#### Test Intent Assessment
+The test suite now does a good job on compile behavior, retry semantics, server checkpoint writes, and server reattach enforcement. The remaining weakness is specifically local crash recovery: `TestResumeOneLocalRun_HappyPath` proves only that local resume can complete and clean up, while the new `Visits` behavior at that boundary is covered only indirectly by serialization tests. That is not regression-sensitive enough for a CLI + checkpoint-storage contract.
+
+#### Validation Performed
+- `git --no-pager diff --stat main...HEAD` — reviewed changed scope
+- `go test -race -count=2 ./internal/engine/... ./workflow/...` — PASS
+- `make ci` — PASS
+
+### Remediation batch 5 — 2026-04-30
+
+#### Blocker — Local crash-recovery reattach test
+
+Added `TestResumeOneLocalRun_VisitsRestored` to `internal/cli/reattach_test.go` (after `TestResumeOneLocalRun_ExceedsMaxRetries`). The test:
+
+- Writes `maxVisitsWorkflow` (step "work" with `max_visits = 1`) to a temp file.
+- Creates a `StepCheckpoint` with `Visits = {"work": 1}` — already at the limit.
+- Calls `resumeOneLocalRun(ctx, log, cp, &out, outputModeJSON)`.
+- Asserts the checkpoint file is removed (normal cleanup on failure).
+- Asserts `out` contains both `"RunFailed"` and `"exceeded max_visits"`.
+
+This would fail if `buildReattachTrackerAndEngine` dropped `cp.Visits` before `engine.WithResumedVisits`, or if `WithResumedVisits` stopped seeding `RunState.Visits`, or if `incrementVisit` stopped enforcing the gate on the first attempt.
+
+#### Validation
+
+- `go test -race -count=1 -run 'TestResumeOneLocalRun_VisitsRestored' ./internal/cli/...` — PASS
+- `go test -race -count=2 ./internal/engine/... ./workflow/... ./internal/cli/...` — PASS
+- `make ci` — PASS
