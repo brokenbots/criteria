@@ -216,10 +216,6 @@ issues:
       linters:
         - gocritic
       text: 'hugeParam: opts is heavy \(200 bytes\); consider passing it by pointer' # W06: gocritic finding (grew from 184→200 with stdin io.Reader injection field, W06-remediation)
-    - path: internal/cli/localresume/resumer.go
-      linters:
-        - gocritic
-      text: 'hugeParam: opts is heavy \(88 bytes\); consider passing it by pointer' # W06-remediation: Options grew with DecisionPathFn/RequestPathFn injection fields for path deduplication
     - path: internal/cli/compile.go
       linters:
         - errcheck

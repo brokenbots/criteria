@@ -110,7 +110,7 @@ func (o *Options) applyDefaults() {
 }
 
 // New creates a LocalResumer for the given mode and options.
-func New(mode Mode, opts Options) LocalResumer {
+func New(mode Mode, opts Options) LocalResumer { //nolint:gocritic // Options is a config struct; callers pass by value intentionally
 	opts.applyDefaults()
 	return &resumer{mode: mode, opts: opts}
 }
