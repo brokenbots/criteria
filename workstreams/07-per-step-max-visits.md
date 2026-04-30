@@ -717,9 +717,9 @@ Two review threads were opened on PR #56 after the workstream completion commit.
 
 **Thread 1** (`PRRT_kwDOSOBb1s5-3oHm`) — `workflow/compile.go:126`:
 - Reviewer: negative `max_visits_warn_threshold` was accepted without validation.
-- Fix: added `&& *spec.Policy.MaxVisitsWarnThreshold >= 0` guard so negative values are silently ignored, preserving the default of 200.
-- Test added: `TestCompile_BackEdgeWarning_NegativeThresholdIgnored` in `workflow/compile_steps_test.go`.
-- Committed in `3ebf498`. Thread resolved.
+- Fix: updated compile-time validation so negative `max_visits_warn_threshold` values are rejected with a compile error, matching the shipped behavior. (Note: an intermediate commit `3ebf498` silently ignored negatives; this was superseded by `5e699b2` which emits a `DiagError`.)
+- Test added: `TestCompile_NegativeMaxVisitsWarnThreshold_Rejected` in `workflow/compile_steps_test.go`.
+- Committed in `5e699b2`. Thread resolved.
 
 **Thread 2** (`PRRT_kwDOSOBb1s5-3oIW`) — `docs/workflow.md`:
 - Reviewer: docs incorrectly said `max_total_steps = 0` means "no cap".
@@ -771,3 +771,25 @@ Three additional review threads addressed:
 **PRRT_kwDOSOBb1s5-4QSy** (`compile_steps_test.go`): removed custom `itoa` helper; replaced all call sites with `strconv.Itoa`.
 
 All three threads resolved. `make ci` — PASS.
+
+### Review 2026-04-30-10 — changes-requested
+
+#### Summary
+The negative-threshold fix is now correct: `max_visits_warn_threshold = -1` fails compile with a clear diagnostic, and the `max_total_steps = 0` docs correction is also right. I am still requesting changes because the latest runtime remediation changed `max_visits` behavior under cancellation in two code paths without adding direct regression tests, so the suite still would not catch a future reordering back to "cancelled attempts consume a visit."
+
+#### Plan Adherence
+- **Step 2 — Compile:** Back in good shape. Negative `max_visits_warn_threshold` is now rejected at compile time (`workflow/compile.go:72-74`), and the docs reflect the supported values accurately.
+- **Step 3 — Runtime tracking:** Behavior changed in `internal/engine/node_step.go` so cancellation is checked before `incrementVisit` in both `runWorkflowIteration` and `runStepFromAttempt` (`internal/engine/node_step.go:240-246`, `400-406`). That behavior may be correct, but it is currently unproven by tests.
+- **Step 5 — Tests:** Incomplete for the newest runtime change. Existing `TestMaxVisits_*` coverage exercises normal retries and persistence, but none of the engine tests cover a cancelled context before attempt dispatch or before workflow-type iteration entry.
+
+#### Required Remediations
+- **Blocker** — `internal/engine/node_step.go:240-246`, `400-406`, `internal/engine/engine_test.go`: the cancellation-before-visit behavior lacks regression-sensitive tests. A future reorder that increments visits before checking `ctx.Err()` would still pass the current suite. **Acceptance criteria:** add engine tests proving that a cancelled context does **not** consume a visit or trip `max_visits` in both changed branches: 1. the normal adapter/agent attempt path in `runStepFromAttempt`; and 2. the `type = "workflow"` iteration path in `runWorkflowIteration`.
+
+#### Test Intent Assessment
+The new compile test is good because it enforces the intended operator-facing contract for invalid input. The runtime change, by contrast, is only implemented, not tested. Since it alters whether cancellation counts toward `max_visits`, it needs direct assertions on visit counts and failure mode under cancellation rather than relying on broad green CI.
+
+#### Validation Performed
+- `git --no-pager show --unified=3 5e699b2 -- workflow/compile.go workflow/compile_steps_test.go docs/workflow.md` — reviewed negative-threshold remediation
+- `git --no-pager show --unified=3 4ae46bf -- internal/engine/node_step.go workflow/compile_steps_test.go` — reviewed cancellation-order remediation
+- `go test -race -count=1 -run 'TestCompile_NegativeMaxVisitsWarnThreshold_Rejected|TestMaxVisits_RetryCounts|TestMaxVisits_Persists' ./workflow/... ./internal/engine/...` — PASS
+- `make ci` — PASS
