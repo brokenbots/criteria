@@ -309,7 +309,7 @@ func unknownFieldDiagnostic(context, field, adapterName string, r hcl.Range) *hc
 			if known == field {
 				return &hcl.Diagnostic{
 					Severity: hcl.DiagError,
-					Summary:  fmt.Sprintf("%s: field %q is not valid in step input for adapter %q; it belongs in the agent config block:", context, field, adapterName),
+					Summary:  fmt.Sprintf("%s: field %q is not valid in step input for adapter %q; it belongs in the agent config block", context, field, adapterName),
 					Detail:   fmt.Sprintf("  agent \"<name>\" {\n    adapter = %q\n    config {\n      %s = ...\n    }\n  }", adapterName, field),
 					Subject:  &r,
 				}

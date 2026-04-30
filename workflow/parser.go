@@ -46,8 +46,8 @@ func Parse(filename string, src []byte) (*Spec, hcl.Diagnostics) {
 		return nil, diags
 	}
 	var file File
-	if d := gohcl.DecodeBody(f.Body, nil, &file); d.HasErrors() {
-		return nil, d
+	if decodeDiags := gohcl.DecodeBody(f.Body, nil, &file); decodeDiags.HasErrors() {
+		return nil, decodeDiags
 	}
 	if len(file.Workflows) != 1 {
 		return nil, hcl.Diagnostics{{
@@ -58,8 +58,8 @@ func Parse(filename string, src []byte) (*Spec, hcl.Diagnostics) {
 	}
 	spec := &file.Workflows[0]
 	spec.SourceBytes = src
-	if d := annotateLegacyConfigRanges(spec, f.Body); d.HasErrors() {
-		diags = append(diags, d...)
+	if annotateDiags := annotateLegacyConfigRanges(spec, f.Body); annotateDiags.HasErrors() {
+		diags = append(diags, annotateDiags...)
 		return nil, diags
 	}
 	return spec, diags
@@ -81,9 +81,9 @@ func annotateLegacyConfigRanges(spec *Spec, body hcl.Body) hcl.Diagnostics { //n
 
 	workflowBody := root.Blocks[0].Body
 	workflowSchema := &hcl.BodySchema{Blocks: []hcl.BlockHeaderSchema{{Type: "step", LabelNames: []string{"name"}}}}
-	content, _, d := workflowBody.PartialContent(workflowSchema)
-	diags = append(diags, d...)
-	if d.HasErrors() {
+	content, _, partialDiags := workflowBody.PartialContent(workflowSchema)
+	diags = append(diags, partialDiags...)
+	if partialDiags.HasErrors() {
 		return diags
 	}
 
@@ -111,9 +111,9 @@ func annotateLegacyConfigRanges(spec *Spec, body hcl.Body) hcl.Diagnostics { //n
 		consumed[name] = seq + 1
 
 		cfgOnly := &hcl.BodySchema{Attributes: []hcl.AttributeSchema{{Name: "config"}}}
-		attrs, _, d := blk.Body.PartialContent(cfgOnly)
-		diags = append(diags, d...)
-		if d.HasErrors() {
+		attrs, _, attrDiags := blk.Body.PartialContent(cfgOnly)
+		diags = append(diags, attrDiags...)
+		if attrDiags.HasErrors() {
 			continue
 		}
 		if attr, ok := attrs.Attributes["config"]; ok {
