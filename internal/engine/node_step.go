@@ -238,6 +238,9 @@ func (n *stepNode) runOneIteration(ctx context.Context, st *RunState, deps Deps,
 // runWorkflowIteration executes the inline workflow body for one iteration
 // and records output block values into vars and cur.Prev (B-05, B-06).
 func (n *stepNode) runWorkflowIteration(ctx context.Context, st *RunState, deps Deps, cur *workflow.IterCursor) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	// W07: workflow-type iterations skip runStepFromAttempt; count the visit here.
 	if err := n.incrementVisit(st); err != nil {
 		return "", err
@@ -395,14 +398,15 @@ func (n *stepNode) runStepFromAttempt(ctx context.Context, st *RunState, deps De
 
 	var lastErr error
 	for attempt := startAttempt; attempt <= maxAttempts; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return adapter.Result{}, err
+		}
+
 		// W07: each attempt (including retries) counts as one visit toward max_visits.
 		if err := n.incrementVisit(st); err != nil {
 			return adapter.Result{}, err
 		}
 
-		if err := ctx.Err(); err != nil {
-			return adapter.Result{}, err
-		}
 		deps.Sink.OnStepEntered(step.Name, n.stepAdapterName(), attempt)
 
 		stepCtx := ctx

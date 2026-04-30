@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -13,16 +14,16 @@ func loopWorkflowSrc(maxVisits, maxTotalSteps, warnThreshold int) string {
 	if maxTotalSteps > 0 || warnThreshold >= 0 {
 		parts := ""
 		if maxTotalSteps > 0 {
-			parts += "    max_total_steps = " + itoa(maxTotalSteps) + "\n"
+			parts += "    max_total_steps = " + strconv.Itoa(maxTotalSteps) + "\n"
 		}
 		if warnThreshold >= 0 {
-			parts += "    max_visits_warn_threshold = " + itoa(warnThreshold) + "\n"
+			parts += "    max_visits_warn_threshold = " + strconv.Itoa(warnThreshold) + "\n"
 		}
 		policyBlock = "  policy {\n" + parts + "  }\n"
 	}
 	maxVisitsAttr := ""
 	if maxVisits != 0 {
-		maxVisitsAttr = "    max_visits = " + itoa(maxVisits) + "\n"
+		maxVisitsAttr = "    max_visits = " + strconv.Itoa(maxVisits) + "\n"
 	}
 	return `
 workflow "loop" {
@@ -37,25 +38,6 @@ workflow "loop" {
   state "done" { terminal = true }
 ` + policyBlock + `}
 `
-}
-
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	negative := n < 0
-	if negative {
-		n = -n
-	}
-	digits := []byte{}
-	for n > 0 {
-		digits = append([]byte{byte('0' + n%10)}, digits...)
-		n /= 10
-	}
-	if negative {
-		return "-" + string(digits)
-	}
-	return string(digits)
 }
 
 // TestCompile_MaxVisits_Decodes verifies that max_visits = 5 on a step
