@@ -35,6 +35,16 @@ func Parse(filename string, src []byte) (*Spec, hcl.Diagnostics) {
 	if diags.HasErrors() {
 		return nil, diags
 	}
+	if f == nil {
+		if len(diags) == 0 {
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  "cannot parse workflow file",
+				Detail:   "parser returned nil file without diagnostics",
+			})
+		}
+		return nil, diags
+	}
 	var file File
 	if d := gohcl.DecodeBody(f.Body, nil, &file); d.HasErrors() {
 		return nil, d
