@@ -72,7 +72,7 @@ func CompileWithOpts(spec *Spec, schemas map[string]AdapterInfo, opts CompileOpt
 
 	g := newFSMGraph(spec)
 	diags = append(diags, compileVariables(g, spec)...)
-	diags = append(diags, compileAgents(g, spec, schemas)...)
+	diags = append(diags, compileAgents(g, spec, schemas, opts)...)
 	diags = append(diags, compileStates(g, spec)...)
 	diags = append(diags, compileSteps(g, spec, schemas, opts)...)
 	diags = append(diags, compileWaits(g, spec)...)

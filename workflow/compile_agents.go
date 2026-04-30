@@ -9,9 +9,31 @@ import (
 	"github.com/hashicorp/hcl/v2"
 )
 
+// agentConfigEvalContext builds the eval context used to resolve agent.config{}
+// attributes at compile time. file(), fileexists(), and trimfrontmatter() are
+// registered so prompt files can be inlined; var/steps/each are intentionally
+// absent because agent config has no runtime resolution path and must reduce
+// to a constant.
+//
+// Always returns a non-nil context — even when workflowDir is empty — so that
+// agent.config expressions are never silently emptied. file()/fileexists()
+// then produce a "workflow directory not configured" compile diagnostic for
+// callers that compile without a WorkflowDir.
+func agentConfigEvalContext(workflowDir string) *hcl.EvalContext {
+	return &hcl.EvalContext{
+		Functions: workflowFunctions(DefaultFunctionOptions(workflowDir)),
+	}
+}
+
 // compileAgents compiles all agent blocks from spec into g.Agents.
-func compileAgents(g *FSMGraph, spec *Spec, schemas map[string]AdapterInfo) hcl.Diagnostics {
+//
+// Agent config is resolved at compile time: unlike step.input{}, there is no
+// runtime evaluation pass for agent.config{}, so any expression here must
+// reduce to a constant. opts.WorkflowDir is used to register file(),
+// fileexists(), and trimfrontmatter() so prompt files can be inlined.
+func compileAgents(g *FSMGraph, spec *Spec, schemas map[string]AdapterInfo, opts CompileOpts) hcl.Diagnostics {
 	var diags hcl.Diagnostics
+	configEvalCtx := agentConfigEvalContext(opts.WorkflowDir)
 	for _, ag := range spec.Agents {
 		name := ag.Name
 		if _, dup := g.Agents[name]; dup {
@@ -35,10 +57,10 @@ func compileAgents(g *FSMGraph, spec *Spec, schemas map[string]AdapterInfo) hcl.
 			missingRange := ag.Config.Remain.MissingItemRange()
 			if info, ok := adapterInfo(schemas, ag.Adapter); ok {
 				// Schema-aware decode: validates types, unknown keys, required fields.
-				agentConfig, d = validateSchemaAttrs(ctxLabel, attrs, info.ConfigSchema, missingRange, "")
+				agentConfig, d = validateSchemaAttrs(ctxLabel, attrs, info.ConfigSchema, missingRange, "", configEvalCtx)
 			} else {
 				// Permissive decode: no schema available.
-				agentConfig, d = decodeAttrsToStringMap(attrs)
+				agentConfig, d = decodeAttrsToStringMap(attrs, configEvalCtx)
 			}
 			diags = append(diags, d...)
 		}

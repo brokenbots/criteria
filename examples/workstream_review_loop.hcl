@@ -20,6 +20,7 @@
 #
 # The allowed-paths env var lets the file() expression function read the agent
 # profile markdown files in .github/agents/ (outside this workflow's directory).
+# Profiles are loaded into each agent's system_prompt at compile time.
 #
 # Note: for_each multi-step agent chains are not supported by the engine —
 # the do-step must return _continue to advance the loop. Use this single-file
@@ -42,36 +43,39 @@ workflow "workstream_review_loop" {
 
   # ── Agents ─────────────────────────────────────────────────────────────────
 
+  # Agent profile markdowns are loaded into each session via system_prompt at
+  # compile time (file() + trimfrontmatter()). The profile is established at
+  # session-open and persists for every subsequent turn — step prompts can be
+  # short coordination signals.
+
   agent "executor" {
     adapter = "copilot"
     config {
-      model            = "gpt-5.3-codex"
+      model            = "claude-sonnet-4.6"
       reasoning_effort = "high"
       max_turns        = 12
+      system_prompt    = trimfrontmatter(file("../.github/agents/workstream-executor.agent.md"))
     }
   }
 
   agent "reviewer" {
     adapter = "copilot"
     config {
-      model            = "claude-sonnet-4.6"
+      model            = "gpt-5.4"
       reasoning_effort = "high"
       max_turns        = 10
+      system_prompt    = trimfrontmatter(file("../.github/agents/workstream-reviewer.agent.md"))
     }
   }
 
   agent "pr_manager" {
     adapter = "copilot"
     config {
-      model            = "claude-haiku-4.5"
-      max_turns        = 10
+      model         = "claude-haiku-4.5"
+      max_turns     = 10
+      system_prompt = trimfrontmatter(file("../.github/agents/workstream-pr-manager.agent.md"))
     }
   }
-
-  # ── Agent profiles ─────────────────────────────────────────────────────────
-  # Loaded inline via file()+trimfrontmatter() — no shell prelude needed.
-  # The profile string is injected into the first user turn of each agent
-  # session; subsequent loop turns are short coordination signals.
 
   step "checkout_branch" {
     adapter = "shell"
@@ -117,7 +121,7 @@ workflow "workstream_review_loop" {
       "*",
     ]
     input {
-      prompt = "${trimfrontmatter(file("../.github/agents/workstream-executor.agent.md"))}\n\nRead ${var.workstream_file} for the full task scope.\n\nExecute the first implementation batch: complete the next unchecked items, write code and tests as needed, keep changes scoped and verifiable. Record your progress and notes in ${var.workstream_file}.\n\nEnd your final line with exactly one of:\nRESULT: needs_review\nRESULT: failure"
+      prompt = "Read ${var.workstream_file} for the full task scope.\n\nExecute the first implementation batch: complete the next unchecked items, write code and tests as needed, keep changes scoped and verifiable. Record your progress and notes in ${var.workstream_file}.\n\nEnd your final line with exactly one of:\nRESULT: needs_review\nRESULT: failure"
     }
     outcome "needs_review"   { transition_to = "review_init" }
     outcome "needs_approval" { transition_to = "review_init" }
@@ -130,7 +134,7 @@ workflow "workstream_review_loop" {
       "*",
     ]
     input {
-      prompt = "${trimfrontmatter(file("../.github/agents/workstream-reviewer.agent.md"))}\n\nRead ${var.workstream_file} for the workstream scope and the executor's latest work.\n\nReview the executor's changes against the acceptance bar. Write all findings and your verdict into the reviewer notes section of ${var.workstream_file}.\n\nEnd your final line with exactly one of:\nRESULT: approved\nRESULT: changes_requested\nRESULT: failure"
+      prompt = "Read ${var.workstream_file} for the workstream scope and the executor's latest work.\n\nReview the executor's changes against the acceptance bar. Write all findings and your verdict into the reviewer notes section of ${var.workstream_file}.\n\nEnd your final line with exactly one of:\nRESULT: approved\nRESULT: changes_requested\nRESULT: failure"
     }
     outcome "approved"          { transition_to = "commit_and_prepare_pr" }
     outcome "changes_requested" { transition_to = "execute" }
@@ -219,7 +223,7 @@ workflow "workstream_review_loop" {
       "*",
     ]
     input {
-      prompt = "${trimfrontmatter(file("../.github/agents/workstream-pr-manager.agent.md"))}\n\nRead ${var.workstream_file}. Ensure branch is pushed, then create or update the PR from the current branch to main.\n\nInclude a concise summary and test evidence from the workstream notes/reviewer notes.\n\nEnd your final line with exactly one of:\nRESULT: watch_pr\nRESULT: failure"
+      prompt = "Read ${var.workstream_file}. Ensure branch is pushed, then create or update the PR from the current branch to main.\n\nInclude a concise summary and test evidence from the workstream notes/reviewer notes.\n\nEnd your final line with exactly one of:\nRESULT: watch_pr\nRESULT: failure"
     }
     outcome "watch_pr"       { transition_to = "watch_pr_warmup" }
     outcome "needs_review"   { transition_to = "watch_pr_warmup" }

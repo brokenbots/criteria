@@ -181,12 +181,12 @@ func compileSteps(g *FSMGraph, spec *Spec, schemas map[string]AdapterInfo, opts 
 			missingRange := sp.Input.Remain.MissingItemRange()
 			if adapterName != "" {
 				if info, ok := adapterInfo(schemas, adapterName); ok {
-					inputMap, d = validateSchemaAttrs(ctxLabel, attrs, info.InputSchema, missingRange, adapterName)
+					inputMap, d = validateSchemaAttrs(ctxLabel, attrs, info.InputSchema, missingRange, adapterName, nil)
 				} else {
-					inputMap, d = decodeAttrsToStringMap(attrs)
+					inputMap, d = decodeAttrsToStringMap(attrs, nil)
 				}
 			} else {
-				inputMap, d = decodeAttrsToStringMap(attrs)
+				inputMap, d = decodeAttrsToStringMap(attrs, nil)
 			}
 			diags = append(diags, d...)
 			inputExprs = make(map[string]hcl.Expression, len(attrs))
