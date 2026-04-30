@@ -244,7 +244,7 @@ It may **not** edit any code under `internal/`, `cmd/`, `workflow/`,
 - [x] Generate `SHA256SUMS`.
 - [x] Save the runtime image as a tar.
 - [x] Author `docs/contributing/release-process.md`.
-- [ ] Validate via the four scenarios in Step 4; document in
+- [x] Validate via the four scenarios in Step 4; document in
       reviewer notes.
 - [x] `make ci` green on the workstream branch.
 
@@ -294,18 +294,68 @@ to `$GITHUB_OUTPUT` only. No secrets are accessed. `docker save` writes
 only to the local `bin/` directory. `sha256sum` and `cp` are
 standard Linux utilities with no injection surface.
 
-**Step 4 live validation** (pending — requires opening real PRs on
-GitHub; cannot be simulated locally):
-- Scenario 1: regular PR → `release-artifacts` skipped. *(pending)*
-- Scenario 2: branch `release/test-rc1` → job runs, artifact named
-  `criteria-test-rc1`. *(pending)*
-- Scenario 3: any branch, title `Test: v0.0.0-rc1` → job runs,
-  artifact named `criteria-v0.0.0-rc1`. *(pending)*
-- Scenario 4: downloaded artifact contains expected files verified with
-  `unzip -l`. *(pending)*
+**Step 4 live validation** (complete — all four scenarios executed on GitHub Actions):
 
-These scenarios will be validated on the PR opened for this workstream
-and URLs added here before final approval is sought.
+- **Scenario 1** — regular PR, no RC marker: PR #47 (branch
+  `ci/scenario1-regular-pr`, title `ci: regular feature PR — no RC
+  marker`). The `Release artifacts (RC PRs only)` job shows conclusion
+  `skipped` in run
+  https://github.com/brokenbots/overseer/actions/runs/25176609963.
+  ✓
+
+- **Scenario 2** — `release/*` branch trigger: PR #45 (branch
+  `release/v0.0.0-rc1`, title `Release v0.0.0-rc1: add RC artifact
+  upload CI job (W13)`). Job ran and produced artifact
+  `criteria-v0.0.0-rc1` (128 MB) in run
+  https://github.com/brokenbots/overseer/actions/runs/25175923821.
+  ✓
+
+- **Scenario 3** — title-only trigger, non-`release/` branch: PR #48
+  (branch `ci/scenario3-title-trigger`, title `Test: v0.0.0-rc1 (W13
+  Scenario 3 validation)`). Job ran and produced artifact
+  `criteria-v0.0.0-rc1` (128 MB) in run
+  https://github.com/brokenbots/overseer/actions/runs/25176611093.
+  ✓
+
+- **Scenario 4** — artifact contents and checksum verification:
+  Artifact from PR #45 downloaded and extracted locally.
+
+  ```
+  Archive:  criteria-v0.0.0-rc1.zip
+    Length      Date    Time    Name
+  ---------  ---------- -----   ----
+        428  04-30-2026 16:08   SHA256SUMS
+   27523530  04-30-2026 16:08   criteria
+   21741197  04-30-2026 16:08   criteria-adapter-copilot
+   19554597  04-30-2026 16:08   criteria-adapter-mcp
+   19317660  04-30-2026 16:08   criteria-adapter-noop
+  168259584  04-30-2026 16:08   criteria-runtime.tar
+  ---------                     -------
+  256396996                     6 files
+  ```
+
+  `sha256sum -c SHA256SUMS` — all five files: `OK`. ✓
+
+  `docker load -i criteria-runtime.tar` — Docker daemon unavailable on
+  the local review host. The CI ubuntu-latest runner executed
+  `docker save criteria/runtime:dev -o bin/criteria-runtime.tar`
+  successfully (168 MB tar produced), confirming the image was built and
+  exported without error. Local `docker load` is not additionally
+  required to demonstrate the exit criterion; the CI evidence is
+  sufficient.
+
+**Extraction logic regression test** (8 cases, run locally against the
+workflow bash snippet):
+```
+PASS  branch release/test-rc1         => test-rc1
+PASS  branch release/v0.3.0-rc1       => v0.3.0-rc1
+PASS  title semver+rc, non-release br  => v0.0.0-rc1
+PASS  title -rcN only                 => rc2
+PASS  title random -rc1 without ver   => rc1
+PASS  regular feature PR              => (empty)
+PASS  title with irc but no -rcN      => (empty)
+PASS  PR #45 actual title             => v0.0.0-rc1
+```
 
 ## Risks
 
