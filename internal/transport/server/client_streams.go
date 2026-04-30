@@ -56,7 +56,7 @@ func (c *Client) startControl(ctx context.Context) error {
 	}
 }
 
-func (c *Client) controlLoop(ctx context.Context, ready chan<- error) {
+func (c *Client) controlLoop(ctx context.Context, ready chan<- error) { //nolint:funlen,gocognit,gocyclo // W03: reconnect loop with backoff, ready signalling, and event dispatch across stream lifecycle
 	backoff := 500 * time.Millisecond
 	firstAttempt := true
 	for {

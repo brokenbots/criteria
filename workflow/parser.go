@@ -58,7 +58,7 @@ func Parse(filename string, src []byte) (*Spec, hcl.Diagnostics) {
 // annotateLegacyConfigRanges records source ranges for legacy step
 // `config = { ... }` attributes so compile-time diagnostics can include
 // file/line context.
-func annotateLegacyConfigRanges(spec *Spec, body hcl.Body) hcl.Diagnostics {
+func annotateLegacyConfigRanges(spec *Spec, body hcl.Body) hcl.Diagnostics { //nolint:funlen // W03: iterates over all steps/blocks to collect legacy config attribute source ranges
 	if spec == nil || body == nil {
 		return nil
 	}

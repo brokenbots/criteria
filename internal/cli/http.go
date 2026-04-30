@@ -21,7 +21,7 @@ import (
 //
 // serverURL selects the scheme. When caFile is non-empty it is loaded as the
 // root bundle for server verification; certFile/keyFile enable mTLS.
-func serverHTTPClient(serverURL, caFile, certFile, keyFile string) (*http.Client, error) {
+func serverHTTPClient(serverURL, caFile, certFile, keyFile string) (*http.Client, error) { //nolint:gocognit // W03: TLS config branches across scheme/CA/mTLS combinations; extraction would obscure call site
 	u, err := url.Parse(serverURL)
 	if err != nil {
 		return nil, fmt.Errorf("parse server url: %w", err)

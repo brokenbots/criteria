@@ -110,7 +110,7 @@ type compileState struct {
 	Success  bool   `json:"success"`
 }
 
-func buildCompileJSON(graph *workflow.FSMGraph) compileJSON {
+func buildCompileJSON(graph *workflow.FSMGraph) compileJSON { //nolint:funlen // W03: serialises entire FSM graph structure; length driven by field count, not complexity
 	agents := make([]compileAgent, 0, len(graph.Agents))
 	agentNames := sortedAgentNames(graph)
 	for _, name := range agentNames {

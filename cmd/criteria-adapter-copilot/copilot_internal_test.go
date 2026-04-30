@@ -175,7 +175,7 @@ func TestPermissionDetails(t *testing.T) {
 		Commands:        cmds,
 	}
 
-	details := permissionDetails(request)
+	details := permissionDetails(&request)
 	if details["kind"] == "" {
 		t.Fatalf("expected kind in details")
 	}
@@ -209,7 +209,7 @@ func TestPermissionDetailsSensitiveOptIn(t *testing.T) {
 		Path:            &path,
 	}
 
-	details := permissionDetails(request)
+	details := permissionDetails(&request)
 	if details["request_json"] == "" {
 		t.Fatalf("expected request_json when sensitive details are enabled")
 	}
@@ -278,7 +278,7 @@ func TestPermissionPermitHandshake(t *testing.T) {
 
 	resCh := make(chan copilot.PermissionRequestResult, 1)
 	go func() {
-		result, _ := p.handlePermissionRequest("s1", request)
+		result, _ := p.handlePermissionRequest("s1", &request)
 		resCh <- result
 	}()
 

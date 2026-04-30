@@ -150,7 +150,7 @@ var knownAgentConfigFields = map[string][]string{
 // adapterName is used to produce a targeted misplacement diagnostic when an
 // unknown input field matches a known agent-config field for that adapter. Pass
 // "" to emit the generic "unknown field" diagnostic for all unknown keys.
-func validateSchemaAttrs(context string, attrs hcl.Attributes, schema map[string]ConfigField, missingRange hcl.Range, adapterName string) (map[string]string, hcl.Diagnostics) {
+func validateSchemaAttrs(context string, attrs hcl.Attributes, schema map[string]ConfigField, missingRange hcl.Range, adapterName string) (map[string]string, hcl.Diagnostics) { //nolint:funlen,gocognit,gocyclo // W03: exhaustive schema validation with per-adapter diagnostics
 	var diags hcl.Diagnostics
 	result := make(map[string]string, len(attrs))
 

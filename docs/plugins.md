@@ -251,12 +251,27 @@ Permission gating is deny-by-default.
 - If a step does not declare `allow_tools`, every tool request is denied.
 - `allow_tools` is only valid on execute-shape agent steps. It is a compile error on adapter-backed steps or lifecycle steps.
 - Patterns use Go `filepath.Match` semantics. That makes exact matches and prefix globs useful:
-  - `read_file`
+  - `read` (or `read_file` — Copilot alias, see below)
   - `shell:git status`
   - `shell:go test*`
   - `shell:*`
 
-The host evaluates plugin permission requests against those patterns. When a request matches, the run emits `permission.granted`; otherwise it emits `permission.denied` with reason `no matching allow_tools entry`. The Copilot plugin then surfaces the denied turn as `needs_review` instead of silently continuing.
+The host evaluates plugin permission requests against those patterns. When a request matches, the run emits `permission.granted`; otherwise it emits `permission.denied` with reason `no matching allow_tools entry` and (for the Copilot adapter) a `suggestion` field pointing to the canonical kind. The Copilot plugin then surfaces the denied turn as `needs_review` instead of silently continuing.
+
+### Copilot permission-kind aliases
+
+The Copilot SDK reports permission requests using short kind names (`read`, `write`, `shell`, `mcp`, `url`, `memory`, `custom-tool`, `hook`). For convenience, two user-friendly aliases are recognised in `allow_tools` entries for Copilot-backed steps:
+
+| Alias | Canonical SDK kind |
+|---|---|
+| `read_file` | `read` |
+| `write_file` | `write` |
+
+Both forms resolve identically at runtime. The canonical forms are shorter and appear verbatim in SDK documentation; using an alias produces a compile-time warning:
+
+```
+step "run" allow_tools: "read_file" is a recognized alias for the Copilot SDK kind "read"; consider using the canonical form for clarity
+```
 
 The hello example uses the narrowest possible allowlist:
 

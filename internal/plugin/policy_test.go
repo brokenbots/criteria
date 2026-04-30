@@ -1,6 +1,7 @@
 package plugin
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -133,6 +134,87 @@ func TestPolicyInvalidPatternSkipped(t *testing.T) {
 	allow, _ := p.Decide(PermissionRequest{ID: "1", Tool: "read_file"})
 	if !allow {
 		t.Fatal("valid pattern after invalid one must still match")
+	}
+}
+
+func TestPolicyWithAliasesReadFile(t *testing.T) {
+	// UF#02: allow_tools = ["read_file"] must grant the SDK kind "read".
+	aliases := map[string]string{"read_file": "read", "write_file": "write"}
+	p := NewPolicyWithAliases([]string{"read_file"}, aliases)
+
+	allow, reason := p.Decide(PermissionRequest{ID: "1", Tool: "read"})
+	if !allow {
+		t.Fatalf("read_file alias must allow canonical 'read', got deny (reason=%q)", reason)
+	}
+	if !strings.Contains(reason, "read_file") {
+		t.Fatalf("reason should reference the matched alias pattern, got %q", reason)
+	}
+	if !strings.Contains(reason, "alias for read") {
+		t.Fatalf("reason should note the canonical form, got %q", reason)
+	}
+}
+
+func TestPolicyWithAliasesWriteFile(t *testing.T) {
+	aliases := map[string]string{"read_file": "read", "write_file": "write"}
+	p := NewPolicyWithAliases([]string{"write_file"}, aliases)
+
+	allow, _ := p.Decide(PermissionRequest{ID: "1", Tool: "write"})
+	if !allow {
+		t.Fatal("write_file alias must allow canonical 'write'")
+	}
+
+	allow, _ = p.Decide(PermissionRequest{ID: "2", Tool: "read"})
+	if allow {
+		t.Fatal("write_file alias must not allow 'read'")
+	}
+}
+
+func TestPolicyWithAliasesCanonicalStillWorks(t *testing.T) {
+	// Canonical name in allow_tools continues to work alongside aliases.
+	aliases := map[string]string{"read_file": "read", "write_file": "write"}
+	p := NewPolicyWithAliases([]string{"read"}, aliases)
+
+	allow, reason := p.Decide(PermissionRequest{ID: "1", Tool: "read"})
+	if !allow {
+		t.Fatalf("canonical 'read' must allow 'read', got deny (reason=%q)", reason)
+	}
+	if reason != "matched: read" {
+		t.Fatalf("expected simple matched reason, got %q", reason)
+	}
+}
+
+func TestPolicyWithAliasesNonAliasUnaffected(t *testing.T) {
+	// A tool that has no alias should not be accidentally granted.
+	aliases := map[string]string{"read_file": "read", "write_file": "write"}
+	p := NewPolicyWithAliases([]string{"read_file"}, aliases)
+
+	allow, _ := p.Decide(PermissionRequest{ID: "1", Tool: "shell"})
+	if allow {
+		t.Fatal("alias map must not affect unrelated tools")
+	}
+}
+
+func TestPermissionDenialSuggestionWithAliases(t *testing.T) {
+	s := PermissionDenialSuggestion("copilot", "read")
+	if s == "" {
+		t.Fatal("expected suggestion for known copilot alias")
+	}
+	if !strings.Contains(s, "read_file") {
+		t.Fatalf("suggestion should mention the alias 'read_file', got %q", s)
+	}
+}
+
+func TestPermissionDenialSuggestionNoAlias(t *testing.T) {
+	s := PermissionDenialSuggestion("copilot", "shell")
+	if s != "" {
+		t.Fatalf("no suggestion expected for 'shell' kind, got %q", s)
+	}
+}
+
+func TestPermissionDenialSuggestionUnknownAdapter(t *testing.T) {
+	s := PermissionDenialSuggestion("noop", "read")
+	if s != "" {
+		t.Fatalf("no suggestion expected for unknown adapter, got %q", s)
 	}
 }
 

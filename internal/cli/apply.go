@@ -78,7 +78,7 @@ func runApply(ctx context.Context, opts applyOptions) error {
 	return runApplyLocal(ctx, opts)
 }
 
-func runApplyLocal(ctx context.Context, opts applyOptions) error {
+func runApplyLocal(ctx context.Context, opts applyOptions) error { //nolint:funlen // W03: local apply orchestrates engine lifecycle, event routing, and output rendering in one function
 	log := newApplyLogger()
 
 	mode, err := resolveOutputMode(opts.output, os.Stdout)

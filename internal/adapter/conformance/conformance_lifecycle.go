@@ -133,7 +133,7 @@ func testSessionLifecycle(t *testing.T, name string, loader plugin.Loader, opts 
 	}
 }
 
-func testConcurrentSessions(t *testing.T, name string, loader plugin.Loader, opts Options, info plugin.Info) {
+func testConcurrentSessions(t *testing.T, name string, loader plugin.Loader, opts Options, info plugin.Info) { //nolint:funlen // W03: concurrent session test requires full lifecycle setup for N goroutines with assertions
 	t.Helper()
 	defer goleak.VerifyNone(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

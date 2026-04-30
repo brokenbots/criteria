@@ -10,6 +10,20 @@ import (
 	"github.com/hashicorp/hcl/v2"
 )
 
+// copilotAllowToolsAliases maps legacy user-facing allow_tools names to the
+// canonical Copilot SDK permission kind. When a step using the copilot adapter
+// lists one of these aliases, a compile-time warning is emitted pointing toward
+// the canonical form.
+//
+// This map is a workflow-package copy of the alias table in
+// internal/plugin/policy.go (adapterPermissionAliases["copilot"]). The two must
+// stay in sync; the duplication is intentional since the workflow package cannot
+// import internal/plugin due to import-boundary rules.
+var copilotAllowToolsAliases = map[string]string{
+	"read_file":  "read",
+	"write_file": "write",
+}
+
 // compileSteps compiles all step blocks from spec into g.Steps and g.stepOrder.
 // Must be called after compileAgents so that agent references can be resolved.
 // opts carries compile options including WorkflowDir (for file() validation)
@@ -152,6 +166,12 @@ func compileSteps(g *FSMGraph, spec *Spec, schemas map[string]AdapterInfo, opts 
 		}
 
 		// Decode input { } block.
+		adapterName := sp.Adapter
+		if hasAgent {
+			if agent, ok := g.Agents[sp.Agent]; ok {
+				adapterName = agent.Adapter
+			}
+		}
 		var inputMap map[string]string
 		var inputExprs map[string]hcl.Expression
 		if sp.Input != nil {
@@ -159,12 +179,6 @@ func compileSteps(g *FSMGraph, spec *Spec, schemas map[string]AdapterInfo, opts 
 			diags = append(diags, d...)
 			ctxLabel := fmt.Sprintf("step %q input", sp.Name)
 			missingRange := sp.Input.Remain.MissingItemRange()
-			adapterName := sp.Adapter
-			if hasAgent {
-				if agent, ok := g.Agents[sp.Agent]; ok {
-					adapterName = agent.Adapter
-				}
-			}
 			if adapterName != "" {
 				if info, ok := adapterInfo(schemas, adapterName); ok {
 					inputMap, d = validateSchemaAttrs(ctxLabel, attrs, info.InputSchema, missingRange, adapterName)
@@ -213,6 +227,20 @@ func compileSteps(g *FSMGraph, spec *Spec, schemas map[string]AdapterInfo, opts 
 			AllowTools: allowToolsForStep(sp, spec),
 			ForEach:    forEachExpr,
 			Count:      countExpr,
+		}
+
+		// Warn when allow_tools uses a Copilot alias rather than the canonical
+		// SDK kind. The alias still works (UF#02 fix resolves it at evaluation
+		// time), but the canonical form is shorter and appears in SDK docs.
+		if adapterName == "copilot" {
+			for _, tool := range node.AllowTools {
+				if canonical, ok := copilotAllowToolsAliases[tool]; ok {
+					diags = append(diags, &hcl.Diagnostic{
+						Severity: hcl.DiagWarning,
+						Summary:  fmt.Sprintf("step %q allow_tools: %q is a recognized alias for the Copilot SDK kind %q; consider using the canonical form for clarity", sp.Name, tool, canonical),
+					})
+				}
+			}
 		}
 
 		// Compile outcomes.

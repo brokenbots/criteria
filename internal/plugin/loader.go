@@ -96,7 +96,7 @@ func (l *DefaultLoader) RegisterBuiltin(name string, factory BuiltinFactory) {
 	l.builtins[name] = factory
 }
 
-func (l *DefaultLoader) Resolve(ctx context.Context, name string) (Plugin, error) {
+func (l *DefaultLoader) Resolve(ctx context.Context, name string) (Plugin, error) { //nolint:funlen // W03: resolver must handle builtin registry, discovery, launch, handshake, and caching paths
 	if stringsTrim(name) == "" {
 		return nil, errors.New("adapter name is required")
 	}
@@ -200,12 +200,12 @@ func (p *rpcPlugin) OpenSession(ctx context.Context, id string, config map[strin
 	return err
 }
 
-func (p *rpcPlugin) Execute(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+func (p *rpcPlugin) Execute(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) { //nolint:funlen,gocognit // W03: execute path handles permission gating, event routing, and partial failure recovery
 	recv, err := p.rpc.Execute(ctx, &pb.ExecuteRequest{SessionId: sessionID, StepName: step.Name, Config: cloneConfig(step.Input)})
 	if err != nil {
 		return adapter.Result{Outcome: "failure"}, err
 	}
-	policy := NewPolicy(step.AllowTools)
+	policy := NewPolicyWithAliases(step.AllowTools, adapterPermissionAliases[p.name])
 	for {
 		evt, recvErr := recv.Recv()
 		if recvErr != nil {
@@ -240,11 +240,16 @@ func (p *rpcPlugin) Execute(ctx context.Context, sessionID string, step *workflo
 					"request_id": pr.ID,
 				})
 			} else {
-				sink.Adapter("permission.denied", map[string]any{
-					"tool":       pr.Tool,
-					"reason":     reason,
-					"request_id": pr.ID,
-				})
+				denial := map[string]any{
+					"tool":        pr.Tool,
+					"reason":      reason,
+					"request_id":  pr.ID,
+					"allow_tools": step.AllowTools,
+				}
+				if suggestion := PermissionDenialSuggestion(p.name, pr.Tool); suggestion != "" {
+					denial["suggestion"] = suggestion
+				}
+				sink.Adapter("permission.denied", denial)
 			}
 			if permitErr := p.Permit(ctx, sessionID, req.GetId(), allow, reason); permitErr != nil {
 				return adapter.Result{Outcome: "failure"}, permitErr

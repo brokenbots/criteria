@@ -25,7 +25,7 @@ import (
 //  4. The event retrieved from ListRunEvents yields the same TypeString as
 //     the submitted envelope, confirming the discriminator is stable across
 //     the wire boundary.
-func testTypeStringStability(t *testing.T, s Subject) {
+func testTypeStringStability(t *testing.T, s Subject) { //nolint:funlen,gocognit // W03: stability test enumerates all envelope types with submit/retrieve/compare steps
 	baseURL, client, teardown := s.SetUp(t)
 	defer teardown()
 
