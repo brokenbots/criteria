@@ -649,3 +649,23 @@ Approved. This follow-up is documentation-only and corrects wording drift rather
 #### Validation Performed
 - `make ci` — passed.
 - Diff review confirmed the only post-approval code changes were wording updates in `docs/workflow.md` and the package comment in `internal/cli/localresume/resumer.go`.
+
+### PR Review 2026-04-30-03 — three review threads
+
+#### Thread 1 — Non-EOF read errors create spurious rejections (resumer.go:257)
+`resolveApprovalStdin` now distinguishes `io.EOF` (non-interactive → persisted rejection)
+from other read errors (I/O error, scanner overflow → abort with error, no decision
+persisted). Added `TestStdinMode_Approval_ReadError_Aborts` (uses `errReader`) and
+tightened `TestStdinMode_Approval_EOF_Rejects` to also assert the reason string.
+
+#### Thread 2 — approvalDecisionDir comment says "Created with 0o700" (local_state.go:156)
+Corrected comment: now says "The directory is not created by this function; callers
+that write files are responsible for MkdirAll."
+
+#### Thread 3 — docs say "abort at compile time" (workflow.md:331)
+Changed to "abort during apply validation before execution starts" to accurately
+reflect that rejection happens in `ensureLocalModeSupported` during `criteria apply`,
+not during `criteria compile`.
+
+#### Validation
+- `make test && make lint` — all 20 packages pass, lint clean.

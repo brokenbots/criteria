@@ -328,7 +328,7 @@ approval "ship_to_prod" {
 - **`reason`** (required): Human-readable prompt displayed in the approval UI.
 - **`outcome "approved"`**, **`outcome "rejected"`** (both required): Transition targets for approve/reject decisions.
 
-**Orchestrator mode required** (default): Approvals require `--server`. Without `CRITERIA_LOCAL_APPROVAL` set, local-mode runs abort at compile time. See **Local-mode approval and signal wait** below.
+**Orchestrator mode required** (default): Approvals require `--server`. Without `CRITERIA_LOCAL_APPROVAL` set, local-mode runs abort during apply validation before execution starts. See **Local-mode approval and signal wait** below.
 
 ---
 

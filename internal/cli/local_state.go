@@ -146,8 +146,9 @@ func RemoveStepCheckpoint(runID string) {
 	_ = os.Remove(p)
 }
 
-// approvalDecisionDir returns the directory for persisted approval decisions
-// for a run: <stateDir>/runs/<runID>/approvals/. Created with 0o700 permissions.
+// approvalDecisionDir returns the directory path for persisted approval decisions
+// for a run: <stateDir>/runs/<runID>/approvals/. The directory is not created
+// by this function; callers that write files are responsible for MkdirAll.
 func approvalDecisionDir(runID string) (string, error) {
 	d, err := stateDir()
 	if err != nil {

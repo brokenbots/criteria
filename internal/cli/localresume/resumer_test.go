@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -236,7 +237,33 @@ func TestStdinMode_Approval_EOF_Rejects(t *testing.T) {
 	if payload["decision"] != "rejected" {
 		t.Errorf("expected rejected on EOF, got %v", payload)
 	}
+	if payload["reason"] != "non-interactive input" {
+		t.Errorf("expected reason 'non-interactive input' on EOF, got %q", payload["reason"])
+	}
 }
+
+func TestStdinMode_Approval_ReadError_Aborts(t *testing.T) {
+	stateDir := t.TempDir()
+	// A reader that returns a non-EOF error should cause the run to abort
+	// (return an error) rather than silently persist a rejection.
+	r := localresume.New(localresume.ModeStdin, localresume.Options{
+		Stdin:    &errReader{err: errors.New("simulated I/O error")},
+		Stderr:   &bytes.Buffer{},
+		StateDir: stateDir,
+	})
+	_, err := r.ResumeApproval(context.Background(), "run-err", "review", nil, "")
+	if err == nil {
+		t.Fatal("expected error on stdin read failure, got nil")
+	}
+	if !strings.Contains(err.Error(), "simulated I/O error") {
+		t.Errorf("error should mention the underlying cause, got: %v", err)
+	}
+}
+
+// errReader is an io.Reader that always returns a configurable error.
+type errReader struct{ err error }
+
+func (e *errReader) Read(_ []byte) (int, error) { return 0, e.err }
 
 func TestStdinMode_Approval_UnrecognizedInput_InvalidInputReason(t *testing.T) {
 	stateDir := t.TempDir()

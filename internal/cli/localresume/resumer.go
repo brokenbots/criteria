@@ -253,8 +253,13 @@ func (r *resumer) resolveApprovalStdin(ctx context.Context, name string, approve
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return nil, err
 		}
-		// EOF or other read errors mean non-interactive input → rejected, not an error.
-		return map[string]string{"decision": "rejected", "reason": "non-interactive input"}, nil
+		// EOF means non-interactive input (e.g., piped empty stdin) → rejected.
+		if errors.Is(err, io.EOF) {
+			return map[string]string{"decision": "rejected", "reason": "non-interactive input"}, nil
+		}
+		// Any other read error (bad FD, I/O error, scanner overflow) should abort
+		// cleanly without persisting a decision.
+		return nil, fmt.Errorf("approval %q: read stdin: %w", name, err)
 	}
 	return parseApprovalInput(decision), nil
 }
