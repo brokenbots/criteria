@@ -273,7 +273,7 @@ URLs.
 
 ## Reviewer notes
 
-### Implementation (2026-04-30)
+#### Implementation (2026-04-30)
 
 **Files changed:**
 - `.github/workflows/ci.yml` — appended the `release-artifacts` job
@@ -373,9 +373,7 @@ PASS  title irc without digit           => <empty>
 | The `release-artifacts` job slows down CI on RC PRs | RC PRs are infrequent (one or two per release). The added build time is acceptable on the human-decision side of an RC. |
 | `actions/upload-artifact@v4` is not the correct major version when this workstream lands | Pin to the same version used elsewhere in `ci.yml` (search for `actions/upload-artifact` in the workflows directory). If no precedent, use the latest stable major and document. |
 
-## Reviewer Notes
-
-### Review 2026-04-30 — changes-requested
+#### Review 2026-04-30 — changes-requested
 
 #### Summary
 The workflow and release-process doc are in place, and `make ci` is green locally, but this is not approvable yet. Two blockers remain: the title-trigger contract and the title-to-tag extraction logic do not accept the same set of PR titles, and the required live PR validation for the GitHub Actions behavior is still entirely pending. I did not find a separate shell-injection, secret-handling, or path-safety issue in the reviewed workflow steps.
@@ -397,9 +395,9 @@ Existing repository validation is still strong enough to show the workflow/doc e
 - Local reproduction of the RC tag extraction logic — `release/test-rc1` => `test-rc1`; `Test: v0.0.0-rc1` => `v0.0.0-rc1`; `Add some feature` => empty; `random -rc1 without version` => empty.
 - `make docker-runtime` — could not be completed locally in this environment because the Docker daemon was unavailable, so runtime-image validation still needs the live CI evidence above.
 
-### Review 2026-04-30-02 — changes-requested
+#### Review 2026-04-30-02 — changes-requested
 
-#### Summary
+##### Summary
 The new pass closes part of the prior review: the skip path, both upload paths, artifact downloadability, and checksum verification are now evidenced. This is still not approvable because the title-trigger contract remains inconsistent with the documented RC marker rules, and the Step 4 validation log is still incomplete: it substitutes Scenario 2 with a different branch shape and still does not provide a successful `docker load` on the downloaded runtime tar. I did not find a separate shell-injection, secret-handling, or path-safety issue in the workflow steps I reviewed.
 
 #### Plan Adherence
@@ -426,9 +424,9 @@ The current evidence is materially stronger than the previous pass: repository C
 - `docker load -i criteria-runtime.tar` in the downloaded run-45 artifact — not verifiable in this environment because the local Docker daemon was unavailable (`Cannot connect to the Docker daemon ...`); no alternate success evidence was recorded in the workstream notes.
 - Local extractor probe against the workflow snippet — `Hotfix -rc2 for storage` => `rc2`; `Bugfix foo-rc` => empty; `Release v1.2.3 prep -rc1` => `v1.2.3`.
 
-### Review 2026-04-30-03 — approved
+#### Review 2026-04-30-03 — approved
 
-#### Summary
+##### Summary
 The prior blockers are resolved and the workstream now meets the acceptance bar. The exact `release/test-rc1` validation path is recorded with a real PR and successful workflow run, the named artifact exists on GitHub, the title-based extractor no longer produces bare semver artifact tags, and the Step 4 notes now include checksum verification plus a successful `docker load` result for the downloaded runtime tar.
 
 #### Plan Adherence
