@@ -16,18 +16,41 @@ import (
 
 // decodeAttrsToStringMap converts pre-fetched hcl.Attributes into a map[string]string.
 // Numbers and bools are converted to their string representations.
-// Attributes that cannot be evaluated without an EvalContext (e.g. variable
-// references like "${var.env}") are stored as empty strings and deferred to
-// runtime evaluation via InputExprs / BuildEvalContext (W04).
-func decodeAttrsToStringMap(attrs hcl.Attributes) (map[string]string, hcl.Diagnostics) {
+//
+// When evalCtx is nil, attributes that cannot be evaluated without an EvalContext
+// (e.g. variable references like "${var.env}") are stored as empty strings and
+// deferred to runtime evaluation via InputExprs / BuildEvalContext (W04).
+//
+// When evalCtx is non-nil, the expression is evaluated against that context and
+// any evaluation failure is reported as a hard diagnostic. This is the
+// "compile-time-resolved" mode used for blocks like agent.config { } that have
+// no runtime resolution path.
+func decodeAttrsToStringMap(attrs hcl.Attributes, evalCtx *hcl.EvalContext) (map[string]string, hcl.Diagnostics) {
 	var diags hcl.Diagnostics
 	result := make(map[string]string, len(attrs))
 	for k, attr := range attrs {
-		val, d := attr.Expr.Value(nil)
+		val, d := attr.Expr.Value(evalCtx)
 		if d.HasErrors() {
-			// Expression needs an EvalContext (e.g. variable references).
-			// Store an empty placeholder; the engine evaluates at step entry.
-			result[k] = ""
+			if evalCtx == nil {
+				// Expression needs an EvalContext (e.g. variable references).
+				// Store an empty placeholder; the engine evaluates at step entry.
+				result[k] = ""
+				continue
+			}
+			// Compile-time-resolved mode: surface the failure rather than
+			// silently producing an empty value.
+			r := attr.Expr.StartRange()
+			for _, ed := range d {
+				if ed.Severity != hcl.DiagError {
+					continue
+				}
+				diags = append(diags, &hcl.Diagnostic{
+					Severity: hcl.DiagError,
+					Summary:  ed.Summary,
+					Detail:   ed.Detail,
+					Subject:  &r,
+				})
+			}
 			continue
 		}
 		diags = append(diags, d...)
@@ -150,7 +173,12 @@ var knownAgentConfigFields = map[string][]string{
 // adapterName is used to produce a targeted misplacement diagnostic when an
 // unknown input field matches a known agent-config field for that adapter. Pass
 // "" to emit the generic "unknown field" diagnostic for all unknown keys.
-func validateSchemaAttrs(context string, attrs hcl.Attributes, schema map[string]ConfigField, missingRange hcl.Range, adapterName string) (map[string]string, hcl.Diagnostics) { //nolint:funlen,gocognit,gocyclo // W03: exhaustive schema validation with per-adapter diagnostics
+//
+// When evalCtx is nil, expressions that fail to evaluate are stored as "" and
+// the type check is deferred to runtime (step.input{} mode). When evalCtx is
+// non-nil, the expression is evaluated against that context and any failure is
+// reported as a hard diagnostic (agent.config{} mode — no runtime resolution).
+func validateSchemaAttrs(context string, attrs hcl.Attributes, schema map[string]ConfigField, missingRange hcl.Range, adapterName string, evalCtx *hcl.EvalContext) (map[string]string, hcl.Diagnostics) { //nolint:funlen,gocognit,gocyclo // W03: exhaustive schema validation with per-adapter diagnostics
 	var diags hcl.Diagnostics
 	result := make(map[string]string, len(attrs))
 
@@ -161,12 +189,29 @@ func validateSchemaAttrs(context string, attrs hcl.Attributes, schema map[string
 			diags = append(diags, unknownFieldDiagnostic(context, k, adapterName, r))
 			continue
 		}
-		val, d := attr.Expr.Value(nil)
+		val, d := attr.Expr.Value(evalCtx)
 		if d.HasErrors() {
-			// Expression needs an EvalContext (e.g. variable references).
-			// Store an empty placeholder; the engine evaluates at step entry.
-			// Unknown-key check already ran above; type check is deferred to runtime.
-			result[k] = ""
+			if evalCtx == nil {
+				// Expression needs an EvalContext (e.g. variable references).
+				// Store an empty placeholder; the engine evaluates at step entry.
+				// Unknown-key check already ran above; type check is deferred to runtime.
+				result[k] = ""
+				continue
+			}
+			// Compile-time-resolved mode: surface the failure rather than
+			// silently producing an empty value.
+			r := attr.Expr.StartRange()
+			for _, ed := range d {
+				if ed.Severity != hcl.DiagError {
+					continue
+				}
+				diags = append(diags, &hcl.Diagnostic{
+					Severity: hcl.DiagError,
+					Summary:  ed.Summary,
+					Detail:   ed.Detail,
+					Subject:  &r,
+				})
+			}
 			continue
 		}
 		diags = append(diags, d...)
