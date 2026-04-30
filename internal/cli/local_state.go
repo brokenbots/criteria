@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -143,6 +144,59 @@ func RemoveStepCheckpoint(runID string) {
 		return
 	}
 	_ = os.Remove(p)
+}
+
+// approvalDecisionDir returns the directory path for persisted approval decisions
+// for a run: <stateDir>/runs/<runID>/approvals/. The directory is not created
+// by this function; callers that write files are responsible for MkdirAll.
+func approvalDecisionDir(runID string) (string, error) {
+	d, err := stateDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(d, "runs", runID, "approvals"), nil
+}
+
+// validateNodeName rejects node names that could escape the approvals directory
+// via path traversal. HCL block labels are arbitrary strings, so we guard
+// against names containing path separators (/ or \), "..", or a Windows volume
+// prefix (e.g., "C:"). Both separators are checked regardless of OS so that
+// decision files remain portable and safe on any platform.
+func validateNodeName(nodeName string) error {
+	if strings.ContainsRune(nodeName, '/') ||
+		strings.ContainsRune(nodeName, '\\') ||
+		strings.Contains(nodeName, "..") ||
+		filepath.VolumeName(nodeName) != "" {
+		return fmt.Errorf("node name %q contains invalid path characters", nodeName)
+	}
+	return nil
+}
+
+// ApprovalDecisionPath returns the path for a persisted decision for a specific
+// node within a run: <stateDir>/runs/<runID>/approvals/<node>.json.
+// This path is used for both read (reattach safety) and write (persistence).
+func ApprovalDecisionPath(runID, nodeName string) (string, error) {
+	if err := validateNodeName(nodeName); err != nil {
+		return "", err
+	}
+	dir, err := approvalDecisionDir(runID)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, nodeName+".json"), nil
+}
+
+// ApprovalRequestPath returns the path of the file-mode sentinel that the
+// operator writes to provide a decision: <stateDir>/runs/<runID>/approval-<node>.json.
+func ApprovalRequestPath(runID, nodeName string) (string, error) {
+	if err := validateNodeName(nodeName); err != nil {
+		return "", err
+	}
+	d, err := stateDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(d, "runs", runID, "approval-"+nodeName+".json"), nil
 }
 
 // ListStepCheckpoints returns all valid checkpoint files found in the runs
