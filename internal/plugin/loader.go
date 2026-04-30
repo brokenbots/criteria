@@ -200,7 +200,7 @@ func (p *rpcPlugin) OpenSession(ctx context.Context, id string, config map[strin
 	return err
 }
 
-func (p *rpcPlugin) Execute(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) { //nolint:funlen,gocognit // W03: execute path handles permission gating, event routing, and partial failure recovery
+func (p *rpcPlugin) Execute(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) { //nolint:funlen,gocognit,gocyclo // W03: execute path handles permission gating, event routing, and partial failure recovery
 	recv, err := p.rpc.Execute(ctx, &pb.ExecuteRequest{SessionId: sessionID, StepName: step.Name, Config: cloneConfig(step.Input)})
 	if err != nil {
 		return adapter.Result{Outcome: "failure"}, err
@@ -240,11 +240,15 @@ func (p *rpcPlugin) Execute(ctx context.Context, sessionID string, step *workflo
 					"request_id": pr.ID,
 				})
 			} else {
+				allowTools := step.AllowTools
+				if allowTools == nil {
+					allowTools = []string{}
+				}
 				denial := map[string]any{
 					"tool":        pr.Tool,
 					"reason":      reason,
 					"request_id":  pr.ID,
-					"allow_tools": step.AllowTools,
+					"allow_tools": allowTools,
 				}
 				if suggestion := PermissionDenialSuggestion(p.name, pr.Tool); suggestion != "" {
 					denial["suggestion"] = suggestion

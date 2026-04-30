@@ -364,9 +364,10 @@ coordination with the orchestrator. For a two-entry alias map (`read_file`→`re
 - `internal/plugin/policy.go`: `adapterPermissionAliases` map keyed by adapter name.
   `NewPolicyWithAliases(patterns, aliases)` constructs the allowlist with the alias
   expansion built in. This is the single source of truth used at runtime.
-- `cmd/criteria-adapter-copilot/copilot_permission.go`: `permissionKindAliases` is a
-  documentation copy only (helps readers understand what the plugin emits vs. what
-  the host accepts). It is **not** used by any code path.
+- `cmd/criteria-adapter-copilot/copilot_permission.go`: contains only `Permit`,
+  `handlePermissionRequest`, and `permissionDetails`. The documentation-only
+  `permissionKindAliases` copy was removed during the review-response pass; see
+  the "Review 2 response" section below.
 - `workflow/compile_steps.go`: `copilotAllowToolsAliases` drives the compile-time
   warning. It cannot import `internal/plugin` (import-boundary enforcement) so the
   alias set is duplicated there with a comment referencing the canonical location.
@@ -535,3 +536,33 @@ Updated `File layout` comment block in `cmd/criteria-adapter-copilot/copilot.go`
 - Updated `copilot_permission.go` line to remove "alias map" (deleted in review 2 pass).
 
 `make ci` ✓ (build, tests, lint clean, baseline 70/70).
+
+### Review 2026-04-29-03 — approved
+
+#### Summary
+Approved. The remaining nit from the prior pass is resolved: the copilot file-layout header comment now correctly reflects the `copilot_model.go` split and no longer claims an adapter-local alias map in `copilot_permission.go`. Scope, behavior, test intent, and quality/security bar are satisfied for this workstream.
+
+#### Plan Adherence
+- File-split layout and size targets are met, including `copilot_turn.go` under cap and `copilot_model.go` present with model/effort helpers.
+- Host-side alias resolution and compile-time alias warning are implemented and covered.
+- Denial-path payload now includes requested tool, reason, request id, allowlist, and suggestion (where applicable), with host-boundary tests asserting contract fields.
+- Baseline target is satisfied (`# W03:` entries at 0; target ≤ 10).
+- Documentation updates for alias behavior are present in `docs/plugins.md`.
+
+#### Test Intent Assessment
+Tests are behavior-aligned and regression-sensitive across compile diagnostics, policy matching, and host execution boundary payload semantics. Negative/canonical cases are covered, and contract-level assertions check fields that operators depend on (`allow_tools`, `suggestion`, and permission event details).
+
+#### Validation Performed
+- `make ci` → pass (build, race tests across modules, import-lint, golangci-lint, baseline cap check, example validation, example-plugin gate).
+
+### PR review thread fixes — 2026-04-29
+
+Five code-review threads raised post-approval; all addressed:
+
+- **PRRT_kwDOSOBb1s5-niTq** (`internal/plugin/loader.go:247`): Normalize nil `AllowTools` to `[]string{}` before emitting `permission.denied` so consumers always receive a list type, not JSON null.
+- **PRRT_kwDOSOBb1s5-niT9** (`cmd/criteria-adapter-copilot/copilot_util.go:41`): Handle `structpb.NewStruct` error in `adapterEvent`; emit a fallback struct with `_encode_error` field so failures are diagnosable.
+- **PRRT_kwDOSOBb1s5-niUH** (PR description): PR description incorrectly claimed a proto extension (`permission_kind_aliases` on `InfoResponse`). Updated PR description to clarify the hardcoded path was used and proto extension was deferred. Workstream notes already said "hardcoded path" — those were correct.
+- **PRRT_kwDOSOBb1s5-niUM** (workstream notes at line ~367): Removed stale reference to `permissionKindAliases` documentation copy in `copilot_permission.go` (variable was deleted in review 2 pass). Updated bullet to reflect current file contents.
+- **PRRT_kwDOSOBb1s5-niUR** (`internal/plugin/policy.go:93`): Sort alias slice before `strings.Join` in `PermissionDenialSuggestion` to produce deterministic suggestion strings.
+
+`make ci` ✓ post-fix.

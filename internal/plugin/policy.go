@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -89,6 +90,7 @@ func PermissionDenialSuggestion(adapterName, tool string) string {
 	if len(aliases) == 0 {
 		return ""
 	}
+	sort.Strings(aliases)
 	return "add '" + tool + "' to allow_tools (aliases: " + strings.Join(aliases, ", ") + ")"
 }
 

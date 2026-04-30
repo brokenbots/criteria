@@ -32,7 +32,12 @@ func logEvent(stream, chunk string) *pb.ExecuteEvent {
 }
 
 func adapterEvent(kind string, data map[string]any) *pb.ExecuteEvent {
-	s, _ := structpb.NewStruct(data)
+	s, err := structpb.NewStruct(data)
+	if err != nil {
+		// Encoding failed; emit a minimal struct so the event kind is preserved
+		// and the encode error is diagnosable rather than silently dropped.
+		s, _ = structpb.NewStruct(map[string]any{"_encode_error": err.Error()})
+	}
 	return &pb.ExecuteEvent{
 		Event: &pb.ExecuteEvent_Adapter{
 			Adapter: &pb.AdapterEvent{
