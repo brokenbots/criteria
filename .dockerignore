@@ -1,0 +1,6 @@
+.git/
+bin/
+tech_evaluations/
+cover*.out
+tmp/
+node_modules/

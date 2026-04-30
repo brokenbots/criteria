@@ -1,5 +1,7 @@
 # Plugins and Agent Workflows
 
+For containerized execution, see [docs/runtime/docker.md](runtime/docker.md).
+
 This document is the reference for running agent-backed workflows with Criteria. For the full workflow language reference (variables, step outputs, branching, iteration, wait nodes, approval gates), see [workflow.md](workflow.md).
 
 ## What Plugins Are
