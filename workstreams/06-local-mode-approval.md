@@ -606,3 +606,20 @@ Resolved by Thread 5: production now writes a checkpoint with `CurrentStep=<paus
 #### Validation
 - `make test` — all 20 packages pass.
 - `make lint` — clean, baseline cap at 70.
+
+### Review 2026-04-30-04 — approved
+
+#### Summary
+Approved. The PR follow-up fixes hold up: declared signal outcomes are now reported in stable order, approval file paths reject traversal-like node names, stdin read errors no longer get flattened to EOF, unrecognized interactive approval input now reports `invalid input`, and paused approval/signal nodes now write a checkpoint pointing at the paused node for crash recovery.
+
+#### Plan Adherence
+- **Step 3:** Still met. Reattach behavior now matches the real paused-node checkpoint shape written in production.
+- **Step 5:** Still met. The added tests cover path validation, unrecognized approval input, and the corrected reattach/pause-checkpoint behavior.
+
+#### Test Intent Assessment
+- The new tests strengthen the contract rather than just line coverage: they verify traversal rejection at the path boundary, distinguish EOF from invalid interactive input, and confirm that a paused run writes a checkpoint targeting the paused node.
+
+#### Validation Performed
+- `make ci` — passed.
+- `go test ./internal/cli/... -run 'Test(ValidateNodeName|ApprovalDecisionPath_RejectsTraversal|ApprovalRequestPath_RejectsTraversal|ApplyLocal_Reattach)' -v && go test ./internal/cli/localresume/... -run 'Test(StdinMode_Approval_UnrecognizedInput_InvalidInputReason|Reattach|StdinMode_Signal_UnknownOutcome_Error)' -v` — passed.
+- Manual file-mode approval repro confirmed the checkpoint written during pause contains `current_step: "review"` for the paused approval node.
