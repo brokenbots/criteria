@@ -57,12 +57,6 @@ func makeSandboxStep(input map[string]string) *workflow.StepNode {
 	}
 }
 
-func init() {
-	// Ensure legacy mode is off for all sandbox tests unless a specific test
-	// sets it explicitly. Tests use t.Setenv to scope the override.
-	os.Unsetenv("CRITERIA_SHELL_LEGACY")
-}
-
 // ── Test 1: env allowlist ────────────────────────────────────────────────────
 
 func TestSandbox_EnvAllowlist_SecretDropped(t *testing.T) {
@@ -314,13 +308,20 @@ func TestSandbox_WorkingDirectory_OutsideHomeRejected(t *testing.T) {
 	if err == nil {
 		t.Errorf("expected a non-nil error for working_directory=/etc outside HOME")
 	}
-	// The error message should be clear.
+	// The error message should carry the new guidance and must not retain the
+	// removed CRITERIA_SHELL_LEGACY=1 suggestion.
 	var errMsg string
 	if err != nil {
 		errMsg = err.Error()
 	}
 	if !strings.Contains(errMsg, "working_directory") {
 		t.Errorf("error message should mention 'working_directory'; got: %q", errMsg)
+	}
+	if !strings.Contains(errMsg, "CRITERIA_SHELL_ALLOWED_PATHS") {
+		t.Errorf("error message should mention 'CRITERIA_SHELL_ALLOWED_PATHS'; got: %q", errMsg)
+	}
+	if strings.Contains(errMsg, "CRITERIA_SHELL_LEGACY") {
+		t.Errorf("error message must not mention removed CRITERIA_SHELL_LEGACY; got: %q", errMsg)
 	}
 }
 
@@ -348,15 +349,21 @@ func TestSandbox_WorkingDirectory_AllowedPathAccepted(t *testing.T) {
 	}
 }
 
-// ── Test 6: legacy opt-out ───────────────────────────────────────────────────
+// ── Test 6: CRITERIA_SHELL_LEGACY=1 is no longer recognized ──────────────────
 
-func TestSandbox_LegacyMode_FullEnvInherited(t *testing.T) {
+// TestSandbox_LegacyEnvVarIgnored asserts that CRITERIA_SHELL_LEGACY is no
+// longer recognized after v0.3.0 removal (W10). Setting it has no effect on
+// sandbox enforcement: the env allowlist still applies.
+func TestSandbox_LegacyEnvVarIgnored(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell adapter uses sh; skip on Windows")
 	}
 	t.Setenv("CRITERIA_SHELL_LEGACY", "1")
-	t.Setenv("SECRET", "legacy-secret-value")
+	t.Setenv("SECRET", "should-not-leak")
 
+	// With the legacy mode removed, setting CRITERIA_SHELL_LEGACY=1 must have
+	// no effect. The env allowlist is unconditional: SECRET must not reach the
+	// child even though the var is set.
 	a := shell.New()
 	result, err := a.Execute(context.Background(), makeSandboxStep(map[string]string{
 		"command": `printf '%s' "$SECRET"`,
@@ -364,42 +371,7 @@ func TestSandbox_LegacyMode_FullEnvInherited(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	got := strings.TrimSpace(result.Outputs["stdout"])
-	if got != "legacy-secret-value" {
-		t.Errorf("CRITERIA_SHELL_LEGACY=1 should pass full env; got %q", got)
-	}
-}
-
-// TestSandbox_LegacyMode_NoTimeoutDefault asserts that CRITERIA_SHELL_LEGACY=1
-// without an explicit timeout attribute does not apply the default 5-minute
-// hard timeout. A step running ≥6 s must complete with "success" and emit no
-// "timeout" adapter event.
-func TestSandbox_LegacyMode_NoTimeoutDefault(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("shell adapter uses sh; skip on Windows")
-	}
-	t.Setenv("CRITERIA_SHELL_LEGACY", "1")
-
-	ev := &adapterEvents{}
-	a := shell.New()
-
-	// A step running 6 seconds well within the test timeout proves that the
-	// hard 5-minute sandbox default is not applied in legacy mode. If the
-	// default were applied with a shorter value (e.g. a bug sets it to 5s),
-	// the step would be killed before it finishes.
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-
-	result, err := a.Execute(ctx, makeSandboxStep(map[string]string{
-		"command": "sleep 6",
-	}), ev)
-	if err != nil {
-		t.Fatalf("Execute returned unexpected error: %v", err)
-	}
-	if result.Outcome != "success" {
-		t.Errorf("expected outcome 'success' in legacy mode (no hard timeout); got %q", result.Outcome)
-	}
-	if _, found := ev.findByType("timeout"); found {
-		t.Error("expected no 'timeout' adapter event in legacy mode without explicit timeout")
+	if got := strings.TrimSpace(result.Outputs["stdout"]); got != "" {
+		t.Errorf("env allowlist must be enforced even with CRITERIA_SHELL_LEGACY=1; SECRET leaked: %q", got)
 	}
 }

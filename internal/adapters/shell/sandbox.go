@@ -3,9 +3,9 @@ package shell
 // sandbox.go — environment allowlist, PATH sanitization, working-directory
 // confinement, and output-capture bounds for the shell adapter.
 //
-// All sandbox defaults are disabled when CRITERIA_SHELL_LEGACY=1 is set in the
-// operator's environment. Legacy mode is a time-boxed escape hatch; it will be
-// removed in v0.3.0. See docs/security/shell-adapter-threat-model.md §6.
+// The CRITERIA_SHELL_LEGACY=1 opt-out was removed in v0.3.0 as committed in
+// the v0.2.0 threat model. Sandbox defaults are now unconditional.
+// See docs/security/shell-adapter-threat-model.md §6.
 
 import (
 	"encoding/json"
@@ -18,7 +18,6 @@ import (
 )
 
 const (
-	legacyEnvVar       = "CRITERIA_SHELL_LEGACY"
 	allowedPathsEnvVar = "CRITERIA_SHELL_ALLOWED_PATHS"
 
 	defaultOutputLimitBytes = 4 * 1024 * 1024  // 4 MiB per stream
@@ -35,15 +34,10 @@ const (
 
 // sandboxConfig holds resolved sandbox parameters for one step execution.
 type sandboxConfig struct {
-	env              []string      // child process environment; nil = inherit all (legacy)
-	timeout          time.Duration // hard timeout; defaultTimeout in sandbox mode, or 0 (no hard timeout) in legacy mode when not explicitly set
-	outputLimitBytes int64         // per-stream capture limit; -1 = unbounded (legacy)
+	env              []string      // child process environment
+	timeout          time.Duration // hard timeout; defaultTimeout unless overridden by step input
+	outputLimitBytes int64         // per-stream capture limit
 	workingDir       string        // CWD for child; empty = inherit operator CWD
-}
-
-// isLegacyMode reports whether the operator has opted out of sandbox defaults.
-func isLegacyMode() bool {
-	return os.Getenv(legacyEnvVar) == "1"
 }
 
 // buildSandboxConfig reads the step Input map and returns the resolved sandbox
@@ -55,7 +49,7 @@ func buildSandboxConfig(input map[string]string) (sandboxConfig, error) {
 		outputLimitBytes: defaultOutputLimitBytes,
 	}
 
-	timeout, explicit, err := parseTimeoutInput(input["timeout"])
+	timeout, err := parseTimeoutInput(input["timeout"])
 	if err != nil {
 		return cfg, err
 	}
@@ -73,17 +67,6 @@ func buildSandboxConfig(input map[string]string) (sandboxConfig, error) {
 		cfg.workingDir = wd
 	}
 
-	if isLegacyMode() {
-		// Legacy: inherit everything, unbounded capture, no hard timeout default.
-		cfg.env = nil
-		cfg.outputLimitBytes = -1 // sentinel: unbounded
-		if !explicit {
-			cfg.timeout = 0 // no hard timeout unless the step declares one explicitly
-		}
-		return cfg, nil
-	}
-
-	// Build the allowlisted env for the child process.
 	envDecl, err := parseEnvInput(input["env"])
 	if err != nil {
 		return cfg, fmt.Errorf("shell adapter: invalid env: %w", err)
@@ -94,23 +77,23 @@ func buildSandboxConfig(input map[string]string) (sandboxConfig, error) {
 }
 
 // parseTimeoutInput parses the optional "timeout" input field.
-// Returns (defaultTimeout, false, nil) when the field is absent or empty.
-// Returns (parsed, true, nil) when the field is present and valid.
-func parseTimeoutInput(raw string) (time.Duration, bool, error) {
+// Returns (defaultTimeout, nil) when the field is absent or empty.
+// Returns (parsed, nil) when the field is present and valid.
+func parseTimeoutInput(raw string) (time.Duration, error) {
 	if raw == "" {
-		return defaultTimeout, false, nil
+		return defaultTimeout, nil
 	}
 	d, err := time.ParseDuration(raw)
 	if err != nil {
-		return 0, false, fmt.Errorf("shell adapter: invalid timeout %q: %w", raw, err)
+		return 0, fmt.Errorf("shell adapter: invalid timeout %q: %w", raw, err)
 	}
 	if d < minTimeout {
-		return 0, false, fmt.Errorf("shell adapter: timeout %v is below minimum %v", d, minTimeout)
+		return 0, fmt.Errorf("shell adapter: timeout %v is below minimum %v", d, minTimeout)
 	}
 	if d > maxTimeout {
-		return 0, false, fmt.Errorf("shell adapter: timeout %v exceeds maximum %v", d, maxTimeout)
+		return 0, fmt.Errorf("shell adapter: timeout %v exceeds maximum %v", d, maxTimeout)
 	}
-	return d, true, nil
+	return d, nil
 }
 
 // parseOutputLimitInput parses the "output_limit_bytes" input field.
@@ -241,12 +224,8 @@ func sanitizePath(path string) string {
 
 // validateWorkingDirectory checks that wd is confined to the operator's home
 // directory or a path explicitly listed in CRITERIA_SHELL_ALLOWED_PATHS.
-// Returns nil if the path is permitted. In legacy mode the check is skipped
-// (the CWD is still set; only the confinement gate is disabled).
+// Returns nil if the path is permitted.
 func validateWorkingDirectory(wd string) error {
-	if isLegacyMode() {
-		return nil
-	}
 	cleaned := filepath.Clean(wd)
 	// After Clean, a path that starts with ".." has escaped an implicit base.
 	// Absolute paths that contain ".." components are resolved by Clean (e.g.
@@ -259,7 +238,7 @@ func validateWorkingDirectory(wd string) error {
 	}
 	return fmt.Errorf(
 		"shell adapter: working_directory %q is outside $HOME (%s) and CRITERIA_SHELL_ALLOWED_PATHS; "+
-			"add the path to CRITERIA_SHELL_ALLOWED_PATHS or set CRITERIA_SHELL_LEGACY=1 to disable confinement",
+			"add the path to CRITERIA_SHELL_ALLOWED_PATHS to allow it",
 		wd, os.Getenv("HOME"),
 	)
 }
@@ -295,7 +274,7 @@ type captureState struct {
 	mu      sync.Mutex
 	buf     strings.Builder
 	dropped int64
-	limit   int64 // -1 means unbounded
+	limit   int64
 }
 
 func newCaptureState(limit int64) *captureState {
@@ -309,10 +288,6 @@ func (cs *captureState) write(data []byte) {
 	}
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
-	if cs.limit < 0 {
-		cs.buf.Write(data)
-		return
-	}
 	remaining := cs.limit - int64(cs.buf.Len())
 	if remaining <= 0 {
 		cs.dropped += int64(len(data))

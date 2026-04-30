@@ -73,9 +73,8 @@ func (a *Adapter) Info() workflow.AdapterInfo {
 }
 
 // Execute runs the shell command declared in step.Input["command"]. It applies
-// sandbox defaults (env allowlist, PATH sanitization, hard timeout, bounded
-// output capture, working-directory confinement) unless CRITERIA_SHELL_LEGACY=1
-// is set.
+// sandbox defaults: env allowlist, PATH sanitization, hard timeout, bounded
+// output capture, and working-directory confinement.
 func (a *Adapter) Execute(ctx context.Context, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
 	cmdStr, ok := step.Input["command"]
 	if !ok || cmdStr == "" {
@@ -93,14 +92,9 @@ func (a *Adapter) Execute(ctx context.Context, step *workflow.StepNode, sink ada
 		}
 	}
 
-	// Create a step-level timeout context when a timeout is configured.
-	// In legacy mode without an explicit timeout attribute, cfg.timeout == 0
-	// and we use the caller's context directly (restoring pre-W05 behavior).
-	timeoutCtx := ctx
-	cancelTimeout := func() {}
-	if cfg.timeout > 0 {
-		timeoutCtx, cancelTimeout = context.WithTimeout(ctx, cfg.timeout)
-	}
+	// Create a step-level timeout context. cfg.timeout is always positive
+	// (defaultTimeout or validated 1s–1h from step input).
+	timeoutCtx, cancelTimeout := context.WithTimeout(ctx, cfg.timeout)
 	defer cancelTimeout()
 
 	cmd := buildCmd(timeoutCtx, cmdStr, cfg)
@@ -161,9 +155,7 @@ func buildCmd(timeoutCtx context.Context, cmdStr string, cfg sandboxConfig) *exe
 	cmd := exec.CommandContext(timeoutCtx, sh, flag, cmdStr)
 	setSIGTERMCancel(cmd)
 	cmd.WaitDelay = killGrace
-	if cfg.env != nil {
-		cmd.Env = cfg.env
-	}
+	cmd.Env = cfg.env
 	if cfg.workingDir != "" {
 		cmd.Dir = cfg.workingDir
 	}
