@@ -37,9 +37,10 @@ type applyOptions struct {
 	tlsCA        string
 	tlsCert      string
 	tlsKey       string
-	varOverrides []string  // raw "key=value" pairs from --var flags
-	output       string    // "auto" | "concise" | "json"
-	stdin        io.Reader // stdin for local-mode approval prompts; nil → os.Stdin
+	varOverrides []string     // raw "key=value" pairs from --var flags
+	output       string       // "auto" | "concise" | "json"
+	stdin        io.Reader    // stdin for local-mode approval prompts; nil → os.Stdin
+	log          *slog.Logger // nil → newApplyLogger(); injectable for tests
 }
 
 func NewApplyCmd() *cobra.Command {
@@ -82,7 +83,10 @@ func runApply(ctx context.Context, opts applyOptions) error {
 }
 
 func runApplyLocal(ctx context.Context, opts applyOptions) error { //nolint:funlen // W03: local apply orchestrates engine lifecycle, event routing, and output rendering in one function
-	log := newApplyLogger()
+	log := opts.log
+	if log == nil {
+		log = newApplyLogger()
+	}
 
 	mode, err := resolveOutputMode(opts.output, os.Stdout)
 	if err != nil {
@@ -516,7 +520,11 @@ func resolveLocalPause(ctx context.Context, resumer localresume.LocalResumer, ru
 		if sd != nil {
 			signalName = sd.signalName
 		}
-		return resumer.ResumeSignal(ctx, runID, pausedNode, signalName)
+		validOutcomes := make([]string, 0, len(wait.Outcomes))
+		for o := range wait.Outcomes {
+			validOutcomes = append(validOutcomes, o)
+		}
+		return resumer.ResumeSignal(ctx, runID, pausedNode, signalName, validOutcomes)
 	}
 	return nil, fmt.Errorf("paused at node %q which is neither an approval nor a signal wait", pausedNode)
 }

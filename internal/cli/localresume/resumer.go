@@ -58,7 +58,10 @@ type LocalResumer interface {
 	// ResumeSignal blocks until a signal payload for the wait node nodeName is
 	// available. The returned map has key "outcome" set to the selected outcome
 	// name, which the engine uses to look up the transition target.
-	ResumeSignal(ctx context.Context, runID, nodeName, signalName string) (map[string]string, error)
+	// validOutcomes is the set of outcome names declared in the wait node's HCL
+	// on{} blocks; an unknown non-empty outcome is rejected before the engine
+	// can fall back to the first declared transition.
+	ResumeSignal(ctx context.Context, runID, nodeName, signalName string, validOutcomes []string) (map[string]string, error)
 }
 
 // Options configures the resumer. All fields are optional; zero values produce
@@ -167,7 +170,7 @@ func (r *resumer) ResumeApproval(ctx context.Context, runID, name string, approv
 
 // ResumeSignal resolves a signal-wait node using the configured mode.
 // It checks for a persisted outcome first (reattach safety).
-func (r *resumer) ResumeSignal(ctx context.Context, runID, nodeName, signalName string) (map[string]string, error) {
+func (r *resumer) ResumeSignal(ctx context.Context, runID, nodeName, signalName string, validOutcomes []string) (map[string]string, error) {
 	// Check for a persisted outcome from a previous attempt.
 	if payload, ok := r.loadPersistedSignal(runID, nodeName); ok {
 		r.opts.Log.Info("local-approval: using persisted signal outcome", "node", nodeName, "outcome", payload["outcome"])
@@ -193,6 +196,15 @@ func (r *resumer) ResumeSignal(ctx context.Context, runID, nodeName, signalName 
 		return nil, err
 	}
 
+	// Validate the resolved outcome against the wait node's declared outcomes.
+	// This prevents arbitrary non-empty outcomes from triggering the engine's
+	// first-outcome fallback behaviour.
+	if len(validOutcomes) > 0 {
+		if err := validateOutcome(nodeName, payload["outcome"], validOutcomes); err != nil {
+			return nil, err
+		}
+	}
+
 	if persistErr := r.persistDecision(runID, nodeName, &persistedDecision{
 		Outcome:   payload["outcome"],
 		DecidedAt: time.Now().UTC().Format(time.RFC3339),
@@ -201,6 +213,17 @@ func (r *resumer) ResumeSignal(ctx context.Context, runID, nodeName, signalName 
 			"node", nodeName, "error", persistErr)
 	}
 	return payload, nil
+}
+
+// validateOutcome returns an error if outcome is not among validOutcomes.
+func validateOutcome(nodeName, outcome string, validOutcomes []string) error {
+	for _, v := range validOutcomes {
+		if v == outcome {
+			return nil
+		}
+	}
+	return fmt.Errorf("signal wait %q: outcome %q is not declared (declared: %s)",
+		nodeName, outcome, strings.Join(validOutcomes, ", "))
 }
 
 // --- stdin mode ---

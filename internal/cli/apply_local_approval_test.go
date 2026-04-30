@@ -23,10 +23,19 @@ func TestApplyLocal_AutoApprove_ApprovalNode(t *testing.T) {
 	t.Setenv("CRITERIA_STATE_DIR", stateDir)
 	t.Setenv("CRITERIA_LOCAL_APPROVAL", "auto-approve")
 
+	var logBuf bytes.Buffer
+	captLog := slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+
 	wf := filepath.Join("testdata", "local_approval_simple.hcl")
-	err := runApply(context.Background(), applyOptions{workflowPath: wf})
+	err := runApply(context.Background(), applyOptions{workflowPath: wf, log: captLog})
 	if err != nil {
 		t.Fatalf("expected successful auto-approve run, got: %v", err)
+	}
+	if !strings.Contains(logBuf.String(), "auto-approving approval node") {
+		t.Errorf("expected auto-approve warning log, got: %s", logBuf.String())
+	}
+	if !strings.Contains(logBuf.String(), "do not use in production") {
+		t.Errorf("expected 'do not use in production' in warning log, got: %s", logBuf.String())
 	}
 }
 
@@ -37,10 +46,19 @@ func TestApplyLocal_AutoApprove_SignalWait(t *testing.T) {
 	t.Setenv("CRITERIA_STATE_DIR", stateDir)
 	t.Setenv("CRITERIA_LOCAL_APPROVAL", "auto-approve")
 
+	var logBuf bytes.Buffer
+	captLog := slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+
 	wf := filepath.Join("testdata", "local_signal_wait.hcl")
-	err := runApply(context.Background(), applyOptions{workflowPath: wf})
+	err := runApply(context.Background(), applyOptions{workflowPath: wf, log: captLog})
 	if err != nil {
 		t.Fatalf("expected successful auto-approve signal run, got: %v", err)
+	}
+	if !strings.Contains(logBuf.String(), "auto-approving signal wait node") {
+		t.Errorf("expected auto-approve signal warning log, got: %s", logBuf.String())
+	}
+	if !strings.Contains(logBuf.String(), "do not use in production") {
+		t.Errorf("expected 'do not use in production' in warning log, got: %s", logBuf.String())
 	}
 }
 
@@ -272,6 +290,93 @@ func TestApplyLocal_MultiApproval_EnvMode(t *testing.T) {
 	wf := filepath.Join("testdata", "local_approval_multi.hcl")
 	if err := runApply(context.Background(), applyOptions{workflowPath: wf}); err != nil {
 		t.Fatalf("multi-approval env-mode run: %v", err)
+	}
+}
+
+func TestApplyLocal_EnvMode_SignalWait_UnknownOutcome_Error(t *testing.T) {
+	pluginDir := filepath.Dir(buildNoopPluginBinary(t))
+	stateDir := t.TempDir()
+	t.Setenv("CRITERIA_PLUGINS", pluginDir)
+	t.Setenv("CRITERIA_STATE_DIR", stateDir)
+	t.Setenv("CRITERIA_LOCAL_APPROVAL", "env")
+	t.Setenv("CRITERIA_SIGNAL_GATE", "bogus") // "bogus" is not declared in local_signal_wait.hcl
+
+	wf := filepath.Join("testdata", "local_signal_wait.hcl")
+	err := runApply(context.Background(), applyOptions{workflowPath: wf})
+	if err == nil {
+		t.Fatal("expected error for unknown signal outcome, got nil")
+	}
+	if !strings.Contains(err.Error(), "bogus") {
+		t.Errorf("error should mention the unknown outcome 'bogus', got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "not declared") {
+		t.Errorf("error should say 'not declared', got: %v", err)
+	}
+}
+
+func TestApplyLocal_StdinMode_SignalWait_UnknownOutcome_Error(t *testing.T) {
+	pluginDir := filepath.Dir(buildNoopPluginBinary(t))
+	stateDir := t.TempDir()
+	t.Setenv("CRITERIA_PLUGINS", pluginDir)
+	t.Setenv("CRITERIA_STATE_DIR", stateDir)
+	t.Setenv("CRITERIA_LOCAL_APPROVAL", "stdin")
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.WriteString(`{"outcome":"bogus"}` + "\n"); err != nil {
+		t.Fatalf("write stdin: %v", err)
+	}
+	w.Close()
+
+	wf := filepath.Join("testdata", "local_signal_wait.hcl")
+	runErr := runApply(context.Background(), applyOptions{workflowPath: wf, stdin: r})
+	if runErr == nil {
+		t.Fatal("expected error for unknown signal outcome, got nil")
+	}
+	if !strings.Contains(runErr.Error(), "bogus") {
+		t.Errorf("error should mention the unknown outcome 'bogus', got: %v", runErr)
+	}
+}
+
+func TestApplyLocal_FileMode_SignalWait_UnknownOutcome_Error(t *testing.T) {
+	pluginDir := filepath.Dir(buildNoopPluginBinary(t))
+	stateDir := t.TempDir()
+	t.Setenv("CRITERIA_PLUGINS", pluginDir)
+	t.Setenv("CRITERIA_STATE_DIR", stateDir)
+	t.Setenv("CRITERIA_LOCAL_APPROVAL", "file")
+	t.Setenv("CRITERIA_LOCAL_APPROVAL_FILE_TIMEOUT", "10s")
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		deadline := time.Now().Add(10 * time.Second)
+		for time.Now().Before(deadline) {
+			runsDir := filepath.Join(stateDir, "runs")
+			entries, err := os.ReadDir(runsDir)
+			if err != nil || len(entries) == 0 {
+				time.Sleep(30 * time.Millisecond)
+				continue
+			}
+			runID := entries[0].Name()
+			reqPath := filepath.Join(runsDir, runID, "approval-gate.json")
+			if err := os.WriteFile(reqPath, []byte(`{"outcome":"bogus"}`), 0o600); err != nil {
+				time.Sleep(30 * time.Millisecond)
+				continue
+			}
+			return
+		}
+	}()
+	defer func() { <-done }()
+
+	wf := filepath.Join("testdata", "local_signal_wait.hcl")
+	runErr := runApply(context.Background(), applyOptions{workflowPath: wf})
+	if runErr == nil {
+		t.Fatal("expected error for unknown file signal outcome, got nil")
+	}
+	if !strings.Contains(runErr.Error(), "bogus") {
+		t.Errorf("error should mention the unknown outcome 'bogus', got: %v", runErr)
 	}
 }
 

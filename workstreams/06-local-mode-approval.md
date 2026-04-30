@@ -442,3 +442,73 @@ All four blockers and both medium/nit items addressed:
 - `make lint` — clean.
 - `go test ./internal/cli/... -run TestApplyLocal -v` — all 17 tests pass.
 - `go test ./internal/cli/localresume/... -v` — all 19 tests pass.
+
+### Review 2026-04-29-02 — changes-requested
+
+#### Summary
+This is much closer: the legacy-shape rejection, stdin cancellation handling, missing-`outcome` rejection, docs update, and helper reuse are fixed. I am still blocking approval because signal waits still accept **unknown non-empty outcomes** in stdin/env/file modes and then silently fall through the engine’s “first outcome” behavior, which can drive the wrong branch. The current tests also remain too weak at the apply layer to catch that class of regression.
+
+#### Plan Adherence
+- **Step 4:** Fixed. `CRITERIA_LOCAL_APPROVAL` no longer disables legacy-shape rejection globally.
+- **Step 3:** Fixed for stdin cancellation; cancellation no longer manufactures and persists a rejection.
+- **Step 5:** Still not fully met. Coverage was expanded substantially, but there is still no negative apply-path coverage for invalid non-empty signal outcomes, and the auto-approve apply tests still do not assert the required warning log.
+- **Step 6:** Fixed. The local-mode constraints docs now match the persistence / reattach behavior.
+
+#### Required Remediations
+- **[blocker] `internal/cli/localresume/resumer.go:231-239,317-335,403-409` and `internal/cli/apply.go:511-519`** — signal waits still accept arbitrary non-empty outcomes. I reproduced successful completion with all three local modes using `bogus` as the outcome: `CRITERIA_LOCAL_APPROVAL=env CRITERIA_SIGNAL_GATE=bogus`, file mode with `{"outcome":"bogus"}`, and stdin mode with `{"outcome":"bogus"}`. The engine then falls back to the first declared wait outcome instead of failing. **Acceptance:** validate the supplied signal outcome against the paused wait node’s declared outcomes before resuming; unknown outcomes must fail clearly in stdin, env, and file modes rather than silently selecting a branch.
+- **[blocker] `internal/cli/apply_local_approval_test.go:19-44,80-92,208-241` and `internal/cli/localresume/resumer_test.go`** — the apply-path tests still do not protect the signal contract strongly enough. They catch empty/missing outcomes now, but they do not cover invalid non-empty outcomes, and the auto-approve apply tests still do not assert the required warning log. That gap is why the remaining signal bug shipped. **Acceptance:** add negative tests for invalid non-empty signal outcomes in stdin/env/file modes, and make the auto-approve apply tests assert the warning log specified by the workstream.
+
+#### Test Intent Assessment
+- The new tests materially improved coverage, especially around reattach and timeout handling.
+- The remaining weakness is contract strength at the apply boundary: several tests still treat `err == nil` as success without asserting the branch that was actually taken or the warning/log semantics that the workstream requires.
+- Signal waits are the clearest example: the suite now rejects missing/empty outcomes, but still allows an invalid non-empty outcome to pass undetected because no test asserts that the chosen outcome is one of the wait node’s declared branches.
+
+#### Validation Performed
+- `make ci` — passed.
+- `CRITERIA_LOCAL_APPROVAL=auto-approve ./bin/criteria apply <temp workflow with state.requires="approval">` — now correctly fails.
+- `printf '{}\n' | CRITERIA_LOCAL_APPROVAL=stdin ./bin/criteria apply <temp signal-wait workflow>` — now correctly fails.
+- `printf '{"outcome":"bogus"}\n' | CRITERIA_LOCAL_APPROVAL=stdin ./bin/criteria apply <temp signal-wait workflow>` — still incorrectly completed.
+- `CRITERIA_LOCAL_APPROVAL=env CRITERIA_SIGNAL_GATE=bogus ./bin/criteria apply <temp signal-wait workflow>` — still incorrectly completed.
+- `CRITERIA_LOCAL_APPROVAL=file` with `{"outcome":"bogus"}` written to the request file — still incorrectly completed.
+
+### Review 2026-04-29-02 — remediation complete
+
+Both blockers addressed:
+
+#### Blocker 1 — Unknown non-empty signal outcomes silently fall through
+
+- Added `validOutcomes []string` parameter to `ResumeSignal` in `LocalResumer` interface.
+- `resumer.ResumeSignal` validates the resolved outcome against `validOutcomes` after
+  resolution in all four modes (stdin, file, env, auto-approve) via new `validateOutcome`
+  helper. Unknown non-empty outcomes return a clear error mentioning the outcome name
+  and listing declared outcomes.
+- `resolveLocalPause` in `apply.go` now extracts `maps.Keys`-equivalent from
+  `wait.Outcomes` and passes to `ResumeSignal`.
+- All existing `ResumeSignal` callers in `resumer_test.go` updated with appropriate
+  `validOutcomes` slices; `TestEnvMode_Signal` fixed to use consistent validOutcomes.
+
+#### Blocker 2 — Missing negative outcome tests; auto-approve apply tests too weak
+
+- New unit tests: `TestStdinMode_Signal_UnknownOutcome_Error`,
+  `TestEnvMode_Signal_UnknownOutcome_Error`, `TestFileMode_Signal_UnknownOutcome_Error`
+  — cover stdin/env/file modes with `"bogus"` outcome, assert error containing "bogus"
+  and "not declared".
+- New apply-layer integration tests: `TestApplyLocal_EnvMode_SignalWait_UnknownOutcome_Error`,
+  `TestApplyLocal_StdinMode_SignalWait_UnknownOutcome_Error`,
+  `TestApplyLocal_FileMode_SignalWait_UnknownOutcome_Error` — end-to-end runs asserting
+  the run returns an error and it mentions the bad outcome.
+- `TestApplyLocal_AutoApprove_ApprovalNode` and `TestApplyLocal_AutoApprove_SignalWait`
+  strengthened: added `log *slog.Logger` field to `applyOptions` (nil → newApplyLogger()),
+  inject captured logger in tests, assert both "auto-approving" and
+  "do not use in production" appear in the warning log.
+
+#### Opportunistic improvements
+- `applyOptions.log *slog.Logger` field added for test-log injection, injected via
+  `runApplyLocal` (when nil, falls back to `newApplyLogger()`).
+- Baseline updated: `opts is heavy` for `apply.go` 200→208 bytes (added `log` field).
+
+#### Validation
+- `make test` — all 20 packages pass.
+- `make lint` — clean, baseline count at 70 (cap met).
+- `go test ./internal/cli/... -run TestApplyLocal -v` — all 21 tests pass.
+- `go test ./internal/cli/localresume/... -v` — all 22 tests pass.

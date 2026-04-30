@@ -62,7 +62,7 @@ func TestAutoApprove_ResumeApproval(t *testing.T) {
 func TestAutoApprove_ResumeSignal(t *testing.T) {
 	stateDir := t.TempDir()
 	r := localresume.New(localresume.ModeAutoApprove, localresume.Options{StateDir: stateDir})
-	payload, err := r.ResumeSignal(context.Background(), "run-1", "gate", "proceed")
+	payload, err := r.ResumeSignal(context.Background(), "run-1", "gate", "proceed", []string{"success", "failure"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -127,7 +127,7 @@ func TestEnvMode_Signal(t *testing.T) {
 	stateDir := t.TempDir()
 	t.Setenv("CRITERIA_SIGNAL_GATE", "received")
 	r := localresume.New(localresume.ModeEnv, localresume.Options{StateDir: stateDir})
-	payload, err := r.ResumeSignal(context.Background(), "run-3", "gate", "proceed")
+	payload, err := r.ResumeSignal(context.Background(), "run-3", "gate", "proceed", []string{"received", "timeout"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -140,7 +140,7 @@ func TestEnvMode_Signal_Unset(t *testing.T) {
 	stateDir := t.TempDir()
 	t.Setenv("CRITERIA_SIGNAL_GATE", "")
 	r := localresume.New(localresume.ModeEnv, localresume.Options{StateDir: stateDir})
-	_, err := r.ResumeSignal(context.Background(), "run-3", "gate", "proceed")
+	_, err := r.ResumeSignal(context.Background(), "run-3", "gate", "proceed", []string{"received", "timeout"})
 	if err == nil {
 		t.Fatal("expected error when signal env var is unset")
 	}
@@ -244,7 +244,7 @@ func TestStdinMode_Signal_JSON(t *testing.T) {
 		Stderr:   &bytes.Buffer{},
 		StateDir: stateDir,
 	})
-	payload, err := r.ResumeSignal(context.Background(), "run-8", "gate", "proceed")
+	payload, err := r.ResumeSignal(context.Background(), "run-8", "gate", "proceed", []string{"received", "timeout"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -260,7 +260,7 @@ func TestStdinMode_Signal_InvalidJSON(t *testing.T) {
 		Stderr:   &bytes.Buffer{},
 		StateDir: stateDir,
 	})
-	_, err := r.ResumeSignal(context.Background(), "run-9", "gate", "proceed")
+	_, err := r.ResumeSignal(context.Background(), "run-9", "gate", "proceed", []string{"received", "timeout"})
 	if err == nil {
 		t.Fatal("expected error for invalid JSON signal input")
 	}
@@ -326,7 +326,7 @@ func TestFileMode_Signal_WritesAndConsumes(t *testing.T) {
 		_ = os.WriteFile(reqPath, []byte(`{"outcome":"received"}`), 0o600)
 	}()
 
-	payload, err := r.ResumeSignal(context.Background(), runID, nodeName, "proceed")
+	payload, err := r.ResumeSignal(context.Background(), runID, nodeName, "proceed", []string{"received", "success"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -445,7 +445,7 @@ func TestReattach_Signal_PersistedOutcomeReused(t *testing.T) {
 	_ = os.WriteFile(decPath, []byte(`{"outcome":"received","decided_at":"2024-01-01T00:00:00Z"}`), 0o600)
 
 	r := localresume.New(localresume.ModeAutoApprove, localresume.Options{StateDir: stateDir})
-	payload, err := r.ResumeSignal(context.Background(), runID, nodeName, "proceed")
+	payload, err := r.ResumeSignal(context.Background(), runID, nodeName, "proceed", []string{"received", "success"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -513,7 +513,7 @@ func TestStdinMode_Signal_EmptyOutcome_Error(t *testing.T) {
 		Stderr:   &bytes.Buffer{},
 		StateDir: stateDir,
 	})
-	_, err := r.ResumeSignal(context.Background(), "run-empty-outcome", "gate", "proceed")
+	_, err := r.ResumeSignal(context.Background(), "run-empty-outcome", "gate", "proceed", []string{"received"})
 	if err == nil {
 		t.Fatal("expected error for empty outcome key, got nil")
 	}
@@ -530,7 +530,7 @@ func TestStdinMode_Signal_MissingOutcome_Error(t *testing.T) {
 		Stderr:   &bytes.Buffer{},
 		StateDir: stateDir,
 	})
-	_, err := r.ResumeSignal(context.Background(), "run-missing-outcome", "gate", "proceed")
+	_, err := r.ResumeSignal(context.Background(), "run-missing-outcome", "gate", "proceed", []string{"received"})
 	if err == nil {
 		t.Fatal("expected error for missing outcome key, got nil")
 	}
@@ -566,6 +566,68 @@ func TestStdinMode_Approval_ContextCancel_NoPersist(t *testing.T) {
 	decPath := filepath.Join(stateDir, "runs", "run-nopersist", "approvals", "review.json")
 	if _, statErr := os.Stat(decPath); !os.IsNotExist(statErr) {
 		t.Error("decision file must not be written on context cancellation")
+	}
+}
+
+// --- outcome validation ---
+
+func TestStdinMode_Signal_UnknownOutcome_Error(t *testing.T) {
+	stateDir := t.TempDir()
+	r := localresume.New(localresume.ModeStdin, localresume.Options{
+		Stdin:    bytes.NewBufferString(`{"outcome":"bogus"}` + "\n"),
+		Stderr:   &bytes.Buffer{},
+		StateDir: stateDir,
+	})
+	_, err := r.ResumeSignal(context.Background(), "run-bogus", "gate", "proceed", []string{"received", "timeout"})
+	if err == nil {
+		t.Fatal("expected error for unknown signal outcome, got nil")
+	}
+	if !strings.Contains(err.Error(), "bogus") {
+		t.Errorf("error should mention the unknown outcome 'bogus', got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "not declared") {
+		t.Errorf("error should say 'not declared', got: %v", err)
+	}
+}
+
+func TestEnvMode_Signal_UnknownOutcome_Error(t *testing.T) {
+	stateDir := t.TempDir()
+	t.Setenv("CRITERIA_SIGNAL_GATE", "bogus")
+	r := localresume.New(localresume.ModeEnv, localresume.Options{StateDir: stateDir})
+	_, err := r.ResumeSignal(context.Background(), "run-env-bogus", "gate", "proceed", []string{"received", "timeout"})
+	if err == nil {
+		t.Fatal("expected error for unknown env signal outcome, got nil")
+	}
+	if !strings.Contains(err.Error(), "bogus") {
+		t.Errorf("error should mention the unknown outcome 'bogus', got: %v", err)
+	}
+}
+
+func TestFileMode_Signal_UnknownOutcome_Error(t *testing.T) {
+	stateDir := t.TempDir()
+	runID := "run-file-bogus"
+	nodeName := "gate"
+	reqPath := filepath.Join(stateDir, "runs", runID, "approval-"+nodeName+".json")
+
+	r := localresume.New(localresume.ModeFile, localresume.Options{
+		FilePollingInterval: 20 * time.Millisecond,
+		FileTimeout:         5 * time.Second,
+		StateDir:            stateDir,
+		Stderr:              &bytes.Buffer{},
+	})
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		if err := os.MkdirAll(filepath.Dir(reqPath), 0o700); err != nil {
+			return
+		}
+		_ = os.WriteFile(reqPath, []byte(`{"outcome":"bogus"}`), 0o600)
+	}()
+	_, err := r.ResumeSignal(context.Background(), runID, nodeName, "proceed", []string{"received", "timeout"})
+	if err == nil {
+		t.Fatal("expected error for unknown file signal outcome, got nil")
+	}
+	if !strings.Contains(err.Error(), "bogus") {
+		t.Errorf("error should mention the unknown outcome 'bogus', got: %v", err)
 	}
 }
 
