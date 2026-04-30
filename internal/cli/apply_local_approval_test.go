@@ -435,3 +435,60 @@ func TestApplyLocal_Reattach_ReusePersistedDecision(t *testing.T) {
 		t.Fatalf("expected 'resumed local run completed' in logs; got: %s", logOutput)
 	}
 }
+
+func TestApplyLocal_Reattach_InvalidPersistedSignalOutcome_Error(t *testing.T) {
+	// Verify that a persisted signal outcome that is not declared in the workflow
+	// is rejected on reattach rather than silently selecting a fallback branch.
+	pluginDir := filepath.Dir(buildNoopPluginBinary(t))
+	stateDir := t.TempDir()
+	t.Setenv("CRITERIA_PLUGINS", pluginDir)
+	t.Setenv("CRITERIA_STATE_DIR", stateDir)
+	t.Setenv("CRITERIA_LOCAL_APPROVAL", "stdin") // would block if reattach doesn't fail first
+
+	wf := filepath.Join("testdata", "local_signal_wait.hcl") // declares outcome "success" only
+	runID := "reattach-bad-signal-run"
+
+	cp := &StepCheckpoint{
+		RunID:        runID,
+		Workflow:     "local_signal_wait",
+		WorkflowPath: wf,
+		CurrentStep:  "gate",
+		Attempt:      0,
+		StartedAt:    time.Now().UTC(),
+	}
+	if err := WriteStepCheckpoint(cp); err != nil {
+		t.Fatalf("WriteStepCheckpoint: %v", err)
+	}
+
+	// Pre-write a persisted signal decision with an undeclared outcome.
+	decisionDir := filepath.Join(stateDir, "runs", runID, "approvals")
+	if err := os.MkdirAll(decisionDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(decisionDir, "gate.json"),
+		[]byte(`{"outcome":"bogus","decided_at":"2024-01-01T00:00:00Z"}`),
+		0o600,
+	); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	var logBuf bytes.Buffer
+	captLog := slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+
+	resumeOneLocalRun(ctx, captLog, cp, io.Discard, outputModeJSON)
+
+	logOutput := logBuf.String()
+	if !strings.Contains(logOutput, "resumed local run failed") {
+		t.Errorf("expected 'resumed local run failed' in logs; got: %s", logOutput)
+	}
+	if strings.Contains(logOutput, "resumed local run completed") {
+		t.Errorf("run must not complete with invalid persisted signal outcome; log: %s", logOutput)
+	}
+	if !strings.Contains(logOutput, "bogus") {
+		t.Errorf("error log should mention the invalid outcome 'bogus'; got: %s", logOutput)
+	}
+}

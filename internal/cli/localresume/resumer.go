@@ -171,8 +171,15 @@ func (r *resumer) ResumeApproval(ctx context.Context, runID, name string, approv
 // ResumeSignal resolves a signal-wait node using the configured mode.
 // It checks for a persisted outcome first (reattach safety).
 func (r *resumer) ResumeSignal(ctx context.Context, runID, nodeName, signalName string, validOutcomes []string) (map[string]string, error) {
-	// Check for a persisted outcome from a previous attempt.
+	// Check for a persisted outcome from a previous attempt, then validate it
+	// against the current node's declared outcomes. An invalid persisted outcome
+	// must fail rather than silently trigger the engine's fallback branch.
 	if payload, ok := r.loadPersistedSignal(runID, nodeName); ok {
+		if len(validOutcomes) > 0 {
+			if err := validateOutcome(nodeName, payload["outcome"], validOutcomes); err != nil {
+				return nil, fmt.Errorf("persisted signal outcome is no longer valid: %w", err)
+			}
+		}
 		r.opts.Log.Info("local-approval: using persisted signal outcome", "node", nodeName, "outcome", payload["outcome"])
 		return payload, nil
 	}

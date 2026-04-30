@@ -569,6 +569,31 @@ func TestStdinMode_Approval_ContextCancel_NoPersist(t *testing.T) {
 	}
 }
 
+func TestReattach_Signal_PersistedInvalidOutcome_Error(t *testing.T) {
+	stateDir := t.TempDir()
+	runID := "run-reattach-invalid"
+	nodeName := "gate"
+
+	// Pre-write a persisted signal decision with an outcome that is NOT declared.
+	decPath := filepath.Join(stateDir, "runs", runID, "approvals", nodeName+".json")
+	if err := os.MkdirAll(filepath.Dir(decPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.WriteFile(decPath, []byte(`{"outcome":"bogus","decided_at":"2024-01-01T00:00:00Z"}`), 0o600)
+
+	r := localresume.New(localresume.ModeAutoApprove, localresume.Options{StateDir: stateDir})
+	_, err := r.ResumeSignal(context.Background(), runID, nodeName, "proceed", []string{"received", "success"})
+	if err == nil {
+		t.Fatal("expected error for invalid persisted signal outcome, got nil")
+	}
+	if !strings.Contains(err.Error(), "bogus") {
+		t.Errorf("error should mention the invalid outcome 'bogus', got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "not declared") {
+		t.Errorf("error should say 'not declared', got: %v", err)
+	}
+}
+
 // --- outcome validation ---
 
 func TestStdinMode_Signal_UnknownOutcome_Error(t *testing.T) {

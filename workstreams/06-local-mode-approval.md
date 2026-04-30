@@ -512,3 +512,53 @@ Both blockers addressed:
 - `make lint` — clean, baseline count at 70 (cap met).
 - `go test ./internal/cli/... -run TestApplyLocal -v` — all 21 tests pass.
 - `go test ./internal/cli/localresume/... -v` — all 22 tests pass.
+
+### Review 2026-04-30 — changes-requested
+
+#### Summary
+The direct stdin/env/file signal paths are now fixed and the warning-log assertions were added, but reattach still has a correctness hole: a persisted signal decision is reused **before** outcome validation, so an invalid outcome already present on disk can still resume the run and trigger the engine’s fallback branch selection. That keeps this below the acceptance bar.
+
+#### Plan Adherence
+- **Step 5:** Improved substantially, but still not complete for reattach semantics. The new tests cover invalid direct signal inputs, yet they do not cover invalid persisted signal outcomes on restart.
+- **Step 3:** Not fully met for signal waits. Reattach reuses persisted decisions, but it does not re-validate a persisted signal outcome against the paused wait node’s declared outcomes before resuming.
+
+#### Required Remediations
+- **[blocker] `internal/cli/localresume/resumer.go:173-178,199-206`** — `ResumeSignal` returns persisted signal payloads from `loadPersistedSignal()` before calling `validateOutcome()`. I reproduced this by pre-writing `runs/<run_id>/approvals/gate.json` with `{"outcome":"bogus"}` plus a checkpoint paused at `gate`; `criteria apply` then logged `local-approval: using persisted signal outcome` and completed the resumed run instead of failing. **Acceptance:** persisted signal outcomes must be validated against `validOutcomes` exactly like live stdin/env/file inputs before they are returned to the engine; invalid persisted outcomes must fail clearly and must not resume the run.
+- **[blocker] `internal/cli/apply_local_approval_test.go`, `internal/cli/localresume/resumer_test.go`** — there is still no coverage for the reattach variant of invalid persisted signal outcomes, which is why the remaining bug escaped despite the new direct-input tests. **Acceptance:** add unit and/or apply-path reattach tests that pre-populate a persisted signal decision with an undeclared outcome and assert that resume fails with a clear error instead of completing.
+
+#### Test Intent Assessment
+- The new negative tests are good for first-pass signal resolution and they close the previous direct-input gap.
+- The remaining weakness is reattach contract coverage: the suite asserts that persisted decisions are reused, but not that persisted signal outcomes are still valid for the declared wait node when reused.
+- Because reattach is a first-class part of this workstream’s behavior, that omission is blocker-level, not follow-up work.
+
+#### Validation Performed
+- `make ci` — passed.
+- `printf '{"outcome":"bogus"}\n' | CRITERIA_LOCAL_APPROVAL=stdin ./bin/criteria apply <temp signal-wait workflow>` — now correctly fails.
+- `CRITERIA_LOCAL_APPROVAL=env CRITERIA_SIGNAL_GATE=bogus ./bin/criteria apply <temp signal-wait workflow>` — now correctly fails.
+- `CRITERIA_LOCAL_APPROVAL=file` with `{"outcome":"bogus"}` written to the request file — now correctly fails.
+- Pre-populated checkpoint + persisted signal decision `{"outcome":"bogus"}` under `$CRITERIA_STATE_DIR/runs/<run_id>/approvals/gate.json` — still incorrectly resumed and completed on reattach.
+
+### Review 2026-04-30 — remediation complete
+
+Both blockers addressed:
+
+#### Blocker 1 — Persisted signal outcome bypasses validation on reattach
+
+- `ResumeSignal` now calls `validateOutcome(nodeName, payload["outcome"], validOutcomes)` against the persisted payload before logging and returning it.
+- Invalid persisted outcomes return `fmt.Errorf("persisted signal outcome is no longer valid: %w", ...)` with the original validation error (mentions outcome name and "not declared") rather than resuming.
+- Modified file: `internal/cli/localresume/resumer.go` (early-return block in `ResumeSignal`).
+
+#### Blocker 2 — Missing reattach tests for invalid persisted signal outcomes
+
+- Added unit test `TestReattach_Signal_PersistedInvalidOutcome_Error` in `resumer_test.go`:
+  pre-writes `{"outcome":"bogus"}` to decision file, calls `ResumeSignal` with `validOutcomes=["received","success"]`, asserts error mentioning "bogus" and "not declared".
+- Added apply-layer integration test `TestApplyLocal_Reattach_InvalidPersistedSignalOutcome_Error` in `apply_local_approval_test.go`:
+  pre-writes checkpoint at `gate` + persisted signal `{"outcome":"bogus"}`, calls `resumeOneLocalRun`, asserts "resumed local run failed" and "bogus" in logs, asserts "resumed local run completed" does NOT appear.
+
+#### Validation
+
+- `make test` — all 20 packages pass (25 resumer unit tests, 23 apply-local integration tests).
+- `make lint` — clean, baseline cap at 70.
+- `go test ./internal/cli/localresume/... -run TestReattach -v` — 3 reattach tests pass.
+- `go test ./internal/cli/... -run TestApplyLocal_Reattach -v` — 2 reattach apply tests pass.
+
