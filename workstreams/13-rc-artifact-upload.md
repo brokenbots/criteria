@@ -425,3 +425,25 @@ The current evidence is materially stronger than the previous pass: repository C
 - `sha256sum -c SHA256SUMS` in the downloaded run-45 artifact — all five files verified `OK`.
 - `docker load -i criteria-runtime.tar` in the downloaded run-45 artifact — not verifiable in this environment because the local Docker daemon was unavailable (`Cannot connect to the Docker daemon ...`); no alternate success evidence was recorded in the workstream notes.
 - Local extractor probe against the workflow snippet — `Hotfix -rc2 for storage` => `rc2`; `Bugfix foo-rc` => empty; `Release v1.2.3 prep -rc1` => `v1.2.3`.
+
+### Review 2026-04-30-03 — approved
+
+#### Summary
+The prior blockers are resolved and the workstream now meets the acceptance bar. The exact `release/test-rc1` validation path is recorded with a real PR and successful workflow run, the named artifact exists on GitHub, the title-based extractor no longer produces bare semver artifact tags, and the Step 4 notes now include checksum verification plus a successful `docker load` result for the downloaded runtime tar.
+
+#### Plan Adherence
+- Step 1 is satisfied: `.github/workflows/ci.yml` keeps the requested RC-only gate, and the extractor in `.github/workflows/ci.yml:152-172` now requires a semver `-rcN` suffix before emitting a semver-based artifact tag, with an `-rcN` fallback for title-only markers.
+- Step 2 is satisfied: the `release-artifacts` job builds the CLI, plugins, runtime image tar, checksum file, bundles the expected outputs, and uploads them with the requested retention and safety settings.
+- Step 3 is satisfied: `docs/contributing/release-process.md` documents the trigger convention, artifact contents, retrieval path, verification commands, and the title-extraction/failure behavior that operators need to understand.
+- Step 4 and the exit criteria are satisfied: the notes now include live evidence for the skip path, the exact `release/test-rc1` branch-trigger path, the title-only trigger path, the artifact file list, successful checksum verification, and successful runtime-image loading.
+
+#### Test Intent Assessment
+This workstream’s contract is GitHub Actions behavior rather than Go runtime behavior, and the current evidence now exercises that contract at the right level. The skip case proves the gating behavior, the two positive PR scenarios prove both trigger paths and artifact names, the downloaded bundles prove the published contents, and the updated extractor regression cases show the title parser no longer regresses to plain semver tags on ambiguous RC titles.
+
+#### Validation Performed
+- `make ci` — passed locally on current `HEAD`.
+- `gh pr view 49 --repo brokenbots/overseer --json ...` — confirmed PR #49 exists for the exact `release/test-rc1` Scenario 2 validation.
+- `gh run view 25177574297 --repo brokenbots/overseer --json ...` — confirmed the `release/test-rc1` run succeeded.
+- `gh run download 25177574297 --repo brokenbots/overseer -n criteria-test-rc1 ...` — succeeded, confirming the exact Scenario 2 artifact name exists on GitHub.
+- Replayed the current extractor logic locally — `Release v1.2.3 prep -rc1` => `rc1`, `Bugfix foo-rc` => empty, `Hotfix -rc2 for storage` => `rc2`, `Release v0.3.0-rc1: ship it` => `v0.3.0-rc1`, `release/test-rc1` => `test-rc1`.
+- Reviewed the recorded Step 4 evidence in this workstream for artifact contents, `sha256sum -c SHA256SUMS`, and successful `docker load -i criteria-runtime.tar`.
