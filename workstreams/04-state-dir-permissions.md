@@ -252,3 +252,24 @@ The implementation itself is correct: both production `MkdirAll` call sites now 
 - `go test -race -count=2 ./internal/cli/...`: passed.
 - `make ci`: passed.
 - Manual: `CRITERIA_STATE_DIR=<fresh tmpdir>/state bin/criteria apply examples/hello.hcl` created the state directory as `drwx------`.
+
+### Review 2026-04-29-02 — approved
+
+#### Summary
+Approved. The resubmission closes the only blocker from the previous review by documenting the missing `internal/cli/local_state_test.go:240` `os.Mkdir` call in the Step 2 audit table. With that audit gap fixed, the implementation, tests, and validation now satisfy the workstream scope and exit criteria.
+
+#### Plan Adherence
+- Step 1: Met. `internal/cli/local_state.go:74` and `internal/cli/local_state.go:129` use `0o700`.
+- Step 2: Met. The audit now accounts for all 18 `MkdirAll` / `os.Mkdir` matches in `internal/`, `cmd/`, `workflow/`, `sdk/`, and `events/`, with mode and rationale recorded for each relevant line or grouped set.
+- Step 3: Met. `TestStateDirPerms` still exercises both write paths, skips on Windows, and asserts `0o700` for directories plus `0o600` for files.
+- Step 4: Met. Existing directories are unchanged; no migration behavior was added.
+- Step 5: Met. Targeted tests, full `make ci`, and the fresh-state-dir manual check all succeeded.
+
+#### Test Intent Assessment
+The regression coverage remains appropriately behavior-based and regression-sensitive. The permission test proves the operator-only directory creation contract at both production write sites and would fail on a reversion to `0o755`; the surrounding existing tests continue to cover checkpoint listing and local-state behavior without diluting this workstream’s intent.
+
+#### Validation Performed
+- `rg -n 'MkdirAll\(|os\.Mkdir\(' internal cmd workflow sdk events --glob '*.go'`: confirmed 18 total matches, all now reflected in the Step 2 audit.
+- `go test -race -count=2 ./internal/cli/...`: passed.
+- `make ci`: passed.
+- Manual: `CRITERIA_STATE_DIR=<fresh tmpdir>/state bin/criteria apply examples/hello.hcl` created the state directory as `drwx------`.
