@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -129,7 +130,14 @@ func runApplyLocal(ctx context.Context, opts applyOptions) error { //nolint:funl
 		}
 	}
 	baseSink := buildLocalSink(runID, jsonOut, mode, graph.StepOrder(), checkpointFn)
-	tracker := &pauseTracker{Sink: baseSink}
+	tracker := &pauseTracker{
+		Sink: baseSink,
+		PauseCheckpointFn: func(node string) {
+			// Write a checkpoint pointing at the paused approval/signal-wait node so
+			// that a crash while waiting can be recovered from the right place.
+			checkpointFn(node, 0)
+		},
+	}
 
 	log.Info("starting local run",
 		"run_id", runID,
@@ -378,12 +386,15 @@ func compileForExecution(ctx context.Context, workflowPath string, log *slog.Log
 // pauseTracker wraps an engine.Sink and tracks pause state for the local approval
 // resume loop. It intercepts OnRunPaused to record the paused node name, and
 // captures approval/signal details so the resume loop knows what to resolve.
+// PauseCheckpointFn, when set, is called each time the engine pauses so that a
+// crash while waiting for an approval or signal can be recovered on restart.
 type pauseTracker struct {
 	engine.Sink
-	mu             sync.Mutex
-	pausedNode     string
-	approvalDetail *approvalDetail
-	signalDetail   *signalDetail
+	mu                sync.Mutex
+	pausedNode        string
+	approvalDetail    *approvalDetail
+	signalDetail      *signalDetail
+	PauseCheckpointFn func(node string)
 }
 
 type approvalDetail struct {
@@ -400,6 +411,9 @@ func (t *pauseTracker) OnRunPaused(node, mode, signal string) {
 	t.mu.Lock()
 	t.pausedNode = node
 	t.mu.Unlock()
+	if t.PauseCheckpointFn != nil {
+		t.PauseCheckpointFn(node)
+	}
 }
 
 func (t *pauseTracker) OnApprovalRequested(node string, approvers []string, reason string) {
@@ -524,6 +538,7 @@ func resolveLocalPause(ctx context.Context, resumer localresume.LocalResumer, ru
 		for o := range wait.Outcomes {
 			validOutcomes = append(validOutcomes, o)
 		}
+		sort.Strings(validOutcomes)
 		return resumer.ResumeSignal(ctx, runID, pausedNode, signalName, validOutcomes)
 	}
 	return nil, fmt.Errorf("paused at node %q which is neither an approval nor a signal wait", pausedNode)
@@ -638,7 +653,12 @@ func resumeOneLocalRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint
 		}
 	}
 	baseSink := buildLocalSink(cp.RunID, out, mode, graph.StepOrder(), checkpointFn)
-	tracker := &pauseTracker{Sink: baseSink}
+	tracker := &pauseTracker{
+		Sink: baseSink,
+		PauseCheckpointFn: func(node string) {
+			checkpointFn(node, 0)
+		},
+	}
 	tracker.OnStepResumed(cp.CurrentStep, nextAttempt, "criteria_restart")
 
 	opts := applyOptions{workflowPath: cp.WorkflowPath}

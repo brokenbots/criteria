@@ -580,3 +580,29 @@ Approved. The remaining reattach hole is fixed: persisted signal outcomes are no
 - `make ci` — passed.
 - `go test ./internal/cli/localresume/... -run 'TestReattach' -v && go test ./internal/cli/... -run 'TestApplyLocal_Reattach' -v` — passed.
 - Manual reattach repro with a pre-populated persisted signal outcome `{"outcome":"bogus"}` now logs `resumed local run failed during approval` with the expected “not declared” error and does not resume the recovered run.
+
+### PR Review 2026-04-30 — code change requests
+
+Six review threads addressed:
+
+#### Thread 1 — Sort validOutcomes before passing to ResumeSignal (apply.go:526)
+Added `sort.Strings(validOutcomes)` after building the slice from `wait.Outcomes` map iteration. Error messages now list declared outcomes in stable alphabetical order.
+
+#### Thread 2 — Path traversal in ApprovalDecisionPath/ApprovalRequestPath (local_state.go:176)
+Added `validateNodeName(nodeName string) error` that rejects names containing `/`, `\`, `..`, or a Windows volume prefix. Both `ApprovalDecisionPath` and `ApprovalRequestPath` call it before joining paths. Tests: `TestValidateNodeName`, `TestApprovalDecisionPath_RejectsTraversal`, `TestApprovalRequestPath_RejectsTraversal`.
+
+#### Thread 3 — readLineWithContext swallows scanner.Err() (resumer.go:293)
+Fixed: when `scanner.Scan()` returns false, `scanner.Err()` is now propagated instead of always returning `io.EOF`. Clean EOF still returns `io.EOF`. Added doc comment about the stdin goroutine limitation.
+
+#### Thread 4 — parseApprovalInput "non-interactive input" misleading (resumer.go:302)
+Changed default case to `reason: "invalid input"` for unrecognized interactive input ("maybe" etc). EOF path in `resolveApprovalStdin` still uses "non-interactive input". Added `TestStdinMode_Approval_UnrecognizedInput_InvalidInputReason`.
+
+#### Thread 5 — No checkpoint written on approval/signal-wait pause (apply.go:403)
+Added `PauseCheckpointFn func(node string)` to `pauseTracker`. `OnRunPaused` calls it when set. Both `runApplyLocal` and `resumeOneLocalRun` wire it to `checkpointFn(node, 0)`.
+
+#### Thread 6 — Reattach tests set CurrentStep to approval/wait node name (apply_local_approval_test.go:406)
+Resolved by Thread 5: production now writes a checkpoint with `CurrentStep=<paused_node>` on pause, so tests correctly model real crash-reattach behavior.
+
+#### Validation
+- `make test` — all 20 packages pass.
+- `make lint` — clean, baseline cap at 70.

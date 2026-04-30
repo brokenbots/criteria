@@ -222,7 +222,8 @@ func TestStdinMode_Approval_Yes_CaseVariants(t *testing.T) {
 
 func TestStdinMode_Approval_EOF_Rejects(t *testing.T) {
 	stateDir := t.TempDir()
-	// Empty reader → EOF → rejected with reason "non-interactive input"
+	// Empty reader → EOF → rejected with reason "non-interactive input" (the EOF
+	// path in resolveApprovalStdin, not the unrecognized-input path in parseApprovalInput).
 	r := localresume.New(localresume.ModeStdin, localresume.Options{
 		Stdin:    bytes.NewBufferString(""),
 		Stderr:   &bytes.Buffer{},
@@ -234,6 +235,25 @@ func TestStdinMode_Approval_EOF_Rejects(t *testing.T) {
 	}
 	if payload["decision"] != "rejected" {
 		t.Errorf("expected rejected on EOF, got %v", payload)
+	}
+}
+
+func TestStdinMode_Approval_UnrecognizedInput_InvalidInputReason(t *testing.T) {
+	stateDir := t.TempDir()
+	r := localresume.New(localresume.ModeStdin, localresume.Options{
+		Stdin:    bytes.NewBufferString("maybe\n"),
+		Stderr:   &bytes.Buffer{},
+		StateDir: stateDir,
+	})
+	payload, err := r.ResumeApproval(context.Background(), "run-ui", "review", nil, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if payload["decision"] != "rejected" {
+		t.Errorf("expected rejected, got %v", payload)
+	}
+	if payload["reason"] != "invalid input" {
+		t.Errorf("expected reason 'invalid input', got %q", payload["reason"])
 	}
 }
 

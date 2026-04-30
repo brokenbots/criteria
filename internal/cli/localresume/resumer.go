@@ -270,6 +270,11 @@ func (r *resumer) resolveSignalStdin(ctx context.Context, nodeName, signalName s
 }
 
 // readLineWithContext reads one line from r, returning an error on EOF or context cancellation.
+// scanner.Err() is propagated when Scan() returns false due to a real read error;
+// a clean EOF returns io.EOF. If ctx is cancelled before the goroutine unblocks,
+// the context error is returned immediately. Note: the goroutine may outlive the
+// ctx-cancel return on blocking readers (e.g., os.Stdin) because Go has no way
+// to interrupt a blocking Read without closing the file descriptor.
 func readLineWithContext(ctx context.Context, r io.Reader) (string, error) {
 	type result struct {
 		line string
@@ -280,6 +285,8 @@ func readLineWithContext(ctx context.Context, r io.Reader) (string, error) {
 		scanner := bufio.NewScanner(r)
 		if scanner.Scan() {
 			ch <- result{line: scanner.Text()}
+		} else if err := scanner.Err(); err != nil {
+			ch <- result{err: err}
 		} else {
 			ch <- result{err: io.EOF}
 		}
@@ -299,7 +306,7 @@ func parseApprovalInput(input string) map[string]string {
 	case "n", "no":
 		return map[string]string{"decision": "rejected"}
 	default:
-		return map[string]string{"decision": "rejected", "reason": "non-interactive input"}
+		return map[string]string{"decision": "rejected", "reason": "invalid input"}
 	}
 }
 

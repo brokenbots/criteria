@@ -333,3 +333,51 @@ func TestStateDirPerms(t *testing.T) {
 		t.Errorf("checkpoint file mode = %04o, want 0600", got)
 	}
 }
+
+func TestValidateNodeName(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", dir)
+
+	validNames := []string{"review", "gate", "my-approval", "step_1", "approval.check"}
+	for _, name := range validNames {
+		t.Run("valid/"+name, func(t *testing.T) {
+			if err := validateNodeName(name); err != nil {
+				t.Errorf("validateNodeName(%q) unexpectedly failed: %v", name, err)
+			}
+		})
+	}
+
+	invalidNames := []string{
+		"../etc/passwd",
+		"../../secret",
+		"node/with/slash",
+		"node\\backslash",
+	}
+	for _, name := range invalidNames {
+		t.Run("invalid/"+name, func(t *testing.T) {
+			if err := validateNodeName(name); err == nil {
+				t.Errorf("validateNodeName(%q) expected error, got nil", name)
+			}
+		})
+	}
+}
+
+func TestApprovalDecisionPath_RejectsTraversal(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", dir)
+
+	_, err := ApprovalDecisionPath("run-1", "../etc/passwd")
+	if err == nil {
+		t.Error("ApprovalDecisionPath with traversal node name should return error")
+	}
+}
+
+func TestApprovalRequestPath_RejectsTraversal(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", dir)
+
+	_, err := ApprovalRequestPath("run-1", "../../evil")
+	if err == nil {
+		t.Error("ApprovalRequestPath with traversal node name should return error")
+	}
+}
