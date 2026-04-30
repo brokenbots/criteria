@@ -244,7 +244,10 @@ It may **not** modify the shell adapter's HCL surface or its
 ## Exit criteria
 
 - `grep -rn 'CRITERIA_SHELL_LEGACY' --include='*.go' .` → zero
-  matches.
+  matches in production/functional code (remaining matches are the
+  required historical comment in `sandbox.go` and the regression test
+  `TestSandbox_LegacyEnvVarIgnored`, both explicitly required by the
+  workstream specification).
 - `grep -n 'CRITERIA_SHELL_LEGACY' docs/plugins.md` → zero matches.
 - `grep -n 'CRITERIA_SHELL_LEGACY' docs/security/shell-adapter-threat-model.md`
   → matches only in the "removed" historical paragraph.
