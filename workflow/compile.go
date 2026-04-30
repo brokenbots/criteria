@@ -78,6 +78,9 @@ func CompileWithOpts(spec *Spec, schemas map[string]AdapterInfo, opts CompileOpt
 	diags = append(diags, compileWaits(g, spec)...)
 	diags = append(diags, compileApprovals(g, spec)...)
 	diags = append(diags, compileBranches(g, spec)...)
+	// Warn after all nodes are compiled so branch/wait/approval targets are
+	// available for the back-edge walk (W07).
+	diags = append(diags, warnBackEdges(g)...)
 	// Reserved-name checks only apply to user-authored top-level workflows.
 	// Sub-workflow bodies (LoadDepth > 0) are synthetic and intentionally use
 	// the "_continue" name as a terminal state.
@@ -116,6 +119,12 @@ func newFSMGraph(spec *Spec) *FSMGraph {
 		}
 		if spec.Policy.MaxStepRetries > 0 {
 			g.Policy.MaxStepRetries = spec.Policy.MaxStepRetries
+		}
+		// MaxVisitsWarnThreshold: nil means "not set" (keep default of 200);
+		// a pointer to 0 explicitly disables the warning; any positive value
+		// overrides the default.
+		if spec.Policy.MaxVisitsWarnThreshold != nil {
+			g.Policy.MaxVisitsWarnThreshold = *spec.Policy.MaxVisitsWarnThreshold
 		}
 	}
 	return g

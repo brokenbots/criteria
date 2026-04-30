@@ -4,7 +4,8 @@
   "target_state": "verified",
   "policy": {
     "MaxTotalSteps": 20,
-    "MaxStepRetries": 0
+    "MaxStepRetries": 0,
+    "MaxVisitsWarnThreshold": 200
   },
   "agents": [],
   "steps": [

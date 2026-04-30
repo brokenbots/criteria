@@ -84,6 +84,9 @@ type StepSpec struct {
 	// OnFailure controls iteration failure behaviour: "continue" (default),
 	// "abort" (stop on first failure), or "ignore" (treat all as success).
 	OnFailure string `hcl:"on_failure,optional"`
+	// MaxVisits limits how many times this step may be evaluated in a single run.
+	// 0 (default) means unlimited. Negative values are rejected at compile time.
+	MaxVisits int `hcl:"max_visits,optional"`
 	// Config is the legacy map attribute; retained for parse-time detection so the
 	// compiler can emit a helpful "use input { } block" diagnostic.
 	Config     map[string]string `hcl:"config,optional"`
@@ -204,8 +207,9 @@ type DefaultArmSpec struct {
 
 // PolicySpec defines global execution guards.
 type PolicySpec struct {
-	MaxTotalSteps  int `hcl:"max_total_steps,optional"`
-	MaxStepRetries int `hcl:"max_step_retries,optional"`
+	MaxTotalSteps          int  `hcl:"max_total_steps,optional"`
+	MaxStepRetries         int  `hcl:"max_step_retries,optional"`
+	MaxVisitsWarnThreshold *int `hcl:"max_visits_warn_threshold,optional"`
 }
 
 // PermissionsSpec defines workflow-level permission allowlists applied to all steps.
@@ -262,6 +266,9 @@ type StepNode struct {
 	// OnFailure controls iteration behaviour when an iteration produces a
 	// non-success outcome. Values: "continue" (default), "abort", "ignore".
 	OnFailure string
+	// MaxVisits limits how many times this step may be evaluated in a single run.
+	// 0 means unlimited. Enforced by the engine before each evaluation (W07).
+	MaxVisits int
 	// Input holds the per-step adapter input from the `input { }` block.
 	// Wire name on ExecuteRequest proto remains "config" to avoid breaking changes;
 	// only the Go-side field is renamed here.
@@ -347,12 +354,17 @@ type BranchArm struct {
 type Policy struct {
 	MaxTotalSteps  int
 	MaxStepRetries int
+	// MaxVisitsWarnThreshold is the max_total_steps value above which the compiler
+	// emits a warning when a step with a back-edge has no max_visits set (W07).
+	// 0 disables the warning. Default is 200.
+	MaxVisitsWarnThreshold int
 }
 
 // DefaultPolicy is applied when a workflow omits a policy block.
 var DefaultPolicy = Policy{
-	MaxTotalSteps:  100,
-	MaxStepRetries: 0,
+	MaxTotalSteps:          100,
+	MaxStepRetries:         0,
+	MaxVisitsWarnThreshold: 200,
 }
 
 // IsTerminal reports whether the named node is a terminal state.

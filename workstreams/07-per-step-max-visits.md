@@ -271,6 +271,9 @@ the `MaxTotalSteps` semantics.
 - [x] Add unit tests per Step 5.
 - [x] Update `docs/workflow.md`.
 - [x] `make build`, `make plugins`, `make test`, `make ci` all green.
+- [x] Fix retry counting — each retry attempt counts as one visit (Blocker 1).
+- [x] Fix back-edge detection through non-step nodes (Blocker 2).
+- [x] Wire visit counts through CLI checkpoint / crash-recovery paths (Blocker 3).
 
 ## Exit criteria
 
@@ -341,3 +344,72 @@ All four are updates to existing suppressions, each annotated with `# W07`:
 
 - `go test -race -count=2 ./internal/engine/... ./workflow/...` — PASS
 - `make ci` — PASS (all linters, tests, examples, greeter plugin)
+
+## Reviewer Notes
+
+### Review 2026-04-30 — changes-requested
+
+*(See above for full review text.)*
+
+### Remediation batch — 2026-04-30
+
+All three blockers fixed; `make ci` green.
+
+#### Blocker 1 — Retry counting
+
+- Extracted `incrementVisit(st *RunState) error` helper on `stepNode`; the helper nil-initializes `st.Visits`, checks the `MaxVisits` gate, and increments.
+- Removed gate+increment block from `Evaluate()` (only `TotalSteps++` remains there).
+- Added `*RunState` parameter to `runStepFromAttempt`; `incrementVisit` is called at the top of every attempt inside the retry loop, so each retry attempt consumes one visit.
+- Added `incrementVisit` call at the top of `runWorkflowIteration` (workflow-type steps bypass `runStepFromAttempt`).
+- Updated `evaluateOnce` to pass `st` to `runStepFromAttempt`.
+- Replaced `TestMaxVisits_RetryCounts`: now uses `errPlugin` (always fails) with `max_step_retries = 3` and `max_visits = 2`; confirms attempts 1 and 2 run (visits 1 and 2), then attempt 3 is blocked by the visit gate before the adapter is invoked.
+- Updated `TestMaxVisits_Persists` counts: with `TotalSteps++` firing in `Evaluate()` before `runStepFromAttempt`, `visits["loop"] = 2` after the 2-step budget is exhausted.
+- Added `errPlugin` type to `engine_test.go`.
+- Updated `docs/workflow.md` line 211: changed "retries within max_step_retries count as a single visit" → "each adapter invocation including each retry attempt counts as one visit".
+
+#### Blocker 2 — Back-edge detection through non-step nodes
+
+- Root cause: `warnBackEdges(g)` in `compile.go` was called on line 78, before `compileBranches(g, spec)` on line 81, so `g.Branches` was always empty during the walk.
+- Fixed by moving `warnBackEdges(g)` to after all node compilation phases (`compileBranches`, `compileWaits`, `compileApprovals`), before `resolveTransitions`.
+- Replaced `stepHasBackEdge` implementation: introduced `nodeTargets(name string, g *FSMGraph) []string` helper that extracts all transition targets for any node kind (step/branch/wait/approval); `stepHasBackEdge` now uses `nodeTargets` for a clean recursive DFS. Also fixed the cognitive complexity lint issue (was 54, now well under 20).
+- Added `TestCompile_BackEdgeWarning_ThroughBranch` to `compile_steps_test.go`.
+
+#### Blocker 3 — CLI persistence wiring
+
+- `runApplyLocal`: declared `var eng *engine.Engine` before the `checkpointFn` closure; added `if eng != nil { cp.Visits = eng.VisitCounts() }` to both checkpoint write paths; changed `eng := engine.New(...)` to `eng = engine.New(...)`.
+- `drainLocalResumeCycles`: added `engine.WithResumedVisits(eng.VisitCounts())` to every `engine.New` call.
+- `drainResumeCycles` (server-mode): same.
+- `resumeOneLocalRun` (crash recovery): added `engine.WithResumedVisits(cp.Visits)` to engine creation; writes `eng.VisitCounts()` into the next checkpoint before proceeding.
+- Extracted `buildReattachTrackerAndEngine` helper from `resumeOneLocalRun` to keep the function under 50 lines — no baseline entry required.
+- Added `TestLocalState_StepCheckpoint_VisitsRoundTrip` and `TestLocalState_StepCheckpoint_VisitsOmittedWhenEmpty` to `local_state_test.go`.
+
+#### Validation
+
+- `go build ./internal/cli/...` — PASS
+- `make ci` — PASS (all linters, tests, examples, greeter plugin)
+
+#### Summary
+The implementation is not yet at the acceptance bar. The branch is green, but three blockers remain: retry attempts do not count toward `max_visits`, the compile-time warning misses loops that traverse non-step nodes, and crash/reattach still does not persist and restore visit counts through the CLI path, so the Step 4 / exit-criteria persistence requirement is not met.
+
+#### Plan Adherence
+- **Step 1 — Schema:** Implemented. `MaxVisits` and `MaxVisitsWarnThreshold` were added and negative `max_visits` is rejected at compile time.
+- **Step 2 — Compile:** Partially implemented. The warning works for direct self-loops, but `stepHasBackEdge()` only follows step-to-step edges and treats branches, waits, approvals, and states as dead ends (`workflow/compile_steps.go:549-590`). That is narrower than the workstream's "reachable from its own outcome graph" requirement. `workflow/compile.go:203-255` already shows the fuller node-kind traversal pattern.
+- **Step 3 — Runtime tracking:** Partially implemented. `RunState.Visits` and the gate-before-increment are present, but the increment happens once per `Evaluate()` before the retry loop, so retries do not consume additional visits (`internal/engine/node_step.go:27-45,382-427`).
+- **Step 4 — Persistence:** Not implemented end-to-end. `StepCheckpoint` has a `Visits` field and the engine can seed `RunState.Visits`, but `apply.go` never writes `eng.VisitCounts()` into checkpoints and never resumes with `WithResumedVisits(cp.Visits)` (`internal/cli/apply.go:119-128,161-164,281-285,646-666`; `internal/engine/engine.go:137-141`).
+- **Step 5 — Tests:** Incomplete. New tests cover direct loops and engine-level seeded resume only. They do not exercise retry counting, non-step-mediated back-edge warnings, or CLI crash/reattach persistence.
+- **Step 6 — Documentation:** Inaccurate. `docs/workflow.md:211` states that retries within a retry budget count as a single visit, which contradicts the workstream requirement that retries count toward the limit.
+
+#### Required Remediations
+- **Blocker** — `internal/engine/node_step.go:27-45,382-427`, `internal/engine/engine_test.go:617-655`, `docs/workflow.md:211`: `max_visits` is currently enforced per step entry, not per retry attempt. The current `TestMaxVisits_RetryCounts` is a back-edge loop test, not a retry test, so it does not verify the required behavior. **Acceptance criteria:** enforce visit counting so each retry attempt consumes one visit, add a runtime test that uses the existing retry mechanism (`max_step_retries`) rather than a graph back-edge, and update docs to match the shipped semantics.
+- **Blocker** — `workflow/compile_steps.go:549-590`, `workflow/compile_steps_test.go:120-225`: back-edge detection only traverses step-to-step edges and misses loops that return through `branch`, `wait`, or `approval` nodes. I reproduced this with a step -> branch -> same step workflow at `max_total_steps = 500`; compile returned `warned=false`. **Acceptance criteria:** reuse or match the graph-wide traversal semantics already used in `checkReachability()`, and add tests covering at least one non-step-mediated loop.
+- **Blocker** — `internal/cli/apply.go:119-128,161-164,281-285,646-666`, `internal/cli/local_state.go:23-40`, `internal/engine/engine.go:137-141`: crash recovery is not wired end-to-end. Checkpoints never capture `Visits`, and resumed engines are not seeded from checkpoint state, so `StepCheckpoint` persistence does not satisfy the exit criterion. **Acceptance criteria:** write visit counts into checkpoints before crash-recovery boundaries, pass checkpointed visits into resumed engines, and add CLI/reattach coverage that proves a persisted checkpoint still trips `max_visits` at the correct iteration after restart.
+- **Minor** — `workstreams/07-per-step-max-visits.md:330-331`: the executor notes explicitly say persistence wiring is incomplete while the checklist and exit criteria are still marked complete. **Acceptance criteria:** keep the workstream status and notes aligned with actual implementation state once the blockers above are fixed.
+
+#### Test Intent Assessment
+The new direct-loop tests are useful for basic decode and guard behavior, and `TestMaxVisits_Persists` does prove engine-level seeding via `WithResumedVisits`. The weak spots are exactly where the acceptance bar is strictest: `TestMaxVisits_RetryCounts` does not use retries at all, all compile-warning tests use only a trivial self-loop, and there is no contract-level CLI/reattach test for persisted `visits`. As written, the suite can stay green while the retry semantics and crash-recovery requirement are both wrong.
+
+#### Validation Performed
+- `go test -race -count=2 ./internal/engine/... ./workflow/...` — PASS
+- `make ci` — PASS
+- `go run` repro against `workflow.Compile` for a step -> branch -> same step workflow with `max_total_steps = 500` — produced `warned=false`
+- `go run` repro against `internal/engine` with `max_visits = 1` and `max_step_retries = 2` — produced `attempts=3` and `step "work" failed after 3 attempts: boom`

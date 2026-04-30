@@ -238,6 +238,11 @@ func (n *stepNode) runOneIteration(ctx context.Context, st *RunState, deps Deps,
 // runWorkflowIteration executes the inline workflow body for one iteration
 // and records output block values into vars and cur.Prev (B-05, B-06).
 func (n *stepNode) runWorkflowIteration(ctx context.Context, st *RunState, deps Deps, cur *workflow.IterCursor) (string, error) {
+	// W07: workflow-type iterations skip runStepFromAttempt; count the visit here.
+	if err := n.incrementVisit(st); err != nil {
+		return "", err
+	}
+
 	if n.step.Body == nil {
 		return "", fmt.Errorf("step %q: type=\"workflow\" but body is nil", n.step.Name)
 	}
@@ -296,7 +301,7 @@ func (n *stepNode) evaluateOnce(ctx context.Context, st *RunState, deps Deps) (s
 		}
 	}
 
-	result, err := n.runStepFromAttempt(ctx, deps, effectiveStep, startAttempt)
+	result, err := n.runStepFromAttempt(ctx, st, deps, effectiveStep, startAttempt)
 	if err != nil {
 		return "", err
 	}
@@ -364,7 +369,25 @@ func (n *stepNode) resolveInput(vars map[string]cty.Value, workflowDir string) (
 	return &cp, nil
 }
 
-func (n *stepNode) runStepFromAttempt(ctx context.Context, deps Deps, step *workflow.StepNode, startAttempt int) (adapter.Result, error) {
+// incrementVisit checks the max_visits limit and increments the visit counter
+// for this step. Returns an error if the limit would be exceeded (W07).
+func (n *stepNode) incrementVisit(st *RunState) error {
+	if n.step.MaxVisits > 0 {
+		if st.Visits == nil {
+			st.Visits = make(map[string]int)
+		}
+		if st.Visits[n.step.Name] >= n.step.MaxVisits {
+			return fmt.Errorf("step %q exceeded max_visits (%d)", n.step.Name, n.step.MaxVisits)
+		}
+	}
+	if st.Visits == nil {
+		st.Visits = make(map[string]int)
+	}
+	st.Visits[n.step.Name]++
+	return nil
+}
+
+func (n *stepNode) runStepFromAttempt(ctx context.Context, st *RunState, deps Deps, step *workflow.StepNode, startAttempt int) (adapter.Result, error) {
 	maxAttempts := 1 + n.graph.Policy.MaxStepRetries
 	if startAttempt > maxAttempts {
 		return adapter.Result{}, fmt.Errorf("step %q has no remaining attempts (start attempt %d exceeds max %d)", step.Name, startAttempt, maxAttempts)
@@ -372,6 +395,11 @@ func (n *stepNode) runStepFromAttempt(ctx context.Context, deps Deps, step *work
 
 	var lastErr error
 	for attempt := startAttempt; attempt <= maxAttempts; attempt++ {
+		// W07: each attempt (including retries) counts as one visit toward max_visits.
+		if err := n.incrementVisit(st); err != nil {
+			return adapter.Result{}, err
+		}
+
 		if err := ctx.Err(); err != nil {
 			return adapter.Result{}, err
 		}

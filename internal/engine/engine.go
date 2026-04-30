@@ -90,6 +90,9 @@ type Engine struct {
 	branchScheduler     BranchScheduler
 	// resumedVars, when non-nil, overrides SeedVarsFromGraph at run start (W04).
 	resumedVars map[string]cty.Value
+	// resumedVisits, when non-nil, seeds RunState.Visits at run start (W07).
+	// Used during crash-recovery reattach to restore per-step visit counts.
+	resumedVisits map[string]int
 	// varOverrides, when non-nil, overlays CLI-supplied key=value pairs on top
 	// of the graph variable defaults at run start.
 	varOverrides map[string]string
@@ -105,6 +108,9 @@ type Engine struct {
 	// lastVars captures the Vars map from RunState when execution pauses so
 	// the caller can pass them to the resumed engine via WithResumedVars (W05).
 	lastVars map[string]cty.Value
+	// lastVisits captures the Visits map from RunState when execution stops so
+	// the caller can pass them to a resumed engine via WithResumedVisits (W07).
+	lastVisits map[string]int
 	// workflowDir is the directory containing the HCL workflow file. Passed to
 	// RunState so that file() and fileexists() can resolve relative paths.
 	workflowDir string
@@ -127,6 +133,12 @@ func New(graph *workflow.FSMGraph, loader plugin.Loader, sink Sink, opts ...Opti
 // Returns nil if the engine has not yet paused. Used by the CLI pause/resume
 // loop to carry variable state across a resume boundary (W05).
 func (e *Engine) VarScope() map[string]cty.Value { return e.lastVars }
+
+// VisitCounts returns the per-step visit counts captured when the last run
+// stopped (paused, failed, or completed). Returns nil if the engine has not
+// yet run. Used by the CLI crash-recovery path to persist visit state across
+// a resume boundary (W07).
+func (e *Engine) VisitCounts() map[string]int { return e.lastVisits }
 
 // Run executes the workflow until a terminal state is reached, the global
 // step limit is exceeded, or ctx is cancelled.
@@ -164,6 +176,7 @@ func (e *Engine) runLoop(ctx context.Context, sessions *plugin.SessionManager, c
 		PendingSignal:    e.pendingSignal,
 		ResumePayload:    e.resumePayload,
 		IterStack:        append([]workflow.IterCursor{}, e.resumedIterStack...),
+		Visits:           cloneVisits(e.resumedVisits),
 		WorkflowDir:      e.workflowDir,
 		firstStep:        true,
 		firstStepAttempt: firstStepAttempt,
@@ -334,6 +347,9 @@ func (e *Engine) advanceTo(st *RunState, next string) {
 // handleEvalError dispatches errors from node.Evaluate. It handles ErrTerminal
 // and ErrPaused specially; all other errors are propagated as run failures.
 func (e *Engine) handleEvalError(st *RunState, err error) error {
+	// Always capture the visit state so callers can retrieve it via VisitCounts()
+	// for crash-recovery reattach (W07).
+	e.lastVisits = st.Visits
 	if errors.Is(err, engineruntime.ErrTerminal) {
 		state, ok := e.graph.States[st.Current]
 		if !ok {
@@ -358,6 +374,18 @@ func (e *Engine) handleEvalError(st *RunState, err error) error {
 	}
 	e.sink.OnRunFailed(err.Error(), st.Current)
 	return err
+}
+
+// cloneVisits returns a shallow copy of the visits map, or nil if the input is nil.
+func cloneVisits(v map[string]int) map[string]int {
+	if v == nil {
+		return nil
+	}
+	out := make(map[string]int, len(v))
+	for k, c := range v {
+		out[k] = c
+	}
+	return out
 }
 
 func (e *Engine) bootstrapSessionsForResume(ctx context.Context, sessions *plugin.SessionManager, startStep string) error {

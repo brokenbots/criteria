@@ -116,6 +116,7 @@ func runApplyLocal(ctx context.Context, opts applyOptions) error { //nolint:funl
 	}
 
 	runID := uuid.NewString()
+	var eng *engine.Engine // captured by checkpointFn closure below
 	checkpointFn := func(step string, attempt int) {
 		cp := &StepCheckpoint{
 			RunID:        runID,
@@ -124,6 +125,9 @@ func runApplyLocal(ctx context.Context, opts applyOptions) error { //nolint:funl
 			CurrentStep:  step,
 			Attempt:      attempt,
 			StartedAt:    time.Now().UTC(),
+		}
+		if eng != nil {
+			cp.Visits = eng.VisitCounts()
 		}
 		if cpErr := WriteStepCheckpoint(cp); cpErr != nil {
 			log.Warn("failed to write step checkpoint; crash recovery may not work", "error", cpErr)
@@ -158,7 +162,7 @@ func runApplyLocal(ctx context.Context, opts applyOptions) error { //nolint:funl
 	// src (raw HCL bytes) is consumed only by server mode for signed payload delivery;
 	// local mode has no signing step, so src is intentionally unused here.
 	_ = src
-	eng := engine.New(graph, loader, tracker,
+	eng = engine.New(graph, loader, tracker,
 		engine.WithVarOverrides(parseVarOverrides(opts.varOverrides)),
 		engine.WithWorkflowDir(filepath.Dir(opts.workflowPath)),
 	)
@@ -280,6 +284,7 @@ func drainResumeCycles(ctx context.Context, log *slog.Logger, loader plugin.Load
 		sink.ClearPaused()
 		resumedEng := engine.New(graph, loader, sink,
 			engine.WithResumedVars(eng.VarScope()),
+			engine.WithResumedVisits(eng.VisitCounts()),
 			engine.WithResumePayload(resumeMsg.Payload),
 			engine.WithWorkflowDir(filepath.Dir(opts.workflowPath)),
 		)
@@ -498,6 +503,7 @@ func drainLocalResumeCycles(ctx context.Context, log *slog.Logger, graph *workfl
 		tracker.ClearPaused()
 		resumedEng := engine.New(graph, loader, tracker,
 			engine.WithResumedVars(eng.VarScope()),
+			engine.WithResumedVisits(eng.VisitCounts()),
 			engine.WithResumePayload(payload),
 			engine.WithWorkflowDir(filepath.Dir(opts.workflowPath)),
 		)
@@ -643,26 +649,7 @@ func resumeOneLocalRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint
 		return
 	}
 
-	checkpointFn := func(step string, attempt int) {
-		next := *cp
-		next.CurrentStep = step
-		next.Attempt = attempt
-		next.StartedAt = time.Now().UTC()
-		if cpErr := WriteStepCheckpoint(&next); cpErr != nil {
-			log.Warn("failed to update local checkpoint", "run_id", cp.RunID, "error", cpErr)
-		}
-	}
-	baseSink := buildLocalSink(cp.RunID, out, mode, graph.StepOrder(), checkpointFn)
-	tracker := &pauseTracker{
-		Sink: baseSink,
-		PauseCheckpointFn: func(node string) {
-			checkpointFn(node, 0)
-		},
-	}
-	tracker.OnStepResumed(cp.CurrentStep, nextAttempt, "criteria_restart")
-
-	opts := applyOptions{workflowPath: cp.WorkflowPath}
-	eng := engine.New(graph, loader, tracker, engine.WithWorkflowDir(filepath.Dir(cp.WorkflowPath)))
+	opts, tracker, eng := buildReattachTrackerAndEngine(cp, log, graph, loader, out, mode, nextAttempt)
 	if runErr := eng.RunFrom(ctx, cp.CurrentStep, nextAttempt); runErr != nil {
 		log.Error("resumed local run failed", "run_id", cp.RunID, "error", runErr)
 		RemoveStepCheckpoint(cp.RunID)
@@ -677,4 +664,35 @@ func resumeOneLocalRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint
 	}
 	log.Info("resumed local run completed", "run_id", cp.RunID)
 	RemoveStepCheckpoint(cp.RunID)
+}
+
+// buildReattachTrackerAndEngine wires the checkpoint sink, pause tracker, and
+// engine for a crash-reattach run. The checkpointFn closure captures eng so
+// that each checkpoint write includes the current visit counts (W07).
+func buildReattachTrackerAndEngine(cp *StepCheckpoint, log *slog.Logger, graph *workflow.FSMGraph, loader plugin.Loader, out io.Writer, mode outputMode, nextAttempt int) (applyOptions, *pauseTracker, *engine.Engine) {
+	opts := applyOptions{workflowPath: cp.WorkflowPath}
+	var eng *engine.Engine // captured by checkpointFn; assigned below before any callbacks fire
+	checkpointFn := func(step string, attempt int) {
+		next := *cp
+		next.CurrentStep = step
+		next.Attempt = attempt
+		next.StartedAt = time.Now().UTC()
+		if eng != nil {
+			next.Visits = eng.VisitCounts()
+		}
+		if cpErr := WriteStepCheckpoint(&next); cpErr != nil {
+			log.Warn("failed to update local checkpoint", "run_id", cp.RunID, "error", cpErr)
+		}
+	}
+	baseSink := buildLocalSink(cp.RunID, out, mode, graph.StepOrder(), checkpointFn)
+	tracker := &pauseTracker{
+		Sink:              baseSink,
+		PauseCheckpointFn: func(node string) { checkpointFn(node, 0) },
+	}
+	tracker.OnStepResumed(cp.CurrentStep, nextAttempt, "criteria_restart")
+	eng = engine.New(graph, loader, tracker,
+		engine.WithWorkflowDir(filepath.Dir(cp.WorkflowPath)),
+		engine.WithResumedVisits(cp.Visits),
+	)
+	return opts, tracker, eng
 }
