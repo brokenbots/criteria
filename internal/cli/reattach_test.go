@@ -480,6 +480,48 @@ func TestBuildServerSink(t *testing.T) {
 	}
 }
 
+// TestBuildServerSink_VisitsPersisted verifies that when buildServerSink
+// receives a non-nil getVisits callback, the visits returned by that callback
+// are written into the StepCheckpoint. This ensures the server checkpoint
+// write path cannot regress to dropping visit counts silently.
+func TestBuildServerSink_VisitsPersisted(t *testing.T) {
+	stateDir := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", stateDir)
+
+	wfFile := writeWorkflowFile(t, minimalWorkflow)
+	graph, err := parseWorkflowFromPath(wfFile)
+	if err != nil {
+		t.Fatalf("parseWorkflowFromPath: %v", err)
+	}
+
+	wantVisits := map[string]int{"build": 2, "test": 1}
+	c := newOfflineClient(t)
+	sink := buildServerSink(c, "run-srv-visits", graph, wfFile, "http://srv", discardLogger(),
+		func() map[string]int { return wantVisits })
+
+	sink.CheckpointFn("build", 3)
+
+	checkpoints, err := ListStepCheckpoints()
+	if err != nil {
+		t.Fatalf("ListStepCheckpoints: %v", err)
+	}
+	var found *StepCheckpoint
+	for _, cp := range checkpoints {
+		if cp.RunID == "run-srv-visits" {
+			found = cp
+			break
+		}
+	}
+	if found == nil {
+		t.Fatal("checkpoint for run-srv-visits not found")
+	}
+	for step, want := range wantVisits {
+		if got := found.Visits[step]; got != want {
+			t.Errorf("Visits[%q] = %d; want %d", step, got, want)
+		}
+	}
+}
+
 // TestResumeOneLocalRun_HappyPath verifies that a local checkpoint is resumed
 // and the checkpoint file is cleaned up after successful completion.
 func TestResumeOneLocalRun_HappyPath(t *testing.T) {

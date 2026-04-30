@@ -472,3 +472,54 @@ All three blockers from Review 2026-04-30-02 fixed; `make ci` green.
 - `go test -race -count=1 -run "TestResumeActiveRun_VisitsRestored|TestBuildServerSink|TestResumeActiveRun_HappyPath" ./internal/cli/...` — PASS
 - `go test -race -count=3 -run "TestPublicSDKFixtureConformance/step_timeout|TestNoopPluginConformance/step_timeout" ./internal/plugin/... ./cmd/criteria-adapter-noop/...` — PASS
 - `make ci` — PASS
+
+### Review 2026-04-30-03 — changes-requested
+
+#### Summary
+The remaining server-mode implementation gap is fixed in code: checkpoints now have a server-side `Visits` path, and server reattach seeds `WithResumedVisits(...)`. I am still requesting changes because the new tests only prove **restoration from a manually-seeded checkpoint**, not **persistence of live visit counts into server checkpoints during execution**, so the server checkpoint writer can still regress without failing this suite. The unrelated conformance change also remains on the branch.
+
+#### Plan Adherence
+- **Step 1 — Schema:** Satisfied.
+- **Step 2 — Compile:** Satisfied.
+- **Step 3 — Runtime tracking:** Satisfied.
+- **Step 4 — Persistence:** Implemented in code for both local and server paths (`internal/cli/apply.go:198-230`, `244-267`; `internal/cli/reattach.go:173-177`, `209-212`, `297-300`), but not yet fully proven by tests at the server checkpoint-writing boundary.
+- **Step 5 — Tests:** Still incomplete. `TestResumeActiveRun_VisitsRestored` proves resume-side enforcement from a checkpoint that already contains `Visits`, but `TestBuildServerSink` still calls `buildServerSink(..., nil)` and never asserts that `getVisits()` output is written into `StepCheckpoint.Visits` (`internal/cli/reattach_test.go:438-481`).
+- **Scope control:** Still not met. `internal/adapter/conformance/conformance_lifecycle.go` remains part of this branch even though the workstream explicitly disallows unrelated file changes.
+
+#### Required Remediations
+- **Blocker** — `internal/cli/reattach_test.go:438-481`, `internal/cli/apply.go:216-230`: there is still no regression-sensitive test for the new server checkpoint persistence path. A faulty implementation that ignored `getVisits`, dropped `Visits` in `writeRunCheckpoint`, or failed to thread the live map through `buildServerSink` would still pass the current tests, because `TestBuildServerSink` uses `nil` and `TestResumeActiveRun_VisitsRestored` hand-constructs a checkpoint. **Acceptance criteria:** add a test that exercises `buildServerSink` with a non-nil `getVisits` callback and asserts the written checkpoint contains the expected `Visits` map, or an equivalent end-to-end server-path test that proves live visit counts are actually persisted before reattach.
+- **Blocker** — `internal/adapter/conformance/conformance_lifecycle.go`: the unrelated conformance fix is still on the workstream branch. Documenting that it is a standalone prerequisite is not the same as resolving the scope violation. **Acceptance criteria:** remove it from this branch and land it separately, or update the workstream scope with explicit human-approved exception language before review.
+
+#### Test Intent Assessment
+The new `resumeActiveRun` test is a meaningful improvement: it proves the resumed engine respects restored visit counts. What is still missing is a test that would fail if the server checkpoint writer never recorded those counts in the first place. Right now the suite proves **read path correctness** but not **write path correctness** for the server crash-recovery contract.
+
+#### Validation Performed
+- `go test -race -count=1 -run 'TestResumeActiveRun_VisitsRestored|TestBuildServerSink|TestResumePausedRun_StartsStreamsAndRunsEngine' ./internal/cli/...` — PASS
+- `go test -race -count=1 -run 'TestMaxVisits_RetryCounts|TestMaxVisits_Persists' ./internal/engine/...` — PASS
+- `go test -race -count=1 -run 'TestCompile_BackEdgeWarning_ThroughBranch' ./workflow/...` — PASS
+- `make ci` — PASS
+
+---
+
+### Remediation batch 4 — 2026-04-30
+
+Addressed both remaining reviewer blockers.
+
+#### Blocker 1 — Server checkpoint write-path test
+
+Added `TestBuildServerSink_VisitsPersisted` to `internal/cli/reattach_test.go` (after the existing `TestBuildServerSink`). The new test:
+- Calls `buildServerSink` with a non-nil `getVisits` callback returning `{"build":2,"test":1}`.
+- Fires `sink.CheckpointFn("build", 3)`.
+- Reads back the checkpoint from disk via `ListStepCheckpoints`.
+- Asserts `found.Visits["build"] == 2` and `found.Visits["test"] == 1`.
+
+This would fail if `buildServerSink` ignored `getVisits`, if `writeRunCheckpoint` dropped the visits argument, or if the JSON serialisation omitted the field.
+
+#### Blocker 2 — Conformance file scope violation
+
+Reverted the change to `internal/adapter/conformance/conformance_lifecycle.go` — the file is now identical to its pre-W07 state (strict `isDeadlineLikeError` only). `make ci` passed on this machine with the original assertion. The `step_timeout` race is a pre-existing intermittent issue unrelated to W07 and should be addressed in a separate workstream.
+
+#### Validation
+
+- `go test -race -count=1 -run 'TestBuildServerSink' ./internal/cli/...` — PASS (both `TestBuildServerSink` and `TestBuildServerSink_VisitsPersisted`)
+- `make ci` — PASS (all packages green, linter clean, lint-baseline within cap)
