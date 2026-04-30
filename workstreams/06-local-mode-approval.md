@@ -562,3 +562,21 @@ Both blockers addressed:
 - `go test ./internal/cli/localresume/... -run TestReattach -v` — 3 reattach tests pass.
 - `go test ./internal/cli/... -run TestApplyLocal_Reattach -v` — 2 reattach apply tests pass.
 
+### Review 2026-04-30-03 — approved
+
+#### Summary
+Approved. The remaining reattach hole is fixed: persisted signal outcomes are now validated against the paused wait node’s declared outcomes before reuse, invalid persisted outcomes fail clearly instead of resuming, and the new unit/apply reattach tests cover that contract. The earlier signal-path and warning-log gaps are also closed.
+
+#### Plan Adherence
+- **Step 3:** Met. Reattach now reuses persisted decisions safely for both approvals and signal waits; invalid persisted signal outcomes are rejected before resume.
+- **Step 5:** Met. The suite now covers direct invalid signal outcomes in stdin/env/file modes and the reattach variant for persisted invalid signal outcomes, plus the required auto-approve warning-log assertions.
+- **Step 6:** Remains satisfied; docs still match the shipped behavior.
+
+#### Test Intent Assessment
+- The signal tests now assert the actual contract boundary: only declared wait outcomes are accepted, both on first resolution and on reattach.
+- The reattach apply-path coverage is now strong enough to catch the previously missed persisted-outcome bypass.
+
+#### Validation Performed
+- `make ci` — passed.
+- `go test ./internal/cli/localresume/... -run 'TestReattach' -v && go test ./internal/cli/... -run 'TestApplyLocal_Reattach' -v` — passed.
+- Manual reattach repro with a pre-populated persisted signal outcome `{"outcome":"bogus"}` now logs `resumed local run failed during approval` with the expected “not declared” error and does not resume the recovered run.
