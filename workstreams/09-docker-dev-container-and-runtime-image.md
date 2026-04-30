@@ -254,19 +254,19 @@ It may **not** modify any code under `internal/`, `cmd/`, `workflow/`,
 
 ## Tasks
 
-- [ ] Author `Dockerfile.runtime` (multi-stage; non-root user; entry
+- [x] Author `Dockerfile.runtime` (multi-stage; non-root user; entry
       point `criteria`).
-- [ ] Author `.devcontainer/devcontainer.json` and
+- [x] Author `.devcontainer/devcontainer.json` and
       `.devcontainer/Dockerfile`.
-- [ ] Update `.dockerignore`.
-- [ ] Add `make docker-runtime` and `make docker-runtime-smoke`
+- [x] Update `.dockerignore`.
+- [x] Add `make docker-runtime` and `make docker-runtime-smoke`
       targets.
-- [ ] Run `make docker-runtime-smoke` locally; confirm exit 0.
-- [ ] Author `docs/runtime/docker.md`.
-- [ ] Add the pointer line to `docs/plugins.md`.
-- [ ] Verify the dev container opens cleanly in VS Code and `make
+- [x] Run `make docker-runtime-smoke` locally; confirm exit 0.
+- [x] Author `docs/runtime/docker.md`.
+- [x] Add the pointer line to `docs/plugins.md`.
+- [x] Verify the dev container opens cleanly in VS Code and `make
       ci` runs inside it.
-- [ ] `make ci` green on the host (independent of the container).
+- [x] `make ci` green on the host (independent of the container).
 
 ## Exit criteria
 
@@ -303,3 +303,114 @@ step is the durable signal that the Dockerfile stays buildable.
 | `${CRITERIA_PLUGINS}` defaults inside the container conflict with the operator's host expectations | Document explicitly: inside the container the plugins live at `/home/criteria/.criteria/plugins/` and are baked in. Operators can override via `--env CRITERIA_PLUGINS=/workspace/plugins -v ./plugins:/workspace/plugins`. |
 | The smoke test workflow chokes on Alpine's `sh` (busybox) for shell-adapter steps | `examples/hello.hcl` is a noop-flavored example and does not exercise shell. If a future smoke test needs `bash`, switch the runtime base to a Debian slim. Acceptable for v0.3.0 to skip shell-heavy smoke tests. |
 | The non-root UID conflicts with a host volume's ownership | Document: operators who mount a host directory must `chown -R 10001:10001` the dir or run with `--user $(id -u):$(id -g)`. This is standard Docker pain; not unique to Criteria. |
+
+## Reviewer notes (batch 1)
+
+- Added `Dockerfile.runtime` with a multi-stage build (`golang:1.26-alpine` -> `alpine:3.20`), `CGO_ENABLED=0`, non-root runtime user `criteria` (UID 10001), `WORKDIR /workspace`, and `ENTRYPOINT ["/usr/local/bin/criteria"]`.
+- Runtime image includes `ca-certificates` and `git`; adapter binaries are copied to `/usr/local/bin/` and baked into `/home/criteria/.criteria/plugins/`.
+- Added Make targets:
+  - `make docker-runtime`
+  - `make docker-runtime-smoke`
+- Added `.devcontainer/devcontainer.json` and `.devcontainer/Dockerfile` using the Go 1.26 devcontainer base, Docker-in-Docker feature, and `postCreateCommand: make bootstrap`.
+- Devcontainer image now ensures writable Go module/build caches for `vscode` (`/go` and `/home/vscode/.cache`) so `make ci` works inside the container.
+
+### Validation executed
+
+- `make docker-runtime-smoke` ✅
+  - Workflow `examples/hello.hcl` completed successfully inside the runtime image (`finalState":"done","success":true`).
+- `docker run --rm --entrypoint id criteria/runtime:dev -u` ✅
+  - Output: `10001`.
+- `docker build -t criteria/devcontainer:dev -f .devcontainer/Dockerfile .` ✅
+- `docker run --rm -v "$PWD:/workspace" -w /workspace criteria/devcontainer:dev bash -lc 'make ci'` ✅
+- `make ci` (host) ✅
+
+## Reviewer notes (batch 2)
+
+- Added `docs/runtime/docker.md` with the required four sections:
+  - What this is (interim whole-process Docker sandbox).
+  - What this is not (explicitly distinguishes Phase 3 environment plugs and Phase 4 OS-level isolation, with `PLAN.md` link).
+  - How to use it (`docker run ... criteria/runtime:<tag> apply /workspace/<file>.hcl` with workspace mount).
+  - Known limitations (shell semantics, networking/GPU notes, approval/signal-wait mounting note, UID `10001` volume ownership guidance).
+- Added the required top-of-file pointer sentence to `docs/plugins.md` before the first `##` heading:
+  - `For containerized execution, see [docs/runtime/docker.md](runtime/docker.md).`
+- Addressed reviewer nit by pinning Buf install in `.devcontainer/Dockerfile`:
+  - `github.com/bufbuild/buf/cmd/buf@v1.68.4` (replaces `@latest`).
+
+### Validation executed (batch 2)
+
+- `docker build -t criteria/devcontainer:dev -f .devcontainer/Dockerfile .` ✅
+- `docker run --rm criteria/devcontainer:dev buf --version` ✅ (`1.68.4`)
+- `docker run --rm -v "$PWD:/workspace" -w /workspace criteria/devcontainer:dev bash -lc 'make ci'` ✅
+- `make docker-runtime-smoke` ✅
+- `make ci` (host) ✅
+
+## Reviewer Notes
+
+### Review 2026-04-29 — changes-requested
+
+#### Summary
+
+The Dockerfile, devcontainer, `.dockerignore`, and Makefile targets are well-implemented and functionally validated. The runtime image passes all container-level requirements: non-root UID 10001, correct entrypoint, no CMD, CGO_ENABLED=0 static binaries, plugins baked into the correct discovery path, and the smoke test exits 0 with `"finalState":"done","success":true`. However, **two exit criteria are unmet**: `docs/runtime/docker.md` does not exist, and the `docs/plugins.md` pointer has not been added. These are hard blockers — the workstream cannot be approved until they are delivered. One additional nit must also be addressed before approval.
+
+#### Plan Adherence
+
+- Step 1 (Dockerfile.runtime): ✅ Implemented. Multi-stage build, `golang:1.26-alpine` / `alpine:3.20`, `CGO_ENABLED=0`, non-root user `criteria` UID 10001, `ca-certificates` + `git`, adapters baked into `/home/criteria/.criteria/plugins/`, `ENTRYPOINT ["/usr/local/bin/criteria"]`, no `CMD`, `WORKDIR /workspace`. Matches spec exactly.
+- Step 2 (.devcontainer): ✅ Implemented. `devcontainer.json` uses correct base, Go 1.26 feature, Docker-in-Docker feature, `postCreateCommand: make bootstrap`, Go extension. `.devcontainer/Dockerfile` installs `ca-certificates`, `curl`, `git`, `make`, and `buf`. Cache dirs for `vscode` are pre-created.
+- Step 3 (Makefile targets): ✅ `docker-runtime` and `docker-runtime-smoke` added; both are in `.PHONY`.
+- Step 4 (Smoke test): ✅ `make docker-runtime-smoke` exits 0. Full expected output documented in executor's batch-1 notes.
+- Step 5 (docs/runtime/docker.md + docs/plugins.md pointer): ❌ **Neither delivered.** Tasks remain unchecked; neither file was created/modified. This is a hard exit criterion failure.
+- Step 6 (.dockerignore): ✅ Excludes all plan-required paths (`bin/`, `.git/`, `tech_evaluations/`, `cover*.out`, `tmp/`, `node_modules/`).
+- Exit criterion — VS Code "Reopen in Container": The executor performed the functional equivalent (built the devcontainer image and ran `make ci` inside it via `docker run`). The actual VS Code UI flow cannot be exercised in a CLI environment; the functional validation is accepted as equivalent for review purposes.
+
+#### Required Remediations
+
+- **[BLOCKER] `docs/runtime/docker.md` missing.**
+  File path: `docs/runtime/docker.md` (new).
+  Required per Step 5 and an explicit exit criterion. Must cover: (1) what this is — whole-process Docker sandbox; (2) what this is not — environment plug (Phase 3) / OS-level isolation (Phase 4), with links to PLAN.md; (3) how to use it — `docker run criteria/runtime:<tag> apply /workspace/<file>.hcl` with volume mount, no host filesystem access outside the mount, custom plugins require rebuilding; (4) known limitations — Alpine shell semantics, no GPU, no host network by default, approval/signal-wait nodes via W06 local-mode, operators must `chown -R 10001:10001` volumes or use `--user`.
+  Acceptance: file exists, covers all four required sections, clearly names Docker as interim sandbox, distinguishes environment-plug Phase 3 and OS-level Phase 4 by name, links to PLAN.md.
+
+- **[BLOCKER] `docs/plugins.md` pointer missing.**
+  File path: `docs/plugins.md` (existing, line 1 area).
+  Required per Step 5: add a one-line pointer at the top of the file: _"For containerized execution, see [docs/runtime/docker.md](runtime/docker.md)."_
+  Acceptance: `docs/plugins.md` contains the exact pointer sentence before its first `##` heading.
+
+- **[NIT] `buf` installed at `@latest` in `.devcontainer/Dockerfile`.**
+  File: `.devcontainer/Dockerfile`, line 9: `go install github.com/bufbuild/buf/cmd/buf@latest`.
+  `@latest` is non-deterministic across devcontainer rebuilds. Pin to the specific `buf` version already exercised by the repo's `buf.yaml` / CI (identify via `buf --version` in CI or `buf.yaml` required-version if set).
+  Acceptance: `@latest` is replaced with a pinned semver tag (e.g., `v1.X.Y`).
+
+#### Test Intent Assessment
+
+This workstream explicitly defers Go tests in favour of container-level smoke verification. The smoke test is meaningful: it exercises the real binary, plugin discovery, the shell adapter, and event emission end-to-end inside the runtime image. The output includes structured event JSON including `StepLog`, `StepOutcome`, `StepOutputCaptured`, `StepTransition`, and `RunCompleted` with `"success":true`. That is sufficient behavioural evidence for the stated scope. No Go test additions are required or expected per the workstream.
+
+#### Validation Performed
+
+- `make ci` (host): exit 0 ✅
+- `make docker-runtime-smoke`: exit 0 ✅. Observed output: StepLog `"hello from criteria"`, RunCompleted `"finalState":"done","success":true`.
+- `docker run --rm --entrypoint id criteria/runtime:dev -u`: `10001` ✅
+- `docker run --rm --entrypoint id criteria/runtime:dev -un`: `criteria` ✅
+- `docker inspect criteria/runtime:dev` — User: `criteria`, WorkingDir: `/workspace`, Entrypoint: `[/usr/local/bin/criteria]`, Cmd: null ✅
+
+### Review 2026-04-29-02 — approved
+
+#### Summary
+
+All three required remediations from the first review are resolved. `docs/runtime/docker.md` exists and covers all four required sections (what it is, what it isn't with explicit Phase 3 / Phase 4 distinction and PLAN.md link, how to use it, known limitations). The `docs/plugins.md` pointer appears correctly before the first `##` heading. `buf` is pinned to `v1.68.4` in `.devcontainer/Dockerfile`. Every exit criterion is met; all task checkboxes are complete. This workstream is approved.
+
+#### Plan Adherence
+
+- Step 1 (Dockerfile.runtime): ✅ Unchanged; confirmed correct from prior review.
+- Step 2 (.devcontainer): ✅ `buf` now pinned to `v1.68.4`; all other fields unchanged and correct.
+- Step 3 (Makefile targets): ✅ Unchanged; confirmed correct.
+- Step 4 (Smoke test): ✅ `make docker-runtime-smoke` independently re-verified; exits 0, `"finalState":"done","success":true`.
+- Step 5 (docs): ✅ `docs/runtime/docker.md` created with all four sections; PLAN.md link via `../../PLAN.md` is path-correct. `docs/plugins.md` pointer added after `# heading`, before first `##` section, matching acceptance criteria.
+- Step 6 (.dockerignore): ✅ Unchanged; confirmed correct.
+- All tasks: all nine task checkboxes marked complete by executor.
+
+#### Validation Performed
+
+- `make ci` (host): exit 0 ✅
+- `make docker-runtime-smoke`: exit 0 ✅. Output: `"finalState":"done","success":true`.
+- `docs/runtime/docker.md` content verified: four required sections present, Phase 3 and Phase 4 named explicitly, links to PLAN.md ✅
+- `docs/plugins.md` pointer present before first `##` heading ✅
+- `.devcontainer/Dockerfile` line 9: `buf@v1.68.4` (pinned) ✅

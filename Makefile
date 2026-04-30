@@ -1,5 +1,5 @@
 .PHONY: help bootstrap tidy build plugins proto proto-lint proto-check-drift \
-	test test-cover test-conformance test-flake-watch lint-imports lint-go lint-baseline-check lint validate example-plugin bench ci clean
+	test test-cover test-conformance test-flake-watch lint-imports lint-go lint-baseline-check lint validate example-plugin bench docker-runtime docker-runtime-smoke ci clean
 
 # Default target: list available targets.
 help:
@@ -25,6 +25,13 @@ plugins: ## Build adapter plugin binaries (output: bin/criteria-adapter-*)
 			go build -o bin/$$name $$d; \
 		fi; \
 	done
+
+docker-runtime: ## Build the operator runtime image (Dockerfile.runtime)
+	docker build -t criteria/runtime:dev -f Dockerfile.runtime .
+
+docker-runtime-smoke: docker-runtime ## Run a workflow inside the runtime image
+	docker run --rm -v "$$PWD/examples:/workspace/examples:ro" \
+		criteria/runtime:dev apply /workspace/examples/hello.hcl
 
 proto: ## Regenerate Go bindings from proto files (requires buf)
 	buf generate

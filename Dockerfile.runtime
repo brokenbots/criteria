@@ -1,0 +1,36 @@
+# syntax=docker/dockerfile:1.7
+
+FROM golang:1.26-alpine AS build
+
+WORKDIR /src
+
+RUN apk add --no-cache make git
+
+ENV CGO_ENABLED=0
+
+COPY . .
+
+RUN go work sync \
+    && make build \
+    && make plugins \
+    && mkdir -p /out/bin \
+    && cp -a bin/. /out/bin/
+
+FROM alpine:3.20
+
+RUN apk add --no-cache ca-certificates git \
+    && addgroup -S -g 10001 criteria \
+    && adduser -S -D -h /home/criteria -u 10001 -G criteria criteria \
+    && mkdir -p /workspace /home/criteria/.criteria/plugins \
+    && chown -R criteria:criteria /workspace /home/criteria
+
+COPY --from=build /out/bin/ /usr/local/bin/
+
+RUN cp /usr/local/bin/criteria-adapter-* /home/criteria/.criteria/plugins/ \
+    && chown criteria:criteria /home/criteria/.criteria/plugins/criteria-adapter-*
+
+ENV HOME=/home/criteria
+
+USER criteria
+WORKDIR /workspace
+ENTRYPOINT ["/usr/local/bin/criteria"]
