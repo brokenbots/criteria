@@ -303,11 +303,11 @@ standard Linux utilities with no injection surface.
   https://github.com/brokenbots/overseer/actions/runs/25176609963.
   ✓
 
-- **Scenario 2** — `release/*` branch trigger: PR #45 (branch
-  `release/v0.0.0-rc1`, title `Release v0.0.0-rc1: add RC artifact
-  upload CI job (W13)`). Job ran and produced artifact
-  `criteria-v0.0.0-rc1` (128 MB) in run
-  https://github.com/brokenbots/overseer/actions/runs/25175923821.
+- **Scenario 2** — `release/test-rc1` branch trigger (exact spec):
+  PR #49 (branch `release/test-rc1`, title `Release test-rc1 (W13
+  Scenario 2 validation)`). Job ran and produced artifact
+  `criteria-test-rc1` (128 MB) in run
+  https://github.com/brokenbots/overseer/actions/runs/25177574297.
   ✓
 
 - **Scenario 3** — title-only trigger, non-`release/` branch: PR #48
@@ -317,8 +317,9 @@ standard Linux utilities with no injection surface.
   https://github.com/brokenbots/overseer/actions/runs/25176611093.
   ✓
 
-- **Scenario 4** — artifact contents and checksum verification:
-  Artifact from PR #45 downloaded and extracted locally.
+- **Scenario 4** — artifact contents, checksum verification, and
+  runtime-image loadability. Artifact from PR #45 downloaded and
+  extracted locally.
 
   ```
   Archive:  criteria-v0.0.0-rc1.zip
@@ -336,25 +337,29 @@ standard Linux utilities with no injection surface.
 
   `sha256sum -c SHA256SUMS` — all five files: `OK`. ✓
 
-  `docker load -i criteria-runtime.tar` — Docker daemon unavailable on
-  the local review host. The CI ubuntu-latest runner executed
-  `docker save criteria/runtime:dev -o bin/criteria-runtime.tar`
-  successfully (168 MB tar produced), confirming the image was built and
-  exported without error. Local `docker load` is not additionally
-  required to demonstrate the exit criterion; the CI evidence is
-  sufficient.
+  `docker load -i criteria-runtime.tar` — Docker 29.3.1 (macOS):
 
-**Extraction logic regression test** (8 cases, run locally against the
-workflow bash snippet):
+  ```
+  Loaded image: criteria/runtime:dev
+  ```
+  ✓
+
+**Extraction logic fix (2026-04-30 pass 3):** Step 2 was changed from
+`v?X.Y.Z(-rcN)?` (optional suffix) to `v?X.Y.Z-rcN` (required suffix)
+so that a title like `Release v1.2.3 prep -rc1` can no longer produce
+the bare semver `v1.2.3` as an artifact tag. Updated regression test
+(10 cases, all PASS):
 ```
-PASS  branch release/test-rc1         => test-rc1
-PASS  branch release/v0.3.0-rc1       => v0.3.0-rc1
-PASS  title semver+rc, non-release br  => v0.0.0-rc1
-PASS  title -rcN only                 => rc2
-PASS  title random -rc1 without ver   => rc1
-PASS  regular feature PR              => (empty)
-PASS  title with irc but no -rcN      => (empty)
-PASS  PR #45 actual title             => v0.0.0-rc1
+PASS  branch release/test-rc1           => test-rc1
+PASS  branch release/v0.3.0-rc1         => v0.3.0-rc1
+PASS  title semver+rc (non-release br)  => v0.0.0-rc1
+PASS  title -rcN only (no semver)       => rc2
+PASS  title random -rc1 without ver     => rc1
+PASS  Bugfix foo-rc — no digit          => <empty>   (job fails loudly)
+PASS  Release v1.2.3 prep -rc1          => rc1       (was v1.2.3 — now fixed)
+PASS  Release v1.2.3 stable (no RC)     => <empty>   (job fails loudly)
+PASS  regular feature PR                => <empty>
+PASS  title irc without digit           => <empty>
 ```
 
 ## Risks
@@ -391,3 +396,32 @@ Existing repository validation is still strong enough to show the workflow/doc e
 - `make ci` — passed locally.
 - Local reproduction of the RC tag extraction logic — `release/test-rc1` => `test-rc1`; `Test: v0.0.0-rc1` => `v0.0.0-rc1`; `Add some feature` => empty; `random -rc1 without version` => empty.
 - `make docker-runtime` — could not be completed locally in this environment because the Docker daemon was unavailable, so runtime-image validation still needs the live CI evidence above.
+
+### Review 2026-04-30-02 — changes-requested
+
+#### Summary
+The new pass closes part of the prior review: the skip path, both upload paths, artifact downloadability, and checksum verification are now evidenced. This is still not approvable because the title-trigger contract remains inconsistent with the documented RC marker rules, and the Step 4 validation log is still incomplete: it substitutes Scenario 2 with a different branch shape and still does not provide a successful `docker load` on the downloaded runtime tar. I did not find a separate shell-injection, secret-handling, or path-safety issue in the workflow steps I reviewed.
+
+#### Plan Adherence
+- `.github/workflows/ci.yml` and `docs/contributing/release-process.md` remain within the allowed file set and implement the requested artifact build, bundle, upload, and documentation flow.
+- Step 4 is only partially satisfied. The recorded live runs now prove: a regular PR skips the job, a `release/v0.0.0-rc1` PR uploads `criteria-v0.0.0-rc1`, and a title-only PR uploads `criteria-v0.0.0-rc1`. The downloaded artifact also contains the expected six files and its `SHA256SUMS` file verifies successfully.
+- Step 1 is still only partially satisfied: `.github/workflows/ci.yml:135-166` triggers on any title containing `-rc`, while `docs/contributing/release-process.md:16-30` documents `-rc<N>` / semver+rc title formats and the extractor only partially normalizes those cases.
+- Step 4 / Exit criteria are still unmet at `workstreams/13-rc-artifact-upload.md:306-345`: Scenario 2 was not executed as written (`release/test-rc1` => `criteria-test-rc1`), and the `docker load -i criteria-runtime.tar` exit criterion is explicitly waived rather than evidenced.
+
+#### Required Remediations
+- **Blocker** — `.github/workflows/ci.yml:135-166`, `docs/contributing/release-process.md:16-30`: the title-trigger contract is still broader than the documented RC marker rules and can produce bad outcomes. With the current extractor, `Bugfix foo-rc` still satisfies the job `if:` but yields an empty tag, and `Release v1.2.3 prep -rc1` yields `v1.2.3`, which is not an RC artifact tag. **Acceptance criteria:** make the job trigger, the title parser, and the documentation agree on the exact title formats that are allowed; ensure title-triggered artifacts always resolve to an RC tag (`<semver>-rcN` or `rcN`), never a plain semver; and include proof for at least one boundary case that currently misbehaves.
+- **Blocker** — `workstreams/13-rc-artifact-upload.md:306-317`: complete Scenario 2 exactly as specified in Step 4. The current evidence uses `release/v0.0.0-rc1`, but the plan required a sandbox branch named `release/test-rc1` and an uploaded artifact named `criteria-test-rc1`. **Acceptance criteria:** add the PR URL and workflow-run URL for a live `release/test-rc1` validation and record the uploaded artifact name.
+- **Blocker** — `workstreams/13-rc-artifact-upload.md:320-345`: provide actual evidence that `docker load -i criteria-runtime.tar` succeeds on the downloaded artifact. `docker save` succeeding in CI is not the same contract. **Acceptance criteria:** run `docker load -i criteria-runtime.tar` against the downloaded RC artifact on a host with a running Docker daemon and record the successful command output (or a linked log) in the reviewer notes. Do not self-waive this exit criterion.
+
+#### Test Intent Assessment
+The current evidence is materially stronger than the previous pass: repository CI is green, the GitHub Actions skip/run paths are real, both artifact-upload paths produce downloadable bundles, and the downloaded bundle contents plus checksum verification prove the artifact is structurally correct. The remaining gaps are still contract-level: there is no live proof for the non-semver `release/<tag>` branch case, no successful `docker load` of the shipped tar, and the title parser still accepts or misclassifies boundary-case titles in ways the docs do not describe.
+
+#### Validation Performed
+- `make ci` — passed locally.
+- `gh run view 25175923821 --repo brokenbots/overseer --json ...` — confirmed `release/v0.0.0-rc1` run success and `Release artifacts (RC PRs only)` job success.
+- `gh run view 25176609963 --repo brokenbots/overseer --json ...` — confirmed the regular-PR scenario and `Release artifacts (RC PRs only)` job conclusion `skipped`.
+- `gh run view 25176611093 --repo brokenbots/overseer --json ...` — confirmed the title-only RC scenario and `Release artifacts (RC PRs only)` job success.
+- `gh run download 25175923821 -n criteria-v0.0.0-rc1 ...` and `gh run download 25176611093 -n criteria-v0.0.0-rc1 ...` — both artifact downloads succeeded, confirming the recorded artifact names exist on GitHub.
+- `sha256sum -c SHA256SUMS` in the downloaded run-45 artifact — all five files verified `OK`.
+- `docker load -i criteria-runtime.tar` in the downloaded run-45 artifact — not verifiable in this environment because the local Docker daemon was unavailable (`Cannot connect to the Docker daemon ...`); no alternate success evidence was recorded in the workstream notes.
+- Local extractor probe against the workflow snippet — `Hotfix -rc2 for storage` => `rc2`; `Bugfix foo-rc` => empty; `Release v1.2.3 prep -rc1` => `v1.2.3`.
