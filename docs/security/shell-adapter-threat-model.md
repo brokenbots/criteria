@@ -100,22 +100,12 @@ The following capabilities are explicitly NOT delivered by this workstream:
 
 ## 6. Migration / Opt-Out
 
-The `CRITERIA_SHELL_LEGACY=1` environment variable disables **all** Phase 1
-hardening defaults:
+**`CRITERIA_SHELL_LEGACY=1` was removed in v0.3.0** as committed in the v0.2.0
+threat model. Setting the env var has no effect. The Phase 1 sandbox defaults
+are unconditional.
 
-- Full environment inheritance is restored.
-- PATH is passed through unsanitized.
-- Output capture is unbounded.
-- Working-directory confinement check is skipped (CWD assignment still applies).
-- Timeout behavior uses the step-level `timeout` attribute or caller context;
-  no hard 5-minute default is enforced (the attribute's parsed timeout is
-  still respected when set in HCL).
-
-`CRITERIA_SHELL_LEGACY=1` is a **time-boxed opt-out**, not a permanent escape
-hatch. It will be removed in the `v0.3.0` release cycle (one phase after W05
-lands). Operators who rely on it should migrate before the `v0.3.0` release
-window, which the team will announce in the CHANGELOG at least one minor version
-in advance.
+Operators who previously relied on the escape hatch should migrate using the
+following checklist:
 
 ### Migration checklist for existing workflows
 

@@ -52,9 +52,8 @@ The built-in `shell` adapter runs `input.command` via `sh -c` (Unix) or `cmd /C`
 
 ### New input attributes (W05 hardening)
 
-All attributes below are optional. `CRITERIA_SHELL_LEGACY=1` disables the security defaults
-(env allowlist, PATH sanitization, bounded capture, working-directory confinement) for a
-time-boxed migration window; it will be removed in `v0.3.0`.
+All attributes below are optional. The security defaults are unconditional;
+there is no escape hatch.
 
 | Attribute | Type | Default | Description |
 |---|---|---|---|
