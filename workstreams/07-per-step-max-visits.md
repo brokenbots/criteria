@@ -727,3 +727,47 @@ Two review threads were opened on PR #56 after the workstream completion commit.
 - Committed in `3ebf498`. Thread resolved.
 
 Validation: `make ci` — PASS (all three modules, lint, import boundaries, examples).
+
+### Review 2026-04-30-09 — changes-requested
+
+#### Summary
+The documentation correction for `max_total_steps = 0` is right, but the new `max_visits_warn_threshold` remediation does **not** meet the quality bar. Negative threshold values are now silently ignored in `workflow/compile.go`, which still accepts invalid user input without any diagnostic. That is weaker than the workstream's compile-time validation approach for adjacent fields and below the repo's error-handling bar for invalid configuration.
+
+#### Plan Adherence
+- **Step 1 — Schema:** Unchanged and still satisfied.
+- **Step 2 — Compile:** Regressed in behavior quality. The workstream defines `max_visits_warn_threshold` as an operator-facing policy field with `0` as the explicit disable value. The new change treats negative values as "invalid" in comments but silently falls back to the default threshold in code (`workflow/compile.go:123-128`), which means malformed configuration is accepted without surfacing the problem.
+- **Step 5 — Tests:** The new test only proves the silent-ignore behavior. It does not enforce a user-visible contract for invalid input handling.
+- **Step 6 — Documentation:** The `max_total_steps = 0` docs fix is correct and should stay.
+
+#### Required Remediations
+- **Blocker** — `workflow/compile.go:123-128`, `workflow/compile_steps_test.go:253-296`, `docs/workflow.md:61`: negative `max_visits_warn_threshold` values are still accepted silently. That means a typo like `-1` changes behavior without telling the operator their config is invalid. **Acceptance criteria:** reject negative `max_visits_warn_threshold` at compile time with a clear diagnostic (for example, `policy.max_visits_warn_threshold must be >= 0`), update tests to assert the compile error, and document the supported values precisely (`0` disables, positive values override, unset uses default).
+
+#### Test Intent Assessment
+The new test is regression-sensitive for the implemented behavior, but the implemented behavior is the problem. It asserts that invalid negative input is ignored, which locks in a silent-misconfiguration path rather than protecting users from it. The better contract test is one that fails compilation on negative threshold values.
+
+#### Validation Performed
+- `git --no-pager diff --unified=3 HEAD~1..HEAD -- workflow/compile.go workflow/compile_steps_test.go docs/workflow.md workstreams/07-per-step-max-visits.md` — reviewed latest remediation
+- `go test -race -count=1 -run 'TestBuildLocalCheckpointFn_VisitsPersisted|TestBuildReattachTrackerAndEngine_VisitsPersisted|TestResumeOneLocalRun_VisitsRestored|TestBuildServerSink_VisitsPersisted|TestResumeActiveRun_VisitsRestored' ./internal/cli/...` — PASS
+- `make ci` — PASS
+
+### Review 2026-04-30-09 — changes-requested (remediated)
+
+Reviewer required compile-time rejection of negative `max_visits_warn_threshold` rather than silent-ignore.
+
+**Remediation (commit 5e699b2):**
+- `workflow/compile.go`: added validation in `CompileWithOpts` — negative `MaxVisitsWarnThreshold` emits `DiagError`; reverted `newFSMGraph` guard to plain `!= nil` (validation is upstream).
+- `workflow/compile_steps_test.go`: replaced `TestCompile_BackEdgeWarning_NegativeThresholdIgnored` with `TestCompile_NegativeMaxVisitsWarnThreshold_Rejected` asserting compile error on `-1`.
+- `docs/workflow.md`: documented valid values precisely (omit=default 200, 0=disable, positive=override, negative=compile error).
+- `make ci` — PASS.
+
+### PR Thread Remediation Batch 2 — commit 4ae46bf
+
+Three additional review threads addressed:
+
+**PRRT_kwDOSOBb1s5-4QSU** (`node_step.go:runStepFromAttempt`): moved `ctx.Err()` before `incrementVisit` so cancellations do not consume a visit.
+
+**PRRT_kwDOSOBb1s5-4QSs** (`node_step.go:runWorkflowIteration`): added `ctx.Err()` guard before `incrementVisit` for workflow-type iterations.
+
+**PRRT_kwDOSOBb1s5-4QSy** (`compile_steps_test.go`): removed custom `itoa` helper; replaced all call sites with `strconv.Itoa`.
+
+All three threads resolved. `make ci` — PASS.
