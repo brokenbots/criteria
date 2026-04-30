@@ -634,3 +634,18 @@ Changed "Engine writes … Engine deletes" → "CLI writes … CLI deletes" in t
 
 #### Validation
 - `make test && make lint` — all pass, no new findings.
+
+### Review 2026-04-30-05 — approved
+
+#### Summary
+Approved. This follow-up is documentation-only and corrects wording drift rather than behavior: file-mode polling/deletion is correctly attributed to the CLI, and the package comment now reflects the resolved state dir contract (`$CRITERIA_STATE_DIR`, or `~/.criteria` by default).
+
+#### Plan Adherence
+- **Step 6:** Still met. The docs and package comment now align with the shipped implementation more precisely.
+
+#### Test Intent Assessment
+- No new behavior was introduced. The existing test and validation coverage remains sufficient for this docs-only update.
+
+#### Validation Performed
+- `make ci` — passed.
+- Diff review confirmed the only post-approval code changes were wording updates in `docs/workflow.md` and the package comment in `internal/cli/localresume/resumer.go`.
