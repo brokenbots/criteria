@@ -566,3 +566,51 @@ Five code-review threads raised post-approval; all addressed:
 - **PRRT_kwDOSOBb1s5-niUR** (`internal/plugin/policy.go:93`): Sort alias slice before `strings.Join` in `PermissionDenialSuggestion` to produce deterministic suggestion strings.
 
 `make ci` ✓ post-fix.
+
+### Review 2026-04-29-04 — changes-requested
+
+#### Summary
+The PR-thread code fixes are directionally correct and `make ci` is green, but approval is blocked on missing regression tests for the newly introduced behaviors in this pass.
+
+#### Plan Adherence
+- Prior accepted scope items (split, alias handling, denial payload fields, docs, baseline burn-down) remain satisfied.
+- New PR-thread fixes are implemented in code:
+  - nil `allow_tools` normalization in denial payload (`internal/plugin/loader.go`)
+  - deterministic alias ordering in suggestion strings (`internal/plugin/policy.go`)
+  - `_encode_error` fallback on adapter event struct encoding failure (`cmd/criteria-adapter-copilot/copilot_util.go`)
+- Test coverage is not yet updated to prove those new behaviors.
+
+#### Required Remediations
+- **[blocker] Missing test for nil `allow_tools` normalization**
+  - **Anchor:** `internal/plugin/loader.go` (deny path around `allowTools := step.AllowTools` and nil-to-empty normalization).
+  - **Issue:** No host-boundary test currently asserts that a step with `AllowTools == nil` emits `permission.denied` with an empty list (not null/missing).
+  - **Acceptance criteria:** Add a host/session-manager test that executes a deny path with nil `AllowTools` and asserts `permission.denied.data.allow_tools` is present and empty-list typed.
+
+- **[blocker] Missing test for adapter-event encode fallback**
+  - **Anchor:** `cmd/criteria-adapter-copilot/copilot_util.go` (`adapterEvent` fallback to `_encode_error`).
+  - **Issue:** No test asserts behavior when `structpb.NewStruct` fails.
+  - **Acceptance criteria:** Add a unit test that passes non-encodable data (for example, a channel value) into `adapterEvent`, then asserts:
+    1. event kind is preserved;
+    2. adapter data exists; and
+    3. `_encode_error` is present and non-empty.
+
+- **[nit] Missing deterministic-order regression test**
+  - **Anchor:** `internal/plugin/policy.go` (`sort.Strings(aliases)` in `PermissionDenialSuggestion`).
+  - **Issue:** The new deterministic-order behavior is untested.
+  - **Acceptance criteria:** Add a unit test that exercises multiple aliases for one canonical tool and asserts stable sorted output order.
+
+#### Test Intent Assessment
+Existing tests still strongly cover the original W03 acceptance behavior, but they do not currently validate the three newly introduced PR-thread fixes. That leaves realistic regression paths unguarded despite green CI.
+
+#### Validation Performed
+- `make ci` → pass.
+
+### Review 2026-04-29-04 response — all blockers resolved
+
+- **[blocker resolved] nil `allow_tools` normalization test** — Added `TestSessionManagerNilAllowToolsEmitsEmptyList` in `internal/plugin/sessions_test.go`. Sets `step.AllowTools = nil`, executes a deny path, and asserts `permission.denied.allow_tools` is present, type-asserts as `[]string`, and has length 0.
+
+- **[blocker resolved] `adapterEvent` encode-error fallback test** — Added `TestAdapterEventEncodeErrorFallback` in new `cmd/criteria-adapter-copilot/copilot_util_test.go`. Passes `map[string]any{"ch": make(chan int)}` (unencodable by structpb) into `adapterEvent("test.kind", ...)`, then asserts: event kind is `"test.kind"`, `GetAdapter().GetData()` is non-nil, and `_encode_error` field is present and non-empty.
+
+- **[nit resolved] Deterministic alias order test** — Added `TestPermissionDenialSuggestionDeterministicOrder` in `internal/plugin/policy_test.go`. Registers three aliases (`fetch_file`, `get_file`, `read_file`) for canonical kind `"read"` under a temporary `test-order` adapter entry, calls `PermissionDenialSuggestion` 20 times, and asserts all outputs are identical and contain `"fetch_file, get_file, read_file"` (sorted order).
+
+- **Validation:** `make ci` → pass.

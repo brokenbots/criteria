@@ -387,6 +387,51 @@ func TestSessionManagerCopilotAliasGrantAtHostBoundary(t *testing.T) {
 
 // TestSessionManagerDefaultDenyAll verifies that a step without allow_tools
 // denies every permission request.
+// TestSessionManagerNilAllowToolsEmitsEmptyList verifies that when a step has
+// nil AllowTools, the host normalizes it to []string{} before embedding it in
+// the permission.denied payload so the field is always present and correctly
+// typed (not JSON null, not absent).
+func TestSessionManagerNilAllowToolsEmitsEmptyList(t *testing.T) {
+	pluginBin := testutil.BuildPermissivePlugin(t)
+	loader := NewLoaderWithDiscovery(func(string) (string, error) { return pluginBin, nil })
+	t.Cleanup(func() { _ = loader.Shutdown(context.Background()) })
+
+	sm := NewSessionManager(loader)
+	if err := sm.Open(context.Background(), "agent", "permissive", OnCrashFail, nil); err != nil {
+		t.Fatalf("open: %v", err)
+	}
+
+	// AllowTools intentionally omitted (nil) — triggers the normalization path.
+	step := &workflow.StepNode{
+		Name:  "run",
+		Input: map[string]string{"perm_tools": "read_file"},
+	}
+	sink := &adapterEventCollector{}
+	if _, err := sm.Execute(context.Background(), "agent", step, sink); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+
+	denied, ok := sink.first("permission.denied")
+	if !ok {
+		t.Fatal("expected permission.denied event")
+	}
+	// allow_tools must be present and typed []string even when the step
+	// declared no AllowTools — the host normalises nil → [].
+	raw, exists := denied["allow_tools"]
+	if !exists {
+		t.Fatal("permission.denied: allow_tools field must be present when AllowTools is nil")
+	}
+	allowTools, ok := raw.([]string)
+	if !ok {
+		t.Fatalf("permission.denied allow_tools type=%T want []string", raw)
+	}
+	if len(allowTools) != 0 {
+		t.Fatalf("permission.denied allow_tools=%v want empty slice", allowTools)
+	}
+
+	_ = sm.Close(context.Background(), "agent")
+}
+
 func TestSessionManagerDefaultDenyAll(t *testing.T) {
 	pluginBin := testutil.BuildPermissivePlugin(t)
 	loader := NewLoaderWithDiscovery(func(string) (string, error) { return pluginBin, nil })

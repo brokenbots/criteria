@@ -5,6 +5,34 @@ import (
 	"testing"
 )
 
+// TestPermissionDenialSuggestionDeterministicOrder verifies that
+// PermissionDenialSuggestion always returns aliases in sorted order
+// regardless of map-iteration order.  It uses a temporary adapter
+// entry with multiple aliases mapping to the same canonical kind.
+func TestPermissionDenialSuggestionDeterministicOrder(t *testing.T) {
+	adapterPermissionAliases["test-order"] = map[string]string{
+		"get_file":   "read",
+		"read_file":  "read",
+		"fetch_file": "read",
+	}
+	t.Cleanup(func() { delete(adapterPermissionAliases, "test-order") })
+
+	const iterations = 20
+	first := PermissionDenialSuggestion("test-order", "read")
+	if first == "" {
+		t.Fatal("expected a suggestion for test-order/read")
+	}
+	for i := 1; i < iterations; i++ {
+		s := PermissionDenialSuggestion("test-order", "read")
+		if s != first {
+			t.Fatalf("non-deterministic output on iteration %d:\n  got  %q\n  want %q", i, s, first)
+		}
+	}
+	if !strings.Contains(first, "fetch_file, get_file, read_file") {
+		t.Fatalf("aliases not sorted in suggestion: %q", first)
+	}
+}
+
 func TestPolicyDefaultDeny(t *testing.T) {
 	p := NewPolicy(nil)
 	allow, reason := p.Decide(PermissionRequest{ID: "1", Tool: "read_file"})
