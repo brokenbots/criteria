@@ -710,3 +710,20 @@ The test suite is now meaningfully regression-sensitive for the shipped behavior
 - `git --no-pager diff --unified=3 HEAD~1..HEAD -- internal/cli/apply.go internal/cli/reattach_test.go workstreams/07-per-step-max-visits.md` — reviewed latest remediation
 - `go test -race -count=1 -run 'TestBuildLocalCheckpointFn_VisitsPersisted|TestBuildReattachTrackerAndEngine_VisitsPersisted|TestResumeOneLocalRun_VisitsRestored|TestBuildServerSink_VisitsPersisted|TestResumeActiveRun_VisitsRestored' ./internal/cli/...` — PASS
 - `make ci` — PASS
+
+### PR Review Thread Remediation — 2026-04-30
+
+Two review threads were opened on PR #56 after the workstream completion commit.
+
+**Thread 1** (`PRRT_kwDOSOBb1s5-3oHm`) — `workflow/compile.go:126`:
+- Reviewer: negative `max_visits_warn_threshold` was accepted without validation.
+- Fix: added `&& *spec.Policy.MaxVisitsWarnThreshold >= 0` guard so negative values are silently ignored, preserving the default of 200.
+- Test added: `TestCompile_BackEdgeWarning_NegativeThresholdIgnored` in `workflow/compile_steps_test.go`.
+- Committed in `3ebf498`. Thread resolved.
+
+**Thread 2** (`PRRT_kwDOSOBb1s5-3oIW`) — `docs/workflow.md`:
+- Reviewer: docs incorrectly said `max_total_steps = 0` means "no cap".
+- Fix: updated docs to say "If unset, or set to `0`, the default cap of `100` applies", matching `compile.go` behaviour.
+- Committed in `3ebf498`. Thread resolved.
+
+Validation: `make ci` — PASS (all three modules, lint, import boundaries, examples).
