@@ -523,3 +523,26 @@ Reverted the change to `internal/adapter/conformance/conformance_lifecycle.go` �
 
 - `go test -race -count=1 -run 'TestBuildServerSink' ./internal/cli/...` — PASS (both `TestBuildServerSink` and `TestBuildServerSink_VisitsPersisted`)
 - `make ci` — PASS (all packages green, linter clean, lint-baseline within cap)
+
+### Review 2026-04-30-04 — approved
+
+#### Summary
+The remaining blockers are resolved. The branch now proves both halves of the server crash-recovery contract: live visit counts are written into server checkpoints, and resumed execution enforces `max_visits` from restored checkpoint state. The out-of-scope conformance file is no longer part of the branch diff, so scope is back in compliance with the workstream.
+
+#### Plan Adherence
+- **Step 1 — Schema:** Implemented as specified.
+- **Step 2 — Compile:** Implemented as specified, including back-edge warnings through non-step nodes and threshold controls.
+- **Step 3 — Runtime tracking:** Implemented as specified; retries count toward `max_visits`, and workflow/iteration paths are covered.
+- **Step 4 — Persistence:** Implemented end-to-end for local and server reattach paths. Server checkpoints now carry `Visits`, and all reviewed resume paths seed `WithResumedVisits(...)`.
+- **Step 5 — Tests:** Acceptance-bar coverage is now present for decode/validation, runtime enforcement, retry counting, branch-mediated warnings, checkpoint JSON behavior, local persistence, and server reattach restoration. `TestBuildServerSink_VisitsPersisted` closes the prior server write-path gap.
+- **Step 6 — Documentation:** Updated and aligned with shipped semantics.
+
+#### Test Intent Assessment
+The final test set now exercises both the write and read sides of persistence. `TestBuildServerSink_VisitsPersisted` would fail if the server checkpoint writer ignored `getVisits` or dropped `Visits` during serialization, and `TestResumeActiveRun_VisitsRestored` would fail if restored visit counts were not enforced by the resumed engine. Together with the runtime and compile tests, this is sufficiently regression-sensitive for the workstream’s behavior and contract boundaries.
+
+#### Validation Performed
+- `go test -race -count=1 -run 'TestBuildServerSink' ./internal/cli/...` — PASS
+- `go test -race -count=1 -run 'TestResumeActiveRun_VisitsRestored|TestResumePausedRun_StartsStreamsAndRunsEngine' ./internal/cli/...` — PASS
+- `go test -race -count=1 -run 'TestMaxVisits_RetryCounts|TestMaxVisits_Persists' ./internal/engine/...` — PASS
+- `go test -race -count=1 -run 'TestCompile_BackEdgeWarning_ThroughBranch' ./workflow/...` — PASS
+- `make ci` — PASS
