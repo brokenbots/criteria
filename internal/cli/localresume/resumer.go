@@ -3,11 +3,12 @@
 // CRITERIA_LOCAL_APPROVAL environment variable:
 //
 //   - stdin       — interactive TTY prompt; reads y/yes → approved, n/no → rejected.
-//   - file        — operator writes a JSON decision file out-of-band; engine polls.
+//   - file        — operator writes a JSON decision file out-of-band; CLI polls.
 //   - env         — reads CRITERIA_APPROVAL_<NODE> / CRITERIA_SIGNAL_<NODE>.
 //   - auto-approve — auto-approves with a warning log; for unattended pipelines.
 //
-// Decisions are persisted under ~/.criteria/runs/<runID>/approvals/<node>.json
+// Decisions are persisted under the resolved state dir ($CRITERIA_STATE_DIR,
+// or ~/.criteria by default) at runs/<runID>/approvals/<node>.json
 // for reattach safety. On reattach, the persisted decision is reused without
 // re-prompting the operator.
 package localresume

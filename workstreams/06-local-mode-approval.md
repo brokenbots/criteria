@@ -623,3 +623,14 @@ Approved. The PR follow-up fixes hold up: declared signal outcomes are now repor
 - `make ci` — passed.
 - `go test ./internal/cli/... -run 'Test(ValidateNodeName|ApprovalDecisionPath_RejectsTraversal|ApprovalRequestPath_RejectsTraversal|ApplyLocal_Reattach)' -v && go test ./internal/cli/localresume/... -run 'Test(StdinMode_Approval_UnrecognizedInput_InvalidInputReason|Reattach|StdinMode_Signal_UnknownOutcome_Error)' -v` — passed.
 - Manual file-mode approval repro confirmed the checkpoint written during pause contains `current_step: "review"` for the paused approval node.
+
+### PR Review 2026-04-30-02 — doc fixes
+
+#### Thread 1 — Package comment hardcodes ~/.criteria (resumer.go:12)
+Updated to: "under the resolved state dir ($CRITERIA_STATE_DIR, or ~/.criteria by default)". Also fixed "engine polls" → "CLI polls" in the file-mode bullet.
+
+#### Thread 2 — docs/workflow.md file-mode table says "engine" (workflow.md:344)
+Changed "Engine writes … Engine deletes" → "CLI writes … CLI deletes" in the modes table.
+
+#### Validation
+- `make test && make lint` — all pass, no new findings.

@@ -341,7 +341,7 @@ By default, `approval` and `wait { signal }` nodes require an orchestrator (`--s
 | `CRITERIA_LOCAL_APPROVAL` | Behavior |
 |---|---|
 | `stdin` | Interactive TTY prompt: prints approvers, reason, and `Approve? (y/n)` to stderr. `y`/`yes` → approved; `n`/`no` → rejected; EOF → rejected with reason "non-interactive input". For signal waits, expects JSON on stdin: `{"outcome":"<name>"}`. |
-| `file` | Engine writes the request path to stderr and polls for the operator to write a decision file. Approval format: `{"decision":"approved"}` or `{"decision":"rejected","reason":"..."}`. Signal format: `{"outcome":"<name>"}`. Engine deletes the file after consumption. Default poll interval: 2s; default timeout: 1h. |
+| `file` | CLI writes the request path to stderr and polls for the operator to write a decision file. Approval format: `{"decision":"approved"}` or `{"decision":"rejected","reason":"..."}`. Signal format: `{"outcome":"<name>"}`. CLI deletes the file after consumption. Default poll interval: 2s; default timeout: 1h. |
 | `env` | Reads `CRITERIA_APPROVAL_<NODE>` (uppercase, dots/hyphens → underscores) for approvals (`approved` or `rejected`). Reads `CRITERIA_SIGNAL_<NODE>` for signal waits (outcome name, e.g. `received`). Missing or invalid → fail the run with a clear error. |
 | `auto-approve` | Logs a warning and returns `approved` for approvals; synthesizes `outcome="success"` for signal waits. **For unattended CI pipelines only — do not use in production environments.** |
 
