@@ -78,9 +78,9 @@ func errorDiagsWithFallbackSubject(in hcl.Diagnostics, expr hcl.Expression) hcl.
 			continue
 		}
 		fallback := expr.Range()
-		copy := *ed
-		copy.Subject = &fallback
-		out = append(out, &copy)
+		clone := *ed
+		clone.Subject = &fallback
+		out = append(out, &clone)
 	}
 	return out
 }
