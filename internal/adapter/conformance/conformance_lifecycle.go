@@ -88,8 +88,18 @@ func testTimeout(t *testing.T, name string, factory targetFactory, opts Options)
 	if execErr == nil {
 		t.Fatal("expected timeout error, got nil")
 	}
-	if !isDeadlineLikeError(execErr) {
-		t.Fatalf("expected deadline exceeded error, got: %v", execErr)
+	// For out-of-process plugin targets the gRPC transport may surface a
+	// deadline expiry as code=Canceled rather than code=DeadlineExceeded
+	// depending on client/server timing. Accept either cancellation-like
+	// error for plugin targets; require DeadlineExceeded for in-process ones.
+	if isPluginTarget(target) {
+		if !isCancellationLikeError(execErr) {
+			t.Fatalf("expected deadline or cancellation error, got: %v", execErr)
+		}
+	} else {
+		if !isDeadlineLikeError(execErr) {
+			t.Fatalf("expected deadline exceeded error, got: %v", execErr)
+		}
 	}
 }
 
