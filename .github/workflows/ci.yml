@@ -157,9 +157,9 @@ jobs:
           if [[ "${GITHUB_HEAD_REF}" == release/* ]]; then
             tag="${GITHUB_HEAD_REF#release/}"
           fi
-          # 2. Title: try to match a full semver+rc token (e.g. v0.3.0-rc1).
+          # 2. Title: match a full semver+rc token (e.g. v0.3.0-rc1). The -rcN suffix is required.
           if [[ -z "$tag" ]]; then
-            tag="$(echo "${PR_TITLE}" | grep -oE 'v?[0-9]+\.[0-9]+\.[0-9]+(-rc[0-9]+)?' | head -1 || true)"
+            tag="$(echo "${PR_TITLE}" | grep -oE 'v?[0-9]+\.[0-9]+\.[0-9]+-rc[0-9]+' | head -1 || true)"
           fi
           # 3. Title fallback: extract just the rcN marker from any -rcN substring.
           if [[ -z "$tag" ]]; then

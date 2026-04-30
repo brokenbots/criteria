@@ -15,19 +15,36 @@ GitHub Releases page.
 
 Open a pull request where **at least one** of the following is true:
 
-| Condition | Example | Artifact name |
+| Condition | Example branch / title | Artifact name |
 |---|---|---|
 | Branch name starts with `release/` | `release/v0.3.0-rc1` | `criteria-v0.3.0-rc1` |
-| PR title contains a semver+rc token | `Release v0.3.0-rc1: ...` | `criteria-v0.3.0-rc1` |
-| PR title contains `-rc<N>` (no semver) | `Hotfix -rc2 for storage` | `criteria-rc2` |
+| PR title contains `<semver>-rc<N>` | `Release v0.3.0-rc1: ...` | `criteria-v0.3.0-rc1` |
+| PR title contains `-rc<N>` (no semver prefix) | `Hotfix -rc2 for storage` | `criteria-rc2` |
 
 The `release-artifacts` CI job is skipped on all other PRs, so
 regular feature and fix PRs are unaffected.
 
-> **Convention:** avoid PR titles that contain the literal substring
-> `-rc` followed by a digit for non-release work (e.g. `refactor-rc1-...`).
-> If false positives become frequent, the team can switch to branch-name
-> triggering only.
+**Tag extraction rules (title-based triggers):**
+
+The artifact name is derived from the PR title in two passes:
+
+1. **Semver+RC match** — extracts the first token matching
+   `v?X.Y.Z-rcN` (the `-rcN` suffix is **required**; a bare semver
+   without it does not match this pass). Example: `Release v0.3.0-rc1`
+   → `criteria-v0.3.0-rc1`.
+2. **RC-marker fallback** — if no semver+RC token is found, extracts
+   the first `-rc<N>` substring and strips the leading `-`. Example:
+   `Hotfix -rc2 for storage` → `criteria-rc2`.
+
+A title that triggers the job but matches neither pass (e.g. `Bugfix
+foo-rc` with no digit after `-rc`) causes the job to fail loudly with
+`ERROR: could not extract RC tag`. This is intentional: the operator
+must fix the branch name or title before the artifact can be built.
+
+> **Convention:** avoid PR titles that contain `-rc<N>` for non-release
+> work (e.g. `refactor-rc1-...`). If false positives become frequent,
+> switch to branch-name-only triggering by removing the title condition
+> from `ci.yml`.
 
 ## What gets uploaded
 
