@@ -334,8 +334,12 @@ workflow "x" {
 	if !diags.HasErrors() {
 		t.Fatal("expected compile error for missing file in agent config")
 	}
-	if !strings.Contains(diags.Error(), "no such file") {
-		t.Errorf("expected 'no such file' diagnostic, got: %s", diags.Error())
+	errMsg := diags.Error()
+	if !strings.Contains(errMsg, "does_not_exist.md") {
+		t.Errorf("expected diagnostic to reference missing file %q, got: %s", "does_not_exist.md", errMsg)
+	}
+	if !strings.Contains(errMsg, "file(") && !strings.Contains(errMsg, "file()") {
+		t.Errorf("expected diagnostic to mention file() usage, got: %s", errMsg)
 	}
 	if diags[0].Subject == nil {
 		t.Error("expected diagnostic to carry a source range")
