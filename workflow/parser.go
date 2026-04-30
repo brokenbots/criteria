@@ -32,9 +32,6 @@ func ParseFile(path string) (*Spec, hcl.Diagnostics) {
 func Parse(filename string, src []byte) (*Spec, hcl.Diagnostics) {
 	parser := hclparse.NewParser()
 	f, diags := parser.ParseHCL(src, filename)
-	if diags.HasErrors() {
-		return nil, diags
-	}
 	if f == nil {
 		if len(diags) == 0 {
 			diags = append(diags, &hcl.Diagnostic{
@@ -43,6 +40,9 @@ func Parse(filename string, src []byte) (*Spec, hcl.Diagnostics) {
 				Detail:   "parser returned nil file without diagnostics",
 			})
 		}
+		return nil, diags
+	}
+	if diags.HasErrors() {
 		return nil, diags
 	}
 	var file File
