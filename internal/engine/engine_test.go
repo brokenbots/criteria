@@ -776,3 +776,91 @@ func (p *errPlugin) Execute(_ context.Context, _ string, _ *workflow.StepNode, _
 func (p *errPlugin) Permit(context.Context, string, string, bool, string) error { return nil }
 func (p *errPlugin) CloseSession(context.Context, string) error                 { return nil }
 func (p *errPlugin) Kill()                                                      {}
+
+// TestMaxVisits_CancelledAttemptDoesNotConsumeVisit verifies that a pre-cancelled
+// context returns a cancellation error WITHOUT incrementing the visit count in
+// runStepFromAttempt. This is a regression test for the ctx.Err() ordering in
+// that path: if incrementVisit were called before ctx.Err(), cancellation would
+// inflate the visit count and could incorrectly trip max_visits on resume.
+func TestMaxVisits_CancelledAttemptDoesNotConsumeVisit(t *testing.T) {
+	g := compile(t, `
+workflow "t" {
+  version = "0.1"
+  initial_state = "work"
+  target_state  = "done"
+  step "work" {
+    adapter    = "fake"
+    max_visits = 1
+    outcome "done" { transition_to = "done" }
+  }
+  state "done" { terminal = true }
+  policy { max_total_steps = 1000 }
+}`)
+	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": &fakePlugin{name: "fake", outcome: "done"}}}
+	sink := &fakeSink{}
+	eng := New(g, loader, sink)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // pre-cancel before Run
+
+	err := eng.Run(ctx)
+	if err == nil {
+		t.Fatal("expected error from cancelled context; got nil")
+	}
+	if strings.Contains(err.Error(), "exceeded max_visits") {
+		t.Errorf("cancellation must not trip max_visits; got: %v", err)
+	}
+
+	visits := eng.VisitCounts()
+	if got := visits["work"]; got != 0 {
+		t.Errorf("visit count for cancelled attempt = %d, want 0 (cancellation must not consume a visit)", got)
+	}
+}
+
+// TestMaxVisits_CancelledWorkflowIterationDoesNotConsumeVisit verifies that a
+// pre-cancelled context returns a cancellation error WITHOUT incrementing the
+// visit count in runWorkflowIteration. This is a regression test for the
+// ctx.Err() ordering in that path: if incrementVisit were called before
+// ctx.Err(), cancellation would inflate iteration visit counts.
+func TestMaxVisits_CancelledWorkflowIterationDoesNotConsumeVisit(t *testing.T) {
+	g := compile(t, `
+workflow "t" {
+  version = "0.1"
+  initial_state = "process"
+  target_state  = "done"
+  step "process" {
+    type       = "workflow"
+    for_each   = ["a"]
+    max_visits = 1
+    workflow {
+      step "inner" {
+        adapter = "fake"
+        outcome "success" { transition_to = "_continue" }
+      }
+    }
+    outcome "all_succeeded" { transition_to = "done" }
+    outcome "any_failed"    { transition_to = "done" }
+  }
+  state "done" { terminal = true }
+  policy { max_total_steps = 1000 }
+}`)
+	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": &fakePlugin{name: "fake", outcome: "success"}}}
+	sink := &fakeSink{}
+	eng := New(g, loader, sink)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // pre-cancel before Run
+
+	err := eng.Run(ctx)
+	if err == nil {
+		t.Fatal("expected error from cancelled context; got nil")
+	}
+	if strings.Contains(err.Error(), "exceeded max_visits") {
+		t.Errorf("cancellation must not trip max_visits; got: %v", err)
+	}
+
+	visits := eng.VisitCounts()
+	if got := visits["process"]; got != 0 {
+		t.Errorf("visit count for cancelled workflow iteration = %d, want 0 (cancellation must not consume a visit)", got)
+	}
+}
