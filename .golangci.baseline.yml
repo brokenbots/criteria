@@ -27,15 +27,15 @@ issues:
     - path: compile_steps.go
       linters:
         - gocritic
-      text: 'hugeParam: sp is heavy \(240 bytes\); consider passing it by pointer' # W10: StepSpec grew with W10 fields
+      text: 'hugeParam: sp is heavy \(248 bytes\); consider passing it by pointer' # W07: StepSpec grew with MaxVisits field
     - path: compile_steps.go
       linters:
         - gocritic
-      text: 'rangeValCopy: each iteration copies 240 bytes \(consider pointers or indexing\)' # W10: StepSpec grew with W10 fields
+      text: 'rangeValCopy: each iteration copies 248 bytes \(consider pointers or indexing\)' # W07: StepSpec grew with MaxVisits field
     - path: compile_lifecycle.go
       linters:
         - gocritic
-      text: 'rangeValCopy: each iteration copies 240 bytes \(consider pointers or indexing\)' # W10: StepSpec grew with W10 fields
+      text: 'rangeValCopy: each iteration copies 248 bytes \(consider pointers or indexing\)' # W07: StepSpec grew with MaxVisits field
     - path: compile_nodes.go
       linters:
         - gocognit
@@ -279,4 +279,4 @@ issues:
     - path: parser.go
       linters:
         - gocritic
-      text: 'rangeValCopy: each iteration copies 240 bytes \(consider pointers or indexing\)' # W10: StepSpec grew with W10 fields
+      text: 'rangeValCopy: each iteration copies 248 bytes \(consider pointers or indexing\)' # W07: StepSpec grew with MaxVisits field
