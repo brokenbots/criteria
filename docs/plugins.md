@@ -256,7 +256,7 @@ Permission gating is deny-by-default.
   - `shell:go test*`
   - `shell:*`
 
-The host evaluates plugin permission requests against those patterns. When a request matches, the run emits `permission.granted`; otherwise it emits `permission.denied` with reason `no matching allow_tools entry` and (for the Copilot adapter) a `suggestion` field pointing to the canonical kind. The Copilot plugin then surfaces the denied turn as `needs_review` instead of silently continuing.
+The host evaluates plugin permission requests against those patterns. When a request matches, the run emits `permission.granted`; otherwise it emits `permission.denied` with reason `no matching allow_tools entry` and (for the Copilot adapter) includes a `suggestion` field only when a relevant canonical-kind suggestion exists (for example, for denied kinds with known aliases such as `read`/`write`). The Copilot plugin then surfaces the denied turn as `needs_review` instead of silently continuing.
 
 ### Copilot permission-kind aliases
 
