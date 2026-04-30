@@ -146,14 +146,14 @@ This workstream may **not** edit `README.md`, `PLAN.md`, `AGENTS.md`,
 
 ## Tasks
 
-- [ ] Change `0o755` → `0o700` at `local_state.go:74` and `:129`.
-- [ ] Audit all `MkdirAll` / `Mkdir` call sites; document findings.
-- [ ] Tighten any additional sites that hold operator-private state.
-- [ ] Add regression test asserting `0o700` on the state dir and
+- [x] Change `0o755` → `0o700` at `local_state.go:74` and `:129`.
+- [x] Audit all `MkdirAll` / `Mkdir` call sites; document findings.
+- [x] Tighten any additional sites that hold operator-private state.
+- [x] Add regression test asserting `0o700` on the state dir and
       `0o600` on files inside.
-- [ ] Skip the test on Windows.
-- [ ] Manual verification on a fresh `~/.criteria` directory.
-- [ ] `make ci` green.
+- [x] Skip the test on Windows.
+- [x] Manual verification on a fresh `~/.criteria` directory.
+- [x] `make ci` green.
 
 ## Exit criteria
 
@@ -174,11 +174,57 @@ This workstream may **not** edit `README.md`, `PLAN.md`, `AGENTS.md`,
   `0o700` and file mode `0o600`.
 - Existing tests must pass unchanged.
 
-## Risks
+## Reviewer Notes
 
-| Risk | Mitigation |
-|---|---|
-| The test cannot easily redirect `$HOME` because `stateDir()` reads it once and caches | Use a small refactor that allows a test-only injection of the state-dir root; do not change the production code path. If the existing helper already supports a `CRITERIA_STATE_DIR` env var, prefer that. |
-| An operator's existing `~/.criteria/` is unaffected and continues at `0o755` | Document explicitly in CHANGELOG (W14). The forward-only stance is deliberate. |
-| The audit (Step 2) finds a case where 0o755 was intentional and required | Document the rationale in a code comment and skip the change for that site. The audit is about *finding* the cases; not all of them require fixes. |
-| `os.MkdirAll` umask interaction reduces the actual mode below 0o700 | `os.MkdirAll` applies `mode & ~umask`; on the typical operator umask (`0o022`) the final mode is `0o700 & ~0o022 = 0o700`. On unusual umasks (e.g. `0o077`) the mode could be tighter, which is acceptable. The test asserts `>=` semantics? No — assert exact `0o700`; if a tight umask produces `0o600` the test will fail and the operator can investigate. |
+### Step 1 — Call-site changes
+
+- `internal/cli/local_state.go:74` (`writeLocalRunState`): `0o755` → `0o700`. ✓
+- `internal/cli/local_state.go:129` (`WriteStepCheckpoint`): `0o755` → `0o700`. ✓
+
+### Step 2 — Audit findings
+
+Every `MkdirAll` / `Mkdir` call in `internal/`, `cmd/`, `workflow/`, `sdk/`, `events/`:
+
+| File:line | Mode | Verdict |
+|---|---|---|
+| `internal/cli/local_state.go:74` | `0o700` (was `0o755`) | **Fixed** — operator-private state dir |
+| `internal/cli/local_state.go:129` | `0o700` (was `0o755`) | **Fixed** — operator-private runs subdir |
+| `internal/cli/local_state_test.go:92` | `0o755` | OK — test scaffold (temp dir helper, not the production path being tested) |
+| `internal/cli/local_state_test.go:235` | `0o755` | OK — test scaffold (temp dir helper) |
+| `internal/cli/compile_test.go:92` | `0o755` | OK — test-only temp path for HCL fixture |
+| `internal/cli/reattach_test.go:82` | `0o755` | OK — test-only temp dir |
+| `internal/plugin/discovery_test.go:27,30,52` | `0o755` | OK — plugin dirs hold public binaries; world-readable is correct (plugin discovery by filename) |
+| `internal/adapters/shell/shell_sandbox_test.go:170` | `0o755` | OK — test-only temp bin dir |
+| `workflow/eval_functions_test.go:196,199,276,303,306,330,333` | `0o755` | OK — test-only temp workflow dirs; not operator state |
+
+No additional production call sites require tightening.
+
+### Step 3 — Regression test
+
+`TestStateDirPerms` added to `internal/cli/local_state_test.go`:
+- Uses `filepath.Join(t.TempDir(), "state")` (non-existent subdir) as `CRITERIA_STATE_DIR`
+  so `os.MkdirAll` creates it fresh and mode assertion is valid.
+- Calls `writeLocalRunState` → asserts `dir` mode `0o700` and `criteria-state.json` mode `0o600`.
+- Calls `WriteStepCheckpoint` → asserts `runs/` mode `0o700` and checkpoint file mode `0o600`.
+- Skips on `runtime.GOOS == "windows"`.
+
+### Step 4 — No migration
+
+Existing `~/.criteria/` directories retain their prior mode. The change applies
+only to *newly created* directories. CHANGELOG entry is deferred to W14 as planned.
+
+### Step 5 — Validation
+
+- `go test -race -count=2 ./internal/cli/...`: ✓ PASS
+- `make ci`: ✓ PASS (the one intermittent failure in `internal/plugin/TestHandshakeInfo`
+  is a pre-existing plugin startup race; confirmed by running the test on unmodified main —
+  it passes on retry and is unrelated to this workstream).
+- Manual: `CRITERIA_STATE_DIR=/tmp/criteria-perm-test bin/criteria apply examples/hello.hcl`
+  → `stat /tmp/criteria-perm-test` reports `drwx------`. ✓
+
+### CHANGELOG note for W14
+
+W14 must add a note under the v0.2.x section:
+> New invocations create `~/.criteria/` and `~/.criteria/runs/` at mode `0700` (operator-only).
+> Existing directories are not migrated. To tighten an existing installation: `chmod 700 ~/.criteria`.
+

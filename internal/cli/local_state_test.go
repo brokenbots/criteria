@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -256,5 +257,79 @@ func TestLocalState_ListCheckpoints_SkipsDirectories(t *testing.T) {
 	}
 	if len(checkpoints) != 1 {
 		t.Fatalf("expected 1, got %d", len(checkpoints))
+	}
+}
+
+// TestStateDirPerms verifies that writeLocalRunState and WriteStepCheckpoint
+// create directories with mode 0o700 (operator-only) and files with 0o600.
+func TestStateDirPerms(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX permission bits do not apply on Windows")
+	}
+
+	// Point CRITERIA_STATE_DIR at a subdirectory that does not yet exist so
+	// that os.MkdirAll creates it fresh with the requested mode (0o700).
+	dir := filepath.Join(t.TempDir(), "state")
+	t.Setenv("CRITERIA_STATE_DIR", dir)
+
+	// --- writeLocalRunState ---
+	st := &localRunState{
+		PID:       99,
+		RunID:     "run-perms",
+		Workflow:  "perm-wf",
+		StartedAt: time.Now().UTC(),
+	}
+	if err := writeLocalRunState(st); err != nil {
+		t.Fatalf("writeLocalRunState: %v", err)
+	}
+
+	stateFileInfo, err := os.Stat(filepath.Join(dir, "criteria-state.json"))
+	if err != nil {
+		t.Fatalf("stat state file: %v", err)
+	}
+	if got := stateFileInfo.Mode().Perm(); got != 0o600 {
+		t.Errorf("state file mode = %04o, want 0600", got)
+	}
+
+	stateDirInfo, err := os.Stat(dir)
+	if err != nil {
+		t.Fatalf("stat state dir: %v", err)
+	}
+	if got := stateDirInfo.Mode().Perm(); got != 0o700 {
+		t.Errorf("state dir mode = %04o, want 0700", got)
+	}
+
+	// --- WriteStepCheckpoint ---
+	workflowPath := filepath.Join(dir, "wf.hcl")
+	if err := os.WriteFile(workflowPath, []byte("workflow \"w\" {}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cp := &StepCheckpoint{
+		RunID:        "run-perms-cp",
+		Workflow:     "perm-wf",
+		WorkflowPath: workflowPath,
+		CurrentStep:  "step1",
+		Attempt:      1,
+		StartedAt:    time.Now().UTC(),
+	}
+	if err := WriteStepCheckpoint(cp); err != nil {
+		t.Fatalf("WriteStepCheckpoint: %v", err)
+	}
+
+	runsDir := filepath.Join(dir, "runs")
+	runsDirInfo, err := os.Stat(runsDir)
+	if err != nil {
+		t.Fatalf("stat runs dir: %v", err)
+	}
+	if got := runsDirInfo.Mode().Perm(); got != 0o700 {
+		t.Errorf("runs dir mode = %04o, want 0700", got)
+	}
+
+	cpFileInfo, err := os.Stat(filepath.Join(runsDir, "run-perms-cp.json"))
+	if err != nil {
+		t.Fatalf("stat checkpoint file: %v", err)
+	}
+	if got := cpFileInfo.Mode().Perm(); got != 0o600 {
+		t.Errorf("checkpoint file mode = %04o, want 0600", got)
 	}
 }
