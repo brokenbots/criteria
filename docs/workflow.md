@@ -914,7 +914,7 @@ See [`proto/criteria/v1/`](../proto/criteria/v1/) for proto definitions and even
 
 - Duration-based waits work.
 - Signal-based waits and approval nodes require `CRITERIA_LOCAL_APPROVAL` (see **Local-mode approval and signal wait**) or `--server`.
-- No crash recovery or run persistence (use `--server` for that).
+- Local runs write step checkpoints and persisted approval/signal decisions to `$CRITERIA_STATE_DIR` so that a restarted run (or `criteria apply --reattach`) can resume from where it left off without re-prompting. For full crash recovery and distributed persistence, use `--server`.
 
 For examples demonstrating each command, see:
 - Local-only workflow: [examples/build_and_test.hcl](../examples/build_and_test.hcl)

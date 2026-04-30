@@ -37,8 +37,9 @@ type applyOptions struct {
 	tlsCA        string
 	tlsCert      string
 	tlsKey       string
-	varOverrides []string // raw "key=value" pairs from --var flags
-	output       string   // "auto" | "concise" | "json"
+	varOverrides []string  // raw "key=value" pairs from --var flags
+	output       string    // "auto" | "concise" | "json"
+	stdin        io.Reader // stdin for local-mode approval prompts; nil → os.Stdin
 }
 
 func NewApplyCmd() *cobra.Command {
@@ -101,7 +102,7 @@ func runApplyLocal(ctx context.Context, opts applyOptions) error { //nolint:funl
 	}
 	defer loader.Shutdown(context.Background())
 
-	resumer, err := buildLocalResumer(log)
+	resumer, err := buildLocalResumer(log, opts.stdin)
 	if err != nil {
 		return err
 	}
@@ -436,7 +437,8 @@ func (t *pauseTracker) ClearPaused() {
 // buildLocalResumer constructs a LocalResumer from CRITERIA_LOCAL_APPROVAL and
 // CRITERIA_LOCAL_APPROVAL_FILE_TIMEOUT. Returns nil, nil when
 // CRITERIA_LOCAL_APPROVAL is unset (local approval not enabled).
-func buildLocalResumer(log *slog.Logger) (localresume.LocalResumer, error) {
+// stdin is used for stdin-mode prompts; nil falls back to os.Stdin.
+func buildLocalResumer(log *slog.Logger, stdin io.Reader) (localresume.LocalResumer, error) {
 	raw := os.Getenv("CRITERIA_LOCAL_APPROVAL")
 	if raw == "" {
 		return nil, nil
@@ -445,7 +447,12 @@ func buildLocalResumer(log *slog.Logger) (localresume.LocalResumer, error) {
 	if err != nil {
 		return nil, err
 	}
-	opts := localresume.Options{Log: log}
+	opts := localresume.Options{
+		Log:            log,
+		Stdin:          stdin, // nil → Options.applyDefaults uses os.Stdin
+		DecisionPathFn: ApprovalDecisionPath,
+		RequestPathFn:  ApprovalRequestPath,
+	}
 	if rawTimeout := os.Getenv("CRITERIA_LOCAL_APPROVAL_FILE_TIMEOUT"); rawTimeout != "" {
 		d, err := time.ParseDuration(rawTimeout)
 		if err != nil {
@@ -520,17 +527,19 @@ const (
 )
 
 func ensureLocalModeSupported(graph *workflow.FSMGraph, localApprovalEnabled bool) error {
-	if localApprovalEnabled {
-		return nil
-	}
-	for _, wn := range graph.Waits {
-		if wn.Signal != "" {
-			return errors.New(errSignalWait)
+	if !localApprovalEnabled {
+		// First-class approval and signal-wait nodes require local approval mode or a server.
+		for _, wn := range graph.Waits {
+			if wn.Signal != "" {
+				return errors.New(errSignalWait)
+			}
+		}
+		if len(graph.Approvals) > 0 {
+			return errors.New(errApprovalNode)
 		}
 	}
-	if len(graph.Approvals) > 0 {
-		return errors.New(errApprovalNode)
-	}
+	// Legacy step-level and state.Requires shapes are unsupported in local mode
+	// regardless of CRITERIA_LOCAL_APPROVAL.
 	for _, step := range graph.Steps {
 		switch step.Lifecycle {
 		case "wait":
@@ -577,7 +586,7 @@ func prepareReattach(ctx context.Context, log *slog.Logger, cp *StepCheckpoint) 
 		RemoveStepCheckpoint(cp.RunID)
 		return nil, nil, nil, false
 	}
-	resumer, resumerErr := buildLocalResumer(log)
+	resumer, resumerErr := buildLocalResumer(log, nil)
 	if resumerErr != nil {
 		log.Warn("local checkpoint: invalid CRITERIA_LOCAL_APPROVAL; clearing", "run_id", cp.RunID, "error", resumerErr)
 		RemoveStepCheckpoint(cp.RunID)
@@ -634,9 +643,10 @@ func resumeOneLocalRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint
 	if resumer != nil {
 		if cycleErr := drainLocalResumeCycles(ctx, log, graph, loader, tracker, resumer, cp.RunID, opts, eng); cycleErr != nil {
 			log.Error("resumed local run failed during approval", "run_id", cp.RunID, "error", cycleErr)
+			RemoveStepCheckpoint(cp.RunID)
+			return
 		}
-	} else {
-		log.Info("resumed local run completed", "run_id", cp.RunID)
 	}
+	log.Info("resumed local run completed", "run_id", cp.RunID)
 	RemoveStepCheckpoint(cp.RunID)
 }

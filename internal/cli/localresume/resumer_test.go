@@ -476,11 +476,16 @@ func TestStdinMode_ContextCancelled(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 		cancel()
 	}()
-	payload, err := r.ResumeApproval(ctx, "run-cancel", "review", nil, "")
-	// Approval context cancellation returns rejected (non-interactive input path)
-	// or a context error — both are acceptable.
-	if err == nil && payload["decision"] != "rejected" {
-		t.Errorf("expected rejected or error on context cancel, got payload=%v, err=%v", payload, err)
+	_, err = r.ResumeApproval(ctx, "run-cancel", "review", nil, "")
+	// Context cancellation must propagate as an error — never manufacture a
+	// persisted rejection when the operator cancelled the run.
+	if err == nil {
+		t.Fatal("expected error on context cancel, got nil")
+	}
+	// Confirm no decision was persisted (reattach safety).
+	decPath := filepath.Join(stateDir, "runs", "run-cancel", "approvals", "review.json")
+	if _, statErr := os.Stat(decPath); !os.IsNotExist(statErr) {
+		t.Error("decision file must not be persisted on context cancellation")
 	}
 }
 
@@ -497,6 +502,70 @@ func TestFileMode_ContextCancelled(t *testing.T) {
 	_, err := r.ResumeApproval(ctx, "run-ctx", "review", nil, "")
 	if err == nil {
 		t.Fatal("expected error on context cancellation")
+	}
+}
+
+func TestStdinMode_Signal_EmptyOutcome_Error(t *testing.T) {
+	stateDir := t.TempDir()
+	r := localresume.New(localresume.ModeStdin, localresume.Options{
+		// JSON payload with empty outcome string.
+		Stdin:    bytes.NewBufferString(`{"outcome":""}` + "\n"),
+		Stderr:   &bytes.Buffer{},
+		StateDir: stateDir,
+	})
+	_, err := r.ResumeSignal(context.Background(), "run-empty-outcome", "gate", "proceed")
+	if err == nil {
+		t.Fatal("expected error for empty outcome key, got nil")
+	}
+	if !strings.Contains(err.Error(), "outcome") {
+		t.Errorf("error should mention 'outcome', got: %v", err)
+	}
+}
+
+func TestStdinMode_Signal_MissingOutcome_Error(t *testing.T) {
+	stateDir := t.TempDir()
+	r := localresume.New(localresume.ModeStdin, localresume.Options{
+		// JSON payload with no outcome key.
+		Stdin:    bytes.NewBufferString(`{}` + "\n"),
+		Stderr:   &bytes.Buffer{},
+		StateDir: stateDir,
+	})
+	_, err := r.ResumeSignal(context.Background(), "run-missing-outcome", "gate", "proceed")
+	if err == nil {
+		t.Fatal("expected error for missing outcome key, got nil")
+	}
+	if !strings.Contains(err.Error(), "outcome") {
+		t.Errorf("error should mention 'outcome', got: %v", err)
+	}
+}
+
+func TestStdinMode_Approval_ContextCancel_NoPersist(t *testing.T) {
+	stateDir := t.TempDir()
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pr.Close()
+	defer pw.Close()
+
+	r := localresume.New(localresume.ModeStdin, localresume.Options{
+		Stdin:    pr,
+		Stderr:   &bytes.Buffer{},
+		StateDir: stateDir,
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(30 * time.Millisecond)
+		cancel()
+	}()
+	_, err = r.ResumeApproval(ctx, "run-nopersist", "review", nil, "")
+	if err == nil {
+		t.Fatal("expected error on context cancel")
+	}
+	// No decision file should be written.
+	decPath := filepath.Join(stateDir, "runs", "run-nopersist", "approvals", "review.json")
+	if _, statErr := os.Stat(decPath); !os.IsNotExist(statErr) {
+		t.Error("decision file must not be written on context cancellation")
 	}
 }
 

@@ -16,6 +16,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -74,12 +75,20 @@ type Options struct {
 	// write the decision file before failing the run. Defaults to 1h.
 	// Configurable via CRITERIA_LOCAL_APPROVAL_FILE_TIMEOUT.
 	FileTimeout time.Duration
-	// StateDir overrides the state directory for locating approval files.
-	// Defaults to the value returned by the CLI's stateDir() function, i.e.
-	// CRITERIA_STATE_DIR or ~/.criteria.
-	StateDir string
 	// Log is the structured logger. Defaults to slog.Default().
 	Log *slog.Logger
+
+	// DecisionPathFn returns the persisted-decision file path for a given runID
+	// and node. When non-nil it takes precedence over StateDir-based derivation.
+	// buildLocalResumer in apply.go injects ApprovalDecisionPath from local_state.go.
+	DecisionPathFn func(runID, nodeName string) (string, error)
+	// RequestPathFn returns the operator-written request file path for a given
+	// runID and node. When non-nil it takes precedence over StateDir-based
+	// derivation. buildLocalResumer injects ApprovalRequestPath from local_state.go.
+	RequestPathFn func(runID, nodeName string) (string, error)
+	// StateDir overrides the state directory used when DecisionPathFn/RequestPathFn
+	// are not provided (unit tests only). Defaults to CRITERIA_STATE_DIR or ~/.criteria.
+	StateDir string
 }
 
 func (o *Options) applyDefaults() {
@@ -132,7 +141,7 @@ func (r *resumer) ResumeApproval(ctx context.Context, runID, name string, approv
 
 	switch r.mode {
 	case ModeStdin:
-		payload = r.resolveApprovalStdin(ctx, name, approvers, reason)
+		payload, err = r.resolveApprovalStdin(ctx, name, approvers, reason)
 	case ModeFile:
 		payload, err = r.resolveApprovalFile(ctx, runID, name)
 	case ModeEnv:
@@ -196,7 +205,7 @@ func (r *resumer) ResumeSignal(ctx context.Context, runID, nodeName, signalName 
 
 // --- stdin mode ---
 
-func (r *resumer) resolveApprovalStdin(ctx context.Context, name string, approvers []string, reason string) map[string]string {
+func (r *resumer) resolveApprovalStdin(ctx context.Context, name string, approvers []string, reason string) (map[string]string, error) {
 	fmt.Fprintf(r.opts.Stderr, "\n[criteria] Approval required for node %q\n", name)
 	if len(approvers) > 0 {
 		fmt.Fprintf(r.opts.Stderr, "  Approvers: %s\n", strings.Join(approvers, ", "))
@@ -208,9 +217,15 @@ func (r *resumer) resolveApprovalStdin(ctx context.Context, name string, approve
 
 	decision, err := readLineWithContext(ctx, r.opts.Stdin)
 	if err != nil {
-		return map[string]string{"decision": "rejected", "reason": "non-interactive input"}
+		// Context cancellation/deadline: propagate as an error so the run
+		// aborts cleanly and no rejection is persisted.
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, err
+		}
+		// EOF or other read errors mean non-interactive input → rejected, not an error.
+		return map[string]string{"decision": "rejected", "reason": "non-interactive input"}, nil
 	}
-	return parseApprovalInput(decision)
+	return parseApprovalInput(decision), nil
 }
 
 func (r *resumer) resolveSignalStdin(ctx context.Context, nodeName, signalName string) (map[string]string, error) {
@@ -263,6 +278,9 @@ func parseSignalInput(input string) (map[string]string, error) {
 	if err := json.Unmarshal([]byte(strings.TrimSpace(input)), &m); err != nil {
 		return nil, fmt.Errorf("parse signal input JSON: %w (input was %q)", err, input)
 	}
+	if strings.TrimSpace(m["outcome"]) == "" {
+		return nil, fmt.Errorf("signal input must include a non-empty %q key, got %v", "outcome", m)
+	}
 	return m, nil
 }
 
@@ -275,7 +293,7 @@ func approvalRequestFileName(nodeName string) string {
 }
 
 func (r *resumer) resolveApprovalFile(ctx context.Context, runID, name string) (map[string]string, error) {
-	reqPath, err := r.approvalRequestPath(runID, name)
+	reqPath, err := r.requestPath(runID, name)
 	if err != nil {
 		return nil, err
 	}
@@ -297,7 +315,7 @@ func (r *resumer) resolveApprovalFile(ctx context.Context, runID, name string) (
 }
 
 func (r *resumer) resolveSignalFile(ctx context.Context, runID, nodeName, signalName string) (map[string]string, error) {
-	reqPath, err := r.approvalRequestPath(runID, nodeName)
+	reqPath, err := r.requestPath(runID, nodeName)
 	if err != nil {
 		return nil, err
 	}
@@ -353,9 +371,13 @@ func (r *resumer) pollForFile(ctx context.Context, reqPath string) (map[string]s
 	}
 }
 
-// approvalRequestPath returns the path for the operator-written decision request
-// file: <stateDir>/runs/<runID>/approval-<node>.json.
-func (r *resumer) approvalRequestPath(runID, nodeName string) (string, error) {
+// requestPath returns the path for the operator-written decision request file:
+// <stateDir>/runs/<runID>/approval-<node>.json.
+// Uses RequestPathFn if injected (production), otherwise falls back to StateDir derivation (tests).
+func (r *resumer) requestPath(runID, nodeName string) (string, error) {
+	if r.opts.RequestPathFn != nil {
+		return r.opts.RequestPathFn(runID, nodeName)
+	}
 	sd, err := r.stateDir()
 	if err != nil {
 		return "", err
@@ -457,6 +479,9 @@ func (r *resumer) loadPersistedSignal(runID, nodeName string) (map[string]string
 }
 
 func (r *resumer) decisionPath(runID, nodeName string) (string, error) {
+	if r.opts.DecisionPathFn != nil {
+		return r.opts.DecisionPathFn(runID, nodeName)
+	}
 	sd, err := r.stateDir()
 	if err != nil {
 		return "", err

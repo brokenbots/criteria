@@ -1,7 +1,10 @@
 package cli
 
 import (
+	"bytes"
 	"context"
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -80,7 +83,7 @@ func TestApplyLocal_EnvMode_SignalWait(t *testing.T) {
 	t.Setenv("CRITERIA_PLUGINS", pluginDir)
 	t.Setenv("CRITERIA_STATE_DIR", stateDir)
 	t.Setenv("CRITERIA_LOCAL_APPROVAL", "env")
-	t.Setenv("CRITERIA_SIGNAL_GATE", "received")
+	t.Setenv("CRITERIA_SIGNAL_GATE", "success") // matches the "success" outcome in local_signal_wait.hcl
 
 	wf := filepath.Join("testdata", "local_signal_wait.hcl")
 	err := runApply(context.Background(), applyOptions{workflowPath: wf})
@@ -154,5 +157,176 @@ func TestApplyLocal_LocalApprovalDisabled_SignalWaitRejected(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "signal waits require an orchestrator") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestApplyLocal_StdinMode_Approved(t *testing.T) {
+	pluginDir := filepath.Dir(buildNoopPluginBinary(t))
+	stateDir := t.TempDir()
+	t.Setenv("CRITERIA_PLUGINS", pluginDir)
+	t.Setenv("CRITERIA_STATE_DIR", stateDir)
+	t.Setenv("CRITERIA_LOCAL_APPROVAL", "stdin")
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	if _, err := w.WriteString("y\n"); err != nil {
+		t.Fatalf("write stdin: %v", err)
+	}
+	w.Close()
+
+	wf := filepath.Join("testdata", "local_approval_simple.hcl")
+	if err := runApply(context.Background(), applyOptions{workflowPath: wf, stdin: r}); err != nil {
+		t.Fatalf("stdin approved run: %v", err)
+	}
+}
+
+func TestApplyLocal_StdinMode_Rejected(t *testing.T) {
+	pluginDir := filepath.Dir(buildNoopPluginBinary(t))
+	stateDir := t.TempDir()
+	t.Setenv("CRITERIA_PLUGINS", pluginDir)
+	t.Setenv("CRITERIA_STATE_DIR", stateDir)
+	t.Setenv("CRITERIA_LOCAL_APPROVAL", "stdin")
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	if _, err := w.WriteString("n\n"); err != nil {
+		t.Fatalf("write stdin: %v", err)
+	}
+	w.Close()
+
+	wf := filepath.Join("testdata", "local_approval_simple.hcl")
+	// "rejected_state" is a valid terminal state (success=false); engine returns nil.
+	if err := runApply(context.Background(), applyOptions{workflowPath: wf, stdin: r}); err != nil {
+		t.Fatalf("stdin rejected run should complete cleanly, got: %v", err)
+	}
+}
+
+func TestApplyLocal_FileMode_SignalWait(t *testing.T) {
+	pluginDir := filepath.Dir(buildNoopPluginBinary(t))
+	stateDir := t.TempDir()
+	t.Setenv("CRITERIA_PLUGINS", pluginDir)
+	t.Setenv("CRITERIA_STATE_DIR", stateDir)
+	t.Setenv("CRITERIA_LOCAL_APPROVAL", "file")
+	t.Setenv("CRITERIA_LOCAL_APPROVAL_FILE_TIMEOUT", "10s")
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		deadline := time.Now().Add(10 * time.Second)
+		for time.Now().Before(deadline) {
+			runsDir := filepath.Join(stateDir, "runs")
+			entries, err := os.ReadDir(runsDir)
+			if err != nil || len(entries) == 0 {
+				time.Sleep(30 * time.Millisecond)
+				continue
+			}
+			runID := entries[0].Name()
+			reqPath := filepath.Join(runsDir, runID, "approval-gate.json")
+			if err := os.WriteFile(reqPath, []byte(`{"outcome":"success"}`), 0o600); err != nil {
+				time.Sleep(30 * time.Millisecond)
+				continue
+			}
+			return
+		}
+	}()
+	defer func() { <-done }()
+
+	wf := filepath.Join("testdata", "local_signal_wait.hcl")
+	if err := runApply(context.Background(), applyOptions{workflowPath: wf}); err != nil {
+		t.Fatalf("file-mode signal wait run: %v", err)
+	}
+}
+
+func TestApplyLocal_FileMode_Timeout(t *testing.T) {
+	pluginDir := filepath.Dir(buildNoopPluginBinary(t))
+	stateDir := t.TempDir()
+	t.Setenv("CRITERIA_PLUGINS", pluginDir)
+	t.Setenv("CRITERIA_STATE_DIR", stateDir)
+	t.Setenv("CRITERIA_LOCAL_APPROVAL", "file")
+	// Very short timeout — no goroutine writes the file, so the run must fail.
+	t.Setenv("CRITERIA_LOCAL_APPROVAL_FILE_TIMEOUT", "200ms")
+
+	wf := filepath.Join("testdata", "local_approval_simple.hcl")
+	err := runApply(context.Background(), applyOptions{workflowPath: wf})
+	if err == nil {
+		t.Fatal("expected timeout error, got nil")
+	}
+	if !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("expected 'timed out' in error, got: %v", err)
+	}
+}
+
+func TestApplyLocal_MultiApproval_EnvMode(t *testing.T) {
+	pluginDir := filepath.Dir(buildNoopPluginBinary(t))
+	stateDir := t.TempDir()
+	t.Setenv("CRITERIA_PLUGINS", pluginDir)
+	t.Setenv("CRITERIA_STATE_DIR", stateDir)
+	t.Setenv("CRITERIA_LOCAL_APPROVAL", "env")
+	t.Setenv("CRITERIA_APPROVAL_FIRST_REVIEW", "approved")
+	t.Setenv("CRITERIA_APPROVAL_SECOND_REVIEW", "approved")
+
+	wf := filepath.Join("testdata", "local_approval_multi.hcl")
+	if err := runApply(context.Background(), applyOptions{workflowPath: wf}); err != nil {
+		t.Fatalf("multi-approval env-mode run: %v", err)
+	}
+}
+
+func TestApplyLocal_Reattach_ReusePersistedDecision(t *testing.T) {
+	// Verify that when a decision is already persisted on disk, resumeOneLocalRun
+	// reuses it without re-prompting. We use stdin mode with NO piped input so the
+	// test would hang if the persisted decision were not found.
+	pluginDir := filepath.Dir(buildNoopPluginBinary(t))
+	stateDir := t.TempDir()
+	t.Setenv("CRITERIA_PLUGINS", pluginDir)
+	t.Setenv("CRITERIA_STATE_DIR", stateDir)
+	t.Setenv("CRITERIA_LOCAL_APPROVAL", "stdin")
+
+	wf := filepath.Join("testdata", "local_approval_simple.hcl")
+	runID := "reattach-test-run-id"
+
+	// Write a checkpoint as if the run crashed while paused at the approval node.
+	cp := &StepCheckpoint{
+		RunID:        runID,
+		Workflow:     "local_approval_simple",
+		WorkflowPath: wf,
+		CurrentStep:  "review",
+		Attempt:      0,
+		StartedAt:    time.Now().UTC(),
+	}
+	if err := WriteStepCheckpoint(cp); err != nil {
+		t.Fatalf("WriteStepCheckpoint: %v", err)
+	}
+
+	// Pre-write a persisted decision at the expected path.
+	decisionDir := filepath.Join(stateDir, "runs", runID, "approvals")
+	if err := os.MkdirAll(decisionDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll decision dir: %v", err)
+	}
+	decisionFile := filepath.Join(decisionDir, "review.json")
+	decision := `{"decision":"approved","decided_at":"2024-01-01T00:00:00Z"}`
+	if err := os.WriteFile(decisionFile, []byte(decision), 0o600); err != nil {
+		t.Fatalf("WriteFile decision: %v", err)
+	}
+
+	// Use a timeout context: if the persisted decision is NOT found and the resumer
+	// blocks on stdin, the context expires and the test fails with a clear message.
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	var logBuf bytes.Buffer
+	captLog := slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+
+	resumeOneLocalRun(ctx, captLog, cp, io.Discard, outputModeJSON)
+
+	logOutput := logBuf.String()
+	if strings.Contains(logOutput, "resumed local run failed") {
+		t.Fatalf("reattach run failed; log: %s", logOutput)
+	}
+	if !strings.Contains(logOutput, "resumed local run completed") {
+		t.Fatalf("expected 'resumed local run completed' in logs; got: %s", logOutput)
 	}
 }
