@@ -1,5 +1,18 @@
 # Contributing to Criteria
 
+## First-time contributors
+
+New to the project? Start here:
+
+- Read [docs/contributing/your-first-pr.md](docs/contributing/your-first-pr.md)
+  for a step-by-step walkthrough that takes you from zero to a merged PR.
+- Look for issues labeled [`good first issue`][gfi] — each one includes the
+  exact file to change, an effort estimate, and an explanation of why it is a
+  good starting point.
+- The maintainer aims to review first-time contributor PRs within **one week**.
+
+[gfi]: https://github.com/brokenbots/overseer/labels/good%20first%20issue
+
 ## Setup
 
 **Prerequisites:**
@@ -12,7 +25,8 @@
 git clone https://github.com/brokenbots/criteria.git
 cd criteria
 make bootstrap         # sync all three Go workspace modules
-make build             # produces bin/criteria and the bundled adapter binaries
+make build             # produces bin/criteria
+make plugins           # build adapter plugin binaries (bin/criteria-adapter-*)
 ```
 
 The repo is a Go workspace containing three modules: the root module (engine + CLI), `sdk/` (published Go SDK), and `workflow/` (HCL compiler). `make bootstrap` handles all three.
