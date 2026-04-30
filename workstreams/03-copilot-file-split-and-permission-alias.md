@@ -614,3 +614,25 @@ Existing tests still strongly cover the original W03 acceptance behavior, but th
 - **[nit resolved] Deterministic alias order test** — Added `TestPermissionDenialSuggestionDeterministicOrder` in `internal/plugin/policy_test.go`. Registers three aliases (`fetch_file`, `get_file`, `read_file`) for canonical kind `"read"` under a temporary `test-order` adapter entry, calls `PermissionDenialSuggestion` 20 times, and asserts all outputs are identical and contain `"fetch_file, get_file, read_file"` (sorted order).
 
 - **Validation:** `make ci` → pass.
+
+### Review 2026-04-29-05 — approved
+
+#### Summary
+Approved. The three previously requested regression tests are now implemented and meaningful: nil `allow_tools` normalization is asserted at the host boundary, adapter-event encode fallback is asserted with `_encode_error`, and deterministic alias suggestion ordering is explicitly verified. The workstream meets scope, quality, security, and exit-criteria expectations.
+
+#### Plan Adherence
+- Prior accepted W03 scope remains satisfied (split, alias behavior, denial payload enrichment, diagnostics, docs, and baseline burn-down).
+- Review-04 findings are resolved:
+  - `internal/plugin/sessions_test.go`: `TestSessionManagerNilAllowToolsEmitsEmptyList`
+  - `cmd/criteria-adapter-copilot/copilot_util_test.go`: `TestAdapterEventEncodeErrorFallback`
+  - `internal/plugin/policy_test.go`: `TestPermissionDenialSuggestionDeterministicOrder`
+
+#### Test Intent Assessment
+New tests are behavior-aligned and regression-sensitive:
+- host contract shape for deny payload list typing (nil -> empty list),
+- fallback observability for struct encoding failures,
+- deterministic suggestion output independent of map iteration order.
+These close the previously identified test-intent gaps.
+
+#### Validation Performed
+- `make ci` → pass.
