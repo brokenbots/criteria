@@ -304,7 +304,7 @@ wait "approval_gate" {
 - **`signal`** (required if no `duration`): Signal name to wait for. External caller sends signal via server RPC.
 - **`outcome`**: Map signal values to transition targets.
 
-**Orchestrator mode required**: Signal waits require `--server` for external signal delivery.
+**Orchestrator mode required**: Signal waits require `--server` for external signal delivery. See **Local-mode approval and signal wait** below for running without a server.
 
 ---
 
@@ -328,7 +328,60 @@ approval "ship_to_prod" {
 - **`reason`** (required): Human-readable prompt displayed in the approval UI.
 - **`outcome "approved"`**, **`outcome "rejected"`** (both required): Transition targets for approve/reject decisions.
 
-**Orchestrator mode required**: Approvals require `--server`. Local-mode runs abort at compile time if approval nodes are present.
+**Orchestrator mode required** (default): Approvals require `--server`. Without `CRITERIA_LOCAL_APPROVAL` set, local-mode runs abort at compile time. See **Local-mode approval and signal wait** below.
+
+---
+
+## Local-mode approval and signal wait
+
+By default, `approval` and `wait { signal }` nodes require an orchestrator (`--server`). Set the env var `CRITERIA_LOCAL_APPROVAL` to one of four values to run them locally without a server.
+
+### Modes
+
+| `CRITERIA_LOCAL_APPROVAL` | Behavior |
+|---|---|
+| `stdin` | Interactive TTY prompt: prints approvers, reason, and `Approve? (y/n)` to stderr. `y`/`yes` → approved; `n`/`no` → rejected; EOF → rejected with reason "non-interactive input". For signal waits, expects JSON on stdin: `{"outcome":"<name>"}`. |
+| `file` | Engine writes the request path to stderr and polls for the operator to write a decision file. Approval format: `{"decision":"approved"}` or `{"decision":"rejected","reason":"..."}`. Signal format: `{"outcome":"<name>"}`. Engine deletes the file after consumption. Default poll interval: 2s; default timeout: 1h. |
+| `env` | Reads `CRITERIA_APPROVAL_<NODE>` (uppercase, dots/hyphens → underscores) for approvals (`approved` or `rejected`). Reads `CRITERIA_SIGNAL_<NODE>` for signal waits (outcome name, e.g. `received`). Missing or invalid → fail the run with a clear error. |
+| `auto-approve` | Logs a warning and returns `approved` for approvals; synthesizes `outcome="success"` for signal waits. **For unattended CI pipelines only — do not use in production environments.** |
+
+### File paths
+
+- **Request file** (operator writes): `$CRITERIA_STATE_DIR/runs/<run_id>/approval-<node>.json`
+- **Decision record** (written after consumption): `$CRITERIA_STATE_DIR/runs/<run_id>/approvals/<node>.json`
+
+### Reattach safety
+
+After a decision is captured, it is persisted to the decision record file. On reattach (e.g., after a CLI crash), the persisted decision is reused without re-prompting the operator.
+
+### File timeout
+
+Override the default 1-hour file-mode timeout:
+
+```sh
+CRITERIA_LOCAL_APPROVAL_FILE_TIMEOUT=30m criteria apply workflow.hcl
+```
+
+### Orchestrator-backed runs
+
+When `--server` is set, `CRITERIA_LOCAL_APPROVAL` is ignored; the orchestrator continues to drive resume.
+
+### Examples
+
+```sh
+# Interactive (stdin mode)
+CRITERIA_LOCAL_APPROVAL=stdin criteria apply workflow.hcl
+
+# Unattended pipeline (auto-approve)
+CRITERIA_LOCAL_APPROVAL=auto-approve criteria apply workflow.hcl
+
+# CI with env-var decision
+CRITERIA_LOCAL_APPROVAL=env CRITERIA_APPROVAL_SHIP_TO_PROD=approved criteria apply workflow.hcl
+
+# Operator writes decision out-of-band (file mode)
+CRITERIA_LOCAL_APPROVAL=file criteria apply workflow.hcl &
+echo '{"decision":"approved"}' > ~/.criteria/runs/<run_id>/approval-ship_to_prod.json
+```
 
 ---
 
@@ -860,9 +913,8 @@ See [`proto/criteria/v1/`](../proto/criteria/v1/) for proto definitions and even
 ### Local-mode constraints
 
 - Duration-based waits work.
-- Signal-based waits abort with "signal waits require --server".
-- Approval nodes abort at workflow validation (before execution starts).
-- No crash recovery or run persistence.
+- Signal-based waits and approval nodes require `CRITERIA_LOCAL_APPROVAL` (see **Local-mode approval and signal wait**) or `--server`.
+- No crash recovery or run persistence (use `--server` for that).
 
 For examples demonstrating each command, see:
 - Local-only workflow: [examples/build_and_test.hcl](../examples/build_and_test.hcl)

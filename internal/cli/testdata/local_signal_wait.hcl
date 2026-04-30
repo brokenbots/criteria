@@ -1,0 +1,47 @@
+workflow "local_signal_wait" {
+  version       = "0.1"
+  initial_state = "gate"
+  target_state  = "done"
+
+  agent "demo" {
+    adapter = "noop"
+  }
+
+  wait "gate" {
+    signal = "proceed"
+    outcome "received" { transition_to = "open_demo" }
+  }
+
+  step "open_demo" {
+    agent     = "demo"
+    lifecycle = "open"
+    outcome "success" { transition_to = "run_step" }
+    outcome "failure" { transition_to = "failed" }
+  }
+
+  step "run_step" {
+    agent = "demo"
+    input {
+      prompt = "continue"
+    }
+    outcome "success" { transition_to = "close_demo" }
+    outcome "failure" { transition_to = "failed" }
+  }
+
+  step "close_demo" {
+    agent     = "demo"
+    lifecycle = "close"
+    outcome "success" { transition_to = "done" }
+    outcome "failure" { transition_to = "failed" }
+  }
+
+  state "done" {
+    terminal = true
+    success  = true
+  }
+
+  state "failed" {
+    terminal = true
+    success  = false
+  }
+}

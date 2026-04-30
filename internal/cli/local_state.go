@@ -145,6 +145,37 @@ func RemoveStepCheckpoint(runID string) {
 	_ = os.Remove(p)
 }
 
+// approvalDecisionDir returns the directory for persisted approval decisions
+// for a run: <stateDir>/runs/<runID>/approvals/. Created with 0o700 permissions.
+func approvalDecisionDir(runID string) (string, error) {
+	d, err := stateDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(d, "runs", runID, "approvals"), nil
+}
+
+// ApprovalDecisionPath returns the path for a persisted decision for a specific
+// node within a run: <stateDir>/runs/<runID>/approvals/<node>.json.
+// This path is used for both read (reattach safety) and write (persistence).
+func ApprovalDecisionPath(runID, nodeName string) (string, error) {
+	dir, err := approvalDecisionDir(runID)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, nodeName+".json"), nil
+}
+
+// ApprovalRequestPath returns the path of the file-mode sentinel that the
+// operator writes to provide a decision: <stateDir>/runs/<runID>/approval-<node>.json.
+func ApprovalRequestPath(runID, nodeName string) (string, error) {
+	d, err := stateDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(d, "runs", runID, "approval-"+nodeName+".json"), nil
+}
+
 // ListStepCheckpoints returns all valid checkpoint files found in the runs
 // subdirectory of the state dir. Corrupt or unreadable files are silently
 // skipped (logged by the caller).

@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/brokenbots/criteria/internal/adapters/shell"
+	"github.com/brokenbots/criteria/internal/cli/localresume"
 	"github.com/brokenbots/criteria/internal/engine"
 	"github.com/brokenbots/criteria/internal/plugin"
 	"github.com/brokenbots/criteria/internal/run"
@@ -99,7 +101,11 @@ func runApplyLocal(ctx context.Context, opts applyOptions) error { //nolint:funl
 	}
 	defer loader.Shutdown(context.Background())
 
-	if err := ensureLocalModeSupported(graph); err != nil {
+	resumer, err := buildLocalResumer(log)
+	if err != nil {
+		return err
+	}
+	if err := ensureLocalModeSupported(graph, resumer != nil); err != nil {
 		return err
 	}
 
@@ -117,7 +123,8 @@ func runApplyLocal(ctx context.Context, opts applyOptions) error { //nolint:funl
 			log.Warn("failed to write step checkpoint; crash recovery may not work", "error", cpErr)
 		}
 	}
-	sink := buildLocalSink(runID, jsonOut, mode, graph.StepOrder(), checkpointFn)
+	baseSink := buildLocalSink(runID, jsonOut, mode, graph.StepOrder(), checkpointFn)
+	tracker := &pauseTracker{Sink: baseSink}
 
 	log.Info("starting local run",
 		"run_id", runID,
@@ -138,7 +145,7 @@ func runApplyLocal(ctx context.Context, opts applyOptions) error { //nolint:funl
 	// src (raw HCL bytes) is consumed only by server mode for signed payload delivery;
 	// local mode has no signing step, so src is intentionally unused here.
 	_ = src
-	eng := engine.New(graph, loader, sink,
+	eng := engine.New(graph, loader, tracker,
 		engine.WithVarOverrides(parseVarOverrides(opts.varOverrides)),
 		engine.WithWorkflowDir(filepath.Dir(opts.workflowPath)),
 	)
@@ -146,6 +153,13 @@ func runApplyLocal(ctx context.Context, opts applyOptions) error { //nolint:funl
 		log.Error("local run failed", "run_id", runID, "error", err)
 		return err
 	}
+
+	if resumer != nil {
+		if err := drainLocalResumeCycles(ctx, log, graph, loader, tracker, resumer, runID, opts, eng); err != nil {
+			return err
+		}
+	}
+
 	log.Info("local run completed", "run_id", runID)
 	return nil
 }
@@ -356,33 +370,181 @@ func compileForExecution(ctx context.Context, workflowPath string, log *slog.Log
 	return src, graph, loader, nil
 }
 
-func ensureLocalModeSupported(graph *workflow.FSMGraph) error {
-	// Signal-based wait nodes require an orchestrator to deliver the signal.
+// pauseTracker wraps an engine.Sink and tracks pause state for the local approval
+// resume loop. It intercepts OnRunPaused to record the paused node name, and
+// captures approval/signal details so the resume loop knows what to resolve.
+type pauseTracker struct {
+	engine.Sink
+	mu             sync.Mutex
+	pausedNode     string
+	approvalDetail *approvalDetail
+	signalDetail   *signalDetail
+}
+
+type approvalDetail struct {
+	approvers []string
+	reason    string
+}
+
+type signalDetail struct {
+	signalName string
+}
+
+func (t *pauseTracker) OnRunPaused(node, mode, signal string) {
+	t.Sink.OnRunPaused(node, mode, signal)
+	t.mu.Lock()
+	t.pausedNode = node
+	t.mu.Unlock()
+}
+
+func (t *pauseTracker) OnApprovalRequested(node string, approvers []string, reason string) {
+	t.Sink.OnApprovalRequested(node, approvers, reason)
+	t.mu.Lock()
+	t.approvalDetail = &approvalDetail{approvers: approvers, reason: reason}
+	t.mu.Unlock()
+}
+
+func (t *pauseTracker) OnWaitEntered(node, mode, duration, signal string) {
+	t.Sink.OnWaitEntered(node, mode, duration, signal)
+	if mode == "signal" {
+		t.mu.Lock()
+		t.signalDetail = &signalDetail{signalName: signal}
+		t.mu.Unlock()
+	}
+}
+
+func (t *pauseTracker) IsPaused() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.pausedNode != ""
+}
+
+func (t *pauseTracker) PausedAt() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.pausedNode
+}
+
+func (t *pauseTracker) ClearPaused() {
+	t.mu.Lock()
+	t.pausedNode = ""
+	t.approvalDetail = nil
+	t.signalDetail = nil
+	t.mu.Unlock()
+}
+
+// buildLocalResumer constructs a LocalResumer from CRITERIA_LOCAL_APPROVAL and
+// CRITERIA_LOCAL_APPROVAL_FILE_TIMEOUT. Returns nil, nil when
+// CRITERIA_LOCAL_APPROVAL is unset (local approval not enabled).
+func buildLocalResumer(log *slog.Logger) (localresume.LocalResumer, error) {
+	raw := os.Getenv("CRITERIA_LOCAL_APPROVAL")
+	if raw == "" {
+		return nil, nil
+	}
+	m, err := localresume.ParseMode(raw)
+	if err != nil {
+		return nil, err
+	}
+	opts := localresume.Options{Log: log}
+	if rawTimeout := os.Getenv("CRITERIA_LOCAL_APPROVAL_FILE_TIMEOUT"); rawTimeout != "" {
+		d, err := time.ParseDuration(rawTimeout)
+		if err != nil {
+			return nil, fmt.Errorf("invalid CRITERIA_LOCAL_APPROVAL_FILE_TIMEOUT=%q: %w", rawTimeout, err)
+		}
+		opts.FileTimeout = d
+	}
+	return localresume.New(m, opts), nil
+}
+
+// drainLocalResumeCycles drives the pause/resume loop for local-mode runs with
+// CRITERIA_LOCAL_APPROVAL set. Each time the engine pauses, it calls the
+// resumer, populates a new engine with the resulting payload, and re-invokes
+// RunFrom until the run is no longer paused.
+func drainLocalResumeCycles(ctx context.Context, log *slog.Logger, graph *workflow.FSMGraph, loader plugin.Loader, tracker *pauseTracker, resumer localresume.LocalResumer, runID string, opts applyOptions, eng *engine.Engine) error {
+	for tracker.IsPaused() {
+		pausedNode := tracker.PausedAt()
+		log.Info("local run paused; resolving via local resumer", "run_id", runID, "node", pausedNode)
+
+		payload, err := resolveLocalPause(ctx, resumer, runID, pausedNode, graph, tracker)
+		if err != nil {
+			return fmt.Errorf("local approval at node %q: %w", pausedNode, err)
+		}
+
+		tracker.ClearPaused()
+		resumedEng := engine.New(graph, loader, tracker,
+			engine.WithResumedVars(eng.VarScope()),
+			engine.WithResumePayload(payload),
+			engine.WithWorkflowDir(filepath.Dir(opts.workflowPath)),
+		)
+		if runErr := resumedEng.RunFrom(ctx, pausedNode, 1); runErr != nil {
+			log.Error("local run failed after resume", "run_id", runID, "error", runErr)
+			return runErr
+		}
+		eng = resumedEng
+		log.Info("local run resumed", "run_id", runID)
+	}
+	return nil
+}
+
+// resolveLocalPause determines whether the paused node is an approval or
+// signal-wait and calls the appropriate resumer method.
+func resolveLocalPause(ctx context.Context, resumer localresume.LocalResumer, runID, pausedNode string, graph *workflow.FSMGraph, tracker *pauseTracker) (map[string]string, error) {
+	if _, isApproval := graph.Approvals[pausedNode]; isApproval {
+		tracker.mu.Lock()
+		ad := tracker.approvalDetail
+		tracker.mu.Unlock()
+		var approvers []string
+		var reason string
+		if ad != nil {
+			approvers = ad.approvers
+			reason = ad.reason
+		}
+		return resumer.ResumeApproval(ctx, runID, pausedNode, approvers, reason)
+	}
+	if wait, isWait := graph.Waits[pausedNode]; isWait && wait.Signal != "" {
+		tracker.mu.Lock()
+		sd := tracker.signalDetail
+		tracker.mu.Unlock()
+		signalName := wait.Signal
+		if sd != nil {
+			signalName = sd.signalName
+		}
+		return resumer.ResumeSignal(ctx, runID, pausedNode, signalName)
+	}
+	return nil, fmt.Errorf("paused at node %q which is neither an approval nor a signal wait", pausedNode)
+}
+
+const (
+	errSignalWait   = "signal waits require an orchestrator (e.g. --server <url>) or the local-mode env CRITERIA_LOCAL_APPROVAL={stdin|file|env|auto-approve}"
+	errApprovalNode = "approval nodes require an orchestrator (e.g. --server <url>) or the local-mode env CRITERIA_LOCAL_APPROVAL={stdin|file|env|auto-approve}"
+)
+
+func ensureLocalModeSupported(graph *workflow.FSMGraph, localApprovalEnabled bool) error {
+	if localApprovalEnabled {
+		return nil
+	}
 	for _, wn := range graph.Waits {
 		if wn.Signal != "" {
-			return errors.New("signal waits require an orchestrator (e.g. --server <url>)")
+			return errors.New(errSignalWait)
 		}
 	}
-	// Approval nodes always require an orchestrator.
 	if len(graph.Approvals) > 0 {
-		return errors.New("approval nodes require an orchestrator (e.g. --server <url>)")
+		return errors.New(errApprovalNode)
 	}
-	// Legacy step lifecycle checks kept for forward-compat.
 	for _, step := range graph.Steps {
-		if step.Lifecycle == "wait" {
-			return errors.New("signal waits require an orchestrator (e.g. --server <url>)")
-		}
-		if step.Lifecycle == "approval" {
-			return errors.New("approval nodes require an orchestrator (e.g. --server <url>)")
+		switch step.Lifecycle {
+		case "wait":
+			return errors.New(errSignalWait)
+		case "approval":
+			return errors.New(errApprovalNode)
 		}
 	}
 	for _, state := range graph.States {
-		requires := strings.ToLower(strings.TrimSpace(state.Requires))
-		switch requires {
+		switch strings.ToLower(strings.TrimSpace(state.Requires)) {
 		case "signal", "wait_signal", "wait.signal":
-			return errors.New("signal waits require an orchestrator (e.g. --server <url>)")
+			return errors.New(errSignalWait)
 		case "approval", "wait_approval", "wait.approval":
-			return errors.New("approval nodes require an orchestrator (e.g. --server <url>)")
+			return errors.New(errApprovalNode)
 		}
 	}
 	return nil
@@ -405,18 +567,39 @@ func resumeLocalInFlightRuns(ctx context.Context, log *slog.Logger, out io.Write
 	}
 }
 
-func resumeOneLocalRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint, out io.Writer, mode outputMode) {
+// prepareReattach validates the checkpoint, builds a plugin loader, and
+// constructs a local resumer. On failure it logs, clears the checkpoint,
+// and returns zero values with false so the caller can skip the run.
+func prepareReattach(ctx context.Context, log *slog.Logger, cp *StepCheckpoint) (*workflow.FSMGraph, plugin.Loader, localresume.LocalResumer, bool) {
 	graph, err := parseWorkflowFromPath(cp.WorkflowPath)
 	if err != nil {
 		log.Warn("cannot parse workflow for crashed local run; abandoning", "run_id", cp.RunID, "error", err)
 		RemoveStepCheckpoint(cp.RunID)
-		return
+		return nil, nil, nil, false
 	}
-	if err := ensureLocalModeSupported(graph); err != nil {
+	resumer, resumerErr := buildLocalResumer(log)
+	if resumerErr != nil {
+		log.Warn("local checkpoint: invalid CRITERIA_LOCAL_APPROVAL; clearing", "run_id", cp.RunID, "error", resumerErr)
+		RemoveStepCheckpoint(cp.RunID)
+		return nil, nil, nil, false
+	}
+	if err := ensureLocalModeSupported(graph, resumer != nil); err != nil {
 		log.Warn("local checkpoint requires server; clearing", "run_id", cp.RunID, "error", err)
 		RemoveStepCheckpoint(cp.RunID)
+		return nil, nil, nil, false
+	}
+	loader := plugin.NewLoader()
+	loader.RegisterBuiltin(shell.Name, plugin.BuiltinFactoryForAdapter(shell.New()))
+	_ = ctx // threaded for context propagation; parseWorkflowFromPath manages its own context internally
+	return graph, loader, resumer, true
+}
+
+func resumeOneLocalRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint, out io.Writer, mode outputMode) {
+	graph, loader, resumer, ok := prepareReattach(ctx, log, cp)
+	if !ok {
 		return
 	}
+	defer loader.Shutdown(context.Background())
 
 	nextAttempt := cp.Attempt + 1
 	maxAttempts := 1 + graph.Policy.MaxStepRetries
@@ -428,10 +611,6 @@ func resumeOneLocalRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint
 		return
 	}
 
-	loader := plugin.NewLoader()
-	loader.RegisterBuiltin(shell.Name, plugin.BuiltinFactoryForAdapter(shell.New()))
-	defer loader.Shutdown(context.Background())
-
 	checkpointFn := func(step string, attempt int) {
 		next := *cp
 		next.CurrentStep = step
@@ -441,12 +620,21 @@ func resumeOneLocalRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint
 			log.Warn("failed to update local checkpoint", "run_id", cp.RunID, "error", cpErr)
 		}
 	}
-	sink := buildLocalSink(cp.RunID, out, mode, graph.StepOrder(), checkpointFn)
-	sink.OnStepResumed(cp.CurrentStep, nextAttempt, "criteria_restart")
+	baseSink := buildLocalSink(cp.RunID, out, mode, graph.StepOrder(), checkpointFn)
+	tracker := &pauseTracker{Sink: baseSink}
+	tracker.OnStepResumed(cp.CurrentStep, nextAttempt, "criteria_restart")
 
-	eng := engine.New(graph, loader, sink, engine.WithWorkflowDir(filepath.Dir(cp.WorkflowPath)))
+	opts := applyOptions{workflowPath: cp.WorkflowPath}
+	eng := engine.New(graph, loader, tracker, engine.WithWorkflowDir(filepath.Dir(cp.WorkflowPath)))
 	if runErr := eng.RunFrom(ctx, cp.CurrentStep, nextAttempt); runErr != nil {
 		log.Error("resumed local run failed", "run_id", cp.RunID, "error", runErr)
+		RemoveStepCheckpoint(cp.RunID)
+		return
+	}
+	if resumer != nil {
+		if cycleErr := drainLocalResumeCycles(ctx, log, graph, loader, tracker, resumer, cp.RunID, opts, eng); cycleErr != nil {
+			log.Error("resumed local run failed during approval", "run_id", cp.RunID, "error", cycleErr)
+		}
 	} else {
 		log.Info("resumed local run completed", "run_id", cp.RunID)
 	}
