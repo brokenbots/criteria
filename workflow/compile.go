@@ -122,8 +122,9 @@ func newFSMGraph(spec *Spec) *FSMGraph {
 		}
 		// MaxVisitsWarnThreshold: nil means "not set" (keep default of 200);
 		// a pointer to 0 explicitly disables the warning; any positive value
-		// overrides the default.
-		if spec.Policy.MaxVisitsWarnThreshold != nil {
+		// overrides the default. Negative values are invalid and are ignored,
+		// preserving the default/non-negative policy behavior.
+		if spec.Policy.MaxVisitsWarnThreshold != nil && *spec.Policy.MaxVisitsWarnThreshold >= 0 {
 			g.Policy.MaxVisitsWarnThreshold = *spec.Policy.MaxVisitsWarnThreshold
 		}
 	}
