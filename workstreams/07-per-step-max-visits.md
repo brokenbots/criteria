@@ -793,3 +793,22 @@ The new compile test is good because it enforces the intended operator-facing co
 - `git --no-pager show --unified=3 4ae46bf -- internal/engine/node_step.go workflow/compile_steps_test.go` — reviewed cancellation-order remediation
 - `go test -race -count=1 -run 'TestCompile_NegativeMaxVisitsWarnThreshold_Rejected|TestMaxVisits_RetryCounts|TestMaxVisits_Persists' ./workflow/... ./internal/engine/...` — PASS
 - `make ci` — PASS
+
+### Review 2026-04-30-11 — approved
+
+#### Summary
+The remaining blocker is resolved. The branch now has direct regression tests for both cancellation-sensitive visit-count paths, so the runtime behavior change in `node_step.go` is no longer implicit. Combined with the earlier persistence, retry, loop-warning, and invalid-threshold coverage, the workstream is back at the acceptance bar.
+
+#### Plan Adherence
+- **Step 2 — Compile:** Satisfied. Negative `max_visits_warn_threshold` is rejected at compile time, and the docs now describe the supported values correctly.
+- **Step 3 — Runtime tracking:** Satisfied. Cancellation is checked before `incrementVisit` in both changed branches, and that behavior is now directly covered by tests.
+- **Step 5 — Tests:** Acceptance-bar coverage is now present for the latest runtime change as well as the previously approved compile/persistence behavior. `TestMaxVisits_CancelledAttemptDoesNotConsumeVisit` and `TestMaxVisits_CancelledWorkflowIterationDoesNotConsumeVisit` close the final regression gap.
+- **Step 6 — Documentation:** Updated and aligned with shipped semantics, including the retry/iteration wording and the `max_total_steps = 0` clarification.
+
+#### Test Intent Assessment
+The newest engine tests are appropriately regression-sensitive: they would fail if visit counting moved back ahead of `ctx.Err()` in either the normal attempt path or the workflow-iteration path. That is the exact contract the recent remediation changed. With those in place, the suite now covers both the steady-state and edge-case semantics introduced by this workstream.
+
+#### Validation Performed
+- `git --no-pager diff --unified=3 HEAD~2..HEAD -- internal/engine/engine_test.go docs/workflow.md workstreams/07-per-step-max-visits.md` — reviewed latest remediation
+- `go test -race -count=1 -run 'TestMaxVisits_CancelledAttemptDoesNotConsumeVisit|TestMaxVisits_CancelledWorkflowIterationDoesNotConsumeVisit|TestCompile_NegativeMaxVisitsWarnThreshold_Rejected' ./internal/engine/... ./workflow/...` — PASS
+- `make ci` — PASS
