@@ -128,3 +128,77 @@ jobs:
 
       - name: Check proto drift
         run: make proto-check-drift
+
+  release-artifacts:
+    name: Release artifacts (RC PRs only)
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'pull_request' && (
+        startsWith(github.head_ref, 'release/') ||
+        contains(github.event.pull_request.title, '-rc')
+      )
+    needs: [unit-tests, e2e]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Sync workspace
+        run: go work sync
+
+      - name: Extract RC tag from branch or title
+        id: rc
+        run: |
+          # 1. Prefer the branch name (release/<tag>).
+          tag=""
+          if [[ "${GITHUB_HEAD_REF}" == release/* ]]; then
+            tag="${GITHUB_HEAD_REF#release/}"
+          fi
+          # 2. Title: try to match a full semver+rc token (e.g. v0.3.0-rc1).
+          if [[ -z "$tag" ]]; then
+            tag="$(echo "${PR_TITLE}" | grep -oE 'v?[0-9]+\.[0-9]+\.[0-9]+(-rc[0-9]+)?' | head -1 || true)"
+          fi
+          # 3. Title fallback: extract just the rcN marker from any -rcN substring.
+          if [[ -z "$tag" ]]; then
+            tag="$(echo "${PR_TITLE}" | grep -oE -- '-rc[0-9]+' | head -1 | sed 's/^-//' || true)"
+          fi
+          if [[ -z "$tag" ]]; then
+            echo "ERROR: could not extract RC tag from branch or title"
+            exit 1
+          fi
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+
+      - name: Build CLI binary
+        run: make build
+
+      - name: Build adapter plugins
+        run: make plugins
+
+      - name: Build runtime container image
+        run: make docker-runtime
+
+      - name: Save runtime image as tar
+        run: |
+          docker save criteria/runtime:dev -o bin/criteria-runtime.tar
+
+      - name: Generate SHA256SUMS
+        working-directory: bin
+        run: sha256sum criteria criteria-adapter-* criteria-runtime.tar > SHA256SUMS
+
+      - name: Bundle artifacts
+        run: |
+          mkdir -p artifact
+          cp bin/criteria bin/criteria-adapter-* bin/criteria-runtime.tar bin/SHA256SUMS artifact/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: criteria-${{ steps.rc.outputs.tag }}
+          path: artifact/
+          retention-days: 30
+          if-no-files-found: error

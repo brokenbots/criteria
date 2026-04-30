@@ -237,16 +237,16 @@ It may **not** edit any code under `internal/`, `cmd/`, `workflow/`,
 
 ## Tasks
 
-- [ ] Append `release-artifacts` job to `.github/workflows/ci.yml`
+- [x] Append `release-artifacts` job to `.github/workflows/ci.yml`
       with the documented trigger condition.
-- [ ] Implement the tag extraction in the `Extract RC tag` step.
-- [ ] Build, bundle, and upload the artifact bundle.
-- [ ] Generate `SHA256SUMS`.
-- [ ] Save the runtime image as a tar.
-- [ ] Author `docs/contributing/release-process.md`.
+- [x] Implement the tag extraction in the `Extract RC tag` step.
+- [x] Build, bundle, and upload the artifact bundle.
+- [x] Generate `SHA256SUMS`.
+- [x] Save the runtime image as a tar.
+- [x] Author `docs/contributing/release-process.md`.
 - [ ] Validate via the four scenarios in Step 4; document in
       reviewer notes.
-- [ ] `make ci` green on the workstream branch.
+- [x] `make ci` green on the workstream branch.
 
 ## Exit criteria
 
@@ -271,6 +271,42 @@ This workstream does not add Go tests. Verification is the four
 scenarios in Step 4, captured in reviewer notes with PR / run
 URLs.
 
+## Reviewer notes
+
+### Implementation (2026-04-30)
+
+**Files changed:**
+- `.github/workflows/ci.yml` — appended the `release-artifacts` job
+  after `proto-drift`. Exact spec from the workstream was used verbatim.
+  `needs: [unit-tests, e2e]` gates the artifact build on CI success.
+  `if-no-files-found: error` ensures a silent empty build fails loudly.
+- `docs/contributing/release-process.md` — new file documenting the
+  trigger convention, artifact contents, download path, retention window,
+  and verification commands.
+
+**`make ci` result:** all gates pass (build, tests, lint-imports,
+lint-go, lint-baseline-check, validate, example-plugin). Baseline
+remains at 70/70 — no new suppressions added.
+
+**Security pass:** the tag extraction uses only `$GITHUB_HEAD_REF` and
+`$PR_TITLE` (passed as an env var, not shell-interpolated), and writes
+to `$GITHUB_OUTPUT` only. No secrets are accessed. `docker save` writes
+only to the local `bin/` directory. `sha256sum` and `cp` are
+standard Linux utilities with no injection surface.
+
+**Step 4 live validation** (pending — requires opening real PRs on
+GitHub; cannot be simulated locally):
+- Scenario 1: regular PR → `release-artifacts` skipped. *(pending)*
+- Scenario 2: branch `release/test-rc1` → job runs, artifact named
+  `criteria-test-rc1`. *(pending)*
+- Scenario 3: any branch, title `Test: v0.0.0-rc1` → job runs,
+  artifact named `criteria-v0.0.0-rc1`. *(pending)*
+- Scenario 4: downloaded artifact contains expected files verified with
+  `unzip -l`. *(pending)*
+
+These scenarios will be validated on the PR opened for this workstream
+and URLs added here before final approval is sought.
+
 ## Risks
 
 | Risk | Mitigation |
@@ -281,3 +317,27 @@ URLs.
 | Tag extraction produces an empty string for an unusual branch name | The job fails loudly with `ERROR: could not extract RC tag`. Operators see the error in the CI log and fix the branch name or title. |
 | The `release-artifacts` job slows down CI on RC PRs | RC PRs are infrequent (one or two per release). The added build time is acceptable on the human-decision side of an RC. |
 | `actions/upload-artifact@v4` is not the correct major version when this workstream lands | Pin to the same version used elsewhere in `ci.yml` (search for `actions/upload-artifact` in the workflows directory). If no precedent, use the latest stable major and document. |
+
+## Reviewer Notes
+
+### Review 2026-04-30 — changes-requested
+
+#### Summary
+The workflow and release-process doc are in place, and `make ci` is green locally, but this is not approvable yet. Two blockers remain: the title-trigger contract and the title-to-tag extraction logic do not accept the same set of PR titles, and the required live PR validation for the GitHub Actions behavior is still entirely pending. I did not find a separate shell-injection, secret-handling, or path-safety issue in the reviewed workflow steps.
+
+#### Plan Adherence
+- The `release-artifacts` job, artifact bundling, checksum generation, runtime-image tar export, and `docs/contributing/release-process.md` are implemented in the allowed files.
+- Step 1 is only partially satisfied: `.github/workflows/ci.yml:135-165` and `docs/contributing/release-process.md:14-29` document/title-gate on `-rc`, but the extractor only succeeds when the title also contains a parseable semver token.
+- Step 4 and the corresponding exit criteria are still unmet: `workstreams/13-rc-artifact-upload.md:297-308` explicitly leaves every live validation scenario pending and provides no PR or workflow-run URLs.
+
+#### Required Remediations
+- **Blocker** — `.github/workflows/ci.yml:135-165`, `docs/contributing/release-process.md:14-29`: align the trigger contract with the extraction contract. Right now a title-only PR can satisfy the documented/workflow RC trigger and still fail before upload because the extractor requires a semantic-version token. **Acceptance criteria:** either tighten the workflow condition and docs so title-based triggering only occurs for the exact parseable RC title format the extractor supports, or broaden extraction so every documented RC-title format yields a non-empty artifact tag. Include one negative-case proof showing a non-release PR title does not run the job.
+- **Blocker** — `workstreams/13-rc-artifact-upload.md:297-308` and Step 4 / Exit criteria: complete the required live GitHub validation and record the evidence. **Acceptance criteria:** add PR/run URLs proving (1) a regular PR skips `release-artifacts`, (2) a `release/test-rc1` branch PR runs and uploads `criteria-test-rc1`, (3) a non-`release/` branch PR with title `Test: v0.0.0-rc1` runs and uploads `criteria-v0.0.0-rc1`, and (4) the downloaded artifact contains the expected files. Also include evidence that `sha256sum -c SHA256SUMS` succeeds and `docker load -i criteria-runtime.tar` succeeds on the downloaded artifact, because both are explicit exit criteria.
+
+#### Test Intent Assessment
+Existing repository validation is still strong enough to show the workflow/doc edits did not break the normal build, test, lint, or example paths. The missing piece is contract-level proof for the GitHub Actions behavior itself: there is still no executed evidence for the skip path, the two run paths, the published artifact name, the downloaded artifact contents, checksum verification, or runtime-image loadability. A local reproduction of the extraction snippet covered the happy paths (`release/test-rc1`, `Test: v0.0.0-rc1`) but also showed `random -rc1 without version` produces an empty tag, so the current checks do not yet prove the intended title-trigger behavior.
+
+#### Validation Performed
+- `make ci` — passed locally.
+- Local reproduction of the RC tag extraction logic — `release/test-rc1` => `test-rc1`; `Test: v0.0.0-rc1` => `v0.0.0-rc1`; `Add some feature` => empty; `random -rc1 without version` => empty.
+- `make docker-runtime` — could not be completed locally in this environment because the Docker daemon was unavailable, so runtime-image validation still needs the live CI evidence above.
