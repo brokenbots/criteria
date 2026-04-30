@@ -22,8 +22,8 @@ New to the project? Start here:
 - git
 
 ```bash
-git clone https://github.com/brokenbots/criteria.git
-cd criteria
+git clone https://github.com/brokenbots/overseer.git
+cd overseer
 make bootstrap         # sync all three Go workspace modules
 make build             # produces bin/criteria
 make plugins           # build adapter plugin binaries (bin/criteria-adapter-*)
