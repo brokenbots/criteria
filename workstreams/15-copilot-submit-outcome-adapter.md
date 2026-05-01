@@ -1225,3 +1225,21 @@ The doc comment listed only `missing`/`invalid_outcome`/`duplicate` kinds, omitt
 #### Validation
 
 - `make ci` — **PASS** (commit `1352773`)
+
+### Review 2026-05-01-08 — approved
+
+#### Summary
+
+Verdict: **approved**. The follow-up PR-thread fixes are correct and do not reopen any acceptance-bar issues. The permission-denied assertion now correctly treats missing fields as absent, `outcome.finalized.reason` is consistent with stored trimmed state, and the `failExhausted` comment now matches the shipped `no_outcomes` behavior.
+
+#### Plan Adherence
+
+- Workstream scope remains satisfied.
+- The new fixes are narrowly targeted and consistent with the approved design.
+- No new deviations from the Step 5 / Step 6 acceptance bar were introduced.
+
+#### Validation Performed
+
+- `go test -race ./cmd/criteria-adapter-copilot/...` — passed.
+- `make test-conformance` — passed.
+- `make ci` — passed.
