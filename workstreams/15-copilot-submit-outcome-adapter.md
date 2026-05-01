@@ -1205,3 +1205,23 @@ The boundary tests for invalid and duplicate tool calls are now strong enough, b
 - `go test -race ./cmd/criteria-adapter-copilot/...` — passed.
 - `make test-conformance` — passed.
 - `make ci` — passed.
+
+### PR review thread remediation 2 — 2026-05-01
+
+Three new unresolved threads from `copilot-pull-request-reviewer`:
+
+**Thread PRRT_kwDOSOBb1s5-7rl0 — `conformance_outcomes.go:86`: `fmt.Sprint` nil false-positive**
+
+`assertPermissionDeniedEvent` used `fmt.Sprint(deniedEvent["request_id"])` which renders a nil map value as `"<nil>"`, causing the empty-string guard to pass when the field is absent. Fix: replaced with type assertion `v, _ := deniedEvent["key"].(string)` — nil and missing fields correctly yield `""`. Removed the now-unused `fmt` import.
+
+**Thread PRRT_kwDOSOBb1s5-7rmB — `copilot_outcome.go:72`: untrimmed reason in `outcome.finalized` event**
+
+`outcome.finalized` emitted `args.Reason` (raw) while `finalizedReason` stored `strings.TrimSpace(args.Reason)`, creating a whitespace discrepancy between persisted state and the operator event. Fix: captured `trimmedReason := strings.TrimSpace(args.Reason)` once before the unlock; used it for both `s.finalizedReason` and the event `"reason"` field.
+
+**Thread PRRT_kwDOSOBb1s5-7rmO — `copilot_turn.go:199`: stale `failExhausted` doc comment**
+
+The doc comment listed only `missing`/`invalid_outcome`/`duplicate` kinds, omitting `no_outcomes`. Fix: added `no_outcomes` / `"step has no declared outcomes"` to both the `reason` and `kind` lines in the comment.
+
+#### Validation
+
+- `make ci` — **PASS** (commit `1352773`)
