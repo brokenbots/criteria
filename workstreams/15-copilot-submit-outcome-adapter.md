@@ -1355,3 +1355,38 @@ All three fixture/scenario conformance tests rely on the deterministic `fake-cop
 #### Validation
 
 - `make ci` — **PASS** (commit `fc457e3`)
+
+### Review 2026-05-01-12 — changes-requested
+
+#### Summary
+
+Verdict: **changes-requested**. The new skip guards are directionally correct, but remediation 7 is incomplete: `TestConformance_AllowedOutcomesPropagation` still runs in `COPILOT_E2E=1` despite hard-coding the fake Copilot's default scenario behavior. That leaves the advertised E2E routing mode leaky for `go test ./cmd/criteria-adapter-copilot/... -run Conformance`, because one remaining fake-dependent test can still execute against the real Copilot CLI and become nondeterministic.
+
+#### Plan Adherence
+
+- The workstream's outcome-contract scope remains implemented.
+- The new routing fix only partially closes the PR-thread issue; one adjacent fake-dependent conformance test remains unguarded.
+
+#### Required Remediations
+
+- **Blocker** — `cmd/criteria-adapter-copilot/conformance_test.go:194-250`: `TestConformance_AllowedOutcomesPropagation` still depends on fake-only semantics in E2E mode. Its own comments assert that "the fake's default scenario submits outcome `success`", and the prompt (`"test AllowedOutcomes propagation"`) is not a deterministic real-CLI contract. In `COPILOT_E2E=1`, `applyFakeIfNeeded` intentionally stops forcing `testFakeBin`, so this test can still run against the real Copilot CLI and violate the routing contract that remediation 7 set out to protect. **Acceptance criteria:** either add the same `COPILOT_E2E` skip guard used by the other fake/scenario tests, or rewrite this test so it is genuinely E2E-safe against the real CLI with deterministic, contract-visible assertions that do not depend on fake-specific behavior.
+
+#### Test Intent Assessment
+
+The three newly guarded tests now correctly declare that they require deterministic fake-Copilot scenarios. The remaining gap is `TestConformance_AllowedOutcomesPropagation`: its assertions only prove the intended behavior when the fake submits `submit_outcome("success")`, so under real-Copilot routing it no longer tests a stable contract and could fail or flake for reasons unrelated to AllowedOutcomes propagation.
+
+#### Validation Performed
+
+- `go test -race ./cmd/criteria-adapter-copilot/...` — passed.
+- `make test-conformance` — passed.
+- `make ci` — passed.
+
+### PR review thread remediation 8 — 2026-05-01
+
+**Blocker — `cmd/criteria-adapter-copilot/conformance_test.go:194-250`: `TestConformance_AllowedOutcomesPropagation` needs COPILOT_E2E skip guard**
+
+The test relies on the fake-copilot default scenario submitting `submit_outcome("success")`. When `COPILOT_E2E=1`, `applyFakeIfNeeded` stops forcing the fake binary, so this test would run against the real Copilot CLI and become non-deterministic. Added the same `if os.Getenv("COPILOT_E2E") == "1" { t.Skip(...) }` guard at the top of the function (before `applyFakeIfNeeded`), consistent with the three fixture tests guarded in remediation 7.
+
+#### Validation
+
+- `make ci` — **PASS** (commit `bb4db2b`)
