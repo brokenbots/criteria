@@ -259,6 +259,9 @@ func TestConformance_AllowedOutcomesPropagation(t *testing.T) {
 // test captures that event and asserts the exact set matches what was declared
 // — any forwarding bug (e.g., wrong set, wrong sort, dropped entries) fails here.
 func TestConformance_AllowedOutcomesPropagation_SetProof(t *testing.T) {
+	if os.Getenv("COPILOT_E2E") == "1" {
+		t.Skip("skipping fake-copilot scenario test in COPILOT_E2E mode")
+	}
 	t.Setenv("FAKE_COPILOT_SCENARIO", "missing")
 	applyFakeIfNeeded(t)
 
@@ -386,6 +389,9 @@ func openFixtureSession(t *testing.T, plug plugin.Plugin, sessionID string) cont
 //   - Exactly one outcome.finalized event is emitted with outcome="success".
 //   - No outcome.failure event is emitted (step succeeded without exhausting).
 func TestConformance_InvalidOutcomeScenario_Fixture(t *testing.T) {
+	if os.Getenv("COPILOT_E2E") == "1" {
+		t.Skip("skipping fake-copilot fixture test in COPILOT_E2E mode")
+	}
 	t.Setenv("FAKE_COPILOT_SCENARIO", "invalid-outcome")
 	applyFakeIfNeeded(t)
 
@@ -463,6 +469,9 @@ func TestConformance_InvalidOutcomeScenario_Fixture(t *testing.T) {
 //   - Exactly one outcome.finalized event (second call rejected — its rejection
 //     is evidenced by the absence of a second outcome.finalized event).
 func TestConformance_DuplicateCallScenario_Fixture(t *testing.T) {
+	if os.Getenv("COPILOT_E2E") == "1" {
+		t.Skip("duplicate-call fixture test requires deterministic fake copilot; skip in E2E mode")
+	}
 	t.Setenv("FAKE_COPILOT_SCENARIO", "duplicate-call")
 	applyFakeIfNeeded(t)
 
