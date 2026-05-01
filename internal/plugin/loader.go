@@ -306,9 +306,9 @@ func (p *rpcPlugin) Kill() {
 }
 
 // collectAllowedOutcomes returns the declared outcome names for a step,
-// sorted ascending for determinism. Returns an empty (non-nil) slice
-// when the step has no outcomes declared (terminal-routing steps,
-// iteration steps that route via cursor outcomes, etc.).
+// sorted ascending for determinism. If the step has no outcomes declared
+// (terminal-routing steps, iteration steps that route via cursor outcomes,
+// etc.), the result is empty.
 func collectAllowedOutcomes(step *workflow.StepNode) []string {
 	if len(step.Outcomes) == 0 {
 		return []string{}

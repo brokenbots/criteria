@@ -23,8 +23,9 @@ documented here. The SDK follows the bump policy in
   the Copilot `submit_outcome` tool, shipping in
   [W15](../workstreams/15-copilot-submit-outcome-adapter.md).
 - **Backward compatibility**: existing adapters that ignore the new field
-  continue to function unchanged. Proto3 unknown-field forwarding means
-  adapters built against older generated bindings silently ignore field 4.
+  continue to function unchanged. Adapters built against older generated
+  bindings silently ignore field 4 when decoding, though they may drop it if
+  they re-serialize the message.
 
 ### Bump rationale
 

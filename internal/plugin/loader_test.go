@@ -266,7 +266,8 @@ func TestLoader_PopulatesAllowedOutcomes(t *testing.T) {
 }
 
 // TestLoader_PopulatesAllowedOutcomes_Empty verifies that a step with no
-// declared outcomes produces an empty (non-nil) AllowedOutcomes slice.
+// declared outcomes produces an empty AllowedOutcomes list. nil and empty are
+// equivalent for proto3 repeated fields; only the length is asserted.
 func TestLoader_PopulatesAllowedOutcomes_Empty(t *testing.T) {
 	rc := &recordingClient{}
 	p := &rpcPlugin{name: "recording-stub", rpc: rc}
@@ -281,9 +282,6 @@ func TestLoader_PopulatesAllowedOutcomes_Empty(t *testing.T) {
 	req := rc.lastExecuteReq
 	if req == nil {
 		t.Fatal("no ExecuteRequest was captured")
-	}
-	if req.AllowedOutcomes == nil {
-		t.Fatal("AllowedOutcomes should be non-nil empty slice, got nil")
 	}
 	if len(req.AllowedOutcomes) != 0 {
 		t.Fatalf("AllowedOutcomes = %v, want empty", req.AllowedOutcomes)
@@ -311,12 +309,10 @@ func TestCollectAllowedOutcomes_Sorted(t *testing.T) {
 }
 
 // TestCollectAllowedOutcomes_Empty verifies that a step with no outcomes
-// returns an empty, non-nil slice.
+// returns an empty result. nil and empty are equivalent for proto3 repeated
+// fields; only the length is asserted.
 func TestCollectAllowedOutcomes_Empty(t *testing.T) {
 	got := collectAllowedOutcomes(&workflow.StepNode{})
-	if got == nil {
-		t.Fatal("expected non-nil empty slice")
-	}
 	if len(got) != 0 {
 		t.Fatalf("got %v, want empty", got)
 	}

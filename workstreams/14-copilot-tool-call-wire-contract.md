@@ -513,3 +513,17 @@ The new tests check contract-visible behavior rather than implementation trivia:
 - `make test` — passed
 - `make test-conformance` — passed
 - `make ci` — passed
+
+### PR Review Remediations (2026-04-30)
+
+Four review threads addressed:
+
+1. **`internal/plugin/loader.go` comment (PRRT_kwDOSOBb1s5-67OH):** Reworded `collectAllowedOutcomes` comment to remove the "non-nil" promise; nil/empty are equivalent over proto3 wire.
+
+2. **`docs/plugins.md` `allowed_outcomes` description (PRRT_kwDOSOBb1s5-67OL):** Added sentence noting that adapters must treat missing/nil `allowed_outcomes` the same as empty, and should not use nil vs empty to infer host version.
+
+3. **`sdk/CHANGELOG.md` backward-compat note (PRRT_kwDOSOBb1s5-67OP):** Replaced "Proto3 unknown-field forwarding" with the more accurate "silently ignore field 4 when decoding, though they may drop it if they re-serialize the message."
+
+4. **`internal/plugin/loader_test.go` nil assertions (PRRT_kwDOSOBb1s5-67OW):** Removed `== nil` guards in `TestLoader_PopulatesAllowedOutcomes_Empty` and `TestCollectAllowedOutcomes_Empty`; both tests now assert only `len == 0`, consistent with proto3 nil/empty equivalence.
+
+All four tests still pass after changes. `make test` (plugin and cli packages) green.
