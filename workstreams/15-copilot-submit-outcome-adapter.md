@@ -996,6 +996,30 @@ This pass substantially improved coverage breadth, and the new structured-failur
 - `make test-conformance` — passed.
 - `make ci` — passed.
 
+### Review 2026-05-01-07 — approved
+
+#### Summary
+
+Verdict: **approved**. The reopened empty-outcomes blocker is closed. `TestSubmitOutcome_EmptyAllowedSetFailsClosed` now proves the exact intended behavior — immediate failure on the first idle turn, no reprompt send, and `outcome.failure.kind = "no_outcomes"` / `reason = "step has no declared outcomes"` — and `docs/plugins.md` now matches the shipped behavior and payload categories.
+
+#### Plan Adherence
+
+- **Steps 1-4:** Implemented and aligned with the locked design decisions.
+- **Step 5.1:** Satisfied. The empty-allowed-set case now has explicit first-turn-failure assertions in addition to the existing valid/invalid/duplicate/reprompt coverage.
+- **Step 5.2:** Satisfied. The exact declared allowed-outcomes set is proven at the plugin boundary.
+- **Step 5.3:** Satisfied. The engine guard regression remains present.
+- **Step 6 / exit criteria:** Satisfied.
+
+#### Test Intent Assessment
+
+The test suite now proves the intended behavior at the right level for all material branches in this workstream: handler-level validation, reprompt recovery, exhaustion, permission denial, max-turns mapping, duplicate handling, exact allowed-outcomes propagation, and the empty-outcomes fast-fail path. The docs and tests are again aligned with the implementation.
+
+#### Validation Performed
+
+- `go test -race ./cmd/criteria-adapter-copilot/...` — passed.
+- `make test-conformance` — passed.
+- `make ci` — passed.
+
 ### Review 2026-05-01-04 — changes-requested
 
 #### Summary
