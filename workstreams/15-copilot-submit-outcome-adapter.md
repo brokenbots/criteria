@@ -1295,3 +1295,21 @@ Added Test 5.4b to prove a duplicate call with an out-of-set outcome yields `kin
 #### Validation
 
 - `make ci` — **PASS** (commit `cf67141`)
+
+### Review 2026-05-01-10 — approved
+
+#### Summary
+
+Verdict: **approved**. The duplicate-classification fix is correct and does not reopen any acceptance-bar issues. Once a step is already finalized, subsequent `submit_outcome` calls are now consistently classified as `duplicate` regardless of whether the later arguments are empty, invalid, or out of set, which matches the documented contract.
+
+#### Plan Adherence
+
+- Workstream scope remains satisfied.
+- The new fix is narrowly targeted and consistent with the approved design.
+- No new deviations from the Step 5 / Step 6 acceptance bar were introduced.
+
+#### Validation Performed
+
+- `go test -race ./cmd/criteria-adapter-copilot/...` — passed.
+- `make test-conformance` — passed.
+- `make ci` — passed.
