@@ -485,3 +485,31 @@ ascending. Adapters may consume it to constrain outcome selection but are not
 required to. Existing adapters are forward-compatible (proto3 unknown-field
 behaviour). First consumer ships in W15 (Copilot `submit_outcome` tool).
 Bump tier: minor. Tag deferred to W16.
+
+### Review 2026-04-30 — approved
+
+#### Summary
+
+Approved. The implementation matches W14's wire-only scope and exit criteria: `ExecuteRequest` now carries `allowed_outcomes` field 4, the host populates it deterministically from declared step outcomes, the engine's independent outcome guard remains unchanged, the SDK bump rationale is documented, and the repository validation lanes pass on this branch.
+
+#### Plan Adherence
+
+- **Step 1 / Step 2:** `proto/criteria/v1/adapter_plugin.proto` adds `repeated string allowed_outcomes = 4;` with the required permanence comment, and the regenerated `sdk/pb/criteria/v1/adapter_plugin.pb.go` exposes `AllowedOutcomes []string` plus the expected accessor. `make proto-check-drift` and `make proto-lint` both pass.
+- **Step 3:** `sdk/CHANGELOG.md` was added and records the new field, host-population behavior, adapter optionality, backward-compatibility note, and bump rationale. I accept the executor's **minor** classification because `CONTRIBUTING.md` explicitly treats additive proto fields as non-breaking at minor or patch level; the workstream's conservative-break wording does not override that published repo policy.
+- **Step 4 / Step 5:** `internal/plugin/loader.go` now populates `AllowedOutcomes` via package-private `collectAllowedOutcomes`, which sorts keys ascending and returns `[]string{}` when `step.Outcomes` is empty. `internal/engine/node_step.go` remains unchanged, preserving the intended belt-and-suspenders validation.
+- **Step 6:** `internal/plugin/loader_test.go` adds coverage for sorted propagation through `rpcPlugin.Execute`, the empty-slice case at the request boundary, and direct helper behavior. Existing suites remain green.
+- **Step 7:** `docs/plugins.md` documents `allowed_outcomes`, notes that host validation is unchanged, and cross-references W15 as the first adapter consumer.
+
+#### Test Intent Assessment
+
+The new tests check contract-visible behavior rather than implementation trivia: unordered `step.Outcomes` input must produce a stable sorted slice, empty outcomes must remain non-nil/empty, and the request handed to the client must include the expected field values. Combined with proto regeneration/drift checks and the passing repository suites, this is sufficient evidence for this additive wire-contract change.
+
+#### Validation Performed
+
+- `make proto-check-drift` — passed
+- `make proto-lint` — passed
+- `make build` — passed
+- `make plugins` — passed
+- `make test` — passed
+- `make test-conformance` — passed
+- `make ci` — passed
