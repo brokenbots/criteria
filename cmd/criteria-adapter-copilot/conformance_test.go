@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -376,11 +377,14 @@ func openFixtureSession(t *testing.T, plug plugin.Plugin, sessionID string) cont
 // "invalid-outcome" fake scenario end-to-end through the real plugin binary.
 //
 // The fake submits "not-a-real-outcome" on turn 1 (rejected by the handler) and
-// "success" on turn 2 (accepted). This validates that:
-//   - The real submit_outcome handler rejects the invalid value and reprompts.
-//   - The valid call on the next turn is accepted.
+// "success" on turn 2 (accepted). This validates:
+//   - Both tool invocations are observable at the adapter boundary as
+//     tool.invocation events, with the exact outcome argument on each call —
+//     proving the invalid call was not silently swallowed by the handler.
+//   - Both calls produced tool.result completion events (full SDK-boundary
+//     lifecycle visibility for rejected and accepted calls alike).
 //   - Exactly one outcome.finalized event is emitted with outcome="success".
-//   - No outcome.failure event is emitted (step succeeded, no exhaustion).
+//   - No outcome.failure event is emitted (step succeeded without exhausting).
 func TestConformance_InvalidOutcomeScenario_Fixture(t *testing.T) {
 	t.Setenv("FAKE_COPILOT_SCENARIO", "invalid-outcome")
 	applyFakeIfNeeded(t)
@@ -409,7 +413,29 @@ func TestConformance_InvalidOutcomeScenario_Fixture(t *testing.T) {
 		t.Errorf("outcome = %q, want %q", result.Outcome, "success")
 	}
 
-	// Exactly one outcome.finalized event — the valid call on turn 2.
+	// Assert both tool invocations are observable at the boundary with their
+	// exact argument payloads. This is the contract-visible proof that the
+	// invalid call was observed and rejected (not silently swallowed) before
+	// the valid call succeeded on turn 2.
+	invocations := capSink.invocationsForTool("submit_outcome")
+	if len(invocations) != 2 {
+		t.Fatalf("submit_outcome tool.invocation count = %d, want 2 (one per turn)", len(invocations))
+	}
+	// Turn 1: invalid outcome argument must be present on the first invocation.
+	if args, _ := invocations[0]["arguments"].(string); !strings.Contains(args, "not-a-real-outcome") {
+		t.Errorf("invocation[0] arguments = %q, want to contain %q (invalid outcome boundary-visible)", args, "not-a-real-outcome")
+	}
+	// Turn 2: accepted outcome argument must be present on the second invocation.
+	if args, _ := invocations[1]["arguments"].(string); !strings.Contains(args, "success") {
+		t.Errorf("invocation[1] arguments = %q, want to contain %q (valid outcome boundary-visible)", args, "success")
+	}
+	// Both calls produced completion events — the full tool-call lifecycle
+	// (request → handler → result) ran for both the rejected and accepted calls.
+	if n := len(capSink.adapterEvents("tool.result")); n < 2 {
+		t.Errorf("tool.result event count = %d, want at least 2 (one per invocation)", n)
+	}
+
+	// Exactly one outcome.finalized event — only the valid call on turn 2.
 	finalized := capSink.adapterEvents("outcome.finalized")
 	if len(finalized) != 1 {
 		t.Fatalf("outcome.finalized event count = %d, want 1; events: %v", len(finalized), finalized)
@@ -428,11 +454,14 @@ func TestConformance_InvalidOutcomeScenario_Fixture(t *testing.T) {
 // "duplicate-call" fake scenario end-to-end through the real plugin binary.
 //
 // The fake submits submit_outcome("success") and submit_outcome("failure") in
-// the same turn (no idle between them). This validates that:
-//   - The first call wins: outcome = "success".
-//   - The second call is rejected at the SDK boundary.
-//   - Exactly one outcome.finalized event is emitted (no second event from the
-//     duplicate call), proving the second call's tool-error is SDK-visible.
+// the same turn (no idle between them). This validates:
+//   - Both tool invocations are observable at the adapter boundary as
+//     tool.invocation events — proving the duplicate call was not silently
+//     swallowed and its arguments ("failure") are boundary-visible.
+//   - Both calls produced tool.result completion events.
+//   - First call wins: outcome = "success".
+//   - Exactly one outcome.finalized event (second call rejected — its rejection
+//     is evidenced by the absence of a second outcome.finalized event).
 func TestConformance_DuplicateCallScenario_Fixture(t *testing.T) {
 	t.Setenv("FAKE_COPILOT_SCENARIO", "duplicate-call")
 	applyFakeIfNeeded(t)
@@ -461,8 +490,29 @@ func TestConformance_DuplicateCallScenario_Fixture(t *testing.T) {
 		t.Errorf("outcome = %q, want %q (first call must win)", result.Outcome, "success")
 	}
 
-	// Exactly ONE outcome.finalized event — the duplicate call must NOT produce
-	// a second event.
+	// Assert both tool invocations are observable at the boundary — proves the
+	// duplicate call was not silently swallowed and its arguments are visible
+	// as boundary evidence of the rejected attempt.
+	invocations := capSink.invocationsForTool("submit_outcome")
+	if len(invocations) != 2 {
+		t.Fatalf("submit_outcome tool.invocation count = %d, want 2 (both calls boundary-visible)", len(invocations))
+	}
+	// First call carried "success".
+	if args, _ := invocations[0]["arguments"].(string); !strings.Contains(args, "success") {
+		t.Errorf("invocation[0] arguments = %q, want to contain %q (first call)", args, "success")
+	}
+	// Second (duplicate) call carried "failure" — its argument is the boundary
+	// proof that the call arrived and was processed (not silently dropped).
+	if args, _ := invocations[1]["arguments"].(string); !strings.Contains(args, "failure") {
+		t.Errorf("invocation[1] arguments = %q, want to contain %q (duplicate call boundary-visible)", args, "failure")
+	}
+	// Both calls completed the full tool-call lifecycle at the boundary level.
+	if n := len(capSink.adapterEvents("tool.result")); n < 2 {
+		t.Errorf("tool.result event count = %d, want at least 2 (one per invocation)", n)
+	}
+
+	// Exactly ONE outcome.finalized event — the duplicate call was rejected,
+	// evidenced by the absence of a second outcome.finalized event.
 	finalized := capSink.adapterEvents("outcome.finalized")
 	if len(finalized) != 1 {
 		t.Fatalf("outcome.finalized event count = %d, want 1 (duplicate rejected); events: %v", len(finalized), finalized)
@@ -513,6 +563,19 @@ func (c *capturingSink) adapterEvents(kind string) []map[string]any {
 	for _, ev := range c.events {
 		if ev.kind == kind {
 			out = append(out, ev.data)
+		}
+	}
+	return out
+}
+
+// invocationsForTool returns tool.invocation events whose "name" field matches
+// toolName. The adapter emits one tool.invocation per external tool call, so
+// this gives the ordered list of calls made to that tool during the step.
+func (c *capturingSink) invocationsForTool(toolName string) []map[string]any {
+	var out []map[string]any
+	for _, ev := range c.adapterEvents("tool.invocation") {
+		if name, _ := ev["name"].(string); name == toolName {
+			out = append(out, ev)
 		}
 	}
 	return out

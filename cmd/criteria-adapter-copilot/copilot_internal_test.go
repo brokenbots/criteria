@@ -43,6 +43,18 @@ type fakeSession struct {
 
 	// setModelCalls records the (model, effort) pairs passed to SetModel in order.
 	setModelCalls []setModelCall
+
+	// W15: per-Send hooks and recording.
+	//   sendCount    — incremented on each Send call (under mu).
+	//   sentOpts     — all MessageOptions passed to Send, in order.
+	//   onSend       — optional hook called (with current call index and opts)
+	//                  BEFORE events fire; allows tests to mutate sessionState.
+	//   sendSequence — if non-nil, each element is the event slice to emit on
+	//                  the corresponding Send call (overrides emitOnSend).
+	sendCount    int
+	sentOpts     []copilot.MessageOptions
+	onSend       func(callIndex int, opts copilot.MessageOptions)
+	sendSequence [][]copilot.SessionEvent
 }
 
 type setModelCall struct {
@@ -64,14 +76,27 @@ func (f *fakeSession) On(handler copilot.SessionEventHandler) func() {
 	}
 }
 
-func (f *fakeSession) Send(_ context.Context, _ copilot.MessageOptions) (string, error) {
+func (f *fakeSession) Send(_ context.Context, opts copilot.MessageOptions) (string, error) {
 	if f.sendErr != nil {
 		return "", f.sendErr
 	}
 	f.mu.Lock()
+	callIndex := f.sendCount
+	f.sendCount++
+	f.sentOpts = append(f.sentOpts, opts)
+	onSend := f.onSend
+	var events []copilot.SessionEvent
+	if f.sendSequence != nil && callIndex < len(f.sendSequence) {
+		events = append([]copilot.SessionEvent(nil), f.sendSequence[callIndex]...)
+	} else {
+		events = append([]copilot.SessionEvent(nil), f.emitOnSend...)
+	}
 	handlers := append([]copilot.SessionEventHandler(nil), f.handlers...)
-	events := append([]copilot.SessionEvent(nil), f.emitOnSend...)
 	f.mu.Unlock()
+
+	if onSend != nil {
+		onSend(callIndex, opts)
+	}
 	for _, event := range events {
 		for _, handler := range handlers {
 			if handler != nil {
@@ -80,6 +105,14 @@ func (f *fakeSession) Send(_ context.Context, _ copilot.MessageOptions) (string,
 		}
 	}
 	return "msg-1", nil
+}
+
+func (f *fakeSession) getSentOpts() []copilot.MessageOptions {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]copilot.MessageOptions, len(f.sentOpts))
+	copy(out, f.sentOpts)
+	return out
 }
 
 func (f *fakeSession) SetModel(_ context.Context, model string, opts *copilot.SetModelOptions) error {
@@ -115,30 +148,8 @@ func (f *fakeSession) Destroy() error {
 	return nil
 }
 
-// TestParseOutcome verifies RESULT: line extraction.
-func TestParseOutcome(t *testing.T) {
-	cases := []struct {
-		name string
-		line string
-		want string
-	}{
-		{"exact success", "RESULT: success", "success"},
-		{"trailing whitespace", "RESULT:   needs_review  ", "needs_review"},
-		{"lowercase prefix", "result: failure", "failure"},
-		{"mixed case", "Result: success", "success"},
-		{"empty after colon defaults", "RESULT:", "needs_review"},
-		{"not a result line defaults", "some log line", "needs_review"},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := parseOutcome(tc.line)
-			if got != tc.want {
-				t.Errorf("parseOutcome(%q) = %q, want %q", tc.line, got, tc.want)
-			}
-		})
-	}
-}
+// TestParseOutcome was removed in W15: outcome parsing via RESULT: prefix no longer exists.
+// Outcome is now determined by the submit_outcome tool call; see copilot_outcome_test.go.
 
 func TestStringifyAny(t *testing.T) {
 	t.Run("nil", func(t *testing.T) {
@@ -331,20 +342,20 @@ func TestExecuteMaxTurnsLimit(t *testing.T) {
 	}
 
 	hasLimitReached := false
-	hasNeedsReview := false
+	hasFailure := false
 	for _, ev := range sender.snapshot() {
 		if adapter := ev.GetAdapter(); adapter != nil && adapter.GetKind() == "limit.reached" {
 			hasLimitReached = true
 		}
-		if result := ev.GetResult(); result != nil && result.GetOutcome() == "needs_review" {
-			hasNeedsReview = true
+		if result := ev.GetResult(); result != nil && result.GetOutcome() == "failure" {
+			hasFailure = true
 		}
 	}
 	if !hasLimitReached {
 		t.Fatal("expected limit.reached adapter event")
 	}
-	if !hasNeedsReview {
-		t.Fatal("expected needs_review result event")
+	if !hasFailure {
+		t.Fatal("expected failure result event (no allowed_outcomes set means needs_review is not in allowed set)")
 	}
 }
 
@@ -467,7 +478,7 @@ func TestOpenSessionInvalidReasoningEffort(t *testing.T) {
 func TestExecutePerStepReasoningEffortRestoresDefault(t *testing.T) {
 	fake := &fakeSession{
 		emitOnSend: []copilot.SessionEvent{
-			{Type: copilot.SessionEventTypeAssistantMessage, Data: &copilot.AssistantMessageData{MessageID: "m1", Content: "RESULT: success"}},
+			{Type: copilot.SessionEventTypeAssistantMessage, Data: &copilot.AssistantMessageData{MessageID: "m1", Content: "working..."}},
 			{Type: copilot.SessionEventTypeSessionIdle, Data: &copilot.SessionIdleData{}},
 		},
 	}
@@ -482,9 +493,18 @@ func TestExecutePerStepReasoningEffortRestoresDefault(t *testing.T) {
 	p := &copilotPlugin{sessions: map[string]*sessionState{"s1": s}}
 	sender := &recordingSender{}
 
+	// W15: simulate submit_outcome tool by setting finalizedOutcome via onSend hook
+	// before session.idle fires, so awaitOutcome sees the outcome on the first attempt.
+	fake.onSend = func(_ int, _ copilot.MessageOptions) {
+		s.mu.Lock()
+		s.finalizedOutcome = "success"
+		s.mu.Unlock()
+	}
+
 	err := p.Execute(context.Background(), &pb.ExecuteRequest{
-		SessionId: "s1",
-		Config:    map[string]string{"prompt": "hi", "reasoning_effort": "high"},
+		SessionId:       "s1",
+		Config:          map[string]string{"prompt": "hi", "reasoning_effort": "high"},
+		AllowedOutcomes: []string{"failure", "success"},
 	}, sender)
 	if err != nil {
 		t.Fatalf("Execute returned error: %v", err)
@@ -525,7 +545,7 @@ func TestExecutePerStepReasoningEffortRestoresDefault(t *testing.T) {
 func TestExecutePerStepEffortRestoresWhenNoDefault(t *testing.T) {
 	fake := &fakeSession{
 		emitOnSend: []copilot.SessionEvent{
-			{Type: copilot.SessionEventTypeAssistantMessage, Data: &copilot.AssistantMessageData{MessageID: "m1", Content: "RESULT: success"}},
+			{Type: copilot.SessionEventTypeAssistantMessage, Data: &copilot.AssistantMessageData{MessageID: "m1", Content: "working..."}},
 			{Type: copilot.SessionEventTypeSessionIdle, Data: &copilot.SessionIdleData{}},
 		},
 	}
@@ -540,9 +560,17 @@ func TestExecutePerStepEffortRestoresWhenNoDefault(t *testing.T) {
 	p := &copilotPlugin{sessions: map[string]*sessionState{"s1": s}}
 	sender := &recordingSender{}
 
+	// W15: simulate submit_outcome tool via onSend hook.
+	fake.onSend = func(_ int, _ copilot.MessageOptions) {
+		s.mu.Lock()
+		s.finalizedOutcome = "success"
+		s.mu.Unlock()
+	}
+
 	if err := p.Execute(context.Background(), &pb.ExecuteRequest{
-		SessionId: "s1",
-		Config:    map[string]string{"prompt": "hi", "reasoning_effort": "high"},
+		SessionId:       "s1",
+		Config:          map[string]string{"prompt": "hi", "reasoning_effort": "high"},
+		AllowedOutcomes: []string{"failure", "success"},
 	}, sender); err != nil {
 		t.Fatalf("Execute returned error: %v", err)
 	}

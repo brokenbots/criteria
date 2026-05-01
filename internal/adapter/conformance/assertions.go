@@ -28,7 +28,7 @@ func executeNoPanic(t *testing.T, target executeTarget, ctx context.Context, ste
 
 // assertValidOutcome fails t if outcome is empty or not in opts.AllowedOutcomes
 // (when a set is configured).
-func assertValidOutcome(t *testing.T, outcome string, opts Options) {
+func assertValidOutcome(t *testing.T, outcome string, opts Options) { //nolint:gocritic // W15: Options passes by value for API clarity
 	t.Helper()
 	if strings.TrimSpace(outcome) == "" {
 		t.Fatal("empty outcome")

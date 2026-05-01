@@ -1024,6 +1024,30 @@ The suite is now much stronger: propagation is directly proven, exhaustion emits
 - `make ci` — passed.
 - `go doc github.com/github/copilot-sdk/go.ExternalToolCompletedData` — confirms the SDK completion event surface exposes only `RequestID`, which informed the boundary-proof expectation above.
 
+### Review 2026-05-01-05 — approved
+
+#### Summary
+
+Verdict: **approved**. The remaining Step 5.1 boundary-proof blocker is closed. The fake now emits `external_tool.completed` deterministically, the duplicate-call scenario is serialized so first-call-wins is stable, and the fixture tests now assert the strongest observable contract evidence available from the SDK surface: both `submit_outcome` invocations are visible with the expected arguments, completion events are emitted for the calls, and only the accepted call produces `outcome.finalized`.
+
+#### Plan Adherence
+
+- **Steps 1-4:** Implemented and aligned with the locked design decisions.
+- **Step 5.1:** Satisfied. The invalid-outcome and duplicate-call scenarios are now exercised through the real plugin/fixture boundary with explicit assertions on tool invocation visibility, completion visibility, and accepted-vs-rejected finalization behavior.
+- **Step 5.2:** Satisfied. `TestConformance_AllowedOutcomesPropagation_SetProof` directly proves the exact declared outcome set reaches the adapter.
+- **Step 5.3:** Satisfied. The engine guard regression remains present.
+- **Step 6 / exit criteria:** Satisfied.
+
+#### Test Intent Assessment
+
+The test suite now demonstrates the intended behavior at the right boundaries. The handler/unit tests cover local validation semantics, while the fixture/conformance tests prove the observable plugin behavior for valid, invalid, duplicate, exhausted, permission-denied, max-turns, and allowed-outcome propagation paths. The remaining SDK limitation on tool-completion payload detail is documented, and the tests now assert the strongest boundary evidence the adapter can emit.
+
+#### Validation Performed
+
+- `go test -race ./cmd/criteria-adapter-copilot/...` — passed.
+- `make test-conformance` — passed.
+- `make ci` — passed.
+
 ### Remediation round 4 — 2026-05-01
 
 #### Changes made
