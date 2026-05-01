@@ -562,3 +562,23 @@ The sorted-order assertions remain strong, and the compatibility wording changes
 Both comments now explicitly note the distinction between the host-side non-nil contract and the wire-level nil/empty equivalence that adapters must observe. A regression to `return nil` in `collectAllowedOutcomes` would now fail both tests.
 
 `make ci` → exit 0.
+
+### Review 2026-04-30-03 — approved
+
+#### Summary
+
+Approved. The previously requested remediation is now in place: the zero-outcome tests again prove the host-side non-nil empty-slice invariant while keeping the docs and comments explicit that adapters must treat nil/missing and empty identically on the wire. With that proof restored, W14 meets its acceptance bar.
+
+#### Plan Adherence
+
+- **Step 4 / Step 6:** `internal/plugin/loader_test.go` once again enforces the exact helper/request contract required by the workstream. `TestLoader_PopulatesAllowedOutcomes_Empty` now fails if `ExecuteRequest.AllowedOutcomes` is `nil`, and `TestCollectAllowedOutcomes_Empty` now fails if `collectAllowedOutcomes` returns `nil`.
+- **Compatibility notes:** The updated comments and plugin docs correctly distinguish the host-side construction contract (`[]string{}` for empty outcomes) from proto3 wire semantics (nil and empty repeated fields are equivalent for adapters).
+- **Remaining W14 scope:** Proto field, generated bindings, host wiring, unchanged engine guard, transport/helper tests, docs, and SDK changelog remain aligned with the approved scope.
+
+#### Test Intent Assessment
+
+The test suite is now regression-sensitive again on the zero-outcome path: a plausible faulty implementation that returns `nil` instead of `[]string{}` would fail both empty-case tests. The sorted-order transport/helper assertions remain strong and continue to validate contract-visible behavior.
+
+#### Validation Performed
+
+- `make ci` — passed
