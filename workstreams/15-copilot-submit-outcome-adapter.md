@@ -1281,3 +1281,17 @@ Verdict: **approved**. The `no_outcomes` consistency fixes are correct and do no
 - `go test -race ./cmd/criteria-adapter-copilot/...` — passed.
 - `make test-conformance` — passed.
 - `make ci` — passed.
+
+### PR review thread remediation 4 — 2026-05-01
+
+**Thread PRRT_kwDOSOBb1s5-7x-L — `copilot_outcome.go:64`: duplicate check after set-membership validation**
+
+`handleSubmitOutcome` checked set membership before checking `finalizedOutcome`, so a second call with an invalid or empty outcome would be classified as `"invalid_outcome"` / `"missing"` instead of `"duplicate"`. This contradicts the documented contract that any subsequent call after finalization is a duplicate regardless of arguments.
+
+Fix: moved the `s.finalizedOutcome != ""` guard to the top of the validation chain (after incrementing `finalizeAttempts` and trimming the outcome), before the empty-string and set-membership checks. New check order: duplicate → missing → no_outcomes → invalid_outcome → accept.
+
+Added Test 5.4b to prove a duplicate call with an out-of-set outcome yields `kind="duplicate"` not `kind="invalid_outcome"`.
+
+#### Validation
+
+- `make ci` — **PASS** (commit `cf67141`)
