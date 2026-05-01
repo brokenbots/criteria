@@ -365,22 +365,22 @@ This workstream may **not** edit:
 
 ## Tasks
 
-- [ ] Add `repeated string allowed_outcomes = 4;` to
+- [x] Add `repeated string allowed_outcomes = 4;` to
       `ExecuteRequest` in `adapter_plugin.proto` with the trailing
       `// permanent (W14 ...)` comment.
-- [ ] Run `make proto`; commit the regenerated bindings; verify
+- [x] Run `make proto`; commit the regenerated bindings; verify
       `make proto-check-drift` and `make proto-lint` exit 0.
-- [ ] Add `collectAllowedOutcomes` helper in `internal/plugin/loader.go`.
-- [ ] Wire the helper into `rpcPlugin.Execute` at line ~204.
-- [ ] Add the transport-level test
+- [x] Add `collectAllowedOutcomes` helper in `internal/plugin/loader.go`.
+- [x] Wire the helper into `rpcPlugin.Execute` at line ~204.
+- [x] Add the transport-level test
       `TestLoader_PopulatesAllowedOutcomes`.
-- [ ] Add the helper tests `TestCollectAllowedOutcomes_Sorted` and
+- [x] Add the helper tests `TestCollectAllowedOutcomes_Sorted` and
       `TestCollectAllowedOutcomes_Empty`.
-- [ ] Update `docs/plugins.md` with the `allowed_outcomes` field
+- [x] Update `docs/plugins.md` with the `allowed_outcomes` field
       documentation and cross-reference to W15.
-- [ ] Bump the SDK version per [CONTRIBUTING.md](../CONTRIBUTING.md);
+- [x] Bump the SDK version per [CONTRIBUTING.md](../CONTRIBUTING.md);
       capture the bump rationale in reviewer notes.
-- [ ] `make build`, `make plugins`, `make test`, `make
+- [x] `make build`, `make plugins`, `make test`, `make
       test-conformance`, `make ci` all green.
 
 ## Exit criteria
@@ -417,3 +417,71 @@ tests.
 | `collectAllowedOutcomes` for iteration steps (those that route via `routeIteratingStep`) returns the wrong set | Iteration steps still have `step.Outcomes` populated for the iteration cursor outcomes (`all_succeeded`, `any_failed`, etc.) — those are real outcomes the host validates against. Emit them. The Copilot adapter does not run as the iteration cursor's adapter, so this is benign. |
 | The proto change forces a major SDK version bump that is disproportionate to the change | The bump policy is repo-defined. Follow it. If the cost is high, raise a docs-only follow-up to soften future additive-field bump guidance — out of scope here. |
 | Existing `make test-conformance` lanes break because conformance fixtures construct `ExecuteRequest` manually with explicit field initialization that fails on unrecognized fields | Generated Go does not break on field addition; existing fixtures are forward-compatible. If conformance fails, root-cause before merge. |
+
+## Reviewer Notes
+
+### Implementation
+
+**Step 1 — Proto field:** Added `repeated string allowed_outcomes = 4;` to
+`ExecuteRequest` with the required `// permanent (W14 ...)` comment exactly as
+specified.
+
+**Step 2 — Proto regen:** `make proto` ran cleanly; diff is minimal — only
+`ExecuteRequest` struct gains `AllowedOutcomes []string` and a `GetAllowedOutcomes()`
+accessor. `make proto-check-drift` and `make proto-lint` both exit 0 after commit.
+
+**Step 3 — SDK bump:** `sdk/CHANGELOG.md` created (no pre-existing file or
+`sdk/VERSION`). Entry documents the new field, host population behaviour, adapter
+optionality, and backward compatibility. Treated as a **minor** bump (additive
+field per CONTRIBUTING.md). Version tag deferred to W16 per policy.
+
+**Step 4 — Host wiring:** `collectAllowedOutcomes` is a package-private helper
+at the bottom of `loader.go`, before `cloneConfig`. Uses `sort.Strings` for
+determinism. Empty `step.Outcomes` returns `[]string{}` (non-nil). Wired into
+`rpcPlugin.Execute` with the struct-literal form specified in the workstream.
+
+**Step 5 — Engine guard:** `internal/engine/node_step.go` is unchanged. The
+unmapped-outcome guard at lines 340-342 is intentional belt-and-suspenders
+validation; the wire field is informational to the adapter only. The engine
+independently validates the returned outcome regardless of what the adapter
+declares it received.
+
+**Step 6 — Tests:**
+- `TestLoader_PopulatesAllowedOutcomes` — uses `recordingClient` (implements
+  `Client` interface) + `immediateResultReceiver` to capture the
+  `*pb.ExecuteRequest` without spawning a real plugin process. Asserts sorted
+  outcome list and that non-sorted insertion order still yields sorted output.
+- `TestLoader_PopulatesAllowedOutcomes_Empty` — asserts non-nil empty slice for
+  steps with no outcomes.
+- `TestCollectAllowedOutcomes_Sorted` / `TestCollectAllowedOutcomes_Empty` —
+  unit tests for the helper directly.
+- All existing `internal/plugin/...` tests pass unchanged.
+
+**Step 7 — Docs:** `docs/plugins.md` now has an `Execute request fields` table
+plus the verbatim `allowed_outcomes` description block with cross-reference to
+W15. Engine guard note is present.
+
+### Validation
+
+```
+make proto-check-drift  → exit 0
+make proto-lint         → exit 0
+make ci                 → exit 0 (all tests, lint, validate, example-plugin)
+```
+
+### Pre-existing working-tree modification
+
+`examples/workstream_review_loop.hcl` was found modified in the working tree
+before implementation began. It is out of W14 scope and was restored to the
+committed version (`git checkout -- examples/workstream_review_loop.hcl`)
+to avoid polluting this PR. The modification belongs to a different session
+and should be committed under a separate branch.
+
+### SDK CHANGELOG entry
+
+New field: `allowed_outcomes` (field 4, `repeated string`) on
+`pb.ExecuteRequest`. Host populates from `step.Outcomes` keys, sorted
+ascending. Adapters may consume it to constrain outcome selection but are not
+required to. Existing adapters are forward-compatible (proto3 unknown-field
+behaviour). First consumer ships in W15 (Copilot `submit_outcome` tool).
+Bump tier: minor. Tag deferred to W16.
