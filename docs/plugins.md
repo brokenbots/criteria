@@ -444,10 +444,10 @@ mode:
 
 ### Log levels
 
-| Event                              | Level   | Message |
-|------------------------------------|---------|---------|
-| Expected close (closing flag set)  | `DEBUG` | `adapter stream closed (expected)` |
-| Unexpected exit / crash heuristic  | `WARN`  | `adapter session crashed` |
+| Event                                                     | Level   | Message |
+|-----------------------------------------------------------|---------|---------| 
+| Expected close (closing flag set or context canceled)     | `DEBUG` | `adapter stream closed (expected)` |
+| Unexpected exit / crash heuristic                         | `WARN`  | `adapter session crashed` |
 
 An **expected close** is one where `SessionManager.Close` or `Shutdown` was
 called by the host before the plugin's gRPC stream ended, **or** the
