@@ -333,12 +333,13 @@ func (*OpenSessionResponse) Descriptor() ([]byte, []int) {
 }
 
 type ExecuteRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`                                                    // permanent
-	StepName      string                 `protobuf:"bytes,2,opt,name=step_name,json=stepName,proto3" json:"step_name,omitempty"`                                                       // permanent
-	Config        map[string]string      `protobuf:"bytes,3,rep,name=config,proto3" json:"config,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // permanent
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	SessionId       string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`                                                    // permanent
+	StepName        string                 `protobuf:"bytes,2,opt,name=step_name,json=stepName,proto3" json:"step_name,omitempty"`                                                       // permanent
+	Config          map[string]string      `protobuf:"bytes,3,rep,name=config,proto3" json:"config,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // permanent
+	AllowedOutcomes []string               `protobuf:"bytes,4,rep,name=allowed_outcomes,json=allowedOutcomes,proto3" json:"allowed_outcomes,omitempty"`                                  // permanent (W14 — declared outcome names for this step, sorted ascending)
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *ExecuteRequest) Reset() {
@@ -388,6 +389,13 @@ func (x *ExecuteRequest) GetStepName() string {
 func (x *ExecuteRequest) GetConfig() map[string]string {
 	if x != nil {
 		return x.Config
+	}
+	return nil
+}
+
+func (x *ExecuteRequest) GetAllowedOutcomes() []string {
+	if x != nil {
+		return x.AllowedOutcomes
 	}
 	return nil
 }
@@ -882,12 +890,13 @@ const file_criteria_v1_adapter_plugin_proto_rawDesc = "" +
 	"\vConfigEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x15\n" +
-	"\x13OpenSessionResponse\"\xc8\x01\n" +
+	"\x13OpenSessionResponse\"\xf3\x01\n" +
 	"\x0eExecuteRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1b\n" +
 	"\tstep_name\x18\x02 \x01(\tR\bstepName\x12?\n" +
-	"\x06config\x18\x03 \x03(\v2'.criteria.v1.ExecuteRequest.ConfigEntryR\x06config\x1a9\n" +
+	"\x06config\x18\x03 \x03(\v2'.criteria.v1.ExecuteRequest.ConfigEntryR\x06config\x12)\n" +
+	"\x10allowed_outcomes\x18\x04 \x03(\tR\x0fallowedOutcomes\x1a9\n" +
 	"\vConfigEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xf1\x01\n" +

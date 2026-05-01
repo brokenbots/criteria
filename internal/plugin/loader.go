@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -201,7 +202,12 @@ func (p *rpcPlugin) OpenSession(ctx context.Context, id string, config map[strin
 }
 
 func (p *rpcPlugin) Execute(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) { //nolint:funlen,gocognit,gocyclo // W03: execute path handles permission gating, event routing, and partial failure recovery
-	recv, err := p.rpc.Execute(ctx, &pb.ExecuteRequest{SessionId: sessionID, StepName: step.Name, Config: cloneConfig(step.Input)})
+	recv, err := p.rpc.Execute(ctx, &pb.ExecuteRequest{
+		SessionId:       sessionID,
+		StepName:        step.Name,
+		Config:          cloneConfig(step.Input),
+		AllowedOutcomes: collectAllowedOutcomes(step),
+	})
 	if err != nil {
 		return adapter.Result{Outcome: "failure"}, err
 	}
@@ -297,6 +303,22 @@ func (p *rpcPlugin) Kill() {
 			p.onKill()
 		}
 	})
+}
+
+// collectAllowedOutcomes returns the declared outcome names for a step,
+// sorted ascending for determinism. Returns an empty (non-nil) slice
+// when the step has no outcomes declared (terminal-routing steps,
+// iteration steps that route via cursor outcomes, etc.).
+func collectAllowedOutcomes(step *workflow.StepNode) []string {
+	if len(step.Outcomes) == 0 {
+		return []string{}
+	}
+	out := make([]string, 0, len(step.Outcomes))
+	for name := range step.Outcomes {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func cloneConfig(in map[string]string) map[string]string {

@@ -50,9 +50,10 @@ message OpenSessionRequest {
 message OpenSessionResponse {}
 
 message ExecuteRequest {
-  string session_id = 1; // permanent
-  string step_name = 2; // permanent
-  map<string, string> config = 3; // permanent
+  string session_id = 1;              // permanent
+  string step_name = 2;              // permanent
+  map<string, string> config = 3;    // permanent
+  repeated string allowed_outcomes = 4; // permanent (W14 — declared outcome names for this step, sorted ascending)
 }
 
 message ExecuteEvent {
