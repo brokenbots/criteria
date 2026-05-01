@@ -1129,3 +1129,55 @@ Fix: changed to `%q` for both operands.
 #### Validation
 
 - `make ci` — **PASS** (all tests, race detector, lint, import boundaries, examples)
+
+### Remediation round 6 — 2026-05-01
+
+#### Changes made
+
+**Blocker — `TestSubmitOutcome_EmptyAllowedSetFailsClosed` (copilot_outcome_test.go)**
+
+Strengthened the test to prove first-turn failure semantics explicitly:
+- `sendCount == 1`: only the initial prompt is sent; no reprompt turns are consumed.
+- `outcome.failure.kind == "no_outcomes"`: the structured failure event carries the correct machine-readable category.
+- `outcome.failure.reason == "step has no declared outcomes"`: human-readable label is also verified.
+
+The test now deterministically catches any regression that re-introduces wasted reprompt turns on a step with an empty outcome set.
+
+**Major — `docs/plugins.md`**
+
+Two areas updated to match the shipped `no_outcomes` short-circuit behavior:
+1. `outcome.failure` payload table: added row for `kind = "no_outcomes"` / `reason = "step has no declared outcomes"`.
+2. "Steps without declared outcomes" paragraph: replaced "after 3 failed attempts" language with the accurate description: the adapter fails immediately on the first idle turn without reprompting.
+
+#### Validation
+
+- `TestSubmitOutcome_EmptyAllowedSetFailsClosed` — **PASS**
+- `make ci` — **PASS** (all tests, race detector, lint, import boundaries, examples)
+
+### Review 2026-05-01-06 — changes-requested
+
+#### Summary
+
+Verdict: **changes-requested**. The PR-thread remediations improved the implementation, but they also introduced a new behavior branch for empty outcome sets that is not yet reflected in the required proof surfaces. `copilot_turn.go` now fails immediately with `kind = "no_outcomes"` and no reprompt when a step declares zero outcomes, but the docs still describe the old three-attempt behavior and the dedicated Step 5.1 test still does not prove the required “failure on first turn” contract.
+
+#### Plan Adherence
+
+- **Steps 1-4:** Still implemented and aligned with the locked design decisions.
+- **Step 5.1:** Regressed on proof strength for the empty-allowed-set case. The behavior changed, but `TestSubmitOutcome_EmptyAllowedSetFailsClosed` still only checks the eventual `failure` outcome.
+- **Step 6:** No longer satisfied. `docs/plugins.md` is now out of sync with shipped behavior for steps with no declared outcomes and for the `outcome.failure` payload categories.
+- **Exit criteria:** Not met until the empty-set behavior is documented and explicitly tested as “failure on first turn.”
+
+#### Required Remediations
+
+- **Blocker** — `cmd/criteria-adapter-copilot/copilot_outcome_test.go:542-560`, `cmd/criteria-adapter-copilot/copilot_turn.go:160-175`: the Step 5.1 empty-allowed-set test no longer proves the workstream’s required behavior. The implementation now short-circuits on the first idle turn with `finalizeFailureKind = "no_outcomes"` and no reprompt, but `TestSubmitOutcome_EmptyAllowedSetFailsClosed` only asserts the final outcome and would still pass if the adapter burned extra reprompt turns. **Acceptance:** strengthen the test to assert first-turn failure semantics directly (for example `sendCount == 1`, no reprompt send, and/or `outcome.failure.kind == "no_outcomes"`).
+- **Major** — `docs/plugins.md:305-334`: the documentation is stale after the PR-thread change. It still says steps without declared outcomes fail only “after 3 failed attempts,” and the `outcome.failure` payload table omits the new `no_outcomes` kind / “step has no declared outcomes” reason. **Acceptance:** update the docs to match the shipped behavior exactly: empty outcome sets fail immediately without reprompt, and the failure-payload documentation includes the `no_outcomes` category.
+
+#### Test Intent Assessment
+
+The boundary tests for invalid and duplicate tool calls are now strong enough, but the empty-outcomes regression shows why the acceptance bar requires tests to assert the exact behavior, not just the final outcome. Right now the suite would not catch a reintroduction of wasted reprompt turns on a misconfigured step, even though the implementation and reviewer notes now claim immediate failure.
+
+#### Validation Performed
+
+- `go test -race ./cmd/criteria-adapter-copilot/...` — passed.
+- `make test-conformance` — passed.
+- `make ci` — passed.

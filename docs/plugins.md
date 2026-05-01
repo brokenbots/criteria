@@ -308,8 +308,8 @@ The Copilot adapter determines step outcomes via a structured `submit_outcome` t
 
    | Field | Type | Description |
    |---|---|---|
-   | `reason` | `string` | Human-readable category: `"missing finalize"`, `"invalid outcome"`, or `"duplicate finalize"` |
-   | `kind` | `string` | Machine-readable category: `"missing"`, `"invalid_outcome"`, or `"duplicate"` |
+   | `reason` | `string` | Human-readable category: `"missing finalize"`, `"invalid outcome"`, `"duplicate finalize"`, or `"step has no declared outcomes"` |
+   | `kind` | `string` | Machine-readable category: `"missing"`, `"invalid_outcome"`, `"duplicate"`, or `"no_outcomes"` |
    | `allowed_outcomes` | `[]string` | Sorted list of the step's declared outcomes (for operator alerting/debugging) |
    | `attempts` | `int` | Number of `submit_outcome` invocations made during this step |
 
@@ -331,7 +331,7 @@ If the model calls `submit_outcome` more than once in the same turn, the first v
 
 ### Steps without declared outcomes
 
-If a step declares no `outcome` blocks, `AllowedOutcomes` is empty: no preamble is prepended and the model receives no `submit_outcome` instructions. If the model calls `submit_outcome` anyway, every outcome is rejected (empty allowed set); after 3 failed attempts the step returns `"failure"`. To avoid this, always declare at least one outcome on steps backed by the Copilot adapter.
+If a step declares no `outcome` blocks, `AllowedOutcomes` is empty: no preamble is prepended and the model receives no `submit_outcome` instructions. If the model calls `submit_outcome` anyway, every outcome is rejected (empty allowed set). When the first idle turn arrives, the adapter fails immediately with `outcome.failure` kind `"no_outcomes"` — it does not reprompt, because reprompting can never succeed when there are no valid outcomes. To avoid this, always declare at least one outcome on steps backed by the Copilot adapter.
 
 ### Iteration contexts
 

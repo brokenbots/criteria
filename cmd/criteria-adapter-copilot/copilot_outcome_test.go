@@ -539,13 +539,15 @@ func TestSubmitOutcome_MaxTurnsReached_NoNeedsReviewInAllowed(t *testing.T) {
 	assertOutcome(t, sender, "failure")
 }
 
-// Test 5.16: Empty allowed set → every submit_outcome call is rejected, exhaustion
-// returns "failure" after maxFinalizeAttempts. Validates closed-set semantics
-// even when the step declares no outcomes.
+// Test 5.16: Empty allowed set → fails immediately on the first idle turn with
+// kind="no_outcomes", without spending reprompt turns. Validates that a
+// misconfigured step (no outcome blocks declared) produces a clear, immediate
+// failure rather than burning 2 extra reprompt turns that can never succeed.
 func TestSubmitOutcome_EmptyAllowedSetFailsClosed(t *testing.T) {
 	s := stateWithOutcomes() // no outcomes declared
 	fake := s.session.(*fakeSession)
 	idle := []copilot.SessionEvent{{Type: copilot.SessionEventTypeSessionIdle, Data: &copilot.SessionIdleData{}}}
+	// Provide multiple idles so the test catches any unwanted reprompt turns.
 	fake.sendSequence = [][]copilot.SessionEvent{idle, idle, idle}
 
 	sender := &recordingSender{}
@@ -558,6 +560,33 @@ func TestSubmitOutcome_EmptyAllowedSetFailsClosed(t *testing.T) {
 	}
 
 	assertOutcome(t, sender, "failure")
+
+	// Must fail on the first turn: only 1 Send call (the initial prompt); no
+	// reprompts because the step can never succeed with an empty outcome set.
+	if fake.sendCount != 1 {
+		t.Errorf("sendCount = %d, want 1 (immediate failure, no reprompts for empty allowed set)", fake.sendCount)
+	}
+
+	// outcome.failure event must be present with kind="no_outcomes" so operators
+	// can distinguish a misconfigured step from a model that failed to finalize.
+	hasFailureEvent := false
+	for _, ev := range sender.snapshot() {
+		a := ev.GetAdapter()
+		if a == nil || a.GetKind() != "outcome.failure" {
+			continue
+		}
+		hasFailureEvent = true
+		d := a.GetData().AsMap()
+		if kind, _ := d["kind"].(string); kind != "no_outcomes" {
+			t.Errorf("outcome.failure kind = %q, want %q", kind, "no_outcomes")
+		}
+		if reason, _ := d["reason"].(string); reason != "step has no declared outcomes" {
+			t.Errorf("outcome.failure reason = %q, want %q", reason, "step has no declared outcomes")
+		}
+	}
+	if !hasFailureEvent {
+		t.Fatal("expected outcome.failure adapter event on empty allowed set")
+	}
 }
 
 // Test 5.17: Initial Send contains a preamble listing the allowed outcomes.
