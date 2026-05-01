@@ -174,19 +174,24 @@ func handleRequest(msg rpcMsg) {
 		toolsMu.Lock()
 		ch := pendingToolCalls[p.RequestID]
 		sessionID := toolCallSessions[p.RequestID]
-		delete(pendingToolCalls, p.RequestID)
-		delete(toolCallSessions, p.RequestID)
 		toolsMu.Unlock()
 
-		// Emit completion BEFORE signalling the waiting goroutine so that
-		// external_tool.completed is always sent before session.idle (which is
-		// sent by the scenario goroutine after <-ch unblocks).
+		// Emit completion and signal waiters BEFORE removing the map entries.
+		// If we deleted first, waitForToolCall could observe a nil channel and
+		// return immediately — before external_tool.completed is sent — letting
+		// the scenario goroutine send session.idle too early and causing the
+		// adapter to miss the tool.result event.
 		if sessionID != "" {
 			sendEvent(sessionID, "external_tool.completed", map[string]any{"requestId": p.RequestID})
 		}
 		if ch != nil {
 			close(ch)
 		}
+
+		toolsMu.Lock()
+		delete(pendingToolCalls, p.RequestID)
+		delete(toolCallSessions, p.RequestID)
+		toolsMu.Unlock()
 		respond(msg.ID, map[string]any{})
 
 	default:
