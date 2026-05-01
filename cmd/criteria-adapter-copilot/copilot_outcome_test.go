@@ -191,6 +191,38 @@ func TestHandleSubmitOutcomeDuplicate(t *testing.T) {
 	}
 }
 
+// Test 5.4b: Duplicate call with an invalid/empty outcome is still classified as
+// "duplicate" — not "invalid_outcome" or "missing" — because the first valid
+// call already finalized the step. The check order must be: duplicate → missing
+// → invalid, not the reverse.
+func TestHandleSubmitOutcomeDuplicateInvalidArgs(t *testing.T) {
+	s := stateWithOutcomes("success", "failure")
+	p := outcomePlugin(s)
+
+	if _, err := p.handleSubmitOutcome("s1", SubmitOutcomeArgs{Outcome: "success"}); err != nil {
+		t.Fatalf("first call: unexpected Go error: %v", err)
+	}
+
+	// Second call with an out-of-set outcome: must be "duplicate", not "invalid_outcome".
+	res, err := p.handleSubmitOutcome("s1", SubmitOutcomeArgs{Outcome: "not-valid"})
+	if err != nil {
+		t.Fatalf("second call: unexpected Go error: %v", err)
+	}
+	if res.ResultType != "failure" {
+		t.Errorf("ResultType = %q, want %q", res.ResultType, "failure")
+	}
+	if !strings.Contains(res.TextResultForLLM, "already finalized") {
+		t.Errorf("TextResultForLLM %q should mention already finalized", res.TextResultForLLM)
+	}
+
+	s.mu.Lock()
+	kind := s.finalizeFailureKind
+	s.mu.Unlock()
+	if kind != "duplicate" {
+		t.Errorf("finalizeFailureKind = %q, want %q (duplicate check precedes set-membership check)", kind, "duplicate")
+	}
+}
+
 // Test 5.5: Unknown session ID returns failure ToolResult (not a Go error).
 func TestHandleSubmitOutcomeUnknownSession(t *testing.T) {
 	p := &copilotPlugin{sessions: map[string]*sessionState{}}

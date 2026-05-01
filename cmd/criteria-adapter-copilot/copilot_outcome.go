@@ -32,6 +32,19 @@ func (p *copilotPlugin) handleSubmitOutcome(pluginSessionID string, args SubmitO
 	s.mu.Lock()
 	s.finalizeAttempts++
 	outcome := strings.TrimSpace(args.Outcome)
+	if s.finalizedOutcome != "" {
+		// Duplicate finalize: the model called us again after a successful call.
+		// Check this before any other validation so subsequent calls — whether
+		// valid, invalid, or empty — are consistently classified as "duplicate"
+		// rather than "missing" or "invalid_outcome".
+		existing := s.finalizedOutcome
+		s.finalizeFailureKind = "duplicate"
+		s.mu.Unlock()
+		return submitOutcomeError(fmt.Sprintf(
+			"outcome already finalized as %q in this turn; do not call submit_outcome again",
+			existing,
+		)), nil
+	}
 	if outcome == "" {
 		s.finalizeFailureKind = "missing"
 		s.mu.Unlock()
@@ -49,18 +62,6 @@ func (p *copilotPlugin) handleSubmitOutcome(pluginSessionID string, args SubmitO
 		return submitOutcomeError(fmt.Sprintf(
 			"outcome %q is not in the allowed set; choose one of: %s",
 			outcome, strings.Join(allowedList, ", "),
-		)), nil
-	}
-	if s.finalizedOutcome != "" {
-		// Duplicate finalize: the model called us twice in one turn.
-		// Keep the FIRST valid outcome (do not overwrite); return an error so
-		// the model can see that the duplicate was rejected.
-		existing := s.finalizedOutcome
-		s.finalizeFailureKind = "duplicate"
-		s.mu.Unlock()
-		return submitOutcomeError(fmt.Sprintf(
-			"outcome already finalized as %q in this turn; do not call submit_outcome again",
-			existing,
 		)), nil
 	}
 	trimmedReason := strings.TrimSpace(args.Reason)
