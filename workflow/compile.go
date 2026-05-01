@@ -69,6 +69,9 @@ func CompileWithOpts(spec *Spec, schemas map[string]AdapterInfo, opts CompileOpt
 	if spec.TargetState == "" {
 		diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: "workflow.target_state is required"})
 	}
+	if spec.Policy != nil && spec.Policy.MaxVisitsWarnThreshold != nil && *spec.Policy.MaxVisitsWarnThreshold < 0 {
+		diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: "policy.max_visits_warn_threshold must be >= 0 (use 0 to disable warnings, omit to use the default of 200)"})
+	}
 
 	g := newFSMGraph(spec)
 	diags = append(diags, compileVariables(g, spec)...)
@@ -78,6 +81,9 @@ func CompileWithOpts(spec *Spec, schemas map[string]AdapterInfo, opts CompileOpt
 	diags = append(diags, compileWaits(g, spec)...)
 	diags = append(diags, compileApprovals(g, spec)...)
 	diags = append(diags, compileBranches(g, spec)...)
+	// Warn after all nodes are compiled so branch/wait/approval targets are
+	// available for the back-edge walk (W07).
+	diags = append(diags, warnBackEdges(g)...)
 	// Reserved-name checks only apply to user-authored top-level workflows.
 	// Sub-workflow bodies (LoadDepth > 0) are synthetic and intentionally use
 	// the "_continue" name as a terminal state.
@@ -116,6 +122,12 @@ func newFSMGraph(spec *Spec) *FSMGraph {
 		}
 		if spec.Policy.MaxStepRetries > 0 {
 			g.Policy.MaxStepRetries = spec.Policy.MaxStepRetries
+		}
+		// MaxVisitsWarnThreshold: nil means "not set" (keep default of 200);
+		// 0 explicitly disables the warning; positive values override the default.
+		// Negative values are rejected at compile time before this point.
+		if spec.Policy.MaxVisitsWarnThreshold != nil {
+			g.Policy.MaxVisitsWarnThreshold = *spec.Policy.MaxVisitsWarnThreshold
 		}
 	}
 	return g

@@ -34,6 +34,10 @@ type StepCheckpoint struct {
 	// re-registering (which would assign a new id and fail the ownership
 	// check). The file is written with 0o600 permissions.
 	Token string `json:"token"`
+	// Visits tracks per-step visit counts for max_visits enforcement (W07).
+	// Omitted from JSON when empty; older checkpoints without this field load
+	// with a nil map which the engine treats as all-zero counts.
+	Visits map[string]int `json:"visits,omitempty"`
 }
 
 // stateDir returns the base directory for Criteria state files.

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -331,6 +332,74 @@ func TestStateDirPerms(t *testing.T) {
 	}
 	if got := cpFileInfo.Mode().Perm(); got != 0o600 {
 		t.Errorf("checkpoint file mode = %04o, want 0600", got)
+	}
+}
+
+func TestLocalState_StepCheckpoint_VisitsRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", dir)
+	workflowPath := filepath.Join(dir, "workflow.hcl")
+	if err := os.WriteFile(workflowPath, []byte("workflow \"w\" { version = \"0.1\" }"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cp := &StepCheckpoint{
+		RunID:        "run-visits",
+		Workflow:     "visit-wf",
+		WorkflowPath: workflowPath,
+		CurrentStep:  "work",
+		Attempt:      1,
+		StartedAt:    time.Now().UTC().Truncate(time.Second),
+		Visits:       map[string]int{"work": 3, "prep": 1},
+	}
+	if err := WriteStepCheckpoint(cp); err != nil {
+		t.Fatalf("WriteStepCheckpoint: %v", err)
+	}
+
+	checkpoints, err := ListStepCheckpoints()
+	if err != nil {
+		t.Fatalf("ListStepCheckpoints: %v", err)
+	}
+	if len(checkpoints) != 1 {
+		t.Fatalf("expected 1 checkpoint, got %d", len(checkpoints))
+	}
+	got := checkpoints[0]
+	if got.Visits["work"] != 3 {
+		t.Errorf("Visits[work] = %d, want 3", got.Visits["work"])
+	}
+	if got.Visits["prep"] != 1 {
+		t.Errorf("Visits[prep] = %d, want 1", got.Visits["prep"])
+	}
+}
+
+func TestLocalState_StepCheckpoint_VisitsOmittedWhenEmpty(t *testing.T) {
+	// A checkpoint with no Visits should not produce a "visits" key in JSON,
+	// ensuring backward compatibility with pre-W07 checkpoint files.
+	dir := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", dir)
+	workflowPath := filepath.Join(dir, "workflow.hcl")
+	if err := os.WriteFile(workflowPath, []byte("workflow \"w\" { version = \"0.1\" }"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cp := &StepCheckpoint{
+		RunID:        "run-no-visits",
+		Workflow:     "wf",
+		WorkflowPath: workflowPath,
+		CurrentStep:  "step1",
+		Attempt:      1,
+	}
+	if err := WriteStepCheckpoint(cp); err != nil {
+		t.Fatalf("WriteStepCheckpoint: %v", err)
+	}
+
+	p := filepath.Join(dir, "runs", "run-no-visits.json")
+	raw, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatalf("read checkpoint: %v", err)
+	}
+	if strings.Contains(string(raw), `"visits"`) {
+		t.Errorf("checkpoint JSON should not contain 'visits' key when Visits is nil/empty; got: %s", raw)
 	}
 }
 

@@ -173,6 +173,7 @@ func resumePausedRun(ctx context.Context, log *slog.Logger, rc reattachTransport
 	eng := engine.New(graph, loader, sink,
 		engine.WithResumedVars(restoredVars),
 		engine.WithResumedIter(restoredIter),
+		engine.WithResumedVisits(cp.Visits),
 		engine.WithPendingSignal(resp.PendingSignal),
 		engine.WithWorkflowDir(filepath.Dir(cp.WorkflowPath)),
 		engine.WithLogger(log),
@@ -207,6 +208,7 @@ func serviceResumeSignals(ctx context.Context, log *slog.Logger, rc reattachTran
 		sink.ClearPaused()
 		resumedEng := engine.New(graph, loader, sink,
 			engine.WithResumedVars(eng.VarScope()),
+			engine.WithResumedVisits(eng.VisitCounts()),
 			engine.WithResumePayload(resumeMsg.Payload),
 			engine.WithWorkflowDir(filepath.Dir(cp.WorkflowPath)),
 		)
@@ -295,6 +297,7 @@ func resumeActiveRun(ctx context.Context, log *slog.Logger, rc reattachTransport
 	eng := engine.New(graph, loader, sink,
 		engine.WithResumedVars(restoredVars),
 		engine.WithResumedIter(restoredIter),
+		engine.WithResumedVisits(cp.Visits),
 		engine.WithWorkflowDir(filepath.Dir(cp.WorkflowPath)),
 		engine.WithLogger(log),
 	)

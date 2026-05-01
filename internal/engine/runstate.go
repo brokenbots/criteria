@@ -32,6 +32,9 @@ type RunState struct {
 	// file() and fileexists() expression functions to resolve relative paths.
 	// Set from Engine.workflowDir at run start.
 	WorkflowDir string
+	// Visits tracks per-step visit counts for max_visits enforcement (W07).
+	// Nil-safe: a nil map is treated as all-zero counts.
+	Visits map[string]int
 
 	firstStep        bool
 	firstStepAttempt int

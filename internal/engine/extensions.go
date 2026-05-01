@@ -22,6 +22,15 @@ func WithResumedVars(vars map[string]cty.Value) Option {
 	}
 }
 
+// WithResumedVisits sets the per-step visit counts to restore at run start.
+// Used during crash recovery to ensure max_visits limits count from the
+// correct baseline after a resume (W07).
+func WithResumedVisits(visits map[string]int) Option {
+	return func(e *Engine) {
+		e.resumedVisits = visits
+	}
+}
+
 // WithResumedIter sets the IterCursor stack to restore at run start. Used during
 // crash recovery when a step iteration was active at the time of the crash (W10).
 // Formerly WithResumedIter(*workflow.IterCursor) (W07); updated to accept a

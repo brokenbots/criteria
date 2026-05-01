@@ -56,8 +56,9 @@ workflow "deploy_pipeline" {
 - **`initial_state`** (required): The starting node or state name.
 - **`target_state`** (required): The intended terminal state. Must reference a terminal state.
 - **`policy`** (optional): Execution guards.
-  - **`max_total_steps`** (default 100): Caps the total number of step executions across the run, including retries and iteration steps. Set to `0` for no cap (use with care for unbounded `for_each` or deeply nested workflow bodies).
+  - **`max_total_steps`** (default 100): Caps the total number of step executions across the run, including retries and iteration steps. Set this to a positive integer to override the cap. If unset, or set to `0`, the default cap of `100` applies. Acts as a coarse backstop; for fine-grained loop control, prefer `max_visits` on individual steps.
   - **`max_step_retries`** (default 0 = no retries): Per-step retry limit for transient failures.
+  - **`max_visits_warn_threshold`** (default 200): Controls when the compiler emits a back-edge warning for steps without `max_visits`. When `max_total_steps` exceeds this threshold and a step has a back-edge (can reach itself via outcome transitions) but no `max_visits`, the compiler emits a warning suggesting `max_visits` be set. Supported values: omit (or leave unset) to use the default threshold of 200; set to `0` to disable warnings entirely; set to a positive integer to override the default. Negative values are invalid and cause a compile error.
 - **`permissions`** (optional): Workflow-level permission allowlist.
   - **`allow_tools`**: List of glob patterns for tool invocations. Step-level `allow_tools` is unioned with this list.
 
@@ -207,6 +208,7 @@ step "build" {
 - **`adapter`** or **`agent`** (required, mutually exclusive): Adapter name or agent reference.
 - **`lifecycle`** (optional, agent-only): `"open"` or `"close"`. See [Agents](#agents).
 - **`timeout`** (optional): Duration string (e.g., `"30s"`, `"5m"`). Step aborts if exceeded.
+- **`max_visits`** (optional, default 0 = unlimited): Maximum number of adapter invocation attempts this step may consume in a single run. Each adapter invocation — including the initial attempt and each retry attempt within a `max_step_retries` budget — counts as one visit. For iterating steps (`for_each`/`count`), entering an iteration consumes one visit for that iteration's initial adapter invocation; any retries within that same iteration consume additional visits and also count against `max_visits`. When the visit count would exceed this limit, the run fails immediately with `step "<name>" exceeded max_visits (<N>)`. A value of `0` (default) means unlimited. Negative values are rejected at compile time. This is the preferred mechanism for bounding tight review loops; see also `max_total_steps` in the policy block for a coarser run-wide cap.
 - **`allow_tools`** (optional, agent execution steps only): List of glob patterns for permitted tool invocations. Unioned with workflow-level `allow_tools`.
 - **`input`** (optional): Input block for adapter configuration. Attributes are adapter-specific.
 - **`outcome`** (required): At least one outcome mapping adapter outcome names to transition targets.

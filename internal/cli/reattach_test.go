@@ -449,7 +449,7 @@ func TestBuildServerSink(t *testing.T) {
 
 	c := newOfflineClient(t)
 	log := discardLogger()
-	sink := buildServerSink(c, "run-srv-1", graph, wfFile, "http://srv", log)
+	sink := buildServerSink(c, "run-srv-1", graph, wfFile, "http://srv", log, nil)
 	if sink == nil {
 		t.Fatal("expected non-nil Sink")
 	}
@@ -477,6 +477,150 @@ func TestBuildServerSink(t *testing.T) {
 	}
 	if !found {
 		t.Error("checkpoint for run-srv-1 not found")
+	}
+}
+
+// TestBuildServerSink_VisitsPersisted verifies that when buildServerSink
+// receives a non-nil getVisits callback, the visits returned by that callback
+// are written into the StepCheckpoint. This ensures the server checkpoint
+// write path cannot regress to dropping visit counts silently.
+func TestBuildServerSink_VisitsPersisted(t *testing.T) {
+	stateDir := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", stateDir)
+
+	wfFile := writeWorkflowFile(t, minimalWorkflow)
+	graph, err := parseWorkflowFromPath(wfFile)
+	if err != nil {
+		t.Fatalf("parseWorkflowFromPath: %v", err)
+	}
+
+	wantVisits := map[string]int{"build": 2, "test": 1}
+	c := newOfflineClient(t)
+	sink := buildServerSink(c, "run-srv-visits", graph, wfFile, "http://srv", discardLogger(),
+		func() map[string]int { return wantVisits })
+
+	sink.CheckpointFn("build", 3)
+
+	checkpoints, err := ListStepCheckpoints()
+	if err != nil {
+		t.Fatalf("ListStepCheckpoints: %v", err)
+	}
+	var found *StepCheckpoint
+	for _, cp := range checkpoints {
+		if cp.RunID == "run-srv-visits" {
+			found = cp
+			break
+		}
+	}
+	if found == nil {
+		t.Fatal("checkpoint for run-srv-visits not found")
+	}
+	for step, want := range wantVisits {
+		if got := found.Visits[step]; got != want {
+			t.Errorf("Visits[%q] = %d; want %d", step, got, want)
+		}
+	}
+}
+
+// TestBuildLocalCheckpointFn_VisitsPersisted verifies that buildLocalCheckpointFn
+// writes the visits returned by getVisits into the StepCheckpoint. Mirrors
+// TestBuildServerSink_VisitsPersisted for the initial-run local path. This would
+// fail if buildLocalCheckpointFn stopped calling getVisits() or stopped assigning
+// its result to cp.Visits.
+func TestBuildLocalCheckpointFn_VisitsPersisted(t *testing.T) {
+	stateDir := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", stateDir)
+
+	wfFile := writeWorkflowFile(t, maxVisitsWorkflow)
+	wantVisits := map[string]int{"work": 2, "review": 1}
+
+	fn := buildLocalCheckpointFn(discardLogger(), "local-fn-visits", "max_visits_test", wfFile,
+		func() map[string]int { return wantVisits })
+	fn("work", 1)
+
+	checkpoints, err := ListStepCheckpoints()
+	if err != nil {
+		t.Fatalf("ListStepCheckpoints: %v", err)
+	}
+	var found *StepCheckpoint
+	for _, cp := range checkpoints {
+		if cp.RunID == "local-fn-visits" {
+			found = cp
+			break
+		}
+	}
+	if found == nil {
+		t.Fatal("checkpoint not found; buildLocalCheckpointFn may not have written it")
+	}
+	for step, want := range wantVisits {
+		if got := found.Visits[step]; got != want {
+			t.Errorf("Visits[%q] = %d; want %d", step, got, want)
+		}
+	}
+}
+
+// TestBuildReattachTrackerAndEngine_VisitsPersisted proves that the local
+// checkpoint write path records live visit counts from the engine. It calls
+// buildReattachTrackerAndEngine directly, runs the returned engine, and asserts
+// that the checkpoint written to disk during OnStepEntered contains the
+// incremented visit count from eng.VisitCounts(). This would fail if the
+// checkpointFn closure removed the `cp.Visits = eng.VisitCounts()` assignment,
+// leaving the persisted checkpoint with nil/empty visits — which would cause
+// subsequent crash-recovery resumes to ignore prior visit history.
+func TestBuildReattachTrackerAndEngine_VisitsPersisted(t *testing.T) {
+	stateDir := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", stateDir)
+
+	// maxVisitsWorkflow: step "work" with max_visits=1 using shell "echo hi".
+	// With no prior visits (Visits=nil), the first attempt succeeds:
+	//   incrementVisit: nil → {"work":1} (0 < 1, gate passes)
+	//   OnStepEntered  → checkpointFn writes checkpoint with eng.VisitCounts()={"work":1}
+	//   shell succeeds → done.
+	wfFile := writeWorkflowFile(t, maxVisitsWorkflow)
+	cp := &StepCheckpoint{
+		RunID:        "brate-visits-written",
+		WorkflowPath: wfFile,
+		CurrentStep:  "work",
+		Attempt:      0,
+		// Visits deliberately nil: proves the closure reads from the live engine,
+		// not from the seed checkpoint.
+	}
+	if err := WriteStepCheckpoint(cp); err != nil {
+		t.Fatalf("WriteStepCheckpoint: %v", err)
+	}
+
+	graph, loader, _, ok := prepareReattach(context.Background(), discardLogger(), cp)
+	if !ok {
+		t.Fatal("prepareReattach failed")
+	}
+	defer loader.Shutdown(context.Background())
+
+	var out bytes.Buffer
+	_, _, eng := buildReattachTrackerAndEngine(cp, discardLogger(), graph, loader, &out, outputModeJSON, 1)
+
+	// Run the engine. checkpointFn fires from OnStepEntered with liveRunState.Visits={"work":1}.
+	if runErr := eng.RunFrom(context.Background(), "work", 1); runErr != nil {
+		t.Fatalf("unexpected RunFrom error: %v", runErr)
+	}
+
+	// buildReattachTrackerAndEngine writes checkpoints but never removes them;
+	// the file on disk must reflect the live visit count from eng.VisitCounts().
+	checkpoints, err := ListStepCheckpoints()
+	if err != nil {
+		t.Fatalf("ListStepCheckpoints: %v", err)
+	}
+	var found *StepCheckpoint
+	for _, item := range checkpoints {
+		if item.RunID == "brate-visits-written" {
+			found = item
+			break
+		}
+	}
+	if found == nil {
+		t.Fatal("checkpoint not found after run; checkpointFn may not have fired during OnStepEntered")
+	}
+	if got := found.Visits["work"]; got != 1 {
+		t.Errorf("checkpoint Visits[%q] = %d; want 1 — checkpointFn must assign eng.VisitCounts()", "work", got)
 	}
 }
 
@@ -570,6 +714,49 @@ func TestResumeOneLocalRun_ExceedsMaxRetries(t *testing.T) {
 	// A RunFailed event must have been written to the output buffer.
 	if !strings.Contains(out.String(), "RunFailed") {
 		t.Errorf("expected RunFailed in output, got: %s", out.String())
+	}
+}
+
+// TestResumeOneLocalRun_VisitsRestored verifies that visit counts persisted in a
+// local StepCheckpoint are seeded into the resumed engine and that max_visits is
+// enforced against the restored count. With Visits={"work":1} and max_visits=1,
+// the first incrementVisit call in the resumed engine must fail immediately,
+// proving the local buildReattachTrackerAndEngine → WithResumedVisits path works
+// end-to-end. This would fail if the visits map were dropped before engine
+// construction or never written into the resumed engine options.
+func TestResumeOneLocalRun_VisitsRestored(t *testing.T) {
+	stateDir := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", stateDir)
+
+	wfFile := writeWorkflowFile(t, maxVisitsWorkflow)
+	cp := &StepCheckpoint{
+		RunID:        "local-visits-restored",
+		Workflow:     "max_visits_test",
+		WorkflowPath: wfFile,
+		CurrentStep:  "work",
+		Attempt:      0,                         // nextAttempt=1 ≤ maxAttempts=1
+		Visits:       map[string]int{"work": 1}, // already at the max_visits=1 limit
+	}
+	if err := WriteStepCheckpoint(cp); err != nil {
+		t.Fatalf("WriteStepCheckpoint: %v", err)
+	}
+
+	var out bytes.Buffer
+	resumeOneLocalRun(context.Background(), discardLogger(), cp, &out, outputModeJSON)
+
+	// Checkpoint must be cleaned up regardless of failure.
+	checkpoints, _ := ListStepCheckpoints()
+	for _, item := range checkpoints {
+		if item.RunID == "local-visits-restored" {
+			t.Error("checkpoint not removed after max_visits failure on local resume")
+		}
+	}
+	// Output must contain a RunFailed event that mentions exceeded max_visits.
+	if !strings.Contains(out.String(), "RunFailed") {
+		t.Errorf("expected RunFailed in output, got: %s", out.String())
+	}
+	if !strings.Contains(out.String(), "exceeded max_visits") {
+		t.Errorf("expected 'exceeded max_visits' in output, got: %s", out.String())
 	}
 }
 
@@ -760,6 +947,80 @@ func TestResumeActiveRun_HappyPath(t *testing.T) {
 	}
 	if !hasCompleted {
 		t.Errorf("expected RunCompleted event; published envelopes: %d", len(ft.published))
+	}
+}
+
+// maxVisitsWorkflow has max_visits = 1 on step "work" for testing visit-count
+// persistence across reattach.
+const maxVisitsWorkflow = `
+workflow "max_visits_test" {
+  version       = "0.1"
+  initial_state = "work"
+  target_state  = "done"
+
+  step "work" {
+    adapter    = "shell"
+    max_visits = 1
+    input {
+      command = "echo hi"
+    }
+    outcome "success" { transition_to = "done" }
+    outcome "failure" { transition_to = "failed" }
+  }
+
+  state "done" {
+    terminal = true
+    success  = true
+  }
+  state "failed" {
+    terminal = true
+    success  = false
+  }
+}
+`
+
+// TestResumeActiveRun_VisitsRestored verifies that visit counts persisted in a
+// StepCheckpoint are seeded into the resumed engine and that max_visits is
+// enforced against the restored count. With Visits={"work":1} and
+// max_visits=1, the first incrementVisit call in the resumed engine must fail.
+func TestResumeActiveRun_VisitsRestored(t *testing.T) {
+	stateDir := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", stateDir)
+
+	wfFile := writeWorkflowFile(t, maxVisitsWorkflow)
+	cp := &StepCheckpoint{
+		RunID:        "rar-visits",
+		WorkflowPath: wfFile,
+		Visits:       map[string]int{"work": 1}, // already at the limit
+	}
+	writeCheckpointDirect(t, stateDir, cp)
+
+	resp := &pb.ReattachRunResponse{
+		CanResume:   true,
+		Status:      "running",
+		CurrentStep: "work",
+		Attempt:     0, // nextAttempt=1 ≤ maxAttempts=1
+	}
+	graph, err := parseWorkflowFromPath(wfFile)
+	if err != nil {
+		t.Fatalf("parseWorkflowFromPath: %v", err)
+	}
+
+	ft := &fakeTransport{}
+	resumeActiveRun(context.Background(), discardLogger(), ft, cp, graph, resp)
+
+	// The engine must emit RunFailed because visits["work"]=1 >= max_visits=1.
+	var gotFailed bool
+	for _, env := range ft.published {
+		if rf := env.GetRunFailed(); rf != nil {
+			gotFailed = true
+			if !strings.Contains(rf.GetReason(), "exceeded max_visits") {
+				t.Errorf("RunFailed reason %q should mention exceeded max_visits", rf.GetReason())
+			}
+		}
+	}
+	if !gotFailed {
+		t.Error("expected RunFailed event when checkpoint visits match max_visits limit")
 	}
 }
 
