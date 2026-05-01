@@ -527,3 +527,38 @@ Four review threads addressed:
 4. **`internal/plugin/loader_test.go` nil assertions (PRRT_kwDOSOBb1s5-67OW):** Removed `== nil` guards in `TestLoader_PopulatesAllowedOutcomes_Empty` and `TestCollectAllowedOutcomes_Empty`; both tests now assert only `len == 0`, consistent with proto3 nil/empty equivalence.
 
 All four tests still pass after changes. `make test` (plugin and cli packages) green.
+
+### Review 2026-04-30-02 — changes-requested
+
+#### Summary
+
+Changes requested. The follow-up commit fixes the docs/changelog wording around proto3 nil-versus-empty compatibility, but it also weakens the W14 proof obligation by removing assertions for the workstream's explicit "empty (non-nil) slice" requirement. The implementation in `collectAllowedOutcomes` still returns `[]string{}`, and the branch is otherwise green, but the current tests would not fail if that invariant regressed to `nil`.
+
+#### Plan Adherence
+
+- **Proto / host wiring / docs:** Still aligned. The additive field, deterministic sorting, unchanged engine guard, and compatibility notes remain correct.
+- **Step 4 / Step 6 regression:** W14 explicitly requires `collectAllowedOutcomes` to return an empty **non-nil** slice when `step.Outcomes` is empty, and Step 6.1 / Step 6.2 specify tests that prove that behavior. The latest edit to `internal/plugin/loader_test.go` removed those assertions, so the current submission no longer demonstrates the full contract the workstream asks for.
+
+#### Required Remediations
+
+- **Blocker — restore proof of the non-nil empty-slice invariant** (`internal/plugin/loader_test.go:268-318`): `TestLoader_PopulatesAllowedOutcomes_Empty` and `TestCollectAllowedOutcomes_Empty` now assert only `len(...) == 0`. That allows a plausible faulty implementation (`return nil`) to pass, even though W14's host-helper contract explicitly requires `[]string{}` for clarity. **Acceptance criteria:** add assertions that fail if `AllowedOutcomes` / `collectAllowedOutcomes(...)` is `nil` in the zero-outcome case, while keeping the compatibility docs that instruct adapters to treat missing/nil and empty equivalently on the wire.
+
+#### Test Intent Assessment
+
+The sorted-order assertions remain strong, and the compatibility wording changes are reasonable. The weak point is regression sensitivity on the zero-outcome path: a helper that returns `nil` instead of `[]string{}` would still satisfy the current tests, so the test suite no longer proves the exact behavior mandated by the workstream. Restore the nil-sensitive assertions so at least one realistic regression fails.
+
+#### Validation Performed
+
+- `make test` — passed
+- `make ci` — passed
+
+### Remediation — Review 2026-04-30-02
+
+**Blocker addressed:** Restored nil-sensitive assertions in both empty-outcome tests.
+
+- `TestLoader_PopulatesAllowedOutcomes_Empty`: re-added `req.AllowedOutcomes == nil` guard before the `len == 0` check. The `recordingClient` captures the request pre-serialization, so the host-side `[]string{}` value is directly observable.
+- `TestCollectAllowedOutcomes_Empty`: re-added `got == nil` guard with updated comment explaining both invariants: host contract (non-nil `[]string{}`), and wire/adapter contract (nil and empty are equivalent).
+
+Both comments now explicitly note the distinction between the host-side non-nil contract and the wire-level nil/empty equivalence that adapters must observe. A regression to `return nil` in `collectAllowedOutcomes` would now fail both tests.
+
+`make ci` → exit 0.
