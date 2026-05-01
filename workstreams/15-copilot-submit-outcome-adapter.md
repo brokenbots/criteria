@@ -1243,3 +1243,23 @@ Verdict: **approved**. The follow-up PR-thread fixes are correct and do not reop
 - `go test -race ./cmd/criteria-adapter-copilot/...` — passed.
 - `make test-conformance` — passed.
 - `make ci` — passed.
+
+### PR review thread remediation 3 — 2026-05-01
+
+Three new unresolved threads from `copilot-pull-request-reviewer`:
+
+**Thread PRRT_kwDOSOBb1s5-7uvK — `copilot_session.go:85`: comment missing `"no_outcomes"`**
+
+The `finalizeFailureKind` field comment listed only `"missing"`, `"invalid_outcome"`, and `"duplicate"`, omitting `"no_outcomes"`. Fix: added `"no_outcomes"` to the comment.
+
+**Thread PRRT_kwDOSOBb1s5-7uvh — `copilot_outcome.go:47`: empty-set submit sets wrong kind**
+
+`handleSubmitOutcome` treated an outcome submitted against an empty allowed set as `"invalid_outcome"` with the confusing message "choose one of: " (empty list). The true root cause is a misconfigured step, not an invalid model choice. Fix: added an empty-set check before the general not-in-set check — when `len(activeAllowedOutcomes) == 0`, sets `finalizeFailureKind = "no_outcomes"` and returns "no outcomes are declared for this step; it cannot be finalized via submit_outcome". Added Test 5.2b to prove the new behavior.
+
+**Thread PRRT_kwDOSOBb1s5-7uvi — `copilot_turn.go:175`: `handleIdleTurn` conditionally set `no_outcomes`**
+
+`handleIdleTurn` only set `finalizeFailureKind = "no_outcomes"` when the field was still `""`. If the model called `submit_outcome` first (setting it to `"invalid_outcome"`), then the idle-turn short-circuit would wrongly report `"invalid_outcome"`. Fix: removed the `&& s.finalizeFailureKind == ""` guard so `handleIdleTurn` unconditionally sets `"no_outcomes"` when the allowed set is empty, ensuring the failure event always reports the root cause accurately.
+
+#### Validation
+
+- `make ci` — **PASS** (commit `d6e6e2f`)
