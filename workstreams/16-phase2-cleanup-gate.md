@@ -48,8 +48,8 @@ Phase 2-specific gates:
   [W15](15-copilot-submit-outcome-adapter.md) (Copilot
   `submit_outcome` finalization) runs end-to-end without an
   orchestrator. The `workflow_file` step from the prior plan is
-  excluded — W05 is cancelled (see Step 2, lines 107-116, for
-  cancellation scope and rationale).
+  excluded — W05 is cancelled (see the cancelled workstreams note
+  above for cancellation scope and rationale).
 - **Tool-call wire contract.** [W14](14-copilot-tool-call-wire-contract.md)
   added `AllowedOutcomes` to `pb.ExecuteRequest`; verify
   `make proto-check-drift` exits 0 and the host populates the field
