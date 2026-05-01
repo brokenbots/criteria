@@ -1343,3 +1343,15 @@ Verdict: **approved**. The fake-Copilot pending-map deletion fix is correct and 
 - `go test -race ./cmd/criteria-adapter-copilot/...` — passed.
 - `make test-conformance` — passed.
 - `make ci` — passed.
+
+### PR review thread remediation 7 — 2026-05-01
+
+**Thread PRRT_kwDOSOBb1s5-729y — `conformance_test.go`: `TestConformance_AllowedOutcomesPropagation_SetProof` needs COPILOT_E2E skip guard**
+**Thread PRRT_kwDOSOBb1s5-7296 — `conformance_test.go`: `TestConformance_InvalidOutcomeScenario_Fixture` needs COPILOT_E2E skip guard**
+**Thread PRRT_kwDOSOBb1s5-729- — `conformance_test.go`: `TestConformance_DuplicateCallScenario_Fixture` needs COPILOT_E2E skip guard**
+
+All three fixture/scenario conformance tests rely on the deterministic `fake-copilot` binary (via `FAKE_COPILOT_SCENARIO`). When `COPILOT_E2E=1`, `applyFakeIfNeeded` stops forcing the fake binary, so these tests would run against the real Copilot CLI and become non-deterministic (scenario outcomes depend on model behavior). Added `if os.Getenv("COPILOT_E2E") == "1" { t.Skip(...) }` at the top of each function, before the `t.Setenv("FAKE_COPILOT_SCENARIO", ...)` call.
+
+#### Validation
+
+- `make ci` — **PASS** (commit `fc457e3`)
