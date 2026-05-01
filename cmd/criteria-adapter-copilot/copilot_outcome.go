@@ -58,8 +58,9 @@ func (p *copilotPlugin) handleSubmitOutcome(pluginSessionID string, args SubmitO
 			existing,
 		)), nil
 	}
+	trimmedReason := strings.TrimSpace(args.Reason)
 	s.finalizedOutcome = outcome
-	s.finalizedReason = strings.TrimSpace(args.Reason)
+	s.finalizedReason = trimmedReason
 	sink := s.sink
 	s.mu.Unlock()
 
@@ -68,7 +69,7 @@ func (p *copilotPlugin) handleSubmitOutcome(pluginSessionID string, args SubmitO
 	if sink != nil {
 		_ = sink.Send(adapterEvent("outcome.finalized", map[string]any{
 			"outcome": outcome,
-			"reason":  args.Reason,
+			"reason":  trimmedReason,
 		}))
 	}
 

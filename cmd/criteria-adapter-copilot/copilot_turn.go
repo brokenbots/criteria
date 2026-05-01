@@ -195,8 +195,8 @@ func (ts *turnState) reprompt(ctx context.Context, s *sessionState) error {
 
 // failExhausted emits a structured failure event and returns a failure result.
 // The event payload includes:
-//   - reason: human-readable category ("missing finalize", "invalid outcome", "duplicate finalize")
-//   - kind:   machine-readable category ("missing", "invalid_outcome", "duplicate")
+//   - reason: human-readable category ("missing finalize", "invalid outcome", "duplicate finalize", "step has no declared outcomes")
+//   - kind:   machine-readable category ("missing", "invalid_outcome", "duplicate", "no_outcomes")
 //   - allowed_outcomes: sorted list of the step's declared outcomes (for operator alerting)
 //   - attempts: how many tool-call attempts were made
 func (ts *turnState) failExhausted(s *sessionState, sink pluginhost.ExecuteEventSender) error {

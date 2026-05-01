@@ -4,7 +4,6 @@ package conformance
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -88,12 +87,14 @@ func assertPermissionDeniedEvent(t *testing.T, sink *recordingSink) {
 	if !ok {
 		t.Fatal("expected permission.denied adapter event from host deny policy")
 	}
-	requestID := strings.TrimSpace(fmt.Sprint(deniedEvent["request_id"]))
-	tool := strings.TrimSpace(fmt.Sprint(deniedEvent["tool"]))
-	if requestID == "" {
+	// Use type assertion so a missing or nil field (which fmt.Sprint renders as
+	// "<nil>") is correctly treated as an absent value.
+	requestID, _ := deniedEvent["request_id"].(string)
+	tool, _ := deniedEvent["tool"].(string)
+	if strings.TrimSpace(requestID) == "" {
 		t.Fatal("permission.denied event must include non-empty request_id")
 	}
-	if tool == "" {
+	if strings.TrimSpace(tool) == "" {
 		t.Fatal("permission.denied event must include non-empty tool")
 	}
 }
