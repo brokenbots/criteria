@@ -106,8 +106,10 @@ package main
 // enum for Outcome — the Copilot Go SDK v0.3.0 has no public live
 // tool-mutation API, and refreshing the enum would require
 // ResumeSessionWithOptions per step, which the design explicitly
-// rejects. Validation runs in the tool handler against the active
-// step's allowed_outcomes set carried on sessionState.
+// rejects. Consequence: Outcome membership is not schema-validated at
+// definition time; it is validated at runtime in the tool handler
+// against the active step's allowed_outcomes set carried on
+// sessionState.
 type SubmitOutcomeArgs struct {
     Outcome string `json:"outcome"`           // required; must be a member of the active allowed set
     Reason  string `json:"reason,omitempty"`  // optional; surfaced in events for operator visibility
@@ -156,7 +158,7 @@ Hard requirements:
 - `submitOutcomeToolDescription` constant value (final wording is the
   executor's call, but it must convey the contract):
 
-  > `Finalize the outcome for the current step. Call this exactly once with one of the allowed outcomes for the step. The list of allowed outcomes is provided in the user prompt. Failure to call this tool with a valid outcome will fail the step.`
+  > `Finalize the outcome for the current step. Call this exactly once with one of the allowed outcomes for the step. The allowed outcomes are listed in the user prompt. Failure to call this tool with a valid outcome will fail the step.`
 
 - `SkipPermission: true` is required (locked decision §4).
 - Handler signature uses the SDK's typed-tool generic; verify the
@@ -284,8 +286,8 @@ func (p *copilotPlugin) handleSubmitOutcome(pluginSessionID string, args SubmitO
         allowedList := sortedAllowedOutcomes(s.activeAllowedOutcomes)
         s.mu.Unlock()
         return submitOutcomeError(fmt.Sprintf(
-            "outcome %q is not in the allowed set %v; choose one of: %s",
-            outcome, allowedList, strings.Join(allowedList, ", "),
+            "outcome %q is not in the allowed set; choose one of: %s",
+            outcome, strings.Join(allowedList, ", "),
         )), nil
     }
     if s.finalizedOutcome != "" {
@@ -471,6 +473,18 @@ Hard requirements:
   short-circuits on `outcome != ""` after the first `turnDone`.
 
 #### Step 3.3 — Remove prose parsing
+
+##### Behavior change (prominent note)
+
+- The adapter now enforces a strict failure default: terminal result is
+  `failure` when finalization does not complete correctly.
+- **Compatibility exception (max-turns only):** if the turn ends via
+  `errMaxTurnsReached`, the adapter may still emit `needs_review` **only**
+  when `needs_review` is present in `AllowedOutcomes`.
+- If `needs_review` is not allowed, the max-turns path also emits
+  `failure`.
+- This exception is intentional for backward compatibility and is the
+  only remaining path where `needs_review` can appear.
 
 Delete `parseOutcome` (line 223 of `copilot_turn.go`) and the
 `resultPrefix` constant
