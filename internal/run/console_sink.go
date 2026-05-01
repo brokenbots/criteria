@@ -24,10 +24,11 @@ type ConsoleSink struct {
 	Steps []string // workflow step order (for "[i/N] step" rendering)
 	Color bool     // emit ANSI color codes
 
-	mu        sync.Mutex
-	runStart  time.Time
-	stepStart map[string]time.Time
-	idxByStep map[string]int
+	mu            sync.Mutex
+	runStart      time.Time
+	stepStart     map[string]time.Time
+	idxByStep     map[string]int
+	stepLifecycle map[string][]string // stepName → lifecycle event strings
 }
 
 // NewConsoleSink builds a sink rendering to out. steps is the workflow step
@@ -38,11 +39,12 @@ func NewConsoleSink(out io.Writer, steps []string, color bool) *ConsoleSink {
 		idx[s] = i + 1
 	}
 	return &ConsoleSink{
-		Out:       out,
-		Steps:     steps,
-		Color:     color,
-		stepStart: make(map[string]time.Time),
-		idxByStep: idx,
+		Out:           out,
+		Steps:         steps,
+		Color:         color,
+		stepStart:     make(map[string]time.Time),
+		idxByStep:     idx,
+		stepLifecycle: make(map[string][]string),
 	}
 }
 
@@ -113,16 +115,23 @@ func (c *ConsoleSink) OnStepEntered(step, adapterName string, attempt int) {
 func (c *ConsoleSink) OnStepOutcome(step, outcome string, duration time.Duration, err error) {
 	c.mu.Lock()
 	delete(c.stepStart, step)
+	events := c.stepLifecycle[step]
+	delete(c.stepLifecycle, step)
 	c.mu.Unlock()
+
+	tag := ""
+	if len(events) > 0 {
+		tag = "  " + c.color("2", "[adapter: "+strings.Join(events, " → ")+"]")
+	}
 	if outcome == "success" && err == nil {
-		c.writeln("  " + c.color("32", "✓") + " success in " + formatDuration(duration))
+		c.writeln("  " + c.color("32", "✓") + " success in " + formatDuration(duration) + tag)
 		return
 	}
 	msg := "  " + c.color("31", "✗") + " " + outcome
 	if err != nil {
 		msg += ": " + err.Error()
 	}
-	msg += " (" + formatDuration(duration) + ")"
+	msg += " (" + formatDuration(duration) + ")" + tag
 	c.writeln(msg)
 }
 
@@ -205,6 +214,18 @@ func (c *ConsoleSink) OnStepIterationItem(node string, index int, step string) {
 }
 
 func (c *ConsoleSink) OnScopeIterCursorSet(cursorJSON string) {}
+
+// OnAdapterLifecycle records the adapter lifecycle status for the step. The
+// accumulated events are rendered as an [adapter: ...] tag in OnStepOutcome.
+func (c *ConsoleSink) OnAdapterLifecycle(stepName, adapterName, status, detail string) {
+	entry := status
+	if detail != "" {
+		entry = status + ": " + truncate(detail, 60)
+	}
+	c.mu.Lock()
+	c.stepLifecycle[stepName] = append(c.stepLifecycle[stepName], entry)
+	c.mu.Unlock()
+}
 
 func (c *ConsoleSink) StepEventSink(step string) adapter.EventSink {
 	return &consoleStepSink{parent: c, step: step}

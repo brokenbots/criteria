@@ -147,6 +147,11 @@ func (s *LocalSink) OnScopeIterCursorSet(cursorJSON string) {
 	s.emit("ScopeIterCursorSet", &pb.ScopeIterCursorSet{CursorJson: cursorJSON})
 }
 
+// OnAdapterLifecycle is a no-op on LocalSink; the ND-JSON record does not
+// include a lifecycle envelope (W12). Lifecycle state is captured in the
+// session crash/respawn adapter events emitted by the session manager.
+func (s *LocalSink) OnAdapterLifecycle(stepName, adapterName, status, detail string) {}
+
 func (s *LocalSink) StepEventSink(step string) adapter.EventSink {
 	return &localStepSink{parent: s, step: step}
 }

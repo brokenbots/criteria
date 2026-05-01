@@ -430,3 +430,46 @@ See [`examples/plugins/greeter/main.go`](../examples/plugins/greeter/main.go) fo
 - `cmd/criteria-adapter-noop/main.go`
 
 If you add a new plugin, wire it through the conformance harness before relying on it in a real workflow. That is the fastest way to confirm `Info`, `OpenSession`, `Execute`, `Permit`, and `CloseSession` all obey the host contract.
+
+## Adapter lifecycle logs
+
+When an adapter session is opened, executes, or exits, Criteria records the
+event and renders a compact status tag on each step's output line in concise
+mode:
+
+```
+  ✓ success in 2.3s  [adapter: started → exited]
+  ✗ failure (8.1s)  [adapter: started → crashed: connection refused]
+```
+
+### Log levels
+
+| Event                              | Level   | Message |
+|------------------------------------|---------|---------|
+| Expected close (closing flag set)  | `DEBUG` | `adapter stream closed (expected)` |
+| Unexpected exit / crash heuristic  | `WARN`  | `adapter session crashed` |
+
+An **expected close** is one where `SessionManager.Close` or `Shutdown` was
+called by the host before the plugin's gRPC stream ended, **or** the
+surrounding execute context was canceled by the host (run timeout, user abort).
+An **unexpected exit** is an EOF or broken-pipe error received when neither
+condition holds.
+
+### Tuning verbosity
+
+The `apply` command creates its slog logger at a fixed `INFO` level (see
+`newApplyLogger` in `internal/cli/apply.go`). There is no `--log-level` CLI
+flag, so debug-level adapter lifecycle messages (e.g. `adapter stream closed
+(expected)`) are not surfaced in normal CLI output.
+
+To see debug-level lifecycle messages in tests, swap the `slog` default handler
+before the call:
+
+```go
+slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr,
+    &slog.HandlerOptions{Level: slog.LevelDebug})))
+```
+
+The `CRITERIA_LOG_LEVEL` environment variable (`trace`|`debug`|`info`|`warn`|
+`error`) controls only the `go-plugin` framework's RPC-layer logger; it does
+**not** affect the slog lifecycle messages above.

@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/workflow"
@@ -56,6 +58,7 @@ type Session struct {
 	OnCrash   string
 	plugin    Plugin
 	respawned bool
+	closing   atomic.Bool
 }
 
 func NewSessionManager(loader Loader) *SessionManager {
@@ -118,6 +121,7 @@ func (m *SessionManager) Close(ctx context.Context, name string) error {
 	if !exists {
 		return nil
 	}
+	sess.closing.Store(true)
 	err := sess.plugin.CloseSession(ctx, name)
 	sess.plugin.Kill()
 	return err
@@ -134,9 +138,20 @@ func (m *SessionManager) Execute(ctx context.Context, name string, step *workflo
 		return result, nil
 	}
 
-	if !isLikelySessionCrash(execErr) {
+	// An explicit Close/Shutdown (closing flag) or a host-canceled context
+	// (run timeout, user abort) both cause the gRPC stream to produce
+	// EOF/broken-pipe errors. Check this before the string heuristic so
+	// neither case is misclassified as a crash.
+	if sess.closing.Load() || ctx.Err() != nil {
+		slog.Debug("adapter stream closed (expected)", "session", sess.Name, "adapter", sess.Adapter)
 		return result, execErr
 	}
+
+	if !isLikelySessionCrash(sess, execErr) {
+		return result, execErr
+	}
+
+	slog.Warn("adapter session crashed", "session", sess.Name, "adapter", sess.Adapter, "error", execErr)
 
 	switch sess.OnCrash {
 	case OnCrashRespawn:
@@ -177,6 +192,7 @@ func (m *SessionManager) Shutdown(ctx context.Context) error {
 
 	var errs []error
 	for _, sess := range sessions {
+		sess.closing.Store(true)
 		if err := sess.plugin.CloseSession(ctx, sess.Name); err != nil {
 			errs = append(errs, err)
 		}
@@ -234,8 +250,13 @@ func normalizeOnCrash(v string) string {
 	}
 }
 
-func isLikelySessionCrash(err error) bool {
+func isLikelySessionCrash(sess *Session, err error) bool {
 	if err == nil {
+		return false
+	}
+	if sess.closing.Load() {
+		// Expected: caller initiated close; any subsequent EOF /
+		// transport-closing / broken-pipe is the normal teardown.
 		return false
 	}
 	msg := strings.ToLower(err.Error())

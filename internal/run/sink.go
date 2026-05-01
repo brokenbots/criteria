@@ -187,6 +187,11 @@ func (s *Sink) OnScopeIterCursorSet(cursorJSON string) {
 	s.publish(&pb.ScopeIterCursorSet{CursorJson: cursorJSON})
 }
 
+// OnAdapterLifecycle is a no-op on the server transport Sink (W12). The
+// server does not have a lifecycle envelope in its proto contract; lifecycle
+// state is observable via the session crash/respawn adapter events.
+func (s *Sink) OnAdapterLifecycle(stepName, adapterName, status, detail string) {}
+
 // StepEventSink returns a per-step adapter sink that wraps Log/Adapter into
 // step.log / adapter.event envelopes.
 func (s *Sink) StepEventSink(step string) adapter.EventSink {

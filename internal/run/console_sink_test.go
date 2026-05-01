@@ -156,3 +156,50 @@ func TestConsoleSink_TransitionToTerminalStateRendered(t *testing.T) {
 type stringErr struct{ msg string }
 
 func (e *stringErr) Error() string { return e.msg }
+
+// TestConsoleSink_LifecycleTag verifies that OnAdapterLifecycle events are
+// accumulated per step and rendered as an [adapter: ...] tag on the step
+// outcome line (W12).
+func TestConsoleSink_LifecycleTag(t *testing.T) {
+	var buf bytes.Buffer
+	sink := NewConsoleSink(&buf, []string{"build"}, false)
+
+	sink.OnAdapterLifecycle("build", "shell", "started", "")
+	sink.OnAdapterLifecycle("build", "shell", "exited", "")
+	sink.OnStepOutcome("build", "success", 2300*time.Millisecond, nil)
+
+	out := buf.String()
+	if !strings.Contains(out, "[adapter: started → exited]") {
+		t.Errorf("expected lifecycle tag in output, got: %q", out)
+	}
+}
+
+// TestConsoleSink_LifecycleTagCrash verifies that a crashed adapter renders
+// the detail string in the lifecycle tag (W12).
+func TestConsoleSink_LifecycleTagCrash(t *testing.T) {
+	var buf bytes.Buffer
+	sink := NewConsoleSink(&buf, []string{"review"}, false)
+
+	sink.OnAdapterLifecycle("review", "copilot", "started", "")
+	sink.OnAdapterLifecycle("review", "copilot", "crashed", "connection refused")
+	sink.OnStepOutcome("review", "failure", 8100*time.Millisecond, &stringErr{"adapter crashed"})
+
+	out := buf.String()
+	if !strings.Contains(out, "[adapter: started → crashed: connection refused]") {
+		t.Errorf("expected crash lifecycle tag in output, got: %q", out)
+	}
+}
+
+// TestConsoleSink_LifecycleTagAbsent verifies that steps without any
+// lifecycle events do not render an [adapter: ...] tag (W12).
+func TestConsoleSink_LifecycleTagAbsent(t *testing.T) {
+	var buf bytes.Buffer
+	sink := NewConsoleSink(&buf, []string{"build"}, false)
+
+	sink.OnStepOutcome("build", "success", 500*time.Millisecond, nil)
+
+	out := buf.String()
+	if strings.Contains(out, "[adapter:") {
+		t.Errorf("expected no lifecycle tag when no events emitted, got: %q", out)
+	}
+}

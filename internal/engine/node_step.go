@@ -468,7 +468,18 @@ func (n *stepNode) executeStep(ctx context.Context, deps Deps, step *workflow.St
 		return adapter.Result{Outcome: "success"}, nil
 	}
 	if step.Agent != "" {
-		return deps.Sessions.Execute(ctx, step.Agent, step, deps.Sink.StepEventSink(step.Name))
+		adapterName := ""
+		if agent, ok := n.graph.Agents[step.Agent]; ok {
+			adapterName = agent.Adapter
+		}
+		deps.Sink.OnAdapterLifecycle(step.Name, adapterName, "started", "")
+		result, execErr := deps.Sessions.Execute(ctx, step.Agent, step, deps.Sink.StepEventSink(step.Name))
+		if execErr != nil {
+			deps.Sink.OnAdapterLifecycle(step.Name, adapterName, "crashed", execErr.Error())
+		} else {
+			deps.Sink.OnAdapterLifecycle(step.Name, adapterName, "exited", "")
+		}
+		return result, execErr
 	}
 
 	anonSessionID := "anon-" + uuid.NewString()
@@ -477,9 +488,16 @@ func (n *stepNode) executeStep(ctx context.Context, deps Deps, step *workflow.St
 	if err := deps.Sessions.Open(context.WithoutCancel(ctx), anonSessionID, step.Adapter, plugin.OnCrashFail, nil); err != nil {
 		return adapter.Result{Outcome: "failure"}, err
 	}
+	deps.Sink.OnAdapterLifecycle(step.Name, step.Adapter, "started", "")
 	defer deps.Sessions.Close(context.Background(), anonSessionID)
 
-	return deps.Sessions.Execute(ctx, anonSessionID, step, deps.Sink.StepEventSink(step.Name))
+	result, execErr := deps.Sessions.Execute(ctx, anonSessionID, step, deps.Sink.StepEventSink(step.Name))
+	if execErr != nil {
+		deps.Sink.OnAdapterLifecycle(step.Name, step.Adapter, "crashed", execErr.Error())
+	} else {
+		deps.Sink.OnAdapterLifecycle(step.Name, step.Adapter, "exited", "")
+	}
+	return result, execErr
 }
 
 func (n *stepNode) stepAdapterName() string {

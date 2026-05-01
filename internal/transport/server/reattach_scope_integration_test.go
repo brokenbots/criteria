@@ -208,6 +208,7 @@ func (s *integrationSink) OnStepIterationStarted(string, int, string, bool)     
 func (s *integrationSink) OnStepIterationCompleted(string, string, string)              {}
 func (s *integrationSink) OnStepIterationItem(string, int, string)                      {}
 func (s *integrationSink) OnScopeIterCursorSet(string)                                  {}
+func (s *integrationSink) OnAdapterLifecycle(string, string, string, string)            {}
 func (s *integrationSink) StepEventSink(step string) adapter.EventSink                  { return s }
 func (s *integrationSink) Log(stream string, line []byte)                               {}
 func (s *integrationSink) Adapter(kind string, data any)                                {}

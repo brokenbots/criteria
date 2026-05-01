@@ -197,6 +197,7 @@ func TestSink_PublishMethodsDoNotPanic(t *testing.T) {
 	s.OnStepIterationItem("each", 0, "review")
 	s.OnStepIterationCompleted("each", "all_succeeded", "done")
 	s.OnScopeIterCursorSet(`{"index":1}`)
+	s.OnAdapterLifecycle("step1", "noop", "started", "")
 }
 
 // TestSink_StepEventSinkLogAndAdapter exercises the step-level event sink
@@ -338,6 +339,7 @@ func TestLocalSink_AllRemainingEvents(t *testing.T) {
 	sink.OnStepIterationItem("each", 0, "review")
 	sink.OnStepIterationCompleted("each", "all_succeeded", "done")
 	sink.OnScopeIterCursorSet(`{"index":1}`)
+	sink.OnAdapterLifecycle("each", "noop", "started", "") // no-op on LocalSink
 
 	// OnRunPaused is a no-op on LocalSink — no ND-JSON line is emitted.
 	wantTypes := []string{

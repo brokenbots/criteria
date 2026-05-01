@@ -150,6 +150,13 @@ func (m *MultiSink) OnScopeIterCursorSet(cursorJSON string) {
 	}
 }
 
+// OnAdapterLifecycle fans the adapter lifecycle event to all child sinks (W12).
+func (m *MultiSink) OnAdapterLifecycle(stepName, adapterName, status, detail string) {
+	for _, c := range m.children {
+		c.OnAdapterLifecycle(stepName, adapterName, status, detail)
+	}
+}
+
 func (m *MultiSink) StepEventSink(step string) adapter.EventSink {
 	subs := make([]adapter.EventSink, 0, len(m.children))
 	for _, c := range m.children {
