@@ -77,6 +77,12 @@ type Sink interface {
 	// cursor stack; an empty string signals cursor cleared. The server stores
 	// this verbatim without interpreting field names.
 	OnScopeIterCursorSet(cursorJSON string)
+	// OnAdapterLifecycle is emitted at adapter session lifecycle events (W12).
+	// status is one of: "started", "exited", "crashed".
+	// stepName is the step that owns the event; adapterName is the adapter
+	// (e.g. "noop", "copilot"); detail is a one-line description (empty for
+	// clean events).
+	OnAdapterLifecycle(stepName, adapterName, status, detail string)
 	// StepEventSink returns the per-step adapter sink (logs + adapter events).
 	StepEventSink(step string) adapter.EventSink
 }

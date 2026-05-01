@@ -515,3 +515,52 @@ func TestSessionManagerShellFingerprintAllowlist(t *testing.T) {
 }
 
 var _ adapter.EventSink = (*adapterEventCollector)(nil)
+
+// TestSession_ClosingFlagSuppressesCrashHeuristic verifies that setting the
+// closing flag causes isLikelySessionCrash to return false even for
+// EOF/connection-close errors (W12).
+func TestSession_ClosingFlagSuppressesCrashHeuristic(t *testing.T) {
+	sess := &Session{}
+	sess.closing.Store(true)
+	for _, errMsg := range []string{
+		"eof",
+		"eof: connection terminated",
+		"transport is closing",
+		"broken pipe",
+		"connection refused",
+		"terminated",
+	} {
+		if isLikelySessionCrash(sess, errors.New(errMsg)) {
+			t.Errorf("expected isLikelySessionCrash to return false with closing flag set, err=%q", errMsg)
+		}
+	}
+}
+
+// TestSession_UnexpectedExitTriggersHeuristic verifies that without the
+// closing flag, crash-like errors trigger the heuristic (W12).
+func TestSession_UnexpectedExitTriggersHeuristic(t *testing.T) {
+	sess := &Session{}
+	for _, errMsg := range []string{
+		"eof",
+		"eof: connection terminated",
+		"transport is closing",
+		"broken pipe",
+		"connection refused",
+		"terminated",
+	} {
+		if !isLikelySessionCrash(sess, errors.New(errMsg)) {
+			t.Errorf("expected isLikelySessionCrash to return true without closing flag, err=%q", errMsg)
+		}
+	}
+}
+
+// TestSession_ExecuteEOFWithoutCloseIsCrash verifies that an Execute call
+// returning an EOF-like error without a preceding Close still triggers the
+// crash heuristic (W12 risk mitigation).
+func TestSession_ExecuteEOFWithoutCloseIsCrash(t *testing.T) {
+	sess := &Session{}
+	// closing flag is NOT set — this simulates an unsolicited plugin exit
+	if !isLikelySessionCrash(sess, errors.New("read: eof")) {
+		t.Error("expected crash heuristic to fire for EOF without closing flag")
+	}
+}

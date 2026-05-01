@@ -58,13 +58,14 @@ func (s *fakeSink) OnWaitResumed(string, string, string, map[string]string) {
 func (s *fakeSink) OnApprovalRequested(string, []string, string) {}
 func (s *fakeSink) OnApprovalDecision(string, string, string, map[string]string) {
 }
-func (s *fakeSink) OnBranchEvaluated(string, string, string, string) {}
-func (s *fakeSink) OnForEachEntered(string, int)                     {}
-func (s *fakeSink) OnStepIterationStarted(string, int, string, bool) {}
-func (s *fakeSink) OnStepIterationCompleted(string, string, string)  {}
-func (s *fakeSink) OnStepIterationItem(string, int, string)          {}
-func (s *fakeSink) OnScopeIterCursorSet(string)                      {}
-func (s *fakeSink) StepEventSink(step string) adapter.EventSink      { return noopSink{} }
+func (s *fakeSink) OnBranchEvaluated(string, string, string, string)  {}
+func (s *fakeSink) OnForEachEntered(string, int)                      {}
+func (s *fakeSink) OnStepIterationStarted(string, int, string, bool)  {}
+func (s *fakeSink) OnStepIterationCompleted(string, string, string)   {}
+func (s *fakeSink) OnStepIterationItem(string, int, string)           {}
+func (s *fakeSink) OnScopeIterCursorSet(string)                       {}
+func (s *fakeSink) OnAdapterLifecycle(string, string, string, string) {}
+func (s *fakeSink) StepEventSink(step string) adapter.EventSink       { return noopSink{} }
 
 type noopSink struct{}
 
@@ -212,6 +213,63 @@ func TestEngineLifecycleWithNoopPlugin(t *testing.T) {
 	if sink.terminal != "done" || !sink.terminalOK {
 		t.Fatalf("terminal state: %s (ok=%v)", sink.terminal, sink.terminalOK)
 	}
+}
+
+// TestNamedAgentLifecycleEventsOnExecutionStep is a regression test verifying
+// that OnAdapterLifecycle events for a named-agent workflow are emitted on the
+// execution step ("run_agent"), not on the open/close lifecycle steps (W12).
+func TestNamedAgentLifecycleEventsOnExecutionStep(t *testing.T) {
+	pluginBin := buildNoopPlugin(t)
+	loader := plugin.NewLoaderWithDiscovery(func(string) (string, error) {
+		return pluginBin, nil
+	})
+	t.Cleanup(func() { _ = loader.Shutdown(context.Background()) })
+
+	g := compileFile(t, "testdata/agent_lifecycle_noop.hcl")
+	sink := &lifecycleCaptureSink{}
+	if err := New(g, loader, sink).Run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+
+	// The execution step must carry both "started" and "exited" events.
+	runEvents := sink.lifecycle["run_agent"]
+	if len(runEvents) < 2 {
+		t.Fatalf("run_agent: want ≥2 lifecycle events, got %v", runEvents)
+	}
+	if runEvents[0] != "started" {
+		t.Errorf("run_agent: first event want %q got %q", "started", runEvents[0])
+	}
+	if runEvents[len(runEvents)-1] != "exited" {
+		t.Errorf("run_agent: last event want %q got %q", "exited", runEvents[len(runEvents)-1])
+	}
+
+	// Open and close lifecycle steps must carry no lifecycle events.
+	if len(sink.lifecycle["open_agent"]) != 0 {
+		t.Errorf("open_agent: expected no lifecycle events, got %v", sink.lifecycle["open_agent"])
+	}
+	if len(sink.lifecycle["close_agent"]) != 0 {
+		t.Errorf("close_agent: expected no lifecycle events, got %v", sink.lifecycle["close_agent"])
+	}
+}
+
+// lifecycleCaptureSink extends fakeSink to record per-step lifecycle events.
+type lifecycleCaptureSink struct {
+	fakeSink
+
+	mu        sync.Mutex
+	lifecycle map[string][]string // step → []status
+}
+
+func (s *lifecycleCaptureSink) OnAdapterLifecycle(step, _ /*adapter*/, status, _ /*detail*/ string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.lifecycle == nil {
+		s.lifecycle = make(map[string][]string)
+	}
+	s.lifecycle[step] = append(s.lifecycle[step], status)
 }
 
 func TestEngineLifecycleOpenTimeoutKeepsSessionAlive(t *testing.T) {
