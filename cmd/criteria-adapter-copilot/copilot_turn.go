@@ -163,10 +163,12 @@ func (ts *turnState) handleIdleTurn(ctx context.Context, s *sessionState, sink p
 	}
 	// Short-circuit when no outcomes are declared: the model can never succeed
 	// regardless of how many reprompts we send. Fail immediately with a clear
-	// reason so the operator can fix the misconfigured step.
+	// reason so the operator can fix the misconfigured step. Unconditionally
+	// override the kind so a prior "invalid_outcome" from a model that called
+	// submit_outcome on an empty set doesn't mask the real root cause.
 	s.mu.Lock()
 	noOutcomes := len(s.activeAllowedOutcomes) == 0
-	if noOutcomes && s.finalizeFailureKind == "" {
+	if noOutcomes {
 		s.finalizeFailureKind = "no_outcomes"
 	}
 	s.mu.Unlock()

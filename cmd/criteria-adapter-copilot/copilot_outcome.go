@@ -38,6 +38,11 @@ func (p *copilotPlugin) handleSubmitOutcome(pluginSessionID string, args SubmitO
 		return submitOutcomeError("outcome is required"), nil
 	}
 	if _, ok := s.activeAllowedOutcomes[outcome]; !ok {
+		if len(s.activeAllowedOutcomes) == 0 {
+			s.finalizeFailureKind = "no_outcomes"
+			s.mu.Unlock()
+			return submitOutcomeError("no outcomes are declared for this step; it cannot be finalized via submit_outcome"), nil
+		}
 		allowedList := sortedAllowedOutcomes(s.activeAllowedOutcomes)
 		s.finalizeFailureKind = "invalid_outcome"
 		s.mu.Unlock()

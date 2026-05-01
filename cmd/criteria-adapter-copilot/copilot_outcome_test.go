@@ -101,6 +101,33 @@ func TestHandleSubmitOutcomeInvalidOutcome(t *testing.T) {
 	}
 }
 
+// Test 5.2b: submit_outcome on a step with no declared outcomes returns a clear
+// error with kind="no_outcomes" — not "invalid_outcome" — so the failure event
+// accurately reflects a misconfigured step rather than a model error.
+func TestHandleSubmitOutcomeNoOutcomesDeclared(t *testing.T) {
+	s := stateWithOutcomes() // empty allowed set
+	p := outcomePlugin(s)
+
+	res, err := p.handleSubmitOutcome("s1", SubmitOutcomeArgs{Outcome: "success"})
+	if err != nil {
+		t.Fatalf("unexpected Go error: %v", err)
+	}
+	if res.ResultType != "failure" {
+		t.Errorf("ResultType = %q, want %q", res.ResultType, "failure")
+	}
+	if !strings.Contains(res.TextResultForLLM, "no outcomes are declared") {
+		t.Errorf("TextResultForLLM %q should mention no declared outcomes", res.TextResultForLLM)
+	}
+
+	s.mu.Lock()
+	kind := s.finalizeFailureKind
+	s.mu.Unlock()
+
+	if kind != "no_outcomes" {
+		t.Errorf("finalizeFailureKind = %q, want %q", kind, "no_outcomes")
+	}
+}
+
 // Test 5.3: Empty outcome string returns failure ToolResult.
 func TestHandleSubmitOutcomeEmptyOutcome(t *testing.T) {
 	s := stateWithOutcomes("success")

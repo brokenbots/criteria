@@ -81,8 +81,8 @@ type sessionState struct {
 	// captures a successful tool call; finalizeAttempts counts invocations
 	// (valid + invalid) for the 3-attempt cap; finalizeFailureKind records the
 	// reason category for the most-recent failed invocation ("missing",
-	// "invalid_outcome", or "duplicate") and is used by failExhausted to emit
-	// a structured diagnostic event.
+	// "invalid_outcome", "duplicate", or "no_outcomes") and is used by
+	// failExhausted to emit a structured diagnostic event.
 	activeAllowedOutcomes map[string]struct{}
 	finalizedOutcome      string
 	finalizedReason       string
