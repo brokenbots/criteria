@@ -528,7 +528,7 @@ Four review threads addressed:
 
 All four tests still pass after changes. `make test` (plugin and cli packages) green.
 
-### Review 2026-04-30-02 — changes-requested
+### Review 2026-04-30T02:00:00Z — changes-requested
 
 #### Summary
 
@@ -563,7 +563,7 @@ Both comments now explicitly note the distinction between the host-side non-nil 
 
 `make ci` → exit 0.
 
-### Review 2026-04-30-03 — approved
+### Review 2026-04-30T03:00:00Z — approved
 
 #### Summary
 

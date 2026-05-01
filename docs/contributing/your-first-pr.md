@@ -96,8 +96,8 @@ backslashes).
 
 ### 3.2 — Open the file and make the fix
 
-Open `internal/plugin/loader.go` and find the `stringsTrim` function
-(around line 313). You will see two `for` loop conditions that use `len(s) > 0`:
+Open `internal/plugin/loader.go` and find the `stringsTrim` function.
+You will see two `for` loop conditions that use `len(s) > 0`:
 
 ```go
 func stringsTrim(s string) string {

@@ -9,8 +9,13 @@
 > [W14](14-copilot-tool-call-wire-contract.md) +
 > [W15](15-copilot-submit-outcome-adapter.md) workstreams (Copilot
 > tool-call outcome finalization). The `workflow_file` runtime gap
-> remains a Phase 3 forward-pointer. Do not run gates that depended
-> on those workstreams; explicit removals are listed below.
+> remains a Phase 3 forward-pointer. The following validations from
+> earlier plans are explicitly removed and must not be run in this
+> cleanup gate:
+> - Any gate step that requires `SubWorkflowResolver` wiring or a
+>   `workflow_file` runtime smoke path (cancelled with W05).
+> - Any gate step that validates reviewer outcome aliasing behavior
+>   (cancelled with W11).
 
 ## Context
 
@@ -43,7 +48,8 @@ Phase 2-specific gates:
   [W15](15-copilot-submit-outcome-adapter.md) (Copilot
   `submit_outcome` finalization) runs end-to-end without an
   orchestrator. The `workflow_file` step from the prior plan is
-  excluded — W05 is cancelled.
+  excluded — W05 is cancelled (see the cancelled workstreams note
+  above for cancellation scope and rationale).
 - **Tool-call wire contract.** [W14](14-copilot-tool-call-wire-contract.md)
   added `AllowedOutcomes` to `pb.ExecuteRequest`; verify
   `make proto-check-drift` exits 0 and the host populates the field
@@ -86,7 +92,7 @@ Phase 2-specific gates:
 - [ ] `make lint-baseline-check` green ([W02](02-lint-ci-gate.md)
       gate).
 - [ ] `make validate` green for every example HCL. (No new W05
-      example; W05 cancelled.)
+      example: `examples/workflow_step_compose.hcl`; W05 cancelled.)
 - [ ] `make example-plugin` green.
 - [ ] `make ci` green.
 - [ ] `make proto-check-drift` exits 0 (W14 added
@@ -217,9 +223,8 @@ files (the originals preserved in git history at commit `4e4a357`):
 - [W14](14-copilot-tool-call-wire-contract.md) +
   [W15](15-copilot-submit-outcome-adapter.md) →
   `user_feedback/03-stabilize-reviewer-outcome-handling-user-story.txt`
-  (UF#03). UF#03 was originally scoped to W11 (host-side outcome
-  aliases); W11 was cancelled and the user pain is addressed at the
-  source by the Copilot tool-call finalization in W14/W15.
+  (UF#03). See the cancelled-workstreams note in Context for why
+  W11 was removed and UF#03 is closed via W14/W15.
 - [W06](06-local-mode-approval.md) →
   `user_feedback/05-allow-approval-in-local-mode-user-story.txt`
   (UF#05).
@@ -294,7 +299,9 @@ artifact upload. Verify:
 - [ ] File `tech_evaluations/TECH_EVALUATION-<v0.3.0-tag>.md`
       with grades for Architecture, Code Quality, Test Quality,
       Documentation, Security, Maintainability, Tech Debt,
-      Performance.
+      Performance. For this gate, use the release-tag filename
+      format exactly as shown (do **not** use the historical
+      `TECH_EVALUATION-<date>-<sequence>.md` pattern).
 - [ ] **Maintainability ≥ B** (was C+ at v0.2.0).
 - [ ] **Tech Debt ≥ B** (was C at v0.2.0).
 - [ ] All other grades unchanged or improved.

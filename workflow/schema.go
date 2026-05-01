@@ -207,8 +207,20 @@ type DefaultArmSpec struct {
 
 // PolicySpec defines global execution guards.
 type PolicySpec struct {
-	MaxTotalSteps          int  `hcl:"max_total_steps,optional"`
-	MaxStepRetries         int  `hcl:"max_step_retries,optional"`
+	MaxTotalSteps  int `hcl:"max_total_steps,optional"`
+	MaxStepRetries int `hcl:"max_step_retries,optional"`
+	// MaxVisitsWarnThreshold controls when the engine emits a warning for
+	// excessive revisits while executing a workflow.
+	//
+	// Semantics:
+	//   - nil: use the default threshold (200 visits)
+	//   - 0: disable revisit warnings
+	//   - >0: use the provided threshold value
+	//   - <0: invalid (validation error)
+	//
+	// This warning threshold is independent from MaxTotalSteps (hard stop), but
+	// should typically be <= MaxTotalSteps when a max is configured so warnings
+	// can be emitted before execution is terminated.
 	MaxVisitsWarnThreshold *int `hcl:"max_visits_warn_threshold,optional"`
 }
 
@@ -354,9 +366,9 @@ type BranchArm struct {
 type Policy struct {
 	MaxTotalSteps  int
 	MaxStepRetries int
-	// MaxVisitsWarnThreshold is the max_total_steps value above which the compiler
-	// emits a warning when a step with a back-edge has no max_visits set (W07).
-	// 0 disables the warning. Default is 200.
+	// MaxVisitsWarnThreshold is the threshold value that max_total_steps is
+	// compared against to determine whether to emit a warning when a step with a
+	// back-edge has no max_visits set (W07). 0 disables the warning. Default is 200.
 	MaxVisitsWarnThreshold int
 }
 
