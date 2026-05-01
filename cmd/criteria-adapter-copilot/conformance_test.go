@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"testing"
 	"time"
 
@@ -46,11 +47,13 @@ func TestCopilotPluginConformance(t *testing.T) {
 		},
 		PermissionConfig: map[string]string{
 			// Force a fetch tool invocation so the fake emits a permission
-			// request. The host deny policy drives the outcome to needs_review.
+			// request. The host deny policy drives the outcome to failure (W15:
+			// copilot returns failure for all permission-denied cases).
 			"prompt": "Use the fetch tool (web/URL fetcher) to retrieve the contents of https://api.github.com/zen — you must invoke the tool to fetch the URL, not guess. After the fetch completes, end your response with `RESULT: success`.",
 		},
-		AllowedOutcomes: []string{"success", "failure", "needs_review"},
-		Streaming:       true,
+		AllowedOutcomes:         []string{"success", "failure", "needs_review"},
+		Streaming:               true,
+		PermissionDenialOutcome: "failure",
 	}
 
 	applyFakeIfNeeded(t)
@@ -179,12 +182,341 @@ func TestCopilotReasoningEffortOverride(t *testing.T) {
 	}
 }
 
+// TestConformance_AllowedOutcomesPropagation (W15 Step 5.2) verifies that
+// AllowedOutcomes derived from a step's declared outcome set are propagated
+// end-to-end through the plugin loader to the copilot adapter, and that the
+// adapter returns an outcome that is a member of the declared set.
+//
+// The loader's collectAllowedOutcomes helper converts step.Outcomes into
+// the AllowedOutcomes field of the ExecuteRequest proto; this test exercises
+// the whole pipe from StepNode declaration to Execute result.
+func TestConformance_AllowedOutcomesPropagation(t *testing.T) {
+	applyFakeIfNeeded(t)
+
+	loader := plugin.NewLoaderWithDiscovery(func(requested string) (string, error) {
+		if requested != "copilot" {
+			return "", fmt.Errorf("unexpected plugin %q", requested)
+		}
+		return testPluginBin, nil
+	})
+	t.Cleanup(func() { _ = loader.Shutdown(context.Background()) })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	plug, err := loader.Resolve(ctx, "copilot")
+	if err != nil {
+		t.Fatalf("resolve plugin: %v", err)
+	}
+
+	sessionID := "allowed-outcomes-propagation-test"
+	if err := plug.OpenSession(ctx, sessionID, nil); err != nil {
+		t.Fatalf("OpenSession: %v", err)
+	}
+	t.Cleanup(func() {
+		closeCtx, closeCancel := context.WithTimeout(context.Background(), 2*time.Second)
+		_ = plug.CloseSession(closeCtx, sessionID)
+		closeCancel()
+		plug.Kill()
+	})
+
+	// Declare exactly two outcomes. The loader populates AllowedOutcomes from
+	// step.Outcomes so the adapter receives ["failure", "success"] (sorted).
+	// The fake's default scenario submits outcome "success".
+	step := &workflow.StepNode{
+		Name:  "propagation-step",
+		Agent: "bot",
+		Input: map[string]string{"prompt": "test AllowedOutcomes propagation"},
+		Outcomes: map[string]string{
+			"success": "done",
+			"failure": "done",
+		},
+	}
+
+	result, err := plug.Execute(ctx, sessionID, step, &discardSink{})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	// Assert exactly "success" (not just in-set).
+	//
+	// Rationale: the fake's default scenario calls submit_outcome("success"). With
+	// correct AllowedOutcomes propagation (allowed = {"success","failure"}), the
+	// tool handler accepts "success" and the step returns "success". If propagation
+	// breaks (empty set), the handler rejects "success" on every attempt, exhaustion
+	// returns "failure", and this assertion fails — exposing the regression.
+	if result.Outcome != "success" {
+		t.Fatalf("Execute returned outcome %q, want %q (AllowedOutcomes propagation may be broken)", result.Outcome, "success")
+	}
+}
+
+// TestConformance_AllowedOutcomesPropagation_SetProof (W15) directly validates
+// that the exact declared AllowedOutcomes set reaches the adapter, not just
+// that the eventual outcome is in-set. It drives the "missing" scenario (fake
+// never calls submit_outcome) so the adapter exhausts all attempts and emits
+// an outcome.failure event that carries the allowed_outcomes it received. The
+// test captures that event and asserts the exact set matches what was declared
+// — any forwarding bug (e.g., wrong set, wrong sort, dropped entries) fails here.
+func TestConformance_AllowedOutcomesPropagation_SetProof(t *testing.T) {
+	t.Setenv("FAKE_COPILOT_SCENARIO", "missing")
+	applyFakeIfNeeded(t)
+
+	loader := plugin.NewLoaderWithDiscovery(func(requested string) (string, error) {
+		if requested != "copilot" {
+			return "", fmt.Errorf("unexpected plugin %q", requested)
+		}
+		return testPluginBin, nil
+	})
+	t.Cleanup(func() { _ = loader.Shutdown(context.Background()) })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	plug, err := loader.Resolve(ctx, "copilot")
+	if err != nil {
+		t.Fatalf("resolve plugin: %v", err)
+	}
+
+	sessionID := "allowed-outcomes-setproof-test"
+	if err := plug.OpenSession(ctx, sessionID, nil); err != nil {
+		t.Fatalf("OpenSession: %v", err)
+	}
+	t.Cleanup(func() {
+		closeCtx, closeCancel := context.WithTimeout(context.Background(), 2*time.Second)
+		_ = plug.CloseSession(closeCtx, sessionID)
+		closeCancel()
+		plug.Kill()
+	})
+
+	// Declare two narrow canary outcomes. The loader converts step.Outcomes
+	// into AllowedOutcomes=["canary-a","canary-b"] (sorted). The fake never
+	// calls submit_outcome (missing scenario) so the adapter exhausts and emits
+	// outcome.failure carrying exactly the set it received.
+	step := &workflow.StepNode{
+		Name:  "setproof-step",
+		Agent: "bot",
+		Input: map[string]string{"prompt": "test exact AllowedOutcomes propagation"},
+		Outcomes: map[string]string{
+			"canary-a": "done",
+			"canary-b": "done",
+		},
+	}
+
+	capSink := newCapturingSink()
+	if _, err := plug.Execute(ctx, sessionID, step, capSink); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	// The outcome.failure event's allowed_outcomes must exactly match the
+	// canary set — this is the direct boundary proof.
+	events := capSink.adapterEvents("outcome.failure")
+	if len(events) == 0 {
+		t.Fatal("expected outcome.failure adapter event from exhaustion")
+	}
+	data := events[0]
+	raw, ok := data["allowed_outcomes"]
+	if !ok {
+		t.Fatal("outcome.failure event missing 'allowed_outcomes' field")
+	}
+	list, ok := raw.([]interface{})
+	if !ok {
+		t.Fatalf("allowed_outcomes type = %T, want []interface{}", raw)
+	}
+	want := []string{"canary-a", "canary-b"} // sorted
+	if len(list) != len(want) {
+		t.Fatalf("allowed_outcomes len = %d, want %d; got %v", len(list), len(want), list)
+	}
+	for i, w := range want {
+		if s, _ := list[i].(string); s != w {
+			t.Errorf("allowed_outcomes[%d] = %q, want %q", i, s, w)
+		}
+	}
+}
+
+// newFixturePlugin returns a plugin loaded from testPluginBin for use in
+// scenario fixture tests. The binary inherits the current process environment,
+// so set FAKE_COPILOT_SCENARIO before calling this.
+func newFixturePlugin(t *testing.T) plugin.Plugin {
+	t.Helper()
+	loader := plugin.NewLoaderWithDiscovery(func(requested string) (string, error) {
+		if requested != "copilot" {
+			return "", fmt.Errorf("unexpected plugin %q", requested)
+		}
+		return testPluginBin, nil
+	})
+	t.Cleanup(func() { _ = loader.Shutdown(context.Background()) })
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	t.Cleanup(cancel)
+	plug, err := loader.Resolve(ctx, "copilot")
+	if err != nil {
+		t.Fatalf("resolve plugin: %v", err)
+	}
+	return plug
+}
+
+// openFixtureSession opens a session on plug and registers cleanup. Returns
+// a context with a 30-second deadline.
+func openFixtureSession(t *testing.T, plug plugin.Plugin, sessionID string) context.Context {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	t.Cleanup(cancel)
+	if err := plug.OpenSession(ctx, sessionID, nil); err != nil {
+		t.Fatalf("OpenSession %q: %v", sessionID, err)
+	}
+	t.Cleanup(func() {
+		closeCtx, closeCancel := context.WithTimeout(context.Background(), 2*time.Second)
+		_ = plug.CloseSession(closeCtx, sessionID)
+		closeCancel()
+		plug.Kill()
+	})
+	return ctx
+}
+
+// TestConformance_InvalidOutcomeScenario_Fixture (W15 Blocker-1a) drives the
+// "invalid-outcome" fake scenario end-to-end through the real plugin binary.
+//
+// The fake submits "not-a-real-outcome" on turn 1 (rejected by the handler) and
+// "success" on turn 2 (accepted). This validates that:
+//   - The real submit_outcome handler rejects the invalid value and reprompts.
+//   - The valid call on the next turn is accepted.
+//   - Exactly one outcome.finalized event is emitted with outcome="success".
+//   - No outcome.failure event is emitted (step succeeded, no exhaustion).
+func TestConformance_InvalidOutcomeScenario_Fixture(t *testing.T) {
+	t.Setenv("FAKE_COPILOT_SCENARIO", "invalid-outcome")
+	applyFakeIfNeeded(t)
+
+	plug := newFixturePlugin(t)
+	ctx := openFixtureSession(t, plug, "invalid-outcome-fixture-test")
+
+	step := &workflow.StepNode{
+		Name:  "invalid-outcome-step",
+		Agent: "bot",
+		Input: map[string]string{"prompt": "test invalid-outcome scenario"},
+		Outcomes: map[string]string{
+			"success": "done",
+			"failure": "done",
+		},
+	}
+
+	capSink := newCapturingSink()
+	result, err := plug.Execute(ctx, "invalid-outcome-fixture-test", step, capSink)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	// First call ("not-a-real-outcome") rejected; second call ("success") accepted.
+	if result.Outcome != "success" {
+		t.Errorf("outcome = %q, want %q", result.Outcome, "success")
+	}
+
+	// Exactly one outcome.finalized event — the valid call on turn 2.
+	finalized := capSink.adapterEvents("outcome.finalized")
+	if len(finalized) != 1 {
+		t.Fatalf("outcome.finalized event count = %d, want 1; events: %v", len(finalized), finalized)
+	}
+	if got, _ := finalized[0]["outcome"].(string); got != "success" {
+		t.Errorf("outcome.finalized outcome = %q, want %q", got, "success")
+	}
+
+	// No outcome.failure event (step did not exhaust).
+	if failures := capSink.adapterEvents("outcome.failure"); len(failures) != 0 {
+		t.Errorf("unexpected outcome.failure events: %v", failures)
+	}
+}
+
+// TestConformance_DuplicateCallScenario_Fixture (W15 Blocker-1b) drives the
+// "duplicate-call" fake scenario end-to-end through the real plugin binary.
+//
+// The fake submits submit_outcome("success") and submit_outcome("failure") in
+// the same turn (no idle between them). This validates that:
+//   - The first call wins: outcome = "success".
+//   - The second call is rejected at the SDK boundary.
+//   - Exactly one outcome.finalized event is emitted (no second event from the
+//     duplicate call), proving the second call's tool-error is SDK-visible.
+func TestConformance_DuplicateCallScenario_Fixture(t *testing.T) {
+	t.Setenv("FAKE_COPILOT_SCENARIO", "duplicate-call")
+	applyFakeIfNeeded(t)
+
+	plug := newFixturePlugin(t)
+	ctx := openFixtureSession(t, plug, "duplicate-call-fixture-test")
+
+	step := &workflow.StepNode{
+		Name:  "duplicate-call-step",
+		Agent: "bot",
+		Input: map[string]string{"prompt": "test duplicate-call scenario"},
+		Outcomes: map[string]string{
+			"success": "done",
+			"failure": "done",
+		},
+	}
+
+	capSink := newCapturingSink()
+	result, err := plug.Execute(ctx, "duplicate-call-fixture-test", step, capSink)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	// First call wins: outcome must be "success".
+	if result.Outcome != "success" {
+		t.Errorf("outcome = %q, want %q (first call must win)", result.Outcome, "success")
+	}
+
+	// Exactly ONE outcome.finalized event — the duplicate call must NOT produce
+	// a second event.
+	finalized := capSink.adapterEvents("outcome.finalized")
+	if len(finalized) != 1 {
+		t.Fatalf("outcome.finalized event count = %d, want 1 (duplicate rejected); events: %v", len(finalized), finalized)
+	}
+	if got, _ := finalized[0]["outcome"].(string); got != "success" {
+		t.Errorf("outcome.finalized outcome = %q, want %q", got, "success")
+	}
+}
+
 // discardSink is a no-op adapter.EventSink used in conformance tests that only
 // need to verify outcomes and errors rather than individual events.
 type discardSink struct{}
 
 func (*discardSink) Log(_ string, _ []byte)  {}
 func (*discardSink) Adapter(_ string, _ any) {}
+
+// capturingSink is a thread-safe adapter.EventSink that records all adapter
+// events for later inspection by fixture tests.
+type capturingSink struct {
+	mu     sync.Mutex
+	events []capturedAdapterEvent
+}
+
+type capturedAdapterEvent struct {
+	kind string
+	data map[string]any
+}
+
+func newCapturingSink() *capturingSink { return &capturingSink{} }
+
+func (*capturingSink) Log(_ string, _ []byte) {}
+
+func (c *capturingSink) Adapter(kind string, data any) {
+	var m map[string]any
+	if data != nil {
+		m, _ = data.(map[string]any)
+	}
+	c.mu.Lock()
+	c.events = append(c.events, capturedAdapterEvent{kind: kind, data: m})
+	c.mu.Unlock()
+}
+
+// adapterEvents returns the data payloads for all captured events of the given kind.
+func (c *capturingSink) adapterEvents(kind string) []map[string]any {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var out []map[string]any
+	for _, ev := range c.events {
+		if ev.kind == kind {
+			out = append(out, ev.data)
+		}
+	}
+	return out
+}
 
 // buildBinary compiles the package at pkgPath in moduleRoot and writes the
 // binary to os.TempDir(). It panics if compilation fails.

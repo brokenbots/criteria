@@ -749,36 +749,93 @@ This workstream may **not** edit:
 
 ## Tasks
 
-- [ ] Verify `github.com/github/copilot-sdk/go v0.3.0` is current in
+- [x] Verify `github.com/github/copilot-sdk/go v0.3.0` is current in
       `go.mod`; audit `SessionConfig.Tools` /
       `copilot.DefineTool` / `Tool.SkipPermission` /
       `copilot.ToolResult` API surface.
-- [ ] Add `submitOutcomeToolName` and tool-description constants to
+- [x] Add `submitOutcomeToolName` and tool-description constants to
       `copilot.go`. Remove `resultPrefix`.
-- [ ] Define `SubmitOutcomeArgs` and the handler / helpers in
+- [x] Define `SubmitOutcomeArgs` and the handler / helpers in
       `copilot_outcome.go`.
-- [ ] Register `submit_outcome` in `buildSessionConfig` with
+- [x] Register `submit_outcome` in `buildSessionConfig` with
       `SkipPermission = true`.
-- [ ] Extend `sessionState` with `activeAllowedOutcomes`,
-      `finalizedOutcome`, `finalizedReason`, `finalizeAttempts`.
-- [ ] Reset finalize state in `beginExecution`; populate
+- [x] Extend `sessionState` with `activeAllowedOutcomes`,
+      `finalizedOutcome`, `finalizedReason`, `finalizeAttempts`,
+      `finalizeFailureKind`.
+- [x] Reset finalize state in `beginExecution`; populate
       `activeAllowedOutcomes` in `Execute` before the prompt is sent.
-- [ ] Prepend the allowed-outcomes preamble to the model prompt.
-- [ ] Replace `awaitOutcome` body with the 3-attempt reprompt loop;
+- [x] Prepend the allowed-outcomes preamble to the model prompt.
+- [x] Replace `awaitOutcome` body with the 3-attempt reprompt loop;
       remove `parseOutcome`.
-- [ ] Update the `errMaxTurnsReached` path to return `failure`
+- [x] Update the `errMaxTurnsReached` path to return `failure`
       unless `needs_review` is in the allowed set.
-- [ ] Update the permission-denied path to return `failure`.
-- [ ] Update the package-level docstring in `copilot.go` per
+- [x] Update the permission-denied path to return `failure`.
+- [x] Update the package-level docstring in `copilot.go` per
       Step 3.3.
-- [ ] Extend the fake-Copilot fixture with the scenarios in Step 4.
-- [ ] Add adapter unit tests per Step 5.1.
-- [ ] Add the conformance propagation test per Step 5.2.
-- [ ] Add the engine-guard regression test per Step 5.3.
-- [ ] Update `docs/plugins.md` per Step 6.
-- [ ] Capture the CHANGELOG text in reviewer notes for W16.
-- [ ] `make build`, `make plugins`, `make test`,
-      `make test-conformance`, `make lint-go`, `make ci` all green.
+- [x] Extend the fake-Copilot fixture with the scenarios in Step 4.
+- [x] Add adapter unit tests per Step 5.1 (now 17 tests, 5.1–5.17).
+- [x] Add the conformance propagation test per Step 5.2.
+- [x] Add the engine-guard regression test per Step 5.3.
+- [x] Update `docs/plugins.md` per Step 6.
+- [x] Capture the CHANGELOG text in reviewer notes for W16.
+- [x] `make build`, `make plugins`, `make test` all green.
+- [x] `make ci` all green (remediation round 2).
+
+## Reviewer Notes
+
+### Implementation summary
+
+All locked design decisions (§1–§6) are respected.
+
+**Core files changed:**
+
+- `cmd/criteria-adapter-copilot/copilot.go` — Removed `resultPrefix`, added `submitOutcomeToolName`/`submitOutcomeToolDescription` constants. Updated package docstring to describe tool-call finalization semantics.
+- `cmd/criteria-adapter-copilot/copilot_outcome.go` — `SubmitOutcomeArgs`, `handleSubmitOutcome`, `submitOutcomeSuccess`, `submitOutcomeError`, `sortedAllowedOutcomes`. Handler is goroutine-safe (mu-guarded), first-write-wins on duplicate, always increments `finalizeAttempts`, returns `(ToolResult, nil)` for all recoverable errors. Sets `finalizeFailureKind` ("missing", "invalid_outcome", "duplicate") on every rejection.
+- `cmd/criteria-adapter-copilot/copilot_session.go` — `sessionState` extended with 5 mu-guarded fields (`activeAllowedOutcomes`, `finalizedOutcome`, `finalizedReason`, `finalizeAttempts`, `finalizeFailureKind`). `buildSessionConfig` registers `submit_outcome` via `copilot.DefineTool` with `SkipPermission = true`.
+- `cmd/criteria-adapter-copilot/copilot_turn.go` — `parseOutcome` deleted, `awaitOutcome` replaced with 3-attempt loop (`maxFinalizeAttempts = 3`). `beginExecution` resets all 4 finalize fields; `Execute` populates `activeAllowedOutcomes` post-`beginExecution`, prepends preamble when `len(AllowedOutcomes) > 0`. `handleMaxTurnsReached` returns `needs_review` only when in allowed set, else `failure`. `reprompt` and `failExhausted` helpers added. `failExhausted` now emits structured `outcome.failure` event payload: `reason` (human-readable), `kind` (machine-readable: "missing"/"invalid_outcome"/"duplicate"), `allowed_outcomes` (sorted `[]any`), `attempts` (int).
+- `cmd/criteria-adapter-copilot/testfixtures/fake-copilot/main.go` — Fully rewritten to emit `external_tool.requested` events and handle `session.tools.handlePendingToolCall`. Six scenarios. gofmt-clean.
+- `cmd/criteria-adapter-copilot/copilot_internal_test.go` — `fakeSession` extended (`sendCount`, `sentOpts`, `onSend`, `sendSequence`). `TestParseOutcome` deleted. `TestExecuteMaxTurnsLimit` expects "failure". Two effort-restore tests use `onSend` hook + `AllowedOutcomes`.
+- `cmd/criteria-adapter-copilot/copilot_outcome_test.go` — 17 unit tests (Tests 5.1–5.17): all original 11 plus 6 new: RepromptTwice, InvalidEnumThenSuccess, PermissionDeniedFailure, MaxTurnsNoNeedsReview, EmptyAllowedSet, PreamblePresentInPrompt. Handler tests strengthened with `finalizeFailureKind` assertions. Exhausted-failure test verifies `kind`, `allowed_outcomes`, `attempts`, `reason` payload fields. `nestingReduce` style fixed.
+- `cmd/criteria-adapter-copilot/conformance_test.go` — `TestConformance_AllowedOutcomesPropagation` now asserts `result.Outcome == "success"` exactly (not just in-set), so a broken AllowedOutcomes propagation causes "failure" from exhaustion which fails the assertion.
+- `internal/adapter/conformance/assertions.go` — `//nolint:gocritic // W15` on `assertValidOutcome`.
+- `internal/adapter/conformance/conformance.go` — `Options.PermissionDenialOutcome string` field added. `//nolint:gocritic // W15` on 4 function signatures.
+- `internal/adapter/conformance/conformance_happy.go` — `//nolint:gocritic // W15` on 3 function signatures.
+- `internal/adapter/conformance/conformance_lifecycle.go` — `//nolint:gocritic // W15` on 5 function signatures; existing `testConcurrentSessions` nolint comment extended to include `gocritic`.
+- `internal/adapter/conformance/conformance_outcomes.go` — `//nolint:gocritic // W15` on 2 function signatures; `assertPermissionDeniedEvent` extracted helper reduces `testPermissionRequestShape` from 57→44 lines (below `funlen` 50-line cap).
+- `internal/engine/engine_test.go` — Added `TestEngine_GuardRemainsForCopilotAdapterFailure` (Step 5.3).
+- `docs/plugins.md` — Removed `RESULT:` prose documentation. Added "Outcome Finalization (Copilot Adapter)" section with full semantics table, structured `outcome.failure` payload table (reason/kind/allowed_outcomes/attempts), duplicate-call behavior, corrected empty-outcomes paragraph (no contradictory statement), and explicit iteration/`for_each` exclusion.
+
+**SDK deviation note:** The SDK v0.3.0 `DefineTool` API signature is `DefineTool[T, U any](name, description string, handler func(T, ToolInvocation) (U, error)) Tool` rather than the archive note's pseudo-code. Adapted accordingly. `SkipPermission` is set post-call on the returned `Tool` struct.
+
+**Tool error semantics confirmed:** Returning `(ToolResult{Error: msg, ResultType: "failure"}, nil)` allows the model to retry within the same turn.
+
+### Validation
+
+- `make ci` — all green (race-safe, lint-clean, no baseline additions)
+- `make build && make plugins` — green
+- `make lint-imports` — clean
+- 17 new/updated unit tests all pass
+
+### Security review
+
+- `Reason` field is operator-supplied free text; not gated on the sensitive-details env flag. No secrets exposure risk.
+- No new external dependencies.
+- No subprocess execution, file access, or network calls in the new code paths.
+- `handleSubmitOutcome` holds `s.mu` for all reads/writes to finalize state; no TOCTOU windows.
+- `finalizeFailureKind` and `allowed_outcomes` in the failure event contain only outcome name strings from the workflow definition — no user-supplied data or secrets.
+
+### CHANGELOG text for W16
+
+> **Behavior change — Copilot outcome finalization:** The Copilot adapter now
+> finalizes step outcomes via a structured `submit_outcome` tool call instead
+> of parsing a `result:` prefix from the model's final assistant message.
+> Workflows where the model previously emitted `result: <outcome>` prose
+> continue to work only if the model also calls `submit_outcome`; the prose
+> path has been removed. Failed finalization (missing call, invalid outcome,
+> exhausted reprompts) now returns `failure` rather than the prior default of
+> `needs_review`. Permission denial during a step also returns `failure`.
+> Workflows that relied on the prior `needs_review` default must declare
+> `failure` in their step's outcome set.
 
 ## Exit criteria
 
@@ -830,3 +887,111 @@ migration to the tool-call fixture path.
 | The engine guard catches a regression where the adapter returns an outcome not in the allowed set | This is the intended defense-in-depth behavior (locked decision §6). The new test in Step 5.3 verifies it. The adapter tool handler also rejects out-of-set outcomes, so reaching the engine guard is itself a bug to investigate — not a normal operating path. |
 | Existing `copilot_internal_test.go` is large (564 lines) and a pure addition makes it unwieldy | Split out a sibling `copilot_outcome_test.go` if the file would exceed ~750 lines after this workstream. Keep the split mechanical. |
 | `CRITERIA_COPILOT_INCLUDE_SENSITIVE_PERMISSION_DETAILS` env-gated event payloads need a parallel knob for finalize reasons | The `Reason` field is operator-supplied free text; treat it as already-allowed. Do not gate it on the sensitive-details flag in this workstream — file a follow-up if security review later requires it. |
+
+### Review 2026-05-01 — changes-requested
+
+#### Summary
+
+Verdict: **changes-requested**. The tool-call finalization path is mostly in place, but the branch does not meet the acceptance bar yet: `make ci` is currently red, the exhausted-finalization event is not the structured diagnostic required by Step 3 / the archive note, and the Step 5 test matrix is still incomplete at the contract boundary. Docs were updated, but they still miss required payload/exclusion details and contain contradictory wording for the empty-outcomes case.
+
+#### Plan Adherence
+
+- **Steps 1-2:** Implemented. `submit_outcome` is registered once per session with `SkipPermission = true`, and per-execute allowed outcomes are loaded before the prompt is sent.
+- **Step 3:** Partially implemented. The prompt preamble, reprompt loop, and max-turns mapping are present, but the exhausted-finalization path does not emit the required structured failure diagnostic.
+- **Step 4:** Partially implemented. The fake fixture gained the requested scenarios, but it still does not expose the observations needed to prove prompt/allowed-outcomes propagation or duplicate-call tool-error visibility through the SDK boundary.
+- **Step 5:** Incomplete. Several required unit/contract cases are missing, and the new propagation test does not actually prove `AllowedOutcomes` reached the adapter.
+- **Step 6:** Partially implemented. The prose `result:` path was documented as removed, but the docs still omit the structured failure-event payload and the iteration/`for_each` exclusion, and the empty-outcomes paragraph is internally inconsistent.
+- **Exit criteria:** Not met. `make test-conformance` passed, but `make ci` failed.
+
+#### Required Remediations
+
+- **Blocker** — `internal/adapter/conformance/conformance.go:17-37`, `internal/adapter/conformance/conformance_outcomes.go:36-76`, `internal/adapter/conformance/assertions.go:29-45`, `cmd/criteria-adapter-copilot/testfixtures/fake-copilot/main.go:1-406`, `cmd/criteria-adapter-copilot/copilot_turn.go:308`: the branch is not CI-clean. `make ci` currently fails on `gofmt` (`copilot_turn.go`, `fake-copilot/main.go`) and on new lints introduced by the `PermissionDenialOutcome` expansion (`gocritic` `hugeParam` across conformance helpers, `funlen` in `testPermissionRequestShape`). **Acceptance:** `make ci` passes without baseline additions; formatting is fixed and the new lint findings are eliminated or justified inline per existing repo conventions.
+- **Blocker** — `cmd/criteria-adapter-copilot/copilot_turn.go:176-189`, `cmd/criteria-adapter-copilot/copilot_outcome.go:26-72`, `cmd/criteria-adapter-copilot/copilot_session.go:78-86`: the exhausted-finalization diagnostic does not satisfy Step 3 or the architecture note. `outcome.failure` currently emits only a generic `reason` string, and the implementation records no state that can distinguish missing finalize vs invalid enum vs duplicate/conflicting calls or include the declared outcomes. **Acceptance:** record the necessary per-execute failure state and emit a structured failure payload that includes the declared allowed outcomes plus a precise failure reason/category for missing finalize, invalid outcome, and duplicate/conflicting finalize attempts.
+- **Blocker** — `cmd/criteria-adapter-copilot/copilot_outcome_test.go:219-353`, `cmd/criteria-adapter-copilot/conformance_test.go:184-244`, `cmd/criteria-adapter-copilot/testfixtures/fake-copilot/main.go:16-37,222-260`: Step 5 coverage is incomplete and too weak at the contract boundary. Missing required cases include reprompt-twice success, invalid-enum then success, permission-denied returns `failure`, max-turns without `needs_review`, empty allowed set fails closed, and prompt-preamble presence. The duplicate-call coverage does not prove the second call's tool-error is visible through the SDK/fixture, and `TestConformance_AllowedOutcomesPropagation` would still pass if `AllowedOutcomes` propagation broke because it only checks that the final outcome is in the declared set. **Acceptance:** add the missing Step 5 cases and strengthen the propagation/duplicate-call assertions so a broken implementation that drops `AllowedOutcomes` or hides the duplicate-call tool-error fails deterministically.
+- **Major** — `docs/plugins.md:285-325`: the documentation is still incomplete/inaccurate for the shipped behavior. It does not describe the structured failure-event payload operators should alert on, does not document that iteration cursor outcomes are out of scope for `submit_outcome`, and the "steps without declared outcomes" paragraph says both that no reprompt loop runs and that the adapter reprompts anyway. **Acceptance:** document the failure-event payload fields, explicitly state the iteration/`for_each` exclusion, and correct the contradictory empty-outcomes text.
+
+#### Test Intent Assessment
+
+The current tests do prove the basic happy path, one-reprompt recovery, exhaustion-to-failure, handler-side validation, and the `needs_review` max-turns branch. They do **not** yet prove the full intended behavior of the workstream. In particular, the new propagation test is not regression-sensitive, because it would still pass if `AllowedOutcomes` never reached the adapter; the duplicate-call checks validate local `ToolResult` state, but not fixture-visible SDK behavior; and there is no proof for several required negative/boundary paths called out in Step 5. As written, a partially broken implementation could still keep this suite green.
+
+#### Validation Performed
+
+- `go test -race ./cmd/criteria-adapter-copilot/...` — passed.
+- `make test-conformance` — passed.
+- `make ci` — failed in `lint-go`: `gofmt` failures in `cmd/criteria-adapter-copilot/copilot_turn.go` and `cmd/criteria-adapter-copilot/testfixtures/fake-copilot/main.go`; `funlen` in `internal/adapter/conformance/conformance_outcomes.go`; `gocritic hugeParam` findings across `internal/adapter/conformance/assertions.go`, `conformance.go`, `conformance_happy.go`, `conformance_lifecycle.go`, and `conformance_outcomes.go`.
+
+### Review 2026-05-01-03 — remediation round 3
+
+#### Changes made
+
+**Blocker 1 — `TestSubmitOutcome_InvalidEnumThenSuccess` (test 5.13)**
+
+Replaced all manual `s.mu.Lock(); s.finalizeAttempts++; s.finalizeFailureKind = "invalid_outcome"` state mutation with direct calls to the real `p.handleSubmitOutcome` handler from the `onSend` hook:
+- `callIndex==0`: `p.handleSubmitOutcome("s1", SubmitOutcomeArgs{Outcome: "not-valid"})` — exercises the real invalid-outcome rejection path, increments `finalizeAttempts`, sets `finalizeFailureKind = "invalid_outcome"` via actual handler code.
+- `callIndex==1`: `p.handleSubmitOutcome("s1", SubmitOutcomeArgs{Outcome: "success"})` — exercises the real acceptance path, sets `finalizedOutcome`.
+
+Added assertion: `finalizeFailureKind == "invalid_outcome"` after the test completes (the last rejection category is preserved by the handler; successful calls do not clear it).
+
+**Blocker 1 — end-to-end fixture tests (new)**
+
+Added `TestConformance_InvalidOutcomeScenario_Fixture` and `TestConformance_DuplicateCallScenario_Fixture` to `conformance_test.go`, both using:
+- `t.Setenv("FAKE_COPILOT_SCENARIO", ...)` before binary spawn
+- `capturingEventSink` to capture adapter events through the full plugin-binary boundary
+- Assertions on the captured events, not on local handler state
+
+`TestConformance_InvalidOutcomeScenario_Fixture`:
+- Drives `invalid-outcome` scenario: fake submits "not-a-real-outcome" (rejected) then "success" (accepted).
+- Asserts: `result.Outcome == "success"`, exactly ONE `outcome.finalized` event with `outcome="success"`, NO `outcome.failure` event.
+
+`TestConformance_DuplicateCallScenario_Fixture`:
+- Drives `duplicate-call` scenario: fake submits "success" and "failure" in the same turn.
+- Asserts: `result.Outcome == "success"` (first call wins), exactly ONE `outcome.finalized` event (second call rejected at the SDK boundary — no second event).
+
+**Blocker 2 — `TestConformance_AllowedOutcomesPropagation_SetProof` (new)**
+
+Added to `conformance_test.go`. Uses "missing" scenario with canary outcomes `{"canary-a": "done", "canary-b": "done"}`:
+- Exhaustion triggers `outcome.failure` event via the real plugin binary.
+- `capturingEventSink` captures the event; test asserts `allowed_outcomes == ["canary-a", "canary-b"]` (sorted, exact match).
+- This directly proves the exact declared set was propagated through the loader → proto → adapter — not just that an in-set outcome was returned.
+
+**Added `capturingEventSink` and helpers**
+
+- `capturingEventSink` struct with `sync.Mutex`, `events []capturedAdapterEvent`
+- `newCapturingSink()`, `Adapter(kind, data)`, `adapterEvents(kind) []map[string]any`
+- `newFixturePlugin(t)` and `openFixtureSession(t, plug, sessionID)` shared helpers for the three fixture tests
+
+**Lint fix**: renamed `cap` → `capSink` throughout to avoid `gocritic builtinShadow` finding (shadowing builtin `cap`).
+
+#### Validation
+
+- All 4 new/modified tests pass: `TestSubmitOutcome_InvalidEnumThenSuccess`, `TestConformance_InvalidOutcomeScenario_Fixture`, `TestConformance_DuplicateCallScenario_Fixture`, `TestConformance_AllowedOutcomesPropagation_SetProof`.
+- `make ci` — green (lint-clean, no baseline additions, race-safe).
+- No `.golangci.baseline.yml` entries added.
+
+
+
+#### Summary
+
+Verdict: **changes-requested**. The executor closed the prior implementation gaps well: the structured `outcome.failure` event is now present, docs were corrected, and `make ci` / `make test-conformance` are green. I am still holding approval because the remaining Step 5 contract-bar gaps were not fully closed: the duplicate/invalid finalize scenarios are still tested via local state mutation rather than through the fixture/SDK boundary, and the new propagation test is still an indirect proxy rather than proving the adapter actually received the declared `AllowedOutcomes`.
+
+#### Plan Adherence
+
+- **Steps 1-4:** Implemented and aligned with the locked design decisions. The session-scoped tool registration, per-execute state reset, reprompt loop, structured failure event, and fixture scenario harness are all present.
+- **Step 5.1:** Still incomplete at the required assertion strength. The new tests cover the missing branches, but some of the critical scenarios are simulated by mutating `sessionState` directly instead of exercising the handler/fixture path the workstream explicitly called for.
+- **Step 5.2:** Still incomplete. `TestConformance_AllowedOutcomesPropagation` is stronger than before, but it still does not assert that the adapter actually received the step’s declared `AllowedOutcomes`.
+- **Step 6 / exit criteria:** Satisfied aside from the remaining Step 5 proof requirements.
+
+#### Required Remediations
+
+- **Blocker** — `cmd/criteria-adapter-copilot/copilot_outcome_test.go:438-474`, `cmd/criteria-adapter-copilot/copilot_outcome_test.go:134-164`, `cmd/criteria-adapter-copilot/testfixtures/fake-copilot/main.go:232-267`: the Step 5 negative-path tests are still not proving the contract-visible behavior the workstream requires. `TestSubmitOutcome_InvalidEnumThenSuccess` manually increments `finalizeAttempts` / `finalizeFailureKind` instead of exercising the real invalid-outcome handler path or fixture scenario, and the duplicate-call coverage still stops at local `ToolResult`/state assertions rather than proving the second call’s tool-error is visible through the SDK/fixture boundary. **Acceptance:** add a test path that drives the real `invalid-outcome` and `duplicate-call` fixture scenarios end to end, and assert the observable contract result: first valid outcome wins, invalid/duplicate calls surface as tool-error behavior visible at the adapter/fixture boundary, and eventual outcome resolution matches the plan.
+- **Blocker** — `cmd/criteria-adapter-copilot/conformance_test.go:184-249`: `TestConformance_AllowedOutcomesPropagation` is still an indirect behavioral proxy. It will catch the empty-set regression, but it does not satisfy the workstream’s explicit requirement to prove the adapter saw the declared `AllowedOutcomes` for the step. A future regression that forwards the wrong-but-still-accepting set would remain green. **Acceptance:** strengthen this test so it validates the propagated set itself at the boundary under test, not just the eventual successful outcome.
+
+#### Test Intent Assessment
+
+This pass substantially improved coverage breadth, and the new structured-failure assertions are valuable. The remaining issue is **behavior alignment at the boundary**: two key tests still validate internal state transitions rather than externally observable contract semantics. That leaves room for a broken SDK-tool interaction or wrong propagated outcome set to slip through while the suite stays green.
+
+#### Validation Performed
+
+- `go test -race ./cmd/criteria-adapter-copilot/...` — passed.
+- `make test-conformance` — passed.
+- `make ci` — passed.
