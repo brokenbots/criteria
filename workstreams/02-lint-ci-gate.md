@@ -1,6 +1,6 @@
 # Workstream 2 — Lint CI gate
 
-**Owner:** Workstream executor · **Depends on:** [W01](01-lint-baseline-mechanical-burn-down.md) · **Unblocks:** [W14](14-phase2-cleanup-gate.md) (cleanup gate verifies the cap is enforced).
+**Owner:** Workstream executor · **Depends on:** [W01](01-lint-baseline-mechanical-burn-down.md) · **Unblocks:** [W16](16-phase2-cleanup-gate.md) (cleanup gate verifies the cap is enforced).
 
 ## Context
 
@@ -105,7 +105,7 @@ It should:
 The branch protection itself is GitHub configuration applied by a
 repo admin — this workstream produces the documentation; the admin
 applies the setting separately. Mark this as a Phase 2 cleanup-gate
-verification item ([W14](14-phase2-cleanup-gate.md) confirms the
+verification item ([W16](16-phase2-cleanup-gate.md) confirms the
 setting is applied).
 
 ### Step 6 — Validate
@@ -204,7 +204,7 @@ validation in Step 6, captured in reviewer notes.
 |---|---|
 | The `grep -c '^\s*-'` heuristic miscounts if the baseline file format changes | Pin the format expectation in `docs/contributing/lint-baseline.md`. If `tools/lint-baseline/main.go` exposes a programmatic count, use it. |
 | A legitimate burn-down PR fails the gate because lowering the cap requires a separate commit | Document in the contributor guide that lowering the cap is a one-line commit; offer to bundle the cap-lower into the burn-down PR. |
-| Branch protection is documented but never applied by an admin | [W14](14-phase2-cleanup-gate.md) verifies the setting is applied as part of the cleanup gate. If not applied by then, escalate. |
+| Branch protection is documented but never applied by an admin | [W16](16-phase2-cleanup-gate.md) verifies the setting is applied as part of the cleanup gate. If not applied by then, escalate. |
 | The cap check fails before `make lint-go` runs (ordering issue) | The cap check runs *after* `make lint-go` in CI; in `make ci` it is a separate target so execution order is determined by the dependency list. |
 
 ## Review history

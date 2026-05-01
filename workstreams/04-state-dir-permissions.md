@@ -1,6 +1,6 @@
 # Workstream 4 — State directory permissions hardening
 
-**Owner:** Workstream executor · **Depends on:** none · **Unblocks:** [W14](14-phase2-cleanup-gate.md) (cleanup gate verifies the perms).
+**Owner:** Workstream executor · **Depends on:** none · **Unblocks:** [W16](16-phase2-cleanup-gate.md) (cleanup gate verifies the perms).
 
 ## Context
 
@@ -91,7 +91,7 @@ is overreach. If the team wants a migration path, that is a separate,
 opt-in workstream — out of scope here.
 
 Document this explicitly in the CHANGELOG (handled by
-[W14](14-phase2-cleanup-gate.md), but flag it in reviewer notes so
+[W16](16-phase2-cleanup-gate.md), but flag it in reviewer notes so
 the gate does not miss it).
 
 ### Step 5 — Validate
@@ -212,7 +212,7 @@ No additional production call sites require tightening.
 ### Step 4 — No migration
 
 Existing `~/.criteria/` directories retain their prior mode. The change applies
-only to *newly created* directories. CHANGELOG entry is deferred to W14 as planned.
+only to *newly created* directories. CHANGELOG entry is deferred to W16 (cleanup gate; renumbered from W14 on 2026-04-30) as planned.
 
 ### Step 5 — Validation
 
@@ -223,9 +223,9 @@ only to *newly created* directories. CHANGELOG entry is deferred to W14 as plann
 - Manual: `CRITERIA_STATE_DIR=/tmp/criteria-perm-test bin/criteria apply examples/hello.hcl`
   → `stat /tmp/criteria-perm-test` reports `drwx------`. ✓
 
-### CHANGELOG note for W14
+### CHANGELOG note for W16 (cleanup gate)
 
-W14 must add a note under the v0.2.x section:
+W16 (renumbered from W14 on 2026-04-30) must add a note under the v0.2.x section:
 > New invocations create `~/.criteria/` and `~/.criteria/runs/` at mode `0700` (operator-only).
 > Existing directories are not migrated. To tighten an existing installation: `chmod 700 ~/.criteria`.
 

@@ -200,8 +200,8 @@ Do **not** edit `README.md`, `PLAN.md`, `AGENTS.md`, `CHANGELOG.md`.
 - No HCL surface change, no CLI flag change, no proto change.
 - Operators who *parse log output* for "EOF" or "process exited"
   patterns (a fragile but possible practice) may need to adjust;
-  document this in the CHANGELOG (W14 territory; provide text in
-  reviewer notes).
+  document this in the CHANGELOG (W16 territory; renumbered from W14
+  on 2026-04-30; provide text in reviewer notes).
 
 ## Reuse
 

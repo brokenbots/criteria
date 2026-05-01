@@ -1,6 +1,6 @@
 # Workstream 3 — copilot.go file split + permission-kind alias (UF#02)
 
-**Owner:** Workstream executor · **Depends on:** [W01](01-lint-baseline-mechanical-burn-down.md), [W02](02-lint-ci-gate.md) · **Unblocks:** [W14](14-phase2-cleanup-gate.md) (cleanup gate verifies the W03 baseline-tagged entries are gone).
+**Owner:** Workstream executor · **Depends on:** [W01](01-lint-baseline-mechanical-burn-down.md), [W02](02-lint-ci-gate.md) · **Unblocks:** [W16](16-phase2-cleanup-gate.md) (cleanup gate verifies the W03 baseline-tagged entries are gone).
 
 ## Context
 
@@ -235,7 +235,7 @@ Permission alias (UF#02):
   suggestions. The event *kind* and *id* fields are unchanged. Any
   consumer that string-matched the reason `no matching allow_tools
   entry` may need to update — list this as a CHANGELOG note for
-  [W14](14-phase2-cleanup-gate.md) to capture.
+  [W16](16-phase2-cleanup-gate.md) to capture.
 - If the proto-declared aliases path is taken, `Info` response gains
   an optional `permission_kind_aliases` map. Older hosts ignore the
   field; older plugins still work (host falls back to identity match).

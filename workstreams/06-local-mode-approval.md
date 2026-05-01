@@ -1,6 +1,6 @@
 # Workstream 6 — Local-mode approval and signal wait
 
-**Owner:** Workstream executor · **Depends on:** none · **Coordinates with:** [W05](05-subworkflow-resolver-wiring.md) (nested workflow approvals propagate cleanly), [W14](14-phase2-cleanup-gate.md) (smoke workflow exercises this).
+**Owner:** Workstream executor · **Depends on:** none · **Coordinates with:** [W16](16-phase2-cleanup-gate.md) (smoke workflow exercises this). *(Prior coordination with W05 — nested-workflow approval propagation — is moot: W05 was cancelled on 2026-04-30 and deferred to Phase 3; the historical coordination note is preserved below in the Risks section.)*
 
 ## Context
 

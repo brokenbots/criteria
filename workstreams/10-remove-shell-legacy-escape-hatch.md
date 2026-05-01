@@ -24,7 +24,7 @@ This workstream honors the commitment. The legacy code path is
 deleted; the env var is no longer recognized; tests that depended on
 it are removed or rewritten; the threat model and `docs/plugins.md`
 are updated; the `CHANGELOG.md` notes the breaking change (the
-CHANGELOG itself is W14's territory; this workstream provides the
+CHANGELOG itself is W16's territory; this workstream provides the
 text in reviewer notes).
 
 ## Prerequisites
@@ -128,7 +128,7 @@ and assert it under `CRITERIA_SHELL_LEGACY=1`.
   defaults are unconditional.
 
 Do **not** edit `README.md`, `PLAN.md`, `AGENTS.md`, `CHANGELOG.md`.
-W14 handles the CHANGELOG entry; this workstream provides the
+W16 handles the CHANGELOG entry; this workstream provides the
 exact text in reviewer notes:
 
 > ### Removed
@@ -173,7 +173,7 @@ exact text in reviewer notes:
 
 This is a **deliberate breaking change** committed in the v0.2.0
 threat model. The CHANGELOG entry (provided by this workstream's
-reviewer notes; written by [W14](14-phase2-cleanup-gate.md)) calls
+reviewer notes; written by [W16](16-phase2-cleanup-gate.md)) calls
 this out under "Removed".
 
 ## Reuse
@@ -231,7 +231,7 @@ It may **not** modify the shell adapter's HCL surface or its
 - [x] Update `docs/plugins.md` line 55 (and surrounding paragraph)
       to drop the legacy mention.
 - [x] Provide the CHANGELOG "Removed" entry text in reviewer notes
-      for [W14](14-phase2-cleanup-gate.md) to copy.
+      for [W16](16-phase2-cleanup-gate.md) to copy.
 - [x] `grep -rn 'CRITERIA_SHELL_LEGACY' --include='*.go'` returns
       zero matches in production/functional code (remaining matches
       are the required historical comment in `sandbox.go` and the
@@ -254,7 +254,7 @@ It may **not** modify the shell adapter's HCL surface or its
 - `TestSandbox_LegacyEnvVarIgnored` passes.
 - `make test -race -count=2 ./internal/adapters/shell/...` green.
 - `make ci` green.
-- The CHANGELOG entry text is in reviewer notes for W14 to consume.
+- The CHANGELOG entry text is in reviewer notes for W16 to consume.
 
 ## Tests
 
@@ -271,7 +271,7 @@ It may **not** modify the shell adapter's HCL surface or its
 | The flake-watch lane regresses because some test relied on legacy-mode looseness for timing | The flake-watch tests don't exercise legacy mode. Run `make test-flake-watch` after the removal to confirm. If a flake surfaces, treat it as a Phase 1 W01 regression and remediate per W01's contract. |
 | The grep verification produces false negatives (e.g. comment-only mention in a `.go` file) | The exit criteria explicitly require `grep -rn` to return zero matches in `*.go` files. Comment-only references should also be removed (since they would mislead a future reader). The threat model is the only place a historical reference is allowed. |
 | Removing the env var leaves users with workflows that fail and no clear migration path | The error message changes and the threat model documents the migration. The CHANGELOG entry names the migration knobs explicitly (`CRITERIA_SHELL_ALLOWED_PATHS`, `env`, `command_path`). |
-| Reviewer notes accidentally land in the wrong file | The CHANGELOG entry is provided in reviewer notes for W14's gate agent to copy. This workstream does not edit CHANGELOG.md directly — that constraint is hard. |
+| Reviewer notes accidentally land in the wrong file | The CHANGELOG entry is provided in reviewer notes for W16's gate agent to copy. This workstream does not edit CHANGELOG.md directly — that constraint is hard. |
 
 ---
 
@@ -333,7 +333,7 @@ W10's permitted file list. The failure is confirmed pre-existing: reverting W10'
 changes (via `git stash`) leaves the cli golden test still failing. All other tests
 (shell adapter, engine, plugin, transport, run, tools) pass with W10's changes.
 
-### CHANGELOG "Removed" entry for W14
+### CHANGELOG "Removed" entry for W16
 
 > ### Removed
 >

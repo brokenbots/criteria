@@ -117,17 +117,17 @@ This is a small surgical edit — do not rewrite the existing content.
 
 The plan calls for "≥2 non-author humans land merged PRs by end of
 Phase 2". `PLAN.md` is owned by the cleanup-gate agent
-([W14](14-phase2-cleanup-gate.md)) — this workstream does **not**
+([W16](16-phase2-cleanup-gate.md)) — this workstream does **not**
 edit `PLAN.md` directly. Instead, leave a clear paragraph in the
-workstream's reviewer notes that W14 should copy into `PLAN.md`'s
+workstream's reviewer notes that W16 should copy into `PLAN.md`'s
 Phase 2 section:
 
 > Phase 2 contributor goal: ≥ 2 non-author humans land merged PRs by
 > end of Phase 2. Source: tech eval section 5
 > ([TECH_EVALUATION-20260429-01.md](tech_evaluations/TECH_EVALUATION-20260429-01.md)).
-> Status reported in [W14](workstreams/14-phase2-cleanup-gate.md).
+> Status reported in [W16](workstreams/16-phase2-cleanup-gate.md).
 
-W14 is responsible for copying this into `PLAN.md` and reporting on
+W16 is responsible for copying this into `PLAN.md` and reporting on
 the actual count at phase close.
 
 ### Step 5 — Update issue templates if applicable
@@ -174,7 +174,7 @@ No CLI flag, HCL surface, log, or runtime behavior is altered.
 ## Out of scope
 
 - Editing `PLAN.md`, `README.md`, `AGENTS.md`, `CHANGELOG.md`. Those
-  are W14's domain; this workstream provides the source text for W14
+  are W16's domain; this workstream provides the source text for W16
   to copy.
 - Onboarding the first non-author contributor. The goal is to *enable*
   contribution; actual recruitment happens organically.
@@ -205,7 +205,7 @@ It may **not** edit any code under `internal/`, `cmd/`, `workflow/`,
       in reviewer notes.
 - [x] Optionally extend `.github/ISSUE_TEMPLATE/*.md` (skip if not
       needed; document choice).
-- [x] Provide the PLAN.md goal paragraph for [W14](14-phase2-cleanup-gate.md)
+- [x] Provide the PLAN.md goal paragraph for [W16](16-phase2-cleanup-gate.md)
       in reviewer notes.
 - [x] `make ci` green.
 
@@ -218,7 +218,7 @@ It may **not** edit any code under `internal/`, `cmd/`, `workflow/`,
   links to the new doc.
 - Five GitHub issues labeled `good-first-issue` with the documented
   shape (file path, effort estimate, scope statement).
-- W14 has a clear paragraph to copy into `PLAN.md` for the Phase 2
+- W16 has a clear paragraph to copy into `PLAN.md` for the Phase 2
   contributor goal.
 - `make ci` green.
 
@@ -231,9 +231,9 @@ clicking the GitHub issue links.
 
 | Risk | Mitigation |
 |---|---|
-| The five labeled issues get claimed by no one | The goal is *enablement*, not guaranteed contribution. W14 reports the actual contributor count at phase close; if the goal is missed, Phase 3 inherits a follow-up workstream that addresses why (visibility, scope, friction). |
+| The five labeled issues get claimed by no one | The goal is *enablement*, not guaranteed contribution. W16 reports the actual contributor count at phase close; if the goal is missed, Phase 3 inherits a follow-up workstream that addresses why (visibility, scope, friction). |
 | The first-PR walkthrough goes stale as W01/W02 land follow-ups | Date the doc with the Phase 2 tag and add a "last reviewed" line. Future workstreams that change the lint flow update the doc as part of their own scope. |
-| Filed issues collide with W14's archival sweep | W14 archives workstream files, not GitHub issues. No collision. |
+| Filed issues collide with W16's archival sweep | W16 archives workstream files, not GitHub issues. No collision. |
 | The contributor sets up a fork and hits a setup snag not covered by the walkthrough | The walkthrough explicitly defers to `CONTRIBUTING.md` for setup; if `CONTRIBUTING.md` is wrong, fix it as part of this workstream's scope (it's allowed to edit). |
 
 ## Reviewer Notes
@@ -288,14 +288,14 @@ Notes on substitutions:
   rendered on GitHub — appropriate for a subtle pointer that does not clutter
   the template for users filing bugs or features.
 
-**Step 5 — `PLAN.md` paragraph for W14**
+**Step 5 — `PLAN.md` paragraph for W16**
 
 > Phase 2 contributor goal: ≥ 2 non-author humans land merged PRs by end of
 > Phase 2. Source: tech eval section 5
 > ([TECH_EVALUATION-20260429-01.md](../tech_evaluations/TECH_EVALUATION-20260429-01.md)).
-> Status reported in [W14](14-phase2-cleanup-gate.md).
+> Status reported in [W16](16-phase2-cleanup-gate.md).
 
-W14 should copy this paragraph verbatim into PLAN.md's Phase 2 section.
+W16 should copy this paragraph verbatim into PLAN.md's Phase 2 section.
 
 **Step 6 — Validation**
 - `make ci` green: build ✓, tests ✓, import-lint ✓, golangci-lint ✓,
@@ -333,7 +333,7 @@ are also inconsistent with the actual label shown in GitHub.
   `.github/ISSUE_TEMPLATE/bug_report.md:35` and
   `.github/ISSUE_TEMPLATE/feature_request.md:23` repeat the same label-name
   mismatch.
-- **Step 5:** the W14 paragraph is present and usable.
+- **Step 5:** the W16 paragraph is present and usable.
 - **Step 6:** `make ci` passed.
 
 #### Required Remediations
@@ -484,7 +484,7 @@ replacement snippet is incomplete.
   not yet the clear, self-consistent first task the workstream requires.
 - **Step 4:** contributor-facing label naming is fixed in the docs and issue
   templates.
-- **Step 5:** the W14 paragraph remains present and usable.
+- **Step 5:** the W16 paragraph remains present and usable.
 - **Step 6:** `make ci` passed again.
 
 #### Required Remediations
@@ -646,7 +646,7 @@ meets its documentation, repo-hygiene, and acceptance-bar requirements.
   contributors section and now points to accurate setup commands.
 - **Step 4:** acceptable. The existing issue templates were extended with a
   lightweight contributor pointer without disrupting their primary purpose.
-- **Step 5:** acceptable. The W14 `PLAN.md` paragraph is present and ready to
+- **Step 5:** acceptable. The W16 `PLAN.md` paragraph is present and ready to
   copy.
 - **Step 6:** `make ci` passed.
 

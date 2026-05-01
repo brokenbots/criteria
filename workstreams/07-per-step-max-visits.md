@@ -1,6 +1,6 @@
 # Workstream 7 — Per-step `max_visits`
 
-**Owner:** Workstream executor · **Depends on:** none · **Coordinates with:** [W14](14-phase2-cleanup-gate.md) (smoke workflow exercises this).
+**Owner:** Workstream executor · **Depends on:** none · **Coordinates with:** [W16](16-phase2-cleanup-gate.md) (smoke workflow exercises this).
 
 ## Context
 
@@ -330,7 +330,7 @@ RunState, extend the test pattern from `TestEngineLifecycle*`.
 
 ### Deviations and open items
 
-- **`apply.go` persistence wiring is incomplete.** The `StepCheckpoint.Visits` field exists and is JSON-serializable, and the engine accepts `WithResumedVisits()`, but the `checkpointFn` closure in `internal/cli/apply.go` does not yet populate `Visits` from the engine nor pass it back on resume. The engine-level `TestMaxVisits_Persists` tests the machinery directly. Full CLI crash-recovery wiring is a forward item for W14 or a follow-on workstream that is permitted to touch `apply.go`.
+- **`apply.go` persistence wiring is incomplete.** The `StepCheckpoint.Visits` field exists and is JSON-serializable, and the engine accepts `WithResumedVisits()`, but the `checkpointFn` closure in `internal/cli/apply.go` does not yet populate `Visits` from the engine nor pass it back on resume. The engine-level `TestMaxVisits_Persists` tests the machinery directly. Full CLI crash-recovery wiring is a forward item for W16 (the cleanup gate; renumbered from W14 on 2026-04-30) or a follow-on workstream that is permitted to touch `apply.go`.
 
 ### Baseline entries updated (not new)
 
