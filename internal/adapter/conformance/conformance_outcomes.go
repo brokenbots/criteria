@@ -4,7 +4,6 @@ package conformance
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -12,7 +11,7 @@ import (
 	"github.com/brokenbots/criteria/internal/plugin"
 )
 
-func testOutcomeDomain(t *testing.T, name string, factory targetFactory, opts Options) {
+func testOutcomeDomain(t *testing.T, name string, factory targetFactory, opts Options) { //nolint:gocritic // W15: Options passes by value for API clarity
 	t.Helper()
 	if len(opts.AllowedOutcomes) == 0 {
 		t.Skip("outcome-domain test skipped: no allowed outcomes configured")
@@ -33,7 +32,7 @@ func testOutcomeDomain(t *testing.T, name string, factory targetFactory, opts Op
 	}
 }
 
-func testPermissionRequestShape(t *testing.T, name string, loader plugin.Loader, opts Options, info plugin.Info) {
+func testPermissionRequestShape(t *testing.T, name string, loader plugin.Loader, opts Options, info plugin.Info) { //nolint:gocritic // W15: Options passes by value for API clarity
 	t.Helper()
 	if !hasCapability(info.Capabilities, "permission_gating") {
 		t.Skip("permission_request_shape skipped: plugin does not advertise permission_gating")
@@ -67,10 +66,20 @@ func testPermissionRequestShape(t *testing.T, name string, loader plugin.Loader,
 	if err != nil {
 		t.Fatalf("execute with permission request config: %v", err)
 	}
-	if res.Outcome != "needs_review" {
-		t.Fatalf("permission denial must end with needs_review, got %q", res.Outcome)
+	wantOutcome := opts.PermissionDenialOutcome
+	if wantOutcome == "" {
+		wantOutcome = "needs_review"
 	}
+	if res.Outcome != wantOutcome {
+		t.Fatalf("permission denial must end with %q, got %q", wantOutcome, res.Outcome)
+	}
+	assertPermissionDeniedEvent(t, sink)
+}
 
+// assertPermissionDeniedEvent verifies that the recording sink contains a
+// well-formed permission.denied adapter event (non-empty request_id and tool).
+func assertPermissionDeniedEvent(t *testing.T, sink *recordingSink) {
+	t.Helper()
 	// The host policy emits permission.denied (not the legacy permission.request)
 	// for every denied request. Verify the event carries the request_id so the
 	// plugin's original request can be correlated.
@@ -78,12 +87,14 @@ func testPermissionRequestShape(t *testing.T, name string, loader plugin.Loader,
 	if !ok {
 		t.Fatal("expected permission.denied adapter event from host deny policy")
 	}
-	requestID := strings.TrimSpace(fmt.Sprint(deniedEvent["request_id"]))
-	tool := strings.TrimSpace(fmt.Sprint(deniedEvent["tool"]))
-	if requestID == "" {
+	// Use type assertion so a missing or nil field (which fmt.Sprint renders as
+	// "<nil>") is correctly treated as an absent value.
+	requestID, _ := deniedEvent["request_id"].(string)
+	tool, _ := deniedEvent["tool"].(string)
+	if strings.TrimSpace(requestID) == "" {
 		t.Fatal("permission.denied event must include non-empty request_id")
 	}
-	if tool == "" {
+	if strings.TrimSpace(tool) == "" {
 		t.Fatal("permission.denied event must include non-empty tool")
 	}
 }

@@ -29,6 +29,11 @@ type Options struct {
 	// ExpectError, when non-nil, asserts the adapter returns a matching error
 	// (used for expected-failure adapters like the non-copilot-build stub).
 	ExpectError func(error) bool
+	// PermissionDenialOutcome is the outcome expected when a permission request
+	// is denied by the host. Defaults to "needs_review" when empty. Adapters
+	// that explicitly return "failure" on denial (e.g. the copilot adapter
+	// post-W15) should set this to "failure".
+	PermissionDenialOutcome string
 }
 
 type executeTarget interface {
@@ -39,7 +44,7 @@ type executeTarget interface {
 type targetFactory func(*testing.T) executeTarget
 
 // Run executes the shared adapter conformance contract.
-func Run(t *testing.T, name string, factory func() adapter.Adapter, opts Options) {
+func Run(t *testing.T, name string, factory func() adapter.Adapter, opts Options) { //nolint:gocritic // W15: Options passes by value for API clarity
 	t.Helper()
 	if strings.TrimSpace(name) == "" {
 		t.Fatal("conformance: name is required")
@@ -54,7 +59,7 @@ func Run(t *testing.T, name string, factory func() adapter.Adapter, opts Options
 }
 
 // RunPlugin executes the shared adapter contract against a plugin binary.
-func RunPlugin(t *testing.T, name, binaryPath string, opts Options) {
+func RunPlugin(t *testing.T, name, binaryPath string, opts Options) { //nolint:gocritic // W15: Options passes by value for API clarity
 	t.Helper()
 	if strings.TrimSpace(name) == "" {
 		t.Fatal("conformance: name is required")
@@ -102,7 +107,7 @@ func RunPlugin(t *testing.T, name, binaryPath string, opts Options) {
 	})
 }
 
-func runContractTests(t *testing.T, name string, opts Options, factory targetFactory) {
+func runContractTests(t *testing.T, name string, opts Options, factory targetFactory) { //nolint:gocritic // W15: Options passes by value for API clarity
 	t.Run("name_stability", func(t *testing.T) { testNameStability(t, name, factory) })
 	t.Run("nil_sink", func(t *testing.T) { testNilSink(t, name, factory, opts) })
 	t.Run("happy_path", func(t *testing.T) { testHappyPath(t, name, factory, opts) })
@@ -117,7 +122,7 @@ func runContractTests(t *testing.T, name string, opts Options, factory targetFac
 	}
 }
 
-func newPluginTargetFactory(name string, loader plugin.Loader, opts Options) targetFactory {
+func newPluginTargetFactory(name string, loader plugin.Loader, opts Options) targetFactory { //nolint:gocritic // W15: Options passes by value for API clarity
 	return func(t *testing.T) executeTarget {
 		t.Helper()
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

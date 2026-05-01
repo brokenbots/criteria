@@ -138,7 +138,7 @@ workflow "agent_hello" {
     allow_tools = ["shell:git status"]
     input {
       max_turns = 4
-      prompt    = "Run `git status` in the current directory. Summarize the result in one short paragraph. End your final line with exactly one of: RESULT: success | RESULT: needs_review | RESULT: failure. Use RESULT: success only if you successfully ran `git status`."
+      prompt    = "Run `git status` in the current directory. Summarize the result in one short paragraph. Call submit_outcome with 'success' if you successfully ran `git status`, otherwise 'failure'."
     }
 
     outcome "success"      { transition_to = "close_done" }
@@ -152,8 +152,7 @@ The important parts are:
 
 - `agent "assistant"` binds a stable session name to the `copilot` plugin.
 - `open_assistant` creates the session. The current Copilot plugin accepts plugin-specific config such as `model` or `working_directory`, but the hello example does not need any open-time options.
-- `ask` is the only execute step. For the Copilot plugin, `input.prompt` is required (Phase 1.5: step-level input moved from `config` to `input` block). `max_turns` is optional and forces a `needs_review` outcome if the plugin hits that limit.
-- The prompt uses the `RESULT: <outcome>` convention. The plugin parses the final assistant message and maps that line onto the step outcome.
+- `ask` is the only execute step. For the Copilot plugin, `input.prompt` is required (Phase 1.5: step-level input moved from `config` to `input` block). `max_turns` is optional and limits the number of assistant turns; see "Outcome finalization" below for how the step outcome is determined.
 - Separate close steps let the workflow clean up the session and still terminate in the right state for `success`, `needs_review`, or `failure`.
 
 ## Copilot Adapter Reference
@@ -167,7 +166,7 @@ These fields are declared on the `agent { config { ... } }` block and apply for 
 | `model` | `string` | Copilot default | Model identifier (e.g. `"claude-sonnet-4.6"`). |
 | `reasoning_effort` | `string` | Copilot default | Reasoning budget for the session. One of `low`, `medium`, `high`, `xhigh`. |
 | `system_prompt` | `string` | `""` | System prompt injected at session open. |
-| `max_turns` | `number` | Copilot default | Maximum conversation turns per step before a `needs_review` outcome is forced. |
+| `max_turns` | `number` | Copilot default | Maximum conversation turns per step. If the cap is reached, the adapter returns `needs_review` when that outcome is declared for the step, otherwise `failure`. |
 | `working_directory` | `string` | CWD of the criteria process | Working directory for tool invocations inside the agent session. |
 
 Example:
@@ -257,7 +256,7 @@ Permission gating is deny-by-default.
   - `shell:go test*`
   - `shell:*`
 
-The host evaluates plugin permission requests against those patterns. When a request matches, the run emits `permission.granted`; otherwise it emits `permission.denied` with reason `no matching allow_tools entry` and (for the Copilot adapter) includes a `suggestion` field only when a relevant canonical-kind suggestion exists (for example, for denied kinds with known aliases such as `read`/`write`). The Copilot plugin then surfaces the denied turn as `needs_review` instead of silently continuing.
+The host evaluates plugin permission requests against those patterns. When a request matches, the run emits `permission.granted`; otherwise it emits `permission.denied` with reason `no matching allow_tools entry` and (for the Copilot adapter) includes a `suggestion` field only when a relevant canonical-kind suggestion exists (for example, for denied kinds with known aliases such as `read`/`write`). The Copilot plugin then surfaces the denied turn as `failure`.
 
 ### Copilot permission-kind aliases
 
@@ -283,6 +282,61 @@ allow_tools = ["shell:git status"]
 
 That allows exactly `git status` and nothing else.
 
+## Outcome Finalization (Copilot Adapter)
+
+The Copilot adapter determines step outcomes via a structured `submit_outcome` tool rather than parsing free-form prose from the assistant's final message.
+
+### How it works
+
+1. **Tool registration** — at `OpenSession`, the adapter registers a `submit_outcome` tool on the SDK session. The tool has `SkipPermission = true` so it does not trigger a permission request.
+
+2. **Prompt preamble** — when `AllowedOutcomes` is non-empty for a step (i.e., the step declares at least one `outcome` block), the adapter prepends the following preamble to the user prompt before sending it to the model:
+   ```
+   You must finalize the outcome for this step by calling the `submit_outcome` tool exactly once before ending the turn. The allowed outcomes are: <comma-separated list>. If you do not call the tool with a valid outcome, the step will fail.
+   ```
+
+3. **Tool validation** — the `submit_outcome` handler validates the `outcome` argument against the active allowed set. Invalid or empty outcomes return a `failure` `ToolResult` (not a Go error) so the model can retry within the same turn.
+
+4. **Reprompt loop** — if the model ends a turn without calling `submit_outcome` with a valid outcome, the adapter reprompts up to 2 additional times (3 attempts total) with:
+   ```
+   You must call the `submit_outcome` tool with one of the allowed outcomes: <list>. Do not return a final answer without calling the tool. ...
+   ```
+
+5. **Exhaustion** — if all 3 attempts fail, the adapter emits an `outcome.failure` adapter event and returns `"failure"`.
+
+   The `outcome.failure` event payload contains:
+
+   | Field | Type | Description |
+   |---|---|---|
+   | `reason` | `string` | Human-readable category: `"missing finalize"`, `"invalid outcome"`, `"duplicate finalize"`, or `"step has no declared outcomes"` |
+   | `kind` | `string` | Machine-readable category: `"missing"`, `"invalid_outcome"`, `"duplicate"`, or `"no_outcomes"` |
+   | `allowed_outcomes` | `[]string` | Sorted list of the step's declared outcomes (for operator alerting/debugging) |
+   | `attempts` | `int` | Number of `submit_outcome` invocations made during this step |
+
+### Outcome semantics
+
+| Situation | Returned outcome |
+|---|---|
+| Model calls `submit_outcome("success")` | `"success"` |
+| Model calls `submit_outcome("failure")` | `"failure"` |
+| Model calls `submit_outcome("needs_review")` | `"needs_review"` |
+| All 3 attempts exhausted without valid call | `"failure"` |
+| `max_turns` reached, `needs_review` in allowed set | `"needs_review"` |
+| `max_turns` reached, `needs_review` not in allowed set | `"failure"` |
+| Permission request denied | `"failure"` |
+
+### Duplicate calls
+
+If the model calls `submit_outcome` more than once in the same turn, the first valid call wins. Subsequent calls return a `failure` `ToolResult` with a message indicating the outcome was already finalized.
+
+### Steps without declared outcomes
+
+If a step declares no `outcome` blocks, `AllowedOutcomes` is empty: no preamble is prepended and the model receives no `submit_outcome` instructions. If the model calls `submit_outcome` anyway, every outcome is rejected (empty allowed set). When the first idle turn arrives, the adapter fails immediately with `outcome.failure` kind `"no_outcomes"` — it does not reprompt, because reprompting can never succeed when there are no valid outcomes. To avoid this, always declare at least one outcome on steps backed by the Copilot adapter.
+
+### Iteration contexts
+
+`submit_outcome` is used only for workflow `step` nodes. Iteration/`for_each` cursor outcomes (`all_succeeded`, `any_failed`) are computed by the engine from individual step results and are **not** finalized via `submit_outcome`.
+
 ## Running the Demo
 
 The shortest manual path for `examples/agent_hello.hcl` is:
@@ -306,7 +360,7 @@ Expected result on the success path:
 
 1. Criteria logs a `starting run` line with a `run_id`.
 2. The Copilot plugin opens a session, requests permission for `shell:git status`, and receives a grant because the step allowlist matches.
-3. The assistant reports the repository status and ends with `RESULT: success`.
+3. The assistant reports the repository status and calls `submit_outcome("success")`.
 4. Criteria closes the session and the server records the run as `succeeded`.
 
 For a one-command smoke check, use:
@@ -327,7 +381,7 @@ Key traits:
 - Both sessions are opened once per outer loop and explicitly closed on both success and failure paths.
 - The executor gets a wider allowlist (`read_file`, `write_file`, `shell:git diff`, `shell:go build*`, `shell:go test*`).
 - The reviewer gets a narrow allowlist (`read_file`, `shell:git diff`).
-- The review step drives the loop with `approved`, `changes_requested`, or the conservative `needs_review` fallback used by the Copilot plugin when a turn needs more work or human attention.
+- The review step drives the loop with `approved`, `changes_requested`, or the conservative `needs_review` fallback used when the `max_turns` cap is reached and `needs_review` is in the step's allowed set.
 - `policy { max_total_steps = 50 }` prevents an infinite reviewer loop.
 
 The control flow is:

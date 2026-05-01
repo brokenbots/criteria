@@ -875,6 +875,46 @@ workflow "t" {
 	}
 }
 
+// TestEngine_GuardRemainsForCopilotAdapterFailure (W15 Step 5.3) is a
+// defense-in-depth regression test: even when the W15 adapter validates
+// outcomes before returning, the engine's unmapped-outcome guard at
+// node_step.go still fires when an adapter returns an outcome that is not in
+// the step's declared set. This ensures adapter and engine validate
+// independently (locked decision §6).
+func TestEngine_GuardRemainsForCopilotAdapterFailure(t *testing.T) {
+	g := compile(t, `
+workflow "t" {
+  version = "0.1"
+  initial_state = "a"
+  target_state  = "done"
+  step "a" {
+    adapter = "fake"
+    outcome "success" { transition_to = "done" }
+    outcome "failure" { transition_to = "done" }
+  }
+  state "done" { terminal = true }
+}`)
+
+	// Adapter returns "unexpected-outcome" which is not in the declared set.
+	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
+		"fake": &fakePlugin{name: "fake", outcome: "unexpected-outcome"},
+	}}
+	sink := &fakeSink{}
+	err := New(g, loader, sink).Run(context.Background())
+	if err == nil {
+		t.Fatal("expected unmapped-outcome error from engine guard; got nil")
+	}
+	if !strings.Contains(err.Error(), "unmapped outcome") {
+		t.Errorf("expected 'unmapped outcome' in error, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), `"a"`) {
+		t.Errorf("expected step name in error, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "unexpected-outcome") {
+		t.Errorf("expected outcome value in error, got: %v", err)
+	}
+}
+
 // TestMaxVisits_CancelledWorkflowIterationDoesNotConsumeVisit verifies that a
 // pre-cancelled context returns a cancellation error WITHOUT incrementing the
 // visit count in runWorkflowIteration. This is a regression test for the

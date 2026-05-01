@@ -74,6 +74,20 @@ type sessionState struct {
 	// these fields accordingly.
 	defaultModel  string
 	defaultEffort string
+
+	// submit_outcome per-execute state (mu-guarded). Reset at every
+	// beginExecution call. activeAllowedOutcomes is the set the host declared
+	// via ExecuteRequest.AllowedOutcomes for the current step; finalizedOutcome
+	// captures a successful tool call; finalizeAttempts counts invocations
+	// (valid + invalid) for the 3-attempt cap; finalizeFailureKind records the
+	// reason category for the most-recent failed invocation ("missing",
+	// "invalid_outcome", "duplicate", or "no_outcomes") and is used by
+	// failExhausted to emit a structured diagnostic event.
+	activeAllowedOutcomes map[string]struct{}
+	finalizedOutcome      string
+	finalizedReason       string
+	finalizeAttempts      int
+	finalizeFailureKind   string
 }
 
 func (p *copilotPlugin) OpenSession(ctx context.Context, req *pb.OpenSessionRequest) (*pb.OpenSessionResponse, error) {
@@ -109,12 +123,25 @@ func (p *copilotPlugin) OpenSession(ctx context.Context, req *pb.OpenSessionRequ
 
 // buildSessionConfig constructs the SDK SessionConfig from agent-level config fields.
 func (p *copilotPlugin) buildSessionConfig(cfg map[string]string, pluginSessionID string) *copilot.SessionConfig {
+	// Register submit_outcome once per session. Validation against the active
+	// step's allowed set happens in handleSubmitOutcome at call time so that
+	// per-step scoping works without recreating the session.
+	submitTool := copilot.DefineTool(
+		submitOutcomeToolName,
+		submitOutcomeToolDescription,
+		func(args SubmitOutcomeArgs, _ copilot.ToolInvocation) (copilot.ToolResult, error) {
+			return p.handleSubmitOutcome(pluginSessionID, args)
+		},
+	)
+	submitTool.SkipPermission = true
+
 	sc := &copilot.SessionConfig{
 		Streaming: true,
 		Model:     cfg["model"],
 		OnPermissionRequest: func(r copilot.PermissionRequest, _ copilot.PermissionInvocation) (copilot.PermissionRequestResult, error) {
 			return p.handlePermissionRequest(pluginSessionID, &r)
 		},
+		Tools: []copilot.Tool{submitTool},
 	}
 	if wd := strings.TrimSpace(cfg["working_directory"]); wd != "" {
 		sc.WorkingDirectory = wd

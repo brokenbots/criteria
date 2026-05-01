@@ -4,18 +4,47 @@
 // conformance test so those tests run in the default (no env-var) lane.
 //
 // Supported methods:
-//   - ping                                             → {protocolVersion:3}
-//   - status.get                                      → {version, protocolVersion}
-//   - session.create                                  → {sessionId}
-//   - session.send                                    → {messageId}; async events follow
-//   - session.destroy                                 → {}
-//   - session.permissions.handlePendingPermissionRequest → {}
-//   - (all other methods)                             → {} (empty success)
+//   - ping                                                => {protocolVersion:3}
+//   - status.get                                         => {version, protocolVersion}
+//   - session.create                                     => {sessionId}
+//   - session.send                                       => {messageId}; async events follow
+//   - session.destroy                                    => {}
+//   - session.permissions.handlePendingPermissionRequest => {}
+//   - session.tools.handlePendingToolCall                => {}
+//   - (all other methods)                                => {} (empty success)
 //
-// session.send behaviour:
-//   - Normal prompt (no "fetch"): emits AssistantMessageDelta + AssistantMessage("RESULT: success") + SessionIdle
-//   - Permission prompt (contains "fetch"): emits PermissionRequested, waits for
-//     handlePendingPermissionRequest, then emits AssistantMessage + SessionIdle.
+// session.send behaviour depends on FAKE_COPILOT_SCENARIO:
+//
+// "" / "success" (default):
+//
+//	Emits submit_outcome("success") tool call + session.idle
+//
+// "success-after-reprompt-1":
+//
+//	Turn 1: session.idle with no tool call
+//	Turn 2: submit_outcome("success") + session.idle
+//
+// "success-after-reprompt-2":
+//
+//	Turns 1-2: session.idle with no tool call
+//	Turn 3: submit_outcome("success") + session.idle
+//
+// "invalid-outcome":
+//
+//	Turn 1: submit_outcome("not-a-real-outcome") + session.idle
+//	Turn 2: submit_outcome("success") + session.idle
+//
+// "duplicate-call":
+//
+//	Turn 1: submit_outcome("success") then submit_outcome("failure") in same turn + session.idle
+//
+// "missing":
+//
+//	All turns: session.idle with no tool call (exhausts 3 attempts => failure)
+//
+// Permission prompt (contains "fetch"): emits permission.requested, waits for
+// handlePendingPermissionRequest, then emits session.idle (no tool call needed:
+// permissionDeny takes precedence in awaitOutcome).
 package main
 
 import (
@@ -50,11 +79,26 @@ type rpcError struct {
 var (
 	wrMu    sync.Mutex // serialises all writes to os.Stdout
 	permsMu sync.Mutex // protects pendingPerms
+	toolsMu sync.Mutex // protects pendingToolCalls
+
 	// pendingPerms maps a permRequestID to a channel that is closed
 	// when session.permissions.handlePendingPermissionRequest arrives.
 	pendingPerms = map[string]chan struct{}{}
-	evtSeq       int64 // monotonic counter for synthetic event IDs
-	permSeq      int64 // monotonic counter for permission request IDs
+
+	// pendingToolCalls maps a requestId to a channel that is closed
+	// when session.tools.handlePendingToolCall arrives.
+	pendingToolCalls = map[string]chan struct{}{}
+
+	// toolCallSessions maps a requestId to its sessionId so that
+	// handlePendingToolCall can emit external_tool.completed to the right session.
+	toolCallSessions = map[string]string{}
+
+	evtSeq  int64 // monotonic counter for synthetic event IDs
+	permSeq int64 // monotonic counter for permission request IDs
+	toolSeq int64 // monotonic counter for tool request IDs
+
+	// sendCounts tracks the per-session turn counter for scenario dispatch.
+	sendCounts sync.Map // sessionID => *int64
 )
 
 func main() {
@@ -121,6 +165,35 @@ func handleRequest(msg rpcMsg) {
 		}
 		respond(msg.ID, map[string]any{"success": true})
 
+	case "session.tools.handlePendingToolCall":
+		var p struct {
+			RequestID string `json:"requestId"`
+		}
+		_ = json.Unmarshal(msg.Params, &p)
+
+		toolsMu.Lock()
+		ch := pendingToolCalls[p.RequestID]
+		sessionID := toolCallSessions[p.RequestID]
+		toolsMu.Unlock()
+
+		// Emit completion and signal waiters BEFORE removing the map entries.
+		// If we deleted first, waitForToolCall could observe a nil channel and
+		// return immediately — before external_tool.completed is sent — letting
+		// the scenario goroutine send session.idle too early and causing the
+		// adapter to miss the tool.result event.
+		if sessionID != "" {
+			sendEvent(sessionID, "external_tool.completed", map[string]any{"requestId": p.RequestID})
+		}
+		if ch != nil {
+			close(ch)
+		}
+
+		toolsMu.Lock()
+		delete(pendingToolCalls, p.RequestID)
+		delete(toolCallSessions, p.RequestID)
+		toolsMu.Unlock()
+		respond(msg.ID, map[string]any{})
+
 	default:
 		// Forward-compatible: unknown calls return an empty success.
 		if len(msg.ID) > 0 {
@@ -130,7 +203,7 @@ func handleRequest(msg rpcMsg) {
 }
 
 // handleSessionSend responds immediately with a messageId and then sends
-// async session events in a goroutine.
+// async session events in a goroutine based on the active scenario and turn.
 func handleSessionSend(msg rpcMsg) {
 	var p struct {
 		SessionID string `json:"sessionId"`
@@ -143,7 +216,9 @@ func handleSessionSend(msg rpcMsg) {
 
 	if isPermissionPrompt(p.Prompt) {
 		// Permission scenario: emit a permission request, wait for the SDK to
-		// call handlePendingPermissionRequest, then complete the turn.
+		// call handlePendingPermissionRequest, then end the turn. The adapter's
+		// awaitOutcome will see permissionDeny=true and return "failure" -- no
+		// submit_outcome tool call is needed.
 		permReqID := newPermID()
 		ch := make(chan struct{})
 		permsMu.Lock()
@@ -158,28 +233,111 @@ func handleSessionSend(msg rpcMsg) {
 				},
 			})
 			<-ch // blocks until handlePendingPermissionRequest arrives
-			sendEvent(p.SessionID, "assistant.message", map[string]any{
-				"messageId":    msgID,
-				"content":      "RESULT: success",
-				"toolRequests": []any{},
-			})
 			sendEvent(p.SessionID, "session.idle", map[string]any{})
 		}()
-	} else {
-		// Normal scenario: stream a delta then the final message.
-		go func() {
-			sendEvent(p.SessionID, "assistant.message_delta", map[string]any{
-				"messageId":    msgID,
-				"deltaContent": "RESULT: success",
-			})
-			sendEvent(p.SessionID, "assistant.message", map[string]any{
-				"messageId":    msgID,
-				"content":      "RESULT: success",
-				"toolRequests": []any{},
-			})
-			sendEvent(p.SessionID, "session.idle", map[string]any{})
-		}()
+		return
 	}
+
+	// Increment and read the per-session turn counter (1-based).
+	counter, _ := sendCounts.LoadOrStore(p.SessionID, new(int64))
+	turn := int(atomic.AddInt64(counter.(*int64), 1))
+
+	scenario := strings.TrimSpace(os.Getenv("FAKE_COPILOT_SCENARIO"))
+
+	go func() {
+		switch scenario {
+		case "", "success":
+			sendToolCallAndIdle(p.SessionID, "success", "step completed")
+
+		case "success-after-reprompt-1":
+			if turn == 1 {
+				sendEvent(p.SessionID, "session.idle", map[string]any{})
+			} else {
+				sendToolCallAndIdle(p.SessionID, "success", "step completed")
+			}
+
+		case "success-after-reprompt-2":
+			if turn <= 2 {
+				sendEvent(p.SessionID, "session.idle", map[string]any{})
+			} else {
+				sendToolCallAndIdle(p.SessionID, "success", "step completed")
+			}
+
+		case "invalid-outcome":
+			if turn == 1 {
+				sendToolCallAndIdle(p.SessionID, "not-a-real-outcome", "")
+			} else {
+				sendToolCallAndIdle(p.SessionID, "success", "step completed")
+			}
+
+		case "duplicate-call":
+			// First call: wait for handler to complete before sending the
+			// second call. This ensures finalizedOutcome is set to "success"
+			// deterministically before the second handler runs, making the
+			// first-call-wins semantics observable at the boundary.
+			reqID1 := sendToolCall(p.SessionID, "success", "first call")
+			waitForToolCall(reqID1)
+			reqID2 := sendToolCall(p.SessionID, "failure", "second call")
+			waitForToolCall(reqID2)
+			sendEvent(p.SessionID, "session.idle", map[string]any{})
+
+		case "missing":
+			sendEvent(p.SessionID, "session.idle", map[string]any{})
+
+		default:
+			// Unknown scenario: treat as success.
+			sendToolCallAndIdle(p.SessionID, "success", "step completed")
+		}
+	}()
+}
+
+// sendToolCallAndIdle emits a submit_outcome tool call event, waits for the
+// SDK to confirm the handler ran (via handlePendingToolCall), then emits
+// session.idle to end the turn.
+func sendToolCallAndIdle(sessionID, outcome, reason string) {
+	reqID := sendToolCall(sessionID, outcome, reason)
+	waitForToolCall(reqID)
+	sendEvent(sessionID, "session.idle", map[string]any{})
+}
+
+// waitForToolCall blocks until handlePendingToolCall has been received for
+// reqID (i.e., the SDK handler has run and external_tool.completed has been
+// emitted). If the call has already completed, it returns immediately.
+func waitForToolCall(reqID string) {
+	toolsMu.Lock()
+	ch := pendingToolCalls[reqID]
+	toolsMu.Unlock()
+	if ch != nil {
+		<-ch
+	}
+}
+
+// sendToolCall emits a single external_tool.requested event for submit_outcome
+// and registers a pending channel for handlePendingToolCall. Returns the requestId.
+func sendToolCall(sessionID, outcome, reason string) string {
+	seq := atomic.AddInt64(&toolSeq, 1)
+	reqID := fmt.Sprintf("fake-tool-req-%d", seq)
+	toolCallID := fmt.Sprintf("fake-tc-%d", seq)
+
+	ch := make(chan struct{})
+	toolsMu.Lock()
+	pendingToolCalls[reqID] = ch
+	toolCallSessions[reqID] = sessionID
+	toolsMu.Unlock()
+
+	args := map[string]any{"outcome": outcome}
+	if reason != "" {
+		args["reason"] = reason
+	}
+
+	sendEvent(sessionID, "external_tool.requested", map[string]any{
+		"requestId":  reqID,
+		"sessionId":  sessionID,
+		"toolCallId": toolCallID,
+		"toolName":   "submit_outcome",
+		"arguments":  args,
+	})
+	return reqID
 }
 
 // isPermissionPrompt reports whether the prompt should trigger the permission

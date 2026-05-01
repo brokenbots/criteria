@@ -12,16 +12,25 @@
 //   - max_turns is enforced plugin-side per Execute call by counting assistant
 //     message events for that turn.
 //   - if the cap is reached, the plugin emits Adapter("limit.reached", ...)
-//     and returns outcome "needs_review".
+//     and returns outcome "failure" (or "needs_review" if that outcome is in
+//     the step's allowed set).
 //
 // Outcome semantics:
-//   - the plugin parses the final assistant message for RESULT: <outcome>.
-//   - if absent or empty, outcome defaults to "needs_review".
+//   - the plugin registers a `submit_outcome` tool at OpenSession.
+//   - per Execute, the host's allowed outcomes are loaded onto sessionState
+//     before the prompt is sent.
+//   - the model MUST call submit_outcome exactly once with a valid outcome;
+//     the adapter forwards that value via ExecuteResult.
+//   - on missing / invalid finalize, the adapter reprompts up to 2 additional
+//     times. After 3 failed attempts the adapter returns "failure" with a
+//     structured diagnostic event.
+//   - permission denial returns "failure".
 //
 // File layout:
 //   - copilot.go         — constants, types (copilotPlugin), Info/ensureClient/getSession
 //   - copilot_session.go — session lifecycle: copilotSession interface, sdkSession, sessionState, Open/CloseSession
 //   - copilot_turn.go    — Execute, turnState, event handlers
+//   - copilot_outcome.go — submit_outcome tool: SubmitOutcomeArgs, handleSubmitOutcome, helpers
 //   - copilot_model.go   — model/effort helpers: applyRequestModel, applyRequestEffort, validateReasoningEffort
 //   - copilot_permission.go — Permit, handlePermissionRequest, permissionDetails
 //   - copilot_util.go    — resultEvent, logEvent, adapterEvent, stringifyAny
@@ -50,7 +59,12 @@ const (
 
 	includeSensitivePermissionDetailsEnv = "CRITERIA_COPILOT_INCLUDE_SENSITIVE_PERMISSION_DETAILS"
 
-	resultPrefix = "result:"
+	submitOutcomeToolName = "submit_outcome"
+
+	// submitOutcomeToolDescription is the description surfaced to the model for
+	// the submit_outcome tool. It conveys the contract: call exactly once with
+	// a valid outcome before ending the turn, or the step fails.
+	submitOutcomeToolDescription = "Finalize the outcome for the current step. Call this exactly once with one of the allowed outcomes for the step. The list of allowed outcomes is provided in the user prompt. Failure to call this tool with a valid outcome will fail the step."
 )
 
 var errMaxTurnsReached = errors.New("copilot: max_turns reached")
