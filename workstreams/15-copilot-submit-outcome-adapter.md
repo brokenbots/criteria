@@ -1325,3 +1325,21 @@ Fix: emit `external_tool.completed` and close the channel first, then acquire a 
 #### Validation
 
 - `make ci` — **PASS** (commit `ff162bd`)
+
+### Review 2026-05-01-11 — approved
+
+#### Summary
+
+Verdict: **approved**. The fake-Copilot pending-map deletion fix is correct and does not reopen any acceptance-bar issues. `waitForToolCall` can no longer observe a missing channel before completion emission, so the `external_tool.completed` → `tool.result` ordering guarantee is preserved and the fixture-boundary tests remain meaningful.
+
+#### Plan Adherence
+
+- Workstream scope remains satisfied.
+- The new fix is narrowly targeted and consistent with the approved design.
+- No new deviations from the Step 5 / Step 6 acceptance bar were introduced.
+
+#### Validation Performed
+
+- `go test -race ./cmd/criteria-adapter-copilot/...` — passed.
+- `make test-conformance` — passed.
+- `make ci` — passed.
