@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"log/slog"
 	"strings"
 	"testing"
 
 	"github.com/brokenbots/criteria/internal/adapter"
+	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -166,5 +168,161 @@ func TestLoader_HostCanceledContextWithEOFLogsAtDebug(t *testing.T) {
 	}
 	if strings.Contains(out, "WARN") {
 		t.Errorf("expected no WARN log for canceled-context + EOF error, got:\n%s", out)
+	}
+}
+
+// recordingClient implements Client and captures the last ExecuteRequest it
+// received. It returns a single ExecuteResult with the first outcome it finds
+// in the request's AllowedOutcomes list (or "success" if the list is empty).
+type recordingClient struct {
+	lastExecuteReq *pb.ExecuteRequest
+}
+
+func (r *recordingClient) Info(_ context.Context, _ *pb.InfoRequest) (*pb.InfoResponse, error) {
+	return &pb.InfoResponse{Name: "recording-stub"}, nil
+}
+
+func (r *recordingClient) OpenSession(_ context.Context, _ *pb.OpenSessionRequest) (*pb.OpenSessionResponse, error) {
+	return &pb.OpenSessionResponse{}, nil
+}
+
+func (r *recordingClient) Execute(_ context.Context, req *pb.ExecuteRequest) (ExecuteEventReceiver, error) {
+	r.lastExecuteReq = req
+	outcome := "success"
+	if len(req.AllowedOutcomes) > 0 {
+		outcome = req.AllowedOutcomes[0]
+	}
+	return &immediateResultReceiver{outcome: outcome}, nil
+}
+
+func (r *recordingClient) Permit(_ context.Context, _ *pb.PermitRequest) (*pb.PermitResponse, error) {
+	return &pb.PermitResponse{}, nil
+}
+
+func (r *recordingClient) CloseSession(_ context.Context, _ *pb.CloseSessionRequest) (*pb.CloseSessionResponse, error) {
+	return &pb.CloseSessionResponse{}, nil
+}
+
+// immediateResultReceiver returns one ExecuteResult event then io.EOF.
+type immediateResultReceiver struct {
+	outcome string
+	done    bool
+}
+
+func (r *immediateResultReceiver) Recv() (*pb.ExecuteEvent, error) {
+	if r.done {
+		return nil, io.EOF
+	}
+	r.done = true
+	return &pb.ExecuteEvent{
+		Event: &pb.ExecuteEvent_Result{
+			Result: &pb.ExecuteResult{Outcome: r.outcome},
+		},
+	}, nil
+}
+
+// TestLoader_PopulatesAllowedOutcomes verifies that ExecuteRequest is
+// constructed with AllowedOutcomes derived from the step's declared
+// outcome set, sorted ascending.
+func TestLoader_PopulatesAllowedOutcomes(t *testing.T) {
+	rc := &recordingClient{}
+	p := &rpcPlugin{name: "recording-stub", rpc: rc}
+
+	step := &workflow.StepNode{
+		Name: "review",
+		// Insert in non-sorted order to verify sorting.
+		Outcomes: map[string]string{
+			"failure":           "failed",
+			"approved":          "done",
+			"changes_requested": "rework",
+		},
+	}
+
+	sink := &adapterEventCollector{}
+	result, err := p.Execute(context.Background(), "sess-1", step, sink)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	req := rc.lastExecuteReq
+	if req == nil {
+		t.Fatal("no ExecuteRequest was captured")
+	}
+
+	want := []string{"approved", "changes_requested", "failure"}
+	if len(req.AllowedOutcomes) != len(want) {
+		t.Fatalf("AllowedOutcomes = %v, want %v", req.AllowedOutcomes, want)
+	}
+	for i, v := range want {
+		if req.AllowedOutcomes[i] != v {
+			t.Errorf("AllowedOutcomes[%d] = %q, want %q", i, req.AllowedOutcomes[i], v)
+		}
+	}
+
+	// The recording client returns the first allowed outcome.
+	if result.Outcome != "approved" {
+		t.Errorf("result.Outcome = %q, want %q", result.Outcome, "approved")
+	}
+}
+
+// TestLoader_PopulatesAllowedOutcomes_Empty verifies that a step with no
+// declared outcomes produces a non-nil empty AllowedOutcomes slice in the
+// constructed ExecuteRequest (host-side pre-serialization contract). On the
+// wire, proto3 repeated fields treat nil and empty equivalently; adapters
+// must not use nil vs empty to infer host version or behavior.
+func TestLoader_PopulatesAllowedOutcomes_Empty(t *testing.T) {
+	rc := &recordingClient{}
+	p := &rpcPlugin{name: "recording-stub", rpc: rc}
+
+	step := &workflow.StepNode{Name: "open", Outcomes: nil}
+
+	sink := &adapterEventCollector{}
+	if _, err := p.Execute(context.Background(), "sess-2", step, sink); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	req := rc.lastExecuteReq
+	if req == nil {
+		t.Fatal("no ExecuteRequest was captured")
+	}
+	if req.AllowedOutcomes == nil {
+		t.Fatal("AllowedOutcomes should be non-nil empty slice, got nil")
+	}
+	if len(req.AllowedOutcomes) != 0 {
+		t.Fatalf("AllowedOutcomes = %v, want empty", req.AllowedOutcomes)
+	}
+}
+
+// TestCollectAllowedOutcomes_Sorted verifies that collectAllowedOutcomes
+// returns outcome names sorted ascending regardless of map insertion order.
+func TestCollectAllowedOutcomes_Sorted(t *testing.T) {
+	step := &workflow.StepNode{Outcomes: map[string]string{
+		"failure":           "failed",
+		"approved":          "done",
+		"changes_requested": "rework",
+	}}
+	got := collectAllowedOutcomes(step)
+	want := []string{"approved", "changes_requested", "failure"}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i, v := range want {
+		if got[i] != v {
+			t.Errorf("got[%d] = %q, want %q", i, got[i], v)
+		}
+	}
+}
+
+// TestCollectAllowedOutcomes_Empty verifies that a step with no outcomes
+// returns a non-nil empty slice (host-side contract). Adapters receive this
+// over the wire where proto3 nil and empty are equivalent, but the host
+// helper must produce []string{} rather than nil for clarity and consistency.
+func TestCollectAllowedOutcomes_Empty(t *testing.T) {
+	got := collectAllowedOutcomes(&workflow.StepNode{})
+	if got == nil {
+		t.Fatal("expected non-nil empty slice, got nil")
+	}
+	if len(got) != 0 {
+		t.Fatalf("got %v, want empty", got)
 	}
 }

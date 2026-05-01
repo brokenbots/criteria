@@ -349,6 +349,21 @@ Adapters implement the `AdapterPlugin` gRPC service defined in `proto/v1/adapter
 - `InputSchema` — JSON schema for step-level input (in the `input { }` block on each step)
 - `OutputSchema` — JSON schema for outputs the adapter may return after execution
 
+### `Execute` request fields
+
+The host sends an `ExecuteRequest` to the adapter on every step execution. The fields are:
+
+| Field | Type | Description |
+|---|---|---|
+| `session_id` | `string` | Session identifier, stable for the lifetime of the agent session. |
+| `step_name` | `string` | Name of the step being executed. |
+| `config` | `map<string, string>` | Step-level input key-value pairs (from the step's `input {}` block). |
+| `allowed_outcomes` | `repeated string` (sorted ascending) | The set of outcome names the workflow declares for this step. See below. |
+
+**`allowed_outcomes`** *(repeated string, sorted ascending)* — The set of outcome names the workflow declares for this step. Adapters may use this list to constrain or validate outcome selection (e.g. by exposing it to a model as a structured tool schema). Adapters are not required to consume the field; the host independently validates the returned outcome against the same set. The list is deterministic — sorted ascending — so adapter implementations may rely on stable ordering across runs. For compatibility, adapters must treat a missing/`nil` `allowed_outcomes` field the same as an empty list: both mean "no declared outcomes". This can occur for steps with zero outcomes and when talking to older hosts, so adapters should not use `nil`/missing versus empty to infer host version or behavior.
+
+The host validation guard in `internal/engine/node_step.go` is unchanged: adapters that ignore `allowed_outcomes` continue to function exactly as before. [W15](../workstreams/15-copilot-submit-outcome-adapter.md) is the first adapter consumer, adding a `submit_outcome` tool call to the Copilot adapter that uses this field to expose the declared outcome set to the model as a structured schema.
+
 When an adapter completes execution, it returns a `Result` containing:
 
 - `Outcome` — the named outcome that determines the FSM transition (e.g., `"success"`, `"failure"`, `"needs_review"`)
