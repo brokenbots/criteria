@@ -1313,3 +1313,15 @@ Verdict: **approved**. The duplicate-classification fix is correct and does not 
 - `go test -race ./cmd/criteria-adapter-copilot/...` — passed.
 - `make test-conformance` — passed.
 - `make ci` — passed.
+
+### PR review thread remediation 5 — 2026-05-01
+
+**Thread PRRT_kwDOSOBb1s5-70Jh — `fake-copilot/main.go:189`: map entries deleted before completion emission**
+
+`handlePendingToolCall` deleted `pendingToolCalls[reqID]` and `toolCallSessions[reqID]` under the lock, then released the lock, then emitted `external_tool.completed` and closed the channel. `waitForToolCall` reads the channel under the same lock — if it ran after the deletion but before the channel close, it would see a nil channel and return immediately, allowing the scenario goroutine to send `session.idle` before `external_tool.completed` was emitted (making `tool.result` capture flaky).
+
+Fix: emit `external_tool.completed` and close the channel first, then acquire a fresh lock and delete the map entries. This guarantees `waitForToolCall` always blocks until completion is actually emitted. See `cmd/criteria-adapter-copilot/testfixtures/fake-copilot/main.go:174-195`.
+
+#### Validation
+
+- `make ci` — **PASS** (commit `ff162bd`)
