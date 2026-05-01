@@ -995,3 +995,72 @@ This pass substantially improved coverage breadth, and the new structured-failur
 - `go test -race ./cmd/criteria-adapter-copilot/...` — passed.
 - `make test-conformance` — passed.
 - `make ci` — passed.
+
+### Review 2026-05-01-04 — changes-requested
+
+#### Summary
+
+Verdict: **changes-requested**. This pass closes the previous propagation-proof blocker and materially strengthens the negative-path coverage. `make ci` and `make test-conformance` are green, the new canary-set proof is a good direct check that `AllowedOutcomes` reached the adapter, and the invalid/duplicate scenarios are now exercised through the real plugin binary. I am still holding approval because the remaining fixture assertions do not yet prove the contract-visible behavior required for invalid and duplicate finalization attempts.
+
+#### Plan Adherence
+
+- **Steps 1-4:** Implemented and still aligned with the locked design decisions.
+- **Step 5.2:** Now satisfied. `TestConformance_AllowedOutcomesPropagation_SetProof` directly proves the exact declared outcome set is forwarded through the loader/proto/adapter boundary.
+- **Step 5.1:** Still incomplete at the assertion level for the invalid/duplicate fixture scenarios. The tests now drive the real fixture path, but they do not yet assert the boundary evidence for the rejected tool calls themselves.
+- **Step 6 / exit criteria:** Satisfied aside from the remaining Step 5.1 proof gap.
+
+#### Required Remediations
+
+- **Blocker** — `cmd/criteria-adapter-copilot/conformance_test.go:375-473`, `cmd/criteria-adapter-copilot/copilot_turn.go:51-70`: the remaining negative-path fixture tests are still weaker than the workstream requires. `TestConformance_InvalidOutcomeScenario_Fixture` proves eventual recovery to `"success"`, but it does not assert that the invalid attempt was recorded at the adapter boundary (for example via the emitted `tool.invocation` event arguments and corresponding completion signal). `TestConformance_DuplicateCallScenario_Fixture` proves first-call-wins, but it still does not prove the second duplicate call was visible at the boundary and rejected, beyond the absence of a second `outcome.finalized` event. `go doc github.com/github/copilot-sdk/go.ExternalToolCompletedData` shows the SDK only surfaces `requestId` on completion, so the acceptance bar here is to assert the strongest boundary evidence the adapter can actually emit: both tool invocations are observed, the invalid/duplicate arguments are present on those events, completion events occur for the calls, and only the accepted call produces `outcome.finalized`. If the executor believes stronger proof is impossible with the SDK surface, that limitation needs to be documented explicitly in the workstream notes instead of silently weakening the test intent.
+
+#### Test Intent Assessment
+
+The suite is now much stronger: propagation is directly proven, exhaustion emits the required structured payload, and the fixture scenarios execute through the real binary rather than only local state mutation. The remaining weakness is **contract visibility of rejected tool calls**. Right now the tests prove the success path after rejection, but not the rejected calls themselves as observable boundary events. That still leaves room for a regression where the adapter swallows or misreports the invalid/duplicate invocation while preserving the eventual final outcome.
+
+#### Validation Performed
+
+- `go test -race ./cmd/criteria-adapter-copilot/...` — passed.
+- `make test-conformance` — passed.
+- `make ci` — passed.
+- `go doc github.com/github/copilot-sdk/go.ExternalToolCompletedData` — confirms the SDK completion event surface exposes only `RequestID`, which informed the boundary-proof expectation above.
+
+### Remediation round 4 — 2026-05-01
+
+#### Changes made
+
+**Root cause of `tool.result` count = 0**
+
+`ExternalToolCompletedData` (which drives `tool.result` emission in `copilot_turn.go:66-70`) is only fired when the server sends `external_tool.completed`. The fake binary never sent that event — it only registered pending channels for `HandlePendingToolCall` handshake. Therefore `tool.result` events were never emitted.
+
+**Root cause of non-deterministic first-call-wins in `duplicate-call`**
+
+The old fake sent both `external_tool.requested` events plus `session.idle` immediately, before either handler completed. The SDK dispatches each `ExternalToolRequestedData` via `go s.handleBroadcastEvent(event)` (session.go:844), so both tool handlers raced to acquire `s.mu` and set `finalizedOutcome`. Whichever goroutine won was non-deterministic.
+
+**`testfixtures/fake-copilot/main.go`**
+
+1. Added `toolCallSessions map[string]string` (under `toolsMu`) to track `requestId → sessionId` so `handlePendingToolCall` can route `external_tool.completed` to the correct session without additional state.
+
+2. `session.tools.handlePendingToolCall` handler: emit `external_tool.completed` **before** `close(ch)`. This ordering guarantee is critical: the scenario goroutine (waiting on `<-ch`) can only proceed to send `session.idle` after `external_tool.completed` is already in the event stream. Without this ordering, there is a window where the scenario goroutine sends `session.idle` before the completion event, and `awaitOutcome` unsubscribes before capturing `tool.result`.
+
+3. Extracted `waitForToolCall(reqID string)` helper (replaces inline `toolsMu.Lock(); ch = ...; toolsMu.Unlock(); <-ch` pattern). `sendToolCallAndIdle` now calls it.
+
+4. `duplicate-call` scenario rewritten to sequential execution:
+   - Send reqID1 ("success"), `waitForToolCall(reqID1)` — blocks until the first handler runs and `external_tool.completed(reqID1)` is sent
+   - Send reqID2 ("failure"), `waitForToolCall(reqID2)` — blocks until the second handler runs and `external_tool.completed(reqID2)` is sent
+   - Then send `session.idle`
+   
+   This makes the first-call-wins outcome deterministic: by the time reqID2 is sent to the SDK, `finalizedOutcome` is already set to "success", so reqID2's handler always hits the duplicate branch.
+
+**Result**
+
+- `tool.result` count: 0 → 2 (both calls' lifecycle events now observable)
+- `outcome` for duplicate-call: non-deterministic → always "success" (first wins by construction)
+- `invocations[0].arguments` contains "success"; `invocations[1].arguments` contains "failure"
+- `outcome.finalized` count = 1, outcome = "success"
+
+#### Validation
+
+- `TestConformance_InvalidOutcomeScenario_Fixture` — **PASS**
+- `TestConformance_DuplicateCallScenario_Fixture` — **PASS**
+- `TestConformance_AllowedOutcomesPropagation_SetProof` — **PASS**
+- `make ci` — **PASS** (race detector, lint, conformance, import boundaries, all examples)
