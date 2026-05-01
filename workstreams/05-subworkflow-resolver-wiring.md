@@ -1,6 +1,20 @@
 # Workstream 5 — Wire `SubWorkflowResolver` into the CLI compile path
 
-**Owner:** Workstream executor · **Depends on:** none · **Unblocks:** [W14](14-phase2-cleanup-gate.md) (cleanup gate verifies the example workflow runs).
+> **Status: CANCELLED (2026-04-30).**
+> This workstream has been removed from Phase 2 scope. Phase 2 priorities
+> were re-aligned to land tool-call outcome finalization for the Copilot
+> adapter (new [W14](14-copilot-tool-call-wire-contract.md) and
+> [W15](15-copilot-submit-outcome-adapter.md)) ahead of `workflow_file`
+> resolver wiring. The `workflow_file` runtime gap remains a forward-pointer
+> in [PLAN.md](../PLAN.md) and is a candidate for Phase 3.
+>
+> **Do not execute this workstream.** The historical scope is preserved
+> below for context only. The cleanup gate (now [W16](16-phase2-cleanup-gate.md))
+> drops the example-validation step that depended on this work.
+
+---
+
+**Owner:** Workstream executor · **Depends on:** none · **Unblocks:** [W16](16-phase2-cleanup-gate.md) (cleanup gate verifies the example workflow runs).
 
 ## Context
 

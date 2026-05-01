@@ -1,6 +1,16 @@
-# Workstream 14 — Phase 2 cleanup gate
+# Workstream 16 — Phase 2 cleanup gate
 
-**Owner:** Cleanup agent (or human committer) · **Depends on:** [W01](01-lint-baseline-mechanical-burn-down.md)–[W13](13-rc-artifact-upload.md) · **Unblocks:** Phase 3 planning + the `v0.3.0` tag.
+**Owner:** Cleanup agent (or human committer) · **Depends on:** [W01](01-lint-baseline-mechanical-burn-down.md)–[W04](04-state-dir-permissions.md), [W06](06-local-mode-approval.md)–[W10](10-remove-shell-legacy-escape-hatch.md), [W12](12-lifecycle-log-clarity.md)–[W15](15-copilot-submit-outcome-adapter.md) · **Unblocks:** Phase 3 planning + the `v0.3.0` tag.
+
+> **Note on cancelled workstreams.** [W05](05-subworkflow-resolver-wiring.md)
+> (`SubWorkflowResolver` wiring) and
+> [W11](11-reviewer-outcome-aliasing.md) (reviewer outcome aliasing)
+> were cancelled on 2026-04-30. UF#03 is now addressed by the new
+> [W14](14-copilot-tool-call-wire-contract.md) +
+> [W15](15-copilot-submit-outcome-adapter.md) workstreams (Copilot
+> tool-call outcome finalization). The `workflow_file` runtime gap
+> remains a Phase 3 forward-pointer. Do not run gates that depended
+> on those workstreams; explicit removals are listed below.
 
 ## Context
 
@@ -26,9 +36,19 @@ Phase 2-specific gates:
   (or, if missed, document why and forward to Phase 3).
 - **`CRITERIA_SHELL_LEGACY=1` removal.** Confirm zero source
   references after [W10](10-remove-shell-legacy-escape-hatch.md).
-- **Smoke run.** A workflow exercising W05 (`workflow_file`),
-  W06 (local approval), W07 (`max_visits`), and W12 (lifecycle
-  log) runs end-to-end without an orchestrator.
+- **Smoke run.** A workflow exercising
+  [W06](06-local-mode-approval.md) (local approval),
+  [W07](07-per-step-max-visits.md) (`max_visits`),
+  [W12](12-lifecycle-log-clarity.md) (lifecycle log), and
+  [W15](15-copilot-submit-outcome-adapter.md) (Copilot
+  `submit_outcome` finalization) runs end-to-end without an
+  orchestrator. The `workflow_file` step from the prior plan is
+  excluded — W05 is cancelled.
+- **Tool-call wire contract.** [W14](14-copilot-tool-call-wire-contract.md)
+  added `AllowedOutcomes` to `pb.ExecuteRequest`; verify
+  `make proto-check-drift` exits 0 and the host populates the field
+  on every Execute (covered by W14's transport test, re-asserted in
+  the cleanup gate's `make ci` lane).
 - **RC artifact verification.** The final RC PR
   ([W13](13-rc-artifact-upload.md)) shows the artifact upload
   job firing and the bundle is downloadable.
@@ -38,10 +58,15 @@ Phase 2-specific gates:
 
 ## Prerequisites
 
-- Every Phase 2 workstream
-  ([W01](01-lint-baseline-mechanical-burn-down.md)–[W13](13-rc-artifact-upload.md))
-  merged on `main`.
-- All exit criteria from each workstream verified.
+- Every active Phase 2 workstream merged on `main`. Active set:
+  [W01](01-lint-baseline-mechanical-burn-down.md)–[W04](04-state-dir-permissions.md),
+  [W06](06-local-mode-approval.md)–[W10](10-remove-shell-legacy-escape-hatch.md),
+  [W12](12-lifecycle-log-clarity.md), [W13](13-rc-artifact-upload.md),
+  [W14](14-copilot-tool-call-wire-contract.md),
+  [W15](15-copilot-submit-outcome-adapter.md).
+  Skipped (cancelled): [W05](05-subworkflow-resolver-wiring.md),
+  [W11](11-reviewer-outcome-aliasing.md).
+- All exit criteria from each active workstream verified.
 - `git status` clean on `main`.
 - `make ci` green on `main`.
 
@@ -60,31 +85,34 @@ Phase 2-specific gates:
 - [ ] `make lint-go` green.
 - [ ] `make lint-baseline-check` green ([W02](02-lint-ci-gate.md)
       gate).
-- [ ] `make validate` green for every example HCL, including the
-      new examples introduced by [W05](05-subworkflow-resolver-wiring.md).
+- [ ] `make validate` green for every example HCL. (No new W05
+      example; W05 cancelled.)
 - [ ] `make example-plugin` green.
 - [ ] `make ci` green.
+- [ ] `make proto-check-drift` exits 0 (W14 added
+      `AllowedOutcomes`; the regenerated bindings must be in sync).
 - [ ] `make docker-runtime` succeeds; `make docker-runtime-smoke`
       exits 0 ([W09](09-docker-dev-container-and-runtime-image.md)).
 - [ ] CLI smoke: `./bin/criteria apply examples/hello.hcl
       --events-file /tmp/events.ndjson` exits 0.
-- [ ] CLI smoke: `./bin/criteria apply
-      examples/workflow_step_compose.hcl` exits 0
-      ([W05](05-subworkflow-resolver-wiring.md) example).
 
 ### Step 2 — Phase 2 unattended-pipeline smoke
 
 The Phase 2 marquee feature is unattended end-to-end execution. Run
-a workflow that exercises [W05](05-subworkflow-resolver-wiring.md)
-+ [W06](06-local-mode-approval.md) + [W07](07-per-step-max-visits.md)
-+ [W12](12-lifecycle-log-clarity.md) together:
+a workflow that exercises
+[W06](06-local-mode-approval.md) + [W07](07-per-step-max-visits.md)
++ [W12](12-lifecycle-log-clarity.md) +
+[W15](15-copilot-submit-outcome-adapter.md) together:
 
 ```hcl
 # examples/phase2_smoke.hcl (or similar)
-# - Uses type = "workflow" with workflow_file = "..." (W05).
 # - Contains an approval node (W06).
 # - One step has max_visits = 5 with a back-edge loop (W07).
+# - One step uses the Copilot adapter so submit_outcome finalization
+#   is exercised end-to-end (W14 wire contract + W15 tool call).
 # - Run with --output concise to verify W12's [adapter: ...] tag.
+# Note: W05's nested-workflow_file step is intentionally NOT used —
+# W05 was cancelled; the resolver remains a Phase 3 forward-pointer.
 ```
 
 Run:
@@ -99,13 +127,19 @@ Verify:
 - [ ] Run completes successfully (no orchestrator, no manual
       intervention).
 - [ ] Approval node auto-approves with the expected warning.
-- [ ] Nested workflow loads via the resolver.
+- [ ] Copilot step finalizes via `submit_outcome` (look for the
+      `outcome.finalized` adapter event in events output).
 - [ ] If the back-edge loop is engineered to trip
       `max_visits = 5`, it does so with the expected error.
 - [ ] Adapter lifecycle tags appear cleanly in concise output.
 
 If the smoke does not pass, do not commit; remediate against the
 relevant workstream's deliverables.
+
+If standing up a real Copilot session in the cleanup gate is not
+viable (auth / network constraints in CI), substitute a fixture-driven
+adapter run that exercises the same `submit_outcome` code path; the
+fixture coverage from W15 is acceptable evidence for the smoke.
 
 ### Step 3 — Lint baseline burn-down gate
 
@@ -161,7 +195,7 @@ The Phase 1 W06 thresholds remain in force. Phase 2 must not
 regress:
 
 - [ ] `make test-cover` reports `internal/cli/...` ≥ 60%
-      (W01-W11 may have moved this; verify).
+      (W01-W15 may have moved this; verify).
 - [ ] `make test-cover` reports `internal/run/...` ≥ 60%.
 - [ ] `make test-cover` reports
       `cmd/criteria-adapter-mcp/...` ≥ 50%.
@@ -180,9 +214,12 @@ files (the originals preserved in git history at commit `4e4a357`):
 - [W03](03-copilot-file-split-and-permission-alias.md) →
   `user_feedback/02-align-copilot-permission-kinds-user-story.txt`
   (UF#02).
-- [W11](11-reviewer-outcome-aliasing.md) →
+- [W14](14-copilot-tool-call-wire-contract.md) +
+  [W15](15-copilot-submit-outcome-adapter.md) →
   `user_feedback/03-stabilize-reviewer-outcome-handling-user-story.txt`
-  (UF#03).
+  (UF#03). UF#03 was originally scoped to W11 (host-side outcome
+  aliases); W11 was cancelled and the user pain is addressed at the
+  source by the Copilot tool-call finalization in W14/W15.
 - [W06](06-local-mode-approval.md) →
   `user_feedback/05-allow-approval-in-local-mode-user-story.txt`
   (UF#05).
@@ -272,11 +309,12 @@ This workstream is the only one that may make structural edits to:
       one-line note that Phase 2 closed and the marquee
       capabilities are unattended local execution
       ([W06](06-local-mode-approval.md)+[W07](07-per-step-max-visits.md)),
-      `workflow_file` resolution
-      ([W05](05-subworkflow-resolver-wiring.md)), and the Docker
-      runtime image
+      Copilot tool-call outcome finalization
+      ([W14](14-copilot-tool-call-wire-contract.md)+[W15](15-copilot-submit-outcome-adapter.md)),
+      and the Docker runtime image
       ([W09](09-docker-dev-container-and-runtime-image.md));
-      cross-link to `docs/runtime/docker.md`.
+      cross-link to `docs/runtime/docker.md`. Note that W05
+      (`workflow_file` resolver) was deferred to Phase 3.
 - [ ] `PLAN.md` — tick every Phase 2 workstream checkbox. Update
       "Status snapshot" to "Phase 2 closed YYYY-MM-DD". Update
       Phase 2 section to a closed/archived state. Add a "Phase 3
@@ -309,16 +347,15 @@ This workstream is the only one that may make structural edits to:
       recommended onboarding flow.
 - [ ] `CHANGELOG.md` — add the v0.3.0 release-notes entry.
       Headline: "Maintainability + Tech Debt to B/B+; unattended
-      local execution; Docker runtime image; CRITERIA_SHELL_LEGACY
-      removed."
+      local execution; Copilot tool-call finalization; Docker
+      runtime image; CRITERIA_SHELL_LEGACY removed."
       Cover, in order:
       - W01 — lint baseline mechanical burn-down.
       - W02 — lint CI gate (baseline-stays-flat enforcement).
       - W03 — copilot.go file split + Copilot permission-kind
         alias (UF#02).
       - W04 — state-dir permissions hardened to 0o700.
-      - W05 — `workflow_file` resolver wired into the CLI;
-        `examples/workflow_step_compose.hcl` ships.
+      - W05 — *cancelled (deferred to Phase 3).*
       - W06 — local-mode approval and signal wait
         (`CRITERIA_LOCAL_APPROVAL`) (UF#05).
       - W07 — per-step `max_visits` (UF#08).
@@ -330,19 +367,32 @@ This workstream is the only one that may make structural edits to:
         copy the entry text from
         [W10](10-remove-shell-legacy-escape-hatch.md)'s
         reviewer notes).
-      - W11 — reviewer outcome aliasing (UF#03).
+      - W11 — *cancelled (UF#03 addressed by W14+W15).*
       - W12 — adapter lifecycle log clarity (UF#06); new
         `OnAdapterLifecycle` sink hook.
       - W13 — release-candidate artifact upload on RC PRs.
+      - W14 — Copilot tool-call wire contract:
+        `pb.ExecuteRequest.AllowedOutcomes`; SDK bump.
+      - W15 — Copilot `submit_outcome` adapter (tool-call outcome
+        finalization with 3-attempt reprompt; prose `result:`
+        parsing removed; UF#03). **Behavior change** —
+        invalid finalize / max-turns / permission-denied now
+        return `failure` rather than `needs_review`. Copy the
+        full entry text from W15's reviewer notes.
       - Removed: `CRITERIA_SHELL_LEGACY=1` env var.
+      - Removed: `result:`-prefix prose parsing in the Copilot
+        adapter (replaced by `submit_outcome` tool — W15).
       Tag: `v0.3.0`.
 
 ### Step 13 — Archive
 
 - [ ] `mkdir -p workstreams/archived/v2/`
 - [ ] `git mv workstreams/0[1-9]-*.md workstreams/archived/v2/`
-- [ ] `git mv workstreams/1[0-3]-*.md workstreams/archived/v2/`
-- [ ] `git mv workstreams/14-*.md workstreams/archived/v2/`
+      (W05 is included in the move; cancelled workstreams archive
+      with the rest of Phase 2).
+- [ ] `git mv workstreams/1[0-5]-*.md workstreams/archived/v2/`
+      (covers W10–W15, including cancelled W11).
+- [ ] `git mv workstreams/16-*.md workstreams/archived/v2/`
       (this workstream itself; do this last, in the final
       archive commit).
 - [ ] Update intra-workstream links if any reviewer notes
@@ -383,7 +433,8 @@ Likely candidates surfaced during Phase 2 implementation:
   conventions needs to be reinforced if any workstream
   accidentally touched the coordination set.
 - Whether the behavior-change disclosure section was honored in
-  every workstream file (W03 through W13 must each have one).
+  every workstream file (W03–W04, W06–W10, W12–W15 must each have
+  one; W05 and W11 are cancelled and exempt).
 
 If no drift, leave the agent files alone. Cap at two changes per
 agent file. If more drift surfaces, capture it as Phase 3 planning
@@ -400,12 +451,13 @@ input rather than agent-config changes here.
 ## Behavior change
 
 **No behavior change.** This workstream archives, validates, and
-tags. All code changes happened in W01–W13.
+tags. All code changes happened in the active Phase 2 workstreams
+(W01–W04, W06–W10, W12–W15; W05 and W11 cancelled).
 
 The `README.md`, `PLAN.md`, `AGENTS.md`, `CHANGELOG.md`,
 `CONTRIBUTING.md`, and `workstreams/README.md` edits are the only
 documentation changes; they reflect (not introduce) the work that
-landed in W01–W13.
+landed in the active Phase 2 set (W01–W04, W06–W10, W12–W15).
 
 ## Reuse
 
@@ -436,7 +488,7 @@ The only workstream that may edit:
 - `CONTRIBUTING.md`
 - `workstreams/README.md`
 - `workstreams/archived/v2/*.md` (via `git mv` from
-  `workstreams/0[1-9]-*.md` and `workstreams/1[0-4]-*.md`).
+  `workstreams/0[1-9]-*.md` and `workstreams/1[0-6]-*.md`).
 - `tech_evaluations/TECH_EVALUATION-<v0.3.0-tag>.md` (new).
 - `.github/agents/workstream-*.agent.md` (capped at two changes
   each, only if drift observed).
@@ -491,7 +543,7 @@ run / image-tag references.
 | One of the two C-grade lifts (Maintainability or Tech Debt) is missed at the tech-eval re-run | Do not tag `v0.3.0` until the gap is closed. Open a remediation PR against the relevant Phase 2 workstream. The plan file explicitly identified these as the Phase 2 must-haves. |
 | The bus-factor goal is missed | The goal is "≥ 2 non-author human PRs". If missed, do not block the tag — document the gap in `PLAN.md`, file a Phase 3 follow-up workstream that addresses contributor-recruitment friction, and proceed. |
 | Branch protection on `main` is documented but not applied (W02) | The cleanup gate verifies it explicitly in Step 5; if not applied, escalate to a project admin and do not tag until the setting is in place. |
-| The smoke workflow exposes a regression introduced by an interaction between W05/W06/W07 that was not caught by per-workstream tests | Treat as a Phase 2 blocker; the gate fails and the relevant workstream re-opens. The plan deliberately scheduled the smoke at the gate to surface integration issues. |
+| The smoke workflow exposes a regression introduced by an interaction between W06/W07/W12/W15 that was not caught by per-workstream tests | Treat as a Phase 2 blocker; the gate fails and the relevant workstream re-opens. The plan deliberately scheduled the smoke at the gate to surface integration issues. |
 | The W10 grep verification finds `CRITERIA_SHELL_LEGACY` references the workstream missed | Open a one-line follow-up PR to remove them; do not tag until the grep is clean. The credibility commitment from the v0.2.0 threat model is hard. |
 | The artifact bundle from W13 has a SHA256SUMS mismatch (e.g. file order changed) | Re-run the upload by retriggering the RC PR's CI run; if the mismatch persists, root-cause in W13 and remediate. |
 | `tech_evaluations/TECH_EVALUATION-<tag>.md` is filed but rates a category lower than expected | The tech eval is independent input; if the rater disagrees with this gate's interpretation of "Maintainability ≥ B", reconcile in reviewer notes before tagging. |

@@ -127,7 +127,7 @@ file is — check `docs/contributing/lint-baseline.md`) to note the
 counts before and after this workstream. Include the rule-level
 breakdown so future contributors know what the residual baseline
 contains. Do **not** edit `PLAN.md`, `README.md`, `AGENTS.md`, or
-`CHANGELOG.md` — those are owned by [W14](14-phase2-cleanup-gate.md).
+`CHANGELOG.md` — those are owned by [W16](16-phase2-cleanup-gate.md).
 
 ## Behavior change
 

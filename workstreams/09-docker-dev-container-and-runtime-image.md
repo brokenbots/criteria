@@ -1,6 +1,6 @@
 # Workstream 9 — Docker dev container and operator runtime image
 
-**Owner:** Workstream executor · **Depends on:** none · **Coordinates with:** [W13](13-rc-artifact-upload.md) (RC PRs upload the runtime image), [W14](14-phase2-cleanup-gate.md) (cleanup gate verifies a smoke run inside the container).
+**Owner:** Workstream executor · **Depends on:** none · **Coordinates with:** [W13](13-rc-artifact-upload.md) (RC PRs upload the runtime image), [W16](16-phase2-cleanup-gate.md) (cleanup gate verifies a smoke run inside the container).
 
 ## Context
 
@@ -179,7 +179,7 @@ at the top: "For containerized execution, see
 [docs/runtime/docker.md](runtime/docker.md)."
 
 Do **not** edit `README.md`, `PLAN.md`, `AGENTS.md`, `CHANGELOG.md`.
-W14 picks up the README announcement.
+W16 (cleanup gate; renumbered from W14 on 2026-04-30) picks up the README announcement.
 
 ### Step 6 — `.dockerignore`
 

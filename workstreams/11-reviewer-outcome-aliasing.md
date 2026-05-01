@@ -1,5 +1,21 @@
 # Workstream 11 — Reviewer outcome aliasing (UF#03)
 
+> **Status: CANCELLED (2026-04-30).**
+> This workstream has been removed from Phase 2 scope. UF#03 is now
+> addressed at the source by the new tool-call finalization workstreams
+> ([W14](14-copilot-tool-call-wire-contract.md) +
+> [W15](15-copilot-submit-outcome-adapter.md)): once the Copilot adapter
+> finalizes via a structured `submit_outcome` tool call against the
+> step's declared outcome set, host-side outcome aliasing is no longer
+> the motivating user pain. UF#03 stays accounted for via W14/W15 in
+> the cleanup gate's user-feedback ledger.
+>
+> **Do not execute this workstream.** The historical scope is preserved
+> below for context only. If a host-side alias map is wanted later (for
+> non-Copilot adapters), file a fresh workstream against this design.
+
+---
+
 **Owner:** Workstream executor · **Depends on:** none.
 
 ## Context

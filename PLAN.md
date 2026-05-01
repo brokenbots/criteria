@@ -76,7 +76,35 @@ type, Copilot agent defaults, and a `count`-style construct).
 
 *Phase 1 closed 2026-04-29. Archived under [workstreams/archived/v1/](workstreams/archived/v1/).*
 
-## Phase 2 — TBD
+## Phase 2 — Maintainability + unattended MVP + Copilot tool-call finalization (in progress)
+
+**Goal:** lift Maintainability and Tech Debt grades from C+/C to ≥ B, ship the smallest set of capabilities that allow unattended end-to-end execution (local-mode approval + per-step `max_visits`), replace the Copilot adapter's brittle prose-parsed outcome with a structured `submit_outcome` tool call (new W14/W15 pair, replacing the cancelled W11 outcome-aliasing approach), establish Docker as the interim runtime sandbox, honor the v0.3.0 commitment to remove `CRITERIA_SHELL_LEGACY=1`, and absorb deferred user-feedback items UF#02, UF#03, UF#05, UF#06, UF#08.
+
+Two workstreams from the original plan were cancelled on 2026-04-30:
+
+- **W05** (`SubWorkflowResolver` CLI wiring) — deferred to Phase 3. The compile-time gap remains a known forward-pointer; the example `examples/workflow_step_compose.hcl` does not ship with v0.3.0.
+- **W11** (reviewer outcome aliasing — host-side `outcome_aliases` HCL block) — cancelled. UF#03 is now addressed at the source by **W14 + W15** (Copilot adapter finalizes via a structured `submit_outcome` tool call against the step's declared outcome set, removing the brittle `result:` prose-parsing path).
+
+### Phase 2 workstreams (active set, target `v0.3.0`)
+
+Workstream files live at [workstreams/](workstreams/).
+
+- [W01](workstreams/01-lint-baseline-mechanical-burn-down.md) — Lint baseline mechanical burn-down.
+- [W02](workstreams/02-lint-ci-gate.md) — Lint CI gate (baseline-stays-flat enforcement).
+- [W03](workstreams/03-copilot-file-split-and-permission-alias.md) — Split `copilot.go`; Copilot permission-kind alias (UF#02).
+- [W04](workstreams/04-state-dir-permissions.md) — `~/.criteria/` mode hardened to `0o700`.
+- [W05](workstreams/05-subworkflow-resolver-wiring.md) — *Cancelled 2026-04-30; deferred to Phase 3.*
+- [W06](workstreams/06-local-mode-approval.md) — Local-mode approval and signal wait via `CRITERIA_LOCAL_APPROVAL` (UF#05).
+- [W07](workstreams/07-per-step-max-visits.md) — Per-step `max_visits` (UF#08).
+- [W08](workstreams/08-contributor-on-ramp.md) — Contributor on-ramp; numeric bus-factor goal.
+- [W09](workstreams/09-docker-dev-container-and-runtime-image.md) — VS Code dev container + operator runtime image.
+- [W10](workstreams/10-remove-shell-legacy-escape-hatch.md) — Remove `CRITERIA_SHELL_LEGACY=1`.
+- [W11](workstreams/11-reviewer-outcome-aliasing.md) — *Cancelled 2026-04-30; UF#03 addressed by W14+W15.*
+- [W12](workstreams/12-lifecycle-log-clarity.md) — Adapter lifecycle log clarity; `OnAdapterLifecycle` sink hook (UF#06).
+- [W13](workstreams/13-rc-artifact-upload.md) — RC artifact upload.
+- [W14](workstreams/14-copilot-tool-call-wire-contract.md) — Copilot tool-call wire contract: `pb.ExecuteRequest.AllowedOutcomes`; SDK bump.
+- [W15](workstreams/15-copilot-submit-outcome-adapter.md) — Copilot `submit_outcome` adapter: tool-call outcome finalization with 3-attempt reprompt; remove `result:` prose parsing (UF#03).
+- [W16](workstreams/16-phase2-cleanup-gate.md) — Phase 2 cleanup gate: validation, lint-baseline gate, tech-eval re-run, archive, tag `v0.3.0`.
 
 ## Deferred / forward-pointers
 
@@ -92,7 +120,7 @@ Phase 2 candidate scope (triage list, not a commitment — Phase 2 planning prio
   for a future language phase.
 - **`@criteria/proto-ts` npm package.** No TypeScript consumers in
   this repo; if a future consumer needs TS bindings, plan it then. Carried over from Phase 0.
-- **`workflow_file` full runtime resolution** (W10 partial): `SubWorkflowResolver` is not wired into the CLI compile path; `workflow_file` validation requires a resolver at compile time. The example `examples/workflow_step_compose.hcl` is deferred until this wiring lands.
+- **`workflow_file` full runtime resolution** (W10 partial): `SubWorkflowResolver` is not wired into the CLI compile path; `workflow_file` validation requires a resolver at compile time. The example `examples/workflow_step_compose.hcl` is deferred until this wiring lands. Phase 2 originally scoped this as W05 but cancelled it on 2026-04-30 to prioritize Copilot tool-call outcome finalization (W14/W15); carry forward to Phase 3.
 - **Lint baseline burn-down (W03/W04 residual entries)**: 42 W03-tagged and 133 W04-tagged entries remain in `.golangci.baseline.yml`. W03 residual covers `handlePermissionRequest`, `permissionDetails`, and extracted helper functions outside the original four-function scope; W04 residual covers gofmt/goimports/unused findings on split files. These are approved exceptions for Phase 2 cleanup. See workstream reviewer notes for full accounting.
 - **Lint baseline enforcement in CI** (`make lint-go` is currently manual; CI enforcement as a permanent gate is a Phase 2 nice-to-have).
 
