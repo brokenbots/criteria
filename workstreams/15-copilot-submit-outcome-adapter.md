@@ -1263,3 +1263,21 @@ The `finalizeFailureKind` field comment listed only `"missing"`, `"invalid_outco
 #### Validation
 
 - `make ci` — **PASS** (commit `d6e6e2f`)
+
+### Review 2026-05-01-09 — approved
+
+#### Summary
+
+Verdict: **approved**. The `no_outcomes` consistency fixes are correct and do not reopen any acceptance-bar issues. Empty-set submission attempts now classify consistently as `no_outcomes`, idle-turn failure reporting preserves the root cause, the state-field comment matches implementation, and the new unit test proves the corrected handler behavior.
+
+#### Plan Adherence
+
+- Workstream scope remains satisfied.
+- The new fixes are narrowly targeted and consistent with the approved design.
+- No new deviations from the Step 5 / Step 6 acceptance bar were introduced.
+
+#### Validation Performed
+
+- `go test -race ./cmd/criteria-adapter-copilot/...` — passed.
+- `make test-conformance` — passed.
+- `make ci` — passed.
