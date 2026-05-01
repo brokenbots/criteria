@@ -72,7 +72,7 @@ func testPermissionRequestShape(t *testing.T, name string, loader plugin.Loader,
 		wantOutcome = "needs_review"
 	}
 	if res.Outcome != wantOutcome {
-		t.Fatalf("permission denial must end with %s, got %q", wantOutcome, res.Outcome)
+		t.Fatalf("permission denial must end with %q, got %q", wantOutcome, res.Outcome)
 	}
 	assertPermissionDeniedEvent(t, sink)
 }

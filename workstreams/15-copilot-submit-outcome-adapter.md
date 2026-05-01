@@ -1088,3 +1088,44 @@ The old fake sent both `external_tool.requested` events plus `session.idle` imme
 - `TestConformance_DuplicateCallScenario_Fixture` — **PASS**
 - `TestConformance_AllowedOutcomesPropagation_SetProof` — **PASS**
 - `make ci` — **PASS** (race detector, lint, conformance, import boundaries, all examples)
+
+### PR review thread remediation — 2026-05-01
+
+Three threads from `copilot-pull-request-reviewer`:
+
+**Thread 1 — `copilot_turn.go`: empty allowed set wastes reprompt turns**
+
+`reprompt()` was called even when `activeAllowedOutcomes` is empty, producing a
+misleading prompt ("allowed outcomes: " with no values) and spending 2 futile turns.
+
+Fix: added `handleIdleTurn` helper extracted from `awaitOutcome`'s idle-turn branch.
+`handleIdleTurn` short-circuits when the allowed set is empty — sets
+`finalizeFailureKind = "no_outcomes"` and calls `failExhausted` immediately
+without reprompting. Also added `"no_outcomes": "step has no declared outcomes"` to
+`failExhausted`'s `reasonLabels` map so the `outcome.failure` event carries a clear
+machine-readable kind and human-readable reason.
+
+Side effect: extracting `handleIdleTurn` reduced `awaitOutcome`'s cognitive
+complexity from 25 to well within the `gocognit` limit (was blocking lint).
+
+**Thread 2 — `fake-copilot/main.go`: atomic race in `sendToolCall`**
+
+`sendToolCall` called `atomic.AddInt64(&toolSeq, 1)` then `atomic.LoadInt64(&toolSeq)`
+separately — the value could change between the two calls under concurrent use.
+
+Fix: capture the incremented value once:
+```go
+seq := atomic.AddInt64(&toolSeq, 1)
+reqID := fmt.Sprintf("fake-tool-req-%d", seq)
+toolCallID := fmt.Sprintf("fake-tc-%d", seq)
+```
+
+**Thread 3 — `conformance_outcomes.go`: inconsistent `%s` vs `%q`**
+
+Failure message used `%s` for `wantOutcome` but `%q` for `res.Outcome`.
+
+Fix: changed to `%q` for both operands.
+
+#### Validation
+
+- `make ci` — **PASS** (all tests, race detector, lint, import boundaries, examples)

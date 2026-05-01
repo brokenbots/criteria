@@ -310,8 +310,9 @@ func waitForToolCall(reqID string) {
 // sendToolCall emits a single external_tool.requested event for submit_outcome
 // and registers a pending channel for handlePendingToolCall. Returns the requestId.
 func sendToolCall(sessionID, outcome, reason string) string {
-	reqID := fmt.Sprintf("fake-tool-req-%d", atomic.AddInt64(&toolSeq, 1))
-	toolCallID := fmt.Sprintf("fake-tc-%d", atomic.LoadInt64(&toolSeq))
+	seq := atomic.AddInt64(&toolSeq, 1)
+	reqID := fmt.Sprintf("fake-tool-req-%d", seq)
+	toolCallID := fmt.Sprintf("fake-tc-%d", seq)
 
 	ch := make(chan struct{})
 	toolsMu.Lock()

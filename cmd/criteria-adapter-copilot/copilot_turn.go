@@ -131,29 +131,49 @@ func (ts *turnState) awaitOutcome(ctx context.Context, s *sessionState, sink plu
 			}
 			return err
 		case <-ts.turnDone:
-			s.mu.Lock()
-			denied := s.permissionDeny
-			outcome := s.finalizedOutcome
-			s.mu.Unlock()
-
-			if denied {
-				return sink.Send(resultEvent("failure"))
-			}
-			if outcome != "" {
-				return sink.Send(resultEvent(outcome))
-			}
-
-			// No valid finalize this turn. Reprompt if attempts remain.
-			if attempt == maxFinalizeAttempts {
-				return ts.failExhausted(s, sink)
-			}
-			if err := ts.reprompt(ctx, s); err != nil {
+			done, err := ts.handleIdleTurn(ctx, s, sink, attempt)
+			if done || err != nil {
 				return err
 			}
-			// Loop and wait for the next SessionIdle.
+			// Not done: reprompt was sent; loop and wait for the next SessionIdle.
 		}
 	}
 	return ts.failExhausted(s, sink)
+}
+
+// handleIdleTurn processes a SessionIdle event during the awaitOutcome loop.
+// Returns (done=true, err) when execution should end; (done=false, nil) when a
+// reprompt was sent and the loop should continue to the next turn.
+func (ts *turnState) handleIdleTurn(ctx context.Context, s *sessionState, sink pluginhost.ExecuteEventSender, attempt int) (done bool, err error) {
+	s.mu.Lock()
+	denied := s.permissionDeny
+	outcome := s.finalizedOutcome
+	s.mu.Unlock()
+
+	if denied {
+		return true, sink.Send(resultEvent("failure"))
+	}
+	if outcome != "" {
+		return true, sink.Send(resultEvent(outcome))
+	}
+
+	// No valid finalize this turn. Fail if exhausted.
+	if attempt == maxFinalizeAttempts {
+		return true, ts.failExhausted(s, sink)
+	}
+	// Short-circuit when no outcomes are declared: the model can never succeed
+	// regardless of how many reprompts we send. Fail immediately with a clear
+	// reason so the operator can fix the misconfigured step.
+	s.mu.Lock()
+	noOutcomes := len(s.activeAllowedOutcomes) == 0
+	if noOutcomes && s.finalizeFailureKind == "" {
+		s.finalizeFailureKind = "no_outcomes"
+	}
+	s.mu.Unlock()
+	if noOutcomes {
+		return true, ts.failExhausted(s, sink)
+	}
+	return false, ts.reprompt(ctx, s)
 }
 
 // reprompt sends a corrective message instructing the model to call submit_outcome.
@@ -193,6 +213,7 @@ func (ts *turnState) failExhausted(s *sessionState, sink pluginhost.ExecuteEvent
 		"missing":         "missing finalize",
 		"invalid_outcome": "invalid outcome",
 		"duplicate":       "duplicate finalize",
+		"no_outcomes":     "step has no declared outcomes",
 	}
 	reason, ok := reasonLabels[kind]
 	if !ok {
