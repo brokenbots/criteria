@@ -192,6 +192,9 @@ func TestCopilotReasoningEffortOverride(t *testing.T) {
 // the AllowedOutcomes field of the ExecuteRequest proto; this test exercises
 // the whole pipe from StepNode declaration to Execute result.
 func TestConformance_AllowedOutcomesPropagation(t *testing.T) {
+	if os.Getenv("COPILOT_E2E") == "1" {
+		t.Skip("skipping fake-copilot default-scenario test in COPILOT_E2E mode")
+	}
 	applyFakeIfNeeded(t)
 
 	loader := plugin.NewLoaderWithDiscovery(func(requested string) (string, error) {
