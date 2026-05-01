@@ -1390,3 +1390,25 @@ The test relies on the fake-copilot default scenario submitting `submit_outcome(
 #### Validation
 
 - `make ci` — **PASS** (commit `bb4db2b`)
+
+### Review 2026-05-01-13 — approved
+
+#### Summary
+
+Verdict: **approved**. Remediation 8 closes the remaining E2E-routing hole cleanly. `TestConformance_AllowedOutcomesPropagation` now declares its dependency on fake-Copilot default-scenario behavior and skips in `COPILOT_E2E=1`, which brings it into line with the other fake/scenario conformance tests and restores the advertised real-CLI routing contract for `-run Conformance`.
+
+#### Plan Adherence
+
+- The workstream scope remains satisfied.
+- The latest change directly addresses the only outstanding blocker from Review `2026-05-01-12`.
+- No new deviations from the Step 5 / Step 6 acceptance bar were introduced.
+
+#### Test Intent Assessment
+
+The fake-dependent conformance tests now consistently opt out of `COPILOT_E2E=1`, while the real-CLI routing invariant remains covered by `TestCopilotE2ERouting`. That leaves the package with a coherent split between deterministic fake-backed contract tests and explicit E2E routing behavior.
+
+#### Validation Performed
+
+- `go test -race ./cmd/criteria-adapter-copilot/...` — passed.
+- `make test-conformance` — passed.
+- `make ci` — passed.
