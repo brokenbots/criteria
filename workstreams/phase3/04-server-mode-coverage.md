@@ -325,6 +325,29 @@ The functional intent of the CLI-side tests is now much stronger: realistic faul
 - `make test-cover` — passed; `cover.out` reports `executeServerRun 95.0%`, `drainResumeCycles 77.8%`, `runApplyServer 86.7%`, `setupServerRun 74.1%`, `internal/transport/server 79.9%`, `internal/cli 75.5%`.
 - `make ci` — passed.
 
+### Review 2026-05-02-03 — approved
+
+#### Summary
+Approved. The remaining goleak blocker is closed: `internal/cli/main_test.go` no longer suppresses the HTTP/2 transport goroutines under review, the fake harness now explicitly closes the h2c/TLS connections that kept those goroutines alive, and the engine+fake-harness tests now register per-test `goleak.VerifyNone(t)` cleanups. The server-mode coverage and transport coverage targets remain above the workstream thresholds.
+
+#### Plan Adherence
+- Step 1: Met. The fake harness remains test-only and now tears down h2c, TLS, and mTLS connections cleanly.
+- Step 2: Met. Happy-path coverage still proves ordered host publication through `runApplyServer`.
+- Step 3: Met. Cancellation and timeout tests cover the intended server-mode control paths and checkpoint behavior.
+- Step 4: Met. `disable`, `tls`, and `mtls` setup coverage remains in place with UUID v4 assertions and negative-path coverage.
+- Step 5: Met. `drainResumeCycles` is exercised directly for pause/resume and reconnect flows, with checkpoint assertions around the cycle.
+- Step 6: Met. Transport reconnect/replay coverage remains above target.
+- Step 7: Met. Leak-specific validation, package validation, coverage validation, and `make ci` all pass.
+
+#### Test Intent Assessment
+The CLI-side tests now prove the intended behavior instead of only eventual success: they assert checkpoint progression, resume orchestration, reconnect replay, TLS wiring, and per-test goroutine cleanup at the engine+harness boundary. A realistic regression in any of those paths would now fail the suite.
+
+#### Validation Performed
+- `go test -v -race -count=1 -timeout=120s ./internal/cli/ -run 'TestRunApplyServer_HappyPath|TestExecuteServerRun_Cancellation|TestExecuteServerRun_TimeoutPropagation|TestSetupServerRun_TLSDisable|TestSetupServerRun_TLSEnable|TestSetupServerRun_MTLS|TestDrainResumeCycles_PauseThenResume|TestDrainResumeCycles_StreamDropAndReconnect'` — passed, including per-test `goleak.VerifyNone(t)` cleanup.
+- `go test -race -count=2 ./internal/cli/... ./internal/transport/server/...` — passed.
+- `make test-cover` — passed; `cover.out` reports `executeServerRun 95.0%`, `drainResumeCycles 77.8%`, `runApplyServer 86.7%`, `setupServerRun 74.1%`, `internal/transport/server 79.9%`, `internal/cli 75.5%`.
+- `make ci` — passed.
+
 ## Review 2 Implementation — Blocker Remediations
 
 ### B1 (`TestRunApplyServer_HappyPath`)
