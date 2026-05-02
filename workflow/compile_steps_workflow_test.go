@@ -77,18 +77,25 @@ workflow "x" {
 	}
 }
 
-// TestWorkflowStep_InvalidLifecycle verifies that a step with an agent but an
-// invalid lifecycle value produces a compile error containing "invalid lifecycle".
-func TestWorkflowStep_InvalidLifecycle(t *testing.T) {
+// TestWorkflowStep_InvalidOnFailureValue verifies that a type="workflow" step
+// with an invalid on_failure value produces a compile error containing
+// "invalid on_failure". This tests that validateOnFailureValue is called by
+// compileWorkflowStep.
+func TestWorkflowStep_InvalidOnFailureValue(t *testing.T) {
 	src := `
 workflow "x" {
   version       = "0.1"
   initial_state = "run"
   target_state  = "done"
-  agent "bot" { adapter = "noop" }
   step "run" {
-    agent     = "bot"
-    lifecycle = "bad"
+    type       = "workflow"
+    on_failure = "bad"
+    workflow {
+      step "inner" {
+        adapter = "noop"
+        outcome "done" { transition_to = "_continue" }
+      }
+    }
     outcome "done" { transition_to = "done" }
   }
   state "done" { terminal = true }
@@ -100,27 +107,31 @@ workflow "x" {
 	}
 	_, diags = Compile(spec, testSchemas)
 	if !diags.HasErrors() {
-		t.Fatal("expected compile error for invalid lifecycle")
+		t.Fatal("expected compile error for invalid on_failure on workflow step")
 	}
-	if !strings.Contains(diags.Error(), "invalid lifecycle") {
-		t.Errorf("expected 'invalid lifecycle' in diagnostic, got: %s", diags.Error())
+	if !strings.Contains(diags.Error(), "invalid on_failure") {
+		t.Errorf("expected 'invalid on_failure' in diagnostic, got: %s", diags.Error())
 	}
 }
 
-// TestWorkflowStep_AllowToolsWithLifecycle verifies that a step with both
-// allow_tools and lifecycle (and an agent) produces a compile error containing
-// "allow_tools is only valid on execute-shape steps".
-func TestWorkflowStep_AllowToolsWithLifecycle(t *testing.T) {
+// TestWorkflowStep_OnFailureRequiresIterating verifies that a non-iterating
+// type="workflow" step with on_failure set (valid value) produces a compile
+// error containing "on_failure requires for_each or count".
+func TestWorkflowStep_OnFailureRequiresIterating(t *testing.T) {
 	src := `
 workflow "x" {
   version       = "0.1"
   initial_state = "run"
   target_state  = "done"
-  agent "bot" { adapter = "noop" }
   step "run" {
-    agent       = "bot"
-    lifecycle   = "open"
-    allow_tools = ["read"]
+    type       = "workflow"
+    on_failure = "continue"
+    workflow {
+      step "inner" {
+        adapter = "noop"
+        outcome "done" { transition_to = "_continue" }
+      }
+    }
     outcome "done" { transition_to = "done" }
   }
   state "done" { terminal = true }
@@ -132,9 +143,9 @@ workflow "x" {
 	}
 	_, diags = Compile(spec, testSchemas)
 	if !diags.HasErrors() {
-		t.Fatal("expected compile error for allow_tools + lifecycle")
+		t.Fatal("expected compile error for on_failure without for_each/count on workflow step")
 	}
-	if !strings.Contains(diags.Error(), "allow_tools is only valid on execute-shape steps") {
-		t.Errorf("expected 'allow_tools is only valid on execute-shape steps' in diagnostic, got: %s", diags.Error())
+	if !strings.Contains(diags.Error(), "on_failure requires for_each or count") {
+		t.Errorf("expected 'on_failure requires for_each or count' in diagnostic, got: %s", diags.Error())
 	}
 }
