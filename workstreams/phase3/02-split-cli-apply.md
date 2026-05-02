@@ -256,6 +256,31 @@ The test story remains acceptable for a pure code-motion change. The passing `go
 - `make ci` — passed.
 - `git show main:internal/cli/apply.go | sed -n '84,90p'` — confirmed the original `runApplyLocal` `//nolint:funlen // W03: ...` annotation text for comparison against the rewritten line in `internal/cli/apply_local.go:22`.
 
+### Review 2026-05-02-03 — approved
+
+#### Summary
+Approved. The carve remains faithful to the workstream scope, `.golangci.baseline.yml` is unchanged, the historical `//nolint:funlen // W03: ...` annotation now appears verbatim on `runApplyLocal`, and the requested validation suite passes on the submitted tree.
+
+#### Plan Adherence
+- **Step 1 / Exit criteria (file carve, LOC, ownership):** Met. `internal/cli/apply.go` is 69 LOC; `apply_local.go`, `apply_server.go`, `apply_resume.go`, and `apply_setup.go` contain the expected moved symbols and remain under the 300 LOC ceiling (current counts: 219 / 189 / 220 / 91).
+- **Step 2 (`//nolint` preservation):** Met. `internal/cli/apply_local.go:22-25` preserves the original `//nolint:funlen // W03: ...` text verbatim on the `func runApplyLocal(` line, with the separate `//nolint:gocritic` suppression attached independently to the `opts applyOptions` parameter.
+- **Step 3 / Step 4:** Met. Intra-package references resolve cleanly, and no `internal/cli/*_test.go` files changed.
+- **Step 5:** Met. `go build ./internal/cli/...`, `go test -race -count=2 ./internal/cli/...`, `make lint-go`, `make lint-baseline-check`, and `make ci` all exited 0.
+- **Exit criteria / baseline guard:** Met. `git diff --exit-code main -- .golangci.baseline.yml` passed.
+
+#### Test Intent Assessment
+For a pure code-motion workstream, the existing regression net remains appropriate. The unchanged CLI tests still exercise the moved local/reattach paths, and the passing `make ci` run gives additional confidence that package wiring and broader behavior were preserved.
+
+#### Validation Performed
+- `git diff --exit-code main -- .golangci.baseline.yml` — passed.
+- `wc -l internal/cli/apply.go internal/cli/apply_local.go internal/cli/apply_server.go internal/cli/apply_resume.go internal/cli/apply_setup.go` — verified 69 / 219 / 189 / 220 / 91 LOC.
+- `git show main:internal/cli/apply.go | sed -n '84,90p'` — confirmed the original `runApplyLocal` historical `//nolint` annotation.
+- `go build ./internal/cli/...` — passed.
+- `go test -race -count=2 ./internal/cli/...` — passed.
+- `make lint-go` — passed.
+- `make lint-baseline-check` — passed (`20 / 20`).
+- `make ci` — passed.
+
 ## Risks
 |---|---|
 | A moved function relies on an unexported helper that should have moved with it | `go build ./internal/cli/...` catches this immediately. Move the helper alongside the function. |
