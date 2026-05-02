@@ -1057,3 +1057,22 @@ go test -race -count=2 ./internal/cli/... ./internal/transport/server/...  # pas
 make lint-go                                                                # pass
 make test                                                                   # all pass
 ```
+
+### Review 2026-05-02-18 — approved
+
+#### Summary
+Approved. The missing negative mTLS regression is now covered, the reconnect-backoff assertion is strong enough to fail a fixed-delay regression, and the branch again meets the workstream’s scope, test-intent, and validation bars.
+
+#### Plan Adherence
+- Steps 1–7 remain met.
+- Scope remains compliant: the new code is limited to test-only files plus workstream notes, and `internal/transport/server/client.go` still only carries the previously accepted `TLSMode()` accessor and a no-behavior-change inline simplification.
+- The mTLS harness hardening is now actually proven by the suite: `TestSetupServerRun_MTLSRejectsCACert` exercises `NewMTLS` end-to-end with the CA cert/key presented as the client credential and verifies that `setupServerRun` fails.
+
+#### Test Intent Assessment
+The new `TestSetupServerRun_MTLSRejectsCACert` closes the prior trust-boundary gap because it proves the exact bad credential combination that motivated `rejectCACertClient` is rejected in the fully wired `setupServerRun` path. The updated `TestClientReconnectMultipleFailures` assertion is also materially stronger: a reconnect loop that merely preserves counts while using a fixed delay would now fail, so the test better matches the intended exponential-backoff contract.
+
+#### Validation Performed
+- `git show --patch --stat 2c0eabb b41621a -- internal/cli/apply_server_test.go internal/cli/applytest/fakeserver.go internal/transport/server/client_test.go workstreams/phase3/04-server-mode-coverage.md` — reviewed the negative mTLS test, CA-key accessor, and stronger backoff assertion.
+- `go test -race -count=2 ./internal/cli/... ./internal/transport/server/...` — passed.
+- `make test-cover` — passed; `cover.out` reports `executeServerRun 95.0%`, `drainResumeCycles 77.8%`, `runApplyServer 86.7%`, `setupServerRun 81.5%`, `internal/transport/server 79.5%`, `internal/cli 75.7%`.
+- `make ci` — passed.
