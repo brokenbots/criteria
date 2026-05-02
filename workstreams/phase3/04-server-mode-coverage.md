@@ -881,3 +881,34 @@ go test -race -count=2 ./internal/transport/server/...  # pass (12.3s)
 make test                                               # all pass
 make lint-go                                            # pass
 ```
+
+### Review 2026-05-03 — changes-requested (threads JcKk, JcKl, JcKr)
+
+#### Blockers addressed (commit `0de9021`)
+
+**JcKk — count-only assertion in TestClientReconnectMultipleFailures**
+- `len(f.events[runID]) == want` passes even if one event is duplicated and another dropped.
+- Fix: replaced with a content assertion that verifies step identity and order
+  `["s1","s2","s3","final"]`. A duplicate+drop bug now fails.
+- `internal/transport/server/client_test.go:657-671`.
+
+**JcKl — count-only assertion in TestClientSinceSeqZeroEventReplay**
+- Same issue: `count != 2` passes even with a replay-induced duplication+drop.
+- Fix: replaced with a content assertion asserting `["s1","s2"]` in order.
+- Also applied same fix to `TestClientReconnectSendsSinceSeq` (identical pattern, not explicitly
+  flagged but reviewer would likely catch it).
+- `internal/transport/server/client_test.go:759-773` and `392-406`.
+
+**JcKr — stale goleak paragraph in workstream doc**
+- The paragraph described the old TestMain approach; current code uses per-test
+  `requireNoGoroutineLeak` / `goleak.IgnoreCurrent()` snapshot inside `startFakeServer`,
+  with no TestMain in the transport package.
+- Updated paragraph to accurately describe both the CLI and transport approaches.
+- `workstreams/phase3/04-server-mode-coverage.md`.
+
+#### Validation (Review 2026-05-03 remediation)
+
+```
+go test -race -count=2 ./internal/transport/server/... ./internal/cli/...  # pass
+make lint-go                                                                # pass
+```
