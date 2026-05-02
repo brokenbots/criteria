@@ -8,39 +8,23 @@ prior phases are in [`archived/`](archived/).
 - **Phase 0** — post-separation cleanup — **closed 2026-04-27**. All nine
   workstreams merged; `v0.1.0` tagged. Archived under [`archived/v0/`](archived/v0/).
 - **Phase 1** — stabilization + critical user fixes — **closed 2026-04-29**.
-  All eleven workstreams merged; lint baseline burn-down gate clean; `v0.2.0` tagged.
-  Archived under [`archived/v1/`](archived/v1/).
-- **Phase 2** — maintainability + unattended MVP + Docker runtime + Copilot tool-call finalization — **in progress**. Fifteen workstreams scoped, two cancelled (W05, W11). Targeting `v0.3.0`. Plan at `~/.claude/plans/we-need-to-plan-inherited-tulip.md` (local). See [PLAN.md](../PLAN.md) for the project-level roadmap.
+  All eleven workstreams merged; lint baseline burn-down gate clean.
+  Archived under [`archived/v1/`](archived/v1/). The `v0.2.0` tag was
+  documented but not pushed at this close; it ships at HEAD with the
+  combined Phase 1 + Phase 2 work below.
+- **Phase 2** — maintainability + unattended MVP + Docker runtime + Copilot
+  tool-call finalization — **closed 2026-05-02**. Sixteen workstreams scoped,
+  two cancelled (W05, W11). `v0.2.0` tagged at HEAD covering combined Phase 1
+  + Phase 2 work. Archived under [`archived/v2/`](archived/v2/).
+- **Phase 3** — TBD. Architecture-team direction is an HCL/runtime rework;
+  see [PLAN.md](../PLAN.md) for the candidate scope and the "Phase 3
+  forward-pointer" section below.
 
-## Phase 2 workstreams
+## Phase 2 workstreams (archived)
 
-Phase 2 brings Maintainability and Tech Debt up from C+/C to ≥ B, ships the smallest set of features that allow unattended end-to-end execution (local-mode approval + per-step `max_visits`), replaces the Copilot adapter's prose-parsed outcome with a structured `submit_outcome` tool call (W14 wire contract + W15 adapter consumer), establishes Docker as the interim runtime sandbox, honors the v0.3.0 commitment to remove `CRITERIA_SHELL_LEGACY=1`, and absorbs four deferred user-feedback items (UF#02, UF#03, UF#05, UF#06, UF#08). UF#03 is now satisfied at the source by W14+W15 (was W11). The `workflow_file` runtime resolver (was W05) is deferred to Phase 3.
-
-- [W01](01-lint-baseline-mechanical-burn-down.md) — Lint baseline mechanical burn-down (gofmt/goimports/unused; reclassify proto-generated `revive`).
-- [W02](02-lint-ci-gate.md) — Lint CI gate; baseline-stays-flat enforcement via `tools/lint-baseline/cap.txt`.
-- [W03](03-copilot-file-split-and-permission-alias.md) — Split `copilot.go` (793 LOC) into focused siblings; land Copilot permission-kind alias (UF#02).
-- [W04](04-state-dir-permissions.md) — Tighten `~/.criteria/` directory mode to `0o700`.
-- [W05](05-subworkflow-resolver-wiring.md) — *Cancelled (2026-04-30); deferred to Phase 3.*
-- [W06](06-local-mode-approval.md) — Local-mode approval and signal wait via `CRITERIA_LOCAL_APPROVAL` (UF#05).
-- [W07](07-per-step-max-visits.md) — Per-step `max_visits` to bound runaway loops (UF#08).
-- [W08](08-contributor-on-ramp.md) — Author `docs/contributing/your-first-pr.md`; label five `good-first-issue` items; numeric Phase 2 contributor goal.
-- [W09](09-docker-dev-container-and-runtime-image.md) — VS Code dev container + operator runtime image as the interim runtime sandbox.
-- [W10](10-remove-shell-legacy-escape-hatch.md) — Remove `CRITERIA_SHELL_LEGACY=1` per the v0.2.0 threat-model commitment.
-- [W11](11-reviewer-outcome-aliasing.md) — *Cancelled (2026-04-30); UF#03 addressed by W14+W15.*
-- [W12](12-lifecycle-log-clarity.md) — Adapter lifecycle log clarity; new `OnAdapterLifecycle` sink hook (UF#06).
-- [W13](13-rc-artifact-upload.md) — Release-candidate artifact upload on PRs marked `release/*` or with `-rc<N>` titles.
-- [W14](14-copilot-tool-call-wire-contract.md) — Copilot tool-call wire contract: add `AllowedOutcomes` to `pb.ExecuteRequest`; SDK bump.
-- [W15](15-copilot-submit-outcome-adapter.md) — Copilot `submit_outcome` adapter: structured tool-call outcome finalization with 3-attempt reprompt; remove `result:` prose parsing (UF#03).
-- [W16](16-phase2-cleanup-gate.md) — Phase 2 cleanup gate: validation, lint-baseline gate, tech-eval re-run, archive, tag `v0.3.0`.
-
-### Workstream conventions (Phase 2)
-
-Every Phase 2 workstream file declares:
-
-- **Goal**, **Prerequisites**, **In scope** (with file paths and line ranges), **Out of scope** (explicit "do not touch" list), **Reuse pointers** (existing functions/interfaces to use), **Behavior change** disclosure ("yes" or "no"; if yes, every observable difference enumerated for the reviewer), **Tests required**, **Exit criteria**, and a **Files this workstream may modify** list.
-- The "may not edit" set is restated in every workstream: `README.md`, `PLAN.md`, `AGENTS.md`, `CHANGELOG.md`, `workstreams/README.md`, and any other workstream file. Those are W16's territory.
-
-See [PLAN.md](../PLAN.md) for the project-level roadmap.
+All Phase 2 workstream files have been moved to [`archived/v2/`](archived/v2/).
+See [PLAN.md](../PLAN.md) for the project-level roadmap with per-workstream
+links and outcomes.
 
 ## Phase 1 workstreams (archived)
 
@@ -52,13 +36,52 @@ All Phase 0 workstream files have been moved to [`archived/v0/`](archived/v0/).
 
 ## Phase 3 forward-pointer
 
-Phase 3 is sketched in the parent plan but not yet scoped here. Targeted theme:
+Phase 3 is sketched in [PLAN.md](../PLAN.md) but not yet active here. Targeted
+theme (per architecture_notes.md and proposed_hcl.hcl): **HCL/runtime rework
+with a clean break from v0.2.0**. Twenty-one workstreams are scoped; the
+detailed per-workstream files have been drafted locally and will be moved into
+this directory when Phase 3 begins. The originally-planned Phase 3 environments
+/ plug architecture theme is deferred to Phase 4 with a new contributor.
 
-- **Environments / plug architecture.** A new layer in `internal/plugin/loader.go:124` (the `exec.Command(path)` site) that wraps an adapter subprocess inside an isolation environment. First reference implementation: a Docker environment, building on Phase 2 [W09](09-docker-dev-container-and-runtime-image.md). The architecture team explicitly framed this as the precursor to OS-level controls.
-- Verbose output mode (UF#07).
-- Continued lint baseline burn-down toward < 50 entries.
-- `DurableAcrossRestart` SDK conformance lift (orchestrator dependency).
-- Contributor goal: ≥ 3 non-author humans by end of Phase 3.
+Headline scope:
+
+- **Pre-rework cleanup.** Lint baseline burn-down to ≤ 50; split
+  [internal/cli/apply.go](../internal/cli/apply.go) and
+  [workflow/compile_steps.go](../workflow/compile_steps.go); server-mode apply
+  test coverage; tracked roadmap artifact; release-process integrity.
+- **Compile-time / runtime semantics.** `local "<name>"` block + constant-fold
+  pass; schema unification (drop `WorkflowBodySpec`, sub-workflow IS a `Spec`,
+  drop cross-scope `Vars` aliasing); top-level `output` block; `environment`
+  declaration surface.
+- **Language surface — clean break.** `agent` → `adapter "<type>" "<name>"`
+  hard rename; adapter lifecycle automation; first-class `subworkflow` block
+  with CLI resolver wiring; universal step `target` attribute; `outcome.next`
+  + reserved `return` outcome; `branch` → `switch` rename; directory-level
+  multi-file module compilation as the only entry shape.
+- **Runtime.** `shared_variable` block; `parallel` step modifier; implicit
+  input chaining.
+
+Phase 4 candidate scope (deferred): environments / plug architecture (the
+originally-planned Phase 3 theme), platform-specific shell sandboxing,
+durable-resume conformance lift, remote subworkflow source schemes, `if`
+block decision, per-iteration adapter sessions.
+
+## Workstream conventions
+
+Every workstream file declares:
+
+- **Goal**, **Prerequisites**, **In scope** (with file paths and line ranges),
+  **Out of scope** (explicit "do not touch" list), **Reuse pointers** (existing
+  functions/interfaces to use), **Behavior change** disclosure ("yes" or "no";
+  if yes, every observable difference enumerated for the reviewer), **Tests
+  required**, **Exit criteria**, and a **Files this workstream may modify**
+  list.
+- The "may not edit" set is restated in every workstream: `README.md`,
+  `PLAN.md`, `AGENTS.md`, `CHANGELOG.md`, `CONTRIBUTING.md`,
+  `workstreams/README.md`, and any other workstream file. Those are the
+  cleanup-gate's territory.
+
+See [PLAN.md](../PLAN.md) for the project-level roadmap.
 
 ## Files NOT editable by workstream-executor or workstream-reviewer
 
@@ -68,6 +91,8 @@ file they are executing**. They may not edit:
 - `README.md`
 - `PLAN.md`
 - `AGENTS.md`
+- `CHANGELOG.md`
+- `CONTRIBUTING.md`
 - `workstreams/README.md`
 - Any other workstream file in this directory
 
@@ -78,7 +103,10 @@ forward-pointer note in its reviewer log.
 
 ## Archived
 
-Phase 0 is archived under [`archived/v0/`](archived/v0/).
-Phase 1 is archived under [`archived/v1/`](archived/v1/).
-The pre-separation v1.x phases live in the orchestrator repo's `workstreams/archived/`; they are
-not copied here.
+- Phase 0 — [`archived/v0/`](archived/v0/) (closed 2026-04-27, `v0.1.0`).
+- Phase 1 — [`archived/v1/`](archived/v1/) (closed 2026-04-29).
+- Phase 2 — [`archived/v2/`](archived/v2/) (closed 2026-05-02, `v0.2.0`
+  combined-phase tag).
+
+The pre-separation v1.x phases live in the orchestrator repo's
+`workstreams/archived/`; they are not copied here.

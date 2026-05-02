@@ -100,7 +100,7 @@ The following capabilities are explicitly NOT delivered by this workstream:
 
 ## 6. Migration / Opt-Out
 
-**`CRITERIA_SHELL_LEGACY=1` was removed in v0.3.0** as committed in the v0.2.0
+**`CRITERIA_SHELL_LEGACY=1` was removed in v0.2.0** as committed in the v0.2.0
 threat model. Setting the env var has no effect. The Phase 1 sandbox defaults
 are unconditional.
 

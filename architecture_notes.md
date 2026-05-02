@@ -168,3 +168,60 @@ compile-time graph truthful.
    own seeded `Vars` from its declared variables + the parent's `input { }`
    bindings. Outputs flow back via `output { }` blocks, as today.
 
+
+---
+
+## Formal Language Specification (v2 Plan)
+
+Based on the review of FSM friction and the proposed HCL structure, the language and execution engine are moving to a Terraform-style module system.
+
+### 1. The Directory-Level Module System
+A "workflow" is no longer strictly bound to a single file. Execution runs against a **directory**. All `.hcl` files in the directory are parsed, validated, and merged into a single flat `Spec` definition. 
+This allows complex FSMs to be split across multiple files (e.g., `variables.hcl`, `adapters.hcl`, `steps.hcl`).
+
+### 2. Core Principles
+*   **Deep Compile-Time Validation:** The FSM graph, including all nested subworkflows, is fully loaded, resolved, and validated at compile time. 
+*   **Explicit Scoping:** Inner scopes (subworkflows) do not implicitly inherit variables or locals. Data passing is explicit via input bindings.
+*   **Target-Agnostic Steps:** A `step` is a uniform unit of work. It does not change shape based on what it executes. It simply points to a target: an internal function, an adapter, or a subworkflow.
+*   **Flow Control as First-Class Blocks:** Control flow is handled by explicit `if` and `switch` blocks rather than being baked into step outcomes.
+*   **Scope-Bound Lifecycles:** Adapters are initialized automatically when their defining workflow scope begins, and are cleanly torn down when that scope reaches a terminal state.
+
+### 3. Core Blocks
+Blocks are elevated to the top level to support multi-file compilation:
+
+*   **`workflow "<name>"`**: The entry point metadata. Defines `version`, `file` constraints, and an optional default `environment`. (Iteration is completely removed from here).
+*   **`variable "<name>"`**: Explicit typing (`string`, `number`, `map`, etc.) and default values. Strict compile-time resolution.
+*   **`local "<name>"`**: Intermediate computed values strictly evaluated at compile-time.
+*   **`output "<name>"`**: Explicitly defines what the directory/module returns to callers. Replaces implicit state leaking.
+*   **`environment "<type>" "<name>"`**: Defines isolated execution environments (e.g., `variables` for env vars, `config` for directories/permissions).
+*   **`adapter "<type>" "<name>"`** *(Replaces `agent`)*: Defines long-lived, named plugin instances. Inherits an `environment`. Lifecycle automatically bound to the workflow module.
+*   **`subworkflow "<name>"`**: Declares a reusable target from a remote or local `source` directory. Subworkflows are deep-compiled into the graph before execution.
+*   **`step "<target_type>_<target_id>" "<name>"`**: The universal execution unit.
+*   **`if "<name>"` / `switch "<name>"`**: Explicit flow control blocks replacing legacy routing blocks.
+
+### 4. Unified Step and Target Semantics
+The `step` block is radically simplified in shape but much more powerful in its routing:
+
+*   **Universal Target:** A step targets internal functions, adapters, or subworkflows universally based on `target_type`.
+*   **Modifiers:**
+    *   `count` / `for_each`: Runs the step multiple times.
+    *   `parallel`: A new list modifier to instruct the engine to execute the step concurrently for multiple items.
+*   **Implicit Input Chaining:** If the `input` block is omitted, the engine defaults to passing the exact `output` of the previous step as the input to the current step, creating clean functional pipelines.
+*   **Outcomes & Routing:**
+    *   `transition_to` is replaced by `next`.
+    *   Outcomes explicitly capture mapping data via the `output` field (`"output" = any`).
+    *   `default_outcome` replaces the fallback boilerplate.
+    *   **`return` Target:** A special reserved outcome `next = "return"`. When a step routes to `"return"`, it halts the current module's execution and passes control back to the caller step that invoked the subworkflow. Bubbling state and outputs upward.
+
+### 5. Compilation vs. Runtime
+*   **Deep Graph Compilation (The "Fold Pass"):** `criteria compile` reads the target directory, discovers all `subworkflow` blocks, fetches their sources, and recursively compiles the entire deep graph before a single step executes. Cycle detection catches infinite recursion.
+*   **Constant Folding:** `var.*` and `local.*` references, as well as functions like `file()`, are folded to constants at compile time. If a referenced file is missing, compilation fails immediately.
+*   **Runtime State:** `steps.*` handles all dynamic runtime values. Step-to-step data is distinct from variables.
+
+### 6. Adapter Lifecycle Semantics
+The explicit `lifecycle = "open"` and `lifecycle = "close"` step attributes are eliminated.
+
+*   **Initialization:** When a workflow (or subworkflow) begins execution, the engine automatically provisions and initializes all `adapter` blocks declared in that scope.
+*   **Execution:** Any `step` within that workflow referencing an adapter shares this initialized session. Long-lived context is maintained automatically.
+*   **Teardown:** When the workflow reaches a terminal state, the engine automatically closes the adapter sessions bound to that scope.
+*   **Subworkflow Isolation:** If a subworkflow declares its own `adapter` block, a fresh adapter session is spun up and torn down explicitly with the subworkflow.

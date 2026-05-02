@@ -6,9 +6,9 @@ documented here. The SDK follows the bump policy in
 
 ---
 
-## [Unreleased] — next minor bump
+## [v0.2.0] — 2026-05-02
 
-### Added — W14: `allowed_outcomes` field on `ExecuteRequest`
+### Added — Phase 2 W14: `allowed_outcomes` field on `ExecuteRequest`
 
 - **New field**: `allowed_outcomes` (field number 4, `repeated string`) on
   `pb.ExecuteRequest` in `proto/criteria/v1/adapter_plugin.proto`.
@@ -33,5 +33,7 @@ Adding a field to `ExecuteRequest` is an additive proto change. Per
 [CONTRIBUTING.md](../CONTRIBUTING.md), additive changes are non-breaking at
 minor or patch level. This change is treated as a **minor** bump (new
 observable field on a request message that plugin authors hand-constructing
-`ExecuteRequest` will see in the generated struct). The version tag bump itself
-is deferred to the cleanup gate ([W16](../workstreams/16-phase2-cleanup-gate.md)).
+`ExecuteRequest` will see in the generated struct). The bump ships in `v0.2.0`
+alongside the Phase 1 + Phase 2 release.
+
+[v0.2.0]: https://github.com/brokenbots/criteria/releases/tag/v0.2.0

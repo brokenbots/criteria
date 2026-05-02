@@ -11,7 +11,7 @@ New to the project? Start here:
   good starting point.
 - The maintainer aims to review first-time contributor PRs within **one week**.
 
-[gfi]: https://github.com/brokenbots/overseer/labels/good%20first%20issue
+[gfi]: https://github.com/brokenbots/criteria/labels/good%20first%20issue
 
 ## Setup
 
@@ -22,7 +22,7 @@ New to the project? Start here:
 - git
 
 ```bash
-git clone https://github.com/brokenbots/overseer.git
+git clone https://github.com/brokenbots/criteria.git
 cd overseer
 make bootstrap         # sync all three Go workspace modules
 make build             # produces bin/criteria
