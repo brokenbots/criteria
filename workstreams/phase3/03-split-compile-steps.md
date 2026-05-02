@@ -425,3 +425,27 @@ Fixed the sole remaining nit: updated the file header comment in `workflow/compi
 Validation:
 - `go test ./workflow/...` ✓
 - `make lint-go` ✓
+
+### Review 2026-05-02-03 — approved
+
+#### Summary
+
+Approved. The last remaining nit from the prior review is fixed: `workflow/compile_steps.go` now documents only the current five-file layout, and the previously-blocking workflow-step validation regression and test gap remain closed.
+
+#### Plan Adherence
+
+- **Step 1 / Exit criteria:** met. The implementation remains in the required five-file production layout and within the LOC caps recorded in the earlier remediation notes.
+- **Step 2 / Behavior change:** met. The restored `validateAdapterAndAgent` path keeps workflow-step validation behavior aligned with the pre-split compiler.
+- **Step 3:** met. `WorkflowBodySpec` and `buildBodySpec` remain present.
+- **Step 5 / test intent:** met. The workflow-step negative tests cover the validation path that previously regressed.
+- **Step 6 / validation:** met. Prior full-matrix validation remains recorded, and the final comment-only fix validated cleanly.
+
+#### Test Intent Assessment
+
+Test intent is sufficient for this workstream. The targeted workflow-step negative tests now prove the restored compile-time rejection behavior, while the existing workflow, example, lint, and CI coverage demonstrate the carve stayed behavior-safe.
+
+#### Validation Performed
+
+- Reviewed `workflow/compile_steps.go` header to confirm stale references to deleted files are gone.
+- `go test ./workflow/...` — passed.
+- `make lint-go` — passed.
