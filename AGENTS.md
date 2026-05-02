@@ -83,9 +83,10 @@ here.
   that they pass), and requires the executor to remediate all findings
   including nits before approval.
 - **Files reviewer/executor agents may NOT modify**: `README.md`,
-  `PLAN.md`, `AGENTS.md`, and any workstream files other than the one
-  the agent is currently working on. The cleanup agent (or a human) is
-  the only writer for these.
+  `PLAN.md`, `AGENTS.md`, `CHANGELOG.md`, `CONTRIBUTING.md`,
+  `workstreams/README.md`, `sdk/CHANGELOG.md`, and any workstream
+  files other than the one the agent is currently working on. The
+  cleanup agent (or a human) is the only writer for these.
 - Keep logs structured (`slog` JSON style in entrypoints).
 - Preserve existing adapter boundaries (`internal/adapter`,
   `internal/adapters/*`, `internal/plugin`). Do not import `sdk/` from

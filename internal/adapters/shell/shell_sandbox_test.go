@@ -352,7 +352,7 @@ func TestSandbox_WorkingDirectory_AllowedPathAccepted(t *testing.T) {
 // ── Test 6: CRITERIA_SHELL_LEGACY=1 is no longer recognized ──────────────────
 
 // TestSandbox_LegacyEnvVarIgnored asserts that CRITERIA_SHELL_LEGACY is no
-// longer recognized after v0.3.0 removal (W10). Setting it has no effect on
+// longer recognized after v0.2.0 removal (W10). Setting it has no effect on
 // sandbox enforcement: the env allowlist still applies.
 func TestSandbox_LegacyEnvVarIgnored(t *testing.T) {
 	if runtime.GOOS == "windows" {

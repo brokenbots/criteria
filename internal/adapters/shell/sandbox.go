@@ -3,7 +3,7 @@ package shell
 // sandbox.go — environment allowlist, PATH sanitization, working-directory
 // confinement, and output-capture bounds for the shell adapter.
 //
-// The CRITERIA_SHELL_LEGACY=1 opt-out was removed in v0.3.0 as committed in
+// The CRITERIA_SHELL_LEGACY=1 opt-out was removed in v0.2.0 as committed in
 // the v0.2.0 threat model. Sandbox defaults are now unconditional.
 // See docs/security/shell-adapter-threat-model.md §6.
 
