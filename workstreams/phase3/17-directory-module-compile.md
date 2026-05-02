@@ -1,0 +1,226 @@
+# Workstream 17 — Directory-level module compilation as the only entry shape
+
+**Phase:** 3 · **Track:** C · **Owner:** Workstream executor · **Depends on:** [13-subworkflow-block-and-resolver.md](13-subworkflow-block-and-resolver.md). · **Unblocks:** none structurally; lands late in the rework.
+
+## Context
+
+[architecture_notes.md §1](../../architecture_notes.md) and [proposed_hcl.hcl](../../proposed_hcl.hcl):
+
+> A "workflow" is no longer strictly bound to a single file. Execution runs against a **directory**. All `.hcl` files in the directory are parsed, validated, and merged into a single flat `Spec` definition.
+
+This workstream:
+
+1. Adds a directory-mode entry to `criteria apply` and `criteria compile`.
+2. Implements the multi-file merge (lifted/generalized from [13](13-subworkflow-block-and-resolver.md)'s local merge helper).
+3. Treats a single `.hcl` file as a one-file directory — its parent directory is the module root, and it is the only file. **No legacy single-file-only code path** survives.
+
+The clean break from v0.2.0: `criteria apply foo.hcl` continues to work (its parent dir is the module), but the code path is the directory path; there is no separate single-file compile.
+
+## Prerequisites
+
+- [13-subworkflow-block-and-resolver.md](13-subworkflow-block-and-resolver.md) merged. The local merge helper from Step 5 of [13](13-subworkflow-block-and-resolver.md) is the input to generalize.
+- `make ci` green.
+
+## In scope
+
+### Step 1 — `mergeSpecsFromDir` helper
+
+Generalize the helper [13](13-subworkflow-block-and-resolver.md) introduced. New file `workflow/parse_dir.go`:
+
+```go
+// ParseDir parses every .hcl file in dir, merges them into a single Spec,
+// and returns the result. The merge rules:
+//   - Top-level slices (Variables, Locals, Outputs, Adapters, Steps, States,
+//     Waits, Approvals, Switches, Subworkflows, Environments) concatenate.
+//   - Singleton fields (Name, Version, InitialState, TargetState, Policy,
+//     Permissions, DefaultEnvironment) take their value from whichever
+//     file declares them. If two files declare the same singleton, that's
+//     a parse error with both file:line locations.
+//   - SourceBytes concatenates with file boundaries preserved (newline
+//     separators) so HCL diagnostics retain accurate Subject ranges.
+//   - Cross-file duplicate names (e.g. step "foo" in two files) error with
+//     both locations.
+func ParseDir(dir string) (*Spec, hcl.Diagnostics)
+
+// ParseFileOrDir is the unified CLI entry. If path is a directory, calls
+// ParseDir. If path is a regular file with .hcl suffix, calls
+// ParseDir(filepath.Dir(path)) and verifies path is among the parsed files
+// (so single-file-mode behavior is preserved without a separate code path).
+func ParseFileOrDir(path string) (*Spec, hcl.Diagnostics)
+```
+
+### Step 2 — Singleton-field disambiguation
+
+For singleton top-level fields (Name, Version, InitialState, TargetState, Policy, Permissions, DefaultEnvironment), a directory module needs a deterministic way to set them. Three options:
+
+1. Convention: declare in `workflow.hcl` only. (Implicit; brittle.)
+2. Block: a top-level `workflow "<name>" { version = ..., environment = ... }` block per [proposed_hcl.hcl](../../proposed_hcl.hcl). The workflow header lives in this block; only one declaration allowed across the merged files. **Choose this option.**
+
+So the merged Spec gets its `Name`, `Version`, `InitialState`, `TargetState`, and `DefaultEnvironment` from the workflow block. Without exactly one workflow block in the merged dir, error.
+
+[workflow/schema.go](../../workflow/schema.go) currently has these as fields directly on `Spec`. Refactor:
+
+```go
+type WorkflowHeaderSpec struct {
+    Name                string `hcl:"name,label"`
+    Version             string `hcl:"version,optional"`
+    InitialState        string `hcl:"initial_state,optional"`
+    TargetState         string `hcl:"target_state,optional"`
+    DefaultEnvironment  string `hcl:"environment,optional"`
+}
+
+type Spec struct {
+    Header       *WorkflowHeaderSpec   `hcl:"workflow,block"`
+    Variables    []VariableSpec        `hcl:"variable,block"`
+    Locals       []LocalSpec           `hcl:"local,block"`
+    Outputs      []OutputSpec          `hcl:"output,block"`
+    Environments []EnvironmentSpec     `hcl:"environment,block"`
+    Adapters     []AdapterDeclSpec     `hcl:"adapter,block"`
+    Subworkflows []SubworkflowSpec     `hcl:"subworkflow,block"`
+    Steps        []StepSpec            `hcl:"step,block"`
+    States       []StateSpec           `hcl:"state,block"`
+    Waits        []WaitSpec            `hcl:"wait,block"`
+    Approvals    []ApprovalSpec        `hcl:"approval,block"`
+    Switches     []SwitchSpec          `hcl:"switch,block"`
+    Policy       *PolicySpec           `hcl:"policy,block"`
+    Permissions  *PermissionsSpec      `hcl:"permissions,block"`
+    SourceBytes  []byte
+}
+```
+
+(Branches are gone after [16](16-switch-and-if-flow-control.md). Agents are gone after [11](11-agent-to-adapter-rename.md).)
+
+The compile flow accesses `spec.Header.Name` etc. Sweep call sites.
+
+### Step 3 — CLI entry
+
+[internal/cli/apply_setup.go](../../internal/cli/apply_setup.go) `compileForExecution`:
+
+```go
+// BEFORE
+src, err := os.ReadFile(workflowPath)
+spec, diags := workflow.Parse(workflowPath, src)
+
+// AFTER
+spec, diags := workflow.ParseFileOrDir(workflowPath)
+```
+
+Update CLI flag/argument docs to clarify that `workflowPath` may be a directory.
+
+`criteria compile <path>` — same change.
+
+### Step 4 — Goldens and examples
+
+Sweep examples:
+
+- Existing single-file examples continue to work (a single `.hcl` file is its own one-file directory).
+- Add at least one **multi-file** example under [examples/phase3-multi-file/](../../examples/phase3-multi-file/) demonstrating the merge: `variables.hcl`, `adapters.hcl`, `steps.hcl`, `workflow.hcl`.
+
+Regenerate compile/plan goldens for any example whose Spec.Name resolution path changed.
+
+### Step 5 — Tests
+
+- `workflow/parse_dir_test.go`:
+  - `TestParseDir_SingleFile`.
+  - `TestParseDir_MultipleFiles`.
+  - `TestParseDir_NoHCLFiles_Error`.
+  - `TestParseDir_DirNotExist_Error`.
+  - `TestParseDir_DuplicateStepAcrossFiles_Error_BothLocations`.
+  - `TestParseDir_DuplicateWorkflowBlock_Error`.
+  - `TestParseDir_NoWorkflowBlock_Error`.
+  - `TestParseDir_DiagnosticsHaveCorrectFilenameSubjects`.
+
+- `workflow/parse_file_or_dir_test.go`:
+  - `TestParseFileOrDir_FilePathDelegatesToDir`.
+  - `TestParseFileOrDir_DirPath`.
+
+- End-to-end: [examples/phase3-multi-file/](../../examples/phase3-multi-file/) runs.
+
+### Step 6 — Validation
+
+```sh
+go build ./...
+go test -race -count=2 ./...
+make validate
+make ci
+```
+
+All exit 0.
+
+## Behavior change
+
+**Behavior change: yes — additive.**
+
+Observable differences:
+
+1. `criteria apply <directory>` works.
+2. `criteria compile <directory>` works.
+3. Multi-file workflows merge with conflict detection.
+4. Workflow header moves into a `workflow "<name>" { ... }` block. Existing top-level attributes (`version`, `initial_state`, `target_state`) move into the block.
+5. Single-file workflows continue to work; `criteria apply foo.hcl` is equivalent to `criteria apply $(dirname foo.hcl)`.
+
+Migration: existing single-file workflows that have top-level `version = ...`, `initial_state = ...`, `target_state = ...` MUST move them inside a `workflow "<name>" { ... }` block. The `name` was previously the file's `<name>` label on a top-level workflow declaration — confirm the existing shape and document the migration. (If today's shape was attribute-only, the migration text says so.)
+
+## Reuse
+
+- The local merge helper from [13](13-subworkflow-block-and-resolver.md) — generalize, do not duplicate.
+- Existing HCL parse infrastructure in [workflow/parse.go](../../workflow/parse.go) (or wherever `Parse` lives).
+- Existing diagnostic-subject preservation patterns.
+
+## Out of scope
+
+- File ordering for the merge. Use lexicographic order of filenames; document that `variables.hcl` and `xxx-variables.hcl` collide if their lex order doesn't match author intent (in practice, no observable effect since merging is order-insensitive for slices).
+- Glob patterns in CLI args (`criteria apply 'workflows/*'`). Single path only.
+- Recursive directory scanning. Only the top-level `.hcl` files in the named directory; subdirectories are NOT included automatically. To compose, use `subworkflow` blocks.
+
+## Files this workstream may modify
+
+- [`workflow/schema.go`](../../workflow/schema.go) — `WorkflowHeaderSpec`, reshape `Spec`.
+- New: `workflow/parse_dir.go`.
+- [`workflow/parse.go`](../../workflow/parse.go) (or wherever `Parse` is) — refactor to call into `ParseFileOrDir` for the public CLI entry; `Parse(path, src)` continues to exist as a single-file primitive used internally.
+- [`internal/cli/apply_setup.go`](../../internal/cli/apply_setup.go).
+- [`internal/cli/compile.go`](../../internal/cli/compile.go).
+- All call sites that read `spec.Name`, `spec.Version`, etc. — update to `spec.Header.Name` etc.
+- All example HCL files — wrap header attributes in `workflow "<name>" { ... }` block.
+- New: [`examples/phase3-multi-file/`](../../examples/).
+- Goldens.
+- [`docs/workflow.md`](../../docs/workflow.md) — directory-mode section.
+- New tests.
+
+This workstream may **not** edit:
+
+- `PLAN.md`, `README.md`, `AGENTS.md`, `CHANGELOG.md`, `workstreams/README.md`, or any other workstream file.
+- `.proto` files.
+
+## Tasks
+
+- [ ] Implement `ParseDir` and `ParseFileOrDir` (Step 1).
+- [ ] Reshape `Spec` to extract `WorkflowHeaderSpec` (Step 2).
+- [ ] Update CLI entry to call `ParseFileOrDir` (Step 3).
+- [ ] Update examples; add multi-file example (Step 4).
+- [ ] Author tests (Step 5).
+- [ ] `make ci` green (Step 6).
+
+## Exit criteria
+
+- `criteria apply <directory>` works.
+- `criteria compile <directory>` works.
+- Multi-file workflows merge correctly with conflict detection.
+- Workflow header is a `workflow "<name>" { ... }` block.
+- All examples migrated.
+- All required tests pass.
+- `make ci` exits 0.
+
+## Tests
+
+The Step 5 list. Coverage: ≥ 90% on `workflow/parse_dir.go`.
+
+## Risks
+
+| Risk | Mitigation |
+|---|---|
+| Existing call sites referencing `spec.Name` break in many places at once | Use `gopls` rename or sed-script across the codebase; verify with `make ci`. |
+| Diagnostic subjects after merging point at the wrong file | The merge concatenates `SourceBytes` carefully and preserves per-file `*hcl.File` objects in the diagnostic-emit path. Test `TestParseDir_DiagnosticsHaveCorrectFilenameSubjects`. |
+| Lexicographic file ordering produces surprising compile-error messages | Order-of-discovery doesn't affect the merged Spec's content (slice concatenation is order-stable but its order is not part of the contract). The HCL diagnostic ranges are per-file regardless. |
+| Single-file-mode users see a new error "no workflow block declared" | Provide a clear migration message. The error fires once during apply; the message tells the user to wrap header attributes in `workflow "<name>" { }`. |
+| Recursion into subdirectories is intuitively expected ("but I have a subworkflow under ./inner") | Document explicitly: subdirectories are NOT scanned. Use `subworkflow "x" { source = "./inner" }`. The single-directory rule keeps the entry shape predictable. |
