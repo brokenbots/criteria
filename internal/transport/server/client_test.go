@@ -951,15 +951,33 @@ func TestClientHeartbeat(t *testing.T) {
 	}
 
 	cancel()
-	// Allow 50ms for the heartbeat goroutine to observe ctx.Done and for any
-	// in-flight RPC that was dispatched just before cancel() to complete.
-	time.Sleep(50 * time.Millisecond)
+	// Wait (up to 1 s) for the heartbeat goroutine to observe ctx.Done and
+	// stop firing. Poll until the count has been stable for at least
+	// 3× the ticker interval; this is more robust than a fixed sleep on
+	// loaded hosts.
+	var last int
+	stableCount := 0
+	if !waitForCond(t, 1*time.Second, func() bool {
+		f.mu.Lock()
+		cur := f.heartbeats
+		f.mu.Unlock()
+		if cur == last {
+			stableCount++
+		} else {
+			last = cur
+			stableCount = 0
+		}
+		return stableCount >= 3
+	}) {
+		t.Error("heartbeat goroutine did not stop within 1s after cancel")
+		return
+	}
 
 	f.mu.Lock()
 	snapshot := f.heartbeats
 	f.mu.Unlock()
 
-	// Assert count does not grow after cancellation (wait 3× the interval).
+	// Verify count does not grow further (wait 3× the interval).
 	time.Sleep(3 * 15 * time.Millisecond)
 	f.mu.Lock()
 	nAfter := f.heartbeats
@@ -1057,7 +1075,9 @@ func TestClientDrain(t *testing.T) {
 		done := make(chan struct{})
 		go func() { c.Drain(ctx); close(done) }()
 
-		time.Sleep(25 * time.Millisecond) // allow Drain to enter select
+		// cancel() is safe to call immediately: Drain's select handles
+		// ctx.Done() whether or not the goroutine has started yet, so no
+		// sleep is needed before cancelling.
 		cancel()
 		select {
 		case <-done:
