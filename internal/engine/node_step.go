@@ -89,7 +89,7 @@ func (n *stepNode) repopulateCursorItems(ctx context.Context, st *RunState, cur 
 		key = cty.StringVal(fmt.Sprintf("%d", cur.Index))
 	}
 	if cur.Index < len(items) {
-		st.Vars = workflow.WithEachBinding(st.Vars, workflow.EachBinding{
+		st.Vars = workflow.WithEachBinding(st.Vars, &workflow.EachBinding{
 			Value: items[cur.Index],
 			Key:   key,
 			Index: cur.Index,
@@ -212,7 +212,7 @@ func (n *stepNode) setupIterCursor(ctx context.Context, st *RunState, deps Deps)
 	}
 
 	// Bind each.* for first item.
-	st.Vars = workflow.WithEachBinding(st.Vars, workflow.EachBinding{
+	st.Vars = workflow.WithEachBinding(st.Vars, &workflow.EachBinding{
 		Value: items[0],
 		Key:   firstKey,
 		Index: 0,
@@ -489,7 +489,7 @@ func (n *stepNode) executeStep(ctx context.Context, deps Deps, step *workflow.St
 		return adapter.Result{Outcome: "failure"}, err
 	}
 	deps.Sink.OnAdapterLifecycle(step.Name, step.Adapter, "started", "")
-	defer deps.Sessions.Close(context.Background(), anonSessionID)
+	defer func() { _ = deps.Sessions.Close(context.WithoutCancel(ctx), anonSessionID) }()
 
 	result, execErr := deps.Sessions.Execute(ctx, anonSessionID, step, deps.Sink.StepEventSink(step.Name))
 	if execErr != nil {

@@ -39,15 +39,15 @@ func TestMCPPluginConformance(t *testing.T) {
 	)
 }
 
-func buildPluginAndFixtureBinaries() (string, string) {
+func buildPluginAndFixtureBinaries() (pluginBin, echoBin string) {
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {
 		panic("resolve caller path")
 	}
 	moduleRoot := filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
 	tmpDir := os.TempDir()
-	pluginBin := filepath.Join(tmpDir, "criteria-adapter-mcp-test")
-	echoBin := filepath.Join(tmpDir, "echo-mcp-test")
+	pluginBin = filepath.Join(tmpDir, "criteria-adapter-mcp-test")
+	echoBin = filepath.Join(tmpDir, "echo-mcp-test")
 
 	buildPlugin := exec.Command("go", "build", "-o", pluginBin, "./cmd/criteria-adapter-mcp")
 	buildPlugin.Dir = moduleRoot

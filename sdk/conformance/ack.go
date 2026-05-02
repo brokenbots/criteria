@@ -66,7 +66,7 @@ func testAckOrderingSequential(t *testing.T, s Subject) { //nolint:funlen // W03
 			t.Fatalf("Send[%d]: %v", i, err)
 		}
 	}
-	stream.CloseRequest()
+	_ = stream.CloseRequest()
 
 	var acks []*pb.Ack
 	for {
@@ -134,7 +134,7 @@ func testAckIdempotentDuplicate(t *testing.T, s Subject) { //nolint:funlen // W0
 		if err != nil {
 			t.Fatalf("Receive: %v", err)
 		}
-		stream.CloseRequest()
+		_ = stream.CloseRequest()
 		for {
 			if _, recvErr := stream.Receive(); recvErr != nil {
 				break

@@ -24,6 +24,18 @@ func (fp *fakePublisher) Publish(_ context.Context, env *pb.Envelope) {
 	fp.published = append(fp.published, env)
 }
 
+// contextCapturingPublisher records both the context and envelope from each
+// Publish call, allowing tests to assert context contract behaviour.
+type contextCapturingPublisher struct {
+	contexts  []context.Context
+	envelopes []*pb.Envelope
+}
+
+func (p *contextCapturingPublisher) Publish(ctx context.Context, env *pb.Envelope) {
+	p.contexts = append(p.contexts, ctx)
+	p.envelopes = append(p.envelopes, env)
+}
+
 // newTestClient constructs a Client pointed at a non-existent server.
 // No actual connections are made at construction time; Publish puts
 // envelopes into the internal send buffer.
@@ -225,6 +237,70 @@ func TestSink_PublishAfterClientClose_DoesNotPanic(t *testing.T) {
 	c.Close() // close before publishing
 	s.OnRunCompleted("done", true)
 	s.OnRunFailed("closed", "step1")
+}
+
+// TestSink_RunFailed_InheritsContextValuesAndDetachesCancellation asserts that
+// Sink.RunFailed passes a context to the transport that:
+//   - inherits values from the caller's context (context.WithValue propagates
+//     through context.WithoutCancel), and
+//   - is NOT canceled even when the caller's context has been canceled.
+//
+// A broken implementation using context.Background() would fail the value
+// assertion; one that omits WithoutCancel would fail the cancellation check.
+func TestSink_RunFailed_InheritsContextValuesAndDetachesCancellation(t *testing.T) {
+	type ctxKey struct{}
+	p := &contextCapturingPublisher{}
+	s := &Sink{RunID: "test-run", Client: p, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	ctx, cancel := context.WithCancel(context.WithValue(context.Background(), ctxKey{}, "marker"))
+	cancel() // cancel immediately to confirm WithoutCancel strips cancellation
+
+	s.RunFailed(ctx, "reason", "step1")
+
+	if len(p.contexts) != 1 {
+		t.Fatalf("expected 1 publish call, got %d", len(p.contexts))
+	}
+	publishedCtx := p.contexts[0]
+
+	if err := publishedCtx.Err(); err != nil {
+		t.Errorf("published context must not be canceled (WithoutCancel expected), got: %v", err)
+	}
+	if got := publishedCtx.Value(ctxKey{}); got != "marker" {
+		t.Errorf("published context must inherit caller values, got: %v", got)
+	}
+	rf := p.envelopes[0].GetRunFailed()
+	if rf == nil || rf.GetReason() != "reason" || rf.GetStep() != "step1" {
+		t.Errorf("RunFailed payload mismatch: %v", p.envelopes[0])
+	}
+}
+
+// TestSink_StepResumed_InheritsContextValuesAndDetachesCancellation mirrors
+// TestSink_RunFailed_... for the StepResumed variant.
+func TestSink_StepResumed_InheritsContextValuesAndDetachesCancellation(t *testing.T) {
+	type ctxKey struct{}
+	p := &contextCapturingPublisher{}
+	s := &Sink{RunID: "test-run", Client: p, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	ctx, cancel := context.WithCancel(context.WithValue(context.Background(), ctxKey{}, "marker"))
+	cancel()
+
+	s.StepResumed(ctx, "step1", 2, "criteria_restart")
+
+	if len(p.contexts) != 1 {
+		t.Fatalf("expected 1 publish call, got %d", len(p.contexts))
+	}
+	publishedCtx := p.contexts[0]
+
+	if err := publishedCtx.Err(); err != nil {
+		t.Errorf("published context must not be canceled (WithoutCancel expected), got: %v", err)
+	}
+	if got := publishedCtx.Value(ctxKey{}); got != "marker" {
+		t.Errorf("published context must inherit caller values, got: %v", got)
+	}
+	sr := p.envelopes[0].GetStepResumed()
+	if sr == nil || sr.GetStep() != "step1" || sr.GetAttempt() != 2 {
+		t.Errorf("StepResumed payload mismatch: %v", p.envelopes[0])
+	}
 }
 
 // TestEncodeAdapterData_Object verifies that a JSON object passes through

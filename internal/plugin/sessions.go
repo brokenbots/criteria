@@ -95,7 +95,7 @@ func (m *SessionManager) Open(ctx context.Context, name, adapterName, onCrash st
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, exists := m.sessions[name]; exists {
-		plug.CloseSession(ctx, name)
+		_ = plug.CloseSession(ctx, name)
 		plug.Kill()
 		return fmt.Errorf("%w: %s", ErrSessionAlreadyOpen, name)
 	}

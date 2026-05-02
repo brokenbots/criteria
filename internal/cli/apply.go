@@ -105,7 +105,7 @@ func runApplyLocal(ctx context.Context, opts applyOptions) error { //nolint:funl
 	if err != nil {
 		return err
 	}
-	defer loader.Shutdown(context.Background())
+	defer func() { _ = loader.Shutdown(context.WithoutCancel(ctx)) }()
 
 	resumer, err := buildLocalResumer(log, opts.stdin)
 	if err != nil {
@@ -229,11 +229,12 @@ func buildLocalCheckpointFn(log *slog.Logger, runID, workflowName, workflowPath 
 // buildServerSink constructs a run.Sink wired to the given server client.
 // getVisits, if non-nil, is called on each checkpoint to capture the current
 // per-step visit counts for crash-recovery persistence (W07).
-func buildServerSink(client *servertrans.Client, runID string, graph *workflow.FSMGraph, workflowPath, serverURL string, log *slog.Logger, getVisits func() map[string]int) *run.Sink {
+func buildServerSink(ctx context.Context, client *servertrans.Client, runID string, graph *workflow.FSMGraph, workflowPath, serverURL string, log *slog.Logger, getVisits func() map[string]int) *run.Sink {
 	return &run.Sink{
 		RunID:  runID,
 		Client: client,
 		Log:    log.With("run_id", runID),
+		Ctx:    ctx,
 		CheckpointFn: func(step string, attempt int) {
 			var visits map[string]int
 			if getVisits != nil {
@@ -266,7 +267,7 @@ func executeServerRun(ctx context.Context, log *slog.Logger, loader plugin.Loade
 
 	// Declare eng first so the checkpoint closure can capture live visit counts.
 	var eng *engine.Engine
-	sink := buildServerSink(client, state.RunID, graph, opts.workflowPath, opts.serverURL, log,
+	sink := buildServerSink(ctx, client, state.RunID, graph, opts.workflowPath, opts.serverURL, log,
 		func() map[string]int {
 			if eng != nil {
 				return eng.VisitCounts()
@@ -288,7 +289,7 @@ func executeServerRun(ctx context.Context, log *slog.Logger, loader plugin.Loade
 		return err
 	}
 
-	drainCtx, drainCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	drainCtx, drainCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	client.Drain(drainCtx)
 	drainCancel()
 	return nil
@@ -338,9 +339,10 @@ func runApplyServer(ctx context.Context, opts applyOptions) error {
 	if err != nil {
 		return err
 	}
-	defer loader.Shutdown(context.Background())
+	defer func() { _ = loader.Shutdown(context.WithoutCancel(runCtx)) }()
 
-	client, runID, err := setupServerRun(runCtx, log, graph, src, opts.serverURL, opts.name, applyClientOptions(opts), cancelRun)
+	copts := applyClientOptions(opts)
+	client, runID, err := setupServerRun(runCtx, log, graph, src, opts.serverURL, opts.name, &copts, cancelRun)
 	if err != nil {
 		return err
 	}
@@ -350,8 +352,8 @@ func runApplyServer(ctx context.Context, opts applyOptions) error {
 	return executeServerRun(runCtx, log, loader, client, state, graph, opts)
 }
 
-func setupServerRun(ctx context.Context, log *slog.Logger, graph *workflow.FSMGraph, src []byte, serverURL, name string, clientOpts servertrans.Options, cancelRun func()) (*servertrans.Client, string, error) {
-	client, err := servertrans.NewClient(serverURL, log, clientOpts)
+func setupServerRun(ctx context.Context, log *slog.Logger, graph *workflow.FSMGraph, src []byte, serverURL, name string, clientOpts *servertrans.Options, cancelRun func()) (*servertrans.Client, string, error) {
+	client, err := servertrans.NewClient(serverURL, log, *clientOpts)
 	if err != nil {
 		return nil, "", err
 	}
@@ -411,7 +413,7 @@ func compileForExecution(ctx context.Context, workflowPath string, log *slog.Log
 	schemas := collectSchemas(ctx, loader, spec, log)
 	graph, diags := workflow.CompileWithOpts(spec, schemas, workflow.CompileOpts{WorkflowDir: filepath.Dir(workflowPath)})
 	if diags.HasErrors() {
-		loader.Shutdown(context.Background())
+		_ = loader.Shutdown(ctx)
 		return nil, nil, nil, fmt.Errorf("compile: %s", diags.Error())
 	}
 
@@ -639,7 +641,7 @@ func resumeLocalInFlightRuns(ctx context.Context, log *slog.Logger, out io.Write
 // constructs a local resumer. On failure it logs, clears the checkpoint,
 // and returns zero values with false so the caller can skip the run.
 func prepareReattach(ctx context.Context, log *slog.Logger, cp *StepCheckpoint) (*workflow.FSMGraph, plugin.Loader, localresume.LocalResumer, bool) {
-	graph, err := parseWorkflowFromPath(cp.WorkflowPath)
+	graph, err := parseWorkflowFromPath(ctx, cp.WorkflowPath)
 	if err != nil {
 		log.Warn("cannot parse workflow for crashed local run; abandoning", "run_id", cp.RunID, "error", err)
 		RemoveStepCheckpoint(cp.RunID)
@@ -658,7 +660,6 @@ func prepareReattach(ctx context.Context, log *slog.Logger, cp *StepCheckpoint) 
 	}
 	loader := plugin.NewLoader()
 	loader.RegisterBuiltin(shell.Name, plugin.BuiltinFactoryForAdapter(shell.New()))
-	_ = ctx // threaded for context propagation; parseWorkflowFromPath manages its own context internally
 	return graph, loader, resumer, true
 }
 
@@ -667,7 +668,7 @@ func resumeOneLocalRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint
 	if !ok {
 		return
 	}
-	defer loader.Shutdown(context.Background())
+	defer func() { _ = loader.Shutdown(context.WithoutCancel(ctx)) }()
 
 	nextAttempt := cp.Attempt + 1
 	maxAttempts := 1 + graph.Policy.MaxStepRetries

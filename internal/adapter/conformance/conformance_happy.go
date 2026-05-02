@@ -93,9 +93,9 @@ func testNameStability(t *testing.T, name string, factory targetFactory) {
 	}
 }
 
-func chunkedIOConfig(base map[string]string) (map[string]string, []byte, bool) {
+func chunkedIOConfig(base map[string]string) (config map[string]string, expected []byte, ok bool) {
 	cfg := cloneConfig(base)
-	if _, ok := cfg["command"]; !ok {
+	if _, hasCmd := cfg["command"]; !hasCmd {
 		return nil, nil, false
 	}
 	if runtime.GOOS == "windows" {
@@ -105,8 +105,6 @@ func chunkedIOConfig(base map[string]string) (map[string]string, []byte, bool) {
 	line := strings.Repeat("x", 512)
 	lineCount := 256
 	expectedLine := []byte(line + "\n")
-	expected := bytes.Repeat(expectedLine, lineCount)
-
 	cfg["command"] = fmt.Sprintf("i=0; while [ $i -lt %d ]; do printf '%%s\\n' '%s'; i=$((i+1)); done", lineCount, line)
-	return cfg, expected, true
+	return cfg, bytes.Repeat(expectedLine, lineCount), true
 }

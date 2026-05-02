@@ -161,7 +161,7 @@ func (e *Engine) VisitCounts() map[string]int {
 // step limit is exceeded, or ctx is cancelled.
 func (e *Engine) Run(ctx context.Context) error {
 	sessions := plugin.NewSessionManager(e.loader)
-	defer sessions.Shutdown(context.Background())
+	defer func() { _ = sessions.Shutdown(context.WithoutCancel(ctx)) }()
 
 	current := e.graph.InitialState
 	e.sink.OnRunStarted(e.graph.Name, current)
@@ -175,7 +175,7 @@ func (e *Engine) Run(ctx context.Context) error {
 // OnRunFailed instead of attempting the step.
 func (e *Engine) RunFrom(ctx context.Context, startStep string, initialAttempt int) error {
 	sessions := plugin.NewSessionManager(e.loader)
-	defer sessions.Shutdown(context.Background())
+	defer func() { _ = sessions.Shutdown(context.WithoutCancel(ctx)) }()
 
 	if err := e.bootstrapSessionsForResume(ctx, sessions, startStep); err != nil {
 		return err
@@ -277,7 +277,7 @@ func routeIteratingStepInGraph(st *RunState, next string, graph *workflow.FSMGra
 		}
 		cur.Key = key
 		cur.InProgress = true
-		st.Vars = workflow.WithEachBinding(st.Vars, workflow.EachBinding{
+		st.Vars = workflow.WithEachBinding(st.Vars, &workflow.EachBinding{
 			Value: item,
 			Key:   key,
 			Index: cur.Index,

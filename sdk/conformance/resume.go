@@ -33,8 +33,8 @@ func testResumeCorrectness(t *testing.T, s Subject) {
 		testResumeSignalMismatch(t, s)
 	})
 	t.Run("NotPaused", func(t *testing.T) {
-		t.Run("PendingRun", func(t *testing.T) { testResumeNotPaused_Pending(t, s) })
-		t.Run("TerminalRun", func(t *testing.T) { testResumeNotPaused_Terminal(t, s) })
+		t.Run("PendingRun", func(t *testing.T) { testResumeNotPausedPending(t, s) })
+		t.Run("TerminalRun", func(t *testing.T) { testResumeNotPausedTerminal(t, s) })
 	})
 	t.Run("ApprovalDecision", func(t *testing.T) {
 		testResumeApprovalDecision(t, s)
@@ -65,7 +65,7 @@ func pauseRunViaWaitEntered(t *testing.T, oClient criteria.ServiceClient, token,
 	if _, err := stream.Receive(); err != nil {
 		t.Fatalf("pauseRunViaWaitEntered Receive ack: %v", err)
 	}
-	stream.CloseRequest()
+	_ = stream.CloseRequest()
 	for {
 		if _, err := stream.Receive(); err != nil {
 			break
@@ -89,7 +89,7 @@ func pauseRunViaApproval(t *testing.T, oClient criteria.ServiceClient, token, ru
 	if _, err := stream.Receive(); err != nil {
 		t.Fatalf("pauseRunViaApproval Receive ack: %v", err)
 	}
-	stream.CloseRequest()
+	_ = stream.CloseRequest()
 	for {
 		if _, err := stream.Receive(); err != nil {
 			break
@@ -188,9 +188,9 @@ func testResumeSignalMismatch(t *testing.T, s Subject) {
 	}
 }
 
-// testResumeNotPaused_Pending asserts that Resume on a run that was never paused
+// testResumeNotPausedPending asserts that Resume on a run that was never paused
 // (pending/running state) returns accepted=false, reason="run_not_paused".
-func testResumeNotPaused_Pending(t *testing.T, s Subject) {
+func testResumeNotPausedPending(t *testing.T, s Subject) {
 	baseURL, client, teardown := s.SetUp(t)
 	defer teardown()
 
@@ -210,13 +210,13 @@ func testResumeNotPaused_Pending(t *testing.T, s Subject) {
 	assertNotPaused(t, oClient, token, runID)
 }
 
-// testResumeNotPaused_Terminal asserts that Resume on a terminal run (one that
+// testResumeNotPausedTerminal asserts that Resume on a terminal run (one that
 // has received RunCompleted) returns accepted=false, reason="run_not_paused".
 //
 // This sub-test is regression-resistant against implementations that return a
 // distinct reason for terminal runs (e.g. "run_terminal"): any such deviation
 // from the spec would break the assertion.
-func testResumeNotPaused_Terminal(t *testing.T, s Subject) {
+func testResumeNotPausedTerminal(t *testing.T, s Subject) {
 	baseURL, client, teardown := s.SetUp(t)
 	defer teardown()
 

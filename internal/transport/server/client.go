@@ -119,7 +119,7 @@ func NewClient(serverURL string, log *slog.Logger, opts ...Options) (*Client, er
 		}
 	}
 
-	httpClient, err := buildHTTPClient(u, o)
+	httpClient, err := buildHTTPClient(u, &o)
 	if err != nil {
 		return nil, err
 	}
@@ -144,7 +144,7 @@ func NewClient(serverURL string, log *slog.Logger, opts ...Options) (*Client, er
 	}, nil
 }
 
-func buildHTTPClient(u *url.URL, o Options) (*http.Client, error) {
+func buildHTTPClient(u *url.URL, o *Options) (*http.Client, error) {
 	switch o.TLSMode {
 	case TLSDisable:
 		if u.Scheme == "https" {

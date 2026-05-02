@@ -333,10 +333,10 @@ func cloneConfig(in map[string]string) map[string]string {
 }
 
 func stringsTrim(s string) string {
-	for len(s) > 0 && (s[0] == ' ' || s[0] == '\t' || s[0] == '\n' || s[0] == '\r') {
+	for s != "" && (s[0] == ' ' || s[0] == '\t' || s[0] == '\n' || s[0] == '\r') {
 		s = s[1:]
 	}
-	for len(s) > 0 {
+	for s != "" {
 		last := s[len(s)-1]
 		if last != ' ' && last != '\t' && last != '\n' && last != '\r' {
 			break

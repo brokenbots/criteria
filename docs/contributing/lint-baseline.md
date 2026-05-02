@@ -170,3 +170,35 @@ the capture+generate cycle using the merged config until the run is stable.
 | `funlen`, `gocyclo`, `gocognit` | W03 — god-function refactor |
 | `revive`, `gocritic` (style/doc) | W06 — coverage, bench, godoc |
 | Everything else | W04 — split oversized files / general hygiene |
+
+## Phase 3 W01 snapshot (mechanical burn-down)
+
+W01 (Phase 3) removed mechanical suppressions: all `errcheck`, `revive` (naming), and
+`contextcheck` findings (context threading), and most `gocritic` findings
+(rangeValCopy, unnamedResult, emptyStringTest, builtinShadow, stringXbytes, hugeParam
+where feasible). This reduced the baseline from 70 to 20 entries — well below the ≤ 50
+target.
+
+Starting count (v0.2.0 tag): **70**
+
+Final count (this workstream): **20**
+
+Per-rule change:
+
+| Linter | Before (v0.2.0) | After | Notes |
+|---|---:|---:|---|
+| `errcheck` | 9 | 0 | All fixed |
+| `contextcheck` | 9 | 0 | All fixed; final 2 via new RunFailed/StepResumed ctx-bearing methods |
+| `gocritic` | 24 | 1 | 19 fixed; 4 hugeParam fixed by pointer conversion; 1 hugeParam kept (applyOptions/W02); 3 dead entries removed |
+| `revive` | 9 | 0 | All fixed (internal-test function renames) |
+| `gocognit` | 7 | 7 | Deferred to W03/W07 siblings |
+| `gocyclo` | 6 | 6 | Deferred to W03/W02 siblings |
+| `funlen` | 6 | 6 | Deferred to W02/W03 siblings |
+
+### Kept entries (gocritic hugeParam)
+
+One `hugeParam` entry remains for `applyOptions` in `internal/cli/apply.go`
+(208 bytes). `applyOptions` is threaded through 6 apply-command functions; converting
+all 6 to pointer is a broad refactor owned by W02-split-cli-apply. The entry carries a
+`# kept:` annotation in `.golangci.baseline.yml`.
+

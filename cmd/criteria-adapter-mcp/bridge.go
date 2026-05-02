@@ -147,12 +147,12 @@ func (b *MCPBridge) OpenSession(ctx context.Context, req *pb.OpenSessionRequest)
 	handshakeCtx, cancel := context.WithTimeout(ctx, initTimeout)
 	defer cancel()
 	if err := state.client.Initialize(handshakeCtx, "criteria-adapter-mcp", pluginVersion); err != nil {
-		_ = shutdownSession(state)
+		_ = shutdownSession(ctx, state)
 		return nil, fmt.Errorf("mcp: initialize: %w", err)
 	}
 	tools, err := state.client.ListTools(handshakeCtx)
 	if err != nil {
-		_ = shutdownSession(state)
+		_ = shutdownSession(ctx, state)
 		return nil, fmt.Errorf("mcp: tools/list: %w", err)
 	}
 	for _, tool := range tools {
@@ -164,8 +164,8 @@ func (b *MCPBridge) OpenSession(ctx context.Context, req *pb.OpenSessionRequest)
 	b.mu.Lock()
 	if existing, ok := b.sessions[req.GetSessionId()]; ok {
 		b.mu.Unlock()
-		_ = shutdownSession(state)
-		_ = shutdownSession(existing)
+		_ = shutdownSession(ctx, state)
+		_ = shutdownSession(ctx, existing)
 		return nil, fmt.Errorf("mcp: session %q already open", req.GetSessionId())
 	}
 	b.sessions[req.GetSessionId()] = state
@@ -236,7 +236,7 @@ func (b *MCPBridge) Permit(context.Context, *pb.PermitRequest) (*pb.PermitRespon
 	return &pb.PermitResponse{}, nil
 }
 
-func (b *MCPBridge) CloseSession(_ context.Context, req *pb.CloseSessionRequest) (*pb.CloseSessionResponse, error) {
+func (b *MCPBridge) CloseSession(ctx context.Context, req *pb.CloseSessionRequest) (*pb.CloseSessionResponse, error) {
 	b.mu.Lock()
 	s, ok := b.sessions[req.GetSessionId()]
 	if ok {
@@ -246,7 +246,7 @@ func (b *MCPBridge) CloseSession(_ context.Context, req *pb.CloseSessionRequest)
 	if !ok {
 		return &pb.CloseSessionResponse{}, nil
 	}
-	if err := shutdownSession(s); err != nil {
+	if err := shutdownSession(ctx, s); err != nil {
 		return &pb.CloseSessionResponse{}, err
 	}
 	return &pb.CloseSessionResponse{}, nil
@@ -258,13 +258,13 @@ func (b *MCPBridge) getSession(id string) *sessionState {
 	return b.sessions[id]
 }
 
-func shutdownSession(s *sessionState) error {
+func shutdownSession(ctx context.Context, s *sessionState) error {
 	if s == nil {
 		return nil
 	}
 	_, inFlight := s.currentSink()
 	if inFlight {
-		_ = s.client.Notification(context.Background(), "notifications/cancelled", map[string]any{"reason": "session_close"})
+		_ = s.client.Notification(context.WithoutCancel(ctx), "notifications/cancelled", map[string]any{"reason": "session_close"})
 	}
 	s.client.Close()
 	_ = s.stdin.Close()

@@ -30,7 +30,8 @@ var copilotAllowToolsAliases = map[string]string{
 // and LoadDepth (for nested workflow body compilation).
 func compileSteps(g *FSMGraph, spec *Spec, schemas map[string]AdapterInfo, opts CompileOpts) hcl.Diagnostics {
 	var diags hcl.Diagnostics
-	for _, sp := range spec.Steps {
+	for i := range spec.Steps {
+		sp := &spec.Steps[i]
 		if _, dup := g.Steps[sp.Name]; dup {
 			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("duplicate step %q", sp.Name)})
 			continue
@@ -279,7 +280,7 @@ func compileSteps(g *FSMGraph, spec *Spec, schemas map[string]AdapterInfo, opts 
 
 		// Compile workflow body for type="workflow" steps.
 		if hasWorkflowType {
-			bodyDiags, body, bodyEntry := compileWorkflowBody(&sp, schemas, opts)
+			bodyDiags, body, bodyEntry := compileWorkflowBody(sp, schemas, opts)
 			diags = append(diags, bodyDiags...)
 			node.Body = body
 			node.BodyEntry = bodyEntry
@@ -500,7 +501,7 @@ func buildBodySpec(stepName, entry string, wb *WorkflowBodySpec) *Spec {
 // allowToolsForStep returns the effective AllowTools for a step. Lifecycle
 // steps (open/close) never receive allow_tools — permission gating is only
 // meaningful on execute-shape steps.
-func allowToolsForStep(sp StepSpec, spec *Spec) []string {
+func allowToolsForStep(sp *StepSpec, spec *Spec) []string {
 	if sp.Lifecycle != "" {
 		return nil
 	}

@@ -230,7 +230,7 @@ func parseCompileForCli(ctx context.Context, workflowPath string) (*workflow.Spe
 	loader := plugin.NewLoader()
 	loader.RegisterBuiltin(shell.Name, plugin.BuiltinFactoryForAdapter(shell.New()))
 	schemas := collectSchemas(ctx, loader, spec, nil)
-	defer loader.Shutdown(ctx)
+	defer func() { _ = loader.Shutdown(ctx) }()
 
 	graph, diags := workflow.CompileWithOpts(spec, schemas, workflow.CompileOpts{WorkflowDir: filepath.Dir(workflowPath)})
 	if diags.HasErrors() {

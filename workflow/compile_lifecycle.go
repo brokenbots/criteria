@@ -50,8 +50,8 @@ func checkReservedNames(spec *Spec) hcl.Diagnostics {
 			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: `"_continue" is a reserved engine-internal target and may not be declared as a state`})
 		}
 	}
-	for _, st := range spec.Steps {
-		if st.Name == "_continue" {
+	for i := range spec.Steps {
+		if spec.Steps[i].Name == "_continue" {
 			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: `"_continue" is a reserved engine-internal target and may not be declared as a step`})
 		}
 	}

@@ -97,7 +97,7 @@ func PermissionDenialSuggestion(adapterName, tool string) string {
 // denyAllPolicy is the default when no allow_tools are configured.
 type denyAllPolicy struct{}
 
-func (denyAllPolicy) Decide(_ PermissionRequest) (bool, string) {
+func (denyAllPolicy) Decide(_ PermissionRequest) (allow bool, reason string) {
 	return false, "no matching allow_tools entry"
 }
 
@@ -107,7 +107,7 @@ type allowlistPolicy struct {
 	aliases  map[string]string // user-facing name → canonical SDK kind
 }
 
-func (p *allowlistPolicy) Decide(req PermissionRequest) (bool, string) {
+func (p *allowlistPolicy) Decide(req PermissionRequest) (allow bool, reason string) {
 	targets := permissionMatchTargets(req)
 	for _, pat := range p.patterns {
 		for _, target := range targets {

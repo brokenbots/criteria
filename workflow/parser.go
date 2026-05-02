@@ -89,8 +89,8 @@ func annotateLegacyConfigRanges(spec *Spec, body hcl.Body) hcl.Diagnostics { //n
 
 	// Preserve ordering by assigning ranges to matching step names in sequence.
 	nameToIdx := map[string][]int{}
-	for i, st := range spec.Steps {
-		nameToIdx[st.Name] = append(nameToIdx[st.Name], i)
+	for i := range spec.Steps {
+		nameToIdx[spec.Steps[i].Name] = append(nameToIdx[spec.Steps[i].Name], i)
 	}
 
 	consumed := map[string]int{}

@@ -35,6 +35,11 @@ type Sink struct {
 	RunID  string
 	Client Publisher
 	Log    *slog.Logger
+	// Ctx is the ambient context for this run. publish always wraps it with
+	// context.WithoutCancel so engine cancellation does not prevent terminal
+	// events from leaving the buffer. Falls back to context.Background() when
+	// nil (e.g. in tests that do not set a run context).
+	Ctx context.Context
 	// CheckpointFn, if non-nil, is called synchronously inside OnStepEntered
 	// before the event is published. Use this to write a durable step
 	// checkpoint for crash recovery.
@@ -46,11 +51,38 @@ type Sink struct {
 	pausedNode string
 }
 
-func (s *Sink) publish(payload any) {
+// sinkCtx returns the ambient context for this Sink, falling back to
+// context.Background() when none was provided (e.g. in tests).
+func (s *Sink) sinkCtx() context.Context {
+	if s.Ctx != nil {
+		return s.Ctx
+	}
+	return context.Background()
+}
+
+// publishWithCtx publishes an event using the provided context, stripping
+// cancellation so terminal events leave the buffer even after the run context
+// is cancelled.
+func (s *Sink) publishWithCtx(ctx context.Context, payload any) {
 	env := events.NewEnvelope(s.RunID, payload)
-	// Always publish on a fresh background context — engine cancellation must
-	// not prevent terminal events from leaving the buffer.
-	s.Client.Publish(context.Background(), env)
+	s.Client.Publish(context.WithoutCancel(ctx), env)
+}
+
+func (s *Sink) publish(payload any) {
+	s.publishWithCtx(s.sinkCtx(), payload)
+}
+
+// RunFailed emits a RunFailed event using the provided context. Use this
+// instead of OnRunFailed at call sites that hold an explicit context so the
+// context is threaded through to the transport without losing ambient values.
+func (s *Sink) RunFailed(ctx context.Context, reason, step string) {
+	s.publishWithCtx(ctx, &pb.RunFailed{Reason: reason, Step: step})
+}
+
+// StepResumed emits a StepResumed event using the provided context. Use this
+// instead of OnStepResumed at call sites that hold an explicit context.
+func (s *Sink) StepResumed(ctx context.Context, step string, attempt int, reason string) {
+	s.publishWithCtx(ctx, &pb.StepResumed{Step: step, Attempt: int32(attempt), Reason: reason})
 }
 
 func (s *Sink) OnRunStarted(workflowName, initialStep string) {
