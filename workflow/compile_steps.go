@@ -44,9 +44,8 @@ func isIteratingStep(sp *StepSpec) bool {
 	}
 	// JustAttributes is a non-destructive read: it does not update hiddenAttrs,
 	// leaving the attributes available for the subsequent PartialContent call
-	// inside decodeRemainIter. Blocks in Remain (unusual/erroneous HCL) cause
-	// a non-fatal diagnostic that we intentionally ignore here; the per-kind
-	// compiler will report the error properly.
+	// inside decodeRemainIter. Blocks in Remain (unusual/erroneous HCL) are
+	// intentionally not reported here; we only check for iteration attributes.
 	attrs, _ := sp.Remain.JustAttributes()
 	_, hasForEach := attrs["for_each"]
 	_, hasCount := attrs["count"]

@@ -97,7 +97,7 @@ func compileWorkflowBodyFromFile(sp *StepSpec, schemas map[string]AdapterInfo, o
 	if sp.WorkflowFile == "" {
 		return append(diags, &hcl.Diagnostic{
 			Severity: hcl.DiagError,
-			Summary:  fmt.Sprintf("step %q: type=\"workflow\" requires a workflow { ... } block", sp.Name),
+			Summary:  fmt.Sprintf("step %q: type=\"workflow\" requires a workflow { ... } block or workflow_file attribute", sp.Name),
 		}), nil, ""
 	}
 	if opts.SubWorkflowResolver == nil {

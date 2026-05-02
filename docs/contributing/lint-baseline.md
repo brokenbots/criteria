@@ -197,7 +197,9 @@ Per-rule change:
 
 ## Phase 3 W03 snapshot (split compile_steps.go)
 
-W03 split the 622-LOC `workflow/compile_steps.go` monolith into 7 focused files.
+W03 split the 622-LOC `workflow/compile_steps.go` monolith into 5 focused files:
+`compile_steps.go` (dispatcher), `compile_steps_adapter.go`, `compile_steps_workflow.go`,
+`compile_steps_iteration.go`, and `compile_steps_graph.go`.
 The three `compileSteps` baseline entries (`gocognit`, `funlen`, `gocyclo`) were
 removed because the function itself no longer exists — replaced by a ≤96-LOC thin
 dispatcher.
