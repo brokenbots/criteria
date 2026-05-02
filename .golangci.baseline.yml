@@ -78,8 +78,7 @@ issues:
         - funlen
       text: 'Function ''SerializeVarScope''' # W10: cursor-stack serialisation added length
     # --- kept gocritic hugeParam: applyOptions threads through 6 apply-command functions; converting to pointer requires W02-split-cli-apply scope ---
-    # P3-02: path broadened from apply.go to apply to cover split files (apply_local.go, apply_resume.go, apply_server.go); single existing entry updated, no new entries added
-    - path: internal/cli/apply
+    - path: internal/cli/apply.go
       linters:
         - gocritic
-      text: 'hugeParam: opts is heavy \(208 bytes\); consider passing it by pointer' # kept: applyOptions threads through apply_*.go split; pointer conversion is a separate signature-change workstream
+      text: 'hugeParam: opts is heavy \(208 bytes\); consider passing it by pointer' # kept: applyOptions threads through 6 apply-command functions; W02-split-cli-apply owns the refactor

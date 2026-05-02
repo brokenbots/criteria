@@ -19,7 +19,7 @@ import (
 	"github.com/brokenbots/criteria/workflow"
 )
 
-func runApplyLocal(ctx context.Context, opts applyOptions) error { //nolint:funlen // W03: local apply orchestrates engine lifecycle, event routing, and output rendering in one function
+func runApplyLocal(ctx context.Context, opts applyOptions) error { //nolint:funlen,gocritic // W03: local apply orchestrates engine lifecycle, event routing, and output rendering in one function; gocritic/hugeParam: opts passes applyOptions by value, pointer conversion is a separate workstream
 	log := opts.log
 	if log == nil {
 		log = newApplyLogger()

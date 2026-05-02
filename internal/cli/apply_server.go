@@ -16,7 +16,7 @@ import (
 	"github.com/brokenbots/criteria/workflow"
 )
 
-func applyClientOptions(opts applyOptions) servertrans.Options {
+func applyClientOptions(opts applyOptions) servertrans.Options { //nolint:gocritic // hugeParam: opts passes applyOptions by value; pointer conversion is a separate workstream
 	return servertrans.Options{
 		Codec:    servertrans.Codec(opts.codec),
 		TLSMode:  servertrans.TLSMode(opts.tlsMode),
@@ -45,7 +45,7 @@ func buildServerSink(ctx context.Context, client *servertrans.Client, runID stri
 	}
 }
 
-func executeServerRun(ctx context.Context, log *slog.Logger, loader plugin.Loader, client *servertrans.Client, state *localRunState, graph *workflow.FSMGraph, opts applyOptions) error {
+func executeServerRun(ctx context.Context, log *slog.Logger, loader plugin.Loader, client *servertrans.Client, state *localRunState, graph *workflow.FSMGraph, opts applyOptions) error { //nolint:gocritic // hugeParam: opts passes applyOptions by value; pointer conversion is a separate workstream
 	_ = writeLocalRunState(state)
 	defer removeLocalRunState()
 	defer RemoveStepCheckpoint(state.RunID)
@@ -88,7 +88,7 @@ func executeServerRun(ctx context.Context, log *slog.Logger, loader plugin.Loade
 // drainResumeCycles handles the pause/resume loop: each time the sink is
 // paused it waits for a matching ResumeRun message and restarts the engine
 // from the paused node, updating eng to the most recently completed engine.
-func drainResumeCycles(ctx context.Context, log *slog.Logger, loader plugin.Loader, sink *run.Sink, client *servertrans.Client, state *localRunState, graph *workflow.FSMGraph, opts applyOptions, eng *engine.Engine) error {
+func drainResumeCycles(ctx context.Context, log *slog.Logger, loader plugin.Loader, sink *run.Sink, client *servertrans.Client, state *localRunState, graph *workflow.FSMGraph, opts applyOptions, eng *engine.Engine) error { //nolint:gocritic // hugeParam: opts passes applyOptions by value; pointer conversion is a separate workstream
 	for sink.IsPaused() {
 		log.Info("run paused; waiting for resume signal", "run_id", state.RunID, "node", sink.PausedAt())
 		var resumeMsg *pb.ResumeRun
@@ -120,7 +120,7 @@ func drainResumeCycles(ctx context.Context, log *slog.Logger, loader plugin.Load
 	return nil
 }
 
-func runApplyServer(ctx context.Context, opts applyOptions) error {
+func runApplyServer(ctx context.Context, opts applyOptions) error { //nolint:gocritic // hugeParam: opts passes applyOptions by value; pointer conversion is a separate workstream
 	runCtx, cancelRun := context.WithCancel(ctx)
 	defer cancelRun()
 
