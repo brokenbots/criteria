@@ -235,7 +235,7 @@ The deliverable is the test suite. The `make test-cover` numbers in Exit criteri
 - **Modified** `internal/transport/server/client.go`: Added `TLSMode() TLSMode`
   getter (the one production-code change permitted by the workstream) needed by
   `TestSetupServerRun_TLS*` tests.
-- **Modified** `internal/transport/server/client_test.go`: Added 10 new tests —
+- **Modified** `internal/transport/server/client_test.go`: Added 9 new tests —
   `TestClientReconnectMultipleFailures`, `TestClientSinceSeqZeroEventReplay`,
   `TestClientTLSErrors`, `TestClientAccessors`, `TestClientHeartbeat`,
   `TestClientResume`, `TestClientDrain`, `TestClientStartPublishStream`,

@@ -161,8 +161,8 @@ func New(t testing.TB) *Fake {
 	return f
 }
 
-// generateSelfSignedCert generates a self-signed RSA certificate valid for
-// 127.0.0.1 that can be used as both server and client certificate in tests.
+// generateSelfSignedCert generates a self-signed RSA CA certificate valid for
+// 127.0.0.1 that can be used as a server certificate in tests.
 // Returns (certPEM, keyPEM) in PEM encoding.
 func generateSelfSignedCert(t testing.TB) (certPEM, keyPEM []byte) {
 	t.Helper()
@@ -189,6 +189,36 @@ func generateSelfSignedCert(t testing.TB) (certPEM, keyPEM []byte) {
 	keyDER, err := x509.MarshalPKCS8PrivateKey(priv)
 	if err != nil {
 		t.Fatalf("applytest: marshal private key: %v", err)
+	}
+	keyPEM = pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})
+	return certPEM, keyPEM
+}
+
+// generateClientLeafCert generates a leaf client certificate signed by the
+// provided CA key/cert. The leaf has IsCA=false and only ExtKeyUsageClientAuth,
+// making it distinct from any CA certificate. Returns (certPEM, keyPEM).
+func generateClientLeafCert(t testing.TB, caPriv *rsa.PrivateKey, caCert *x509.Certificate) (certPEM, keyPEM []byte) {
+	t.Helper()
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("applytest: generate leaf RSA key: %v", err)
+	}
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(2),
+		Subject:      pkix.Name{Organization: []string{"criteria-test-client"}},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}
+	certDER, err := x509.CreateCertificate(rand.Reader, template, caCert, &priv.PublicKey, caPriv)
+	if err != nil {
+		t.Fatalf("applytest: create leaf certificate: %v", err)
+	}
+	certPEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+	keyDER, err := x509.MarshalPKCS8PrivateKey(priv)
+	if err != nil {
+		t.Fatalf("applytest: marshal leaf private key: %v", err)
 	}
 	keyPEM = pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})
 	return certPEM, keyPEM
@@ -231,21 +261,39 @@ func NewTLS(t testing.TB) *Fake {
 }
 
 // NewMTLS starts an HTTPS/h2 fake server that requires mutual TLS
-// authentication. Both the server and accepted client certificates are derived
-// from the same freshly generated self-signed CA. Call CACertPEM(),
+// authentication. The server certificate is signed by a freshly generated CA.
+// The client certificate is a distinct leaf certificate signed by the same CA,
+// with IsCA=false and ExtKeyUsageClientAuth only. Call CACertPEM(),
 // ClientCertPEM(), and ClientKeyPEM() to retrieve the credential material that
-// clients must present.
+// clients must present. Using the CA certificate as a client certificate, or
+// the client certificate as a CA bundle, will fail mTLS verification.
 func NewMTLS(t testing.TB) *Fake {
 	t.Helper()
-	certPEM, keyPEM := generateSelfSignedCert(t)
+	// Generate the CA: used as both the server's TLS certificate and the trust
+	// anchor for verifying the client's leaf certificate.
+	caCertPEM, caKeyPEM := generateSelfSignedCert(t)
+
+	caKeyDER, _ := pem.Decode(caKeyPEM)
+	caPriv, err := x509.ParsePKCS8PrivateKey(caKeyDER.Bytes)
+	if err != nil {
+		t.Fatalf("applytest: parse CA private key: %v", err)
+	}
+	caCertDER, _ := pem.Decode(caCertPEM)
+	caCert, err := x509.ParseCertificate(caCertDER.Bytes)
+	if err != nil {
+		t.Fatalf("applytest: parse CA certificate: %v", err)
+	}
+
+	// Generate a leaf client certificate signed by the CA.
+	clientCertPEM, clientKeyPEM := generateClientLeafCert(t, caPriv.(*rsa.PrivateKey), caCert)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	f := &Fake{
 		ctx:           ctx,
 		cancel:        cancel,
-		caCertPEM:     certPEM,
-		clientCertPEM: certPEM, // same cert acts as client cert for test simplicity
-		clientKeyPEM:  keyPEM,
+		caCertPEM:     caCertPEM,
+		clientCertPEM: clientCertPEM,
+		clientKeyPEM:  clientKeyPEM,
 	}
 	f.handler = newFakeHandler(f)
 
@@ -253,12 +301,12 @@ func NewMTLS(t testing.TB) *Fake {
 	path, h := criteriav1connect.NewCriteriaServiceHandler(f.handler)
 	mux.Handle(path, h)
 
-	cert, err := tls.X509KeyPair(certPEM, keyPEM)
+	cert, err := tls.X509KeyPair(caCertPEM, caKeyPEM)
 	if err != nil {
 		t.Fatalf("applytest: load TLS key pair: %v", err)
 	}
 	pool := x509.NewCertPool()
-	pool.AppendCertsFromPEM(certPEM)
+	pool.AppendCertsFromPEM(caCertPEM)
 
 	srv := httptest.NewUnstartedServer(mux)
 	srv.TLS = &tls.Config{
@@ -281,7 +329,8 @@ func NewMTLS(t testing.TB) *Fake {
 	return f
 }
 
-// URL returns the base URL of the fake server (http scheme over h2c).
+// URL returns the base URL of the fake server. For plain h2c servers this is
+// an http:// address; for TLS and mTLS servers it is an https:// address.
 func (f *Fake) URL() string { return f.srv.URL }
 
 // Events returns a point-in-time snapshot of all envelopes the fake received.

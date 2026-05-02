@@ -37,6 +37,16 @@ type fakeServer struct {
 	controls    chan *pb.ControlMessage
 	ctlAttached chan struct{}
 
+	// heartbeats counts Heartbeat RPCs received.
+	heartbeats int
+
+	// lastResumeReq captures the most recent Resume RPC request payload.
+	lastResumeReq *pb.ResumeRequest
+
+	// streamOpenTimes records when each SubmitEvents stream was opened; used
+	// to assert exponential reconnect backoff spacing.
+	streamOpenTimes []time.Time
+
 	// failAfterAcks, when > 0, causes SubmitEvents to return an error
 	// after sending that many acks. Decremented as it fires.
 	failAfterAcks int
@@ -63,6 +73,9 @@ func (f *fakeServer) Register(_ context.Context, _ *connect.Request[pb.RegisterR
 }
 
 func (f *fakeServer) Heartbeat(_ context.Context, _ *connect.Request[pb.HeartbeatRequest]) (*connect.Response[pb.HeartbeatResponse], error) {
+	f.mu.Lock()
+	f.heartbeats++
+	f.mu.Unlock()
 	return connect.NewResponse(&pb.HeartbeatResponse{}), nil
 }
 
@@ -79,6 +92,7 @@ func (f *fakeServer) SubmitEvents(ctx context.Context, stream *connect.BidiStrea
 	sinceRaw := stream.RequestHeader().Get("since_seq")
 	f.mu.Lock()
 	f.sinceSeqHdr = append(f.sinceSeqHdr, sinceRaw)
+	f.streamOpenTimes = append(f.streamOpenTimes, time.Now())
 	f.mu.Unlock()
 
 	var sinceSeq uint64
@@ -164,7 +178,10 @@ func (f *fakeServer) SubmitEvents(ctx context.Context, stream *connect.BidiStrea
 	}
 }
 
-func (f *fakeServer) Resume(_ context.Context, _ *connect.Request[pb.ResumeRequest]) (*connect.Response[pb.ResumeResponse], error) {
+func (f *fakeServer) Resume(_ context.Context, req *connect.Request[pb.ResumeRequest]) (*connect.Response[pb.ResumeResponse], error) {
+	f.mu.Lock()
+	f.lastResumeReq = req.Msg
+	f.mu.Unlock()
 	return connect.NewResponse(&pb.ResumeResponse{}), nil
 }
 
@@ -601,6 +618,34 @@ func TestClientReconnectMultipleFailures(t *testing.T) {
 	if count != want {
 		t.Fatalf("expected exactly %d events (no duplicates), got %d", want, count)
 	}
+
+	// Assert exponential backoff: stream open timestamps must have increasing
+	// gaps between consecutive reconnects. This catches a regression where
+	// backoffSleep is removed and the client tight-loops reconnects.
+	f.mu.Lock()
+	openTimes := make([]time.Time, len(f.streamOpenTimes))
+	copy(openTimes, f.streamOpenTimes)
+	f.mu.Unlock()
+
+	if len(openTimes) < numEvents+1 {
+		t.Fatalf("expected at least %d stream openings, got %d", numEvents+1, len(openTimes))
+	}
+	// The first reconnect gap must be at least 100ms (min backoff is 500ms;
+	// this loose threshold reliably catches tight-loop regression without
+	// being sensitive to CI scheduling jitter).
+	firstGap := openTimes[1].Sub(openTimes[0])
+	if firstGap < 100*time.Millisecond {
+		t.Errorf("first reconnect gap %s is too short — expected ≥100ms (backoff removed?)", firstGap)
+	}
+	// Subsequent gaps must be non-decreasing (proving exponential growth).
+	for i := 2; i < len(openTimes); i++ {
+		prev := openTimes[i-1].Sub(openTimes[i-2])
+		curr := openTimes[i].Sub(openTimes[i-1])
+		if curr < prev {
+			t.Errorf("reconnect gap[%d]=%s shrank from gap[%d]=%s — expected non-decreasing (exponential) backoff",
+				i-1, curr, i-2, prev)
+		}
+	}
 }
 
 // TestClientSinceSeqZeroEventReplay verifies that a reconnect with since_seq
@@ -706,6 +751,16 @@ func TestClientTLSErrors(t *testing.T) {
 			t.Fatal("expected error for unknown TLS mode")
 		}
 	})
+	t.Run("tls_enable_with_http_url", func(t *testing.T) {
+		// buildHTTPClient accepts TLSEnable against an http:// URL at
+		// construction time; the scheme mismatch surfaces only when RPCs are
+		// attempted. This subtest documents that accepted behaviour.
+		c, err := NewClient("http://example.com", log, Options{TLSMode: TLSEnable})
+		if err != nil {
+			t.Fatalf("unexpected construction error for TLSEnable+http URL: %v", err)
+		}
+		defer c.Close()
+	})
 }
 
 // TestClientAccessors verifies Token, ResumeCh, TLSMode, and SetCredentials.
@@ -756,6 +811,13 @@ func TestClientHeartbeat(t *testing.T) {
 	time.Sleep(60 * time.Millisecond) // allow several heartbeats to fire
 	cancel()
 	time.Sleep(30 * time.Millisecond) // allow goroutine to observe ctx.Done
+
+	f.mu.Lock()
+	n := f.heartbeats
+	f.mu.Unlock()
+	if n < 3 {
+		t.Errorf("expected at least 3 Heartbeat RPCs in 60ms at 15ms interval, got %d", n)
+	}
 }
 
 // TestClientResume verifies the Resume RPC is dispatched to the server and the
@@ -782,6 +844,22 @@ func TestClientResume(t *testing.T) {
 	}
 	if resp == nil {
 		t.Fatal("Resume returned nil response")
+	}
+
+	f.mu.Lock()
+	got := f.lastResumeReq
+	f.mu.Unlock()
+	if got == nil {
+		t.Fatal("server did not receive a Resume request")
+	}
+	if got.RunId != "run-1" {
+		t.Errorf("Resume RunId: got %q want %q", got.RunId, "run-1")
+	}
+	if got.Signal != "received" {
+		t.Errorf("Resume Signal: got %q want %q", got.Signal, "received")
+	}
+	if got.Payload["outcome"] != "ok" {
+		t.Errorf("Resume Payload[outcome]: got %q want %q", got.Payload["outcome"], "ok")
 	}
 }
 
