@@ -157,41 +157,32 @@ func buildHTTPClient(u *url.URL, o *Options) (*http.Client, error) {
 			},
 		}}, nil
 	case TLSEnable, TLSMutual:
-		return buildTLSHTTPClient(u, o)
+		cfg := &tls.Config{MinVersion: tls.VersionTLS12}
+		if o.CAFile != "" {
+			pemBytes, err := os.ReadFile(o.CAFile)
+			if err != nil {
+				return nil, fmt.Errorf("read ca: %w", err)
+			}
+			pool := x509.NewCertPool()
+			if !pool.AppendCertsFromPEM(pemBytes) {
+				return nil, errors.New("invalid ca bundle")
+			}
+			cfg.RootCAs = pool
+		}
+		if o.TLSMode == TLSMutual {
+			if o.CertFile == "" || o.KeyFile == "" {
+				return nil, errors.New("mtls requires --tls-cert and --tls-key")
+			}
+			crt, err := tls.LoadX509KeyPair(o.CertFile, o.KeyFile)
+			if err != nil {
+				return nil, fmt.Errorf("load client cert: %w", err)
+			}
+			cfg.Certificates = []tls.Certificate{crt}
+		}
+		return &http.Client{Transport: &http2.Transport{TLSClientConfig: cfg}}, nil
 	default:
 		return nil, fmt.Errorf("unknown tls mode %q", o.TLSMode)
 	}
-}
-
-// buildTLSHTTPClient builds an HTTP/2 client with TLS configured for TLSEnable
-// or TLSMutual mode.
-func buildTLSHTTPClient(u *url.URL, o *Options) (*http.Client, error) {
-	if u.Scheme == "http" {
-		return nil, fmt.Errorf("tls mode %q requires an https URL", o.TLSMode)
-	}
-	cfg := &tls.Config{MinVersion: tls.VersionTLS12}
-	if o.CAFile != "" {
-		pemBytes, err := os.ReadFile(o.CAFile)
-		if err != nil {
-			return nil, fmt.Errorf("read ca: %w", err)
-		}
-		pool := x509.NewCertPool()
-		if !pool.AppendCertsFromPEM(pemBytes) {
-			return nil, errors.New("invalid ca bundle")
-		}
-		cfg.RootCAs = pool
-	}
-	if o.TLSMode == TLSMutual {
-		if o.CertFile == "" || o.KeyFile == "" {
-			return nil, errors.New("mtls requires --tls-cert and --tls-key")
-		}
-		crt, err := tls.LoadX509KeyPair(o.CertFile, o.KeyFile)
-		if err != nil {
-			return nil, fmt.Errorf("load client cert: %w", err)
-		}
-		cfg.Certificates = []tls.Certificate{crt}
-	}
-	return &http.Client{Transport: &http2.Transport{TLSClientConfig: cfg}}, nil
 }
 
 // CriteriaID returns the server-assigned criteria id after Register.

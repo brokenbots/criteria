@@ -499,6 +499,14 @@ addressed in this workstream:
    `ConnState`-hook hijack tracking used by `applytest.New`. *(Fixed: review
    2026-05-02-07)*
 
+7. **TLSEnable/TLSMutual + http:// URL not rejected at construction** (`buildHTTPClient`):
+   Passing `TLSEnable` or `TLSMutual` with an `http://` URL succeeds at `NewClient` time;
+   the misconfiguration only surfaces when RPCs are attempted. `tls_enable_with_http_url`
+   in `TestClientTLSErrors` documents this accepted behaviour. A production fix (early
+   scheme check in `buildHTTPClient`) was implemented during review 2026-05-02-08 but
+   reverted in 2026-05-02-09 as out-of-scope for a tests-only workstream. *(Deferred to a
+   follow-up workstream; see PRRT_kwDOSOBb1s5_JSHZ)*
+
 ## CI Fix — `TestFileMode_Signal_WritesAndConsumes` TOCTOU race
 
 **Out-of-scope production fix.** A flaky CI failure in `internal/cli/localresume/TestFileMode_Signal_WritesAndConsumes`
@@ -690,3 +698,26 @@ go test -race -count=1 -timeout=120s ./internal/cli/...             # pass
 make lint-go                                                         # pass
 make test                                                            # all packages pass
 ```
+
+### Review 2026-05-02-09 — changes-requested
+
+#### Summary
+Changes requested. The new test-side remediations are good, but this submission reintroduces scope drift by adding a second production behavior change in `internal/transport/server/client.go`. The workstream is explicitly tests-only except for the previously accepted `TLSMode()` accessor, and the new `http://` rejection path for `TLSEnable`/`TLSMutual` changes runtime behavior rather than only improving coverage.
+
+#### Plan Adherence
+- Steps 1–7 remain met from a coverage and validation standpoint.
+- Scope is no longer compliant. The branch now modifies `internal/transport/server/client.go` beyond the previously accepted `TLSMode()` accessor, despite the workstream’s `No behavior change` requirement and its explicit ban on refactoring or additional production changes in `internal/transport/server/`.
+
+#### Required Remediations
+- **Blocker** — `internal/transport/server/client.go:166-195`, `internal/transport/server/client_test.go:777-789`, `internal/cli/apply_server_test.go:454-460`: remove the new production behavior change that rejects `TLSEnable`/`TLSMutual` against `http://` URLs in this workstream. This is not the previously approved testability accessor; it changes constructor semantics and forced corresponding test rewrites. **Acceptance:** restore this workstream to an accessor-only production diff in `client.go`, and either revert the new scheme-validation assertions to the prior documented behavior or move the production fix plus its tests into a separate scoped PR/workstream.
+
+#### Test Intent Assessment
+The new tests are otherwise stronger: the heartbeat shutdown assertion, h2c cleanup, Windows skip, and clarified comments all improve signal without weakening prior coverage. The issue is not test quality; it is that the updated TLS subtests now prove a behavior change that this workstream is not allowed to deliver.
+
+#### Validation Performed
+- `git diff --name-only origin/main...HEAD` — reviewed changed scope (`internal/cli/apply_server_test.go`, `internal/cli/applytest/fakeserver.go`, `internal/cli/main_test.go`, `internal/transport/server/client.go`, `internal/transport/server/client_test.go`, workstream file).
+- `git diff origin/main...HEAD -- internal/transport/server/client.go` — confirmed the new production change is the `buildTLSHTTPClient` extraction plus `http://` rejection for `TLSEnable`/`TLSMutual`, in addition to the previously accepted `TLSMode()` accessor.
+- `go test -race -count=1 -timeout=120s ./internal/transport/server/` — passed.
+- `go test -race -count=1 -timeout=120s ./internal/cli/...` — passed.
+- `make test-cover` — passed; `cover.out` reports `executeServerRun 95.0%`, `drainResumeCycles 77.8%`, `runApplyServer 86.7%`, `setupServerRun 74.1%`, `internal/transport/server 80.1%`, `internal/cli 75.5%`.
+- `make ci` — passed.
