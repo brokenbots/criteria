@@ -179,8 +179,7 @@ func buildHTTPClient(u *url.URL, o *Options) (*http.Client, error) {
 			}
 			cfg.Certificates = []tls.Certificate{crt}
 		}
-		tr := &http2.Transport{TLSClientConfig: cfg}
-		return &http.Client{Transport: tr}, nil
+		return &http.Client{Transport: &http2.Transport{TLSClientConfig: cfg}}, nil
 	default:
 		return nil, fmt.Errorf("unknown tls mode %q", o.TLSMode)
 	}
@@ -199,6 +198,9 @@ func (c *Client) RunCancelCh() <-chan string { return c.runCancelCh }
 // ResumeCh returns the channel carrying ResumeRun messages from the server (W05).
 // The caller should drain this channel while a run is paused.
 func (c *Client) ResumeCh() <-chan *pb.ResumeRun { return c.resumeCh }
+
+// TLSMode returns the TLS mode in effect for this client.
+func (c *Client) TLSMode() TLSMode { return c.opts.TLSMode }
 
 // Close stops the streams and releases resources. It is safe to call
 // concurrently with Publish; Close signals shutdown via c.closed and never

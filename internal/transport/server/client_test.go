@@ -2,19 +2,27 @@ package servertrans
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
 	"crypto/tls"
+	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"io"
 	"log/slog"
+	"math/big"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"testing"
 	"time"
 
 	"connectrpc.com/connect"
+	"go.uber.org/goleak"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
 
@@ -22,6 +30,53 @@ import (
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 	"github.com/brokenbots/criteria/sdk/pb/criteria/v1/criteriav1connect"
 )
+
+// requireNoGoroutineLeak registers a t.Cleanup that asserts no new goroutines
+// were leaked by the test. It snapshots the current goroutine set with
+// goleak.IgnoreCurrent() at call time so that goroutines already running (e.g.
+// from a previous test in the same binary run) do not cause spurious failures;
+// only goroutines spawned after this call are subject to the leak check.
+//
+// It must be called before any setup that starts goroutines so that its cleanup
+// (LIFO order) runs after all server-shutdown and connection-close cleanup.
+func requireNoGoroutineLeak(t *testing.T) {
+	t.Helper()
+	snapshot := goleak.IgnoreCurrent()
+	t.Cleanup(func() { goleak.VerifyNone(t, snapshot) })
+}
+
+// writeTempCertKey generates a minimal self-signed RSA certificate, writes the
+// PEM-encoded cert and key to temporary files, and returns their paths. It is
+// used by tests that need valid cert/key files to exercise TLSMutual construction
+// paths without connecting to a real server.
+func writeTempCertKey(t *testing.T) (certFile, keyFile string) {
+	t.Helper()
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		NotBefore:    time.Now().Add(-time.Minute),
+		NotAfter:     time.Now().Add(time.Hour),
+	}
+	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &priv.PublicKey, priv)
+	if err != nil {
+		t.Fatalf("create cert: %v", err)
+	}
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(priv)})
+	dir := t.TempDir()
+	certFile = filepath.Join(dir, "cert.pem")
+	keyFile = filepath.Join(dir, "key.pem")
+	if err := os.WriteFile(certFile, certPEM, 0o600); err != nil {
+		t.Fatalf("write cert: %v", err)
+	}
+	if err := os.WriteFile(keyFile, keyPEM, 0o600); err != nil {
+		t.Fatalf("write key: %v", err)
+	}
+	return
+}
 
 // --- Fake Connect server -----------------------------------------------------
 
@@ -36,6 +91,16 @@ type fakeServer struct {
 	sinceSeqHdr []string
 	controls    chan *pb.ControlMessage
 	ctlAttached chan struct{}
+
+	// heartbeats counts Heartbeat RPCs received.
+	heartbeats int
+
+	// lastResumeReq captures the most recent Resume RPC request payload.
+	lastResumeReq *pb.ResumeRequest
+
+	// streamOpenTimes records when each SubmitEvents stream was opened; used
+	// to assert exponential reconnect backoff spacing.
+	streamOpenTimes []time.Time
 
 	// failAfterAcks, when > 0, causes SubmitEvents to return an error
 	// after sending that many acks. Decremented as it fires.
@@ -63,6 +128,9 @@ func (f *fakeServer) Register(_ context.Context, _ *connect.Request[pb.RegisterR
 }
 
 func (f *fakeServer) Heartbeat(_ context.Context, _ *connect.Request[pb.HeartbeatRequest]) (*connect.Response[pb.HeartbeatResponse], error) {
+	f.mu.Lock()
+	f.heartbeats++
+	f.mu.Unlock()
 	return connect.NewResponse(&pb.HeartbeatResponse{}), nil
 }
 
@@ -79,6 +147,7 @@ func (f *fakeServer) SubmitEvents(ctx context.Context, stream *connect.BidiStrea
 	sinceRaw := stream.RequestHeader().Get("since_seq")
 	f.mu.Lock()
 	f.sinceSeqHdr = append(f.sinceSeqHdr, sinceRaw)
+	f.streamOpenTimes = append(f.streamOpenTimes, time.Now())
 	f.mu.Unlock()
 
 	var sinceSeq uint64
@@ -164,6 +233,13 @@ func (f *fakeServer) SubmitEvents(ctx context.Context, stream *connect.BidiStrea
 	}
 }
 
+func (f *fakeServer) Resume(_ context.Context, req *connect.Request[pb.ResumeRequest]) (*connect.Response[pb.ResumeResponse], error) {
+	f.mu.Lock()
+	f.lastResumeReq = req.Msg
+	f.mu.Unlock()
+	return connect.NewResponse(&pb.ResumeResponse{}), nil
+}
+
 func (f *fakeServer) Control(ctx context.Context, _ *connect.Request[pb.ControlSubscribeRequest], stream *connect.ServerStream[pb.ControlMessage]) error {
 	if err := stream.Send(&pb.ControlMessage{Command: &pb.ControlMessage_ControlReady{ControlReady: &pb.ControlReady{}}}); err != nil {
 		return err
@@ -191,12 +267,39 @@ func (f *fakeServer) Control(ctx context.Context, _ *connect.Request[pb.ControlS
 
 func startFakeServer(t *testing.T, f *fakeServer) string {
 	t.Helper()
+	// Register goleak check before any goroutine-spawning setup so that its
+	// cleanup (LIFO order) runs after the server and connection cleanup below.
+	requireNoGoroutineLeak(t)
+
 	mux := http.NewServeMux()
 	path, handler := criteriav1connect.NewCriteriaServiceHandler(f)
 	mux.Handle(path, handler)
 	srv := httptest.NewUnstartedServer(h2c.NewHandler(mux, &http2.Server{}))
+
+	// Track hijacked h2c connections so cleanup can close them explicitly.
+	// httptest.Server.Close() cannot reach hijacked connections (they are
+	// removed from httptest's internal tracking after hijack), so without this
+	// the h2c serve goroutines outlive the test and trip goleak assertions.
+	var hijackedMu sync.Mutex
+	var hijackedConns []net.Conn
+	srv.Config.ConnState = func(c net.Conn, cs http.ConnState) {
+		if cs == http.StateHijacked {
+			hijackedMu.Lock()
+			hijackedConns = append(hijackedConns, c)
+			hijackedMu.Unlock()
+		}
+	}
+
 	srv.Start()
-	t.Cleanup(srv.Close)
+	t.Cleanup(func() {
+		hijackedMu.Lock()
+		for _, c := range hijackedConns {
+			_ = c.Close()
+		}
+		hijackedMu.Unlock()
+		_ = srv.Config.Close()
+		srv.Close()
+	})
 	return srv.URL
 }
 
@@ -325,12 +428,20 @@ func TestClientReconnectSendsSinceSeq(t *testing.T) {
 		t.Fatalf("expected a reconnect with since_seq=1, got headers: %v", hdrs)
 	}
 
-	// And exactly one event was persisted for each publish (no duplicates).
+	// Verify the exact event sequence: a count-only check would pass if one
+	// event were duplicated and the other lost.
 	f.mu.Lock()
-	count := len(f.events[runID])
+	evts := append([]*pb.Envelope(nil), f.events[runID]...)
 	f.mu.Unlock()
-	if count != 2 {
-		t.Fatalf("expected 2 persisted events, got %d", count)
+	wantSteps := []string{"s1", "s2"}
+	if len(evts) != len(wantSteps) {
+		t.Fatalf("expected %d events, got %d", len(wantSteps), len(evts))
+	}
+	for i, wantStep := range wantSteps {
+		se := evts[i].GetStepEntered()
+		if se == nil || se.Step != wantStep {
+			t.Errorf("event[%d]: want StepEntered{Step:%q}, got %v", i, wantStep, evts[i])
+		}
 	}
 }
 
@@ -536,4 +647,473 @@ func TestClientCloseWithConcurrentPublish(t *testing.T) {
 		t.Fatalf("close: %v", err)
 	}
 	wg.Wait()
+}
+
+// TestClientReconnectMultipleFailures verifies that the client retries after
+// N consecutive stream failures and all events are ultimately persisted exactly
+// once (no duplicates).
+func TestClientReconnectMultipleFailures(t *testing.T) {
+	const numEvents = 3
+	f := newFakeServer()
+	// Fail after every ack, N times, before finally succeeding.
+	f.failAfterAcks = numEvents
+	url := startFakeServer(t, f)
+
+	c, err := NewClient(url, newTestLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	defer c.Close()
+
+	if err := c.Register(ctx, "n", "h", "v"); err != nil {
+		t.Fatal(err)
+	}
+	runID, err := c.CreateRun(ctx, "wf", "hcl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.StartStreams(ctx, runID); err != nil {
+		t.Fatal(err)
+	}
+
+	// Publish numEvents events; each triggers a disconnect after its ack.
+	for i := 0; i < numEvents; i++ {
+		env := events.NewEnvelope(runID, &pb.StepEntered{Step: "s" + strconv.Itoa(i+1), Adapter: "shell", Attempt: 1})
+		c.Publish(ctx, env)
+	}
+
+	// After numEvents reconnects the fake allows acks through indefinitely.
+	// Publish one final event on the stable connection.
+	final := events.NewEnvelope(runID, &pb.StepEntered{Step: "final", Adapter: "shell", Attempt: 1})
+	c.Publish(ctx, final)
+
+	const want = numEvents + 1
+	if !waitForCond(t, 10*time.Second, func() bool {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		return len(f.events[runID]) == want
+	}) {
+		f.mu.Lock()
+		got := len(f.events[runID])
+		f.mu.Unlock()
+		t.Fatalf("expected %d persisted events after multi-failure reconnect, got %d", want, got)
+	}
+
+	// Verify the exact event sequence (s1, s2, s3, final): a count-only check
+	// would pass if one event were duplicated and another lost.
+	f.mu.Lock()
+	evts := append([]*pb.Envelope(nil), f.events[runID]...)
+	f.mu.Unlock()
+	wantSteps := []string{"s1", "s2", "s3", "final"}
+	if len(evts) != len(wantSteps) {
+		t.Fatalf("expected %d events, got %d", len(wantSteps), len(evts))
+	}
+	for i, wantStep := range wantSteps {
+		se := evts[i].GetStepEntered()
+		if se == nil || se.Step != wantStep {
+			t.Errorf("event[%d]: want StepEntered{Step:%q}, got %v", i, wantStep, evts[i])
+		}
+	}
+
+	// Assert exponential backoff: stream open timestamps must show gaps that
+	// grow by at least 1.5× per failure. The implementation doubles the delay
+	// on each failure (500ms→1000ms→2000ms), giving an actual ratio of ~2.0 —
+	// well above the 1.5 threshold. A regression to a fixed delay (ratio 1.0)
+	// would fail this check.
+	f.mu.Lock()
+	openTimes := make([]time.Time, len(f.streamOpenTimes))
+	copy(openTimes, f.streamOpenTimes)
+	f.mu.Unlock()
+
+	if len(openTimes) < numEvents+1 {
+		t.Fatalf("expected at least %d stream openings, got %d", numEvents+1, len(openTimes))
+	}
+	// First reconnect gap must be at least 100ms (min backoff is 500ms;
+	// loose threshold reliably catches tight-loop regression).
+	firstGap := openTimes[1].Sub(openTimes[0])
+	if firstGap < 100*time.Millisecond {
+		t.Errorf("first reconnect gap %s is too short — expected ≥100ms (backoff removed?)", firstGap)
+	}
+	// Each subsequent gap must be at least 1.5× the previous, proving
+	// exponential growth. A fixed-delay regression (ratio 1.0) fails here.
+	for i := 2; i < len(openTimes); i++ {
+		prev := openTimes[i-1].Sub(openTimes[i-2])
+		curr := openTimes[i].Sub(openTimes[i-1])
+		if curr < 3*prev/2 {
+			t.Errorf("reconnect gap[%d]=%s < 1.5× gap[%d]=%s — expected exponential growth (fixed-delay regression?)",
+				i-1, curr, i-2, prev)
+		}
+	}
+}
+
+// TestClientSinceSeqZeroEventReplay verifies that a reconnect with since_seq
+// pointing past all stored events produces no phantom replay acks, and the
+// client still delivers any outstanding pending events correctly.
+func TestClientSinceSeqZeroEventReplay(t *testing.T) {
+	f := newFakeServer()
+	// Force one disconnect after the first ack so we get a since_seq reconnect.
+	f.failAfterAcks = 1
+	url := startFakeServer(t, f)
+
+	c, err := NewClient(url, newTestLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	defer c.Close()
+
+	if err := c.Register(ctx, "n", "h", "v"); err != nil {
+		t.Fatal(err)
+	}
+	runID, err := c.CreateRun(ctx, "wf", "hcl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.StartStreams(ctx, runID); err != nil {
+		t.Fatal(err)
+	}
+
+	// Publish and wait for first ack; triggers disconnect.
+	env1 := events.NewEnvelope(runID, &pb.StepEntered{Step: "s1", Adapter: "shell", Attempt: 1})
+	c.Publish(ctx, env1)
+	if !waitForCond(t, 2*time.Second, func() bool { return c.lastAckedSeq.Load() == 1 }) {
+		t.Fatalf("first ack not observed before disconnect")
+	}
+
+	// Publish a second event; reconnect carries since_seq=1 (pointing past all
+	// stored events, so zero events are replayed).
+	env2 := events.NewEnvelope(runID, &pb.StepEntered{Step: "s2", Adapter: "shell", Attempt: 1})
+	c.Publish(ctx, env2)
+
+	if !waitForCond(t, 5*time.Second, func() bool {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		return len(f.events[runID]) == 2
+	}) {
+		f.mu.Lock()
+		got := len(f.events[runID])
+		f.mu.Unlock()
+		t.Fatalf("second event never persisted after zero-event replay; persisted=%d", got)
+	}
+
+	// since_seq was sent on the reconnect.
+	f.mu.Lock()
+	hdrs := append([]string(nil), f.sinceSeqHdr...)
+	f.mu.Unlock()
+	foundSince1 := false
+	for _, h := range hdrs {
+		if h == "1" {
+			foundSince1 = true
+			break
+		}
+	}
+	if !foundSince1 {
+		t.Fatalf("expected a reconnect with since_seq=1, got headers: %v", hdrs)
+	}
+
+	// Verify the exact event sequence: a count-only check would pass if s1
+	// were re-persisted and s2 were dropped.
+	f.mu.Lock()
+	evts := append([]*pb.Envelope(nil), f.events[runID]...)
+	f.mu.Unlock()
+	wantSteps2 := []string{"s1", "s2"}
+	if len(evts) != len(wantSteps2) {
+		t.Fatalf("expected %d events (no replay duplicates), got %d", len(wantSteps2), len(evts))
+	}
+	for i, wantStep := range wantSteps2 {
+		se := evts[i].GetStepEntered()
+		if se == nil || se.Step != wantStep {
+			t.Errorf("event[%d]: want StepEntered{Step:%q}, got %v", i, wantStep, evts[i])
+		}
+	}
+}
+
+// TestClientTLSErrors exercises buildHTTPClient error and alternative success
+// paths that are unreachable via the default h2c test setup.
+func TestClientTLSErrors(t *testing.T) {
+	log := newTestLogger()
+
+	t.Run("disable_with_https_url", func(t *testing.T) {
+		if _, err := NewClient("https://example.com", log, Options{TLSMode: TLSDisable}); err == nil {
+			t.Fatal("expected error for TLSDisable + https URL")
+		}
+	})
+	t.Run("mutual_missing_certs", func(t *testing.T) {
+		if _, err := NewClient("https://example.com", log, Options{TLSMode: TLSMutual}); err == nil {
+			t.Fatal("expected error for TLSMutual without cert/key")
+		}
+	})
+	t.Run("tls_enable_no_ca", func(t *testing.T) {
+		// No CA file means accept system roots — buildHTTPClient succeeds.
+		c, err := NewClient("https://example.com", log, Options{TLSMode: TLSEnable})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		defer c.Close()
+	})
+	t.Run("unknown_tls_mode", func(t *testing.T) {
+		if _, err := NewClient("http://example.com", log, Options{TLSMode: "bad"}); err == nil {
+			t.Fatal("expected error for unknown TLS mode")
+		}
+	})
+	t.Run("tls_enable_with_http_url", func(t *testing.T) {
+		// buildHTTPClient accepts TLSEnable against an http:// URL at
+		// construction time; the scheme mismatch surfaces only when RPCs are
+		// attempted. This subtest documents that accepted behaviour.
+		// TODO: reject http:// at construction time in a follow-up workstream.
+		c, err := NewClient("http://example.com", log, Options{TLSMode: TLSEnable})
+		if err != nil {
+			t.Fatalf("unexpected construction error for TLSEnable+http URL: %v", err)
+		}
+		defer c.Close()
+	})
+	t.Run("tls_mutual_with_http_url", func(t *testing.T) {
+		// TLSMutual also accepts an http:// URL at construction time when valid
+		// cert/key files are provided; same deferred-mismatch behaviour as TLSEnable.
+		// TODO: reject http:// at construction time in a follow-up workstream.
+		certFile, keyFile := writeTempCertKey(t)
+		c, err := NewClient("http://example.com", log, Options{
+			TLSMode:  TLSMutual,
+			CertFile: certFile,
+			KeyFile:  keyFile,
+		})
+		if err != nil {
+			t.Fatalf("unexpected construction error for TLSMutual+http URL: %v", err)
+		}
+		defer c.Close()
+	})
+}
+
+// TestClientAccessors verifies Token, ResumeCh, TLSMode, and SetCredentials.
+func TestClientAccessors(t *testing.T) {
+	c, err := NewClient("http://localhost:9999", newTestLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+
+	if c.Token() != "" {
+		t.Errorf("expected empty token before Register, got %q", c.Token())
+	}
+	if c.ResumeCh() == nil {
+		t.Error("ResumeCh() should return a non-nil channel")
+	}
+	if c.TLSMode() != TLSDisable {
+		t.Errorf("expected TLSDisable default, got %q", c.TLSMode())
+	}
+	c.SetCredentials("crt-x", "tok-x")
+	if c.Token() != "tok-x" {
+		t.Errorf("Token after SetCredentials: got %q want tok-x", c.Token())
+	}
+	if c.CriteriaID() != "crt-x" {
+		t.Errorf("CriteriaID after SetCredentials: got %q want crt-x", c.CriteriaID())
+	}
+}
+
+// TestClientHeartbeat verifies that StartHeartbeat fires periodic Heartbeat
+// RPCs and exits cleanly when the context is cancelled.
+func TestClientHeartbeat(t *testing.T) {
+	f := newFakeServer()
+	url := startFakeServer(t, f)
+
+	c, err := NewClient(url, newTestLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	if err := c.Register(ctx, "n", "h", "v"); err != nil {
+		t.Fatal(err)
+	}
+
+	c.StartHeartbeat(ctx, 15*time.Millisecond)
+
+	// Poll (up to 2s) for at least 3 heartbeat RPCs so the assertion is not
+	// sensitive to scheduler jitter or CI load.
+	deadline := time.Now().Add(2 * time.Second)
+	var n int
+	for time.Now().Before(deadline) {
+		f.mu.Lock()
+		n = f.heartbeats
+		f.mu.Unlock()
+		if n >= 3 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if n < 3 {
+		t.Errorf("expected at least 3 Heartbeat RPCs, got %d", n)
+	}
+
+	cancel()
+	// Allow 50ms for the heartbeat goroutine to observe ctx.Done and for any
+	// in-flight RPC that was dispatched just before cancel() to complete.
+	time.Sleep(50 * time.Millisecond)
+
+	f.mu.Lock()
+	snapshot := f.heartbeats
+	f.mu.Unlock()
+
+	// Assert count does not grow after cancellation (wait 3× the interval).
+	time.Sleep(3 * 15 * time.Millisecond)
+	f.mu.Lock()
+	nAfter := f.heartbeats
+	f.mu.Unlock()
+	if nAfter != snapshot {
+		t.Errorf("heartbeat did not stop after cancel: count grew from %d to %d", snapshot, nAfter)
+	}
+}
+
+// TestClientResume verifies the Resume RPC is dispatched to the server and the
+// response is forwarded to the caller.
+func TestClientResume(t *testing.T) {
+	f := newFakeServer()
+	url := startFakeServer(t, f)
+
+	c, err := NewClient(url, newTestLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	defer c.Close()
+
+	if err := c.Register(ctx, "n", "h", "v"); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := c.Resume(ctx, "run-1", "received", map[string]string{"outcome": "ok"})
+	if err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	if resp == nil {
+		t.Fatal("Resume returned nil response")
+	}
+
+	f.mu.Lock()
+	got := f.lastResumeReq
+	f.mu.Unlock()
+	if got == nil {
+		t.Fatal("server did not receive a Resume request")
+	}
+	if got.RunId != "run-1" {
+		t.Errorf("Resume RunId: got %q want %q", got.RunId, "run-1")
+	}
+	if got.Signal != "received" {
+		t.Errorf("Resume Signal: got %q want %q", got.Signal, "received")
+	}
+	if got.Payload["outcome"] != "ok" {
+		t.Errorf("Resume Payload[outcome]: got %q want %q", got.Payload["outcome"], "ok")
+	}
+}
+
+// TestClientDrain verifies that Drain returns immediately when no events are
+// pending and that it unblocks on context cancellation.
+func TestClientDrain(t *testing.T) {
+	t.Run("empty_returns_immediately", func(t *testing.T) {
+		c, err := NewClient("http://localhost:9999", newTestLogger())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer c.Close()
+
+		done := make(chan struct{})
+		go func() { c.Drain(context.Background()); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(500 * time.Millisecond):
+			t.Fatal("Drain did not return when no events pending")
+		}
+	})
+
+	t.Run("ctx_cancel_unblocks_drain", func(t *testing.T) {
+		f := newFakeServer()
+		url := startFakeServer(t, f)
+		c, err := NewClient(url, newTestLogger())
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		defer c.Close()
+
+		if err := c.Register(ctx, "n", "h", "v"); err != nil {
+			t.Fatal(err)
+		}
+		runID, err := c.CreateRun(ctx, "wf", "hcl")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// Publish without starting streams so the event stays in sendCh,
+		// causing Drain to block on the select rather than returning early.
+		env := events.NewEnvelope(runID, &pb.StepEntered{Step: "s1", Adapter: "shell", Attempt: 1})
+		c.Publish(ctx, env)
+
+		done := make(chan struct{})
+		go func() { c.Drain(ctx); close(done) }()
+
+		time.Sleep(25 * time.Millisecond) // allow Drain to enter select
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(500 * time.Millisecond):
+			t.Fatal("Drain did not return after context cancel")
+		}
+	})
+}
+
+// TestClientStartPublishStream exercises StartPublishStream: the
+// credentials-not-set error path and the success path via SetCredentials.
+func TestClientStartPublishStream(t *testing.T) {
+	// Error path: no credentials set.
+	c, err := NewClient("http://localhost:9999", newTestLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	if err := c.StartPublishStream(context.Background(), "run-1"); err == nil {
+		t.Fatal("expected 'credentials not set' error")
+	}
+
+	// Success path via SetCredentials (simulates crash-recovery).
+	f := newFakeServer()
+	url := startFakeServer(t, f)
+	c2, err := NewClient(url, newTestLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer c2.Close()
+	defer cancel()
+
+	c2.SetCredentials(f.criteriaID, f.token)
+	runID, err := c2.CreateRun(ctx, "wf", "hcl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c2.StartPublishStream(ctx, runID); err != nil {
+		t.Fatalf("StartPublishStream: %v", err)
+	}
+	// Second call returns an error because the stream is already started.
+	if err := c2.StartPublishStream(ctx, runID); err == nil {
+		t.Fatal("expected error on duplicate StartPublishStream")
+	}
+}
+
+// TestClientStartStreamsNotRegistered verifies that StartStreams returns an
+// error before Register has been called.
+func TestClientStartStreamsNotRegistered(t *testing.T) {
+	c, err := NewClient("http://localhost:9999", newTestLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	if err := c.StartStreams(context.Background(), "run-1"); err == nil {
+		t.Fatal("expected 'not registered' error")
+	}
 }
