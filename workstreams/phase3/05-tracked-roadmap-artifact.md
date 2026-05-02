@@ -112,10 +112,10 @@ This workstream may **not** edit:
 
 ## Tasks
 
-- [ ] Author [docs/roadmap/phase-2-summary.md](../../docs/roadmap/phase-2-summary.md) (Step 1).
-- [ ] Document the deferred [workstreams/README.md:13](../README.md) edit in reviewer notes for [21](21-phase3-cleanup-gate.md) to execute (Step 2).
-- [ ] Sweep for other local-only references (Step 3).
-- [ ] `make ci` green (Step 4).
+- [x] Author [docs/roadmap/phase-2-summary.md](../../docs/roadmap/phase-2-summary.md) (Step 1).
+- [x] Document the deferred [workstreams/README.md:13](../README.md) edit in reviewer notes for [21](21-phase3-cleanup-gate.md) to execute (Step 2).
+- [x] Sweep for other local-only references (Step 3).
+- [x] `make ci` green (Step 4).
 
 ## Exit criteria
 
@@ -136,3 +136,55 @@ This workstream does not add tests. The signal is the missing-reference grep at 
 | Step 3 surfaces references in files the workstream cannot edit | Document and forward to [21](21-phase3-cleanup-gate.md). The cleanup gate explicitly owns the coordination set. |
 | `docs/roadmap/` is reorganized later to a different path | The summary's URL is the long-lived one; if the directory moves, the redirector lives in the dir-move PR, not here. |
 | The summary file is mistaken for the live plan and edited to plan future work | Add a header line: "This is a closed-phase record. Active planning lives in `docs/roadmap/phase-3.md` (created by the Phase 3 cleanup gate)." |
+
+## Reviewer notes
+
+### Step 1 — Completed
+
+`docs/roadmap/phase-2-summary.md` created. The `docs/roadmap/` directory was
+absent and is created by this workstream. The summary follows the required
+structure: status line, goal paragraph, per-workstream bullet list with archive
+links, outcomes section, and source-plan attribution. A "closed-phase record"
+header is present per the risk mitigation note. The outcome section honestly
+records that the ≥ B Maintainability / Tech Debt grade target was not reached at
+Phase 2 close (both remained C+ per TECH_EVALUATION-20260501-01.md); the goal
+is carried into Phase 3.
+
+### Step 2 — Deferred edit for [21]
+
+**Forward to [21-phase3-cleanup-gate.md](21-phase3-cleanup-gate.md):**
+`workstreams/README.md` line 13 was found to **no longer contain** the
+`~/.claude/plans/we-need-to-plan-inherited-tulip.md` reference; the Phase 2
+cleanup gate (W16) appears to have already removed it. The deferred-edit
+ticket is therefore a no-op. W21 should confirm the absence on its sweep and
+consider whether `workstreams/README.md` should gain a link to
+`docs/roadmap/phase-2-summary.md` for reader convenience.
+
+### Step 3 — Reference sweep results
+
+`git grep -n '~/\.claude\|/plans/we-need-to' -- ':!workstreams/archived/' ':!docs/roadmap/phase-2-summary.md'`
+returned hits in three categories:
+
+1. **`tech_evaluations/TECH_EVALUATION-20260501-01.md`** (lines 209, 219, 274):
+   These are historical audit observations stating "the roadmap pointed to
+   `~/.claude/...`". They are accurate historical records, not live broken
+   links; altering them would corrupt the audit trail. This file is outside
+   the workstream's editable set. Forward to [21] to decide whether a
+   follow-up note ("this was resolved by W05-phase3") should be appended
+   to the tech evaluation — the decision is the cleanup gate's call.
+
+2. **`workstreams/phase3/05-tracked-roadmap-artifact.md`** (this file):
+   Contextual quotes in the workstream spec. Expected and not actionable.
+
+3. **`workstreams/phase3/21-phase3-cleanup-gate.md`**: References the deferred
+   edit. Cannot be edited by this workstream. Already tracked.
+
+The exit criterion specified "returns only the deferred reference at
+`workstreams/README.md:13`"; because that reference was already removed before
+this workstream executed, the criterion is satisfied with the stronger condition
+that no live documentation outside of historical records and workstream specs
+holds a stale local path.
+
+### Step 4 — Validation
+
+`make ci` exits 0 (documentation-only change; no code affected).
