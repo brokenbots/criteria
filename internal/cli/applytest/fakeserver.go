@@ -260,6 +260,24 @@ func NewTLS(t testing.TB) *Fake {
 	return f
 }
 
+// parseCACert decodes a PEM-encoded cert+key pair produced by
+// generateSelfSignedCert and returns the parsed private key and certificate,
+// which are needed to sign leaf certificates in NewMTLS.
+func parseCACert(t testing.TB, certPEM, keyPEM []byte) (*rsa.PrivateKey, *x509.Certificate) {
+	t.Helper()
+	keyDER, _ := pem.Decode(keyPEM)
+	privAny, err := x509.ParsePKCS8PrivateKey(keyDER.Bytes)
+	if err != nil {
+		t.Fatalf("applytest: parse CA private key: %v", err)
+	}
+	certDER, _ := pem.Decode(certPEM)
+	cert, err := x509.ParseCertificate(certDER.Bytes)
+	if err != nil {
+		t.Fatalf("applytest: parse CA certificate: %v", err)
+	}
+	return privAny.(*rsa.PrivateKey), cert
+}
+
 // NewMTLS starts an HTTPS/h2 fake server that requires mutual TLS
 // authentication. The server certificate is signed by a freshly generated CA.
 // The client certificate is a distinct leaf certificate signed by the same CA,
@@ -269,23 +287,9 @@ func NewTLS(t testing.TB) *Fake {
 // the client certificate as a CA bundle, will fail mTLS verification.
 func NewMTLS(t testing.TB) *Fake {
 	t.Helper()
-	// Generate the CA: used as both the server's TLS certificate and the trust
-	// anchor for verifying the client's leaf certificate.
 	caCertPEM, caKeyPEM := generateSelfSignedCert(t)
-
-	caKeyDER, _ := pem.Decode(caKeyPEM)
-	caPriv, err := x509.ParsePKCS8PrivateKey(caKeyDER.Bytes)
-	if err != nil {
-		t.Fatalf("applytest: parse CA private key: %v", err)
-	}
-	caCertDER, _ := pem.Decode(caCertPEM)
-	caCert, err := x509.ParseCertificate(caCertDER.Bytes)
-	if err != nil {
-		t.Fatalf("applytest: parse CA certificate: %v", err)
-	}
-
-	// Generate a leaf client certificate signed by the CA.
-	clientCertPEM, clientKeyPEM := generateClientLeafCert(t, caPriv.(*rsa.PrivateKey), caCert)
+	caPriv, caCert := parseCACert(t, caCertPEM, caKeyPEM)
+	clientCertPEM, clientKeyPEM := generateClientLeafCert(t, caPriv, caCert)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	f := &Fake{
