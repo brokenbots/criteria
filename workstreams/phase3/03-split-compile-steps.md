@@ -359,3 +359,29 @@ Tests 1 and 2 exercise the newly restored `validateAdapterAndAgent` path in `com
 - `go test -race -count=2 ./workflow/...` ✓ (all 4 new tests pass)
 - `make lint-go` ✓
 - `wc -l workflow/compile_steps.go workflow/compile_steps_*.go` — 5 files, none exceeds 243 LOC
+
+### Remediation 2026-05-02
+
+All three blockers addressed:
+
+**Blocker 1 (validation regression):** Added `validateAdapterAndAgent(g, sp)` call to `compileWorkflowStep` (line 26). A `type="workflow"` step with `allow_tools` without agent or `lifecycle` without agent now correctly produces compile errors.
+
+**Blocker 2 (extra files):** Eliminated `compile_steps_helpers.go` and `compile_steps_workflow_body.go`. All content distributed into the five required files per Step 1/Step 2:
+- `compile_steps_graph.go` (238 LOC): +resolveAdapterName, +resolveStepOnCrash, +compileOutcomeBlock, +newWorkflowStepNode, +compileWorkflowOutputs
+- `compile_steps_adapter.go` (235 LOC): +validateAdapterAndAgent, +validateLegacyConfig, +decodeStepTimeout, +decodeStepInput
+- `compile_steps_iteration.go` (148 LOC): +decodeRemainIter, +validateEachRefs, +validateIteratingOutcomes, +compileWorkflowIterExpr, +validateOnFailureValue
+- `compile_steps_workflow.go` (243 LOC): merged body loaders; lost compileWorkflowIterExpr/newWorkflowStepNode/compileWorkflowOutputs
+
+**Blocker 3 (missing tests):** Added `compile_steps_workflow_test.go` with 4 tests:
+- `TestWorkflowStep_AllowToolsWithoutAgent` — allow_tools on workflow step without agent → error
+- `TestWorkflowStep_LifecycleWithoutAgent` — lifecycle on workflow step without agent → error
+- `TestWorkflowStep_InvalidOnFailureValue` — invalid on_failure value on workflow step → error (tests validateOnFailureValue)
+- `TestWorkflowStep_OnFailureRequiresIterating` — on_failure without for_each/count → error (tests compileWorkflowIterExpr constraint)
+
+Note: `lifecycle = "bad"` and `allow_tools + lifecycle` cases cannot be tested on pure `type="workflow"` steps because having both `agent` and `type="workflow"` fails `validateStepKindSelectionDiags` first. The four implemented tests cover all reachable shared-validation paths for workflow steps.
+
+Validation:
+- `go test -race -count=2 ./workflow/...` ✓
+- `make lint-go` ✓
+- `make lint-baseline-check` ✓ (17/17)
+- `make validate` ✓
