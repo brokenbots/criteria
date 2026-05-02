@@ -385,3 +385,43 @@ Validation:
 - `make lint-go` ✓
 - `make lint-baseline-check` ✓ (17/17)
 - `make validate` ✓
+
+### Review 2026-05-02-02 — changes-requested
+
+#### Summary
+
+The substantive blockers from the prior pass are fixed: the workflow-step validation regression is restored, the production layout is back to the five required files, the new workflow-step negative tests cover the missed validation path, and the full validation matrix passes. I am still holding approval for one remaining nit in the changed code: `workflow/compile_steps.go` still documents two deleted files in its header comment, leaving the final state internally inconsistent.
+
+#### Plan Adherence
+
+- **Step 1 / Exit criteria:** functionally met. The production layout is now the required five files and all are under the LOC cap.
+- **Step 2 / Behavior change:** met. The workflow-step validation regression from the prior review is fixed.
+- **Step 5 / test intent:** met. The added workflow-step negative tests now exercise the restored validation path.
+- **Documentation polish on touched code:** not met. The dispatcher file header still references `compile_steps_workflow_body.go` and `compile_steps_helpers.go`, which no longer exist.
+
+#### Required Remediations
+
+- **Required — `workflow/compile_steps.go:6-12`:** the header comment still lists `compile_steps_workflow_body.go` and `compile_steps_helpers.go` as active implementation files even though both were deleted in the remediation. This is a small issue, but the final code should not ship with stale guidance in the file that now serves as the top-level dispatcher entrypoint. **Acceptance criteria:** update the file header so it accurately documents only the current five-file layout.
+
+#### Test Intent Assessment
+
+Test intent is now adequate for the reviewed regression. `workflow/compile_steps_workflow_test.go` proves the restored compile-time rejection path for invalid workflow steps, and the existing workflow/compile/validate/CI targets demonstrate the carve remained behavior-safe after the remediation.
+
+#### Validation Performed
+
+- `go run` repro against current branch for a `type="workflow"` step with `lifecycle = "open"` and `allow_tools = ["read"]` — now returns the expected diagnostics instead of `diag_count=0`.
+- `wc -l workflow/compile_steps.go workflow/compile_steps_*.go` — passed; production files are 96, 235, 238, 148, and 243 LOC.
+- `go build ./workflow/...` — passed.
+- `go test -race -count=2 ./workflow/...` — passed.
+- `make lint-go` — passed.
+- `make lint-baseline-check` — passed (`17 / 17`).
+- `make validate` — passed.
+- `make ci` — passed.
+
+### Remediation 2026-05-02-02
+
+Fixed the sole remaining nit: updated the file header comment in `workflow/compile_steps.go` (lines 6–11) to remove references to the deleted `compile_steps_workflow_body.go` and `compile_steps_helpers.go`. Header now accurately documents the current five-file layout only.
+
+Validation:
+- `go test ./workflow/...` ✓
+- `make lint-go` ✓
