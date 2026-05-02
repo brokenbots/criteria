@@ -677,9 +677,11 @@ func TestClientReconnectMultipleFailures(t *testing.T) {
 		}
 	}
 
-	// Assert exponential backoff: stream open timestamps must have increasing
-	// gaps between consecutive reconnects. This catches a regression where
-	// backoffSleep is removed and the client tight-loops reconnects.
+	// Assert exponential backoff: stream open timestamps must show gaps that
+	// grow by at least 1.5× per failure. The implementation doubles the delay
+	// on each failure (500ms→1000ms→2000ms), giving an actual ratio of ~2.0 —
+	// well above the 1.5 threshold. A regression to a fixed delay (ratio 1.0)
+	// would fail this check.
 	f.mu.Lock()
 	openTimes := make([]time.Time, len(f.streamOpenTimes))
 	copy(openTimes, f.streamOpenTimes)
@@ -688,19 +690,19 @@ func TestClientReconnectMultipleFailures(t *testing.T) {
 	if len(openTimes) < numEvents+1 {
 		t.Fatalf("expected at least %d stream openings, got %d", numEvents+1, len(openTimes))
 	}
-	// The first reconnect gap must be at least 100ms (min backoff is 500ms;
-	// this loose threshold reliably catches tight-loop regression without
-	// being sensitive to CI scheduling jitter).
+	// First reconnect gap must be at least 100ms (min backoff is 500ms;
+	// loose threshold reliably catches tight-loop regression).
 	firstGap := openTimes[1].Sub(openTimes[0])
 	if firstGap < 100*time.Millisecond {
 		t.Errorf("first reconnect gap %s is too short — expected ≥100ms (backoff removed?)", firstGap)
 	}
-	// Subsequent gaps must be non-decreasing (proving exponential growth).
+	// Each subsequent gap must be at least 1.5× the previous, proving
+	// exponential growth. A fixed-delay regression (ratio 1.0) fails here.
 	for i := 2; i < len(openTimes); i++ {
 		prev := openTimes[i-1].Sub(openTimes[i-2])
 		curr := openTimes[i].Sub(openTimes[i-1])
-		if curr < prev {
-			t.Errorf("reconnect gap[%d]=%s shrank from gap[%d]=%s — expected non-decreasing (exponential) backoff",
+		if curr < 3*prev/2 {
+			t.Errorf("reconnect gap[%d]=%s < 1.5× gap[%d]=%s — expected exponential growth (fixed-delay regression?)",
 				i-1, curr, i-2, prev)
 		}
 	}

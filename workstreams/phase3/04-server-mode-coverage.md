@@ -387,7 +387,7 @@ Changed `CreateRun` to use `uuid.NewString()` so run IDs are UUID v4 throughout.
 
 ### B4 (`TestDrainResumeCycles_*`)
 
-Both tests now:
+**`TestDrainResumeCycles_PauseThenResume`**:
 1. Build `sink` + `eng` directly (bypassing `executeServerRun`) so checkpoint files persist for assertions
 2. Run `eng.Run(ctx)` to the pause point, assert `sink.IsPaused()`
 3. Read and assert the pre-resume checkpoint (`CurrentStep == "step_one"`)
@@ -396,7 +396,12 @@ Both tests now:
 6. Assert `RunCompleted`, `WaitResumed`, `StepEntered("step_three")` in fake events
 7. Read and assert post-resume checkpoint (`CurrentStep == "step_three"`)
 
-The `StreamDropAndReconnect` variant also asserts `fake.SinceSeqHeaders()` contains a non-empty value, proving the reconnect sent a `since_seq` header.
+**`TestDrainResumeCycles_StreamDropAndReconnect`**:
+1–5. Same setup and `drainResumeCycles` call as above (uses `DropStreamAt: "step_three"` to drop the stream mid-run)
+6. Assert `HasEventOfType("RunCompleted")` and `HasStepEntered("step_three")` in fake events
+7. Assert `fake.SinceSeqHeaders()` contains a non-empty value, proving the reconnect sent a `since_seq` header
+
+Note: `StreamDropAndReconnect` does **not** assert checkpoint files — only `PauseThenResume` reads and checks pre/post-resume checkpoint content.
 
 **Key discovery**: `Sink.publish` is async (events go into `sendCh`). Without `client.Drain()`, `RunCompleted` is buffered but not yet received by the fake when assertions run. `executeServerRun` calls `client.Drain()` internally; tests calling `drainResumeCycles` directly must do the same.
 
