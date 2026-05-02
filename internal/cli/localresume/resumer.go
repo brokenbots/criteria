@@ -405,6 +405,12 @@ func (r *resumer) pollForFile(ctx context.Context, reqPath string) (map[string]s
 			if err != nil {
 				return nil, fmt.Errorf("read decision file: %w", err)
 			}
+			// Skip empty files: os.WriteFile creates the file (O_TRUNC, 0 bytes)
+			// before writing content, so a concurrent reader can race with the
+			// writer and see a zero-byte file. Retry on the next tick.
+			if len(data) == 0 {
+				continue
+			}
 			var m map[string]string
 			if err := json.Unmarshal(data, &m); err != nil {
 				return nil, fmt.Errorf("decode decision file: %w", err)
