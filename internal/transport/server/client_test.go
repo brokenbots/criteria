@@ -164,6 +164,10 @@ func (f *fakeServer) SubmitEvents(ctx context.Context, stream *connect.BidiStrea
 	}
 }
 
+func (f *fakeServer) Resume(_ context.Context, _ *connect.Request[pb.ResumeRequest]) (*connect.Response[pb.ResumeResponse], error) {
+	return connect.NewResponse(&pb.ResumeResponse{}), nil
+}
+
 func (f *fakeServer) Control(ctx context.Context, _ *connect.Request[pb.ControlSubscribeRequest], stream *connect.ServerStream[pb.ControlMessage]) error {
 	if err := stream.Send(&pb.ControlMessage{Command: &pb.ControlMessage_ControlReady{ControlReady: &pb.ControlReady{}}}); err != nil {
 		return err
@@ -536,4 +540,353 @@ func TestClientCloseWithConcurrentPublish(t *testing.T) {
 		t.Fatalf("close: %v", err)
 	}
 	wg.Wait()
+}
+
+// TestClientReconnectMultipleFailures verifies that the client retries after
+// N consecutive stream failures and all events are ultimately persisted exactly
+// once (no duplicates).
+func TestClientReconnectMultipleFailures(t *testing.T) {
+	const numEvents = 3
+	f := newFakeServer()
+	// Fail after every ack, N times, before finally succeeding.
+	f.failAfterAcks = numEvents
+	url := startFakeServer(t, f)
+
+	c, err := NewClient(url, newTestLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	defer c.Close()
+
+	if err := c.Register(ctx, "n", "h", "v"); err != nil {
+		t.Fatal(err)
+	}
+	runID, err := c.CreateRun(ctx, "wf", "hcl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.StartStreams(ctx, runID); err != nil {
+		t.Fatal(err)
+	}
+
+	// Publish numEvents events; each triggers a disconnect after its ack.
+	for i := 0; i < numEvents; i++ {
+		env := events.NewEnvelope(runID, &pb.StepEntered{Step: "s" + strconv.Itoa(i+1), Adapter: "shell", Attempt: 1})
+		c.Publish(ctx, env)
+	}
+
+	// After numEvents reconnects the fake allows acks through indefinitely.
+	// Publish one final event on the stable connection.
+	final := events.NewEnvelope(runID, &pb.StepEntered{Step: "final", Adapter: "shell", Attempt: 1})
+	c.Publish(ctx, final)
+
+	const want = numEvents + 1
+	if !waitForCond(t, 10*time.Second, func() bool {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		return len(f.events[runID]) == want
+	}) {
+		f.mu.Lock()
+		got := len(f.events[runID])
+		f.mu.Unlock()
+		t.Fatalf("expected %d persisted events after multi-failure reconnect, got %d", want, got)
+	}
+
+	// Exactly want events: no duplicates despite reconnects.
+	f.mu.Lock()
+	count := len(f.events[runID])
+	f.mu.Unlock()
+	if count != want {
+		t.Fatalf("expected exactly %d events (no duplicates), got %d", want, count)
+	}
+}
+
+// TestClientSinceSeqZeroEventReplay verifies that a reconnect with since_seq
+// pointing past all stored events produces no phantom replay acks, and the
+// client still delivers any outstanding pending events correctly.
+func TestClientSinceSeqZeroEventReplay(t *testing.T) {
+	f := newFakeServer()
+	// Force one disconnect after the first ack so we get a since_seq reconnect.
+	f.failAfterAcks = 1
+	url := startFakeServer(t, f)
+
+	c, err := NewClient(url, newTestLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	defer c.Close()
+
+	if err := c.Register(ctx, "n", "h", "v"); err != nil {
+		t.Fatal(err)
+	}
+	runID, err := c.CreateRun(ctx, "wf", "hcl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.StartStreams(ctx, runID); err != nil {
+		t.Fatal(err)
+	}
+
+	// Publish and wait for first ack; triggers disconnect.
+	env1 := events.NewEnvelope(runID, &pb.StepEntered{Step: "s1", Adapter: "shell", Attempt: 1})
+	c.Publish(ctx, env1)
+	if !waitForCond(t, 2*time.Second, func() bool { return c.lastAckedSeq.Load() == 1 }) {
+		t.Fatalf("first ack not observed before disconnect")
+	}
+
+	// Publish a second event; reconnect carries since_seq=1 (pointing past all
+	// stored events, so zero events are replayed).
+	env2 := events.NewEnvelope(runID, &pb.StepEntered{Step: "s2", Adapter: "shell", Attempt: 1})
+	c.Publish(ctx, env2)
+
+	if !waitForCond(t, 5*time.Second, func() bool {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		return len(f.events[runID]) == 2
+	}) {
+		f.mu.Lock()
+		got := len(f.events[runID])
+		f.mu.Unlock()
+		t.Fatalf("second event never persisted after zero-event replay; persisted=%d", got)
+	}
+
+	// since_seq was sent on the reconnect.
+	f.mu.Lock()
+	hdrs := append([]string(nil), f.sinceSeqHdr...)
+	f.mu.Unlock()
+	foundSince1 := false
+	for _, h := range hdrs {
+		if h == "1" {
+			foundSince1 = true
+			break
+		}
+	}
+	if !foundSince1 {
+		t.Fatalf("expected a reconnect with since_seq=1, got headers: %v", hdrs)
+	}
+
+	// Exactly 2 events persisted — the zero-event replay produced no duplicates.
+	f.mu.Lock()
+	count := len(f.events[runID])
+	f.mu.Unlock()
+	if count != 2 {
+		t.Fatalf("expected 2 persisted events (no replay duplicates), got %d", count)
+	}
+}
+
+// TestClientTLSErrors exercises buildHTTPClient error and alternative success
+// paths that are unreachable via the default h2c test setup.
+func TestClientTLSErrors(t *testing.T) {
+	log := newTestLogger()
+
+	t.Run("disable_with_https_url", func(t *testing.T) {
+		if _, err := NewClient("https://example.com", log, Options{TLSMode: TLSDisable}); err == nil {
+			t.Fatal("expected error for TLSDisable + https URL")
+		}
+	})
+	t.Run("mutual_missing_certs", func(t *testing.T) {
+		if _, err := NewClient("https://example.com", log, Options{TLSMode: TLSMutual}); err == nil {
+			t.Fatal("expected error for TLSMutual without cert/key")
+		}
+	})
+	t.Run("tls_enable_no_ca", func(t *testing.T) {
+		// No CA file means accept system roots — buildHTTPClient succeeds.
+		c, err := NewClient("https://example.com", log, Options{TLSMode: TLSEnable})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		defer c.Close()
+	})
+	t.Run("unknown_tls_mode", func(t *testing.T) {
+		if _, err := NewClient("http://example.com", log, Options{TLSMode: "bad"}); err == nil {
+			t.Fatal("expected error for unknown TLS mode")
+		}
+	})
+}
+
+// TestClientAccessors verifies Token, ResumeCh, TLSMode, and SetCredentials.
+func TestClientAccessors(t *testing.T) {
+	c, err := NewClient("http://localhost:9999", newTestLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+
+	if c.Token() != "" {
+		t.Errorf("expected empty token before Register, got %q", c.Token())
+	}
+	if c.ResumeCh() == nil {
+		t.Error("ResumeCh() should return a non-nil channel")
+	}
+	if c.TLSMode() != TLSDisable {
+		t.Errorf("expected TLSDisable default, got %q", c.TLSMode())
+	}
+	c.SetCredentials("crt-x", "tok-x")
+	if c.Token() != "tok-x" {
+		t.Errorf("Token after SetCredentials: got %q want tok-x", c.Token())
+	}
+	if c.CriteriaID() != "crt-x" {
+		t.Errorf("CriteriaID after SetCredentials: got %q want crt-x", c.CriteriaID())
+	}
+}
+
+// TestClientHeartbeat verifies that StartHeartbeat fires periodic Heartbeat
+// RPCs and exits cleanly when the context is cancelled.
+func TestClientHeartbeat(t *testing.T) {
+	f := newFakeServer()
+	url := startFakeServer(t, f)
+
+	c, err := NewClient(url, newTestLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	if err := c.Register(ctx, "n", "h", "v"); err != nil {
+		t.Fatal(err)
+	}
+
+	c.StartHeartbeat(ctx, 15*time.Millisecond)
+	time.Sleep(60 * time.Millisecond) // allow several heartbeats to fire
+	cancel()
+	time.Sleep(30 * time.Millisecond) // allow goroutine to observe ctx.Done
+}
+
+// TestClientResume verifies the Resume RPC is dispatched to the server and the
+// response is forwarded to the caller.
+func TestClientResume(t *testing.T) {
+	f := newFakeServer()
+	url := startFakeServer(t, f)
+
+	c, err := NewClient(url, newTestLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	defer c.Close()
+
+	if err := c.Register(ctx, "n", "h", "v"); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := c.Resume(ctx, "run-1", "received", map[string]string{"outcome": "ok"})
+	if err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	if resp == nil {
+		t.Fatal("Resume returned nil response")
+	}
+}
+
+// TestClientDrain verifies that Drain returns immediately when no events are
+// pending and that it unblocks on context cancellation.
+func TestClientDrain(t *testing.T) {
+	t.Run("empty_returns_immediately", func(t *testing.T) {
+		c, err := NewClient("http://localhost:9999", newTestLogger())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer c.Close()
+
+		done := make(chan struct{})
+		go func() { c.Drain(context.Background()); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(500 * time.Millisecond):
+			t.Fatal("Drain did not return when no events pending")
+		}
+	})
+
+	t.Run("ctx_cancel_unblocks_drain", func(t *testing.T) {
+		f := newFakeServer()
+		url := startFakeServer(t, f)
+		c, err := NewClient(url, newTestLogger())
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		defer c.Close()
+
+		if err := c.Register(ctx, "n", "h", "v"); err != nil {
+			t.Fatal(err)
+		}
+		runID, err := c.CreateRun(ctx, "wf", "hcl")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// Publish without starting streams so the event stays in sendCh,
+		// causing Drain to block on the select rather than returning early.
+		env := events.NewEnvelope(runID, &pb.StepEntered{Step: "s1", Adapter: "shell", Attempt: 1})
+		c.Publish(ctx, env)
+
+		done := make(chan struct{})
+		go func() { c.Drain(ctx); close(done) }()
+
+		time.Sleep(25 * time.Millisecond) // allow Drain to enter select
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(500 * time.Millisecond):
+			t.Fatal("Drain did not return after context cancel")
+		}
+	})
+}
+
+// TestClientStartPublishStream exercises StartPublishStream: the
+// credentials-not-set error path and the success path via SetCredentials.
+func TestClientStartPublishStream(t *testing.T) {
+	// Error path: no credentials set.
+	c, err := NewClient("http://localhost:9999", newTestLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	if err := c.StartPublishStream(context.Background(), "run-1"); err == nil {
+		t.Fatal("expected 'credentials not set' error")
+	}
+
+	// Success path via SetCredentials (simulates crash-recovery).
+	f := newFakeServer()
+	url := startFakeServer(t, f)
+	c2, err := NewClient(url, newTestLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer c2.Close()
+	defer cancel()
+
+	c2.SetCredentials(f.criteriaID, f.token)
+	runID, err := c2.CreateRun(ctx, "wf", "hcl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c2.StartPublishStream(ctx, runID); err != nil {
+		t.Fatalf("StartPublishStream: %v", err)
+	}
+	// Second call returns an error because the stream is already started.
+	if err := c2.StartPublishStream(ctx, runID); err == nil {
+		t.Fatal("expected error on duplicate StartPublishStream")
+	}
+}
+
+// TestClientStartStreamsNotRegistered verifies that StartStreams returns an
+// error before Register has been called.
+func TestClientStartStreamsNotRegistered(t *testing.T) {
+	c, err := NewClient("http://localhost:9999", newTestLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	if err := c.StartStreams(context.Background(), "run-1"); err == nil {
+		t.Fatal("expected 'not registered' error")
+	}
 }

@@ -200,6 +200,9 @@ func (c *Client) RunCancelCh() <-chan string { return c.runCancelCh }
 // The caller should drain this channel while a run is paused.
 func (c *Client) ResumeCh() <-chan *pb.ResumeRun { return c.resumeCh }
 
+// TLSMode returns the TLS mode in effect for this client.
+func (c *Client) TLSMode() TLSMode { return c.opts.TLSMode }
+
 // Close stops the streams and releases resources. It is safe to call
 // concurrently with Publish; Close signals shutdown via c.closed and never
 // closes sendCh, so an in-flight Publish select unblocks cleanly.
