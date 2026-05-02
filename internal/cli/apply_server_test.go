@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -125,7 +126,9 @@ workflow "pause_resume" {
 // TestRunApplyServer_HappyPath exercises the full server-mode apply path through
 // runApplyServer against an in-memory fake server. It verifies that client
 // submissions arrive in order and that the terminal RunCompleted event follows
-// all step events.
+// all step events. Server-mode apply routes directly to runApplyServer and does
+// not write a local events file (eventsPath is not set and is not used in this
+// path).
 func TestRunApplyServer_HappyPath(t *testing.T) {
 	requireNoGoroutineLeak(t)
 	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
@@ -185,6 +188,9 @@ func TestRunApplyServer_HappyPath(t *testing.T) {
 // checkpoint was written before the cancel propagated, and that the checkpoint
 // is cleaned up on exit.
 func TestExecuteServerRun_Cancellation(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("cancelWorkflow uses the Unix sleep command")
+	}
 	requireNoGoroutineLeak(t)
 	stateDir := t.TempDir()
 	t.Setenv("CRITERIA_STATE_DIR", stateDir)
@@ -454,7 +460,7 @@ func TestSetupServerRun_MTLSMissingCert(t *testing.T) {
 
 	log := newApplyLogger()
 	copts := servertrans.Options{TLSMode: servertrans.TLSMutual}
-	_, _, err := setupServerRun(context.Background(), log, nil, nil, "http://localhost:9999", "test", &copts, nil)
+	_, _, err := setupServerRun(context.Background(), log, nil, nil, "https://localhost:9999", "test", &copts, nil)
 	if err == nil {
 		t.Fatal("expected error for mtls without cert")
 	}

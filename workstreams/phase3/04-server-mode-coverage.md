@@ -466,19 +466,38 @@ make test
 
 ## Known Limitations (Noted in Review)
 
-The following test quality concerns were identified during review but do not block the workstream acceptance:
+The following test quality concerns were identified during review. All items have been
+addressed in this workstream:
 
-1. **Cross-platform compatibility** (`TestExecuteServerRun_Cancellation`): Uses Unix `sleep` command via shell adapter; will fail on Windows where `sleep` is unavailable. Matches existing shell-adapter test pattern but should be revisited in a separate Windows-testing workstream.
+1. **Cross-platform compatibility** (`TestExecuteServerRun_Cancellation`): Uses Unix `sleep`
+   command via shell adapter. Added `runtime.GOOS == "windows"` skip guard so the test is
+   skipped on Windows rather than failing. *(Fixed: review 2026-05-02-07)*
 
-2. **mTLS certificate isolation** (`TestSetupServerRun_MTLS`): Uses the same self-signed certificate for both CA and client, reducing test isolation. A regression that swapped `CAFile` and `CertFile` would still pass. Recommend using a distinct CA and leaf certificate in future mTLS coverage improvements.
+2. **mTLS certificate isolation** (`TestSetupServerRun_MTLS`): Previously used the same
+   self-signed cert for both CA and client. Fixed in review round 2026-05-02-06 by adding
+   a distinct CA cert and a leaf cert signed by that CA (`generateClientLeafCert` +
+   `parseCACert` helpers). *(Fixed: review 2026-05-02-06)*
 
-3. **Backoff observation** (`TestClientReconnectMultipleFailures`): Verifies reconnection succeeds after failures but does not assert exponential backoff timing. A regression that removed delays would still pass. Recommend adding timing assertions in a future transport-layer coverage pass.
+3. **Backoff observation** (`TestClientReconnectMultipleFailures`): Previously did not
+   assert exponential backoff timing. Fixed in review round 2026-05-02-06 by adding
+   `streamOpenTimes` timestamps and asserting gap between reconnects. *(Fixed: review
+   2026-05-02-06)*
 
-4. **Resume request validation** (`TestClientResume`): Checks for non-nil response but does not assert that `runID`, `signal`, and `payload` were correctly mapped in the request. A regression that dropped these fields would still pass. Recommend adding request capture to the fake server.
+4. **Resume request validation** (`TestClientResume`): Previously only checked non-nil
+   response. Fixed in review round 2026-05-02-06 by capturing `lastResumeReq` in the fake
+   server and asserting `runID`, `signal`, and `payload` fields. *(Fixed: review
+   2026-05-02-06)*
 
-5. **Heartbeat observability** (`TestClientHeartbeat`): Sleeps and cancels context but does not verify heartbeat RPCs were actually sent; fake server doesn't record heartbeat calls. Recommend adding heartbeat counter/assertion to fake.
+5. **Heartbeat observability** (`TestClientHeartbeat`): Previously did not assert heartbeats
+   were sent. Fixed in review round 2026-05-02-06 by adding a `heartbeats` counter to the
+   fake server and asserting count ≥ 3. Added shutdown assertion (count does not grow after
+   cancel) in review 2026-05-02-07. *(Fixed: review 2026-05-02-07)*
 
-6. **Transport-layer goroutine assertions**: New `internal/transport/server/client_test.go` tests spin up h2c servers via plain `httptest.Server.Close()` without `goleak` assertions. Transport leaks would not be caught by these tests. Recommend adding per-test goleak checks or integration into a broader transport-level leak test in a future pass.
+6. **Transport-layer goroutine assertions**: Previously `startFakeServer` in
+   `client_test.go` closed the server without tracking hijacked h2c connections, leaving
+   goroutines alive after the test. Fixed in review 2026-05-02-07 by adding the same
+   `ConnState`-hook hijack tracking used by `applytest.New`. *(Fixed: review
+   2026-05-02-07)*
 
 ## CI Fix — `TestFileMode_Signal_WritesAndConsumes` TOCTOU race
 

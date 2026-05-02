@@ -216,8 +216,31 @@ func startFakeServer(t *testing.T, f *fakeServer) string {
 	path, handler := criteriav1connect.NewCriteriaServiceHandler(f)
 	mux.Handle(path, handler)
 	srv := httptest.NewUnstartedServer(h2c.NewHandler(mux, &http2.Server{}))
+
+	// Track hijacked h2c connections so cleanup can close them explicitly.
+	// httptest.Server.Close() cannot reach hijacked connections (they are
+	// removed from httptest's internal tracking after hijack), so without this
+	// the h2c serve goroutines outlive the test and trip goleak assertions.
+	var hijackedMu sync.Mutex
+	var hijackedConns []net.Conn
+	srv.Config.ConnState = func(c net.Conn, cs http.ConnState) {
+		if cs == http.StateHijacked {
+			hijackedMu.Lock()
+			hijackedConns = append(hijackedConns, c)
+			hijackedMu.Unlock()
+		}
+	}
+
 	srv.Start()
-	t.Cleanup(srv.Close)
+	t.Cleanup(func() {
+		hijackedMu.Lock()
+		for _, c := range hijackedConns {
+			_ = c.Close()
+		}
+		hijackedMu.Unlock()
+		_ = srv.Config.Close()
+		srv.Close()
+	})
 	return srv.URL
 }
 
@@ -752,14 +775,17 @@ func TestClientTLSErrors(t *testing.T) {
 		}
 	})
 	t.Run("tls_enable_with_http_url", func(t *testing.T) {
-		// buildHTTPClient accepts TLSEnable against an http:// URL at
-		// construction time; the scheme mismatch surfaces only when RPCs are
-		// attempted. This subtest documents that accepted behaviour.
-		c, err := NewClient("http://example.com", log, Options{TLSMode: TLSEnable})
-		if err != nil {
-			t.Fatalf("unexpected construction error for TLSEnable+http URL: %v", err)
+		// TLSEnable + http:// is an obvious misconfiguration; reject it at
+		// construction time so callers get a clear error instead of a
+		// confusing RPC-level failure.
+		if _, err := NewClient("http://example.com", log, Options{TLSMode: TLSEnable}); err == nil {
+			t.Fatal("expected error for TLSEnable + http URL")
 		}
-		defer c.Close()
+	})
+	t.Run("tls_mutual_with_http_url", func(t *testing.T) {
+		if _, err := NewClient("http://example.com", log, Options{TLSMode: TLSMutual}); err == nil {
+			t.Fatal("expected error for TLSMutual + http URL")
+		}
 	})
 }
 
@@ -817,6 +843,15 @@ func TestClientHeartbeat(t *testing.T) {
 	f.mu.Unlock()
 	if n < 3 {
 		t.Errorf("expected at least 3 Heartbeat RPCs in 60ms at 15ms interval, got %d", n)
+	}
+
+	// Assert that StartHeartbeat stopped dispatching RPCs after cancellation.
+	time.Sleep(45 * time.Millisecond) // longer than 3 heartbeat intervals
+	f.mu.Lock()
+	nAfter := f.heartbeats
+	f.mu.Unlock()
+	if nAfter != n {
+		t.Errorf("heartbeat did not stop after cancel: count grew from %d to %d", n, nAfter)
 	}
 }
 
