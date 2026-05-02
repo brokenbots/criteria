@@ -606,3 +606,21 @@ Items 2–5 from the Known Limitations list are now resolved by commit `5b1de90`
 go test -race -count=1 -timeout=120s ./internal/transport/server/   # pass (6.8s)
 go test -race -count=1 -timeout=120s ./internal/cli/...             # pass (23.7s)
 ```
+
+### Review 2026-05-02-07 — approved
+
+#### Summary
+Approved. The follow-up transport-side test improvements are in scope, they strengthen the previously noted weak spots without changing production behavior, and the branch still meets the workstream’s coverage, leak-check, and validation bars.
+
+#### Plan Adherence
+- Steps 1–7 remain met.
+- Scope remains compliant: the new changes are limited to test-only files plus workstream notes, and the only production-code diff in the workstream remains the previously accepted `internal/transport/server/client.go` accessor.
+
+#### Test Intent Assessment
+The transport tests are now materially stronger. `TestClientHeartbeat` asserts actual heartbeat RPC delivery, `TestClientResume` validates request mapping, `TestClientReconnectMultipleFailures` now checks backoff behavior instead of only eventual success, and the mTLS helper now uses a distinct CA and client leaf certificate so CA/client mixups would fail as intended.
+
+#### Validation Performed
+- `go test -race -count=1 -timeout=120s ./internal/transport/server/` — passed.
+- `go test -race -count=1 -timeout=120s ./internal/cli/...` — passed.
+- `make test-cover` — passed; `cover.out` reports `executeServerRun 95.0%`, `drainResumeCycles 77.8%`, `runApplyServer 86.7%`, `setupServerRun 74.1%`, `internal/transport/server 79.9%`, `internal/cli 75.5%`.
+- `make ci` — passed.
