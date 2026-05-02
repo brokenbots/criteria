@@ -771,3 +771,54 @@ The test suite remains strong and regression-sensitive. The CLI server-mode test
 - `go test -race -count=2 ./internal/cli/... ./internal/transport/server/...` — passed.
 - `make test-cover` — passed; `cover.out` reports `executeServerRun 95.0%`, `drainResumeCycles 77.8%`, `runApplyServer 86.7%`, `setupServerRun 74.1%`, `internal/transport/server 79.9%`, `internal/cli 75.5%`.
 - `make ci` — passed.
+
+### Review 2026-05-02-11 — third batch of PR threads
+
+#### Threads addressed (commit `a43307b`)
+
+**PRRT_kwDOSOBb1s5_JWKN / PRRT_kwDOSOBb1s5_JWKW / PRRT_kwDOSOBb1s5_JYUb — TestClientHeartbeat flaky / shutdown race**
+- Replaced fixed `time.Sleep(60ms)` + ≥3 assert with a deadline-poll loop
+  (up to 2s, 5ms interval) that breaks as soon as `f.heartbeats ≥ 3`.
+- Post-cancel: sleep 50ms to drain any in-flight RPC, snapshot count, then
+  sleep 3× the interval and assert count unchanged.
+- `internal/transport/server/client_test.go:878-916`.
+
+**PRRT_kwDOSOBb1s5_JYUZ — startFakeServer cleanup without goleak assertion**
+- Added `requireNoGoroutineLeak` helper to `client_test.go`.
+- Registered it as the first call inside `startFakeServer` so its cleanup
+  (LIFO) runs after server/connection cleanup; every consumer automatically
+  gets per-test goroutine leak checking.
+- Did not add package-level `TestMain`/`VerifyTestMain` to avoid coupling to
+  `reattach_scope_integration_test.go` (pre-existing, outside workstream scope),
+  which has its own hijacked-connection gap that would have been caught by
+  `VerifyTestMain`. Per-test approach is the correct pattern.
+- `internal/transport/server/client_test.go:28-33, 223-228`.
+
+**PRRT_kwDOSOBb1s5_JYUL — ApplyExecution.Steps unused field**
+- Removed `FakeStep` struct and `Steps []FakeStep` field from `ApplyExecution`.
+- No test references them; struct now only exposes actively-driven fields.
+- `internal/cli/applytest/fakeserver.go:44-57`.
+
+**PRRT_kwDOSOBb1s5_JYUX — triggerActions fires for duplicate events**
+- `persistMsg` now returns `(seq, cid, shouldDrop, isDuplicate bool)`.
+- `SubmitEvents` loop skips `triggerActions` when `isDuplicate` is true.
+- `internal/cli/applytest/fakeserver.go:498-522 (loop), 534-573 (persistMsg)`.
+
+**PRRT_kwDOSOBb1s5_JWKc — workstream note vs code confusion**
+- Added cross-reference to post-revert note at workstream line 607 explaining
+  the temporary B8 production change and revert in `db8a83b`; note now
+  unambiguously describes the current (accepted) behavior.
+
+**PRRT_kwDOSOBb1s5_JYUT — stale goleak suppression section**
+- Updated workstream goleak+HTTP/2 implementation note to describe the current
+  per-test `goleak.VerifyNone(t)` + `IgnoreCurrent()` approach; removed the
+  stale `IgnoreAnyFunction` description.
+
+#### Validation (Review 2026-05-02-11)
+
+```
+go test -race -count=1 ./internal/transport/server/...  # pass (6.7s)
+go test -race -count=1 ./internal/cli/...               # pass (24.0s)
+make test                                               # all pass
+make lint-go                                            # pass
+```
