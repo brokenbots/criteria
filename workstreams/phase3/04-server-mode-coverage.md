@@ -534,3 +534,23 @@ go test -race -count=1 -timeout=120s ./internal/cli/ ./internal/transport/server
 make test
 # all packages pass (localresume flakiness addressed via PR #68 landing separately)
 ```
+
+### Review 2026-05-02-05 — approved
+
+#### Summary
+Approved. The branch is back within the workstream’s allowed scope: there are no remaining `internal/cli/localresume/` diffs against `main`, `internal/cli/main_test.go` is present again, and the previously approved server-mode coverage and per-test goleak work still validate cleanly.
+
+#### Plan Adherence
+- Steps 1–7 remain met by the server-mode harness, CLI tests, and transport tests already reviewed.
+- Scope is now compliant again: the only production-code diff against `main` in this workstream is the previously accepted `internal/transport/server/client.go` `TLSMode()` accessor used for testability.
+
+#### Test Intent Assessment
+The test intent remains strong and regression-sensitive. The suite continues to prove server-mode orchestration, reconnect/replay behavior, TLS setup, checkpoint progression, and per-test goroutine cleanup at the engine+harness boundary.
+
+#### Validation Performed
+- `git diff --stat origin/main...HEAD -- internal/cli/localresume/` — empty.
+- Confirmed `internal/cli/main_test.go` exists in the current worktree.
+- `go test -v -race -count=1 -timeout=120s ./internal/cli/ -run 'TestRunApplyServer_HappyPath|TestExecuteServerRun_Cancellation|TestExecuteServerRun_TimeoutPropagation|TestSetupServerRun_TLSDisable|TestSetupServerRun_TLSEnable|TestSetupServerRun_MTLS|TestDrainResumeCycles_PauseThenResume|TestDrainResumeCycles_StreamDropAndReconnect'` — passed.
+- `go test -race -count=2 ./internal/cli/... ./internal/transport/server/...` — passed.
+- `make test-cover` — passed; `cover.out` reports `executeServerRun 95.0%`, `drainResumeCycles 77.8%`, `runApplyServer 86.7%`, `setupServerRun 74.1%`, `internal/transport/server 79.9%`, `internal/cli 75.5%`.
+- `make ci` — passed.
