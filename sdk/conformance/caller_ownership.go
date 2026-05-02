@@ -27,25 +27,25 @@ import (
 //     the documented bootstrap-required error).
 func testCallerOwnership(t *testing.T, s Subject) {
 	t.Run("Heartbeat", func(t *testing.T) {
-		testOwnership_Heartbeat(t, s)
+		testOwnershipHeartbeat(t, s)
 	})
 	t.Run("CreateRun", func(t *testing.T) {
-		testOwnership_CreateRun(t, s)
+		testOwnershipCreateRun(t, s)
 	})
 	t.Run("ReattachRun", func(t *testing.T) {
-		testOwnership_ReattachRun(t, s)
+		testOwnershipReattachRun(t, s)
 	})
 	t.Run("SubmitEvents", func(t *testing.T) {
-		testOwnership_SubmitEvents(t, s)
+		testOwnershipSubmitEvents(t, s)
 	})
 	t.Run("Control", func(t *testing.T) {
-		testOwnership_Control(t, s)
+		testOwnershipControl(t, s)
 	})
 	t.Run("Resume", func(t *testing.T) {
-		testOwnership_Resume(t, s)
+		testOwnershipResume(t, s)
 	})
 	t.Run("RegisterBootstrapGate", func(t *testing.T) {
-		testOwnership_RegisterBootstrapGate(t, s)
+		testOwnershipRegisterBootstrapGate(t, s)
 	})
 }
 
@@ -76,7 +76,7 @@ func ownershipSetup(t *testing.T, s Subject) (
 	return oClient, ownerID, attackerID, attackerToken, runID
 }
 
-func testOwnership_Heartbeat(t *testing.T, s Subject) {
+func testOwnershipHeartbeat(t *testing.T, s Subject) {
 	oClient, ownerID, _, attackerToken, _ := ownershipSetup(t, s)
 	req := connect.NewRequest(&pb.HeartbeatRequest{CriteriaId: ownerID})
 	req.Header().Set("Authorization", "Bearer "+attackerToken)
@@ -87,7 +87,7 @@ func testOwnership_Heartbeat(t *testing.T, s Subject) {
 	}
 }
 
-func testOwnership_CreateRun(t *testing.T, s Subject) {
+func testOwnershipCreateRun(t *testing.T, s Subject) {
 	oClient, ownerID, _, attackerToken, _ := ownershipSetup(t, s)
 	req := connect.NewRequest(&pb.CreateRunRequest{CriteriaId: ownerID, WorkflowName: "wf"})
 	req.Header().Set("Authorization", "Bearer "+attackerToken)
@@ -98,7 +98,7 @@ func testOwnership_CreateRun(t *testing.T, s Subject) {
 	}
 }
 
-func testOwnership_ReattachRun(t *testing.T, s Subject) {
+func testOwnershipReattachRun(t *testing.T, s Subject) {
 	oClient, _, attackerID, attackerToken, runID := ownershipSetup(t, s)
 	req := connect.NewRequest(&pb.ReattachRunRequest{RunId: runID, CriteriaId: attackerID})
 	req.Header().Set("Authorization", "Bearer "+attackerToken)
@@ -109,7 +109,7 @@ func testOwnership_ReattachRun(t *testing.T, s Subject) {
 	}
 }
 
-func testOwnership_SubmitEvents(t *testing.T, s Subject) {
+func testOwnershipSubmitEvents(t *testing.T, s Subject) {
 	oClient, _, _, attackerToken, runID := ownershipSetup(t, s)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -132,7 +132,7 @@ func testOwnership_SubmitEvents(t *testing.T, s Subject) {
 	}
 }
 
-func testOwnership_Control(t *testing.T, s Subject) {
+func testOwnershipControl(t *testing.T, s Subject) {
 	oClient, ownerID, _, attackerToken, _ := ownershipSetup(t, s)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -153,7 +153,7 @@ func testOwnership_Control(t *testing.T, s Subject) {
 	}
 }
 
-func testOwnership_Resume(t *testing.T, s Subject) {
+func testOwnershipResume(t *testing.T, s Subject) {
 	baseURL, client, teardown := s.SetUp(t)
 	defer teardown()
 
@@ -181,7 +181,7 @@ func testOwnership_Resume(t *testing.T, s Subject) {
 	}
 }
 
-func testOwnership_RegisterBootstrapGate(t *testing.T, s Subject) {
+func testOwnershipRegisterBootstrapGate(t *testing.T, s Subject) {
 	// The conformance test cannot configure the bootstrap credential on the
 	// server (that's implementation-specific). We verify that Register without
 	// any credential either returns Unimplemented (no bootstrap configured) or

@@ -241,7 +241,7 @@ func (c *Client) readLoop() {
 			continue
 		}
 		if len(msg.ID) > 0 {
-			c.handleResponse(msg)
+			c.handleResponse(&msg)
 		}
 	}
 }
@@ -257,7 +257,7 @@ func (c *Client) handleNotification(method string, raw json.RawMessage) {
 	c.notify(Notification{Method: method, Params: params})
 }
 
-func (c *Client) handleResponse(msg incomingEnvelope) {
+func (c *Client) handleResponse(msg *incomingEnvelope) {
 	key := normalizeID(msg.ID)
 	if key == "" {
 		return

@@ -489,7 +489,7 @@ func (n *stepNode) executeStep(ctx context.Context, deps Deps, step *workflow.St
 		return adapter.Result{Outcome: "failure"}, err
 	}
 	deps.Sink.OnAdapterLifecycle(step.Name, step.Adapter, "started", "")
-	defer deps.Sessions.Close(context.Background(), anonSessionID)
+	defer func() { _ = deps.Sessions.Close(context.WithoutCancel(ctx), anonSessionID) }()
 
 	result, execErr := deps.Sessions.Execute(ctx, anonSessionID, step, deps.Sink.StepEventSink(step.Name))
 	if execErr != nil {

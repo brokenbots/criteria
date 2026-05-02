@@ -115,11 +115,11 @@ func main() {
 		if msg.Method == "" {
 			continue // ignore responses
 		}
-		handleRequest(msg)
+		handleRequest(&msg)
 	}
 }
 
-func handleRequest(msg rpcMsg) {
+func handleRequest(msg *rpcMsg) {
 	switch msg.Method {
 	case "ping":
 		ts := time.Now().UnixMilli()
@@ -204,7 +204,7 @@ func handleRequest(msg rpcMsg) {
 
 // handleSessionSend responds immediately with a messageId and then sends
 // async session events in a goroutine based on the active scenario and turn.
-func handleSessionSend(msg rpcMsg) {
+func handleSessionSend(msg *rpcMsg) {
 	var p struct {
 		SessionID string `json:"sessionId"`
 		Prompt    string `json:"prompt"`

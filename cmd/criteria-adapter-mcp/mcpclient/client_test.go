@@ -2,6 +2,7 @@ package mcpclient
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -26,7 +27,7 @@ func TestFrameRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("readFrame: %v", err)
 	}
-	if string(got) != string(payload) {
+	if !bytes.Equal(got, payload) {
 		t.Fatalf("payload mismatch: got %q want %q", string(got), string(payload))
 	}
 	<-done

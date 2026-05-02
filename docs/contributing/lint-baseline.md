@@ -170,3 +170,49 @@ the capture+generate cycle using the merged config until the run is stable.
 | `funlen`, `gocyclo`, `gocognit` | W03 — god-function refactor |
 | `revive`, `gocritic` (style/doc) | W06 — coverage, bench, godoc |
 | Everything else | W04 — split oversized files / general hygiene |
+
+## Phase 3 W01 snapshot (mechanical burn-down)
+
+W01 (Phase 3) removed mechanical suppressions: all `errcheck` and `revive`
+findings (naming), most `contextcheck` findings (context threading), and most
+`gocritic` findings (rangeValCopy, unnamedResult, emptyStringTest, builtinShadow,
+stringXbytes, hugeParam where feasible). This reduced the baseline from 70 to 26
+entries — well below the ≤ 50 target.
+
+Starting count (v0.2.0 tag): **70**
+
+Final count (this workstream): **26**
+
+Per-rule change:
+
+| Linter | Before (v0.2.0) | After | Notes |
+|---|---:|---:|---|
+| `errcheck` | 9 | 0 | All fixed |
+| `contextcheck` | 9 | 2 | 7 fixed; 2 kept (engine.Sink interface limitation — see below) |
+| `gocritic` | 24 | 5 | 19 fixed; 5 hugeParam kept at public/SDK API boundaries; 3 dead entries removed |
+| `revive` | 9 | 0 | All fixed (internal-test function renames) |
+| `gocognit` | 7 | 7 | Deferred to W03/W07 siblings |
+| `gocyclo` | 6 | 6 | Deferred to W03/W02 siblings |
+| `funlen` | 6 | 6 | Deferred to W02/W03 siblings |
+
+### Kept entries (gocritic hugeParam)
+
+Five `hugeParam` entries remain for public/SDK API entry points where a pointer
+change would be a visible API break:
+- `conformance_happy.go`: `TestHappyPath`, `TestHappyPathWithInputSchema`
+- `conformance_lifecycle.go`: `TestLifecycle`
+- `sdk/conformance/conformance_subject.go`: `RunSuite`
+- `sdk/pluginhost/server.go`: `ServePlugin`
+
+### Kept entries (contextcheck — W01 annotation)
+
+Two `contextcheck` entries remain in `internal/cli/reattach.go` for
+`OnRunFailed→publish` and `OnStepResumed→publish`. The concrete `run.Sink`
+implementation correctly stores the caller's context in its `Ctx` field and
+uses `context.WithoutCancel(ctx)` for publish calls. The `contextcheck` static
+analyzer cannot trace context through struct field assignments, so it still flags
+these as "non-inherited context" even though the behavior is correct.
+
+The real fix — adding `ctx context.Context` to every `engine.Sink` interface
+method — is a breaking SDK-level change tracked as an `[ARCH-REVIEW]` item in
+`workstreams/phase3/01-lint-baseline-burndown.md`.

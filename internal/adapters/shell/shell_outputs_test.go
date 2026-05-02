@@ -127,7 +127,7 @@ func TestShellAdapter_StdoutCappedAtDefaultLimit(t *testing.T) {
 	if len(stdout) > defaultCap {
 		t.Errorf("stdout length %d exceeds default cap of %d bytes", len(stdout), defaultCap)
 	}
-	if len(stdout) == 0 {
+	if stdout == "" {
 		t.Error("stdout is empty; expected some captured output")
 	}
 	// No truncation sentinel should be present.
@@ -154,7 +154,7 @@ func TestShellAdapter_StdoutExplicitSmallCapTriggersEvent(t *testing.T) {
 	if len(stdout) > 1024 {
 		t.Errorf("stdout length %d exceeds explicit cap of 1024", len(stdout))
 	}
-	if len(stdout) == 0 {
+	if stdout == "" {
 		t.Error("stdout is empty; expected some captured output")
 	}
 	if result.Outputs["_truncated_stdout"] != "true" {

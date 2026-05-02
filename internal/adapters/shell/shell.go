@@ -268,7 +268,7 @@ func pumpStream(wg *sync.WaitGroup, r io.Reader, stream string, sink adapter.Eve
 }
 
 // defaultShell returns the shell binary and flag for the current OS.
-func defaultShell() (string, string) {
+func defaultShell() (shell, flag string) {
 	if runtime.GOOS == "windows" {
 		return "cmd", "/C"
 	}

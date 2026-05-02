@@ -71,7 +71,7 @@ func testSchemaVersionAccepted(t *testing.T, s Subject) {
 	if _, err := stream.Receive(); err != nil {
 		t.Fatalf("Receive ack: %v (schema_version=%d should be accepted)", err, env.SchemaVersion)
 	}
-	stream.CloseRequest()
+	_ = stream.CloseRequest()
 	for {
 		if _, recvErr := stream.Receive(); recvErr != nil {
 			break
@@ -149,7 +149,7 @@ func testSchemaPersistedVersionMatchesSDK(t *testing.T, s Subject) {
 	if _, err := stream.Receive(); err != nil {
 		t.Fatalf("Receive ack: %v", err)
 	}
-	stream.CloseRequest()
+	_ = stream.CloseRequest()
 	for {
 		if _, recvErr := stream.Receive(); recvErr != nil {
 			break

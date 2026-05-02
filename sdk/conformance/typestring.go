@@ -87,7 +87,7 @@ func testTypeStringStability(t *testing.T, s Subject) { //nolint:funlen,gocognit
 			if _, err := stream.Receive(); err != nil {
 				t.Fatalf("Receive ack: %v", err)
 			}
-			stream.CloseRequest()
+			_ = stream.CloseRequest()
 			for {
 				if _, recvErr := stream.Receive(); recvErr != nil {
 					break

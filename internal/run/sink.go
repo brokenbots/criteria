@@ -35,6 +35,11 @@ type Sink struct {
 	RunID  string
 	Client Publisher
 	Log    *slog.Logger
+	// Ctx is the ambient context for this run. publish always wraps it with
+	// context.WithoutCancel so engine cancellation does not prevent terminal
+	// events from leaving the buffer. Falls back to context.Background() when
+	// nil (e.g. in tests that do not set a run context).
+	Ctx context.Context
 	// CheckpointFn, if non-nil, is called synchronously inside OnStepEntered
 	// before the event is published. Use this to write a durable step
 	// checkpoint for crash recovery.
@@ -46,11 +51,20 @@ type Sink struct {
 	pausedNode string
 }
 
+// sinkCtx returns the ambient context for this Sink, falling back to
+// context.Background() when none was provided (e.g. in tests).
+func (s *Sink) sinkCtx() context.Context {
+	if s.Ctx != nil {
+		return s.Ctx
+	}
+	return context.Background()
+}
+
 func (s *Sink) publish(payload any) {
 	env := events.NewEnvelope(s.RunID, payload)
-	// Always publish on a fresh background context — engine cancellation must
-	// not prevent terminal events from leaving the buffer.
-	s.Client.Publish(context.Background(), env)
+	// Use WithoutCancel so engine cancellation does not prevent terminal events
+	// from leaving the buffer, while still inheriting the ambient context.
+	s.Client.Publish(context.WithoutCancel(s.sinkCtx()), env)
 }
 
 func (s *Sink) OnRunStarted(workflowName, initialStep string) {

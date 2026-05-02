@@ -355,7 +355,7 @@ func TestLoadCheckpointWorkflow_MissingFile(t *testing.T) {
 	}
 	writeCheckpointDirect(t, stateDir, cp)
 
-	graph, err := loadCheckpointWorkflow(discardLogger(), cp)
+	graph, err := loadCheckpointWorkflow(context.Background(), discardLogger(), cp)
 	if err == nil {
 		t.Fatal("expected error for missing workflow file")
 	}
@@ -375,7 +375,7 @@ func TestLoadCheckpointWorkflow_InvalidHCL(t *testing.T) {
 	cp := &StepCheckpoint{RunID: "cp-badhcl", WorkflowPath: badHCL}
 	writeCheckpointDirect(t, stateDir, cp)
 
-	graph, err := loadCheckpointWorkflow(discardLogger(), cp)
+	graph, err := loadCheckpointWorkflow(context.Background(), discardLogger(), cp)
 	if err == nil {
 		t.Fatal("expected error for invalid HCL")
 	}
@@ -388,7 +388,7 @@ func TestLoadCheckpointWorkflow_Valid(t *testing.T) {
 	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
 	wfFile := writeWorkflowFile(t, minimalWorkflow)
 	cp := &StepCheckpoint{RunID: "cp-valid", WorkflowPath: wfFile}
-	graph, err := loadCheckpointWorkflow(discardLogger(), cp)
+	graph, err := loadCheckpointWorkflow(context.Background(), discardLogger(), cp)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -400,14 +400,14 @@ func TestLoadCheckpointWorkflow_Valid(t *testing.T) {
 // TestParseWorkflowFromPath exercises all failure and success paths.
 func TestParseWorkflowFromPath(t *testing.T) {
 	t.Run("empty path", func(t *testing.T) {
-		_, err := parseWorkflowFromPath("")
+		_, err := parseWorkflowFromPath(context.Background(), "")
 		if err == nil {
 			t.Fatal("expected error for empty path")
 		}
 	})
 
 	t.Run("missing file", func(t *testing.T) {
-		_, err := parseWorkflowFromPath(filepath.Join(t.TempDir(), "nope.hcl"))
+		_, err := parseWorkflowFromPath(context.Background(), filepath.Join(t.TempDir(), "nope.hcl"))
 		if err == nil {
 			t.Fatal("expected error for missing file")
 		}
@@ -416,7 +416,7 @@ func TestParseWorkflowFromPath(t *testing.T) {
 	t.Run("invalid HCL", func(t *testing.T) {
 		p := filepath.Join(t.TempDir(), "bad.hcl")
 		_ = os.WriteFile(p, []byte(`not valid hcl {{{`), 0o600)
-		_, err := parseWorkflowFromPath(p)
+		_, err := parseWorkflowFromPath(context.Background(), p)
 		if err == nil {
 			t.Fatal("expected error for invalid HCL")
 		}
@@ -425,7 +425,7 @@ func TestParseWorkflowFromPath(t *testing.T) {
 	t.Run("valid workflow", func(t *testing.T) {
 		t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
 		wfFile := writeWorkflowFile(t, minimalWorkflow)
-		graph, err := parseWorkflowFromPath(wfFile)
+		graph, err := parseWorkflowFromPath(context.Background(), wfFile)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -442,14 +442,14 @@ func TestBuildServerSink(t *testing.T) {
 	t.Setenv("CRITERIA_STATE_DIR", stateDir)
 
 	wfFile := writeWorkflowFile(t, minimalWorkflow)
-	graph, err := parseWorkflowFromPath(wfFile)
+	graph, err := parseWorkflowFromPath(context.Background(), wfFile)
 	if err != nil {
 		t.Fatalf("parseWorkflowFromPath: %v", err)
 	}
 
 	c := newOfflineClient(t)
 	log := discardLogger()
-	sink := buildServerSink(c, "run-srv-1", graph, wfFile, "http://srv", log, nil)
+	sink := buildServerSink(context.Background(), c, "run-srv-1", graph, wfFile, "http://srv", log, nil)
 	if sink == nil {
 		t.Fatal("expected non-nil Sink")
 	}
@@ -489,14 +489,14 @@ func TestBuildServerSink_VisitsPersisted(t *testing.T) {
 	t.Setenv("CRITERIA_STATE_DIR", stateDir)
 
 	wfFile := writeWorkflowFile(t, minimalWorkflow)
-	graph, err := parseWorkflowFromPath(wfFile)
+	graph, err := parseWorkflowFromPath(context.Background(), wfFile)
 	if err != nil {
 		t.Fatalf("parseWorkflowFromPath: %v", err)
 	}
 
 	wantVisits := map[string]int{"build": 2, "test": 1}
 	c := newOfflineClient(t)
-	sink := buildServerSink(c, "run-srv-visits", graph, wfFile, "http://srv", discardLogger(),
+	sink := buildServerSink(context.Background(), c, "run-srv-visits", graph, wfFile, "http://srv", discardLogger(),
 		func() map[string]int { return wantVisits })
 
 	sink.CheckpointFn("build", 3)
@@ -874,7 +874,7 @@ func TestResumeActiveRun_ExceedsMaxRetries(t *testing.T) {
 		CurrentStep: "greet",
 		Attempt:     1,
 	}
-	graph, err := parseWorkflowFromPath(wfFile)
+	graph, err := parseWorkflowFromPath(context.Background(), wfFile)
 	if err != nil {
 		t.Fatalf("parseWorkflowFromPath: %v", err)
 	}
@@ -919,7 +919,7 @@ func TestResumeActiveRun_HappyPath(t *testing.T) {
 		CurrentStep: "done", // terminal state → engine finishes immediately
 		Attempt:     0,      // nextAttempt=1 ≤ maxAttempts=1 (MaxStepRetries=0 default)
 	}
-	graph, err := parseWorkflowFromPath(wfFile)
+	graph, err := parseWorkflowFromPath(context.Background(), wfFile)
 	if err != nil {
 		t.Fatalf("parseWorkflowFromPath: %v", err)
 	}
@@ -1001,7 +1001,7 @@ func TestResumeActiveRun_VisitsRestored(t *testing.T) {
 		CurrentStep: "work",
 		Attempt:     0, // nextAttempt=1 ≤ maxAttempts=1
 	}
-	graph, err := parseWorkflowFromPath(wfFile)
+	graph, err := parseWorkflowFromPath(context.Background(), wfFile)
 	if err != nil {
 		t.Fatalf("parseWorkflowFromPath: %v", err)
 	}
@@ -1042,7 +1042,7 @@ func TestResumePausedRun_StartsStreamsAndRunsEngine(t *testing.T) {
 		CurrentStep:   "done", // terminal → engine completes immediately
 		PendingSignal: "start",
 	}
-	graph, err := parseWorkflowFromPath(wfFile)
+	graph, err := parseWorkflowFromPath(context.Background(), wfFile)
 	if err != nil {
 		t.Fatalf("parseWorkflowFromPath: %v", err)
 	}
@@ -1085,7 +1085,7 @@ func TestResumePausedRun_StartStreamsError(t *testing.T) {
 	writeCheckpointDirect(t, stateDir, cp)
 
 	resp := &pb.ReattachRunResponse{Status: "paused", CurrentStep: "done"}
-	graph, err := parseWorkflowFromPath(wfFile)
+	graph, err := parseWorkflowFromPath(context.Background(), wfFile)
 	if err != nil {
 		t.Fatalf("parseWorkflowFromPath: %v", err)
 	}

@@ -84,7 +84,7 @@ func testEnvelopeRoundTrip(t *testing.T, s Subject) { //nolint:funlen,gocognit /
 			if ack.CorrelationId != corrID {
 				t.Errorf("ack.correlation_id=%q want %q", ack.CorrelationId, corrID)
 			}
-			stream.CloseRequest()
+			_ = stream.CloseRequest()
 			// Drain to EOF so the server handler exits cleanly.
 			for {
 				_, recvErr := stream.Receive()

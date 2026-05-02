@@ -100,9 +100,9 @@ workflow "session_flow" {
 		t.Fatalf("run step expected inherited on_crash=respawn, got %q", run.OnCrash)
 	}
 
-	close := g.Steps["close_exec"]
-	if close.Lifecycle != "close" {
-		t.Fatalf("close step lifecycle mismatch: %q", close.Lifecycle)
+	closeStep := g.Steps["close_exec"]
+	if closeStep.Lifecycle != "close" {
+		t.Fatalf("close step lifecycle mismatch: %q", closeStep.Lifecycle)
 	}
 }
 

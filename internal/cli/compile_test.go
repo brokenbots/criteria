@@ -49,13 +49,13 @@ func TestCompileGolden_JSONAndDOT(t *testing.T) {
 // examples/ and workflow/testdata/.  The repoRoot is the canonical repo root
 // derived from the caller's file path, so that tests can compute repo-relative
 // names for golden files and remain portable across checkout paths.
-func workflowFixtures(t *testing.T) (string, []string) {
+func workflowFixtures(t *testing.T) (repoRoot string, fixtures []string) {
 	t.Helper()
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("resolve caller")
 	}
-	repoRoot := filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
+	repoRoot = filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
 	dirs := []string{
 		filepath.Join(repoRoot, "examples"),
 		filepath.Join(repoRoot, "workflow", "testdata"),
@@ -101,7 +101,7 @@ func assertGoldenFile(t *testing.T, relativePath string, got []byte) {
 	if err != nil {
 		t.Fatalf("read golden %s: %v", relativePath, err)
 	}
-	if string(want) != string(got) {
+	if !bytes.Equal(want, got) {
 		t.Fatalf("golden mismatch for %s\nwant:\n%s\n\ngot:\n%s", relativePath, string(want), string(got))
 	}
 }

@@ -66,7 +66,7 @@ func resumeOneRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint, cli
 		return
 	}
 
-	graph, err := loadCheckpointWorkflow(log, cp)
+	graph, err := loadCheckpointWorkflow(ctx, log, cp)
 	if err != nil {
 		return
 	}
@@ -136,8 +136,8 @@ func attemptReattach(ctx context.Context, log *slog.Logger, rc reattachTransport
 
 // loadCheckpointWorkflow re-parses and compiles the workflow recorded in cp.
 // On failure it abandons the checkpoint and returns a non-nil error.
-func loadCheckpointWorkflow(log *slog.Logger, cp *StepCheckpoint) (*workflow.FSMGraph, error) {
-	graph, err := parseWorkflowFromPath(cp.WorkflowPath)
+func loadCheckpointWorkflow(ctx context.Context, log *slog.Logger, cp *StepCheckpoint) (*workflow.FSMGraph, error) {
+	graph, err := parseWorkflowFromPath(ctx, cp.WorkflowPath)
 	if err != nil {
 		abandonCheckpoint(log, cp, "cannot parse workflow for crashed run; abandoning", err)
 		return nil, err
@@ -162,7 +162,7 @@ func resumePausedRun(ctx context.Context, log *slog.Logger, rc reattachTransport
 		abandonCheckpoint(log, cp, "failed to start server streams for paused run", streamErr)
 		return
 	}
-	sink := &run.Sink{RunID: cp.RunID, Client: rc, Log: log}
+	sink := &run.Sink{RunID: cp.RunID, Client: rc, Log: log, Ctx: ctx}
 	loader := plugin.NewLoader()
 	loader.RegisterBuiltin(shell.Name, plugin.BuiltinFactoryForAdapter(shell.New()))
 
@@ -271,7 +271,7 @@ func resumeActiveRun(ctx context.Context, log *slog.Logger, rc reattachTransport
 			abandonCheckpoint(log, cp, "failed to start streams for failed resume", streamErr)
 			return
 		}
-		sink := &run.Sink{RunID: cp.RunID, Client: rc, Log: log}
+		sink := &run.Sink{RunID: cp.RunID, Client: rc, Log: log, Ctx: ctx}
 		reason := fmt.Sprintf("exceeded max_step_retries on resume at step %q (attempt %d)", resp.CurrentStep, nextAttempt)
 		sink.OnRunFailed(reason, resp.CurrentStep)
 		drainAndCleanup(ctx, rc, cp)
@@ -283,7 +283,7 @@ func resumeActiveRun(ctx context.Context, log *slog.Logger, rc reattachTransport
 		return
 	}
 
-	sink := &run.Sink{RunID: cp.RunID, Client: rc, Log: log}
+	sink := &run.Sink{RunID: cp.RunID, Client: rc, Log: log, Ctx: ctx}
 	sink.OnStepResumed(resp.CurrentStep, nextAttempt, "criteria_restart")
 	loader := plugin.NewLoader()
 	loader.RegisterBuiltin(shell.Name, plugin.BuiltinFactoryForAdapter(shell.New()))
@@ -309,7 +309,7 @@ func resumeActiveRun(ctx context.Context, log *slog.Logger, rc reattachTransport
 	drainAndCleanup(ctx, rc, cp)
 }
 
-func parseWorkflowFromPath(path string) (*workflow.FSMGraph, error) {
+func parseWorkflowFromPath(ctx context.Context, path string) (*workflow.FSMGraph, error) {
 	if path == "" {
 		return nil, fmt.Errorf("workflow path not recorded in checkpoint")
 	}
@@ -323,7 +323,6 @@ func parseWorkflowFromPath(path string) (*workflow.FSMGraph, error) {
 	}
 
 	// Collect adapter schemas for compile-time validation.
-	ctx := context.Background()
 	loader := plugin.NewLoader()
 	loader.RegisterBuiltin(shell.Name, plugin.BuiltinFactoryForAdapter(shell.New()))
 	schemas := collectSchemas(ctx, loader, spec, nil)
