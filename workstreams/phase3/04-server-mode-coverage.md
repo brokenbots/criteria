@@ -554,3 +554,55 @@ The test intent remains strong and regression-sensitive. The suite continues to 
 - `go test -race -count=2 ./internal/cli/... ./internal/transport/server/...` — passed.
 - `make test-cover` — passed; `cover.out` reports `executeServerRun 95.0%`, `drainResumeCycles 77.8%`, `runApplyServer 86.7%`, `setupServerRun 74.1%`, `internal/transport/server 79.9%`, `internal/cli 75.5%`.
 - `make ci` — passed.
+
+## Review 2026-05-02-06 — PR Review Thread Remediations
+
+Six unresolved threads addressed in commit `5b1de90`. Two outdated threads (resumer.go) resolved without code change.
+
+### Fixes implemented
+
+**PRRT_kwDOSOBb1s5_JN5k — TestClientHeartbeat observability**
+- Added `heartbeats int` field to `fakeServer`, incremented under lock in `Heartbeat()` handler.
+- `TestClientHeartbeat` now reads `f.heartbeats` after the 60ms window and asserts ≥3 RPCs received.
+- `internal/transport/server/client_test.go:65-70` (handler), `:758-771` (assertion).
+
+**PRRT_kwDOSOBb1s5_JN5p — TestClientResume request validation**
+- Added `lastResumeReq *pb.ResumeRequest` field to `fakeServer`, captured under lock in `Resume()` handler.
+- `TestClientResume` now asserts `RunId == "run-1"`, `Signal == "received"`, `Payload["outcome"] == "ok"`.
+- `internal/transport/server/client_test.go:172-176` (handler), `:793-808` (assertions).
+
+**PRRT_kwDOSOBb1s5_JN5q — TestClientReconnectMultipleFailures backoff assertion**
+- Added `streamOpenTimes []time.Time` to `fakeServer`; `SubmitEvents` appends `time.Now()` at each stream open.
+- Test asserts: first reconnect gap ≥100ms (catches tight-loop regression), and subsequent gaps non-decreasing (proves exponential growth).
+- `internal/transport/server/client_test.go:83-84` (recording), `:600-626` (assertions).
+
+**PRRT_kwDOSOBb1s5_JN5w — TestClientTLSErrors missing tls+http:// case**
+- Added `tls_enable_with_http_url` subtest asserting `NewClient("http://...", TLSEnable)` succeeds at construction time (documents accepted behaviour; scheme mismatch surfaces at connection time).
+- `internal/transport/server/client_test.go:709-716`.
+
+**PRRT_kwDOSOBb1s5_JN57 — NewMTLS distinct CA + leaf client cert**
+- Added `generateClientLeafCert(t, caPriv, caCert)` helper: IsCA=false, `ExtKeyUsageClientAuth` only, signed by CA.
+- `NewMTLS` now uses a proper CA cert (server TLS + `ClientCAs` pool) and a distinct leaf client cert.
+- `f.clientCertPEM` ≠ `f.caCertPEM`. Updated `NewMTLS` and `URL()` docstrings.
+- `internal/cli/applytest/fakeserver.go:196-235` (helper), `:263-320` (NewMTLS update).
+
+**PRRT_kwDOSOBb1s5_JN6G — Test count doc mismatch**
+- Corrected "10 new tests" → "9 new tests" (count now matches the 9 named `TestClient*` functions in the file).
+
+**PRRT_kwDOSOBb1s5_JN5i, PRRT_kwDOSOBb1s5_JN6L — Outdated resumer.go threads**
+- Both outdated; resumer.go change was reverted in B7 and landed in PR #68. Resolved without code change.
+
+### Updated Known Limitations
+
+Items 2–5 from the Known Limitations list are now resolved by commit `5b1de90`:
+- #2 mTLS cert isolation — fixed (distinct CA + leaf cert).
+- #3 Backoff observation — fixed (timing assertions added).
+- #4 Resume request validation — fixed (request capture and field assertions added).
+- #5 Heartbeat observability — fixed (heartbeat counter and RPC count assertion added).
+
+### Validation (Review 2026-05-02-06)
+
+```
+go test -race -count=1 -timeout=120s ./internal/transport/server/   # pass (6.8s)
+go test -race -count=1 -timeout=120s ./internal/cli/...             # pass (23.7s)
+```
