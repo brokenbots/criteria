@@ -643,3 +643,50 @@ The transport tests are now materially stronger. `TestClientHeartbeat` asserts a
 - `go test -race -count=1 -timeout=120s ./internal/cli/...` — passed.
 - `make test-cover` — passed; `cover.out` reports `executeServerRun 95.0%`, `drainResumeCycles 77.8%`, `runApplyServer 86.7%`, `setupServerRun 74.1%`, `internal/transport/server 79.9%`, `internal/cli 75.5%`.
 - `make ci` — passed.
+
+## Review 2026-05-02-08 — PR Review Thread Remediations
+
+Seven unresolved threads addressed in commit `b822168`. All 7 resolved.
+
+### Fixes implemented
+
+**PRRT_kwDOSOBb1s5_JSHR — Windows skip (`apply_server_test.go:82`)**
+- Added `if runtime.GOOS == "windows" { t.Skip("cancelWorkflow uses the Unix sleep command") }` as the first statement of `TestExecuteServerRun_Cancellation`.
+- Added `"runtime"` to imports.
+- `internal/cli/apply_server_test.go:191-193`.
+
+**PRRT_kwDOSOBb1s5_JSHZ — TLSEnable/TLSMutual + http:// URL rejected at construction (`client_test.go`)**
+- Extracted `buildTLSHTTPClient` helper from `buildHTTPClient` to keep `gocognit` under 20.
+- Added http-scheme check at top of `buildTLSHTTPClient`: returns `fmt.Errorf("tls mode %q requires an https URL", ...)` when scheme is `http`.
+- Updated `tls_enable_with_http_url` subtest to expect an error; added companion `tls_mutual_with_http_url` subtest.
+- Also fixed `TestSetupServerRun_MTLSMissingCert` (was passing `http://` to test missing-cert path — now uses `https://` since the scheme check fires first).
+- `internal/transport/server/client.go:162-165` (validation), `client_test.go` (tests).
+
+**PRRT_kwDOSOBb1s5_JSHb — startFakeServer h2c goroutine cleanup (`client_test.go:593`)**
+- `startFakeServer` now sets a `ConnState` hook before `srv.Start()` to track hijacked connections.
+- `t.Cleanup` closes hijacked conns explicitly, then calls `srv.Config.Close()` + `srv.Close()`.
+- `internal/transport/server/client_test.go:219-242`.
+
+**PRRT_kwDOSOBb1s5_JSHd — Heartbeat shutdown proof (`client_test.go:845`)**
+- After `cancel()` + 30ms drain, snapshots `n = f.heartbeats`, sleeps 45ms (3× interval), re-reads `nAfter`.
+- Asserts `nAfter == n`: heartbeat loop stopped dispatching RPCs after context cancel.
+- `internal/transport/server/client_test.go:824-832`.
+
+**PRRT_kwDOSOBb1s5_JSHh — Stale Known Limitations bullets #2-4**
+- Updated Known Limitations section: items #2 (mTLS cert), #3 (backoff), #4 (resume) now document their resolved status.
+
+**PRRT_kwDOSOBb1s5_JSHl — Stale Known Limitation #5 (heartbeat)**
+- Updated Known Limitation #5 to reflect that the heartbeat counter and shutdown assertion are both in place.
+
+**PRRT_kwDOSOBb1s5_JSHo — Misleading eventsPath comment (`apply_server_test.go:142`)**
+- Expanded the `TestRunApplyServer_HappyPath` comment to explicitly state that server-mode apply does not write a local events file and that `eventsPath` is unused in this path.
+- `internal/cli/apply_server_test.go:128-132`.
+
+### Validation (Review 2026-05-02-08)
+
+```
+go test -race -count=1 -timeout=120s ./internal/transport/server/   # pass
+go test -race -count=1 -timeout=120s ./internal/cli/...             # pass
+make lint-go                                                         # pass
+make test                                                            # all packages pass
+```
