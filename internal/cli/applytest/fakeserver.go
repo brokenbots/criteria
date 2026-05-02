@@ -6,8 +6,16 @@ package applytest
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"errors"
 	"io"
+	"math/big"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -16,6 +24,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/google/uuid"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
 
@@ -32,6 +41,8 @@ type FakeStep struct {
 // ApplyExecution is the script the fake server drives:
 //   - InjectPauseAt: when a WaitEntered event is received for this node name,
 //     the fake waits ResumeAfter and then sends a ResumeRun control message.
+//   - NeverResume: when true, InjectPauseAt triggers the pause watch but never
+//     sends a ResumeRun — use this to test timeout paths in drainResumeCycles.
 //   - DropStreamAt: when a StepEntered event is received for this step name,
 //     the fake closes the SubmitEvents stream once (forcing a client reconnect).
 //   - CancelAt: when a StepEntered event is received for this step name,
@@ -39,6 +50,7 @@ type FakeStep struct {
 type ApplyExecution struct {
 	Steps         []FakeStep
 	InjectPauseAt string        // wait node name; empty = no pause injection
+	NeverResume   bool          // when true, InjectPauseAt fires the hook but never schedules a resume
 	ResumeAfter   time.Duration // delay before ResumeRun; defaults to 10ms when zero
 	DropStreamAt  string        // step name; empty = no stream drop
 	CancelAt      string        // step name; empty = no cancellation
@@ -56,11 +68,44 @@ type Fake struct {
 	handler *fakeHandler
 	srv     *httptest.Server
 
+	// caCertPEM holds the PEM-encoded CA certificate used to start a TLS
+	// server (set by NewTLS / NewMTLS; nil for plain h2c servers).
+	caCertPEM []byte
+	// clientCertPEM / clientKeyPEM hold the PEM-encoded client certificate
+	// and private key that tests should present when connecting to an mTLS
+	// fake server (set by NewMTLS; nil otherwise).
+	clientCertPEM []byte
+	clientKeyPEM  []byte
+
 	// goroutine lifecycle: cancel stops InjectPauseAt goroutines; wg blocks
 	// until they exit so t.Cleanup can call srv.Close without racing.
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
+}
+
+// CACertPEM returns the PEM-encoded CA certificate for TLS fake servers,
+// or nil for plain h2c fakes.
+func (f *Fake) CACertPEM() []byte { return f.caCertPEM }
+
+// ClientCertPEM returns the PEM-encoded client certificate for mTLS fake
+// servers, or nil for plain h2c / TLS-only fakes.
+func (f *Fake) ClientCertPEM() []byte { return f.clientCertPEM }
+
+// ClientKeyPEM returns the PEM-encoded client private key for mTLS fake
+// servers, or nil for plain h2c / TLS-only fakes.
+func (f *Fake) ClientKeyPEM() []byte { return f.clientKeyPEM }
+
+// newFakeHandler allocates and initialises the internal handler for f.
+func newFakeHandler(f *Fake) *fakeHandler {
+	return &fakeHandler{
+		parent:      f,
+		criteriaID:  "test-criteria-id",
+		token:       "test-token",
+		events:      make(map[string][]*pb.Envelope),
+		controls:    make(chan *pb.ControlMessage, 32),
+		ctlAttached: make(chan struct{}, 1),
+	}
 }
 
 // New starts a fake server on a random loopback port and registers t.Cleanup
@@ -69,14 +114,7 @@ func New(t testing.TB) *Fake {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	f := &Fake{ctx: ctx, cancel: cancel}
-	f.handler = &fakeHandler{
-		parent:      f,
-		criteriaID:  "test-criteria-id",
-		token:       "test-token",
-		events:      make(map[string][]*pb.Envelope),
-		controls:    make(chan *pb.ControlMessage, 32),
-		ctlAttached: make(chan struct{}, 1),
-	}
+	f.handler = newFakeHandler(f)
 
 	mux := http.NewServeMux()
 	path, h := criteriav1connect.NewCriteriaServiceHandler(f.handler)
@@ -84,6 +122,120 @@ func New(t testing.TB) *Fake {
 
 	srv := httptest.NewUnstartedServer(h2c.NewHandler(mux, &http2.Server{}))
 	srv.Start()
+	f.srv = srv
+
+	t.Cleanup(func() {
+		cancel()
+		f.wg.Wait()
+		srv.Close()
+	})
+	return f
+}
+
+// generateSelfSignedCert generates a self-signed RSA certificate valid for
+// 127.0.0.1 that can be used as both server and client certificate in tests.
+// Returns (certPEM, keyPEM) in PEM encoding.
+func generateSelfSignedCert(t testing.TB) (certPEM, keyPEM []byte) {
+	t.Helper()
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("applytest: generate RSA key: %v", err)
+	}
+	template := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{Organization: []string{"criteria-test"}},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(24 * time.Hour),
+		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
+		IPAddresses:           []net.IP{net.ParseIP("127.0.0.1")},
+		IsCA:                  true,
+		BasicConstraintsValid: true,
+	}
+	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &priv.PublicKey, priv)
+	if err != nil {
+		t.Fatalf("applytest: create certificate: %v", err)
+	}
+	certPEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+	keyDER, err := x509.MarshalPKCS8PrivateKey(priv)
+	if err != nil {
+		t.Fatalf("applytest: marshal private key: %v", err)
+	}
+	keyPEM = pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})
+	return certPEM, keyPEM
+}
+
+// NewTLS starts an HTTPS/h2 fake server using a freshly generated self-signed
+// certificate. Call CACertPEM() to retrieve the PEM-encoded CA certificate
+// that clients must trust.
+func NewTLS(t testing.TB) *Fake {
+	t.Helper()
+	certPEM, keyPEM := generateSelfSignedCert(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	f := &Fake{ctx: ctx, cancel: cancel, caCertPEM: certPEM}
+	f.handler = newFakeHandler(f)
+
+	mux := http.NewServeMux()
+	path, h := criteriav1connect.NewCriteriaServiceHandler(f.handler)
+	mux.Handle(path, h)
+
+	cert, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		t.Fatalf("applytest: load TLS key pair: %v", err)
+	}
+	srv := httptest.NewUnstartedServer(mux)
+	srv.TLS = &tls.Config{Certificates: []tls.Certificate{cert}}
+	srv.EnableHTTP2 = true
+	srv.StartTLS()
+	f.srv = srv
+
+	t.Cleanup(func() {
+		cancel()
+		f.wg.Wait()
+		srv.Close()
+	})
+	return f
+}
+
+// NewMTLS starts an HTTPS/h2 fake server that requires mutual TLS
+// authentication. Both the server and accepted client certificates are derived
+// from the same freshly generated self-signed CA. Call CACertPEM(),
+// ClientCertPEM(), and ClientKeyPEM() to retrieve the credential material that
+// clients must present.
+func NewMTLS(t testing.TB) *Fake {
+	t.Helper()
+	certPEM, keyPEM := generateSelfSignedCert(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	f := &Fake{
+		ctx:           ctx,
+		cancel:        cancel,
+		caCertPEM:     certPEM,
+		clientCertPEM: certPEM, // same cert acts as client cert for test simplicity
+		clientKeyPEM:  keyPEM,
+	}
+	f.handler = newFakeHandler(f)
+
+	mux := http.NewServeMux()
+	path, h := criteriav1connect.NewCriteriaServiceHandler(f.handler)
+	mux.Handle(path, h)
+
+	cert, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		t.Fatalf("applytest: load TLS key pair: %v", err)
+	}
+	pool := x509.NewCertPool()
+	pool.AppendCertsFromPEM(certPEM)
+
+	srv := httptest.NewUnstartedServer(mux)
+	srv.TLS = &tls.Config{
+		Certificates: []tls.Certificate{cert},
+		ClientAuth:   tls.RequireAndVerifyClientCert,
+		ClientCAs:    pool,
+	}
+	srv.EnableHTTP2 = true
+	srv.StartTLS()
 	f.srv = srv
 
 	t.Cleanup(func() {
@@ -213,8 +365,8 @@ func (h *fakeHandler) Heartbeat(_ context.Context, _ *connect.Request[pb.Heartbe
 }
 
 func (h *fakeHandler) CreateRun(_ context.Context, req *connect.Request[pb.CreateRunRequest]) (*connect.Response[pb.Run], error) {
+	id := uuid.NewString()
 	h.mu.Lock()
-	id := "run-" + strconv.Itoa(len(h.events)+1)
 	h.events[id] = nil
 	h.mu.Unlock()
 	return connect.NewResponse(&pb.Run{
@@ -361,9 +513,13 @@ func (h *fakeHandler) sendControl(msg *pb.ControlMessage) {
 }
 
 // schedulePauseResume starts a goroutine that sends a ResumeRun message after
-// the configured delay.
+// the configured delay. It is a no-op when NeverResume is true, allowing tests
+// to verify timeout paths in drainResumeCycles without an actual resume signal.
 func (h *fakeHandler) schedulePauseResume(runID string) {
 	ex := h.parent.Execution
+	if ex.NeverResume {
+		return
+	}
 	delay := ex.ResumeAfter
 	if delay <= 0 {
 		delay = 10 * time.Millisecond

@@ -16,6 +16,12 @@ func TestMain(m *testing.M) {
 	// shutting down during goleak's check window. We filter them to avoid
 	// false positives; real transport goroutine leaks would manifest in the
 	// internal/transport/server package tests instead.
+	//
+	// IgnoreAnyFunction is required here instead of IgnoreTopFunction: when a
+	// goroutine is blocked in IO wait, goleak reports internal/poll.runtime_pollWait
+	// as the top frame, not the h2 function itself. IgnoreAnyFunction with these
+	// specific internal h2 function names is narrow in practice because they only
+	// appear in HTTP/2 connection-management goroutines, not in user code.
 	goleak.VerifyTestMain(m,
 		goleak.IgnoreCurrent(),
 		goleak.IgnoreAnyFunction("golang.org/x/net/http2.(*clientConnReadLoop).run"),
