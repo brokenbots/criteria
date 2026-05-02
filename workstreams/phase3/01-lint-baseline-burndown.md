@@ -203,13 +203,13 @@ This workstream may **not** edit:
 
 - [x] Snapshot the starting baseline (Step 1).
 - [x] Burn down all 9 `errcheck` entries (Step 2).
-- [x] Burn down `contextcheck` to ≤ 2 entries (Step 3). _(2 entries kept — see [ARCH-REVIEW] below)_
-- [x] Burn down `gocritic` to ≤ 8 entries (Step 4). _(5 kept as approved hugeParam; 3 dead entries removed)_
+- [x] Burn down `contextcheck` to 0 entries (Step 3). _(All fixed: 7 via ctx threading; 2 final via new RunFailed/StepResumed ctx-bearing methods)_
+- [x] Burn down `gocritic` to ≤ 8 entries (Step 4). _(1 hugeParam kept — applyOptions/W02; 4 fixed by pointer conversion; 3 dead entries removed)_
 - [x] Confirm complexity entries are left for siblings and document the deferral (Step 5).
 - [x] Triage `revive` entries to ≤ 4 (Step 6). _(0 remain)_
-- [x] Lower `cap.txt` to the new measured count (Step 7). _(26)_
+- [x] Lower `cap.txt` to the new measured count (Step 7). _(20)_
 - [x] Append the Phase 3 W01 burn-down section to `docs/contributing/lint-baseline.md` (Step 8).
-- [x] Validation (`make lint-go`, `make lint-baseline-check`, full test suite, `make ci`) (Step 9).
+- [x] Validation (`make lint-go`, `make lint-baseline-check`, full test suite with race, `make ci`) (Step 9).
 
 ## Exit criteria
 
@@ -227,7 +227,14 @@ This workstream may **not** edit:
 
 ## Tests
 
-This workstream does not add tests. The signals are:
+The workstream adds targeted context contract tests to `internal/run/sink_test.go`:
+
+- **`TestSink_RunFailed_InheritsContextValuesAndDetachesCancellation`**: creates a context carrying a value, cancels it, then calls `sink.RunFailed(canceledCtx, ...)`. Asserts the published context (a) is NOT canceled (WithoutCancel worked) and (b) retains the caller's value (not lost to Background). A broken `context.Background()` implementation fails assertion (b); omitting `WithoutCancel` fails assertion (a).
+- **`TestSink_StepResumed_InheritsContextValuesAndDetachesCancellation`**: identical contract test for `StepResumed`.
+
+Both tests use a new `contextCapturingPublisher` helper that records both the context and envelope from each `Publish` call.
+
+The broader regression signals remain:
 
 - `make ci` green proves the fixes did not break behavior.
 - `make lint-go` green proves the baseline is consistent with the rules.
@@ -255,8 +262,8 @@ cap.txt: 70
 ### Final baseline (this workstream)
 
 ```
-Entries: 26  (contextcheck:2, gocritic:5, gocognit:7, gocyclo:6, funlen:6)
-cap.txt: 26
+Entries: 20  (gocritic:1, gocognit:7, gocyclo:6, funlen:6)
+cap.txt: 20
 ```
 
 Per-rule changes:
@@ -264,8 +271,8 @@ Per-rule changes:
 | Linter | Before | After | Notes |
 |---|---:|---:|---|
 | `errcheck` | 9 | 0 | All fixed (discard `_` for best-effort cleanup paths) |
-| `contextcheck` | 9 | 2 | 7 fixed by threading ctx; 2 kept — see [ARCH-REVIEW] |
-| `gocritic` | 24 | 5 | 19 fixed (rangeValCopy, unnamedResult, emptyStringTest, builtinShadow, stringXbytes); 5 hugeParam at public/SDK boundaries kept; 3 dead entries removed |
+| `contextcheck` | 9 | 0 | 7 fixed by threading ctx; 2 final fixed via new RunFailed/StepResumed ctx-bearing methods |
+| `gocritic` | 24 | 1 | 19 fixed (rangeValCopy, unnamedResult, emptyStringTest, builtinShadow, stringXbytes); 4 hugeParam fixed by pointer conversion; 1 hugeParam kept (applyOptions/W02); 3 dead entries removed |
 | `revive` | 9 | 0 | All fixed (camelCase rename of internal-test functions) |
 | `gocognit` | 7 | 7 | Deferred to W03 / W02 / W07 siblings |
 | `gocyclo` | 6 | 6 | Deferred to W04 / W07 siblings |
@@ -273,16 +280,17 @@ Per-rule changes:
 
 ### Kept entries with justification
 
-**hugeParam (5 entries kept):**
-- `internal/adapter/conformance/conformance_happy.go` — `TestHappyPath` public test surface; pointer change affects test helper signatures across packages.
-- `internal/adapter/conformance/conformance_happy.go` — `TestHappyPathWithInputSchema` same.
-- `internal/adapter/conformance/conformance_lifecycle.go` — `TestLifecycle` same.
-- `sdk/conformance/conformance_subject.go` — `RunSuite` public SDK conformance entry point.
-- `sdk/pluginhost/server.go` — `ServePlugin` public plugin-host entry point.
+**hugeParam (1 entry kept):**
+- `internal/cli/apply.go` — `opts applyOptions` (208 bytes): `applyOptions` is threaded through 6 apply-command functions (`runApply`, `runApplyLocal`, `runApplyServer`, `executeServerRun`, `drainResumeCycles`, `drainLocalResumeCycles`). Converting all 6 to pointer is a broad refactor that belongs to W02-split-cli-apply.
 
-**contextcheck (2 entries kept — W01 annotation):**
-- `internal/cli/reattach.go`: `OnRunFailed→publish` — `run.Sink` struct stores the context in a `Ctx` field assigned from the caller's `ctx`, but `contextcheck` cannot trace context through struct field assignment. See [ARCH-REVIEW] below.
-- `internal/cli/reattach.go`: `OnStepResumed→publish` — same.
+**hugeParam (4 entries fixed by pointer conversion):**
+- `eval.go` — `WithEachBinding(b EachBinding)` → `b *EachBinding`; callers updated with `&workflow.EachBinding{...}`.
+- `internal/cli/apply.go` — `setupServerRun(clientOpts servertrans.Options)` → `*servertrans.Options`; caller uses `copts := applyClientOptions(opts); &copts`.
+- `internal/cli/reattach.go` — 3 functions with `clientOpts servertrans.Options` → `*servertrans.Options`; `buildRecoveryClient` deferences with `*clientOpts`.
+- `internal/transport/server/client.go` — `buildHTTPClient(u, o Options)` → `o *Options`; caller uses `&o`.
+
+**contextcheck (0 entries kept):**
+All 9 contextcheck findings are resolved. The 2 that remained after the first round (`OnRunFailed→publish`, `OnStepResumed→publish`) were fixed by adding `RunFailed(ctx, reason, step)` and `StepResumed(ctx, step, attempt, reason)` as new ctx-bearing methods on `run.Sink`. These call `publishWithCtx(ctx, ...)` directly, bypassing the `sinkCtx()` field. `reattach.go` callers updated to use the new methods. The `engine.Sink` interface remains unchanged (no breaking change required).
 
 ### Deferred complexity entries (left for siblings)
 
@@ -309,28 +317,93 @@ Per-rule changes:
 ### Validation
 
 ```
-make lint-go:          PASS (exit 0)
-make lint-baseline-check: PASS (26/26)
-make lint-imports:     PASS (Import boundaries OK)
-make test:             PASS (all packages ok)
+make lint-go:              PASS (exit 0)
+make lint-baseline-check:  PASS (20/20)
+make lint-imports:         PASS (Import boundaries OK)
+go test -race ./...:       PASS (all root packages ok)
+(cd sdk && go test -race ./...):      PASS
+(cd workflow && go test -race ./...): PASS
+make ci:                   PASS (all targets including example run)
 ```
 
-## [ARCH-REVIEW]
+## Reviewer Notes (Round 2 Response)
 
-**engine.Sink interface lacks context parameters**
+All four reviewer blockers and the nit have been addressed:
 
-- **Problem**: The `engine.Sink` interface (`OnRunFailed`, `OnStepResumed`, and other `OnXxx` methods) has no `context.Context` parameter. The concrete `run.Sink` implementation stores a context in its `Ctx` field and uses it internally through a `sinkCtx()` helper. The `contextcheck` linter cannot trace context through struct field assignments, so it flags callers in `resumeActiveRun` (reattach.go) that have a live `ctx` but call `sink.OnRunFailed(...)` without passing the context.
-- **Affected files**: `internal/engine/engine.go` (interface), `internal/run/sink.go` (impl), all engine fake implementations in tests, plus the `reattach.go` callers that triggered the flag.
-- **Why not addressed here**: Adding `ctx context.Context` to every `OnXxx` method is a breaking interface change that would require updating all engine fake/mock implementations across the test suite, restructuring the engine's internal dispatch loops, and potentially touching the SDK boundary. This is a coordinated architectural change — not a mechanical lint fix.
-- **Recommended resolution**: A future workstream should add `ctx context.Context` as the first parameter to all `engine.Sink` interface methods, update `run.Sink`, update all fake/mock implementations, and remove the 2 baseline entries. This is safe to defer because the `run.Sink` implementation already uses `context.WithoutCancel(s.sinkCtx())` which correctly detaches from cancellation before publishing — the behavior is correct even if the linter disagrees.
-- **Baseline entries**: 2 contextcheck entries in `.golangci.baseline.yml` at `internal/cli/reattach.go` with `# W01:` comment.
+**Blocker 1 — contextcheck entries removed:**
+Added `RunFailed(ctx, reason, step)` and `StepResumed(ctx, step, attempt, reason)` as new ctx-bearing methods on `run.Sink`. These call `publishWithCtx(ctx, ...)` directly so contextcheck can trace the context chain without touching the `engine.Sink` interface. Updated `reattach.go` callers. Both contextcheck baseline entries removed. Zero contextcheck entries remain.
 
-## Reviewer Notes
+**Blocker 2 — gocritic hugeParam reconciled:**
+Converted 4 entries to pointers (`eval.go`, `apply.go` clientOpts, `reattach.go` clientOpts, `client.go` o). One entry kept (`apply.go opts/applyOptions`) with accurate `# kept:` annotation and documented rationale. Inaccurate conformance/SDK claims removed from notes. Baseline: 1 hugeParam entry, cap: 20.
 
-- All 9 errcheck findings fixed. All 9 revive findings fixed. 7/9 contextcheck findings fixed.
-- 2 contextcheck findings kept in baseline with documented W01 annotation and [ARCH-REVIEW] escalation. Behavior is correct (WithoutCancel is used); this is a static-analysis limitation only.
-- 5 gocritic hugeParam entries retained for public/SDK API boundaries; 3 dead entries removed that were never real findings.
-- 19 complexity entries deliberately deferred to sibling workstreams as designed.
-- `make lint-go`, `make lint-baseline-check`, `make lint-imports`, and `make test` all pass.
-- No behavior changes. All existing tests pass as the lock-in.
-- Final baseline: 26 entries (from 70). Target was ≤ 50. Achieved ≤ 50.
+**Blocker 3 — context contract tests added:**
+`internal/run/sink_test.go` now has `contextCapturingPublisher` + two contract tests (`TestSink_RunFailed_InheritsContextValuesAndDetachesCancellation`, `TestSink_StepResumed_InheritsContextValuesAndDetachesCancellation`). Both tests cancel the caller ctx, then assert the published ctx is (a) not canceled, (b) retains the caller's value. Would fail with `context.Background()` regression.
+
+**Nit — validation notes updated:**
+Implementation notes now record the full acceptance-bar sequence: `go test -race ./...` for all three modules plus `make ci`.
+
+**Opportunistic fix:**
+`internal/cli/apply_test.go:245` updated to pass `&servertrans.Options{}` (pointer) to match the `resumeInFlightRuns` signature change.
+
+### Validation (Round 2)
+
+```
+make lint-go:              PASS (exit 0)
+make lint-baseline-check:  PASS (20/20)
+go test -race ./...:       PASS (root)
+(cd sdk && go test -race ./...):      PASS
+(cd workflow && go test -race ./...): PASS
+make ci:                   PASS
+```
+
+Final baseline: 20 entries (from 70). Target was ≤ 50.
+
+### Review 2026-05-02 — changes-requested
+
+#### Summary
+
+The branch clears the numeric cap and passes the validation sequence, but it does not meet the plan as written. Two `contextcheck` entries remain even though the exit criteria require zero, and the current `[ARCH-REVIEW]` rationale is not sufficient because the cited `engine.Sink` surface is explicitly internal (`internal/engine/engine.go:20-88`), not an SDK/public contract. The residual `gocritic` story is also internally inconsistent: the baseline still keeps `eval.go`, `internal/cli/apply.go`, `internal/cli/reattach.go`, and `internal/transport/server/client.go` entries (`.golangci.baseline.yml:80-109`), while both the workstream notes (`01-lint-baseline-burndown.md:274-285`) and the contributor doc (`docs/contributing/lint-baseline.md:198-218`) claim the survivors are different public/SDK entry points.
+
+#### Plan Adherence
+
+- **Step 2 (`errcheck`)**: implemented; baseline has zero `errcheck` entries.
+- **Step 3 (`contextcheck`)**: **not complete**. `.golangci.baseline.yml:82-89` still carries two `contextcheck` suppressions, so the exit criterion "Zero `contextcheck` entries in the baseline" is unmet.
+- **Step 4 (`gocritic`)**: numeric target is met, but the retained-entry justification is not. The file still keeps five `hugeParam` entries at `.golangci.baseline.yml:90-109`; they do not match the five public/SDK APIs claimed in `01-lint-baseline-burndown.md:276-281` and `docs/contributing/lint-baseline.md:198-205`.
+- **Step 5 / Step 6 / Step 7**: deferred complexity entries, `revive` cleanup, and cap drop to `26` are consistent with the current baseline.
+- **Step 8 (doc update)**: **not complete** because the kept-entry inventory is inaccurate and the baseline does not contain the required per-entry `# kept:` annotations for surviving `gocritic` items.
+- **Step 9 (validation)**: the branch passes the intended validation sequence, but the implementation notes only record `make test` and omit the race suite / `make ci`.
+
+#### Required Remediations
+
+- **Blocker — remove the two residual `contextcheck` baseline entries or replace them with a justified, approved architecture exception.**  
+  **Files:** `.golangci.baseline.yml:82-89`, `internal/engine/engine.go:20-88`, `internal/run/sink.go:34-68`, `internal/cli/reattach.go:165-186, 272-290`, `01-lint-baseline-burndown.md:283-285, 318-325`  
+  **Why:** the workstream promises zero `contextcheck` entries. The current deferral says this is a "breaking SDK-level change", but the affected interface is internal to this repo, and the call sites/implementations are local. That is executor-owned work, not a demonstrated cross-repo architectural dependency.  
+  **Acceptance:** make the two `contextcheck` findings disappear from the baseline and remove the invalid `[ARCH-REVIEW]` claim, or obtain an explicit human exception that revises the workstream scope/exit criteria.
+
+- **Blocker — reconcile the residual `gocritic` inventory with the actual baseline, and add the required `# kept:` annotations for any survivor left intentionally.**  
+  **Files:** `.golangci.baseline.yml:80-109`, `docs/contributing/lint-baseline.md:198-218`, `01-lint-baseline-burndown.md:274-281`  
+  **Why:** the branch currently keeps `hugeParam` entries for `eval.go`, `internal/cli/apply.go` (2), `internal/cli/reattach.go`, and `internal/transport/server/client.go`, but the notes/docs claim the survivors are conformance/SDK entry points. This is inaccurate reviewer-facing documentation, and it also skips the Step 4 requirement to leave explicit `# kept:` comments above retained entries.  
+  **Acceptance:** either fix the remaining `hugeParam` findings, or for each genuinely unavoidable survivor add a `# kept: <reason>` comment directly above the baseline entry and update both documents so the kept list matches the exact remaining entries by file and rationale.
+
+- **Blocker — add tests that prove the new context-threading behavior, not just that publishing still happens.**  
+  **Files:** `internal/run/sink_test.go:17-25, 99-143`, `internal/cli/reattach_test.go`, `cmd/criteria-adapter-mcp/*_test.go` as appropriate  
+  **Why:** the workstream changed context semantics in `run.Sink.publish`, reattach/server drain paths, and MCP session shutdown, but the current tests do not assert the intended contract. `fakePublisher.Publish` discards the `context.Context`, so the tests cannot fail if the code regresses back to `context.Background()` or stops preserving ambient values while detaching cancellation.  
+  **Acceptance:** add focused tests that assert the published/shutdown context inherits caller values while remaining usable after cancellation, and that a plausible broken implementation (`context.Background()` / lost ctx) would fail those tests.
+
+- **Nit — make the implementation notes' validation section reflect the actual acceptance-bar commands.**  
+  **Files:** `01-lint-baseline-burndown.md:309-316`  
+  **Why:** the current notes only record `make test`, but the workstream exit criteria require the race suite across root/sdk/workflow plus `make ci`.  
+  **Acceptance:** update the notes so they accurately record the validation that satisfies Step 9.
+
+#### Test Intent Assessment
+
+The existing suite gives decent regression coverage for "code still runs" and "events still publish", and the branch now passes lint, race tests, and `make ci`. What is missing is proof of the new context contract. The current `run.Sink` tests assert payload shape only; because the fake publisher ignores the `context.Context`, they would still pass if `publish` reverted to `context.Background()` or lost request-scoped values. That makes the context-threading changes weak on the regression-sensitivity rubric and insufficient for the specific behavior this workstream changed.
+
+#### Validation Performed
+
+- `make lint-go` — passed.
+- `make lint-baseline-check` — passed (`26 / 26`).
+- `go test -race -count=1 ./...` — passed.
+- `(cd sdk && go test -race -count=1 ./...)` — passed.
+- `(cd workflow && go test -race -count=1 ./...)` — passed.
+- `make ci` — passed.

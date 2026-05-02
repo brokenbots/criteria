@@ -299,7 +299,7 @@ func TestBuildRecoveryClient_MissingCredentials(t *testing.T) {
 		t.Fatalf("WriteStepCheckpoint: %v", err)
 	}
 
-	rc, err := buildRecoveryClient(discardLogger(), cp, servertrans.Options{})
+	rc, err := buildRecoveryClient(discardLogger(), cp, &servertrans.Options{})
 	if err == nil {
 		if rc != nil {
 			rc.Close()
@@ -334,12 +334,19 @@ func TestBuildRecoveryClient_BadServerURL(t *testing.T) {
 		t.Fatalf("WriteStepCheckpoint: %v", err)
 	}
 
-	rc, err := buildRecoveryClient(discardLogger(), cp, servertrans.Options{})
+	rc, err := buildRecoveryClient(discardLogger(), cp, &servertrans.Options{})
 	if err == nil {
 		if rc != nil {
 			rc.Close()
 		}
 		t.Fatal("expected error for invalid server URL scheme")
+	}
+	// Checkpoint must have been removed.
+	list, _ := ListStepCheckpoints()
+	for _, item := range list {
+		if item.RunID == "cp-badurl" {
+			t.Error("checkpoint not removed after bad-URL failure")
+		}
 	}
 }
 

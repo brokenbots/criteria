@@ -277,7 +277,7 @@ func routeIteratingStepInGraph(st *RunState, next string, graph *workflow.FSMGra
 		}
 		cur.Key = key
 		cur.InProgress = true
-		st.Vars = workflow.WithEachBinding(st.Vars, workflow.EachBinding{
+		st.Vars = workflow.WithEachBinding(st.Vars, &workflow.EachBinding{
 			Value: item,
 			Key:   key,
 			Index: cur.Index,

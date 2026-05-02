@@ -77,33 +77,8 @@ issues:
       linters:
         - funlen
       text: 'Function ''SerializeVarScope''' # W10: cursor-stack serialisation added length
-    # --- Kept gocritic hugeParam — public/complex API boundaries not worth refactoring ---
-    # --- Residual contextcheck: engine.Sink interface has no ctx params; fix requires breaking SDK change (W01) ---
-    - path: internal/cli/reattach.go
-      linters:
-        - contextcheck
-      text: 'Function `OnRunFailed->publish` should pass the context parameter' # W01: requires engine.Sink interface ctx threading
-    - path: internal/cli/reattach.go
-      linters:
-        - contextcheck
-      text: 'Function `OnStepResumed->publish` should pass the context parameter' # W01: requires engine.Sink interface ctx threading
-    - path: eval.go
-      linters:
-        - gocritic
-      text: 'hugeParam: b is heavy \(120 bytes\); consider passing it by pointer' # W10: EachBinding is a value-type aggregate
+    # --- kept gocritic hugeParam: applyOptions threads through 6 apply-command functions; converting to pointer requires W02-split-cli-apply scope ---
     - path: internal/cli/apply.go
       linters:
         - gocritic
-      text: 'hugeParam: clientOpts is heavy \(88 bytes\); consider passing it by pointer' # W06: gocritic finding
-    - path: internal/cli/apply.go
-      linters:
-        - gocritic
-      text: 'hugeParam: opts is heavy \(208 bytes\); consider passing it by pointer' # W06: gocritic finding (grew from 184→208 with stdin/log injection fields, W06-remediation)
-    - path: internal/cli/reattach.go
-      linters:
-        - gocritic
-      text: 'hugeParam: clientOpts is heavy \(88 bytes\); consider passing it by pointer' # W06: gocritic finding
-    - path: internal/transport/server/client.go
-      linters:
-        - gocritic
-      text: 'hugeParam: o is heavy \(88 bytes\); consider passing it by pointer' # W06: gocritic finding
+      text: 'hugeParam: opts is heavy \(208 bytes\); consider passing it by pointer' # kept: applyOptions threads through 6 apply-command functions; W02-split-cli-apply owns the refactor

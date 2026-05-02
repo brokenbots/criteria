@@ -35,7 +35,7 @@ type reattachTransport interface {
 //
 // The clientOpts are used to build temporary clients for each resumed run.
 // This function blocks until all resumable runs have completed (or failed).
-func resumeInFlightRuns(ctx context.Context, log *slog.Logger, clientOpts servertrans.Options) {
+func resumeInFlightRuns(ctx context.Context, log *slog.Logger, clientOpts *servertrans.Options) {
 	checkpoints, err := ListStepCheckpoints()
 	if err != nil {
 		log.Warn("could not list step checkpoints; skipping crash recovery", "error", err)
@@ -50,7 +50,7 @@ func resumeInFlightRuns(ctx context.Context, log *slog.Logger, clientOpts server
 	}
 }
 
-func resumeOneRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint, clientOpts servertrans.Options) {
+func resumeOneRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint, clientOpts *servertrans.Options) {
 	log = log.With("run_id", cp.RunID, "step", cp.CurrentStep)
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -96,14 +96,14 @@ func abandonCheckpoint(log *slog.Logger, cp *StepCheckpoint, reason string, err 
 // buildRecoveryClient validates checkpoint credentials, builds a temporary
 // server client, and sets the persisted credentials on it. On any failure it
 // abandons the checkpoint and returns a non-nil error so the caller can return.
-func buildRecoveryClient(log *slog.Logger, cp *StepCheckpoint, clientOpts servertrans.Options) (*servertrans.Client, error) {
+func buildRecoveryClient(log *slog.Logger, cp *StepCheckpoint, clientOpts *servertrans.Options) (*servertrans.Client, error) {
 	if cp.CriteriaID == "" || cp.Token == "" {
 		abandonCheckpoint(log, cp, "checkpoint missing criteria credentials; clearing", nil)
 		return nil, fmt.Errorf("missing credentials for run %q", cp.RunID)
 	}
 	// We do not Register (which would create a new criteria_id); instead we
 	// re-use the original identity so ReattachRun ownership check passes.
-	rc, err := servertrans.NewClient(cp.ServerURL, log, clientOpts)
+	rc, err := servertrans.NewClient(cp.ServerURL, log, *clientOpts)
 	if err != nil {
 		abandonCheckpoint(log, cp, "cannot build recovery client; abandoning checkpoint", err)
 		return nil, err
@@ -273,7 +273,7 @@ func resumeActiveRun(ctx context.Context, log *slog.Logger, rc reattachTransport
 		}
 		sink := &run.Sink{RunID: cp.RunID, Client: rc, Log: log, Ctx: ctx}
 		reason := fmt.Sprintf("exceeded max_step_retries on resume at step %q (attempt %d)", resp.CurrentStep, nextAttempt)
-		sink.OnRunFailed(reason, resp.CurrentStep)
+		sink.RunFailed(ctx, reason, resp.CurrentStep)
 		drainAndCleanup(ctx, rc, cp)
 		return
 	}
@@ -284,7 +284,7 @@ func resumeActiveRun(ctx context.Context, log *slog.Logger, rc reattachTransport
 	}
 
 	sink := &run.Sink{RunID: cp.RunID, Client: rc, Log: log, Ctx: ctx}
-	sink.OnStepResumed(resp.CurrentStep, nextAttempt, "criteria_restart")
+	sink.StepResumed(ctx, resp.CurrentStep, nextAttempt, "criteria_restart")
 	loader := plugin.NewLoader()
 	loader.RegisterBuiltin(shell.Name, plugin.BuiltinFactoryForAdapter(shell.New()))
 

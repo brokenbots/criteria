@@ -284,7 +284,7 @@ type EachBinding struct {
 // step-level iteration. Called by the engine node before executing the
 // iteration step so that input expressions can reference each.value, each.key,
 // each._idx, each._total, each._first, each._last, and each._prev.
-func WithEachBinding(vars map[string]cty.Value, b EachBinding) map[string]cty.Value {
+func WithEachBinding(vars map[string]cty.Value, b *EachBinding) map[string]cty.Value {
 	newVars := make(map[string]cty.Value, len(vars)+1)
 	for k, v := range vars {
 		newVars[k] = v

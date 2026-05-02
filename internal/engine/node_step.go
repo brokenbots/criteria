@@ -89,7 +89,7 @@ func (n *stepNode) repopulateCursorItems(ctx context.Context, st *RunState, cur 
 		key = cty.StringVal(fmt.Sprintf("%d", cur.Index))
 	}
 	if cur.Index < len(items) {
-		st.Vars = workflow.WithEachBinding(st.Vars, workflow.EachBinding{
+		st.Vars = workflow.WithEachBinding(st.Vars, &workflow.EachBinding{
 			Value: items[cur.Index],
 			Key:   key,
 			Index: cur.Index,
@@ -212,7 +212,7 @@ func (n *stepNode) setupIterCursor(ctx context.Context, st *RunState, deps Deps)
 	}
 
 	// Bind each.* for first item.
-	st.Vars = workflow.WithEachBinding(st.Vars, workflow.EachBinding{
+	st.Vars = workflow.WithEachBinding(st.Vars, &workflow.EachBinding{
 		Value: items[0],
 		Key:   firstKey,
 		Index: 0,

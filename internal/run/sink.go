@@ -60,11 +60,29 @@ func (s *Sink) sinkCtx() context.Context {
 	return context.Background()
 }
 
-func (s *Sink) publish(payload any) {
+// publishWithCtx publishes an event using the provided context, stripping
+// cancellation so terminal events leave the buffer even after the run context
+// is cancelled.
+func (s *Sink) publishWithCtx(ctx context.Context, payload any) {
 	env := events.NewEnvelope(s.RunID, payload)
-	// Use WithoutCancel so engine cancellation does not prevent terminal events
-	// from leaving the buffer, while still inheriting the ambient context.
-	s.Client.Publish(context.WithoutCancel(s.sinkCtx()), env)
+	s.Client.Publish(context.WithoutCancel(ctx), env)
+}
+
+func (s *Sink) publish(payload any) {
+	s.publishWithCtx(s.sinkCtx(), payload)
+}
+
+// RunFailed emits a RunFailed event using the provided context. Use this
+// instead of OnRunFailed at call sites that hold an explicit context so the
+// context is threaded through to the transport without losing ambient values.
+func (s *Sink) RunFailed(ctx context.Context, reason, step string) {
+	s.publishWithCtx(ctx, &pb.RunFailed{Reason: reason, Step: step})
+}
+
+// StepResumed emits a StepResumed event using the provided context. Use this
+// instead of OnStepResumed at call sites that hold an explicit context.
+func (s *Sink) StepResumed(ctx context.Context, step string, attempt int, reason string) {
+	s.publishWithCtx(ctx, &pb.StepResumed{Step: step, Attempt: int32(attempt), Reason: reason})
 }
 
 func (s *Sink) OnRunStarted(workflowName, initialStep string) {

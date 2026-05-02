@@ -341,7 +341,8 @@ func runApplyServer(ctx context.Context, opts applyOptions) error {
 	}
 	defer func() { _ = loader.Shutdown(context.WithoutCancel(runCtx)) }()
 
-	client, runID, err := setupServerRun(runCtx, log, graph, src, opts.serverURL, opts.name, applyClientOptions(opts), cancelRun)
+	copts := applyClientOptions(opts)
+	client, runID, err := setupServerRun(runCtx, log, graph, src, opts.serverURL, opts.name, &copts, cancelRun)
 	if err != nil {
 		return err
 	}
@@ -351,8 +352,8 @@ func runApplyServer(ctx context.Context, opts applyOptions) error {
 	return executeServerRun(runCtx, log, loader, client, state, graph, opts)
 }
 
-func setupServerRun(ctx context.Context, log *slog.Logger, graph *workflow.FSMGraph, src []byte, serverURL, name string, clientOpts servertrans.Options, cancelRun func()) (*servertrans.Client, string, error) {
-	client, err := servertrans.NewClient(serverURL, log, clientOpts)
+func setupServerRun(ctx context.Context, log *slog.Logger, graph *workflow.FSMGraph, src []byte, serverURL, name string, clientOpts *servertrans.Options, cancelRun func()) (*servertrans.Client, string, error) {
+	client, err := servertrans.NewClient(serverURL, log, *clientOpts)
 	if err != nil {
 		return nil, "", err
 	}
