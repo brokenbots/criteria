@@ -912,3 +912,22 @@ make lint-go                                            # pass
 go test -race -count=2 ./internal/transport/server/... ./internal/cli/...  # pass
 make lint-go                                                                # pass
 ```
+
+### Review 2026-05-03-02 — approved
+
+#### Summary
+Approved. The transport repeat-run regression is resolved, the weakened count-only transport assertions have been strengthened into content-and-order checks, and the branch again satisfies the full workstream validation and coverage bar without reintroducing scope drift.
+
+#### Plan Adherence
+- Steps 1–7 remain met.
+- Scope remains compliant: the current branch changes are still test-only plus workstream notes, and `internal/transport/server/client.go` remains limited to the previously accepted `TLSMode()` accessor and a no-behavior-change inline simplification.
+- The transport leak-checking change is now compatible with the required `-race -count=2` validation: `requireNoGoroutineLeak` snapshots pre-existing goroutines with `goleak.IgnoreCurrent()` and still checks goroutines started after the snapshot.
+
+#### Test Intent Assessment
+The transport tests are materially stronger now. `TestClientReconnectMultipleFailures`, `TestClientSinceSeqZeroEventReplay`, and `TestClientReconnectSendsSinceSeq` no longer rely on count-only persistence checks that could miss a duplicate+drop bug; they assert the exact step sequence instead. The per-test goleak snapshot approach is acceptable here because each test still verifies cleanup of goroutines it starts, while no longer being contaminated by unrelated pre-existing goroutines from earlier tests in the same binary run.
+
+#### Validation Performed
+- `git diff origin/main...HEAD -- internal/transport/server/client_test.go internal/cli/applytest/fakeserver.go` — reviewed the latest transport-test and fake-harness diffs.
+- `go test -race -count=2 ./internal/cli/... ./internal/transport/server/...` — passed.
+- `make test-cover` — passed; `cover.out` reports `executeServerRun 95.0%`, `drainResumeCycles 77.8%`, `runApplyServer 86.7%`, `setupServerRun 74.1%`, `internal/transport/server 79.5%`, `internal/cli 75.5%`.
+- `make ci` — passed.
