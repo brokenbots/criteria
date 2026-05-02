@@ -272,9 +272,10 @@ func parseCACert(t testing.TB, certPEM, keyPEM []byte) (*rsa.PrivateKey, *x509.C
 }
 
 // NewMTLS starts an HTTPS/h2 fake server that requires mutual TLS
-// authentication. The server certificate is signed by a freshly generated CA.
-// The client certificate is a distinct leaf certificate signed by the same CA,
-// with IsCA=false and ExtKeyUsageClientAuth only. Call CACertPEM(),
+// authentication. A self-signed CA certificate is generated and used directly
+// as the server certificate (no separate server leaf cert). The client
+// certificate is a distinct leaf certificate signed by the same CA, with
+// IsCA=false and ExtKeyUsageClientAuth only. Call CACertPEM(),
 // ClientCertPEM(), and ClientKeyPEM() to retrieve the credential material that
 // clients must present. Using the CA certificate as a client certificate, or
 // the client certificate as a CA bundle, will fail mTLS verification.

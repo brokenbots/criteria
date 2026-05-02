@@ -822,3 +822,56 @@ go test -race -count=1 ./internal/cli/...               # pass (24.0s)
 make test                                               # all pass
 make lint-go                                            # pass
 ```
+
+### Review 2026-05-02-12 — changes-requested
+
+#### Summary
+Changes requested. The new heartbeat polling and duplicate-event guard are reasonable, but the transport-side goleak remediation introduced a regression: `startFakeServer` now unconditionally registers `goleak.VerifyNone(t)`, and the required `go test -race -count=2 ./internal/transport/server/...` validation fails across the package with lingering HTTP/2 goroutines. That breaks Step 7 and means the claimed cleanup improvement is not actually holding under the workstream’s repeat-run bar.
+
+#### Plan Adherence
+- The branch remains within the workstream’s intended scope: the new code is in test-only files plus workstream notes, and `internal/transport/server/client.go` still differs from `main` only by the previously accepted `TLSMode()` accessor and a no-op inline simplification.
+- Step 6 coverage intent is still met by the transport tests already in place.
+- Step 7 is not met on the current branch because the required `-race -count=2` transport validation now fails.
+
+#### Required Remediations
+- **Blocker** — `internal/transport/server/client_test.go:27-33,222-228`: the new `requireNoGoroutineLeak` registration inside `startFakeServer` causes widespread `goleak.VerifyNone(t)` failures under the required repeat-run command. `go test -race -count=2 ./internal/transport/server/...` now fails in `TestClientHappyPath`, `TestClientReconnectSendsSinceSeq`, `TestClientControlStreamDeliversRunCancel`, `TestClientPersistBeforeAckReconnect`, `TestClientPublishBlocksWhenBufferFull`, `TestClientCloseWithConcurrentPublish`, `TestClientReconnectMultipleFailures`, `TestClientSinceSeqZeroEventReplay`, `TestClientHeartbeat`, `TestClientResume`, `TestClientDrain/ctx_cancel_unblocks_drain`, and `TestClientStartPublishStream`, all with lingering h2c/http2 goroutines. **Acceptance:** either make the transport test cleanup deterministic enough that per-test `goleak.VerifyNone(t)` passes under `go test -race -count=2 ./internal/transport/server/...`, or narrow/remove this new automatic goleak assertion so the package once again satisfies the workstream’s required validation while preserving the already-required per-test leak checks for the CLI engine+fake-harness tests.
+
+#### Test Intent Assessment
+The heartbeat polling change improves regression resistance by removing scheduler-sensitive sleeps, and the duplicate-event guard in the fake harness is a sound correctness improvement. The blocker is that the new leak-checking mechanism overreaches its cleanup guarantees: instead of proving cleanup, it makes the transport suite nondeterministic across repeated runs, so the current tests no longer validate the workstream reliably.
+
+#### Validation Performed
+- `git show --stat --patch a43307b -- internal/transport/server/client_test.go internal/cli/applytest/fakeserver.go` — reviewed the new thread-remediation diff.
+- `go test -race -count=1 ./internal/transport/server/...` — passed.
+- `go test -race -count=2 ./internal/transport/server/...` — failed with repeated `goleak.VerifyNone(t)` reports from `internal/transport/server/client_test.go:32`, showing lingering `golang.org/x/net/http2` client/server read-loop goroutines across multiple tests.
+- `go test -race -count=2 ./internal/cli/... ./internal/transport/server/...` — failed for the same transport-package goroutine leak reason before `make test-cover` / `make ci` could complete.
+
+### Review 2026-05-02-12 — changes-requested
+
+#### Blocker addressed (commit `11bd5e7`)
+
+**requireNoGoroutineLeak fails under -count=2**
+- Root cause: `reattach_scope_integration_test.go` (pre-existing, out of workstream scope) leaks
+  h2c goroutines after its single run; under `-count=2`, those goroutines are still alive
+  when the second run of `TestClientHappyPath` etc. starts, causing spurious `goleak.VerifyNone`
+  failures.
+- Fix: `requireNoGoroutineLeak` now calls `goleak.IgnoreCurrent()` at call time to snapshot
+  goroutines that pre-exist when the test starts. Only goroutines spawned AFTER the snapshot
+  are subject to the check. Server goroutines (spawned after `startFakeServer` is called, which
+  is after the snapshot) are still caught if they don't clean up.
+- `go test -race -count=2 ./internal/transport/server/...` now passes.
+- `internal/transport/server/client_test.go:28-40`.
+
+**JcKX — NewMTLS docstring mismatch**
+- The docstring said "server certificate is signed by a freshly generated CA" but the server
+  actually uses the self-signed CA cert directly (no separate server leaf).
+- Updated docstring to "A self-signed CA certificate is generated and used directly as the
+  server certificate (no separate server leaf cert)."
+- `internal/cli/applytest/fakeserver.go:274-281`.
+
+#### Validation (Review 2026-05-02-12 remediation)
+
+```
+go test -race -count=2 ./internal/transport/server/...  # pass (12.3s)
+make test                                               # all pass
+make lint-go                                            # pass
+```
