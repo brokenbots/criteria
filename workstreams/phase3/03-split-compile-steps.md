@@ -273,3 +273,89 @@ No test function names changed.
 - `go test -race -count=2 ./workflow/...` ✓
 - `make lint-go` ✓ (clean)
 - `make lint-baseline-check` ✓ (17/17)
+
+### Review 2026-05-02 — changes-requested
+
+#### Summary
+
+Changes requested. The validation targets are green, but the carve is not pure motion: `compileWorkflowStep` no longer applies the shared adapter/agent/lifecycle validation that the monolith applied to every step, so invalid `type="workflow"` steps now compile without diagnostics. The production layout also diverges from Step 1/Step 2 by introducing two extra responsibility-class files instead of keeping the split on the five step-kind files named in the workstream.
+
+#### Plan Adherence
+
+- **Step 1 / Exit criteria:** not met. The workstream explicitly defines the production layout as `compile_steps.go` plus four new siblings (`_adapter.go`, `_workflow.go`, `_iteration.go`, `_graph.go`) at [Step 1](#step-1--establish-the-new-file-layout). The implementation adds `workflow/compile_steps_helpers.go` and `workflow/compile_steps_workflow_body.go`, which are responsibility-class files rather than the required step-kind layout.
+- **Step 2 / Behavior change:** not met. The carve was required to be pure motion, but `workflow/compile_steps_workflow.go` does not call the shared step validation that the original monolith ran before branching, so compile-time diagnostics changed for invalid workflow steps.
+- **Step 3:** met. `WorkflowBodySpec` and `buildBodySpec` still exist.
+- **Steps 4-6:** command and baseline exit criteria are satisfied.
+- **Step 5 / test intent:** not met. The moved tests do not cover validation parity for `type="workflow"` steps, so the regression above was not exercised.
+
+#### Required Remediations
+
+- **Blocker — `workflow/compile_steps_workflow.go:25-27` vs `workflow/compile_steps_helpers.go:15-42`:** `compileWorkflowStep` skips `validateAdapterAndAgent`, even though the monolith ran those checks for every step before any kind-specific handling. Current repro on this branch: a `type="workflow"` step with `lifecycle = "open"` and `allow_tools = ["read"]` returns `diag_count=0`. That is a user-visible compile contract regression and a security-policy regression because `allow_tools` is silently accepted on a step kind with no agent backing. **Acceptance criteria:** restore the pre-split diagnostics for invalid workflow-step combinations (at minimum adapter/agent/lifecycle/allow_tools/input validation parity), and keep the carve behaviorally identical to the pre-split implementation.
+- **Blocker — `workflow/compile_steps_helpers.go:1-237`, `workflow/compile_steps_workflow_body.go:1-161`, and workstream Step 1/Step 2 (`workstreams/phase3/03-split-compile-steps.md:42-48,75-85`):** the implementation introduces two extra production files even though the workstream requires a split by step kind and says shared paths should stay in the most relevant existing file (or graph file). **Acceptance criteria:** rework the production layout so it matches the five-file plan exactly (`compile_steps.go`, `_adapter.go`, `_workflow.go`, `_iteration.go`, `_graph.go`) while still satisfying the LOC caps. If you believe that is infeasible, raise it explicitly instead of silently diverging from the workstream.
+- **Blocker — `workflow/workflow_test.go:200-224`, `workflow/agents_test.go:193-230`:** the current suite proves `allow_tools` / `lifecycle` validation for non-`type="workflow"` steps, but it does not assert the same validation contract for workflow-typed steps, which is why this regression passed green. **Acceptance criteria:** add negative compile tests for invalid `type="workflow"` steps covering the restored shared validation paths, with assertions on the diagnostic summaries so future drift fails deterministically.
+
+#### Test Intent Assessment
+
+The current suite is strong on happy-path preservation: `go test -race -count=2 ./workflow/...`, `make validate`, and `make ci` all show that ordinary compile/eval flows still work after the split. What it does **not** prove is validation parity for invalid `type="workflow"` step shapes. The missing assertions are exactly the ones needed to catch this refactor bug: workflow-typed steps with stray `allow_tools`, `lifecycle`, invalid lifecycle values, and other shared adapter/agent validation cases should still fail compile with the same user-facing diagnostics as before.
+
+#### Validation Performed
+
+- `wc -l workflow/compile_steps.go workflow/compile_steps_*.go` — dispatcher is 96 LOC; production siblings are 137, 124, 237, 61, 163, 161 LOC.
+- `go build ./workflow/...` — passed.
+- `go test -race -count=2 ./workflow/...` — passed.
+- `make lint-go` — passed.
+- `make lint-baseline-check` — passed (`17 / 17`).
+- `make validate` — passed.
+- `make ci` — passed.
+- Ad hoc repro via `go run` against the current branch: compiling a `type="workflow"` step with `lifecycle = "open"` and `allow_tools = ["read"]` returned `diag_count=0`, confirming the lost validation on the workflow path.
+
+## Reviewer Notes — Remediation
+
+### Three fixes applied (commit 4a123ca)
+
+#### Blocker 1 — Restore `validateAdapterAndAgent` call in `compileWorkflowStep`
+
+`compile_steps_workflow.go` now calls `validateAdapterAndAgent(g, sp)` immediately after `validateLegacyConfig(sp)`, restoring the pre-split compile-contract for `type="workflow"` steps. A workflow step with `allow_tools` but no agent now produces `"allow_tools requires agent"`, and a lifecycle field without an agent produces `"lifecycle requires agent"`, matching adapter step behavior.
+
+#### Blocker 2 — Consolidate to the five step-kind files specified in Step 1
+
+`compile_steps_helpers.go` and `compile_steps_workflow_body.go` have been deleted. Their content was distributed as follows:
+
+| Destination | Functions received |
+|---|---|
+| `compile_steps_adapter.go` | `validateAdapterAndAgent`, `validateLegacyConfig`, `decodeStepTimeout`, `decodeStepInput` |
+| `compile_steps_iteration.go` | `decodeRemainIter`, `validateOnFailureValue`, `validateEachRefs`, `validateIteratingOutcomes`, `compileWorkflowIterExpr` |
+| `compile_steps_graph.go` | `resolveAdapterName`, `resolveStepOnCrash`, `compileOutcomeBlock`, `newWorkflowStepNode`, `compileWorkflowOutputs`; `"time"` import added |
+| `compile_steps_workflow.go` | `compileWorkflowBodyFromFile`, `compileWorkflowBodyInline`, `validateBodyHasContinuePath`, `buildBodySpec`; `"time"` import dropped; `compileWorkflowIterExpr`, `newWorkflowStepNode`, `compileWorkflowOutputs` removed (moved to graph) |
+
+Final production layout — exactly the five files from Step 1:
+
+| File | LOC |
+|---|---:|
+| `compile_steps.go` | 96 |
+| `compile_steps_adapter.go` | 235 |
+| `compile_steps_graph.go` | 238 |
+| `compile_steps_iteration.go` | 148 |
+| `compile_steps_workflow.go` | 243 |
+
+All files are ≤ 250 LOC.
+
+#### Blocker 3 — Add negative compile tests for `type="workflow"` step validation
+
+`workflow/compile_steps_workflow_test.go` added with four tests:
+
+| Test | Assertion |
+|---|---|
+| `TestWorkflowStep_AllowToolsWithoutAgent` | `type="workflow"` + `allow_tools` + no agent → `"allow_tools requires agent"` |
+| `TestWorkflowStep_LifecycleWithoutAgent` | `type="workflow"` + `lifecycle = "open"` + no agent → `"lifecycle requires agent"` |
+| `TestWorkflowStep_InvalidLifecycle` | agent step + `lifecycle = "bad"` → `"invalid lifecycle"` |
+| `TestWorkflowStep_AllowToolsWithLifecycle` | agent step + `lifecycle = "open"` + `allow_tools` → `"allow_tools is only valid on execute-shape steps"` |
+
+Tests 1 and 2 exercise the newly restored `validateAdapterAndAgent` path in `compileWorkflowStep`. Tests 3 and 4 use plain agent steps (not `type="workflow"`) because `type="workflow"` + `agent` triggers the step-kind-selection error before lifecycle validation runs (`validateStepKindSelectionDiags` enforces "exactly one of adapter/agent/type=workflow"), and `hcl.Diagnostics.Error()` only renders the first diagnostic.
+
+### Validation
+
+- `go build ./workflow/...` ✓
+- `go test -race -count=2 ./workflow/...` ✓ (all 4 new tests pass)
+- `make lint-go` ✓
+- `wc -l workflow/compile_steps.go workflow/compile_steps_*.go` — 5 files, none exceeds 243 LOC
