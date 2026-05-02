@@ -4,12 +4,10 @@ package workflow
 // appropriate per-kind compiler.
 //
 // Per-kind implementations live in:
-//   - compile_steps_adapter.go        — adapter/agent steps (non-iterating)
-//   - compile_steps_iteration.go      — for_each/count iterating steps
-//   - compile_steps_workflow.go       — type="workflow" steps
-//   - compile_steps_workflow_body.go  — workflow body loading helpers
-//   - compile_steps_helpers.go        — shared private helpers
-//   - compile_steps_graph.go          — shared graph helpers (warnBackEdges etc.)
+//   - compile_steps_adapter.go    — adapter/agent steps (non-iterating)
+//   - compile_steps_iteration.go  — for_each/count iterating steps
+//   - compile_steps_workflow.go   — type="workflow" steps (inline + file body)
+//   - compile_steps_graph.go      — shared graph helpers (warnBackEdges etc.)
 
 import (
 	"fmt"
