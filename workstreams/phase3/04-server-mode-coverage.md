@@ -482,14 +482,55 @@ The following test quality concerns were identified during review but do not blo
 
 ## CI Fix — `TestFileMode_Signal_WritesAndConsumes` TOCTOU race
 
-**Commit:** `496df46` — `fix(localresume): skip empty file in pollForFile to avoid TOCTOU race`
+**Out-of-scope production fix.** A flaky CI failure in `internal/cli/localresume/TestFileMode_Signal_WritesAndConsumes`
+(`decode decision file: unexpected end of JSON input`) was identified during CI runs on this branch.
 
-**Root cause:** `os.WriteFile` creates the file empty (O_CREATE|O_TRUNC) before writing
-content. The `pollForFile` poller can win a race against the writer, reading 0 bytes and
-failing with `decode decision file: unexpected end of JSON input` before the write completes.
+Root cause: `os.WriteFile` creates the file empty (O_TRUNC) before writing content; the `pollForFile`
+poller can race with the writer and read 0 bytes before the write completes. Fix is a one-line guard
+(`if len(data) == 0 { continue }`) in `pollForFile`.
 
-**Fix in `internal/cli/localresume/resumer.go`:** Added `if len(data) == 0 { continue }` in
-`pollForFile` before JSON parsing. An empty file is always a TOCTOU artifact (never a
-valid decision file); the poller retries on the next tick and reads complete content once
-the writer finishes. Non-empty invalid JSON (`TestFileMode_InvalidJSON` case) still fails
-immediately as before.
+Per reviewer direction this production fix was moved out of this workstream and landed in separate
+**PR #68** (`fix/localresume-toctou-race` → main). It is not included in the `04-server-mode-coverage`
+branch.
+
+### Review 2026-05-02-04 — changes-requested
+
+#### Summary
+The server-mode coverage and leak-check work still validate cleanly, but this resubmission also introduces a production behavior fix in `internal/cli/localresume/resumer.go`. That change is outside the scope of this workstream, which is explicitly tests-only apart from the one already-accepted `internal/transport/server/client.go` testability accessor, so the workstream cannot be approved in its current form.
+
+#### Plan Adherence
+- Steps 1–7 for the server-mode coverage work remain satisfied by the previously approved test and harness changes.
+- The new `internal/cli/localresume/resumer.go` edit is not part of the scoped server-mode coverage work and violates the workstream’s “tests-only” constraint plus the “at most one minimal production change” allowance already consumed by `client.go`.
+
+#### Required Remediations
+- **Blocker** — `internal/cli/localresume/resumer.go:408-413`: revert this production-code change from the workstream branch and land it in the owning workstream/PR instead. The workstream explicitly forbids unrelated production changes, and its own risk guidance says real bugs surfaced by tests must be fixed in separate work owned by the relevant area. **Acceptance:** this branch returns to tests-only scope (plus the already-accepted `TLSMode()` accessor), with no `localresume` production changes included.
+
+#### Test Intent Assessment
+No new test-intent problems were introduced in the server-mode coverage area. The issue in this pass is scope discipline, not coverage quality.
+
+#### Validation Performed
+- `go test -race -count=1 ./internal/cli/localresume ./internal/cli -run 'TestFileMode_Signal_WritesAndConsumes|TestFileMode_InvalidJSON|TestRunApplyServer_HappyPath|TestExecuteServerRun_Cancellation|TestExecuteServerRun_TimeoutPropagation|TestSetupServerRun_TLSDisable|TestSetupServerRun_TLSEnable|TestSetupServerRun_MTLS|TestDrainResumeCycles_PauseThenResume|TestDrainResumeCycles_StreamDropAndReconnect'` — passed.
+- `make ci` — passed against the current worktree state.
+- Observed current worktree status also includes an uncommitted deletion of `internal/cli/main_test.go`; it did not change the validation outcome above, but it is not part of the committed scope reviewed here.
+
+## B7 — Revert out-of-scope production change
+
+**Blocker (B7)**: `internal/cli/localresume/resumer.go` production fix is outside workstream scope.
+
+### Action taken
+
+1. Reverted `496df46` from the workstream branch via `git revert 496df46` (commit `67cc264`).
+2. Restored accidentally-deleted `internal/cli/main_test.go` (was an uncommitted deletion, not committed; restored via `git checkout HEAD -- internal/cli/main_test.go`).
+3. Cherry-picked the `localresume` fix to a separate branch `fix/localresume-toctou-race` and opened **PR #68** to land it on main independently.
+
+The workstream branch now contains only test-only changes plus the previously-accepted `TLSMode()` accessor in `internal/transport/server/client.go`. No `internal/cli/localresume` changes remain.
+
+### Validation (B7)
+
+```
+git diff origin/main...HEAD -- internal/cli/localresume/   # empty — no localresume changes
+go test -race -count=1 -timeout=120s ./internal/cli/ ./internal/transport/server/
+# both pass
+make test
+# all packages pass (localresume flakiness addressed via PR #68 landing separately)
+```
