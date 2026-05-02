@@ -195,6 +195,29 @@ Per-rule change:
 | `gocyclo` | 6 | 6 | Deferred to W03/W02 siblings |
 | `funlen` | 6 | 6 | Deferred to W02/W03 siblings |
 
+## Phase 3 W03 snapshot (split compile_steps.go)
+
+W03 split the 622-LOC `workflow/compile_steps.go` monolith into 5 focused files:
+`compile_steps.go` (dispatcher), `compile_steps_adapter.go`, `compile_steps_workflow.go`,
+`compile_steps_iteration.go`, and `compile_steps_graph.go`.
+The three `compileSteps` baseline entries (`gocognit`, `funlen`, `gocyclo`) were
+removed because the function itself no longer exists — replaced by a ≤96-LOC thin
+dispatcher.
+
+Starting count (after Phase 3 W01): **20**
+
+Final count (this workstream): **17**
+
+Per-rule change:
+
+| Linter | Before | After | Notes |
+|---|---:|---:|---|
+| `gocognit` | 7 | 6 | `compileSteps` entry removed |
+| `gocyclo` | 6 | 5 | `compileSteps` entry removed |
+| `funlen` | 6 | 5 | `compileSteps` entry removed |
+
+`cap.txt` lowered from 20 → 17.
+
 ### Kept entries (gocritic hugeParam)
 
 One `hugeParam` entry remains for `applyOptions` in `internal/cli/apply.go`
