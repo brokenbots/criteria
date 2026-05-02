@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"go.uber.org/goleak"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
 
@@ -22,6 +23,14 @@ import (
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 	"github.com/brokenbots/criteria/sdk/pb/criteria/v1/criteriav1connect"
 )
+
+// requireNoGoroutineLeak registers a t.Cleanup that asserts no goroutines
+// were leaked by the test. It must be called before any setup that starts
+// goroutines so that its cleanup runs after all server-shutdown cleanup.
+func requireNoGoroutineLeak(t *testing.T) {
+	t.Helper()
+	t.Cleanup(func() { goleak.VerifyNone(t) })
+}
 
 // --- Fake Connect server -----------------------------------------------------
 
@@ -212,6 +221,10 @@ func (f *fakeServer) Control(ctx context.Context, _ *connect.Request[pb.ControlS
 
 func startFakeServer(t *testing.T, f *fakeServer) string {
 	t.Helper()
+	// Register goleak check before any goroutine-spawning setup so that its
+	// cleanup (LIFO order) runs after the server and connection cleanup below.
+	requireNoGoroutineLeak(t)
+
 	mux := http.NewServeMux()
 	path, handler := criteriav1connect.NewCriteriaServiceHandler(f)
 	mux.Handle(path, handler)
@@ -832,24 +845,40 @@ func TestClientHeartbeat(t *testing.T) {
 	}
 
 	c.StartHeartbeat(ctx, 15*time.Millisecond)
-	time.Sleep(60 * time.Millisecond) // allow several heartbeats to fire
-	cancel()
-	time.Sleep(30 * time.Millisecond) // allow goroutine to observe ctx.Done
 
-	f.mu.Lock()
-	n := f.heartbeats
-	f.mu.Unlock()
+	// Poll (up to 2s) for at least 3 heartbeat RPCs so the assertion is not
+	// sensitive to scheduler jitter or CI load.
+	deadline := time.Now().Add(2 * time.Second)
+	var n int
+	for time.Now().Before(deadline) {
+		f.mu.Lock()
+		n = f.heartbeats
+		f.mu.Unlock()
+		if n >= 3 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 	if n < 3 {
-		t.Errorf("expected at least 3 Heartbeat RPCs in 60ms at 15ms interval, got %d", n)
+		t.Errorf("expected at least 3 Heartbeat RPCs, got %d", n)
 	}
 
-	// Assert that StartHeartbeat stopped dispatching RPCs after cancellation.
-	time.Sleep(45 * time.Millisecond) // longer than 3 heartbeat intervals
+	cancel()
+	// Allow 50ms for the heartbeat goroutine to observe ctx.Done and for any
+	// in-flight RPC that was dispatched just before cancel() to complete.
+	time.Sleep(50 * time.Millisecond)
+
+	f.mu.Lock()
+	snapshot := f.heartbeats
+	f.mu.Unlock()
+
+	// Assert count does not grow after cancellation (wait 3× the interval).
+	time.Sleep(3 * 15 * time.Millisecond)
 	f.mu.Lock()
 	nAfter := f.heartbeats
 	f.mu.Unlock()
-	if nAfter != n {
-		t.Errorf("heartbeat did not stop after cancel: count grew from %d to %d", n, nAfter)
+	if nAfter != snapshot {
+		t.Errorf("heartbeat did not stop after cancel: count grew from %d to %d", snapshot, nAfter)
 	}
 }
 

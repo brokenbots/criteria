@@ -32,12 +32,6 @@ import (
 	"github.com/brokenbots/criteria/sdk/pb/criteria/v1/criteriav1connect"
 )
 
-// FakeStep describes a single step in a scripted execution.
-// Included for future step-level scripting; unused in current hooks.
-type FakeStep struct {
-	Name string
-}
-
 // ApplyExecution is the script the fake server drives:
 //   - InjectPauseAt: when a WaitEntered event is received for this node name,
 //     the fake waits ResumeAfter and then sends a ResumeRun control message.
@@ -48,7 +42,6 @@ type FakeStep struct {
 //   - CancelAt: when a StepEntered event is received for this step name,
 //     the fake sends a RunCancel control message.
 type ApplyExecution struct {
-	Steps         []FakeStep
 	InjectPauseAt string        // wait node name; empty = no pause injection
 	NeverResume   bool          // when true, InjectPauseAt fires the hook but never schedules a resume
 	ResumeAfter   time.Duration // delay before ResumeRun; defaults to 10ms when zero
@@ -498,7 +491,7 @@ func (h *fakeHandler) SubmitEvents(_ context.Context, stream *connect.BidiStream
 			replayed[msg.RunId] = true
 		}
 
-		seq, cid, shouldDrop := h.persistMsg(msg)
+		seq, cid, shouldDrop, isDuplicate := h.persistMsg(msg)
 
 		if shouldDrop {
 			return connect.NewError(connect.CodeUnavailable, errors.New("applytest: stream drop injected"))
@@ -508,7 +501,9 @@ func (h *fakeHandler) SubmitEvents(_ context.Context, stream *connect.BidiStream
 			return err
 		}
 
-		h.triggerActions(msg)
+		if !isDuplicate {
+			h.triggerActions(msg)
+		}
 	}
 }
 
@@ -529,18 +524,17 @@ func (h *fakeHandler) replayAcks(stream *connect.BidiStream[pb.Envelope, pb.Ack]
 }
 
 // persistMsg deduplicates the envelope, applies DropStreamAt logic, persists
-// the event if it should be stored, and returns (seq, correlationID, shouldDrop).
-func (h *fakeHandler) persistMsg(msg *pb.Envelope) (seq uint64, cid string, shouldDrop bool) {
+// the event if it should be stored, and returns (seq, correlationID, shouldDrop, isDuplicate).
+func (h *fakeHandler) persistMsg(msg *pb.Envelope) (seq uint64, cid string, shouldDrop, isDuplicate bool) {
 	h.mu.Lock()
 	list := h.events[msg.RunId]
 
 	// Dedup on (run_id, correlation_id) mirrors the real server's behaviour.
-	duplicate := false
 	if msg.CorrelationId != "" {
 		for _, e := range list {
 			if e.CorrelationId == msg.CorrelationId {
 				seq = e.Seq
-				duplicate = true
+				isDuplicate = true
 				break
 			}
 		}
@@ -558,7 +552,7 @@ func (h *fakeHandler) persistMsg(msg *pb.Envelope) (seq uint64, cid string, shou
 		h.dropDone = true
 	}
 
-	if !duplicate && !shouldDrop {
+	if !isDuplicate && !shouldDrop {
 		msg.Seq = uint64(len(list) + 1)
 		seq = msg.Seq
 		h.events[msg.RunId] = append(list, msg)
@@ -568,7 +562,7 @@ func (h *fakeHandler) persistMsg(msg *pb.Envelope) (seq uint64, cid string, shou
 	}
 	cid = msg.CorrelationId
 	h.mu.Unlock()
-	return seq, cid, shouldDrop
+	return seq, cid, shouldDrop, isDuplicate
 }
 
 // triggerActions fires scripted control messages in response to a received event.

@@ -268,10 +268,12 @@ message or the wait node will re-pause indefinitely.
 
 **goleak + HTTP/2**: goleak v1.3.0 lacks `WithRetryTimeout`. HTTP/2 transport
 goroutines (`clientConnReadLoop`, `serverConn.serve`, `serverConn.readFrames`)
-linger briefly after `httptest.Server.Close()`. Suppressed via three
-`IgnoreAnyFunction` filters in `TestMain`; real transport goroutine leaks would
-still manifest in `internal/transport/server` package tests which have no goleak
-suppression.
+linger briefly after `httptest.Server.Close()`. Current approach: per-test
+`goleak.VerifyNone(t)` via `requireNoGoroutineLeak(t)` (called as the first
+deferred function in each test) with `goleak.IgnoreCurrent()` in `TestMain`
+to baseline-suppress third-party goroutines that exist before any test runs.
+This is applied in both `internal/cli/main_test.go` and
+`internal/transport/server/client_test.go`.
 
 ## Reviewer Notes
 
@@ -605,6 +607,7 @@ Six unresolved threads addressed in commit `5b1de90`. Two outdated threads (resu
 
 **PRRT_kwDOSOBb1s5_JN5w — TestClientTLSErrors missing tls+http:// case**
 - Added `tls_enable_with_http_url` subtest asserting `NewClient("http://...", TLSEnable)` succeeds at construction time (documents accepted behaviour; scheme mismatch surfaces at connection time).
+- Note: this is the final post-revert state. During B8 a production validation was added to reject the combination at construction; that was reverted in `db8a83b` as out-of-scope — the subtest now documents the accepted (no-error) construction behaviour and Known Limitation #7 tracks the deferred fix.
 - `internal/transport/server/client_test.go:709-716`.
 
 **PRRT_kwDOSOBb1s5_JN57 — NewMTLS distinct CA + leaf client cert**
