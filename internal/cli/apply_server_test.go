@@ -11,12 +11,26 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.uber.org/goleak"
 
 	"github.com/brokenbots/criteria/internal/cli/applytest"
 	"github.com/brokenbots/criteria/internal/engine"
 	servertrans "github.com/brokenbots/criteria/internal/transport/server"
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 )
+
+// requireNoGoroutineLeak registers a t.Cleanup that calls goleak.VerifyNone(t)
+// after all other cleanups for this test have run. Because t.Cleanup is LIFO,
+// registering this first ensures it runs last — after the fake server and
+// transport client have been closed — so HTTP/2 connection goroutines are gone
+// by the time the leak assertion fires.
+//
+// Call this as the very first statement of any test that creates an engine or
+// fake-server instance, before any t.TempDir or applytest.New calls.
+func requireNoGoroutineLeak(t *testing.T) {
+	t.Helper()
+	t.Cleanup(func() { goleak.VerifyNone(t) })
+}
 
 // twoStepWorkflow is a minimal two-step shell workflow used by happy-path tests.
 const twoStepWorkflow = `
@@ -113,6 +127,7 @@ workflow "pause_resume" {
 // submissions arrive in order and that the terminal RunCompleted event follows
 // all step events.
 func TestRunApplyServer_HappyPath(t *testing.T) {
+	requireNoGoroutineLeak(t)
 	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
 	fake := applytest.New(t)
 
@@ -170,6 +185,7 @@ func TestRunApplyServer_HappyPath(t *testing.T) {
 // checkpoint was written before the cancel propagated, and that the checkpoint
 // is cleaned up on exit.
 func TestExecuteServerRun_Cancellation(t *testing.T) {
+	requireNoGoroutineLeak(t)
 	stateDir := t.TempDir()
 	t.Setenv("CRITERIA_STATE_DIR", stateDir)
 	fake := applytest.New(t)
@@ -252,6 +268,7 @@ func TestExecuteServerRun_Cancellation(t *testing.T) {
 // propagates correctly when the run context expires while drainResumeCycles is
 // waiting for a ResumeRun signal that the fake server never sends.
 func TestExecuteServerRun_TimeoutPropagation(t *testing.T) {
+	requireNoGoroutineLeak(t)
 	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
 	// InjectPauseAt triggers the wait hook; NeverResume prevents the fake from
 	// sending a ResumeRun, so drainResumeCycles stalls until ctx.Done() fires.
@@ -297,6 +314,7 @@ func TestExecuteServerRun_TimeoutPropagation(t *testing.T) {
 // TestSetupServerRun_TLSDisable verifies that setupServerRun returns a client
 // with TLSMode=disable and a UUID v4 run ID.
 func TestSetupServerRun_TLSDisable(t *testing.T) {
+	requireNoGoroutineLeak(t)
 	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
 	fake := applytest.New(t)
 
@@ -333,6 +351,7 @@ func TestSetupServerRun_TLSDisable(t *testing.T) {
 // TestSetupServerRun_TLSEnable verifies that setupServerRun connects over TLS
 // when the server presents a certificate trusted via the configured CA file.
 func TestSetupServerRun_TLSEnable(t *testing.T) {
+	requireNoGoroutineLeak(t)
 	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
 	fake := applytest.NewTLS(t)
 
@@ -375,6 +394,7 @@ func TestSetupServerRun_TLSEnable(t *testing.T) {
 // TestSetupServerRun_MTLS verifies that setupServerRun connects over mutual TLS
 // when both the server CA and the client certificate are configured correctly.
 func TestSetupServerRun_MTLS(t *testing.T) {
+	requireNoGoroutineLeak(t)
 	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
 	fake := applytest.NewMTLS(t)
 
@@ -447,6 +467,7 @@ func TestSetupServerRun_MTLSMissingCert(t *testing.T) {
 // the first engine run pauses at the wait node, the checkpoint is asserted,
 // then drainResumeCycles receives the resume signal and completes the run.
 func TestDrainResumeCycles_PauseThenResume(t *testing.T) {
+	requireNoGoroutineLeak(t)
 	stateDir := t.TempDir()
 	t.Setenv("CRITERIA_STATE_DIR", stateDir)
 	fake := applytest.New(t)
@@ -547,6 +568,7 @@ func TestDrainResumeCycles_PauseThenResume(t *testing.T) {
 // directly: the client reconnects, replays from since_seq, and the run
 // completes.
 func TestDrainResumeCycles_StreamDropAndReconnect(t *testing.T) {
+	requireNoGoroutineLeak(t)
 	stateDir := t.TempDir()
 	t.Setenv("CRITERIA_STATE_DIR", stateDir)
 	fake := applytest.New(t)

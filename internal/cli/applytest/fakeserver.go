@@ -110,6 +110,12 @@ func newFakeHandler(f *Fake) *fakeHandler {
 
 // New starts a fake server on a random loopback port and registers t.Cleanup
 // to cancel pending goroutines, wait for them to exit, then close the server.
+//
+// h2c connections are hijacked by the h2c library, so httptest.Server.Close()
+// cannot close them (hijacked connections are removed from httptest's tracking).
+// We intercept ConnState before Start() to collect the hijacked net.Conn values
+// and close them explicitly in cleanup, which unblocks serverConn.readFrames and
+// serverConn.serve goroutines so goleak.VerifyNone(t) in per-test cleanup passes.
 func New(t testing.TB) *Fake {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -121,12 +127,35 @@ func New(t testing.TB) *Fake {
 	mux.Handle(path, h)
 
 	srv := httptest.NewUnstartedServer(h2c.NewHandler(mux, &http2.Server{}))
+
+	// Intercept the ConnState hook before srv.Start() so httptest.Server.wrap()
+	// captures this as oldHook and calls it after its own tracking logic. We
+	// record hijacked connections so the cleanup can close them explicitly.
+	var hijackedMu sync.Mutex
+	var hijackedConns []net.Conn
+	srv.Config.ConnState = func(c net.Conn, cs http.ConnState) {
+		if cs == http.StateHijacked {
+			hijackedMu.Lock()
+			hijackedConns = append(hijackedConns, c)
+			hijackedMu.Unlock()
+		}
+	}
+
 	srv.Start()
 	f.srv = srv
 
 	t.Cleanup(func() {
 		cancel()
 		f.wg.Wait()
+		// Close hijacked h2c connections: not tracked by httptest after hijack,
+		// so srv.Config.Close() and srv.Close() cannot reach them.
+		hijackedMu.Lock()
+		for _, c := range hijackedConns {
+			_ = c.Close()
+		}
+		hijackedMu.Unlock()
+		// Close any non-hijacked connections in StateActive (belt-and-suspenders).
+		_ = srv.Config.Close()
 		srv.Close()
 	})
 	return f
@@ -193,6 +222,9 @@ func NewTLS(t testing.TB) *Fake {
 	t.Cleanup(func() {
 		cancel()
 		f.wg.Wait()
+		// srv.Config.Close() closes TLS h2 connections in StateActive, which
+		// httptest.Server.CloseClientConnections() would skip (it only closes idle).
+		_ = srv.Config.Close()
 		srv.Close()
 	})
 	return f
@@ -241,6 +273,9 @@ func NewMTLS(t testing.TB) *Fake {
 	t.Cleanup(func() {
 		cancel()
 		f.wg.Wait()
+		// srv.Config.Close() closes TLS h2 connections in StateActive, which
+		// httptest.Server.CloseClientConnections() would skip (it only closes idle).
+		_ = srv.Config.Close()
 		srv.Close()
 	})
 	return f

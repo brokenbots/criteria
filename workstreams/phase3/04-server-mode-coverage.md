@@ -300,6 +300,31 @@ The new `internal/transport/server/client_test.go` coverage is strong: it assert
 - `make test-cover` — passed on rerun; `cover.out` reports `executeServerRun 90.0%`, `runApplyServer 86.7%`, `setupServerRun 74.1%`, `drainResumeCycles 72.2%`, `internal/transport/server 79.9%`, and `internal/cli 75.3%`.
 - An earlier `make test-cover` attempt failed once in `internal/plugin/TestHandshakeInfo` with a plugin-start timeout before succeeding on rerun.
 
+### Review 2026-05-02-02 — changes-requested
+
+#### Summary
+This resubmission closes the substantive functional gaps from the prior pass: the tests now cover TLS and mTLS setup, drive `drainResumeCycles` directly, assert checkpoint persistence around pause/cancel flows, and the package-level validation/coverage targets reproduce cleanly. One blocker remains, though: the workstream’s explicit goleak exit criterion is still not met because the CLI package relies on a package-wide `VerifyTestMain` with HTTP/2 ignore filters instead of proving `goleak.VerifyNone(t)` clean on each engine+fake-harness test.
+
+#### Plan Adherence
+- Step 1: Met. The fake-server harness now covers h2c, TLS, and mTLS paths and remains test-only.
+- Step 2: Met for the server-mode path actually implemented in `runApplyServer`; the happy-path test now proves ordered host event publication through the fake.
+- Step 3: Met. Cancellation now proves checkpoint persistence/cleanup, and timeout now exercises the paused-resume path rather than a simple sleeping step.
+- Step 4: Met. Positive `disable`, `tls`, and `mtls` coverage exists, with UUID v4 assertions and the negative mTLS case retained.
+- Step 5: Met functionally. `drainResumeCycles` is exercised directly for both resume and reconnect flows, with checkpoint assertions around the cycle.
+- Step 6: Met. The transport-side reconnect/replay tests remain strong and coverage stays above target.
+- Step 7: Met for build/test/coverage reproduction, but the explicit goleak exit criterion is still open.
+
+#### Required Remediations
+- **Blocker** — `internal/cli/main_test.go:9-31`, `internal/cli/apply_server_test.go`: the workstream requires `goleak.VerifyNone(t)` clean for every test that exercises the engine + fake harness combination. The current package-level `goleak.VerifyTestMain` with `IgnoreAnyFunction` filters is not equivalent: it does not attach the leak assertion to each relevant test, and it explicitly suppresses the HTTP/2 goroutines introduced by this harness. **Acceptance:** add per-test leak checking (or an equivalent helper used by each engine+harness test) that proves those tests are clean without filtering out the harness transport goroutines under review.
+
+#### Test Intent Assessment
+The functional intent of the CLI-side tests is now much stronger: realistic faults in pause/resume orchestration, TLS wiring, checkpoint progression, and reconnect handling would now fail the suite. The remaining weakness is leak detection intent. With the current `VerifyTestMain` plus HTTP/2 ignore list, the tests no longer prove the specific non-leak property the workstream called out.
+
+#### Validation Performed
+- `go test -race -count=2 ./internal/cli/... ./internal/transport/server/...` — passed.
+- `make test-cover` — passed; `cover.out` reports `executeServerRun 95.0%`, `drainResumeCycles 77.8%`, `runApplyServer 86.7%`, `setupServerRun 74.1%`, `internal/transport/server 79.9%`, `internal/cli 75.5%`.
+- `make ci` — passed.
+
 ## Review 2 Implementation — Blocker Remediations
 
 ### B1 (`TestRunApplyServer_HappyPath`)
@@ -349,4 +374,64 @@ Reverted to `IgnoreAnyFunction` (from the earlier `IgnoreTopFunction` attempt). 
 go test -race -timeout 120s ./internal/cli/...   # all pass, no goroutine leaks
 make lint-imports                                 # OK
 make ci                                           # exit 0
+```
+
+---
+
+## B6 — Per-test goroutine leak checking (`goleak.VerifyNone(t)`)
+
+**Reviewer blocker (B6)**: Remove the `IgnoreAnyFunction` HTTP/2 filters and prove
+`goleak.VerifyNone(t)` clean per engine+fake-harness test WITHOUT filtering harness
+transport goroutines.
+
+### Root cause
+
+`httptest.Server.Close()` only closes connections in `StateIdle`/`StateNew`.
+
+- **h2c (`New()`)**: The h2c library calls `Hijack()`, which transitions the connection
+  to `StateHijacked`. `httptest.Server.wrap()` deletes the entry from `s.conns` and
+  calls `s.wg.Done()` at hijack time. `http.Server.activeConn` also removes the entry
+  at `StateHijacked`. Result: **no standard close API can reach hijacked connections**.
+- **TLS h2 (`NewTLS()`, `NewMTLS()`)**: Connections stay `StateActive` in
+  `http.Server.activeConn`. `httptest.Server.CloseClientConnections()` skips them.
+  `http.Server.Close()` closes them, but `httptest.Server.Close()` never calls it.
+
+### Fix applied
+
+**`internal/cli/applytest/fakeserver.go`**:
+
+1. `New()` (h2c): Set `srv.Config.ConnState` **before** `srv.Start()` so
+   `httptest.Server.wrap()` captures it as `oldHook` and chains it. The hook saves
+   every hijacked `net.Conn`. Cleanup explicitly closes those connections, then calls
+   `srv.Config.Close()` (belt-and-suspenders) before `srv.Close()`.
+
+2. `NewTLS()` and `NewMTLS()`: Added `_ = srv.Config.Close()` before `srv.Close()` in
+   each cleanup. `http.Server.Close()` iterates all `activeConn` entries regardless of
+   state, closing TLS h2 connections so server-side goroutines (`serverConn.serve`,
+   `serverConn.readFrames`) exit and send EOF to the client, causing
+   `clientConnReadLoop.run` to exit too.
+
+**`internal/cli/apply_server_test.go`**:
+
+- Added `requireNoGoroutineLeak(t *testing.T)` helper (registers `goleak.VerifyNone(t)`
+  via `t.Cleanup` as slot #1 — runs LAST in LIFO after `fake.Close()`).
+- Called `requireNoGoroutineLeak(t)` as the FIRST statement in all 8 engine+harness tests.
+
+**`internal/cli/main_test.go`**:
+
+- Removed the 3 `IgnoreAnyFunction` filters (`clientConnReadLoop.run`, `serverConn.serve`,
+  `serverConn.readFrames`). Package-level `VerifyTestMain` now only uses `IgnoreCurrent()`.
+
+### Validation (B6)
+
+```
+go test -v -race -count=1 -timeout=120s ./internal/cli/ \
+  -run "TestRunApplyServer_HappyPath|TestExecuteServerRun_Cancellation|TestExecuteServerRun_TimeoutPropagation|TestSetupServerRun_TLS|TestSetupServerRun_MTLS|TestDrainResumeCycles"
+# All 9 tests PASS, goleak.VerifyNone(t) clean for all 8 engine+harness tests
+
+go test -race -count=1 -timeout=120s ./internal/cli/
+# ok github.com/brokenbots/criteria/internal/cli
+
+make test
+# All packages pass
 ```
