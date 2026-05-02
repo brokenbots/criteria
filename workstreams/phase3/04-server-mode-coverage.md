@@ -1119,3 +1119,22 @@ go test -race -count=1 ./internal/transport/server/ -run TestClientTLSErrors -v 
 make test    # all pass
 make lint-go # pass
 ```
+
+### Review 2026-05-02-19 — approved
+
+#### Summary
+Approved. The previously weak negative mTLS assertion now fails unless the error is certificate-related, the `TLSMutual + http://` construction case is explicitly covered, and the branch still clears the full workstream validation and coverage bar.
+
+#### Plan Adherence
+- Steps 1–7 remain met.
+- Scope remains compliant: the new code is limited to test-only files plus workstream notes, and `internal/transport/server/client.go` still only differs from `main` by the previously accepted `TLSMode()` accessor and a no-behavior-change inline simplification.
+- The review-thread remediations are now accurately reflected in the workstream notes: stale `FakeStep` and test-count references were corrected.
+
+#### Test Intent Assessment
+`TestSetupServerRun_MTLSRejectsCACert` now proves the intended failure mode rather than accepting any non-nil error, so it actually validates that the mTLS CA-cert rejection path is involved. `TestClientTLSErrors` is also stronger because it now covers both accepted-construction misconfiguration cases (`TLSEnable + http://` and `TLSMutual + http://`), preventing a mode-specific regression from slipping through undocumented.
+
+#### Validation Performed
+- `git show --patch --stat 9e61774 -- internal/cli/apply_server_test.go internal/transport/server/client_test.go workstreams/phase3/04-server-mode-coverage.md` — reviewed the tightened mTLS assertion, new `tls_mutual_with_http_url` subtest, and note updates.
+- `go test -race -count=2 ./internal/cli/... ./internal/transport/server/...` — passed.
+- `make test-cover` — passed; `cover.out` reports `executeServerRun 95.0%`, `drainResumeCycles 77.8%`, `runApplyServer 86.7%`, `setupServerRun 81.5%`, `internal/transport/server 80.6%`, `internal/cli 75.7%`.
+- `make ci` — passed.
