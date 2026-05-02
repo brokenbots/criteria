@@ -721,3 +721,31 @@ The new tests are otherwise stronger: the heartbeat shutdown assertion, h2c clea
 - `go test -race -count=1 -timeout=120s ./internal/cli/...` — passed.
 - `make test-cover` — passed; `cover.out` reports `executeServerRun 95.0%`, `drainResumeCycles 77.8%`, `runApplyServer 86.7%`, `setupServerRun 74.1%`, `internal/transport/server 80.1%`, `internal/cli 75.5%`.
 - `make ci` — passed.
+
+## Review 2026-05-02-09 — B8 Remediation
+
+Reverted out-of-scope production behavior change in commit `db8a83b`.
+
+### Fixes
+
+**Blocker: TLS scheme validation revert**
+- Restored `buildHTTPClient` to its original inline form — no `buildTLSHTTPClient`
+  helper, no http:// scheme check for `TLSEnable`/`TLSMutual`.
+- Reverted `tls_enable_with_http_url` subtest to document accepted behaviour (construction
+  succeeds; mismatch surfaces at RPC time). Added `TODO` comment noting the deferred fix.
+- Removed `tls_mutual_with_http_url` subtest (tested the now-reverted production check).
+- Restored `TestSetupServerRun_MTLSMissingCert` to use `http://localhost:9999` (the
+  missing-cert check is still reached without a prior scheme guard).
+- Added Known Limitation #7 to document the deferred TLS scheme validation.
+
+`git diff origin/main...HEAD -- internal/transport/server/client.go` now shows only the
+previously accepted `TLSMode()` accessor plus a minor inline consolidation (`tr` variable
+removed) — both zero behavior change.
+
+### Validation (Review 2026-05-02-09)
+
+```
+go test -race ./internal/transport/server/...   # pass (6.8s)
+go test -race ./internal/cli/...                # pass (23.8s)
+make lint-go                                    # pass
+```
