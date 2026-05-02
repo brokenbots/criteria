@@ -1022,3 +1022,38 @@ go test -race -run TestSetupServerRun_MTLS ./internal/cli/... -v
 go test -race -count=2 ./internal/cli/... ./internal/transport/server/...  # pass
 make lint-go                                                                # pass
 ```
+
+### Review round (threads JhFs, JhF0) — changes-requested
+
+#### Blockers addressed (commit `b41621a`)
+
+**JhFs — Workstream notes inaccurate: StreamDropAndReconnect checkpoint claim**
+- The B4 notes described "Both tests now:" with a shared 7-step list that included
+  checkpoint assertions (steps 3 and 7). But `TestDrainResumeCycles_StreamDropAndReconnect`
+  does NOT read or check the checkpoint file; only `PauseThenResume` does.
+- Fix: rewrote the B4 notes to document each test variant separately.
+  `PauseThenResume` retains all 7 steps including pre/post checkpoint assertions.
+  `StreamDropAndReconnect` is documented with its actual assertions:
+  `HasEventOfType("RunCompleted")`, `HasStepEntered("step_three")`, and
+  `SinceSeqHeaders()` non-empty. An explicit note states it does NOT assert checkpoint files.
+- `workstreams/phase3/04-server-mode-coverage.md` (B4 section).
+
+**JhF0 — Backoff assertion too weak (non-decreasing accepts fixed delay)**
+- The "subsequent gaps must be non-decreasing" check in `TestClientReconnectMultipleFailures`
+  accepted a fixed 500ms delay (ratio 1.0), so a regression removing exponential growth
+  would still pass.
+- Fix: replaced the non-decreasing loop with a per-pair 1.5× ratio assertion:
+  `curr < 3*prev/2` fails when `curr/prev < 1.5`. The actual doubling schedule
+  (500ms→1000ms→2000ms, ratio ≈2.0) comfortably passes. A fixed-delay regression
+  (ratio 1.0) now fails. Updated comment to describe this accurately.
+- `internal/transport/server/client_test.go` (`TestClientReconnectMultipleFailures` assertion block).
+
+#### Validation (JhFs + JhF0 remediation)
+
+```
+go test -race -count=1 -timeout=60s ./internal/transport/server/ -run TestClientReconnectMultipleFailures
+  --- PASS: TestClientReconnectMultipleFailures (3.54s)
+go test -race -count=2 ./internal/cli/... ./internal/transport/server/...  # pass
+make lint-go                                                                # pass
+make test                                                                   # all pass
+```
