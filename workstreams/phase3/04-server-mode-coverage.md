@@ -931,3 +931,36 @@ The transport tests are materially stronger now. `TestClientReconnectMultipleFai
 - `go test -race -count=2 ./internal/cli/... ./internal/transport/server/...` — passed.
 - `make test-cover` — passed; `cover.out` reports `executeServerRun 95.0%`, `drainResumeCycles 77.8%`, `runApplyServer 86.7%`, `setupServerRun 74.1%`, `internal/transport/server 79.5%`, `internal/cli 75.5%`.
 - `make ci` — passed.
+
+### Review 2026-05-02-16 — changes-requested (threads Jdy-, JdzG)
+
+#### Blockers addressed (commit TBD)
+
+**Jdy- — CA cert accepted as client cert in mTLS harness**
+- The CA cert had `ExtKeyUsageClientAuth`, and it was trusted in `ClientCAs`. A client
+  accidentally presenting the CA cert+key as client credentials would authenticate successfully,
+  defeating the purpose of the distinct leaf client cert.
+- Root cause: removing `ExtKeyUsageClientAuth` from the CA cert breaks Go's EKU chain
+  validation for the leaf client cert (the chain CA must carry `ClientAuth` or no EKU restriction).
+- Fix: keep `ExtKeyUsageClientAuth` on the CA cert (required for chain compat), and add a
+  `VerifyPeerCertificate` hook (`rejectCACertClient`) to `NewMTLS`'s `tls.Config` that explicitly
+  rejects any presented client cert with `IsCA=true`. The CA cert is self-signed (IsCA=true), so
+  it is now rejected at the application layer if accidentally used as a client cert. The leaf
+  (IsCA=false) passes as before. The hook is extracted as a named function to keep `NewMTLS` ≤50
+  lines (funlen lint).
+- `internal/cli/applytest/fakeserver.go`: `rejectCACertClient` (new func), `NewMTLS` TLS config,
+  `generateSelfSignedCert` comment updated.
+
+**JdzG — test count mismatch: workstream says 18, PR summary said 17**
+- Workstream implementation notes list 9 new CLI tests and 9 new transport tests (= 18 total).
+- PR description said "17 new test cases", "7 tests" for CLI, and "10 focused tests" for transport.
+- Actual counts are 9 CLI + 9 transport = 18. PR description updated via `gh pr edit`:
+  "17" → "18", "7 tests" → "9 tests", "10 focused tests" → "9 focused tests",
+  and `TestSetupServerRun_MTLSMissingCert` added to the test evidence list.
+
+#### Validation (Review 2026-05-02-16 remediation)
+
+```
+go test -race ./internal/cli/... ./internal/transport/server/...  # pass
+make lint-go                                                       # pass
+```

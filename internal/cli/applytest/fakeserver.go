@@ -13,6 +13,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"io"
 	"math/big"
 	"net"
@@ -164,10 +165,14 @@ func generateSelfSignedCert(t testing.TB) (certPEM, keyPEM []byte) {
 		t.Fatalf("applytest: generate RSA key: %v", err)
 	}
 	template := &x509.Certificate{
-		SerialNumber:          big.NewInt(1),
-		Subject:               pkix.Name{Organization: []string{"criteria-test"}},
-		NotBefore:             time.Now().Add(-time.Hour),
-		NotAfter:              time.Now().Add(24 * time.Hour),
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{Organization: []string{"criteria-test"}},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+		// ExtKeyUsageClientAuth is included here solely so Go's EKU chain-
+		// validation accepts the leaf client cert (issued by this CA) for client
+		// authentication. The CA cert itself is prevented from being used as a
+		// client cert by the VerifyPeerCertificate hook in NewMTLS (IsCA=true check).
 		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
 		IPAddresses:           []net.IP{net.ParseIP("127.0.0.1")},
@@ -271,6 +276,23 @@ func parseCACert(t testing.TB, certPEM, keyPEM []byte) (*rsa.PrivateKey, *x509.C
 	return privAny.(*rsa.PrivateKey), cert
 }
 
+// rejectCACertClient is a tls.Config.VerifyPeerCertificate hook for mTLS servers
+// that rejects any client certificate with IsCA=true. This prevents the CA
+// certificate from being accidentally accepted as a client credential.
+func rejectCACertClient(rawCerts [][]byte, _ [][]*x509.Certificate) error {
+	if len(rawCerts) == 0 {
+		return nil
+	}
+	leaf, err := x509.ParseCertificate(rawCerts[0])
+	if err != nil {
+		return err
+	}
+	if leaf.IsCA {
+		return fmt.Errorf("applytest: client presented a CA certificate; use the leaf client cert instead")
+	}
+	return nil
+}
+
 // NewMTLS starts an HTTPS/h2 fake server that requires mutual TLS
 // authentication. A self-signed CA certificate is generated and used directly
 // as the server certificate (no separate server leaf cert). The client
@@ -308,9 +330,10 @@ func NewMTLS(t testing.TB) *Fake {
 
 	srv := httptest.NewUnstartedServer(mux)
 	srv.TLS = &tls.Config{
-		Certificates: []tls.Certificate{cert},
-		ClientAuth:   tls.RequireAndVerifyClientCert,
-		ClientCAs:    pool,
+		Certificates:          []tls.Certificate{cert},
+		ClientAuth:            tls.RequireAndVerifyClientCert,
+		ClientCAs:             pool,
+		VerifyPeerCertificate: rejectCACertClient,
 	}
 	srv.EnableHTTP2 = true
 	srv.StartTLS()
