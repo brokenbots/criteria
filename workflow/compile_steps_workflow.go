@@ -1,11 +1,10 @@
 package workflow
 
 // compile_steps_workflow.go — compile path for type="workflow" steps (inline
-// workflow body and workflow_file variants) plus supporting helpers.
+// workflow body and workflow_file variants) plus workflow body helpers.
 
 import (
 	"fmt"
-	"time"
 
 	"github.com/hashicorp/hcl/v2"
 )
@@ -24,6 +23,7 @@ func compileWorkflowStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[stri
 
 	diags = append(diags, validateStepKindSelectionDiags(sp)...)
 	diags = append(diags, validateLegacyConfig(sp)...)
+	diags = append(diags, validateAdapterAndAgent(g, sp)...)
 	diags = append(diags, validateOnFailureValue(sp)...)
 
 	effectiveOnCrash, d := resolveStepOnCrash(g, sp)
@@ -65,77 +65,6 @@ func compileWorkflowStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[stri
 	return diags
 }
 
-// compileWorkflowIterExpr decodes the for_each/count expressions, checks for
-// mutual exclusion, and validates the on_failure constraint for workflow steps.
-func compileWorkflowIterExpr(sp *StepSpec) (forEachExpr, countExpr hcl.Expression, isIterating bool, diags hcl.Diagnostics) {
-	forEachExpr, countExpr, d := decodeRemainIter(sp)
-	diags = append(diags, d...)
-	if forEachExpr != nil && countExpr != nil {
-		diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q: for_each and count are mutually exclusive", sp.Name)})
-	}
-	isIterating = forEachExpr != nil || countExpr != nil
-	if sp.OnFailure != "" && !isIterating {
-		diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q: on_failure requires for_each or count", sp.Name)})
-	}
-	return forEachExpr, countExpr, isIterating, diags
-}
-
-// newWorkflowStepNode constructs a StepNode for a type="workflow" step with
-// all common fields plus optional ForEach/Count.
-func newWorkflowStepNode(sp *StepSpec, spec *Spec, effectiveOnCrash string, timeout time.Duration,
-	inputMap map[string]string, inputExprs map[string]hcl.Expression,
-	forEachExpr, countExpr hcl.Expression) *StepNode {
-	return &StepNode{
-		Name:       sp.Name,
-		OnCrash:    effectiveOnCrash,
-		Type:       sp.Type,
-		OnFailure:  sp.OnFailure,
-		MaxVisits:  sp.MaxVisits,
-		Input:      inputMap,
-		InputExprs: inputExprs,
-		Timeout:    timeout,
-		Outcomes:   map[string]string{},
-		AllowTools: allowToolsForStep(sp, spec),
-		ForEach:    forEachExpr,
-		Count:      countExpr,
-	}
-}
-
-// compileWorkflowOutputs extracts output{} block expressions from sp.Workflow
-// and populates node.Outputs. It is safe to call when sp.Workflow is nil or
-// has no outputs — it returns nil in that case.
-func compileWorkflowOutputs(sp *StepSpec, node *StepNode) hcl.Diagnostics {
-	if sp.Workflow == nil || len(sp.Workflow.Outputs) == 0 {
-		return nil
-	}
-	var diags hcl.Diagnostics
-	seen := map[string]bool{}
-	node.Outputs = make(map[string]hcl.Expression, len(sp.Workflow.Outputs))
-	for _, out := range sp.Workflow.Outputs {
-		if out == nil {
-			continue
-		}
-		if seen[out.Name] {
-			diags = append(diags, &hcl.Diagnostic{
-				Severity: hcl.DiagError,
-				Summary:  fmt.Sprintf("step %q: duplicate output name %q", sp.Name, out.Name),
-			})
-			continue
-		}
-		seen[out.Name] = true
-		content, _, d := out.Remain.PartialContent(&hcl.BodySchema{
-			Attributes: []hcl.AttributeSchema{{Name: "value", Required: true}},
-		})
-		diags = append(diags, d...)
-		if content != nil {
-			if attr, ok := content.Attributes["value"]; ok {
-				node.Outputs[out.Name] = attr.Expr
-			}
-		}
-	}
-	return diags
-}
-
 // compileWorkflowBody dispatches to the inline or file-backed body compiler.
 // Returns the compiled FSMGraph, the body entry state name, and any diagnostics.
 func compileWorkflowBody(sp *StepSpec, schemas map[string]AdapterInfo, opts CompileOpts) (hcl.Diagnostics, *FSMGraph, string) {
@@ -160,4 +89,155 @@ func compileWorkflowBody(sp *StepSpec, schemas map[string]AdapterInfo, opts Comp
 		return compileWorkflowBodyFromFile(sp, schemas, opts)
 	}
 	return compileWorkflowBodyInline(sp, schemas, opts)
+}
+
+// compileWorkflowBodyFromFile handles the workflow_file = "..." loading path.
+func compileWorkflowBodyFromFile(sp *StepSpec, schemas map[string]AdapterInfo, opts CompileOpts) (hcl.Diagnostics, *FSMGraph, string) {
+	var diags hcl.Diagnostics
+	if sp.WorkflowFile == "" {
+		return append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  fmt.Sprintf("step %q: type=\"workflow\" requires a workflow { ... } block", sp.Name),
+		}), nil, ""
+	}
+	if opts.SubWorkflowResolver == nil {
+		return append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  fmt.Sprintf("step %q: workflow_file requires SubWorkflowResolver in CompileOpts", sp.Name),
+		}), nil, ""
+	}
+	for _, f := range opts.LoadedFiles {
+		if f == sp.WorkflowFile {
+			return append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  fmt.Sprintf("step %q: workflow_file %q creates a load cycle", sp.Name, sp.WorkflowFile),
+			}), nil, ""
+		}
+	}
+	loaded, err := opts.SubWorkflowResolver(sp.WorkflowFile, opts.WorkflowDir)
+	if err != nil {
+		return append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  fmt.Sprintf("step %q: failed to load workflow_file %q: %s", sp.Name, sp.WorkflowFile, err),
+		}), nil, ""
+	}
+	childOpts := CompileOpts{
+		WorkflowDir:         opts.WorkflowDir,
+		LoadDepth:           opts.LoadDepth + 1,
+		LoadedFiles:         append(append([]string{}, opts.LoadedFiles...), sp.WorkflowFile),
+		SubWorkflowResolver: opts.SubWorkflowResolver,
+	}
+	body, d := CompileWithOpts(loaded, schemas, childOpts)
+	diags = append(diags, d...)
+	if diags.HasErrors() {
+		return diags, nil, ""
+	}
+	return diags, body, loaded.InitialState
+}
+
+// compileWorkflowBodyInline handles the inline workflow { ... } block path.
+func compileWorkflowBodyInline(sp *StepSpec, schemas map[string]AdapterInfo, opts CompileOpts) (hcl.Diagnostics, *FSMGraph, string) {
+	var diags hcl.Diagnostics
+	wb := sp.Workflow
+	if len(wb.Steps) == 0 {
+		return append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  fmt.Sprintf("step %q: workflow body must contain at least one step", sp.Name),
+		}), nil, ""
+	}
+
+	entry := wb.Entry
+	if entry == "" {
+		entry = wb.Steps[0].Name
+	}
+
+	bodySpec := buildBodySpec(sp.Name, entry, wb)
+	childOpts := CompileOpts{
+		WorkflowDir:         opts.WorkflowDir,
+		LoadDepth:           opts.LoadDepth + 1,
+		LoadedFiles:         append([]string{}, opts.LoadedFiles...),
+		SubWorkflowResolver: opts.SubWorkflowResolver,
+	}
+	body, d := CompileWithOpts(bodySpec, schemas, childOpts)
+	diags = append(diags, d...)
+
+	if err := validateBodyHasContinuePath(sp.Name, body); err != nil {
+		diags = append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  err.Error(),
+		})
+	}
+
+	return diags, body, entry
+}
+
+// validateBodyHasContinuePath returns an error when none of the body steps
+// has a transition_to = "_continue" outcome. This ensures that the iteration
+// loop can terminate normally; a body with no path to _continue is a compile
+// error (B-09).
+func validateBodyHasContinuePath(stepName string, body *FSMGraph) error {
+	if body == nil {
+		return nil
+	}
+	for _, stepNode := range body.Steps {
+		for _, target := range stepNode.Outcomes {
+			if target == "_continue" {
+				return nil
+			}
+		}
+	}
+	return fmt.Errorf("step %q: workflow body has no path to \"_continue\"; at least one outcome must transition_to = \"_continue\"", stepName)
+}
+
+// buildBodySpec constructs a synthetic Spec from a WorkflowBodySpec for
+// recursive compilation. It adds a "_continue" terminal state that body steps
+// can transition to in order to signal iteration advance.
+func buildBodySpec(stepName, entry string, wb *WorkflowBodySpec) *Spec {
+	// Convert pointer slices to value slices for the synthetic Spec.
+	steps := make([]StepSpec, 0, len(wb.Steps))
+	for _, s := range wb.Steps {
+		if s != nil {
+			steps = append(steps, *s)
+		}
+	}
+	states := make([]StateSpec, 0, len(wb.States)+1)
+	for _, s := range wb.States {
+		if s != nil {
+			states = append(states, *s)
+		}
+	}
+	// Add the synthetic _continue terminal state (body-complete signal).
+	states = append(states, StateSpec{
+		Name:     "_continue",
+		Terminal: true,
+	})
+	waits := make([]WaitSpec, 0, len(wb.Waits))
+	for _, w := range wb.Waits {
+		if w != nil {
+			waits = append(waits, *w)
+		}
+	}
+	approvals := make([]ApprovalSpec, 0, len(wb.Approvals))
+	for _, a := range wb.Approvals {
+		if a != nil {
+			approvals = append(approvals, *a)
+		}
+	}
+	branches := make([]BranchSpec, 0, len(wb.Branches))
+	for _, b := range wb.Branches {
+		if b != nil {
+			branches = append(branches, *b)
+		}
+	}
+	return &Spec{
+		Name:         stepName + ":body",
+		Version:      "1",
+		InitialState: entry,
+		TargetState:  "_continue",
+		Steps:        steps,
+		States:       states,
+		Waits:        waits,
+		Approvals:    approvals,
+		Branches:     branches,
+	}
 }

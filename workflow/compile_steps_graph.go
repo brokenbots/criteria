@@ -1,13 +1,127 @@
 package workflow
 
-// compile_steps_graph.go — FSM graph traversal helpers used by every
-// step-kind compiler: back-edge detection and reachable-target enumeration.
+// compile_steps_graph.go — FSM graph traversal and node construction helpers
+// used by every step-kind compiler: back-edge detection, reachable-target
+// enumeration, outcome compilation, and node constructors.
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/hashicorp/hcl/v2"
 )
+
+// resolveAdapterName returns the effective adapter name for a step: either
+// sp.Adapter (direct) or the adapter backing sp.Agent (indirect).
+func resolveAdapterName(g *FSMGraph, sp *StepSpec) string {
+	if sp.Adapter != "" {
+		return sp.Adapter
+	}
+	if sp.Agent != "" {
+		if agent, ok := g.Agents[sp.Agent]; ok {
+			return agent.Adapter
+		}
+	}
+	return ""
+}
+
+// resolveStepOnCrash returns the effective on_crash for a step, falling back
+// to the backing agent's on_crash if the step doesn't specify one.
+func resolveStepOnCrash(g *FSMGraph, sp *StepSpec) (string, hcl.Diagnostics) {
+	var diags hcl.Diagnostics
+	if sp.OnCrash != "" && !isValidOnCrash(sp.OnCrash) {
+		diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q: invalid on_crash %q", sp.Name, sp.OnCrash)})
+	}
+	effective := sp.OnCrash
+	if effective == "" {
+		if sp.Agent != "" {
+			if agent, ok := g.Agents[sp.Agent]; ok {
+				effective = agent.OnCrash
+			} else {
+				effective = onCrashFail
+			}
+		} else {
+			effective = onCrashFail
+		}
+	}
+	return effective, diags
+}
+
+// compileOutcomeBlock populates node.Outcomes from sp.Outcomes, checking for
+// duplicates and missing transition_to values.
+func compileOutcomeBlock(sp *StepSpec, node *StepNode) hcl.Diagnostics {
+	var diags hcl.Diagnostics
+	seen := map[string]bool{}
+	for _, o := range sp.Outcomes {
+		if seen[o.Name] {
+			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q: duplicate outcome %q", sp.Name, o.Name)})
+			continue
+		}
+		seen[o.Name] = true
+		if o.TransitionTo == "" {
+			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q outcome %q: transition_to required", sp.Name, o.Name)})
+			continue
+		}
+		node.Outcomes[o.Name] = o.TransitionTo
+	}
+	return diags
+}
+
+// newWorkflowStepNode constructs a StepNode for a type="workflow" step with
+// all common fields plus optional ForEach/Count.
+func newWorkflowStepNode(sp *StepSpec, spec *Spec, effectiveOnCrash string, timeout time.Duration,
+	inputMap map[string]string, inputExprs map[string]hcl.Expression,
+	forEachExpr, countExpr hcl.Expression) *StepNode {
+	return &StepNode{
+		Name:       sp.Name,
+		OnCrash:    effectiveOnCrash,
+		Type:       sp.Type,
+		OnFailure:  sp.OnFailure,
+		MaxVisits:  sp.MaxVisits,
+		Input:      inputMap,
+		InputExprs: inputExprs,
+		Timeout:    timeout,
+		Outcomes:   map[string]string{},
+		AllowTools: allowToolsForStep(sp, spec),
+		ForEach:    forEachExpr,
+		Count:      countExpr,
+	}
+}
+
+// compileWorkflowOutputs extracts output{} block expressions from sp.Workflow
+// and populates node.Outputs. It is safe to call when sp.Workflow is nil or
+// has no outputs — it returns nil in that case.
+func compileWorkflowOutputs(sp *StepSpec, node *StepNode) hcl.Diagnostics {
+	if sp.Workflow == nil || len(sp.Workflow.Outputs) == 0 {
+		return nil
+	}
+	var diags hcl.Diagnostics
+	seen := map[string]bool{}
+	node.Outputs = make(map[string]hcl.Expression, len(sp.Workflow.Outputs))
+	for _, out := range sp.Workflow.Outputs {
+		if out == nil {
+			continue
+		}
+		if seen[out.Name] {
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  fmt.Sprintf("step %q: duplicate output name %q", sp.Name, out.Name),
+			})
+			continue
+		}
+		seen[out.Name] = true
+		content, _, d := out.Remain.PartialContent(&hcl.BodySchema{
+			Attributes: []hcl.AttributeSchema{{Name: "value", Required: true}},
+		})
+		diags = append(diags, d...)
+		if content != nil {
+			if attr, ok := content.Attributes["value"]; ok {
+				node.Outputs[out.Name] = attr.Expr
+			}
+		}
+	}
+	return diags
+}
 
 // warnBackEdges emits a compile-time warning for every step that:
 //   - has a back-edge (a path in the outcome graph that leads back to itself), AND
