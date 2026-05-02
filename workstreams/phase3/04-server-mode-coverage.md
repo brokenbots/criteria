@@ -749,3 +749,22 @@ go test -race ./internal/transport/server/...   # pass (6.8s)
 go test -race ./internal/cli/...                # pass (23.8s)
 make lint-go                                    # pass
 ```
+
+### Review 2026-05-02-10 — approved
+
+#### Summary
+Approved. The prior scope blocker is resolved: the out-of-scope TLS scheme validation was reverted from `internal/transport/server/client.go`, the workstream is back to test-only changes plus the previously accepted `TLSMode()` accessor, and the full validation/coverage bar still passes.
+
+#### Plan Adherence
+- Steps 1–7 remain met.
+- Scope is compliant again: `internal/transport/server/client.go` now differs from `main` only by the accepted `TLSMode()` accessor and a trivial inline return simplification with no behavior change.
+- The TLS misconfiguration follow-up is documented as deferred rather than being shipped from this coverage-only workstream.
+
+#### Test Intent Assessment
+The test suite remains strong and regression-sensitive. The CLI server-mode tests still prove happy-path ordering, cancellation/timeout behavior, checkpoint progression, pause/resume cycles, reconnect handling, and per-test goroutine cleanup. The transport-side tests continue to cover reconnect backoff, replay/dedup, heartbeat delivery and shutdown, resume request mapping, and TLS configuration/error paths without depending on the reverted production behavior.
+
+#### Validation Performed
+- `git diff origin/main...HEAD -- internal/transport/server/client.go` — confirmed the prior `http://` rejection behavior is gone; remaining diff is the accepted `TLSMode()` accessor plus an inline return simplification.
+- `go test -race -count=2 ./internal/cli/... ./internal/transport/server/...` — passed.
+- `make test-cover` — passed; `cover.out` reports `executeServerRun 95.0%`, `drainResumeCycles 77.8%`, `runApplyServer 86.7%`, `setupServerRun 74.1%`, `internal/transport/server 79.9%`, `internal/cli 75.5%`.
+- `make ci` — passed.
