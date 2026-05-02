@@ -479,3 +479,17 @@ The following test quality concerns were identified during review but do not blo
 5. **Heartbeat observability** (`TestClientHeartbeat`): Sleeps and cancels context but does not verify heartbeat RPCs were actually sent; fake server doesn't record heartbeat calls. Recommend adding heartbeat counter/assertion to fake.
 
 6. **Transport-layer goroutine assertions**: New `internal/transport/server/client_test.go` tests spin up h2c servers via plain `httptest.Server.Close()` without `goleak` assertions. Transport leaks would not be caught by these tests. Recommend adding per-test goleak checks or integration into a broader transport-level leak test in a future pass.
+
+## CI Fix — `TestFileMode_Signal_WritesAndConsumes` TOCTOU race
+
+**Commit:** `496df46` — `fix(localresume): skip empty file in pollForFile to avoid TOCTOU race`
+
+**Root cause:** `os.WriteFile` creates the file empty (O_CREATE|O_TRUNC) before writing
+content. The `pollForFile` poller can win a race against the writer, reading 0 bytes and
+failing with `decode decision file: unexpected end of JSON input` before the write completes.
+
+**Fix in `internal/cli/localresume/resumer.go`:** Added `if len(data) == 0 { continue }` in
+`pollForFile` before JSON parsing. An empty file is always a TOCTOU artifact (never a
+valid decision file); the poller retries on the next tick and reads complete content once
+the writer finishes. Non-empty invalid JSON (`TestFileMode_InvalidJSON` case) still fails
+immediately as before.
