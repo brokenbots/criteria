@@ -215,23 +215,26 @@ The deliverable is the test suite. The `make test-cover` numbers in Exit criteri
 
 - **New** `internal/cli/applytest/fakeserver.go` (~395 lines): Full Connect/h2c fake
   server implementing Register, Heartbeat, CreateRun, SubmitEvents (dedup,
-  since\_seq replay, DropStreamAt, CancelAt, InjectPauseAt), Control. Public
-  surface: `Fake`, `ApplyExecution`, `FakeStep`, `New(t)`, `URL()`, `Events()`,
-  `HasStepEntered()`, `HasEventOfType()`, `WaitForCond()`. Helper functions
-  `replayAcks`, `persistMsg`, `sendControl`, `schedulePauseResume` extracted to
-  keep cognitive complexity below the gocognit limit.
+  since\_seq replay, DropStreamAt, CancelAt, InjectPauseAt), Control. Supports
+  h2c (`New(t)`, returns `http://...` URL), TLS (`NewTLS(t)`, returns `https://...`),
+  and mTLS (`NewMTLS(t)`, returns `https://...`). Public surface: `Fake`, `ApplyExecution`,
+  `FakeStep`, `New(t)`, `NewTLS(t)`, `NewMTLS(t)`, `URL()`, `Events()`,
+  `HasStepEntered()`, `HasEventOfType()`, `WaitForCond()`. Explicitly closes
+  hijacked h2c connections and server-side TLS connections to prevent HTTP/2
+  goroutine leaks. Helper functions `replayAcks`, `persistMsg`, `sendControl`,
+  `schedulePauseResume` extracted to keep cognitive complexity below the gocognit limit.
 - **New** `internal/cli/main_test.go`: `goleak.VerifyTestMain` with `IgnoreCurrent()`
-  plus three `IgnoreAnyFunction` filters for HTTP/2 transport goroutines
-  (`clientConnReadLoop`, `serverConn.serve`, `serverConn.readFrames`) that linger
-  briefly after `httptest.Server.Close()`.
-- **New** `internal/cli/apply_server_test.go` (~290 lines): 7 tests in `package cli`:
+  only; HTTP/2 transport goroutines are now cleaned up deterministically by the fake
+  harness (via explicit `ConnState` hooks and connection close in cleanup).
+- **New** `internal/cli/apply_server_test.go` (~290+ lines): 9 tests in `package cli`:
   `TestRunApplyServer_HappyPath`, `TestExecuteServerRun_Cancellation`,
   `TestExecuteServerRun_TimeoutPropagation`, `TestSetupServerRun_TLSDisable`,
-  `TestSetupServerRun_MTLSMissingCert`, `TestDrainResumeCycles_PauseThenResume`,
-  `TestDrainResumeCycles_StreamDropAndReconnect`.
+  `TestSetupServerRun_TLSEnable`, `TestSetupServerRun_MTLS`, `TestSetupServerRun_MTLSMissingCert`,
+  `TestDrainResumeCycles_PauseThenResume`, `TestDrainResumeCycles_StreamDropAndReconnect`.
+  Each engine+harness test calls `requireNoGoroutineLeak(t)` for per-test `goleak.VerifyNone(t)` cleanup.
 - **Modified** `internal/transport/server/client.go`: Added `TLSMode() TLSMode`
   getter (the one production-code change permitted by the workstream) needed by
-  `TestSetupServerRun_TLSDisable`.
+  `TestSetupServerRun_TLS*` tests.
 - **Modified** `internal/transport/server/client_test.go`: Added 10 new tests —
   `TestClientReconnectMultipleFailures`, `TestClientSinceSeqZeroEventReplay`,
   `TestClientTLSErrors`, `TestClientAccessors`, `TestClientHeartbeat`,
@@ -239,7 +242,7 @@ The deliverable is the test suite. The `make test-cover` numbers in Exit criteri
   `TestClientStartStreamsNotRegistered`; also added `Resume` handler to
   `fakeServer`.
 
-### Coverage results
+### Coverage results (initial pass)
 
 - `executeServerRun`: **90.0%** (target ≥ 60%) ✓
 - `runApplyServer`: **86.7%** (target ≥ 60%) ✓
@@ -247,6 +250,8 @@ The deliverable is the test suite. The `make test-cover` numbers in Exit criteri
 - `drainResumeCycles`: **72.2%** (target ≥ 60%) ✓
 - `internal/transport/server` package: **79.9%** (target ≥ 70%) ✓
 - `internal/cli/...` package: **75.3%** (baseline 69.2%) ✓
+
+*Note: Later validation confirmed final coverage higher (see Review 2 / Review 3 sections below).*
 
 ### Key findings
 
@@ -458,3 +463,19 @@ go test -race -count=1 -timeout=120s ./internal/cli/
 make test
 # All packages pass
 ```
+
+## Known Limitations (Noted in Review)
+
+The following test quality concerns were identified during review but do not block the workstream acceptance:
+
+1. **Cross-platform compatibility** (`TestExecuteServerRun_Cancellation`): Uses Unix `sleep` command via shell adapter; will fail on Windows where `sleep` is unavailable. Matches existing shell-adapter test pattern but should be revisited in a separate Windows-testing workstream.
+
+2. **mTLS certificate isolation** (`TestSetupServerRun_MTLS`): Uses the same self-signed certificate for both CA and client, reducing test isolation. A regression that swapped `CAFile` and `CertFile` would still pass. Recommend using a distinct CA and leaf certificate in future mTLS coverage improvements.
+
+3. **Backoff observation** (`TestClientReconnectMultipleFailures`): Verifies reconnection succeeds after failures but does not assert exponential backoff timing. A regression that removed delays would still pass. Recommend adding timing assertions in a future transport-layer coverage pass.
+
+4. **Resume request validation** (`TestClientResume`): Checks for non-nil response but does not assert that `runID`, `signal`, and `payload` were correctly mapped in the request. A regression that dropped these fields would still pass. Recommend adding request capture to the fake server.
+
+5. **Heartbeat observability** (`TestClientHeartbeat`): Sleeps and cancels context but does not verify heartbeat RPCs were actually sent; fake server doesn't record heartbeat calls. Recommend adding heartbeat counter/assertion to fake.
+
+6. **Transport-layer goroutine assertions**: New `internal/transport/server/client_test.go` tests spin up h2c servers via plain `httptest.Server.Close()` without `goleak` assertions. Transport leaks would not be caught by these tests. Recommend adding per-test goleak checks or integration into a broader transport-level leak test in a future pass.
