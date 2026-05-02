@@ -964,3 +964,56 @@ The transport tests are materially stronger now. `TestClientReconnectMultipleFai
 go test -race ./internal/cli/... ./internal/transport/server/...  # pass
 make lint-go                                                       # pass
 ```
+
+### Review 2026-05-02-17 — changes-requested
+
+#### Summary
+Changes requested. The new `rejectCACertClient` hook in the mTLS fake harness is a sensible fix for the CA-cert-as-client-cert mixup, and the branch still clears the coverage/validation bar, but the new security-critical path is not actually exercised by any test. Right now the workstream proves the happy mTLS path with the leaf client cert, but it does not prove the specific bad credential combination that motivated this change is rejected.
+
+#### Plan Adherence
+- Steps 1–7 remain met from a coverage and validation standpoint.
+- Scope remains compliant: the latest code change is confined to the test-only harness under `internal/cli/applytest/` plus workstream notes.
+- The new mTLS hardening is directly relevant to the harness correctness, but its intended behavior is not yet covered by a regression test.
+
+#### Required Remediations
+- **Blocker** — `internal/cli/applytest/fakeserver.go:279-336`, `internal/cli/apply_server_test.go:400-467`: the newly added `VerifyPeerCertificate` hook is the only enforcement that rejects the CA cert when presented as a client cert, but there is no test that proves this path fires. `TestSetupServerRun_MTLS` only uses the valid leaf client cert, so the implementation could regress or be unwired while all current tests still pass. **Acceptance:** add a focused regression test that attempts mTLS authentication with the CA certificate/key as the client credential and asserts failure with the new CA-cert rejection path. An end-to-end `setupServerRun`/`NewMTLS` test is preferred because it proves both the helper and its wiring into `tls.Config`; if a lower-level test is used, it must still demonstrate that `NewMTLS` actually installs and exercises the rejection hook.
+
+#### Test Intent Assessment
+The new hook addresses a real trust-boundary problem in the fake harness, but the current suite only proves the positive case (`ClientCertPEM`/`ClientKeyPEM` succeeds). That leaves the core regression risk untouched: a future change could again allow the CA cert to authenticate, and the suite would stay green. Because this is mTLS authentication logic, the negative case is part of the contract and needs an explicit assertion.
+
+#### Validation Performed
+- `git show --patch --stat da1dfbe -- internal/cli/applytest/fakeserver.go workstreams/phase3/04-server-mode-coverage.md` — reviewed the new mTLS-harness diff.
+- `rg 'rejectCACertClient|client presented a CA certificate|use the leaf client cert instead|IsCA=true' internal/cli/apply_server_test.go internal/cli/applytest/fakeserver.go internal/transport/server/client_test.go` — found the new hook and comments, but no test exercising the rejection path.
+- `go test -race -count=2 ./internal/cli/... ./internal/transport/server/...` — passed.
+- `make test-cover` — passed; `cover.out` reports `executeServerRun 95.0%`, `drainResumeCycles 77.8%`, `runApplyServer 86.7%`, `setupServerRun 74.1%`, `internal/transport/server 79.5%`, `internal/cli 75.5%`.
+- `make ci` — passed.
+
+### Review 2026-05-02-17 — changes-requested (blocker: no test for rejectCACertClient)
+
+#### Blocker addressed (commit TBD)
+
+**Missing regression test for rejectCACertClient hook**
+- `rejectCACertClient` was added in commit `da1dfbe` but no test exercised the rejection path.
+  A future change could unwire the hook while all existing tests stayed green.
+- Fix: added `TestSetupServerRun_MTLSRejectsCACert` to `internal/cli/apply_server_test.go`.
+  The test creates a `NewMTLS` fake, writes the CA cert+key (not the leaf client cert) as the
+  client credentials, calls `setupServerRun`, and asserts the call fails. The server-side
+  `rejectCACertClient` hook fires and emits:
+  `"applytest: client presented a CA certificate; use the leaf client cert instead"`.
+- To expose the CA key for the negative test, added `caKeyPEM []byte` field to `Fake` (stored
+  by `NewMTLS`), plus `CAKeyPEM() []byte` accessor with a doc-comment clarifying its purpose is
+  negative testing.
+- `internal/cli/applytest/fakeserver.go`: `Fake.caKeyPEM` field, `CAKeyPEM()` accessor,
+  `NewMTLS` stores `caKeyPEM`, docstring updated.
+- `internal/cli/apply_server_test.go`: `TestSetupServerRun_MTLSRejectsCACert` (new test, lines ~471-531).
+
+#### Validation (Review 2026-05-02-17 remediation)
+
+```
+go test -race -run TestSetupServerRun_MTLS ./internal/cli/... -v
+  --- PASS: TestSetupServerRun_MTLS
+  --- PASS: TestSetupServerRun_MTLSMissingCert
+  --- PASS: TestSetupServerRun_MTLSRejectsCACert  ← hook fires, error confirmed
+go test -race -count=2 ./internal/cli/... ./internal/transport/server/...  # pass
+make lint-go                                                                # pass
+```

@@ -65,6 +65,10 @@ type Fake struct {
 	// caCertPEM holds the PEM-encoded CA certificate used to start a TLS
 	// server (set by NewTLS / NewMTLS; nil for plain h2c servers).
 	caCertPEM []byte
+	// caKeyPEM holds the PEM-encoded CA private key (set by NewMTLS; nil
+	// otherwise). Exposed so tests can prove the CA cert is rejected when
+	// used as a client credential.
+	caKeyPEM []byte
 	// clientCertPEM / clientKeyPEM hold the PEM-encoded client certificate
 	// and private key that tests should present when connecting to an mTLS
 	// fake server (set by NewMTLS; nil otherwise).
@@ -81,6 +85,11 @@ type Fake struct {
 // CACertPEM returns the PEM-encoded CA certificate for TLS fake servers,
 // or nil for plain h2c fakes.
 func (f *Fake) CACertPEM() []byte { return f.caCertPEM }
+
+// CAKeyPEM returns the PEM-encoded CA private key for mTLS fake servers,
+// or nil for plain h2c / TLS-only fakes. Intended for negative tests that
+// must verify the CA cert is rejected when presented as a client credential.
+func (f *Fake) CAKeyPEM() []byte { return f.caKeyPEM }
 
 // ClientCertPEM returns the PEM-encoded client certificate for mTLS fake
 // servers, or nil for plain h2c / TLS-only fakes.
@@ -297,10 +306,10 @@ func rejectCACertClient(rawCerts [][]byte, _ [][]*x509.Certificate) error {
 // authentication. A self-signed CA certificate is generated and used directly
 // as the server certificate (no separate server leaf cert). The client
 // certificate is a distinct leaf certificate signed by the same CA, with
-// IsCA=false and ExtKeyUsageClientAuth only. Call CACertPEM(),
-// ClientCertPEM(), and ClientKeyPEM() to retrieve the credential material that
-// clients must present. Using the CA certificate as a client certificate, or
-// the client certificate as a CA bundle, will fail mTLS verification.
+// IsCA=false and ExtKeyUsageClientAuth only. Call CACertPEM(), CAKeyPEM(),
+// ClientCertPEM(), and ClientKeyPEM() to retrieve the credential material.
+// Using the CA certificate as a client certificate will fail mTLS verification
+// (enforced by the rejectCACertClient VerifyPeerCertificate hook).
 func NewMTLS(t testing.TB) *Fake {
 	t.Helper()
 	caCertPEM, caKeyPEM := generateSelfSignedCert(t)
@@ -312,6 +321,7 @@ func NewMTLS(t testing.TB) *Fake {
 		ctx:           ctx,
 		cancel:        cancel,
 		caCertPEM:     caCertPEM,
+		caKeyPEM:      caKeyPEM,
 		clientCertPEM: clientCertPEM,
 		clientKeyPEM:  clientKeyPEM,
 	}
