@@ -171,10 +171,13 @@ All siblings well under the 300 LOC ceiling.
 No baseline changes. The pre-existing `gocritic hugeParam` findings for `applyOptions` parameters are
 suppressed via inline `//nolint:gocritic` annotations on the six affected function signatures
 (`runApplyLocal`, `drainLocalResumeCycles`, `applyClientOptions`, `executeServerRun`,
-`drainResumeCycles`, `runApplyServer`). For `runApplyLocal`, the existing `//nolint:funlen`
-was extended to `//nolint:funlen,gocritic`. The original baseline entry for
-`internal/cli/apply.go` is now unused (the functions moved out), but removing it is left for
-the baseline-burndown workstream [01](01-lint-baseline-burndown.md).
+`drainResumeCycles`, `runApplyServer`). For `runApplyLocal`, the function signature was split
+to multi-line so that:
+- `//nolint:funlen // W03: local apply orchestrates engine lifecycle, event routing, and output rendering in one function` appears verbatim on the `func runApplyLocal(` line (satisfying Step 2).
+- `//nolint:gocritic // hugeParam: applyOptions passes by value; pointer conversion is a separate workstream` appears on the `opts applyOptions,` parameter line (suppressing the new finding without modifying the historical annotation).
+
+The original baseline entry for `internal/cli/apply.go` is now unused (the functions moved out),
+but removing it is left for the baseline-burndown workstream [01](01-lint-baseline-burndown.md).
 
 Converting `applyOptions` to a pointer (to eliminate `hugeParam` entirely) is a signature change
 outside this workstream's scope.
@@ -185,7 +188,7 @@ Existing test files (`apply_test.go`, `reattach_test.go`, `apply_local_approval_
 `apply_server_required_test.go`) each cover multiple moved functions and were left in place.
 No test was renamed or removed; all pass under `-race -count=2`.
 
-### Validation run (round 2 — post-reviewer-feedback)
+### Validation run (round 3 — post-reviewer-feedback)
 
 ```
 go build ./internal/cli/...                  exit 0
@@ -194,6 +197,10 @@ make lint-go                                 exit 0
 make lint-baseline-check                     exit 0 (20/20)
 git diff .golangci.baseline.yml              (empty — baseline unchanged from main)
 ```
+
+Resolution: split `runApplyLocal` signature to multi-line; historical `//nolint:funlen // W03: ...`
+preserved verbatim on the `func` line; `//nolint:gocritic` added on the `opts applyOptions,` line
+independently.
 
 ### Review 2026-05-02 — changes-requested
 
@@ -221,6 +228,33 @@ The existing CLI tests are still doing useful regression work for this pure-move
 - `make lint-baseline-check` — passed on the submitted tree (`20 / 20`).
 - `make ci` — passed on the submitted tree.
 - `go tool golangci-lint run --config <temp merged config using main's .golangci.baseline.yml> ./internal/cli/...` — **failed** with six `gocritic hugeParam` findings, confirming the branch currently depends on the forbidden baseline edit.
+
+### Review 2026-05-02-02 — changes-requested
+
+#### Summary
+The prior baseline-file blocker is resolved: `.golangci.baseline.yml` is unchanged from `main`, the carve still matches the planned file split, and the requested validation commands pass. This pass remains **changes-requested** because the historical `//nolint:funlen // W03: ...` annotation on `runApplyLocal` was not moved verbatim; it was rewritten to `//nolint:funlen,gocritic` and had extra rationale appended, which conflicts with the workstream’s explicit audit-trail requirement.
+
+#### Plan Adherence
+- **Step 1 / Exit criteria (file carve, LOC, ownership):** Met. `internal/cli/apply.go` is still 69 LOC, and the moved functions remain in the planned sibling files with all files under the LOC caps.
+- **Step 2 (`//nolint` preservation):** **Not met.** The original line in `main` was `//nolint:funlen // W03: local apply orchestrates engine lifecycle, event routing, and output rendering in one function`; the current `internal/cli/apply_local.go:22` line changes both the linter list and the explanatory text.
+- **Step 3 / Step 5 (build, tests, lint, CI):** Met. `go build ./internal/cli/...`, `go test -race -count=2 ./internal/cli/...`, `make lint-go`, `make lint-baseline-check`, and `make ci` all exited 0 on the submitted tree.
+- **Exit criteria / baseline guard:** Met. `git diff main -- .golangci.baseline.yml` is empty.
+
+#### Required Remediations
+- **Blocker** — `internal/cli/apply_local.go:22`: restore the historical `runApplyLocal` annotation exactly as required by Step 2. The workstream explicitly says the existing `//nolint:funlen // W03: ...` comment “moves with the function ... verbatim” and “do[es] not modify the comment text.” The current combined `//nolint:funlen,gocritic` comment alters that audit trail. **Acceptance:** the `runApplyLocal` line matches the original `//nolint:funlen // W03: ...` text exactly, and any necessary `gocritic` suppression is attached separately without changing that historical comment.
+
+#### Test Intent Assessment
+The test story remains acceptable for a pure code-motion change. The passing `go test -race -count=2 ./internal/cli/...` run still exercises the existing local/reattach behavior, and `make ci` provides the broader regression net. I did not find a new behavioral coverage gap in this revision.
+
+#### Validation Performed
+- `git diff --exit-code main -- .golangci.baseline.yml` — passed (baseline unchanged from `main`).
+- `wc -l internal/cli/apply.go internal/cli/apply_local.go internal/cli/apply_server.go internal/cli/apply_resume.go internal/cli/apply_setup.go` — verified 69 / 216 / 189 / 220 / 91 LOC.
+- `go build ./internal/cli/...` — passed.
+- `go test -race -count=2 ./internal/cli/...` — passed.
+- `make lint-go` — passed.
+- `make lint-baseline-check` — passed (`20 / 20`).
+- `make ci` — passed.
+- `git show main:internal/cli/apply.go | sed -n '84,90p'` — confirmed the original `runApplyLocal` `//nolint:funlen // W03: ...` annotation text for comparison against the rewritten line in `internal/cli/apply_local.go:22`.
 
 ## Risks
 |---|---|
