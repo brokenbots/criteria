@@ -407,3 +407,31 @@ The existing suite gives decent regression coverage for "code still runs" and "e
 - `(cd sdk && go test -race -count=1 ./...)` — passed.
 - `(cd workflow && go test -race -count=1 ./...)` — passed.
 - `make ci` — passed.
+
+### Review 2026-05-02-02 — approved
+
+#### Summary
+
+The follow-up commit resolves the prior blockers and now meets the workstream exit criteria. The branch removes the last 2 `contextcheck` suppressions without widening the internal `engine.Sink` interface, reconciles the residual `gocritic` inventory down to a single documented `applyOptions` entry, and adds targeted tests that prove the new transport context contract. The measured baseline is now 20 entries, well below the ≤ 50 target.
+
+#### Plan Adherence
+
+- **Step 2 (`errcheck`)**: complete; no `errcheck` entries remain in `.golangci.baseline.yml`.
+- **Step 3 (`contextcheck`)**: complete; baseline count is now zero, and the remaining reattach sites use `run.Sink.RunFailed(ctx, ...)` / `StepResumed(ctx, ...)` so the linter can trace the caller context directly.
+- **Step 4 (`gocritic`)**: complete; four `hugeParam` findings were removed by pointer conversion and one residual `applyOptions` entry remains with a clear `# kept:` rationale tied to W02 scope.
+- **Step 5 / Step 6 / Step 7**: complete; deferred complexity entries remain isolated to sibling workstreams, `revive` is at zero, and `cap.txt` matches the measured count (`20`).
+- **Step 8 (doc update)**: complete; `docs/contributing/lint-baseline.md` and the implementation notes now match the actual residual baseline.
+- **Step 9 (validation)**: complete; the workstream notes now reflect the full acceptance-bar sequence and the branch satisfies it.
+
+#### Test Intent Assessment
+
+The new `contextCapturingPublisher` tests are strong enough for the behavior that changed. They assert both required invariants at the transport boundary: published contexts retain caller-scoped values and do not inherit cancellation. A regression to `context.Background()` would lose the value assertion, and a regression that dropped `context.WithoutCancel` would fail the cancellation assertion. That closes the prior intent gap.
+
+#### Validation Performed
+
+- `make lint-go` — passed.
+- `make lint-baseline-check` — passed (`20 / 20`).
+- `go test -race -count=1 ./...` — passed.
+- `(cd sdk && go test -race -count=1 ./...)` — passed.
+- `(cd workflow && go test -race -count=1 ./...)` — passed.
+- `make ci` — passed.
