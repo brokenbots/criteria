@@ -388,12 +388,20 @@ func TestClientReconnectSendsSinceSeq(t *testing.T) {
 		t.Fatalf("expected a reconnect with since_seq=1, got headers: %v", hdrs)
 	}
 
-	// And exactly one event was persisted for each publish (no duplicates).
+	// Verify the exact event sequence: a count-only check would pass if one
+	// event were duplicated and the other lost.
 	f.mu.Lock()
-	count := len(f.events[runID])
+	evts := append([]*pb.Envelope(nil), f.events[runID]...)
 	f.mu.Unlock()
-	if count != 2 {
-		t.Fatalf("expected 2 persisted events, got %d", count)
+	wantSteps := []string{"s1", "s2"}
+	if len(evts) != len(wantSteps) {
+		t.Fatalf("expected %d events, got %d", len(wantSteps), len(evts))
+	}
+	for i, wantStep := range wantSteps {
+		se := evts[i].GetStepEntered()
+		if se == nil || se.Step != wantStep {
+			t.Errorf("event[%d]: want StepEntered{Step:%q}, got %v", i, wantStep, evts[i])
+		}
 	}
 }
 
@@ -653,12 +661,20 @@ func TestClientReconnectMultipleFailures(t *testing.T) {
 		t.Fatalf("expected %d persisted events after multi-failure reconnect, got %d", want, got)
 	}
 
-	// Exactly want events: no duplicates despite reconnects.
+	// Verify the exact event sequence (s1, s2, s3, final): a count-only check
+	// would pass if one event were duplicated and another lost.
 	f.mu.Lock()
-	count := len(f.events[runID])
+	evts := append([]*pb.Envelope(nil), f.events[runID]...)
 	f.mu.Unlock()
-	if count != want {
-		t.Fatalf("expected exactly %d events (no duplicates), got %d", want, count)
+	wantSteps := []string{"s1", "s2", "s3", "final"}
+	if len(evts) != len(wantSteps) {
+		t.Fatalf("expected %d events, got %d", len(wantSteps), len(evts))
+	}
+	for i, wantStep := range wantSteps {
+		se := evts[i].GetStepEntered()
+		if se == nil || se.Step != wantStep {
+			t.Errorf("event[%d]: want StepEntered{Step:%q}, got %v", i, wantStep, evts[i])
+		}
 	}
 
 	// Assert exponential backoff: stream open timestamps must have increasing
@@ -756,12 +772,20 @@ func TestClientSinceSeqZeroEventReplay(t *testing.T) {
 		t.Fatalf("expected a reconnect with since_seq=1, got headers: %v", hdrs)
 	}
 
-	// Exactly 2 events persisted — the zero-event replay produced no duplicates.
+	// Verify the exact event sequence: a count-only check would pass if s1
+	// were re-persisted and s2 were dropped.
 	f.mu.Lock()
-	count := len(f.events[runID])
+	evts := append([]*pb.Envelope(nil), f.events[runID]...)
 	f.mu.Unlock()
-	if count != 2 {
-		t.Fatalf("expected 2 persisted events (no replay duplicates), got %d", count)
+	wantSteps2 := []string{"s1", "s2"}
+	if len(evts) != len(wantSteps2) {
+		t.Fatalf("expected %d events (no replay duplicates), got %d", len(wantSteps2), len(evts))
+	}
+	for i, wantStep := range wantSteps2 {
+		se := evts[i].GetStepEntered()
+		if se == nil || se.Step != wantStep {
+			t.Errorf("event[%d]: want StepEntered{Step:%q}, got %v", i, wantStep, evts[i])
+		}
 	}
 }
 

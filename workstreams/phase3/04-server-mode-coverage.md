@@ -268,12 +268,18 @@ message or the wait node will re-pause indefinitely.
 
 **goleak + HTTP/2**: goleak v1.3.0 lacks `WithRetryTimeout`. HTTP/2 transport
 goroutines (`clientConnReadLoop`, `serverConn.serve`, `serverConn.readFrames`)
-linger briefly after `httptest.Server.Close()`. Current approach: per-test
-`goleak.VerifyNone(t)` via `requireNoGoroutineLeak(t)` (called as the first
-deferred function in each test) with `goleak.IgnoreCurrent()` in `TestMain`
-to baseline-suppress third-party goroutines that exist before any test runs.
-This is applied in both `internal/cli/main_test.go` and
-`internal/transport/server/client_test.go`.
+linger briefly after `httptest.Server.Close()`. Current approach:
+
+- `internal/cli/main_test.go`: `goleak.VerifyTestMain(m, goleak.IgnoreCurrent())`
+  at package level, plus per-test `goleak.VerifyNone(t)` via `requireNoGoroutineLeak(t)`
+  (called first in each test) which defers goleak after server cleanup.
+- `internal/transport/server/client_test.go`: no package-level `TestMain`. Per-test
+  `requireNoGoroutineLeak(t)` is registered inside `startFakeServer` as the first
+  `t.Cleanup`; it snapshots current goroutines via `goleak.IgnoreCurrent()` at call time so
+  pre-existing goroutines (e.g. from the pre-existing `reattach_scope_integration_test.go`
+  which is out of workstream scope) are excluded from the check. Only goroutines spawned
+  after the snapshot are subject to the assertion.
+  This makes `go test -race -count=2 ./internal/transport/server/...` pass reliably.
 
 ## Reviewer Notes
 
