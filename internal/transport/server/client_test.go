@@ -24,12 +24,18 @@ import (
 	"github.com/brokenbots/criteria/sdk/pb/criteria/v1/criteriav1connect"
 )
 
-// requireNoGoroutineLeak registers a t.Cleanup that asserts no goroutines
-// were leaked by the test. It must be called before any setup that starts
-// goroutines so that its cleanup runs after all server-shutdown cleanup.
+// requireNoGoroutineLeak registers a t.Cleanup that asserts no new goroutines
+// were leaked by the test. It snapshots the current goroutine set with
+// goleak.IgnoreCurrent() at call time so that goroutines already running (e.g.
+// from a previous test in the same binary run) do not cause spurious failures;
+// only goroutines spawned after this call are subject to the leak check.
+//
+// It must be called before any setup that starts goroutines so that its cleanup
+// (LIFO order) runs after all server-shutdown and connection-close cleanup.
 func requireNoGoroutineLeak(t *testing.T) {
 	t.Helper()
-	t.Cleanup(func() { goleak.VerifyNone(t) })
+	snapshot := goleak.IgnoreCurrent()
+	t.Cleanup(func() { goleak.VerifyNone(t, snapshot) })
 }
 
 // --- Fake Connect server -----------------------------------------------------
