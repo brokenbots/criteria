@@ -218,7 +218,7 @@ The deliverable is the test suite. The `make test-cover` numbers in Exit criteri
   since\_seq replay, DropStreamAt, CancelAt, InjectPauseAt), Control. Supports
   h2c (`New(t)`, returns `http://...` URL), TLS (`NewTLS(t)`, returns `https://...`),
   and mTLS (`NewMTLS(t)`, returns `https://...`). Public surface: `Fake`, `ApplyExecution`,
-  `FakeStep`, `New(t)`, `NewTLS(t)`, `NewMTLS(t)`, `URL()`, `Events()`,
+  `New(t)`, `NewTLS(t)`, `NewMTLS(t)`, `URL()`, `Events()`,
   `HasStepEntered()`, `HasEventOfType()`, `WaitForCond()`. Explicitly closes
   hijacked h2c connections and server-side TLS connections to prevent HTTP/2
   goroutine leaks. Helper functions `replayAcks`, `persistMsg`, `sendControl`,
@@ -226,10 +226,11 @@ The deliverable is the test suite. The `make test-cover` numbers in Exit criteri
 - **New** `internal/cli/main_test.go`: `goleak.VerifyTestMain` with `IgnoreCurrent()`
   only; HTTP/2 transport goroutines are now cleaned up deterministically by the fake
   harness (via explicit `ConnState` hooks and connection close in cleanup).
-- **New** `internal/cli/apply_server_test.go` (~290+ lines): 9 tests in `package cli`:
+- **New** `internal/cli/apply_server_test.go`: 10 tests in `package cli`:
   `TestRunApplyServer_HappyPath`, `TestExecuteServerRun_Cancellation`,
   `TestExecuteServerRun_TimeoutPropagation`, `TestSetupServerRun_TLSDisable`,
   `TestSetupServerRun_TLSEnable`, `TestSetupServerRun_MTLS`, `TestSetupServerRun_MTLSMissingCert`,
+  `TestSetupServerRun_MTLSRejectsCACert`,
   `TestDrainResumeCycles_PauseThenResume`, `TestDrainResumeCycles_StreamDropAndReconnect`.
   Each engine+harness test calls `requireNoGoroutineLeak(t)` for per-test `goleak.VerifyNone(t)` cleanup.
 - **Modified** `internal/transport/server/client.go`: Added `TLSMode() TLSMode`
@@ -468,7 +469,8 @@ transport goroutines.
 ```
 go test -v -race -count=1 -timeout=120s ./internal/cli/ \
   -run "TestRunApplyServer_HappyPath|TestExecuteServerRun_Cancellation|TestExecuteServerRun_TimeoutPropagation|TestSetupServerRun_TLS|TestSetupServerRun_MTLS|TestDrainResumeCycles"
-# All 9 tests PASS, goleak.VerifyNone(t) clean for all 8 engine+harness tests
+# All 10 tests PASS, goleak.VerifyNone(t) clean for all 9 engine+harness tests
+# (includes TestSetupServerRun_MTLSRejectsCACert added in a later round)
 
 go test -race -count=1 -timeout=120s ./internal/cli/
 # ok github.com/brokenbots/criteria/internal/cli
@@ -959,9 +961,9 @@ The transport tests are materially stronger now. `TestClientReconnectMultipleFai
 **JdzG — test count mismatch: workstream says 18, PR summary said 17**
 - Workstream implementation notes list 9 new CLI tests and 9 new transport tests (= 18 total).
 - PR description said "17 new test cases", "7 tests" for CLI, and "10 focused tests" for transport.
-- Actual counts are 9 CLI + 9 transport = 18. PR description updated via `gh pr edit`:
-  "17" → "18", "7 tests" → "9 tests", "10 focused tests" → "9 focused tests",
-  and `TestSetupServerRun_MTLSMissingCert` added to the test evidence list.
+- Actual counts at time of fix were 9 CLI + 9 transport = 18. PR description updated via `gh pr edit`.
+- After adding `TestSetupServerRun_MTLSRejectsCACert` the counts are 10 CLI + 9 transport = 19 total.
+  PR description and workstream implementation notes updated accordingly.
 
 #### Validation (Review 2026-05-02-16 remediation)
 

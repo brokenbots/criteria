@@ -2,13 +2,20 @@ package servertrans
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
 	"crypto/tls"
+	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"io"
 	"log/slog"
+	"math/big"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"testing"
@@ -36,6 +43,39 @@ func requireNoGoroutineLeak(t *testing.T) {
 	t.Helper()
 	snapshot := goleak.IgnoreCurrent()
 	t.Cleanup(func() { goleak.VerifyNone(t, snapshot) })
+}
+
+// writeTempCertKey generates a minimal self-signed RSA certificate, writes the
+// PEM-encoded cert and key to temporary files, and returns their paths. It is
+// used by tests that need valid cert/key files to exercise TLSMutual construction
+// paths without connecting to a real server.
+func writeTempCertKey(t *testing.T) (certFile, keyFile string) {
+	t.Helper()
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		NotBefore:    time.Now().Add(-time.Minute),
+		NotAfter:     time.Now().Add(time.Hour),
+	}
+	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &priv.PublicKey, priv)
+	if err != nil {
+		t.Fatalf("create cert: %v", err)
+	}
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(priv)})
+	dir := t.TempDir()
+	certFile = filepath.Join(dir, "cert.pem")
+	keyFile = filepath.Join(dir, "key.pem")
+	if err := os.WriteFile(certFile, certPEM, 0o600); err != nil {
+		t.Fatalf("write cert: %v", err)
+	}
+	if err := os.WriteFile(keyFile, keyPEM, 0o600); err != nil {
+		t.Fatalf("write key: %v", err)
+	}
+	return
 }
 
 // --- Fake Connect server -----------------------------------------------------
@@ -827,6 +867,21 @@ func TestClientTLSErrors(t *testing.T) {
 		c, err := NewClient("http://example.com", log, Options{TLSMode: TLSEnable})
 		if err != nil {
 			t.Fatalf("unexpected construction error for TLSEnable+http URL: %v", err)
+		}
+		defer c.Close()
+	})
+	t.Run("tls_mutual_with_http_url", func(t *testing.T) {
+		// TLSMutual also accepts an http:// URL at construction time when valid
+		// cert/key files are provided; same deferred-mismatch behaviour as TLSEnable.
+		// TODO: reject http:// at construction time in a follow-up workstream.
+		certFile, keyFile := writeTempCertKey(t)
+		c, err := NewClient("http://example.com", log, Options{
+			TLSMode:  TLSMutual,
+			CertFile: certFile,
+			KeyFile:  keyFile,
+		})
+		if err != nil {
+			t.Fatalf("unexpected construction error for TLSMutual+http URL: %v", err)
 		}
 		defer c.Close()
 	})

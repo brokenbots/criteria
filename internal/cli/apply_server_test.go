@@ -517,9 +517,9 @@ func TestSetupServerRun_MTLSRejectsCACert(t *testing.T) {
 	}
 	// The server's VerifyPeerCertificate hook returns an error that causes the
 	// TLS layer to send a BadCertificate alert; the client surfaces this as a
-	// "bad certificate" error inside the register RPC failure.
-	if !strings.Contains(err.Error(), "bad certificate") && !strings.Contains(err.Error(), "certificate") {
-		t.Logf("got error (any TLS cert rejection is acceptable): %v", err)
+	// "bad certificate" or similar certificate-rejection error.
+	if !strings.Contains(err.Error(), "certificate") {
+		t.Errorf("expected a certificate-rejection error from rejectCACertClient, got: %v", err)
 	}
 }
 
