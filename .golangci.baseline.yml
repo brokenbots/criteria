@@ -29,18 +29,6 @@ issues:
       linters:
         - gocyclo
       text: '`compileForEachs`' # W04: compileForEachs extracted from Compile
-    - path: compile_steps.go
-      linters:
-        - gocognit
-      text: '`compileSteps`' # W04: compileSteps extracted from Compile
-    - path: compile_steps.go
-      linters:
-        - funlen
-      text: 'Function ''compileSteps''' # W04: compileSteps extracted from Compile
-    - path: compile_steps.go
-      linters:
-        - gocyclo
-      text: '`compileSteps`' # W04: compileSteps extracted from Compile
     - path: compile.go
       linters:
         - gocognit
