@@ -179,42 +179,42 @@ func TestFoldExpr_FileFunc_RuntimeRef_Skipped(t *testing.T) {
 // The expression is foldable (var is declared) but path validation is deferred
 // because the argument is unknown at compile time.
 func TestFoldExpr_VarNoDefault_FileCall_NoError(t *testing.T) {
-dir := t.TempDir()
-expr := parseExpr(t, "file(var.path)")
-// var.path has no default — should be represented as UnknownVal, not NullVal.
-vars := map[string]cty.Value{"path": cty.UnknownVal(cty.String)}
-_, foldable, diags := workflow.FoldExpr(expr, vars, nil, dir)
-if !foldable {
-t.Fatal("expected foldable=true for file(var.path) with declared (but unknown) var")
-}
-if diags.HasErrors() {
-t.Fatalf("expected no error for file(unknown_var); got: %s", diags.Error())
-}
+	dir := t.TempDir()
+	expr := parseExpr(t, "file(var.path)")
+	// var.path has no default — should be represented as UnknownVal, not NullVal.
+	vars := map[string]cty.Value{"path": cty.UnknownVal(cty.String)}
+	_, foldable, diags := workflow.FoldExpr(expr, vars, nil, dir)
+	if !foldable {
+		t.Fatal("expected foldable=true for file(var.path) with declared (but unknown) var")
+	}
+	if diags.HasErrors() {
+		t.Fatalf("expected no error for file(unknown_var); got: %s", diags.Error())
+	}
 }
 
 // TestFoldExpr_NoWorkflowDir_LiteralFile_NoError verifies that file("path")
 // with workflowDir="" does not error — the function is stubbed to return
 // unknown so var/local reference checks can still run.
 func TestFoldExpr_NoWorkflowDir_LiteralFile_NoError(t *testing.T) {
-expr := parseExpr(t, `file("any_path.txt")`)
-_, foldable, diags := workflow.FoldExpr(expr, nil, nil, "")
-if !foldable {
-t.Fatal("expected foldable=true for file() with literal string")
-}
-if diags.HasErrors() {
-t.Fatalf("expected no error when workflowDir is empty; got: %s", diags.Error())
-}
+	expr := parseExpr(t, `file("any_path.txt")`)
+	_, foldable, diags := workflow.FoldExpr(expr, nil, nil, "")
+	if !foldable {
+		t.Fatal("expected foldable=true for file() with literal string")
+	}
+	if diags.HasErrors() {
+		t.Fatalf("expected no error when workflowDir is empty; got: %s", diags.Error())
+	}
 }
 
 // TestFoldExpr_NoWorkflowDir_UndeclaredVar_StillErrors verifies that even when
 // workflowDir is "", a reference to an undeclared var still produces an error.
 func TestFoldExpr_NoWorkflowDir_UndeclaredVar_StillErrors(t *testing.T) {
-expr := parseExpr(t, "var.does_not_exist")
-_, foldable, diags := workflow.FoldExpr(expr, nil, nil, "")
-if !foldable {
-t.Fatal("expected foldable=true (var.* is a fold-time namespace)")
-}
-if !diags.HasErrors() {
-t.Fatal("expected a compile error for undeclared var reference; got none")
-}
+	expr := parseExpr(t, "var.does_not_exist")
+	_, foldable, diags := workflow.FoldExpr(expr, nil, nil, "")
+	if !foldable {
+		t.Fatal("expected foldable=true (var.* is a fold-time namespace)")
+	}
+	if !diags.HasErrors() {
+		t.Fatal("expected a compile error for undeclared var reference; got none")
+	}
 }
