@@ -253,3 +253,21 @@ All three stability-gate criteria re-met after these changes:
 - `make test-flake-watch` ×3 consecutive ✓ (still holds from prior cycle)
 - `go test -race -count=20 ./...` root module ✓ + sdk/ ✓ + workflow/ ✓ (fresh run, all packages green)
 - `make ci` ✓ (all targets pass)
+
+### Review 2026-05-02-03 — approved
+
+#### Summary
+Approved. The remaining blockers are resolved: `pollForFile` now retries only the empty-file truncation window that caused the flake, persistently malformed JSON still fails promptly with a decode error, and the new deterministic empty-file-then-valid test proves the intended retry path without relying on scheduler timing. The additional conformance timeout updates are consistent with the earlier loader/conformance hardening and do not introduce a contract or behavior concern. No security issues were identified in this pass.
+
+#### Plan Adherence
+- Stability gate remains met with recorded evidence in `flakey-test-worklog.md`: three consecutive `make test-flake-watch` passes, root `go test -race -count=20 ./...`, separate `sdk/` and `workflow/` `-count=20` runs, and `make ci`.
+- `internal/cli/localresume` remediation now matches the workstream constraint: the fix is narrow and does not broaden malformed-input behavior.
+- `internal/adapter/conformance` startup-budget fixes are now applied consistently across all plugin resolve paths used by the conformance suite.
+
+#### Test Intent Assessment
+The local-resume tests now meet the bar. `TestFileMode_InvalidJSON` specifically rejects the timeout regression by requiring a decode error, and `TestFileMode_Approval_EmptyFileThenValid` deterministically exercises the retry condition that was previously timing-sensitive. The conformance and plugin coverage remains behavior-focused and regression-sensitive.
+
+#### Validation Performed
+- `go test ./internal/cli/localresume -run 'TestFileMode_(InvalidJSON|Approval_EmptyFileThenValid|Approval_WritesAndConsumes)' -count=20` — passed.
+- `go test -race -count=10 ./internal/cli/localresume ./internal/adapter/conformance ./internal/plugin` — passed.
+- Searched `internal/adapter/conformance` and `internal/plugin` for remaining 5-second plugin-startup contexts — none found.
