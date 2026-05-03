@@ -201,3 +201,39 @@ func TestCompileLocals_RuntimeRef(t *testing.T) {
 		t.Errorf("expected error to mention 'compile-time constant', got %q", diags.Error())
 	}
 }
+
+// TestCompileLocals_FileWithNoWorkflowDir verifies that a local whose value
+// calls file() produces a compile error when Compile() is used without a
+// WorkflowDir (i.e. the file cannot be resolved). Locals must fully resolve to
+// known values at compile time; an unknown result is not allowed.
+func TestCompileLocals_FileWithNoWorkflowDir(t *testing.T) {
+src := `
+workflow "x" {
+  version       = "0.1"
+  initial_state = "open"
+  target_state  = "done"
+  local "prompt" {
+    value = file("prompt.txt")
+  }
+  step "open" {
+    adapter   = "noop"
+    lifecycle = "open"
+    outcome "success" { transition_to = "done" }
+  }
+  state "done" { terminal = true }
+}
+`
+spec, diags := Parse("t.hcl", []byte(src))
+if diags.HasErrors() {
+t.Fatalf("parse: %s", diags.Error())
+}
+// Compile without WorkflowDir — file() stubs return unknown, so the local
+// cannot be resolved. The compile must fail.
+_, diags = Compile(spec, nil)
+if !diags.HasErrors() {
+t.Fatal("expected compile error for local { value = file(...) } with no WorkflowDir; got none")
+}
+if !strings.Contains(diags.Error(), "fully resolved") {
+t.Errorf("expected error to mention 'fully resolved', got %q", diags.Error())
+}
+}

@@ -215,6 +215,17 @@ func compileOneLocal(g *FSMGraph, ls LocalSpec, expr hcl.Expression, opts Compil
 	if diags.HasErrors() {
 		return diags
 	}
+	// Locals must fully resolve to a known value at compile time. An unknown
+	// value means a required input (e.g. file path via var without a default,
+	// or file() without a configured workflow directory) was not resolvable.
+	if !val.IsKnown() {
+		r := expr.StartRange()
+		return append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  fmt.Sprintf("local %q: value could not be fully resolved at compile time; ensure all referenced variables have defaults and that a workflow directory is provided when using file()", ls.Name),
+			Subject:  &r,
+		})
+	}
 	g.Locals[ls.Name] = &LocalNode{
 		Name:        ls.Name,
 		Type:        val.Type(),

@@ -515,6 +515,35 @@ The test suite now exercises both sides of the `agent.config` contract: foldable
 - `make lint-go` — passed
 - `make lint-baseline-check` — passed
 
+### Review 2026-05-02-04 — changes-requested
+
+#### Summary
+
+`changes-requested`. The new PR-remediation commit introduced a regression in the local-compile contract: `FoldExpr` now stubs `file()` / `fileexists()` when `workflowDir == ""`, and `compileLocals` accepts that unknown result as a compiled local. A `local` can therefore compile through `Compile()` with an unknown value, even though this workstream explicitly requires locals to fully resolve at compile time.
+
+#### Plan Adherence
+
+- Steps 1, 2, 4-7 remain implemented.
+- Step 3 is regressed: a `local` no longer necessarily resolves to a concrete compile-time value before being stored in `g.Locals`.
+- Step 9 is incomplete for this regression: there is no test covering `local` + `file()` when `Compile()` is called without `WorkflowDir`.
+
+#### Required Remediations
+
+- **Blocker** — `workflow/compile_fold.go:63-82`, `workflow/compile_locals.go:205-224`: the `workflowDir == ""` stubs return `cty.UnknownVal`, and `compileOneLocal` stores that unknown value without complaint. Direct probe: `local "prompt" { value = file("prompt.txt") }` compiled via `workflow.Compile(spec, nil)` produced `compile_has_errors: false` and `local_is_known=false`. This violates the Step 3 contract that a local “must fully resolve at compile.” **Acceptance:** ensure locals never compile with unknown values. A safe fix would be to keep the new stub behavior for validation call sites if needed, but have `compileLocals` reject unknown results (or otherwise surface a compile diagnostic) so every `LocalNode.Value` is known. Add a regression test that fails on the current behavior.
+
+#### Test Intent Assessment
+
+The new tests successfully cover the PR reviewer’s concerns around undeclared vars and runtime-only namespaces, but they do not protect the local-compile invariant. That gap let a behaviorally important regression land while the suite stayed green.
+
+#### Validation Performed
+
+- `go test -race -count=2 ./workflow/...` — passed
+- `go build ./...` — passed
+- `make validate` — passed
+- `make lint-go` — passed
+- `make lint-baseline-check` — passed
+- Direct probe: `local "prompt" { value = file("prompt.txt") }` via `workflow.Compile(spec, nil)` compiled successfully with `local_is_known=false`
+
 ### PR review remediation (2026-05-02, commit 5bb931f)
 
 Four `copilot-pull-request-reviewer` threads addressed:
@@ -532,3 +561,15 @@ Four `copilot-pull-request-reviewer` threads addressed:
 - Added `TestFoldExpr_NoWorkflowDir_LiteralFile_NoError` and `TestFoldExpr_NoWorkflowDir_UndeclaredVar_StillErrors`.
 
 All four threads replied-to and resolved. `make ci` exits 0.
+
+### Review 4 response (2026-05-02)
+
+Blocker addressed: `compileOneLocal` now rejects unknown fold results.
+
+**Root cause:** The `workflowDir == ""` file-stub fix (commit 5bb931f) made `file()` return `cty.UnknownVal` when no WorkflowDir is set. `compileOneLocal` stored that unknown value without complaint, violating the Step 3 contract that locals must fully resolve at compile time.
+
+**Fix:** Added an `!val.IsKnown()` guard in `compileOneLocal` (`workflow/compile_locals.go`). When the folded value is unknown, a compile diagnostic is returned: *"value could not be fully resolved at compile time; ensure all referenced variables have defaults and that a workflow directory is provided when using file()"*.
+
+**Test:** Added `TestCompileLocals_FileWithNoWorkflowDir` to `compile_locals_test.go` — proves that `local { value = file("prompt.txt") }` via `workflow.Compile(spec, nil)` now fails compilation with a diagnostic mentioning "fully resolved". This test would have caught the regression.
+
+**Validation:** `make ci` exits 0; no new baseline entries.
