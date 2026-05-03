@@ -152,6 +152,22 @@ func (s *LocalSink) OnScopeIterCursorSet(cursorJSON string) {
 // session crash/respawn adapter events emitted by the session manager.
 func (s *LocalSink) OnAdapterLifecycle(stepName, adapterName, status, detail string) {}
 
+// OnRunOutputs emits a run.outputs envelope when declared outputs are evaluated (W09).
+func (s *LocalSink) OnRunOutputs(outputs []map[string]string) {
+	if len(outputs) == 0 {
+		return
+	}
+	pbOutputs := make([]*pb.RunOutputs_Output, 0, len(outputs))
+	for _, out := range outputs {
+		pbOutputs = append(pbOutputs, &pb.RunOutputs_Output{
+			Name:         out["name"],
+			Value:        out["value"],
+			DeclaredType: out["declared_type"],
+		})
+	}
+	s.emit("run.outputs", &pb.RunOutputs{Outputs: pbOutputs})
+}
+
 func (s *LocalSink) StepEventSink(step string) adapter.EventSink {
 	return &localStepSink{parent: s, step: step}
 }

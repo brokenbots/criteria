@@ -578,6 +578,7 @@
       "success": false
     }
   ],
+  "outputs": [],
   "step_order": [
     "checkout_branch",
     "open_executor",

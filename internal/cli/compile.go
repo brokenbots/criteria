@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/zclconf/go-cty/cty"
 
 	"github.com/brokenbots/criteria/internal/adapters/shell"
 	"github.com/brokenbots/criteria/internal/plugin"
@@ -72,6 +73,7 @@ type compileJSON struct {
 	Agents       []compileAgent    `json:"agents"`
 	Steps        []compileStep     `json:"steps"`
 	States       []compileState    `json:"states"`
+	Outputs      []compileOutput   `json:"outputs"`
 	StepOrder    []string          `json:"step_order"`
 	Plugins      []string          `json:"plugins_required"`
 	Metadata     compileOutputMeta `json:"metadata"`
@@ -102,6 +104,12 @@ type compileStep struct {
 type compileOutcome struct {
 	Name         string `json:"name"`
 	TransitionTo string `json:"transition_to"`
+}
+
+type compileOutput struct {
+	Name        string `json:"name"`
+	Type        string `json:"type,omitempty"`
+	Description string `json:"description,omitempty"`
 }
 
 type compileState struct {
@@ -154,6 +162,24 @@ func buildCompileJSON(graph *workflow.FSMGraph) compileJSON { //nolint:funlen //
 	}
 
 	// TODO(W10): add a Branches field to compileJSON for tooling completeness.
+	outputs := make([]compileOutput, 0, len(graph.Outputs))
+	for _, name := range graph.OutputOrder {
+		on := graph.Outputs[name]
+		typeStr := ""
+		if on.DeclaredType != cty.NilType {
+			// TypeToString only supports types accepted by parseVariableType.
+			// This should never error at compile time since declared types come from HCL schema.
+			if s, err := workflow.TypeToString(on.DeclaredType); err == nil {
+				typeStr = s
+			}
+		}
+		outputs = append(outputs, compileOutput{
+			Name:        on.Name,
+			Type:        typeStr,
+			Description: on.Description,
+		})
+	}
+
 	return compileJSON{
 		Name:         graph.Name,
 		InitialState: graph.InitialState,
@@ -162,6 +188,7 @@ func buildCompileJSON(graph *workflow.FSMGraph) compileJSON { //nolint:funlen //
 		Agents:       agents,
 		Steps:        steps,
 		States:       states,
+		Outputs:      outputs,
 		StepOrder:    graph.StepOrder(),
 		Plugins:      requiredPlugins(graph),
 		Metadata:     compileOutputMeta{SchemaVersion: 1},

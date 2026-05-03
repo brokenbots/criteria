@@ -38,6 +38,7 @@ func (r *recordingSink) OnStepIterationCompleted(string, string, string)   { r.b
 func (r *recordingSink) OnStepIterationItem(string, int, string)           { r.bump() }
 func (r *recordingSink) OnScopeIterCursorSet(string)                       { r.bump() }
 func (r *recordingSink) OnAdapterLifecycle(string, string, string, string) { r.bump() }
+func (r *recordingSink) OnRunOutputs([]map[string]string)                  { r.bump() }
 func (r *recordingSink) StepEventSink(step string) adapter.EventSink {
 	return &recordingStepSink{parent: r}
 }

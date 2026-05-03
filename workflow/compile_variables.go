@@ -81,6 +81,37 @@ func parseVariableType(typeStr string) (cty.Type, error) {
 	}
 }
 
+// TypeToString converts a cty.Type back to its declared type string representation.
+// This is the inverse of parseVariableType: only types accepted by parseVariableType
+// are supported. Returns an error for unsupported types instead of a fallback string,
+// ensuring round-trip guarantees for type serialization.
+func TypeToString(t cty.Type) (string, error) {
+	switch {
+	case t.Equals(cty.String):
+		return "string", nil
+	case t.Equals(cty.Number):
+		return "number", nil
+	case t.Equals(cty.Bool):
+		return "bool", nil
+	case t.IsListType():
+		switch t.ElementType() {
+		case cty.String:
+			return "list(string)", nil
+		case cty.Number:
+			return "list(number)", nil
+		case cty.Bool:
+			return "list(bool)", nil
+		}
+	case t.IsMapType():
+		if t.ElementType().Equals(cty.String) {
+			return "map(string)", nil
+		}
+	}
+	// Unsupported type: return error instead of falling back to FriendlyName().
+	// This ensures TypeToString is a strict inverse of parseVariableType.
+	return "", fmt.Errorf("unsupported type %s; supported: string, number, bool, list(string), list(number), list(bool), map(string)", t.FriendlyName())
+}
+
 // convertCtyValue verifies that v matches typ exactly. No implicit coercions
 // are performed: a number default declared on a string variable is an error,
 // matching the W04 rule that "default must match declared type".

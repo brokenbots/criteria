@@ -117,6 +117,7 @@
       "success": true
     }
   ],
+  "outputs": [],
   "step_order": [
     "boot",
     "discover",

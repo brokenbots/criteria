@@ -83,6 +83,10 @@ type Sink interface {
 	// (e.g. "noop", "copilot"); detail is a one-line description (empty for
 	// clean events).
 	OnAdapterLifecycle(stepName, adapterName, status, detail string)
+	// OnRunOutputs is emitted when a run reaches terminal state with declared outputs (W09).
+	// outputs is a list of (name, value, declared_type) tuples in declaration order.
+	// This method is called before OnRunCompleted.
+	OnRunOutputs(outputs []map[string]string)
 	// StepEventSink returns the per-step adapter sink (logs + adapter events).
 	StepEventSink(step string) adapter.EventSink
 }
@@ -384,6 +388,17 @@ func (e *Engine) handleEvalError(st *RunState, err error) error {
 			missing := fmt.Errorf("terminal node %q is not a state", st.Current)
 			e.sink.OnRunFailed(missing.Error(), st.Current)
 			return missing
+		}
+		// Evaluate outputs at terminal state (W09).
+		outputs, outErr := evalRunOutputs(e.graph, st)
+		if outErr != nil {
+			// Output evaluation failed; emit error and fail the run.
+			e.sink.OnRunFailed(outErr.Error(), st.Current)
+			return outErr
+		}
+		// Emit outputs before run.completed if present.
+		if len(outputs) > 0 {
+			e.sink.OnRunOutputs(outputs)
 		}
 		e.sink.OnRunCompleted(state.Name, state.Success)
 		return nil

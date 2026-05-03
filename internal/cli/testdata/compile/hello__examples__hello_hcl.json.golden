@@ -40,6 +40,13 @@
       "success": false
     }
   ],
+  "outputs": [
+    {
+      "name": "greeting",
+      "type": "string",
+      "description": "The greeting message produced by the workflow"
+    }
+  ],
   "step_order": [
     "say_hello"
   ],

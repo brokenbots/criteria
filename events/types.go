@@ -100,6 +100,8 @@ func setPayload(env *pb.Envelope, payload any) { //nolint:funlen,gocyclo // W03:
 		env.Payload = &pb.Envelope_ScopeIterCursorSet{ScopeIterCursorSet: p}
 	case *pb.StepIterationItem:
 		env.Payload = &pb.Envelope_StepIterationItem{StepIterationItem: p}
+	case *pb.RunOutputs:
+		env.Payload = &pb.Envelope_RunOutputs{RunOutputs: p}
 	default:
 		panic(fmt.Sprintf("events.NewEnvelope: unsupported payload type %T", payload))
 	}
@@ -162,6 +164,8 @@ func TypeString(env *pb.Envelope) string { //nolint:funlen,gocyclo // W03: discr
 		return "scope.iter_cursor_set"
 	case *pb.Envelope_StepIterationItem:
 		return "step.iteration_item"
+	case *pb.Envelope_RunOutputs:
+		return "run.outputs"
 	default:
 		return ""
 	}

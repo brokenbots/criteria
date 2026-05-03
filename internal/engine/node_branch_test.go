@@ -63,6 +63,7 @@ func (s *branchSink) OnStepIterationCompleted(string, string, string)   {}
 func (s *branchSink) OnStepIterationItem(string, int, string)           {}
 func (s *branchSink) OnScopeIterCursorSet(string)                       {}
 func (s *branchSink) OnAdapterLifecycle(string, string, string, string) {}
+func (s *branchSink) OnRunOutputs([]map[string]string)                  {}
 func (s *branchSink) StepEventSink(string) adapter.EventSink            { return noopAdapterSink{} }
 
 // --- Unit tests for branchNode.Evaluate ---

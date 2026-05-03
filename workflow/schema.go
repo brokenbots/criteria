@@ -25,6 +25,15 @@ type LocalNode struct {
 	Description string
 }
 
+// OutputNode is a compiled output declaration. The value expression is
+// evaluated at runtime when the run reaches a terminal state.
+type OutputNode struct {
+	Name         string
+	Description  string
+	DeclaredType cty.Type       // cty.NilType if no explicit type was declared
+	Value        hcl.Expression // evaluated at runtime
+}
+
 // Spec is the parsed (but unvalidated) HCL workflow document.
 type Spec struct {
 	Name         string           `hcl:"name,label"`
@@ -33,6 +42,7 @@ type Spec struct {
 	TargetState  string           `hcl:"target_state"`
 	Variables    []VariableSpec   `hcl:"variable,block"`
 	Locals       []LocalSpec      `hcl:"local,block"`
+	Outputs      []OutputSpec     `hcl:"output,block"`
 	Agents       []AgentSpec      `hcl:"agent,block"`
 	Steps        []StepSpec       `hcl:"step,block"`
 	States       []StateSpec      `hcl:"state,block"`
@@ -166,11 +176,13 @@ type BodySpec struct {
 	Remain hcl.Body `hcl:",remain"`
 }
 
-// OutputSpec declares a named output value exposed by a workflow-step body.
+// OutputSpec declares a named output value exposed by a workflow or workflow-step body.
 // The value expression is extracted from Remain by the compiler.
 type OutputSpec struct {
-	Name   string   `hcl:"name,label"`
-	Remain hcl.Body `hcl:",remain"` // captures the "value" expression
+	Name        string   `hcl:"name,label"`
+	Description string   `hcl:"description,optional"`
+	TypeStr     string   `hcl:"type,optional"`
+	Remain      hcl.Body `hcl:",remain"` // captures the "value" expression
 }
 
 // ConfigFieldType enumerates the types a config or input field may carry.
@@ -285,6 +297,8 @@ type FSMGraph struct {
 	TargetState  string
 	Variables    map[string]*VariableNode // compiled variable declarations (W04)
 	Locals       map[string]*LocalNode    // compiled local declarations (W07)
+	Outputs      map[string]*OutputNode   // compiled output declarations (W09)
+	OutputOrder  []string                 // declaration order for stable iteration
 	Agents       map[string]*AgentNode
 	Steps        map[string]*StepNode     // by step name
 	States       map[string]*StateNode    // by state name (terminal etc.)

@@ -44,6 +44,7 @@
       "success": true
     }
   ],
+  "outputs": [],
   "step_order": [
     "build"
   ],

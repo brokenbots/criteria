@@ -9,6 +9,12 @@ workflow "file_function_demo" {
   initial_state = "greet"
   target_state  = "done"
 
+  output "result" {
+    type        = "string"
+    description = "The result message produced by the workflow"
+    value       = "Function evaluation complete"
+  }
+
   state "done" {
     terminal = true
     success  = true
