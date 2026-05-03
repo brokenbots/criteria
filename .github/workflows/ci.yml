@@ -202,3 +202,36 @@ jobs:
           path: artifact/
           retention-days: 30
           if-no-files-found: error
+
+  tag-claim-check:
+    name: Tag-claim guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract tag claims from tracked docs
+        id: extract
+        run: |
+          ./tools/release/extract-tag-claims.sh > claims.txt
+          echo "Claims found:"
+          cat claims.txt
+
+      - name: Verify each claim resolves on origin
+        run: |
+          FAIL=0
+          while IFS= read -r tag; do
+            if ! git ls-remote --tags --exit-code origin "refs/tags/${tag}" >/dev/null 2>&1; then
+              echo "::error::Doc claims tag ${tag} but origin has no such tag"
+              FAIL=1
+            fi
+          done < claims.txt
+          exit "${FAIL}"
+
+  all-checks:
+    name: All checks passed
+    runs-on: ubuntu-latest
+    needs: [lint, unit-tests, e2e, proto-drift, tag-claim-check]
+    steps:
+      - run: echo "All required checks passed."
