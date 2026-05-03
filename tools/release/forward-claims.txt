@@ -1,0 +1,12 @@
+# Forward tag claims — tags that are planned but not yet pushed to origin.
+#
+# The tag-claim-check CI job treats entries here as expected forward
+# references and emits a warning instead of a hard failure.
+#
+# IMPORTANT: Remove an entry from this file the moment the corresponding
+# tag is pushed to origin. Stale entries hide real unresolved claims.
+#
+# Format:
+#   TAG  # REASON — workstream or milestone that will push this tag
+#
+v0.3.0  # Phase 3 cleanup gate — pushed by W21 (21-phase3-cleanup-gate.md)

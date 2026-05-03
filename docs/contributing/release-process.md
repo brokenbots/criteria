@@ -1,99 +1,178 @@
-# Release process — RC artifact upload
+# Release process
 
-## What this is
+This document describes how Criteria releases are built, signed, and published,
+and how that differs from the RC artifact workflow used during the review window.
 
-For every pull request that targets a release candidate, CI builds a
-downloadable artifact bundle and attaches it to the workflow run. This
-lets reviewers inspect or test the candidate binary without rebuilding
-the project locally.
+## Release vs RC artifact
 
-This mechanism covers the **review window** only. The final tagged
-release uses a separate release workflow and publishes to the project's
-GitHub Releases page.
-
-## How to trigger it
-
-Open a pull request where **at least one** of the following is true:
-
-| Condition | Example branch / title | Artifact name |
+| Dimension | RC artifact | Release |
 |---|---|---|
-| Branch name starts with `release/` | `release/v0.3.0-rc1` | `criteria-v0.3.0-rc1` |
-| PR title contains `<semver>-rc<N>` | `Release v0.3.0-rc1: ...` | `criteria-v0.3.0-rc1` |
-| PR title contains `-rc<N>` (no semver prefix) | `Hotfix -rc2 for storage` | `criteria-rc2` |
+| **Trigger** | PR with `release/<tag>` branch or `-rc<N>` title | `vX.Y.Z` tag push (no pre-release suffix) |
+| **Produced by** | `release-artifacts` job in `ci.yml` | `release.yml` workflow |
+| **Destination** | PR Artifacts panel (workflow run) | GitHub Releases page |
+| **Signed** | No | Yes — `SHA256SUMS` signed by cosign |
+| **Published** | No | Yes |
+| **Retention** | 30 days (workflow artifact) | Permanent (GitHub Release) |
+| **Spec** | [archived/v2/13-rc-artifact-upload.md](../../workstreams/archived/v2/13-rc-artifact-upload.md) | This document |
 
-The `release-artifacts` CI job is skipped on all other PRs, so
-regular feature and fix PRs are unaffected.
+### RC artifact
 
-**Tag extraction rules (title-based triggers):**
+The `release-artifacts` job in [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml)
+runs only on pull requests whose branch starts with `release/` or whose title
+contains `-rc<N>`. It builds the current Linux/amd64 binaries, packages them
+with a runtime image tar and a `SHA256SUMS` file, and uploads them to the
+workflow run's Artifacts panel. This is for reviewer inspection during the
+review window only. It is **not** signed and **not** published.
 
-The artifact name is derived from the PR title in two passes:
+### Release
 
-1. **Semver+RC match** — extracts the first token matching
-   `v?X.Y.Z-rcN` (the `-rcN` suffix is **required**; a bare semver
-   without it does not match this pass). Example: `Release v0.3.0-rc1`
-   → `criteria-v0.3.0-rc1`.
-2. **RC-marker fallback** — if no semver+RC token is found, extracts
-   the first `-rc<N>` substring and strips the leading `-`. Example:
-   `Hotfix -rc2 for storage` → `criteria-rc2`.
+A release is triggered by pushing a tag of the form `vX.Y.Z` (no pre-release
+suffix). The `release.yml` workflow runs four sequential jobs:
 
-A title that triggers the job but matches neither pass (e.g. `Bugfix
-foo-rc` with no digit after `-rc`) causes the job to fail loudly with
-`ERROR: could not extract RC tag`. This is intentional: the operator
-must fix the branch name or title before the artifact can be built.
+1. **`build`** — cross-compiles binaries for all four supported platforms and
+   packages each as a tarball.
+2. **`docker-image`** — builds the runtime image and saves it as a tar.
+3. **`checksum-and-sign`** — computes `SHA256SUMS` for all artifacts and signs
+   it with cosign.
+4. **`release`** — creates the GitHub Release with all artifacts attached and
+   release notes pulled from `CHANGELOG.md`.
 
-> **Convention:** avoid PR titles that contain `-rc<N>` for non-release
-> work (e.g. `refactor-rc1-...`). If false positives become frequent,
-> switch to branch-name-only triggering by removing the title condition
-> from `ci.yml`.
+---
 
-## What gets uploaded
+## Supported platforms
 
-| File | Description |
+Each release produces one tarball per platform:
+
+| Tarball | Contents |
 |---|---|
-| `criteria` | Main CLI binary (linux/amd64) |
-| `criteria-adapter-copilot` | Copilot adapter plugin |
-| `criteria-adapter-mcp` | MCP adapter plugin |
-| `criteria-adapter-noop` | No-op adapter plugin |
-| `criteria-runtime.tar` | Runtime container image (load with `docker load`) |
-| `SHA256SUMS` | Checksums for all files above |
+| `criteria-<tag>-linux-amd64.tar.gz` | `criteria` + adapters + `LICENSE` + `README.md` |
+| `criteria-<tag>-linux-arm64.tar.gz` | same |
+| `criteria-<tag>-darwin-amd64.tar.gz` | same |
+| `criteria-<tag>-darwin-arm64.tar.gz` | same |
+| `criteria-runtime-<tag>.tar` | Docker runtime image (load with `docker load`) |
+| `SHA256SUMS` | SHA256 checksums for all of the above |
+| `SHA256SUMS.sig` | cosign signature of `SHA256SUMS` |
+| `SHA256SUMS.cert` | cosign signing certificate |
 
-## Where to find it
+---
 
-1. Open the PR on GitHub.
-2. Click the **Checks** tab and select the `release-artifacts` job.
-3. Scroll to the **Artifacts** section at the bottom of the job summary.
-4. Download the zip named `criteria-<tag>` (e.g. `criteria-v0.3.0-rc1`).
-
-## Verifying the download
+## How to trigger a release
 
 ```sh
-# Unzip the artifact.
-unzip criteria-v0.3.0-rc1.zip -d criteria-v0.3.0-rc1/
-cd criteria-v0.3.0-rc1/
-
-# Verify checksums.
-sha256sum -c SHA256SUMS
-
-# Load the runtime image.
-docker load -i criteria-runtime.tar
-
-# Run the CLI.
-chmod +x criteria
-./criteria --version
+git tag -a vX.Y.Z -m "Release vX.Y.Z"
+git push origin vX.Y.Z
 ```
 
-## Retention
+The `release.yml` workflow starts automatically. Monitor it at
+`https://github.com/brokenbots/criteria/actions`.
 
-Artifacts are retained for **30 days** from the workflow run. Download
-before that window closes if you need the artifact beyond the review
-cycle.
+> **Important:** the `tag-claim-check` CI job verifies that every tag claimed
+> in the tracked docs (`README.md`, `PLAN.md`, `CHANGELOG.md`,
+> `workstreams/README.md`, `docs/`) exists on remote before a PR or push to
+> `main` is accepted. Push the tag **before** (or as part of) landing changes
+> that add the tag to any of these docs.
 
-## What this is not
+---
 
-- This does **not** create a GitHub Release or publish to a registry.
-- This does **not** sign the binaries (no GPG or sigstore).
-- The runtime image is uploaded as a tar for local loading only; it is
-  not pushed to any registry from the RC PR.
+## Verifying a release download
 
-The final tagged release (post-merge, post-approval) is responsible for
-signing, registry publish, and the official GitHub Release entry.
+```sh
+# Download the tarball and checksum file from the GitHub Releases page.
+tar -xzf criteria-vX.Y.Z-linux-amd64.tar.gz
+sha256sum -c SHA256SUMS
+
+# Verify the cosign signature (keyless — no key material needed).
+cosign verify-blob \
+  --certificate SHA256SUMS.cert \
+  --signature SHA256SUMS.sig \
+  --certificate-identity-regexp 'https://github.com/brokenbots/criteria/.github/workflows/release.yml' \
+  --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+  SHA256SUMS
+```
+
+---
+
+## Signing details
+
+The checksum manifest (`SHA256SUMS`) is signed, not the individual binaries.
+This is the modern signing practice and sufficient for supply-chain verification.
+
+**Preferred path — cosign keyless (GitHub OIDC):**
+No key material is stored. The `release.yml` workflow uses the GitHub Actions
+OIDC token to obtain a short-lived signing certificate from Sigstore's Fulcio
+CA. The workflow requires `permissions: id-token: write`. Verification uses the
+certificate's Subject Alternative Name (SAN) to confirm the signature came from
+this specific workflow path and OIDC issuer.
+
+**Fallback — cosign with a stored key:**
+If keyless signing is unavailable (e.g. OIDC not configured for the org), the
+workflow falls back to `cosign sign-blob --key` using the `RELEASE_SIGNING_KEY`
+repository secret (base64-encoded cosign private key) and
+`RELEASE_SIGNING_PASSWORD`. Configure these secrets in
+`Settings → Secrets and variables → Actions`.
+
+If neither signing path is available the workflow **does not publish a release**
+— it surfaces the failure explicitly. Fix the signing configuration (OIDC
+permissions or the `RELEASE_SIGNING_KEY` secret) and re-run the workflow.
+
+---
+
+## Docker image
+
+The release builds `criteria/runtime:<tag>` using `Dockerfile.runtime` and
+saves it as `criteria-runtime-<tag>.tar`. It is included as a release asset for
+local loading only:
+
+```sh
+docker load -i criteria-runtime-vX.Y.Z.tar
+docker run --rm criteria/runtime:vX.Y.Z --help
+```
+
+Registry publishing (Docker Hub, GHCR, ECR) is a project-level decision not
+covered by this workflow; the image is not pushed to any registry during release.
+
+---
+
+## Release notes
+
+Release notes are extracted automatically from `CHANGELOG.md`. The extractor
+takes the content between the `## [vX.Y.Z]` heading and the next `##` heading.
+If the tag has no matching section, the release body defaults to `Release vX.Y.Z`.
+
+Keep `CHANGELOG.md` updated before tagging. See [CONTRIBUTING.md](../../CONTRIBUTING.md)
+for the changelog entry format.
+
+---
+
+## Recovery: re-running a failed release
+
+If the release workflow fails (e.g., signing secret missing, network error):
+
+1. Fix the root cause (configure the secret, etc.).
+2. Re-run the failed job from the GitHub Actions UI, or delete and re-push the tag
+   if the workflow did not create a GitHub Release yet.
+3. If a partial release was published, delete it via `gh release delete <tag>`,
+   then re-push the tag.
+
+---
+
+## Tag-claim guard
+
+The `tag-claim-check` job in `ci.yml` runs on every PR and every push to `main`.
+It scans `README.md`, `PLAN.md`, `CHANGELOG.md`, `workstreams/README.md`, and
+`docs/**/*.md` for version strings that appear alongside a "tag" or "release"
+keyword (or as a `## [vX.Y.Z]` CHANGELOG heading) and verifies each claimed tag
+exists on the remote. The guard prevents docs from claiming a tag before the tag
+is pushed.
+
+The extractor script is at `tools/release/extract-tag-claims.sh`.
+Smoke tests are at `tools/release/tests/extract-tag-claims_test.sh`.
+
+---
+
+## Deferred: README.md cross-link
+
+A cross-link from `README.md` to this document and to the RC artifact section
+is deferred to [workstreams/phase3/21-phase3-cleanup-gate.md](../../workstreams/phase3/21-phase3-cleanup-gate.md),
+which owns the `README.md` coordination set.
+

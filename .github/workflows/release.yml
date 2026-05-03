@@ -1,0 +1,215 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]*.[0-9]*.[0-9]*'   # release tags only
+      - '!v*-*'                    # exclude pre-release tags (e.g. v0.3.0-rc1)
+
+permissions:
+  contents: write   # create GitHub Release + upload assets
+  id-token: write   # cosign keyless OIDC signing
+
+jobs:
+  build:
+    name: Build binaries
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Sync workspace
+        run: go work sync
+
+      - name: Build criteria binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: make build
+
+      - name: Build adapter plugins
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: make plugins
+
+      - name: Package tarball
+        run: |
+          TAG="${{ github.ref_name }}"
+          OS="${{ matrix.goos }}"
+          ARCH="${{ matrix.goarch }}"
+          TARBALL="criteria-${TAG}-${OS}-${ARCH}.tar.gz"
+          mkdir -p dist/${OS}-${ARCH}
+          cp bin/criteria bin/criteria-adapter-* LICENSE README.md dist/${OS}-${ARCH}/
+          tar -czf "$TARBALL" -C dist/${OS}-${ARCH} .
+          echo "tarball=${TARBALL}" >> "$GITHUB_ENV"
+
+      - name: Upload tarball artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: criteria-${{ github.ref_name }}-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: criteria-${{ github.ref_name }}-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz
+          if-no-files-found: error
+
+  docker-image:
+    name: Build Docker image tar
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build runtime image
+        run: |
+          TAG="${{ github.ref_name }}"
+          make docker-runtime
+          docker tag criteria/runtime:dev "criteria/runtime:${TAG}"
+          docker tag criteria/runtime:dev "criteria/runtime:latest"
+
+      - name: Save image as tar
+        run: |
+          TAG="${{ github.ref_name }}"
+          TARBALL="criteria-runtime-${TAG}.tar"
+          docker save -o "$TARBALL" "criteria/runtime:${TAG}"
+
+      - name: Upload Docker image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: criteria-runtime-${{ github.ref_name }}
+          path: criteria-runtime-${{ github.ref_name }}.tar
+          if-no-files-found: error
+
+  checksum-and-sign:
+    name: Checksum and sign
+    runs-on: ubuntu-latest
+    needs: [build, docker-image]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Flatten artifact directories
+        run: |
+          mkdir -p release-assets
+          find artifacts/ -type f \( -name '*.tar.gz' -o -name '*.tar' \) \
+            -exec cp {} release-assets/ \;
+          ls -lh release-assets/
+
+      - name: Compute SHA256SUMS
+        working-directory: release-assets
+        run: sha256sum * > SHA256SUMS
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign SHA256SUMS (keyless via GitHub OIDC)
+        working-directory: release-assets
+        run: |
+          cosign sign-blob \
+            --yes \
+            --output-signature SHA256SUMS.sig \
+            --output-certificate SHA256SUMS.cert \
+            SHA256SUMS
+        continue-on-error: true   # keyless may be unavailable; see release-process.md
+
+      - name: Sign SHA256SUMS (key-based fallback)
+        if: ${{ secrets.RELEASE_SIGNING_KEY != '' && hashFiles('release-assets/SHA256SUMS.sig') == '' }}
+        working-directory: release-assets
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+          RELEASE_SIGNING_PASSWORD: ${{ secrets.RELEASE_SIGNING_PASSWORD }}
+        run: |
+          echo "$RELEASE_SIGNING_KEY" | base64 -d > /tmp/signing.key
+          COSIGN_PASSWORD="$RELEASE_SIGNING_PASSWORD" cosign sign-blob \
+            --key /tmp/signing.key \
+            --output-signature SHA256SUMS.sig \
+            --output-certificate SHA256SUMS.cert \
+            SHA256SUMS
+          rm -f /tmp/signing.key
+
+      - name: Require signature
+        working-directory: release-assets
+        run: |
+          if [[ ! -f SHA256SUMS.sig ]]; then
+            echo "::error::Neither signing path produced SHA256SUMS.sig."
+            echo "::error::Configure OIDC permissions or set RELEASE_SIGNING_KEY / RELEASE_SIGNING_PASSWORD secrets."
+            exit 1
+          fi
+
+      - name: Upload checksums and signatures
+        uses: actions/upload-artifact@v4
+        with:
+          name: checksums-and-signatures
+          path: |
+            release-assets/SHA256SUMS
+            release-assets/SHA256SUMS.sig
+            release-assets/SHA256SUMS.cert
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    runs-on: ubuntu-latest
+    needs: [checksum-and-sign]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Flatten release assets
+        run: |
+          mkdir -p release-assets
+          find artifacts/ -type f -exec cp {} release-assets/ \;
+          ls -lh release-assets/
+
+      - name: Extract release notes from CHANGELOG.md
+        id: notes
+        run: |
+          TAG="${{ github.ref_name }}"
+          # Extract the block between ## [TAG] and the next ## heading.
+          python3 - "$TAG" CHANGELOG.md <<'EOF'
+          import sys, re
+          tag, path = sys.argv[1], sys.argv[2]
+          text = open(path).read()
+          # Match the section starting with ## [TAG] through the next ## heading (exclusive).
+          pattern = rf'(^## \[{re.escape(tag)}\].*?)(?=^## |\Z)'
+          m = re.search(pattern, text, re.MULTILINE | re.DOTALL)
+          body = m.group(1).strip() if m else f"Release {tag}"
+          # Write to a file to avoid shell quoting issues.
+          open("release-notes.md", "w").write(body)
+          EOF
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ github.ref_name }}"
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --notes-file release-notes.md \
+            release-assets/*
