@@ -38,7 +38,8 @@ func testPermissionRequestShape(t *testing.T, name string, loader plugin.Loader,
 		t.Skip("permission_request_shape skipped: plugin does not advertise permission_gating")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// 30 s matches the StartTimeout in the loader.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	plug, err := loader.Resolve(ctx, name)

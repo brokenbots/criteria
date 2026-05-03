@@ -213,3 +213,24 @@ All three stability-gate criteria now met with full evidence recorded in `flakey
 - `go test -race -count=20 ./...` root module ✓ + sdk/ ✓ + workflow/ ✓
 - `make ci` ✓
 
+### Review 2026-05-02-02 — changes-requested
+
+#### Summary
+The previous review blocker is closed: `flakey-test-worklog.md` now records the required count=20 race evidence for the root, `sdk/`, and `workflow/` modules, and the timeout rationale mismatch was corrected. I am still requesting changes because the new `pollForFile` fix in `internal/cli/localresume` changes observable file-mode behavior: persistently malformed JSON now waits until the file timeout elapses before failing instead of surfacing a prompt validation error, and the updated test was weakened to permit that timeout path. The plugin timeout changes validated cleanly in focused race runs and did not raise additional review findings.
+
+#### Plan Adherence
+- Stability gate: met. The worklog now contains three consecutive `make test-flake-watch` passes, a root-module `go test -race -count=20 ./...` pass, separate `sdk/` and `workflow/` `-count=20` passes, and a final `make ci` pass.
+- `internal/plugin` / conformance timeout hardening: implemented and consistent across `loader.go`, `handshake_test.go`, and `conformance.go`.
+- `internal/cli/localresume` flake remediation: partially met. The code now tolerates transient decode failures, but it also broadens that retry behavior to all JSON parse errors and changes the invalid-input failure mode.
+
+#### Required Remediations
+- **blocker** — `internal/cli/localresume/resumer.go:393-423`: `pollForFile` now retries on every `json.Unmarshal` error until the overall file timeout expires. In production file mode the default timeout is one hour, so a persistently malformed operator file now hangs until timeout instead of failing promptly with an invalid-JSON error. That is an observable behavior change, which violates the workstream's "no behavior changes" constraint. **Acceptance:** narrow the retry logic so it only covers the transient partial-write case that caused the flake, while preserving prompt failure for persistently malformed JSON. For example, retry only specific truncation/empty-file decode errors for a bounded interval or make the write path deterministic in tests instead of broadening runtime semantics.
+- **blocker** — `internal/cli/localresume/resumer_test.go:409-433`: the updated invalid-JSON test does not prove the intended behavior. It explicitly accepts either `"invalid JSON"` or `"timed out"`, so the implementation can regress to the slower timeout path and still pass. There is also no deterministic regression test that proves a transient partial write is retried and then consumed successfully once the file becomes valid. **Acceptance:** strengthen the tests so they (1) require a concrete invalid-JSON failure for persistently malformed content and (2) add a deterministic partial-write test that first exposes truncated JSON and then completes the file, asserting the approval is consumed successfully without flaking.
+
+#### Test Intent Assessment
+The plugin-related tests are still strong: caching the binaries and aligning startup budgets directly exercise the flake mechanism, and the focused race runs stayed green. The local-resume tests are not yet at the same bar. `TestFileMode_Approval_WritesAndConsumes` still relies on opportunistic scheduling to hit the mid-write window, so it does not validate the new retry path deterministically, and `TestFileMode_InvalidJSON` now tolerates the very timeout-based behavior that should be rejected as a regression.
+
+#### Validation Performed
+- `go test ./internal/cli/localresume -run 'TestFileMode_(Approval_WritesAndConsumes|InvalidJSON|MissingDecisionKey)' -count=10` — passed.
+- `go test ./internal/plugin -run 'TestHandshakeInfo|TestPublicSDKFixtureConformance' -count=3` — passed.
+- `go test -race -count=10 ./internal/cli/localresume ./internal/plugin ./internal/adapter/conformance` — passed.
