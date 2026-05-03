@@ -25,6 +25,24 @@ type LocalNode struct {
 	Description string
 }
 
+// EnvironmentSpec declares a typed execution environment in HCL.
+// The HCL form has two labels: type then name.
+//
+//	environment "shell" "default" { variables = {...}, config = {...} }
+type EnvironmentSpec struct {
+	Type   string   `hcl:"type,label"`
+	Name   string   `hcl:"name,label"`
+	Remain hcl.Body `hcl:",remain"` // captures variables and config attributes
+}
+
+// EnvironmentNode is a compiled environment declaration.
+type EnvironmentNode struct {
+	Type      string
+	Name      string
+	Variables map[string]string    // resolved env vars (compile-folded)
+	Config    map[string]cty.Value // type-specific config (compile-folded; shape unenforced for v0.3.0)
+}
+
 // OutputNode is a compiled output declaration. The value expression is
 // evaluated at runtime when the run reaches a terminal state.
 type OutputNode struct {
@@ -36,21 +54,23 @@ type OutputNode struct {
 
 // Spec is the parsed (but unvalidated) HCL workflow document.
 type Spec struct {
-	Name         string           `hcl:"name,label"`
-	Version      string           `hcl:"version"`
-	InitialState string           `hcl:"initial_state"`
-	TargetState  string           `hcl:"target_state"`
-	Variables    []VariableSpec   `hcl:"variable,block"`
-	Locals       []LocalSpec      `hcl:"local,block"`
-	Outputs      []OutputSpec     `hcl:"output,block"`
-	Agents       []AgentSpec      `hcl:"agent,block"`
-	Steps        []StepSpec       `hcl:"step,block"`
-	States       []StateSpec      `hcl:"state,block"`
-	Waits        []WaitSpec       `hcl:"wait,block"`
-	Approvals    []ApprovalSpec   `hcl:"approval,block"`
-	Branches     []BranchSpec     `hcl:"branch,block"`
-	Policy       *PolicySpec      `hcl:"policy,block"`
-	Permissions  *PermissionsSpec `hcl:"permissions,block"`
+	Name               string            `hcl:"name,label"`
+	Version            string            `hcl:"version"`
+	InitialState       string            `hcl:"initial_state"`
+	TargetState        string            `hcl:"target_state"`
+	DefaultEnvironment string            `hcl:"environment,optional"` // "<type>.<name>" reference to the workflow's default environment
+	Variables          []VariableSpec    `hcl:"variable,block"`
+	Locals             []LocalSpec       `hcl:"local,block"`
+	Environments       []EnvironmentSpec `hcl:"environment,block"`
+	Outputs            []OutputSpec      `hcl:"output,block"`
+	Agents             []AgentSpec       `hcl:"agent,block"`
+	Steps              []StepSpec        `hcl:"step,block"`
+	States             []StateSpec       `hcl:"state,block"`
+	Waits              []WaitSpec        `hcl:"wait,block"`
+	Approvals          []ApprovalSpec    `hcl:"approval,block"`
+	Branches           []BranchSpec      `hcl:"branch,block"`
+	Policy             *PolicySpec       `hcl:"policy,block"`
+	Permissions        *PermissionsSpec  `hcl:"permissions,block"`
 	// SourceBytes holds the raw HCL source that was parsed to produce this Spec.
 	// Populated by Parse/ParseFile; used by the compiler to extract expression
 	// source text (e.g. for BranchEvaluated.Condition).
@@ -142,16 +162,17 @@ type StepSpec struct {
 // this struct is decoded separately by compileWorkflowBodyInline rather than
 // embedded directly in BodySpec.
 type SpecContent struct {
-	Variables   []VariableSpec   `hcl:"variable,block"`
-	Locals      []LocalSpec      `hcl:"local,block"`
-	Agents      []AgentSpec      `hcl:"agent,block"`
-	Steps       []StepSpec       `hcl:"step,block"`
-	States      []StateSpec      `hcl:"state,block"`
-	Waits       []WaitSpec       `hcl:"wait,block"`
-	Approvals   []ApprovalSpec   `hcl:"approval,block"`
-	Branches    []BranchSpec     `hcl:"branch,block"`
-	Policy      *PolicySpec      `hcl:"policy,block"`
-	Permissions *PermissionsSpec `hcl:"permissions,block"`
+	Variables    []VariableSpec    `hcl:"variable,block"`
+	Locals       []LocalSpec       `hcl:"local,block"`
+	Environments []EnvironmentSpec `hcl:"environment,block"`
+	Agents       []AgentSpec       `hcl:"agent,block"`
+	Steps        []StepSpec        `hcl:"step,block"`
+	States       []StateSpec       `hcl:"state,block"`
+	Waits        []WaitSpec        `hcl:"wait,block"`
+	Approvals    []ApprovalSpec    `hcl:"approval,block"`
+	Branches     []BranchSpec      `hcl:"branch,block"`
+	Policy       *PolicySpec       `hcl:"policy,block"`
+	Permissions  *PermissionsSpec  `hcl:"permissions,block"`
 }
 
 // BodySpec is the thin parsed header for an inline `workflow { ... }` block
@@ -292,20 +313,22 @@ type PermissionsSpec struct {
 
 // FSMGraph is the validated, executable representation of a workflow.
 type FSMGraph struct {
-	Name         string
-	InitialState string
-	TargetState  string
-	Variables    map[string]*VariableNode // compiled variable declarations (W04)
-	Locals       map[string]*LocalNode    // compiled local declarations (W07)
-	Outputs      map[string]*OutputNode   // compiled output declarations (W09)
-	OutputOrder  []string                 // declaration order for stable iteration
-	Agents       map[string]*AgentNode
-	Steps        map[string]*StepNode     // by step name
-	States       map[string]*StateNode    // by state name (terminal etc.)
-	Waits        map[string]*WaitNode     // by wait node name (W05)
-	Approvals    map[string]*ApprovalNode // by approval node name (W05)
-	Branches     map[string]*BranchNode   // by branch node name (W06)
-	Policy       Policy
+	Name               string
+	InitialState       string
+	TargetState        string
+	Variables          map[string]*VariableNode    // compiled variable declarations (W04)
+	Locals             map[string]*LocalNode       // compiled local declarations (W07)
+	Environments       map[string]*EnvironmentNode // compiled environment declarations; keyed by "<type>.<name>"
+	DefaultEnvironment string                      // optional; set if exactly one env is declared or explicitly set on workflow header
+	Outputs            map[string]*OutputNode      // compiled output declarations (W09)
+	OutputOrder        []string                    // declaration order for stable iteration
+	Agents             map[string]*AgentNode
+	Steps              map[string]*StepNode     // by step name
+	States             map[string]*StateNode    // by state name (terminal etc.)
+	Waits              map[string]*WaitNode     // by wait node name (W05)
+	Approvals          map[string]*ApprovalNode // by approval node name (W05)
+	Branches           map[string]*BranchNode   // by branch node name (W06)
+	Policy             Policy
 	// Order of step declarations (stable for diagnostics).
 	stepOrder []string
 }

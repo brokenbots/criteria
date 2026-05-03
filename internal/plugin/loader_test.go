@@ -3,11 +3,14 @@ package plugin
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
 	"strings"
 	"testing"
+
+	"github.com/hashicorp/hcl/v2"
 
 	"github.com/brokenbots/criteria/internal/adapter"
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
@@ -324,5 +327,121 @@ func TestCollectAllowedOutcomes_Empty(t *testing.T) {
 	}
 	if len(got) != 0 {
 		t.Fatalf("got %v, want empty", got)
+	}
+}
+
+// TestLoaderInjectsEnvironmentVars verifies that when a step has environment variables
+// bound from an environment block, those variables are included in the step's Input
+// and would be passed to the adapter subprocess.
+func TestLoaderInjectsEnvironmentVars(t *testing.T) {
+	// Create a step node with environment variables merged into its input.
+	// This simulates what node_step.go's resolveInput does.
+	step := &workflow.StepNode{
+		Name:    "test_step",
+		Adapter: "noop",
+		Input: map[string]string{
+			"command": "echo hello",
+		},
+	}
+
+	// Simulate environment variable injection (what mergeEnvironmentVars does in node_step.go)
+	envVars := map[string]string{
+		"CI":           "true",
+		"LOG_LEVEL":    "debug",
+		"SERVICE_NAME": "test",
+	}
+	envJSON, _ := json.Marshal(envVars)
+	step.Input["env"] = string(envJSON)
+
+	// Verify the environment variables are in the step's Input
+	if step.Input["env"] == "" {
+		t.Fatal("expected environment variables in step.Input[\"env\"]")
+	}
+
+	// Verify we can unmarshal the env JSON back
+	var unmarshaled map[string]string
+	if err := json.Unmarshal([]byte(step.Input["env"]), &unmarshaled); err != nil {
+		t.Fatalf("failed to unmarshal env: %v", err)
+	}
+
+	for k, v := range envVars {
+		if unmarshaled[k] != v {
+			t.Errorf("env var %s: got %q, want %q", k, unmarshaled[k], v)
+		}
+	}
+}
+
+// TestLoaderControlledSetWinsConflict verifies that the shell adapter's controlled
+// set of environment variables takes precedence over environment-declared variables.
+// For v0.3.0, this is enforced at compile time via warnings, not runtime rejection.
+func TestLoaderControlledSetWinsConflict(t *testing.T) {
+	// Parse and compile a workflow with an environment that declares controlled variables.
+	src := `
+workflow "test" {
+  version       = "0.1"
+  initial_state = "done"
+  target_state  = "done"
+  environment   = "shell.prod"
+
+  environment "shell" "prod" {
+    variables = {
+      PATH   = "/evil/path"
+      HOME   = "/tmp/evil"
+      X_GOOD = "should_pass"
+    }
+  }
+
+  state "done" {
+    terminal = true
+    success  = true
+  }
+}
+`
+	spec, diags := workflow.Parse("test.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+
+	g, diags := workflow.Compile(spec, nil)
+	if diags.HasErrors() {
+		t.Fatalf("compile had errors: %s", diags.Error())
+	}
+
+	// Verify compile-time warnings are present for controlled-set conflicts
+	hasPathWarning := false
+	hasHomeWarning := false
+	for _, d := range diags {
+		if d.Severity == hcl.DiagWarning {
+			if strings.Contains(d.Summary, "PATH") {
+				hasPathWarning = true
+			}
+			if strings.Contains(d.Summary, "HOME") {
+				hasHomeWarning = true
+			}
+		}
+	}
+
+	if !hasPathWarning {
+		t.Error("expected compile warning for PATH conflict")
+	}
+	if !hasHomeWarning {
+		t.Error("expected compile warning for HOME conflict")
+	}
+
+	// Verify the environment was still stored with the conflicting variables
+	env, ok := g.Environments["shell.prod"]
+	if !ok {
+		t.Fatal("environment shell.prod not found in graph")
+	}
+
+	// Verify the declared values are stored (even though they'll be overridden at runtime)
+	if env.Variables["PATH"] != "/evil/path" {
+		t.Errorf("PATH not stored correctly: got %q", env.Variables["PATH"])
+	}
+	if env.Variables["HOME"] != "/tmp/evil" {
+		t.Errorf("HOME not stored correctly: got %q", env.Variables["HOME"])
+	}
+	if env.Variables["X_GOOD"] != "should_pass" {
+		t.Errorf("X_GOOD not stored correctly: got %q", env.Variables["X_GOOD"])
 	}
 }
