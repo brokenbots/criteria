@@ -499,3 +499,28 @@ Two reviewer threads raised after approval. Both addressed:
 - `make test` — all packages pass.
 - `make lint-go` — clean (gofmt applied to iteration_compile_test.go).
 - 5 new tests all pass.
+
+### Review 2026-05-03-06 — approved
+
+#### Summary
+
+Approved. The post-merge fixes address both follow-up review threads: workflow-body `output {}` expressions are now compile-validated against the child scope rather than the parent graph, and inline body `name`/`version` are now wired correctly while the non-functional `target_state` field is rejected. The changed workflow paths, new tests, and repository validation all pass.
+
+#### Plan Adherence
+
+- **Step 1:** Still satisfied. The inline body remains backed by shared workflow content schema, and the follow-up `name`/`version` wiring now matches the exposed body header surface.
+- **Step 2:** Still satisfied. Explicit body input binding and validation behavior remains intact after the follow-up changes.
+- **Step 4:** Strengthened. Compile-time validation for body `output {}` expressions now matches the runtime child-scope evaluation context, so body-scoped `var.*`/`local.*` references are accepted and parent-only ones are rejected.
+- **Schema surface:** Improved. `target_state` is no longer exposed on inline bodies even though `_continue` is the only valid internal target, avoiding a misleading/non-functional field.
+
+#### Test Intent Assessment
+
+The new tests close real contract gaps rather than just boosting count: they prove child-scope body vars are accepted in output expressions, parent-only vars are rejected, body header `name`/`version` are propagated into the synthetic spec, defaults still apply when omitted, and `target_state` inside an inline body is rejected at compile time. Those assertions are aligned with the actual behavior and prevent regression on both review-thread fixes.
+
+#### Validation Performed
+
+- `git diff --stat HEAD^..HEAD` — reviewed the new code changes in `workflow/compile_steps_graph.go`, `workflow/compile_steps_workflow.go`, `workflow/schema.go`, and associated tests.
+- `go test -race -count=2 ./workflow/...` — passed.
+- `go test -cover ./workflow` — passed (`workflow` 86.1%).
+- `make lint-go && make test` — passed.
+- `make ci` — passed.
