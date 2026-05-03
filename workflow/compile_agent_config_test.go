@@ -559,24 +559,24 @@ workflow "x" {
 // with a clear error. agent.config has no runtime resolution path — it is
 // decoded once at compile and stored as a static map.
 func TestAgentConfigRejectsRuntimeOnlyNamespaces(t *testing.T) {
-cases := []struct {
-name     string
-attrExpr string
-wantErr  string
-}{
-{
-name:     "steps reference",
-attrExpr: `system_prompt = steps.summarise.stdout`,
-wantErr:  "steps",
-},
-{
-name:     "each reference",
-attrExpr: `system_prompt = each.value`,
-wantErr:  "each",
-},
-}
+	cases := []struct {
+		name     string
+		attrExpr string
+		wantErr  string
+	}{
+		{
+			name:     "steps reference",
+			attrExpr: `system_prompt = steps.summarise.stdout`,
+			wantErr:  "steps",
+		},
+		{
+			name:     "each reference",
+			attrExpr: `system_prompt = each.value`,
+			wantErr:  "each",
+		},
+	}
 
-tmpl := `
+	tmpl := `
 workflow "x" {
   version       = "0.1"
   initial_state = "open"
@@ -595,20 +595,20 @@ workflow "x" {
   state "done" { terminal = true }
 }
 `
-for _, tc := range cases {
-t.Run(tc.name, func(t *testing.T) {
-src := fmt.Sprintf(tmpl, tc.attrExpr)
-spec, diags := Parse("t.hcl", []byte(src))
-if diags.HasErrors() {
-t.Fatalf("parse: %s", diags.Error())
-}
-_, diags = Compile(spec, testSchemas)
-if !diags.HasErrors() {
-t.Fatalf("expected compile error for runtime-only namespace %q in agent.config, but compiled successfully", tc.name)
-}
-if !strings.Contains(strings.ToLower(diags.Error()), tc.wantErr) {
-t.Errorf("error %q does not mention %q", diags.Error(), tc.wantErr)
-}
-})
-}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			src := fmt.Sprintf(tmpl, tc.attrExpr)
+			spec, diags := Parse("t.hcl", []byte(src))
+			if diags.HasErrors() {
+				t.Fatalf("parse: %s", diags.Error())
+			}
+			_, diags = Compile(spec, testSchemas)
+			if !diags.HasErrors() {
+				t.Fatalf("expected compile error for runtime-only namespace %q in agent.config, but compiled successfully", tc.name)
+			}
+			if !strings.Contains(strings.ToLower(diags.Error()), tc.wantErr) {
+				t.Errorf("error %q does not mention %q", diags.Error(), tc.wantErr)
+			}
+		})
+	}
 }
