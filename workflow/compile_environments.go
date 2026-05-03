@@ -56,6 +56,45 @@ func compileEnvironments(g *FSMGraph, spec *Spec, opts CompileOpts) hcl.Diagnost
 
 // compileEnvironmentBlock validates and compiles a single environment declaration.
 func compileEnvironmentBlock(g *FSMGraph, envSpec EnvironmentSpec, opts CompileOpts, seen map[string]bool) hcl.Diagnostics {
+	// Validate block basics (type, name, duplicates)
+	diags := validateEnvironmentBasics(envSpec, seen)
+	if diags.HasErrors() {
+		return diags
+	}
+
+	key := fmt.Sprintf("%s.%s", envSpec.Type, envSpec.Name)
+	seen[key] = true
+
+	// Parse variables and config attributes
+	attrs, d := envSpec.Remain.JustAttributes()
+	diags = append(diags, d...)
+
+	// Decode variables and config
+	variables, d := decodeEnvironmentVariables(attrs, opts)
+	diags = append(diags, d...)
+	config, d := decodeEnvironmentConfig(attrs, opts)
+	diags = append(diags, d...)
+
+	if diags.HasErrors() {
+		return diags
+	}
+
+	// Check for controlled-set conflicts
+	diags = append(diags, checkShellControlledSetConflicts(envSpec.Type, variables, attrs)...)
+
+	// Store the compiled environment
+	g.Environments[key] = &EnvironmentNode{
+		Type:      envSpec.Type,
+		Name:      envSpec.Name,
+		Variables: variables,
+		Config:    config,
+	}
+
+	return diags
+}
+
+// validateEnvironmentBasics validates type, name, and duplicate checks for an environment block.
+func validateEnvironmentBasics(envSpec EnvironmentSpec, seen map[string]bool) hcl.Diagnostics {
 	var diags hcl.Diagnostics
 
 	// Validate type is registered.
@@ -84,35 +123,6 @@ func compileEnvironmentBlock(g *FSMGraph, envSpec EnvironmentSpec, opts CompileO
 			Summary:  fmt.Sprintf("duplicate environment %q", key),
 			Subject:  envSpec.Remain.MissingItemRange().Ptr(),
 		})
-		return diags
-	}
-	seen[key] = true
-
-	// Parse variables and config attributes from the remain body.
-	attrs, d := envSpec.Remain.JustAttributes()
-	diags = append(diags, d...)
-
-	// Decode variables map (optional, must fold to map(string)).
-	variables, d := decodeEnvironmentVariables(attrs, opts)
-	diags = append(diags, d...)
-
-	// Decode config map (optional, must fold to map or object).
-	config, d := decodeEnvironmentConfig(attrs, opts)
-	diags = append(diags, d...)
-
-	if diags.HasErrors() {
-		return diags
-	}
-
-	// For shell environments, warn about variables that conflict with the controlled set.
-	diags = append(diags, checkShellControlledSetConflicts(envSpec.Type, variables, attrs)...)
-
-	// Store the compiled environment.
-	g.Environments[key] = &EnvironmentNode{
-		Type:      envSpec.Type,
-		Name:      envSpec.Name,
-		Variables: variables,
-		Config:    config,
 	}
 
 	return diags
