@@ -288,16 +288,74 @@ This workstream may **not** edit:
 
 ## Tasks
 
-- [ ] Add `LocalSpec` / `LocalNode` to schema (Step 1).
-- [ ] Implement `FoldExpr` in `compile_fold.go` (Step 2).
-- [ ] Implement `compileLocals` in `compile_locals.go` (Step 3).
-- [ ] Rewrite `validateFileFunctionCalls` → `validateFoldableAttrs` (Step 4).
-- [ ] Add call sites for every foldable attribute slot (Step 5).
-- [ ] Confirm undeclared `var.*` references are now compile errors (Step 6).
-- [ ] Extend `BuildEvalContextWithOpts` and add `SeedLocalsFromGraph` (Step 7).
-- [ ] Author all new test files (Step 9).
-- [ ] Author the example workflow under `examples/phase3-fold/` (Step 9).
-- [ ] `make ci` green; baseline cap unchanged (Step 10).
+- [x] Add `LocalSpec` / `LocalNode` to schema (Step 1).
+- [x] Implement `FoldExpr` in `compile_fold.go` (Step 2).
+- [x] Implement `compileLocals` in `compile_locals.go` (Step 3).
+- [x] Rewrite `validateFileFunctionCalls` → `validateFoldableAttrs` (Step 4).
+- [x] Add call sites for every foldable attribute slot (Step 5).
+- [x] Confirm undeclared `var.*` references are now compile errors (Step 6).
+- [x] Extend `BuildEvalContextWithOpts` and add `SeedLocalsFromGraph` (Step 7).
+- [x] Author all new test files (Step 9).
+- [x] Author the example workflow under `examples/phase3-fold/` (Step 9).
+- [x] `make ci` green; baseline cap unchanged (Step 10).
+
+## Reviewer Notes
+
+### Implementation summary
+
+All 10 steps implemented. `make ci` exits 0; no new `.golangci.baseline.yml` entries.
+
+**New files:**
+- `workflow/compile_fold.go` — `FoldExpr`, `ctyObjectOrEmpty`, `graphVars`, `graphLocals`, `runtimeOnlyNamespaces`
+- `workflow/compile_locals.go` — `compileLocals` (entry), `buildLocalIndex`, `extractLocalValueExprs`, `buildLocalDepGraph`, `addLocalDep`, `topoSortLocals`, `compileLocalNodes`, `compileOneLocal`
+- `workflow/compile_fold_test.go` — 11 unit tests for FoldExpr
+- `workflow/compile_locals_test.go` — 7 unit tests for compileLocals
+- `workflow/compile_validation_test.go` — `TestValidateFoldableAttrs_AgentConfigFile`
+- `examples/phase3-fold/fold-demo.hcl` — example demonstrating `local`, `var`, and chained local interpolation
+
+**Modified files:**
+- `workflow/schema.go`: `LocalSpec`, `LocalNode` structs; `Spec.Locals`, `FSMGraph.Locals` fields
+- `workflow/compile.go`: init `Locals` in `newFSMGraph`; call `compileLocals`; pass `opts` to `compileBranches`
+- `workflow/compile_validation.go`: `validateFileFunctionCalls` renamed/rewritten to `validateFoldableAttrs`; `fileValidateFunction` deleted; unused imports removed
+- `workflow/compile_agents.go`: `validateFoldableAttrs` call added after config decode
+- `workflow/compile_steps_adapter.go`: `decodeStepInput` takes `g *FSMGraph`; uses `validateFoldableAttrs`
+- `workflow/compile_steps_iteration.go`: extracted `validateIterExprFold`; gofmt applied to test file
+- `workflow/compile_steps_workflow.go`: updated `decodeStepInput` and `compileWorkflowOutputs` call signatures
+- `workflow/compile_steps_graph.go`: `compileWorkflowOutputs` takes `g *FSMGraph, opts CompileOpts`; validates output.value via FoldExpr
+- `workflow/compile_nodes.go`: `compileBranches` takes `opts CompileOpts`; FoldExpr called on branch arm conditions
+- `workflow/eval.go`: `SeedLocalsFromGraph` added; `BuildEvalContextWithOpts` exposes `local.*` via `vars["local"]`
+- `internal/engine/engine.go`: `seedRunVars` sets `vars["local"]` via `SeedLocalsFromGraph`
+- `workflow/compile_file_function_test.go`: replaced `SkipsVariableArgs` test with `VarArgFileExists` + `VarArgFileMissing`
+- `workflow/iteration_compile_test.go`: added `TestForEachExprFoldsAtCompile_FilesValidated`
+- `Makefile`: added `examples/phase3-fold/*.hcl` to validate glob
+
+### Behavior changes
+
+1. `var.<undeclared>` is now a compile error (previously runtime fail-silent).
+2. `file(var.x)` is validated at compile when `var.x` has a default (previously skipped).
+3. `local "<name>"` block is a new compile-time constant declaration.
+
+### Lint fixes applied during CI
+
+`compileLocals` was refactored into 7 helper functions (gocognit cap compliance). `compileIteratingStep` had `validateIterExprFold` extracted (funlen cap compliance). `iteration_compile_test.go` was gofmt-fixed.
+
+### Tests
+
+- `workflow/compile_fold_test.go`: 11 tests — pure literal, var-resolved, var-missing, local-resolved, runtime-deferred (steps.*, each.*), file() literal, file(var.path) exists, file(var.path) missing, file(steps.*) deferred
+- `workflow/compile_locals_test.go`: 7 tests — simple, depends-on-var, depends-on-earlier-local, cycle, multiple-attrs error, no-value-attr error, runtime-ref error
+- `workflow/compile_validation_test.go`: agent config file validation
+- `workflow/iteration_compile_test.go`: for_each fold/file validation
+- `workflow/compile_file_function_test.go`: var-arg file exists and file missing
+- `examples/phase3-fold/fold-demo.hcl`: validates under `make validate`
+
+### Security
+
+No new network, file, or process access beyond existing `file()` function. `FoldExpr` operates on compile-time HCL expressions only; paths are validated via `CRITERIA_WORKFLOW_ALLOWED_PATHS` as before.
+
+### Architecture
+
+`BuildEvalContextWithOpts` signature was not changed; locals are threaded through the existing `vars map[string]cty.Value` via the `"local"` key to avoid updating 5+ callers across packages.
+
 
 ## Exit criteria
 

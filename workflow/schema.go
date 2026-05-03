@@ -9,6 +9,22 @@ import (
 	"github.com/zclconf/go-cty/cty"
 )
 
+// LocalSpec is the parsed (but unvalidated) local value declaration.
+// The "value" expression is decoded by the compiler via the Remain body.
+type LocalSpec struct {
+	Name        string   `hcl:"name,label"`
+	Description string   `hcl:"description,optional"`
+	Remain      hcl.Body `hcl:",remain"` // captures the "value" expression
+}
+
+// LocalNode is a compiled local declaration with its fully-resolved value.
+type LocalNode struct {
+	Name        string
+	Type        cty.Type  // inferred from the folded value
+	Value       cty.Value // fully resolved at compile
+	Description string
+}
+
 // Spec is the parsed (but unvalidated) HCL workflow document.
 type Spec struct {
 	Name         string           `hcl:"name,label"`
@@ -16,6 +32,7 @@ type Spec struct {
 	InitialState string           `hcl:"initial_state"`
 	TargetState  string           `hcl:"target_state"`
 	Variables    []VariableSpec   `hcl:"variable,block"`
+	Locals       []LocalSpec      `hcl:"local,block"`
 	Agents       []AgentSpec      `hcl:"agent,block"`
 	Steps        []StepSpec       `hcl:"step,block"`
 	States       []StateSpec      `hcl:"state,block"`
@@ -238,6 +255,7 @@ type FSMGraph struct {
 	InitialState string
 	TargetState  string
 	Variables    map[string]*VariableNode // compiled variable declarations (W04)
+	Locals       map[string]*LocalNode    // compiled local declarations (W07)
 	Agents       map[string]*AgentNode
 	Steps        map[string]*StepNode     // by step name
 	States       map[string]*StateNode    // by state name (terminal etc.)

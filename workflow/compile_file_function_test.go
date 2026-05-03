@@ -83,11 +83,15 @@ func TestCompileFileFunctionValidation_ExistingFile(t *testing.T) {
 	}
 }
 
-// Test 16: compile-time validation skips file() calls with variable references.
-func TestCompileFileFunctionValidation_SkipsVariableArgs(t *testing.T) {
+// Test 16: file(var.path) is now validated at compile time when the var has a
+// known default value. Behavior change from W07: previously variable args were
+// skipped; now the fold pass resolves them and validates the file path.
+func TestCompileFileFunctionValidation_VarArgFileExists(t *testing.T) {
 	dir := t.TempDir()
-	// The file "some.txt" does NOT exist, but since the arg contains
-	// a variable reference, compile-time validation must skip it.
+	// Create "some.txt" so the fold-time file() validation succeeds.
+	if err := os.WriteFile(filepath.Join(dir, "some.txt"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	hclContent := `workflow "test" {
   version       = "0.1"
   initial_state = "step1"
@@ -116,7 +120,48 @@ func TestCompileFileFunctionValidation_SkipsVariableArgs(t *testing.T) {
 `
 	diags := compileWorkflowInDir(t, dir, hclContent)
 	if diags.HasErrors() {
-		t.Fatalf("compile-time validation should not reject variable-arg file() calls: %s", diags.Error())
+		t.Fatalf("unexpected compile error for file(var.path) with existing file: %s", diags.Error())
+	}
+}
+
+// Test 16b: file(var.path) errors at compile when the resolved file does not exist.
+// This is the new behavior from W07: variable-arg file() calls are now validated
+// at compile time when the variable has a fold-time value.
+func TestCompileFileFunctionValidation_VarArgFileMissing(t *testing.T) {
+	dir := t.TempDir()
+	// "some.txt" does NOT exist in dir — fold-time file() validation should catch it.
+	hclContent := `workflow "test" {
+  version       = "0.1"
+  initial_state = "step1"
+  target_state  = "done"
+
+  state "done" {
+    terminal = true
+    success  = true
+  }
+
+  variable "path" {
+    type    = "string"
+    default = "some.txt"
+  }
+
+  agent "a" { adapter = "noop" }
+
+  step "step1" {
+    agent = "a"
+    input {
+      prompt = file(var.path)
+    }
+    outcome "success" { transition_to = "done" }
+  }
+}
+`
+	diags := compileWorkflowInDir(t, dir, hclContent)
+	if !diags.HasErrors() {
+		t.Fatal("expected compile error for file(var.path) with missing file; got none")
+	}
+	if !strings.Contains(diags.Error(), "some.txt") {
+		t.Errorf("compile error %q should reference the missing file", diags.Error())
 	}
 }
 

@@ -51,7 +51,7 @@ func compileAdapterStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[strin
 	}
 
 	adapterName := resolveAdapterName(g, sp)
-	inputMap, inputExprs, d := decodeStepInput(sp, schemas, opts, adapterName)
+	inputMap, inputExprs, d := decodeStepInput(g, sp, schemas, opts, adapterName)
 	diags = append(diags, d...)
 
 	// each.* references are only valid inside iterating steps or workflow bodies
@@ -206,7 +206,7 @@ func decodeStepTimeout(sp *StepSpec) (time.Duration, hcl.Diagnostics) {
 // decodeStepInput decodes the input { } block for sp, validates against the
 // adapter schema when one is known, and returns the static map and expression
 // map.
-func decodeStepInput(sp *StepSpec, schemas map[string]AdapterInfo, opts CompileOpts, adapterName string) (inputMap map[string]string, inputExprs map[string]hcl.Expression, diags hcl.Diagnostics) {
+func decodeStepInput(g *FSMGraph, sp *StepSpec, schemas map[string]AdapterInfo, opts CompileOpts, adapterName string) (inputMap map[string]string, inputExprs map[string]hcl.Expression, diags hcl.Diagnostics) {
 	if sp.Input == nil {
 		return nil, nil, nil
 	}
@@ -228,8 +228,6 @@ func decodeStepInput(sp *StepSpec, schemas map[string]AdapterInfo, opts CompileO
 	for k, attr := range attrs {
 		inputExprs[k] = attr.Expr
 	}
-	if opts.WorkflowDir != "" {
-		diags = append(diags, validateFileFunctionCalls(attrs, opts.WorkflowDir)...)
-	}
+	diags = append(diags, validateFoldableAttrs(attrs, graphVars(g), graphLocals(g), opts.WorkflowDir)...)
 	return inputMap, inputExprs, diags
 }

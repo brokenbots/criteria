@@ -108,7 +108,7 @@ validate: build ## Validate all standalone example workflows
 	@# Some examples (e.g. workstream_review_loop.hcl) reference files outside
 	@# their own directory via file() in agent.config; allow the repo root so
 	@# compile-time file() resolution succeeds.
-	@for f in examples/*.hcl examples/plugins/*/*.hcl; do \
+	@for f in examples/*.hcl examples/plugins/*/*.hcl examples/phase3-fold/*.hcl; do \
 		echo "Validating $$f..."; \
 		CRITERIA_WORKFLOW_ALLOWED_PATHS="$(CURDIR)" ./bin/criteria validate "$$f" || exit 1; \
 	done

@@ -333,6 +333,7 @@ func (e *Engine) seedRunVars() map[string]cty.Value {
 		return e.resumedVars
 	}
 	vars := workflow.SeedVarsFromGraph(e.graph)
+	vars["local"] = workflow.SeedLocalsFromGraph(e.graph)
 	if len(e.varOverrides) > 0 {
 		vars = workflow.ApplyVarOverrides(e.graph, vars, e.varOverrides)
 	}

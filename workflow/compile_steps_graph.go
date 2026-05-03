@@ -91,7 +91,7 @@ func newWorkflowStepNode(sp *StepSpec, spec *Spec, effectiveOnCrash string, time
 // compileWorkflowOutputs extracts output{} block expressions from sp.Workflow
 // and populates node.Outputs. It is safe to call when sp.Workflow is nil or
 // has no outputs — it returns nil in that case.
-func compileWorkflowOutputs(sp *StepSpec, node *StepNode) hcl.Diagnostics {
+func compileWorkflowOutputs(g *FSMGraph, sp *StepSpec, node *StepNode, opts CompileOpts) hcl.Diagnostics {
 	if sp.Workflow == nil || len(sp.Workflow.Outputs) == 0 {
 		return nil
 	}
@@ -117,6 +117,11 @@ func compileWorkflowOutputs(sp *StepSpec, node *StepNode) hcl.Diagnostics {
 		if content != nil {
 			if attr, ok := content.Attributes["value"]; ok {
 				node.Outputs[out.Name] = attr.Expr
+				// Validate the value expression at compile time.
+				_, foldable, fd := FoldExpr(attr.Expr, graphVars(g), graphLocals(g), opts.WorkflowDir)
+				if foldable {
+					diags = append(diags, errorDiagsWithFallbackSubject(fd, attr.Expr)...)
+				}
 			}
 		}
 	}

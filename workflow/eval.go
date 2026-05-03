@@ -34,6 +34,10 @@ func BuildEvalContext(vars map[string]cty.Value) *hcl.EvalContext {
 // FunctionOptions so callers can provide a WorkflowDir for file() resolution.
 // Use DefaultFunctionOptions(dir) to source MaxBytes and AllowedPaths from
 // environment variables alongside the workflow directory.
+//
+// If vars["local"] is present and is a non-nil object, it is exposed as the
+// "local" namespace in the context so runtime expressions can read compiled
+// locals.
 func BuildEvalContextWithOpts(vars map[string]cty.Value, opts FunctionOptions) *hcl.EvalContext {
 	varObj := cty.EmptyObjectVal
 	stepsObj := cty.EmptyObjectVal
@@ -53,6 +57,11 @@ func BuildEvalContextWithOpts(vars map[string]cty.Value, opts FunctionOptions) *
 	// Include "each" bindings when inside a for_each iteration (W07).
 	if each, ok := vars["each"]; ok && each != cty.NilVal && each.Type().IsObjectType() {
 		ctxVars["each"] = each
+	}
+
+	// Expose compiled locals as "local.*" when they have been seeded (W07).
+	if local, ok := vars["local"]; ok && local != cty.NilVal && local.Type().IsObjectType() {
+		ctxVars["local"] = local
 	}
 
 	return &hcl.EvalContext{
@@ -176,6 +185,20 @@ func SeedVarsFromGraph(g *FSMGraph) map[string]cty.Value {
 		vars["var"] = cty.EmptyObjectVal
 	}
 	return vars
+}
+
+// SeedLocalsFromGraph returns a cty object value containing all compiled locals
+// from the graph. Returns cty.EmptyObjectVal when there are no locals.
+// Called at run start alongside SeedVarsFromGraph.
+func SeedLocalsFromGraph(g *FSMGraph) cty.Value {
+	if len(g.Locals) == 0 {
+		return cty.EmptyObjectVal
+	}
+	m := make(map[string]cty.Value, len(g.Locals))
+	for name, ln := range g.Locals {
+		m[name] = ln.Value
+	}
+	return cty.ObjectVal(m)
 }
 
 // ApplyVarOverrides merges CLI-supplied key=value pairs into an existing vars

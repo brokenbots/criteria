@@ -63,6 +63,8 @@ func compileAgents(g *FSMGraph, spec *Spec, schemas map[string]AdapterInfo, opts
 				agentConfig, d = decodeAttrsToStringMap(attrs, configEvalCtx)
 			}
 			diags = append(diags, d...)
+			// Validate compile-foldable attributes (catches file(var.x) with bad path, etc.).
+			diags = append(diags, validateFoldableAttrs(attrs, graphVars(g), graphLocals(g), opts.WorkflowDir)...)
 		}
 		g.Agents[name] = &AgentNode{
 			Name:    name,
