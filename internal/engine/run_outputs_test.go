@@ -9,7 +9,8 @@ import (
 	"github.com/brokenbots/criteria/workflow"
 )
 
-// TestEvalRunOutputs_Basic tests basic output evaluation with a constant expression.
+// TestEvalRunOutputs_Basic tests basic output evaluation infrastructure.
+// Verifies that evalRunOutputs processes output declarations and renders values.
 func TestEvalRunOutputs_Basic(t *testing.T) {
 	g := &workflow.FSMGraph{
 		Outputs:     make(map[string]*workflow.OutputNode),
@@ -27,10 +28,7 @@ func TestEvalRunOutputs_Basic(t *testing.T) {
 		},
 	}
 
-	// Create an output that will be evaluated in the context with steps.* available.
-	// We use StaticExpr here, but the key test is that the eval context has steps.*
-	// available when evalRunOutputs calls BuildEvalContextWithOpts.
-	// In a real workflow, the expression would reference steps.my_step.result.
+	// Test basic output evaluation: evaluate a constant expression.
 	val := cty.StringVal("step completed successfully")
 	expr := hcl.StaticExpr(val, hcl.Range{})
 
@@ -194,8 +192,7 @@ func TestEvalRunOutputs_EvalContextAvailable(t *testing.T) {
 		},
 	}
 
-	// The key test: the expression evaluates to a value that came from steps.build_step.version.
-	// This verifies that the eval context makes steps.* accessible.
+	// Test output evaluation with a constant expression.
 	val := cty.StringVal("v1.2.3")
 	expr := hcl.StaticExpr(val, hcl.Range{})
 
@@ -216,8 +213,7 @@ func TestEvalRunOutputs_EvalContextAvailable(t *testing.T) {
 		t.Fatalf("expected 1 output, got %d", len(outputs))
 	}
 
-	// The presence of outputs proves that the eval context was applied
-	// and the expression was evaluated in a context where steps.* is available.
+	// The presence of outputs proves that output evaluation completed successfully.
 	if outputs[0]["name"] != "deployed_version" {
 		t.Fatalf("expected output name 'deployed_version', got %q", outputs[0]["name"])
 	}

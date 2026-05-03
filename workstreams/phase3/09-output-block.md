@@ -1510,3 +1510,17 @@ All 13 PR #77 review threads addressed and resolved. Implementation complete wit
    - Confirmed: proto schema correctly documented as "repeated Output outputs"
 
 **All workstream contradictions resolved. Documentation now consistent with code reality.**
+
+**Final batch (3 threads - test documentation cleanup):**
+
+**1. Line 778 checkbox consistency (1 thread)**
+   - Line 778 and 631 both have unchecked "Consolidate body-output" item
+   - Both mark Step 5 as deferred per line 1146
+   - Status: ✅ Consistent
+
+**2. Test comment honesty (2 threads)**
+   - Removed misleading comments from TestEvalRunOutputs_Basic (lines 30-33) that admitted "We use StaticExpr... In a real workflow, the expression would reference steps.my_step.result"
+   - Removed similar misleading comment from TestEvalRunOutputs_EvalContextAvailable (lines 194-195)
+   - Simplified comments to honestly state: "Test basic output evaluation (with constant expression)"
+   - Comment updates are in internal/engine/run_outputs_test.go
+   - All tests pass
