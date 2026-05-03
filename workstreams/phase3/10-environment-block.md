@@ -724,3 +724,73 @@ The workstream is **approved**. All exit criteria are met, all required tests pa
 #### Acceptance Verdict
 
 **APPROVED** — All exit criteria met, all tests passing, code quality high, security model sound, documentation complete, end-to-end example working correctly with proper injection and filtering of environment variables. Ready to merge and unblock [11-agent-to-adapter-rename.md](11-agent-to-adapter-rename.md) and [13-subworkflow-block-and-resolver.md](13-subworkflow-block-and-resolver.md).
+
+### PR Review Round 3 — Unresolved Threads (2026-05-03)
+
+#### Summary
+
+After "Approved" review, PR manager flagged 2 unresolved threads requiring code changes. Both threads were about test inadequacy:
+
+1. **Thread 1 (PRRT_kwDOSOBb1s5_Nw3m)**: `TestLoaderInjectsEnvironmentVars` in loader_test.go did not test the loader or runtime path — only JSON roundtrip that duplicated compile-time tests.
+2. **Thread 2 (PRRT_kwDOSOBb1s5_Nw3o)**: `TestLoaderControlledSetWinsConflict` in loader_test.go did not test runtime filter behavior — only compile-time warnings (already covered by `TestCompileEnvironments_ControlledSetConflictWarning`).
+
+#### Remediations (commit dd6dbad)
+
+**1. Proper Engine-Level Tests** — Created `internal/engine/node_step_test.go` with 3 focused tests:
+
+- **TestStepNode_ResolveInput_InjectsEnvironmentVars** (lines 22-49)
+  - Creates FSMGraph with environment "shell.ci" containing CI, LOG_LEVEL, SERVICE_NAME variables
+  - Calls the actual resolveInput() → mergeEnvironmentVars() path
+  - Asserts the JSON-encoded "env" field contains all three injected variables
+  - Will fail if mergeEnvironmentVars is deleted or short-circuited
+
+- **TestStepNode_ResolveInput_FiltersControlledEnvVars** (lines 51-91)
+  - Creates environment with both controlled (PATH, HOME, USER, LOGNAME, LANG, TZ, LC_ALL, LC_CTYPE) and non-controlled (GOOD_VAR) variables
+  - Calls resolveInput() and asserts controlled keys are NOT in the injected env JSON
+  - Asserts non-controlled keys ARE injected correctly
+  - Tests runtime filter directly, catching regressions if the filter is disabled or diverges
+
+- **TestStepNode_ResolveInput_ControlledSetConsistency** (lines 93-111)
+  - Verifies ShellControlledEnvVars contains exactly: PATH, HOME, USER, LOGNAME, LANG, TZ
+  - Verifies IsShellLCPrefix correctly identifies LC_* variables
+  - Guards against accidental divergence between compile-time and runtime lists
+
+**2. Single Source of Truth** — Exported controlled-set from workflow package:
+
+- Exported `ShellControlledEnvVars` (was `shellControlledEnvVars`) from workflow/compile_environments.go (lines 24-35)
+- Added exported `IsShellLCPrefix(name string) bool` helper function (lines 37-40)
+- Updated workflow/compile_environments.go to use exported versions (lines 310, 319)
+- Updated internal/engine/node_step.go to import and use exported versions (lines 415-443)
+- Eliminates the failure mode: controlled-set list divergence between compile and runtime
+
+**3. Removed Placeholder Tests** — Deleted non-functional tests from loader_test.go:
+
+- Removed `TestLoaderInjectsEnvironmentVars` (was lines 334-387) — only tested compilation, not actual injection
+- Removed `TestLoaderControlledSetWinsConflict` (was lines 391-466) — only tested compile warnings, not runtime filter
+
+#### Validation
+
+```
+✓ go test -race ./...              All 200+ tests pass (including 3 new engine tests)
+✓ go test -race ./internal/engine  3 new tests pass: InjectsEnvironmentVars, FiltersControlledEnvVars, Consistency
+✓ go test -race ./workflow         14 compile tests still pass
+✓ make lint-go                     All linters pass (gofmt, golangci-lint)
+✓ make validate                    All examples validate including phase3-environment
+✓ make ci                          Full suite passes
+```
+
+#### Thread Resolution
+
+- Thread 1 (PRRT_kwDOSOBb1s5_Nw3m): **Resolved** via `resolveReviewThread` mutation after pushing commit dd6dbad with TestStepNode_ResolveInput_InjectsEnvironmentVars
+- Thread 2 (PRRT_kwDOSOBb1s5_Nw3o): **Resolved** via `resolveReviewThread` mutation after pushing commit dd6dbad with TestStepNode_ResolveInput_FiltersControlledEnvVars and consistency test
+
+#### Files Modified in Round 3
+
+- `workflow/compile_environments.go`: Exported ShellControlledEnvVars and IsShellLCPrefix
+- `internal/engine/node_step.go`: Use exported versions from workflow package
+- `internal/engine/node_step_test.go` (NEW): 3 comprehensive engine-level tests
+- `internal/plugin/loader_test.go`: Removed 2 non-functional placeholder tests
+
+#### Result
+
+All 2 unresolved threads now resolved with proper runtime tests and single-source-of-truth fix. PR is ready to merge.
