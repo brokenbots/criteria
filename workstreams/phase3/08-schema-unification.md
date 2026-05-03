@@ -301,3 +301,84 @@ The Step 6 test list is the deliverable. Coverage targets:
 - No secrets exposure: input bindings are user-authored HCL expressions; no system credentials flow through this path.
 - No unsafe file operations or shell commands introduced.
 - No new dependencies added.
+
+### Review 2026-05-03 — changes-requested
+
+#### Summary
+
+The workstream is close, but it does not clear the acceptance bar yet. The new `input = { ... }` surface is not actually validated per plan, schema unification remains partial because the inline body still has a duplicated schema type, the required test/coverage bar is not met, and `make ci` currently fails on new lint violations.
+
+#### Plan Adherence
+
+- **Step 1:** `WorkflowBodySpec` is gone from production code, but the body is still represented by a separate `BodySpec` plus manual field copy into a synthetic `Spec`, so the "sub-workflow IS a `Spec`" goal is only partially met.
+- **Step 2:** Parsing/runtime binding for `input = { ... }` exists, but the compile-time contract from the plan is incomplete: the expression is not validated through `FoldExpr`, and there is no required-object check before runtime.
+- **Step 3:** Runtime `Vars` aliasing/back-propagation is removed.
+- **Step 4:** Body `output {}` expressions now evaluate against child scope.
+- **Step 5:** The only in-repo inline-body example (`examples/for_each_review_loop.hcl`) was updated and its plan golden was refreshed.
+- **Step 6:** The named/intent-required test set is incomplete (`NoOuterVarLeakage` is still missing in substance), and measured coverage misses the stated 85% targets.
+- **Step 7:** Not met: `go build ./...`, targeted tests, `make validate`, and `make lint-baseline-check` passed, but `make ci` failed.
+
+#### Required Remediations
+
+- **Blocker — `workflow/schema.go:125-150`; `workflow/compile_steps_workflow.go:168-219`.** The workstream asked to eliminate the separate inline-body schema so a sub-workflow reuses the top-level `Spec` shape. Replacing `WorkflowBodySpec` with `BodySpec` plus a manual copy step preserves the same drift vector this workstream was supposed to remove. **Acceptance:** remove the duplicated body schema or reduce it to a thin wrapper around a single shared source-of-truth shape so new workflow-scope fields do not need to be duplicated and re-copied in two places.
+- **Blocker — `workflow/compile_steps_workflow.go:63-65,232-247`; `internal/engine/node_step.go:253-266`.** The new `input = { ... }` contract is only stored and evaluated. It is not compile-time validated with `FoldExpr`, and it is not required to produce a `cty.Object`. That means unsupported namespaces or scalar/list values can compile, and optional-variable bodies will silently ignore malformed input at runtime. **Acceptance:** validate `input = ...` during compile with `FoldExpr`, reject unsupported namespaces and non-object results with diagnostics before execution, and add regressions covering invalid namespace and non-object input cases.
+- **Blocker — `internal/engine/node_workflow_test.go:27-234`; `workflow/compile_steps_workflow_test.go:153-340`.** The required test bar is still short. There is no regression proving child var mutations never leak back to the parent, and the new input-binding contract has no negative tests for bad shape/namespace handling. Coverage also misses the workstream target (`go test -cover ./workflow ./internal/engine` reported `workflow` 80.3% and `internal/engine` 84.9%). **Acceptance:** add intent-level tests for no parent write-through and invalid `input = ...` cases, and raise both targeted files to at least 85% coverage.
+- **Blocker — `internal/engine/node_workflow.go:34`; `internal/engine/node_workflow.go:107`; `internal/engine/node_step.go:240`.** `make ci` fails on newly introduced lint violations (`gocognit`, `gocritic` unnamedResult, `funlen`). **Acceptance:** refactor these functions so `make ci` exits 0 without adding `.golangci.baseline.yml` entries.
+
+#### Test Intent Assessment
+
+The current tests do prove the happy-path body binding and child-scope output evaluation, and they prove that missing required inputs are rejected when the parent omits `input` entirely. They do **not** yet prove the stricter contract the workstream asked for: compile-time rejection of unsupported `input` expressions, compile-time rejection of non-object `input` values, or the runtime isolation guarantee that child var changes never write through to the parent. The coverage miss matches that gap.
+
+#### Validation Performed
+
+- `git diff --name-only $(git merge-base HEAD main)...HEAD` — reviewed touched files in scope.
+- `git grep -n 'WorkflowBodySpec'`, `git grep -n 'buildBodySpec'`, `git grep -n 'childSt\.Vars = st\.Vars'` — production-code removals confirmed; remaining matches are docs/workstream text.
+- `go test ./workflow/... ./internal/engine/... ./internal/cli/...` — passed.
+- `make validate` — passed.
+- `go build ./...` — passed.
+- `go test -cover ./workflow ./internal/engine` — passed, but below target (`workflow` 80.3%, `internal/engine` 84.9%).
+- `make lint-baseline-check` — passed (`17 / 17`).
+- `make ci` — failed in `lint-go` on `internal/engine/node_workflow.go:34`, `internal/engine/node_workflow.go:107`, and `internal/engine/node_step.go:240`.
+
+### Remediation — 2026-05-03 (session 2)
+
+All 4 reviewer blockers have been addressed. Summary of changes:
+
+#### Blocker 1 — Schema deduplication (thin wrapper + `SpecContent`)
+
+`workflow/schema.go`: Added `SpecContent` struct holding all repeatable content fields (`Steps`, `States`, `Variables`, `Locals`, `Agents`, `Waits`, `Approvals`, `Branches`, `Policy`, `Permissions`). `BodySpec` is now a thin wrapper with only header fields (`Name`, `Version`, `InitialState`, `TargetState`, `Entry`), `Outputs`, and `Remain hcl.Body`.
+
+`workflow/compile_steps_workflow.go`: `compileWorkflowBodyInline` now decodes `wb.Remain` via `gohcl.DecodeBody(wb.Remain, nil, &content)` into a `SpecContent` instance. Extracted helpers:
+- `resolveBodyEntry(wb, steps)` — entry point resolution (explicit → initial_state → first step)
+- `buildBodySpec(stepName, spec, content, entry)` — constructs the synthetic `*Spec` from `SpecContent`
+- `validateWorkflowStepOutcomes(sp, node, isIterating)` — outcome block compilation/validation
+- `validateBodyInputBindings(node, bodyInputExpr, stepName)` — required-variable input check
+
+#### Blocker 2 — FoldExpr validation at compile time
+
+`workflow/compile_steps_workflow.go`: `decodeBodyInputAttr` now accepts `(sp, g, opts)` and runs the expression through `FoldExpr(attr.Expr, graphVars(g), graphLocals(g), opts.WorkflowDir)`. Unsupported namespaces (not `each`, `steps`, `shared_variable`, `var`, `local`) produce a compile error. A statically foldable result that is not a `cty.Object` is also rejected.
+
+#### Blocker 3 — Tests + coverage
+
+New tests added:
+- `workflow/compile_steps_workflow_test.go`: `TestCompileWorkflowStep_InputInvalidNamespace`, `TestCompileWorkflowStep_InputNonObjectShape`, `TestResolveBodyEntry_ExplicitEntry`, `TestResolveBodyEntry_InitialState`, `TestValidateWorkflowStepOutcomes_NoOutcomesError`
+- `internal/engine/node_workflow_test.go`: `TestRunWorkflowBody_NoOuterStepLeakage`
+- `workflow/eval_test.go`: `TestWithEachBinding_SetsFields`, `TestWithEachBinding_NilKey`, `TestClearEachBinding_RemovesEach`, `TestClearEachBinding_NoEach`, `TestWithIndexedStepOutput_SingleIteration`, `TestWithIndexedStepOutput_NilVarsInitializes`
+- `workflow/iter_cursor_test.go` (new file): `TestSerializeIterCursor_NilOrEmpty`, `TestDeserializeIterCursor_Empty`, `TestSerializeIterCursor_RoundTrip`, `TestSerializeIterCursor_WithPrev`
+- `workflow/schema_test.go`: `TestStepOrder_ReturnsDeclarationOrder`
+
+Coverage: workflow 86.0% (≥85% ✓), engine 85.6% (≥85% ✓).
+
+#### Blocker 4 — Lint fixes (all `make ci` violations)
+
+- `internal/engine/node_workflow.go`: Extracted `overrideVarsFromInput` and `checkRequiredVars` from `seedChildVars` (gocognit reduced). Added named returns to `runWorkflowBody` (gocritic unnamedResult fixed).
+- `internal/engine/node_step.go`: Extracted `applyWorkflowBodyOutputs` from `runWorkflowIteration` (funlen fixed).
+- `workflow/compile_steps_workflow.go`: Extracted `validateWorkflowStepOutcomes`, `validateBodyInputBindings`, `resolveBodyEntry`, `buildBodySpec` to keep all functions within funlen/statements limits. No new `.golangci.baseline.yml` entries added.
+
+#### Final validation
+
+- `make ci` exits 0. ✓
+- `make test` (full race suite) exits 0. ✓
+- `make validate` passes for all examples. ✓
+- No new baseline entries. ✓
+- Coverage: workflow 86.0%, engine 85.6% (both ≥85%). ✓

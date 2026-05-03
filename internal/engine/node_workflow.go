@@ -32,60 +32,63 @@ import (
 // absent from parentInput. This is the runtime safety net; the compiler also
 // catches the case where no input expression is present at all.
 func seedChildVars(body *workflow.FSMGraph, parentInput cty.Value, parentVars map[string]cty.Value) (map[string]cty.Value, error) {
-	// Start from graph defaults (builds var.* and steps = empty).
 	vars := workflow.SeedVarsFromGraph(body)
-
-	// Seed local.* from compile-time constants (only when any locals exist).
 	if len(body.Locals) > 0 {
 		vars["local"] = workflow.SeedLocalsFromGraph(body)
 	}
+	vars = overrideVarsFromInput(vars, body, parentInput)
+	if err := checkRequiredVars(body, parentInput); err != nil {
+		return nil, err
+	}
+	// Thread each.* from parent scope so iteration variables remain accessible
+	// inside the body (read-only; no back-propagation to outer scope).
+	if each, ok := parentVars["each"]; ok && each != cty.NilVal {
+		vars["each"] = each
+	}
+	return vars, nil
+}
 
-	// Apply parentInput overrides to var.*.
-	if parentInput != cty.NilVal && parentInput.IsKnown() && !parentInput.IsNull() && parentInput.Type().IsObjectType() {
-		varObj := vars["var"]
-		varAttrs := map[string]cty.Value{}
-		if varObj.Type().IsObjectType() {
-			for k := range varObj.Type().AttributeTypes() {
-				varAttrs[k] = varObj.GetAttr(k)
-			}
-		}
-		for name := range body.Variables {
-			if parentInput.Type().HasAttribute(name) {
-				varAttrs[name] = parentInput.GetAttr(name)
-			}
-		}
-		if len(varAttrs) > 0 {
-			vars["var"] = cty.ObjectVal(varAttrs)
+// overrideVarsFromInput applies parentInput object bindings to the var.*
+// entries in vars. Only keys that match declared body variables are applied.
+// Returns an unmodified vars when parentInput is absent or not an object.
+func overrideVarsFromInput(vars map[string]cty.Value, body *workflow.FSMGraph, parentInput cty.Value) map[string]cty.Value {
+	if parentInput == cty.NilVal || !parentInput.IsKnown() || parentInput.IsNull() || !parentInput.Type().IsObjectType() {
+		return vars
+	}
+	varObj := vars["var"]
+	varAttrs := map[string]cty.Value{}
+	if varObj.Type().IsObjectType() {
+		for k := range varObj.Type().AttributeTypes() {
+			varAttrs[k] = varObj.GetAttr(k)
 		}
 	}
+	for name := range body.Variables {
+		if parentInput.Type().HasAttribute(name) {
+			varAttrs[name] = parentInput.GetAttr(name)
+		}
+	}
+	if len(varAttrs) > 0 {
+		vars["var"] = cty.ObjectVal(varAttrs)
+	}
+	return vars
+}
 
-	// Check for required variables (no default) not covered by parentInput.
+// checkRequiredVars returns an error if any required body variable (no default)
+// lacks a binding in parentInput. This is the runtime complement to the
+// compile-time check in compileWorkflowStep.
+func checkRequiredVars(body *workflow.FSMGraph, parentInput cty.Value) error {
+	hasInput := parentInput != cty.NilVal && parentInput.IsKnown() && !parentInput.IsNull() && parentInput.Type().IsObjectType()
 	var missing []string
 	for name, node := range body.Variables {
-		if !node.IsRequired() {
-			continue
-		}
-		hasBinding := parentInput != cty.NilVal &&
-			parentInput.IsKnown() &&
-			!parentInput.IsNull() &&
-			parentInput.Type().IsObjectType() &&
-			parentInput.Type().HasAttribute(name)
-		if !hasBinding {
+		if node.IsRequired() && !(hasInput && parentInput.Type().HasAttribute(name)) {
 			missing = append(missing, name)
 		}
 	}
 	if len(missing) > 0 {
 		sort.Strings(missing)
-		return nil, fmt.Errorf("workflow body missing required input(s): %s", strings.Join(missing, ", "))
+		return fmt.Errorf("workflow body missing required input(s): %s", strings.Join(missing, ", "))
 	}
-
-	// Thread each.* from the parent scope so iteration variables remain
-	// accessible inside the body (read-only; no back-propagation).
-	if each, ok := parentVars["each"]; ok && each != cty.NilVal {
-		vars["each"] = each
-	}
-
-	return vars, nil
+	return nil
 }
 
 // runWorkflowBody executes the sub-workflow body synchronously in a nested
@@ -104,7 +107,7 @@ func seedChildVars(body *workflow.FSMGraph, parentInput cty.Value, parentVars ma
 //
 // The returned child vars represent the body's final execution scope and are
 // used by the caller to evaluate output{} block expressions.
-func runWorkflowBody(ctx context.Context, body *workflow.FSMGraph, bodyEntry string, childVars map[string]cty.Value, workflowDir string, deps Deps) (string, map[string]cty.Value, error) {
+func runWorkflowBody(ctx context.Context, body *workflow.FSMGraph, bodyEntry string, childVars map[string]cty.Value, workflowDir string, deps Deps) (terminal string, finalVars map[string]cty.Value, err error) {
 	if bodyEntry == "" {
 		bodyEntry = body.InitialState
 	}

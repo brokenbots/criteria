@@ -107,8 +107,8 @@ type StepSpec struct {
 	// Config is the legacy map attribute; retained for parse-time detection so the
 	// compiler can emit a helpful "use input { } block" diagnostic.
 	Config     map[string]string `hcl:"config,optional"`
-	Input    *InputSpec `hcl:"input,block"`
-	Workflow *BodySpec  `hcl:"workflow,block"`
+	Input      *InputSpec        `hcl:"input,block"`
+	Workflow   *BodySpec         `hcl:"workflow,block"`
 	Timeout    string            `hcl:"timeout,optional"`
 	AllowTools []string          `hcl:"allow_tools,optional"`
 	Outcomes   []OutcomeSpec     `hcl:"outcome,block"`
@@ -122,17 +122,16 @@ type StepSpec struct {
 	LegacyConfigRange *hcl.Range
 }
 
-// BodySpec is the parsed body of an inline `workflow { ... }` block inside a
-// step. Unlike Spec it needs no label; all header fields are optional and are
-// filled in synthetically by the compiler. It may declare its own variables,
-// agents, and locals, making it a fully self-contained sub-workflow.
-type BodySpec struct {
-	// Header fields — all optional; filled in synthetically during compilation.
-	Name         string `hcl:"name,optional"`
-	Version      string `hcl:"version,optional"`
-	InitialState string `hcl:"initial_state,optional"`
-	TargetState  string `hcl:"target_state,optional"`
-	// Content blocks mirror Spec exactly.
+// SpecContent holds the workflow content fields shared between Spec and BodySpec.
+// It is the gohcl decode target for the body of an inline workflow { ... } block
+// and acts as a single source of truth for all content block types. Adding a new
+// workflow-scope block type here automatically makes it available in both
+// top-level Spec contexts and inline body contexts.
+//
+// Note: gohcl does not support anonymous embedded struct field promotion, so
+// this struct is decoded separately by compileWorkflowBodyInline rather than
+// embedded directly in BodySpec.
+type SpecContent struct {
 	Variables   []VariableSpec   `hcl:"variable,block"`
 	Locals      []LocalSpec      `hcl:"local,block"`
 	Agents      []AgentSpec      `hcl:"agent,block"`
@@ -143,10 +142,27 @@ type BodySpec struct {
 	Branches    []BranchSpec     `hcl:"branch,block"`
 	Policy      *PolicySpec      `hcl:"policy,block"`
 	Permissions *PermissionsSpec `hcl:"permissions,block"`
-	Outputs     []OutputSpec     `hcl:"output,block"`
+}
+
+// BodySpec is the thin parsed header for an inline `workflow { ... }` block
+// inside a step. Unlike Spec it needs no label; all header fields are optional.
+// Content blocks (steps, variables, locals, etc.) are captured in Remain and
+// decoded by compileWorkflowBodyInline into a SpecContent, eliminating
+// field duplication between BodySpec and Spec.
+type BodySpec struct {
+	// Header fields — all optional; filled in synthetically during compilation.
+	Name         string `hcl:"name,optional"`
+	Version      string `hcl:"version,optional"`
+	InitialState string `hcl:"initial_state,optional"`
+	TargetState  string `hcl:"target_state,optional"`
 	// Entry is the explicit initial step name. When empty the compiler uses
 	// InitialState (if set) or the first declared step.
-	Entry string `hcl:"entry,optional"`
+	Entry   string       `hcl:"entry,optional"`
+	Outputs []OutputSpec `hcl:"output,block"`
+	// Remain captures all content blocks (steps, variables, locals, agents,
+	// states, waits, approvals, branches, policy, permissions) for later
+	// decoding into SpecContent by compileWorkflowBodyInline.
+	Remain hcl.Body `hcl:",remain"`
 }
 
 // OutputSpec declares a named output value exposed by a workflow-step body.

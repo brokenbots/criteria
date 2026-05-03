@@ -282,27 +282,31 @@ func (n *stepNode) runWorkflowIteration(ctx context.Context, st *RunState, deps 
 	}
 	st.LastOutcome = outcome
 
-	// Evaluate output{} block expressions against the child's final scope.
-	// Using the child scope ensures that steps.* references inside output{}
-	// resolve against body steps, not the outer workflow.
-	if len(n.step.Outputs) > 0 {
-		evalCtx := workflow.BuildEvalContextWithOpts(childFinalVars, workflow.DefaultFunctionOptions(st.WorkflowDir))
-		stringOuts := make(map[string]string, len(n.step.Outputs))
-		ctyOuts := make(map[string]cty.Value, len(n.step.Outputs))
-		for k, expr := range n.step.Outputs {
-			v, diags := expr.Value(evalCtx)
-			if !diags.HasErrors() {
-				ctyOuts[k] = v
-				stringOuts[k] = workflow.CtyValueToString(v)
-			}
-		}
-		if len(stringOuts) > 0 {
-			st.Vars = workflow.WithIndexedStepOutput(st.Vars, n.step.Name, iterOutputKey(cur), stringOuts)
-			cur.Prev = cty.ObjectVal(ctyOuts)
+	n.applyWorkflowBodyOutputs(st, cur, childFinalVars)
+	return outcome, nil
+}
+
+// applyWorkflowBodyOutputs evaluates the output{} block expressions against
+// the child's final scope and records the resulting values into the outer
+// vars (via WithIndexedStepOutput) and into cur.Prev for each.prev access.
+func (n *stepNode) applyWorkflowBodyOutputs(st *RunState, cur *workflow.IterCursor, childFinalVars map[string]cty.Value) {
+	if len(n.step.Outputs) == 0 {
+		return
+	}
+	evalCtx := workflow.BuildEvalContextWithOpts(childFinalVars, workflow.DefaultFunctionOptions(st.WorkflowDir))
+	stringOuts := make(map[string]string, len(n.step.Outputs))
+	ctyOuts := make(map[string]cty.Value, len(n.step.Outputs))
+	for k, expr := range n.step.Outputs {
+		v, diags := expr.Value(evalCtx)
+		if !diags.HasErrors() {
+			ctyOuts[k] = v
+			stringOuts[k] = workflow.CtyValueToString(v)
 		}
 	}
-
-	return outcome, nil
+	if len(stringOuts) > 0 {
+		st.Vars = workflow.WithIndexedStepOutput(st.Vars, n.step.Name, iterOutputKey(cur), stringOuts)
+		cur.Prev = cty.ObjectVal(ctyOuts)
+	}
 }
 
 // evaluateOnce executes the step for a single non-iterating invocation (or a

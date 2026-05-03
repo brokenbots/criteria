@@ -160,6 +160,66 @@ workflow "t" {
 	}
 }
 
+// TestRunWorkflowBody_NoOuterStepLeakage is a regression test verifying that
+// body step outputs are never visible in the outer workflow's steps.* scope.
+//
+// The body step "inner" runs and produces output, but only the body's child
+// scope is aware of it. The outer "check" step references steps.inner.result
+// in its input — if body outputs leaked to the outer scope (as in the old
+// childSt.Vars = st.Vars aliasing bug), this run would succeed. With proper
+// scope isolation, the expression is unresolvable in the outer scope and the
+// run must fail with an error.
+func TestRunWorkflowBody_NoOuterStepLeakage(t *testing.T) {
+	g := compile(t, `
+workflow "t" {
+  version       = "0.1"
+  initial_state = "produce"
+  target_state  = "done"
+
+  step "produce" {
+    type     = "workflow"
+    for_each = ["x"]
+
+    workflow {
+      step "inner" {
+        adapter = "fake_producer"
+        outcome "success" { transition_to = "_continue" }
+      }
+    }
+
+    outcome "all_succeeded" { transition_to = "check" }
+    outcome "any_failed"    { transition_to = "done" }
+  }
+
+  step "check" {
+    adapter = "fake_consumer"
+    input {
+      received = steps.inner.result
+    }
+    outcome "success" { transition_to = "done" }
+  }
+
+  state "done" {
+    terminal = true
+    success  = true
+  }
+}`)
+
+	sink := &iterSink{}
+	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
+		"fake_producer": &captureOutputPlugin{
+			outcomes: []string{"success"},
+			outputs:  []map[string]string{{"result": "body-only-output"}},
+		},
+		"fake_consumer": &captureInputPlugin{outcome: "success", capture: &[]map[string]string{}},
+	}}
+
+	err := New(g, loader, sink).Run(context.Background())
+	if err == nil {
+		t.Fatal("expected error: body step outputs must not be visible in outer steps.* scope (no-leakage regression)")
+	}
+}
+
 // TestRunWorkflowBody_OutputUsesChildStepsScope verifies that output{} block
 // expressions in a type="workflow" step are evaluated against the body's final
 // variable scope (childFinalVars), so that references to `steps.<body_step>.*`

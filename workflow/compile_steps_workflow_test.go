@@ -338,3 +338,118 @@ workflow "x" {
 		t.Errorf("expected variable name 'x' in diagnostic, got: %s", diags.Error())
 	}
 }
+
+// TestCompileWorkflowStep_InputInvalidNamespace verifies that a body step
+// `input = { ... }` expression that references an unsupported variable namespace
+// (not var.*, local.*, each.*, steps.*, or shared_variable.*) is rejected at
+// compile time with a diagnostic. This ensures that typos or fully unknown
+// roots (e.g. `nonexistent.val`) are caught before any runtime evaluation.
+func TestCompileWorkflowStep_InputInvalidNamespace(t *testing.T) {
+	src := `
+workflow "x" {
+  version       = "0.1"
+  initial_state = "run"
+  target_state  = "done"
+  step "run" {
+    type     = "workflow"
+    for_each = ["a"]
+    input    = { region = nonexistent.val }
+    workflow {
+      variable "region" {
+        type    = "string"
+        default = "us-east"
+      }
+      step "inner" {
+        adapter = "noop"
+        input { label = var.region }
+        outcome "done" { transition_to = "_continue" }
+      }
+    }
+    outcome "all_succeeded" { transition_to = "done" }
+    outcome "any_failed"    { transition_to = "done" }
+  }
+  state "done" { terminal = true }
+}
+`
+	spec, diags := Parse("t.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	_, diags = Compile(spec, nil)
+	if !diags.HasErrors() {
+		t.Fatal("expected compile error for unsupported namespace in body input expression")
+	}
+}
+
+// TestCompileWorkflowStep_InputNonObjectShape verifies that a body step
+// `input = <scalar>` expression that does not evaluate to a cty.Object is
+// rejected at compile time with an actionable diagnostic. This prevents a
+// silent runtime failure when the engine tries to apply the value as a var map.
+func TestCompileWorkflowStep_InputNonObjectShape(t *testing.T) {
+	src := `
+workflow "x" {
+  version       = "0.1"
+  initial_state = "run"
+  target_state  = "done"
+  step "run" {
+    type     = "workflow"
+    for_each = ["a"]
+    input    = "not-an-object"
+    workflow {
+      step "inner" {
+        adapter = "noop"
+        outcome "done" { transition_to = "_continue" }
+      }
+    }
+    outcome "all_succeeded" { transition_to = "done" }
+    outcome "any_failed"    { transition_to = "done" }
+  }
+  state "done" { terminal = true }
+}
+`
+	spec, diags := Parse("t.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	_, diags = Compile(spec, nil)
+	if !diags.HasErrors() {
+		t.Fatal("expected compile error for non-object body input expression")
+	}
+	if !strings.Contains(diags.Error(), "object") {
+		t.Errorf("expected 'object' in diagnostic, got: %s", diags.Error())
+	}
+}
+
+// TestResolveBodyEntry_ExplicitEntry verifies that an explicit entry field
+// takes precedence over initial_state and first-step fallback.
+func TestResolveBodyEntry_ExplicitEntry(t *testing.T) {
+	wb := &BodySpec{Entry: "myentry", InitialState: "other"}
+	steps := []StepSpec{{Name: "first"}}
+	if got := resolveBodyEntry(wb, steps); got != "myentry" {
+		t.Errorf("expected myentry, got %q", got)
+	}
+}
+
+// TestResolveBodyEntry_InitialState verifies that initial_state is used when
+// no explicit entry is set.
+func TestResolveBodyEntry_InitialState(t *testing.T) {
+	wb := &BodySpec{InitialState: "starthere"}
+	steps := []StepSpec{{Name: "first"}}
+	if got := resolveBodyEntry(wb, steps); got != "starthere" {
+		t.Errorf("expected starthere, got %q", got)
+	}
+}
+
+// TestValidateWorkflowStepOutcomes_NoOutcomesError verifies that a
+// non-iterating step with zero outcomes produces a compile error.
+func TestValidateWorkflowStepOutcomes_NoOutcomesError(t *testing.T) {
+	sp := &StepSpec{Name: "needs-outcome"}
+	node := &StepNode{Outcomes: map[string]string{}}
+	diags := validateWorkflowStepOutcomes(sp, node, false)
+	if !diags.HasErrors() {
+		t.Fatal("expected error for step with no outcomes")
+	}
+	if !strings.Contains(diags.Error(), "at least one outcome is required") {
+		t.Errorf("unexpected error message: %s", diags.Error())
+	}
+}

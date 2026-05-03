@@ -327,3 +327,129 @@ func TestApplyVarOverrides_NoOverrides_PreservesLocals(t *testing.T) {
 		t.Fatal("ApplyVarOverrides(nil overrides) dropped vars[\"local\"]")
 	}
 }
+
+// TestWithEachBinding_SetsFields verifies that WithEachBinding correctly
+// populates all each.* fields from the provided EachBinding.
+func TestWithEachBinding_SetsFields(t *testing.T) {
+	base := map[string]cty.Value{
+		"var":   cty.EmptyObjectVal,
+		"steps": cty.EmptyObjectVal,
+	}
+	b := &EachBinding{
+		Value: cty.StringVal("item"),
+		Key:   cty.StringVal("k"),
+		Index: 1,
+		Total: 3,
+		First: false,
+		Last:  false,
+		Prev:  cty.NilVal,
+	}
+	got := WithEachBinding(base, b)
+
+	each, ok := got["each"]
+	if !ok {
+		t.Fatal("WithEachBinding: each not set")
+	}
+	if v := each.GetAttr("value").AsString(); v != "item" {
+		t.Errorf("each.value: want 'item', got %q", v)
+	}
+	if k := each.GetAttr("key").AsString(); k != "k" {
+		t.Errorf("each.key: want 'k', got %q", k)
+	}
+	idx, _ := each.GetAttr("_idx").AsBigFloat().Int64()
+	if idx != 1 {
+		t.Errorf("each._idx: want 1, got %d", idx)
+	}
+	total, _ := each.GetAttr("_total").AsBigFloat().Int64()
+	if total != 3 {
+		t.Errorf("each._total: want 3, got %d", total)
+	}
+}
+
+// TestWithEachBinding_NilKey uses a nil key and verifies the fallback index
+// string is used as each.key.
+func TestWithEachBinding_NilKey(t *testing.T) {
+	base := map[string]cty.Value{"var": cty.EmptyObjectVal}
+	b := &EachBinding{
+		Value: cty.StringVal("x"),
+		Key:   cty.NilVal, // should fall back to "0"
+		Index: 0,
+		Total: 1,
+		First: true,
+		Last:  true,
+		Prev:  cty.NilVal,
+	}
+	got := WithEachBinding(base, b)
+	each := got["each"]
+	if k := each.GetAttr("key").AsString(); k != "0" {
+		t.Errorf("each.key fallback: want '0', got %q", k)
+	}
+}
+
+// TestClearEachBinding_RemovesEach verifies that ClearEachBinding drops the
+// each key from the vars map and preserves all other keys.
+func TestClearEachBinding_RemovesEach(t *testing.T) {
+	vars := map[string]cty.Value{
+		"var":  cty.EmptyObjectVal,
+		"each": cty.EmptyObjectVal,
+	}
+	got := ClearEachBinding(vars)
+	if _, ok := got["each"]; ok {
+		t.Fatal("ClearEachBinding: each still present")
+	}
+	if _, ok := got["var"]; !ok {
+		t.Fatal("ClearEachBinding: var was dropped")
+	}
+}
+
+// TestClearEachBinding_NoEach verifies that ClearEachBinding is a no-op when
+// the each key is absent.
+func TestClearEachBinding_NoEach(t *testing.T) {
+	vars := map[string]cty.Value{"var": cty.EmptyObjectVal}
+	got := ClearEachBinding(vars)
+	if got == nil {
+		t.Fatal("ClearEachBinding(no each) returned nil")
+	}
+	if _, ok := got["var"]; !ok {
+		t.Fatal("ClearEachBinding: var was dropped when each was absent")
+	}
+}
+
+// TestWithIndexedStepOutput_SingleIteration verifies that WithIndexedStepOutput
+// stores the first iteration output under steps[stepName]["0"].
+func TestWithIndexedStepOutput_SingleIteration(t *testing.T) {
+	vars := map[string]cty.Value{
+		"var":   cty.EmptyObjectVal,
+		"steps": cty.EmptyObjectVal,
+	}
+	got := WithIndexedStepOutput(vars, "run", cty.NumberIntVal(0), map[string]string{"result": "hello"})
+	steps, ok := got["steps"]
+	if !ok {
+		t.Fatal("steps key missing after WithIndexedStepOutput")
+	}
+	if !steps.Type().IsObjectType() {
+		t.Fatalf("steps is not an object type: %s", steps.Type().FriendlyName())
+	}
+	if !steps.Type().HasAttribute("run") {
+		t.Fatal("steps.run missing")
+	}
+	runEntry := steps.GetAttr("run")
+	if !runEntry.Type().HasAttribute("0") {
+		t.Fatal("steps.run[0] missing")
+	}
+	if v := runEntry.GetAttr("0").GetAttr("result").AsString(); v != "hello" {
+		t.Errorf("steps.run[0].result: want 'hello', got %q", v)
+	}
+}
+
+// TestWithIndexedStepOutput_NilVarsInitializes verifies that a nil vars map is
+// treated as empty rather than panicking.
+func TestWithIndexedStepOutput_NilVarsInitializes(t *testing.T) {
+	got := WithIndexedStepOutput(nil, "step1", cty.NumberIntVal(0), map[string]string{"x": "1"})
+	if got == nil {
+		t.Fatal("WithIndexedStepOutput(nil vars) returned nil")
+	}
+	if _, ok := got["steps"]; !ok {
+		t.Fatal("steps key missing")
+	}
+}
