@@ -27,7 +27,7 @@ plugins: ## Build adapter plugin binaries (output: bin/criteria-adapter-*)
 	done
 
 install: build plugins ## Install criteria to ~/.criteria (binary → ~/.criteria/bin, plugins → ~/.criteria/plugins)
-	@install -d "$$HOME/.criteria/bin" "$$HOME/.criteria/plugins"
+	@install -d -m 700 "$$HOME/.criteria" "$$HOME/.criteria/bin" "$$HOME/.criteria/plugins"
 	@install -m 755 bin/criteria "$$HOME/.criteria/bin/criteria"
 	@for f in bin/criteria-adapter-*; do \
 		[ -f "$$f" ] && install -m 755 "$$f" "$$HOME/.criteria/plugins/"; \
