@@ -11,8 +11,10 @@ documented here. The SDK follows the bump policy in
 ### Added — Phase 3 W09: Output blocks and `OnRunOutputs` interface method
 
 - **New proto message**: `RunOutputs` on `pb.Envelope` (field number 33) in
-  `proto/criteria/v1/events.proto`, containing `string workflow` and `map<string,
-  string> values` for terminal workflow output emission.
+  `proto/criteria/v1/events.proto`. Shape: `repeated Output outputs` where each
+  `Output` contains `string name` (output declaration name), `string value`
+  (JSON-stringified cty value for transport), and `string declared_type` (type
+  string if set, empty otherwise). All fields marked permanent (wire format locked).
 - **New sink interface method**: `OnRunOutputs([]map[string]string)` on
   `run.Sink` in `internal/run/sink.go`. External SDK consumers implementing
   their own `run.Sink` interface must add this method (even as an empty stub)
