@@ -182,16 +182,30 @@ workflow "test" {
 `
 	spec, diags := Parse("test.hcl", []byte(src))
 	if diags.HasErrors() {
-		// Type validation on string literal might happen at parse time; skip this case
-		t.Skip("type checking on string literals happens at parse time")
+		t.Fatalf("parse error: %v", diags.Errs())
 	}
 
 	g := newFSMGraph(spec)
 	diags = compileOutputs(g, spec, CompileOpts{})
 
-	// Type mismatch is acceptable to skip in this batch - will be covered by runtime eval tests
-	if diags.HasErrors() {
-		t.Logf("noted: type mismatch detected at compile time (acceptable)")
+	// Type mismatch should produce a compile error
+	if !diags.HasErrors() {
+		t.Fatalf("expected type mismatch error, got none; outputs: %v", g.Outputs)
+	}
+
+	// Verify error message mentions output name and types
+	found := false
+	for _, d := range diags {
+		if d.Severity == hcl.DiagError &&
+			contains(d.Summary, "str_not_num") &&
+			contains(d.Summary, "number") &&
+			contains(d.Summary, "string") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected error naming output, declared type, and actual type; got: %v", diags.Errs())
 	}
 }
 

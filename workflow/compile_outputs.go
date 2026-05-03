@@ -9,6 +9,7 @@ import (
 
 	"github.com/hashicorp/hcl/v2"
 	"github.com/zclconf/go-cty/cty"
+	"github.com/zclconf/go-cty/cty/convert"
 )
 
 // compileOutputs decodes each output{ value=... } block, validates the value
@@ -120,11 +121,12 @@ func validateOutputValue(name string, valAttr *hcl.Attribute, declaredType cty.T
 
 	// If foldable at compile time, validate declared type match.
 	if foldable && declaredType != cty.NilType {
-		if !val.Type().Equals(declaredType) {
+		_, err := convert.Convert(val, declaredType)
+		if err != nil {
 			r := valueExpr.StartRange()
 			result = append(result, &hcl.Diagnostic{
 				Severity: hcl.DiagError,
-				Summary:  fmt.Sprintf("output %q: value is %s but declared type is %s", name, val.Type().FriendlyName(), declaredType.FriendlyName()),
+				Summary:  fmt.Sprintf("output %q: value of type %s is not assignable to declared type %s: %s", name, val.Type().FriendlyName(), declaredType.FriendlyName(), err),
 				Subject:  &r,
 			})
 		}
@@ -138,13 +140,16 @@ func validateOutputAttrs(name string, attrs hcl.Attributes, diags *hcl.Diagnosti
 	allowedAttrs := map[string]bool{
 		"value":       true,
 		"description": true,
+		// "type" is handled by the HCL schema tag hcl:"type,optional" on OutputSpec,
+		// so it never appears in attrs. Include here for clarity that it's a valid field.
+		"type": true,
 	}
 	for k, attr := range attrs {
 		if !allowedAttrs[k] {
 			r := attr.NameRange
 			*diags = append(*diags, &hcl.Diagnostic{
 				Severity: hcl.DiagError,
-				Summary:  fmt.Sprintf("output %q: unknown attribute %q; only \"value\" and \"description\" are allowed", name, k),
+				Summary:  fmt.Sprintf("output %q: unknown attribute %q; only \"value\", \"description\", and \"type\" are allowed", name, k),
 				Subject:  &r,
 			})
 		}

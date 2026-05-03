@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/zclconf/go-cty/cty"
+	"github.com/zclconf/go-cty/cty/convert"
 	"github.com/zclconf/go-cty/cty/json"
 
 	"github.com/brokenbots/criteria/workflow"
@@ -24,7 +25,8 @@ func evalRunOutputs(g *workflow.FSMGraph, st *RunState) ([]map[string]string, er
 	result := make([]map[string]string, 0, len(g.Outputs))
 
 	// Build evaluation context with current run state.
-	// Include steps and locals so outputs can reference them.
+	// st.Vars carries var.*, steps.*, local.*, and each.* (when in scope);
+	// BuildEvalContextWithOpts unpacks them into the eval context.
 	evalCtx := workflow.BuildEvalContextWithOpts(st.Vars, workflow.DefaultFunctionOptions(st.WorkflowDir))
 
 	// Evaluate each output in declaration order.
@@ -37,12 +39,14 @@ func evalRunOutputs(g *workflow.FSMGraph, st *RunState) ([]map[string]string, er
 			return nil, fmt.Errorf("output %q: evaluation failed: %s", name, diags.Error())
 		}
 
-		// Check type match if declared type is set.
+		// Check type match if declared type is set, using cty conversion semantics.
 		if on.DeclaredType != cty.NilType {
-			if !val.Type().Equals(on.DeclaredType) {
-				return nil, fmt.Errorf("output %q: value is %s but declared type is %s",
-					name, val.Type().FriendlyName(), on.DeclaredType.FriendlyName())
+			converted, err := convert.Convert(val, on.DeclaredType)
+			if err != nil {
+				return nil, fmt.Errorf("output %q: value of type %s is not assignable to declared type %s: %w",
+					name, val.Type().FriendlyName(), on.DeclaredType.FriendlyName(), err)
 			}
+			val = converted
 		}
 
 		// Render the value as a JSON string for transport.

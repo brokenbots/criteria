@@ -2,8 +2,12 @@ package cli
 
 import (
 	"bytes"
+	"context"
+	"encoding/json"
 	"io"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -144,4 +148,122 @@ func TestParseVarOverrides(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestApplyLocal_OutputsEmittedInEventStream(t *testing.T) {
+t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
+
+workflowPath := writeWorkflowFile(t, `
+workflow "test_outputs" {
+  version       = "1"
+  initial_state = "start"
+  target_state  = "done"
+
+  output "count" {
+    type        = "number"
+    description = "The count value"
+    value       = 42
+  }
+
+  output "name" {
+    description = "The name value"
+    value       = "test"
+  }
+
+  state "start" {}
+  state "done" { terminal = true }
+}
+`)
+
+eventsFile := filepath.Join(t.TempDir(), "events.ndjson")
+
+if err := runApply(context.Background(), applyOptions{
+workflowPath: workflowPath,
+eventsPath:   eventsFile,
+}); err != nil {
+t.Fatalf("runApply failed: %v", err)
+}
+
+events, err := parseNDJSON(eventsFile)
+if err != nil {
+t.Fatalf("parse events: %v", err)
+}
+
+var outputs []map[string]interface{}
+outputsSeq := -1
+finishedSeq := -1
+
+for _, evt := range events {
+evtType, ok := evt["payload_type"].(string)
+if !ok {
+continue
+}
+
+if evtType == "run.outputs" {
+seq, _ := evt["seq"].(float64)
+outputsSeq = int(seq)
+
+payload, ok := evt["payload"].(map[string]interface{})
+if !ok {
+continue
+}
+
+outList, ok := payload["outputs"].([]interface{})
+if !ok {
+continue
+}
+
+for _, o := range outList {
+if outMap, ok := o.(map[string]interface{}); ok {
+outputs = append(outputs, outMap)
+}
+}
+}
+
+if evtType == "RunCompleted" {
+seq, _ := evt["seq"].(float64)
+finishedSeq = int(seq)
+}
+}
+
+if len(outputs) != 2 {
+t.Fatalf("expected 2 outputs, got %d: %v", len(outputs), outputs)
+}
+
+if outputs[0]["name"] != "count" {
+t.Fatalf("expected first output name 'count', got %q", outputs[0]["name"])
+}
+if outputs[1]["name"] != "name" {
+t.Fatalf("expected second output name 'name', got %q", outputs[1]["name"])
+}
+
+if outputsSeq == -1 {
+t.Fatalf("run.outputs envelope not found in events")
+}
+if finishedSeq == -1 {
+t.Fatalf("RunCompleted envelope not found in events")
+}
+if outputsSeq >= finishedSeq {
+t.Fatalf("outputs (seq %d) must arrive before RunCompleted (seq %d)", outputsSeq, finishedSeq)
+}
+}
+
+func parseNDJSON(filepath string) ([]map[string]interface{}, error) {
+data, err := os.ReadFile(filepath)
+if err != nil {
+return nil, err
+}
+
+var events []map[string]interface{}
+for _, line := range strings.Split(string(data), "\n") {
+if line == "" {
+continue
+}
+var evt map[string]interface{}
+if err := json.Unmarshal([]byte(line), &evt); err != nil {
+return nil, err
+}
+events = append(events, evt)
+}
+return events, nil
 }
