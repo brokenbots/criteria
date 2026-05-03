@@ -514,3 +514,21 @@ The test suite now exercises both sides of the `agent.config` contract: foldable
 - `make validate` — passed
 - `make lint-go` — passed
 - `make lint-baseline-check` — passed
+
+### PR review remediation (2026-05-02, commit 5bb931f)
+
+Four `copilot-pull-request-reviewer` threads addressed:
+
+**PRRT_KTFy + PRRT_KTF- — forward-claims bypass removed**
+- Deleted `tools/release/forward-claims.txt`.
+- Simplified `.github/workflows/ci.yml` tag-claim guard: removed the forward-claims loading block and the warning-path branch; every extracted tag now hard-fails if absent from origin.
+
+**PRRT_KTF7 — graphVars uses cty.UnknownVal for no-default variables**
+- `graphVars` in `compile_fold.go` now stores `cty.UnknownVal(node.Type)` instead of `cty.NullVal(node.Type)` for variables without a declared default. The function framework short-circuits unknown args (returns unknown without calling Impl), so `file(var.x)` with a no-default variable no longer produces spurious type errors.
+- Added `TestFoldExpr_VarNoDefault_FileCall_NoError`.
+
+**PRRT_KTF3 — FoldExpr stubs file functions when workflowDir is empty**
+- `FoldExpr` now replaces `file()` and `fileexists()` with stub functions returning `cty.UnknownVal` when `workflowDir == ""`. This allows `Compile()` (no WorkflowDir) to still catch undeclared var/local references while deferring path validation.
+- Added `TestFoldExpr_NoWorkflowDir_LiteralFile_NoError` and `TestFoldExpr_NoWorkflowDir_UndeclaredVar_StillErrors`.
+
+All four threads replied-to and resolved. `make ci` exits 0.
