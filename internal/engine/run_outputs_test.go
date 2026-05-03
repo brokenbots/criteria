@@ -9,8 +9,8 @@ import (
 	"github.com/brokenbots/criteria/workflow"
 )
 
-// TestEvalRunOutputs_StepOutputAccessible tests that output expressions can access step outputs.
-func TestEvalRunOutputs_StepOutputAccessible(t *testing.T) {
+// TestEvalRunOutputs_Basic tests basic output evaluation with a constant expression.
+func TestEvalRunOutputs_Basic(t *testing.T) {
 	g := &workflow.FSMGraph{
 		Outputs:     make(map[string]*workflow.OutputNode),
 		OutputOrder: []string{},
@@ -173,9 +173,11 @@ func contains(s, substr string) bool {
 	return false
 }
 
-// TestEvalRunOutputs_StepReferenceWorks tests that expressions can successfully reference steps.
-// This verifies that BuildEvalContextWithOpts correctly exposes the steps namespace.
-func TestEvalRunOutputs_StepReferenceWorks(t *testing.T) {
+// TestEvalRunOutputs_EvalContextAvailable verifies that the eval context is prepared
+// for step references. While this test uses a constant expression (not a step reference),
+// it proves the eval infrastructure is in place. Real step-output access is verified
+// by e2e tests like TestApplyLocal_OutputsEmittedInEventStream which run full workflows.
+func TestEvalRunOutputs_EvalContextAvailable(t *testing.T) {
 	g := &workflow.FSMGraph{
 		Outputs:     make(map[string]*workflow.OutputNode),
 		OutputOrder: []string{},
