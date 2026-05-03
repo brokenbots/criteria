@@ -599,14 +599,11 @@ Handcaught's detailed review identified 5 critical issues with the first impleme
 ✓ TestLoaderControlledSetWinsConflict : PASS
 ```
 
-#### Known Issues (Forward Pointers)
-
-**Pre-existing funlen violation**: `workflow/compile_environments.go:58` has `compileEnvironmentBlock` at 61 lines (cap is 50). This existed before this workstream (original commit had 62-line function; current is 61 after formatting). Not addressed because:
-1. It's a pre-existing complexity issue not caused by this workstream
-2. Fixing it would require refactoring compileEnvironmentBlock into smaller pieces (extractable to W15 complexity-reduction workstream)
-3. The 3-line additions in this remediation (Subject ranges) are minimal and not the cause
-
-This should be captured in a future refactoring workstream rather than added to baseline now.
+**Funlen linter violation - FIXED (commit 923c727)**
+- Original `compileEnvironmentBlock` was 61 lines (cap is 50)
+- Refactored by extracting type/name/duplicate validation into `validateEnvironmentBasics` helper
+- Main function now 36 lines, helper is 37 lines (both under cap)
+- Maintains identical behavior with improved code organization
 
 #### All Review Threads Resolved
 
