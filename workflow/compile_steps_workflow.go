@@ -5,6 +5,8 @@ package workflow
 
 import (
 	"fmt"
+	"sort"
+	"strings"
 
 	"github.com/hashicorp/hcl/v2"
 )
@@ -55,8 +57,36 @@ func compileWorkflowStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[stri
 		diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q: at least one outcome is required", sp.Name)})
 	}
 
-	d, node.Body, node.BodyEntry = compileWorkflowBody(sp, schemas, opts)
+	d, node.Body, node.BodyEntry = compileWorkflowBody(sp, spec, schemas, opts)
 	diags = append(diags, d...)
+
+	// Decode the optional `input = { ... }` attribute for body variable binding.
+	bodyInputExpr, d := decodeBodyInputAttr(sp)
+	diags = append(diags, d...)
+
+	// Validate that every required body variable (no default) has an input
+	// binding. A missing input expression when the body requires variables is
+	// caught here at compile time so the user gets an actionable diagnostic
+	// rather than a silent null at runtime.
+	if node.Body != nil {
+		var missingVars []string
+		for varName, varNode := range node.Body.Variables {
+			if varNode.IsRequired() && bodyInputExpr == nil {
+				missingVars = append(missingVars, varName)
+			}
+		}
+		if len(missingVars) > 0 {
+			sort.Strings(missingVars)
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary: fmt.Sprintf(
+					"step %q: body variable(s) %s have no default; add input = { %s = ... } to the parent step",
+					sp.Name, strings.Join(missingVars, ", "), missingVars[0],
+				),
+			})
+		}
+		node.BodyInputExpr = bodyInputExpr
+	}
 
 	diags = append(diags, compileWorkflowOutputs(g, sp, node, opts)...)
 
@@ -67,7 +97,7 @@ func compileWorkflowStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[stri
 
 // compileWorkflowBody dispatches to the inline or file-backed body compiler.
 // Returns the compiled FSMGraph, the body entry state name, and any diagnostics.
-func compileWorkflowBody(sp *StepSpec, schemas map[string]AdapterInfo, opts CompileOpts) (hcl.Diagnostics, *FSMGraph, string) {
+func compileWorkflowBody(sp *StepSpec, spec *Spec, schemas map[string]AdapterInfo, opts CompileOpts) (hcl.Diagnostics, *FSMGraph, string) {
 	const maxLoadDepth = 4
 	var diags hcl.Diagnostics
 
@@ -88,7 +118,7 @@ func compileWorkflowBody(sp *StepSpec, schemas map[string]AdapterInfo, opts Comp
 	if sp.Workflow == nil {
 		return compileWorkflowBodyFromFile(sp, schemas, opts)
 	}
-	return compileWorkflowBodyInline(sp, schemas, opts)
+	return compileWorkflowBodyInline(sp, spec, schemas, opts)
 }
 
 // compileWorkflowBodyFromFile handles the workflow_file = "..." loading path.
@@ -136,7 +166,8 @@ func compileWorkflowBodyFromFile(sp *StepSpec, schemas map[string]AdapterInfo, o
 }
 
 // compileWorkflowBodyInline handles the inline workflow { ... } block path.
-func compileWorkflowBodyInline(sp *StepSpec, schemas map[string]AdapterInfo, opts CompileOpts) (hcl.Diagnostics, *FSMGraph, string) {
+// It builds a synthetic *Spec from the BodySpec and compiles it recursively.
+func compileWorkflowBodyInline(sp *StepSpec, spec *Spec, schemas map[string]AdapterInfo, opts CompileOpts) (hcl.Diagnostics, *FSMGraph, string) {
 	var diags hcl.Diagnostics
 	wb := sp.Workflow
 	if len(wb.Steps) == 0 {
@@ -146,12 +177,39 @@ func compileWorkflowBodyInline(sp *StepSpec, schemas map[string]AdapterInfo, opt
 		}), nil, ""
 	}
 
+	// Determine entry point: explicit entry > initial_state > first step.
 	entry := wb.Entry
+	if entry == "" {
+		entry = wb.InitialState
+	}
 	if entry == "" {
 		entry = wb.Steps[0].Name
 	}
 
-	bodySpec := buildBodySpec(sp.Name, entry, wb)
+	// Build states slice with the synthetic _continue terminal appended.
+	// Copy to avoid mutating the parsed slice.
+	states := make([]StateSpec, len(wb.States), len(wb.States)+1)
+	copy(states, wb.States)
+	states = append(states, StateSpec{Name: "_continue", Terminal: true})
+
+	bodySpec := &Spec{
+		Name:         sp.Name + ":body",
+		Version:      "1",
+		InitialState: entry,
+		TargetState:  "_continue",
+		Variables:    wb.Variables,
+		Locals:       wb.Locals,
+		Agents:       wb.Agents,
+		Steps:        wb.Steps,
+		States:       states,
+		Waits:        wb.Waits,
+		Approvals:    wb.Approvals,
+		Branches:     wb.Branches,
+		Policy:       wb.Policy,
+		Permissions:  wb.Permissions,
+		SourceBytes:  spec.SourceBytes, // propagate for BranchArm.ConditionSrc
+	}
+
 	childOpts := CompileOpts{
 		WorkflowDir:         opts.WorkflowDir,
 		LoadDepth:           opts.LoadDepth + 1,
@@ -171,6 +229,24 @@ func compileWorkflowBodyInline(sp *StepSpec, schemas map[string]AdapterInfo, opt
 	return diags, body, entry
 }
 
+// decodeBodyInputAttr extracts the optional `input = { ... }` map expression
+// from the parent step's Remain body. Returns nil, nil when the attribute is
+// absent. The expression is stored on StepNode.BodyInputExpr and evaluated at
+// iteration entry to seed the child scope's var.* bindings.
+func decodeBodyInputAttr(sp *StepSpec) (hcl.Expression, hcl.Diagnostics) {
+	schema := &hcl.BodySchema{
+		Attributes: []hcl.AttributeSchema{{Name: "input", Required: false}},
+	}
+	content, _, diags := sp.Remain.PartialContent(schema)
+	if diags.HasErrors() || content == nil {
+		return nil, diags
+	}
+	if attr, ok := content.Attributes["input"]; ok {
+		return attr.Expr, nil
+	}
+	return nil, nil
+}
+
 // validateBodyHasContinuePath returns an error when none of the body steps
 // has a transition_to = "_continue" outcome. This ensures that the iteration
 // loop can terminate normally; a body with no path to _continue is a compile
@@ -187,57 +263,4 @@ func validateBodyHasContinuePath(stepName string, body *FSMGraph) error {
 		}
 	}
 	return fmt.Errorf("step %q: workflow body has no path to \"_continue\"; at least one outcome must transition_to = \"_continue\"", stepName)
-}
-
-// buildBodySpec constructs a synthetic Spec from a WorkflowBodySpec for
-// recursive compilation. It adds a "_continue" terminal state that body steps
-// can transition to in order to signal iteration advance.
-func buildBodySpec(stepName, entry string, wb *WorkflowBodySpec) *Spec {
-	// Convert pointer slices to value slices for the synthetic Spec.
-	steps := make([]StepSpec, 0, len(wb.Steps))
-	for _, s := range wb.Steps {
-		if s != nil {
-			steps = append(steps, *s)
-		}
-	}
-	states := make([]StateSpec, 0, len(wb.States)+1)
-	for _, s := range wb.States {
-		if s != nil {
-			states = append(states, *s)
-		}
-	}
-	// Add the synthetic _continue terminal state (body-complete signal).
-	states = append(states, StateSpec{
-		Name:     "_continue",
-		Terminal: true,
-	})
-	waits := make([]WaitSpec, 0, len(wb.Waits))
-	for _, w := range wb.Waits {
-		if w != nil {
-			waits = append(waits, *w)
-		}
-	}
-	approvals := make([]ApprovalSpec, 0, len(wb.Approvals))
-	for _, a := range wb.Approvals {
-		if a != nil {
-			approvals = append(approvals, *a)
-		}
-	}
-	branches := make([]BranchSpec, 0, len(wb.Branches))
-	for _, b := range wb.Branches {
-		if b != nil {
-			branches = append(branches, *b)
-		}
-	}
-	return &Spec{
-		Name:         stepName + ":body",
-		Version:      "1",
-		InitialState: entry,
-		TargetState:  "_continue",
-		Steps:        steps,
-		States:       states,
-		Waits:        waits,
-		Approvals:    approvals,
-		Branches:     branches,
-	}
 }

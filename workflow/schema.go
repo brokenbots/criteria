@@ -107,8 +107,8 @@ type StepSpec struct {
 	// Config is the legacy map attribute; retained for parse-time detection so the
 	// compiler can emit a helpful "use input { } block" diagnostic.
 	Config     map[string]string `hcl:"config,optional"`
-	Input      *InputSpec        `hcl:"input,block"`
-	Workflow   *WorkflowBodySpec `hcl:"workflow,block"`
+	Input    *InputSpec `hcl:"input,block"`
+	Workflow *BodySpec  `hcl:"workflow,block"`
 	Timeout    string            `hcl:"timeout,optional"`
 	AllowTools []string          `hcl:"allow_tools,optional"`
 	Outcomes   []OutcomeSpec     `hcl:"outcome,block"`
@@ -122,18 +122,30 @@ type StepSpec struct {
 	LegacyConfigRange *hcl.Range
 }
 
-// WorkflowBodySpec is the parsed body of an inline `workflow { ... }` block
-// inside a step. It defines an independent sub-workflow that runs as the step
-// body during each iteration. All fields mirror their top-level Spec counterparts.
-type WorkflowBodySpec struct {
-	Steps     []*StepSpec     `hcl:"step,block"`
-	States    []*StateSpec    `hcl:"state,block"`
-	Waits     []*WaitSpec     `hcl:"wait,block"`
-	Approvals []*ApprovalSpec `hcl:"approval,block"`
-	Branches  []*BranchSpec   `hcl:"branch,block"`
-	Outputs   []*OutputSpec   `hcl:"output,block"`
-	// Entry is the explicit initial step name. When empty the compiler uses the
-	// first declared step.
+// BodySpec is the parsed body of an inline `workflow { ... }` block inside a
+// step. Unlike Spec it needs no label; all header fields are optional and are
+// filled in synthetically by the compiler. It may declare its own variables,
+// agents, and locals, making it a fully self-contained sub-workflow.
+type BodySpec struct {
+	// Header fields — all optional; filled in synthetically during compilation.
+	Name         string `hcl:"name,optional"`
+	Version      string `hcl:"version,optional"`
+	InitialState string `hcl:"initial_state,optional"`
+	TargetState  string `hcl:"target_state,optional"`
+	// Content blocks mirror Spec exactly.
+	Variables   []VariableSpec   `hcl:"variable,block"`
+	Locals      []LocalSpec      `hcl:"local,block"`
+	Agents      []AgentSpec      `hcl:"agent,block"`
+	Steps       []StepSpec       `hcl:"step,block"`
+	States      []StateSpec      `hcl:"state,block"`
+	Waits       []WaitSpec       `hcl:"wait,block"`
+	Approvals   []ApprovalSpec   `hcl:"approval,block"`
+	Branches    []BranchSpec     `hcl:"branch,block"`
+	Policy      *PolicySpec      `hcl:"policy,block"`
+	Permissions *PermissionsSpec `hcl:"permissions,block"`
+	Outputs     []OutputSpec     `hcl:"output,block"`
+	// Entry is the explicit initial step name. When empty the compiler uses
+	// InitialState (if set) or the first declared step.
 	Entry string `hcl:"entry,optional"`
 }
 
@@ -276,6 +288,10 @@ type VariableNode struct {
 	Description string
 }
 
+// IsRequired returns true when the variable has no declared default.
+// Used by the body input validation logic to detect unbound required vars.
+func (v *VariableNode) IsRequired() bool { return v.Default == cty.NilVal }
+
 // AgentNode is a compiled long-lived adapter declaration.
 type AgentNode struct {
 	Name    string
@@ -328,6 +344,11 @@ type StepNode struct {
 	// BodyEntry is the initial state name for the workflow body. Derived from
 	// the first declared step in the body when not explicitly set.
 	BodyEntry string
+	// BodyInputExpr is the optional `input = { ... }` expression on the parent
+	// step. When non-nil the engine evaluates it at iteration entry to build the
+	// child scope's var.* bindings. When nil the body's variable defaults are
+	// used directly.
+	BodyInputExpr hcl.Expression
 	// Outputs maps output block names to their value HCL expressions. Evaluated
 	// after each body iteration completes to populate indexed step outputs.
 	Outputs map[string]hcl.Expression

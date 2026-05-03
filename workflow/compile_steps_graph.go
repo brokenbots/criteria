@@ -99,9 +99,6 @@ func compileWorkflowOutputs(g *FSMGraph, sp *StepSpec, node *StepNode, opts Comp
 	seen := map[string]bool{}
 	node.Outputs = make(map[string]hcl.Expression, len(sp.Workflow.Outputs))
 	for _, out := range sp.Workflow.Outputs {
-		if out == nil {
-			continue
-		}
 		if seen[out.Name] {
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagError,

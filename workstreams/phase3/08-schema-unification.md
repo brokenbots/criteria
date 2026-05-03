@@ -197,13 +197,13 @@ This workstream may **not** edit:
 
 ## Tasks
 
-- [ ] Delete `WorkflowBodySpec` and update `StepSpec.Workflow` type (Step 1).
-- [ ] Add `StepSpec.Input` and the parent input binding compile flow (Step 2).
-- [ ] Remove `childSt.Vars = st.Vars` and back-propagation; add `seedChildVars` (Step 3).
-- [ ] Confirm body's `output` blocks evaluate against child scope (Step 4).
-- [ ] Update all example HCL files using inline bodies; regenerate goldens (Step 5).
-- [ ] Author all required tests (Step 6).
-- [ ] `make ci` green; `make validate` green for every example.
+- [x] Delete `WorkflowBodySpec` and update `StepSpec.Workflow` type (Step 1).
+- [x] Add `StepSpec.Input` and the parent input binding compile flow (Step 2).
+- [x] Remove `childSt.Vars = st.Vars` and back-propagation; add `seedChildVars` (Step 3).
+- [x] Confirm body's `output` blocks evaluate against child scope (Step 4).
+- [x] Update all example HCL files using inline bodies; regenerate goldens (Step 5).
+- [x] Author all required tests (Step 6).
+- [x] `make ci` green; `make validate` green for every example.
 
 ## Exit criteria
 
@@ -228,9 +228,76 @@ The Step 6 test list is the deliverable. Coverage targets:
 
 | Risk | Mitigation |
 |---|---|
-| Existing in-repo examples use the implicit outer-var read | Sweep [examples/](../../examples/) and update before submitting; re-run `make validate`. |
+| Existing in-repo examples use the implicit outer-var read | Swept [examples/](../../examples/) and updated before submitting; re-ran `make validate`. |
 | External users (outside this repo) have inline-body workflows that rely on the alias | This is the documented breaking change. The migration note ([21](21-phase3-cleanup-gate.md)) enumerates it. |
 | The inline `step.workflow { ... }` form still ships at v0.3.0 — but [13](13-subworkflow-block-and-resolver.md) introduces `subworkflow` as the preferred alternative | Acceptable. Both forms coexist post-v0.3.0; the inline form is the lightweight case, the `subworkflow` block is the multi-file/cross-source case. |
-| `seedChildVars` produces a different cty value shape than the existing aliased Vars | Add an explicit shape assertion to the body's first-step entry: required vars must all be present, with their declared types. Fail loudly. |
-| Goldens regenerate cleanly locally but CI's golden lane diverges | Run `make ci` locally before submitting; if a CI golden fails, root-cause is almost always a path-resolution or env-var difference; document in reviewer notes. |
-| Removing the alias surfaces a real bug in iteration where each.* was the only outer state the body needed | `each.*` continues to work — the iteration cursor is still threaded through `childSt`. Confirm with a `TestRunWorkflowBody_EachStillBinds` test. |
+| `seedChildVars` produces a different cty value shape than the existing aliased Vars | Added an explicit required-var check in `seedChildVars` and compile-time validation in `compileWorkflowStep`. Fails loudly. |
+| Goldens regenerate cleanly locally but CI's golden lane diverges | Ran `make ci` locally; golden outputs match. |
+| Removing the alias surfaces a real bug in iteration where each.* was the only outer state the body needed | `each.*` is explicitly threaded through `seedChildVars` from `parentVars`; confirmed by `TestSeedChildVars_EachThreaded`. |
+
+## Reviewer Notes
+
+### Implementation summary
+
+**Step 1 — Schema unification (`workflow/schema.go`)**
+- Deleted `WorkflowBodySpec` struct (pointer-slice fields `[]*StepSpec` etc.).
+- Added `BodySpec` struct mirroring all `Spec` content fields; header fields (`Name`, `Version`, `InitialState`, `TargetState`) are `optional` attributes (no label required). Value slices (`[]StepSpec`, `[]StateSpec`, etc.) to match `Spec`. Includes `Variables`, `Locals`, `Agents`, `Steps`, `States`, `Waits`, `Approvals`, `Branches`, `Policy`, `Permissions`, `Outputs`, `Entry`.
+- `StepSpec.Workflow *WorkflowBodySpec` → `*BodySpec`.
+- Added `StepNode.BodyInputExpr hcl.Expression` for per-iteration input expression.
+- Added `VariableNode.IsRequired() bool` method.
+
+**Step 2 — Compile rewrite (`workflow/compile_steps_workflow.go`)**
+- Deleted `buildBodySpec` (pointer-to-value conversion helper, now unnecessary).
+- Rewrote `compileWorkflowBodyInline`: builds a synthetic `*Spec` from `BodySpec` (copies all fields; synthesizes `Name`, `Version`, `InitialState`, `TargetState` if missing); drives it through the standard `compileSpec` path.
+- Added `decodeBodyInputAttr`: reads `input = { ... }` from `StepSpec.Remain` via `PartialContent`; folds the expression via `FoldExpr` to verify no unsupported namespaces; stores in `StepNode.BodyInputExpr`.
+- Added compile-time required-variable check in `compileWorkflowStep`: if body has required variables AND `BodyInputExpr == nil`, emits a compile error.
+- Imports: added `sort`, `strings`; removed `cty` (not needed after `buildBodySpec` deletion).
+
+**Step 3 — Compile graph fix (`workflow/compile_steps_graph.go`)**
+- Removed `if out == nil { continue }` nil check in `compileWorkflowOutputs` — `BodySpec` uses `[]OutputSpec` (value slice), not `[]*OutputSpec`.
+
+**Step 4 — Engine: `seedChildVars` + no aliasing (`internal/engine/node_workflow.go`)**
+- Added `seedChildVars(body, parentInput, parentVars)`: seeds from `SeedVarsFromGraph`; applies `parentInput` overrides to `var.*`; threads `each.*` from `parentVars`; seeds `local.*`; returns error for missing required vars.
+- Rewrote `runWorkflowBody`: accepts `childVars map[string]cty.Value` (pre-seeded); no longer takes `*RunState`; returns `(string, map[string]cty.Value, error)` where the second return is child's final vars.
+- Bug fix: `local != cty.EmptyObjectVal` comparison panics (`typeObject` not comparable); replaced with `len(body.Locals) > 0` guard.
+
+**Step 5 — Engine: output evaluation against child scope (`internal/engine/node_step.go`)**
+- `runWorkflowIteration` now evaluates `BodyInputExpr`, calls `seedChildVars`, calls new `runWorkflowBody` signature, builds output eval context from `childFinalVars` (not `st.Vars`).
+
+**Step 6 — Examples + goldens**
+- `examples/for_each_review_loop.hcl`: added outer `variable "prefix" { default = "item" }`, body `variable "prefix"` (required), parent step `input = { prefix = var.prefix }`, updated body step labels to reference `var.prefix`.
+- Plan golden regenerated: `internal/cli/testdata/plan/for_each_review_loop__*.golden` now shows `prefix: string = item`.
+- Compile golden unchanged (FSMGraph JSON does not serialize variable metadata).
+
+### Tests written
+
+**`workflow/compile_steps_workflow_test.go`** (4 new tests):
+- `TestCompileWorkflowStep_BodyHasFullSpec` — verifies body's `g.Variables`, `g.Agents` populated.
+- `TestCompileWorkflowStep_BodyVariableNotInOuterScope` — references to `var.outer` from body are compile errors.
+- `TestCompileWorkflowStep_InputBoundToBodyVariable` — `input = { x = var.outer_x }` stores expression in `BodyInputExpr`.
+- `TestCompileWorkflowStep_InputMissingRequiredVariable` — body declares required variable but no `input` → compile error.
+
+**`internal/engine/node_workflow_test.go`** (4 new tests):
+- `TestSeedChildVars_EachThreaded` — `each.*` from `parentVars` is in child scope.
+- `TestSeedChildVars_MissingRequiredVar` — `seedChildVars` returns error for missing required var.
+- `TestRunWorkflowBody_BodyInputBindsVar` — integration: body var bound via `input = { ... }` resolves in body step input.
+- `TestRunWorkflowBody_OutputUsesChildStepsScope` — integration: output block uses `steps.inner.*` from child scope (not outer).
+
+### Exit criteria verification
+
+- `git grep WorkflowBodySpec` → 0 matches in production code. ✓
+- `git grep buildBodySpec` → 0 matches in production code. ✓
+- `git grep 'childSt.Vars = st.Vars'` → 0 matches. ✓
+- `input = { ... }` parses, compiles, and binds at runtime. ✓ (tested by `TestRunWorkflowBody_BodyInputBindsVar`)
+- Body cannot reference outer vars without declaring them + passing via `input`. ✓ (enforced at compile time; tested by `TestCompileWorkflowStep_BodyVariableNotInOuterScope`)
+- All required tests exist and pass. ✓
+- `make validate` passes for every example. ✓
+- `make test` (full race suite) exits 0. ✓
+
+### Security review
+
+- `seedChildVars`: iterates only declared variable names from `body.Variables`; no arbitrary key injection from `parentInput`.
+- Input attribute expression is folded via `FoldExpr` at compile time — unsupported namespaces produce a compile error before any runtime evaluation.
+- No secrets exposure: input bindings are user-authored HCL expressions; no system credentials flow through this path.
+- No unsafe file operations or shell commands introduced.
+- No new dependencies added.

@@ -249,7 +249,24 @@ func (n *stepNode) runWorkflowIteration(ctx context.Context, st *RunState, deps 
 	if n.step.Body == nil {
 		return "", fmt.Errorf("step %q: type=\"workflow\" but body is nil", n.step.Name)
 	}
-	bodyOutcome, err := runWorkflowBody(ctx, n.step.Body, n.step.BodyEntry, st, deps)
+
+	// Evaluate the optional body input expression to build the child var scope.
+	var parentInput cty.Value
+	if n.step.BodyInputExpr != nil {
+		evalCtx := workflow.BuildEvalContextWithOpts(st.Vars, workflow.DefaultFunctionOptions(st.WorkflowDir))
+		var diags hcl.Diagnostics
+		parentInput, diags = n.step.BodyInputExpr.Value(evalCtx)
+		if diags.HasErrors() {
+			return "", fmt.Errorf("step %q: body input expression error: %s", n.step.Name, diags.Error())
+		}
+	}
+
+	childVars, err := seedChildVars(n.step.Body, parentInput, st.Vars)
+	if err != nil {
+		return "", fmt.Errorf("step %q: %w", n.step.Name, err)
+	}
+
+	bodyOutcome, childFinalVars, err := runWorkflowBody(ctx, n.step.Body, n.step.BodyEntry, childVars, st.WorkflowDir, deps)
 	if err != nil {
 		return "", err
 	}
@@ -265,11 +282,11 @@ func (n *stepNode) runWorkflowIteration(ctx context.Context, st *RunState, deps 
 	}
 	st.LastOutcome = outcome
 
-	// Evaluate output{} block expressions and record them as this iteration's
-	// indexed step output. Also store as cur.Prev for the next iteration's
-	// each._prev binding (B-05, B-06).
+	// Evaluate output{} block expressions against the child's final scope.
+	// Using the child scope ensures that steps.* references inside output{}
+	// resolve against body steps, not the outer workflow.
 	if len(n.step.Outputs) > 0 {
-		evalCtx := workflow.BuildEvalContextWithOpts(st.Vars, workflow.DefaultFunctionOptions(st.WorkflowDir))
+		evalCtx := workflow.BuildEvalContextWithOpts(childFinalVars, workflow.DefaultFunctionOptions(st.WorkflowDir))
 		stringOuts := make(map[string]string, len(n.step.Outputs))
 		ctyOuts := make(map[string]cty.Value, len(n.step.Outputs))
 		for k, expr := range n.step.Outputs {

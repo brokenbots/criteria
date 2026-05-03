@@ -3,7 +3,7 @@ initial_state: init   target_state: done
 policy: max_total_steps=50  max_step_retries=0
 
 variables:
-  (none)
+  prefix: string = item
 
 agents:
   (none)
