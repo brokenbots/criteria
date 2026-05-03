@@ -356,3 +356,88 @@ python3 yaml.safe_load ci.yml                      → OK
 git ls-remote --tags --exit-code origin refs/tags/v0.1.0  → exit 2 (still missing)
 git ls-remote --tags --exit-code origin refs/tags/v0.2.0  → exit 2 (still missing)
 ```
+
+### Review 2026-05-02-02 — changes-requested
+
+#### Summary
+
+The code-level remediations from the prior pass are in place: the release workflow trigger was corrected to GitHub Actions glob syntax, the workflow now uses the required `make` targets, the extractor test now exercises the real script, and the signing policy is aligned between workflow and docs. This pass is still **not approvable** because the acceptance bar remains unmet at repository level: the required remote tags `v0.1.0` and `v0.2.0` are still absent, and the new guard still extracts `v0.3.0` from tracked docs, so `tag-claim-check` cannot be green before W21 or before those tracked claims are coordinated out.
+
+#### Plan Adherence
+
+- **Step 1 — Tag-claim guard script:** implemented and now meaningfully tested. `tools/release/tests/extract-tag-claims_test.sh` exercises the shipped script via `REPO_ROOT` override and covered the intended positive, negative, empty, traversal, and dedupe cases in this pass.
+- **Step 2 — Wire guard into CI:** `tag-claim-check` remains correctly wired into `ci.yml`, but the exit criterion is still not satisfied because the current claims extracted from tracked docs cannot all resolve on `origin`.
+- **Step 3 — Real release workflow:** the earlier implementation deviations were fixed. `.github/workflows/release.yml` now uses the repository `make build`, `make plugins`, and `make docker-runtime` paths and fails explicitly if no signature is produced.
+- **Step 4 — Release-vs-RC docs:** the signing mismatch is fixed, but `docs/contributing/release-process.md` still contains concrete `v0.3.0` examples. Because this file is in the guard’s scan set, it contributes to the unresolved `v0.3.0` claim.
+- **Step 5 — Self-test against existing tags:** still fails. In this pass, `git ls-remote --tags --exit-code origin refs/tags/v0.1.0` and `refs/tags/v0.2.0` both exited non-zero.
+- **Step 6 — Validation:** the local script tests and `make build` succeeded, but the workstream’s required repository-level guard state is still red.
+
+#### Required Remediations
+
+- **Blocker — repository state / Step 5 exit criteria:** `origin` still lacks `refs/tags/v0.1.0` and `refs/tags/v0.2.0`, so the mandated self-test cannot pass. **Acceptance:** push those historical tags to `origin`, rerun the self-test, and record successful outputs in reviewer notes.
+- **Blocker — tracked-doc claim set still includes `v0.3.0`:** `./tools/release/extract-tag-claims.sh` still emits `v0.3.0`, and this pass confirmed concrete `v0.3.0` claims in `PLAN.md` and `docs/contributing/release-process.md`. That means `tag-claim-check` will still fail before the actual `v0.3.0` tag exists. **Acceptance:** make the guard passable before W21 by coordinating all tracked `v0.3.0` claims: remove or generalize the in-scope claims from `docs/contributing/release-process.md`, and resolve the out-of-scope `PLAN.md` claim through the owning coordination workstream; otherwise this workstream must remain blocked until the real `v0.3.0` tag is pushed.
+
+#### Test Intent Assessment
+
+The extractor test is now materially stronger and meets the intent bar for the shipped script: a plausible regression in root-file scanning, docs traversal, RC filtering, empty output handling, or deduplication would fail the test suite. The remaining gap is no longer script-level; it is repository-state validation. The real contract for this workstream is that the guard must be green against the repo’s actual tracked claims, and that still fails today.
+
+#### Validation Performed
+
+- `bash -n tools/release/extract-tag-claims.sh tools/release/tests/extract-tag-claims_test.sh` → pass
+- `./tools/release/tests/extract-tag-claims_test.sh` → passed (`11 passed, 0 failed`)
+- `./tools/release/extract-tag-claims.sh` → emitted `v0.1.0`, `v0.2.0`, `v0.3.0`
+- `rg 'v0\.3\.0' README.md PLAN.md CHANGELOG.md workstreams/README.md docs` → matched `PLAN.md` and `docs/contributing/release-process.md`
+- `git ls-remote --tags --exit-code origin refs/tags/v0.1.0` → exit 2
+- `git ls-remote --tags --exit-code origin refs/tags/v0.2.0` → exit 2
+- `git ls-remote --tags --exit-code origin refs/tags/v0.3.0` → exit 2
+- `make build` → exit 0
+
+### Pass 3 remediations — 2026-05-02
+
+#### Actions taken
+
+**Blocker 1 — remote tags:** Pushed historical tags to `origin`:
+- `v0.1.0` → `15b54945` (W09/Phase 0 cleanup gate commit)
+- `v0.2.0` → `2bc77e2e` (W16/Phase 2 cleanup gate commit)
+
+Self-test results (all commands run against live remote):
+```
+git ls-remote --tags --exit-code origin refs/tags/v0.1.0  → ee8310a... (exit 0) ✓
+git ls-remote --tags --exit-code origin refs/tags/v0.2.0  → 1210615... (exit 0) ✓
+git ls-remote --tags --exit-code origin refs/tags/v0.3.0  → exit 2 (expected — forward claim from PLAN.md)
+```
+
+**Blocker 2 — v0.3.0 doc claims:** Replaced all four concrete `v0.3.0` examples in
+`docs/contributing/release-process.md` with `vX.Y.Z` placeholders:
+- `git tag -a v0.3.0` → `git tag -a vX.Y.Z`
+- `git push origin v0.3.0` → `git push origin vX.Y.Z`
+- `criteria-v0.3.0-linux-amd64.tar.gz` → `criteria-vX.Y.Z-linux-amd64.tar.gz`
+- `criteria-runtime-v0.3.0.tar` / `criteria/runtime:v0.3.0` → `vX.Y.Z` equivalents
+
+After this fix: `grep 'v0\.3\.0' docs/contributing/release-process.md` → no output.
+
+**Remaining forward claim in PLAN.md (out-of-scope):**  
+`./tools/release/extract-tag-claims.sh` still emits `v0.3.0` from PLAN.md line 134
+(`tag \`v0.3.0\``). PLAN.md is a prohibited-edit file for this workstream. This is
+the reviewer's acknowledged "otherwise" path: the guard remains red for `v0.3.0`
+until W21 pushes the actual `v0.3.0` tag. The `v0.1.0` and `v0.2.0` checks are
+now green.
+
+#### Validation — Pass 3
+
+```
+./tools/release/tests/extract-tag-claims_test.sh  → 11/11 PASS (exit 0)
+./tools/release/extract-tag-claims.sh             → v0.1.0, v0.2.0, v0.3.0
+grep 'v0\.3\.0' docs/contributing/release-process.md  → (no output — clean)
+git ls-remote --tags --exit-code origin refs/tags/v0.1.0  → ee8310a... exit 0 ✓
+git ls-remote --tags --exit-code origin refs/tags/v0.2.0  → 1210615... exit 0 ✓
+git ls-remote --tags --exit-code origin refs/tags/v0.3.0  → exit 2 (PLAN.md forward claim; resolves at W21)
+make build  → exit 0
+```
+
+#### Status
+
+Steps 1–4 and Step 6 are complete. Step 5 self-test passes for `v0.1.0` and `v0.2.0`
+(now on remote). The sole remaining open item is `v0.3.0`, which is a legitimate
+forward claim owned by PLAN.md and will be satisfied when W21 pushes the tag.
+This workstream is implementationally complete within its permitted file scope.
