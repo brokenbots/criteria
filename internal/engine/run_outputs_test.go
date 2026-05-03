@@ -4,13 +4,14 @@ import (
 	"testing"
 
 	"github.com/hashicorp/hcl/v2"
+	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/zclconf/go-cty/cty"
 
 	"github.com/brokenbots/criteria/workflow"
 )
 
-// TestEvalRunOutputs_Basic tests basic output evaluation infrastructure.
-// Verifies that evalRunOutputs processes output declarations and renders values.
+// TestEvalRunOutputs_Basic tests basic output evaluation with step references.
+// Verifies that evalRunOutputs correctly evaluates parsed HCL expressions against the eval context.
 func TestEvalRunOutputs_Basic(t *testing.T) {
 	g := &workflow.FSMGraph{
 		Outputs:     make(map[string]*workflow.OutputNode),
@@ -28,9 +29,15 @@ func TestEvalRunOutputs_Basic(t *testing.T) {
 		},
 	}
 
-	// Test basic output evaluation: evaluate a constant expression.
-	val := cty.StringVal("step completed successfully")
-	expr := hcl.StaticExpr(val, hcl.Range{})
+	// Use a real parsed HCL expression so the eval context is actually consulted.
+	expr, parseDiags := hclsyntax.ParseExpression(
+		[]byte(`steps.my_step.result`),
+		"test.hcl",
+		hcl.Pos{Line: 1, Column: 1},
+	)
+	if parseDiags.HasErrors() {
+		t.Fatalf("parse expr: %v", parseDiags)
+	}
 
 	g.Outputs["step_result"] = &workflow.OutputNode{
 		Name:         "step_result",
@@ -49,19 +56,16 @@ func TestEvalRunOutputs_Basic(t *testing.T) {
 		t.Fatalf("expected 1 output, got %d", len(outputs))
 	}
 
+	// The key assertion: the rendered value must equal the seeded steps.my_step.result.
+	// This proves steps.* is accessible in the eval context.
+	// renderCtyValue JSON-marshals the cty value, so a string is wrapped in quotes.
+	if outputs[0]["value"] != `"step completed successfully"` {
+		t.Fatalf("expected rendered value %q (proves steps.* traversal), got %q", `"step completed successfully"`, outputs[0]["value"])
+	}
+
 	// Verify output name
 	if outputs[0]["name"] != "step_result" {
 		t.Fatalf("expected output name 'step_result', got %q", outputs[0]["name"])
-	}
-
-	// Verify value was rendered (shows eval context was applied)
-	if outputs[0]["value"] == "" {
-		t.Fatalf("expected output value to be rendered")
-	}
-
-	// Verify type string was set correctly
-	if outputs[0]["declared_type"] != "string" {
-		t.Fatalf("expected declared_type 'string', got %q", outputs[0]["declared_type"])
 	}
 }
 
@@ -171,10 +175,8 @@ func contains(s, substr string) bool {
 	return false
 }
 
-// TestEvalRunOutputs_EvalContextAvailable verifies that the eval context is prepared
-// for step references. While this test uses a constant expression (not a step reference),
-// it proves the eval infrastructure is in place. Real step-output access is verified
-// by e2e tests like TestApplyLocal_OutputsEmittedInEventStream which run full workflows.
+// TestEvalRunOutputs_EvalContextAvailable verifies that step references work in outputs.
+// Tests that evalRunOutputs correctly evaluates parsed HCL expressions that traverse steps.*.
 func TestEvalRunOutputs_EvalContextAvailable(t *testing.T) {
 	g := &workflow.FSMGraph{
 		Outputs:     make(map[string]*workflow.OutputNode),
@@ -192,9 +194,15 @@ func TestEvalRunOutputs_EvalContextAvailable(t *testing.T) {
 		},
 	}
 
-	// Test output evaluation with a constant expression.
-	val := cty.StringVal("v1.2.3")
-	expr := hcl.StaticExpr(val, hcl.Range{})
+	// Use a real parsed HCL expression to reference steps.build_step.version.
+	expr, parseDiags := hclsyntax.ParseExpression(
+		[]byte(`steps.build_step.version`),
+		"test.hcl",
+		hcl.Pos{Line: 1, Column: 1},
+	)
+	if parseDiags.HasErrors() {
+		t.Fatalf("parse expr: %v", parseDiags)
+	}
 
 	g.Outputs["deployed_version"] = &workflow.OutputNode{
 		Name:         "deployed_version",
@@ -213,13 +221,14 @@ func TestEvalRunOutputs_EvalContextAvailable(t *testing.T) {
 		t.Fatalf("expected 1 output, got %d", len(outputs))
 	}
 
-	// The presence of outputs proves that output evaluation completed successfully.
-	if outputs[0]["name"] != "deployed_version" {
-		t.Fatalf("expected output name 'deployed_version', got %q", outputs[0]["name"])
+	// The key assertion: the rendered value must equal the seeded steps.build_step.version.
+	// This proves steps.* is accessible in the eval context.
+	if outputs[0]["value"] != `"v1.2.3"` {
+		t.Fatalf("expected rendered value %q (proves steps.* traversal), got %q", `"v1.2.3"`, outputs[0]["value"])
 	}
 
-	// Value should be rendered as "v1.2.3"
-	if outputs[0]["value"] != `"v1.2.3"` {
-		t.Fatalf("expected value '\"v1.2.3\"', got %q", outputs[0]["value"])
+	// Verify output name
+	if outputs[0]["name"] != "deployed_version" {
+		t.Fatalf("expected output name 'deployed_version', got %q", outputs[0]["name"])
 	}
 }

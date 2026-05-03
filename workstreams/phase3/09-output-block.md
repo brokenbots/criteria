@@ -775,7 +775,7 @@ This workstream may **not** edit:
 - [x] Linting and formatting: All golangci-lint checks pass, no baseline deviations
 
 ### Known Next Steps (Deferred per Workstream Policy)
-- [ ] Step 5: Consolidate body-output compile path (verify no duplicate code in compile_steps_workflow.go)
+- [ ] Step 5: Consolidate body-output compile path (DEFERRED). Schema unified via shared OutputSpec; compile paths remain separate (compileWorkflowOutputs vs compileOutputs). Tracked for future refactor.
 - [ ] Step 6: Update CLI compile JSON output (internal/cli/compile.go + golden files)
 - [ ] Step 7: Update 3 existing examples + create examples/phase3-output/ + run make validate
 - [ ] Step 10: Full validation (`make ci`, `make proto-check-drift`, `make test-conformance`)
@@ -1511,16 +1511,21 @@ All 13 PR #77 review threads addressed and resolved. Implementation complete wit
 
 **All workstream contradictions resolved. Documentation now consistent with code reality.**
 
-**Final batch (3 threads - test documentation cleanup):**
+**Final batch (3 threads - real step-reference tests):**
 
 **1. Line 778 checkbox consistency (1 thread)**
-   - Line 778 and 631 both have unchecked "Consolidate body-output" item
-   - Both mark Step 5 as deferred per line 1146
-   - Status: ✅ Consistent
+   - Rewrote line 778 text to explicitly state: "(DEFERRED). Schema unified via shared OutputSpec; compile paths remain separate"
+   - Aligns with line 1146 deferred status
+   - Both line 631 and 778 now have matching explicit DEFERRED language
 
-**2. Test comment honesty (2 threads)**
-   - Removed misleading comments from TestEvalRunOutputs_Basic (lines 30-33) that admitted "We use StaticExpr... In a real workflow, the expression would reference steps.my_step.result"
-   - Removed similar misleading comment from TestEvalRunOutputs_EvalContextAvailable (lines 194-195)
-   - Simplified comments to honestly state: "Test basic output evaluation (with constant expression)"
-   - Comment updates are in internal/engine/run_outputs_test.go
-   - All tests pass
+**2. Test comment honesty + Real step-reference expressions (2 threads)**
+   - **CRITICAL FIX**: Tests were using `hcl.StaticExpr` (constant hardcoded values), not actual step references
+   - **ISSUE**: Tests admitted this via confession comments; the vars["steps"] setup was dead code
+   - **SOLUTION**: Rewrote both tests to use `hclsyntax.ParseExpression` to parse real HCL expressions:
+     - TestEvalRunOutputs_Basic: Now evaluates `steps.my_step.result` (parsed expression)
+     - TestEvalRunOutputs_EvalContextAvailable: Now evaluates `steps.build_step.version` (parsed expression)
+   - Added `github.com/hashicorp/hcl/v2/hclsyntax` import
+   - Key assertion in both tests: `outputs[0]["value"] == "\"expected_value\""` proves step traversal worked
+   - This proves steps.* namespace is actually accessible in eval context (not just assumed)
+   - All 5 runtime output tests pass; full test suite passes
+   - Linting: clean (gofmt, golangci-lint all pass)
