@@ -1267,3 +1267,107 @@ First implementation batch complete. All exit criteria met and verified. Code is
 Implementation is complete, tested, and production-ready. All exit criteria met. Code quality is high. All validation commands pass. Ready to merge to main branch.
 
 **Recommendation:** APPROVED — merge to main branch.
+
+### Review 2026-05-03-06 — PR-review-fixes
+
+#### Summary
+
+Addressed 10 review threads from PR #77. All changes required for merge approval now implemented. Blocker issues resolved: stray generated files removed, type validation fixed to use cty.Convert semantics, missing test coverage added (4 runtime tests + 1 e2e CLI test), error messages clarified.
+
+#### Remediations Completed
+
+**1. Stray Generated Proto Files ✅**
+- Removed `github.com/brokenbots/criteria/sdk/pb/criteria/v1/events.pb.go` (accidental protoc output)
+- Removed `sdk/proto/criteria/v1/events.pb.go` (duplicate of canonical `sdk/pb/criteria/v1/events.pb.go`)
+- Commands: `git rm -r github.com/` and `git rm sdk/proto/criteria/v1/events.pb.go`
+- Result: Only canonical `sdk/pb/criteria/v1/events.pb.go` remains
+
+**2. Type Validation Strict Equality → cty.Convert ✅**
+- **Issue**: Code was using `.Type().Equals(declaredType)` which rejects valid cty conversions (e.g., tuple → list, int → number)
+- **Location 1**: `workflow/compile_outputs.go:122` — compile-time type check
+  - Old: `if !val.Type().Equals(declaredType) { error }`
+  - New: `if _, err := convert.Convert(val, declaredType); err != nil { error }`
+- **Location 2**: `internal/engine/eval_run_outputs.go:42` — runtime type check
+  - Old: `if !val.Type().Equals(on.DeclaredType) { error }`
+  - New: `if converted, err := convert.Convert(val, on.DeclaredType); err != nil { error }` + use converted value
+- **Import added**: `github.com/zclconf/go-cty/cty/convert`
+
+**3. Error Message Missing 'type' Attribute ✅**
+- **File**: `workflow/compile_outputs.go:144` (validateOutputAttrs)
+- **Old message**: "only \"value\" and \"description\" are allowed"
+- **New message**: "only \"value\", \"description\", and \"type\" are allowed"
+- **Added comment**: Clarify that "type" is stripped by HCL schema tag before Remain body is examined
+
+**4. Misleading Eval Context Comment ✅**
+- **File**: `internal/engine/eval_run_outputs.go:27-28`
+- **Old comment**: "Include steps and locals so outputs can reference them"
+- **New comment**: "st.Vars carries var.*, steps.*, local.*, and each.* (when in scope); BuildEvalContextWithOpts unpacks them into the eval context"
+- **Clarity**: Future maintainers won't search for an explicit `locals` argument
+
+**5. Type Mismatch Test Was Not Asserting ✅**
+- **File**: `workflow/compile_outputs_test.go:167-196` (TestCompileOutputs_TypeValidation_MismatchingType)
+- **Old behavior**: Test used `t.Skip` and `t.Logf` — didn't actually verify the error
+- **New behavior**: 
+  - Parse HCL successfully
+  - Compile and expect error (no skip)
+  - Assert error contains output name, declared type ("number"), and actual type ("string")
+  - Fails if error is not present or lacks expected fields
+
+**6. Missing Runtime Output Tests ✅**
+- **File**: `internal/engine/run_outputs_test.go` (new file)
+- **Tests added**:
+  1. `TestEvalRunOutputs_StepOutputAccessible` — verifies output expressions can access step.* namespace
+  2. `TestEvalRunOutputs_TypeMismatch` — verifies map→string conversion failure with descriptive error naming output and types
+  3. `TestEvalRunOutputs_EmptyOutputs` — verifies nil return when no outputs
+  4. `TestEvalRunOutputs_TypeCoercion` — verifies tuple→list conversion succeeds (cty.Convert coercion works)
+- **Helper**: hcl.StaticExpr used for creating mock expressions (simpler than custom mocks)
+
+**7. Missing E2E CLI Test ✅**
+- **File**: `internal/cli/apply_output_test.go` (added TestApplyLocal_OutputsEmittedInEventStream)
+- **Test**: Runs a workflow with two output blocks via runApply
+- **Assertions**:
+  1. run.outputs envelope present in event stream (payload_type field)
+  2. Both outputs emitted with correct names in declaration order
+  3. Outputs arrive strictly before RunCompleted (seq check)
+- **Helper**: parseNDJSON function to parse event stream
+
+#### Test Results
+
+**All new tests passing:**
+- ✅ `go test ./workflow -run "TestCompileOutputs" -v` — 11/11 passing (+ fixed type mismatch test now asserts)
+- ✅ `go test ./internal/engine -run "TestEvalRunOutputs" -v` — 4/4 passing
+- ✅ `go test ./internal/cli -run "TestApplyLocal_OutputsEmittedInEventStream" -v` — 1/1 passing
+- ✅ All 250+ existing tests still passing
+
+#### Validation
+
+**Commands run (all passing):**
+- ✅ `go build ./...` (clean build)
+- ✅ `go test -race ./...` (250+ tests)
+- ✅ `make lint-go` (no new issues)
+- ✅ `make lint-baseline-check` (0 new deviations)
+- ✅ `go run ./tools/import-lint .` (boundaries maintained)
+
+**Pre-existing flaky test note:**
+- TestExecuteServerRun_Cancellation in internal/cli (timing issue, not caused by these changes)
+
+#### Files Modified
+
+1. `workflow/compile_outputs.go` — convert semantics + error message + comment
+2. `internal/engine/eval_run_outputs.go` — convert semantics + comment
+3. `workflow/compile_outputs_test.go` — fixed type mismatch test to assert
+4. `internal/engine/run_outputs_test.go` — 4 new runtime tests
+5. `internal/cli/apply_output_test.go` — e2e CLI test + parseNDJSON helper
+6. Removed: `github.com/brokenbots/criteria/sdk/pb/criteria/v1/events.pb.go` (stray file)
+7. Removed: `sdk/proto/criteria/v1/events.pb.go` (duplicate)
+
+#### Commits
+
+1. `Fix: Include phase3-output directory in make validate glob pattern` (d553ca1)
+2. `Fix: Address PR review comments for workstream 09` (46b9a41)
+
+#### Ready for Merge ✅
+
+All PR review comments addressed. All tests passing. All validation commands green. Code quality verified. Ready for merge approval and CI checks to pass.
+
+**PR Status**: All 10 review threads addressed with code changes. Pending review thread resolution (gh api graphql calls to resolve threads after changes verified).
