@@ -59,8 +59,8 @@ Each release produces one tarball per platform:
 ## How to trigger a release
 
 ```sh
-git tag -a v0.3.0 -m "Release v0.3.0"
-git push origin v0.3.0
+git tag -a vX.Y.Z -m "Release vX.Y.Z"
+git push origin vX.Y.Z
 ```
 
 The `release.yml` workflow starts automatically. Monitor it at
@@ -78,7 +78,7 @@ The `release.yml` workflow starts automatically. Monitor it at
 
 ```sh
 # Download the tarball and checksum file from the GitHub Releases page.
-tar -xzf criteria-v0.3.0-linux-amd64.tar.gz
+tar -xzf criteria-vX.Y.Z-linux-amd64.tar.gz
 sha256sum -c SHA256SUMS
 
 # Verify the cosign signature (keyless — no key material needed).
@@ -124,8 +124,8 @@ saves it as `criteria-runtime-<tag>.tar`. It is included as a release asset for
 local loading only:
 
 ```sh
-docker load -i criteria-runtime-v0.3.0.tar
-docker run --rm criteria/runtime:v0.3.0 --help
+docker load -i criteria-runtime-vX.Y.Z.tar
+docker run --rm criteria/runtime:vX.Y.Z --help
 ```
 
 Registry publishing (Docker Hub, GHCR, ECR) is a project-level decision not
