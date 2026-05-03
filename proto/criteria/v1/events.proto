@@ -288,8 +288,15 @@ message StepIterationItem {
 message RunOutputs {
   message Output {
     string name = 1;           // output declaration name; permanent
-    string value = 2;          // string-rendered cty value for log/UI; permanent
+    string value = 2;          // string-rendered cty value for log/UI; consumers must JSON-parse to recover type structure; permanent
     string declared_type = 3;  // declared type string if set, empty otherwise; permanent
   }
   repeated Output outputs = 1;  // outputs in declaration order; permanent
+
+  // Note: output values are currently stringified on the wire (via cty/json marshaling) to preserve
+  // human readability and avoid complexity at Phase 3 ship. Typed consumers must JSON-parse the
+  // value string to recover the original type structure. A future SDK upgrade may add a sibling
+  // google.protobuf.Value typed_value field if programmatic typed consumption becomes a requirement
+  // (e.g. W13 sub-workflow callers needing native type access). Until then, assume consumers will
+  // JSON-parse value and understand it may be string/number/bool/null/array/object.
 }

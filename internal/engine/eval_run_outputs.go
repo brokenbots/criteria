@@ -58,7 +58,11 @@ func evalRunOutputs(g *workflow.FSMGraph, st *RunState) ([]map[string]string, er
 		// Build declared type string (empty if not set).
 		declaredTypeStr := ""
 		if on.DeclaredType != cty.NilType {
-			declaredTypeStr = workflow.TypeToString(on.DeclaredType)
+			// TypeToString only supports types accepted by parseVariableType.
+			// This should never error at runtime since declared types are validated at compile time.
+			if s, err := workflow.TypeToString(on.DeclaredType); err == nil {
+				declaredTypeStr = s
+			}
 		}
 
 		result = append(result, map[string]string{

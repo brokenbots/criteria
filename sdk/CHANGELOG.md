@@ -6,6 +6,39 @@ documented here. The SDK follows the bump policy in
 
 ---
 
+## [v0.3.0] — 2026-05-03
+
+### Added — Phase 3 W09: Output blocks and `OnRunOutputs` interface method
+
+- **New proto message**: `RunOutputs` on `pb.Envelope` (field number 33) in
+  `proto/criteria/v1/events.proto`, containing `string workflow` and `map<string,
+  string> values` for terminal workflow output emission.
+- **New sink interface method**: `OnRunOutputs([]map[string]string)` on
+  `run.Sink` in `internal/run/sink.go`. External SDK consumers implementing
+  their own `run.Sink` interface must add this method (even as an empty stub)
+  to avoid compilation errors. The method receives output name→value pairs as
+  the workflow enters terminal state (after all steps complete).
+- **Wire shape**: output values are currently stringified (via `cty/json`
+  marshaling) for wire transport. Consumers must JSON-parse the `value` field
+  to recover type structure. A future SDK upgrade may add a `typed_value` field
+  with `google.protobuf.Value` for native type preservation.
+- **Backward compatibility**: existing clients unaware of field 33 simply ignore
+  the new `run.outputs` envelope type. New clients emit `RunOutputs` before
+  `RunCompleted` (observable in event stream ordering).
+
+### Bump rationale
+
+Adding a new message field to `Envelope` is additive at the proto level. Adding
+a method to the `run.Sink` interface is a breaking change for external
+implementations but acceptable for pre-1.0 SDK (no strict API stability
+guarantee). The bump is treated as a **minor** version bump (`v0.3.0`). SDK
+consumers must update their `run.Sink` implementations to compile against
+`v0.3.0+`.
+
+[v0.3.0]: https://github.com/brokenbots/criteria/releases/tag/v0.3.0
+
+---
+
 ## [v0.2.0] — 2026-05-02
 
 ### Added — Phase 2 W14: `allowed_outcomes` field on `ExecuteRequest`

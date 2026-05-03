@@ -226,3 +226,51 @@ workflow "test" {
 		t.Errorf("expected compile error for bool default on number variable, got none")
 	}
 }
+
+func TestTypeToString_RoundTrip(t *testing.T) {
+	tests := []struct {
+		typeStr string
+	}{
+		{"string"},
+		{"number"},
+		{"bool"},
+		{"list(string)"},
+		{"list(number)"},
+		{"list(bool)"},
+		{"map(string)"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.typeStr, func(t *testing.T) {
+			// Parse the type string.
+			parsed, err := parseVariableType(tt.typeStr)
+			if err != nil {
+				t.Fatalf("parseVariableType failed: %v", err)
+			}
+
+			// Convert back to string.
+			converted, err := TypeToString(parsed)
+			if err != nil {
+				t.Fatalf("TypeToString failed: %v", err)
+			}
+
+			// Should match the original.
+			if converted != tt.typeStr {
+				t.Errorf("TypeToString round-trip failed: got %q, want %q", converted, tt.typeStr)
+			}
+		})
+	}
+}
+
+func TestTypeToString_UnsupportedType(t *testing.T) {
+	// Create an unsupported type (e.g., tuple).
+	unsupported := cty.Tuple([]cty.Type{cty.String, cty.Number})
+
+	_, err := TypeToString(unsupported)
+	if err == nil {
+		t.Error("TypeToString should return error for unsupported type, got nil")
+	}
+	if err.Error() == "" {
+		t.Error("TypeToString error message is empty")
+	}
+}

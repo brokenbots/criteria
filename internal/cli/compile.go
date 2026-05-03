@@ -167,7 +167,11 @@ func buildCompileJSON(graph *workflow.FSMGraph) compileJSON { //nolint:funlen //
 		on := graph.Outputs[name]
 		typeStr := ""
 		if on.DeclaredType != cty.NilType {
-			typeStr = workflow.TypeToString(on.DeclaredType)
+			// TypeToString only supports types accepted by parseVariableType.
+			// This should never error at compile time since declared types come from HCL schema.
+			if s, err := workflow.TypeToString(on.DeclaredType); err == nil {
+				typeStr = s
+			}
 		}
 		outputs = append(outputs, compileOutput{
 			Name:        on.Name,
