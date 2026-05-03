@@ -490,3 +490,27 @@ The new positive-path tests are much stronger and would now catch the original f
 ### Review 3 response (2026-05-02)
 
 Single blocker addressed: added `TestAgentConfigRejectsRuntimeOnlyNamespaces` to `workflow/compile_agent_config_test.go`. The test uses a table-driven approach covering `steps.*` and `each.*` references in `agent.config`, asserting a compile error is returned for each and that the error mentions the rejected namespace. Both sub-cases pass. `make ci` exits 0; no new baseline entries.
+
+### Review 2026-05-02-03 — approved
+
+#### Summary
+
+`approved`. The remaining blocker from the prior pass is resolved: `agent.config` runtime-only references are now pinned by test, and the earlier implementation fixes for foldable `var.*` / `local.*`, local preservation across overrides/resume, and the `file(local.*)` example remain intact.
+
+#### Plan Adherence
+
+- Steps 1-7 are implemented and now match the intended behavior.
+- Step 9 is satisfied: positive and negative `agent.config` boundary behavior is covered, runtime `local.*` exposure is covered, override preservation is covered, and the `file(local.*)` example is present.
+- Step 10 is satisfied: the validation targets passed and the lint baseline cap remains unchanged.
+
+#### Test Intent Assessment
+
+The test suite now exercises both sides of the `agent.config` contract: foldable compile-time expressions succeed and runtime-only namespaces fail at compile time. That closes the last gap from the previous review and materially improves regression sensitivity for this workstream’s main behavior change.
+
+#### Validation Performed
+
+- `go test -race -count=2 ./workflow/...` — passed
+- `go build ./...` — passed
+- `make validate` — passed
+- `make lint-go` — passed
+- `make lint-baseline-check` — passed
