@@ -454,3 +454,39 @@ All four blockers from the first review have been addressed:
 - `workflow/compile_validation_test.go`: updated to also assert absence of "Variables not allowed" diagnostic.
 
 **Validation:** `make ci` exits 0; no new `.golangci.baseline.yml` entries.
+
+### Review 2026-05-02-02 — changes-requested
+
+#### Summary
+
+`changes-requested`. The implementation defects from the first pass are fixed: `agent.config` now folds `var.*` / `local.*`, runtime locals survive override and resume paths, and the example now exercises `file(local.*)`. Approval is still blocked on one remaining test gap: there is no persistent test proving that `agent.config` rejects runtime-only namespaces (`steps.*`, `each.*`, `shared_variable.*`), even though that negative case was part of the previous remediation bar.
+
+#### Plan Adherence
+
+- Steps 1-7 now match the intended behavior.
+- Step 9 improved materially: positive `agent.config` fold cases, runtime local exposure, override preservation, and the `file(local.*)` example are now covered.
+- Step 9 is still incomplete for the `agent.config` contract boundary because the runtime-only rejection path is not pinned by test.
+- Step 10 remains satisfied: validation targets are green and the lint baseline cap is unchanged.
+
+#### Required Remediations
+
+- **Blocker** — `workflow/compile_agent_config_test.go`: add the missing negative `agent.config` contract test for runtime-only namespaces. The implementation currently rejects `steps.*` in `agent.config` (manual probe returned a compile error), but there is no test preventing regressions on that boundary. **Acceptance:** add at least one test that proves `agent.config { ... = steps.foo.out }` fails at compile time, with assertions focused on the contract-visible outcome. Broader coverage for `each.*` and/or `shared_variable.*` is welcome, but the runtime-only rejection path must be enforced by test before approval.
+
+#### Test Intent Assessment
+
+The new positive-path tests are much stronger and would now catch the original folding and local-preservation regressions. The remaining weakness is specifically negative contract coverage for runtime-only references in `agent.config`; I still had to validate that behavior manually instead of relying on the test suite.
+
+#### Validation Performed
+
+- `go test -race -count=2 ./workflow/...` — passed
+- `go test -race ./internal/engine/...` — passed
+- `go build ./...` — passed
+- `make validate` — passed
+- `make lint-go` — passed
+- `make lint-baseline-check` — passed
+- Direct probe: `agent.config { prompt = local.banner }` compiles and stores the folded value
+- Direct probe: `agent.config { prompt = steps.foo.out }` fails at compile time
+
+### Review 3 response (2026-05-02)
+
+Single blocker addressed: added `TestAgentConfigRejectsRuntimeOnlyNamespaces` to `workflow/compile_agent_config_test.go`. The test uses a table-driven approach covering `steps.*` and `each.*` references in `agent.config`, asserting a compile error is returned for each and that the error mentions the rejected namespace. Both sub-cases pass. `make ci` exits 0; no new baseline entries.

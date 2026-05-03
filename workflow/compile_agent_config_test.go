@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -551,4 +552,63 @@ workflow "x" {
 	if !strings.Contains(diags.Error(), `field "items" must be a list of strings`) {
 		t.Errorf("unexpected error: %s", diags.Error())
 	}
+}
+
+// TestAgentConfigRejectsRuntimeOnlyNamespaces verifies that runtime-only
+// references (steps.*, each.*) in agent.config are rejected at compile time
+// with a clear error. agent.config has no runtime resolution path — it is
+// decoded once at compile and stored as a static map.
+func TestAgentConfigRejectsRuntimeOnlyNamespaces(t *testing.T) {
+cases := []struct {
+name     string
+attrExpr string
+wantErr  string
+}{
+{
+name:     "steps reference",
+attrExpr: `system_prompt = steps.summarise.stdout`,
+wantErr:  "steps",
+},
+{
+name:     "each reference",
+attrExpr: `system_prompt = each.value`,
+wantErr:  "each",
+},
+}
+
+tmpl := `
+workflow "x" {
+  version       = "0.1"
+  initial_state = "open"
+  target_state  = "done"
+  agent "bot" {
+    adapter = "copilot"
+    config {
+      %s
+    }
+  }
+  step "open" {
+    agent     = "bot"
+    lifecycle = "open"
+    outcome "success" { transition_to = "done" }
+  }
+  state "done" { terminal = true }
+}
+`
+for _, tc := range cases {
+t.Run(tc.name, func(t *testing.T) {
+src := fmt.Sprintf(tmpl, tc.attrExpr)
+spec, diags := Parse("t.hcl", []byte(src))
+if diags.HasErrors() {
+t.Fatalf("parse: %s", diags.Error())
+}
+_, diags = Compile(spec, testSchemas)
+if !diags.HasErrors() {
+t.Fatalf("expected compile error for runtime-only namespace %q in agent.config, but compiled successfully", tc.name)
+}
+if !strings.Contains(strings.ToLower(diags.Error()), tc.wantErr) {
+t.Errorf("error %q does not mention %q", diags.Error(), tc.wantErr)
+}
+})
+}
 }
