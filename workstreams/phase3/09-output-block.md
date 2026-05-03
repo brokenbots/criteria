@@ -1403,3 +1403,15 @@ All 10 PR #77 review threads have been processed:
 - [x] All 7 resolved threads marked closed on GitHub
 - [x] Workstream file updated with implementation notes and thread resolution status
 - [x] Ready for final review and merge
+
+#### Lint & Format Fix
+
+**Commit 7ed5ec6** — Fixed gofmt and prealloc linting issues:
+- Fixed formatting in apply_output_test.go and run_outputs_test.go
+- Pre-allocated events slice in parseNDJSON helper (prealloc check)
+- All linting and formatting checks now passing
+
+**Verification:**
+- ✅ `make lint-go` — All checks passing
+- ✅ `make test` — All 250+ tests passing
+- ✅ `make validate` — All examples validating
