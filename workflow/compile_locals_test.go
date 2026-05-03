@@ -207,7 +207,7 @@ func TestCompileLocals_RuntimeRef(t *testing.T) {
 // WorkflowDir (i.e. the file cannot be resolved). Locals must fully resolve to
 // known values at compile time; an unknown result is not allowed.
 func TestCompileLocals_FileWithNoWorkflowDir(t *testing.T) {
-src := `
+	src := `
 workflow "x" {
   version       = "0.1"
   initial_state = "open"
@@ -223,17 +223,17 @@ workflow "x" {
   state "done" { terminal = true }
 }
 `
-spec, diags := Parse("t.hcl", []byte(src))
-if diags.HasErrors() {
-t.Fatalf("parse: %s", diags.Error())
-}
-// Compile without WorkflowDir — file() stubs return unknown, so the local
-// cannot be resolved. The compile must fail.
-_, diags = Compile(spec, nil)
-if !diags.HasErrors() {
-t.Fatal("expected compile error for local { value = file(...) } with no WorkflowDir; got none")
-}
-if !strings.Contains(diags.Error(), "fully resolved") {
-t.Errorf("expected error to mention 'fully resolved', got %q", diags.Error())
-}
+	spec, diags := Parse("t.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	// Compile without WorkflowDir — file() stubs return unknown, so the local
+	// cannot be resolved. The compile must fail.
+	_, diags = Compile(spec, nil)
+	if !diags.HasErrors() {
+		t.Fatal("expected compile error for local { value = file(...) } with no WorkflowDir; got none")
+	}
+	if !strings.Contains(diags.Error(), "fully resolved") {
+		t.Errorf("expected error to mention 'fully resolved', got %q", diags.Error())
+	}
 }
