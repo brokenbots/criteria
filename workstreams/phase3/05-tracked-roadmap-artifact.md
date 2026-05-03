@@ -289,3 +289,11 @@ owns the coordination-set link surfacing.
   — remaining matches are limited to the historical tech evaluation and
   workstream-spec files; `workstreams/README.md` no longer matches.
 - `make ci` — passed.
+
+### Architecture approval — 2026-05-02 — approved
+
+Both workstreams meet goal. Workstream 05 delivered a durable in-repo Phase 2
+summary artifact at `docs/roadmap/phase-2-summary.md`, correctly eliminated all
+actionable stale local-plan references within its permitted scope, and handed
+off the remaining coordination-set edit to W21 with an unambiguous mandatory
+action. Approved by architecture.
