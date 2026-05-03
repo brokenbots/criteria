@@ -2098,7 +2098,7 @@ func (x *RunOutputs) GetOutputs() []*RunOutputs_Output {
 type RunOutputs_Output struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`                                     // output declaration name; permanent
-	Value         string                 `protobuf:"bytes,2,opt,name=value,proto3" json:"value,omitempty"`                                   // string-rendered cty value for log/UI; permanent
+	Value         string                 `protobuf:"bytes,2,opt,name=value,proto3" json:"value,omitempty"`                                   // string-rendered cty value for log/UI; consumers must JSON-parse to recover type structure; permanent
 	DeclaredType  string                 `protobuf:"bytes,3,opt,name=declared_type,json=declaredType,proto3" json:"declared_type,omitempty"` // declared type string if set, empty otherwise; permanent
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
