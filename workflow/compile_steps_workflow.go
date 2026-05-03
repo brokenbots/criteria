@@ -5,8 +5,12 @@ package workflow
 
 import (
 	"fmt"
+	"sort"
+	"strings"
 
 	"github.com/hashicorp/hcl/v2"
+	"github.com/hashicorp/hcl/v2/gohcl"
+	"github.com/zclconf/go-cty/cty"
 )
 
 // compileWorkflowStep compiles a type="workflow" step, including any optional
@@ -48,26 +52,72 @@ func compileWorkflowStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[stri
 
 	node := newWorkflowStepNode(sp, spec, effectiveOnCrash, timeout, inputMap, inputExprs, forEachExpr, countExpr)
 
-	diags = append(diags, compileOutcomeBlock(sp, node)...)
-	if isIterating {
-		diags = append(diags, validateIteratingOutcomes(sp, node)...)
-	} else if len(node.Outcomes) == 0 {
-		diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q: at least one outcome is required", sp.Name)})
-	}
+	diags = append(diags, validateWorkflowStepOutcomes(sp, node, isIterating)...)
 
-	d, node.Body, node.BodyEntry = compileWorkflowBody(sp, schemas, opts)
+	d, node.Body, node.BodyEntry = compileWorkflowBody(sp, spec, schemas, opts)
 	diags = append(diags, d...)
 
-	diags = append(diags, compileWorkflowOutputs(g, sp, node, opts)...)
+	// Decode and validate the optional `input = { ... }` attribute for body
+	// variable binding. FoldExpr validates the expression at compile time.
+	bodyInputExpr, d := decodeBodyInputAttr(sp, g, opts)
+	diags = append(diags, d...)
+
+	diags = append(diags, validateBodyInputBindings(node, bodyInputExpr, sp.Name)...)
+
+	diags = append(diags, compileWorkflowOutputs(sp, node, opts)...)
 
 	g.Steps[sp.Name] = node
 	g.stepOrder = append(g.stepOrder, sp.Name)
 	return diags
 }
 
+// validateWorkflowStepOutcomes compiles and validates outcome blocks for a
+// workflow step. Iterating steps use validateIteratingOutcomes; non-iterating
+// steps require at least one outcome.
+func validateWorkflowStepOutcomes(sp *StepSpec, node *StepNode, isIterating bool) hcl.Diagnostics {
+	diags := compileOutcomeBlock(sp, node)
+	if isIterating {
+		return append(diags, validateIteratingOutcomes(sp, node)...)
+	}
+	if len(node.Outcomes) == 0 {
+		return append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  fmt.Sprintf("step %q: at least one outcome is required", sp.Name),
+		})
+	}
+	return diags
+}
+
+// validateBodyInputBindings checks that every required body variable (no
+// default) has an input binding and records the binding expression on the node.
+// A missing binding is a compile-time error.
+func validateBodyInputBindings(node *StepNode, bodyInputExpr hcl.Expression, stepName string) hcl.Diagnostics {
+	if node.Body == nil {
+		return nil
+	}
+	var missingVars []string
+	for varName, varNode := range node.Body.Variables {
+		if varNode.IsRequired() && bodyInputExpr == nil {
+			missingVars = append(missingVars, varName)
+		}
+	}
+	if len(missingVars) > 0 {
+		sort.Strings(missingVars)
+		return hcl.Diagnostics{{
+			Severity: hcl.DiagError,
+			Summary: fmt.Sprintf(
+				"step %q: body variable(s) %s have no default; add input = { %s = ... } to the parent step",
+				stepName, strings.Join(missingVars, ", "), missingVars[0],
+			),
+		}}
+	}
+	node.BodyInputExpr = bodyInputExpr
+	return nil
+}
+
 // compileWorkflowBody dispatches to the inline or file-backed body compiler.
 // Returns the compiled FSMGraph, the body entry state name, and any diagnostics.
-func compileWorkflowBody(sp *StepSpec, schemas map[string]AdapterInfo, opts CompileOpts) (hcl.Diagnostics, *FSMGraph, string) {
+func compileWorkflowBody(sp *StepSpec, spec *Spec, schemas map[string]AdapterInfo, opts CompileOpts) (hcl.Diagnostics, *FSMGraph, string) {
 	const maxLoadDepth = 4
 	var diags hcl.Diagnostics
 
@@ -88,7 +138,7 @@ func compileWorkflowBody(sp *StepSpec, schemas map[string]AdapterInfo, opts Comp
 	if sp.Workflow == nil {
 		return compileWorkflowBodyFromFile(sp, schemas, opts)
 	}
-	return compileWorkflowBodyInline(sp, schemas, opts)
+	return compileWorkflowBodyInline(sp, spec, schemas, opts)
 }
 
 // compileWorkflowBodyFromFile handles the workflow_file = "..." loading path.
@@ -136,22 +186,28 @@ func compileWorkflowBodyFromFile(sp *StepSpec, schemas map[string]AdapterInfo, o
 }
 
 // compileWorkflowBodyInline handles the inline workflow { ... } block path.
-func compileWorkflowBodyInline(sp *StepSpec, schemas map[string]AdapterInfo, opts CompileOpts) (hcl.Diagnostics, *FSMGraph, string) {
+// It decodes the body's Remain into SpecContent (shared content schema) and
+// builds a synthetic *Spec for recursive compilation.
+func compileWorkflowBodyInline(sp *StepSpec, spec *Spec, schemas map[string]AdapterInfo, opts CompileOpts) (hcl.Diagnostics, *FSMGraph, string) {
 	var diags hcl.Diagnostics
 	wb := sp.Workflow
-	if len(wb.Steps) == 0 {
+
+	// Decode content blocks from the body's Remain into the shared SpecContent.
+	var content SpecContent
+	if d := gohcl.DecodeBody(wb.Remain, nil, &content); d.HasErrors() {
+		return append(diags, d...), nil, ""
+	}
+
+	if len(content.Steps) == 0 {
 		return append(diags, &hcl.Diagnostic{
 			Severity: hcl.DiagError,
 			Summary:  fmt.Sprintf("step %q: workflow body must contain at least one step", sp.Name),
 		}), nil, ""
 	}
 
-	entry := wb.Entry
-	if entry == "" {
-		entry = wb.Steps[0].Name
-	}
+	entry := resolveBodyEntry(wb, content.Steps)
+	bodySpec := buildBodySpec(sp.Name, wb, spec, &content, entry)
 
-	bodySpec := buildBodySpec(sp.Name, entry, wb)
 	childOpts := CompileOpts{
 		WorkflowDir:         opts.WorkflowDir,
 		LoadDepth:           opts.LoadDepth + 1,
@@ -171,6 +227,91 @@ func compileWorkflowBodyInline(sp *StepSpec, schemas map[string]AdapterInfo, opt
 	return diags, body, entry
 }
 
+// resolveBodyEntry determines the entry state for a workflow body: explicit
+// entry > initial_state > first step name.
+func resolveBodyEntry(wb *BodySpec, steps []StepSpec) string {
+	if wb.Entry != "" {
+		return wb.Entry
+	}
+	if wb.InitialState != "" {
+		return wb.InitialState
+	}
+	return steps[0].Name
+}
+
+// buildBodySpec constructs the synthetic *Spec used for recursive compilation
+// of an inline workflow body. It appends the synthetic _continue terminal state
+// and propagates SourceBytes from the parent spec.
+// Name and Version default to "<step>:body" and "1" when not specified in wb.
+func buildBodySpec(stepName string, wb *BodySpec, spec *Spec, content *SpecContent, entry string) *Spec {
+	states := make([]StateSpec, len(content.States), len(content.States)+1)
+	copy(states, content.States)
+	states = append(states, StateSpec{Name: "_continue", Terminal: true})
+
+	name := wb.Name
+	if name == "" {
+		name = stepName + ":body"
+	}
+	version := wb.Version
+	if version == "" {
+		version = "1"
+	}
+
+	return &Spec{
+		Name:         name,
+		Version:      version,
+		InitialState: entry,
+		TargetState:  "_continue",
+		Variables:    content.Variables,
+		Locals:       content.Locals,
+		Agents:       content.Agents,
+		Steps:        content.Steps,
+		States:       states,
+		Waits:        content.Waits,
+		Approvals:    content.Approvals,
+		Branches:     content.Branches,
+		Policy:       content.Policy,
+		Permissions:  content.Permissions,
+		SourceBytes:  spec.SourceBytes, // propagate for BranchArm.ConditionSrc
+	}
+}
+
+// decodeBodyInputAttr extracts and validates the optional `input = { ... }` map
+// expression from the parent step's Remain body. Returns nil, nil when the
+// attribute is absent. When present, the expression is validated via FoldExpr:
+// unsupported variable namespaces produce a compile error, and a statically
+// foldable result that is not a cty.Object is rejected. The expression is stored
+// on StepNode.BodyInputExpr and evaluated at iteration entry to seed the child
+// scope's var.* bindings.
+func decodeBodyInputAttr(sp *StepSpec, g *FSMGraph, opts CompileOpts) (hcl.Expression, hcl.Diagnostics) {
+	schema := &hcl.BodySchema{
+		Attributes: []hcl.AttributeSchema{{Name: "input", Required: false}},
+	}
+	content, _, diags := sp.Remain.PartialContent(schema)
+	if diags.HasErrors() || content == nil {
+		return nil, diags
+	}
+	attr, ok := content.Attributes["input"]
+	if !ok {
+		return nil, nil
+	}
+
+	// Validate the expression via FoldExpr. Unsupported namespaces (not each,
+	// steps, or shared_variable) produce a diagnostic error. A statically
+	// foldable result must be a cty.Object.
+	result, foldable, foldDiags := FoldExpr(attr.Expr, graphVars(g), graphLocals(g), opts.WorkflowDir)
+	if foldDiags.HasErrors() {
+		return nil, foldDiags
+	}
+	if foldable && result != cty.NilVal && !result.Type().IsObjectType() {
+		return nil, hcl.Diagnostics{{
+			Severity: hcl.DiagError,
+			Summary:  fmt.Sprintf("step %q: body input = ... must evaluate to an object value; got %s", sp.Name, result.Type().FriendlyName()),
+		}}
+	}
+	return attr.Expr, nil
+}
+
 // validateBodyHasContinuePath returns an error when none of the body steps
 // has a transition_to = "_continue" outcome. This ensures that the iteration
 // loop can terminate normally; a body with no path to _continue is a compile
@@ -187,57 +328,4 @@ func validateBodyHasContinuePath(stepName string, body *FSMGraph) error {
 		}
 	}
 	return fmt.Errorf("step %q: workflow body has no path to \"_continue\"; at least one outcome must transition_to = \"_continue\"", stepName)
-}
-
-// buildBodySpec constructs a synthetic Spec from a WorkflowBodySpec for
-// recursive compilation. It adds a "_continue" terminal state that body steps
-// can transition to in order to signal iteration advance.
-func buildBodySpec(stepName, entry string, wb *WorkflowBodySpec) *Spec {
-	// Convert pointer slices to value slices for the synthetic Spec.
-	steps := make([]StepSpec, 0, len(wb.Steps))
-	for _, s := range wb.Steps {
-		if s != nil {
-			steps = append(steps, *s)
-		}
-	}
-	states := make([]StateSpec, 0, len(wb.States)+1)
-	for _, s := range wb.States {
-		if s != nil {
-			states = append(states, *s)
-		}
-	}
-	// Add the synthetic _continue terminal state (body-complete signal).
-	states = append(states, StateSpec{
-		Name:     "_continue",
-		Terminal: true,
-	})
-	waits := make([]WaitSpec, 0, len(wb.Waits))
-	for _, w := range wb.Waits {
-		if w != nil {
-			waits = append(waits, *w)
-		}
-	}
-	approvals := make([]ApprovalSpec, 0, len(wb.Approvals))
-	for _, a := range wb.Approvals {
-		if a != nil {
-			approvals = append(approvals, *a)
-		}
-	}
-	branches := make([]BranchSpec, 0, len(wb.Branches))
-	for _, b := range wb.Branches {
-		if b != nil {
-			branches = append(branches, *b)
-		}
-	}
-	return &Spec{
-		Name:         stepName + ":body",
-		Version:      "1",
-		InitialState: entry,
-		TargetState:  "_continue",
-		Steps:        steps,
-		States:       states,
-		Waits:        waits,
-		Approvals:    approvals,
-		Branches:     branches,
-	}
 }

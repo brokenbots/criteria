@@ -23,7 +23,51 @@ func TestDefaultPolicyMatchesDoc(t *testing.T) {
 	}
 }
 
-// parseDocDefault extracts the max_total_steps default value from the
+// TestStepOrder_ReturnsDeclarationOrder verifies that StepOrder returns step
+// names in their declaration order (insertion order of stepOrder slice) and
+// that the returned slice is a copy (modifications do not affect the graph).
+func TestStepOrder_ReturnsDeclarationOrder(t *testing.T) {
+	// Compile a small workflow and check that StepOrder matches the HCL order.
+	src := []byte(`
+workflow "ord" {
+  version       = "0.1"
+  initial_state = "a"
+  target_state  = "done"
+  step "a" {
+    adapter = "noop"
+    outcome "ok" { transition_to = "b" }
+  }
+  step "b" {
+    adapter = "noop"
+    outcome "ok" { transition_to = "done" }
+  }
+  state "done" { terminal = true }
+}
+`)
+	spec, diags := Parse("t.hcl", src)
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	g, diags := Compile(spec, nil)
+	if diags.HasErrors() {
+		t.Fatalf("compile: %s", diags.Error())
+	}
+
+	order := g.StepOrder()
+	if len(order) != 2 {
+		t.Fatalf("want 2 steps in order, got %d: %v", len(order), order)
+	}
+	if order[0] != "a" || order[1] != "b" {
+		t.Errorf("step order: want [a b], got %v", order)
+	}
+
+	// Mutating the returned slice must not affect the graph.
+	order[0] = "mutated"
+	if g.StepOrder()[0] != "a" {
+		t.Error("StepOrder returned a slice sharing backing with internal state")
+	}
+}
+
 // "default N" pattern in the max_total_steps documentation line.
 // It matches lines like:  **`max_total_steps`** (default 100):
 func parseDocDefault(t *testing.T, path string) int {

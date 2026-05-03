@@ -11,6 +11,10 @@
 # before the loop advances to the next item. The `each.*` variables are
 # available in all three iteration steps.
 #
+# The example also demonstrates body variable scoping: the outer `prefix`
+# variable is threaded into the body via `input = { prefix = var.prefix }`,
+# so body steps can reference `var.prefix` independently of the outer scope.
+#
 # Run:
 #   criteria apply -f examples/for_each_review_loop.hcl
 
@@ -18,6 +22,11 @@ workflow "for_each_review_loop" {
   version       = "0.1"
   initial_state = "init"
   target_state  = "done"
+
+  variable "prefix" {
+    type    = "string"
+    default = "item"
+  }
 
   policy {
     max_total_steps = 50
@@ -30,16 +39,24 @@ workflow "for_each_review_loop" {
   }
 
   # type="workflow" step iterates its inline body once per item.
+  # input = { ... } binds outer variables into the body's own var.* scope.
   step "process_items" {
     type     = "workflow"
     for_each = ["alpha", "beta", "gamma"]
+    input    = { prefix = var.prefix }
 
     workflow {
+      # Body declares its own variable; value is injected by the parent step
+      # via the input = { ... } attribute above.
+      variable "prefix" {
+        type = "string"
+      }
+
       # Step 1 of the iteration body: execute work on each item.
       step "execute" {
         adapter = "noop"
         input {
-          label  = "execute:${each.value}"
+          label  = "${var.prefix}:execute:${each.value}"
           result = "success"
         }
         outcome "success" { transition_to = "review" }
@@ -50,7 +67,7 @@ workflow "for_each_review_loop" {
       step "review" {
         adapter = "noop"
         input {
-          label  = "review:${each.value}"
+          label  = "${var.prefix}:review:${each.value}"
           result = "success"
         }
         outcome "success" { transition_to = "cleanup" }
@@ -61,7 +78,7 @@ workflow "for_each_review_loop" {
       step "cleanup" {
         adapter = "noop"
         input {
-          label  = "cleanup:${each.value} (index ${each._idx})"
+          label  = "${var.prefix}:cleanup:${each.value} (index ${each._idx})"
           result = "success"
         }
         outcome "success" { transition_to = "_continue" }
@@ -79,4 +96,3 @@ workflow "for_each_review_loop" {
     success  = false
   }
 }
-

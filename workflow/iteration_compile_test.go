@@ -680,3 +680,106 @@ func TestForEachExprFoldsAtCompile_FilesValidated(t *testing.T) {
 		t.Errorf("expected a diagnostic referencing the missing file path, got: %s", compileDiags.Error())
 	}
 }
+
+// TestWorkflowOutput_BodyVarReference_AcceptedAtCompile verifies that an
+// output value expression referencing a body-declared variable is accepted at
+// compile time. The body graph is used for FoldExpr, so var.result (declared
+// in the body) is in scope.
+func TestWorkflowOutput_BodyVarReference_AcceptedAtCompile(t *testing.T) {
+	src := `
+workflow "w" {
+  version       = "0.1"
+  initial_state = "run"
+  target_state  = "done"
+  step "run" {
+    type     = "workflow"
+    for_each = ["a"]
+    workflow {
+      variable "result" {
+        type    = "string"
+        default = "ok"
+      }
+      step "inner" {
+        adapter = "noop"
+        input   { result = "success" }
+        outcome "success" { transition_to = "_continue" }
+      }
+      output "out" {
+        value = var.result
+      }
+    }
+    outcome "all_succeeded" { transition_to = "done" }
+    outcome "any_failed"    { transition_to = "done" }
+  }
+  state "done" { terminal = true }
+}`
+	spec, diags := workflow.Parse("test.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse error: %s", diags.Error())
+	}
+	_, diags = workflow.Compile(spec, nil)
+	if diags.HasErrors() {
+		t.Fatalf("expected no compile error for body-scoped var in output; got: %s", diags.Error())
+	}
+}
+
+// TestWorkflowOutput_ParentOnlyVarReference_RejectedAtCompile verifies that
+// an output value expression referencing a parent-scope variable (not declared
+// in the body) is rejected at compile time. The body graph is used for
+// FoldExpr, so var.outer (only in the parent) is NOT in scope.
+func TestWorkflowOutput_ParentOnlyVarReference_RejectedAtCompile(t *testing.T) {
+	compileExpectError(t, `
+workflow "w" {
+  version       = "0.1"
+  initial_state = "run"
+  target_state  = "done"
+  variable "outer" {
+    type    = "string"
+    default = "hello"
+  }
+  step "run" {
+    type     = "workflow"
+    for_each = ["a"]
+    workflow {
+      step "inner" {
+        adapter = "noop"
+        input   { result = "success" }
+        outcome "success" { transition_to = "_continue" }
+      }
+      output "out" {
+        value = var.outer
+      }
+    }
+    outcome "all_succeeded" { transition_to = "done" }
+    outcome "any_failed"    { transition_to = "done" }
+  }
+  state "done" { terminal = true }
+}`, `"outer"`)
+}
+
+// TestWorkflowBody_TargetStateField_RejectedAtCompile verifies that
+// target_state is no longer a valid attribute inside an inline workflow body
+// block. After removing TargetState from BodySpec, it lands in Remain and
+// fails when decoded into SpecContent (which has no target_state attribute).
+func TestWorkflowBody_TargetStateField_RejectedAtCompile(t *testing.T) {
+	compileExpectError(t, `
+workflow "w" {
+  version       = "0.1"
+  initial_state = "run"
+  target_state  = "done"
+  step "run" {
+    type     = "workflow"
+    for_each = ["a"]
+    workflow {
+      target_state = "custom"
+      step "inner" {
+        adapter = "noop"
+        outcome "success" { transition_to = "_continue" }
+      }
+    }
+    outcome "all_succeeded" { transition_to = "done" }
+    outcome "any_failed"    { transition_to = "done" }
+  }
+  state "done" { terminal = true }
+}`, `target_state`)
+}
