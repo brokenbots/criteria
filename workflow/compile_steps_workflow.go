@@ -64,7 +64,7 @@ func compileWorkflowStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[stri
 
 	diags = append(diags, validateBodyInputBindings(node, bodyInputExpr, sp.Name)...)
 
-	diags = append(diags, compileWorkflowOutputs(g, sp, node, opts)...)
+	diags = append(diags, compileWorkflowOutputs(sp, node, opts)...)
 
 	g.Steps[sp.Name] = node
 	g.stepOrder = append(g.stepOrder, sp.Name)
@@ -206,7 +206,7 @@ func compileWorkflowBodyInline(sp *StepSpec, spec *Spec, schemas map[string]Adap
 	}
 
 	entry := resolveBodyEntry(wb, content.Steps)
-	bodySpec := buildBodySpec(sp.Name, spec, &content, entry)
+	bodySpec := buildBodySpec(sp.Name, wb, spec, &content, entry)
 
 	childOpts := CompileOpts{
 		WorkflowDir:         opts.WorkflowDir,
@@ -242,14 +242,24 @@ func resolveBodyEntry(wb *BodySpec, steps []StepSpec) string {
 // buildBodySpec constructs the synthetic *Spec used for recursive compilation
 // of an inline workflow body. It appends the synthetic _continue terminal state
 // and propagates SourceBytes from the parent spec.
-func buildBodySpec(stepName string, spec *Spec, content *SpecContent, entry string) *Spec {
+// Name and Version default to "<step>:body" and "1" when not specified in wb.
+func buildBodySpec(stepName string, wb *BodySpec, spec *Spec, content *SpecContent, entry string) *Spec {
 	states := make([]StateSpec, len(content.States), len(content.States)+1)
 	copy(states, content.States)
 	states = append(states, StateSpec{Name: "_continue", Terminal: true})
 
+	name := wb.Name
+	if name == "" {
+		name = stepName + ":body"
+	}
+	version := wb.Version
+	if version == "" {
+		version = "1"
+	}
+
 	return &Spec{
-		Name:         stepName + ":body",
-		Version:      "1",
+		Name:         name,
+		Version:      version,
 		InitialState: entry,
 		TargetState:  "_continue",
 		Variables:    content.Variables,

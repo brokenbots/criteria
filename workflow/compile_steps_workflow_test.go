@@ -453,3 +453,31 @@ func TestValidateWorkflowStepOutcomes_NoOutcomesError(t *testing.T) {
 		t.Errorf("unexpected error message: %s", diags.Error())
 	}
 }
+
+// TestBuildBodySpec_WiresNameAndVersion verifies that user-supplied name and
+// version in the body block are propagated to the synthetic Spec.
+func TestBuildBodySpec_WiresNameAndVersion(t *testing.T) {
+	wb := &BodySpec{Name: "custom-name", Version: "2.0"}
+	content := &SpecContent{Steps: []StepSpec{{Name: "s"}}}
+	result := buildBodySpec("step1", wb, &Spec{}, content, "s")
+	if result.Name != "custom-name" {
+		t.Errorf("expected Name=%q, got %q", "custom-name", result.Name)
+	}
+	if result.Version != "2.0" {
+		t.Errorf("expected Version=%q, got %q", "2.0", result.Version)
+	}
+}
+
+// TestBuildBodySpec_DefaultsNameAndVersion verifies that the synthetic
+// defaults ("<step>:body" and "1") are used when wb.Name/wb.Version are empty.
+func TestBuildBodySpec_DefaultsNameAndVersion(t *testing.T) {
+	wb := &BodySpec{}
+	content := &SpecContent{Steps: []StepSpec{{Name: "s"}}}
+	result := buildBodySpec("mystep", wb, &Spec{}, content, "s")
+	if result.Name != "mystep:body" {
+		t.Errorf("expected Name=%q, got %q", "mystep:body", result.Name)
+	}
+	if result.Version != "1" {
+		t.Errorf("expected Version=%q, got %q", "1", result.Version)
+	}
+}

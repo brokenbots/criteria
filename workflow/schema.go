@@ -150,11 +150,12 @@ type SpecContent struct {
 // decoded by compileWorkflowBodyInline into a SpecContent, eliminating
 // field duplication between BodySpec and Spec.
 type BodySpec struct {
-	// Header fields — all optional; filled in synthetically during compilation.
-	Name         string `hcl:"name,optional"`
-	Version      string `hcl:"version,optional"`
+	// Name and Version are optional user-supplied labels; they default to
+	// "<step>:body" and "1" respectively during compilation.
+	Name    string `hcl:"name,optional"`
+	Version string `hcl:"version,optional"`
+	// InitialState selects the starting state (lower priority than Entry).
 	InitialState string `hcl:"initial_state,optional"`
-	TargetState  string `hcl:"target_state,optional"`
 	// Entry is the explicit initial step name. When empty the compiler uses
 	// InitialState (if set) or the first declared step.
 	Entry   string       `hcl:"entry,optional"`

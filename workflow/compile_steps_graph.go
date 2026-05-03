@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/hcl/v2"
+	"github.com/zclconf/go-cty/cty"
 )
 
 // resolveAdapterName returns the effective adapter name for a step: either
@@ -91,10 +92,22 @@ func newWorkflowStepNode(sp *StepSpec, spec *Spec, effectiveOnCrash string, time
 // compileWorkflowOutputs extracts output{} block expressions from sp.Workflow
 // and populates node.Outputs. It is safe to call when sp.Workflow is nil or
 // has no outputs — it returns nil in that case.
-func compileWorkflowOutputs(g *FSMGraph, sp *StepSpec, node *StepNode, opts CompileOpts) hcl.Diagnostics {
+func compileWorkflowOutputs(sp *StepSpec, node *StepNode, opts CompileOpts) hcl.Diagnostics {
 	if sp.Workflow == nil || len(sp.Workflow.Outputs) == 0 {
 		return nil
 	}
+
+	// Output value expressions are evaluated against the child body scope at
+	// runtime, not the parent scope. Use the body graph's vars/locals so that
+	// compile-time validation matches the runtime evaluation context: body
+	// var/local references are accepted, and parent-only var/local references
+	// are correctly rejected.
+	var bodyVars, bodyLocals map[string]cty.Value
+	if node.Body != nil {
+		bodyVars = graphVars(node.Body)
+		bodyLocals = graphLocals(node.Body)
+	}
+
 	var diags hcl.Diagnostics
 	seen := map[string]bool{}
 	node.Outputs = make(map[string]hcl.Expression, len(sp.Workflow.Outputs))
@@ -114,8 +127,8 @@ func compileWorkflowOutputs(g *FSMGraph, sp *StepSpec, node *StepNode, opts Comp
 		if content != nil {
 			if attr, ok := content.Attributes["value"]; ok {
 				node.Outputs[out.Name] = attr.Expr
-				// Validate the value expression at compile time.
-				_, foldable, fd := FoldExpr(attr.Expr, graphVars(g), graphLocals(g), opts.WorkflowDir)
+				// Validate the value expression against the child body scope.
+				_, foldable, fd := FoldExpr(attr.Expr, bodyVars, bodyLocals, opts.WorkflowDir)
 				if foldable {
 					diags = append(diags, errorDiagsWithFallbackSubject(fd, attr.Expr)...)
 				}

@@ -463,3 +463,39 @@ Approved. There are no implementation changes after the prior approved pass; the
 
 - `git diff --stat HEAD^..HEAD` — only `workstreams/phase3/08-schema-unification.md` changed.
 - `git diff --name-only HEAD^..HEAD` — confirmed no source, test, config, golden, or generated-file changes after the prior approval.
+
+### Post-merge review threads — 2026-05-03-05
+
+Two reviewer threads raised after approval. Both addressed:
+
+#### Thread 1: `compileWorkflowOutputs` used parent graph for FoldExpr (compile_steps_graph.go:103)
+
+**Problem:** `compileWorkflowOutputs` called `FoldExpr(attr.Expr, graphVars(g), graphLocals(g), ...)` where `g` is the *parent* workflow graph. Output `value` expressions are evaluated against the *child body scope* at runtime (`childFinalVars`). This caused: (a) references to parent-only `var.*`/`local.*` to be incorrectly accepted, and (b) references to body-declared `var.*`/`local.*` to be incorrectly rejected.
+
+**Fix (`workflow/compile_steps_graph.go`):**
+- Extracted `bodyVars`/`bodyLocals` from `node.Body` (the compiled child graph) before the output loop.
+- Replaced `graphVars(g)/graphLocals(g)` with `bodyVars/bodyLocals` in the FoldExpr call.
+- Since `g` is no longer used inside `compileWorkflowOutputs`, removed it from the function signature (call site in `compile_steps_workflow.go` updated accordingly).
+- Added `"github.com/zclconf/go-cty/cty"` import.
+
+**Tests added (`workflow/iteration_compile_test.go`):**
+- `TestWorkflowOutput_BodyVarReference_AcceptedAtCompile`: body-scoped `var.result` in output now compiles cleanly.
+- `TestWorkflowOutput_ParentOnlyVarReference_RejectedAtCompile`: parent-only `var.outer` in output is now correctly rejected at compile time.
+
+#### Thread 2: `buildBodySpec` hard-coded Name/Version, ignored BodySpec fields; `TargetState` exposed non-functional schema (compile_steps_workflow.go:254)
+
+**Problem:** `buildBodySpec` always used `stepName + ":body"` and `"1"` regardless of user-supplied `name`/`version` in the body block. Additionally, `BodySpec.TargetState` was declared in the HCL schema but must always be `_continue` for internal wiring — exposing it invited user confusion and silent breakage.
+
+**Fix:**
+- **`workflow/schema.go`:** Removed `TargetState string \`hcl:"target_state,optional"\`` from `BodySpec`. Any user-written `target_state = ...` inside an inline body block now lands in `Remain` and produces an "An argument named 'target_state' is not expected here" error when decoded into `SpecContent`. Updated struct comment.
+- **`workflow/compile_steps_workflow.go`:** Updated `buildBodySpec` signature to accept `wb *BodySpec`; wires `wb.Name`/`wb.Version` with defaults `"<step>:body"` / `"1"`. Updated caller `compileWorkflowBodyInline` to pass `wb`.
+
+**Tests added:**
+- `workflow/compile_steps_workflow_test.go`: `TestBuildBodySpec_WiresNameAndVersion` (explicit name/version used), `TestBuildBodySpec_DefaultsNameAndVersion` (defaults applied when empty).
+- `workflow/iteration_compile_test.go`: `TestWorkflowBody_TargetStateField_RejectedAtCompile` (target_state inside body block now causes a compile error).
+
+#### Validation Performed
+
+- `make test` — all packages pass.
+- `make lint-go` — clean (gofmt applied to iteration_compile_test.go).
+- 5 new tests all pass.
