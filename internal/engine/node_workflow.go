@@ -36,6 +36,12 @@ func seedChildVars(body *workflow.FSMGraph, parentInput cty.Value, parentVars ma
 	if len(body.Locals) > 0 {
 		vars["local"] = workflow.SeedLocalsFromGraph(body)
 	}
+	// Validate the input type before applying it. The compile-time check via
+	// FoldExpr only catches statically-foldable non-object values; this catches
+	// runtime-evaluated ones (e.g. input = each.value when each.value is "a").
+	if parentInput != cty.NilVal && parentInput.IsKnown() && !parentInput.IsNull() && !parentInput.Type().IsObjectType() {
+		return nil, fmt.Errorf("body input must be an object value; got %s (use a map literal: input = { key = val })", parentInput.Type().FriendlyName())
+	}
 	vars = overrideVarsFromInput(vars, body, parentInput)
 	if err := checkRequiredVars(body, parentInput); err != nil {
 		return nil, err

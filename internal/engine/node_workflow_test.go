@@ -14,6 +14,7 @@ package engine
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/zclconf/go-cty/cty"
@@ -290,5 +291,57 @@ workflow "t" {
 	}
 	if got := consumeCapture[0]["received"]; got != "child-output" {
 		t.Errorf("output block value via child scope: want %q, got %q", "child-output", got)
+	}
+}
+
+// TestRunWorkflowBody_ScalarInputFails is a regression for the runtime
+// object-shape contract on body input. When a for_each step uses
+// `input = each.value` and each.value evaluates to a string (not an object),
+// the run must fail with a clear error — not silently ignore the malformed
+// input. This covers the runtime path that the compile-time FoldExpr check
+// cannot reach for runtime-only namespaces like each.*.
+func TestRunWorkflowBody_ScalarInputFails(t *testing.T) {
+	// Compile succeeds: each.value is a runtime-only namespace, so FoldExpr
+	// returns foldable=false and the object-shape check is deferred to runtime.
+	g := compile(t, `
+workflow "t" {
+  version       = "0.1"
+  initial_state = "process"
+  target_state  = "done"
+
+  step "process" {
+    type     = "workflow"
+    for_each = ["a"]
+
+    input = each.value
+
+    workflow {
+      step "body" {
+        adapter = "fake"
+        outcome "success" { transition_to = "_continue" }
+      }
+    }
+
+    outcome "all_succeeded" { transition_to = "done" }
+    outcome "any_failed"    { transition_to = "done" }
+  }
+
+  state "done" {
+    terminal = true
+    success  = true
+  }
+}`)
+
+	sink := &iterSink{}
+	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
+		"fake": &fakePlugin{name: "fake", outcome: "success"},
+	}}
+
+	err := New(g, loader, sink).Run(context.Background())
+	if err == nil {
+		t.Fatal("expected error: non-object body input (each.value = string) must be rejected at runtime")
+	}
+	if !strings.Contains(err.Error(), "object") {
+		t.Errorf("error should mention 'object', got: %v", err)
 	}
 }

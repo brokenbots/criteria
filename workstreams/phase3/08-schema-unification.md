@@ -382,3 +382,45 @@ Coverage: workflow 86.0% (≥85% ✓), engine 85.6% (≥85% ✓).
 - `make validate` passes for all examples. ✓
 - No new baseline entries. ✓
 - Coverage: workflow 86.0%, engine 85.6% (both ≥85%). ✓
+
+### Review 2026-05-03-02 — changes-requested
+
+#### Summary
+
+This pass closes the schema-deduplication, lint, and coverage blockers, and the required validation targets are now green. However, the body-input contract is still not fully enforced: runtime-only expressions such as `input = each.value` compile successfully even though Step 2 requires the workflow input surface to evaluate to a `cty.Object`. That leaves the prior input-validation blocker only partially remediated.
+
+#### Plan Adherence
+
+- **Step 1:** Acceptable now. `SpecContent` is the shared source of truth for workflow-scope content blocks, and `BodySpec` is reduced to a thin header/output wrapper.
+- **Step 2:** Still incomplete. Unsupported roots are rejected, and statically foldable scalar/list inputs are rejected, but runtime-only non-object expressions (`each.*`, `steps.*`) still pass compile despite the required object contract.
+- **Steps 3–7:** Satisfied based on the current implementation and validation results.
+
+#### Required Remediations
+
+- **Blocker — `workflow/compile_steps_workflow.go:276-302`; `internal/engine/node_step.go:253-264`; `internal/engine/node_workflow.go:54-56`.** The workstream requires `step.workflow input = ...` to have object shape. The current implementation enforces that only when `FoldExpr` can reduce the value, so runtime-only expressions can still bypass validation. Repro: a workflow step with `for_each = ["a"]` and `input = each.value` currently passes `criteria validate`, even though `each.value` is a string, not an object. At runtime, `overrideVarsFromInput` silently ignores the value when the body has no required vars, which is exactly the malformed-input acceptance this blocker was meant to eliminate. **Acceptance:** reject non-object body-input expressions for runtime-only namespaces too (either by compile-time shape analysis or by explicit runtime type check that fails the step instead of silently ignoring it), and add a regression covering `input = each.value` or equivalent `steps.*` scalar input.
+
+#### Test Intent Assessment
+
+The newly added negative tests now cover unknown namespaces and statically non-object values, which materially improves the contract. The remaining gap is that there is still no regression proving runtime-only scalar inputs are rejected rather than accepted and ignored. Until that case is covered, the tests do not fully prove the Step 2 object-shape guarantee.
+
+#### Validation Performed
+
+- `go build ./...` — passed.
+- `go test -race -count=2 ./workflow/... ./internal/engine/... ./internal/cli/...` — passed.
+- `go test -cover ./workflow ./internal/engine` — passed (`workflow` 86.0%, `internal/engine` 85.6%).
+- `make validate && make lint-go && make lint-baseline-check && make ci` — passed.
+- Manual contract probe: `./bin/criteria validate /tmp/ws08-dynamic-input.hcl` using a workflow step with `input = each.value` — **unexpectedly passed**, demonstrating the remaining object-shape validation gap.
+
+### Remediation — 2026-05-03 (session 3)
+
+**Blocker — runtime non-object input validation:**
+
+`internal/engine/node_workflow.go`: Added early-return type guard in `seedChildVars` before calling `overrideVarsFromInput`. If `parentInput` is a known, non-null, non-object value (e.g. `each.value = "a"`), `seedChildVars` now returns an error immediately with message `"body input must be an object value; got <type> (use a map literal: input = { key = val })"`. This closes the gap left by the compile-time FoldExpr check which only catches statically-foldable non-object values.
+
+`internal/engine/node_workflow_test.go`: Added `TestRunWorkflowBody_ScalarInputFails` — a regression test using `for_each = ["a"]` and `input = each.value`. The workflow compiles successfully (runtime-only namespace deferred by FoldExpr), but the run fails with a clear "object" error message when `each.value` evaluates to the string `"a"` at runtime.
+
+**Final validation:**
+- `make ci` exits 0. ✓
+- `make test` (full race suite) exits 0. ✓
+- Engine coverage: 85.8% (≥85% ✓), workflow: 86.0% (≥85% ✓).
+- No new `.golangci.baseline.yml` entries. ✓
