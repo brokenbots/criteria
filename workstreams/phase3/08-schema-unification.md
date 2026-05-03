@@ -424,3 +424,31 @@ The newly added negative tests now cover unknown namespaces and statically non-o
 - `make test` (full race suite) exits 0. ✓
 - Engine coverage: 85.8% (≥85% ✓), workflow: 86.0% (≥85% ✓).
 - No new `.golangci.baseline.yml` entries. ✓
+
+### Review 2026-05-03-03 — approved
+
+#### Summary
+
+Approved. The remaining body-input contract gap is now closed: runtime-only scalar inputs are rejected at body entry with a clear error instead of being silently ignored. With that fix in place, the implementation now satisfies the workstream scope, required tests, coverage targets, and validation bar.
+
+#### Plan Adherence
+
+- **Step 1:** Satisfied. Inline workflow bodies now reuse shared workflow content schema through `SpecContent`, with `BodySpec` reduced to header/output concerns.
+- **Step 2:** Satisfied. `input = ...` is validated at compile time for unsupported namespaces and statically non-object values, and now also fails loudly at runtime for runtime-only non-object expressions such as `each.value`.
+- **Step 3:** Satisfied. Parent/child `Vars` aliasing and back-propagation are removed.
+- **Step 4:** Satisfied. Body `output {}` expressions evaluate against child scope.
+- **Step 5:** Satisfied. The in-repo inline-body example and its plan golden were updated to the explicit-input shape.
+- **Step 6:** Satisfied. Required behavior is covered, including no outer-scope leakage, child-scope output resolution, invalid namespace/non-object input rejection, and runtime scalar-input rejection. Coverage meets the stated thresholds.
+- **Step 7:** Satisfied. Required build/test/lint/validation targets are green.
+
+#### Test Intent Assessment
+
+The test set now proves the intended contract rather than just the happy path: compile-time scope isolation is enforced, runtime isolation is preserved, body outputs resolve against child state, statically invalid body inputs are rejected during compile, and runtime-only invalid body inputs are rejected during execution with an explicit error. That closes the prior regression gap.
+
+#### Validation Performed
+
+- `go build ./...` — passed.
+- `go test -race -count=2 ./workflow/... ./internal/engine/... ./internal/cli/...` — passed.
+- `go test -cover ./workflow ./internal/engine` — passed (`workflow` 86.0%, `internal/engine` 85.8%).
+- `make validate && make lint-go && make lint-baseline-check && make ci` — passed.
+- Manual runtime probe with a workflow step using `input = each.value` — `criteria apply` failed as expected with `body input must be an object value`, confirming the remaining blocker is resolved.
