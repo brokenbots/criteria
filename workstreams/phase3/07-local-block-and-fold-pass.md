@@ -573,3 +573,28 @@ Blocker addressed: `compileOneLocal` now rejects unknown fold results.
 **Test:** Added `TestCompileLocals_FileWithNoWorkflowDir` to `compile_locals_test.go` — proves that `local { value = file("prompt.txt") }` via `workflow.Compile(spec, nil)` now fails compilation with a diagnostic mentioning "fully resolved". This test would have caught the regression.
 
 **Validation:** `make ci` exits 0; no new baseline entries.
+
+### Review 2026-05-02-05 — approved
+
+#### Summary
+
+`approved`. The regression introduced by the PR-remediation follow-up is fixed: locals no longer compile with unknown values when `workflowDir` is empty. `compileOneLocal` now rejects unknown fold results, and the new regression test pins that contract.
+
+#### Plan Adherence
+
+- Step 3 is restored: locals must fully resolve at compile time before they are stored in `g.Locals`.
+- Step 9 is satisfied for the regression path: `TestCompileLocals_FileWithNoWorkflowDir` now proves the failure mode that previously slipped through.
+- The previously approved Step 1-7 and broader Step 9/10 behavior remains intact.
+
+#### Test Intent Assessment
+
+The new regression test is appropriately behavior-focused: it exercises the exact failing entrypoint (`workflow.Compile(spec, nil)`) and asserts the contract-visible outcome (`local` compilation fails rather than storing an unknown value). Combined with the existing fold/local tests, the suite now covers both the original feature and this later semantic regression.
+
+#### Validation Performed
+
+- `go test -race -count=2 ./workflow/...` — passed
+- `go build ./...` — passed
+- `make validate` — passed
+- `make lint-go` — passed
+- `make lint-baseline-check` — passed
+- Direct probe: `local "prompt" { value = file("prompt.txt") }` via `workflow.Compile(spec, nil)` now fails with the expected “fully resolved” diagnostic
