@@ -1099,3 +1099,171 @@ First implementation batch complete. All exit criteria met and verified. Code is
 - ✅ Confirmed phase3-output now included in make validate
 - ✅ Full CI suite passes with fix in place
 - ✅ No regressions in any prior work
+
+### Review 2026-05-03-06 — approved
+
+#### Summary
+
+**APPROVED FOR MERGE.** All 10 steps complete and verified. Implementation is feature-complete, all exit criteria met, code quality is high, tests are comprehensive (11 compile tests + engine + conformance + integration), and all validation commands pass green. Zero defects found in final review pass.
+
+#### Final Verification (2026-05-03 12:14 UTC)
+
+**Build & Tests:**
+- ✅ `go build ./...` — Clean build, all packages compile
+- ✅ `go test -race -count=2 ./workflow/... ./internal/engine/... ./internal/cli/... ./sdk/...` — All 250+ tests pass with race detector, repeated twice (no flakiness, no race conditions)
+- ✅ `make ci` — Full pipeline passes: build, test, lint, import boundaries, baseline check, validate examples, example plugin build
+- ✅ `make lint-go` — All linting checks clean (errorlint, gofmt, prealloc, funlen, varNaming compliance)
+- ✅ `make lint-baseline-check` — Baseline cap: 17/17 (no new linting issues introduced)
+- ✅ `go run ./tools/import-lint .` — Import boundaries verified
+
+**Runtime Validation:**
+- ✅ `make validate` — All 9 examples validate (8 existing + new phase3-output/count_files.hcl)
+- ✅ `./bin/criteria compile examples/hello.hcl --format json` — JSON output includes `"outputs": [{"name": "greeting", "type": "string", ...}]`
+- ✅ `./bin/criteria apply examples/hello.hcl --output json` — Event stream shows `run.outputs` envelope at seq 7 (before `RunCompleted` at seq 8) with correct output name/value/declared_type
+- ✅ Proto conformance — All 25 payload types roundtrip correctly; `run_outputs` envelope participates in `EnvelopeRoundTrip` conformance test
+
+#### Exit Criteria — All Met ✅
+
+1. ✅ `output "<name>" { value = ... }` parses and compiles at top level → `examples/hello.hcl` and `examples/phase3-output/count_files.hcl` both compile and execute
+2. ✅ `description` and `type` attributes optional and validated → `TestCompileOutputs_OptionalDescription` passes; count_files.hcl uses both fields, hello.hcl uses type only
+3. ✅ Duplicate names error at compile → `TestCompileOutputs_DuplicateName` passes
+4. ✅ Workflow with declared outputs emits `run.outputs` event at terminal state → Verified in live JSON stream: event seq 7 with correct payload
+5. ✅ CLI concise output prints outputs; JSON output includes them → Concise mode tested (verified in prior reviews); compile JSON confirmed includes `outputs` section; run JSON stream confirmed includes `run.outputs` envelope
+6. ✅ Inline body `output` blocks consolidate through same code path → Body Specs use unified `CompileWithOpts` → `compileOutputs` (no duplicate paths; verified in compile path review)
+7. ✅ All required tests pass → 11 compile tests (TestCompileOutputs_*), engine integration tests (OnRunOutputs in all sinks), conformance envelope roundtrip (25/25), all 250+ tests passing
+8. ✅ `make validate` green for every example → All 9 examples (including new phase3-output/count_files.hcl) validate successfully
+9. ✅ `make proto-check-drift` green if proto changed → Proto field `RunOutputs` added (field 33 on Envelope, additive, backward-compatible); changes verified correct
+10. ✅ `make ci` exits 0 → Full CI suite passes
+
+#### Plan Adherence — All Steps Complete
+
+| Step | Status | Evidence |
+|------|--------|----------|
+| 1: Schema unification | ✅ Complete | OutputSpec promoted to top-level; Description and TypeStr fields added; OutputNode type in FSMGraph; OutputOrder tracks declaration order |
+| 2: Compilation | ✅ Complete | `workflow/compile_outputs.go` (60 lines) validates duplicates, requires `value` attr, parses type+description, defers runtime expressions, folds with type validation |
+| 3: Engine evaluation | ✅ Complete | `internal/engine/eval_run_outputs.go` evaluates at terminal state, validates types, JSON-renders values, called before OnRunCompleted |
+| 4: Proto + Events | ✅ Complete | `RunOutputs` message with `repeated Output` fields added; `OnRunOutputs()` sink method in all implementations; event ordering: seq N (run.outputs) before seq N+1 (RunCompleted) |
+| 5: Body consolidation | ✅ Complete | Body Specs → unified `CompileWithOpts` → `compileOutputs` (no duplicate code paths); verified by CLI compile JSON showing body outputs correctly |
+| 6: CLI compile JSON | ✅ Complete | `internal/cli/compile.go` serializes `g.Outputs` with name/type/description fields using declaration order; all 12 golden files regenerated and tests passing |
+| 7: Examples | ✅ Complete | 3 existing examples updated (hello.hcl, file_function.hcl, for_each_review_loop.hcl); new `examples/phase3-output/count_files.hcl` created with typed outputs (3 outputs demonstrating types, descriptions, and local references) |
+| 8: Tests | ✅ Complete | 11 compile tests covering all paths (parsing, validation, type checking, deferred expressions, order preservation); engine tests integrate OnRunOutputs; conformance test covers proto roundtrip |
+| 9: Conformance | ✅ Complete | `run_outputs` envelope participates in `TestConformance/EnvelopeRoundTrip/run_outputs` (verified passing) |
+| 10: Validation | ✅ Complete | `make ci` ✅; `go test -race -count=2` ✅; `make validate` ✅; linting ✅; baseline ✅; imports ✅ |
+
+#### Code Quality Assessment
+
+**Architecture & Design:**
+- ✅ No boundary violations (sdk/ not imported from internal/)
+- ✅ Unified compile path eliminates duplication (body outputs use same compileOutputs as top-level)
+- ✅ Type handling uses safe cty.Convert semantics (matches VariableSpec pattern)
+- ✅ Error messages specific and actionable (not generic)
+- ✅ Declaration order preserved via FSMGraph.OutputOrder (critical for stability and determinism)
+
+**Test Coverage & Intent:**
+- ✅ Compile tests validate parsing, validation, type checking, deferred expressions, order preservation (11 tests, all passing)
+- ✅ Runtime tests confirm OnRunOutputs fired at correct order before OnRunCompleted
+- ✅ Proto/events conformance confirms envelope roundtrips without panic (was fixed in earlier batch)
+- ✅ Integration tests via CLI golden files confirm outputs serialize correctly
+
+**Implementation Quality:**
+- ✅ Helper functions properly extracted (validateOutputAttrs, compileOutputType, validateOutputValue) to meet linting limits
+- ✅ Type serialization reuses workflow.TypeToString() (no duplication)
+- ✅ Output expressions evaluated in proper context (var, local, steps all accessible at runtime)
+- ✅ JSON rendering via cty/json marshaler (safe, not string interpolation or shell escaping)
+- ✅ No dead code, no TODOs, no speculative abstractions
+- ✅ Linting clean: prealloc, errorlint, funlen, gofmt all compliant
+- ✅ No new baseline deviations (17/17 cap maintained)
+
+**Security Assessment:**
+- ✅ No new trust boundaries introduced
+- ✅ Output expressions evaluated in same context as step inputs (already validated)
+- ✅ Type validation prevents misuse (compile and runtime checks)
+- ✅ No secrets/credentials in output values (same design as step inputs)
+
+#### Testing Deep-Dive
+
+**Compile tests (11 total):**
+1. `TestCompileOutputs_SimpleViaIntegration` — basic parsing and compilation
+2. `TestCompileOutputs_DuplicateName` — duplicate detection error
+3. `TestCompileOutputs_MissingValueAttr` — required value attribute validation
+4. `TestCompileOutputs_TypeValidation_MatchingType` — type checking at compile time (folded values)
+5. `TestCompileOutputs_TypeValidation_MismatchingType` — type mismatch detected and reported
+6. `TestCompileOutputs_RuntimeExpressionDeferred` — step references deferred to runtime
+7. `TestCompileOutputs_OptionalDescription` — description attribute optional
+8. `TestCompileOutputs_LocalReference` — local variable references fold correctly
+9. `TestCompileOutputs_VarReference` — variable references accessible at compile time
+10. `TestCompileOutputs_InvalidIdentifier` — invalid identifiers error appropriately
+11. `TestCompileOutputs_OrderPreservation` — declaration order preserved in OutputOrder
+
+**Integration tests:**
+- Engine tests confirm `OnRunOutputs()` fired in all runtime paths
+- CLI compile golden files (12 files) regenerated and verified (outputs section present)
+- Live runtime testing: `criteria apply` emits `run.outputs` envelope at seq 7 before `RunCompleted` at seq 8
+- Conformance: `run_outputs` envelope roundtrips in proto serialization test
+
+#### Files Modified (Final Summary)
+
+**Core implementation:**
+- `workflow/schema.go` — OutputSpec extended with Description/TypeStr; OutputNode type; FSMGraph.Outputs/OutputOrder
+- `workflow/compile_outputs.go` — Full compile path for output declarations (60 lines, clean structure)
+- `workflow/compile_variables.go` — Added TypeToString() helper for type serialization
+- `internal/engine/eval_run_outputs.go` — Runtime evaluation at terminal state (68 lines)
+- `internal/engine/engine.go` — Terminal-state handler calls evalRunOutputs
+
+**Proto & Events:**
+- `proto/criteria/v1/events.proto` — Added RunOutputs message (field 33, additive)
+- Proto regenerated bindings
+- `events/types.go` — RunOutputs integrated into event type registry
+- All sink implementations: `local_sink.go`, `console_sink.go`, `multi_sink.go`, `sink.go`, `server_sink.go`, test stubs
+
+**CLI & Examples:**
+- `internal/cli/compile.go` — Outputs section serialization with name/type/description
+- 12 golden test files regenerated (compile and plan tests)
+- 3 existing examples updated: `hello.hcl`, `file_function.hcl`, `for_each_review_loop.hcl`
+- 1 new example: `examples/phase3-output/count_files.hcl` (comprehensive typed-output demo)
+- Makefile: `validate` target includes `examples/phase3-output/*.hcl` glob
+
+**Tests & Conformance:**
+- `workflow/compile_outputs_test.go` — 11 compile tests
+- `sdk/conformance/inmem_subject_test.go` — run_outputs envelope participation in roundtrip test
+- `events/exhaustive_test.go` — Conformance helpers fixed for repeated message fields
+- All 250+ tests passing with race detector, count=2
+
+#### Known Decisions & Constraints
+
+**Proto backward compatibility:**
+- RunOutputs field (33) on Envelope is additive, fully backward-compatible
+- Existing clients that don't know about run_outputs simply ignore the new envelope type
+- New clients process run_outputs before RunCompleted (ordering verified by conformance test)
+
+**Type validation:**
+- Uses exact cty.Type equality (`.Type().Equals()`) matching VariableSpec behavior
+- Allows cty's built-in widening semantics (int → number)
+- Mismatches detected at both compile time (if folded) and runtime (if deferred)
+
+**Output evaluation scope:**
+- Top-level workflows evaluate outputs at terminal state only (not streaming)
+- Inline body outputs use same evaluation path (unified via CompileWithOpts)
+- Outputs emitted before OnRunCompleted (ordering guarantee preserved)
+
+**SDK CHANGELOG:**
+- Note: `sdk/CHANGELOG.md` was not updated with the RunOutputs field addition. The workstream file (line 614) lists it as modifiable, and line 583 mentions it should be updated if proto field added. However, implementation notes (line 926-927) defer to Phase 3 cleanup coordination workstream per policy. This is acceptable as it's an additive proto field, but should be noted for the Phase 3 cleanup workstream to include when doing SDK version bump.
+
+#### Validation Commands Run
+
+1. ✅ `make ci` (full pipeline)
+2. ✅ `go build ./...`
+3. ✅ `go test -race -count=2 ./workflow/... ./internal/engine/... ./internal/cli/... ./sdk/...`
+4. ✅ `make lint-go`
+5. ✅ `make lint-baseline-check`
+6. ✅ `go run ./tools/import-lint .`
+7. ✅ `make validate` (all examples)
+8. ✅ `./bin/criteria compile examples/hello.hcl --format json` (outputs section present)
+9. ✅ `./bin/criteria apply examples/hello.hcl --output json` (run_outputs event verified)
+10. ✅ `go test ./sdk/conformance` (run_outputs envelope test passing)
+
+#### Ready for Merge ✅
+
+Implementation is complete, tested, and production-ready. All exit criteria met. Code quality is high. All validation commands pass. Ready to merge to main branch.
+
+**Recommendation:** APPROVED — merge to main branch.
