@@ -288,16 +288,113 @@ This workstream may **not** edit:
 
 ## Tasks
 
-- [ ] Add `LocalSpec` / `LocalNode` to schema (Step 1).
-- [ ] Implement `FoldExpr` in `compile_fold.go` (Step 2).
-- [ ] Implement `compileLocals` in `compile_locals.go` (Step 3).
-- [ ] Rewrite `validateFileFunctionCalls` → `validateFoldableAttrs` (Step 4).
-- [ ] Add call sites for every foldable attribute slot (Step 5).
-- [ ] Confirm undeclared `var.*` references are now compile errors (Step 6).
-- [ ] Extend `BuildEvalContextWithOpts` and add `SeedLocalsFromGraph` (Step 7).
-- [ ] Author all new test files (Step 9).
-- [ ] Author the example workflow under `examples/phase3-fold/` (Step 9).
-- [ ] `make ci` green; baseline cap unchanged (Step 10).
+- [x] Add `LocalSpec` / `LocalNode` to schema (Step 1).
+- [x] Implement `FoldExpr` in `compile_fold.go` (Step 2).
+- [x] Implement `compileLocals` in `compile_locals.go` (Step 3).
+- [x] Rewrite `validateFileFunctionCalls` → `validateFoldableAttrs` (Step 4).
+- [x] Add call sites for every foldable attribute slot (Step 5).
+- [x] Confirm undeclared `var.*` references are now compile errors (Step 6).
+- [x] Extend `BuildEvalContextWithOpts` and add `SeedLocalsFromGraph` (Step 7).
+- [x] Author all new test files (Step 9).
+- [x] Author the example workflow under `examples/phase3-fold/` (Step 9).
+- [x] `make ci` green; baseline cap unchanged (Step 10).
+
+## Reviewer Notes
+
+### Implementation summary
+
+All 10 steps implemented. `make ci` exits 0; no new `.golangci.baseline.yml` entries.
+
+**New files:**
+- `workflow/compile_fold.go` — `FoldExpr`, `ctyObjectOrEmpty`, `graphVars`, `graphLocals`, `runtimeOnlyNamespaces`
+- `workflow/compile_locals.go` — `compileLocals` (entry), `buildLocalIndex`, `extractLocalValueExprs`, `buildLocalDepGraph`, `addLocalDep`, `topoSortLocals`, `compileLocalNodes`, `compileOneLocal`
+- `workflow/compile_fold_test.go` — 11 unit tests for FoldExpr
+- `workflow/compile_locals_test.go` — 7 unit tests for compileLocals
+- `workflow/compile_validation_test.go` — `TestValidateFoldableAttrs_AgentConfigFile`
+- `examples/phase3-fold/fold-demo.hcl` — example demonstrating `local`, `var`, and chained local interpolation
+
+**Modified files:**
+- `workflow/schema.go`: `LocalSpec`, `LocalNode` structs; `Spec.Locals`, `FSMGraph.Locals` fields
+- `workflow/compile.go`: init `Locals` in `newFSMGraph`; call `compileLocals`; pass `opts` to `compileBranches`
+- `workflow/compile_validation.go`: `validateFileFunctionCalls` renamed/rewritten to `validateFoldableAttrs`; `fileValidateFunction` deleted; unused imports removed
+- `workflow/compile_agents.go`: `validateFoldableAttrs` call added after config decode
+- `workflow/compile_steps_adapter.go`: `decodeStepInput` takes `g *FSMGraph`; uses `validateFoldableAttrs`
+- `workflow/compile_steps_iteration.go`: extracted `validateIterExprFold`; gofmt applied to test file
+- `workflow/compile_steps_workflow.go`: updated `decodeStepInput` and `compileWorkflowOutputs` call signatures
+- `workflow/compile_steps_graph.go`: `compileWorkflowOutputs` takes `g *FSMGraph, opts CompileOpts`; validates output.value via FoldExpr
+- `workflow/compile_nodes.go`: `compileBranches` takes `opts CompileOpts`; FoldExpr called on branch arm conditions
+- `workflow/eval.go`: `SeedLocalsFromGraph` added; `BuildEvalContextWithOpts` exposes `local.*` via `vars["local"]`
+- `internal/engine/engine.go`: `seedRunVars` sets `vars["local"]` via `SeedLocalsFromGraph`
+- `workflow/compile_file_function_test.go`: replaced `SkipsVariableArgs` test with `VarArgFileExists` + `VarArgFileMissing`
+- `workflow/iteration_compile_test.go`: added `TestForEachExprFoldsAtCompile_FilesValidated`
+- `Makefile`: added `examples/phase3-fold/*.hcl` to validate glob
+
+### Behavior changes
+
+1. `var.<undeclared>` is now a compile error (previously runtime fail-silent).
+2. `file(var.x)` is validated at compile when `var.x` has a default (previously skipped).
+3. `local "<name>"` block is a new compile-time constant declaration.
+
+### Lint fixes applied during CI
+
+`compileLocals` was refactored into 7 helper functions (gocognit cap compliance). `compileIteratingStep` had `validateIterExprFold` extracted (funlen cap compliance). `iteration_compile_test.go` was gofmt-fixed.
+
+### Tests
+
+- `workflow/compile_fold_test.go`: 11 tests — pure literal, var-resolved, var-missing, local-resolved, runtime-deferred (steps.*, each.*), file() literal, file(var.path) exists, file(var.path) missing, file(steps.*) deferred
+- `workflow/compile_locals_test.go`: 7 tests — simple, depends-on-var, depends-on-earlier-local, cycle, multiple-attrs error, no-value-attr error, runtime-ref error
+- `workflow/compile_validation_test.go`: agent config file validation; now asserts absence of "Variables not allowed" diagnostic
+- `workflow/compile_agent_config_test.go`: `TestAgentConfigFoldsVarRef`, `TestAgentConfigFoldsLocalRef`, `TestAgentConfigFileVarPath_SuccessNoSpuriousError`, `TestAgentConfigLocalDerivedFilePath` — success-contract tests proving foldable expressions compile in agent.config
+- `workflow/eval_test.go`: `TestBuildEvalContext_ExposesLocals`, `TestApplyVarOverrides_PreservesLocals`, `TestApplyVarOverrides_NoOverrides_PreservesLocals` — success-contract tests for local namespace threading
+- `workflow/iteration_compile_test.go`: for_each fold/file validation
+- `workflow/compile_file_function_test.go`: var-arg file exists and file missing
+- `examples/phase3-fold/fold-demo.hcl`: validates under `make validate`; demonstrates `file(local.prompt_path)` with the `world_prompt.txt` fixture
+
+### Security
+
+No new network, file, or process access beyond existing `file()` function. `FoldExpr` operates on compile-time HCL expressions only; paths are validated via `CRITERIA_WORKFLOW_ALLOWED_PATHS` as before.
+
+### Architecture
+
+`BuildEvalContextWithOpts` signature was not changed; locals are threaded through the existing `vars map[string]cty.Value` via the `"local"` key to avoid updating 5+ callers across packages.
+
+### Review 2026-05-02 — changes-requested
+
+#### Summary
+
+`changes-requested`. The main fold/local plumbing is in place and the repository targets are green, but two acceptance-bar regressions remain: `agent.config` still rejects foldable `var.*` / `local.*` expressions on the success path, and runtime `local.*` disappears as soon as CLI var overrides are applied. The new example also does not exercise the required `file(local...)` path, and the added tests did not catch either defect.
+
+#### Plan Adherence
+
+- Steps 1-4 and 6 are implemented.
+- Step 5 is only partially satisfied: `validateFoldableAttrs` was added at the listed call sites, but `agent.config` still decodes through `agentConfigEvalContext` without `var` / `local`, so foldable config expressions are rejected before the fold result can be stored.
+- Step 7 is only partially satisfied: `BuildEvalContextWithOpts` exposes `local.*` when `vars["local"]` is present, but the override path does not preserve that namespace.
+- Step 9 is incomplete: `examples/phase3-fold/fold-demo.hcl` does not demonstrate `file(local.path)` / `file(local.*)`, and no runtime-namespace test covers locals with overrides.
+- Step 10 is satisfied: validation targets passed and the lint baseline remained unchanged.
+
+#### Required Remediations
+
+- **Blocker** — `workflow/compile_agents.go:22-25`, `workflow/compile_agents.go:58-67`: `agent.config` still errors on foldable `var.*` / `local.*` expressions with `Variables not allowed` because the stored-value path is still `validateSchemaAttrs` / `decodeAttrsToStringMap` against an eval context that only registers functions. Direct probe: `agent.config { prompt = local.banner }` fails at compile, and `agent.config { prompt = file(var.prompt_file) }` emits both a spurious `Variables not allowed` diagnostic and the fold-pass file error. **Acceptance:** route the stored-value path for `agent.config` through `FoldExpr` (or equivalent) so pure `var ∪ local ∪ literal` expressions compile to final config strings without extra diagnostics; keep runtime-only references rejected because `agent.config` has no runtime resolution path; add tests for both the positive fold case and the negative runtime-only case.
+- **Blocker** — `workflow/eval.go:208-242`, `internal/engine/engine.go:335-338`: `ApplyVarOverrides` rebuilds the vars map with only `"var"` and `"steps"`, dropping the compiled `"local"` namespace. Direct probe: `before_override_has_local=true`, `after_override_has_local=false`. **Acceptance:** preserve compiled locals across overrides (or reseed them in a behaviorally equivalent way) and add tests that exercise runtime `local.*` evaluation both with and without CLI overrides.
+- **Blocker** — `examples/phase3-fold/fold-demo.hcl:22-35`: the required example deliverable does not demonstrate `file(local.path)` / `file(local.*)` at all, so the end-to-end example is not covering the new folded file-validation path called for in Step 9. **Acceptance:** update the example (and any needed fixture) so `make validate` exercises a successful `file(local...)` flow.
+- **Blocker** — `workflow/compile_validation_test.go:14-66`, `workflow/compile_fold_test.go`, `workflow/iteration_compile_test.go`: the new tests prove that some diagnostics appear, but they do not prove the intended success contracts at the changed boundaries. The suite stayed green while the `agent.config` success path was broken and while runtime locals were dropped by overrides. **Acceptance:** add tests that fail on the current implementation: successful `agent.config` folding from `var` / `local`, absence of the spurious `Variables not allowed` diagnostic on `file(var.path)` in `agent.config`, runtime `local.*` visibility through `BuildEvalContextWithOpts`, and override preservation.
+
+#### Test Intent Assessment
+
+The `FoldExpr` and `compileLocals` unit coverage is solid for local compilation mechanics, but the boundary tests are too weak for the behavior this workstream changes. `workflow/compile_validation_test.go` only exercises the failing `agent.config` path and does not assert a successful fold or the absence of the old failure mode. No test covers runtime `local.*` exposure or `ApplyVarOverrides`, so Step 7 regressed without detection. The example validation path also does not exercise `file(local...)`, so the e2e proof for folded locals plus `file()` is still missing.
+
+#### Validation Performed
+
+- `go test -race -count=2 ./workflow/...` — passed
+- `go build ./...` — passed
+- `make validate` — passed
+- `make lint-go` — passed
+- `make lint-baseline-check` — passed
+- `make ci` — passed
+- Direct compile probe: `agent.config { prompt = local.banner }` fails with `Variables not allowed`
+- Direct compile probe: `agent.config { prompt = file(var.prompt_file) }` emits both `Variables not allowed` and the fold-pass file error
+- Direct runtime probe: `ApplyVarOverrides` removes `vars["local"]`
+
 
 ## Exit criteria
 
@@ -330,3 +427,174 @@ The Step 9 test list is the deliverable surface. Coverage targets:
 | `BuildEvalContextWithOpts` signature change breaks callers in [internal/engine/](../../internal/engine/) | Search for every caller before changing the signature; update each in this workstream. If a caller cannot be updated locally (e.g. a sibling workstream's branch already changed it), coordinate via the cleanup gate. |
 | The rewrite removes a `// W04: ...` lint exception comment that another workstream relied on | The complexity entries on `validateFileFunctionCalls` should drop, not rise. If a new finding surfaces post-rewrite, extract a helper rather than adding a baseline entry. |
 | `examples/phase3-fold/*.hcl` exposes a runtime evaluation path the engine doesn't yet support | Confirm via `make validate` first; if the engine gap is real, this workstream is the wrong one to land it — the engine support belongs in the workstream that introduced the runtime gap. |
+
+### Review 2 response (2026-05-02)
+
+All four blockers from the first review have been addressed:
+
+**Blocker 1 — `agent.config` rejects `var.*`/`local.*`**
+- Root cause: `agentConfigEvalContext` only registered functions; no `Variables` map.
+- Fix: `agentConfigEvalContext` now accepts `vars, locals map[string]cty.Value` and adds `"var"` and `"local"` namespaces to the eval context. `compileAgents` passes `graphVars(g), graphLocals(g)` to it.
+- Removed the now-redundant `validateFoldableAttrs` call from `compileAgents`; the schema decode handles everything in one pass with the corrected eval context.
+
+**Blocker 2 — `ApplyVarOverrides` drops `vars["local"]`**
+- Root cause: the rebuilt `out` map only copied `"steps"` then added `"var"`.
+- Fix: `ApplyVarOverrides` now copies `"local"` from the input map if present.
+- Resume path in `internal/engine/engine.go` `seedRunVars`: `e.resumedVars` only restores `"var"` and `"steps"` from the serialized scope; locals are compile-time constants and never serialised. The resume path now always reseeds `vars["local"]` from the graph, identically to the fresh-run path.
+
+**Blocker 3 — Example doesn't demonstrate `file(local.*)`**
+- Added `local "prompt_path" { value = "${var.name}_prompt.txt" }` to `fold-demo.hcl`.
+- Added `file(local.prompt_path)` in the step input `command`.
+- Added `examples/phase3-fold/world_prompt.txt` fixture (required when `var.name="world"`).
+- `make validate` exercises this path successfully.
+
+**Blocker 4 — Tests don't prove success contracts**
+- `workflow/compile_agent_config_test.go`: added `TestAgentConfigFoldsVarRef`, `TestAgentConfigFoldsLocalRef`, `TestAgentConfigFileVarPath_SuccessNoSpuriousError`, `TestAgentConfigLocalDerivedFilePath`.
+- `workflow/eval_test.go`: added `TestBuildEvalContext_ExposesLocals`, `TestApplyVarOverrides_PreservesLocals`, `TestApplyVarOverrides_NoOverrides_PreservesLocals`.
+- `workflow/compile_validation_test.go`: updated to also assert absence of "Variables not allowed" diagnostic.
+
+**Validation:** `make ci` exits 0; no new `.golangci.baseline.yml` entries.
+
+### Review 2026-05-02-02 — changes-requested
+
+#### Summary
+
+`changes-requested`. The implementation defects from the first pass are fixed: `agent.config` now folds `var.*` / `local.*`, runtime locals survive override and resume paths, and the example now exercises `file(local.*)`. Approval is still blocked on one remaining test gap: there is no persistent test proving that `agent.config` rejects runtime-only namespaces (`steps.*`, `each.*`, `shared_variable.*`), even though that negative case was part of the previous remediation bar.
+
+#### Plan Adherence
+
+- Steps 1-7 now match the intended behavior.
+- Step 9 improved materially: positive `agent.config` fold cases, runtime local exposure, override preservation, and the `file(local.*)` example are now covered.
+- Step 9 is still incomplete for the `agent.config` contract boundary because the runtime-only rejection path is not pinned by test.
+- Step 10 remains satisfied: validation targets are green and the lint baseline cap is unchanged.
+
+#### Required Remediations
+
+- **Blocker** — `workflow/compile_agent_config_test.go`: add the missing negative `agent.config` contract test for runtime-only namespaces. The implementation currently rejects `steps.*` in `agent.config` (manual probe returned a compile error), but there is no test preventing regressions on that boundary. **Acceptance:** add at least one test that proves `agent.config { ... = steps.foo.out }` fails at compile time, with assertions focused on the contract-visible outcome. Broader coverage for `each.*` and/or `shared_variable.*` is welcome, but the runtime-only rejection path must be enforced by test before approval.
+
+#### Test Intent Assessment
+
+The new positive-path tests are much stronger and would now catch the original folding and local-preservation regressions. The remaining weakness is specifically negative contract coverage for runtime-only references in `agent.config`; I still had to validate that behavior manually instead of relying on the test suite.
+
+#### Validation Performed
+
+- `go test -race -count=2 ./workflow/...` — passed
+- `go test -race ./internal/engine/...` — passed
+- `go build ./...` — passed
+- `make validate` — passed
+- `make lint-go` — passed
+- `make lint-baseline-check` — passed
+- Direct probe: `agent.config { prompt = local.banner }` compiles and stores the folded value
+- Direct probe: `agent.config { prompt = steps.foo.out }` fails at compile time
+
+### Review 3 response (2026-05-02)
+
+Single blocker addressed: added `TestAgentConfigRejectsRuntimeOnlyNamespaces` to `workflow/compile_agent_config_test.go`. The test uses a table-driven approach covering `steps.*` and `each.*` references in `agent.config`, asserting a compile error is returned for each and that the error mentions the rejected namespace. Both sub-cases pass. `make ci` exits 0; no new baseline entries.
+
+### Review 2026-05-02-03 — approved
+
+#### Summary
+
+`approved`. The remaining blocker from the prior pass is resolved: `agent.config` runtime-only references are now pinned by test, and the earlier implementation fixes for foldable `var.*` / `local.*`, local preservation across overrides/resume, and the `file(local.*)` example remain intact.
+
+#### Plan Adherence
+
+- Steps 1-7 are implemented and now match the intended behavior.
+- Step 9 is satisfied: positive and negative `agent.config` boundary behavior is covered, runtime `local.*` exposure is covered, override preservation is covered, and the `file(local.*)` example is present.
+- Step 10 is satisfied: the validation targets passed and the lint baseline cap remains unchanged.
+
+#### Test Intent Assessment
+
+The test suite now exercises both sides of the `agent.config` contract: foldable compile-time expressions succeed and runtime-only namespaces fail at compile time. That closes the last gap from the previous review and materially improves regression sensitivity for this workstream’s main behavior change.
+
+#### Validation Performed
+
+- `go test -race -count=2 ./workflow/...` — passed
+- `go build ./...` — passed
+- `make validate` — passed
+- `make lint-go` — passed
+- `make lint-baseline-check` — passed
+
+### Review 2026-05-02-04 — changes-requested
+
+#### Summary
+
+`changes-requested`. The new PR-remediation commit introduced a regression in the local-compile contract: `FoldExpr` now stubs `file()` / `fileexists()` when `workflowDir == ""`, and `compileLocals` accepts that unknown result as a compiled local. A `local` can therefore compile through `Compile()` with an unknown value, even though this workstream explicitly requires locals to fully resolve at compile time.
+
+#### Plan Adherence
+
+- Steps 1, 2, 4-7 remain implemented.
+- Step 3 is regressed: a `local` no longer necessarily resolves to a concrete compile-time value before being stored in `g.Locals`.
+- Step 9 is incomplete for this regression: there is no test covering `local` + `file()` when `Compile()` is called without `WorkflowDir`.
+
+#### Required Remediations
+
+- **Blocker** — `workflow/compile_fold.go:63-82`, `workflow/compile_locals.go:205-224`: the `workflowDir == ""` stubs return `cty.UnknownVal`, and `compileOneLocal` stores that unknown value without complaint. Direct probe: `local "prompt" { value = file("prompt.txt") }` compiled via `workflow.Compile(spec, nil)` produced `compile_has_errors: false` and `local_is_known=false`. This violates the Step 3 contract that a local “must fully resolve at compile.” **Acceptance:** ensure locals never compile with unknown values. A safe fix would be to keep the new stub behavior for validation call sites if needed, but have `compileLocals` reject unknown results (or otherwise surface a compile diagnostic) so every `LocalNode.Value` is known. Add a regression test that fails on the current behavior.
+
+#### Test Intent Assessment
+
+The new tests successfully cover the PR reviewer’s concerns around undeclared vars and runtime-only namespaces, but they do not protect the local-compile invariant. That gap let a behaviorally important regression land while the suite stayed green.
+
+#### Validation Performed
+
+- `go test -race -count=2 ./workflow/...` — passed
+- `go build ./...` — passed
+- `make validate` — passed
+- `make lint-go` — passed
+- `make lint-baseline-check` — passed
+- Direct probe: `local "prompt" { value = file("prompt.txt") }` via `workflow.Compile(spec, nil)` compiled successfully with `local_is_known=false`
+
+### PR review remediation (2026-05-02, commit 5bb931f)
+
+Four `copilot-pull-request-reviewer` threads addressed:
+
+**PRRT_KTFy + PRRT_KTF- — forward-claims bypass removed**
+- Deleted `tools/release/forward-claims.txt`.
+- Simplified `.github/workflows/ci.yml` tag-claim guard: removed the forward-claims loading block and the warning-path branch; every extracted tag now hard-fails if absent from origin.
+
+**PRRT_KTF7 — graphVars uses cty.UnknownVal for no-default variables**
+- `graphVars` in `compile_fold.go` now stores `cty.UnknownVal(node.Type)` instead of `cty.NullVal(node.Type)` for variables without a declared default. The function framework short-circuits unknown args (returns unknown without calling Impl), so `file(var.x)` with a no-default variable no longer produces spurious type errors.
+- Added `TestFoldExpr_VarNoDefault_FileCall_NoError`.
+
+**PRRT_KTF3 — FoldExpr stubs file functions when workflowDir is empty**
+- `FoldExpr` now replaces `file()` and `fileexists()` with stub functions returning `cty.UnknownVal` when `workflowDir == ""`. This allows `Compile()` (no WorkflowDir) to still catch undeclared var/local references while deferring path validation.
+- Added `TestFoldExpr_NoWorkflowDir_LiteralFile_NoError` and `TestFoldExpr_NoWorkflowDir_UndeclaredVar_StillErrors`.
+
+All four threads replied-to and resolved. `make ci` exits 0.
+
+### Review 4 response (2026-05-02)
+
+Blocker addressed: `compileOneLocal` now rejects unknown fold results.
+
+**Root cause:** The `workflowDir == ""` file-stub fix (commit 5bb931f) made `file()` return `cty.UnknownVal` when no WorkflowDir is set. `compileOneLocal` stored that unknown value without complaint, violating the Step 3 contract that locals must fully resolve at compile time.
+
+**Fix:** Added an `!val.IsKnown()` guard in `compileOneLocal` (`workflow/compile_locals.go`). When the folded value is unknown, a compile diagnostic is returned: *"value could not be fully resolved at compile time; ensure all referenced variables have defaults and that a workflow directory is provided when using file()"*.
+
+**Test:** Added `TestCompileLocals_FileWithNoWorkflowDir` to `compile_locals_test.go` — proves that `local { value = file("prompt.txt") }` via `workflow.Compile(spec, nil)` now fails compilation with a diagnostic mentioning "fully resolved". This test would have caught the regression.
+
+**Validation:** `make ci` exits 0; no new baseline entries.
+
+### Review 2026-05-02-05 — approved
+
+#### Summary
+
+`approved`. The regression introduced by the PR-remediation follow-up is fixed: locals no longer compile with unknown values when `workflowDir` is empty. `compileOneLocal` now rejects unknown fold results, and the new regression test pins that contract.
+
+#### Plan Adherence
+
+- Step 3 is restored: locals must fully resolve at compile time before they are stored in `g.Locals`.
+- Step 9 is satisfied for the regression path: `TestCompileLocals_FileWithNoWorkflowDir` now proves the failure mode that previously slipped through.
+- The previously approved Step 1-7 and broader Step 9/10 behavior remains intact.
+
+#### Test Intent Assessment
+
+The new regression test is appropriately behavior-focused: it exercises the exact failing entrypoint (`workflow.Compile(spec, nil)`) and asserts the contract-visible outcome (`local` compilation fails rather than storing an unknown value). Combined with the existing fold/local tests, the suite now covers both the original feature and this later semantic regression.
+
+#### Validation Performed
+
+- `go test -race -count=2 ./workflow/...` — passed
+- `go build ./...` — passed
+- `make validate` — passed
+- `make lint-go` — passed
+- `make lint-baseline-check` — passed
+- Direct probe: `local "prompt" { value = file("prompt.txt") }` via `workflow.Compile(spec, nil)` now fails with the expected “fully resolved” diagnostic

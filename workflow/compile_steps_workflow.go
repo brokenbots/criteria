@@ -39,7 +39,7 @@ func compileWorkflowStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[stri
 	forEachExpr, countExpr, isIterating, d := compileWorkflowIterExpr(sp)
 	diags = append(diags, d...)
 
-	inputMap, inputExprs, d := decodeStepInput(sp, schemas, opts, "")
+	inputMap, inputExprs, d := decodeStepInput(g, sp, schemas, opts, "")
 	diags = append(diags, d...)
 
 	if !isIterating && opts.LoadDepth == 0 {
@@ -58,7 +58,7 @@ func compileWorkflowStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[stri
 	d, node.Body, node.BodyEntry = compileWorkflowBody(sp, schemas, opts)
 	diags = append(diags, d...)
 
-	diags = append(diags, compileWorkflowOutputs(sp, node)...)
+	diags = append(diags, compileWorkflowOutputs(g, sp, node, opts)...)
 
 	g.Steps[sp.Name] = node
 	g.stepOrder = append(g.stepOrder, sp.Name)

@@ -330,9 +330,18 @@ func finishIterationInGraph(st *RunState, stepName string, graph *workflow.FSMGr
 // defaults, applies any CLI overrides, and emits OnVariableSet events.
 func (e *Engine) seedRunVars() map[string]cty.Value {
 	if e.resumedVars != nil {
-		return e.resumedVars
+		// Locals are compile-time constants that are never persisted in the
+		// scope snapshot. Always reseed them from the current graph so that
+		// resumed runs have the same local.* bindings as fresh runs.
+		resumed := make(map[string]cty.Value, len(e.resumedVars)+1)
+		for k, v := range e.resumedVars {
+			resumed[k] = v
+		}
+		resumed["local"] = workflow.SeedLocalsFromGraph(e.graph)
+		return resumed
 	}
 	vars := workflow.SeedVarsFromGraph(e.graph)
+	vars["local"] = workflow.SeedLocalsFromGraph(e.graph)
 	if len(e.varOverrides) > 0 {
 		vars = workflow.ApplyVarOverrides(e.graph, vars, e.varOverrides)
 	}

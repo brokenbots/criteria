@@ -111,7 +111,7 @@ func compileApprovals(g *FSMGraph, spec *Spec) hcl.Diagnostics {
 
 // compileBranches compiles all branch blocks from spec into g.Branches.
 // Must be called after compileApprovals so that full clash checks work.
-func compileBranches(g *FSMGraph, spec *Spec) hcl.Diagnostics {
+func compileBranches(g *FSMGraph, spec *Spec, opts CompileOpts) hcl.Diagnostics {
 	var diags hcl.Diagnostics
 	for _, bs := range spec.Branches {
 		name := bs.Name
@@ -199,6 +199,11 @@ func compileBranches(g *FSMGraph, spec *Spec) hcl.Diagnostics {
 						})
 					}
 				}
+			}
+			// Fold-pass validation: catches file(var.x) missing-file errors and
+			// unknown local references. steps.* refs are silently deferred.
+			if _, foldable, fd := FoldExpr(condExpr, graphVars(g), graphLocals(g), opts.WorkflowDir); foldable {
+				diags = append(diags, errorDiagsWithFallbackSubject(fd, condExpr)...)
 			}
 			// Capture the source text of the condition expression so it can be
 			// surfaced in BranchEvaluated events (W06).

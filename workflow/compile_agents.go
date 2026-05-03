@@ -7,20 +7,27 @@ import (
 	"fmt"
 
 	"github.com/hashicorp/hcl/v2"
+	"github.com/zclconf/go-cty/cty"
 )
 
 // agentConfigEvalContext builds the eval context used to resolve agent.config{}
 // attributes at compile time. file(), fileexists(), and trimfrontmatter() are
-// registered so prompt files can be inlined; var/steps/each are intentionally
-// absent because agent config has no runtime resolution path and must reduce
-// to a constant.
+// registered so prompt files can be inlined. var.* and local.* are included so
+// that config expressions can reference declared variables and compiled locals.
+// steps.*, each.*, and shared_variable.* are intentionally absent — expressions
+// that reference those namespaces fail with "Variables not allowed", which is
+// the correct compile error since agent config has no runtime resolution path.
 //
 // Always returns a non-nil context — even when workflowDir is empty — so that
 // agent.config expressions are never silently emptied. file()/fileexists()
 // then produce a "workflow directory not configured" compile diagnostic for
 // callers that compile without a WorkflowDir.
-func agentConfigEvalContext(workflowDir string) *hcl.EvalContext {
+func agentConfigEvalContext(vars, locals map[string]cty.Value, workflowDir string) *hcl.EvalContext {
 	return &hcl.EvalContext{
+		Variables: map[string]cty.Value{
+			"var":   ctyObjectOrEmpty(vars),
+			"local": ctyObjectOrEmpty(locals),
+		},
 		Functions: workflowFunctions(DefaultFunctionOptions(workflowDir)),
 	}
 }
@@ -33,7 +40,7 @@ func agentConfigEvalContext(workflowDir string) *hcl.EvalContext {
 // fileexists(), and trimfrontmatter() so prompt files can be inlined.
 func compileAgents(g *FSMGraph, spec *Spec, schemas map[string]AdapterInfo, opts CompileOpts) hcl.Diagnostics {
 	var diags hcl.Diagnostics
-	configEvalCtx := agentConfigEvalContext(opts.WorkflowDir)
+	configEvalCtx := agentConfigEvalContext(graphVars(g), graphLocals(g), opts.WorkflowDir)
 	for _, ag := range spec.Agents {
 		name := ag.Name
 		if _, dup := g.Agents[name]; dup {

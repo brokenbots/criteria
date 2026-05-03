@@ -1,11 +1,186 @@
 package workflow
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+// TestAgentConfigFoldsVarRef verifies that a var.* reference in agent.config
+// resolves at compile time without a "Variables not allowed" error.
+func TestAgentConfigFoldsVarRef(t *testing.T) {
+	src := `
+workflow "x" {
+  version       = "0.1"
+  initial_state = "open"
+  target_state  = "done"
+  variable "prompt_val" {
+    type    = "string"
+    default = "You are a helpful assistant."
+  }
+  agent "bot" {
+    adapter = "copilot"
+    config {
+      system_prompt = var.prompt_val
+    }
+  }
+  step "open" {
+    agent     = "bot"
+    lifecycle = "open"
+    outcome "success" { transition_to = "done" }
+  }
+  state "done" { terminal = true }
+}
+`
+	spec, diags := Parse("t.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	g, diags := Compile(spec, testSchemas)
+	if diags.HasErrors() {
+		t.Fatalf("expected var.* in agent.config to compile without error, got: %s", diags.Error())
+	}
+	got := g.Agents["bot"].Config["system_prompt"]
+	if got != "You are a helpful assistant." {
+		t.Errorf("system_prompt = %q, want 'You are a helpful assistant.'", got)
+	}
+}
+
+// TestAgentConfigFoldsLocalRef verifies that a local.* reference in agent.config
+// resolves at compile time without a "Variables not allowed" error.
+func TestAgentConfigFoldsLocalRef(t *testing.T) {
+	src := `
+workflow "x" {
+  version       = "0.1"
+  initial_state = "open"
+  target_state  = "done"
+  local "greeting" {
+    value = "You are a helpful assistant."
+  }
+  agent "bot" {
+    adapter = "copilot"
+    config {
+      system_prompt = local.greeting
+    }
+  }
+  step "open" {
+    agent     = "bot"
+    lifecycle = "open"
+    outcome "success" { transition_to = "done" }
+  }
+  state "done" { terminal = true }
+}
+`
+	spec, diags := Parse("t.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	g, diags := Compile(spec, testSchemas)
+	if diags.HasErrors() {
+		t.Fatalf("expected local.* in agent.config to compile without error, got: %s", diags.Error())
+	}
+	got := g.Agents["bot"].Config["system_prompt"]
+	if got != "You are a helpful assistant." {
+		t.Errorf("system_prompt = %q, want 'You are a helpful assistant.'", got)
+	}
+}
+
+// TestAgentConfigFileVarPath_SuccessNoSpuriousError verifies that
+// file(var.prompt_file) in agent.config with an *existing* file compiles
+// without any error — specifically without the old "Variables not allowed"
+// spurious diagnostic.
+func TestAgentConfigFileVarPath_SuccessNoSpuriousError(t *testing.T) {
+	dir := t.TempDir()
+	promptPath := filepath.Join(dir, "prompt.txt")
+	if err := os.WriteFile(promptPath, []byte("Be helpful.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	src := `
+workflow "x" {
+  version       = "0.1"
+  initial_state = "open"
+  target_state  = "done"
+  variable "prompt_file" {
+    type    = "string"
+    default = "prompt.txt"
+  }
+  agent "bot" {
+    adapter = "copilot"
+    config {
+      system_prompt = file(var.prompt_file)
+    }
+  }
+  step "open" {
+    agent     = "bot"
+    lifecycle = "open"
+    outcome "success" { transition_to = "done" }
+  }
+  state "done" { terminal = true }
+}
+`
+	spec, diags := Parse("t.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	g, diags := CompileWithOpts(spec, testSchemas, CompileOpts{WorkflowDir: dir})
+	if diags.HasErrors() {
+		t.Fatalf("expected file(var.prompt_file) with existing file to compile without error, got: %s", diags.Error())
+	}
+	got := g.Agents["bot"].Config["system_prompt"]
+	if got != "Be helpful.\n" {
+		t.Errorf("system_prompt = %q, want 'Be helpful.\\n'", got)
+	}
+}
+
+// TestAgentConfigLocalDerivedFilePath verifies that a local that derives a file
+// path and is then used with file(local.path) in agent.config compiles correctly.
+func TestAgentConfigLocalDerivedFilePath(t *testing.T) {
+	dir := t.TempDir()
+	promptPath := filepath.Join(dir, "world_prompt.txt")
+	if err := os.WriteFile(promptPath, []byte("Hello from world.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	src := `
+workflow "x" {
+  version       = "0.1"
+  initial_state = "open"
+  target_state  = "done"
+  variable "name" {
+    type    = "string"
+    default = "world"
+  }
+  local "prompt_path" {
+    value = "${var.name}_prompt.txt"
+  }
+  agent "bot" {
+    adapter = "copilot"
+    config {
+      system_prompt = file(local.prompt_path)
+    }
+  }
+  step "open" {
+    agent     = "bot"
+    lifecycle = "open"
+    outcome "success" { transition_to = "done" }
+  }
+  state "done" { terminal = true }
+}
+`
+	spec, diags := Parse("t.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	g, diags := CompileWithOpts(spec, testSchemas, CompileOpts{WorkflowDir: dir})
+	if diags.HasErrors() {
+		t.Fatalf("expected file(local.prompt_path) with existing file to compile without error, got: %s", diags.Error())
+	}
+	got := g.Agents["bot"].Config["system_prompt"]
+	if got != "Hello from world.\n" {
+		t.Errorf("system_prompt = %q, want 'Hello from world.\\n'", got)
+	}
+}
 
 func TestAgentConfigValidatedAgainstSchema(t *testing.T) {
 	src := `
@@ -376,5 +551,64 @@ workflow "x" {
 	}
 	if !strings.Contains(diags.Error(), `field "items" must be a list of strings`) {
 		t.Errorf("unexpected error: %s", diags.Error())
+	}
+}
+
+// TestAgentConfigRejectsRuntimeOnlyNamespaces verifies that runtime-only
+// references (steps.*, each.*) in agent.config are rejected at compile time
+// with a clear error. agent.config has no runtime resolution path — it is
+// decoded once at compile and stored as a static map.
+func TestAgentConfigRejectsRuntimeOnlyNamespaces(t *testing.T) {
+	cases := []struct {
+		name     string
+		attrExpr string
+		wantErr  string
+	}{
+		{
+			name:     "steps reference",
+			attrExpr: `system_prompt = steps.summarise.stdout`,
+			wantErr:  "steps",
+		},
+		{
+			name:     "each reference",
+			attrExpr: `system_prompt = each.value`,
+			wantErr:  "each",
+		},
+	}
+
+	tmpl := `
+workflow "x" {
+  version       = "0.1"
+  initial_state = "open"
+  target_state  = "done"
+  agent "bot" {
+    adapter = "copilot"
+    config {
+      %s
+    }
+  }
+  step "open" {
+    agent     = "bot"
+    lifecycle = "open"
+    outcome "success" { transition_to = "done" }
+  }
+  state "done" { terminal = true }
+}
+`
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			src := fmt.Sprintf(tmpl, tc.attrExpr)
+			spec, diags := Parse("t.hcl", []byte(src))
+			if diags.HasErrors() {
+				t.Fatalf("parse: %s", diags.Error())
+			}
+			_, diags = Compile(spec, testSchemas)
+			if !diags.HasErrors() {
+				t.Fatalf("expected compile error for runtime-only namespace %q in agent.config, but compiled successfully", tc.name)
+			}
+			if !strings.Contains(strings.ToLower(diags.Error()), tc.wantErr) {
+				t.Errorf("error %q does not mention %q", diags.Error(), tc.wantErr)
+			}
+		})
 	}
 }

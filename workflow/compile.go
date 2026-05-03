@@ -75,12 +75,13 @@ func CompileWithOpts(spec *Spec, schemas map[string]AdapterInfo, opts CompileOpt
 
 	g := newFSMGraph(spec)
 	diags = append(diags, compileVariables(g, spec)...)
+	diags = append(diags, compileLocals(g, spec, opts)...)
 	diags = append(diags, compileAgents(g, spec, schemas, opts)...)
 	diags = append(diags, compileStates(g, spec)...)
 	diags = append(diags, compileSteps(g, spec, schemas, opts)...)
 	diags = append(diags, compileWaits(g, spec)...)
 	diags = append(diags, compileApprovals(g, spec)...)
-	diags = append(diags, compileBranches(g, spec)...)
+	diags = append(diags, compileBranches(g, spec, opts)...)
 	// Warn after all nodes are compiled so branch/wait/approval targets are
 	// available for the back-edge walk (W07).
 	diags = append(diags, warnBackEdges(g)...)
@@ -108,6 +109,7 @@ func newFSMGraph(spec *Spec) *FSMGraph {
 		InitialState: spec.InitialState,
 		TargetState:  spec.TargetState,
 		Variables:    map[string]*VariableNode{},
+		Locals:       map[string]*LocalNode{},
 		Agents:       map[string]*AgentNode{},
 		Steps:        map[string]*StepNode{},
 		States:       map[string]*StateNode{},

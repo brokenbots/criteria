@@ -40,9 +40,10 @@ func compileIteratingStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[str
 	if forEachExpr != nil && countExpr != nil {
 		diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q: for_each and count are mutually exclusive", sp.Name)})
 	}
+	diags = append(diags, validateIterExprFold(g, opts, forEachExpr, countExpr)...)
 
 	adapterName := resolveAdapterName(g, sp)
-	inputMap, inputExprs, d := decodeStepInput(sp, schemas, opts, adapterName)
+	inputMap, inputExprs, d := decodeStepInput(g, sp, schemas, opts, adapterName)
 	diags = append(diags, d...)
 
 	// each.* references are valid inside iterating steps; no error emitted.
@@ -128,6 +129,22 @@ func validateIteratingOutcomes(sp *StepSpec, node *StepNode) hcl.Diagnostics {
 			Severity: hcl.DiagWarning,
 			Summary:  fmt.Sprintf("step %q: outcome \"any_failed\" not declared; failed iterations will fall through to \"all_succeeded\"", sp.Name),
 		})
+	}
+	return diags
+}
+
+// validateIterExprFold runs the compile-time fold pass on for_each and count
+// expressions. Runtime-only references (steps.*, shared_variable.*) are
+// silently deferred; any other fold errors are returned.
+func validateIterExprFold(g *FSMGraph, opts CompileOpts, forEachExpr, countExpr hcl.Expression) hcl.Diagnostics {
+	var diags hcl.Diagnostics
+	if forEachExpr != nil {
+		_, _, d := FoldExpr(forEachExpr, graphVars(g), graphLocals(g), opts.WorkflowDir)
+		diags = append(diags, errorDiagsWithFallbackSubject(d, forEachExpr)...)
+	}
+	if countExpr != nil {
+		_, _, d := FoldExpr(countExpr, graphVars(g), graphLocals(g), opts.WorkflowDir)
+		diags = append(diags, errorDiagsWithFallbackSubject(d, countExpr)...)
 	}
 	return diags
 }

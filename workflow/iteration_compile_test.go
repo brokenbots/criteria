@@ -5,6 +5,8 @@ package workflow_test
 
 import (
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/brokenbots/criteria/workflow"
@@ -620,5 +622,61 @@ workflow "w" {
 	}
 	if !containsAny(msg, "each._idx") {
 		t.Errorf("error = %q; want mention of 'each._idx'", msg)
+	}
+}
+
+// TestForEachExprFoldsAtCompile_FilesValidated verifies that a for_each expression
+// referencing a var with a fold-time value is validated at compile time when it
+// involves a file() call with a missing file path.
+func TestForEachExprFoldsAtCompile_FilesValidated(t *testing.T) {
+	dir := t.TempDir()
+	// "missing.txt" does not exist — fold pass on for_each expression should catch it.
+	hclContent := `workflow "test" {
+  version       = "0.1"
+  initial_state = "step1"
+  target_state  = "done"
+
+  state "done" {
+    terminal = true
+    success  = true
+  }
+
+  variable "path" {
+    type    = "string"
+    default = "missing.txt"
+  }
+
+  agent "a" { adapter = "noop" }
+
+  step "step1" {
+    agent    = "a"
+    for_each = [file(var.path)]
+    outcome "all_succeeded" { transition_to = "done" }
+    outcome "any_failed"    { transition_to = "done" }
+  }
+}
+`
+	wfPath := filepath.Join(dir, "test.hcl")
+	if err := os.WriteFile(wfPath, []byte(hclContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	spec, diags := workflow.Parse(wfPath, []byte(hclContent))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	_, compileDiags := workflow.CompileWithOpts(spec, nil, workflow.CompileOpts{WorkflowDir: dir})
+	if !compileDiags.HasErrors() {
+		t.Fatal("expected compile error for for_each with file(var.path) missing file; got none")
+	}
+	// Check all diagnostics for the missing file reference.
+	found := false
+	for _, d := range compileDiags {
+		if strings.Contains(d.Summary, "missing.txt") || strings.Contains(d.Detail, "missing.txt") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected a diagnostic referencing the missing file path, got: %s", compileDiags.Error())
 	}
 }
