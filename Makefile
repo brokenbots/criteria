@@ -50,10 +50,8 @@ install: build plugins ## Install criteria to ~/.criteria (binary → ~/.criteri
 	@echo '    set -gx CRITERIA_PLUGINS $$HOME/.criteria/plugins'
 	@echo ""
 
-
-	docker build -t criteria/runtime:dev -f Dockerfile.runtime .
-
 docker-runtime-smoke: docker-runtime ## Run a workflow inside the runtime image
+	docker build -t criteria/runtime:dev -f Dockerfile.runtime .
 	docker run --rm -v "$$PWD/examples:/workspace/examples:ro" \
 		criteria/runtime:dev apply /workspace/examples/hello.hcl
 
