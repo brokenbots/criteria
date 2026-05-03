@@ -418,17 +418,6 @@ func (n *stepNode) mergeEnvironmentVars(merged map[string]string) {
 		return
 	}
 
-	// Controlled environment variables that must not be overridden by user-declared environments.
-	// These are enforced by the shell adapter's sandbox for security and consistency.
-	controlledEnvVars := map[string]bool{
-		"PATH":    true, // Hard-rejected by parseEnvInput
-		"HOME":    true, // Inherited from host; user values create security issues
-		"USER":    true,
-		"LOGNAME": true,
-		"LANG":    true,
-		"TZ":      true,
-	}
-
 	// Parse the existing "env" input if present.
 	existingEnv := make(map[string]string)
 	if rawEnv, ok := merged["env"]; ok && rawEnv != "" {
@@ -439,7 +428,8 @@ func (n *stepNode) mergeEnvironmentVars(merged map[string]string) {
 	// Step-declared env vars take precedence over environment-declared ones.
 	for k, v := range env.Variables {
 		// Skip controlled vars and LC_* prefixes (controlled by shell adapter for locale).
-		if controlledEnvVars[k] || (len(k) >= 3 && k[:3] == "LC_") {
+		// Uses exported ShellControlledEnvVars from workflow package for consistency with compile-time checks.
+		if workflow.ShellControlledEnvVars[k] || workflow.IsShellLCPrefix(k) {
 			continue
 		}
 		if _, exists := existingEnv[k]; !exists {

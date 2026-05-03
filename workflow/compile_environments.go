@@ -21,16 +21,23 @@ var registeredEnvironmentTypes = map[string]bool{
 // environmentNamePattern validates that environment names match ^[a-zA-Z][a-zA-Z0-9_-]*$
 var environmentNamePattern = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_-]*$`)
 
-// shellControlledEnvVars is the set of environment variable names that the shell adapter
+// ShellControlledEnvVars is the set of environment variable names that the shell adapter
 // reserves and will not override, even if declared in an environment block.
 // These vars are enforced for security and consistency reasons (see sandbox.go).
-var shellControlledEnvVars = map[string]bool{
+// Exported for use in runtime filtering (internal/engine/node_step.go).
+var ShellControlledEnvVars = map[string]bool{
 	"HOME":    true,
 	"USER":    true,
 	"LOGNAME": true,
 	"LANG":    true,
 	"TZ":      true,
 	"PATH":    true, // sanitized by shell adapter
+}
+
+// IsShellLCPrefix reports whether a variable name is a locale-control prefix (LC_*).
+// These are reserved by the shell adapter for locale settings.
+func IsShellLCPrefix(name string) bool {
+	return len(name) >= 3 && name[:3] == "LC_"
 }
 
 // compileEnvironments folds and stores every environment block.
@@ -300,7 +307,7 @@ func checkShellControlledSetConflicts(envType string, variables map[string]strin
 
 	for varName := range variables {
 		// Check for exact matches in the controlled set
-		if shellControlledEnvVars[varName] {
+		if ShellControlledEnvVars[varName] {
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagWarning,
 				Summary:  fmt.Sprintf("environment variable %q conflicts with the shell adapter's controlled set and will be filtered out", varName),
@@ -309,7 +316,7 @@ func checkShellControlledSetConflicts(envType string, variables map[string]strin
 			})
 		}
 		// Check for LC_* prefixes
-		if len(varName) >= 3 && varName[:3] == "LC_" {
+		if IsShellLCPrefix(varName) {
 			// LC_* is controlled by the shell adapter for locale support; warn but allow
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagWarning,
