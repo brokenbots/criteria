@@ -78,7 +78,9 @@ func RunPlugin(t *testing.T, name, binaryPath string, opts Options) { //nolint:g
 		_ = loader.Shutdown(context.Background())
 	})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// 30 s matches the StartTimeout in the loader so the context does not
+	// expire before the plugin process finishes advertising its socket.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	probe, err := loader.Resolve(ctx, name)
 	if err != nil {
@@ -125,7 +127,8 @@ func runContractTests(t *testing.T, name string, opts Options, factory targetFac
 func newPluginTargetFactory(name string, loader plugin.Loader, opts Options) targetFactory { //nolint:gocritic // W15: Options passes by value for API clarity
 	return func(t *testing.T) executeTarget {
 		t.Helper()
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		// 30 s matches the StartTimeout in the loader.
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
 		plug, err := loader.Resolve(ctx, name)

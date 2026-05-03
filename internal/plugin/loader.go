@@ -125,8 +125,11 @@ func (l *DefaultLoader) Resolve(ctx context.Context, name string) (Plugin, error
 		// Session and loader shutdown are the only teardown mechanisms.
 		Cmd:              exec.Command(path),
 		AllowedProtocols: []hplugin.Protocol{hplugin.ProtocolGRPC},
-		StartTimeout:     5 * time.Second,
-		Logger:           pluginClientLogger(),
+		// 30 s gives plugin binaries enough time to start on loaded CI machines
+		// and under the Go race detector, where process scheduling can be delayed
+		// significantly. A typical local start takes well under 1 s.
+		StartTimeout: 30 * time.Second,
+		Logger:       pluginClientLogger(),
 	})
 
 	rpcClient, err := client.Client()

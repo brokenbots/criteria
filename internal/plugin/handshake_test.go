@@ -19,8 +19,8 @@ func TestHandshakeInfo(t *testing.T) {
 		Plugins:          PluginMap(),
 		Cmd:              exec.Command(pluginBin),
 		AllowedProtocols: []hplugin.Protocol{hplugin.ProtocolGRPC},
-		// 30 s matches production loader.go and handles CPU-loaded CI hosts
-		// where the plugin process advertisement is slow.
+		// 30 s matches loader.go's StartTimeout to handle CPU pressure from
+		// -race -count=20 with many parallel packages.
 		StartTimeout: 30 * time.Second,
 	})
 	t.Cleanup(client.Kill)

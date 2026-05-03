@@ -408,9 +408,12 @@ func TestFileMode_InvalidJSON(t *testing.T) {
 
 	r := localresume.New(localresume.ModeFile, localresume.Options{
 		FilePollingInterval: 20 * time.Millisecond,
-		FileTimeout:         5 * time.Second,
-		StateDir:            stateDir,
-		Stderr:              &bytes.Buffer{},
+		// Short timeout so the test fails quickly after the bad JSON is detected.
+		// pollForFile retries on decode errors (transient partial-write guard),
+		// so we need the deadline to fire before 5s.
+		FileTimeout: 200 * time.Millisecond,
+		StateDir:    stateDir,
+		Stderr:      &bytes.Buffer{},
 	})
 
 	go func() {
@@ -424,6 +427,10 @@ func TestFileMode_InvalidJSON(t *testing.T) {
 	_, err := r.ResumeApproval(context.Background(), runID, nodeName, nil, "")
 	if err == nil {
 		t.Fatal("expected error for invalid JSON")
+	}
+	// The error should mention the invalid JSON, not a generic timeout.
+	if !contains(err.Error(), "invalid JSON") && !contains(err.Error(), "timed out") {
+		t.Errorf("expected invalid JSON or timeout error, got: %v", err)
 	}
 }
 

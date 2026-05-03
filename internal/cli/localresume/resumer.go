@@ -390,16 +390,25 @@ func (r *resumer) pollForFile(ctx context.Context, reqPath string) (map[string]s
 	ticker := time.NewTicker(r.opts.FilePollingInterval)
 	defer ticker.Stop()
 
+	// Track the most recent JSON decode error so we can report it if we
+	// timeout after seeing only invalid JSON (vs. reporting the generic
+	// timeout when the real problem is bad file content).
+	var lastDecodeErr error
+
 	for {
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		case t := <-ticker.C:
 			if t.After(deadline) {
+				if lastDecodeErr != nil {
+					return nil, fmt.Errorf("decision file %q contains invalid JSON: %w", reqPath, lastDecodeErr)
+				}
 				return nil, fmt.Errorf("timed out waiting for decision file %q (timeout=%v)", reqPath, r.opts.FileTimeout)
 			}
 			data, err := os.ReadFile(reqPath)
 			if os.IsNotExist(err) {
+				lastDecodeErr = nil
 				continue
 			}
 			if err != nil {
@@ -407,7 +416,11 @@ func (r *resumer) pollForFile(ctx context.Context, reqPath string) (map[string]s
 			}
 			var m map[string]string
 			if err := json.Unmarshal(data, &m); err != nil {
-				return nil, fmt.Errorf("decode decision file: %w", err)
+				// The file may have been caught mid-write (TOCTOU); retry on
+				// the next tick. If the content is persistently invalid the
+				// deadline will fire and we report the decode error above.
+				lastDecodeErr = err
+				continue
 			}
 			return m, nil
 		}
