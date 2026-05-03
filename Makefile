@@ -1,4 +1,4 @@
-.PHONY: help bootstrap tidy build plugins proto proto-lint proto-check-drift \
+.PHONY: help bootstrap tidy build plugins install proto proto-lint proto-check-drift \
 	test test-cover test-conformance test-flake-watch lint-imports lint-go lint-baseline-check lint validate example-plugin bench docker-runtime docker-runtime-smoke ci clean
 
 # Default target: list available targets.
@@ -26,7 +26,31 @@ plugins: ## Build adapter plugin binaries (output: bin/criteria-adapter-*)
 		fi; \
 	done
 
-docker-runtime: ## Build the operator runtime image (Dockerfile.runtime)
+install: build plugins ## Install criteria to ~/.criteria (binary → ~/.criteria/bin, plugins → ~/.criteria/plugins)
+	@install -d "$$HOME/.criteria/bin" "$$HOME/.criteria/plugins"
+	@install -m 755 bin/criteria "$$HOME/.criteria/bin/criteria"
+	@for f in bin/criteria-adapter-*; do \
+		[ -f "$$f" ] && install -m 755 "$$f" "$$HOME/.criteria/plugins/"; \
+	done
+	@echo ""
+	@echo "criteria installed to $$HOME/.criteria"
+	@echo ""
+	@echo "Add the following to your shell config to use it:"
+	@echo ""
+	@echo "  bash  (~/.bashrc or ~/.bash_profile):"
+	@echo '    export PATH="$$HOME/.criteria/bin:$$PATH"'
+	@echo '    export CRITERIA_PLUGINS="$$HOME/.criteria/plugins"'
+	@echo ""
+	@echo "  zsh   (~/.zshrc):"
+	@echo '    export PATH="$$HOME/.criteria/bin:$$PATH"'
+	@echo '    export CRITERIA_PLUGINS="$$HOME/.criteria/plugins"'
+	@echo ""
+	@echo "  fish  (~/.config/fish/config.fish):"
+	@echo '    fish_add_path $$HOME/.criteria/bin'
+	@echo '    set -gx CRITERIA_PLUGINS $$HOME/.criteria/plugins'
+	@echo ""
+
+
 	docker build -t criteria/runtime:dev -f Dockerfile.runtime .
 
 docker-runtime-smoke: docker-runtime ## Run a workflow inside the runtime image
