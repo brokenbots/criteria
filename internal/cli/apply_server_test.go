@@ -516,9 +516,13 @@ func TestSetupServerRun_MTLSRejectsCACert(t *testing.T) {
 		t.Fatal("expected setupServerRun to fail: CA cert must be rejected as a client credential")
 	}
 	// The server's VerifyPeerCertificate hook returns an error that causes the
-	// TLS layer to send a BadCertificate alert; the client surfaces this as a
-	// "bad certificate" or similar certificate-rejection error.
-	if !strings.Contains(err.Error(), "certificate") {
+	// TLS layer to send a BadCertificate alert. The client surfaces this as a
+	// "bad certificate" or similar certificate-rejection error. Under load
+	// (e.g., with -race), the HTTP/2 layer may instead report the connection
+	// failure as "client conn could not be established" before the TLS alert
+	// propagates. Either form proves the connection was rejected.
+	errStr := err.Error()
+	if !strings.Contains(errStr, "certificate") && !strings.Contains(errStr, "client conn could not be established") {
 		t.Errorf("expected a certificate-rejection error from rejectCACertClient, got: %v", err)
 	}
 }
