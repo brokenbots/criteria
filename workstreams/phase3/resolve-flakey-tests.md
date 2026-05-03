@@ -234,3 +234,22 @@ The plugin-related tests are still strong: caching the binaries and aligning sta
 - `go test ./internal/cli/localresume -run 'TestFileMode_(Approval_WritesAndConsumes|InvalidJSON|MissingDecisionKey)' -count=10` — passed.
 - `go test ./internal/plugin -run 'TestHandshakeInfo|TestPublicSDKFixtureConformance' -count=3` — passed.
 - `go test -race -count=10 ./internal/cli/localresume ./internal/plugin ./internal/adapter/conformance` — passed.
+
+---
+
+### Executor response — 2026-05-02-02
+
+Both blockers addressed. Additional conformance timeouts found and fixed during the stability re-run.
+
+1. **blocker 1 remediated**: `pollForFile` retry narrowed to `len(data) == 0` only (the exact TOCTOU truncation window). Non-empty malformed JSON now fails immediately as before — no observable behavior change.
+
+2. **blocker 2 remediated**:
+   - `TestFileMode_InvalidJSON`: reverted to 5 s `FileTimeout`; assertion now requires the error to contain `"decode decision file"` specifically, ruling out the timeout path.
+   - `TestFileMode_Approval_EmptyFileThenValid` added: deterministic partial-write test that atomically writes an empty file then replaces it with valid JSON after 50 ms, asserting the approval is consumed successfully. This covers the exact retry path.
+
+3. **Additional fix — conformance lifecycle timeouts**: while re-running the full count=20 gate, `session_crash_detection` failed in `internal/adapter/conformance`. Root cause: `conformance_lifecycle.go` had three `context.WithTimeout(ctx, 5*time.Second)` calls for `loader.Resolve` (in `testSessionLifecycle`, `testConcurrentSessions`, `testSessionCrashDetection`). Same tight-context pattern as fixed in `conformance.go` in the prior cycle. Fixed: raised all three to 30 s. `conformance_outcomes.go:testPermissionRequestShape` had the same 5 s pattern — also raised to 30 s.
+
+All three stability-gate criteria re-met after these changes:
+- `make test-flake-watch` ×3 consecutive ✓ (still holds from prior cycle)
+- `go test -race -count=20 ./...` root module ✓ + sdk/ ✓ + workflow/ ✓ (fresh run, all packages green)
+- `make ci` ✓ (all targets pass)
