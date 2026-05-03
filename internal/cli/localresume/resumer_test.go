@@ -425,6 +425,54 @@ func TestFileMode_InvalidJSON(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for invalid JSON")
 	}
+	// Persistently malformed JSON must fail promptly with a decode error —
+	// not wait until the file timeout (which would indicate the retry-on-empty
+	// guard is incorrectly retrying non-empty malformed content).
+	if !contains(err.Error(), "decode decision file") {
+		t.Errorf("expected decode decision file error, got: %v", err)
+	}
+}
+
+// TestFileMode_Approval_EmptyFileThenValid proves that pollForFile retries when
+// it observes an empty file (the os.WriteFile truncate→write window) and
+// successfully consumes the file once valid JSON is written. This is a
+// deterministic test of the TOCTOU guard without relying on scheduler timing.
+func TestFileMode_Approval_EmptyFileThenValid(t *testing.T) {
+	stateDir := t.TempDir()
+	runID := "run-empty-then-valid"
+	nodeName := "review"
+	reqPath := filepath.Join(stateDir, "runs", runID, "approval-"+nodeName+".json")
+
+	r := localresume.New(localresume.ModeFile, localresume.Options{
+		FilePollingInterval: 10 * time.Millisecond,
+		FileTimeout:         5 * time.Second,
+		StateDir:            stateDir,
+		Stderr:              &bytes.Buffer{},
+	})
+
+	go func() {
+		if err := os.MkdirAll(filepath.Dir(reqPath), 0o700); err != nil {
+			return
+		}
+		// Create an empty file: simulates the truncation step of os.WriteFile.
+		f, err := os.Create(reqPath)
+		if err != nil {
+			return
+		}
+		_ = f.Close()
+		// Wait one poll interval, then write valid JSON: simulates the write
+		// step completing after the poller has already seen the empty file.
+		time.Sleep(20 * time.Millisecond)
+		_ = os.WriteFile(reqPath, []byte(`{"decision":"approved"}`), 0o600)
+	}()
+
+	payload, err := r.ResumeApproval(context.Background(), runID, nodeName, nil, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if payload["decision"] != "approved" {
+		t.Errorf("expected decision=approved, got %v", payload)
+	}
 }
 
 func TestFileMode_MissingDecisionKey(t *testing.T) {

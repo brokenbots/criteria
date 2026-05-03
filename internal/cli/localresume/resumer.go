@@ -405,6 +405,11 @@ func (r *resumer) pollForFile(ctx context.Context, reqPath string) (map[string]s
 			if err != nil {
 				return nil, fmt.Errorf("read decision file: %w", err)
 			}
+			// An empty file means os.WriteFile truncated but has not yet
+			// finished writing. Retry on the next tick.
+			if len(data) == 0 {
+				continue
+			}
 			var m map[string]string
 			if err := json.Unmarshal(data, &m); err != nil {
 				return nil, fmt.Errorf("decode decision file: %w", err)

@@ -112,10 +112,10 @@ This workstream may **not** edit:
 
 ## Tasks
 
-- [ ] Author [docs/roadmap/phase-2-summary.md](../../docs/roadmap/phase-2-summary.md) (Step 1).
-- [ ] Document the deferred [workstreams/README.md:13](../README.md) edit in reviewer notes for [21](21-phase3-cleanup-gate.md) to execute (Step 2).
-- [ ] Sweep for other local-only references (Step 3).
-- [ ] `make ci` green (Step 4).
+- [x] Author [docs/roadmap/phase-2-summary.md](../../docs/roadmap/phase-2-summary.md) (Step 1).
+- [x] Document the deferred [workstreams/README.md:13](../README.md) edit in reviewer notes for [21](21-phase3-cleanup-gate.md) to execute (Step 2).
+- [x] Sweep for other local-only references (Step 3).
+- [x] `make ci` green (Step 4).
 
 ## Exit criteria
 
@@ -136,3 +136,156 @@ This workstream does not add tests. The signal is the missing-reference grep at 
 | Step 3 surfaces references in files the workstream cannot edit | Document and forward to [21](21-phase3-cleanup-gate.md). The cleanup gate explicitly owns the coordination set. |
 | `docs/roadmap/` is reorganized later to a different path | The summary's URL is the long-lived one; if the directory moves, the redirector lives in the dir-move PR, not here. |
 | The summary file is mistaken for the live plan and edited to plan future work | Add a header line: "This is a closed-phase record. Active planning lives in `docs/roadmap/phase-3.md` (created by the Phase 3 cleanup gate)." |
+
+## Reviewer notes
+
+### Step 1 — Completed
+
+`docs/roadmap/phase-2-summary.md` created. The `docs/roadmap/` directory was
+absent and is created by this workstream. The summary follows the required
+structure: status line, goal paragraph, per-workstream bullet list with archive
+links, outcomes section, and source-plan attribution. A "closed-phase record"
+header is present per the risk mitigation note. The outcome section honestly
+records that the ≥ B Maintainability / Tech Debt grade target was not reached at
+Phase 2 close (both remained C+ per TECH_EVALUATION-20260501-01.md); the goal
+is carried into Phase 3.
+
+### Step 2 — Deferred edit for [21]
+
+**Mandatory action for [21-phase3-cleanup-gate.md](21-phase3-cleanup-gate.md):**
+
+1. `workstreams/README.md` line 13 was found to **no longer contain** the
+   `~/.claude/plans/we-need-to-plan-inherited-tulip.md` reference; the Phase 2
+   cleanup gate (W16) appears to have removed it before this workstream
+   executed. W21 must confirm the absence on its sweep.
+
+2. **W21 must add a link** from `workstreams/README.md` to
+   `docs/roadmap/phase-2-summary.md` so that readers following the Phase 2
+   status line in that file can reach the durable summary. This is the
+   coordination-set change this workstream was created to enable; it is
+   required, not optional.
+
+### Step 3 — Reference sweep results
+
+Command run:
+
+```
+git grep -n '~/\.claude\|/plans/we-need-to' -- ':!workstreams/archived/' ':!docs/roadmap/phase-2-summary.md'
+```
+
+**The literal command still returns matches.** Actual output:
+
+- `tech_evaluations/TECH_EVALUATION-20260501-01.md` lines 209, 219, 274 — historical audit observations that state "the roadmap pointed to `~/.claude/...`". These are accurate records of the past state; modifying them would corrupt the audit trail. This file is outside the workstream's editable set.
+- `workstreams/phase3/05-tracked-roadmap-artifact.md` (this file) — contextual quotes in the workstream spec itself. Not actionable.
+- `workstreams/phase3/21-phase3-cleanup-gate.md` — tracks the deferred edit. Cannot be modified by this workstream.
+
+The exit criterion as written ("returns only the deferred reference at `workstreams/README.md:13`") is **not literally satisfied**: the deferred reference was already removed before this workstream ran, and three non-archived files still match the pattern. The criterion was written assuming `workstreams/README.md:13` would be the sole remaining hit; in practice, the Phase 2 cleanup gate removed that reference earlier than expected.
+
+**Narrowed validation claim:** no `~/.claude/...` reference exists in any editable, live documentation file within this workstream's permitted scope. All remaining grep hits are in either immutable historical records or workstream spec files that this workstream may not modify. W21 has been given a mandatory action (Step 2 above) to add the forward link in `workstreams/README.md`.
+
+### Step 4 — Validation
+
+`make ci` exits 0 (documentation-only change; no code affected).
+
+### Review 2026-05-02 — changes-requested
+
+#### Summary
+
+`docs/roadmap/phase-2-summary.md` satisfies the Step 1 content/structure ask and
+the repo-wide validation target passed, but this review is blocked on plan
+adherence in the reviewer-notes handoff. The Step 2 note downgrades the required
+W21 follow-up to an optional convenience item, and the Step 3 note claims the
+literal grep exit criterion passed even though the recorded command output still
+contains non-archived matches.
+
+#### Plan Adherence
+
+- **Step 1:** Implemented. `docs/roadmap/phase-2-summary.md:1-62` has the
+  required sections, archived workstream links, and source-plan attribution.
+- **Step 2:** Not accepted as written. `workstreams/phase3/05-tracked-roadmap-artifact.md:153-161`
+  does not preserve the required "W21 must update `workstreams/README.md` to
+  point at `docs/roadmap/phase-2-summary.md`" handoff; it reframes that action
+  as optional.
+- **Step 3 / Exit criteria:** Not accepted as written.
+  `workstreams/phase3/05-tracked-roadmap-artifact.md:163-186` says the grep
+  criterion is satisfied, but the actual command still returns hits in
+  `tech_evaluations/TECH_EVALUATION-20260501-01.md`, this workstream spec, and
+  `workstreams/phase3/21-phase3-cleanup-gate.md`.
+- **Step 4:** Implemented. `make ci` exited 0.
+
+#### Required Remediations
+
+- **Blocker — W21 handoff is too weak.** Update
+  `workstreams/phase3/05-tracked-roadmap-artifact.md:153-161` so the reviewer
+  note gives W21 an explicit action to surface
+  `docs/roadmap/phase-2-summary.md` from `workstreams/README.md`. If the exact
+  old line-13 replacement is stale, say that plainly, but keep the handoff
+  mandatory rather than "consider for convenience". **Acceptance:** the note
+  unambiguously tells W21 what coordination-set change remains required.
+- **Blocker — validation note overstates the grep result.** Update
+  `workstreams/phase3/05-tracked-roadmap-artifact.md:163-186` to reflect the
+  actual command output and distinguish immutable historical/spec references
+  from actionable misses without claiming the raw exit criterion passed when it
+  did not. **Acceptance:** the notes either (a) state the literal command still
+  returns those known exceptions, or (b) document a narrower validation rule
+  that matches the intended editable-scope check.
+
+#### Test Intent Assessment
+
+For a documentation-only workstream, `make ci` is sufficient regression
+coverage. The meaningful intent test here is the reference sweep, and the
+current notes are weak because they prove "no actionable live references in
+editable docs" while claiming a stronger raw-grep outcome than the evidence
+supports.
+
+#### Validation Performed
+
+- `git diff origin/main...HEAD` — only
+  `docs/roadmap/phase-2-summary.md` and this workstream file changed.
+- `git grep -n '~/\.claude\|/plans/we-need-to' -- ':!workstreams/archived/' ':!docs/roadmap/phase-2-summary.md'`
+  — matched `tech_evaluations/TECH_EVALUATION-20260501-01.md`,
+  `workstreams/phase3/05-tracked-roadmap-artifact.md`, and
+  `workstreams/phase3/21-phase3-cleanup-gate.md`; no `workstreams/README.md`
+  hit remained.
+- `make ci` — passed.
+
+### Review 2026-05-02-02 — approved
+
+#### Summary
+
+Approved. The executor resolved both blockers from the prior pass: the Step 2
+handoff now gives W21 a mandatory coordination-set action to surface
+`docs/roadmap/phase-2-summary.md` from `workstreams/README.md`, and the Step 3
+note now accurately reports the grep output instead of overstating the literal
+exit-criterion result. The summary artifact remains correct, and no new quality
+or security concerns were introduced.
+
+#### Plan Adherence
+
+- **Step 1:** Satisfied. `docs/roadmap/phase-2-summary.md:1-62` still matches
+  the required structure and archival links.
+- **Step 2:** Satisfied. `workstreams/phase3/05-tracked-roadmap-artifact.md:153-166`
+  now records an explicit mandatory W21 follow-up rather than an optional
+  convenience edit.
+- **Step 3:** Satisfied for the editable scope this workstream owns.
+  `workstreams/phase3/05-tracked-roadmap-artifact.md:168-184` now correctly
+  distinguishes immutable historical/spec references from actionable live docs
+  and no longer claims the raw grep returned only one line.
+- **Step 4:** Satisfied. `make ci` exited 0 on this review pass.
+
+#### Test Intent Assessment
+
+For this documentation-only workstream, the meaningful evidence is the repo
+validation run plus the explicit reference sweep. The updated notes now align
+their claim with what the grep actually proves: no stale local-plan reference
+remains in editable live docs within this workstream's allowed scope, while W21
+owns the coordination-set link surfacing.
+
+#### Validation Performed
+
+- `git show --stat HEAD` — latest commit only updated
+  `workstreams/phase3/05-tracked-roadmap-artifact.md`.
+- `git grep -n '~/\.claude\|/plans/we-need-to' -- ':!workstreams/archived/' ':!docs/roadmap/phase-2-summary.md'`
+  — remaining matches are limited to the historical tech evaluation and
+  workstream-spec files; `workstreams/README.md` no longer matches.
+- `make ci` — passed.

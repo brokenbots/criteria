@@ -3,8 +3,6 @@ package plugin
 import (
 	"context"
 	"os/exec"
-	"path/filepath"
-	"runtime"
 	"testing"
 	"time"
 
@@ -21,7 +19,9 @@ func TestHandshakeInfo(t *testing.T) {
 		Plugins:          PluginMap(),
 		Cmd:              exec.Command(pluginBin),
 		AllowedProtocols: []hplugin.Protocol{hplugin.ProtocolGRPC},
-		StartTimeout:     2 * time.Second,
+		// 30 s matches loader.go's StartTimeout to handle CPU pressure from
+		// -race -count=20 with many parallel packages.
+		StartTimeout: 30 * time.Second,
 	})
 	t.Cleanup(client.Kill)
 
@@ -55,22 +55,12 @@ func TestHandshakeInfo(t *testing.T) {
 	}
 }
 
+// buildNoopPlugin returns the noop adapter binary compiled once for the test
+// binary lifetime. The actual build happens in TestMain (see main_test.go).
 func buildNoopPlugin(t *testing.T) string {
 	t.Helper()
-
-	_, file, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("resolve caller path")
+	if testNoopPluginBin == "" {
+		t.Fatal("testNoopPluginBin not set; ensure TestMain ran")
 	}
-	moduleRoot := filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
-	pluginBin := filepath.Join(t.TempDir(), "criteria-adapter-noop")
-
-	cmd := exec.Command("go", "build", "-o", pluginBin, "./cmd/criteria-adapter-noop")
-	cmd.Dir = moduleRoot
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("build noop plugin: %v\n%s", err, string(output))
-	}
-
-	return pluginBin
+	return testNoopPluginBin
 }

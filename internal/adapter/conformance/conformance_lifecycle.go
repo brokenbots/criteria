@@ -96,7 +96,8 @@ func testTimeout(t *testing.T, name string, factory targetFactory, opts Options)
 func testSessionLifecycle(t *testing.T, name string, loader plugin.Loader, opts Options, info plugin.Info) { //nolint:gocritic // W15: Options passes by value for API clarity
 	t.Helper()
 	defer goleak.VerifyNone(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// 30 s matches the StartTimeout in the loader.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	plug, err := loader.Resolve(ctx, name)
@@ -136,7 +137,8 @@ func testSessionLifecycle(t *testing.T, name string, loader plugin.Loader, opts 
 func testConcurrentSessions(t *testing.T, name string, loader plugin.Loader, opts Options, info plugin.Info) { //nolint:funlen,gocritic // W03: concurrent session test requires full lifecycle setup for N goroutines with assertions; W15: Options passes by value for API clarity
 	t.Helper()
 	defer goleak.VerifyNone(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// 30 s matches the StartTimeout in the loader.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	plugA, err := loader.Resolve(ctx, name)
@@ -218,7 +220,8 @@ func testSessionCrashDetection(t *testing.T, name string, loader plugin.Loader, 
 	t.Helper()
 	defer goleak.VerifyNone(t)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// 30 s matches the StartTimeout in the loader.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	plug, err := loader.Resolve(ctx, name)
