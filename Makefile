@@ -50,7 +50,7 @@ install: build plugins ## Install criteria to ~/.criteria (binary → ~/.criteri
 	@echo '    set -gx CRITERIA_PLUGINS $$HOME/.criteria/plugins'
 	@echo ""
 
-
+docker-runtime: ## Build the operator runtime image (Dockerfile.runtime)
 	docker build -t criteria/runtime:dev -f Dockerfile.runtime .
 
 docker-runtime-smoke: docker-runtime ## Run a workflow inside the runtime image
