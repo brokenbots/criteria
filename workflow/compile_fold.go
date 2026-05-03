@@ -6,6 +6,7 @@ package workflow
 import (
 	"github.com/hashicorp/hcl/v2"
 	"github.com/zclconf/go-cty/cty"
+	"github.com/zclconf/go-cty/cty/function"
 )
 
 // runtimeOnlyNamespaces is the set of variable-root names whose values are
@@ -34,8 +35,10 @@ var runtimeOnlyNamespaces = map[string]bool{
 // names, not "local". Both maps may be nil or empty.
 //
 // workflowDir is forwarded to the function registry so file() and
-// fileexists() can resolve relative paths. Pass "" to skip path validation
-// (file() will error with "workflow directory not configured" if called).
+// fileexists() can resolve relative paths. When workflowDir is "", file()
+// and fileexists() are replaced with stubs that return unknown values so
+// that var/local reference checks still run without triggering
+// "workflow directory not configured" errors.
 func FoldExpr(
 	expr hcl.Expression,
 	vars map[string]cty.Value,
@@ -57,12 +60,33 @@ func FoldExpr(
 		}
 	}
 
+	funcs := workflowFunctions(DefaultFunctionOptions(workflowDir))
+	if workflowDir == "" {
+		// Stub file() and fileexists() so var/local reference checks still run
+		// but path validation is not attempted when no workflow directory is
+		// configured. Literal-string args return unknown rather than erroring.
+		funcs["file"] = function.New(&function.Spec{
+			Params: []function.Parameter{{Name: "path", Type: cty.String}},
+			Type:   function.StaticReturnType(cty.String),
+			Impl: func(args []cty.Value, _ cty.Type) (cty.Value, error) {
+				return cty.UnknownVal(cty.String), nil
+			},
+		})
+		funcs["fileexists"] = function.New(&function.Spec{
+			Params: []function.Parameter{{Name: "path", Type: cty.String}},
+			Type:   function.StaticReturnType(cty.Bool),
+			Impl: func(args []cty.Value, _ cty.Type) (cty.Value, error) {
+				return cty.UnknownVal(cty.Bool), nil
+			},
+		})
+	}
+
 	ctx := &hcl.EvalContext{
 		Variables: map[string]cty.Value{
 			"var":   ctyObjectOrEmpty(vars),
 			"local": ctyObjectOrEmpty(locals),
 		},
-		Functions: workflowFunctions(DefaultFunctionOptions(workflowDir)),
+		Functions: funcs,
 	}
 
 	val, diags := expr.Value(ctx)
@@ -80,7 +104,11 @@ func ctyObjectOrEmpty(m map[string]cty.Value) cty.Value {
 }
 
 // graphVars builds a flat name→value map from g.Variables for use with
-// FoldExpr. Variables without a default are represented as cty.NullVal.
+// FoldExpr. Variables without a default are represented as cty.UnknownVal so
+// that expressions referencing them (including file(var.x)) are treated as
+// producing an unknown result rather than causing a type error or spurious
+// "workflow directory not configured" failure. Only declared variables with a
+// known default are considered foldable.
 func graphVars(g *FSMGraph) map[string]cty.Value {
 	if len(g.Variables) == 0 {
 		return nil
@@ -90,7 +118,7 @@ func graphVars(g *FSMGraph) map[string]cty.Value {
 		if node.Default != cty.NilVal {
 			m[name] = node.Default
 		} else {
-			m[name] = cty.NullVal(node.Type)
+			m[name] = cty.UnknownVal(node.Type)
 		}
 	}
 	return m
