@@ -248,3 +248,82 @@ func TestSerializeVarScope_WithIterCursor(t *testing.T) {
 		t.Errorf("Items = %v; want nil (Items are re-evaluated on re-entry)", c.Items)
 	}
 }
+
+// TestBuildEvalContext_ExposesLocals verifies that BuildEvalContextWithOpts
+// makes compiled local values accessible via the "local" namespace.
+func TestBuildEvalContext_ExposesLocals(t *testing.T) {
+	vars := map[string]cty.Value{
+		"var":   cty.EmptyObjectVal,
+		"steps": cty.EmptyObjectVal,
+		"local": cty.ObjectVal(map[string]cty.Value{
+			"greeting": cty.StringVal("Hello, world!"),
+		}),
+	}
+	ctx := BuildEvalContextWithOpts(vars, DefaultFunctionOptions(""))
+	if ctx == nil {
+		t.Fatal("nil eval context")
+	}
+	localObj, ok := ctx.Variables["local"]
+	if !ok {
+		t.Fatal("'local' namespace missing from eval context")
+	}
+	if !localObj.Type().HasAttribute("greeting") {
+		t.Fatal("local.greeting not in eval context")
+	}
+	if localObj.GetAttr("greeting").AsString() != "Hello, world!" {
+		t.Errorf("local.greeting = %q, want 'Hello, world!'", localObj.GetAttr("greeting").AsString())
+	}
+}
+
+// TestApplyVarOverrides_PreservesLocals verifies that applying CLI var overrides
+// does not drop the compiled locals namespace.
+func TestApplyVarOverrides_PreservesLocals(t *testing.T) {
+	g := &FSMGraph{
+		Variables: map[string]*VariableNode{
+			"name": {Name: "name", Type: cty.String, Default: cty.StringVal("world")},
+		},
+		Locals: map[string]*LocalNode{
+			"greeting": {Name: "greeting", Type: cty.String, Value: cty.StringVal("Hello, world!")},
+		},
+	}
+	vars := SeedVarsFromGraph(g)
+	vars["local"] = SeedLocalsFromGraph(g)
+
+	after := ApplyVarOverrides(g, vars, map[string]string{"name": "alice"})
+
+	if _, ok := after["local"]; !ok {
+		t.Fatal("ApplyVarOverrides dropped vars[\"local\"]; expected it to be preserved")
+	}
+	localObj := after["local"]
+	if !localObj.Type().HasAttribute("greeting") {
+		t.Fatal("local.greeting not present after ApplyVarOverrides")
+	}
+	if localObj.GetAttr("greeting").AsString() != "Hello, world!" {
+		t.Errorf("local.greeting = %q, want 'Hello, world!'", localObj.GetAttr("greeting").AsString())
+	}
+	// Var override must still have been applied.
+	varObj := after["var"]
+	if varObj.GetAttr("name").AsString() != "alice" {
+		t.Errorf("var.name = %q, want 'alice'", varObj.GetAttr("name").AsString())
+	}
+}
+
+// TestApplyVarOverrides_NoOverrides_PreservesLocals verifies that calling
+// ApplyVarOverrides with an empty overrides map also preserves locals.
+func TestApplyVarOverrides_NoOverrides_PreservesLocals(t *testing.T) {
+	g := &FSMGraph{
+		Variables: map[string]*VariableNode{},
+		Locals: map[string]*LocalNode{
+			"x": {Name: "x", Type: cty.String, Value: cty.StringVal("42")},
+		},
+	}
+	vars := SeedVarsFromGraph(g)
+	vars["local"] = SeedLocalsFromGraph(g)
+
+	// No overrides — the function short-circuits and returns vars unchanged.
+	after := ApplyVarOverrides(g, vars, nil)
+
+	if _, ok := after["local"]; !ok {
+		t.Fatal("ApplyVarOverrides(nil overrides) dropped vars[\"local\"]")
+	}
+}

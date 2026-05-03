@@ -234,6 +234,10 @@ func ApplyVarOverrides(g *FSMGraph, vars map[string]cty.Value, overrides map[str
 		}
 	}
 	out := map[string]cty.Value{"steps": vars["steps"]}
+	// Preserve compiled locals (compile-time constants; not affected by var overrides).
+	if local, ok := vars["local"]; ok {
+		out["local"] = local
+	}
 	if len(existing) > 0 {
 		out["var"] = cty.ObjectVal(existing)
 	} else {

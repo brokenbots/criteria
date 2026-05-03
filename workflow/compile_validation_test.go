@@ -52,7 +52,7 @@ func TestValidateFoldableAttrs_AgentConfigFile(t *testing.T) {
 	if !compileDiags.HasErrors() {
 		t.Fatal("expected compile error for file(var.prompt_file) with missing file; got none")
 	}
-	// Check all diagnostics — the fold-pass error may be the second diagnostic.
+	// The file-not-found error should reference the missing path.
 	found := false
 	for _, d := range compileDiags {
 		if strings.Contains(d.Summary, "missing.txt") || strings.Contains(d.Detail, "missing.txt") {
@@ -62,5 +62,12 @@ func TestValidateFoldableAttrs_AgentConfigFile(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected a diagnostic referencing the missing file path, got: %s", compileDiags.Error())
+	}
+	// Must NOT contain a spurious "Variables not allowed" diagnostic —
+	// the old bug where var.* was rejected before fold evaluation.
+	for _, d := range compileDiags {
+		if strings.Contains(d.Summary, "Variables not allowed") || strings.Contains(d.Detail, "Variables not allowed") {
+			t.Errorf("unexpected 'Variables not allowed' diagnostic; var.* should fold at compile: %s", d.Summary)
+		}
 	}
 }
