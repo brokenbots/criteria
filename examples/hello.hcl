@@ -5,6 +5,12 @@ workflow "hello" {
   initial_state = "say_hello"
   target_state  = "done"
 
+  output "greeting" {
+    type        = "string"
+    description = "The greeting message produced by the workflow"
+    value       = "Execution complete"
+  }
+
   step "say_hello" {
     adapter = "shell"
     input {

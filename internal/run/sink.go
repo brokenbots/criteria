@@ -224,6 +224,22 @@ func (s *Sink) OnScopeIterCursorSet(cursorJSON string) {
 // state is observable via the session crash/respawn adapter events.
 func (s *Sink) OnAdapterLifecycle(stepName, adapterName, status, detail string) {}
 
+// OnRunOutputs publishes a run.outputs envelope when declared outputs are evaluated (W09).
+func (s *Sink) OnRunOutputs(outputs []map[string]string) {
+	if len(outputs) == 0 {
+		return
+	}
+	pbOutputs := make([]*pb.RunOutputs_Output, 0, len(outputs))
+	for _, out := range outputs {
+		pbOutputs = append(pbOutputs, &pb.RunOutputs_Output{
+			Name:         out["name"],
+			Value:        out["value"],
+			DeclaredType: out["declared_type"],
+		})
+	}
+	s.publish(&pb.RunOutputs{Outputs: pbOutputs})
+}
+
 // StepEventSink returns a per-step adapter sink that wraps Log/Adapter into
 // step.log / adapter.event envelopes.
 func (s *Sink) StepEventSink(step string) adapter.EventSink {

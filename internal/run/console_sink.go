@@ -227,6 +227,24 @@ func (c *ConsoleSink) OnAdapterLifecycle(stepName, adapterName, status, detail s
 	c.mu.Unlock()
 }
 
+// OnRunOutputs renders workflow outputs to the console (W09).
+// Outputs are rendered after the terminal state line in concise output mode.
+func (c *ConsoleSink) OnRunOutputs(outputs []map[string]string) {
+	if len(outputs) == 0 {
+		return
+	}
+	for _, out := range outputs {
+		name := out["name"]
+		value := out["value"]
+		typeStr := out["declared_type"]
+		if typeStr != "" {
+			c.writeln(fmt.Sprintf("  output %s (%s) = %s", name, typeStr, value))
+		} else {
+			c.writeln(fmt.Sprintf("  output %s = %s", name, value))
+		}
+	}
+}
+
 func (c *ConsoleSink) StepEventSink(step string) adapter.EventSink {
 	return &consoleStepSink{parent: c, step: step}
 }

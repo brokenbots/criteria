@@ -32,6 +32,17 @@ workflow "for_each_review_loop" {
     max_total_steps = 50
   }
 
+  output "status" {
+    type        = "string"
+    description = "Final status of the iteration processing"
+    value       = "Processing complete"
+  }
+
+  output "processed_items" {
+    description = "List of items that were processed"
+    value       = ["alpha", "beta", "gamma"]
+  }
+
   step "init" {
     adapter = "noop"
     input { result = "success" }

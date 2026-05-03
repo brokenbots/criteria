@@ -180,7 +180,16 @@ func deterministicValue(fd protoreflect.FieldDescriptor, parent protoreflect.Mes
 			// Return the empty message; zero-value well-known types round-trip fine.
 			return parent.NewField(fd)
 		}
-		sub := parent.NewField(fd).Message()
+		var sub protoreflect.Message
+		if fd.IsList() {
+			// For repeated message fields, create a new message by getting one from a scratch parent.
+			scratchParent := parent.Type().New()
+			list := scratchParent.Mutable(fd).List()
+			// Append an empty message to the list (list.AppendMutable returns a Message).
+			sub = list.AppendMutable().Message()
+		} else {
+			sub = parent.NewField(fd).Message()
+		}
 		populateMessage(sub, depth+1)
 		return protoreflect.ValueOfMessage(sub)
 	}

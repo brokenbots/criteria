@@ -65,6 +65,7 @@ func (s *fakeSink) OnStepIterationCompleted(string, string, string)   {}
 func (s *fakeSink) OnStepIterationItem(string, int, string)           {}
 func (s *fakeSink) OnScopeIterCursorSet(string)                       {}
 func (s *fakeSink) OnAdapterLifecycle(string, string, string, string) {}
+func (s *fakeSink) OnRunOutputs([]map[string]string)                  {}
 func (s *fakeSink) StepEventSink(step string) adapter.EventSink       { return noopSink{} }
 
 type noopSink struct{}

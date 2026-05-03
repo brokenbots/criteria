@@ -35,6 +35,13 @@
       "success": true
     }
   ],
+  "outputs": [
+    {
+      "name": "result",
+      "type": "string",
+      "description": "The result message produced by the workflow"
+    }
+  ],
   "step_order": [
     "greet"
   ],

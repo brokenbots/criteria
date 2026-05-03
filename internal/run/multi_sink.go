@@ -157,6 +157,13 @@ func (m *MultiSink) OnAdapterLifecycle(stepName, adapterName, status, detail str
 	}
 }
 
+// OnRunOutputs fans the outputs event to all child sinks (W09).
+func (m *MultiSink) OnRunOutputs(outputs []map[string]string) {
+	for _, c := range m.children {
+		c.OnRunOutputs(outputs)
+	}
+}
+
 func (m *MultiSink) StepEventSink(step string) adapter.EventSink {
 	subs := make([]adapter.EventSink, 0, len(m.children))
 	for _, c := range m.children {

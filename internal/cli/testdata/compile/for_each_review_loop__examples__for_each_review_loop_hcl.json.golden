@@ -51,6 +51,17 @@
       "success": false
     }
   ],
+  "outputs": [
+    {
+      "name": "status",
+      "type": "string",
+      "description": "Final status of the iteration processing"
+    },
+    {
+      "name": "processed_items",
+      "description": "List of items that were processed"
+    }
+  ],
   "step_order": [
     "init",
     "process_items"

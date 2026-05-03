@@ -55,6 +55,7 @@
       "success": true
     }
   ],
+  "outputs": [],
   "step_order": [
     "process",
     "count_phase"

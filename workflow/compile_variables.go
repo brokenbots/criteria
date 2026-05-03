@@ -81,6 +81,34 @@ func parseVariableType(typeStr string) (cty.Type, error) {
 	}
 }
 
+// TypeToString converts a cty.Type back to its declared type string representation.
+// This is the reverse of parseVariableType, used for serialization and display.
+func TypeToString(t cty.Type) string {
+	switch {
+	case t.Equals(cty.String):
+		return "string"
+	case t.Equals(cty.Number):
+		return "number"
+	case t.Equals(cty.Bool):
+		return "bool"
+	case t.IsListType():
+		switch t.ElementType() {
+		case cty.String:
+			return "list(string)"
+		case cty.Number:
+			return "list(number)"
+		case cty.Bool:
+			return "list(bool)"
+		}
+	case t.IsMapType():
+		if t.ElementType().Equals(cty.String) {
+			return "map(string)"
+		}
+	}
+	// Fallback: use friendly name. This handles edge cases not in the subset.
+	return t.FriendlyName()
+}
+
 // convertCtyValue verifies that v matches typ exactly. No implicit coercions
 // are performed: a number default declared on a string variable is an error,
 // matching the W04 rule that "default must match declared type".
