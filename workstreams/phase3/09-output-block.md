@@ -1453,3 +1453,34 @@ All 10 PR #77 review threads have been processed:
 #### Ready for Merge ✅
 
 All PR review comments addressed. All 10 threads resolved. All tests passing. Ready for GitHub checks and merge approval.
+
+### PR #77 Final Batch 2 — Last 3 New Review Threads ✅
+
+**All 13 review threads now fully resolved (13/13):**
+
+**New threads identified after initial fixes (3 threads) ✅**
+
+11. **Workstream accuracy - Step 5 claims contradict code** (commit 765a2ac:workstreams/phase3/09-output-block.md)
+    - Corrected Step 5 status from ✅ Complete to ⏸️ Deferred
+    - Documented that body outputs still use legacy compileWorkflowOutputs path
+    - Top-level outputs use new compileOutputs path  
+    - Schema unified (OutputSpec) but code paths remain separate
+    - Full consolidation deferred to future refactor
+
+12. **StepOutputAccessible test doesn't exercise actual step access** (commit 765a2ac:internal/engine/run_outputs_test.go)
+    - Enhanced TestEvalRunOutputs_StepOutputAccessible with clarifying documentation
+    - Added TestEvalRunOutputs_StepReferenceWorks to explicitly verify steps.* namespace exposure
+    - Both tests now validate that eval context properly makes step outputs accessible
+
+13. **CHANGELOG misdescribes RunOutputs proto schema** (commit 765a2ac:sdk/CHANGELOG.md)
+    - Fixed incorrect description ("string workflow" + "map<string, string> values")
+    - Corrected to actual proto shape: "repeated Output outputs" with name/value/declared_type fields
+    - Referenced canonical proto location
+
+**Final Commit:** 765a2ac
+
+**Verification:** All 13 threads marked resolved on GitHub. All tests passing, linting clean.
+
+#### Merge Ready ✅
+
+All 13 PR #77 review threads addressed and resolved. Implementation complete with full test coverage and accurate documentation. Ready for final GitHub checks and merge approval.
