@@ -63,6 +63,7 @@ func compileEnvironmentBlock(g *FSMGraph, envSpec EnvironmentSpec, opts CompileO
 		diags = append(diags, &hcl.Diagnostic{
 			Severity: hcl.DiagError,
 			Summary:  fmt.Sprintf("environment type %q is not registered (v0.3.0 only supports 'shell'; other types are Phase 4 work)", envSpec.Type),
+			Subject:  envSpec.Remain.MissingItemRange().Ptr(),
 		})
 	}
 
@@ -71,6 +72,7 @@ func compileEnvironmentBlock(g *FSMGraph, envSpec EnvironmentSpec, opts CompileO
 		diags = append(diags, &hcl.Diagnostic{
 			Severity: hcl.DiagError,
 			Summary:  fmt.Sprintf("environment name %q must match ^[a-zA-Z][a-zA-Z0-9_-]*$", envSpec.Name),
+			Subject:  envSpec.Remain.MissingItemRange().Ptr(),
 		})
 	}
 
@@ -80,6 +82,7 @@ func compileEnvironmentBlock(g *FSMGraph, envSpec EnvironmentSpec, opts CompileO
 		diags = append(diags, &hcl.Diagnostic{
 			Severity: hcl.DiagError,
 			Summary:  fmt.Sprintf("duplicate environment %q", key),
+			Subject:  envSpec.Remain.MissingItemRange().Ptr(),
 		})
 		return diags
 	}
@@ -270,8 +273,8 @@ func resolveDefaultEnvironment(g *FSMGraph, spec *Spec) hcl.Diagnostics {
 }
 
 // checkShellControlledSetConflicts emits warnings for environment variables that
-// conflict with the shell adapter's controlled set. These vars will be overridden
-// at runtime and the user should be informed.
+// conflict with the shell adapter's controlled set. These variables will be filtered
+// out during runtime and never reach the subprocess.
 func checkShellControlledSetConflicts(envType string, variables map[string]string, attrs hcl.Attributes) hcl.Diagnostics {
 	var diags hcl.Diagnostics
 
@@ -290,8 +293,8 @@ func checkShellControlledSetConflicts(envType string, variables map[string]strin
 		if shellControlledEnvVars[varName] {
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagWarning,
-				Summary:  fmt.Sprintf("environment variable %q conflicts with the shell adapter's controlled set and will be overridden at runtime", varName),
-				Detail:   fmt.Sprintf("The shell adapter enforces %q for security and consistency; the value declared in this environment will not be used.", varName),
+				Summary:  fmt.Sprintf("environment variable %q conflicts with the shell adapter's controlled set and will be filtered out", varName),
+				Detail:   fmt.Sprintf("The shell adapter enforces %q for security and consistency; this value will not be injected into the subprocess. If you need to set this, use the corresponding step input field instead (e.g., input.command_path for PATH).", varName),
 				Subject:  varAttr.Expr.Range().Ptr(),
 			})
 		}
@@ -301,7 +304,7 @@ func checkShellControlledSetConflicts(envType string, variables map[string]strin
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagWarning,
 				Summary:  fmt.Sprintf("environment variable %q matches LC_* prefix which is controlled by the shell adapter", varName),
-				Detail:   "The shell adapter enforces LC_* variables for locale support; the value declared in this environment may be overridden at runtime.",
+				Detail:   "The shell adapter enforces LC_* variables for locale support; this value will be filtered out and not injected into the subprocess.",
 				Subject:  varAttr.Expr.Range().Ptr(),
 			})
 		}

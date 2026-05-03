@@ -241,7 +241,10 @@ func TestCompileEnvironments_ConfigFold(t *testing.T) {
 
 func TestCompileEnvironments_MultipleNoDefault(t *testing.T) {
 	// Multiple environments without explicit default should not error at compile,
-	// but DefaultEnvironment should be empty.
+	// but DefaultEnvironment should be empty. When consumer-binding surface lands
+	// (WS11/WS14 for adapter and step environment= attributes), add
+	// TestCompileEnvironments_DefaultMultipleNoDefault to verify compilation fails
+	// when a consumer references an unbound environment with multiple available options.
 	src := environmentWorkflow(`
   environment "shell" "dev" {
   }

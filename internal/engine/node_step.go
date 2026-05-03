@@ -410,11 +410,23 @@ func (n *stepNode) resolveInput(vars map[string]cty.Value, workflowDir string) (
 	return &cp, nil
 }
 
-// mergeEnvironmentVars merges environment-declared variables into the "env" input field.
+// mergeEnvironmentVars merges environment-declared variables into the "env" input field,
+// filtering out security-critical variables that the shell adapter controls.
 func (n *stepNode) mergeEnvironmentVars(merged map[string]string) {
 	env := n.getStepEnvironment()
 	if env == nil || len(env.Variables) == 0 {
 		return
+	}
+
+	// Controlled environment variables that must not be overridden by user-declared environments.
+	// These are enforced by the shell adapter's sandbox for security and consistency.
+	controlledEnvVars := map[string]bool{
+		"PATH":    true, // Hard-rejected by parseEnvInput
+		"HOME":    true, // Inherited from host; user values create security issues
+		"USER":    true,
+		"LOGNAME": true,
+		"LANG":    true,
+		"TZ":      true,
 	}
 
 	// Parse the existing "env" input if present.
@@ -423,8 +435,13 @@ func (n *stepNode) mergeEnvironmentVars(merged map[string]string) {
 		_ = json.Unmarshal([]byte(rawEnv), &existingEnv)
 	}
 
-	// Merge environment-declared variables. Step-declared env vars take precedence.
+	// Merge environment-declared variables, skipping controlled keys and LC_* prefixes.
+	// Step-declared env vars take precedence over environment-declared ones.
 	for k, v := range env.Variables {
+		// Skip controlled vars and LC_* prefixes (controlled by shell adapter for locale).
+		if controlledEnvVars[k] || (len(k) >= 3 && k[:3] == "LC_") {
+			continue
+		}
 		if _, exists := existingEnv[k]; !exists {
 			existingEnv[k] = v
 		}
