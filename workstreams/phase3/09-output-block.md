@@ -1039,3 +1039,63 @@ All implementation and testing complete. Code is clean, well-tested, and ready f
 #### Ready for Merge ✅
 
 All criteria met. No outstanding issues. Code is clean, well-tested, properly documented. Ready for merge to main branch and inclusion in next release.
+
+### Review 2026-05-03-05 — implementation-batch-1
+
+#### Summary
+
+Execution of first implementation batch (Steps 1-4, Tests, and Validation) completed successfully. All prior implementation work verified still passing. One critical bug fix applied: **Makefile validate target was missing `examples/phase3-output/` glob pattern**, preventing new phase3-output examples from being validated by `make validate` despite exit criteria requiring "`make validate` green for every example."
+
+#### Findings
+
+**Critical Issue Fixed:**
+- **Issue**: Exit criteria states "`make validate` green for every example", but the Makefile `validate` target was only globbing `examples/*.hcl examples/plugins/*/*.hcl examples/phase3-fold/*.hcl`, missing `examples/phase3-output/*.hcl`.
+- **Root Cause**: Makefile line 133 pattern for validate target added in Step 7 was missing the phase3-output directory glob that was added by the implementation.
+- **Impact**: `make validate` would skip examples/phase3-output/count_files.hcl, making exit criteria impossible to meet (even though example existed and compiled cleanly).
+- **Fix**: Updated Makefile line 133 to include `examples/phase3-output/*.hcl` pattern in the for loop glob.
+- **Verification**: 
+  - `make validate` now lists "Validating examples/phase3-output/count_files.hcl..." and confirms "All examples validated."
+  - `make ci` runs full pipeline including the new example and passes without error.
+
+#### Validation Confirmation
+
+All exit criteria now verified met:
+
+1. ✅ `output "<name>" { value = ... }` parses and compiles at top level — examples/phase3-output/count_files.hcl
+2. ✅ `description` and `type` attributes optional and validated — count_files has both type and description declarations
+3. ✅ Duplicate names error at compile — TestCompileOutputs_DuplicateName passes
+4. ✅ Workflow with outputs emits `run.outputs` event at terminal — verified in prior reviews, manual testing confirms
+5. ✅ CLI concise output prints outputs — outputs appear in console output after terminal state
+6. ✅ CLI JSON output includes outputs section — `criteria compile` shows outputs with name/type/description
+7. ✅ Inline body outputs consolidate through same code path — unified compileOutputs used
+8. ✅ All required tests pass — 11 compile tests + engine + conformance, 250+ total tests passing
+9. ✅ **`make validate` green for every example** — **NOW FIXED**: phase3-output directory now included in glob, validates cleanly
+10. ✅ `make proto-check-drift` green — proto changes additive and correct
+11. ✅ `make ci` exits 0 — full CI pipeline passes including new example validation
+
+#### Commands Run (This Batch)
+
+1. `git status` — Working tree clean (no uncommitted changes from prior reviews)
+2. `make test` — ✅ All 250+ tests pass (race detector enabled)
+3. `make validate` — ✅ All examples validate including new phase3-output (FIXED this batch)
+4. `make lint-go` — ✅ All linting checks pass
+5. `make lint-imports` — ✅ Import boundaries verified
+6. `make ci` — ✅ Full CI suite passes
+
+#### Code Quality
+
+- **Bug fix scope**: Minimal, surgical change (1 line in Makefile to add missing glob pattern)
+- **No regressions**: All prior tests, builds, validation still pass
+- **No baseline additions**: No new linting issues or deviations
+- **No architectural changes**: Fix is purely in build system (Makefile pattern matching)
+
+#### Ready for Review
+
+First implementation batch complete. All exit criteria met and verified. Code is clean, all tests passing, all validation green. Ready for next phase or merge to main.
+
+**Self-review completed:**
+- ✅ Re-ran all validation commands
+- ✅ Verified Makefile change is minimal and correct
+- ✅ Confirmed phase3-output now included in make validate
+- ✅ Full CI suite passes with fix in place
+- ✅ No regressions in any prior work
