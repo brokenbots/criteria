@@ -57,6 +57,11 @@ func Parse(filename string, src []byte) (*Spec, hcl.Diagnostics) {
 		return nil, stepAgentDiags
 	}
 
+	// Check for legacy step lifecycle attributes in the workflow body (before decoding).
+	if stepLifecycleDiags := rejectLegacyStepLifecycleAttr(f.Body); stepLifecycleDiags.HasErrors() {
+		return nil, stepLifecycleDiags
+	}
+
 	var file File
 	if decodeDiags := gohcl.DecodeBody(f.Body, nil, &file); decodeDiags.HasErrors() {
 		return nil, decodeDiags

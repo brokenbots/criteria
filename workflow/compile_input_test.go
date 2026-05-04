@@ -114,6 +114,7 @@ workflow "x" {
 	}
 }
 
+// TestInputOnLifecycleOpenIsError tests that lifecycle="open" on steps produces a parse-time error.
 func TestInputOnLifecycleOpenIsError(t *testing.T) {
 	src := `
 workflow "x" {
@@ -132,19 +133,16 @@ workflow "x" {
   state "done" { terminal = true }
 }
 `
-	spec, diags := Parse("t.hcl", []byte(src))
-	if diags.HasErrors() {
-		t.Fatalf("parse: %s", diags.Error())
-	}
-	_, diags = Compile(spec, testSchemas)
+	_, diags := Parse("t.hcl", []byte(src))
 	if !diags.HasErrors() {
-		t.Fatal("expected compile error for input on lifecycle open")
+		t.Fatal("expected parse error for lifecycle attribute")
 	}
-	if !strings.Contains(diags.Error(), `lifecycle "open" must not include input`) {
+	if !strings.Contains(diags.Error(), `removed attribute "lifecycle"`) {
 		t.Errorf("unexpected error: %s", diags.Error())
 	}
 }
 
+// TestInputOnLifecycleCloseIsError tests that lifecycle="close" on steps produces a parse-time error.
 func TestInputOnLifecycleCloseIsError(t *testing.T) {
 	src := `
 workflow "x" {
@@ -172,15 +170,11 @@ workflow "x" {
   state "done" { terminal = true }
 }
 `
-	spec, diags := Parse("t.hcl", []byte(src))
-	if diags.HasErrors() {
-		t.Fatalf("parse: %s", diags.Error())
-	}
-	_, diags = Compile(spec, testSchemas)
+	_, diags := Parse("t.hcl", []byte(src))
 	if !diags.HasErrors() {
-		t.Fatal("expected compile error for input on lifecycle close")
+		t.Fatal("expected parse error for lifecycle attribute")
 	}
-	if !strings.Contains(diags.Error(), `lifecycle "close" must not include input`) {
+	if !strings.Contains(diags.Error(), `removed attribute "lifecycle"`) {
 		t.Errorf("unexpected error: %s", diags.Error())
 	}
 }
@@ -296,7 +290,6 @@ workflow "x" {
   target_state  = "done"
   step "open" {
     adapter = adapter.copilot.default
-    lifecycle = "open"
     outcome "success" { transition_to = "run" }
   }
   step "run" {
@@ -309,7 +302,6 @@ workflow "x" {
   }
   step "close" {
     adapter = adapter.copilot.default
-    lifecycle = "close"
     outcome "success" { transition_to = "done" }
   }
   state "done" { terminal = true }
@@ -338,7 +330,6 @@ workflow "x" {
   target_state  = "done"
   step "open" {
     adapter = adapter.copilot.default
-    lifecycle = "open"
     outcome "success" { transition_to = "run" }
   }
   step "run" {
@@ -350,7 +341,6 @@ workflow "x" {
   }
   step "close" {
     adapter = adapter.copilot.default
-    lifecycle = "close"
     outcome "success" { transition_to = "done" }
   }
   state "done" { terminal = true }

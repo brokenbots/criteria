@@ -198,16 +198,8 @@ func ensureLocalModeSupported(graph *workflow.FSMGraph, localApprovalEnabled boo
 			return errors.New(errApprovalNode)
 		}
 	}
-	// Legacy step-level and state.Requires shapes are unsupported in local mode
+	// Legacy state.Requires shapes are unsupported in local mode
 	// regardless of CRITERIA_LOCAL_APPROVAL.
-	for _, step := range graph.Steps {
-		switch step.Lifecycle {
-		case "wait":
-			return errors.New(errSignalWait)
-		case "approval":
-			return errors.New(errApprovalNode)
-		}
-	}
 	for _, state := range graph.States {
 		switch strings.ToLower(strings.TrimSpace(state.Requires)) {
 		case "signal", "wait_signal", "wait.signal":

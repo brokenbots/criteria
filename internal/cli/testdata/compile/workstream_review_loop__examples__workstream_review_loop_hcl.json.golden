@@ -63,57 +63,6 @@
         },
         {
           "name": "success",
-          "transition_to": "open_executor"
-        }
-      ]
-    },
-    {
-      "name": "open_executor",
-      "adapter": "copilot.executor",
-      "lifecycle": "open",
-      "input_keys": null,
-      "allow_tools": null,
-      "outcomes": [
-        {
-          "name": "failure",
-          "transition_to": "failed"
-        },
-        {
-          "name": "success",
-          "transition_to": "open_reviewer"
-        }
-      ]
-    },
-    {
-      "name": "open_reviewer",
-      "adapter": "copilot.reviewer",
-      "lifecycle": "open",
-      "input_keys": null,
-      "allow_tools": null,
-      "outcomes": [
-        {
-          "name": "failure",
-          "transition_to": "close_executor_abort"
-        },
-        {
-          "name": "success",
-          "transition_to": "open_pr_manager"
-        }
-      ]
-    },
-    {
-      "name": "open_pr_manager",
-      "adapter": "copilot.pr_manager",
-      "lifecycle": "open",
-      "input_keys": null,
-      "allow_tools": null,
-      "outcomes": [
-        {
-          "name": "failure",
-          "transition_to": "close_reviewer_abort"
-        },
-        {
-          "name": "success",
           "transition_to": "execute_init"
         }
       ]
@@ -130,7 +79,7 @@
       "outcomes": [
         {
           "name": "failure",
-          "transition_to": "close_pr_manager_abort"
+          "transition_to": "failed"
         },
         {
           "name": "needs_approval",
@@ -162,7 +111,7 @@
         },
         {
           "name": "failure",
-          "transition_to": "close_pr_manager_abort"
+          "transition_to": "failed"
         },
         {
           "name": "needs_approval",
@@ -186,7 +135,7 @@
       "outcomes": [
         {
           "name": "failure",
-          "transition_to": "close_pr_manager_abort"
+          "transition_to": "failed"
         },
         {
           "name": "needs_approval",
@@ -233,7 +182,7 @@
       "outcomes": [
         {
           "name": "failure",
-          "transition_to": "close_pr_manager_abort"
+          "transition_to": "failed"
         },
         {
           "name": "needs_approval",
@@ -265,7 +214,7 @@
         },
         {
           "name": "failure",
-          "transition_to": "close_pr_manager_abort"
+          "transition_to": "failed"
         },
         {
           "name": "needs_approval",
@@ -289,7 +238,7 @@
       "outcomes": [
         {
           "name": "failure",
-          "transition_to": "close_pr_manager_abort"
+          "transition_to": "failed"
         },
         {
           "name": "success",
@@ -309,7 +258,7 @@
       "outcomes": [
         {
           "name": "failure",
-          "transition_to": "close_pr_manager_abort"
+          "transition_to": "failed"
         },
         {
           "name": "needs_approval",
@@ -394,7 +343,7 @@
       "outcomes": [
         {
           "name": "failure",
-          "transition_to": "close_pr_manager_abort"
+          "transition_to": "failed"
         },
         {
           "name": "merged",
@@ -434,7 +383,7 @@
       "outcomes": [
         {
           "name": "failure",
-          "transition_to": "close_pr_manager_abort"
+          "transition_to": "failed"
         },
         {
           "name": "needs_approval",
@@ -461,113 +410,11 @@
       "outcomes": [
         {
           "name": "failure",
-          "transition_to": "close_pr_manager_done"
-        },
-        {
-          "name": "success",
-          "transition_to": "close_pr_manager_done"
-        }
-      ]
-    },
-    {
-      "name": "close_pr_manager_done",
-      "adapter": "copilot.pr_manager",
-      "lifecycle": "close",
-      "input_keys": null,
-      "allow_tools": null,
-      "outcomes": [
-        {
-          "name": "failure",
-          "transition_to": "close_reviewer_done"
-        },
-        {
-          "name": "success",
-          "transition_to": "close_reviewer_done"
-        }
-      ]
-    },
-    {
-      "name": "close_reviewer_done",
-      "adapter": "copilot.reviewer",
-      "lifecycle": "close",
-      "input_keys": null,
-      "allow_tools": null,
-      "outcomes": [
-        {
-          "name": "failure",
-          "transition_to": "close_executor_done"
-        },
-        {
-          "name": "success",
-          "transition_to": "close_executor_done"
-        }
-      ]
-    },
-    {
-      "name": "close_executor_done",
-      "adapter": "copilot.executor",
-      "lifecycle": "close",
-      "input_keys": null,
-      "allow_tools": null,
-      "outcomes": [
-        {
-          "name": "failure",
           "transition_to": "done"
         },
         {
           "name": "success",
           "transition_to": "done"
-        }
-      ]
-    },
-    {
-      "name": "close_pr_manager_abort",
-      "adapter": "copilot.pr_manager",
-      "lifecycle": "close",
-      "input_keys": null,
-      "allow_tools": null,
-      "outcomes": [
-        {
-          "name": "failure",
-          "transition_to": "close_reviewer_abort"
-        },
-        {
-          "name": "success",
-          "transition_to": "close_reviewer_abort"
-        }
-      ]
-    },
-    {
-      "name": "close_reviewer_abort",
-      "adapter": "copilot.reviewer",
-      "lifecycle": "close",
-      "input_keys": null,
-      "allow_tools": null,
-      "outcomes": [
-        {
-          "name": "failure",
-          "transition_to": "close_executor_abort"
-        },
-        {
-          "name": "success",
-          "transition_to": "close_executor_abort"
-        }
-      ]
-    },
-    {
-      "name": "close_executor_abort",
-      "adapter": "copilot.executor",
-      "lifecycle": "close",
-      "input_keys": null,
-      "allow_tools": null,
-      "outcomes": [
-        {
-          "name": "failure",
-          "transition_to": "failed"
-        },
-        {
-          "name": "success",
-          "transition_to": "failed"
         }
       ]
     }
@@ -587,9 +434,6 @@
   "outputs": [],
   "step_order": [
     "checkout_branch",
-    "open_executor",
-    "open_reviewer",
-    "open_pr_manager",
     "execute_init",
     "review_init",
     "execute",
@@ -603,13 +447,7 @@
     "watch_pr_gate",
     "triage_pr_feedback",
     "execute_pr_feedback",
-    "merge_pr_and_sync_main",
-    "close_pr_manager_done",
-    "close_reviewer_done",
-    "close_executor_done",
-    "close_pr_manager_abort",
-    "close_reviewer_abort",
-    "close_executor_abort"
+    "merge_pr_and_sync_main"
   ],
   "plugins_required": [
     "copilot",

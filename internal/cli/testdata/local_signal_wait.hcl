@@ -7,14 +7,7 @@ workflow "local_signal_wait" {
 
   wait "gate" {
     signal = "proceed"
-    outcome "success" { transition_to = "open_demo" }
-  }
-
-  step "open_demo" {
-    adapter = adapter.noop.demo
-    lifecycle = "open"
     outcome "success" { transition_to = "run_step" }
-    outcome "failure" { transition_to = "failed" }
   }
 
   step "run_step" {
@@ -22,13 +15,6 @@ workflow "local_signal_wait" {
     input {
       prompt = "continue"
     }
-    outcome "success" { transition_to = "close_demo" }
-    outcome "failure" { transition_to = "failed" }
-  }
-
-  step "close_demo" {
-    adapter = adapter.noop.demo
-    lifecycle = "close"
     outcome "success" { transition_to = "done" }
     outcome "failure" { transition_to = "failed" }
   }

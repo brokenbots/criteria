@@ -84,32 +84,8 @@ workflow "workstream_review_loop" {
       command = "branch=$(basename '${var.workstream_file}' .md) && current=$(git branch --show-current) && if [ \"$current\" = \"main\" ]; then git checkout -b \"$branch\"; else echo \"already on branch: $current\"; fi"
     }
     timeout = "10s"
-    outcome "success" { transition_to = "open_executor" }
-    outcome "failure" { transition_to = "failed" }
-  }
-
-  # ── Open agent sessions ───────────────────────────────────────────────────
-  # Failure paths close only the agents already opened before the fault.
-
-  step "open_executor" {
-    adapter = adapter.copilot.executor
-    lifecycle = "open"
-    outcome "success" { transition_to = "open_reviewer" }
-    outcome "failure" { transition_to = "failed" }
-  }
-
-  step "open_reviewer" {
-    adapter = adapter.copilot.reviewer
-    lifecycle = "open"
-    outcome "success" { transition_to = "open_pr_manager" }
-    outcome "failure" { transition_to = "close_executor_abort" }
-  }
-
-  step "open_pr_manager" {
-    adapter = adapter.copilot.pr_manager
-    lifecycle = "open"
     outcome "success" { transition_to = "execute_init" }
-    outcome "failure" { transition_to = "close_reviewer_abort" }
+    outcome "failure" { transition_to = "failed" }
   }
 
   # ── Init pass: bootstrap agent context ─────────────────────────────────────
@@ -126,7 +102,7 @@ workflow "workstream_review_loop" {
     }
     outcome "needs_review"   { transition_to = "review_init" }
     outcome "needs_approval" { transition_to = "review_init" }
-    outcome "failure"        { transition_to = "close_pr_manager_abort" }
+    outcome "failure"        { transition_to = "failed" }
   }
 
   step "review_init" {
@@ -141,7 +117,7 @@ workflow "workstream_review_loop" {
     outcome "changes_requested" { transition_to = "execute" }
     outcome "needs_review"      { transition_to = "execute" }
     outcome "needs_approval"    { transition_to = "execute" }
-    outcome "failure"           { transition_to = "close_pr_manager_abort" }
+    outcome "failure"           { transition_to = "failed" }
   }
 
   # ── Review loop: minimal signal prompts ─────────────────────────────────────
@@ -159,7 +135,7 @@ workflow "workstream_review_loop" {
     outcome "success"        { transition_to = "verify" }
     outcome "needs_review"   { transition_to = "verify" }
     outcome "needs_approval" { transition_to = "verify" }
-    outcome "failure"        { transition_to = "close_pr_manager_abort" }
+    outcome "failure"        { transition_to = "failed" }
   }
 
   step "verify" {
@@ -182,7 +158,7 @@ workflow "workstream_review_loop" {
     }
     outcome "needs_review"   { transition_to = "verify" }
     outcome "needs_approval" { transition_to = "verify" }
-    outcome "failure"        { transition_to = "close_pr_manager_abort" }
+    outcome "failure"        { transition_to = "failed" }
   }
 
   step "review" {
@@ -197,7 +173,7 @@ workflow "workstream_review_loop" {
     outcome "changes_requested" { transition_to = "execute" }
     outcome "needs_review"      { transition_to = "execute" }
     outcome "needs_approval"    { transition_to = "execute" }
-    outcome "failure"           { transition_to = "close_pr_manager_abort" }
+    outcome "failure"           { transition_to = "failed" }
   }
 
   # ── Finalize: executor commit ──────────────────────────────────────────────
@@ -211,7 +187,7 @@ workflow "workstream_review_loop" {
       prompt = "Approved. Commit all workstream changes with message:\nworkstream: complete ${var.workstream_file}\n\nEnd your final line with exactly one of:\nRESULT: success\nRESULT: failure"
     }
     outcome "success" { transition_to = "open_or_update_pr" }
-    outcome "failure" { transition_to = "close_pr_manager_abort" }
+    outcome "failure" { transition_to = "failed" }
   }
 
   # ── PR automation loop ────────────────────────────────────────────────────
@@ -229,7 +205,7 @@ workflow "workstream_review_loop" {
     outcome "watch_pr"       { transition_to = "watch_pr_warmup" }
     outcome "needs_review"   { transition_to = "watch_pr_warmup" }
     outcome "needs_approval" { transition_to = "watch_pr_warmup" }
-    outcome "failure"       { transition_to = "close_pr_manager_abort" }
+    outcome "failure"        { transition_to = "failed" }
   }
 
   step "watch_pr_warmup" {
@@ -276,7 +252,7 @@ workflow "workstream_review_loop" {
     outcome "watch_pr"       { transition_to = "watch_pr_backoff" }
     outcome "needs_review"   { transition_to = "watch_pr_backoff" }
     outcome "needs_approval" { transition_to = "watch_pr_backoff" }
-    outcome "failure"        { transition_to = "close_pr_manager_abort" }
+    outcome "failure"        { transition_to = "failed" }
   }
 
   step "execute_pr_feedback" {
@@ -290,7 +266,7 @@ workflow "workstream_review_loop" {
     outcome "success"        { transition_to = "verify" }
     outcome "needs_review"   { transition_to = "verify" }
     outcome "needs_approval" { transition_to = "verify" }
-    outcome "failure"        { transition_to = "close_pr_manager_abort" }
+    outcome "failure"        { transition_to = "failed" }
   }
 
   step "merge_pr_and_sync_main" {
@@ -299,55 +275,8 @@ workflow "workstream_review_loop" {
       command = "set -uo pipefail; exec 2>&1; branch=$(git branch --show-current); pr_state=\"\"; pr_number=\"\"; if [ -n \"$branch\" ] && [ \"$branch\" != \"main\" ]; then pr_view=$(gh pr view \"$branch\" --json number,state 2>/dev/null || true); if [ -n \"$pr_view\" ]; then pr_number=$(printf '%s' \"$pr_view\" | jq -r '.number // empty'); pr_state=$(printf '%s' \"$pr_view\" | jq -r '.state // empty'); fi; fi; echo \"branch=$branch pr_number=$${pr_number:-unknown} pr_state=$${pr_state:-unknown}\"; if [ -n \"$pr_number\" ] && [ \"$pr_state\" != \"MERGED\" ] && [ \"$pr_state\" != \"CLOSED\" ]; then gh pr merge \"$pr_number\" --squash --delete-branch || { echo 'merge command failed'; exit 1; }; else echo 'skip_merge=true'; fi; git fetch origin main || exit 1; git checkout main || exit 1; git pull --ff-only origin main || exit 1; echo \"synced_main=true merged_pr=$${pr_number:-unknown}\"; exit 0"
     }
     timeout = "5m"
-    outcome "success" { transition_to = "close_pr_manager_done" }
-    outcome "failure" { transition_to = "close_pr_manager_done" }
-  }
-
-  # ── Close agents: success path ──────────────────────────────────────────────
-
-  step "close_pr_manager_done" {
-    adapter = adapter.copilot.pr_manager
-    lifecycle = "close"
-    outcome "success" { transition_to = "close_reviewer_done" }
-    outcome "failure" { transition_to = "close_reviewer_done" }
-  }
-
-  step "close_reviewer_done" {
-    adapter = adapter.copilot.reviewer
-    lifecycle = "close"
-    outcome "success" { transition_to = "close_executor_done" }
-    outcome "failure" { transition_to = "close_executor_done" }
-  }
-
-  step "close_executor_done" {
-    adapter = adapter.copilot.executor
-    lifecycle = "close"
     outcome "success" { transition_to = "done" }
     outcome "failure" { transition_to = "done" }
-  }
-
-  # ── Close agents: abort path ─────────────────────────────────────────────────
-  # Each step chains to the next so all open sessions are closed before failing.
-
-  step "close_pr_manager_abort" {
-    adapter = adapter.copilot.pr_manager
-    lifecycle = "close"
-    outcome "success" { transition_to = "close_reviewer_abort" }
-    outcome "failure" { transition_to = "close_reviewer_abort" }
-  }
-
-  step "close_reviewer_abort" {
-    adapter = adapter.copilot.reviewer
-    lifecycle = "close"
-    outcome "success" { transition_to = "close_executor_abort" }
-    outcome "failure" { transition_to = "close_executor_abort" }
-  }
-
-  step "close_executor_abort" {
-    adapter = adapter.copilot.executor
-    lifecycle = "close"
-    outcome "success" { transition_to = "failed" }
-    outcome "failure" { transition_to = "failed" }
   }
 
   # ── Terminal states ────────────────────────────────────────────────────────

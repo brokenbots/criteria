@@ -16,7 +16,7 @@
 
 workflow "copilot_planning_then_execution" {
   version       = "1"
-  initial_state = "open_agent"
+  initial_state = "plan"
   target_state  = "done"
 
   policy {
@@ -29,16 +29,6 @@ workflow "copilot_planning_then_execution" {
       reasoning_effort = "medium"   # default for all steps
       max_turns        = 6
     }
-  }
-
-  # ── Lifecycle ───────────────────────────────────────────────────────────────
-
-  step "open_agent" {
-    adapter = adapter.copilot.engineer
-    lifecycle = "open"
-
-    outcome "success" { transition_to = "plan" }
-    outcome "failure" { transition_to = "failed" }
   }
 
   # ── Planning (high reasoning effort) ────────────────────────────────────────
@@ -57,7 +47,7 @@ workflow "copilot_planning_then_execution" {
     }
 
     outcome "success" { transition_to = "execute" }
-    outcome "failure" { transition_to = "close_failed" }
+    outcome "failure" { transition_to = "failed" }
   }
 
   # ── Execution (inherits adapter-level "medium") ────────────────────────────────
@@ -72,25 +62,7 @@ workflow "copilot_planning_then_execution" {
       EOT
     }
 
-    outcome "success" { transition_to = "close_done" }
-    outcome "failure" { transition_to = "close_failed" }
-  }
-
-  # ── Close paths ─────────────────────────────────────────────────────────────
-
-  step "close_done" {
-    adapter = adapter.copilot.engineer
-    lifecycle = "close"
-
     outcome "success" { transition_to = "done" }
-    outcome "failure" { transition_to = "done" }
-  }
-
-  step "close_failed" {
-    adapter = adapter.copilot.engineer
-    lifecycle = "close"
-
-    outcome "success" { transition_to = "failed" }
     outcome "failure" { transition_to = "failed" }
   }
 

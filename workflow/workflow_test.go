@@ -181,22 +181,17 @@ workflow "x" {
   }
   step "close" {
     adapter = adapter.copilot.default
-    lifecycle = "close"
     outcome "success" { transition_to = "done" }
   }
   state "done" { terminal = true }
 }
 `
-	spec, diags := Parse("t.hcl", []byte(src))
-	if diags.HasErrors() {
-		t.Fatalf("parse: %s", diags.Error())
-	}
-	_, diags = Compile(spec, nil)
+	_, diags := Parse("t.hcl", []byte(src))
 	if !diags.HasErrors() {
-		t.Fatal("expected compile error for allow_tools on lifecycle step")
+		t.Fatal("expected parse error for lifecycle attribute")
 	}
-	if !strings.Contains(diags.Error(), "allow_tools") {
-		t.Errorf("expected error mentioning allow_tools, got: %s", diags.Error())
+	if !strings.Contains(diags.Error(), `removed attribute "lifecycle"`) {
+		t.Errorf("expected error about lifecycle attribute, got: %s", diags.Error())
 	}
 }
 
@@ -236,22 +231,12 @@ func TestCompileAllowToolsUnionedWithWorkflowLevel(t *testing.T) {
 workflow "x" {
   adapter "copilot" "default" {}
   version       = "0.1"
-  initial_state = "open"
+  initial_state = "run"
   target_state  = "done"
 
-  step "open" {
-    adapter = adapter.copilot.default
-    lifecycle = "open"
-    outcome "success" { transition_to = "run" }
-  }
   step "run" {
     adapter = adapter.copilot.default
     allow_tools = ["read_file"]
-    outcome "success" { transition_to = "close" }
-  }
-  step "close" {
-    adapter = adapter.copilot.default
-    lifecycle = "close"
     outcome "success" { transition_to = "done" }
   }
   state "done" { terminal = true }
@@ -283,15 +268,5 @@ workflow "x" {
 	}
 	if !found["shell:echo *"] {
 		t.Errorf("AllowTools missing workflow-level 'shell:echo *': %v", run.AllowTools)
-	}
-	// Lifecycle steps must not get AllowTools (even from workflow-level)
-	for _, name := range []string{"open", "close"} {
-		step := g.Steps[name]
-		if step == nil {
-			continue
-		}
-		if len(step.AllowTools) != 0 {
-			t.Errorf("lifecycle step %q should have empty AllowTools, got %v", name, step.AllowTools)
-		}
 	}
 }

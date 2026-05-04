@@ -42,9 +42,8 @@ workflow "x" {
 	}
 }
 
-// TestWorkflowStep_LifecycleWithoutAgent verifies that a type="workflow" step
-// that specifies lifecycle without an adapter produces a compile error containing
-// "lifecycle requires an adapter reference".
+// TestWorkflowStep_LifecycleWithoutAgent tests that lifecycle attributes on steps
+// produce a parse-time error.
 func TestWorkflowStep_LifecycleWithoutAgent(t *testing.T) {
 	src := `
 workflow "x" {
@@ -66,16 +65,12 @@ workflow "x" {
   state "done" { terminal = true }
 }
 `
-	spec, diags := Parse("t.hcl", []byte(src))
-	if diags.HasErrors() {
-		t.Fatalf("parse: %s", diags.Error())
-	}
-	_, diags = Compile(spec, testSchemas)
+	_, diags := Parse("t.hcl", []byte(src))
 	if !diags.HasErrors() {
-		t.Fatal("expected compile error for lifecycle without adapter on workflow step")
+		t.Fatal("expected parse error for lifecycle attribute")
 	}
-	if !strings.Contains(diags.Error(), "lifecycle requires an adapter reference") {
-		t.Errorf("expected 'lifecycle requires an adapter reference' in diagnostic, got: %s", diags.Error())
+	if !strings.Contains(diags.Error(), `removed attribute "lifecycle"`) {
+		t.Errorf("expected 'removed attribute \"lifecycle\"' in diagnostic, got: %s", diags.Error())
 	}
 }
 

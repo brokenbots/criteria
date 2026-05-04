@@ -174,43 +174,22 @@ func (e *Engine) Run(ctx context.Context) error {
 	sessions := plugin.NewSessionManager(e.loader)
 	defer func() { _ = sessions.Shutdown(context.WithoutCancel(ctx)) }()
 
-	// Bootstrap adapter sessions for workflows without explicit lifecycle steps (test-only).
-	// Production workflows (W12) require explicit lifecycle management.
-	if e.autoBootstrapAdapters {
-		if err := e.bootstrapAllAdapters(ctx, sessions); err != nil {
-			return err
-		}
+	deps := Deps{
+		Sessions: sessions,
+		Sink:     e.sink,
 	}
+
+	// Provision adapter sessions at scope start (W12)
+	scopeHandles, err := initScopeAdapters(ctx, e.graph, deps)
+	if err != nil {
+		e.sink.OnRunFailed(err.Error(), e.graph.InitialState)
+		return err
+	}
+	defer func() { tearDownScopeAdapters(ctx, scopeHandles, deps) }()
 
 	current := e.graph.InitialState
 	e.sink.OnRunStarted(e.graph.Name, current)
 	return e.runLoop(ctx, sessions, current, 1)
-}
-
-// bootstrapAllAdapters opens adapters that have no explicit lifecycle "open" steps.
-// This is needed for workflows without explicit lifecycle management.
-func (e *Engine) bootstrapAllAdapters(ctx context.Context, sessions *plugin.SessionManager) error {
-	// Find which adapter instances have explicit lifecycle "open" steps
-	adaptersWithLifecycleOpen := make(map[string]bool)
-	for _, node := range e.graph.Steps {
-		if node.Lifecycle == "open" {
-			// The adapter reference is already in dotted form "<type>.<name>"
-			adaptersWithLifecycleOpen[node.Adapter] = true
-		}
-	}
-
-	// Bootstrap only adapters without explicit lifecycle steps
-	for _, adapter := range e.graph.Adapters {
-		instanceID := adapter.Type + "." + adapter.Name
-		if adaptersWithLifecycleOpen[instanceID] {
-			// This adapter instance has an explicit lifecycle step; don't bootstrap
-			continue
-		}
-		if err := sessions.Open(ctx, instanceID, adapter.Type, adapter.OnCrash, adapter.Config); err != nil && !errors.Is(err, plugin.ErrSessionAlreadyOpen) {
-			return fmt.Errorf("bootstrap adapter %q: %w", instanceID, err)
-		}
-	}
-	return nil
 }
 
 // RunFrom resumes a workflow at startStep with the given initialAttempt
@@ -222,14 +201,22 @@ func (e *Engine) RunFrom(ctx context.Context, startStep string, initialAttempt i
 	sessions := plugin.NewSessionManager(e.loader)
 	defer func() { _ = sessions.Shutdown(context.WithoutCancel(ctx)) }()
 
-	if err := e.bootstrapSessionsForResume(ctx, sessions, startStep); err != nil {
+	deps := Deps{
+		Sessions: sessions,
+		Sink:     e.sink,
+	}
+
+	// For resumed runs, provision adapter sessions at scope start (W12).
+	// Sessions that were already open in the original run are re-opened here.
+	scopeHandles, err := initScopeAdapters(ctx, e.graph, deps)
+	if err != nil {
+		e.sink.OnRunFailed(err.Error(), startStep)
 		return err
 	}
-	// Also bootstrap any adapters that haven't been opened by explicit lifecycle steps (test-only).
-	if e.autoBootstrapAdapters {
-		if err := e.bootstrapAllAdapters(ctx, sessions); err != nil {
-			return err
-		}
+	defer func() { tearDownScopeAdapters(ctx, scopeHandles, deps) }()
+
+	if err := e.bootstrapSessionsForResume(ctx, sessions, startStep); err != nil {
+		return err
 	}
 	return e.runLoop(ctx, sessions, startStep, initialAttempt)
 }
@@ -480,31 +467,10 @@ func cloneVisits(v map[string]int) map[string]int {
 
 func (e *Engine) bootstrapSessionsForResume(ctx context.Context, sessions *plugin.SessionManager, startStep string) error {
 	// Sessions are process-local and do not survive adapter restarts.
-	// Crash recovery recreates them by replaying lifecycle steps declared before
-	// the resumed step in declaration order.
-	for _, name := range e.graph.StepOrder() {
-		if name == startStep {
-			break
-		}
-		step, ok := e.graph.Steps[name]
-		if !ok || step.Adapter == "" {
-			continue
-		}
-		switch step.Lifecycle {
-		case "open":
-			adapter, ok := e.graph.Adapters[step.Adapter]
-			if !ok {
-				return fmt.Errorf("unknown adapter %q in step %q", step.Adapter, step.Name)
-			}
-			if err := sessions.Open(ctx, step.Adapter, adapter.Type, step.OnCrash, adapter.Config); err != nil && !errors.Is(err, plugin.ErrSessionAlreadyOpen) {
-				return fmt.Errorf("restore session for adapter %q: %w", step.Adapter, err)
-			}
-		case "close":
-			if err := sessions.Close(ctx, step.Adapter); err != nil {
-				return fmt.Errorf("restore close for adapter %q: %w", step.Adapter, err)
-			}
-		}
-	}
+	// With automatic lifecycle management (W12), adapters are provisioned at scope start.
+	// Crash recovery no longer needs to replay lifecycle steps since there are no longer
+	// any explicit lifecycle="open"/"close" steps. This function is kept for compatibility
+	// but does nothing.
 	return nil
 }
 

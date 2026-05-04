@@ -481,27 +481,17 @@ func TestEnginePermissionGrantAndDeny(t *testing.T) {
 	g := compile(t, `
 workflow "perm" {
   version       = "0.1"
-  initial_state = "open"
+  initial_state = "run"
   target_state  = "done"
 
   adapter "permissive" "bot" { }
 
-  step "open" {
-    adapter = adapter.permissive.bot
-    lifecycle = "open"
-    outcome "success" { transition_to = "run" }
-  }
   step "run" {
     adapter = adapter.permissive.bot
     input { perm_tools = "read_file,write_file" }
     allow_tools = ["read_file"]
-    outcome "success"      { transition_to = "close" }
-    outcome "needs_review" { transition_to = "close" }
-  }
-  step "close" {
-    adapter = adapter.permissive.bot
-    lifecycle = "close"
-    outcome "success" { transition_to = "done" }
+    outcome "success"      { transition_to = "done" }
+    outcome "needs_review" { transition_to = "done" }
   }
   state "done" { terminal = true }
 }`)
@@ -554,26 +544,16 @@ func TestEngineDefaultPolicyDeniesAll(t *testing.T) {
 	g := compile(t, `
 workflow "perm-deny" {
   version       = "0.1"
-  initial_state = "open"
+  initial_state = "run"
   target_state  = "done"
 
   adapter "permissive" "bot" { }
 
-  step "open" {
-    adapter = adapter.permissive.bot
-    lifecycle = "open"
-    outcome "success" { transition_to = "run" }
-  }
   step "run" {
     adapter = adapter.permissive.bot
     input { perm_tools = "read_file" }
-    outcome "needs_review" { transition_to = "close" }
-    outcome "success"      { transition_to = "close" }
-  }
-  step "close" {
-    adapter = adapter.permissive.bot
-    lifecycle = "close"
-    outcome "success" { transition_to = "done" }
+    outcome "needs_review" { transition_to = "done" }
+    outcome "success"      { transition_to = "done" }
   }
   state "done" { terminal = true }
 }`)
@@ -600,27 +580,17 @@ func TestEngineShellFingerprintAllowlist(t *testing.T) {
 	g := compile(t, `
 workflow "perm-shell" {
   version       = "0.1"
-  initial_state = "open"
+  initial_state = "run"
   target_state  = "done"
 
   adapter "permissive" "bot" { }
 
-  step "open" {
-    adapter = adapter.permissive.bot
-    lifecycle = "open"
-    outcome "success" { transition_to = "run" }
-  }
   step "run" {
     adapter = adapter.permissive.bot
     input { perm_tools = "shell|git status,shell|rm -rf /" }
     allow_tools = ["shell:git *"]
-    outcome "success"      { transition_to = "close" }
-    outcome "needs_review" { transition_to = "close" }
-  }
-  step "close" {
-    adapter = adapter.permissive.bot
-    lifecycle = "close"
-    outcome "success" { transition_to = "done" }
+    outcome "success"      { transition_to = "done" }
+    outcome "needs_review" { transition_to = "done" }
   }
   state "done" { terminal = true }
 }`)

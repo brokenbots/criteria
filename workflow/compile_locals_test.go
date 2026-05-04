@@ -215,7 +215,6 @@ workflow "x" {
   }
   step "open" {
     adapter   = "noop"
-    lifecycle = "open"
     outcome "success" { transition_to = "done" }
   }
   state "done" { terminal = true }

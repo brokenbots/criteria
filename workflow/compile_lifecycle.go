@@ -18,15 +18,6 @@ func isValidOnCrash(v string) bool {
 	}
 }
 
-func isValidLifecycle(v string) bool {
-	switch v {
-	case lifecycleOpen, lifecycleClose:
-		return true
-	default:
-		return false
-	}
-}
-
 func isValidAdapterName(v string) bool {
 	v = strings.TrimSpace(v)
 	if v == "" {

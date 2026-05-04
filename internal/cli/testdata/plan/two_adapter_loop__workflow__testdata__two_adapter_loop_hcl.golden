@@ -1,5 +1,5 @@
 workflow: two_agent_loop  (version 0.1)
-initial_state: open_executor   target_state: done
+initial_state: execute   target_state: done
 policy: max_total_steps=100  max_step_retries=0
 
 variables:
@@ -12,30 +12,14 @@ adapters:
     config: (none)
 
 steps (declaration order):
-  open_executor   adapter=copilot.executor   lifecycle=open
-    input keys: (none)
-    allow_tools: (none)
-    outcomes: success -> open_reviewer
-  open_reviewer   adapter=copilot.reviewer   lifecycle=open
-    input keys: (none)
-    allow_tools: (none)
-    outcomes: success -> execute
   execute   adapter=copilot.executor
     input keys: (none)
     allow_tools: (none)
-    outcomes: approved -> close_reviewer, retry -> review
+    outcomes: approved -> review, retry -> review
   review   adapter=copilot.reviewer
     input keys: (none)
     allow_tools: (none)
-    outcomes: approved -> close_reviewer, changes -> execute
-  close_reviewer   adapter=copilot.reviewer   lifecycle=close
-    input keys: (none)
-    allow_tools: (none)
-    outcomes: success -> close_executor
-  close_executor   adapter=copilot.executor   lifecycle=close
-    input keys: (none)
-    allow_tools: (none)
-    outcomes: success -> done
+    outcomes: approved -> done, changes -> execute
 
 states:
   done    terminal=true   success=true

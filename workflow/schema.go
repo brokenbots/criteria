@@ -114,9 +114,8 @@ type AdapterDeclSpec struct {
 
 // StepSpec describes a single step in the workflow.
 type StepSpec struct {
-	Name      string `hcl:"name,label"`
-	Lifecycle string `hcl:"lifecycle,optional"`
-	OnCrash   string `hcl:"on_crash,optional"`
+	Name    string `hcl:"name,label"`
+	OnCrash string `hcl:"on_crash,optional"`
 	// Type is the step kind: "" (default adapter step) or "workflow" (sub-workflow body).
 	Type string `hcl:"type,optional"`
 	// WorkflowFile is a path to an HCL file whose body is used as the sub-workflow
@@ -352,10 +351,9 @@ type AdapterNode struct {
 
 // StepNode is a compiled step with resolved transitions.
 type StepNode struct {
-	Name      string
-	Adapter   string // "<type>.<name>" reference to a declared adapter
-	Lifecycle string
-	OnCrash   string
+	Name    string
+	Adapter string // "<type>.<name>" reference to a declared adapter
+	OnCrash string
 	// Type is the step kind: "" (default adapter) or "workflow" (sub-workflow body).
 	Type string
 	// OnFailure controls iteration behaviour when an iteration produces a

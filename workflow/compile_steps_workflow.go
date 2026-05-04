@@ -337,7 +337,7 @@ func validateBodyHasContinuePath(stepName string, body *FSMGraph) error {
 }
 
 // validateWorkflowStepNoAdapterAttrs validates that workflow steps don't have
-// allow_tools or lifecycle attributes, as these require an adapter reference
+// allow_tools attributes are not allowed on workflow steps, as they require an adapter reference
 // which workflow steps don't have.
 func validateWorkflowStepNoAdapterAttrs(sp *StepSpec) hcl.Diagnostics {
 	var diags hcl.Diagnostics
@@ -345,12 +345,6 @@ func validateWorkflowStepNoAdapterAttrs(sp *StepSpec) hcl.Diagnostics {
 		diags = append(diags, &hcl.Diagnostic{
 			Severity: hcl.DiagError,
 			Summary:  fmt.Sprintf("step %q: allow_tools requires an adapter reference", sp.Name),
-		})
-	}
-	if sp.Lifecycle != "" {
-		diags = append(diags, &hcl.Diagnostic{
-			Severity: hcl.DiagError,
-			Summary:  fmt.Sprintf("step %q: lifecycle requires an adapter reference", sp.Name),
 		})
 	}
 	return diags
