@@ -81,7 +81,12 @@ func compileForExecution(ctx context.Context, workflowPath string, log *slog.Log
 	loader := plugin.NewLoader()
 	loader.RegisterBuiltin(shell.Name, plugin.BuiltinFactoryForAdapter(shell.New()))
 	schemas := collectSchemas(ctx, loader, spec, log)
-	graph, diags := workflow.CompileWithOpts(spec, schemas, workflow.CompileOpts{WorkflowDir: filepath.Dir(workflowPath)})
+
+	resolver := &workflow.LocalSubWorkflowResolver{}
+	graph, diags := workflow.CompileWithOpts(spec, schemas, workflow.CompileOpts{
+		WorkflowDir:         filepath.Dir(workflowPath),
+		SubWorkflowResolver: resolver,
+	})
 	if diags.HasErrors() {
 		_ = loader.Shutdown(ctx)
 		return nil, nil, nil, fmt.Errorf("compile: %s", diags.Error())

@@ -35,7 +35,8 @@ func NewValidateCmd() *cobra.Command {
 				_ = loader.Shutdown(ctx)
 
 				_, diags = workflow.CompileWithOpts(spec, schemas, workflow.CompileOpts{
-					WorkflowDir: filepath.Dir(path),
+					WorkflowDir:         filepath.Dir(path),
+					SubWorkflowResolver: &workflow.LocalSubWorkflowResolver{},
 				})
 				if diags.HasErrors() {
 					anyErr = true

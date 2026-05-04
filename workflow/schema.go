@@ -64,6 +64,7 @@ type Spec struct {
 	Environments       []EnvironmentSpec `hcl:"environment,block"`
 	Outputs            []OutputSpec      `hcl:"output,block"`
 	Adapters           []AdapterDeclSpec `hcl:"adapter,block"`
+	Subworkflows       []SubworkflowSpec `hcl:"subworkflow,block"`
 	Steps              []StepSpec        `hcl:"step,block"`
 	States             []StateSpec       `hcl:"state,block"`
 	Waits              []WaitSpec        `hcl:"wait,block"`
@@ -116,11 +117,6 @@ type AdapterDeclSpec struct {
 type StepSpec struct {
 	Name    string `hcl:"name,label"`
 	OnCrash string `hcl:"on_crash,optional"`
-	// Type is the step kind: "" (default adapter step) or "workflow" (sub-workflow body).
-	Type string `hcl:"type,optional"`
-	// WorkflowFile is a path to an HCL file whose body is used as the sub-workflow
-	// body for workflow-type steps. Mutually exclusive with Workflow.
-	WorkflowFile string `hcl:"workflow_file,optional"`
 	// OnFailure controls iteration failure behaviour: "continue" (default),
 	// "abort" (stop on first failure), or "ignore" (treat all as success).
 	OnFailure string `hcl:"on_failure,optional"`
@@ -131,7 +127,6 @@ type StepSpec struct {
 	// compiler can emit a helpful "use input { } block" diagnostic.
 	Config     map[string]string `hcl:"config,optional"`
 	Input      *InputSpec        `hcl:"input,block"`
-	Workflow   *BodySpec         `hcl:"workflow,block"`
 	Timeout    string            `hcl:"timeout,optional"`
 	AllowTools []string          `hcl:"allow_tools,optional"`
 	Outcomes   []OutcomeSpec     `hcl:"outcome,block"`
@@ -197,6 +192,16 @@ type OutputSpec struct {
 	Description string   `hcl:"description,optional"`
 	TypeStr     string   `hcl:"type,optional"`
 	Remain      hcl.Body `hcl:",remain"` // captures the "value" expression
+}
+
+// SubworkflowSpec declares a reusable sub-workflow to be resolved and compiled.
+// The name is a single label; source and input are attributes.
+// The Remain body captures any additional attributes like the "input" block.
+type SubworkflowSpec struct {
+	Name        string   `hcl:"name,label"`
+	Source      string   `hcl:"source"`               // directory path; local or remote
+	Environment string   `hcl:"environment,optional"` // "<env_type>.<env_name>" reference
+	Remain      hcl.Body `hcl:",remain"`              // captures the "input" block
 }
 
 // ConfigFieldType enumerates the types a config or input field may carry.
@@ -317,6 +322,8 @@ type FSMGraph struct {
 	OutputOrder        []string                    // declaration order for stable iteration
 	Adapters           map[string]*AdapterNode     // compiled adapter declarations; keyed by "<type>.<name>"
 	AdapterOrder       []string                    // declaration order for stable iteration
+	Subworkflows       map[string]*SubworkflowNode // compiled subworkflow declarations; keyed by subworkflow name
+	SubworkflowOrder   []string                    // declaration order for stable iteration
 	Steps              map[string]*StepNode        // by step name
 	States             map[string]*StateNode       // by state name (terminal etc.)
 	Waits              map[string]*WaitNode        // by wait node name (W05)
@@ -400,6 +407,18 @@ type StepNode struct {
 	// Outputs maps output block names to their value HCL expressions. Evaluated
 	// after each body iteration completes to populate indexed step outputs.
 	Outputs map[string]hcl.Expression
+}
+
+// SubworkflowNode is a compiled subworkflow declaration with resolved source,
+// body, and input bindings.
+type SubworkflowNode struct {
+	Name         string                    // subworkflow name (the label)
+	SourcePath   string                    // resolved absolute path to subworkflow directory
+	Body         *FSMGraph                 // deep-compiled callee workflow
+	BodyEntry    string                    // initial state name for the subworkflow body
+	Environment  string                    // resolved "<env_type>.<env_name>" reference (optional)
+	Inputs       map[string]hcl.Expression // parent-scope input expressions (name -> HCL expression)
+	DeclaredVars map[string]*VariableNode  // callee's declared variables (name -> VariableNode)
 }
 
 // StateNode is a compiled (non-step) state.

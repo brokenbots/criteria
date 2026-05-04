@@ -17,15 +17,12 @@ import (
 
 // compileSteps compiles all step blocks from spec into g.Steps and g.stepOrder.
 // Must be called after compileAdapters so that adapter references can be resolved.
-// Routes each step to the appropriate per-kind compiler based on step type and
-// iteration modifier.
+// Routes each step to the appropriate per-kind compiler based on iteration modifier.
 func compileSteps(g *FSMGraph, spec *Spec, schemas map[string]AdapterInfo, opts CompileOpts) hcl.Diagnostics {
 	var diags hcl.Diagnostics
 	for i := range spec.Steps {
 		sp := &spec.Steps[i]
 		switch {
-		case sp.Type == "workflow":
-			diags = append(diags, compileWorkflowStep(g, sp, spec, schemas, opts)...)
 		case isIteratingStep(sp):
 			diags = append(diags, compileIteratingStep(g, sp, spec, schemas, opts)...)
 		default:
@@ -64,20 +61,4 @@ func validateStepRegistration(g *FSMGraph, sp *StepSpec) (ok bool, diags hcl.Dia
 		return false, diags
 	}
 	return true, nil
-}
-
-// validateStepKindSelectionDiags validates that the step type value is recognised.
-// Note: The presence of adapter vs type="workflow" is validated by the individual
-// step compilers (compileAdapterStep, compileIteratingStep, compileWorkflowStep)
-// after resolving the adapter reference from the Remain body.
-func validateStepKindSelectionDiags(sp *StepSpec) hcl.Diagnostics {
-	var diags hcl.Diagnostics
-
-	if sp.Type != "" && sp.Type != "workflow" {
-		diags = append(diags, &hcl.Diagnostic{
-			Severity: hcl.DiagError,
-			Summary:  fmt.Sprintf("step %q: invalid type %q; only \"workflow\" is recognised", sp.Name, sp.Type),
-		})
-	}
-	return diags
 }

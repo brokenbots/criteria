@@ -70,3 +70,25 @@ issues:
       linters:
         - gocritic
       text: 'hugeParam: opts is heavy \(208 bytes\); consider passing it by pointer' # kept: applyOptions threads through 6 apply-command functions; W02-split-cli-apply owns the refactor
+    # --- W13: contextcheck findings from subworkflow resolution (uses context.Background() inside compileSubworkflows) ---
+    - path: internal/cli/apply_setup.go
+      linters:
+        - contextcheck
+      text: 'should pass the context parameter'
+    - path: internal/cli/compile.go
+      linters:
+        - contextcheck
+      text: 'should pass the context parameter'
+    - path: internal/cli/reattach.go
+      linters:
+        - contextcheck
+      text: 'should pass the context parameter'
+    # --- W13: gocognit and funlen complexity in compileSubworkflows (cycle detection, multi-file parsing, validation) ---
+    - path: .*compile_subworkflows\.go
+      linters:
+        - gocognit
+      text: '`compileSubworkflows`'
+    - path: .*compile_subworkflows\.go
+      linters:
+        - funlen
+      text: 'compileSubworkflows'

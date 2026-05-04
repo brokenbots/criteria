@@ -38,8 +38,6 @@ func compileAdapterStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[strin
 		return diags
 	}
 
-	diags = append(diags, validateStepKindSelectionDiags(sp)...)
-
 	// Resolve the adapter reference from the step's Remain body as an HCL traversal.
 	// This replaces the old sp.Adapter string field with proper traversal parsing.
 	adapterRef, adapterPresent, d := resolveStepAdapterRef(sp.Remain)
@@ -147,7 +145,7 @@ func newBaseStepNodeWithAdapterRef(sp *StepSpec, spec *Spec, adapterRef string, 
 		Name:       sp.Name,
 		Adapter:    adapterRef, // resolved "<type>.<name>" from traversal expression
 		OnCrash:    effectiveOnCrash,
-		Type:       sp.Type,
+		Type:       "", // only adapter steps; inline workflows removed (see W13)
 		OnFailure:  sp.OnFailure,
 		MaxVisits:  sp.MaxVisits,
 		Input:      inputMap,

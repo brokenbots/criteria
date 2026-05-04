@@ -1172,6 +1172,7 @@ workflow "needs_approval" {
 // (the step being executed at crash time) is inside the body of the iterating
 // step but no longer exists in that body after a workflow edit.
 func TestCheckIterationCursorValidity_CurrentMissingFromBody(t *testing.T) {
+	t.Skip("test uses removed inline workflow body feature (W13); pending W14 subworkflow invocation support")
 	// Compile a workflow with a type="workflow" iterating step.
 	const src = `
 workflow "w" {
@@ -1243,6 +1244,7 @@ workflow "w" {
 // asserting that checkIterationCursorValidity catches the modification and
 // returns a non-nil error describing the missing body step.
 func TestIter_ResumeRejectsModifiedBody(t *testing.T) {
+	t.Skip("test uses removed inline workflow body feature (W13); pending W14 subworkflow invocation support")
 	TestCheckIterationCursorValidity_CurrentMissingFromBody(t)
 }
 

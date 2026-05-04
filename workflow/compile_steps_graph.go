@@ -6,21 +6,9 @@ package workflow
 
 import (
 	"fmt"
-	"time"
 
 	"github.com/hashicorp/hcl/v2"
-	"github.com/zclconf/go-cty/cty"
 )
-
-// resolveStepOnCrash returns the effective on_crash for a step, falling back
-// to the backing adapter's on_crash if the step doesn't specify one.
-// Deprecated: Use resolveStepOnCrashWithAdapter instead.
-func resolveStepOnCrash(g *FSMGraph, sp *StepSpec) (string, hcl.Diagnostics) {
-	var diags hcl.Diagnostics
-	// This function no longer works because sp.Adapter is not a gohcl-decoded field.
-	// Use resolveStepOnCrashWithAdapter(g, sp, adapterRef) in the compile path instead.
-	return onCrashFail, diags
-}
 
 // compileOutcomeBlock populates node.Outcomes from sp.Outcomes, checking for
 // duplicates and missing transition_to values.
@@ -42,77 +30,6 @@ func compileOutcomeBlock(sp *StepSpec, node *StepNode) hcl.Diagnostics {
 	return diags
 }
 
-// newWorkflowStepNode constructs a StepNode for a type="workflow" step with
-// all common fields plus optional ForEach/Count.
-func newWorkflowStepNode(sp *StepSpec, spec *Spec, effectiveOnCrash string, timeout time.Duration,
-	inputMap map[string]string, inputExprs map[string]hcl.Expression,
-	forEachExpr, countExpr hcl.Expression) *StepNode {
-	return &StepNode{
-		Name:       sp.Name,
-		OnCrash:    effectiveOnCrash,
-		Type:       sp.Type,
-		OnFailure:  sp.OnFailure,
-		MaxVisits:  sp.MaxVisits,
-		Input:      inputMap,
-		InputExprs: inputExprs,
-		Timeout:    timeout,
-		Outcomes:   map[string]string{},
-		AllowTools: allowToolsForStep(sp, spec),
-		ForEach:    forEachExpr,
-		Count:      countExpr,
-	}
-}
-
-// compileWorkflowOutputs extracts output{} block expressions from sp.Workflow
-// and populates node.Outputs. It is safe to call when sp.Workflow is nil or
-// has no outputs — it returns nil in that case.
-func compileWorkflowOutputs(sp *StepSpec, node *StepNode, opts CompileOpts) hcl.Diagnostics {
-	if sp.Workflow == nil || len(sp.Workflow.Outputs) == 0 {
-		return nil
-	}
-
-	// Output value expressions are evaluated against the child body scope at
-	// runtime, not the parent scope. Use the body graph's vars/locals so that
-	// compile-time validation matches the runtime evaluation context: body
-	// var/local references are accepted, and parent-only var/local references
-	// are correctly rejected.
-	var bodyVars, bodyLocals map[string]cty.Value
-	if node.Body != nil {
-		bodyVars = graphVars(node.Body)
-		bodyLocals = graphLocals(node.Body)
-	}
-
-	var diags hcl.Diagnostics
-	seen := map[string]bool{}
-	node.Outputs = make(map[string]hcl.Expression, len(sp.Workflow.Outputs))
-	for _, out := range sp.Workflow.Outputs {
-		if seen[out.Name] {
-			diags = append(diags, &hcl.Diagnostic{
-				Severity: hcl.DiagError,
-				Summary:  fmt.Sprintf("step %q: duplicate output name %q", sp.Name, out.Name),
-			})
-			continue
-		}
-		seen[out.Name] = true
-		content, _, d := out.Remain.PartialContent(&hcl.BodySchema{
-			Attributes: []hcl.AttributeSchema{{Name: "value", Required: true}},
-		})
-		diags = append(diags, d...)
-		if content != nil {
-			if attr, ok := content.Attributes["value"]; ok {
-				node.Outputs[out.Name] = attr.Expr
-				// Validate the value expression against the child body scope.
-				_, foldable, fd := FoldExpr(attr.Expr, bodyVars, bodyLocals, opts.WorkflowDir)
-				if foldable {
-					diags = append(diags, errorDiagsWithFallbackSubject(fd, attr.Expr)...)
-				}
-			}
-		}
-	}
-	return diags
-}
-
-// warnBackEdges emits a compile-time warning for every step that:
 //   - has a back-edge (a path in the outcome graph that leads back to itself), AND
 //   - has no max_visits set (MaxVisits == 0), AND
 //   - the workflow's max_total_steps exceeds the MaxVisitsWarnThreshold (and

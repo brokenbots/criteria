@@ -255,7 +255,10 @@ func parseCompileForCli(ctx context.Context, workflowPath string) (*workflow.Spe
 	schemas := collectSchemas(ctx, loader, spec, nil)
 	defer func() { _ = loader.Shutdown(ctx) }()
 
-	graph, diags := workflow.CompileWithOpts(spec, schemas, workflow.CompileOpts{WorkflowDir: filepath.Dir(workflowPath)})
+	graph, diags := workflow.CompileWithOpts(spec, schemas, workflow.CompileOpts{
+		WorkflowDir:         filepath.Dir(workflowPath),
+		SubWorkflowResolver: &workflow.LocalSubWorkflowResolver{},
+	})
 	if diags.HasErrors() {
 		return nil, nil, fmt.Errorf("compile: %s", diags.Error())
 	}

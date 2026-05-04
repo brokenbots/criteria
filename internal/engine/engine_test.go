@@ -967,6 +967,7 @@ workflow "t" {
 // ctx.Err() ordering in that path: if incrementVisit were called before
 // ctx.Err(), cancellation would inflate iteration visit counts.
 func TestMaxVisits_CancelledWorkflowIterationDoesNotConsumeVisit(t *testing.T) {
+	t.Skip("test uses removed inline workflow body feature (W13); pending W14 subworkflow invocation support")
 	g := compile(t, `
 workflow "t" {
   version = "0.1"
