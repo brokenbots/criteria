@@ -120,6 +120,92 @@ See [Expressions](#expressions) for interpolation rules.
 
 ---
 
+## Environments
+
+Environments declare typed execution contexts that can inject environment variables and configuration into adapter executions. They enable centralized management of environment-specific settings.
+
+### Declaring environments
+
+<!-- validator: fragment -->
+```hcl
+environment "shell" "production" {
+  variables = {
+    CI = "true"
+    LOG_LEVEL = "info"
+    SERVICE_ENVIRONMENT = "prod"
+  }
+  config = {
+    timeout_seconds = 300
+    retry_strategy = "exponential"
+  }
+}
+
+environment "shell" "staging" {
+  variables = {
+    CI = "true"
+    LOG_LEVEL = "debug"
+    SERVICE_ENVIRONMENT = "staging"
+  }
+  config = {
+    timeout_seconds = 120
+  }
+}
+```
+
+### Attributes
+
+- **`<type>`** (required label): The environment type. In v0.3.0, only `"shell"` is supported. Future versions will support additional types like `"docker"`, `"firecracker"`, etc., for isolated execution contexts.
+- **`<name>`** (required label): The environment name. Must match `^[a-zA-Z][a-zA-Z0-9_-]*$` (starts with a letter; can contain letters, digits, underscores, hyphens).
+- **`variables`** (optional): Map of environment variable names to string values. Numbers and booleans are coerced to strings. All variables must fold at compile time (no runtime-only references like `each.value` or `steps.X.outputs.Y`).
+- **`config`** (optional): Map of type-specific configuration. Shape is not validated in v0.3.0 (validation lands in Phase 4 with a per-type schema registry). The config is parsed and stored but does not affect adapter behavior in v0.3.0. This slot is reserved for Phase 4 implementation.
+
+### Default environment
+
+If a workflow declares exactly one environment, that environment becomes the default and is automatically bound to all adapter steps. If multiple environments are declared, you must explicitly set the default:
+
+<!-- validator: fragment -->
+```hcl
+workflow "multi_env_workflow" {
+  version       = "1"
+  initial_state = "start"
+  target_state  = "done"
+  environment   = "shell.production"
+
+  # ... environments, steps, etc.
+}
+```
+
+In the workflow header, the `environment = "<type>.<name>"` attribute serves as the explicit default environment for the workflow. If no environment is set and multiple environments are declared, the workflow is valid at compile time, but runtime execution may fail if steps expect an environment to be bound.
+
+### Runtime behavior (v0.3.0)
+
+When an adapter step runs under an environment, the environment's `variables` map is injected into the adapter subprocess's environment. For the shell adapter, these become environment variables in the spawned shell process:
+
+```hcl
+step "deploy" {
+  adapter = "shell"
+  input {
+    command = "echo $LOG_LEVEL"  # will print "debug" (or "info" for prod env)
+  }
+  outcome "success" { transition_to = "done" }
+}
+```
+
+The controlled environment allowlist (see [security/shell-adapter-threat-model.md](../security/shell-adapter-threat-model.md)) is preserved; environment-injected variables are added to the safe set. If an injected variable conflicts with a security-critical variable (e.g., `PATH`), the controlled set wins and a compile-time warning is emitted.
+
+### Phase 4 forward-pointer (v0.4.0+)
+
+The `config` map and per-type schema enforcement are deferred to Phase 4, which will introduce:
+
+- Per-type config schemas (e.g., `shell` type defines expected config keys like `timeout`, `retry_strategy`).
+- Environment-type plugin registry for custom isolation models (sandboxing, containerization, resource limits).
+- Per-step and per-adapter environment overrides (currently all steps use the workflow default).
+- Per-environment lifecycle hooks (open, close) for setup and teardown.
+
+For now, the `config` is parsed and stored but ignored at runtime. A v0.3.0 workflow declaring `config` will continue to work unchanged under v0.4.0.
+
+---
+
 ## Agents
 
 Agents are long-lived adapter sessions that maintain state across multiple step executions. Declare agents at the workflow level and reference them from steps.

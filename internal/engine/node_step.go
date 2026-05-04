@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -366,31 +367,79 @@ func (n *stepNode) evaluateOnce(ctx context.Context, st *RunState, deps Deps) (s
 	return next, nil
 }
 
+// getStepEnvironment returns the environment bound to this step.
+// For v0.3.0, all steps use the workflow's DefaultEnvironment (if set).
+// Future phases will support per-step environment overrides.
+func (n *stepNode) getStepEnvironment() *workflow.EnvironmentNode {
+	if n.graph.DefaultEnvironment != "" {
+		return n.graph.Environments[n.graph.DefaultEnvironment]
+	}
+	return nil
+}
+
 // resolveInput returns the step with Input populated from evaluated HCL
 // expressions. It returns an error if any expression fails to evaluate so
 // the caller can fail fast rather than silently using a placeholder value.
+// It also merges in environment variables if the step has a bound environment.
 func (n *stepNode) resolveInput(vars map[string]cty.Value, workflowDir string) (*workflow.StepNode, error) {
-	if len(n.step.InputExprs) == 0 {
-		return n.step, nil
-	}
-	resolved, err := workflow.ResolveInputExprsWithOpts(n.step.InputExprs, vars, workflow.DefaultFunctionOptions(workflowDir))
-	if err != nil {
-		return nil, err
-	}
-	if resolved == nil {
-		return n.step, nil
-	}
-	// Merge: expression-resolved values override compiled Input placeholders.
+	// Start with a copy of the step input.
 	merged := make(map[string]string, len(n.step.Input))
 	for k, v := range n.step.Input {
 		merged[k] = v
 	}
-	for k, v := range resolved {
-		merged[k] = v
+
+	// Resolve HCL input expressions if any.
+	if len(n.step.InputExprs) > 0 {
+		resolved, err := workflow.ResolveInputExprsWithOpts(n.step.InputExprs, vars, workflow.DefaultFunctionOptions(workflowDir))
+		if err != nil {
+			return nil, err
+		}
+		// Expression-resolved values override compiled Input placeholders.
+		for k, v := range resolved {
+			merged[k] = v
+		}
 	}
+
+	// Inject environment variables if the step has a bound environment.
+	// Environment variables are merged into the "env" input field, which adapters
+	// like shell will parse and inject into the subprocess.
+	n.mergeEnvironmentVars(merged)
+
 	cp := *n.step
 	cp.Input = merged
 	return &cp, nil
+}
+
+// mergeEnvironmentVars merges environment-declared variables into the "env" input field,
+// filtering out security-critical variables that the shell adapter controls.
+func (n *stepNode) mergeEnvironmentVars(merged map[string]string) {
+	env := n.getStepEnvironment()
+	if env == nil || len(env.Variables) == 0 {
+		return
+	}
+
+	// Parse the existing "env" input if present.
+	existingEnv := make(map[string]string)
+	if rawEnv, ok := merged["env"]; ok && rawEnv != "" {
+		_ = json.Unmarshal([]byte(rawEnv), &existingEnv)
+	}
+
+	// Merge environment-declared variables, skipping controlled keys and LC_* prefixes.
+	// Step-declared env vars take precedence over environment-declared ones.
+	for k, v := range env.Variables {
+		// Skip controlled vars and LC_* prefixes (controlled by shell adapter for locale).
+		// Uses exported ShellControlledEnvVars from workflow package for consistency with compile-time checks.
+		if workflow.ShellControlledEnvVars[k] || workflow.IsShellLCPrefix(k) {
+			continue
+		}
+		if _, exists := existingEnv[k]; !exists {
+			existingEnv[k] = v
+		}
+	}
+
+	// Re-encode the merged env as JSON and store it back.
+	jsonBytes, _ := json.Marshal(existingEnv)
+	merged["env"] = string(jsonBytes)
 }
 
 // incrementVisit checks the max_visits limit and increments the visit counter
