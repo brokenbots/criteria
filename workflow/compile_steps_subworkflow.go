@@ -4,7 +4,6 @@ package workflow
 
 import (
 	"fmt"
-	"time"
 
 	"github.com/hashicorp/hcl/v2"
 )
@@ -12,6 +11,8 @@ import (
 // compileSubworkflowStep compiles a non-iterating subworkflow-targeted step and
 // registers it in g. subworkflowRef is the pre-resolved subworkflow name from
 // resolveStepTarget.
+//
+//nolint:funlen // W14: sequential compile+validate phases; splitting adds indirection without clarity gain
 func compileSubworkflowStep(g *FSMGraph, sp *StepSpec, _ *Spec, subworkflowRef string, opts CompileOpts) hcl.Diagnostics {
 	var diags hcl.Diagnostics
 
@@ -74,7 +75,7 @@ func compileSubworkflowStep(g *FSMGraph, sp *StepSpec, _ *Spec, subworkflowRef s
 		SubworkflowRef: subworkflowRef,
 		OnCrash:        effectiveOnCrash,
 		MaxVisits:      sp.MaxVisits,
-		Timeout:        time.Duration(timeout),
+		Timeout:        timeout,
 		InputExprs:     inputExprs,
 		Outcomes:       map[string]string{},
 		Environment:    envKey,

@@ -100,6 +100,8 @@ func resolveStepTarget(stepName string, body hcl.Body, g *FSMGraph) (kind StepTa
 // validates it against g.Environments. Returns the resolved "<type>.<name>" key,
 // or "" if no environment attribute is present. Returns an error diagnostic when
 // the attribute is a quoted string rather than a bare traversal.
+//
+//nolint:funlen // W14: multi-step traversal validation with per-error diagnostics; splitting adds indirection
 func resolveStepEnvironmentOverride(stepName string, body hcl.Body, g *FSMGraph) (envKey string, diags hcl.Diagnostics) {
 	if body == nil {
 		return "", nil

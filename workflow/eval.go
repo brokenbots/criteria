@@ -147,7 +147,6 @@ func ResolveInputExprsAsCty(exprs map[string]hcl.Expression, vars map[string]cty
 	return result, nil
 }
 
-
 // is the "each" variable. Used to produce the planned error message before
 // the HCL evaluator runs, which would otherwise give a generic error.
 func refsEach(expr hcl.Expression) bool {

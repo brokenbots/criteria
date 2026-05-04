@@ -71,7 +71,7 @@ func resumeOneRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint, cli
 		return
 	}
 
-	if err := checkIterationCursorValidity(graph, resp.VariableScope, resp.CurrentStep); err != nil {
+	if err := checkIterationCursorValidity(graph, resp.VariableScope); err != nil {
 		abandonCheckpoint(log, cp, "checkpoint step is no longer valid after workflow edit", err)
 		return
 	}
@@ -232,7 +232,7 @@ func serviceResumeSignals(ctx context.Context, log *slog.Logger, rc reattachTran
 // crash and resume.
 //
 // Returns a non-nil error (suitable for abandonCheckpoint) when the check fails.
-func checkIterationCursorValidity(graph *workflow.FSMGraph, variableScope, currentStep string) error {
+func checkIterationCursorValidity(graph *workflow.FSMGraph, variableScope string) error {
 	// Discard the error: RestoreVarScope returns an empty stack on parse failure,
 	// which the check below handles correctly. A broken scope is not an
 	// iteration-cursor incompatibility.

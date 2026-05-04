@@ -327,9 +327,9 @@ func calleeBodyWithStep(adapterType string) *workflow.FSMGraph {
 		InitialState: "work",
 		Steps: map[string]*workflow.StepNode{
 			"work": {
-				Name:    "work",
+				Name:       "work",
 				TargetKind: workflow.StepTargetAdapter,
-					AdapterRef: instanceID,
+				AdapterRef: instanceID,
 				Outcomes: map[string]string{
 					"success": "done",
 				},

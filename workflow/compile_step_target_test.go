@@ -303,11 +303,11 @@ workflow "t" {
 // TestCompileStep_SubworkflowStepInput verifies that a subworkflow-targeted step
 // accepts an input { } block and stores the expressions in StepNode.InputExprs.
 func TestCompileStep_SubworkflowStepInput(t *testing.T) {
-dir := t.TempDir()
-subHCL := minimalCalleeHCL("inner", nil)
-writeSubworkflowDir(t, dir, "inner", subHCL)
+	dir := t.TempDir()
+	subHCL := minimalCalleeHCL("inner", nil)
+	writeSubworkflowDir(t, dir, "inner", subHCL)
 
-src := `
+	src := `
 workflow "t" {
   adapter "noop" "default" {}
   version       = "0.1"
@@ -326,36 +326,36 @@ workflow "t" {
   state "done" { terminal = true }
 }
 `
-spec, diags := Parse("t.hcl", []byte(src))
-if diags.HasErrors() {
-t.Fatalf("parse: %s", diags.Error())
-}
-g, diags := CompileWithOpts(spec, nil, CompileOpts{
-WorkflowDir:         dir,
-SubWorkflowResolver: &LocalSubWorkflowResolver{},
-})
-if diags.HasErrors() {
-t.Fatalf("unexpected compile error: %s", diags.Error())
-}
-step, ok := g.Steps["s"]
-if !ok {
-t.Fatal("step 's' not found in compiled graph")
-}
-if step.TargetKind != StepTargetSubworkflow {
-t.Errorf("TargetKind = %v, want StepTargetSubworkflow", step.TargetKind)
-}
-if step.InputExprs == nil {
-t.Fatal("InputExprs is nil; expected step-level input to be stored")
-}
-if _, ok := step.InputExprs["greeting"]; !ok {
-t.Errorf("InputExprs missing %q key; got keys: %v", "greeting", mapKeys(step.InputExprs))
-}
+	spec, diags := Parse("t.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	g, diags := CompileWithOpts(spec, nil, CompileOpts{
+		WorkflowDir:         dir,
+		SubWorkflowResolver: &LocalSubWorkflowResolver{},
+	})
+	if diags.HasErrors() {
+		t.Fatalf("unexpected compile error: %s", diags.Error())
+	}
+	step, ok := g.Steps["s"]
+	if !ok {
+		t.Fatal("step 's' not found in compiled graph")
+	}
+	if step.TargetKind != StepTargetSubworkflow {
+		t.Errorf("TargetKind = %v, want StepTargetSubworkflow", step.TargetKind)
+	}
+	if step.InputExprs == nil {
+		t.Fatal("InputExprs is nil; expected step-level input to be stored")
+	}
+	if _, ok := step.InputExprs["greeting"]; !ok {
+		t.Errorf("InputExprs missing %q key; got keys: %v", "greeting", mapKeys(step.InputExprs))
+	}
 }
 
 func mapKeys[K comparable, V any](m map[K]V) []K {
-keys := make([]K, 0, len(m))
-for k := range m {
-keys = append(keys, k)
-}
-return keys
+	keys := make([]K, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
 }

@@ -1243,14 +1243,14 @@ func TestCheckIterationCursorValidity_StepRemoved(t *testing.T) {
 	scope := iterCursorScopeForStep(t, g, "execute")
 
 	// Confirm the baseline: scope with "execute" still in the graph returns nil.
-	if err := checkIterationCursorValidity(g, scope, "execute"); err != nil {
+	if err := checkIterationCursorValidity(g, scope); err != nil {
 		t.Fatalf("baseline check failed unexpectedly: %v", err)
 	}
 
 	// Simulate the workflow being edited: remove "execute" from the graph.
 	delete(g.Steps, "execute")
 
-	err := checkIterationCursorValidity(g, scope, "execute")
+	err := checkIterationCursorValidity(g, scope)
 	if err == nil {
 		t.Fatal("expected error when iterating step no longer exists, got nil")
 	}
@@ -1272,7 +1272,7 @@ func TestCheckIterationCursorValidity_NoActiveIteration(t *testing.T) {
 		t.Fatalf("SerializeVarScope: %v", err)
 	}
 
-	if err := checkIterationCursorValidity(g, scope, "execute"); err != nil {
+	if err := checkIterationCursorValidity(g, scope); err != nil {
 		t.Errorf("expected nil for non-iteration step; got: %v", err)
 	}
 }
