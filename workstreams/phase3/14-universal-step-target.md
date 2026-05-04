@@ -458,6 +458,25 @@ The test suite now exercises both the positive and negative behavior that matter
 - `make ci` ✅
 - `git --no-pager grep -nE 'hcl:"adapter,optional"|hcl:"agent,optional"' -- ':!*_test.go' ':!docs/' ':!CHANGELOG.md' ':!workstreams/'` ✅ (no matches)
 
+### Review 2026-05-04-04 — approved
+
+#### Summary
+The PR-review remediations are in place and hold up under re-review. Subworkflow-targeted steps now reject per-step `environment` overrides instead of silently ignoring them, the new documentation/examples match the shipped W14 surface, and the subworkflow step-input validation remains enforced for both iterating and non-iterating paths.
+
+#### Plan Adherence
+- **Subworkflow environment behavior:** now matches the intended contract; environment is configured on the subworkflow declaration, and step-level overrides are compile errors for subworkflow targets.
+- **Subworkflow step input contract:** still enforced at compile time for declared variables only, including iterating steps.
+- **Docs/examples:** W14 examples now use `target = ...`, and the step-level environment override subsection documents the bare-traversal syntax and adapter-only restriction.
+
+#### Test Intent Assessment
+The added negative tests for subworkflow-targeted `environment` are appropriately regression-sensitive: a future implementation that silently ignores the attribute would fail. Combined with the previously added env-injection and subworkflow input-path tests, the suite now covers the important user-visible and contract-visible behaviors for this workstream.
+
+#### Validation Performed
+- `go test -race ./...` ✅
+- `make validate` ✅
+- `make ci` ✅
+- `git --no-pager grep -nE 'hcl:"adapter,optional"|hcl:"agent,optional"' -- ':!*_test.go' ':!docs/' ':!CHANGELOG.md' ':!workstreams/'` ✅ (no matches)
+
 
 ## Risks
 
