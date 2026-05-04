@@ -44,7 +44,7 @@ func WithResumedIter(stack []workflow.IterCursor) Option {
 }
 
 // WithPendingSignal seeds RunState.PendingSignal at the start of RunFrom.
-// Use this when re-attaching an agent to a run that was paused mid-signal-
+// Use this when re-attaching an adapter to a run that was paused mid-signal-
 // wait: the wait node sees PendingSignal set and immediately re-issues
 // ErrPaused so the run stays blocked until the real Resume RPC arrives (W05).
 func WithPendingSignal(signal string) Option {

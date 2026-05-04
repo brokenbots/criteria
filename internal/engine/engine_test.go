@@ -187,6 +187,14 @@ func compile(t *testing.T, src string) *workflow.FSMGraph {
 	return g
 }
 
+// NewTestEngine creates an engine with auto-bootstrap enabled for testing.
+// This is a convenience helper for tests that don't explicitly manage adapter lifecycle.
+func NewTestEngine(g *workflow.FSMGraph, loader plugin.Loader, sink Sink, opts ...Option) *Engine {
+	allOpts := []Option{WithAutoBootstrapAdapters()}
+	allOpts = append(allOpts, opts...)
+	return New(g, loader, sink, allOpts...)
+}
+
 func TestEngineHappyPath(t *testing.T) {
 	g := compile(t, `
 workflow "t" {
@@ -205,7 +213,7 @@ workflow "t" {
 }`)
 	sink := &fakeSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": &fakePlugin{name: "fake", outcome: "success"}}}
-	if err := New(g, loader, sink).Run(context.Background()); err != nil {
+	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	if sink.terminal != "done" || !sink.terminalOK {
@@ -235,7 +243,7 @@ workflow "t" {
 }`)
 	sink := &fakeSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": &fakePlugin{name: "fake", outcome: "", err: errors.New("boom")}}}
-	if err := New(g, loader, sink).Run(context.Background()); err != nil {
+	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	if sink.terminal != "fail" || sink.terminalOK {
@@ -258,7 +266,7 @@ workflow "t" {
 }`)
 	sink := &fakeSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": &fakePlugin{name: "fake", outcome: "again"}}}
-	err := New(g, loader, sink).Run(context.Background())
+	err := NewTestEngine(g, loader, sink).Run(context.Background())
 	if err == nil {
 		t.Fatal("expected loop guard error")
 	}
@@ -273,7 +281,7 @@ func TestEngineLifecycleWithNoopPlugin(t *testing.T) {
 
 	g := compileFile(t, "testdata/adapter_lifecycle_noop.hcl")
 	sink := &fakeSink{}
-	if err := New(g, loader, sink).Run(context.Background()); err != nil {
+	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	if sink.terminal != "done" || !sink.terminalOK {
@@ -293,7 +301,7 @@ func TestNamedAgentLifecycleEventsOnExecutionStep(t *testing.T) {
 
 	g := compileFile(t, "testdata/adapter_lifecycle_noop.hcl")
 	sink := &lifecycleCaptureSink{}
-	if err := New(g, loader, sink).Run(context.Background()); err != nil {
+	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -347,7 +355,7 @@ func TestEngineLifecycleOpenTimeoutKeepsSessionAlive(t *testing.T) {
 
 	g := compileFile(t, "testdata/adapter_lifecycle_noop_open_timeout.hcl")
 	sink := &captureStepEventSink{}
-	if err := New(g, loader, sink).Run(context.Background()); err != nil {
+	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	if sink.terminal != "done" || !sink.terminalOK {
@@ -497,7 +505,7 @@ workflow "perm" {
 }`)
 
 	sink := &captureStepEventSink{}
-	if err := New(g, loader, sink).Run(context.Background()); err != nil {
+	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	if sink.terminal != "done" || !sink.terminalOK {
@@ -569,7 +577,7 @@ workflow "perm-deny" {
 }`)
 
 	sink := &captureStepEventSink{}
-	if err := New(g, loader, sink).Run(context.Background()); err != nil {
+	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	if sink.sawAdapterKind("permission.granted") {
@@ -616,7 +624,7 @@ workflow "perm-shell" {
 }`)
 
 	sink := &captureStepEventSink{}
-	if err := New(g, loader, sink).Run(context.Background()); err != nil {
+	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	granted, ok := sink.firstAdapterEvent("permission.granted")
@@ -650,7 +658,7 @@ workflow "t" {
 }`)
 	sink := &fakeSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": &fakePlugin{name: "fake", outcome: "again"}}}
-	err := New(g, loader, sink).Run(context.Background())
+	err := NewTestEngine(g, loader, sink).Run(context.Background())
 	if err == nil {
 		t.Fatal("expected max_visits error")
 	}
@@ -705,7 +713,7 @@ workflow "t" {
 }`)
 	sink := &fakeSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": plg}}
-	if err := New(g, loader, sink).Run(context.Background()); err != nil {
+	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if sink.terminal != "done" || !sink.terminalOK {
@@ -733,7 +741,7 @@ workflow "t" {
 	}
 	sink := &fakeSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": &fakePlugin{name: "fake", outcome: "success"}}}
-	if err := New(g, loader, sink).Run(context.Background()); err != nil {
+	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 }
@@ -762,7 +770,7 @@ workflow "t" {
 	// Plugin that always errors so the retry loop is exercised.
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": &errPlugin{name: "fake", err: errors.New("boom")}}}
 	sink := &fakeSink{}
-	err := New(g, loader, sink).Run(context.Background())
+	err := NewTestEngine(g, loader, sink).Run(context.Background())
 	if err == nil {
 		t.Fatal("expected max_visits error")
 	}
@@ -803,7 +811,7 @@ workflow "t" {
 }`)
 	sink := &fakeSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": &fakePlugin{name: "fake", outcome: "again"}}}
-	eng := New(g, loader, sink)
+	eng := NewTestEngine(g, loader, sink)
 	err := eng.Run(context.Background())
 	if err == nil {
 		t.Fatal("expected max_total_steps error from first run")
@@ -922,7 +930,7 @@ workflow "t" {
 }`)
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": &fakePlugin{name: "fake", outcome: "done"}}}
 	sink := &fakeSink{}
-	eng := New(g, loader, sink)
+	eng := NewTestEngine(g, loader, sink)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // pre-cancel before Run
@@ -966,7 +974,7 @@ workflow "t" {
 		"fake": &fakePlugin{name: "fake", outcome: "unexpected-outcome"},
 	}}
 	sink := &fakeSink{}
-	err := New(g, loader, sink).Run(context.Background())
+	err := NewTestEngine(g, loader, sink).Run(context.Background())
 	if err == nil {
 		t.Fatal("expected unmapped-outcome error from engine guard; got nil")
 	}
@@ -1010,7 +1018,7 @@ workflow "t" {
 }`)
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": &fakePlugin{name: "fake", outcome: "success"}}}
 	sink := &fakeSink{}
-	eng := New(g, loader, sink)
+	eng := NewTestEngine(g, loader, sink)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // pre-cancel before Run

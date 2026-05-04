@@ -138,8 +138,8 @@ type Engine struct {
 }
 
 func New(graph *workflow.FSMGraph, loader plugin.Loader, sink Sink, opts ...Option) *Engine {
-	// Default to true for now (pre-W12 behavior); will flip to false when W12 lands.
-	e := &Engine{graph: graph, loader: loader, sink: sink, autoBootstrapAdapters: true}
+	// Default to false (strict lifecycle semantics). Auto-bootstrap is opt-in via WithAutoBootstrapAdapters().
+	e := &Engine{graph: graph, loader: loader, sink: sink, autoBootstrapAdapters: false}
 	for _, opt := range opts {
 		if opt != nil {
 			opt(e)
