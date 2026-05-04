@@ -271,7 +271,7 @@ func TestEngineLifecycleWithNoopPlugin(t *testing.T) {
 	})
 	t.Cleanup(func() { _ = loader.Shutdown(context.Background()) })
 
-	g := compileFile(t, "testdata/agent_lifecycle_noop.hcl")
+	g := compileFile(t, "testdata/adapter_lifecycle_noop.hcl")
 	sink := &fakeSink{}
 	if err := New(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
@@ -291,7 +291,7 @@ func TestNamedAgentLifecycleEventsOnExecutionStep(t *testing.T) {
 	})
 	t.Cleanup(func() { _ = loader.Shutdown(context.Background()) })
 
-	g := compileFile(t, "testdata/agent_lifecycle_noop.hcl")
+	g := compileFile(t, "testdata/adapter_lifecycle_noop.hcl")
 	sink := &lifecycleCaptureSink{}
 	if err := New(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
@@ -345,7 +345,7 @@ func TestEngineLifecycleOpenTimeoutKeepsSessionAlive(t *testing.T) {
 	})
 	t.Cleanup(func() { _ = loader.Shutdown(context.Background()) })
 
-	g := compileFile(t, "testdata/agent_lifecycle_noop_open_timeout.hcl")
+	g := compileFile(t, "testdata/adapter_lifecycle_noop_open_timeout.hcl")
 	sink := &captureStepEventSink{}
 	if err := New(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)

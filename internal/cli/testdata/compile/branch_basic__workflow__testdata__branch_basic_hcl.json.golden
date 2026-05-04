@@ -7,7 +7,7 @@
     "MaxStepRetries": 0,
     "MaxVisitsWarnThreshold": 200
   },
-  "agents": [
+  "adapters": [
     {
       "type": "noop",
       "name": "default",
