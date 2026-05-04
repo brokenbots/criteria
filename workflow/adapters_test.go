@@ -45,7 +45,7 @@ workflow "session_flow" {
   }
 
   step "run" {
-    adapter = adapter.copilot.exec
+    target = adapter.copilot.exec
     outcome "approved" { transition_to = "done" }
   }
 
@@ -73,7 +73,7 @@ workflow "session_flow" {
 	}
 
 	run := g.Steps["run"]
-	if run.Adapter != "copilot.exec" {
+	if run.AdapterRef != "copilot.exec" {
 		t.Fatalf("run step did not preserve adapter: %+v", run)
 	}
 	if run.OnCrash != "respawn" {
@@ -94,7 +94,7 @@ workflow "test" {
   }
 
   step "step_one" {
-    adapter = adapter.noop.default
+    target = adapter.noop.default
     lifecycle = "open"
     outcome "success" { transition_to = "done" }
   }
@@ -121,7 +121,7 @@ workflow "x" {
   initial_state = "a"
   target_state = "done"
   step "a" {
-    adapter = adapter.ghost.default
+    target = adapter.ghost.default
     outcome "ok" { transition_to = "done" }
   }
   state "done" { terminal = true }
@@ -143,7 +143,7 @@ workflow "x" {
     config { }
   }
   step "a" {
-    adapter = adapter.copilot.worker
+    target = adapter.copilot.worker
     outcome "ok" { transition_to = "done" }
   }
   state "done" { terminal = true }
@@ -163,7 +163,7 @@ workflow "x" {
     config { }
   }
   step "a" {
-    adapter = adapter.shell.default
+    target = adapter.shell.default
     outcome "ok" { transition_to = "done" }
   }
   state "done" { terminal = true }

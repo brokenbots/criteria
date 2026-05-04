@@ -11,7 +11,7 @@ workflow "agent_lifecycle_noop_open_timeout" {
   }
 
   step "run_agent" {
-    adapter = adapter.noop.demo
+    target = adapter.noop.demo
     input {
       prompt = "hello"
     }

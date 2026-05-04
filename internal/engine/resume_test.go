@@ -16,11 +16,11 @@ workflow "t" {
   initial_state = "step1"
   target_state  = "done"
   step "step1" {
-    adapter = adapter.fake
+    target = adapter.fake
     outcome "success" { transition_to = "step2" }
   }
   step "step2" {
-    adapter = adapter.fake
+    target = adapter.fake
     outcome "success" { transition_to = "done" }
   }
   state "done" { terminal = true }

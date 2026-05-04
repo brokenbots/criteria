@@ -16,7 +16,7 @@ workflow "hello" {
   }
 
   step "say_hello" {
-    adapter = adapter.shell.default
+    target = adapter.shell.default
     input {
       command = "echo hello from criteria"
     }

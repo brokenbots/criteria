@@ -10,7 +10,7 @@ workflow "two_agent_loop" {
   adapter "copilot" "reviewer" {}
 
   step "execute" {
-    adapter = adapter.copilot.executor
+    target = adapter.copilot.executor
     on_crash = "abort_run"
 
     outcome "approved" { transition_to = "review" }
@@ -18,7 +18,7 @@ workflow "two_agent_loop" {
   }
 
   step "review" {
-    adapter = adapter.copilot.reviewer
+    target = adapter.copilot.reviewer
 
     outcome "approved" { transition_to = "done" }
     outcome "changes"  { transition_to = "execute" }

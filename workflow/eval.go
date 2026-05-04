@@ -116,7 +116,37 @@ func ResolveInputExprsWithOpts(exprs map[string]hcl.Expression, vars map[string]
 	return result, nil
 }
 
-// refsEach returns true if the expression contains any traversal whose root
+// ResolveInputExprsAsCty evaluates a map of HCL expressions against the provided
+// vars map and returns the raw cty.Value map. Unlike ResolveInputExprsWithOpts,
+// values are not coerced to strings — callers that need cty.Value (e.g. subworkflow
+// step input binding) use this form.
+func ResolveInputExprsAsCty(exprs map[string]hcl.Expression, vars map[string]cty.Value, opts FunctionOptions) (map[string]cty.Value, error) {
+	if len(exprs) == 0 {
+		return nil, nil
+	}
+	ctx := BuildEvalContextWithOpts(vars, opts)
+	result := make(map[string]cty.Value, len(exprs))
+	var errs []string
+	for k, expr := range exprs {
+		if refsEach(expr) {
+			if _, hasEach := vars["each"]; !hasEach {
+				errs = append(errs, fmt.Sprintf("input.%s: each is only valid inside for_each", k))
+				continue
+			}
+		}
+		val, diags := expr.Value(ctx)
+		if diags.HasErrors() {
+			errs = append(errs, fmt.Sprintf("input.%s: %s", k, diags.Error()))
+			continue
+		}
+		result[k] = val
+	}
+	if len(errs) > 0 {
+		return nil, fmt.Errorf("expression evaluation errors: %s", strings.Join(errs, "; "))
+	}
+	return result, nil
+}
+
 // is the "each" variable. Used to produce the planned error message before
 // the HCL evaluator runs, which would otherwise give a generic error.
 func refsEach(expr hcl.Expression) bool {

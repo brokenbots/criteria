@@ -71,7 +71,7 @@ func resumeOneRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint, cli
 		return
 	}
 
-	if err := checkIterationCursorValidity(graph, resp.VariableScope, resp.CurrentStep); err != nil {
+	if err := checkIterationCursorValidity(graph, resp.VariableScope); err != nil {
 		abandonCheckpoint(log, cp, "checkpoint step is no longer valid after workflow edit", err)
 		return
 	}
@@ -232,7 +232,7 @@ func serviceResumeSignals(ctx context.Context, log *slog.Logger, rc reattachTran
 // crash and resume.
 //
 // Returns a non-nil error (suitable for abandonCheckpoint) when the check fails.
-func checkIterationCursorValidity(graph *workflow.FSMGraph, variableScope, currentStep string) error {
+func checkIterationCursorValidity(graph *workflow.FSMGraph, variableScope string) error {
 	// Discard the error: RestoreVarScope returns an empty stack on parse failure,
 	// which the check below handles correctly. A broken scope is not an
 	// iteration-cursor incompatibility.
@@ -249,13 +249,7 @@ func checkIterationCursorValidity(graph *workflow.FSMGraph, variableScope, curre
 	if !ok {
 		return fmt.Errorf("checkpoint iterating step %q no longer exists in the workflow", top.StepName)
 	}
-	// For type="workflow" steps with a body, verify the currentStep still exists
-	// in the body graph (the body may have been edited between crash and resume).
-	if stepNode.Body != nil && currentStep != "" {
-		if _, inBody := stepNode.Body.Steps[currentStep]; !inBody {
-			return fmt.Errorf("checkpoint body step %q no longer exists in iterating step %q", currentStep, top.StepName)
-		}
-	}
+	_ = stepNode // reserved for future step-kind-specific resume validation
 	return nil
 }
 

@@ -47,9 +47,10 @@ func (s *adapterEvents) findByType(eventType string) (map[string]any, bool) {
 // fields that the sandbox hardening reads; caller supplies the full input map.
 func makeSandboxStep(input map[string]string) *workflow.StepNode {
 	return &workflow.StepNode{
-		Name:    "sandbox-test",
-		Adapter: shell.Name,
-		Input:   input,
+		Name:       "sandbox-test",
+		TargetKind: workflow.StepTargetAdapter,
+		AdapterRef: shell.Name,
+		Input:      input,
 		Outcomes: map[string]string{
 			"success": "__done__",
 			"failure": "__done__",

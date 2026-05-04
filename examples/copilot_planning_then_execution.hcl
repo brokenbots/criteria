@@ -34,7 +34,7 @@ workflow "copilot_planning_then_execution" {
   # ── Planning (high reasoning effort) ────────────────────────────────────────
 
   step "plan" {
-    adapter = adapter.copilot.engineer
+    target = adapter.copilot.engineer
     allow_tools = ["read_file"]
     input {
       # reasoning_effort = "high" overrides the adapter default for this step only.
@@ -53,7 +53,7 @@ workflow "copilot_planning_then_execution" {
   # ── Execution (inherits adapter-level "medium") ────────────────────────────────
 
   step "execute" {
-    adapter = adapter.copilot.engineer
+    target = adapter.copilot.engineer
     allow_tools = ["read_file", "write_file", "shell:go build*", "shell:go test*"]
     input {
       prompt = <<-EOT

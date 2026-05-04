@@ -85,7 +85,7 @@ workflow "test" {
   target_state  = "done"
 
   step "step1" {
-    adapter = adapter.noop
+    target = adapter.noop
     outcome "success" { transition_to = "done" }
   }
 
@@ -162,7 +162,7 @@ workflow "test" {
   target_state  = "done"
 
   step "step1" {
-    adapter = adapter.noop
+    target = adapter.noop
     outcome "success" { transition_to = "done" }
   }
 
@@ -212,7 +212,7 @@ workflow "test" {
   target_state  = "done"
 
   step "fail_step" {
-    adapter = adapter.noop
+    target = adapter.noop
     outcome "success" { transition_to = "done" }
   }
 
@@ -260,12 +260,12 @@ workflow "test" {
   target_state  = "done"
 
   step "step1" {
-    adapter = adapter.noop_a
+    target = adapter.noop_a
     outcome "success" { transition_to = "step2" }
   }
 
   step "step2" {
-    adapter = adapter.noop_b
+    target = adapter.noop_b
     outcome "success" { transition_to = "done" }
   }
 
@@ -359,7 +359,7 @@ workflow "test" {
   target_state  = "done"
 
   step "step1" {
-    adapter = adapter.noop
+    target = adapter.noop
     outcome "success" { transition_to = "done" }
   }
 
@@ -407,12 +407,12 @@ workflow "test" {
   target_state  = "done"
 
   step "step1" {
-    adapter = adapter.noop_a
+    target = adapter.noop_a
     outcome "success" { transition_to = "step2" }
   }
 
   step "step2" {
-    adapter = adapter.noop_b
+    target = adapter.noop_b
     outcome "success" { transition_to = "done" }
   }
 

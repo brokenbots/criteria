@@ -51,7 +51,7 @@ workflow "resume" {
   adapter "shell" "default" {}
 
   step "deploy" {
-    adapter = adapter.shell.default
+    target = adapter.shell.default
     input {
       command = "echo ${steps.build.stdout}"
     }

@@ -19,7 +19,7 @@ workflow "interpolate" {
     default = "orchestrator"
   }
   step "clone" {
-    adapter = adapter.shell.default
+    target = adapter.shell.default
     input {
       command = "echo ${var.repo}"
     }
@@ -39,14 +39,14 @@ workflow "step_outputs" {
   target_state  = "__done__"
 
   step "build" {
-    adapter = adapter.shell.default
+    target = adapter.shell.default
     input {
       command = "echo building"
     }
     outcome "success" { transition_to = "publish" }
   }
   step "publish" {
-    adapter = adapter.shell.default
+    target = adapter.shell.default
     input {
       command = "echo ${steps.build.stdout}"
     }

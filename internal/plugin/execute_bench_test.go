@@ -32,10 +32,11 @@ func (noopAdapter) Execute(_ context.Context, _ *workflow.StepNode, _ adapter.Ev
 // no-op command (true(1)) so process spawn dominates, not command duration.
 func minimalStep(name string) *workflow.StepNode {
 	return &workflow.StepNode{
-		Name:     name,
-		Adapter:  "shell",
-		Input:    map[string]string{"command": "true"},
-		Outcomes: map[string]string{"success": "done", "failure": "done"},
+		Name:       name,
+		TargetKind: workflow.StepTargetAdapter,
+		AdapterRef: "shell",
+		Input:      map[string]string{"command": "true"},
+		Outcomes:   map[string]string{"success": "done", "failure": "done"},
 	}
 }
 
@@ -69,9 +70,10 @@ func BenchmarkPluginExecuteNoop(b *testing.B) {
 	factory := BuiltinFactoryForAdapter(noopAdapter{})
 	ctx := context.Background()
 	step := &workflow.StepNode{
-		Name:     "noop-step",
-		Adapter:  "noop",
-		Outcomes: map[string]string{"success": "done"},
+		Name:       "noop-step",
+		TargetKind: workflow.StepTargetAdapter,
+		AdapterRef: "noop",
+		Outcomes:   map[string]string{"success": "done"},
 	}
 	p := factory()
 	if err := p.OpenSession(ctx, "sess", nil); err != nil {

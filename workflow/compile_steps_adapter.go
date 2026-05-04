@@ -1,7 +1,6 @@
 package workflow
 
-// compile_steps_adapter.go — compile path for adapter- and agent-backed steps
-// (non-iterating).
+// compile_steps_adapter.go — compile path for adapter-targeted steps (non-iterating).
 
 import (
 	"fmt"
@@ -25,11 +24,9 @@ var copilotAllowToolsAliases = map[string]string{
 	"write_file": "write",
 }
 
-// compileAdapterStep compiles a non-iterating adapter- or agent-backed step
-// and registers it in g.
-//
-//nolint:funlen // W11: function length unavoidable due to comprehensive adapter validation and resolution
-func compileAdapterStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[string]AdapterInfo, opts CompileOpts) hcl.Diagnostics {
+// compileAdapterStep compiles a non-iterating adapter-targeted step and registers
+// it in g. adapterRef is the pre-resolved "<type>.<name>" string from resolveStepTarget.
+func compileAdapterStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[string]AdapterInfo, opts CompileOpts, adapterRef string) hcl.Diagnostics {
 	var diags hcl.Diagnostics
 
 	ok, d := validateStepRegistration(g, sp)
@@ -38,23 +35,7 @@ func compileAdapterStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[strin
 		return diags
 	}
 
-	// Resolve the adapter reference from the step's Remain body as an HCL traversal.
-	// This replaces the old sp.Adapter string field with proper traversal parsing.
-	adapterRef, adapterPresent, d := resolveStepAdapterRef(sp.Remain)
-	diags = append(diags, d...)
-
-	// Validate that the resolved adapter reference (if present) exists in the graph.
-	// This check comes after traversal resolution to provide precise diagnostics.
-	if adapterPresent {
-		if _, ok := g.Adapters[adapterRef]; !ok {
-			diags = append(diags, &hcl.Diagnostic{
-				Severity: hcl.DiagError,
-				Summary:  fmt.Sprintf("step %q: referenced adapter %q is not declared", sp.Name, adapterRef),
-			})
-		}
-	}
-
-	diags = append(diags, validateAdapterRefRequired(sp, adapterPresent)...)
+	diags = append(diags, validateAllowToolsWithAdapter(sp, adapterRef)...)
 	diags = append(diags, validateLegacyConfig(sp)...)
 	diags = append(diags, validateOnFailureForNonIterating(sp)...)
 
@@ -68,15 +49,10 @@ func compileAdapterStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[strin
 		diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q: max_visits must be >= 0", sp.Name)})
 	}
 
-	// Extract the adapter type from the dotted reference for validation and warnings.
-	adapterType := ""
-	if adapterRef != "" {
-		parts := strings.Split(adapterRef, ".")
-		if len(parts) == 2 {
-			adapterType = parts[0]
-		}
-	}
+	envKey, d := resolveStepEnvironmentOverride(sp.Name, sp.Remain, g)
+	diags = append(diags, d...)
 
+	adapterType := adapterTypeFromRef(adapterRef)
 	inputMap, inputExprs, d := decodeStepInput(g, sp, schemas, opts, adapterType)
 	diags = append(diags, d...)
 
@@ -86,7 +62,7 @@ func compileAdapterStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[strin
 		diags = append(diags, validateEachRefs(sp.Name, inputExprs)...)
 	}
 
-	node := newBaseStepNodeWithAdapterRef(sp, spec, adapterRef, effectiveOnCrash, timeout, inputMap, inputExprs)
+	node := newAdapterStepNode(sp, spec, adapterRef, effectiveOnCrash, envKey, timeout, inputMap, inputExprs)
 	diags = append(diags, maybeCopilotAliasWarnings(sp.Name, adapterType, node.AllowTools)...)
 	diags = append(diags, compileOutcomeBlock(sp, node)...)
 
@@ -102,6 +78,18 @@ func compileAdapterStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[strin
 // allowToolsForStep returns the effective AllowTools for a step.
 func allowToolsForStep(sp *StepSpec, spec *Spec) []string {
 	return unionAllowTools(sp.AllowTools, workflowAllowTools(spec))
+}
+
+// adapterTypeFromRef extracts the adapter type from a dotted "<type>.<name>" reference.
+func adapterTypeFromRef(adapterRef string) string {
+	if adapterRef == "" {
+		return ""
+	}
+	parts := strings.Split(adapterRef, ".")
+	if len(parts) == 2 {
+		return parts[0]
+	}
+	return ""
 }
 
 // validateOnFailureForNonIterating validates on_failure for steps that do not
@@ -136,40 +124,34 @@ func maybeCopilotAliasWarnings(stepName, adapterName string, tools []string) hcl
 	return diags
 }
 
-// newBaseStepNodeWithAdapterRef constructs a StepNode with all fields common to both
-// non-iterating and iterating adapter steps, using the resolved adapterRef instead
-// of reading from sp.Adapter (which is no longer a gohcl-decoded field).
-func newBaseStepNodeWithAdapterRef(sp *StepSpec, spec *Spec, adapterRef string, effectiveOnCrash string, timeout time.Duration,
+// newAdapterStepNode constructs a StepNode for an adapter-targeted step.
+func newAdapterStepNode(sp *StepSpec, spec *Spec, adapterRef string, effectiveOnCrash string, envKey string, timeout time.Duration,
 	inputMap map[string]string, inputExprs map[string]hcl.Expression) *StepNode {
 	return &StepNode{
-		Name:       sp.Name,
-		Adapter:    adapterRef, // resolved "<type>.<name>" from traversal expression
-		OnCrash:    effectiveOnCrash,
-		Type:       "", // only adapter steps; inline workflows removed (see W13)
-		OnFailure:  sp.OnFailure,
-		MaxVisits:  sp.MaxVisits,
-		Input:      inputMap,
-		InputExprs: inputExprs,
-		Timeout:    timeout,
-		Outcomes:   map[string]string{},
-		AllowTools: allowToolsForStep(sp, spec),
+		Name:        sp.Name,
+		TargetKind:  StepTargetAdapter,
+		AdapterRef:  adapterRef,
+		OnCrash:     effectiveOnCrash,
+		OnFailure:   sp.OnFailure,
+		MaxVisits:   sp.MaxVisits,
+		Input:       inputMap,
+		InputExprs:  inputExprs,
+		Timeout:     timeout,
+		Outcomes:    map[string]string{},
+		AllowTools:  allowToolsForStep(sp, spec),
+		Environment: envKey,
 	}
 }
 
-// validateAdapterRefRequired checks constraints that require a valid adapter reference.
-// This is called after the adapter reference has been resolved from the step's
-// Remain body and validated. adapterPresent indicates whether an adapter attribute
-// was found in the step.
-func validateAdapterRefRequired(sp *StepSpec, adapterPresent bool) hcl.Diagnostics {
+// validateAllowToolsWithAdapter checks that allow_tools is only set on adapter-targeted steps.
+func validateAllowToolsWithAdapter(sp *StepSpec, adapterRef string) hcl.Diagnostics {
 	var diags hcl.Diagnostics
-
-	if len(sp.AllowTools) > 0 && !adapterPresent {
+	if len(sp.AllowTools) > 0 && adapterRef == "" {
 		diags = append(diags, &hcl.Diagnostic{
 			Severity: hcl.DiagError,
 			Summary:  fmt.Sprintf("step %q: allow_tools requires an adapter reference", sp.Name),
 		})
 	}
-
 	return diags
 }
 

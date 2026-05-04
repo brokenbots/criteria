@@ -16,9 +16,10 @@ func (noopSink) Adapter(string, any) {}
 
 func makeStep(input map[string]string) *workflow.StepNode {
 	return &workflow.StepNode{
-		Name:    "test",
-		Adapter: shell.Name,
-		Input:   input,
+		Name:       "test",
+		TargetKind: workflow.StepTargetAdapter,
+		AdapterRef: shell.Name,
+		Input:      input,
 		Outcomes: map[string]string{
 			"success": "__done__",
 			"failure": "__done__",

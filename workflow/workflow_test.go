@@ -13,7 +13,7 @@ workflow "build_and_test" {
   target_state  = "verified"
 
   step "build" {
-    adapter = adapter.shell.default
+    target = adapter.shell.default
     input {
       command = "echo build"
     }
@@ -24,7 +24,7 @@ workflow "build_and_test" {
   }
 
   step "test" {
-    adapter = adapter.shell.default
+    target = adapter.shell.default
     input {
       command = "echo test"
     }
@@ -80,7 +80,7 @@ workflow "x" {
   initial_state = "a"
   target_state  = "done"
   step "a" {
-    adapter = adapter.shell.default
+    target = adapter.shell.default
     outcome "success" { transition_to = "missing" }
   }
   state "done" { terminal = true }
@@ -107,7 +107,7 @@ workflow "x" {
   initial_state = "a"
   target_state  = "halfway"
   step "a" {
-    adapter = adapter.shell.default
+    target = adapter.shell.default
     outcome "success" { transition_to = "halfway" }
   }
   state "halfway" {}
@@ -128,11 +128,11 @@ workflow "x" {
   initial_state = "a"
   target_state  = "done"
   step "a" {
-    adapter = adapter.shell.default
+    target = adapter.shell.default
     outcome "success" { transition_to = "done" }
   }
   step "orphan" {
-    adapter = adapter.shell.default
+    target = adapter.shell.default
     outcome "success" { transition_to = "done" }
   }
   state "done" { terminal = true }
@@ -153,7 +153,7 @@ workflow "x" {
   initial_state = "a"
   target_state  = "done"
   step "a" {
-    adapter = adapter.shell.default
+    target = adapter.shell.default
   }
   state "done" { terminal = true }
 }
@@ -174,13 +174,13 @@ workflow "x" {
   target_state  = "done"
 
   step "open" {
-    adapter = adapter.copilot.default
+    target = adapter.copilot.default
     lifecycle   = "open"
     allow_tools = ["read_file"]
     outcome "success" { transition_to = "done" }
   }
   step "close" {
-    adapter = adapter.copilot.default
+    target = adapter.copilot.default
     outcome "success" { transition_to = "done" }
   }
   state "done" { terminal = true }
@@ -197,8 +197,7 @@ workflow "x" {
 
 func TestCompileAllowToolsWithoutAgentIsError(t *testing.T) {
 	// TestCompileAllowToolsWithoutAgentIsError verifies that using allow_tools on a
-	// bare adapter reference (not declared) produces an error about the bare type.
-	// (The allow_tools validation is now at runtime, not compile time.)
+	// step referencing an undeclared adapter produces an error about the undeclared adapter.
 	src := `
 workflow "x" {
   version       = "0.1"
@@ -206,7 +205,7 @@ workflow "x" {
   target_state  = "done"
 
   step "run" {
-    adapter     = adapter.shell.default
+    target      = adapter.shell.default
     allow_tools = ["shell:git status"]
     outcome "success" { transition_to = "done" }
   }
@@ -235,7 +234,7 @@ workflow "x" {
   target_state  = "done"
 
   step "run" {
-    adapter = adapter.copilot.default
+    target = adapter.copilot.default
     allow_tools = ["read_file"]
     outcome "success" { transition_to = "done" }
   }

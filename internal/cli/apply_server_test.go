@@ -43,14 +43,14 @@ workflow "two_step" {
   adapter "shell" "default" {}
 
   step "step_one" {
-    adapter = adapter.shell.default
+    target = adapter.shell.default
     input { command = "echo step_one" }
     outcome "success" { transition_to = "step_two" }
     outcome "failure" { transition_to = "done" }
   }
 
   step "step_two" {
-    adapter = adapter.shell.default
+    target = adapter.shell.default
     input { command = "echo step_two" }
     outcome "success" { transition_to = "done" }
     outcome "failure" { transition_to = "done" }
@@ -75,14 +75,14 @@ workflow "cancel_test" {
   adapter "shell" "default" {}
 
   step "step_one" {
-    adapter = adapter.shell.default
+    target = adapter.shell.default
     input { command = "echo step_one" }
     outcome "success" { transition_to = "step_two" }
     outcome "failure" { transition_to = "done" }
   }
 
   step "step_two" {
-    adapter = adapter.shell.default
+    target = adapter.shell.default
     input { command = "sleep 30" }
     outcome "success" { transition_to = "done" }
   }
@@ -104,7 +104,7 @@ workflow "pause_resume" {
   adapter "shell" "default" {}
 
   step "step_one" {
-    adapter = adapter.shell.default
+    target = adapter.shell.default
     input { command = "echo step_one" }
     outcome "success" { transition_to = "gate" }
     outcome "failure" { transition_to = "done" }
@@ -116,7 +116,7 @@ workflow "pause_resume" {
   }
 
   step "step_three" {
-    adapter = adapter.shell.default
+    target = adapter.shell.default
     input { command = "echo step_three" }
     outcome "success" { transition_to = "done" }
     outcome "failure" { transition_to = "done" }

@@ -90,8 +90,3 @@ func ResolveStepAdapterRef(body hcl.Body) (adapterRef string, present bool, diag
 	adapterRef = fmt.Sprintf("%s.%s", typeAttr.Name, nameAttr.Name)
 	return adapterRef, true, nil
 }
-
-// resolveStepAdapterRef is a lowercase alias for ResolveStepAdapterRef, kept for backward compatibility.
-func resolveStepAdapterRef(body hcl.Body) (adapterRef string, present bool, diags hcl.Diagnostics) {
-	return ResolveStepAdapterRef(body)
-}

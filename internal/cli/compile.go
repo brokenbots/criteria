@@ -144,7 +144,7 @@ func buildCompileJSON(graph *workflow.FSMGraph) compileJSON { //nolint:funlen //
 		}
 		steps = append(steps, compileStep{
 			Name:       st.Name,
-			Adapter:    st.Adapter,
+			Adapter:    st.AdapterRef,
 			Timeout:    timeout,
 			InputKeys:  sortedMapKeys(st.Input),
 			AllowTools: append([]string(nil), st.AllowTools...),
@@ -313,8 +313,8 @@ func requiredPlugins(graph *workflow.FSMGraph) []string {
 	}
 	for _, st := range graph.Steps {
 		// Steps reference adapters; extract the type from "<type>.<name>" reference.
-		if st.Adapter != "" {
-			parts := strings.Split(st.Adapter, ".")
+		if st.AdapterRef != "" {
+			parts := strings.Split(st.AdapterRef, ".")
 			if len(parts) == 2 {
 				seen[parts[0]] = true
 			}

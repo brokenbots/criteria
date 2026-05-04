@@ -40,7 +40,7 @@ workflow "local_apply_noop" {
   }
 
   step "run_adapter" {
-    adapter = adapter.noop.demo
+    target = adapter.noop.demo
     input {
       prompt = "hello"
     }

@@ -115,7 +115,7 @@ workflow "t" {
         type = "string"
       }
       step "body" {
-        adapter = adapter.fake
+        target = adapter.fake
         input {
           label = var.prefix
         }
@@ -185,7 +185,7 @@ workflow "t" {
 
     workflow {
       step "inner" {
-        adapter = adapter.fake_producer
+        target = adapter.fake_producer
         outcome "success" { transition_to = "_continue" }
       }
     }
@@ -195,7 +195,7 @@ workflow "t" {
   }
 
   step "check" {
-    adapter = adapter.fake_consumer
+    target = adapter.fake_consumer
     input {
       received = steps.inner.result
     }
@@ -246,7 +246,7 @@ workflow "t" {
         value = steps.inner.result
       }
       step "inner" {
-        adapter = adapter.fake_producer
+        target = adapter.fake_producer
         outcome "success" { transition_to = "_continue" }
       }
     }
@@ -256,7 +256,7 @@ workflow "t" {
   }
 
   step "consume" {
-    adapter = adapter.fake_consumer
+    target = adapter.fake_consumer
     input {
       received = steps.produce[0].tag
     }
@@ -321,7 +321,7 @@ workflow "t" {
 
     workflow {
       step "body" {
-        adapter = adapter.fake
+        target = adapter.fake
         outcome "success" { transition_to = "_continue" }
       }
     }
@@ -367,7 +367,7 @@ workflow "parent" {
 
     workflow {
       step "body_step" {
-        adapter = adapter.noop
+        target = adapter.noop
         outcome "success" { transition_to = "_continue" }
       }
     }
@@ -427,7 +427,7 @@ workflow "parent" {
   target_state  = "done"
 
   step "pre" {
-    adapter = adapter.noop_a
+    target = adapter.noop_a
     outcome "success" { transition_to = "body" }
   }
 
@@ -437,7 +437,7 @@ workflow "parent" {
 
     workflow {
       step "inner" {
-        adapter = adapter.noop_b
+        target = adapter.noop_b
         outcome "success" { transition_to = "_continue" }
       }
     }
@@ -447,7 +447,7 @@ workflow "parent" {
   }
 
   step "post" {
-    adapter = adapter.noop_a
+    target = adapter.noop_a
     outcome "success" { transition_to = "done" }
   }
 
@@ -548,7 +548,7 @@ workflow "parent" {
 
     workflow {
       step "inner" {
-        adapter = adapter.noop.parent_only
+        target = adapter.noop.parent_only
         outcome "success" { transition_to = "_continue" }
       }
     }

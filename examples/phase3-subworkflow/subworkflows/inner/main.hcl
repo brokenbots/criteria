@@ -17,7 +17,7 @@ workflow "inner_task" {
   }
 
   step "execute" {
-    adapter = adapter.shell.default
+    target = adapter.shell.default
     input {
       command = "echo 'Processing task'"
     }

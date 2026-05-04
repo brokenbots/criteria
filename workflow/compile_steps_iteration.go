@@ -1,20 +1,21 @@
 package workflow
 
-// compile_steps_iteration.go — compile path for adapter- and agent-backed steps
-// that carry a for_each or count modifier.
+// compile_steps_iteration.go — compile path for steps that carry a for_each or
+// count modifier. Supports both adapter and subworkflow target kinds.
 
 import (
 	"fmt"
-	"strings"
+	"time"
 
 	"github.com/hashicorp/hcl/v2"
 )
 
 // compileIteratingStep compiles a for_each/count iterating step and registers
-// it in g. The for_each/count expressions are decoded from sp.Remain.
+// it in g. targetKind, adapterRef, and subworkflowRef come from resolveStepTarget.
 //
 //nolint:funlen // W11: function length unavoidable due to comprehensive iteration and adapter validation
-func compileIteratingStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[string]AdapterInfo, opts CompileOpts) hcl.Diagnostics {
+func compileIteratingStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[string]AdapterInfo, opts CompileOpts,
+	targetKind StepTargetKind, adapterRef, subworkflowRef string) hcl.Diagnostics {
 	var diags hcl.Diagnostics
 
 	ok, d := validateStepRegistration(g, sp)
@@ -23,23 +24,20 @@ func compileIteratingStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[str
 		return diags
 	}
 
-	// Resolve the adapter reference from the step's Remain body as an HCL traversal.
-	adapterRef, adapterPresent, d := resolveStepAdapterRef(sp.Remain)
-	diags = append(diags, d...)
-
-	// Validate that the resolved adapter reference (if present) exists in the graph.
-	if adapterPresent {
-		if _, ok := g.Adapters[adapterRef]; !ok {
-			diags = append(diags, &hcl.Diagnostic{
-				Severity: hcl.DiagError,
-				Summary:  fmt.Sprintf("step %q: referenced adapter %q is not declared", sp.Name, adapterRef),
-			})
-		}
-	}
-
-	diags = append(diags, validateAdapterRefRequired(sp, adapterPresent)...)
+	diags = append(diags, validateAllowToolsWithAdapter(sp, adapterRef)...)
 	diags = append(diags, validateLegacyConfig(sp)...)
 	diags = append(diags, validateOnFailureValue(sp)...)
+
+	// Environment override: valid only for adapter targets; subworkflow targets
+	// use the environment declared on the subworkflow block.
+	var envKey string
+	if targetKind != StepTargetSubworkflow {
+		var d hcl.Diagnostics
+		envKey, d = resolveStepEnvironmentOverride(sp.Name, sp.Remain, g)
+		diags = append(diags, d...)
+	} else {
+		diags = append(diags, rejectEnvOverrideForSubworkflow(sp.Name, sp.Remain)...)
+	}
 
 	effectiveOnCrash, d := resolveStepOnCrashWithAdapter(g, sp, adapterRef)
 	diags = append(diags, d...)
@@ -58,31 +56,46 @@ func compileIteratingStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[str
 	}
 	diags = append(diags, validateIterExprFold(g, opts, forEachExpr, countExpr)...)
 
-	// Extract the adapter type from the dotted reference for validation and warnings.
-	adapterType := ""
-	if adapterRef != "" {
-		parts := strings.Split(adapterRef, ".")
-		if len(parts) == 2 {
-			adapterType = parts[0]
-		}
+	adapterType := adapterTypeFromRef(adapterRef)
+
+	var node *StepNode
+	if targetKind == StepTargetSubworkflow {
+		swInputExprs, d := compileSubworkflowStepInputExprs(g, sp, subworkflowRef)
+		diags = append(diags, d...)
+		node = newSubworkflowIterStepNode(sp, spec, subworkflowRef, effectiveOnCrash, envKey, timeout, swInputExprs)
+	} else {
+		inputMap, inputExprs, d := decodeStepInput(g, sp, schemas, opts, adapterType)
+		diags = append(diags, d...)
+		// each.* references are valid inside iterating steps; no error emitted.
+		node = newAdapterStepNode(sp, spec, adapterRef, effectiveOnCrash, envKey, timeout, inputMap, inputExprs)
+		diags = append(diags, maybeCopilotAliasWarnings(sp.Name, adapterType, node.AllowTools)...)
 	}
 
-	inputMap, inputExprs, d := decodeStepInput(g, sp, schemas, opts, adapterType)
-	diags = append(diags, d...)
-
-	// each.* references are valid inside iterating steps; no error emitted.
-
-	node := newBaseStepNodeWithAdapterRef(sp, spec, adapterRef, effectiveOnCrash, timeout, inputMap, inputExprs)
 	node.ForEach = forEachExpr
 	node.Count = countExpr
 
-	diags = append(diags, maybeCopilotAliasWarnings(sp.Name, adapterType, node.AllowTools)...)
 	diags = append(diags, compileOutcomeBlock(sp, node)...)
 	diags = append(diags, validateIteratingOutcomes(sp, node)...)
 
 	g.Steps[sp.Name] = node
 	g.stepOrder = append(g.stepOrder, sp.Name)
 	return diags
+}
+
+// newSubworkflowIterStepNode constructs a StepNode for an iterating subworkflow step.
+func newSubworkflowIterStepNode(sp *StepSpec, _ *Spec, subworkflowRef, effectiveOnCrash, envKey string, timeout time.Duration, inputExprs map[string]hcl.Expression) *StepNode {
+	return &StepNode{
+		Name:           sp.Name,
+		TargetKind:     StepTargetSubworkflow,
+		SubworkflowRef: subworkflowRef,
+		OnCrash:        effectiveOnCrash,
+		OnFailure:      sp.OnFailure,
+		MaxVisits:      sp.MaxVisits,
+		Timeout:        timeout,
+		InputExprs:     inputExprs,
+		Outcomes:       map[string]string{},
+		Environment:    envKey,
+	}
 }
 
 // decodeRemainIter reads the for_each and count expressions from sp.Remain

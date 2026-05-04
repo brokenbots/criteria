@@ -13,20 +13,20 @@ import (
 // references in the HCL, and updates all references to use the dotted "<type>.default" form.
 // This is a test helper to reduce boilerplate since most tests use simple single-adapter workflows.
 func injectDefaultAdapters(src string) string {
-	// Collect unique adapter type names from adapter = adapter.... references
+	// Collect unique adapter type names from target = adapter.... references
 	adapters := make(map[string]bool)
 	for _, line := range strings.Split(src, "\n") {
 		trimmed := strings.TrimSpace(line)
-		// Match "adapter" keyword followed by "=" and a string literal (allowing for variable spacing)
-		if strings.HasPrefix(trimmed, `adapter`) && strings.Contains(trimmed, `=`) && strings.Contains(trimmed, `"`) {
-			// Extract the value between the first pair of quotes
-			start := strings.Index(trimmed, `"`) + 1
-			end := strings.Index(trimmed[start:], `"`)
-			if end > 0 {
-				adapterRef := trimmed[start : start+end]
-				// Only inject if it's a bare type (no dots)
-				if !strings.Contains(adapterRef, ".") {
-					adapters[adapterRef] = true
+		// Match "target = adapter.<type>" (bare, 2-segment reference without instance name)
+		if strings.HasPrefix(trimmed, `target`) && strings.Contains(trimmed, `=`) && strings.Contains(trimmed, `adapter.`) {
+			afterEq := strings.TrimSpace(trimmed[strings.Index(trimmed, "=")+1:])
+			if strings.HasPrefix(afterEq, "adapter.") {
+				parts := strings.FieldsFunc(strings.TrimPrefix(afterEq, "adapter."), func(c rune) bool {
+					return c == '.' || c == ' ' || c == '\n' || c == '\r' || c == '\t' || c == '#'
+				})
+				if len(parts) == 1 {
+					// Bare type: target = adapter.fake (no instance name)
+					adapters[parts[0]] = true
 				}
 			}
 		}
@@ -52,13 +52,10 @@ func injectDefaultAdapters(src string) string {
 
 	result := src[:headerEnd] + "\n" + injected.String() + src[headerEnd:]
 
-	// Replace all bare adapter references with dotted references using regex to handle variable spacing
+	// Replace all bare adapter references with dotted references
 	for adapterType := range adapters {
-		// Pattern matches: adapter followed by optional spaces, =, optional spaces, then the quoted type
-		// We don't need lookahead since we're only processing types we know are bare
-		//nolint:gocritic // sprintfQuotedString: Sprintf needed to build regex pattern with literal quotes
-		pattern := regexp.MustCompile(fmt.Sprintf(`adapter\s*=\s*"%s"`, regexp.QuoteMeta(adapterType)))
-		replacement := fmt.Sprintf(`adapter = adapter.%s.default`, adapterType)
+		pattern := regexp.MustCompile(fmt.Sprintf(`target\s*=\s*adapter\.%s\b`, regexp.QuoteMeta(adapterType)))
+		replacement := fmt.Sprintf(`target = adapter.%s.default`, adapterType)
 		result = pattern.ReplaceAllString(result, replacement)
 	}
 
@@ -280,7 +277,7 @@ workflow "w" {
   target_state  = "done"
 
   step "start" {
-    adapter = adapter.noop.default
+    target = adapter.noop.default
     outcome "success" { transition_to = "done" }
   }
 

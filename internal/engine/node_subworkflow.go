@@ -23,17 +23,29 @@ import (
 
 // runSubworkflow executes the subworkflow identified by node against the parent
 // run state. It evaluates the node's input expressions in the parent scope,
-// seeds the child scope, executes the callee FSMGraph to completion, evaluates
-// the callee's declared outputs, and returns the output map to the caller.
+// merges any step-level input overrides (stepInput), seeds the child scope,
+// executes the callee FSMGraph to completion, evaluates the callee's declared
+// outputs, and returns the output map to the caller.
 //
-// The caller (W14 step target wiring) projects the returned output values back
-// into the parent scope under subworkflow.<name>.output.* once Step 7 lands.
-func runSubworkflow(ctx context.Context, node *workflow.SubworkflowNode, parentSt *RunState, deps Deps) (map[string]cty.Value, error) {
+// stepInput contains per-call input bindings (from the step's input { } block)
+// that override the declaration-level bindings in node.Inputs. Pass nil when
+// there are no step-level overrides.
+func runSubworkflow(ctx context.Context, node *workflow.SubworkflowNode, parentSt *RunState, stepInput map[string]cty.Value, deps Deps) (map[string]cty.Value, error) {
 	// Evaluate each input expression against the parent scope.
 	evalOpts := workflow.DefaultFunctionOptions(parentSt.WorkflowDir)
 	inputVals, err := evaluateSubworkflowInputs(node, parentSt.Vars, evalOpts)
 	if err != nil {
 		return nil, fmt.Errorf("subworkflow %q: input evaluation: %w", node.Name, err)
+	}
+
+	// Step-level inputs override declaration-level bindings.
+	if len(stepInput) > 0 {
+		if inputVals == nil {
+			inputVals = make(map[string]cty.Value, len(stepInput))
+		}
+		for k, v := range stepInput {
+			inputVals[k] = v
+		}
 	}
 
 	// Seed the child scope: start from the callee's variable defaults, then

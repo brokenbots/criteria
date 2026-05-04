@@ -11,7 +11,7 @@ workflow "agent_lifecycle_noop" {
   }
 
   step "run_agent" {
-    adapter = adapter.noop.demo
+    target = adapter.noop.demo
     input {
       prompt = "hello"
     }

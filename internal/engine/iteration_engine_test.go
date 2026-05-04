@@ -84,7 +84,7 @@ workflow "t" {
   initial_state = "items"
   target_state  = "done"
   step "items" {
-    adapter  = adapter.fake
+    target = adapter.fake
     for_each = ["alpha", "beta", "gamma"]
     outcome "all_succeeded" { transition_to = "done" }
     outcome "any_failed"    { transition_to = "done" }
@@ -125,7 +125,7 @@ workflow "t" {
   initial_state = "items"
   target_state  = "done"
   step "items" {
-    adapter  = adapter.fake
+    target = adapter.fake
     for_each = ["a", "b"]
     outcome "all_succeeded" { transition_to = "done" }
     outcome "any_failed"    { transition_to = "done" }
@@ -161,7 +161,7 @@ workflow "t" {
   initial_state = "items"
   target_state  = "done"
   step "items" {
-    adapter  = adapter.fake
+    target = adapter.fake
     for_each = []
     outcome "all_succeeded" { transition_to = "done" }
     outcome "any_failed"    { transition_to = "done" }
@@ -199,7 +199,7 @@ workflow "t" {
   initial_state = "n"
   target_state  = "done"
   step "n" {
-    adapter = adapter.fake
+    target = adapter.fake
     count   = 4
     outcome "all_succeeded" { transition_to = "done" }
     outcome "any_failed"    { transition_to = "done" }
@@ -234,7 +234,7 @@ workflow "t" {
   initial_state = "items"
   target_state  = "done"
   step "items" {
-    adapter = adapter.fake
+    target = adapter.fake
     for_each   = ["a", "b", "c"]
     on_failure = "abort"
     outcome "all_succeeded" { transition_to = "done" }
@@ -272,7 +272,7 @@ workflow "t" {
   initial_state = "items"
   target_state  = "done"
   step "items" {
-    adapter = adapter.fake
+    target = adapter.fake
     for_each   = ["a", "b", "c"]
     on_failure = "ignore"
     outcome "all_succeeded" { transition_to = "done" }
@@ -311,13 +311,13 @@ workflow "t" {
   initial_state = "items"
   target_state  = "done"
   step "items" {
-    adapter  = adapter.fake
+    target = adapter.fake
     for_each = ["a", "b"]
     outcome "all_succeeded" { transition_to = "post" }
     outcome "any_failed"    { transition_to = "post" }
   }
   step "post" {
-    adapter = adapter.fake
+    target = adapter.fake
     outcome "success" { transition_to = "done" }
   }
   state "done" {
@@ -372,7 +372,7 @@ workflow "t" {
     for_each = ["a", "b"]
     workflow {
       step "body" {
-        adapter = adapter.fake
+        target = adapter.fake
         outcome "success" { transition_to = "_continue" }
       }
     }
@@ -420,11 +420,11 @@ workflow "t" {
     for_each = ["x"]
     workflow {
       step "prepare" {
-        adapter = adapter.fake
+        target = adapter.fake
         outcome "success" { transition_to = "verify" }
       }
       step "verify" {
-        adapter = adapter.fake
+        target = adapter.fake
         outcome "success" { transition_to = "_continue" }
       }
     }
@@ -463,7 +463,7 @@ workflow "t" {
   initial_state = "items"
   target_state  = "done"
   step "items" {
-    adapter  = adapter.fake
+    target = adapter.fake
     for_each = ["alpha", "beta"]
     input {
       label = "v:${each.value},i:${each._idx}"
@@ -570,7 +570,7 @@ workflow "t" {
   initial_state = "items"
   target_state  = "done"
   step "items" {
-    adapter  = adapter.fake
+    target = adapter.fake
     for_each = ["a", "b", "c"]
     outcome "all_succeeded" { transition_to = "done" }
     outcome "any_failed"    { transition_to = "done" }
@@ -709,7 +709,7 @@ workflow "t" {
   initial_state = "items"
   target_state  = "done"
   step "items" {
-    adapter  = adapter.fake
+    target = adapter.fake
     for_each = { alpha = "A", beta = "B" }
     input {
       label = "k:${each.key},t:${each._total}"
@@ -752,7 +752,7 @@ workflow "t" {
   initial_state = "items"
   target_state  = "done"
   step "items" {
-    adapter  = adapter.fake
+    target = adapter.fake
     for_each = ["a", "b"]
     input {
       label = "${each.value},prevnull:${each._prev == null}"
@@ -799,7 +799,7 @@ workflow "t" {
   initial_state = "items"
   target_state  = "done"
   step "items" {
-    adapter = adapter.fake
+    target = adapter.fake
     for_each   = ["a", "b", "c"]
     on_failure = "continue"
     outcome "all_succeeded" { transition_to = "done" }
@@ -839,7 +839,7 @@ workflow "t" {
   initial_state = "items"
   target_state  = "done"
   step "items" {
-    adapter = adapter.fake
+    target = adapter.fake
     for_each   = ["a", "b", "c"]
     on_failure = "abort"
     outcome "all_succeeded" { transition_to = "done" }
@@ -894,7 +894,7 @@ workflow "t" {
   initial_state = "produce"
   target_state  = "done"
   step "produce" {
-    adapter = adapter.fake_produce
+    target = adapter.fake_produce
     for_each = ["x", "y"]
     outcome "all_succeeded" { transition_to = "done" }
     outcome "any_failed"    { transition_to = "done" }
@@ -938,7 +938,7 @@ workflow "t" {
   initial_state = "items"
   target_state  = "done"
   step "items" {
-    adapter  = adapter.fake
+    target = adapter.fake
     for_each = ["a", "b", "c"]
     input {
       label = "${each.value}"
@@ -995,7 +995,7 @@ workflow "t" {
     for_each = ["x", "y"]
     workflow {
       step "inner" {
-        adapter = adapter.fake
+        target = adapter.fake
         input   { label = "${each.value}" }
         outcome "success" { transition_to = "_continue" }
       }
@@ -1052,7 +1052,7 @@ workflow "t" {
     for_each   = ["x", "y", "z"]
     workflow {
       step "body" {
-        adapter = adapter.fake
+        target = adapter.fake
         input   { label = "${each.value}" }
         outcome "success" { transition_to = "_continue" }
         outcome "failure" { transition_to = "aborted" }
@@ -1136,7 +1136,7 @@ workflow "t" {
         value = "42"
       }
       step "body" {
-        adapter = adapter.fake
+        target = adapter.fake
         outcome "success" { transition_to = "_continue" }
       }
     }
@@ -1145,7 +1145,7 @@ workflow "t" {
   }
 
   step "consume" {
-    adapter = adapter.fake
+    target = adapter.fake
     input {
       got = "${steps.produce[0].score}"
     }
@@ -1198,14 +1198,14 @@ workflow "t" {
   target_state  = "done"
 
   step "produce" {
-    adapter = adapter.fake_produce
+    target = adapter.fake_produce
     for_each = ["x", "y"]
     outcome "all_succeeded" { transition_to = "consume" }
     outcome "any_failed"    { transition_to = "done" }
   }
 
   step "consume" {
-    adapter = adapter.fake_consume
+    target = adapter.fake_consume
     input {
       first_val  = "${steps.produce[0].val}"
       second_val = "${steps.produce[1].val}"
@@ -1258,7 +1258,7 @@ workflow "t" {
   target_state  = "done"
 
   step "items" {
-    adapter = adapter.fake
+    target = adapter.fake
     for_each   = ["a", "b"]
     on_failure = "continue"
     input {
@@ -1316,7 +1316,7 @@ workflow "t" {
     for_each = ["a", "b"]
     workflow {
       step "inner" {
-        adapter  = adapter.fake
+        target = adapter.fake
         for_each = ["x", "y"]
         input    { label = "${each.value}" }
         outcome "all_succeeded" { transition_to = "_continue" }
@@ -1371,7 +1371,7 @@ workflow "t" {
   initial_state = "items"
   target_state  = "done"
   step "items" {
-    adapter  = adapter.fake
+    target = adapter.fake
     for_each = ["a", "b"]
     input {
       prev_null = "${each._prev == null}"
@@ -1456,7 +1456,7 @@ workflow "t" {
     for_each = ["a", "b", "c"]
     workflow {
       step "body" {
-        adapter = adapter.seq
+        target = adapter.seq
         outcome "success" { transition_to = "_continue" }
         outcome "failure" { transition_to = "bail" }
       }
@@ -1492,13 +1492,13 @@ workflow "t" {
   initial_state = "produce"
   target_state  = "consume"
   step "produce" {
-    adapter = adapter.out
+    target = adapter.out
     for_each = { alpha = "a", beta = "b" }
     outcome "all_succeeded" { transition_to = "consume" }
     outcome "any_failed"    { transition_to = "consume" }
   }
   step "consume" {
-    adapter = adapter.capture
+    target = adapter.capture
     input {
       got_alpha = "${steps.produce.alpha.val}"
     }

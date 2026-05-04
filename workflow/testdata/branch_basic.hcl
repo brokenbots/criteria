@@ -14,7 +14,7 @@ workflow "branch_basic" {
   adapter "noop" "default" {}
 
   step "build" {
-    adapter = adapter.noop.default
+    target = adapter.noop.default
     outcome "success" { transition_to = "decide" }
   }
 
