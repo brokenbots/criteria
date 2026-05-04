@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 
 	"github.com/zclconf/go-cty/cty"
@@ -210,11 +209,6 @@ func (e *Engine) bootstrapAllAdapters(ctx context.Context, sessions *plugin.Sess
 		}
 	}
 	return nil
-}
-
-// splitAdapterRef parses a dotted adapter reference like "noop.default" into ["noop", "default"]
-func splitAdapterRef(ref string) []string {
-	return strings.SplitN(ref, ".", 2)
 }
 
 // RunFrom resumes a workflow at startStep with the given initialAttempt

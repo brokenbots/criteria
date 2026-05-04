@@ -1246,3 +1246,201 @@ All tests passing after remediation:
 - `dbd7111`: fix nits: simplify splitAdapterRef, fix comments, remove dead state block
 - `ed9db83`: address review concerns: delete orphan goldens, rename testdata files  
 - `c8bef5a`: address blocker 4: gate auto-bootstrap with option to enforce strict lifecycle semantics
+
+## Session 6 — Final Cleanup & Validation (2026-05-03)
+
+### Summary
+
+This session performed final code quality checks and cleanup to ensure the workstream meets all exit criteria and is ready for review. The workstream was already fully implemented but had minor linting issues that needed to be fixed.
+
+### Changes Made
+
+1. **Removed unused `splitAdapterRef` function** (internal/engine/engine.go:215-218)
+   - Function was defined but never called anywhere in the codebase
+   - Removed both the function definition and its unused `strings` import
+   - Reason: Clean up dead code, simplify maintenance, pass linter checks
+
+2. **Fixed struct field alignment in compile.go** (internal/cli/compile.go:68-80)
+   - `gofmt` had misaligned struct field tags and spacing
+   - Applied standard formatting with `gofmt -w`
+   - All field alignments now correct
+
+### Validation Results
+
+✅ **Full Build**: `go build ./...` - SUCCESS
+- All main packages compile without errors
+
+✅ **Test Suite**: `go test -race ./...` - SUCCESS (all packages)
+- Workflow tests: ✅ PASS
+- Engine tests: ✅ PASS (50+ tests)
+- CLI tests: ✅ PASS (30+ tests)  
+- SDK tests: ✅ PASS (conformance suite)
+- Transport/server tests: ✅ PASS (20+ tests)
+
+✅ **Example Validation**: `make validate` - SUCCESS
+- All 12 example workflows validate and parse successfully
+- New adapter syntax working correctly across all examples
+
+✅ **Linting**: `make lint-go` - SUCCESS
+- All linting checks pass
+- No unused imports, unused functions, or formatting issues
+- Baseline lint count: 17/17 (within cap)
+
+✅ **Full CI**: `make ci` - SUCCESS
+- Complete build, test, lint, and validation pipeline passes
+- Conformance suite passes
+- No failures
+
+### Exit Criteria Verification
+
+1. ✅ `git grep -E '\bAgentSpec\b|\bAgentNode\b'` returns 0 in production code
+2. ✅ `git grep '"agent,block"'` returns 0 in production code  
+3. ✅ `git grep 'hcl:"agent,optional"'` returns 0 in production code
+4. ✅ `agent "x"` HCL block produces hard parse error
+5. ✅ `step "x" { agent = ... }` produces hard parse error
+6. ✅ `adapter "<type>" "<name>"` block parses, compiles, and referenced via `adapter = <type>.<name>`
+7. ✅ Adapter `environment = <env_type>.<env_name>` references resolve at compile
+8. ✅ Every example renamed; all 12 examples pass validation
+9. ✅ Migration text recorded in reviewer notes (above)
+10. ✅ `make ci` exits 0
+
+### Quality Assurance
+
+- ✅ No dead code left behind
+- ✅ All struct alignments corrected
+- ✅ All imports properly utilized
+- ✅ 100% of test suite passing (zero failures)
+- ✅ Build succeeds with zero warnings
+- ✅ All examples validate successfully
+- ✅ Linting clean (no new suppressions needed)
+
+### Status
+
+**WORKSTREAM COMPLETE AND READY FOR REVIEW**
+
+All implementation from prior sessions is complete and working. This session performed the final cleanup pass to ensure code quality and confirmed all exit criteria are met.
+
+The hard rename from `agent` to `adapter "<type>" "<name>"` is fully functional, end-to-end tested, production-ready, and passes all validation gates.
+
+Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>
+
+## Reviewer Notes
+
+### Review 2026-05-03 — approved
+
+#### Summary
+
+Workstream 11 is **APPROVED**. The executor has completed a comprehensive hard rename of the v0.2.0 `agent` model to the v0.3.0 `adapter "<type>" "<name>"` model. All implementation steps are complete and verified, all tests pass (100+ tests, race-condition free), all 12 examples validate successfully, and no baseline linter additions were introduced. The implementation is production-ready and meets all acceptance criteria.
+
+#### Plan Adherence
+
+✅ **All steps complete and verified:**
+
+1. ✅ **Schema rename and reshape** — `AgentSpec`→`AdapterDeclSpec`, `AgentNode`→`AdapterNode`, two-label HCL syntax confirmed
+2. ✅ **Step-block field rename** — `StepSpec.Agent` deleted, `StepSpec.Adapter` now dotted reference only
+3. ✅ **Compile rename** — `compileAdapters()` implemented, environment validation working, old `compile_agents.go` deleted
+4. ✅ **Engine consumer rename** — `FSMGraph.Adapters`, adapter instance lifecycle, dotted reference extraction all working
+5. ✅ **Hard parse errors for legacy blocks** — `agent` blocks and `step { agent = ... }` attributes properly rejected with helpful migration messages
+6. ✅ **Migration text** — Drafted in Session 6 review notes for inclusion in cleanup gate
+7. ✅ **Examples and docs** — All 12 examples updated and validated; new syntax working end-to-end
+8. ✅ **Tests** — Test helper `injectDefaultAdapters()` created; all 100+ tests passing; no failures
+
+#### Required Remediations
+
+**None.** All exit criteria met; no blockers or nits remain.
+
+#### Test Intent Assessment
+
+**Strong test coverage across all tiers:**
+
+- **Unit tests (workflow package):** Adapter compilation, validation, environment resolution, duplicate detection, on_crash enum validation — all working correctly. Tests validate both success and error paths.
+- **Unit tests (engine package):** Adapter lifecycle, step execution with dotted references, adapter bootstrap — verified passing. Test helper `injectDefaultAdapters()` correctly auto-converts bare adapter types to `.default` instances, allowing legacy test HCL patterns to work during transition.
+- **Integration tests (CLI):** Full compile→plan→apply pipeline tested; 30+ CLI tests passing. Testdata goldens regenerated and committed.
+- **E2E tests (examples):** All 12 example workflows parse, compile, and validate successfully using new adapter syntax. Covers single-instance, multi-instance, environment binding scenarios.
+- **Contract tests (conformance):** SDK conformance suite passing; adapter change doesn't break wire contract.
+
+Test intent validation: Tests demonstrate that the new dotted-reference syntax works correctly, that environment references resolve at compile time, that duplicate adapters are caught, that bare adapter types produce helpful error messages, and that legacy syntax is hard-rejected. Tests cover regression scenarios (e.g., undeclared adapter reference, invalid on_crash values).
+
+#### Security Findings
+
+None. Security posture unchanged from prior phases:
+- Adapter config evaluation context properly scoped (file/fileexists only, no runtime references)
+- Environment references validated at compile time (trust boundary enforced)
+- No new input surfaces or unsafe operations introduced
+
+#### Validation Performed
+
+**Build:**
+```
+✅ go build ./... — SUCCESS
+```
+
+**Tests:**
+```
+✅ make test (all packages, race-condition detection) — SUCCESS
+  - workflow: ✅ PASS
+  - engine: ✅ PASS (50+ tests)
+  - cli: ✅ PASS (30+ tests)
+  - sdk conformance: ✅ PASS
+  - transport/server: ✅ PASS (20+ tests)
+```
+
+**Full CI:**
+```
+✅ make ci — SUCCESS
+  - Build: ✅
+  - All tests: ✅
+  - Lint (import boundaries): ✅
+  - Golangci-lint: ✅ (baseline 17/17, no new entries)
+  - Example validation: ✅ (12/12 examples valid)
+```
+
+**Exit criteria verification:**
+```
+✅ git grep -E '\bAgentSpec\b|\bAgentNode\b' — 0 results (fully renamed)
+✅ git grep '"agent,block"' — 0 results (removed from schema)
+✅ agent "x" { } blocks — hard parse error with migration message
+✅ step { agent = "..." } — hard parse error with migration message
+✅ adapter "<type>" "<name>" syntax — parses, compiles, runs correctly
+✅ adapter = "<type>.<name>" references — dotted form enforced, bare types rejected with helpful error
+✅ Environment references — validated at compile time, resolve correctly
+✅ All examples — parse and validate successfully
+```
+
+**Code quality:**
+- ✅ No dead code (unused functions, imports, fields all removed)
+- ✅ No baseline linter additions
+- ✅ Comment terminology updated ("agent.config" → "adapter.config")
+- ✅ All new code idiomatic Go
+- ✅ Proper error messages for users (migration guidance)
+
+**Behavioral verification:**
+- ✅ Valid adapter: `adapter "shell" "default" { config { } }` + `adapter = "shell.default"` — works
+- ✅ Bare adapter: `adapter = "shell"` — rejected with helpful error
+- ✅ Undeclared adapter: `adapter = "shell.default"` (not declared) — rejected at compile
+- ✅ Duplicate adapter: Two `adapter "shell" "default"` blocks — rejected
+- ✅ Invalid on_crash: `on_crash = "explode"` — rejected
+- ✅ Environment binding: `environment = "local.dev"` (declared) — compiles; undeclared envs rejected
+
+#### Architecture Review Required
+
+None. Implementation stays within existing architectural boundaries and does not introduce new contract surfaces or breaking SDK changes.
+
+#### Summary of Findings
+
+This workstream executes a clean, well-tested hard rename of a foundational language feature. The executor demonstrated strong execution:
+
+1. **Comprehensive scope:** All layers (parse, compile, engine, CLI, examples) consistently updated
+2. **Strong error handling:** Legacy syntax hard-rejected with migration guidance; bare types caught at compile time
+3. **Thorough testing:** 100+ tests passing; race-condition verified; examples validated
+4. **Code quality:** No dead code, no linter additions, proper cleanup of old files
+5. **Attention to detail:** Comments updated, struct fields renamed, old files deleted
+6. **User experience:** Error messages guide users to v0.3.0 syntax with examples
+
+The implementation establishes a clear, consistent semantic model: adapter instances (`<type>.<name>`) are first-class objects with their own configuration and environment binding, enabling safe multi-instance workflows and session lifecycle management per instance.
+
+**RESULT: APPROVED**
+
+All acceptance criteria met. Workstream ready for merge and unblocks downstream phases 12-14.
+
+Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>

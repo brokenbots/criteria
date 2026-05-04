@@ -67,16 +67,16 @@ func compileWorkflowOutput(ctx context.Context, workflowPath, format string) ([]
 
 type compileJSON struct {
 	Name         string            `json:"name"`
-	InitialState string             `json:"initial_state"`
-	TargetState  string             `json:"target_state"`
-	Policy       workflow.Policy    `json:"policy"`
-	Adapters     []compileAdapter   `json:"adapters"`
-	Steps        []compileStep      `json:"steps"`
-	States       []compileState     `json:"states"`
-	Outputs      []compileOutput    `json:"outputs"`
-	StepOrder    []string           `json:"step_order"`
-	Plugins      []string           `json:"plugins_required"`
-	Metadata     compileOutputMeta  `json:"metadata"`
+	InitialState string            `json:"initial_state"`
+	TargetState  string            `json:"target_state"`
+	Policy       workflow.Policy   `json:"policy"`
+	Adapters     []compileAdapter  `json:"adapters"`
+	Steps        []compileStep     `json:"steps"`
+	States       []compileState    `json:"states"`
+	Outputs      []compileOutput   `json:"outputs"`
+	StepOrder    []string          `json:"step_order"`
+	Plugins      []string          `json:"plugins_required"`
+	Metadata     compileOutputMeta `json:"metadata"`
 }
 
 type compileOutputMeta struct {
@@ -183,7 +183,7 @@ func buildCompileJSON(graph *workflow.FSMGraph) compileJSON { //nolint:funlen //
 		InitialState: graph.InitialState,
 		TargetState:  graph.TargetState,
 		Policy:       graph.Policy,
-		Adapters:    adapters,
+		Adapters:     adapters,
 		Steps:        steps,
 		States:       states,
 		Outputs:      outputs,
