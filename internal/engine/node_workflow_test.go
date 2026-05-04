@@ -516,24 +516,32 @@ workflow "parent" {
 	}
 }
 
-// TestRunWorkflowBody_BodyDoesNotInheritParentAdapter verifies that a body step
-// that references a parent-only adapter produces a compile error, preventing
-// implicit parent adapter visibility.
+// TestRunWorkflowBody_BodyDoesNotInheritParentAdapter verifies the scope-isolation
+// invariant: a body step that references an adapter declared only in the parent
+// scope must produce a compile error. This guarantees parent adapters are NOT
+// implicitly visible inside subworkflow bodies.
+//
+// Bypasses the compile() helper because injectDefaultAdapters auto-injects bare
+// adapter references; we need the dotted reference to remain unresolved against
+// the body's own (empty) Adapters map.
 func TestRunWorkflowBody_BodyDoesNotInheritParentAdapter(t *testing.T) {
-	// Body-scope isolation means body steps must declare their own adapters.
-	// This test verifies that parent adapters are not visible in body scope.
-	g := compile(t, `
+	src := `
 workflow "parent" {
   version       = "0.1"
-  initial_state = "start"
+  initial_state = "outer"
   target_state  = "done"
 
-  step "start" {
+  adapter "noop" "parent_only" {
+    config {}
+  }
+
+  step "outer" {
     type     = "workflow"
     for_each = ["x"]
 
     workflow {
       step "inner" {
+        adapter = adapter.noop.parent_only
         outcome "success" { transition_to = "_continue" }
       }
     }
@@ -546,15 +554,26 @@ workflow "parent" {
     terminal = true
     success  = true
   }
-}`)
-
-	if g == nil {
-		t.Fatal("compile should succeed")
+}`
+	spec, diags := workflow.Parse("body_inherit_test.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %v", diags)
 	}
-	// Verify that if a body step tried to reference an adapter outside scope,
-	// it would be caught at compile time. The workflow above has no adapters,
-	// so any adapter reference would fail compilation.
-	// This is implicitly tested by the successful compile() call above.
+	_, diags = workflow.Compile(spec, nil)
+	if !diags.HasErrors() {
+		t.Fatal("expected compile error: body step references parent-only adapter, got no errors")
+	}
+	wantSubstr := `referenced adapter "noop.parent_only" is not declared`
+	found := false
+	for _, d := range diags {
+		if strings.Contains(d.Summary, wantSubstr) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected diagnostic containing %q, got diagnostics: %v", wantSubstr, diags)
+	}
 }
 
 // Helper to check if an event string is in the events slice
