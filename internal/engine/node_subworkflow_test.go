@@ -8,6 +8,8 @@ package engine
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -225,5 +227,64 @@ func TestRunSubworkflow_MissingRequiredInput(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "required") {
 		t.Errorf("error should mention 'required', got: %v", err)
+	}
+}
+
+// TestRunSubworkflow_FileFromCalleeDir is a regression test that verifies the
+// callee's runtime functions resolve relative paths against the subworkflow's
+// source directory (node.SourcePath), not the parent workflow directory.
+//
+// A subworkflow with output "msg" { value = file("msg.txt") } should succeed
+// when msg.txt exists in the subworkflow directory even if the parent workflow
+// lives in a completely different directory.
+func TestRunSubworkflow_FileFromCalleeDir(t *testing.T) {
+	calleeDir := t.TempDir()
+	parentDir := t.TempDir()
+
+	// Write msg.txt only in the callee directory, not in the parent directory.
+	msgPath := filepath.Join(calleeDir, "msg.txt")
+	if err := os.WriteFile(msgPath, []byte("hello from callee"), 0o600); err != nil {
+		t.Fatalf("write msg.txt: %v", err)
+	}
+
+	// Build a file("msg.txt") expression via HCL parsing.
+	fileExpr, diags := hclsyntax.ParseExpression([]byte(`file("msg.txt")`), "test", hcl.Pos{Line: 1, Column: 1})
+	if diags.HasErrors() {
+		t.Fatalf("parse file expr: %s", diags.Error())
+	}
+
+	body := &workflow.FSMGraph{
+		InitialState: "done",
+		States:       map[string]*workflow.StateNode{"done": {Name: "done", Terminal: true, Success: true}},
+		Variables:    map[string]*workflow.VariableNode{},
+		Outputs: map[string]*workflow.OutputNode{
+			"msg": {Name: "msg", Value: fileExpr},
+		},
+		OutputOrder: []string{"msg"},
+	}
+	node := &workflow.SubworkflowNode{
+		Name:         "file-test",
+		SourcePath:   calleeDir,
+		Body:         body,
+		BodyEntry:    "done",
+		Inputs:       map[string]hcl.Expression{},
+		DeclaredVars: map[string]*workflow.VariableNode{},
+	}
+	// Parent lives in a separate directory — msg.txt does NOT exist there.
+	parentSt := &RunState{
+		Vars:        map[string]cty.Value{"var": cty.EmptyObjectVal},
+		WorkflowDir: parentDir,
+	}
+
+	outputs, err := runSubworkflow(context.Background(), node, parentSt, testDeps(t))
+	if err != nil {
+		t.Fatalf("runSubworkflow: %v", err)
+	}
+	got, ok := outputs["msg"]
+	if !ok {
+		t.Fatal("output 'msg' not present")
+	}
+	if got.AsString() != "hello from callee" {
+		t.Errorf("output 'msg': want %q, got %q", "hello from callee", got.AsString())
 	}
 }

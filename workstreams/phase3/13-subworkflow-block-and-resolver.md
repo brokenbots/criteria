@@ -1326,3 +1326,56 @@ Test summary:
 - `internal/engine/eval_run_outputs_test.go`: existing tests unchanged and still passing
 - `workflow/compile_subworkflows_test.go`: 15 tests (unchanged from prior revision)
 - `internal/cli/subwfresolve_test.go`: 5 tests (unchanged)
+
+### Review 2026-05-04-04 — changes-requested
+
+#### Summary
+This revision fixes the previously identified output-contract, docs-accuracy, and baseline-disclosure issues. I am still not approving it because `runSubworkflow` evaluates the callee using the **parent** workflow directory instead of the resolved subworkflow source directory, which breaks runtime `file()`/`fileexists()` inside the callee whenever the subworkflow lives outside the parent's directory.
+
+#### Plan Adherence
+- **Step 5:** Docs and disclosure issues are now addressed.
+- **Step 6:** The output-map contract now exists, but the runtime environment is still wrong. `internal/engine/node_subworkflow.go:47-57` passes `parentSt.WorkflowDir` both into `runWorkflowBody(...)` and into the final output-evaluation `RunState`. That means runtime expression functions in the callee resolve relative paths against the parent workflow path rather than `node.SourcePath`, even though compile-time validation uses the resolved subworkflow directory.
+
+#### Required Remediations
+- **Blocker — callee runtime path resolution uses the wrong workflow directory** (`internal/engine/node_subworkflow.go:47-57`). Execute the callee and evaluate its outputs with `node.SourcePath` (or an equivalent callee-specific workflow dir), not `parentSt.WorkflowDir`. Add a regression test covering a subworkflow output or step input that calls `file("msg.txt")` from the callee directory. **Acceptance:** a subworkflow with `output "msg" { value = file("msg.txt") }` succeeds when `msg.txt` exists in the subworkflow directory and the parent workflow lives elsewhere.
+
+#### Test Intent Assessment
+The new runtime tests now cover output evaluation, but they still only use literal values and traversals. They would all pass even if the callee's runtime function context were pointed at the wrong directory, which is why this path-resolution defect slipped through.
+
+#### Validation Performed
+- `make build` — passed.
+- `make test` — passed.
+- `make lint-go` — passed.
+- `make validate` — passed.
+- `make ci` — passed.
+- Temporary in-package repro test: a callee with `output "msg" { value = file("msg.txt") }`, where `msg.txt` exists only in the subworkflow directory, failed with `no such file: msg.txt`, confirming `runSubworkflow` is using the parent workflow directory at runtime.
+
+---
+
+## Reviewer Notes — Batch 2 Revision 3 (Review 2026-05-04-04 Blocker Fixed)
+
+### Blocker Addressed (Review 2026-05-04-04)
+
+**Blocker — callee runtime path resolution uses wrong workflow directory**
+- `runSubworkflow` in `internal/engine/node_subworkflow.go` now derives `calleeDir := node.SourcePath` and passes it to both `runWorkflowBody` (replacing `parentSt.WorkflowDir`) and the `finalSt.WorkflowDir` used for output evaluation.
+- Input expression evaluation (`evaluateSubworkflowInputs`) still uses `parentSt.WorkflowDir` — correct, since those expressions come from the parent HCL context.
+- Regression test added: `TestRunSubworkflow_FileFromCalleeDir` (in `internal/engine/node_subworkflow_test.go`):
+  - Creates two separate temp dirs: `calleeDir` (holds `msg.txt`) and `parentDir` (no `msg.txt`).
+  - Callee declares `output "msg" { value = file("msg.txt") }` via `hclsyntax.ParseExpression`.
+  - `node.SourcePath = calleeDir`, `parentSt.WorkflowDir = parentDir`.
+  - Asserts the output returns `"hello from callee"` read from `calleeDir/msg.txt`.
+  - Would fail with `no such file` if `parentSt.WorkflowDir` were used (the previous bug).
+
+### Validation
+
+```
+make build      ✅
+make test       ✅ (6 subworkflow engine tests, including new regression)
+make lint-go    ✅
+make validate   ✅
+make ci         ✅
+```
+
+Test summary:
+- `internal/engine/node_subworkflow_test.go`: 6 tests (added `TestRunSubworkflow_FileFromCalleeDir`)
+- All other test counts unchanged.

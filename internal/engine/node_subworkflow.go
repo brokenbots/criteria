@@ -43,16 +43,21 @@ func runSubworkflow(ctx context.Context, node *workflow.SubworkflowNode, parentS
 		return nil, fmt.Errorf("subworkflow %q: %w", node.Name, err)
 	}
 
-	// Run the callee FSMGraph to a terminal state.
-	_, finalVars, err := runWorkflowBody(ctx, node.Body, node.BodyEntry, childVars, parentSt.WorkflowDir, deps)
+	// Run the callee FSMGraph to a terminal state using the callee's source
+	// directory so that runtime functions (file(), fileexists(), etc.) inside
+	// the callee resolve relative paths against the subworkflow directory, not
+	// the parent workflow directory.
+	calleeDir := node.SourcePath
+	_, finalVars, err := runWorkflowBody(ctx, node.Body, node.BodyEntry, childVars, calleeDir, deps)
 	if err != nil {
 		return nil, fmt.Errorf("subworkflow %q: %w", node.Name, err)
 	}
 
-	// Evaluate the callee's declared outputs against the final child state.
+	// Evaluate the callee's declared outputs against the final child state,
+	// also using the callee's directory for any file-referencing expressions.
 	finalSt := &RunState{
 		Vars:        finalVars,
-		WorkflowDir: parentSt.WorkflowDir,
+		WorkflowDir: calleeDir,
 	}
 	outputs, err := evalRunOutputsAsValues(node.Body, finalSt)
 	if err != nil {
