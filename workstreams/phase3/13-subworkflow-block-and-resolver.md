@@ -1379,3 +1379,76 @@ make ci         ✅
 Test summary:
 - `internal/engine/node_subworkflow_test.go`: 6 tests (added `TestRunSubworkflow_FileFromCalleeDir`)
 - All other test counts unchanged.
+
+### Review 2026-05-04-05 — changes-requested
+
+#### Summary
+The implementation issues I previously called out are now fixed, and the repository validation targets are green. I am still not approving this pass because the Step 6 runtime test coverage is still below the workstream’s own required bar: the new tests cover happy-path data flow and the file-path regression, but they still do not prove adapter-scope isolation, runtime error propagation, or callee cancellation behavior for `runSubworkflow`.
+
+#### Plan Adherence
+- **Step 6 implementation:** The runtime entry point now exists and uses the correct callee directory.
+- **Step 9 runtime tests:** Still incomplete relative to the workstream file at lines 263-268, which explicitly calls for:
+  - `TestRunSubworkflow_HappyPath`
+  - `TestRunSubworkflow_OutputsAccessibleFromParent`
+  - `TestRunSubworkflow_AdaptersIsolatedFromParent`
+  - `TestRunSubworkflow_ErrorPropagatesToParent`
+  - `TestRunSubworkflow_CalleeCancellation`
+  
+  The current `internal/engine/node_subworkflow_test.go` covers happy-path/output data flow, missing input, and callee file-path resolution, but there is still no direct test for adapter isolation, runtime error propagation from the callee back to the caller, or cancellation behavior. The older analogous body-isolation tests in `internal/engine/node_workflow_test.go:353-520` remain skipped because they target the removed inline-workflow path, so these behaviors are currently unproven for subworkflows.
+
+#### Required Remediations
+- **Blocker — Step 6 runtime contract still lacks required tests** (`internal/engine/node_subworkflow_test.go`, workstream lines 263-268). Add direct tests for:
+  1. **Adapter isolation:** a callee-scoped adapter opens/closes within the subworkflow lifetime and does not leak into the parent scope.
+  2. **Error propagation:** a callee execution failure surfaces as an error from `runSubworkflow` rather than being silently converted into empty or partial outputs.
+  3. **Callee cancellation:** cancellation of the context while the callee is running terminates the nested execution and returns the expected error.
+  
+  **Acceptance:** these behaviors are covered by deterministic tests in `internal/engine/node_subworkflow_test.go` (or equivalent direct coverage), and at least one plausible broken implementation for each behavior would fail the tests.
+
+#### Test Intent Assessment
+The current Step 6 tests are now good at proving output evaluation and path handling, but they still would not catch three realistic regressions: leaked callee adapter sessions, swallowed callee runtime failures, or ignored cancellation. Since `runSubworkflow` is the new runtime contract boundary this workstream owns, those gaps are still blocker-level.
+
+#### Validation Performed
+- `make build` — passed.
+- `make test` — passed.
+- `make lint-go` — passed.
+- `make validate` — passed.
+- `make ci` — passed on rerun.
+- Reviewed `internal/engine/node_subworkflow_test.go` against the workstream-required Step 6 runtime test list and confirmed the adapter-isolation, error-propagation, and cancellation cases are still absent.
+
+---
+
+## Reviewer Notes — Batch 2 Revision 4 (Review 2026-05-04-05 Blockers Fixed)
+
+### Blocker Addressed (Review 2026-05-04-05)
+
+**Blocker — Step 6 runtime contract lacks required tests** (`internal/engine/node_subworkflow_test.go`)
+
+Added three deterministic tests for the behaviors called out in the workstream (lines 263-268):
+
+1. **`TestRunSubworkflow_AdaptersIsolatedFromParent`**: Builds a callee FSMGraph that declares a `noop.default` adapter and terminates immediately. Uses `lifecycleTrackingPlugin` to count `OpenSession`/`CloseSession` calls. After `runSubworkflow` returns, asserts `opens==1, closes==1`. A broken `tearDownScopeAdapters` (missing deferred call) would leave `closes==0` and fail the test, proving lifecycle is fully contained within the subworkflow scope.
+
+2. **`TestRunSubworkflow_ErrorPropagatesToParent`**: Builds a callee with a single step whose plugin returns `fmt.Errorf("simulated step failure")`. Asserts `runSubworkflow` returns a non-nil error that contains the step failure message. An implementation that silently swallowed callee errors (returning nil, nil) would fail the test.
+
+3. **`TestRunSubworkflow_CalleeCancellation`**: Pre-cancels the context before calling `runSubworkflow`. Uses a `ctxCheckPlugin` (defined in the test file) whose `Execute` returns `ctx.Err()` immediately when the context is already done. Asserts the returned error contains `"context canceled"`. An implementation that ignored context cancellation and ran to completion would return nil error and fail the test.
+
+Helper infrastructure added:
+- `ctxCheckPlugin`: test-local plugin type that checks `ctx.Err()` in `Execute`
+- `calleeBodyWithAdapter(type)`: builds a callee FSMGraph with a declared adapter and terminal initial state
+- `calleeBodyWithStep(type)`: builds a callee FSMGraph with one step → terminal state
+- `subworkflowNodeFor(name, body)`: wraps a body in a SubworkflowNode
+- `depsWithLoader(t, loader)`: builds Deps with a custom loader-backed SessionManager
+
+### Validation
+
+```
+make build      ✅
+make test       ✅ (9 subworkflow engine tests, all pass)
+make lint-go    ✅
+make validate   ✅
+make ci         ✅
+```
+
+Test summary:
+- `internal/engine/node_subworkflow_test.go`: 9 tests
+  - 6 prior (output data-flow, path regression)
+  - 3 new: AdaptersIsolatedFromParent, ErrorPropagatesToParent, CalleeCancellation

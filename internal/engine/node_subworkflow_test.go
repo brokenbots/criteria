@@ -8,6 +8,7 @@ package engine
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/zclconf/go-cty/cty"
 
+	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/plugin"
 	"github.com/brokenbots/criteria/workflow"
 )
@@ -286,5 +288,166 @@ func TestRunSubworkflow_FileFromCalleeDir(t *testing.T) {
 	}
 	if got.AsString() != "hello from callee" {
 		t.Errorf("output 'msg': want %q, got %q", "hello from callee", got.AsString())
+	}
+}
+
+// ctxCheckPlugin is a test plugin whose Execute returns ctx.Err() immediately
+// when the context is already cancelled, allowing deterministic cancellation tests.
+type ctxCheckPlugin struct {
+	fakePlugin
+}
+
+func (p *ctxCheckPlugin) Execute(ctx context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+	if err := ctx.Err(); err != nil {
+		return adapter.Result{}, err
+	}
+	return adapter.Result{Outcome: "success"}, nil
+}
+
+// calleeBodyWithAdapter builds a callee FSMGraph that declares a single adapter
+// and has an immediate terminal state. Adapter lifecycle (open/close) happens
+// regardless of whether any step uses the adapter.
+func calleeBodyWithAdapter(adapterType string) *workflow.FSMGraph {
+	instanceID := adapterType + ".default"
+	return &workflow.FSMGraph{
+		InitialState: "done",
+		States:       map[string]*workflow.StateNode{"done": {Name: "done", Terminal: true, Success: true}},
+		Variables:    map[string]*workflow.VariableNode{},
+		Adapters:     map[string]*workflow.AdapterNode{instanceID: {Type: adapterType, Name: "default"}},
+		AdapterOrder: []string{instanceID},
+		Policy:       workflow.DefaultPolicy,
+	}
+}
+
+// calleeBodyWithStep builds a callee FSMGraph with a single step that uses an
+// adapter. The step transitions to terminal state on "success" outcome.
+func calleeBodyWithStep(adapterType string) *workflow.FSMGraph {
+	instanceID := adapterType + ".default"
+	return &workflow.FSMGraph{
+		InitialState: "work",
+		Steps: map[string]*workflow.StepNode{
+			"work": {
+				Name:    "work",
+				Adapter: instanceID,
+				Outcomes: map[string]string{
+					"success": "done",
+				},
+			},
+		},
+		States:       map[string]*workflow.StateNode{"done": {Name: "done", Terminal: true, Success: true}},
+		Variables:    map[string]*workflow.VariableNode{},
+		Adapters:     map[string]*workflow.AdapterNode{instanceID: {Type: adapterType, Name: "default"}},
+		AdapterOrder: []string{instanceID},
+		Policy:       workflow.DefaultPolicy,
+	}
+}
+
+// subworkflowNodeFor wraps a body FSMGraph in a SubworkflowNode.
+func subworkflowNodeFor(name string, body *workflow.FSMGraph) *workflow.SubworkflowNode {
+	return &workflow.SubworkflowNode{
+		Name:         name,
+		SourcePath:   "/test/" + name,
+		Body:         body,
+		BodyEntry:    body.InitialState,
+		Inputs:       map[string]hcl.Expression{},
+		DeclaredVars: map[string]*workflow.VariableNode{},
+	}
+}
+
+// depsWithLoader builds a Deps whose SessionManager uses the given loader.
+func depsWithLoader(t *testing.T, loader plugin.Loader) Deps {
+	t.Helper()
+	sessions := plugin.NewSessionManager(loader)
+	t.Cleanup(func() { sessions.Shutdown(context.Background()) })
+	return Deps{Sessions: sessions, Sink: &fakeSink{}}
+}
+
+// TestRunSubworkflow_AdaptersIsolatedFromParent verifies that a callee-declared
+// adapter is opened at the start of the subworkflow scope and closed when it
+// returns — proving that adapter lifecycle is fully contained within the
+// subworkflow and does not leak into the parent scope.
+//
+// A broken teardown (missing deferred tearDownScopeAdapters) would leave
+// closes==0 after runSubworkflow returns, failing the test.
+func TestRunSubworkflow_AdaptersIsolatedFromParent(t *testing.T) {
+	tracker := &lifecycleTrackingPlugin{fakePlugin: fakePlugin{name: "noop"}}
+	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"noop": tracker}}
+
+	node := subworkflowNodeFor("isolated", calleeBodyWithAdapter("noop"))
+	parentSt := &RunState{
+		Vars:        map[string]cty.Value{"var": cty.EmptyObjectVal},
+		WorkflowDir: t.TempDir(),
+	}
+
+	_, err := runSubworkflow(context.Background(), node, parentSt, depsWithLoader(t, loader))
+	if err != nil {
+		t.Fatalf("runSubworkflow: %v", err)
+	}
+
+	tracker.mu.Lock()
+	opens := tracker.opensCount
+	closes := tracker.closesCount
+	tracker.mu.Unlock()
+
+	if opens != 1 {
+		t.Errorf("callee adapter opens: want 1, got %d", opens)
+	}
+	if closes != 1 {
+		t.Errorf("callee adapter closes: want 1, got %d (adapter leaked past subworkflow boundary)", closes)
+	}
+}
+
+// TestRunSubworkflow_ErrorPropagatesToParent verifies that a runtime failure
+// inside the callee (adapter Execute returning an error) propagates back to
+// the caller of runSubworkflow rather than being silently swallowed.
+//
+// A broken implementation that converts callee errors to empty/nil outputs
+// without returning an error would fail this test.
+func TestRunSubworkflow_ErrorPropagatesToParent(t *testing.T) {
+	errPlugin := &fakePlugin{name: "noop", err: fmt.Errorf("simulated step failure")}
+	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"noop": errPlugin}}
+
+	node := subworkflowNodeFor("fail-test", calleeBodyWithStep("noop"))
+	parentSt := &RunState{
+		Vars:        map[string]cty.Value{"var": cty.EmptyObjectVal},
+		WorkflowDir: t.TempDir(),
+	}
+
+	_, err := runSubworkflow(context.Background(), node, parentSt, depsWithLoader(t, loader))
+	if err == nil {
+		t.Fatal("expected error from failing callee step, got nil")
+	}
+	if !strings.Contains(err.Error(), "simulated step failure") {
+		t.Errorf("error should contain step failure message, got: %v", err)
+	}
+}
+
+// TestRunSubworkflow_CalleeCancellation verifies that cancelling the context
+// while the callee is executing causes runSubworkflow to return a
+// context-related error rather than completing normally.
+//
+// A broken implementation that ignored ctx would execute to completion and
+// return nil error, failing this test.
+func TestRunSubworkflow_CalleeCancellation(t *testing.T) {
+	checkPlugin := &ctxCheckPlugin{fakePlugin: fakePlugin{name: "noop"}}
+	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"noop": checkPlugin}}
+
+	node := subworkflowNodeFor("cancel-test", calleeBodyWithStep("noop"))
+	parentSt := &RunState{
+		Vars:        map[string]cty.Value{"var": cty.EmptyObjectVal},
+		WorkflowDir: t.TempDir(),
+	}
+
+	// Pre-cancel the context: ctxCheckPlugin.Execute returns ctx.Err() immediately,
+	// which propagates up through runWorkflowBody as a non-terminal error.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := runSubworkflow(ctx, node, parentSt, depsWithLoader(t, loader))
+	if err == nil {
+		t.Fatal("expected error after context cancellation, got nil")
+	}
+	if !strings.Contains(err.Error(), context.Canceled.Error()) {
+		t.Errorf("error should mention context cancellation, got: %v", err)
 	}
 }
