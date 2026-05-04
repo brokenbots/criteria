@@ -40,7 +40,7 @@ func runApplyLocal( //nolint:funlen // W03: local apply orchestrates engine life
 
 	resumeLocalInFlightRuns(ctx, log, jsonOut, mode)
 
-	src, graph, loader, err := compileForExecution(ctx, opts.workflowPath, log)
+	src, graph, loader, err := compileForExecution(ctx, opts.workflowPath, log, opts.subworkflowRoots...)
 	if err != nil {
 		return err
 	}

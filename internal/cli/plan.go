@@ -33,7 +33,7 @@ func NewPlanCmd() *cobra.Command {
 }
 
 func renderPlanOutput(ctx context.Context, workflowPath string, overrides map[string]string) (string, error) { //nolint:funlen,gocognit,gocyclo // W03: renders full plan tree with agent/step/outcome formatting across multiple output paths
-	spec, graph, err := parseCompileForCli(ctx, workflowPath)
+	spec, graph, err := parseCompileForCli(ctx, workflowPath, nil)
 	if err != nil {
 		return "", err
 	}

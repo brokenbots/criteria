@@ -125,7 +125,7 @@ func runApplyServer(ctx context.Context, opts applyOptions) error { //nolint:goc
 	defer cancelRun()
 
 	log := newApplyLogger()
-	src, graph, loader, err := compileForExecution(runCtx, opts.workflowPath, log)
+	src, graph, loader, err := compileForExecution(runCtx, opts.workflowPath, log, opts.subworkflowRoots...)
 	if err != nil {
 		return err
 	}

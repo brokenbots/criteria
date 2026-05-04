@@ -68,7 +68,7 @@ func newLocalRunState(runID, graphName, serverURL string) *localRunState {
 	}
 }
 
-func compileForExecution(ctx context.Context, workflowPath string, log *slog.Logger) ([]byte, *workflow.FSMGraph, *plugin.DefaultLoader, error) {
+func compileForExecution(ctx context.Context, workflowPath string, log *slog.Logger, subworkflowRoots ...string) ([]byte, *workflow.FSMGraph, *plugin.DefaultLoader, error) {
 	src, err := os.ReadFile(workflowPath)
 	if err != nil {
 		return nil, nil, nil, err
@@ -82,7 +82,7 @@ func compileForExecution(ctx context.Context, workflowPath string, log *slog.Log
 	loader.RegisterBuiltin(shell.Name, plugin.BuiltinFactoryForAdapter(shell.New()))
 	schemas := collectSchemas(ctx, loader, spec, log)
 
-	resolver := &workflow.LocalSubWorkflowResolver{}
+	resolver := &workflow.LocalSubWorkflowResolver{AllowedRoots: subworkflowRoots}
 	graph, diags := workflow.CompileWithOpts(spec, schemas, workflow.CompileOpts{
 		WorkflowDir:         filepath.Dir(workflowPath),
 		SubWorkflowResolver: resolver,
