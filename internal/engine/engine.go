@@ -181,27 +181,24 @@ func (e *Engine) Run(ctx context.Context) error {
 // bootstrapAllAdapters opens adapters that have no explicit lifecycle "open" steps.
 // This is needed for workflows without explicit lifecycle management.
 func (e *Engine) bootstrapAllAdapters(ctx context.Context, sessions *plugin.SessionManager) error {
-	// Find which adapters have explicit lifecycle "open" steps
-	adapterstWithLifecycleOpen := make(map[string]bool)
+	// Find which adapter instances have explicit lifecycle "open" steps
+	adaptersWithLifecycleOpen := make(map[string]bool)
 	for _, node := range e.graph.Steps {
 		if node.Lifecycle == "open" {
-			// Extract adapter type from adapter reference (e.g., "noop.demo" -> "noop")
-			parts := splitAdapterRef(node.Adapter)
-			if len(parts) > 0 {
-				adapterstWithLifecycleOpen[parts[0]] = true
-			}
+			// The adapter reference is already in dotted form "<type>.<name>"
+			adaptersWithLifecycleOpen[node.Adapter] = true
 		}
 	}
 
 	// Bootstrap only adapters without explicit lifecycle steps
 	for _, adapter := range e.graph.Adapters {
-		if adapterstWithLifecycleOpen[adapter.Type] {
-			// This adapter has an explicit lifecycle step; don't bootstrap
+		instanceID := adapter.Type + "." + adapter.Name
+		if adaptersWithLifecycleOpen[instanceID] {
+			// This adapter instance has an explicit lifecycle step; don't bootstrap
 			continue
 		}
-		sessionID := adapter.Type + "." + adapter.Name
-		if err := sessions.Open(ctx, sessionID, adapter.Type, adapter.OnCrash, adapter.Config); err != nil && !errors.Is(err, plugin.ErrSessionAlreadyOpen) {
-			return fmt.Errorf("bootstrap adapter %q: %w", sessionID, err)
+		if err := sessions.Open(ctx, instanceID, adapter.Type, adapter.OnCrash, adapter.Config); err != nil && !errors.Is(err, plugin.ErrSessionAlreadyOpen) {
+			return fmt.Errorf("bootstrap adapter %q: %w", instanceID, err)
 		}
 	}
 	return nil
@@ -209,22 +206,7 @@ func (e *Engine) bootstrapAllAdapters(ctx context.Context, sessions *plugin.Sess
 
 // splitAdapterRef parses a dotted adapter reference like "noop.default" into ["noop", "default"]
 func splitAdapterRef(ref string) []string {
-	parts := make([]string, 0, 2)
-	for i := 0; i < len(ref); i++ {
-		if ref[i] == '.' {
-			if i > 0 {
-				parts = append(parts, ref[:i])
-			}
-			if i+1 < len(ref) {
-				parts = append(parts, ref[i+1:])
-			}
-			break
-		}
-	}
-	if len(parts) == 0 && ref != "" {
-		parts = append(parts, ref)
-	}
-	return parts
+	return strings.SplitN(ref, ".", 2)
 }
 
 // RunFrom resumes a workflow at startStep with the given initialAttempt

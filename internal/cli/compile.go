@@ -67,23 +67,23 @@ func compileWorkflowOutput(ctx context.Context, workflowPath, format string) ([]
 
 type compileJSON struct {
 	Name         string            `json:"name"`
-	InitialState string            `json:"initial_state"`
-	TargetState  string            `json:"target_state"`
-	Policy       workflow.Policy   `json:"policy"`
-	Agents       []compileAgent    `json:"agents"`
-	Steps        []compileStep     `json:"steps"`
-	States       []compileState    `json:"states"`
-	Outputs      []compileOutput   `json:"outputs"`
-	StepOrder    []string          `json:"step_order"`
-	Plugins      []string          `json:"plugins_required"`
-	Metadata     compileOutputMeta `json:"metadata"`
+	InitialState string             `json:"initial_state"`
+	TargetState  string             `json:"target_state"`
+	Policy       workflow.Policy    `json:"policy"`
+	Adapters     []compileAdapter   `json:"adapters"`
+	Steps        []compileStep      `json:"steps"`
+	States       []compileState     `json:"states"`
+	Outputs      []compileOutput    `json:"outputs"`
+	StepOrder    []string           `json:"step_order"`
+	Plugins      []string           `json:"plugins_required"`
+	Metadata     compileOutputMeta  `json:"metadata"`
 }
 
 type compileOutputMeta struct {
 	SchemaVersion int `json:"schema_version"`
 }
 
-type compileAgent struct {
+type compileAdapter struct {
 	Type       string   `json:"type"`
 	Name       string   `json:"name"`
 	OnCrash    string   `json:"on_crash"`
@@ -118,11 +118,11 @@ type compileState struct {
 }
 
 func buildCompileJSON(graph *workflow.FSMGraph) compileJSON { //nolint:funlen // W03: serialises entire FSM graph structure; length driven by field count, not complexity
-	adapters := make([]compileAgent, 0, len(graph.Adapters))
+	adapters := make([]compileAdapter, 0, len(graph.Adapters))
 	adapterNames := sortedAdapterNames(graph)
 	for _, name := range adapterNames {
 		ad := graph.Adapters[name]
-		adapters = append(adapters, compileAgent{
+		adapters = append(adapters, compileAdapter{
 			Type:       ad.Type,
 			Name:       ad.Name,
 			OnCrash:    ad.OnCrash,
@@ -183,7 +183,7 @@ func buildCompileJSON(graph *workflow.FSMGraph) compileJSON { //nolint:funlen //
 		InitialState: graph.InitialState,
 		TargetState:  graph.TargetState,
 		Policy:       graph.Policy,
-		Agents:       adapters,
+		Adapters:    adapters,
 		Steps:        steps,
 		States:       states,
 		Outputs:      outputs,

@@ -44,16 +44,11 @@ func rejectLegacyStepAgentAttr(body hcl.Body) hcl.Diagnostics {
 	schema := &hcl.BodySchema{
 		Blocks: []hcl.BlockHeaderSchema{
 			{Type: "step", LabelNames: []string{"name"}},
-			{Type: "state", LabelNames: []string{"name"}},
 		},
 	}
 	content, _, _ := body.PartialContent(schema)
 
 	for _, block := range content.Blocks {
-		if block.Type != "step" {
-			continue
-		}
-
 		// Check for "agent" attribute in the step block body.
 		stepSchema := &hcl.BodySchema{Attributes: []hcl.AttributeSchema{{Name: "agent"}}}
 		stepContent, _, _ := block.Body.PartialContent(stepSchema)

@@ -86,7 +86,7 @@ type VariableSpec struct {
 	Remain      hcl.Body `hcl:",remain"` // captures the "default" expression
 }
 
-// ConfigSpec holds the raw HCL body of an `agent.config { ... }` block.
+// ConfigSpec holds the raw HCL body of an `adapter.config { ... }` block.
 // Attributes are decoded into string values by the compiler.
 // W04 will upgrade to expression-aware decoding (var.<name>, each.value).
 type ConfigSpec struct {
@@ -118,7 +118,7 @@ type StepSpec struct {
 	Adapter   string `hcl:"adapter,optional"` // "<type>.<name>" reference to a declared adapter
 	Lifecycle string `hcl:"lifecycle,optional"`
 	OnCrash   string `hcl:"on_crash,optional"`
-	// Type is the step kind: "" (default adapter/agent step) or "workflow" (sub-workflow body).
+	// Type is the step kind: "" (default adapter step) or "workflow" (sub-workflow body).
 	Type string `hcl:"type,optional"`
 	// WorkflowFile is a path to an HCL file whose body is used as the sub-workflow
 	// body for workflow-type steps. Mutually exclusive with Workflow.
@@ -186,7 +186,7 @@ type BodySpec struct {
 	// InitialState (if set) or the first declared step.
 	Entry   string       `hcl:"entry,optional"`
 	Outputs []OutputSpec `hcl:"output,block"`
-	// Remain captures all content blocks (steps, variables, locals, agents,
+	// Remain captures all content blocks (steps, variables, locals, adapters,
 	// states, waits, approvals, branches, policy, permissions) for later
 	// decoding into SpecContent by compileWorkflowBodyInline.
 	Remain hcl.Body `hcl:",remain"`
@@ -219,11 +219,11 @@ type ConfigField struct {
 }
 
 // AdapterInfo describes an adapter's declared configuration schema.
-// It is used during workflow compilation to validate agent config blocks and
+// It is used during workflow compilation to validate adapter config blocks and
 // step input blocks against the adapter's declared requirements.
 // An empty (zero-value) AdapterInfo means "any keys accepted" (permissive).
 type AdapterInfo struct {
-	ConfigSchema map[string]ConfigField // schema for agent-level `config { }` blocks
+	ConfigSchema map[string]ConfigField // schema for adapter-level config { }` blocks
 	InputSchema  map[string]ConfigField // schema for per-step `input { }` blocks
 	OutputSchema map[string]ConfigField // declared outputs the adapter promises to populate (W04)
 }
