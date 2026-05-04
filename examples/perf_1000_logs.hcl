@@ -5,8 +5,12 @@ workflow "perf_1000_logs" {
   initial_state = "generate_logs"
   target_state  = "done"
 
+  adapter "shell" "default" {
+    config { }
+  }
+
   step "generate_logs" {
-    adapter = "shell"
+    adapter = adapter.shell.default
     input {
       command = "for i in {1..1000}; do echo \"Log line $i: This is a test log entry to measure throughput and latency.\"; done"
     }

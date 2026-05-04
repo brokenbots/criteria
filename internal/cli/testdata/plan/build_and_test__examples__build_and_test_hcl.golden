@@ -5,15 +5,16 @@ policy: max_total_steps=20  max_step_retries=0
 variables:
   (none)
 
-agents:
-  (none)
+adapters:
+  shell.default   type=shell   on_crash=fail
+    config: (none)
 
 steps (declaration order):
-  build   adapter=shell   timeout=5m0s
+  build   adapter=shell.default   timeout=5m0s
     input keys: command
     allow_tools: (none)
     outcomes: success -> test, failure -> failed
-  test   adapter=shell   timeout=10m0s
+  test   adapter=shell.default   timeout=10m0s
     input keys: command
     allow_tools: (none)
     outcomes: success -> verified, failure -> failed

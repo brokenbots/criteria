@@ -68,6 +68,7 @@ func executeServerRun(ctx context.Context, log *slog.Logger, loader plugin.Loade
 	eng = engine.New(graph, loader, sink,
 		engine.WithVarOverrides(parseVarOverrides(opts.varOverrides)),
 		engine.WithWorkflowDir(filepath.Dir(opts.workflowPath)),
+		engine.WithAutoBootstrapAdapters(),
 	)
 	if err := eng.Run(ctx); err != nil {
 		log.Error("run failed", "error", err)
@@ -109,6 +110,7 @@ func drainResumeCycles(ctx context.Context, log *slog.Logger, loader plugin.Load
 			engine.WithResumedVisits(eng.VisitCounts()),
 			engine.WithResumePayload(resumeMsg.Payload),
 			engine.WithWorkflowDir(filepath.Dir(opts.workflowPath)),
+			engine.WithAutoBootstrapAdapters(),
 		)
 		if err := resumedEng.RunFrom(ctx, pausedNode, 1); err != nil {
 			log.Error("run failed after resume", "error", err)

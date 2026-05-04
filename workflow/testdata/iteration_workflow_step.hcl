@@ -10,20 +10,24 @@ workflow "iteration_workflow_step" {
     max_total_steps = 50
   }
 
+  adapter "noop" "default" {}
+
   step "run_items" {
     type     = "workflow"
     for_each = ["a", "b", "c"]
 
     workflow {
+      adapter "noop" "default" {}
+
       step "prepare" {
-        adapter = "noop"
+        adapter = adapter.noop.default
         input   { result = "success" }
         outcome "success" { transition_to = "verify" }
         outcome "failure" { transition_to = "_continue" }
       }
 
       step "verify" {
-        adapter = "noop"
+        adapter = adapter.noop.default
         input   { result = "success" }
         outcome "success" { transition_to = "_continue" }
         outcome "failure" { transition_to = "_continue" }

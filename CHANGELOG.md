@@ -2,6 +2,54 @@
 
 All notable changes to Criteria are recorded here.
 
+## [Unreleased] — Phase 3 W11: Hard rename `agent` → `adapter`
+
+### Headline: agent → adapter hard rename with breaking HCL changes
+
+This workstream completes the Phase 3 hard rename from `agent` terminology to `adapter`. The HCL syntax changes are **breaking** — workflows using the v0.2.0 form must be updated before running on v0.3.0+.
+
+#### Breaking changes
+
+- **HCL block syntax**: `agent "name" { ... }` blocks are now rejected with a hard parse error. Replace with `adapter "<type>" "<name>" { ... }` form.
+- **Step adapter reference**: `step { adapter = "shell.default" }` (quoted string) is now rejected. Replace with `adapter = adapter.shell.default` (bareword traversal reference). **This is a hard error; there is no legacy fallback.**
+- **Step agent reference removed**: `step { agent = "name" }` is now rejected. Replace with `adapter = adapter.<type>.<name>` using the adapter's type and name.
+- **Proto field rename**: `pb.StepEntered.agent_name` → `pb.StepEntered.adapter` (field number 2 unchanged; wire format stable but generated code must regenerate).
+- **Auto-bootstrap removed from production**: Adapters are no longer implicitly opened when the engine starts. Only adapters explicitly referenced in steps will be opened. Tests must use `WithAutoBootstrapAdapters()` if they need the old behavior for setup purposes.
+
+#### Migration notes
+
+**v0.2.0 form:**
+```hcl
+agent "reviewer" {
+    adapter = "copilot"
+    config { reasoning_effort = "high" }
+}
+step "review" { agent = "reviewer" }
+```
+
+**v0.3.0 form:**
+```hcl
+adapter "copilot" "reviewer" {
+    config = {
+        reasoning_effort = "high"
+    }
+}
+step "review" { adapter = adapter.copilot.reviewer }
+```
+
+Steps that used `adapter = "shell"` (bare type without an explicit adapter name) must now declare a named adapter:
+```hcl
+adapter "shell" "default" { config = {} }
+step "build" { adapter = adapter.shell.default }
+```
+
+Workflows using `agent` blocks or quoted adapter references will fail at parse time with an actionable error message. Use the examples above to migrate.
+
+#### SDK breaking change (field number stable)
+
+- **Proto**: `pb.StepEntered.adapter` field (number 2, unchanged for wire format). Orchestrators and SDKs reading by field name must regenerate protobuf bindings. Old readers consuming by field number continue to work; old writers must upgrade to emit the new field name.
+- **Backward compatibility**: Wire format is stable (same field number). Readers upgrade automatically; writers must rebuild. Considered a **minor** version bump for pre-1.0 projects.
+
 ## [v0.2.0] — 2026-05-02
 
 ### Headline: combined Phase 1 (stabilization) + Phase 2 (maintainability + unattended MVP + Copilot tool-call finalization)

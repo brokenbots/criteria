@@ -151,8 +151,8 @@ func TestCopilotReasoningEffortOverride(t *testing.T) {
 
 	// Step 1: execute with per-step reasoning_effort override "high".
 	step1 := &workflow.StepNode{
-		Name:  "planning",
-		Agent: "bot",
+		Name:    "planning",
+		Adapter: "bot",
 		Input: map[string]string{
 			"prompt":           "Reply with only: RESULT: success",
 			"reasoning_effort": "high",
@@ -168,8 +168,8 @@ func TestCopilotReasoningEffortOverride(t *testing.T) {
 
 	// Step 2: execute without per-step effort (inherits agent default after restore).
 	step2 := &workflow.StepNode{
-		Name:  "execution",
-		Agent: "bot",
+		Name:    "execution",
+		Adapter: "bot",
 		Input: map[string]string{
 			"prompt": "Reply with only: RESULT: success",
 		},
@@ -228,9 +228,9 @@ func TestConformance_AllowedOutcomesPropagation(t *testing.T) {
 	// step.Outcomes so the adapter receives ["failure", "success"] (sorted).
 	// The fake's default scenario submits outcome "success".
 	step := &workflow.StepNode{
-		Name:  "propagation-step",
-		Agent: "bot",
-		Input: map[string]string{"prompt": "test AllowedOutcomes propagation"},
+		Name:    "propagation-step",
+		Adapter: "bot",
+		Input:   map[string]string{"prompt": "test AllowedOutcomes propagation"},
 		Outcomes: map[string]string{
 			"success": "done",
 			"failure": "done",
@@ -300,9 +300,9 @@ func TestConformance_AllowedOutcomesPropagation_SetProof(t *testing.T) {
 	// calls submit_outcome (missing scenario) so the adapter exhausts and emits
 	// outcome.failure carrying exactly the set it received.
 	step := &workflow.StepNode{
-		Name:  "setproof-step",
-		Agent: "bot",
-		Input: map[string]string{"prompt": "test exact AllowedOutcomes propagation"},
+		Name:    "setproof-step",
+		Adapter: "bot",
+		Input:   map[string]string{"prompt": "test exact AllowedOutcomes propagation"},
 		Outcomes: map[string]string{
 			"canary-a": "done",
 			"canary-b": "done",
@@ -402,9 +402,9 @@ func TestConformance_InvalidOutcomeScenario_Fixture(t *testing.T) {
 	ctx := openFixtureSession(t, plug, "invalid-outcome-fixture-test")
 
 	step := &workflow.StepNode{
-		Name:  "invalid-outcome-step",
-		Agent: "bot",
-		Input: map[string]string{"prompt": "test invalid-outcome scenario"},
+		Name:    "invalid-outcome-step",
+		Adapter: "bot",
+		Input:   map[string]string{"prompt": "test invalid-outcome scenario"},
 		Outcomes: map[string]string{
 			"success": "done",
 			"failure": "done",
@@ -482,9 +482,9 @@ func TestConformance_DuplicateCallScenario_Fixture(t *testing.T) {
 	ctx := openFixtureSession(t, plug, "duplicate-call-fixture-test")
 
 	step := &workflow.StepNode{
-		Name:  "duplicate-call-step",
-		Agent: "bot",
-		Input: map[string]string{"prompt": "test duplicate-call scenario"},
+		Name:    "duplicate-call-step",
+		Adapter: "bot",
+		Input:   map[string]string{"prompt": "test duplicate-call scenario"},
 		Outcomes: map[string]string{
 			"success": "done",
 			"failure": "done",

@@ -5,34 +5,34 @@ policy: max_total_steps=100  max_step_retries=0
 variables:
   (none)
 
-agents:
-  executor   adapter=copilot   on_crash=respawn
+adapters:
+  copilot.executor   type=copilot   on_crash=respawn
     config: (none)
-  reviewer   adapter=copilot   on_crash=fail
+  copilot.reviewer   type=copilot   on_crash=fail
     config: (none)
 
 steps (declaration order):
-  open_executor   agent=executor   lifecycle=open
+  open_executor   adapter=copilot.executor   lifecycle=open
     input keys: (none)
     allow_tools: (none)
     outcomes: success -> open_reviewer
-  open_reviewer   agent=reviewer   lifecycle=open
+  open_reviewer   adapter=copilot.reviewer   lifecycle=open
     input keys: (none)
     allow_tools: (none)
     outcomes: success -> execute
-  execute   agent=executor
+  execute   adapter=copilot.executor
     input keys: (none)
     allow_tools: (none)
     outcomes: approved -> close_reviewer, retry -> review
-  review   agent=reviewer
+  review   adapter=copilot.reviewer
     input keys: (none)
     allow_tools: (none)
     outcomes: approved -> close_reviewer, changes -> execute
-  close_reviewer   agent=reviewer   lifecycle=close
+  close_reviewer   adapter=copilot.reviewer   lifecycle=close
     input keys: (none)
     allow_tools: (none)
     outcomes: success -> close_executor
-  close_executor   agent=executor   lifecycle=close
+  close_executor   adapter=copilot.executor   lifecycle=close
     input keys: (none)
     allow_tools: (none)
     outcomes: success -> done

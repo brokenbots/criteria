@@ -12,19 +12,17 @@ import (
 func TestStepInputMisplacedCopilotAgentField(t *testing.T) {
 	src := `
 workflow "x" {
+  adapter "copilot" "default" {}
   version       = "0.1"
   initial_state = "open"
   target_state  = "done"
-  agent "bot" {
-    adapter = "copilot"
-  }
   step "open" {
-    agent     = "bot"
+    adapter = adapter.copilot.default
     lifecycle = "open"
     outcome "success" { transition_to = "run" }
   }
   step "run" {
-    agent = "bot"
+    adapter = adapter.copilot.default
     input {
       prompt        = "hello"
       system_prompt = "You are a bot."
@@ -32,7 +30,7 @@ workflow "x" {
     outcome "success" { transition_to = "close" }
   }
   step "close" {
-    agent     = "bot"
+    adapter = adapter.copilot.default
     lifecycle = "close"
     outcome "success" { transition_to = "done" }
   }
@@ -51,10 +49,10 @@ workflow "x" {
 	if !strings.Contains(msg, `"system_prompt"`) {
 		t.Errorf("expected field name in diagnostic, got: %s", msg)
 	}
-	if !strings.Contains(msg, "agent config block") {
-		t.Errorf("expected 'agent config block' hint in diagnostic, got: %s", msg)
+	if !strings.Contains(msg, "adapter config block") {
+		t.Errorf("expected 'adapter config block' hint in diagnostic, got: %s", msg)
 	}
-	if !strings.Contains(msg, `adapter = "copilot"`) {
+	if !strings.Contains(msg, `adapter "copilot"`) {
 		t.Errorf("expected copilot adapter in diagnostic, got: %s", msg)
 	}
 }
@@ -65,11 +63,12 @@ workflow "x" {
 func TestStepInputUnknownFieldNonCopilotAdapterKeepsGenericDiagnostic(t *testing.T) {
 	src := `
 workflow "x" {
+  adapter "shell" "default" {}
   version       = "0.1"
   initial_state = "run"
   target_state  = "done"
   step "run" {
-    adapter = "shell"
+    adapter = adapter.shell.default
     input {
       command       = "echo hi"
       system_prompt = "not-valid-for-shell"
@@ -102,19 +101,17 @@ workflow "x" {
 func TestStepInputReasoningEffortAcceptedForCopilot(t *testing.T) {
 	src := `
 workflow "x" {
+  adapter "copilot" "default" {}
   version       = "0.1"
   initial_state = "open"
   target_state  = "done"
-  agent "bot" {
-    adapter = "copilot"
-  }
   step "open" {
-    agent     = "bot"
+    adapter = adapter.copilot.default
     lifecycle = "open"
     outcome "success" { transition_to = "run" }
   }
   step "run" {
-    agent = "bot"
+    adapter = adapter.copilot.default
     input {
       prompt           = "hello"
       reasoning_effort = "high"
@@ -122,7 +119,7 @@ workflow "x" {
     outcome "success" { transition_to = "close" }
   }
   step "close" {
-    agent     = "bot"
+    adapter = adapter.copilot.default
     lifecycle = "close"
     outcome "success" { transition_to = "done" }
   }
@@ -152,19 +149,17 @@ workflow "x" {
 func TestCopilotAllowToolsAliasWarning(t *testing.T) {
 	src := `
 workflow "x" {
+  adapter "copilot" "default" {}
   version       = "0.1"
   initial_state = "open"
   target_state  = "done"
-  agent "bot" {
-    adapter = "copilot"
-  }
   step "open" {
-    agent     = "bot"
+    adapter = adapter.copilot.default
     lifecycle = "open"
     outcome "success" { transition_to = "run" }
   }
   step "run" {
-    agent       = "bot"
+    adapter = adapter.copilot.default
     allow_tools = ["read_file", "write_file"]
     input {
       prompt = "hello"
@@ -172,7 +167,7 @@ workflow "x" {
     outcome "success" { transition_to = "close" }
   }
   step "close" {
-    agent     = "bot"
+    adapter = adapter.copilot.default
     lifecycle = "close"
     outcome "success" { transition_to = "done" }
   }
@@ -230,19 +225,17 @@ workflow "x" {
 func TestCopilotAllowToolsCanonicalNoWarning(t *testing.T) {
 	src := `
 workflow "x" {
+  adapter "copilot" "default" {}
   version       = "0.1"
   initial_state = "open"
   target_state  = "done"
-  agent "bot" {
-    adapter = "copilot"
-  }
   step "open" {
-    agent     = "bot"
+    adapter = adapter.copilot.default
     lifecycle = "open"
     outcome "success" { transition_to = "run" }
   }
   step "run" {
-    agent       = "bot"
+    adapter = adapter.copilot.default
     allow_tools = ["read", "write"]
     input {
       prompt = "hello"
@@ -250,7 +243,7 @@ workflow "x" {
     outcome "success" { transition_to = "close" }
   }
   step "close" {
-    agent     = "bot"
+    adapter = adapter.copilot.default
     lifecycle = "close"
     outcome "success" { transition_to = "done" }
   }

@@ -63,21 +63,21 @@ func renderPlanOutput(ctx context.Context, workflowPath string, overrides map[st
 	}
 	b.WriteString("\n")
 
-	b.WriteString("agents:\n")
-	agentNames := sortedAgentNames(graph)
-	if len(agentNames) == 0 {
+	b.WriteString("adapters:\n")
+	adapterNames := sortedAdapterNames(graph)
+	if len(adapterNames) == 0 {
 		b.WriteString("  (none)\n")
 	}
-	for _, name := range agentNames {
-		ag := graph.Agents[name]
-		b.WriteString(fmt.Sprintf("  %s   adapter=%s   on_crash=%s\n", ag.Name, ag.Adapter, ag.OnCrash))
-		cfg := sortedMapKeys(ag.Config)
+	for _, name := range adapterNames {
+		ad := graph.Adapters[name]
+		b.WriteString(fmt.Sprintf("  %s.%s   type=%s   on_crash=%s\n", ad.Type, ad.Name, ad.Type, ad.OnCrash))
+		cfg := sortedMapKeys(ad.Config)
 		if len(cfg) == 0 {
 			b.WriteString("    config: (none)\n")
 		} else {
 			pairs := make([]string, 0, len(cfg))
 			for _, k := range cfg {
-				pairs = append(pairs, fmt.Sprintf("%s=%s", k, ag.Config[k]))
+				pairs = append(pairs, fmt.Sprintf("%s=%s", k, ad.Config[k]))
 			}
 			b.WriteString(fmt.Sprintf("    config: %s\n", strings.Join(pairs, ", ")))
 		}
@@ -135,9 +135,6 @@ func renderPlanOutput(ctx context.Context, workflowPath string, overrides map[st
 
 func formatStepHeader(step *workflow.StepNode) string {
 	parts := []string{step.Name}
-	if step.Agent != "" {
-		parts = append(parts, "agent="+step.Agent)
-	}
 	if step.Adapter != "" {
 		parts = append(parts, "adapter="+step.Adapter)
 	}

@@ -84,7 +84,7 @@ workflow "t" {
   initial_state = "items"
   target_state  = "done"
   step "items" {
-    adapter  = "fake"
+    adapter  = adapter.fake
     for_each = ["alpha", "beta", "gamma"]
     outcome "all_succeeded" { transition_to = "done" }
     outcome "any_failed"    { transition_to = "done" }
@@ -98,7 +98,7 @@ workflow "t" {
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
 		"fake": &fakePlugin{name: "fake", outcome: "success"},
 	}}
-	if err := New(g, loader, sink).Run(context.Background()); err != nil {
+	if err := New(g, loader, sink, WithAutoBootstrapAdapters()).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -125,7 +125,7 @@ workflow "t" {
   initial_state = "items"
   target_state  = "done"
   step "items" {
-    adapter  = "fake"
+    adapter  = adapter.fake
     for_each = ["a", "b"]
     outcome "all_succeeded" { transition_to = "done" }
     outcome "any_failed"    { transition_to = "done" }
@@ -140,7 +140,7 @@ workflow "t" {
 		// First call returns "failure", subsequent calls return "success".
 		"fake": &multiOutcomePlugin{name: "fake", outcomes: []string{"failure", "success"}},
 	}}
-	if err := New(g, loader, sink).Run(context.Background()); err != nil {
+	if err := New(g, loader, sink, WithAutoBootstrapAdapters()).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -161,7 +161,7 @@ workflow "t" {
   initial_state = "items"
   target_state  = "done"
   step "items" {
-    adapter  = "fake"
+    adapter  = adapter.fake
     for_each = []
     outcome "all_succeeded" { transition_to = "done" }
     outcome "any_failed"    { transition_to = "done" }
@@ -175,7 +175,7 @@ workflow "t" {
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
 		"fake": &fakePlugin{name: "fake", outcome: "success"},
 	}}
-	if err := New(g, loader, sink).Run(context.Background()); err != nil {
+	if err := New(g, loader, sink, WithAutoBootstrapAdapters()).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -199,7 +199,7 @@ workflow "t" {
   initial_state = "n"
   target_state  = "done"
   step "n" {
-    adapter = "fake"
+    adapter = adapter.fake
     count   = 4
     outcome "all_succeeded" { transition_to = "done" }
     outcome "any_failed"    { transition_to = "done" }
@@ -213,7 +213,7 @@ workflow "t" {
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
 		"fake": &fakePlugin{name: "fake", outcome: "success"},
 	}}
-	if err := New(g, loader, sink).Run(context.Background()); err != nil {
+	if err := New(g, loader, sink, WithAutoBootstrapAdapters()).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -234,7 +234,7 @@ workflow "t" {
   initial_state = "items"
   target_state  = "done"
   step "items" {
-    adapter    = "fake"
+    adapter = adapter.fake
     for_each   = ["a", "b", "c"]
     on_failure = "abort"
     outcome "all_succeeded" { transition_to = "done" }
@@ -250,7 +250,7 @@ workflow "t" {
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
 		"fake": &multiOutcomePlugin{name: "fake", outcomes: []string{"failure", "success", "success"}},
 	}}
-	if err := New(g, loader, sink).Run(context.Background()); err != nil {
+	if err := New(g, loader, sink, WithAutoBootstrapAdapters()).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -272,7 +272,7 @@ workflow "t" {
   initial_state = "items"
   target_state  = "done"
   step "items" {
-    adapter    = "fake"
+    adapter = adapter.fake
     for_each   = ["a", "b", "c"]
     on_failure = "ignore"
     outcome "all_succeeded" { transition_to = "done" }
@@ -288,7 +288,7 @@ workflow "t" {
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
 		"fake": &fakePlugin{name: "fake", outcome: "failure"},
 	}}
-	if err := New(g, loader, sink).Run(context.Background()); err != nil {
+	if err := New(g, loader, sink, WithAutoBootstrapAdapters()).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -311,13 +311,13 @@ workflow "t" {
   initial_state = "items"
   target_state  = "done"
   step "items" {
-    adapter  = "fake"
+    adapter  = adapter.fake
     for_each = ["a", "b"]
     outcome "all_succeeded" { transition_to = "post" }
     outcome "any_failed"    { transition_to = "post" }
   }
   step "post" {
-    adapter = "fake"
+    adapter = adapter.fake
     outcome "success" { transition_to = "done" }
   }
   state "done" {
@@ -329,7 +329,7 @@ workflow "t" {
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
 		"fake": &fakePlugin{name: "fake", outcome: "success"},
 	}}
-	if err := New(g, loader, sink).Run(context.Background()); err != nil {
+	if err := New(g, loader, sink, WithAutoBootstrapAdapters()).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -371,7 +371,7 @@ workflow "t" {
     for_each = ["a", "b"]
     workflow {
       step "body" {
-        adapter = "fake"
+        adapter = adapter.fake
         outcome "success" { transition_to = "_continue" }
       }
     }
@@ -387,7 +387,7 @@ workflow "t" {
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
 		"fake": &fakePlugin{name: "fake", outcome: "success"},
 	}}
-	if err := New(g, loader, sink).Run(context.Background()); err != nil {
+	if err := New(g, loader, sink, WithAutoBootstrapAdapters()).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -418,11 +418,11 @@ workflow "t" {
     for_each = ["x"]
     workflow {
       step "prepare" {
-        adapter = "fake"
+        adapter = adapter.fake
         outcome "success" { transition_to = "verify" }
       }
       step "verify" {
-        adapter = "fake"
+        adapter = adapter.fake
         outcome "success" { transition_to = "_continue" }
       }
     }
@@ -438,7 +438,7 @@ workflow "t" {
 	// Track which body steps ran.
 	p := &fakePlugin{name: "fake", outcome: "success"}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": p}}
-	if err := New(g, loader, sink).Run(context.Background()); err != nil {
+	if err := New(g, loader, sink, WithAutoBootstrapAdapters()).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -461,7 +461,7 @@ workflow "t" {
   initial_state = "items"
   target_state  = "done"
   step "items" {
-    adapter  = "fake"
+    adapter  = adapter.fake
     for_each = ["alpha", "beta"]
     input {
       label = "v:${each.value},i:${each._idx}"
@@ -482,7 +482,7 @@ workflow "t" {
 	}
 	sink := &iterSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": capturePlugin}}
-	if err := New(g, loader, sink).Run(context.Background()); err != nil {
+	if err := New(g, loader, sink, WithAutoBootstrapAdapters()).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -568,7 +568,7 @@ workflow "t" {
   initial_state = "items"
   target_state  = "done"
   step "items" {
-    adapter  = "fake"
+    adapter  = adapter.fake
     for_each = ["a", "b", "c"]
     outcome "all_succeeded" { transition_to = "done" }
     outcome "any_failed"    { transition_to = "done" }
@@ -594,6 +594,7 @@ workflow "t" {
 
 	eng := New(g, loader, sink,
 		WithResumedIter(resumeStack),
+		WithAutoBootstrapAdapters(),
 	)
 	// RunFrom with resume at "items" step, attempt 1.
 	if err := eng.RunFrom(context.Background(), "items", 1); err != nil {
@@ -707,7 +708,7 @@ workflow "t" {
   initial_state = "items"
   target_state  = "done"
   step "items" {
-    adapter  = "fake"
+    adapter  = adapter.fake
     for_each = { alpha = "A", beta = "B" }
     input {
       label = "k:${each.key},t:${each._total}"
@@ -724,7 +725,7 @@ workflow "t" {
 	cp := &captureInputPlugin{outcome: "success", capture: &capturedInputs}
 	sink := &iterSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": cp}}
-	if err := New(g, loader, sink).Run(context.Background()); err != nil {
+	if err := New(g, loader, sink, WithAutoBootstrapAdapters()).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -750,7 +751,7 @@ workflow "t" {
   initial_state = "items"
   target_state  = "done"
   step "items" {
-    adapter  = "fake"
+    adapter  = adapter.fake
     for_each = ["a", "b"]
     input {
       label = "${each.value},prevnull:${each._prev == null}"
@@ -771,7 +772,7 @@ workflow "t" {
 	}
 	sink := &iterSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": combined}}
-	if err := New(g, loader, sink).Run(context.Background()); err != nil {
+	if err := New(g, loader, sink, WithAutoBootstrapAdapters()).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -797,7 +798,7 @@ workflow "t" {
   initial_state = "items"
   target_state  = "done"
   step "items" {
-    adapter    = "fake"
+    adapter = adapter.fake
     for_each   = ["a", "b", "c"]
     on_failure = "continue"
     outcome "all_succeeded" { transition_to = "done" }
@@ -812,7 +813,7 @@ workflow "t" {
 	plug := &multiOutcomePlugin{name: "fake", outcomes: []string{"success", "failure", "success"}}
 	sink := &iterSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": plug}}
-	if err := New(g, loader, sink).Run(context.Background()); err != nil {
+	if err := New(g, loader, sink, WithAutoBootstrapAdapters()).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -837,7 +838,7 @@ workflow "t" {
   initial_state = "items"
   target_state  = "done"
   step "items" {
-    adapter    = "fake"
+    adapter = adapter.fake
     for_each   = ["a", "b", "c"]
     on_failure = "abort"
     outcome "all_succeeded" { transition_to = "done" }
@@ -851,7 +852,7 @@ workflow "t" {
 	plug := &multiOutcomePlugin{name: "fake", outcomes: []string{"failure", "success"}}
 	sink := &iterSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": plug}}
-	if err := New(g, loader, sink).Run(context.Background()); err != nil {
+	if err := New(g, loader, sink, WithAutoBootstrapAdapters()).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -892,7 +893,7 @@ workflow "t" {
   initial_state = "produce"
   target_state  = "done"
   step "produce" {
-    adapter  = "fake_produce"
+    adapter = adapter.fake_produce
     for_each = ["x", "y"]
     outcome "all_succeeded" { transition_to = "done" }
     outcome "any_failed"    { transition_to = "done" }
@@ -910,7 +911,7 @@ workflow "t" {
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
 		"fake_produce": producePlug,
 	}}
-	if err := New(g, loader, sink).Run(context.Background()); err != nil {
+	if err := New(g, loader, sink, WithAutoBootstrapAdapters()).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -936,7 +937,7 @@ workflow "t" {
   initial_state = "items"
   target_state  = "done"
   step "items" {
-    adapter  = "fake"
+    adapter  = adapter.fake
     for_each = ["a", "b", "c"]
     input {
       label = "${each.value}"
@@ -961,7 +962,7 @@ workflow "t" {
 		Total:      3,
 		InProgress: true,
 	}}
-	eng := New(g, loader, sink, WithResumedIter(resumeStack))
+	eng := New(g, loader, sink, WithResumedIter(resumeStack), WithAutoBootstrapAdapters())
 	if err := eng.RunFrom(context.Background(), "items", 1); err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -992,7 +993,7 @@ workflow "t" {
     for_each = ["x", "y"]
     workflow {
       step "inner" {
-        adapter = "fake"
+        adapter = adapter.fake
         input   { label = "${each.value}" }
         outcome "success" { transition_to = "_continue" }
       }
@@ -1009,7 +1010,7 @@ workflow "t" {
 	capturePlugin := &captureInputPlugin{outcome: "success", capture: &capturedInputs}
 	sink := &iterSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": capturePlugin}}
-	if err := New(g, loader, sink).Run(context.Background()); err != nil {
+	if err := New(g, loader, sink, WithAutoBootstrapAdapters()).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -1048,7 +1049,7 @@ workflow "t" {
     for_each   = ["x", "y", "z"]
     workflow {
       step "body" {
-        adapter = "fake"
+        adapter = adapter.fake
         input   { label = "${each.value}" }
         outcome "success" { transition_to = "_continue" }
         outcome "failure" { transition_to = "aborted" }
@@ -1076,7 +1077,7 @@ workflow "t" {
 	combined := &combinedPlugin{captureInputPlugin: cp, outcomePlugin: mp}
 	sink := &iterSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": combined}}
-	if err := New(g, loader, sink).Run(context.Background()); err != nil {
+	if err := New(g, loader, sink, WithAutoBootstrapAdapters()).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -1131,7 +1132,7 @@ workflow "t" {
         value = "42"
       }
       step "body" {
-        adapter = "fake"
+        adapter = adapter.fake
         outcome "success" { transition_to = "_continue" }
       }
     }
@@ -1140,7 +1141,7 @@ workflow "t" {
   }
 
   step "consume" {
-    adapter = "fake"
+    adapter = adapter.fake
     input {
       got = "${steps.produce[0].score}"
     }
@@ -1157,7 +1158,7 @@ workflow "t" {
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
 		"fake": &captureInputPlugin{outcome: "success", capture: &capturedConsume},
 	}}
-	if err := New(g, loader, sink).Run(context.Background()); err != nil {
+	if err := New(g, loader, sink, WithAutoBootstrapAdapters()).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -1193,14 +1194,14 @@ workflow "t" {
   target_state  = "done"
 
   step "produce" {
-    adapter  = "fake_produce"
+    adapter = adapter.fake_produce
     for_each = ["x", "y"]
     outcome "all_succeeded" { transition_to = "consume" }
     outcome "any_failed"    { transition_to = "done" }
   }
 
   step "consume" {
-    adapter = "fake_consume"
+    adapter = adapter.fake_consume
     input {
       first_val  = "${steps.produce[0].val}"
       second_val = "${steps.produce[1].val}"
@@ -1224,7 +1225,7 @@ workflow "t" {
 		"fake_produce": producePlug,
 		"fake_consume": consumePlug,
 	}}
-	if err := New(g, loader, sink).Run(context.Background()); err != nil {
+	if err := New(g, loader, sink, WithAutoBootstrapAdapters()).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -1253,7 +1254,7 @@ workflow "t" {
   target_state  = "done"
 
   step "items" {
-    adapter    = "fake"
+    adapter = adapter.fake
     for_each   = ["a", "b"]
     on_failure = "continue"
     input {
@@ -1278,7 +1279,7 @@ workflow "t" {
 	combined.capture = &capturedInputs
 	sink := &iterSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": combined}}
-	if err := New(g, loader, sink).Run(context.Background()); err != nil {
+	if err := New(g, loader, sink, WithAutoBootstrapAdapters()).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -1310,7 +1311,7 @@ workflow "t" {
     for_each = ["a", "b"]
     workflow {
       step "inner" {
-        adapter  = "fake"
+        adapter  = adapter.fake
         for_each = ["x", "y"]
         input    { label = "${each.value}" }
         outcome "all_succeeded" { transition_to = "_continue" }
@@ -1330,7 +1331,7 @@ workflow "t" {
 	cp := &captureInputPlugin{outcome: "success", capture: &capturedInputs}
 	sink := &iterSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": cp}}
-	if err := New(g, loader, sink).Run(context.Background()); err != nil {
+	if err := New(g, loader, sink, WithAutoBootstrapAdapters()).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -1365,7 +1366,7 @@ workflow "t" {
   initial_state = "items"
   target_state  = "done"
   step "items" {
-    adapter  = "fake"
+    adapter  = adapter.fake
     for_each = ["a", "b"]
     input {
       prev_null = "${each._prev == null}"
@@ -1411,7 +1412,7 @@ workflow "t" {
 	sink := &iterSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": capturePlugin}}
 
-	eng := New(g, loader, sink, WithResumedIter([]workflow.IterCursor{*restored}))
+	eng := New(g, loader, sink, WithResumedIter([]workflow.IterCursor{*restored}), WithAutoBootstrapAdapters())
 	if err := eng.RunFrom(context.Background(), "items", 1); err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -1449,7 +1450,7 @@ workflow "t" {
     for_each = ["a", "b", "c"]
     workflow {
       step "body" {
-        adapter = "seq"
+        adapter = adapter.seq
         outcome "success" { transition_to = "_continue" }
         outcome "failure" { transition_to = "bail" }
       }
@@ -1464,7 +1465,7 @@ workflow "t" {
   }
 }`)
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"seq": seqPlugin}}
-	eng := New(g, loader, &fakeSink{})
+	eng := New(g, loader, &fakeSink{}, WithAutoBootstrapAdapters())
 	if err := eng.Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -1485,13 +1486,13 @@ workflow "t" {
   initial_state = "produce"
   target_state  = "consume"
   step "produce" {
-    adapter  = "out"
+    adapter = adapter.out
     for_each = { alpha = "a", beta = "b" }
     outcome "all_succeeded" { transition_to = "consume" }
     outcome "any_failed"    { transition_to = "consume" }
   }
   step "consume" {
-    adapter = "capture"
+    adapter = adapter.capture
     input {
       got_alpha = "${steps.produce.alpha.val}"
     }
@@ -1508,7 +1509,7 @@ workflow "t" {
 		"out":     outPlugin,
 		"capture": capturePlugin,
 	}}
-	eng := New(g, loader, &fakeSink{})
+	eng := New(g, loader, &fakeSink{}, WithAutoBootstrapAdapters())
 	if err := eng.Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}

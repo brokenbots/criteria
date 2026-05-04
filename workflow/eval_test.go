@@ -169,11 +169,12 @@ func TestResolveInputExprs_EachProducesPlannedMessage(t *testing.T) {
 	// is the correct enforcement point.
 	src := `
 workflow "test" {
+  adapter "shell" "default" {}
   version       = "0.1"
   initial_state = "s"
   target_state  = "__done__"
   step "s" {
-    adapter = "shell"
+    adapter = adapter.shell.default
     input {
       command = "${each.value}"
     }

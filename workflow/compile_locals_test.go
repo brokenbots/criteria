@@ -177,14 +177,12 @@ func TestCompileLocals_RuntimeRef(t *testing.T) {
     success  = true
   }
 
-  agent "a" { adapter = "noop" }
-
   local "bad" {
     value = steps.step1.out
   }
 
   step "step1" {
-    agent = "a"
+    adapter = adapter.a.default
     outcome "success" { transition_to = "done" }
   }
 }

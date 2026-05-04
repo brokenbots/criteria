@@ -12,13 +12,17 @@ workflow "phase3-environment" {
     }
   }
 
+  adapter "shell" "default" {
+    config { }
+  }
+
   state "done" {
     terminal = true
     success = true
   }
 
   step "print_env" {
-    adapter = "shell"
+    adapter = adapter.shell.default
     input {
       command = "printenv"
     }

@@ -48,8 +48,10 @@ workflow "resume" {
   initial_state = "deploy"
   target_state  = "__done__"
 
+  adapter "shell" "default" {}
+
   step "deploy" {
-    adapter = "shell"
+    adapter = adapter.shell.default
     input {
       command = "echo ${steps.build.stdout}"
     }
@@ -104,7 +106,7 @@ func TestReattachRun_RestoresVarScope(t *testing.T) {
 		t.Fatalf("workflow.Parse: %s", diags)
 	}
 	graph, diags := workflow.Compile(spec, map[string]workflow.AdapterInfo{
-		"shell": {
+		"shell.default": {
 			InputSchema: map[string]workflow.ConfigField{
 				"command": {Type: workflow.ConfigFieldString, Required: true},
 			},
@@ -143,7 +145,7 @@ func TestReattachRun_RestoresVarScope(t *testing.T) {
 		"shell": plugin.BuiltinFactoryForAdapter(rec)(),
 	}}
 	sink := &integrationSink{}
-	eng := engine.New(graph, loader, sink, engine.WithResumedVars(restoredVars))
+	eng := engine.New(graph, loader, sink, engine.WithResumedVars(restoredVars), engine.WithAutoBootstrapAdapters())
 	if runErr := eng.Run(ctx); runErr != nil {
 		t.Fatalf("engine.Run: %v", runErr)
 	}

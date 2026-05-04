@@ -12,40 +12,14 @@ import (
 	"github.com/zclconf/go-cty/cty"
 )
 
-// resolveAdapterName returns the effective adapter name for a step: either
-// sp.Adapter (direct) or the adapter backing sp.Agent (indirect).
-func resolveAdapterName(g *FSMGraph, sp *StepSpec) string {
-	if sp.Adapter != "" {
-		return sp.Adapter
-	}
-	if sp.Agent != "" {
-		if agent, ok := g.Agents[sp.Agent]; ok {
-			return agent.Adapter
-		}
-	}
-	return ""
-}
-
 // resolveStepOnCrash returns the effective on_crash for a step, falling back
-// to the backing agent's on_crash if the step doesn't specify one.
+// to the backing adapter's on_crash if the step doesn't specify one.
+// Deprecated: Use resolveStepOnCrashWithAdapter instead.
 func resolveStepOnCrash(g *FSMGraph, sp *StepSpec) (string, hcl.Diagnostics) {
 	var diags hcl.Diagnostics
-	if sp.OnCrash != "" && !isValidOnCrash(sp.OnCrash) {
-		diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q: invalid on_crash %q", sp.Name, sp.OnCrash)})
-	}
-	effective := sp.OnCrash
-	if effective == "" {
-		if sp.Agent != "" {
-			if agent, ok := g.Agents[sp.Agent]; ok {
-				effective = agent.OnCrash
-			} else {
-				effective = onCrashFail
-			}
-		} else {
-			effective = onCrashFail
-		}
-	}
-	return effective, diags
+	// This function no longer works because sp.Adapter is not a gohcl-decoded field.
+	// Use resolveStepOnCrashWithAdapter(g, sp, adapterRef) in the compile path instead.
+	return onCrashFail, diags
 }
 
 // compileOutcomeBlock populates node.Outcomes from sp.Outcomes, checking for

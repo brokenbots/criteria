@@ -3,16 +3,15 @@ workflow "agent_lifecycle_noop_open_timeout" {
   initial_state = "open_agent"
   target_state  = "done"
 
-  agent "demo" {
-    adapter  = "noop"
+  adapter "noop" "demo" {
     on_crash = "fail"
     config {
       bootstrap = "true"
-    }
+  }
   }
 
   step "open_agent" {
-    agent     = "demo"
+    adapter = adapter.noop.demo
     lifecycle = "open"
     timeout   = "1s"
     outcome "success" { transition_to = "run_agent" }
@@ -20,7 +19,7 @@ workflow "agent_lifecycle_noop_open_timeout" {
   }
 
   step "run_agent" {
-    agent = "demo"
+    adapter = adapter.noop.demo
     input {
       prompt = "hello"
     }
@@ -29,7 +28,7 @@ workflow "agent_lifecycle_noop_open_timeout" {
   }
 
   step "close_agent" {
-    agent     = "demo"
+    adapter = adapter.noop.demo
     lifecycle = "close"
     outcome "success" { transition_to = "done" }
     outcome "failure" { transition_to = "failed" }

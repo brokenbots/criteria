@@ -7,11 +7,18 @@
     "MaxStepRetries": 0,
     "MaxVisitsWarnThreshold": 200
   },
-  "agents": [],
+  "adapters": [
+    {
+      "type": "noop",
+      "name": "default",
+      "on_crash": "fail",
+      "config_keys": null
+    }
+  ],
   "steps": [
     {
       "name": "init",
-      "adapter": "noop",
+      "adapter": "noop.default",
       "input_keys": [
         "result"
       ],

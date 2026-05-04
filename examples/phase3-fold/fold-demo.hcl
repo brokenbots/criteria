@@ -16,6 +16,10 @@ workflow "fold-demo" {
   initial_state = "greet"
   target_state  = "done"
 
+  adapter "shell" "default" {
+    config { }
+  }
+
   variable "name" {
     type        = "string"
     default     = "world"
@@ -37,7 +41,7 @@ workflow "fold-demo" {
   }
 
   step "greet" {
-    adapter = "shell"
+    adapter = adapter.shell.default
     input {
       # file(local.prompt_path) is folded and validated at compile time.
       # The default var.name="world" resolves to "world_prompt.txt".

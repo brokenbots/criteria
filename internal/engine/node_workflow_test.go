@@ -114,7 +114,7 @@ workflow "t" {
         type = "string"
       }
       step "body" {
-        adapter = "fake"
+        adapter = adapter.fake
         input {
           label = var.prefix
         }
@@ -137,7 +137,7 @@ workflow "t" {
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
 		"fake": &captureInputPlugin{outcome: "success", capture: &captured},
 	}}
-	if err := New(g, loader, sink).Run(context.Background()); err != nil {
+	if err := New(g, loader, sink, WithAutoBootstrapAdapters()).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -183,7 +183,7 @@ workflow "t" {
 
     workflow {
       step "inner" {
-        adapter = "fake_producer"
+        adapter = adapter.fake_producer
         outcome "success" { transition_to = "_continue" }
       }
     }
@@ -193,7 +193,7 @@ workflow "t" {
   }
 
   step "check" {
-    adapter = "fake_consumer"
+    adapter = adapter.fake_consumer
     input {
       received = steps.inner.result
     }
@@ -215,7 +215,7 @@ workflow "t" {
 		"fake_consumer": &captureInputPlugin{outcome: "success", capture: &[]map[string]string{}},
 	}}
 
-	err := New(g, loader, sink).Run(context.Background())
+	err := New(g, loader, sink, WithAutoBootstrapAdapters()).Run(context.Background())
 	if err == nil {
 		t.Fatal("expected error: body step outputs must not be visible in outer steps.* scope (no-leakage regression)")
 	}
@@ -243,7 +243,7 @@ workflow "t" {
         value = steps.inner.result
       }
       step "inner" {
-        adapter = "fake_producer"
+        adapter = adapter.fake_producer
         outcome "success" { transition_to = "_continue" }
       }
     }
@@ -253,7 +253,7 @@ workflow "t" {
   }
 
   step "consume" {
-    adapter = "fake_consumer"
+    adapter = adapter.fake_consumer
     input {
       received = steps.produce[0].tag
     }
@@ -276,7 +276,7 @@ workflow "t" {
 		},
 		"fake_consumer": &captureInputPlugin{outcome: "success", capture: &consumeCapture},
 	}}
-	if err := New(g, loader, sink).Run(context.Background()); err != nil {
+	if err := New(g, loader, sink, WithAutoBootstrapAdapters()).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -317,7 +317,7 @@ workflow "t" {
 
     workflow {
       step "body" {
-        adapter = "fake"
+        adapter = adapter.fake
         outcome "success" { transition_to = "_continue" }
       }
     }
@@ -337,7 +337,7 @@ workflow "t" {
 		"fake": &fakePlugin{name: "fake", outcome: "success"},
 	}}
 
-	err := New(g, loader, sink).Run(context.Background())
+	err := New(g, loader, sink, WithAutoBootstrapAdapters()).Run(context.Background())
 	if err == nil {
 		t.Fatal("expected error: non-object body input (each.value = string) must be rejected at runtime")
 	}

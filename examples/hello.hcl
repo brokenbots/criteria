@@ -5,6 +5,10 @@ workflow "hello" {
   initial_state = "say_hello"
   target_state  = "done"
 
+  adapter "shell" "default" {
+    config { }
+  }
+
   output "greeting" {
     type        = "string"
     description = "The greeting message produced by the workflow"
@@ -12,7 +16,7 @@ workflow "hello" {
   }
 
   step "say_hello" {
-    adapter = "shell"
+    adapter = adapter.shell.default
     input {
       command = "echo hello from criteria"
     }

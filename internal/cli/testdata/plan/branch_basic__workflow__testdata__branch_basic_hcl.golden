@@ -5,11 +5,12 @@ policy: max_total_steps=100  max_step_retries=0
 variables:
   env: string = staging
 
-agents:
-  (none)
+adapters:
+  noop.default   type=noop   on_crash=fail
+    config: (none)
 
 steps (declaration order):
-  build   adapter=noop
+  build   adapter=noop.default
     input keys: (none)
     allow_tools: (none)
     outcomes: success -> decide

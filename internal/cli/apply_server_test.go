@@ -40,15 +40,17 @@ workflow "two_step" {
   initial_state = "step_one"
   target_state  = "done"
 
+  adapter "shell" "default" {}
+
   step "step_one" {
-    adapter = "shell"
+    adapter = adapter.shell.default
     input { command = "echo step_one" }
     outcome "success" { transition_to = "step_two" }
     outcome "failure" { transition_to = "done" }
   }
 
   step "step_two" {
-    adapter = "shell"
+    adapter = adapter.shell.default
     input { command = "echo step_two" }
     outcome "success" { transition_to = "done" }
     outcome "failure" { transition_to = "done" }
@@ -70,15 +72,17 @@ workflow "cancel_test" {
   initial_state = "step_one"
   target_state  = "done"
 
+  adapter "shell" "default" {}
+
   step "step_one" {
-    adapter = "shell"
+    adapter = adapter.shell.default
     input { command = "echo step_one" }
     outcome "success" { transition_to = "step_two" }
     outcome "failure" { transition_to = "done" }
   }
 
   step "step_two" {
-    adapter = "shell"
+    adapter = adapter.shell.default
     input { command = "sleep 30" }
     outcome "success" { transition_to = "done" }
   }
@@ -97,8 +101,10 @@ workflow "pause_resume" {
   initial_state = "step_one"
   target_state  = "done"
 
+  adapter "shell" "default" {}
+
   step "step_one" {
-    adapter = "shell"
+    adapter = adapter.shell.default
     input { command = "echo step_one" }
     outcome "success" { transition_to = "gate" }
     outcome "failure" { transition_to = "done" }
@@ -110,7 +116,7 @@ workflow "pause_resume" {
   }
 
   step "step_three" {
-    adapter = "shell"
+    adapter = adapter.shell.default
     input { command = "echo step_three" }
     outcome "success" { transition_to = "done" }
     outcome "failure" { transition_to = "done" }
@@ -566,7 +572,7 @@ func TestDrainResumeCycles_PauseThenResume(t *testing.T) {
 			return nil
 		})
 
-	eng = engine.New(graph, loader, sink, engine.WithWorkflowDir(filepath.Dir(wfPath)))
+	eng = engine.New(graph, loader, sink, engine.WithWorkflowDir(filepath.Dir(wfPath)), engine.WithAutoBootstrapAdapters())
 	if err := eng.Run(ctx); err != nil {
 		t.Fatalf("first engine run: %v", err)
 	}
@@ -667,7 +673,7 @@ func TestDrainResumeCycles_StreamDropAndReconnect(t *testing.T) {
 			return nil
 		})
 
-	eng = engine.New(graph, loader, sink, engine.WithWorkflowDir(filepath.Dir(wfPath)))
+	eng = engine.New(graph, loader, sink, engine.WithWorkflowDir(filepath.Dir(wfPath)), engine.WithAutoBootstrapAdapters())
 	if err := eng.Run(ctx); err != nil {
 		t.Fatalf("first engine run: %v", err)
 	}

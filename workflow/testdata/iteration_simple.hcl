@@ -10,8 +10,10 @@ workflow "iteration_simple" {
     max_total_steps = 30
   }
 
+  adapter "noop" "default" {}
+
   step "process" {
-    adapter  = "noop"
+    adapter = adapter.noop.default
     for_each = ["alpha", "beta", "gamma"]
     input {
       label  = "item:${each.value}"
@@ -22,7 +24,7 @@ workflow "iteration_simple" {
   }
 
   step "count_phase" {
-    adapter   = "noop"
+    adapter = adapter.noop.default
     count     = 3
     on_failure = "ignore"
     input {

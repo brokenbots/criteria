@@ -14,8 +14,10 @@ workflow "requires_signal" {
   initial_state = "execute"
   target_state  = "done"
 
+  adapter "shell" "default" {}
+
   step "execute" {
-    adapter = "shell"
+    adapter = adapter.shell.default
     input {
       command = "echo hello"
     }

@@ -5,6 +5,7 @@ package workflow
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/hashicorp/hcl/v2"
@@ -26,6 +27,8 @@ var copilotAllowToolsAliases = map[string]string{
 
 // compileAdapterStep compiles a non-iterating adapter- or agent-backed step
 // and registers it in g.
+//
+//nolint:funlen // W11: function length unavoidable due to comprehensive adapter validation and resolution
 func compileAdapterStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[string]AdapterInfo, opts CompileOpts) hcl.Diagnostics {
 	var diags hcl.Diagnostics
 
@@ -36,11 +39,28 @@ func compileAdapterStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[strin
 	}
 
 	diags = append(diags, validateStepKindSelectionDiags(sp)...)
-	diags = append(diags, validateAdapterAndAgent(g, sp)...)
+
+	// Resolve the adapter reference from the step's Remain body as an HCL traversal.
+	// This replaces the old sp.Adapter string field with proper traversal parsing.
+	adapterRef, adapterPresent, d := resolveStepAdapterRef(sp.Remain)
+	diags = append(diags, d...)
+
+	// Validate that the resolved adapter reference (if present) exists in the graph.
+	// This check comes after traversal resolution to provide precise diagnostics.
+	if adapterPresent {
+		if _, ok := g.Adapters[adapterRef]; !ok {
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  fmt.Sprintf("step %q: referenced adapter %q is not declared", sp.Name, adapterRef),
+			})
+		}
+	}
+
+	diags = append(diags, validateAdapterRefRequired(sp, adapterPresent)...)
 	diags = append(diags, validateLegacyConfig(sp)...)
 	diags = append(diags, validateOnFailureForNonIterating(sp)...)
 
-	effectiveOnCrash, d := resolveStepOnCrash(g, sp)
+	effectiveOnCrash, d := resolveStepOnCrashWithAdapter(g, sp, adapterRef)
 	diags = append(diags, d...)
 
 	timeout, d := decodeStepTimeout(sp)
@@ -50,8 +70,16 @@ func compileAdapterStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[strin
 		diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q: max_visits must be >= 0", sp.Name)})
 	}
 
-	adapterName := resolveAdapterName(g, sp)
-	inputMap, inputExprs, d := decodeStepInput(g, sp, schemas, opts, adapterName)
+	// Extract the adapter type from the dotted reference for validation and warnings.
+	adapterType := ""
+	if adapterRef != "" {
+		parts := strings.Split(adapterRef, ".")
+		if len(parts) == 2 {
+			adapterType = parts[0]
+		}
+	}
+
+	inputMap, inputExprs, d := decodeStepInput(g, sp, schemas, opts, adapterType)
 	diags = append(diags, d...)
 
 	// each.* references are only valid inside iterating steps or workflow bodies
@@ -60,8 +88,8 @@ func compileAdapterStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[strin
 		diags = append(diags, validateEachRefs(sp.Name, inputExprs)...)
 	}
 
-	node := newBaseStepNode(sp, spec, effectiveOnCrash, timeout, inputMap, inputExprs)
-	diags = append(diags, maybeCopilotAliasWarnings(sp.Name, adapterName, node.AllowTools)...)
+	node := newBaseStepNodeWithAdapterRef(sp, spec, adapterRef, effectiveOnCrash, timeout, inputMap, inputExprs)
+	diags = append(diags, maybeCopilotAliasWarnings(sp.Name, adapterType, node.AllowTools)...)
 	diags = append(diags, compileOutcomeBlock(sp, node)...)
 
 	if len(node.Outcomes) == 0 {
@@ -115,14 +143,14 @@ func maybeCopilotAliasWarnings(stepName, adapterName string, tools []string) hcl
 	return diags
 }
 
-// newBaseStepNode constructs a StepNode with all fields common to both
-// non-iterating and iterating adapter/agent steps.
-func newBaseStepNode(sp *StepSpec, spec *Spec, effectiveOnCrash string, timeout time.Duration,
+// newBaseStepNodeWithAdapterRef constructs a StepNode with all fields common to both
+// non-iterating and iterating adapter steps, using the resolved adapterRef instead
+// of reading from sp.Adapter (which is no longer a gohcl-decoded field).
+func newBaseStepNodeWithAdapterRef(sp *StepSpec, spec *Spec, adapterRef string, effectiveOnCrash string, timeout time.Duration,
 	inputMap map[string]string, inputExprs map[string]hcl.Expression) *StepNode {
 	return &StepNode{
 		Name:       sp.Name,
-		Adapter:    sp.Adapter,
-		Agent:      sp.Agent,
+		Adapter:    adapterRef, // resolved "<type>.<name>" from traversal expression
 		Lifecycle:  sp.Lifecycle,
 		OnCrash:    effectiveOnCrash,
 		Type:       sp.Type,
@@ -136,35 +164,83 @@ func newBaseStepNode(sp *StepSpec, spec *Spec, effectiveOnCrash string, timeout 
 	}
 }
 
-// validateAdapterAndAgent validates adapter name syntax, agent reference
-// existence, allow_tools/agent constraint, and lifecycle/agent constraint.
-func validateAdapterAndAgent(g *FSMGraph, sp *StepSpec) hcl.Diagnostics {
+// validateAdapterRefRequired checks constraints that require a valid adapter reference.
+// This is called after the adapter reference has been resolved from the step's
+// Remain body and validated. adapterPresent indicates whether an adapter attribute
+// was found in the step.
+func validateAdapterRefRequired(sp *StepSpec, adapterPresent bool) hcl.Diagnostics {
 	var diags hcl.Diagnostics
-	if sp.Adapter != "" && !isValidAdapterName(sp.Adapter) {
-		diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q: invalid adapter %q", sp.Name, sp.Adapter)})
+
+	if len(sp.AllowTools) > 0 && !adapterPresent {
+		diags = append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  fmt.Sprintf("step %q: allow_tools requires an adapter reference", sp.Name),
+		})
 	}
-	if sp.Agent != "" {
-		if _, ok := g.Agents[sp.Agent]; !ok {
-			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q: unknown agent %q", sp.Name, sp.Agent)})
-		}
-	}
-	if len(sp.AllowTools) > 0 && sp.Agent == "" {
-		diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q: allow_tools requires agent", sp.Name)})
-	}
+
 	if sp.Lifecycle != "" {
 		if !isValidLifecycle(sp.Lifecycle) {
-			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q: invalid lifecycle %q", sp.Name, sp.Lifecycle)})
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  fmt.Sprintf("step %q: invalid lifecycle %q", sp.Name, sp.Lifecycle),
+			})
 		}
-		if sp.Agent == "" {
-			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q: lifecycle requires agent", sp.Name)})
+		if !adapterPresent {
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  fmt.Sprintf("step %q: lifecycle requires an adapter reference", sp.Name),
+			})
 		}
 		if sp.Input != nil {
-			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q: lifecycle %q must not include input", sp.Name, sp.Lifecycle)})
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  fmt.Sprintf("step %q: lifecycle %q must not include input", sp.Name, sp.Lifecycle),
+			})
 		}
 		if len(sp.AllowTools) > 0 {
-			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q: allow_tools is only valid on execute-shape steps (not lifecycle open/close)", sp.Name)})
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  fmt.Sprintf("step %q: allow_tools is only valid on execute-shape steps (not lifecycle open/close)", sp.Name),
+			})
 		}
 	}
+
+	return diags
+}
+
+// resolveStepOnCrashWithAdapter returns the effective on_crash for a step,
+// falling back to the backing adapter's on_crash if the step doesn't specify one.
+// adapterRef is the resolved adapter "<type>.<name>" reference.
+func resolveStepOnCrashWithAdapter(g *FSMGraph, sp *StepSpec, adapterRef string) (string, hcl.Diagnostics) {
+	var diags hcl.Diagnostics
+	if sp.OnCrash != "" && !isValidOnCrash(sp.OnCrash) {
+		diags = append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  fmt.Sprintf("step %q: invalid on_crash %q", sp.Name, sp.OnCrash),
+		})
+		return "", diags
+	}
+	if sp.OnCrash != "" {
+		return sp.OnCrash, nil // step explicitly specifies on_crash
+	}
+	// Fall back to the adapter's on_crash (if set).
+	if adapterRef != "" {
+		if adapterNode, ok := g.Adapters[adapterRef]; ok {
+			return adapterNode.OnCrash, nil
+		}
+	}
+	return "", nil
+}
+
+// validateAdapterAndAgent validates adapter references and constraints.
+// In v0.3.0, steps must reference declared adapters via the "<type>.<name>" dotted form.
+// Bare adapter types (e.g., adapter = "shell") are no longer allowed.
+//
+// Deprecated: This function is kept for reference; new code should use validateAdapterRefRequired.
+func validateAdapterAndAgent(g *FSMGraph, sp *StepSpec) hcl.Diagnostics {
+	var diags hcl.Diagnostics
+	// Note: validateAdapterAndAgent is kept here for legacy reference but is no longer called.
+	// The new compile flow uses resolveStepAdapterRef for traversal-based resolution.
 	return diags
 }
 

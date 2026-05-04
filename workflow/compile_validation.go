@@ -103,15 +103,15 @@ func validateFoldableAttrs(attrs hcl.Attributes, vars, locals map[string]cty.Val
 	return diags
 }
 
-// knownAgentConfigFields maps adapter names to the set of fields that belong in
-// the agent config block rather than a step input block. When an unknown
-// step-input field matches this list, the diagnostic names the agent config
+// knownAdapterConfigFields maps adapter names to the set of fields that belong in
+// the adapter config block rather than a step input block. When an unknown
+// step-input field matches this list, the diagnostic names the adapter config
 // block as the correct location rather than emitting the generic "unknown field"
 // message.
 //
 // Adding a new adapter here costs one slice entry; adapters not in the map
 // continue to emit the generic diagnostic.
-var knownAgentConfigFields = map[string][]string{
+var knownAdapterConfigFields = map[string][]string{
 	"copilot": {"model", "reasoning_effort", "system_prompt", "max_turns", "working_directory"},
 	// future adapters extend this list
 }
@@ -121,13 +121,13 @@ var knownAgentConfigFields = map[string][]string{
 // and type mismatch checks. Returns (decoded string map, diagnostics).
 //
 // adapterName is used to produce a targeted misplacement diagnostic when an
-// unknown input field matches a known agent-config field for that adapter. Pass
+// unknown input field matches a known adapter-config field for that adapter. Pass
 // "" to emit the generic "unknown field" diagnostic for all unknown keys.
 //
 // When evalCtx is nil, expressions that fail to evaluate are stored as "" and
 // the type check is deferred to runtime (step.input{} mode). When evalCtx is
 // non-nil, the expression is evaluated against that context and any failure is
-// reported as a hard diagnostic (agent.config{} mode — no runtime resolution).
+// reported as a hard diagnostic (adapter.config{} mode — no runtime resolution).
 func validateSchemaAttrs(context string, attrs hcl.Attributes, schema map[string]ConfigField, missingRange hcl.Range, adapterName string, evalCtx *hcl.EvalContext) (map[string]string, hcl.Diagnostics) { //nolint:funlen,gocognit,gocyclo // W03: exhaustive schema validation with per-adapter diagnostics
 	var diags hcl.Diagnostics
 	result := make(map[string]string, len(attrs))
@@ -243,12 +243,12 @@ func validateSchemaAttrs(context string, attrs hcl.Attributes, schema map[string
 // the generic "unknown field" message is returned.
 func unknownFieldDiagnostic(context, field, adapterName string, r hcl.Range) *hcl.Diagnostic {
 	if adapterName != "" {
-		for _, known := range knownAgentConfigFields[adapterName] {
+		for _, known := range knownAdapterConfigFields[adapterName] {
 			if known == field {
 				return &hcl.Diagnostic{
 					Severity: hcl.DiagError,
-					Summary:  fmt.Sprintf("%s: field %q is not valid in step input for adapter %q; it belongs in the agent config block", context, field, adapterName),
-					Detail:   fmt.Sprintf("  agent \"<name>\" {\n    adapter = %q\n    config {\n      %s = ...\n    }\n  }", adapterName, field),
+					Summary:  fmt.Sprintf("%s: field %q is not valid in step input for adapter %q; it belongs in the adapter config block", context, field, adapterName),
+					Detail:   fmt.Sprintf("  adapter %q \"<name>\" {\n    config {\n      %s = ...\n    }\n  }", adapterName, field),
 					Subject:  &r,
 				}
 			}

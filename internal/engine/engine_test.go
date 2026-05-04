@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"sync"
@@ -109,8 +110,74 @@ func (l *fakeLoader) Resolve(_ context.Context, name string) (plugin.Plugin, err
 
 func (l *fakeLoader) Shutdown(context.Context) error { return nil }
 
+// injectDefaultAdapters automatically adds adapter declarations for any bare adapter type
+// references in the HCL, and updates all references to use the dotted "<type>.default" form.
+// This is a test helper to reduce boilerplate since most tests use simple single-adapter workflows.
+func injectDefaultAdapters(src string) string {
+	// Collect unique adapter type names from adapter = adapter.... references
+	adapters := make(map[string]bool)
+	for _, line := range strings.Split(src, "\n") {
+		trimmed := strings.TrimSpace(line)
+		// Match "adapter" keyword followed by "=" and a traversal (e.g., adapter = adapter.fake)
+		if strings.HasPrefix(trimmed, `adapter`) && strings.Contains(trimmed, `=`) && strings.Contains(trimmed, `adapter.`) {
+			// Extract the part after "adapter."; find the first identifier
+			afterAdapter := strings.TrimSpace(trimmed[strings.Index(trimmed, "=")+1:])
+			if strings.HasPrefix(afterAdapter, "adapter.") {
+				parts := strings.FieldsFunc(strings.TrimPrefix(afterAdapter, "adapter."), func(c rune) bool {
+					return c == '.' || c == ' ' || c == '\n' || c == '\r' || c == '\t' || c == '#'
+				})
+				if len(parts) > 0 {
+					adapterType := parts[0]
+					// Only inject if it's a bare type (i.e., only one segment: adapter = adapter.fake, not adapter.fake.default)
+					if !strings.Contains(strings.Join(parts, "."), ".") {
+						adapters[adapterType] = true
+					}
+				}
+			}
+		}
+	}
+
+	if len(adapters) == 0 {
+		return src
+	}
+
+	// Build adapter declarations to inject
+	var injected strings.Builder
+	for adapterType := range adapters {
+		//nolint:gocritic // sprintfQuotedString: Sprintf needed to build HCL with literal quotes
+		injected.WriteString(fmt.Sprintf("  adapter \"%s\" \"default\" {}\n", adapterType))
+	}
+	adapterDecls := injected.String()
+
+	// Inject adapters into outer workflow
+	workflowStart := strings.Index(src, "workflow \"")
+	if workflowStart != -1 {
+		bracePos := strings.Index(src[workflowStart:], "{")
+		if bracePos != -1 {
+			bracePos += workflowStart
+			headerEnd := strings.Index(src[bracePos:], "\n") + bracePos + 1
+			src = src[:headerEnd] + "\n" + adapterDecls + src[headerEnd:]
+		}
+	}
+
+	// Also inject into nested workflow blocks
+	// Look for "workflow {" patterns inside step blocks
+	src = strings.ReplaceAll(src, "workflow {\n", "workflow {\n"+adapterDecls)
+
+	// Replace all bare adapter references with dotted references using regex to handle variable spacing
+	for adapterType := range adapters {
+		// Pattern matches: adapter = adapter.<type> followed by whitespace or end of line (not a dot)
+		pattern := regexp.MustCompile(fmt.Sprintf(`adapter\s*=\s*adapter\.%s\b`, regexp.QuoteMeta(adapterType)))
+		replacement := fmt.Sprintf(`adapter = adapter.%s.default`, adapterType)
+		src = pattern.ReplaceAllString(src, replacement)
+	}
+
+	return src
+}
+
 func compile(t *testing.T, src string) *workflow.FSMGraph {
 	t.Helper()
+	src = injectDefaultAdapters(src)
 	spec, diags := workflow.Parse("t.hcl", []byte(src))
 	if diags.HasErrors() {
 		t.Fatalf("parse: %s", diags.Error())
@@ -122,6 +189,14 @@ func compile(t *testing.T, src string) *workflow.FSMGraph {
 	return g
 }
 
+// NewTestEngine creates an engine with auto-bootstrap enabled for testing.
+// This is a convenience helper for tests that don't explicitly manage adapter lifecycle.
+func NewTestEngine(g *workflow.FSMGraph, loader plugin.Loader, sink Sink, opts ...Option) *Engine {
+	allOpts := []Option{WithAutoBootstrapAdapters()}
+	allOpts = append(allOpts, opts...)
+	return New(g, loader, sink, allOpts...)
+}
+
 func TestEngineHappyPath(t *testing.T) {
 	g := compile(t, `
 workflow "t" {
@@ -129,18 +204,18 @@ workflow "t" {
   initial_state = "a"
   target_state  = "done"
   step "a" {
-    adapter = "fake"
+    adapter = adapter.fake
     outcome "success" { transition_to = "b" }
   }
   step "b" {
-    adapter = "fake"
+    adapter = adapter.fake
     outcome "success" { transition_to = "done" }
   }
   state "done" { terminal = true }
 }`)
 	sink := &fakeSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": &fakePlugin{name: "fake", outcome: "success"}}}
-	if err := New(g, loader, sink).Run(context.Background()); err != nil {
+	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	if sink.terminal != "done" || !sink.terminalOK {
@@ -158,7 +233,7 @@ workflow "t" {
   initial_state = "a"
   target_state  = "fail"
   step "a" {
-    adapter = "fake"
+    adapter = adapter.fake
     outcome "success" { transition_to = "ok" }
     outcome "failure" { transition_to = "fail" }
   }
@@ -170,7 +245,7 @@ workflow "t" {
 }`)
 	sink := &fakeSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": &fakePlugin{name: "fake", outcome: "", err: errors.New("boom")}}}
-	if err := New(g, loader, sink).Run(context.Background()); err != nil {
+	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	if sink.terminal != "fail" || sink.terminalOK {
@@ -185,7 +260,7 @@ workflow "t" {
   initial_state = "a"
   target_state  = "done"
   step "a" {
-    adapter = "fake"
+    adapter = adapter.fake
     outcome "again" { transition_to = "a" }
   }
   state "done" { terminal = true }
@@ -193,7 +268,7 @@ workflow "t" {
 }`)
 	sink := &fakeSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": &fakePlugin{name: "fake", outcome: "again"}}}
-	err := New(g, loader, sink).Run(context.Background())
+	err := NewTestEngine(g, loader, sink).Run(context.Background())
 	if err == nil {
 		t.Fatal("expected loop guard error")
 	}
@@ -206,9 +281,9 @@ func TestEngineLifecycleWithNoopPlugin(t *testing.T) {
 	})
 	t.Cleanup(func() { _ = loader.Shutdown(context.Background()) })
 
-	g := compileFile(t, "testdata/agent_lifecycle_noop.hcl")
+	g := compileFile(t, "testdata/adapter_lifecycle_noop.hcl")
 	sink := &fakeSink{}
-	if err := New(g, loader, sink).Run(context.Background()); err != nil {
+	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	if sink.terminal != "done" || !sink.terminalOK {
@@ -226,9 +301,9 @@ func TestNamedAgentLifecycleEventsOnExecutionStep(t *testing.T) {
 	})
 	t.Cleanup(func() { _ = loader.Shutdown(context.Background()) })
 
-	g := compileFile(t, "testdata/agent_lifecycle_noop.hcl")
+	g := compileFile(t, "testdata/adapter_lifecycle_noop.hcl")
 	sink := &lifecycleCaptureSink{}
-	if err := New(g, loader, sink).Run(context.Background()); err != nil {
+	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -280,9 +355,9 @@ func TestEngineLifecycleOpenTimeoutKeepsSessionAlive(t *testing.T) {
 	})
 	t.Cleanup(func() { _ = loader.Shutdown(context.Background()) })
 
-	g := compileFile(t, "testdata/agent_lifecycle_noop_open_timeout.hcl")
+	g := compileFile(t, "testdata/adapter_lifecycle_noop_open_timeout.hcl")
 	sink := &captureStepEventSink{}
-	if err := New(g, loader, sink).Run(context.Background()); err != nil {
+	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	if sink.terminal != "done" || !sink.terminalOK {
@@ -409,22 +484,22 @@ workflow "perm" {
   initial_state = "open"
   target_state  = "done"
 
-  agent "bot" { adapter = "permissive" }
+  adapter "permissive" "bot" { }
 
   step "open" {
-    agent     = "bot"
+    adapter = adapter.permissive.bot
     lifecycle = "open"
     outcome "success" { transition_to = "run" }
   }
   step "run" {
-    agent       = "bot"
+    adapter = adapter.permissive.bot
     input { perm_tools = "read_file,write_file" }
     allow_tools = ["read_file"]
     outcome "success"      { transition_to = "close" }
     outcome "needs_review" { transition_to = "close" }
   }
   step "close" {
-    agent     = "bot"
+    adapter = adapter.permissive.bot
     lifecycle = "close"
     outcome "success" { transition_to = "done" }
   }
@@ -432,7 +507,7 @@ workflow "perm" {
 }`)
 
 	sink := &captureStepEventSink{}
-	if err := New(g, loader, sink).Run(context.Background()); err != nil {
+	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	if sink.terminal != "done" || !sink.terminalOK {
@@ -482,21 +557,21 @@ workflow "perm-deny" {
   initial_state = "open"
   target_state  = "done"
 
-  agent "bot" { adapter = "permissive" }
+  adapter "permissive" "bot" { }
 
   step "open" {
-    agent     = "bot"
+    adapter = adapter.permissive.bot
     lifecycle = "open"
     outcome "success" { transition_to = "run" }
   }
   step "run" {
-    agent  = "bot"
+    adapter = adapter.permissive.bot
     input { perm_tools = "read_file" }
     outcome "needs_review" { transition_to = "close" }
     outcome "success"      { transition_to = "close" }
   }
   step "close" {
-    agent     = "bot"
+    adapter = adapter.permissive.bot
     lifecycle = "close"
     outcome "success" { transition_to = "done" }
   }
@@ -504,7 +579,7 @@ workflow "perm-deny" {
 }`)
 
 	sink := &captureStepEventSink{}
-	if err := New(g, loader, sink).Run(context.Background()); err != nil {
+	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	if sink.sawAdapterKind("permission.granted") {
@@ -528,22 +603,22 @@ workflow "perm-shell" {
   initial_state = "open"
   target_state  = "done"
 
-  agent "bot" { adapter = "permissive" }
+  adapter "permissive" "bot" { }
 
   step "open" {
-    agent     = "bot"
+    adapter = adapter.permissive.bot
     lifecycle = "open"
     outcome "success" { transition_to = "run" }
   }
   step "run" {
-    agent       = "bot"
+    adapter = adapter.permissive.bot
     input { perm_tools = "shell|git status,shell|rm -rf /" }
     allow_tools = ["shell:git *"]
     outcome "success"      { transition_to = "close" }
     outcome "needs_review" { transition_to = "close" }
   }
   step "close" {
-    agent     = "bot"
+    adapter = adapter.permissive.bot
     lifecycle = "close"
     outcome "success" { transition_to = "done" }
   }
@@ -551,7 +626,7 @@ workflow "perm-shell" {
 }`)
 
 	sink := &captureStepEventSink{}
-	if err := New(g, loader, sink).Run(context.Background()); err != nil {
+	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	granted, ok := sink.firstAdapterEvent("permission.granted")
@@ -575,7 +650,7 @@ workflow "t" {
   initial_state = "loop"
   target_state  = "done"
   step "loop" {
-    adapter    = "fake"
+    adapter = adapter.fake
     max_visits = 3
     outcome "again" { transition_to = "loop" }
     outcome "done"  { transition_to = "done" }
@@ -585,7 +660,7 @@ workflow "t" {
 }`)
 	sink := &fakeSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": &fakePlugin{name: "fake", outcome: "again"}}}
-	err := New(g, loader, sink).Run(context.Background())
+	err := NewTestEngine(g, loader, sink).Run(context.Background())
 	if err == nil {
 		t.Fatal("expected max_visits error")
 	}
@@ -630,7 +705,7 @@ workflow "t" {
   initial_state = "loop"
   target_state  = "done"
   step "loop" {
-    adapter    = "fake"
+    adapter = adapter.fake
     max_visits = 100
     outcome "again" { transition_to = "loop" }
     outcome "done"  { transition_to = "done" }
@@ -640,7 +715,7 @@ workflow "t" {
 }`)
 	sink := &fakeSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": plg}}
-	if err := New(g, loader, sink).Run(context.Background()); err != nil {
+	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if sink.terminal != "done" || !sink.terminalOK {
@@ -657,7 +732,7 @@ workflow "t" {
   initial_state = "a"
   target_state  = "done"
   step "a" {
-    adapter = "fake"
+    adapter = adapter.fake
     outcome "success" { transition_to = "done" }
   }
   state "done" { terminal = true }
@@ -668,7 +743,7 @@ workflow "t" {
 	}
 	sink := &fakeSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": &fakePlugin{name: "fake", outcome: "success"}}}
-	if err := New(g, loader, sink).Run(context.Background()); err != nil {
+	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 }
@@ -684,7 +759,7 @@ workflow "t" {
   initial_state = "work"
   target_state  = "done"
   step "work" {
-    adapter    = "fake"
+    adapter = adapter.fake
     max_visits = 2
     outcome "done" { transition_to = "done" }
   }
@@ -697,7 +772,7 @@ workflow "t" {
 	// Plugin that always errors so the retry loop is exercised.
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": &errPlugin{name: "fake", err: errors.New("boom")}}}
 	sink := &fakeSink{}
-	err := New(g, loader, sink).Run(context.Background())
+	err := NewTestEngine(g, loader, sink).Run(context.Background())
 	if err == nil {
 		t.Fatal("expected max_visits error")
 	}
@@ -728,7 +803,7 @@ workflow "t" {
   initial_state = "loop"
   target_state  = "done"
   step "loop" {
-    adapter    = "fake"
+    adapter = adapter.fake
     max_visits = 5
     outcome "again" { transition_to = "loop" }
     outcome "done"  { transition_to = "done" }
@@ -738,7 +813,7 @@ workflow "t" {
 }`)
 	sink := &fakeSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": &fakePlugin{name: "fake", outcome: "again"}}}
-	eng := New(g, loader, sink)
+	eng := NewTestEngine(g, loader, sink)
 	err := eng.Run(context.Background())
 	if err == nil {
 		t.Fatal("expected max_total_steps error from first run")
@@ -762,7 +837,7 @@ workflow "t" {
   initial_state = "loop"
   target_state  = "done"
   step "loop" {
-    adapter    = "fake"
+    adapter = adapter.fake
     max_visits = 5
     outcome "again" { transition_to = "loop" }
     outcome "done"  { transition_to = "done" }
@@ -771,7 +846,7 @@ workflow "t" {
   policy { max_total_steps = 1000 }
 }`)
 	sink2 := &fakeSink{}
-	eng2 := New(g2, loader, sink2, WithResumedVisits(visits))
+	eng2 := New(g2, loader, sink2, WithResumedVisits(visits), WithAutoBootstrapAdapters())
 	err2 := eng2.RunFrom(context.Background(), "loop", 1)
 	if err2 == nil {
 		t.Fatal("expected max_visits error from resumed run")
@@ -848,7 +923,7 @@ workflow "t" {
   initial_state = "work"
   target_state  = "done"
   step "work" {
-    adapter    = "fake"
+    adapter = adapter.fake
     max_visits = 1
     outcome "done" { transition_to = "done" }
   }
@@ -857,7 +932,7 @@ workflow "t" {
 }`)
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": &fakePlugin{name: "fake", outcome: "done"}}}
 	sink := &fakeSink{}
-	eng := New(g, loader, sink)
+	eng := NewTestEngine(g, loader, sink)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // pre-cancel before Run
@@ -889,7 +964,7 @@ workflow "t" {
   initial_state = "a"
   target_state  = "done"
   step "a" {
-    adapter = "fake"
+    adapter = adapter.fake
     outcome "success" { transition_to = "done" }
     outcome "failure" { transition_to = "done" }
   }
@@ -901,7 +976,7 @@ workflow "t" {
 		"fake": &fakePlugin{name: "fake", outcome: "unexpected-outcome"},
 	}}
 	sink := &fakeSink{}
-	err := New(g, loader, sink).Run(context.Background())
+	err := NewTestEngine(g, loader, sink).Run(context.Background())
 	if err == nil {
 		t.Fatal("expected unmapped-outcome error from engine guard; got nil")
 	}
@@ -933,7 +1008,7 @@ workflow "t" {
     max_visits = 1
     workflow {
       step "inner" {
-        adapter = "fake"
+        adapter = adapter.fake
         outcome "success" { transition_to = "_continue" }
       }
     }
@@ -945,7 +1020,7 @@ workflow "t" {
 }`)
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": &fakePlugin{name: "fake", outcome: "success"}}}
 	sink := &fakeSink{}
-	eng := New(g, loader, sink)
+	eng := NewTestEngine(g, loader, sink)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // pre-cancel before Run

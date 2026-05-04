@@ -63,7 +63,7 @@ type Spec struct {
 	Locals             []LocalSpec       `hcl:"local,block"`
 	Environments       []EnvironmentSpec `hcl:"environment,block"`
 	Outputs            []OutputSpec      `hcl:"output,block"`
-	Agents             []AgentSpec       `hcl:"agent,block"`
+	Adapters           []AdapterDeclSpec `hcl:"adapter,block"`
 	Steps              []StepSpec        `hcl:"step,block"`
 	States             []StateSpec       `hcl:"state,block"`
 	Waits              []WaitSpec        `hcl:"wait,block"`
@@ -86,7 +86,7 @@ type VariableSpec struct {
 	Remain      hcl.Body `hcl:",remain"` // captures the "default" expression
 }
 
-// ConfigSpec holds the raw HCL body of an `agent.config { ... }` block.
+// ConfigSpec holds the raw HCL body of an `adapter.config { ... }` block.
 // Attributes are decoded into string values by the compiler.
 // W04 will upgrade to expression-aware decoding (var.<name>, each.value).
 type ConfigSpec struct {
@@ -101,29 +101,23 @@ type InputSpec struct {
 	Remain hcl.Body `hcl:",remain"`
 }
 
-// HCL extensions for session-aware workflows:
-//   - Top-level `agent "name" { adapter = "..." }` declarations bind names to adapters.
-//   - Steps use `agent = "name"` to route work to an agent-backed session.
-//   - Steps with `lifecycle = "open"|"close"` explicitly manage session lifetime.
-//     `open` and `close` must not include `input { }`.
-//   - Agent-level `config { }` block carries session-open config (replaces open-step config).
-//
-// AgentSpec declares a named long-lived adapter session target.
-type AgentSpec struct {
-	Name    string      `hcl:"name,label"`
-	Adapter string      `hcl:"adapter"`
-	OnCrash string      `hcl:"on_crash,optional"`
-	Config  *ConfigSpec `hcl:"config,block"`
+// AdapterDeclSpec declares a named long-lived adapter session target in HCL form.
+// This is the HCL schema for the `adapter "<type>" "<name>"` block.
+// Note: This is distinct from AdapterInfo, which describes an adapter's schema.
+type AdapterDeclSpec struct {
+	Type        string      `hcl:"type,label"`           // first label: adapter type
+	Name        string      `hcl:"name,label"`           // second label: instance name
+	Environment string      `hcl:"environment,optional"` // "<env_type>.<env_name>" reference
+	OnCrash     string      `hcl:"on_crash,optional"`
+	Config      *ConfigSpec `hcl:"config,block"`
 }
 
 // StepSpec describes a single step in the workflow.
 type StepSpec struct {
 	Name      string `hcl:"name,label"`
-	Adapter   string `hcl:"adapter,optional"`
-	Agent     string `hcl:"agent,optional"`
 	Lifecycle string `hcl:"lifecycle,optional"`
 	OnCrash   string `hcl:"on_crash,optional"`
-	// Type is the step kind: "" (default adapter/agent step) or "workflow" (sub-workflow body).
+	// Type is the step kind: "" (default adapter step) or "workflow" (sub-workflow body).
 	Type string `hcl:"type,optional"`
 	// WorkflowFile is a path to an HCL file whose body is used as the sub-workflow
 	// body for workflow-type steps. Mutually exclusive with Workflow.
@@ -142,9 +136,9 @@ type StepSpec struct {
 	Timeout    string            `hcl:"timeout,optional"`
 	AllowTools []string          `hcl:"allow_tools,optional"`
 	Outcomes   []OutcomeSpec     `hcl:"outcome,block"`
-	// Remain captures for_each and count expressions (and any unknown attrs)
-	// for lazy extraction by the compiler. gohcl does not support hcl.Expression
-	// as a direct decode target, so the remain pattern is used instead.
+	// Remain captures adapter attribute and other expressions (for_each, count, etc.)
+	// for lazy extraction by the compiler. The adapter attribute, if present, must be
+	// an HCL traversal expression (not a string literal), e.g., adapter.shell.default.
 	Remain hcl.Body `hcl:",remain"`
 	// LegacyConfigRange, when set by Parse, points at the source range for a
 	// legacy config = { ... } attribute so compile diagnostics can include
@@ -165,7 +159,7 @@ type SpecContent struct {
 	Variables    []VariableSpec    `hcl:"variable,block"`
 	Locals       []LocalSpec       `hcl:"local,block"`
 	Environments []EnvironmentSpec `hcl:"environment,block"`
-	Agents       []AgentSpec       `hcl:"agent,block"`
+	Adapters     []AdapterDeclSpec `hcl:"adapter,block"`
 	Steps        []StepSpec        `hcl:"step,block"`
 	States       []StateSpec       `hcl:"state,block"`
 	Waits        []WaitSpec        `hcl:"wait,block"`
@@ -191,7 +185,7 @@ type BodySpec struct {
 	// InitialState (if set) or the first declared step.
 	Entry   string       `hcl:"entry,optional"`
 	Outputs []OutputSpec `hcl:"output,block"`
-	// Remain captures all content blocks (steps, variables, locals, agents,
+	// Remain captures all content blocks (steps, variables, locals, adapters,
 	// states, waits, approvals, branches, policy, permissions) for later
 	// decoding into SpecContent by compileWorkflowBodyInline.
 	Remain hcl.Body `hcl:",remain"`
@@ -224,11 +218,11 @@ type ConfigField struct {
 }
 
 // AdapterInfo describes an adapter's declared configuration schema.
-// It is used during workflow compilation to validate agent config blocks and
+// It is used during workflow compilation to validate adapter config blocks and
 // step input blocks against the adapter's declared requirements.
 // An empty (zero-value) AdapterInfo means "any keys accepted" (permissive).
 type AdapterInfo struct {
-	ConfigSchema map[string]ConfigField // schema for agent-level `config { }` blocks
+	ConfigSchema map[string]ConfigField // schema for adapter-level config { }` blocks
 	InputSchema  map[string]ConfigField // schema for per-step `input { }` blocks
 	OutputSchema map[string]ConfigField // declared outputs the adapter promises to populate (W04)
 }
@@ -322,12 +316,12 @@ type FSMGraph struct {
 	DefaultEnvironment string                      // optional; set if exactly one env is declared or explicitly set on workflow header
 	Outputs            map[string]*OutputNode      // compiled output declarations (W09)
 	OutputOrder        []string                    // declaration order for stable iteration
-	Agents             map[string]*AgentNode
-	Steps              map[string]*StepNode     // by step name
-	States             map[string]*StateNode    // by state name (terminal etc.)
-	Waits              map[string]*WaitNode     // by wait node name (W05)
-	Approvals          map[string]*ApprovalNode // by approval node name (W05)
-	Branches           map[string]*BranchNode   // by branch node name (W06)
+	Adapters           map[string]*AdapterNode     // compiled adapter declarations; keyed by "<type>.<name>"
+	Steps              map[string]*StepNode        // by step name
+	States             map[string]*StateNode       // by state name (terminal etc.)
+	Waits              map[string]*WaitNode        // by wait node name (W05)
+	Approvals          map[string]*ApprovalNode    // by approval node name (W05)
+	Branches           map[string]*BranchNode      // by branch node name (W06)
 	Policy             Policy
 	// Order of step declarations (stable for diagnostics).
 	stepOrder []string
@@ -346,22 +340,23 @@ type VariableNode struct {
 // Used by the body input validation logic to detect unbound required vars.
 func (v *VariableNode) IsRequired() bool { return v.Default == cty.NilVal }
 
-// AgentNode is a compiled long-lived adapter declaration.
-type AgentNode struct {
-	Name    string
-	Adapter string
-	OnCrash string
-	Config  map[string]string // session-open config from agent.config { }
+// AdapterNode is a compiled adapter declaration with resolved type and configuration.
+// The key in FSMGraph.Adapters is "<type>.<name>" (both labels).
+type AdapterNode struct {
+	Type        string            // adapter type (first label)
+	Name        string            // instance name (second label)
+	Environment string            // optional "<env_type>.<env_name>" reference; resolved to default at scope start if not set
+	OnCrash     string            // "fail" (default) or "continue"
+	Config      map[string]string // compile-folded config from adapter.config { }
 }
 
 // StepNode is a compiled step with resolved transitions.
 type StepNode struct {
 	Name      string
-	Adapter   string
-	Agent     string
+	Adapter   string // "<type>.<name>" reference to a declared adapter
 	Lifecycle string
 	OnCrash   string
-	// Type is the step kind: "" (default adapter/agent) or "workflow" (sub-workflow body).
+	// Type is the step kind: "" (default adapter) or "workflow" (sub-workflow body).
 	Type string
 	// OnFailure controls iteration behaviour when an iteration produces a
 	// non-success outcome. Values: "continue" (default), "abort", "ignore".

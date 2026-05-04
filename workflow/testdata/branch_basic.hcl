@@ -11,8 +11,10 @@ workflow "branch_basic" {
     default = "staging"
   }
 
+  adapter "noop" "default" {}
+
   step "build" {
-    adapter = "noop"
+    adapter = adapter.noop.default
     outcome "success" { transition_to = "decide" }
   }
 

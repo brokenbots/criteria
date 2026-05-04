@@ -7,11 +7,18 @@
     "MaxStepRetries": 0,
     "MaxVisitsWarnThreshold": 200
   },
-  "agents": [],
+  "adapters": [
+    {
+      "type": "shell",
+      "name": "default",
+      "on_crash": "fail",
+      "config_keys": null
+    }
+  ],
   "steps": [
     {
       "name": "build",
-      "adapter": "shell",
+      "adapter": "shell.default",
       "timeout": "5m0s",
       "input_keys": [
         "command"
@@ -30,7 +37,7 @@
     },
     {
       "name": "test",
-      "adapter": "shell",
+      "adapter": "shell.default",
       "timeout": "10m0s",
       "input_keys": [
         "command"

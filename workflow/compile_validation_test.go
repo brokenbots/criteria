@@ -32,8 +32,7 @@ func TestValidateFoldableAttrs_AgentConfigFile(t *testing.T) {
     default = "missing.txt"
   }
 
-  agent "a" {
-    adapter = "noop"
+  adapter "noop" "a" {
     config {
       prompt = file(var.prompt_file)
     }

@@ -16,6 +16,8 @@ import (
 // compileWorkflowStep compiles a type="workflow" step, including any optional
 // for_each/count modifier. It populates the step's Body and BodyEntry fields
 // in addition to the common step fields.
+//
+//nolint:funlen // W11: function length unavoidable due to comprehensive workflow and adapter validation
 func compileWorkflowStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[string]AdapterInfo, opts CompileOpts) hcl.Diagnostics {
 	var diags hcl.Diagnostics
 
@@ -29,6 +31,9 @@ func compileWorkflowStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[stri
 	diags = append(diags, validateLegacyConfig(sp)...)
 	diags = append(diags, validateAdapterAndAgent(g, sp)...)
 	diags = append(diags, validateOnFailureValue(sp)...)
+
+	// Workflow steps do not have adapters, so allow_tools and lifecycle are not valid
+	diags = append(diags, validateWorkflowStepNoAdapterAttrs(sp)...)
 
 	effectiveOnCrash, d := resolveStepOnCrash(g, sp)
 	diags = append(diags, d...)
@@ -265,7 +270,7 @@ func buildBodySpec(stepName string, wb *BodySpec, spec *Spec, content *SpecConte
 		Variables:    content.Variables,
 		Locals:       content.Locals,
 		Environments: content.Environments,
-		Agents:       content.Agents,
+		Adapters:     content.Adapters,
 		Steps:        content.Steps,
 		States:       states,
 		Waits:        content.Waits,
@@ -329,4 +334,24 @@ func validateBodyHasContinuePath(stepName string, body *FSMGraph) error {
 		}
 	}
 	return fmt.Errorf("step %q: workflow body has no path to \"_continue\"; at least one outcome must transition_to = \"_continue\"", stepName)
+}
+
+// validateWorkflowStepNoAdapterAttrs validates that workflow steps don't have
+// allow_tools or lifecycle attributes, as these require an adapter reference
+// which workflow steps don't have.
+func validateWorkflowStepNoAdapterAttrs(sp *StepSpec) hcl.Diagnostics {
+	var diags hcl.Diagnostics
+	if len(sp.AllowTools) > 0 {
+		diags = append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  fmt.Sprintf("step %q: allow_tools requires an adapter reference", sp.Name),
+		})
+	}
+	if sp.Lifecycle != "" {
+		diags = append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  fmt.Sprintf("step %q: lifecycle requires an adapter reference", sp.Name),
+		})
+	}
+	return diags
 }

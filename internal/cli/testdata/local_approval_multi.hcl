@@ -3,9 +3,7 @@ workflow "local_approval_multi" {
   initial_state = "first_review"
   target_state  = "done"
 
-  agent "demo" {
-    adapter = "noop"
-  }
+  adapter "noop" "demo" {}
 
   approval "first_review" {
     approvers = ["alice"]
@@ -22,14 +20,14 @@ workflow "local_approval_multi" {
   }
 
   step "open_demo" {
-    agent     = "demo"
+    adapter = adapter.noop.demo
     lifecycle = "open"
     outcome "success" { transition_to = "run_step" }
     outcome "failure" { transition_to = "failed" }
   }
 
   step "run_step" {
-    agent = "demo"
+    adapter = adapter.noop.demo
     input {
       prompt = "continue"
     }
@@ -38,7 +36,7 @@ workflow "local_approval_multi" {
   }
 
   step "close_demo" {
-    agent     = "demo"
+    adapter = adapter.noop.demo
     lifecycle = "close"
     outcome "success" { transition_to = "done" }
     outcome "failure" { transition_to = "failed" }

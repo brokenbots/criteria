@@ -44,7 +44,7 @@ func WithResumedIter(stack []workflow.IterCursor) Option {
 }
 
 // WithPendingSignal seeds RunState.PendingSignal at the start of RunFrom.
-// Use this when re-attaching an agent to a run that was paused mid-signal-
+// Use this when re-attaching an adapter to a run that was paused mid-signal-
 // wait: the wait node sees PendingSignal set and immediately re-issues
 // ErrPaused so the run stays blocked until the real Resume RPC arrives (W05).
 func WithPendingSignal(signal string) Option {
@@ -102,6 +102,25 @@ func WithWorkflowDir(dir string) Option {
 func WithLogger(log *slog.Logger) Option {
 	return func(e *Engine) {
 		e.log = log
+	}
+}
+
+// WithAutoBootstrapAdapters enables automatic session opening for adapters without
+// explicit lifecycle "open" steps. This is disabled by default (W11); adapters
+// require explicit lifecycle management via lifecycle = "open" and lifecycle = "close"
+// steps. This option is provided for backward compatibility and testing.
+func WithAutoBootstrapAdapters() Option {
+	return func(e *Engine) {
+		e.autoBootstrapAdapters = true
+	}
+}
+
+// WithStrictLifecycleSemantics explicitly disables automatic adapter bootstrap,
+// requiring explicit lifecycle management. This is the default (W11); the option
+// is provided for clarity and testing.
+func WithStrictLifecycleSemantics() Option {
+	return func(e *Engine) {
+		e.autoBootstrapAdapters = false
 	}
 }
 
