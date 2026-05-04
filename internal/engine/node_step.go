@@ -311,7 +311,7 @@ func (n *stepNode) applyWorkflowBodyOutputs(st *RunState, cur *workflow.IterCurs
 }
 
 // evaluateOnce executes the step for a single non-iterating invocation (or a
-// single iteration invocation for adapter steps).
+// single iteration invocation for steps).
 func (n *stepNode) evaluateOnce(ctx context.Context, st *RunState, deps Deps) (string, error) {
 	effectiveStep, resolveErr := n.resolveInput(st.Vars, st.WorkflowDir)
 	if resolveErr != nil {

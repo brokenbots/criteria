@@ -681,27 +681,6 @@ go test ./internal/transport/server -v
 - All HCL files (examples, testdata) have been converted to traversal syntax and verified with `make validate`.
 - No new `.golangci.baseline.yml` entries were added during this remediation.
 
-### Post-Remediation Fix (Batch 2)
-
-**Greeter Example Adapter Session Management:**
-- **Issue:** The greeter plugin example (`examples/plugins/greeter/example.hcl`) failed with "unknown session" error because adapters are no longer auto-bootstrapped in production paths (per W11 design).
-- **Root cause:** The example workflow did not include explicit `lifecycle = "open"` steps to open adapter sessions before use.
-- **Fix applied:** Added an "open_greeter" step with `lifecycle = "open"` as the initial step, following the pattern used in other examples (e.g., `copilot_planning_then_execution.hcl`). The workflow now transitions from opening the adapter to using it for the greeting step.
-- **File modified:** `examples/plugins/greeter/example.hcl`
-- **Verification:** `make example-plugin` now passes; `make ci` exits 0.
-
-**All Exit Criteria Verified (2026-05-03 23:56 UTC):**
-- ✅ No legacy `AgentSpec`/`AgentNode` identifiers in production code
-- ✅ No quoted dotted adapter references in HCL fixtures
-- ✅ Legacy syntax (`agent` block, `step.agent` attribute) produces hard parse errors
-- ✅ Traversal resolution helper exported for W14 reuse
-- ✅ Auto-bootstrap disabled in production; test-only opt-in via `WithAutoBootstrapAdapters()`
-- ✅ All tests pass (`make test`, `make test-conformance`)
-- ✅ All examples validate (`make validate`)
-- ✅ CI suite passes (`make ci`)
-
-**Ready for review and merge.** All blockers resolved; all exit criteria pass; `make ci` exits 0.
-
 ### Review 2026-05-03 — approved
 
 #### Summary
