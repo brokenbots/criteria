@@ -11,7 +11,7 @@ workflow "build_and_test" {
   }
 
   step "build" {
-    adapter = adapter.shell.default
+    target = adapter.shell.default
     input {
       command = "go build ./..."
     }
@@ -22,7 +22,7 @@ workflow "build_and_test" {
   }
 
   step "test" {
-    adapter = adapter.shell.default
+    target = adapter.shell.default
     input {
       command = "go test ./..."
     }

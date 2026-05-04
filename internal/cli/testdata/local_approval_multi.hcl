@@ -20,7 +20,7 @@ workflow "local_approval_multi" {
   }
 
   step "run_step" {
-    adapter = adapter.noop.demo
+    target = adapter.noop.demo
     input {
       prompt = "continue"
     }

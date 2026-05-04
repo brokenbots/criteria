@@ -117,7 +117,7 @@ workflow "shell_resume" {
   adapter "shell" "default" {}
 
   step "greet" {
-    adapter = adapter.shell.default
+    target = adapter.shell.default
     input {
       command = "echo hello"
     }
@@ -150,7 +150,7 @@ workflow "max_retry" {
   }
 
   step "greet" {
-    adapter = adapter.shell.default
+    target = adapter.shell.default
     input {
       command = "echo hi"
     }
@@ -972,7 +972,7 @@ workflow "max_visits_test" {
   adapter "shell" "default" {}
 
   step "work" {
-    adapter = adapter.shell.default
+    target = adapter.shell.default
     max_visits = 1
     input {
       command = "echo hi"
@@ -1167,85 +1167,19 @@ workflow "needs_approval" {
 	}
 }
 
-// TestCheckIterationCursorValidity_CurrentMissingFromBody verifies that
-// checkIterationCursorValidity returns an error when the run's current step
-// (the step being executed at crash time) is inside the body of the iterating
-// step but no longer exists in that body after a workflow edit.
+// TestCheckIterationCursorValidity_CurrentMissingFromBody verified that
+// checkIterationCursorValidity errored when a body step was missing from an
+// inline-workflow step. Inline workflow bodies were removed in W13; body step
+// validation no longer exists. The test is preserved as a permanent skip so
+// the intent is documented for any future subworkflow-cursor validation work.
 func TestCheckIterationCursorValidity_CurrentMissingFromBody(t *testing.T) {
-	t.Skip("test uses removed inline workflow body feature (W13); pending W14 subworkflow invocation support")
-	// Compile a workflow with a type="workflow" iterating step.
-	const src = `
-workflow "w" {
-  version       = "0.1"
-  initial_state = "outer"
-  target_state  = "done"
-
-  step "outer" {
-    type     = "workflow"
-    for_each = ["a"]
-    workflow {
-      adapter "noop" "default" {}
-      step "body_step" {
-        adapter = adapter.noop.default
-        outcome "success" { transition_to = "_continue" }
-      }
-    }
-    outcome "all_succeeded" { transition_to = "done" }
-    outcome "any_failed"    { transition_to = "done" }
-  }
-
-  state "done" {
-    terminal = true
-    success  = true
-  }
-}`
-	spec, diags := workflow.Parse("test.hcl", []byte(src))
-	if diags.HasErrors() {
-		t.Fatalf("parse: %s", diags.Error())
-	}
-	g, diags := workflow.Compile(spec, nil)
-	if diags.HasErrors() {
-		t.Fatalf("compile: %s", diags.Error())
-	}
-
-	// Build a variable scope with an in-progress cursor on "outer".
-	vars := workflow.SeedVarsFromGraph(g)
-	scope, err := workflow.SerializeVarScope(vars, []workflow.IterCursor{{
-		StepName:   "outer",
-		InProgress: true,
-	}})
-	if err != nil {
-		t.Fatalf("SerializeVarScope: %v", err)
-	}
-
-	// Baseline: body_step exists — should return nil.
-	if err := checkIterationCursorValidity(g, scope, "body_step"); err != nil {
-		t.Fatalf("baseline check unexpected error: %v", err)
-	}
-
-	// Simulate a workflow edit that removes "body_step" from the body.
-	if g.Steps["outer"].Body == nil {
-		t.Fatal("outer step has no body — test setup error")
-	}
-	delete(g.Steps["outer"].Body.Steps, "body_step")
-
-	// Now the saved current step "body_step" is missing from the body.
-	err = checkIterationCursorValidity(g, scope, "body_step")
-	if err == nil {
-		t.Fatal("expected error when body step no longer exists, got nil")
-	}
-	if !strings.Contains(err.Error(), "body_step") {
-		t.Errorf("expected error to mention 'body_step'; got: %v", err)
-	}
+	t.Skip("test uses removed inline workflow body feature (W13/W14); subworkflow cursor validation is a separate future workstream")
 }
 
-// TestIter_ResumeRejectsModifiedBody mirrors
-// TestCheckIterationCursorValidity_CurrentMissingFromBody at the package level,
-// asserting that checkIterationCursorValidity catches the modification and
-// returns a non-nil error describing the missing body step.
+// TestIter_ResumeRejectsModifiedBody is the package-level mirror of
+// TestCheckIterationCursorValidity_CurrentMissingFromBody (see above).
 func TestIter_ResumeRejectsModifiedBody(t *testing.T) {
-	t.Skip("test uses removed inline workflow body feature (W13); pending W14 subworkflow invocation support")
-	TestCheckIterationCursorValidity_CurrentMissingFromBody(t)
+	t.Skip("test uses removed inline workflow body feature (W13/W14); subworkflow cursor validation is a separate future workstream")
 }
 
 const iterCursorWorkflow = `
@@ -1257,7 +1191,7 @@ workflow "iter_cursor" {
   adapter "noop" "default" {}
 
   step "execute" {
-    adapter = adapter.noop.default
+    target = adapter.noop.default
     for_each  = ["a", "b"]
     outcome "all_succeeded" { transition_to = "done" }
     outcome "any_failed"    { transition_to = "done" }

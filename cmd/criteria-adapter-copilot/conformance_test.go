@@ -152,7 +152,8 @@ func TestCopilotReasoningEffortOverride(t *testing.T) {
 	// Step 1: execute with per-step reasoning_effort override "high".
 	step1 := &workflow.StepNode{
 		Name:    "planning",
-		Adapter: "bot",
+		TargetKind: workflow.StepTargetAdapter,
+		AdapterRef: "bot",
 		Input: map[string]string{
 			"prompt":           "Reply with only: RESULT: success",
 			"reasoning_effort": "high",
@@ -169,7 +170,8 @@ func TestCopilotReasoningEffortOverride(t *testing.T) {
 	// Step 2: execute without per-step effort (inherits agent default after restore).
 	step2 := &workflow.StepNode{
 		Name:    "execution",
-		Adapter: "bot",
+		TargetKind: workflow.StepTargetAdapter,
+		AdapterRef: "bot",
 		Input: map[string]string{
 			"prompt": "Reply with only: RESULT: success",
 		},
@@ -229,7 +231,8 @@ func TestConformance_AllowedOutcomesPropagation(t *testing.T) {
 	// The fake's default scenario submits outcome "success".
 	step := &workflow.StepNode{
 		Name:    "propagation-step",
-		Adapter: "bot",
+		TargetKind: workflow.StepTargetAdapter,
+		AdapterRef: "bot",
 		Input:   map[string]string{"prompt": "test AllowedOutcomes propagation"},
 		Outcomes: map[string]string{
 			"success": "done",
@@ -301,7 +304,8 @@ func TestConformance_AllowedOutcomesPropagation_SetProof(t *testing.T) {
 	// outcome.failure carrying exactly the set it received.
 	step := &workflow.StepNode{
 		Name:    "setproof-step",
-		Adapter: "bot",
+		TargetKind: workflow.StepTargetAdapter,
+		AdapterRef: "bot",
 		Input:   map[string]string{"prompt": "test exact AllowedOutcomes propagation"},
 		Outcomes: map[string]string{
 			"canary-a": "done",
@@ -403,7 +407,8 @@ func TestConformance_InvalidOutcomeScenario_Fixture(t *testing.T) {
 
 	step := &workflow.StepNode{
 		Name:    "invalid-outcome-step",
-		Adapter: "bot",
+		TargetKind: workflow.StepTargetAdapter,
+		AdapterRef: "bot",
 		Input:   map[string]string{"prompt": "test invalid-outcome scenario"},
 		Outcomes: map[string]string{
 			"success": "done",
@@ -483,7 +488,8 @@ func TestConformance_DuplicateCallScenario_Fixture(t *testing.T) {
 
 	step := &workflow.StepNode{
 		Name:    "duplicate-call-step",
-		Adapter: "bot",
+		TargetKind: workflow.StepTargetAdapter,
+		AdapterRef: "bot",
 		Input:   map[string]string{"prompt": "test duplicate-call scenario"},
 		Outcomes: map[string]string{
 			"success": "done",

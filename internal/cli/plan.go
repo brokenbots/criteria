@@ -135,8 +135,8 @@ func renderPlanOutput(ctx context.Context, workflowPath string, overrides map[st
 
 func formatStepHeader(step *workflow.StepNode) string {
 	parts := []string{step.Name}
-	if step.Adapter != "" {
-		parts = append(parts, "adapter="+step.Adapter)
+	if step.AdapterRef != "" {
+		parts = append(parts, "adapter="+step.AdapterRef)
 	}
 	if step.Timeout > 0 {
 		parts = append(parts, "timeout="+step.Timeout.String())

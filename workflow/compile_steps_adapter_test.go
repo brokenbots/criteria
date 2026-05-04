@@ -17,11 +17,11 @@ workflow "x" {
   initial_state = "open"
   target_state  = "done"
   step "open" {
-    adapter = adapter.copilot.default
+    target = adapter.copilot.default
     outcome "success" { transition_to = "run" }
   }
   step "run" {
-    adapter = adapter.copilot.default
+    target = adapter.copilot.default
     input {
       prompt        = "hello"
       system_prompt = "You are a bot."
@@ -29,7 +29,7 @@ workflow "x" {
     outcome "success" { transition_to = "close" }
   }
   step "close" {
-    adapter = adapter.copilot.default
+    target = adapter.copilot.default
     outcome "success" { transition_to = "done" }
   }
   state "done" { terminal = true }
@@ -66,7 +66,7 @@ workflow "x" {
   initial_state = "run"
   target_state  = "done"
   step "run" {
-    adapter = adapter.shell.default
+    target = adapter.shell.default
     input {
       command       = "echo hi"
       system_prompt = "not-valid-for-shell"
@@ -104,11 +104,11 @@ workflow "x" {
   initial_state = "open"
   target_state  = "done"
   step "open" {
-    adapter = adapter.copilot.default
+    target = adapter.copilot.default
     outcome "success" { transition_to = "run" }
   }
   step "run" {
-    adapter = adapter.copilot.default
+    target = adapter.copilot.default
     input {
       prompt           = "hello"
       reasoning_effort = "high"
@@ -116,7 +116,7 @@ workflow "x" {
     outcome "success" { transition_to = "close" }
   }
   step "close" {
-    adapter = adapter.copilot.default
+    target = adapter.copilot.default
     outcome "success" { transition_to = "done" }
   }
   state "done" { terminal = true }
@@ -150,11 +150,11 @@ workflow "x" {
   initial_state = "open"
   target_state  = "done"
   step "open" {
-    adapter = adapter.copilot.default
+    target = adapter.copilot.default
     outcome "success" { transition_to = "run" }
   }
   step "run" {
-    adapter = adapter.copilot.default
+    target = adapter.copilot.default
     allow_tools = ["read_file", "write_file"]
     input {
       prompt = "hello"
@@ -162,7 +162,7 @@ workflow "x" {
     outcome "success" { transition_to = "close" }
   }
   step "close" {
-    adapter = adapter.copilot.default
+    target = adapter.copilot.default
     outcome "success" { transition_to = "done" }
   }
   state "done" { terminal = true }
@@ -224,11 +224,11 @@ workflow "x" {
   initial_state = "open"
   target_state  = "done"
   step "open" {
-    adapter = adapter.copilot.default
+    target = adapter.copilot.default
     outcome "success" { transition_to = "run" }
   }
   step "run" {
-    adapter = adapter.copilot.default
+    target = adapter.copilot.default
     allow_tools = ["read", "write"]
     input {
       prompt = "hello"
@@ -236,7 +236,7 @@ workflow "x" {
     outcome "success" { transition_to = "close" }
   }
   step "close" {
-    adapter = adapter.copilot.default
+    target = adapter.copilot.default
     outcome "success" { transition_to = "done" }
   }
   state "done" { terminal = true }

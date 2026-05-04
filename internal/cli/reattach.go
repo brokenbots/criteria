@@ -249,13 +249,7 @@ func checkIterationCursorValidity(graph *workflow.FSMGraph, variableScope, curre
 	if !ok {
 		return fmt.Errorf("checkpoint iterating step %q no longer exists in the workflow", top.StepName)
 	}
-	// For type="workflow" steps with a body, verify the currentStep still exists
-	// in the body graph (the body may have been edited between crash and resume).
-	if stepNode.Body != nil && currentStep != "" {
-		if _, inBody := stepNode.Body.Steps[currentStep]; !inBody {
-			return fmt.Errorf("checkpoint body step %q no longer exists in iterating step %q", currentStep, top.StepName)
-		}
-	}
+	_ = stepNode // reserved for future step-kind-specific resume validation
 	return nil
 }
 

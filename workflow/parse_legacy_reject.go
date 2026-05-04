@@ -76,7 +76,7 @@ func rejectLegacyStepAgentAttrInBody(body hcl.Body) hcl.Diagnostics {
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagError,
 				Summary:  `removed attribute "agent" on steps`,
-				Detail:   `the "agent" attribute on steps was removed in v0.3.0. Use adapter = "<type>.<name>" to reference a declared adapter.`,
+				Detail:   `the "agent" attribute on steps was removed in v0.3.0. Use target = adapter.<type>.<name> to reference a declared adapter. See CHANGELOG.md migration note.`,
 				Subject:  &attr.NameRange,
 			})
 		}
@@ -263,6 +263,53 @@ func rejectLegacyStepWorkflowFileInBody(body hcl.Body) hcl.Diagnostics {
 	return diags
 }
 
+// rejectLegacyStepAdapterAttr checks for and rejects the old `adapter = adapter.<type>.<name>` attribute
+// on step blocks, which was replaced by `target = adapter.<type>.<name>` in W14.
+func rejectLegacyStepAdapterAttr(body hcl.Body) hcl.Diagnostics {
+	var diags hcl.Diagnostics
+
+	wfSchema := &hcl.BodySchema{
+		Blocks: []hcl.BlockHeaderSchema{
+			{Type: "workflow", LabelNames: []string{"name"}},
+		},
+	}
+	wfContent, _, _ := body.PartialContent(wfSchema)
+
+	for _, wfBlock := range wfContent.Blocks {
+		diags = append(diags, rejectLegacyStepAdapterAttrInBody(wfBlock.Body)...)
+	}
+
+	return diags
+}
+
+// rejectLegacyStepAdapterAttrInBody checks all step blocks in body for the old adapter attribute.
+func rejectLegacyStepAdapterAttrInBody(body hcl.Body) hcl.Diagnostics {
+	var diags hcl.Diagnostics
+
+	stepSchema := &hcl.BodySchema{
+		Blocks: []hcl.BlockHeaderSchema{
+			{Type: "step", LabelNames: []string{"name"}},
+		},
+	}
+	stepContent, _, _ := body.PartialContent(stepSchema)
+
+	for _, block := range stepContent.Blocks {
+		adapterSchema := &hcl.BodySchema{Attributes: []hcl.AttributeSchema{{Name: "adapter"}}}
+		adapterContent, _, _ := block.Body.PartialContent(adapterSchema)
+
+		if attr, ok := adapterContent.Attributes["adapter"]; ok {
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  `removed attribute "adapter" on steps`,
+				Detail:   `the "adapter" attribute on steps was replaced by "target" in v0.3.0. Use target = adapter.<type>.<name> instead. See CHANGELOG.md migration note.`,
+				Subject:  &attr.NameRange,
+			})
+		}
+	}
+
+	return diags
+}
+
 // rejectLegacyStepTypeAttr checks for and rejects the removed `step { type = "..." }` attribute.
 func rejectLegacyStepTypeAttr(body hcl.Body) hcl.Diagnostics {
 	var diags hcl.Diagnostics
@@ -303,7 +350,7 @@ func rejectLegacyStepTypeAttrInBody(body hcl.Body) hcl.Diagnostics {
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagError,
 				Summary:  `removed attribute "type" on steps`,
-				Detail:   `attribute "type" was removed in v0.3.0. All steps are now adapter steps. Use adapter = "<type>.<name>" to declare which adapter to run. Inline workflow bodies are replaced by top-level "subworkflow" blocks referenced via target in W14. See CHANGELOG.md migration note.`,
+				Detail:   `attribute "type" was removed in v0.3.0. All steps are now adapter steps. Use target = adapter.<type>.<name> to declare which adapter to run. Inline workflow bodies are replaced by top-level "subworkflow" blocks referenced via target. See CHANGELOG.md migration note.`,
 				Subject:  &attr.NameRange,
 			})
 		}

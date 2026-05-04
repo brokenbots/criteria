@@ -76,6 +76,7 @@ func checkLegacyAttributes(body hcl.Body) hcl.Diagnostics {
 	checks := []func(hcl.Body) hcl.Diagnostics{
 		rejectLegacyBlocks,
 		rejectLegacyStepAgentAttr,
+		rejectLegacyStepAdapterAttr,
 		rejectLegacyStepLifecycleAttr,
 		rejectLegacyStepWorkflowBlock,
 		rejectLegacyStepWorkflowFile,

@@ -227,92 +227,20 @@ func (n *stepNode) setupIterCursor(ctx context.Context, st *RunState, deps Deps)
 	return "", false, nil
 }
 
-// runOneIteration executes the step body/adapter for the current iteration
-// and returns the raw outcome (which routeIteratingStep will intercept).
-func (n *stepNode) runOneIteration(ctx context.Context, st *RunState, deps Deps, cur *workflow.IterCursor) (string, error) {
-	if n.step.Type == "workflow" {
-		return n.runWorkflowIteration(ctx, st, deps, cur)
-	}
+// runOneIteration executes the adapter for the current iteration and returns
+// the raw outcome (which routeIteratingStep will intercept).
+func (n *stepNode) runOneIteration(ctx context.Context, st *RunState, deps Deps, _ *workflow.IterCursor) (string, error) {
 	return n.evaluateOnce(ctx, st, deps)
-}
-
-// runWorkflowIteration executes the inline workflow body for one iteration
-// and records output block values into vars and cur.Prev (B-05, B-06).
-func (n *stepNode) runWorkflowIteration(ctx context.Context, st *RunState, deps Deps, cur *workflow.IterCursor) (string, error) {
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
-	// W07: workflow-type iterations skip runStepFromAttempt; count the visit here.
-	if err := n.incrementVisit(st); err != nil {
-		return "", err
-	}
-
-	if n.step.Body == nil {
-		return "", fmt.Errorf("step %q: type=\"workflow\" but body is nil", n.step.Name)
-	}
-
-	// Evaluate the optional body input expression to build the child var scope.
-	var parentInput cty.Value
-	if n.step.BodyInputExpr != nil {
-		evalCtx := workflow.BuildEvalContextWithOpts(st.Vars, workflow.DefaultFunctionOptions(st.WorkflowDir))
-		var diags hcl.Diagnostics
-		parentInput, diags = n.step.BodyInputExpr.Value(evalCtx)
-		if diags.HasErrors() {
-			return "", fmt.Errorf("step %q: body input expression error: %s", n.step.Name, diags.Error())
-		}
-	}
-
-	childVars, err := seedChildVars(n.step.Body, parentInput, st.Vars)
-	if err != nil {
-		return "", fmt.Errorf("step %q: %w", n.step.Name, err)
-	}
-
-	bodyOutcome, childFinalVars, err := runWorkflowBody(ctx, n.step.Body, n.step.BodyEntry, childVars, st.WorkflowDir, deps)
-	if err != nil {
-		return "", err
-	}
-	// "_continue" is the normal-completion signal from a workflow body.
-	// Translate it to "success" so that isSuccessOutcome works correctly in
-	// routeIteratingStep. Any other terminal state (e.g. "failed") is an
-	// early-exit that signals routeIteratingStep to stop the loop immediately.
-	outcome := bodyOutcome
-	if outcome == "_continue" {
-		outcome = "success"
-	} else {
-		cur.EarlyExit = true
-	}
-	st.LastOutcome = outcome
-
-	n.applyWorkflowBodyOutputs(st, cur, childFinalVars)
-	return outcome, nil
-}
-
-// applyWorkflowBodyOutputs evaluates the output{} block expressions against
-// the child's final scope and records the resulting values into the outer
-// vars (via WithIndexedStepOutput) and into cur.Prev for each.prev access.
-func (n *stepNode) applyWorkflowBodyOutputs(st *RunState, cur *workflow.IterCursor, childFinalVars map[string]cty.Value) {
-	if len(n.step.Outputs) == 0 {
-		return
-	}
-	evalCtx := workflow.BuildEvalContextWithOpts(childFinalVars, workflow.DefaultFunctionOptions(st.WorkflowDir))
-	stringOuts := make(map[string]string, len(n.step.Outputs))
-	ctyOuts := make(map[string]cty.Value, len(n.step.Outputs))
-	for k, expr := range n.step.Outputs {
-		v, diags := expr.Value(evalCtx)
-		if !diags.HasErrors() {
-			ctyOuts[k] = v
-			stringOuts[k] = workflow.CtyValueToString(v)
-		}
-	}
-	if len(stringOuts) > 0 {
-		st.Vars = workflow.WithIndexedStepOutput(st.Vars, n.step.Name, iterOutputKey(cur), stringOuts)
-		cur.Prev = cty.ObjectVal(ctyOuts)
-	}
 }
 
 // evaluateOnce executes the step for a single non-iterating invocation (or a
 // single iteration invocation for steps).
 func (n *stepNode) evaluateOnce(ctx context.Context, st *RunState, deps Deps) (string, error) {
+	// Subworkflow steps bypass the adapter execution path entirely.
+	if n.step.TargetKind == workflow.StepTargetSubworkflow {
+		return n.evaluateSubworkflowStep(ctx, st, deps)
+	}
+
 	effectiveStep, resolveErr := n.resolveInput(st.Vars, st.WorkflowDir)
 	if resolveErr != nil {
 		return "", fmt.Errorf("step %q: input expression error: %w", n.step.Name, resolveErr)
@@ -367,10 +295,76 @@ func (n *stepNode) evaluateOnce(ctx context.Context, st *RunState, deps Deps) (s
 	return next, nil
 }
 
-// getStepEnvironment returns the environment bound to this step.
-// For v0.3.0, all steps use the workflow's DefaultEnvironment (if set).
-// Future phases will support per-step environment overrides.
+// evaluateSubworkflowStep handles a step whose TargetKind is StepTargetSubworkflow.
+// It runs the referenced subworkflow in a nested engine loop and maps the result
+// to the step's declared outcomes. Step-level input expressions (from the step's
+// input { } block) are evaluated against the parent scope and passed into the
+// callee as variable bindings, overriding any declaration-level bindings.
+func (n *stepNode) evaluateSubworkflowStep(ctx context.Context, st *RunState, deps Deps) (string, error) {
+	swNode, ok := n.graph.Subworkflows[n.step.SubworkflowRef]
+	if !ok {
+		return "", fmt.Errorf("step %q: subworkflow %q not found", n.step.Name, n.step.SubworkflowRef)
+	}
+
+	// Evaluate step-level input expressions against the parent scope.
+	var stepInput map[string]cty.Value
+	if len(n.step.InputExprs) > 0 {
+		evalOpts := workflow.DefaultFunctionOptions(st.WorkflowDir)
+		resolved, err := workflow.ResolveInputExprsAsCty(n.step.InputExprs, st.Vars, evalOpts)
+		if err != nil {
+			return "", fmt.Errorf("step %q: input expression error: %w", n.step.Name, err)
+		}
+		stepInput = resolved
+	}
+
+	outputs, runErr := runSubworkflow(ctx, swNode, st, stepInput, deps)
+
+	outcome := "success"
+	if runErr != nil {
+		outcome = "failure"
+	}
+
+	if len(outputs) > 0 {
+		stringOutputs := make(map[string]string, len(outputs))
+		for k, v := range outputs {
+			if v.Type() == cty.String {
+				stringOutputs[k] = v.AsString()
+			}
+		}
+		if len(stringOutputs) > 0 {
+			st.Vars = workflow.WithStepOutputs(st.Vars, n.step.Name, stringOutputs)
+			deps.Sink.OnStepOutputCaptured(n.step.Name, stringOutputs)
+		}
+	}
+
+	next, ok := n.step.Outcomes[outcome]
+	if !ok {
+		if runErr != nil {
+			return "", fmt.Errorf("step %q: subworkflow failed and no %q outcome is declared: %w", n.step.Name, outcome, runErr)
+		}
+		return "", fmt.Errorf("step %q: subworkflow produced unmapped outcome %q", n.step.Name, outcome)
+	}
+	deps.Sink.OnStepTransition(n.step.Name, next, outcome)
+	return next, nil
+}
+
+// Per-step environment override (n.step.Environment) takes precedence over
+// the adapter's environment and the workflow's DefaultEnvironment.
 func (n *stepNode) getStepEnvironment() *workflow.EnvironmentNode {
+	if n.step.Environment != "" {
+		if env, ok := n.graph.Environments[n.step.Environment]; ok {
+			return env
+		}
+	}
+	// Fall back to the adapter's declared environment.
+	if n.step.AdapterRef != "" {
+		if adapterDecl, ok := n.graph.Adapters[n.step.AdapterRef]; ok && adapterDecl.Environment != "" {
+			if env, ok := n.graph.Environments[adapterDecl.Environment]; ok {
+				return env
+			}
+		}
+	}
+	// Final fallback: workflow-level default.
 	if n.graph.DefaultEnvironment != "" {
 		return n.graph.Environments[n.graph.DefaultEnvironment]
 	}
@@ -516,13 +510,13 @@ func (n *stepNode) runStepFromAttempt(ctx context.Context, st *RunState, deps De
 
 func (n *stepNode) executeStep(ctx context.Context, deps Deps, step *workflow.StepNode) (adapter.Result, error) {
 	// Non-lifecycle step: execute using the referenced adapter.
-	if step.Adapter != "" {
+	if step.AdapterRef != "" {
 		adapterType := ""
-		if adaptrDecl, ok := n.graph.Adapters[step.Adapter]; ok {
+		if adaptrDecl, ok := n.graph.Adapters[step.AdapterRef]; ok {
 			adapterType = adaptrDecl.Type
 		}
 		deps.Sink.OnAdapterLifecycle(step.Name, adapterType, "started", "")
-		result, execErr := deps.Sessions.Execute(ctx, step.Adapter, step, deps.Sink.StepEventSink(step.Name))
+		result, execErr := deps.Sessions.Execute(ctx, step.AdapterRef, step, deps.Sink.StepEventSink(step.Name))
 		if execErr != nil {
 			deps.Sink.OnAdapterLifecycle(step.Name, adapterType, "crashed", execErr.Error())
 		} else {
@@ -532,14 +526,14 @@ func (n *stepNode) executeStep(ctx context.Context, deps Deps, step *workflow.St
 	}
 
 	// This case should not happen with proper validation, but provide a fallback.
-	// All steps must reference an adapter or be a workflow type.
+	// All steps must reference an adapter or be a subworkflow target.
 	return adapter.Result{}, fmt.Errorf("step %q has no adapter reference", step.Name)
 }
 
 func (n *stepNode) stepAdapterName() string {
 	// Extract the adapter type from the dotted "<type>.<name>" reference.
-	if n.step.Adapter != "" {
-		parts := strings.Split(n.step.Adapter, ".")
+	if n.step.AdapterRef != "" {
+		parts := strings.Split(n.step.AdapterRef, ".")
 		if len(parts) == 2 {
 			return parts[0]
 		}

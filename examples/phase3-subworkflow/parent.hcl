@@ -16,7 +16,7 @@ workflow "phase3_subworkflow_demo" {
   }
 
   step "setup" {
-    adapter = adapter.shell.default
+    target = adapter.shell.default
     input {
       command = "echo 'Starting subworkflow demo'"
     }

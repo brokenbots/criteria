@@ -24,7 +24,7 @@ workflow "x" {
     }
   }
   step "work" {
-    adapter   = adapter.copilot.bot
+    target = adapter.copilot.bot
     outcome "success" { transition_to = "done" }
   }
   state "done" { terminal = true }
@@ -61,7 +61,7 @@ workflow "x" {
     }
   }
   step "work" {
-    adapter   = adapter.copilot.bot
+    target = adapter.copilot.bot
     outcome "success" { transition_to = "done" }
   }
   state "done" { terminal = true }
@@ -105,7 +105,7 @@ workflow "x" {
     }
   }
   step "work" {
-    adapter   = adapter.copilot.bot
+    target = adapter.copilot.bot
     outcome "success" { transition_to = "done" }
   }
   state "done" { terminal = true }

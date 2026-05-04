@@ -183,7 +183,7 @@ When an adapter step runs under an environment, the environment's `variables` ma
 
 ```hcl
 step "deploy" {
-  adapter = "shell"
+  target = adapter.shell.default
   input {
     command = "echo $LOG_LEVEL"  # will print "debug" (or "info" for prod env)
   }
@@ -274,12 +274,12 @@ See [plugins.md](plugins.md) for the plugin wire protocol and adapter developmen
 
 ## Steps
 
-Steps are the primary execution units. Each step invokes an adapter (either directly or via an agent) and transitions to the next node based on the adapter's outcome.
+Steps are the primary execution units. Each step invokes an adapter (or a subworkflow) and transitions to the next node based on the outcome.
 
 <!-- validator: fragment -->
 ```hcl
 step "build" {
-  adapter = "shell"
+  target  = adapter.shell.default
   timeout = "5m"
   input {
     command = "go build ./..."
@@ -291,8 +291,11 @@ step "build" {
 
 ### Step attributes
 
-- **`adapter`** or **`agent`** (required, mutually exclusive): Adapter name or agent reference.
-- **`lifecycle`** (optional, agent-only): `"open"` or `"close"`. See [Agents](#agents).
+- **`target`** (required): The execution target for this step. Two forms are accepted:
+  - `adapter.<type>.<name>` — invokes the named adapter instance (e.g. `adapter.shell.default`).
+  - `subworkflow.<name>` — invokes a `subworkflow` block declared in the same workflow file (e.g. `subworkflow.setup`).
+  Subworkflow steps always produce a `"success"` outcome on completion or `"failure"` on error.
+- **`lifecycle`** (optional, agent-backed adapter steps only): `"open"` or `"close"`. See [Agents](#agents).
 - **`timeout`** (optional): Duration string (e.g., `"30s"`, `"5m"`). Step aborts if exceeded.
 - **`max_visits`** (optional, default 0 = unlimited): Maximum number of adapter invocation attempts this step may consume in a single run. Each adapter invocation — including the initial attempt and each retry attempt within a `max_step_retries` budget — counts as one visit. For iterating steps (`for_each`/`count`), entering an iteration consumes one visit for that iteration's initial adapter invocation; any retries within that same iteration consume additional visits and also count against `max_visits`. When the visit count would exceed this limit, the run fails immediately with `step "<name>" exceeded max_visits (<N>)`. A value of `0` (default) means unlimited. Negative values are rejected at compile time. This is the preferred mechanism for bounding tight review loops; see also `max_total_steps` in the policy block for a coarser run-wide cap.
 - **`allow_tools`** (optional, agent execution steps only): List of glob patterns for permitted tool invocations. Unioned with workflow-level `allow_tools`.
@@ -307,7 +310,7 @@ The `input { }` block passes adapter-specific configuration. Attributes support 
 <!-- validator: fragment -->
 ```hcl
 step "publish" {
-  adapter = "shell"
+  target = adapter.shell.default
   input {
     command = "echo Build ID: ${steps.build.stdout}"
   }

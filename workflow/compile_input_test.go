@@ -58,7 +58,7 @@ workflow "x" {
   initial_state = "run"
   target_state  = "done"
   step "run" {
-    adapter = adapter.shell.default
+    target = adapter.shell.default
     input {}
     outcome "success" { transition_to = "done" }
     outcome "failure" { transition_to = "done" }
@@ -90,7 +90,7 @@ workflow "x" {
   initial_state = "run"
   target_state  = "done"
   step "run" {
-    adapter = adapter.shell.default
+    target = adapter.shell.default
     input {
       command = "echo hi"
       unknown_key = "bad"
@@ -123,7 +123,7 @@ workflow "x" {
   initial_state = "open"
   target_state  = "done"
   step "open" {
-    adapter   = adapter.copilot.default
+    target = adapter.copilot.default
     lifecycle = "open"
     input {
       prompt = "hello"
@@ -151,16 +151,16 @@ workflow "x" {
   initial_state = "open"
   target_state  = "done"
   step "open" {
-    adapter   = adapter.copilot.default
+    target = adapter.copilot.default
     lifecycle = "open"
     outcome "success" { transition_to = "run" }
   }
   step "run" {
-    adapter = adapter.copilot.default
+    target = adapter.copilot.default
     outcome "success" { transition_to = "close" }
   }
   step "close" {
-    adapter   = adapter.copilot.default
+    target = adapter.copilot.default
     lifecycle = "close"
     input {
       prompt = "bye"
@@ -187,7 +187,7 @@ workflow "x" {
   initial_state = "run"
   target_state  = "done"
   step "run" {
-    adapter = adapter.shell.default
+    target = adapter.shell.default
     config = {
       command = "echo old"
     }
@@ -225,7 +225,7 @@ workflow "x" {
   initial_state = "run"
   target_state  = "done"
   step "run" {
-    adapter = adapter.shell.default
+    target = adapter.shell.default
     input {
       command  = "echo hi"
       extra    = "ok"
@@ -257,7 +257,7 @@ workflow "x" {
   initial_state = "run"
   target_state  = "done"
   step "run" {
-    adapter = adapter.shell.default
+    target = adapter.shell.default
     input {
       command = "echo hi"
     }
@@ -289,11 +289,11 @@ workflow "x" {
   initial_state = "open"
   target_state  = "done"
   step "open" {
-    adapter = adapter.copilot.default
+    target = adapter.copilot.default
     outcome "success" { transition_to = "run" }
   }
   step "run" {
-    adapter = adapter.copilot.default
+    target = adapter.copilot.default
     input {
       prompt    = "do work"
       max_turns = "not-a-number"
@@ -301,7 +301,7 @@ workflow "x" {
     outcome "success" { transition_to = "close" }
   }
   step "close" {
-    adapter = adapter.copilot.default
+    target = adapter.copilot.default
     outcome "success" { transition_to = "done" }
   }
   state "done" { terminal = true }
@@ -329,18 +329,18 @@ workflow "x" {
   initial_state = "open"
   target_state  = "done"
   step "open" {
-    adapter = adapter.copilot.default
+    target = adapter.copilot.default
     outcome "success" { transition_to = "run" }
   }
   step "run" {
-    adapter = adapter.copilot.default
+    target = adapter.copilot.default
     input {
       prompt = 42
     }
     outcome "success" { transition_to = "close" }
   }
   step "close" {
-    adapter = adapter.copilot.default
+    target = adapter.copilot.default
     outcome "success" { transition_to = "done" }
   }
   state "done" { terminal = true }
@@ -367,7 +367,7 @@ workflow "x" {
   initial_state = "run"
   target_state  = "done"
   step "run" {
-    adapter = adapter.listy.default
+    target = adapter.listy.default
     input {
       items = ["a", "b"]
     }
@@ -394,7 +394,7 @@ workflow "x" {
   initial_state = "run"
   target_state  = "done"
   step "run" {
-    adapter = adapter.listy.default
+    target = adapter.listy.default
     input {
       items = ["a", 1]
     }

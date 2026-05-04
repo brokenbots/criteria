@@ -16,7 +16,7 @@ workflow "t" {
   initial_state = "a"
   target_state  = "done"
   step "a" {
-    adapter = adapter.fake
+    target = adapter.fake
     outcome "success" { transition_to = "done" }
   }
   state "done" { terminal = true }
@@ -52,7 +52,7 @@ workflow "t" {
   initial_state = "a"
   target_state  = "done"
   step "a" {
-    adapter = adapter.fake
+    target = adapter.fake
     outcome "success" { transition_to = "done" }
   }
   state "done" { terminal = true }
@@ -80,7 +80,7 @@ workflow "t" {
   initial_state = "a"
   target_state  = "done"
   step "a" {
-    adapter = adapter.fake
+    target = adapter.fake
     outcome "success" { transition_to = "done" }
   }
   state "done" { terminal = true }
@@ -135,7 +135,7 @@ workflow "t" {
   initial_state = "a"
   target_state  = "done"
   step "a" {
-    adapter = adapter.fake
+    target = adapter.fake
     outcome "again" { transition_to = "a" }
   }
   state "done" { terminal = true }
@@ -161,7 +161,7 @@ workflow "t" {
   initial_state = "a"
   target_state  = "done"
   step "a" {
-    adapter = adapter.fake
+    target = adapter.fake
     outcome "success" { transition_to = "done" }
   }
   state "done" {

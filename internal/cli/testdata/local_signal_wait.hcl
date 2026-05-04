@@ -11,7 +11,7 @@ workflow "local_signal_wait" {
   }
 
   step "run_step" {
-    adapter = adapter.noop.demo
+    target = adapter.noop.demo
     input {
       prompt = "continue"
     }

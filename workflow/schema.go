@@ -129,10 +129,14 @@ type StepSpec struct {
 	Input      *InputSpec        `hcl:"input,block"`
 	Timeout    string            `hcl:"timeout,optional"`
 	AllowTools []string          `hcl:"allow_tools,optional"`
-	Outcomes   []OutcomeSpec     `hcl:"outcome,block"`
-	// Remain captures adapter attribute and other expressions (for_each, count, etc.)
-	// for lazy extraction by the compiler. The adapter attribute, if present, must be
-	// an HCL traversal expression (not a string literal), e.g., adapter.shell.default.
+	// Environment is not decoded here; it is a bare traversal (e.g. shell.ci)
+	// captured via Remain by resolveStepEnvironmentOverride. A quoted-string form
+	// causes a compile error with a migration hint.
+	Outcomes []OutcomeSpec `hcl:"outcome,block"`
+	// Remain captures the target attribute and other expressions (for_each, count,
+	// etc.) for lazy extraction by the compiler. The target attribute, if present,
+	// must be an HCL traversal expression of the form adapter.<type>.<name> or
+	// subworkflow.<name>.
 	Remain hcl.Body `hcl:",remain"`
 	// LegacyConfigRange, when set by Parse, points at the source range for a
 	// legacy config = { ... } attribute so compile diagnostics can include
@@ -357,13 +361,26 @@ type AdapterNode struct {
 	Config      map[string]string // compile-folded config from adapter.config { }
 }
 
+// StepTargetKind enumerates the kinds of compiled step targets.
+type StepTargetKind int
+
+const (
+	// StepTargetAdapter targets a named adapter declaration: target = adapter.<type>.<name>.
+	StepTargetAdapter StepTargetKind = iota
+	// StepTargetSubworkflow targets a named subworkflow declaration: target = subworkflow.<name>.
+	StepTargetSubworkflow
+)
+
 // StepNode is a compiled step with resolved transitions.
 type StepNode struct {
-	Name    string
-	Adapter string // "<type>.<name>" reference to a declared adapter
-	OnCrash string
-	// Type is the step kind: "" (default adapter) or "workflow" (sub-workflow body).
-	Type string
+	Name string
+	// TargetKind identifies what this step executes: an adapter or a subworkflow.
+	TargetKind StepTargetKind
+	// AdapterRef is the resolved "<type>.<name>" adapter reference when TargetKind == StepTargetAdapter.
+	AdapterRef string
+	// SubworkflowRef is the resolved subworkflow name when TargetKind == StepTargetSubworkflow.
+	SubworkflowRef string
+	OnCrash        string
 	// OnFailure controls iteration behaviour when an iteration produces a
 	// non-success outcome. Values: "continue" (default), "abort", "ignore".
 	OnFailure string
@@ -384,8 +401,7 @@ type StepNode struct {
 	Timeout    time.Duration     // zero = no timeout
 	Outcomes   map[string]string // outcome name -> target node name (step or state)
 	// AllowTools is the union of step-level and workflow-level allow_tools glob
-	// patterns. An empty slice means deny-all (default). Only valid on
-	// execute-shape steps (Lifecycle == "").
+	// patterns. An empty slice means deny-all (default). Only valid for adapter steps.
 	AllowTools []string
 	// ForEach is the raw HCL expression for step-level iteration over a list or
 	// map. Evaluated at runtime on first step entry. Mutually exclusive with Count.
@@ -394,19 +410,11 @@ type StepNode struct {
 	// Evaluates to an integer N; iteration runs N times with each.value = 0..N-1.
 	// Mutually exclusive with ForEach.
 	Count hcl.Expression
-	// Body is the compiled FSMGraph for workflow-type steps. Nil for non-workflow steps.
-	Body *FSMGraph
-	// BodyEntry is the initial state name for the workflow body. Derived from
-	// the first declared step in the body when not explicitly set.
-	BodyEntry string
-	// BodyInputExpr is the optional `input = { ... }` expression on the parent
-	// step. When non-nil the engine evaluates it at iteration entry to build the
-	// child scope's var.* bindings. When nil the body's variable defaults are
-	// used directly.
-	BodyInputExpr hcl.Expression
-	// Outputs maps output block names to their value HCL expressions. Evaluated
-	// after each body iteration completes to populate indexed step outputs.
-	Outputs map[string]hcl.Expression
+	// Environment is an optional per-step override for the execution environment,
+	// in the form "<env_type>.<env_name>". When set, it overrides the adapter
+	// block's environment and the workflow-level default for this step only.
+	// Applies env-var injection only; does not create a new adapter session.
+	Environment string
 }
 
 // SubworkflowNode is a compiled subworkflow declaration with resolved source,

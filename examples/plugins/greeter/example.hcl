@@ -11,7 +11,7 @@ workflow "greeter_example" {
   }
 
   step "greet" {
-    adapter = adapter.greeter.default
+    target = adapter.greeter.default
     input {
       name = "world"
     }

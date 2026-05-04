@@ -51,9 +51,10 @@ func baseStep(name, adapterName string, config map[string]string) *workflow.Step
 		cfg[k] = v
 	}
 	return &workflow.StepNode{
-		Name:    name,
-		Adapter: adapterName,
-		Input:   cfg,
+		Name:       name,
+		TargetKind: workflow.StepTargetAdapter,
+		AdapterRef: adapterName,
+		Input:      cfg,
 		Outcomes: map[string]string{
 			"success": "done",
 			"failure": "done",
