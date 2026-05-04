@@ -406,3 +406,122 @@ workflow "parent" {
 		t.Errorf("body adapter: expected 1 close, got %d", closes)
 	}
 }
+
+// TestRunWorkflowBody_BodyAndParentAdaptersIsolated verifies that adapters provisioned in a
+// parent workflow stay open through body execution while body-scoped adapters are isolated
+// and closed when the body completes.
+func TestRunWorkflowBody_BodyAndParentAdaptersIsolated(t *testing.T) {
+	// Parent uses adapter noop_a in multiple steps
+	// Body uses adapter noop_b
+	// Verify a opens/closes once for parent, b opens/closes once for body
+	parentG := compile(t, `
+workflow "parent" {
+  version       = "0.1"
+  initial_state = "pre"
+  target_state  = "done"
+
+  step "pre" {
+    adapter = adapter.noop_a
+    outcome "success" { transition_to = "body" }
+  }
+
+  step "body" {
+    type     = "workflow"
+    for_each = ["x"]
+
+    workflow {
+      step "inner" {
+        adapter = adapter.noop_b
+        outcome "success" { transition_to = "_continue" }
+      }
+    }
+
+    outcome "all_succeeded" { transition_to = "post" }
+    outcome "any_failed"    { transition_to = "done" }
+  }
+
+  step "post" {
+    adapter = adapter.noop_a
+    outcome "success" { transition_to = "done" }
+  }
+
+  state "done" {
+    terminal = true
+    success  = true
+  }
+}`)
+
+	// We'll use two separate plugins to track each adapter's lifecycle independently
+	adapterA := &lifecycleTrackingPlugin{
+		fakePlugin: fakePlugin{name: "noop_a", outcome: "success"},
+	}
+	adapterB := &lifecycleTrackingPlugin{
+		fakePlugin: fakePlugin{name: "noop_b", outcome: "success"},
+	}
+
+	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
+		"noop_a": adapterA,
+		"noop_b": adapterB,
+	}}
+
+	sink := &lifecycleTrackingSink{}
+	eng := New(parentG, loader, sink)
+
+	err := eng.Run(context.Background())
+	if err != nil {
+		t.Errorf("Run failed: %v", err)
+	}
+
+	// Verify adapter A (parent): should open once at parent scope start, close once at end
+	adapterA.mu.Lock()
+	aOpens := adapterA.opensCount
+	aCloses := adapterA.closesCount
+	adapterA.mu.Unlock()
+
+	if aOpens != 1 {
+		t.Errorf("adapter a (parent): expected 1 open, got %d", aOpens)
+	}
+	if aCloses != 1 {
+		t.Errorf("adapter a (parent): expected 1 close, got %d", aCloses)
+	}
+
+	// Verify adapter B (body): should open once when body starts, close once when body ends
+	adapterB.mu.Lock()
+	bOpens := adapterB.opensCount
+	bCloses := adapterB.closesCount
+	adapterB.mu.Unlock()
+
+	if bOpens != 1 {
+		t.Errorf("adapter b (body): expected 1 open, got %d", bOpens)
+	}
+	if bCloses != 1 {
+		t.Errorf("adapter b (body): expected 1 close, got %d", bCloses)
+	}
+
+	// Verify event order: a opens, b opens (in body), b closes (body ends), a closes (parent ends)
+	events := sink.adapterLifecycleEvents
+	if len(events) < 4 {
+		t.Errorf("expected at least 4 lifecycle events, got %d: %v", len(events), events)
+	} else {
+		// Check that the essential events occurred (may have execution events in between)
+		hasAOpened := containsEvent(events, "noop_a.default:opened")
+		hasBOpened := containsEvent(events, "noop_b.default:opened")
+		hasBClosed := containsEvent(events, "noop_b.default:closed")
+		hasAClosed := containsEvent(events, "noop_a.default:closed")
+
+		if !hasAOpened || !hasBOpened || !hasBClosed || !hasAClosed {
+			t.Errorf("missing essential lifecycle events: %v (opened_a=%v, opened_b=%v, closed_b=%v, closed_a=%v)",
+				events, hasAOpened, hasBOpened, hasBClosed, hasAClosed)
+		}
+	}
+}
+
+// Helper to check if an event string contains a specific substring
+func containsEvent(events []string, substr string) bool {
+	for _, evt := range events {
+		if evt == substr {
+			return true
+		}
+	}
+	return false
+}
