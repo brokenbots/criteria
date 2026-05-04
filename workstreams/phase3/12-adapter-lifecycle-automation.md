@@ -1135,3 +1135,23 @@ Fixed test helper `injectDefaultAdapters()` which was collecting adapters into a
 **Commit:** 8f37f6b
 
 **Result:** All tests now pass consistently with -race flag. make ci green.
+
+### PR #80 Review Threads Resolved (2026-05-04)
+
+**All 19 review threads now resolved (0 unresolved).**
+
+**Threads addressed via GraphQL resolveReviewThread mutation:**
+- BLOCKER 1: Dead autoBootstrapAdapters code (d0e356a)
+- BLOCKER 2a/2b: Empty validateAdapterAndAgent function (d0e356a)
+- BLOCKER 3: Misnamed compile_lifecycle.go → compile_validators.go (d0e356a)
+- BLOCKER 4: Wrong test path in TestEngine_AdapterTeardownOnError (d0e356a)
+- BLOCKER 5: LIFO order assertion tightened (d0e356a)
+- BLOCKER 6: ErrSessionAlreadyOpen swallow documented (d0e356a)
+- BLOCKER 7a/7b: Missing cancel and rollback tests (d0e356a)
+- BLOCKER 7c/d: Missing body-isolation tests (d0e356a)
+- Copilot comments 1-4: Teardown order, context handling, recursive legacy checks, RunFrom comment (all addressed)
+- Non-blocking suggestions: Duplication, half-true comment, stale comment
+
+All blockers were fixed in commits d0e356a (code fixes and tests) and 8f37f6b (test helper nondeterminism fix).
+
+**Status:** All threads resolved. PR ready for reviewer re-review.
