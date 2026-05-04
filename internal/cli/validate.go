@@ -15,7 +15,9 @@ import (
 )
 
 func NewValidateCmd() *cobra.Command {
-	return &cobra.Command{
+	var subworkflowRoots []string
+
+	cmd := &cobra.Command{
 		Use:   "validate <workflow.hcl> [more.hcl ...]",
 		Short: "Parse and validate a workflow HCL file without executing it",
 		Args:  cobra.MinimumNArgs(1),
@@ -35,7 +37,9 @@ func NewValidateCmd() *cobra.Command {
 				_ = loader.Shutdown(ctx)
 
 				_, diags = workflow.CompileWithOpts(spec, schemas, workflow.CompileOpts{
-					WorkflowDir: filepath.Dir(path),
+					WorkflowDir:         filepath.Dir(path),
+					SubWorkflowResolver: &workflow.LocalSubWorkflowResolver{AllowedRoots: subworkflowRoots},
+					Schemas:             schemas,
 				})
 				if diags.HasErrors() {
 					anyErr = true
@@ -53,4 +57,7 @@ func NewValidateCmd() *cobra.Command {
 			return nil
 		},
 	}
+
+	cmd.Flags().StringArrayVar(&subworkflowRoots, "subworkflow-root", nil, "Restrict subworkflow source resolution to this root path (repeatable; empty = no restriction)")
+	return cmd
 }

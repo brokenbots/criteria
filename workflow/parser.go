@@ -46,20 +46,9 @@ func Parse(filename string, src []byte) (*Spec, hcl.Diagnostics) {
 		return nil, diags
 	}
 
-	// Check for legacy blocks before attempting decode.
-	legacyDiags := rejectLegacyBlocks(f.Body)
-	if legacyDiags.HasErrors() {
+	// Check for legacy attributes and blocks before attempting decode.
+	if legacyDiags := checkLegacyAttributes(f.Body); legacyDiags.HasErrors() {
 		return nil, legacyDiags
-	}
-
-	// Check for legacy step agent attributes in the workflow body (before decoding).
-	if stepAgentDiags := rejectLegacyStepAgentAttr(f.Body); stepAgentDiags.HasErrors() {
-		return nil, stepAgentDiags
-	}
-
-	// Check for legacy step lifecycle attributes in the workflow body (before decoding).
-	if stepLifecycleDiags := rejectLegacyStepLifecycleAttr(f.Body); stepLifecycleDiags.HasErrors() {
-		return nil, stepLifecycleDiags
 	}
 
 	var file File
@@ -80,6 +69,27 @@ func Parse(filename string, src []byte) (*Spec, hcl.Diagnostics) {
 		return nil, diags
 	}
 	return spec, diags
+}
+
+// checkLegacyAttributes runs all legacy attribute and block rejection checks.
+func checkLegacyAttributes(body hcl.Body) hcl.Diagnostics {
+	checks := []func(hcl.Body) hcl.Diagnostics{
+		rejectLegacyBlocks,
+		rejectLegacyStepAgentAttr,
+		rejectLegacyStepLifecycleAttr,
+		rejectLegacyStepWorkflowBlock,
+		rejectLegacyStepWorkflowFile,
+		rejectLegacyStepTypeAttr,
+	}
+
+	var diags hcl.Diagnostics
+	for _, check := range checks {
+		diags = append(diags, check(body)...)
+		if diags.HasErrors() {
+			return diags
+		}
+	}
+	return diags
 }
 
 // annotateLegacyConfigRanges records source ranges for legacy step

@@ -5,6 +5,7 @@ package workflow
 // (transition resolution and reachability analysis).
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -17,6 +18,16 @@ const (
 	onCrashAbortRun = "abort_run"
 )
 
+// SubWorkflowResolver resolves subworkflow source directories.
+// ResolveSource resolves a source string ("./path" or "scheme://...")
+// to a directory containing one or more .hcl files.
+// callerDir is the directory containing the parent workflow (used to resolve relative paths).
+// For local paths, the returned dir is the absolute path; for remote sources,
+// the resolver fetches into a cache dir.
+type SubWorkflowResolver interface {
+	ResolveSource(ctx context.Context, callerDir, source string) (dir string, err error)
+}
+
 // CompileOpts carries optional configuration for the Compile pass.
 type CompileOpts struct {
 	// WorkflowDir is the directory containing the HCL file being compiled.
@@ -27,16 +38,17 @@ type CompileOpts struct {
 	// compiler increments this for each recursive CompileWithOpts call when
 	// compiling a workflow-type step body. Maximum depth is 4.
 	LoadDepth int
-	// LoadedFiles tracks file paths already in the load chain for
-	// workflow_file cycle detection. It is populated automatically by the
-	// compiler when SubWorkflowResolver is set.
-	LoadedFiles []string
+	// SubworkflowChain tracks resolved source paths in the current call stack
+	// for cycle detection when compiling subworkflows.
+	SubworkflowChain []string
 	// SubWorkflowResolver is an optional callback used to load an external
-	// workflow file referenced by workflow_file = "...". When nil, any step
-	// using workflow_file is rejected with a compile error. The resolver
-	// receives the file path and the WorkflowDir; it must return a parsed
-	// *Spec or an error.
-	SubWorkflowResolver func(filePath, workflowDir string) (*Spec, error)
+	// subworkflow directory referenced by subworkflow.source = "...".
+	// When nil, any subworkflow is rejected with a compile error.
+	SubWorkflowResolver SubWorkflowResolver
+	// Schemas is the adapter schema map propagated into recursive subworkflow
+	// compiles so callee adapter config and step input are fully validated.
+	// Set by the CLI compile path; nil when compiling standalone without adapters.
+	Schemas map[string]AdapterInfo
 }
 
 // Compile validates a Spec and returns an executable FSMGraph. It is a
@@ -74,6 +86,7 @@ func CompileWithOpts(spec *Spec, schemas map[string]AdapterInfo, opts CompileOpt
 	diags = append(diags, compileVariables(g, spec)...)
 	diags = append(diags, compileLocals(g, spec, opts)...)
 	diags = append(diags, compileEnvironments(g, spec, opts)...)
+	diags = append(diags, compileSubworkflows(g, spec, opts)...)
 	diags = append(diags, compileOutputs(g, spec, opts)...)
 	diags = append(diags, compileAdapters(g, spec, schemas, opts)...)
 	diags = append(diags, compileStates(g, spec)...)
@@ -113,6 +126,8 @@ func newFSMGraph(spec *Spec) *FSMGraph {
 		Outputs:      map[string]*OutputNode{},
 		OutputOrder:  []string{},
 		Adapters:     map[string]*AdapterNode{},
+		AdapterOrder: []string{},
+		Subworkflows: map[string]*SubworkflowNode{},
 		Steps:        map[string]*StepNode{},
 		States:       map[string]*StateNode{},
 		Waits:        map[string]*WaitNode{},

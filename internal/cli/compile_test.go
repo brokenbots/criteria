@@ -25,7 +25,7 @@ func TestCompileGolden_JSONAndDOT(t *testing.T) {
 		relPath, _ := filepath.Rel(repoRoot, path)
 		name := strings.TrimSuffix(filepath.Base(path), ".hcl") + "__" + sanitizeFixturePath(relPath)
 		t.Run(name+"_json", func(t *testing.T) {
-			out, err := compileWorkflowOutput(context.Background(), path, "json")
+			out, err := compileWorkflowOutput(context.Background(), path, "json", nil)
 			if err != nil {
 				t.Fatalf("compile json: %v", err)
 			}
@@ -33,7 +33,7 @@ func TestCompileGolden_JSONAndDOT(t *testing.T) {
 		})
 
 		t.Run(name+"_dot", func(t *testing.T) {
-			out, err := compileWorkflowOutput(context.Background(), path, "dot")
+			out, err := compileWorkflowOutput(context.Background(), path, "dot", nil)
 			if err != nil {
 				t.Fatalf("compile dot: %v", err)
 			}
@@ -138,14 +138,14 @@ func TestCompileWorkflowOutput_InvalidFormat(t *testing.T) {
 	if len(fixtures) == 0 {
 		t.Skip("no fixtures")
 	}
-	_, err := compileWorkflowOutput(context.Background(), fixtures[0], "xml")
+	_, err := compileWorkflowOutput(context.Background(), fixtures[0], "xml", nil)
 	if err == nil {
 		t.Fatal("expected error for unsupported format")
 	}
 }
 
 func TestParseCompileForCli_MissingFile(t *testing.T) {
-	_, _, err := parseCompileForCli(context.Background(), "/no/such/file.hcl")
+	_, _, err := parseCompileForCli(context.Background(), "/no/such/file.hcl", nil)
 	if err == nil {
 		t.Fatal("expected error for missing file")
 	}

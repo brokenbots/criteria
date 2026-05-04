@@ -156,3 +156,158 @@ func rejectLegacyStepLifecycleAttrInBody(body hcl.Body) hcl.Diagnostics {
 
 	return diags
 }
+
+// rejectLegacyStepWorkflowBlock checks for and rejects the removed `step { workflow { ... } }` inline body block.
+func rejectLegacyStepWorkflowBlock(body hcl.Body) hcl.Diagnostics {
+	var diags hcl.Diagnostics
+
+	// First find the workflow block(s)
+	wfSchema := &hcl.BodySchema{
+		Blocks: []hcl.BlockHeaderSchema{
+			{Type: "workflow", LabelNames: []string{"name"}},
+		},
+	}
+	wfContent, _, _ := body.PartialContent(wfSchema)
+
+	for _, wfBlock := range wfContent.Blocks {
+		diags = append(diags, rejectLegacyStepWorkflowBlockInBody(wfBlock.Body)...)
+	}
+
+	return diags
+}
+
+// rejectLegacyStepWorkflowBlockInBody recursively checks for inline workflow blocks in all steps.
+func rejectLegacyStepWorkflowBlockInBody(body hcl.Body) hcl.Diagnostics {
+	var diags hcl.Diagnostics
+
+	stepSchema := &hcl.BodySchema{
+		Blocks: []hcl.BlockHeaderSchema{
+			{Type: "step", LabelNames: []string{"name"}},
+		},
+	}
+	stepContent, _, _ := body.PartialContent(stepSchema)
+
+	for _, block := range stepContent.Blocks {
+		workflowSchema := &hcl.BodySchema{
+			Blocks: []hcl.BlockHeaderSchema{
+				{Type: "workflow", LabelNames: []string{}},
+			},
+		}
+		workflowContent, _, _ := block.Body.PartialContent(workflowSchema)
+
+		for _, wfBlock := range workflowContent.Blocks {
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  `removed block "workflow" on steps`,
+				Detail:   `inline "workflow { ... }" blocks on steps were removed in v0.3.0. Declare a top-level "subworkflow" block and reference it via target in W14. See CHANGELOG.md migration note.`,
+				Subject:  &wfBlock.DefRange,
+			})
+		}
+
+		// Recursively check nested workflow steps (for iteration bodies with inline workflows)
+		diags = append(diags, rejectLegacyStepWorkflowBlockInBody(block.Body)...)
+	}
+
+	return diags
+}
+
+// rejectLegacyStepWorkflowFile checks for and rejects the removed `step { workflow_file = "..." }` attribute.
+func rejectLegacyStepWorkflowFile(body hcl.Body) hcl.Diagnostics {
+	var diags hcl.Diagnostics
+
+	// First find the workflow block(s)
+	wfSchema := &hcl.BodySchema{
+		Blocks: []hcl.BlockHeaderSchema{
+			{Type: "workflow", LabelNames: []string{"name"}},
+		},
+	}
+	wfContent, _, _ := body.PartialContent(wfSchema)
+
+	for _, wfBlock := range wfContent.Blocks {
+		diags = append(diags, rejectLegacyStepWorkflowFileInBody(wfBlock.Body)...)
+	}
+
+	return diags
+}
+
+// rejectLegacyStepWorkflowFileInBody recursively checks for workflow_file attributes in all steps.
+func rejectLegacyStepWorkflowFileInBody(body hcl.Body) hcl.Diagnostics {
+	var diags hcl.Diagnostics
+
+	stepSchema := &hcl.BodySchema{
+		Blocks: []hcl.BlockHeaderSchema{
+			{Type: "step", LabelNames: []string{"name"}},
+		},
+	}
+	stepContent, _, _ := body.PartialContent(stepSchema)
+
+	for _, block := range stepContent.Blocks {
+		workflowFileSchema := &hcl.BodySchema{
+			Attributes: []hcl.AttributeSchema{{Name: "workflow_file"}},
+		}
+		workflowFileContent, _, _ := block.Body.PartialContent(workflowFileSchema)
+
+		if attr, ok := workflowFileContent.Attributes["workflow_file"]; ok {
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  `removed attribute "workflow_file" on steps`,
+				Detail:   `attribute "workflow_file" was removed in v0.3.0. Declare a top-level "subworkflow" block and reference it via target in W14. See CHANGELOG.md migration note.`,
+				Subject:  &attr.NameRange,
+			})
+		}
+
+		// Recursively check nested workflow steps
+		diags = append(diags, rejectLegacyStepWorkflowFileInBody(block.Body)...)
+	}
+
+	return diags
+}
+
+// rejectLegacyStepTypeAttr checks for and rejects the removed `step { type = "..." }` attribute.
+func rejectLegacyStepTypeAttr(body hcl.Body) hcl.Diagnostics {
+	var diags hcl.Diagnostics
+
+	// First find the workflow block(s)
+	wfSchema := &hcl.BodySchema{
+		Blocks: []hcl.BlockHeaderSchema{
+			{Type: "workflow", LabelNames: []string{"name"}},
+		},
+	}
+	wfContent, _, _ := body.PartialContent(wfSchema)
+
+	for _, wfBlock := range wfContent.Blocks {
+		diags = append(diags, rejectLegacyStepTypeAttrInBody(wfBlock.Body)...)
+	}
+
+	return diags
+}
+
+// rejectLegacyStepTypeAttrInBody recursively checks for type attributes in all steps within a body.
+func rejectLegacyStepTypeAttrInBody(body hcl.Body) hcl.Diagnostics {
+	var diags hcl.Diagnostics
+
+	// Look for step blocks within this body.
+	stepSchema := &hcl.BodySchema{
+		Blocks: []hcl.BlockHeaderSchema{
+			{Type: "step", LabelNames: []string{"name"}},
+		},
+	}
+	stepContent, _, _ := body.PartialContent(stepSchema)
+
+	for _, block := range stepContent.Blocks {
+		// Check for "type" attribute in the step block body.
+		typeSchema := &hcl.BodySchema{Attributes: []hcl.AttributeSchema{{Name: "type"}}}
+		typeContent, _, _ := block.Body.PartialContent(typeSchema)
+
+		if attr, ok := typeContent.Attributes["type"]; ok {
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  `removed attribute "type" on steps`,
+				Detail:   `attribute "type" was removed in v0.3.0. All steps are now adapter steps. Use adapter = "<type>.<name>" to declare which adapter to run. Inline workflow bodies are replaced by top-level "subworkflow" blocks referenced via target in W14. See CHANGELOG.md migration note.`,
+				Subject:  &attr.NameRange,
+			})
+		}
+	}
+
+	return diags
+}

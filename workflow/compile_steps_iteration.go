@@ -23,8 +23,6 @@ func compileIteratingStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[str
 		return diags
 	}
 
-	diags = append(diags, validateStepKindSelectionDiags(sp)...)
-
 	// Resolve the adapter reference from the step's Remain body as an HCL traversal.
 	adapterRef, adapterPresent, d := resolveStepAdapterRef(sp.Remain)
 	diags = append(diags, d...)
@@ -173,19 +171,4 @@ func validateIterExprFold(g *FSMGraph, opts CompileOpts, forEachExpr, countExpr 
 		diags = append(diags, errorDiagsWithFallbackSubject(d, countExpr)...)
 	}
 	return diags
-}
-
-// compileWorkflowIterExpr decodes the for_each/count expressions, checks for
-// mutual exclusion, and validates the on_failure constraint for workflow steps.
-func compileWorkflowIterExpr(sp *StepSpec) (forEachExpr, countExpr hcl.Expression, isIterating bool, diags hcl.Diagnostics) {
-	forEachExpr, countExpr, d := decodeRemainIter(sp)
-	diags = append(diags, d...)
-	if forEachExpr != nil && countExpr != nil {
-		diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q: for_each and count are mutually exclusive", sp.Name)})
-	}
-	isIterating = forEachExpr != nil || countExpr != nil
-	if sp.OnFailure != "" && !isIterating {
-		diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q: on_failure requires for_each or count", sp.Name)})
-	}
-	return forEachExpr, countExpr, isIterating, diags
 }

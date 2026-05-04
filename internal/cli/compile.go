@@ -20,8 +20,9 @@ import (
 
 func NewCompileCmd() *cobra.Command {
 	var (
-		outPath string
-		format  string
+		outPath          string
+		format           string
+		subworkflowRoots []string
 	)
 
 	cmd := &cobra.Command{
@@ -30,7 +31,7 @@ func NewCompileCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			workflowPath := args[0]
-			output, err := compileWorkflowOutput(cmd.Context(), workflowPath, format)
+			output, err := compileWorkflowOutput(cmd.Context(), workflowPath, format, subworkflowRoots)
 			if err != nil {
 				return err
 			}
@@ -40,11 +41,12 @@ func NewCompileCmd() *cobra.Command {
 
 	cmd.Flags().StringVar(&outPath, "out", "", "Write output to file (default stdout)")
 	cmd.Flags().StringVar(&format, "format", "json", "Output format: json or dot")
+	cmd.Flags().StringArrayVar(&subworkflowRoots, "subworkflow-root", nil, "Restrict subworkflow source resolution to this root path (repeatable; empty = no restriction)")
 	return cmd
 }
 
-func compileWorkflowOutput(ctx context.Context, workflowPath, format string) ([]byte, error) {
-	spec, graph, err := parseCompileForCli(ctx, workflowPath)
+func compileWorkflowOutput(ctx context.Context, workflowPath, format string, subworkflowRoots []string) ([]byte, error) {
+	spec, graph, err := parseCompileForCli(ctx, workflowPath, subworkflowRoots)
 	if err != nil {
 		return nil, err
 	}
@@ -239,7 +241,7 @@ func renderDOT(graph *workflow.FSMGraph) string {
 	return b.String()
 }
 
-func parseCompileForCli(ctx context.Context, workflowPath string) (*workflow.Spec, *workflow.FSMGraph, error) {
+func parseCompileForCli(ctx context.Context, workflowPath string, subworkflowRoots []string) (*workflow.Spec, *workflow.FSMGraph, error) {
 	src, err := os.ReadFile(workflowPath)
 	if err != nil {
 		return nil, nil, err
@@ -255,7 +257,11 @@ func parseCompileForCli(ctx context.Context, workflowPath string) (*workflow.Spe
 	schemas := collectSchemas(ctx, loader, spec, nil)
 	defer func() { _ = loader.Shutdown(ctx) }()
 
-	graph, diags := workflow.CompileWithOpts(spec, schemas, workflow.CompileOpts{WorkflowDir: filepath.Dir(workflowPath)})
+	graph, diags := workflow.CompileWithOpts(spec, schemas, workflow.CompileOpts{
+		WorkflowDir:         filepath.Dir(workflowPath),
+		SubWorkflowResolver: &workflow.LocalSubWorkflowResolver{AllowedRoots: subworkflowRoots},
+		Schemas:             schemas,
+	})
 	if diags.HasErrors() {
 		return nil, nil, fmt.Errorf("compile: %s", diags.Error())
 	}

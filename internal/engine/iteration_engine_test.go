@@ -361,6 +361,7 @@ workflow "t" {
 // TestIteration_WorkflowStep_RunsBodyPerIteration verifies that a
 // type="workflow" step executes the inline body for each iteration item.
 func TestIteration_WorkflowStep_RunsBodyPerIteration(t *testing.T) {
+	t.Skip("test uses removed inline workflow body feature (W13); pending W14 subworkflow invocation support")
 	g := compile(t, `
 workflow "t" {
   version       = "0.1"
@@ -408,6 +409,7 @@ workflow "t" {
 // TestIteration_WorkflowStep_MultiStepBody verifies that a type="workflow"
 // step with a multi-step body executes all body steps per iteration.
 func TestIteration_WorkflowStep_MultiStepBody(t *testing.T) {
+	t.Skip("test uses removed inline workflow body feature (W13); pending W14 subworkflow invocation support")
 	g := compile(t, `
 workflow "t" {
   version       = "0.1"
@@ -982,6 +984,7 @@ workflow "t" {
 // with for_each correctly executes the body once per iteration item, binding
 // each.value inside the body.
 func TestIter_NestedIteration_WorkflowBody(t *testing.T) {
+	t.Skip("test uses removed inline workflow body feature (W13); pending W14 subworkflow invocation support")
 	g := compile(t, `
 workflow "t" {
   version       = "0.1"
@@ -1036,6 +1039,7 @@ workflow "t" {
 // (early-exit path) with on_failure="abort", the iteration loop terminates
 // after that iteration rather than continuing to the next item.
 func TestIter_EarlyExit_OutsideBody_TerminatesLoop(t *testing.T) {
+	t.Skip("test uses removed inline workflow body feature (W13); pending W14 subworkflow invocation support")
 	g := compile(t, `
 workflow "t" {
   version       = "0.1"
@@ -1117,6 +1121,7 @@ func (c *combinedPlugin) Execute(ctx context.Context, runID string, step *workfl
 // steps via steps.<name>[idx].<key>, and that the output block is evaluated
 // against the body's final variable state.
 func TestIter_OutputBlocks_OnlyDeclaredVisible(t *testing.T) {
+	t.Skip("test uses removed inline workflow body feature (W13); pending W14 subworkflow invocation support")
 	g := compile(t, `
 workflow "t" {
   version       = "0.1"
@@ -1299,6 +1304,7 @@ workflow "t" {
 // RunState.IterStack (outer for_each + inner for_each), producing the correct
 // number of inner-step executions.
 func TestIter_NestedIteration_CursorStack(t *testing.T) {
+	t.Skip("test uses removed inline workflow body feature (W13); pending W14 subworkflow invocation support")
 	g := compile(t, `
 workflow "t" {
   version       = "0.1"
@@ -1431,6 +1437,7 @@ workflow "t" {
 // loop stops immediately (early-exit semantics) rather than advancing to the
 // next iteration.
 func TestIter_WorkflowBody_EarlyExit_StopsLoop(t *testing.T) {
+	t.Skip("test uses removed inline workflow body feature (W13); pending W14 subworkflow invocation support")
 	n := 0
 	seqPlugin := &callbackPlugin{fn: func(_ map[string]string) (string, map[string]string) {
 		n++

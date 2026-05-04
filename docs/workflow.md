@@ -1075,23 +1075,117 @@ parallel "build_and_test" {
 
 **Not implemented in v1.5**. Requires engine scheduler enhancements and cross-region synchronization primitives.
 
-### Sub-workflow composition (future)
+---
 
-Embed reusable workflow fragments:
+## Subworkflows
 
-<!-- validator: skip: not implemented in v1.5; sub_workflow block is not a recognized workflow node type -->
+The `subworkflow "<name>"` block declares a reusable workflow fragment to be resolved from a local directory and deep-compiled into the parent workflow's FSM graph at compile time.
+
+### Declaring a subworkflow
+
+<!-- validator: skip: subworkflow invocation via `target = subworkflow.<name>` is implemented in W14; this illustrative example uses a future step attribute -->
 ```hcl
-sub_workflow "smoke_test" {
-  source = "workflows/smoke.hcl"
-  inputs = {
-    env = var.env
+workflow "deploy_pipeline" {
+  version       = "1"
+  initial_state = "lint"
+  target_state  = "done"
+
+  # Declare an adapter the parent uses.
+  adapter "shell" "default" {
+    config { }
   }
-  outcome "success" { transition_to = "deploy_prod" }
-  outcome "failure" { transition_to = "rollback" }
+
+  # Declare the sub-workflow to deep-compile.
+  subworkflow "smoke_test" {
+    source      = "./subworkflows/smoke"   # local directory containing one or more .hcl files
+    environment = "shell.ci"              # optional: bind callee to a declared environment
+    input = {
+      target_env = var.env               # bind parent-scope expressions to callee variables
+      retries    = 3
+    }
+  }
+
+  variable "env" {
+    type    = "string"
+    default = "staging"
+  }
+
+  step "lint" {
+    adapter = adapter.shell.default
+    input {
+      command = "run-lint"
+    }
+    outcome "success" { transition_to = "done" }
+    outcome "failure" { transition_to = "done" }
+  }
+
+  state "done" {
+    terminal = true
+    success  = true
+  }
 }
 ```
 
-**Not implemented in v1.5**. Requires workflow registry, input/output contracts, and nested execution context.
+### Sub-workflow directory layout
+
+Each `source` path must point to a **directory** (not a file) containing at least one `.hcl` file:
+
+```
+./subworkflows/smoke/
+  main.hcl        # workflow block, states, steps, outputs
+  variables.hcl   # optional: additional declarations in their own workflow {} block
+```
+
+Multiple `.hcl` files in the directory are merged at compile time. Each file must be a complete, standalone HCL document with its own `workflow "<name>" { ... }` wrapper (the same format as any other workflow file). Declaration lists (states, steps, variables, outputs) from all files are combined; the `version`, `initial_state`, and `target_state` are taken from the first file read (alphabetical order). Duplicate name declarations across files produce a compile error.
+
+### Input binding
+
+The `input = { ... }` map binds parent-scope expressions to the callee's `variable` blocks:
+
+- Every callee variable without a `default` value **must** have a corresponding input key.
+- Extra input keys that don't match any callee variable produce a compile error.
+- Input values are parent-scope HCL expressions; `var.*`, `local.*`, and literal values are all valid.
+
+### Output access (W14+)
+
+After W14 (universal step target) lands, the callee's `output` blocks are accessible in the parent scope as `subworkflow.<name>.output.<output_name>`:
+
+```hcl
+# After W14 — step targeting a subworkflow
+step "run_smoke" {
+  target = subworkflow.smoke_test
+}
+
+# Then in a subsequent step's input:
+step "report" {
+  adapter = adapter.shell.default
+  input {
+    result = subworkflow.smoke_test.output.status
+  }
+}
+```
+
+### Compilation semantics
+
+1. **Deep-compile**: The parent workflow's `compileSubworkflows` pass resolves each `source`, reads all `.hcl` files in the directory, merges them, and recursively compiles the callee into a child `FSMGraph`. All validation (type errors, undeclared adapters, missing variables) happens at compile time before any step executes.
+2. **Cycle detection**: If a subworkflow's source path already appears in the current compilation chain, a compile error is produced listing the full cycle path.
+3. **Scope isolation**: The callee declares its own adapters; sessions are isolated and torn down when the callee reaches a terminal state.
+
+### CLI flags
+
+- `--subworkflow-root <path>` (repeatable): Restrict subworkflow source resolution to paths under this root. By default (empty), any local path is allowed. Use this in CI pipelines to prevent workflows from loading subworkflows from outside a trusted directory tree.
+
+  ```sh
+  criteria apply --subworkflow-root ./workflows my_workflow.hcl
+  ```
+
+  The flag is also supported by `criteria validate` and `criteria compile`.
+
+### Source schemes
+
+Only local filesystem paths (`./relative/path` or `/absolute/path`) are supported in v0.3.0. Remote schemes (`git://`, `https://`, etc.) are reserved for Phase 4.
+
+---
 
 ### Variable overrides at runtime (future enhancement)
 
@@ -1104,5 +1198,5 @@ The criteria project ships as a single repository:
 - **`github.com/brokenbots/criteria`** — workflow engine, compiler, and standalone CLI (this document); the `cmd/criteria-adapter-*` plugin binaries live here too.
 - **`github.com/brokenbots/criteria/sdk`** — published Go SDK; shared protobuf contracts and event schemas live under `sdk/pb/criteria/v1`.
 
-The orchestrator side is developed separately at [github.com/brokenbots/orchestrator](https://github.com/brokenbots/orchestrator) and consumes the published SDK. Parallel regions and sub-workflow composition are targeted as future language work — see [PLAN.md](../PLAN.md).
+The orchestrator side is developed separately at [github.com/brokenbots/orchestrator](https://github.com/brokenbots/orchestrator) and consumes the published SDK. Parallel regions are targeted as future language work — see [PLAN.md](../PLAN.md).
 

@@ -14,19 +14,20 @@ import (
 )
 
 type applyOptions struct {
-	workflowPath string
-	serverURL    string
-	eventsPath   string
-	name         string
-	codec        string
-	tlsMode      string
-	tlsCA        string
-	tlsCert      string
-	tlsKey       string
-	varOverrides []string     // raw "key=value" pairs from --var flags
-	output       string       // "auto" | "concise" | "json"
-	stdin        io.Reader    // stdin for local-mode approval prompts; nil → os.Stdin
-	log          *slog.Logger // nil → newApplyLogger(); injectable for tests
+	workflowPath     string
+	serverURL        string
+	eventsPath       string
+	name             string
+	codec            string
+	tlsMode          string
+	tlsCA            string
+	tlsCert          string
+	tlsKey           string
+	varOverrides     []string     // raw "key=value" pairs from --var flags
+	output           string       // "auto" | "concise" | "json"
+	subworkflowRoots []string     // --subworkflow-root flag (repeatable); populates AllowedRoots on LocalSubWorkflowResolver
+	stdin            io.Reader    // stdin for local-mode approval prompts; nil → os.Stdin
+	log              *slog.Logger // nil → newApplyLogger(); injectable for tests
 }
 
 func NewApplyCmd() *cobra.Command {
@@ -55,6 +56,7 @@ func NewApplyCmd() *cobra.Command {
 	cmd.Flags().StringVar(&opts.tlsKey, "tls-key", envOrDefault("CRITERIA_TLS_KEY", ""), "Path to client key PEM")
 	cmd.Flags().StringArrayVar(&opts.varOverrides, "var", nil, "Override a workflow variable: key=value (repeatable)")
 	cmd.Flags().StringVar(&opts.output, "output", envOrDefault("CRITERIA_OUTPUT", "auto"), "Standalone output format: auto|concise|json (auto: concise on TTY, json when piped)")
+	cmd.Flags().StringArrayVar(&opts.subworkflowRoots, "subworkflow-root", nil, "Restrict subworkflow source resolution to this root path (repeatable; empty = no restriction)")
 	return cmd
 }
 

@@ -328,7 +328,10 @@ func parseWorkflowFromPath(ctx context.Context, path string) (*workflow.FSMGraph
 	schemas := collectSchemas(ctx, loader, spec, nil)
 	_ = loader.Shutdown(ctx)
 
-	graph, diags := workflow.CompileWithOpts(spec, schemas, workflow.CompileOpts{WorkflowDir: filepath.Dir(path)})
+	graph, diags := workflow.CompileWithOpts(spec, schemas, workflow.CompileOpts{
+		WorkflowDir:         filepath.Dir(path),
+		SubWorkflowResolver: &workflow.LocalSubWorkflowResolver{},
+	})
 	if diags.HasErrors() {
 		return nil, fmt.Errorf("compile workflow: %s", diags.Error())
 	}
