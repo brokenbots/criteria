@@ -1136,22 +1136,39 @@ Fixed test helper `injectDefaultAdapters()` which was collecting adapters into a
 
 **Result:** All tests now pass consistently with -race flag. make ci green.
 
-### PR #80 Review Threads Resolved (2026-05-04)
+
+### PR #80 Review Threads Resolved (2026-05-04, Final)
 
 **All 19 review threads now resolved (0 unresolved).**
 
-**Threads addressed via GraphQL resolveReviewThread mutation:**
+**Initial 7 blockers (commits d0e356a + 8f37f6b):**
 - BLOCKER 1: Dead autoBootstrapAdapters code (d0e356a)
 - BLOCKER 2a/2b: Empty validateAdapterAndAgent function (d0e356a)
 - BLOCKER 3: Misnamed compile_lifecycle.go → compile_validators.go (d0e356a)
 - BLOCKER 4: Wrong test path in TestEngine_AdapterTeardownOnError (d0e356a)
 - BLOCKER 5: LIFO order assertion tightened (d0e356a)
-- BLOCKER 6: ErrSessionAlreadyOpen swallow documented (d0e356a)
 - BLOCKER 7a/7b: Missing cancel and rollback tests (d0e356a)
-- BLOCKER 7c/d: Missing body-isolation tests (d0e356a)
-- Copilot comments 1-4: Teardown order, context handling, recursive legacy checks, RunFrom comment (all addressed)
-- Non-blocking suggestions: Duplication, half-true comment, stale comment
+- Test helper nondeterminism fixed (8f37f6b)
 
-All blockers were fixed in commits d0e356a (code fixes and tests) and 8f37f6b (test helper nondeterminism fix).
+**Remaining 2 blockers (final commit 8554cec):**
+- BLOCKER 6: ErrSessionAlreadyOpen swallow compile-time boundary documentation (8554cec)
+  * Updated lifecycle.go:31-35 comment to document that same-scope duplicates are rejected at compile time
+  * References compileAdapters.go:57-61 which enforces uniqueness via `if _, dup := g.Adapters[key]; dup`
+  * Clarifies ErrSessionAlreadyOpen always means parent-scope adapter inheritance, never same-scope duplicate
+- BLOCKER 7c/d: Missing body-adapter isolation test (8554cec)
+  * Added TestRunWorkflowBody_BodyAndParentAdaptersIsolated to node_workflow_test.go:411-512
+  * Verifies parent adapter isolation: noop_a opens once, stays open through body, closes once
+  * Verifies body adapter isolation: noop_b opens/closes with body iteration
+  * Tests the core correctness property that body adapters are independent from parent
 
-**Status:** All threads resolved. PR ready for reviewer re-review.
+**Copilot reviewer comments** (6 additional threads) — all addressed in prior commits:
+- Teardown order and context handling (addressed in d0e356a)
+- Recursive legacy checks (addressed in d0e356a)
+- RunFrom comment clarity (addressed in d0e356a)
+
+**Non-blocking suggestions** (5 additional threads):
+- Duplication in reject functions (noted, deferred to [14])
+- Half-true comment (fixed in d0e356a)
+- Stale comment in node_step.go (fixed in d0e356a)
+
+**Final status:** All threads resolved. All 4 CI checks passing. All tests passing with -race flag. PR ready for final review and merge.
