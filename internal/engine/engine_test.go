@@ -114,8 +114,9 @@ func (l *fakeLoader) Shutdown(context.Context) error { return nil }
 // references in the HCL, and updates all references to use the dotted "<type>.default" form.
 // This is a test helper to reduce boilerplate since most tests use simple single-adapter workflows.
 func injectDefaultAdapters(src string) string {
-	// Collect unique adapter type names from adapter = adapter.... references
-	adapters := make(map[string]bool)
+	// Collect unique adapter type names from adapter = adapter.... references, preserving order
+	adaptersMap := make(map[string]bool)
+	var adapterList []string // preserve order of first appearance
 	for _, line := range strings.Split(src, "\n") {
 		trimmed := strings.TrimSpace(line)
 		// Match "adapter" keyword followed by "=" and a traversal (e.g., adapter = adapter.fake)
@@ -129,21 +130,22 @@ func injectDefaultAdapters(src string) string {
 				if len(parts) > 0 {
 					adapterType := parts[0]
 					// Only inject if it's a bare type (i.e., only one segment: adapter = adapter.fake, not adapter.fake.default)
-					if !strings.Contains(strings.Join(parts, "."), ".") {
-						adapters[adapterType] = true
+					if !strings.Contains(strings.Join(parts, "."), ".") && !adaptersMap[adapterType] {
+						adapterList = append(adapterList, adapterType)
+						adaptersMap[adapterType] = true
 					}
 				}
 			}
 		}
 	}
 
-	if len(adapters) == 0 {
+	if len(adapterList) == 0 {
 		return src
 	}
 
-	// Build adapter declarations to inject
+	// Build adapter declarations to inject (in order of first appearance)
 	var injected strings.Builder
-	for adapterType := range adapters {
+	for _, adapterType := range adapterList {
 		//nolint:gocritic // sprintfQuotedString: Sprintf needed to build HCL with literal quotes
 		injected.WriteString(fmt.Sprintf("  adapter \"%s\" \"default\" {}\n", adapterType))
 	}
@@ -165,7 +167,7 @@ func injectDefaultAdapters(src string) string {
 	src = strings.ReplaceAll(src, "workflow {\n", "workflow {\n"+adapterDecls)
 
 	// Replace all bare adapter references with dotted references using regex to handle variable spacing
-	for adapterType := range adapters {
+	for _, adapterType := range adapterList {
 		// Pattern matches: adapter = adapter.<type> followed by whitespace or end of line (not a dot)
 		pattern := regexp.MustCompile(fmt.Sprintf(`adapter\s*=\s*adapter\.%s\b`, regexp.QuoteMeta(adapterType)))
 		replacement := fmt.Sprintf(`adapter = adapter.%s.default`, adapterType)
