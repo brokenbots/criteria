@@ -178,16 +178,53 @@ func (e *Engine) Run(ctx context.Context) error {
 	return e.runLoop(ctx, sessions, current, 1)
 }
 
-// bootstrapAllAdapters opens all declared adapters if they haven't been opened yet.
-// This is needed for workflows without explicit lifecycle "open" steps.
+// bootstrapAllAdapters opens adapters that have no explicit lifecycle "open" steps.
+// This is needed for workflows without explicit lifecycle management.
 func (e *Engine) bootstrapAllAdapters(ctx context.Context, sessions *plugin.SessionManager) error {
+	// Find which adapters have explicit lifecycle "open" steps
+	adapterstWithLifecycleOpen := make(map[string]bool)
+	for _, node := range e.graph.Steps {
+		if node.Lifecycle == "open" {
+			// Extract adapter type from adapter reference (e.g., "noop.demo" -> "noop")
+			parts := splitAdapterRef(node.Adapter)
+			if len(parts) > 0 {
+				adapterstWithLifecycleOpen[parts[0]] = true
+			}
+		}
+	}
+
+	// Bootstrap only adapters without explicit lifecycle steps
 	for _, adapter := range e.graph.Adapters {
+		if adapterstWithLifecycleOpen[adapter.Type] {
+			// This adapter has an explicit lifecycle step; don't bootstrap
+			continue
+		}
 		sessionID := adapter.Type + "." + adapter.Name
 		if err := sessions.Open(ctx, sessionID, adapter.Type, adapter.OnCrash, adapter.Config); err != nil && !errors.Is(err, plugin.ErrSessionAlreadyOpen) {
 			return fmt.Errorf("bootstrap adapter %q: %w", sessionID, err)
 		}
 	}
 	return nil
+}
+
+// splitAdapterRef parses a dotted adapter reference like "noop.default" into ["noop", "default"]
+func splitAdapterRef(ref string) []string {
+	parts := make([]string, 0, 2)
+	for i := 0; i < len(ref); i++ {
+		if ref[i] == '.' {
+			if i > 0 {
+				parts = append(parts, ref[:i])
+			}
+			if i+1 < len(ref) {
+				parts = append(parts, ref[i+1:])
+			}
+			break
+		}
+	}
+	if len(parts) == 0 && ref != "" {
+		parts = append(parts, ref)
+	}
+	return parts
 }
 
 // RunFrom resumes a workflow at startStep with the given initialAttempt

@@ -14,6 +14,8 @@ import (
 // resolved (binary not found, network error, etc.) are silently skipped so that
 // compile still runs in permissive mode for those adapters — a missing binary
 // should not block validation. If log is nil, failures are suppressed silently.
+//
+//nolint:gocognit // W11: function is inherently complex due to error handling for multiple adapter types
 func collectSchemas(ctx context.Context, loader plugin.Loader, spec *workflow.Spec, log *slog.Logger) map[string]workflow.AdapterInfo {
 	if loader == nil || spec == nil {
 		return nil

@@ -114,8 +114,10 @@ workflow "shell_resume" {
   initial_state = "greet"
   target_state  = "done"
 
+  adapter "shell" "default" {}
+
   step "greet" {
-    adapter = "shell"
+    adapter = "shell.default"
     input {
       command = "echo hello"
     }
@@ -141,12 +143,14 @@ workflow "max_retry" {
   initial_state = "greet"
   target_state  = "done"
 
+  adapter "shell" "default" {}
+
   policy {
     max_step_retries = 0
   }
 
   step "greet" {
-    adapter = "shell"
+    adapter = "shell.default"
     input {
       command = "echo hi"
     }
@@ -965,8 +969,10 @@ workflow "max_visits_test" {
   initial_state = "work"
   target_state  = "done"
 
+  adapter "shell" "default" {}
+
   step "work" {
-    adapter    = "shell"
+    adapter    = "shell.default"
     max_visits = 1
     input {
       command = "echo hi"
@@ -1177,8 +1183,9 @@ workflow "w" {
     type     = "workflow"
     for_each = ["a"]
     workflow {
+      adapter "noop" "default" {}
       step "body_step" {
-        adapter = "noop"
+        adapter = "noop.default"
         outcome "success" { transition_to = "_continue" }
       }
     }
@@ -1245,8 +1252,10 @@ workflow "iter_cursor" {
   initial_state = "execute"
   target_state  = "done"
 
+  adapter "noop" "default" {}
+
   step "execute" {
-    adapter   = "noop"
+    adapter   = "noop.default"
     for_each  = ["a", "b"]
     outcome "all_succeeded" { transition_to = "done" }
     outcome "any_failed"    { transition_to = "done" }

@@ -8,6 +8,7 @@ import (
 
 const varWorkflow = `
 workflow "test" {
+  adapter "noop" "default" {}
   version       = "0.1"
   initial_state = "start"
   target_state  = "__done__"
@@ -25,7 +26,7 @@ workflow "test" {
     type = "string"
   }
   step "start" {
-    adapter = "noop"
+    adapter = "noop.default"
     outcome "success" { transition_to = "__done__" }
   }
   state "__done__" { terminal = true }
@@ -34,12 +35,13 @@ workflow "test" {
 
 const varWorkflowNoVars = `
 workflow "novars" {
+  adapter "noop" "default" {}
   version       = "0.1"
   initial_state = "start"
   target_state  = "__done__"
 
   step "start" {
-    adapter = "noop"
+    adapter = "noop.default"
     outcome "success" { transition_to = "__done__" }
   }
   state "__done__" { terminal = true }
@@ -124,7 +126,7 @@ workflow "test" {
     default = "b"
   }
   step "s" {
-    adapter = "noop"
+    adapter = "noop.default"
     outcome "success" { transition_to = "__done__" }
   }
   state "__done__" { terminal = true }
@@ -152,7 +154,7 @@ workflow "test" {
     default = "a"
   }
   step "s" {
-    adapter = "noop"
+    adapter = "noop.default"
     outcome "success" { transition_to = "__done__" }
   }
   state "__done__" { terminal = true }
@@ -182,7 +184,7 @@ workflow "test" {
     default = 42
   }
   step "s" {
-    adapter = "noop"
+    adapter = "noop.default"
     outcome "success" { transition_to = "__done__" }
   }
   state "__done__" { terminal = true }
@@ -211,7 +213,7 @@ workflow "test" {
     default = true
   }
   step "s" {
-    adapter = "noop"
+    adapter = "noop.default"
     outcome "success" { transition_to = "__done__" }
   }
   state "__done__" { terminal = true }

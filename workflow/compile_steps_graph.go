@@ -16,7 +16,7 @@ import (
 // resolveAdapterName extracts the adapter type from a dotted adapter reference.
 // In v0.3.0, sp.Adapter is always a dotted "<type>.<name>" reference to a declared adapter.
 // Returns the type component (left side of the dot), or "" if the reference is empty.
-func resolveAdapterName(g *FSMGraph, sp *StepSpec) string {
+func resolveAdapterName(g *FSMGraph, sp *StepSpec) string { //nolint:unparam // g kept for consistency with other step processors
 	if sp.Adapter == "" {
 		return ""
 	}

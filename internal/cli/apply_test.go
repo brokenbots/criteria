@@ -30,34 +30,33 @@ func TestApplyLocal_NoopPlugin_EmitsExpectedEvents(t *testing.T) {
 	workflowPath := writeWorkflowFile(t, `
 workflow "local_apply_noop" {
   version = "0.1"
-  initial_state = "open_agent"
+  initial_state = "open_adapter"
   target_state  = "done"
 
-  agent "demo" {
-    adapter = "noop"
+  adapter "noop" "demo" {
     config {
       bootstrap = "true"
     }
   }
 
-  step "open_agent" {
-    agent = "demo"
+  step "open_adapter" {
+    adapter = "noop.demo"
     lifecycle = "open"
-    outcome "success" { transition_to = "run_agent" }
+    outcome "success" { transition_to = "run_adapter" }
     outcome "failure" { transition_to = "failed" }
   }
 
-  step "run_agent" {
-    agent = "demo"
+  step "run_adapter" {
+    adapter = "noop.demo"
     input {
       prompt = "hello"
     }
-    outcome "success" { transition_to = "close_agent" }
+    outcome "success" { transition_to = "close_adapter" }
     outcome "failure" { transition_to = "failed" }
   }
 
-  step "close_agent" {
-    agent = "demo"
+  step "close_adapter" {
+    adapter = "noop.demo"
     lifecycle = "close"
     outcome "success" { transition_to = "done" }
     outcome "failure" { transition_to = "failed" }

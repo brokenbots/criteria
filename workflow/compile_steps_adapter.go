@@ -138,6 +138,8 @@ func newBaseStepNode(sp *StepSpec, spec *Spec, effectiveOnCrash string, timeout 
 // validateAdapterAndAgent validates adapter references and constraints.
 // In v0.3.0, steps must reference declared adapters via the "<type>.<name>" dotted form.
 // Bare adapter types (e.g., adapter = "shell.default") are no longer allowed.
+//
+//nolint:funlen // function length unavoidable due to comprehensive adapter validation checks
 func validateAdapterAndAgent(g *FSMGraph, sp *StepSpec) hcl.Diagnostics {
 	var diags hcl.Diagnostics
 

@@ -2,6 +2,7 @@ package workflow_test
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -16,8 +17,9 @@ func injectDefaultAdapters(src string) string {
 	adapters := make(map[string]bool)
 	for _, line := range strings.Split(src, "\n") {
 		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, `adapter = "`) {
-			// Extract the adapter type (bare type without dots)
+		// Match "adapter" keyword followed by "=" and a string literal (allowing for variable spacing)
+		if strings.HasPrefix(trimmed, `adapter`) && strings.Contains(trimmed, `=`) && strings.Contains(trimmed, `"`) {
+			// Extract the value between the first pair of quotes
 			start := strings.Index(trimmed, `"`) + 1
 			end := strings.Index(trimmed[start:], `"`)
 			if end > 0 {
@@ -37,6 +39,7 @@ func injectDefaultAdapters(src string) string {
 	// Build adapter declarations to inject
 	var injected strings.Builder
 	for adapterType := range adapters {
+		//nolint:gocritic // sprintfQuotedString: Sprintf needed to build HCL with literal quotes
 		injected.WriteString(fmt.Sprintf("  adapter \"%s\" \"default\" {}\n", adapterType))
 	}
 
@@ -49,11 +52,14 @@ func injectDefaultAdapters(src string) string {
 
 	result := src[:headerEnd] + "\n" + injected.String() + src[headerEnd:]
 
-	// Replace all bare adapter references with dotted references
+	// Replace all bare adapter references with dotted references using regex to handle variable spacing
 	for adapterType := range adapters {
-		oldRef := fmt.Sprintf(`adapter = "%s"`, adapterType)
-		newRef := fmt.Sprintf(`adapter = "%s.default"`, adapterType)
-		result = strings.ReplaceAll(result, oldRef, newRef)
+		// Pattern matches: adapter followed by optional spaces, =, optional spaces, then the quoted type
+		// We don't need lookahead since we're only processing types we know are bare
+		//nolint:gocritic // sprintfQuotedString: Sprintf needed to build regex pattern with literal quotes
+		pattern := regexp.MustCompile(fmt.Sprintf(`adapter\s*=\s*"%s"`, regexp.QuoteMeta(adapterType)))
+		replacement := fmt.Sprintf(`adapter = "%s.default"`, adapterType)
+		result = pattern.ReplaceAllString(result, replacement)
 	}
 
 	return result
@@ -268,12 +274,13 @@ func TestBranchCompile_UnreachableBranchWarns(t *testing.T) {
 	// The branch node is not reachable from initial_state (a step is initial).
 	src := `
 workflow "w" {
+  adapter "noop" "default" {}
   version       = "0.1"
   initial_state = "start"
   target_state  = "done"
 
   step "start" {
-    adapter = "noop"
+    adapter = "noop.default"
     outcome "success" { transition_to = "done" }
   }
 

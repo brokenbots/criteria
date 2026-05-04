@@ -46,11 +46,12 @@ var testSchemas = map[string]AdapterInfo{
 func TestInputRequiredFieldMissing(t *testing.T) {
 	src := `
 workflow "x" {
+  adapter "shell" "default" {}
   version       = "0.1"
   initial_state = "run"
   target_state  = "done"
   step "run" {
-    adapter = "shell"
+    adapter = "shell.default"
     input {}
     outcome "success" { transition_to = "done" }
     outcome "failure" { transition_to = "done" }
@@ -77,11 +78,12 @@ workflow "x" {
 func TestInputUnknownField(t *testing.T) {
 	src := `
 workflow "x" {
+  adapter "shell" "default" {}
   version       = "0.1"
   initial_state = "run"
   target_state  = "done"
   step "run" {
-    adapter = "shell"
+    adapter = "shell.default"
     input {
       command = "echo hi"
       unknown_key = "bad"
@@ -108,12 +110,12 @@ workflow "x" {
 func TestInputOnLifecycleOpenIsError(t *testing.T) {
 	src := `
 workflow "x" {
+  adapter "copilot" "default" {}
   version       = "0.1"
   initial_state = "open"
   target_state  = "done"
-  agent "bot" { adapter = "copilot" }
   step "open" {
-    agent     = "bot"
+    adapter   = "copilot.default"
     lifecycle = "open"
     input {
       prompt = "hello"
@@ -139,21 +141,21 @@ workflow "x" {
 func TestInputOnLifecycleCloseIsError(t *testing.T) {
 	src := `
 workflow "x" {
+  adapter "copilot" "default" {}
   version       = "0.1"
   initial_state = "open"
   target_state  = "done"
-  agent "bot" { adapter = "copilot" }
   step "open" {
-    agent     = "bot"
+    adapter   = "copilot.default"
     lifecycle = "open"
     outcome "success" { transition_to = "run" }
   }
   step "run" {
-    agent = "bot"
+    adapter = "copilot.default"
     outcome "success" { transition_to = "close" }
   }
   step "close" {
-    agent     = "bot"
+    adapter   = "copilot.default"
     lifecycle = "close"
     input {
       prompt = "bye"
@@ -179,11 +181,12 @@ workflow "x" {
 func TestLegacyConfigAttributeEmitsDiagnostic(t *testing.T) {
 	src := `
 workflow "x" {
+  adapter "shell" "default" {}
   version       = "0.1"
   initial_state = "run"
   target_state  = "done"
   step "run" {
-    adapter = "shell"
+    adapter = "shell.default"
     config = {
       command = "echo old"
     }
@@ -216,11 +219,12 @@ func TestInputPermissiveWhenNoSchema(t *testing.T) {
 	// When schemas = nil, any keys should be accepted without error.
 	src := `
 workflow "x" {
+  adapter "shell" "default" {}
   version       = "0.1"
   initial_state = "run"
   target_state  = "done"
   step "run" {
-    adapter = "shell"
+    adapter = "shell.default"
     input {
       command  = "echo hi"
       extra    = "ok"
@@ -247,11 +251,12 @@ workflow "x" {
 func TestInputDecodesNumberAndBoolToString(t *testing.T) {
 	src := `
 workflow "x" {
+  adapter "shell" "default" {}
   version       = "0.1"
   initial_state = "run"
   target_state  = "done"
   step "run" {
-    adapter = "shell"
+    adapter = "shell.default"
     input {
       command = "echo hi"
     }
@@ -278,17 +283,17 @@ func TestInputTypeMismatch_StringForNumber(t *testing.T) {
 	// max_turns is declared as ConfigFieldNumber; passing a string should fail.
 	src := `
 workflow "x" {
+  adapter "copilot" "default" {}
   version       = "0.1"
   initial_state = "open"
   target_state  = "done"
-  agent "bot" { adapter = "copilot" }
   step "open" {
-    agent     = "bot"
+    adapter = "copilot.default"
     lifecycle = "open"
     outcome "success" { transition_to = "run" }
   }
   step "run" {
-    agent = "bot"
+    adapter = "copilot.default"
     input {
       prompt    = "do work"
       max_turns = "not-a-number"
@@ -296,7 +301,7 @@ workflow "x" {
     outcome "success" { transition_to = "close" }
   }
   step "close" {
-    agent     = "bot"
+    adapter = "copilot.default"
     lifecycle = "close"
     outcome "success" { transition_to = "done" }
   }
@@ -320,24 +325,24 @@ func TestInputTypeMismatch_NumberForString(t *testing.T) {
 	// prompt is declared as ConfigFieldString; passing a number should fail.
 	src := `
 workflow "x" {
+  adapter "copilot" "default" {}
   version       = "0.1"
   initial_state = "open"
   target_state  = "done"
-  agent "bot" { adapter = "copilot" }
   step "open" {
-    agent     = "bot"
+    adapter = "copilot.default"
     lifecycle = "open"
     outcome "success" { transition_to = "run" }
   }
   step "run" {
-    agent = "bot"
+    adapter = "copilot.default"
     input {
       prompt = 42
     }
     outcome "success" { transition_to = "close" }
   }
   step "close" {
-    agent     = "bot"
+    adapter = "copilot.default"
     lifecycle = "close"
     outcome "success" { transition_to = "done" }
   }
@@ -360,11 +365,12 @@ workflow "x" {
 func TestInputListStringAcceptsStringTupleLiteral(t *testing.T) {
 	src := `
 workflow "x" {
+  adapter "listy" "default" {}
   version       = "0.1"
   initial_state = "run"
   target_state  = "done"
   step "run" {
-    adapter = "listy"
+    adapter = "listy.default"
     input {
       items = ["a", "b"]
     }
@@ -386,11 +392,12 @@ workflow "x" {
 func TestInputListStringRejectsMixedTupleLiteral(t *testing.T) {
 	src := `
 workflow "x" {
+  adapter "listy" "default" {}
   version       = "0.1"
   initial_state = "run"
   target_state  = "done"
   step "run" {
-    adapter = "listy"
+    adapter = "listy.default"
     input {
       items = ["a", 1]
     }

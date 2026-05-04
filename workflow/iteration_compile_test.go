@@ -52,11 +52,12 @@ workflow "w" {
 func TestIteration_Count_CompilesSuccessfully(t *testing.T) {
 	src := `
 workflow "w" {
+  adapter "noop" "default" {}
   version       = "0.1"
   initial_state = "n"
   target_state  = "done"
   step "n" {
-    adapter = "noop"
+    adapter = "noop.default"
     count   = 5
     outcome "all_succeeded" { transition_to = "done" }
     outcome "any_failed"    { transition_to = "done" }
@@ -163,6 +164,7 @@ workflow "w" {
 func TestIteration_WorkflowStep_CompilesSuccessfully(t *testing.T) {
 	src := `
 workflow "w" {
+  adapter "noop" "default" {}
   version       = "0.1"
   initial_state = "run"
   target_state  = "done"
@@ -170,8 +172,9 @@ workflow "w" {
     type     = "workflow"
     for_each = ["a", "b"]
     workflow {
+      adapter "noop" "default" {}
       step "do" {
-        adapter = "noop"
+        adapter = "noop.default"
         outcome "success" { transition_to = "_continue" }
       }
     }
@@ -241,12 +244,13 @@ workflow "w" {
 func TestIteration_WorkflowStep_InvalidType(t *testing.T) {
 	src := `
 workflow "w" {
+  adapter "noop" "default" {}
   version       = "0.1"
   initial_state = "run"
   target_state  = "done"
   step "run" {
     type    = "agent_runner"
-    adapter = "noop"
+    adapter = "noop.default"
     outcome "success" { transition_to = "done" }
   }
   state "done" { terminal = true }
@@ -286,7 +290,8 @@ workflow "w" {
                     for_each = ["e"]
                     workflow {
                       step "leaf" {
-                        adapter = "noop"
+      adapter "noop" "default" {}
+                        adapter = "noop.default"
                         outcome "success" { transition_to = "_continue" }
                       }
                     }
@@ -398,8 +403,9 @@ workflow "w" {
     type     = "workflow"
     for_each = ["a"]
     workflow {
+      adapter "noop" "default" {}
       step "body" {
-        adapter = "noop"
+        adapter = "noop.default"
         outcome "success" { transition_to = "end" }
       }
       state "end" {
@@ -425,8 +431,9 @@ workflow "w" {
     type     = "workflow"
     for_each = ["a"]
     workflow {
+      adapter "noop" "default" {}
       step "inner" {
-        adapter = "noop"
+        adapter = "noop.default"
         outcome "success" { transition_to = "_continue" }
       }
       output "result" {
@@ -542,11 +549,12 @@ workflow "w" {
 func TestStep_TypeWorkflow_BothWorkflowBlockAndFile_Fails(t *testing.T) {
 	innerSrc := `
 workflow "inner" {
+  adapter "noop" "default" {}
   version       = "0.1"
   initial_state = "body"
   target_state  = "_continue"
   step "body" {
-    adapter = "noop"
+    adapter = "noop.default"
     outcome "success" { transition_to = "_continue" }
   }
   state "_continue" { terminal = true }
@@ -568,7 +576,8 @@ workflow "outer" {
     for_each      = ["a"]
     workflow {
       step "body" {
-        adapter = "noop"
+      adapter "noop" "default" {}
+        adapter = "noop.default"
         outcome "success" { transition_to = "_continue" }
       }
       state "_continue" { terminal = true }
@@ -598,11 +607,12 @@ workflow "outer" {
 func TestStep_EachRefs_NotInIteratingStep_ErrorMentionsBothForEachAndCount(t *testing.T) {
 	src := `
 workflow "w" {
+  adapter "noop" "default" {}
   version       = "0.1"
   initial_state = "run"
   target_state  = "done"
   step "run" {
-    adapter = "noop"
+    adapter = "noop.default"
     input   { val = "${each.value}" }
     outcome "success" { transition_to = "done" }
   }
@@ -695,12 +705,13 @@ workflow "w" {
     type     = "workflow"
     for_each = ["a"]
     workflow {
+      adapter "noop" "default" {}
       variable "result" {
         type    = "string"
         default = "ok"
       }
       step "inner" {
-        adapter = "noop"
+        adapter = "noop.default"
         input   { result = "success" }
         outcome "success" { transition_to = "_continue" }
       }
@@ -741,8 +752,9 @@ workflow "w" {
     type     = "workflow"
     for_each = ["a"]
     workflow {
+      adapter "noop" "default" {}
       step "inner" {
-        adapter = "noop"
+        adapter = "noop.default"
         input   { result = "success" }
         outcome "success" { transition_to = "_continue" }
       }
@@ -773,7 +785,8 @@ workflow "w" {
     workflow {
       target_state = "custom"
       step "inner" {
-        adapter = "noop"
+      adapter "noop" "default" {}
+        adapter = "noop.default"
         outcome "success" { transition_to = "_continue" }
       }
     }

@@ -9,6 +9,7 @@ import (
 // interpolWorkflow declares a variable and a step that references it.
 const interpolWorkflow = `
 workflow "interpolate" {
+  adapter "shell" "default" {}
   version       = "0.1"
   initial_state = "clone"
   target_state  = "__done__"
@@ -18,7 +19,7 @@ workflow "interpolate" {
     default = "orchestrator"
   }
   step "clone" {
-    adapter = "shell"
+    adapter = "shell.default"
     input {
       command = "echo ${var.repo}"
     }
@@ -32,19 +33,20 @@ workflow "interpolate" {
 // stepOutputWorkflow uses a step output in a subsequent step's input.
 const stepOutputWorkflow = `
 workflow "step_outputs" {
+  adapter "shell" "default" {}
   version       = "0.1"
   initial_state = "build"
   target_state  = "__done__"
 
   step "build" {
-    adapter = "shell"
+    adapter = "shell.default"
     input {
       command = "echo building"
     }
     outcome "success" { transition_to = "publish" }
   }
   step "publish" {
-    adapter = "shell"
+    adapter = "shell.default"
     input {
       command = "echo ${steps.build.stdout}"
     }

@@ -91,6 +91,11 @@ workflow "t" {
 	sessions := plugin.NewSessionManager(loader)
 	t.Cleanup(func() { sessions.Shutdown(context.Background()) })
 
+	// Bootstrap the adapter session
+	if err := sessions.Open(context.Background(), "fake.default", "fake", "", nil); err != nil {
+		t.Fatalf("open session: %v", err)
+	}
+
 	deps := Deps{Sessions: sessions, Sink: sink}
 	st := &RunState{Current: "a", firstStep: true, firstStepAttempt: 1}
 

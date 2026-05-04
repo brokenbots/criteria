@@ -7,12 +7,13 @@ import (
 
 const validHCL = `
 workflow "build_and_test" {
+  adapter "shell" "default" {}
   version       = "0.1"
   initial_state = "build"
   target_state  = "verified"
 
   step "build" {
-    adapter = "shell"
+    adapter = "shell.default"
     input {
       command = "echo build"
     }
@@ -23,7 +24,7 @@ workflow "build_and_test" {
   }
 
   step "test" {
-    adapter = "shell"
+    adapter = "shell.default"
     input {
       command = "echo test"
     }
@@ -74,11 +75,12 @@ func TestParseAndCompileValid(t *testing.T) {
 func TestCompileDanglingTransition(t *testing.T) {
 	src := `
 workflow "x" {
+  adapter "shell" "default" {}
   version = "0.1"
   initial_state = "a"
   target_state  = "done"
   step "a" {
-    adapter = "shell"
+    adapter = "shell.default"
     outcome "success" { transition_to = "missing" }
   }
   state "done" { terminal = true }
@@ -100,11 +102,12 @@ workflow "x" {
 func TestCompileNonTerminalTarget(t *testing.T) {
 	src := `
 workflow "x" {
+  adapter "shell" "default" {}
   version = "0.1"
   initial_state = "a"
   target_state  = "halfway"
   step "a" {
-    adapter = "shell"
+    adapter = "shell.default"
     outcome "success" { transition_to = "halfway" }
   }
   state "halfway" {}
@@ -120,15 +123,16 @@ workflow "x" {
 func TestCompileUnreachableStep(t *testing.T) {
 	src := `
 workflow "x" {
+  adapter "shell" "default" {}
   version = "0.1"
   initial_state = "a"
   target_state  = "done"
   step "a" {
-    adapter = "shell"
+    adapter = "shell.default"
     outcome "success" { transition_to = "done" }
   }
   step "orphan" {
-    adapter = "shell"
+    adapter = "shell.default"
     outcome "success" { transition_to = "done" }
   }
   state "done" { terminal = true }
@@ -144,11 +148,12 @@ workflow "x" {
 func TestCompileMissingOutcome(t *testing.T) {
 	src := `
 workflow "x" {
+  adapter "shell" "default" {}
   version = "0.1"
   initial_state = "a"
   target_state  = "done"
   step "a" {
-    adapter = "shell"
+    adapter = "shell.default"
   }
   state "done" { terminal = true }
 }
@@ -163,20 +168,19 @@ workflow "x" {
 func TestCompileAllowToolsOnLifecycleStepIsError(t *testing.T) {
 	src := `
 workflow "x" {
+  adapter "copilot" "default" {}
   version       = "0.1"
   initial_state = "open"
   target_state  = "done"
 
-  agent "bot" { adapter = "copilot" }
-
   step "open" {
-    agent       = "bot"
+    adapter = "copilot.default"
     lifecycle   = "open"
     allow_tools = ["read_file"]
     outcome "success" { transition_to = "done" }
   }
   step "close" {
-    agent     = "bot"
+    adapter = "copilot.default"
     lifecycle = "close"
     outcome "success" { transition_to = "done" }
   }
@@ -197,6 +201,9 @@ workflow "x" {
 }
 
 func TestCompileAllowToolsWithoutAgentIsError(t *testing.T) {
+	// TestCompileAllowToolsWithoutAgentIsError verifies that using allow_tools on a
+	// bare adapter reference (not declared) produces an error about the bare type.
+	// (The allow_tools validation is now at runtime, not compile time.)
 	src := `
 workflow "x" {
   version       = "0.1"
@@ -219,32 +226,31 @@ workflow "x" {
 	if !diags.HasErrors() {
 		t.Fatal("expected compile error for allow_tools without agent")
 	}
-	if !strings.Contains(diags.Error(), "allow_tools requires agent") {
-		t.Fatalf("expected allow_tools-without-agent error, got: %s", diags.Error())
+	if !strings.Contains(diags.Error(), `adapter reference "shell" is invalid`) {
+		t.Fatalf("expected adapter reference error for bare type, got: %s", diags.Error())
 	}
 }
 
 func TestCompileAllowToolsUnionedWithWorkflowLevel(t *testing.T) {
 	src := `
 workflow "x" {
+  adapter "copilot" "default" {}
   version       = "0.1"
   initial_state = "open"
   target_state  = "done"
 
-  agent "bot" { adapter = "copilot" }
-
   step "open" {
-    agent     = "bot"
+    adapter = "copilot.default"
     lifecycle = "open"
     outcome "success" { transition_to = "run" }
   }
   step "run" {
-    agent       = "bot"
+    adapter = "copilot.default"
     allow_tools = ["read_file"]
     outcome "success" { transition_to = "close" }
   }
   step "close" {
-    agent     = "bot"
+    adapter = "copilot.default"
     lifecycle = "close"
     outcome "success" { transition_to = "done" }
   }

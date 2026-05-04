@@ -230,7 +230,7 @@ func TestConformance_AllowedOutcomesPropagation(t *testing.T) {
 	step := &workflow.StepNode{
 		Name:    "propagation-step",
 		Adapter: "bot",
-		Input: map[string]string{"prompt": "test AllowedOutcomes propagation"},
+		Input:   map[string]string{"prompt": "test AllowedOutcomes propagation"},
 		Outcomes: map[string]string{
 			"success": "done",
 			"failure": "done",
@@ -302,7 +302,7 @@ func TestConformance_AllowedOutcomesPropagation_SetProof(t *testing.T) {
 	step := &workflow.StepNode{
 		Name:    "setproof-step",
 		Adapter: "bot",
-		Input: map[string]string{"prompt": "test exact AllowedOutcomes propagation"},
+		Input:   map[string]string{"prompt": "test exact AllowedOutcomes propagation"},
 		Outcomes: map[string]string{
 			"canary-a": "done",
 			"canary-b": "done",
@@ -404,7 +404,7 @@ func TestConformance_InvalidOutcomeScenario_Fixture(t *testing.T) {
 	step := &workflow.StepNode{
 		Name:    "invalid-outcome-step",
 		Adapter: "bot",
-		Input: map[string]string{"prompt": "test invalid-outcome scenario"},
+		Input:   map[string]string{"prompt": "test invalid-outcome scenario"},
 		Outcomes: map[string]string{
 			"success": "done",
 			"failure": "done",
@@ -484,7 +484,7 @@ func TestConformance_DuplicateCallScenario_Fixture(t *testing.T) {
 	step := &workflow.StepNode{
 		Name:    "duplicate-call-step",
 		Adapter: "bot",
-		Input: map[string]string{"prompt": "test duplicate-call scenario"},
+		Input:   map[string]string{"prompt": "test duplicate-call scenario"},
 		Outcomes: map[string]string{
 			"success": "done",
 			"failure": "done",

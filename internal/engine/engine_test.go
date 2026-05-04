@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"sync"
@@ -117,8 +118,9 @@ func injectDefaultAdapters(src string) string {
 	adapters := make(map[string]bool)
 	for _, line := range strings.Split(src, "\n") {
 		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, `adapter = "`) {
-			// Extract the adapter type (bare type without dots)
+		// Match "adapter" keyword followed by "=" and a string literal (allowing for variable spacing)
+		if strings.HasPrefix(trimmed, `adapter`) && strings.Contains(trimmed, `=`) && strings.Contains(trimmed, `"`) {
+			// Extract the value between the first pair of quotes
 			start := strings.Index(trimmed, `"`) + 1
 			end := strings.Index(trimmed[start:], `"`)
 			if end > 0 {
@@ -138,26 +140,37 @@ func injectDefaultAdapters(src string) string {
 	// Build adapter declarations to inject
 	var injected strings.Builder
 	for adapterType := range adapters {
+		//nolint:gocritic // sprintfQuotedString: Sprintf needed to build HCL with literal quotes
 		injected.WriteString(fmt.Sprintf("  adapter \"%s\" \"default\" {}\n", adapterType))
 	}
+	adapterDecls := injected.String()
 
-	// Insert the adapters after the workflow header
-	workflowStart := strings.Index(src, "workflow \"t\" {")
-	if workflowStart == -1 {
-		return src
+	// Inject adapters into outer workflow
+	workflowStart := strings.Index(src, "workflow \"")
+	if workflowStart != -1 {
+		bracePos := strings.Index(src[workflowStart:], "{")
+		if bracePos != -1 {
+			bracePos += workflowStart
+			headerEnd := strings.Index(src[bracePos:], "\n") + bracePos + 1
+			src = src[:headerEnd] + "\n" + adapterDecls + src[headerEnd:]
+		}
 	}
-	headerEnd := strings.Index(src[workflowStart:], "\n") + workflowStart + 1
 
-	result := src[:headerEnd] + "\n" + injected.String() + src[headerEnd:]
+	// Also inject into nested workflow blocks
+	// Look for "workflow {" patterns inside step blocks
+	src = strings.ReplaceAll(src, "workflow {\n", "workflow {\n"+adapterDecls)
 
-	// Replace all bare adapter references with dotted references
+	// Replace all bare adapter references with dotted references using regex to handle variable spacing
 	for adapterType := range adapters {
-		oldRef := fmt.Sprintf(`adapter = "%s"`, adapterType)
-		newRef := fmt.Sprintf(`adapter = "%s.default"`, adapterType)
-		result = strings.ReplaceAll(result, oldRef, newRef)
+		// Pattern matches: adapter followed by optional spaces, =, optional spaces, then the quoted type
+		// We don't need lookahead since we're only processing types we know are bare
+		//nolint:gocritic // sprintfQuotedString: Sprintf needed to build regex pattern with literal quotes
+		pattern := regexp.MustCompile(fmt.Sprintf(`adapter\s*=\s*"%s"`, regexp.QuoteMeta(adapterType)))
+		replacement := fmt.Sprintf(`adapter = "%s.default"`, adapterType)
+		src = pattern.ReplaceAllString(src, replacement)
 	}
 
-	return result
+	return src
 }
 
 func compile(t *testing.T, src string) *workflow.FSMGraph {
@@ -461,22 +474,22 @@ workflow "perm" {
   initial_state = "open"
   target_state  = "done"
 
-  agent "bot" { adapter = "permissive" }
+  adapter "permissive" "bot" { }
 
   step "open" {
-    agent     = "bot"
+    adapter = "permissive.bot"
     lifecycle = "open"
     outcome "success" { transition_to = "run" }
   }
   step "run" {
-    agent       = "bot"
+    adapter = "permissive.bot"
     input { perm_tools = "read_file,write_file" }
     allow_tools = ["read_file"]
     outcome "success"      { transition_to = "close" }
     outcome "needs_review" { transition_to = "close" }
   }
   step "close" {
-    agent     = "bot"
+    adapter = "permissive.bot"
     lifecycle = "close"
     outcome "success" { transition_to = "done" }
   }
@@ -534,21 +547,21 @@ workflow "perm-deny" {
   initial_state = "open"
   target_state  = "done"
 
-  agent "bot" { adapter = "permissive" }
+  adapter "permissive" "bot" { }
 
   step "open" {
-    agent     = "bot"
+    adapter = "permissive.bot"
     lifecycle = "open"
     outcome "success" { transition_to = "run" }
   }
   step "run" {
-    agent  = "bot"
+    adapter = "permissive.bot"
     input { perm_tools = "read_file" }
     outcome "needs_review" { transition_to = "close" }
     outcome "success"      { transition_to = "close" }
   }
   step "close" {
-    agent     = "bot"
+    adapter = "permissive.bot"
     lifecycle = "close"
     outcome "success" { transition_to = "done" }
   }
@@ -580,22 +593,22 @@ workflow "perm-shell" {
   initial_state = "open"
   target_state  = "done"
 
-  agent "bot" { adapter = "permissive" }
+  adapter "permissive" "bot" { }
 
   step "open" {
-    agent     = "bot"
+    adapter = "permissive.bot"
     lifecycle = "open"
     outcome "success" { transition_to = "run" }
   }
   step "run" {
-    agent       = "bot"
+    adapter = "permissive.bot"
     input { perm_tools = "shell|git status,shell|rm -rf /" }
     allow_tools = ["shell:git *"]
     outcome "success"      { transition_to = "close" }
     outcome "needs_review" { transition_to = "close" }
   }
   step "close" {
-    agent     = "bot"
+    adapter = "permissive.bot"
     lifecycle = "close"
     outcome "success" { transition_to = "done" }
   }

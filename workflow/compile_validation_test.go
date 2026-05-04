@@ -33,7 +33,6 @@ func TestValidateFoldableAttrs_AgentConfigFile(t *testing.T) {
   }
 
   adapter "noop" "a" {
-    config { 
     config {
       prompt = file(var.prompt_file)
     }

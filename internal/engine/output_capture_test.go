@@ -53,8 +53,10 @@ workflow "outputs" {
   initial_state = "produce"
   target_state  = "__done__"
 
+  adapter "fake_out" "default" {}
+
   step "produce" {
-    adapter = "fake_out"
+    adapter = "fake_out.default"
     outcome "success" { transition_to = "__done__" }
   }
   state "__done__" { terminal = true }
@@ -67,7 +69,7 @@ func TestOutputCapture_StepOutputsCapturedInVars(t *testing.T) {
 		t.Fatalf("parse: %s", diags)
 	}
 	g, diags := workflow.Compile(spec, map[string]workflow.AdapterInfo{
-		"fake_out": {
+		"fake_out.default": {
 			InputSchema:  map[string]workflow.ConfigField{},
 			OutputSchema: map[string]workflow.ConfigField{"result": {Type: workflow.ConfigFieldString}},
 		},
@@ -108,12 +110,15 @@ workflow "interp_outputs" {
   initial_state = "build"
   target_state  = "__done__"
 
+  adapter "fake_out" "default" {}
+  adapter "fake_consumer" "default" {}
+
   step "build" {
-    adapter = "fake_out"
+    adapter = "fake_out.default"
     outcome "success" { transition_to = "deploy" }
   }
   step "deploy" {
-    adapter = "fake_consumer"
+    adapter = "fake_consumer.default"
     input {
       artifact = "${steps.build.result}"
     }
@@ -145,11 +150,11 @@ func (p *fakeConsumerPlugin) Kill()                                             
 
 func TestOutputCapture_ExpressionInterpolation(t *testing.T) {
 	adapterSchemas := map[string]workflow.AdapterInfo{
-		"fake_out": {
+		"fake_out.default": {
 			InputSchema:  map[string]workflow.ConfigField{},
 			OutputSchema: map[string]workflow.ConfigField{"result": {Type: workflow.ConfigFieldString}},
 		},
-		"fake_consumer": {
+		"fake_consumer.default": {
 			InputSchema: map[string]workflow.ConfigField{"artifact": {Type: workflow.ConfigFieldString}},
 		},
 	}
@@ -193,12 +198,14 @@ workflow "sequence" {
   initial_state = "first"
   target_state  = "__done__"
 
+  adapter "fake_out" "default" {}
+
   step "first" {
-    adapter = "fake_out"
+    adapter = "fake_out.default"
     outcome "success" { transition_to = "second" }
   }
   step "second" {
-    adapter = "fake_out"
+    adapter = "fake_out.default"
     outcome "success" { transition_to = "__done__" }
   }
   state "__done__" { terminal = true }
@@ -213,7 +220,7 @@ func TestOutputCapture_EmissionOrder(t *testing.T) {
 		t.Fatalf("parse: %s", diags)
 	}
 	g, diags := workflow.Compile(spec, map[string]workflow.AdapterInfo{
-		"fake_out": {
+		"fake_out.default": {
 			OutputSchema: map[string]workflow.ConfigField{"k": {Type: workflow.ConfigFieldString}},
 		},
 	})

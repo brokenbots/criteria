@@ -27,11 +27,12 @@ func loopWorkflowSrc(maxVisits, maxTotalSteps, warnThreshold int) string {
 	}
 	return `
 workflow "loop" {
+  adapter "fake" "default" {}
   version       = "0.1"
   initial_state = "execute"
   target_state  = "done"
   step "execute" {
-    adapter = "fake"
+    adapter = "fake.default"
 ` + maxVisitsAttr + `    outcome "again" { transition_to = "execute" }
     outcome "success" { transition_to = "done" }
   }
@@ -192,11 +193,12 @@ func TestCompile_BackEdgeWarning_CustomThreshold(t *testing.T) {
 func TestCompile_BackEdgeWarning_ThroughBranch(t *testing.T) {
 	src := `
 workflow "t" {
+  adapter "fake" "default" {}
   version       = "0.1"
   initial_state = "work"
   target_state  = "done"
   step "work" {
-    adapter = "fake"
+    adapter = "fake.default"
     outcome "check" { transition_to = "decide" }
     outcome "done"  { transition_to = "done" }
   }
@@ -244,7 +246,7 @@ workflow "loop" {
     max_visits_warn_threshold = -1
   }
   step "execute" {
-    adapter = "fake"
+    adapter = "fake.default"
     outcome "success" { transition_to = "done" }
   }
   state "done" {

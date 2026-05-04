@@ -41,6 +41,8 @@ func adapterConfigEvalContext(vars, locals map[string]cty.Value, workflowDir str
 //
 // The key in g.Adapters is "<type>.<name>" (both labels concatenated with a dot).
 // Environment references are validated against g.Environments at this time.
+//
+//nolint:funlen // function length due to comprehensive adapter config validation and error handling
 func compileAdapters(g *FSMGraph, spec *Spec, schemas map[string]AdapterInfo, opts CompileOpts) hcl.Diagnostics {
 	var diags hcl.Diagnostics
 	configEvalCtx := adapterConfigEvalContext(graphVars(g), graphLocals(g), opts.WorkflowDir)
