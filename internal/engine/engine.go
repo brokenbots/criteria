@@ -132,10 +132,15 @@ type Engine struct {
 	// log is an optional structured logger for internal engine warnings.
 	// Falls back to slog.Default() when nil.
 	log *slog.Logger
+	// autoBootstrapAdapters, when true, auto-opens adapters without explicit lifecycle "open" steps.
+	// This is a temporary measure pre-W12 to support workflows without explicit lifecycle management.
+	// Defaults to true; can be disabled to enforce strict lifecycle semantics.
+	autoBootstrapAdapters bool
 }
 
 func New(graph *workflow.FSMGraph, loader plugin.Loader, sink Sink, opts ...Option) *Engine {
-	e := &Engine{graph: graph, loader: loader, sink: sink}
+	// Default to true for now (pre-W12 behavior); will flip to false when W12 lands.
+	e := &Engine{graph: graph, loader: loader, sink: sink, autoBootstrapAdapters: true}
 	for _, opt := range opts {
 		if opt != nil {
 			opt(e)
@@ -168,10 +173,12 @@ func (e *Engine) Run(ctx context.Context) error {
 	sessions := plugin.NewSessionManager(e.loader)
 	defer func() { _ = sessions.Shutdown(context.WithoutCancel(ctx)) }()
 
-	// Bootstrap adapter sessions for workflows without explicit lifecycle steps.
-	// This ensures tests and simple workflows work without needing lifecycle management.
-	if err := e.bootstrapAllAdapters(ctx, sessions); err != nil {
-		return err
+	// Bootstrap adapter sessions for workflows without explicit lifecycle steps (test-only).
+	// Production workflows (W12) require explicit lifecycle management.
+	if e.autoBootstrapAdapters {
+		if err := e.bootstrapAllAdapters(ctx, sessions); err != nil {
+			return err
+		}
 	}
 
 	current := e.graph.InitialState
@@ -222,9 +229,11 @@ func (e *Engine) RunFrom(ctx context.Context, startStep string, initialAttempt i
 	if err := e.bootstrapSessionsForResume(ctx, sessions, startStep); err != nil {
 		return err
 	}
-	// Also bootstrap any adapters that haven't been opened by explicit lifecycle steps.
-	if err := e.bootstrapAllAdapters(ctx, sessions); err != nil {
-		return err
+	// Also bootstrap any adapters that haven't been opened by explicit lifecycle steps (test-only).
+	if e.autoBootstrapAdapters {
+		if err := e.bootstrapAllAdapters(ctx, sessions); err != nil {
+			return err
+		}
 	}
 	return e.runLoop(ctx, sessions, startStep, initialAttempt)
 }
