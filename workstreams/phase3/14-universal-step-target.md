@@ -468,3 +468,38 @@ The test suite now exercises both the positive and negative behavior that matter
 | Step environment override semantics confuse readers ("does it create a new session?") | Document explicitly: override is env-var injection only, not a new session. Test `TestStep_EnvironmentOverride_NewSessionNotCreated`. |
 | Legacy-rejection message is too terse | Use the multiline format from [11](11-agent-to-adapter-rename.md)'s rejection messages, with a CHANGELOG pointer. |
 | `target` references break HCL `gohcl` decode for unknown reasons | Capture via `Remain.JustAttributes()` as the existing pattern does; do not try to decode `hcl.Expression` into a struct field directly. |
+
+### Round 4 — PR review remediation applied (2026-05-04)
+
+**Review threads on PR #82:**
+
+**Thread PRRT_kwDOSOBb1s5_flT_ (blocker — legacy doc examples):**
+- `docs/workflow.md:1117`: `adapter = adapter.shell.default` → `target = adapter.shell.default`
+- `docs/workflow.md:1164`: same fix
+- `docs/workflow.md:1089`: updated `<!-- validator: skip -->` reason to reflect W14 is complete
+
+**Thread PRRT_kwDOSOBb1s5_flUD (blocker — env override silently inert for subworkflow targets):**
+- Added `rejectEnvOverrideForSubworkflow(stepName, body)` helper in `workflow/compile_step_target.go`
+  after `resolveStepEnvironmentOverride`. Uses `PartialContent` to detect presence and returns a
+  diagnostic if the `environment` attribute is set on a subworkflow-targeted step.
+- `workflow/compile_steps_subworkflow.go:compileSubworkflowStep`: calls helper instead of
+  `resolveStepEnvironmentOverride`; `Environment` set to `""` on StepNode.
+- `workflow/compile_steps_iteration.go:compileIteratingStep`: env resolution now branches by
+  `targetKind` — adapter targets call `resolveStepEnvironmentOverride`, subworkflow targets call
+  `rejectEnvOverrideForSubworkflow`; `envKey` declared inside adapter branch only.
+- Tests added in `workflow/compile_step_target_test.go`:
+  - `TestCompileStep_SubworkflowTarget_EnvironmentRejected`
+  - `TestCompileStep_SubworkflowIterTarget_EnvironmentRejected`
+
+**Thread PRRT_kwDOSOBb1s5_flUF (nit — schema.go comment misplaced):**
+- `workflow/schema.go:132-135`: Environment comment repositioned directly above the `Outcomes` field,
+  eliminating the visual ambiguity between `AllowTools` and `Outcomes`.
+
+**Thread PRRT_kwDOSOBb1s5_flUG (doc — missing environment override subsection):**
+- `docs/workflow.md`: Added "Step-level environment override" subsection after "Input block" documenting
+  bare-traversal syntax, compile-time validation, and adapter-only restriction.
+
+**Validation (round 4):**
+- `go test -race ./...` ✅ (all packages pass)
+- `make lint-go` ✅ clean (gofmt alignment in schema.go fixed via `gofmt -w`)
+- All 4 threads resolved via GraphQL resolveReviewThread mutation (commit 8581e6b)
