@@ -301,10 +301,13 @@ workflow "t" {
 }
 
 // TestCompileStep_SubworkflowStepInput verifies that a subworkflow-targeted step
-// accepts an input { } block and stores the expressions in StepNode.InputExprs.
+// accepts an input { } block for a declared callee variable and stores the
+// expressions in StepNode.InputExprs.
 func TestCompileStep_SubworkflowStepInput(t *testing.T) {
 	dir := t.TempDir()
-	subHCL := minimalCalleeHCL("inner", nil)
+	// Callee declares "greeting" with a default so the declaration-level subworkflow
+	// block does not need to supply it, but step-level input can still override it.
+	subHCL := minimalCalleeHCL("inner", map[string]bool{"greeting": true})
 	writeSubworkflowDir(t, dir, "inner", subHCL)
 
 	src := `
@@ -349,6 +352,92 @@ workflow "t" {
 	}
 	if _, ok := step.InputExprs["greeting"]; !ok {
 		t.Errorf("InputExprs missing %q key; got keys: %v", "greeting", mapKeys(step.InputExprs))
+	}
+}
+
+// TestCompileStep_SubworkflowStepInput_UndeclaredKeyRejected verifies that a
+// step-level input key that is not declared in the callee's variables is rejected
+// at compile time for non-iterating subworkflow-targeted steps.
+func TestCompileStep_SubworkflowStepInput_UndeclaredKeyRejected(t *testing.T) {
+	dir := t.TempDir()
+	subHCL := minimalCalleeHCL("inner", nil) // callee declares no variables
+	writeSubworkflowDir(t, dir, "inner", subHCL)
+
+	src := `
+workflow "t" {
+  adapter "noop" "default" {}
+  version       = "0.1"
+  initial_state = "s"
+  target_state  = "done"
+  subworkflow "inner" {
+    source = "inner"
+  }
+  step "s" {
+    target = subworkflow.inner
+    input {
+      typo = "oops"
+    }
+    outcome "success" { transition_to = "done" }
+  }
+  state "done" { terminal = true }
+}
+`
+	spec, diags := Parse("t.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	_, diags = CompileWithOpts(spec, nil, CompileOpts{
+		WorkflowDir:         dir,
+		SubWorkflowResolver: &LocalSubWorkflowResolver{},
+	})
+	if !diags.HasErrors() {
+		t.Fatal("expected compile error for undeclared step input key; got none")
+	}
+	if !strings.Contains(diags.Error(), "typo") {
+		t.Errorf("expected error to mention undeclared key %q, got: %s", "typo", diags.Error())
+	}
+}
+
+// TestCompileStep_SubworkflowIterStepInput_UndeclaredKeyRejected verifies that
+// undeclared step input keys are also rejected for iterating subworkflow-targeted steps.
+func TestCompileStep_SubworkflowIterStepInput_UndeclaredKeyRejected(t *testing.T) {
+	dir := t.TempDir()
+	subHCL := minimalCalleeHCL("inner", nil) // callee declares no variables
+	writeSubworkflowDir(t, dir, "inner", subHCL)
+
+	src := `
+workflow "t" {
+  adapter "noop" "default" {}
+  version       = "0.1"
+  initial_state = "s"
+  target_state  = "done"
+  subworkflow "inner" {
+    source = "inner"
+  }
+  step "s" {
+    for_each = ["a", "b"]
+    target   = subworkflow.inner
+    input {
+      typo = each.value
+    }
+    outcome "success" { transition_to = "done" }
+  }
+  state "done" { terminal = true }
+}
+`
+	spec, diags := Parse("t.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	_, diags = CompileWithOpts(spec, nil, CompileOpts{
+		WorkflowDir:         dir,
+		SubWorkflowResolver: &LocalSubWorkflowResolver{},
+	})
+	if !diags.HasErrors() {
+		t.Fatal("expected compile error for undeclared iterating step input key; got none")
+	}
+	if !strings.Contains(diags.Error(), "typo") {
+		t.Errorf("expected error to mention undeclared key %q, got: %s", "typo", diags.Error())
 	}
 }
 

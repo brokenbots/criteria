@@ -52,7 +52,9 @@ func compileIteratingStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[str
 
 	var node *StepNode
 	if targetKind == StepTargetSubworkflow {
-		node = newSubworkflowIterStepNode(sp, spec, subworkflowRef, effectiveOnCrash, envKey, timeout)
+		swInputExprs, d := compileSubworkflowStepInputExprs(g, sp, subworkflowRef)
+		diags = append(diags, d...)
+		node = newSubworkflowIterStepNode(sp, spec, subworkflowRef, effectiveOnCrash, envKey, timeout, swInputExprs)
 	} else {
 		inputMap, inputExprs, d := decodeStepInput(g, sp, schemas, opts, adapterType)
 		diags = append(diags, d...)
@@ -73,7 +75,7 @@ func compileIteratingStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[str
 }
 
 // newSubworkflowIterStepNode constructs a StepNode for an iterating subworkflow step.
-func newSubworkflowIterStepNode(sp *StepSpec, _ *Spec, subworkflowRef, effectiveOnCrash, envKey string, timeout time.Duration) *StepNode {
+func newSubworkflowIterStepNode(sp *StepSpec, _ *Spec, subworkflowRef, effectiveOnCrash, envKey string, timeout time.Duration, inputExprs map[string]hcl.Expression) *StepNode {
 	return &StepNode{
 		Name:           sp.Name,
 		TargetKind:     StepTargetSubworkflow,
@@ -82,6 +84,7 @@ func newSubworkflowIterStepNode(sp *StepSpec, _ *Spec, subworkflowRef, effective
 		OnFailure:      sp.OnFailure,
 		MaxVisits:      sp.MaxVisits,
 		Timeout:        timeout,
+		InputExprs:     inputExprs,
 		Outcomes:       map[string]string{},
 		Environment:    envKey,
 	}

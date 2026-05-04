@@ -37,17 +37,10 @@ func compileSubworkflowStep(g *FSMGraph, sp *StepSpec, _ *Spec, subworkflowRef s
 	// Compile the step-level input block if present. Attributes are captured as
 	// expressions for runtime evaluation against the parent scope, then passed
 	// into the callee as variable bindings (overriding any declaration-level input).
-	var inputExprs map[string]hcl.Expression
-	if sp.Input != nil {
-		attrs, attrDiags := sp.Input.Remain.JustAttributes()
-		diags = append(diags, attrDiags...)
-		if len(attrs) > 0 {
-			inputExprs = make(map[string]hcl.Expression, len(attrs))
-			for k, attr := range attrs {
-				inputExprs[k] = attr.Expr
-			}
-		}
-	}
+	// Keys are validated against the callee's declared variables so typos are
+	// caught at compile time rather than silently dropped at runtime.
+	inputExprs, d := compileSubworkflowStepInputExprs(g, sp, subworkflowRef)
+	diags = append(diags, d...)
 
 	diags = append(diags, validateLegacyConfig(sp)...)
 
@@ -90,4 +83,28 @@ func compileSubworkflowStep(g *FSMGraph, sp *StepSpec, _ *Spec, subworkflowRef s
 	g.Steps[sp.Name] = node
 	g.stepOrder = append(g.stepOrder, sp.Name)
 	return diags
+}
+
+// compileSubworkflowStepInputExprs captures and validates the step-level input { }
+// block for subworkflow-targeted steps. Each attribute key is validated against the
+// callee's declared variables (undeclared keys are rejected as a compile error).
+// Returns nil, nil when no input block is present.
+func compileSubworkflowStepInputExprs(g *FSMGraph, sp *StepSpec, subworkflowRef string) (map[string]hcl.Expression, hcl.Diagnostics) {
+	if sp.Input == nil {
+		return nil, nil
+	}
+	attrs, diags := sp.Input.Remain.JustAttributes()
+	if len(attrs) == 0 {
+		return nil, diags
+	}
+	exprs := make(map[string]hcl.Expression, len(attrs))
+	for k, attr := range attrs {
+		exprs[k] = attr.Expr
+	}
+	if swNode, ok := g.Subworkflows[subworkflowRef]; ok {
+		for k, expr := range exprs {
+			diags = append(diags, validateInputItem(subworkflowRef, k, expr, swNode.DeclaredVars)...)
+		}
+	}
+	return exprs, diags
 }

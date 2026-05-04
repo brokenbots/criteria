@@ -385,15 +385,43 @@ All three reviewer blockers have been fixed:
 - `make validate` ✅ (all 21 examples)
 - Final grep for legacy adapter attrs → zero matches
 
+### Review 2026-05-04-02 — changes-requested
 
 #### Summary
-The target-based step dispatch is mostly in place, and the legacy attribute rejection plus validation sweep are in good shape, but two required behaviors from the workstream are still missing: the per-step `environment` override was implemented as a quoted string instead of the required bare reference syntax, and subworkflow-targeted steps still reject `input { ... }` rather than evaluating and passing step inputs into `runSubworkflow`. The current tests also do not prove the environment override at the subprocess boundary or the subworkflow step-input path.
+The previous blockers are fixed: step-level `environment = shell.ci` now uses the required bare traversal form, subworkflow-targeted steps accept step `input { ... }`, and the new behavior-level tests cover both the env injection path and the step-to-subworkflow input path. One blocker remains, though: step-level subworkflow inputs do not enforce the callee variable contract, so undeclared input keys are accepted and then silently ignored at runtime.
 
 #### Plan Adherence
-- **Reshape `StepSpec` / `StepNode`, target resolution, engine dispatch, legacy rejection:** implemented.
-- **Step-level `environment` override:** not implemented per spec. The workstream requires `environment = shell.ci`, but `workflow/schema.go:132-135`, `workflow/compile_step_target_test.go:218-220`, `docs/workflow.md:1102-1105`, and `examples/phase3-environment/phase3.hcl:1-5` all use the quoted-string form instead. A minimal workflow using `environment = shell.ci` currently fails during parse with `Variables not allowed`.
-- **Subworkflow-targeted step input:** not implemented. `workflow/compile_steps_subworkflow.go:34-38` hard-errors on `input { ... }`, which contradicts Step 4's requirement to evaluate the step input in the parent context and pass it through to `runSubworkflow`.
-- **Tests:** incomplete for the missing behaviors above. The environment override engine test does not touch subprocess execution, and there is no compile/runtime test proving step-level input reaches a subworkflow target.
+- **Step-level environment override:** fixed and now matches the workstream syntax.
+- **Subworkflow-targeted step input:** fixed for the happy path; step inputs are evaluated in the parent scope and passed into `runSubworkflow`.
+- **Contract validation for subworkflow step input:** still incomplete. Unlike declaration-level `subworkflow { input = { ... } }`, the new step-level `input { ... }` path does not validate keys against the callee's declared variables.
+- **Tests:** improved substantially, but they still only prove the valid-input path; there is no negative coverage for undeclared step input keys on subworkflow-targeted steps.
+
+#### Required Remediations
+- **Blocker — undeclared step input keys are silently dropped for subworkflow targets** (`workflow/compile_steps_subworkflow.go:37-50`, `internal/engine/node_subworkflow.go:108-120`, `workflow/compile_subworkflows.go:214-270`): the compiler now captures step-level subworkflow input expressions, but it does not validate them against the callee's declared vars the way declaration-level subworkflow inputs already do. A minimal repro with `target = subworkflow.inner` and `input { typo = "oops" }` compiles successfully even when the callee declares no such variable, and `seedChildVarsFromBindings` then ignores the key silently. **Acceptance:** step-level subworkflow inputs must reject undeclared keys explicitly (compile-time preferred, reusing the existing subworkflow input validation rules or equivalent), must not silently drop them at runtime, and must have negative tests proving the rejection for both non-iterating and iterating subworkflow-targeted steps as applicable.
+
+#### Test Intent Assessment
+The new engine tests are now meaningfully aligned with behavior: `TestStep_EnvironmentOverride_InjectedIntoAdapter` proves subprocess-facing env injection, and `TestStep_SubworkflowStepInput_ReachesCallee` proves the positive data path into the callee. The remaining gap is regression sensitivity around invalid inputs: with no negative test, a faulty implementation that accepts misspelled subworkflow input keys still passes the suite.
+
+#### Validation Performed
+- `go test -race ./...` ✅
+- `make validate` ✅
+- `git --no-pager grep -nE 'hcl:"adapter,optional"|hcl:"agent,optional"' -- ':!*_test.go' ':!docs/' ':!CHANGELOG.md' ':!workstreams/'` ✅ (no matches)
+- Minimal compile repro for step-level subworkflow input with undeclared key (`input { typo = "oops" }` against a callee with no matching variable) ❌ compiled successfully instead of rejecting the bad key.
+
+### Round 3 — Remediation applied (2026-05-04)
+
+**Blocker — undeclared step input keys silently accepted:**
+- Extracted `compileSubworkflowStepInputExprs(g, sp, subworkflowRef)` helper in `compile_steps_subworkflow.go`.  For each key in the step `input {}` block, `validateInputItem` is called against `g.Subworkflows[subworkflowRef].DeclaredVars` (populated by `compileSubworkflows` before `compileSteps` runs). Undeclared keys produce a compile-time error identical in format to declaration-level input validation.
+- `compileSubworkflowStep` now calls the shared helper instead of inlining the capture logic.
+- `compileIteratingStep` for `targetKind == StepTargetSubworkflow` now also calls the helper and passes `InputExprs` to `newSubworkflowIterStepNode` (signature updated).  Iterating subworkflow steps silently ignored `sp.Input` before; they now capture and validate it.  The engine's `evaluateSubworkflowStep` already evaluates `InputExprs` for both iterating and non-iterating steps, so no engine changes are needed.
+- `TestCompileStep_SubworkflowStepInput` updated: callee now declares `greeting` with a default so the step-level `input { greeting = "hello" }` is accepted.
+- New test: `TestCompileStep_SubworkflowStepInput_UndeclaredKeyRejected` — non-iterating step with `input { typo = "oops" }` against a no-variable callee → compile error mentioning `"typo"`.
+- New test: `TestCompileStep_SubworkflowIterStepInput_UndeclaredKeyRejected` — iterating step with `input { typo = each.value }` against a no-variable callee → compile error mentioning `"typo"`.
+
+**Validation (round 3 — final):**
+- `go test -race ./...` ✅ (all packages pass)
+- `make lint-go` ✅ clean (cognitive complexity resolved by extracting helper)
+- `make validate` ✅ (all 21 examples)
 
 #### Required Remediations
 - **Blocker — step environment syntax mismatch** (`workflow/schema.go:132-135`, `workflow/compile_step_target_test.go:210-268`, `docs/workflow.md:1102-1105`, `examples/phase3-environment/phase3.hcl:1-5`): implement the step-level override using the reference syntax required by this workstream (`environment = shell.ci`), not a quoted string. **Acceptance:** a step with `environment = shell.ci` parses and compiles; docs/examples/tests use the same syntax; compile-time resolution still validates the referenced environment and rejects missing ones with a targeted diagnostic.
