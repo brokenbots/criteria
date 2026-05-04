@@ -1176,4 +1176,6 @@ Fixed test helper `injectDefaultAdapters()` which was collecting adapters into a
 - Half-true comment (fixed in d0e356a)
 - Stale comment in node_step.go (fixed in d0e356a)
 
-**Final status:** All 19 threads resolved (0 unresolved). All 4 CI checks passing. All tests passing with -race flag. PR ready for final review and merge.
+**Final status:** All 19 threads resolved (0 unresolved) via GraphQL mutation. All 4 CI checks passing. All tests passing with -race flag. PR ready for final review and merge.
+
+**Note:** Thread BLOCKER 7c/d (PRRT_kwDOSOBb1s5_Z5lg) was resolved in final gate cycle after verifying all three required tests were in place and passing (commit 2f01f72 + gofmt fix 4d132cb).
