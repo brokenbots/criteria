@@ -7,6 +7,10 @@ workflow "inner_task" {
     config { }
   }
 
+  variable "work" {
+    type = "string"
+  }
+
   output "result" {
     type  = "string"
     value = "Task completed successfully"

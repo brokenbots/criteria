@@ -86,6 +86,7 @@ func compileForExecution(ctx context.Context, workflowPath string, log *slog.Log
 	graph, diags := workflow.CompileWithOpts(spec, schemas, workflow.CompileOpts{
 		WorkflowDir:         filepath.Dir(workflowPath),
 		SubWorkflowResolver: resolver,
+		Schemas:             schemas,
 	})
 	if diags.HasErrors() {
 		_ = loader.Shutdown(ctx)

@@ -56,7 +56,7 @@ func (r *LocalSubWorkflowResolver) checkRemoteScheme(source string) error {
 	return nil
 }
 
-// resolvePath resolves a source path to an absolute path.
+// resolvePath resolves a source path to an absolute, symlink-resolved path.
 func (r *LocalSubWorkflowResolver) resolvePath(source, callerDir string) string {
 	var resolvedPath string
 	if filepath.IsAbs(source) {
@@ -66,10 +66,17 @@ func (r *LocalSubWorkflowResolver) resolvePath(source, callerDir string) string 
 	}
 
 	abs, _ := filepath.Abs(resolvedPath)
+	// Canonicalize symlinks so AllowedRoots checks cannot be bypassed by a
+	// symlink that points outside the trusted tree.
+	if canonical, err := filepath.EvalSymlinks(abs); err == nil {
+		return canonical
+	}
 	return abs
 }
 
 // checkAllowedRoots verifies the resolved path is under an allowed root.
+// Both the resolved path and each root are symlink-resolved before comparison
+// to prevent escape via symlinks.
 func (r *LocalSubWorkflowResolver) checkAllowedRoots(resolvedPath string) error {
 	if len(r.AllowedRoots) == 0 {
 		return nil
@@ -79,6 +86,10 @@ func (r *LocalSubWorkflowResolver) checkAllowedRoots(resolvedPath string) error 
 		abs, err := filepath.Abs(root)
 		if err != nil {
 			continue
+		}
+		// Canonicalize the root too, in case allowed roots contain symlinks.
+		if canonical, err := filepath.EvalSymlinks(abs); err == nil {
+			abs = canonical
 		}
 		if strings.HasPrefix(resolvedPath+string(filepath.Separator), abs+string(filepath.Separator)) ||
 			resolvedPath == abs {

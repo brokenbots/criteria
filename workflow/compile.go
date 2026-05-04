@@ -45,6 +45,10 @@ type CompileOpts struct {
 	// subworkflow directory referenced by subworkflow.source = "...".
 	// When nil, any subworkflow is rejected with a compile error.
 	SubWorkflowResolver SubWorkflowResolver
+	// Schemas is the adapter schema map propagated into recursive subworkflow
+	// compiles so callee adapter config and step input are fully validated.
+	// Set by the CLI compile path; nil when compiling standalone without adapters.
+	Schemas map[string]AdapterInfo
 }
 
 // Compile validates a Spec and returns an executable FSMGraph. It is a

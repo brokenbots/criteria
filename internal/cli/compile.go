@@ -260,6 +260,7 @@ func parseCompileForCli(ctx context.Context, workflowPath string, subworkflowRoo
 	graph, diags := workflow.CompileWithOpts(spec, schemas, workflow.CompileOpts{
 		WorkflowDir:         filepath.Dir(workflowPath),
 		SubWorkflowResolver: &workflow.LocalSubWorkflowResolver{AllowedRoots: subworkflowRoots},
+		Schemas:             schemas,
 	})
 	if diags.HasErrors() {
 		return nil, nil, fmt.Errorf("compile: %s", diags.Error())

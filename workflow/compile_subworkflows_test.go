@@ -51,13 +51,15 @@ func parentHCLWithSubworkflow(swName, source, inputAttrs string) string {
 }
 
 // compileParentSpec parses and compiles a workflow HCL with a LocalSubWorkflowResolver.
-func compileParentSpec(t *testing.T, parentHCL, parentDir string) (*FSMGraph, hclDiags) {
+func compileParentSpec(t *testing.T, parentHCL, parentDir string) (graph *FSMGraph, diags hclDiags) {
 	t.Helper()
-	spec, diags := Parse("parent.hcl", []byte(parentHCL))
-	if diags.HasErrors() {
-		t.Fatalf("parse failed: %s", diags.Error())
+	var parseDiags hclDiags
+	var spec *Spec
+	spec, parseDiags = Parse("parent.hcl", []byte(parentHCL))
+	if parseDiags.HasErrors() {
+		t.Fatalf("parse failed: %s", parseDiags.Error())
 	}
-	graph, diags := CompileWithOpts(spec, nil, CompileOpts{
+	graph, diags = CompileWithOpts(spec, nil, CompileOpts{
 		WorkflowDir:         parentDir,
 		SubWorkflowResolver: &LocalSubWorkflowResolver{},
 	})
@@ -65,7 +67,10 @@ func compileParentSpec(t *testing.T, parentHCL, parentDir string) (*FSMGraph, hc
 }
 
 // hclDiags is an alias for convenience in test signatures.
-type hclDiags = interface{ HasErrors() bool; Error() string }
+type hclDiags = interface {
+	HasErrors() bool
+	Error() string
+}
 
 // TestCompileSubworkflows_Basic verifies that a well-formed subworkflow declaration
 // compiles successfully and populates FSMGraph.Subworkflows.
@@ -359,17 +364,18 @@ func TestCompileSubworkflows_MultipleDeclarations(t *testing.T) {
 }
 
 // TestCompileSubworkflows_MultiFileDirectory verifies that multiple .hcl files
-// in a subworkflow directory are merged into a single compiled spec.
+// in a subworkflow directory are merged into a single compiled spec. Both files
+// must use the workflow {} wrapper; declarations are merged field-by-field.
 func TestCompileSubworkflows_MultiFileDirectory(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	// Create a subworkflow directory with two .hcl files that together form a valid workflow.
 	innerDir := filepath.Join(tmpDir, "inner")
 	if err := os.Mkdir(innerDir, 0o755); err != nil {
 		t.Fatalf("create inner dir: %v", err)
 	}
-	// First file: workflow header + state
-	headerHCL := `workflow "inner" {
+
+	// main.hcl: workflow header + step + terminal state.
+	mainHCL := `workflow "inner" {
   version       = "1"
   initial_state = "done"
   target_state  = "done"
@@ -380,8 +386,25 @@ func TestCompileSubworkflows_MultiFileDirectory(t *testing.T) {
   }
 }
 `
-	if err := os.WriteFile(filepath.Join(innerDir, "main.hcl"), []byte(headerHCL), 0o644); err != nil {
+	// vars.hcl: a second file in the same directory declaring a variable.
+	// Each file in a multi-file subworkflow directory must have a workflow{} wrapper
+	// with the required initial_state/target_state fields (the merge uses the first file's values).
+	varsHCL := `workflow "inner" {
+  version       = "1"
+  initial_state = "done"
+  target_state  = "done"
+
+  variable "task_name" {
+    type    = "string"
+    default = "default_task"
+  }
+}
+`
+	if err := os.WriteFile(filepath.Join(innerDir, "main.hcl"), []byte(mainHCL), 0o644); err != nil {
 		t.Fatalf("write main.hcl: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(innerDir, "vars.hcl"), []byte(varsHCL), 0o644); err != nil {
+		t.Fatalf("write vars.hcl: %v", err)
 	}
 
 	parentHCL := parentHCLWithSubworkflow("inner_task", "./inner", "")
@@ -389,8 +412,13 @@ func TestCompileSubworkflows_MultiFileDirectory(t *testing.T) {
 	if diags.HasErrors() {
 		t.Fatalf("expected no errors, got: %s", diags.Error())
 	}
-	if _, ok := graph.Subworkflows["inner_task"]; !ok {
-		t.Error("expected subworkflow 'inner_task' in graph")
+	sw, ok := graph.Subworkflows["inner_task"]
+	if !ok {
+		t.Fatal("expected subworkflow 'inner_task' in graph")
+	}
+	// The merged callee should have the variable declared in vars.hcl.
+	if _, hasVar := sw.Body.Variables["task_name"]; !hasVar {
+		t.Error("expected variable 'task_name' merged from vars.hcl into callee graph")
 	}
 }
 
@@ -537,5 +565,79 @@ func TestLocalSubWorkflowResolver_NotADirectory_Error(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "directory") {
 		t.Errorf("error should mention 'directory', got: %v", err)
+	}
+}
+
+// TestLocalSubWorkflowResolver_SymlinkBypass verifies that a symlink inside
+// AllowedRoots pointing outside the trusted tree is rejected.
+func TestLocalSubWorkflowResolver_SymlinkBypass(t *testing.T) {
+	allowedRoot := t.TempDir()
+	outsideDir := t.TempDir()
+
+	// Create an actual subworkflow directory outside the allowed root.
+	outerSWDir := filepath.Join(outsideDir, "secret")
+	if err := os.Mkdir(outerSWDir, 0o755); err != nil {
+		t.Fatalf("mkdir outside dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(outerSWDir, "main.hcl"), []byte("// secret workflow"), 0o644); err != nil {
+		t.Fatalf("write outside: %v", err)
+	}
+
+	// Create a symlink inside allowedRoot that points outside.
+	symlinkPath := filepath.Join(allowedRoot, "escape")
+	if err := os.Symlink(outerSWDir, symlinkPath); err != nil {
+		t.Skip("cannot create symlink (possible permission issue):", err)
+	}
+
+	resolver := &LocalSubWorkflowResolver{AllowedRoots: []string{allowedRoot}}
+	_, err := resolver.ResolveSource(context.Background(), allowedRoot, "./escape")
+	if err == nil {
+		t.Fatal("expected error: symlink escapes allowed root, got none")
+	}
+	if !strings.Contains(err.Error(), "allowed root") {
+		t.Errorf("error should mention 'allowed root', got: %v", err)
+	}
+}
+
+// TestCompileSubworkflows_InputTypeMismatch verifies that a literal input value
+// whose type is incompatible with the callee variable type produces a compile error.
+func TestCompileSubworkflows_InputTypeMismatch(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Callee declares a number variable.
+	calleeHCL := `workflow "inner" {
+  version       = "1"
+  initial_state = "done"
+  target_state  = "done"
+
+  variable "count" {
+    type = "number"
+  }
+
+  state "done" {
+    terminal = true
+    success  = true
+  }
+}
+`
+	innerDir := writeSubworkflowDir(t, tmpDir, "inner", calleeHCL)
+	_ = innerDir
+
+	// Parent passes a clearly-incompatible literal string.
+	parentHCL := parentHCLWithSubworkflow("inner_task", "./inner", `count = "not-a-number"`)
+	spec, diags := Parse("parent.hcl", []byte(parentHCL))
+	if diags.HasErrors() {
+		t.Fatalf("parse failed: %s", diags.Error())
+	}
+	resolver := &LocalSubWorkflowResolver{}
+	_, diags = CompileWithOpts(spec, nil, CompileOpts{
+		WorkflowDir:         tmpDir,
+		SubWorkflowResolver: resolver,
+	})
+	if !diags.HasErrors() {
+		t.Fatal("expected type mismatch error, got none")
+	}
+	if !strings.Contains(diags.Error(), "type mismatch") {
+		t.Errorf("expected 'type mismatch' in error, got: %s", diags.Error())
 	}
 }
