@@ -94,7 +94,6 @@ func runApplyLocal( //nolint:funlen // W03: local apply orchestrates engine life
 	eng = engine.New(graph, loader, tracker,
 		engine.WithVarOverrides(parseVarOverrides(opts.varOverrides)),
 		engine.WithWorkflowDir(filepath.Dir(opts.workflowPath)),
-		engine.WithAutoBootstrapAdapters(), // Enable auto-bootstrap for backward compat with workflows that don't have explicit lifecycle steps
 	)
 	if err := eng.Run(ctx); err != nil {
 		log.Error("local run failed", "run_id", runID, "error", err)
@@ -215,7 +214,6 @@ func buildReattachTrackerAndEngine(cp *StepCheckpoint, log *slog.Logger, graph *
 	eng = engine.New(graph, loader, tracker,
 		engine.WithWorkflowDir(filepath.Dir(cp.WorkflowPath)),
 		engine.WithResumedVisits(cp.Visits),
-		engine.WithAutoBootstrapAdapters(), // Enable auto-bootstrap for backward compat
 	)
 	return opts, tracker, eng
 }

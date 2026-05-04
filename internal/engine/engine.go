@@ -138,8 +138,11 @@ type Engine struct {
 }
 
 func New(graph *workflow.FSMGraph, loader plugin.Loader, sink Sink, opts ...Option) *Engine {
-	// Default to false (strict lifecycle semantics). Auto-bootstrap is opt-in via WithAutoBootstrapAdapters().
-	e := &Engine{graph: graph, loader: loader, sink: sink, autoBootstrapAdapters: false}
+	// Default to true for backward compatibility. W12 will introduce strict lifecycle
+	// semantics as the default; for now, auto-bootstrap enables workflows without explicit
+	// lifecycle steps. Production callers can opt-in to WithStrictLifecycleSemantics() to
+	// enforce explicit lifecycle management.
+	e := &Engine{graph: graph, loader: loader, sink: sink, autoBootstrapAdapters: true}
 	for _, opt := range opts {
 		if opt != nil {
 			opt(e)

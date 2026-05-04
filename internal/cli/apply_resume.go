@@ -142,7 +142,6 @@ func drainLocalResumeCycles(ctx context.Context, log *slog.Logger, graph *workfl
 			engine.WithResumedVisits(eng.VisitCounts()),
 			engine.WithResumePayload(payload),
 			engine.WithWorkflowDir(filepath.Dir(opts.workflowPath)),
-			engine.WithAutoBootstrapAdapters(), // Enable auto-bootstrap for backward compat
 		)
 		if runErr := resumedEng.RunFrom(ctx, pausedNode, 1); runErr != nil {
 			log.Error("local run failed after resume", "run_id", runID, "error", runErr)
