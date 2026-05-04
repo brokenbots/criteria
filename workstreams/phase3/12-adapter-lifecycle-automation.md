@@ -1123,3 +1123,15 @@ The executor has delivered a complete, high-quality implementation of automatic 
 2. Resolve all 13 unresolved PR threads via GraphQL mutation
 3. Re-request review from PR author
 4. Merge once approved
+
+### Build/Test Verification Fixed (2026-05-04)
+
+Fixed test helper `injectDefaultAdapters()` which was collecting adapters into a map and iterating in non-deterministic order. This caused adapter initialization order to vary between test runs, leading to test failures where the FSMGraph.AdapterOrder didn't match expected sequences.
+
+**Root cause:** Line 146 `for adapterType := range adapters` iterates map keys in random order, but FSMGraph.AdapterOrder is populated in declaration order from compiled HCL.
+
+**Fix:** Changed to preserve adapter order by tracking first appearance of each adapter type in source HCL (added `adapterList []string` alongside `adaptersMap`), then use ordered list instead of map iteration.
+
+**Commit:** 8f37f6b
+
+**Result:** All tests now pass consistently with -race flag. make ci green.
