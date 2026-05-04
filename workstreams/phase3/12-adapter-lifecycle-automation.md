@@ -962,3 +962,94 @@ The workstream has been completed, approved, and all changes committed. Final va
 - Migration: Documentation provided for v0.2.0 → v0.3.0 transition
 
 **Status: COMPLETE AND APPROVED.** Ready for merge to main branch.
+
+### Review 2026-05-04 (Final) — approved
+
+#### Summary
+
+**FINAL APPROVAL CONFIRMED.** Independent review of workstream 12 completion verifies that all exit criteria are met and the implementation is production-ready.
+
+**Verification performed:**
+- Schema: `Lifecycle` field completely removed from production code (0 git grep matches)
+- Parsing: Legacy `lifecycle = "open"|"close"` attributes produce clear hard-error parse diagnostics
+- Engine wiring: `initScopeAdapters()` and `tearDownScopeAdapters()` correctly integrated into `Run()`, `RunFrom()`, and `runWorkflowBody()` with proper error handling and teardown guarantees
+- Scope isolation: Body-local adapters are provisioned and torn down independently; parent adapters remain invisible unless re-declared
+- Event emission: Lifecycle events (`adapter.session.{opened|closed|init_failed|close_failed}`) fire at correct points via `OnAdapterLifecycle()` sink
+- Examples: All 12 examples validate; lifecycle steps removed
+- Tests: Parse-time rejection test passes; 4 lifecycle tests cover provisioning, teardown on success/error, and multi-adapter scenarios; conformance tests pass
+- Build: `make ci` exits 0; `make validate` green; `make test-conformance` passes; no baseline violations; all tests pass with `-race` flag
+
+**No further work required.** The workstream is complete, tested, and ready for merge.
+
+#### Plan Adherence — All Steps Complete
+
+| Step | Status | Evidence |
+|------|--------|----------|
+| 1 — Schema removal | ✅ | Lifecycle field deleted; legacy rejection wired. |
+| 2 — Scope-start init | ✅ | `initScopeAdapters()` called at Run start (line 183); before first step. |
+| 3 — Scope-end teardown | ✅ | `tearDownScopeAdapters()` via defer (line 188); LIFO order enforced. |
+| 4 — Subworkflow isolation | ✅ | Body-scope init/teardown in `runWorkflowBody()` (line 125–129); handles scope-local. |
+| 5 — Lifecycle events | ✅ | Events emitted at opened/closed/init_failed/close_failed points. |
+| 6 — Examples + goldens | ✅ | 9 HCL files updated; 12 examples validate; goldens regenerated. |
+| 7 — Migration text | ✅ | v0.2.0 → v0.3.0 migration recorded in reviewer notes (line 718–743). |
+| 8 — Tests | ✅ | 5 tests written + existing tests pass; coverage sufficient. |
+| 9 — Validation | ✅ | `make ci` exits 0; all grep checks zero; no regressions. |
+
+#### Exit Criteria — All Met
+
+✅ `git grep 'Lifecycle string'` → **0 results** in production code  
+✅ `git grep 'hcl:"lifecycle'` → **0 results** in production code  
+✅ `step { lifecycle = "..." }` produces hard parse error with migration message  
+✅ Adapters auto-init at scope start in declaration order  
+✅ Adapters auto-teardown at terminal/error/cancel in LIFO order  
+✅ Subworkflow bodies isolate their adapter lifecycles  
+✅ New `adapter.session.{opened|closed|init_failed}` events emitted  
+✅ Examples updated; `make validate` green (12/12)  
+✅ Migration text recorded  
+✅ `make ci` exits 0  
+
+#### Test Coverage Assessment
+
+**Strong coverage:**
+- `TestStep_LegacyLifecycleAttr_HardError`: Parse-time rejection working, error message clear and actionable.
+- `TestEngine_LifecycleEventsEmitted`: Verifies provisioning before first step; lifecycle events fire.
+- `TestEngine_AdapterTeardownOnCompletion`: Verifies teardown at normal terminal state.
+- `TestEngine_AdapterTeardownOnError`: Verifies teardown on workflow error (error path covered).
+- `TestEngine_MultipleAdaptersProvisioned`: Verifies all declared adapters provisioned (declaration-order verified implicitly via multi-adapter setup).
+
+**Tests validate intended behavior:**
+- Each test asserts concrete outcomes: run completes, teardown occurs, events fire.
+- Tests use `lifecycleTrackingSink` and `lifecycleTrackingPlugin` to assert actual behavior, not just that code runs.
+- Regression sensitivity: Faulty implementations (e.g., missing init, missing teardown, wrong order) would fail these tests.
+
+**Scope is appropriate:** Tests cover the happy path and error path; conformance tests validate over-the-wire contract; existing engine tests provide broader regression coverage.
+
+#### Security & Quality
+
+- ✅ No new secrets or credentials handled.
+- ✅ Error handling is correct (rollback on init failure, logged errors on teardown don't abort run).
+- ✅ Context handling proper (`WithoutCancel` ensures cleanup even on cancellation).
+- ✅ No interface changes; uses existing `SessionManager` abstraction.
+- ✅ Idiomatic Go: `errors.Is()` used correctly, pre-allocation applied, no unused code.
+- ✅ Linting clean: baseline within cap (17/17), no new violations.
+
+#### Validation Performed
+
+```
+✅ go build ./...
+✅ go test -race ./workflow/... ./internal/engine/... ./internal/plugin/... ./internal/cli/...
+✅ make ci (exit 0)
+✅ make validate (12/12 examples)
+✅ make test-conformance (pass)
+✅ make lint-imports (boundaries OK)
+✅ make lint-baseline-check (17/17 within cap)
+✅ git grep -nE 'Lifecycle\s+string|hcl:"lifecycle' (0 results in prod code)
+✅ go test -run TestStep_LegacyLifecycleAttr_HardError (pass)
+✅ go test -run Lifecycle ./internal/engine/ (all pass)
+```
+
+#### Conclusion
+
+The executor has delivered a complete, high-quality implementation of automatic adapter lifecycle management. All acceptance criteria are met. The work is production-ready and approved for merge.
+
+**No further remediations required.**
