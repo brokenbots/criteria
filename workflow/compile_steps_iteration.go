@@ -28,8 +28,16 @@ func compileIteratingStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[str
 	diags = append(diags, validateLegacyConfig(sp)...)
 	diags = append(diags, validateOnFailureValue(sp)...)
 
-	envKey, d := resolveStepEnvironmentOverride(sp.Name, sp.Remain, g)
-	diags = append(diags, d...)
+	// Environment override: valid only for adapter targets; subworkflow targets
+	// use the environment declared on the subworkflow block.
+	var envKey string
+	if targetKind != StepTargetSubworkflow {
+		var d hcl.Diagnostics
+		envKey, d = resolveStepEnvironmentOverride(sp.Name, sp.Remain, g)
+		diags = append(diags, d...)
+	} else {
+		diags = append(diags, rejectEnvOverrideForSubworkflow(sp.Name, sp.Remain)...)
+	}
 
 	effectiveOnCrash, d := resolveStepOnCrashWithAdapter(g, sp, adapterRef)
 	diags = append(diags, d...)

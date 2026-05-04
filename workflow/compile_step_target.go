@@ -162,7 +162,30 @@ func resolveStepEnvironmentOverride(stepName string, body hcl.Body, g *FSMGraph)
 	return key, nil
 }
 
-// adapter.<type>.<name>. Returns the "<type>.<name>" reference and any diagnostics.
+// rejectEnvOverrideForSubworkflow emits a compile error if the step's Remain
+// body contains an `environment` attribute. Environment is set at the
+// subworkflow declaration level (subworkflow { environment = "shell.ci" }),
+// not per-step; step-level environment overrides are only valid for
+// adapter-targeted steps.
+func rejectEnvOverrideForSubworkflow(stepName string, body hcl.Body) hcl.Diagnostics {
+	if body == nil {
+		return nil
+	}
+	content, _, _ := body.PartialContent(&hcl.BodySchema{
+		Attributes: []hcl.AttributeSchema{{Name: "environment", Required: false}},
+	})
+	attr, ok := content.Attributes["environment"]
+	if !ok {
+		return nil
+	}
+	r := attr.Expr.Range()
+	return hcl.Diagnostics{&hcl.Diagnostic{
+		Severity: hcl.DiagError,
+		Summary:  fmt.Sprintf("step %q: environment override is not valid for subworkflow-targeted steps", stepName),
+		Detail:   `Set environment on the subworkflow declaration instead: subworkflow "<name>" { environment = "<type>.<name>" }.`,
+		Subject:  &r,
+	}}
+}
 func resolveAdapterTarget(stepName string, trav hcl.Traversal, attr *hcl.Attribute, g *FSMGraph) (adapterRef string, diags hcl.Diagnostics) {
 	if len(trav) != 3 {
 		diags = append(diags, &hcl.Diagnostic{

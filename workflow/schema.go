@@ -129,9 +129,10 @@ type StepSpec struct {
 	Input      *InputSpec        `hcl:"input,block"`
 	Timeout    string            `hcl:"timeout,optional"`
 	AllowTools []string          `hcl:"allow_tools,optional"`
-	// Environment is not decoded here; it is a bare traversal (e.g. shell.ci)
-	// captured via Remain by resolveStepEnvironmentOverride. A quoted-string form
-	// causes a compile error with a migration hint.
+	// Outcomes lists the declared outcome blocks for this step.
+	// Environment (e.g. shell.ci) is not decoded as a struct field; it is a bare
+	// traversal captured from Remain by resolveStepEnvironmentOverride. A
+	// quoted-string form causes a compile error with a migration hint.
 	Outcomes []OutcomeSpec `hcl:"outcome,block"`
 	// Remain captures the target attribute and other expressions (for_each, count,
 	// etc.) for lazy extraction by the compiler. The target attribute, if present,

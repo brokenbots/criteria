@@ -320,6 +320,26 @@ step "publish" {
 
 See [Expressions](#expressions) for interpolation syntax.
 
+### Step-level environment override
+
+Adapter-targeted steps can bind to a specific declared environment at the step level, overriding the workflow default:
+
+```hcl
+step "deploy" {
+  target      = adapter.shell.default
+  environment = shell.production
+  input {
+    command = "deploy.sh"
+  }
+  outcome "success" { transition_to = "done" }
+}
+```
+
+Key points:
+- **Bare traversal required**: `environment = shell.production` (no quotes). Quoted strings are rejected at compile time with a migration hint.
+- **Validated at compile time**: the referenced environment (`<type>.<name>`) must be declared in the same workflow; a missing reference is a compile error.
+- **Adapter steps only**: `environment` on a subworkflow-targeted step (`target = subworkflow.<name>`) is a compile error. To bind a subworkflow to an environment, set it on the subworkflow declaration: `subworkflow "inner" { environment = "shell.ci" }`.
+
 ### Adapter outputs
 
 Adapters return outputs via the `Result.Outputs` map. Common outputs:
@@ -1086,7 +1106,7 @@ The `subworkflow "<name>"` block declares a reusable workflow fragment to be res
 
 ### Declaring a subworkflow
 
-<!-- validator: skip: subworkflow invocation via `target = subworkflow.<name>` is implemented in W14; this illustrative example uses a future step attribute -->
+<!-- validator: skip: subworkflow source path and environment reference are illustrative; environment declaration omitted for brevity -->
 ```hcl
 workflow "deploy_pipeline" {
   version       = "1"
@@ -1114,7 +1134,7 @@ workflow "deploy_pipeline" {
   }
 
   step "lint" {
-    adapter = adapter.shell.default
+    target = adapter.shell.default
     input {
       command = "run-lint"
     }
@@ -1161,7 +1181,7 @@ step "run_smoke" {
 
 # Then in a subsequent step's input:
 step "report" {
-  adapter = adapter.shell.default
+  target = adapter.shell.default
   input {
     result = subworkflow.smoke_test.output.status
   }

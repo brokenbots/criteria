@@ -24,15 +24,16 @@ func compileSubworkflowStep(g *FSMGraph, sp *StepSpec, _ *Spec, subworkflowRef s
 
 	diags = append(diags, validateOnFailureForNonIterating(sp)...)
 
-	envKey, d := resolveStepEnvironmentOverride(sp.Name, sp.Remain, g)
-	diags = append(diags, d...)
-
 	if len(sp.AllowTools) > 0 {
 		diags = append(diags, &hcl.Diagnostic{
 			Severity: hcl.DiagError,
 			Summary:  fmt.Sprintf("step %q: allow_tools is not valid for subworkflow-targeted steps", sp.Name),
 		})
 	}
+
+	// Environment override is not applicable for subworkflow-targeted steps;
+	// the environment for the callee is set on the subworkflow declaration.
+	diags = append(diags, rejectEnvOverrideForSubworkflow(sp.Name, sp.Remain)...)
 
 	// Compile the step-level input block if present. Attributes are captured as
 	// expressions for runtime evaluation against the parent scope, then passed
@@ -71,7 +72,7 @@ func compileSubworkflowStep(g *FSMGraph, sp *StepSpec, _ *Spec, subworkflowRef s
 		Timeout:        timeout,
 		InputExprs:     inputExprs,
 		Outcomes:       map[string]string{},
-		Environment:    envKey,
+		Environment:    "",
 	}
 
 	diags = append(diags, compileOutcomeBlock(sp, node)...)

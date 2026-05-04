@@ -448,3 +448,84 @@ func mapKeys[K comparable, V any](m map[K]V) []K {
 	}
 	return keys
 }
+
+// TestCompileStep_SubworkflowTarget_EnvironmentRejected verifies that setting
+// environment on a non-iterating subworkflow-targeted step is a compile error.
+func TestCompileStep_SubworkflowTarget_EnvironmentRejected(t *testing.T) {
+	dir := t.TempDir()
+	writeSubworkflowDir(t, dir, "inner", minimalCalleeHCL("inner", nil))
+
+	src := `
+workflow "t" {
+  adapter "noop" "default" {}
+  environment "shell" "ci" {}
+  version       = "0.1"
+  initial_state = "s"
+  target_state  = "done"
+  subworkflow "inner" {
+    source = "inner"
+  }
+  step "s" {
+    target      = subworkflow.inner
+    environment = shell.ci
+    outcome "success" { transition_to = "done" }
+  }
+  state "done" { terminal = true }
+}
+`
+	spec, diags := Parse("t.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	_, diags = CompileWithOpts(spec, nil, CompileOpts{
+		WorkflowDir:         dir,
+		SubWorkflowResolver: &LocalSubWorkflowResolver{},
+	})
+	if !diags.HasErrors() {
+		t.Fatal("expected compile error for environment on subworkflow-targeted step; got none")
+	}
+	if !strings.Contains(diags.Error(), "not valid for subworkflow-targeted steps") {
+		t.Errorf("expected error to mention subworkflow restriction, got: %s", diags.Error())
+	}
+}
+
+// TestCompileStep_SubworkflowIterTarget_EnvironmentRejected verifies that
+// setting environment on an iterating subworkflow-targeted step is also rejected.
+func TestCompileStep_SubworkflowIterTarget_EnvironmentRejected(t *testing.T) {
+	dir := t.TempDir()
+	writeSubworkflowDir(t, dir, "inner", minimalCalleeHCL("inner", nil))
+
+	src := `
+workflow "t" {
+  adapter "noop" "default" {}
+  environment "shell" "ci" {}
+  version       = "0.1"
+  initial_state = "s"
+  target_state  = "done"
+  subworkflow "inner" {
+    source = "inner"
+  }
+  step "s" {
+    for_each    = ["a"]
+    target      = subworkflow.inner
+    environment = shell.ci
+    outcome "success" { transition_to = "done" }
+  }
+  state "done" { terminal = true }
+}
+`
+	spec, diags := Parse("t.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	_, diags = CompileWithOpts(spec, nil, CompileOpts{
+		WorkflowDir:         dir,
+		SubWorkflowResolver: &LocalSubWorkflowResolver{},
+	})
+	if !diags.HasErrors() {
+		t.Fatal("expected compile error for environment on iterating subworkflow-targeted step; got none")
+	}
+	if !strings.Contains(diags.Error(), "not valid for subworkflow-targeted steps") {
+		t.Errorf("expected error to mention subworkflow restriction, got: %s", diags.Error())
+	}
+}
