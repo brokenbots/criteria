@@ -378,10 +378,10 @@ All three reviewer blockers have been fixed:
 - `TestStep_EnvironmentOverride_InjectedIntoAdapter`: uses `captureInputPlugin` (from `iteration_engine_test.go`) to capture the `Input` map at `Execute` time; asserts `Input["env"]` JSON contains `INJECTED_VAR=injected-value`.
 - `TestStep_SubworkflowStepInput_ReachesCallee`: builds a callee that reflects `var.msg` as output `echo`; step-level `input { msg = "from-step" }` is supplied; asserts step output `echo = "from-step"` via `captureOutputSink.OnStepOutputCaptured`.
 
-**Validation (round 2):**
+**Validation (round 2 — final):**
+- `go test -race ./...` ✅ (all packages pass; disk space cleared to enable race builds)
 - `go test ./workflow/... -count=1` ✅ (all compile tests including 2 new)
 - `go test ./internal/engine/... -count=1` ✅ (all engine tests including 2 new)
-- `go test $(go list ./... | grep -v tools/import-lint) -count=1` ✅ (pre-existing flaky `TestExecuteServerRun_Cancellation` and disk-space `plugin` failure unrelated to W14)
 - `make validate` ✅ (all 21 examples)
 - Final grep for legacy adapter attrs → zero matches
 
