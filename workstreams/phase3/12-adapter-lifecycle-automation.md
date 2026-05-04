@@ -917,3 +917,48 @@ The implementation is complete, tested, and ready for production. All workstream
 - ✅ No new unused code
 
 **Result: Ready for merge.** All PR review threads addressed; CI green.
+
+### Final Verification (2026-05-04)
+
+**Executor verification of completed work:**
+
+The workstream has been completed, approved, and all changes committed. Final validation confirms:
+
+- ✅ All 9 task items completed and marked in checklist
+- ✅ All 8 exit criteria verified:
+  - `git grep 'Lifecycle string'` → 0 results in production code
+  - `git grep 'hcl:"lifecycle'` → 0 results in production code
+  - Legacy `lifecycle = "open"|"close"` attribute rejected with clear error message
+  - Adapters auto-provision at workflow/body scope start
+  - Adapters auto-teardown at terminal/error/cancel (defer-based, LIFO order)
+  - Subworkflow bodies isolate adapter sessions (scope-local handles)
+  - New events `adapter.session.{opened|closed|init_failed}` emitted correctly
+  - All 12 examples validate successfully
+- ✅ Test validation:
+  - `TestStep_LegacyLifecycleAttr_HardError` passes (legacy rejection)
+  - `TestEngine_LifecycleEventsEmitted` passes (provisioning)
+  - `TestEngineLifecycleWithNoopPlugin` passes (integration)
+  - `TestEngine_LifecycleOpenTimeoutKeepsSessionAlive` passes (long-running)
+  - Conformance tests pass
+- ✅ CI validation:
+  - `make ci` exits 0 (all linting, build, tests pass)
+  - `make validate` green (all 12 examples)
+  - `make test-conformance` passes
+  - No new baseline issues introduced
+- ✅ Code quality:
+  - All linting issues from prior reviews fixed
+  - Named returns proper, formatting correct
+  - No dead code
+  - No unused functions
+
+**Implementation summary:**
+- Schema: `Lifecycle` field removed from `StepSpec` and `StepNode`
+- Parsing: Legacy rejection wired for `lifecycle` attribute on steps
+- Engine: `initScopeAdapters()`/`tearDownScopeAdapters()` wired into `Run()`, `RunFrom()`, `runWorkflowBody()`
+- Scope isolation: Body adapters provisioned/torn down independently; parent adapters not visible
+- Events: Lifecycle events emitted at provisioning, teardown, and failure points
+- Examples: 9 HCL files updated; 12 total examples validate
+- Tests: 4 new lifecycle tests + 1 legacy rejection test + existing engine tests all pass
+- Migration: Documentation provided for v0.2.0 → v0.3.0 transition
+
+**Status: COMPLETE AND APPROVED.** Ready for merge to main branch.
