@@ -3,10 +3,12 @@ package engine
 // node_subworkflow_test.go — unit tests for runSubworkflow (W13, Phase 3).
 //
 // These tests verify the runtime entry point without requiring W14's step
-// target wiring. They call runSubworkflow directly.
+// target wiring. They call runSubworkflow directly and assert on the returned
+// output map (matching the workstream-specified signature).
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/hashicorp/hcl/v2"
@@ -18,7 +20,7 @@ import (
 )
 
 // minimalSubworkflowNode builds a SubworkflowNode with the simplest possible
-// callee FSMGraph: a single terminal state.
+// callee FSMGraph: a single terminal state and no declared outputs.
 func minimalSubworkflowNode(name string) *workflow.SubworkflowNode {
 	body := &workflow.FSMGraph{
 		InitialState: "done",
@@ -37,6 +39,16 @@ func minimalSubworkflowNode(name string) *workflow.SubworkflowNode {
 	}
 }
 
+// traversalExpr builds an hcl.Expression for a dotted traversal like "var.x"
+// or "each.value" without requiring HCL text parsing.
+func traversalExpr(root string, attrs ...string) hcl.Expression {
+	t := hcl.Traversal{hcl.TraverseRoot{Name: root}}
+	for _, a := range attrs {
+		t = append(t, hcl.TraverseAttr{Name: a})
+	}
+	return &hclsyntax.ScopeTraversalExpr{Traversal: t}
+}
+
 func testDeps(t *testing.T) Deps {
 	t.Helper()
 	sessions := plugin.NewSessionManager(plugin.NewLoader())
@@ -48,7 +60,8 @@ func testDeps(t *testing.T) Deps {
 }
 
 // TestRunSubworkflow_ReachesTerminalState verifies that runSubworkflow executes
-// a minimal callee FSMGraph to its terminal state and returns without error.
+// a minimal callee FSMGraph to completion without error, returning nil outputs
+// when no output blocks are declared.
 func TestRunSubworkflow_ReachesTerminalState(t *testing.T) {
 	node := minimalSubworkflowNode("simple")
 	parentSt := &RunState{
@@ -56,91 +69,133 @@ func TestRunSubworkflow_ReachesTerminalState(t *testing.T) {
 		WorkflowDir: t.TempDir(),
 	}
 
-	terminal, _, err := runSubworkflow(context.Background(), node, parentSt, testDeps(t))
+	outputs, err := runSubworkflow(context.Background(), node, parentSt, testDeps(t))
 	if err != nil {
 		t.Fatalf("runSubworkflow: %v", err)
 	}
-	if terminal != "done" {
-		t.Errorf("expected terminal state 'done', got %q", terminal)
+	if len(outputs) != 0 {
+		t.Errorf("expected no outputs, got %v", outputs)
 	}
 }
 
-// TestRunSubworkflow_InputBinding verifies that parent-scope input expressions
-// are evaluated and bound into the child's var.* scope.
-func TestRunSubworkflow_InputBinding(t *testing.T) {
-	// Callee has a variable "greeting" with no default; the parent must supply it.
+// TestRunSubworkflow_OutputsEvaluated verifies that a callee's declared output
+// expressions are evaluated against the final child state and returned to the
+// caller. This is the core of Step 6's runtime contract.
+func TestRunSubworkflow_OutputsEvaluated(t *testing.T) {
+	// Callee declares a literal output: output "status" { value = "ok" }
 	body := &workflow.FSMGraph{
 		InitialState: "done",
-		States: map[string]*workflow.StateNode{
-			"done": {Name: "done", Terminal: true, Success: true},
+		States:       map[string]*workflow.StateNode{"done": {Name: "done", Terminal: true, Success: true}},
+		Variables:    map[string]*workflow.VariableNode{},
+		Outputs: map[string]*workflow.OutputNode{
+			"status": {Name: "status", Value: &hclsyntax.LiteralValueExpr{Val: cty.StringVal("ok")}},
 		},
-		Variables: map[string]*workflow.VariableNode{
-			"greeting": {Name: "greeting", Type: cty.String},
-		},
+		OutputOrder: []string{"status"},
 	}
-	// Build a literal HCL expression: "hello"
-	greetingExpr := hclsyntax.LiteralValueExpr{Val: cty.StringVal("hello")}
-
 	node := &workflow.SubworkflowNode{
-		Name:      "greeter",
-		Body:      body,
-		BodyEntry: "done",
-		Inputs:    map[string]hcl.Expression{"greeting": &greetingExpr},
-		DeclaredVars: map[string]*workflow.VariableNode{
-			"greeting": {Name: "greeting", Type: cty.String},
-		},
+		Name:         "status-test",
+		Body:         body,
+		BodyEntry:    "done",
+		Inputs:       map[string]hcl.Expression{},
+		DeclaredVars: map[string]*workflow.VariableNode{},
 	}
-
 	parentSt := &RunState{
 		Vars:        map[string]cty.Value{"var": cty.EmptyObjectVal},
 		WorkflowDir: t.TempDir(),
 	}
 
-	terminal, finalVars, err := runSubworkflow(context.Background(), node, parentSt, testDeps(t))
+	outputs, err := runSubworkflow(context.Background(), node, parentSt, testDeps(t))
 	if err != nil {
 		t.Fatalf("runSubworkflow: %v", err)
 	}
-	if terminal != "done" {
-		t.Errorf("expected terminal 'done', got %q", terminal)
+	got, ok := outputs["status"]
+	if !ok {
+		t.Fatal("output 'status' not present in returned map")
 	}
-	// The child's final vars should contain var.greeting = "hello".
-	if varObj, ok := finalVars["var"]; ok && varObj.Type().IsObjectType() {
-		if varObj.Type().HasAttribute("greeting") {
-			got := varObj.GetAttr("greeting").AsString()
-			if got != "hello" {
-				t.Errorf("var.greeting: want %q, got %q", "hello", got)
-			}
-		}
+	if got.AsString() != "ok" {
+		t.Errorf("output 'status': want %q, got %q", "ok", got.AsString())
 	}
 }
 
-// TestRunSubworkflow_EachThreaded verifies that the parent's each.* bindings
-// are visible inside the subworkflow child scope (read-only pass-through).
-func TestRunSubworkflow_EachThreaded(t *testing.T) {
-	node := minimalSubworkflowNode("each-test")
+// TestRunSubworkflow_InputBoundToOutput verifies the full data-flow path:
+// parent input expression → callee var.* → callee output → returned output map.
+func TestRunSubworkflow_InputBoundToOutput(t *testing.T) {
+	// Callee: variable "greeting" (no default) + output "result" = var.greeting
+	body := &workflow.FSMGraph{
+		InitialState: "done",
+		States:       map[string]*workflow.StateNode{"done": {Name: "done", Terminal: true, Success: true}},
+		Variables:    map[string]*workflow.VariableNode{"greeting": {Name: "greeting", Type: cty.String}},
+		Outputs: map[string]*workflow.OutputNode{
+			"result": {Name: "result", Value: traversalExpr("var", "greeting")},
+		},
+		OutputOrder: []string{"result"},
+	}
+	node := &workflow.SubworkflowNode{
+		Name:         "greeter",
+		Body:         body,
+		BodyEntry:    "done",
+		Inputs:       map[string]hcl.Expression{"greeting": &hclsyntax.LiteralValueExpr{Val: cty.StringVal("hello")}},
+		DeclaredVars: map[string]*workflow.VariableNode{"greeting": {Name: "greeting", Type: cty.String}},
+	}
+	parentSt := &RunState{
+		Vars:        map[string]cty.Value{"var": cty.EmptyObjectVal},
+		WorkflowDir: t.TempDir(),
+	}
 
-	eachVal := cty.ObjectVal(map[string]cty.Value{
-		"value": cty.StringVal("item-x"),
-		"_idx":  cty.NumberIntVal(0),
-	})
+	outputs, err := runSubworkflow(context.Background(), node, parentSt, testDeps(t))
+	if err != nil {
+		t.Fatalf("runSubworkflow: %v", err)
+	}
+	got, ok := outputs["result"]
+	if !ok {
+		t.Fatal("output 'result' not present")
+	}
+	if got.AsString() != "hello" {
+		t.Errorf("output 'result': want %q, got %q", "hello", got.AsString())
+	}
+}
+
+// TestRunSubworkflow_EachThreadedToOutput verifies that each.* from the parent
+// scope is visible inside the subworkflow and can be captured via an output.
+func TestRunSubworkflow_EachThreadedToOutput(t *testing.T) {
+	// Callee has output "item" = each.value
+	body := &workflow.FSMGraph{
+		InitialState: "done",
+		States:       map[string]*workflow.StateNode{"done": {Name: "done", Terminal: true, Success: true}},
+		Variables:    map[string]*workflow.VariableNode{},
+		Outputs: map[string]*workflow.OutputNode{
+			"item": {Name: "item", Value: traversalExpr("each", "value")},
+		},
+		OutputOrder: []string{"item"},
+	}
+	node := &workflow.SubworkflowNode{
+		Name:         "each-test",
+		Body:         body,
+		BodyEntry:    "done",
+		Inputs:       map[string]hcl.Expression{},
+		DeclaredVars: map[string]*workflow.VariableNode{},
+	}
 	parentSt := &RunState{
 		Vars: map[string]cty.Value{
-			"var":  cty.EmptyObjectVal,
-			"each": eachVal,
+			"var": cty.EmptyObjectVal,
+			"each": cty.ObjectVal(map[string]cty.Value{
+				"value": cty.StringVal("item-x"),
+				"_idx":  cty.NumberIntVal(0),
+			}),
 		},
 		WorkflowDir: t.TempDir(),
 	}
 
-	_, finalVars, err := runSubworkflow(context.Background(), node, parentSt, testDeps(t))
+	outputs, err := runSubworkflow(context.Background(), node, parentSt, testDeps(t))
 	if err != nil {
 		t.Fatalf("runSubworkflow: %v", err)
 	}
-	each, ok := finalVars["each"]
+	got, ok := outputs["item"]
 	if !ok {
-		t.Fatal("each not present in child final vars")
+		t.Fatal("output 'item' not present")
 	}
-	if got := each.GetAttr("value").AsString(); got != "item-x" {
-		t.Errorf("each.value: want %q, got %q", "item-x", got)
+	if got.AsString() != "item-x" {
+		t.Errorf("output 'item': want %q, got %q", "item-x", got.AsString())
 	}
 }
 
@@ -156,7 +211,7 @@ func TestRunSubworkflow_MissingRequiredInput(t *testing.T) {
 		Name:         "missing-input",
 		Body:         body,
 		BodyEntry:    "done",
-		Inputs:       map[string]hcl.Expression{}, // no input provided
+		Inputs:       map[string]hcl.Expression{},
 		DeclaredVars: map[string]*workflow.VariableNode{"required_var": {Name: "required_var", Type: cty.String}},
 	}
 	parentSt := &RunState{
@@ -164,8 +219,11 @@ func TestRunSubworkflow_MissingRequiredInput(t *testing.T) {
 		WorkflowDir: t.TempDir(),
 	}
 
-	_, _, err := runSubworkflow(context.Background(), node, parentSt, testDeps(t))
+	_, err := runSubworkflow(context.Background(), node, parentSt, testDeps(t))
 	if err == nil {
 		t.Fatal("expected error for missing required input, got none")
+	}
+	if !strings.Contains(err.Error(), "required") {
+		t.Errorf("error should mention 'required', got: %v", err)
 	}
 }

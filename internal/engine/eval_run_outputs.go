@@ -75,6 +75,35 @@ func evalRunOutputs(g *workflow.FSMGraph, st *RunState) ([]map[string]string, er
 	return result, nil
 }
 
+// evalRunOutputsAsValues evaluates each declared output expression against the
+// final run state and returns the resolved cty.Value keyed by output name.
+// This is the internal form used by runSubworkflow to return output values to
+// the parent caller; use evalRunOutputs for the string-rendered event form.
+func evalRunOutputsAsValues(g *workflow.FSMGraph, st *RunState) (map[string]cty.Value, error) {
+	if len(g.Outputs) == 0 {
+		return nil, nil
+	}
+	evalCtx := workflow.BuildEvalContextWithOpts(st.Vars, workflow.DefaultFunctionOptions(st.WorkflowDir))
+	result := make(map[string]cty.Value, len(g.Outputs))
+	for _, name := range g.OutputOrder {
+		on := g.Outputs[name]
+		val, diags := on.Value.Value(evalCtx)
+		if diags.HasErrors() {
+			return nil, fmt.Errorf("output %q: evaluation failed: %s", name, diags.Error())
+		}
+		if on.DeclaredType != cty.NilType {
+			converted, err := convert.Convert(val, on.DeclaredType)
+			if err != nil {
+				return nil, fmt.Errorf("output %q: value of type %s is not assignable to declared type %s: %w",
+					name, val.Type().FriendlyName(), on.DeclaredType.FriendlyName(), err)
+			}
+			val = converted
+		}
+		result[name] = val
+	}
+	return result, nil
+}
+
 // renderCtyValue converts a cty.Value to a string representation suitable for
 // transport (JSON encoding for most types, friendly string for others).
 func renderCtyValue(val cty.Value) (string, error) {

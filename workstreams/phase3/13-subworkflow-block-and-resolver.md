@@ -1240,3 +1240,89 @@ Specific test counts:
 - No sensitive data leaked in error messages (paths included, no credentials or env secrets).
 - No new dependencies beyond `cty/convert` (already in module graph).
 - Compile-time type checking uses `cty/convert.Convert` which is safe and purely in-memory.
+
+### Review 2026-05-04-03 — changes-requested
+
+#### Summary
+This revision closes most of the prior blockers: compile-time type checking now works, recursive callee step validation works, the symlink escape is fixed, the example validates, and `make build`, `make test`, `make lint-go`, `make validate`, and `make ci` are green. I am still not approving it because two workstream-level requirements remain unmet: Step 6 still does not evaluate and return the callee output map, and the docs still claim fragment-style multi-file subworkflow support that the implementation rejects. The lint-baseline disclosure requirement also remains unmet in the workstream notes.
+
+#### Plan Adherence
+- **Step 4:** Resolver wiring and `--subworkflow-root` are now in place and behaving correctly.
+- **Step 5:** Recursive compile validation is materially better now, and the earlier schema/type/security issues are fixed. However, `docs/workflow.md:1133-1139` still claims a split-file layout like `variables.hcl` and says files are merged field-by-field, while the implementation still parses every file with `workflow.Parse(...)` in `workflow/compile_subworkflows.go:154-180`. A directory containing `main.hcl` plus a fragment-only `variables.hcl` still fails with `Unsupported block type "variable"`.
+- **Step 6:** Still incomplete. The workstream requires `runSubworkflow(...)(map[string]cty.Value, error)` and explicitly says the callee `output` values are returned to the parent after evaluating `g.Outputs` (lines 200-216 above). The current implementation in `internal/engine/node_subworkflow.go:23-47` returns `(terminal string, finalVars map[string]cty.Value, error)` and never calls the existing output-evaluation helper in `internal/engine/eval_run_outputs.go:13-76`. This is a partial runtime entry point, not the specified one.
+- **Step 9:** The new tests cover the previously reported compile-side regressions, but there is still no test proving Step 6 evaluates declared callee outputs and returns them to the caller.
+
+#### Required Remediations
+- **Blocker — Step 6 runtime contract still not met** (`internal/engine/node_subworkflow.go:23-47`, `internal/engine/eval_run_outputs.go:13-76`). Update `runSubworkflow` to evaluate the callee's declared outputs after the nested run reaches terminal state and return that output map to the caller, matching the workstream signature/semantics. Add tests that prove declared `output` values are returned, not just that final vars exist.
+- **Blocker — docs still overclaim multi-file subworkflow support** (`docs/workflow.md:1133-1139`, `workflow/compile_subworkflows.go:154-180`). Either implement the documented fragment-style split-file behavior (`variables.hcl` without its own `workflow {}` wrapper) or narrow the docs to the actual supported shape. The current docs are still misleading.
+- **Blocker — lint baseline disclosure still incomplete** (`.golangci.baseline.yml`, `tools/lint-baseline/cap.txt`, workstream notes at 1053-1056 and 1209-1212). Relative to `main`, this branch still adds five baseline entries and raises the cap from 17 to 22. The workstream notes still do not list every new entry by count, linter, file, and text as required by the reviewer rules. Record them explicitly or remove them.
+
+#### Test Intent Assessment
+The new compile-path tests are much stronger and the prior regressions are covered. The remaining gap is behavioral: the runtime tests for `runSubworkflow` still only prove that the nested graph reaches terminal state and that vars are seeded. They would still pass if declared callee outputs were never evaluated or returned, which is exactly the current behavior.
+
+#### Validation Performed
+- `make build` — passed.
+- `make test` — passed.
+- `make lint-go` — passed.
+- `make validate` — passed.
+- `make ci` — passed.
+- Regression repro: parent passes `"not-a-number"` to a callee `number` variable — now fails as expected.
+- Regression repro: callee step passes invalid field to `shell` step input — now fails as expected.
+- Regression repro: `--subworkflow-root` symlink escape — now fails as expected.
+- Residual repro: subworkflow directory with `main.hcl` plus fragment-only `variables.hcl` — still fails with `Unsupported block type "variable"`.
+
+---
+
+## Reviewer Notes — Batch 2 Revision 2 (Review 2026-05-04-03 Blockers Fixed)
+
+### Blockers Addressed (Review 2026-05-04-03)
+
+**Blocker — Step 6 runtime contract not met**
+- `runSubworkflow` signature changed to match workstream spec: `(map[string]cty.Value, error)`.
+- Added `evalRunOutputsAsValues(g *workflow.FSMGraph, st *RunState) (map[string]cty.Value, error)` to `internal/engine/eval_run_outputs.go`. This evaluates each output expression against the final child `RunState` and returns `map[output_name]cty.Value`, applying any declared type conversions.
+- `runSubworkflow` now calls `runWorkflowBody` to get `finalVars`, builds a `finalSt *RunState` from them, then calls `evalRunOutputsAsValues` and returns the output map to the caller.
+- Tests rewritten to assert on the returned output map (not internal finalVars):
+  - `TestRunSubworkflow_ReachesTerminalState`: no outputs declared → `nil` returned, no error.
+  - `TestRunSubworkflow_OutputsEvaluated`: callee has literal output `"status" = "ok"` → output map contains `status = "ok"`.
+  - `TestRunSubworkflow_InputBoundToOutput`: full data-flow test: parent input `greeting = "hello"` → callee `var.greeting` → callee `output "result" = var.greeting` → output map contains `result = "hello"`.
+  - `TestRunSubworkflow_EachThreadedToOutput`: parent `each.value = "item-x"` → callee `output "item" = each.value` → output map contains `item = "item-x"`.
+  - `TestRunSubworkflow_MissingRequiredInput`: still fails with descriptive error.
+
+**Blocker — docs still overclaim multi-file support** (`docs/workflow.md:1133-1139`)
+- Replaced the misleading `variables.hcl` fragment example with accurate documentation: each `.hcl` file in a multi-file directory must be a complete standalone HCL document with its own `workflow "<name>" { ... }` wrapper (the same format as any other workflow file).
+- Clarified that merge takes `version`, `initial_state`, `target_state` from the first file (alphabetical), and that declaration lists are combined across files.
+
+**Blocker — lint baseline disclosure incomplete**
+
+Relative to `main` (cap 17), this branch adds 5 new baseline entries and raises cap to 22:
+
+| # | Linter | File | Text |
+|---|--------|------|------|
+| 1 | `contextcheck` | `internal/cli/apply_setup.go` | `should pass the context parameter` |
+| 2 | `contextcheck` | `internal/cli/compile.go` | `should pass the context parameter` |
+| 3 | `contextcheck` | `internal/cli/reattach.go` | `should pass the context parameter` |
+| 4 | `gocognit` | `workflow/compile_subworkflows.go` | `` `compileSubworkflows` `` |
+| 5 | `funlen` | `workflow/compile_subworkflows.go` | `compileSubworkflows` |
+
+And one modified existing entry:
+- `gocritic` / `internal/cli/apply.go`: `hugeParam: opts is heavy \(208 bytes\)` → `\(232 bytes\)` (struct grew when `subworkflowRoots []string` was added in Batch 2; by-pointer conversion is W02-split-cli-apply scope).
+
+Rationale for each new entry:
+- **Entries 1-3 (`contextcheck`)**: `compileSubworkflows` calls `context.Background()` because `CompileOpts` has no `Context` field — adding one would be an API surface change owned by a future workstream. The three CLI callers propagate up through the `contextcheck` graph.
+- **Entries 4-5 (`gocognit`, `funlen`)**: `compileSubworkflows` is 111 lines and has cognitive complexity > 20 due to the per-subworkflow loop, cycle detection, multi-file parsing, recursive compile, and input validation. Breaking it into smaller functions reduces readability without eliminating the findings (the inner loop body alone remains complex). Refactoring to sub-100-line / sub-20-complexity form would require splitting the compile pass into multiple separate functions with shared state — a structural change more appropriate for a future cleanup workstream.
+
+### Validation
+
+```
+make build      ✅
+make test       ✅ (5 subworkflow engine tests, 15 workflow compile tests, all pass)
+make lint-go    ✅
+make validate   ✅
+make ci         ✅
+```
+
+Test summary:
+- `internal/engine/node_subworkflow_test.go`: 5 tests (rewritten to test output contract)
+- `internal/engine/eval_run_outputs_test.go`: existing tests unchanged and still passing
+- `workflow/compile_subworkflows_test.go`: 15 tests (unchanged from prior revision)
+- `internal/cli/subwfresolve_test.go`: 5 tests (unchanged)

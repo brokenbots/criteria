@@ -5,7 +5,8 @@ package engine
 // runSubworkflow executes a pre-compiled SubworkflowNode in a nested engine loop,
 // mirroring the runWorkflowBody pattern from node_workflow.go. The input
 // expressions (parent-scope HCL) are evaluated against the parent's current
-// vars before entering the child scope.
+// vars before entering the child scope, and the callee's declared output
+// expressions are evaluated against the final child state before returning.
 //
 // W14 (universal step target) wires the `target = subworkflow.<name>` step
 // attribute to call this entry point. Until W14 lands, subworkflow blocks are
@@ -22,28 +23,42 @@ import (
 
 // runSubworkflow executes the subworkflow identified by node against the parent
 // run state. It evaluates the node's input expressions in the parent scope,
-// seeds the child scope, executes the callee FSMGraph to completion, and returns
-// the terminal state name and the child's final vars.
+// seeds the child scope, executes the callee FSMGraph to completion, evaluates
+// the callee's declared outputs, and returns the output map to the caller.
 //
-// The caller (W14 step target wiring) is responsible for projecting the child
-// finalVars back into the parent scope under subworkflow.<name>.output.* once
-// output block evaluation is supported.
-func runSubworkflow(ctx context.Context, node *workflow.SubworkflowNode, parentSt *RunState, deps Deps) (terminal string, finalVars map[string]cty.Value, err error) {
+// The caller (W14 step target wiring) projects the returned output values back
+// into the parent scope under subworkflow.<name>.output.* once Step 7 lands.
+func runSubworkflow(ctx context.Context, node *workflow.SubworkflowNode, parentSt *RunState, deps Deps) (map[string]cty.Value, error) {
 	// Evaluate each input expression against the parent scope.
 	evalOpts := workflow.DefaultFunctionOptions(parentSt.WorkflowDir)
 	inputVals, err := evaluateSubworkflowInputs(node, parentSt.Vars, evalOpts)
 	if err != nil {
-		return "", nil, fmt.Errorf("subworkflow %q: input evaluation: %w", node.Name, err)
+		return nil, fmt.Errorf("subworkflow %q: input evaluation: %w", node.Name, err)
 	}
 
 	// Seed the child scope: start from the callee's variable defaults, then
 	// apply the evaluated input bindings.
 	childVars, err := seedChildVarsFromBindings(node.Body, inputVals, parentSt.Vars)
 	if err != nil {
-		return "", nil, fmt.Errorf("subworkflow %q: %w", node.Name, err)
+		return nil, fmt.Errorf("subworkflow %q: %w", node.Name, err)
 	}
 
-	return runWorkflowBody(ctx, node.Body, node.BodyEntry, childVars, parentSt.WorkflowDir, deps)
+	// Run the callee FSMGraph to a terminal state.
+	_, finalVars, err := runWorkflowBody(ctx, node.Body, node.BodyEntry, childVars, parentSt.WorkflowDir, deps)
+	if err != nil {
+		return nil, fmt.Errorf("subworkflow %q: %w", node.Name, err)
+	}
+
+	// Evaluate the callee's declared outputs against the final child state.
+	finalSt := &RunState{
+		Vars:        finalVars,
+		WorkflowDir: parentSt.WorkflowDir,
+	}
+	outputs, err := evalRunOutputsAsValues(node.Body, finalSt)
+	if err != nil {
+		return nil, fmt.Errorf("subworkflow %q: output evaluation: %w", node.Name, err)
+	}
+	return outputs, nil
 }
 
 // evaluateSubworkflowInputs evaluates each input expression stored in the node

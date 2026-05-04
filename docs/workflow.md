@@ -1132,11 +1132,11 @@ Each `source` path must point to a **directory** (not a file) containing at leas
 
 ```
 ./subworkflows/smoke/
-  main.hcl        # workflow block, steps, outputs
-  variables.hcl   # optional: split declarations across files
+  main.hcl        # workflow block, states, steps, outputs
+  variables.hcl   # optional: additional declarations in their own workflow {} block
 ```
 
-Multiple `.hcl` files in the directory are merged field-by-field at compile time. Duplicate declarations across files produce a compile error.
+Multiple `.hcl` files in the directory are merged at compile time. Each file must be a complete, standalone HCL document with its own `workflow "<name>" { ... }` wrapper (the same format as any other workflow file). Declaration lists (states, steps, variables, outputs) from all files are combined; the `version`, `initial_state`, and `target_state` are taken from the first file read (alphabetical order). Duplicate name declarations across files produce a compile error.
 
 ### Input binding
 
