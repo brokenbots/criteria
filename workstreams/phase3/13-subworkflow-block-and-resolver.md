@@ -1452,3 +1452,27 @@ Test summary:
 - `internal/engine/node_subworkflow_test.go`: 9 tests
   - 6 prior (output data-flow, path regression)
   - 3 new: AdaptersIsolatedFromParent, ErrorPropagatesToParent, CalleeCancellation
+
+### Review 2026-05-04-06 — approved
+
+#### Summary
+Approved. The remaining Step 6 blocker from the prior pass is now resolved: `internal/engine/node_subworkflow_test.go` includes direct, deterministic coverage for adapter isolation, callee error propagation, and callee cancellation, and those tests exercise the actual `runSubworkflow` contract boundary rather than the removed inline-workflow path.
+
+#### Plan Adherence
+- **Step 6 runtime entry point:** Implemented and previously verified, including callee-directory evaluation for runtime file functions.
+- **Step 9 runtime tests:** Now aligned with the workstream’s required coverage. The runtime suite includes direct coverage for happy-path/output behavior plus the three previously missing cases:
+  - `TestRunSubworkflow_AdaptersIsolatedFromParent`
+  - `TestRunSubworkflow_ErrorPropagatesToParent`
+  - `TestRunSubworkflow_CalleeCancellation`
+
+#### Test Intent Assessment
+The new tests clear the remaining acceptance gap. They assert observable contract behavior and would fail under plausible regressions:
+- missing adapter teardown would leave `closes==0`
+- swallowed callee step failures would return nil error
+- ignored cancellation would complete successfully instead of surfacing `context canceled`
+
+That is strong enough coverage for the runtime boundary this workstream introduces.
+
+#### Validation Performed
+- `go test ./internal/engine -run 'TestRunSubworkflow_(AdaptersIsolatedFromParent|ErrorPropagatesToParent|CalleeCancellation)$'` — passed.
+- `make ci` — passed.
