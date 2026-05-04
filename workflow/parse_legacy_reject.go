@@ -263,60 +263,6 @@ func rejectLegacyStepWorkflowFileInBody(body hcl.Body) hcl.Diagnostics {
 	return diags
 }
 
-// rejectLegacyStepInputBlock checks for and rejects the removed `step { input { ... } }` block (W08 stopgap).
-func rejectLegacyStepInputBlock(body hcl.Body) hcl.Diagnostics {
-	var diags hcl.Diagnostics
-
-	// First find the workflow block(s)
-	wfSchema := &hcl.BodySchema{
-		Blocks: []hcl.BlockHeaderSchema{
-			{Type: "workflow", LabelNames: []string{"name"}},
-		},
-	}
-	wfContent, _, _ := body.PartialContent(wfSchema)
-
-	for _, wfBlock := range wfContent.Blocks {
-		diags = append(diags, rejectLegacyStepInputBlockInBody(wfBlock.Body)...)
-	}
-
-	return diags
-}
-
-// rejectLegacyStepInputBlockInBody recursively checks for input blocks on all steps.
-func rejectLegacyStepInputBlockInBody(body hcl.Body) hcl.Diagnostics {
-	var diags hcl.Diagnostics
-
-	stepSchema := &hcl.BodySchema{
-		Blocks: []hcl.BlockHeaderSchema{
-			{Type: "step", LabelNames: []string{"name"}},
-		},
-	}
-	stepContent, _, _ := body.PartialContent(stepSchema)
-
-	for _, block := range stepContent.Blocks {
-		inputSchema := &hcl.BodySchema{
-			Blocks: []hcl.BlockHeaderSchema{
-				{Type: "input", LabelNames: []string{}},
-			},
-		}
-		inputContent, _, _ := block.Body.PartialContent(inputSchema)
-
-		for _, inputBlock := range inputContent.Blocks {
-			diags = append(diags, &hcl.Diagnostic{
-				Severity: hcl.DiagError,
-				Summary:  `removed block "input" on steps`,
-				Detail:   `step "input { ... }" blocks were removed in v0.3.0. Declare a top-level "subworkflow" block with input bindings and reference it via target in W14. See CHANGELOG.md migration note.`,
-				Subject:  &inputBlock.DefRange,
-			})
-		}
-
-		// Recursively check nested workflow steps
-		diags = append(diags, rejectLegacyStepInputBlockInBody(block.Body)...)
-	}
-
-	return diags
-}
-
 // rejectLegacyStepTypeAttr checks for and rejects the removed `step { type = "..." }` attribute.
 func rejectLegacyStepTypeAttr(body hcl.Body) hcl.Diagnostics {
 	var diags hcl.Diagnostics
