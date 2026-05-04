@@ -438,6 +438,26 @@ The new engine tests are now meaningfully aligned with behavior: `TestStep_Envir
 - Minimal parse repro for step environment override using `environment = shell.ci` ❌ (`Variables not allowed`)
 - Minimal compile repro for subworkflow-targeted step input ❌ (`step "call": input block is not valid for subworkflow-targeted steps; declare inputs on the subworkflow block instead`)
 
+### Review 2026-05-04-03 — approved
+
+#### Summary
+The remaining blocker is resolved. Step-level subworkflow inputs now enforce the callee variable contract at compile time for both non-iterating and iterating subworkflow-targeted steps, closing the silent-drop gap from the prior review. The workstream now meets the target-resolution, environment-override, migration, example, and validation requirements.
+
+#### Plan Adherence
+- **Universal `target` dispatch:** implemented for adapter and subworkflow targets, with `target = step.<name>` explicitly rejected as documented.
+- **Step-level `environment = ...` override:** implemented in the required bare traversal form and validated at compile time.
+- **Subworkflow-targeted step input:** implemented and now validated against callee-declared variables, including undeclared-key rejection for iterating and non-iterating paths.
+- **Examples, docs, and migration enforcement:** updated; legacy `step.adapter`/`step.agent` rejection remains in place.
+
+#### Test Intent Assessment
+The test suite now exercises both the positive and negative behavior that matters for this workstream: environment override reaches adapter execution, step-level subworkflow input reaches the callee, and undeclared step input keys are rejected before runtime in both subworkflow execution modes. Those assertions are regression-sensitive and aligned with the intended contract.
+
+#### Validation Performed
+- `go test -race ./...` ✅
+- `make validate` ✅
+- `make ci` ✅
+- `git --no-pager grep -nE 'hcl:"adapter,optional"|hcl:"agent,optional"' -- ':!*_test.go' ':!docs/' ':!CHANGELOG.md' ':!workstreams/'` ✅ (no matches)
+
 
 ## Risks
 
