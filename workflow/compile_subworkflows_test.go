@@ -422,6 +422,95 @@ func TestCompileSubworkflows_MultiFileDirectory(t *testing.T) {
 	}
 }
 
+// TestCompileSubworkflows_MultiFileSubworkflowDeclarations verifies that subworkflow blocks
+// declared in multiple .hcl files within a directory are properly merged.
+func TestCompileSubworkflows_MultiFileSubworkflowDeclarations(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	innerDir := filepath.Join(tmpDir, "inner")
+	if err := os.Mkdir(innerDir, 0o755); err != nil {
+		t.Fatalf("create inner dir: %v", err)
+	}
+
+	// main.hcl: workflow with one subworkflow declaration.
+	mainHCL := `workflow "inner" {
+  version       = "1"
+  initial_state = "done"
+  target_state  = "done"
+
+  subworkflow "sub1" {
+    source = "./sub1"
+  }
+
+  state "done" {
+    terminal = true
+    success  = true
+  }
+}
+`
+	// sub.hcl: a second file in the same directory declaring another subworkflow.
+	subHCL := `workflow "inner" {
+  version       = "1"
+  initial_state = "done"
+  target_state  = "done"
+
+  subworkflow "sub2" {
+    source = "./sub2"
+  }
+}
+`
+	if err := os.WriteFile(filepath.Join(innerDir, "main.hcl"), []byte(mainHCL), 0o644); err != nil {
+		t.Fatalf("write main.hcl: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(innerDir, "sub.hcl"), []byte(subHCL), 0o644); err != nil {
+		t.Fatalf("write sub.hcl: %v", err)
+	}
+
+	// Create empty sub1 and sub2 directories so resolution succeeds.
+	sub1Dir := filepath.Join(innerDir, "sub1")
+	sub2Dir := filepath.Join(innerDir, "sub2")
+	if err := os.Mkdir(sub1Dir, 0o755); err != nil {
+		t.Fatalf("create sub1 dir: %v", err)
+	}
+	if err := os.Mkdir(sub2Dir, 0o755); err != nil {
+		t.Fatalf("create sub2 dir: %v", err)
+	}
+	// Each needs at least one .hcl file.
+	if err := os.WriteFile(filepath.Join(sub1Dir, "main.hcl"), []byte(`workflow "sub1" {
+  version       = "1"
+  initial_state = "done"
+  target_state  = "done"
+  state "done" { terminal = true }
+}`), 0o644); err != nil {
+		t.Fatalf("write sub1/main.hcl: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(sub2Dir, "main.hcl"), []byte(`workflow "sub2" {
+  version       = "1"
+  initial_state = "done"
+  target_state  = "done"
+  state "done" { terminal = true }
+}`), 0o644); err != nil {
+		t.Fatalf("write sub2/main.hcl: %v", err)
+	}
+
+	parentHCL := parentHCLWithSubworkflow("inner_task", "./inner", "")
+	graph, diags := compileParentSpec(t, parentHCL, tmpDir)
+	if diags.HasErrors() {
+		t.Fatalf("expected no errors, got: %s", diags.Error())
+	}
+	sw, ok := graph.Subworkflows["inner_task"]
+	if !ok {
+		t.Fatal("expected subworkflow 'inner_task' in graph")
+	}
+	// The merged callee should have both subworkflow declarations.
+	if _, hasSub1 := sw.Body.Subworkflows["sub1"]; !hasSub1 {
+		t.Error("expected subworkflow 'sub1' merged from main.hcl into callee graph")
+	}
+	if _, hasSub2 := sw.Body.Subworkflows["sub2"]; !hasSub2 {
+		t.Error("expected subworkflow 'sub2' merged from sub.hcl into callee graph")
+	}
+}
+
 // TestCompileSubworkflows_NilResolver errors when SubWorkflowResolver is nil.
 func TestCompileSubworkflows_NilResolver(t *testing.T) {
 	parentHCL := `workflow "parent" {

@@ -205,6 +205,7 @@ func mergeSubworkflowSpecs(specs ...*Spec) *Spec {
 		merged.Approvals = append(merged.Approvals, spec.Approvals...)
 		merged.Branches = append(merged.Branches, spec.Branches...)
 		merged.Environments = append(merged.Environments, spec.Environments...)
+		merged.Subworkflows = append(merged.Subworkflows, spec.Subworkflows...)
 	}
 
 	return merged

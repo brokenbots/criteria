@@ -161,6 +161,25 @@ func rejectLegacyStepLifecycleAttrInBody(body hcl.Body) hcl.Diagnostics {
 func rejectLegacyStepWorkflowBlock(body hcl.Body) hcl.Diagnostics {
 	var diags hcl.Diagnostics
 
+	// First find the workflow block(s)
+	wfSchema := &hcl.BodySchema{
+		Blocks: []hcl.BlockHeaderSchema{
+			{Type: "workflow", LabelNames: []string{"name"}},
+		},
+	}
+	wfContent, _, _ := body.PartialContent(wfSchema)
+
+	for _, wfBlock := range wfContent.Blocks {
+		diags = append(diags, rejectLegacyStepWorkflowBlockInBody(wfBlock.Body)...)
+	}
+
+	return diags
+}
+
+// rejectLegacyStepWorkflowBlockInBody recursively checks for inline workflow blocks in all steps.
+func rejectLegacyStepWorkflowBlockInBody(body hcl.Body) hcl.Diagnostics {
+	var diags hcl.Diagnostics
+
 	stepSchema := &hcl.BodySchema{
 		Blocks: []hcl.BlockHeaderSchema{
 			{Type: "step", LabelNames: []string{"name"}},
@@ -184,6 +203,9 @@ func rejectLegacyStepWorkflowBlock(body hcl.Body) hcl.Diagnostics {
 				Subject:  &wfBlock.DefRange,
 			})
 		}
+
+		// Recursively check nested workflow steps (for iteration bodies with inline workflows)
+		diags = append(diags, rejectLegacyStepWorkflowBlockInBody(block.Body)...)
 	}
 
 	return diags
@@ -191,6 +213,25 @@ func rejectLegacyStepWorkflowBlock(body hcl.Body) hcl.Diagnostics {
 
 // rejectLegacyStepWorkflowFile checks for and rejects the removed `step { workflow_file = "..." }` attribute.
 func rejectLegacyStepWorkflowFile(body hcl.Body) hcl.Diagnostics {
+	var diags hcl.Diagnostics
+
+	// First find the workflow block(s)
+	wfSchema := &hcl.BodySchema{
+		Blocks: []hcl.BlockHeaderSchema{
+			{Type: "workflow", LabelNames: []string{"name"}},
+		},
+	}
+	wfContent, _, _ := body.PartialContent(wfSchema)
+
+	for _, wfBlock := range wfContent.Blocks {
+		diags = append(diags, rejectLegacyStepWorkflowFileInBody(wfBlock.Body)...)
+	}
+
+	return diags
+}
+
+// rejectLegacyStepWorkflowFileInBody recursively checks for workflow_file attributes in all steps.
+func rejectLegacyStepWorkflowFileInBody(body hcl.Body) hcl.Diagnostics {
 	var diags hcl.Diagnostics
 
 	stepSchema := &hcl.BodySchema{
@@ -214,6 +255,9 @@ func rejectLegacyStepWorkflowFile(body hcl.Body) hcl.Diagnostics {
 				Subject:  &attr.NameRange,
 			})
 		}
+
+		// Recursively check nested workflow steps
+		diags = append(diags, rejectLegacyStepWorkflowFileInBody(block.Body)...)
 	}
 
 	return diags
@@ -221,6 +265,25 @@ func rejectLegacyStepWorkflowFile(body hcl.Body) hcl.Diagnostics {
 
 // rejectLegacyStepInputBlock checks for and rejects the removed `step { input { ... } }` block (W08 stopgap).
 func rejectLegacyStepInputBlock(body hcl.Body) hcl.Diagnostics {
+	var diags hcl.Diagnostics
+
+	// First find the workflow block(s)
+	wfSchema := &hcl.BodySchema{
+		Blocks: []hcl.BlockHeaderSchema{
+			{Type: "workflow", LabelNames: []string{"name"}},
+		},
+	}
+	wfContent, _, _ := body.PartialContent(wfSchema)
+
+	for _, wfBlock := range wfContent.Blocks {
+		diags = append(diags, rejectLegacyStepInputBlockInBody(wfBlock.Body)...)
+	}
+
+	return diags
+}
+
+// rejectLegacyStepInputBlockInBody recursively checks for input blocks on all steps.
+func rejectLegacyStepInputBlockInBody(body hcl.Body) hcl.Diagnostics {
 	var diags hcl.Diagnostics
 
 	stepSchema := &hcl.BodySchema{
@@ -246,6 +309,9 @@ func rejectLegacyStepInputBlock(body hcl.Body) hcl.Diagnostics {
 				Subject:  &inputBlock.DefRange,
 			})
 		}
+
+		// Recursively check nested workflow steps
+		diags = append(diags, rejectLegacyStepInputBlockInBody(block.Body)...)
 	}
 
 	return diags

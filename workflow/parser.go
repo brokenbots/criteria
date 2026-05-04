@@ -80,7 +80,6 @@ func checkLegacyAttributes(body hcl.Body) hcl.Diagnostics {
 		rejectLegacyStepWorkflowBlock,
 		rejectLegacyStepWorkflowFile,
 		rejectLegacyStepTypeAttr,
-		rejectLegacyStepInputBlock,
 	}
 
 	var diags hcl.Diagnostics
