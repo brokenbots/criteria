@@ -7,11 +7,18 @@
     "MaxStepRetries": 0,
     "MaxVisitsWarnThreshold": 200
   },
-  "agents": [],
+  "agents": [
+    {
+      "type": "shell",
+      "name": "default",
+      "on_crash": "fail",
+      "config_keys": null
+    }
+  ],
   "steps": [
     {
       "name": "say_hello",
-      "adapter": "shell",
+      "adapter": "shell.default",
       "input_keys": [
         "command"
       ],

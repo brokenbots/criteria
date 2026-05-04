@@ -6,8 +6,12 @@ workflow "build_and_test" {
   initial_state = "build"
   target_state  = "verified"
 
+  adapter "shell" "default" {
+    config { }
+  }
+
   step "build" {
-    adapter = "shell"
+    adapter = "shell.default"
     input {
       command = "go build ./..."
     }
@@ -18,7 +22,7 @@ workflow "build_and_test" {
   }
 
   step "test" {
-    adapter = "shell"
+    adapter = "shell.default"
     input {
       command = "go test ./..."
     }

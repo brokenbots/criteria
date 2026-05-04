@@ -7,7 +7,14 @@
     "MaxStepRetries": 0,
     "MaxVisitsWarnThreshold": 200
   },
-  "agents": [],
+  "agents": [
+    {
+      "type": "noop",
+      "name": "default",
+      "on_crash": "fail",
+      "config_keys": null
+    }
+  ],
   "steps": [
     {
       "name": "run_items",
@@ -36,7 +43,9 @@
   "step_order": [
     "run_items"
   ],
-  "plugins_required": null,
+  "plugins_required": [
+    "noop"
+  ],
   "metadata": {
     "schema_version": 1
   }

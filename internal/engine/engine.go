@@ -167,9 +167,27 @@ func (e *Engine) Run(ctx context.Context) error {
 	sessions := plugin.NewSessionManager(e.loader)
 	defer func() { _ = sessions.Shutdown(context.WithoutCancel(ctx)) }()
 
+	// Bootstrap adapter sessions for workflows without explicit lifecycle steps.
+	// This ensures tests and simple workflows work without needing lifecycle management.
+	if err := e.bootstrapAllAdapters(ctx, sessions); err != nil {
+		return err
+	}
+
 	current := e.graph.InitialState
 	e.sink.OnRunStarted(e.graph.Name, current)
 	return e.runLoop(ctx, sessions, current, 1)
+}
+
+// bootstrapAllAdapters opens all declared adapters if they haven't been opened yet.
+// This is needed for workflows without explicit lifecycle "open" steps.
+func (e *Engine) bootstrapAllAdapters(ctx context.Context, sessions *plugin.SessionManager) error {
+	for _, adapter := range e.graph.Adapters {
+		sessionID := adapter.Type + "." + adapter.Name
+		if err := sessions.Open(ctx, sessionID, adapter.Type, adapter.OnCrash, adapter.Config); err != nil && !errors.Is(err, plugin.ErrSessionAlreadyOpen) {
+			return fmt.Errorf("bootstrap adapter %q: %w", sessionID, err)
+		}
+	}
+	return nil
 }
 
 // RunFrom resumes a workflow at startStep with the given initialAttempt
@@ -182,6 +200,10 @@ func (e *Engine) RunFrom(ctx context.Context, startStep string, initialAttempt i
 	defer func() { _ = sessions.Shutdown(context.WithoutCancel(ctx)) }()
 
 	if err := e.bootstrapSessionsForResume(ctx, sessions, startStep); err != nil {
+		return err
+	}
+	// Also bootstrap any adapters that haven't been opened by explicit lifecycle steps.
+	if err := e.bootstrapAllAdapters(ctx, sessions); err != nil {
 		return err
 	}
 	return e.runLoop(ctx, sessions, startStep, initialAttempt)
@@ -432,7 +454,7 @@ func cloneVisits(v map[string]int) map[string]int {
 }
 
 func (e *Engine) bootstrapSessionsForResume(ctx context.Context, sessions *plugin.SessionManager, startStep string) error {
-	// Sessions are process-local and do not survive agent restarts.
+	// Sessions are process-local and do not survive adapter restarts.
 	// Crash recovery recreates them by replaying lifecycle steps declared before
 	// the resumed step in declaration order.
 	for _, name := range e.graph.StepOrder() {
@@ -440,21 +462,21 @@ func (e *Engine) bootstrapSessionsForResume(ctx context.Context, sessions *plugi
 			break
 		}
 		step, ok := e.graph.Steps[name]
-		if !ok || step.Agent == "" {
+		if !ok || step.Adapter == "" {
 			continue
 		}
 		switch step.Lifecycle {
 		case "open":
-			agent, ok := e.graph.Agents[step.Agent]
+			adapter, ok := e.graph.Adapters[step.Adapter]
 			if !ok {
-				return fmt.Errorf("unknown agent %q in step %q", step.Agent, step.Name)
+				return fmt.Errorf("unknown adapter %q in step %q", step.Adapter, step.Name)
 			}
-			if err := sessions.Open(ctx, step.Agent, agent.Adapter, step.OnCrash, agent.Config); err != nil && !errors.Is(err, plugin.ErrSessionAlreadyOpen) {
-				return fmt.Errorf("restore session for agent %q: %w", step.Agent, err)
+			if err := sessions.Open(ctx, step.Adapter, adapter.Type, step.OnCrash, adapter.Config); err != nil && !errors.Is(err, plugin.ErrSessionAlreadyOpen) {
+				return fmt.Errorf("restore session for adapter %q: %w", step.Adapter, err)
 			}
 		case "close":
-			if err := sessions.Close(ctx, step.Agent); err != nil {
-				return fmt.Errorf("restore close for agent %q: %w", step.Agent, err)
+			if err := sessions.Close(ctx, step.Adapter); err != nil {
+				return fmt.Errorf("restore close for adapter %q: %w", step.Adapter, err)
 			}
 		}
 	}

@@ -5,8 +5,9 @@ policy: max_total_steps=50  max_step_retries=0
 variables:
   (none)
 
-agents:
-  (none)
+adapters:
+  noop.default   type=noop   on_crash=fail
+    config: (none)
 
 steps (declaration order):
   run_items
@@ -18,4 +19,4 @@ states:
   done    terminal=true   success=true
 
 plugins required:
-  (none)
+  noop   (search: $CRITERIA_PLUGINS, ~/.criteria/plugins)

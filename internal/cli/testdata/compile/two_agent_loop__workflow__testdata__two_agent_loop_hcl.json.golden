@@ -9,14 +9,14 @@
   },
   "agents": [
     {
+      "type": "copilot",
       "name": "executor",
-      "adapter": "copilot",
       "on_crash": "respawn",
       "config_keys": null
     },
     {
+      "type": "copilot",
       "name": "reviewer",
-      "adapter": "copilot",
       "on_crash": "fail",
       "config_keys": null
     }
@@ -24,7 +24,7 @@
   "steps": [
     {
       "name": "open_executor",
-      "agent": "executor",
+      "adapter": "copilot.executor",
       "lifecycle": "open",
       "input_keys": null,
       "allow_tools": null,
@@ -37,7 +37,7 @@
     },
     {
       "name": "open_reviewer",
-      "agent": "reviewer",
+      "adapter": "copilot.reviewer",
       "lifecycle": "open",
       "input_keys": null,
       "allow_tools": null,
@@ -50,7 +50,7 @@
     },
     {
       "name": "execute",
-      "agent": "executor",
+      "adapter": "copilot.executor",
       "input_keys": null,
       "allow_tools": null,
       "outcomes": [
@@ -66,7 +66,7 @@
     },
     {
       "name": "review",
-      "agent": "reviewer",
+      "adapter": "copilot.reviewer",
       "input_keys": null,
       "allow_tools": null,
       "outcomes": [
@@ -82,7 +82,7 @@
     },
     {
       "name": "close_reviewer",
-      "agent": "reviewer",
+      "adapter": "copilot.reviewer",
       "lifecycle": "close",
       "input_keys": null,
       "allow_tools": null,
@@ -95,7 +95,7 @@
     },
     {
       "name": "close_executor",
-      "agent": "executor",
+      "adapter": "copilot.executor",
       "lifecycle": "close",
       "input_keys": null,
       "allow_tools": null,

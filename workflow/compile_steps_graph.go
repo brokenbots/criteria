@@ -6,38 +6,45 @@ package workflow
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/hashicorp/hcl/v2"
 	"github.com/zclconf/go-cty/cty"
 )
 
-// resolveAdapterName returns the effective adapter name for a step: either
-// sp.Adapter (direct) or the adapter backing sp.Agent (indirect).
+// resolveAdapterName extracts the adapter type from a dotted adapter reference.
+// In v0.3.0, sp.Adapter is always a dotted "<type>.<name>" reference to a declared adapter.
+// Returns the type component (left side of the dot), or "" if the reference is empty.
 func resolveAdapterName(g *FSMGraph, sp *StepSpec) string {
-	if sp.Adapter != "" {
-		return sp.Adapter
+	if sp.Adapter == "" {
+		return ""
 	}
-	if sp.Agent != "" {
-		if agent, ok := g.Agents[sp.Agent]; ok {
-			return agent.Adapter
-		}
+	// Adapter is "<type>.<name>"; extract the type (left of the dot).
+	parts := strings.Split(sp.Adapter, ".")
+	if len(parts) == 2 {
+		return parts[0]
 	}
 	return ""
 }
 
 // resolveStepOnCrash returns the effective on_crash for a step, falling back
-// to the backing agent's on_crash if the step doesn't specify one.
+// to the backing adapter's on_crash if the step doesn't specify one.
 func resolveStepOnCrash(g *FSMGraph, sp *StepSpec) (string, hcl.Diagnostics) {
 	var diags hcl.Diagnostics
 	if sp.OnCrash != "" && !isValidOnCrash(sp.OnCrash) {
-		diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q: invalid on_crash %q", sp.Name, sp.OnCrash)})
+		diags = append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  fmt.Sprintf("step %q: invalid on_crash %q", sp.Name, sp.OnCrash),
+		})
 	}
+
 	effective := sp.OnCrash
 	if effective == "" {
-		if sp.Agent != "" {
-			if agent, ok := g.Agents[sp.Agent]; ok {
-				effective = agent.OnCrash
+		// Fall back to the adapter's on_crash if available.
+		if sp.Adapter != "" {
+			if adapter, ok := g.Adapters[sp.Adapter]; ok {
+				effective = adapter.OnCrash
 			} else {
 				effective = onCrashFail
 			}

@@ -5,11 +5,12 @@ policy: max_total_steps=50  max_step_retries=0
 variables:
   prefix: string = item
 
-agents:
-  (none)
+adapters:
+  noop.default   type=noop   on_crash=fail
+    config: (none)
 
 steps (declaration order):
-  init   adapter=noop
+  init   adapter=noop.default
     input keys: result
     allow_tools: (none)
     outcomes: success -> process_items

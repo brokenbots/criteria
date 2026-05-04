@@ -45,6 +45,13 @@ func Parse(filename string, src []byte) (*Spec, hcl.Diagnostics) {
 	if diags.HasErrors() {
 		return nil, diags
 	}
+
+	// Check for legacy blocks before attempting decode.
+	legacyDiags := rejectLegacyBlocks(f.Body)
+	if legacyDiags.HasErrors() {
+		return nil, legacyDiags
+	}
+
 	var file File
 	if decodeDiags := gohcl.DecodeBody(f.Body, nil, &file); decodeDiags.HasErrors() {
 		return nil, decodeDiags

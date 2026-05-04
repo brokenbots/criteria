@@ -3,31 +3,28 @@ workflow "two_agent_loop" {
   initial_state = "open_executor"
   target_state  = "done"
 
-  agent "executor" {
-    adapter  = "copilot"
+  adapter "copilot" "executor" {
     on_crash = "respawn"
   }
 
-  agent "reviewer" {
-    adapter = "copilot"
-  }
+  adapter "copilot" "reviewer" {}
 
   step "open_executor" {
-    agent     = "executor"
+    adapter = "copilot.executor"
     lifecycle = "open"
 
     outcome "success" { transition_to = "open_reviewer" }
   }
 
   step "open_reviewer" {
-    agent     = "reviewer"
+    adapter = "copilot.reviewer"
     lifecycle = "open"
 
     outcome "success" { transition_to = "execute" }
   }
 
   step "execute" {
-    agent    = "executor"
+    adapter = "copilot.executor"
     on_crash = "abort_run"
 
     outcome "approved" { transition_to = "close_reviewer" }
@@ -35,21 +32,21 @@ workflow "two_agent_loop" {
   }
 
   step "review" {
-    agent = "reviewer"
+    adapter = "copilot.reviewer"
 
     outcome "approved" { transition_to = "close_reviewer" }
     outcome "changes"  { transition_to = "execute" }
   }
 
   step "close_reviewer" {
-    agent     = "reviewer"
+    adapter = "copilot.reviewer"
     lifecycle = "close"
 
     outcome "success" { transition_to = "close_executor" }
   }
 
   step "close_executor" {
-    agent     = "executor"
+    adapter = "copilot.executor"
     lifecycle = "close"
 
     outcome "success" { transition_to = "done" }

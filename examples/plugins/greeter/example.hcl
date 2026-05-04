@@ -6,8 +6,12 @@ workflow "greeter_example" {
   initial_state = "greet"
   target_state  = "done"
 
+  adapter "greeter" "default" {
+    config { }
+  }
+
   step "greet" {
-    adapter = "greeter"
+    adapter = "greeter.default"
     input {
       name = "world"
     }

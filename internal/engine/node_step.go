@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/hashicorp/hcl/v2"
 	"github.com/zclconf/go-cty/cty"
 
@@ -516,15 +516,15 @@ func (n *stepNode) runStepFromAttempt(ctx context.Context, st *RunState, deps De
 
 func (n *stepNode) executeStep(ctx context.Context, deps Deps, step *workflow.StepNode) (adapter.Result, error) {
 	if step.Lifecycle == "open" {
-		agent, ok := n.graph.Agents[step.Agent]
+		adaptrDecl, ok := n.graph.Adapters[step.Adapter]
 		if !ok {
-			return adapter.Result{Outcome: "failure"}, fmt.Errorf("unknown agent %q", step.Agent)
+			return adapter.Result{Outcome: "failure"}, fmt.Errorf("unknown adapter %q", step.Adapter)
 		}
 		// Plugin process startup is infrastructure, not step execution. Use an
 		// uncancellable context so a short step timeout does not race the process
 		// launch on a loaded host. Step timeouts govern plugin RPC execution;
 		// they must not cancel the session open itself.
-		if err := deps.Sessions.Open(context.WithoutCancel(ctx), step.Agent, agent.Adapter, step.OnCrash, agent.Config); err != nil {
+		if err := deps.Sessions.Open(context.WithoutCancel(ctx), step.Adapter, adaptrDecl.Type, step.OnCrash, adaptrDecl.Config); err != nil {
 			return adapter.Result{Outcome: "failure"}, err
 		}
 		return adapter.Result{Outcome: "success"}, nil
@@ -532,51 +532,42 @@ func (n *stepNode) executeStep(ctx context.Context, deps Deps, step *workflow.St
 	if step.Lifecycle == "close" {
 		// Same rationale as "open": plugin teardown must complete regardless of
 		// any step-level deadline that may have already expired.
-		if err := deps.Sessions.Close(context.WithoutCancel(ctx), step.Agent); err != nil {
+		if err := deps.Sessions.Close(context.WithoutCancel(ctx), step.Adapter); err != nil {
 			return adapter.Result{Outcome: "failure"}, err
 		}
 		return adapter.Result{Outcome: "success"}, nil
 	}
-	if step.Agent != "" {
-		adapterName := ""
-		if agent, ok := n.graph.Agents[step.Agent]; ok {
-			adapterName = agent.Adapter
+
+	// Non-lifecycle step: execute using the referenced adapter.
+	if step.Adapter != "" {
+		adapterType := ""
+		if adaptrDecl, ok := n.graph.Adapters[step.Adapter]; ok {
+			adapterType = adaptrDecl.Type
 		}
-		deps.Sink.OnAdapterLifecycle(step.Name, adapterName, "started", "")
-		result, execErr := deps.Sessions.Execute(ctx, step.Agent, step, deps.Sink.StepEventSink(step.Name))
+		deps.Sink.OnAdapterLifecycle(step.Name, adapterType, "started", "")
+		result, execErr := deps.Sessions.Execute(ctx, step.Adapter, step, deps.Sink.StepEventSink(step.Name))
 		if execErr != nil {
-			deps.Sink.OnAdapterLifecycle(step.Name, adapterName, "crashed", execErr.Error())
+			deps.Sink.OnAdapterLifecycle(step.Name, adapterType, "crashed", execErr.Error())
 		} else {
-			deps.Sink.OnAdapterLifecycle(step.Name, adapterName, "exited", "")
+			deps.Sink.OnAdapterLifecycle(step.Name, adapterType, "exited", "")
 		}
 		return result, execErr
 	}
 
-	anonSessionID := "anon-" + uuid.NewString()
-	// Anonymous sessions follow the same lifecycle semantics as named-agent
-	// open steps: process startup must not be bounded by the step deadline.
-	if err := deps.Sessions.Open(context.WithoutCancel(ctx), anonSessionID, step.Adapter, plugin.OnCrashFail, nil); err != nil {
-		return adapter.Result{Outcome: "failure"}, err
-	}
-	deps.Sink.OnAdapterLifecycle(step.Name, step.Adapter, "started", "")
-	defer func() { _ = deps.Sessions.Close(context.WithoutCancel(ctx), anonSessionID) }()
-
-	result, execErr := deps.Sessions.Execute(ctx, anonSessionID, step, deps.Sink.StepEventSink(step.Name))
-	if execErr != nil {
-		deps.Sink.OnAdapterLifecycle(step.Name, step.Adapter, "crashed", execErr.Error())
-	} else {
-		deps.Sink.OnAdapterLifecycle(step.Name, step.Adapter, "exited", "")
-	}
-	return result, execErr
+	// This case should not happen with proper validation, but provide a fallback.
+	// All steps must reference an adapter or be a workflow type.
+	return adapter.Result{}, fmt.Errorf("step %q has no adapter reference", step.Name)
 }
 
 func (n *stepNode) stepAdapterName() string {
-	if n.step.Agent != "" {
-		if agent, ok := n.graph.Agents[n.step.Agent]; ok {
-			return agent.Adapter
+	// Extract the adapter type from the dotted "<type>.<name>" reference.
+	if n.step.Adapter != "" {
+		parts := strings.Split(n.step.Adapter, ".")
+		if len(parts) == 2 {
+			return parts[0]
 		}
 	}
-	return n.step.Adapter
+	return ""
 }
 
 // stringMapToCtyObject converts a string-keyed map to a cty object value.

@@ -14,6 +14,10 @@ workflow "count_files" {
   initial_state = "count"
   target_state  = "done"
 
+  adapter "shell" "default" {
+    config { }
+  }
+
   # Local variable to store the count result.
   local "total" {
     value = 10
@@ -41,7 +45,7 @@ workflow "count_files" {
   }
 
   step "count" {
-    adapter = "shell"
+    adapter = "shell.default"
     input {
       command = "ls -1 | wc -l"
     }

@@ -40,10 +40,11 @@ func minimalWorkflowWithFile(filePath string) string {
     success  = true
   }
 
-  agent "a" { adapter = "noop" }
+  adapter "noop" "a" {
+    config { } }
 
   step "step1" {
-    agent = "a"
+    adapter = "noop.a"
     input {
       prompt = file("` + filePath + `")
     }
@@ -107,10 +108,11 @@ func TestCompileFileFunctionValidation_VarArgFileExists(t *testing.T) {
     default = "some.txt"
   }
 
-  agent "a" { adapter = "noop" }
+  adapter "noop" "a" {
+    config { } }
 
   step "step1" {
-    agent = "a"
+    adapter = "noop.a"
     input {
       prompt = file(var.path)
     }
@@ -145,10 +147,11 @@ func TestCompileFileFunctionValidation_VarArgFileMissing(t *testing.T) {
     default = "some.txt"
   }
 
-  agent "a" { adapter = "noop" }
+  adapter "noop" "a" {
+    config { } }
 
   step "step1" {
-    agent = "a"
+    adapter = "noop.a"
     input {
       prompt = file(var.path)
     }

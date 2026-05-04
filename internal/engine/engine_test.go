@@ -109,8 +109,60 @@ func (l *fakeLoader) Resolve(_ context.Context, name string) (plugin.Plugin, err
 
 func (l *fakeLoader) Shutdown(context.Context) error { return nil }
 
+// injectDefaultAdapters automatically adds adapter declarations for any bare adapter type
+// references in the HCL, and updates all references to use the dotted "<type>.default" form.
+// This is a test helper to reduce boilerplate since most tests use simple single-adapter workflows.
+func injectDefaultAdapters(src string) string {
+	// Collect unique adapter type names from adapter = "..." references
+	adapters := make(map[string]bool)
+	for _, line := range strings.Split(src, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, `adapter = "`) {
+			// Extract the adapter type (bare type without dots)
+			start := strings.Index(trimmed, `"`) + 1
+			end := strings.Index(trimmed[start:], `"`)
+			if end > 0 {
+				adapterRef := trimmed[start : start+end]
+				// Only inject if it's a bare type (no dots)
+				if !strings.Contains(adapterRef, ".") {
+					adapters[adapterRef] = true
+				}
+			}
+		}
+	}
+
+	if len(adapters) == 0 {
+		return src
+	}
+
+	// Build adapter declarations to inject
+	var injected strings.Builder
+	for adapterType := range adapters {
+		injected.WriteString(fmt.Sprintf("  adapter \"%s\" \"default\" {}\n", adapterType))
+	}
+
+	// Insert the adapters after the workflow header
+	workflowStart := strings.Index(src, "workflow \"t\" {")
+	if workflowStart == -1 {
+		return src
+	}
+	headerEnd := strings.Index(src[workflowStart:], "\n") + workflowStart + 1
+
+	result := src[:headerEnd] + "\n" + injected.String() + src[headerEnd:]
+
+	// Replace all bare adapter references with dotted references
+	for adapterType := range adapters {
+		oldRef := fmt.Sprintf(`adapter = "%s"`, adapterType)
+		newRef := fmt.Sprintf(`adapter = "%s.default"`, adapterType)
+		result = strings.ReplaceAll(result, oldRef, newRef)
+	}
+
+	return result
+}
+
 func compile(t *testing.T, src string) *workflow.FSMGraph {
 	t.Helper()
+	src = injectDefaultAdapters(src)
 	spec, diags := workflow.Parse("t.hcl", []byte(src))
 	if diags.HasErrors() {
 		t.Fatalf("parse: %s", diags.Error())

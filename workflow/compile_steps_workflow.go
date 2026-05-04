@@ -265,7 +265,7 @@ func buildBodySpec(stepName string, wb *BodySpec, spec *Spec, content *SpecConte
 		Variables:    content.Variables,
 		Locals:       content.Locals,
 		Environments: content.Environments,
-		Agents:       content.Agents,
+		Adapters:     content.Adapters,
 		Steps:        content.Steps,
 		States:       states,
 		Waits:        content.Waits,

@@ -7,11 +7,18 @@
     "MaxStepRetries": 0,
     "MaxVisitsWarnThreshold": 200
   },
-  "agents": [],
+  "agents": [
+    {
+      "type": "shell",
+      "name": "default",
+      "on_crash": "fail",
+      "config_keys": null
+    }
+  ],
   "steps": [
     {
       "name": "boot",
-      "adapter": "shell",
+      "adapter": "shell.default",
       "timeout": "10s",
       "input_keys": [
         "command"
@@ -30,7 +37,7 @@
     },
     {
       "name": "discover",
-      "adapter": "shell",
+      "adapter": "shell.default",
       "timeout": "30s",
       "input_keys": [
         "command"
@@ -49,7 +56,7 @@
     },
     {
       "name": "process_each",
-      "adapter": "shell",
+      "adapter": "shell.default",
       "timeout": "30s",
       "input_keys": [
         "command"
@@ -68,7 +75,7 @@
     },
     {
       "name": "review",
-      "adapter": "shell",
+      "adapter": "shell.default",
       "timeout": "10s",
       "input_keys": [
         "command"
@@ -87,7 +94,7 @@
     },
     {
       "name": "celebrate",
-      "adapter": "shell",
+      "adapter": "shell.default",
       "timeout": "10s",
       "input_keys": [
         "command"

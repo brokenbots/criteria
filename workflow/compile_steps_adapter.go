@@ -116,13 +116,12 @@ func maybeCopilotAliasWarnings(stepName, adapterName string, tools []string) hcl
 }
 
 // newBaseStepNode constructs a StepNode with all fields common to both
-// non-iterating and iterating adapter/agent steps.
+// non-iterating and iterating adapter steps.
 func newBaseStepNode(sp *StepSpec, spec *Spec, effectiveOnCrash string, timeout time.Duration,
 	inputMap map[string]string, inputExprs map[string]hcl.Expression) *StepNode {
 	return &StepNode{
 		Name:       sp.Name,
 		Adapter:    sp.Adapter,
-		Agent:      sp.Agent,
 		Lifecycle:  sp.Lifecycle,
 		OnCrash:    effectiveOnCrash,
 		Type:       sp.Type,
@@ -136,35 +135,64 @@ func newBaseStepNode(sp *StepSpec, spec *Spec, effectiveOnCrash string, timeout 
 	}
 }
 
-// validateAdapterAndAgent validates adapter name syntax, agent reference
-// existence, allow_tools/agent constraint, and lifecycle/agent constraint.
+// validateAdapterAndAgent validates adapter references and constraints.
+// In v0.3.0, steps must reference declared adapters via the "<type>.<name>" dotted form.
+// Bare adapter types (e.g., adapter = "shell.default") are no longer allowed.
 func validateAdapterAndAgent(g *FSMGraph, sp *StepSpec) hcl.Diagnostics {
 	var diags hcl.Diagnostics
-	if sp.Adapter != "" && !isValidAdapterName(sp.Adapter) {
-		diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q: invalid adapter %q", sp.Name, sp.Adapter)})
-	}
-	if sp.Agent != "" {
-		if _, ok := g.Agents[sp.Agent]; !ok {
-			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q: unknown agent %q", sp.Name, sp.Agent)})
+
+	if sp.Adapter != "" {
+		// New v0.3.0 semantics: Adapter must be a dotted reference to a declared adapter.
+		if !isValidDottedAdapterRef(sp.Adapter) {
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  fmt.Sprintf("step %q: adapter reference %q is invalid; use the form \"<type>.<name>\" to reference a declared adapter (e.g., \"shell.default\" after declaring adapter \"shell\" \"default\" {})", sp.Name, sp.Adapter),
+			})
+		} else {
+			// Verify the referenced adapter is declared in g.Adapters.
+			if _, ok := g.Adapters[sp.Adapter]; !ok {
+				diags = append(diags, &hcl.Diagnostic{
+					Severity: hcl.DiagError,
+					Summary:  fmt.Sprintf("step %q: referenced adapter %q is not declared", sp.Name, sp.Adapter),
+				})
+			}
 		}
 	}
-	if len(sp.AllowTools) > 0 && sp.Agent == "" {
-		diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q: allow_tools requires agent", sp.Name)})
+
+	if len(sp.AllowTools) > 0 && sp.Adapter == "" {
+		diags = append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  fmt.Sprintf("step %q: allow_tools requires an adapter reference", sp.Name),
+		})
 	}
+
 	if sp.Lifecycle != "" {
 		if !isValidLifecycle(sp.Lifecycle) {
-			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q: invalid lifecycle %q", sp.Name, sp.Lifecycle)})
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  fmt.Sprintf("step %q: invalid lifecycle %q", sp.Name, sp.Lifecycle),
+			})
 		}
-		if sp.Agent == "" {
-			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q: lifecycle requires agent", sp.Name)})
+		if sp.Adapter == "" {
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  fmt.Sprintf("step %q: lifecycle requires an adapter reference", sp.Name),
+			})
 		}
 		if sp.Input != nil {
-			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q: lifecycle %q must not include input", sp.Name, sp.Lifecycle)})
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  fmt.Sprintf("step %q: lifecycle %q must not include input", sp.Name, sp.Lifecycle),
+			})
 		}
 		if len(sp.AllowTools) > 0 {
-			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q: allow_tools is only valid on execute-shape steps (not lifecycle open/close)", sp.Name)})
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  fmt.Sprintf("step %q: allow_tools is only valid on execute-shape steps (not lifecycle open/close)", sp.Name),
+			})
 		}
 	}
+
 	return diags
 }
 

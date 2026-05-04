@@ -3,7 +3,7 @@
 # Demonstrates per-step reasoning_effort override with the Copilot adapter.
 #
 # The planning step uses "high" reasoning effort to produce a careful plan.
-# Execution steps inherit the agent-level default of "medium".
+# Execution steps inherit the adapter-level default of "medium".
 #
 # Requirements:
 #   • criteria-adapter-copilot installed in $CRITERIA_PLUGINS or ~/.criteria/plugins/
@@ -23,8 +23,7 @@ workflow "copilot_planning_then_execution" {
     max_total_steps = 20
   }
 
-  agent "engineer" {
-    adapter = "copilot"
+  adapter "copilot" "engineer" {
     config {
       model            = "claude-sonnet-4.6"
       reasoning_effort = "medium"   # default for all steps
@@ -35,7 +34,7 @@ workflow "copilot_planning_then_execution" {
   # ── Lifecycle ───────────────────────────────────────────────────────────────
 
   step "open_agent" {
-    agent     = "engineer"
+    adapter   = "copilot.engineer"
     lifecycle = "open"
 
     outcome "success" { transition_to = "plan" }
@@ -45,10 +44,10 @@ workflow "copilot_planning_then_execution" {
   # ── Planning (high reasoning effort) ────────────────────────────────────────
 
   step "plan" {
-    agent       = "engineer"
+    adapter     = "copilot.engineer"
     allow_tools = ["read_file"]
     input {
-      # reasoning_effort = "high" overrides the agent default for this step only.
+      # reasoning_effort = "high" overrides the adapter default for this step only.
       reasoning_effort = "high"
       prompt           = <<-EOT
         Draft a numbered implementation plan (3–5 steps) for adding a new "greet"
@@ -61,10 +60,10 @@ workflow "copilot_planning_then_execution" {
     outcome "failure" { transition_to = "close_failed" }
   }
 
-  # ── Execution (inherits agent-level "medium") ────────────────────────────────
+  # ── Execution (inherits adapter-level "medium") ────────────────────────────────
 
   step "execute" {
-    agent       = "engineer"
+    adapter     = "copilot.engineer"
     allow_tools = ["read_file", "write_file", "shell:go build*", "shell:go test*"]
     input {
       prompt = <<-EOT
@@ -80,7 +79,7 @@ workflow "copilot_planning_then_execution" {
   # ── Close paths ─────────────────────────────────────────────────────────────
 
   step "close_done" {
-    agent     = "engineer"
+    adapter   = "copilot.engineer"
     lifecycle = "close"
 
     outcome "success" { transition_to = "done" }
@@ -88,7 +87,7 @@ workflow "copilot_planning_then_execution" {
   }
 
   step "close_failed" {
-    agent     = "engineer"
+    adapter   = "copilot.engineer"
     lifecycle = "close"
 
     outcome "success" { transition_to = "failed" }

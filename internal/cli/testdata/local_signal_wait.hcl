@@ -3,9 +3,7 @@ workflow "local_signal_wait" {
   initial_state = "gate"
   target_state  = "done"
 
-  agent "demo" {
-    adapter = "noop"
-  }
+  adapter "noop" "demo" {}
 
   wait "gate" {
     signal = "proceed"
@@ -13,14 +11,14 @@ workflow "local_signal_wait" {
   }
 
   step "open_demo" {
-    agent     = "demo"
+    adapter = "noop.demo"
     lifecycle = "open"
     outcome "success" { transition_to = "run_step" }
     outcome "failure" { transition_to = "failed" }
   }
 
   step "run_step" {
-    agent = "demo"
+    adapter = "noop.demo"
     input {
       prompt = "continue"
     }
@@ -29,7 +27,7 @@ workflow "local_signal_wait" {
   }
 
   step "close_demo" {
-    agent     = "demo"
+    adapter = "noop.demo"
     lifecycle = "close"
     outcome "success" { transition_to = "done" }
     outcome "failure" { transition_to = "failed" }

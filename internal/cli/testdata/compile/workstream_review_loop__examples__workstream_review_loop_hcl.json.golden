@@ -9,8 +9,8 @@
   },
   "agents": [
     {
+      "type": "copilot",
       "name": "executor",
-      "adapter": "copilot",
       "on_crash": "fail",
       "config_keys": [
         "max_turns",
@@ -20,8 +20,8 @@
       ]
     },
     {
+      "type": "copilot",
       "name": "pr_manager",
-      "adapter": "copilot",
       "on_crash": "fail",
       "config_keys": [
         "max_turns",
@@ -30,8 +30,8 @@
       ]
     },
     {
+      "type": "copilot",
       "name": "reviewer",
-      "adapter": "copilot",
       "on_crash": "fail",
       "config_keys": [
         "max_turns",
@@ -39,12 +39,18 @@
         "reasoning_effort",
         "system_prompt"
       ]
+    },
+    {
+      "type": "shell",
+      "name": "default",
+      "on_crash": "fail",
+      "config_keys": null
     }
   ],
   "steps": [
     {
       "name": "checkout_branch",
-      "adapter": "shell",
+      "adapter": "shell.default",
       "timeout": "10s",
       "input_keys": [
         "command"
@@ -63,7 +69,7 @@
     },
     {
       "name": "open_executor",
-      "agent": "executor",
+      "adapter": "copilot.executor",
       "lifecycle": "open",
       "input_keys": null,
       "allow_tools": null,
@@ -80,7 +86,7 @@
     },
     {
       "name": "open_reviewer",
-      "agent": "reviewer",
+      "adapter": "copilot.reviewer",
       "lifecycle": "open",
       "input_keys": null,
       "allow_tools": null,
@@ -97,7 +103,7 @@
     },
     {
       "name": "open_pr_manager",
-      "agent": "pr_manager",
+      "adapter": "copilot.pr_manager",
       "lifecycle": "open",
       "input_keys": null,
       "allow_tools": null,
@@ -114,7 +120,7 @@
     },
     {
       "name": "execute_init",
-      "agent": "executor",
+      "adapter": "copilot.executor",
       "input_keys": [
         "prompt"
       ],
@@ -138,7 +144,7 @@
     },
     {
       "name": "review_init",
-      "agent": "reviewer",
+      "adapter": "copilot.reviewer",
       "input_keys": [
         "prompt"
       ],
@@ -170,7 +176,7 @@
     },
     {
       "name": "execute",
-      "agent": "executor",
+      "adapter": "copilot.executor",
       "input_keys": [
         "prompt"
       ],
@@ -198,7 +204,7 @@
     },
     {
       "name": "verify",
-      "adapter": "shell",
+      "adapter": "shell.default",
       "timeout": "2m0s",
       "input_keys": [
         "command"
@@ -217,7 +223,7 @@
     },
     {
       "name": "fix_verify",
-      "agent": "executor",
+      "adapter": "copilot.executor",
       "input_keys": [
         "prompt"
       ],
@@ -241,7 +247,7 @@
     },
     {
       "name": "review",
-      "agent": "reviewer",
+      "adapter": "copilot.reviewer",
       "input_keys": [
         "prompt"
       ],
@@ -273,7 +279,7 @@
     },
     {
       "name": "commit_and_prepare_pr",
-      "agent": "executor",
+      "adapter": "copilot.executor",
       "input_keys": [
         "prompt"
       ],
@@ -293,7 +299,7 @@
     },
     {
       "name": "open_or_update_pr",
-      "agent": "pr_manager",
+      "adapter": "copilot.pr_manager",
       "input_keys": [
         "prompt"
       ],
@@ -321,7 +327,7 @@
     },
     {
       "name": "watch_pr_warmup",
-      "adapter": "shell",
+      "adapter": "shell.default",
       "timeout": "3m0s",
       "input_keys": [
         "command"
@@ -340,7 +346,7 @@
     },
     {
       "name": "watch_pr_backoff",
-      "adapter": "shell",
+      "adapter": "shell.default",
       "timeout": "5m0s",
       "input_keys": [
         "command"
@@ -359,7 +365,7 @@
     },
     {
       "name": "watch_pr_gate",
-      "adapter": "shell",
+      "adapter": "shell.default",
       "timeout": "45m0s",
       "input_keys": [
         "command"
@@ -378,7 +384,7 @@
     },
     {
       "name": "triage_pr_feedback",
-      "agent": "pr_manager",
+      "adapter": "copilot.pr_manager",
       "input_keys": [
         "prompt"
       ],
@@ -418,7 +424,7 @@
     },
     {
       "name": "execute_pr_feedback",
-      "agent": "executor",
+      "adapter": "copilot.executor",
       "input_keys": [
         "prompt"
       ],
@@ -446,7 +452,7 @@
     },
     {
       "name": "merge_pr_and_sync_main",
-      "adapter": "shell",
+      "adapter": "shell.default",
       "timeout": "5m0s",
       "input_keys": [
         "command"
@@ -465,7 +471,7 @@
     },
     {
       "name": "close_pr_manager_done",
-      "agent": "pr_manager",
+      "adapter": "copilot.pr_manager",
       "lifecycle": "close",
       "input_keys": null,
       "allow_tools": null,
@@ -482,7 +488,7 @@
     },
     {
       "name": "close_reviewer_done",
-      "agent": "reviewer",
+      "adapter": "copilot.reviewer",
       "lifecycle": "close",
       "input_keys": null,
       "allow_tools": null,
@@ -499,7 +505,7 @@
     },
     {
       "name": "close_executor_done",
-      "agent": "executor",
+      "adapter": "copilot.executor",
       "lifecycle": "close",
       "input_keys": null,
       "allow_tools": null,
@@ -516,7 +522,7 @@
     },
     {
       "name": "close_pr_manager_abort",
-      "agent": "pr_manager",
+      "adapter": "copilot.pr_manager",
       "lifecycle": "close",
       "input_keys": null,
       "allow_tools": null,
@@ -533,7 +539,7 @@
     },
     {
       "name": "close_reviewer_abort",
-      "agent": "reviewer",
+      "adapter": "copilot.reviewer",
       "lifecycle": "close",
       "input_keys": null,
       "allow_tools": null,
@@ -550,7 +556,7 @@
     },
     {
       "name": "close_executor_abort",
-      "agent": "executor",
+      "adapter": "copilot.executor",
       "lifecycle": "close",
       "input_keys": null,
       "allow_tools": null,

@@ -8,6 +8,10 @@ workflow "demo_tour_local" {
   initial_state = "boot"
   target_state  = "done"
 
+  adapter "shell" "default" {
+    config { }
+  }
+
   policy {
     max_total_steps = 40
   }
@@ -19,7 +23,7 @@ workflow "demo_tour_local" {
   }
 
   step "boot" {
-    adapter = "shell"
+    adapter = "shell.default"
     input {
       command = "printf '=== Demo (${var.mode} mode) ===\\n'"
     }
@@ -29,7 +33,7 @@ workflow "demo_tour_local" {
   }
 
   step "discover" {
-    adapter = "shell"
+    adapter = "shell.default"
     input {
       command = "printf 'discovering...\\n'; for t in alpha beta gamma; do printf '  -> %s\\n' \"$t\"; sleep 0.2; done"
     }
@@ -39,7 +43,7 @@ workflow "demo_tour_local" {
   }
 
   step "process_each" {
-    adapter  = "shell"
+    adapter  = "shell.default"
     for_each = ["alpha", "beta", "gamma"]
     input {
       command = "printf 'processing %s (#%s)\\n' \"${each.value}\" \"${each._idx}\"; sleep 0.3"
@@ -50,7 +54,7 @@ workflow "demo_tour_local" {
   }
 
   step "review" {
-    adapter = "shell"
+    adapter = "shell.default"
     input {
       command = "printf 'review ok\\n'; echo 'ok'"
     }
@@ -75,7 +79,7 @@ workflow "demo_tour_local" {
   }
 
   step "celebrate" {
-    adapter = "shell"
+    adapter = "shell.default"
     input {
       command = "printf '\\n=== DONE ===\\n'"
     }

@@ -5,15 +5,16 @@ policy: max_total_steps=30  max_step_retries=0
 variables:
   (none)
 
-agents:
-  (none)
+adapters:
+  noop.default   type=noop   on_crash=fail
+    config: (none)
 
 steps (declaration order):
-  process   adapter=noop
+  process   adapter=noop.default
     input keys: label, result
     allow_tools: (none)
     outcomes: all_succeeded -> count_phase, any_failed -> done
-  count_phase   adapter=noop
+  count_phase   adapter=noop.default
     input keys: label, result
     allow_tools: (none)
     outcomes: all_succeeded -> done, any_failed -> done

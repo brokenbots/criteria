@@ -84,8 +84,8 @@ type compileOutputMeta struct {
 }
 
 type compileAgent struct {
+	Type       string   `json:"type"`
 	Name       string   `json:"name"`
-	Adapter    string   `json:"adapter"`
 	OnCrash    string   `json:"on_crash"`
 	ConfigKeys []string `json:"config_keys"`
 }
@@ -93,7 +93,6 @@ type compileAgent struct {
 type compileStep struct {
 	Name       string           `json:"name"`
 	Adapter    string           `json:"adapter,omitempty"`
-	Agent      string           `json:"agent,omitempty"`
 	Lifecycle  string           `json:"lifecycle,omitempty"`
 	Timeout    string           `json:"timeout,omitempty"`
 	InputKeys  []string         `json:"input_keys"`
@@ -119,15 +118,15 @@ type compileState struct {
 }
 
 func buildCompileJSON(graph *workflow.FSMGraph) compileJSON { //nolint:funlen // W03: serialises entire FSM graph structure; length driven by field count, not complexity
-	agents := make([]compileAgent, 0, len(graph.Agents))
-	agentNames := sortedAgentNames(graph)
-	for _, name := range agentNames {
-		ag := graph.Agents[name]
-		agents = append(agents, compileAgent{
-			Name:       ag.Name,
-			Adapter:    ag.Adapter,
-			OnCrash:    ag.OnCrash,
-			ConfigKeys: sortedMapKeys(ag.Config),
+	adapters := make([]compileAgent, 0, len(graph.Adapters))
+	adapterNames := sortedAdapterNames(graph)
+	for _, name := range adapterNames {
+		ad := graph.Adapters[name]
+		adapters = append(adapters, compileAgent{
+			Type:       ad.Type,
+			Name:       ad.Name,
+			OnCrash:    ad.OnCrash,
+			ConfigKeys: sortedMapKeys(ad.Config),
 		})
 	}
 
@@ -145,7 +144,6 @@ func buildCompileJSON(graph *workflow.FSMGraph) compileJSON { //nolint:funlen //
 		steps = append(steps, compileStep{
 			Name:       st.Name,
 			Adapter:    st.Adapter,
-			Agent:      st.Agent,
 			Lifecycle:  st.Lifecycle,
 			Timeout:    timeout,
 			InputKeys:  sortedMapKeys(st.Input),
@@ -185,7 +183,7 @@ func buildCompileJSON(graph *workflow.FSMGraph) compileJSON { //nolint:funlen //
 		InitialState: graph.InitialState,
 		TargetState:  graph.TargetState,
 		Policy:       graph.Policy,
-		Agents:       agents,
+		Agents:       adapters,
 		Steps:        steps,
 		States:       states,
 		Outputs:      outputs,
@@ -290,8 +288,8 @@ func sortedVariableNames(graph *workflow.FSMGraph) []string {
 	return sortedMapKeys(graph.Variables)
 }
 
-func sortedAgentNames(graph *workflow.FSMGraph) []string {
-	return sortedMapKeys(graph.Agents)
+func sortedAdapterNames(graph *workflow.FSMGraph) []string {
+	return sortedMapKeys(graph.Adapters)
 }
 
 func sortedStateNames(graph *workflow.FSMGraph) []string {
@@ -304,14 +302,18 @@ func sortedBranchNames(graph *workflow.FSMGraph) []string {
 
 func requiredPlugins(graph *workflow.FSMGraph) []string {
 	seen := map[string]bool{}
-	for _, ag := range graph.Agents {
-		if ag.Adapter != "" {
-			seen[ag.Adapter] = true
+	for _, ad := range graph.Adapters {
+		if ad.Type != "" {
+			seen[ad.Type] = true
 		}
 	}
 	for _, st := range graph.Steps {
+		// Steps reference adapters; extract the type from "<type>.<name>" reference.
 		if st.Adapter != "" {
-			seen[st.Adapter] = true
+			parts := strings.Split(st.Adapter, ".")
+			if len(parts) == 2 {
+				seen[parts[0]] = true
+			}
 		}
 	}
 	return sortedMapKeys(seen)

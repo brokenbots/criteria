@@ -5,11 +5,12 @@ policy: max_total_steps=100  max_step_retries=0
 variables:
   (none)
 
-agents:
-  (none)
+adapters:
+  shell.default   type=shell   on_crash=fail
+    config: (none)
 
 steps (declaration order):
-  say_hello   adapter=shell
+  say_hello   adapter=shell.default
     input keys: command
     allow_tools: (none)
     outcomes: success -> done, failure -> failed

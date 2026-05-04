@@ -41,6 +41,17 @@ func isValidAdapterName(v string) bool {
 	return true
 }
 
+// isValidDottedAdapterRef validates a step adapter reference in the form "<type>.<name>".
+// Both the type and name components must be valid adapter names (alphanumeric, dash, underscore).
+func isValidDottedAdapterRef(v string) bool {
+	v = strings.TrimSpace(v)
+	parts := strings.Split(v, ".")
+	if len(parts) != 2 {
+		return false
+	}
+	return isValidAdapterName(parts[0]) && isValidAdapterName(parts[1])
+}
+
 // checkReservedNames rejects any spec node that uses the engine-internal
 // "_continue" target as its declared name.
 func checkReservedNames(spec *Spec) hcl.Diagnostics {

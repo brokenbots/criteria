@@ -63,7 +63,7 @@ type Spec struct {
 	Locals             []LocalSpec       `hcl:"local,block"`
 	Environments       []EnvironmentSpec `hcl:"environment,block"`
 	Outputs            []OutputSpec      `hcl:"output,block"`
-	Agents             []AgentSpec       `hcl:"agent,block"`
+	Adapters           []AdapterDeclSpec `hcl:"adapter,block"`
 	Steps              []StepSpec        `hcl:"step,block"`
 	States             []StateSpec       `hcl:"state,block"`
 	Waits              []WaitSpec        `hcl:"wait,block"`
@@ -101,26 +101,21 @@ type InputSpec struct {
 	Remain hcl.Body `hcl:",remain"`
 }
 
-// HCL extensions for session-aware workflows:
-//   - Top-level `agent "name" { adapter = "..." }` declarations bind names to adapters.
-//   - Steps use `agent = "name"` to route work to an agent-backed session.
-//   - Steps with `lifecycle = "open"|"close"` explicitly manage session lifetime.
-//     `open` and `close` must not include `input { }`.
-//   - Agent-level `config { }` block carries session-open config (replaces open-step config).
-//
-// AgentSpec declares a named long-lived adapter session target.
-type AgentSpec struct {
-	Name    string      `hcl:"name,label"`
-	Adapter string      `hcl:"adapter"`
-	OnCrash string      `hcl:"on_crash,optional"`
-	Config  *ConfigSpec `hcl:"config,block"`
+// AdapterDeclSpec declares a named long-lived adapter session target in HCL form.
+// This is the HCL schema for the `adapter "<type>" "<name>"` block.
+// Note: This is distinct from AdapterInfo, which describes an adapter's schema.
+type AdapterDeclSpec struct {
+	Type        string      `hcl:"type,label"`           // first label: adapter type
+	Name        string      `hcl:"name,label"`           // second label: instance name
+	Environment string      `hcl:"environment,optional"` // "<env_type>.<env_name>" reference
+	OnCrash     string      `hcl:"on_crash,optional"`
+	Config      *ConfigSpec `hcl:"config,block"`
 }
 
 // StepSpec describes a single step in the workflow.
 type StepSpec struct {
 	Name      string `hcl:"name,label"`
-	Adapter   string `hcl:"adapter,optional"`
-	Agent     string `hcl:"agent,optional"`
+	Adapter   string `hcl:"adapter,optional"` // "<type>.<name>" reference to a declared adapter
 	Lifecycle string `hcl:"lifecycle,optional"`
 	OnCrash   string `hcl:"on_crash,optional"`
 	// Type is the step kind: "" (default adapter/agent step) or "workflow" (sub-workflow body).
@@ -165,7 +160,7 @@ type SpecContent struct {
 	Variables    []VariableSpec    `hcl:"variable,block"`
 	Locals       []LocalSpec       `hcl:"local,block"`
 	Environments []EnvironmentSpec `hcl:"environment,block"`
-	Agents       []AgentSpec       `hcl:"agent,block"`
+	Adapters     []AdapterDeclSpec `hcl:"adapter,block"`
 	Steps        []StepSpec        `hcl:"step,block"`
 	States       []StateSpec       `hcl:"state,block"`
 	Waits        []WaitSpec        `hcl:"wait,block"`
@@ -322,12 +317,12 @@ type FSMGraph struct {
 	DefaultEnvironment string                      // optional; set if exactly one env is declared or explicitly set on workflow header
 	Outputs            map[string]*OutputNode      // compiled output declarations (W09)
 	OutputOrder        []string                    // declaration order for stable iteration
-	Agents             map[string]*AgentNode
-	Steps              map[string]*StepNode     // by step name
-	States             map[string]*StateNode    // by state name (terminal etc.)
-	Waits              map[string]*WaitNode     // by wait node name (W05)
-	Approvals          map[string]*ApprovalNode // by approval node name (W05)
-	Branches           map[string]*BranchNode   // by branch node name (W06)
+	Adapters           map[string]*AdapterNode     // compiled adapter declarations; keyed by "<type>.<name>"
+	Steps              map[string]*StepNode        // by step name
+	States             map[string]*StateNode       // by state name (terminal etc.)
+	Waits              map[string]*WaitNode        // by wait node name (W05)
+	Approvals          map[string]*ApprovalNode    // by approval node name (W05)
+	Branches           map[string]*BranchNode      // by branch node name (W06)
 	Policy             Policy
 	// Order of step declarations (stable for diagnostics).
 	stepOrder []string
@@ -346,22 +341,23 @@ type VariableNode struct {
 // Used by the body input validation logic to detect unbound required vars.
 func (v *VariableNode) IsRequired() bool { return v.Default == cty.NilVal }
 
-// AgentNode is a compiled long-lived adapter declaration.
-type AgentNode struct {
-	Name    string
-	Adapter string
-	OnCrash string
-	Config  map[string]string // session-open config from agent.config { }
+// AdapterNode is a compiled adapter declaration with resolved type and configuration.
+// The key in FSMGraph.Adapters is "<type>.<name>" (both labels).
+type AdapterNode struct {
+	Type        string            // adapter type (first label)
+	Name        string            // instance name (second label)
+	Environment string            // optional "<env_type>.<env_name>" reference; resolved to default at scope start if not set
+	OnCrash     string            // "fail" (default) or "continue"
+	Config      map[string]string // compile-folded config from adapter.config { }
 }
 
 // StepNode is a compiled step with resolved transitions.
 type StepNode struct {
 	Name      string
-	Adapter   string
-	Agent     string
+	Adapter   string // "<type>.<name>" reference to a declared adapter
 	Lifecycle string
 	OnCrash   string
-	// Type is the step kind: "" (default adapter/agent) or "workflow" (sub-workflow body).
+	// Type is the step kind: "" (default adapter) or "workflow" (sub-workflow body).
 	Type string
 	// OnFailure controls iteration behaviour when an iteration produces a
 	// non-success outcome. Values: "continue" (default), "abort", "ignore".

@@ -60,7 +60,7 @@ func gen1000StepHCL(n int) []byte {
 		}
 		fmt.Fprintf(&b, `
   step "step_%d" {
-    adapter = "shell"
+    adapter = "shell.default"
     input { command = "echo step_%d" }
     outcome "success" { transition_to = "%s" }
     outcome "failure" { transition_to = "done" }

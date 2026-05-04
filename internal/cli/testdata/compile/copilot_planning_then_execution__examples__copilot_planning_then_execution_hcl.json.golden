@@ -9,8 +9,8 @@
   },
   "agents": [
     {
+      "type": "copilot",
       "name": "engineer",
-      "adapter": "copilot",
       "on_crash": "fail",
       "config_keys": [
         "max_turns",
@@ -22,7 +22,7 @@
   "steps": [
     {
       "name": "open_agent",
-      "agent": "engineer",
+      "adapter": "copilot.engineer",
       "lifecycle": "open",
       "input_keys": null,
       "allow_tools": null,
@@ -39,7 +39,7 @@
     },
     {
       "name": "plan",
-      "agent": "engineer",
+      "adapter": "copilot.engineer",
       "input_keys": [
         "prompt",
         "reasoning_effort"
@@ -60,7 +60,7 @@
     },
     {
       "name": "execute",
-      "agent": "engineer",
+      "adapter": "copilot.engineer",
       "input_keys": [
         "prompt"
       ],
@@ -83,7 +83,7 @@
     },
     {
       "name": "close_done",
-      "agent": "engineer",
+      "adapter": "copilot.engineer",
       "lifecycle": "close",
       "input_keys": null,
       "allow_tools": null,
@@ -100,7 +100,7 @@
     },
     {
       "name": "close_failed",
-      "agent": "engineer",
+      "adapter": "copilot.engineer",
       "lifecycle": "close",
       "input_keys": null,
       "allow_tools": null,

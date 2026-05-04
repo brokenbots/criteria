@@ -9,6 +9,10 @@ workflow "file_function_demo" {
   initial_state = "greet"
   target_state  = "done"
 
+  adapter "shell" "default" {
+    config { }
+  }
+
   output "result" {
     type        = "string"
     description = "The result message produced by the workflow"
@@ -21,7 +25,7 @@ workflow "file_function_demo" {
   }
 
   step "greet" {
-    adapter = "shell"
+    adapter = "shell.default"
     input {
       command = trimfrontmatter(file("./file_function_prompt.md"))
     }

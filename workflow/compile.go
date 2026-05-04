@@ -78,7 +78,7 @@ func CompileWithOpts(spec *Spec, schemas map[string]AdapterInfo, opts CompileOpt
 	diags = append(diags, compileLocals(g, spec, opts)...)
 	diags = append(diags, compileEnvironments(g, spec, opts)...)
 	diags = append(diags, compileOutputs(g, spec, opts)...)
-	diags = append(diags, compileAgents(g, spec, schemas, opts)...)
+	diags = append(diags, compileAdapters(g, spec, schemas, opts)...)
 	diags = append(diags, compileStates(g, spec)...)
 	diags = append(diags, compileSteps(g, spec, schemas, opts)...)
 	diags = append(diags, compileWaits(g, spec)...)
@@ -115,7 +115,7 @@ func newFSMGraph(spec *Spec) *FSMGraph {
 		Environments: map[string]*EnvironmentNode{},
 		Outputs:      map[string]*OutputNode{},
 		OutputOrder:  []string{},
-		Agents:       map[string]*AgentNode{},
+		Adapters:     map[string]*AdapterNode{},
 		Steps:        map[string]*StepNode{},
 		States:       map[string]*StateNode{},
 		Waits:        map[string]*WaitNode{},

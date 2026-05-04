@@ -16,7 +16,7 @@ import (
 )
 
 // compileSteps compiles all step blocks from spec into g.Steps and g.stepOrder.
-// Must be called after compileAgents so that agent references can be resolved.
+// Must be called after compileAdapters so that adapter references can be resolved.
 // Routes each step to the appropriate per-kind compiler based on step type and
 // iteration modifier.
 func compileSteps(g *FSMGraph, spec *Spec, schemas map[string]AdapterInfo, opts CompileOpts) hcl.Diagnostics {
@@ -66,28 +66,30 @@ func validateStepRegistration(g *FSMGraph, sp *StepSpec) (ok bool, diags hcl.Dia
 	return true, nil
 }
 
-// validateStepKindSelectionDiags validates that exactly one of adapter, agent,
+// validateStepKindSelectionDiags validates that exactly one of adapter
 // or type="workflow" is set on sp, and that the type value is recognised.
 func validateStepKindSelectionDiags(sp *StepSpec) hcl.Diagnostics {
 	var diags hcl.Diagnostics
 	hasAdapter := sp.Adapter != ""
-	hasAgent := sp.Agent != ""
 	hasWorkflowType := sp.Type == "workflow"
 
 	numKinds := 0
 	if hasAdapter {
 		numKinds++
 	}
-	if hasAgent {
-		numKinds++
-	}
 	if hasWorkflowType {
 		numKinds++
 	}
 	if sp.Type != "" && sp.Type != "workflow" {
-		diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q: invalid type %q; only \"workflow\" is recognised", sp.Name, sp.Type)})
+		diags = append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  fmt.Sprintf("step %q: invalid type %q; only \"workflow\" is recognised", sp.Name, sp.Type),
+		})
 	} else if numKinds != 1 {
-		diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q: exactly one of adapter, agent, or type=\"workflow\" must be set", sp.Name)})
+		diags = append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  fmt.Sprintf("step %q: exactly one of adapter or type=\"workflow\" must be set", sp.Name),
+		})
 	}
 	return diags
 }

@@ -646,10 +646,10 @@ func TestForEachExprFoldsAtCompile_FilesValidated(t *testing.T) {
     default = "missing.txt"
   }
 
-  agent "a" { adapter = "noop" }
+  adapter "noop" "a" {}
 
   step "step1" {
-    agent    = "a"
+    adapter    = "noop.a"
     for_each = [file(var.path)]
     outcome "all_succeeded" { transition_to = "done" }
     outcome "any_failed"    { transition_to = "done" }
