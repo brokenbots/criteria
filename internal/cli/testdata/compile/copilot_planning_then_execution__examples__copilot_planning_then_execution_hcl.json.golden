@@ -1,6 +1,6 @@
 {
   "name": "copilot_planning_then_execution",
-  "initial_state": "open_agent",
+  "initial_state": "plan",
   "target_state": "done",
   "policy": {
     "MaxTotalSteps": 20,
@@ -21,23 +21,6 @@
   ],
   "steps": [
     {
-      "name": "open_agent",
-      "adapter": "copilot.engineer",
-      "lifecycle": "open",
-      "input_keys": null,
-      "allow_tools": null,
-      "outcomes": [
-        {
-          "name": "failure",
-          "transition_to": "failed"
-        },
-        {
-          "name": "success",
-          "transition_to": "plan"
-        }
-      ]
-    },
-    {
       "name": "plan",
       "adapter": "copilot.engineer",
       "input_keys": [
@@ -50,7 +33,7 @@
       "outcomes": [
         {
           "name": "failure",
-          "transition_to": "close_failed"
+          "transition_to": "failed"
         },
         {
           "name": "success",
@@ -73,45 +56,11 @@
       "outcomes": [
         {
           "name": "failure",
-          "transition_to": "close_failed"
-        },
-        {
-          "name": "success",
-          "transition_to": "close_done"
-        }
-      ]
-    },
-    {
-      "name": "close_done",
-      "adapter": "copilot.engineer",
-      "lifecycle": "close",
-      "input_keys": null,
-      "allow_tools": null,
-      "outcomes": [
-        {
-          "name": "failure",
-          "transition_to": "done"
-        },
-        {
-          "name": "success",
-          "transition_to": "done"
-        }
-      ]
-    },
-    {
-      "name": "close_failed",
-      "adapter": "copilot.engineer",
-      "lifecycle": "close",
-      "input_keys": null,
-      "allow_tools": null,
-      "outcomes": [
-        {
-          "name": "failure",
           "transition_to": "failed"
         },
         {
           "name": "success",
-          "transition_to": "failed"
+          "transition_to": "done"
         }
       ]
     }
@@ -130,11 +79,8 @@
   ],
   "outputs": [],
   "step_order": [
-    "open_agent",
     "plan",
-    "execute",
-    "close_done",
-    "close_failed"
+    "execute"
   ],
   "plugins_required": [
     "copilot"

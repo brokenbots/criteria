@@ -1,22 +1,14 @@
 digraph "two_agent_loop" {
   rankdir=LR;
 
-  "open_executor" [shape=box];
-  "open_reviewer" [shape=box];
   "execute" [shape=box];
   "review" [shape=box];
-  "close_reviewer" [shape=box];
-  "close_executor" [shape=box];
   "done" [shape=doublecircle];
 
   "__start__" [shape=point,width=0.12,label=""];
-  "__start__" -> "open_executor" [label="initial"];
-  "open_executor" -> "open_reviewer" [label="success"];
-  "open_reviewer" -> "execute" [label="success"];
-  "execute" -> "close_reviewer" [label="approved"];
+  "__start__" -> "execute" [label="initial"];
+  "execute" -> "review" [label="approved"];
   "execute" -> "review" [label="retry"];
-  "review" -> "close_reviewer" [label="approved"];
+  "review" -> "done" [label="approved"];
   "review" -> "execute" [label="changes"];
-  "close_reviewer" -> "close_executor" [label="success"];
-  "close_executor" -> "done" [label="success"];
 }

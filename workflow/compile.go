@@ -15,9 +15,6 @@ const (
 	onCrashFail     = "fail"
 	onCrashRespawn  = "respawn"
 	onCrashAbortRun = "abort_run"
-
-	lifecycleOpen  = "open"
-	lifecycleClose = "close"
 )
 
 // CompileOpts carries optional configuration for the Compile pass.

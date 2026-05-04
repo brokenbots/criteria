@@ -83,4 +83,5 @@ func Run(t *testing.T, s Subject) {
 	t.Run("ResumeCorrectness", func(t *testing.T) { testResumeCorrectness(t, s) })
 	t.Run("CallerOwnership", func(t *testing.T) { testCallerOwnership(t, s) })
 	t.Run("SchemaVersion", func(t *testing.T) { testSchemaVersion(t, s) })
+	t.Run("LifecycleAutomatic", func(t *testing.T) { testLifecycleAutomatic(t, s) })
 }

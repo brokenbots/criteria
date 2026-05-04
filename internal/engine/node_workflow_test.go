@@ -137,7 +137,7 @@ workflow "t" {
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
 		"fake": &captureInputPlugin{outcome: "success", capture: &captured},
 	}}
-	if err := New(g, loader, sink, WithAutoBootstrapAdapters()).Run(context.Background()); err != nil {
+	if err := New(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -215,7 +215,7 @@ workflow "t" {
 		"fake_consumer": &captureInputPlugin{outcome: "success", capture: &[]map[string]string{}},
 	}}
 
-	err := New(g, loader, sink, WithAutoBootstrapAdapters()).Run(context.Background())
+	err := New(g, loader, sink).Run(context.Background())
 	if err == nil {
 		t.Fatal("expected error: body step outputs must not be visible in outer steps.* scope (no-leakage regression)")
 	}
@@ -276,7 +276,7 @@ workflow "t" {
 		},
 		"fake_consumer": &captureInputPlugin{outcome: "success", capture: &consumeCapture},
 	}}
-	if err := New(g, loader, sink, WithAutoBootstrapAdapters()).Run(context.Background()); err != nil {
+	if err := New(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -337,11 +337,251 @@ workflow "t" {
 		"fake": &fakePlugin{name: "fake", outcome: "success"},
 	}}
 
-	err := New(g, loader, sink, WithAutoBootstrapAdapters()).Run(context.Background())
+	err := New(g, loader, sink).Run(context.Background())
 	if err == nil {
 		t.Fatal("expected error: non-object body input (each.value = string) must be rejected at runtime")
 	}
 	if !strings.Contains(err.Error(), "object") {
 		t.Errorf("error should mention 'object', got: %v", err)
 	}
+}
+
+// TestRunWorkflowBody_BodyAdapterIsolated verifies that adapters provisioned in a step's
+// workflow body are cleaned up properly when the body completes (verifying isolation).
+func TestRunWorkflowBody_BodyAdapterIsolated(t *testing.T) {
+	// A simple iteration with a workflow body that uses an adapter
+	parentG := compile(t, `
+workflow "parent" {
+  version       = "0.1"
+  initial_state = "process"
+  target_state  = "done"
+
+  step "process" {
+    type     = "workflow"
+    for_each = ["item"]
+
+    workflow {
+      step "body_step" {
+        adapter = adapter.noop
+        outcome "success" { transition_to = "_continue" }
+      }
+    }
+
+    outcome "all_succeeded" { transition_to = "done" }
+    outcome "any_failed"    { transition_to = "done" }
+  }
+
+  state "done" {
+    terminal = true
+    success  = true
+  }
+}`)
+
+	bodyTracker := &lifecycleTrackingPlugin{
+		fakePlugin: fakePlugin{name: "noop", outcome: "success"},
+	}
+
+	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
+		"noop": bodyTracker,
+	}}
+
+	sink := &lifecycleTrackingSink{}
+	eng := New(parentG, loader, sink)
+
+	err := eng.Run(context.Background())
+	if err != nil {
+		t.Errorf("Run failed: %v", err)
+	}
+
+	// Verify that the adapter in the body was provisioned and torn down
+	bodyTracker.mu.Lock()
+	opens := bodyTracker.opensCount
+	closes := bodyTracker.closesCount
+	bodyTracker.mu.Unlock()
+
+	if opens != 1 {
+		t.Errorf("body adapter: expected 1 open, got %d", opens)
+	}
+	if closes != 1 {
+		t.Errorf("body adapter: expected 1 close, got %d", closes)
+	}
+}
+
+// TestRunWorkflowBody_BodyAndParentAdaptersIsolated verifies that adapters provisioned in a
+// parent workflow stay open through body execution while body-scoped adapters are isolated
+// and closed when the body completes.
+func TestRunWorkflowBody_BodyAndParentAdaptersIsolated(t *testing.T) {
+	// Parent uses adapter noop_a in multiple steps
+	// Body uses adapter noop_b
+	// Verify a opens/closes once for parent, b opens/closes once for body
+	parentG := compile(t, `
+workflow "parent" {
+  version       = "0.1"
+  initial_state = "pre"
+  target_state  = "done"
+
+  step "pre" {
+    adapter = adapter.noop_a
+    outcome "success" { transition_to = "body" }
+  }
+
+  step "body" {
+    type     = "workflow"
+    for_each = ["x"]
+
+    workflow {
+      step "inner" {
+        adapter = adapter.noop_b
+        outcome "success" { transition_to = "_continue" }
+      }
+    }
+
+    outcome "all_succeeded" { transition_to = "post" }
+    outcome "any_failed"    { transition_to = "done" }
+  }
+
+  step "post" {
+    adapter = adapter.noop_a
+    outcome "success" { transition_to = "done" }
+  }
+
+  state "done" {
+    terminal = true
+    success  = true
+  }
+}`)
+
+	// We'll use two separate plugins to track each adapter's lifecycle independently
+	adapterA := &lifecycleTrackingPlugin{
+		fakePlugin: fakePlugin{name: "noop_a", outcome: "success"},
+	}
+	adapterB := &lifecycleTrackingPlugin{
+		fakePlugin: fakePlugin{name: "noop_b", outcome: "success"},
+	}
+
+	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
+		"noop_a": adapterA,
+		"noop_b": adapterB,
+	}}
+
+	sink := &lifecycleTrackingSink{}
+	eng := New(parentG, loader, sink)
+
+	err := eng.Run(context.Background())
+	if err != nil {
+		t.Errorf("Run failed: %v", err)
+	}
+
+	// Verify adapter A (parent): should open once at parent scope start, close once at end
+	adapterA.mu.Lock()
+	aOpens := adapterA.opensCount
+	aCloses := adapterA.closesCount
+	adapterA.mu.Unlock()
+
+	if aOpens != 1 {
+		t.Errorf("adapter a (parent): expected 1 open, got %d", aOpens)
+	}
+	if aCloses != 1 {
+		t.Errorf("adapter a (parent): expected 1 close, got %d", aCloses)
+	}
+
+	// Verify adapter B (body): should open once when body starts, close once when body ends
+	adapterB.mu.Lock()
+	bOpens := adapterB.opensCount
+	bCloses := adapterB.closesCount
+	adapterB.mu.Unlock()
+
+	if bOpens != 1 {
+		t.Errorf("adapter b (body): expected 1 open, got %d", bOpens)
+	}
+	if bCloses != 1 {
+		t.Errorf("adapter b (body): expected 1 close, got %d", bCloses)
+	}
+
+	// Verify event order: a opens, b opens (in body), b closes (body ends), a closes (parent ends)
+	events := sink.adapterLifecycleEvents
+	if len(events) < 4 {
+		t.Errorf("expected at least 4 lifecycle events, got %d: %v", len(events), events)
+	} else {
+		// Check that the essential events occurred (may have execution events in between)
+		hasAOpened := containsEvent(events, "noop_a.default:opened")
+		hasBOpened := containsEvent(events, "noop_b.default:opened")
+		hasBClosed := containsEvent(events, "noop_b.default:closed")
+		hasAClosed := containsEvent(events, "noop_a.default:closed")
+
+		if !hasAOpened || !hasBOpened || !hasBClosed || !hasAClosed {
+			t.Errorf("missing essential lifecycle events: %v (opened_a=%v, opened_b=%v, closed_b=%v, closed_a=%v)",
+				events, hasAOpened, hasBOpened, hasBClosed, hasAClosed)
+		}
+	}
+}
+
+// TestRunWorkflowBody_BodyDoesNotInheritParentAdapter verifies the scope-isolation
+// invariant: a body step that references an adapter declared only in the parent
+// scope must produce a compile error. This guarantees parent adapters are NOT
+// implicitly visible inside subworkflow bodies.
+//
+// Bypasses the compile() helper because injectDefaultAdapters auto-injects bare
+// adapter references; we need the dotted reference to remain unresolved against
+// the body's own (empty) Adapters map.
+func TestRunWorkflowBody_BodyDoesNotInheritParentAdapter(t *testing.T) {
+	src := `
+workflow "parent" {
+  version       = "0.1"
+  initial_state = "outer"
+  target_state  = "done"
+
+  adapter "noop" "parent_only" {
+    config {}
+  }
+
+  step "outer" {
+    type     = "workflow"
+    for_each = ["x"]
+
+    workflow {
+      step "inner" {
+        adapter = adapter.noop.parent_only
+        outcome "success" { transition_to = "_continue" }
+      }
+    }
+
+    outcome "all_succeeded" { transition_to = "done" }
+    outcome "any_failed"    { transition_to = "done" }
+  }
+
+  state "done" {
+    terminal = true
+    success  = true
+  }
+}`
+	spec, diags := workflow.Parse("body_inherit_test.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %v", diags)
+	}
+	_, diags = workflow.Compile(spec, nil)
+	if !diags.HasErrors() {
+		t.Fatal("expected compile error: body step references parent-only adapter, got no errors")
+	}
+	wantSubstr := `referenced adapter "noop.parent_only" is not declared`
+	found := false
+	for _, d := range diags {
+		if strings.Contains(d.Summary, wantSubstr) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected diagnostic containing %q, got diagnostics: %v", wantSubstr, diags)
+	}
+}
+
+// Helper to check if an event string is in the events slice
+func containsEvent(events []string, substr string) bool {
+	for _, evt := range events {
+		if evt == substr {
+			return true
+		}
+	}
+	return false
 }

@@ -138,9 +138,6 @@ func formatStepHeader(step *workflow.StepNode) string {
 	if step.Adapter != "" {
 		parts = append(parts, "adapter="+step.Adapter)
 	}
-	if step.Lifecycle != "" {
-		parts = append(parts, "lifecycle="+step.Lifecycle)
-	}
 	if step.Timeout > 0 {
 		parts = append(parts, "timeout="+step.Timeout.String())
 	}

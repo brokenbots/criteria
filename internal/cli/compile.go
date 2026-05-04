@@ -93,7 +93,6 @@ type compileAdapter struct {
 type compileStep struct {
 	Name       string           `json:"name"`
 	Adapter    string           `json:"adapter,omitempty"`
-	Lifecycle  string           `json:"lifecycle,omitempty"`
 	Timeout    string           `json:"timeout,omitempty"`
 	InputKeys  []string         `json:"input_keys"`
 	AllowTools []string         `json:"allow_tools"`
@@ -144,7 +143,6 @@ func buildCompileJSON(graph *workflow.FSMGraph) compileJSON { //nolint:funlen //
 		steps = append(steps, compileStep{
 			Name:       st.Name,
 			Adapter:    st.Adapter,
-			Lifecycle:  st.Lifecycle,
 			Timeout:    timeout,
 			InputKeys:  sortedMapKeys(st.Input),
 			AllowTools: append([]string(nil), st.AllowTools...),

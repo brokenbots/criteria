@@ -228,31 +228,19 @@ steps (declaration order):
   checkout_branch   adapter=shell.default   timeout=10s
     input keys: command
     allow_tools: (none)
-    outcomes: success -> open_executor, failure -> failed
-  open_executor   adapter=copilot.executor   lifecycle=open
-    input keys: (none)
-    allow_tools: (none)
-    outcomes: success -> open_reviewer, failure -> failed
-  open_reviewer   adapter=copilot.reviewer   lifecycle=open
-    input keys: (none)
-    allow_tools: (none)
-    outcomes: success -> open_pr_manager, failure -> close_executor_abort
-  open_pr_manager   adapter=copilot.pr_manager   lifecycle=open
-    input keys: (none)
-    allow_tools: (none)
-    outcomes: success -> execute_init, failure -> close_reviewer_abort
+    outcomes: success -> execute_init, failure -> failed
   execute_init   adapter=copilot.executor
     input keys: prompt
     allow_tools: *
-    outcomes: needs_review -> review_init, needs_approval -> review_init, failure -> close_pr_manager_abort
+    outcomes: needs_review -> review_init, needs_approval -> review_init, failure -> failed
   review_init   adapter=copilot.reviewer
     input keys: prompt
     allow_tools: *
-    outcomes: approved -> commit_and_prepare_pr, changes_requested -> execute, needs_review -> execute, needs_approval -> execute, failure -> close_pr_manager_abort
+    outcomes: approved -> commit_and_prepare_pr, changes_requested -> execute, needs_review -> execute, needs_approval -> execute, failure -> failed
   execute   adapter=copilot.executor
     input keys: prompt
     allow_tools: *
-    outcomes: success -> verify, needs_review -> verify, needs_approval -> verify, failure -> close_pr_manager_abort
+    outcomes: success -> verify, needs_review -> verify, needs_approval -> verify, failure -> failed
   verify   adapter=shell.default   timeout=2m0s
     input keys: command
     allow_tools: (none)
@@ -260,19 +248,19 @@ steps (declaration order):
   fix_verify   adapter=copilot.executor
     input keys: prompt
     allow_tools: *
-    outcomes: needs_review -> verify, needs_approval -> verify, failure -> close_pr_manager_abort
+    outcomes: needs_review -> verify, needs_approval -> verify, failure -> failed
   review   adapter=copilot.reviewer
     input keys: prompt
     allow_tools: *
-    outcomes: approved -> commit_and_prepare_pr, changes_requested -> execute, needs_review -> execute, needs_approval -> execute, failure -> close_pr_manager_abort
+    outcomes: approved -> commit_and_prepare_pr, changes_requested -> execute, needs_review -> execute, needs_approval -> execute, failure -> failed
   commit_and_prepare_pr   adapter=copilot.executor
     input keys: prompt
     allow_tools: *
-    outcomes: success -> open_or_update_pr, failure -> close_pr_manager_abort
+    outcomes: success -> open_or_update_pr, failure -> failed
   open_or_update_pr   adapter=copilot.pr_manager
     input keys: prompt
     allow_tools: *
-    outcomes: watch_pr -> watch_pr_warmup, needs_review -> watch_pr_warmup, needs_approval -> watch_pr_warmup, failure -> close_pr_manager_abort
+    outcomes: watch_pr -> watch_pr_warmup, needs_review -> watch_pr_warmup, needs_approval -> watch_pr_warmup, failure -> failed
   watch_pr_warmup   adapter=shell.default   timeout=3m0s
     input keys: command
     allow_tools: (none)
@@ -288,39 +276,15 @@ steps (declaration order):
   triage_pr_feedback   adapter=copilot.pr_manager
     input keys: prompt
     allow_tools: *
-    outcomes: merged -> merge_pr_and_sync_main, needs_executor -> execute_pr_feedback, recheck -> watch_pr_backoff, watch_pr -> watch_pr_backoff, needs_review -> watch_pr_backoff, needs_approval -> watch_pr_backoff, failure -> close_pr_manager_abort
+    outcomes: merged -> merge_pr_and_sync_main, needs_executor -> execute_pr_feedback, recheck -> watch_pr_backoff, watch_pr -> watch_pr_backoff, needs_review -> watch_pr_backoff, needs_approval -> watch_pr_backoff, failure -> failed
   execute_pr_feedback   adapter=copilot.executor
     input keys: prompt
     allow_tools: *
-    outcomes: success -> verify, needs_review -> verify, needs_approval -> verify, failure -> close_pr_manager_abort
+    outcomes: success -> verify, needs_review -> verify, needs_approval -> verify, failure -> failed
   merge_pr_and_sync_main   adapter=shell.default   timeout=5m0s
     input keys: command
     allow_tools: (none)
-    outcomes: success -> close_pr_manager_done, failure -> close_pr_manager_done
-  close_pr_manager_done   adapter=copilot.pr_manager   lifecycle=close
-    input keys: (none)
-    allow_tools: (none)
-    outcomes: success -> close_reviewer_done, failure -> close_reviewer_done
-  close_reviewer_done   adapter=copilot.reviewer   lifecycle=close
-    input keys: (none)
-    allow_tools: (none)
-    outcomes: success -> close_executor_done, failure -> close_executor_done
-  close_executor_done   adapter=copilot.executor   lifecycle=close
-    input keys: (none)
-    allow_tools: (none)
     outcomes: success -> done, failure -> done
-  close_pr_manager_abort   adapter=copilot.pr_manager   lifecycle=close
-    input keys: (none)
-    allow_tools: (none)
-    outcomes: success -> close_reviewer_abort, failure -> close_reviewer_abort
-  close_reviewer_abort   adapter=copilot.reviewer   lifecycle=close
-    input keys: (none)
-    allow_tools: (none)
-    outcomes: success -> close_executor_abort, failure -> close_executor_abort
-  close_executor_abort   adapter=copilot.executor   lifecycle=close
-    input keys: (none)
-    allow_tools: (none)
-    outcomes: success -> failed, failure -> failed
 
 states:
   done    terminal=true   success=true

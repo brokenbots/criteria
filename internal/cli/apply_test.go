@@ -30,7 +30,7 @@ func TestApplyLocal_NoopPlugin_EmitsExpectedEvents(t *testing.T) {
 	workflowPath := writeWorkflowFile(t, `
 workflow "local_apply_noop" {
   version = "0.1"
-  initial_state = "open_adapter"
+  initial_state = "run_adapter"
   target_state  = "done"
 
   adapter "noop" "demo" {
@@ -39,25 +39,11 @@ workflow "local_apply_noop" {
     }
   }
 
-  step "open_adapter" {
-    adapter = adapter.noop.demo
-    lifecycle = "open"
-    outcome "success" { transition_to = "run_adapter" }
-    outcome "failure" { transition_to = "failed" }
-  }
-
   step "run_adapter" {
     adapter = adapter.noop.demo
     input {
       prompt = "hello"
     }
-    outcome "success" { transition_to = "close_adapter" }
-    outcome "failure" { transition_to = "failed" }
-  }
-
-  step "close_adapter" {
-    adapter = adapter.noop.demo
-    lifecycle = "close"
     outcome "success" { transition_to = "done" }
     outcome "failure" { transition_to = "failed" }
   }
@@ -90,7 +76,7 @@ workflow "local_apply_noop" {
 		t.Fatalf("expected exactly one RunCompleted, got %d", countPayloadType(types, "RunCompleted"))
 	}
 
-	wantOrder := []string{"StepEntered", "StepOutcome", "StepTransition", "StepEntered", "StepOutcome", "StepTransition", "StepEntered", "StepOutcome", "StepTransition"}
+	wantOrder := []string{"StepEntered", "StepOutcome", "StepTransition"}
 	gotStepEvents := filterPayloadTypes(types, map[string]bool{"StepEntered": true, "StepOutcome": true, "StepTransition": true})
 	if strings.Join(gotStepEvents, ",") != strings.Join(wantOrder, ",") {
 		t.Fatalf("step event order mismatch\nwant: %v\ngot:  %v", wantOrder, gotStepEvents)

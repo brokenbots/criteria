@@ -1,7 +1,7 @@
 package workflow
 
-// compile_lifecycle.go — lifecycle and crash-policy validation helpers, plus
-// the reserved-name check for the engine-internal "_continue" target.
+// compile_validators.go — validation helpers for adapter names and crash policies,
+// plus the reserved-name check for the engine-internal "_continue" target.
 
 import (
 	"strings"
@@ -12,15 +12,6 @@ import (
 func isValidOnCrash(v string) bool {
 	switch v {
 	case onCrashFail, onCrashRespawn, onCrashAbortRun:
-		return true
-	default:
-		return false
-	}
-}
-
-func isValidLifecycle(v string) bool {
-	switch v {
-	case lifecycleOpen, lifecycleClose:
 		return true
 	default:
 		return false

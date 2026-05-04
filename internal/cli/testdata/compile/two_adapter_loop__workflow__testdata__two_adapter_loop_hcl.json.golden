@@ -1,6 +1,6 @@
 {
   "name": "two_agent_loop",
-  "initial_state": "open_executor",
+  "initial_state": "execute",
   "target_state": "done",
   "policy": {
     "MaxTotalSteps": 100,
@@ -23,32 +23,6 @@
   ],
   "steps": [
     {
-      "name": "open_executor",
-      "adapter": "copilot.executor",
-      "lifecycle": "open",
-      "input_keys": null,
-      "allow_tools": null,
-      "outcomes": [
-        {
-          "name": "success",
-          "transition_to": "open_reviewer"
-        }
-      ]
-    },
-    {
-      "name": "open_reviewer",
-      "adapter": "copilot.reviewer",
-      "lifecycle": "open",
-      "input_keys": null,
-      "allow_tools": null,
-      "outcomes": [
-        {
-          "name": "success",
-          "transition_to": "execute"
-        }
-      ]
-    },
-    {
       "name": "execute",
       "adapter": "copilot.executor",
       "input_keys": null,
@@ -56,7 +30,7 @@
       "outcomes": [
         {
           "name": "approved",
-          "transition_to": "close_reviewer"
+          "transition_to": "review"
         },
         {
           "name": "retry",
@@ -72,37 +46,11 @@
       "outcomes": [
         {
           "name": "approved",
-          "transition_to": "close_reviewer"
+          "transition_to": "done"
         },
         {
           "name": "changes",
           "transition_to": "execute"
-        }
-      ]
-    },
-    {
-      "name": "close_reviewer",
-      "adapter": "copilot.reviewer",
-      "lifecycle": "close",
-      "input_keys": null,
-      "allow_tools": null,
-      "outcomes": [
-        {
-          "name": "success",
-          "transition_to": "close_executor"
-        }
-      ]
-    },
-    {
-      "name": "close_executor",
-      "adapter": "copilot.executor",
-      "lifecycle": "close",
-      "input_keys": null,
-      "allow_tools": null,
-      "outcomes": [
-        {
-          "name": "success",
-          "transition_to": "done"
         }
       ]
     }
@@ -116,12 +64,8 @@
   ],
   "outputs": [],
   "step_order": [
-    "open_executor",
-    "open_reviewer",
     "execute",
-    "review",
-    "close_reviewer",
-    "close_executor"
+    "review"
   ],
   "plugins_required": [
     "copilot"

@@ -12,7 +12,7 @@ func TestAdapterConfigFoldsVarRef(t *testing.T) {
 	src := `
 workflow "x" {
   version       = "0.1"
-  initial_state = "open"
+  initial_state = "work"
   target_state  = "done"
   variable "prompt_val" {
     type    = "string"
@@ -23,9 +23,8 @@ workflow "x" {
       system_prompt = var.prompt_val
     }
   }
-  step "open" {
+  step "work" {
     adapter   = adapter.copilot.bot
-    lifecycle = "open"
     outcome "success" { transition_to = "done" }
   }
   state "done" { terminal = true }
@@ -51,7 +50,7 @@ func TestAdapterConfigFoldsLocalRef(t *testing.T) {
 	src := `
 workflow "x" {
   version       = "0.1"
-  initial_state = "open"
+  initial_state = "work"
   target_state  = "done"
   local "greeting" {
     value = "You are a helpful assistant."
@@ -61,9 +60,8 @@ workflow "x" {
       system_prompt = local.greeting
     }
   }
-  step "open" {
+  step "work" {
     adapter   = adapter.copilot.bot
-    lifecycle = "open"
     outcome "success" { transition_to = "done" }
   }
   state "done" { terminal = true }
@@ -95,7 +93,7 @@ func TestAdapterConfigFileVarPath_SuccessNoSpuriousError(t *testing.T) {
 	src := `
 workflow "x" {
   version       = "0.1"
-  initial_state = "open"
+  initial_state = "work"
   target_state  = "done"
   variable "prompt_file" {
     type    = "string"
@@ -106,9 +104,8 @@ workflow "x" {
       system_prompt = file(var.prompt_file)
     }
   }
-  step "open" {
+  step "work" {
     adapter   = adapter.copilot.bot
-    lifecycle = "open"
     outcome "success" { transition_to = "done" }
   }
   state "done" { terminal = true }

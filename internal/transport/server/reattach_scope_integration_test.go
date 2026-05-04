@@ -145,7 +145,7 @@ func TestReattachRun_RestoresVarScope(t *testing.T) {
 		"shell": plugin.BuiltinFactoryForAdapter(rec)(),
 	}}
 	sink := &integrationSink{}
-	eng := engine.New(graph, loader, sink, engine.WithResumedVars(restoredVars), engine.WithAutoBootstrapAdapters())
+	eng := engine.New(graph, loader, sink, engine.WithResumedVars(restoredVars))
 	if runErr := eng.Run(ctx); runErr != nil {
 		t.Fatalf("engine.Run: %v", runErr)
 	}

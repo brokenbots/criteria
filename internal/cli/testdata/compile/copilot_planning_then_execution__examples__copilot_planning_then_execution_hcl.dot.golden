@@ -1,24 +1,15 @@
 digraph "copilot_planning_then_execution" {
   rankdir=LR;
 
-  "open_agent" [shape=box];
   "plan" [shape=box];
   "execute" [shape=box];
-  "close_done" [shape=box];
-  "close_failed" [shape=box];
   "done" [shape=doublecircle];
   "failed" [shape=doublecircle];
 
   "__start__" [shape=point,width=0.12,label=""];
-  "__start__" -> "open_agent" [label="initial"];
-  "open_agent" -> "failed" [label="failure"];
-  "open_agent" -> "plan" [label="success"];
-  "plan" -> "close_failed" [label="failure"];
+  "__start__" -> "plan" [label="initial"];
+  "plan" -> "failed" [label="failure"];
   "plan" -> "execute" [label="success"];
-  "execute" -> "close_failed" [label="failure"];
-  "execute" -> "close_done" [label="success"];
-  "close_done" -> "done" [label="failure"];
-  "close_done" -> "done" [label="success"];
-  "close_failed" -> "failed" [label="failure"];
-  "close_failed" -> "failed" [label="success"];
+  "execute" -> "failed" [label="failure"];
+  "execute" -> "done" [label="success"];
 }

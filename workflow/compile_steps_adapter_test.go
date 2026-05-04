@@ -18,7 +18,6 @@ workflow "x" {
   target_state  = "done"
   step "open" {
     adapter = adapter.copilot.default
-    lifecycle = "open"
     outcome "success" { transition_to = "run" }
   }
   step "run" {
@@ -31,7 +30,6 @@ workflow "x" {
   }
   step "close" {
     adapter = adapter.copilot.default
-    lifecycle = "close"
     outcome "success" { transition_to = "done" }
   }
   state "done" { terminal = true }
@@ -107,7 +105,6 @@ workflow "x" {
   target_state  = "done"
   step "open" {
     adapter = adapter.copilot.default
-    lifecycle = "open"
     outcome "success" { transition_to = "run" }
   }
   step "run" {
@@ -120,7 +117,6 @@ workflow "x" {
   }
   step "close" {
     adapter = adapter.copilot.default
-    lifecycle = "close"
     outcome "success" { transition_to = "done" }
   }
   state "done" { terminal = true }
@@ -155,7 +151,6 @@ workflow "x" {
   target_state  = "done"
   step "open" {
     adapter = adapter.copilot.default
-    lifecycle = "open"
     outcome "success" { transition_to = "run" }
   }
   step "run" {
@@ -168,7 +163,6 @@ workflow "x" {
   }
   step "close" {
     adapter = adapter.copilot.default
-    lifecycle = "close"
     outcome "success" { transition_to = "done" }
   }
   state "done" { terminal = true }
@@ -231,7 +225,6 @@ workflow "x" {
   target_state  = "done"
   step "open" {
     adapter = adapter.copilot.default
-    lifecycle = "open"
     outcome "success" { transition_to = "run" }
   }
   step "run" {
@@ -244,7 +237,6 @@ workflow "x" {
   }
   step "close" {
     adapter = adapter.copilot.default
-    lifecycle = "close"
     outcome "success" { transition_to = "done" }
   }
   state "done" { terminal = true }

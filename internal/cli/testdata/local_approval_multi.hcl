@@ -15,15 +15,8 @@ workflow "local_approval_multi" {
   approval "second_review" {
     approvers = ["bob"]
     reason    = "second gate"
-    outcome "approved" { transition_to = "open_demo" }
+    outcome "approved" { transition_to = "run_step" }
     outcome "rejected" { transition_to = "rejected_state" }
-  }
-
-  step "open_demo" {
-    adapter = adapter.noop.demo
-    lifecycle = "open"
-    outcome "success" { transition_to = "run_step" }
-    outcome "failure" { transition_to = "failed" }
   }
 
   step "run_step" {
@@ -31,13 +24,6 @@ workflow "local_approval_multi" {
     input {
       prompt = "continue"
     }
-    outcome "success" { transition_to = "close_demo" }
-    outcome "failure" { transition_to = "failed" }
-  }
-
-  step "close_demo" {
-    adapter = adapter.noop.demo
-    lifecycle = "close"
     outcome "success" { transition_to = "done" }
     outcome "failure" { transition_to = "failed" }
   }

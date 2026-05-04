@@ -515,29 +515,6 @@ func (n *stepNode) runStepFromAttempt(ctx context.Context, st *RunState, deps De
 }
 
 func (n *stepNode) executeStep(ctx context.Context, deps Deps, step *workflow.StepNode) (adapter.Result, error) {
-	if step.Lifecycle == "open" {
-		adaptrDecl, ok := n.graph.Adapters[step.Adapter]
-		if !ok {
-			return adapter.Result{Outcome: "failure"}, fmt.Errorf("unknown adapter %q", step.Adapter)
-		}
-		// Plugin process startup is infrastructure, not step execution. Use an
-		// uncancellable context so a short step timeout does not race the process
-		// launch on a loaded host. Step timeouts govern plugin RPC execution;
-		// they must not cancel the session open itself.
-		if err := deps.Sessions.Open(context.WithoutCancel(ctx), step.Adapter, adaptrDecl.Type, step.OnCrash, adaptrDecl.Config); err != nil {
-			return adapter.Result{Outcome: "failure"}, err
-		}
-		return adapter.Result{Outcome: "success"}, nil
-	}
-	if step.Lifecycle == "close" {
-		// Same rationale as "open": plugin teardown must complete regardless of
-		// any step-level deadline that may have already expired.
-		if err := deps.Sessions.Close(context.WithoutCancel(ctx), step.Adapter); err != nil {
-			return adapter.Result{Outcome: "failure"}, err
-		}
-		return adapter.Result{Outcome: "success"}, nil
-	}
-
 	// Non-lifecycle step: execute using the referenced adapter.
 	if step.Adapter != "" {
 		adapterType := ""

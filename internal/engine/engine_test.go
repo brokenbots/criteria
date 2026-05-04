@@ -114,8 +114,9 @@ func (l *fakeLoader) Shutdown(context.Context) error { return nil }
 // references in the HCL, and updates all references to use the dotted "<type>.default" form.
 // This is a test helper to reduce boilerplate since most tests use simple single-adapter workflows.
 func injectDefaultAdapters(src string) string {
-	// Collect unique adapter type names from adapter = adapter.... references
-	adapters := make(map[string]bool)
+	// Collect unique adapter type names from adapter = adapter.... references, preserving order
+	adaptersMap := make(map[string]bool)
+	var adapterList []string // preserve order of first appearance
 	for _, line := range strings.Split(src, "\n") {
 		trimmed := strings.TrimSpace(line)
 		// Match "adapter" keyword followed by "=" and a traversal (e.g., adapter = adapter.fake)
@@ -129,21 +130,22 @@ func injectDefaultAdapters(src string) string {
 				if len(parts) > 0 {
 					adapterType := parts[0]
 					// Only inject if it's a bare type (i.e., only one segment: adapter = adapter.fake, not adapter.fake.default)
-					if !strings.Contains(strings.Join(parts, "."), ".") {
-						adapters[adapterType] = true
+					if !strings.Contains(strings.Join(parts, "."), ".") && !adaptersMap[adapterType] {
+						adapterList = append(adapterList, adapterType)
+						adaptersMap[adapterType] = true
 					}
 				}
 			}
 		}
 	}
 
-	if len(adapters) == 0 {
+	if len(adapterList) == 0 {
 		return src
 	}
 
-	// Build adapter declarations to inject
+	// Build adapter declarations to inject (in order of first appearance)
 	var injected strings.Builder
-	for adapterType := range adapters {
+	for _, adapterType := range adapterList {
 		//nolint:gocritic // sprintfQuotedString: Sprintf needed to build HCL with literal quotes
 		injected.WriteString(fmt.Sprintf("  adapter \"%s\" \"default\" {}\n", adapterType))
 	}
@@ -165,7 +167,7 @@ func injectDefaultAdapters(src string) string {
 	src = strings.ReplaceAll(src, "workflow {\n", "workflow {\n"+adapterDecls)
 
 	// Replace all bare adapter references with dotted references using regex to handle variable spacing
-	for adapterType := range adapters {
+	for _, adapterType := range adapterList {
 		// Pattern matches: adapter = adapter.<type> followed by whitespace or end of line (not a dot)
 		pattern := regexp.MustCompile(fmt.Sprintf(`adapter\s*=\s*adapter\.%s\b`, regexp.QuoteMeta(adapterType)))
 		replacement := fmt.Sprintf(`adapter = adapter.%s.default`, adapterType)
@@ -192,9 +194,7 @@ func compile(t *testing.T, src string) *workflow.FSMGraph {
 // NewTestEngine creates an engine with auto-bootstrap enabled for testing.
 // This is a convenience helper for tests that don't explicitly manage adapter lifecycle.
 func NewTestEngine(g *workflow.FSMGraph, loader plugin.Loader, sink Sink, opts ...Option) *Engine {
-	allOpts := []Option{WithAutoBootstrapAdapters()}
-	allOpts = append(allOpts, opts...)
-	return New(g, loader, sink, allOpts...)
+	return New(g, loader, sink, opts...)
 }
 
 func TestEngineHappyPath(t *testing.T) {
@@ -481,27 +481,17 @@ func TestEnginePermissionGrantAndDeny(t *testing.T) {
 	g := compile(t, `
 workflow "perm" {
   version       = "0.1"
-  initial_state = "open"
+  initial_state = "run"
   target_state  = "done"
 
   adapter "permissive" "bot" { }
 
-  step "open" {
-    adapter = adapter.permissive.bot
-    lifecycle = "open"
-    outcome "success" { transition_to = "run" }
-  }
   step "run" {
     adapter = adapter.permissive.bot
     input { perm_tools = "read_file,write_file" }
     allow_tools = ["read_file"]
-    outcome "success"      { transition_to = "close" }
-    outcome "needs_review" { transition_to = "close" }
-  }
-  step "close" {
-    adapter = adapter.permissive.bot
-    lifecycle = "close"
-    outcome "success" { transition_to = "done" }
+    outcome "success"      { transition_to = "done" }
+    outcome "needs_review" { transition_to = "done" }
   }
   state "done" { terminal = true }
 }`)
@@ -554,26 +544,16 @@ func TestEngineDefaultPolicyDeniesAll(t *testing.T) {
 	g := compile(t, `
 workflow "perm-deny" {
   version       = "0.1"
-  initial_state = "open"
+  initial_state = "run"
   target_state  = "done"
 
   adapter "permissive" "bot" { }
 
-  step "open" {
-    adapter = adapter.permissive.bot
-    lifecycle = "open"
-    outcome "success" { transition_to = "run" }
-  }
   step "run" {
     adapter = adapter.permissive.bot
     input { perm_tools = "read_file" }
-    outcome "needs_review" { transition_to = "close" }
-    outcome "success"      { transition_to = "close" }
-  }
-  step "close" {
-    adapter = adapter.permissive.bot
-    lifecycle = "close"
-    outcome "success" { transition_to = "done" }
+    outcome "needs_review" { transition_to = "done" }
+    outcome "success"      { transition_to = "done" }
   }
   state "done" { terminal = true }
 }`)
@@ -600,27 +580,17 @@ func TestEngineShellFingerprintAllowlist(t *testing.T) {
 	g := compile(t, `
 workflow "perm-shell" {
   version       = "0.1"
-  initial_state = "open"
+  initial_state = "run"
   target_state  = "done"
 
   adapter "permissive" "bot" { }
 
-  step "open" {
-    adapter = adapter.permissive.bot
-    lifecycle = "open"
-    outcome "success" { transition_to = "run" }
-  }
   step "run" {
     adapter = adapter.permissive.bot
     input { perm_tools = "shell|git status,shell|rm -rf /" }
     allow_tools = ["shell:git *"]
-    outcome "success"      { transition_to = "close" }
-    outcome "needs_review" { transition_to = "close" }
-  }
-  step "close" {
-    adapter = adapter.permissive.bot
-    lifecycle = "close"
-    outcome "success" { transition_to = "done" }
+    outcome "success"      { transition_to = "done" }
+    outcome "needs_review" { transition_to = "done" }
   }
   state "done" { terminal = true }
 }`)
@@ -846,7 +816,7 @@ workflow "t" {
   policy { max_total_steps = 1000 }
 }`)
 	sink2 := &fakeSink{}
-	eng2 := New(g2, loader, sink2, WithResumedVisits(visits), WithAutoBootstrapAdapters())
+	eng2 := New(g2, loader, sink2, WithResumedVisits(visits))
 	err2 := eng2.RunFrom(context.Background(), "loop", 1)
 	if err2 == nil {
 		t.Fatal("expected max_visits error from resumed run")

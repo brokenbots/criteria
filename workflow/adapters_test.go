@@ -30,7 +30,7 @@ func TestParseAndCompileAdapterLifecycleWorkflow(t *testing.T) {
 	src := `
 workflow "session_flow" {
   version       = "0.1"
-  initial_state = "open_exec"
+  initial_state = "run"
   target_state  = "done"
 
   adapter "copilot" "exec" {
@@ -44,21 +44,9 @@ workflow "session_flow" {
     config { }
   }
 
-  step "open_exec" {
-    adapter   = adapter.copilot.exec
-    lifecycle = "open"
-    outcome "success" { transition_to = "run" }
-  }
-
   step "run" {
     adapter = adapter.copilot.exec
-    outcome "approved" { transition_to = "close_exec" }
-  }
-
-  step "close_exec" {
-    adapter   = adapter.copilot.exec
-    lifecycle = "close"
-    outcome "success" { transition_to = "done" }
+    outcome "approved" { transition_to = "done" }
   }
 
   state "done" { terminal = true }
@@ -84,23 +72,39 @@ workflow "session_flow" {
 		t.Fatalf("expected default fail on_crash for copilot.review, got %q", g.Adapters["copilot.review"].OnCrash)
 	}
 
-	open := g.Steps["open_exec"]
-	if open.Adapter != "copilot.exec" || open.Lifecycle != "open" {
-		t.Fatalf("open step did not preserve adapter/lifecycle: %+v", open)
-	}
-	if open.OnCrash != "respawn" {
-		t.Fatalf("open step expected inherited on_crash=respawn, got %q", open.OnCrash)
-	}
-
 	run := g.Steps["run"]
+	if run.Adapter != "copilot.exec" {
+		t.Fatalf("run step did not preserve adapter: %+v", run)
+	}
 	if run.OnCrash != "respawn" {
 		t.Fatalf("run step expected inherited on_crash=respawn, got %q", run.OnCrash)
 	}
+}
 
-	closeStep := g.Steps["close_exec"]
-	if closeStep.Lifecycle != "close" {
-		t.Fatalf("close step lifecycle mismatch: %q", closeStep.Lifecycle)
-	}
+// TestStep_LegacyLifecycleAttr_HardError tests that lifecycle attributes on steps produce a hard parse error.
+func TestStep_LegacyLifecycleAttr_HardError(t *testing.T) {
+	src := `
+workflow "test" {
+  version       = "0.1"
+  initial_state = "step_one"
+  target_state  = "done"
+
+  adapter "noop" "default" {
+    config { }
+  }
+
+  step "step_one" {
+    adapter = adapter.noop.default
+    lifecycle = "open"
+    outcome "success" { transition_to = "done" }
+  }
+
+  state "done" { terminal = true }
+}
+`
+
+	_, diags := Parse("test.hcl", []byte(src))
+	requireExactErrorSummary(t, diags, `removed attribute "lifecycle" on steps`)
 }
 
 func TestCompileAdapterValidationErrors(t *testing.T) {
@@ -180,34 +184,4 @@ workflow "x" {
 			requireExactErrorSummary(t, diags, tc.wantSummary)
 		})
 	}
-}
-
-func TestLifecycleStepsStillValidateTargetsAndReachability(t *testing.T) {
-	src := `
-workflow "x" {
-  version = "0.1"
-  initial_state = "open"
-  target_state = "done"
-  adapter "shell" "default" {
-    config { }
-  }
-  step "open" {
-    adapter = adapter.shell.default
-    lifecycle = "open"
-    outcome "ok" { transition_to = "run" }
-  }
-  step "run" {
-    adapter = adapter.shell.default
-    outcome "ok" { transition_to = "missing" }
-  }
-  state "done" { terminal = true }
-}
-`
-
-	spec, diags := Parse("targets.hcl", []byte(src))
-	if diags.HasErrors() {
-		t.Fatalf("parse: %s", diags.Error())
-	}
-	_, diags = Compile(spec, nil)
-	requireExactErrorSummary(t, diags, `step "run" outcome "ok" -> unknown target "missing"`)
 }
