@@ -45,7 +45,7 @@ func TestResume_HappyPath(t *testing.T) {
 	sink := &trackSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": &fakePlugin{name: "fake", outcome: "success"}}}
 
-	eng := New(g, loader, sink, WithAutoBootstrapAdapters())
+	eng := New(g, loader, sink)
 	// Simulate crash at step2 attempt 1 — resume from step2 at attempt 2.
 	// RunFrom does NOT call OnRunStarted; it starts execution from step2.
 	if err := eng.RunFrom(context.Background(), "step2", 2); err != nil {
@@ -86,7 +86,7 @@ func TestResume_RunFrom_AttemptOffsetApplied(t *testing.T) {
 	}
 
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": &fakePlugin{name: "fake", outcome: "success"}}}
-	eng := New(g, loader, sink, WithAutoBootstrapAdapters())
+	eng := New(g, loader, sink)
 	// Resume from step1 at attempt 2 (already failed once).
 	if err := eng.RunFrom(context.Background(), "step1", 2); err != nil {
 		t.Fatalf("RunFrom: %v", err)
@@ -112,7 +112,7 @@ func TestResume_RespectsMaxRetries(t *testing.T) {
 	// Adapter always fails.
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": &fakePlugin{name: "fake", err: errors.New("always fails")}}}
 
-	eng := New(g, loader, sink, WithAutoBootstrapAdapters())
+	eng := New(g, loader, sink)
 	// Resume at attempt 3 (= maxAttempts): only 1 attempt allowed; it fails.
 	err := eng.RunFrom(context.Background(), "step1", 3)
 	if err == nil {
@@ -129,7 +129,7 @@ func TestResume_ExceedsMaxRetries_FailsImmediately(t *testing.T) {
 	sink := &fakeSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": &fakePlugin{name: "fake", outcome: "success"}}}
 
-	eng := New(g, loader, sink, WithAutoBootstrapAdapters())
+	eng := New(g, loader, sink)
 	// Resume at attempt 4 (exceeds maxAttempts=3): no attempts possible.
 	err := eng.RunFrom(context.Background(), "step1", 4)
 	if err == nil {

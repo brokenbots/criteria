@@ -105,25 +105,6 @@ func WithLogger(log *slog.Logger) Option {
 	}
 }
 
-// WithAutoBootstrapAdapters enables automatic session opening for adapters without
-// explicit lifecycle "open" steps. This is disabled by default (W11); adapters
-// require explicit lifecycle management via lifecycle = "open" and lifecycle = "close"
-// steps. This option is provided for backward compatibility and testing.
-func WithAutoBootstrapAdapters() Option {
-	return func(e *Engine) {
-		e.autoBootstrapAdapters = true
-	}
-}
-
-// WithStrictLifecycleSemantics explicitly disables automatic adapter bootstrap,
-// requiring explicit lifecycle management. This is the default (W11); the option
-// is provided for clarity and testing.
-func WithStrictLifecycleSemantics() Option {
-	return func(e *Engine) {
-		e.autoBootstrapAdapters = false
-	}
-}
-
 // isSuccessOutcome returns true when the outcome name indicates a successful
 // iteration. By convention, outcome names that equal "success" (case-
 // insensitive) are treated as successes; all other names set AnyFailed=true

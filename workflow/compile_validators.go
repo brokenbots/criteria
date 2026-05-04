@@ -1,7 +1,7 @@
 package workflow
 
-// compile_lifecycle.go — lifecycle and crash-policy validation helpers, plus
-// the reserved-name check for the engine-internal "_continue" target.
+// compile_validators.go — validation helpers for adapter names and crash policies,
+// plus the reserved-name check for the engine-internal "_continue" target.
 
 import (
 	"strings"

@@ -29,7 +29,6 @@ func compileWorkflowStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[stri
 
 	diags = append(diags, validateStepKindSelectionDiags(sp)...)
 	diags = append(diags, validateLegacyConfig(sp)...)
-	diags = append(diags, validateAdapterAndAgent(g, sp)...)
 	diags = append(diags, validateOnFailureValue(sp)...)
 
 	// Workflow steps do not have adapters, so allow_tools and lifecycle are not valid

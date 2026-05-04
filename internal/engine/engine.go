@@ -131,17 +131,10 @@ type Engine struct {
 	// log is an optional structured logger for internal engine warnings.
 	// Falls back to slog.Default() when nil.
 	log *slog.Logger
-	// autoBootstrapAdapters, when true, auto-opens adapters without explicit lifecycle "open" steps.
-	// Defaults to false (W11: strict lifecycle semantics). Workflows can opt-in to auto-bootstrap
-	// via WithAutoBootstrapAdapters() for backward compatibility testing.
-	autoBootstrapAdapters bool
 }
 
 func New(graph *workflow.FSMGraph, loader plugin.Loader, sink Sink, opts ...Option) *Engine {
-	// Default to false (strict lifecycle semantics). Adapter session lifecycle
-	// automation is owned by W12. Workflows that require automatic adapter
-	// bootstrap for backward compatibility can opt-in via WithAutoBootstrapAdapters().
-	e := &Engine{graph: graph, loader: loader, sink: sink, autoBootstrapAdapters: false}
+	e := &Engine{graph: graph, loader: loader, sink: sink}
 	for _, opt := range opts {
 		if opt != nil {
 			opt(e)

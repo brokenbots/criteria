@@ -199,18 +199,6 @@ func resolveStepOnCrashWithAdapter(g *FSMGraph, sp *StepSpec, adapterRef string)
 	return "", nil
 }
 
-// validateAdapterAndAgent validates adapter references and constraints.
-// In v0.3.0, steps must reference declared adapters via the "<type>.<name>" dotted form.
-// Bare adapter types (e.g., adapter = "shell") are no longer allowed.
-//
-// Deprecated: This function is kept for reference; new code should use validateAdapterRefRequired.
-func validateAdapterAndAgent(g *FSMGraph, sp *StepSpec) hcl.Diagnostics {
-	var diags hcl.Diagnostics
-	// Note: validateAdapterAndAgent is kept here for legacy reference but is no longer called.
-	// The new compile flow uses resolveStepAdapterRef for traversal-based resolution.
-	return diags
-}
-
 // validateLegacyConfig emits a migration diagnostic when a step uses the
 // deprecated config = { ... } attribute instead of input { }.
 func validateLegacyConfig(sp *StepSpec) hcl.Diagnostics {

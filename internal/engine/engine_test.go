@@ -192,9 +192,7 @@ func compile(t *testing.T, src string) *workflow.FSMGraph {
 // NewTestEngine creates an engine with auto-bootstrap enabled for testing.
 // This is a convenience helper for tests that don't explicitly manage adapter lifecycle.
 func NewTestEngine(g *workflow.FSMGraph, loader plugin.Loader, sink Sink, opts ...Option) *Engine {
-	allOpts := []Option{WithAutoBootstrapAdapters()}
-	allOpts = append(allOpts, opts...)
-	return New(g, loader, sink, allOpts...)
+	return New(g, loader, sink, opts...)
 }
 
 func TestEngineHappyPath(t *testing.T) {
@@ -816,7 +814,7 @@ workflow "t" {
   policy { max_total_steps = 1000 }
 }`)
 	sink2 := &fakeSink{}
-	eng2 := New(g2, loader, sink2, WithResumedVisits(visits), WithAutoBootstrapAdapters())
+	eng2 := New(g2, loader, sink2, WithResumedVisits(visits))
 	err2 := eng2.RunFrom(context.Background(), "loop", 1)
 	if err2 == nil {
 		t.Fatal("expected max_visits error from resumed run")

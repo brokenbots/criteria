@@ -89,7 +89,7 @@ func TestOutputCapture_StepOutputsCapturedInVars(t *testing.T) {
 		"fake_out": plug,
 	}}
 
-	eng := New(g, loader, sink, WithAutoBootstrapAdapters())
+	eng := New(g, loader, sink)
 	if err := eng.Run(context.Background()); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -180,7 +180,7 @@ func TestOutputCapture_ExpressionInterpolation(t *testing.T) {
 		"fake_consumer": consumer,
 	}}
 
-	eng := New(g, loader, sink, WithAutoBootstrapAdapters())
+	eng := New(g, loader, sink)
 	if err := eng.Run(context.Background()); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -232,7 +232,7 @@ func TestOutputCapture_EmissionOrder(t *testing.T) {
 	sink := &outputCaptureSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake_out": plug}}
 
-	eng := New(g, loader, sink, WithAutoBootstrapAdapters())
+	eng := New(g, loader, sink)
 	if err := eng.Run(context.Background()); err != nil {
 		t.Fatalf("Run: %v", err)
 	}

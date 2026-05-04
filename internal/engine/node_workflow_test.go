@@ -137,7 +137,7 @@ workflow "t" {
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
 		"fake": &captureInputPlugin{outcome: "success", capture: &captured},
 	}}
-	if err := New(g, loader, sink, WithAutoBootstrapAdapters()).Run(context.Background()); err != nil {
+	if err := New(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -215,7 +215,7 @@ workflow "t" {
 		"fake_consumer": &captureInputPlugin{outcome: "success", capture: &[]map[string]string{}},
 	}}
 
-	err := New(g, loader, sink, WithAutoBootstrapAdapters()).Run(context.Background())
+	err := New(g, loader, sink).Run(context.Background())
 	if err == nil {
 		t.Fatal("expected error: body step outputs must not be visible in outer steps.* scope (no-leakage regression)")
 	}
@@ -276,7 +276,7 @@ workflow "t" {
 		},
 		"fake_consumer": &captureInputPlugin{outcome: "success", capture: &consumeCapture},
 	}}
-	if err := New(g, loader, sink, WithAutoBootstrapAdapters()).Run(context.Background()); err != nil {
+	if err := New(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -337,11 +337,72 @@ workflow "t" {
 		"fake": &fakePlugin{name: "fake", outcome: "success"},
 	}}
 
-	err := New(g, loader, sink, WithAutoBootstrapAdapters()).Run(context.Background())
+	err := New(g, loader, sink).Run(context.Background())
 	if err == nil {
 		t.Fatal("expected error: non-object body input (each.value = string) must be rejected at runtime")
 	}
 	if !strings.Contains(err.Error(), "object") {
 		t.Errorf("error should mention 'object', got: %v", err)
+	}
+}
+
+// TestRunWorkflowBody_BodyAdapterIsolated verifies that adapters provisioned in a step's
+// workflow body are cleaned up properly when the body completes (verifying isolation).
+func TestRunWorkflowBody_BodyAdapterIsolated(t *testing.T) {
+	// A simple iteration with a workflow body that uses an adapter
+	parentG := compile(t, `
+workflow "parent" {
+  version       = "0.1"
+  initial_state = "process"
+  target_state  = "done"
+
+  step "process" {
+    type     = "workflow"
+    for_each = ["item"]
+
+    workflow {
+      step "body_step" {
+        adapter = adapter.noop
+        outcome "success" { transition_to = "_continue" }
+      }
+    }
+
+    outcome "all_succeeded" { transition_to = "done" }
+    outcome "any_failed"    { transition_to = "done" }
+  }
+
+  state "done" {
+    terminal = true
+    success  = true
+  }
+}`)
+
+	bodyTracker := &lifecycleTrackingPlugin{
+		fakePlugin: fakePlugin{name: "noop", outcome: "success"},
+	}
+
+	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
+		"noop": bodyTracker,
+	}}
+
+	sink := &lifecycleTrackingSink{}
+	eng := New(parentG, loader, sink)
+
+	err := eng.Run(context.Background())
+	if err != nil {
+		t.Errorf("Run failed: %v", err)
+	}
+
+	// Verify that the adapter in the body was provisioned and torn down
+	bodyTracker.mu.Lock()
+	opens := bodyTracker.opensCount
+	closes := bodyTracker.closesCount
+	bodyTracker.mu.Unlock()
+
+	if opens != 1 {
+		t.Errorf("body adapter: expected 1 open, got %d", opens)
+	}
+	if closes != 1 {
+		t.Errorf("body adapter: expected 1 close, got %d", closes)
 	}
 }

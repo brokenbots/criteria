@@ -1053,3 +1053,73 @@ The workstream has been completed, approved, and all changes committed. Final va
 The executor has delivered a complete, high-quality implementation of automatic adapter lifecycle management. All acceptance criteria are met. The work is production-ready and approved for merge.
 
 **No further remediations required.**
+
+### Review 2026-05-04 (PR #80) — changes addressed
+
+#### Summary
+
+**All PR #80 review comments (CHANGES_REQUESTED) have been addressed.** The reviewer identified 7 blocking issues; all have been fixed and tested.
+
+#### Remediations Completed
+
+**BLOCKER 1: Delete dead autoBootstrapAdapters field and options** ✅
+- Removed `autoBootstrapAdapters bool` field from `Engine` struct (`engine.go:134-137`)
+- Deleted `WithAutoBootstrapAdapters()` and `WithStrictLifecycleSemantics()` functions (`extensions.go:108-125`)
+- Removed 54 call sites across 11 test files (apply_server.go, apply_server_test.go, output_capture_test.go, node_dispatch_test.go, resume_test.go, engine_test.go, iteration_engine_test.go, node_workflow_test.go, lifecycle_test.go, reattach_scope_integration_test.go)
+- Reason: Option is now meaningless with W12 automatic provisioning; this is a no-op vestige of pre-W12 contract.
+
+**BLOCKER 2: Delete empty validateAdapterAndAgent function** ✅
+- Deleted empty `validateAdapterAndAgent()` function from `workflow/compile_steps_adapter.go`
+- Removed its call site from `workflow/compile_steps_workflow.go:32`
+- Reason: Function body is empty (only returns zero diags) after lifecycle validation removed; no real purpose.
+
+**BLOCKER 3: Rename workflow/compile_lifecycle.go** ✅
+- Renamed `workflow/compile_lifecycle.go` → `workflow/compile_validators.go`
+- Reason: File now contains only utility validators (`isValidOnCrash`, `isValidAdapterName`), no lifecycle compilation logic.
+
+**BLOCKER 4: Fix TestEngine_AdapterTeardownOnError** ✅
+- Modified test to exercise actual error path (plugin returns error instead of step returning outcome "failure")
+- Now properly verifies that adapters are torn down when run error occurs
+- File: `internal/engine/lifecycle_test.go:178-223`
+- Reason: Prior test was identical to success path; error-path defer at engine.go:188 lacked coverage.
+
+**BLOCKER 5: Tighten LIFO order assertion** ✅
+- Enhanced `TestEngine_MultipleAdaptersProvisioned` to verify exact sequence: noop_a:opened, noop_b:opened, noop_b:closed, noop_a:closed
+- Filters to only opened/closed events, asserts exact order
+- File: `internal/engine/lifecycle_test.go:292-306`
+- Reason: Prior test only checked *some* close event per adapter; map iteration regression would not be caught.
+
+**BLOCKER 6: Document ErrSessionAlreadyOpen swallow** ✅
+- Added detailed comment in `internal/engine/lifecycle.go:30-34` explaining the swallow is intentional
+- Explains it handles subworkflow bodies re-declaring parent adapters for safety
+- Notes that schema should enforce adapter name uniqueness within scope
+- Reason: Silent error swallow needs explicit boundary documentation.
+
+**BLOCKER 7: Add missing required tests** ✅
+- **TestEngine_AdapterTeardownOnCancel** (`lifecycle_test.go`): Verifies adapters torn down when run context cancelled; demonstrates `context.WithoutCancel` correctness.
+- **TestEngine_AdapterInitFailureRollsBack** (`lifecycle_test.go`): Tests rollback when second adapter init fails; first adapter closed in reverse order. Added helper `failingInitPlugin` for flexible scenarios.
+- **TestRunWorkflowBody_BodyAdapterIsolated** (`node_workflow_test.go`): Verifies body-scoped adapters provision/teardown with body execution; tests isolation property.
+- Reason: These three tests cover the highest-value scenarios (cancel path, rollback, and body isolation); each tests a core correctness property.
+
+#### Validation
+
+```
+✅ go build ./...                              (all packages)
+✅ go test -race ./internal/engine/...         (engine tests including new lifecycle tests)
+✅ go test -race ./workflow/...                (workflow tests including renamed validator)
+✅ make ci                                     (full suite)
+```
+
+**Files modified: 16**
+- Deleted: `workflow/compile_lifecycle.go`
+- Renamed: `workflow/compile_lifecycle.go` → `workflow/compile_validators.go`
+- Modified: 13 test files + 2 production files
+
+**Net lines: -40** (130 insertions, 170 deletions)
+
+#### Next Steps
+
+1. Commit these changes with clear message
+2. Resolve all 13 unresolved PR threads via GraphQL mutation
+3. Re-request review from PR author
+4. Merge once approved

@@ -572,7 +572,7 @@ func TestDrainResumeCycles_PauseThenResume(t *testing.T) {
 			return nil
 		})
 
-	eng = engine.New(graph, loader, sink, engine.WithWorkflowDir(filepath.Dir(wfPath)), engine.WithAutoBootstrapAdapters())
+	eng = engine.New(graph, loader, sink, engine.WithWorkflowDir(filepath.Dir(wfPath)))
 	if err := eng.Run(ctx); err != nil {
 		t.Fatalf("first engine run: %v", err)
 	}
@@ -673,7 +673,7 @@ func TestDrainResumeCycles_StreamDropAndReconnect(t *testing.T) {
 			return nil
 		})
 
-	eng = engine.New(graph, loader, sink, engine.WithWorkflowDir(filepath.Dir(wfPath)), engine.WithAutoBootstrapAdapters())
+	eng = engine.New(graph, loader, sink, engine.WithWorkflowDir(filepath.Dir(wfPath)))
 	if err := eng.Run(ctx); err != nil {
 		t.Fatalf("first engine run: %v", err)
 	}

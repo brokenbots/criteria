@@ -98,7 +98,7 @@ workflow "t" {
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
 		"fake": &fakePlugin{name: "fake", outcome: "success"},
 	}}
-	if err := New(g, loader, sink, WithAutoBootstrapAdapters()).Run(context.Background()); err != nil {
+	if err := New(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -140,7 +140,7 @@ workflow "t" {
 		// First call returns "failure", subsequent calls return "success".
 		"fake": &multiOutcomePlugin{name: "fake", outcomes: []string{"failure", "success"}},
 	}}
-	if err := New(g, loader, sink, WithAutoBootstrapAdapters()).Run(context.Background()); err != nil {
+	if err := New(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -175,7 +175,7 @@ workflow "t" {
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
 		"fake": &fakePlugin{name: "fake", outcome: "success"},
 	}}
-	if err := New(g, loader, sink, WithAutoBootstrapAdapters()).Run(context.Background()); err != nil {
+	if err := New(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -213,7 +213,7 @@ workflow "t" {
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
 		"fake": &fakePlugin{name: "fake", outcome: "success"},
 	}}
-	if err := New(g, loader, sink, WithAutoBootstrapAdapters()).Run(context.Background()); err != nil {
+	if err := New(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -250,7 +250,7 @@ workflow "t" {
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
 		"fake": &multiOutcomePlugin{name: "fake", outcomes: []string{"failure", "success", "success"}},
 	}}
-	if err := New(g, loader, sink, WithAutoBootstrapAdapters()).Run(context.Background()); err != nil {
+	if err := New(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -288,7 +288,7 @@ workflow "t" {
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
 		"fake": &fakePlugin{name: "fake", outcome: "failure"},
 	}}
-	if err := New(g, loader, sink, WithAutoBootstrapAdapters()).Run(context.Background()); err != nil {
+	if err := New(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -329,7 +329,7 @@ workflow "t" {
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
 		"fake": &fakePlugin{name: "fake", outcome: "success"},
 	}}
-	if err := New(g, loader, sink, WithAutoBootstrapAdapters()).Run(context.Background()); err != nil {
+	if err := New(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -387,7 +387,7 @@ workflow "t" {
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
 		"fake": &fakePlugin{name: "fake", outcome: "success"},
 	}}
-	if err := New(g, loader, sink, WithAutoBootstrapAdapters()).Run(context.Background()); err != nil {
+	if err := New(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -438,7 +438,7 @@ workflow "t" {
 	// Track which body steps ran.
 	p := &fakePlugin{name: "fake", outcome: "success"}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": p}}
-	if err := New(g, loader, sink, WithAutoBootstrapAdapters()).Run(context.Background()); err != nil {
+	if err := New(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -482,7 +482,7 @@ workflow "t" {
 	}
 	sink := &iterSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": capturePlugin}}
-	if err := New(g, loader, sink, WithAutoBootstrapAdapters()).Run(context.Background()); err != nil {
+	if err := New(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -594,7 +594,6 @@ workflow "t" {
 
 	eng := New(g, loader, sink,
 		WithResumedIter(resumeStack),
-		WithAutoBootstrapAdapters(),
 	)
 	// RunFrom with resume at "items" step, attempt 1.
 	if err := eng.RunFrom(context.Background(), "items", 1); err != nil {
@@ -725,7 +724,7 @@ workflow "t" {
 	cp := &captureInputPlugin{outcome: "success", capture: &capturedInputs}
 	sink := &iterSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": cp}}
-	if err := New(g, loader, sink, WithAutoBootstrapAdapters()).Run(context.Background()); err != nil {
+	if err := New(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -772,7 +771,7 @@ workflow "t" {
 	}
 	sink := &iterSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": combined}}
-	if err := New(g, loader, sink, WithAutoBootstrapAdapters()).Run(context.Background()); err != nil {
+	if err := New(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -813,7 +812,7 @@ workflow "t" {
 	plug := &multiOutcomePlugin{name: "fake", outcomes: []string{"success", "failure", "success"}}
 	sink := &iterSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": plug}}
-	if err := New(g, loader, sink, WithAutoBootstrapAdapters()).Run(context.Background()); err != nil {
+	if err := New(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -852,7 +851,7 @@ workflow "t" {
 	plug := &multiOutcomePlugin{name: "fake", outcomes: []string{"failure", "success"}}
 	sink := &iterSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": plug}}
-	if err := New(g, loader, sink, WithAutoBootstrapAdapters()).Run(context.Background()); err != nil {
+	if err := New(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -911,7 +910,7 @@ workflow "t" {
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
 		"fake_produce": producePlug,
 	}}
-	if err := New(g, loader, sink, WithAutoBootstrapAdapters()).Run(context.Background()); err != nil {
+	if err := New(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -962,7 +961,7 @@ workflow "t" {
 		Total:      3,
 		InProgress: true,
 	}}
-	eng := New(g, loader, sink, WithResumedIter(resumeStack), WithAutoBootstrapAdapters())
+	eng := New(g, loader, sink, WithResumedIter(resumeStack))
 	if err := eng.RunFrom(context.Background(), "items", 1); err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -1010,7 +1009,7 @@ workflow "t" {
 	capturePlugin := &captureInputPlugin{outcome: "success", capture: &capturedInputs}
 	sink := &iterSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": capturePlugin}}
-	if err := New(g, loader, sink, WithAutoBootstrapAdapters()).Run(context.Background()); err != nil {
+	if err := New(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -1077,7 +1076,7 @@ workflow "t" {
 	combined := &combinedPlugin{captureInputPlugin: cp, outcomePlugin: mp}
 	sink := &iterSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": combined}}
-	if err := New(g, loader, sink, WithAutoBootstrapAdapters()).Run(context.Background()); err != nil {
+	if err := New(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -1158,7 +1157,7 @@ workflow "t" {
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
 		"fake": &captureInputPlugin{outcome: "success", capture: &capturedConsume},
 	}}
-	if err := New(g, loader, sink, WithAutoBootstrapAdapters()).Run(context.Background()); err != nil {
+	if err := New(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -1225,7 +1224,7 @@ workflow "t" {
 		"fake_produce": producePlug,
 		"fake_consume": consumePlug,
 	}}
-	if err := New(g, loader, sink, WithAutoBootstrapAdapters()).Run(context.Background()); err != nil {
+	if err := New(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -1279,7 +1278,7 @@ workflow "t" {
 	combined.capture = &capturedInputs
 	sink := &iterSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": combined}}
-	if err := New(g, loader, sink, WithAutoBootstrapAdapters()).Run(context.Background()); err != nil {
+	if err := New(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -1331,7 +1330,7 @@ workflow "t" {
 	cp := &captureInputPlugin{outcome: "success", capture: &capturedInputs}
 	sink := &iterSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": cp}}
-	if err := New(g, loader, sink, WithAutoBootstrapAdapters()).Run(context.Background()); err != nil {
+	if err := New(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -1412,7 +1411,7 @@ workflow "t" {
 	sink := &iterSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": capturePlugin}}
 
-	eng := New(g, loader, sink, WithResumedIter([]workflow.IterCursor{*restored}), WithAutoBootstrapAdapters())
+	eng := New(g, loader, sink, WithResumedIter([]workflow.IterCursor{*restored}))
 	if err := eng.RunFrom(context.Background(), "items", 1); err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -1465,7 +1464,7 @@ workflow "t" {
   }
 }`)
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"seq": seqPlugin}}
-	eng := New(g, loader, &fakeSink{}, WithAutoBootstrapAdapters())
+	eng := New(g, loader, &fakeSink{})
 	if err := eng.Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -1509,7 +1508,7 @@ workflow "t" {
 		"out":     outPlugin,
 		"capture": capturePlugin,
 	}}
-	eng := New(g, loader, &fakeSink{}, WithAutoBootstrapAdapters())
+	eng := New(g, loader, &fakeSink{})
 	if err := eng.Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}

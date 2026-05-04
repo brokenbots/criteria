@@ -27,6 +27,11 @@ func initScopeAdapters(ctx context.Context, g *workflow.FSMGraph, deps Deps) (or
 	for _, instanceID := range g.AdapterOrder {
 		adapter := g.Adapters[instanceID]
 		openErr := deps.Sessions.Open(ctx, instanceID, adapter.Type, adapter.OnCrash, adapter.Config)
+
+		// Silently swallow ErrSessionAlreadyOpen to support subworkflow bodies that
+		// re-declare parent adapters (for safety, even though there's no compile-time
+		// uniqueness check). The schema should enforce adapter name uniqueness at the
+		// workflow level. Only adapters we newly opened are tracked for teardown.
 		if openErr != nil && !errors.Is(openErr, plugin.ErrSessionAlreadyOpen) {
 			// Rollback: tear down all successfully provisioned adapters in reverse order
 			for i := len(provisioned) - 1; i >= 0; i-- {
