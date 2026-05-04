@@ -316,6 +316,7 @@ type FSMGraph struct {
 	Outputs            map[string]*OutputNode      // compiled output declarations (W09)
 	OutputOrder        []string                    // declaration order for stable iteration
 	Adapters           map[string]*AdapterNode     // compiled adapter declarations; keyed by "<type>.<name>"
+	AdapterOrder       []string                    // declaration order for stable iteration
 	Steps              map[string]*StepNode        // by step name
 	States             map[string]*StateNode       // by state name (terminal etc.)
 	Waits              map[string]*WaitNode        // by wait node name (W05)

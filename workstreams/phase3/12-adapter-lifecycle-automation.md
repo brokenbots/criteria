@@ -868,3 +868,52 @@ The implementation is complete, tested, and ready for production. All workstream
 4. **Plan adherence:** Every step completed as specified; no deviations from acceptance bar.
 
 **No further remediations required. Approve for merge.**
+
+### PR Review Fixes (2026-05-04 — Second Review)
+
+**6 review comments addressed:**
+
+1. **Adapter init order nondeterminism** (internal/engine/lifecycle.go:53)
+   - **Issue:** `initScopeAdapters()` iterates `g.Adapters` (map), so adapter init order is randomized.
+   - **Fix:** Added `AdapterOrder []string` field to `FSMGraph` (workflow/schema.go line 319), populated during compilation (workflow/compile_adapters.go line 85). Now iterates adapters in declaration order for stable provisioning and LIFO teardown.
+   - **Commits:** Includes map population at compile time and use in lifecycle.go.
+
+2. **Teardown order nondeterminism** (internal/engine/lifecycle.go:85)
+   - **Issue:** Building reverse order from map keys doesn't match init order.
+   - **Fix:** Changed `initScopeAdapters()` return signature to `(order []string, err error)`, returns ordered adapter IDs. `tearDownScopeAdapters()` now takes ordered slice and reverses it, ensuring LIFO semantics.
+   - **Commits:** Updated function signatures and all three call sites (engine.go Run/RunFrom, node_workflow.go).
+
+3. **Teardown context cancellation** (internal/engine/lifecycle.go:42)
+   - **Issue:** If run is canceled (SIGINT/SIGTERM), `ctx` is canceled and `CloseSession` may never run, leaving plugins alive.
+   - **Fix:** In `tearDownScopeAdapters()`, use `context.WithoutCancel(ctx)` for cleanup to ensure best-effort teardown even when main run context is canceled.
+   - **Commit:** internal/engine/lifecycle.go line 69.
+
+4. **Legacy checks not recursive** (workflow/parse_legacy_reject.go:113)
+   - **Issue:** `rejectLegacyStepAgentAttr` and `rejectLegacyStepLifecycleAttr` only scan top-level workflow steps; nested steps inside inline subworkflow bodies are unchecked.
+   - **Fix:** Made both functions recursive. Created helpers `rejectLegacyStepAgentAttrInBody()` and `rejectLegacyStepLifecycleAttrInBody()` that recursively descend into nested `workflow` blocks inside steps.
+   - **Commits:** Expanded parse_legacy_reject.go with recursive traversal for both agent and lifecycle attributes.
+
+5. **RunFrom comment incorrect** (internal/engine/engine.go:216)
+   - **Issue:** Comment says "sessions already open in original run are re-opened here", but `RunFrom` creates fresh `SessionManager`.
+   - **Fix:** Updated comment to clarify "Sessions are always provisioned fresh, not restored from a prior run."
+   - **Commit:** internal/engine/engine.go line 210.
+
+6. **Lifecycle tests lack assertions** (internal/engine/lifecycle_test.go:46)
+   - **Issue:** Tests assert terminal state or "steps ran" but never verify adapters were opened/closed or `OnAdapterLifecycle` events were emitted.
+   - **Fix:** Rewrote all tests to track actual session open/close calls and lifecycle events:
+     - Created `lifecycleTrackingSink` to record lifecycle events.
+     - Created `lifecycleTrackingPlugin` to track `OpenSession`/`CloseSession` call counts.
+     - Tests now assert:
+       - Adapters are opened exactly once (or correct count for multi-adapter tests)
+       - Adapters are closed exactly once (or in correct order for LIFO verification)
+       - Lifecycle events (`opened`, `closed`) are emitted correctly
+   - **Commits:** internal/engine/lifecycle_test.go fully rewritten with meaningful assertions.
+
+**Validation:**
+- ✅ `make ci` exits 0 (tests, linting, build all pass)
+- ✅ All engine tests pass including new lifecycle tests
+- ✅ Named return values properly used (gocritic)
+- ✅ Formatting correct (gofmt)
+- ✅ No new unused code
+
+**Result: Ready for merge.** All PR review threads addressed; CI green.

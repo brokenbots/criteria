@@ -180,12 +180,12 @@ func (e *Engine) Run(ctx context.Context) error {
 	}
 
 	// Provision adapter sessions at scope start (W12)
-	scopeHandles, err := initScopeAdapters(ctx, e.graph, deps)
+	scopeOrder, err := initScopeAdapters(ctx, e.graph, deps)
 	if err != nil {
 		e.sink.OnRunFailed(err.Error(), e.graph.InitialState)
 		return err
 	}
-	defer func() { tearDownScopeAdapters(ctx, scopeHandles, deps) }()
+	defer func() { tearDownScopeAdapters(ctx, scopeOrder, deps) }()
 
 	current := e.graph.InitialState
 	e.sink.OnRunStarted(e.graph.Name, current)
@@ -197,6 +197,8 @@ func (e *Engine) Run(ctx context.Context) error {
 // from there). It does NOT emit OnRunStarted (the run already started).
 // If initialAttempt would already exceed max_step_retries, it emits
 // OnRunFailed instead of attempting the step.
+// Adapter sessions are provisioned fresh on each run (resumed or not),
+// allowing the workflow to be resumed in a new process context.
 func (e *Engine) RunFrom(ctx context.Context, startStep string, initialAttempt int) error {
 	sessions := plugin.NewSessionManager(e.loader)
 	defer func() { _ = sessions.Shutdown(context.WithoutCancel(ctx)) }()
@@ -207,13 +209,13 @@ func (e *Engine) RunFrom(ctx context.Context, startStep string, initialAttempt i
 	}
 
 	// For resumed runs, provision adapter sessions at scope start (W12).
-	// Sessions that were already open in the original run are re-opened here.
-	scopeHandles, err := initScopeAdapters(ctx, e.graph, deps)
+	// Sessions are always provisioned fresh, not restored from a prior run.
+	scopeOrder, err := initScopeAdapters(ctx, e.graph, deps)
 	if err != nil {
 		e.sink.OnRunFailed(err.Error(), startStep)
 		return err
 	}
-	defer func() { tearDownScopeAdapters(ctx, scopeHandles, deps) }()
+	defer func() { tearDownScopeAdapters(ctx, scopeOrder, deps) }()
 
 	if err := e.bootstrapSessionsForResume(ctx, sessions, startStep); err != nil {
 		return err

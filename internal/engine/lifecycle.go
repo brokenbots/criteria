@@ -10,70 +10,64 @@ import (
 	"github.com/brokenbots/criteria/workflow"
 )
 
-// SessionHandle is an opaque handle to a provisioned adapter session, returned by initScopeAdapters.
-// It is used by tearDownScopeAdapters to release the session.
-type SessionHandle = interface{}
-
 // initScopeAdapters provisions all adapters declared in the given FSMGraph at the start of its execution scope.
-// Adapters are provisioned in declaration order.
+// Adapters are provisioned in declaration order (from AdapterOrder).
 // If any adapter fails to initialize, all successfully provisioned adapters are torn down in reverse order,
 // an event is emitted, and the error is returned.
-// Returns a map of "<type>.<name>" -> SessionHandle for the provisioned adapters.
-func initScopeAdapters(ctx context.Context, g *workflow.FSMGraph, deps Deps) (map[string]SessionHandle, error) {
+// Returns the ordered slice of provisioned adapter IDs (for correct LIFO teardown)
+// and an error if any adapter failed to initialize.
+func initScopeAdapters(ctx context.Context, g *workflow.FSMGraph, deps Deps) (order []string, err error) {
 	if len(g.Adapters) == 0 {
-		return make(map[string]SessionHandle), nil
+		return nil, nil
 	}
 
-	handles := make(map[string]SessionHandle)
-	provisioned := make([]string, 0, len(g.Adapters)) // track in order for rollback
+	provisioned := make([]string, 0, len(g.Adapters)) // track in order for LIFO rollback
 
-	// Provision adapters in declaration order
-	for _, adapter := range g.Adapters {
-		instanceID := adapter.Type + "." + adapter.Name
-		err := deps.Sessions.Open(ctx, instanceID, adapter.Type, adapter.OnCrash, adapter.Config)
-		if err != nil && !errors.Is(err, plugin.ErrSessionAlreadyOpen) {
+	// Provision adapters in declaration order (from AdapterOrder)
+	for _, instanceID := range g.AdapterOrder {
+		adapter := g.Adapters[instanceID]
+		openErr := deps.Sessions.Open(ctx, instanceID, adapter.Type, adapter.OnCrash, adapter.Config)
+		if openErr != nil && !errors.Is(openErr, plugin.ErrSessionAlreadyOpen) {
 			// Rollback: tear down all successfully provisioned adapters in reverse order
 			for i := len(provisioned) - 1; i >= 0; i-- {
 				adapterID := provisioned[i]
 				_ = deps.Sessions.Close(ctx, adapterID) // ignore teardown errors during rollback
 			}
 			// Emit lifecycle event for the failure
-			deps.Sink.OnAdapterLifecycle("", instanceID, "init_failed", err.Error())
-			return nil, fmt.Errorf("initialize adapter %q: %w", instanceID, err)
+			deps.Sink.OnAdapterLifecycle("", instanceID, "init_failed", openErr.Error())
+			return nil, fmt.Errorf("initialize adapter %q: %w", instanceID, openErr)
 		}
 		// Only track adapters that we newly opened (not already-open ones)
 		// This prevents tearing down adapters that belong to a parent scope
-		if err == nil {
+		if openErr == nil {
 			provisioned = append(provisioned, instanceID)
-			handles[instanceID] = nil // placeholder handle
 
 			// Emit lifecycle event for successful provisioning
 			deps.Sink.OnAdapterLifecycle("", instanceID, "opened", "")
 		}
 	}
 
-	return handles, nil
+	return provisioned, nil
 }
 
-// tearDownScopeAdapters releases all adapter sessions in the given handles map in reverse order.
+// tearDownScopeAdapters releases all adapter sessions in the given order in reverse (LIFO).
+// The order slice must be the one returned by initScopeAdapters to ensure correct teardown order.
 // Errors during teardown are logged via the adapter lifecycle sink but do not change the run's terminal state.
 // Always called, even if the run errored or was cancelled.
-func tearDownScopeAdapters(ctx context.Context, handles map[string]SessionHandle, deps Deps) {
-	if len(handles) == 0 {
+// Uses context.WithoutCancel to ensure teardown completes even if the run context was canceled.
+func tearDownScopeAdapters(ctx context.Context, order []string, deps Deps) {
+	if len(order) == 0 {
 		return
 	}
 
-	// Collect adapter IDs and sort in reverse declaration order
-	// (in the absence of a specific order, just reverse the map iteration order)
-	adapterIDs := make([]string, 0, len(handles))
-	for adapterID := range handles {
-		adapterIDs = append(adapterIDs, adapterID)
-	}
+	// Use context.WithoutCancel to detach from parent cancellation,
+	// ensuring cleanup runs even if the main run context was cancelled.
+	cleanupCtx := context.WithoutCancel(ctx)
 
 	// Teardown in reverse order (LIFO)
-	for i := len(adapterIDs) - 1; i >= 0; i-- {
-		adapterID := adapterIDs[i]
-		err := deps.Sessions.Close(ctx, adapterID)
+	for i := len(order) - 1; i >= 0; i-- {
+		adapterID := order[i]
+		err := deps.Sessions.Close(cleanupCtx, adapterID)
 		if err != nil {
 			// Emit lifecycle event for the failure but don't abort
 			deps.Sink.OnAdapterLifecycle("", adapterID, "close_failed", err.Error())

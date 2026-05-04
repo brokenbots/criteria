@@ -41,6 +41,7 @@ func adapterConfigEvalContext(vars, locals map[string]cty.Value, workflowDir str
 //
 // The key in g.Adapters is "<type>.<name>" (both labels concatenated with a dot).
 // Environment references are validated against g.Environments at this time.
+// Adapter declaration order is recorded in g.AdapterOrder for stable iteration.
 //
 //nolint:funlen // function length due to comprehensive adapter config validation and error handling
 func compileAdapters(g *FSMGraph, spec *Spec, schemas map[string]AdapterInfo, opts CompileOpts) hcl.Diagnostics {
@@ -118,6 +119,8 @@ func compileAdapters(g *FSMGraph, spec *Spec, schemas map[string]AdapterInfo, op
 			OnCrash:     effectiveOnCrash,
 			Config:      adapterConfig,
 		}
+		// Track adapter declaration order for stable iteration
+		g.AdapterOrder = append(g.AdapterOrder, key)
 	}
 	return diags
 }

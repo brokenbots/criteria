@@ -122,11 +122,11 @@ func runWorkflowBody(ctx context.Context, body *workflow.FSMGraph, bodyEntry str
 	}
 
 	// Body-scope adapter provisioning (W12): each body declares its own adapters.
-	bodyHandles, err := initScopeAdapters(ctx, body, deps)
+	bodyOrder, err := initScopeAdapters(ctx, body, deps)
 	if err != nil {
 		return "", nil, fmt.Errorf("workflow body init adapters: %w", err)
 	}
-	defer func() { tearDownScopeAdapters(ctx, bodyHandles, deps) }()
+	defer func() { tearDownScopeAdapters(ctx, bodyOrder, deps) }()
 
 	childSt := &RunState{
 		Current:       bodyEntry,
