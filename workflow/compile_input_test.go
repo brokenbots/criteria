@@ -21,6 +21,12 @@ var listSchema = AdapterInfo{
 	},
 }
 
+// noopSchema is a test schema for the no-op adapter used in workflow-step tests.
+var noopSchema = AdapterInfo{
+	InputSchema:  map[string]ConfigField{},
+	ConfigSchema: map[string]ConfigField{},
+}
+
 // copilotSchema mirrors the real copilot adapter schema.
 var copilotSchema = AdapterInfo{
 	ConfigSchema: map[string]ConfigField{
@@ -41,6 +47,7 @@ var testSchemas = map[string]AdapterInfo{
 	"shell":   shellSchema,
 	"copilot": copilotSchema,
 	"listy":   listSchema,
+	"noop":    noopSchema,
 }
 
 func TestInputRequiredFieldMissing(t *testing.T) {
@@ -51,7 +58,7 @@ workflow "x" {
   initial_state = "run"
   target_state  = "done"
   step "run" {
-    adapter = "shell.default"
+    adapter = adapter.shell.default
     input {}
     outcome "success" { transition_to = "done" }
     outcome "failure" { transition_to = "done" }
@@ -83,7 +90,7 @@ workflow "x" {
   initial_state = "run"
   target_state  = "done"
   step "run" {
-    adapter = "shell.default"
+    adapter = adapter.shell.default
     input {
       command = "echo hi"
       unknown_key = "bad"
@@ -115,7 +122,7 @@ workflow "x" {
   initial_state = "open"
   target_state  = "done"
   step "open" {
-    adapter   = "copilot.default"
+    adapter   = adapter.copilot.default
     lifecycle = "open"
     input {
       prompt = "hello"
@@ -129,7 +136,7 @@ workflow "x" {
 	if diags.HasErrors() {
 		t.Fatalf("parse: %s", diags.Error())
 	}
-	_, diags = Compile(spec, nil)
+	_, diags = Compile(spec, testSchemas)
 	if !diags.HasErrors() {
 		t.Fatal("expected compile error for input on lifecycle open")
 	}
@@ -146,16 +153,16 @@ workflow "x" {
   initial_state = "open"
   target_state  = "done"
   step "open" {
-    adapter   = "copilot.default"
+    adapter   = adapter.copilot.default
     lifecycle = "open"
     outcome "success" { transition_to = "run" }
   }
   step "run" {
-    adapter = "copilot.default"
+    adapter = adapter.copilot.default
     outcome "success" { transition_to = "close" }
   }
   step "close" {
-    adapter   = "copilot.default"
+    adapter   = adapter.copilot.default
     lifecycle = "close"
     input {
       prompt = "bye"
@@ -169,7 +176,7 @@ workflow "x" {
 	if diags.HasErrors() {
 		t.Fatalf("parse: %s", diags.Error())
 	}
-	_, diags = Compile(spec, nil)
+	_, diags = Compile(spec, testSchemas)
 	if !diags.HasErrors() {
 		t.Fatal("expected compile error for input on lifecycle close")
 	}
@@ -186,7 +193,7 @@ workflow "x" {
   initial_state = "run"
   target_state  = "done"
   step "run" {
-    adapter = "shell.default"
+    adapter = adapter.shell.default
     config = {
       command = "echo old"
     }
@@ -224,7 +231,7 @@ workflow "x" {
   initial_state = "run"
   target_state  = "done"
   step "run" {
-    adapter = "shell.default"
+    adapter = adapter.shell.default
     input {
       command  = "echo hi"
       extra    = "ok"
@@ -256,7 +263,7 @@ workflow "x" {
   initial_state = "run"
   target_state  = "done"
   step "run" {
-    adapter = "shell.default"
+    adapter = adapter.shell.default
     input {
       command = "echo hi"
     }
@@ -288,12 +295,12 @@ workflow "x" {
   initial_state = "open"
   target_state  = "done"
   step "open" {
-    adapter = "copilot.default"
+    adapter = adapter.copilot.default
     lifecycle = "open"
     outcome "success" { transition_to = "run" }
   }
   step "run" {
-    adapter = "copilot.default"
+    adapter = adapter.copilot.default
     input {
       prompt    = "do work"
       max_turns = "not-a-number"
@@ -301,7 +308,7 @@ workflow "x" {
     outcome "success" { transition_to = "close" }
   }
   step "close" {
-    adapter = "copilot.default"
+    adapter = adapter.copilot.default
     lifecycle = "close"
     outcome "success" { transition_to = "done" }
   }
@@ -330,19 +337,19 @@ workflow "x" {
   initial_state = "open"
   target_state  = "done"
   step "open" {
-    adapter = "copilot.default"
+    adapter = adapter.copilot.default
     lifecycle = "open"
     outcome "success" { transition_to = "run" }
   }
   step "run" {
-    adapter = "copilot.default"
+    adapter = adapter.copilot.default
     input {
       prompt = 42
     }
     outcome "success" { transition_to = "close" }
   }
   step "close" {
-    adapter = "copilot.default"
+    adapter = adapter.copilot.default
     lifecycle = "close"
     outcome "success" { transition_to = "done" }
   }
@@ -370,7 +377,7 @@ workflow "x" {
   initial_state = "run"
   target_state  = "done"
   step "run" {
-    adapter = "listy.default"
+    adapter = adapter.listy.default
     input {
       items = ["a", "b"]
     }
@@ -397,7 +404,7 @@ workflow "x" {
   initial_state = "run"
   target_state  = "done"
   step "run" {
-    adapter = "listy.default"
+    adapter = adapter.listy.default
     input {
       items = ["a", 1]
     }

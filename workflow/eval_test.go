@@ -174,7 +174,7 @@ workflow "test" {
   initial_state = "s"
   target_state  = "__done__"
   step "s" {
-    adapter = "shell.default"
+    adapter = adapter.shell.default
     input {
       command = "${each.value}"
     }

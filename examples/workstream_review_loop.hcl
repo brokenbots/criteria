@@ -79,7 +79,7 @@ workflow "workstream_review_loop" {
   }
 
   step "checkout_branch" {
-    adapter = "shell.default"
+    adapter = adapter.shell.default
     input {
       command = "branch=$(basename '${var.workstream_file}' .md) && current=$(git branch --show-current) && if [ \"$current\" = \"main\" ]; then git checkout -b \"$branch\"; else echo \"already on branch: $current\"; fi"
     }
@@ -92,21 +92,21 @@ workflow "workstream_review_loop" {
   # Failure paths close only the agents already opened before the fault.
 
   step "open_executor" {
-    adapter     = "copilot.executor"
+    adapter = adapter.copilot.executor
     lifecycle = "open"
     outcome "success" { transition_to = "open_reviewer" }
     outcome "failure" { transition_to = "failed" }
   }
 
   step "open_reviewer" {
-    adapter     = "copilot.reviewer"
+    adapter = adapter.copilot.reviewer
     lifecycle = "open"
     outcome "success" { transition_to = "open_pr_manager" }
     outcome "failure" { transition_to = "close_executor_abort" }
   }
 
   step "open_pr_manager" {
-    adapter     = "copilot.pr_manager"
+    adapter = adapter.copilot.pr_manager
     lifecycle = "open"
     outcome "success" { transition_to = "execute_init" }
     outcome "failure" { transition_to = "close_reviewer_abort" }
@@ -117,7 +117,7 @@ workflow "workstream_review_loop" {
   # That context persists in the live session for all subsequent loop turns.
 
   step "execute_init" {
-    adapter       = "copilot.executor"
+    adapter = adapter.copilot.executor
     allow_tools = [
       "*",
     ]
@@ -130,7 +130,7 @@ workflow "workstream_review_loop" {
   }
 
   step "review_init" {
-    adapter       = "copilot.reviewer"
+    adapter = adapter.copilot.reviewer
     allow_tools = [
       "*",
     ]
@@ -149,7 +149,7 @@ workflow "workstream_review_loop" {
   # These prompts are coordination signals only — not instructions.
 
   step "execute" {
-    adapter       = "copilot.executor"
+    adapter = adapter.copilot.executor
     allow_tools = [
       "*",
     ]
@@ -163,7 +163,7 @@ workflow "workstream_review_loop" {
   }
 
   step "verify" {
-    adapter = "shell.default"
+    adapter = adapter.shell.default
     input {
       command = "make ci 2>&1"
     }
@@ -173,7 +173,7 @@ workflow "workstream_review_loop" {
   }
 
   step "fix_verify" {
-    adapter       = "copilot.executor"
+    adapter = adapter.copilot.executor
     allow_tools = [
       "*",
     ]
@@ -186,7 +186,7 @@ workflow "workstream_review_loop" {
   }
 
   step "review" {
-    adapter       = "copilot.reviewer"
+    adapter = adapter.copilot.reviewer
     allow_tools = [
       "*",
     ]
@@ -203,7 +203,7 @@ workflow "workstream_review_loop" {
   # ── Finalize: executor commit ──────────────────────────────────────────────
 
   step "commit_and_prepare_pr" {
-    adapter       = "copilot.executor"
+    adapter = adapter.copilot.executor
     allow_tools = [
       "*",
     ]
@@ -219,7 +219,7 @@ workflow "workstream_review_loop" {
   # Shell step blocks on required checks and returns gate status.
 
   step "open_or_update_pr" {
-    adapter       = "copilot.pr_manager"
+    adapter = adapter.copilot.pr_manager
     allow_tools = [
       "*",
     ]
@@ -233,7 +233,7 @@ workflow "workstream_review_loop" {
   }
 
   step "watch_pr_warmup" {
-    adapter = "shell.default"
+    adapter = adapter.shell.default
     input {
       command = "set -euo pipefail; branch=$(git branch --show-current | tr '/ ' '__'); mkdir -p .criteria/tmp; echo 0 > .criteria/tmp/pr_watch_backoff_$branch.txt; echo 'warming up CI checks before first poll (90s)'; sleep 90"
     }
@@ -243,7 +243,7 @@ workflow "workstream_review_loop" {
   }
 
   step "watch_pr_backoff" {
-    adapter = "shell.default"
+    adapter = adapter.shell.default
     input {
       command = "set -euo pipefail; branch=$(git branch --show-current | tr '/ ' '__'); mkdir -p .criteria/tmp; state=.criteria/tmp/pr_watch_backoff_$branch.txt; attempt=0; if [ -f \"$state\" ]; then attempt=$(cat \"$state\" 2>/dev/null || echo 0); fi; attempt=$((attempt + 1)); echo \"$attempt\" > \"$state\"; if [ \"$attempt\" -le 1 ]; then delay=20; elif [ \"$attempt\" -le 2 ]; then delay=40; elif [ \"$attempt\" -le 3 ]; then delay=80; elif [ \"$attempt\" -le 4 ]; then delay=120; else delay=180; fi; echo \"backoff_attempt=$attempt\"; echo \"sleep_seconds=$delay\"; sleep \"$delay\""
     }
@@ -253,7 +253,7 @@ workflow "workstream_review_loop" {
   }
 
   step "watch_pr_gate" {
-    adapter = "shell.default"
+    adapter = adapter.shell.default
     input {
       command = "set -euo pipefail; exec 2>&1; branch=$(git branch --show-current); pr_number=$(gh pr view \"$branch\" --json number --jq '.number'); echo \"pr_number=$pr_number\"; pr_state=$(gh pr view \"$pr_number\" --json state --jq '.state'); echo \"pr_state=$pr_state\"; if [ \"$pr_state\" = \"MERGED\" ]; then echo \"checks=already_merged\"; echo \"ready_to_merge=true\"; exit 0; fi; checks_rc=0; checks_json=$(gh pr checks \"$pr_number\" --required --json bucket,name,state,workflow 2>&1) || checks_rc=$?; if [ \"$checks_rc\" -eq 8 ]; then echo \"checks=pending\"; printf '%s\n' \"$checks_json\" | jq -r 'group_by(.bucket) | map([.[0].bucket, (length|tostring)] | join(\"=\")) | .[]'; exit 1; fi; if [ \"$checks_rc\" -ne 0 ]; then echo \"checks=failed\"; printf '%s\n' \"$checks_json\"; exit 1; fi; echo \"checks=passed\"; printf '%s\n' \"$checks_json\" | jq -r 'group_by(.bucket) | map([.[0].bucket, (length|tostring)] | join(\"=\")) | .[]'; owner=$(gh repo view --json owner --jq '.owner.login'); repo=$(gh repo view --json name --jq '.name'); review_decision=$(gh pr view \"$pr_number\" --json reviewDecision --jq '.reviewDecision // \"REVIEW_REQUIRED\"'); review_threads_json=$(gh api graphql -f query='query($owner:String!, $repo:String!, $number:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$number){reviewThreads(first:100){totalCount pageInfo{hasNextPage endCursor} nodes{isResolved isOutdated}}}}}' -f owner=\"$owner\" -f repo=\"$repo\" -F number=\"$pr_number\"); review_threads_total=$(printf '%s' \"$review_threads_json\" | jq -r '.data.repository.pullRequest.reviewThreads.totalCount'); review_threads_has_next_page=$(printf '%s' \"$review_threads_json\" | jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage'); unresolved_threads=$(printf '%s' \"$review_threads_json\" | jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select((.isOutdated|not) and (.isResolved|not))] | length'); echo \"review_decision=$review_decision\"; echo \"review_threads_total=$review_threads_total\"; echo \"review_threads_has_next_page=$review_threads_has_next_page\"; echo \"unresolved_threads=$unresolved_threads\"; if [ \"$review_decision\" = \"APPROVED\" ] && [ \"$review_threads_has_next_page\" = \"false\" ] && [ \"$unresolved_threads\" -eq 0 ]; then echo \"ready_to_merge=true\"; exit 0; fi; if [ \"$review_threads_has_next_page\" = \"true\" ]; then echo \"review_threads_complete=false\"; fi; echo \"ready_to_merge=false\"; exit 1"
     }
@@ -263,7 +263,7 @@ workflow "workstream_review_loop" {
   }
 
   step "triage_pr_feedback" {
-    adapter       = "copilot.pr_manager"
+    adapter = adapter.copilot.pr_manager
     allow_tools = [
       "*",
     ]
@@ -280,7 +280,7 @@ workflow "workstream_review_loop" {
   }
 
   step "execute_pr_feedback" {
-    adapter       = "copilot.executor"
+    adapter = adapter.copilot.executor
     allow_tools = [
       "*",
     ]
@@ -294,7 +294,7 @@ workflow "workstream_review_loop" {
   }
 
   step "merge_pr_and_sync_main" {
-    adapter = "shell.default"
+    adapter = adapter.shell.default
     input {
       command = "set -uo pipefail; exec 2>&1; branch=$(git branch --show-current); pr_state=\"\"; pr_number=\"\"; if [ -n \"$branch\" ] && [ \"$branch\" != \"main\" ]; then pr_view=$(gh pr view \"$branch\" --json number,state 2>/dev/null || true); if [ -n \"$pr_view\" ]; then pr_number=$(printf '%s' \"$pr_view\" | jq -r '.number // empty'); pr_state=$(printf '%s' \"$pr_view\" | jq -r '.state // empty'); fi; fi; echo \"branch=$branch pr_number=$${pr_number:-unknown} pr_state=$${pr_state:-unknown}\"; if [ -n \"$pr_number\" ] && [ \"$pr_state\" != \"MERGED\" ] && [ \"$pr_state\" != \"CLOSED\" ]; then gh pr merge \"$pr_number\" --squash --delete-branch || { echo 'merge command failed'; exit 1; }; else echo 'skip_merge=true'; fi; git fetch origin main || exit 1; git checkout main || exit 1; git pull --ff-only origin main || exit 1; echo \"synced_main=true merged_pr=$${pr_number:-unknown}\"; exit 0"
     }
@@ -306,21 +306,21 @@ workflow "workstream_review_loop" {
   # ── Close agents: success path ──────────────────────────────────────────────
 
   step "close_pr_manager_done" {
-    adapter     = "copilot.pr_manager"
+    adapter = adapter.copilot.pr_manager
     lifecycle = "close"
     outcome "success" { transition_to = "close_reviewer_done" }
     outcome "failure" { transition_to = "close_reviewer_done" }
   }
 
   step "close_reviewer_done" {
-    adapter     = "copilot.reviewer"
+    adapter = adapter.copilot.reviewer
     lifecycle = "close"
     outcome "success" { transition_to = "close_executor_done" }
     outcome "failure" { transition_to = "close_executor_done" }
   }
 
   step "close_executor_done" {
-    adapter     = "copilot.executor"
+    adapter = adapter.copilot.executor
     lifecycle = "close"
     outcome "success" { transition_to = "done" }
     outcome "failure" { transition_to = "done" }
@@ -330,21 +330,21 @@ workflow "workstream_review_loop" {
   # Each step chains to the next so all open sessions are closed before failing.
 
   step "close_pr_manager_abort" {
-    adapter     = "copilot.pr_manager"
+    adapter = adapter.copilot.pr_manager
     lifecycle = "close"
     outcome "success" { transition_to = "close_reviewer_abort" }
     outcome "failure" { transition_to = "close_reviewer_abort" }
   }
 
   step "close_reviewer_abort" {
-    adapter     = "copilot.reviewer"
+    adapter = adapter.copilot.reviewer
     lifecycle = "close"
     outcome "success" { transition_to = "close_executor_abort" }
     outcome "failure" { transition_to = "close_executor_abort" }
   }
 
   step "close_executor_abort" {
-    adapter     = "copilot.executor"
+    adapter = adapter.copilot.executor
     lifecycle = "close"
     outcome "success" { transition_to = "failed" }
     outcome "failure" { transition_to = "failed" }

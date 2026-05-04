@@ -64,7 +64,7 @@ func buildNStepWorkflow(b *testing.B, n int) *workflow.FSMGraph {
 		}
 		hcl += fmt.Sprintf(`
   step "step_%d" {
-    adapter = "fake"
+    adapter = adapter.fake
     input { prompt = "step %d" }
     outcome "success" { transition_to = "%s" }
     outcome "failure" { transition_to = "done" }

@@ -15,7 +15,7 @@ import (
 // compile still runs in permissive mode for those adapters — a missing binary
 // should not block validation. If log is nil, failures are suppressed silently.
 //
-//nolint:gocognit // W11: function is inherently complex due to error handling for multiple adapter types
+//nolint:gocognit,gocyclo // W11: function is inherently complex due to error handling for multiple adapter types
 func collectSchemas(ctx context.Context, loader plugin.Loader, spec *workflow.Spec, log *slog.Logger) map[string]workflow.AdapterInfo {
 	if loader == nil || spec == nil {
 		return nil
@@ -30,9 +30,10 @@ func collectSchemas(ctx context.Context, loader plugin.Loader, spec *workflow.Sp
 	}
 	for i := range spec.Steps {
 		st := &spec.Steps[i]
-		// Steps reference adapters as "<type>.<name>"; extract the type.
-		if st.Adapter != "" {
-			parts := strings.Split(st.Adapter, ".")
+		// Steps reference adapters via traversal expressions in the Remain body.
+		// Extract the adapter type from the resolved reference.
+		if adapterRef, present, _ := workflow.ResolveStepAdapterRef(st.Remain); present && adapterRef != "" {
+			parts := strings.Split(adapterRef, ".")
 			if len(parts) == 2 && parts[0] != "" {
 				seen[parts[0]] = true
 			}

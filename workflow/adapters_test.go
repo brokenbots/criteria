@@ -45,18 +45,18 @@ workflow "session_flow" {
   }
 
   step "open_exec" {
-    adapter   = "copilot.exec"
+    adapter   = adapter.copilot.exec
     lifecycle = "open"
     outcome "success" { transition_to = "run" }
   }
 
   step "run" {
-    adapter = "copilot.exec"
+    adapter = adapter.copilot.exec
     outcome "approved" { transition_to = "close_exec" }
   }
 
   step "close_exec" {
-    adapter   = "copilot.exec"
+    adapter   = adapter.copilot.exec
     lifecycle = "close"
     outcome "success" { transition_to = "done" }
   }
@@ -117,7 +117,7 @@ workflow "x" {
   initial_state = "a"
   target_state = "done"
   step "a" {
-    adapter = "ghost.default"
+    adapter = adapter.ghost.default
     outcome "ok" { transition_to = "done" }
   }
   state "done" { terminal = true }
@@ -139,7 +139,7 @@ workflow "x" {
     config { }
   }
   step "a" {
-    adapter = "copilot.worker"
+    adapter = adapter.copilot.worker
     outcome "ok" { transition_to = "done" }
   }
   state "done" { terminal = true }
@@ -159,7 +159,7 @@ workflow "x" {
     config { }
   }
   step "a" {
-    adapter = "shell.default"
+    adapter = adapter.shell.default
     outcome "ok" { transition_to = "done" }
   }
   state "done" { terminal = true }
@@ -192,12 +192,12 @@ workflow "x" {
     config { }
   }
   step "open" {
-    adapter = "shell.default"
+    adapter = adapter.shell.default
     lifecycle = "open"
     outcome "ok" { transition_to = "run" }
   }
   step "run" {
-    adapter = "shell.default"
+    adapter = adapter.shell.default
     outcome "ok" { transition_to = "missing" }
   }
   state "done" { terminal = true }

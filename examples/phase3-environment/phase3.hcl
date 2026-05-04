@@ -22,7 +22,7 @@ workflow "phase3-environment" {
   }
 
   step "print_env" {
-    adapter = "shell.default"
+    adapter = adapter.shell.default
     input {
       command = "printenv"
     }

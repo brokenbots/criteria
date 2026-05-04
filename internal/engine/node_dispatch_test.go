@@ -16,7 +16,7 @@ workflow "t" {
   initial_state = "a"
   target_state  = "done"
   step "a" {
-    adapter = "fake"
+    adapter = adapter.fake
     outcome "success" { transition_to = "done" }
   }
   state "done" { terminal = true }
@@ -52,7 +52,7 @@ workflow "t" {
   initial_state = "a"
   target_state  = "done"
   step "a" {
-    adapter = "fake"
+    adapter = adapter.fake
     outcome "success" { transition_to = "done" }
   }
   state "done" { terminal = true }
@@ -60,7 +60,7 @@ workflow "t" {
 
 	sink := &fakeSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": &fakePlugin{name: "fake", outcome: "success"}}}
-	err := New(g, loader, sink).RunFrom(context.Background(), "missing", 1)
+	err := New(g, loader, sink, WithAutoBootstrapAdapters()).RunFrom(context.Background(), "missing", 1)
 	if err == nil {
 		t.Fatal("expected unknown node error")
 	}
@@ -80,7 +80,7 @@ workflow "t" {
   initial_state = "a"
   target_state  = "done"
   step "a" {
-    adapter = "fake"
+    adapter = adapter.fake
     outcome "success" { transition_to = "done" }
   }
   state "done" { terminal = true }
@@ -135,7 +135,7 @@ workflow "t" {
   initial_state = "a"
   target_state  = "done"
   step "a" {
-    adapter = "fake"
+    adapter = adapter.fake
     outcome "again" { transition_to = "a" }
   }
   state "done" { terminal = true }
@@ -144,7 +144,7 @@ workflow "t" {
 
 	sink := &fakeSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": &fakePlugin{name: "fake", outcome: "again"}}}
-	err := New(g, loader, sink).Run(context.Background())
+	err := New(g, loader, sink, WithAutoBootstrapAdapters()).Run(context.Background())
 	if err == nil {
 		t.Fatal("expected max_total_steps error")
 	}
@@ -161,7 +161,7 @@ workflow "t" {
   initial_state = "a"
   target_state  = "done"
   step "a" {
-    adapter = "fake"
+    adapter = adapter.fake
     outcome "success" { transition_to = "done" }
   }
   state "done" {
@@ -172,7 +172,7 @@ workflow "t" {
 
 	sink := &fakeSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": &fakePlugin{name: "fake", outcome: "success"}}}
-	err := New(g, loader, sink).Run(context.Background())
+	err := New(g, loader, sink, WithAutoBootstrapAdapters()).Run(context.Background())
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}

@@ -40,14 +40,14 @@ workflow "local_apply_noop" {
   }
 
   step "open_adapter" {
-    adapter = "noop.demo"
+    adapter = adapter.noop.demo
     lifecycle = "open"
     outcome "success" { transition_to = "run_adapter" }
     outcome "failure" { transition_to = "failed" }
   }
 
   step "run_adapter" {
-    adapter = "noop.demo"
+    adapter = adapter.noop.demo
     input {
       prompt = "hello"
     }
@@ -56,7 +56,7 @@ workflow "local_apply_noop" {
   }
 
   step "close_adapter" {
-    adapter = "noop.demo"
+    adapter = adapter.noop.demo
     lifecycle = "close"
     outcome "success" { transition_to = "done" }
     outcome "failure" { transition_to = "failed" }

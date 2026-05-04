@@ -106,16 +106,18 @@ func WithLogger(log *slog.Logger) Option {
 }
 
 // WithAutoBootstrapAdapters enables automatic session opening for adapters without
-// explicit lifecycle "open" steps. This is a temporary measure pre-W12 and is enabled
-// by default. Production workflows should use explicit lifecycle management (W12).
+// explicit lifecycle "open" steps. This is disabled by default (W11); adapters
+// require explicit lifecycle management via lifecycle = "open" and lifecycle = "close"
+// steps. This option is provided for backward compatibility and testing.
 func WithAutoBootstrapAdapters() Option {
 	return func(e *Engine) {
 		e.autoBootstrapAdapters = true
 	}
 }
 
-// WithStrictLifecycleSemantics disables automatic adapter bootstrap, requiring explicit
-// lifecycle management. Useful for testing strict lifecycle semantics (pre-W12 validation).
+// WithStrictLifecycleSemantics explicitly disables automatic adapter bootstrap,
+// requiring explicit lifecycle management. This is the default (W11); the option
+// is provided for clarity and testing.
 func WithStrictLifecycleSemantics() Option {
 	return func(e *Engine) {
 		e.autoBootstrapAdapters = false

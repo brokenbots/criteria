@@ -5,12 +5,15 @@ package workflow
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/hashicorp/hcl/v2"
 )
 
 // compileIteratingStep compiles a for_each/count iterating step and registers
 // it in g. The for_each/count expressions are decoded from sp.Remain.
+//
+//nolint:funlen // W11: function length unavoidable due to comprehensive iteration and adapter validation
 func compileIteratingStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[string]AdapterInfo, opts CompileOpts) hcl.Diagnostics {
 	var diags hcl.Diagnostics
 
@@ -21,11 +24,26 @@ func compileIteratingStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[str
 	}
 
 	diags = append(diags, validateStepKindSelectionDiags(sp)...)
-	diags = append(diags, validateAdapterAndAgent(g, sp)...)
+
+	// Resolve the adapter reference from the step's Remain body as an HCL traversal.
+	adapterRef, adapterPresent, d := resolveStepAdapterRef(sp.Remain)
+	diags = append(diags, d...)
+
+	// Validate that the resolved adapter reference (if present) exists in the graph.
+	if adapterPresent {
+		if _, ok := g.Adapters[adapterRef]; !ok {
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  fmt.Sprintf("step %q: referenced adapter %q is not declared", sp.Name, adapterRef),
+			})
+		}
+	}
+
+	diags = append(diags, validateAdapterRefRequired(sp, adapterPresent)...)
 	diags = append(diags, validateLegacyConfig(sp)...)
 	diags = append(diags, validateOnFailureValue(sp)...)
 
-	effectiveOnCrash, d := resolveStepOnCrash(g, sp)
+	effectiveOnCrash, d := resolveStepOnCrashWithAdapter(g, sp, adapterRef)
 	diags = append(diags, d...)
 
 	timeout, d := decodeStepTimeout(sp)
@@ -42,17 +60,25 @@ func compileIteratingStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[str
 	}
 	diags = append(diags, validateIterExprFold(g, opts, forEachExpr, countExpr)...)
 
-	adapterName := resolveAdapterName(g, sp)
-	inputMap, inputExprs, d := decodeStepInput(g, sp, schemas, opts, adapterName)
+	// Extract the adapter type from the dotted reference for validation and warnings.
+	adapterType := ""
+	if adapterRef != "" {
+		parts := strings.Split(adapterRef, ".")
+		if len(parts) == 2 {
+			adapterType = parts[0]
+		}
+	}
+
+	inputMap, inputExprs, d := decodeStepInput(g, sp, schemas, opts, adapterType)
 	diags = append(diags, d...)
 
 	// each.* references are valid inside iterating steps; no error emitted.
 
-	node := newBaseStepNode(sp, spec, effectiveOnCrash, timeout, inputMap, inputExprs)
+	node := newBaseStepNodeWithAdapterRef(sp, spec, adapterRef, effectiveOnCrash, timeout, inputMap, inputExprs)
 	node.ForEach = forEachExpr
 	node.Count = countExpr
 
-	diags = append(diags, maybeCopilotAliasWarnings(sp.Name, adapterName, node.AllowTools)...)
+	diags = append(diags, maybeCopilotAliasWarnings(sp.Name, adapterType, node.AllowTools)...)
 	diags = append(diags, compileOutcomeBlock(sp, node)...)
 	diags = append(diags, validateIteratingOutcomes(sp, node)...)
 

@@ -13,7 +13,7 @@ workflow "build_and_test" {
   target_state  = "verified"
 
   step "build" {
-    adapter = "shell.default"
+    adapter = adapter.shell.default
     input {
       command = "echo build"
     }
@@ -24,7 +24,7 @@ workflow "build_and_test" {
   }
 
   step "test" {
-    adapter = "shell.default"
+    adapter = adapter.shell.default
     input {
       command = "echo test"
     }
@@ -80,7 +80,7 @@ workflow "x" {
   initial_state = "a"
   target_state  = "done"
   step "a" {
-    adapter = "shell.default"
+    adapter = adapter.shell.default
     outcome "success" { transition_to = "missing" }
   }
   state "done" { terminal = true }
@@ -107,7 +107,7 @@ workflow "x" {
   initial_state = "a"
   target_state  = "halfway"
   step "a" {
-    adapter = "shell.default"
+    adapter = adapter.shell.default
     outcome "success" { transition_to = "halfway" }
   }
   state "halfway" {}
@@ -128,11 +128,11 @@ workflow "x" {
   initial_state = "a"
   target_state  = "done"
   step "a" {
-    adapter = "shell.default"
+    adapter = adapter.shell.default
     outcome "success" { transition_to = "done" }
   }
   step "orphan" {
-    adapter = "shell.default"
+    adapter = adapter.shell.default
     outcome "success" { transition_to = "done" }
   }
   state "done" { terminal = true }
@@ -153,7 +153,7 @@ workflow "x" {
   initial_state = "a"
   target_state  = "done"
   step "a" {
-    adapter = "shell.default"
+    adapter = adapter.shell.default
   }
   state "done" { terminal = true }
 }
@@ -174,13 +174,13 @@ workflow "x" {
   target_state  = "done"
 
   step "open" {
-    adapter = "copilot.default"
+    adapter = adapter.copilot.default
     lifecycle   = "open"
     allow_tools = ["read_file"]
     outcome "success" { transition_to = "done" }
   }
   step "close" {
-    adapter = "copilot.default"
+    adapter = adapter.copilot.default
     lifecycle = "close"
     outcome "success" { transition_to = "done" }
   }
@@ -211,7 +211,7 @@ workflow "x" {
   target_state  = "done"
 
   step "run" {
-    adapter     = "shell"
+    adapter     = adapter.shell.default
     allow_tools = ["shell:git status"]
     outcome "success" { transition_to = "done" }
   }
@@ -224,10 +224,10 @@ workflow "x" {
 	}
 	_, diags = Compile(spec, nil)
 	if !diags.HasErrors() {
-		t.Fatal("expected compile error for allow_tools without agent")
+		t.Fatal("expected compile error for undefined adapter")
 	}
-	if !strings.Contains(diags.Error(), `adapter reference "shell" is invalid`) {
-		t.Fatalf("expected adapter reference error for bare type, got: %s", diags.Error())
+	if !strings.Contains(diags.Error(), `adapter "shell.default" is not declared`) {
+		t.Fatalf("expected adapter not declared error, got: %s", diags.Error())
 	}
 }
 
@@ -240,17 +240,17 @@ workflow "x" {
   target_state  = "done"
 
   step "open" {
-    adapter = "copilot.default"
+    adapter = adapter.copilot.default
     lifecycle = "open"
     outcome "success" { transition_to = "run" }
   }
   step "run" {
-    adapter = "copilot.default"
+    adapter = adapter.copilot.default
     allow_tools = ["read_file"]
     outcome "success" { transition_to = "close" }
   }
   step "close" {
-    adapter = "copilot.default"
+    adapter = adapter.copilot.default
     lifecycle = "close"
     outcome "success" { transition_to = "done" }
   }

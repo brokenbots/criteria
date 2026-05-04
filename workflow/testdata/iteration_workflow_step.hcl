@@ -20,14 +20,14 @@ workflow "iteration_workflow_step" {
       adapter "noop" "default" {}
 
       step "prepare" {
-        adapter = "noop.default"
+        adapter = adapter.noop.default
         input   { result = "success" }
         outcome "success" { transition_to = "verify" }
         outcome "failure" { transition_to = "_continue" }
       }
 
       step "verify" {
-        adapter = "noop.default"
+        adapter = adapter.noop.default
         input   { result = "success" }
         outcome "success" { transition_to = "_continue" }
         outcome "failure" { transition_to = "_continue" }

@@ -41,7 +41,7 @@ workflow "fold-demo" {
   }
 
   step "greet" {
-    adapter = "shell.default"
+    adapter = adapter.shell.default
     input {
       # file(local.prompt_path) is folded and validated at compile time.
       # The default var.name="world" resolves to "world_prompt.txt".

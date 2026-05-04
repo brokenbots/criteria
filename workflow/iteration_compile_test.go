@@ -57,7 +57,7 @@ workflow "w" {
   initial_state = "n"
   target_state  = "done"
   step "n" {
-    adapter = "noop.default"
+    adapter = adapter.noop.default
     count   = 5
     outcome "all_succeeded" { transition_to = "done" }
     outcome "any_failed"    { transition_to = "done" }
@@ -174,7 +174,7 @@ workflow "w" {
     workflow {
       adapter "noop" "default" {}
       step "do" {
-        adapter = "noop.default"
+        adapter = adapter.noop.default
         outcome "success" { transition_to = "_continue" }
       }
     }
@@ -250,7 +250,7 @@ workflow "w" {
   target_state  = "done"
   step "run" {
     type    = "agent_runner"
-    adapter = "noop.default"
+    adapter = adapter.noop.default
     outcome "success" { transition_to = "done" }
   }
   state "done" { terminal = true }
@@ -291,7 +291,7 @@ workflow "w" {
                     workflow {
                       step "leaf" {
       adapter "noop" "default" {}
-                        adapter = "noop.default"
+                        adapter = adapter.noop.default
                         outcome "success" { transition_to = "_continue" }
                       }
                     }
@@ -405,7 +405,7 @@ workflow "w" {
     workflow {
       adapter "noop" "default" {}
       step "body" {
-        adapter = "noop.default"
+        adapter = adapter.noop.default
         outcome "success" { transition_to = "end" }
       }
       state "end" {
@@ -433,7 +433,7 @@ workflow "w" {
     workflow {
       adapter "noop" "default" {}
       step "inner" {
-        adapter = "noop.default"
+        adapter = adapter.noop.default
         outcome "success" { transition_to = "_continue" }
       }
       output "result" {
@@ -554,7 +554,7 @@ workflow "inner" {
   initial_state = "body"
   target_state  = "_continue"
   step "body" {
-    adapter = "noop.default"
+    adapter = adapter.noop.default
     outcome "success" { transition_to = "_continue" }
   }
   state "_continue" { terminal = true }
@@ -577,7 +577,7 @@ workflow "outer" {
     workflow {
       step "body" {
       adapter "noop" "default" {}
-        adapter = "noop.default"
+        adapter = adapter.noop.default
         outcome "success" { transition_to = "_continue" }
       }
       state "_continue" { terminal = true }
@@ -612,7 +612,7 @@ workflow "w" {
   initial_state = "run"
   target_state  = "done"
   step "run" {
-    adapter = "noop.default"
+    adapter = adapter.noop.default
     input   { val = "${each.value}" }
     outcome "success" { transition_to = "done" }
   }
@@ -711,7 +711,7 @@ workflow "w" {
         default = "ok"
       }
       step "inner" {
-        adapter = "noop.default"
+        adapter = adapter.noop.default
         input   { result = "success" }
         outcome "success" { transition_to = "_continue" }
       }
@@ -754,7 +754,7 @@ workflow "w" {
     workflow {
       adapter "noop" "default" {}
       step "inner" {
-        adapter = "noop.default"
+        adapter = adapter.noop.default
         input   { result = "success" }
         outcome "success" { transition_to = "_continue" }
       }
@@ -786,7 +786,7 @@ workflow "w" {
       target_state = "custom"
       step "inner" {
       adapter "noop" "default" {}
-        adapter = "noop.default"
+        adapter = adapter.noop.default
         outcome "success" { transition_to = "_continue" }
       }
     }

@@ -6,53 +6,20 @@ package workflow
 
 import (
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/hashicorp/hcl/v2"
 	"github.com/zclconf/go-cty/cty"
 )
 
-// resolveAdapterName extracts the adapter type from a dotted adapter reference.
-// In v0.3.0, sp.Adapter is always a dotted "<type>.<name>" reference to a declared adapter.
-// Returns the type component (left side of the dot), or "" if the reference is empty.
-func resolveAdapterName(g *FSMGraph, sp *StepSpec) string { //nolint:unparam // g kept for consistency with other step processors
-	if sp.Adapter == "" {
-		return ""
-	}
-	// Adapter is "<type>.<name>"; extract the type (left of the dot).
-	parts := strings.Split(sp.Adapter, ".")
-	if len(parts) == 2 {
-		return parts[0]
-	}
-	return ""
-}
-
 // resolveStepOnCrash returns the effective on_crash for a step, falling back
 // to the backing adapter's on_crash if the step doesn't specify one.
+// Deprecated: Use resolveStepOnCrashWithAdapter instead.
 func resolveStepOnCrash(g *FSMGraph, sp *StepSpec) (string, hcl.Diagnostics) {
 	var diags hcl.Diagnostics
-	if sp.OnCrash != "" && !isValidOnCrash(sp.OnCrash) {
-		diags = append(diags, &hcl.Diagnostic{
-			Severity: hcl.DiagError,
-			Summary:  fmt.Sprintf("step %q: invalid on_crash %q", sp.Name, sp.OnCrash),
-		})
-	}
-
-	effective := sp.OnCrash
-	if effective == "" {
-		// Fall back to the adapter's on_crash if available.
-		if sp.Adapter != "" {
-			if adapter, ok := g.Adapters[sp.Adapter]; ok {
-				effective = adapter.OnCrash
-			} else {
-				effective = onCrashFail
-			}
-		} else {
-			effective = onCrashFail
-		}
-	}
-	return effective, diags
+	// This function no longer works because sp.Adapter is not a gohcl-decoded field.
+	// Use resolveStepOnCrashWithAdapter(g, sp, adapterRef) in the compile path instead.
+	return onCrashFail, diags
 }
 
 // compileOutcomeBlock populates node.Outcomes from sp.Outcomes, checking for

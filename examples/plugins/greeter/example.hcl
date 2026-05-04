@@ -3,15 +3,22 @@
 # Run with: CRITERIA_PLUGINS=<dir-with-criteria-adapter-greeter> criteria apply example.hcl
 workflow "greeter_example" {
   version       = "0.1"
-  initial_state = "greet"
+  initial_state = "open_greeter"
   target_state  = "done"
 
   adapter "greeter" "default" {
     config { }
   }
 
+  step "open_greeter" {
+    adapter = adapter.greeter.default
+    lifecycle = "open"
+    outcome "success" { transition_to = "greet" }
+    outcome "failure" { transition_to = "failed" }
+  }
+
   step "greet" {
-    adapter = "greeter.default"
+    adapter = adapter.greeter.default
     input {
       name = "world"
     }

@@ -25,7 +25,7 @@ workflow "file_function_demo" {
   }
 
   step "greet" {
-    adapter = "shell.default"
+    adapter = adapter.shell.default
     input {
       command = trimfrontmatter(file("./file_function_prompt.md"))
     }

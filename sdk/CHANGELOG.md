@@ -8,6 +8,16 @@ documented here. The SDK follows the bump policy in
 
 ## [v0.3.0] — 2026-05-03
 
+### Changed — Phase 3 W11: Proto field rename `agent_name` → `adapter`
+
+- **Proto field rename**: `pb.StepEntered.agent_name` → `pb.StepEntered.adapter` in `proto/criteria/v1/events.proto`.
+  - Field number 2 (unchanged for wire compatibility; message definition uses implicit field numbering and `adapter` occupies the same wire slot).
+  - Generated Go binding: `StepEntered.Adapter string` (previously `AgentName`).
+  - Orchestrators and SDKs reading by field name must regenerate protobuf bindings (`protoc` with the updated `.proto` file) to update generated code.
+  - SDKs that read by field number (direct proto parsing, not generated bindings) are unaffected at runtime; readers continue to work. Writers must update to emit the new field name.
+- **Backward compatibility**: Field numbers stable; wire format unchanged. Old readers consuming by field number continue to work. **Old writers must upgrade** — clients built against v0.2.0 bindings emitting `agent_name` will not match the v0.3.0 field name.
+- **Scope**: This is a wire-format **stable** breaking change. Only affected for code that regenerates protos or hand-constructs `StepEntered` messages. Pre-1.0 projects treat as a **minor** version bump.
+
 ### Added — Phase 3 W09: Output blocks and `OnRunOutputs` interface method
 
 - **New proto message**: `RunOutputs` on `pb.Envelope` (field number 33) in
@@ -30,12 +40,9 @@ documented here. The SDK follows the bump policy in
 
 ### Bump rationale
 
-Adding a new message field to `Envelope` is additive at the proto level. Adding
-a method to the `run.Sink` interface is a breaking change for external
-implementations but acceptable for pre-1.0 SDK (no strict API stability
-guarantee). The bump is treated as a **minor** version bump (`v0.3.0`). SDK
-consumers must update their `run.Sink` implementations to compile against
-`v0.3.0+`.
+Phase 3 W11 introduces a proto field rename (breaking for generated code) but the wire format remains stable (same field number). Phase 3 W09 adds a new message field (additive) and an interface method (breaking for external implementors). The combined version is treated as a **minor** bump for pre-1.0 (`v0.3.0`). SDK consumers must:
+1. Regenerate protobuf bindings from the updated `.proto` files.
+2. Update any external `run.Sink` implementations to add the `OnRunOutputs` method.
 
 [v0.3.0]: https://github.com/brokenbots/criteria/releases/tag/v0.3.0
 

@@ -56,7 +56,7 @@ workflow "outputs" {
   adapter "fake_out" "default" {}
 
   step "produce" {
-    adapter = "fake_out.default"
+    adapter = adapter.fake_out.default
     outcome "success" { transition_to = "__done__" }
   }
   state "__done__" { terminal = true }
@@ -89,7 +89,7 @@ func TestOutputCapture_StepOutputsCapturedInVars(t *testing.T) {
 		"fake_out": plug,
 	}}
 
-	eng := New(g, loader, sink)
+	eng := New(g, loader, sink, WithAutoBootstrapAdapters())
 	if err := eng.Run(context.Background()); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -114,11 +114,11 @@ workflow "interp_outputs" {
   adapter "fake_consumer" "default" {}
 
   step "build" {
-    adapter = "fake_out.default"
+    adapter = adapter.fake_out.default
     outcome "success" { transition_to = "deploy" }
   }
   step "deploy" {
-    adapter = "fake_consumer.default"
+    adapter = adapter.fake_consumer.default
     input {
       artifact = "${steps.build.result}"
     }
@@ -180,7 +180,7 @@ func TestOutputCapture_ExpressionInterpolation(t *testing.T) {
 		"fake_consumer": consumer,
 	}}
 
-	eng := New(g, loader, sink)
+	eng := New(g, loader, sink, WithAutoBootstrapAdapters())
 	if err := eng.Run(context.Background()); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -201,11 +201,11 @@ workflow "sequence" {
   adapter "fake_out" "default" {}
 
   step "first" {
-    adapter = "fake_out.default"
+    adapter = adapter.fake_out.default
     outcome "success" { transition_to = "second" }
   }
   step "second" {
-    adapter = "fake_out.default"
+    adapter = adapter.fake_out.default
     outcome "success" { transition_to = "__done__" }
   }
   state "__done__" { terminal = true }
@@ -232,7 +232,7 @@ func TestOutputCapture_EmissionOrder(t *testing.T) {
 	sink := &outputCaptureSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake_out": plug}}
 
-	eng := New(g, loader, sink)
+	eng := New(g, loader, sink, WithAutoBootstrapAdapters())
 	if err := eng.Run(context.Background()); err != nil {
 		t.Fatalf("Run: %v", err)
 	}

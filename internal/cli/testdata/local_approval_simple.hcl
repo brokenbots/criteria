@@ -13,14 +13,14 @@ workflow "local_approval_simple" {
   }
 
   step "open_demo" {
-    adapter = "noop.demo"
+    adapter = adapter.noop.demo
     lifecycle = "open"
     outcome "success" { transition_to = "run_step" }
     outcome "failure" { transition_to = "failed" }
   }
 
   step "run_step" {
-    adapter = "noop.demo"
+    adapter = adapter.noop.demo
     input {
       prompt = "continue"
     }
@@ -29,7 +29,7 @@ workflow "local_approval_simple" {
   }
 
   step "close_demo" {
-    adapter = "noop.demo"
+    adapter = adapter.noop.demo
     lifecycle = "close"
     outcome "success" { transition_to = "done" }
     outcome "failure" { transition_to = "failed" }

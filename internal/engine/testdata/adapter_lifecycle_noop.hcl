@@ -11,14 +11,14 @@ workflow "agent_lifecycle_noop" {
   }
 
   step "open_agent" {
-    adapter = "noop.demo"
+    adapter = adapter.noop.demo
     lifecycle = "open"
     outcome "success" { transition_to = "run_agent" }
     outcome "failure" { transition_to = "failed" }
   }
 
   step "run_agent" {
-    adapter = "noop.demo"
+    adapter = adapter.noop.demo
     input {
       prompt = "hello"
     }
@@ -27,7 +27,7 @@ workflow "agent_lifecycle_noop" {
   }
 
   step "close_agent" {
-    adapter = "noop.demo"
+    adapter = adapter.noop.demo
     lifecycle = "close"
     outcome "success" { transition_to = "done" }
     outcome "failure" { transition_to = "failed" }

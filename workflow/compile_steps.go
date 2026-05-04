@@ -66,29 +66,17 @@ func validateStepRegistration(g *FSMGraph, sp *StepSpec) (ok bool, diags hcl.Dia
 	return true, nil
 }
 
-// validateStepKindSelectionDiags validates that exactly one of adapter
-// or type="workflow" is set on sp, and that the type value is recognised.
+// validateStepKindSelectionDiags validates that the step type value is recognised.
+// Note: The presence of adapter vs type="workflow" is validated by the individual
+// step compilers (compileAdapterStep, compileIteratingStep, compileWorkflowStep)
+// after resolving the adapter reference from the Remain body.
 func validateStepKindSelectionDiags(sp *StepSpec) hcl.Diagnostics {
 	var diags hcl.Diagnostics
-	hasAdapter := sp.Adapter != ""
-	hasWorkflowType := sp.Type == "workflow"
 
-	numKinds := 0
-	if hasAdapter {
-		numKinds++
-	}
-	if hasWorkflowType {
-		numKinds++
-	}
 	if sp.Type != "" && sp.Type != "workflow" {
 		diags = append(diags, &hcl.Diagnostic{
 			Severity: hcl.DiagError,
 			Summary:  fmt.Sprintf("step %q: invalid type %q; only \"workflow\" is recognised", sp.Name, sp.Type),
-		})
-	} else if numKinds != 1 {
-		diags = append(diags, &hcl.Diagnostic{
-			Severity: hcl.DiagError,
-			Summary:  fmt.Sprintf("step %q: exactly one of adapter or type=\"workflow\" must be set", sp.Name),
 		})
 	}
 	return diags

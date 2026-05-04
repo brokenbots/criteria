@@ -48,7 +48,7 @@ workflow "for_each_review_loop" {
   }
 
   step "init" {
-    adapter = "noop.default"
+    adapter = adapter.noop.default
     input { result = "success" }
     outcome "success" { transition_to = "process_items" }
   }
@@ -73,7 +73,7 @@ workflow "for_each_review_loop" {
 
       # Step 1 of the iteration body: execute work on each item.
       step "execute" {
-        adapter = "noop.default"
+        adapter = adapter.noop.default
         input {
           label  = "${var.prefix}:execute:${each.value}"
           result = "success"
@@ -84,7 +84,7 @@ workflow "for_each_review_loop" {
 
       # Step 2 of the iteration body: review the result.
       step "review" {
-        adapter = "noop.default"
+        adapter = adapter.noop.default
         input {
           label  = "${var.prefix}:review:${each.value}"
           result = "success"
@@ -95,7 +95,7 @@ workflow "for_each_review_loop" {
 
       # Step 3 of the iteration body: always clean up.
       step "cleanup" {
-        adapter = "noop.default"
+        adapter = adapter.noop.default
         input {
           label  = "${var.prefix}:cleanup:${each.value} (index ${each._idx})"
           result = "success"

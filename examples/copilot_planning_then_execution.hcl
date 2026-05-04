@@ -34,7 +34,7 @@ workflow "copilot_planning_then_execution" {
   # ── Lifecycle ───────────────────────────────────────────────────────────────
 
   step "open_agent" {
-    adapter   = "copilot.engineer"
+    adapter = adapter.copilot.engineer
     lifecycle = "open"
 
     outcome "success" { transition_to = "plan" }
@@ -44,7 +44,7 @@ workflow "copilot_planning_then_execution" {
   # ── Planning (high reasoning effort) ────────────────────────────────────────
 
   step "plan" {
-    adapter     = "copilot.engineer"
+    adapter = adapter.copilot.engineer
     allow_tools = ["read_file"]
     input {
       # reasoning_effort = "high" overrides the adapter default for this step only.
@@ -63,7 +63,7 @@ workflow "copilot_planning_then_execution" {
   # ── Execution (inherits adapter-level "medium") ────────────────────────────────
 
   step "execute" {
-    adapter     = "copilot.engineer"
+    adapter = adapter.copilot.engineer
     allow_tools = ["read_file", "write_file", "shell:go build*", "shell:go test*"]
     input {
       prompt = <<-EOT
@@ -79,7 +79,7 @@ workflow "copilot_planning_then_execution" {
   # ── Close paths ─────────────────────────────────────────────────────────────
 
   step "close_done" {
-    adapter   = "copilot.engineer"
+    adapter = adapter.copilot.engineer
     lifecycle = "close"
 
     outcome "success" { transition_to = "done" }
@@ -87,7 +87,7 @@ workflow "copilot_planning_then_execution" {
   }
 
   step "close_failed" {
-    adapter   = "copilot.engineer"
+    adapter = adapter.copilot.engineer
     lifecycle = "close"
 
     outcome "success" { transition_to = "failed" }

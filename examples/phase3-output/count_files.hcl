@@ -45,7 +45,7 @@ workflow "count_files" {
   }
 
   step "count" {
-    adapter = "shell.default"
+    adapter = adapter.shell.default
     input {
       command = "ls -1 | wc -l"
     }

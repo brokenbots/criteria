@@ -182,7 +182,7 @@ func TestCompileLocals_RuntimeRef(t *testing.T) {
   }
 
   step "step1" {
-    adapter = "a.default"
+    adapter = adapter.a.default
     outcome "success" { transition_to = "done" }
   }
 }

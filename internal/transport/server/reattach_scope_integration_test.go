@@ -51,7 +51,7 @@ workflow "resume" {
   adapter "shell" "default" {}
 
   step "deploy" {
-    adapter = "shell.default"
+    adapter = adapter.shell.default
     input {
       command = "echo ${steps.build.stdout}"
     }
@@ -145,7 +145,7 @@ func TestReattachRun_RestoresVarScope(t *testing.T) {
 		"shell": plugin.BuiltinFactoryForAdapter(rec)(),
 	}}
 	sink := &integrationSink{}
-	eng := engine.New(graph, loader, sink, engine.WithResumedVars(restoredVars))
+	eng := engine.New(graph, loader, sink, engine.WithResumedVars(restoredVars), engine.WithAutoBootstrapAdapters())
 	if runErr := eng.Run(ctx); runErr != nil {
 		t.Fatalf("engine.Run: %v", runErr)
 	}

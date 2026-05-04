@@ -45,7 +45,7 @@ func minimalWorkflowWithFile(filePath string) string {
   }
 
   step "step1" {
-    adapter = "noop.a"
+    adapter = adapter.noop.a
     input {
       prompt = file("` + filePath + `")
     }
@@ -114,7 +114,7 @@ func TestCompileFileFunctionValidation_VarArgFileExists(t *testing.T) {
   }
 
   step "step1" {
-    adapter = "noop.a"
+    adapter = adapter.noop.a
     input {
       prompt = file(var.path)
     }
@@ -154,7 +154,7 @@ func TestCompileFileFunctionValidation_VarArgFileMissing(t *testing.T) {
   }
 
   step "step1" {
-    adapter = "noop.a"
+    adapter = adapter.noop.a
     input {
       prompt = file(var.path)
     }

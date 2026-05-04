@@ -132,17 +132,16 @@ type Engine struct {
 	// Falls back to slog.Default() when nil.
 	log *slog.Logger
 	// autoBootstrapAdapters, when true, auto-opens adapters without explicit lifecycle "open" steps.
-	// This is a temporary measure pre-W12 to support workflows without explicit lifecycle management.
-	// Defaults to true; can be disabled to enforce strict lifecycle semantics.
+	// Defaults to false (W11: strict lifecycle semantics). Workflows can opt-in to auto-bootstrap
+	// via WithAutoBootstrapAdapters() for backward compatibility testing.
 	autoBootstrapAdapters bool
 }
 
 func New(graph *workflow.FSMGraph, loader plugin.Loader, sink Sink, opts ...Option) *Engine {
-	// Default to true for backward compatibility. W12 will introduce strict lifecycle
-	// semantics as the default; for now, auto-bootstrap enables workflows without explicit
-	// lifecycle steps. Production callers can opt-in to WithStrictLifecycleSemantics() to
-	// enforce explicit lifecycle management.
-	e := &Engine{graph: graph, loader: loader, sink: sink, autoBootstrapAdapters: true}
+	// Default to false (strict lifecycle semantics). Adapter session lifecycle
+	// automation is owned by W12. Workflows that require automatic adapter
+	// bootstrap for backward compatibility can opt-in via WithAutoBootstrapAdapters().
+	e := &Engine{graph: graph, loader: loader, sink: sink, autoBootstrapAdapters: false}
 	for _, opt := range opts {
 		if opt != nil {
 			opt(e)

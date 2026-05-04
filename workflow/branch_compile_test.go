@@ -13,7 +13,7 @@ import (
 // references in the HCL, and updates all references to use the dotted "<type>.default" form.
 // This is a test helper to reduce boilerplate since most tests use simple single-adapter workflows.
 func injectDefaultAdapters(src string) string {
-	// Collect unique adapter type names from adapter = "..." references
+	// Collect unique adapter type names from adapter = adapter.... references
 	adapters := make(map[string]bool)
 	for _, line := range strings.Split(src, "\n") {
 		trimmed := strings.TrimSpace(line)
@@ -58,7 +58,7 @@ func injectDefaultAdapters(src string) string {
 		// We don't need lookahead since we're only processing types we know are bare
 		//nolint:gocritic // sprintfQuotedString: Sprintf needed to build regex pattern with literal quotes
 		pattern := regexp.MustCompile(fmt.Sprintf(`adapter\s*=\s*"%s"`, regexp.QuoteMeta(adapterType)))
-		replacement := fmt.Sprintf(`adapter = "%s.default"`, adapterType)
+		replacement := fmt.Sprintf(`adapter = adapter.%s.default`, adapterType)
 		result = pattern.ReplaceAllString(result, replacement)
 	}
 
@@ -280,7 +280,7 @@ workflow "w" {
   target_state  = "done"
 
   step "start" {
-    adapter = "noop.default"
+    adapter = adapter.noop.default
     outcome "success" { transition_to = "done" }
   }
 

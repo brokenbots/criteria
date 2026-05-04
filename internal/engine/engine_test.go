@@ -114,20 +114,24 @@ func (l *fakeLoader) Shutdown(context.Context) error { return nil }
 // references in the HCL, and updates all references to use the dotted "<type>.default" form.
 // This is a test helper to reduce boilerplate since most tests use simple single-adapter workflows.
 func injectDefaultAdapters(src string) string {
-	// Collect unique adapter type names from adapter = "..." references
+	// Collect unique adapter type names from adapter = adapter.... references
 	adapters := make(map[string]bool)
 	for _, line := range strings.Split(src, "\n") {
 		trimmed := strings.TrimSpace(line)
-		// Match "adapter" keyword followed by "=" and a string literal (allowing for variable spacing)
-		if strings.HasPrefix(trimmed, `adapter`) && strings.Contains(trimmed, `=`) && strings.Contains(trimmed, `"`) {
-			// Extract the value between the first pair of quotes
-			start := strings.Index(trimmed, `"`) + 1
-			end := strings.Index(trimmed[start:], `"`)
-			if end > 0 {
-				adapterRef := trimmed[start : start+end]
-				// Only inject if it's a bare type (no dots)
-				if !strings.Contains(adapterRef, ".") {
-					adapters[adapterRef] = true
+		// Match "adapter" keyword followed by "=" and a traversal (e.g., adapter = adapter.fake)
+		if strings.HasPrefix(trimmed, `adapter`) && strings.Contains(trimmed, `=`) && strings.Contains(trimmed, `adapter.`) {
+			// Extract the part after "adapter."; find the first identifier
+			afterAdapter := strings.TrimSpace(trimmed[strings.Index(trimmed, "=")+1:])
+			if strings.HasPrefix(afterAdapter, "adapter.") {
+				parts := strings.FieldsFunc(strings.TrimPrefix(afterAdapter, "adapter."), func(c rune) bool {
+					return c == '.' || c == ' ' || c == '\n' || c == '\r' || c == '\t' || c == '#'
+				})
+				if len(parts) > 0 {
+					adapterType := parts[0]
+					// Only inject if it's a bare type (i.e., only one segment: adapter = adapter.fake, not adapter.fake.default)
+					if !strings.Contains(strings.Join(parts, "."), ".") {
+						adapters[adapterType] = true
+					}
 				}
 			}
 		}
@@ -162,11 +166,9 @@ func injectDefaultAdapters(src string) string {
 
 	// Replace all bare adapter references with dotted references using regex to handle variable spacing
 	for adapterType := range adapters {
-		// Pattern matches: adapter followed by optional spaces, =, optional spaces, then the quoted type
-		// We don't need lookahead since we're only processing types we know are bare
-		//nolint:gocritic // sprintfQuotedString: Sprintf needed to build regex pattern with literal quotes
-		pattern := regexp.MustCompile(fmt.Sprintf(`adapter\s*=\s*"%s"`, regexp.QuoteMeta(adapterType)))
-		replacement := fmt.Sprintf(`adapter = "%s.default"`, adapterType)
+		// Pattern matches: adapter = adapter.<type> followed by whitespace or end of line (not a dot)
+		pattern := regexp.MustCompile(fmt.Sprintf(`adapter\s*=\s*adapter\.%s\b`, regexp.QuoteMeta(adapterType)))
+		replacement := fmt.Sprintf(`adapter = adapter.%s.default`, adapterType)
 		src = pattern.ReplaceAllString(src, replacement)
 	}
 
@@ -202,11 +204,11 @@ workflow "t" {
   initial_state = "a"
   target_state  = "done"
   step "a" {
-    adapter = "fake"
+    adapter = adapter.fake
     outcome "success" { transition_to = "b" }
   }
   step "b" {
-    adapter = "fake"
+    adapter = adapter.fake
     outcome "success" { transition_to = "done" }
   }
   state "done" { terminal = true }
@@ -231,7 +233,7 @@ workflow "t" {
   initial_state = "a"
   target_state  = "fail"
   step "a" {
-    adapter = "fake"
+    adapter = adapter.fake
     outcome "success" { transition_to = "ok" }
     outcome "failure" { transition_to = "fail" }
   }
@@ -258,7 +260,7 @@ workflow "t" {
   initial_state = "a"
   target_state  = "done"
   step "a" {
-    adapter = "fake"
+    adapter = adapter.fake
     outcome "again" { transition_to = "a" }
   }
   state "done" { terminal = true }
@@ -485,19 +487,19 @@ workflow "perm" {
   adapter "permissive" "bot" { }
 
   step "open" {
-    adapter = "permissive.bot"
+    adapter = adapter.permissive.bot
     lifecycle = "open"
     outcome "success" { transition_to = "run" }
   }
   step "run" {
-    adapter = "permissive.bot"
+    adapter = adapter.permissive.bot
     input { perm_tools = "read_file,write_file" }
     allow_tools = ["read_file"]
     outcome "success"      { transition_to = "close" }
     outcome "needs_review" { transition_to = "close" }
   }
   step "close" {
-    adapter = "permissive.bot"
+    adapter = adapter.permissive.bot
     lifecycle = "close"
     outcome "success" { transition_to = "done" }
   }
@@ -558,18 +560,18 @@ workflow "perm-deny" {
   adapter "permissive" "bot" { }
 
   step "open" {
-    adapter = "permissive.bot"
+    adapter = adapter.permissive.bot
     lifecycle = "open"
     outcome "success" { transition_to = "run" }
   }
   step "run" {
-    adapter = "permissive.bot"
+    adapter = adapter.permissive.bot
     input { perm_tools = "read_file" }
     outcome "needs_review" { transition_to = "close" }
     outcome "success"      { transition_to = "close" }
   }
   step "close" {
-    adapter = "permissive.bot"
+    adapter = adapter.permissive.bot
     lifecycle = "close"
     outcome "success" { transition_to = "done" }
   }
@@ -604,19 +606,19 @@ workflow "perm-shell" {
   adapter "permissive" "bot" { }
 
   step "open" {
-    adapter = "permissive.bot"
+    adapter = adapter.permissive.bot
     lifecycle = "open"
     outcome "success" { transition_to = "run" }
   }
   step "run" {
-    adapter = "permissive.bot"
+    adapter = adapter.permissive.bot
     input { perm_tools = "shell|git status,shell|rm -rf /" }
     allow_tools = ["shell:git *"]
     outcome "success"      { transition_to = "close" }
     outcome "needs_review" { transition_to = "close" }
   }
   step "close" {
-    adapter = "permissive.bot"
+    adapter = adapter.permissive.bot
     lifecycle = "close"
     outcome "success" { transition_to = "done" }
   }
@@ -648,7 +650,7 @@ workflow "t" {
   initial_state = "loop"
   target_state  = "done"
   step "loop" {
-    adapter    = "fake"
+    adapter = adapter.fake
     max_visits = 3
     outcome "again" { transition_to = "loop" }
     outcome "done"  { transition_to = "done" }
@@ -703,7 +705,7 @@ workflow "t" {
   initial_state = "loop"
   target_state  = "done"
   step "loop" {
-    adapter    = "fake"
+    adapter = adapter.fake
     max_visits = 100
     outcome "again" { transition_to = "loop" }
     outcome "done"  { transition_to = "done" }
@@ -730,7 +732,7 @@ workflow "t" {
   initial_state = "a"
   target_state  = "done"
   step "a" {
-    adapter = "fake"
+    adapter = adapter.fake
     outcome "success" { transition_to = "done" }
   }
   state "done" { terminal = true }
@@ -757,7 +759,7 @@ workflow "t" {
   initial_state = "work"
   target_state  = "done"
   step "work" {
-    adapter    = "fake"
+    adapter = adapter.fake
     max_visits = 2
     outcome "done" { transition_to = "done" }
   }
@@ -801,7 +803,7 @@ workflow "t" {
   initial_state = "loop"
   target_state  = "done"
   step "loop" {
-    adapter    = "fake"
+    adapter = adapter.fake
     max_visits = 5
     outcome "again" { transition_to = "loop" }
     outcome "done"  { transition_to = "done" }
@@ -835,7 +837,7 @@ workflow "t" {
   initial_state = "loop"
   target_state  = "done"
   step "loop" {
-    adapter    = "fake"
+    adapter = adapter.fake
     max_visits = 5
     outcome "again" { transition_to = "loop" }
     outcome "done"  { transition_to = "done" }
@@ -844,7 +846,7 @@ workflow "t" {
   policy { max_total_steps = 1000 }
 }`)
 	sink2 := &fakeSink{}
-	eng2 := New(g2, loader, sink2, WithResumedVisits(visits))
+	eng2 := New(g2, loader, sink2, WithResumedVisits(visits), WithAutoBootstrapAdapters())
 	err2 := eng2.RunFrom(context.Background(), "loop", 1)
 	if err2 == nil {
 		t.Fatal("expected max_visits error from resumed run")
@@ -921,7 +923,7 @@ workflow "t" {
   initial_state = "work"
   target_state  = "done"
   step "work" {
-    adapter    = "fake"
+    adapter = adapter.fake
     max_visits = 1
     outcome "done" { transition_to = "done" }
   }
@@ -962,7 +964,7 @@ workflow "t" {
   initial_state = "a"
   target_state  = "done"
   step "a" {
-    adapter = "fake"
+    adapter = adapter.fake
     outcome "success" { transition_to = "done" }
     outcome "failure" { transition_to = "done" }
   }
@@ -1006,7 +1008,7 @@ workflow "t" {
     max_visits = 1
     workflow {
       step "inner" {
-        adapter = "fake"
+        adapter = adapter.fake
         outcome "success" { transition_to = "_continue" }
       }
     }

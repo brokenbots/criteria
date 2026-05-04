@@ -6,12 +6,11 @@ import (
 )
 
 // TestWorkflowStep_AllowToolsWithoutAgent verifies that a type="workflow" step
-// that specifies allow_tools without an agent produces a compile error
+// that specifies allow_tools without an adapter produces a compile error
 // containing "allow_tools requires an adapter reference".
 func TestWorkflowStep_AllowToolsWithoutAgent(t *testing.T) {
 	src := `
 workflow "x" {
-  adapter "noop" "default" {}
   version       = "0.1"
   initial_state = "run"
   target_state  = "done"
@@ -19,8 +18,9 @@ workflow "x" {
     type        = "workflow"
     allow_tools = ["read"]
     workflow {
+      adapter "noop" "default" {}
       step "inner" {
-        adapter = "noop.default"
+        adapter = adapter.noop.default
         outcome "done" { transition_to = "_continue" }
       }
     }
@@ -35,7 +35,7 @@ workflow "x" {
 	}
 	_, diags = Compile(spec, testSchemas)
 	if !diags.HasErrors() {
-		t.Fatal("expected compile error for allow_tools without agent on workflow step")
+		t.Fatal("expected compile error for allow_tools without adapter on workflow step")
 	}
 	if !strings.Contains(diags.Error(), "allow_tools requires an adapter reference") {
 		t.Errorf("expected 'allow_tools requires an adapter reference' in diagnostic, got: %s", diags.Error())
@@ -43,12 +43,11 @@ workflow "x" {
 }
 
 // TestWorkflowStep_LifecycleWithoutAgent verifies that a type="workflow" step
-// that specifies lifecycle without an agent produces a compile error containing
+// that specifies lifecycle without an adapter produces a compile error containing
 // "lifecycle requires an adapter reference".
 func TestWorkflowStep_LifecycleWithoutAgent(t *testing.T) {
 	src := `
 workflow "x" {
-  adapter "noop" "default" {}
   version       = "0.1"
   initial_state = "run"
   target_state  = "done"
@@ -56,8 +55,9 @@ workflow "x" {
     type      = "workflow"
     lifecycle = "open"
     workflow {
+      adapter "noop" "default" {}
       step "inner" {
-        adapter = "noop.default"
+        adapter = adapter.noop.default
         outcome "done" { transition_to = "_continue" }
       }
     }
@@ -72,7 +72,7 @@ workflow "x" {
 	}
 	_, diags = Compile(spec, testSchemas)
 	if !diags.HasErrors() {
-		t.Fatal("expected compile error for lifecycle without agent on workflow step")
+		t.Fatal("expected compile error for lifecycle without adapter on workflow step")
 	}
 	if !strings.Contains(diags.Error(), "lifecycle requires an adapter reference") {
 		t.Errorf("expected 'lifecycle requires an adapter reference' in diagnostic, got: %s", diags.Error())
@@ -95,7 +95,7 @@ workflow "x" {
     on_failure = "bad"
     workflow {
       step "inner" {
-        adapter = "noop.default"
+        adapter = adapter.noop.default
         outcome "done" { transition_to = "_continue" }
       }
     }
@@ -132,7 +132,7 @@ workflow "x" {
     on_failure = "continue"
     workflow {
       step "inner" {
-        adapter = "noop.default"
+        adapter = adapter.noop.default
         outcome "done" { transition_to = "_continue" }
       }
     }
@@ -177,7 +177,7 @@ workflow "x" {
         value = "hello"
       }
       step "inner" {
-        adapter = "noop.default"
+        adapter = adapter.noop.default
         input { label = var.label_prefix }
         outcome "done" { transition_to = "_continue" }
       }
@@ -235,7 +235,7 @@ workflow "x" {
       adapter "noop" "default" {}
       # No variable "outer_only" declared here — body has its own scope.
       step "inner" {
-        adapter = "noop.default"
+        adapter = adapter.noop.default
         input { label = var.outer_only }
         outcome "done" { transition_to = "_continue" }
       }
@@ -279,7 +279,7 @@ workflow "x" {
         default = "us-east"
       }
       step "inner" {
-        adapter = "noop.default"
+        adapter = adapter.noop.default
         input { label = var.region }
         outcome "done" { transition_to = "_continue" }
       }
@@ -324,7 +324,7 @@ workflow "x" {
         # No default — this is a required input.
       }
       step "inner" {
-        adapter = "noop.default"
+        adapter = adapter.noop.default
         outcome "done" { transition_to = "_continue" }
       }
     }
@@ -368,7 +368,7 @@ workflow "x" {
         default = "us-east"
       }
       step "inner" {
-        adapter = "noop.default"
+        adapter = adapter.noop.default
         input { label = var.region }
         outcome "done" { transition_to = "_continue" }
       }
@@ -407,7 +407,7 @@ workflow "x" {
     workflow {
       adapter "noop" "default" {}
       step "inner" {
-        adapter = "noop.default"
+        adapter = adapter.noop.default
         outcome "done" { transition_to = "_continue" }
       }
     }

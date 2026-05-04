@@ -115,7 +115,6 @@ type AdapterDeclSpec struct {
 // StepSpec describes a single step in the workflow.
 type StepSpec struct {
 	Name      string `hcl:"name,label"`
-	Adapter   string `hcl:"adapter,optional"` // "<type>.<name>" reference to a declared adapter
 	Lifecycle string `hcl:"lifecycle,optional"`
 	OnCrash   string `hcl:"on_crash,optional"`
 	// Type is the step kind: "" (default adapter step) or "workflow" (sub-workflow body).
@@ -137,9 +136,9 @@ type StepSpec struct {
 	Timeout    string            `hcl:"timeout,optional"`
 	AllowTools []string          `hcl:"allow_tools,optional"`
 	Outcomes   []OutcomeSpec     `hcl:"outcome,block"`
-	// Remain captures for_each and count expressions (and any unknown attrs)
-	// for lazy extraction by the compiler. gohcl does not support hcl.Expression
-	// as a direct decode target, so the remain pattern is used instead.
+	// Remain captures adapter attribute and other expressions (for_each, count, etc.)
+	// for lazy extraction by the compiler. The adapter attribute, if present, must be
+	// an HCL traversal expression (not a string literal), e.g., adapter.shell.default.
 	Remain hcl.Body `hcl:",remain"`
 	// LegacyConfigRange, when set by Parse, points at the source range for a
 	// legacy config = { ... } attribute so compile diagnostics can include

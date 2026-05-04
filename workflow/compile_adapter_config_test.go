@@ -24,7 +24,7 @@ workflow "x" {
     }
   }
   step "open" {
-    adapter   = "copilot.bot"
+    adapter   = adapter.copilot.bot
     lifecycle = "open"
     outcome "success" { transition_to = "done" }
   }
@@ -62,7 +62,7 @@ workflow "x" {
     }
   }
   step "open" {
-    adapter   = "copilot.bot"
+    adapter   = adapter.copilot.bot
     lifecycle = "open"
     outcome "success" { transition_to = "done" }
   }
@@ -107,7 +107,7 @@ workflow "x" {
     }
   }
   step "open" {
-    adapter   = "copilot.bot"
+    adapter   = adapter.copilot.bot
     lifecycle = "open"
     outcome "success" { transition_to = "done" }
   }

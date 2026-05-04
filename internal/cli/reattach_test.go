@@ -117,7 +117,7 @@ workflow "shell_resume" {
   adapter "shell" "default" {}
 
   step "greet" {
-    adapter = "shell.default"
+    adapter = adapter.shell.default
     input {
       command = "echo hello"
     }
@@ -150,7 +150,7 @@ workflow "max_retry" {
   }
 
   step "greet" {
-    adapter = "shell.default"
+    adapter = adapter.shell.default
     input {
       command = "echo hi"
     }
@@ -972,7 +972,7 @@ workflow "max_visits_test" {
   adapter "shell" "default" {}
 
   step "work" {
-    adapter    = "shell.default"
+    adapter = adapter.shell.default
     max_visits = 1
     input {
       command = "echo hi"
@@ -1185,7 +1185,7 @@ workflow "w" {
     workflow {
       adapter "noop" "default" {}
       step "body_step" {
-        adapter = "noop.default"
+        adapter = adapter.noop.default
         outcome "success" { transition_to = "_continue" }
       }
     }
@@ -1255,7 +1255,7 @@ workflow "iter_cursor" {
   adapter "noop" "default" {}
 
   step "execute" {
-    adapter   = "noop.default"
+    adapter = adapter.noop.default
     for_each  = ["a", "b"]
     outcome "all_succeeded" { transition_to = "done" }
     outcome "any_failed"    { transition_to = "done" }
