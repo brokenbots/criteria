@@ -1150,16 +1150,21 @@ Fixed test helper `injectDefaultAdapters()` which was collecting adapters into a
 - BLOCKER 7a/7b: Missing cancel and rollback tests (d0e356a)
 - Test helper nondeterminism fixed (8f37f6b)
 
-**Remaining 2 blockers (final commit 8554cec):**
+**Remaining 2 blockers (commits 8554cec + final 2f01f72):**
 - BLOCKER 6: ErrSessionAlreadyOpen swallow compile-time boundary documentation (8554cec)
   * Updated lifecycle.go:31-35 comment to document that same-scope duplicates are rejected at compile time
   * References compileAdapters.go:57-61 which enforces uniqueness via `if _, dup := g.Adapters[key]; dup`
   * Clarifies ErrSessionAlreadyOpen always means parent-scope adapter inheritance, never same-scope duplicate
-- BLOCKER 7c/d: Missing body-adapter isolation test (8554cec)
-  * Added TestRunWorkflowBody_BodyAndParentAdaptersIsolated to node_workflow_test.go:411-512
-  * Verifies parent adapter isolation: noop_a opens once, stays open through body, closes once
-  * Verifies body adapter isolation: noop_b opens/closes with body iteration
-  * Tests the core correctness property that body adapters are independent from parent
+- BLOCKER 7c/d: Missing body-adapter isolation tests (2f01f72)
+  * TestRunWorkflowBody_BodyAdapterIsolated (already existed)
+    - Verifies body adapters provision/teardown with body execution
+  * TestRunWorkflowBody_BodyDoesNotInheritParentAdapter (2f01f72)
+    - Verifies body steps have no implicit access to parent adapters
+    - Documents scope isolation enforced at compile time
+  * testLifecycleAutomatic in sdk/conformance/ (2f01f72)
+    - New conformance test for automatic adapter lifecycle management
+    - Validates wire protocol handles automatic provisioning
+    - Registered in conformance.Run() test suite
 
 **Copilot reviewer comments** (6 additional threads) — all addressed in prior commits:
 - Teardown order and context handling (addressed in d0e356a)
@@ -1171,4 +1176,4 @@ Fixed test helper `injectDefaultAdapters()` which was collecting adapters into a
 - Half-true comment (fixed in d0e356a)
 - Stale comment in node_step.go (fixed in d0e356a)
 
-**Final status:** All threads resolved. All 4 CI checks passing. All tests passing with -race flag. PR ready for final review and merge.
+**Final status:** All 19 threads resolved (0 unresolved). All 4 CI checks passing. All tests passing with -race flag. PR ready for final review and merge.
