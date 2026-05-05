@@ -2,7 +2,7 @@
 #
 # mode: standalone
 #
-# Demonstrates variables, for_each, wait (duration), and branch without requiring a server.
+# Demonstrates variables, for_each, wait (duration), and switch without requiring a server.
 workflow "demo_tour_local" {
   version       = "1"
   initial_state = "boot"
@@ -68,13 +68,13 @@ workflow "demo_tour_local" {
     outcome "elapsed" { next = "decide" }
   }
 
-  branch "decide" {
-    arm {
-      when          = steps.review.exit_code == "0"
-      transition_to = "celebrate"
+  switch "decide" {
+    condition {
+      match = steps.review.exit_code == "0"
+      next  = step.celebrate
     }
     default {
-      transition_to = "aborted"
+      next = state.aborted
     }
   }
 

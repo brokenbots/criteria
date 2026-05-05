@@ -54,6 +54,7 @@
       "description": "The greeting message produced by the workflow"
     }
   ],
+  "switches": [],
   "step_order": [
     "say_hello"
   ],

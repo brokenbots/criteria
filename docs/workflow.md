@@ -6,7 +6,7 @@ The Criteria workflow language is a declarative HCL-based language for orchestra
 
 A Criteria workflow defines:
 
-- **Nodes**: steps (adapter invocations), waits (time or signal gates), approvals (human decisions), branches (conditional routing), and iterating steps (for_each / count).
+- **Nodes**: steps (adapter invocations), waits (time or signal gates), approvals (human decisions), switches (conditional routing), and iterating steps (for_each / count).
 - **States**: named terminal or intermediate targets. The workflow FSM transitions between nodes and states based on outcomes.
 - **Variables**: read-only typed values that seed the workflow execution. Per-run variable overrides are a future enhancement.
 - **Agents**: long-lived adapter sessions that maintain state across multiple steps.
@@ -347,16 +347,16 @@ Adapters return outputs via the `Result.Outputs` map. Common outputs:
 - **`exit_code`**: Command exit code (shell adapter).
 - **`stdout`**, **`stderr`**: Captured streams.
 
-Outputs are available to downstream steps and branch conditions as `steps.<name>.<output>`.
+Outputs are available to downstream steps and switch conditions as `steps.<name>.<output>`.
 
 ### Outcomes
 
-Each `outcome` block maps an adapter-emitted outcome name to a transition target (step, state, wait, approval, branch, or another iterating step). For steps inside an iteration body, the synthetic `_continue` target signals iteration continuation.
+Each `outcome` block maps an adapter-emitted outcome name to a transition target (step, state, wait, approval, switch, or another iterating step). For steps inside an iteration body, the synthetic `_continue` target signals iteration continuation.
 
 #### Outcome block attributes
 
 - **`next`** (required): The name of the next node to transition to. Two reserved values have special semantics:
-  - A step, state, wait, approval, or branch name — standard transition.
+  - A step, state, wait, approval, or switch name — standard transition.
   - **`"return"`** — halts the current scope (the workflow body or a subworkflow invocation) and returns to the caller. In a subworkflow, the caller's step outcome is then applied. At the top level, `return` terminates the run as successful with any projected outputs. See **Return semantics** below.
 - **`output`** (optional): An HCL object expression that projects a custom output map for this outcome. When present, the projected map replaces the step's full adapter output for the purpose of downstream `steps.<name>.*` references and subworkflow return values. When absent, the step's full adapter output passes through unchanged.
 
@@ -536,46 +536,56 @@ echo '{"decision":"approved"}' > ~/.criteria/runs/<run_id>/approval-ship_to_prod
 
 ---
 
-## Branch
+## Switch
 
-Branch nodes evaluate conditions and transition to the first matching arm or the default.
+Switch nodes evaluate conditions in order and transition to the first matching
+arm, or fall back to the `default` block when one is present. The `branch` block from
+earlier releases has been replaced by `switch`; `branch` is now rejected at
+parse time.
 
-<!-- validator: skip: branch arms reference var.env and steps.build which are declared outside this excerpt -->
+<!-- validator: skip: switch conditions reference var.env and steps.build which are declared outside this excerpt -->
 ```hcl
-branch "check_env" {
-  arm {
-    when          = var.env == "prod"
-    transition_to = "deploy_prod"
+switch "check_env" {
+  condition {
+    match = var.env == "prod"
+    next  = state.deploy_prod
   }
-  arm {
-    when          = var.env == "staging"
-    transition_to = "deploy_staging"
+  condition {
+    match = var.env == "staging"
+    next  = state.deploy_staging
   }
-  arm {
-    when          = steps.build.exit_code == "0"
-    transition_to = "deploy_dev"
+  condition {
+    match = steps.build.exit_code == "0"
+    next  = state.deploy_dev
   }
   default {
-    transition_to = "skip_deploy"
+    next = state.skip_deploy
   }
 }
 ```
 
 ### Attributes
 
-- **`arm`** (one or more): Conditional branches evaluated in order. First match wins.
-  - **`when`**: Boolean expression. See [Expressions](#expressions).
-  - **`transition_to`**: Target node if `when` is true.
-- **`default`** (required): Fallback transition if no arm matches.
+- **`condition`** (zero or more): Conditional arms evaluated in order. First match wins.
+  - **`match`**: Boolean expression. See [Expressions](#expressions).
+  - **`next`**: Target node in traversal form (`step.name`, `state.name`, `wait.name`, `approval.name`, `switch.name`) or `"return"` to bubble out of a sub-workflow.
+  - **`output`** (optional): Object expression whose key/value pairs are stored under `steps.<switch_name>.*` before the target is entered.
+- **`default`** (recommended): Fallback when no condition matches. Omitting `default` is a compile warning unless one condition is provably always true; at runtime, a switch with no matching condition and no default block fails the run.
+  - **`next`**: Same form as condition `next`.
+  - **`output`** (optional): Same as condition `output`.
 
 ### Expression scope
 
-Branch conditions may reference:
+Switch conditions may reference:
 
 - **`var.<name>`**: Workflow variables.
 - **`steps.<name>.<output>`**: Outputs from completed steps (e.g., `steps.build.exit_code`).
 
 See [Expressions](#expressions) for syntax rules.
+
+> **Note:** Whether an `if` shorthand will be added is undecided. For now, use a
+> two-condition `switch` (one `condition` + `default`) wherever a simple
+> true/false fork is needed.
 
 ---
 
@@ -1012,7 +1022,7 @@ bin/criteria plan examples/demo_tour_local.hcl
 
 Prints:
 - Variables, agents, steps (in declaration order).
-- States, wait nodes, approval nodes, branches, for-each loops.
+- States, wait nodes, approval nodes, switch nodes, for-each loops.
 - Plugins required.
 
 ### `criteria apply`
@@ -1102,9 +1112,9 @@ step "build" {
 Explicit skip (when fragment wrapping cannot resolve references):
 
 ```
-<!-- validator: skip: branch references var.env declared outside this excerpt -->
+<!-- validator: skip: switch references var.env declared outside this excerpt -->
 ` ``` `hcl
-branch "check_env" {
+switch "check_env" {
   ...
 }
 ` ``` `

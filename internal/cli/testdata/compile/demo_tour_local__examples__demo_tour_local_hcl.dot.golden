@@ -22,6 +22,6 @@ digraph "demo_tour_local" {
   "review" -> "wait_brief" [label="success"];
   "celebrate" -> "aborted" [label="failure"];
   "celebrate" -> "done" [label="success"];
-  "decide" -> "celebrate" [label="arm[0]"];
+  "decide" -> "celebrate" [label="condition[0]"];
   "decide" -> "aborted" [label="default"];
 }

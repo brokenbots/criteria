@@ -1,4 +1,4 @@
-digraph "branch_basic" {
+digraph "switch_basic" {
   rankdir=LR;
 
   "build" [shape=box];
@@ -11,8 +11,8 @@ digraph "branch_basic" {
   "__start__" [shape=point,width=0.12,label=""];
   "__start__" -> "build" [label="initial"];
   "build" -> "decide" [label="success"];
-  "decide" -> "deploy" [label="arm[0]"];
-  "decide" -> "deploy_staging" [label="arm[1]"];
-  "decide" -> "deploy_staging" [label="arm[2]"];
+  "decide" -> "deploy" [label="condition[0]"];
+  "decide" -> "deploy_staging" [label="condition[1]"];
+  "decide" -> "deploy_staging" [label="condition[2]"];
   "decide" -> "skip_deploy" [label="default"];
 }

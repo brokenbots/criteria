@@ -167,13 +167,15 @@ func nodeTargets(name string, g *FSMGraph) []string {
 		}
 		return targets
 	}
-	if branch, ok := g.Branches[name]; ok {
-		targets := make([]string, 0, len(branch.Arms)+1)
-		for _, arm := range branch.Arms {
-			targets = append(targets, arm.Target)
+	if sw, ok := g.Switches[name]; ok {
+		targets := make([]string, 0, len(sw.Conditions)+1)
+		for _, cond := range sw.Conditions {
+			if cond.Next != ReturnSentinel {
+				targets = append(targets, cond.Next)
+			}
 		}
-		if branch.DefaultTarget != "" {
-			targets = append(targets, branch.DefaultTarget)
+		if sw.DefaultNext != "" && sw.DefaultNext != ReturnSentinel {
+			targets = append(targets, sw.DefaultNext)
 		}
 		return targets
 	}

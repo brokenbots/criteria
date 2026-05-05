@@ -116,7 +116,7 @@ func isSuccessOutcome(outcome string) bool {
 	return strings.EqualFold(outcome, "success")
 }
 
-type BranchSpec struct{}
+type ParallelTaskSpec struct{}
 
 type JoinPolicy struct{}
 
@@ -132,5 +132,5 @@ type SubWorkflowResolver interface {
 // BranchScheduler runs parallel branches concurrently and joins them according
 // to the parallel node's join policy. Implemented in Phase 1.6.
 type BranchScheduler interface {
-	Run(ctx context.Context, branches []BranchSpec, join JoinPolicy) (BranchResult, error)
+	Run(ctx context.Context, branches []ParallelTaskSpec, join JoinPolicy) (BranchResult, error)
 }

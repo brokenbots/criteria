@@ -48,6 +48,7 @@
     }
   ],
   "outputs": [],
+  "switches": [],
   "step_order": [
     "generate_logs"
   ],

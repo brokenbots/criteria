@@ -3,6 +3,7 @@ package pluginhost
 import (
 	"context"
 	"errors"
+	"sync"
 
 	hplugin "github.com/hashicorp/go-plugin"
 	"google.golang.org/grpc"
@@ -88,11 +89,17 @@ func (s *grpcAdapterServer) CloseSession(ctx context.Context, req *pb.CloseSessi
 }
 
 // grpcExecuteEventServer wraps a grpc.ServerStream to satisfy ExecuteEventSender.
+// Send is safe for concurrent use: adapters may call it from event-handler
+// goroutines concurrently with the main Execute goroutine. The mutex serialises
+// all SendMsg calls because grpc.ServerStream.SendMsg is not goroutine-safe.
 type grpcExecuteEventServer struct {
+	mu     sync.Mutex
 	stream grpc.ServerStream
 }
 
 func (s *grpcExecuteEventServer) Send(evt *pb.ExecuteEvent) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return s.stream.SendMsg(evt)
 }
 

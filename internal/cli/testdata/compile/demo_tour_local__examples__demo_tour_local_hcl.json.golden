@@ -125,6 +125,18 @@
     }
   ],
   "outputs": [],
+  "switches": [
+    {
+      "name": "decide",
+      "conditions": [
+        {
+          "match": "steps.review.exit_code == \"0\"",
+          "next": "celebrate"
+        }
+      ],
+      "default_next": "aborted"
+    }
+  ],
   "step_order": [
     "boot",
     "discover",

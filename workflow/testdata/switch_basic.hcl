@@ -1,7 +1,8 @@
-// branch_basic.hcl — exercises the branch node kind (W06).
-// A two-arm branch selects between "deploy" and "skip_deploy" based on
-// var.env and a captured step output. A default arm handles the fallback.
-workflow "branch_basic" {
+// switch_basic.hcl — exercises the switch node kind (W16).
+// A three-condition switch selects between "deploy", "deploy_staging", and
+// "skip_deploy" based on var.env and a captured step output. A default arm
+// handles the fallback.
+workflow "switch_basic" {
   version       = "0.1"
   initial_state = "build"
   target_state  = "done"
@@ -18,21 +19,21 @@ workflow "branch_basic" {
     outcome "success" { next = "decide" }
   }
 
-  branch "decide" {
-    arm {
-      when          = var.env == "prod"
-      transition_to = "deploy"
+  switch "decide" {
+    condition {
+      match = var.env == "prod"
+      next  = state.deploy
     }
-    arm {
-      when          = var.env == "staging"
-      transition_to = "deploy_staging"
+    condition {
+      match = var.env == "staging"
+      next  = state.deploy_staging
     }
-    arm {
-      when          = steps.build.exit_code == "0"
-      transition_to = "deploy_staging"
+    condition {
+      match = steps.build.exit_code == "0"
+      next  = state.deploy_staging
     }
     default {
-      transition_to = "skip_deploy"
+      next = state.skip_deploy
     }
   }
 

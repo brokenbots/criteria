@@ -8,23 +8,11 @@ issues:
     - path: compile_nodes.go
       linters:
         - gocognit
-      text: '`compileBranches`' # W04: compileBranches extracted from Compile
-    - path: compile_nodes.go
-      linters:
-        - gocognit
       text: '`compileForEachs`' # W04: compileForEachs extracted from Compile
     - path: compile_nodes.go
       linters:
         - funlen
-      text: 'Function ''compileBranches''' # W04: compileBranches extracted from Compile
-    - path: compile_nodes.go
-      linters:
-        - funlen
       text: 'Function ''compileForEachs''' # W04: compileForEachs extracted from Compile
-    - path: compile_nodes.go
-      linters:
-        - gocyclo
-      text: '`compileBranches`' # W04: compileBranches extracted from Compile
     - path: compile_nodes.go
       linters:
         - gocyclo
@@ -92,3 +80,13 @@ issues:
       linters:
         - funlen
       text: 'compileSubworkflows'
+    # --- W16: nodeTargets gocognit: grew from 21 to 22 when switch case was added alongside steps/waits/approvals ---
+    - path: compile_steps_graph.go
+      linters:
+        - gocognit
+      text: '`nodeTargets`' # W16: switch case added; full refactor is out of scope for this workstream
+    # --- W16: compileSwitchConditionBlock funlen: 55-line function validates attrs, match, next, and output for a condition block ---
+    - path: compile_switches.go
+      linters:
+        - funlen
+      text: 'compileSwitchConditionBlock' # W16: each logical phase is necessary; further splitting would obscure intent

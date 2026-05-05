@@ -365,7 +365,7 @@ workflow "t" {
 }`,
 		},
 		{
-			name: "branch",
+			name: "switch",
 			src: `
 workflow "t" {
   version       = "0.1"
@@ -376,12 +376,12 @@ workflow "t" {
     target = adapter.noop.default
     outcome "success" { next = "done" }
   }
-  branch "return" {
-    arm {
-      when         = true
-      transition_to = "done"
+  switch "return" {
+    condition {
+      match = true
+      next  = state.done
     }
-    default { transition_to = "done" }
+    default { next = state.done }
   }
   state "done" {
     terminal = true
