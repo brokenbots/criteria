@@ -549,3 +549,20 @@ Approved. The remaining reviewer-log issue is fixed, prior dated sections are pr
 
 - `make ci` — passed.
 - `git grep -nE '\bBranchSpec\b|\bBranchNode\b|\bArmSpec\b|"branch,block"' -- ':!*_test.go' ':!docs/' ':!CHANGELOG.md' ':!workstreams/'` — zero matches.
+
+### Review 2026-05-04-05 — approved
+
+#### Summary
+
+Approved again. There are no code changes since the prior approved pass, the reviewer-log structure remains compliant, and the current tree still satisfies the workstream acceptance bar.
+
+#### Plan Adherence
+
+- No implementation drift since the previous approved review.
+- Prior switch compile/runtime/docs/example/golden changes remain intact and consistent.
+- Reviewer notes remain in append-only dated sections under `## Reviewer Notes`.
+
+#### Validation Performed
+
+- `make ci` — passed.
+- `git grep -nE '\bBranchSpec\b|\bBranchNode\b|\bArmSpec\b|"branch,block"' -- ':!*_test.go' ':!docs/' ':!CHANGELOG.md' ':!workstreams/'` — zero matches.
