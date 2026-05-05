@@ -136,15 +136,18 @@ func ParseDir(dir string) (*Spec, hcl.Diagnostics) { //nolint:funlen // W17: fil
 }
 
 // ParseFileOrDir is the unified CLI entry point. If path is a directory, it
-// calls ParseDir. If path is a regular .hcl file, it first attempts to parse
-// the parent directory as a module (ParseDir of the parent) so that sibling
-// files are merged. This handles the common case where a file is the entry
-// point of a split directory module (e.g. workflow.hcl + steps.hcl).
+// calls ParseDir. If path is a regular file it must have a ".hcl" suffix;
+// ParseFileOrDir then attempts to parse the parent directory as a module
+// (ParseDir of the parent) so that sibling files are merged. This handles the
+// common case where a file is the entry point of a split directory module
+// (e.g. workflow.hcl + steps.hcl).
 //
 // If ParseDir(parent) fails because the parent contains multiple workflow
 // header blocks — meaning the parent is a collection of independent workflows,
 // not a directory module — ParseFileOrDir falls back to parsing only the named
 // file (which must then contain a complete workflow including its header).
+//
+// Non-".hcl" regular file paths are rejected immediately with an error.
 func ParseFileOrDir(path string) (*Spec, hcl.Diagnostics) {
 	info, err := os.Stat(path)
 	if err != nil {
@@ -156,6 +159,15 @@ func ParseFileOrDir(path string) (*Spec, hcl.Diagnostics) {
 	}
 	if info.IsDir() {
 		return ParseDir(path)
+	}
+
+	// Only .hcl files are valid workflow entry points.
+	if !strings.HasSuffix(path, ".hcl") {
+		return nil, hcl.Diagnostics{{
+			Severity: hcl.DiagError,
+			Summary:  "invalid workflow file",
+			Detail:   fmt.Sprintf("%q is not a .hcl file; workflow entry points must be a directory or a .hcl file", path),
+		}}
 	}
 
 	// Try to parse the parent directory as a module first. This correctly handles

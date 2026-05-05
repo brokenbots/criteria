@@ -3,6 +3,7 @@ package workflow
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -115,6 +116,40 @@ func TestParseFileOrDir_NonexistentPath_Error(t *testing.T) {
 	_, diags := ParseFileOrDir("/nonexistent-criteria-parsedir-xyz/file.hcl")
 	if !diags.HasErrors() {
 		t.Fatal("expected error for non-existent path")
+	}
+}
+
+// TestParseFileOrDir_NonHCLFile_Error verifies that a regular file without a
+// .hcl suffix is rejected with a descriptive error rather than silently
+// succeeding by parsing the parent directory.
+func TestParseFileOrDir_NonHCLFile_Error(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create a valid workflow directory alongside a non-.hcl file.
+	writeHCLFile(t, dir, "workflow", `workflow "test" {
+  version       = "0.1"
+  initial_state = "run"
+  target_state  = "done"
+}
+`)
+	notesPath := filepath.Join(dir, "notes.txt")
+	if err := os.WriteFile(notesPath, []byte("some notes"), 0o644); err != nil {
+		t.Fatalf("write notes.txt: %v", err)
+	}
+
+	_, diags := ParseFileOrDir(notesPath)
+	if !diags.HasErrors() {
+		t.Fatal("expected error for non-.hcl file path")
+	}
+	found := false
+	for _, d := range diags {
+		if strings.Contains(d.Detail, ".hcl") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected diagnostic detail mentioning .hcl requirement, got: %s", diags.Error())
 	}
 }
 
