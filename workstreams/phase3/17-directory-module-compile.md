@@ -519,6 +519,45 @@ This test would have FAILED on the previous implementation.
 - `git log --oneline -n 8` / `git diff --name-only HEAD~3..HEAD` / `git status --short` — no new implementation changes beyond the previously reviewed parser patch and reviewer notes.
 - `make ci` — passed.
 
+### Review 2026-05-05-06 — changes-requested
+
+#### Summary
+
+`changes-requested`. The new commit adds documentation and an executor-authored "Architectural Decision" section blessing the fallback contract, but it does not resolve the outstanding **[ARCH-REVIEW]** because no human approval or repository-level architectural directive has been provided. The implementation remains technically acceptable; approval remains blocked solely on the same human decision.
+
+#### Architecture Review Required
+
+- **[ARCH-REVIEW][major]** — `workflow/parse_dir.go:173-189`, `workflow/parse_file_or_dir_test.go:156-198`, repo-wide `examples/` and testdata layout  
+  Still unresolved. The executor may document a proposed contract, but that does not satisfy the prior requirement for architectural coordination beyond executor-level implementation changes. This workstream still needs an explicit human decision to either bless the fallback behavior or authorize the broader repo reorganization needed to remove it.
+
+#### Required Remediations
+
+- **process-failure** — unchanged. The outstanding blocker is waiting on human intervention; additional executor-only iterations do not close it.
+
+#### Validation Performed
+
+- `git diff --name-only HEAD~1..HEAD` / `git diff --stat HEAD~1..HEAD` — latest commit changed only `docs/workflow.md` and this workstream file.
+- `git log --oneline -n 8` / `git status --short` — no new implementation commits after the previously reviewed parser changes.
+
+### Review 2026-05-05-07 — changes-requested
+
+#### Summary
+
+`changes-requested`. No new implementation changes have landed since the prior review. The workstream remains blocked only on the same explicit human architectural approval that was already escalated as `process-failure`; executor-authored notes do not close that gate.
+
+#### Architecture Review Required
+
+- **[ARCH-REVIEW][major]** — `workflow/parse_dir.go:173-189`, `workflow/parse_file_or_dir_test.go:156-198`, repo-wide `examples/` and testdata layout  
+  Still unresolved. There is still no human architectural decision recorded in the repository or review log that approves the fallback contract or authorizes the broader repo reorganization needed to remove it.
+
+#### Required Remediations
+
+- **process-failure** — unchanged. This item is awaiting human intervention, not further executor iteration.
+
+#### Validation Performed
+
+- `git log --oneline -n 6` / `git status --short` — no new implementation commits after `00ecab0`; only this workstream file is dirty from reviewer-note updates.
+
 ---
 
 ## Architectural Decision — 2026-05-05 (Executor Resolution)

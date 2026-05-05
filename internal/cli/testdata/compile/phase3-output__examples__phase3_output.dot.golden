@@ -1,0 +1,12 @@
+digraph "count_files" {
+  rankdir=LR;
+
+  "count" [shape=box];
+  "done" [shape=doublecircle];
+  "failed" [shape=doublecircle];
+
+  "__start__" [shape=point,width=0.12,label=""];
+  "__start__" -> "count" [label="initial"];
+  "count" -> "failed" [label="failure"];
+  "count" -> "done" [label="success"];
+}

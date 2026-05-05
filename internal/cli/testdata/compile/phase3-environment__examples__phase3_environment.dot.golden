@@ -1,0 +1,10 @@
+digraph "phase3-environment" {
+  rankdir=LR;
+
+  "print_env" [shape=box];
+  "done" [shape=doublecircle];
+
+  "__start__" [shape=point,width=0.12,label=""];
+  "__start__" -> "print_env" [label="initial"];
+  "print_env" -> "done" [label="success"];
+}

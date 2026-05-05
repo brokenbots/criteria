@@ -54,7 +54,7 @@ adapter "copilot" "executor" {
     model            = "claude-sonnet-4.6"
     reasoning_effort = "high"
     max_turns        = 12
-    system_prompt    = trimfrontmatter(file("../.github/agents/workstream-executor.agent.md"))
+    system_prompt    = trimfrontmatter(file("../../.github/agents/workstream-executor.agent.md"))
   }
 }
 
@@ -63,7 +63,7 @@ adapter "copilot" "reviewer" {
     model            = "gpt-5.4"
     reasoning_effort = "high"
     max_turns        = 10
-    system_prompt    = trimfrontmatter(file("../.github/agents/workstream-reviewer.agent.md"))
+    system_prompt    = trimfrontmatter(file("../../.github/agents/workstream-reviewer.agent.md"))
   }
 }
 
@@ -71,7 +71,7 @@ adapter "copilot" "pr_manager" {
   config {
     model         = "claude-haiku-4.5"
     max_turns     = 10
-    system_prompt = trimfrontmatter(file("../.github/agents/workstream-pr-manager.agent.md"))
+    system_prompt = trimfrontmatter(file("../../.github/agents/workstream-pr-manager.agent.md"))
   }
 }
 

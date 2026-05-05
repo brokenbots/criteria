@@ -137,15 +137,10 @@ func ParseDir(dir string) (*Spec, hcl.Diagnostics) { //nolint:funlen // W17: fil
 
 // ParseFileOrDir is the unified CLI entry point. If path is a directory, it
 // calls ParseDir. If path is a regular file it must have a ".hcl" suffix;
-// ParseFileOrDir then attempts to parse the parent directory as a module
-// (ParseDir of the parent) so that sibling files are merged. This handles the
-// common case where a file is the entry point of a split directory module
-// (e.g. workflow.hcl + steps.hcl).
-//
-// If ParseDir(parent) fails because the parent contains multiple workflow
-// header blocks — meaning the parent is a collection of independent workflows,
-// not a directory module — ParseFileOrDir falls back to parsing only the named
-// file (which must then contain a complete workflow including its header).
+// ParseFileOrDir then calls ParseDir on the file's parent directory so that
+// all sibling .hcl files are merged as one directory module. Every workflow
+// must live in its own directory — a directory must contain exactly one
+// workflow header block across all its .hcl files.
 //
 // Non-".hcl" regular file paths are rejected immediately with an error.
 func ParseFileOrDir(path string) (*Spec, hcl.Diagnostics) {
@@ -170,70 +165,9 @@ func ParseFileOrDir(path string) (*Spec, hcl.Diagnostics) {
 		}}
 	}
 
-	// Try to parse the parent directory as a module first. This correctly handles
-	// split modules where the named file is the entry point (e.g. workflow.hcl +
-	// content.hcl). Sibling files are merged together.
-	dirSpec, dirDiags := ParseDir(filepath.Dir(path))
-	if !dirDiags.HasErrors() {
-		return dirSpec, dirDiags
-	}
-
-	// If ParseDir failed because the parent directory is a collection of
-	// independent workflows (multiple workflow header blocks), fall back to
-	// parsing only the named file as a standalone single-file module.
-	if isSingletonConflictOnly(dirDiags) {
-		return parseSingleFile(path)
-	}
-
-	// For any other ParseDir error (syntax errors in siblings, etc.), propagate.
-	return nil, dirDiags
-}
-
-// isSingletonConflictOnly returns true when all error diagnostics in diags are
-// singleton-conflict errors from mergeSpecs ("duplicate workflow block",
-// "duplicate policy block", "duplicate permissions block"). These indicate the
-// parent directory is a collection of independent single-file workflows, not a
-// directory module. Non-singleton errors (syntax, parse failures) are propagated.
-func isSingletonConflictOnly(diags hcl.Diagnostics) bool {
-	hasError := false
-	for _, d := range diags {
-		if d.Severity != hcl.DiagError {
-			continue
-		}
-		hasError = true
-		switch d.Summary {
-		case "duplicate workflow block", "duplicate policy block", "duplicate permissions block":
-		default:
-			return false
-		}
-	}
-	return hasError
-}
-
-// parseSingleFile parses exactly one .hcl file and requires it to contain a
-// workflow header block. Used as a fallback when the parent directory is not a
-// directory module.
-func parseSingleFile(path string) (*Spec, hcl.Diagnostics) {
-	src, readErr := os.ReadFile(path)
-	if readErr != nil {
-		return nil, hcl.Diagnostics{{
-			Severity: hcl.DiagError,
-			Summary:  "cannot read workflow file",
-			Detail:   readErr.Error(),
-		}}
-	}
-	spec, diags := Parse(path, src)
-	if diags.HasErrors() || spec == nil {
-		return spec, diags
-	}
-	if spec.Header == nil {
-		return nil, hcl.Diagnostics{{
-			Severity: hcl.DiagError,
-			Summary:  "no workflow block declared",
-			Detail:   fmt.Sprintf("file %q must contain exactly one workflow \"<name>\" { ... } header block; none was found. Add a workflow block with version, initial_state, and target_state attributes.", path),
-		}}
-	}
-	return spec, diags
+	// Parse the parent directory as the module root. All .hcl files in the
+	// directory are merged; the named file must be part of that set.
+	return ParseDir(filepath.Dir(path))
 }
 
 // mergeSpecs merges a slice of parsed file entries into a single Spec.

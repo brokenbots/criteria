@@ -385,7 +385,7 @@ state "done" { terminal = true }
 }
 
 func TestSwitchCompile_FixtureFile(t *testing.T) {
-	spec, diags := workflow.ParseFile("testdata/switch_basic.hcl")
+	spec, diags := workflow.ParseFile("testdata/switch_basic/switch_basic.hcl")
 	if diags.HasErrors() {
 		t.Fatalf("parse fixture: %v", diags)
 	}

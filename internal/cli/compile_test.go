@@ -17,7 +17,7 @@ var updateGolden = flag.Bool("update", false, "update golden files")
 func TestCompileGolden_JSONAndDOT(t *testing.T) {
 	repoRoot, fixtures := workflowFixtures(t)
 	// Some fixtures reference files outside their own directory (e.g.
-	// examples/workstream_review_loop.hcl loads agent profiles from
+	// examples/workstream_review_loop/ loads agent profiles from
 	// .github/agents/). Allow the whole repo root so file() resolves at compile.
 	t.Setenv("CRITERIA_WORKFLOW_ALLOWED_PATHS", repoRoot)
 	for _, path := range fixtures {
@@ -45,10 +45,11 @@ func TestCompileGolden_JSONAndDOT(t *testing.T) {
 	}
 }
 
-// workflowFixtures returns (repoRoot, absoluteHCLPaths) for all .hcl files in
-// examples/ and workflow/testdata/.  The repoRoot is the canonical repo root
-// derived from the caller's file path, so that tests can compute repo-relative
-// names for golden files and remain portable across checkout paths.
+// workflowFixtures returns (repoRoot, absolutePaths) for all workflow modules
+// under examples/ and workflow/testdata/. Each path is a directory whose
+// top-level .hcl files form a single workflow module. The repoRoot is derived
+// from the caller's file path so that tests compute repo-relative golden names
+// and remain portable across checkout paths.
 func workflowFixtures(t *testing.T) (repoRoot string, fixtures []string) {
 	t.Helper()
 	_, file, _, ok := runtime.Caller(0)
@@ -68,10 +69,22 @@ func workflowFixtures(t *testing.T) (repoRoot string, fixtures []string) {
 			t.Fatalf("read fixtures dir %s: %v", dir, err)
 		}
 		for _, ent := range entries {
-			if ent.IsDir() || filepath.Ext(ent.Name()) != ".hcl" {
+			if !ent.IsDir() {
 				continue
 			}
-			out = append(out, filepath.Join(dir, ent.Name()))
+			subDir := filepath.Join(dir, ent.Name())
+			// Include only directories that contain at least one .hcl file
+			// at the top level — those are workflow module directories.
+			subEntries, readErr := os.ReadDir(subDir)
+			if readErr != nil {
+				continue
+			}
+			for _, sub := range subEntries {
+				if !sub.IsDir() && filepath.Ext(sub.Name()) == ".hcl" {
+					out = append(out, subDir)
+					break
+				}
+			}
 		}
 	}
 	sort.Strings(out)

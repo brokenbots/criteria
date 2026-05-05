@@ -10,7 +10,7 @@ import (
 func TestPlanGolden(t *testing.T) {
 	repoRoot, fixtures := workflowFixtures(t)
 	// Some fixtures reference files outside their own directory (e.g.
-	// examples/workstream_review_loop.hcl loads agent profiles from
+	// examples/workstream_review_loop/ loads agent profiles from
 	// .github/agents/). Allow the whole repo root so file() resolves at compile.
 	t.Setenv("CRITERIA_WORKFLOW_ALLOWED_PATHS", repoRoot)
 	for _, path := range fixtures {

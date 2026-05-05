@@ -80,9 +80,9 @@ See `examples/phase3-multi-file/` for a working example.
 
 #### File path entry points
 
-Passing a `.hcl` file path (e.g. `criteria apply my-workflow/workflow.hcl`) is equivalent to passing the parent directory when the parent contains a single directory module: all sibling `.hcl` files are merged together. This lets you point any CLI command at a specific file within a split module.
+Passing a `.hcl` file path (e.g. `criteria apply my-workflow/workflow.hcl`) is equivalent to passing the parent directory: all `.hcl` files in the parent directory are merged together as one module. This lets you point any CLI command at a specific file within a split module.
 
-**Collection directories** — directories that contain multiple independent workflow files, each with their own `workflow` header block — are also supported. When `criteria apply` is given a `.hcl` file whose parent directory contains multiple workflow headers, it automatically treats the file as a standalone single-file workflow rather than part of a directory module. This is the correct behavior for shared directories such as `examples/` where each `.hcl` file is a self-contained workflow.
+Every workflow must live in its own directory — a directory may contain exactly one `workflow` header block across all its `.hcl` files. If the parent directory contains multiple `workflow` header blocks, the command fails with a "duplicate workflow block" error.
 
 Only `.hcl` files are accepted as file-path entry points. Passing a non-`.hcl` file is an error.
 

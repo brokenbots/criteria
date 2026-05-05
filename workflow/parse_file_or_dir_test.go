@@ -153,15 +153,15 @@ func TestParseFileOrDir_NonHCLFile_Error(t *testing.T) {
 	}
 }
 
-// TestParseFileOrDir_FilePath_FallsBackToSingleFileWhenParentHasMultipleHeaders
-// verifies that when the parent directory contains multiple independent workflow
-// files (each with their own singleton blocks — workflow, policy, etc.),
-// ParseFileOrDir falls back to parsing only the named file — rather than
-// failing with "duplicate workflow block" from the directory merge attempt.
-func TestParseFileOrDir_FilePath_FallsBackToSingleFileWhenParentHasMultipleHeaders(t *testing.T) {
+// TestParseFileOrDir_FilePath_RejectsCollectionDirectory verifies that a file
+// path inside a directory containing multiple workflow headers (a "collection"
+// directory, not a module) fails with a clear "duplicate workflow block" error.
+// Every workflow must live in its own directory with a single header block.
+func TestParseFileOrDir_FilePath_RejectsCollectionDirectory(t *testing.T) {
 	dir := t.TempDir()
 
-	// Two complete, independent workflows in the same directory.
+	// Two complete, independent workflows in the same directory — this is not a
+	// valid module layout.
 	if err := os.WriteFile(filepath.Join(dir, "wf_a.hcl"), []byte(singleFileContent), 0o644); err != nil {
 		t.Fatalf("write wf_a.hcl: %v", err)
 	}
@@ -184,15 +184,13 @@ state "done" { terminal = true }
 		t.Fatalf("write wf_b.hcl: %v", err)
 	}
 
-	// Passing wf_a.hcl should parse it standalone (not fail due to sibling header).
-	spec, diags := ParseFileOrDir(filepath.Join(dir, "wf_a.hcl"))
-	if diags.HasErrors() {
-		t.Fatalf("expected fallback to single-file parse, got error: %s", diags.Error())
+	// Passing wf_a.hcl must fail because the parent directory is not a valid
+	// single-module directory — it contains two workflow headers.
+	_, diags := ParseFileOrDir(filepath.Join(dir, "wf_a.hcl"))
+	if !diags.HasErrors() {
+		t.Fatal("expected error: directory contains multiple workflow headers; got success")
 	}
-	if spec == nil || spec.Header == nil {
-		t.Fatal("expected non-nil spec with Header")
-	}
-	if spec.Header.Name != "test" {
-		t.Errorf("Header.Name = %q, want %q", spec.Header.Name, "test")
+	if !strings.Contains(diags.Error(), "duplicate workflow block") {
+		t.Errorf("expected 'duplicate workflow block' error, got: %s", diags.Error())
 	}
 }
