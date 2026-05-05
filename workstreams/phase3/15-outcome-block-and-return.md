@@ -233,13 +233,13 @@ This workstream may **not** edit:
 
 ## Tasks
 
-- [ ] Reshape `OutcomeSpec` and `StepSpec.DefaultOutcome`; reshape compiled types (Step 1).
-- [ ] Reserved `return` compile and runtime semantics (Step 2).
-- [ ] `default_outcome` compile validation and runtime mapping (Step 3).
-- [ ] Legacy parse rejection (Step 4).
-- [ ] Engine routing (Step 5).
-- [ ] All required tests (Step 6).
-- [ ] `make ci` green; final grep zero (Step 7).
+- [x] Reshape `OutcomeSpec` and `StepSpec.DefaultOutcome`; reshape compiled types (Step 1).
+- [x] Reserved `return` compile and runtime semantics (Step 2).
+- [x] `default_outcome` compile validation and runtime mapping (Step 3).
+- [x] Legacy parse rejection (Step 4).
+- [x] Engine routing (Step 5).
+- [x] All required tests (Step 6).
+- [x] `make ci` green; final grep zero (Step 7).
 
 ## Exit criteria
 
@@ -265,3 +265,98 @@ Step 6 list. Coverage: outcome routing path ≥ 90%.
 | `outcome.output` expression references a step output that didn't run | Same error as in [09](09-output-block.md): "outcome X output references step Y which did not execute". Reuse the error helper. |
 | Migration burden: every example with outcome blocks rewrites | Mechanical — substitute `transition_to` → `next`. Sweep all examples; regenerate goldens. |
 | The reserved-name approach for `"return"` collides with a user step named `return` | Steps cannot be named `"return"` — add a name validation that rejects this. Test `TestCompileStep_NameReturn_HardError`. |
+
+## Implementation notes
+
+### Schema changes (`workflow/schema.go`)
+- `OutcomeSpec`: `TransitionTo` → `Next`; `Remain hcl.Body` added for optional `output` attr.
+- `CompiledOutcome` struct: `Name`, `Next`, `OutputExpr hcl.Expression`.
+- `StepNode.Outcomes`: `map[string]string` → `map[string]*CompiledOutcome`.
+- `StepNode.DefaultOutcome string` added.
+- `ReturnSentinel = "return"` const added.
+- `StepSpec.DefaultOutcome string hcl:"default_outcome,optional"` added.
+
+### Compiler (`workflow/compile_steps_graph.go`)
+- `compileOutcomeBlock`: uses `o.Remain.PartialContent()` (not `gohcl.DecodeBody`) for the optional `output` attr to correctly detect absence (gohcl always sets expression even when absent, causing false "got dynamic" errors).
+- `validateStepNameNotReturn`: compile error if a step is named `"return"`.
+- `nodeTargets`: `"return"` sentinel bypasses name validation.
+
+### Legacy rejection (`workflow/parse_legacy_reject.go`)
+- `rejectLegacyOutcomeTransitionTo`: hard error on `transition_to` inside `outcome` blocks (step/wait/approval). Branch arm `transition_to` is intentionally preserved (W16 scope).
+
+### Engine (`internal/engine/`)
+- `engine.go`: `Sink` interface gains `OnStepOutcomeDefaulted(step, original, mapped string)` and `OnStepOutcomeUnknown(step, outcome string)`. Added `handleReturnExit`, `formatReturnOutputs`. `finishIterationInGraph` updated for `*CompiledOutcome`.
+- `node_step.go`: `evaluateOnce` delegates outcome resolution/projection to new `applyOutcome` helper (reduces cognitive complexity). Iterating-step cursor check moved before Outcomes lookup (bug fix). `evalOutcomeOutputProjection` evaluates `output` expression.
+- `node_workflow.go`: `runWorkflowBody` returns `(terminal, returnOutputs, finalVars, err)`. Return-sentinel path exits scope and bubbles outputs.
+- `node_subworkflow.go`: observes 4-return signature; return-bubble path surfaces outputs to parent step.
+
+### Events (`events/`)
+- `step.outcome.defaulted` and `step.outcome.unknown` event types added.
+
+### Docs (`docs/workflow.md`)
+- All outcome blocks updated: `transition_to` → `next`.
+- Outcomes section expanded with: block attributes, `next = "return"` semantics, output projection, `default_outcome`, precedence rule.
+
+### Tests
+- `workflow/compile_outcomes_test.go` (new): 10 compile tests — NextIsStep, NextIsState, NextIsReturn, OutputExprFolds, OutputExprRuntimeRef, LegacyTransitionTo_HardError, DefaultOutcomeMissing, NameReturn_HardError, OutputExprNotObject, OutputExprBadRef. All pass.
+- `internal/engine/node_step_w15_test.go` (new): 12 engine tests — DefaultOutcome_AppliedOnUnknownName (with event payload assertion), DefaultOutcomeUnset_UnknownNameErrors (with event payload assertion), OutcomeReturn_TopLevelTerminal, OutcomeReturn_BubblesToParent, OutcomeOutputProjection_PassedToNextStep, OutcomeReturnOutputOverridesOutputBlocks (with output value fidelity assertions), OutcomeReturn_EndToEnd. All pass.
+
+### All examples updated
+21 HCL files and all Go inline HCL test strings updated. 12 golden JSON files regenerated.
+
+### Final grep
+`git grep -nE 'hcl:"transition_to"' -- ':!*_test.go' ':!docs/' ':!CHANGELOG.md' ':!workstreams/'` returns only `ArmSpec`/`DefaultArmSpec` in `workflow/schema.go` — both are W16 scope (branch block conversion). Zero production outcome blocks use `transition_to`.
+
+### `make ci` result
+All targets pass: build, test (race), validate, test-conformance, lint-imports, lint-go (gofmt -s issues fixed in 3 test files + schema.go).
+
+### `make ci` result (post-remediation)
+All targets pass. 10 compile tests + 12 engine tests all green.
+
+## Reviewer notes
+
+- The `gohcl.DecodeBody` → `PartialContent` fix is critical: without it, every `outcome` block without an `output` attribute would fail at runtime with "outcome output must be an object; got dynamic". The fix is narrowly scoped to `compileOutcomeBlock`.
+- The iteration engine bug fix (cursor check before Outcomes lookup) restores correct routing for iterating steps; it was a pre-existing ordering bug exposed by the `*CompiledOutcome` type change.
+- `ArmSpec.TransitionTo` and `DefaultArmSpec.TransitionTo` retain `transition_to` intentionally — they are W16 scope.
+- `evaluateOnce` cognitive complexity reduced from 24 → ~14 by extracting `applyOutcome`.
+- `runWorkflowBody` return params combined from `(terminal string, returnOutputs map[string]cty.Value, finalVars map[string]cty.Value, err error)` to `(terminal string, returnOutputs, finalVars map[string]cty.Value, err error)` per gocritic.
+
+### Review 2026-05-04 — changes-requested
+
+#### Summary
+The workstream is not ready to approve. The `next = "return"` path is wired end-to-end and the migration sweep landed, but two required semantics are still broken: `outcome.output` is not compile-validated at all, and top-level `return` corrupts projected output values by stringifying them before publishing run outputs. The new tests also miss both regressions, so the current suite gives false confidence.
+
+#### Plan Adherence
+- **Step 1 / Step 2:** partially implemented. `OutcomeSpec.Next`, `CompiledOutcome`, and `ReturnSentinel` are in place, but `workflow/compile_steps_graph.go:34-44` only stores `output` expressions; it does not validate them against the compile/eval closure required by the plan.
+- **Step 2 / Step 5:** not fully implemented. `internal/engine/node_step.go:304-325` converts projected output values to `map[string]string` and then to `cty.StringVal`, so top-level `return` does not preserve the projected output set semantics required by the workstream.
+- **Step 6:** incomplete. The new tests in `workflow/compile_outcomes_test.go` and `internal/engine/node_step_w15_test.go:20-235` assert mostly success/failure shape, but they do not prove compile-time rejection for invalid `outcome.output`, do not verify emitted defaulted/unknown outcome events, and do not inspect actual run outputs on the `return` path.
+
+#### Required Remediations
+- **Blocker — compile-time validation missing** (`workflow/compile_steps_graph.go:34-44`): `outcome.output` must be validated during compile using the same fold/defer rules described in the plan. Current repro: a workflow with `output = { bad = nope.missing }` compiles successfully, and `output = "not-an-object"` also compiles successfully. **Acceptance criteria:** invalid references/type errors in `outcome.output` fail compilation with source-ranged diagnostics; runtime-only refs that are explicitly allowed still defer cleanly; add tests that fail on the two repros above.
+- **Blocker — top-level return output typing/encoding is wrong** (`internal/engine/node_step.go:304-325`, `internal/engine/engine.go:462-490`): projected return outputs are stringified early, so numbers/bools become strings and strings become double-quoted. Repro with `criteria apply` on a step returning `output = { count = 1, flag = true, msg = "ok" }` prints `output count = "1"`, `output flag = "true"`, `output msg = "\"ok\""`, while normal workflow outputs correctly print `1`, `true`, `"ok"`. **Acceptance criteria:** preserve projected `cty.Value`s through the return path so top-level `return` emits the same values and encoding as normal run outputs; add a regression test that asserts exact emitted run outputs, not just `terminalOK`.
+- **Blocker — test intent is too weak for the new contract surfaces** (`workflow/compile_outcomes_test.go`, `internal/engine/node_step_w15_test.go`): the suite currently would stay green with both bugs above. **Acceptance criteria:** strengthen tests to assert compile diagnostics, actual projected output values, and `step.outcome.defaulted` / `step.outcome.unknown` event emission payloads at the sink boundary.
+
+#### Test Intent Assessment
+The compile tests are only checking that fields were stored, not that the compiler enforces the promised contract. The engine tests mostly check "run succeeded" / "run failed", which does not prove output precedence or output value fidelity. In particular, `TestStep_OutcomeReturnOutputOverridesOutputBlocks` only checks `terminalOK`, so it misses the current output corruption entirely.
+
+#### Validation Performed
+- `make ci` — passed.
+- `git grep -nE 'hcl:"transition_to"' -- ':!*_test.go' ':!docs/' ':!CHANGELOG.md' ':!workstreams/'` — only `ArmSpec` / `DefaultArmSpec` remain, consistent with W16 scope.
+- Manual compile repro via temporary Go program: workflows with `output = { bad = nope.missing }` and `output = "not-an-object"` both compiled successfully.
+- Manual runtime repro via `go run ./cmd/criteria apply <temp-workflow>`: top-level `next = "return"` emitted stringified/double-encoded outputs (`"1"`, `"true"`, `"\"ok\""`), unlike the normal output-block path.
+
+### Remediations (2026-05-04)
+
+All three blockers resolved. `make ci` green.
+
+**Blocker 1 — compile-time validation:** Added `validateOutcomeOutputExpr` in `workflow/compile_steps_graph.go`. `compileOutcomeBlock` signature extended to accept `g *FSMGraph, opts CompileOpts`. The helper calls `validateFoldableAttrs` to catch unknown references (runtime-only namespaces like `steps.*`, `each.*` silently deferred), then calls `FoldExpr` and checks the result is an object type when foldable. `output = "not-an-object"` and `output = { bad = nope.missing }` now both produce compile errors. Two new tests added: `TestCompileOutcome_OutputExprNotObject` and `TestCompileOutcome_OutputExprBadRef`.
+
+**Bug introduced and fixed:** The `compileOutcomeBlock` signature change accidentally dropped `g.Steps[sp.Name] = node` from `compileIteratingStep`, causing all iterating steps to disappear from `g.Steps` (failing `resolveTransitions`). Fixed by restoring the assignment. All existing iteration tests now pass.
+
+**Blocker 2 — return output encoding:** `evalOutcomeOutputProjection` return type changed from `map[string]string` to `map[string]cty.Value`. `applyOutcome` now stores raw cty values directly in `st.ReturnOutputs` (no `cty.StringVal` wrapping). Added `ctyValsToStrings` for the `WithStepOutputs`/`OnStepOutputCaptured` paths that still require `map[string]string`. `formatReturnOutputs` in `engine.go` uses `renderCtyValue` so number/bool/string values encode identically to the normal output path.
+
+**Blocker 3 — test strengthening:**
+- Added `outcomeSink` type (embeds `fakeSink`) that captures `OnStepOutcomeDefaulted`, `OnStepOutcomeUnknown`, and `OnRunOutputs` payloads.
+- `TestStep_DefaultOutcome_AppliedOnUnknownName`: asserts `sink.defaulted` event with correct step/original/mapped values.
+- `TestStep_DefaultOutcomeUnset_UnknownNameErrors`: asserts `sink.unknown` event with correct step/outcome values.
+- `TestStep_OutcomeReturnOutputOverridesOutputBlocks`: switched to `outcomeSink`; asserts `sink.outputs` contains `status = "\"from_return\""` and `count = "42"` (number must not be double-quoted).

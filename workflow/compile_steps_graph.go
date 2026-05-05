@@ -8,11 +8,21 @@ import (
 	"fmt"
 
 	"github.com/hashicorp/hcl/v2"
+	"github.com/zclconf/go-cty/cty"
 )
 
-// compileOutcomeBlock populates node.Outcomes from sp.Outcomes, checking for
-// duplicates and missing transition_to values.
-func compileOutcomeBlock(sp *StepSpec, node *StepNode) hcl.Diagnostics {
+// compileOutcomeBlock populates node.Outcomes from sp.Outcomes. It validates:
+//   - no duplicate outcome names
+//   - "next" is present (non-empty)
+//   - "return" is not used as a step name (reserved sentinel)
+//   - default_outcome, if set, refers to a declared outcome
+//   - the optional "output" expression, when present, references only known
+//     vars/locals (runtime-only refs like steps.* are deferred, not errors)
+//     and, when foldable at compile time, evaluates to an object type.
+//
+// The optional "output" expression is extracted from the outcome's Remain body
+// and stored in CompiledOutcome.OutputExpr.
+func compileOutcomeBlock(sp *StepSpec, node *StepNode, g *FSMGraph, opts CompileOpts) hcl.Diagnostics {
 	var diags hcl.Diagnostics
 	seen := map[string]bool{}
 	for _, o := range sp.Outcomes {
@@ -21,13 +31,87 @@ func compileOutcomeBlock(sp *StepSpec, node *StepNode) hcl.Diagnostics {
 			continue
 		}
 		seen[o.Name] = true
-		if o.TransitionTo == "" {
-			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q outcome %q: transition_to required", sp.Name, o.Name)})
+		if o.Next == "" {
+			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q outcome %q: next is required", sp.Name, o.Name)})
 			continue
 		}
-		node.Outcomes[o.Name] = o.TransitionTo
+		compiled := &CompiledOutcome{Name: o.Name, Next: o.Next}
+		if o.Remain != nil {
+			content, _, cDiags := o.Remain.PartialContent(&hcl.BodySchema{
+				Attributes: []hcl.AttributeSchema{{Name: "output", Required: false}},
+			})
+			diags = append(diags, cDiags...)
+			if attr, ok := content.Attributes["output"]; ok {
+				compiled.OutputExpr = attr.Expr
+				diags = append(diags, validateOutcomeOutputExpr(sp.Name, o.Name, attr, g, opts)...)
+			}
+		}
+		node.Outcomes[o.Name] = compiled
 	}
+
+	// Validate default_outcome refers to a declared outcome.
+	if sp.DefaultOutcome != "" {
+		if !seen[sp.DefaultOutcome] {
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  fmt.Sprintf("step %q: default_outcome %q is not a declared outcome", sp.Name, sp.DefaultOutcome),
+			})
+		} else {
+			node.DefaultOutcome = sp.DefaultOutcome
+		}
+	}
+
 	return diags
+}
+
+// validateOutcomeOutputExpr validates the output = { ... } expression on an
+// outcome block. It:
+//  1. Checks for unknown var/local references using validateFoldableAttrs
+//     (runtime-only namespaces like "steps" and "each" are silently deferred).
+//  2. When the expression is foldable at compile time (no runtime refs), verifies
+//     that the result is an object type so non-object literals (e.g. strings)
+//     are caught at compile time.
+func validateOutcomeOutputExpr(stepName, outcomeName string, attr *hcl.Attribute, g *FSMGraph, opts CompileOpts) hcl.Diagnostics {
+	// Step 1: check for unresolvable free-variable references.
+	refDiags := validateFoldableAttrs(hcl.Attributes{attr.Name: attr}, graphVars(g), graphLocals(g), opts.WorkflowDir)
+	if refDiags.HasErrors() {
+		return refDiags
+	}
+
+	// Step 2: if foldable at compile time, validate the type is an object.
+	val, foldable, foldDiags := FoldExpr(attr.Expr, graphVars(g), graphLocals(g), opts.WorkflowDir)
+	if foldDiags.HasErrors() {
+		return foldDiags
+	}
+	if !foldable {
+		// Expression contains runtime-only refs — defer to runtime evaluation.
+		return nil
+	}
+	if val == cty.NilVal || !val.IsKnown() {
+		return nil
+	}
+	if !val.Type().IsObjectType() && val.Type() != cty.DynamicPseudoType {
+		r := attr.Expr.StartRange()
+		return hcl.Diagnostics{&hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  fmt.Sprintf("step %q outcome %q: output must be an object literal; got %s", stepName, outcomeName, val.Type().FriendlyName()),
+			Subject:  &r,
+		}}
+	}
+	return nil
+}
+
+// validateStepNameNotReturn errors when a step is named "return" since that
+// string is the reserved outcome routing sentinel.
+func validateStepNameNotReturn(sp *StepSpec) hcl.Diagnostics {
+	if sp.Name == ReturnSentinel {
+		return hcl.Diagnostics{&hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  `step "return": "return" is a reserved name; steps cannot be named "return"`,
+			Detail:   `The name "return" is reserved as a sentinel for outcome routing (next = "return"). Choose a different step name.`,
+		}}
+	}
+	return nil
 }
 
 //   - has a back-edge (a path in the outcome graph that leads back to itself), AND
@@ -71,13 +155,14 @@ func warnBackEdges(g *FSMGraph) hcl.Diagnostics {
 // nodeTargets returns the names of all FSM nodes that the named node can
 // transition to. Recognises steps, branches, waits, and approvals; returns
 // nil for unknown nodes (state nodes have no outgoing edges and are dead-ends).
-// The "_continue" pseudo-target is excluded because it is never a real node.
+// The "_continue" and "return" pseudo-targets are excluded because they are
+// never real nodes.
 func nodeTargets(name string, g *FSMGraph) []string {
 	if step, ok := g.Steps[name]; ok {
 		var targets []string
-		for _, t := range step.Outcomes {
-			if t != "_continue" {
-				targets = append(targets, t)
+		for _, co := range step.Outcomes {
+			if co.Next != "_continue" && co.Next != ReturnSentinel {
+				targets = append(targets, co.Next)
 			}
 		}
 		return targets
