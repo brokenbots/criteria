@@ -18,18 +18,23 @@ func NewValidateCmd() *cobra.Command {
 	var subworkflowRoots []string
 
 	cmd := &cobra.Command{
-		Use:   "validate <workflow.hcl> [more.hcl ...]",
-		Short: "Parse and validate a workflow HCL file without executing it",
+		Use:   "validate <workflow.hcl|dir> [more ...]",
+		Short: "Parse and validate a workflow HCL file or directory without executing it",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			anyErr := false
 			ctx := context.Background()
 			for _, path := range args {
-				spec, diags := workflow.ParseFile(path)
+				spec, diags := workflow.ParseFileOrDir(path)
 				if diags.HasErrors() {
 					anyErr = true
 					fmt.Fprintf(os.Stderr, "%s: parse failed:\n%s\n", path, diags.Error())
 					continue
+				}
+				info, _ := os.Stat(path)
+				workflowDir := path
+				if info != nil && !info.IsDir() {
+					workflowDir = filepath.Dir(path)
 				}
 				loader := plugin.NewLoader()
 				loader.RegisterBuiltin(shell.Name, plugin.BuiltinFactoryForAdapter(shell.New()))
@@ -37,7 +42,7 @@ func NewValidateCmd() *cobra.Command {
 				_ = loader.Shutdown(ctx)
 
 				_, diags = workflow.CompileWithOpts(spec, schemas, workflow.CompileOpts{
-					WorkflowDir:         filepath.Dir(path),
+					WorkflowDir:         workflowDir,
 					SubWorkflowResolver: &workflow.LocalSubWorkflowResolver{AllowedRoots: subworkflowRoots},
 					Schemas:             schemas,
 				})

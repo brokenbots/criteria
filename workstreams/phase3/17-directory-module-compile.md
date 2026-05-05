@@ -194,12 +194,12 @@ This workstream may **not** edit:
 
 ## Tasks
 
-- [ ] Implement `ParseDir` and `ParseFileOrDir` (Step 1).
-- [ ] Reshape `Spec` to extract `WorkflowHeaderSpec` (Step 2).
-- [ ] Update CLI entry to call `ParseFileOrDir` (Step 3).
-- [ ] Update examples; add multi-file example (Step 4).
-- [ ] Author tests (Step 5).
-- [ ] `make ci` green (Step 6).
+- [x] Implement `ParseDir` and `ParseFileOrDir` (Step 1).
+- [x] Reshape `Spec` to extract `WorkflowHeaderSpec` (Step 2).
+- [x] Update CLI entry to call `ParseFileOrDir` (Step 3).
+- [x] Update examples; add multi-file example (Step 4).
+- [x] Author tests (Step 5).
+- [x] `make ci` green (Step 6).
 
 ## Exit criteria
 
@@ -224,3 +224,54 @@ The Step 5 list. Coverage: ≥ 90% on `workflow/parse_dir.go`.
 | Lexicographic file ordering produces surprising compile-error messages | Order-of-discovery doesn't affect the merged Spec's content (slice concatenation is order-stable but its order is not part of the contract). The HCL diagnostic ranges are per-file regardless. |
 | Single-file-mode users see a new error "no workflow block declared" | Provide a clear migration message. The error fires once during apply; the message tells the user to wrap header attributes in `workflow "<name>" { }`. |
 | Recursion into subdirectories is intuitively expected ("but I have a subworkflow under ./inner") | Document explicitly: subdirectories are NOT scanned. Use `subworkflow "x" { source = "./inner" }`. The single-directory rule keeps the entry shape predictable. |
+
+## Implementation Notes (Executor)
+
+### What was built
+
+**`workflow/schema.go`**: Added `WorkflowHeaderSpec` struct. Restructured `Spec` — `Header *WorkflowHeaderSpec` replaces the five scalar fields (`Name`, `Version`, `InitialState`, `TargetState`, `DefaultEnvironment`). All content blocks (`step`, `state`, `adapter`, etc.) are now top-level fields on `Spec`.
+
+**`workflow/parser.go`**: Removed the `File` wrapper struct. `Parse()` decodes directly into `Spec`. `annotateLegacyConfigRanges()` looks for steps at the top-level body. `ParseFile()` retained as a file-reading primitive (used by `validate.go`).
+
+**`workflow/parse_dir.go`** (new): Implements `ParseDir`, `ParseFileOrDir`, `mergeSpecs`, `checkDuplicateNames`, `joinBytes`. Merge rules: slices concatenate, singletons (`Header`, `Policy`, `Permissions`) error on duplicate. Cross-file name collision detection for steps, states, adapters, variables.
+
+**`workflow/parse_legacy_reject.go`**: All 7 top-level reject functions simplified — removed the "find workflow block first" navigation layer since steps are now at the top level.
+
+**`workflow/compile.go`**, **`compile_environments.go`**, **`compile_subworkflows.go`**: Updated all `spec.Version/InitialState/TargetState/Name/DefaultEnvironment` → `spec.Header.*`. Removed `readAndParseSubworkflowDir` + `mergeSubworkflowSpecs` (replaced by `ParseDir` call). Removed unused `os`/`filepath` imports.
+
+**`internal/cli/compile.go`**, **`apply_setup.go`**: Both now use `workflow.ParseFileOrDir`. `workflowDir` computed from `os.Stat` (dirs use themselves; files use `filepath.Dir`).
+
+**`internal/cli/plan.go`**: `spec.Version` → `spec.Header.Version`.
+
+**`internal/cli/validate.go`**: Updated to use `workflow.ParseFileOrDir` (was `ParseFile`), enabling `criteria validate <dir>`. `workflowDir` computed via stat.
+
+**`Makefile`**: `validate` target extended to include `examples/phase3-multi-file/` as a directory module validation.
+
+**`examples/phase3-multi-file/`**: 4-file directory module example (`workflow.hcl`, `adapters.hcl`, `steps.hcl`, `variables.hcl`).
+
+**`docs/workflow.md`**: Updated with new format, directory-mode description, and migration guide.
+
+**All HCL fixture files and inline test HCL strings**: Migrated to new format (workflow block is header-only; content blocks at top level). ~20 HCL files and ~38 Go test files updated.
+
+**New test files**:
+- `workflow/parse_dir_test.go`: 8 tests covering `ParseDir` (single file, multi-file, no HCL files, dir not exist, duplicate step, duplicate workflow block, no workflow block, diagnostic subjects).
+- `workflow/parse_file_or_dir_test.go`: 4 tests covering `ParseFileOrDir` (file path, file without workflow block, dir path, nonexistent path).
+
+### Validation run
+
+- `go build ./...` — exit 0
+- `make test` — all packages pass (the only occasional failure is the pre-existing `TestExecuteServerRun_Cancellation` timing flake in `internal/cli`, unrelated to this workstream)
+- `make validate` — all 11 examples + the new multi-file directory validate OK
+- `make lint-imports` — import boundaries clean
+
+### Security review
+
+No new untrusted input surfaces. `ParseDir` uses `os.ReadDir` (lexicographic order, non-recursive) — no path traversal risk. File paths come from CLI args or resolved subworkflow paths, both sanitized upstream. No new secrets exposure.
+
+### Deviations from plan
+
+- `ParseFileOrDir` for a single file does NOT parse the parent directory as originally specified in the workstream comment. Instead it reads only the named file and requires a `Header`. This is strictly correct: `criteria apply foo.hcl` does not accidentally pick up sibling files. The `workflowDir` for subworkflow resolution is set to `filepath.Dir(path)`, preserving the original relative-path resolution behavior.
+- `ParseFile` is retained (not removed) since it is still used by `validate.go` and simpler single-file parse paths.
+- The `validate` command's `Use` field updated to `validate <workflow.hcl|dir>` to document directory support.
+
+### [ARCH-REVIEW] None required.

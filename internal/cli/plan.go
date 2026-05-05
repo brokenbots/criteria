@@ -16,7 +16,7 @@ import (
 func NewPlanCmd() *cobra.Command {
 	var varOverrides []string
 	cmd := &cobra.Command{
-		Use:   "plan <workflow.hcl>",
+		Use:   "plan <workflow.hcl|dir>",
 		Short: "Render a human-readable execution preview",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {

@@ -134,6 +134,8 @@ validate: build ## Validate all standalone example workflows
 		echo "Validating $$f..."; \
 		CRITERIA_WORKFLOW_ALLOWED_PATHS="$(CURDIR)" ./bin/criteria validate "$$f" || exit 1; \
 	done
+	@echo "Validating examples/phase3-multi-file (directory module)..."; \
+	CRITERIA_WORKFLOW_ALLOWED_PATHS="$(CURDIR)" ./bin/criteria validate examples/phase3-multi-file || exit 1
 	@echo "All examples validated."
 
 example-plugin: build ## Build and run the greeter example plugin end-to-end
