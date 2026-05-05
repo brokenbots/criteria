@@ -30,6 +30,8 @@ type Service interface {
 
 // ExecuteEventSender pushes Execute stream events from the plugin to the host.
 // Implementations must not retain the sender beyond the Execute call.
+// Send must be safe for concurrent use: adapters may call it from event-handler
+// goroutines concurrently with the main Execute goroutine.
 type ExecuteEventSender interface {
 	Send(*pb.ExecuteEvent) error
 }
