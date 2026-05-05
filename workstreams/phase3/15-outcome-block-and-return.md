@@ -401,3 +401,20 @@ Three changes across two files implement full `subworkflow.*` support:
 - `internal/engine/node_step_w15_test.go` — `TestStep_OutcomeOutput_SubworkflowOutputAvailable`: end-to-end engine test with a two-level workflow (callee returns `val = "hello"`, parent projects `result = subworkflow.val`); asserts `sink.outputs` contains `result = "\"hello\""` via the `OnRunOutputs` path.
 
 **Regression fixed:** The `renderCtyValue` conversion for `stringOutputs` (the `steps.*` pass-through map) initially used `renderCtyValue` for all types, which JSON-encodes strings and broke `TestStep_SubworkflowStepInput_ReachesCallee` (expected raw string, got JSON-quoted). Fixed by using `v.AsString()` for string-typed cty values, matching adapter output convention.
+
+### Review 2026-05-04-03 — approved
+
+#### Summary
+The remaining `subworkflow.*` blocker is resolved. `outcome.output` now defers `subworkflow.*` at compile time, evaluates it at runtime for subworkflow-targeted steps, and routes subworkflow steps through the same default-outcome / projection / return-sentinel path as adapter steps. The focused tests now prove the missing compile and runtime contract, and the broader validation pass remains green.
+
+#### Plan Adherence
+- **Step 1 / Step 2 / Step 5:** complete. `subworkflow.*` is now supported in `outcome.output`, and subworkflow steps no longer bypass `DefaultOutcome`, `OutputExpr`, or `next = "return"` handling.
+- **Step 6:** complete. The added compile test and engine test cover the exact contract gap from the prior pass.
+
+#### Test Intent Assessment
+The strengthened suite now checks the right behaviors rather than just pass/fail shape: compile acceptance for `subworkflow.*`, exact output encoding for top-level `return`, and sink-level emission for defaulted/unknown outcomes. These tests would fail on the prior regressions.
+
+#### Validation Performed
+- `make ci` — passed.
+- `go test ./workflow -run 'TestCompileOutcome_OutputExprSubworkflowRef' -count=1` — passed.
+- `go test ./internal/engine -run 'TestStep_OutcomeOutput_SubworkflowOutputAvailable|TestStep_OutcomeReturnOutputOverridesOutputBlocks|TestStep_DefaultOutcome_AppliedOnUnknownName|TestStep_DefaultOutcomeUnset_UnknownNameErrors' -count=1` — passed.
