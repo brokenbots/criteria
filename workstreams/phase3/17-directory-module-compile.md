@@ -326,6 +326,42 @@ The current parser tests prove that `ParseDir` can merge simple directories and 
 - Manual repro: directory workflow using `file("./payload.sh")`, then `go run ./cmd/criteria apply "$tmpdir"` — failed at runtime with `file(): no such file: ./payload.sh`, proving the execution path uses the wrong workflow directory for directory inputs.
 - Manual repro: duplicate steps across two files inspected via `workflow.ParseDir(...)` — emitted `duplicate step name "run" across files` with `subject=<nil> context=<nil>`, proving the required file/line conflict locations are not preserved.
 
+### Review 2026-05-05-02 — changes-requested
+
+#### Summary
+
+`changes-requested`. The three blockers from the prior pass are fixed: file-path entry now merges sibling module files, directory `apply` uses the correct runtime workflow directory, and duplicate diagnostics now carry file locations. I am still blocking approval because the new fallback logic in `ParseFileOrDir` reintroduces the forbidden standalone-file code path and creates an invalid new behavior: passing a non-`.hcl` file inside a workflow directory now succeeds by silently parsing the parent directory.
+
+#### Plan Adherence
+
+- **Previous blockers**: resolved. The prior repros now pass, and the new CLI tests cover directory/file-path entry behavior.
+- **Step 1 (`ParseFileOrDir`)**: still deviates from the workstream contract. `workflow/parse_dir.go:138-225` now adds `isSingletonConflictOnly` + `parseSingleFile` fallback logic, which preserves a separate single-file parse path even though the workstream explicitly says "No legacy single-file-only code path survives" and restricts file handling to regular files with a `.hcl` suffix.
+
+#### Required Remediations
+
+- **blocker** — `workflow/parse_dir.go:148-225`, `workflow/parse_file_or_dir_test.go:121-163`  
+  `ParseFileOrDir` now accepts invalid inputs and silently changes meaning based on sibling files. I reproduced this with a valid workflow directory containing `workflow.hcl` plus an unrelated `notes.txt`; `go run ./cmd/criteria validate "$tmpdir/notes.txt"` returned `ok` by parsing the parent directory, even though the workstream contract only allows directory paths or regular files with a `.hcl` suffix.  
+  **Acceptance:** reject non-`.hcl` regular file paths up front, and remove or formally escalate the standalone-file fallback path so the implementation matches the documented unified directory-entry contract.
+
+#### Test Intent Assessment
+
+The new tests are much stronger than the previous pass for the fixed regressions, but they now codify the fallback behavior in `TestParseFileOrDir_FilePath_FallsBackToSingleFileWhenParentHasMultipleHeaders`. That test proves backward compatibility with the fallback, not adherence to the workstream contract. Add negative coverage that a non-`.hcl` file path is rejected and align the file-path behavior tests with the final agreed contract.
+
+#### Architecture Review Required
+
+- **[ARCH-REVIEW][major]** — `workflow/parse_dir.go:144-225`, `workflow/parse_file_or_dir_test.go:121-163`, `Makefile`, repo-wide example/testdata layout  
+  The implementation currently resolves a real tension between the written workstream contract and the repository’s existing layout by reintroducing a standalone-file fallback. The workstream says `foo.hcl` must use the parent-directory module path with no separate single-file code path, but the repository still contains many standalone `.hcl` files living side-by-side in shared directories. Removing the fallback to satisfy the workstream likely requires reorganizing examples/testdata/CLI expectations; keeping the fallback means the contract and docs need to be updated to bless it explicitly.  
+  **Decision needed:** either 1. preserve the strict unified directory-entry model and move standalone workflows/examples/testdata into one-workflow-per-directory layouts, or 2. explicitly adopt the fallback as the supported contract and update the workstream/docs/tests accordingly. Approval should wait until that contract is resolved.
+
+#### Validation Performed
+
+- `go test ./workflow -run 'TestParseDir|TestParseFileOrDir'` — passed.
+- `go test ./internal/cli -run 'TestCompileDir|TestValidateDir|TestApplyLocal'` — passed.
+- Manual repro: split directory module with `workflow.hcl` + `steps.hcl`, then `go run ./cmd/criteria validate "$tmpdir/workflow.hcl"` — passed, confirming the prior delegation blocker is fixed.
+- Manual repro: directory workflow using `file("./payload.sh")`, then `go run ./cmd/criteria apply "$tmpdir"` — completed successfully, confirming the runtime workflow-dir blocker is fixed.
+- Manual repro: duplicate steps across two files inspected via `workflow.ParseDir(...)` — now emitted a `Subject` on the second declaration and included the first declaration location in `Detail`, confirming the previous diagnostics blocker is fixed.
+- Manual repro: valid workflow directory plus unrelated `notes.txt`, then `go run ./cmd/criteria validate "$tmpdir/notes.txt"` — returned `ok`, proving invalid non-`.hcl` file paths are currently accepted.
+
 ---
 
 ## Reviewer Feedback Remediation — 2026-05-05
@@ -378,3 +414,45 @@ All tests would have FAILED on the pre-fix implementations.
 - `make validate` — all examples and phase3-multi-file/ directory module OK
 - `make lint-imports` — import boundaries clean
 - `go build ./...` — exit 0
+
+---
+
+## Reviewer Feedback Remediation — 2026-05-05-02
+
+### Changes made in response to Review 3
+
+**Blocker — Non-.hcl file paths silently accepted (`workflow/parse_dir.go`)**
+
+Added an explicit `.hcl` suffix check in `ParseFileOrDir` immediately after the directory branch, before attempting `ParseDir(parent)`. Any regular file without a `.hcl` suffix now returns a clear diagnostic:
+
+> "invalid workflow file: %q is not a .hcl file; workflow entry points must be a directory or a .hcl file"
+
+This prevents the case where `criteria validate notes.txt` inside a workflow directory would silently succeed by parsing the parent directory module.
+
+**Test added — `TestParseFileOrDir_NonHCLFile_Error` (`workflow/parse_file_or_dir_test.go`)**
+
+Creates a directory with a valid `workflow.hcl` plus a `notes.txt` file, passes `notes.txt` to `ParseFileOrDir`, and asserts:
+- `diags.HasErrors()` is true
+- The diagnostic detail mentions ".hcl" (clear rejection reason)
+
+This test would have FAILED on the previous implementation.
+
+### [ARCH-REVIEW] Fallback semantics vs strict unified contract
+
+**[ARCH-REVIEW][major]** — `workflow/parse_dir.go:138-225`, `workflow/parse_file_or_dir_test.go:121-163`, `Makefile`, repo-wide example/testdata layout
+
+**Problem:** The workstream specification says "no legacy single-file-only code path survives", but the current repository contains many standalone `.hcl` files living side-by-side in shared directories (e.g., `examples/`, `workflow/testdata/`, `internal/cli/testdata/`). The `isSingletonConflictOnly` + `parseSingleFile` fallback exists precisely to handle these shared directories — without it, `criteria validate examples/simple.hcl` would fail with "duplicate workflow block" because the parent directory has multiple workflow headers.
+
+**Decision needed (two options):**
+1. **Strict unified contract**: remove the fallback and reorganize all existing standalone workflow files into one-workflow-per-directory layout. This satisfies the workstream spec literally but requires moving ~10+ example and testdata files and updating all their references.
+2. **Blessed fallback contract**: formally adopt the fallback as the supported contract (a directory with multiple independent workflow headers is a "collection" not a "module") and update the workstream, docs, and tests to describe both shapes. This is what the current implementation does; the `.hcl` rejection patch narrows the footgun without removing the fallback.
+
+**Why it cannot be addressed incrementally here:** Reorganizing examples and testdata would touch files outside this workstream's permitted file list (`README.md`, `PLAN.md`, `examples/`, many testdata dirs). Architecture team should decide which contract to bless before a future workstream reorganizes the repo layout.
+
+**Affected files/scope:** `workflow/parse_dir.go:172-177` (fallback), `workflow/parse_file_or_dir_test.go:121-163` (fallback test), all files under `examples/`, `workflow/testdata/`, golden test files in `internal/cli/`.
+
+### Validation
+
+- `make test` — all packages pass
+- `make lint` — clean
+- `go test ./workflow -run TestParseFileOrDir` — all 6 tests pass, including new negative test
