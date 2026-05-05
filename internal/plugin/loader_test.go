@@ -231,10 +231,10 @@ func TestLoader_PopulatesAllowedOutcomes(t *testing.T) {
 	step := &workflow.StepNode{
 		Name: "review",
 		// Insert in non-sorted order to verify sorting.
-		Outcomes: map[string]string{
-			"failure":           "failed",
-			"approved":          "done",
-			"changes_requested": "rework",
+		Outcomes: map[string]*workflow.CompiledOutcome{
+			"failure":           {Next: "failed"},
+			"approved":          {Next: "done"},
+			"changes_requested": {Next: "rework"},
 		},
 	}
 
@@ -296,10 +296,10 @@ func TestLoader_PopulatesAllowedOutcomes_Empty(t *testing.T) {
 // TestCollectAllowedOutcomes_Sorted verifies that collectAllowedOutcomes
 // returns outcome names sorted ascending regardless of map insertion order.
 func TestCollectAllowedOutcomes_Sorted(t *testing.T) {
-	step := &workflow.StepNode{Outcomes: map[string]string{
-		"failure":           "failed",
-		"approved":          "done",
-		"changes_requested": "rework",
+	step := &workflow.StepNode{Outcomes: map[string]*workflow.CompiledOutcome{
+		"failure":           {Next: "failed"},
+		"approved":          {Next: "done"},
+		"changes_requested": {Next: "rework"},
 	}}
 	got := collectAllowedOutcomes(step)
 	want := []string{"approved", "changes_requested", "failure"}

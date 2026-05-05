@@ -310,7 +310,65 @@ func rejectLegacyStepAdapterAttrInBody(body hcl.Body) hcl.Diagnostics {
 	return diags
 }
 
-// rejectLegacyStepTypeAttr checks for and rejects the removed `step { type = "..." }` attribute.
+// rejectLegacyOutcomeTransitionTo checks for and rejects the old transition_to
+// attribute inside outcome blocks. In v0.3.0, transition_to was renamed to next.
+func rejectLegacyOutcomeTransitionTo(body hcl.Body) hcl.Diagnostics {
+	var diags hcl.Diagnostics
+
+	wfSchema := &hcl.BodySchema{
+		Blocks: []hcl.BlockHeaderSchema{
+			{Type: "workflow", LabelNames: []string{"name"}},
+			{Type: "subworkflow", LabelNames: []string{"name"}},
+		},
+	}
+	wfContent, _, _ := body.PartialContent(wfSchema)
+	for _, wfBlock := range wfContent.Blocks {
+		diags = append(diags, rejectLegacyOutcomeTransitionToInBody(wfBlock.Body)...)
+	}
+	return diags
+}
+
+// rejectLegacyOutcomeTransitionToInBody walks step and wait/approval blocks to
+// find any outcome blocks with a transition_to attribute.
+func rejectLegacyOutcomeTransitionToInBody(body hcl.Body) hcl.Diagnostics {
+	var diags hcl.Diagnostics
+
+	stepSchema := &hcl.BodySchema{
+		Blocks: []hcl.BlockHeaderSchema{
+			{Type: "step", LabelNames: []string{"name"}},
+			{Type: "wait", LabelNames: []string{"name"}},
+			{Type: "approval", LabelNames: []string{"name"}},
+		},
+	}
+	stepContent, _, _ := body.PartialContent(stepSchema)
+
+	for _, block := range stepContent.Blocks {
+		outcomeSchema := &hcl.BodySchema{
+			Blocks: []hcl.BlockHeaderSchema{
+				{Type: "outcome", LabelNames: []string{"name"}},
+			},
+		}
+		outcomeContent, _, _ := block.Body.PartialContent(outcomeSchema)
+
+		for _, outcomeBlock := range outcomeContent.Blocks {
+			attrSchema := &hcl.BodySchema{
+				Attributes: []hcl.AttributeSchema{{Name: "transition_to"}},
+			}
+			attrContent, _, _ := outcomeBlock.Body.PartialContent(attrSchema)
+
+			if attr, ok := attrContent.Attributes["transition_to"]; ok {
+				diags = append(diags, &hcl.Diagnostic{
+					Severity: hcl.DiagError,
+					Summary:  `removed attribute "transition_to" on outcome blocks`,
+					Detail:   `attribute "transition_to" was renamed to "next" in v0.3.0. For outcomes that bubble the result to the caller, use next = "return". See CHANGELOG.md migration note.`,
+					Subject:  &attr.NameRange,
+				})
+			}
+		}
+	}
+
+	return diags
+}
 func rejectLegacyStepTypeAttr(body hcl.Body) hcl.Diagnostics {
 	var diags hcl.Diagnostics
 

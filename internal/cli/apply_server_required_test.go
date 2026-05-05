@@ -21,8 +21,8 @@ workflow "requires_signal" {
     input {
       command = "echo hello"
     }
-    outcome "success" { transition_to = "wait_for_signal" }
-    outcome "failure" { transition_to = "failed" }
+    outcome "success" { next = "wait_for_signal" }
+    outcome "failure" { next = "failed" }
   }
 
   state "wait_for_signal" {
@@ -60,7 +60,7 @@ workflow "wait_signal" {
 
   wait "gate" {
     signal = "ready"
-    outcome "received" { transition_to = "done" }
+    outcome "received" { next = "done" }
   }
 
   state "done" {
@@ -91,8 +91,8 @@ workflow "needs_approval" {
   approval "review" {
     approvers = ["alice"]
     reason    = "ship it?"
-    outcome "approved" { transition_to = "done" }
-    outcome "rejected" { transition_to = "done" }
+    outcome "approved" { next = "done" }
+    outcome "rejected" { next = "done" }
   }
 
   state "done" {

@@ -23,8 +23,8 @@ workflow "interpolate" {
     input {
       command = "echo ${var.repo}"
     }
-    outcome "success" { transition_to = "__done__" }
-    outcome "failure" { transition_to = "__done__" }
+    outcome "success" { next = "__done__" }
+    outcome "failure" { next = "__done__" }
   }
   state "__done__" { terminal = true }
 }
@@ -43,14 +43,14 @@ workflow "step_outputs" {
     input {
       command = "echo building"
     }
-    outcome "success" { transition_to = "publish" }
+    outcome "success" { next = "publish" }
   }
   step "publish" {
     target = adapter.shell.default
     input {
       command = "echo ${steps.build.stdout}"
     }
-    outcome "success" { transition_to = "__done__" }
+    outcome "success" { next = "__done__" }
   }
   state "__done__" { terminal = true }
 }

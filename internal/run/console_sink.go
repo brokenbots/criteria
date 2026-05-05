@@ -245,6 +245,18 @@ func (c *ConsoleSink) OnRunOutputs(outputs []map[string]string) {
 	}
 }
 
+// OnStepOutcomeDefaulted logs a warning when an unknown outcome is mapped to
+// the default_outcome (W15).
+func (c *ConsoleSink) OnStepOutcomeDefaulted(step, original, mapped string) {
+	c.writeln(fmt.Sprintf("  ⚠ step %q: unknown outcome %q mapped to default_outcome %q", step, original, mapped))
+}
+
+// OnStepOutcomeUnknown logs a warning before the run fails due to an unmapped
+// outcome and no default_outcome (W15).
+func (c *ConsoleSink) OnStepOutcomeUnknown(step, outcome string) {
+	c.writeln(fmt.Sprintf("  ✗ step %q: unmapped outcome %q (no default_outcome declared)", step, outcome))
+}
+
 func (c *ConsoleSink) StepEventSink(step string) adapter.EventSink {
 	return &consoleStepSink{parent: c, step: step}
 }

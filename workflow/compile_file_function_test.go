@@ -49,7 +49,7 @@ func minimalWorkflowWithFile(filePath string) string {
     input {
       prompt = file("` + filePath + `")
     }
-    outcome "success" { transition_to = "done" }
+    outcome "success" { next = "done" }
   }
 }
 `
@@ -118,7 +118,7 @@ func TestCompileFileFunctionValidation_VarArgFileExists(t *testing.T) {
     input {
       prompt = file(var.path)
     }
-    outcome "success" { transition_to = "done" }
+    outcome "success" { next = "done" }
   }
 }
 `
@@ -158,7 +158,7 @@ func TestCompileFileFunctionValidation_VarArgFileMissing(t *testing.T) {
     input {
       prompt = file(var.path)
     }
-    outcome "success" { transition_to = "done" }
+    outcome "success" { next = "done" }
   }
 }
 `

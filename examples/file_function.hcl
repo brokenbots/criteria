@@ -29,7 +29,7 @@ workflow "file_function_demo" {
     input {
       command = trimfrontmatter(file("./file_function_prompt.md"))
     }
-    outcome "success" { transition_to = "done" }
-    outcome "failure" { transition_to = "done" }
+    outcome "success" { next = "done" }
+    outcome "failure" { next = "done" }
   }
 }

@@ -17,11 +17,11 @@ workflow "t" {
   target_state  = "done"
   step "step1" {
     target = adapter.fake
-    outcome "success" { transition_to = "step2" }
+    outcome "success" { next = "step2" }
   }
   step "step2" {
     target = adapter.fake
-    outcome "success" { transition_to = "done" }
+    outcome "success" { next = "done" }
   }
   state "done" { terminal = true }
   policy { max_step_retries = 2 }

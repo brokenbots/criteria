@@ -36,6 +36,12 @@ type RunState struct {
 	// Nil-safe: a nil map is treated as all-zero counts.
 	Visits map[string]int
 
+	// ReturnOutputs holds the projected output values when a step exits via
+	// next = "return". Set by stepNode.evaluateOnce; consumed by
+	// handleReturnExit (top-level) or runSubworkflow (nested). Nil means
+	// no return exit has occurred.
+	ReturnOutputs map[string]cty.Value
+
 	firstStep        bool
 	firstStepAttempt int
 }

@@ -51,11 +51,11 @@ func compileWaits(g *FSMGraph, spec *Spec) hcl.Diagnostics {
 			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("wait %q: at least one outcome is required", name)})
 		}
 		for _, o := range ws.Outcomes {
-			if o.TransitionTo == "" {
-				diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("wait %q outcome %q: transition_to required", name, o.Name)})
+			if o.Next == "" {
+				diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("wait %q outcome %q: next is required", name, o.Name)})
 				continue
 			}
-			node.Outcomes[o.Name] = o.TransitionTo
+			node.Outcomes[o.Name] = o.Next
 		}
 		g.Waits[name] = node
 	}
@@ -91,11 +91,11 @@ func compileApprovals(g *FSMGraph, spec *Spec) hcl.Diagnostics {
 			Outcomes:  map[string]string{},
 		}
 		for _, o := range as.Outcomes {
-			if o.TransitionTo == "" {
-				diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("approval %q outcome %q: transition_to required", name, o.Name)})
+			if o.Next == "" {
+				diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("approval %q outcome %q: next is required", name, o.Name)})
 				continue
 			}
-			node.Outcomes[o.Name] = o.TransitionTo
+			node.Outcomes[o.Name] = o.Next
 		}
 		// Enforce required outcomes: approved and rejected must both be present.
 		if _, ok := node.Outcomes["approved"]; !ok {

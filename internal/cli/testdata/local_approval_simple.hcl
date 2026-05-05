@@ -8,8 +8,8 @@ workflow "local_approval_simple" {
   approval "review" {
     approvers = ["alice"]
     reason    = "needs review"
-    outcome "approved" { transition_to = "run_step" }
-    outcome "rejected" { transition_to = "rejected_state" }
+    outcome "approved" { next = "run_step" }
+    outcome "rejected" { next = "rejected_state" }
   }
 
   step "run_step" {
@@ -17,8 +17,8 @@ workflow "local_approval_simple" {
     input {
       prompt = "continue"
     }
-    outcome "success" { transition_to = "done" }
-    outcome "failure" { transition_to = "failed" }
+    outcome "success" { next = "done" }
+    outcome "failure" { next = "failed" }
   }
 
   state "done" {

@@ -7,12 +7,14 @@ package engine
 //   - output projection stores projected keys in run vars for subsequent steps
 //   - unknown outcome without default_outcome causes run failure
 //   - event emission for defaulted/unknown outcomes
+//   - subworkflow.* namespace accessible in outcome.output expressions
 
 import (
 	"context"
 	"testing"
 
 	"github.com/hashicorp/hcl/v2"
+	"github.com/hashicorp/hcl/v2/hclsyntax"
 
 	"github.com/brokenbots/criteria/internal/plugin"
 	"github.com/brokenbots/criteria/workflow"
@@ -374,5 +376,109 @@ func TestStep_OutcomeReturn_EndToEnd(t *testing.T) {
 	}
 	if sink.terminal != "done" || !sink.terminalOK {
 		t.Errorf("terminal=%q ok=%v, want done/true", sink.terminal, sink.terminalOK)
+	}
+}
+
+// parseExpr is a test helper that parses a single HCL expression from src.
+func parseExpr(t *testing.T, src string) hcl.Expression {
+	t.Helper()
+	expr, diags := hclsyntax.ParseExpression([]byte(src), "test.hcl", hcl.Pos{Line: 1, Column: 1})
+	if diags.HasErrors() {
+		t.Fatalf("parseExpr(%q): %s", src, diags.Error())
+	}
+	return expr
+}
+
+// TestStep_OutcomeOutput_SubworkflowOutputAvailable verifies that when a
+// subworkflow step projects its outcome via subworkflow.*, the keys from the
+// callee's output map are accessible and the projected values are emitted as
+// top-level run outputs (via OnRunOutputs) with the correct encoding.
+func TestStep_OutcomeOutput_SubworkflowOutputAvailable(t *testing.T) {
+	// Callee: single step returns next = "return" with output = { val = "hello" }.
+	// This puts val="hello" in the callee's ReturnOutputs, which runSubworkflow
+	// returns as map[string]cty.Value{"val": cty.StringVal("hello")}.
+	calleeStep := &workflow.StepNode{
+		Name:       "inner",
+		TargetKind: workflow.StepTargetAdapter,
+		AdapterRef: "fake.default",
+		Input:      map[string]string{},
+		Outcomes: map[string]*workflow.CompiledOutcome{
+			"success": {
+				Name:       "success",
+				Next:       workflow.ReturnSentinel,
+				OutputExpr: parseExpr(t, `{ val = "hello" }`),
+			},
+		},
+	}
+	calleeGraph := &workflow.FSMGraph{
+		Name:         "callee",
+		InitialState: "inner",
+		TargetState:  "done",
+		Policy:       workflow.DefaultPolicy,
+		Steps:        map[string]*workflow.StepNode{"inner": calleeStep},
+		States: map[string]*workflow.StateNode{
+			"done": {Name: "done", Terminal: true, Success: true},
+		},
+		Adapters:     map[string]*workflow.AdapterNode{"fake.default": {Type: "fake", Name: "default"}},
+		AdapterOrder: []string{"fake.default"},
+		Subworkflows: map[string]*workflow.SubworkflowNode{},
+		Variables:    map[string]*workflow.VariableNode{},
+		Environments: map[string]*workflow.EnvironmentNode{},
+	}
+
+	// Parent: subworkflow step projects via subworkflow.val, then returns.
+	// next = "return" makes the projected output the top-level run output set,
+	// which is emitted via OnRunOutputs and can be cleanly asserted.
+	callStep := &workflow.StepNode{
+		Name:           "call",
+		TargetKind:     workflow.StepTargetSubworkflow,
+		SubworkflowRef: "callee",
+		Input:          map[string]string{},
+		Outcomes: map[string]*workflow.CompiledOutcome{
+			"success": {
+				Name:       "success",
+				Next:       workflow.ReturnSentinel,
+				OutputExpr: parseExpr(t, `{ result = subworkflow.val }`),
+			},
+		},
+	}
+	swNode := &workflow.SubworkflowNode{
+		Name: "callee",
+		Body: calleeGraph,
+	}
+	parentGraph := &workflow.FSMGraph{
+		Name:         "t",
+		InitialState: "call",
+		TargetState:  "done",
+		Policy:       workflow.DefaultPolicy,
+		Steps:        map[string]*workflow.StepNode{"call": callStep},
+		States: map[string]*workflow.StateNode{
+			"done": {Name: "done", Terminal: true, Success: true},
+		},
+		Adapters:     map[string]*workflow.AdapterNode{},
+		Subworkflows: map[string]*workflow.SubworkflowNode{"callee": swNode},
+		Variables:    map[string]*workflow.VariableNode{},
+		Environments: map[string]*workflow.EnvironmentNode{},
+	}
+
+	sink := &outcomeSink{}
+	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
+		"fake":         &fakePlugin{name: "fake", outcome: "success"},
+		"fake.default": &fakePlugin{name: "fake", outcome: "success"},
+	}}
+	if err := NewTestEngine(parentGraph, loader, sink).Run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if !sink.terminalOK {
+		t.Error("expected terminalOK=true")
+	}
+
+	// OnRunOutputs should contain result = "\"hello\"" (JSON-encoded string).
+	outputMap := make(map[string]string)
+	for _, o := range sink.outputs {
+		outputMap[o["name"]] = o["value"]
+	}
+	if got, want := outputMap["result"], `"hello"`; got != want {
+		t.Errorf("subworkflow output projection: result = %q, want %q", got, want)
 	}
 }

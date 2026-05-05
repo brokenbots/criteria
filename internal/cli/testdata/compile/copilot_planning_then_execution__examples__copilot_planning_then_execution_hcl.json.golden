@@ -33,11 +33,11 @@
       "outcomes": [
         {
           "name": "failure",
-          "transition_to": "failed"
+          "next": "failed"
         },
         {
           "name": "success",
-          "transition_to": "execute"
+          "next": "execute"
         }
       ]
     },
@@ -56,11 +56,11 @@
       "outcomes": [
         {
           "name": "failure",
-          "transition_to": "failed"
+          "next": "failed"
         },
         {
           "name": "success",
-          "transition_to": "done"
+          "next": "done"
         }
       ]
     }

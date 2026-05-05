@@ -15,7 +15,7 @@ workflow "w" {
 
   wait "pause" {
     duration = "2s"
-    outcome "elapsed" { transition_to = "done" }
+    outcome "elapsed" { next = "done" }
   }
 
   state "done" {
@@ -56,8 +56,8 @@ workflow "w" {
 
   wait "gating" {
     signal = "approve"
-    outcome "approved" { transition_to = "done" }
-    outcome "rejected" { transition_to = "done" }
+    outcome "approved" { next = "done" }
+    outcome "rejected" { next = "done" }
   }
 
   state "done" {
@@ -93,7 +93,7 @@ workflow "w" {
   wait "pause" {
     duration = "1s"
     signal   = "go"
-    outcome "elapsed" { transition_to = "done" }
+    outcome "elapsed" { next = "done" }
   }
 
   state "done" {
@@ -149,8 +149,8 @@ workflow "w" {
   approval "check" {
     approvers = ["alice"]
     reason    = "LGTM?"
-    outcome "approved"  { transition_to = "done" }
-    outcome "rejected"  { transition_to = "done" }
+    outcome "approved"  { next = "done" }
+    outcome "rejected"  { next = "done" }
   }
 
   state "done" {
@@ -189,7 +189,7 @@ workflow "w" {
   approval "check" {
     approvers = ["alice"]
     reason    = "LGTM?"
-    outcome "approved" { transition_to = "done" }
+    outcome "approved" { next = "done" }
   }
 
   state "done" {

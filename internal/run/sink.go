@@ -240,6 +240,23 @@ func (s *Sink) OnRunOutputs(outputs []map[string]string) {
 	s.publish(&pb.RunOutputs{Outputs: pbOutputs})
 }
 
+// OnStepOutcomeDefaulted is emitted when a step returns an unknown outcome and
+// default_outcome mapping is applied (W15).
+func (s *Sink) OnStepOutcomeDefaulted(step, original, mapped string) {
+	s.publish(&pb.AdapterEvent{Step: step, Kind: "step.outcome.defaulted", Data: encodeAdapterData(map[string]any{
+		"original": original,
+		"mapped":   mapped,
+	})})
+}
+
+// OnStepOutcomeUnknown is emitted when a step returns an outcome not in its
+// declared set and no default_outcome is configured (W15).
+func (s *Sink) OnStepOutcomeUnknown(step, outcome string) {
+	s.publish(&pb.AdapterEvent{Step: step, Kind: "step.outcome.unknown", Data: encodeAdapterData(map[string]any{
+		"outcome": outcome,
+	})})
+}
+
 // StepEventSink returns a per-step adapter sink that wraps Log/Adapter into
 // step.log / adapter.event envelopes.
 func (s *Sink) StepEventSink(step string) adapter.EventSink {

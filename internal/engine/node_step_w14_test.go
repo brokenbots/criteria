@@ -32,7 +32,7 @@ workflow "t" {
   target_state  = "done"
   step "do" {
     target = adapter.fake
-    outcome "success" { transition_to = "done" }
+    outcome "success" { next = "done" }
   }
   state "done" { terminal = true }
 }`)
@@ -76,7 +76,7 @@ func TestStep_Evaluate_SubworkflowTarget(t *testing.T) {
 				Name:           "do",
 				TargetKind:     workflow.StepTargetSubworkflow,
 				SubworkflowRef: "callee",
-				Outcomes:       map[string]string{"success": "done"},
+				Outcomes:       map[string]*workflow.CompiledOutcome{"success": {Next: "done"}},
 			},
 		},
 		States: map[string]*workflow.StateNode{
@@ -177,7 +177,7 @@ func TestStep_EnvironmentOverride_InjectedIntoAdapter(t *testing.T) {
 				AdapterRef:  "noop.default",
 				Environment: "shell.override",
 				Input:       map[string]string{},
-				Outcomes:    map[string]string{"success": "done"},
+				Outcomes:    map[string]*workflow.CompiledOutcome{"success": {Next: "done"}},
 			},
 		},
 		States: map[string]*workflow.StateNode{
@@ -272,7 +272,7 @@ func TestStep_SubworkflowStepInput_ReachesCallee(t *testing.T) {
 				TargetKind:     workflow.StepTargetSubworkflow,
 				SubworkflowRef: "callee",
 				InputExprs:     stepInputExpr,
-				Outcomes:       map[string]string{"success": "done"},
+				Outcomes:       map[string]*workflow.CompiledOutcome{"success": {Next: "done"}},
 			},
 		},
 		States: map[string]*workflow.StateNode{

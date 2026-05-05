@@ -360,3 +360,44 @@ All three blockers resolved. `make ci` green.
 - `TestStep_DefaultOutcome_AppliedOnUnknownName`: asserts `sink.defaulted` event with correct step/original/mapped values.
 - `TestStep_DefaultOutcomeUnset_UnknownNameErrors`: asserts `sink.unknown` event with correct step/outcome values.
 - `TestStep_OutcomeReturnOutputOverridesOutputBlocks`: switched to `outcomeSink`; asserts `sink.outputs` contains `status = "\"from_return\""` and `count = "42"` (number must not be double-quoted).
+
+### Review 2026-05-04-02 — changes-requested
+
+#### Summary
+The prior blockers are fixed, but the workstream still misses one explicit Step 2 requirement: `outcome.output` does not support `subworkflow.*` references. The new compile-time validation now hard-fails them with `Unknown variable; There is no variable named "subworkflow"`, and the runtime eval context still does not expose a `subworkflow` namespace. That leaves the reserved-`return` output projection incomplete relative to the plan.
+
+#### Plan Adherence
+- **Step 2:** still incomplete. The workstream file explicitly says an outcome `output` expression may reference `var.*`, `local.*`, `each.*`, `steps.*`, and `subworkflow.*`, but the current implementation only supports the first four classes in practice.
+- **Step 6:** incomplete for this requirement. There is still no compile/runtime test proving `subworkflow.*` works inside `outcome.output`.
+
+#### Required Remediations
+- **Blocker — `subworkflow.*` namespace not supported in `outcome.output`** (`workflow/compile_steps_graph.go:67-101`, `workflow/compile_fold.go:15-19`, `workflow/eval.go:41-70`, `internal/engine/node_step.go:613-627`): the compiler now rejects `output = { x = subworkflow.answer }` with `Unknown variable; There is no variable named "subworkflow"`, which contradicts the scope in Step 2. Even if compile-time validation were loosened, runtime evaluation still lacks a `subworkflow` namespace in `BuildEvalContextWithOpts`. **Acceptance criteria:** implement the intended `subworkflow.*` expression support for outcome projections end-to-end, or escalate the requirement with `[ARCH-REVIEW]` if the namespace contract must change; add tests that prove `subworkflow.*` is accepted and resolves correctly in `outcome.output`.
+
+#### Test Intent Assessment
+The strengthened tests now cover the earlier regressions well, but they still do not exercise the most specific expression-scope requirement in the workstream. A suite can stay green while `subworkflow.*` remains entirely unsupported.
+
+#### Validation Performed
+- `make ci` — passed.
+- Manual compile repro via temporary Go program: a workflow using `output = { x = subworkflow.answer }` fails compilation with `Unknown variable; There is no variable named "subworkflow"`.
+- Code inspection confirmed the runtime eval context still exposes `var`, `steps`, `each`, and `local`, but not `subworkflow`.
+
+### Remediations (2026-05-04-02)
+
+Blocker resolved. `make ci` green.
+
+**Blocker — `subworkflow.*` namespace in `outcome.output`:**
+
+Three changes across two files implement full `subworkflow.*` support:
+
+1. **`workflow/compile_fold.go`** — Added `"subworkflow": true` to `runtimeOnlyNamespaces`. `FoldExpr` now returns `(cty.NilVal, false, nil)` (deferred, not an error) for any expression containing `subworkflow.*`, matching the pattern used for `steps.*`, `each.*`, and `shared_variable.*`.
+
+2. **`internal/engine/node_step.go`:**
+   - `evalOutcomeOutputProjection` accepts a new `swOutputs map[string]cty.Value` parameter and sets `"subworkflow"` in the eval context — `cty.ObjectVal(swOutputs)` when non-empty, `cty.EmptyObjectVal` otherwise (so adapter steps that accidentally use `subworkflow.*` get a clear "attribute not found" error rather than "unknown variable").
+   - `applyOutcome` accepts `swOutputs map[string]cty.Value` and threads it through to `evalOutcomeOutputProjection`; nil is passed on the adapter path.
+   - `evaluateSubworkflowStep` refactored to call `applyOutcome` instead of directly looking up outcomes. This also fixes missing `DefaultOutcome`, `OutputExpr`, and `ReturnSentinel` support for subworkflow steps (previously bypassed). String-typed cty outputs are stored as raw strings in `stringOutputs` (matching adapter convention); non-string types use `renderCtyValue`.
+
+**Tests added:**
+- `workflow/compile_outcomes_test.go` — `TestCompileOutcome_OutputExprSubworkflowRef`: verifies `output = { result = subworkflow.answer }` compiles without error.
+- `internal/engine/node_step_w15_test.go` — `TestStep_OutcomeOutput_SubworkflowOutputAvailable`: end-to-end engine test with a two-level workflow (callee returns `val = "hello"`, parent projects `result = subworkflow.val`); asserts `sink.outputs` contains `result = "\"hello\""` via the `OnRunOutputs` path.
+
+**Regression fixed:** The `renderCtyValue` conversion for `stringOutputs` (the `steps.*` pass-through map) initially used `renderCtyValue` for all types, which JSON-encodes strings and broke `TestStep_SubworkflowStepInput_ReachesCallee` (expected raw string, got JSON-quoted). Fixed by using `v.AsString()` for string-typed cty values, matching adapter output convention.

@@ -132,6 +132,8 @@ func (s *pauseSink) OnStepIterationItem(string, int, string)                    
 func (s *pauseSink) OnScopeIterCursorSet(string)                                  {}
 func (s *pauseSink) OnAdapterLifecycle(string, string, string, string)            {}
 func (s *pauseSink) OnRunOutputs([]map[string]string)                             {}
+func (s *pauseSink) OnStepOutcomeDefaulted(string, string, string)                {}
+func (s *pauseSink) OnStepOutcomeUnknown(string, string)                          {}
 func (s *pauseSink) StepEventSink(string) adapter.EventSink                       { return noopAdapterSink{} }
 
 type noopAdapterSink struct{}

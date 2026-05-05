@@ -36,7 +36,7 @@ func minimalStep(name string) *workflow.StepNode {
 		TargetKind: workflow.StepTargetAdapter,
 		AdapterRef: "shell",
 		Input:      map[string]string{"command": "true"},
-		Outcomes:   map[string]string{"success": "done", "failure": "done"},
+		Outcomes:   map[string]*workflow.CompiledOutcome{"success": {Next: "done"}, "failure": {Next: "done"}},
 	}
 }
 
@@ -73,7 +73,7 @@ func BenchmarkPluginExecuteNoop(b *testing.B) {
 		Name:       "noop-step",
 		TargetKind: workflow.StepTargetAdapter,
 		AdapterRef: "noop",
-		Outcomes:   map[string]string{"success": "done"},
+		Outcomes:   map[string]*workflow.CompiledOutcome{"success": {Next: "done"}},
 	}
 	p := factory()
 	if err := p.OpenSession(ctx, "sess", nil); err != nil {

@@ -234,9 +234,9 @@ func TestConformance_AllowedOutcomesPropagation(t *testing.T) {
 		TargetKind: workflow.StepTargetAdapter,
 		AdapterRef: "bot",
 		Input:      map[string]string{"prompt": "test AllowedOutcomes propagation"},
-		Outcomes: map[string]string{
-			"success": "done",
-			"failure": "done",
+		Outcomes: map[string]*workflow.CompiledOutcome{
+			"success": {Next: "done"},
+			"failure": {Next: "done"},
 		},
 	}
 
@@ -307,9 +307,9 @@ func TestConformance_AllowedOutcomesPropagation_SetProof(t *testing.T) {
 		TargetKind: workflow.StepTargetAdapter,
 		AdapterRef: "bot",
 		Input:      map[string]string{"prompt": "test exact AllowedOutcomes propagation"},
-		Outcomes: map[string]string{
-			"canary-a": "done",
-			"canary-b": "done",
+		Outcomes: map[string]*workflow.CompiledOutcome{
+			"canary-a": {Next: "done"},
+			"canary-b": {Next: "done"},
 		},
 	}
 
@@ -410,9 +410,9 @@ func TestConformance_InvalidOutcomeScenario_Fixture(t *testing.T) {
 		TargetKind: workflow.StepTargetAdapter,
 		AdapterRef: "bot",
 		Input:      map[string]string{"prompt": "test invalid-outcome scenario"},
-		Outcomes: map[string]string{
-			"success": "done",
-			"failure": "done",
+		Outcomes: map[string]*workflow.CompiledOutcome{
+			"success": {Next: "done"},
+			"failure": {Next: "done"},
 		},
 	}
 
@@ -491,9 +491,9 @@ func TestConformance_DuplicateCallScenario_Fixture(t *testing.T) {
 		TargetKind: workflow.StepTargetAdapter,
 		AdapterRef: "bot",
 		Input:      map[string]string{"prompt": "test duplicate-call scenario"},
-		Outcomes: map[string]string{
-			"success": "done",
-			"failure": "done",
+		Outcomes: map[string]*workflow.CompiledOutcome{
+			"success": {Next: "done"},
+			"failure": {Next: "done"},
 		},
 	}
 

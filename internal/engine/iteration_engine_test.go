@@ -86,8 +86,8 @@ workflow "t" {
   step "items" {
     target = adapter.fake
     for_each = ["alpha", "beta", "gamma"]
-    outcome "all_succeeded" { transition_to = "done" }
-    outcome "any_failed"    { transition_to = "done" }
+    outcome "all_succeeded" { next = "done" }
+    outcome "any_failed"    { next = "done" }
   }
   state "done" {
     terminal = true
@@ -127,8 +127,8 @@ workflow "t" {
   step "items" {
     target = adapter.fake
     for_each = ["a", "b"]
-    outcome "all_succeeded" { transition_to = "done" }
-    outcome "any_failed"    { transition_to = "done" }
+    outcome "all_succeeded" { next = "done" }
+    outcome "any_failed"    { next = "done" }
   }
   state "done" {
     terminal = true
@@ -163,8 +163,8 @@ workflow "t" {
   step "items" {
     target = adapter.fake
     for_each = []
-    outcome "all_succeeded" { transition_to = "done" }
-    outcome "any_failed"    { transition_to = "done" }
+    outcome "all_succeeded" { next = "done" }
+    outcome "any_failed"    { next = "done" }
   }
   state "done" {
     terminal = true
@@ -201,8 +201,8 @@ workflow "t" {
   step "n" {
     target = adapter.fake
     count   = 4
-    outcome "all_succeeded" { transition_to = "done" }
-    outcome "any_failed"    { transition_to = "done" }
+    outcome "all_succeeded" { next = "done" }
+    outcome "any_failed"    { next = "done" }
   }
   state "done" {
     terminal = true
@@ -237,8 +237,8 @@ workflow "t" {
     target = adapter.fake
     for_each   = ["a", "b", "c"]
     on_failure = "abort"
-    outcome "all_succeeded" { transition_to = "done" }
-    outcome "any_failed"    { transition_to = "done" }
+    outcome "all_succeeded" { next = "done" }
+    outcome "any_failed"    { next = "done" }
   }
   state "done" {
     terminal = true
@@ -275,8 +275,8 @@ workflow "t" {
     target = adapter.fake
     for_each   = ["a", "b", "c"]
     on_failure = "ignore"
-    outcome "all_succeeded" { transition_to = "done" }
-    outcome "any_failed"    { transition_to = "done" }
+    outcome "all_succeeded" { next = "done" }
+    outcome "any_failed"    { next = "done" }
   }
   state "done" {
     terminal = true
@@ -313,12 +313,12 @@ workflow "t" {
   step "items" {
     target = adapter.fake
     for_each = ["a", "b"]
-    outcome "all_succeeded" { transition_to = "post" }
-    outcome "any_failed"    { transition_to = "post" }
+    outcome "all_succeeded" { next = "post" }
+    outcome "any_failed"    { next = "post" }
   }
   step "post" {
     target = adapter.fake
-    outcome "success" { transition_to = "done" }
+    outcome "success" { next = "done" }
   }
   state "done" {
     terminal = true
@@ -373,11 +373,11 @@ workflow "t" {
     workflow {
       step "body" {
         target = adapter.fake
-        outcome "success" { transition_to = "_continue" }
+        outcome "success" { next = "_continue" }
       }
     }
-    outcome "all_succeeded" { transition_to = "done" }
-    outcome "any_failed"    { transition_to = "done" }
+    outcome "all_succeeded" { next = "done" }
+    outcome "any_failed"    { next = "done" }
   }
   state "done" {
     terminal = true
@@ -421,15 +421,15 @@ workflow "t" {
     workflow {
       step "prepare" {
         target = adapter.fake
-        outcome "success" { transition_to = "verify" }
+        outcome "success" { next = "verify" }
       }
       step "verify" {
         target = adapter.fake
-        outcome "success" { transition_to = "_continue" }
+        outcome "success" { next = "_continue" }
       }
     }
-    outcome "all_succeeded" { transition_to = "done" }
-    outcome "any_failed"    { transition_to = "done" }
+    outcome "all_succeeded" { next = "done" }
+    outcome "any_failed"    { next = "done" }
   }
   state "done" {
     terminal = true
@@ -468,8 +468,8 @@ workflow "t" {
     input {
       label = "v:${each.value},i:${each._idx}"
     }
-    outcome "all_succeeded" { transition_to = "done" }
-    outcome "any_failed"    { transition_to = "done" }
+    outcome "all_succeeded" { next = "done" }
+    outcome "any_failed"    { next = "done" }
   }
   state "done" {
     terminal = true
@@ -572,8 +572,8 @@ workflow "t" {
   step "items" {
     target = adapter.fake
     for_each = ["a", "b", "c"]
-    outcome "all_succeeded" { transition_to = "done" }
-    outcome "any_failed"    { transition_to = "done" }
+    outcome "all_succeeded" { next = "done" }
+    outcome "any_failed"    { next = "done" }
   }
   state "done" {
     terminal = true
@@ -714,8 +714,8 @@ workflow "t" {
     input {
       label = "k:${each.key},t:${each._total}"
     }
-    outcome "all_succeeded" { transition_to = "done" }
-    outcome "any_failed"    { transition_to = "done" }
+    outcome "all_succeeded" { next = "done" }
+    outcome "any_failed"    { next = "done" }
   }
   state "done" {
     terminal = true
@@ -757,8 +757,8 @@ workflow "t" {
     input {
       label = "${each.value},prevnull:${each._prev == null}"
     }
-    outcome "all_succeeded" { transition_to = "done" }
-    outcome "any_failed"    { transition_to = "done" }
+    outcome "all_succeeded" { next = "done" }
+    outcome "any_failed"    { next = "done" }
   }
   state "done" {
     terminal = true
@@ -802,8 +802,8 @@ workflow "t" {
     target = adapter.fake
     for_each   = ["a", "b", "c"]
     on_failure = "continue"
-    outcome "all_succeeded" { transition_to = "done" }
-    outcome "any_failed"    { transition_to = "done" }
+    outcome "all_succeeded" { next = "done" }
+    outcome "any_failed"    { next = "done" }
   }
   state "done" {
     terminal = true
@@ -842,8 +842,8 @@ workflow "t" {
     target = adapter.fake
     for_each   = ["a", "b", "c"]
     on_failure = "abort"
-    outcome "all_succeeded" { transition_to = "done" }
-    outcome "any_failed"    { transition_to = "done" }
+    outcome "all_succeeded" { next = "done" }
+    outcome "any_failed"    { next = "done" }
   }
   state "done" {
     terminal = true
@@ -896,8 +896,8 @@ workflow "t" {
   step "produce" {
     target = adapter.fake_produce
     for_each = ["x", "y"]
-    outcome "all_succeeded" { transition_to = "done" }
-    outcome "any_failed"    { transition_to = "done" }
+    outcome "all_succeeded" { next = "done" }
+    outcome "any_failed"    { next = "done" }
   }
   state "done" {
     terminal = true
@@ -943,8 +943,8 @@ workflow "t" {
     input {
       label = "${each.value}"
     }
-    outcome "all_succeeded" { transition_to = "done" }
-    outcome "any_failed"    { transition_to = "done" }
+    outcome "all_succeeded" { next = "done" }
+    outcome "any_failed"    { next = "done" }
   }
   state "done" {
     terminal = true
@@ -997,11 +997,11 @@ workflow "t" {
       step "inner" {
         target = adapter.fake
         input   { label = "${each.value}" }
-        outcome "success" { transition_to = "_continue" }
+        outcome "success" { next = "_continue" }
       }
     }
-    outcome "all_succeeded" { transition_to = "done" }
-    outcome "any_failed"    { transition_to = "done" }
+    outcome "all_succeeded" { next = "done" }
+    outcome "any_failed"    { next = "done" }
   }
   state "done" {
     terminal = true
@@ -1054,16 +1054,16 @@ workflow "t" {
       step "body" {
         target = adapter.fake
         input   { label = "${each.value}" }
-        outcome "success" { transition_to = "_continue" }
-        outcome "failure" { transition_to = "aborted" }
+        outcome "success" { next = "_continue" }
+        outcome "failure" { next = "aborted" }
       }
       state "aborted" {
         terminal = true
         success  = false
       }
     }
-    outcome "all_succeeded" { transition_to = "done" }
-    outcome "any_failed"    { transition_to = "done" }
+    outcome "all_succeeded" { next = "done" }
+    outcome "any_failed"    { next = "done" }
   }
 
   state "done" {
@@ -1137,11 +1137,11 @@ workflow "t" {
       }
       step "body" {
         target = adapter.fake
-        outcome "success" { transition_to = "_continue" }
+        outcome "success" { next = "_continue" }
       }
     }
-    outcome "all_succeeded" { transition_to = "consume" }
-    outcome "any_failed"    { transition_to = "done" }
+    outcome "all_succeeded" { next = "consume" }
+    outcome "any_failed"    { next = "done" }
   }
 
   step "consume" {
@@ -1149,7 +1149,7 @@ workflow "t" {
     input {
       got = "${steps.produce[0].score}"
     }
-    outcome "success" { transition_to = "done" }
+    outcome "success" { next = "done" }
   }
 
   state "done" {
@@ -1200,8 +1200,8 @@ workflow "t" {
   step "produce" {
     target = adapter.fake_produce
     for_each = ["x", "y"]
-    outcome "all_succeeded" { transition_to = "consume" }
-    outcome "any_failed"    { transition_to = "done" }
+    outcome "all_succeeded" { next = "consume" }
+    outcome "any_failed"    { next = "done" }
   }
 
   step "consume" {
@@ -1210,7 +1210,7 @@ workflow "t" {
       first_val  = "${steps.produce[0].val}"
       second_val = "${steps.produce[1].val}"
     }
-    outcome "success" { transition_to = "done" }
+    outcome "success" { next = "done" }
   }
 
   state "done" {
@@ -1265,8 +1265,8 @@ workflow "t" {
       label      = "${each.value}"
       prev_null  = "${each._prev == null}"
     }
-    outcome "all_succeeded" { transition_to = "done" }
-    outcome "any_failed"    { transition_to = "done" }
+    outcome "all_succeeded" { next = "done" }
+    outcome "any_failed"    { next = "done" }
   }
 
   state "done" {
@@ -1319,12 +1319,12 @@ workflow "t" {
         target = adapter.fake
         for_each = ["x", "y"]
         input    { label = "${each.value}" }
-        outcome "all_succeeded" { transition_to = "_continue" }
-        outcome "any_failed"    { transition_to = "_continue" }
+        outcome "all_succeeded" { next = "_continue" }
+        outcome "any_failed"    { next = "_continue" }
       }
     }
-    outcome "all_succeeded" { transition_to = "done" }
-    outcome "any_failed"    { transition_to = "done" }
+    outcome "all_succeeded" { next = "done" }
+    outcome "any_failed"    { next = "done" }
   }
 
   state "done" {
@@ -1376,8 +1376,8 @@ workflow "t" {
     input {
       prev_null = "${each._prev == null}"
     }
-    outcome "all_succeeded" { transition_to = "done" }
-    outcome "any_failed"    { transition_to = "done" }
+    outcome "all_succeeded" { next = "done" }
+    outcome "any_failed"    { next = "done" }
   }
   state "done" {
     terminal = true
@@ -1457,13 +1457,13 @@ workflow "t" {
     workflow {
       step "body" {
         target = adapter.seq
-        outcome "success" { transition_to = "_continue" }
-        outcome "failure" { transition_to = "bail" }
+        outcome "success" { next = "_continue" }
+        outcome "failure" { next = "bail" }
       }
       state "bail" { terminal = true }
     }
-    outcome "all_succeeded" { transition_to = "done" }
-    outcome "any_failed"    { transition_to = "done" }
+    outcome "all_succeeded" { next = "done" }
+    outcome "any_failed"    { next = "done" }
   }
   state "done" {
     terminal = true
@@ -1494,15 +1494,15 @@ workflow "t" {
   step "produce" {
     target = adapter.out
     for_each = { alpha = "a", beta = "b" }
-    outcome "all_succeeded" { transition_to = "consume" }
-    outcome "any_failed"    { transition_to = "consume" }
+    outcome "all_succeeded" { next = "consume" }
+    outcome "any_failed"    { next = "consume" }
   }
   step "consume" {
     target = adapter.capture
     input {
       got_alpha = "${steps.produce.alpha.val}"
     }
-    outcome "success" { transition_to = "done" }
+    outcome "success" { next = "done" }
   }
   state "done" {
     terminal = true

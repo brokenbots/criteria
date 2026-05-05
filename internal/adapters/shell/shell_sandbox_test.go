@@ -51,9 +51,9 @@ func makeSandboxStep(input map[string]string) *workflow.StepNode {
 		TargetKind: workflow.StepTargetAdapter,
 		AdapterRef: shell.Name,
 		Input:      input,
-		Outcomes: map[string]string{
-			"success": "__done__",
-			"failure": "__done__",
+		Outcomes: map[string]*workflow.CompiledOutcome{
+			"success": {Next: "__done__"},
+			"failure": {Next: "__done__"},
 		},
 	}
 }

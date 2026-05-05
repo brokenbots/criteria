@@ -21,8 +21,8 @@ workflow "inner_task" {
     input {
       command = "echo 'Processing task'"
     }
-    outcome "success" { transition_to = "complete" }
-    outcome "failure" { transition_to = "complete" }
+    outcome "success" { next = "complete" }
+    outcome "failure" { next = "complete" }
   }
 
   state "complete" {

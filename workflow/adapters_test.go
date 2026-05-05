@@ -46,7 +46,7 @@ workflow "session_flow" {
 
   step "run" {
     target = adapter.copilot.exec
-    outcome "approved" { transition_to = "done" }
+    outcome "approved" { next = "done" }
   }
 
   state "done" { terminal = true }
@@ -96,7 +96,7 @@ workflow "test" {
   step "step_one" {
     target = adapter.noop.default
     lifecycle = "open"
-    outcome "success" { transition_to = "done" }
+    outcome "success" { next = "done" }
   }
 
   state "done" { terminal = true }
@@ -122,7 +122,7 @@ workflow "x" {
   target_state = "done"
   step "a" {
     target = adapter.ghost.default
-    outcome "ok" { transition_to = "done" }
+    outcome "ok" { next = "done" }
   }
   state "done" { terminal = true }
 }
@@ -144,7 +144,7 @@ workflow "x" {
   }
   step "a" {
     target = adapter.copilot.worker
-    outcome "ok" { transition_to = "done" }
+    outcome "ok" { next = "done" }
   }
   state "done" { terminal = true }
 }
@@ -164,7 +164,7 @@ workflow "x" {
   }
   step "a" {
     target = adapter.shell.default
-    outcome "ok" { transition_to = "done" }
+    outcome "ok" { next = "done" }
   }
   state "done" { terminal = true }
 }

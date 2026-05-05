@@ -16,6 +16,7 @@ var runtimeOnlyNamespaces = map[string]bool{
 	"each":            true,
 	"steps":           true,
 	"shared_variable": true,
+	"subworkflow":     true, // outputs from the subworkflow the step invoked
 }
 
 // FoldExpr evaluates expr in the closure (var ∪ local ∪ literal ∪ funcs).

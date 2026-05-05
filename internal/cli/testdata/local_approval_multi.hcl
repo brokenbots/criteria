@@ -8,15 +8,15 @@ workflow "local_approval_multi" {
   approval "first_review" {
     approvers = ["alice"]
     reason    = "first gate"
-    outcome "approved" { transition_to = "second_review" }
-    outcome "rejected" { transition_to = "rejected_state" }
+    outcome "approved" { next = "second_review" }
+    outcome "rejected" { next = "rejected_state" }
   }
 
   approval "second_review" {
     approvers = ["bob"]
     reason    = "second gate"
-    outcome "approved" { transition_to = "run_step" }
-    outcome "rejected" { transition_to = "rejected_state" }
+    outcome "approved" { next = "run_step" }
+    outcome "rejected" { next = "rejected_state" }
   }
 
   step "run_step" {
@@ -24,8 +24,8 @@ workflow "local_approval_multi" {
     input {
       prompt = "continue"
     }
-    outcome "success" { transition_to = "done" }
-    outcome "failure" { transition_to = "failed" }
+    outcome "success" { next = "done" }
+    outcome "failure" { next = "failed" }
   }
 
   state "done" {

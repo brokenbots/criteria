@@ -24,7 +24,7 @@
       "outcomes": [
         {
           "name": "success",
-          "transition_to": "decide"
+          "next": "decide"
         }
       ]
     }

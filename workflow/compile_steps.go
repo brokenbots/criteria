@@ -30,7 +30,7 @@ func compileSteps(g *FSMGraph, spec *Spec, schemas map[string]AdapterInfo, opts 
 			ok, rd := validateStepRegistration(g, sp)
 			diags = append(diags, rd...)
 			if ok {
-				g.Steps[sp.Name] = &StepNode{Name: sp.Name, Outcomes: map[string]string{}}
+				g.Steps[sp.Name] = &StepNode{Name: sp.Name, Outcomes: map[string]*CompiledOutcome{}}
 				g.stepOrder = append(g.stepOrder, sp.Name)
 			}
 			continue
@@ -65,9 +65,13 @@ func isIteratingStep(sp *StepSpec) bool {
 	return hasForEach || hasCount
 }
 
-// validateStepRegistration checks for duplicate steps and state name clashes.
-// Returns false when the step should be skipped entirely.
+// validateStepRegistration checks for duplicate steps, state name clashes, and
+// reserved names (e.g. "return"). Returns false when the step should be skipped.
 func validateStepRegistration(g *FSMGraph, sp *StepSpec) (ok bool, diags hcl.Diagnostics) {
+	diags = append(diags, validateStepNameNotReturn(sp)...)
+	if diags.HasErrors() {
+		return false, diags
+	}
 	if _, dup := g.Steps[sp.Name]; dup {
 		diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("duplicate step %q", sp.Name)})
 		return false, diags

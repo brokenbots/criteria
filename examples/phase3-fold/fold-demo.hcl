@@ -47,8 +47,8 @@ workflow "fold-demo" {
       # The default var.name="world" resolves to "world_prompt.txt".
       command = "printf '%s\\n%s' '${local.banner_line}' '${file(local.prompt_path)}'"
     }
-    outcome "success" { transition_to = "done" }
-    outcome "failure" { transition_to = "failed" }
+    outcome "success" { next = "done" }
+    outcome "failure" { next = "failed" }
   }
 
   state "done"   { terminal = true }

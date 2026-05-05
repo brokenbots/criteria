@@ -27,11 +27,11 @@
       "outcomes": [
         {
           "name": "failure",
-          "transition_to": "failed"
+          "next": "failed"
         },
         {
           "name": "success",
-          "transition_to": "test"
+          "next": "test"
         }
       ]
     },
@@ -46,11 +46,11 @@
       "outcomes": [
         {
           "name": "failure",
-          "transition_to": "failed"
+          "next": "failed"
         },
         {
           "name": "success",
-          "transition_to": "verified"
+          "next": "verified"
         }
       ]
     }

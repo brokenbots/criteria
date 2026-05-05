@@ -273,7 +273,39 @@ func TestCompileOutcome_OutputExprBadRef(t *testing.T) {
 	}
 }
 
-// rejected because "return" is the reserved outcome sentinel.
+// TestCompileOutcome_OutputExprSubworkflowRef verifies that an outcome output
+// expression referencing the "subworkflow" namespace is accepted at compile
+// time — it is only resolved at runtime when the subworkflow step has executed.
+func TestCompileOutcome_OutputExprSubworkflowRef(t *testing.T) {
+	src := `
+workflow "t" {
+  version       = "0.1"
+  initial_state = "a"
+  target_state  = "done"
+  adapter "noop" "default" {}
+  step "a" {
+    target = adapter.noop.default
+    outcome "success" {
+      next   = "done"
+      output = { result = subworkflow.answer }
+    }
+  }
+  state "done" {
+    terminal = true
+    success  = true
+  }
+}
+`
+	spec, diags := Parse("t.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	_, diags = Compile(spec, nil)
+	if diags.HasErrors() {
+		t.Fatalf("compile should not reject subworkflow.* refs in outcome.output: %s", diags.Error())
+	}
+}
+
 func TestCompileStep_NameReturn_HardError(t *testing.T) {
 	src := `
 workflow "t" {

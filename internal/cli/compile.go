@@ -102,8 +102,8 @@ type compileStep struct {
 }
 
 type compileOutcome struct {
-	Name         string `json:"name"`
-	TransitionTo string `json:"transition_to"`
+	Name string `json:"name"`
+	Next string `json:"next"`
 }
 
 type compileOutput struct {
@@ -136,7 +136,7 @@ func buildCompileJSON(graph *workflow.FSMGraph) compileJSON { //nolint:funlen //
 		st := graph.Steps[name]
 		outcomes := make([]compileOutcome, 0, len(st.Outcomes))
 		for _, outcomeName := range sortedMapKeys(st.Outcomes) {
-			outcomes = append(outcomes, compileOutcome{Name: outcomeName, TransitionTo: st.Outcomes[outcomeName]})
+			outcomes = append(outcomes, compileOutcome{Name: outcomeName, Next: st.Outcomes[outcomeName].Next})
 		}
 		var timeout string
 		if st.Timeout > 0 {
@@ -220,13 +220,12 @@ func renderDOT(graph *workflow.FSMGraph) string {
 	for _, stepName := range graph.StepOrder() {
 		step := graph.Steps[stepName]
 		for _, outcomeName := range sortedMapKeys(step.Outcomes) {
-			target := step.Outcomes[outcomeName]
-			if target == "_continue" {
-				// _continue is engine-internal and not a real graph node; suppress it
-				// from the DOT output to avoid dangling edges.
+			co := step.Outcomes[outcomeName]
+			if co.Next == "_continue" || co.Next == workflow.ReturnSentinel {
+				// _continue and "return" are engine-internal; suppress from DOT output.
 				continue
 			}
-			b.WriteString(fmt.Sprintf("  %q -> %q [label=%q];\n", step.Name, target, outcomeName))
+			b.WriteString(fmt.Sprintf("  %q -> %q [label=%q];\n", step.Name, co.Next, outcomeName))
 		}
 	}
 	for _, branchName := range sortedBranchNames(graph) {

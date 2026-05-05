@@ -60,9 +60,16 @@ func runSubworkflow(ctx context.Context, node *workflow.SubworkflowNode, parentS
 	// the callee resolve relative paths against the subworkflow directory, not
 	// the parent workflow directory.
 	calleeDir := node.SourcePath
-	_, finalVars, err := runWorkflowBody(ctx, node.Body, node.BodyEntry, childVars, calleeDir, deps)
+	terminal, returnOutputs, finalVars, err := runWorkflowBody(ctx, node.Body, node.BodyEntry, childVars, calleeDir, deps)
 	if err != nil {
 		return nil, fmt.Errorf("subworkflow %q: %w", node.Name, err)
+	}
+	_ = terminal
+
+	// When the callee exited via next = "return", the return-projected outputs
+	// override the normal output block evaluation.
+	if returnOutputs != nil {
+		return returnOutputs, nil
 	}
 
 	// Evaluate the callee's declared outputs against the final child state,

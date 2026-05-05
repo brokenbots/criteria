@@ -36,11 +36,11 @@ workflow "ord" {
   target_state  = "done"
   step "a" {
     target = adapter.noop.default
-    outcome "ok" { transition_to = "b" }
+    outcome "ok" { next = "b" }
   }
   step "b" {
     target = adapter.noop.default
-    outcome "ok" { transition_to = "done" }
+    outcome "ok" { next = "done" }
   }
   state "done" { terminal = true }
 }

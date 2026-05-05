@@ -129,6 +129,10 @@ type StepSpec struct {
 	Input      *InputSpec        `hcl:"input,block"`
 	Timeout    string            `hcl:"timeout,optional"`
 	AllowTools []string          `hcl:"allow_tools,optional"`
+	// DefaultOutcome, when set, is the fallback outcome name used when an adapter
+	// returns an outcome name not in the declared set. Must refer to a declared
+	// outcome; validated at compile time.
+	DefaultOutcome string `hcl:"default_outcome,optional"`
 	// Outcomes lists the declared outcome blocks for this step.
 	// Environment (e.g. shell.ci) is not decoded as a struct field; it is a bare
 	// traversal captured from Remain by resolveStepEnvironmentOverride. A
@@ -236,10 +240,14 @@ type AdapterInfo struct {
 	OutputSchema map[string]ConfigField // declared outputs the adapter promises to populate (W04)
 }
 
-// OutcomeSpec maps an adapter outcome name to a transition target.
+// OutcomeSpec maps an adapter outcome name to the next node.
+// The Next attribute replaces the removed transition_to attribute (v0.3.0).
+// An optional "output" expression may appear in the Remain body to project
+// a custom output map instead of passing the step's full output downstream.
 type OutcomeSpec struct {
-	Name         string `hcl:"name,label"`
-	TransitionTo string `hcl:"transition_to"`
+	Name   string   `hcl:"name,label"`
+	Next   string   `hcl:"next"`
+	Remain hcl.Body `hcl:",remain"` // captures the optional "output" expression
 }
 
 // WaitSpec declares a wait node. Exactly one of duration or signal must be set.
@@ -372,6 +380,25 @@ const (
 	StepTargetSubworkflow
 )
 
+// CompiledOutcome is a compiled step outcome with resolved transition target
+// and an optional output projection expression.
+type CompiledOutcome struct {
+	// Name is the outcome name declared in the workflow.
+	Name string
+	// Next is the resolved target node name or the reserved sentinel "return".
+	// When "return", the engine halts the current scope and propagates the
+	// projected output upward (or treats the run as terminal-success at
+	// the top level).
+	Next string
+	// OutputExpr, when non-nil, is evaluated at runtime against the current
+	// run scope to produce the projected output map. When nil, the step's
+	// full adapter output is passed downstream unchanged.
+	OutputExpr hcl.Expression
+}
+
+// ReturnSentinel is the reserved next value that signals scope-exit.
+const ReturnSentinel = "return"
+
 // StepNode is a compiled step with resolved transitions.
 type StepNode struct {
 	Name string
@@ -399,8 +426,12 @@ type StepNode struct {
 	// produce the effective input map passed to the adapter. If nil, Input is
 	// used directly (static-only inputs, e.g. lifecycle steps).
 	InputExprs map[string]hcl.Expression
-	Timeout    time.Duration     // zero = no timeout
-	Outcomes   map[string]string // outcome name -> target node name (step or state)
+	Timeout    time.Duration               // zero = no timeout
+	Outcomes   map[string]*CompiledOutcome // outcome name -> compiled outcome
+	// DefaultOutcome, when non-empty, is applied when the adapter returns an
+	// outcome name not present in Outcomes. The unknown name is silently mapped
+	// to this outcome. When empty, an unknown outcome is a runtime error.
+	DefaultOutcome string
 	// AllowTools is the union of step-level and workflow-level allow_tools glob
 	// patterns. An empty slice means deny-all (default). Only valid for adapter steps.
 	AllowTools []string

@@ -281,14 +281,19 @@ func (n *stepNode) evaluateOnce(ctx context.Context, st *RunState, deps Deps) (s
 		return result.Outcome, nil
 	}
 
-	return n.applyOutcome(result.Outcome, result.Outputs, st, deps)
+	return n.applyOutcome(result.Outcome, result.Outputs, nil, st, deps)
 }
 
 // applyOutcome resolves the compiled outcome for the given adapter outcome name,
 // applies any output projection, stores outputs in run vars, and returns the
 // next node name (or ReturnSentinel). Separated from evaluateOnce to keep
 // cognitive complexity below the lint threshold.
-func (n *stepNode) applyOutcome(outcomeName string, rawOutputs map[string]string, st *RunState, deps Deps) (string, error) {
+//
+// swOutputs carries the cty-typed outputs from a subworkflow step (nil for
+// adapter steps). When non-nil they are exposed as the "subworkflow" namespace
+// inside any outcome.output expression, so callers can write
+// output = { result = subworkflow.val }.
+func (n *stepNode) applyOutcome(outcomeName string, rawOutputs map[string]string, swOutputs map[string]cty.Value, st *RunState, deps Deps) (string, error) {
 	compiled, ok := n.step.Outcomes[outcomeName]
 	if !ok {
 		if n.step.DefaultOutcome != "" {
@@ -306,7 +311,7 @@ func (n *stepNode) applyOutcome(outcomeName string, rawOutputs map[string]string
 	stepOutputs := rawOutputs
 	var projectedCty map[string]cty.Value
 	if compiled.OutputExpr != nil {
-		projected, err := evalOutcomeOutputProjection(compiled.OutputExpr, st)
+		projected, err := evalOutcomeOutputProjection(compiled.OutputExpr, swOutputs, st)
 		if err != nil {
 			return "", fmt.Errorf("step %q outcome %q: output projection: %w", n.step.Name, outcomeName, err)
 		}
@@ -373,28 +378,29 @@ func (n *stepNode) evaluateSubworkflowStep(ctx context.Context, st *RunState, de
 		outcome = "failure"
 	}
 
-	if len(outputs) > 0 {
-		stringOutputs := make(map[string]string, len(outputs))
-		for k, v := range outputs {
-			if v.Type() == cty.String {
-				stringOutputs[k] = v.AsString()
-			}
+	// Convert subworkflow cty outputs to a string map for pass-through storage
+	// (steps.<name>.*). String values are stored as raw strings to match the
+	// adapter output convention (adapters return map[string]string directly).
+	// Non-string values are rendered via renderCtyValue (JSON encoding).
+	// The raw cty map is passed separately as swOutputs so outcome.output
+	// expressions can reference subworkflow.*.
+	stringOutputs := make(map[string]string, len(outputs))
+	for k, v := range outputs {
+		if v.IsKnown() && v.Type() == cty.String {
+			stringOutputs[k] = v.AsString()
+			continue
 		}
-		if len(stringOutputs) > 0 {
-			st.Vars = workflow.WithStepOutputs(st.Vars, n.step.Name, stringOutputs)
-			deps.Sink.OnStepOutputCaptured(n.step.Name, stringOutputs)
+		rendered, err := renderCtyValue(v)
+		if err != nil {
+			return "", fmt.Errorf("step %q: subworkflow output %q: %w", n.step.Name, k, err)
 		}
+		stringOutputs[k] = rendered
 	}
 
-	next, ok := n.step.Outcomes[outcome]
-	if !ok {
-		if runErr != nil {
-			return "", fmt.Errorf("step %q: subworkflow failed and no %q outcome is declared: %w", n.step.Name, outcome, runErr)
-		}
-		return "", fmt.Errorf("step %q: subworkflow produced unmapped outcome %q", n.step.Name, outcome)
-	}
-	deps.Sink.OnStepTransition(n.step.Name, next.Next, outcome)
-	return next.Next, nil
+	// Route through applyOutcome so DefaultOutcome mapping, OutputExpr
+	// evaluation (including subworkflow.* references), and the return sentinel
+	// are all handled uniformly with adapter steps.
+	return n.applyOutcome(outcome, stringOutputs, outputs, st, deps)
 }
 
 // Per-step environment override (n.step.Environment) takes precedence over
@@ -610,9 +616,17 @@ func stringMapToCtyObject(m map[string]string) cty.Value {
 // or OnStepOutputCaptured; st.ReturnOutputs receives the raw cty values so that
 // top-level return preserves numeric/bool types in OnRunOutputs, matching the
 // encoding produced by the normal output-block evaluation path.
-func evalOutcomeOutputProjection(expr hcl.Expression, st *RunState) (map[string]cty.Value, error) {
+//
+// swOutputs, when non-nil, is exposed as the "subworkflow" variable in the eval
+// context so that outcome expressions can reference subworkflow.* keys.
+func evalOutcomeOutputProjection(expr hcl.Expression, swOutputs map[string]cty.Value, st *RunState) (map[string]cty.Value, error) {
 	evalOpts := workflow.DefaultFunctionOptions(st.WorkflowDir)
 	evalCtx := workflow.BuildEvalContextWithOpts(st.Vars, evalOpts)
+	if len(swOutputs) > 0 {
+		evalCtx.Variables["subworkflow"] = cty.ObjectVal(swOutputs)
+	} else {
+		evalCtx.Variables["subworkflow"] = cty.EmptyObjectVal
+	}
 	val, diags := expr.Value(evalCtx)
 	if diags.HasErrors() {
 		return nil, fmt.Errorf("evaluating output expression: %s", diags.Error())

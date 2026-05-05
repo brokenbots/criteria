@@ -26,11 +26,11 @@
       "outcomes": [
         {
           "name": "failure",
-          "transition_to": "done"
+          "next": "done"
         },
         {
           "name": "success",
-          "transition_to": "done"
+          "next": "done"
         }
       ]
     }
