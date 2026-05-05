@@ -71,7 +71,7 @@ func collectFileBlockRanges(src []byte, filename string) map[string]hcl.Range {
 //   - SourceBytes concatenates all file bytes separated by newlines.
 //   - The merged Spec must contain exactly one Header (workflow block); zero
 //     headers produces an error.
-func ParseDir(dir string) (*Spec, hcl.Diagnostics) {
+func ParseDir(dir string) (*Spec, hcl.Diagnostics) { //nolint:funlen // W17: file discovery + per-file parse loop + merge + validation are sequential, extraction would obscure the flow
 	dirEntries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, hcl.Diagnostics{{
@@ -82,7 +82,7 @@ func ParseDir(dir string) (*Spec, hcl.Diagnostics) {
 	}
 
 	// Collect .hcl files in lexicographic order (ReadDir already returns sorted).
-	var hclFiles []string
+	hclFiles := make([]string, 0, len(dirEntries))
 	for _, entry := range dirEntries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".hcl") {
 			continue
@@ -228,7 +228,7 @@ func parseSingleFile(path string) (*Spec, hcl.Diagnostics) {
 // Slice fields are concatenated; singleton fields (Header, Policy, Permissions)
 // must appear in at most one file. Block ranges from each entry are used to
 // populate Subject/Detail fields in conflict diagnostics with file:line info.
-func mergeSpecs(dir string, entries []fileEntry) (*Spec, hcl.Diagnostics) { //nolint:cyclop // W17: multi-field merge with singleton conflict detection requires sequential checks
+func mergeSpecs(dir string, entries []fileEntry) (*Spec, hcl.Diagnostics) { //nolint:cyclop,gocognit,gocyclo,funlen // W17: multi-field merge with singleton conflict detection requires sequential checks
 	if len(entries) == 0 {
 		return nil, nil
 	}
@@ -394,8 +394,8 @@ func checkDuplicateNames(entries []fileEntry) hcl.Diagnostics {
 	}
 
 	for _, entry := range entries {
-		for _, s := range entry.spec.Steps {
-			addDup("step", s.Name, entry.ranges)
+		for i := range entry.spec.Steps {
+			addDup("step", entry.spec.Steps[i].Name, entry.ranges)
 		}
 		for _, s := range entry.spec.States {
 			addDup("state", s.Name, entry.ranges)

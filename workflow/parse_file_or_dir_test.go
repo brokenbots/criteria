@@ -161,4 +161,3 @@ state "done" { terminal = true }
 		t.Errorf("Header.Name = %q, want %q", spec.Header.Name, "test")
 	}
 }
-
