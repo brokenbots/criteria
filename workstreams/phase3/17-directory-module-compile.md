@@ -715,3 +715,25 @@ Added 2 new tests and a helper in `internal/cli/cli_dir_mode_test.go`:
 Both reviewer blockers are resolved:
 1. `workflow/parse_dir.go` is now at ~98% coverage (well above the required ≥ 90%).  All meaningful branches — including both policy/permissions singleton conflict detection with `previously declared at` detail, the ReadFile error path, the empty-entries early return, `collectFileBlockRanges` parse error, and `joinBytes` empty-parts — are now exercised by dedicated tests.
 2. `TestCompileDir_FileFunction_DirectoryPath` and `TestCompileDir_FileFunction_FilePath` are regression-sensitive for `workflowDirFromPath`: a broken implementation that returns `""` or the wrong directory would cause `file("./payload.txt")` to fail at compile time (not deferred to runtime), failing the test.
+
+### Review 2026-05-05-09 — approved
+
+#### Summary
+
+`approved`. The previously blocked test gaps are closed. The executor added meaningful parser coverage for the previously untested `parse_dir.go` branches and added regression-sensitive CLI tests that prove directory/file entry points preserve the correct workflow directory for relative `file()` resolution. The strict one-workflow-per-directory contract, parser behavior, CLI entry handling, docs/examples/testdata layout, and repository validation now meet the workstream bar.
+
+#### Plan Adherence
+
+- **Steps 1-4**: implemented and still aligned with the workstream contract. The fallback path remains removed, file paths delegate through the parent directory module, and the repo layout/docs reflect the strict directory model.
+- **Step 5 (tests)**: complete. `workflow/parse_dir.go` now clears the explicit coverage bar, and the new CLI tests are strong enough to fail on realistic workflow-directory regressions.
+- **Step 6 (validation)**: complete. Repository CI passes.
+
+#### Test Intent Assessment
+
+The new parser tests materially improve regression sensitivity by exercising singleton conflict branches, the unreadable-file path, and defensive helper branches directly. The new CLI file-function tests validate behavior at the contract boundary rather than incidental success: they would fail if directory/file entry resolution pointed at the wrong workflow root, because `file("./payload.txt")` is resolved during compilation. That closes the prior gap where tests could pass despite broken workflow-directory threading.
+
+#### Validation Performed
+
+- `go test ./workflow/... -coverprofile=/tmp/w17-cover.out` + `go tool cover -func=/tmp/w17-cover.out` — `workflow/parse_dir.go` now reports **99.4% (159/160 statements)** file coverage; per-function coverage is 95-100%.
+- `go test ./internal/cli/... -run 'TestCompileDir_FileFunction'` — passed.
+- `make ci` — passed.
