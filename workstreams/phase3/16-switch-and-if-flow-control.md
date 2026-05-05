@@ -567,6 +567,24 @@ Approved again. There are no code changes since the prior approved pass, the rev
 - `make ci` — passed.
 - `git grep -nE '\bBranchSpec\b|\bBranchNode\b|\bArmSpec\b|"branch,block"' -- ':!*_test.go' ':!docs/' ':!CHANGELOG.md' ':!workstreams/'` — zero matches.
 
+### Review 2026-05-04-06 — approved
+
+#### Summary
+
+Approved. The current committed tree still satisfies the workstream acceptance bar, and the additional round-4 cleanup claimed in the workstream notes is reflected in the repository state I reviewed.
+
+#### Plan Adherence
+
+- Switch-related runtime and compile tests are renamed and present as `node_switch_test.go` and `switch_compile_test.go`.
+- Legacy `branch`-named testdata/file artifacts are renamed to switch-specific names where claimed, and the schema/docs now consistently describe `default` as recommended-with-warning rather than strictly required.
+- Reviewer notes remain append-only under `## Reviewer Notes`.
+
+#### Validation Performed
+
+- `make ci` — passed.
+- `git grep -nE '\bBranchSpec\b|\bBranchNode\b|\bArmSpec\b|"branch,block"' -- ':!*_test.go' ':!docs/' ':!CHANGELOG.md' ':!workstreams/'` — zero matches.
+- Verified presence of `internal/engine/node_switch_test.go`, `workflow/switch_compile_test.go`, and `workflow/testdata/switch_basic.hcl`, with no lingering `node_branch_test.go`, `branch_compile_test.go`, or `branch_basic.hcl` in the repo tree.
+
 ## Executor Notes — Round 4 Remediation (2026-05-04-06)
 
 Commit `108bca7` addresses all 10 reviewer threads from the fourth review cycle.
