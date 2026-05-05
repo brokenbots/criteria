@@ -158,21 +158,21 @@ workflow "test_outputs" {
   version       = "1"
   initial_state = "start"
   target_state  = "done"
-
-  output "count" {
-    type        = "number"
-    description = "The count value"
-    value       = 42
-  }
-
-  output "name" {
-    description = "The name value"
-    value       = "test"
-  }
-
-  state "start" {}
-  state "done" { terminal = true }
 }
+
+output "count" {
+  type        = "number"
+  description = "The count value"
+  value       = 42
+}
+
+output "name" {
+  description = "The name value"
+  value       = "test"
+}
+
+state "start" {}
+state "done" { terminal = true }
 `)
 
 	eventsFile := filepath.Join(t.TempDir(), "events.ndjson")

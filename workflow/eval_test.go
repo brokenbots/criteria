@@ -169,19 +169,20 @@ func TestResolveInputExprs_EachProducesPlannedMessage(t *testing.T) {
 	// is the correct enforcement point.
 	src := `
 workflow "test" {
-  adapter "shell" "default" {}
   version       = "0.1"
   initial_state = "s"
   target_state  = "__done__"
-  step "s" {
-    target = adapter.shell.default
-    input {
-      command = "${each.value}"
-    }
-    outcome "success" { next = "__done__" }
-  }
-  state "__done__" { terminal = true }
 }
+
+adapter "shell" "default" {}
+step "s" {
+  target = adapter.shell.default
+  input {
+    command = "${each.value}"
+  }
+  outcome "success" { next = "__done__" }
+}
+state "__done__" { terminal = true }
 `
 	spec, diags := Parse("test.hcl", []byte(src))
 	if diags.HasErrors() {

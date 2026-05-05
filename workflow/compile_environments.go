@@ -260,13 +260,13 @@ func resolveDefaultEnvironment(g *FSMGraph, spec *Spec) hcl.Diagnostics {
 	var diags hcl.Diagnostics
 
 	// If the workflow header specifies an explicit default, use it.
-	if spec.DefaultEnvironment != "" {
-		g.DefaultEnvironment = spec.DefaultEnvironment
+	if spec.Header != nil && spec.Header.DefaultEnvironment != "" {
+		g.DefaultEnvironment = spec.Header.DefaultEnvironment
 		// Validate that the referenced environment exists.
-		if _, ok := g.Environments[spec.DefaultEnvironment]; !ok {
+		if _, ok := g.Environments[spec.Header.DefaultEnvironment]; !ok {
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagError,
-				Summary:  fmt.Sprintf("workflow environment %q does not refer to a declared environment block", spec.DefaultEnvironment),
+				Summary:  fmt.Sprintf("workflow environment %q does not refer to a declared environment block", spec.Header.DefaultEnvironment),
 			})
 		}
 		return diags

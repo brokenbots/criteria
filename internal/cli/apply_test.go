@@ -32,30 +32,30 @@ workflow "local_apply_noop" {
   version = "0.1"
   initial_state = "run_adapter"
   target_state  = "done"
+}
 
-  adapter "noop" "demo" {
-    config {
-      bootstrap = "true"
-    }
+adapter "noop" "demo" {
+  config {
+    bootstrap = "true"
   }
+}
 
-  step "run_adapter" {
-    target = adapter.noop.demo
-    input {
-      prompt = "hello"
-    }
-    outcome "success" { next = "done" }
-    outcome "failure" { next = "failed" }
+step "run_adapter" {
+  target = adapter.noop.demo
+  input {
+    prompt = "hello"
   }
+  outcome "success" { next = "done" }
+  outcome "failure" { next = "failed" }
+}
 
-  state "done" {
-    terminal = true
-    success  = true
-  }
-  state "failed" {
-    terminal = true
-    success  = false
-  }
+state "done" {
+  terminal = true
+  success  = true
+}
+state "failed" {
+  terminal = true
+  success  = false
 }
 `)
 
@@ -172,7 +172,9 @@ func TestWriteRunCheckpoint_Success(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("CRITERIA_STATE_DIR", dir)
 
-	wfFile := writeWorkflowFile(t, `workflow "w" { version = "0.1" }`)
+	wfFile := writeWorkflowFile(t, `workflow "w" {
+ version = "0.1" 
+}`)
 	log := newApplyLogger()
 
 	// Must not panic; checkpoint written to stateDir.
@@ -206,10 +208,10 @@ func TestRunApply_BadEventsFile_ReturnsError(t *testing.T) {
   version = "0.1"
   initial_state = "done"
   target_state  = "done"
-  state "done" {
-    terminal = true
-    success  = true
-  }
+}
+state "done" {
+  terminal = true
+  success  = true
 }`)
 	err := runApply(context.Background(), applyOptions{
 		workflowPath: wfFile,
@@ -232,7 +234,9 @@ func TestResumeInFlightRuns_ServerFn_EmptyCheckpoints(t *testing.T) {
 
 func TestRunApplyLocal_InvalidOutputMode_ReturnsError(t *testing.T) {
 	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
-	wfFile := writeWorkflowFile(t, `workflow "w" { version = "0.1" }`)
+	wfFile := writeWorkflowFile(t, `workflow "w" {
+ version = "0.1" 
+}`)
 	err := runApply(context.Background(), applyOptions{
 		workflowPath: wfFile,
 		output:       "verbose", // invalid → resolveOutputMode error

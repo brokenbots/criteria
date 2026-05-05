@@ -8,28 +8,28 @@ workflow "file_function_demo" {
   version       = "0.1"
   initial_state = "greet"
   target_state  = "done"
+}
 
-  adapter "shell" "default" {
-    config { }
-  }
+adapter "shell" "default" {
+  config { }
+}
 
-  output "result" {
-    type        = "string"
-    description = "The result message produced by the workflow"
-    value       = "Function evaluation complete"
-  }
+output "result" {
+  type        = "string"
+  description = "The result message produced by the workflow"
+  value       = "Function evaluation complete"
+}
 
-  state "done" {
-    terminal = true
-    success  = true
-  }
+state "done" {
+  terminal = true
+  success  = true
+}
 
-  step "greet" {
-    target = adapter.shell.default
-    input {
-      command = trimfrontmatter(file("./file_function_prompt.md"))
-    }
-    outcome "success" { next = "done" }
-    outcome "failure" { next = "done" }
+step "greet" {
+  target = adapter.shell.default
+  input {
+    command = trimfrontmatter(file("./file_function_prompt.md"))
   }
+  outcome "success" { next = "done" }
+  outcome "failure" { next = "done" }
 }

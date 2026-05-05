@@ -15,19 +15,19 @@ workflow "t" {
   version       = "0.1"
   initial_state = "work"
   target_state  = "done"
-  adapter "noop" "default" {}
-  step "work" {
-    target = adapter.noop.default
-    ` + stepBody + `
-  }
-  state "done" {
-    terminal = true
-    success  = true
-  }
-  state "failed" {
-    terminal = true
-    success  = false
-  }
+}
+adapter "noop" "default" {}
+step "work" {
+  target = adapter.noop.default
+  ` + stepBody + `
+}
+state "done" {
+  terminal = true
+  success  = true
+}
+state "failed" {
+  terminal = true
+  success  = false
 }
 `
 }
@@ -40,19 +40,19 @@ workflow "t" {
   version       = "0.1"
   initial_state = "a"
   target_state  = "done"
-  adapter "noop" "default" {}
-  step "a" {
-    target = adapter.noop.default
-    outcome "success" { next = "b" }
-  }
-  step "b" {
-    target = adapter.noop.default
-    outcome "success" { next = "done" }
-  }
-  state "done" {
-    terminal = true
-    success  = true
-  }
+}
+adapter "noop" "default" {}
+step "a" {
+  target = adapter.noop.default
+  outcome "success" { next = "b" }
+}
+step "b" {
+  target = adapter.noop.default
+  outcome "success" { next = "done" }
+}
+state "done" {
+  terminal = true
+  success  = true
 }
 `
 	spec, diags := Parse("t.hcl", []byte(src))
@@ -106,15 +106,15 @@ workflow "t" {
   version       = "0.1"
   initial_state = "work"
   target_state  = "done"
-  adapter "noop" "default" {}
-  step "work" {
-    target = adapter.noop.default
-    outcome "success" { next = "return" }
-  }
-  state "done" {
-    terminal = true
-    success  = true
-  }
+}
+adapter "noop" "default" {}
+step "work" {
+  target = adapter.noop.default
+  outcome "success" { next = "return" }
+}
+state "done" {
+  terminal = true
+  success  = true
 }
 `
 	spec, diags := Parse("t.hcl", []byte(src))
@@ -169,22 +169,22 @@ workflow "t" {
   version       = "0.1"
   initial_state = "a"
   target_state  = "done"
-  adapter "noop" "default" {}
-  step "a" {
-    target = adapter.noop.default
-    outcome "success" {
-      next   = "b"
-      output = { result = steps.a.exit_code }
-    }
+}
+adapter "noop" "default" {}
+step "a" {
+  target = adapter.noop.default
+  outcome "success" {
+    next   = "b"
+    output = { result = steps.a.exit_code }
   }
-  step "b" {
-    target = adapter.noop.default
-    outcome "success" { next = "done" }
-  }
-  state "done" {
-    terminal = true
-    success  = true
-  }
+}
+step "b" {
+  target = adapter.noop.default
+  outcome "success" { next = "done" }
+}
+state "done" {
+  terminal = true
+  success  = true
 }
 `
 	spec, diags := Parse("t.hcl", []byte(src))
@@ -282,18 +282,18 @@ workflow "t" {
   version       = "0.1"
   initial_state = "a"
   target_state  = "done"
-  adapter "noop" "default" {}
-  step "a" {
-    target = adapter.noop.default
-    outcome "success" {
-      next   = "done"
-      output = { result = subworkflow.answer }
-    }
+}
+adapter "noop" "default" {}
+step "a" {
+  target = adapter.noop.default
+  outcome "success" {
+    next   = "done"
+    output = { result = subworkflow.answer }
   }
-  state "done" {
-    terminal = true
-    success  = true
-  }
+}
+state "done" {
+  terminal = true
+  success  = true
 }
 `
 	spec, diags := Parse("t.hcl", []byte(src))
@@ -312,15 +312,15 @@ workflow "t" {
   version       = "0.1"
   initial_state = "return"
   target_state  = "done"
-  adapter "noop" "default" {}
-  step "return" {
-    target = adapter.noop.default
-    outcome "success" { next = "done" }
-  }
-  state "done" {
-    terminal = true
-    success  = true
-  }
+}
+adapter "noop" "default" {}
+step "return" {
+  target = adapter.noop.default
+  outcome "success" { next = "done" }
+}
+state "done" {
+  terminal = true
+  success  = true
 }
 `
 	spec, diags := Parse("t.hcl", []byte(src))
@@ -353,15 +353,15 @@ workflow "t" {
   version       = "0.1"
   initial_state = "step1"
   target_state  = "return"
-  adapter "noop" "default" {}
-  step "step1" {
-    target = adapter.noop.default
-    outcome "success" { next = "return" }
-  }
-  state "return" {
-    terminal = true
-    success  = true
-  }
+}
+adapter "noop" "default" {}
+step "step1" {
+  target = adapter.noop.default
+  outcome "success" { next = "return" }
+}
+state "return" {
+  terminal = true
+  success  = true
 }`,
 		},
 		{
@@ -371,22 +371,22 @@ workflow "t" {
   version       = "0.1"
   initial_state = "step1"
   target_state  = "done"
-  adapter "noop" "default" {}
-  step "step1" {
-    target = adapter.noop.default
-    outcome "success" { next = "done" }
+}
+adapter "noop" "default" {}
+step "step1" {
+  target = adapter.noop.default
+  outcome "success" { next = "done" }
+}
+switch "return" {
+  condition {
+    match = true
+    next  = state.done
   }
-  switch "return" {
-    condition {
-      match = true
-      next  = state.done
-    }
-    default { next = state.done }
-  }
-  state "done" {
-    terminal = true
-    success  = true
-  }
+  default { next = state.done }
+}
+state "done" {
+  terminal = true
+  success  = true
 }`,
 		},
 	}

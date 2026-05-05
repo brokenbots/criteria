@@ -50,13 +50,13 @@ workflow "t" {
   version       = "0.1"
   initial_state = "work"
   target_state  = "done"
-  step "work" {
-    target          = adapter.fake
-    default_outcome = "success"
-    outcome "success" { next = "done" }
-  }
-  state "done" { terminal = true }
-}`)
+}
+step "work" {
+  target          = adapter.fake
+  default_outcome = "success"
+  outcome "success" { next = "done" }
+}
+state "done" { terminal = true }`)
 	sink := &outcomeSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
 		"fake": &fakePlugin{name: "fake", outcome: "unmapped_name"},
@@ -92,12 +92,12 @@ workflow "t" {
   version       = "0.1"
   initial_state = "work"
   target_state  = "done"
-  step "work" {
-    target = adapter.fake
-    outcome "success" { next = "done" }
-  }
-  state "done" { terminal = true }
-}`)
+}
+step "work" {
+  target = adapter.fake
+  outcome "success" { next = "done" }
+}
+state "done" { terminal = true }`)
 	sink := &outcomeSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
 		"fake": &fakePlugin{name: "fake", outcome: "not_declared"},
@@ -127,12 +127,12 @@ workflow "t" {
   version       = "0.1"
   initial_state = "work"
   target_state  = "done"
-  step "work" {
-    target = adapter.fake
-    outcome "success" { next = "return" }
-  }
-  state "done" { terminal = true }
-}`)
+}
+step "work" {
+  target = adapter.fake
+  outcome "success" { next = "return" }
+}
+state "done" { terminal = true }`)
 	sink := &fakeSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
 		"fake": &fakePlugin{name: "fake", outcome: "success"},
@@ -230,19 +230,19 @@ workflow "t" {
   version       = "0.1"
   initial_state = "a"
   target_state  = "done"
-  step "a" {
-    target = adapter.fake
-    outcome "success" {
-      next   = "b"
-      output = { result = "projected" }
-    }
+}
+step "a" {
+  target = adapter.fake
+  outcome "success" {
+    next   = "b"
+    output = { result = "projected" }
   }
-  step "b" {
-    target = adapter.fake
-    outcome "success" { next = "done" }
-  }
-  state "done" { terminal = true }
-}`)
+}
+step "b" {
+  target = adapter.fake
+  outcome "success" { next = "done" }
+}
+state "done" { terminal = true }`)
 	sink := &fakeSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
 		"fake": &fakePlugin{name: "fake", outcome: "success"},
@@ -265,15 +265,15 @@ workflow "t" {
   version       = "0.1"
   initial_state = "work"
   target_state  = "done"
-  step "work" {
-    target = adapter.fake
-    outcome "success" {
-      next   = "return"
-      output = { status = "from_return", count = 42 }
-    }
+}
+step "work" {
+  target = adapter.fake
+  outcome "success" {
+    next   = "return"
+    output = { status = "from_return", count = 42 }
   }
-  state "done" { terminal = true }
-}`)
+}
+state "done" { terminal = true }`)
 	sink := &outcomeSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
 		"fake": &fakePlugin{name: "fake", outcome: "success"},

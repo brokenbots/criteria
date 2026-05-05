@@ -12,16 +12,16 @@ workflow "w" {
   version       = "0.1"
   initial_state = "pause"
   target_state  = "done"
+}
 
-  wait "pause" {
-    duration = "2s"
-    outcome "elapsed" { next = "done" }
-  }
+wait "pause" {
+  duration = "2s"
+  outcome "elapsed" { next = "done" }
+}
 
-  state "done" {
-    terminal = true
-    success  = true
-  }
+state "done" {
+  terminal = true
+  success  = true
 }
 `)
 	spec, diags := workflow.Parse("test.hcl", src)
@@ -53,17 +53,17 @@ workflow "w" {
   version       = "0.1"
   initial_state = "gating"
   target_state  = "done"
+}
 
-  wait "gating" {
-    signal = "approve"
-    outcome "approved" { next = "done" }
-    outcome "rejected" { next = "done" }
-  }
+wait "gating" {
+  signal = "approve"
+  outcome "approved" { next = "done" }
+  outcome "rejected" { next = "done" }
+}
 
-  state "done" {
-    terminal = true
-    success  = true
-  }
+state "done" {
+  terminal = true
+  success  = true
 }
 `)
 	spec, diags := workflow.Parse("test.hcl", src)
@@ -89,17 +89,17 @@ workflow "w" {
   version       = "0.1"
   initial_state = "pause"
   target_state  = "done"
+}
 
-  wait "pause" {
-    duration = "1s"
-    signal   = "go"
-    outcome "elapsed" { next = "done" }
-  }
+wait "pause" {
+  duration = "1s"
+  signal   = "go"
+  outcome "elapsed" { next = "done" }
+}
 
-  state "done" {
-    terminal = true
-    success  = true
-  }
+state "done" {
+  terminal = true
+  success  = true
 }
 `)
 	spec, diags := workflow.Parse("test.hcl", src)
@@ -118,15 +118,15 @@ workflow "w" {
   version       = "0.1"
   initial_state = "pause"
   target_state  = "done"
+}
 
-  wait "pause" {
-    signal = "go"
-  }
+wait "pause" {
+  signal = "go"
+}
 
-  state "done" {
-    terminal = true
-    success  = true
-  }
+state "done" {
+  terminal = true
+  success  = true
 }
 `)
 	spec, diags := workflow.Parse("test.hcl", src)
@@ -145,18 +145,18 @@ workflow "w" {
   version       = "0.1"
   initial_state = "check"
   target_state  = "done"
+}
 
-  approval "check" {
-    approvers = ["alice"]
-    reason    = "LGTM?"
-    outcome "approved"  { next = "done" }
-    outcome "rejected"  { next = "done" }
-  }
+approval "check" {
+  approvers = ["alice"]
+  reason    = "LGTM?"
+  outcome "approved"  { next = "done" }
+  outcome "rejected"  { next = "done" }
+}
 
-  state "done" {
-    terminal = true
-    success  = true
-  }
+state "done" {
+  terminal = true
+  success  = true
 }
 `)
 	spec, diags := workflow.Parse("test.hcl", src)
@@ -185,17 +185,17 @@ workflow "w" {
   version       = "0.1"
   initial_state = "check"
   target_state  = "done"
+}
 
-  approval "check" {
-    approvers = ["alice"]
-    reason    = "LGTM?"
-    outcome "approved" { next = "done" }
-  }
+approval "check" {
+  approvers = ["alice"]
+  reason    = "LGTM?"
+  outcome "approved" { next = "done" }
+}
 
-  state "done" {
-    terminal = true
-    success  = true
-  }
+state "done" {
+  terminal = true
+  success  = true
 }
 `)
 	spec, diags := workflow.Parse("test.hcl", src)

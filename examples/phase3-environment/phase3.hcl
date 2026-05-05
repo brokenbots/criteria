@@ -3,32 +3,32 @@ workflow "phase3-environment" {
   initial_state = "print_env"
   target_state = "done"
   environment = "shell.ci"
+}
 
-  environment "shell" "ci" {
-    variables = {
-      CI = "true"
-      LOG_LEVEL = "debug"
-      SERVICE_NAME = "criteria-test"
-    }
+environment "shell" "ci" {
+  variables = {
+    CI = "true"
+    LOG_LEVEL = "debug"
+    SERVICE_NAME = "criteria-test"
   }
+}
 
-  adapter "shell" "default" {
-    config { }
+adapter "shell" "default" {
+  config { }
+}
+
+state "done" {
+  terminal = true
+  success = true
+}
+
+step "print_env" {
+  target = adapter.shell.default
+  input {
+    command = "printenv"
   }
-
-  state "done" {
-    terminal = true
-    success = true
-  }
-
-  step "print_env" {
-    target = adapter.shell.default
-    input {
-      command = "printenv"
-    }
-    outcome "success" {
-      next = "done"
-    }
+  outcome "success" {
+    next = "done"
   }
 }
 

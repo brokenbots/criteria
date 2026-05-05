@@ -14,21 +14,21 @@ workflow "x" {
   version       = "0.1"
   initial_state = "work"
   target_state  = "done"
-  variable "prompt_val" {
-    type    = "string"
-    default = "You are a helpful assistant."
-  }
-  adapter "copilot" "bot" {
-    config {
-      system_prompt = var.prompt_val
-    }
-  }
-  step "work" {
-    target = adapter.copilot.bot
-    outcome "success" { next = "done" }
-  }
-  state "done" { terminal = true }
 }
+variable "prompt_val" {
+  type    = "string"
+  default = "You are a helpful assistant."
+}
+adapter "copilot" "bot" {
+  config {
+    system_prompt = var.prompt_val
+  }
+}
+step "work" {
+  target = adapter.copilot.bot
+  outcome "success" { next = "done" }
+}
+state "done" { terminal = true }
 `
 	spec, diags := Parse("t.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -52,20 +52,20 @@ workflow "x" {
   version       = "0.1"
   initial_state = "work"
   target_state  = "done"
-  local "greeting" {
-    value = "You are a helpful assistant."
-  }
-  adapter "copilot" "bot" {
-    config {
-      system_prompt = local.greeting
-    }
-  }
-  step "work" {
-    target = adapter.copilot.bot
-    outcome "success" { next = "done" }
-  }
-  state "done" { terminal = true }
 }
+local "greeting" {
+  value = "You are a helpful assistant."
+}
+adapter "copilot" "bot" {
+  config {
+    system_prompt = local.greeting
+  }
+}
+step "work" {
+  target = adapter.copilot.bot
+  outcome "success" { next = "done" }
+}
+state "done" { terminal = true }
 `
 	spec, diags := Parse("t.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -95,21 +95,21 @@ workflow "x" {
   version       = "0.1"
   initial_state = "work"
   target_state  = "done"
-  variable "prompt_file" {
-    type    = "string"
-    default = "prompt.txt"
-  }
-  adapter "copilot" "bot" {
-    config {
-      system_prompt = file(var.prompt_file)
-    }
-  }
-  step "work" {
-    target = adapter.copilot.bot
-    outcome "success" { next = "done" }
-  }
-  state "done" { terminal = true }
 }
+variable "prompt_file" {
+  type    = "string"
+  default = "prompt.txt"
+}
+adapter "copilot" "bot" {
+  config {
+    system_prompt = file(var.prompt_file)
+  }
+}
+step "work" {
+  target = adapter.copilot.bot
+  outcome "success" { next = "done" }
+}
+state "done" { terminal = true }
 `
 	spec, diags := Parse("t.hcl", []byte(src))
 	if diags.HasErrors() {

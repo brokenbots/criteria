@@ -39,27 +39,27 @@ workflow "two_step" {
   version       = "0.1"
   initial_state = "step_one"
   target_state  = "done"
+}
 
-  adapter "shell" "default" {}
+adapter "shell" "default" {}
 
-  step "step_one" {
-    target = adapter.shell.default
-    input { command = "echo step_one" }
-    outcome "success" { next = "step_two" }
-    outcome "failure" { next = "done" }
-  }
+step "step_one" {
+  target = adapter.shell.default
+  input { command = "echo step_one" }
+  outcome "success" { next = "step_two" }
+  outcome "failure" { next = "done" }
+}
 
-  step "step_two" {
-    target = adapter.shell.default
-    input { command = "echo step_two" }
-    outcome "success" { next = "done" }
-    outcome "failure" { next = "done" }
-  }
+step "step_two" {
+  target = adapter.shell.default
+  input { command = "echo step_two" }
+  outcome "success" { next = "done" }
+  outcome "failure" { next = "done" }
+}
 
-  state "done" {
-    terminal = true
-    success  = true
-  }
+state "done" {
+  terminal = true
+  success  = true
 }
 `
 
@@ -71,26 +71,26 @@ workflow "cancel_test" {
   version       = "0.1"
   initial_state = "step_one"
   target_state  = "done"
+}
 
-  adapter "shell" "default" {}
+adapter "shell" "default" {}
 
-  step "step_one" {
-    target = adapter.shell.default
-    input { command = "echo step_one" }
-    outcome "success" { next = "step_two" }
-    outcome "failure" { next = "done" }
-  }
+step "step_one" {
+  target = adapter.shell.default
+  input { command = "echo step_one" }
+  outcome "success" { next = "step_two" }
+  outcome "failure" { next = "done" }
+}
 
-  step "step_two" {
-    target = adapter.shell.default
-    input { command = "sleep 30" }
-    outcome "success" { next = "done" }
-  }
+step "step_two" {
+  target = adapter.shell.default
+  input { command = "sleep 30" }
+  outcome "success" { next = "done" }
+}
 
-  state "done" {
-    terminal = true
-    success  = true
-  }
+state "done" {
+  terminal = true
+  success  = true
 }
 `
 
@@ -100,32 +100,32 @@ workflow "pause_resume" {
   version       = "0.1"
   initial_state = "step_one"
   target_state  = "done"
+}
 
-  adapter "shell" "default" {}
+adapter "shell" "default" {}
 
-  step "step_one" {
-    target = adapter.shell.default
-    input { command = "echo step_one" }
-    outcome "success" { next = "gate" }
-    outcome "failure" { next = "done" }
-  }
+step "step_one" {
+  target = adapter.shell.default
+  input { command = "echo step_one" }
+  outcome "success" { next = "gate" }
+  outcome "failure" { next = "done" }
+}
 
-  wait "gate" {
-    signal = "resume"
-    outcome "received" { next = "step_three" }
-  }
+wait "gate" {
+  signal = "resume"
+  outcome "received" { next = "step_three" }
+}
 
-  step "step_three" {
-    target = adapter.shell.default
-    input { command = "echo step_three" }
-    outcome "success" { next = "done" }
-    outcome "failure" { next = "done" }
-  }
+step "step_three" {
+  target = adapter.shell.default
+  input { command = "echo step_three" }
+  outcome "success" { next = "done" }
+  outcome "failure" { next = "done" }
+}
 
-  state "done" {
-    terminal = true
-    success  = true
-  }
+state "done" {
+  terminal = true
+  success  = true
 }
 `
 

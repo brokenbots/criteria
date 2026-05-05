@@ -1,7 +1,6 @@
 package workflow
 
 import (
-	"fmt"
 	"os"
 
 	"github.com/hashicorp/hcl/v2"
@@ -9,13 +8,7 @@ import (
 	"github.com/hashicorp/hcl/v2/hclparse"
 )
 
-// File is the top-level HCL file structure: one workflow block.
-type File struct {
-	Workflows []Spec `hcl:"workflow,block"`
-}
-
-// ParseFile reads and decodes an HCL file into a Spec. The file must contain
-// exactly one `workflow` block.
+// ParseFile reads and decodes a single HCL file into a Spec.
 func ParseFile(path string) (*Spec, hcl.Diagnostics) {
 	src, err := os.ReadFile(path)
 	if err != nil {
@@ -28,7 +21,11 @@ func ParseFile(path string) (*Spec, hcl.Diagnostics) {
 	return Parse(path, src)
 }
 
-// Parse decodes HCL source into a Spec.
+// Parse decodes HCL source into a Spec. The workflow "name" { ... } block is
+// header-only in the new format; all content blocks (step, state, adapter, etc.)
+// live at the top level of the file. A nil Header is valid here (for content-only
+// files in a multi-file directory); callers that require a header (ParseDir,
+// CompileWithOpts) perform the check themselves.
 func Parse(filename string, src []byte) (*Spec, hcl.Diagnostics) {
 	parser := hclparse.NewParser()
 	f, diags := parser.ParseHCL(src, filename)
@@ -51,24 +48,16 @@ func Parse(filename string, src []byte) (*Spec, hcl.Diagnostics) {
 		return nil, legacyDiags
 	}
 
-	var file File
-	if decodeDiags := gohcl.DecodeBody(f.Body, nil, &file); decodeDiags.HasErrors() {
+	var spec Spec
+	if decodeDiags := gohcl.DecodeBody(f.Body, nil, &spec); decodeDiags.HasErrors() {
 		return nil, decodeDiags
 	}
-	if len(file.Workflows) != 1 {
-		return nil, hcl.Diagnostics{{
-			Severity: hcl.DiagError,
-			Summary:  "expected exactly one workflow block",
-			Detail:   fmt.Sprintf("got %d", len(file.Workflows)),
-		}}
-	}
-	spec := &file.Workflows[0]
 	spec.SourceBytes = src
-	if annotateDiags := annotateLegacyConfigRanges(spec, f.Body); annotateDiags.HasErrors() {
+	if annotateDiags := annotateLegacyConfigRanges(&spec, f.Body); annotateDiags.HasErrors() {
 		diags = append(diags, annotateDiags...)
 		return nil, diags
 	}
-	return spec, diags
+	return &spec, diags
 }
 
 // checkLegacyAttributes runs all legacy attribute and block rejection checks.
@@ -102,17 +91,10 @@ func annotateLegacyConfigRanges(spec *Spec, body hcl.Body) hcl.Diagnostics { //n
 		return nil
 	}
 
-	rootSchema := &hcl.BodySchema{Blocks: []hcl.BlockHeaderSchema{{Type: "workflow", LabelNames: []string{"name"}}}}
-	root, _, diags := body.PartialContent(rootSchema)
-	if diags.HasErrors() || len(root.Blocks) == 0 {
-		return diags
-	}
-
-	workflowBody := root.Blocks[0].Body
-	workflowSchema := &hcl.BodySchema{Blocks: []hcl.BlockHeaderSchema{{Type: "step", LabelNames: []string{"name"}}}}
-	content, _, partialDiags := workflowBody.PartialContent(workflowSchema)
-	diags = append(diags, partialDiags...)
-	if partialDiags.HasErrors() {
+	// Steps are now at the top level of the file (not inside a workflow block).
+	stepSchema := &hcl.BodySchema{Blocks: []hcl.BlockHeaderSchema{{Type: "step", LabelNames: []string{"name"}}}}
+	content, _, diags := body.PartialContent(stepSchema)
+	if diags.HasErrors() {
 		return diags
 	}
 

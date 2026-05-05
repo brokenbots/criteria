@@ -69,11 +69,7 @@ func newLocalRunState(runID, graphName, serverURL string) *localRunState {
 }
 
 func compileForExecution(ctx context.Context, workflowPath string, log *slog.Logger, subworkflowRoots ...string) ([]byte, *workflow.FSMGraph, *plugin.DefaultLoader, error) {
-	src, err := os.ReadFile(workflowPath)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	spec, diags := workflow.Parse(workflowPath, src)
+	spec, diags := workflow.ParseFileOrDir(workflowPath)
 	if diags.HasErrors() {
 		return nil, nil, nil, fmt.Errorf("parse: %s", diags.Error())
 	}
@@ -82,9 +78,14 @@ func compileForExecution(ctx context.Context, workflowPath string, log *slog.Log
 	loader.RegisterBuiltin(shell.Name, plugin.BuiltinFactoryForAdapter(shell.New()))
 	schemas := collectSchemas(ctx, loader, spec, log)
 
+	workflowDir := workflowPath
+	if info, err := os.Stat(workflowPath); err == nil && !info.IsDir() {
+		workflowDir = filepath.Dir(workflowPath)
+	}
+
 	resolver := &workflow.LocalSubWorkflowResolver{AllowedRoots: subworkflowRoots}
 	graph, diags := workflow.CompileWithOpts(spec, schemas, workflow.CompileOpts{
-		WorkflowDir:         filepath.Dir(workflowPath),
+		WorkflowDir:         workflowDir,
 		SubWorkflowResolver: resolver,
 		Schemas:             schemas,
 	})
@@ -93,5 +94,5 @@ func compileForExecution(ctx context.Context, workflowPath string, log *slog.Log
 		return nil, nil, nil, fmt.Errorf("compile: %s", diags.Error())
 	}
 
-	return src, graph, loader, nil
+	return spec.SourceBytes, graph, loader, nil
 }

@@ -30,12 +30,12 @@ workflow "t" {
   version       = "0.1"
   initial_state = "do"
   target_state  = "done"
-  step "do" {
-    target = adapter.fake
-    outcome "success" { next = "done" }
-  }
-  state "done" { terminal = true }
-}`)
+}
+step "do" {
+  target = adapter.fake
+  outcome "success" { next = "done" }
+}
+state "done" { terminal = true }`)
 
 	step, ok := g.Steps["do"]
 	if !ok {

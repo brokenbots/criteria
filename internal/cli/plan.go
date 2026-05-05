@@ -39,7 +39,7 @@ func renderPlanOutput(ctx context.Context, workflowPath string, overrides map[st
 	}
 
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("workflow: %s  (version %s)\n", graph.Name, spec.Version))
+	b.WriteString(fmt.Sprintf("workflow: %s  (version %s)\n", graph.Name, spec.Header.Version))
 	b.WriteString(fmt.Sprintf("initial_state: %s   target_state: %s\n", graph.InitialState, graph.TargetState))
 	b.WriteString(fmt.Sprintf("policy: max_total_steps=%d  max_step_retries=%d\n", graph.Policy.MaxTotalSteps, graph.Policy.MaxStepRetries))
 	b.WriteString("\n")

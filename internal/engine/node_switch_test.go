@@ -86,31 +86,31 @@ workflow "t" {
   version       = "0.1"
   initial_state = "decide"
   target_state  = "done"
-
-  variable "env" {
-    type    = "string"
-    default = "staging"
-  }
-
-  switch "decide" {
-    condition {
-      match = var.env == "prod"
-      next  = state.deploy
-    }
-    condition {
-      match = var.env == "staging"
-      next  = state.staging_deploy
-    }
-    default {
-      next = state.skip
-    }
-  }
-
-  state "deploy"         { terminal = true }
-  state "staging_deploy" { terminal = true }
-  state "skip"           { terminal = true }
-  state "done"           { terminal = true }
 }
+
+variable "env" {
+  type    = "string"
+  default = "staging"
+}
+
+switch "decide" {
+  condition {
+    match = var.env == "prod"
+    next  = state.deploy
+  }
+  condition {
+    match = var.env == "staging"
+    next  = state.staging_deploy
+  }
+  default {
+    next = state.skip
+  }
+}
+
+state "deploy"         { terminal = true }
+state "staging_deploy" { terminal = true }
+state "skip"           { terminal = true }
+state "done"           { terminal = true }
 `
 	spec, diags := workflow.Parse("t.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -160,30 +160,30 @@ workflow "t" {
   version       = "0.1"
   initial_state = "decide"
   target_state  = "done"
-
-  variable "env" {
-    type    = "string"
-    default = "dev"
-  }
-
-  switch "decide" {
-    condition {
-      match = var.env == "prod"
-      next  = state.deploy
-    }
-    condition {
-      match = var.env == "staging"
-      next  = state.staging_deploy
-    }
-    default {
-      next = state.done
-    }
-  }
-
-  state "deploy"         { terminal = true }
-  state "staging_deploy" { terminal = true }
-  state "done"           { terminal = true }
 }
+
+variable "env" {
+  type    = "string"
+  default = "dev"
+}
+
+switch "decide" {
+  condition {
+    match = var.env == "prod"
+    next  = state.deploy
+  }
+  condition {
+    match = var.env == "staging"
+    next  = state.staging_deploy
+  }
+  default {
+    next = state.done
+  }
+}
+
+state "deploy"         { terminal = true }
+state "staging_deploy" { terminal = true }
+state "done"           { terminal = true }
 `
 	spec, diags := workflow.Parse("t.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -226,24 +226,24 @@ workflow "t" {
   version       = "0.1"
   initial_state = "decide"
   target_state  = "done"
-
-  variable "env" {
-    type    = "string"
-    default = "dev"
-  }
-
-  switch "decide" {
-    condition {
-      match = var.env
-      next  = state.done
-    }
-    default {
-      next = state.done
-    }
-  }
-
-  state "done" { terminal = true }
 }
+
+variable "env" {
+  type    = "string"
+  default = "dev"
+}
+
+switch "decide" {
+  condition {
+    match = var.env
+    next  = state.done
+  }
+  default {
+    next = state.done
+  }
+}
+
+state "done" { terminal = true }
 `
 	spec, diags := workflow.Parse("t.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -281,38 +281,38 @@ workflow "t" {
   version       = "0.1"
   initial_state = "decide"
   target_state  = "tier_ok"
+}
 
-  variable "env" {
-    type    = "string"
-    default = "prod"
-  }
+variable "env" {
+  type    = "string"
+  default = "prod"
+}
 
-  switch "decide" {
-    condition {
-      match  = var.env == "prod"
-      next   = switch.check_tier
-      output = { tier = "production" }
-    }
-    default {
-      next = state.tier_fail
-    }
+switch "decide" {
+  condition {
+    match  = var.env == "prod"
+    next   = switch.check_tier
+    output = { tier = "production" }
   }
+  default {
+    next = state.tier_fail
+  }
+}
 
-  switch "check_tier" {
-    condition {
-      match = steps.decide.tier == "production"
-      next  = state.tier_ok
-    }
-    default {
-      next = state.tier_fail
-    }
+switch "check_tier" {
+  condition {
+    match = steps.decide.tier == "production"
+    next  = state.tier_ok
   }
+  default {
+    next = state.tier_fail
+  }
+}
 
-  state "tier_ok"   { terminal = true }
-  state "tier_fail" {
-    terminal = true
-    success  = false
-  }
+state "tier_ok"   { terminal = true }
+state "tier_fail" {
+  terminal = true
+  success  = false
 }
 `
 	spec, diags := workflow.Parse("t.hcl", []byte(src))
@@ -360,19 +360,19 @@ workflow "t" {
   version       = "0.1"
   initial_state = "decide"
   target_state  = "done"
-
-  switch "decide" {
-    condition {
-      match = true
-      next  = "return"
-    }
-    default {
-      next = state.done
-    }
-  }
-
-  state "done" { terminal = true }
 }
+
+switch "decide" {
+  condition {
+    match = true
+    next  = "return"
+  }
+  default {
+    next = state.done
+  }
+}
+
+state "done" { terminal = true }
 `
 	spec, diags := workflow.Parse("t.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -405,31 +405,31 @@ workflow "t" {
   version       = "0.1"
   initial_state = "decide"
   target_state  = "succeeded"
+}
 
-  variable "result" {
-    type    = "string"
-    default = "pass"
-  }
+variable "result" {
+  type    = "string"
+  default = "pass"
+}
 
-  switch "decide" {
-    condition {
-      match = var.result == "pass"
-      next  = state.succeeded
-    }
-    condition {
-      match = var.result == "fail"
-      next  = state.failed
-    }
-    default {
-      next = state.failed
-    }
+switch "decide" {
+  condition {
+    match = var.result == "pass"
+    next  = state.succeeded
   }
+  condition {
+    match = var.result == "fail"
+    next  = state.failed
+  }
+  default {
+    next = state.failed
+  }
+}
 
-  state "succeeded" { terminal = true }
-  state "failed" {
-    terminal = true
-    success  = false
-  }
+state "succeeded" { terminal = true }
+state "failed" {
+  terminal = true
+  success  = false
 }
 `
 	spec, diags := workflow.Parse("t.hcl", []byte(src))
@@ -470,24 +470,24 @@ workflow "t" {
   version       = "0.1"
   initial_state = "gate"
   target_state  = "done"
-
-  variable "early_exit" {
-    type    = "string"
-    default = "yes"
-  }
-
-  switch "gate" {
-    condition {
-      match = var.early_exit == "yes"
-      next  = "return"
-    }
-    default {
-      next = state.done
-    }
-  }
-
-  state "done" { terminal = true }
 }
+
+variable "early_exit" {
+  type    = "string"
+  default = "yes"
+}
+
+switch "gate" {
+  condition {
+    match = var.early_exit == "yes"
+    next  = "return"
+  }
+  default {
+    next = state.done
+  }
+}
+
+state "done" { terminal = true }
 `
 	spec, diags := workflow.Parse("t.hcl", []byte(src))
 	if diags.HasErrors() {

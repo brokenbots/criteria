@@ -30,20 +30,21 @@ func TestStepOrder_ReturnsDeclarationOrder(t *testing.T) {
 	// Compile a small workflow and check that StepOrder matches the HCL order.
 	src := []byte(`
 workflow "ord" {
-  adapter "noop" "default" {}
   version       = "0.1"
   initial_state = "a"
   target_state  = "done"
-  step "a" {
-    target = adapter.noop.default
-    outcome "ok" { next = "b" }
-  }
-  step "b" {
-    target = adapter.noop.default
-    outcome "ok" { next = "done" }
-  }
-  state "done" { terminal = true }
 }
+
+adapter "noop" "default" {}
+step "a" {
+  target = adapter.noop.default
+  outcome "ok" { next = "b" }
+}
+step "b" {
+  target = adapter.noop.default
+  outcome "ok" { next = "done" }
+}
+state "done" { terminal = true }
 `)
 	spec, diags := Parse("t.hcl", src)
 	if diags.HasErrors() {

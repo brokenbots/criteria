@@ -32,25 +32,25 @@ workflow "session_flow" {
   version       = "0.1"
   initial_state = "run"
   target_state  = "done"
-
-  adapter "copilot" "exec" {
-    on_crash = "respawn"
-    config {
-      mode = "executor"
-    }
-  }
-
-  adapter "copilot" "review" {
-    config { }
-  }
-
-  step "run" {
-    target = adapter.copilot.exec
-    outcome "approved" { next = "done" }
-  }
-
-  state "done" { terminal = true }
 }
+
+adapter "copilot" "exec" {
+  on_crash = "respawn"
+  config {
+    mode = "executor"
+  }
+}
+
+adapter "copilot" "review" {
+  config { }
+}
+
+step "run" {
+  target = adapter.copilot.exec
+  outcome "approved" { next = "done" }
+}
+
+state "done" { terminal = true }
 `
 
 	spec, diags := Parse("adapters.hcl", []byte(src))
@@ -88,19 +88,19 @@ workflow "test" {
   version       = "0.1"
   initial_state = "step_one"
   target_state  = "done"
-
-  adapter "noop" "default" {
-    config { }
-  }
-
-  step "step_one" {
-    target = adapter.noop.default
-    lifecycle = "open"
-    outcome "success" { next = "done" }
-  }
-
-  state "done" { terminal = true }
 }
+
+adapter "noop" "default" {
+  config { }
+}
+
+step "step_one" {
+  target = adapter.noop.default
+  lifecycle = "open"
+  outcome "success" { next = "done" }
+}
+
+state "done" { terminal = true }
 `
 
 	_, diags := Parse("test.hcl", []byte(src))
@@ -120,12 +120,12 @@ workflow "x" {
   version = "0.1"
   initial_state = "a"
   target_state = "done"
-  step "a" {
-    target = adapter.ghost.default
-    outcome "ok" { next = "done" }
-  }
-  state "done" { terminal = true }
 }
+step "a" {
+  target = adapter.ghost.default
+  outcome "ok" { next = "done" }
+}
+state "done" { terminal = true }
 `,
 			wantSummary: `step "a": referenced adapter "ghost.default" is not declared`,
 		},
@@ -136,18 +136,18 @@ workflow "x" {
   version = "0.1"
   initial_state = "a"
   target_state = "done"
-  adapter "copilot" "worker" {
-    config { }
-  }
-  adapter "copilot" "worker" {
-    config { }
-  }
-  step "a" {
-    target = adapter.copilot.worker
-    outcome "ok" { next = "done" }
-  }
-  state "done" { terminal = true }
 }
+adapter "copilot" "worker" {
+  config { }
+}
+adapter "copilot" "worker" {
+  config { }
+}
+step "a" {
+  target = adapter.copilot.worker
+  outcome "ok" { next = "done" }
+}
+state "done" { terminal = true }
 `,
 			wantSummary: `duplicate adapter "copilot.worker"`,
 		},
@@ -158,16 +158,16 @@ workflow "x" {
   version = "0.1"
   initial_state = "a"
   target_state = "done"
-  adapter "shell" "default" {
-    on_crash = "explode"
-    config { }
-  }
-  step "a" {
-    target = adapter.shell.default
-    outcome "ok" { next = "done" }
-  }
-  state "done" { terminal = true }
 }
+adapter "shell" "default" {
+  on_crash = "explode"
+  config { }
+}
+step "a" {
+  target = adapter.shell.default
+  outcome "ok" { next = "done" }
+}
+state "done" { terminal = true }
 `,
 			wantSummary: `adapter "shell.default": invalid on_crash "explode"`,
 		},

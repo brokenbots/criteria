@@ -18,63 +18,63 @@ workflow "copilot_planning_then_execution" {
   version       = "1"
   initial_state = "plan"
   target_state  = "done"
+}
 
-  policy {
-    max_total_steps = 20
+policy {
+  max_total_steps = 20
+}
+
+adapter "copilot" "engineer" {
+  config {
+    model            = "claude-sonnet-4.6"
+    reasoning_effort = "medium"   # default for all steps
+    max_turns        = 6
+  }
+}
+
+# ── Planning (high reasoning effort) ────────────────────────────────────────
+
+step "plan" {
+  target = adapter.copilot.engineer
+  allow_tools = ["read_file"]
+  input {
+    # reasoning_effort = "high" overrides the adapter default for this step only.
+    reasoning_effort = "high"
+    prompt           = <<-EOT
+      Draft a numbered implementation plan (3–5 steps) for adding a new "greet"
+      shell command that prints "Hello, <name>!" given a name argument.
+      End your final line with exactly: RESULT: success
+    EOT
   }
 
-  adapter "copilot" "engineer" {
-    config {
-      model            = "claude-sonnet-4.6"
-      reasoning_effort = "medium"   # default for all steps
-      max_turns        = 6
-    }
+  outcome "success" { next = "execute" }
+  outcome "failure" { next = "failed" }
+}
+
+# ── Execution (inherits adapter-level "medium") ────────────────────────────────
+
+step "execute" {
+  target = adapter.copilot.engineer
+  allow_tools = ["read_file", "write_file", "shell:go build*", "shell:go test*"]
+  input {
+    prompt = <<-EOT
+      Implement the plan from the previous step as a minimal Go program.
+      End your final line with exactly: RESULT: success
+    EOT
   }
 
-  # ── Planning (high reasoning effort) ────────────────────────────────────────
+  outcome "success" { next = "done" }
+  outcome "failure" { next = "failed" }
+}
 
-  step "plan" {
-    target = adapter.copilot.engineer
-    allow_tools = ["read_file"]
-    input {
-      # reasoning_effort = "high" overrides the adapter default for this step only.
-      reasoning_effort = "high"
-      prompt           = <<-EOT
-        Draft a numbered implementation plan (3–5 steps) for adding a new "greet"
-        shell command that prints "Hello, <name>!" given a name argument.
-        End your final line with exactly: RESULT: success
-      EOT
-    }
+# ── Terminal states ────────────────────────────────────────────────────────
 
-    outcome "success" { next = "execute" }
-    outcome "failure" { next = "failed" }
-  }
+state "done" {
+  terminal = true
+  success  = true
+}
 
-  # ── Execution (inherits adapter-level "medium") ────────────────────────────────
-
-  step "execute" {
-    target = adapter.copilot.engineer
-    allow_tools = ["read_file", "write_file", "shell:go build*", "shell:go test*"]
-    input {
-      prompt = <<-EOT
-        Implement the plan from the previous step as a minimal Go program.
-        End your final line with exactly: RESULT: success
-      EOT
-    }
-
-    outcome "success" { next = "done" }
-    outcome "failure" { next = "failed" }
-  }
-
-  # ── Terminal states ────────────────────────────────────────────────────────
-
-  state "done" {
-    terminal = true
-    success  = true
-  }
-
-  state "failed" {
-    terminal = true
-    success  = false
-  }
+state "failed" {
+  terminal = true
+  success  = false
 }

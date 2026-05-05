@@ -28,7 +28,7 @@ See [Standalone CLI](#standalone-cli) for command reference.
 
 ## Workflow Header
 
-Every workflow begins with a `workflow` block:
+Every workflow file begins with a `workflow` header block containing only the top-level metadata attributes. All other declarations (steps, states, adapters, variables, etc.) appear at the **top level** of the file, outside the workflow block.
 
 <!-- validator: skip: illustrative header showing structure only; initial_state and target_state reference nodes not defined in this excerpt -->
 ```hcl
@@ -36,18 +36,18 @@ workflow "deploy_pipeline" {
   version       = "1"
   initial_state = "validate"
   target_state  = "deployed"
-
-  policy {
-    max_total_steps  = 100
-    max_step_retries = 3
-  }
-
-  permissions {
-    allow_tools = ["shell:git*"]
-  }
-
-  # ... variables, agents, steps, states, etc.
 }
+
+policy {
+  max_total_steps  = 100
+  max_step_retries = 3
+}
+
+permissions {
+  allow_tools = ["shell:git*"]
+}
+
+# ... variables, agents, steps, states, etc.
 ```
 
 ### Attributes
@@ -55,12 +55,36 @@ workflow "deploy_pipeline" {
 - **`version`** (required): Schema version. Use `"1"` for v1.5 workflows.
 - **`initial_state`** (required): The starting node or state name.
 - **`target_state`** (required): The intended terminal state. Must reference a terminal state.
-- **`policy`** (optional): Execution guards.
+- **`policy`** (optional, top-level block): Execution guards.
   - **`max_total_steps`** (default 100): Caps the total number of step executions across the run, including retries and iteration steps. Set this to a positive integer to override the cap. If unset, or set to `0`, the default cap of `100` applies. Acts as a coarse backstop; for fine-grained loop control, prefer `max_visits` on individual steps.
   - **`max_step_retries`** (default 0 = no retries): Per-step retry limit for transient failures.
   - **`max_visits_warn_threshold`** (default 200): Controls when the compiler emits a back-edge warning for steps without `max_visits`. When `max_total_steps` exceeds this threshold and a step has a back-edge (can reach itself via outcome transitions) but no `max_visits`, the compiler emits a warning suggesting `max_visits` be set. Supported values: omit (or leave unset) to use the default threshold of 200; set to `0` to disable warnings entirely; set to a positive integer to override the default. Negative values are invalid and cause a compile error.
-- **`permissions`** (optional): Workflow-level permission allowlist.
+- **`permissions`** (optional, top-level block): Workflow-level permission allowlist.
   - **`allow_tools`**: List of glob patterns for tool invocations. Step-level `allow_tools` is unioned with this list.
+
+### Directory mode (multi-file workflows)
+
+A workflow can be split across multiple `.hcl` files in a directory. When `criteria apply` receives a directory path, it reads all `.hcl` files and merges their declarations:
+
+```
+my-workflow/
+  workflow.hcl    # contains the workflow header block
+  adapters.hcl    # adapter declarations
+  variables.hcl   # variable declarations
+  steps.hcl       # step, state, and other declarations
+```
+
+Each file must be a valid standalone HCL document. The `workflow "name" { ... }` header block (with `version`, `initial_state`, `target_state`) must appear in exactly one file. All other top-level blocks are merged across all files in alphabetical order. Duplicate name declarations across files produce a compile error.
+
+See `examples/phase3-multi-file/` for a working example.
+
+### Upgrading from the nested format
+
+Older Criteria workflows used a nested format where steps, adapters, and states appeared _inside_ the `workflow { ... }` block. The current format places all declarations at the top level. To migrate:
+
+1. Move all blocks except `version`, `initial_state`, `target_state`, and `environment` out of the `workflow { }` block.
+2. Remove one level of indentation from the moved blocks.
+3. The `workflow { }` block now contains only the four header attributes.
 
 ---
 

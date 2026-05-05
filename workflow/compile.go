@@ -69,13 +69,20 @@ func Compile(spec *Spec, schemas map[string]AdapterInfo) (*FSMGraph, hcl.Diagnos
 func CompileWithOpts(spec *Spec, schemas map[string]AdapterInfo, opts CompileOpts) (*FSMGraph, hcl.Diagnostics) {
 	var diags hcl.Diagnostics
 
-	if spec.Version == "" {
+	if spec.Header == nil {
+		return nil, hcl.Diagnostics{{
+			Severity: hcl.DiagError,
+			Summary:  "no workflow block declared",
+			Detail:   `each workflow directory must contain exactly one workflow "<name>" { version = "..." initial_state = "..." target_state = "..." } header block; none was found. Wrap the workflow header attributes in a workflow "<name>" { ... } block.`,
+		}}
+	}
+	if spec.Header.Version == "" {
 		diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: "workflow.version is required"})
 	}
-	if spec.InitialState == "" {
+	if spec.Header.InitialState == "" {
 		diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: "workflow.initial_state is required"})
 	}
-	if spec.TargetState == "" {
+	if spec.Header.TargetState == "" {
 		diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: "workflow.target_state is required"})
 	}
 	if spec.Policy != nil && spec.Policy.MaxVisitsWarnThreshold != nil && *spec.Policy.MaxVisitsWarnThreshold < 0 {
@@ -117,9 +124,9 @@ func CompileWithOpts(spec *Spec, schemas map[string]AdapterInfo, opts CompileOpt
 // newFSMGraph allocates a fresh FSMGraph seeded from spec's top-level fields.
 func newFSMGraph(spec *Spec) *FSMGraph {
 	g := &FSMGraph{
-		Name:         spec.Name,
-		InitialState: spec.InitialState,
-		TargetState:  spec.TargetState,
+		Name:         spec.Header.Name,
+		InitialState: spec.Header.InitialState,
+		TargetState:  spec.Header.TargetState,
 		Variables:    map[string]*VariableNode{},
 		Locals:       map[string]*LocalNode{},
 		Environments: map[string]*EnvironmentNode{},

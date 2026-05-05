@@ -15,12 +15,12 @@ workflow "t" {
   version = "0.1"
   initial_state = "a"
   target_state  = "done"
-  step "a" {
-    target = adapter.fake
-    outcome "success" { next = "done" }
-  }
-  state "done" { terminal = true }
-}`)
+}
+step "a" {
+  target = adapter.fake
+  outcome "success" { next = "done" }
+}
+state "done" { terminal = true }`)
 
 	node, err := nodeFor(g, "a")
 	if err != nil {
@@ -51,12 +51,12 @@ workflow "t" {
   version = "0.1"
   initial_state = "a"
   target_state  = "done"
-  step "a" {
-    target = adapter.fake
-    outcome "success" { next = "done" }
-  }
-  state "done" { terminal = true }
-}`)
+}
+step "a" {
+  target = adapter.fake
+  outcome "success" { next = "done" }
+}
+state "done" { terminal = true }`)
 
 	sink := &fakeSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": &fakePlugin{name: "fake", outcome: "success"}}}
@@ -79,12 +79,12 @@ workflow "t" {
   version = "0.1"
   initial_state = "a"
   target_state  = "done"
-  step "a" {
-    target = adapter.fake
-    outcome "success" { next = "done" }
-  }
-  state "done" { terminal = true }
-}`)
+}
+step "a" {
+  target = adapter.fake
+  outcome "success" { next = "done" }
+}
+state "done" { terminal = true }`)
 
 	sink := &fakeSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": &fakePlugin{name: "fake", outcome: "success"}}}
@@ -134,13 +134,13 @@ workflow "t" {
   version = "0.1"
   initial_state = "a"
   target_state  = "done"
-  step "a" {
-    target = adapter.fake
-    outcome "again" { next = "a" }
-  }
-  state "done" { terminal = true }
-  policy { max_total_steps = 3 }
-}`)
+}
+step "a" {
+  target = adapter.fake
+  outcome "again" { next = "a" }
+}
+state "done" { terminal = true }
+policy { max_total_steps = 3 }`)
 
 	sink := &fakeSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": &fakePlugin{name: "fake", outcome: "again"}}}
@@ -160,14 +160,14 @@ workflow "t" {
   version = "0.1"
   initial_state = "a"
   target_state  = "done"
-  step "a" {
-    target = adapter.fake
-    outcome "success" { next = "done" }
-  }
-  state "done" {
-    terminal = true
-    success = true
-  }
+}
+step "a" {
+  target = adapter.fake
+  outcome "success" { next = "done" }
+}
+state "done" {
+  terminal = true
+  success = true
 }`)
 
 	sink := &fakeSink{}

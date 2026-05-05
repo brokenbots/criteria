@@ -52,26 +52,36 @@ type OutputNode struct {
 	Value        hcl.Expression // evaluated at runtime
 }
 
-// Spec is the parsed (but unvalidated) HCL workflow document.
+// WorkflowHeaderSpec carries the workflow identity and routing fields declared
+// in the `workflow "<name>" { ... }` header block. In a directory module, exactly
+// one .hcl file must contain this block; across multiple files, exactly one
+// WorkflowHeaderSpec may be non-nil after merging.
+type WorkflowHeaderSpec struct {
+	Name               string `hcl:"name,label"`
+	Version            string `hcl:"version,optional"`
+	InitialState       string `hcl:"initial_state,optional"`
+	TargetState        string `hcl:"target_state,optional"`
+	DefaultEnvironment string `hcl:"environment,optional"` // "<type>.<name>" reference to the workflow's default environment
+}
+
+// Spec is the parsed (but unvalidated) HCL workflow document. After workstream
+// 17, the `workflow "<name>" { ... }` block is header-only; all content blocks
+// (step, state, adapter, etc.) live at the top level of the HCL file.
 type Spec struct {
-	Name               string            `hcl:"name,label"`
-	Version            string            `hcl:"version"`
-	InitialState       string            `hcl:"initial_state"`
-	TargetState        string            `hcl:"target_state"`
-	DefaultEnvironment string            `hcl:"environment,optional"` // "<type>.<name>" reference to the workflow's default environment
-	Variables          []VariableSpec    `hcl:"variable,block"`
-	Locals             []LocalSpec       `hcl:"local,block"`
-	Environments       []EnvironmentSpec `hcl:"environment,block"`
-	Outputs            []OutputSpec      `hcl:"output,block"`
-	Adapters           []AdapterDeclSpec `hcl:"adapter,block"`
-	Subworkflows       []SubworkflowSpec `hcl:"subworkflow,block"`
-	Steps              []StepSpec        `hcl:"step,block"`
-	States             []StateSpec       `hcl:"state,block"`
-	Waits              []WaitSpec        `hcl:"wait,block"`
-	Approvals          []ApprovalSpec    `hcl:"approval,block"`
-	Switches           []SwitchSpec      `hcl:"switch,block"`
-	Policy             *PolicySpec       `hcl:"policy,block"`
-	Permissions        *PermissionsSpec  `hcl:"permissions,block"`
+	Header       *WorkflowHeaderSpec `hcl:"workflow,block"`
+	Variables    []VariableSpec      `hcl:"variable,block"`
+	Locals       []LocalSpec         `hcl:"local,block"`
+	Environments []EnvironmentSpec   `hcl:"environment,block"`
+	Outputs      []OutputSpec        `hcl:"output,block"`
+	Adapters     []AdapterDeclSpec   `hcl:"adapter,block"`
+	Subworkflows []SubworkflowSpec   `hcl:"subworkflow,block"`
+	Steps        []StepSpec          `hcl:"step,block"`
+	States       []StateSpec         `hcl:"state,block"`
+	Waits        []WaitSpec          `hcl:"wait,block"`
+	Approvals    []ApprovalSpec      `hcl:"approval,block"`
+	Switches     []SwitchSpec        `hcl:"switch,block"`
+	Policy       *PolicySpec         `hcl:"policy,block"`
+	Permissions  *PermissionsSpec    `hcl:"permissions,block"`
 	// SourceBytes holds the raw HCL source that was parsed to produce this Spec.
 	// Populated by Parse/ParseFile; used by the compiler to extract expression
 	// source text (e.g. for SwitchEvaluated.Condition).

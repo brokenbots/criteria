@@ -85,16 +85,16 @@ workflow "t" {
   version       = "0.1"
   initial_state = "items"
   target_state  = "done"
-  step "items" {
-    target = adapter.fake
-    for_each = ["alpha", "beta", "gamma"]
-    outcome "all_succeeded" { next = "done" }
-    outcome "any_failed"    { next = "done" }
-  }
-  state "done" {
-    terminal = true
-    success  = true
-  }
+}
+step "items" {
+  target = adapter.fake
+  for_each = ["alpha", "beta", "gamma"]
+  outcome "all_succeeded" { next = "done" }
+  outcome "any_failed"    { next = "done" }
+}
+state "done" {
+  terminal = true
+  success  = true
 }`)
 	sink := &iterSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
@@ -126,16 +126,16 @@ workflow "t" {
   version       = "0.1"
   initial_state = "items"
   target_state  = "done"
-  step "items" {
-    target = adapter.fake
-    for_each = ["a", "b"]
-    outcome "all_succeeded" { next = "done" }
-    outcome "any_failed"    { next = "done" }
-  }
-  state "done" {
-    terminal = true
-    success  = true
-  }
+}
+step "items" {
+  target = adapter.fake
+  for_each = ["a", "b"]
+  outcome "all_succeeded" { next = "done" }
+  outcome "any_failed"    { next = "done" }
+}
+state "done" {
+  terminal = true
+  success  = true
 }`)
 	sink := &iterSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
@@ -162,16 +162,16 @@ workflow "t" {
   version       = "0.1"
   initial_state = "items"
   target_state  = "done"
-  step "items" {
-    target = adapter.fake
-    for_each = []
-    outcome "all_succeeded" { next = "done" }
-    outcome "any_failed"    { next = "done" }
-  }
-  state "done" {
-    terminal = true
-    success  = true
-  }
+}
+step "items" {
+  target = adapter.fake
+  for_each = []
+  outcome "all_succeeded" { next = "done" }
+  outcome "any_failed"    { next = "done" }
+}
+state "done" {
+  terminal = true
+  success  = true
 }`)
 	sink := &iterSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
@@ -200,16 +200,16 @@ workflow "t" {
   version       = "0.1"
   initial_state = "n"
   target_state  = "done"
-  step "n" {
-    target = adapter.fake
-    count   = 4
-    outcome "all_succeeded" { next = "done" }
-    outcome "any_failed"    { next = "done" }
-  }
-  state "done" {
-    terminal = true
-    success  = true
-  }
+}
+step "n" {
+  target = adapter.fake
+  count   = 4
+  outcome "all_succeeded" { next = "done" }
+  outcome "any_failed"    { next = "done" }
+}
+state "done" {
+  terminal = true
+  success  = true
 }`)
 	sink := &iterSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
@@ -235,17 +235,17 @@ workflow "t" {
   version       = "0.1"
   initial_state = "items"
   target_state  = "done"
-  step "items" {
-    target = adapter.fake
-    for_each   = ["a", "b", "c"]
-    on_failure = "abort"
-    outcome "all_succeeded" { next = "done" }
-    outcome "any_failed"    { next = "done" }
-  }
-  state "done" {
-    terminal = true
-    success  = true
-  }
+}
+step "items" {
+  target = adapter.fake
+  for_each   = ["a", "b", "c"]
+  on_failure = "abort"
+  outcome "all_succeeded" { next = "done" }
+  outcome "any_failed"    { next = "done" }
+}
+state "done" {
+  terminal = true
+  success  = true
 }`)
 	sink := &iterSink{}
 	// First call: failure; subsequent calls: success (should not be reached).
@@ -273,17 +273,17 @@ workflow "t" {
   version       = "0.1"
   initial_state = "items"
   target_state  = "done"
-  step "items" {
-    target = adapter.fake
-    for_each   = ["a", "b", "c"]
-    on_failure = "ignore"
-    outcome "all_succeeded" { next = "done" }
-    outcome "any_failed"    { next = "done" }
-  }
-  state "done" {
-    terminal = true
-    success  = true
-  }
+}
+step "items" {
+  target = adapter.fake
+  for_each   = ["a", "b", "c"]
+  on_failure = "ignore"
+  outcome "all_succeeded" { next = "done" }
+  outcome "any_failed"    { next = "done" }
+}
+state "done" {
+  terminal = true
+  success  = true
 }`)
 	sink := &iterSink{}
 	// All calls return "failure".
@@ -312,20 +312,20 @@ workflow "t" {
   version       = "0.1"
   initial_state = "items"
   target_state  = "done"
-  step "items" {
-    target = adapter.fake
-    for_each = ["a", "b"]
-    outcome "all_succeeded" { next = "post" }
-    outcome "any_failed"    { next = "post" }
-  }
-  step "post" {
-    target = adapter.fake
-    outcome "success" { next = "done" }
-  }
-  state "done" {
-    terminal = true
-    success  = true
-  }
+}
+step "items" {
+  target = adapter.fake
+  for_each = ["a", "b"]
+  outcome "all_succeeded" { next = "post" }
+  outcome "any_failed"    { next = "post" }
+}
+step "post" {
+  target = adapter.fake
+  outcome "success" { next = "done" }
+}
+state "done" {
+  terminal = true
+  success  = true
 }`)
 	sink := &iterSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
@@ -369,22 +369,22 @@ workflow "t" {
   version       = "0.1"
   initial_state = "run"
   target_state  = "done"
-  step "run" {
-    type     = "workflow"
-    for_each = ["a", "b"]
-    workflow {
-      step "body" {
-        target = adapter.fake
-        outcome "success" { next = "_continue" }
-      }
+}
+step "run" {
+  type     = "workflow"
+  for_each = ["a", "b"]
+  workflow {
+    step "body" {
+      target = adapter.fake
+      outcome "success" { next = "_continue" }
     }
-    outcome "all_succeeded" { next = "done" }
-    outcome "any_failed"    { next = "done" }
   }
-  state "done" {
-    terminal = true
-    success  = true
-  }
+  outcome "all_succeeded" { next = "done" }
+  outcome "any_failed"    { next = "done" }
+}
+state "done" {
+  terminal = true
+  success  = true
 }`)
 	sink := &iterSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
@@ -417,26 +417,26 @@ workflow "t" {
   version       = "0.1"
   initial_state = "run"
   target_state  = "done"
-  step "run" {
-    type     = "workflow"
-    for_each = ["x"]
-    workflow {
-      step "prepare" {
-        target = adapter.fake
-        outcome "success" { next = "verify" }
-      }
-      step "verify" {
-        target = adapter.fake
-        outcome "success" { next = "_continue" }
-      }
+}
+step "run" {
+  type     = "workflow"
+  for_each = ["x"]
+  workflow {
+    step "prepare" {
+      target = adapter.fake
+      outcome "success" { next = "verify" }
     }
-    outcome "all_succeeded" { next = "done" }
-    outcome "any_failed"    { next = "done" }
+    step "verify" {
+      target = adapter.fake
+      outcome "success" { next = "_continue" }
+    }
   }
-  state "done" {
-    terminal = true
-    success  = true
-  }
+  outcome "all_succeeded" { next = "done" }
+  outcome "any_failed"    { next = "done" }
+}
+state "done" {
+  terminal = true
+  success  = true
 }`)
 	sink := &iterSink{}
 	// Track which body steps ran.
@@ -464,19 +464,19 @@ workflow "t" {
   version       = "0.1"
   initial_state = "items"
   target_state  = "done"
-  step "items" {
-    target = adapter.fake
-    for_each = ["alpha", "beta"]
-    input {
-      label = "v:${each.value},i:${each._idx}"
-    }
-    outcome "all_succeeded" { next = "done" }
-    outcome "any_failed"    { next = "done" }
+}
+step "items" {
+  target = adapter.fake
+  for_each = ["alpha", "beta"]
+  input {
+    label = "v:${each.value},i:${each._idx}"
   }
-  state "done" {
-    terminal = true
-    success  = true
-  }
+  outcome "all_succeeded" { next = "done" }
+  outcome "any_failed"    { next = "done" }
+}
+state "done" {
+  terminal = true
+  success  = true
 }`)
 	// capturePlugin records input labels.
 	var capturedInputs []map[string]string
@@ -571,16 +571,16 @@ workflow "t" {
   version       = "0.1"
   initial_state = "items"
   target_state  = "done"
-  step "items" {
-    target = adapter.fake
-    for_each = ["a", "b", "c"]
-    outcome "all_succeeded" { next = "done" }
-    outcome "any_failed"    { next = "done" }
-  }
-  state "done" {
-    terminal = true
-    success  = true
-  }
+}
+step "items" {
+  target = adapter.fake
+  for_each = ["a", "b", "c"]
+  outcome "all_succeeded" { next = "done" }
+  outcome "any_failed"    { next = "done" }
+}
+state "done" {
+  terminal = true
+  success  = true
 }`)
 	sink := &iterSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
@@ -710,19 +710,19 @@ workflow "t" {
   version       = "0.1"
   initial_state = "items"
   target_state  = "done"
-  step "items" {
-    target = adapter.fake
-    for_each = { alpha = "A", beta = "B" }
-    input {
-      label = "k:${each.key},t:${each._total}"
-    }
-    outcome "all_succeeded" { next = "done" }
-    outcome "any_failed"    { next = "done" }
+}
+step "items" {
+  target = adapter.fake
+  for_each = { alpha = "A", beta = "B" }
+  input {
+    label = "k:${each.key},t:${each._total}"
   }
-  state "done" {
-    terminal = true
-    success  = true
-  }
+  outcome "all_succeeded" { next = "done" }
+  outcome "any_failed"    { next = "done" }
+}
+state "done" {
+  terminal = true
+  success  = true
 }`)
 	var capturedInputs []map[string]string
 	cp := &captureInputPlugin{outcome: "success", capture: &capturedInputs}
@@ -753,19 +753,19 @@ workflow "t" {
   version       = "0.1"
   initial_state = "items"
   target_state  = "done"
-  step "items" {
-    target = adapter.fake
-    for_each = ["a", "b"]
-    input {
-      label = "${each.value},prevnull:${each._prev == null}"
-    }
-    outcome "all_succeeded" { next = "done" }
-    outcome "any_failed"    { next = "done" }
+}
+step "items" {
+  target = adapter.fake
+  for_each = ["a", "b"]
+  input {
+    label = "${each.value},prevnull:${each._prev == null}"
   }
-  state "done" {
-    terminal = true
-    success  = true
-  }
+  outcome "all_succeeded" { next = "done" }
+  outcome "any_failed"    { next = "done" }
+}
+state "done" {
+  terminal = true
+  success  = true
 }`)
 	var capturedInputs []map[string]string
 	combined := &captureOutputPlugin{
@@ -800,17 +800,17 @@ workflow "t" {
   version       = "0.1"
   initial_state = "items"
   target_state  = "done"
-  step "items" {
-    target = adapter.fake
-    for_each   = ["a", "b", "c"]
-    on_failure = "continue"
-    outcome "all_succeeded" { next = "done" }
-    outcome "any_failed"    { next = "done" }
-  }
-  state "done" {
-    terminal = true
-    success  = true
-  }
+}
+step "items" {
+  target = adapter.fake
+  for_each   = ["a", "b", "c"]
+  on_failure = "continue"
+  outcome "all_succeeded" { next = "done" }
+  outcome "any_failed"    { next = "done" }
+}
+state "done" {
+  terminal = true
+  success  = true
 }`)
 	// Second iteration fails; others succeed.
 	plug := &multiOutcomePlugin{name: "fake", outcomes: []string{"success", "failure", "success"}}
@@ -840,17 +840,17 @@ workflow "t" {
   version       = "0.1"
   initial_state = "items"
   target_state  = "done"
-  step "items" {
-    target = adapter.fake
-    for_each   = ["a", "b", "c"]
-    on_failure = "abort"
-    outcome "all_succeeded" { next = "done" }
-    outcome "any_failed"    { next = "done" }
-  }
-  state "done" {
-    terminal = true
-    success  = true
-  }
+}
+step "items" {
+  target = adapter.fake
+  for_each   = ["a", "b", "c"]
+  on_failure = "abort"
+  outcome "all_succeeded" { next = "done" }
+  outcome "any_failed"    { next = "done" }
+}
+state "done" {
+  terminal = true
+  success  = true
 }`)
 	plug := &multiOutcomePlugin{name: "fake", outcomes: []string{"failure", "success"}}
 	sink := &iterSink{}
@@ -895,16 +895,16 @@ workflow "t" {
   version       = "0.1"
   initial_state = "produce"
   target_state  = "done"
-  step "produce" {
-    target = adapter.fake_produce
-    for_each = ["x", "y"]
-    outcome "all_succeeded" { next = "done" }
-    outcome "any_failed"    { next = "done" }
-  }
-  state "done" {
-    terminal = true
-    success  = true
-  }
+}
+step "produce" {
+  target = adapter.fake_produce
+  for_each = ["x", "y"]
+  outcome "all_succeeded" { next = "done" }
+  outcome "any_failed"    { next = "done" }
+}
+state "done" {
+  terminal = true
+  success  = true
 }`)
 	producePlug := &captureOutputPlugin{
 		outcomes: []string{"success", "success"},
@@ -939,19 +939,19 @@ workflow "t" {
   version       = "0.1"
   initial_state = "items"
   target_state  = "done"
-  step "items" {
-    target = adapter.fake
-    for_each = ["a", "b", "c"]
-    input {
-      label = "${each.value}"
-    }
-    outcome "all_succeeded" { next = "done" }
-    outcome "any_failed"    { next = "done" }
+}
+step "items" {
+  target = adapter.fake
+  for_each = ["a", "b", "c"]
+  input {
+    label = "${each.value}"
   }
-  state "done" {
-    terminal = true
-    success  = true
-  }
+  outcome "all_succeeded" { next = "done" }
+  outcome "any_failed"    { next = "done" }
+}
+state "done" {
+  terminal = true
+  success  = true
 }`)
 	var capturedInputs []map[string]string
 	capturePlugin := &captureInputPlugin{outcome: "success", capture: &capturedInputs}
@@ -992,23 +992,23 @@ workflow "t" {
   version       = "0.1"
   initial_state = "outer"
   target_state  = "done"
-  step "outer" {
-    type     = "workflow"
-    for_each = ["x", "y"]
-    workflow {
-      step "inner" {
-        target = adapter.fake
-        input   { label = "${each.value}" }
-        outcome "success" { next = "_continue" }
-      }
+}
+step "outer" {
+  type     = "workflow"
+  for_each = ["x", "y"]
+  workflow {
+    step "inner" {
+      target = adapter.fake
+      input   { label = "${each.value}" }
+      outcome "success" { next = "_continue" }
     }
-    outcome "all_succeeded" { next = "done" }
-    outcome "any_failed"    { next = "done" }
   }
-  state "done" {
-    terminal = true
-    success  = true
-  }
+  outcome "all_succeeded" { next = "done" }
+  outcome "any_failed"    { next = "done" }
+}
+state "done" {
+  terminal = true
+  success  = true
 }`)
 	var capturedInputs []map[string]string
 	capturePlugin := &captureInputPlugin{outcome: "success", capture: &capturedInputs}
@@ -1047,31 +1047,31 @@ workflow "t" {
   version       = "0.1"
   initial_state = "outer"
   target_state  = "done"
+}
 
-  step "outer" {
-    type       = "workflow"
-    on_failure = "abort"
-    for_each   = ["x", "y", "z"]
-    workflow {
-      step "body" {
-        target = adapter.fake
-        input   { label = "${each.value}" }
-        outcome "success" { next = "_continue" }
-        outcome "failure" { next = "aborted" }
-      }
-      state "aborted" {
-        terminal = true
-        success  = false
-      }
+step "outer" {
+  type       = "workflow"
+  on_failure = "abort"
+  for_each   = ["x", "y", "z"]
+  workflow {
+    step "body" {
+      target = adapter.fake
+      input   { label = "${each.value}" }
+      outcome "success" { next = "_continue" }
+      outcome "failure" { next = "aborted" }
     }
-    outcome "all_succeeded" { next = "done" }
-    outcome "any_failed"    { next = "done" }
+    state "aborted" {
+      terminal = true
+      success  = false
+    }
   }
+  outcome "all_succeeded" { next = "done" }
+  outcome "any_failed"    { next = "done" }
+}
 
-  state "done" {
-    terminal = true
-    success  = true
-  }
+state "done" {
+  terminal = true
+  success  = true
 }`)
 	// Return success for first item, failure for second — iteration must stop
 	// after the second item because on_failure="abort".
@@ -1129,35 +1129,35 @@ workflow "t" {
   version       = "0.1"
   initial_state = "produce"
   target_state  = "done"
+}
 
-  step "produce" {
-    type     = "workflow"
-    for_each = ["item"]
-    workflow {
-      output "score" {
-        value = "42"
-      }
-      step "body" {
-        target = adapter.fake
-        outcome "success" { next = "_continue" }
-      }
+step "produce" {
+  type     = "workflow"
+  for_each = ["item"]
+  workflow {
+    output "score" {
+      value = "42"
     }
-    outcome "all_succeeded" { next = "consume" }
-    outcome "any_failed"    { next = "done" }
-  }
-
-  step "consume" {
-    target = adapter.fake
-    input {
-      got = "${steps.produce[0].score}"
+    step "body" {
+      target = adapter.fake
+      outcome "success" { next = "_continue" }
     }
-    outcome "success" { next = "done" }
   }
+  outcome "all_succeeded" { next = "consume" }
+  outcome "any_failed"    { next = "done" }
+}
 
-  state "done" {
-    terminal = true
-    success  = true
+step "consume" {
+  target = adapter.fake
+  input {
+    got = "${steps.produce[0].score}"
   }
+  outcome "success" { next = "done" }
+}
+
+state "done" {
+  terminal = true
+  success  = true
 }`)
 	var capturedConsume []map[string]string
 	sink := &iterSink{}
@@ -1198,27 +1198,27 @@ workflow "t" {
   version       = "0.1"
   initial_state = "produce"
   target_state  = "done"
+}
 
-  step "produce" {
-    target = adapter.fake_produce
-    for_each = ["x", "y"]
-    outcome "all_succeeded" { next = "consume" }
-    outcome "any_failed"    { next = "done" }
-  }
+step "produce" {
+  target = adapter.fake_produce
+  for_each = ["x", "y"]
+  outcome "all_succeeded" { next = "consume" }
+  outcome "any_failed"    { next = "done" }
+}
 
-  step "consume" {
-    target = adapter.fake_consume
-    input {
-      first_val  = "${steps.produce[0].val}"
-      second_val = "${steps.produce[1].val}"
-    }
-    outcome "success" { next = "done" }
+step "consume" {
+  target = adapter.fake_consume
+  input {
+    first_val  = "${steps.produce[0].val}"
+    second_val = "${steps.produce[1].val}"
   }
+  outcome "success" { next = "done" }
+}
 
-  state "done" {
-    terminal = true
-    success  = true
-  }
+state "done" {
+  terminal = true
+  success  = true
 }`)
 	producePlug := &captureOutputPlugin{
 		outcomes: []string{"success", "success"},
@@ -1258,23 +1258,23 @@ workflow "t" {
   version       = "0.1"
   initial_state = "items"
   target_state  = "done"
+}
 
-  step "items" {
-    target = adapter.fake
-    for_each   = ["a", "b"]
-    on_failure = "continue"
-    input {
-      label      = "${each.value}"
-      prev_null  = "${each._prev == null}"
-    }
-    outcome "all_succeeded" { next = "done" }
-    outcome "any_failed"    { next = "done" }
+step "items" {
+  target = adapter.fake
+  for_each   = ["a", "b"]
+  on_failure = "continue"
+  input {
+    label      = "${each.value}"
+    prev_null  = "${each._prev == null}"
   }
+  outcome "all_succeeded" { next = "done" }
+  outcome "any_failed"    { next = "done" }
+}
 
-  state "done" {
-    terminal = true
-    success  = true
-  }
+state "done" {
+  terminal = true
+  success  = true
 }`)
 	// Iteration 0 fails but returns outputs; iteration 1 should see _prev from iter 0.
 	combined := &captureOutputPlugin{
@@ -1312,27 +1312,27 @@ workflow "t" {
   version       = "0.1"
   initial_state = "outer"
   target_state  = "done"
+}
 
-  step "outer" {
-    type     = "workflow"
-    for_each = ["a", "b"]
-    workflow {
-      step "inner" {
-        target = adapter.fake
-        for_each = ["x", "y"]
-        input    { label = "${each.value}" }
-        outcome "all_succeeded" { next = "_continue" }
-        outcome "any_failed"    { next = "_continue" }
-      }
+step "outer" {
+  type     = "workflow"
+  for_each = ["a", "b"]
+  workflow {
+    step "inner" {
+      target = adapter.fake
+      for_each = ["x", "y"]
+      input    { label = "${each.value}" }
+      outcome "all_succeeded" { next = "_continue" }
+      outcome "any_failed"    { next = "_continue" }
     }
-    outcome "all_succeeded" { next = "done" }
-    outcome "any_failed"    { next = "done" }
   }
+  outcome "all_succeeded" { next = "done" }
+  outcome "any_failed"    { next = "done" }
+}
 
-  state "done" {
-    terminal = true
-    success  = true
-  }
+state "done" {
+  terminal = true
+  success  = true
 }`)
 	var capturedInputs []map[string]string
 	cp := &captureInputPlugin{outcome: "success", capture: &capturedInputs}
@@ -1372,19 +1372,19 @@ workflow "t" {
   version       = "0.1"
   initial_state = "items"
   target_state  = "done"
-  step "items" {
-    target = adapter.fake
-    for_each = ["a", "b"]
-    input {
-      prev_null = "${each._prev == null}"
-    }
-    outcome "all_succeeded" { next = "done" }
-    outcome "any_failed"    { next = "done" }
+}
+step "items" {
+  target = adapter.fake
+  for_each = ["a", "b"]
+  input {
+    prev_null = "${each._prev == null}"
   }
-  state "done" {
-    terminal = true
-    success  = true
-  }
+  outcome "all_succeeded" { next = "done" }
+  outcome "any_failed"    { next = "done" }
+}
+state "done" {
+  terminal = true
+  success  = true
 }`)
 
 	// Build a cursor for the second iteration (index=1) with Prev set to a
@@ -1453,24 +1453,24 @@ workflow "t" {
   version       = "0.1"
   initial_state = "loop"
   target_state  = "done"
-  step "loop" {
-    type     = "workflow"
-    for_each = ["a", "b", "c"]
-    workflow {
-      step "body" {
-        target = adapter.seq
-        outcome "success" { next = "_continue" }
-        outcome "failure" { next = "bail" }
-      }
-      state "bail" { terminal = true }
+}
+step "loop" {
+  type     = "workflow"
+  for_each = ["a", "b", "c"]
+  workflow {
+    step "body" {
+      target = adapter.seq
+      outcome "success" { next = "_continue" }
+      outcome "failure" { next = "bail" }
     }
-    outcome "all_succeeded" { next = "done" }
-    outcome "any_failed"    { next = "done" }
+    state "bail" { terminal = true }
   }
-  state "done" {
-    terminal = true
-    success  = true
-  }
+  outcome "all_succeeded" { next = "done" }
+  outcome "any_failed"    { next = "done" }
+}
+state "done" {
+  terminal = true
+  success  = true
 }`)
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"seq": seqPlugin}}
 	eng := New(g, loader, &fakeSink{})
@@ -1493,23 +1493,23 @@ workflow "t" {
   version       = "0.1"
   initial_state = "produce"
   target_state  = "consume"
-  step "produce" {
-    target = adapter.out
-    for_each = { alpha = "a", beta = "b" }
-    outcome "all_succeeded" { next = "consume" }
-    outcome "any_failed"    { next = "consume" }
+}
+step "produce" {
+  target = adapter.out
+  for_each = { alpha = "a", beta = "b" }
+  outcome "all_succeeded" { next = "consume" }
+  outcome "any_failed"    { next = "consume" }
+}
+step "consume" {
+  target = adapter.capture
+  input {
+    got_alpha = "${steps.produce.alpha.val}"
   }
-  step "consume" {
-    target = adapter.capture
-    input {
-      got_alpha = "${steps.produce.alpha.val}"
-    }
-    outcome "success" { next = "done" }
-  }
-  state "done" {
-    terminal = true
-    success  = true
-  }
+  outcome "success" { next = "done" }
+}
+state "done" {
+  terminal = true
+  success  = true
 }`)
 	var capturedInputs []map[string]string
 	capturePlugin := &captureInputPlugin{outcome: "success", capture: &capturedInputs}

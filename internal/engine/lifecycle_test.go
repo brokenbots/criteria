@@ -83,16 +83,16 @@ workflow "test" {
   version       = "0.1"
   initial_state = "step1"
   target_state  = "done"
+}
 
-  step "step1" {
-    target = adapter.noop
-    outcome "success" { next = "done" }
-  }
+step "step1" {
+  target = adapter.noop
+  outcome "success" { next = "done" }
+}
 
-  state "done" {
-    terminal = true
-    success  = true
-  }
+state "done" {
+  terminal = true
+  success  = true
 }`)
 
 	trackingPlugin := &lifecycleTrackingPlugin{
@@ -160,16 +160,16 @@ workflow "test" {
   version       = "0.1"
   initial_state = "step1"
   target_state  = "done"
+}
 
-  step "step1" {
-    target = adapter.noop
-    outcome "success" { next = "done" }
-  }
+step "step1" {
+  target = adapter.noop
+  outcome "success" { next = "done" }
+}
 
-  state "done" {
-    terminal = true
-    success  = true
-  }
+state "done" {
+  terminal = true
+  success  = true
 }`)
 
 	trackingPlugin := &lifecycleTrackingPlugin{
@@ -210,16 +210,16 @@ workflow "test" {
   version       = "0.1"
   initial_state = "fail_step"
   target_state  = "done"
+}
 
-  step "fail_step" {
-    target = adapter.noop
-    outcome "success" { next = "done" }
-  }
+step "fail_step" {
+  target = adapter.noop
+  outcome "success" { next = "done" }
+}
 
-  state "done" {
-    terminal = true
-    success  = true
-  }
+state "done" {
+  terminal = true
+  success  = true
 }`)
 
 	trackingPlugin := &lifecycleTrackingPlugin{
@@ -258,21 +258,21 @@ workflow "test" {
   version       = "0.1"
   initial_state = "step1"
   target_state  = "done"
+}
 
-  step "step1" {
-    target = adapter.noop_a
-    outcome "success" { next = "step2" }
-  }
+step "step1" {
+  target = adapter.noop_a
+  outcome "success" { next = "step2" }
+}
 
-  step "step2" {
-    target = adapter.noop_b
-    outcome "success" { next = "done" }
-  }
+step "step2" {
+  target = adapter.noop_b
+  outcome "success" { next = "done" }
+}
 
-  state "done" {
-    terminal = true
-    success  = true
-  }
+state "done" {
+  terminal = true
+  success  = true
 }`)
 
 	trackingA := &lifecycleTrackingPlugin{
@@ -357,16 +357,16 @@ workflow "test" {
   version       = "0.1"
   initial_state = "step1"
   target_state  = "done"
+}
 
-  step "step1" {
-    target = adapter.noop
-    outcome "success" { next = "done" }
-  }
+step "step1" {
+  target = adapter.noop
+  outcome "success" { next = "done" }
+}
 
-  state "done" {
-    terminal = true
-    success  = true
-  }
+state "done" {
+  terminal = true
+  success  = true
 }`)
 
 	trackingPlugin := &lifecycleTrackingPlugin{
@@ -405,21 +405,21 @@ workflow "test" {
   version       = "0.1"
   initial_state = "step1"
   target_state  = "done"
+}
 
-  step "step1" {
-    target = adapter.noop_a
-    outcome "success" { next = "step2" }
-  }
+step "step1" {
+  target = adapter.noop_a
+  outcome "success" { next = "step2" }
+}
 
-  step "step2" {
-    target = adapter.noop_b
-    outcome "success" { next = "done" }
-  }
+step "step2" {
+  target = adapter.noop_b
+  outcome "success" { next = "done" }
+}
 
-  state "done" {
-    terminal = true
-    success  = true
-  }
+state "done" {
+  terminal = true
+  success  = true
 }`)
 
 	trackingA := &lifecycleTrackingPlugin{

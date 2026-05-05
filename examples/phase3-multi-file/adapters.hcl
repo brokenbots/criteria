@@ -1,0 +1,3 @@
+adapter "shell" "default" {
+  config { }
+}

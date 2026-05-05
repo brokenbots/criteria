@@ -5,38 +5,38 @@ workflow "iteration_simple" {
   version       = "0.1"
   initial_state = "process"
   target_state  = "done"
+}
 
-  policy {
-    max_total_steps = 30
+policy {
+  max_total_steps = 30
+}
+
+adapter "noop" "default" {}
+
+step "process" {
+  target = adapter.noop.default
+  for_each = ["alpha", "beta", "gamma"]
+  input {
+    label  = "item:${each.value}"
+    result = "success"
   }
+  outcome "all_succeeded" { next = "count_phase" }
+  outcome "any_failed"    { next = "done" }
+}
 
-  adapter "noop" "default" {}
-
-  step "process" {
-    target = adapter.noop.default
-    for_each = ["alpha", "beta", "gamma"]
-    input {
-      label  = "item:${each.value}"
-      result = "success"
-    }
-    outcome "all_succeeded" { next = "count_phase" }
-    outcome "any_failed"    { next = "done" }
+step "count_phase" {
+  target = adapter.noop.default
+  count     = 3
+  on_failure = "ignore"
+  input {
+    label  = "idx:${each._idx}"
+    result = "success"
   }
+  outcome "all_succeeded" { next = "done" }
+  outcome "any_failed"    { next = "done" }
+}
 
-  step "count_phase" {
-    target = adapter.noop.default
-    count     = 3
-    on_failure = "ignore"
-    input {
-      label  = "idx:${each._idx}"
-      result = "success"
-    }
-    outcome "all_succeeded" { next = "done" }
-    outcome "any_failed"    { next = "done" }
-  }
-
-  state "done" {
-    terminal = true
-    success  = true
-  }
+state "done" {
+  terminal = true
+  success  = true
 }

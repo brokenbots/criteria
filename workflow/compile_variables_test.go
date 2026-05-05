@@ -8,44 +8,46 @@ import (
 
 const varWorkflow = `
 workflow "test" {
-  adapter "noop" "default" {}
   version       = "0.1"
   initial_state = "start"
   target_state  = "__done__"
-
-  variable "greeting" {
-    type        = "string"
-    default     = "hello"
-    description = "A greeting"
-  }
-  variable "count" {
-    type    = "number"
-    default = 3
-  }
-  variable "no_default" {
-    type = "string"
-  }
-  step "start" {
-    target = adapter.noop.default
-    outcome "success" { next = "__done__" }
-  }
-  state "__done__" { terminal = true }
 }
+
+adapter "noop" "default" {}
+
+variable "greeting" {
+  type        = "string"
+  default     = "hello"
+  description = "A greeting"
+}
+variable "count" {
+  type    = "number"
+  default = 3
+}
+variable "no_default" {
+  type = "string"
+}
+step "start" {
+  target = adapter.noop.default
+  outcome "success" { next = "__done__" }
+}
+state "__done__" { terminal = true }
 `
 
 const varWorkflowNoVars = `
 workflow "novars" {
-  adapter "noop" "default" {}
   version       = "0.1"
   initial_state = "start"
   target_state  = "__done__"
-
-  step "start" {
-    target = adapter.noop.default
-    outcome "success" { next = "__done__" }
-  }
-  state "__done__" { terminal = true }
 }
+
+adapter "noop" "default" {}
+
+step "start" {
+  target = adapter.noop.default
+  outcome "success" { next = "__done__" }
+}
+state "__done__" { terminal = true }
 `
 
 func TestVariableCompile_Defaults(t *testing.T) {
@@ -116,21 +118,21 @@ workflow "test" {
   version       = "0.1"
   initial_state = "s"
   target_state  = "__done__"
-
-  variable "x" {
-    type    = "string"
-    default = "a"
-  }
-  variable "x" {
-    type    = "string"
-    default = "b"
-  }
-  step "s" {
-    target = adapter.noop.default
-    outcome "success" { next = "__done__" }
-  }
-  state "__done__" { terminal = true }
 }
+
+variable "x" {
+  type    = "string"
+  default = "a"
+}
+variable "x" {
+  type    = "string"
+  default = "b"
+}
+step "s" {
+  target = adapter.noop.default
+  outcome "success" { next = "__done__" }
+}
+state "__done__" { terminal = true }
 `
 	spec, diags := Parse("test.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -148,17 +150,17 @@ workflow "test" {
   version       = "0.1"
   initial_state = "s"
   target_state  = "__done__"
-
-  variable "x" {
-    type    = "badtype"
-    default = "a"
-  }
-  step "s" {
-    target = adapter.noop.default
-    outcome "success" { next = "__done__" }
-  }
-  state "__done__" { terminal = true }
 }
+
+variable "x" {
+  type    = "badtype"
+  default = "a"
+}
+step "s" {
+  target = adapter.noop.default
+  outcome "success" { next = "__done__" }
+}
+state "__done__" { terminal = true }
 `
 	spec, diags := Parse("test.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -178,17 +180,17 @@ workflow "test" {
   version       = "0.1"
   initial_state = "s"
   target_state  = "__done__"
-
-  variable "x" {
-    type    = "string"
-    default = 42
-  }
-  step "s" {
-    target = adapter.noop.default
-    outcome "success" { next = "__done__" }
-  }
-  state "__done__" { terminal = true }
 }
+
+variable "x" {
+  type    = "string"
+  default = 42
+}
+step "s" {
+  target = adapter.noop.default
+  outcome "success" { next = "__done__" }
+}
+state "__done__" { terminal = true }
 `
 	spec, diags := Parse("test.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -207,17 +209,17 @@ workflow "test" {
   version       = "0.1"
   initial_state = "s"
   target_state  = "__done__"
-
-  variable "flag" {
-    type    = "number"
-    default = true
-  }
-  step "s" {
-    target = adapter.noop.default
-    outcome "success" { next = "__done__" }
-  }
-  state "__done__" { terminal = true }
 }
+
+variable "flag" {
+  type    = "number"
+  default = true
+}
+step "s" {
+  target = adapter.noop.default
+  outcome "success" { next = "__done__" }
+}
+state "__done__" { terminal = true }
 `
 	spec, diags := Parse("test.hcl", []byte(src))
 	if diags.HasErrors() {
