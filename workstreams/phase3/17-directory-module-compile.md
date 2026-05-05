@@ -275,3 +275,53 @@ No new untrusted input surfaces. `ParseDir` uses `os.ReadDir` (lexicographic ord
 - The `validate` command's `Use` field updated to `validate <workflow.hcl|dir>` to document directory support.
 
 ### [ARCH-REVIEW] None required.
+
+## Reviewer Notes
+
+### Review 2026-05-05 — changes-requested
+
+#### Summary
+
+`changes-requested`. The branch lands most of the parser/schema reshaping, but it misses two required entry-path behaviors and leaves the conflict diagnostics below the workstream bar. `ParseFileOrDir` does not implement the required "file path delegates to parent directory module" semantics, and `criteria apply <directory>` still executes with the wrong runtime base directory, so relative `file()` reads fail during execution. The new tests are also not strong enough to catch either regression or the missing file/line conflict locations.
+
+#### Plan Adherence
+
+- **Step 1 (`ParseDir` / `ParseFileOrDir`)**: partially implemented. `ParseDir` exists, but `ParseFileOrDir` in `workflow/parse_dir.go:87-122` parses a regular file directly instead of delegating to `ParseDir(filepath.Dir(path))` and verifying the target file is part of the module. That is a direct deviation from the specified unified entry shape.
+- **Step 2 (header extraction)**: implemented. `Spec.Header` is wired through compile call sites.
+- **Step 3 (CLI entry)**: partially implemented. `compile`/`apply`/`validate` now parse directories, but the execution path still derives the runtime workflow directory incorrectly for directory inputs in `internal/cli/apply_local.go:94-97`, `internal/cli/apply_local.go:140-145`, `internal/cli/apply_server.go:68-71`, `internal/cli/apply_server.go:107-112`, `internal/cli/apply_resume.go:140-145`, and `internal/cli/reattach.go:173-179`, `209-214`, `291-296`.
+- **Step 4 (examples/docs)**: mostly implemented, but `docs/workflow.md` now says every workflow file begins with a workflow header block even though the new multi-file shape explicitly allows content-only files.
+- **Step 5 (tests)**: incomplete. The parser tests in `workflow/parse_file_or_dir_test.go:9-100` encode the deviated file-path behavior instead of the required delegation behavior, and `workflow/parse_dir_test.go:146-208` only asserts duplicate summaries, not the required both-location diagnostics. No CLI contract coverage was added for directory `apply` / `compile` / `validate`.
+
+#### Required Remediations
+
+- **blocker** — `workflow/parse_dir.go:87-122`, `workflow/parse_file_or_dir_test.go:9-55`  
+  `ParseFileOrDir` does not satisfy the workstream’s core compatibility rule: `criteria apply foo.hcl` must go through the directory-module path, not a separate single-file parser. I reproduced this with a split module containing `workflow.hcl` + `steps.hcl`; `go run ./cmd/criteria validate "$tmpdir/workflow.hcl"` failed with `initial_state "run" does not refer to a declared step or state`.  
+  **Acceptance:** implement the specified delegation to the parent directory module, verify the named file is included in the parsed set, and replace the current file-only tests with the required delegation behavior tests.
+
+- **blocker** — `internal/cli/apply_local.go:94-97`, `internal/cli/apply_local.go:140-145`, `internal/cli/apply_server.go:68-71`, `internal/cli/apply_server.go:107-112`, `internal/cli/apply_resume.go:140-145`, `internal/cli/reattach.go:173-179`, `internal/cli/reattach.go:209-214`, `internal/cli/reattach.go:291-296`  
+  Runtime execution still uses `filepath.Dir(opts.workflowPath)` / `filepath.Dir(cp.WorkflowPath)` unconditionally. For directory inputs that resolves to the parent directory, so runtime relative-path evaluation is wrong. I reproduced this with `go run ./cmd/criteria apply "$tmpdir"` on a directory workflow whose step input was `file("./payload.sh")`; the run failed with `file(): no such file: ./payload.sh` even though the file exists in the workflow directory.  
+  **Acceptance:** thread the resolved workflow directory used during compile into every initial, resumed, local, server, and reattach engine construction path, then add CLI-level regression tests that run `apply` against a directory workflow containing a relative `file()` reference and prove it succeeds.
+
+- **blocker** — `workflow/parse_dir.go:152-216`, `workflow/parse_dir.go:220-270`, `workflow/parse_dir_test.go:146-208`  
+  Conflict diagnostics do not meet the required acceptance bar. Duplicate workflow/policy/permissions and duplicate-name errors are emitted without `Subject` / `Context` locations; a direct repro against duplicate steps printed `subject=<nil> context=<nil>`. The workstream explicitly requires both file:line locations for singleton conflicts and cross-file duplicate names.  
+  **Acceptance:** preserve per-declaration source locations during merge, emit diagnostics that carry both locations for duplicate singleton blocks and duplicate named declarations, and strengthen tests to assert the reported filenames/locations rather than only matching summary text.
+
+- **major** — `internal/cli/*_test.go`, `workflow/parse_file_or_dir_test.go:9-100`, `workflow/parse_dir_test.go:146-260`  
+  The new tests validate parser happy paths, but they do not cover the CLI contract surface that changed, and they missed two real regressions.  
+  **Acceptance:** add end-to-end/contract tests for `criteria apply <directory>`, `criteria compile <directory>`, and `criteria validate <directory>` plus the required `foo.hcl`→parent-directory behavior, with assertions that would fail on the current broken implementations.
+
+- **nit** — `docs/workflow.md:22-23`, `docs/workflow.md:68-82`  
+  The header section says every workflow file begins with a workflow header block, which conflicts with the documented multi-file directory mode where only one file contains the header and the rest may be content-only.  
+  **Acceptance:** tighten the wording so single-file and multi-file module rules are both accurate.
+
+#### Test Intent Assessment
+
+The current parser tests prove that `ParseDir` can merge simple directories and that generic error strings appear, but they do **not** prove the user-visible compatibility contract for `foo.hcl` entry paths, they do **not** prove that conflict diagnostics retain actionable locations, and they do **not** exercise the CLI command boundaries that changed. The fact that `go test ./workflow -run 'TestParseDir|TestParseFileOrDir'` and `go test ./internal/cli -run 'TestApply|TestValidate|TestCompile'` both pass while the directory-entry and runtime-path regressions remain confirms the assertions are too weak for this workstream.
+
+#### Validation Performed
+
+- `go test ./workflow -run 'TestParseDir|TestParseFileOrDir'` — passed.
+- `go test ./internal/cli -run 'TestApply|TestValidate|TestCompile'` — passed.
+- Manual repro: split directory module with `workflow.hcl` + `steps.hcl`, then `go run ./cmd/criteria validate "$tmpdir/workflow.hcl"` — failed with `initial_state "run" does not refer to a declared step or state`, proving file-path entry does not delegate to the directory module.
+- Manual repro: directory workflow using `file("./payload.sh")`, then `go run ./cmd/criteria apply "$tmpdir"` — failed at runtime with `file(): no such file: ./payload.sh`, proving the execution path uses the wrong workflow directory for directory inputs.
+- Manual repro: duplicate steps across two files inspected via `workflow.ParseDir(...)` — emitted `duplicate step name "run" across files` with `subject=<nil> context=<nil>`, proving the required file/line conflict locations are not preserved.

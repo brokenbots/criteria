@@ -7,7 +7,6 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -141,7 +140,7 @@ func drainLocalResumeCycles(ctx context.Context, log *slog.Logger, graph *workfl
 			engine.WithResumedVars(eng.VarScope()),
 			engine.WithResumedVisits(eng.VisitCounts()),
 			engine.WithResumePayload(payload),
-			engine.WithWorkflowDir(filepath.Dir(opts.workflowPath)),
+			engine.WithWorkflowDir(workflowDirFromPath(opts.workflowPath)),
 		)
 		if runErr := resumedEng.RunFrom(ctx, pausedNode, 1); runErr != nil {
 			log.Error("local run failed after resume", "run_id", runID, "error", runErr)

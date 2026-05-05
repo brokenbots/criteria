@@ -68,6 +68,16 @@ func newLocalRunState(runID, graphName, serverURL string) *localRunState {
 	}
 }
 
+// workflowDirFromPath returns the workflow module directory for path.
+// If path is a directory it is returned as-is; if it is a file, its parent
+// directory is returned — all sibling .hcl files form the same module.
+func workflowDirFromPath(path string) string {
+	if info, err := os.Stat(path); err == nil && info.IsDir() {
+		return path
+	}
+	return filepath.Dir(path)
+}
+
 func compileForExecution(ctx context.Context, workflowPath string, log *slog.Logger, subworkflowRoots ...string) ([]byte, *workflow.FSMGraph, *plugin.DefaultLoader, error) {
 	spec, diags := workflow.ParseFileOrDir(workflowPath)
 	if diags.HasErrors() {
@@ -78,10 +88,7 @@ func compileForExecution(ctx context.Context, workflowPath string, log *slog.Log
 	loader.RegisterBuiltin(shell.Name, plugin.BuiltinFactoryForAdapter(shell.New()))
 	schemas := collectSchemas(ctx, loader, spec, log)
 
-	workflowDir := workflowPath
-	if info, err := os.Stat(workflowPath); err == nil && !info.IsDir() {
-		workflowDir = filepath.Dir(workflowPath)
-	}
+	workflowDir := workflowDirFromPath(workflowPath)
 
 	resolver := &workflow.LocalSubWorkflowResolver{AllowedRoots: subworkflowRoots}
 	graph, diags := workflow.CompileWithOpts(spec, schemas, workflow.CompileOpts{

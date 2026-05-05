@@ -6,13 +6,53 @@ import (
 	"testing"
 )
 
-// TestParseFileOrDir_FilePathParsesFile verifies that a path pointing to a
-// single .hcl file is parsed directly (not expanded to the parent directory)
-// and requires a workflow header block.
-func TestParseFileOrDir_FilePathParsesFile(t *testing.T) {
+// TestParseFileOrDir_FilePath_DelegatesToParentDir verifies that when a file
+// path is given and the parent directory is a proper module (single workflow
+// header across all .hcl files), ParseFileOrDir merges all sibling files.
+func TestParseFileOrDir_FilePath_DelegatesToParentDir(t *testing.T) {
 	dir := t.TempDir()
 
-	// Write a complete single-file workflow.
+	// workflow.hcl — the file we'll reference by path
+	writeHCLFile(t, dir, "workflow", `workflow "multi" {
+  version       = "0.1"
+  initial_state = "run"
+  target_state  = "done"
+}
+`)
+	// steps.hcl — a sibling file that must be merged in
+	writeHCLFile(t, dir, "steps", `adapter "noop" "default" {}
+
+step "run" {
+  target = adapter.noop.default
+  outcome "success" { next = "done" }
+}
+
+state "done" { terminal = true }
+`)
+
+	// Pass the file path, not the directory.
+	filePath := filepath.Join(dir, "workflow.hcl")
+	spec, diags := ParseFileOrDir(filePath)
+	if diags.HasErrors() {
+		t.Fatalf("ParseFileOrDir(file): %s", diags.Error())
+	}
+	if spec == nil || spec.Header == nil {
+		t.Fatal("expected non-nil spec with Header")
+	}
+	if spec.Header.Name != "multi" {
+		t.Errorf("Header.Name = %q, want %q", spec.Header.Name, "multi")
+	}
+	// The step from steps.hcl must be merged in.
+	if len(spec.Steps) != 1 {
+		t.Errorf("expected 1 step from merged dir, got %d", len(spec.Steps))
+	}
+}
+
+// TestParseFileOrDir_FilePath_SingleFileDir verifies that a file alone in its
+// directory works correctly when referenced by file path.
+func TestParseFileOrDir_FilePath_SingleFileDir(t *testing.T) {
+	dir := t.TempDir()
+
 	filePath := filepath.Join(dir, "main.hcl")
 	if err := os.WriteFile(filePath, []byte(singleFileContent), 0o644); err != nil {
 		t.Fatalf("write main.hcl: %v", err)
@@ -33,30 +73,9 @@ func TestParseFileOrDir_FilePathParsesFile(t *testing.T) {
 	}
 }
 
-// TestParseFileOrDir_FilePathNoWorkflowBlock_Error verifies that passing a
-// file path to a file with no workflow header block returns an error — a file
-// path cannot act as a content-only file.
-func TestParseFileOrDir_FilePathNoWorkflowBlock_Error(t *testing.T) {
-	dir := t.TempDir()
-
-	contentOnly := filepath.Join(dir, "content.hcl")
-	if err := os.WriteFile(contentOnly, []byte(`step "run" {
-  target = adapter.noop.default
-  outcome "success" { next = "done" }
-}
-`), 0o644); err != nil {
-		t.Fatalf("write content.hcl: %v", err)
-	}
-
-	_, diags := ParseFileOrDir(contentOnly)
-	if !diags.HasErrors() {
-		t.Fatal("expected error when file has no workflow block")
-	}
-}
-
-// TestParseFileOrDir_DirPathDelegatesToParseDir verifies that a directory path
-// delegates to ParseDir, merging all .hcl files in the directory.
-func TestParseFileOrDir_DirPathDelegatesToParseDir(t *testing.T) {
+// TestParseFileOrDir_DirPath verifies that a directory path delegates to ParseDir,
+// merging all .hcl files in the directory.
+func TestParseFileOrDir_DirPath(t *testing.T) {
 	dir := t.TempDir()
 
 	writeHCLFile(t, dir, "workflow", `workflow "dir_test" {
@@ -98,3 +117,48 @@ func TestParseFileOrDir_NonexistentPath_Error(t *testing.T) {
 		t.Fatal("expected error for non-existent path")
 	}
 }
+
+// TestParseFileOrDir_FilePath_FallsBackToSingleFileWhenParentHasMultipleHeaders
+// verifies that when the parent directory contains multiple independent workflow
+// files (each with their own singleton blocks — workflow, policy, etc.),
+// ParseFileOrDir falls back to parsing only the named file — rather than
+// failing with "duplicate workflow block" from the directory merge attempt.
+func TestParseFileOrDir_FilePath_FallsBackToSingleFileWhenParentHasMultipleHeaders(t *testing.T) {
+	dir := t.TempDir()
+
+	// Two complete, independent workflows in the same directory.
+	if err := os.WriteFile(filepath.Join(dir, "wf_a.hcl"), []byte(singleFileContent), 0o644); err != nil {
+		t.Fatalf("write wf_a.hcl: %v", err)
+	}
+	bContent := `workflow "other" {
+  version       = "0.1"
+  initial_state = "run"
+  target_state  = "done"
+}
+
+adapter "noop" "default" {}
+
+step "run" {
+  target = adapter.noop.default
+  outcome "success" { next = "done" }
+}
+
+state "done" { terminal = true }
+`
+	if err := os.WriteFile(filepath.Join(dir, "wf_b.hcl"), []byte(bContent), 0o644); err != nil {
+		t.Fatalf("write wf_b.hcl: %v", err)
+	}
+
+	// Passing wf_a.hcl should parse it standalone (not fail due to sibling header).
+	spec, diags := ParseFileOrDir(filepath.Join(dir, "wf_a.hcl"))
+	if diags.HasErrors() {
+		t.Fatalf("expected fallback to single-file parse, got error: %s", diags.Error())
+	}
+	if spec == nil || spec.Header == nil {
+		t.Fatal("expected non-nil spec with Header")
+	}
+	if spec.Header.Name != "test" {
+		t.Errorf("Header.Name = %q, want %q", spec.Header.Name, "test")
+	}
+}
+

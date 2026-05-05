@@ -8,7 +8,55 @@ import (
 	"strings"
 
 	"github.com/hashicorp/hcl/v2"
+	"github.com/hashicorp/hcl/v2/hclsyntax"
 )
+
+// fileEntry pairs a parsed Spec with the source block ranges from that file,
+// used to produce file:line diagnostic locations for merge conflicts.
+type fileEntry struct {
+	spec   *Spec
+	ranges map[string]hcl.Range
+}
+
+// collectFileBlockRanges parses src with the low-level hclsyntax parser and
+// returns a map from "blocktype:label" (or just "blocktype" for singletons) to
+// the DefRange of the first matching block in that file.
+//
+// Recognised keys: "step:name", "state:name", "variable:name",
+// "adapter:type.name", "workflow", "policy", "permissions".
+func collectFileBlockRanges(src []byte, filename string) map[string]hcl.Range {
+	file, diags := hclsyntax.ParseConfig(src, filename, hcl.Pos{Line: 1, Column: 1})
+	if diags.HasErrors() || file == nil {
+		return nil
+	}
+	body, ok := file.Body.(*hclsyntax.Body)
+	if !ok {
+		return nil
+	}
+	result := make(map[string]hcl.Range)
+	for _, block := range body.Blocks {
+		var key string
+		switch block.Type {
+		case "step", "state", "variable":
+			if len(block.Labels) >= 1 {
+				key = block.Type + ":" + block.Labels[0]
+			}
+		case "adapter":
+			if len(block.Labels) >= 2 {
+				key = "adapter:" + block.Labels[0] + "." + block.Labels[1]
+			}
+		case "workflow", "policy", "permissions":
+			key = block.Type
+		}
+		if key != "" {
+			if _, already := result[key]; !already {
+				rng := block.DefRange()
+				result[key] = rng
+			}
+		}
+	}
+	return result
+}
 
 // ParseDir parses every .hcl file in dir (lexicographic order, non-recursive),
 // merges them into a single Spec, and returns the result.
@@ -24,7 +72,7 @@ import (
 //   - The merged Spec must contain exactly one Header (workflow block); zero
 //     headers produces an error.
 func ParseDir(dir string) (*Spec, hcl.Diagnostics) {
-	entries, err := os.ReadDir(dir)
+	dirEntries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, hcl.Diagnostics{{
 			Severity: hcl.DiagError,
@@ -35,7 +83,7 @@ func ParseDir(dir string) (*Spec, hcl.Diagnostics) {
 
 	// Collect .hcl files in lexicographic order (ReadDir already returns sorted).
 	var hclFiles []string
-	for _, entry := range entries {
+	for _, entry := range dirEntries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".hcl") {
 			continue
 		}
@@ -53,7 +101,7 @@ func ParseDir(dir string) (*Spec, hcl.Diagnostics) {
 	// Ensure lexicographic order (ReadDir is already sorted, but be explicit).
 	sort.Strings(hclFiles)
 
-	var specs []*Spec
+	var entries []fileEntry
 	var allDiags hcl.Diagnostics
 	for _, path := range hclFiles {
 		src, readErr := os.ReadFile(path)
@@ -68,7 +116,10 @@ func ParseDir(dir string) (*Spec, hcl.Diagnostics) {
 		spec, parseDiags := Parse(path, src)
 		allDiags = append(allDiags, parseDiags...)
 		if spec != nil {
-			specs = append(specs, spec)
+			entries = append(entries, fileEntry{
+				spec:   spec,
+				ranges: collectFileBlockRanges(src, path),
+			})
 		}
 	}
 
@@ -76,7 +127,7 @@ func ParseDir(dir string) (*Spec, hcl.Diagnostics) {
 		return nil, allDiags
 	}
 
-	merged, mergeDiags := mergeSpecs(dir, specs)
+	merged, mergeDiags := mergeSpecs(dir, entries)
 	allDiags = append(allDiags, mergeDiags...)
 	if allDiags.HasErrors() {
 		return nil, allDiags
@@ -85,8 +136,15 @@ func ParseDir(dir string) (*Spec, hcl.Diagnostics) {
 }
 
 // ParseFileOrDir is the unified CLI entry point. If path is a directory, it
-// calls ParseDir. If path is a regular file, it parses that single file (the
-// file acts as a one-file directory module).
+// calls ParseDir. If path is a regular .hcl file, it first attempts to parse
+// the parent directory as a module (ParseDir of the parent) so that sibling
+// files are merged. This handles the common case where a file is the entry
+// point of a split directory module (e.g. workflow.hcl + steps.hcl).
+//
+// If ParseDir(parent) fails because the parent contains multiple workflow
+// header blocks — meaning the parent is a collection of independent workflows,
+// not a directory module — ParseFileOrDir falls back to parsing only the named
+// file (which must then contain a complete workflow including its header).
 func ParseFileOrDir(path string) (*Spec, hcl.Diagnostics) {
 	info, err := os.Stat(path)
 	if err != nil {
@@ -99,6 +157,51 @@ func ParseFileOrDir(path string) (*Spec, hcl.Diagnostics) {
 	if info.IsDir() {
 		return ParseDir(path)
 	}
+
+	// Try to parse the parent directory as a module first. This correctly handles
+	// split modules where the named file is the entry point (e.g. workflow.hcl +
+	// content.hcl). Sibling files are merged together.
+	dirSpec, dirDiags := ParseDir(filepath.Dir(path))
+	if !dirDiags.HasErrors() {
+		return dirSpec, dirDiags
+	}
+
+	// If ParseDir failed because the parent directory is a collection of
+	// independent workflows (multiple workflow header blocks), fall back to
+	// parsing only the named file as a standalone single-file module.
+	if isSingletonConflictOnly(dirDiags) {
+		return parseSingleFile(path)
+	}
+
+	// For any other ParseDir error (syntax errors in siblings, etc.), propagate.
+	return nil, dirDiags
+}
+
+// isSingletonConflictOnly returns true when all error diagnostics in diags are
+// singleton-conflict errors from mergeSpecs ("duplicate workflow block",
+// "duplicate policy block", "duplicate permissions block"). These indicate the
+// parent directory is a collection of independent single-file workflows, not a
+// directory module. Non-singleton errors (syntax, parse failures) are propagated.
+func isSingletonConflictOnly(diags hcl.Diagnostics) bool {
+	hasError := false
+	for _, d := range diags {
+		if d.Severity != hcl.DiagError {
+			continue
+		}
+		hasError = true
+		switch d.Summary {
+		case "duplicate workflow block", "duplicate policy block", "duplicate permissions block":
+		default:
+			return false
+		}
+	}
+	return hasError
+}
+
+// parseSingleFile parses exactly one .hcl file and requires it to contain a
+// workflow header block. Used as a fallback when the parent directory is not a
+// directory module.
+func parseSingleFile(path string) (*Spec, hcl.Diagnostics) {
 	src, readErr := os.ReadFile(path)
 	if readErr != nil {
 		return nil, hcl.Diagnostics{{
@@ -121,11 +224,12 @@ func ParseFileOrDir(path string) (*Spec, hcl.Diagnostics) {
 	return spec, diags
 }
 
-// mergeSpecs merges a slice of parsed Specs into a single Spec.
+// mergeSpecs merges a slice of parsed file entries into a single Spec.
 // Slice fields are concatenated; singleton fields (Header, Policy, Permissions)
-// must appear in at most one spec.
-func mergeSpecs(dir string, specs []*Spec) (*Spec, hcl.Diagnostics) { //nolint:cyclop // W17: multi-field merge with singleton conflict detection requires sequential checks
-	if len(specs) == 0 {
+// must appear in at most one file. Block ranges from each entry are used to
+// populate Subject/Detail fields in conflict diagnostics with file:line info.
+func mergeSpecs(dir string, entries []fileEntry) (*Spec, hcl.Diagnostics) { //nolint:cyclop // W17: multi-field merge with singleton conflict detection requires sequential checks
+	if len(entries) == 0 {
 		return nil, nil
 	}
 
@@ -135,7 +239,13 @@ func mergeSpecs(dir string, specs []*Spec) (*Spec, hcl.Diagnostics) { //nolint:c
 	// Track source bytes for concatenation.
 	var srcParts [][]byte
 
-	for _, s := range specs {
+	// Track first-seen ranges for singleton blocks.
+	var headerRange, policyRange, permissionsRange *hcl.Range
+
+	for _, entry := range entries {
+		s := entry.spec
+		ranges := entry.ranges
+
 		// Merge slice fields.
 		merged.Variables = append(merged.Variables, s.Variables...)
 		merged.Locals = append(merged.Locals, s.Locals...)
@@ -152,39 +262,72 @@ func mergeSpecs(dir string, specs []*Spec) (*Spec, hcl.Diagnostics) { //nolint:c
 		// Merge singleton: Header.
 		if s.Header != nil {
 			if merged.Header != nil {
-				diags = append(diags, &hcl.Diagnostic{
+				detail := fmt.Sprintf("directory %q contains more than one workflow \"<name>\" { ... } header block; only one is allowed across all .hcl files in a directory module", dir)
+				if headerRange != nil {
+					detail += fmt.Sprintf("; previously declared at %s", headerRange.String())
+				}
+				d := &hcl.Diagnostic{
 					Severity: hcl.DiagError,
 					Summary:  "duplicate workflow block",
-					Detail:   fmt.Sprintf("directory %q contains more than one workflow \"<name>\" { ... } header block; only one is allowed across all .hcl files in a directory module", dir),
-				})
+					Detail:   detail,
+				}
+				if rng, ok := ranges["workflow"]; ok {
+					d.Subject = &rng
+				}
+				diags = append(diags, d)
 			} else {
 				merged.Header = s.Header
+				if rng, ok := ranges["workflow"]; ok {
+					headerRange = &rng
+				}
 			}
 		}
 
 		// Merge singleton: Policy.
 		if s.Policy != nil {
 			if merged.Policy != nil {
-				diags = append(diags, &hcl.Diagnostic{
+				detail := fmt.Sprintf("directory %q contains more than one policy { ... } block; only one is allowed across all .hcl files in a directory module", dir)
+				if policyRange != nil {
+					detail += fmt.Sprintf("; previously declared at %s", policyRange.String())
+				}
+				d := &hcl.Diagnostic{
 					Severity: hcl.DiagError,
 					Summary:  "duplicate policy block",
-					Detail:   fmt.Sprintf("directory %q contains more than one policy { ... } block; only one is allowed across all .hcl files in a directory module", dir),
-				})
+					Detail:   detail,
+				}
+				if rng, ok := ranges["policy"]; ok {
+					d.Subject = &rng
+				}
+				diags = append(diags, d)
 			} else {
 				merged.Policy = s.Policy
+				if rng, ok := ranges["policy"]; ok {
+					policyRange = &rng
+				}
 			}
 		}
 
 		// Merge singleton: Permissions.
 		if s.Permissions != nil {
 			if merged.Permissions != nil {
-				diags = append(diags, &hcl.Diagnostic{
+				detail := fmt.Sprintf("directory %q contains more than one permissions { ... } block; only one is allowed across all .hcl files in a directory module", dir)
+				if permissionsRange != nil {
+					detail += fmt.Sprintf("; previously declared at %s", permissionsRange.String())
+				}
+				d := &hcl.Diagnostic{
 					Severity: hcl.DiagError,
 					Summary:  "duplicate permissions block",
-					Detail:   fmt.Sprintf("directory %q contains more than one permissions { ... } block; only one is allowed across all .hcl files in a directory module", dir),
-				})
+					Detail:   detail,
+				}
+				if rng, ok := ranges["permissions"]; ok {
+					d.Subject = &rng
+				}
+				diags = append(diags, d)
 			} else {
 				merged.Permissions = s.Permissions
+				if rng, ok := ranges["permissions"]; ok {
+					permissionsRange = &rng
+				}
 			}
 		}
 
@@ -206,7 +349,7 @@ func mergeSpecs(dir string, specs []*Spec) (*Spec, hcl.Diagnostics) { //nolint:c
 	}
 
 	// Check for cross-file duplicate names in slice fields.
-	diags = append(diags, checkDuplicateNames(merged)...)
+	diags = append(diags, checkDuplicateNames(entries)...)
 	if diags.HasErrors() {
 		return nil, diags
 	}
@@ -217,54 +360,52 @@ func mergeSpecs(dir string, specs []*Spec) (*Spec, hcl.Diagnostics) { //nolint:c
 	return merged, diags
 }
 
-// checkDuplicateNames detects duplicate block names within each merged slice field.
-func checkDuplicateNames(spec *Spec) hcl.Diagnostics {
+// checkDuplicateNames detects duplicate block names across the set of parsed
+// file entries. It iterates entries in order so that the first occurrence can
+// be referenced in the diagnostic detail for the second occurrence.
+func checkDuplicateNames(entries []fileEntry) hcl.Diagnostics {
 	var diags hcl.Diagnostics
 
-	seen := make(map[string]bool)
-	for _, s := range spec.Steps {
-		key := "step:" + s.Name
-		if seen[key] {
-			diags = append(diags, &hcl.Diagnostic{
-				Severity: hcl.DiagError,
-				Summary:  fmt.Sprintf("duplicate step name %q across files", s.Name),
-				Detail:   fmt.Sprintf("step %q is declared more than once in the directory module", s.Name),
-			})
-		}
-		seen[key] = true
+	type firstSeen struct {
+		rng hcl.Range
 	}
-	for _, s := range spec.States {
-		key := "state:" + s.Name
-		if seen[key] {
-			diags = append(diags, &hcl.Diagnostic{
+	seen := make(map[string]*firstSeen)
+
+	addDup := func(blockType, label string, ranges map[string]hcl.Range) {
+		key := blockType + ":" + label
+		rng, hasRng := ranges[key]
+		if first, already := seen[key]; already {
+			detail := fmt.Sprintf("%s %q is declared more than once in the directory module", blockType, label)
+			if first.rng != (hcl.Range{}) {
+				detail += fmt.Sprintf("; previously declared at %s", first.rng.String())
+			}
+			d := &hcl.Diagnostic{
 				Severity: hcl.DiagError,
-				Summary:  fmt.Sprintf("duplicate state name %q across files", s.Name),
-				Detail:   fmt.Sprintf("state %q is declared more than once in the directory module", s.Name),
-			})
+				Summary:  fmt.Sprintf("duplicate %s name %q across files", blockType, label),
+				Detail:   detail,
+			}
+			if hasRng {
+				d.Subject = &rng
+			}
+			diags = append(diags, d)
+		} else {
+			seen[key] = &firstSeen{rng: rng}
 		}
-		seen[key] = true
 	}
-	for _, a := range spec.Adapters {
-		key := "adapter:" + a.Type + "." + a.Name
-		if seen[key] {
-			diags = append(diags, &hcl.Diagnostic{
-				Severity: hcl.DiagError,
-				Summary:  fmt.Sprintf("duplicate adapter %q %q across files", a.Type, a.Name),
-				Detail:   fmt.Sprintf("adapter %q %q is declared more than once in the directory module", a.Type, a.Name),
-			})
+
+	for _, entry := range entries {
+		for _, s := range entry.spec.Steps {
+			addDup("step", s.Name, entry.ranges)
 		}
-		seen[key] = true
-	}
-	for _, v := range spec.Variables {
-		key := "variable:" + v.Name
-		if seen[key] {
-			diags = append(diags, &hcl.Diagnostic{
-				Severity: hcl.DiagError,
-				Summary:  fmt.Sprintf("duplicate variable name %q across files", v.Name),
-				Detail:   fmt.Sprintf("variable %q is declared more than once in the directory module", v.Name),
-			})
+		for _, s := range entry.spec.States {
+			addDup("state", s.Name, entry.ranges)
 		}
-		seen[key] = true
+		for _, a := range entry.spec.Adapters {
+			addDup("adapter", a.Type+"."+a.Name, entry.ranges)
+		}
+		for _, v := range entry.spec.Variables {
+			addDup("variable", v.Name, entry.ranges)
+		}
 	}
 
 	return diags

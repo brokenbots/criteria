@@ -19,8 +19,8 @@ A Criteria workflow defines:
 
 ### Execution modes
 
-- **Local mode**: `criteria apply <workflow.hcl>` — runs in-process. Duration-based waits work; signal-based waits and approvals require `--server`.
-- **Orchestrator mode**: `criteria apply <workflow.hcl> --server <url>` — connects to a server instance for persistence, crash recovery, and approval support.
+- **Local mode**: `criteria apply <workflow.hcl|dir>` — runs in-process. Duration-based waits work; signal-based waits and approvals require `--server`.
+- **Orchestrator mode**: `criteria apply <workflow.hcl|dir> --server <url>` — connects to a server instance for persistence, crash recovery, and approval support.
 
 See [Standalone CLI](#standalone-cli) for command reference.
 
@@ -28,7 +28,7 @@ See [Standalone CLI](#standalone-cli) for command reference.
 
 ## Workflow Header
 
-Every workflow file begins with a `workflow` header block containing only the top-level metadata attributes. All other declarations (steps, states, adapters, variables, etc.) appear at the **top level** of the file, outside the workflow block.
+A Criteria workflow module consists of one or more `.hcl` files. In a **single-file workflow**, the file contains both the `workflow` header block and all content declarations. In a **multi-file (directory) module**, exactly one file contains the `workflow` header block and sibling files contain only content declarations (steps, states, adapters, etc.).
 
 <!-- validator: skip: illustrative header showing structure only; initial_state and target_state reference nodes not defined in this excerpt -->
 ```hcl
@@ -74,7 +74,7 @@ my-workflow/
   steps.hcl       # step, state, and other declarations
 ```
 
-Each file must be a valid standalone HCL document. The `workflow "name" { ... }` header block (with `version`, `initial_state`, `target_state`) must appear in exactly one file. All other top-level blocks are merged across all files in alphabetical order. Duplicate name declarations across files produce a compile error.
+Each file must be a valid standalone HCL document. The `workflow "name" { ... }` header block (with `version`, `initial_state`, `target_state`) must appear in **exactly one** file in the directory; all other files are content-only (no workflow block). All top-level blocks are merged across all files in alphabetical order. Duplicate name declarations across files produce a compile error.
 
 See `examples/phase3-multi-file/` for a working example.
 

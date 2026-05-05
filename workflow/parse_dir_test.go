@@ -144,7 +144,8 @@ func TestParseDir_DirNotExist_Error(t *testing.T) {
 }
 
 // TestParseDir_DuplicateStepAcrossFiles_Error verifies that the same step name
-// declared in two different files produces an error that mentions the step name.
+// declared in two different files produces a diagnostic with the step name and
+// carries file:line source locations in Subject/Detail.
 func TestParseDir_DuplicateStepAcrossFiles_Error(t *testing.T) {
 	dir := t.TempDir()
 
@@ -176,6 +177,31 @@ state "done" { terminal = true }
 	}
 	if !strings.Contains(diags.Error(), `duplicate step name "run"`) {
 		t.Errorf("expected 'duplicate step name' in error, got: %s", diags.Error())
+	}
+
+	// The diagnostic must carry a Subject with a file:line location pointing to
+	// the second declaration (steps2.hcl), and the Detail must mention the first
+	// file (main.hcl) as "previously declared at ...".
+	var found bool
+	for _, d := range diags {
+		if !strings.Contains(d.Summary, `duplicate step name "run"`) {
+			continue
+		}
+		found = true
+		if d.Subject == nil {
+			t.Errorf("diagnostic Subject is nil; expected a file:line location for the second declaration")
+		} else if !strings.Contains(d.Subject.Filename, "steps2.hcl") {
+			t.Errorf("Subject.Filename = %q; expected it to contain 'steps2.hcl'", d.Subject.Filename)
+		}
+		if !strings.Contains(d.Detail, "previously declared at") {
+			t.Errorf("Detail = %q; expected 'previously declared at' with the first-file location", d.Detail)
+		}
+		if !strings.Contains(d.Detail, "main.hcl") {
+			t.Errorf("Detail = %q; expected 'main.hcl' to appear as the first-declaration location", d.Detail)
+		}
+	}
+	if !found {
+		t.Error("no diagnostic matched 'duplicate step name \"run\"'")
 	}
 }
 
