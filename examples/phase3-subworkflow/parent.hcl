@@ -20,8 +20,8 @@ workflow "phase3_subworkflow_demo" {
     input {
       command = "echo 'Starting subworkflow demo'"
     }
-    outcome "success" { transition_to = "done" }
-    outcome "failure" { transition_to = "done" }
+    outcome "success" { next = "done" }
+    outcome "failure" { next = "done" }
   }
 
   state "done" {

@@ -28,8 +28,8 @@ workflow "demo_tour_local" {
       command = "printf '=== Demo (${var.mode} mode) ===\\n'"
     }
     timeout = "10s"
-    outcome "success" { transition_to = "discover" }
-    outcome "failure" { transition_to = "aborted" }
+    outcome "success" { next = "discover" }
+    outcome "failure" { next = "aborted" }
   }
 
   step "discover" {
@@ -38,8 +38,8 @@ workflow "demo_tour_local" {
       command = "printf 'discovering...\\n'; for t in alpha beta gamma; do printf '  -> %s\\n' \"$t\"; sleep 0.2; done"
     }
     timeout = "30s"
-    outcome "success" { transition_to = "process_each" }
-    outcome "failure" { transition_to = "aborted" }
+    outcome "success" { next = "process_each" }
+    outcome "failure" { next = "aborted" }
   }
 
   step "process_each" {
@@ -49,8 +49,8 @@ workflow "demo_tour_local" {
       command = "printf 'processing %s (#%s)\\n' \"${each.value}\" \"${each._idx}\"; sleep 0.3"
     }
     timeout = "30s"
-    outcome "all_succeeded" { transition_to = "review" }
-    outcome "any_failed"    { transition_to = "aborted" }
+    outcome "all_succeeded" { next = "review" }
+    outcome "any_failed"    { next = "aborted" }
   }
 
   step "review" {
@@ -59,13 +59,13 @@ workflow "demo_tour_local" {
       command = "printf 'review ok\\n'; echo 'ok'"
     }
     timeout = "10s"
-    outcome "success" { transition_to = "wait_brief" }
-    outcome "failure" { transition_to = "aborted" }
+    outcome "success" { next = "wait_brief" }
+    outcome "failure" { next = "aborted" }
   }
 
   wait "wait_brief" {
     duration = "2s"
-    outcome "elapsed" { transition_to = "decide" }
+    outcome "elapsed" { next = "decide" }
   }
 
   branch "decide" {
@@ -84,8 +84,8 @@ workflow "demo_tour_local" {
       command = "printf '\\n=== DONE ===\\n'"
     }
     timeout = "10s"
-    outcome "success" { transition_to = "done" }
-    outcome "failure" { transition_to = "aborted" }
+    outcome "success" { next = "done" }
+    outcome "failure" { next = "aborted" }
   }
 
   state "done" {

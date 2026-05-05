@@ -33,8 +33,8 @@ workflow "loop" {
   target_state  = "done"
   step "execute" {
     target = adapter.fake.default
-` + maxVisitsAttr + `    outcome "again" { transition_to = "execute" }
-    outcome "success" { transition_to = "done" }
+` + maxVisitsAttr + `    outcome "again" { next = "execute" }
+    outcome "success" { next = "done" }
   }
   state "done" { terminal = true }
 ` + policyBlock + `}
@@ -199,8 +199,8 @@ workflow "t" {
   target_state  = "done"
   step "work" {
     target = adapter.fake.default
-    outcome "check" { transition_to = "decide" }
-    outcome "done"  { transition_to = "done" }
+    outcome "check" { next = "decide" }
+    outcome "done"  { next = "done" }
   }
   branch "decide" {
     arm {
@@ -247,7 +247,7 @@ workflow "loop" {
   }
   step "execute" {
     target = adapter.fake.default
-    outcome "success" { transition_to = "done" }
+    outcome "success" { next = "done" }
   }
   state "done" {
     terminal = true

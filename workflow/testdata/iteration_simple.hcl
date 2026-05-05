@@ -19,8 +19,8 @@ workflow "iteration_simple" {
       label  = "item:${each.value}"
       result = "success"
     }
-    outcome "all_succeeded" { transition_to = "count_phase" }
-    outcome "any_failed"    { transition_to = "done" }
+    outcome "all_succeeded" { next = "count_phase" }
+    outcome "any_failed"    { next = "done" }
   }
 
   step "count_phase" {
@@ -31,8 +31,8 @@ workflow "iteration_simple" {
       label  = "idx:${each._idx}"
       result = "success"
     }
-    outcome "all_succeeded" { transition_to = "done" }
-    outcome "any_failed"    { transition_to = "done" }
+    outcome "all_succeeded" { next = "done" }
+    outcome "any_failed"    { next = "done" }
   }
 
   state "done" {

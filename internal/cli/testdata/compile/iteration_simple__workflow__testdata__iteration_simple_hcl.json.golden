@@ -27,11 +27,11 @@
       "outcomes": [
         {
           "name": "all_succeeded",
-          "transition_to": "count_phase"
+          "next": "count_phase"
         },
         {
           "name": "any_failed",
-          "transition_to": "done"
+          "next": "done"
         }
       ]
     },
@@ -46,11 +46,11 @@
       "outcomes": [
         {
           "name": "all_succeeded",
-          "transition_to": "done"
+          "next": "done"
         },
         {
           "name": "any_failed",
-          "transition_to": "done"
+          "next": "done"
         }
       ]
     }

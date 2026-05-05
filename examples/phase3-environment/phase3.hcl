@@ -27,7 +27,7 @@ workflow "phase3-environment" {
       command = "printenv"
     }
     outcome "success" {
-      transition_to = "done"
+      next = "done"
     }
   }
 }

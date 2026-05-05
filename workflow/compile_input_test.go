@@ -60,8 +60,8 @@ workflow "x" {
   step "run" {
     target = adapter.shell.default
     input {}
-    outcome "success" { transition_to = "done" }
-    outcome "failure" { transition_to = "done" }
+    outcome "success" { next = "done" }
+    outcome "failure" { next = "done" }
   }
   state "done" { terminal = true }
 }
@@ -95,8 +95,8 @@ workflow "x" {
       command = "echo hi"
       unknown_key = "bad"
     }
-    outcome "success" { transition_to = "done" }
-    outcome "failure" { transition_to = "done" }
+    outcome "success" { next = "done" }
+    outcome "failure" { next = "done" }
   }
   state "done" { terminal = true }
 }
@@ -128,7 +128,7 @@ workflow "x" {
     input {
       prompt = "hello"
     }
-    outcome "success" { transition_to = "done" }
+    outcome "success" { next = "done" }
   }
   state "done" { terminal = true }
 }
@@ -153,11 +153,11 @@ workflow "x" {
   step "open" {
     target = adapter.copilot.default
     lifecycle = "open"
-    outcome "success" { transition_to = "run" }
+    outcome "success" { next = "run" }
   }
   step "run" {
     target = adapter.copilot.default
-    outcome "success" { transition_to = "close" }
+    outcome "success" { next = "close" }
   }
   step "close" {
     target = adapter.copilot.default
@@ -165,7 +165,7 @@ workflow "x" {
     input {
       prompt = "bye"
     }
-    outcome "success" { transition_to = "done" }
+    outcome "success" { next = "done" }
   }
   state "done" { terminal = true }
 }
@@ -191,8 +191,8 @@ workflow "x" {
     config = {
       command = "echo old"
     }
-    outcome "success" { transition_to = "done" }
-    outcome "failure" { transition_to = "done" }
+    outcome "success" { next = "done" }
+    outcome "failure" { next = "done" }
   }
   state "done" { terminal = true }
 }
@@ -230,8 +230,8 @@ workflow "x" {
       command  = "echo hi"
       extra    = "ok"
     }
-    outcome "success" { transition_to = "done" }
-    outcome "failure" { transition_to = "done" }
+    outcome "success" { next = "done" }
+    outcome "failure" { next = "done" }
   }
   state "done" { terminal = true }
 }
@@ -261,8 +261,8 @@ workflow "x" {
     input {
       command = "echo hi"
     }
-    outcome "success" { transition_to = "done" }
-    outcome "failure" { transition_to = "done" }
+    outcome "success" { next = "done" }
+    outcome "failure" { next = "done" }
   }
   state "done" { terminal = true }
 }
@@ -290,7 +290,7 @@ workflow "x" {
   target_state  = "done"
   step "open" {
     target = adapter.copilot.default
-    outcome "success" { transition_to = "run" }
+    outcome "success" { next = "run" }
   }
   step "run" {
     target = adapter.copilot.default
@@ -298,11 +298,11 @@ workflow "x" {
       prompt    = "do work"
       max_turns = "not-a-number"
     }
-    outcome "success" { transition_to = "close" }
+    outcome "success" { next = "close" }
   }
   step "close" {
     target = adapter.copilot.default
-    outcome "success" { transition_to = "done" }
+    outcome "success" { next = "done" }
   }
   state "done" { terminal = true }
 }
@@ -330,18 +330,18 @@ workflow "x" {
   target_state  = "done"
   step "open" {
     target = adapter.copilot.default
-    outcome "success" { transition_to = "run" }
+    outcome "success" { next = "run" }
   }
   step "run" {
     target = adapter.copilot.default
     input {
       prompt = 42
     }
-    outcome "success" { transition_to = "close" }
+    outcome "success" { next = "close" }
   }
   step "close" {
     target = adapter.copilot.default
-    outcome "success" { transition_to = "done" }
+    outcome "success" { next = "done" }
   }
   state "done" { terminal = true }
 }
@@ -371,7 +371,7 @@ workflow "x" {
     input {
       items = ["a", "b"]
     }
-    outcome "success" { transition_to = "done" }
+    outcome "success" { next = "done" }
   }
   state "done" { terminal = true }
 }
@@ -398,7 +398,7 @@ workflow "x" {
     input {
       items = ["a", 1]
     }
-    outcome "success" { transition_to = "done" }
+    outcome "success" { next = "done" }
   }
   state "done" { terminal = true }
 }

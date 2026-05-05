@@ -57,7 +57,7 @@ workflow "outputs" {
 
   step "produce" {
     target = adapter.fake_out.default
-    outcome "success" { transition_to = "__done__" }
+    outcome "success" { next = "__done__" }
   }
   state "__done__" { terminal = true }
 }
@@ -115,14 +115,14 @@ workflow "interp_outputs" {
 
   step "build" {
     target = adapter.fake_out.default
-    outcome "success" { transition_to = "deploy" }
+    outcome "success" { next = "deploy" }
   }
   step "deploy" {
     target = adapter.fake_consumer.default
     input {
       artifact = "${steps.build.result}"
     }
-    outcome "success" { transition_to = "__done__" }
+    outcome "success" { next = "__done__" }
   }
   state "__done__" { terminal = true }
 }
@@ -202,11 +202,11 @@ workflow "sequence" {
 
   step "first" {
     target = adapter.fake_out.default
-    outcome "success" { transition_to = "second" }
+    outcome "success" { next = "second" }
   }
   step "second" {
     target = adapter.fake_out.default
-    outcome "success" { transition_to = "__done__" }
+    outcome "success" { next = "__done__" }
   }
   state "__done__" { terminal = true }
 }

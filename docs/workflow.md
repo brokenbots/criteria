@@ -112,7 +112,7 @@ step "deploy" {
   input {
     command = "deploy --env ${var.env}"
   }
-  outcome "success" { transition_to = "done" }
+  outcome "success" { next = "done" }
 }
 ```
 
@@ -187,7 +187,7 @@ step "deploy" {
   input {
     command = "echo $LOG_LEVEL"  # will print "debug" (or "info" for prod env)
   }
-  outcome "success" { transition_to = "done" }
+  outcome "success" { next = "done" }
 }
 ```
 
@@ -223,8 +223,8 @@ agent "assistant" {
 step "open_assistant" {
   agent     = "assistant"
   lifecycle = "open"
-  outcome "success" { transition_to = "ask_question" }
-  outcome "failure" { transition_to = "failed" }
+  outcome "success" { next = "ask_question" }
+  outcome "failure" { next = "failed" }
 }
 
 step "ask_question" {
@@ -233,15 +233,15 @@ step "ask_question" {
   input {
     prompt = "List files in the current directory and summarize their purpose."
   }
-  outcome "success" { transition_to = "close_assistant" }
-  outcome "failure" { transition_to = "failed" }
+  outcome "success" { next = "close_assistant" }
+  outcome "failure" { next = "failed" }
 }
 
 step "close_assistant" {
   agent     = "assistant"
   lifecycle = "close"
-  outcome "success" { transition_to = "done" }
-  outcome "failure" { transition_to = "failed" }
+  outcome "success" { next = "done" }
+  outcome "failure" { next = "failed" }
 }
 ```
 
@@ -284,8 +284,8 @@ step "build" {
   input {
     command = "go build ./..."
   }
-  outcome "success" { transition_to = "test" }
-  outcome "failure" { transition_to = "failed" }
+  outcome "success" { next = "test" }
+  outcome "failure" { next = "failed" }
 }
 ```
 
@@ -314,7 +314,7 @@ step "publish" {
   input {
     command = "echo Build ID: ${steps.build.stdout}"
   }
-  outcome "success" { transition_to = "done" }
+  outcome "success" { next = "done" }
 }
 ```
 
@@ -331,7 +331,7 @@ step "deploy" {
   input {
     command = "deploy.sh"
   }
-  outcome "success" { transition_to = "done" }
+  outcome "success" { next = "done" }
 }
 ```
 
@@ -352,6 +352,46 @@ Outputs are available to downstream steps and branch conditions as `steps.<name>
 ### Outcomes
 
 Each `outcome` block maps an adapter-emitted outcome name to a transition target (step, state, wait, approval, branch, or another iterating step). For steps inside an iteration body, the synthetic `_continue` target signals iteration continuation.
+
+#### Outcome block attributes
+
+- **`next`** (required): The name of the next node to transition to. Two reserved values have special semantics:
+  - A step, state, wait, approval, or branch name — standard transition.
+  - **`"return"`** — halts the current scope (the workflow body or a subworkflow invocation) and returns to the caller. In a subworkflow, the caller's step outcome is then applied. At the top level, `return` terminates the run as successful with any projected outputs. See **Return semantics** below.
+- **`output`** (optional): An HCL object expression that projects a custom output map for this outcome. When present, the projected map replaces the step's full adapter output for the purpose of downstream `steps.<name>.*` references and subworkflow return values. When absent, the step's full adapter output passes through unchanged.
+
+#### Return semantics (`next = "return"`)
+
+When a step outcome specifies `next = "return"`, the engine exits the current scope immediately:
+
+- **In a subworkflow**: the subworkflow exits and the parent step sees a `"success"` outcome (or `"failure"` if the return was triggered by an error path). The `output` projection from the triggering outcome becomes the subworkflow step's outputs, accessible as `steps.<step_name>.*` in the parent scope.
+- **At the top level**: the run terminates as successful. If the outcome includes `output = { ... }`, that projection IS the run's output set — it overrides any top-level `output` blocks declared in the workflow.
+
+**Precedence**: `outcome.output` always wins over top-level `output` block declarations when `next = "return"` is used. Top-level `output` blocks provide the default output set for normal terminal-state exits.
+
+#### `default_outcome`
+
+The optional `default_outcome = "<name>"` step attribute provides a fallback when an adapter returns an outcome name that is not in the step's declared outcome set:
+
+- If set, the unknown outcome name is silently mapped to the named default. A `step.outcome.defaulted` event is emitted with both the original and mapped names so operators can audit the mapping.
+- If not set, an unknown outcome is a runtime error (`step.outcome.unknown` event).
+
+`default_outcome` must refer to one of the declared `outcome` blocks on the same step (compile-time error otherwise).
+
+```hcl
+step "call_agent" {
+  target          = adapter.copilot.reviewer
+  default_outcome = "needs_review"
+
+  outcome "approved" {
+    next = "deploy"
+  }
+  outcome "needs_review" {
+    next   = "return"
+    output = { reason = "review required" }
+  }
+}
+```
 
 ---
 
@@ -392,7 +432,7 @@ Wait nodes pause execution for a duration or external signal.
 ```hcl
 wait "cool_down" {
   duration = "10s"
-  outcome "elapsed" { transition_to = "retry_deploy" }
+  outcome "elapsed" { next = "retry_deploy" }
 }
 ```
 
@@ -407,8 +447,8 @@ wait "cool_down" {
 ```hcl
 wait "approval_gate" {
   signal = "deploy_approved"
-  outcome "approved" { transition_to = "deploy" }
-  outcome "rejected" { transition_to = "aborted" }
+  outcome "approved" { next = "deploy" }
+  outcome "rejected" { next = "aborted" }
 }
 ```
 
@@ -428,8 +468,8 @@ Approval nodes are human decision gates. Paused runs wait for an approver to sub
 approval "ship_to_prod" {
   approvers = ["alice", "bob"]
   reason    = "Production deployment requires approval"
-  outcome "approved" { transition_to = "deploy_prod" }
-  outcome "rejected" { transition_to = "cancel_deploy" }
+  outcome "approved" { next = "deploy_prod" }
+  outcome "rejected" { next = "cancel_deploy" }
 }
 ```
 
@@ -555,8 +595,8 @@ step "deploy_services" {
   input {
     command = "deploy ${each.value} --index ${each._idx}"
   }
-  outcome "all_succeeded" { transition_to = "verify" }
-  outcome "any_failed"    { transition_to = "rollback" }
+  outcome "all_succeeded" { next = "verify" }
+  outcome "any_failed"    { next = "rollback" }
 }
 ```
 
@@ -574,7 +614,7 @@ step "batch" {
   input {
     index = "${each._idx}"
   }
-  outcome "all_succeeded" { transition_to = "done" }
+  outcome "all_succeeded" { next = "done" }
 }
 ```
 
@@ -618,8 +658,8 @@ step "running_total" {
     accumulator = each._first ? 0 : each._prev.total
     addend      = each.value
   }
-  outcome "all_succeeded" { transition_to = "summarize" }
-  outcome "any_failed"    { transition_to = "failed" }
+  outcome "all_succeeded" { next = "summarize" }
+  outcome "any_failed"    { next = "failed" }
 }
 ```
 
@@ -652,8 +692,8 @@ step "deploy" {
   for_each   = var.targets
   on_failure = "abort"
   input { command = "deploy ${each.value}" }
-  outcome "all_succeeded" { transition_to = "done" }
-  outcome "any_failed"    { transition_to = "rollback" }
+  outcome "all_succeeded" { next = "done" }
+  outcome "any_failed"    { next = "rollback" }
 }
 ```
 
@@ -674,22 +714,22 @@ step "process_items" {
     step "run" {
       adapter = "shell"
       input   { command = "process ${each.value}" }
-      outcome "success" { transition_to = "review" }
-      outcome "failure" { transition_to = "_continue" }
+      outcome "success" { next = "review" }
+      outcome "failure" { next = "_continue" }
     }
 
     step "review" {
       agent  = "assistant"
       input  { prompt = "Review result for ${each.value}" }
-      outcome "approved" { transition_to = "_continue" }
-      outcome "rejected" { transition_to = "_continue" }
+      outcome "approved" { next = "_continue" }
+      outcome "rejected" { next = "_continue" }
     }
   }
 
   output "last_review" { value = steps.review.stdout }
 
-  outcome "all_succeeded" { transition_to = "done" }
-  outcome "any_failed"    { transition_to = "handle_errors" }
+  outcome "all_succeeded" { next = "done" }
+  outcome "any_failed"    { next = "handle_errors" }
 }
 ```
 
@@ -768,18 +808,18 @@ W08 top-level `for_each` iteration blocks (with `items = …` and `do = "…"`) 
 # {
 #   items = ["a", "b"]
 #   do    = "run_one"
-#   outcome "all_succeeded" { transition_to = "done" }
+#   outcome "all_succeeded" { next = "done" }
 # }
 # step "run_one" {
 #   adapter = "noop"
-#   outcome "success" { transition_to = "_continue" }
+#   outcome "success" { next = "_continue" }
 # }
 
 # W10 equivalent:
 step "deploy" {
   adapter  = "noop"
   for_each = ["a", "b"]
-  outcome "all_succeeded" { transition_to = "done" }
+  outcome "all_succeeded" { next = "done" }
 }
 ```
 
@@ -792,10 +832,10 @@ step "deploy" {
   workflow {
     step "run_one" {
       adapter = "noop"
-      outcome "success" { transition_to = "_continue" }
+      outcome "success" { next = "_continue" }
     }
   }
-  outcome "all_succeeded" { transition_to = "done" }
+  outcome "all_succeeded" { next = "done" }
 }
 ```
 
@@ -927,7 +967,7 @@ step "build" {
   agent       = "assistant"
   allow_tools = ["shell:go*build*"]
   input { prompt = "Run go build" }
-  outcome "success" { transition_to = "done" }
+  outcome "success" { next = "done" }
 }
 ```
 
@@ -1091,8 +1131,8 @@ parallel "build_and_test" {
   region "test" {
     steps = ["unit_tests", "integration_tests"]
   }
-  outcome "all_succeeded" { transition_to = "deploy" }
-  outcome "any_failed"    { transition_to = "failed" }
+  outcome "all_succeeded" { next = "deploy" }
+  outcome "any_failed"    { next = "failed" }
 }
 ```
 
@@ -1138,8 +1178,8 @@ workflow "deploy_pipeline" {
     input {
       command = "run-lint"
     }
-    outcome "success" { transition_to = "done" }
-    outcome "failure" { transition_to = "done" }
+    outcome "success" { next = "done" }
+    outcome "failure" { next = "done" }
   }
 
   state "done" {

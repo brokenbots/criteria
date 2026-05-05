@@ -15,8 +15,8 @@ workflow "perf_1000_logs" {
       command = "for i in {1..1000}; do echo \"Log line $i: This is a test log entry to measure throughput and latency.\"; done"
     }
 
-    outcome "success" { transition_to = "done" }
-    outcome "failure" { transition_to = "failed" }
+    outcome "success" { next = "done" }
+    outcome "failure" { next = "failed" }
   }
 
   state "done"   { terminal = true }

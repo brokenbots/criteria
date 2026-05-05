@@ -7,7 +7,7 @@ workflow "local_signal_wait" {
 
   wait "gate" {
     signal = "proceed"
-    outcome "success" { transition_to = "run_step" }
+    outcome "success" { next = "run_step" }
   }
 
   step "run_step" {
@@ -15,8 +15,8 @@ workflow "local_signal_wait" {
     input {
       prompt = "continue"
     }
-    outcome "success" { transition_to = "done" }
-    outcome "failure" { transition_to = "failed" }
+    outcome "success" { next = "done" }
+    outcome "failure" { next = "failed" }
   }
 
   state "done" {

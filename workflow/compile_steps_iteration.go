@@ -74,7 +74,7 @@ func compileIteratingStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[str
 	node.ForEach = forEachExpr
 	node.Count = countExpr
 
-	diags = append(diags, compileOutcomeBlock(sp, node)...)
+	diags = append(diags, compileOutcomeBlock(sp, node, g, opts)...)
 	diags = append(diags, validateIteratingOutcomes(sp, node)...)
 
 	g.Steps[sp.Name] = node
@@ -93,7 +93,7 @@ func newSubworkflowIterStepNode(sp *StepSpec, _ *Spec, subworkflowRef, effective
 		MaxVisits:      sp.MaxVisits,
 		Timeout:        timeout,
 		InputExprs:     inputExprs,
-		Outcomes:       map[string]string{},
+		Outcomes:       map[string]*CompiledOutcome{},
 		Environment:    envKey,
 	}
 }

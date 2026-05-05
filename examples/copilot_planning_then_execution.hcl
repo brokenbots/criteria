@@ -46,8 +46,8 @@ workflow "copilot_planning_then_execution" {
       EOT
     }
 
-    outcome "success" { transition_to = "execute" }
-    outcome "failure" { transition_to = "failed" }
+    outcome "success" { next = "execute" }
+    outcome "failure" { next = "failed" }
   }
 
   # ── Execution (inherits adapter-level "medium") ────────────────────────────────
@@ -62,8 +62,8 @@ workflow "copilot_planning_then_execution" {
       EOT
     }
 
-    outcome "success" { transition_to = "done" }
-    outcome "failure" { transition_to = "failed" }
+    outcome "success" { next = "done" }
+    outcome "failure" { next = "failed" }
   }
 
   # ── Terminal states ────────────────────────────────────────────────────────

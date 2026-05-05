@@ -164,6 +164,20 @@ func (m *MultiSink) OnRunOutputs(outputs []map[string]string) {
 	}
 }
 
+// OnStepOutcomeDefaulted fans the event to all child sinks (W15).
+func (m *MultiSink) OnStepOutcomeDefaulted(step, original, mapped string) {
+	for _, c := range m.children {
+		c.OnStepOutcomeDefaulted(step, original, mapped)
+	}
+}
+
+// OnStepOutcomeUnknown fans the event to all child sinks (W15).
+func (m *MultiSink) OnStepOutcomeUnknown(step, outcome string) {
+	for _, c := range m.children {
+		c.OnStepOutcomeUnknown(step, outcome)
+	}
+}
+
 func (m *MultiSink) StepEventSink(step string) adapter.EventSink {
 	subs := make([]adapter.EventSink, 0, len(m.children))
 	for _, c := range m.children {

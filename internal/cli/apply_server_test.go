@@ -45,15 +45,15 @@ workflow "two_step" {
   step "step_one" {
     target = adapter.shell.default
     input { command = "echo step_one" }
-    outcome "success" { transition_to = "step_two" }
-    outcome "failure" { transition_to = "done" }
+    outcome "success" { next = "step_two" }
+    outcome "failure" { next = "done" }
   }
 
   step "step_two" {
     target = adapter.shell.default
     input { command = "echo step_two" }
-    outcome "success" { transition_to = "done" }
-    outcome "failure" { transition_to = "done" }
+    outcome "success" { next = "done" }
+    outcome "failure" { next = "done" }
   }
 
   state "done" {
@@ -77,14 +77,14 @@ workflow "cancel_test" {
   step "step_one" {
     target = adapter.shell.default
     input { command = "echo step_one" }
-    outcome "success" { transition_to = "step_two" }
-    outcome "failure" { transition_to = "done" }
+    outcome "success" { next = "step_two" }
+    outcome "failure" { next = "done" }
   }
 
   step "step_two" {
     target = adapter.shell.default
     input { command = "sleep 30" }
-    outcome "success" { transition_to = "done" }
+    outcome "success" { next = "done" }
   }
 
   state "done" {
@@ -106,20 +106,20 @@ workflow "pause_resume" {
   step "step_one" {
     target = adapter.shell.default
     input { command = "echo step_one" }
-    outcome "success" { transition_to = "gate" }
-    outcome "failure" { transition_to = "done" }
+    outcome "success" { next = "gate" }
+    outcome "failure" { next = "done" }
   }
 
   wait "gate" {
     signal = "resume"
-    outcome "received" { transition_to = "step_three" }
+    outcome "received" { next = "step_three" }
   }
 
   step "step_three" {
     target = adapter.shell.default
     input { command = "echo step_three" }
-    outcome "success" { transition_to = "done" }
-    outcome "failure" { transition_to = "done" }
+    outcome "success" { next = "done" }
+    outcome "failure" { next = "done" }
   }
 
   state "done" {

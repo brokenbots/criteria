@@ -13,15 +13,15 @@ workflow "two_agent_loop" {
     target = adapter.copilot.executor
     on_crash = "abort_run"
 
-    outcome "approved" { transition_to = "review" }
-    outcome "retry"    { transition_to = "review" }
+    outcome "approved" { next = "review" }
+    outcome "retry"    { next = "review" }
   }
 
   step "review" {
     target = adapter.copilot.reviewer
 
-    outcome "approved" { transition_to = "done" }
-    outcome "changes"  { transition_to = "execute" }
+    outcome "approved" { next = "done" }
+    outcome "changes"  { next = "execute" }
   }
 
   state "done" {

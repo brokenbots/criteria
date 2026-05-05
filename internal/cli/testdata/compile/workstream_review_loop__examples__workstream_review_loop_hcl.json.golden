@@ -59,11 +59,11 @@
       "outcomes": [
         {
           "name": "failure",
-          "transition_to": "failed"
+          "next": "failed"
         },
         {
           "name": "success",
-          "transition_to": "execute_init"
+          "next": "execute_init"
         }
       ]
     },
@@ -79,15 +79,15 @@
       "outcomes": [
         {
           "name": "failure",
-          "transition_to": "failed"
+          "next": "failed"
         },
         {
           "name": "needs_approval",
-          "transition_to": "review_init"
+          "next": "review_init"
         },
         {
           "name": "needs_review",
-          "transition_to": "review_init"
+          "next": "review_init"
         }
       ]
     },
@@ -103,23 +103,23 @@
       "outcomes": [
         {
           "name": "approved",
-          "transition_to": "commit_and_prepare_pr"
+          "next": "commit_and_prepare_pr"
         },
         {
           "name": "changes_requested",
-          "transition_to": "execute"
+          "next": "execute"
         },
         {
           "name": "failure",
-          "transition_to": "failed"
+          "next": "failed"
         },
         {
           "name": "needs_approval",
-          "transition_to": "execute"
+          "next": "execute"
         },
         {
           "name": "needs_review",
-          "transition_to": "execute"
+          "next": "execute"
         }
       ]
     },
@@ -135,19 +135,19 @@
       "outcomes": [
         {
           "name": "failure",
-          "transition_to": "failed"
+          "next": "failed"
         },
         {
           "name": "needs_approval",
-          "transition_to": "verify"
+          "next": "verify"
         },
         {
           "name": "needs_review",
-          "transition_to": "verify"
+          "next": "verify"
         },
         {
           "name": "success",
-          "transition_to": "verify"
+          "next": "verify"
         }
       ]
     },
@@ -162,11 +162,11 @@
       "outcomes": [
         {
           "name": "failure",
-          "transition_to": "fix_verify"
+          "next": "fix_verify"
         },
         {
           "name": "success",
-          "transition_to": "review"
+          "next": "review"
         }
       ]
     },
@@ -182,15 +182,15 @@
       "outcomes": [
         {
           "name": "failure",
-          "transition_to": "failed"
+          "next": "failed"
         },
         {
           "name": "needs_approval",
-          "transition_to": "verify"
+          "next": "verify"
         },
         {
           "name": "needs_review",
-          "transition_to": "verify"
+          "next": "verify"
         }
       ]
     },
@@ -206,23 +206,23 @@
       "outcomes": [
         {
           "name": "approved",
-          "transition_to": "commit_and_prepare_pr"
+          "next": "commit_and_prepare_pr"
         },
         {
           "name": "changes_requested",
-          "transition_to": "execute"
+          "next": "execute"
         },
         {
           "name": "failure",
-          "transition_to": "failed"
+          "next": "failed"
         },
         {
           "name": "needs_approval",
-          "transition_to": "execute"
+          "next": "execute"
         },
         {
           "name": "needs_review",
-          "transition_to": "execute"
+          "next": "execute"
         }
       ]
     },
@@ -238,11 +238,11 @@
       "outcomes": [
         {
           "name": "failure",
-          "transition_to": "failed"
+          "next": "failed"
         },
         {
           "name": "success",
-          "transition_to": "open_or_update_pr"
+          "next": "open_or_update_pr"
         }
       ]
     },
@@ -258,19 +258,19 @@
       "outcomes": [
         {
           "name": "failure",
-          "transition_to": "failed"
+          "next": "failed"
         },
         {
           "name": "needs_approval",
-          "transition_to": "watch_pr_warmup"
+          "next": "watch_pr_warmup"
         },
         {
           "name": "needs_review",
-          "transition_to": "watch_pr_warmup"
+          "next": "watch_pr_warmup"
         },
         {
           "name": "watch_pr",
-          "transition_to": "watch_pr_warmup"
+          "next": "watch_pr_warmup"
         }
       ]
     },
@@ -285,11 +285,11 @@
       "outcomes": [
         {
           "name": "failure",
-          "transition_to": "triage_pr_feedback"
+          "next": "triage_pr_feedback"
         },
         {
           "name": "success",
-          "transition_to": "watch_pr_gate"
+          "next": "watch_pr_gate"
         }
       ]
     },
@@ -304,11 +304,11 @@
       "outcomes": [
         {
           "name": "failure",
-          "transition_to": "triage_pr_feedback"
+          "next": "triage_pr_feedback"
         },
         {
           "name": "success",
-          "transition_to": "watch_pr_gate"
+          "next": "watch_pr_gate"
         }
       ]
     },
@@ -323,11 +323,11 @@
       "outcomes": [
         {
           "name": "failure",
-          "transition_to": "triage_pr_feedback"
+          "next": "triage_pr_feedback"
         },
         {
           "name": "success",
-          "transition_to": "merge_pr_and_sync_main"
+          "next": "merge_pr_and_sync_main"
         }
       ]
     },
@@ -343,31 +343,31 @@
       "outcomes": [
         {
           "name": "failure",
-          "transition_to": "failed"
+          "next": "failed"
         },
         {
           "name": "merged",
-          "transition_to": "merge_pr_and_sync_main"
+          "next": "merge_pr_and_sync_main"
         },
         {
           "name": "needs_approval",
-          "transition_to": "watch_pr_backoff"
+          "next": "watch_pr_backoff"
         },
         {
           "name": "needs_executor",
-          "transition_to": "execute_pr_feedback"
+          "next": "execute_pr_feedback"
         },
         {
           "name": "needs_review",
-          "transition_to": "watch_pr_backoff"
+          "next": "watch_pr_backoff"
         },
         {
           "name": "recheck",
-          "transition_to": "watch_pr_backoff"
+          "next": "watch_pr_backoff"
         },
         {
           "name": "watch_pr",
-          "transition_to": "watch_pr_backoff"
+          "next": "watch_pr_backoff"
         }
       ]
     },
@@ -383,19 +383,19 @@
       "outcomes": [
         {
           "name": "failure",
-          "transition_to": "failed"
+          "next": "failed"
         },
         {
           "name": "needs_approval",
-          "transition_to": "verify"
+          "next": "verify"
         },
         {
           "name": "needs_review",
-          "transition_to": "verify"
+          "next": "verify"
         },
         {
           "name": "success",
-          "transition_to": "verify"
+          "next": "verify"
         }
       ]
     },
@@ -410,11 +410,11 @@
       "outcomes": [
         {
           "name": "failure",
-          "transition_to": "done"
+          "next": "done"
         },
         {
           "name": "success",
-          "transition_to": "done"
+          "next": "done"
         }
       ]
     }

@@ -19,8 +19,8 @@ workflow "build_and_test" {
     }
     timeout = "30s"
 
-    outcome "success" { transition_to = "test" }
-    outcome "failure" { transition_to = "failed" }
+    outcome "success" { next = "test" }
+    outcome "failure" { next = "failed" }
   }
 
   step "test" {
@@ -29,8 +29,8 @@ workflow "build_and_test" {
       command = "echo test"
     }
 
-    outcome "success" { transition_to = "verified" }
-    outcome "failure" { transition_to = "failed" }
+    outcome "success" { next = "verified" }
+    outcome "failure" { next = "failed" }
   }
 
   state "verified" { terminal = true }
@@ -81,7 +81,7 @@ workflow "x" {
   target_state  = "done"
   step "a" {
     target = adapter.shell.default
-    outcome "success" { transition_to = "missing" }
+    outcome "success" { next = "missing" }
   }
   state "done" { terminal = true }
 }
@@ -108,7 +108,7 @@ workflow "x" {
   target_state  = "halfway"
   step "a" {
     target = adapter.shell.default
-    outcome "success" { transition_to = "halfway" }
+    outcome "success" { next = "halfway" }
   }
   state "halfway" {}
 }
@@ -129,11 +129,11 @@ workflow "x" {
   target_state  = "done"
   step "a" {
     target = adapter.shell.default
-    outcome "success" { transition_to = "done" }
+    outcome "success" { next = "done" }
   }
   step "orphan" {
     target = adapter.shell.default
-    outcome "success" { transition_to = "done" }
+    outcome "success" { next = "done" }
   }
   state "done" { terminal = true }
 }
@@ -177,11 +177,11 @@ workflow "x" {
     target = adapter.copilot.default
     lifecycle   = "open"
     allow_tools = ["read_file"]
-    outcome "success" { transition_to = "done" }
+    outcome "success" { next = "done" }
   }
   step "close" {
     target = adapter.copilot.default
-    outcome "success" { transition_to = "done" }
+    outcome "success" { next = "done" }
   }
   state "done" { terminal = true }
 }
@@ -207,7 +207,7 @@ workflow "x" {
   step "run" {
     target      = adapter.shell.default
     allow_tools = ["shell:git status"]
-    outcome "success" { transition_to = "done" }
+    outcome "success" { next = "done" }
   }
   state "done" { terminal = true }
 }
@@ -236,7 +236,7 @@ workflow "x" {
   step "run" {
     target = adapter.copilot.default
     allow_tools = ["read_file"]
-    outcome "success" { transition_to = "done" }
+    outcome "success" { next = "done" }
   }
   state "done" { terminal = true }
 

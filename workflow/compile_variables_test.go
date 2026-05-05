@@ -27,7 +27,7 @@ workflow "test" {
   }
   step "start" {
     target = adapter.noop.default
-    outcome "success" { transition_to = "__done__" }
+    outcome "success" { next = "__done__" }
   }
   state "__done__" { terminal = true }
 }
@@ -42,7 +42,7 @@ workflow "novars" {
 
   step "start" {
     target = adapter.noop.default
-    outcome "success" { transition_to = "__done__" }
+    outcome "success" { next = "__done__" }
   }
   state "__done__" { terminal = true }
 }
@@ -127,7 +127,7 @@ workflow "test" {
   }
   step "s" {
     target = adapter.noop.default
-    outcome "success" { transition_to = "__done__" }
+    outcome "success" { next = "__done__" }
   }
   state "__done__" { terminal = true }
 }
@@ -155,7 +155,7 @@ workflow "test" {
   }
   step "s" {
     target = adapter.noop.default
-    outcome "success" { transition_to = "__done__" }
+    outcome "success" { next = "__done__" }
   }
   state "__done__" { terminal = true }
 }
@@ -185,7 +185,7 @@ workflow "test" {
   }
   step "s" {
     target = adapter.noop.default
-    outcome "success" { transition_to = "__done__" }
+    outcome "success" { next = "__done__" }
   }
   state "__done__" { terminal = true }
 }
@@ -214,7 +214,7 @@ workflow "test" {
   }
   step "s" {
     target = adapter.noop.default
-    outcome "success" { transition_to = "__done__" }
+    outcome "success" { next = "__done__" }
   }
   state "__done__" { terminal = true }
 }

@@ -71,11 +71,11 @@ func compileSubworkflowStep(g *FSMGraph, sp *StepSpec, _ *Spec, subworkflowRef s
 		MaxVisits:      sp.MaxVisits,
 		Timeout:        timeout,
 		InputExprs:     inputExprs,
-		Outcomes:       map[string]string{},
+		Outcomes:       map[string]*CompiledOutcome{},
 		Environment:    "",
 	}
 
-	diags = append(diags, compileOutcomeBlock(sp, node)...)
+	diags = append(diags, compileOutcomeBlock(sp, node, g, opts)...)
 
 	if len(node.Outcomes) == 0 {
 		diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q: at least one outcome is required", sp.Name)})

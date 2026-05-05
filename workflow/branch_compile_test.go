@@ -278,7 +278,7 @@ workflow "w" {
 
   step "start" {
     target = adapter.noop.default
-    outcome "success" { transition_to = "done" }
+    outcome "success" { next = "done" }
   }
 
   branch "orphan" {

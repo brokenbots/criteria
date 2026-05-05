@@ -17,7 +17,7 @@ workflow "t" {
   target_state  = "done"
   step "a" {
     target = adapter.fake
-    outcome "success" { transition_to = "done" }
+    outcome "success" { next = "done" }
   }
   state "done" { terminal = true }
 }`)
@@ -53,7 +53,7 @@ workflow "t" {
   target_state  = "done"
   step "a" {
     target = adapter.fake
-    outcome "success" { transition_to = "done" }
+    outcome "success" { next = "done" }
   }
   state "done" { terminal = true }
 }`)
@@ -81,7 +81,7 @@ workflow "t" {
   target_state  = "done"
   step "a" {
     target = adapter.fake
-    outcome "success" { transition_to = "done" }
+    outcome "success" { next = "done" }
   }
   state "done" { terminal = true }
 }`)
@@ -136,7 +136,7 @@ workflow "t" {
   target_state  = "done"
   step "a" {
     target = adapter.fake
-    outcome "again" { transition_to = "a" }
+    outcome "again" { next = "a" }
   }
   state "done" { terminal = true }
   policy { max_total_steps = 3 }
@@ -162,7 +162,7 @@ workflow "t" {
   target_state  = "done"
   step "a" {
     target = adapter.fake
-    outcome "success" { transition_to = "done" }
+    outcome "success" { next = "done" }
   }
   state "done" {
     terminal = true

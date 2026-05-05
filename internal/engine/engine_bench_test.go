@@ -37,6 +37,8 @@ func (benchSink) OnStepIterationItem(string, int, string)                      {
 func (benchSink) OnScopeIterCursorSet(string)                                  {}
 func (benchSink) OnAdapterLifecycle(string, string, string, string)            {}
 func (benchSink) OnRunOutputs([]map[string]string)                             {}
+func (benchSink) OnStepOutcomeDefaulted(string, string, string)                {}
+func (benchSink) OnStepOutcomeUnknown(string, string)                          {}
 func (benchSink) StepEventSink(string) adapter.EventSink                       { return benchEventSink{} }
 
 type benchEventSink struct{}
@@ -66,8 +68,8 @@ func buildNStepWorkflow(b *testing.B, n int) *workflow.FSMGraph {
   step "step_%d" {
     target = adapter.fake
     input { prompt = "step %d" }
-    outcome "success" { transition_to = "%s" }
-    outcome "failure" { transition_to = "done" }
+    outcome "success" { next = "%s" }
+    outcome "failure" { next = "done" }
   }
 `, i, i, next)
 	}

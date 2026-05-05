@@ -181,9 +181,9 @@ func (n *stepNode) setupIterCursor(ctx context.Context, st *RunState, deps Deps)
 
 	if total == 0 {
 		// Empty collection: emit all_succeeded immediately.
-		t := n.step.Outcomes["all_succeeded"]
-		deps.Sink.OnStepIterationCompleted(n.step.Name, "all_succeeded", t)
-		return t, true, nil
+		co := n.step.Outcomes["all_succeeded"]
+		deps.Sink.OnStepIterationCompleted(n.step.Name, "all_succeeded", co.Next)
+		return co.Next, true, nil
 	}
 
 	// Determine the key for the first item.
@@ -281,18 +281,72 @@ func (n *stepNode) evaluateOnce(ctx context.Context, st *RunState, deps Deps) (s
 		return result.Outcome, nil
 	}
 
-	// Capture step outputs into run vars and notify sink (W04).
-	if len(result.Outputs) > 0 {
-		st.Vars = workflow.WithStepOutputs(st.Vars, n.step.Name, result.Outputs)
-		deps.Sink.OnStepOutputCaptured(n.step.Name, result.Outputs)
+	return n.applyOutcome(result.Outcome, result.Outputs, nil, st, deps)
+}
+
+// applyOutcome resolves the compiled outcome for the given adapter outcome name,
+// applies any output projection, stores outputs in run vars, and returns the
+// next node name (or ReturnSentinel). Separated from evaluateOnce to keep
+// cognitive complexity below the lint threshold.
+//
+// swOutputs carries the cty-typed outputs from a subworkflow step (nil for
+// adapter steps). When non-nil they are exposed as the "subworkflow" namespace
+// inside any outcome.output expression, so callers can write
+// output = { result = subworkflow.val }.
+func (n *stepNode) applyOutcome(outcomeName string, rawOutputs map[string]string, swOutputs map[string]cty.Value, st *RunState, deps Deps) (string, error) {
+	compiled, ok := n.step.Outcomes[outcomeName]
+	if !ok {
+		if n.step.DefaultOutcome != "" {
+			deps.Sink.OnStepOutcomeDefaulted(n.step.Name, outcomeName, n.step.DefaultOutcome)
+			outcomeName = n.step.DefaultOutcome
+			compiled = n.step.Outcomes[outcomeName]
+		} else {
+			deps.Sink.OnStepOutcomeUnknown(n.step.Name, outcomeName)
+			return "", fmt.Errorf("step %q produced unmapped outcome %q", n.step.Name, outcomeName)
+		}
 	}
 
-	next, ok := n.step.Outcomes[result.Outcome]
-	if !ok {
-		return "", fmt.Errorf("step %q produced unmapped outcome %q", n.step.Name, result.Outcome)
+	// Apply output projection if the outcome declares one. Projection returns
+	// raw cty values so numeric/bool types survive the return path unaltered.
+	stepOutputs := rawOutputs
+	var projectedCty map[string]cty.Value
+	if compiled.OutputExpr != nil {
+		projected, err := evalOutcomeOutputProjection(compiled.OutputExpr, swOutputs, st)
+		if err != nil {
+			return "", fmt.Errorf("step %q outcome %q: output projection: %w", n.step.Name, outcomeName, err)
+		}
+		projectedCty = projected
+		stepOutputs, err = ctyValsToStrings(projected)
+		if err != nil {
+			return "", fmt.Errorf("step %q outcome %q: output projection render: %w", n.step.Name, outcomeName, err)
+		}
 	}
-	deps.Sink.OnStepTransition(n.step.Name, next, result.Outcome)
-	return next, nil
+
+	if len(stepOutputs) > 0 {
+		st.Vars = workflow.WithStepOutputs(st.Vars, n.step.Name, stepOutputs)
+		deps.Sink.OnStepOutputCaptured(n.step.Name, stepOutputs)
+	}
+
+	if compiled.Next == workflow.ReturnSentinel {
+		// Store raw cty values so formatReturnOutputs renders them with the
+		// same type fidelity as the normal output-block path (numbers stay
+		// numbers, bools stay bools, etc.).
+		if projectedCty != nil {
+			st.ReturnOutputs = projectedCty
+		} else if len(rawOutputs) > 0 {
+			// No projection: convert adapter string outputs to cty strings.
+			retVals := make(map[string]cty.Value, len(rawOutputs))
+			for k, v := range rawOutputs {
+				retVals[k] = cty.StringVal(v)
+			}
+			st.ReturnOutputs = retVals
+		}
+		deps.Sink.OnStepTransition(n.step.Name, workflow.ReturnSentinel, outcomeName)
+		return workflow.ReturnSentinel, nil
+	}
+
+	deps.Sink.OnStepTransition(n.step.Name, compiled.Next, outcomeName)
+	return compiled.Next, nil
 }
 
 // evaluateSubworkflowStep handles a step whose TargetKind is StepTargetSubworkflow.
@@ -324,28 +378,29 @@ func (n *stepNode) evaluateSubworkflowStep(ctx context.Context, st *RunState, de
 		outcome = "failure"
 	}
 
-	if len(outputs) > 0 {
-		stringOutputs := make(map[string]string, len(outputs))
-		for k, v := range outputs {
-			if v.Type() == cty.String {
-				stringOutputs[k] = v.AsString()
-			}
+	// Convert subworkflow cty outputs to a string map for pass-through storage
+	// (steps.<name>.*). String values are stored as raw strings to match the
+	// adapter output convention (adapters return map[string]string directly).
+	// Non-string values are rendered via renderCtyValue (JSON encoding).
+	// The raw cty map is passed separately as swOutputs so outcome.output
+	// expressions can reference subworkflow.*.
+	stringOutputs := make(map[string]string, len(outputs))
+	for k, v := range outputs {
+		if v.IsKnown() && v.Type() == cty.String {
+			stringOutputs[k] = v.AsString()
+			continue
 		}
-		if len(stringOutputs) > 0 {
-			st.Vars = workflow.WithStepOutputs(st.Vars, n.step.Name, stringOutputs)
-			deps.Sink.OnStepOutputCaptured(n.step.Name, stringOutputs)
+		rendered, err := renderCtyValue(v)
+		if err != nil {
+			return "", fmt.Errorf("step %q: subworkflow output %q: %w", n.step.Name, k, err)
 		}
+		stringOutputs[k] = rendered
 	}
 
-	next, ok := n.step.Outcomes[outcome]
-	if !ok {
-		if runErr != nil {
-			return "", fmt.Errorf("step %q: subworkflow failed and no %q outcome is declared: %w", n.step.Name, outcome, runErr)
-		}
-		return "", fmt.Errorf("step %q: subworkflow produced unmapped outcome %q", n.step.Name, outcome)
-	}
-	deps.Sink.OnStepTransition(n.step.Name, next, outcome)
-	return next, nil
+	// Route through applyOutcome so DefaultOutcome mapping, OutputExpr
+	// evaluation (including subworkflow.* references), and the return sentinel
+	// are all handled uniformly with adapter steps.
+	return n.applyOutcome(outcome, stringOutputs, outputs, st, deps)
 }
 
 // Per-step environment override (n.step.Environment) takes precedence over
@@ -554,7 +609,53 @@ func stringMapToCtyObject(m map[string]string) cty.Value {
 	return cty.ObjectVal(vals)
 }
 
-// iterOutputKey returns the key to use with WithIndexedStepOutput.
+// evalOutcomeOutputProjection evaluates an outcome's output expression against
+// the current run state and returns the raw cty attribute values. The expression
+// must evaluate to a cty object; each attribute becomes an output key. Callers
+// use ctyValsToStrings when they need a map[string]string for WithStepOutputs
+// or OnStepOutputCaptured; st.ReturnOutputs receives the raw cty values so that
+// top-level return preserves numeric/bool types in OnRunOutputs, matching the
+// encoding produced by the normal output-block evaluation path.
+//
+// swOutputs, when non-nil, is exposed as the "subworkflow" variable in the eval
+// context so that outcome expressions can reference subworkflow.* keys.
+func evalOutcomeOutputProjection(expr hcl.Expression, swOutputs map[string]cty.Value, st *RunState) (map[string]cty.Value, error) {
+	evalOpts := workflow.DefaultFunctionOptions(st.WorkflowDir)
+	evalCtx := workflow.BuildEvalContextWithOpts(st.Vars, evalOpts)
+	if len(swOutputs) > 0 {
+		evalCtx.Variables["subworkflow"] = cty.ObjectVal(swOutputs)
+	} else {
+		evalCtx.Variables["subworkflow"] = cty.EmptyObjectVal
+	}
+	val, diags := expr.Value(evalCtx)
+	if diags.HasErrors() {
+		return nil, fmt.Errorf("evaluating output expression: %s", diags.Error())
+	}
+	if !val.Type().IsObjectType() {
+		return nil, fmt.Errorf("outcome output must be an object; got %s", val.Type().FriendlyName())
+	}
+	result := make(map[string]cty.Value, len(val.Type().AttributeTypes()))
+	for name := range val.Type().AttributeTypes() {
+		result[name] = val.GetAttr(name)
+	}
+	return result, nil
+}
+
+// ctyValsToStrings converts a map[string]cty.Value to map[string]string using
+// renderCtyValue for each value. Used to produce the string form needed by
+// WithStepOutputs and OnStepOutputCaptured.
+func ctyValsToStrings(vals map[string]cty.Value) (map[string]string, error) {
+	result := make(map[string]string, len(vals))
+	for k, v := range vals {
+		rendered, err := renderCtyValue(v)
+		if err != nil {
+			return nil, fmt.Errorf("output key %q: %w", k, err)
+		}
+		result[k] = rendered
+	}
+	return result, nil
+}
+
 // Map for_each iterations use the string key so callers can look up outputs
 // via steps.<name>["key"]. List/count iterations use the numeric index.
 func iterOutputKey(cur *workflow.IterCursor) cty.Value {

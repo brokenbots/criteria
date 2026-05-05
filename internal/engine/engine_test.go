@@ -67,6 +67,8 @@ func (s *fakeSink) OnStepIterationItem(string, int, string)           {}
 func (s *fakeSink) OnScopeIterCursorSet(string)                       {}
 func (s *fakeSink) OnAdapterLifecycle(string, string, string, string) {}
 func (s *fakeSink) OnRunOutputs([]map[string]string)                  {}
+func (s *fakeSink) OnStepOutcomeDefaulted(string, string, string)     {}
+func (s *fakeSink) OnStepOutcomeUnknown(string, string)               {}
 func (s *fakeSink) StepEventSink(step string) adapter.EventSink       { return noopSink{} }
 
 type noopSink struct{}
@@ -201,11 +203,11 @@ workflow "t" {
   target_state  = "done"
   step "a" {
     target = adapter.fake
-    outcome "success" { transition_to = "b" }
+    outcome "success" { next = "b" }
   }
   step "b" {
     target = adapter.fake
-    outcome "success" { transition_to = "done" }
+    outcome "success" { next = "done" }
   }
   state "done" { terminal = true }
 }`)
@@ -230,8 +232,8 @@ workflow "t" {
   target_state  = "fail"
   step "a" {
     target = adapter.fake
-    outcome "success" { transition_to = "ok" }
-    outcome "failure" { transition_to = "fail" }
+    outcome "success" { next = "ok" }
+    outcome "failure" { next = "fail" }
   }
   state "ok" { terminal = true }
   state "fail" {
@@ -257,7 +259,7 @@ workflow "t" {
   target_state  = "done"
   step "a" {
     target = adapter.fake
-    outcome "again" { transition_to = "a" }
+    outcome "again" { next = "a" }
   }
   state "done" { terminal = true }
   policy { max_total_steps = 3 }
@@ -486,8 +488,8 @@ workflow "perm" {
     target = adapter.permissive.bot
     input { perm_tools = "read_file,write_file" }
     allow_tools = ["read_file"]
-    outcome "success"      { transition_to = "done" }
-    outcome "needs_review" { transition_to = "done" }
+    outcome "success"      { next = "done" }
+    outcome "needs_review" { next = "done" }
   }
   state "done" { terminal = true }
 }`)
@@ -548,8 +550,8 @@ workflow "perm-deny" {
   step "run" {
     target = adapter.permissive.bot
     input { perm_tools = "read_file" }
-    outcome "needs_review" { transition_to = "done" }
-    outcome "success"      { transition_to = "done" }
+    outcome "needs_review" { next = "done" }
+    outcome "success"      { next = "done" }
   }
   state "done" { terminal = true }
 }`)
@@ -585,8 +587,8 @@ workflow "perm-shell" {
     target = adapter.permissive.bot
     input { perm_tools = "shell|git status,shell|rm -rf /" }
     allow_tools = ["shell:git *"]
-    outcome "success"      { transition_to = "done" }
-    outcome "needs_review" { transition_to = "done" }
+    outcome "success"      { next = "done" }
+    outcome "needs_review" { next = "done" }
   }
   state "done" { terminal = true }
 }`)
@@ -618,8 +620,8 @@ workflow "t" {
   step "loop" {
     target = adapter.fake
     max_visits = 3
-    outcome "again" { transition_to = "loop" }
-    outcome "done"  { transition_to = "done" }
+    outcome "again" { next = "loop" }
+    outcome "done"  { next = "done" }
   }
   state "done" { terminal = true }
   policy { max_total_steps = 1000 }
@@ -673,8 +675,8 @@ workflow "t" {
   step "loop" {
     target = adapter.fake
     max_visits = 100
-    outcome "again" { transition_to = "loop" }
-    outcome "done"  { transition_to = "done" }
+    outcome "again" { next = "loop" }
+    outcome "done"  { next = "done" }
   }
   state "done" { terminal = true }
   policy { max_total_steps = 1000 }
@@ -699,7 +701,7 @@ workflow "t" {
   target_state  = "done"
   step "a" {
     target = adapter.fake
-    outcome "success" { transition_to = "done" }
+    outcome "success" { next = "done" }
   }
   state "done" { terminal = true }
 }`)
@@ -727,7 +729,7 @@ workflow "t" {
   step "work" {
     target = adapter.fake
     max_visits = 2
-    outcome "done" { transition_to = "done" }
+    outcome "done" { next = "done" }
   }
   state "done" { terminal = true }
   policy {
@@ -771,8 +773,8 @@ workflow "t" {
   step "loop" {
     target = adapter.fake
     max_visits = 5
-    outcome "again" { transition_to = "loop" }
-    outcome "done"  { transition_to = "done" }
+    outcome "again" { next = "loop" }
+    outcome "done"  { next = "done" }
   }
   state "done" { terminal = true }
   policy { max_total_steps = 2 }
@@ -805,8 +807,8 @@ workflow "t" {
   step "loop" {
     target = adapter.fake
     max_visits = 5
-    outcome "again" { transition_to = "loop" }
-    outcome "done"  { transition_to = "done" }
+    outcome "again" { next = "loop" }
+    outcome "done"  { next = "done" }
   }
   state "done" { terminal = true }
   policy { max_total_steps = 1000 }
@@ -891,7 +893,7 @@ workflow "t" {
   step "work" {
     target = adapter.fake
     max_visits = 1
-    outcome "done" { transition_to = "done" }
+    outcome "done" { next = "done" }
   }
   state "done" { terminal = true }
   policy { max_total_steps = 1000 }
@@ -931,8 +933,8 @@ workflow "t" {
   target_state  = "done"
   step "a" {
     target = adapter.fake
-    outcome "success" { transition_to = "done" }
-    outcome "failure" { transition_to = "done" }
+    outcome "success" { next = "done" }
+    outcome "failure" { next = "done" }
   }
   state "done" { terminal = true }
 }`)
@@ -976,11 +978,11 @@ workflow "t" {
     workflow {
       step "inner" {
         target = adapter.fake
-        outcome "success" { transition_to = "_continue" }
+        outcome "success" { next = "_continue" }
       }
     }
-    outcome "all_succeeded" { transition_to = "done" }
-    outcome "any_failed"    { transition_to = "done" }
+    outcome "all_succeeded" { next = "done" }
+    outcome "any_failed"    { next = "done" }
   }
   state "done" { terminal = true }
   policy { max_total_steps = 1000 }

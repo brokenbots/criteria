@@ -55,9 +55,9 @@ func baseStep(name, adapterName string, config map[string]string) *workflow.Step
 		TargetKind: workflow.StepTargetAdapter,
 		AdapterRef: adapterName,
 		Input:      cfg,
-		Outcomes: map[string]string{
-			"success": "done",
-			"failure": "done",
+		Outcomes: map[string]*workflow.CompiledOutcome{
+			"success": {Name: "success", Next: "done"},
+			"failure": {Name: "failure", Next: "done"},
 		},
 	}
 }

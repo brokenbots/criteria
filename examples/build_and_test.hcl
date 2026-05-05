@@ -17,8 +17,8 @@ workflow "build_and_test" {
     }
     timeout = "5m"
 
-    outcome "success" { transition_to = "test" }
-    outcome "failure" { transition_to = "failed" }
+    outcome "success" { next = "test" }
+    outcome "failure" { next = "failed" }
   }
 
   step "test" {
@@ -28,8 +28,8 @@ workflow "build_and_test" {
     }
     timeout = "10m"
 
-    outcome "success" { transition_to = "verified" }
-    outcome "failure" { transition_to = "failed" }
+    outcome "success" { next = "verified" }
+    outcome "failure" { next = "failed" }
   }
 
   state "verified" { terminal = true }

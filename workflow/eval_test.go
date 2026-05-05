@@ -178,7 +178,7 @@ workflow "test" {
     input {
       command = "${each.value}"
     }
-    outcome "success" { transition_to = "__done__" }
+    outcome "success" { next = "__done__" }
   }
   state "__done__" { terminal = true }
 }

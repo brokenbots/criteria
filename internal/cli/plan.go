@@ -153,8 +153,8 @@ func formatOutcomes(step *workflow.StepNode, spec *workflow.Spec) string { //nol
 				continue
 			}
 			for _, o := range st.Outcomes {
-				if dst, ok := step.Outcomes[o.Name]; ok {
-					ordered = append(ordered, fmt.Sprintf("%s -> %s", o.Name, dst))
+				if co, ok := step.Outcomes[o.Name]; ok {
+					ordered = append(ordered, fmt.Sprintf("%s -> %s", o.Name, co.Next))
 				}
 			}
 			break
@@ -164,7 +164,7 @@ func formatOutcomes(step *workflow.StepNode, spec *workflow.Spec) string { //nol
 	if len(ordered) == 0 {
 		names := sortedMapKeys(step.Outcomes)
 		for _, name := range names {
-			ordered = append(ordered, fmt.Sprintf("%s -> %s", name, step.Outcomes[name]))
+			ordered = append(ordered, fmt.Sprintf("%s -> %s", name, step.Outcomes[name].Next))
 		}
 	} else {
 		missing := make([]string, 0, len(step.Outcomes))
@@ -182,7 +182,7 @@ func formatOutcomes(step *workflow.StepNode, spec *workflow.Spec) string { //nol
 		}
 		sort.Strings(missing)
 		for _, name := range missing {
-			ordered = append(ordered, fmt.Sprintf("%s -> %s", name, step.Outcomes[name]))
+			ordered = append(ordered, fmt.Sprintf("%s -> %s", name, step.Outcomes[name].Next))
 		}
 	}
 	return strings.Join(ordered, ", ")

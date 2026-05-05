@@ -15,8 +15,8 @@ workflow "agent_lifecycle_noop" {
     input {
       prompt = "hello"
     }
-    outcome "success" { transition_to = "done" }
-    outcome "failure" { transition_to = "failed" }
+    outcome "success" { next = "done" }
+    outcome "failure" { next = "failed" }
   }
 
   state "done" {

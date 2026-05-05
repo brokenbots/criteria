@@ -183,7 +183,7 @@ func TestCompileLocals_RuntimeRef(t *testing.T) {
 
   step "step1" {
     target = adapter.a.default
-    outcome "success" { transition_to = "done" }
+    outcome "success" { next = "done" }
   }
 }
 `
@@ -216,7 +216,7 @@ workflow "x" {
   adapter "noop" "default" {}
   step "open" {
     target = adapter.noop.default
-    outcome "success" { transition_to = "done" }
+    outcome "success" { next = "done" }
   }
   state "done" { terminal = true }
 }

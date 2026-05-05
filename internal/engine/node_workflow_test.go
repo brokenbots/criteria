@@ -119,12 +119,12 @@ workflow "t" {
         input {
           label = var.prefix
         }
-        outcome "success" { transition_to = "_continue" }
+        outcome "success" { next = "_continue" }
       }
     }
 
-    outcome "all_succeeded" { transition_to = "done" }
-    outcome "any_failed"    { transition_to = "done" }
+    outcome "all_succeeded" { next = "done" }
+    outcome "any_failed"    { next = "done" }
   }
 
   state "done" {
@@ -186,12 +186,12 @@ workflow "t" {
     workflow {
       step "inner" {
         target = adapter.fake_producer
-        outcome "success" { transition_to = "_continue" }
+        outcome "success" { next = "_continue" }
       }
     }
 
-    outcome "all_succeeded" { transition_to = "check" }
-    outcome "any_failed"    { transition_to = "done" }
+    outcome "all_succeeded" { next = "check" }
+    outcome "any_failed"    { next = "done" }
   }
 
   step "check" {
@@ -199,7 +199,7 @@ workflow "t" {
     input {
       received = steps.inner.result
     }
-    outcome "success" { transition_to = "done" }
+    outcome "success" { next = "done" }
   }
 
   state "done" {
@@ -247,12 +247,12 @@ workflow "t" {
       }
       step "inner" {
         target = adapter.fake_producer
-        outcome "success" { transition_to = "_continue" }
+        outcome "success" { next = "_continue" }
       }
     }
 
-    outcome "all_succeeded" { transition_to = "consume" }
-    outcome "any_failed"    { transition_to = "done" }
+    outcome "all_succeeded" { next = "consume" }
+    outcome "any_failed"    { next = "done" }
   }
 
   step "consume" {
@@ -260,7 +260,7 @@ workflow "t" {
     input {
       received = steps.produce[0].tag
     }
-    outcome "success" { transition_to = "done" }
+    outcome "success" { next = "done" }
   }
 
   state "done" {
@@ -322,12 +322,12 @@ workflow "t" {
     workflow {
       step "body" {
         target = adapter.fake
-        outcome "success" { transition_to = "_continue" }
+        outcome "success" { next = "_continue" }
       }
     }
 
-    outcome "all_succeeded" { transition_to = "done" }
-    outcome "any_failed"    { transition_to = "done" }
+    outcome "all_succeeded" { next = "done" }
+    outcome "any_failed"    { next = "done" }
   }
 
   state "done" {
@@ -368,12 +368,12 @@ workflow "parent" {
     workflow {
       step "body_step" {
         target = adapter.noop
-        outcome "success" { transition_to = "_continue" }
+        outcome "success" { next = "_continue" }
       }
     }
 
-    outcome "all_succeeded" { transition_to = "done" }
-    outcome "any_failed"    { transition_to = "done" }
+    outcome "all_succeeded" { next = "done" }
+    outcome "any_failed"    { next = "done" }
   }
 
   state "done" {
@@ -428,7 +428,7 @@ workflow "parent" {
 
   step "pre" {
     target = adapter.noop_a
-    outcome "success" { transition_to = "body" }
+    outcome "success" { next = "body" }
   }
 
   step "body" {
@@ -438,17 +438,17 @@ workflow "parent" {
     workflow {
       step "inner" {
         target = adapter.noop_b
-        outcome "success" { transition_to = "_continue" }
+        outcome "success" { next = "_continue" }
       }
     }
 
-    outcome "all_succeeded" { transition_to = "post" }
-    outcome "any_failed"    { transition_to = "done" }
+    outcome "all_succeeded" { next = "post" }
+    outcome "any_failed"    { next = "done" }
   }
 
   step "post" {
     target = adapter.noop_a
-    outcome "success" { transition_to = "done" }
+    outcome "success" { next = "done" }
   }
 
   state "done" {
@@ -549,12 +549,12 @@ workflow "parent" {
     workflow {
       step "inner" {
         target = adapter.noop.parent_only
-        outcome "success" { transition_to = "_continue" }
+        outcome "success" { next = "_continue" }
       }
     }
 
-    outcome "all_succeeded" { transition_to = "done" }
-    outcome "any_failed"    { transition_to = "done" }
+    outcome "all_succeeded" { next = "done" }
+    outcome "any_failed"    { next = "done" }
   }
 
   state "done" {

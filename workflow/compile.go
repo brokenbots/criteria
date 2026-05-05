@@ -170,17 +170,16 @@ func resolveTransitions(g *FSMGraph) hcl.Diagnostics {
 		}
 	}
 	for _, step := range g.Steps {
-		for outcome, target := range step.Outcomes {
-			if target == "_continue" {
+		for outcome, co := range step.Outcomes {
+			if co.Next == "_continue" || co.Next == ReturnSentinel {
 				// _continue is a synthetic engine-internal target, not a graph node.
-				// It is only valid inside for_each do-steps; reachability validation
-				// is deferred to runtime.
+				// "return" is a reserved routing sentinel, not a declared node.
 				continue
 			}
-			if _, ok := g.Lookup(target); !ok {
+			if _, ok := g.Lookup(co.Next); !ok {
 				diags = append(diags, &hcl.Diagnostic{
 					Severity: hcl.DiagError,
-					Summary:  fmt.Sprintf("step %q outcome %q -> unknown target %q", step.Name, outcome, target),
+					Summary:  fmt.Sprintf("step %q outcome %q -> unknown target %q", step.Name, outcome, co.Next),
 				})
 			}
 		}
@@ -232,14 +231,15 @@ func checkReachability(g *FSMGraph) hcl.Diagnostics {
 	var walk func(name string)
 	walk = func(name string) {
 		if step, isStep := g.Steps[name]; isStep {
-			for _, target := range step.Outcomes {
-				if target == "_continue" {
+			for _, co := range step.Outcomes {
+				if co.Next == "_continue" || co.Next == ReturnSentinel {
 					// _continue is synthetic; the for_each's outgoing edges drive reachability.
+					// "return" is not a real node.
 					continue
 				}
-				if !reachable[target] {
-					reachable[target] = true
-					walk(target)
+				if !reachable[co.Next] {
+					reachable[co.Next] = true
+					walk(co.Next)
 				}
 			}
 			return

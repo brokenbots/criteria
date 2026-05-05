@@ -55,8 +55,8 @@ workflow "resume" {
     input {
       command = "echo ${steps.build.stdout}"
     }
-    outcome "success" { transition_to = "__done__" }
-    outcome "failure" { transition_to = "__done__" }
+    outcome "success" { next = "__done__" }
+    outcome "failure" { next = "__done__" }
   }
   state "__done__" { terminal = true }
 }
@@ -212,6 +212,8 @@ func (s *integrationSink) OnStepIterationItem(string, int, string)              
 func (s *integrationSink) OnScopeIterCursorSet(string)                                  {}
 func (s *integrationSink) OnAdapterLifecycle(string, string, string, string)            {}
 func (s *integrationSink) OnRunOutputs([]map[string]string)                             {}
+func (s *integrationSink) OnStepOutcomeDefaulted(string, string, string)                {}
+func (s *integrationSink) OnStepOutcomeUnknown(string, string)                          {}
 func (s *integrationSink) StepEventSink(step string) adapter.EventSink                  { return s }
 func (s *integrationSink) Log(stream string, line []byte)                               {}
 func (s *integrationSink) Adapter(kind string, data any)                                {}

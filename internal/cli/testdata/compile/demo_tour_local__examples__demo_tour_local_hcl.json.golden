@@ -27,11 +27,11 @@
       "outcomes": [
         {
           "name": "failure",
-          "transition_to": "aborted"
+          "next": "aborted"
         },
         {
           "name": "success",
-          "transition_to": "discover"
+          "next": "discover"
         }
       ]
     },
@@ -46,11 +46,11 @@
       "outcomes": [
         {
           "name": "failure",
-          "transition_to": "aborted"
+          "next": "aborted"
         },
         {
           "name": "success",
-          "transition_to": "process_each"
+          "next": "process_each"
         }
       ]
     },
@@ -65,11 +65,11 @@
       "outcomes": [
         {
           "name": "all_succeeded",
-          "transition_to": "review"
+          "next": "review"
         },
         {
           "name": "any_failed",
-          "transition_to": "aborted"
+          "next": "aborted"
         }
       ]
     },
@@ -84,11 +84,11 @@
       "outcomes": [
         {
           "name": "failure",
-          "transition_to": "aborted"
+          "next": "aborted"
         },
         {
           "name": "success",
-          "transition_to": "wait_brief"
+          "next": "wait_brief"
         }
       ]
     },
@@ -103,11 +103,11 @@
       "outcomes": [
         {
           "name": "failure",
-          "transition_to": "aborted"
+          "next": "aborted"
         },
         {
           "name": "success",
-          "transition_to": "done"
+          "next": "done"
         }
       ]
     }

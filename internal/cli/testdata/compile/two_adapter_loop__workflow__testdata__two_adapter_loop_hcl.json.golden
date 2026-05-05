@@ -30,11 +30,11 @@
       "outcomes": [
         {
           "name": "approved",
-          "transition_to": "review"
+          "next": "review"
         },
         {
           "name": "retry",
-          "transition_to": "review"
+          "next": "review"
         }
       ]
     },
@@ -46,11 +46,11 @@
       "outcomes": [
         {
           "name": "approved",
-          "transition_to": "done"
+          "next": "done"
         },
         {
           "name": "changes",
-          "transition_to": "execute"
+          "next": "execute"
         }
       ]
     }

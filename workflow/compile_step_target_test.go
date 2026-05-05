@@ -23,7 +23,7 @@ workflow "t" {
   target_state  = "done"
   step "s" {
 ` + stepBody + `
-    outcome "success" { transition_to = "done" }
+    outcome "success" { next = "done" }
   }
   state "done" { terminal = true }
 }
@@ -69,7 +69,7 @@ workflow "t" {
   }
   step "s" {
     target = subworkflow.inner
-    outcome "success" { transition_to = "done" }
+    outcome "success" { next = "done" }
   }
   state "done" { terminal = true }
 }
@@ -121,7 +121,7 @@ workflow "t" {
   target_state  = "done"
   step "s" {
     target = subworkflow.nonexistent
-    outcome "success" { transition_to = "done" }
+    outcome "success" { next = "done" }
   }
   state "done" { terminal = true }
 }
@@ -148,7 +148,7 @@ workflow "t" {
   target_state  = "done"
   step "s" {
     adapter = adapter.noop.default
-    outcome "success" { transition_to = "done" }
+    outcome "success" { next = "done" }
   }
   state "done" { terminal = true }
 }
@@ -189,7 +189,7 @@ workflow "t" {
   initial_state = "s"
   target_state  = "done"
   step "s" {
-    outcome "success" { transition_to = "done" }
+    outcome "success" { next = "done" }
   }
   state "done" { terminal = true }
 }
@@ -218,7 +218,7 @@ workflow "t" {
   step "s" {
     target      = adapter.noop.default
     environment = shell.ci
-    outcome "success" { transition_to = "done" }
+    outcome "success" { next = "done" }
   }
   state "done" { terminal = true }
 }
@@ -250,7 +250,7 @@ workflow "t" {
   step "s" {
     target      = adapter.noop.default
     environment = shell.missing
-    outcome "success" { transition_to = "done" }
+    outcome "success" { next = "done" }
   }
   state "done" { terminal = true }
 }
@@ -282,7 +282,7 @@ workflow "t" {
   step "s" {
     target      = adapter.noop.default
     environment = "shell.ci"
-    outcome "success" { transition_to = "done" }
+    outcome "success" { next = "done" }
   }
   state "done" { terminal = true }
 }
@@ -324,7 +324,7 @@ workflow "t" {
     input {
       greeting = "hello"
     }
-    outcome "success" { transition_to = "done" }
+    outcome "success" { next = "done" }
   }
   state "done" { terminal = true }
 }
@@ -377,7 +377,7 @@ workflow "t" {
     input {
       typo = "oops"
     }
-    outcome "success" { transition_to = "done" }
+    outcome "success" { next = "done" }
   }
   state "done" { terminal = true }
 }
@@ -420,7 +420,7 @@ workflow "t" {
     input {
       typo = each.value
     }
-    outcome "success" { transition_to = "done" }
+    outcome "success" { next = "done" }
   }
   state "done" { terminal = true }
 }
@@ -468,7 +468,7 @@ workflow "t" {
   step "s" {
     target      = subworkflow.inner
     environment = shell.ci
-    outcome "success" { transition_to = "done" }
+    outcome "success" { next = "done" }
   }
   state "done" { terminal = true }
 }
@@ -509,7 +509,7 @@ workflow "t" {
     for_each    = ["a"]
     target      = subworkflow.inner
     environment = shell.ci
-    outcome "success" { transition_to = "done" }
+    outcome "success" { next = "done" }
   }
   state "done" { terminal = true }
 }

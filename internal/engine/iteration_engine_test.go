@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hashicorp/hcl/v2"
+	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/zclconf/go-cty/cty"
 
 	"github.com/brokenbots/criteria/internal/adapter"
@@ -86,8 +88,8 @@ workflow "t" {
   step "items" {
     target = adapter.fake
     for_each = ["alpha", "beta", "gamma"]
-    outcome "all_succeeded" { transition_to = "done" }
-    outcome "any_failed"    { transition_to = "done" }
+    outcome "all_succeeded" { next = "done" }
+    outcome "any_failed"    { next = "done" }
   }
   state "done" {
     terminal = true
@@ -127,8 +129,8 @@ workflow "t" {
   step "items" {
     target = adapter.fake
     for_each = ["a", "b"]
-    outcome "all_succeeded" { transition_to = "done" }
-    outcome "any_failed"    { transition_to = "done" }
+    outcome "all_succeeded" { next = "done" }
+    outcome "any_failed"    { next = "done" }
   }
   state "done" {
     terminal = true
@@ -163,8 +165,8 @@ workflow "t" {
   step "items" {
     target = adapter.fake
     for_each = []
-    outcome "all_succeeded" { transition_to = "done" }
-    outcome "any_failed"    { transition_to = "done" }
+    outcome "all_succeeded" { next = "done" }
+    outcome "any_failed"    { next = "done" }
   }
   state "done" {
     terminal = true
@@ -201,8 +203,8 @@ workflow "t" {
   step "n" {
     target = adapter.fake
     count   = 4
-    outcome "all_succeeded" { transition_to = "done" }
-    outcome "any_failed"    { transition_to = "done" }
+    outcome "all_succeeded" { next = "done" }
+    outcome "any_failed"    { next = "done" }
   }
   state "done" {
     terminal = true
@@ -237,8 +239,8 @@ workflow "t" {
     target = adapter.fake
     for_each   = ["a", "b", "c"]
     on_failure = "abort"
-    outcome "all_succeeded" { transition_to = "done" }
-    outcome "any_failed"    { transition_to = "done" }
+    outcome "all_succeeded" { next = "done" }
+    outcome "any_failed"    { next = "done" }
   }
   state "done" {
     terminal = true
@@ -275,8 +277,8 @@ workflow "t" {
     target = adapter.fake
     for_each   = ["a", "b", "c"]
     on_failure = "ignore"
-    outcome "all_succeeded" { transition_to = "done" }
-    outcome "any_failed"    { transition_to = "done" }
+    outcome "all_succeeded" { next = "done" }
+    outcome "any_failed"    { next = "done" }
   }
   state "done" {
     terminal = true
@@ -313,12 +315,12 @@ workflow "t" {
   step "items" {
     target = adapter.fake
     for_each = ["a", "b"]
-    outcome "all_succeeded" { transition_to = "post" }
-    outcome "any_failed"    { transition_to = "post" }
+    outcome "all_succeeded" { next = "post" }
+    outcome "any_failed"    { next = "post" }
   }
   step "post" {
     target = adapter.fake
-    outcome "success" { transition_to = "done" }
+    outcome "success" { next = "done" }
   }
   state "done" {
     terminal = true
@@ -373,11 +375,11 @@ workflow "t" {
     workflow {
       step "body" {
         target = adapter.fake
-        outcome "success" { transition_to = "_continue" }
+        outcome "success" { next = "_continue" }
       }
     }
-    outcome "all_succeeded" { transition_to = "done" }
-    outcome "any_failed"    { transition_to = "done" }
+    outcome "all_succeeded" { next = "done" }
+    outcome "any_failed"    { next = "done" }
   }
   state "done" {
     terminal = true
@@ -421,15 +423,15 @@ workflow "t" {
     workflow {
       step "prepare" {
         target = adapter.fake
-        outcome "success" { transition_to = "verify" }
+        outcome "success" { next = "verify" }
       }
       step "verify" {
         target = adapter.fake
-        outcome "success" { transition_to = "_continue" }
+        outcome "success" { next = "_continue" }
       }
     }
-    outcome "all_succeeded" { transition_to = "done" }
-    outcome "any_failed"    { transition_to = "done" }
+    outcome "all_succeeded" { next = "done" }
+    outcome "any_failed"    { next = "done" }
   }
   state "done" {
     terminal = true
@@ -468,8 +470,8 @@ workflow "t" {
     input {
       label = "v:${each.value},i:${each._idx}"
     }
-    outcome "all_succeeded" { transition_to = "done" }
-    outcome "any_failed"    { transition_to = "done" }
+    outcome "all_succeeded" { next = "done" }
+    outcome "any_failed"    { next = "done" }
   }
   state "done" {
     terminal = true
@@ -572,8 +574,8 @@ workflow "t" {
   step "items" {
     target = adapter.fake
     for_each = ["a", "b", "c"]
-    outcome "all_succeeded" { transition_to = "done" }
-    outcome "any_failed"    { transition_to = "done" }
+    outcome "all_succeeded" { next = "done" }
+    outcome "any_failed"    { next = "done" }
   }
   state "done" {
     terminal = true
@@ -714,8 +716,8 @@ workflow "t" {
     input {
       label = "k:${each.key},t:${each._total}"
     }
-    outcome "all_succeeded" { transition_to = "done" }
-    outcome "any_failed"    { transition_to = "done" }
+    outcome "all_succeeded" { next = "done" }
+    outcome "any_failed"    { next = "done" }
   }
   state "done" {
     terminal = true
@@ -757,8 +759,8 @@ workflow "t" {
     input {
       label = "${each.value},prevnull:${each._prev == null}"
     }
-    outcome "all_succeeded" { transition_to = "done" }
-    outcome "any_failed"    { transition_to = "done" }
+    outcome "all_succeeded" { next = "done" }
+    outcome "any_failed"    { next = "done" }
   }
   state "done" {
     terminal = true
@@ -802,8 +804,8 @@ workflow "t" {
     target = adapter.fake
     for_each   = ["a", "b", "c"]
     on_failure = "continue"
-    outcome "all_succeeded" { transition_to = "done" }
-    outcome "any_failed"    { transition_to = "done" }
+    outcome "all_succeeded" { next = "done" }
+    outcome "any_failed"    { next = "done" }
   }
   state "done" {
     terminal = true
@@ -842,8 +844,8 @@ workflow "t" {
     target = adapter.fake
     for_each   = ["a", "b", "c"]
     on_failure = "abort"
-    outcome "all_succeeded" { transition_to = "done" }
-    outcome "any_failed"    { transition_to = "done" }
+    outcome "all_succeeded" { next = "done" }
+    outcome "any_failed"    { next = "done" }
   }
   state "done" {
     terminal = true
@@ -896,8 +898,8 @@ workflow "t" {
   step "produce" {
     target = adapter.fake_produce
     for_each = ["x", "y"]
-    outcome "all_succeeded" { transition_to = "done" }
-    outcome "any_failed"    { transition_to = "done" }
+    outcome "all_succeeded" { next = "done" }
+    outcome "any_failed"    { next = "done" }
   }
   state "done" {
     terminal = true
@@ -943,8 +945,8 @@ workflow "t" {
     input {
       label = "${each.value}"
     }
-    outcome "all_succeeded" { transition_to = "done" }
-    outcome "any_failed"    { transition_to = "done" }
+    outcome "all_succeeded" { next = "done" }
+    outcome "any_failed"    { next = "done" }
   }
   state "done" {
     terminal = true
@@ -997,11 +999,11 @@ workflow "t" {
       step "inner" {
         target = adapter.fake
         input   { label = "${each.value}" }
-        outcome "success" { transition_to = "_continue" }
+        outcome "success" { next = "_continue" }
       }
     }
-    outcome "all_succeeded" { transition_to = "done" }
-    outcome "any_failed"    { transition_to = "done" }
+    outcome "all_succeeded" { next = "done" }
+    outcome "any_failed"    { next = "done" }
   }
   state "done" {
     terminal = true
@@ -1054,16 +1056,16 @@ workflow "t" {
       step "body" {
         target = adapter.fake
         input   { label = "${each.value}" }
-        outcome "success" { transition_to = "_continue" }
-        outcome "failure" { transition_to = "aborted" }
+        outcome "success" { next = "_continue" }
+        outcome "failure" { next = "aborted" }
       }
       state "aborted" {
         terminal = true
         success  = false
       }
     }
-    outcome "all_succeeded" { transition_to = "done" }
-    outcome "any_failed"    { transition_to = "done" }
+    outcome "all_succeeded" { next = "done" }
+    outcome "any_failed"    { next = "done" }
   }
 
   state "done" {
@@ -1137,11 +1139,11 @@ workflow "t" {
       }
       step "body" {
         target = adapter.fake
-        outcome "success" { transition_to = "_continue" }
+        outcome "success" { next = "_continue" }
       }
     }
-    outcome "all_succeeded" { transition_to = "consume" }
-    outcome "any_failed"    { transition_to = "done" }
+    outcome "all_succeeded" { next = "consume" }
+    outcome "any_failed"    { next = "done" }
   }
 
   step "consume" {
@@ -1149,7 +1151,7 @@ workflow "t" {
     input {
       got = "${steps.produce[0].score}"
     }
-    outcome "success" { transition_to = "done" }
+    outcome "success" { next = "done" }
   }
 
   state "done" {
@@ -1200,8 +1202,8 @@ workflow "t" {
   step "produce" {
     target = adapter.fake_produce
     for_each = ["x", "y"]
-    outcome "all_succeeded" { transition_to = "consume" }
-    outcome "any_failed"    { transition_to = "done" }
+    outcome "all_succeeded" { next = "consume" }
+    outcome "any_failed"    { next = "done" }
   }
 
   step "consume" {
@@ -1210,7 +1212,7 @@ workflow "t" {
       first_val  = "${steps.produce[0].val}"
       second_val = "${steps.produce[1].val}"
     }
-    outcome "success" { transition_to = "done" }
+    outcome "success" { next = "done" }
   }
 
   state "done" {
@@ -1265,8 +1267,8 @@ workflow "t" {
       label      = "${each.value}"
       prev_null  = "${each._prev == null}"
     }
-    outcome "all_succeeded" { transition_to = "done" }
-    outcome "any_failed"    { transition_to = "done" }
+    outcome "all_succeeded" { next = "done" }
+    outcome "any_failed"    { next = "done" }
   }
 
   state "done" {
@@ -1319,12 +1321,12 @@ workflow "t" {
         target = adapter.fake
         for_each = ["x", "y"]
         input    { label = "${each.value}" }
-        outcome "all_succeeded" { transition_to = "_continue" }
-        outcome "any_failed"    { transition_to = "_continue" }
+        outcome "all_succeeded" { next = "_continue" }
+        outcome "any_failed"    { next = "_continue" }
       }
     }
-    outcome "all_succeeded" { transition_to = "done" }
-    outcome "any_failed"    { transition_to = "done" }
+    outcome "all_succeeded" { next = "done" }
+    outcome "any_failed"    { next = "done" }
   }
 
   state "done" {
@@ -1376,8 +1378,8 @@ workflow "t" {
     input {
       prev_null = "${each._prev == null}"
     }
-    outcome "all_succeeded" { transition_to = "done" }
-    outcome "any_failed"    { transition_to = "done" }
+    outcome "all_succeeded" { next = "done" }
+    outcome "any_failed"    { next = "done" }
   }
   state "done" {
     terminal = true
@@ -1457,13 +1459,13 @@ workflow "t" {
     workflow {
       step "body" {
         target = adapter.seq
-        outcome "success" { transition_to = "_continue" }
-        outcome "failure" { transition_to = "bail" }
+        outcome "success" { next = "_continue" }
+        outcome "failure" { next = "bail" }
       }
       state "bail" { terminal = true }
     }
-    outcome "all_succeeded" { transition_to = "done" }
-    outcome "any_failed"    { transition_to = "done" }
+    outcome "all_succeeded" { next = "done" }
+    outcome "any_failed"    { next = "done" }
   }
   state "done" {
     terminal = true
@@ -1494,15 +1496,15 @@ workflow "t" {
   step "produce" {
     target = adapter.out
     for_each = { alpha = "a", beta = "b" }
-    outcome "all_succeeded" { transition_to = "consume" }
-    outcome "any_failed"    { transition_to = "consume" }
+    outcome "all_succeeded" { next = "consume" }
+    outcome "any_failed"    { next = "consume" }
   }
   step "consume" {
     target = adapter.capture
     input {
       got_alpha = "${steps.produce.alpha.val}"
     }
-    outcome "success" { transition_to = "done" }
+    outcome "success" { next = "done" }
   }
   state "done" {
     terminal = true
@@ -1642,5 +1644,77 @@ func TestIter_Keys_SerializeRestore(t *testing.T) {
 		if got, _ := keysSlice[i].(string); got != w {
 			t.Errorf("keys[%d]: got %q want %q", i, got, w)
 		}
+	}
+}
+
+// TestIter_AggregateOutcome_ReturnOutputProjection verifies that when an
+// iterating step's aggregate outcome declares output = { ... } and next =
+// "return", the projected outputs are correctly evaluated and emitted via
+// OnRunOutputs on the top-level return path.
+//
+// Prior to the fix, finishIterationInGraph returned co.Next without evaluating
+// co.OutputExpr, so st.ReturnOutputs was never populated and the run exited
+// with no outputs.
+func TestIter_AggregateOutcome_ReturnOutputProjection(t *testing.T) {
+	// parseExprIter is a local helper so this test file stays standalone.
+	parseExprIter := func(src string) hcl.Expression {
+		t.Helper()
+		expr, diags := hclsyntax.ParseExpression([]byte(src), "test.hcl", hcl.Pos{Line: 1, Column: 1})
+		if diags.HasErrors() {
+			t.Fatalf("parseExprIter(%q): %s", src, diags.Error())
+		}
+		return expr
+	}
+
+	step := &workflow.StepNode{
+		Name:       "looper",
+		TargetKind: workflow.StepTargetAdapter,
+		AdapterRef: "fake.default",
+		Input:      map[string]string{},
+		ForEach:    parseExprIter(`["a", "b"]`),
+		Outcomes: map[string]*workflow.CompiledOutcome{
+			"success": {
+				Name: "success",
+				Next: "_continue",
+			},
+			"all_succeeded": {
+				Name:       "all_succeeded",
+				Next:       workflow.ReturnSentinel,
+				OutputExpr: parseExprIter(`{ done = "yes" }`),
+			},
+		},
+	}
+	graph := &workflow.FSMGraph{
+		Name:         "t",
+		InitialState: "looper",
+		TargetState:  "done",
+		Policy:       workflow.DefaultPolicy,
+		Steps:        map[string]*workflow.StepNode{"looper": step},
+		States:       map[string]*workflow.StateNode{"done": {Name: "done", Terminal: true, Success: true}},
+		Adapters:     map[string]*workflow.AdapterNode{"fake.default": {Type: "fake", Name: "default"}},
+		AdapterOrder: []string{"fake.default"},
+		Subworkflows: map[string]*workflow.SubworkflowNode{},
+		Variables:    map[string]*workflow.VariableNode{},
+		Environments: map[string]*workflow.EnvironmentNode{},
+	}
+
+	sink := &outcomeSink{}
+	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
+		"fake":         &fakePlugin{name: "fake", outcome: "success"},
+		"fake.default": &fakePlugin{name: "fake", outcome: "success"},
+	}}
+	if err := NewTestEngine(graph, loader, sink).Run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if !sink.terminalOK {
+		t.Error("expected terminalOK=true")
+	}
+
+	outputMap := make(map[string]string)
+	for _, o := range sink.outputs {
+		outputMap[o["name"]] = o["value"]
+	}
+	if got, want := outputMap["done"], `"yes"`; got != want {
+		t.Errorf("aggregate return output: done = %q, want %q", got, want)
 	}
 }

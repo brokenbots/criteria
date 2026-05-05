@@ -121,8 +121,8 @@ workflow "shell_resume" {
     input {
       command = "echo hello"
     }
-    outcome "success" { transition_to = "done" }
-    outcome "failure" { transition_to = "failed" }
+    outcome "success" { next = "done" }
+    outcome "failure" { next = "failed" }
   }
 
   state "done" {
@@ -154,8 +154,8 @@ workflow "max_retry" {
     input {
       command = "echo hi"
     }
-    outcome "success" { transition_to = "done" }
-    outcome "failure" { transition_to = "failed" }
+    outcome "success" { next = "done" }
+    outcome "failure" { next = "failed" }
   }
 
   state "done" {
@@ -977,8 +977,8 @@ workflow "max_visits_test" {
     input {
       command = "echo hi"
     }
-    outcome "success" { transition_to = "done" }
-    outcome "failure" { transition_to = "failed" }
+    outcome "success" { next = "done" }
+    outcome "failure" { next = "failed" }
   }
 
   state "done" {
@@ -1134,8 +1134,8 @@ workflow "needs_approval" {
   approval "review" {
     approvers = ["alice"]
     reason    = "ship it?"
-    outcome "approved" { transition_to = "done" }
-    outcome "rejected" { transition_to = "done" }
+    outcome "approved" { next = "done" }
+    outcome "rejected" { next = "done" }
   }
 
   state "done" {
@@ -1193,8 +1193,8 @@ workflow "iter_cursor" {
   step "execute" {
     target = adapter.noop.default
     for_each  = ["a", "b"]
-    outcome "all_succeeded" { transition_to = "done" }
-    outcome "any_failed"    { transition_to = "done" }
+    outcome "all_succeeded" { next = "done" }
+    outcome "any_failed"    { next = "done" }
   }
 
   state "done" {

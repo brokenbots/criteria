@@ -87,6 +87,14 @@ type Sink interface {
 	// outputs is a list of (name, value, declared_type) tuples in declaration order.
 	// This method is called before OnRunCompleted.
 	OnRunOutputs(outputs []map[string]string)
+	// OnStepOutcomeDefaulted is emitted when a step produces an outcome not in
+	// its declared set and default_outcome is applied (W15). original is the
+	// outcome name the adapter returned; mapped is the default_outcome name used.
+	OnStepOutcomeDefaulted(step, original, mapped string)
+	// OnStepOutcomeUnknown is emitted when a step produces an outcome not in its
+	// declared set and no default_outcome is configured (W15). This precedes a
+	// run failure.
+	OnStepOutcomeUnknown(step, outcome string)
 	// StepEventSink returns the per-step adapter sink (logs + adapter events).
 	StepEventSink(step string) adapter.EventSink
 }
@@ -244,7 +252,13 @@ func (e *Engine) runLoop(ctx context.Context, sessions *plugin.SessionManager, c
 		if err != nil {
 			return e.handleEvalError(st, err)
 		}
-		next = e.routeIteratingStep(st, next)
+		next, err = e.routeIteratingStep(st, next)
+		if err != nil {
+			return e.handleEvalError(st, err)
+		}
+		if next == workflow.ReturnSentinel {
+			return e.handleReturnExit(st)
+		}
 		e.advanceTo(st, next)
 	}
 }
@@ -252,7 +266,7 @@ func (e *Engine) runLoop(ctx context.Context, sessions *plugin.SessionManager, c
 // routeIteratingStep handles post-step routing for steps with active iteration
 // cursors (W10). Delegates to routeIteratingStepInGraph using the engine's
 // own graph and sink. See routeIteratingStepInGraph for full semantics.
-func (e *Engine) routeIteratingStep(st *RunState, next string) string {
+func (e *Engine) routeIteratingStep(st *RunState, next string) (string, error) {
 	return routeIteratingStepInGraph(st, next, e.graph, e.sink)
 }
 
@@ -265,10 +279,10 @@ func (e *Engine) routeIteratingStep(st *RunState, next string) string {
 //   - More iterations remain → re-bind each.*, emit started event, re-enter step.
 //   - All iterations done (or on_failure=abort after failure) → pop cursor,
 //     emit completed event, return aggregate outcome target from graph.
-func routeIteratingStepInGraph(st *RunState, next string, graph *workflow.FSMGraph, sink Sink) string { //nolint:funlen // iteration router is inherently stateful; splitting adds indirection
+func routeIteratingStepInGraph(st *RunState, next string, graph *workflow.FSMGraph, sink Sink) (string, error) { //nolint:funlen // iteration router is inherently stateful; splitting adds indirection
 	cur := st.TopCursor()
 	if cur == nil || !cur.InProgress {
-		return next
+		return next, nil
 	}
 
 	stepName := cur.StepName
@@ -276,7 +290,7 @@ func routeIteratingStepInGraph(st *RunState, next string, graph *workflow.FSMGra
 	// When the step has a workflow body (_continue comes from the body's
 	// terminal state), next will be "_continue".
 	if st.Current != stepName && next != "_continue" {
-		return next
+		return next, nil
 	}
 
 	// Record outcome for this iteration.
@@ -323,7 +337,7 @@ func routeIteratingStepInGraph(st *RunState, next string, graph *workflow.FSMGra
 			sink.OnScopeIterCursorSet(curJSON)
 		}
 		sink.OnStepIterationStarted(stepName, cur.Index, workflow.CtyValueToString(item), cur.AnyFailed)
-		return stepName // re-enter the same step
+		return stepName, nil // re-enter the same step
 	}
 
 	// All iterations done.
@@ -332,15 +346,18 @@ func routeIteratingStepInGraph(st *RunState, next string, graph *workflow.FSMGra
 
 // finishIterationInGraph closes out an iteration loop: pops the cursor, clears
 // each.* bindings, emits OnStepIterationCompleted, and returns the aggregate
-// outcome target looked up from graph.
-func finishIterationInGraph(st *RunState, stepName string, graph *workflow.FSMGraph, sink Sink) string {
+// outcome target looked up from graph. When the aggregate outcome routes via
+// next = "return" and declares an output expression, the expression is
+// evaluated and the result stored in st.ReturnOutputs before the sentinel is
+// returned — matching the single-step return path in applyOutcome.
+func finishIterationInGraph(st *RunState, stepName string, graph *workflow.FSMGraph, sink Sink) (string, error) {
 	cur := st.PopCursor()
 	st.Vars = workflow.ClearEachBinding(st.Vars)
 	sink.OnScopeIterCursorSet("") // cursor cleared
 
 	step, ok := graph.Steps[stepName]
 	if !ok {
-		return stepName
+		return stepName, nil
 	}
 
 	aggregateOutcome := "all_succeeded"
@@ -348,15 +365,24 @@ func finishIterationInGraph(st *RunState, stepName string, graph *workflow.FSMGr
 		aggregateOutcome = "any_failed"
 	}
 
-	target, ok := step.Outcomes[aggregateOutcome]
+	co, ok := step.Outcomes[aggregateOutcome]
 	if !ok {
 		// Fall back to all_succeeded (required by compile; missing any_failed is
 		// a compile warning, not an error).
-		target = step.Outcomes["all_succeeded"]
+		co = step.Outcomes["all_succeeded"]
 	}
 
-	sink.OnStepIterationCompleted(stepName, aggregateOutcome, target)
-	return target
+	sink.OnStepIterationCompleted(stepName, aggregateOutcome, co.Next)
+
+	if co.Next == workflow.ReturnSentinel && co.OutputExpr != nil {
+		projected, err := evalOutcomeOutputProjection(co.OutputExpr, nil, st)
+		if err != nil {
+			return "", fmt.Errorf("step %q aggregate outcome %q: output projection: %w", stepName, aggregateOutcome, err)
+		}
+		st.ReturnOutputs = projected
+	}
+
+	return co.Next, nil
 }
 
 // returns the restored scope unchanged. For fresh runs it seeds from graph
@@ -448,7 +474,44 @@ func (e *Engine) handleEvalError(st *RunState, err error) error {
 	return err
 }
 
-// cloneVisits returns a shallow copy of the visits map, or nil if the input is nil.
+// handleReturnExit handles top-level runs that exit via next = "return".
+// The projected outputs in st.ReturnOutputs are emitted as OnRunOutputs
+// (if non-empty) and the run is completed successfully with no named final state.
+func (e *Engine) handleReturnExit(st *RunState) error {
+	e.liveRunState = nil
+	e.lastVisits = st.Visits
+
+	if len(st.ReturnOutputs) > 0 {
+		outputs := formatReturnOutputs(st.ReturnOutputs)
+		if len(outputs) > 0 {
+			e.sink.OnRunOutputs(outputs)
+		}
+	}
+	e.sink.OnRunCompleted("", true)
+	return nil
+}
+
+// formatReturnOutputs converts the ReturnOutputs cty.Value map to the
+// []map[string]string tuple format expected by OnRunOutputs.
+func formatReturnOutputs(returnOutputs map[string]cty.Value) []map[string]string {
+	if len(returnOutputs) == 0 {
+		return nil
+	}
+	out := make([]map[string]string, 0, len(returnOutputs))
+	for name, val := range returnOutputs {
+		rendered, err := renderCtyValue(val)
+		if err != nil {
+			rendered = fmt.Sprintf("%v", val)
+		}
+		out = append(out, map[string]string{
+			"name":          name,
+			"value":         rendered,
+			"declared_type": "",
+		})
+	}
+	return out
+}
+
 func cloneVisits(v map[string]int) map[string]int {
 	if v == nil {
 		return nil
