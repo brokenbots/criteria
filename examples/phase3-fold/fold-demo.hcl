@@ -15,45 +15,45 @@ workflow "fold-demo" {
   version       = "0.1"
   initial_state = "greet"
   target_state  = "done"
+}
 
-  adapter "shell" "default" {
-    config { }
-  }
+adapter "shell" "default" {
+  config { }
+}
 
-  variable "name" {
-    type        = "string"
-    default     = "world"
-    description = "Name to greet"
-  }
+variable "name" {
+  type        = "string"
+  default     = "world"
+  description = "Name to greet"
+}
 
-  # Compile-time constants.
-  local "greeting" {
-    value = "Hello, ${var.name}!"
-  }
+# Compile-time constants.
+local "greeting" {
+  value = "Hello, ${var.name}!"
+}
 
-  local "banner_line" {
-    value = "---[ ${local.greeting} ]---"
-  }
+local "banner_line" {
+  value = "---[ ${local.greeting} ]---"
+}
 
-  # Compile-time file path — file(local.prompt_path) is validated at compile.
-  local "prompt_path" {
-    value = "${var.name}_prompt.txt"
-  }
+# Compile-time file path — file(local.prompt_path) is validated at compile.
+local "prompt_path" {
+  value = "${var.name}_prompt.txt"
+}
 
-  step "greet" {
-    target = adapter.shell.default
-    input {
-      # file(local.prompt_path) is folded and validated at compile time.
-      # The default var.name="world" resolves to "world_prompt.txt".
-      command = "printf '%s\\n%s' '${local.banner_line}' '${file(local.prompt_path)}'"
-    }
-    outcome "success" { next = "done" }
-    outcome "failure" { next = "failed" }
+step "greet" {
+  target = adapter.shell.default
+  input {
+    # file(local.prompt_path) is folded and validated at compile time.
+    # The default var.name="world" resolves to "world_prompt.txt".
+    command = "printf '%s\\n%s' '${local.banner_line}' '${file(local.prompt_path)}'"
   }
+  outcome "success" { next = "done" }
+  outcome "failure" { next = "failed" }
+}
 
-  state "done"   { terminal = true }
-  state "failed" {
-    terminal = true
-    success  = false
-  }
+state "done"   { terminal = true }
+state "failed" {
+  terminal = true
+  success  = false
 }

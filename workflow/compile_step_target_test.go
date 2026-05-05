@@ -16,17 +16,17 @@ import (
 func minimalWorkflow(extraDecls, stepBody string) string {
 	return `
 workflow "t" {
-  adapter "noop" "default" {}
-` + extraDecls + `
   version       = "0.1"
   initial_state = "s"
   target_state  = "done"
-  step "s" {
-` + stepBody + `
-    outcome "success" { next = "done" }
-  }
-  state "done" { terminal = true }
 }
+adapter "noop" "default" {}
+` + extraDecls + `
+step "s" {
+` + stepBody + `
+  outcome "success" { next = "done" }
+}
+state "done" { terminal = true }
 `
 }
 
@@ -60,19 +60,20 @@ func TestCompileStep_TargetSubworkflow(t *testing.T) {
 
 	src := `
 workflow "t" {
-  adapter "noop" "default" {}
   version       = "0.1"
   initial_state = "s"
   target_state  = "done"
-  subworkflow "inner" {
-    source = "inner"
-  }
-  step "s" {
-    target = subworkflow.inner
-    outcome "success" { next = "done" }
-  }
-  state "done" { terminal = true }
 }
+
+adapter "noop" "default" {}
+subworkflow "inner" {
+  source = "inner"
+}
+step "s" {
+  target = subworkflow.inner
+  outcome "success" { next = "done" }
+}
+state "done" { terminal = true }
 `
 	spec, diags := Parse("t.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -115,16 +116,17 @@ func TestCompileStep_TargetUnresolvedAdapter(t *testing.T) {
 func TestCompileStep_TargetUnresolvedSubworkflow(t *testing.T) {
 	src := `
 workflow "t" {
-  adapter "noop" "default" {}
   version       = "0.1"
   initial_state = "s"
   target_state  = "done"
-  step "s" {
-    target = subworkflow.nonexistent
-    outcome "success" { next = "done" }
-  }
-  state "done" { terminal = true }
 }
+
+adapter "noop" "default" {}
+step "s" {
+  target = subworkflow.nonexistent
+  outcome "success" { next = "done" }
+}
+state "done" { terminal = true }
 `
 	spec, diags := Parse("t.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -142,16 +144,17 @@ workflow "t" {
 func TestCompileStep_LegacyAdapterAttr_HardError(t *testing.T) {
 	src := `
 workflow "t" {
-  adapter "noop" "default" {}
   version       = "0.1"
   initial_state = "s"
   target_state  = "done"
-  step "s" {
-    adapter = adapter.noop.default
-    outcome "success" { next = "done" }
-  }
-  state "done" { terminal = true }
 }
+
+adapter "noop" "default" {}
+step "s" {
+  adapter = adapter.noop.default
+  outcome "success" { next = "done" }
+}
+state "done" { terminal = true }
 `
 	_, diags := Parse("t.hcl", []byte(src))
 	if !diags.HasErrors() {
@@ -184,15 +187,16 @@ func TestCompileStep_TargetStepKindRejected(t *testing.T) {
 func TestCompileStep_MissingTarget_Error(t *testing.T) {
 	src := `
 workflow "t" {
-  adapter "noop" "default" {}
   version       = "0.1"
   initial_state = "s"
   target_state  = "done"
-  step "s" {
-    outcome "success" { next = "done" }
-  }
-  state "done" { terminal = true }
 }
+
+adapter "noop" "default" {}
+step "s" {
+  outcome "success" { next = "done" }
+}
+state "done" { terminal = true }
 `
 	spec, diags := Parse("t.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -210,18 +214,19 @@ workflow "t" {
 func TestCompileStep_EnvironmentOverride_Resolves(t *testing.T) {
 	src := `
 workflow "t" {
-  adapter "noop" "default" {}
-  environment "shell" "ci" {}
   version       = "0.1"
   initial_state = "s"
   target_state  = "done"
-  step "s" {
-    target      = adapter.noop.default
-    environment = shell.ci
-    outcome "success" { next = "done" }
-  }
-  state "done" { terminal = true }
 }
+
+adapter "noop" "default" {}
+environment "shell" "ci" {}
+step "s" {
+  target      = adapter.noop.default
+  environment = shell.ci
+  outcome "success" { next = "done" }
+}
+state "done" { terminal = true }
 `
 	spec, diags := Parse("t.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -243,17 +248,18 @@ workflow "t" {
 func TestCompileStep_EnvironmentOverride_Missing(t *testing.T) {
 	src := `
 workflow "t" {
-  adapter "noop" "default" {}
   version       = "0.1"
   initial_state = "s"
   target_state  = "done"
-  step "s" {
-    target      = adapter.noop.default
-    environment = shell.missing
-    outcome "success" { next = "done" }
-  }
-  state "done" { terminal = true }
 }
+
+adapter "noop" "default" {}
+step "s" {
+  target      = adapter.noop.default
+  environment = shell.missing
+  outcome "success" { next = "done" }
+}
+state "done" { terminal = true }
 `
 	spec, diags := Parse("t.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -274,18 +280,19 @@ workflow "t" {
 func TestCompileStep_EnvironmentOverride_QuotedStringRejected(t *testing.T) {
 	src := `
 workflow "t" {
-  adapter "noop" "default" {}
-  environment "shell" "ci" {}
   version       = "0.1"
   initial_state = "s"
   target_state  = "done"
-  step "s" {
-    target      = adapter.noop.default
-    environment = "shell.ci"
-    outcome "success" { next = "done" }
-  }
-  state "done" { terminal = true }
 }
+
+adapter "noop" "default" {}
+environment "shell" "ci" {}
+step "s" {
+  target      = adapter.noop.default
+  environment = "shell.ci"
+  outcome "success" { next = "done" }
+}
+state "done" { terminal = true }
 `
 	spec, diags := Parse("t.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -312,22 +319,23 @@ func TestCompileStep_SubworkflowStepInput(t *testing.T) {
 
 	src := `
 workflow "t" {
-  adapter "noop" "default" {}
   version       = "0.1"
   initial_state = "s"
   target_state  = "done"
-  subworkflow "inner" {
-    source = "inner"
-  }
-  step "s" {
-    target = subworkflow.inner
-    input {
-      greeting = "hello"
-    }
-    outcome "success" { next = "done" }
-  }
-  state "done" { terminal = true }
 }
+
+adapter "noop" "default" {}
+subworkflow "inner" {
+  source = "inner"
+}
+step "s" {
+  target = subworkflow.inner
+  input {
+    greeting = "hello"
+  }
+  outcome "success" { next = "done" }
+}
+state "done" { terminal = true }
 `
 	spec, diags := Parse("t.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -365,22 +373,23 @@ func TestCompileStep_SubworkflowStepInput_UndeclaredKeyRejected(t *testing.T) {
 
 	src := `
 workflow "t" {
-  adapter "noop" "default" {}
   version       = "0.1"
   initial_state = "s"
   target_state  = "done"
-  subworkflow "inner" {
-    source = "inner"
-  }
-  step "s" {
-    target = subworkflow.inner
-    input {
-      typo = "oops"
-    }
-    outcome "success" { next = "done" }
-  }
-  state "done" { terminal = true }
 }
+
+adapter "noop" "default" {}
+subworkflow "inner" {
+  source = "inner"
+}
+step "s" {
+  target = subworkflow.inner
+  input {
+    typo = "oops"
+  }
+  outcome "success" { next = "done" }
+}
+state "done" { terminal = true }
 `
 	spec, diags := Parse("t.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -407,23 +416,24 @@ func TestCompileStep_SubworkflowIterStepInput_UndeclaredKeyRejected(t *testing.T
 
 	src := `
 workflow "t" {
-  adapter "noop" "default" {}
   version       = "0.1"
   initial_state = "s"
   target_state  = "done"
-  subworkflow "inner" {
-    source = "inner"
-  }
-  step "s" {
-    for_each = ["a", "b"]
-    target   = subworkflow.inner
-    input {
-      typo = each.value
-    }
-    outcome "success" { next = "done" }
-  }
-  state "done" { terminal = true }
 }
+
+adapter "noop" "default" {}
+subworkflow "inner" {
+  source = "inner"
+}
+step "s" {
+  for_each = ["a", "b"]
+  target   = subworkflow.inner
+  input {
+    typo = each.value
+  }
+  outcome "success" { next = "done" }
+}
+state "done" { terminal = true }
 `
 	spec, diags := Parse("t.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -457,21 +467,22 @@ func TestCompileStep_SubworkflowTarget_EnvironmentRejected(t *testing.T) {
 
 	src := `
 workflow "t" {
-  adapter "noop" "default" {}
-  environment "shell" "ci" {}
   version       = "0.1"
   initial_state = "s"
   target_state  = "done"
-  subworkflow "inner" {
-    source = "inner"
-  }
-  step "s" {
-    target      = subworkflow.inner
-    environment = shell.ci
-    outcome "success" { next = "done" }
-  }
-  state "done" { terminal = true }
 }
+
+adapter "noop" "default" {}
+environment "shell" "ci" {}
+subworkflow "inner" {
+  source = "inner"
+}
+step "s" {
+  target      = subworkflow.inner
+  environment = shell.ci
+  outcome "success" { next = "done" }
+}
+state "done" { terminal = true }
 `
 	spec, diags := Parse("t.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -497,22 +508,23 @@ func TestCompileStep_SubworkflowIterTarget_EnvironmentRejected(t *testing.T) {
 
 	src := `
 workflow "t" {
-  adapter "noop" "default" {}
-  environment "shell" "ci" {}
   version       = "0.1"
   initial_state = "s"
   target_state  = "done"
-  subworkflow "inner" {
-    source = "inner"
-  }
-  step "s" {
-    for_each    = ["a"]
-    target      = subworkflow.inner
-    environment = shell.ci
-    outcome "success" { next = "done" }
-  }
-  state "done" { terminal = true }
 }
+
+adapter "noop" "default" {}
+environment "shell" "ci" {}
+subworkflow "inner" {
+  source = "inner"
+}
+step "s" {
+  for_each    = ["a"]
+  target      = subworkflow.inner
+  environment = shell.ci
+  outcome "success" { next = "done" }
+}
+state "done" { terminal = true }
 `
 	spec, diags := Parse("t.hcl", []byte(src))
 	if diags.HasErrors() {

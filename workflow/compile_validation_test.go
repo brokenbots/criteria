@@ -21,21 +21,21 @@ func TestValidateFoldableAttrs_AgentConfigFile(t *testing.T) {
   version       = "0.1"
   initial_state = "done"
   target_state  = "done"
+}
 
-  state "done" {
-    terminal = true
-    success  = true
-  }
+state "done" {
+  terminal = true
+  success  = true
+}
 
-  variable "prompt_file" {
-    type    = "string"
-    default = "missing.txt"
-  }
+variable "prompt_file" {
+  type    = "string"
+  default = "missing.txt"
+}
 
-  adapter "noop" "a" {
-    config {
-      prompt = file(var.prompt_file)
-    }
+adapter "noop" "a" {
+  config {
+    prompt = file(var.prompt_file)
   }
 }
 `

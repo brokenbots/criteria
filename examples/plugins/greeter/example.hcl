@@ -5,24 +5,24 @@ workflow "greeter_example" {
   version       = "0.1"
   initial_state = "greet"
   target_state  = "done"
+}
 
-  adapter "greeter" "default" {
-    config { }
+adapter "greeter" "default" {
+  config { }
+}
+
+step "greet" {
+  target = adapter.greeter.default
+  input {
+    name = "world"
   }
 
-  step "greet" {
-    target = adapter.greeter.default
-    input {
-      name = "world"
-    }
+  outcome "success" { next = "done" }
+  outcome "failure" { next = "failed" }
+}
 
-    outcome "success" { next = "done" }
-    outcome "failure" { next = "failed" }
-  }
-
-  state "done" { terminal = true }
-  state "failed" {
-    terminal = true
-    success  = false
-  }
+state "done" { terminal = true }
+state "failed" {
+  terminal = true
+  success  = false
 }

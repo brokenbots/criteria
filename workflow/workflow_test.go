@@ -7,42 +7,43 @@ import (
 
 const validHCL = `
 workflow "build_and_test" {
-  adapter "shell" "default" {}
   version       = "0.1"
   initial_state = "build"
   target_state  = "verified"
+}
 
-  step "build" {
-    target = adapter.shell.default
-    input {
-      command = "echo build"
-    }
-    timeout = "30s"
+adapter "shell" "default" {}
 
-    outcome "success" { next = "test" }
-    outcome "failure" { next = "failed" }
+step "build" {
+  target = adapter.shell.default
+  input {
+    command = "echo build"
+  }
+  timeout = "30s"
+
+  outcome "success" { next = "test" }
+  outcome "failure" { next = "failed" }
+}
+
+step "test" {
+  target = adapter.shell.default
+  input {
+    command = "echo test"
   }
 
-  step "test" {
-    target = adapter.shell.default
-    input {
-      command = "echo test"
-    }
+  outcome "success" { next = "verified" }
+  outcome "failure" { next = "failed" }
+}
 
-    outcome "success" { next = "verified" }
-    outcome "failure" { next = "failed" }
-  }
+state "verified" { terminal = true }
+state "failed" {
+  terminal = true
+  success  = false
+}
 
-  state "verified" { terminal = true }
-  state "failed" {
-    terminal = true
-    success  = false
-  }
-
-  policy {
-    max_total_steps  = 10
-    max_step_retries = 2
-  }
+policy {
+  max_total_steps  = 10
+  max_step_retries = 2
 }
 `
 
@@ -75,16 +76,17 @@ func TestParseAndCompileValid(t *testing.T) {
 func TestCompileDanglingTransition(t *testing.T) {
 	src := `
 workflow "x" {
-  adapter "shell" "default" {}
   version = "0.1"
   initial_state = "a"
   target_state  = "done"
-  step "a" {
-    target = adapter.shell.default
-    outcome "success" { next = "missing" }
-  }
-  state "done" { terminal = true }
 }
+
+adapter "shell" "default" {}
+step "a" {
+  target = adapter.shell.default
+  outcome "success" { next = "missing" }
+}
+state "done" { terminal = true }
 `
 	spec, diags := Parse("t.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -102,16 +104,17 @@ workflow "x" {
 func TestCompileNonTerminalTarget(t *testing.T) {
 	src := `
 workflow "x" {
-  adapter "shell" "default" {}
   version = "0.1"
   initial_state = "a"
   target_state  = "halfway"
-  step "a" {
-    target = adapter.shell.default
-    outcome "success" { next = "halfway" }
-  }
-  state "halfway" {}
 }
+
+adapter "shell" "default" {}
+step "a" {
+  target = adapter.shell.default
+  outcome "success" { next = "halfway" }
+}
+state "halfway" {}
 `
 	spec, _ := Parse("t.hcl", []byte(src))
 	_, diags := Compile(spec, nil)
@@ -123,20 +126,21 @@ workflow "x" {
 func TestCompileUnreachableStep(t *testing.T) {
 	src := `
 workflow "x" {
-  adapter "shell" "default" {}
   version = "0.1"
   initial_state = "a"
   target_state  = "done"
-  step "a" {
-    target = adapter.shell.default
-    outcome "success" { next = "done" }
-  }
-  step "orphan" {
-    target = adapter.shell.default
-    outcome "success" { next = "done" }
-  }
-  state "done" { terminal = true }
 }
+
+adapter "shell" "default" {}
+step "a" {
+  target = adapter.shell.default
+  outcome "success" { next = "done" }
+}
+step "orphan" {
+  target = adapter.shell.default
+  outcome "success" { next = "done" }
+}
+state "done" { terminal = true }
 `
 	spec, _ := Parse("t.hcl", []byte(src))
 	_, diags := Compile(spec, nil)
@@ -148,15 +152,16 @@ workflow "x" {
 func TestCompileMissingOutcome(t *testing.T) {
 	src := `
 workflow "x" {
-  adapter "shell" "default" {}
   version = "0.1"
   initial_state = "a"
   target_state  = "done"
-  step "a" {
-    target = adapter.shell.default
-  }
-  state "done" { terminal = true }
 }
+
+adapter "shell" "default" {}
+step "a" {
+  target = adapter.shell.default
+}
+state "done" { terminal = true }
 `
 	spec, _ := Parse("t.hcl", []byte(src))
 	_, diags := Compile(spec, nil)
@@ -168,23 +173,24 @@ workflow "x" {
 func TestCompileAllowToolsOnLifecycleStepIsError(t *testing.T) {
 	src := `
 workflow "x" {
-  adapter "copilot" "default" {}
   version       = "0.1"
   initial_state = "open"
   target_state  = "done"
-
-  step "open" {
-    target = adapter.copilot.default
-    lifecycle   = "open"
-    allow_tools = ["read_file"]
-    outcome "success" { next = "done" }
-  }
-  step "close" {
-    target = adapter.copilot.default
-    outcome "success" { next = "done" }
-  }
-  state "done" { terminal = true }
 }
+
+adapter "copilot" "default" {}
+
+step "open" {
+  target = adapter.copilot.default
+  lifecycle   = "open"
+  allow_tools = ["read_file"]
+  outcome "success" { next = "done" }
+}
+step "close" {
+  target = adapter.copilot.default
+  outcome "success" { next = "done" }
+}
+state "done" { terminal = true }
 `
 	_, diags := Parse("t.hcl", []byte(src))
 	if !diags.HasErrors() {
@@ -203,14 +209,14 @@ workflow "x" {
   version       = "0.1"
   initial_state = "run"
   target_state  = "done"
-
-  step "run" {
-    target      = adapter.shell.default
-    allow_tools = ["shell:git status"]
-    outcome "success" { next = "done" }
-  }
-  state "done" { terminal = true }
 }
+
+step "run" {
+  target      = adapter.shell.default
+  allow_tools = ["shell:git status"]
+  outcome "success" { next = "done" }
+}
+state "done" { terminal = true }
 `
 	spec, diags := Parse("t.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -228,21 +234,22 @@ workflow "x" {
 func TestCompileAllowToolsUnionedWithWorkflowLevel(t *testing.T) {
 	src := `
 workflow "x" {
-  adapter "copilot" "default" {}
   version       = "0.1"
   initial_state = "run"
   target_state  = "done"
+}
 
-  step "run" {
-    target = adapter.copilot.default
-    allow_tools = ["read_file"]
-    outcome "success" { next = "done" }
-  }
-  state "done" { terminal = true }
+adapter "copilot" "default" {}
 
-  permissions {
-    allow_tools = ["shell:echo *"]
-  }
+step "run" {
+  target = adapter.copilot.default
+  allow_tools = ["read_file"]
+  outcome "success" { next = "done" }
+}
+state "done" { terminal = true }
+
+permissions {
+  allow_tools = ["shell:echo *"]
 }
 `
 	spec, diags := Parse("t.hcl", []byte(src))

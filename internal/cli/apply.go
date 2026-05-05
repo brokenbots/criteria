@@ -34,7 +34,7 @@ func NewApplyCmd() *cobra.Command {
 	var opts applyOptions
 
 	cmd := &cobra.Command{
-		Use:   "apply <workflow.hcl>",
+		Use:   "apply <workflow.hcl|dir>",
 		Short: "Execute a workflow locally or against a server",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {

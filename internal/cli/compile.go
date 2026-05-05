@@ -26,7 +26,7 @@ func NewCompileCmd() *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:   "compile <workflow.hcl>",
+		Use:   "compile <workflow.hcl|dir>",
 		Short: "Parse and compile a workflow to JSON or DOT",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -267,12 +267,7 @@ func renderDOT(graph *workflow.FSMGraph) string {
 }
 
 func parseCompileForCli(ctx context.Context, workflowPath string, subworkflowRoots []string) (*workflow.Spec, *workflow.FSMGraph, error) {
-	src, err := os.ReadFile(workflowPath)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	spec, diags := workflow.Parse(workflowPath, src)
+	spec, diags := workflow.ParseFileOrDir(workflowPath)
 	if diags.HasErrors() {
 		return nil, nil, fmt.Errorf("parse: %s", diags.Error())
 	}
@@ -282,8 +277,13 @@ func parseCompileForCli(ctx context.Context, workflowPath string, subworkflowRoo
 	schemas := collectSchemas(ctx, loader, spec, nil)
 	defer func() { _ = loader.Shutdown(ctx) }()
 
+	workflowDir := workflowPath
+	if info, err := os.Stat(workflowPath); err == nil && !info.IsDir() {
+		workflowDir = filepath.Dir(workflowPath)
+	}
+
 	graph, diags := workflow.CompileWithOpts(spec, schemas, workflow.CompileOpts{
-		WorkflowDir:         filepath.Dir(workflowPath),
+		WorkflowDir:         workflowDir,
 		SubWorkflowResolver: &workflow.LocalSubWorkflowResolver{AllowedRoots: subworkflowRoots},
 		Schemas:             schemas,
 	})

@@ -53,18 +53,19 @@ var testSchemas = map[string]AdapterInfo{
 func TestInputRequiredFieldMissing(t *testing.T) {
 	src := `
 workflow "x" {
-  adapter "shell" "default" {}
   version       = "0.1"
   initial_state = "run"
   target_state  = "done"
-  step "run" {
-    target = adapter.shell.default
-    input {}
-    outcome "success" { next = "done" }
-    outcome "failure" { next = "done" }
-  }
-  state "done" { terminal = true }
 }
+
+adapter "shell" "default" {}
+step "run" {
+  target = adapter.shell.default
+  input {}
+  outcome "success" { next = "done" }
+  outcome "failure" { next = "done" }
+}
+state "done" { terminal = true }
 `
 	spec, diags := Parse("t.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -85,21 +86,22 @@ workflow "x" {
 func TestInputUnknownField(t *testing.T) {
 	src := `
 workflow "x" {
-  adapter "shell" "default" {}
   version       = "0.1"
   initial_state = "run"
   target_state  = "done"
-  step "run" {
-    target = adapter.shell.default
-    input {
-      command = "echo hi"
-      unknown_key = "bad"
-    }
-    outcome "success" { next = "done" }
-    outcome "failure" { next = "done" }
-  }
-  state "done" { terminal = true }
 }
+
+adapter "shell" "default" {}
+step "run" {
+  target = adapter.shell.default
+  input {
+    command = "echo hi"
+    unknown_key = "bad"
+  }
+  outcome "success" { next = "done" }
+  outcome "failure" { next = "done" }
+}
+state "done" { terminal = true }
 `
 	spec, diags := Parse("t.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -118,20 +120,21 @@ workflow "x" {
 func TestInputOnLifecycleOpenIsError(t *testing.T) {
 	src := `
 workflow "x" {
-  adapter "copilot" "default" {}
   version       = "0.1"
   initial_state = "open"
   target_state  = "done"
-  step "open" {
-    target = adapter.copilot.default
-    lifecycle = "open"
-    input {
-      prompt = "hello"
-    }
-    outcome "success" { next = "done" }
-  }
-  state "done" { terminal = true }
 }
+
+adapter "copilot" "default" {}
+step "open" {
+  target = adapter.copilot.default
+  lifecycle = "open"
+  input {
+    prompt = "hello"
+  }
+  outcome "success" { next = "done" }
+}
+state "done" { terminal = true }
 `
 	_, diags := Parse("t.hcl", []byte(src))
 	if !diags.HasErrors() {
@@ -146,29 +149,30 @@ workflow "x" {
 func TestInputOnLifecycleCloseIsError(t *testing.T) {
 	src := `
 workflow "x" {
-  adapter "copilot" "default" {}
   version       = "0.1"
   initial_state = "open"
   target_state  = "done"
-  step "open" {
-    target = adapter.copilot.default
-    lifecycle = "open"
-    outcome "success" { next = "run" }
-  }
-  step "run" {
-    target = adapter.copilot.default
-    outcome "success" { next = "close" }
-  }
-  step "close" {
-    target = adapter.copilot.default
-    lifecycle = "close"
-    input {
-      prompt = "bye"
-    }
-    outcome "success" { next = "done" }
-  }
-  state "done" { terminal = true }
 }
+
+adapter "copilot" "default" {}
+step "open" {
+  target = adapter.copilot.default
+  lifecycle = "open"
+  outcome "success" { next = "run" }
+}
+step "run" {
+  target = adapter.copilot.default
+  outcome "success" { next = "close" }
+}
+step "close" {
+  target = adapter.copilot.default
+  lifecycle = "close"
+  input {
+    prompt = "bye"
+  }
+  outcome "success" { next = "done" }
+}
+state "done" { terminal = true }
 `
 	_, diags := Parse("t.hcl", []byte(src))
 	if !diags.HasErrors() {
@@ -182,20 +186,21 @@ workflow "x" {
 func TestLegacyConfigAttributeEmitsDiagnostic(t *testing.T) {
 	src := `
 workflow "x" {
-  adapter "shell" "default" {}
   version       = "0.1"
   initial_state = "run"
   target_state  = "done"
-  step "run" {
-    target = adapter.shell.default
-    config = {
-      command = "echo old"
-    }
-    outcome "success" { next = "done" }
-    outcome "failure" { next = "done" }
-  }
-  state "done" { terminal = true }
 }
+
+adapter "shell" "default" {}
+step "run" {
+  target = adapter.shell.default
+  config = {
+    command = "echo old"
+  }
+  outcome "success" { next = "done" }
+  outcome "failure" { next = "done" }
+}
+state "done" { terminal = true }
 `
 	spec, diags := Parse("t.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -220,21 +225,22 @@ func TestInputPermissiveWhenNoSchema(t *testing.T) {
 	// When schemas = nil, any keys should be accepted without error.
 	src := `
 workflow "x" {
-  adapter "shell" "default" {}
   version       = "0.1"
   initial_state = "run"
   target_state  = "done"
-  step "run" {
-    target = adapter.shell.default
-    input {
-      command  = "echo hi"
-      extra    = "ok"
-    }
-    outcome "success" { next = "done" }
-    outcome "failure" { next = "done" }
-  }
-  state "done" { terminal = true }
 }
+
+adapter "shell" "default" {}
+step "run" {
+  target = adapter.shell.default
+  input {
+    command  = "echo hi"
+    extra    = "ok"
+  }
+  outcome "success" { next = "done" }
+  outcome "failure" { next = "done" }
+}
+state "done" { terminal = true }
 `
 	spec, diags := Parse("t.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -252,20 +258,21 @@ workflow "x" {
 func TestInputDecodesNumberAndBoolToString(t *testing.T) {
 	src := `
 workflow "x" {
-  adapter "shell" "default" {}
   version       = "0.1"
   initial_state = "run"
   target_state  = "done"
-  step "run" {
-    target = adapter.shell.default
-    input {
-      command = "echo hi"
-    }
-    outcome "success" { next = "done" }
-    outcome "failure" { next = "done" }
-  }
-  state "done" { terminal = true }
 }
+
+adapter "shell" "default" {}
+step "run" {
+  target = adapter.shell.default
+  input {
+    command = "echo hi"
+  }
+  outcome "success" { next = "done" }
+  outcome "failure" { next = "done" }
+}
+state "done" { terminal = true }
 `
 	spec, diags := Parse("t.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -284,28 +291,29 @@ func TestInputTypeMismatch_StringForNumber(t *testing.T) {
 	// max_turns is declared as ConfigFieldNumber; passing a string should fail.
 	src := `
 workflow "x" {
-  adapter "copilot" "default" {}
   version       = "0.1"
   initial_state = "open"
   target_state  = "done"
-  step "open" {
-    target = adapter.copilot.default
-    outcome "success" { next = "run" }
-  }
-  step "run" {
-    target = adapter.copilot.default
-    input {
-      prompt    = "do work"
-      max_turns = "not-a-number"
-    }
-    outcome "success" { next = "close" }
-  }
-  step "close" {
-    target = adapter.copilot.default
-    outcome "success" { next = "done" }
-  }
-  state "done" { terminal = true }
 }
+
+adapter "copilot" "default" {}
+step "open" {
+  target = adapter.copilot.default
+  outcome "success" { next = "run" }
+}
+step "run" {
+  target = adapter.copilot.default
+  input {
+    prompt    = "do work"
+    max_turns = "not-a-number"
+  }
+  outcome "success" { next = "close" }
+}
+step "close" {
+  target = adapter.copilot.default
+  outcome "success" { next = "done" }
+}
+state "done" { terminal = true }
 `
 	spec, diags := Parse("t.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -324,27 +332,28 @@ func TestInputTypeMismatch_NumberForString(t *testing.T) {
 	// prompt is declared as ConfigFieldString; passing a number should fail.
 	src := `
 workflow "x" {
-  adapter "copilot" "default" {}
   version       = "0.1"
   initial_state = "open"
   target_state  = "done"
-  step "open" {
-    target = adapter.copilot.default
-    outcome "success" { next = "run" }
-  }
-  step "run" {
-    target = adapter.copilot.default
-    input {
-      prompt = 42
-    }
-    outcome "success" { next = "close" }
-  }
-  step "close" {
-    target = adapter.copilot.default
-    outcome "success" { next = "done" }
-  }
-  state "done" { terminal = true }
 }
+
+adapter "copilot" "default" {}
+step "open" {
+  target = adapter.copilot.default
+  outcome "success" { next = "run" }
+}
+step "run" {
+  target = adapter.copilot.default
+  input {
+    prompt = 42
+  }
+  outcome "success" { next = "close" }
+}
+step "close" {
+  target = adapter.copilot.default
+  outcome "success" { next = "done" }
+}
+state "done" { terminal = true }
 `
 	spec, diags := Parse("t.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -362,19 +371,20 @@ workflow "x" {
 func TestInputListStringAcceptsStringTupleLiteral(t *testing.T) {
 	src := `
 workflow "x" {
-  adapter "listy" "default" {}
   version       = "0.1"
   initial_state = "run"
   target_state  = "done"
-  step "run" {
-    target = adapter.listy.default
-    input {
-      items = ["a", "b"]
-    }
-    outcome "success" { next = "done" }
-  }
-  state "done" { terminal = true }
 }
+
+adapter "listy" "default" {}
+step "run" {
+  target = adapter.listy.default
+  input {
+    items = ["a", "b"]
+  }
+  outcome "success" { next = "done" }
+}
+state "done" { terminal = true }
 `
 	spec, diags := Parse("t.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -389,19 +399,20 @@ workflow "x" {
 func TestInputListStringRejectsMixedTupleLiteral(t *testing.T) {
 	src := `
 workflow "x" {
-  adapter "listy" "default" {}
   version       = "0.1"
   initial_state = "run"
   target_state  = "done"
-  step "run" {
-    target = adapter.listy.default
-    input {
-      items = ["a", 1]
-    }
-    outcome "success" { next = "done" }
-  }
-  state "done" { terminal = true }
 }
+
+adapter "listy" "default" {}
+step "run" {
+  target = adapter.listy.default
+  input {
+    items = ["a", 1]
+  }
+  outcome "success" { next = "done" }
+}
+state "done" { terminal = true }
 `
 	spec, diags := Parse("t.hcl", []byte(src))
 	if diags.HasErrors() {

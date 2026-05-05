@@ -37,23 +37,9 @@ func rejectLegacyBlocks(body hcl.Body) hcl.Diagnostics {
 }
 
 // rejectLegacyStepAgentAttr checks for and rejects the legacy `agent = "..."` attribute on step blocks.
-// This recursively checks all step blocks, including those inside nested workflow step bodies.
+// Steps are now at the top level of the file (not inside a workflow block).
 func rejectLegacyStepAgentAttr(body hcl.Body) hcl.Diagnostics {
-	var diags hcl.Diagnostics
-
-	// First find the workflow block(s)
-	wfSchema := &hcl.BodySchema{
-		Blocks: []hcl.BlockHeaderSchema{
-			{Type: "workflow", LabelNames: []string{"name"}},
-		},
-	}
-	wfContent, _, _ := body.PartialContent(wfSchema)
-
-	for _, wfBlock := range wfContent.Blocks {
-		diags = append(diags, rejectLegacyStepAgentAttrInBody(wfBlock.Body)...)
-	}
-
-	return diags
+	return rejectLegacyStepAgentAttrInBody(body)
 }
 
 // rejectLegacyStepAgentAttrInBody recursively checks for agent attributes in all steps within a body.
@@ -98,23 +84,9 @@ func rejectLegacyStepAgentAttrInBody(body hcl.Body) hcl.Diagnostics {
 }
 
 // rejectLegacyStepLifecycleAttr checks for and rejects the legacy `lifecycle = "open"|"close"` attribute on step blocks.
-// This recursively checks all step blocks, including those inside nested workflow step bodies.
+// Steps are now at the top level of the file (not inside a workflow block).
 func rejectLegacyStepLifecycleAttr(body hcl.Body) hcl.Diagnostics {
-	var diags hcl.Diagnostics
-
-	// First find the workflow block(s)
-	wfSchema := &hcl.BodySchema{
-		Blocks: []hcl.BlockHeaderSchema{
-			{Type: "workflow", LabelNames: []string{"name"}},
-		},
-	}
-	wfContent, _, _ := body.PartialContent(wfSchema)
-
-	for _, wfBlock := range wfContent.Blocks {
-		diags = append(diags, rejectLegacyStepLifecycleAttrInBody(wfBlock.Body)...)
-	}
-
-	return diags
+	return rejectLegacyStepLifecycleAttrInBody(body)
 }
 
 // rejectLegacyStepLifecycleAttrInBody recursively checks for lifecycle attributes in all steps within a body.
@@ -159,22 +131,9 @@ func rejectLegacyStepLifecycleAttrInBody(body hcl.Body) hcl.Diagnostics {
 }
 
 // rejectLegacyStepWorkflowBlock checks for and rejects the removed `step { workflow { ... } }` inline body block.
+// Steps are now at the top level of the file (not inside a workflow block).
 func rejectLegacyStepWorkflowBlock(body hcl.Body) hcl.Diagnostics {
-	var diags hcl.Diagnostics
-
-	// First find the workflow block(s)
-	wfSchema := &hcl.BodySchema{
-		Blocks: []hcl.BlockHeaderSchema{
-			{Type: "workflow", LabelNames: []string{"name"}},
-		},
-	}
-	wfContent, _, _ := body.PartialContent(wfSchema)
-
-	for _, wfBlock := range wfContent.Blocks {
-		diags = append(diags, rejectLegacyStepWorkflowBlockInBody(wfBlock.Body)...)
-	}
-
-	return diags
+	return rejectLegacyStepWorkflowBlockInBody(body)
 }
 
 // rejectLegacyStepWorkflowBlockInBody recursively checks for inline workflow blocks in all steps.
@@ -213,22 +172,9 @@ func rejectLegacyStepWorkflowBlockInBody(body hcl.Body) hcl.Diagnostics {
 }
 
 // rejectLegacyStepWorkflowFile checks for and rejects the removed `step { workflow_file = "..." }` attribute.
+// Steps are now at the top level of the file (not inside a workflow block).
 func rejectLegacyStepWorkflowFile(body hcl.Body) hcl.Diagnostics {
-	var diags hcl.Diagnostics
-
-	// First find the workflow block(s)
-	wfSchema := &hcl.BodySchema{
-		Blocks: []hcl.BlockHeaderSchema{
-			{Type: "workflow", LabelNames: []string{"name"}},
-		},
-	}
-	wfContent, _, _ := body.PartialContent(wfSchema)
-
-	for _, wfBlock := range wfContent.Blocks {
-		diags = append(diags, rejectLegacyStepWorkflowFileInBody(wfBlock.Body)...)
-	}
-
-	return diags
+	return rejectLegacyStepWorkflowFileInBody(body)
 }
 
 // rejectLegacyStepWorkflowFileInBody recursively checks for workflow_file attributes in all steps.
@@ -266,21 +212,9 @@ func rejectLegacyStepWorkflowFileInBody(body hcl.Body) hcl.Diagnostics {
 
 // rejectLegacyStepAdapterAttr checks for and rejects the old `adapter = adapter.<type>.<name>` attribute
 // on step blocks, which was replaced by `target = adapter.<type>.<name>` in W14.
+// Steps are now at the top level of the file (not inside a workflow block).
 func rejectLegacyStepAdapterAttr(body hcl.Body) hcl.Diagnostics {
-	var diags hcl.Diagnostics
-
-	wfSchema := &hcl.BodySchema{
-		Blocks: []hcl.BlockHeaderSchema{
-			{Type: "workflow", LabelNames: []string{"name"}},
-		},
-	}
-	wfContent, _, _ := body.PartialContent(wfSchema)
-
-	for _, wfBlock := range wfContent.Blocks {
-		diags = append(diags, rejectLegacyStepAdapterAttrInBody(wfBlock.Body)...)
-	}
-
-	return diags
+	return rejectLegacyStepAdapterAttrInBody(body)
 }
 
 // rejectLegacyStepAdapterAttrInBody checks all step blocks in body for the old adapter attribute.
@@ -313,20 +247,9 @@ func rejectLegacyStepAdapterAttrInBody(body hcl.Body) hcl.Diagnostics {
 
 // rejectLegacyOutcomeTransitionTo checks for and rejects the old transition_to
 // attribute inside outcome blocks. In v0.3.0, transition_to was renamed to next.
+// Steps/waits/approvals are now at the top level of the file (not inside a workflow block).
 func rejectLegacyOutcomeTransitionTo(body hcl.Body) hcl.Diagnostics {
-	var diags hcl.Diagnostics
-
-	wfSchema := &hcl.BodySchema{
-		Blocks: []hcl.BlockHeaderSchema{
-			{Type: "workflow", LabelNames: []string{"name"}},
-			{Type: "subworkflow", LabelNames: []string{"name"}},
-		},
-	}
-	wfContent, _, _ := body.PartialContent(wfSchema)
-	for _, wfBlock := range wfContent.Blocks {
-		diags = append(diags, rejectLegacyOutcomeTransitionToInBody(wfBlock.Body)...)
-	}
-	return diags
+	return rejectLegacyOutcomeTransitionToInBody(body)
 }
 
 // rejectLegacyOutcomeTransitionToInBody walks step and wait/approval blocks to
@@ -371,21 +294,8 @@ func rejectLegacyOutcomeTransitionToInBody(body hcl.Body) hcl.Diagnostics {
 	return diags
 }
 func rejectLegacyStepTypeAttr(body hcl.Body) hcl.Diagnostics {
-	var diags hcl.Diagnostics
-
-	// First find the workflow block(s)
-	wfSchema := &hcl.BodySchema{
-		Blocks: []hcl.BlockHeaderSchema{
-			{Type: "workflow", LabelNames: []string{"name"}},
-		},
-	}
-	wfContent, _, _ := body.PartialContent(wfSchema)
-
-	for _, wfBlock := range wfContent.Blocks {
-		diags = append(diags, rejectLegacyStepTypeAttrInBody(wfBlock.Body)...)
-	}
-
-	return diags
+	// Steps are now at the top level of the file (not inside a workflow block).
+	return rejectLegacyStepTypeAttrInBody(body)
 }
 
 // rejectLegacyStepTypeAttrInBody recursively checks for type attributes in all steps within a body.

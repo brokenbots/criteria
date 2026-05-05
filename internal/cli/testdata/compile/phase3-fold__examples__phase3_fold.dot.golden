@@ -1,0 +1,12 @@
+digraph "fold-demo" {
+  rankdir=LR;
+
+  "greet" [shape=box];
+  "done" [shape=doublecircle];
+  "failed" [shape=doublecircle];
+
+  "__start__" [shape=point,width=0.12,label=""];
+  "__start__" -> "greet" [label="initial"];
+  "greet" -> "failed" [label="failure"];
+  "greet" -> "done" [label="success"];
+}

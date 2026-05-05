@@ -14,31 +14,31 @@ func loopWorkflowSrc(maxVisits, maxTotalSteps, warnThreshold int) string {
 	if maxTotalSteps > 0 || warnThreshold >= 0 {
 		parts := ""
 		if maxTotalSteps > 0 {
-			parts += "    max_total_steps = " + strconv.Itoa(maxTotalSteps) + "\n"
+			parts += "  max_total_steps = " + strconv.Itoa(maxTotalSteps) + "\n"
 		}
 		if warnThreshold >= 0 {
-			parts += "    max_visits_warn_threshold = " + strconv.Itoa(warnThreshold) + "\n"
+			parts += "  max_visits_warn_threshold = " + strconv.Itoa(warnThreshold) + "\n"
 		}
-		policyBlock = "  policy {\n" + parts + "  }\n"
+		policyBlock = "policy {\n" + parts + "}\n"
 	}
 	maxVisitsAttr := ""
 	if maxVisits != 0 {
-		maxVisitsAttr = "    max_visits = " + strconv.Itoa(maxVisits) + "\n"
+		maxVisitsAttr = "  max_visits = " + strconv.Itoa(maxVisits) + "\n"
 	}
 	return `
 workflow "loop" {
-  adapter "fake" "default" {}
   version       = "0.1"
   initial_state = "execute"
   target_state  = "done"
-  step "execute" {
-    target = adapter.fake.default
-` + maxVisitsAttr + `    outcome "again" { next = "execute" }
-    outcome "success" { next = "done" }
-  }
-  state "done" { terminal = true }
-` + policyBlock + `}
-`
+}
+adapter "fake" "default" {}
+step "execute" {
+  target = adapter.fake.default
+` + maxVisitsAttr + `  outcome "again" { next = "execute" }
+  outcome "success" { next = "done" }
+}
+state "done" { terminal = true }
+` + policyBlock
 }
 
 // TestCompile_MaxVisits_Decodes verifies that max_visits = 5 on a step
@@ -193,27 +193,28 @@ func TestCompile_BackEdgeWarning_CustomThreshold(t *testing.T) {
 func TestCompile_BackEdgeWarning_ThroughBranch(t *testing.T) {
 	src := `
 workflow "t" {
-  adapter "fake" "default" {}
   version       = "0.1"
   initial_state = "work"
   target_state  = "done"
-  step "work" {
-    target = adapter.fake.default
-    outcome "check" { next = "decide" }
-    outcome "done"  { next = "done" }
-  }
-  switch "decide" {
-    condition {
-      match = true
-      next  = state.work
-    }
-    default {
-      next = state.done
-    }
-  }
-  state "done" { terminal = true }
-  policy { max_total_steps = 500 }
 }
+
+adapter "fake" "default" {}
+step "work" {
+  target = adapter.fake.default
+  outcome "check" { next = "decide" }
+  outcome "done"  { next = "done" }
+}
+switch "decide" {
+  condition {
+    match = true
+    next  = state.work
+  }
+  default {
+    next = state.done
+  }
+}
+state "done" { terminal = true }
+policy { max_total_steps = 500 }
 `
 	spec, diags := Parse("t.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -242,17 +243,17 @@ workflow "loop" {
   version       = "0.1"
   initial_state = "execute"
   target_state  = "done"
-  policy {
-    max_visits_warn_threshold = -1
-  }
-  step "execute" {
-    target = adapter.fake.default
-    outcome "success" { next = "done" }
-  }
-  state "done" {
-    terminal = true
-    success  = true
-  }
+}
+policy {
+  max_visits_warn_threshold = -1
+}
+step "execute" {
+  target = adapter.fake.default
+  outcome "success" { next = "done" }
+}
+state "done" {
+  terminal = true
+  success  = true
 }
 `
 	spec, diags := Parse("t.hcl", []byte(src))

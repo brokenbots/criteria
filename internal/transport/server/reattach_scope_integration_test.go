@@ -47,19 +47,19 @@ workflow "resume" {
   version       = "0.1"
   initial_state = "deploy"
   target_state  = "__done__"
-
-  adapter "shell" "default" {}
-
-  step "deploy" {
-    target = adapter.shell.default
-    input {
-      command = "echo ${steps.build.stdout}"
-    }
-    outcome "success" { next = "__done__" }
-    outcome "failure" { next = "__done__" }
-  }
-  state "__done__" { terminal = true }
 }
+
+adapter "shell" "default" {}
+
+step "deploy" {
+  target = adapter.shell.default
+  input {
+    command = "echo ${steps.build.stdout}"
+  }
+  outcome "success" { next = "__done__" }
+  outcome "failure" { next = "__done__" }
+}
+state "__done__" { terminal = true }
 `
 
 // TestReattachRun_RestoresVarScope is a true integration test that:

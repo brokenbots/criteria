@@ -1,0 +1,23 @@
+workflow: fold-demo  (version 0.1)
+initial_state: greet   target_state: done
+policy: max_total_steps=100  max_step_retries=0
+
+variables:
+  name: string = world
+
+adapters:
+  shell.default   type=shell   on_crash=fail
+    config: (none)
+
+steps (declaration order):
+  greet   adapter=shell.default
+    input keys: command
+    allow_tools: (none)
+    outcomes: success -> done, failure -> failed
+
+states:
+  done    terminal=true   success=true
+  failed    terminal=true   success=false
+
+plugins required:
+  shell   (search: $CRITERIA_PLUGINS, ~/.criteria/plugins)

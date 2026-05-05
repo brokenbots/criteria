@@ -52,15 +52,15 @@ workflow "outputs" {
   version       = "0.1"
   initial_state = "produce"
   target_state  = "__done__"
-
-  adapter "fake_out" "default" {}
-
-  step "produce" {
-    target = adapter.fake_out.default
-    outcome "success" { next = "__done__" }
-  }
-  state "__done__" { terminal = true }
 }
+
+adapter "fake_out" "default" {}
+
+step "produce" {
+  target = adapter.fake_out.default
+  outcome "success" { next = "__done__" }
+}
+state "__done__" { terminal = true }
 `
 
 func TestOutputCapture_StepOutputsCapturedInVars(t *testing.T) {
@@ -109,23 +109,23 @@ workflow "interp_outputs" {
   version       = "0.1"
   initial_state = "build"
   target_state  = "__done__"
-
-  adapter "fake_out" "default" {}
-  adapter "fake_consumer" "default" {}
-
-  step "build" {
-    target = adapter.fake_out.default
-    outcome "success" { next = "deploy" }
-  }
-  step "deploy" {
-    target = adapter.fake_consumer.default
-    input {
-      artifact = "${steps.build.result}"
-    }
-    outcome "success" { next = "__done__" }
-  }
-  state "__done__" { terminal = true }
 }
+
+adapter "fake_out" "default" {}
+adapter "fake_consumer" "default" {}
+
+step "build" {
+  target = adapter.fake_out.default
+  outcome "success" { next = "deploy" }
+}
+step "deploy" {
+  target = adapter.fake_consumer.default
+  input {
+    artifact = "${steps.build.result}"
+  }
+  outcome "success" { next = "__done__" }
+}
+state "__done__" { terminal = true }
 `
 
 // fakeConsumerPlugin records what Input it received.
@@ -197,19 +197,19 @@ workflow "sequence" {
   version       = "0.1"
   initial_state = "first"
   target_state  = "__done__"
-
-  adapter "fake_out" "default" {}
-
-  step "first" {
-    target = adapter.fake_out.default
-    outcome "success" { next = "second" }
-  }
-  step "second" {
-    target = adapter.fake_out.default
-    outcome "success" { next = "__done__" }
-  }
-  state "__done__" { terminal = true }
 }
+
+adapter "fake_out" "default" {}
+
+step "first" {
+  target = adapter.fake_out.default
+  outcome "success" { next = "second" }
+}
+step "second" {
+  target = adapter.fake_out.default
+  outcome "success" { next = "__done__" }
+}
+state "__done__" { terminal = true }
 `
 
 // TestOutputCapture_EmissionOrder asserts that OnStepOutputCaptured is called

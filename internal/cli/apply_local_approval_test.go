@@ -26,7 +26,7 @@ func TestApplyLocal_AutoApprove_ApprovalNode(t *testing.T) {
 	var logBuf bytes.Buffer
 	captLog := slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
-	wf := filepath.Join("testdata", "local_approval_simple.hcl")
+	wf := filepath.Join("testdata", "local_approval_simple")
 	err := runApply(context.Background(), applyOptions{workflowPath: wf, log: captLog})
 	if err != nil {
 		t.Fatalf("expected successful auto-approve run, got: %v", err)
@@ -49,7 +49,7 @@ func TestApplyLocal_AutoApprove_SignalWait(t *testing.T) {
 	var logBuf bytes.Buffer
 	captLog := slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
-	wf := filepath.Join("testdata", "local_signal_wait.hcl")
+	wf := filepath.Join("testdata", "local_signal_wait")
 	err := runApply(context.Background(), applyOptions{workflowPath: wf, log: captLog})
 	if err != nil {
 		t.Fatalf("expected successful auto-approve signal run, got: %v", err)
@@ -70,7 +70,7 @@ func TestApplyLocal_EnvMode_ApprovalApproved(t *testing.T) {
 	t.Setenv("CRITERIA_LOCAL_APPROVAL", "env")
 	t.Setenv("CRITERIA_APPROVAL_REVIEW", "approved")
 
-	wf := filepath.Join("testdata", "local_approval_simple.hcl")
+	wf := filepath.Join("testdata", "local_approval_simple")
 	err := runApply(context.Background(), applyOptions{workflowPath: wf})
 	if err != nil {
 		t.Fatalf("expected successful env-mode approved run, got: %v", err)
@@ -85,7 +85,7 @@ func TestApplyLocal_EnvMode_ApprovalRejected(t *testing.T) {
 	t.Setenv("CRITERIA_LOCAL_APPROVAL", "env")
 	t.Setenv("CRITERIA_APPROVAL_REVIEW", "rejected")
 
-	wf := filepath.Join("testdata", "local_approval_simple.hcl")
+	wf := filepath.Join("testdata", "local_approval_simple")
 	// "rejected_state" is a valid terminal state (success=false); runApply
 	// returns nil — workflow-level outcome is communicated via RunCompleted events,
 	// not as a Go error.
@@ -103,7 +103,7 @@ func TestApplyLocal_EnvMode_SignalWait(t *testing.T) {
 	t.Setenv("CRITERIA_LOCAL_APPROVAL", "env")
 	t.Setenv("CRITERIA_SIGNAL_GATE", "success") // matches the "success" outcome in local_signal_wait.hcl
 
-	wf := filepath.Join("testdata", "local_signal_wait.hcl")
+	wf := filepath.Join("testdata", "local_signal_wait")
 	err := runApply(context.Background(), applyOptions{workflowPath: wf})
 	if err != nil {
 		t.Fatalf("expected successful env-mode signal run, got: %v", err)
@@ -143,7 +143,7 @@ func TestApplyLocal_FileMode_ApprovalApproved(t *testing.T) {
 	}()
 	defer func() { <-done }()
 
-	wf := filepath.Join("testdata", "local_approval_simple.hcl")
+	wf := filepath.Join("testdata", "local_approval_simple")
 	err := runApply(context.Background(), applyOptions{workflowPath: wf})
 	if err != nil {
 		t.Fatalf("expected successful file-mode approved run, got: %v", err)
@@ -154,7 +154,7 @@ func TestApplyLocal_LocalApprovalDisabled_ApprovalNodeRejected(t *testing.T) {
 	// Without CRITERIA_LOCAL_APPROVAL, approval nodes must be rejected.
 	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
 
-	wf := filepath.Join("testdata", "local_approval_simple.hcl")
+	wf := filepath.Join("testdata", "local_approval_simple")
 	err := runApply(context.Background(), applyOptions{workflowPath: wf})
 	if err == nil {
 		t.Fatal("expected error for approval node without CRITERIA_LOCAL_APPROVAL")
@@ -168,7 +168,7 @@ func TestApplyLocal_LocalApprovalDisabled_SignalWaitRejected(t *testing.T) {
 	// Without CRITERIA_LOCAL_APPROVAL, wait {signal} nodes must be rejected.
 	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
 
-	wf := filepath.Join("testdata", "local_signal_wait.hcl")
+	wf := filepath.Join("testdata", "local_signal_wait")
 	err := runApply(context.Background(), applyOptions{workflowPath: wf})
 	if err == nil {
 		t.Fatal("expected error for signal wait without CRITERIA_LOCAL_APPROVAL")
@@ -194,7 +194,7 @@ func TestApplyLocal_StdinMode_Approved(t *testing.T) {
 	}
 	w.Close()
 
-	wf := filepath.Join("testdata", "local_approval_simple.hcl")
+	wf := filepath.Join("testdata", "local_approval_simple")
 	if err := runApply(context.Background(), applyOptions{workflowPath: wf, stdin: r}); err != nil {
 		t.Fatalf("stdin approved run: %v", err)
 	}
@@ -216,7 +216,7 @@ func TestApplyLocal_StdinMode_Rejected(t *testing.T) {
 	}
 	w.Close()
 
-	wf := filepath.Join("testdata", "local_approval_simple.hcl")
+	wf := filepath.Join("testdata", "local_approval_simple")
 	// "rejected_state" is a valid terminal state (success=false); engine returns nil.
 	if err := runApply(context.Background(), applyOptions{workflowPath: wf, stdin: r}); err != nil {
 		t.Fatalf("stdin rejected run should complete cleanly, got: %v", err)
@@ -253,7 +253,7 @@ func TestApplyLocal_FileMode_SignalWait(t *testing.T) {
 	}()
 	defer func() { <-done }()
 
-	wf := filepath.Join("testdata", "local_signal_wait.hcl")
+	wf := filepath.Join("testdata", "local_signal_wait")
 	if err := runApply(context.Background(), applyOptions{workflowPath: wf}); err != nil {
 		t.Fatalf("file-mode signal wait run: %v", err)
 	}
@@ -268,7 +268,7 @@ func TestApplyLocal_FileMode_Timeout(t *testing.T) {
 	// Very short timeout — no goroutine writes the file, so the run must fail.
 	t.Setenv("CRITERIA_LOCAL_APPROVAL_FILE_TIMEOUT", "200ms")
 
-	wf := filepath.Join("testdata", "local_approval_simple.hcl")
+	wf := filepath.Join("testdata", "local_approval_simple")
 	err := runApply(context.Background(), applyOptions{workflowPath: wf})
 	if err == nil {
 		t.Fatal("expected timeout error, got nil")
@@ -287,7 +287,7 @@ func TestApplyLocal_MultiApproval_EnvMode(t *testing.T) {
 	t.Setenv("CRITERIA_APPROVAL_FIRST_REVIEW", "approved")
 	t.Setenv("CRITERIA_APPROVAL_SECOND_REVIEW", "approved")
 
-	wf := filepath.Join("testdata", "local_approval_multi.hcl")
+	wf := filepath.Join("testdata", "local_approval_multi")
 	if err := runApply(context.Background(), applyOptions{workflowPath: wf}); err != nil {
 		t.Fatalf("multi-approval env-mode run: %v", err)
 	}
@@ -301,7 +301,7 @@ func TestApplyLocal_EnvMode_SignalWait_UnknownOutcome_Error(t *testing.T) {
 	t.Setenv("CRITERIA_LOCAL_APPROVAL", "env")
 	t.Setenv("CRITERIA_SIGNAL_GATE", "bogus") // "bogus" is not declared in local_signal_wait.hcl
 
-	wf := filepath.Join("testdata", "local_signal_wait.hcl")
+	wf := filepath.Join("testdata", "local_signal_wait")
 	err := runApply(context.Background(), applyOptions{workflowPath: wf})
 	if err == nil {
 		t.Fatal("expected error for unknown signal outcome, got nil")
@@ -330,7 +330,7 @@ func TestApplyLocal_StdinMode_SignalWait_UnknownOutcome_Error(t *testing.T) {
 	}
 	w.Close()
 
-	wf := filepath.Join("testdata", "local_signal_wait.hcl")
+	wf := filepath.Join("testdata", "local_signal_wait")
 	runErr := runApply(context.Background(), applyOptions{workflowPath: wf, stdin: r})
 	if runErr == nil {
 		t.Fatal("expected error for unknown signal outcome, got nil")
@@ -370,7 +370,7 @@ func TestApplyLocal_FileMode_SignalWait_UnknownOutcome_Error(t *testing.T) {
 	}()
 	defer func() { <-done }()
 
-	wf := filepath.Join("testdata", "local_signal_wait.hcl")
+	wf := filepath.Join("testdata", "local_signal_wait")
 	runErr := runApply(context.Background(), applyOptions{workflowPath: wf})
 	if runErr == nil {
 		t.Fatal("expected error for unknown file signal outcome, got nil")
@@ -390,7 +390,7 @@ func TestApplyLocal_Reattach_ReusePersistedDecision(t *testing.T) {
 	t.Setenv("CRITERIA_STATE_DIR", stateDir)
 	t.Setenv("CRITERIA_LOCAL_APPROVAL", "stdin")
 
-	wf := filepath.Join("testdata", "local_approval_simple.hcl")
+	wf := filepath.Join("testdata", "local_approval_simple")
 	runID := "reattach-test-run-id"
 
 	// Write a checkpoint as if the run crashed while paused at the approval node.
@@ -445,7 +445,7 @@ func TestApplyLocal_Reattach_InvalidPersistedSignalOutcome_Error(t *testing.T) {
 	t.Setenv("CRITERIA_STATE_DIR", stateDir)
 	t.Setenv("CRITERIA_LOCAL_APPROVAL", "stdin") // would block if reattach doesn't fail first
 
-	wf := filepath.Join("testdata", "local_signal_wait.hcl") // declares outcome "success" only
+	wf := filepath.Join("testdata", "local_signal_wait") // declares outcome "success" only
 	runID := "reattach-bad-signal-run"
 
 	cp := &StepCheckpoint{

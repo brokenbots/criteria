@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/brokenbots/criteria/internal/adapters/shell"
@@ -175,7 +173,7 @@ func resumePausedRun(ctx context.Context, log *slog.Logger, rc reattachTransport
 		engine.WithResumedIter(restoredIter),
 		engine.WithResumedVisits(cp.Visits),
 		engine.WithPendingSignal(resp.PendingSignal),
-		engine.WithWorkflowDir(filepath.Dir(cp.WorkflowPath)),
+		engine.WithWorkflowDir(workflowDirFromPath(cp.WorkflowPath)),
 		engine.WithLogger(log),
 	)
 	if runErr := eng.RunFrom(ctx, resp.CurrentStep, int(resp.Attempt)); runErr != nil {
@@ -210,7 +208,7 @@ func serviceResumeSignals(ctx context.Context, log *slog.Logger, rc reattachTran
 			engine.WithResumedVars(eng.VarScope()),
 			engine.WithResumedVisits(eng.VisitCounts()),
 			engine.WithResumePayload(resumeMsg.Payload),
-			engine.WithWorkflowDir(filepath.Dir(cp.WorkflowPath)),
+			engine.WithWorkflowDir(workflowDirFromPath(cp.WorkflowPath)),
 		)
 		if runErr := resumedEng.RunFrom(ctx, pausedNode, 1); runErr != nil {
 			log.Error("run failed after resume", "error", runErr)
@@ -292,7 +290,7 @@ func resumeActiveRun(ctx context.Context, log *slog.Logger, rc reattachTransport
 		engine.WithResumedVars(restoredVars),
 		engine.WithResumedIter(restoredIter),
 		engine.WithResumedVisits(cp.Visits),
-		engine.WithWorkflowDir(filepath.Dir(cp.WorkflowPath)),
+		engine.WithWorkflowDir(workflowDirFromPath(cp.WorkflowPath)),
 		engine.WithLogger(log),
 	)
 	if runErr := eng.RunFrom(ctx, resp.CurrentStep, nextAttempt); runErr != nil {
@@ -307,11 +305,7 @@ func parseWorkflowFromPath(ctx context.Context, path string) (*workflow.FSMGraph
 	if path == "" {
 		return nil, fmt.Errorf("workflow path not recorded in checkpoint")
 	}
-	src, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("read workflow %q: %w", path, err)
-	}
-	spec, diags := workflow.Parse(path, src)
+	spec, diags := workflow.ParseFileOrDir(path)
 	if diags.HasErrors() {
 		return nil, fmt.Errorf("parse workflow: %s", diags.Error())
 	}
@@ -323,7 +317,7 @@ func parseWorkflowFromPath(ctx context.Context, path string) (*workflow.FSMGraph
 	_ = loader.Shutdown(ctx)
 
 	graph, diags := workflow.CompileWithOpts(spec, schemas, workflow.CompileOpts{
-		WorkflowDir:         filepath.Dir(path),
+		WorkflowDir:         workflowDirFromPath(path),
 		SubWorkflowResolver: &workflow.LocalSubWorkflowResolver{},
 	})
 	if diags.HasErrors() {

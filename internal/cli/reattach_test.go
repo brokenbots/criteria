@@ -99,11 +99,11 @@ workflow "minimal" {
   version       = "0.1"
   initial_state = "done"
   target_state  = "done"
+}
 
-  state "done" {
-    terminal = true
-    success  = true
-  }
+state "done" {
+  terminal = true
+  success  = true
 }
 `
 
@@ -113,26 +113,26 @@ workflow "shell_resume" {
   version       = "0.1"
   initial_state = "greet"
   target_state  = "done"
+}
 
-  adapter "shell" "default" {}
+adapter "shell" "default" {}
 
-  step "greet" {
-    target = adapter.shell.default
-    input {
-      command = "echo hello"
-    }
-    outcome "success" { next = "done" }
-    outcome "failure" { next = "failed" }
+step "greet" {
+  target = adapter.shell.default
+  input {
+    command = "echo hello"
   }
+  outcome "success" { next = "done" }
+  outcome "failure" { next = "failed" }
+}
 
-  state "done" {
-    terminal = true
-    success  = true
-  }
-  state "failed" {
-    terminal = true
-    success  = false
-  }
+state "done" {
+  terminal = true
+  success  = true
+}
+state "failed" {
+  terminal = true
+  success  = false
 }
 `
 
@@ -142,30 +142,30 @@ workflow "max_retry" {
   version       = "0.1"
   initial_state = "greet"
   target_state  = "done"
+}
 
-  adapter "shell" "default" {}
+adapter "shell" "default" {}
 
-  policy {
-    max_step_retries = 0
-  }
+policy {
+  max_step_retries = 0
+}
 
-  step "greet" {
-    target = adapter.shell.default
-    input {
-      command = "echo hi"
-    }
-    outcome "success" { next = "done" }
-    outcome "failure" { next = "failed" }
+step "greet" {
+  target = adapter.shell.default
+  input {
+    command = "echo hi"
   }
+  outcome "success" { next = "done" }
+  outcome "failure" { next = "failed" }
+}
 
-  state "done" {
-    terminal = true
-    success  = true
-  }
-  state "failed" {
-    terminal = true
-    success  = false
-  }
+state "done" {
+  terminal = true
+  success  = true
+}
+state "failed" {
+  terminal = true
+  success  = false
 }
 `
 
@@ -968,27 +968,27 @@ workflow "max_visits_test" {
   version       = "0.1"
   initial_state = "work"
   target_state  = "done"
+}
 
-  adapter "shell" "default" {}
+adapter "shell" "default" {}
 
-  step "work" {
-    target = adapter.shell.default
-    max_visits = 1
-    input {
-      command = "echo hi"
-    }
-    outcome "success" { next = "done" }
-    outcome "failure" { next = "failed" }
+step "work" {
+  target = adapter.shell.default
+  max_visits = 1
+  input {
+    command = "echo hi"
   }
+  outcome "success" { next = "done" }
+  outcome "failure" { next = "failed" }
+}
 
-  state "done" {
-    terminal = true
-    success  = true
-  }
-  state "failed" {
-    terminal = true
-    success  = false
-  }
+state "done" {
+  terminal = true
+  success  = true
+}
+state "failed" {
+  terminal = true
+  success  = false
 }
 `
 
@@ -1130,18 +1130,18 @@ workflow "needs_approval" {
   version       = "0.1"
   initial_state = "review"
   target_state  = "done"
+}
 
-  approval "review" {
-    approvers = ["alice"]
-    reason    = "ship it?"
-    outcome "approved" { next = "done" }
-    outcome "rejected" { next = "done" }
-  }
+approval "review" {
+  approvers = ["alice"]
+  reason    = "ship it?"
+  outcome "approved" { next = "done" }
+  outcome "rejected" { next = "done" }
+}
 
-  state "done" {
-    terminal = true
-    success  = true
-  }
+state "done" {
+  terminal = true
+  success  = true
 }
 `)
 	cp := &StepCheckpoint{
@@ -1187,20 +1187,20 @@ workflow "iter_cursor" {
   version       = "0.1"
   initial_state = "execute"
   target_state  = "done"
+}
 
-  adapter "noop" "default" {}
+adapter "noop" "default" {}
 
-  step "execute" {
-    target = adapter.noop.default
-    for_each  = ["a", "b"]
-    outcome "all_succeeded" { next = "done" }
-    outcome "any_failed"    { next = "done" }
-  }
+step "execute" {
+  target = adapter.noop.default
+  for_each  = ["a", "b"]
+  outcome "all_succeeded" { next = "done" }
+  outcome "any_failed"    { next = "done" }
+}
 
-  state "done" {
-    terminal = true
-    success  = true
-  }
+state "done" {
+  terminal = true
+  success  = true
 }
 `
 

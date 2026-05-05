@@ -16,17 +16,14 @@ func environmentWorkflow(envBlocks, extraHeaderAttrs string) string {
   version       = "0.1"
   initial_state = "done"
   target_state  = "done"
-` + extraHeaderAttrs
+` + extraHeaderAttrs + `}
 
-	body := `
-  state "done" {
-    terminal = true
-    success  = true
-  }
-` + envBlocks + `
+state "done" {
+  terminal = true
+  success  = true
 }
 `
-	return header + body
+	return header + envBlocks
 }
 
 func TestCompileEnvironments_Single(t *testing.T) {

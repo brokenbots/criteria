@@ -119,30 +119,30 @@ workflow "w" {
   version       = "0.1"
   initial_state = "check"
   target_state  = "done"
-
-  variable "env" {
-    type    = "string"
-    default = "staging"
-  }
-
-  switch "check" {
-    condition {
-      match = var.env == "prod"
-      next  = state.deploy
-    }
-    condition {
-      match = var.env == "staging"
-      next  = state.deploy_staging
-    }
-    default {
-      next = state.done
-    }
-  }
-
-  state "deploy"         { terminal = true }
-  state "deploy_staging" { terminal = true }
-  state "done"           { terminal = true }
 }
+
+variable "env" {
+  type    = "string"
+  default = "staging"
+}
+
+switch "check" {
+  condition {
+    match = var.env == "prod"
+    next  = state.deploy
+  }
+  condition {
+    match = var.env == "staging"
+    next  = state.deploy_staging
+  }
+  default {
+    next = state.done
+  }
+}
+
+state "deploy"         { terminal = true }
+state "deploy_staging" { terminal = true }
+state "done"           { terminal = true }
 `
 	g := mustParseAndCompile(t, src)
 	sw, ok := g.Switches["check"]
@@ -163,20 +163,20 @@ workflow "w" {
   version       = "0.1"
   initial_state = "check"
   target_state  = "done"
-
-  switch "check" {
-    condition {
-      match = var.env == "prod"
-      next  = state.done
-    }
-  }
-
-  variable "env" {
-    type = "string"
-  }
-
-  state "done" { terminal = true }
 }
+
+switch "check" {
+  condition {
+    match = var.env == "prod"
+    next  = state.done
+  }
+}
+
+variable "env" {
+  type = "string"
+}
+
+state "done" { terminal = true }
 `
 	src = injectDefaultAdapters(src)
 	spec, diags := workflow.Parse("test.hcl", []byte(src))
@@ -204,19 +204,19 @@ workflow "w" {
   version       = "0.1"
   initial_state = "check"
   target_state  = "done"
-
-  switch "check" {
-    condition {
-      match = true
-      next  = "nonexistent"
-    }
-    default {
-      next = state.done
-    }
-  }
-
-  state "done" { terminal = true }
 }
+
+switch "check" {
+  condition {
+    match = true
+    next  = "nonexistent"
+  }
+  default {
+    next = state.done
+  }
+}
+
+state "done" { terminal = true }
 `
 	compileExpectError(t, src, `unknown target "nonexistent"`)
 }
@@ -227,19 +227,19 @@ workflow "w" {
   version       = "0.1"
   initial_state = "check"
   target_state  = "done"
-
-  switch "check" {
-    condition {
-      match = true
-      next  = state.done
-    }
-    default {
-      next = "missing"
-    }
-  }
-
-  state "done" { terminal = true }
 }
+
+switch "check" {
+  condition {
+    match = true
+    next  = state.done
+  }
+  default {
+    next = "missing"
+  }
+}
+
+state "done" { terminal = true }
 `
 	compileExpectError(t, src, `unknown target "missing"`)
 }
@@ -250,19 +250,19 @@ workflow "w" {
   version       = "0.1"
   initial_state = "check"
   target_state  = "done"
-
-  switch "check" {
-    condition {
-      match = var.undeclared == "x"
-      next  = state.done
-    }
-    default {
-      next = state.done
-    }
-  }
-
-  state "done" { terminal = true }
 }
+
+switch "check" {
+  condition {
+    match = var.undeclared == "x"
+    next  = state.done
+  }
+  default {
+    next = state.done
+  }
+}
+
+state "done" { terminal = true }
 `
 	compileExpectError(t, src, `undefined variable "undeclared"`)
 }
@@ -273,19 +273,19 @@ workflow "w" {
   version       = "0.1"
   initial_state = "check"
   target_state  = "done"
-
-  switch "check" {
-    condition {
-      match = steps.ghoststep.exit_code == "0"
-      next  = state.done
-    }
-    default {
-      next = state.done
-    }
-  }
-
-  state "done" { terminal = true }
 }
+
+switch "check" {
+  condition {
+    match = steps.ghoststep.exit_code == "0"
+    next  = state.done
+  }
+  default {
+    next = state.done
+  }
+}
+
+state "done" { terminal = true }
 `
 	compileExpectError(t, src, `unknown step "ghoststep"`)
 }
@@ -293,23 +293,24 @@ workflow "w" {
 func TestSwitchCompile_SelfReferenceRejected(t *testing.T) {
 	src := `
 workflow "w" {
-  adapter "noop" "default" {}
   version       = "0.1"
   initial_state = "check"
   target_state  = "done"
-
-  switch "check" {
-    condition {
-      match = steps.check.exit_code == "0"
-      next  = state.done
-    }
-    default {
-      next = state.done
-    }
-  }
-
-  state "done" { terminal = true }
 }
+
+adapter "noop" "default" {}
+
+switch "check" {
+  condition {
+    match = steps.check.exit_code == "0"
+    next  = state.done
+  }
+  default {
+    next = state.done
+  }
+}
+
+state "done" { terminal = true }
 `
 	compileExpectError(t, src, `self-reference steps.check is always empty at match time`)
 }
@@ -318,28 +319,29 @@ func TestSwitchCompile_UnreachableSwitchWarns(t *testing.T) {
 	// The switch node is not reachable from initial_state (a step is initial).
 	src := `
 workflow "w" {
-  adapter "noop" "default" {}
   version       = "0.1"
   initial_state = "start"
   target_state  = "done"
-
-  step "start" {
-    target = adapter.noop.default
-    outcome "success" { next = "done" }
-  }
-
-  switch "orphan" {
-    condition {
-      match = true
-      next  = state.done
-    }
-    default {
-      next = state.done
-    }
-  }
-
-  state "done" { terminal = true }
 }
+
+adapter "noop" "default" {}
+
+step "start" {
+  target = adapter.noop.default
+  outcome "success" { next = "done" }
+}
+
+switch "orphan" {
+  condition {
+    match = true
+    next  = state.done
+  }
+  default {
+    next = state.done
+  }
+}
+
+state "done" { terminal = true }
 `
 	spec, diags := workflow.Parse("test.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -367,23 +369,23 @@ workflow "w" {
   version       = "0.1"
   initial_state = "check"
   target_state  = "done"
-
-  switch "check" {
-    default { next = state.done }
-  }
-
-  switch "check" {
-    default { next = state.done }
-  }
-
-  state "done" { terminal = true }
 }
+
+switch "check" {
+  default { next = state.done }
+}
+
+switch "check" {
+  default { next = state.done }
+}
+
+state "done" { terminal = true }
 `
 	compileExpectError(t, src, `duplicate switch "check"`)
 }
 
 func TestSwitchCompile_FixtureFile(t *testing.T) {
-	spec, diags := workflow.ParseFile("testdata/switch_basic.hcl")
+	spec, diags := workflow.ParseFile("testdata/switch_basic/switch_basic.hcl")
 	if diags.HasErrors() {
 		t.Fatalf("parse fixture: %v", diags)
 	}
@@ -404,19 +406,19 @@ workflow "w" {
   version       = "0.1"
   initial_state = "check"
   target_state  = "done"
-
-  branch "check" {
-    arm {
-      when          = true
-      transition_to = "done"
-    }
-    default {
-      transition_to = "done"
-    }
-  }
-
-  state "done" { terminal = true }
 }
+
+branch "check" {
+  arm {
+    when          = true
+    transition_to = "done"
+  }
+  default {
+    transition_to = "done"
+  }
+}
+
+state "done" { terminal = true }
 `
 	_, diags := workflow.Parse("test.hcl", []byte(src))
 	if !diags.HasErrors() {
@@ -442,19 +444,19 @@ workflow "w" {
   version       = "0.1"
   initial_state = "check"
   target_state  = "done"
-
-  switch "check" {
-    condition {
-      match = true
-      next  = "return"
-    }
-    default {
-      next = state.done
-    }
-  }
-
-  state "done" { terminal = true }
 }
+
+switch "check" {
+  condition {
+    match = true
+    next  = "return"
+  }
+  default {
+    next = state.done
+  }
+}
+
+state "done" { terminal = true }
 `
 	g := mustParseAndCompile(t, src)
 	sw, ok := g.Switches["check"]
@@ -477,20 +479,20 @@ workflow "w" {
   version       = "0.1"
   initial_state = "check"
   target_state  = "done"
-
-  switch "check" {
-    condition {
-      match         = true
-      next          = state.done
-      transition_to = "done"
-    }
-    default {
-      next = state.done
-    }
-  }
-
-  state "done" { terminal = true }
 }
+
+switch "check" {
+  condition {
+    match         = true
+    next          = state.done
+    transition_to = "done"
+  }
+  default {
+    next = state.done
+  }
+}
+
+state "done" { terminal = true }
 `
 	compileExpectError(t, src, `unknown attribute`)
 }
@@ -504,20 +506,20 @@ workflow "w" {
   version       = "0.1"
   initial_state = "check"
   target_state  = "done"
-
-  switch "check" {
-    condition {
-      match  = true
-      next   = state.done
-      output = "oops"
-    }
-    default {
-      next = state.done
-    }
-  }
-
-  state "done" { terminal = true }
 }
+
+switch "check" {
+  condition {
+    match  = true
+    next   = state.done
+    output = "oops"
+  }
+  default {
+    next = state.done
+  }
+}
+
+state "done" { terminal = true }
 `
 	compileExpectError(t, bad, `output must be an object literal`)
 
@@ -526,20 +528,20 @@ workflow "w" {
   version       = "0.1"
   initial_state = "check"
   target_state  = "done"
-
-  switch "check" {
-    condition {
-      match  = true
-      next   = state.done
-      output = { tier = "prod" }
-    }
-    default {
-      next = state.done
-    }
-  }
-
-  state "done" { terminal = true }
 }
+
+switch "check" {
+  condition {
+    match  = true
+    next   = state.done
+    output = { tier = "prod" }
+  }
+  default {
+    next = state.done
+  }
+}
+
+state "done" { terminal = true }
 `
 	mustParseAndCompile(t, good)
 }

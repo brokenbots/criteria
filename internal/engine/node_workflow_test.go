@@ -98,39 +98,39 @@ workflow "t" {
   version       = "0.1"
   initial_state = "process"
   target_state  = "done"
+}
 
-  variable "prefix" {
-    type    = "string"
-    default = "hello"
-  }
+variable "prefix" {
+  type    = "string"
+  default = "hello"
+}
 
-  step "process" {
-    type     = "workflow"
-    for_each = ["a"]
+step "process" {
+  type     = "workflow"
+  for_each = ["a"]
 
-    input = { prefix = var.prefix }
+  input = { prefix = var.prefix }
 
-    workflow {
-      variable "prefix" {
-        type = "string"
-      }
-      step "body" {
-        target = adapter.fake
-        input {
-          label = var.prefix
-        }
-        outcome "success" { next = "_continue" }
-      }
+  workflow {
+    variable "prefix" {
+      type = "string"
     }
-
-    outcome "all_succeeded" { next = "done" }
-    outcome "any_failed"    { next = "done" }
+    step "body" {
+      target = adapter.fake
+      input {
+        label = var.prefix
+      }
+      outcome "success" { next = "_continue" }
+    }
   }
 
-  state "done" {
-    terminal = true
-    success  = true
-  }
+  outcome "all_succeeded" { next = "done" }
+  outcome "any_failed"    { next = "done" }
+}
+
+state "done" {
+  terminal = true
+  success  = true
 }`)
 
 	var captured []map[string]string
@@ -178,34 +178,34 @@ workflow "t" {
   version       = "0.1"
   initial_state = "produce"
   target_state  = "done"
+}
 
-  step "produce" {
-    type     = "workflow"
-    for_each = ["x"]
+step "produce" {
+  type     = "workflow"
+  for_each = ["x"]
 
-    workflow {
-      step "inner" {
-        target = adapter.fake_producer
-        outcome "success" { next = "_continue" }
-      }
+  workflow {
+    step "inner" {
+      target = adapter.fake_producer
+      outcome "success" { next = "_continue" }
     }
-
-    outcome "all_succeeded" { next = "check" }
-    outcome "any_failed"    { next = "done" }
   }
 
-  step "check" {
-    target = adapter.fake_consumer
-    input {
-      received = steps.inner.result
-    }
-    outcome "success" { next = "done" }
-  }
+  outcome "all_succeeded" { next = "check" }
+  outcome "any_failed"    { next = "done" }
+}
 
-  state "done" {
-    terminal = true
-    success  = true
+step "check" {
+  target = adapter.fake_consumer
+  input {
+    received = steps.inner.result
   }
+  outcome "success" { next = "done" }
+}
+
+state "done" {
+  terminal = true
+  success  = true
 }`)
 
 	sink := &iterSink{}
@@ -236,37 +236,37 @@ workflow "t" {
   version       = "0.1"
   initial_state = "produce"
   target_state  = "done"
+}
 
-  step "produce" {
-    type     = "workflow"
-    for_each = ["x"]
+step "produce" {
+  type     = "workflow"
+  for_each = ["x"]
 
-    workflow {
-      output "tag" {
-        value = steps.inner.result
-      }
-      step "inner" {
-        target = adapter.fake_producer
-        outcome "success" { next = "_continue" }
-      }
+  workflow {
+    output "tag" {
+      value = steps.inner.result
     }
-
-    outcome "all_succeeded" { next = "consume" }
-    outcome "any_failed"    { next = "done" }
-  }
-
-  step "consume" {
-    target = adapter.fake_consumer
-    input {
-      received = steps.produce[0].tag
+    step "inner" {
+      target = adapter.fake_producer
+      outcome "success" { next = "_continue" }
     }
-    outcome "success" { next = "done" }
   }
 
-  state "done" {
-    terminal = true
-    success  = true
+  outcome "all_succeeded" { next = "consume" }
+  outcome "any_failed"    { next = "done" }
+}
+
+step "consume" {
+  target = adapter.fake_consumer
+  input {
+    received = steps.produce[0].tag
   }
+  outcome "success" { next = "done" }
+}
+
+state "done" {
+  terminal = true
+  success  = true
 }`)
 
 	// Body step "inner" returns output "result" = "child-output".
@@ -312,28 +312,28 @@ workflow "t" {
   version       = "0.1"
   initial_state = "process"
   target_state  = "done"
+}
 
-  step "process" {
-    type     = "workflow"
-    for_each = ["a"]
+step "process" {
+  type     = "workflow"
+  for_each = ["a"]
 
-    input = each.value
+  input = each.value
 
-    workflow {
-      step "body" {
-        target = adapter.fake
-        outcome "success" { next = "_continue" }
-      }
+  workflow {
+    step "body" {
+      target = adapter.fake
+      outcome "success" { next = "_continue" }
     }
-
-    outcome "all_succeeded" { next = "done" }
-    outcome "any_failed"    { next = "done" }
   }
 
-  state "done" {
-    terminal = true
-    success  = true
-  }
+  outcome "all_succeeded" { next = "done" }
+  outcome "any_failed"    { next = "done" }
+}
+
+state "done" {
+  terminal = true
+  success  = true
 }`)
 
 	sink := &iterSink{}
@@ -360,26 +360,26 @@ workflow "parent" {
   version       = "0.1"
   initial_state = "process"
   target_state  = "done"
+}
 
-  step "process" {
-    type     = "workflow"
-    for_each = ["item"]
+step "process" {
+  type     = "workflow"
+  for_each = ["item"]
 
-    workflow {
-      step "body_step" {
-        target = adapter.noop
-        outcome "success" { next = "_continue" }
-      }
+  workflow {
+    step "body_step" {
+      target = adapter.noop
+      outcome "success" { next = "_continue" }
     }
-
-    outcome "all_succeeded" { next = "done" }
-    outcome "any_failed"    { next = "done" }
   }
 
-  state "done" {
-    terminal = true
-    success  = true
-  }
+  outcome "all_succeeded" { next = "done" }
+  outcome "any_failed"    { next = "done" }
+}
+
+state "done" {
+  terminal = true
+  success  = true
 }`)
 
 	bodyTracker := &lifecycleTrackingPlugin{
@@ -425,36 +425,36 @@ workflow "parent" {
   version       = "0.1"
   initial_state = "pre"
   target_state  = "done"
+}
 
-  step "pre" {
-    target = adapter.noop_a
-    outcome "success" { next = "body" }
-  }
+step "pre" {
+  target = adapter.noop_a
+  outcome "success" { next = "body" }
+}
 
-  step "body" {
-    type     = "workflow"
-    for_each = ["x"]
+step "body" {
+  type     = "workflow"
+  for_each = ["x"]
 
-    workflow {
-      step "inner" {
-        target = adapter.noop_b
-        outcome "success" { next = "_continue" }
-      }
+  workflow {
+    step "inner" {
+      target = adapter.noop_b
+      outcome "success" { next = "_continue" }
     }
-
-    outcome "all_succeeded" { next = "post" }
-    outcome "any_failed"    { next = "done" }
   }
 
-  step "post" {
-    target = adapter.noop_a
-    outcome "success" { next = "done" }
-  }
+  outcome "all_succeeded" { next = "post" }
+  outcome "any_failed"    { next = "done" }
+}
 
-  state "done" {
-    terminal = true
-    success  = true
-  }
+step "post" {
+  target = adapter.noop_a
+  outcome "success" { next = "done" }
+}
+
+state "done" {
+  terminal = true
+  success  = true
 }`)
 
 	// We'll use two separate plugins to track each adapter's lifecycle independently
@@ -537,30 +537,30 @@ workflow "parent" {
   version       = "0.1"
   initial_state = "outer"
   target_state  = "done"
+}
 
-  adapter "noop" "parent_only" {
-    config {}
-  }
+adapter "noop" "parent_only" {
+  config {}
+}
 
-  step "outer" {
-    type     = "workflow"
-    for_each = ["x"]
+step "outer" {
+  type     = "workflow"
+  for_each = ["x"]
 
-    workflow {
-      step "inner" {
-        target = adapter.noop.parent_only
-        outcome "success" { next = "_continue" }
-      }
+  workflow {
+    step "inner" {
+      target = adapter.noop.parent_only
+      outcome "success" { next = "_continue" }
     }
-
-    outcome "all_succeeded" { next = "done" }
-    outcome "any_failed"    { next = "done" }
   }
 
-  state "done" {
-    terminal = true
-    success  = true
-  }
+  outcome "all_succeeded" { next = "done" }
+  outcome "any_failed"    { next = "done" }
+}
+
+state "done" {
+  terminal = true
+  success  = true
 }`
 	spec, diags := workflow.Parse("body_inherit_test.hcl", []byte(src))
 	if diags.HasErrors() {

@@ -53,7 +53,7 @@ install: build plugins ## Install criteria to ~/.criteria (binary → ~/.criteri
 docker-runtime-smoke: docker-runtime ## Run a workflow inside the runtime image
 	docker build -t criteria/runtime:dev -f Dockerfile.runtime .
 	docker run --rm -v "$$PWD/examples:/workspace/examples:ro" \
-		criteria/runtime:dev apply /workspace/examples/hello.hcl
+		criteria/runtime:dev apply /workspace/examples/hello
 
 proto: ## Regenerate Go bindings from proto files (requires buf)
 	buf generate
@@ -126,11 +126,19 @@ lint-baseline-check: ## Fail if .golangci.baseline.yml exceeds the cap in tools/
 
 lint: lint-imports lint-go ## Run all linters
 
-validate: build ## Validate all standalone example workflows
-	@# Some examples (e.g. workstream_review_loop.hcl) reference files outside
+validate: build ## Validate all example workflow directories
+	@# Some examples (e.g. workstream_review_loop) reference files outside
 	@# their own directory via file() in agent.config; allow the repo root so
 	@# compile-time file() resolution succeeds.
-	@for f in examples/*.hcl examples/plugins/*/*.hcl examples/phase3-fold/*.hcl examples/phase3-output/*.hcl examples/phase3-environment/*.hcl examples/phase3-subworkflow/*.hcl; do \
+	@for d in examples/build_and_test examples/copilot_planning_then_execution \
+		examples/demo_tour_local examples/file_function examples/hello \
+		examples/perf_1000_logs examples/workstream_review_loop \
+		examples/phase3-environment examples/phase3-fold examples/phase3-multi-file \
+		examples/phase3-output examples/phase3-subworkflow; do \
+		echo "Validating $$d..."; \
+		CRITERIA_WORKFLOW_ALLOWED_PATHS="$(CURDIR)" ./bin/criteria validate "$$d" || exit 1; \
+	done
+	@for f in examples/plugins/*/*.hcl; do \
 		echo "Validating $$f..."; \
 		CRITERIA_WORKFLOW_ALLOWED_PATHS="$(CURDIR)" ./bin/criteria validate "$$f" || exit 1; \
 	done

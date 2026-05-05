@@ -12,28 +12,29 @@ import (
 func TestStepInputMisplacedCopilotAgentField(t *testing.T) {
 	src := `
 workflow "x" {
-  adapter "copilot" "default" {}
   version       = "0.1"
   initial_state = "open"
   target_state  = "done"
-  step "open" {
-    target = adapter.copilot.default
-    outcome "success" { next = "run" }
-  }
-  step "run" {
-    target = adapter.copilot.default
-    input {
-      prompt        = "hello"
-      system_prompt = "You are a bot."
-    }
-    outcome "success" { next = "close" }
-  }
-  step "close" {
-    target = adapter.copilot.default
-    outcome "success" { next = "done" }
-  }
-  state "done" { terminal = true }
 }
+
+adapter "copilot" "default" {}
+step "open" {
+  target = adapter.copilot.default
+  outcome "success" { next = "run" }
+}
+step "run" {
+  target = adapter.copilot.default
+  input {
+    prompt        = "hello"
+    system_prompt = "You are a bot."
+  }
+  outcome "success" { next = "close" }
+}
+step "close" {
+  target = adapter.copilot.default
+  outcome "success" { next = "done" }
+}
+state "done" { terminal = true }
 `
 	spec, diags := Parse("t.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -61,21 +62,22 @@ workflow "x" {
 func TestStepInputUnknownFieldNonCopilotAdapterKeepsGenericDiagnostic(t *testing.T) {
 	src := `
 workflow "x" {
-  adapter "shell" "default" {}
   version       = "0.1"
   initial_state = "run"
   target_state  = "done"
-  step "run" {
-    target = adapter.shell.default
-    input {
-      command       = "echo hi"
-      system_prompt = "not-valid-for-shell"
-    }
-    outcome "success" { next = "done" }
-    outcome "failure" { next = "done" }
-  }
-  state "done" { terminal = true }
 }
+
+adapter "shell" "default" {}
+step "run" {
+  target = adapter.shell.default
+  input {
+    command       = "echo hi"
+    system_prompt = "not-valid-for-shell"
+  }
+  outcome "success" { next = "done" }
+  outcome "failure" { next = "done" }
+}
+state "done" { terminal = true }
 `
 	spec, diags := Parse("t.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -99,28 +101,29 @@ workflow "x" {
 func TestStepInputReasoningEffortAcceptedForCopilot(t *testing.T) {
 	src := `
 workflow "x" {
-  adapter "copilot" "default" {}
   version       = "0.1"
   initial_state = "open"
   target_state  = "done"
-  step "open" {
-    target = adapter.copilot.default
-    outcome "success" { next = "run" }
-  }
-  step "run" {
-    target = adapter.copilot.default
-    input {
-      prompt           = "hello"
-      reasoning_effort = "high"
-    }
-    outcome "success" { next = "close" }
-  }
-  step "close" {
-    target = adapter.copilot.default
-    outcome "success" { next = "done" }
-  }
-  state "done" { terminal = true }
 }
+
+adapter "copilot" "default" {}
+step "open" {
+  target = adapter.copilot.default
+  outcome "success" { next = "run" }
+}
+step "run" {
+  target = adapter.copilot.default
+  input {
+    prompt           = "hello"
+    reasoning_effort = "high"
+  }
+  outcome "success" { next = "close" }
+}
+step "close" {
+  target = adapter.copilot.default
+  outcome "success" { next = "done" }
+}
+state "done" { terminal = true }
 `
 	spec, diags := Parse("t.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -145,28 +148,29 @@ workflow "x" {
 func TestCopilotAllowToolsAliasWarning(t *testing.T) {
 	src := `
 workflow "x" {
-  adapter "copilot" "default" {}
   version       = "0.1"
   initial_state = "open"
   target_state  = "done"
-  step "open" {
-    target = adapter.copilot.default
-    outcome "success" { next = "run" }
-  }
-  step "run" {
-    target = adapter.copilot.default
-    allow_tools = ["read_file", "write_file"]
-    input {
-      prompt = "hello"
-    }
-    outcome "success" { next = "close" }
-  }
-  step "close" {
-    target = adapter.copilot.default
-    outcome "success" { next = "done" }
-  }
-  state "done" { terminal = true }
 }
+
+adapter "copilot" "default" {}
+step "open" {
+  target = adapter.copilot.default
+  outcome "success" { next = "run" }
+}
+step "run" {
+  target = adapter.copilot.default
+  allow_tools = ["read_file", "write_file"]
+  input {
+    prompt = "hello"
+  }
+  outcome "success" { next = "close" }
+}
+step "close" {
+  target = adapter.copilot.default
+  outcome "success" { next = "done" }
+}
+state "done" { terminal = true }
 `
 	spec, diags := Parse("t.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -219,28 +223,29 @@ workflow "x" {
 func TestCopilotAllowToolsCanonicalNoWarning(t *testing.T) {
 	src := `
 workflow "x" {
-  adapter "copilot" "default" {}
   version       = "0.1"
   initial_state = "open"
   target_state  = "done"
-  step "open" {
-    target = adapter.copilot.default
-    outcome "success" { next = "run" }
-  }
-  step "run" {
-    target = adapter.copilot.default
-    allow_tools = ["read", "write"]
-    input {
-      prompt = "hello"
-    }
-    outcome "success" { next = "close" }
-  }
-  step "close" {
-    target = adapter.copilot.default
-    outcome "success" { next = "done" }
-  }
-  state "done" { terminal = true }
 }
+
+adapter "copilot" "default" {}
+step "open" {
+  target = adapter.copilot.default
+  outcome "success" { next = "run" }
+}
+step "run" {
+  target = adapter.copilot.default
+  allow_tools = ["read", "write"]
+  input {
+    prompt = "hello"
+  }
+  outcome "success" { next = "close" }
+}
+step "close" {
+  target = adapter.copilot.default
+  outcome "success" { next = "done" }
+}
+state "done" { terminal = true }
 `
 	spec, diags := Parse("t.hcl", []byte(src))
 	if diags.HasErrors() {

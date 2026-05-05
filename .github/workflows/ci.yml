@@ -99,7 +99,7 @@ jobs:
         run: make build
 
       - name: CLI smoke test
-        run: ./bin/criteria apply examples/hello.hcl --events-file /tmp/events.ndjson
+        run: ./bin/criteria apply examples/hello --events-file /tmp/events.ndjson
 
       - name: Validate example workflows
         run: make validate

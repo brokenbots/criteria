@@ -1,0 +1,77 @@
+{
+  "name": "count_files",
+  "initial_state": "count",
+  "target_state": "done",
+  "policy": {
+    "MaxTotalSteps": 100,
+    "MaxStepRetries": 0,
+    "MaxVisitsWarnThreshold": 200
+  },
+  "adapters": [
+    {
+      "type": "shell",
+      "name": "default",
+      "on_crash": "fail",
+      "config_keys": null
+    }
+  ],
+  "steps": [
+    {
+      "name": "count",
+      "adapter": "shell.default",
+      "input_keys": [
+        "command"
+      ],
+      "allow_tools": null,
+      "outcomes": [
+        {
+          "name": "failure",
+          "next": "failed"
+        },
+        {
+          "name": "success",
+          "next": "done"
+        }
+      ]
+    }
+  ],
+  "states": [
+    {
+      "name": "done",
+      "terminal": true,
+      "success": true
+    },
+    {
+      "name": "failed",
+      "terminal": true,
+      "success": false
+    }
+  ],
+  "outputs": [
+    {
+      "name": "summary",
+      "type": "string",
+      "description": "A summary of the file count operation"
+    },
+    {
+      "name": "file_count",
+      "type": "number",
+      "description": "Total number of files counted"
+    },
+    {
+      "name": "status",
+      "type": "string",
+      "description": "Final execution status"
+    }
+  ],
+  "switches": [],
+  "step_order": [
+    "count"
+  ],
+  "plugins_required": [
+    "shell"
+  ],
+  "metadata": {
+    "schema_version": 1
+  }
+}

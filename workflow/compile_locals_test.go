@@ -13,14 +13,13 @@ func localWorkflow(localBlocks, extraBlocks string) string {
   version       = "0.1"
   initial_state = "done"
   target_state  = "done"
-
-  state "done" {
-    terminal = true
-    success  = true
-  }
-` + extraBlocks + localBlocks + `
 }
-`
+
+state "done" {
+  terminal = true
+  success  = true
+}
+` + extraBlocks + localBlocks
 }
 
 func TestCompileLocals_Simple(t *testing.T) {
@@ -171,20 +170,20 @@ func TestCompileLocals_RuntimeRef(t *testing.T) {
   version       = "0.1"
   initial_state = "step1"
   target_state  = "done"
+}
 
-  state "done" {
-    terminal = true
-    success  = true
-  }
+state "done" {
+  terminal = true
+  success  = true
+}
 
-  local "bad" {
-    value = steps.step1.out
-  }
+local "bad" {
+  value = steps.step1.out
+}
 
-  step "step1" {
-    target = adapter.a.default
-    outcome "success" { next = "done" }
-  }
+step "step1" {
+  target = adapter.a.default
+  outcome "success" { next = "done" }
 }
 `
 	spec, diags := Parse("test.hcl", []byte(src))
@@ -210,16 +209,16 @@ workflow "x" {
   version       = "0.1"
   initial_state = "open"
   target_state  = "done"
-  local "prompt" {
-    value = file("prompt.txt")
-  }
-  adapter "noop" "default" {}
-  step "open" {
-    target = adapter.noop.default
-    outcome "success" { next = "done" }
-  }
-  state "done" { terminal = true }
 }
+local "prompt" {
+  value = file("prompt.txt")
+}
+adapter "noop" "default" {}
+step "open" {
+  target = adapter.noop.default
+  outcome "success" { next = "done" }
+}
+state "done" { terminal = true }
 `
 	spec, diags := Parse("t.hcl", []byte(src))
 	if diags.HasErrors() {

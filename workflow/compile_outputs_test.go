@@ -12,15 +12,15 @@ workflow "test" {
   version      = "1"
   initial_state = "start"
   target_state  = "end"
+}
   
-  output "result" {
-    value = "hello"
-  }
+output "result" {
+  value = "hello"
+}
   
-  state "start" {}
-  state "end" {
-    terminal = true
-  }
+state "start" {}
+state "end" {
+  terminal = true
 }
 `
 	spec, diags := Parse("test.hcl", []byte(src))
@@ -50,13 +50,13 @@ workflow "test" {
   version      = "1"
   initial_state = "start"
   target_state  = "end"
-  
-  output "count" { value = 1 }
-  output "count" { value = 2 }
-  
-  state "start" {}
-  state "end" { terminal = true }
 }
+  
+output "count" { value = 1 }
+output "count" { value = 2 }
+  
+state "start" {}
+state "end" { terminal = true }
 `
 	spec, diags := Parse("test.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -87,14 +87,14 @@ workflow "test" {
   version      = "1"
   initial_state = "start"
   target_state  = "end"
-  
-  output "bad" {
-    description = "no value"
-  }
-  
-  state "start" {}
-  state "end" { terminal = true }
 }
+  
+output "bad" {
+  description = "no value"
+}
+  
+state "start" {}
+state "end" { terminal = true }
 `
 	spec, diags := Parse("test.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -137,15 +137,15 @@ workflow "test" {
   version      = "1"
   initial_state = "start"
   target_state  = "end"
-  
-  output "num" {
-    type  = "number"
-    value = 42
-  }
-  
-  state "start" {}
-  state "end" { terminal = true }
 }
+  
+output "num" {
+  type  = "number"
+  value = 42
+}
+  
+state "start" {}
+state "end" { terminal = true }
 `
 	spec, diags := Parse("test.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -170,15 +170,15 @@ workflow "test" {
   version      = "1"
   initial_state = "start"
   target_state  = "end"
-  
-  output "str_not_num" {
-    type  = "number"
-    value = "hello"
-  }
-  
-  state "start" {}
-  state "end" { terminal = true }
 }
+  
+output "str_not_num" {
+  type  = "number"
+  value = "hello"
+}
+  
+state "start" {}
+state "end" { terminal = true }
 `
 	spec, diags := Parse("test.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -216,14 +216,14 @@ workflow "test" {
   version      = "1"
   initial_state = "start"
   target_state  = "end"
-  
-  output "step_result" {
-    value = steps.build.outputs.artifact
-  }
-  
-  state "start" {}
-  state "end" { terminal = true }
 }
+  
+output "step_result" {
+  value = steps.build.outputs.artifact
+}
+  
+state "start" {}
+state "end" { terminal = true }
 `
 	spec, diags := Parse("test.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -255,19 +255,19 @@ workflow "test" {
   version      = "1"
   initial_state = "start"
   target_state  = "end"
-  
-  output "documented" {
-    description = "This is an output"
-    value       = "hello"
-  }
-  
-  output "undocumented" {
-    value = "world"
-  }
-  
-  state "start" {}
-  state "end" { terminal = true }
 }
+  
+output "documented" {
+  description = "This is an output"
+  value       = "hello"
+}
+  
+output "undocumented" {
+  value = "world"
+}
+  
+state "start" {}
+state "end" { terminal = true }
 `
 	spec, diags := Parse("test.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -299,18 +299,18 @@ workflow "test" {
   version      = "1"
   initial_state = "start"
   target_state  = "end"
-  
-  local "msg" {
-    value = "computed"
-  }
-  
-  output "from_local" {
-    value = local.msg
-  }
-  
-  state "start" {}
-  state "end" { terminal = true }
 }
+  
+local "msg" {
+  value = "computed"
+}
+  
+output "from_local" {
+  value = local.msg
+}
+  
+state "start" {}
+state "end" { terminal = true }
 `
 	spec, diags := Parse("test.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -339,14 +339,14 @@ workflow "test" {
   version      = "1"
   initial_state = "start"
   target_state  = "end"
-  
-  output "echo" {
-    value = "echo"
-  }
-  
-  state "start" {}
-  state "end" { terminal = true }
 }
+  
+output "echo" {
+  value = "echo"
+}
+  
+state "start" {}
+state "end" { terminal = true }
 `
 	spec, diags := Parse("test.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -372,14 +372,14 @@ workflow "test" {
   version      = "1"
   initial_state = "start"
   target_state  = "end"
-  
-  output "bad_ref" {
-    value = undefined_var
-  }
-  
-  state "start" {}
-  state "end" { terminal = true }
 }
+  
+output "bad_ref" {
+  value = undefined_var
+}
+  
+state "start" {}
+state "end" { terminal = true }
 `
 	spec, diags := Parse("test.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -401,14 +401,14 @@ workflow "test" {
   version      = "1"
   initial_state = "start"
   target_state  = "end"
-  
-  output "alpha" { value = "a" }
-  output "beta"  { value = "b" }
-  output "gamma" { value = "c" }
-  
-  state "start" {}
-  state "end" { terminal = true }
 }
+  
+output "alpha" { value = "a" }
+output "beta"  { value = "b" }
+output "gamma" { value = "c" }
+  
+state "start" {}
+state "end" { terminal = true }
 `
 	spec, diags := Parse("test.hcl", []byte(src))
 	if diags.HasErrors() {

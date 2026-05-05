@@ -1,0 +1,11 @@
+digraph "phase3_subworkflow_demo" {
+  rankdir=LR;
+
+  "setup" [shape=box];
+  "done" [shape=doublecircle];
+
+  "__start__" [shape=point,width=0.12,label=""];
+  "__start__" -> "setup" [label="initial"];
+  "setup" -> "done" [label="failure"];
+  "setup" -> "done" [label="success"];
+}

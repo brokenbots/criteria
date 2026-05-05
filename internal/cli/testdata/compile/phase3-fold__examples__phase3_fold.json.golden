@@ -1,0 +1,61 @@
+{
+  "name": "fold-demo",
+  "initial_state": "greet",
+  "target_state": "done",
+  "policy": {
+    "MaxTotalSteps": 100,
+    "MaxStepRetries": 0,
+    "MaxVisitsWarnThreshold": 200
+  },
+  "adapters": [
+    {
+      "type": "shell",
+      "name": "default",
+      "on_crash": "fail",
+      "config_keys": null
+    }
+  ],
+  "steps": [
+    {
+      "name": "greet",
+      "adapter": "shell.default",
+      "input_keys": [
+        "command"
+      ],
+      "allow_tools": null,
+      "outcomes": [
+        {
+          "name": "failure",
+          "next": "failed"
+        },
+        {
+          "name": "success",
+          "next": "done"
+        }
+      ]
+    }
+  ],
+  "states": [
+    {
+      "name": "done",
+      "terminal": true,
+      "success": true
+    },
+    {
+      "name": "failed",
+      "terminal": true,
+      "success": false
+    }
+  ],
+  "outputs": [],
+  "switches": [],
+  "step_order": [
+    "greet"
+  ],
+  "plugins_required": [
+    "shell"
+  ],
+  "metadata": {
+    "schema_version": 1
+  }
+}

@@ -34,23 +34,23 @@ func minimalWorkflowWithFile(filePath string) string {
   version       = "0.1"
   initial_state = "step1"
   target_state  = "done"
+}
 
-  state "done" {
-    terminal = true
-    success  = true
-  }
+state "done" {
+  terminal = true
+  success  = true
+}
 
-  adapter "noop" "a" {
-    config {}
-  }
+adapter "noop" "a" {
+  config {}
+}
 
-  step "step1" {
-    target = adapter.noop.a
-    input {
-      prompt = file("` + filePath + `")
-    }
-    outcome "success" { next = "done" }
+step "step1" {
+  target = adapter.noop.a
+  input {
+    prompt = file("` + filePath + `")
   }
+  outcome "success" { next = "done" }
 }
 `
 }
@@ -98,28 +98,28 @@ func TestCompileFileFunctionValidation_VarArgFileExists(t *testing.T) {
   version       = "0.1"
   initial_state = "step1"
   target_state  = "done"
+}
 
-  state "done" {
-    terminal = true
-    success  = true
-  }
+state "done" {
+  terminal = true
+  success  = true
+}
 
-  variable "path" {
-    type    = "string"
-    default = "some.txt"
-  }
+variable "path" {
+  type    = "string"
+  default = "some.txt"
+}
 
-  adapter "noop" "a" {
-    config {}
-  }
+adapter "noop" "a" {
+  config {}
+}
 
-  step "step1" {
-    target = adapter.noop.a
-    input {
-      prompt = file(var.path)
-    }
-    outcome "success" { next = "done" }
+step "step1" {
+  target = adapter.noop.a
+  input {
+    prompt = file(var.path)
   }
+  outcome "success" { next = "done" }
 }
 `
 	diags := compileWorkflowInDir(t, dir, hclContent)
@@ -138,28 +138,28 @@ func TestCompileFileFunctionValidation_VarArgFileMissing(t *testing.T) {
   version       = "0.1"
   initial_state = "step1"
   target_state  = "done"
+}
 
-  state "done" {
-    terminal = true
-    success  = true
-  }
+state "done" {
+  terminal = true
+  success  = true
+}
 
-  variable "path" {
-    type    = "string"
-    default = "some.txt"
-  }
+variable "path" {
+  type    = "string"
+  default = "some.txt"
+}
 
-  adapter "noop" "a" {
-    config {}
-  }
+adapter "noop" "a" {
+  config {}
+}
 
-  step "step1" {
-    target = adapter.noop.a
-    input {
-      prompt = file(var.path)
-    }
-    outcome "success" { next = "done" }
+step "step1" {
+  target = adapter.noop.a
+  input {
+    prompt = file(var.path)
   }
+  outcome "success" { next = "done" }
 }
 `
 	diags := compileWorkflowInDir(t, dir, hclContent)

@@ -13,30 +13,30 @@ workflow "requires_signal" {
   version = "0.1"
   initial_state = "execute"
   target_state  = "done"
+}
 
-  adapter "shell" "default" {}
+adapter "shell" "default" {}
 
-  step "execute" {
-    target = adapter.shell.default
-    input {
-      command = "echo hello"
-    }
-    outcome "success" { next = "wait_for_signal" }
-    outcome "failure" { next = "failed" }
+step "execute" {
+  target = adapter.shell.default
+  input {
+    command = "echo hello"
   }
+  outcome "success" { next = "wait_for_signal" }
+  outcome "failure" { next = "failed" }
+}
 
-  state "wait_for_signal" {
-    requires = "signal"
-  }
+state "wait_for_signal" {
+  requires = "signal"
+}
 
-  state "done" {
-    terminal = true
-  }
+state "done" {
+  terminal = true
+}
 
-  state "failed" {
-    terminal = true
-    success = false
-  }
+state "failed" {
+  terminal = true
+  success = false
 }
 `)
 
@@ -57,16 +57,16 @@ workflow "wait_signal" {
   version       = "0.1"
   initial_state = "gate"
   target_state  = "done"
+}
 
-  wait "gate" {
-    signal = "ready"
-    outcome "received" { next = "done" }
-  }
+wait "gate" {
+  signal = "ready"
+  outcome "received" { next = "done" }
+}
 
-  state "done" {
-    terminal = true
-    success  = true
-  }
+state "done" {
+  terminal = true
+  success  = true
 }
 `)
 
@@ -87,18 +87,18 @@ workflow "needs_approval" {
   version       = "0.1"
   initial_state = "review"
   target_state  = "done"
+}
 
-  approval "review" {
-    approvers = ["alice"]
-    reason    = "ship it?"
-    outcome "approved" { next = "done" }
-    outcome "rejected" { next = "done" }
-  }
+approval "review" {
+  approvers = ["alice"]
+  reason    = "ship it?"
+  outcome "approved" { next = "done" }
+  outcome "rejected" { next = "done" }
+}
 
-  state "done" {
-    terminal = true
-    success  = true
-  }
+state "done" {
+  terminal = true
+  success  = true
 }
 `)
 

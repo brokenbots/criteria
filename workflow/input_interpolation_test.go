@@ -9,51 +9,53 @@ import (
 // interpolWorkflow declares a variable and a step that references it.
 const interpolWorkflow = `
 workflow "interpolate" {
-  adapter "shell" "default" {}
   version       = "0.1"
   initial_state = "clone"
   target_state  = "__done__"
-
-  variable "repo" {
-    type    = "string"
-    default = "orchestrator"
-  }
-  step "clone" {
-    target = adapter.shell.default
-    input {
-      command = "echo ${var.repo}"
-    }
-    outcome "success" { next = "__done__" }
-    outcome "failure" { next = "__done__" }
-  }
-  state "__done__" { terminal = true }
 }
+
+adapter "shell" "default" {}
+
+variable "repo" {
+  type    = "string"
+  default = "orchestrator"
+}
+step "clone" {
+  target = adapter.shell.default
+  input {
+    command = "echo ${var.repo}"
+  }
+  outcome "success" { next = "__done__" }
+  outcome "failure" { next = "__done__" }
+}
+state "__done__" { terminal = true }
 `
 
 // stepOutputWorkflow uses a step output in a subsequent step's input.
 const stepOutputWorkflow = `
 workflow "step_outputs" {
-  adapter "shell" "default" {}
   version       = "0.1"
   initial_state = "build"
   target_state  = "__done__"
-
-  step "build" {
-    target = adapter.shell.default
-    input {
-      command = "echo building"
-    }
-    outcome "success" { next = "publish" }
-  }
-  step "publish" {
-    target = adapter.shell.default
-    input {
-      command = "echo ${steps.build.stdout}"
-    }
-    outcome "success" { next = "__done__" }
-  }
-  state "__done__" { terminal = true }
 }
+
+adapter "shell" "default" {}
+
+step "build" {
+  target = adapter.shell.default
+  input {
+    command = "echo building"
+  }
+  outcome "success" { next = "publish" }
+}
+step "publish" {
+  target = adapter.shell.default
+  input {
+    command = "echo ${steps.build.stdout}"
+  }
+  outcome "success" { next = "__done__" }
+}
+state "__done__" { terminal = true }
 `
 
 func TestInputInterpolation_VarReference(t *testing.T) {

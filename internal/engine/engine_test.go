@@ -149,18 +149,31 @@ func injectDefaultAdapters(src string) string {
 	var injected strings.Builder
 	for _, adapterType := range adapterList {
 		//nolint:gocritic // sprintfQuotedString: Sprintf needed to build HCL with literal quotes
-		injected.WriteString(fmt.Sprintf("  adapter \"%s\" \"default\" {}\n", adapterType))
+		injected.WriteString(fmt.Sprintf("adapter \"%s\" \"default\" {}\n", adapterType))
 	}
 	adapterDecls := injected.String()
 
-	// Inject adapters into outer workflow
+	// Inject adapters after the workflow block closing brace (top level)
 	workflowStart := strings.Index(src, "workflow \"")
 	if workflowStart != -1 {
-		bracePos := strings.Index(src[workflowStart:], "{")
-		if bracePos != -1 {
-			bracePos += workflowStart
-			headerEnd := strings.Index(src[bracePos:], "\n") + bracePos + 1
-			src = src[:headerEnd] + "\n" + adapterDecls + src[headerEnd:]
+		bracePos := strings.Index(src[workflowStart:], "{") + workflowStart
+		depth := 0
+		closeIdx := -1
+		for i := bracePos; i < len(src); i++ {
+			switch src[i] {
+			case '{':
+				depth++
+			case '}':
+				depth--
+				if depth == 0 {
+					closeIdx = i
+					i = len(src) // exit loop
+				}
+			}
+		}
+		if closeIdx != -1 {
+			insertAt := closeIdx + 1
+			src = src[:insertAt] + "\n" + adapterDecls + src[insertAt:]
 		}
 	}
 
@@ -201,16 +214,16 @@ workflow "t" {
   version = "0.1"
   initial_state = "a"
   target_state  = "done"
-  step "a" {
-    target = adapter.fake
-    outcome "success" { next = "b" }
-  }
-  step "b" {
-    target = adapter.fake
-    outcome "success" { next = "done" }
-  }
-  state "done" { terminal = true }
-}`)
+}
+step "a" {
+  target = adapter.fake
+  outcome "success" { next = "b" }
+}
+step "b" {
+  target = adapter.fake
+  outcome "success" { next = "done" }
+}
+state "done" { terminal = true }`)
 	sink := &fakeSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": &fakePlugin{name: "fake", outcome: "success"}}}
 	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
@@ -230,16 +243,16 @@ workflow "t" {
   version = "0.1"
   initial_state = "a"
   target_state  = "fail"
-  step "a" {
-    target = adapter.fake
-    outcome "success" { next = "ok" }
-    outcome "failure" { next = "fail" }
-  }
-  state "ok" { terminal = true }
-  state "fail" {
-    terminal = true
-    success  = false
-  }
+}
+step "a" {
+  target = adapter.fake
+  outcome "success" { next = "ok" }
+  outcome "failure" { next = "fail" }
+}
+state "ok" { terminal = true }
+state "fail" {
+  terminal = true
+  success  = false
 }`)
 	sink := &fakeSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": &fakePlugin{name: "fake", outcome: "", err: errors.New("boom")}}}
@@ -257,13 +270,13 @@ workflow "t" {
   version = "0.1"
   initial_state = "a"
   target_state  = "done"
-  step "a" {
-    target = adapter.fake
-    outcome "again" { next = "a" }
-  }
-  state "done" { terminal = true }
-  policy { max_total_steps = 3 }
-}`)
+}
+step "a" {
+  target = adapter.fake
+  outcome "again" { next = "a" }
+}
+state "done" { terminal = true }
+policy { max_total_steps = 3 }`)
 	sink := &fakeSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": &fakePlugin{name: "fake", outcome: "again"}}}
 	err := NewTestEngine(g, loader, sink).Run(context.Background())
@@ -481,18 +494,18 @@ workflow "perm" {
   version       = "0.1"
   initial_state = "run"
   target_state  = "done"
+}
 
-  adapter "permissive" "bot" { }
+adapter "permissive" "bot" { }
 
-  step "run" {
-    target = adapter.permissive.bot
-    input { perm_tools = "read_file,write_file" }
-    allow_tools = ["read_file"]
-    outcome "success"      { next = "done" }
-    outcome "needs_review" { next = "done" }
-  }
-  state "done" { terminal = true }
-}`)
+step "run" {
+  target = adapter.permissive.bot
+  input { perm_tools = "read_file,write_file" }
+  allow_tools = ["read_file"]
+  outcome "success"      { next = "done" }
+  outcome "needs_review" { next = "done" }
+}
+state "done" { terminal = true }`)
 
 	sink := &captureStepEventSink{}
 	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
@@ -544,17 +557,17 @@ workflow "perm-deny" {
   version       = "0.1"
   initial_state = "run"
   target_state  = "done"
+}
 
-  adapter "permissive" "bot" { }
+adapter "permissive" "bot" { }
 
-  step "run" {
-    target = adapter.permissive.bot
-    input { perm_tools = "read_file" }
-    outcome "needs_review" { next = "done" }
-    outcome "success"      { next = "done" }
-  }
-  state "done" { terminal = true }
-}`)
+step "run" {
+  target = adapter.permissive.bot
+  input { perm_tools = "read_file" }
+  outcome "needs_review" { next = "done" }
+  outcome "success"      { next = "done" }
+}
+state "done" { terminal = true }`)
 
 	sink := &captureStepEventSink{}
 	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
@@ -580,18 +593,18 @@ workflow "perm-shell" {
   version       = "0.1"
   initial_state = "run"
   target_state  = "done"
+}
 
-  adapter "permissive" "bot" { }
+adapter "permissive" "bot" { }
 
-  step "run" {
-    target = adapter.permissive.bot
-    input { perm_tools = "shell|git status,shell|rm -rf /" }
-    allow_tools = ["shell:git *"]
-    outcome "success"      { next = "done" }
-    outcome "needs_review" { next = "done" }
-  }
-  state "done" { terminal = true }
-}`)
+step "run" {
+  target = adapter.permissive.bot
+  input { perm_tools = "shell|git status,shell|rm -rf /" }
+  allow_tools = ["shell:git *"]
+  outcome "success"      { next = "done" }
+  outcome "needs_review" { next = "done" }
+}
+state "done" { terminal = true }`)
 
 	sink := &captureStepEventSink{}
 	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
@@ -617,15 +630,15 @@ workflow "t" {
   version = "0.1"
   initial_state = "loop"
   target_state  = "done"
-  step "loop" {
-    target = adapter.fake
-    max_visits = 3
-    outcome "again" { next = "loop" }
-    outcome "done"  { next = "done" }
-  }
-  state "done" { terminal = true }
-  policy { max_total_steps = 1000 }
-}`)
+}
+step "loop" {
+  target = adapter.fake
+  max_visits = 3
+  outcome "again" { next = "loop" }
+  outcome "done"  { next = "done" }
+}
+state "done" { terminal = true }
+policy { max_total_steps = 1000 }`)
 	sink := &fakeSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": &fakePlugin{name: "fake", outcome: "again"}}}
 	err := NewTestEngine(g, loader, sink).Run(context.Background())
@@ -672,15 +685,15 @@ workflow "t" {
   version = "0.1"
   initial_state = "loop"
   target_state  = "done"
-  step "loop" {
-    target = adapter.fake
-    max_visits = 100
-    outcome "again" { next = "loop" }
-    outcome "done"  { next = "done" }
-  }
-  state "done" { terminal = true }
-  policy { max_total_steps = 1000 }
-}`)
+}
+step "loop" {
+  target = adapter.fake
+  max_visits = 100
+  outcome "again" { next = "loop" }
+  outcome "done"  { next = "done" }
+}
+state "done" { terminal = true }
+policy { max_total_steps = 1000 }`)
 	sink := &fakeSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": plg}}
 	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
@@ -699,12 +712,12 @@ workflow "t" {
   version = "0.1"
   initial_state = "a"
   target_state  = "done"
-  step "a" {
-    target = adapter.fake
-    outcome "success" { next = "done" }
-  }
-  state "done" { terminal = true }
-}`)
+}
+step "a" {
+  target = adapter.fake
+  outcome "success" { next = "done" }
+}
+state "done" { terminal = true }`)
 	step := g.Steps["a"]
 	if step.MaxVisits != 0 {
 		t.Errorf("MaxVisits = %d, want 0 (unlimited)", step.MaxVisits)
@@ -726,16 +739,16 @@ workflow "t" {
   version = "0.1"
   initial_state = "work"
   target_state  = "done"
-  step "work" {
-    target = adapter.fake
-    max_visits = 2
-    outcome "done" { next = "done" }
-  }
-  state "done" { terminal = true }
-  policy {
-    max_total_steps  = 1000
-    max_step_retries = 3
-  }
+}
+step "work" {
+  target = adapter.fake
+  max_visits = 2
+  outcome "done" { next = "done" }
+}
+state "done" { terminal = true }
+policy {
+  max_total_steps  = 1000
+  max_step_retries = 3
 }`)
 	// Plugin that always errors so the retry loop is exercised.
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": &errPlugin{name: "fake", err: errors.New("boom")}}}
@@ -770,15 +783,15 @@ workflow "t" {
   version = "0.1"
   initial_state = "loop"
   target_state  = "done"
-  step "loop" {
-    target = adapter.fake
-    max_visits = 5
-    outcome "again" { next = "loop" }
-    outcome "done"  { next = "done" }
-  }
-  state "done" { terminal = true }
-  policy { max_total_steps = 2 }
-}`)
+}
+step "loop" {
+  target = adapter.fake
+  max_visits = 5
+  outcome "again" { next = "loop" }
+  outcome "done"  { next = "done" }
+}
+state "done" { terminal = true }
+policy { max_total_steps = 2 }`)
 	sink := &fakeSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": &fakePlugin{name: "fake", outcome: "again"}}}
 	eng := NewTestEngine(g, loader, sink)
@@ -804,15 +817,15 @@ workflow "t" {
   version = "0.1"
   initial_state = "loop"
   target_state  = "done"
-  step "loop" {
-    target = adapter.fake
-    max_visits = 5
-    outcome "again" { next = "loop" }
-    outcome "done"  { next = "done" }
-  }
-  state "done" { terminal = true }
-  policy { max_total_steps = 1000 }
-}`)
+}
+step "loop" {
+  target = adapter.fake
+  max_visits = 5
+  outcome "again" { next = "loop" }
+  outcome "done"  { next = "done" }
+}
+state "done" { terminal = true }
+policy { max_total_steps = 1000 }`)
 	sink2 := &fakeSink{}
 	eng2 := New(g2, loader, sink2, WithResumedVisits(visits))
 	err2 := eng2.RunFrom(context.Background(), "loop", 1)
@@ -890,14 +903,14 @@ workflow "t" {
   version = "0.1"
   initial_state = "work"
   target_state  = "done"
-  step "work" {
-    target = adapter.fake
-    max_visits = 1
-    outcome "done" { next = "done" }
-  }
-  state "done" { terminal = true }
-  policy { max_total_steps = 1000 }
-}`)
+}
+step "work" {
+  target = adapter.fake
+  max_visits = 1
+  outcome "done" { next = "done" }
+}
+state "done" { terminal = true }
+policy { max_total_steps = 1000 }`)
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": &fakePlugin{name: "fake", outcome: "done"}}}
 	sink := &fakeSink{}
 	eng := NewTestEngine(g, loader, sink)
@@ -931,13 +944,13 @@ workflow "t" {
   version = "0.1"
   initial_state = "a"
   target_state  = "done"
-  step "a" {
-    target = adapter.fake
-    outcome "success" { next = "done" }
-    outcome "failure" { next = "done" }
-  }
-  state "done" { terminal = true }
-}`)
+}
+step "a" {
+  target = adapter.fake
+  outcome "success" { next = "done" }
+  outcome "failure" { next = "done" }
+}
+state "done" { terminal = true }`)
 
 	// Adapter returns "unexpected-outcome" which is not in the declared set.
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
@@ -971,22 +984,22 @@ workflow "t" {
   version = "0.1"
   initial_state = "process"
   target_state  = "done"
-  step "process" {
-    type       = "workflow"
-    for_each   = ["a"]
-    max_visits = 1
-    workflow {
-      step "inner" {
-        target = adapter.fake
-        outcome "success" { next = "_continue" }
-      }
+}
+step "process" {
+  type       = "workflow"
+  for_each   = ["a"]
+  max_visits = 1
+  workflow {
+    step "inner" {
+      target = adapter.fake
+      outcome "success" { next = "_continue" }
     }
-    outcome "all_succeeded" { next = "done" }
-    outcome "any_failed"    { next = "done" }
   }
-  state "done" { terminal = true }
-  policy { max_total_steps = 1000 }
-}`)
+  outcome "all_succeeded" { next = "done" }
+  outcome "any_failed"    { next = "done" }
+}
+state "done" { terminal = true }
+policy { max_total_steps = 1000 }`)
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": &fakePlugin{name: "fake", outcome: "success"}}}
 	sink := &fakeSink{}
 	eng := NewTestEngine(g, loader, sink)
