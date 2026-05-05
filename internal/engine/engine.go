@@ -252,7 +252,10 @@ func (e *Engine) runLoop(ctx context.Context, sessions *plugin.SessionManager, c
 		if err != nil {
 			return e.handleEvalError(st, err)
 		}
-		next = e.routeIteratingStep(st, next)
+		next, err = e.routeIteratingStep(st, next)
+		if err != nil {
+			return e.handleEvalError(st, err)
+		}
 		if next == workflow.ReturnSentinel {
 			return e.handleReturnExit(st)
 		}
@@ -263,7 +266,7 @@ func (e *Engine) runLoop(ctx context.Context, sessions *plugin.SessionManager, c
 // routeIteratingStep handles post-step routing for steps with active iteration
 // cursors (W10). Delegates to routeIteratingStepInGraph using the engine's
 // own graph and sink. See routeIteratingStepInGraph for full semantics.
-func (e *Engine) routeIteratingStep(st *RunState, next string) string {
+func (e *Engine) routeIteratingStep(st *RunState, next string) (string, error) {
 	return routeIteratingStepInGraph(st, next, e.graph, e.sink)
 }
 
@@ -276,10 +279,10 @@ func (e *Engine) routeIteratingStep(st *RunState, next string) string {
 //   - More iterations remain → re-bind each.*, emit started event, re-enter step.
 //   - All iterations done (or on_failure=abort after failure) → pop cursor,
 //     emit completed event, return aggregate outcome target from graph.
-func routeIteratingStepInGraph(st *RunState, next string, graph *workflow.FSMGraph, sink Sink) string { //nolint:funlen // iteration router is inherently stateful; splitting adds indirection
+func routeIteratingStepInGraph(st *RunState, next string, graph *workflow.FSMGraph, sink Sink) (string, error) { //nolint:funlen // iteration router is inherently stateful; splitting adds indirection
 	cur := st.TopCursor()
 	if cur == nil || !cur.InProgress {
-		return next
+		return next, nil
 	}
 
 	stepName := cur.StepName
@@ -287,7 +290,7 @@ func routeIteratingStepInGraph(st *RunState, next string, graph *workflow.FSMGra
 	// When the step has a workflow body (_continue comes from the body's
 	// terminal state), next will be "_continue".
 	if st.Current != stepName && next != "_continue" {
-		return next
+		return next, nil
 	}
 
 	// Record outcome for this iteration.
@@ -334,7 +337,7 @@ func routeIteratingStepInGraph(st *RunState, next string, graph *workflow.FSMGra
 			sink.OnScopeIterCursorSet(curJSON)
 		}
 		sink.OnStepIterationStarted(stepName, cur.Index, workflow.CtyValueToString(item), cur.AnyFailed)
-		return stepName // re-enter the same step
+		return stepName, nil // re-enter the same step
 	}
 
 	// All iterations done.
@@ -343,15 +346,18 @@ func routeIteratingStepInGraph(st *RunState, next string, graph *workflow.FSMGra
 
 // finishIterationInGraph closes out an iteration loop: pops the cursor, clears
 // each.* bindings, emits OnStepIterationCompleted, and returns the aggregate
-// outcome target looked up from graph.
-func finishIterationInGraph(st *RunState, stepName string, graph *workflow.FSMGraph, sink Sink) string {
+// outcome target looked up from graph. When the aggregate outcome routes via
+// next = "return" and declares an output expression, the expression is
+// evaluated and the result stored in st.ReturnOutputs before the sentinel is
+// returned — matching the single-step return path in applyOutcome.
+func finishIterationInGraph(st *RunState, stepName string, graph *workflow.FSMGraph, sink Sink) (string, error) {
 	cur := st.PopCursor()
 	st.Vars = workflow.ClearEachBinding(st.Vars)
 	sink.OnScopeIterCursorSet("") // cursor cleared
 
 	step, ok := graph.Steps[stepName]
 	if !ok {
-		return stepName
+		return stepName, nil
 	}
 
 	aggregateOutcome := "all_succeeded"
@@ -367,7 +373,16 @@ func finishIterationInGraph(st *RunState, stepName string, graph *workflow.FSMGr
 	}
 
 	sink.OnStepIterationCompleted(stepName, aggregateOutcome, co.Next)
-	return co.Next
+
+	if co.Next == workflow.ReturnSentinel && co.OutputExpr != nil {
+		projected, err := evalOutcomeOutputProjection(co.OutputExpr, nil, st)
+		if err != nil {
+			return "", fmt.Errorf("step %q aggregate outcome %q: output projection: %w", stepName, aggregateOutcome, err)
+		}
+		st.ReturnOutputs = projected
+	}
+
+	return co.Next, nil
 }
 
 // returns the restored scope unchanged. For fresh runs it seeds from graph

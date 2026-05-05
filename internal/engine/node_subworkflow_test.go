@@ -452,3 +452,56 @@ func TestRunSubworkflow_CalleeCancellation(t *testing.T) {
 		t.Errorf("error should mention context cancellation, got: %v", err)
 	}
 }
+
+// TestRunSubworkflow_ReturnSentinelWithNilOutputs verifies that when a
+// subworkflow exits via next = "return" with no output projection, runSubworkflow
+// returns (nil, nil) rather than falling through to evalRunOutputsAsValues.
+// Prior to the fix, `_ = terminal` and `if returnOutputs != nil` caused the
+// nil-output return path to silently evaluate the callee's output blocks instead.
+func TestRunSubworkflow_ReturnSentinelWithNilOutputs(t *testing.T) {
+	// Callee: single step with next = "return" but no output = {...} projection.
+	// The callee also declares an output block so we can detect a fall-through:
+	// if evalRunOutputsAsValues is called it would populate "leaked" in the output.
+	returnStep := &workflow.StepNode{
+		Name:       "inner",
+		TargetKind: workflow.StepTargetAdapter,
+		AdapterRef: "fake.default",
+		Input:      map[string]string{},
+		Outcomes: map[string]*workflow.CompiledOutcome{
+			"success": {Name: "success", Next: workflow.ReturnSentinel},
+		},
+	}
+	calleeGraph := &workflow.FSMGraph{
+		Name:         "callee",
+		InitialState: "inner",
+		TargetState:  "done",
+		Policy:       workflow.DefaultPolicy,
+		Steps:        map[string]*workflow.StepNode{"inner": returnStep},
+		States:       map[string]*workflow.StateNode{"done": {Name: "done", Terminal: true, Success: true}},
+		Adapters:     map[string]*workflow.AdapterNode{"fake.default": {Type: "fake", Name: "default"}},
+		AdapterOrder: []string{"fake.default"},
+		Subworkflows: map[string]*workflow.SubworkflowNode{},
+		Variables:    map[string]*workflow.VariableNode{},
+		Environments: map[string]*workflow.EnvironmentNode{},
+	}
+	swNode := &workflow.SubworkflowNode{Name: "callee", Body: calleeGraph}
+
+	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
+		"fake":         &fakePlugin{name: "fake", outcome: "success"},
+		"fake.default": &fakePlugin{name: "fake", outcome: "success"},
+	}}
+	parentSt := &RunState{
+		Vars:        map[string]cty.Value{},
+		WorkflowDir: t.TempDir(),
+	}
+	deps := depsWithLoader(t, loader)
+
+	outputs, err := runSubworkflow(context.Background(), swNode, parentSt, nil, deps)
+	if err != nil {
+		t.Fatalf("runSubworkflow: %v", err)
+	}
+	// Nil outputs is the correct result for a no-projection return.
+	if outputs != nil {
+		t.Errorf("expected nil outputs on no-projection return, got %v", outputs)
+	}
+}

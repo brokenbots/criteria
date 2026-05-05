@@ -64,11 +64,10 @@ func runSubworkflow(ctx context.Context, node *workflow.SubworkflowNode, parentS
 	if err != nil {
 		return nil, fmt.Errorf("subworkflow %q: %w", node.Name, err)
 	}
-	_ = terminal
-
-	// When the callee exited via next = "return", the return-projected outputs
-	// override the normal output block evaluation.
-	if returnOutputs != nil {
+	// When the callee exited via next = "return", return the projected outputs
+	// directly. returnOutputs may be nil (legitimate empty projection) — in
+	// that case return nil rather than falling through to evalRunOutputsAsValues.
+	if terminal == workflow.ReturnSentinel {
 		return returnOutputs, nil
 	}
 

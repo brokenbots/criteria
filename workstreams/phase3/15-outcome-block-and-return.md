@@ -418,3 +418,28 @@ The strengthened suite now checks the right behaviors rather than just pass/fail
 - `make ci` — passed.
 - `go test ./workflow -run 'TestCompileOutcome_OutputExprSubworkflowRef' -count=1` — passed.
 - `go test ./internal/engine -run 'TestStep_OutcomeOutput_SubworkflowOutputAvailable|TestStep_OutcomeReturnOutputOverridesOutputBlocks|TestStep_DefaultOutcome_AppliedOnUnknownName|TestStep_DefaultOutcomeUnset_UnknownNameErrors' -count=1` — passed.
+
+### Review 2026-05-04-04 — changes-requested
+
+#### Summary
+Three additional issues identified in PR #83 review:
+1. Return-sentinel detection unreliable in `runSubworkflow` (`_ = terminal` / `if returnOutputs != nil`).
+2. `output = { ... }` silently dropped on iterating aggregate outcomes when `next = "return"`.
+3. `"return"` reserved only as step name; state/wait/approval/branch named `"return"` were accepted silently.
+
+#### Remediations (2026-05-04-04)
+
+All three blockers resolved. `make ci` green.
+
+**Issue 1 — Return sentinel check in `runSubworkflow`** (`internal/engine/node_subworkflow.go`): Replaced `_ = terminal; if returnOutputs != nil` with `if terminal == workflow.ReturnSentinel`. The prior code silently fell through to `evalRunOutputsAsValues` when a returning callee had no `output = {...}` projection (nil `returnOutputs`). Now the callee's return is honoured regardless of whether outputs are nil.
+- Test: `TestRunSubworkflow_ReturnSentinelWithNilOutputs` — verifies nil outputs returned for a no-projection return, not callee output block values.
+
+**Issue 2 — Iteration aggregate outcome projection on return path** (`internal/engine/engine.go`): Changed `finishIterationInGraph` and `routeIteratingStepInGraph` signatures from `string` to `(string, error)`. When `co.Next == ReturnSentinel && co.OutputExpr != nil`, `finishIterationInGraph` now calls `evalOutcomeOutputProjection` and stores the result in `st.ReturnOutputs` before returning the sentinel. Updated `routeIteratingStep` wrapper method and both call sites (`engine.go` main loop, `node_workflow.go` body loop) to propagate the error.
+- Test: `TestIter_AggregateOutcome_ReturnOutputProjection` — end-to-end engine test with `for_each = ["a","b"]` and `all_succeeded { next = "return"; output = { done = "yes" } }`; asserts `sink.outputs["done"] == "\"yes\""`.
+
+**Issue 3 — Reserved `"return"` for non-step nodes** (`workflow/compile_validators.go`): Extended `checkReservedNames` to reject `"return"` as a name for states, waits, approvals, and branches. Extracted `reservedNameDiags` helper to keep `checkReservedNames` below the cognitive-complexity limit. Branches can only be `"return"` (not `"_continue"`) so branches only check the sentinel guard.
+- Test: `TestCompileReservedName_ReturnForNonStepNodes` — table-driven: `state "return"` and `branch "return"` both produce compile errors mentioning `"return"`.
+
+#### Validation Performed
+- `make ci` — passed.
+- All new tests: `TestRunSubworkflow_ReturnSentinelWithNilOutputs`, `TestIter_AggregateOutcome_ReturnOutputProjection`, `TestCompileReservedName_ReturnForNonStepNodes` — passed.

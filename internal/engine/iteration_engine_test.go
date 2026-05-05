@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hashicorp/hcl/v2"
+	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/zclconf/go-cty/cty"
 
 	"github.com/brokenbots/criteria/internal/adapter"
@@ -1642,5 +1644,77 @@ func TestIter_Keys_SerializeRestore(t *testing.T) {
 		if got, _ := keysSlice[i].(string); got != w {
 			t.Errorf("keys[%d]: got %q want %q", i, got, w)
 		}
+	}
+}
+
+// TestIter_AggregateOutcome_ReturnOutputProjection verifies that when an
+// iterating step's aggregate outcome declares output = { ... } and next =
+// "return", the projected outputs are correctly evaluated and emitted via
+// OnRunOutputs on the top-level return path.
+//
+// Prior to the fix, finishIterationInGraph returned co.Next without evaluating
+// co.OutputExpr, so st.ReturnOutputs was never populated and the run exited
+// with no outputs.
+func TestIter_AggregateOutcome_ReturnOutputProjection(t *testing.T) {
+	// parseExprIter is a local helper so this test file stays standalone.
+	parseExprIter := func(src string) hcl.Expression {
+		t.Helper()
+		expr, diags := hclsyntax.ParseExpression([]byte(src), "test.hcl", hcl.Pos{Line: 1, Column: 1})
+		if diags.HasErrors() {
+			t.Fatalf("parseExprIter(%q): %s", src, diags.Error())
+		}
+		return expr
+	}
+
+	step := &workflow.StepNode{
+		Name:       "looper",
+		TargetKind: workflow.StepTargetAdapter,
+		AdapterRef: "fake.default",
+		Input:      map[string]string{},
+		ForEach:    parseExprIter(`["a", "b"]`),
+		Outcomes: map[string]*workflow.CompiledOutcome{
+			"success": {
+				Name: "success",
+				Next: "_continue",
+			},
+			"all_succeeded": {
+				Name:       "all_succeeded",
+				Next:       workflow.ReturnSentinel,
+				OutputExpr: parseExprIter(`{ done = "yes" }`),
+			},
+		},
+	}
+	graph := &workflow.FSMGraph{
+		Name:         "t",
+		InitialState: "looper",
+		TargetState:  "done",
+		Policy:       workflow.DefaultPolicy,
+		Steps:        map[string]*workflow.StepNode{"looper": step},
+		States:       map[string]*workflow.StateNode{"done": {Name: "done", Terminal: true, Success: true}},
+		Adapters:     map[string]*workflow.AdapterNode{"fake.default": {Type: "fake", Name: "default"}},
+		AdapterOrder: []string{"fake.default"},
+		Subworkflows: map[string]*workflow.SubworkflowNode{},
+		Variables:    map[string]*workflow.VariableNode{},
+		Environments: map[string]*workflow.EnvironmentNode{},
+	}
+
+	sink := &outcomeSink{}
+	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
+		"fake":         &fakePlugin{name: "fake", outcome: "success"},
+		"fake.default": &fakePlugin{name: "fake", outcome: "success"},
+	}}
+	if err := NewTestEngine(graph, loader, sink).Run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if !sink.terminalOK {
+		t.Error("expected terminalOK=true")
+	}
+
+	outputMap := make(map[string]string)
+	for _, o := range sink.outputs {
+		outputMap[o["name"]] = o["value"]
+	}
+	if got, want := outputMap["done"], `"yes"`; got != want {
+		t.Errorf("aggregate return output: done = %q, want %q", got, want)
 	}
 }

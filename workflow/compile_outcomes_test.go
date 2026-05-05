@@ -335,3 +335,75 @@ workflow "t" {
 		t.Errorf("error should mention 'return', got: %s", diags.Error())
 	}
 }
+
+// TestCompileReservedName_ReturnForNonStepNodes verifies that "return" is
+// rejected as a name for states, waits, approvals, and branches in addition
+// to steps — since any such node named "return" would silently cause
+// resolveTransitions to treat next = "return" as a ReturnSentinel instead of
+// a real node reference.
+func TestCompileReservedName_ReturnForNonStepNodes(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+	}{
+		{
+			name: "state",
+			src: `
+workflow "t" {
+  version       = "0.1"
+  initial_state = "step1"
+  target_state  = "return"
+  adapter "noop" "default" {}
+  step "step1" {
+    target = adapter.noop.default
+    outcome "success" { next = "return" }
+  }
+  state "return" {
+    terminal = true
+    success  = true
+  }
+}`,
+		},
+		{
+			name: "branch",
+			src: `
+workflow "t" {
+  version       = "0.1"
+  initial_state = "step1"
+  target_state  = "done"
+  adapter "noop" "default" {}
+  step "step1" {
+    target = adapter.noop.default
+    outcome "success" { next = "done" }
+  }
+  branch "return" {
+    arm {
+      when         = true
+      transition_to = "done"
+    }
+    default { transition_to = "done" }
+  }
+  state "done" {
+    terminal = true
+    success  = true
+  }
+}`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			spec, diags := Parse("t.hcl", []byte(tc.src))
+			if diags.HasErrors() {
+				t.Fatalf("parse: %s", diags.Error())
+			}
+			_, diags = Compile(spec, nil)
+			if !diags.HasErrors() {
+				t.Fatalf("expected compile error for %s named 'return', got none", tc.name)
+			}
+			if !strings.Contains(diags.Error(), "return") {
+				t.Errorf("error should mention 'return', got: %s", diags.Error())
+			}
+		})
+	}
+}

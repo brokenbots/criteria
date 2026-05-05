@@ -153,7 +153,10 @@ func runWorkflowBody(ctx context.Context, body *workflow.FSMGraph, bodyEntry str
 			return "", nil, nil, fmt.Errorf("workflow body step %q: %w", childSt.Current, err)
 		}
 		// Apply iteration routing for any for_each/count steps inside the body.
-		next = routeIteratingStepInGraph(childSt, next, body, deps.Sink)
+		next, err = routeIteratingStepInGraph(childSt, next, body, deps.Sink)
+		if err != nil {
+			return "", nil, nil, fmt.Errorf("workflow body step %q: iteration: %w", childSt.Current, err)
+		}
 		if next == workflow.ReturnSentinel {
 			return workflow.ReturnSentinel, childSt.ReturnOutputs, childSt.Vars, nil
 		}
