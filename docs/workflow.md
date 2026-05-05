@@ -78,6 +78,14 @@ Each file must be a valid standalone HCL document. The `workflow "name" { ... }`
 
 See `examples/phase3-multi-file/` for a working example.
 
+#### File path entry points
+
+Passing a `.hcl` file path (e.g. `criteria apply my-workflow/workflow.hcl`) is equivalent to passing the parent directory when the parent contains a single directory module: all sibling `.hcl` files are merged together. This lets you point any CLI command at a specific file within a split module.
+
+**Collection directories** — directories that contain multiple independent workflow files, each with their own `workflow` header block — are also supported. When `criteria apply` is given a `.hcl` file whose parent directory contains multiple workflow headers, it automatically treats the file as a standalone single-file workflow rather than part of a directory module. This is the correct behavior for shared directories such as `examples/` where each `.hcl` file is a self-contained workflow.
+
+Only `.hcl` files are accepted as file-path entry points. Passing a non-`.hcl` file is an error.
+
 ### Upgrading from the nested format
 
 Older Criteria workflows used a nested format where steps, adapters, and states appeared _inside_ the `workflow { ... }` block. The current format places all declarations at the top level. To migrate:
