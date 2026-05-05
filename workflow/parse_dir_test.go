@@ -257,6 +257,169 @@ state "done" { terminal = true }
 	}
 }
 
+// TestParseDir_PolicyMergeAndDuplicateBlock_Error verifies that:
+//   - A single policy block in the directory is merged successfully (covers
+//     the first-seen policyRange setter path in mergeSpecs).
+//   - A second policy block across files produces a "duplicate policy block"
+//     error that includes the previous-declaration location in the detail text.
+func TestParseDir_PolicyMergeAndDuplicateBlock_Error(t *testing.T) {
+	dir := t.TempDir()
+
+	writeHCLFile(t, dir, "workflow", `workflow "pol" {
+  version       = "0.1"
+  initial_state = "done"
+  target_state  = "done"
+}
+state "done" { terminal = true }
+`)
+	// First policy block — should be accepted; policyRange will be set.
+	writeHCLFile(t, dir, "policy_a", `policy {
+  max_total_steps = 10
+}
+`)
+	// Second policy block — must produce a duplicate error with first-file location.
+	writeHCLFile(t, dir, "policy_b", `policy {
+  max_total_steps = 20
+}
+`)
+
+	_, diags := ParseDir(dir)
+	if !diags.HasErrors() {
+		t.Fatal("expected error for duplicate policy blocks")
+	}
+	if !strings.Contains(diags.Error(), "duplicate policy block") {
+		t.Errorf("expected 'duplicate policy block' in error, got: %s", diags.Error())
+	}
+	// The detail must mention the first declaration location (policy_a.hcl).
+	var found bool
+	for _, d := range diags {
+		if strings.Contains(d.Summary, "duplicate policy block") {
+			found = true
+			if !strings.Contains(d.Detail, "previously declared at") {
+				t.Errorf("Detail = %q; expected 'previously declared at' with first-file location", d.Detail)
+			}
+		}
+	}
+	if !found {
+		t.Error("no diagnostic with summary 'duplicate policy block' found")
+	}
+}
+
+// TestParseDir_PermissionsMergeAndDuplicateBlock_Error verifies that:
+//   - A single permissions block is merged successfully (covers the
+//     first-seen permissionsRange setter path in mergeSpecs).
+//   - A second permissions block produces a "duplicate permissions block" error
+//     that includes the previous-declaration location.
+func TestParseDir_PermissionsMergeAndDuplicateBlock_Error(t *testing.T) {
+	dir := t.TempDir()
+
+	writeHCLFile(t, dir, "workflow", `workflow "perm" {
+  version       = "0.1"
+  initial_state = "done"
+  target_state  = "done"
+}
+state "done" { terminal = true }
+`)
+	writeHCLFile(t, dir, "perms_a", `permissions {
+  allow_tools = ["read_file"]
+}
+`)
+	writeHCLFile(t, dir, "perms_b", `permissions {
+  allow_tools = ["write_file"]
+}
+`)
+
+	_, diags := ParseDir(dir)
+	if !diags.HasErrors() {
+		t.Fatal("expected error for duplicate permissions blocks")
+	}
+	if !strings.Contains(diags.Error(), "duplicate permissions block") {
+		t.Errorf("expected 'duplicate permissions block' in error, got: %s", diags.Error())
+	}
+	var found bool
+	for _, d := range diags {
+		if strings.Contains(d.Summary, "duplicate permissions block") {
+			found = true
+			if !strings.Contains(d.Detail, "previously declared at") {
+				t.Errorf("Detail = %q; expected 'previously declared at' with first-file location", d.Detail)
+			}
+		}
+	}
+	if !found {
+		t.Error("no diagnostic with summary 'duplicate permissions block' found")
+	}
+}
+
+// TestParseDir_UnreadableFile_Error verifies that an os.ReadFile failure
+// (e.g. a file that becomes unreadable between directory scan and read) is
+// surfaced as a "cannot read workflow file" diagnostic.
+func TestParseDir_UnreadableFile_Error(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("cannot test file-permission errors as root")
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "unreadable.hcl")
+	if err := os.WriteFile(path, []byte(`workflow "x" {}`), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := os.Chmod(path, 0o000); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(path, 0o644) })
+
+	_, diags := ParseDir(dir)
+	if !diags.HasErrors() {
+		t.Fatal("expected error for unreadable file")
+	}
+	if !strings.Contains(diags.Error(), "cannot read workflow file") {
+		t.Errorf("expected 'cannot read workflow file' in error, got: %s", diags.Error())
+	}
+}
+
+// TestMergeSpecs_EmptyEntries verifies that mergeSpecs returns nil, nil for an
+// empty entry slice (the zero-entries early-return path).
+func TestMergeSpecs_EmptyEntries(t *testing.T) {
+	spec, diags := mergeSpecs("/some/dir", nil)
+	if spec != nil {
+		t.Errorf("expected nil spec for empty entries, got: %+v", spec)
+	}
+	if diags != nil {
+		t.Errorf("expected nil diags for empty entries, got: %s", diags.Error())
+	}
+
+	// Also test with an explicit empty slice.
+	spec2, diags2 := mergeSpecs("/some/dir", []fileEntry{})
+	if spec2 != nil {
+		t.Errorf("expected nil spec for empty slice, got: %+v", spec2)
+	}
+	if diags2 != nil {
+		t.Errorf("expected nil diags for empty slice, got: %s", diags2.Error())
+	}
+}
+
+// TestCollectFileBlockRanges_ParseError verifies that collectFileBlockRanges
+// returns nil when the source bytes cannot be parsed as HCL (the
+// diags.HasErrors() early-return path).
+func TestCollectFileBlockRanges_ParseError(t *testing.T) {
+	got := collectFileBlockRanges([]byte("this { is not valid HCL at all !!!"), "bad.hcl")
+	if got != nil {
+		t.Errorf("expected nil for invalid HCL, got: %v", got)
+	}
+}
+
+// TestJoinBytes_EmptyParts verifies that joinBytes returns nil for an empty
+// parts slice (the defensive early-return path).
+func TestJoinBytes_EmptyParts(t *testing.T) {
+	got := joinBytes(nil, '\n')
+	if got != nil {
+		t.Errorf("expected nil for empty parts, got: %v", got)
+	}
+	got2 := joinBytes([][]byte{}, '\n')
+	if got2 != nil {
+		t.Errorf("expected nil for empty slice parts, got: %v", got2)
+	}
+}
+
 // TestParseDir_DiagnosticsHaveCorrectFilenameSubjects verifies that parse errors
 // in individual files within a directory carry the correct filename in their subject
 // range (not just a generic subject).
