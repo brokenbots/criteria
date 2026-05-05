@@ -566,3 +566,27 @@ Approved again. There are no code changes since the prior approved pass, the rev
 
 - `make ci` — passed.
 - `git grep -nE '\bBranchSpec\b|\bBranchNode\b|\bArmSpec\b|"branch,block"' -- ':!*_test.go' ':!docs/' ':!CHANGELOG.md' ':!workstreams/'` — zero matches.
+
+## Executor Notes — Round 4 Remediation (2026-05-04-06)
+
+Commit `108bca7` addresses all 10 reviewer threads from the fourth review cycle.
+
+### Changes Made
+
+1. **Tombstone deleted** — `internal/engine/node_branch.go` removed entirely.
+2. **Test file renamed** — `internal/engine/node_branch_test.go` → `node_switch_test.go`.
+3. **Compile test file renamed** — `workflow/branch_compile_test.go` → `switch_compile_test.go`; all `TestBranchCompile_*` functions renamed `TestSwitchCompile_*`.
+4. **Testdata/golden renamed** — `workflow/testdata/branch_basic.hcl` → `switch_basic.hcl`; all four golden files renamed from `branch_basic__*` to `switch_basic__*`. Reference in renamed test file updated to match.
+5. **`compileJSON` switches field** — Added `compileSwitch` and `compileSwitchArm` types; added `Switches []compileSwitch` field to `compileJSON`; populated via `buildCompileJSON` using `sortedMapKeys(graph.Switches)` for deterministic output. All JSON golden files regenerated via `-update` flag. Removed the `// TODO(W16)` comment.
+6. **Default-semantics docs/schema fix** — `workflow/schema.go` SwitchSpec comment updated from "Default is required" to "Default is recommended; absence is a compile warning…". `docs/workflow.md` prose and attribute docs updated to match.
+7. **Self-reference rejection** — `validateSwitchExprRefs` now rejects `steps.<self_switch_name>` with a clear compile error explaining the match-time ordering issue. Added `TestSwitchCompile_SelfReferenceRejected` to cover the path.
+8. **gRPC thread replied** — Thread for `sdk/pluginhost/serve.go` replied with reference to the prior commit `0b46b8c` that already landed this fix; thread resolved.
+
+### Review Threads Resolved
+
+All 10 threads replied to (commit `108bca7` + file:line) and resolved via GraphQL `resolveReviewThread` mutation.
+
+### Validation
+
+- `make test` — passed (all packages).
+- `go test ./internal/cli/... ./internal/engine/... ./workflow/...` — all pass.
