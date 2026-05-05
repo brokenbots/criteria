@@ -276,7 +276,9 @@ type StateSpec struct {
 }
 
 // SwitchSpec declares a switch node. Conditions are evaluated in declaration order;
-// the first truthy condition wins. Default is required.
+// the first truthy condition wins. Default is recommended; absence produces a
+// compile warning when no condition is provably exhaustive at compile time, and
+// a runtime error when no condition matches.
 type SwitchSpec struct {
 	Name       string             `hcl:"name,label"`
 	Conditions []ConditionSpec    `hcl:"condition,block"`

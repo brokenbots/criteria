@@ -52,6 +52,26 @@
     }
   ],
   "outputs": [],
+  "switches": [
+    {
+      "name": "decide",
+      "conditions": [
+        {
+          "match": "var.env == \"prod\"",
+          "next": "deploy"
+        },
+        {
+          "match": "var.env == \"staging\"",
+          "next": "deploy_staging"
+        },
+        {
+          "match": "steps.build.exit_code == \"0\"",
+          "next": "deploy_staging"
+        }
+      ],
+      "default_next": "skip_deploy"
+    }
+  ],
   "step_order": [
     "build"
   ],

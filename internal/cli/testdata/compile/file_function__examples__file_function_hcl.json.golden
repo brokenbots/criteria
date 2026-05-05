@@ -49,6 +49,7 @@
       "description": "The result message produced by the workflow"
     }
   ],
+  "switches": [],
   "step_order": [
     "greet"
   ],

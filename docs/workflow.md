@@ -539,7 +539,7 @@ echo '{"decision":"approved"}' > ~/.criteria/runs/<run_id>/approval-ship_to_prod
 ## Switch
 
 Switch nodes evaluate conditions in order and transition to the first matching
-arm, or fall back to the required `default` block. The `branch` block from
+arm, or fall back to the `default` block when one is present. The `branch` block from
 earlier releases has been replaced by `switch`; `branch` is now rejected at
 parse time.
 
@@ -570,7 +570,7 @@ switch "check_env" {
   - **`match`**: Boolean expression. See [Expressions](#expressions).
   - **`next`**: Target node in traversal form (`step.name`, `state.name`, `wait.name`, `approval.name`, `switch.name`) or `"return"` to bubble out of a sub-workflow.
   - **`output`** (optional): Object expression whose key/value pairs are stored under `steps.<switch_name>.*` before the target is entered.
-- **`default`** (required): Fallback when no condition matches.
+- **`default`** (recommended): Fallback when no condition matches. Omitting `default` is a compile warning unless one condition is provably always true; at runtime, a switch with no matching condition and no default block fails the run.
   - **`next`**: Same form as condition `next`.
   - **`output`** (optional): Same as condition `output`.
 

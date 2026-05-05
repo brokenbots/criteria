@@ -295,6 +295,13 @@ func validateSwitchExprRefs(expr hcl.Expression, g *FSMGraph, switchName string,
 		case "steps":
 			// steps.<name> may reference a step or a switch node (switches
 			// publish their output under steps.<switch_name>.*).
+			if attr.Name == switchName {
+				diags = append(diags, &hcl.Diagnostic{
+					Severity: hcl.DiagError,
+					Summary:  fmt.Sprintf("switch %q condition[%d]: self-reference steps.%s is always empty at match time; use a variable or a prior step instead", switchName, condIdx, switchName),
+				})
+				continue
+			}
 			_, isStep := g.Steps[attr.Name]
 			_, isSwitch := g.Switches[attr.Name]
 			if !isStep && !isSwitch {

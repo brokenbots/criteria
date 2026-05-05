@@ -68,6 +68,7 @@
     }
   ],
   "outputs": [],
+  "switches": [],
   "step_order": [
     "build",
     "test"

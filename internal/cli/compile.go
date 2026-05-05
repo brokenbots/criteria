@@ -76,6 +76,7 @@ type compileJSON struct {
 	Steps        []compileStep     `json:"steps"`
 	States       []compileState    `json:"states"`
 	Outputs      []compileOutput   `json:"outputs"`
+	Switches     []compileSwitch   `json:"switches"`
 	StepOrder    []string          `json:"step_order"`
 	Plugins      []string          `json:"plugins_required"`
 	Metadata     compileOutputMeta `json:"metadata"`
@@ -116,6 +117,17 @@ type compileState struct {
 	Name     string `json:"name"`
 	Terminal bool   `json:"terminal"`
 	Success  bool   `json:"success"`
+}
+
+type compileSwitch struct {
+	Name        string                  `json:"name"`
+	Conditions  []compileSwitchArm      `json:"conditions"`
+	DefaultNext string                  `json:"default_next,omitempty"`
+}
+
+type compileSwitchArm struct {
+	Match string `json:"match"`
+	Next  string `json:"next"`
 }
 
 func buildCompileJSON(graph *workflow.FSMGraph) compileJSON { //nolint:funlen // W03: serialises entire FSM graph structure; length driven by field count, not complexity
@@ -159,7 +171,16 @@ func buildCompileJSON(graph *workflow.FSMGraph) compileJSON { //nolint:funlen //
 		states = append(states, compileState{Name: st.Name, Terminal: st.Terminal, Success: st.Success})
 	}
 
-	// TODO(W16): add a Switches field to compileJSON for tooling completeness.
+	switches := make([]compileSwitch, 0, len(graph.Switches))
+	for _, name := range sortedMapKeys(graph.Switches) {
+		sw := graph.Switches[name]
+		arms := make([]compileSwitchArm, 0, len(sw.Conditions))
+		for _, c := range sw.Conditions {
+			arms = append(arms, compileSwitchArm{Match: c.MatchSrc, Next: c.Next})
+		}
+		switches = append(switches, compileSwitch{Name: sw.Name, Conditions: arms, DefaultNext: sw.DefaultNext})
+	}
+
 	outputs := make([]compileOutput, 0, len(graph.Outputs))
 	for _, name := range graph.OutputOrder {
 		on := graph.Outputs[name]
@@ -187,6 +208,7 @@ func buildCompileJSON(graph *workflow.FSMGraph) compileJSON { //nolint:funlen //
 		Steps:        steps,
 		States:       states,
 		Outputs:      outputs,
+		Switches:     switches,
 		StepOrder:    graph.StepOrder(),
 		Plugins:      requiredPlugins(graph),
 		Metadata:     compileOutputMeta{SchemaVersion: 1},

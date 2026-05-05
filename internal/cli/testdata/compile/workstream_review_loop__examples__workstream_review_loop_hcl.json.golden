@@ -432,6 +432,7 @@
     }
   ],
   "outputs": [],
+  "switches": [],
   "step_order": [
     "checkout_branch",
     "execute_init",

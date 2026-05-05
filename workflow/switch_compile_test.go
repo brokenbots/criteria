@@ -111,7 +111,7 @@ func compileExpectError(t *testing.T, src, want string) {
 	}
 }
 
-func TestBranchCompile_HappyPath(t *testing.T) {
+func TestSwitchCompile_HappyPath(t *testing.T) {
 	// Note: "prev" is unreachable from "check" (initial_state), but "check" is
 	// the initial state itself. Build a reachable workflow.
 	src := `
@@ -157,7 +157,7 @@ workflow "w" {
 	}
 }
 
-func TestBranchCompile_MissingDefault(t *testing.T) {
+func TestSwitchCompile_MissingDefault(t *testing.T) {
 	src := `
 workflow "w" {
   version       = "0.1"
@@ -198,7 +198,7 @@ workflow "w" {
 	}
 }
 
-func TestBranchCompile_UnknownArmTarget(t *testing.T) {
+func TestSwitchCompile_UnknownArmTarget(t *testing.T) {
 	src := `
 workflow "w" {
   version       = "0.1"
@@ -221,7 +221,7 @@ workflow "w" {
 	compileExpectError(t, src, `unknown target "nonexistent"`)
 }
 
-func TestBranchCompile_UnknownDefaultTarget(t *testing.T) {
+func TestSwitchCompile_UnknownDefaultTarget(t *testing.T) {
 	src := `
 workflow "w" {
   version       = "0.1"
@@ -244,7 +244,7 @@ workflow "w" {
 	compileExpectError(t, src, `unknown target "missing"`)
 }
 
-func TestBranchCompile_UndeclaredVariable(t *testing.T) {
+func TestSwitchCompile_UndeclaredVariable(t *testing.T) {
 	src := `
 workflow "w" {
   version       = "0.1"
@@ -267,7 +267,7 @@ workflow "w" {
 	compileExpectError(t, src, `undefined variable "undeclared"`)
 }
 
-func TestBranchCompile_UnknownStepReference(t *testing.T) {
+func TestSwitchCompile_UnknownStepReference(t *testing.T) {
 	src := `
 workflow "w" {
   version       = "0.1"
@@ -290,7 +290,31 @@ workflow "w" {
 	compileExpectError(t, src, `unknown step "ghoststep"`)
 }
 
-func TestBranchCompile_UnreachableSwitchWarns(t *testing.T) {
+func TestSwitchCompile_SelfReferenceRejected(t *testing.T) {
+	src := `
+workflow "w" {
+  adapter "noop" "default" {}
+  version       = "0.1"
+  initial_state = "check"
+  target_state  = "done"
+
+  switch "check" {
+    condition {
+      match = steps.check.exit_code == "0"
+      next  = state.done
+    }
+    default {
+      next = state.done
+    }
+  }
+
+  state "done" { terminal = true }
+}
+`
+	compileExpectError(t, src, `self-reference steps.check is always empty at match time`)
+}
+
+func TestSwitchCompile_UnreachableSwitchWarns(t *testing.T) {
 	// The switch node is not reachable from initial_state (a step is initial).
 	src := `
 workflow "w" {
@@ -337,7 +361,7 @@ workflow "w" {
 	}
 }
 
-func TestBranchCompile_DuplicateSwitch(t *testing.T) {
+func TestSwitchCompile_DuplicateSwitch(t *testing.T) {
 	src := `
 workflow "w" {
   version       = "0.1"
@@ -358,8 +382,8 @@ workflow "w" {
 	compileExpectError(t, src, `duplicate switch "check"`)
 }
 
-func TestBranchCompile_FixtureFile(t *testing.T) {
-	spec, diags := workflow.ParseFile("testdata/branch_basic.hcl")
+func TestSwitchCompile_FixtureFile(t *testing.T) {
+	spec, diags := workflow.ParseFile("testdata/switch_basic.hcl")
 	if diags.HasErrors() {
 		t.Fatalf("parse fixture: %v", diags)
 	}
@@ -372,9 +396,9 @@ func TestBranchCompile_FixtureFile(t *testing.T) {
 	}
 }
 
-// TestBranchCompile_LegacyBranchBlock_HardError ensures the old "branch" block
+// TestSwitchCompile_LegacyBranchBlock_HardError ensures the old "branch" block
 // is hard-rejected at parse time.
-func TestBranchCompile_LegacyBranchBlock_HardError(t *testing.T) {
+func TestSwitchCompile_LegacyBranchBlock_HardError(t *testing.T) {
 	src := `
 workflow "w" {
   version       = "0.1"
