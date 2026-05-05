@@ -209,14 +209,14 @@ func TestApplyLocal_FilePathDelegatesToParentDir(t *testing.T) {
 //
 // Returns (dir, path-to-workflow.hcl).
 func writeFileFunctionWorkflow(t *testing.T) (dir, filePath string) {
-t.Helper()
-dir = t.TempDir()
+	t.Helper()
+	dir = t.TempDir()
 
-if err := os.WriteFile(filepath.Join(dir, "payload.txt"), []byte("echo hello-from-payload"), 0o644); err != nil {
-t.Fatalf("write payload.txt: %v", err)
-}
+	if err := os.WriteFile(filepath.Join(dir, "payload.txt"), []byte("echo hello-from-payload"), 0o644); err != nil {
+		t.Fatalf("write payload.txt: %v", err)
+	}
 
-header := strings.TrimSpace(`
+	header := strings.TrimSpace(`
 workflow "file_func_dir_mode" {
   version       = "0.1"
   initial_state = "run"
@@ -237,7 +237,7 @@ state "failed" {
 }
 `) + "\n"
 
-content := strings.TrimSpace(`
+	content := strings.TrimSpace(`
 step "run" {
   target = adapter.shell.default
   input {
@@ -248,14 +248,14 @@ step "run" {
 }
 `) + "\n"
 
-if err := os.WriteFile(filepath.Join(dir, "workflow.hcl"), []byte(header), 0o600); err != nil {
-t.Fatalf("write workflow.hcl: %v", err)
-}
-if err := os.WriteFile(filepath.Join(dir, "content.hcl"), []byte(content), 0o600); err != nil {
-t.Fatalf("write content.hcl: %v", err)
-}
-filePath = filepath.Join(dir, "workflow.hcl")
-return dir, filePath
+	if err := os.WriteFile(filepath.Join(dir, "workflow.hcl"), []byte(header), 0o600); err != nil {
+		t.Fatalf("write workflow.hcl: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "content.hcl"), []byte(content), 0o600); err != nil {
+		t.Fatalf("write content.hcl: %v", err)
+	}
+	filePath = filepath.Join(dir, "workflow.hcl")
+	return dir, filePath
 }
 
 // TestCompileDir_FileFunction_DirectoryPath verifies that compileWorkflowOutput
@@ -263,15 +263,15 @@ return dir, filePath
 // in a step input resolves against the module directory. A wrong or empty
 // WorkflowDir would cause validateFoldableAttrs to surface a hard compile error.
 func TestCompileDir_FileFunction_DirectoryPath(t *testing.T) {
-dir, _ := writeFileFunctionWorkflow(t)
+	dir, _ := writeFileFunctionWorkflow(t)
 
-out, err := compileWorkflowOutput(context.Background(), dir, "json", nil)
-if err != nil {
-t.Fatalf("compileWorkflowOutput(dir) with file(): %v", err)
-}
-if !strings.Contains(string(out), `"name": "file_func_dir_mode"`) {
-t.Errorf("compiled output does not contain workflow name; got: %s", string(out))
-}
+	out, err := compileWorkflowOutput(context.Background(), dir, "json", nil)
+	if err != nil {
+		t.Fatalf("compileWorkflowOutput(dir) with file(): %v", err)
+	}
+	if !strings.Contains(string(out), `"name": "file_func_dir_mode"`) {
+		t.Errorf("compiled output does not contain workflow name; got: %s", string(out))
+	}
 }
 
 // TestCompileDir_FileFunction_FilePath verifies that compileWorkflowOutput with
@@ -280,13 +280,13 @@ t.Errorf("compiled output does not contain workflow name; got: %s", string(out))
 // regression test for workflowDirFromPath: if it returned filepath.Dir("") or
 // the wrong directory, the file() call would fail with a hard compile error.
 func TestCompileDir_FileFunction_FilePath(t *testing.T) {
-_, filePath := writeFileFunctionWorkflow(t)
+	_, filePath := writeFileFunctionWorkflow(t)
 
-out, err := compileWorkflowOutput(context.Background(), filePath, "json", nil)
-if err != nil {
-t.Fatalf("compileWorkflowOutput(file path) with file(): %v", err)
-}
-if !strings.Contains(string(out), `"name": "file_func_dir_mode"`) {
-t.Errorf("compiled output does not contain workflow name; got: %s", string(out))
-}
+	out, err := compileWorkflowOutput(context.Background(), filePath, "json", nil)
+	if err != nil {
+		t.Fatalf("compileWorkflowOutput(file path) with file(): %v", err)
+	}
+	if !strings.Contains(string(out), `"name": "file_func_dir_mode"`) {
+		t.Errorf("compiled output does not contain workflow name; got: %s", string(out))
+	}
 }
