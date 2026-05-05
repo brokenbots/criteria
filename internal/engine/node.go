@@ -41,8 +41,8 @@ func nodeFor(graph *workflow.FSMGraph, name string) (Node, error) {
 	if approval, ok := graph.Approvals[name]; ok {
 		return &approvalNode{node: approval}, nil
 	}
-	if br, ok := graph.Branches[name]; ok {
-		return &branchNode{node: br}, nil
+	if sw, ok := graph.Switches[name]; ok {
+		return &switchNode{node: sw}, nil
 	}
 	// TODO(1.6): parallelNode would call deps.BranchScheduler.Run(...).
 	if state, ok := graph.States[name]; ok {

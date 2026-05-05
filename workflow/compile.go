@@ -93,7 +93,7 @@ func CompileWithOpts(spec *Spec, schemas map[string]AdapterInfo, opts CompileOpt
 	diags = append(diags, compileSteps(g, spec, schemas, opts)...)
 	diags = append(diags, compileWaits(g, spec)...)
 	diags = append(diags, compileApprovals(g, spec)...)
-	diags = append(diags, compileBranches(g, spec, opts)...)
+	diags = append(diags, compileSwitches(g, spec, opts)...)
 	// Warn after all nodes are compiled so branch/wait/approval targets are
 	// available for the back-edge walk (W07).
 	diags = append(diags, warnBackEdges(g)...)
@@ -132,7 +132,7 @@ func newFSMGraph(spec *Spec) *FSMGraph {
 		States:       map[string]*StateNode{},
 		Waits:        map[string]*WaitNode{},
 		Approvals:    map[string]*ApprovalNode{},
-		Branches:     map[string]*BranchNode{},
+		Switches:     map[string]*SwitchNode{},
 		Policy:       DefaultPolicy,
 	}
 	if spec.Policy != nil {
@@ -204,20 +204,25 @@ func resolveTransitions(g *FSMGraph) hcl.Diagnostics {
 			}
 		}
 	}
-	for _, br := range g.Branches {
-		for i, arm := range br.Arms {
-			if _, ok := g.Lookup(arm.Target); !ok {
+	for _, sw := range g.Switches {
+		for i, cond := range sw.Conditions {
+			if cond.Next == ReturnSentinel {
+				continue
+			}
+			if _, ok := g.Lookup(cond.Next); !ok {
 				diags = append(diags, &hcl.Diagnostic{
 					Severity: hcl.DiagError,
-					Summary:  fmt.Sprintf("branch %q arm[%d] -> unknown target %q", br.Name, i, arm.Target),
+					Summary:  fmt.Sprintf("switch %q condition[%d] -> unknown target %q", sw.Name, i, cond.Next),
 				})
 			}
 		}
-		if _, ok := g.Lookup(br.DefaultTarget); !ok {
-			diags = append(diags, &hcl.Diagnostic{
-				Severity: hcl.DiagError,
-				Summary:  fmt.Sprintf("branch %q default -> unknown target %q", br.Name, br.DefaultTarget),
-			})
+		if sw.DefaultNext != ReturnSentinel && sw.DefaultNext != "" {
+			if _, ok := g.Lookup(sw.DefaultNext); !ok {
+				diags = append(diags, &hcl.Diagnostic{
+					Severity: hcl.DiagError,
+					Summary:  fmt.Sprintf("switch %q default -> unknown target %q", sw.Name, sw.DefaultNext),
+				})
+			}
 		}
 	}
 	return diags
@@ -262,16 +267,19 @@ func checkReachability(g *FSMGraph) hcl.Diagnostics {
 			}
 			return
 		}
-		if br, isBranch := g.Branches[name]; isBranch {
-			for _, arm := range br.Arms {
-				if !reachable[arm.Target] {
-					reachable[arm.Target] = true
-					walk(arm.Target)
+		if sw, isSwitch := g.Switches[name]; isSwitch {
+			for _, cond := range sw.Conditions {
+				if cond.Next == ReturnSentinel {
+					continue
+				}
+				if !reachable[cond.Next] {
+					reachable[cond.Next] = true
+					walk(cond.Next)
 				}
 			}
-			if !reachable[br.DefaultTarget] {
-				reachable[br.DefaultTarget] = true
-				walk(br.DefaultTarget)
+			if sw.DefaultNext != ReturnSentinel && sw.DefaultNext != "" && !reachable[sw.DefaultNext] {
+				reachable[sw.DefaultNext] = true
+				walk(sw.DefaultNext)
 			}
 			return
 		}
@@ -292,9 +300,9 @@ func checkReachability(g *FSMGraph) hcl.Diagnostics {
 			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagWarning, Summary: fmt.Sprintf("approval %q is unreachable from initial_state", name)})
 		}
 	}
-	for name := range g.Branches {
+	for name := range g.Switches {
 		if !reachable[name] {
-			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagWarning, Summary: fmt.Sprintf("branch %q is unreachable from initial_state", name)})
+			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagWarning, Summary: fmt.Sprintf("switch %q is unreachable from initial_state", name)})
 		}
 	}
 	for name := range g.States {

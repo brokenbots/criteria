@@ -1,5 +1,5 @@
 {
-  "name": "branch_basic",
+  "name": "switch_basic",
   "initial_state": "build",
   "target_state": "done",
   "policy": {

@@ -187,8 +187,8 @@ func TestCompile_BackEdgeWarning_CustomThreshold(t *testing.T) {
 	}
 }
 
-// TestCompile_BackEdgeWarning_ThroughBranch verifies that a loop mediated by
-// a branch node (step → branch → step) is detected as a back-edge, so the
+// TestCompile_BackEdgeWarning_ThroughSwitch verifies that a loop mediated by
+// a switch node (step → switch → step) is detected as a back-edge, so the
 // warning fires even when there is no direct step-to-step edge.
 func TestCompile_BackEdgeWarning_ThroughBranch(t *testing.T) {
 	src := `
@@ -202,13 +202,13 @@ workflow "t" {
     outcome "check" { next = "decide" }
     outcome "done"  { next = "done" }
   }
-  branch "decide" {
-    arm {
-      when          = true
-      transition_to = "work"
+  switch "decide" {
+    condition {
+      match = true
+      next  = state.work
     }
     default {
-      transition_to = "done"
+      next = state.done
     }
   }
   state "done" { terminal = true }
@@ -230,7 +230,7 @@ workflow "t" {
 		}
 	}
 	if !warned {
-		t.Errorf("expected back-edge warning for step->branch->step loop; got diags: %v", diags)
+		t.Errorf("expected back-edge warning for step->switch->step loop; got diags: %v", diags)
 	}
 }
 

@@ -69,12 +69,12 @@ type Spec struct {
 	States             []StateSpec       `hcl:"state,block"`
 	Waits              []WaitSpec        `hcl:"wait,block"`
 	Approvals          []ApprovalSpec    `hcl:"approval,block"`
-	Branches           []BranchSpec      `hcl:"branch,block"`
+	Switches           []SwitchSpec      `hcl:"switch,block"`
 	Policy             *PolicySpec       `hcl:"policy,block"`
 	Permissions        *PermissionsSpec  `hcl:"permissions,block"`
 	// SourceBytes holds the raw HCL source that was parsed to produce this Spec.
 	// Populated by Parse/ParseFile; used by the compiler to extract expression
-	// source text (e.g. for BranchEvaluated.Condition).
+	// source text (e.g. for SwitchEvaluated.Condition).
 	SourceBytes []byte
 }
 
@@ -167,7 +167,7 @@ type SpecContent struct {
 	States       []StateSpec       `hcl:"state,block"`
 	Waits        []WaitSpec        `hcl:"wait,block"`
 	Approvals    []ApprovalSpec    `hcl:"approval,block"`
-	Branches     []BranchSpec      `hcl:"branch,block"`
+	Switches     []SwitchSpec      `hcl:"switch,block"`
 	Policy       *PolicySpec       `hcl:"policy,block"`
 	Permissions  *PermissionsSpec  `hcl:"permissions,block"`
 }
@@ -275,24 +275,25 @@ type StateSpec struct {
 	Requires string `hcl:"requires,optional"`
 }
 
-// BranchSpec declares a branch node. Arms are evaluated in declaration order;
-// the first truthy arm wins. Default is required.
-type BranchSpec struct {
-	Name    string          `hcl:"name,label"`
-	Arms    []ArmSpec       `hcl:"arm,block"`
-	Default *DefaultArmSpec `hcl:"default,block"`
+// SwitchSpec declares a switch node. Conditions are evaluated in declaration order;
+// the first truthy condition wins. Default is required.
+type SwitchSpec struct {
+	Name       string             `hcl:"name,label"`
+	Conditions []ConditionSpec    `hcl:"condition,block"`
+	Default    *SwitchDefaultSpec `hcl:"default,block"`
 }
 
-// ArmSpec holds a single conditional arm inside a branch block.
-// The `when` expression is captured via Remain and extracted by the compiler.
-type ArmSpec struct {
-	TransitionTo string   `hcl:"transition_to"`
-	Remain       hcl.Body `hcl:",remain"` // captures the "when" expression
+// ConditionSpec holds a single conditional arm inside a switch block.
+// The `match` (required), `next` (required), and `output` (optional) attributes
+// are captured via Remain and extracted by the compiler.
+type ConditionSpec struct {
+	Remain hcl.Body `hcl:",remain"` // captures: match (required), next (required), output (optional)
 }
 
-// DefaultArmSpec holds the fallback transition for a branch block.
-type DefaultArmSpec struct {
-	TransitionTo string `hcl:"transition_to"`
+// SwitchDefaultSpec holds the fallback transition for a switch block.
+// The `next` (required) and `output` (optional) attributes are captured via Remain.
+type SwitchDefaultSpec struct {
+	Remain hcl.Body `hcl:",remain"` // captures: next (required), output (optional)
 }
 
 // PolicySpec defines global execution guards.
@@ -341,7 +342,7 @@ type FSMGraph struct {
 	States             map[string]*StateNode       // by state name (terminal etc.)
 	Waits              map[string]*WaitNode        // by wait node name (W05)
 	Approvals          map[string]*ApprovalNode    // by approval node name (W05)
-	Branches           map[string]*BranchNode      // by branch node name (W06)
+	Switches           map[string]*SwitchNode      // by switch node name (W16)
 	Policy             Policy
 	// Order of step declarations (stable for diagnostics).
 	stepOrder []string
@@ -488,24 +489,25 @@ type ApprovalNode struct {
 	Outcomes  map[string]string // "approved" -> target, "rejected" -> target
 }
 
-// BranchNode is a compiled branch node. Arms are evaluated in declaration
-// order; the first truthy arm selects the transition target. If no arm
-// matches, DefaultTarget is used.
-type BranchNode struct {
+// SwitchNode is a compiled switch node. Conditions are evaluated in declaration
+// order; the first truthy condition selects the transition target. If no
+// condition matches, DefaultNext is used.
+type SwitchNode struct {
 	Name          string
-	Arms          []BranchArm
-	DefaultTarget string
+	Conditions    []SwitchCondition
+	DefaultNext   string
+	DefaultOutput hcl.Expression // nil if not declared
 }
 
-// BranchArm holds a single conditional arm in a BranchNode.
-type BranchArm struct {
-	Condition hcl.Expression // evaluated at runtime against BuildEvalContext(rs.Vars)
-	// ConditionSrc is the source text of the condition expression, extracted from
-	// Spec.SourceBytes during compilation. It is populated only when the Spec was
-	// produced by Parse or ParseFile (i.e. SourceBytes is non-nil). Callers that
-	// construct a Spec programmatically (e.g. unit tests) will see an empty string.
-	ConditionSrc string
-	Target       string // transition_to target node name
+// SwitchCondition holds a single conditional arm in a SwitchNode.
+type SwitchCondition struct {
+	Match hcl.Expression // evaluated at runtime against BuildEvalContext(rs.Vars)
+	// MatchSrc is the source text of the match expression, extracted from
+	// Spec.SourceBytes during compilation. Empty when Spec was constructed
+	// programmatically (e.g. unit tests).
+	MatchSrc   string
+	Next       string         // resolved target node name or ReturnSentinel
+	OutputExpr hcl.Expression // nil if not declared
 }
 
 // Policy holds resolved engine guards. Defaults are applied during compile.
@@ -533,7 +535,7 @@ func (g *FSMGraph) IsTerminal(name string) bool {
 	return false
 }
 
-// Lookup returns ("step"|"state"|"wait"|"approval"|"branch", true) if name exists in the graph.
+// Lookup returns ("step"|"state"|"wait"|"approval"|"switch", true) if name exists in the graph.
 func (g *FSMGraph) Lookup(name string) (kind string, ok bool) {
 	if _, ok := g.Steps[name]; ok {
 		return "step", true
@@ -547,8 +549,8 @@ func (g *FSMGraph) Lookup(name string) (kind string, ok bool) {
 	if _, ok := g.Approvals[name]; ok {
 		return "approval", true
 	}
-	if _, ok := g.Branches[name]; ok {
-		return "branch", true
+	if _, ok := g.Switches[name]; ok {
+		return "switch", true
 	}
 	return "", false
 }

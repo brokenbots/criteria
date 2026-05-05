@@ -159,7 +159,7 @@ func buildCompileJSON(graph *workflow.FSMGraph) compileJSON { //nolint:funlen //
 		states = append(states, compileState{Name: st.Name, Terminal: st.Terminal, Success: st.Success})
 	}
 
-	// TODO(W10): add a Branches field to compileJSON for tooling completeness.
+	// TODO(W16): add a Switches field to compileJSON for tooling completeness.
 	outputs := make([]compileOutput, 0, len(graph.Outputs))
 	for _, name := range graph.OutputOrder {
 		on := graph.Outputs[name]
@@ -202,7 +202,7 @@ func renderDOT(graph *workflow.FSMGraph) string {
 	for _, name := range graph.StepOrder() {
 		b.WriteString(fmt.Sprintf("  %q [shape=box];\n", name))
 	}
-	for _, name := range sortedBranchNames(graph) {
+	for _, name := range sortedSwitchNames(graph) {
 		b.WriteString(fmt.Sprintf("  %q [shape=diamond];\n", name))
 	}
 	for _, name := range sortedStateNames(graph) {
@@ -228,13 +228,17 @@ func renderDOT(graph *workflow.FSMGraph) string {
 			b.WriteString(fmt.Sprintf("  %q -> %q [label=%q];\n", step.Name, co.Next, outcomeName))
 		}
 	}
-	for _, branchName := range sortedBranchNames(graph) {
-		br := graph.Branches[branchName]
-		for i, arm := range br.Arms {
-			label := fmt.Sprintf("arm[%d]", i)
-			b.WriteString(fmt.Sprintf("  %q -> %q [label=%q];\n", branchName, arm.Target, label))
+	for _, switchName := range sortedSwitchNames(graph) {
+		sw := graph.Switches[switchName]
+		for i, cond := range sw.Conditions {
+			label := fmt.Sprintf("condition[%d]", i)
+			if cond.Next != workflow.ReturnSentinel {
+				b.WriteString(fmt.Sprintf("  %q -> %q [label=%q];\n", switchName, cond.Next, label))
+			}
 		}
-		b.WriteString(fmt.Sprintf("  %q -> %q [label=%q];\n", branchName, br.DefaultTarget, "default"))
+		if sw.DefaultNext != workflow.ReturnSentinel {
+			b.WriteString(fmt.Sprintf("  %q -> %q [label=%q];\n", switchName, sw.DefaultNext, "default"))
+		}
 	}
 	b.WriteString("}\n")
 	return b.String()
@@ -299,8 +303,8 @@ func sortedStateNames(graph *workflow.FSMGraph) []string {
 	return sortedMapKeys(graph.States)
 }
 
-func sortedBranchNames(graph *workflow.FSMGraph) []string {
-	return sortedMapKeys(graph.Branches)
+func sortedSwitchNames(graph *workflow.FSMGraph) []string {
+	return sortedMapKeys(graph.Switches)
 }
 
 func requiredPlugins(graph *workflow.FSMGraph) []string {

@@ -1,4 +1,4 @@
-workflow: branch_basic  (version 0.1)
+workflow: switch_basic  (version 0.1)
 initial_state: build   target_state: done
 policy: max_total_steps=100  max_step_retries=0
 

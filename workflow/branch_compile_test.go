@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hashicorp/hcl/v2"
+
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -123,17 +125,17 @@ workflow "w" {
     default = "staging"
   }
 
-  branch "check" {
-    arm {
-      when          = var.env == "prod"
-      transition_to = "deploy"
+  switch "check" {
+    condition {
+      match = var.env == "prod"
+      next  = state.deploy
     }
-    arm {
-      when          = var.env == "staging"
-      transition_to = "deploy_staging"
+    condition {
+      match = var.env == "staging"
+      next  = state.deploy_staging
     }
     default {
-      transition_to = "done"
+      next = state.done
     }
   }
 
@@ -143,15 +145,15 @@ workflow "w" {
 }
 `
 	g := mustParseAndCompile(t, src)
-	br, ok := g.Branches["check"]
+	sw, ok := g.Switches["check"]
 	if !ok {
-		t.Fatal("branch node 'check' missing from compiled graph")
+		t.Fatal("switch node 'check' missing from compiled graph")
 	}
-	if len(br.Arms) != 2 {
-		t.Errorf("expected 2 arms, got %d", len(br.Arms))
+	if len(sw.Conditions) != 2 {
+		t.Errorf("expected 2 conditions, got %d", len(sw.Conditions))
 	}
-	if br.DefaultTarget != "done" {
-		t.Errorf("expected default target 'done', got %q", br.DefaultTarget)
+	if sw.DefaultNext != "done" {
+		t.Errorf("expected default target 'done', got %q", sw.DefaultNext)
 	}
 }
 
@@ -162,17 +164,38 @@ workflow "w" {
   initial_state = "check"
   target_state  = "done"
 
-  branch "check" {
-    arm {
-      when          = true
-      transition_to = "done"
+  switch "check" {
+    condition {
+      match = var.env == "prod"
+      next  = state.done
     }
+  }
+
+  variable "env" {
+    type = "string"
   }
 
   state "done" { terminal = true }
 }
 `
-	compileExpectError(t, src, `default block is required`)
+	src = injectDefaultAdapters(src)
+	spec, diags := workflow.Parse("test.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %v", diags)
+	}
+	_, diags = workflow.Compile(spec, nil)
+	if diags.HasErrors() {
+		t.Fatalf("expected warning only, got error: %v", diags)
+	}
+	hasWarn := false
+	for _, d := range diags {
+		if d.Severity == hcl.DiagWarning && strings.Contains(d.Summary, "default block is required") {
+			hasWarn = true
+		}
+	}
+	if !hasWarn {
+		t.Errorf("expected warning about missing default block; got diags: %v", diags)
+	}
 }
 
 func TestBranchCompile_UnknownArmTarget(t *testing.T) {
@@ -182,13 +205,13 @@ workflow "w" {
   initial_state = "check"
   target_state  = "done"
 
-  branch "check" {
-    arm {
-      when          = true
-      transition_to = "nonexistent"
+  switch "check" {
+    condition {
+      match = true
+      next  = "nonexistent"
     }
     default {
-      transition_to = "done"
+      next = state.done
     }
   }
 
@@ -205,13 +228,13 @@ workflow "w" {
   initial_state = "check"
   target_state  = "done"
 
-  branch "check" {
-    arm {
-      when          = true
-      transition_to = "done"
+  switch "check" {
+    condition {
+      match = true
+      next  = state.done
     }
     default {
-      transition_to = "missing"
+      next = "missing"
     }
   }
 
@@ -228,13 +251,13 @@ workflow "w" {
   initial_state = "check"
   target_state  = "done"
 
-  branch "check" {
-    arm {
-      when          = var.undeclared == "x"
-      transition_to = "done"
+  switch "check" {
+    condition {
+      match = var.undeclared == "x"
+      next  = state.done
     }
     default {
-      transition_to = "done"
+      next = state.done
     }
   }
 
@@ -251,13 +274,13 @@ workflow "w" {
   initial_state = "check"
   target_state  = "done"
 
-  branch "check" {
-    arm {
-      when          = steps.ghoststep.exit_code == "0"
-      transition_to = "done"
+  switch "check" {
+    condition {
+      match = steps.ghoststep.exit_code == "0"
+      next  = state.done
     }
     default {
-      transition_to = "done"
+      next = state.done
     }
   }
 
@@ -267,8 +290,8 @@ workflow "w" {
 	compileExpectError(t, src, `unknown step "ghoststep"`)
 }
 
-func TestBranchCompile_UnreachableBranchWarns(t *testing.T) {
-	// The branch node is not reachable from initial_state (a step is initial).
+func TestBranchCompile_UnreachableSwitchWarns(t *testing.T) {
+	// The switch node is not reachable from initial_state (a step is initial).
 	src := `
 workflow "w" {
   adapter "noop" "default" {}
@@ -281,13 +304,13 @@ workflow "w" {
     outcome "success" { next = "done" }
   }
 
-  branch "orphan" {
-    arm {
-      when          = true
-      transition_to = "done"
+  switch "orphan" {
+    condition {
+      match = true
+      next  = state.done
     }
     default {
-      transition_to = "done"
+      next = state.done
     }
   }
 
@@ -310,29 +333,29 @@ workflow "w" {
 		}
 	}
 	if !hasWarn {
-		t.Error("expected unreachability warning for 'orphan' branch, got none")
+		t.Error("expected unreachability warning for 'orphan' switch, got none")
 	}
 }
 
-func TestBranchCompile_DuplicateBranch(t *testing.T) {
+func TestBranchCompile_DuplicateSwitch(t *testing.T) {
 	src := `
 workflow "w" {
   version       = "0.1"
   initial_state = "check"
   target_state  = "done"
 
-  branch "check" {
-    default { transition_to = "done" }
+  switch "check" {
+    default { next = state.done }
   }
 
-  branch "check" {
-    default { transition_to = "done" }
+  switch "check" {
+    default { next = state.done }
   }
 
   state "done" { terminal = true }
 }
 `
-	compileExpectError(t, src, `duplicate branch "check"`)
+	compileExpectError(t, src, `duplicate switch "check"`)
 }
 
 func TestBranchCompile_FixtureFile(t *testing.T) {
@@ -344,7 +367,155 @@ func TestBranchCompile_FixtureFile(t *testing.T) {
 	if diags.HasErrors() {
 		t.Fatalf("compile fixture: %v", diags)
 	}
-	if _, ok := g.Branches["decide"]; !ok {
-		t.Error("branch 'decide' missing from compiled fixture graph")
+	if _, ok := g.Switches["decide"]; !ok {
+		t.Error("switch 'decide' missing from compiled fixture graph")
 	}
+}
+
+// TestBranchCompile_LegacyBranchBlock_HardError ensures the old "branch" block
+// is hard-rejected at parse time.
+func TestBranchCompile_LegacyBranchBlock_HardError(t *testing.T) {
+	src := `
+workflow "w" {
+  version       = "0.1"
+  initial_state = "check"
+  target_state  = "done"
+
+  branch "check" {
+    arm {
+      when          = true
+      transition_to = "done"
+    }
+    default {
+      transition_to = "done"
+    }
+  }
+
+  state "done" { terminal = true }
+}
+`
+	_, diags := workflow.Parse("test.hcl", []byte(src))
+	if !diags.HasErrors() {
+		t.Fatal("expected parse error for legacy 'branch' block, got none")
+	}
+	found := false
+	for _, d := range diags {
+		if strings.Contains(d.Summary, "branch") || strings.Contains(d.Detail, "branch") ||
+			strings.Contains(d.Detail, "switch") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected error mentioning 'branch' or 'switch', got: %v", diags)
+	}
+}
+
+// TestCompileSwitch_NextIsReturn verifies that next = "return" is accepted by
+// the compiler and stored as the condition's Next target.
+func TestCompileSwitch_NextIsReturn(t *testing.T) {
+	src := `
+workflow "w" {
+  version       = "0.1"
+  initial_state = "check"
+  target_state  = "done"
+
+  switch "check" {
+    condition {
+      match = true
+      next  = "return"
+    }
+    default {
+      next = state.done
+    }
+  }
+
+  state "done" { terminal = true }
+}
+`
+	g := mustParseAndCompile(t, src)
+	sw, ok := g.Switches["check"]
+	if !ok {
+		t.Fatal("switch node 'check' missing from compiled graph")
+	}
+	if len(sw.Conditions) != 1 {
+		t.Fatalf("expected 1 condition, got %d", len(sw.Conditions))
+	}
+	if sw.Conditions[0].Next != "return" {
+		t.Errorf("Conditions[0].Next = %q, want \"return\"", sw.Conditions[0].Next)
+	}
+}
+
+// TestCompileSwitch_LegacyTransitionToOnArm_HardError ensures that using
+// the old "transition_to" attribute inside a condition block is rejected.
+func TestCompileSwitch_LegacyTransitionToOnArm_HardError(t *testing.T) {
+	src := `
+workflow "w" {
+  version       = "0.1"
+  initial_state = "check"
+  target_state  = "done"
+
+  switch "check" {
+    condition {
+      match         = true
+      next          = state.done
+      transition_to = "done"
+    }
+    default {
+      next = state.done
+    }
+  }
+
+  state "done" { terminal = true }
+}
+`
+	compileExpectError(t, src, `unknown attribute`)
+}
+
+// TestCompileSwitch_OutputExprFolds verifies compile-time output expression
+// validation: a bare string is rejected (not an object), and an object literal
+// is accepted.
+func TestCompileSwitch_OutputExprFolds(t *testing.T) {
+	bad := `
+workflow "w" {
+  version       = "0.1"
+  initial_state = "check"
+  target_state  = "done"
+
+  switch "check" {
+    condition {
+      match  = true
+      next   = state.done
+      output = "oops"
+    }
+    default {
+      next = state.done
+    }
+  }
+
+  state "done" { terminal = true }
+}
+`
+	compileExpectError(t, bad, `output must be an object literal`)
+
+	good := `
+workflow "w" {
+  version       = "0.1"
+  initial_state = "check"
+  target_state  = "done"
+
+  switch "check" {
+    condition {
+      match  = true
+      next   = state.done
+      output = { tier = "prod" }
+    }
+    default {
+      next = state.done
+    }
+  }
+
+  state "done" { terminal = true }
+}
+`
+	mustParseAndCompile(t, good)
 }

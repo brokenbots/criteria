@@ -11,8 +11,9 @@ import (
 func rejectLegacyBlocks(body hcl.Body) hcl.Diagnostics {
 	legacyBlockNames := map[string]string{
 		"agent": `the "agent" block was renamed to "adapter" in v0.3.0; declare adapter "<type>" "<name>" { ... } and remove the legacy agent block. See CHANGELOG.md migration note.`,
-		// [15] adds: "branch": ...
-		// [16] adds: "transition_to": (attribute, not block — handled separately)
+		"branch": `block "branch" was renamed to "switch" in v0.3.0. The arm shape changed ` +
+			`from arm { when, transition_to } to condition { match, next, output }. ` +
+			`The default block uses next instead of transition_to. See CHANGELOG.md migration note.`,
 	}
 
 	var diags hcl.Diagnostics
