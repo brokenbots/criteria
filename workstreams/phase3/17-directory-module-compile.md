@@ -325,3 +325,56 @@ The current parser tests prove that `ParseDir` can merge simple directories and 
 - Manual repro: split directory module with `workflow.hcl` + `steps.hcl`, then `go run ./cmd/criteria validate "$tmpdir/workflow.hcl"` — failed with `initial_state "run" does not refer to a declared step or state`, proving file-path entry does not delegate to the directory module.
 - Manual repro: directory workflow using `file("./payload.sh")`, then `go run ./cmd/criteria apply "$tmpdir"` — failed at runtime with `file(): no such file: ./payload.sh`, proving the execution path uses the wrong workflow directory for directory inputs.
 - Manual repro: duplicate steps across two files inspected via `workflow.ParseDir(...)` — emitted `duplicate step name "run" across files` with `subject=<nil> context=<nil>`, proving the required file/line conflict locations are not preserved.
+
+---
+
+## Reviewer Feedback Remediation — 2026-05-05
+
+### Changes made in response to Review 2 blockers
+
+**Blocker 1 — `ParseFileOrDir` file-path delegation (`workflow/parse_dir.go`)**
+
+`ParseFileOrDir(path)` now first attempts `ParseDir(filepath.Dir(path))` for file paths. This correctly merges all sibling `.hcl` files as one directory module. If the parent directory contains multiple independent workflow files (each with their own workflow/policy/permissions singletons — i.e., it is a collection of independent workflows, not a module), `isSingletonConflictOnly()` detects this and falls back to single-file parsing. This preserves backward compatibility with shared testdata directories and the existing `examples/` directory structure.
+
+New functions:
+- `isSingletonConflictOnly(diags)` — detects parent-is-a-collection fallback condition
+- `parseSingleFile(path)` — single-file fallback with header requirement
+
+**Blocker 2 — `workflowDir` threading through all apply execution paths (`internal/cli/apply_setup.go`, `apply_local.go`, `apply_server.go`, `apply_resume.go`, `reattach.go`)**
+
+Added `workflowDirFromPath(path) string` helper: returns path for directories, `filepath.Dir(path)` for files. Replaced all `filepath.Dir(opts.workflowPath)` and `filepath.Dir(cp.WorkflowPath)` calls in every initial, resumed, local, server, and reattach engine construction path. Fixed `parseWorkflowFromPath` in `reattach.go` to use `ParseFileOrDir` (was `os.ReadFile + Parse`, which fails for directory paths).
+
+**Blocker 3 — Source locations in conflict diagnostics (`workflow/parse_dir.go`)**
+
+Added:
+- `fileEntry{spec *Spec, ranges map[string]hcl.Range}` type to carry hclsyntax block ranges alongside parsed specs
+- `collectFileBlockRanges(src, filename)` using `hclsyntax.ParseConfig` to extract `DefRange()` per block key (`"step:name"`, `"adapter:type.name"`, `"workflow"`, `"policy"`, `"permissions"`, `"state:name"`, `"variable:name"`)
+- `mergeSpecs` now accepts `[]fileEntry`, tracks first-seen ranges for singleton blocks, and sets `Subject` + `"previously declared at {location}"` in all singleton conflict diagnostics
+- `checkDuplicateNames` now iterates per-file entries (not the merged spec) so it can track first vs second occurrence with file:line info
+
+**Major — CLI contract tests (`internal/cli/cli_dir_mode_test.go`)**
+
+New file with 6 end-to-end tests:
+- `TestCompileDir_{DirectoryPath,FilePathDelegatesToParentDir}` — prove `compileWorkflowOutput` accepts dir and file paths
+- `TestValidateDir_{DirectoryPath,FilePathDelegatesToParentDir}` — prove `validate` command merges sibling files
+- `TestApplyLocal_{DirectoryPath,FilePathDelegatesToParentDir}` — prove `apply` runs a noop adapter workflow from a split directory module with both path styles
+
+All tests would have FAILED on the pre-fix implementations.
+
+**Nit — `docs/workflow.md`**
+
+- Lines 22-23: `<workflow.hcl>` → `<workflow.hcl|dir>` in execution mode examples
+- Lines 30-33: Replaced "Every workflow file begins with a workflow header block" with accurate description of both single-file and multi-file module forms
+- Line 77: Added "only ONE file needs the header; all other files are content-only"
+
+### Test strengthening
+
+- `TestParseDir_DuplicateStepAcrossFiles_Error` (parse_dir_test.go): now asserts `d.Subject != nil`, `Subject.Filename == "steps2.hcl"`, `Detail` contains "previously declared at", and `Detail` contains "main.hcl"
+- `parse_file_or_dir_test.go`: Rewrote all 4 tests to cover delegation behavior; added 5th test (`FilePath_FallsBackToSingleFileWhenParentHasMultipleHeaders`) for the fallback path
+
+### Validation
+
+- `make test` — all packages pass (pre-existing `TestExecuteServerRun_Cancellation` timing flake unaffected)
+- `make validate` — all examples and phase3-multi-file/ directory module OK
+- `make lint-imports` — import boundaries clean
+- `go build ./...` — exit 0
