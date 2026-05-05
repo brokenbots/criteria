@@ -120,9 +120,9 @@ type compileState struct {
 }
 
 type compileSwitch struct {
-	Name        string                  `json:"name"`
-	Conditions  []compileSwitchArm      `json:"conditions"`
-	DefaultNext string                  `json:"default_next,omitempty"`
+	Name        string             `json:"name"`
+	Conditions  []compileSwitchArm `json:"conditions"`
+	DefaultNext string             `json:"default_next,omitempty"`
 }
 
 type compileSwitchArm struct {
