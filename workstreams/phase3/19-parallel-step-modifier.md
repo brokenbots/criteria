@@ -344,3 +344,90 @@ The strengthened tests now validate the intended behavior rather than only green
 - `go test -race -count=20 ./internal/engine/...` — pass
 - `make ci` — pass
 - targeted review of `internal/engine/parallel_iteration.go`, `internal/engine/parallel_iteration_test.go`, and `docs/workflow.md` confirmed closure of the remaining blockers
+
+### Review 2026-05-06 — approved
+
+#### Summary
+
+Approval stands. I did not find any new implementation delta that reopens the prior findings, and the current tree still clears the workstream acceptance bar. The parallel scheduler, list-only contract, sink/event synchronization, output ordering, and validation surface remain aligned with the plan.
+
+#### Plan Adherence
+
+- **Step 1–8:** still complete and aligned with the workstream scope and exit criteria.
+
+#### Test Intent Assessment
+
+The strengthened coverage from the prior approved pass remains sufficient: the tests assert exact default-cap behavior, downstream-visible aggregation order, and concurrent adapter-event sink safety under the race detector.
+
+#### Validation Performed
+
+- `go test -race -count=20 ./internal/engine/...` — pass
+- `make ci` — pass
+
+### Review 2026-05-06-02 — changes-requested
+
+#### Summary
+
+The branch is still green, but I found a new blocker in the parallel adapter execution path. `parallel` bypasses the normal step execution wrapper and calls `executeStep` directly, so parallel adapter iterations do not honor the established step semantics for `max_visits`, per-step timeout handling, or the rest of the `runStepFromAttempt` policy surface. This is a behavior regression for a step modifier and the current tests do not cover it.
+
+#### Plan Adherence
+
+- **Step 3 / Step 6:** not fully aligned. The bounded fan-out exists, but parallel adapter iterations are not executing with the same step policy semantics as non-parallel adapter steps.
+- **Step 7:** incomplete. The current tests prove concurrency, aggregation order, and sink safety, but they do not prove that parallel steps preserve core step semantics such as `max_visits`, retries/fatal handling, and timeout enforcement.
+- **Step 8:** validation commands are green, but the targeted semantic probes below fail.
+
+#### Required Remediations
+
+- **blocker** — `internal/engine/parallel_iteration.go:277-345`, `internal/engine/node_step.go:613-665`: `runParallelAdapterIteration` calls `executeStep` directly instead of routing each iteration through `runStepFromAttempt` (or an equivalent wrapper). As a result, parallel adapter steps skip `incrementVisit`/`max_visits` enforcement and per-step timeout wrapping, and they also bypass the established retry / fatal-error handling path for adapter execution. I confirmed two concrete regressions with temporary probes: `max_visits = 1` on a two-item parallel adapter step completed successfully instead of failing, and `timeout = "50ms"` on a slow parallel adapter step was ignored and the run completed after ~200ms. **Acceptance:** make parallel adapter iterations preserve the same step-execution semantics as non-parallel adapter steps, including `max_visits`, timeout enforcement, retry behavior, and fatal-error propagation; add regression tests that fail on the current implementation for at least `max_visits` and timeout, plus coverage for the retry/fatal path you choose to preserve.
+
+#### Test Intent Assessment
+
+The current suite is strong on concurrency-specific behavior, but it is weak on semantic parity with ordinary step execution. A faulty implementation can still pass all existing parallel tests while silently dropping step policy guarantees. The remediation tests need to assert user-visible outcomes, not just successful execution: one should prove `max_visits` is consumed and enforced across parallel iterations, and another should prove a timed-out parallel adapter iteration is cancelled by the step timeout rather than running to natural completion.
+
+#### Validation Performed
+
+- `go build ./...` — pass
+- `go test -race -count=20 ./internal/engine/...` — pass
+- `go test -race -count=2 ./...` — pass
+- `make validate` — pass
+- `make ci` — pass
+- temporary probe test in `internal/engine`:
+  - `TestParallelProbe_MaxVisitsIgnored` — fails (`expected max_visits error, got nil`)
+  - `TestParallelProbe_TimeoutIgnored` — fails (run completes after ~200ms instead of honoring `timeout = "50ms"`)
+
+### Implementation Response to Review 2026-05-06-02
+
+#### Root Cause
+
+`runParallelAdapterIteration` called `n.executeStep(ctx, deps, effectiveStep)` directly — the bare adapter RPC with no policy layer. `runStepFromAttempt` is the policy-aware entry point that calls `incrementVisit` (max_visits), wraps context with `context.WithTimeout`, retries non-fatal errors, and handles `*plugin.FatalRunError`.
+
+#### Changes Made
+
+- **`internal/engine/runstate.go`**: Added `import "sync"` and `VisitsMu *sync.Mutex` field to `RunState` (after `Visits map[string]int`).
+- **`internal/engine/node_step.go`**: `incrementVisit` now locks `st.VisitsMu` when non-nil, making the check-and-increment atomic across concurrent goroutines. Sequential paths have `VisitsMu == nil` (no locking overhead).
+- **`internal/engine/parallel_iteration.go`**:
+  - `runParallelIterations`: ensures `st.Visits != nil` before spawning goroutines; creates `var visitsMu sync.Mutex`; passes `&visitsMu` to each goroutine.
+  - `runOneParallelItem`: takes `visitsMu *sync.Mutex`; delegates `iterSt` construction to new `buildParallelIterState` helper.
+  - `buildParallelIterState` (new helper): constructs per-iteration `RunState` with `Visits: st.Visits` (shared map reference) and `VisitsMu: visitsMu`. Extracted to keep `runOneParallelItem` under the `funlen` 50-line limit.
+  - `runParallelAdapterIteration`: replaced direct `executeStep` call (+ manual `OnStepEntered`/`OnStepOutcome`/timing) with a single call to `runStepFromAttempt(ctx, st, deps, effectiveStep, 1)`. `runStepFromAttempt` handles all hooks internally.
+
+#### Shared Visits Map Design
+
+Go maps are reference types. `iterSt.Visits = st.Visits` makes all goroutines point to the same underlying map. The `VisitsMu *sync.Mutex` on `RunState` serializes the check-and-increment in `incrementVisit`. The mutex is a stack variable in `runParallelIterations`, guaranteed live until `wg.Wait()` returns. `VisitsMu == nil` on non-parallel paths: no overhead.
+
+#### Regression Tests Added
+
+- **`TestParallelIteration_MaxVisitsEnforced`**: `max_visits = 1`, 2-item parallel step. Proves exactly one iteration succeeds and the second hits the limit: terminal ≠ "done" (routes to `any_failed` → "failed"). Would pass on the old code (both items succeeded).
+- **`TestParallelIteration_TimeoutEnforced`**: adapter blocks on `ctx.Done()` for up to 2s; step has `timeout = "100ms"`. Asserts elapsed < 1s and terminal ≠ "done". Would time out after ~2s on the old code.
+- **`TestParallelIteration_FatalErrorPropagated`**: adapter returns `*plugin.FatalRunError`. Asserts terminal ≠ "done". Confirms the fatal-error branch in `runStepFromAttempt` is reached.
+
+#### Lint Fixes
+
+- `funlen`: extracted `buildParallelIterState` to bring `runOneParallelItem` from 52 to ≤50 lines.
+- `gofmt`: removed inline comment that caused column-alignment failure.
+
+#### Validation
+
+- `go build ./...` — pass
+- `go test -race -count=20 -timeout 120s ./internal/engine/...` — pass (no races detected)
+- `make ci` — pass (all packages green)

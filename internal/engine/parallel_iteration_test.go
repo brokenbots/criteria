@@ -7,6 +7,7 @@ package engine
 import (
 	"context"
 	"errors"
+	"fmt"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -618,3 +619,130 @@ type sharedLogEventSink struct {
 
 func (e *sharedLogEventSink) Log(string, []byte)  { e.parent.count++ }
 func (e *sharedLogEventSink) Adapter(string, any) {}
+
+// --- Step-policy regression tests (W19 Review 2026-05-06-02) ---
+
+// TestParallelIteration_MaxVisitsEnforced verifies that max_visits is shared
+// across parallel goroutines. With max_visits=1 and 2 items, exactly one
+// iteration can execute; the second exceeds the limit and fails, routing to
+// "any_failed" (the "failed" terminal state). Before the fix, runParallelAdapterIteration
+// called executeStep directly, skipping incrementVisit entirely, so both items
+// succeeded and the run reached "done".
+func TestParallelIteration_MaxVisitsEnforced(t *testing.T) {
+	g := compile(t, parallelWorkflowHCL(`
+step "work" {
+  target     = adapter.fake
+  parallel   = ["a", "b"]
+  max_visits = 1
+  outcome "all_succeeded" { next = "done" }
+  outcome "any_failed"    { next = "failed" }
+}`))
+
+	p := &fakePlugin{name: "fake", outcome: "success"}
+	sink := &parallelSink{}
+	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": p}}
+	if err := New(g, loader, sink).Run(context.Background()); err != nil {
+		t.Fatalf("unexpected run error: %v", err)
+	}
+	// max_visits=1 on a 2-item parallel step: the second iteration must fail.
+	// The aggregate therefore routes to "any_failed" → terminal "failed", not "done".
+	if sink.terminal == "done" && sink.terminalOK {
+		t.Error("expected non-success terminal: max_visits=1 should prevent both parallel items from executing; got 'done'")
+	}
+}
+
+// TestParallelIteration_TimeoutEnforced verifies that a per-step timeout is
+// applied to each parallel adapter iteration. The plugin blocks indefinitely;
+// with timeout="100ms" the iterations should be cancelled well before the
+// natural completion time. Before the fix, runParallelAdapterIteration called
+// executeStep directly without wrapping the context with a timeout, so the step
+// ran to natural completion (~2s) ignoring the declared timeout.
+func TestParallelIteration_TimeoutEnforced(t *testing.T) {
+	g := compile(t, `
+workflow "t" {
+  version       = "0.1"
+  initial_state = "work"
+  target_state  = "done"
+}
+step "work" {
+  target   = adapter.fake
+  parallel = ["a", "b"]
+  timeout  = "100ms"
+  outcome "all_succeeded" { next = "done" }
+  outcome "any_failed"    { next = "failed" }
+}
+state "done" {
+  terminal = true
+  success  = true
+}
+state "failed" {
+  terminal = true
+  success  = false
+}
+`)
+
+	// Plugin blocks until its context is cancelled; without timeout enforcement
+	// it would run for the full parent-context lifetime (>> 100ms).
+	p := &contextAwarePlugin{
+		name: "fake",
+		fn: func(ctx context.Context, _ int) (adapter.Result, error) {
+			select {
+			case <-time.After(2 * time.Second):
+				return adapter.Result{Outcome: "success"}, nil
+			case <-ctx.Done():
+				return adapter.Result{}, ctx.Err()
+			}
+		},
+		callCount: new(int32),
+	}
+
+	start := time.Now()
+	sink := &parallelSink{}
+	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": p}}
+	if err := New(g, loader, sink).Run(context.Background()); err != nil {
+		t.Logf("run error (expected due to timeout): %v", err)
+	}
+	elapsed := time.Since(start)
+
+	// Should complete in roughly 100ms (step timeout), not 2s (natural completion).
+	// Allow generous headroom for race-detector overhead.
+	if elapsed > 1*time.Second {
+		t.Errorf("run took %v; expected timeout to enforce ~100ms cancellation (not 2s)", elapsed)
+	}
+	// Timeout must cause a non-success outcome (not "done").
+	if sink.terminal == "done" && sink.terminalOK {
+		t.Error("expected non-success terminal: step timeout should have caused failure; got 'done'")
+	}
+}
+
+// TestParallelIteration_FatalErrorPropagated verifies that a FatalRunError from
+// an adapter iteration is treated as a failure (any_failed) rather than silently
+// succeeding. This exercises the fatal-error branch inside runStepFromAttempt
+// which was bypassed before the fix.
+func TestParallelIteration_FatalErrorPropagated(t *testing.T) {
+	g := compile(t, parallelWorkflowHCL(`
+step "work" {
+  target   = adapter.fake
+  parallel = ["a", "b"]
+  outcome "all_succeeded" { next = "done" }
+  outcome "any_failed"    { next = "failed" }
+}`))
+
+	// Plugin returns a FatalRunError on every call.
+	p := &contextAwarePlugin{
+		name: "fake",
+		fn: func(_ context.Context, _ int) (adapter.Result, error) {
+			return adapter.Result{}, &plugin.FatalRunError{Err: fmt.Errorf("simulated fatal")}
+		},
+		callCount: new(int32),
+	}
+
+	sink := &parallelSink{}
+	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": p}}
+	// Run may return an error or route to "failed"; either is acceptable for
+	// fatal errors. The key assertion is that it must not reach "done".
+	_ = New(g, loader, sink).Run(context.Background())
+	if sink.terminal == "done" && sink.terminalOK {
+		t.Error("expected non-success terminal: fatal adapter error should not reach 'done'")
+	}
+}

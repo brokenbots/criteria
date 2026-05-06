@@ -228,7 +228,7 @@ type parallelIterResult struct {
 // continue/ignore mode, all goroutines run to completion.
 // runOneParallelItem runs a single item in the parallel fan-out. It acquires
 // the semaphore, binds each.*, runs the step body, and stores the result.
-// It calls cancelOnce if abort mode is enabled and the iteration fails.
+// visitsMu serializes Visits map access across goroutines (see runParallelIterations).
 func runOneParallelItem(
 	iterCtx context.Context,
 	n *stepNode,
@@ -240,6 +240,7 @@ func runOneParallelItem(
 	results []parallelIterResult,
 	cancelIter context.CancelFunc,
 	cancelOnce *sync.Once,
+	visitsMu *sync.Mutex,
 ) {
 	select {
 	case sem <- struct{}{}:
@@ -249,28 +250,11 @@ func runOneParallelItem(
 	}
 	defer func() { <-sem }()
 
-	var key cty.Value
+	key := cty.StringVal(strconv.Itoa(i))
 	if i < len(keys) {
 		key = keys[i]
-	} else {
-		key = cty.StringVal(strconv.Itoa(i))
 	}
-
-	iterVars := workflow.WithEachBinding(st.Vars, &workflow.EachBinding{
-		Value: items[i],
-		Key:   key,
-		Index: i,
-		Total: total,
-		First: i == 0,
-		Last:  i == total-1,
-		Prev:  cty.NilVal,
-	})
-	iterSt := &RunState{
-		Current:        st.Current,
-		Vars:           iterVars,
-		WorkflowDir:    st.WorkflowDir,
-		SharedVarStore: st.SharedVarStore,
-	}
+	iterSt := buildParallelIterState(i, total, items[i], key, st, visitsMu)
 
 	deps.Sink.OnStepIterationStarted(n.step.Name, i, workflow.CtyValueToString(items[i]), false)
 
@@ -279,6 +263,28 @@ func runOneParallelItem(
 
 	if cancelIter != nil && (err != nil || !isSuccessOutcome(outcome)) {
 		cancelOnce.Do(cancelIter)
+	}
+}
+
+// buildParallelIterState constructs the per-iteration RunState. The Visits map
+// is shared by reference so that max_visits is enforced across all goroutines;
+// visitsMu serializes concurrent check-and-increment in incrementVisit.
+func buildParallelIterState(i, total int, item, key cty.Value, st *RunState, visitsMu *sync.Mutex) *RunState {
+	return &RunState{
+		Current:        st.Current,
+		WorkflowDir:    st.WorkflowDir,
+		SharedVarStore: st.SharedVarStore,
+		Visits:         st.Visits,
+		VisitsMu:       visitsMu,
+		Vars: workflow.WithEachBinding(st.Vars, &workflow.EachBinding{
+			Value: item,
+			Key:   key,
+			Index: i,
+			Total: total,
+			First: i == 0,
+			Last:  i == total-1,
+			Prev:  cty.NilVal,
+		}),
 	}
 }
 
@@ -295,6 +301,14 @@ func runParallelIterations(ctx context.Context, n *stepNode, items, keys []cty.V
 
 	sem := make(chan struct{}, n.step.ParallelMax)
 
+	// Ensure the shared Visits map exists so all iterSt copies see the same
+	// underlying map for max_visits tracking. visitsMu serializes concurrent
+	// check-and-increment calls in incrementVisit across goroutines.
+	if st.Visits == nil {
+		st.Visits = make(map[string]int)
+	}
+	var visitsMu sync.Mutex
+
 	var wg sync.WaitGroup
 	var cancelOnce sync.Once
 
@@ -303,7 +317,7 @@ func runParallelIterations(ctx context.Context, n *stepNode, items, keys []cty.V
 		i := i
 		go func() {
 			defer wg.Done()
-			runOneParallelItem(iterCtx, n, i, total, items, keys, st, deps, sem, results, cancelIter, &cancelOnce)
+			runOneParallelItem(iterCtx, n, i, total, items, keys, st, deps, sem, results, cancelIter, &cancelOnce, &visitsMu)
 		}()
 	}
 
@@ -323,25 +337,20 @@ func (n *stepNode) runParallelIterationOnce(ctx context.Context, st *RunState, d
 }
 
 // runParallelAdapterIteration resolves the step's input expressions against the
-// per-iteration vars and calls the adapter. Returns the raw outcome string and
-// outputs map, or an error.
+// per-iteration vars and executes the iteration through runStepFromAttempt.
+// This preserves the same step-execution semantics as non-parallel adapter steps:
+// max_visits enforcement (via the shared Visits map + VisitsMu in st), per-step
+// timeout wrapping, retry behaviour, and fatal-error propagation.
 func (n *stepNode) runParallelAdapterIteration(ctx context.Context, st *RunState, deps Deps) (outcome string, outputs map[string]string, err error) {
 	effectiveStep, resolveErr := n.resolveInput(st.Vars, st.WorkflowDir)
 	if resolveErr != nil {
 		return "", nil, fmt.Errorf("step %q: input expression error: %w", n.step.Name, resolveErr)
 	}
 
-	deps.Sink.OnStepEntered(effectiveStep.Name, n.stepAdapterName(), 1)
-
-	start := time.Now()
-	result, execErr := n.executeStep(ctx, deps, effectiveStep)
-	dur := time.Since(start)
-
+	result, execErr := n.runStepFromAttempt(ctx, st, deps, effectiveStep, 1)
 	if execErr != nil {
-		deps.Sink.OnStepOutcome(effectiveStep.Name, "failure", dur, execErr)
 		return "failure", nil, execErr
 	}
-	deps.Sink.OnStepOutcome(effectiveStep.Name, result.Outcome, dur, nil)
 	return result.Outcome, result.Outputs, nil
 }
 
