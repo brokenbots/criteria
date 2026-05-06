@@ -1204,7 +1204,11 @@ shared_variable "status_msg" {
 
 `type` accepts `"string"`, `"number"`, or `"bool"`. `value` sets the initial
 value; it must be a literal (no expression references). If `value` is omitted
-the variable starts at the zero value for its type (`0`, `""`, or `false`).
+the variable starts as a **typed `null`** for its declared type. Reading
+`shared.<name>` before any `shared_writes` has applied will yield `null`;
+expressions that require a concrete value (e.g. arithmetic on a `null number`)
+will produce a runtime error. Provide an explicit `value` if you need a
+non-null default.
 
 ### Reading a shared variable
 

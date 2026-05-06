@@ -295,6 +295,18 @@ All 8 steps fully implemented and validated. `make test` and `make validate` bot
 - `make test`: all packages pass
 - `make validate`: all examples including new `phase3-shared-variable` pass
 
+### Review 2026-05-06-02 — resolution
+
+Fixed the single doc inaccuracy: `docs/workflow.md` line 1207 previously said
+omitted `value` defaults to `0`/`""`/`false`. Updated to correctly describe the
+actual behavior: typed `null` (matching `cty.NullVal(type)` in
+`compileSharedVarInitialValue` and assertions in `compile_shared_variables_test.go:107-115`
+and `shared_var_store_test.go:79-87`). Added a note that reading a null variable
+before any write produces `null`, and that expressions requiring a concrete value
+will error, advising users to provide an explicit `value` for non-null defaults.
+
+**Validation:** `make ci` exits 0 (docs-only change, no code affected).
+
 ### Review 2026-05-06 — resolution
 
 All 4 blockers from Review 2026-05-05 addressed:
@@ -372,3 +384,31 @@ Current tests are solid on basic store behavior, runtime type mismatch, initial-
   - `internal/engine/shared_var_store.go:100` `errorlint`
   - `internal/engine/shared_var_subworkflow_test.go:12` `gofmt`
   - `internal/engine/shared_var_store.go:12` `goimports`
+
+### Review 2026-05-06-02 — changes-requested
+
+#### Summary
+
+Most of the prior blockers are resolved: compile-time `shared_writes` validation is present, batch writes are atomic, CI is green, and the workflow docs were added. I am still blocking approval because the new docs describe the wrong runtime default when `shared_variable.value` is omitted. The implementation and tests use typed `null`, but `docs/workflow.md` tells users the default is the type's zero value.
+
+#### Plan Adherence
+
+- Step 5 is now implemented to the expected bar: `shared_writes` validates declared destination variables and known output keys, and the runtime applies the full write set through `SetBatch`.
+- Step 8 is now satisfied: `make ci` exits 0.
+- Documentation was added as required, but one semantic detail is inaccurate and needs correction before approval.
+
+#### Required Remediations
+
+- **Required** — `docs/workflow.md:1205-1207`: correct the docs for omitted `shared_variable.value`. The implementation compiles omitted values as `cty.NullVal(type)`, and the tests assert that behavior (`workflow/compile_shared_variables_test.go:107-115`, `internal/engine/shared_var_store_test.go:79-87`). The docs currently say omitted values start at `0`, `""`, or `false`, which is incorrect and user-visible. **Acceptance:** update the docs to describe a typed `null` default and keep the surrounding examples/semantics consistent with actual runtime behavior.
+
+#### Test Intent Assessment
+
+The new tests now cover the previously missing contracts well: invalid `shared_writes` output-key mappings are rejected at compile time where key sets are knowable, and `SetBatch` has an all-or-nothing regression test. The remaining gap is documentation accuracy rather than executable behavior.
+
+#### Validation Performed
+
+- `make ci` — passed
+- Spot-checked implementation and tests for omitted-value behavior:
+  - `workflow/compile_shared_variables.go` initializes omitted values with `cty.NullVal(type)`
+  - `workflow/compile_shared_variables_test.go:107-115` asserts typed-null initial values
+  - `internal/engine/shared_var_store_test.go:79-87` asserts typed-null store defaults
