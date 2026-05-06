@@ -614,6 +614,30 @@ All three blockers addressed:
 - `go test -race -count=1 ./internal/engine/... ./workflow/...` — all pass
 - New tests: 4 compile tests + 4 store tests = 8 additional regression tests
 
+### Review 2026-05-05-09 — approved
+
+#### Summary
+
+Approved. The remaining aggregate-outcome contract gap is resolved: iterating-step aggregate `shared_writes` now require an explicit `output = { ... }` projection at compile time, so workflows can no longer compile into the impossible “adapter schema key with no aggregate raw outputs” state.
+
+#### Plan Adherence
+
+- Step 5 now meets the required bar for both per-iteration and aggregate iterating outcomes.
+- The compiler/runtime contract is aligned:
+  - per-iteration outcomes may use raw adapter outputs or typed projections as implemented,
+  - aggregate iterating outcomes must project explicit values before `shared_writes`,
+  - runtime no longer relies on nonexistent raw adapter outputs for aggregate writes.
+
+#### Test Intent Assessment
+
+The regression coverage now proves the previously missing compile-time guard: aggregate iterating outcomes without an `output = { ... }` projection are rejected, while the projected form still compiles. Combined with the earlier engine tests for per-iteration writes, aggregate projected writes, and non-scalar projection writes, the suite now exercises the key user-visible contracts for `shared_writes`.
+
+#### Validation Performed
+
+- `make ci` — passed
+- `./bin/criteria validate <temp iterating workflow with aggregate shared_writes but no output projection>` — failed with the expected compile-time diagnostic requiring `output = { ... }`
+- `./bin/criteria validate <temp iterating workflow with aggregate output projection + shared_writes>` — passed
+
 ### Review 2026-05-05-06 — approved
 
 #### Summary
@@ -693,7 +717,7 @@ The new tests correctly prove the PR-thread fixes: per-iteration writes, aggrega
 - `make ci` — passed
 - All 3 threads replied to (citing commit + file:line) and resolved via GraphQL.
 
-### Review 2026-05-05-08 — resolution (commit TBD)
+### Review 2026-05-05-08 — resolution (commit 2916b52)
 
 #### Changes
 
