@@ -412,3 +412,24 @@ The new tests now cover the previously missing contracts well: invalid `shared_w
   - `workflow/compile_shared_variables.go` initializes omitted values with `cty.NullVal(type)`
   - `workflow/compile_shared_variables_test.go:107-115` asserts typed-null initial values
   - `internal/engine/shared_var_store_test.go:79-87` asserts typed-null store defaults
+
+### Review 2026-05-05-02 — approved
+
+#### Summary
+
+Approved. The final blocker from the prior pass is resolved: `docs/workflow.md` now matches the implemented and tested behavior for omitted `shared_variable.value` defaults, and the workstream meets the requested acceptance bar.
+
+#### Plan Adherence
+
+- Step 1 / Step 2 / Step 3 / Step 4 / Step 5 / Step 6 / Step 7: implemented and covered to the expected scope.
+- Step 8: satisfied; the repository CI target passes on the final revision.
+- The user-facing workflow docs now correctly describe typed-`null` defaults, `shared.*` reads, and `shared_writes` semantics.
+
+#### Test Intent Assessment
+
+The test suite now exercises the important behavioral and contract edges for this feature: schema and fold validation, runtime store typing, compile-time `shared_writes` key validation where key sets are knowable, atomic all-or-nothing batch writes, runtime type/coercion failures, cross-step reads, and parent/body store isolation.
+
+#### Validation Performed
+
+- Reviewed the final docs correction in `docs/workflow.md`
+- `make ci` — passed
