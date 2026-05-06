@@ -639,3 +639,26 @@ The suite now proves the important contracts rather than just local mechanics: s
   - `evalOutcomeOutputProjection` injects `step.output.*` into the eval context
   - `workflow/compile_fold.go` defers `step.*` references to runtime
   - `internal/engine/outcome_shared_writes_test.go` now exercises the end-to-end non-scalar projection path
+
+### Review 2026-05-05-07 — changes-requested (PR #87 review threads)
+
+#### Threads
+
+1. **PRRT_kwDOSOBb1s5_17dw** — `applySharedWrites` unreachable for iterating steps (`for_each` / `count`): the per-iteration short-circuit path in `evaluateOnce` returned before reaching `applyOutcome` and never called `applySharedWrites`; `finishIterationInGraph` also did not apply aggregate-outcome `SharedWrites`.
+2. **PRRT_kwDOSOBb1s5_17d0** — `"shared_variable"` entry in `runtimeOnlyNamespaces` was a footgun: engine never seeds a `shared_variable` namespace (only `shared`), so any user expression with `shared_variable.*` silently passed compile-time and then failed at runtime with an opaque "variable not found" error.
+3. **PRRT_kwDOSOBb1s5_17d1** — Error messages in `compile_shared_variables.go` and `compile_locals.go` named the wrong namespace (`shared_variable` instead of `shared`).
+
+### Review 2026-05-05-07 — resolution (commit 4ce4c68)
+
+#### Changes
+
+- **node_step.go**: Extracted per-iteration shared_writes logic into `applyIterationSharedWrites` helper; called it in the cursor short-circuit path. This also brings `evaluateOnce` back within the `gocognit` ≤20 threshold.
+- **engine.go**: Refactored `finishIterationInGraph` to evaluate `OutputExpr` unconditionally and call `applySharedWrites` for aggregate outcomes.
+- **compile_fold.go**: Removed `"shared_variable": true` from `runtimeOnlyNamespaces`; updated `FoldExpr` doc comment to say `shared`.
+- **compile_shared_variables.go** + **compile_locals.go**: Fixed error message strings (`shared_variable` → `shared`).
+- **outcome_shared_writes_test.go**: Added `TestSharedWrites_PerIterationOutcome` and `TestSharedWrites_AggregateOutcome`.
+
+#### Validation
+
+- `make ci` — passed
+- All 3 threads replied to (citing commit + file:line) and resolved via GraphQL.
