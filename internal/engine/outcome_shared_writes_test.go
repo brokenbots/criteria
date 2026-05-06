@@ -388,3 +388,141 @@ state "done" {
 	require.NotNil(t, outputs)
 	assert.Equal(t, `"hello"`, outputs["val"])
 }
+
+// TestSharedWrites_PerIterationOutcome proves that a for_each step's per-iteration
+// outcome applies shared_writes on each adapter call. Each iteration overwrites
+// the shared variable with the current iteration's output value. A subsequent
+// step reads the final value to confirm the last write was committed.
+func TestSharedWrites_PerIterationOutcome(t *testing.T) {
+	const src = `
+workflow "t" {
+  version       = "0.1"
+  initial_state = "loop"
+  target_state  = "done"
+}
+
+shared_variable "last_tag" {
+  type  = "string"
+  value = ""
+}
+
+adapter "sw" "default" {}
+
+step "loop" {
+  target   = adapter.sw.default
+  for_each = ["alpha", "beta", "gamma"]
+  outcome "success" {
+    next          = "_continue"
+    shared_writes = { last_tag = "tag" }
+  }
+  outcome "all_succeeded" { next = "read_back" }
+  outcome "any_failed"    { next = "done" }
+}
+
+step "read_back" {
+  target = adapter.sw.default
+  outcome "success" {
+    next   = "done"
+    output = { result = shared.last_tag }
+  }
+}
+
+state "done" {
+  terminal = true
+  success  = true
+}
+`
+	spec, diags := workflow.Parse("t.hcl", []byte(src))
+	require.False(t, diags.HasErrors(), "parse: %s", diags.Error())
+	g, diags := workflow.Compile(spec, nil)
+	require.False(t, diags.HasErrors(), "compile: %s", diags.Error())
+
+	items := []string{"alpha", "beta", "gamma"}
+	callNum := 0
+	capturedSink := &outputCaptureSink{}
+
+	plug := &pluginFunc{
+		name: "sw",
+		fn: func(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+			if callNum < len(items) {
+				tag := items[callNum]
+				callNum++
+				return adapter.Result{Outcome: "success", Outputs: map[string]string{"tag": tag}}, nil
+			}
+			callNum++
+			return adapter.Result{Outcome: "success"}, nil
+		},
+	}
+	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"sw": plug}}
+
+	eng := NewTestEngine(g, loader, capturedSink)
+	require.NoError(t, eng.Run(context.Background()))
+	assert.Equal(t, "done", capturedSink.terminal)
+
+	// shared.last_tag should hold the final iteration's value ("gamma").
+	readBackOutputs := capturedSink.captured["read_back"]
+	require.NotNil(t, readBackOutputs, "read_back outputs not captured")
+	assert.Equal(t, `"gamma"`, readBackOutputs["result"])
+}
+
+// TestSharedWrites_AggregateOutcome proves that shared_writes declared on an
+// aggregate outcome (all_succeeded / any_failed) in a for_each step is applied
+// when finishIterationInGraph fires, not during any individual iteration.
+func TestSharedWrites_AggregateOutcome(t *testing.T) {
+	const src = `
+workflow "t" {
+  version       = "0.1"
+  initial_state = "loop"
+  target_state  = "done"
+}
+
+shared_variable "done_flag" {
+  type  = "string"
+  value = "pending"
+}
+
+adapter "sw" "default" {}
+
+step "loop" {
+  target   = adapter.sw.default
+  for_each = ["x", "y"]
+  outcome "success" { next = "_continue" }
+  outcome "all_succeeded" {
+    next          = "read_back"
+    output        = { status = "completed" }
+    shared_writes = { done_flag = "status" }
+  }
+  outcome "any_failed" { next = "done" }
+}
+
+step "read_back" {
+  target = adapter.sw.default
+  outcome "success" {
+    next   = "done"
+    output = { result = shared.done_flag }
+  }
+}
+
+state "done" {
+  terminal = true
+  success  = true
+}
+`
+	spec, diags := workflow.Parse("t.hcl", []byte(src))
+	require.False(t, diags.HasErrors(), "parse: %s", diags.Error())
+	g, diags := workflow.Compile(spec, nil)
+	require.False(t, diags.HasErrors(), "compile: %s", diags.Error())
+
+	capturedSink := &outputCaptureSink{}
+	plug := &sharedWritesPlugin{outcome: "success", outputs: map[string]string{}}
+	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"sw": plug}}
+
+	eng := NewTestEngine(g, loader, capturedSink)
+	require.NoError(t, eng.Run(context.Background()))
+	assert.Equal(t, "done", capturedSink.terminal)
+
+	// shared.done_flag should be "completed" — written by the aggregate outcome.
+	readBackOutputs := capturedSink.captured["read_back"]
+	require.NotNil(t, readBackOutputs, "read_back outputs not captured")
+	assert.Equal(t, `"completed"`, readBackOutputs["result"])
+}

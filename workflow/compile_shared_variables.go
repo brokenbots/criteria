@@ -134,7 +134,7 @@ func validateFoldedInitialValue(name string, valAttr *hcl.Attribute, typ cty.Typ
 		r := valAttr.Expr.StartRange()
 		diags = append(diags, &hcl.Diagnostic{
 			Severity: hcl.DiagError,
-			Summary:  fmt.Sprintf("shared_variable %q: initial value must be a compile-time constant expression; references to each, steps, or shared_variable are not allowed", name),
+			Summary:  fmt.Sprintf("shared_variable %q: initial value must be a compile-time constant expression; references to each, steps, or shared are not allowed", name),
 			Subject:  &r,
 		})
 		return cty.NullVal(typ), diags, true

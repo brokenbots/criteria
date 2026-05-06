@@ -284,10 +284,33 @@ func (n *stepNode) evaluateOnce(ctx context.Context, st *RunState, deps Deps) (s
 		}
 		deps.Sink.OnStepOutputCaptured(n.step.Name, result.Outputs)
 		deps.Sink.OnStepTransition(n.step.Name, result.Outcome, result.Outcome)
+		if err := n.applyIterationSharedWrites(result.Outcome, result.Outputs, st, deps.Sink); err != nil {
+			return "", err
+		}
 		return result.Outcome, nil
 	}
 
 	return n.applyOutcome(result.Outcome, result.Outputs, nil, st, deps)
+}
+
+// applyIterationSharedWrites applies shared_writes from the per-iteration
+// outcome (if declared) during a for_each / count step. It is called on every
+// adapter result inside the iteration loop — before the aggregate outcome fires.
+// projectedCty is computed from the outcome's OutputExpr when present.
+func (n *stepNode) applyIterationSharedWrites(outcomeName string, rawOutputs map[string]string, st *RunState, sink Sink) error {
+	compiled, ok := n.step.Outcomes[outcomeName]
+	if !ok || len(compiled.SharedWrites) == 0 || st.SharedVarStore == nil {
+		return nil
+	}
+	var projectedCty map[string]cty.Value
+	if compiled.OutputExpr != nil {
+		proj, err := evalOutcomeOutputProjection(compiled.OutputExpr, nil, rawOutputs, st)
+		if err != nil {
+			return fmt.Errorf("step %q outcome %q: output projection: %w", n.step.Name, outcomeName, err)
+		}
+		projectedCty = proj
+	}
+	return applySharedWrites(n.step.Name, outcomeName, compiled.SharedWrites, projectedCty, rawOutputs, st, sink)
 }
 
 // applyOutcome resolves the compiled outcome for the given adapter outcome name,
