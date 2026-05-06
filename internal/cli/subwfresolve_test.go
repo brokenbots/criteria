@@ -31,10 +31,7 @@ func TestLocalResolver_LocalRelative(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected success, got: %v", err)
 	}
-	if !filepath.IsAbs(resolved) {
-		t.Errorf("expected absolute path, got: %q", resolved)
-	}
-	expected, _ := filepath.Abs(swDir)
+	expected, _ := filepath.EvalSymlinks(swDir)
 	if resolved != expected {
 		t.Errorf("expected %q, got %q", expected, resolved)
 	}
@@ -53,11 +50,8 @@ func TestLocalResolver_LocalAbsolute(t *testing.T) {
 
 	r := &workflow.LocalSubWorkflowResolver{}
 	// callerDir is irrelevant when source is absolute.
-	resolved, err := r.ResolveSource(context.Background(), "/irrelevant", swDir)
-	if err != nil {
-		t.Fatalf("expected success, got: %v", err)
-	}
-	expected, _ := filepath.Abs(swDir)
+	resolved, _ := r.ResolveSource(context.Background(), "/irrelevant", swDir)
+	expected, _ := filepath.EvalSymlinks(swDir)
 	if resolved != expected {
 		t.Errorf("expected %q, got %q", expected, resolved)
 	}

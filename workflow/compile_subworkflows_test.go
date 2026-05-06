@@ -550,7 +550,7 @@ func TestLocalSubWorkflowResolver_LocalRelative(t *testing.T) {
 	if !filepath.IsAbs(resolved) {
 		t.Errorf("expected absolute path, got: %q", resolved)
 	}
-	expected, _ := filepath.Abs(swDir)
+	expected, _ := filepath.EvalSymlinks(swDir)
 	if resolved != expected {
 		t.Errorf("expected %q, got %q", expected, resolved)
 	}
@@ -573,7 +573,7 @@ func TestLocalSubWorkflowResolver_LocalAbsolute(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected success, got: %v", err)
 	}
-	expected, _ := filepath.Abs(swDir)
+	expected, _ := filepath.EvalSymlinks(swDir)
 	if resolved != expected {
 		t.Errorf("expected %q, got %q", expected, resolved)
 	}
