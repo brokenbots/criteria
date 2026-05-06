@@ -134,7 +134,8 @@ validate: build ## Validate all example workflow directories
 		examples/demo_tour_local examples/file_function examples/hello \
 		examples/perf_1000_logs examples/workstream_review_loop \
 		examples/phase3-environment examples/phase3-fold examples/phase3-multi-file \
-		examples/phase3-output examples/phase3-subworkflow examples/phase3-shared-variable; do \
+		examples/phase3-output examples/phase3-subworkflow examples/phase3-shared-variable \
+		examples/phase3-parallel; do \
 		echo "Validating $$d..."; \
 		CRITERIA_WORKFLOW_ALLOWED_PATHS="$(CURDIR)" ./bin/criteria validate "$$d" || exit 1; \
 	done

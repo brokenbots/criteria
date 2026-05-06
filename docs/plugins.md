@@ -458,6 +458,28 @@ Step outputs also flow into `for_each` iteration contexts. See [workflow.md](wor
 
 The canonical third-party plugin example is [`examples/plugins/greeter/`](../examples/plugins/greeter/). It lives in its own Go module (no `replace` directive once an SDK tag exists), imports only `sdk/pluginhost` and the generated proto bindings, and demonstrates the full workflow from `go build` to `criteria apply`. Read that directory first — it is the minimum viable plugin.
 
+### Concurrency requirements for `parallel` steps
+
+When a workflow step uses the `parallel = [...]` modifier, the engine calls your
+adapter's `Execute` method **concurrently from multiple goroutines** — one per
+parallel item, bounded by `parallel_max`. Session handles (from `OpenSession`)
+are shared across all parallel executions for the same step.
+
+Adapter authors must ensure:
+
+1. **`Execute` is goroutine-safe.** If your implementation touches any shared
+   state (maps, counters, file handles), protect it with a `sync.Mutex` or use
+   atomic operations.
+2. **Session handles are treated as read-only or are protected.** If the
+   session handle wraps a stateful connection (e.g. a gRPC stream), protect it
+   or open a fresh connection per `Execute` call.
+3. **Context cancellation is respected.** When the engine cancels the context
+   (e.g. on `on_failure = "abort"`), `Execute` should return promptly. Long
+   operations should select on `ctx.Done()`.
+
+Adapters that are already stateless (no shared mutable state) need no changes.
+The `noop` and `shell` bundled adapters are both goroutine-safe.
+
 The public plugin SDK lives in `sdk/pluginhost`. External authors import:
 
 ```

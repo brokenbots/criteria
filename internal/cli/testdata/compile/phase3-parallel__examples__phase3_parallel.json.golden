@@ -1,0 +1,56 @@
+{
+  "name": "parallel-demo",
+  "initial_state": "fetch",
+  "target_state": "done",
+  "policy": {
+    "MaxTotalSteps": 100,
+    "MaxStepRetries": 0,
+    "MaxVisitsWarnThreshold": 200
+  },
+  "adapters": [
+    {
+      "type": "noop",
+      "name": "default",
+      "on_crash": "fail",
+      "config_keys": null
+    }
+  ],
+  "steps": [
+    {
+      "name": "fetch",
+      "adapter": "noop.default",
+      "input_keys": [
+        "service"
+      ],
+      "allow_tools": null,
+      "outcomes": [
+        {
+          "name": "all_succeeded",
+          "next": "done"
+        },
+        {
+          "name": "any_failed",
+          "next": "done"
+        }
+      ]
+    }
+  ],
+  "states": [
+    {
+      "name": "done",
+      "terminal": true,
+      "success": true
+    }
+  ],
+  "outputs": [],
+  "switches": [],
+  "step_order": [
+    "fetch"
+  ],
+  "plugins_required": [
+    "noop"
+  ],
+  "metadata": {
+    "schema_version": 1
+  }
+}

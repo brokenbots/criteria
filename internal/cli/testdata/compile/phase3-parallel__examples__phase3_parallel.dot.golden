@@ -1,0 +1,11 @@
+digraph "parallel-demo" {
+  rankdir=LR;
+
+  "fetch" [shape=box];
+  "done" [shape=doublecircle];
+
+  "__start__" [shape=point,width=0.12,label=""];
+  "__start__" -> "fetch" [label="initial"];
+  "fetch" -> "done" [label="all_succeeded"];
+  "fetch" -> "done" [label="any_failed"];
+}

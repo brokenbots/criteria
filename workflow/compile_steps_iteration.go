@@ -1,13 +1,15 @@
 package workflow
 
-// compile_steps_iteration.go — compile path for steps that carry a for_each or
-// count modifier. Supports both adapter and subworkflow target kinds.
+// compile_steps_iteration.go — compile path for steps that carry a for_each,
+// count, or parallel modifier. Supports both adapter and subworkflow target kinds.
 
 import (
 	"fmt"
+	"runtime"
 	"time"
 
 	"github.com/hashicorp/hcl/v2"
+	"github.com/zclconf/go-cty/cty"
 )
 
 // compileIteratingStep compiles a for_each/count iterating step and registers
@@ -49,12 +51,21 @@ func compileIteratingStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[str
 		diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q: max_visits must be >= 0", sp.Name)})
 	}
 
-	forEachExpr, countExpr, d := decodeRemainIter(sp)
+	forEachExpr, countExpr, parallelExpr, parallelMax, d := decodeRemainIter(sp, g)
 	diags = append(diags, d...)
 	if forEachExpr != nil && countExpr != nil {
 		diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q: for_each and count are mutually exclusive", sp.Name)})
 	}
-	diags = append(diags, validateIterExprFold(g, opts, forEachExpr, countExpr)...)
+	if parallelExpr != nil && forEachExpr != nil {
+		diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q: parallel and for_each are mutually exclusive", sp.Name)})
+	}
+	if parallelExpr != nil && countExpr != nil {
+		diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q: parallel and count are mutually exclusive", sp.Name)})
+	}
+	diags = append(diags, validateIterExprFold(g, opts, forEachExpr, countExpr, parallelExpr)...)
+	if parallelExpr != nil {
+		diags = append(diags, validateParallelIsList(g, opts, sp.Name, parallelExpr)...)
+	}
 
 	adapterType := adapterTypeFromRef(adapterRef)
 
@@ -73,6 +84,8 @@ func compileIteratingStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[str
 
 	node.ForEach = forEachExpr
 	node.Count = countExpr
+	node.Parallel = parallelExpr
+	node.ParallelMax = parallelMax
 
 	diags = append(diags, compileOutcomeBlock(sp, node, g, opts, schemas[adapterRef].OutputSchema)...)
 	diags = append(diags, validateIteratingOutcomes(sp, node)...)
@@ -98,16 +111,19 @@ func newSubworkflowIterStepNode(sp *StepSpec, _ *Spec, subworkflowRef, effective
 	}
 }
 
-// decodeRemainIter reads the for_each and count expressions from sp.Remain
-// without side-effects on any prior or future PartialContent calls.
-func decodeRemainIter(sp *StepSpec) (forEachExpr, countExpr hcl.Expression, diags hcl.Diagnostics) {
+// decodeRemainIter reads the for_each, count, parallel, and parallel_max
+// expressions from sp.Remain without side-effects on any prior or future
+// PartialContent calls. parallelMax of 0 means "use default (GOMAXPROCS)".
+func decodeRemainIter(sp *StepSpec, g *FSMGraph) (forEachExpr, countExpr, parallelExpr hcl.Expression, parallelMax int, diags hcl.Diagnostics) {
 	if sp.Remain == nil {
-		return nil, nil, nil
+		return nil, nil, nil, 0, nil
 	}
 	content, _, d := sp.Remain.PartialContent(&hcl.BodySchema{
 		Attributes: []hcl.AttributeSchema{
 			{Name: "for_each", Required: false},
 			{Name: "count", Required: false},
+			{Name: "parallel", Required: false},
+			{Name: "parallel_max", Required: false},
 		},
 	})
 	diags = append(diags, d...)
@@ -118,12 +134,34 @@ func decodeRemainIter(sp *StepSpec) (forEachExpr, countExpr hcl.Expression, diag
 		if attr, ok := content.Attributes["count"]; ok {
 			countExpr = attr.Expr
 		}
+		if attr, ok := content.Attributes["parallel"]; ok {
+			parallelExpr = attr.Expr
+		}
+		if attr, ok := content.Attributes["parallel_max"]; ok {
+			var val int
+			d2 := decodeIntAttr(attr, g, &val)
+			diags = append(diags, d2...)
+			if !d2.HasErrors() {
+				if val < 1 {
+					diags = append(diags, &hcl.Diagnostic{
+						Severity: hcl.DiagError,
+						Subject:  attr.Expr.StartRange().Ptr(),
+						Summary:  fmt.Sprintf("step %q: parallel_max must be >= 1; got %d", sp.Name, val),
+					})
+				} else {
+					parallelMax = val
+				}
+			}
+		}
 	}
-	return forEachExpr, countExpr, diags
+	// Apply default for parallelMax when parallel is set but parallel_max is absent.
+	if parallelExpr != nil && parallelMax == 0 {
+		parallelMax = runtime.GOMAXPROCS(0)
+	}
+	return forEachExpr, countExpr, parallelExpr, parallelMax, diags
 }
 
 // validateOnFailureValue checks that sp.OnFailure is a recognised value.
-// It does not check whether on_failure is allowed on this step kind.
 func validateOnFailureValue(sp *StepSpec) hcl.Diagnostics {
 	if sp.OnFailure == "" {
 		return nil
@@ -147,7 +185,7 @@ func validateEachRefs(stepName string, inputExprs map[string]hcl.Expression) hcl
 		if refsEach(expr) {
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagError,
-				Summary:  fmt.Sprintf("step %q input.%s: each._idx, each.key, each.value, each._prev, each._total, each._first, and each._last are only available inside iterating steps (for_each or count)", stepName, k),
+				Summary:  fmt.Sprintf("step %q input.%s: each._idx, each.key, each.value, each._prev, each._total, each._first, and each._last are only available inside iterating steps (for_each, count, or parallel)", stepName, k),
 			})
 		}
 	}
@@ -170,10 +208,10 @@ func validateIteratingOutcomes(sp *StepSpec, node *StepNode) hcl.Diagnostics {
 	return diags
 }
 
-// validateIterExprFold runs the compile-time fold pass on for_each and count
-// expressions. Runtime-only references (steps.*, shared_variable.*) are
+// validateIterExprFold runs the compile-time fold pass on for_each, count, and
+// parallel expressions. Runtime-only references (steps.*, shared_variable.*) are
 // silently deferred; any other fold errors are returned.
-func validateIterExprFold(g *FSMGraph, opts CompileOpts, forEachExpr, countExpr hcl.Expression) hcl.Diagnostics {
+func validateIterExprFold(g *FSMGraph, opts CompileOpts, forEachExpr, countExpr, parallelExpr hcl.Expression) hcl.Diagnostics {
 	var diags hcl.Diagnostics
 	if forEachExpr != nil {
 		_, _, d := FoldExpr(forEachExpr, graphVars(g), graphLocals(g), opts.WorkflowDir)
@@ -183,5 +221,75 @@ func validateIterExprFold(g *FSMGraph, opts CompileOpts, forEachExpr, countExpr 
 		_, _, d := FoldExpr(countExpr, graphVars(g), graphLocals(g), opts.WorkflowDir)
 		diags = append(diags, errorDiagsWithFallbackSubject(d, countExpr)...)
 	}
+	if parallelExpr != nil {
+		_, _, d := FoldExpr(parallelExpr, graphVars(g), graphLocals(g), opts.WorkflowDir)
+		diags = append(diags, errorDiagsWithFallbackSubject(d, parallelExpr)...)
+	}
 	return diags
+}
+
+// validateParallelIsList checks at compile time that the parallel expression
+// evaluates to a list or tuple (not a map or object). parallel = {} syntax is
+// not supported; use parallel = [...] for all parallel fan-out. If the expression
+// cannot be folded at compile time, the check is deferred to runtime.
+func validateParallelIsList(g *FSMGraph, opts CompileOpts, stepName string, expr hcl.Expression) hcl.Diagnostics {
+	val, folded, diags := FoldExpr(expr, graphVars(g), graphLocals(g), opts.WorkflowDir)
+	if diags.HasErrors() || !folded {
+		return nil // deferred to runtime; fold errors already reported by validateIterExprFold
+	}
+	if !val.IsKnown() || val.IsNull() {
+		return nil
+	}
+	t := val.Type()
+	if t.IsObjectType() || t.IsMapType() {
+		return hcl.Diagnostics{&hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Subject:  expr.StartRange().Ptr(),
+			Summary:  fmt.Sprintf("step %q: parallel must be a list [...]; map and object syntax are not supported", stepName),
+		}}
+	}
+	return nil
+}
+
+// both literal values and var.* references whose default is a known number.
+// Returns an error diagnostic if the expression is runtime-only, unknown,
+// non-numeric, or fractional.
+func decodeIntAttr(attr *hcl.Attribute, g *FSMGraph, dst *int) hcl.Diagnostics {
+	foldedVal, folded, diags := FoldExpr(attr.Expr, graphVars(g), graphLocals(g), "")
+	if diags.HasErrors() {
+		return diags
+	}
+	if !folded {
+		return hcl.Diagnostics{&hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Subject:  attr.Expr.StartRange().Ptr(),
+			Summary:  fmt.Sprintf("%q: must be a compile-time value (literal or var.* with a known default); runtime-only expressions are not allowed", attr.Name),
+		}}
+	}
+	val := foldedVal
+	if val.IsNull() || !val.IsKnown() {
+		return hcl.Diagnostics{&hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Subject:  attr.Expr.StartRange().Ptr(),
+			Summary:  fmt.Sprintf("%q: value must be a compile-time integer literal or var.* with a known default", attr.Name),
+		}}
+	}
+	if !val.Type().Equals(cty.Number) {
+		return hcl.Diagnostics{&hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Subject:  attr.Expr.StartRange().Ptr(),
+			Summary:  fmt.Sprintf("%q: value must be a number; got %s", attr.Name, val.Type().FriendlyName()),
+		}}
+	}
+	bf := val.AsBigFloat()
+	if !bf.IsInt() {
+		return hcl.Diagnostics{&hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Subject:  attr.Expr.StartRange().Ptr(),
+			Summary:  fmt.Sprintf("%q: value must be a whole number; got a fractional value", attr.Name),
+		}}
+	}
+	n, _ := bf.Int64()
+	*dst = int(n)
+	return nil
 }

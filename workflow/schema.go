@@ -489,6 +489,14 @@ type StepNode struct {
 	// Evaluates to an integer N; iteration runs N times with each.value = 0..N-1.
 	// Mutually exclusive with ForEach.
 	Count hcl.Expression
+	// Parallel is the raw HCL expression for step-level parallel execution.
+	// Evaluates to a list or tuple; the step body runs concurrently for every item.
+	// Mutually exclusive with ForEach and Count.
+	Parallel hcl.Expression
+	// ParallelMax is the maximum number of concurrent goroutines for a parallel step.
+	// Populated from the compile-time parallel_max attribute; default is
+	// runtime.GOMAXPROCS(0) when the attribute is absent. Never 0 at runtime.
+	ParallelMax int
 	// Environment is an optional per-step override for the execution environment,
 	// in the form "<env_type>.<env_name>". When set, it overrides the adapter
 	// block's environment and the workflow-level default for this step only.

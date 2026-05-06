@@ -165,14 +165,69 @@ This workstream may **not** edit:
 
 ## Tasks
 
-- [ ] Schema (Step 1).
-- [ ] Compile validation (Step 2).
-- [ ] Engine concurrency primitive (Step 3).
-- [ ] Output aggregation (Step 4).
-- [ ] Adapter session sharing semantics + doc (Step 5).
-- [ ] Subworkflow parallelism (Step 6).
-- [ ] Tests (Step 7).
-- [ ] `make ci` green at `-count=20` (Step 8).
+- [x] Schema (Step 1).
+- [x] Compile validation (Step 2).
+- [x] Engine concurrency primitive (Step 3).
+- [x] Output aggregation (Step 4).
+- [x] Adapter session sharing semantics + doc (Step 5).
+- [x] Subworkflow parallelism (Step 6).
+- [x] Tests (Step 7).
+- [x] `make ci` green at `-count=20` (Step 8).
+
+## Reviewer Notes
+
+### Implementation summary
+
+All workstream tasks are complete. Implementation is organized as:
+
+- **`workflow/schema.go`**: `Parallel hcl.Expression` and `ParallelMax int` added to `StepNode`.
+- **`workflow/compile_steps.go`**: `isIteratingStep` detects `parallel` attribute.
+- **`workflow/compile_steps_iteration.go`**: `decodeRemainIter(sp, g)` extended with `g *FSMGraph` so `decodeIntAttr` can evaluate `parallel_max = var.*` via `FoldExpr`; compile-time type check via `validateParallelIsList` rejects map/object syntax; mutual exclusion with `for_each`/`count`; `parallel_max = 0` rejected; GOMAXPROCS default; `validateEachRefs` updated; `on_failure` diagnostic updated to include `parallel`.
+- **`workflow/compile_steps_adapter.go`**: `validateOnFailureForNonIterating` message updated to "for_each, count, or parallel".
+- **`internal/engine/parallel_iteration.go`** (new): `lockedSink` overrides ALL 25 Sink interface methods; `StepEventSink` returns `lockedEventSink` wrapping the inner EventSink under the same mutex; `lockedEventSink` serializes `Log`/`Adapter` calls from parallel goroutines; `runOneParallelItem`, `runParallelIterations`, `aggregateParallelResults`, `finishParallelOutcome`, `evaluateParallel` with runtime map/object rejection.
+- **`internal/engine/node_step.go`**: parallel dispatch before `evaluateOnce`.
+- **`workflow/compile_steps_iteration_test.go`** (new): 11 compile-time tests.
+- **`internal/engine/parallel_iteration_test.go`** (new): 11 engine-level tests (added `TestParallelIteration_AdapterEventSink_NoConcurrentRace` which would DATA RACE without `lockedEventSink`).
+- **`examples/phase3-parallel/parallel-demo.hcl`** (new): example workflow.
+- **`docs/workflow.md`**: `parallel` section updated — list/tuple only, removed object/map language and `each.key` reference.
+- **`docs/plugins.md`**: adapter concurrency guidance section added.
+- **`Makefile`**: `examples/phase3-parallel` added to validate target.
+- Golden files regenerated for CLI tests.
+
+### Architecture decisions
+
+- **`lockedSink` + `lockedEventSink`**: `StepEventSink` now unlocks before returning a `lockedEventSink` that wraps the inner sink under `&s.mu`. All parallel goroutines therefore serialize both outer Sink calls and adapter EventSink `Log`/`Adapter` calls through the same mutex. Non-parallel calls remain lock-free.
+- **`parallel_max` fold context**: `decodeIntAttr` uses `FoldExpr` with `graphVars(g)/graphLocals(g)`. Allows `var.*`; rejects runtime-only refs.
+- **`parallel` list-only enforcement**: `validateParallelIsList` at compile time; runtime guard in `evaluateParallel`.
+- **Output aggregation order**: `results[i]` by declaration index regardless of goroutine completion order.
+- **`parallel` list-only enforcement**: Added `validateParallelIsList` at compile time (checks fold result for map/object type) and a runtime guard in `evaluateParallel` (checks `keys != nil` from `buildForEachItems`). Literal maps like `parallel = { a = "x" }` are caught at compile time; runtime-computed maps caught at runtime.
+- **No `IterCursor` machinery**: Parallel steps run entirely within a single `Evaluate` call. This avoids cursor complexity and makes abort semantics straightforward via `context.WithCancel`.
+- **Output aggregation order**: `runOneParallelItem` stores results at `results[i]` by declaration index. `aggregateParallelResults` iterates in index order, calling `WithIndexedStepOutput` in declaration order regardless of goroutine completion order.
+
+### Tests validation
+
+- All 11 compile-time tests: PASS
+- All 10 engine parallel tests: PASS (including race detector at `-count=5`)
+- Full `make ci`: PASS
+- `make validate`: PASS (including `examples/phase3-parallel`)
+
+### Blocker resolutions
+
+- **Blocker 1 (lockedSink)**: All 25 Sink interface methods overridden. `StepEventSink` now returns `&lockedEventSink{EventSink: inner, mu: &s.mu}` so that `Log`/`Adapter` calls from parallel adapter goroutines are also serialized. New regression test `TestParallelIteration_AdapterEventSink_NoConcurrentRace` uses `loggingBarrierPlugin` + `sharedLogSink` (non-atomic shared counter) — would DATA RACE under `-race` without `lockedEventSink`. Existing `TestParallelIteration_LockedSink_NoConcurrentRace` covers outer Sink methods.
+- **Blocker 2 (var.*)**: resolved in prior batch.
+- **Blocker 3 (list-only)**: resolved in prior batch; docs updated this batch (removed "or object/map").
+- **Blocker 4 (GOMAXPROCS)**: resolved in prior batch.
+- **Blocker 5 (output order)**: resolved in prior batch.
+- **Nit (on_failure message)**: resolved in prior batch.
+- **Docs fix**: `docs/workflow.md` parallel attribute description updated to "list or tuple" only; removed "or object/map" and "`each.key` for maps".
+
+### Security review
+
+- No new external inputs beyond HCL expression evaluator.
+- `lockedSink` now covers ALL 25 Sink methods — no concurrent sink method can bypass the mutex.
+- No secrets logged; goroutine state scoped per-iteration.
+- Context cancellation correctly propagated to all in-flight goroutines via `iterCtx.Done()`.
+- `parallel` list-only enforcement prevents unexpected iteration over object keys (potential ordering non-determinism).
 
 ## Exit criteria
 
@@ -199,3 +254,93 @@ The Step 7 list. Coverage: parallel-iteration path ≥ 85%; the bounded-fan-out 
 | Output aggregation order is non-deterministic if collected by channel arrival | Use index-keyed slice, not channel arrival. Test `TestParallelIteration_OutputAggregationOrder`. |
 | `parallel_max = 0` is ambiguous (unlimited? error?) | Reject 0 at compile; require ≥ 1 or the default. Test `TestStep_ParallelMaxZero_Error`. |
 | Context cancellation propagation leaks goroutines | Every per-iteration goroutine listens on `ctx.Done()`. Use `errgroup.WithContext` for cancellation discipline. Add `goleak.VerifyNone(t)` in TestMain. |
+
+### Review 2026-05-05 — changes-requested
+
+#### Summary
+
+The fan-out implementation is mostly in place and the branch is green, but it does not yet meet the workstream acceptance bar. I found one confirmed compile-time contract gap (`parallel_max = var.*` is rejected), one substantive concurrency hole in sink handling, a scope deviation in `parallel` collection semantics, and two tests that do not actually prove the behaviors they claim.
+
+#### Plan Adherence
+
+- **Step 1:** Implemented enough for runtime behavior; `StepNode` carries `Parallel` and `ParallelMax`.
+- **Step 2:** Partial. Mutual exclusion and `parallel_max >= 1` exist, but `parallel_max = var.cap` is rejected even though the workstream scoped `parallel_max` to compile-time literal or `var.*`.
+- **Step 3 / Step 5 / Step 6:** Partial. Bounded fan-out, shared adapter sessions, and per-item subworkflow runs exist, but the sink wrapper does not actually cover the full concurrent event surface.
+- **Step 4:** Not aligned with the written contract. The workstream scoped `parallel` as a list modifier with list-by-index aggregation; the implementation and docs now accept object/map iteration and aggregate by map key.
+- **Step 7:** Incomplete. The new tests cover several happy paths, but the default-cap and output-order tests do not prove the required behavior.
+- **Step 8:** `make ci` is green.
+
+#### Required Remediations
+
+- **blocker** — `internal/engine/parallel_iteration.go:29-58, 199-214, 336-348`: `lockedSink` only serializes four methods. Parallel adapter execution can still emit concurrent `StepEventSink(...).Log/Adapter` traffic, and parallel subworkflows can call `OnStepTransition`, `OnStepOutputCaptured`, `OnForEachEntered`, branch/wait events, and other sink methods through the embedded sink without locking. This contradicts the intended sink-safety design and leaves concurrent event delivery exposed. **Acceptance:** make the entire sink path reachable from parallel goroutines concurrency-safe, including `StepEventSink` and nested subworkflow events, and add a regression test that would fail without that protection under `-race`.
+- **blocker** — `workflow/compile_steps_iteration.go:137-156, 231-259`: `parallel_max` is decoded with `attr.Expr.Value(nil)`, so `parallel_max = var.cap` fails with `Variables not allowed`. The workstream explicitly narrowed this attribute to compile-time literal or `var.*`, not literal-only. **Acceptance:** allow compile-time-foldable `var.*` values, continue rejecting runtime-only references, and add compile tests for both the accepted and rejected cases.
+- **blocker** — `internal/engine/node_step.go:158-177`, `internal/engine/parallel_iteration.go:222-229`, `docs/workflow.md:693-697`: the implementation broadens `parallel` to object/map iteration and aggregates by map key. The workstream scoped `parallel` as a list modifier and required list-by-index aggregation. **Acceptance:** either narrow `parallel` back to list/tuple semantics and document/test that contract, or explicitly escalate the contract change with `[ARCH-REVIEW]`; it cannot be silently widened.
+- **blocker** — `workflow/compile_steps_iteration_test.go:129-155`: `TestStep_ParallelDefaultMax_IsGOMAXPROCS` does not pin the default to `runtime.GOMAXPROCS(0)`; it only asserts `>= 1`, so a regression to `1` would still pass. **Acceptance:** import and use `runtime` directly and assert exact equality.
+- **blocker** — `internal/engine/parallel_iteration_test.go:336-375`: `TestParallelIteration_OutputAggregationOrder` never inspects aggregated outputs or any downstream-visible consumer, so it does not prove declaration-order storage. **Acceptance:** add an assertion that fails if outputs are stored in completion order instead of input order.
+- **nit** — `workflow/compile_steps_adapter.go:95-104`: the non-iterating diagnostic still says `on_failure requires for_each or count`, omitting `parallel`. **Acceptance:** update the diagnostic and its tests/docs so the message reflects the actual supported iteration modifiers.
+
+#### Test Intent Assessment
+
+The current tests do prove bounded fan-out, the three `on_failure` modes at a high level, empty-list behavior, and that the current implementation survives `-race -count=20` in the targeted engine package. They do **not** yet prove two exit-criteria claims: the default `parallel_max` value and declaration-ordered output aggregation. They also do not exercise concurrent sink/event emission from adapters or nested subworkflows, which is the highest-risk part of this change.
+
+#### Validation Performed
+
+- `go test ./workflow -run 'TestStep_Parallel|TestEvalContext_EachRefs_Error'` — pass
+- `go test ./internal/engine -run 'TestParallelIteration_'` — pass
+- `go test -race -count=20 ./internal/engine -run 'TestParallelIteration_'` — pass
+- `make validate` — pass
+- `make ci` — pass
+- compile probe using `workflow.Parse`/`workflow.Compile` with `parallel_max = var.cap` — fails with `Variables not allowed`, confirming the Step 2 gap
+
+### Review 2026-05-05-02 — changes-requested
+
+#### Summary
+
+This pass closes most of the prior blockers: `parallel_max = var.*` now compiles, `parallel` is narrowed back to list semantics in code, the default-cap and output-order tests are materially stronger, and the branch is green under the required validation. I am still holding approval because the sink fix is incomplete at the adapter event boundary: `StepEventSink` returns an unsynchronized event sink, so parallel adapter `Log`/`Adapter` traffic can still race in real sinks, and the new regression test does not exercise that path.
+
+#### Plan Adherence
+
+- **Step 1 / Step 2 / Step 4:** aligned now. The compiler captures `parallel`, supports compile-time-foldable `parallel_max`, and rejects map/object syntax.
+- **Step 3 / Step 5 / Step 6:** mostly aligned, but the sink-safety portion is still incomplete for adapter event sinks returned by `StepEventSink`.
+- **Step 7:** improved substantially, but the new sink-race test still does not prove the previously unsafe adapter-event path.
+- **Step 8:** aligned. `go test -race -count=20 ./internal/engine/...` and `make ci` both pass.
+
+#### Required Remediations
+
+- **blocker** — `internal/engine/parallel_iteration.go:182-185`, `internal/engine/node_step.go:675`, `internal/run/console_sink.go:260-324`: `lockedSink.StepEventSink` only serializes the factory call and then returns the underlying `adapter.EventSink` unwrapped. Parallel adapter executions therefore still emit concurrent `Log`/`Adapter` calls against the returned sink. This is observable in `ConsoleSink`, where `consoleStepSink.Adapter` writes directly through `parent.writeln(...)` with no locking. The current regression test does not catch this because `barrierPlugin` emits no adapter events and `parallelSink` uses the noop `fakeSink.StepEventSink`. **Acceptance:** make the returned adapter event sink concurrency-safe under parallel execution (for example by wrapping `Log`/`Adapter` behind the same mutex), and add a regression test that emits adapter events from parallel iterations and would fail under `-race` without the fix.
+- **blocker** — `docs/workflow.md:693-694`: the documentation still says `parallel` accepts `object/map`, but the implementation now rejects that at compile time and runtime. **Acceptance:** update the workflow docs so the `parallel` contract is consistently list/tuple-only everywhere.
+
+#### Test Intent Assessment
+
+The strengthened compile tests now genuinely prove the `parallel_max` default and the `var.*` acceptance/rejection behavior. The output-order test is also now meaningful because it validates a downstream consumer view rather than only aggregate success. The remaining weak spot is the sink regression: it proves the outer `Sink` methods are locked, but it does not exercise concurrent adapter event emission through `StepEventSink`, which is the path still left unsynchronized.
+
+#### Validation Performed
+
+- `go test ./workflow -run 'TestStep_Parallel'` — pass
+- `go test ./internal/engine -run 'TestParallelIteration_'` — pass
+- `go test -race -count=20 ./internal/engine/...` — pass
+- `make ci` — pass
+- targeted code review of `lockedSink.StepEventSink`, `executeStep`, and concrete sinks confirmed the remaining unsynchronized adapter-event path
+
+### Review 2026-05-05-03 — approved
+
+#### Summary
+
+Approval granted. The remaining sink-concurrency blocker is fixed: `StepEventSink` now returns a mutex-wrapped event sink, the new regression test exercises concurrent adapter-event emission under `-race`, and the `parallel` docs now match the implemented list/tuple-only contract. I did not find any remaining plan, test-intent, or security gaps that block this workstream.
+
+#### Plan Adherence
+
+- **Step 1 / Step 2 / Step 4:** complete and aligned. `parallel` is compiled, `parallel_max` supports compile-time-foldable `var.*`, and map/object syntax is rejected consistently.
+- **Step 3 / Step 5 / Step 6:** complete and aligned. Parallel adapter and subworkflow execution now route all sink and adapter-event traffic through synchronized wrappers.
+- **Step 7:** complete. The tests now prove default cap behavior, declaration-order output aggregation, and the adapter-event sink race regression.
+- **Step 8:** complete. Required race and CI validations pass.
+
+#### Test Intent Assessment
+
+The strengthened tests now validate the intended behavior rather than only green execution: `parallel_max` defaulting is asserted exactly against `runtime.GOMAXPROCS(0)`, output order is checked through a downstream consumer, and the new `TestParallelIteration_AdapterEventSink_NoConcurrentRace` would fail under `-race` without the `lockedEventSink` wrapper. That closes the last meaningful test-strength gap from prior review passes.
+
+#### Validation Performed
+
+- `go test -race -count=20 ./internal/engine/...` — pass
+- `make ci` — pass
+- targeted review of `internal/engine/parallel_iteration.go`, `internal/engine/parallel_iteration_test.go`, and `docs/workflow.md` confirmed closure of the remaining blockers

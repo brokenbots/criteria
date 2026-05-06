@@ -42,6 +42,11 @@ func (n *stepNode) Evaluate(ctx context.Context, st *RunState, deps Deps) (strin
 		return n.evaluateIterating(ctx, st, deps)
 	}
 
+	// Handle parallel execution.
+	if n.step.Parallel != nil {
+		return n.evaluateParallel(ctx, st, deps)
+	}
+
 	// Non-iterating step: normal execution path.
 	return n.evaluateOnce(ctx, st, deps)
 }
