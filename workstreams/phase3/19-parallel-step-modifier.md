@@ -481,3 +481,25 @@ The new `TestParallelIteration_MaxVisitsEnforced` and `TestParallelIteration_Tim
 - `make ci` — pass
 - temporary probe test in `internal/engine`:
   - `TestParallelFatalProbe_ReturnsError` — fails (`expected fatal run error, got nil`)
+
+### Review 2026-05-06-04 — approved
+
+#### Summary
+
+Approval granted. The remaining fatal-error blocker is fixed: parallel adapter iterations now preserve fatal propagation semantics end-to-end, the fatal regression test now asserts `Engine.Run(...)` returns an error, and the workstream clears the required validation surface again.
+
+#### Plan Adherence
+
+- **Step 3 / Step 6:** complete and aligned. Parallel adapter iterations now preserve the ordinary adapter-step policy surface for `max_visits`, timeouts, retries, and fatal-error propagation.
+- **Step 7:** complete. The new regression coverage now proves the previously missing fatal path in addition to the earlier `max_visits` and timeout fixes.
+- **Step 8:** complete. Required engine race validation and full CI pass.
+
+#### Test Intent Assessment
+
+The strengthened regression set now checks the right contract. `TestParallelIteration_FatalErrorPropagated` no longer treats “not done” as sufficient; it asserts that fatal adapter failures surface as run errors, which would fail against the prior downgraded `any_failed` behavior. Together with the `max_visits` and timeout tests, that closes the last semantic-parity gap in the parallel adapter path.
+
+#### Validation Performed
+
+- `go test ./internal/engine -run 'TestParallelIteration_(FatalErrorPropagated|MaxVisitsEnforced|TimeoutEnforced)$'` — pass
+- `go test -race -count=20 -timeout 120s ./internal/engine/...` — pass
+- `TMPDIR=/home/dave/.tmp/criteria-review make ci` — pass
