@@ -74,7 +74,7 @@ func compileIteratingStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[str
 	node.ForEach = forEachExpr
 	node.Count = countExpr
 
-	diags = append(diags, compileOutcomeBlock(sp, node, g, opts)...)
+	diags = append(diags, compileOutcomeBlock(sp, node, g, opts, schemas[adapterRef].OutputSchema)...)
 	diags = append(diags, validateIteratingOutcomes(sp, node)...)
 
 	g.Steps[sp.Name] = node

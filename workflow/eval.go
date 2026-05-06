@@ -42,10 +42,10 @@ func BuildEvalContextWithOpts(vars map[string]cty.Value, opts FunctionOptions) *
 	varObj := cty.EmptyObjectVal
 	stepsObj := cty.EmptyObjectVal
 
-	if v, ok := vars["var"]; ok && v != cty.NilVal && v.Type().IsObjectType() {
+	if v, ok := objectFromVars(vars, "var"); ok {
 		varObj = v
 	}
-	if s, ok := vars["steps"]; ok && s != cty.NilVal && s.Type().IsObjectType() {
+	if s, ok := objectFromVars(vars, "steps"); ok {
 		stepsObj = s
 	}
 
@@ -55,19 +55,32 @@ func BuildEvalContextWithOpts(vars map[string]cty.Value, opts FunctionOptions) *
 	}
 
 	// Include "each" bindings when inside a for_each iteration (W07).
-	if each, ok := vars["each"]; ok && each != cty.NilVal && each.Type().IsObjectType() {
+	if each, ok := objectFromVars(vars, "each"); ok {
 		ctxVars["each"] = each
 	}
 
 	// Expose compiled locals as "local.*" when they have been seeded (W07).
-	if local, ok := vars["local"]; ok && local != cty.NilVal && local.Type().IsObjectType() {
+	if local, ok := objectFromVars(vars, "local"); ok {
 		ctxVars["local"] = local
+	}
+
+	// Expose shared_variable values as "shared.*" when a snapshot is present (W18).
+	if shared, ok := objectFromVars(vars, "shared"); ok {
+		ctxVars["shared"] = shared
 	}
 
 	return &hcl.EvalContext{
 		Variables: ctxVars,
 		Functions: workflowFunctions(opts),
 	}
+}
+
+// objectFromVars retrieves a named value from vars and returns it only if it is
+// a non-nil, known, object-typed value. Used to populate optional eval context
+// namespaces (var, steps, each, local, shared).
+func objectFromVars(vars map[string]cty.Value, key string) (cty.Value, bool) {
+	v, ok := vars[key]
+	return v, ok && v != cty.NilVal && v.Type().IsObjectType()
 }
 
 // ResolveInputExprs evaluates a map of HCL expressions against the provided
@@ -229,6 +242,22 @@ func SeedLocalsFromGraph(g *FSMGraph) cty.Value {
 		m[name] = ln.Value
 	}
 	return cty.ObjectVal(m)
+}
+
+// SeedSharedSnapshot wraps a snapshot from SharedVarStore.Snapshot() into a
+// cty object and stores it under vars["shared"]. Returns an unmodified vars
+// when snap is nil or empty. Call this before building the eval context to
+// expose shared.* in HCL expressions.
+func SeedSharedSnapshot(vars, snap map[string]cty.Value) map[string]cty.Value {
+	if len(snap) == 0 {
+		return vars
+	}
+	newVars := make(map[string]cty.Value, len(vars)+1)
+	for k, v := range vars {
+		newVars[k] = v
+	}
+	newVars["shared"] = cty.ObjectVal(snap)
+	return newVars
 }
 
 // ApplyVarOverrides merges CLI-supplied key=value pairs into an existing vars

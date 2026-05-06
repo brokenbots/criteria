@@ -236,6 +236,7 @@ func (e *Engine) runLoop(ctx context.Context, sessions *plugin.SessionManager, c
 		IterStack:        append([]workflow.IterCursor{}, e.resumedIterStack...),
 		Visits:           cloneVisits(e.resumedVisits),
 		WorkflowDir:      e.workflowDir,
+		SharedVarStore:   NewSharedVarStore(e.graph),
 		firstStep:        true,
 		firstStepAttempt: firstStepAttempt,
 	}
@@ -374,12 +375,26 @@ func finishIterationInGraph(st *RunState, stepName string, graph *workflow.FSMGr
 
 	sink.OnStepIterationCompleted(stepName, aggregateOutcome, co.Next)
 
-	if co.Next == workflow.ReturnSentinel && co.OutputExpr != nil {
-		projected, err := evalOutcomeOutputProjection(co.OutputExpr, nil, st)
+	// Evaluate output projection for the aggregate outcome. This is used by both
+	// the return path (st.ReturnOutputs) and any shared_writes declared on the
+	// aggregate outcome. Evaluated once and shared between both paths.
+	var aggregateProjectedCty map[string]cty.Value
+	if co.OutputExpr != nil {
+		projected, err := evalOutcomeOutputProjection(co.OutputExpr, nil, nil, st)
 		if err != nil {
 			return "", fmt.Errorf("step %q aggregate outcome %q: output projection: %w", stepName, aggregateOutcome, err)
 		}
-		st.ReturnOutputs = projected
+		aggregateProjectedCty = projected
+		if co.Next == workflow.ReturnSentinel {
+			st.ReturnOutputs = projected
+		}
+	}
+
+	// Apply shared_writes for the aggregate outcome if declared.
+	if len(co.SharedWrites) > 0 && st.SharedVarStore != nil {
+		if err := applySharedWrites(stepName, aggregateOutcome, co.SharedWrites, aggregateProjectedCty, nil, st, sink); err != nil {
+			return "", err
+		}
 	}
 
 	return co.Next, nil

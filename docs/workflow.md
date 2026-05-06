@@ -1182,6 +1182,124 @@ parallel "build_and_test" {
 
 ---
 
+## Shared Variables
+
+`shared_variable "<name>"` blocks declare workflow-scoped mutable state that
+steps can read from eval expressions and write via the `shared_writes` outcome
+attribute. The engine manages locking — step code never sees a partial write.
+
+### Declaring a shared variable
+
+```hcl
+shared_variable "counter" {
+  type  = "number"
+  value = 0
+}
+
+shared_variable "status_msg" {
+  type  = "string"
+  value = "pending"
+}
+```
+
+`type` accepts the same type surface as `variable` declarations: `"string"`,
+`"number"`, `"bool"`, `"list(string)"`, `"list(number)"`, `"list(bool)"`, and
+`"map(string)"`.
+
+`value` sets the initial value; it must be a literal (no expression references).
+If `value` is omitted the variable starts as a **typed `null`** for its declared
+type. Reading `shared.<name>` before any `shared_writes` has applied will yield
+`null`; expressions that require a concrete value (e.g. arithmetic on a `null
+number`) will produce a runtime error. Provide an explicit `value` if you need a
+non-null default.
+
+### Reading a shared variable
+
+Inside any HCL expression (step input, condition, output projection) use the
+`shared.<name>` namespace:
+
+```hcl
+step "notify" {
+  target = adapter.noop.default
+  input {
+    message = "counter is ${shared.counter}"
+  }
+  outcome "done" { next = "done" }
+}
+```
+
+The snapshot is captured **once per step entry** so all expressions within a
+step see a consistent point-in-time view, even if another concurrent step
+updates the variable during execution.
+
+### Writing a shared variable (shared_writes)
+
+Use `shared_writes` on an outcome block to write one or more variables when
+that outcome is reached. The value maps a `shared_variable` name to an output
+key from the step's adapter output:
+
+```hcl
+step "count_lines" {
+  target = adapter.noop.default
+  outcome "done" {
+    next         = "done"
+    shared_writes = { counter = "line_count" }
+  }
+}
+```
+
+`counter` is a declared `shared_variable`; `"line_count"` is the key in the
+adapter's output map. All writes in one `shared_writes` block are committed
+atomically — partial writes are never observable.
+
+When an `output = { ... }` projection is also declared on the outcome, the
+engine validates at **compile time** that every `shared_writes` value key
+appears in the projection. When no projection is present but the adapter
+declares an output schema, the compiler validates against that schema instead.
+If neither is available the check is deferred to runtime.
+
+### Type enforcement
+
+The declared `type` is enforced on every write. If the adapter output value
+cannot be coerced to the declared type the step fails with a clear error message
+and the workflow is aborted. No partial write occurs.
+
+There are two write paths, with different type capabilities:
+
+**Typed output projection** (`output = { ... }` declared on the outcome): the
+projection is evaluated as an HCL expression, producing a fully-typed cty value.
+All declared `shared_variable` types are supported — including `list(string)`,
+`list(number)`, `list(bool)`, and `map(string)`. Use this path for non-scalar
+accumulation:
+
+```hcl
+outcome "success" {
+  next          = "done"
+  output        = { tag_list = [step.output.tag1, step.output.tag2] }
+  shared_writes = { tags = "tag_list" }
+}
+```
+
+Here `step.output.<key>` exposes the raw adapter output strings for the current step. Each value is a `string`, so `[step.output.tag1, step.output.tag2]` constructs a `list(string)` that the engine converts to the declared type of the shared variable.
+
+**Raw adapter string coercion** (no `output = { ... }` projection, or the key is
+absent from the projection): the engine coerces the adapter's raw string output
+to the declared type. Only scalar types are supported this way. For `"number"`
+variables, the string must be a valid numeric literal with no trailing
+non-numeric characters (`"42"` and `"3.14"` are accepted; `"7abc"` and `"1e2x"`
+are rejected). For `"bool"` variables, accepted values are `"true"`, `"false"`,
+`"1"`, and `"0"`. Declaring a non-scalar shared variable and writing to it via
+raw coercion is a runtime error; use an output projection instead.
+
+### Isolation across subworkflow bodies
+
+Each subworkflow body gets its own isolated shared-variable store. Writes
+inside a subworkflow body do not propagate to the parent, and parent writes
+made after the subworkflow starts are not visible inside it. This prevents
+accidental coupling between a subworkflow and its caller.
+
+---
+
 ## Subworkflows
 
 The `subworkflow "<name>"` block declares a reusable workflow fragment to be resolved from a local directory and deep-compiled into the parent workflow's FSM graph at compile time.

@@ -1,0 +1,78 @@
+{
+  "name": "shared-variable-demo",
+  "initial_state": "start",
+  "target_state": "done",
+  "policy": {
+    "MaxTotalSteps": 100,
+    "MaxStepRetries": 0,
+    "MaxVisitsWarnThreshold": 200
+  },
+  "adapters": [
+    {
+      "type": "noop",
+      "name": "default",
+      "on_crash": "fail",
+      "config_keys": null
+    }
+  ],
+  "steps": [
+    {
+      "name": "start",
+      "adapter": "noop.default",
+      "input_keys": null,
+      "allow_tools": null,
+      "outcomes": [
+        {
+          "name": "success",
+          "next": "finish"
+        }
+      ]
+    },
+    {
+      "name": "finish",
+      "adapter": "noop.default",
+      "input_keys": null,
+      "allow_tools": null,
+      "outcomes": [
+        {
+          "name": "success",
+          "next": "report"
+        }
+      ]
+    },
+    {
+      "name": "report",
+      "adapter": "noop.default",
+      "input_keys": [
+        "message"
+      ],
+      "allow_tools": null,
+      "outcomes": [
+        {
+          "name": "success",
+          "next": "done"
+        }
+      ]
+    }
+  ],
+  "states": [
+    {
+      "name": "done",
+      "terminal": true,
+      "success": true
+    }
+  ],
+  "outputs": [],
+  "switches": [],
+  "step_order": [
+    "start",
+    "finish",
+    "report"
+  ],
+  "plugins_required": [
+    "noop"
+  ],
+  "metadata": {
+    "schema_version": 1
+  }
+}

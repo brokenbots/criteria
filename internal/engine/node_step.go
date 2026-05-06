@@ -31,6 +31,12 @@ func (n *stepNode) Evaluate(ctx context.Context, st *RunState, deps Deps) (strin
 		return "", fmt.Errorf("policy.max_total_steps exceeded (%d)", n.graph.Policy.MaxTotalSteps)
 	}
 
+	// Refresh the "shared" namespace in vars so expressions see the current
+	// snapshot of all shared_variable values (W18).
+	if st.SharedVarStore != nil {
+		st.Vars = workflow.SeedSharedSnapshot(st.Vars, st.SharedVarStore.Snapshot())
+	}
+
 	// Handle step-level iteration (for_each or count).
 	if n.step.ForEach != nil || n.step.Count != nil {
 		return n.evaluateIterating(ctx, st, deps)
@@ -278,10 +284,33 @@ func (n *stepNode) evaluateOnce(ctx context.Context, st *RunState, deps Deps) (s
 		}
 		deps.Sink.OnStepOutputCaptured(n.step.Name, result.Outputs)
 		deps.Sink.OnStepTransition(n.step.Name, result.Outcome, result.Outcome)
+		if err := n.applyIterationSharedWrites(result.Outcome, result.Outputs, st, deps.Sink); err != nil {
+			return "", err
+		}
 		return result.Outcome, nil
 	}
 
 	return n.applyOutcome(result.Outcome, result.Outputs, nil, st, deps)
+}
+
+// applyIterationSharedWrites applies shared_writes from the per-iteration
+// outcome (if declared) during a for_each / count step. It is called on every
+// adapter result inside the iteration loop — before the aggregate outcome fires.
+// projectedCty is computed from the outcome's OutputExpr when present.
+func (n *stepNode) applyIterationSharedWrites(outcomeName string, rawOutputs map[string]string, st *RunState, sink Sink) error {
+	compiled, ok := n.step.Outcomes[outcomeName]
+	if !ok || len(compiled.SharedWrites) == 0 || st.SharedVarStore == nil {
+		return nil
+	}
+	var projectedCty map[string]cty.Value
+	if compiled.OutputExpr != nil {
+		proj, err := evalOutcomeOutputProjection(compiled.OutputExpr, nil, rawOutputs, st)
+		if err != nil {
+			return fmt.Errorf("step %q outcome %q: output projection: %w", n.step.Name, outcomeName, err)
+		}
+		projectedCty = proj
+	}
+	return applySharedWrites(n.step.Name, outcomeName, compiled.SharedWrites, projectedCty, rawOutputs, st, sink)
 }
 
 // applyOutcome resolves the compiled outcome for the given adapter outcome name,
@@ -311,7 +340,7 @@ func (n *stepNode) applyOutcome(outcomeName string, rawOutputs map[string]string
 	stepOutputs := rawOutputs
 	var projectedCty map[string]cty.Value
 	if compiled.OutputExpr != nil {
-		projected, err := evalOutcomeOutputProjection(compiled.OutputExpr, swOutputs, st)
+		projected, err := evalOutcomeOutputProjection(compiled.OutputExpr, swOutputs, rawOutputs, st)
 		if err != nil {
 			return "", fmt.Errorf("step %q outcome %q: output projection: %w", n.step.Name, outcomeName, err)
 		}
@@ -327,20 +356,16 @@ func (n *stepNode) applyOutcome(outcomeName string, rawOutputs map[string]string
 		deps.Sink.OnStepOutputCaptured(n.step.Name, stepOutputs)
 	}
 
-	if compiled.Next == workflow.ReturnSentinel {
-		// Store raw cty values so formatReturnOutputs renders them with the
-		// same type fidelity as the normal output-block path (numbers stay
-		// numbers, bools stay bools, etc.).
-		if projectedCty != nil {
-			st.ReturnOutputs = projectedCty
-		} else if len(rawOutputs) > 0 {
-			// No projection: convert adapter string outputs to cty strings.
-			retVals := make(map[string]cty.Value, len(rawOutputs))
-			for k, v := range rawOutputs {
-				retVals[k] = cty.StringVal(v)
-			}
-			st.ReturnOutputs = retVals
+	// Apply shared_writes: update shared_variable store with values from the
+	// step's outputs. Uses SetBatch to commit the full write set atomically.
+	if len(compiled.SharedWrites) > 0 && st.SharedVarStore != nil {
+		if err := applySharedWrites(n.step.Name, outcomeName, compiled.SharedWrites, projectedCty, rawOutputs, st, deps.Sink); err != nil {
+			return "", err
 		}
+	}
+
+	if compiled.Next == workflow.ReturnSentinel {
+		captureReturnOutputs(rawOutputs, projectedCty, st)
 		deps.Sink.OnStepTransition(n.step.Name, workflow.ReturnSentinel, outcomeName)
 		return workflow.ReturnSentinel, nil
 	}
@@ -349,7 +374,78 @@ func (n *stepNode) applyOutcome(outcomeName string, rawOutputs map[string]string
 	return compiled.Next, nil
 }
 
-// evaluateSubworkflowStep handles a step whose TargetKind is StepTargetSubworkflow.
+// captureReturnOutputs stores the step's final outputs into st.ReturnOutputs
+// so subworkflow callers can access them via the "subworkflow.*" namespace.
+// Prefers typed cty projections over raw adapter string outputs.
+func captureReturnOutputs(rawOutputs map[string]string, projectedCty map[string]cty.Value, st *RunState) {
+	if projectedCty != nil {
+		st.ReturnOutputs = projectedCty
+	} else if len(rawOutputs) > 0 {
+		retVals := make(map[string]cty.Value, len(rawOutputs))
+		for k, v := range rawOutputs {
+			retVals[k] = cty.StringVal(v)
+		}
+		st.ReturnOutputs = retVals
+	}
+}
+
+// applySharedWrites resolves the write set from the outcome's shared_writes map
+// and commits all entries atomically via SetBatch. Each entry maps a
+// shared_variable name to an output key: the value is resolved from projectedCty
+// (typed) when present, or coerced from rawOutputs (string) otherwise.
+func applySharedWrites(
+	stepName, outcomeName string,
+	writes map[string]string,
+	projectedCty map[string]cty.Value,
+	rawOutputs map[string]string,
+	st *RunState,
+	sink Sink,
+) error {
+	batch := make(map[string]cty.Value, len(writes))
+	for varName, outputKey := range writes {
+		v, err := resolveSharedWriteValue(varName, outputKey, projectedCty, rawOutputs, st.SharedVarStore)
+		if err != nil {
+			msg := fmt.Sprintf("step %q outcome %q: shared_writes %q: %v", stepName, outcomeName, varName, err)
+			sink.OnRunFailed(msg, stepName)
+			return fmt.Errorf("step %q outcome %q: shared_writes %q: %w", stepName, outcomeName, varName, err)
+		}
+		if v == cty.NilVal {
+			msg := fmt.Sprintf("step %q outcome %q: shared_writes: output key %q not found in step outputs", stepName, outcomeName, outputKey)
+			sink.OnRunFailed(msg, stepName)
+			return fmt.Errorf("%s", msg) //nolint:err113 // msg is already fully contextual
+		}
+		batch[varName] = v
+	}
+	if err := st.SharedVarStore.SetBatch(batch); err != nil {
+		msg := fmt.Sprintf("step %q outcome %q: shared_writes: %v", stepName, outcomeName, err)
+		sink.OnRunFailed(msg, stepName)
+		return fmt.Errorf("step %q outcome %q: shared_writes: %w", stepName, outcomeName, err)
+	}
+	return nil
+}
+
+// resolveSharedWriteValue looks up the value for a single shared_writes entry.
+// It prefers the typed cty value from projectedCty; falls back to coercing the
+// raw adapter string from rawOutputs. Returns (cty.NilVal, nil) if the key is
+// absent, or (cty.NilVal, err) if coercion fails.
+func resolveSharedWriteValue(varName, outputKey string, projectedCty map[string]cty.Value, rawOutputs map[string]string, store *SharedVarStore) (cty.Value, error) {
+	if projectedCty != nil {
+		if pv, ok := projectedCty[outputKey]; ok {
+			return pv, nil
+		}
+	}
+	sv, ok := rawOutputs[outputKey]
+	if !ok {
+		return cty.NilVal, nil
+	}
+	declaredType, _ := store.TypeOf(varName)
+	coerced, err := coerceStringToCty(sv, declaredType)
+	if err != nil {
+		return cty.NilVal, err
+	}
+	return coerced, nil
+}
+
 // It runs the referenced subworkflow in a nested engine loop and maps the result
 // to the step's declared outcomes. Step-level input expressions (from the step's
 // input { } block) are evaluated against the parent scope and passed into the
@@ -619,7 +715,13 @@ func stringMapToCtyObject(m map[string]string) cty.Value {
 //
 // swOutputs, when non-nil, is exposed as the "subworkflow" variable in the eval
 // context so that outcome expressions can reference subworkflow.* keys.
-func evalOutcomeOutputProjection(expr hcl.Expression, swOutputs map[string]cty.Value, st *RunState) (map[string]cty.Value, error) {
+//
+// adapterOutputs, when non-nil, is exposed as the "step.output" variable in the
+// eval context so that outcome expressions can reference step.output.<key>. Each
+// value is a cty.String (raw adapter output string). This is the mechanism for
+// outcome projections that need to reference the current step's adapter result —
+// for example to transform or accumulate values into a shared_variable.
+func evalOutcomeOutputProjection(expr hcl.Expression, swOutputs map[string]cty.Value, adapterOutputs map[string]string, st *RunState) (map[string]cty.Value, error) {
 	evalOpts := workflow.DefaultFunctionOptions(st.WorkflowDir)
 	evalCtx := workflow.BuildEvalContextWithOpts(st.Vars, evalOpts)
 	if len(swOutputs) > 0 {
@@ -627,6 +729,7 @@ func evalOutcomeOutputProjection(expr hcl.Expression, swOutputs map[string]cty.V
 	} else {
 		evalCtx.Variables["subworkflow"] = cty.EmptyObjectVal
 	}
+	evalCtx.Variables["step"] = buildStepOutputVar(adapterOutputs)
 	val, diags := expr.Value(evalCtx)
 	if diags.HasErrors() {
 		return nil, fmt.Errorf("evaluating output expression: %s", diags.Error())
@@ -639,6 +742,25 @@ func evalOutcomeOutputProjection(expr hcl.Expression, swOutputs map[string]cty.V
 		result[name] = val.GetAttr(name)
 	}
 	return result, nil
+}
+
+// buildStepOutputVar constructs the cty object exposed as the "step" variable
+// in outcome output projection expressions. It has a single "output" attribute
+// that is an object of string-valued adapter output keys. When adapterOutputs is
+// empty, "step.output" is an empty object (no keys).
+func buildStepOutputVar(adapterOutputs map[string]string) cty.Value {
+	if len(adapterOutputs) == 0 {
+		return cty.ObjectVal(map[string]cty.Value{
+			"output": cty.EmptyObjectVal,
+		})
+	}
+	attrs := make(map[string]cty.Value, len(adapterOutputs))
+	for k, v := range adapterOutputs {
+		attrs[k] = cty.StringVal(v)
+	}
+	return cty.ObjectVal(map[string]cty.Value{
+		"output": cty.ObjectVal(attrs),
+	})
 }
 
 // ctyValsToStrings converts a map[string]cty.Value to map[string]string using

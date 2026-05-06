@@ -208,7 +208,7 @@ func compileOneLocal(g *FSMGraph, ls LocalSpec, expr hcl.Expression, opts Compil
 		r := expr.StartRange()
 		return append(diags, &hcl.Diagnostic{
 			Severity: hcl.DiagError,
-			Summary:  fmt.Sprintf("local %q: value must be a compile-time constant expression; references to each, steps, or shared_variable are not allowed", ls.Name),
+			Summary:  fmt.Sprintf("local %q: value must be a compile-time constant expression; references to each, steps, or shared are not allowed", ls.Name),
 			Subject:  &r,
 		})
 	}

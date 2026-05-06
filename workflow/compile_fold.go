@@ -13,16 +13,17 @@ import (
 // only available at runtime. Expressions that reference any of these roots are
 // deferred to the engine; they are not errors at compile time.
 var runtimeOnlyNamespaces = map[string]bool{
-	"each":            true,
-	"steps":           true,
-	"shared_variable": true,
-	"subworkflow":     true, // outputs from the subworkflow the step invoked
+	"each":        true,
+	"steps":       true,
+	"shared":      true, // shared_variable runtime values (W18)
+	"step":        true, // current adapter step outputs: step.output.<key> (W18)
+	"subworkflow": true, // outputs from the subworkflow the step invoked
 }
 
 // FoldExpr evaluates expr in the closure (var ∪ local ∪ literal ∪ funcs).
 // Returns the cty.Value if the expression folds, or (cty.NilVal, false, nil)
-// when the expression references runtime-only namespaces (each, steps,
-// shared_variable). Runtime-only refs are not errors — they signal "leave
+// when the expression references runtime-only namespaces (each, steps, shared,
+// step, subworkflow). Runtime-only refs are not errors — they signal "leave
 // this expression for the engine".
 //
 // Diagnostics are returned for fold-time failures (unknown var/local name,
