@@ -31,6 +31,7 @@ import (
 func compileOutcomeBlock(sp *StepSpec, node *StepNode, g *FSMGraph, opts CompileOpts, adapterOutputSchema map[string]ConfigField) hcl.Diagnostics {
 	var diags hcl.Diagnostics
 	seen := map[string]bool{}
+	isIter := node.ForEach != nil || node.Count != nil
 	for _, o := range sp.Outcomes {
 		if seen[o.Name] {
 			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q: duplicate outcome %q", sp.Name, o.Name)})
@@ -43,7 +44,12 @@ func compileOutcomeBlock(sp *StepSpec, node *StepNode, g *FSMGraph, opts Compile
 		}
 		compiled := &CompiledOutcome{Name: o.Name, Next: o.Next}
 		if o.Remain != nil {
-			d := compileOutcomeRemain(sp.Name, o.Name, o.Remain, g, opts, adapterOutputSchema, compiled)
+			// Aggregate iterating outcomes (next != "_continue") fire after all
+			// iterations complete; the engine has no raw adapter outputs at that
+			// point. shared_writes on these outcomes must use an explicit
+			// output = { ... } projection block — never the adapter output schema.
+			isAggregateIter := isIter && o.Next != "_continue"
+			d := compileOutcomeRemain(sp.Name, o.Name, o.Remain, g, opts, adapterOutputSchema, compiled, isAggregateIter)
 			diags = append(diags, d...)
 		}
 		node.Outcomes[o.Name] = compiled
@@ -126,7 +132,11 @@ func staticObjectExprKeys(expr hcl.Expression) map[string]bool {
 
 // compileOutcomeRemain processes the Remain body of an outcome block, extracting
 // the optional "output" and "shared_writes" attributes and populating compiled.
-func compileOutcomeRemain(stepName, outcomeName string, remain hcl.Body, g *FSMGraph, opts CompileOpts, adapterOutputSchema map[string]ConfigField, compiled *CompiledOutcome) hcl.Diagnostics {
+// isAggregateIter must be true when this outcome is an aggregate outcome on an
+// iterating step (next != "_continue"): in that case the engine has no raw
+// adapter outputs at the time the outcome fires, so shared_writes entries can
+// only reference keys from an explicit output = { ... } projection block.
+func compileOutcomeRemain(stepName, outcomeName string, remain hcl.Body, g *FSMGraph, opts CompileOpts, adapterOutputSchema map[string]ConfigField, compiled *CompiledOutcome, isAggregateIter bool) hcl.Diagnostics {
 	content, _, diags := remain.PartialContent(&hcl.BodySchema{
 		Attributes: []hcl.AttributeSchema{
 			{Name: "output", Required: false},
@@ -142,10 +152,23 @@ func compileOutcomeRemain(stepName, outcomeName string, remain hcl.Body, g *FSMG
 	}
 
 	if attr, ok := content.Attributes["shared_writes"]; ok {
-		effectiveKeys := resolveSharedWritesKeys(knownOutputKeys, adapterOutputSchema)
-		writes, d := compileSharedWritesAttr(stepName, outcomeName, attr, g, effectiveKeys)
-		diags = append(diags, d...)
-		compiled.SharedWrites = writes
+		if isAggregateIter && knownOutputKeys == nil {
+			// Aggregate outcomes have no raw adapter outputs at runtime.
+			// Require an explicit output = { ... } projection so the compiler
+			// can validate the keys and the engine has values to write from.
+			r := attr.Expr.StartRange()
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  fmt.Sprintf("step %q outcome %q: shared_writes on aggregate outcomes require an output = { ... } projection block", stepName, outcomeName),
+				Detail:   `Aggregate outcomes (e.g. "all_succeeded", "any_failed") fire after all iterations complete and have no single adapter output available. Add an output = { ... } block inside this outcome to project the values you want to write, then reference those projection keys in shared_writes.`,
+				Subject:  &r,
+			})
+		} else {
+			effectiveKeys := resolveSharedWritesKeys(knownOutputKeys, adapterOutputSchema)
+			writes, d := compileSharedWritesAttr(stepName, outcomeName, attr, g, effectiveKeys)
+			diags = append(diags, d...)
+			compiled.SharedWrites = writes
+		}
 	}
 
 	return diags

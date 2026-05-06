@@ -566,6 +566,116 @@ step "inc" {
 	}
 }
 
+// TestCompileSharedWrites_AggregateIterating_RequiresProjection verifies that
+// shared_writes on an iterating-step aggregate outcome (all_succeeded / any_failed)
+// without an output = { ... } projection is rejected at compile time.
+// Aggregate outcomes fire from finishIterationInGraph with no raw adapter outputs,
+// so the compiler must prevent mappings that would silently fail at runtime.
+func TestCompileSharedWrites_AggregateIterating_RequiresProjection(t *testing.T) {
+	src := `
+workflow "test" {
+  version       = "0.1"
+  initial_state = "process"
+  target_state  = "done"
+}
+
+state "done" {
+  terminal = true
+  success  = true
+}
+
+shared_variable "result" {
+  type = "string"
+}
+
+adapter "noop" "default" {}
+
+step "process" {
+  target   = adapter.noop.default
+  for_each = ["a", "b"]
+
+  outcome "item_ok" {
+    next = "_continue"
+  }
+
+  # Aggregate outcome with shared_writes but NO output = { ... } projection.
+  # The engine has no raw adapter outputs when this fires — must be a compile error.
+  outcome "all_succeeded" {
+    next         = "done"
+    shared_writes = { result = "stdout" }
+  }
+}
+`
+	spec, diags := Parse("test.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	schemas := map[string]AdapterInfo{
+		"noop.default": {OutputSchema: map[string]ConfigField{"stdout": {}}},
+	}
+	_, diags = Compile(spec, schemas)
+	if !diags.HasErrors() {
+		t.Fatal("expected compile error: aggregate outcome shared_writes require output projection")
+	}
+	if !strings.Contains(diags.Error(), "output") {
+		t.Errorf("expected error to mention output projection, got: %s", diags.Error())
+	}
+}
+
+// TestCompileSharedWrites_AggregateIterating_WithProjection verifies that
+// shared_writes on an iterating-step aggregate outcome compiles cleanly when
+// an explicit output = { ... } projection is present that declares the referenced key.
+func TestCompileSharedWrites_AggregateIterating_WithProjection(t *testing.T) {
+	src := `
+workflow "test" {
+  version       = "0.1"
+  initial_state = "process"
+  target_state  = "done"
+}
+
+state "done" {
+  terminal = true
+  success  = true
+}
+
+shared_variable "result" {
+  type = "string"
+}
+
+adapter "noop" "default" {}
+
+step "process" {
+  target   = adapter.noop.default
+  for_each = ["a", "b"]
+
+  outcome "item_ok" {
+    next = "_continue"
+  }
+
+  outcome "all_succeeded" {
+    next         = "done"
+    output       = { final_val = "placeholder" }
+    shared_writes = { result = "final_val" }
+  }
+}
+`
+	spec, diags := Parse("test.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	g, diags := Compile(spec, nil)
+	if diags.HasErrors() {
+		t.Fatalf("compile: %s", diags.Error())
+	}
+	outcome := g.Steps["process"].Outcomes["all_succeeded"]
+	if outcome == nil {
+		t.Fatal("outcome \"all_succeeded\" not found")
+	}
+	if outcome.SharedWrites["result"] != "final_val" {
+		t.Errorf("expected shared_writes[result]=final_val, got %v", outcome.SharedWrites["result"])
+	}
+}
+
 // TestCompileSharedVariables_AllSupportedTypesAccepted confirms that all types
 // from the variable-type surface (scalar and non-scalar) compile successfully
 // for shared_variable declarations. Non-scalar types require writes via a typed

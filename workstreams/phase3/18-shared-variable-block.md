@@ -640,6 +640,36 @@ The suite now proves the important contracts rather than just local mechanics: s
   - `workflow/compile_fold.go` defers `step.*` references to runtime
   - `internal/engine/outcome_shared_writes_test.go` now exercises the end-to-end non-scalar projection path
 
+### Review 2026-05-05-08 — changes-requested
+
+#### Summary
+
+Not approved on this pass. The recent PR-thread fixes are real and CI is green, but there is still a compile/runtime contract gap for iterating-step aggregate outcomes: `all_succeeded` / `any_failed` `shared_writes` can still validate against adapter output schema keys even though no raw adapter outputs exist once the aggregate outcome fires. That leaves a class of workflows that compile successfully and then fail at runtime for reasons the compiler could have prevented.
+
+#### Plan Adherence
+
+- The PR-thread remediations landed correctly: per-iteration writes now execute, aggregate writes with an explicit `output = { ... }` projection work, `step.output.*` is available at runtime, and the stale `shared_variable` namespace footgun is gone.
+- Step 5 is still **not fully correct** for iterating aggregate outcomes. The compiler continues to treat adapter schema keys as valid `shared_writes` sources on aggregate outcomes, but `finishIterationInGraph` has no adapter `rawOutputs` to supply unless the aggregate outcome also declares an `output = { ... }` projection.
+
+#### Required Remediations
+
+- **Blocker** — `workflow/compile_steps_iteration.go:77`, `workflow/compile_steps_graph.go:144-167`, `internal/engine/engine.go:378-396`: tighten `shared_writes` validation for iterating-step aggregate outcomes (`all_succeeded`, `any_failed`). Right now `compileOutcomeBlock` receives the backing adapter schema for every iterating-step outcome, so an aggregate outcome like `all_succeeded { shared_writes = { final_stdout = "stdout" } }` compiles against adapter output schema even though `finishIterationInGraph` later calls `applySharedWrites(..., aggregateProjectedCty, nil, ...)` with no raw outputs. That workflow therefore compiles and then can only fail at runtime with “output key not found in step outputs”. **Acceptance:** either require an explicit aggregate `output = { ... }` projection for aggregate-outcome `shared_writes`, or otherwise provide a real runtime source for those keys; in either case, the compiler/docs/tests must match the chosen contract and prevent impossible aggregate mappings from compiling silently.
+
+#### Test Intent Assessment
+
+The new tests correctly prove the PR-thread fixes: per-iteration writes, aggregate writes through a projection, and the `step.output.*` projection namespace. What is still missing is a regression test for the impossible aggregate-mapping case above. Without that, the suite still allows a workflow that compiles against adapter schema keys on an aggregate outcome even though the engine has no raw outputs available at that point.
+
+#### Validation Performed
+
+- `make ci` — passed
+- Validated a temporary iterating workflow with aggregate `shared_writes` and **no** aggregate `output = { ... }` projection:
+  - `outcome "all_succeeded" { shared_writes = { final_stdout = "stdout" } }`
+  - `./bin/criteria validate <temp-workflow>` — passed
+- Re-checked runtime wiring:
+  - `compile_steps_iteration.go` passes `schemas[adapterRef].OutputSchema` into `compileOutcomeBlock` for all iterating-step outcomes
+  - `compile_steps_graph.go` therefore accepts adapter-schema keys when no projection is present
+  - `finishIterationInGraph` invokes `applySharedWrites(stepName, aggregateOutcome, co.SharedWrites, aggregateProjectedCty, nil, ...)`, so aggregate outcomes have no raw adapter outputs unless they first project one
+
 ### Review 2026-05-05-07 — changes-requested (PR #87 review threads)
 
 #### Threads
@@ -662,3 +692,16 @@ The suite now proves the important contracts rather than just local mechanics: s
 
 - `make ci` — passed
 - All 3 threads replied to (citing commit + file:line) and resolved via GraphQL.
+
+### Review 2026-05-05-08 — resolution (commit TBD)
+
+#### Changes
+
+- **compile_steps_graph.go**: Added `isAggregateIter` detection in `compileOutcomeBlock`: an outcome is aggregate when the step is iterating (`node.ForEach != nil || node.Count != nil`) and `o.Next != "_continue"`. Added `isAggregateIter bool` parameter to `compileOutcomeRemain`.
+- **compile_steps_graph.go** (`compileOutcomeRemain`): When `isAggregateIter && knownOutputKeys == nil` (aggregate outcome with no `output = { ... }` projection), emit a compile-time error requiring an explicit projection block instead of silently falling back to the adapter output schema.
+- **compile_shared_variables_test.go**: Added `TestCompileSharedWrites_AggregateIterating_RequiresProjection` (aggregate shared_writes without projection → compile error) and `TestCompileSharedWrites_AggregateIterating_WithProjection` (aggregate shared_writes with projection → compiles cleanly).
+
+#### Validation
+
+- `make ci` — passed
+- New regression tests pass; all existing shared_writes and engine tests continue to pass.
