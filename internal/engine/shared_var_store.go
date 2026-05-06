@@ -7,9 +7,11 @@ package engine
 
 import (
 	"fmt"
+	"strconv"
 	"sync"
 
 	"github.com/zclconf/go-cty/cty"
+	"github.com/zclconf/go-cty/cty/convert"
 
 	"github.com/brokenbots/criteria/workflow"
 )
@@ -53,7 +55,11 @@ func (s *SharedVarStore) Get(name string) (cty.Value, error) {
 
 // Set stores v under name. Returns an error if:
 //   - name is not a declared shared_variable, or
-//   - v's type does not match the declared type.
+//   - v's type does not match the declared type and cannot be converted to it.
+//
+// Conversion is attempted via go-cty's convert package when there is a type
+// mismatch. This allows HCL tuple literals (produced by `[a, b]` expressions)
+// to be stored in list-typed shared variables when element types are compatible.
 func (s *SharedVarStore) Set(name string, v cty.Value) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -62,7 +68,11 @@ func (s *SharedVarStore) Set(name string, v cty.Value) error {
 		return fmt.Errorf("shared_variable %q is not declared", name)
 	}
 	if v.Type() != want {
-		return fmt.Errorf("shared_variable %q expects type %s; got %s", name, want.FriendlyName(), v.Type().FriendlyName())
+		converted, err := convert.Convert(v, want)
+		if err != nil {
+			return fmt.Errorf("shared_variable %q expects type %s; got %s", name, want.FriendlyName(), v.Type().FriendlyName())
+		}
+		v = converted
 	}
 	s.values[name] = v
 	return nil
@@ -71,21 +81,33 @@ func (s *SharedVarStore) Set(name string, v cty.Value) error {
 // SetBatch atomically applies all writes in the map. The entire write set is
 // validated and committed under a single mutex lock, so readers cannot observe
 // a partially-applied write set. Returns an error if any entry has an undeclared
-// name or a type mismatch; no writes are committed on error.
+// name or a type mismatch that cannot be resolved via conversion; no writes are
+// committed on error.
+//
+// When a value's type does not exactly match the declared type, conversion is
+// attempted via go-cty's convert package. This allows HCL tuple literals
+// (produced by `[expr, expr]` in outcome output projections) to be stored in
+// list-typed shared variables when element types are compatible.
 func (s *SharedVarStore) SetBatch(writes map[string]cty.Value) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	// Validate all entries before committing any.
+	// Validate and coerce all entries before committing any.
+	coerced := make(map[string]cty.Value, len(writes))
 	for name, v := range writes {
 		want, ok := s.types[name]
 		if !ok {
 			return fmt.Errorf("shared_variable %q is not declared", name)
 		}
 		if v.Type() != want {
-			return fmt.Errorf("shared_variable %q expects type %s; got %s", name, want.FriendlyName(), v.Type().FriendlyName())
+			converted, err := convert.Convert(v, want)
+			if err != nil {
+				return fmt.Errorf("shared_variable %q expects type %s; got %s", name, want.FriendlyName(), v.Type().FriendlyName())
+			}
+			v = converted
 		}
+		coerced[name] = v
 	}
-	for name, v := range writes {
+	for name, v := range coerced {
 		s.values[name] = v
 	}
 	return nil
@@ -119,8 +141,8 @@ func coerceStringToCty(s string, t cty.Type) (cty.Value, error) {
 	case cty.String:
 		return cty.StringVal(s), nil
 	case cty.Number:
-		var f float64
-		if _, err := fmt.Sscanf(s, "%g", &f); err != nil {
+		f, err := strconv.ParseFloat(s, 64)
+		if err != nil {
 			return cty.NilVal, fmt.Errorf("cannot coerce %q to type number: %w", s, err)
 		}
 		return cty.NumberFloatVal(f), nil

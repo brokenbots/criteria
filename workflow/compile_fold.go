@@ -17,6 +17,7 @@ var runtimeOnlyNamespaces = map[string]bool{
 	"steps":           true,
 	"shared":          true, // shared_variable runtime values (W18)
 	"shared_variable": true, // legacy alias; kept for forward compatibility
+	"step":            true, // current adapter step outputs: step.output.<key> (W18)
 	"subworkflow":     true, // outputs from the subworkflow the step invoked
 }
 

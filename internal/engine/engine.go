@@ -376,7 +376,7 @@ func finishIterationInGraph(st *RunState, stepName string, graph *workflow.FSMGr
 	sink.OnStepIterationCompleted(stepName, aggregateOutcome, co.Next)
 
 	if co.Next == workflow.ReturnSentinel && co.OutputExpr != nil {
-		projected, err := evalOutcomeOutputProjection(co.OutputExpr, nil, st)
+		projected, err := evalOutcomeOutputProjection(co.OutputExpr, nil, nil, st)
 		if err != nil {
 			return "", fmt.Errorf("step %q aggregate outcome %q: output projection: %w", stepName, aggregateOutcome, err)
 		}

@@ -433,3 +433,209 @@ The test suite now exercises the important behavioral and contract edges for thi
 
 - Reviewed the final docs correction in `docs/workflow.md`
 - `make ci` — passed
+
+### Review 2026-05-05-03 — changes-requested
+
+#### Summary
+
+Not approved. The branch is close and the claimed validation targets are green, but Step 5 still has contract bugs at the adapter-output trust boundary: numeric coercion is too permissive (`"7abc"` is accepted as `7`), and the compile/runtime/doc surfaces disagree on supported `shared_variable` types. Those issues can silently corrupt shared state or allow workflows to compile into guaranteed runtime failures.
+
+#### Plan Adherence
+
+- Step 1 / Step 2 / Step 3 / Step 4 / Step 6 / Step 7 / Step 8: implemented and validated to the expected bar.
+- Step 5: **not fully correct yet**. `shared_writes` batch application is atomic, but the raw adapter-output write path still has two contract gaps:
+  1. malformed numeric strings are accepted during coercion instead of rejected;
+  2. the compiler accepts non-scalar shared-variable types that the raw-write runtime path cannot produce.
+- Docs remain out of sync with the implemented compile surface for supported shared-variable types.
+
+#### Required Remediations
+
+- **Blocker** — `internal/engine/shared_var_store.go:117-126`: make number coercion strict. The current `fmt.Sscanf("%g", ...)` path accepts trailing garbage (`"7abc"` -> `7`, `"1e2x"` -> `100`) instead of rejecting the value. This is incorrect input validation on adapter-controlled data and can silently write bad state into `shared_variable`s. **Acceptance:** reject malformed numeric strings with any trailing non-whitespace content, preserve valid numeric inputs, and add regression coverage that fails on inputs such as `"7abc"` / `"1e2x"` while still accepting valid numbers.
+- **Blocker** — `workflow/compile_variables.go:63-81`, `internal/engine/shared_var_store.go:117-139`, `docs/workflow.md:1205-1263`: align the supported-type contract for `shared_variable`. The compiler currently accepts `list(string)`, `list(number)`, `list(bool)`, and `map(string)` via `parseVariableType`, but raw `shared_writes` coercion only supports `string`, `number`, and `bool`. That means authors can compile workflows that are guaranteed to fail at runtime when a raw adapter output is written into one of those declared types. **Acceptance:** either support those types in the raw-write path with a documented encoding contract, or reject/narrow them consistently at compile time; in either case, update the docs and add regression tests that prove the chosen contract.
+- **Required** — `docs/workflow.md:1205-1263`: update the user-facing docs so they no longer claim only `"string"`, `"number"`, and `"bool"` are accepted unless the implementation is intentionally narrowed to that set. The docs must also explain any distinction between raw adapter-output writes and typed `output = { ... }` projection writes if that distinction remains. **Acceptance:** the author-facing docs accurately describe the implemented type surface and write semantics without requiring readers to infer behavior from source.
+
+#### Test Intent Assessment
+
+The current suite is strong on schema validation, atomic batch writes, cross-step reads, and parent/body isolation. It is still weak on trust-boundary parsing and type-surface consistency: there is no regression that proves malformed numeric adapter output is rejected, and no test that exercises the declared non-scalar shared-variable types against the runtime write path. Because of those gaps, the suite still passes while the implementation accepts bad numeric input and while the compile/runtime contract for supported types remains inconsistent.
+
+#### Validation Performed
+
+- `make ci` — passed
+- `go test -race -count=20 ./internal/engine/...` — passed
+- Manual probe of the current numeric coercion logic confirmed malformed strings are accepted:
+  - `"7abc"` parsed as `7`
+  - `"1e2x"` parsed as `100`
+- Spot-checked supported-type surface:
+  - `workflow/compile_variables.go` accepts `list(string)`, `list(number)`, `list(bool)`, and `map(string)`
+  - `internal/engine/shared_var_store.go` raw coercion supports only `string`, `number`, and `bool`
+  - `docs/workflow.md` currently documents only scalar types
+
+### Review 2026-05-05-04 — changes-requested
+
+#### Summary
+
+Still not approved. The malformed-number parsing bug is fixed, but the resubmission resolves the type-surface mismatch by removing planned capability: `shared_variable` is now compile-time restricted to scalar types only. That does not match the workstream scope, which defines `type = <variable_type>`, reuses the variable-type parser, and explicitly calls out list accumulation as an intended use case.
+
+#### Plan Adherence
+
+- The prior numeric-coercion blocker is resolved: raw number parsing is now strict and the regression coverage is appropriate.
+- Step 5 remains **not acceptable as implemented** because the fix narrows the feature contract instead of preserving the planned type surface. The workstream text and examples allow general variable types, and the runtime already has a typed write path via outcome `output = { ... }` projection (`projectedCty`) that can carry non-scalar values.
+- Documentation is internally consistent with the narrowed implementation, but it is now inconsistent with the workstream’s intended scope.
+
+#### Required Remediations
+
+- **Blocker** — `workflow/compile_shared_variables.go:90-106`, `docs/workflow.md:1205-1210`: restore the planned `shared_variable` type surface instead of restricting it to scalars. The workstream specifies `type = <variable_type>`, lists reuse of the existing variable-type parser, and names “a list of failed items” as a core use case. The current `parseSharedVarType` change rejects `list(string)`, `list(number)`, `list(bool)`, and `map(string)`, which is a scope reduction rather than a compliant fix. **Acceptance:** either keep shared variables aligned with the existing variable-type surface and make the write paths honor that contract, or escalate with `[ARCH-REVIEW]` if you believe the workstream itself must change. Do not silently narrow the feature in implementation/docs.
+- **Required** — `internal/engine/shared_var_store.go:116-139`, `internal/engine/node_step.go:373-423`, `docs/workflow.md:1205-1210`: if raw adapter outputs remain string-only, document and test the distinction correctly instead of forcing scalar-only shared variables. The engine already supports typed writes when `shared_writes` reads from an outcome `output = { ... }` projection (`projectedCty`), so the docs’ current “scalar encoding” workaround overstates the limitation. **Acceptance:** author-facing docs explain the actual contract for non-scalar shared variables and the tests prove the supported path(s).
+
+#### Test Intent Assessment
+
+The new parsing tests do prove the malformed-number regression is fixed. The added non-scalar rejection tests, however, lock in a contract change that conflicts with the workstream rather than validating intended behavior. What is still missing is coverage for the intended non-scalar story — for example, a `shared_variable` declared with a list/map type written through a typed outcome projection, or equivalent tests proving whatever compliant contract is chosen.
+
+#### Validation Performed
+
+- `make ci` — passed
+- Re-checked the workstream scope and current implementation:
+  - workstream declares `type = <variable_type>` and cites “a list of failed items” as a target use case
+  - `workflow/compile_shared_variables.go` now rejects all non-scalar shared-variable types via `parseSharedVarType`
+  - `internal/engine/node_step.go` still has a typed `projectedCty` write path, so the feature was narrowed rather than fully supported
+
+### Review 2026-05-05-04 — resolution
+
+Both blockers addressed:
+
+**Blocker 1 (type surface restoration):**
+- Removed `parseSharedVarType` from `compile_shared_variables.go`.
+- `compileSharedVarType` reverted to call `parseVariableType`, restoring the full type surface: `string`, `number`, `bool`, `list(string)`, `list(number)`, `list(bool)`, `map(string)`.
+
+**Required (docs — two write paths):**
+- Updated `docs/workflow.md` `type` paragraph to list all supported types (matching the variable-type surface).
+- Updated the "Type enforcement" section to describe both write paths:
+  - **Typed output projection** (`output = { ... }` on the outcome): full type surface; produces typed cty values via HCL expression evaluation; all declared types supported.
+  - **Raw adapter string coercion** (no projection or key absent from projection): scalar types only (`string`, `number`, `bool`); strict numeric parsing (rejects trailing garbage); strict bool parsing.
+- Added example showing output projection for non-scalar (list) accumulation.
+
+**Tests:**
+- Replaced `TestCompileSharedVariables_NonScalarTypeRejected` + `TestCompileSharedVariables_ScalarTypesAccepted` with `TestCompileSharedVariables_AllSupportedTypesAccepted` covering all 7 types (including list/map).
+- Added `TestSharedVarStore_SetBatch_ListType` and `TestSharedVarStore_SetBatch_ListType_TypeMismatch` to `shared_var_store_test.go` proving the store correctly accepts and type-checks `list(string)` values (as written through the typed projection path).
+- Retained `TestCoerceStringToCty_UnsupportedType` — proves the raw coercion fallback correctly errors on non-scalar types (defense-in-depth; complements the docs' guidance to use projections for non-scalar types).
+
+**Validation:**
+- `make ci` — exits 0
+- `go test -race -count=1 ./internal/engine/... ./workflow/...` — all pass
+
+### Review 2026-05-05-05 — changes-requested
+
+#### Summary
+
+Still not approved. The branch now restores the planned shared-variable type surface and fixes strict numeric parsing, but the newly documented non-scalar write path is not actually implemented for adapter steps. The docs tell authors to use an outcome `output = { ... }` projection for list/map writes, yet the example relies on `step.this.output.*`, and that namespace does not exist. As a result, the core “accumulate a list of failed items” use case remains unproven and, in the documented form, does not compile.
+
+#### Plan Adherence
+
+- The previous blockers on numeric parsing and shared-variable type-surface narrowing are resolved.
+- Step 5 is still **not complete** for the intended non-scalar workflow because outcome output projections for adapter steps do not expose the current adapter result. `evalOutcomeOutputProjection` builds its eval context from `st.Vars` before `WithStepOutputs` stores the current step outputs, and it only adds `subworkflow.*` explicitly.
+- The workstream’s original Step 5 example and use case assume a current-step output namespace (for example `step.this.output.lines`) that is not present in the implementation.
+
+#### Required Remediations
+
+- **Blocker** — `internal/engine/node_step.go:315-340`, `internal/engine/node_step.go:695-714`, `docs/workflow.md:1267-1290`: implement or explicitly provide the current-step adapter-output namespace needed to make typed non-scalar `shared_writes` usable from adapter steps, then document the real syntax. Right now the docs instruct users to use `output = { failed_items = [step.this.output.failed] }`, but `criteria validate` rejects that with `Unknown variable; There is no variable named "step"`. **Acceptance:** add a supported way for an outcome `output` projection to reference the current adapter result (or another compliant mechanism that preserves the workstream’s intended list-accumulation use case), update docs to that real syntax, and ensure the documented example validates.
+- **Blocker** — `internal/engine/outcome_shared_writes_test.go`, `docs/workflow.md:1275-1280`: add an engine-level contract test for non-scalar shared writes through the supported typed projection path. Current coverage proves compile acceptance and store type enforcement, but not the end-to-end adapter-step behavior. **Acceptance:** add an integration test that runs a step, projects a non-scalar value from the current step’s result into `output`, applies `shared_writes`, and verifies a later step can read the typed shared value correctly; this test must fail on the current undocumented/unsupported path.
+- **Required** — `docs/workflow.md:1275-1280`: remove the invalid `step.this.output.failed` example until the engine supports it. User-facing docs must not describe syntax that fails `criteria validate`. **Acceptance:** every shared-variable example in the docs compiles under the current implementation.
+
+#### Test Intent Assessment
+
+The new tests strengthen store-level coverage and restore compile acceptance for the full type surface, but they still do not validate the user-visible non-scalar write contract. In particular, there is no end-to-end test that proves an adapter step can project its own result into a list/map shared variable via `shared_writes`. That gap matters because the newly documented syntax is currently invalid.
+
+#### Validation Performed
+
+- `make ci` — passed
+- Validated the new docs example shape with a temporary workflow using:
+  - `output = { failed_items = [step.this.output.failed] }`
+  - `shared_writes = { failures = "failed_items" }`
+- `./bin/criteria validate <temp-workflow>` — failed with:
+  - `Unknown variable; There is no variable named "step"`
+- Re-checked `evalOutcomeOutputProjection`:
+  - builds from `workflow.BuildEvalContextWithOpts(st.Vars, ...)`
+  - adds `subworkflow` only
+  - runs before `workflow.WithStepOutputs` stores the current step outputs
+
+### Review 2026-05-05-05 — resolution
+
+All three blockers addressed.
+
+**Blocker 1 — `step.output.*` namespace in outcome output projections:**
+- Modified `evalOutcomeOutputProjection` signature in `internal/engine/node_step.go` to accept `adapterOutputs map[string]string` alongside the existing `swOutputs`.
+- Added `buildStepOutputVar(adapterOutputs map[string]string) cty.Value` helper that constructs `step = { output = { key = string_val, ... } }` for the HCL eval context.
+- Updated the `applyOutcome` call site to pass `rawOutputs` through.
+- Updated the aggregate-outcome call site in `engine.go` (where `adapterOutputs` is nil/irrelevant) to pass `nil`.
+- Added `step` to `runtimeOnlyNamespaces` in `workflow/compile_fold.go` so `step.output.*` references in outcome `output = { ... }` expressions are deferred to runtime rather than rejected at compile time.
+
+**Blocker 2 — Tuple→list type coercion in `Set` / `SetBatch`:**
+- Added `github.com/zclconf/go-cty/cty/convert` import to `internal/engine/shared_var_store.go` (package already in go.mod).
+- Updated `Set` and `SetBatch` to attempt `convert.Convert(v, want)` before returning a type mismatch error. This enables HCL `[a, b]` tuple literals to write to `list(string)` (and similar) declared types.
+- `SetBatch` now uses a `coerced` staging map so all entries are validated and coerced before any write is committed — atomicity preserved.
+
+**Blocker 3 — End-to-end integration test:**
+- Added `TestSharedWrites_NonScalarViaTypedProjection` to `internal/engine/outcome_shared_writes_test.go`.
+  - Two-step workflow: `collect` step returns `{"tag1": "foo", "tag2": "bar"}` raw outputs; outcome projects `output = { tag_list = [step.output.tag1, step.output.tag2] }` and writes to `shared_variable "items" { type = "list(string)" }`.
+  - `read_back` step reads `shared.items[0]` and `shared.items[1]` via an output projection.
+  - Test asserts `first = "foo"` and `second = "bar"` in `read_back`'s captured outputs.
+- Added `TestSharedVarStore_SetBatch_TupleConvertsToList` to `internal/engine/shared_var_store_test.go` to cover the new `convert.Convert` fallback path directly.
+
+**Required — docs example corrected:**
+- Replaced invalid `output = { failed_items = [step.this.output.failed] }` in `docs/workflow.md` with the real `step.output.<key>` syntax: `output = { tag_list = [step.output.tag1, step.output.tag2] }`.
+- Added prose explaining that each `step.output.<key>` value is a `string` and how the tuple-to-list conversion works.
+
+**Validation:**
+- `go test -race -count=1 ./internal/engine/... ./workflow/... -run "TestSharedWrites|TestSharedVarStore|TestCoerceString|TestCompileSharedVariables"` — all pass
+- `make ci` — exits 0 (all unit tests, conformance, validate, example-plugin)
+
+
+All three blockers addressed:
+
+**Blocker 1 (malformed number coercion):**
+- Replaced `fmt.Sscanf(s, "%g", &f)` with `strconv.ParseFloat(s, 64)` in `coerceStringToCty`.
+- `strconv.ParseFloat` requires the entire string to be a valid float; trailing garbage causes an error.
+- Added `TestCoerceStringToCty_MalformedNumbers` in `shared_var_store_test.go` that proves `"7abc"`, `"1e2x"`, `"abc"`, `" 7"`, `"7 "`, `"7.0.0"`, `"--7"`, and `""` are all rejected.
+- Added `TestCoerceStringToCty_ValidNumbers` to confirm `"42"`, `"3.14"`, `"1e5"`, etc. are still accepted.
+
+**Blocker 2 (compile/runtime type-surface alignment — chosen approach: restrict at compile time):**
+- Added `parseSharedVarType` function in `compile_shared_variables.go` that only accepts `string`, `number`, `bool`.
+- Updated `compileSharedVarType` to call `parseSharedVarType` instead of `parseVariableType`.
+- `list(string)`, `list(number)`, `list(bool)`, and `map(string)` now produce a compile error with a clear message explaining the restriction and suggesting the scalar-encoding workaround.
+- Added `TestCompileSharedVariables_NonScalarTypeRejected` (4 sub-cases) and `TestCompileSharedVariables_ScalarTypesAccepted` (3 sub-cases) in `compile_shared_variables_test.go`.
+- Added `TestCoerceStringToCty_UnsupportedType` in `shared_var_store_test.go` to prove the runtime coercion path also rejects non-scalar types (defence-in-depth, since they're now blocked at compile time).
+
+**Required (docs):**
+- Updated `docs/workflow.md` `type` paragraph to explicitly state only scalar types are supported, explain why (raw adapter string coercion), and suggest the scalar-encoding workaround.
+- Updated the "Type enforcement" section to describe strict number parsing semantics: accepted formats (`"42"`, `"3.14"`, `"1e5"`) and rejected malformed inputs (`"7abc"`, `"1e2x"`); also documented accepted `bool` values.
+
+**Validation:**
+- `make ci` — exits 0
+- `go test -race -count=1 ./internal/engine/... ./workflow/...` — all pass
+- New tests: 4 compile tests + 4 store tests = 8 additional regression tests
+
+### Review 2026-05-05-06 — approved
+
+#### Summary
+
+Approved. The remaining Step 5 gaps are resolved: outcome `output = { ... }` projections for adapter steps now expose the current adapter result as `step.output.<key>`, the non-scalar `shared_writes` path is covered end to end, and the user-facing docs now describe syntax that validates under the actual implementation.
+
+#### Plan Adherence
+
+- Step 1 / Step 2 / Step 3 / Step 4 / Step 5 / Step 6 / Step 7 / Step 8 are now implemented to the requested bar.
+- The planned shared-variable type surface is preserved (`string`, `number`, `bool`, `list(string)`, `list(number)`, `list(bool)`, `map(string)`).
+- The intended non-scalar accumulation story is now real for adapter steps: `step.output.*` is available inside outcome output projections, typed projections feed `shared_writes`, and tuple-to-list conversion is handled at the store boundary.
+
+#### Test Intent Assessment
+
+The suite now proves the important contracts rather than just local mechanics: strict raw numeric coercion, compile acceptance for the full declared type surface, atomic batch writes, and—critically—the engine-level adapter-step path for non-scalar shared writes via typed output projection followed by a later read from `shared.*`. That closes the prior gap where docs and store tests implied support without proving the user-visible path.
+
+#### Validation Performed
+
+- `make ci` — passed
+- `./bin/criteria validate <temp workflow using output = { tag_list = [step.output.tag1, step.output.tag2] } and shared_writes to list(string)>` — passed
+- Spot-checked implementation wiring:
+  - `internal/engine/node_step.go` passes raw adapter outputs into `evalOutcomeOutputProjection`
+  - `evalOutcomeOutputProjection` injects `step.output.*` into the eval context
+  - `workflow/compile_fold.go` defers `step.*` references to runtime
+  - `internal/engine/outcome_shared_writes_test.go` now exercises the end-to-end non-scalar projection path

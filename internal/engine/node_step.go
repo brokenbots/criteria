@@ -317,7 +317,7 @@ func (n *stepNode) applyOutcome(outcomeName string, rawOutputs map[string]string
 	stepOutputs := rawOutputs
 	var projectedCty map[string]cty.Value
 	if compiled.OutputExpr != nil {
-		projected, err := evalOutcomeOutputProjection(compiled.OutputExpr, swOutputs, st)
+		projected, err := evalOutcomeOutputProjection(compiled.OutputExpr, swOutputs, rawOutputs, st)
 		if err != nil {
 			return "", fmt.Errorf("step %q outcome %q: output projection: %w", n.step.Name, outcomeName, err)
 		}
@@ -692,7 +692,13 @@ func stringMapToCtyObject(m map[string]string) cty.Value {
 //
 // swOutputs, when non-nil, is exposed as the "subworkflow" variable in the eval
 // context so that outcome expressions can reference subworkflow.* keys.
-func evalOutcomeOutputProjection(expr hcl.Expression, swOutputs map[string]cty.Value, st *RunState) (map[string]cty.Value, error) {
+//
+// adapterOutputs, when non-nil, is exposed as the "step.output" variable in the
+// eval context so that outcome expressions can reference step.output.<key>. Each
+// value is a cty.String (raw adapter output string). This is the mechanism for
+// outcome projections that need to reference the current step's adapter result —
+// for example to transform or accumulate values into a shared_variable.
+func evalOutcomeOutputProjection(expr hcl.Expression, swOutputs map[string]cty.Value, adapterOutputs map[string]string, st *RunState) (map[string]cty.Value, error) {
 	evalOpts := workflow.DefaultFunctionOptions(st.WorkflowDir)
 	evalCtx := workflow.BuildEvalContextWithOpts(st.Vars, evalOpts)
 	if len(swOutputs) > 0 {
@@ -700,6 +706,7 @@ func evalOutcomeOutputProjection(expr hcl.Expression, swOutputs map[string]cty.V
 	} else {
 		evalCtx.Variables["subworkflow"] = cty.EmptyObjectVal
 	}
+	evalCtx.Variables["step"] = buildStepOutputVar(adapterOutputs)
 	val, diags := expr.Value(evalCtx)
 	if diags.HasErrors() {
 		return nil, fmt.Errorf("evaluating output expression: %s", diags.Error())
@@ -712,6 +719,25 @@ func evalOutcomeOutputProjection(expr hcl.Expression, swOutputs map[string]cty.V
 		result[name] = val.GetAttr(name)
 	}
 	return result, nil
+}
+
+// buildStepOutputVar constructs the cty object exposed as the "step" variable
+// in outcome output projection expressions. It has a single "output" attribute
+// that is an object of string-valued adapter output keys. When adapterOutputs is
+// empty, "step.output" is an empty object (no keys).
+func buildStepOutputVar(adapterOutputs map[string]string) cty.Value {
+	if len(adapterOutputs) == 0 {
+		return cty.ObjectVal(map[string]cty.Value{
+			"output": cty.EmptyObjectVal,
+		})
+	}
+	attrs := make(map[string]cty.Value, len(adapterOutputs))
+	for k, v := range adapterOutputs {
+		attrs[k] = cty.StringVal(v)
+	}
+	return cty.ObjectVal(map[string]cty.Value{
+		"output": cty.ObjectVal(attrs),
+	})
 }
 
 // ctyValsToStrings converts a map[string]cty.Value to map[string]string using

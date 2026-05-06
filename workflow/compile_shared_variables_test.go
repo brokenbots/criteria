@@ -565,3 +565,30 @@ step "inc" {
 		t.Errorf("expected shared_writes[counter]=any_adapter_output, got %v", outcome.SharedWrites["counter"])
 	}
 }
+
+// TestCompileSharedVariables_AllSupportedTypesAccepted confirms that all types
+// from the variable-type surface (scalar and non-scalar) compile successfully
+// for shared_variable declarations. Non-scalar types require writes via a typed
+// output projection; they are not accessible through raw adapter string coercion.
+func TestCompileSharedVariables_AllSupportedTypesAccepted(t *testing.T) {
+	allTypes := []string{
+		"string", "number", "bool",
+		"list(string)", "list(number)", "list(bool)",
+		"map(string)",
+	}
+	for _, typeStr := range allTypes {
+		src := sharedVarWorkflow(`
+shared_variable "x" {
+  type = "`+typeStr+`"
+}
+`, "")
+		spec, diags := Parse("test.hcl", []byte(src))
+		if diags.HasErrors() {
+			t.Fatalf("parse: %s", diags.Error())
+		}
+		_, diags = Compile(spec, nil)
+		if diags.HasErrors() {
+			t.Errorf("unexpected compile error for type %q: %s", typeStr, diags.Error())
+		}
+	}
+}

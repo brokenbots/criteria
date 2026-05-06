@@ -161,3 +161,125 @@ func TestNewSharedVarStore_EmptyGraph(t *testing.T) {
 	snap := store.Snapshot()
 	assert.Empty(t, snap)
 }
+
+// TestSharedVarStore_SetBatch_ListType proves that the store accepts a
+// list(string) value via SetBatch. Non-scalar shared variables can only be
+// written through a typed outcome output projection (not raw string coercion),
+// but the store itself is type-agnostic — it enforces the declared cty.Type.
+func TestSharedVarStore_SetBatch_ListType(t *testing.T) {
+	listType := cty.List(cty.String)
+	store := newTestStore(map[string]*workflow.SharedVariableNode{
+		"tags": {Name: "tags", Type: listType, InitialValue: cty.NullVal(listType)},
+	})
+
+	// Simulate the typed write path: projectedCty produces a proper list value.
+	listVal := cty.ListVal([]cty.Value{cty.StringVal("foo"), cty.StringVal("bar")})
+	require.NoError(t, store.SetBatch(map[string]cty.Value{"tags": listVal}))
+
+	v, err := store.Get("tags")
+	require.NoError(t, err)
+	assert.Equal(t, listType, v.Type())
+
+	var elems []string
+	for it := v.ElementIterator(); it.Next(); {
+		_, elem := it.Element()
+		elems = append(elems, elem.AsString())
+	}
+	assert.Equal(t, []string{"foo", "bar"}, elems)
+}
+
+// TestSharedVarStore_SetBatch_ListType_TypeMismatch proves that setting a
+// scalar value into a list-typed shared variable is rejected.
+func TestSharedVarStore_SetBatch_ListType_TypeMismatch(t *testing.T) {
+	listType := cty.List(cty.String)
+	store := newTestStore(map[string]*workflow.SharedVariableNode{
+		"tags": {Name: "tags", Type: listType, InitialValue: cty.NullVal(listType)},
+	})
+	err := store.SetBatch(map[string]cty.Value{"tags": cty.StringVal("not-a-list")})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "type")
+}
+
+// TestSharedVarStore_SetBatch_TupleConvertsToList proves that an HCL tuple
+// value (the type produced by `[a, b]` expressions) is converted to the
+// declared list type via go-cty's convert package. This is the mechanism that
+// enables `output = { items = [step.output.x, step.output.y] }` projections
+// to write to list(string) shared variables.
+func TestSharedVarStore_SetBatch_TupleConvertsToList(t *testing.T) {
+	listType := cty.List(cty.String)
+	store := newTestStore(map[string]*workflow.SharedVariableNode{
+		"tags": {Name: "tags", Type: listType, InitialValue: cty.NullVal(listType)},
+	})
+	// HCL evaluates `[expr, expr]` as a cty.Tuple, not a cty.List.
+	tupleVal := cty.TupleVal([]cty.Value{cty.StringVal("alpha"), cty.StringVal("beta")})
+	require.NoError(t, store.SetBatch(map[string]cty.Value{"tags": tupleVal}))
+
+	v, err := store.Get("tags")
+	require.NoError(t, err)
+	assert.Equal(t, listType, v.Type())
+	var elems []string
+	for it := v.ElementIterator(); it.Next(); {
+		_, elem := it.Element()
+		elems = append(elems, elem.AsString())
+	}
+	assert.Equal(t, []string{"alpha", "beta"}, elems)
+}
+
+func TestCoerceStringToCty_ValidNumbers(t *testing.T) {
+	cases := []struct {
+		input    string
+		expected float64
+	}{
+		{"0", 0},
+		{"42", 42},
+		{"3.14", 3.14},
+		{"1e5", 1e5},
+		{"-7", -7},
+		{"0.001", 0.001},
+	}
+	for _, tc := range cases {
+		v, err := coerceStringToCty(tc.input, cty.Number)
+		require.NoError(t, err, "input %q", tc.input)
+		f, _ := v.AsBigFloat().Float64()
+		assert.InDelta(t, tc.expected, f, 1e-9, "input %q", tc.input)
+	}
+}
+
+func TestCoerceStringToCty_MalformedNumbers(t *testing.T) {
+	// These inputs must be rejected — they have trailing non-numeric content
+	// or are otherwise invalid. The previous fmt.Sscanf implementation
+	// silently accepted them (e.g. "7abc" → 7, "1e2x" → 100).
+	malformed := []string{"7abc", "1e2x", "abc", " 7", "7 ", "7.0.0", "--7", ""}
+	for _, bad := range malformed {
+		_, err := coerceStringToCty(bad, cty.Number)
+		require.Error(t, err, "expected error for malformed number input %q", bad)
+	}
+}
+
+func TestCoerceStringToCty_Bool(t *testing.T) {
+	for _, s := range []string{"true", "1"} {
+		v, err := coerceStringToCty(s, cty.Bool)
+		require.NoError(t, err)
+		assert.True(t, v.True())
+	}
+	for _, s := range []string{"false", "0"} {
+		v, err := coerceStringToCty(s, cty.Bool)
+		require.NoError(t, err)
+		assert.False(t, v.True())
+	}
+	_, err := coerceStringToCty("yes", cty.Bool)
+	require.Error(t, err)
+}
+
+func TestCoerceStringToCty_UnsupportedType(t *testing.T) {
+	// Non-scalar types must return an error from coercion.
+	unsupported := []cty.Type{
+		cty.List(cty.String),
+		cty.Map(cty.String),
+		cty.List(cty.Number),
+	}
+	for _, typ := range unsupported {
+		_, err := coerceStringToCty("value", typ)
+		require.Error(t, err, "expected error for unsupported type %s", typ.FriendlyName())
+	}
+}

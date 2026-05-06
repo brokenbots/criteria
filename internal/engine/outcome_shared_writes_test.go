@@ -263,7 +263,86 @@ state "done" {
 	assert.Contains(t, err.Error(), "type")
 }
 
-// TestSharedWrites_InitialValueVisibleInExpr verifies that the shared_variable
+// TestSharedWrites_NonScalarViaTypedProjection tests the end-to-end non-scalar
+// shared_write path: a step uses an output = {} projection to assemble a
+// list(string) from the adapter's raw outputs (accessed via step.output.*),
+// and shared_writes maps the projected key to the shared_variable. A second
+// step reads back the shared variable and emits it as a JSON-encoded output,
+// proving the write was committed with the correct type.
+//
+// This exercises:
+//  1. step.output.<key> namespace availability in evalOutcomeOutputProjection
+//  2. Tuple→list type coercion in SetBatch (HCL [a, b] produces a tuple)
+//  3. The full typed projection path (projectedCty) used by resolveSharedWriteValue
+func TestSharedWrites_NonScalarViaTypedProjection(t *testing.T) {
+	const src = `
+workflow "t" {
+  version       = "0.1"
+  initial_state = "collect"
+  target_state  = "done"
+}
+
+shared_variable "items" {
+  type = "list(string)"
+}
+
+adapter "sw" "default" {}
+
+step "collect" {
+  target = adapter.sw.default
+  outcome "success" {
+    next          = "read_back"
+    output        = { tag_list = [step.output.tag1, step.output.tag2] }
+    shared_writes = { items = "tag_list" }
+  }
+}
+
+step "read_back" {
+  target = adapter.sw.default
+  outcome "success" {
+    next   = "done"
+    output = { first = shared.items[0], second = shared.items[1] }
+  }
+}
+
+state "done" {
+  terminal = true
+  success  = true
+}
+`
+	spec, diags := workflow.Parse("t.hcl", []byte(src))
+	require.False(t, diags.HasErrors(), "parse: %s", diags.Error())
+	g, diags := workflow.Compile(spec, nil)
+	require.False(t, diags.HasErrors(), "compile: %s", diags.Error())
+
+	callNum := 0
+	capturedSink := &outputCaptureSink{}
+
+	plug := &pluginFunc{
+		name: "sw",
+		fn: func(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+			callNum++
+			if callNum == 1 {
+				// collect: return tag1 and tag2 raw outputs
+				return adapter.Result{Outcome: "success", Outputs: map[string]string{"tag1": "foo", "tag2": "bar"}}, nil
+			}
+			// read_back: no adapter outputs needed; projection reads shared.items
+			return adapter.Result{Outcome: "success"}, nil
+		},
+	}
+	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"sw": plug}}
+
+	eng := NewTestEngine(g, loader, capturedSink)
+	require.NoError(t, eng.Run(context.Background()))
+	assert.Equal(t, "done", capturedSink.terminal)
+
+	// read_back's projected outputs should carry the list elements.
+	readBackOutputs := capturedSink.captured["read_back"]
+	require.NotNil(t, readBackOutputs, "read_back outputs not captured")
+	assert.Equal(t, `"foo"`, readBackOutputs["first"])
+	assert.Equal(t, `"bar"`, readBackOutputs["second"])
+}
+
 // initial value is readable in HCL expressions via shared.* at the first step.
 func TestSharedWrites_InitialValueVisibleInExpr(t *testing.T) {
 	const src = `
