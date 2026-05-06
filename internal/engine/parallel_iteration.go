@@ -15,6 +15,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"sync"
@@ -23,6 +24,7 @@ import (
 	"github.com/zclconf/go-cty/cty"
 
 	"github.com/brokenbots/criteria/internal/adapter"
+	"github.com/brokenbots/criteria/internal/plugin"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -420,7 +422,15 @@ func ctyOutputsToStrings(outputs map[string]cty.Value) map[string]string {
 // outputs and shared_writes, and returns whether any iteration failed.
 func (n *stepNode) aggregateParallelResults(results []parallelIterResult, keys []cty.Value, st *RunState, sink Sink) (anyFailed bool, err error) {
 	for _, r := range results {
-		if r.err != nil || !isSuccessOutcome(r.outcome) {
+		if r.err != nil {
+			// Fatal errors must surface as run failures, not be downgraded into
+			// aggregate outcome routing. Return the first fatal error immediately.
+			var fatal *plugin.FatalRunError
+			if errors.As(r.err, &fatal) {
+				return true, r.err
+			}
+			anyFailed = true
+		} else if !isSuccessOutcome(r.outcome) {
 			anyFailed = true
 		}
 		if len(r.outputs) > 0 {

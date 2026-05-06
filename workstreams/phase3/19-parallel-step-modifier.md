@@ -395,7 +395,29 @@ The current suite is strong on concurrency-specific behavior, but it is weak on 
   - `TestParallelProbe_MaxVisitsIgnored` — fails (`expected max_visits error, got nil`)
   - `TestParallelProbe_TimeoutIgnored` — fails (run completes after ~200ms instead of honoring `timeout = "50ms"`)
 
-### Implementation Response to Review 2026-05-06-02
+### Implementation Response to Review 2026-05-06-03
+
+#### Root Cause
+
+`aggregateParallelResults` treated all `r.err` values uniformly — setting `anyFailed = true` regardless of whether the error was a `*plugin.FatalRunError` or an ordinary adapter failure. Fatal errors were silently downgraded into aggregate `any_failed` outcome routing, so `Engine.Run(...)` returned `nil` even for fatal adapter failures.
+
+The non-parallel path (`runStepFromAttempt` → `evaluateOnce` → `Evaluate`) propagates `*plugin.FatalRunError` as a returned `error`, which becomes a `Run()` error. The parallel path stopped at `aggregateParallelResults` without forwarding it.
+
+#### Changes Made
+
+- **`internal/engine/parallel_iteration.go`**:
+  - Added `"errors"` and `"github.com/brokenbots/criteria/internal/plugin"` imports.
+  - `aggregateParallelResults`: added fatal-error check before the general `anyFailed = true` path. When `errors.As(r.err, &fatal)` matches, the function returns the fatal error immediately, causing `evaluateParallel` → `Evaluate` → `Engine.Run` to surface it as a run-level error. Non-fatal errors continue to route through `anyFailed`.
+
+- **`internal/engine/parallel_iteration_test.go`**:
+  - `TestParallelIteration_FatalErrorPropagated`: strengthened to assert `err != nil` from `Run(...)`. The test now fails if fatal errors are silently converted to aggregate routing (the previous behavior), not just if the run reaches "done".
+
+#### Validation
+
+- `go test -run TestParallelIteration_Fatal ./internal/engine/...` — pass
+- `go test -race -count=20 -timeout 120s ./internal/engine/...` — pass (no races)
+- `make ci` — pass (all packages green)
+
 
 #### Root Cause
 
@@ -431,3 +453,31 @@ Go maps are reference types. `iterSt.Visits = st.Visits` makes all goroutines po
 - `go build ./...` — pass
 - `go test -race -count=20 -timeout 120s ./internal/engine/...` — pass (no races detected)
 - `make ci` — pass (all packages green)
+
+### Review 2026-05-06-03 — changes-requested
+
+#### Summary
+
+This pass closes most of the prior blocker: parallel adapter iterations now honor `max_visits` and per-step timeouts, and the branch is green again under the required validation. I am still holding approval because fatal adapter errors are not actually propagated with normal step semantics in the parallel path. The implementation now enters `runStepFromAttempt`, but `evaluateParallel` still downgrades per-iteration fatal errors into aggregate `any_failed` routing instead of failing the run, and the new fatal regression test is too weak to catch that.
+
+#### Plan Adherence
+
+- **Step 3 / Step 6:** partially aligned. The policy wrapper is now used for parallel adapter iterations, but fatal-error handling still diverges from the ordinary adapter-step path.
+- **Step 7:** improved, but incomplete. The new `max_visits` and timeout regressions are meaningful; the fatal test does not assert the required behavior and currently passes even though fatal propagation is still broken.
+- **Step 8:** `go test -race -count=20 ./internal/engine/...` and `make ci` pass.
+
+#### Required Remediations
+
+- **blocker** — `internal/engine/parallel_iteration.go:350-352, 421-436, 482-520`, `internal/engine/parallel_iteration_test.go:718-747`: fatal adapter errors are still not propagated as run failures in the parallel path. `runParallelAdapterIteration` now correctly receives the `*plugin.FatalRunError` from `runStepFromAttempt`, but it returns `("failure", nil, execErr)`, and `evaluateParallel` later collapses any `r.err` into `any_failed` instead of surfacing the fatal error through `handleEvalError` like a non-parallel adapter step. I confirmed this with a targeted probe: a parallel adapter step whose plugin always returns `*plugin.FatalRunError` still makes `Engine.Run(...)` return `nil`. **Acceptance:** preserve fatal-error semantics end-to-end for `parallel` adapter steps so a `*plugin.FatalRunError` fails the run rather than routing as a normal aggregate failure, and strengthen the fatal regression test to assert `Run(...)` returns the fatal error (or an equivalent propagated error signal), not merely that the run avoids the `"done"` terminal state.
+
+#### Test Intent Assessment
+
+The new `TestParallelIteration_MaxVisitsEnforced` and `TestParallelIteration_TimeoutEnforced` now genuinely prove those two restored behaviors. `TestParallelIteration_FatalErrorPropagated` does not: it only asserts that the run does not reach `"done"`, so the implementation can still silently convert fatal errors into an ordinary `"failed"` terminal route and the test stays green. That is exactly what the current code does.
+
+#### Validation Performed
+
+- `go build ./...` — pass
+- `go test -race -count=20 -timeout 120s ./internal/engine/...` — pass
+- `make ci` — pass
+- temporary probe test in `internal/engine`:
+  - `TestParallelFatalProbe_ReturnsError` — fails (`expected fatal run error, got nil`)

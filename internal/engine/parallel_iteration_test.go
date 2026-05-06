@@ -716,9 +716,9 @@ state "failed" {
 }
 
 // TestParallelIteration_FatalErrorPropagated verifies that a FatalRunError from
-// an adapter iteration is treated as a failure (any_failed) rather than silently
-// succeeding. This exercises the fatal-error branch inside runStepFromAttempt
-// which was bypassed before the fix.
+// a parallel adapter iteration propagates as a run error rather than being
+// downgraded to aggregate any_failed routing. Before the fix, evaluateParallel
+// collapsed r.err into anyFailed so Engine.Run returned nil even for fatal errors.
 func TestParallelIteration_FatalErrorPropagated(t *testing.T) {
 	g := compile(t, parallelWorkflowHCL(`
 step "work" {
@@ -739,9 +739,12 @@ step "work" {
 
 	sink := &parallelSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": p}}
-	// Run may return an error or route to "failed"; either is acceptable for
-	// fatal errors. The key assertion is that it must not reach "done".
-	_ = New(g, loader, sink).Run(context.Background())
+	// Fatal errors must surface as Engine.Run errors, not be silently routed
+	// to "failed" terminal state.
+	err := New(g, loader, sink).Run(context.Background())
+	if err == nil {
+		t.Error("expected Run to return a fatal error; got nil")
+	}
 	if sink.terminal == "done" && sink.terminalOK {
 		t.Error("expected non-success terminal: fatal adapter error should not reach 'done'")
 	}
