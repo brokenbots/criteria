@@ -42,6 +42,12 @@ type RunState struct {
 	// no return exit has occurred.
 	ReturnOutputs map[string]cty.Value
 
+	// SharedVarStore is the workflow-scoped store for shared_variable values.
+	// Each top-level workflow and each subworkflow body receives its own fresh
+	// store populated from the compiled graph's SharedVariables. Nil when the
+	// workflow declares no shared_variable blocks.
+	SharedVarStore *SharedVarStore
+
 	firstStep        bool
 	firstStepAttempt int
 }

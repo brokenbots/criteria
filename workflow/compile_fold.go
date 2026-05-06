@@ -15,7 +15,8 @@ import (
 var runtimeOnlyNamespaces = map[string]bool{
 	"each":            true,
 	"steps":           true,
-	"shared_variable": true,
+	"shared":          true, // shared_variable runtime values (W18)
+	"shared_variable": true, // legacy alias; kept for forward compatibility
 	"subworkflow":     true, // outputs from the subworkflow the step invoked
 }
 

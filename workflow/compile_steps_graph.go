@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	"github.com/hashicorp/hcl/v2"
+	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/zclconf/go-cty/cty"
 )
 
@@ -19,10 +20,15 @@ import (
 //   - the optional "output" expression, when present, references only known
 //     vars/locals (runtime-only refs like steps.* are deferred, not errors)
 //     and, when foldable at compile time, evaluates to an object type.
+//   - the optional "shared_writes" map, when present, references only declared
+//     shared_variable names (unknown keys are compile errors), and maps to
+//     output keys that exist in the output projection (when declared) or in
+//     the adapter's output schema (when adapterOutputSchema is non-nil).
 //
 // The optional "output" expression is extracted from the outcome's Remain body
-// and stored in CompiledOutcome.OutputExpr.
-func compileOutcomeBlock(sp *StepSpec, node *StepNode, g *FSMGraph, opts CompileOpts) hcl.Diagnostics {
+// and stored in CompiledOutcome.OutputExpr. The optional "shared_writes" map
+// is extracted from Remain and stored in CompiledOutcome.SharedWrites.
+func compileOutcomeBlock(sp *StepSpec, node *StepNode, g *FSMGraph, opts CompileOpts, adapterOutputSchema map[string]ConfigField) hcl.Diagnostics {
 	var diags hcl.Diagnostics
 	seen := map[string]bool{}
 	for _, o := range sp.Outcomes {
@@ -37,14 +43,8 @@ func compileOutcomeBlock(sp *StepSpec, node *StepNode, g *FSMGraph, opts Compile
 		}
 		compiled := &CompiledOutcome{Name: o.Name, Next: o.Next}
 		if o.Remain != nil {
-			content, _, cDiags := o.Remain.PartialContent(&hcl.BodySchema{
-				Attributes: []hcl.AttributeSchema{{Name: "output", Required: false}},
-			})
-			diags = append(diags, cDiags...)
-			if attr, ok := content.Attributes["output"]; ok {
-				compiled.OutputExpr = attr.Expr
-				diags = append(diags, validateOutcomeOutputExpr(sp.Name, o.Name, attr, g, opts)...)
-			}
+			d := compileOutcomeRemain(sp.Name, o.Name, o.Remain, g, opts, adapterOutputSchema, compiled)
+			diags = append(diags, d...)
 		}
 		node.Outcomes[o.Name] = compiled
 	}
@@ -99,6 +99,72 @@ func validateOutcomeOutputExpr(stepName, outcomeName string, attr *hcl.Attribute
 		}}
 	}
 	return nil
+}
+
+// staticObjectExprKeys extracts the string keys of a literal object expression
+// at compile time. It returns a non-nil map only when the expression is an
+// hclsyntax.ObjectConsExpr with at least one literal string key; computed keys
+// are silently skipped. Returns nil if the expression is not an object literal.
+func staticObjectExprKeys(expr hcl.Expression) map[string]bool {
+	oc, ok := expr.(*hclsyntax.ObjectConsExpr)
+	if !ok {
+		return nil
+	}
+	keys := make(map[string]bool, len(oc.Items))
+	for _, item := range oc.Items {
+		tv, diags := item.KeyExpr.Value(nil)
+		if diags.HasErrors() || !tv.IsKnown() || tv.IsNull() || tv.Type() != cty.String {
+			continue
+		}
+		keys[tv.AsString()] = true
+	}
+	if len(keys) == 0 {
+		return nil
+	}
+	return keys
+}
+
+// compileOutcomeRemain processes the Remain body of an outcome block, extracting
+// the optional "output" and "shared_writes" attributes and populating compiled.
+func compileOutcomeRemain(stepName, outcomeName string, remain hcl.Body, g *FSMGraph, opts CompileOpts, adapterOutputSchema map[string]ConfigField, compiled *CompiledOutcome) hcl.Diagnostics {
+	content, _, diags := remain.PartialContent(&hcl.BodySchema{
+		Attributes: []hcl.AttributeSchema{
+			{Name: "output", Required: false},
+			{Name: "shared_writes", Required: false},
+		},
+	})
+
+	var knownOutputKeys map[string]bool
+	if attr, ok := content.Attributes["output"]; ok {
+		compiled.OutputExpr = attr.Expr
+		diags = append(diags, validateOutcomeOutputExpr(stepName, outcomeName, attr, g, opts)...)
+		knownOutputKeys = staticObjectExprKeys(attr.Expr)
+	}
+
+	if attr, ok := content.Attributes["shared_writes"]; ok {
+		effectiveKeys := resolveSharedWritesKeys(knownOutputKeys, adapterOutputSchema)
+		writes, d := compileSharedWritesAttr(stepName, outcomeName, attr, g, effectiveKeys)
+		diags = append(diags, d...)
+		compiled.SharedWrites = writes
+	}
+
+	return diags
+}
+
+// resolveSharedWritesKeys returns the set of known output keys for shared_writes
+// validation. Prefers projection keys; falls back to the adapter output schema.
+func resolveSharedWritesKeys(projectionKeys map[string]bool, schema map[string]ConfigField) map[string]bool {
+	if projectionKeys != nil {
+		return projectionKeys
+	}
+	if len(schema) == 0 {
+		return nil
+	}
+	keys := make(map[string]bool, len(schema))
+	for k := range schema {
+		keys[k] = true
+	}
+	return keys
 }
 
 // validateStepNameNotReturn errors when a step is named "return" since that

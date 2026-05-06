@@ -1,0 +1,14 @@
+digraph "shared-variable-demo" {
+  rankdir=LR;
+
+  "start" [shape=box];
+  "finish" [shape=box];
+  "report" [shape=box];
+  "done" [shape=doublecircle];
+
+  "__start__" [shape=point,width=0.12,label=""];
+  "__start__" -> "start" [label="initial"];
+  "start" -> "finish" [label="success"];
+  "finish" -> "report" [label="success"];
+  "report" -> "done" [label="success"];
+}

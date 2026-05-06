@@ -236,6 +236,7 @@ func (e *Engine) runLoop(ctx context.Context, sessions *plugin.SessionManager, c
 		IterStack:        append([]workflow.IterCursor{}, e.resumedIterStack...),
 		Visits:           cloneVisits(e.resumedVisits),
 		WorkflowDir:      e.workflowDir,
+		SharedVarStore:   NewSharedVarStore(e.graph),
 		firstStep:        true,
 		firstStepAttempt: firstStepAttempt,
 	}
