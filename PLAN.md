@@ -24,6 +24,11 @@ Workstream files for the active phase live at
   feature work. See "Phase 3 forward-pointer" below for the candidate scope
   list. Originally-planned environments / plug architecture is deferred to
   Phase 4 with a new contributor.
+- **Phase 3 — HCL/runtime rework** — **closed 2026-05-06**. All nineteen active
+  workstreams merged (W20 skipped); lint baseline burn-down to 21 entries (zero
+  `errcheck`/`contextcheck`); Maintainability and Tech Debt lifted to B;
+  release-process integrity (`tag-claim-check` CI guard) shipping. Archived under
+  [workstreams/archived/v3/](workstreams/archived/v3/).
 
 ## Phase 0 — Post-separation cleanup ✅ closed 2026-04-27
 

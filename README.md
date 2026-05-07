@@ -1,5 +1,7 @@
 # Criteria
 
+**Status: v0.3.0** · Clean break from v0.2.0 with HCL/runtime rework. See "[Migrating from v0.2.0 to v0.3.0](#migrating-from-v0.2.0-to-v0.3.0)" below.
+
 Criteria is a standalone workflow execution engine. Write a workflow in HCL, run it with `criteria apply` — no external service required. Each workflow compiles to a finite-state machine; execution drives through swappable adapter plugins and streams structured ND-JSON events to stdout or a file.
 
 *Criteria targets teams who want a Temporal- or Argo-style execution model without the infrastructure dependency for everyday development, and orchestrator authors who need a well-defined client SDK to build against.*
@@ -31,21 +33,25 @@ workflow "hello" {
   version       = "0.1"
   initial_state = "greet"
   target_state  = "done"
+}
 
-  step "greet" {
-    adapter = "shell"
-    input {
-      command = "echo hello from criteria"
-    }
-    outcome "success" { transition_to = "done" }
-    outcome "failure" { transition_to = "failed" }
-  }
+adapter "shell" "default" {
+  config { }
+}
 
-  state "done" { terminal = true }
-  state "failed" {
-    terminal = true
-    success  = false
+step "greet" {
+  target = adapter.shell.default
+  input {
+    command = "echo hello from criteria"
   }
+  outcome "success" { next = "done" }
+  outcome "failure" { next = "failed" }
+}
+
+state "done" { terminal = true }
+state "failed" {
+  terminal = true
+  success  = false
 }
 ```
 
@@ -140,14 +146,33 @@ func TestMyCriteria(t *testing.T) {
 
 See [`sdk/conformance/`](sdk/conformance/) for the full interface and in-memory reference Subject.
 
+## Migrating from v0.2.0 to v0.3.0
+
+Phase 3 (v0.3.0) is a **clean break** from v0.2.0. The HCL language and adapter model were reworked to improve usability and architecture. No v0.2.0 workflows parse without updates.
+
+**Key changes:**
+- `agent` block → `adapter "<type>" "<name>"` block.
+- `step.adapter = "<bare type>"` → `step.target = adapter.<type>.<name>`.
+- `transition_to` → `next`.
+- `branch` block → `switch` block.
+- Top-level workflow attributes moved into `workflow "<name>" { ... }` block.
+- Inline `step.workflow { ... }` replaced by first-class `subworkflow` blocks.
+- `lifecycle = "open"|"close"` removed (auto-managed).
+
+See the [v0.2.0 → v0.3.0 migration guide](CHANGELOG.md#v0.2.0--v0.3.0-migration-guide) for comprehensive before/after examples.
+
 ## Status
 
-`v0.2.0` is the current release (tagged 2026-05-02). It bundles two phases of work that were merged but not separately tagged:
+**v0.3.0** (tagged 2026-05-06) closes Phase 3 — the HCL/runtime rework. Key accomplishments:
 
-- **Phase 1 — Stabilization.** Deterministic CI (`-count=2`, `goleak`), golangci-lint with a documented [burn-down contract](docs/contributing/lint-baseline.md), shell adapter first-pass hardening (see [threat model](docs/security/shell-adapter-threat-model.md)), coverage/benchmark/GoDoc baselines, and four user-blocking capability additions (`file()`/`fileexists()`/`trimfrontmatter()` expression functions, step-level `for_each`/`count` with a `type = "workflow"` nested step, Copilot `reasoning_effort` propagation, and targeted diagnostics for misplaced agent-config fields).
-- **Phase 2 — Maintainability + unattended MVP + Copilot tool-call finalization.** Local-mode approval and signal-wait (`CRITERIA_LOCAL_APPROVAL`), per-step `max_visits` to bound runaway loops, `~/.criteria/` directory mode hardened to `0o700`, the `CRITERIA_SHELL_LEGACY=1` shell-sandbox opt-out removed, the `copilot.go` adapter split into focused files with a permission-kind alias, the Copilot adapter's `result:` prose parsing replaced by a structured `submit_outcome` tool call (with `pb.ExecuteRequest.AllowedOutcomes` on the wire), an adapter-lifecycle sink hook for log clarity, a VS Code dev container and operator runtime image (`Dockerfile.runtime`), and release-candidate artifact uploads on RC PRs.
+- **Phase 3 — HCL and runtime rework.** Clean break from v0.2.0: `adapter` block model replaces `agent`; `switch` replaces `branch`; `next` replaces `transition_to`; workflow attributes wrap in a `workflow` block; subworkflows are first-class; adapter lifecycle is automatic; parallel execution, shared variables, top-level outputs, local variables, environment blocks, and universal step `target` attribute are all added. Lint baseline burn-down complete (≤ 50); Maintainability and Tech Debt both lifted to B. Release process integrity ([tag-claim-check](docs/contributing/release-process.md) CI guard) shipping.
 
-Phase 0 cleanup is complete: the project is renamed to Criteria, the HCL language and SDK contract are stabilizing, and the repo has full test coverage and public-repo hygiene. Binary releases will be published via GitHub Releases as they are cut; for now use `go install`.
+Prior phases:
+- **Phase 2** (v0.2.0, 2026-05-02) — Maintainability + unattended MVP + Copilot tool-call finalization. Local-mode approval, signal waits, `max_visits` loop bounding, `~/.criteria/` hardened, Copilot `submit_outcome` RPC replacing prose parsing, runtime Docker image.
+- **Phase 1** (v0.2.0, 2026-04-29) — Stabilization and critical user fixes. Deterministic CI, golangci-lint, coverage/benchmark baselines, `file()` functions, `for_each`, Copilot `reasoning_effort`, step-level workflow nesting.
+- **Phase 0** (v0.1.0, 2026-04-27) — Post-separation cleanup. Repo hygiene, public plugin SDK, shell adapter sandboxing, brand rename completion.
+
+Binary releases are published on GitHub Releases. For installation, see [Install](#install).
 
 ## License
 

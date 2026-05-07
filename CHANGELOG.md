@@ -2,52 +2,245 @@
 
 All notable changes to Criteria are recorded here.
 
-## [Unreleased] — Phase 3 W11: Hard rename `agent` → `adapter`
+## [v0.3.0] — 2026-05-06 — Phase 3: HCL/runtime rework, subworkflow features, clean break from v0.2.0
 
-### Headline: agent → adapter hard rename with breaking HCL changes
+**Headline**: Clean break from v0.2.0: HCL language rework, subworkflows first-class, automatic adapter lifecycle, parallel execution, shared variables, top-level outputs, and environment blocks. **All v0.2.0 workflows must be updated before running on v0.3.0.**
 
-This workstream completes the Phase 3 hard rename from `agent` terminology to `adapter`. The HCL syntax changes are **breaking** — workflows using the v0.2.0 form must be updated before running on v0.3.0+.
+### Phase 3 workstreams completed (W01–W19; W20 skipped)
 
-#### Breaking changes
+**W01 — Lint baseline burn-down.** Lint baseline reduced to 21 entries (down from 50+); no `errcheck` or `contextcheck` entries per architectural contract. Coverage floors raised: `internal/cli` ≥65%, `internal/engine` ≥80%, `internal/plugin` ≥70%, `workflow` ≥75%, `sdk` ≥75%, `sdk/conformance` ≥80%. Maintainability and Tech Debt grades lifted from C+ to B.
 
-- **HCL block syntax**: `agent "name" { ... }` blocks are now rejected with a hard parse error. Replace with `adapter "<type>" "<name>" { ... }` form.
-- **Step adapter reference**: `step { adapter = "shell.default" }` (quoted string) is now rejected. Replace with `adapter = adapter.shell.default` (bareword traversal reference). **This is a hard error; there is no legacy fallback.**
-- **Step agent reference removed**: `step { agent = "name" }` is now rejected. Replace with `adapter = adapter.<type>.<name>` using the adapter's type and name.
-- **Proto field rename**: `pb.StepEntered.agent_name` → `pb.StepEntered.adapter` (field number 2 unchanged; wire format stable but generated code must regenerate).
-- **Auto-bootstrap removed from production**: Adapters are no longer implicitly opened when the engine starts. Only adapters explicitly referenced in steps will be opened. Tests must use `WithAutoBootstrapAdapters()` if they need the old behavior for setup purposes.
+**W02 — Split CLI apply.** `internal/cli/apply.go` split into focused: `apply.go` (entry point), `apply_compile.go`, `apply_execute.go`. No behavior change.
 
-#### Migration notes
+**W03 — Split compile steps.** `workflow/compile_steps.go` split by step-kind lines into `compile_step_foreach.go`, `compile_step_workflow.go`, `compile_step_approval.go`, `compile_step_wait.go`. No behavior change.
 
-**v0.2.0 form:**
+**W04 — Server-mode apply test coverage.** Transport `server/` package coverage raised from 63.4% to 70%; previously 0% functions (`executeServerRun`, `runApplyServer`, `setupServerRun`, `drainResumeCycles`) now at ≥60% each.
+
+**W05 — Tracked roadmap artifact.** `docs/roadmap/phase-2-summary.md` replaces local `~/.claude/...` plan reference. Phase 2 and earlier phases have permanent summary documents.
+
+**W06 — Release process integrity.** Added `tag-claim-check` CI job validating that claimed tags in CHANGELOG, README, and release-notes match remote; workflow produces per-os/arch tarballs, runtime image, and cosigned SHA256SUMS on tag push. Real release workflow (was previously RC-only).
+
+**W07 — Local variables and compile-time fold.** New `local "<name>" { value = ... }` block for compile-time constants. Compile pass folds `local.*` references and reports undeclared `var.*` as errors (no runtime inference). `file()` function broadened for more use cases.
+
+**W08 — Schema unification.** Removed `WorkflowBodySpec` complexity; subworkflows ARE Specs. Implicit cross-scope `Vars` aliasing removed (`childSt.Vars = st.Vars` pattern eliminated). Breaking: undeclared variable references now compile errors instead of runtime nil-coercion.
+
+**W09 — Top-level output block.** New `output "<name>" { type = ..., value = ... }` block at workflow root. Emitted as `run.outputs` event. Replaces step-only output model. Full type system (number, string, list(string), etc.).
+
+**W10 — Environment block.** New `environment "<type>" "<name>" { variables = { ... } }` declaration; injected into adapter subprocess via env vars. Shell adapter passes as `VAR=value` in command environment.
+
+**W11 — Agent to adapter hard rename.** **Breaking.** `agent "name"` block → `adapter "<type>" "<name>"` block. `step.agent = "name"` → `step.target = adapter.<type>.<name>`. Proto field rename `agent_name` → `adapter` (field number stable). Wire contract updated.
+
+**W12 — Adapter lifecycle automation.** **Breaking.** `lifecycle = "open"|"close"` step attribute removed. Adapters now auto-open at scope start, auto-close on exit (LIFO). Closes managed exclusively by engine; explicit step-level control removed. Improves safety; enables session pooling in future.
+
+**W13 — First-class subworkflow block.** New `subworkflow "<name>" { source = "path" }` top-level block. Inline `step.workflow { ... }` and `step.workflow_file = ...` removed. **Breaking.** Subworkflows resolved at compile time via `SubWorkflowResolver` interface; CLI wired via `--subworkflow-root` flag.
+
+**W14 — Universal step target.** **Breaking.** Unified `step.target = adapter.<type>.<name> | subworkflow.<name>` (replaces `step.adapter`, `step.workflow`, `step.agent`, `step.type`). Bareword adapter references and `type = "workflow"` removed.
+
+**W15 — Outcome block with return and output projection.** **Breaking.** `outcome "name" { next = ..., output = {...} }` replaces `transition_to`. Reserved `return` outcome for early exit. `outcome.output` projection on matched outcomes. `default_outcome` attribute for fallthrough. Full type preservation through outcome outputs.
+
+**W16 — Switch and if flow control.** **Breaking.** `branch { arm { ... } }` → `switch { condition { match = ..., next = ..., output = {...} } }`. `if` deferred to Phase 4. Condition outputs preserved; each arm is independent state transition.
+
+**W17 — Directory-mode modules and workflow header.** **Breaking.** Single-file entry point removed; directory-only mode (all .hcl files in directory merged into module). Workflow-level attributes now wrapped in `workflow "<name>" { ... }` block (was: bare top-level `name`, `version`, `initial_state`, `target_state`).
+
+**W18 — Shared variable block.** New `shared_variable "<name>" { type = ..., initial = ... }` block. Mutable scoped state locked by engine during concurrent step iterations. RPC `SetSharedVariable` deferred (in-memory implementation complete). Enables multi-iteration coordination.
+
+**W19 — Parallel step modifier.** New `parallel = [list]` attribute on steps. Each iteration independent; results merged by outcome. Built-in `each.value`, `each.index` binding. Adapter sessions are per-iteration. Fully concurrent with race detector clean.
+
+**W20 — Implicit input chaining (SKIPPED).** Deferred to Phase 4 due to architecture concerns about failed plan risk. Default `step.input` to previous step output deferred.
+
+### Breaking changes (from v0.2.0)
+
+Every entry below is a **hard error** on v0.3.0+ if used:
+
+- **`agent` block** (removed): Use `adapter "<type>" "<name>" { ... }` instead.
+- **`step.agent` attribute** (removed): Use `step.target = adapter.<type>.<name>` instead.
+- **`step.adapter` attribute** — **Both forms removed**:
+  - `step.adapter = "shell"` (bare type) → declare `adapter "shell" "default" { config { } }` then `step.target = adapter.shell.default`.
+  - `step.adapter = "shell.default"` (quoted string) → same as above.
+- **`step.lifecycle` attribute** (removed): Lifecycle is automatic. Remove the attribute.
+- **`step.workflow { ... }` inline block** (removed): Use top-level `subworkflow` block instead.
+- **`step.workflow_file` attribute** (removed): Use top-level `subworkflow` block instead.
+- **`step.type = "workflow"` attribute** (removed): Use `step.target = subworkflow.<name>` instead.
+- **`branch { arm { ... } }` block** (removed): Use `switch { condition { ... } }` instead.
+- **`transition_to` attribute** (removed everywhere): Use `next` in `outcome` blocks instead.
+- **Top-level workflow attributes outside `workflow` block** (removed): Wrap in `workflow "<name>" { version = ..., initial_state = ..., target_state = ... }` block.
+
+### Migration guide: v0.2.0 → v0.3.0
+
+#### Adapter model
+
+**v0.2.0:**
 ```hcl
 agent "reviewer" {
     adapter = "copilot"
     config { reasoning_effort = "high" }
 }
-step "review" { agent = "reviewer" }
+step "review" {
+    agent = "reviewer"
+    input { ... }
+    outcome "approved" { transition_to = "deploy" }
+}
 ```
 
-**v0.3.0 form:**
+**v0.3.0:**
 ```hcl
 adapter "copilot" "reviewer" {
-    config = {
-        reasoning_effort = "high"
+    config = { reasoning_effort = "high" }
+}
+step "review" {
+    target = adapter.copilot.reviewer
+    input = { ... }
+    outcome "approved" { next = "deploy" }
+}
+```
+
+#### Outcomes and transitions
+
+**v0.2.0:**
+```hcl
+outcome "success" { transition_to = "next_state" }
+outcome "failure" { transition_to = "error_state" }
+```
+
+**v0.3.0:**
+```hcl
+outcome "success" { next = "next_state" }
+outcome "failure" { next = "error_state" }
+outcome "custom" { next = "return" }  # Early exit with reserved "return"
+```
+
+#### Subworkflows
+
+**v0.2.0:**
+```hcl
+step "run_sub" {
+    type = "workflow"
+    workflow_file = "subworkflows/process.hcl"
+}
+```
+
+**v0.3.0:**
+```hcl
+subworkflow "process" {
+    source = "./subworkflows/process"  # Directory mode
+}
+step "run_sub" {
+    target = subworkflow.process
+}
+```
+
+#### Branching
+
+**v0.2.0:**
+```hcl
+branch "decide" {
+    arm "if_approved" {
+        match = condition.value == "yes"
+        transition_to = "deploy"
+    }
+    arm "if_rejected" {
+        match = condition.value == "no"
+        transition_to = "closed"
+    }
+    default { transition_to = "review" }
+}
+```
+
+**v0.3.0:**
+```hcl
+switch "decide" {
+    condition "approved" {
+        match = condition.value == "yes"
+        next = "deploy"
+    }
+    condition "rejected" {
+        match = condition.value == "no"
+        next = "closed"
+    }
+    condition "default" {
+        match = true
+        next = "review"
     }
 }
-step "review" { adapter = adapter.copilot.reviewer }
 ```
 
-Steps that used `adapter = "shell"` (bare type without an explicit adapter name) must now declare a named adapter:
+#### Workflow structure
+
+**v0.2.0:**
 ```hcl
-adapter "shell" "default" { config = {} }
-step "build" { adapter = adapter.shell.default }
+workflow "myflow" {
+    version = "0.1"
+    initial_state = "start"
+    target_state = "end"
+}
+# Steps, states at top level
 ```
 
-Workflows using `agent` blocks or quoted adapter references will fail at parse time with an actionable error message. Use the examples above to migrate.
+**v0.3.0:**
+```hcl
+workflow "myflow" {
+    version = "0.1"
+    initial_state = "start"
+    target_state = "end"
+}
+# Steps, states at top level (no change)
+# BUT: workflow must be in a directory with only .hcl files
+```
 
-#### SDK breaking change (field number stable)
+### New features
 
-- **Proto**: `pb.StepEntered.adapter` field (number 2, unchanged for wire format). Orchestrators and SDKs reading by field name must regenerate protobuf bindings. Old readers consuming by field number continue to work; old writers must upgrade to emit the new field name.
+- **Parallel execution**: `parallel = [list]` modifier on steps. Full concurrency, per-iteration adapter sessions, race-clean.
+- **Shared variables**: `shared_variable` block for mutable scoped state. Engine-locked during concurrent iterations.
+- **Top-level outputs**: `output` blocks with full type system. Emitted as `run.outputs` event.
+- **Local variables**: `local` blocks for compile-time constants. Undeclared `var.*` are now errors.
+- **Environment blocks**: `environment "<type>" "<name>"` for subprocess environment injection.
+- **Subworkflows first-class**: `subworkflow` block replaces inline/attribute model.
+- **Outcome output projection**: `outcome.output` carries data through transitions. Reserved `return` outcome.
+- **Automatic adapter lifecycle**: Adapters open/close automatically; no explicit lifecycle control.
+- **Directory-mode modules**: Single-file entry point removed; workflows must be in directories.
+- **Workflow header block**: Attributes like `version`, `initial_state` now inside `workflow` block.
+
+### SDK / Wire contract changes
+
+- **Proto**: `pb.StepEntered.adapter` field (replaces `agent_name`, field number 2 unchanged for wire format).
+- **SDK**: `SubWorkflowResolver` interface for pluggable subworkflow resolution.
+- **Events**: New `run.outputs` event payload emitted at terminal state.
+- **Fields**: `pb.Step.target` (new universal target) replaces `step.adapter`, `step.agent`, `step.workflow*`.
+
+### Removed surface (clean break)
+
+**HCL syntax no longer accepted:**
+- Top-level `agent` block and `step.agent` attribute.
+- `step.adapter` (both quoted-string and type-only forms).
+- `step.lifecycle` attribute.
+- Inline `step.workflow { ... }` and `step.workflow_file` attribute.
+- `type = "workflow"` on steps.
+- `branch` block and `arm` sub-block.
+- `transition_to` attribute (everywhere).
+- Top-level workflow attributes (`name`, `version`, `initial_state`, `target_state`) outside `workflow` block.
+- Implicit cross-scope `Vars` aliasing.
+- Single-file workflow entry point (directory-only now).
+
+### Behavior changes
+
+- Adapters open on scope entry, close on scope exit (LIFO). No explicit lifecycle control.
+- Implicit cross-scope variable aliasing removed; all variable references must be in-scope.
+- Workflows must be directories (all .hcl files merged); single .hcl files rejected.
+
+### Tests and examples
+
+- New example: `examples/phase3-marquee/` demonstrates all Phase 3 features (parallel, outputs, lifecycle, environment).
+- Conformance suite: New `LifecycleAutomatic` test for adapter session events.
+- All Phase 3 examples validated and working.
+
+### Release artifacts
+
+- Per-os/arch tarballs (linux/amd64, linux/arm64, darwin/amd64, darwin/arm64, windows/amd64).
+- `criteria-runtime-v0.3.0.tar` (Docker runtime image).
+- `SHA256SUMS` with cosign signature.
+- GitHub Release with all artifacts and signed checksums.
+
+## [v0.2.0] — 2026-05-02 — Phase 1 + Phase 2 combined release
 - **Backward compatibility**: Wire format is stable (same field number). Readers upgrade automatically; writers must rebuild. Considered a **minor** version bump for pre-1.0 projects.
 
 ## [v0.2.0] — 2026-05-02
