@@ -1,0 +1,80 @@
+{
+  "name": "phase3_marquee",
+  "initial_state": "process_items",
+  "target_state": "done",
+  "policy": {
+    "MaxTotalSteps": 100,
+    "MaxStepRetries": 0,
+    "MaxVisitsWarnThreshold": 200
+  },
+  "adapters": [
+    {
+      "type": "shell",
+      "name": "default",
+      "on_crash": "fail",
+      "config_keys": null
+    }
+  ],
+  "steps": [
+    {
+      "name": "process_items",
+      "adapter": "shell.default",
+      "input_keys": [
+        "command"
+      ],
+      "allow_tools": null,
+      "outcomes": [
+        {
+          "name": "all_succeeded",
+          "next": "report"
+        },
+        {
+          "name": "any_failed",
+          "next": "report"
+        }
+      ]
+    },
+    {
+      "name": "report",
+      "adapter": "shell.default",
+      "input_keys": [
+        "command"
+      ],
+      "allow_tools": null,
+      "outcomes": [
+        {
+          "name": "failure",
+          "next": "done"
+        },
+        {
+          "name": "success",
+          "next": "done"
+        }
+      ]
+    }
+  ],
+  "states": [
+    {
+      "name": "done",
+      "terminal": true,
+      "success": true
+    }
+  ],
+  "outputs": [
+    {
+      "name": "processed_count",
+      "type": "number"
+    }
+  ],
+  "switches": [],
+  "step_order": [
+    "process_items",
+    "report"
+  ],
+  "plugins_required": [
+    "shell"
+  ],
+  "metadata": {
+    "schema_version": 1
+  }
+}
