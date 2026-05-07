@@ -630,3 +630,34 @@ The new `TestParallelIteration_SubworkflowOutputRenderErrorPropagated` checks th
 - `go test ./internal/engine -run 'TestParallelIteration_(SubworkflowOutputRenderErrorPropagated|AbortOnFirstFailure|FatalErrorPropagated|TimeoutEnforced|MaxVisitsEnforced)$|TestCtyOutputsToStrings_RenderFailurePropagated'` — pass
 - `go test -race -count=20 -timeout 300s ./internal/engine/...` — pass
 - `TMPDIR=/home/dave/.tmp/criteria-review make ci` — pass
+
+### PR 88 Review Response (2026-05-06)
+
+Addressed 5 review threads from reviewer `handcaught`. Commit: `4136d0f`.
+
+#### Thread PRRT_kwDOSOBb1s6AKrrO — `isIter` predicate bug (P0)
+
+**Fix:** `workflow/compile_steps_graph.go:34` — extended predicate to `node.ForEach != nil || node.Count != nil || node.Parallel != nil`. Parallel steps were silently bypassing the W18 guard requiring `output = { ... }` projection on aggregate outcomes with `shared_writes`.
+
+**Test:** `TestCompileSharedWrites_AggregateParallel_RequiresProjection` added in `workflow/compile_shared_variables_test.go`.
+
+#### Thread PRRT_kwDOSOBb1s6AKrrV — bypass of `runStepFromAttempt` (P1)
+
+Already addressed in prior review rounds (80dade3). `runParallelAdapterIteration` calls `n.runStepFromAttempt` at line 352; `classifyIterError` propagates `FatalRunError` as a run failure. `TestParallelIteration_FatalErrorPropagated` covers end-to-end. Replied and resolved.
+
+#### Thread PRRT_kwDOSOBb1s6AKrrY — doc comment placement (outdated)
+
+Outdated thread. Code was refactored in a prior commit. Replied and resolved.
+
+#### Thread PRRT_kwDOSOBb1s6AKrrZ — stale `keys` param on `parallelOutputKey`
+
+**Fix:** `parallelOutputKey` simplified to `func parallelOutputKey(index int) cty.Value`, removing the unused `keys []cty.Value` parameter and the stale "map-keyed" doc clause. `aggregateParallelResults` signature also cleaned up.
+
+#### Thread PRRT_kwDOSOBb1s6AKrra — `OnFailure` doc inconsistency
+
+**Fix:** Updated both `StepSpec.OnFailure` (schema.go:153) and `StepNode.OnFailure` (schema.go:459) to document that the default differs between sequential (`continue`) and parallel (`abort`).
+
+#### Validation
+
+- `go test -race ./...` — all packages pass
+- `make lint-go` — clean (gofmt, gocognit, gocritic all pass)
