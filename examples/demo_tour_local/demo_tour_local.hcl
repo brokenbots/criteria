@@ -7,14 +7,14 @@ workflow "demo_tour_local" {
   version       = "1"
   initial_state = "boot"
   target_state  = "done"
+
+  policy {
+    max_total_steps = 40
+  }
 }
 
 adapter "shell" "default" {
   config { }
-}
-
-policy {
-  max_total_steps = 40
 }
 
 variable "mode" {

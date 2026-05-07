@@ -142,13 +142,13 @@ workflow "max_retry" {
   version       = "0.1"
   initial_state = "greet"
   target_state  = "done"
+
+  policy {
+    max_step_retries = 0
+  }
 }
 
 adapter "shell" "default" {}
-
-policy {
-  max_step_retries = 0
-}
 
 step "greet" {
   target = adapter.shell.default

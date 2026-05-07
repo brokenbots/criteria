@@ -74,21 +74,25 @@ type OutputNode struct {
 	Value        hcl.Expression // evaluated at runtime
 }
 
-// WorkflowHeaderSpec carries the workflow identity and routing fields declared
-// in the `workflow "<name>" { ... }` header block. In a directory module, exactly
-// one .hcl file must contain this block; across multiple files, exactly one
-// WorkflowHeaderSpec may be non-nil after merging.
+// WorkflowHeaderSpec carries the workflow identity, routing fields, and
+// execution policy declared in the `workflow "<name>" { ... }` header block.
+// In a directory module, exactly one .hcl file must contain this block;
+// across multiple files, exactly one WorkflowHeaderSpec may be non-nil
+// after merging. The policy block is nested here because it applies to the
+// whole workflow — it is not a top-level sibling block.
 type WorkflowHeaderSpec struct {
-	Name               string `hcl:"name,label"`
-	Version            string `hcl:"version,optional"`
-	InitialState       string `hcl:"initial_state,optional"`
-	TargetState        string `hcl:"target_state,optional"`
-	DefaultEnvironment string `hcl:"environment,optional"` // "<type>.<name>" reference to the workflow's default environment
+	Name               string      `hcl:"name,label"`
+	Version            string      `hcl:"version,optional"`
+	InitialState       string      `hcl:"initial_state,optional"`
+	TargetState        string      `hcl:"target_state,optional"`
+	DefaultEnvironment string      `hcl:"environment,optional"` // "<type>.<name>" reference to the workflow's default environment
+	Policy             *PolicySpec `hcl:"policy,block"`
 }
 
 // Spec is the parsed (but unvalidated) HCL workflow document. After workstream
-// 17, the `workflow "<name>" { ... }` block is header-only; all content blocks
-// (step, state, adapter, etc.) live at the top level of the HCL file.
+// 17, the `workflow "<name>" { ... }` block is the header and carries
+// workflow-scoped settings (including the optional policy block); all content
+// blocks (step, state, adapter, etc.) live at the top level of the HCL file.
 type Spec struct {
 	Header          *WorkflowHeaderSpec  `hcl:"workflow,block"`
 	Variables       []VariableSpec       `hcl:"variable,block"`
@@ -103,7 +107,6 @@ type Spec struct {
 	Waits           []WaitSpec           `hcl:"wait,block"`
 	Approvals       []ApprovalSpec       `hcl:"approval,block"`
 	Switches        []SwitchSpec         `hcl:"switch,block"`
-	Policy          *PolicySpec          `hcl:"policy,block"`
 	Permissions     *PermissionsSpec     `hcl:"permissions,block"`
 	// SourceBytes holds the raw HCL source that was parsed to produce this Spec.
 	// Populated by Parse/ParseFile; used by the compiler to extract expression

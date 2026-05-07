@@ -134,13 +134,13 @@ workflow "t" {
   version = "0.1"
   initial_state = "a"
   target_state  = "done"
+  policy { max_total_steps = 3 }
 }
 step "a" {
   target = adapter.fake
   outcome "again" { next = "a" }
 }
-state "done" { terminal = true }
-policy { max_total_steps = 3 }`)
+state "done" { terminal = true }`)
 
 	sink := &fakeSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": &fakePlugin{name: "fake", outcome: "again"}}}

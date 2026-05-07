@@ -10,6 +10,11 @@ workflow "build_and_test" {
   version       = "0.1"
   initial_state = "build"
   target_state  = "verified"
+
+  policy {
+    max_total_steps  = 10
+    max_step_retries = 2
+  }
 }
 
 adapter "shell" "default" {}
@@ -39,11 +44,6 @@ state "verified" { terminal = true }
 state "failed" {
   terminal = true
   success  = false
-}
-
-policy {
-  max_total_steps  = 10
-  max_step_retries = 2
 }
 `
 

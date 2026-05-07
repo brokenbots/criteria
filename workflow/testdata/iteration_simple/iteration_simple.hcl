@@ -5,10 +5,10 @@ workflow "iteration_simple" {
   version       = "0.1"
   initial_state = "process"
   target_state  = "done"
-}
 
-policy {
-  max_total_steps = 30
+  policy {
+    max_total_steps = 30
+  }
 }
 
 adapter "noop" "default" {}

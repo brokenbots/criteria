@@ -19,7 +19,7 @@ func loopWorkflowSrc(maxVisits, maxTotalSteps, warnThreshold int) string {
 		if warnThreshold >= 0 {
 			parts += "  max_visits_warn_threshold = " + strconv.Itoa(warnThreshold) + "\n"
 		}
-		policyBlock = "policy {\n" + parts + "}\n"
+		policyBlock = "  policy {\n" + parts + "  }\n"
 	}
 	maxVisitsAttr := ""
 	if maxVisits != 0 {
@@ -30,7 +30,7 @@ workflow "loop" {
   version       = "0.1"
   initial_state = "execute"
   target_state  = "done"
-}
+` + policyBlock + `}
 adapter "fake" "default" {}
 step "execute" {
   target = adapter.fake.default
@@ -38,7 +38,7 @@ step "execute" {
   outcome "success" { next = "done" }
 }
 state "done" { terminal = true }
-` + policyBlock
+`
 }
 
 // TestCompile_MaxVisits_Decodes verifies that max_visits = 5 on a step
@@ -196,6 +196,8 @@ workflow "t" {
   version       = "0.1"
   initial_state = "work"
   target_state  = "done"
+
+  policy { max_total_steps = 500 }
 }
 
 adapter "fake" "default" {}
@@ -214,7 +216,6 @@ switch "decide" {
   }
 }
 state "done" { terminal = true }
-policy { max_total_steps = 500 }
 `
 	spec, diags := Parse("t.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -243,9 +244,10 @@ workflow "loop" {
   version       = "0.1"
   initial_state = "execute"
   target_state  = "done"
-}
-policy {
-  max_visits_warn_threshold = -1
+
+  policy {
+    max_visits_warn_threshold = -1
+  }
 }
 step "execute" {
   target = adapter.fake.default

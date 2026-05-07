@@ -18,10 +18,10 @@ workflow "copilot_planning_then_execution" {
   version       = "1"
   initial_state = "plan"
   target_state  = "done"
-}
 
-policy {
-  max_total_steps = 20
+  policy {
+    max_total_steps = 20
+  }
 }
 
 adapter "copilot" "engineer" {

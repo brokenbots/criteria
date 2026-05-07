@@ -257,52 +257,59 @@ state "done" { terminal = true }
 	}
 }
 
-// TestParseDir_PolicyMergeAndDuplicateBlock_Error verifies that:
-//   - A single policy block in the directory is merged successfully (covers
-//     the first-seen policyRange setter path in mergeSpecs).
-//   - A second policy block across files produces a "duplicate policy block"
-//     error that includes the previous-declaration location in the detail text.
-func TestParseDir_PolicyMergeAndDuplicateBlock_Error(t *testing.T) {
-	dir := t.TempDir()
+// TestParseDir_PolicyNestedInWorkflowBlock verifies that:
+//   - A policy block nested inside the workflow { } block is parsed and compiled
+//     correctly (the policy applies to the whole workflow).
+//   - A standalone top-level policy { } block (old syntax) produces a parse error
+//     because Spec no longer declares that HCL block type.
+func TestParseDir_PolicyNestedInWorkflowBlock(t *testing.T) {
+	t.Run("valid_nested", func(t *testing.T) {
+		dir := t.TempDir()
+		writeHCLFile(t, dir, "workflow", `workflow "pol" {
+  version       = "0.1"
+  initial_state = "done"
+  target_state  = "done"
 
-	writeHCLFile(t, dir, "workflow", `workflow "pol" {
+  policy {
+    max_total_steps = 10
+  }
+}
+state "done" { terminal = true }
+`)
+		spec, diags := ParseDir(dir)
+		if diags.HasErrors() {
+			t.Fatalf("unexpected error: %s", diags.Error())
+		}
+		if spec == nil || spec.Header == nil {
+			t.Fatal("expected non-nil spec with header")
+		}
+		if spec.Header.Policy == nil {
+			t.Fatal("expected non-nil policy in workflow header")
+		}
+		if spec.Header.Policy.MaxTotalSteps != 10 {
+			t.Errorf("Policy.MaxTotalSteps = %d, want 10", spec.Header.Policy.MaxTotalSteps)
+		}
+	})
+
+	t.Run("top_level_policy_rejected", func(t *testing.T) {
+		dir := t.TempDir()
+		writeHCLFile(t, dir, "workflow", `workflow "pol" {
   version       = "0.1"
   initial_state = "done"
   target_state  = "done"
 }
 state "done" { terminal = true }
 `)
-	// First policy block — should be accepted; policyRange will be set.
-	writeHCLFile(t, dir, "policy_a", `policy {
+		// Standalone policy block at top level — no longer valid syntax.
+		writeHCLFile(t, dir, "policy", `policy {
   max_total_steps = 10
 }
 `)
-	// Second policy block — must produce a duplicate error with first-file location.
-	writeHCLFile(t, dir, "policy_b", `policy {
-  max_total_steps = 20
-}
-`)
-
-	_, diags := ParseDir(dir)
-	if !diags.HasErrors() {
-		t.Fatal("expected error for duplicate policy blocks")
-	}
-	if !strings.Contains(diags.Error(), "duplicate policy block") {
-		t.Errorf("expected 'duplicate policy block' in error, got: %s", diags.Error())
-	}
-	// The detail must mention the first declaration location (policy_a.hcl).
-	var found bool
-	for _, d := range diags {
-		if strings.Contains(d.Summary, "duplicate policy block") {
-			found = true
-			if !strings.Contains(d.Detail, "previously declared at") {
-				t.Errorf("Detail = %q; expected 'previously declared at' with first-file location", d.Detail)
-			}
+		_, diags := ParseDir(dir)
+		if !diags.HasErrors() {
+			t.Fatal("expected error for top-level standalone policy block; got none")
 		}
-	}
-	if !found {
-		t.Error("no diagnostic with summary 'duplicate policy block' found")
-	}
+	})
 }
 
 // TestParseDir_PermissionsMergeAndDuplicateBlock_Error verifies that:

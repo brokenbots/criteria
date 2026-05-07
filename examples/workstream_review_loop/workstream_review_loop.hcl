@@ -30,10 +30,10 @@ workflow "workstream_review_loop" {
   version       = "1"
   initial_state = "checkout_branch"
   target_state  = "done"
-}
 
-policy {
-  max_total_steps = 120  # caps execute/review/pr loops; fails safely if automation cannot converge
+  policy {
+    max_total_steps = 120  # caps execute/review/pr loops; fails safely if automation cannot converge
+  }
 }
 
 variable "workstream_file" {

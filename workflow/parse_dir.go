@@ -23,7 +23,7 @@ type fileEntry struct {
 // the DefRange of the first matching block in that file.
 //
 // Recognised keys: "step:name", "state:name", "variable:name",
-// "adapter:type.name", "workflow", "policy", "permissions".
+// "adapter:type.name", "workflow", "permissions".
 func collectFileBlockRanges(src []byte, filename string) map[string]hcl.Range {
 	file, diags := hclsyntax.ParseConfig(src, filename, hcl.Pos{Line: 1, Column: 1})
 	if diags.HasErrors() || file == nil {
@@ -45,7 +45,7 @@ func collectFileBlockRanges(src []byte, filename string) map[string]hcl.Range {
 			if len(block.Labels) >= 2 {
 				key = "adapter:" + block.Labels[0] + "." + block.Labels[1]
 			}
-		case "workflow", "policy", "permissions":
+		case "workflow", "permissions":
 			key = block.Type
 		}
 		if key != "" {
@@ -171,9 +171,11 @@ func ParseFileOrDir(path string) (*Spec, hcl.Diagnostics) {
 }
 
 // mergeSpecs merges a slice of parsed file entries into a single Spec.
-// Slice fields are concatenated; singleton fields (Header, Policy, Permissions)
+// Slice fields are concatenated; singleton fields (Header, Permissions)
 // must appear in at most one file. Block ranges from each entry are used to
 // populate Subject/Detail fields in conflict diagnostics with file:line info.
+// The policy block is nested inside the workflow header block and is therefore
+// automatically handled by the Header singleton constraint.
 func mergeSpecs(dir string, entries []fileEntry) (*Spec, hcl.Diagnostics) { //nolint:cyclop,gocognit,gocyclo,funlen // W17: multi-field merge with singleton conflict detection requires sequential checks
 	if len(entries) == 0 {
 		return nil, nil
@@ -186,7 +188,7 @@ func mergeSpecs(dir string, entries []fileEntry) (*Spec, hcl.Diagnostics) { //no
 	var srcParts [][]byte
 
 	// Track first-seen ranges for singleton blocks.
-	var headerRange, policyRange, permissionsRange *hcl.Range
+	var headerRange, permissionsRange *hcl.Range
 
 	for _, entry := range entries {
 		s := entry.spec
@@ -206,7 +208,7 @@ func mergeSpecs(dir string, entries []fileEntry) (*Spec, hcl.Diagnostics) { //no
 		merged.Subworkflows = append(merged.Subworkflows, s.Subworkflows...)
 		merged.SharedVariables = append(merged.SharedVariables, s.SharedVariables...)
 
-		// Merge singleton: Header.
+		// Merge singleton: Header (carries the nested policy block too).
 		if s.Header != nil {
 			if merged.Header != nil {
 				detail := fmt.Sprintf("directory %q contains more than one workflow \"<name>\" { ... } header block; only one is allowed across all .hcl files in a directory module", dir)
@@ -226,30 +228,6 @@ func mergeSpecs(dir string, entries []fileEntry) (*Spec, hcl.Diagnostics) { //no
 				merged.Header = s.Header
 				if rng, ok := ranges["workflow"]; ok {
 					headerRange = &rng
-				}
-			}
-		}
-
-		// Merge singleton: Policy.
-		if s.Policy != nil {
-			if merged.Policy != nil {
-				detail := fmt.Sprintf("directory %q contains more than one policy { ... } block; only one is allowed across all .hcl files in a directory module", dir)
-				if policyRange != nil {
-					detail += fmt.Sprintf("; previously declared at %s", policyRange.String())
-				}
-				d := &hcl.Diagnostic{
-					Severity: hcl.DiagError,
-					Summary:  "duplicate policy block",
-					Detail:   detail,
-				}
-				if rng, ok := ranges["policy"]; ok {
-					d.Subject = &rng
-				}
-				diags = append(diags, d)
-			} else {
-				merged.Policy = s.Policy
-				if rng, ok := ranges["policy"]; ok {
-					policyRange = &rng
 				}
 			}
 		}

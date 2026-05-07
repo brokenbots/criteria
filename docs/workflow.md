@@ -36,11 +36,11 @@ workflow "deploy_pipeline" {
   version       = "1"
   initial_state = "validate"
   target_state  = "deployed"
-}
 
-policy {
-  max_total_steps  = 100
-  max_step_retries = 3
+  policy {
+    max_total_steps  = 100
+    max_step_retries = 3
+  }
 }
 
 permissions {
@@ -55,7 +55,7 @@ permissions {
 - **`version`** (required): Schema version. Use `"1"` for v1.5 workflows.
 - **`initial_state`** (required): The starting node or state name.
 - **`target_state`** (required): The intended terminal state. Must reference a terminal state.
-- **`policy`** (optional, top-level block): Execution guards.
+- **`policy`** (optional, nested inside `workflow` block): Execution guards. The `policy` block is nested inside the `workflow "<name>" { ... }` block because it applies to the entire workflow.
   - **`max_total_steps`** (default 100): Caps the total number of step executions across the run, including retries and iteration steps. Set this to a positive integer to override the cap. If unset, or set to `0`, the default cap of `100` applies. Acts as a coarse backstop; for fine-grained loop control, prefer `max_visits` on individual steps.
   - **`max_step_retries`** (default 0 = no retries): Per-step retry limit for transient failures.
   - **`max_visits_warn_threshold`** (default 200): Controls when the compiler emits a back-edge warning for steps without `max_visits`. When `max_total_steps` exceeds this threshold and a step has a back-edge (can reach itself via outcome transitions) but no `max_visits`, the compiler emits a warning suggesting `max_visits` be set. Supported values: omit (or leave unset) to use the default threshold of 200; set to `0` to disable warnings entirely; set to a positive integer to override the default. Negative values are invalid and cause a compile error.

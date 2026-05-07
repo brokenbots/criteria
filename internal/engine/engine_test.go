@@ -270,13 +270,13 @@ workflow "t" {
   version = "0.1"
   initial_state = "a"
   target_state  = "done"
+  policy { max_total_steps = 3 }
 }
 step "a" {
   target = adapter.fake
   outcome "again" { next = "a" }
 }
-state "done" { terminal = true }
-policy { max_total_steps = 3 }`)
+state "done" { terminal = true }`)
 	sink := &fakeSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": &fakePlugin{name: "fake", outcome: "again"}}}
 	err := NewTestEngine(g, loader, sink).Run(context.Background())
@@ -630,6 +630,7 @@ workflow "t" {
   version = "0.1"
   initial_state = "loop"
   target_state  = "done"
+  policy { max_total_steps = 1000 }
 }
 step "loop" {
   target = adapter.fake
@@ -637,8 +638,7 @@ step "loop" {
   outcome "again" { next = "loop" }
   outcome "done"  { next = "done" }
 }
-state "done" { terminal = true }
-policy { max_total_steps = 1000 }`)
+state "done" { terminal = true }`)
 	sink := &fakeSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": &fakePlugin{name: "fake", outcome: "again"}}}
 	err := NewTestEngine(g, loader, sink).Run(context.Background())
@@ -685,6 +685,7 @@ workflow "t" {
   version = "0.1"
   initial_state = "loop"
   target_state  = "done"
+  policy { max_total_steps = 1000 }
 }
 step "loop" {
   target = adapter.fake
@@ -692,8 +693,7 @@ step "loop" {
   outcome "again" { next = "loop" }
   outcome "done"  { next = "done" }
 }
-state "done" { terminal = true }
-policy { max_total_steps = 1000 }`)
+state "done" { terminal = true }`)
 	sink := &fakeSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": plg}}
 	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
@@ -739,17 +739,17 @@ workflow "t" {
   version = "0.1"
   initial_state = "work"
   target_state  = "done"
+  policy {
+    max_total_steps  = 1000
+    max_step_retries = 3
+  }
 }
 step "work" {
   target = adapter.fake
   max_visits = 2
   outcome "done" { next = "done" }
 }
-state "done" { terminal = true }
-policy {
-  max_total_steps  = 1000
-  max_step_retries = 3
-}`)
+state "done" { terminal = true }`)
 	// Plugin that always errors so the retry loop is exercised.
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": &errPlugin{name: "fake", err: errors.New("boom")}}}
 	sink := &fakeSink{}
@@ -783,6 +783,7 @@ workflow "t" {
   version = "0.1"
   initial_state = "loop"
   target_state  = "done"
+  policy { max_total_steps = 2 }
 }
 step "loop" {
   target = adapter.fake
@@ -790,8 +791,7 @@ step "loop" {
   outcome "again" { next = "loop" }
   outcome "done"  { next = "done" }
 }
-state "done" { terminal = true }
-policy { max_total_steps = 2 }`)
+state "done" { terminal = true }`)
 	sink := &fakeSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": &fakePlugin{name: "fake", outcome: "again"}}}
 	eng := NewTestEngine(g, loader, sink)
@@ -817,6 +817,7 @@ workflow "t" {
   version = "0.1"
   initial_state = "loop"
   target_state  = "done"
+  policy { max_total_steps = 1000 }
 }
 step "loop" {
   target = adapter.fake
@@ -824,8 +825,7 @@ step "loop" {
   outcome "again" { next = "loop" }
   outcome "done"  { next = "done" }
 }
-state "done" { terminal = true }
-policy { max_total_steps = 1000 }`)
+state "done" { terminal = true }`)
 	sink2 := &fakeSink{}
 	eng2 := New(g2, loader, sink2, WithResumedVisits(visits))
 	err2 := eng2.RunFrom(context.Background(), "loop", 1)
@@ -903,14 +903,14 @@ workflow "t" {
   version = "0.1"
   initial_state = "work"
   target_state  = "done"
+  policy { max_total_steps = 1000 }
 }
 step "work" {
   target = adapter.fake
   max_visits = 1
   outcome "done" { next = "done" }
 }
-state "done" { terminal = true }
-policy { max_total_steps = 1000 }`)
+state "done" { terminal = true }`)
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": &fakePlugin{name: "fake", outcome: "done"}}}
 	sink := &fakeSink{}
 	eng := NewTestEngine(g, loader, sink)
@@ -998,8 +998,7 @@ step "process" {
   outcome "all_succeeded" { next = "done" }
   outcome "any_failed"    { next = "done" }
 }
-state "done" { terminal = true }
-policy { max_total_steps = 1000 }`)
+state "done" { terminal = true }`)
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": &fakePlugin{name: "fake", outcome: "success"}}}
 	sink := &fakeSink{}
 	eng := NewTestEngine(g, loader, sink)
