@@ -661,3 +661,26 @@ Outdated thread. Code was refactored in a prior commit. Replied and resolved.
 
 - `go test -race ./...` — all packages pass
 - `make lint-go` — clean (gofmt, gocognit, gocritic all pass)
+
+### Review 2026-05-06-08 — approved
+
+#### Summary
+
+Approval stands after the PR 88 follow-up fixes. The new `isIter` predicate now covers `parallel`, so aggregate parallel outcomes with `shared_writes` correctly require an explicit projection; the stale `parallelOutputKey`/`keys` cleanup is behavior-preserving; and the `OnFailure` docs now match the actual sequential-versus-parallel defaults.
+
+#### Plan Adherence
+
+- **Step 2 / Step 4 / Step 7:** aligned. The compile-time guard for aggregate iterating outcomes now applies to parallel steps as intended, and the added regression locks that behavior in.
+- **Docs:** aligned. `StepSpec.OnFailure` and `StepNode.OnFailure` now describe the real default split between sequential iteration and parallel iteration.
+- **Engine cleanup:** aligned. `parallelOutputKey` now matches the implemented list-only parallel contract.
+
+#### Test Intent Assessment
+
+`TestCompileSharedWrites_AggregateParallel_RequiresProjection` checks the right contract: it exercises the exact compile-time guard that parallel steps previously bypassed. Together with the earlier runtime regressions for fatal propagation, timeout/max-visits parity, sink safety, output ordering, and subworkflow render-failure propagation, the workstream’s coverage remains strong at both compile-time and runtime boundaries.
+
+#### Validation Performed
+
+- `go test ./workflow -run 'TestCompileSharedWrites_AggregateParallel_RequiresProjection'` — pass
+- `go test ./internal/engine -run 'TestParallelIteration_(SubworkflowOutputRenderErrorPropagated|AbortOnFirstFailure|FatalErrorPropagated)$'` — pass
+- `go test -race -count=20 -timeout 300s ./internal/engine/...` — pass
+- `TMPDIR=/home/dave/.tmp/criteria-review make ci` — pass
