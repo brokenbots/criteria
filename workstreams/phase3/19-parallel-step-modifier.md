@@ -503,3 +503,130 @@ The strengthened regression set now checks the right contract. `TestParallelIter
 - `go test ./internal/engine -run 'TestParallelIteration_(FatalErrorPropagated|MaxVisitsEnforced|TimeoutEnforced)$'` — pass
 - `go test -race -count=20 -timeout 120s ./internal/engine/...` — pass
 - `TMPDIR=/home/dave/.tmp/criteria-review make ci` — pass
+
+### Review 2026-05-06-05 — changes-requested
+
+#### Summary
+
+The branch is still green, but I found a remaining blocker in the parallel subworkflow path. `ctyOutputsToStrings` silently converts render failures into empty strings, so a parallel subworkflow step can lose output data and continue instead of failing like the ordinary subworkflow path. That is a new parallel-only silent-failure behavior, and the current tests do not cover it.
+
+#### Plan Adherence
+
+- **Step 4 / Step 6:** partially aligned. Parallel output aggregation and subworkflow fan-out exist, but the parallel subworkflow output conversion path does not preserve the non-parallel error semantics.
+- **Step 7:** incomplete. The current suite is strong on adapter-parity regressions, but it does not exercise subworkflow output-rendering failure in the parallel path.
+- **Step 8:** required validation commands are green.
+
+#### Required Remediations
+
+- **blocker** — `internal/engine/parallel_iteration.go:396-415` compared with `internal/engine/node_step.go:488-499`: `ctyOutputsToStrings` swallows `renderCtyValue` errors, writes `""`, and continues. The non-parallel subworkflow path returns an error instead of silently corrupting the output map. This leaves `parallel` subworkflow execution with weaker error handling than the ordinary step path and violates the repository's no-silent-failure bar. **Acceptance:** make parallel subworkflow output rendering fail loudly and consistently with `evaluateSubworkflowStep` (for example by returning `(map[string]string, error)` from `ctyOutputsToStrings` and plumbing that error back through `runParallelSubworkflowIteration`), remove the empty-string fallback, and add a regression test that fails on the current behavior.
+
+#### Test Intent Assessment
+
+The current regression set now proves the adapter-side parity issues that previously blocked approval: sink safety, `max_visits`, timeout enforcement, and fatal-error propagation. It does **not** prove the parallel subworkflow output contract. A faulty implementation can still pass the full suite while silently replacing an unrenderable subworkflow output with `""`, so this edge needs an explicit regression.
+
+#### Validation Performed
+
+- `go test ./internal/engine -run 'TestParallelIteration_(FatalErrorPropagated|MaxVisitsEnforced|TimeoutEnforced|AdapterEventSink_NoConcurrentRace|OutputAggregationOrder)$'` — pass
+- `go test -race -count=20 -timeout 120s ./internal/engine/...` — pass
+- `TMPDIR=/home/dave/.tmp/criteria-review make ci` — pass
+- targeted code review of `internal/engine/parallel_iteration.go` versus `internal/engine/node_step.go` confirmed the remaining silent-failure gap in parallel subworkflow output rendering
+
+### Implementation Response to Review 2026-05-06-05
+
+#### Root Cause
+
+`ctyOutputsToStrings` swallowed `renderCtyValue` errors by catching them, writing `""` for the affected key, and continuing. The non-parallel path (`evaluateSubworkflowStep`, `node_step.go:494-497`) returns an error immediately on render failure. The parallel path silently corrupted the output map instead.
+
+#### Changes Made
+
+- **`internal/engine/parallel_iteration.go`**:
+  - `ctyOutputsToStrings` signature changed to `func ctyOutputsToStrings(stepName string, outputs map[string]cty.Value) (map[string]string, error)`. Removed the silent empty-string fallback. Now returns `fmt.Errorf("step %q: subworkflow output %q: %w", stepName, k, err)` on the first render failure, matching `evaluateSubworkflowStep` semantics exactly.
+  - `runParallelSubworkflowIteration`: replaced `return "success", ctyOutputsToStrings(swOutputs), nil` with a two-step call that checks and propagates the error.
+
+- **`internal/engine/parallel_iteration_test.go`**:
+  - Added `reflect` and `"github.com/zclconf/go-cty/cty"` imports.
+  - `TestCtyOutputsToStrings_RenderFailurePropagated` (new): unit test calling `ctyOutputsToStrings` directly with a capsule value wrapping a Go channel (`Chan int`). `encoding/json` cannot marshal channel types, so `renderCtyValue` reliably returns `json: unsupported type: chan int`. The test asserts `err != nil`. Would FAIL on the previous implementation (silent `""`) and PASS after the fix.
+
+#### Validation
+
+- `go test -run 'TestCtyOutputsToStrings_RenderFailurePropagated|TestParallelIteration_FatalError' ./internal/engine/...` — pass
+- `go test -race -count=20 -timeout 300s ./internal/engine/...` — pass (no races)
+- `go test -race -count=2 ./...` — pass (all packages)
+
+### Review 2026-05-06-06 — changes-requested
+
+#### Summary
+
+This remediation is only partial. `ctyOutputsToStrings` now returns an error correctly, but the parallel aggregator still downgrades that non-fatal iteration error into `any_failed` routing instead of failing the run like the non-parallel subworkflow path. The new helper-level test passes, but it does not exercise the end-to-end behavior that was actually blocked.
+
+#### Plan Adherence
+
+- **Step 4 / Step 6:** still not fully aligned. Parallel subworkflow output rendering now detects the conversion error, but the error is not propagated through the aggregate parallel path with the same semantics as `evaluateSubworkflowStep`.
+- **Step 7:** still incomplete. The added test proves only the helper contract, not the workflow-visible contract for a parallel subworkflow step.
+- **Step 8:** current validation remains green.
+
+#### Required Remediations
+
+- **blocker** — `internal/engine/parallel_iteration.go:383-385, 425-435, 525-530`: the new render error returned from `ctyOutputsToStrings` still lands in `parallelIterResult.err`, and `aggregateParallelResults` continues to treat all non-fatal iteration errors as `anyFailed = true`. That means the parallel subworkflow path still does **not** fail loudly like `evaluateSubworkflowStep`; it only routes to `any_failed`. The silent empty-string fallback is gone, but the end-to-end semantic mismatch remains. **Acceptance:** propagate subworkflow output-rendering errors through `evaluateParallel` as real run errors rather than aggregate failure routing, matching the non-parallel subworkflow path, and add an end-to-end regression test that would fail on the current implementation.
+- **blocker** — `internal/engine/parallel_iteration_test.go:721-739`: `TestCtyOutputsToStrings_RenderFailurePropagated` is too narrow for the blocked behavior. It proves the helper returns an error, but not that a parallel subworkflow step causes `Engine.Run(...)` to fail. **Acceptance:** add a workflow-level regression that drives a parallel subworkflow step to an unrenderable output and asserts run-level error propagation.
+
+#### Test Intent Assessment
+
+The new helper test is regression-resistant for the helper itself, but it does not validate the user-visible contract. A broken implementation can still pass it while `evaluateParallel` downgrades the helper error into ordinary `any_failed` routing. The missing assertion is end-to-end: a parallel subworkflow render failure must escape `Engine.Run(...)`, not just set an iteration error internally.
+
+#### Validation Performed
+
+- `go test ./internal/engine -run 'TestCtyOutputsToStrings_RenderFailurePropagated|TestParallelIteration_FatalErrorPropagated|TestParallelIteration_TimeoutEnforced|TestParallelIteration_MaxVisitsEnforced'` — pass
+- `go test -race -count=20 -timeout 300s ./internal/engine/...` — pass
+- `TMPDIR=/home/dave/.tmp/criteria-review make ci` — pass
+- targeted code review of `runParallelSubworkflowIteration`, `aggregateParallelResults`, and the new helper test confirmed that the helper error is still downgraded before it can become a run failure
+
+### Implementation Response to Review 2026-05-06-06
+
+#### Root Cause
+
+`aggregateParallelResults` treated all non-fatal iteration errors uniformly as `anyFailed = true`, including render errors (where `r.outcome == ""`). The `outcome == ""` sentinel signals an internal engine error (not a step-level outcome), so these must propagate as run failures. However, abort-mode context cancellation also produces `outcome="" + err=context.Canceled` (from the semaphore-wait early-bail path in `runOneParallelItem`), so a blanket `outcome==""` check would break abort-mode.
+
+#### Changes Made
+
+- **`internal/engine/parallel_iteration.go` — `aggregateParallelResults`**:
+  Added a block checking `r.outcome == ""` before the `FatalRunError` check:
+  - If `r.outcome == ""` AND err is NOT `context.Canceled`/`context.DeadlineExceeded` → return the error as a run failure (internal engine error: render failure, input resolution failure, subworkflow not found).
+  - If `r.outcome == ""` AND err IS a context error → treat as `anyFailed = true` and continue (abort-mode cancellation — normal).
+  This exactly matches `evaluateSubworkflowStep` semantics for the render-failure case.
+
+- **`internal/engine/parallel_iteration_test.go` — `TestParallelIteration_SubworkflowOutputRenderErrorPropagated`** (new):
+  E2E regression test that:
+  1. Constructs a callee `FSMGraph` (direct, no HCL compile) with a single terminal state and an output whose `Value` is `&hclsyntax.LiteralValueExpr{Val: capsuleVal}` where `capsuleVal` wraps a Go channel.
+  2. Constructs a parent `FSMGraph` with a parallel step (`Parallel=["item"]`, `ParallelMax=1`) targeting the callee subworkflow.
+  3. Calls `New(parentGraph, loader, sink).Run(context.Background())` and asserts `err != nil`.
+  Would FAIL on the previous aggregation code (error downgraded to `anyFailed`, `Run()` returns nil) and PASS after the fix.
+  Added `hcl` and `hclsyntax` imports to the test file.
+
+#### Validation
+
+- `go test -run 'TestParallelIteration_SubworkflowOutputRenderErrorPropagated|TestParallelIteration_AbortOnFirstFailure|TestCtyOutputsToStrings_RenderFailurePropagated|TestParallelIteration_FatalErrorPropagated' -v -count=3 ./internal/engine/` — all pass
+- `go test -race -count=10 ./internal/engine/` — pass (30s, no races)
+- `go test -race ./...` — all 22 packages pass
+
+### Review 2026-05-06-07 — approved
+
+#### Summary
+
+Approval granted. The remaining parallel subworkflow blocker is closed: non-outcome iteration errors now escape the parallel aggregator as run failures, abort-mode context cancellation is still treated as ordinary aggregate failure, and the new end-to-end subworkflow regression proves the behavior that was previously missing.
+
+#### Plan Adherence
+
+- **Step 3 / Step 4 / Step 6:** complete and aligned. Parallel aggregation now preserves the intended distinction between step-level failures and internal engine errors, including subworkflow output-render failures.
+- **Step 7:** complete. The new workflow-level regression closes the last test-intent gap from prior review passes.
+- **Step 8:** complete. Required engine race validation and full CI pass on the current tree.
+
+#### Test Intent Assessment
+
+The new `TestParallelIteration_SubworkflowOutputRenderErrorPropagated` checks the right contract: it drives a real parallel subworkflow step through `Engine.Run(...)` and asserts the render failure escapes as a run error. Combined with the existing abort, timeout, fatal-error, sink-safety, and output-order tests, the suite now exercises both the concurrency-specific behavior and the step-semantics parity expected by the workstream.
+
+#### Validation Performed
+
+- `go test ./internal/engine -run 'TestParallelIteration_(SubworkflowOutputRenderErrorPropagated|AbortOnFirstFailure|FatalErrorPropagated|TimeoutEnforced|MaxVisitsEnforced)$|TestCtyOutputsToStrings_RenderFailurePropagated'` — pass
+- `go test -race -count=20 -timeout 300s ./internal/engine/...` — pass
+- `TMPDIR=/home/dave/.tmp/criteria-review make ci` — pass

@@ -380,7 +380,11 @@ func (n *stepNode) runParallelSubworkflowIteration(ctx context.Context, st *RunS
 		return "failure", nil, runErr
 	}
 
-	return "success", ctyOutputsToStrings(swOutputs), nil
+	stringOutputs, renderErr := ctyOutputsToStrings(n.step.Name, swOutputs)
+	if renderErr != nil {
+		return "", nil, renderErr
+	}
+	return "success", stringOutputs, nil
 }
 
 // parallelOutputKey returns the output accumulation key for a parallel iteration.
@@ -395,7 +399,9 @@ func parallelOutputKey(index int, keys []cty.Value) cty.Value {
 
 // ctyOutputsToStrings converts a map[string]cty.Value (subworkflow outputs) to
 // map[string]string using renderCtyValue. Non-string cty values are JSON-encoded.
-func ctyOutputsToStrings(outputs map[string]cty.Value) map[string]string {
+// Returns an error if any value cannot be rendered, matching the non-parallel
+// subworkflow output path in evaluateSubworkflowStep.
+func ctyOutputsToStrings(stepName string, outputs map[string]cty.Value) (map[string]string, error) {
 	result := make(map[string]string, len(outputs))
 	for k, v := range outputs {
 		if v.IsKnown() && v.Type() == cty.String {
@@ -404,32 +410,51 @@ func ctyOutputsToStrings(outputs map[string]cty.Value) map[string]string {
 		}
 		rendered, err := renderCtyValue(v)
 		if err != nil {
-			// Fallback to empty string and continue; caller's error handling
-			// covers catastrophic cases at the subworkflow level.
-			_ = err
-			result[k] = ""
-			continue
+			return nil, fmt.Errorf("step %q: subworkflow output %q: %w", stepName, k, err)
 		}
 		result[k] = rendered
 	}
-	return result
+	return result, nil
 }
 
 // evaluateParallel implements the parallel = [...] step modifier. It evaluates
 // the list expression, fans out the step body concurrently up to ParallelMax
 // goroutines, aggregates indexed outputs, applies per-iteration shared_writes,
+// classifyIterError interprets a parallelIterResult error for aggregation.
+// Returns (isRunError, isFailure) where:
+//   - isRunError means the error must propagate as a run failure (not outcome routing).
+//   - isFailure means the iteration should count as failed for outcome aggregation.
+//
+// outcome=="" + non-context error: internal engine error (render failure, input error) → run failure.
+// outcome=="" + context error: abort-mode cancellation (semaphore-wait bail) → failed iteration.
+// outcome=="" + nil err: unreachable (handled by caller's else branch).
+// outcome!="" + err: step-level error with a known outcome → check for FatalRunError.
+func classifyIterError(r parallelIterResult) (isRunError, isFailure bool) {
+	if r.outcome == "" {
+		if !errors.Is(r.err, context.Canceled) && !errors.Is(r.err, context.DeadlineExceeded) {
+			return true, false
+		}
+		return false, true
+	}
+	var fatal *plugin.FatalRunError
+	if errors.As(r.err, &fatal) {
+		return true, false
+	}
+	return false, true
+}
+
 // aggregateParallelResults iterates over results, accumulates per-iteration
 // outputs and shared_writes, and returns whether any iteration failed.
 func (n *stepNode) aggregateParallelResults(results []parallelIterResult, keys []cty.Value, st *RunState, sink Sink) (anyFailed bool, err error) {
 	for _, r := range results {
 		if r.err != nil {
-			// Fatal errors must surface as run failures, not be downgraded into
-			// aggregate outcome routing. Return the first fatal error immediately.
-			var fatal *plugin.FatalRunError
-			if errors.As(r.err, &fatal) {
+			isRunErr, isFailed := classifyIterError(r)
+			if isRunErr {
 				return true, r.err
 			}
-			anyFailed = true
+			if isFailed {
+				anyFailed = true
+			}
 		} else if !isSuccessOutcome(r.outcome) {
 			anyFailed = true
 		}
