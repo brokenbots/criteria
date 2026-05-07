@@ -42,6 +42,11 @@ func (n *stepNode) Evaluate(ctx context.Context, st *RunState, deps Deps) (strin
 		return n.evaluateIterating(ctx, st, deps)
 	}
 
+	// Handle parallel execution.
+	if n.step.Parallel != nil {
+		return n.evaluateParallel(ctx, st, deps)
+	}
+
 	// Non-iterating step: normal execution path.
 	return n.evaluateOnce(ctx, st, deps)
 }
@@ -589,7 +594,13 @@ func (n *stepNode) mergeEnvironmentVars(merged map[string]string) {
 
 // incrementVisit checks the max_visits limit and increments the visit counter
 // for this step. Returns an error if the limit would be exceeded (W07).
+// When st.VisitsMu is set (parallel fan-out), the check-and-increment is
+// performed under the mutex so concurrent goroutines share one counter.
 func (n *stepNode) incrementVisit(st *RunState) error {
+	if st.VisitsMu != nil {
+		st.VisitsMu.Lock()
+		defer st.VisitsMu.Unlock()
+	}
 	if n.step.MaxVisits > 0 {
 		if st.Visits == nil {
 			st.Visits = make(map[string]int)

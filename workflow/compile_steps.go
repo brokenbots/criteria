@@ -48,9 +48,10 @@ func compileSteps(g *FSMGraph, spec *Spec, schemas map[string]AdapterInfo, opts 
 	return diags
 }
 
-// isIteratingStep reports whether sp has a for_each or count attribute in its
-// Remain body. Uses JustAttributes which does not mark attributes as consumed,
-// so the per-kind compiler's decodeRemainIter call still finds them.
+// isIteratingStep reports whether sp has a for_each, count, or parallel
+// attribute in its Remain body. Uses JustAttributes which does not mark
+// attributes as consumed, so the per-kind compiler's decodeRemainIter call
+// still finds them.
 func isIteratingStep(sp *StepSpec) bool {
 	if sp.Remain == nil {
 		return false
@@ -62,7 +63,8 @@ func isIteratingStep(sp *StepSpec) bool {
 	attrs, _ := sp.Remain.JustAttributes()
 	_, hasForEach := attrs["for_each"]
 	_, hasCount := attrs["count"]
-	return hasForEach || hasCount
+	_, hasParallel := attrs["parallel"]
+	return hasForEach || hasCount || hasParallel
 }
 
 // validateStepRegistration checks for duplicate steps, state name clashes, and

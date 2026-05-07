@@ -6,7 +6,7 @@ The Criteria workflow language is a declarative HCL-based language for orchestra
 
 A Criteria workflow defines:
 
-- **Nodes**: steps (adapter invocations), waits (time or signal gates), approvals (human decisions), switches (conditional routing), and iterating steps (for_each / count).
+- **Nodes**: steps (adapter invocations), waits (time or signal gates), approvals (human decisions), switches (conditional routing), and iterating steps (for_each / count / parallel).
 - **States**: named terminal or intermediate targets. The workflow FSM transitions between nodes and states based on outcomes.
 - **Variables**: read-only typed values that seed the workflow execution. Per-run variable overrides are a future enhancement.
 - **Agents**: long-lived adapter sessions that maintain state across multiple steps.
@@ -623,9 +623,11 @@ See [Expressions](#expressions) for syntax rules.
 
 ## Step-level iteration
 
-Steps iterate over a list, tuple, map, or a fixed count using `for_each` or
-`count` fields. The step body runs once per item; the step acts as its own
-iteration container — there is no separate `for_each` block type.
+Steps iterate over a list, tuple, map, or a fixed count using `for_each`,
+`count`, or `parallel` fields. The sequential modifiers (`for_each`/`count`)
+run the step body once per item in order; `parallel` runs all items
+concurrently. The step acts as its own iteration container — there is no
+separate `for_each` block type.
 
 ### `for_each` — iterate over a collection
 
@@ -662,6 +664,64 @@ step "batch" {
 
 - **`count`**: Expression evaluating to a non-negative integer. Items are the
   integers `0` through `count - 1`.
+
+### `parallel` — run iterations concurrently
+
+`parallel` is a fan-out modifier: the step body runs **concurrently** for all
+items in the list, bounded by `parallel_max` goroutines. Results are collected
+in declaration order regardless of completion order.
+
+`parallel` is mutually exclusive with `for_each` and `count`.
+
+<!-- validator: fragment -->
+```hcl
+step "fetch" {
+  target       = adapter.noop.default
+  parallel     = ["auth", "catalog", "billing"]
+  parallel_max = 2   # at most 2 concurrent executions; default = GOMAXPROCS
+  on_failure   = "continue"
+
+  input {
+    service = each.value
+  }
+
+  outcome "all_succeeded" { next = "done" }
+  outcome "any_failed"    { next = "handle_errors" }
+}
+```
+
+- **`parallel`**: Expression evaluating to a list or tuple. Each item is bound
+  to `each.value` (and `each.index`) within its goroutine. Object/map syntax is
+  rejected at compile time; use `for_each` for key/value iteration.
+- **`parallel_max`** (optional): Maximum number of goroutines that may execute
+  concurrently. Defaults to `GOMAXPROCS`. Must be >= 1; rejected at compile time
+  if set to 0 or negative.
+
+**on_failure semantics for `parallel`:**
+
+| Value | Behaviour |
+|---|---|
+| `""` or `"abort"` (default) | Cancel remaining goroutines on the first failure. Route to `any_failed`. |
+| `"continue"` | All goroutines run to completion. Route to `any_failed` if any failed. |
+| `"ignore"` | All goroutines run; failures are treated as successes. Always route to `all_succeeded`. |
+
+Note: `on_failure` default for `parallel` is **abort** (cancel outstanding work
+immediately on first failure), unlike sequential `for_each`/`count` where the
+default is `continue`.
+
+**Adapter concurrency requirements:**
+
+When a step uses `parallel`, its adapter's `Execute` method is called
+concurrently from multiple goroutines. Adapter implementations must be
+goroutine-safe: avoid shared mutable state, or protect it with a mutex.
+Session handles (from `OpenSession`) are shared across parallel iterations for
+the same step; adapter authors should treat them as read-only or protect writes.
+
+**`each.*` bindings in `parallel`:**
+
+All standard `each.*` bindings are available per goroutine (see table below).
+`each._prev` is always `null` in `parallel` mode — there is no defined
+"previous" iteration when goroutines run concurrently.
 
 ### `each.*` bindings
 

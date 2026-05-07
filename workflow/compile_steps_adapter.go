@@ -93,14 +93,14 @@ func adapterTypeFromRef(adapterRef string) string {
 }
 
 // validateOnFailureForNonIterating validates on_failure for steps that do not
-// carry for_each or count. It checks the value is recognised and always errors
-// because on_failure requires iterating.
+// carry for_each, count, or parallel. It checks the value is recognised and
+// always errors because on_failure requires an iterating modifier.
 func validateOnFailureForNonIterating(sp *StepSpec) hcl.Diagnostics {
 	diags := validateOnFailureValue(sp)
 	if sp.OnFailure != "" {
 		diags = append(diags, &hcl.Diagnostic{
 			Severity: hcl.DiagError,
-			Summary:  fmt.Sprintf("step %q: on_failure requires for_each or count", sp.Name),
+			Summary:  fmt.Sprintf("step %q: on_failure requires for_each, count, or parallel", sp.Name),
 		})
 	}
 	return diags

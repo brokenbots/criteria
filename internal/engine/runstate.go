@@ -1,6 +1,8 @@
 package engine
 
 import (
+	"sync"
+
 	"github.com/zclconf/go-cty/cty"
 
 	"github.com/brokenbots/criteria/workflow"
@@ -35,6 +37,9 @@ type RunState struct {
 	// Visits tracks per-step visit counts for max_visits enforcement (W07).
 	// Nil-safe: a nil map is treated as all-zero counts.
 	Visits map[string]int
+	// VisitsMu serializes concurrent access to Visits during parallel step
+	// fan-out (W19). Nil in sequential paths — no locking overhead there.
+	VisitsMu *sync.Mutex
 
 	// ReturnOutputs holds the projected output values when a step exits via
 	// next = "return". Set by stepNode.evaluateOnce; consumed by

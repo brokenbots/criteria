@@ -150,8 +150,9 @@ type AdapterDeclSpec struct {
 type StepSpec struct {
 	Name    string `hcl:"name,label"`
 	OnCrash string `hcl:"on_crash,optional"`
-	// OnFailure controls iteration failure behaviour: "continue" (default),
-	// "abort" (stop on first failure), or "ignore" (treat all as success).
+	// OnFailure controls iteration failure behaviour: "continue" (default for
+	// sequential for_each/count steps), "abort" (stop on first failure; default
+	// for parallel steps), or "ignore" (treat all as success).
 	OnFailure string `hcl:"on_failure,optional"`
 	// MaxVisits limits how many times this step may be evaluated in a single run.
 	// 0 (default) means unlimited. Negative values are rejected at compile time.
@@ -457,7 +458,8 @@ type StepNode struct {
 	SubworkflowRef string
 	OnCrash        string
 	// OnFailure controls iteration behaviour when an iteration produces a
-	// non-success outcome. Values: "continue" (default), "abort", "ignore".
+	// non-success outcome. Values: "continue" (default for sequential
+	// for_each/count steps), "abort" (default for parallel steps), "ignore".
 	OnFailure string
 	// MaxVisits limits how many times this step may be evaluated in a single run.
 	// 0 means unlimited. Enforced by the engine before each evaluation (W07).
@@ -489,6 +491,14 @@ type StepNode struct {
 	// Evaluates to an integer N; iteration runs N times with each.value = 0..N-1.
 	// Mutually exclusive with ForEach.
 	Count hcl.Expression
+	// Parallel is the raw HCL expression for step-level parallel execution.
+	// Evaluates to a list or tuple; the step body runs concurrently for every item.
+	// Mutually exclusive with ForEach and Count.
+	Parallel hcl.Expression
+	// ParallelMax is the maximum number of concurrent goroutines for a parallel step.
+	// Populated from the compile-time parallel_max attribute; default is
+	// runtime.GOMAXPROCS(0) when the attribute is absent. Never 0 at runtime.
+	ParallelMax int
 	// Environment is an optional per-step override for the execution environment,
 	// in the form "<env_type>.<env_name>". When set, it overrides the adapter
 	// block's environment and the workflow-level default for this step only.

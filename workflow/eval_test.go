@@ -192,7 +192,7 @@ state "__done__" { terminal = true }
 	if !diags.HasErrors() {
 		t.Fatal("expected compile error for each.value outside for_each, got none")
 	}
-	if !strings.Contains(diags.Error(), "for_each or count") {
+	if !strings.Contains(diags.Error(), "for_each, count, or parallel") {
 		t.Errorf("compile error = %q, want message about each.* scope", diags.Error())
 	}
 }

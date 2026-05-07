@@ -31,7 +31,7 @@ import (
 func compileOutcomeBlock(sp *StepSpec, node *StepNode, g *FSMGraph, opts CompileOpts, adapterOutputSchema map[string]ConfigField) hcl.Diagnostics {
 	var diags hcl.Diagnostics
 	seen := map[string]bool{}
-	isIter := node.ForEach != nil || node.Count != nil
+	isIter := node.ForEach != nil || node.Count != nil || node.Parallel != nil
 	for _, o := range sp.Outcomes {
 		if seen[o.Name] {
 			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q: duplicate outcome %q", sp.Name, o.Name)})
