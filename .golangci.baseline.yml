@@ -90,3 +90,16 @@ issues:
       linters:
         - funlen
       text: 'compileSwitchConditionBlock' # W16: each logical phase is necessary; further splitting would obscure intent
+    # --- Step 1 rename fix: lifecycle_test.go -> lifecycle.go moved test functions into production, increasing baseline ---
+    - path: .*conformance/lifecycle.go
+      linters:
+        - gocognit
+      text: '`testAdapterSessionEventsRoundTrip`' # W12: SDK conformance test for adapter lifecycle round-trip events; high complexity from exhaustive event validation
+    - path: .*conformance/lifecycle.go
+      linters:
+        - funlen
+      text: 'testAdapterSessionEventsOrdered' # W12: SDK conformance test for event ordering; 41-line function validates state machine and ordering invariants
+    - path: .*conformance/lifecycle.go
+      linters:
+        - funlen
+      text: 'testAdapterSessionEventsRoundTrip' # W12: SDK conformance test; 48-line function validates round-trip events exhaustively

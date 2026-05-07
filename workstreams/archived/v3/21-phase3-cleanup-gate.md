@@ -1,8 +1,12 @@
 # Workstream 21 — Phase 3 cleanup gate
 
-**Phase:** 3 · **Track:** E (close) · **Owner:** Cleanup agent (or human committer) · **Depends on:** every Phase 3 workstream merged ([01](01-lint-baseline-burndown.md)–[20](20-implicit-input-chaining.md)). · **Unblocks:** the `v0.3.0` tag and Phase 4 planning.
+**Phase:** 3 · **Track:** E (close) · **Owner:** Cleanup agent (or human committer) · **Depends on:** Phase 3 workstreams merged ([01](01-lint-baseline-burndown.md)–[19](19-parallel-step-modifier.md); [20](20-implicit-input-chaining.md) **skipped**). · **Unblocks:** the `v0.3.0` tag and Phase 4 planning.
 
 This workstream is the **only** one in Phase 3 that may edit the coordination set: [README.md](../../README.md), [PLAN.md](../../PLAN.md), [AGENTS.md](../../AGENTS.md), [CHANGELOG.md](../../CHANGELOG.md), [CONTRIBUTING.md](../../CONTRIBUTING.md), [workstreams/README.md](../README.md). It runs after every other Phase 3 workstream is merged, performs final validation, archives the phase, and cuts `v0.3.0`.
+
+### Workstream 20 Skip (Implicit Input Chaining)
+
+Workstream 20 (implicit input chaining) is **not merged**. Architecture decision (2026-05-06): concern about failed plan risk from implicit input inference. This feature is deferred to Phase 4 or later. The cleanup gate proceeds with workstreams 01–19 merged.
 
 Same close-out shape as [archived/v2/16-phase2-cleanup-gate.md](../archived/v2/16-phase2-cleanup-gate.md). Phase 3-specific gates listed below.
 

@@ -1,0 +1,14 @@
+digraph "phase3_marquee" {
+  rankdir=LR;
+
+  "process_items" [shape=box];
+  "report" [shape=box];
+  "done" [shape=doublecircle];
+
+  "__start__" [shape=point,width=0.12,label=""];
+  "__start__" -> "process_items" [label="initial"];
+  "process_items" -> "report" [label="all_succeeded"];
+  "process_items" -> "report" [label="any_failed"];
+  "report" -> "done" [label="failure"];
+  "report" -> "done" [label="success"];
+}

@@ -1,0 +1,26 @@
+workflow: phase3_marquee  (version 0.1)
+initial_state: process_items   target_state: done
+policy: max_total_steps=100  max_step_retries=0
+
+variables:
+  input_count: number = 3
+
+adapters:
+  shell.default   type=shell   on_crash=fail
+    config: (none)
+
+steps (declaration order):
+  process_items   adapter=shell.default
+    input keys: command
+    allow_tools: (none)
+    outcomes: all_succeeded -> report, any_failed -> report
+  report   adapter=shell.default
+    input keys: command
+    allow_tools: (none)
+    outcomes: success -> done, failure -> done
+
+states:
+  done    terminal=true   success=true
+
+plugins required:
+  shell   (search: $CRITERIA_PLUGINS, ~/.criteria/plugins)
