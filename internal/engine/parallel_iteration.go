@@ -387,13 +387,11 @@ func (n *stepNode) runParallelSubworkflowIteration(ctx context.Context, st *RunS
 	return "success", stringOutputs, nil
 }
 
-// parallelOutputKey returns the output accumulation key for a parallel iteration.
-// For list/count-like iterations (no keys) it returns cty.NumberIntVal(index).
-// For map-keyed iterations it returns the map key at that index.
-func parallelOutputKey(index int, keys []cty.Value) cty.Value {
-	if index < len(keys) {
-		return keys[index]
-	}
+// parallelOutputKey returns the output accumulation key for a parallel
+// iteration. Parallel steps only support list inputs (map/object syntax is
+// rejected at compile time and at runtime), so the key is always the integer
+// index of the item in the list.
+func parallelOutputKey(index int) cty.Value {
 	return cty.NumberIntVal(int64(index))
 }
 
@@ -445,7 +443,7 @@ func classifyIterError(r parallelIterResult) (isRunError, isFailure bool) {
 
 // aggregateParallelResults iterates over results, accumulates per-iteration
 // outputs and shared_writes, and returns whether any iteration failed.
-func (n *stepNode) aggregateParallelResults(results []parallelIterResult, keys []cty.Value, st *RunState, sink Sink) (anyFailed bool, err error) {
+func (n *stepNode) aggregateParallelResults(results []parallelIterResult, st *RunState, sink Sink) (anyFailed bool, err error) {
 	for _, r := range results {
 		if r.err != nil {
 			isRunErr, isFailed := classifyIterError(r)
@@ -459,7 +457,7 @@ func (n *stepNode) aggregateParallelResults(results []parallelIterResult, keys [
 			anyFailed = true
 		}
 		if len(r.outputs) > 0 {
-			key := parallelOutputKey(r.index, keys)
+			key := parallelOutputKey(r.index)
 			st.Vars = workflow.WithIndexedStepOutput(st.Vars, n.step.Name, key, r.outputs)
 		}
 		if r.err == nil && r.outcome != "" {
@@ -547,7 +545,7 @@ func (n *stepNode) evaluateParallel(ctx context.Context, st *RunState, deps Deps
 		return "", ctx.Err()
 	}
 
-	anyFailed, aggregateErr := n.aggregateParallelResults(results, keys, st, deps.Sink)
+	anyFailed, aggregateErr := n.aggregateParallelResults(results, st, deps.Sink)
 	if aggregateErr != nil {
 		return "", aggregateErr
 	}

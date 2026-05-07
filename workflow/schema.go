@@ -150,8 +150,9 @@ type AdapterDeclSpec struct {
 type StepSpec struct {
 	Name    string `hcl:"name,label"`
 	OnCrash string `hcl:"on_crash,optional"`
-	// OnFailure controls iteration failure behaviour: "continue" (default),
-	// "abort" (stop on first failure), or "ignore" (treat all as success).
+	// OnFailure controls iteration failure behaviour: "continue" (default for
+	// sequential for_each/count steps), "abort" (stop on first failure; default
+	// for parallel steps), or "ignore" (treat all as success).
 	OnFailure string `hcl:"on_failure,optional"`
 	// MaxVisits limits how many times this step may be evaluated in a single run.
 	// 0 (default) means unlimited. Negative values are rejected at compile time.
@@ -457,7 +458,8 @@ type StepNode struct {
 	SubworkflowRef string
 	OnCrash        string
 	// OnFailure controls iteration behaviour when an iteration produces a
-	// non-success outcome. Values: "continue" (default), "abort", "ignore".
+	// non-success outcome. Values: "continue" (default for sequential
+	// for_each/count steps), "abort" (default for parallel steps), "ignore".
 	OnFailure string
 	// MaxVisits limits how many times this step may be evaluated in a single run.
 	// 0 means unlimited. Enforced by the engine before each evaluation (W07).

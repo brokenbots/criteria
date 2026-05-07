@@ -622,7 +622,60 @@ step "process" {
 	}
 }
 
-// TestCompileSharedWrites_AggregateIterating_WithProjection verifies that
+// TestCompileSharedWrites_AggregateParallel_RequiresProjection verifies that
+// shared_writes on a parallel-step aggregate outcome (all_succeeded / any_failed)
+// without an output = { ... } projection is rejected at compile time, matching
+// the same guard applied to for_each/count steps. Previously `isIter` in
+// compileOutcomeBlock omitted node.Parallel != nil, so this check was silently
+// bypassed for parallel steps.
+func TestCompileSharedWrites_AggregateParallel_RequiresProjection(t *testing.T) {
+	src := `
+workflow "test" {
+  version       = "0.1"
+  initial_state = "process"
+  target_state  = "done"
+}
+
+state "done" {
+  terminal = true
+  success  = true
+}
+
+shared_variable "result" {
+  type = "string"
+}
+
+adapter "noop" "default" {}
+
+step "process" {
+  target   = adapter.noop.default
+  parallel = ["a", "b"]
+
+  outcome "all_succeeded" {
+    next          = "done"
+    shared_writes = { result = "stdout" }
+  }
+  outcome "any_failed" {
+    next = "done"
+  }
+}
+`
+	spec, diags := Parse("test.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	schemas := map[string]AdapterInfo{
+		"noop.default": {OutputSchema: map[string]ConfigField{"stdout": {}}},
+	}
+	_, diags = Compile(spec, schemas)
+	if !diags.HasErrors() {
+		t.Fatal("expected compile error: aggregate parallel outcome shared_writes require output projection")
+	}
+	if !strings.Contains(diags.Error(), "output") {
+		t.Errorf("expected error to mention output projection, got: %s", diags.Error())
+	}
+}
+
 // shared_writes on an iterating-step aggregate outcome compiles cleanly when
 // an explicit output = { ... } projection is present that declares the referenced key.
 func TestCompileSharedWrites_AggregateIterating_WithProjection(t *testing.T) {
