@@ -254,7 +254,9 @@ func renderDOT(graph *workflow.FSMGraph) string {
 	b.WriteString("\n")
 
 	for _, name := range graph.StepOrder() {
-		b.WriteString(fmt.Sprintf("  %q [shape=box];\n", name))
+		st := graph.Steps[name]
+		attrs := dotStepAttrs(name, st)
+		b.WriteString(fmt.Sprintf("  %q [%s];\n", name, attrs))
 	}
 	for _, name := range sortedSwitchNames(graph) {
 		b.WriteString(fmt.Sprintf("  %q [shape=diamond];\n", name))
@@ -296,6 +298,41 @@ func renderDOT(graph *workflow.FSMGraph) string {
 	}
 	b.WriteString("}\n")
 	return b.String()
+}
+
+// dotStepAttrs returns the Graphviz attribute string for a step node.
+// Plain adapter steps return "shape=box". Iterating or subworkflow-targeted
+// steps gain a label annotation indicating the iteration mode and/or
+// subworkflow delegation. Subworkflow steps also use shape=component.
+func dotStepAttrs(name string, st *workflow.StepNode) string {
+	shape := "box"
+	if st.SubworkflowRef != "" {
+		shape = "component"
+	}
+
+	var annotations []string
+	if st.ForEach != nil {
+		annotations = append(annotations, "[for_each]")
+	}
+	if st.Count != nil {
+		annotations = append(annotations, "[count]")
+	}
+	if st.Parallel != nil {
+		annotations = append(annotations, "[parallel]")
+	}
+	if st.SubworkflowRef != "" {
+		annotations = append(annotations, fmt.Sprintf("[→ %s]", st.SubworkflowRef))
+	}
+
+	if len(annotations) == 0 {
+		return fmt.Sprintf("shape=%s", shape)
+	}
+
+	parts := make([]string, 0, 1+len(annotations))
+	parts = append(parts, name)
+	parts = append(parts, annotations...)
+	label := strings.Join(parts, "\n")
+	return fmt.Sprintf("shape=%s, label=%q", shape, label)
 }
 
 func parseCompileForCli(ctx context.Context, workflowPath string, subworkflowRoots []string) (*workflow.Spec, *workflow.FSMGraph, error) {

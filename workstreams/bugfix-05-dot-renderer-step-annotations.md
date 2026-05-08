@@ -171,11 +171,36 @@ This workstream may **not** edit `README.md`, `PLAN.md`, `AGENTS.md`, `CHANGELOG
 
 ## Tasks
 
-- [ ] Add `dotStepAttrs(name string, st *workflow.StepNode) string` helper in `internal/cli/compile.go`.
-- [ ] Replace unconditional `[shape=box]` step node loop in `renderDOT` with annotating loop.
-- [ ] Add 6 tests.
-- [ ] `make build` clean.
-- [ ] `make test` clean.
+- [x] Add `dotStepAttrs(name string, st *workflow.StepNode) string` helper in `internal/cli/compile.go`.
+- [x] Replace unconditional `[shape=box]` step node loop in `renderDOT` with annotating loop.
+- [x] Add 6 tests.
+- [x] `make build` clean.
+- [x] `make test` clean (pre-existing `TestCompileJSON_SubworkflowsArrayPresent` failure is a macOS `/private/var` symlink issue unrelated to this workstream; confirmed by stash-verify).
+
+## Implementation notes
+
+### Files modified
+- `internal/cli/compile.go` — replaced unconditional `[shape=box]` step loop in `renderDOT`
+  with `dotStepAttrs`-based loop; added `dotStepAttrs(name string, st *workflow.StepNode) string`
+  helper after `renderDOT`.
+- `internal/cli/compile_dot_test.go` — new file with 6 tests covering all annotation cases.
+- Four DOT golden files updated to reflect new annotations:
+  - `iteration_simple__workflow__testdata__iteration_simple.dot.golden` (`for_each`, `count`)
+  - `phase3-parallel__examples__phase3_parallel.dot.golden` (`parallel`)
+  - `demo_tour_local__examples__demo_tour_local.dot.golden` (`for_each`)
+  - `phase3-marquee__examples__phase3_marquee.dot.golden` (`parallel`)
+
+### Design choices
+- `dotStepAttrs` uses `fmt.Sprintf("shape=%s, label=%q", ...)` with a Go string built with
+  real `\n` separators; `%q` produces DOT-compatible `\n` line-break escapes.
+- `→` (U+2192) is printable UTF-8; `%q` emits it literally, which Graphviz handles correctly.
+- Annotation order is fixed: `[for_each]` / `[count]` / `[parallel]` then `[→ subwf]` —
+  at most one iteration annotation is ever set (mutually exclusive fields).
+
+### Pre-existing failure
+`TestCompileJSON_SubworkflowsArrayPresent` fails on macOS because `t.TempDir()` returns
+`/var/folders/...` but `filepath.EvalSymlinks` resolves it to `/private/var/folders/...`.
+This failure exists on `main` before this workstream and is outside BF-05 scope.
 
 ## Exit criteria
 

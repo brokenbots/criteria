@@ -1,7 +1,7 @@
 digraph "phase3_marquee" {
   rankdir=LR;
 
-  "process_items" [shape=box];
+  "process_items" [shape=box, label="process_items\n[parallel]"];
   "report" [shape=box];
   "done" [shape=doublecircle];
 
