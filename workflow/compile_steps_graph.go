@@ -345,31 +345,34 @@ func nodeTargets(name string, g *FSMGraph) []string {
 // before it runs so forward-references resolve correctly.
 func warnCrossStepFieldRefs(g *FSMGraph, schemas map[string]AdapterInfo) hcl.Diagnostics {
 	var diags hcl.Diagnostics
-
-	type namedExpr struct {
-		context string
-		expr    hcl.Expression
+	for _, ne := range collectCrossStepExprs(g) {
+		diags = append(diags, checkStepsFieldTraversals(ne.context, ne.expr, g, schemas)...)
 	}
-	var exprs []namedExpr
+	return diags
+}
 
+type namedExpr struct {
+	context string
+	expr    hcl.Expression
+}
+
+// collectCrossStepExprs gathers every expression site that may contain
+// steps.<name>.<field> traversals, in deterministic declaration order.
+// Switch condition match expressions are excluded — they are validated
+// inline by validateSwitchExprRefs and would produce duplicate warnings.
+func collectCrossStepExprs(g *FSMGraph) []namedExpr {
+	var exprs []namedExpr
 	for _, name := range g.stepOrder {
 		step := g.Steps[name]
 		for k, expr := range step.InputExprs {
-			exprs = append(exprs, namedExpr{
-				context: fmt.Sprintf("step %q input %q", step.Name, k),
-				expr:    expr,
-			})
+			exprs = append(exprs, namedExpr{fmt.Sprintf("step %q input %q", step.Name, k), expr})
 		}
 		for outName, co := range step.Outcomes {
 			if co.OutputExpr != nil {
-				exprs = append(exprs, namedExpr{
-					context: fmt.Sprintf("step %q outcome %q output", step.Name, outName),
-					expr:    co.OutputExpr,
-				})
+				exprs = append(exprs, namedExpr{fmt.Sprintf("step %q outcome %q output", step.Name, outName), co.OutputExpr})
 			}
 		}
 	}
-
 	swNames := make([]string, 0, len(g.Switches))
 	for swName := range g.Switches {
 		swNames = append(swNames, swName)
@@ -377,28 +380,16 @@ func warnCrossStepFieldRefs(g *FSMGraph, schemas map[string]AdapterInfo) hcl.Dia
 	sort.Strings(swNames)
 	for _, swName := range swNames {
 		sw := g.Switches[swName]
-		// Switch condition match expressions are checked inline by validateSwitchExprRefs;
-		// only check the default output expression and per-arm output expressions here.
 		if sw.DefaultOutput != nil {
-			exprs = append(exprs, namedExpr{
-				context: fmt.Sprintf("switch %q default output", swName),
-				expr:    sw.DefaultOutput,
-			})
+			exprs = append(exprs, namedExpr{fmt.Sprintf("switch %q default output", swName), sw.DefaultOutput})
 		}
 		for i, cond := range sw.Conditions {
 			if cond.OutputExpr != nil {
-				exprs = append(exprs, namedExpr{
-					context: fmt.Sprintf("switch %q condition %d output", swName, i),
-					expr:    cond.OutputExpr,
-				})
+				exprs = append(exprs, namedExpr{fmt.Sprintf("switch %q condition %d output", swName, i), cond.OutputExpr})
 			}
 		}
 	}
-
-	for _, ne := range exprs {
-		diags = append(diags, checkStepsFieldTraversals(ne.context, ne.expr, g, schemas)...)
-	}
-	return diags
+	return exprs
 }
 
 // checkStepsFieldTraversals inspects expr for steps.<name>.<field> traversals
