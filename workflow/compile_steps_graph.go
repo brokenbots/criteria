@@ -107,6 +107,42 @@ func validateOutcomeOutputExpr(stepName, outcomeName string, attr *hcl.Attribute
 	return nil
 }
 
+// validateOutputExprStepOutputRefs checks that every step.output.<field>
+// traversal in expr references a field that exists in adapterOutputSchema.
+// When schema is empty (nil or zero-length), no check is performed — the
+// adapter has no declared output contract and all field references are valid.
+// Traversals that do not match the step.output.<field> shape are ignored.
+func validateOutputExprStepOutputRefs(stepName, outcomeName string, expr hcl.Expression, schema map[string]ConfigField) hcl.Diagnostics {
+	if len(schema) == 0 {
+		return nil
+	}
+	var diags hcl.Diagnostics
+	for _, traversal := range expr.Variables() {
+		// Require at least step.output.<field> — three segments minimum.
+		if len(traversal) < 3 {
+			continue
+		}
+		root, rootOK := traversal[0].(hcl.TraverseRoot)
+		mid, midOK := traversal[1].(hcl.TraverseAttr)
+		field, fieldOK := traversal[2].(hcl.TraverseAttr)
+		if !rootOK || !midOK || !fieldOK {
+			continue
+		}
+		if root.Name != "step" || mid.Name != "output" {
+			continue
+		}
+		if _, known := schema[field.Name]; !known {
+			r := field.SrcRange
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  fmt.Sprintf("step %q outcome %q: output field %q is not declared in the adapter's output schema", stepName, outcomeName, field.Name),
+				Subject:  &r,
+			})
+		}
+	}
+	return diags
+}
+
 // staticObjectExprKeys extracts the string keys of a literal object expression
 // at compile time. It returns a non-nil map only when the expression is an
 // hclsyntax.ObjectConsExpr with at least one literal string key; computed keys
@@ -148,6 +184,9 @@ func compileOutcomeRemain(stepName, outcomeName string, remain hcl.Body, g *FSMG
 	if attr, ok := content.Attributes["output"]; ok {
 		compiled.OutputExpr = attr.Expr
 		diags = append(diags, validateOutcomeOutputExpr(stepName, outcomeName, attr, g, opts)...)
+		if !isAggregateIter {
+			diags = append(diags, validateOutputExprStepOutputRefs(stepName, outcomeName, attr.Expr, adapterOutputSchema)...)
+		}
 		knownOutputKeys = staticObjectExprKeys(attr.Expr)
 	}
 

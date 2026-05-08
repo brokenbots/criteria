@@ -259,3 +259,22 @@ Added `TestCompileOutcome_StepOutputRef_AggregateIter_Permissive` to `workflow/c
 **Validation:**
 - `go test ./workflow/ -run TestCompileOutcome` — 13 tests PASS.
 - `make test` — full suite PASS (race detector enabled).
+
+### Review 2026-05-07-02 — approved
+
+#### Summary
+Approved. The executor closed the prior blocker by adding an aggregate-outcome regression test that directly exercises the `!isAggregateIter` guard, and the compiler change now meets the workstream intent, exit criteria, and test-intent bar. I found no remaining security, architecture, or quality issues in scope.
+
+#### Plan Adherence
+- `validateOutputExprStepOutputRefs` is present in `workflow/compile_steps_graph.go` and matches the requested `expr.Variables()` traversal pattern for `step.output.<field>` refs.
+- `compileOutcomeRemain` calls the validator only for non-aggregate outcomes via `!isAggregateIter`, matching the Step 2 requirement.
+- `workflow/compile_outcomes_test.go` now covers all required behavior: known-field success, unknown-field failure, nil-schema permissiveness, and aggregate-outcome permissiveness for the guard path.
+- Existing `TestCompileOutcome_OutputExprRuntimeRef` remains intact, so the cross-step `steps.*` runtime namespace stays unaffected as required.
+
+#### Test Intent Assessment
+The test suite now demonstrates behavioral intent instead of only pass/fail mechanics: the unknown-field test proves compile-time rejection when a schema exists, the no-schema test proves permissive fallback, and the aggregate-outcome test proves the validator is intentionally skipped when no single step output exists at runtime. A plausible regression that removes the guard or weakens the field check would now fail this suite.
+
+#### Validation Performed
+- Reviewed the branch diff for `workflow/compile_outcomes_test.go` and the live working-tree diff for `workflow/compile_steps_graph.go`.
+- Ran `go test ./workflow -run 'TestCompileOutcome_(OutputExprRuntimeRef|StepOutputRef_)'` — passed.
+- Ran `make test` — passed.
