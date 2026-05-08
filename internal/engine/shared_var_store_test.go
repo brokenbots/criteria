@@ -236,6 +236,12 @@ func TestCoerceStringToCty_ValidNumbers(t *testing.T) {
 		{"1e5", 1e5},
 		{"-7", -7},
 		{"0.001", 0.001},
+		// Shell commands append a trailing newline; whitespace must be trimmed.
+		{"1\n", 1},
+		{" 42\n", 42},
+		{"3.14\n", 3.14},
+		{" 7", 7},
+		{"7 ", 7},
 	}
 	for _, tc := range cases {
 		v, err := coerceStringToCty(tc.input, cty.Number)
@@ -246,10 +252,10 @@ func TestCoerceStringToCty_ValidNumbers(t *testing.T) {
 }
 
 func TestCoerceStringToCty_MalformedNumbers(t *testing.T) {
-	// These inputs must be rejected — they have trailing non-numeric content
-	// or are otherwise invalid. The previous fmt.Sscanf implementation
+	// These inputs must be rejected — they have non-numeric content that is
+	// not just surrounding whitespace. The previous fmt.Sscanf implementation
 	// silently accepted them (e.g. "7abc" → 7, "1e2x" → 100).
-	malformed := []string{"7abc", "1e2x", "abc", " 7", "7 ", "7.0.0", "--7", ""}
+	malformed := []string{"7abc", "1e2x", "abc", "7.0.0", "--7", ""}
 	for _, bad := range malformed {
 		_, err := coerceStringToCty(bad, cty.Number)
 		require.Error(t, err, "expected error for malformed number input %q", bad)
@@ -257,15 +263,15 @@ func TestCoerceStringToCty_MalformedNumbers(t *testing.T) {
 }
 
 func TestCoerceStringToCty_Bool(t *testing.T) {
-	for _, s := range []string{"true", "1"} {
+	for _, s := range []string{"true", "1", "true\n", " 1\n"} {
 		v, err := coerceStringToCty(s, cty.Bool)
-		require.NoError(t, err)
-		assert.True(t, v.True())
+		require.NoError(t, err, "input %q", s)
+		assert.True(t, v.True(), "input %q", s)
 	}
-	for _, s := range []string{"false", "0"} {
+	for _, s := range []string{"false", "0", "false\n", " 0\n"} {
 		v, err := coerceStringToCty(s, cty.Bool)
-		require.NoError(t, err)
-		assert.False(t, v.True())
+		require.NoError(t, err, "input %q", s)
+		assert.False(t, v.True(), "input %q", s)
 	}
 	_, err := coerceStringToCty("yes", cty.Bool)
 	require.Error(t, err)

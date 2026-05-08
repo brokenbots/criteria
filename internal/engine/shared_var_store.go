@@ -8,6 +8,7 @@ package engine
 import (
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/zclconf/go-cty/cty"
@@ -141,13 +142,13 @@ func coerceStringToCty(s string, t cty.Type) (cty.Value, error) {
 	case cty.String:
 		return cty.StringVal(s), nil
 	case cty.Number:
-		f, err := strconv.ParseFloat(s, 64)
+		f, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
 		if err != nil {
 			return cty.NilVal, fmt.Errorf("cannot coerce %q to type number: %w", s, err)
 		}
 		return cty.NumberFloatVal(f), nil
 	case cty.Bool:
-		switch s {
+		switch strings.TrimSpace(s) {
 		case "true", "1":
 			return cty.BoolVal(true), nil
 		case "false", "0":
