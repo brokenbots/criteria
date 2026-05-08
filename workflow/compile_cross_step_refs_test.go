@@ -51,6 +51,32 @@ state "done" { terminal = true }
 `
 }
 
+// crossStepSwitchCondOutputSrc returns a workflow with a switch condition arm
+// that carries an output projection referencing steps.build.<field>.
+func crossStepSwitchCondOutputSrc(field string) string {
+	return `
+workflow "t" {
+  version       = "0.1"
+  initial_state = "build"
+  target_state  = "done"
+}
+adapter "noop" "default" {}
+step "build" {
+  target = adapter.noop.default
+  outcome "success" { next = "check" }
+}
+switch "check" {
+  condition {
+    match  = true
+    next   = state.done
+    output = { x = steps.build.` + field + ` }
+  }
+  default { next = state.done }
+}
+state "done" { terminal = true }
+`
+}
+
 // crossStepInputSrc returns a minimal workflow with:
 //   - step "build" (adapter noop.default)
 //   - step "run" whose input references steps.build.<field>
@@ -232,5 +258,69 @@ func TestWarnCrossStepField_OutcomeOutputCrossStepUnknown(t *testing.T) {
 	}
 	if n := countWarnings(diags, "ghost"); n != 1 {
 		t.Errorf("expected exactly 1 warning mentioning %q, got %d; diags: %v", "ghost", n, diags)
+	}
+}
+
+// TestWarnCrossStepField_SwitchCondOutputKnownField verifies that a switch
+// condition arm output projection referencing a known field produces no
+// diagnostic and returns a valid graph.
+func TestWarnCrossStepField_SwitchCondOutputKnownField(t *testing.T) {
+	g, diags := compileWithSchemas(t, crossStepSwitchCondOutputSrc("stdout"), outputSchemaFor("stdout"))
+	if diags.HasErrors() {
+		t.Fatalf("unexpected compile error: %s", diags.Error())
+	}
+	if g == nil {
+		t.Fatal("expected non-nil FSMGraph")
+	}
+	if n := countWarnings(diags, "stdout"); n != 0 {
+		t.Errorf("expected 0 warnings for known field, got %d", n)
+	}
+}
+
+// TestWarnCrossStepField_SwitchCondOutputUnknownField verifies that a switch
+// condition arm output projection referencing an undeclared field produces
+// exactly one DiagWarning and still returns a valid graph.
+func TestWarnCrossStepField_SwitchCondOutputUnknownField(t *testing.T) {
+	g, diags := compileWithSchemas(t, crossStepSwitchCondOutputSrc("typo"), outputSchemaFor("stdout"))
+	if diags.HasErrors() {
+		t.Fatalf("unexpected compile error: %s", diags.Error())
+	}
+	if g == nil {
+		t.Fatal("warning-only compile must return a non-nil FSMGraph")
+	}
+	if n := countWarnings(diags, "typo"); n != 1 {
+		t.Errorf("expected exactly 1 warning mentioning %q, got %d; diags: %v", "typo", n, diags)
+	}
+}
+
+// TestWarnCrossStepField_UnknownStepName verifies that a step input expression
+// referencing an unknown step name produces exactly one DiagWarning and still
+// returns a valid graph.
+func TestWarnCrossStepField_UnknownStepName(t *testing.T) {
+	src := `
+workflow "t" {
+  version       = "0.1"
+  initial_state = "run"
+  target_state  = "done"
+}
+adapter "noop" "default" {}
+step "run" {
+  target = adapter.noop.default
+  input {
+    command = steps.bulid.stdout
+  }
+  outcome "success" { next = "done" }
+}
+state "done" { terminal = true }
+`
+	g, diags := compileWithSchemas(t, src, outputSchemaFor("stdout"))
+	if diags.HasErrors() {
+		t.Fatalf("unexpected compile error: %s", diags.Error())
+	}
+	if g == nil {
+		t.Fatal("warning-only compile must return a non-nil FSMGraph")
+	}
+	if n := countWarnings(diags, "bulid"); n != 1 {
+		t.Errorf("expected exactly 1 warning mentioning %q, got %d; diags: %v", "bulid", n, diags)
 	}
 }

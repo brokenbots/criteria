@@ -416,6 +416,26 @@ The tests now validate behavioral intent instead of mere warning presence. In pa
 - `make test` — passed.
 - Ad-hoc compile probe for `match = steps.build.stddout == "ok"` with schema `{stdout}` — observed `WARN_COUNT=1` and `GRAPH_NON_NIL=true`.
 
+### Post-review remediation 2026-05-08 (PR #95 thread fixes)
+
+Three unresolved reviewer threads addressed:
+
+1. **PRRT_kwDOSOBb1s6AhWrm — Coverage gap: `SwitchCondition.OutputExpr` never checked** (`compile_steps_graph.go:378`)
+   - Added inner loop over `sw.Conditions` in `warnCrossStepFieldRefs` to enqueue each non-nil `cond.OutputExpr` alongside `sw.DefaultOutput`.
+   - Updated doc comment to list `SwitchCondition.OutputExpr` as a checked site.
+   - Added `TestWarnCrossStepField_SwitchCondOutputKnownField` and `TestWarnCrossStepField_SwitchCondOutputUnknownField` regression tests in `compile_cross_step_refs_test.go`.
+
+2. **PRRT_kwDOSOBb1s6AhWro — Non-deterministic diagnostic ordering** (`compile_steps_graph.go:353`)
+   - Changed step loop from `for _, step := range g.Steps` to `for _, name := range g.stepOrder` for deterministic step order.
+   - Changed switch loop from `for swName, sw := range g.Switches` to a sorted-key walk (added `sort.Strings` over collected switch names).
+
+3. **PRRT_kwDOSOBb1s6AhWrq — Comment overstates coverage** (`compile_steps_graph.go:409`)
+   - Replaced the misleading "already caught as an error by validateSwitchExprRefs" comment.
+   - Implemented option 1 from the reviewer: emit a `DiagWarning` for unknown step names at non-switch sites (step inputs, outcome outputs, switch condition/default outputs), so typos like `steps.bulid.stdout` surface at compile time rather than silently failing at runtime.
+   - Added `TestWarnCrossStepField_UnknownStepName` regression test.
+
+Validation: `make test` — all pass.
+
 ### Review 2026-05-07-03 — approved
 
 #### Summary

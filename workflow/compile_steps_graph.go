@@ -6,6 +6,7 @@ package workflow
 
 import (
 	"fmt"
+	"sort"
 
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
@@ -333,6 +334,7 @@ func nodeTargets(name string, g *FSMGraph) []string {
 //   - StepNode.InputExprs (step input block attribute expressions)
 //   - CompiledOutcome.OutputExpr (outcome output projections, cross-step form)
 //   - SwitchNode.DefaultOutput (switch default output expressions)
+//   - SwitchCondition.OutputExpr (per-arm output projections in switch conditions)
 //
 // Switch condition match expressions are intentionally excluded: they are
 // already checked inline by validateSwitchExprRefs during compileSwitches,
@@ -350,7 +352,8 @@ func warnCrossStepFieldRefs(g *FSMGraph, schemas map[string]AdapterInfo) hcl.Dia
 	}
 	var exprs []namedExpr
 
-	for _, step := range g.Steps {
+	for _, name := range g.stepOrder {
+		step := g.Steps[name]
 		for k, expr := range step.InputExprs {
 			exprs = append(exprs, namedExpr{
 				context: fmt.Sprintf("step %q input %q", step.Name, k),
@@ -366,14 +369,29 @@ func warnCrossStepFieldRefs(g *FSMGraph, schemas map[string]AdapterInfo) hcl.Dia
 			}
 		}
 	}
-	for swName, sw := range g.Switches {
+
+	swNames := make([]string, 0, len(g.Switches))
+	for swName := range g.Switches {
+		swNames = append(swNames, swName)
+	}
+	sort.Strings(swNames)
+	for _, swName := range swNames {
+		sw := g.Switches[swName]
 		// Switch condition match expressions are checked inline by validateSwitchExprRefs;
-		// only check the default output expression here to avoid duplicates.
+		// only check the default output expression and per-arm output expressions here.
 		if sw.DefaultOutput != nil {
 			exprs = append(exprs, namedExpr{
 				context: fmt.Sprintf("switch %q default output", swName),
 				expr:    sw.DefaultOutput,
 			})
+		}
+		for i, cond := range sw.Conditions {
+			if cond.OutputExpr != nil {
+				exprs = append(exprs, namedExpr{
+					context: fmt.Sprintf("switch %q condition %d output", swName, i),
+					expr:    cond.OutputExpr,
+				})
+			}
 		}
 	}
 
@@ -404,8 +422,18 @@ func checkStepsFieldTraversals(context string, expr hcl.Expression, g *FSMGraph,
 
 		step, isStep := g.Steps[nameAttr.Name]
 		if !isStep {
-			// Unknown step name — already caught as an error by validateSwitchExprRefs
-			// for switch conditions. Skip here to avoid duplicate diagnostics.
+			// Unknown step name at this site — no other pass validates step
+			// input, outcome output, or switch output expressions at compile
+			// time, so emit a warning here for early feedback.
+			r := nameAttr.SrcRange
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagWarning,
+				Summary: fmt.Sprintf(
+					"%s: references unknown step %q",
+					context, nameAttr.Name,
+				),
+				Subject: &r,
+			})
 			continue
 		}
 
