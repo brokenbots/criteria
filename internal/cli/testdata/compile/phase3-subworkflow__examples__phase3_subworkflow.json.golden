@@ -44,6 +44,73 @@
   ],
   "outputs": [],
   "switches": [],
+  "subworkflows": [
+    {
+      "name": "inner_task",
+      "source_path": "<repo>/examples/phase3-subworkflow/subworkflows/inner",
+      "body": {
+        "name": "inner_task",
+        "initial_state": "execute",
+        "target_state": "complete",
+        "policy": {
+          "MaxTotalSteps": 100,
+          "MaxStepRetries": 0,
+          "MaxVisitsWarnThreshold": 200
+        },
+        "adapters": [
+          {
+            "type": "shell",
+            "name": "default",
+            "on_crash": "fail",
+            "config_keys": null
+          }
+        ],
+        "steps": [
+          {
+            "name": "execute",
+            "adapter": "shell.default",
+            "input_keys": [
+              "command"
+            ],
+            "allow_tools": null,
+            "outcomes": [
+              {
+                "name": "failure",
+                "next": "complete"
+              },
+              {
+                "name": "success",
+                "next": "complete"
+              }
+            ]
+          }
+        ],
+        "states": [
+          {
+            "name": "complete",
+            "terminal": true,
+            "success": true
+          }
+        ],
+        "outputs": [
+          {
+            "name": "result",
+            "type": "string"
+          }
+        ],
+        "switches": [],
+        "step_order": [
+          "execute"
+        ],
+        "plugins_required": [
+          "shell"
+        ],
+        "metadata": {
+          "schema_version": 1
+        }
+      }
+    }
+  ],
   "step_order": [
     "setup"
   ],
