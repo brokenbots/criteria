@@ -68,18 +68,19 @@ func compileWorkflowOutput(ctx context.Context, workflowPath, format string, sub
 }
 
 type compileJSON struct {
-	Name         string            `json:"name"`
-	InitialState string            `json:"initial_state"`
-	TargetState  string            `json:"target_state"`
-	Policy       workflow.Policy   `json:"policy"`
-	Adapters     []compileAdapter  `json:"adapters"`
-	Steps        []compileStep     `json:"steps"`
-	States       []compileState    `json:"states"`
-	Outputs      []compileOutput   `json:"outputs"`
-	Switches     []compileSwitch   `json:"switches"`
-	StepOrder    []string          `json:"step_order"`
-	Plugins      []string          `json:"plugins_required"`
-	Metadata     compileOutputMeta `json:"metadata"`
+	Name         string               `json:"name"`
+	InitialState string               `json:"initial_state"`
+	TargetState  string               `json:"target_state"`
+	Policy       workflow.Policy      `json:"policy"`
+	Adapters     []compileAdapter     `json:"adapters"`
+	Steps        []compileStep        `json:"steps"`
+	States       []compileState       `json:"states"`
+	Outputs      []compileOutput      `json:"outputs"`
+	Switches     []compileSwitch      `json:"switches"`
+	Subworkflows []compileSubworkflow `json:"subworkflows,omitempty"`
+	StepOrder    []string             `json:"step_order"`
+	Plugins      []string             `json:"plugins_required"`
+	Metadata     compileOutputMeta    `json:"metadata"`
 }
 
 type compileOutputMeta struct {
@@ -94,12 +95,19 @@ type compileAdapter struct {
 }
 
 type compileStep struct {
-	Name       string           `json:"name"`
-	Adapter    string           `json:"adapter,omitempty"`
-	Timeout    string           `json:"timeout,omitempty"`
-	InputKeys  []string         `json:"input_keys"`
-	AllowTools []string         `json:"allow_tools"`
-	Outcomes   []compileOutcome `json:"outcomes"`
+	Name        string           `json:"name"`
+	Adapter     string           `json:"adapter,omitempty"`
+	Subworkflow string           `json:"subworkflow,omitempty"`
+	Timeout     string           `json:"timeout,omitempty"`
+	InputKeys   []string         `json:"input_keys"`
+	AllowTools  []string         `json:"allow_tools"`
+	Outcomes    []compileOutcome `json:"outcomes"`
+}
+
+type compileSubworkflow struct {
+	Name       string      `json:"name"`
+	SourcePath string      `json:"source_path"`
+	Body       compileJSON `json:"body"`
 }
 
 type compileOutcome struct {
@@ -154,13 +162,21 @@ func buildCompileJSON(graph *workflow.FSMGraph) compileJSON { //nolint:funlen //
 		if st.Timeout > 0 {
 			timeout = st.Timeout.String()
 		}
+		inputKeySet := make(map[string]struct{}, len(st.Input)+len(st.InputExprs))
+		for k := range st.Input {
+			inputKeySet[k] = struct{}{}
+		}
+		for k := range st.InputExprs {
+			inputKeySet[k] = struct{}{}
+		}
 		steps = append(steps, compileStep{
-			Name:       st.Name,
-			Adapter:    st.AdapterRef,
-			Timeout:    timeout,
-			InputKeys:  sortedMapKeys(st.Input),
-			AllowTools: append([]string(nil), st.AllowTools...),
-			Outcomes:   outcomes,
+			Name:        st.Name,
+			Adapter:     st.AdapterRef,
+			Subworkflow: st.SubworkflowRef,
+			Timeout:     timeout,
+			InputKeys:   sortedMapKeys(inputKeySet),
+			AllowTools:  append([]string(nil), st.AllowTools...),
+			Outcomes:    outcomes,
 		})
 	}
 
@@ -181,6 +197,36 @@ func buildCompileJSON(graph *workflow.FSMGraph) compileJSON { //nolint:funlen //
 		switches = append(switches, compileSwitch{Name: sw.Name, Conditions: arms, DefaultNext: sw.DefaultNext})
 	}
 
+	outputs := buildCompileOutputs(graph)
+
+	subworkflows := make([]compileSubworkflow, 0, len(graph.SubworkflowOrder))
+	for _, swName := range graph.SubworkflowOrder {
+		sw := graph.Subworkflows[swName]
+		subworkflows = append(subworkflows, compileSubworkflow{
+			Name:       sw.Name,
+			SourcePath: sw.SourcePath,
+			Body:       buildCompileJSON(sw.Body),
+		})
+	}
+
+	return compileJSON{
+		Name:         graph.Name,
+		InitialState: graph.InitialState,
+		TargetState:  graph.TargetState,
+		Policy:       graph.Policy,
+		Adapters:     adapters,
+		Steps:        steps,
+		States:       states,
+		Outputs:      outputs,
+		Switches:     switches,
+		Subworkflows: subworkflows,
+		StepOrder:    graph.StepOrder(),
+		Plugins:      requiredPlugins(graph),
+		Metadata:     compileOutputMeta{SchemaVersion: 1},
+	}
+}
+
+func buildCompileOutputs(graph *workflow.FSMGraph) []compileOutput {
 	outputs := make([]compileOutput, 0, len(graph.Outputs))
 	for _, name := range graph.OutputOrder {
 		on := graph.Outputs[name]
@@ -198,21 +244,7 @@ func buildCompileJSON(graph *workflow.FSMGraph) compileJSON { //nolint:funlen //
 			Description: on.Description,
 		})
 	}
-
-	return compileJSON{
-		Name:         graph.Name,
-		InitialState: graph.InitialState,
-		TargetState:  graph.TargetState,
-		Policy:       graph.Policy,
-		Adapters:     adapters,
-		Steps:        steps,
-		States:       states,
-		Outputs:      outputs,
-		Switches:     switches,
-		StepOrder:    graph.StepOrder(),
-		Plugins:      requiredPlugins(graph),
-		Metadata:     compileOutputMeta{SchemaVersion: 1},
-	}
+	return outputs
 }
 
 func renderDOT(graph *workflow.FSMGraph) string {

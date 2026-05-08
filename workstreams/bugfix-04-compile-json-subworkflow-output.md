@@ -188,13 +188,13 @@ This workstream may **not** edit `README.md`, `PLAN.md`, `AGENTS.md`, `CHANGELOG
 
 ## Tasks
 
-- [ ] Add `Subworkflow string` to `compileStep`; populate from `st.SubworkflowRef` in `buildCompileJSON`.
-- [ ] Replace `sortedMapKeys(st.Input)` with the union of `st.Input` + `st.InputExprs`.
-- [ ] Add `compileSubworkflow` type; add `Subworkflows` field to `compileJSON`.
-- [ ] Populate `Subworkflows` in `buildCompileJSON` by iterating `graph.SubworkflowOrder`.
-- [ ] Add 5 tests covering gaps 1–3 and regressions.
-- [ ] `make build` clean.
-- [ ] `make test` clean.
+- [x] Add `Subworkflow string` to `compileStep`; populate from `st.SubworkflowRef` in `buildCompileJSON`.
+- [x] Replace `sortedMapKeys(st.Input)` with the union of `st.Input` + `st.InputExprs`.
+- [x] Add `compileSubworkflow` type; add `Subworkflows` field to `compileJSON`.
+- [x] Populate `Subworkflows` in `buildCompileJSON` by iterating `graph.SubworkflowOrder`.
+- [x] Add 5 tests covering gaps 1–3 and regressions.
+- [x] `make build` clean.
+- [x] `make test` clean.
 
 ## Exit criteria
 
@@ -205,3 +205,91 @@ This workstream may **not** edit `README.md`, `PLAN.md`, `AGENTS.md`, `CHANGELOG
   - `"body"` contains the callee FSMGraph (steps, states, adapters, etc.).
 - Adapter-only workflow JSON is unchanged (no `"subworkflows"` field, `"input_keys"` correct).
 - `make test` clean.
+
+## Reviewer Notes
+
+### Implementation summary
+
+**`internal/cli/compile.go`**
+- Added `Subworkflow string \`json:"subworkflow,omitempty"\`` to `compileStep` (Gap 1).
+- Added `compileSubworkflow` struct with `Name`, `SourcePath`, `Body` fields.
+- Added `Subworkflows []compileSubworkflow \`json:"subworkflows,omitempty"\`` to `compileJSON` (Gap 3).
+- In `buildCompileJSON` step loop: replaced `sortedMapKeys(st.Input)` with a union over `st.Input` and `st.InputExprs` keys (Gap 2), and populated `Subworkflow: st.SubworkflowRef`.
+- Added subworkflow population loop iterating `graph.SubworkflowOrder` with recursive `buildCompileJSON(sw.Body)`.
+
+**`internal/cli/compile_test.go`**
+- Updated `assertGoldenFile` to replace the repo root with `<repo>` placeholder before comparing/writing golden files. This makes golden files portable across checkout paths (the `source_path` field is absolute on disk).
+
+**`internal/cli/compile_subworkflow_test.go`** (new file)
+- 5 tests: `TestCompileJSON_SubworkflowStepHasSubworkflowField`, `TestCompileJSON_SubworkflowStepInputKeys`, `TestCompileJSON_SubworkflowsArrayPresent`, `TestCompileJSON_NoSubworkflows_SubworkflowsFieldOmitted`, `TestCompileJSON_AdapterStepUnchanged`.
+
+**`internal/cli/testdata/compile/phase3-subworkflow__examples__phase3_subworkflow.json.golden`**
+- Updated to include the `subworkflows` array; `source_path` stored as `<repo>/...` via the new normalization in `assertGoldenFile`.
+
+### Opportunistic fix
+- Golden test path normalization (`assertGoldenFile`) prevents the golden test from failing when the repo is checked out at a different path. This was a pre-existing fragility exposed by adding `source_path` to the JSON output.
+
+### Validation
+- `make build`: clean
+- `make test` (full suite, `-race`): all pass
+- 5 new unit tests: all pass
+
+### Security
+- No new external inputs, file I/O, or deserialization paths introduced. `buildCompileJSON` is read-only over already-validated `FSMGraph` data. No concerns.
+
+### Review 2026-05-08 — changes-requested
+
+#### Summary
+The implementation closes the three JSON gaps in `buildCompileJSON`, and the repo is currently green, but I am not approving this pass yet. The changed CLI JSON contract for subworkflow-targeted steps still lacks an exact serialized contract test at the boundary, and the workstream file includes a stray control character in the executor notes.
+
+#### Plan Adherence
+- Tasks 1-4 are implemented in `internal/cli/compile.go` and match the workstream intent.
+- Task 5 is only partially satisfied: the new unit tests cover the happy-path fields via `map[string]any`, and the updated golden covers top-level `subworkflows`, but there is still no exact JSON contract fixture for a workflow whose emitted `steps[]` entry targets a subworkflow.
+- Tasks 6-7 are currently satisfied: `make build` and `make test` are clean in the current tree.
+
+#### Required Remediations
+- **blocker** — `internal/cli/compile_subworkflow_test.go:64-208`, `internal/cli/testdata/compile/*`: add an end-to-end CLI JSON contract test (golden fixture or equivalent exact serialized assertion) for a workflow with `target = subworkflow.<name>` and a bound `input { ... }` block. Rationale: the changed public JSON surface includes `steps[].subworkflow` and non-null `steps[].input_keys`, but the exact-output regression suite currently only pins the top-level `subworkflows` array. The new map-level tests would not catch contract regressions like an omitted/renamed serialized field, an unexpected `"adapter"` key, or a null `input_keys` value emitted at the boundary. **Acceptance:** a regression that drops `"subworkflow"`, emits `"adapter"` for the subworkflow-targeted step, or serializes `input_keys` incorrectly must fail an exact-output CLI test.
+- **nit** — `workstreams/bugfix-04-compile-json-subworkflow-output.md:229`: remove the stray ANSI/control byte introduced in the executor notes so the workstream remains plain Markdown. **Acceptance:** the file contains only normal Markdown text at that line with no escape/control character bytes.
+
+#### Test Intent Assessment
+`internal/cli/compile_subworkflow_test.go` does prove the implementation logic for the three gaps, and the updated phase3 golden proves the recursive `subworkflows` body shape for one real fixture. The weak spot is contract strength for subworkflow-targeted step serialization: those assertions currently deserialize into generic maps and inspect selected keys rather than pinning the exact CLI JSON payload for that case. The missing exact-output test is the main reason this stays at `changes-requested`.
+
+#### Validation Performed
+- `make build` — passed.
+- `make test` — passed (`go test -race ./...`, `cd sdk && go test -race ./...`, `cd workflow && go test -race ./...`).
+
+### Remediation 2026-05-08
+
+- **blocker resolved**: Added `TestCompileJSON_SubworkflowStepExactContract` to `compile_subworkflow_test.go`. Uses `[]json.RawMessage` to extract the step's raw JSON bytes (preserving struct field order), then compacts and compares against an exact expected string. Catches dropped `"subworkflow"`, unexpected `"adapter"`, null `input_keys`, or any renamed/reordered field.
+- **nit resolved**: Replaced `✅` emoji characters in the executor validation notes with plain ASCII text.
+
+### Fix 2026-05-08 — gocognit lint failure
+
+`make lint-go` rejected `buildCompileJSON` for cognitive complexity 22 > 20 (`gocognit`).
+
+**Fix**: Extracted the outputs loop (with doubly-nested `if` checking `DeclaredType != cty.NilType` and `TypeToString` error) into a new `buildCompileOutputs(*workflow.FSMGraph) []compileOutput` helper. That section contributed approximately 6 complexity points (for +1, if +2, if err==nil +3) to the main function, reducing it from 22 to ~16.
+
+- `internal/cli/compile.go`: outputs loop replaced with `buildCompileOutputs(graph)` call; helper added just before `renderDOT`.
+- `nolint:funlen` comment on `buildCompileJSON` retained — function is still above the line-count threshold with the recursive subworkflow body.
+- `make lint-go`: clean. `make test`: all pass.
+
+### Review 2026-05-08-02 — approved
+
+#### Summary
+The prior blocker is resolved. The implementation now meets the workstream scope and exit criteria, including exact contract coverage for subworkflow-targeted step JSON, and the current tree is clean on lint, build, and test.
+
+#### Plan Adherence
+- Task 1 is implemented: `compileStep` now emits `subworkflow` for subworkflow-targeted steps.
+- Task 2 is implemented: `input_keys` is derived from the union of `st.Input` and `st.InputExprs`.
+- Task 3 is implemented: `compileJSON` now exposes `subworkflows`, including recursive `body` emission.
+- Task 4 is implemented: subworkflows are emitted in `graph.SubworkflowOrder`.
+- Task 5 is now fully satisfied: the original five behavior tests remain, and `TestCompileJSON_SubworkflowStepExactContract` adds exact serialized CLI contract coverage for the changed `steps[]` surface.
+- Tasks 6-7 are satisfied: lint, build, and tests are clean.
+
+#### Test Intent Assessment
+The test suite now covers both behavior and contract strength at the CLI boundary. The map-based tests exercise the logical presence/absence rules for `subworkflow`, `adapter`, `input_keys`, and `subworkflows`, while the new exact-contract test ensures a regression in serialized field presence, omission, or nullability for a subworkflow-targeted step fails deterministically. The existing golden fixture continues to pin recursive `subworkflows.body` output for a real workflow fixture.
+
+#### Validation Performed
+- `make lint-go` — passed.
+- `make build` — passed.
+- `make test` — passed (`go test -race ./...`, `cd sdk && go test -race ./...`, `cd workflow && go test -race ./...`).

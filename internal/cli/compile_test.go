@@ -101,11 +101,20 @@ func sanitizeFixturePath(path string) string {
 
 func assertGoldenFile(t *testing.T, relativePath string, got []byte) {
 	t.Helper()
+	// Normalize machine-specific repo root paths to a portable placeholder so
+	// golden files check in cleanly across different checkout locations.
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("resolve caller for golden normalization")
+	}
+	repoRoot := filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
+	norm := bytes.ReplaceAll(got, []byte(repoRoot), []byte("<repo>"))
+
 	if *updateGolden {
 		if err := os.MkdirAll(filepath.Dir(relativePath), 0o755); err != nil {
 			t.Fatalf("mkdir golden dir: %v", err)
 		}
-		if err := os.WriteFile(relativePath, got, 0o600); err != nil {
+		if err := os.WriteFile(relativePath, norm, 0o600); err != nil {
 			t.Fatalf("write golden: %v", err)
 		}
 	}
@@ -114,8 +123,8 @@ func assertGoldenFile(t *testing.T, relativePath string, got []byte) {
 	if err != nil {
 		t.Fatalf("read golden %s: %v", relativePath, err)
 	}
-	if !bytes.Equal(want, got) {
-		t.Fatalf("golden mismatch for %s\nwant:\n%s\n\ngot:\n%s", relativePath, string(want), string(got))
+	if !bytes.Equal(want, norm) {
+		t.Fatalf("golden mismatch for %s\nwant:\n%s\n\ngot:\n%s", relativePath, string(want), string(norm))
 	}
 }
 
