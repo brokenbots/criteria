@@ -1,6 +1,6 @@
 # Criteria
 
-**Status: v0.3.0** · Clean break from v0.2.0 with HCL/runtime rework. See "[Migrating from v0.2.0 to v0.3.0](#migrating-from-v0.2.0-to-v0.3.0)" below.
+**Status: This project is under heavy development use with caution, run in a container for safety as adapter should be considered trusted code
 
 Criteria is a standalone workflow execution engine. Write a workflow in HCL, run it with `criteria apply` — no external service required. Each workflow compiles to a finite-state machine; execution drives through swappable adapter plugins and streams structured ND-JSON events to stdout or a file.
 
