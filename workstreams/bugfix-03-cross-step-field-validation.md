@@ -415,3 +415,23 @@ The tests now validate behavioral intent instead of mere warning presence. In pa
 - `make lint-go` — passed.
 - `make test` — passed.
 - Ad-hoc compile probe for `match = steps.build.stddout == "ok"` with schema `{stdout}` — observed `WARN_COUNT=1` and `GRAPH_NON_NIL=true`.
+
+### Review 2026-05-07-03 — approved
+
+#### Summary
+The latest executor changes meet the workstream scope and exit criteria. Cross-step field validation now warns exactly once for bad switch-condition references, continues to cover step-input and outcome-output expressions in the post-pass, remains permissive when schemas are absent, and preserves successful compilation for warning-only cases. No security or architecture issues were found in this review pass.
+
+#### Plan Adherence
+- **Step 1 / Step 2:** Implemented as required. `warnCrossStepFieldRefs` is wired from `CompileWithOpts` after `warnBackEdges`, and its post-pass coverage now correctly focuses on step inputs, outcome output projections, and switch default output without re-walking switch `match` expressions.
+- **Step 3:** Implemented correctly. `validateSwitchExprRefs` now threads `schemas` through the switch compilation path and validates the third `steps.<name>.<field>` segment against the referenced step's `OutputSchema` when available.
+- **Step 4:** Implemented and now sufficiently asserted. The seven requested tests are present, and the warning-only cases assert both exact warning cardinality and a non-nil `*FSMGraph`, which directly proves the intended behavior.
+- **Exit criteria:** Satisfied. Unknown cross-step fields warn at compile time when schema-backed, known fields remain clean, nil-schema compiles remain permissive, and warning-only compiles succeed.
+
+#### Test Intent Assessment
+The tests now validate behavioral intent rather than mere execution success. The switch unknown-field case is sensitive to the duplicate-warning regression that previously existed, and the warning-only cases assert returned graph presence so a broken "warn then fail compilation" implementation would not pass. For this internal compiler change, the focused workflow compilation tests are the appropriate level of coverage.
+
+#### Validation Performed
+- `git --no-pager diff --name-status origin/main...HEAD` — reviewed changed scope; no unexpected source or baseline files were modified outside the workstream.
+- `git --no-pager diff --check origin/main...HEAD` — passed.
+- `go test ./workflow -run 'TestWarnCrossStepField|TestCompileOutcome_OutputExprRuntimeRef|TestSwitch_FirstMatchWins'` — passed.
+- `make lint-go && make test` — passed.
