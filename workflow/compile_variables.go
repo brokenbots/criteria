@@ -9,6 +9,7 @@ import (
 
 	"github.com/hashicorp/hcl/v2"
 	"github.com/zclconf/go-cty/cty"
+	"github.com/zclconf/go-cty/cty/convert"
 )
 
 // compileVariables compiles all variable blocks from spec into g.Variables.
@@ -112,14 +113,19 @@ func TypeToString(t cty.Type) (string, error) {
 	return "", fmt.Errorf("unsupported type %s; supported: string, number, bool, list(string), list(number), list(bool), map(string)", t.FriendlyName())
 }
 
-// convertCtyValue verifies that v matches typ exactly. No implicit coercions
-// are performed: a number default declared on a string variable is an error,
-// matching the W04 rule that "default must match declared type".
+// convertCtyValue coerces v to typ. Exact type matches are accepted immediately.
+// When the types differ, go-cty's convert package is used as a fallback so that
+// HCL tuple literals (the type produced by `[a, b]` expressions) are accepted
+// as default values for list-typed variables.
 func convertCtyValue(v cty.Value, typ cty.Type) (cty.Value, error) {
 	if v.Type().Equals(typ) {
 		return v, nil
 	}
-	return cty.NilVal, fmt.Errorf("default value is %s but variable is declared as %s", v.Type().FriendlyName(), typ.FriendlyName())
+	converted, err := convert.Convert(v, typ)
+	if err != nil {
+		return cty.NilVal, fmt.Errorf("default value is %s but variable is declared as %s", v.Type().FriendlyName(), typ.FriendlyName())
+	}
+	return converted, nil
 }
 
 // isListStringValue reports whether val is a list(string) or tuple-of-strings.

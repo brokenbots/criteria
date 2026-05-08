@@ -266,6 +266,55 @@ func TestTypeToString_RoundTrip(t *testing.T) {
 	}
 }
 
+// TestVariableCompile_ListDefaultTupleLiteral proves that a variable declared
+// as list(string) accepts a `["a", "b"]` literal default. HCL evaluates that
+// syntax to a cty.Tuple, so convertCtyValue must coerce it via convert.Convert
+// rather than rejecting it with a strict type-equality check.
+func TestVariableCompile_ListDefaultTupleLiteral(t *testing.T) {
+	src := `
+workflow "test" {
+  version       = "0.1"
+  initial_state = "s"
+  target_state  = "__done__"
+}
+
+adapter "noop" "default" {}
+
+variable "tags" {
+  type    = "list(string)"
+  default = ["foo", "bar"]
+}
+step "s" {
+  target = adapter.noop.default
+  outcome "success" { next = "__done__" }
+}
+state "__done__" { terminal = true }
+`
+	spec, diags := Parse("test.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags)
+	}
+	g, diags := Compile(spec, nil)
+	if diags.HasErrors() {
+		t.Fatalf("expected list(string) tuple literal default to compile: %s", diags)
+	}
+	v, ok := g.Variables["tags"]
+	if !ok {
+		t.Fatal("variable 'tags' not found in compiled graph")
+	}
+	if !v.Default.Type().Equals(cty.List(cty.String)) {
+		t.Errorf("expected default type list(string), got %s", v.Default.Type().FriendlyName())
+	}
+	var elems []string
+	for it := v.Default.ElementIterator(); it.Next(); {
+		_, elem := it.Element()
+		elems = append(elems, elem.AsString())
+	}
+	if len(elems) != 2 || elems[0] != "foo" || elems[1] != "bar" {
+		t.Errorf("unexpected default elements: %v", elems)
+	}
+}
+
 func TestTypeToString_UnsupportedType(t *testing.T) {
 	// Create an unsupported type (e.g., tuple).
 	unsupported := cty.Tuple([]cty.Type{cty.String, cty.Number})
