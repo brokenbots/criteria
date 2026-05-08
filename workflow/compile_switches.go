@@ -11,7 +11,7 @@ import (
 
 // compileSwitches compiles all switch blocks from spec into g.Switches.
 // Must be called after compileApprovals so that full clash checks work.
-func compileSwitches(g *FSMGraph, spec *Spec, opts CompileOpts) hcl.Diagnostics {
+func compileSwitches(g *FSMGraph, spec *Spec, schemas map[string]AdapterInfo, opts CompileOpts) hcl.Diagnostics {
 	var diags hcl.Diagnostics
 	for _, ss := range spec.Switches {
 		name := ss.Name
@@ -36,7 +36,7 @@ func compileSwitches(g *FSMGraph, spec *Spec, opts CompileOpts) hcl.Diagnostics 
 		}
 
 		for i, cs := range ss.Conditions {
-			cond, condDiags := compileSwitchConditionBlock(cs, i, name, spec.SourceBytes, g, opts)
+			cond, condDiags := compileSwitchConditionBlock(cs, i, name, spec.SourceBytes, g, schemas, opts)
 			diags = append(diags, condDiags...)
 			if cond != nil {
 				node.Conditions = append(node.Conditions, *cond)
@@ -107,7 +107,7 @@ func compileSwitchDefaultBlock(def *SwitchDefaultSpec, switchName string, g *FSM
 
 // compileSwitchConditionBlock compiles a single condition block within a switch.
 // Returns a SwitchCondition (or nil on critical error) and diagnostics.
-func compileSwitchConditionBlock(cs ConditionSpec, idx int, switchName string, sourceBytes []byte, g *FSMGraph, opts CompileOpts) (*SwitchCondition, hcl.Diagnostics) {
+func compileSwitchConditionBlock(cs ConditionSpec, idx int, switchName string, sourceBytes []byte, g *FSMGraph, schemas map[string]AdapterInfo, opts CompileOpts) (*SwitchCondition, hcl.Diagnostics) {
 	var diags hcl.Diagnostics
 	location := fmt.Sprintf("condition[%d]", idx)
 
@@ -143,7 +143,7 @@ func compileSwitchConditionBlock(cs ConditionSpec, idx int, switchName string, s
 	}
 
 	matchExpr := matchAttr.Expr
-	diags = append(diags, validateSwitchExprRefs(matchExpr, g, switchName, idx)...)
+	diags = append(diags, validateSwitchExprRefs(matchExpr, g, schemas, switchName, idx)...)
 	if _, foldable, fd := FoldExpr(matchExpr, graphVars(g), graphLocals(g), opts.WorkflowDir); foldable {
 		diags = append(diags, errorDiagsWithFallbackSubject(fd, matchExpr)...)
 	}
@@ -269,8 +269,10 @@ func resolveNextAttr(expr hcl.Expression, switchName, location string) (string, 
 }
 
 // validateSwitchExprRefs validates that variable and step traversals referenced
-// in a switch condition match expression are declared in the graph.
-func validateSwitchExprRefs(expr hcl.Expression, g *FSMGraph, switchName string, condIdx int) hcl.Diagnostics {
+// in a switch condition match expression are declared in the graph. When schemas
+// is non-nil and the referenced step has an OutputSchema, it also warns when the
+// field name is not declared in that schema.
+func validateSwitchExprRefs(expr hcl.Expression, g *FSMGraph, schemas map[string]AdapterInfo, switchName string, condIdx int) hcl.Diagnostics {
 	var diags hcl.Diagnostics
 	for _, traversal := range expr.Variables() {
 		if len(traversal) < 2 {
@@ -293,26 +295,58 @@ func validateSwitchExprRefs(expr hcl.Expression, g *FSMGraph, switchName string,
 				})
 			}
 		case "steps":
-			// steps.<name> may reference a step or a switch node (switches
-			// publish their output under steps.<switch_name>.*).
-			if attr.Name == switchName {
-				diags = append(diags, &hcl.Diagnostic{
-					Severity: hcl.DiagError,
-					Summary:  fmt.Sprintf("switch %q condition[%d]: self-reference steps.%s is always empty at match time; use a variable or a prior step instead", switchName, condIdx, switchName),
-				})
-				continue
-			}
-			_, isStep := g.Steps[attr.Name]
-			_, isSwitch := g.Switches[attr.Name]
-			if !isStep && !isSwitch {
-				diags = append(diags, &hcl.Diagnostic{
-					Severity: hcl.DiagError,
-					Summary:  fmt.Sprintf("switch %q condition[%d]: unknown step %q referenced in match expression", switchName, condIdx, attr.Name),
-				})
-			}
+			diags = append(diags, validateSwitchStepTraversal(traversal, attr.Name, g, schemas, switchName, condIdx)...)
 		}
 	}
 	return diags
+}
+
+// validateSwitchStepTraversal validates a steps.<name>[.<field>] traversal in a
+// switch condition. It checks for self-references, unknown step names, and — when
+// a schema is available — unknown output field names.
+func validateSwitchStepTraversal(traversal hcl.Traversal, stepName string, g *FSMGraph, schemas map[string]AdapterInfo, switchName string, condIdx int) hcl.Diagnostics {
+	if stepName == switchName {
+		return hcl.Diagnostics{&hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  fmt.Sprintf("switch %q condition[%d]: self-reference steps.%s is always empty at match time; use a variable or a prior step instead", switchName, condIdx, switchName),
+		}}
+	}
+	_, isStep := g.Steps[stepName]
+	_, isSwitch := g.Switches[stepName]
+	if !isStep && !isSwitch {
+		return hcl.Diagnostics{&hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  fmt.Sprintf("switch %q condition[%d]: unknown step %q referenced in match expression", switchName, condIdx, stepName),
+		}}
+	}
+	if !isStep || len(traversal) < 3 {
+		return nil
+	}
+	return validateSwitchStepFieldRef(traversal[2], stepName, g, schemas, switchName, condIdx)
+}
+
+// validateSwitchStepFieldRef checks whether the third traversal segment (the
+// field name) is declared in the step's OutputSchema. Returns nil when no schema
+// is available or the field is known.
+func validateSwitchStepFieldRef(seg hcl.Traverser, stepName string, g *FSMGraph, schemas map[string]AdapterInfo, switchName string, condIdx int) hcl.Diagnostics {
+	fieldAttr, fieldOK := seg.(hcl.TraverseAttr)
+	if !fieldOK {
+		return nil
+	}
+	stepNode := g.Steps[stepName]
+	info, hasSchema := adapterInfo(schemas, adapterTypeFromRef(stepNode.AdapterRef))
+	if !hasSchema || len(info.OutputSchema) == 0 {
+		return nil
+	}
+	if _, known := info.OutputSchema[fieldAttr.Name]; known {
+		return nil
+	}
+	r := fieldAttr.SrcRange
+	return hcl.Diagnostics{&hcl.Diagnostic{
+		Severity: hcl.DiagWarning,
+		Summary:  fmt.Sprintf("switch %q condition[%d]: field %q is not declared in the output schema of step %q", switchName, condIdx, fieldAttr.Name, stepName),
+		Subject:  &r,
+	}}
 }
 
 // extractExprSource extracts the source text of an expression from raw source bytes.

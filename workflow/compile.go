@@ -101,10 +101,11 @@ func CompileWithOpts(spec *Spec, schemas map[string]AdapterInfo, opts CompileOpt
 	diags = append(diags, compileSteps(g, spec, schemas, opts)...)
 	diags = append(diags, compileWaits(g, spec)...)
 	diags = append(diags, compileApprovals(g, spec)...)
-	diags = append(diags, compileSwitches(g, spec, opts)...)
+	diags = append(diags, compileSwitches(g, spec, schemas, opts)...)
 	// Warn after all nodes are compiled so branch/wait/approval targets are
 	// available for the back-edge walk (W07).
 	diags = append(diags, warnBackEdges(g)...)
+	diags = append(diags, warnCrossStepFieldRefs(g, schemas)...)
 	// Reserved-name checks only apply to user-authored top-level workflows.
 	// Sub-workflow bodies (LoadDepth > 0) are synthetic and intentionally use
 	// the "_continue" name as a terminal state.

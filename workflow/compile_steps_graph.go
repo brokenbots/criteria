@@ -6,6 +6,7 @@ package workflow
 
 import (
 	"fmt"
+	"sort"
 
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
@@ -322,6 +323,130 @@ func nodeTargets(name string, g *FSMGraph) []string {
 		return targets
 	}
 	return nil
+}
+
+// warnCrossStepFieldRefs walks every compiled expression that may contain
+// steps.<name>.<field> traversals and emits DiagWarning when <field> is absent
+// from the referenced step's declared OutputSchema. Only fires when a schema is
+// available; steps with no OutputSchema are skipped (permissive).
+//
+// Expression sites checked:
+//   - StepNode.InputExprs (step input block attribute expressions)
+//   - CompiledOutcome.OutputExpr (outcome output projections, cross-step form)
+//   - SwitchNode.DefaultOutput (switch default output expressions)
+//   - SwitchCondition.OutputExpr (per-arm output projections in switch conditions)
+//
+// Switch condition match expressions are intentionally excluded: they are
+// already checked inline by validateSwitchExprRefs during compileSwitches,
+// which runs after all steps are registered. Including them here would produce
+// duplicate warnings for the same traversal.
+//
+// This is a post-compilation pass: all steps must be registered in g.Steps
+// before it runs so forward-references resolve correctly.
+func warnCrossStepFieldRefs(g *FSMGraph, schemas map[string]AdapterInfo) hcl.Diagnostics {
+	var diags hcl.Diagnostics
+	for _, ne := range collectCrossStepExprs(g) {
+		diags = append(diags, checkStepsFieldTraversals(ne.context, ne.expr, g, schemas)...)
+	}
+	return diags
+}
+
+type namedExpr struct {
+	context string
+	expr    hcl.Expression
+}
+
+// collectCrossStepExprs gathers every expression site that may contain
+// steps.<name>.<field> traversals, in deterministic declaration order.
+// Switch condition match expressions are excluded — they are validated
+// inline by validateSwitchExprRefs and would produce duplicate warnings.
+func collectCrossStepExprs(g *FSMGraph) []namedExpr {
+	var exprs []namedExpr
+	for _, name := range g.stepOrder {
+		step := g.Steps[name]
+		for k, expr := range step.InputExprs {
+			exprs = append(exprs, namedExpr{fmt.Sprintf("step %q input %q", step.Name, k), expr})
+		}
+		for outName, co := range step.Outcomes {
+			if co.OutputExpr != nil {
+				exprs = append(exprs, namedExpr{fmt.Sprintf("step %q outcome %q output", step.Name, outName), co.OutputExpr})
+			}
+		}
+	}
+	swNames := make([]string, 0, len(g.Switches))
+	for swName := range g.Switches {
+		swNames = append(swNames, swName)
+	}
+	sort.Strings(swNames)
+	for _, swName := range swNames {
+		sw := g.Switches[swName]
+		if sw.DefaultOutput != nil {
+			exprs = append(exprs, namedExpr{fmt.Sprintf("switch %q default output", swName), sw.DefaultOutput})
+		}
+		for i, cond := range sw.Conditions {
+			if cond.OutputExpr != nil {
+				exprs = append(exprs, namedExpr{fmt.Sprintf("switch %q condition %d output", swName, i), cond.OutputExpr})
+			}
+		}
+	}
+	return exprs
+}
+
+// checkStepsFieldTraversals inspects expr for steps.<name>.<field> traversals
+// and emits warnings for fields absent from the step's OutputSchema.
+func checkStepsFieldTraversals(context string, expr hcl.Expression, g *FSMGraph, schemas map[string]AdapterInfo) hcl.Diagnostics {
+	var diags hcl.Diagnostics
+	for _, traversal := range expr.Variables() {
+		// Require at least: steps . <name> . <field>
+		if len(traversal) < 3 {
+			continue
+		}
+		root, rootOK := traversal[0].(hcl.TraverseRoot)
+		nameAttr, nameOK := traversal[1].(hcl.TraverseAttr)
+		fieldAttr, fieldOK := traversal[2].(hcl.TraverseAttr)
+		if !rootOK || !nameOK || !fieldOK {
+			continue
+		}
+		if root.Name != "steps" {
+			continue
+		}
+
+		step, isStep := g.Steps[nameAttr.Name]
+		if !isStep {
+			// Unknown step name at this site — no other pass validates step
+			// input, outcome output, or switch output expressions at compile
+			// time, so emit a warning here for early feedback.
+			r := nameAttr.SrcRange
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagWarning,
+				Summary: fmt.Sprintf(
+					"%s: references unknown step %q",
+					context, nameAttr.Name,
+				),
+				Subject: &r,
+			})
+			continue
+		}
+
+		// Look up the step's OutputSchema via its AdapterRef.
+		info, hasSchema := adapterInfo(schemas, adapterTypeFromRef(step.AdapterRef))
+		if !hasSchema || len(info.OutputSchema) == 0 {
+			continue // no declared contract; permissive
+		}
+
+		if _, known := info.OutputSchema[fieldAttr.Name]; !known {
+			r := fieldAttr.SrcRange
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagWarning,
+				Summary: fmt.Sprintf(
+					"%s: field %q is not declared in the output schema of step %q (adapter %q)",
+					context, fieldAttr.Name, nameAttr.Name, step.AdapterRef,
+				),
+				Subject: &r,
+			})
+		}
+	}
+	return diags
 }
 
 // stepHasBackEdge reports whether the named step can reach itself via outcome
