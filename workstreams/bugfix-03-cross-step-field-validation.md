@@ -314,14 +314,14 @@ This workstream may **not** edit `README.md`, `PLAN.md`, `AGENTS.md`, `CHANGELOG
 
 ## Tasks
 
-- [ ] Add `warnCrossStepFieldRefs` and `checkStepsFieldTraversals` to `workflow/compile_steps_graph.go`.
-- [ ] Add `warnCrossStepFieldRefs(g, schemas)` call in `CompileWithOpts` after `warnBackEdges`.
-- [ ] Add `schemas` parameter to `validateSwitchExprRefs`; add field-name check in `case "steps"`.
-- [ ] Update the single `validateSwitchExprRefs` call site in `compile_switches.go`.
-- [ ] Add `workflow/compile_cross_step_refs_test.go` with all 7 tests.
-- [ ] `go test ./workflow/ -run TestWarnCrossStepField` passes.
-- [ ] Confirm `TestCompileOutcome_OutputExprRuntimeRef` and `TestSwitch_FirstMatchWins` still pass.
-- [ ] `make test` clean.
+- [x] Add `warnCrossStepFieldRefs` and `checkStepsFieldTraversals` to `workflow/compile_steps_graph.go`.
+- [x] Add `warnCrossStepFieldRefs(g, schemas)` call in `CompileWithOpts` after `warnBackEdges`.
+- [x] Add `schemas` parameter to `validateSwitchExprRefs`; add field-name check in `case "steps"`.
+- [x] Update the single `validateSwitchExprRefs` call site in `compile_switches.go`.
+- [x] Add `workflow/compile_cross_step_refs_test.go` with all 7 tests.
+- [x] `go test ./workflow/ -run TestWarnCrossStepField` passes.
+- [x] Confirm `TestCompileOutcome_OutputExprRuntimeRef` and `TestSwitch_FirstMatchWins` still pass.
+- [x] `make test` clean.
 
 ## Exit criteria
 
@@ -332,3 +332,86 @@ This workstream may **not** edit `README.md`, `PLAN.md`, `AGENTS.md`, `CHANGELOG
 - All `steps.*` refs when `schemas` is nil produce no diagnostic.
 - Compile still succeeds (returns a valid `*FSMGraph`) for all warning-only cases.
 - `make test` clean.
+
+## Reviewer Notes
+
+**Implementation summary:**
+
+1. **`workflow/compile_steps_graph.go`** — Added `warnCrossStepFieldRefs(g, schemas)` (post-pass
+   collector) and `checkStepsFieldTraversals(context, expr, g, schemas)` (per-expression checker).
+   Both follow the `warnBackEdges` pattern exactly. Traversal shape `steps.<name>.<field>` is
+   matched; unknown step names are skipped (already an error elsewhere); steps with no
+   `OutputSchema` are permissive.
+
+2. **`workflow/compile.go`** — One-line addition: `diags = append(diags, warnCrossStepFieldRefs(g, schemas)...)`
+   immediately after the `warnBackEdges` call. Also threaded `schemas` into `compileSwitches`.
+
+3. **`workflow/compile_switches.go`** — `compileSwitches`, `compileSwitchConditionBlock`, and
+   `validateSwitchExprRefs` each gained a `schemas map[string]AdapterInfo` parameter. In
+   `validateSwitchExprRefs`, the `case "steps"` arm now checks the third traversal segment against
+   `OutputSchema` when a schema is available, consistent with the post-pass.
+
+4. **`workflow/compile_cross_step_refs_test.go`** — New file with all 7 specified tests.
+   Helper `outputSchemaFor` named to avoid conflict with the existing `noopSchema` var in
+   `compile_input_test.go`.
+
+**Validation:**
+- `go test ./workflow/ -run TestWarnCrossStepField` — all 7 PASS
+- `TestCompileOutcome_OutputExprRuntimeRef` — PASS (nil schemas, no warnings)
+- `make test` — clean across all packages (workflow race-tested)
+
+### Review 2026-05-07 — changes-requested
+
+#### Summary
+Implementation is close, but the switch-condition path currently emits duplicate warnings for the same bad `steps.<name>.<field>` reference, so the behavior does not meet a clean acceptance bar yet. Test coverage also misses that regression because the new tests only assert warning presence, not warning cardinality or successful graph return for warning-only compiles. No separate security concerns were identified in this pass.
+
+#### Plan Adherence
+- **Step 1 / Step 2 / Step 3:** Implemented, but the combined behavior is incorrect for switch conditions: `validateSwitchExprRefs` warns inline and `warnCrossStepFieldRefs` warns again during the post-pass for the same traversal.
+- **Step 4:** The requested test file was added with the seven named tests, but the assertions are not strong enough to prove the exit criteria. In particular, they do not detect duplicate warnings and they do not assert that warning-only compiles still return a valid `*FSMGraph`.
+- **Exit criteria:** `make test` is clean, permissive nil-schema behavior still holds, and known fields stay warning-free. The warning-on-typo criterion is only partially satisfied because the switch case currently produces two warnings instead of one coherent compile-time warning.
+
+#### Required Remediations
+- **Blocker** — `workflow/compile.go:107-108`, `workflow/compile_steps_graph.go:364-380`, `workflow/compile_switches.go:316-333`: switch-condition field validation is performed twice, once inline and once again in the post-pass, so `steps.build.stddout` in a switch emits two warnings. **Acceptance criteria:** a bad cross-step field in a switch `match` expression must produce exactly one warning; retain warning coverage for step-input and outcome-output sites without duplicating the switch diagnostic.
+- **Blocker** — `workflow/compile_cross_step_refs_test.go:133-146`, `workflow/compile_cross_step_refs_test.go:166-178`, `workflow/compile_cross_step_refs_test.go:213-225`: the unknown-field tests only check for the existence of a matching warning substring, so the current duplicate-warning bug passes unnoticed; the tests also ignore the returned graph, leaving the "compile still succeeds" exit criterion unproven. **Acceptance criteria:** strengthen the tests to assert warning counts (especially exactly one warning for the switch unknown-field case, and no warnings for the known/nil-schema cases) and assert that warning-only compiles return a non-nil graph.
+
+#### Test Intent Assessment
+The new tests do exercise the intended expression sites, which is the right shape. The weak point is regression sensitivity: a faulty implementation that emits duplicate diagnostics still passes, and the warning-only success contract is not asserted because the returned graph is discarded. Tightening those assertions is required before this workstream can be approved.
+
+### Remediation 2026-05-07
+
+**Blocker 1 fixed** — `warnCrossStepFieldRefs` no longer includes `SwitchCondition.Match`
+expressions in its post-pass. Switch match expressions are handled inline by
+`validateSwitchExprRefs` (which runs after `g.Steps` is fully populated because
+`compileSwitches` is called after `compileSteps`). Each bad field reference in a switch
+condition now produces exactly one warning.  The post-pass retains coverage for step inputs,
+outcome output projections, and switch default output expressions.
+
+**Lint fix 2026-05-07** — `validateSwitchExprRefs` exceeded the gocognit limit of 20 (was 39)
+after the field-check addition. Extracted two helpers to restore compliance:
+- `validateSwitchStepTraversal` — handles self-reference check, unknown-step check, and delegates to field check.
+- `validateSwitchStepFieldRef` — checks the third traversal segment against `OutputSchema`.
+`make lint-go` and `make test` clean.
+- Assert a non-nil `*FSMGraph` is returned for warning-only compiles.
+- Assert exact warning counts via `countWarnings` helper: unknown-field cases require count == 1;
+  known-field and nil-schema cases require count == 0.
+
+`make test` clean.
+
+### Review 2026-05-07-02 — approved
+
+#### Summary
+The prior blockers are resolved. Switch-condition cross-step field validation no longer emits duplicate warnings, the warning-only compile path now stays explicitly covered by tests, and the implementation matches the workstream scope and exit criteria. No security concerns were identified in this pass.
+
+#### Plan Adherence
+- **Step 1 / Step 2 / Step 3:** Implemented correctly. `warnCrossStepFieldRefs` now covers step inputs, outcome output projections, and switch default output without duplicating the inline switch-condition warning path.
+- **Step 4:** The new tests now assert warning cardinality and confirm warning-only compiles return a non-nil `*FSMGraph`, which closes the prior regression gap.
+- **Exit criteria:** Satisfied. Unknown cross-step fields warn at compile time when schema is present, known fields stay clean, nil-schema compiles remain permissive, warning-only compiles succeed, and repository validation is green.
+
+#### Test Intent Assessment
+The tests now validate behavioral intent instead of mere warning presence. In particular, the switch unknown-field case is regression-sensitive to duplicate diagnostics, and the warning-only cases explicitly prove compile success by asserting a returned graph.
+
+#### Validation Performed
+- `go test ./workflow/ -run 'TestWarnCrossStepField|TestCompileOutcome_OutputExprRuntimeRef|TestSwitch_FirstMatchWins'` — passed.
+- `make lint-go` — passed.
+- `make test` — passed.
+- Ad-hoc compile probe for `match = steps.build.stddout == "ok"` with schema `{stdout}` — observed `WARN_COUNT=1` and `GRAPH_NON_NIL=true`.
