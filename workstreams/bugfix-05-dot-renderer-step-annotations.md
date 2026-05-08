@@ -210,3 +210,27 @@ This failure exists on `main` before this workstream and is outside BF-05 scope.
 - A subworkflow-targeted step renders with `shape=component` and `[→ <name>]` in its label.
 - A plain adapter step renders as `[shape=box]` with no `label` attribute.
 - `make test` clean.
+
+## Reviewer Notes
+
+### Review 2026-05-08 — approved
+
+#### Summary
+Implementation matches BF-05 scope. `renderDOT` now derives per-step DOT attributes from `StepNode` iteration and subworkflow fields, plain steps remain unannotated, iterating steps gain bracketed labels, and subworkflow steps switch to `shape=component` with delegation labels. I found no boundary, security, or convention issues in the touched code. Repository validation remains blocked only by the documented pre-existing macOS `/private/var` symlink assertion in `TestCompileJSON_SubworkflowsArrayPresent`, which I reproduced on `origin/main`, so there is no BF-05 regression in the failing suite result.
+
+#### Plan Adherence
+- `dotStepAttrs(name string, st *workflow.StepNode) string` was added in `internal/cli/compile.go` and used from the `renderDOT` step-node loop as specified.
+- Iteration annotations are emitted from nil checks on `ForEach`, `Count`, and `Parallel`; subworkflow steps render as `shape=component` with `[→ <subwf>]`.
+- Plain adapter steps still render as `[shape=box]` with no explicit `label`.
+- Six end-to-end DOT tests were added in `internal/cli/compile_dot_test.go` for plain, `for_each`, `count`, `parallel`, subworkflow, and iterating-subworkflow cases.
+- DOT golden files were updated for real iteration/parallel fixtures; subworkflow behavior is covered by the new focused tests.
+
+#### Test Intent Assessment
+The new tests exercise the full `compileWorkflowOutput(..., "dot", ...)` path rather than only the helper, which is the right boundary for this change. Existing golden coverage continues to pin full DOT output for representative real workflows, while the new focused tests cover the previously unexercised subworkflow-step rendering path and confirm plain steps do not gain labels. Together these assertions are regression-sensitive for the intended behavior change.
+
+#### Validation Performed
+- `make build` — passed.
+- `go test ./internal/cli -run 'TestRenderDOT_|TestCompileGoldenDOT'` — passed.
+- `go test ./internal/cli -run 'TestCompileGolden_JSONAndDOT'` — passed.
+- `make test` — failed only at pre-existing `TestCompileJSON_SubworkflowsArrayPresent` macOS `/private/var` path assertion.
+- `git worktree add --detach <temp> origin/main && go test ./internal/cli -run TestCompileJSON_SubworkflowsArrayPresent` — reproduced the same failure on `origin/main`.
