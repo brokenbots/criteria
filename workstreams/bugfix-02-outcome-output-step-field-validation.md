@@ -184,13 +184,14 @@ This workstream may **not** edit `README.md`, `PLAN.md`, `AGENTS.md`, `CHANGELOG
 
 ## Tasks
 
-- [ ] Add `validateOutputExprStepOutputRefs` to `workflow/compile_steps_graph.go`.
-- [ ] Call it from `compileOutcomeRemain` (guarded by `!isAggregateIter`).
-- [ ] Add `TestCompileOutcome_StepOutputRef_KnownField` to `workflow/compile_outcomes_test.go`.
-- [ ] Add `TestCompileOutcome_StepOutputRef_UnknownField`.
-- [ ] Add `TestCompileOutcome_StepOutputRef_NoSchema`.
-- [ ] `go test ./workflow/ -run TestCompileOutcome` passes.
-- [ ] `make test` clean.
+- [x] Add `validateOutputExprStepOutputRefs` to `workflow/compile_steps_graph.go`.
+- [x] Call it from `compileOutcomeRemain` (guarded by `!isAggregateIter`).
+- [x] Add `TestCompileOutcome_StepOutputRef_KnownField` to `workflow/compile_outcomes_test.go`.
+- [x] Add `TestCompileOutcome_StepOutputRef_UnknownField`.
+- [x] Add `TestCompileOutcome_StepOutputRef_NoSchema`.
+- [x] Add `TestCompileOutcome_StepOutputRef_AggregateIter_Permissive` — regression test for the `!isAggregateIter` guard.
+- [x] `go test ./workflow/ -run TestCompileOutcome` passes.
+- [x] `make test` clean.
 
 ## Exit criteria
 
@@ -202,3 +203,78 @@ This workstream may **not** edit `README.md`, `PLAN.md`, `AGENTS.md`, `CHANGELOG
 - Existing `TestCompileOutcome_OutputExprRuntimeRef` (uses `steps.a.exit_code`) continues to
   pass.
 - `make test` clean.
+
+## Implementation Notes
+
+**Changes made:**
+
+- `workflow/compile_steps_graph.go`: Added `validateOutputExprStepOutputRefs` immediately after
+  `validateOutcomeOutputExpr`. Wired it into `compileOutcomeRemain` guarded by `!isAggregateIter`.
+  Follows the `validateSwitchExprRefs` traversal pattern exactly (TraverseRoot + TraverseAttr).
+
+- `workflow/compile_outcomes_test.go`: Added three tests:
+  - `TestCompileOutcome_StepOutputRef_KnownField` — schema with `"result"`, ref to `step.output.result` → no error.
+  - `TestCompileOutcome_StepOutputRef_UnknownField` — schema with `"result"`, ref to `step.output.ghost` → error containing `"ghost"`.
+  - `TestCompileOutcome_StepOutputRef_NoSchema` — nil schemas, ref to `step.output.ghost` → no error.
+
+**Validation:**
+- `go test ./workflow/ -run TestCompileOutcome` — all 12 tests PASS.
+- `make test` — full suite PASS (race detector enabled).
+
+**Security:** No sensitive data exposure, no unsafe operations, no new dependencies.
+
+**Opportunistic fixes:** None needed; code was clean.
+
+## Reviewer Notes
+
+### Review 2026-05-07 — changes-requested
+
+#### Summary
+The implementation matches the intended compiler change and the validated behavior is correct for ordinary step outcomes, but the test suite does not prove the required `!isAggregateIter` wiring. The new tests only exercise non-aggregate outcomes, so a regression that removes the aggregate guard in `compileOutcomeRemain` would still leave every added test green.
+
+#### Plan Adherence
+- `validateOutputExprStepOutputRefs` was added in `workflow/compile_steps_graph.go` and follows the requested traversal-walking pattern.
+- `compileOutcomeRemain` now calls the new validator behind `!isAggregateIter`, which matches the workstream text.
+- The three requested tests were added and they cover known-field success, unknown-field failure, and nil-schema permissive behavior.
+- `TestCompileOutcome_OutputExprRuntimeRef` still passes, and the full suite is green.
+- Gap: the explicit aggregate-outcome guard from Step 2 is not covered by a regression test, so that checklist item is implemented but not adequately defended.
+
+#### Required Remediations
+- **Blocker** — `workflow/compile_outcomes_test.go:L339-L443`, `workflow/compile_steps_graph.go:L184-L189`: add a regression test that exercises an iterating or parallel aggregate outcome (`all_succeeded`/`any_failed`) with a non-empty adapter `OutputSchema` and an `output = { x = step.output.ghost }` projection. **Rationale:** the workstream explicitly requires the validator call to be guarded by `!isAggregateIter`, but the current tests never enter that branch, so removing the guard would not fail any added test. **Acceptance criteria:** the new test must fail if the guard is removed and pass with the current implementation; it must demonstrate that aggregate outcomes are not schema-validated by `validateOutputExprStepOutputRefs` while non-aggregate outcomes still are.
+
+#### Test Intent Assessment
+The new tests are good for the direct happy-path/error-path behavior on normal outcomes: they would catch a broken field lookup, a missing diagnostic on unknown fields, and loss of permissive behavior when schemas are absent. They are weak on regression sensitivity for the Step 2 wiring requirement because they never cover the aggregate-outcome path that motivated the `!isAggregateIter` guard.
+
+#### Validation Performed
+- Reviewed diffs in `workflow/compile_steps_graph.go`, `workflow/compile_outcomes_test.go`, and this workstream file.
+- Ran `go test ./workflow -run 'TestCompileOutcome_(OutputExprRuntimeRef|StepOutputRef_)'` — passed.
+- Ran `make test` — passed.
+
+### Remediation 2026-05-07 — blocker addressed
+
+Added `TestCompileOutcome_StepOutputRef_AggregateIter_Permissive` to `workflow/compile_outcomes_test.go` (after the three previous StepOutputRef tests).
+
+**Test behavior:** Uses a `for_each` step with an `all_succeeded` aggregate outcome (next ≠ `_continue`) that references `step.output.ghost` in its output projection. The schema declares only `"result"`. The test asserts no compile error — aggregate outcomes must not be schema-validated. Verified by temporarily replacing `!isAggregateIter` with `true`: the test fails with the guard removed and passes with it present.
+
+**Validation:**
+- `go test ./workflow/ -run TestCompileOutcome` — 13 tests PASS.
+- `make test` — full suite PASS (race detector enabled).
+
+### Review 2026-05-07-02 — approved
+
+#### Summary
+Approved. The executor closed the prior blocker by adding an aggregate-outcome regression test that directly exercises the `!isAggregateIter` guard, and the compiler change now meets the workstream intent, exit criteria, and test-intent bar. I found no remaining security, architecture, or quality issues in scope.
+
+#### Plan Adherence
+- `validateOutputExprStepOutputRefs` is present in `workflow/compile_steps_graph.go` and matches the requested `expr.Variables()` traversal pattern for `step.output.<field>` refs.
+- `compileOutcomeRemain` calls the validator only for non-aggregate outcomes via `!isAggregateIter`, matching the Step 2 requirement.
+- `workflow/compile_outcomes_test.go` now covers all required behavior: known-field success, unknown-field failure, nil-schema permissiveness, and aggregate-outcome permissiveness for the guard path.
+- Existing `TestCompileOutcome_OutputExprRuntimeRef` remains intact, so the cross-step `steps.*` runtime namespace stays unaffected as required.
+
+#### Test Intent Assessment
+The test suite now demonstrates behavioral intent instead of only pass/fail mechanics: the unknown-field test proves compile-time rejection when a schema exists, the no-schema test proves permissive fallback, and the aggregate-outcome test proves the validator is intentionally skipped when no single step output exists at runtime. A plausible regression that removes the guard or weakens the field check would now fail this suite.
+
+#### Validation Performed
+- Reviewed the branch diff for `workflow/compile_outcomes_test.go` and the live working-tree diff for `workflow/compile_steps_graph.go`.
+- Ran `go test ./workflow -run 'TestCompileOutcome_(OutputExprRuntimeRef|StepOutputRef_)'` — passed.
+- Ran `make test` — passed.

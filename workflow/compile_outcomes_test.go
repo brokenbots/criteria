@@ -336,6 +336,159 @@ state "done" {
 	}
 }
 
+// TestCompileOutcome_StepOutputRef_KnownField verifies that an outcome output
+// expression referencing step.output.<field> compiles without error when
+// <field> is declared in the adapter's OutputSchema.
+func TestCompileOutcome_StepOutputRef_KnownField(t *testing.T) {
+	src := `
+workflow "t" {
+  version       = "0.1"
+  initial_state = "work"
+  target_state  = "done"
+}
+adapter "noop" "default" {}
+step "work" {
+  target = adapter.noop.default
+  outcome "success" {
+    next   = "done"
+    output = { x = step.output.result }
+  }
+}
+state "done" {
+  terminal = true
+  success  = true
+}
+`
+	spec, diags := Parse("t.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	schemas := map[string]AdapterInfo{
+		"noop.default": {OutputSchema: map[string]ConfigField{"result": {Type: ConfigFieldString}}},
+	}
+	_, diags = Compile(spec, schemas)
+	if diags.HasErrors() {
+		t.Fatalf("compile should not reject known output field: %s", diags.Error())
+	}
+}
+
+// TestCompileOutcome_StepOutputRef_UnknownField verifies that an outcome output
+// expression referencing step.output.<field> where <field> is absent from the
+// adapter's OutputSchema produces a compile error containing the field name.
+func TestCompileOutcome_StepOutputRef_UnknownField(t *testing.T) {
+	src := `
+workflow "t" {
+  version       = "0.1"
+  initial_state = "work"
+  target_state  = "done"
+}
+adapter "noop" "default" {}
+step "work" {
+  target = adapter.noop.default
+  outcome "success" {
+    next   = "done"
+    output = { x = step.output.ghost }
+  }
+}
+state "done" {
+  terminal = true
+  success  = true
+}
+`
+	spec, diags := Parse("t.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	schemas := map[string]AdapterInfo{
+		"noop.default": {OutputSchema: map[string]ConfigField{"result": {Type: ConfigFieldString}}},
+	}
+	_, diags = Compile(spec, schemas)
+	if !diags.HasErrors() {
+		t.Fatal("expected compile error for unknown output field, got none")
+	}
+	if !strings.Contains(diags.Error(), "ghost") {
+		t.Errorf("error should mention the unknown field name 'ghost', got: %s", diags.Error())
+	}
+}
+
+// TestCompileOutcome_StepOutputRef_NoSchema verifies that an outcome output
+// expression referencing step.output.<field> compiles without error when no
+// OutputSchema is provided (permissive when schema is absent).
+func TestCompileOutcome_StepOutputRef_NoSchema(t *testing.T) {
+	src := `
+workflow "t" {
+  version       = "0.1"
+  initial_state = "work"
+  target_state  = "done"
+}
+adapter "noop" "default" {}
+step "work" {
+  target = adapter.noop.default
+  outcome "success" {
+    next   = "done"
+    output = { x = step.output.ghost }
+  }
+}
+state "done" {
+  terminal = true
+  success  = true
+}
+`
+	spec, diags := Parse("t.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	_, diags = Compile(spec, nil)
+	if diags.HasErrors() {
+		t.Fatalf("compile should not reject step.output.* when schema is absent: %s", diags.Error())
+	}
+}
+
+// TestCompileOutcome_StepOutputRef_AggregateIter_Permissive verifies that the
+// !isAggregateIter guard prevents validateOutputExprStepOutputRefs from firing
+// on aggregate outcomes of iterating steps. Aggregate outcomes (e.g.
+// "all_succeeded") fire after all iterations complete and the engine has no
+// single adapter output available at that point, so step.output.* refs in their
+// output projections must not be schema-validated. This test must fail if the
+// !isAggregateIter guard is removed.
+func TestCompileOutcome_StepOutputRef_AggregateIter_Permissive(t *testing.T) {
+	src := `
+workflow "t" {
+  version       = "0.1"
+  initial_state = "work"
+  target_state  = "done"
+}
+adapter "noop" "default" {}
+step "work" {
+  target   = adapter.noop.default
+  for_each = ["a", "b"]
+  outcome "item_ok" {
+    next = "_continue"
+  }
+  outcome "all_succeeded" {
+    next   = "done"
+    output = { x = step.output.ghost }
+  }
+}
+state "done" {
+  terminal = true
+  success  = true
+}
+`
+	spec, diags := Parse("t.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	// Schema declares only "result" — "ghost" is absent.
+	schemas := map[string]AdapterInfo{
+		"noop.default": {OutputSchema: map[string]ConfigField{"result": {Type: ConfigFieldString}}},
+	}
+	_, diags = Compile(spec, schemas)
+	if diags.HasErrors() {
+		t.Fatalf("aggregate outcome step.output.* should not be schema-validated (isAggregateIter guard missing?): %s", diags.Error())
+	}
+}
+
 // TestCompileReservedName_ReturnForNonStepNodes verifies that "return" is
 // rejected as a name for states, waits, approvals, and branches in addition
 // to steps — since any such node named "return" would silently cause
