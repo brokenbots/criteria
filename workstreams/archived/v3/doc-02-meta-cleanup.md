@@ -288,7 +288,26 @@ All 9 checks must pass before reviewer approval.
 
 ## Executor notes
 
-*(To be filled in by the executor agent during implementation.)*
+All five changes implemented on branch `cleanup/doc-02-meta-cleanup` (2026-05-09):
+
+- **I1 (README.md):** Replaced the v0.2.0 `workflow { }` nested code block with the
+  v0.3.0 top-level layout matching `examples/hello/hello.hcl`. Uses
+  `adapter "shell" "default" { config {} }`, `target = adapter.shell.default`, and
+  `next = ...` throughout.
+- **I2 (CONTRIBUTING.md):** `cd overseer` → `cd criteria`.
+- **I15 (PLAN.md):** Removed stale `- **Phase 3 — TBD.**` bullet from Status snapshot.
+  Also updated the stale `## Phase 3 — TBD` section heading and its forward-looking
+  candidate scope body to a proper closed-phase section with full W01–W21 workstream
+  links (matching the Phase 0/1/2 section style).
+- **I13/I14 (workstreams/README.md):** Phase 3 status bullet updated to "closed
+  2026-05-06"; `## Phase 3 forward-pointer` section replaced with
+  `## Phase 3 workstreams (archived)` brief note. Post-phase doc workstreams
+  doc-01 and doc-02 also listed in that section after archival.
+
+**Validation:** `make validate` failed on `examples/phase3-parallel` (pre-existing
+failure on `main` before this branch; confirmed by `git stash` + re-run). Tracked by
+active workstream `parallel-02-adapter-parallel-safe-capability.md`. All other
+examples passed. Doc-only changes do not affect the failure.
 
 ## Reviewer notes
 

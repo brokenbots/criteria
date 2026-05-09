@@ -23,7 +23,7 @@ New to the project? Start here:
 
 ```bash
 git clone https://github.com/brokenbots/criteria.git
-cd overseer
+cd criteria
 make bootstrap         # sync all three Go workspace modules
 make build             # produces bin/criteria
 make plugins           # build adapter plugin binaries (bin/criteria-adapter-*)
