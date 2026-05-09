@@ -247,55 +247,250 @@ func buildCompileOutputs(graph *workflow.FSMGraph) []compileOutput {
 	return outputs
 }
 
+// renderDOT renders the FSMGraph as a Graphviz DOT digraph string.
+// Subworkflow-targeted steps with compiled bodies are rendered as
+// subgraph cluster_ blocks with namespaced node IDs; parent edges are
+// rewired to the cluster boundaries. The rendering is recursive for nested
+// subworkflows.
 func renderDOT(graph *workflow.FSMGraph) string {
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("digraph %q {\n", graph.Name))
 	b.WriteString("  rankdir=LR;\n")
 	b.WriteString("\n")
+	dotWriteNodes(&b, graph, "  ", "")
+	b.WriteString("\n")
+	dotWriteEdges(&b, graph, "  ", "")
+	b.WriteString("}\n")
+	return b.String()
+}
 
+// dotWriteNodes writes node declarations for graph at the given indent and
+// namespace. Non-subworkflow steps, switches, and states are declared as
+// regular nodes. Subworkflow steps with compiled bodies become subgraph
+// cluster_ blocks whose interior is written by dotWriteClusterBody.
+func dotWriteNodes(b *strings.Builder, graph *workflow.FSMGraph, indent, namespace string) {
+	dotWriteNodeDecls(b, graph, indent, namespace)
 	for _, name := range graph.StepOrder() {
-		b.WriteString(fmt.Sprintf("  %q [shape=box];\n", name))
+		st := graph.Steps[name]
+		if st.SubworkflowRef == "" {
+			continue
+		}
+		swNode := graph.Subworkflows[st.SubworkflowRef]
+		if swNode == nil || swNode.Body == nil {
+			// No compiled body: fall back to a shape=component placeholder.
+			attrs := dotStepAttrs(name, st)
+			fmt.Fprintf(b, "%s%q [%s];\n", indent, namespace+name, attrs)
+			continue
+		}
+		clusterNS := namespace + name + "/"
+		clusterID := sanitizeDotID(namespace + name)
+		fmt.Fprintf(b, "%ssubgraph cluster_%s {\n", indent, clusterID)
+		fmt.Fprintf(b, "%s  label=%q;\n", indent, dotClusterLabel(st))
+		fmt.Fprintf(b, "%s  style=dashed;\n", indent)
+		dotWriteClusterBody(b, swNode.Body, indent+"  ", clusterNS)
+		fmt.Fprintf(b, "%s}\n", indent)
+	}
+}
+
+// dotWriteNodeDecls writes flat node declarations for adapter steps, switches,
+// and states. Subworkflow steps are skipped (they are rendered as clusters).
+func dotWriteNodeDecls(b *strings.Builder, graph *workflow.FSMGraph, indent, namespace string) {
+	for _, name := range graph.StepOrder() {
+		st := graph.Steps[name]
+		if st.SubworkflowRef != "" {
+			continue // rendered as a cluster block by the caller
+		}
+		attrs := dotStepAttrs(name, st)
+		fmt.Fprintf(b, "%s%q [%s];\n", indent, namespace+name, attrs)
 	}
 	for _, name := range sortedSwitchNames(graph) {
-		b.WriteString(fmt.Sprintf("  %q [shape=diamond];\n", name))
+		fmt.Fprintf(b, "%s%q [shape=diamond];\n", indent, namespace+name)
 	}
 	for _, name := range sortedStateNames(graph) {
-		state := graph.States[name]
 		shape := "ellipse"
-		if state.Terminal {
+		if graph.States[name].Terminal {
 			shape = "doublecircle"
 		}
-		b.WriteString(fmt.Sprintf("  %q [shape=%s];\n", name, shape))
+		fmt.Fprintf(b, "%s%q [shape=%s];\n", indent, namespace+name, shape)
 	}
-	b.WriteString("\n")
-	b.WriteString(fmt.Sprintf("  %q [shape=point,width=0.12,label=\"\"];\n", "__start__"))
-	b.WriteString(fmt.Sprintf("  %q -> %q [label=%q];\n", "__start__", graph.InitialState, "initial"))
+}
 
+// dotWriteClusterBody writes node declarations, nested clusters, and internal
+// edges for a subworkflow cluster. Exit edges (from the cluster's terminal
+// states to the parent's outcome targets) are NOT written here; the caller
+// emits them via dotWriteExitEdges after the cluster block closes.
+func dotWriteClusterBody(b *strings.Builder, graph *workflow.FSMGraph, indent, namespace string) {
+	dotWriteNodeDecls(b, graph, indent, namespace)
+	// Nested cluster subgraphs (second pass over steps).
+	for _, name := range graph.StepOrder() {
+		st := graph.Steps[name]
+		if st.SubworkflowRef == "" {
+			continue
+		}
+		swNode := graph.Subworkflows[st.SubworkflowRef]
+		if swNode == nil || swNode.Body == nil {
+			attrs := dotStepAttrs(name, st)
+			fmt.Fprintf(b, "%s%q [%s];\n", indent, namespace+name, attrs)
+			continue
+		}
+		nestedNS := namespace + name + "/"
+		clusterID := sanitizeDotID(namespace + name)
+		fmt.Fprintf(b, "%ssubgraph cluster_%s {\n", indent, clusterID)
+		fmt.Fprintf(b, "%s  label=%q;\n", indent, dotClusterLabel(st))
+		fmt.Fprintf(b, "%s  style=dashed;\n", indent)
+		dotWriteClusterBody(b, swNode.Body, indent+"  ", nestedNS)
+		fmt.Fprintf(b, "%s}\n", indent)
+	}
+	// __start__ node and initial edge.
+	initialTarget := dotResolveRef(graph, namespace, graph.InitialState)
+	fmt.Fprintf(b, "%s%q [shape=point,width=0.12,label=\"\"];\n", indent, namespace+"__start__")
+	fmt.Fprintf(b, "%s%q -> %q [label=%q];\n", indent, namespace+"__start__", initialTarget, "initial")
+	dotWriteStepEdges(b, graph, indent, namespace)
+	dotWriteSwitchEdges(b, graph, indent, namespace)
+}
+
+// dotWriteEdges writes the top-level edge declarations for the root digraph:
+// the __start__ node, the initial state edge (rewired if the initial state is
+// a subworkflow step), step outcome edges, exit edges from subworkflow clusters,
+// and switch edges.
+func dotWriteEdges(b *strings.Builder, graph *workflow.FSMGraph, indent, namespace string) {
+	initialTarget := dotResolveRef(graph, namespace, graph.InitialState)
+	fmt.Fprintf(b, "%s%q [shape=point,width=0.12,label=\"\"];\n", indent, namespace+"__start__")
+	fmt.Fprintf(b, "%s%q -> %q [label=%q];\n", indent, namespace+"__start__", initialTarget, "initial")
+	dotWriteStepEdges(b, graph, indent, namespace)
+	dotWriteSwitchEdges(b, graph, indent, namespace)
+}
+
+// dotWriteStepEdges writes outcome edges for adapter steps and, for subworkflow
+// steps with compiled bodies, the exit edges from the cluster's terminal states.
+func dotWriteStepEdges(b *strings.Builder, graph *workflow.FSMGraph, indent, namespace string) {
 	for _, stepName := range graph.StepOrder() {
 		step := graph.Steps[stepName]
+		if step.SubworkflowRef != "" {
+			swNode := graph.Subworkflows[step.SubworkflowRef]
+			if swNode != nil && swNode.Body != nil {
+				clusterNS := namespace + stepName + "/"
+				dotWriteExitEdges(b, indent, graph, namespace, step, swNode.Body, clusterNS)
+			}
+			continue
+		}
 		for _, outcomeName := range sortedMapKeys(step.Outcomes) {
 			co := step.Outcomes[outcomeName]
 			if co.Next == "_continue" || co.Next == workflow.ReturnSentinel {
-				// _continue and "return" are engine-internal; suppress from DOT output.
 				continue
 			}
-			b.WriteString(fmt.Sprintf("  %q -> %q [label=%q];\n", step.Name, co.Next, outcomeName))
+			nextRef := dotResolveRef(graph, namespace, co.Next)
+			fmt.Fprintf(b, "%s%q -> %q [label=%q];\n", indent, namespace+stepName, nextRef, outcomeName)
 		}
 	}
+}
+
+// dotWriteSwitchEdges writes all outgoing edges from switch nodes in graph.
+func dotWriteSwitchEdges(b *strings.Builder, graph *workflow.FSMGraph, indent, namespace string) {
 	for _, switchName := range sortedSwitchNames(graph) {
 		sw := graph.Switches[switchName]
 		for i, cond := range sw.Conditions {
 			label := fmt.Sprintf("condition[%d]", i)
 			if cond.Next != workflow.ReturnSentinel {
-				b.WriteString(fmt.Sprintf("  %q -> %q [label=%q];\n", switchName, cond.Next, label))
+				nextRef := dotResolveRef(graph, namespace, cond.Next)
+				fmt.Fprintf(b, "%s%q -> %q [label=%q];\n", indent, namespace+switchName, nextRef, label)
 			}
 		}
 		if sw.DefaultNext != workflow.ReturnSentinel {
-			b.WriteString(fmt.Sprintf("  %q -> %q [label=%q];\n", switchName, sw.DefaultNext, "default"))
+			nextRef := dotResolveRef(graph, namespace, sw.DefaultNext)
+			fmt.Fprintf(b, "%s%q -> %q [label=%q];\n", indent, namespace+switchName, nextRef, "default")
 		}
 	}
-	b.WriteString("}\n")
-	return b.String()
+}
+
+// dotWriteExitEdges emits edges from each terminal state in clusterBody to
+// each of the parent step's outcome targets. These edges connect the cluster
+// boundary back to nodes in the parent graph.
+func dotWriteExitEdges(b *strings.Builder, indent string, parentGraph *workflow.FSMGraph, parentNS string, step *workflow.StepNode, clusterBody *workflow.FSMGraph, clusterNS string) {
+	for _, termName := range sortedStateNames(clusterBody) {
+		termState := clusterBody.States[termName]
+		if !termState.Terminal {
+			continue
+		}
+		for _, outcomeName := range sortedMapKeys(step.Outcomes) {
+			co := step.Outcomes[outcomeName]
+			if co.Next == "_continue" || co.Next == workflow.ReturnSentinel {
+				continue
+			}
+			nextRef := dotResolveRef(parentGraph, parentNS, co.Next)
+			fmt.Fprintf(b, "%s%q -> %q [label=%q];\n", indent, clusterNS+termName, nextRef, outcomeName)
+		}
+	}
+}
+
+// dotResolveRef returns the DOT node ID for a reference within the current
+// graph level. If name is a subworkflow step with a compiled body, the
+// cluster's __start__ node is returned so that edges are routed into the
+// cluster boundary rather than a now-absent placeholder node.
+func dotResolveRef(graph *workflow.FSMGraph, namespace, name string) string {
+	if st, ok := graph.Steps[name]; ok && st.SubworkflowRef != "" {
+		if swNode, ok := graph.Subworkflows[st.SubworkflowRef]; ok && swNode != nil && swNode.Body != nil {
+			return namespace + name + "/__start__"
+		}
+	}
+	return namespace + name
+}
+
+// sanitizeDotID replaces characters that are not valid in an unquoted DOT
+// identifier with underscores, for use in subgraph cluster names.
+func sanitizeDotID(s string) string {
+	var buf strings.Builder
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' {
+			buf.WriteRune(r)
+		} else {
+			buf.WriteRune('_')
+		}
+	}
+	return buf.String()
+}
+
+// dotClusterLabel returns the Graphviz label string for a subworkflow cluster.
+// The label is the subworkflow reference name plus any iteration annotation
+// (e.g. "\n[for_each]") when the step iterates.
+func dotClusterLabel(st *workflow.StepNode) string {
+	label := st.SubworkflowRef
+	if st.ForEach != nil {
+		label += "\n[for_each]"
+	} else if st.Count != nil {
+		label += "\n[count]"
+	} else if st.Parallel != nil {
+		label += "\n[parallel]"
+	}
+	return label
+}
+
+// dotStepAttrs returns the Graphviz attribute string for a step node.
+// Plain adapter steps get "shape=box". Iterating or subworkflow steps gain
+// a label annotation (e.g. "step\n[for_each]") and subworkflow steps use
+// shape=component (fallback when no compiled body is available).
+func dotStepAttrs(name string, st *workflow.StepNode) string {
+	var annotations []string
+	if st.ForEach != nil {
+		annotations = append(annotations, "[for_each]")
+	} else if st.Count != nil {
+		annotations = append(annotations, "[count]")
+	} else if st.Parallel != nil {
+		annotations = append(annotations, "[parallel]")
+	}
+	if st.SubworkflowRef != "" {
+		annotations = append(annotations, fmt.Sprintf("[→ %s]", st.SubworkflowRef))
+	}
+
+	shape := "shape=box"
+	if st.SubworkflowRef != "" {
+		shape = "shape=component"
+	}
+	if len(annotations) == 0 {
+		return shape
+	}
+	label := name + "\n" + strings.Join(annotations, "\n")
+	return fmt.Sprintf("%s, label=%q", shape, label)
 }
 
 func parseCompileForCli(ctx context.Context, workflowPath string, subworkflowRoots []string) (*workflow.Spec, *workflow.FSMGraph, error) {

@@ -3,7 +3,7 @@ digraph "demo_tour_local" {
 
   "boot" [shape=box];
   "discover" [shape=box];
-  "process_each" [shape=box];
+  "process_each" [shape=box, label="process_each\n[for_each]"];
   "review" [shape=box];
   "celebrate" [shape=box];
   "decide" [shape=diamond];
