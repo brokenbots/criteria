@@ -286,6 +286,26 @@ The new test is strong on session-open counting: the original regression would f
 - `make test` — passed
 - `go test -race -run TestParallelSubworkflow_IsolatedSessions_ConcurrentExecution -count=20 ./internal/engine` — passed
 
+### Review 2026-05-09-02 — approved
+
+#### Summary
+Approved. The test remediation closes the prior blocker: the new `perResolveLoader` and `statefulPlugin` harness now models the real shared-session serialization failure mode, preserves the `OpenSession == N` assertion, and makes the wall-clock check regression-sensitive to the exact bug this workstream set out to fix.
+
+#### Plan Adherence
+- Step 1: `Deps.Loader` is present in `internal/engine/node.go`.
+- Step 2: `buildDeps` wires `Loader: e.loader` in `internal/engine/engine.go`.
+- Step 3: `runParallelSubworkflowIteration` now creates a per-iteration `SessionManager` in `internal/engine/parallel_iteration.go` without disturbing sink or teardown semantics.
+- Step 4: `TestParallelSubworkflow_IsolatedSessions_ConcurrentExecution` now uses a loader that returns a distinct plugin handle per resolve and a per-instance execution mutex, so the timing assertion meaningfully distinguishes shared-session serialization from isolated-session concurrency.
+- Exit criteria are satisfied by the current code and validation results.
+
+#### Test Intent Assessment
+The strengthened regression test now validates behavioral intent rather than just pass-shape execution. A broken implementation that reuses the parent `SessionManager` would collapse to one resolved plugin instance, serialize on `execMu`, and fail the elapsed-time bound; the fixed implementation opens three sessions, executes on three independent instances, and stays within the threshold. That makes the test appropriately regression-sensitive at the session/loader contract boundary.
+
+#### Validation Performed
+- `go test -race -count=5 ./internal/engine/...` — passed
+- `go test -race -run TestParallelSubworkflow_IsolatedSessions_ConcurrentExecution -count=20 ./internal/engine` — passed
+- `make test` — passed
+
 ### Remediation (2026-05-09)
 
 Replaced `sessionCountPlugin` + `fakeLoader` harness with `perResolveLoader` + `statefulPlugin`.
