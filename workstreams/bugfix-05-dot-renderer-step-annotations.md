@@ -302,8 +302,13 @@ This workstream may **not** edit `README.md`, `PLAN.md`, `AGENTS.md`, `CHANGELOG
   the cluster label still embeds `[→ subwf_name]` and `[for_each]` so annotation semantics
   are preserved at the cluster level.
 
-**Validation (Steps 3–4):** `go test ./internal/cli/... -run 'TestRenderDOT_|TestDotStepAttrs_'`
-— 11/11 pass. `make test` clean (all packages, -race).
+**Validation (Steps 3–4 remediation):** cluster ID collision fixed by keying cluster
+namespace/ID on step name rather than `SubworkflowRef`. All 6 call sites changed in
+`dotWriteNodes`, `dotWriteClusterBody` (both the block header and the exit-edges call),
+`dotWriteEdges`, and `dotResolveRef`. Added `TestRenderDOT_RepeatedSubworkflowSameDeclaration`
+(two steps targeting the same declaration → two distinct clusters, distinct node IDs, correct
+chain edges). `go test ./internal/cli/... -run 'TestRenderDOT_|TestDotStepAttrs_'` — 12/12
+pass. `make test` clean (all packages, -race).
 
 ## Reviewer Notes
 
@@ -326,6 +331,31 @@ The new tests validate contract-visible DOT behavior rather than helper internal
 - `go test ./internal/cli -run 'TestRenderDOT_|TestDotStepAttrs_|TestCompileGolden_JSONAndDOT' -count=1`
 - `make build`
 - `make test`
+
+### Review 2026-05-08-02 — changes-requested
+
+#### Summary
+The iterating-step annotations are in place and the new cluster rendering works for the single-call cases covered by the tests, but the subworkflow inlining is not correct for repeated call sites. `renderDOT` namespaces clusters and interior node IDs by `SubworkflowRef` alone, so two different steps targeting the same subworkflow collapse onto the same DOT IDs and edges. That breaks the "full execution structure" requirement for subworkflow rendering and needs remediation before approval.
+
+#### Plan Adherence
+- Steps 1-2 are implemented and covered at the DOT-output level.
+- Steps 3-4 are only partially satisfied: single subworkflow calls and one nested chain render, but distinct parent steps targeting the same subworkflow declaration do not produce distinct inlined structures.
+- The current tests do not cover repeated subworkflow invocation from multiple parent steps, so the collision escaped review.
+
+#### Required Remediations
+- **Blocker** — `internal/cli/compile.go:303-305`, `internal/cli/compile.go:412-413`, `internal/cli/compile.go:467-469`: cluster IDs and node namespaces are derived from `st.SubworkflowRef`, so multiple steps that target the same subworkflow emit duplicate `subgraph cluster_<name>` blocks and reuse the same `"name/__start__"` / `"name/<node>"` IDs. A concrete compile of a parent workflow with `step "first"` and `step "second"` both targeting `subworkflow.inner` produced two identical `subgraph cluster_inner` blocks plus shared edges `"inner/done" -> "inner/__start__"` and `"inner/done" -> "done"`, which collapses two call sites into one graph. **Acceptance criteria:** namespace each inlined subworkflow by call-site identity (for example, the parent step path) rather than the declaration name alone, ensure repeated calls to the same subworkflow render as distinct clusters with distinct node IDs, and preserve correct edge routing between the first call, the second call, and the parent graph.
+- **Blocker** — `internal/cli/compile_dot_test.go:337-517`: subworkflow coverage exercises only one invocation per subworkflow declaration, so it does not prove the cluster renderer preserves structure when the same subworkflow is called more than once. **Acceptance criteria:** add an end-to-end DOT test with at least two parent steps targeting the same subworkflow and assert that the output contains two distinct cluster identifiers / namespaced node sets and the expected rewired edges between those separate invocations.
+
+#### Test Intent Assessment
+The annotation tests are behavior-aligned for plain, `for_each`, `count`, and `parallel` steps, and the cluster tests prove the basic happy path. The missing case is the key regression-sensitive one for this refactor: repeated subworkflow invocation. A faulty implementation can pass the current suite while merging multiple call sites into one rendered cluster, which is exactly what happens today.
+
+#### Validation Performed
+- Inspected `git show --stat --summary --format=fuller 9bca858` and the targeted diff for `internal/cli/compile.go` and `internal/cli/compile_dot_test.go`.
+- `go test ./internal/cli -run 'TestRenderDOT_|TestDotStepAttrs_|TestCompileGolden_JSONAndDOT' -count=1` (passed).
+- `make build` (passed).
+- `make test` (passed).
+- Compiled an ad hoc workflow with two parent steps both targeting `subworkflow.inner`; DOT output showed duplicate `subgraph cluster_inner` blocks and shared `"inner/..."`
+  node IDs, confirming the collision.
 
 
 ## Reviewer Notes

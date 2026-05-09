@@ -300,8 +300,8 @@ func dotWriteNodes(b *strings.Builder, graph *workflow.FSMGraph, indent, namespa
 			b.WriteString(fmt.Sprintf("%s%q [%s];\n", indent, namespace+name, attrs))
 			continue
 		}
-		clusterNS := namespace + st.SubworkflowRef + "/"
-		clusterID := sanitizeDotID(namespace + st.SubworkflowRef)
+		clusterNS := namespace + name + "/"
+		clusterID := sanitizeDotID(namespace + name)
 		b.WriteString(fmt.Sprintf("%ssubgraph cluster_%s {\n", indent, clusterID))
 		b.WriteString(fmt.Sprintf("%s  label=%q;\n", indent, dotClusterLabel(st)))
 		b.WriteString(fmt.Sprintf("%s  style=dashed;\n", indent))
@@ -347,8 +347,8 @@ func dotWriteClusterBody(b *strings.Builder, graph *workflow.FSMGraph, indent, n
 			b.WriteString(fmt.Sprintf("%s%q [%s];\n", indent, namespace+name, attrs))
 			continue
 		}
-		nestedNS := namespace + st.SubworkflowRef + "/"
-		clusterID := sanitizeDotID(namespace + st.SubworkflowRef)
+		nestedNS := namespace + name + "/"
+		clusterID := sanitizeDotID(namespace + name)
 		b.WriteString(fmt.Sprintf("%ssubgraph cluster_%s {\n", indent, clusterID))
 		b.WriteString(fmt.Sprintf("%s  label=%q;\n", indent, dotClusterLabel(st)))
 		b.WriteString(fmt.Sprintf("%s  style=dashed;\n", indent))
@@ -365,7 +365,7 @@ func dotWriteClusterBody(b *strings.Builder, graph *workflow.FSMGraph, indent, n
 		if step.SubworkflowRef != "" {
 			swNode := graph.Subworkflows[step.SubworkflowRef]
 			if swNode != nil && swNode.Body != nil {
-				nestedNS := namespace + step.SubworkflowRef + "/"
+				nestedNS := namespace + stepName + "/"
 				dotWriteExitEdges(b, indent, graph, namespace, step, swNode.Body, nestedNS)
 			}
 			continue
@@ -409,7 +409,7 @@ func dotWriteEdges(b *strings.Builder, graph *workflow.FSMGraph, indent, namespa
 		if step.SubworkflowRef != "" {
 			swNode := graph.Subworkflows[step.SubworkflowRef]
 			if swNode != nil && swNode.Body != nil {
-				clusterNS := namespace + step.SubworkflowRef + "/"
+				clusterNS := namespace + stepName + "/"
 				dotWriteExitEdges(b, indent, graph, namespace, step, swNode.Body, clusterNS)
 			}
 			continue
@@ -466,7 +466,7 @@ func dotWriteExitEdges(b *strings.Builder, indent string, parentGraph *workflow.
 func dotResolveRef(graph *workflow.FSMGraph, namespace, name string) string {
 	if st, ok := graph.Steps[name]; ok && st.SubworkflowRef != "" {
 		if swNode, ok := graph.Subworkflows[st.SubworkflowRef]; ok && swNode != nil && swNode.Body != nil {
-			return namespace + st.SubworkflowRef + "/__start__"
+			return namespace + name + "/__start__"
 		}
 	}
 	return namespace + name
