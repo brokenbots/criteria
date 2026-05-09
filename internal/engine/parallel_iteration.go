@@ -38,8 +38,8 @@ import (
 // write latency. fanIns tracks all created sinks; closeEventSinks drains them.
 type lockedSink struct {
 	Sink
-	mu    sync.Mutex
-	fanMu sync.Mutex // protects fanIns slice
+	mu     sync.Mutex
+	fanMu  sync.Mutex // protects fanIns slice
 	fanIns []*fanInEventSink
 }
 
@@ -295,27 +295,6 @@ func copyAdapterData(data any) any {
 func (f *fanInEventSink) close() {
 	close(f.ch)
 	<-f.done
-}
-
-// lockedEventSink wraps an adapter.EventSink and serializes Log and Adapter
-// under a provided mutex. Retained alongside fanInEventSink for use in
-// non-parallel contexts where a simple mutex guard suffices (e.g. benchmarks
-// comparing the two approaches directly).
-type lockedEventSink struct {
-	adapter.EventSink
-	mu *sync.Mutex
-}
-
-func (e *lockedEventSink) Log(stream string, chunk []byte) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.EventSink.Log(stream, chunk)
-}
-
-func (e *lockedEventSink) Adapter(kind string, data any) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.EventSink.Adapter(kind, data)
 }
 
 // parallelIterResult holds the raw outcome and string outputs for one parallel

@@ -1146,7 +1146,7 @@ type fanInCountSink struct {
 	lastAdapterData any // most recent data argument to Adapter()
 }
 
-func (s *fanInCountSink) Log(string, []byte)     { s.logCount++ }
+func (s *fanInCountSink) Log(string, []byte)      { s.logCount++ }
 func (s *fanInCountSink) Adapter(_ string, d any) { s.adapterCount++; s.lastAdapterData = d }
 
 // TestFanInEventSink_AllEventsDelivered verifies that all Log and Adapter events
