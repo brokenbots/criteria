@@ -20,10 +20,6 @@ Workstream files for the active phase live at
   Fourteen of sixteen workstreams merged (W05 and W11 cancelled); `v0.2.0`
   tagged at HEAD covering combined Phase 1 + Phase 2 work. Archived under
   [workstreams/archived/v2/](workstreams/archived/v2/).
-- **Phase 3 — TBD.** Architecture-team direction: HCL/runtime rework before any
-  feature work. See "Phase 3 forward-pointer" below for the candidate scope
-  list. Originally-planned environments / plug architecture is deferred to
-  Phase 4 with a new contributor.
 - **Phase 3 — HCL/runtime rework** — **closed 2026-05-06**. All nineteen active
   workstreams merged (W20 skipped); lint baseline burn-down to 21 entries (zero
   `errcheck`/`contextcheck`); Maintainability and Tech Debt lifted to B;
@@ -126,19 +122,38 @@ Two workstreams from the original plan were cancelled on 2026-04-30:
 - **Tag-claim discipline.** The pre-existing `v0.2.0` claim in CHANGELOG and PLAN was a forward reference, not an actual tag — the tech evaluation flagged this as the #1 critical-severity tech debt. The W16 cleanup tag fixes this by pushing `v0.2.0` to remote at HEAD, with the CHANGELOG entry expanded to cover both phases.
 - **Tech-debt grades.** Per [tech_evaluations/TECH_EVALUATION-20260501-01.md](tech_evaluations/TECH_EVALUATION-20260501-01.md): Maintainability lifted from C+ to **C+** (the prior B target was missed — the project remains effectively single-maintainer until non-author PRs land); Tech Debt lifted from C to **C+** (cap is exactly full at 70/70, leaving no headroom for Phase 3 structural changes — Phase 3 W01 burns this down before any rework lands).
 
-## Phase 3 — TBD
+## Phase 3 — HCL/runtime rework ✅ closed 2026-05-06
 
-Architecture-team direction (per architecture_notes.md and proposed_hcl.hcl): the next phase is an HCL/runtime rework. The originally-planned Phase 3 environments / plug architecture theme is deferred to Phase 4 with a new contributor.
+All nineteen active workstreams merged (W20 skipped). `v0.3.0` tagged. Archived under
+[workstreams/archived/v3/](workstreams/archived/v3/). See
+[docs/roadmap/phase-3-summary.md](docs/roadmap/phase-3-summary.md) for the full
+per-workstream outcome summary.
 
-Phase 3 candidate scope (target `v0.3.0`, clean break from v0.2.0):
+### Phase 3 workstreams (archived to [workstreams/archived/v3/](workstreams/archived/v3/))
 
-- **Pre-rework cleanup.** Lint baseline burn-down to ≤ 50 (W01). Split [internal/cli/apply.go](internal/cli/apply.go) (W02) and [workflow/compile_steps.go](workflow/compile_steps.go) (W03). Server-mode apply test coverage (W04). Tracked roadmap artifact (W05) replacing the local-only plan reference. Release-process integrity: CI tag-claim guard + signed release workflow (W06).
-- **Compile-time/runtime semantics.** `local "<name>"` block + constant-fold pass that broadens `file()` validation across every attribute slot (W07). Schema unification — drop `WorkflowBodySpec`, sub-workflow IS a `Spec`, drop cross-scope `Vars` aliasing (W08). Top-level `output "<name>"` block + new `run.outputs` event (W09). `environment "<type>" "<name>"` declaration surface with env-var injection (W10).
-- **Language surface — clean break.** `agent` block hard-renamed to `adapter "<type>" "<name>"` (W11). Adapter lifecycle automation (drop `lifecycle = "open"|"close"`) (W12). First-class `subworkflow "<name>"` block + CLI `SubWorkflowResolver` wiring (W13). Universal step `target = adapter.<type>.<name> | subworkflow.<name> | step.<name>` attribute (W14). `outcome.next` (replacing `transition_to`) + reserved `return` outcome + `default_outcome` (W15). `branch` block hard-renamed to `switch` with `condition.match`/`next`/`output` (W16). Directory-level multi-file module compilation as the only entry shape (W17).
-- **Runtime.** `shared_variable` block (engine-locked mutable scoped state) (W18). `parallel` step modifier for concurrent execution across list items (W19). Implicit input chaining (default `step.input` to previous step output) (W20).
-- **Close gate.** Phase 3 cleanup gate (W21): legacy-removal grep gate, lint baseline ≤ 50, tech-eval re-run, archive, tag `v0.3.0`.
+- [W01](workstreams/archived/v3/01-lint-baseline-burndown.md) ✅ — Lint baseline burn-down to ≤ 50.
+- [W02](workstreams/archived/v3/02-split-cli-apply.md) ✅ — Split `internal/cli/apply.go`.
+- [W03](workstreams/archived/v3/03-split-compile-steps.md) ✅ — Split `workflow/compile_steps.go`.
+- [W04](workstreams/archived/v3/04-server-mode-coverage.md) ✅ — Server-mode apply test coverage.
+- [W05](workstreams/archived/v3/05-tracked-roadmap-artifact.md) ✅ — Tracked roadmap artifact.
+- [W06](workstreams/archived/v3/06-release-process-integrity.md) ✅ — Release-process integrity (tag-claim-check CI guard).
+- [W07](workstreams/archived/v3/07-local-block-and-fold-pass.md) ✅ — `local "<name>"` block + constant-fold pass.
+- [W08](workstreams/archived/v3/08-schema-unification.md) ✅ — Schema unification (drop `WorkflowBodySpec`).
+- [W09](workstreams/archived/v3/09-output-block.md) ✅ — Top-level `output "<name>"` block.
+- [W10](workstreams/archived/v3/10-environment-block.md) ✅ — `environment "<type>" "<name>"` declaration surface.
+- [W11](workstreams/archived/v3/11-agent-to-adapter-rename.md) ✅ — `agent` → `adapter "<type>" "<name>"` hard rename.
+- [W12](workstreams/archived/v3/12-adapter-lifecycle-automation.md) ✅ — Adapter lifecycle automation.
+- [W13](workstreams/archived/v3/13-subworkflow-block-and-resolver.md) ✅ — First-class `subworkflow "<name>"` block + CLI resolver wiring.
+- [W14](workstreams/archived/v3/14-universal-step-target.md) ✅ — Universal step `target` attribute.
+- [W15](workstreams/archived/v3/15-outcome-block-and-return.md) ✅ — `outcome.next` + reserved `return` outcome + `default_outcome`.
+- [W16](workstreams/archived/v3/16-switch-and-if-flow-control.md) ✅ — `branch` → `switch` rename.
+- [W17](workstreams/archived/v3/17-directory-module-compile.md) ✅ — Directory-level multi-file module compilation.
+- [W18](workstreams/archived/v3/18-shared-variable-block.md) ✅ — `shared_variable` block.
+- [W19](workstreams/archived/v3/19-parallel-step-modifier.md) ✅ — `parallel` step modifier.
+- W20 — Implicit input chaining — *skipped*.
+- [W21](workstreams/archived/v3/21-phase3-cleanup-gate.md) ✅ — Phase 3 cleanup gate; archive; tag `v0.3.0`.
 
-The detailed plan and per-workstream files are staged locally and have not yet been committed to `main`. They land as Phase 3 begins.
+*Phase 3 closed 2026-05-06. Archived under [workstreams/archived/v3/](workstreams/archived/v3/).*
 
 ## Deferred / forward-pointers (Phase 4 and beyond)
 

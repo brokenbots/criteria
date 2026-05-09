@@ -89,26 +89,30 @@ workflow "deploy" {
   version       = "0.1"
   initial_state = "build"
   target_state  = "deployed"
+}
 
-  step "build" {
-    adapter = "shell"
-    input { command = "go build ./..." }
-    outcome "success" { transition_to = "test" }
-    outcome "failure" { transition_to = "failed" }
-  }
+adapter "shell" "default" {
+  config {}
+}
 
-  step "test" {
-    adapter = "shell"
-    input { command = "go test ./..." }
-    outcome "success" { transition_to = "deployed" }
-    outcome "failure" { transition_to = "failed" }
-  }
+step "build" {
+  target = adapter.shell.default
+  input { command = "go build ./..." }
+  outcome "success" { next = "test" }
+  outcome "failure" { next = "failed" }
+}
 
-  state "deployed" { terminal = true }
-  state "failed" {
-    terminal = true
-    success  = false
-  }
+step "test" {
+  target = adapter.shell.default
+  input { command = "go test ./..." }
+  outcome "success" { next = "deployed" }
+  outcome "failure" { next = "failed" }
+}
+
+state "deployed" { terminal = true }
+state "failed" {
+  terminal = true
+  success  = false
 }
 ```
 

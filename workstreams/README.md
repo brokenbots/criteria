@@ -16,9 +16,10 @@ prior phases are in [`archived/`](archived/).
   tool-call finalization — **closed 2026-05-02**. Sixteen workstreams scoped,
   two cancelled (W05, W11). `v0.2.0` tagged at HEAD covering combined Phase 1
   + Phase 2 work. Archived under [`archived/v2/`](archived/v2/).
-- **Phase 3** — TBD. Architecture-team direction is an HCL/runtime rework;
-  see [PLAN.md](../PLAN.md) for the candidate scope and the "Phase 3
-  forward-pointer" section below.
+- **Phase 3** — HCL/runtime rework — **closed 2026-05-06**. All nineteen active
+  workstreams merged (W20 skipped); `v0.3.0` tagged. Archived under
+  [`archived/v3/`](archived/v3/). See [docs/roadmap/phase-3-summary.md](../docs/roadmap/phase-3-summary.md)
+  for full outcomes.
 
 ## Phase 2 workstreams (archived)
 
@@ -34,37 +35,17 @@ All Phase 1 workstream files have been moved to [`archived/v1/`](archived/v1/).
 
 All Phase 0 workstream files have been moved to [`archived/v0/`](archived/v0/).
 
-## Phase 3 forward-pointer
+## Phase 3 workstreams (archived)
 
-Phase 3 is sketched in [PLAN.md](../PLAN.md) but not yet active here. Targeted
-theme (per architecture_notes.md and proposed_hcl.hcl): **HCL/runtime rework
-with a clean break from v0.2.0**. Twenty-one workstreams are scoped; the
-detailed per-workstream files have been drafted locally and will be moved into
-this directory when Phase 3 begins. The originally-planned Phase 3 environments
-/ plug architecture theme is deferred to Phase 4 with a new contributor.
+Phase 3 closed 2026-05-06 with `v0.3.0` tagged. All workstream files have been
+moved to [`archived/v3/`](archived/v3/). See
+[docs/roadmap/phase-3-summary.md](../docs/roadmap/phase-3-summary.md) for the
+full per-workstream outcome summary.
 
-Headline scope:
+Post-phase documentation cleanup workstreams (also archived to `archived/v3/`):
 
-- **Pre-rework cleanup.** Lint baseline burn-down to ≤ 50; split
-  [internal/cli/apply.go](../internal/cli/apply.go) and
-  [workflow/compile_steps.go](../workflow/compile_steps.go); server-mode apply
-  test coverage; tracked roadmap artifact; release-process integrity.
-- **Compile-time / runtime semantics.** `local "<name>"` block + constant-fold
-  pass; schema unification (drop `WorkflowBodySpec`, sub-workflow IS a `Spec`,
-  drop cross-scope `Vars` aliasing); top-level `output` block; `environment`
-  declaration surface.
-- **Language surface — clean break.** `agent` → `adapter "<type>" "<name>"`
-  hard rename; adapter lifecycle automation; first-class `subworkflow` block
-  with CLI resolver wiring; universal step `target` attribute; `outcome.next`
-  + reserved `return` outcome; `branch` → `switch` rename; directory-level
-  multi-file module compilation as the only entry shape.
-- **Runtime.** `shared_variable` block; `parallel` step modifier; implicit
-  input chaining.
-
-Phase 4 candidate scope (deferred): environments / plug architecture (the
-originally-planned Phase 3 theme), platform-specific shell sandboxing,
-durable-resume conformance lift, remote subworkflow source schemes, `if`
-block decision, per-iteration adapter sessions.
+- [doc-01](archived/v3/doc-01-docs-cleanup.md) ✅ — Docs cleanup: runtime/compiler reference and roadmap files.
+- [doc-02](archived/v3/doc-02-meta-cleanup.md) ✅ — Docs cleanup: meta/index files (`README.md`, `CONTRIBUTING.md`, `PLAN.md`, `workstreams/README.md`).
 
 ## Workstream conventions
 
