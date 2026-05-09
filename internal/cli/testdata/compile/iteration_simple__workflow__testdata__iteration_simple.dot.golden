@@ -1,9 +1,9 @@
 digraph "iteration_simple" {
   rankdir=LR;
 
-  "process" [shape=box, label="process\n[for_each]"];
-  "count_phase" [shape=box, label="count_phase\n[count]"];
-  "done" [shape=doublecircle];
+  "process" [shape=box, style="filled,dashed", fillcolor="#D6EAF8", label="process\n[for_each]"];
+  "count_phase" [shape=box, style="filled,dashed", fillcolor="#D6EAF8", label="count_phase\n[count]"];
+  "done" [shape=doublecircle, style=filled, fillcolor="#D5F5E3"];
 
   "__start__" [shape=point,width=0.12,label=""];
   "__start__" -> "process" [label="initial"];

@@ -1,9 +1,9 @@
 digraph "perf_1000_logs" {
   rankdir=LR;
 
-  "generate_logs" [shape=box];
-  "done" [shape=doublecircle];
-  "failed" [shape=doublecircle];
+  "generate_logs" [shape=box, style="filled", fillcolor="#D6EAF8"];
+  "done" [shape=doublecircle, style=filled, fillcolor="#D5F5E3"];
+  "failed" [shape=doublecircle, style=filled, fillcolor="#FADBD8"];
 
   "__start__" [shape=point,width=0.12,label=""];
   "__start__" -> "generate_logs" [label="initial"];

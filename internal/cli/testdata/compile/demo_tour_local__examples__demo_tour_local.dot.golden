@@ -1,14 +1,14 @@
 digraph "demo_tour_local" {
   rankdir=LR;
 
-  "boot" [shape=box];
-  "discover" [shape=box];
-  "process_each" [shape=box, label="process_each\n[for_each]"];
-  "review" [shape=box];
-  "celebrate" [shape=box];
-  "decide" [shape=diamond];
-  "aborted" [shape=doublecircle];
-  "done" [shape=doublecircle];
+  "boot" [shape=box, style="filled", fillcolor="#D6EAF8"];
+  "discover" [shape=box, style="filled", fillcolor="#D6EAF8"];
+  "process_each" [shape=box, style="filled,dashed", fillcolor="#D6EAF8", label="process_each\n[for_each]"];
+  "review" [shape=box, style="filled", fillcolor="#D6EAF8"];
+  "celebrate" [shape=box, style="filled", fillcolor="#D6EAF8"];
+  "decide" [shape=diamond, style=filled, fillcolor="#FEF9E7"];
+  "aborted" [shape=doublecircle, style=filled, fillcolor="#FADBD8"];
+  "done" [shape=doublecircle, style=filled, fillcolor="#D5F5E3"];
 
   "__start__" [shape=point,width=0.12,label=""];
   "__start__" -> "boot" [label="initial"];

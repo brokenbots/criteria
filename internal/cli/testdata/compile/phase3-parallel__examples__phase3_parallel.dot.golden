@@ -1,8 +1,8 @@
 digraph "parallel-demo" {
   rankdir=LR;
 
-  "fetch" [shape=box, label="fetch\n[parallel]"];
-  "done" [shape=doublecircle];
+  "fetch" [shape=box, style="filled", fillcolor="#D6EAF8", peripheries=2, label="fetch\n[parallel]"];
+  "done" [shape=doublecircle, style=filled, fillcolor="#D5F5E3"];
 
   "__start__" [shape=point,width=0.12,label=""];
   "__start__" -> "fetch" [label="initial"];

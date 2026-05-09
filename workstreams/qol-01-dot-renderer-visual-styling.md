@@ -324,16 +324,59 @@ This workstream may **not** edit `README.md`, `PLAN.md`, `AGENTS.md`, `CHANGELOG
 
 ## Tasks
 
-- [ ] Add `dotAdapterPalette` slice and semantic fill color constants to `internal/cli/compile.go`.
-- [ ] Add `buildAdapterColorMap(graph *workflow.FSMGraph) map[string]string` helper.
-- [ ] Add `adapterTypeOf(ref string) string` helper (splits `"<type>.<name>"` on first `.`).
-- [ ] Implement/extend `dotStepAttrs` to accept `adapterColors map[string]string` and emit shape, fillcolor, style, and peripheries.
-- [ ] Call `buildAdapterColorMap` once at the top of `renderDOT`; pass result into step node loop.
-- [ ] Update switch node loop to add `style=filled` and `fillcolor`.
-- [ ] Update state node loop to add fill for terminal success/failure states.
-- [ ] Add 12 tests (3 unit tests for `buildAdapterColorMap`, 9 render tests).
-- [ ] `make build` clean.
-- [ ] `make test` clean.
+- [x] Add `dotAdapterPalette` slice and semantic fill color constants to `internal/cli/compile.go`.
+- [x] Add `buildAdapterColorMap(graph *workflow.FSMGraph) map[string]string` helper.
+- [x] Add `adapterTypeOf(ref string) string` helper (splits `"<type>.<name>"` on first `.`).
+- [x] Implement/extend `dotStepAttrs` to accept `adapterColors map[string]string` and emit shape, fillcolor, style, and peripheries.
+- [x] Call `buildAdapterColorMap` once at the top of `renderDOT`; pass result into step node loop.
+- [x] Update switch node loop to add `style=filled` and `fillcolor`.
+- [x] Update state node loop to add fill for terminal success/failure states.
+- [x] Add 12 tests (3 unit tests for `buildAdapterColorMap`, 9 render tests).
+- [x] `make build` clean.
+- [x] `make test` clean.
+
+## Implementation notes
+
+### Changes made
+
+**`internal/cli/compile.go`**
+- Added `dotAdapterPalette` (8-entry pastel slice) and semantic color constants (`dotSubworkflowFill`, `dotUnknownFill`, `dotSwitchFill`, `dotSuccessFill`, `dotFailureFill`).
+- Added `buildAdapterColorMap(graph *workflow.FSMGraph) map[string]string` — iterates `graph.AdapterOrder`, assigns palette entries to distinct adapter types with wrap-around.
+- Added `adapterTypeOf(ref string) string` — two-line helper that splits `"<type>.<name>"` on the first `.`.
+- Extended `dotStepAttrs` signature from `(name, st)` to `(name, st, adapterColors)`. Now emits `shape=`, `style=`, `fillcolor=`, optionally `peripheries=2`, and optionally `label=`.
+- Updated `renderDOT` to call `buildAdapterColorMap` once and pass `adapterColors` through `dotWriteNodes` → `dotWriteNodeDecls` and `dotWriteClusterBody`.
+- Updated `dotWriteNodes`, `dotWriteNodeDecls`, `dotWriteClusterBody` to accept and thread `adapterColors`.
+- Updated switch node loop: `[shape=diamond, style=filled, fillcolor="#FEF9E7"]`.
+- Updated state node loop: terminal-success gets green fill, terminal-failure gets pink fill, non-terminal gets no fill.
+
+**`internal/cli/compile_dot_test.go`** (updated for behavioral changes)
+- `TestRenderDOT_PlainStepNoAnnotation` — updated to check `style="filled"` and `fillcolor=`; node-level no-label check tightened to match only the node declaration line (not edge lines).
+- `TestDotStepAttrs_PlainAdapter` — updated to pass `adapterColors`; asserts fill color and style.
+- `TestDotStepAttrs_SubworkflowOnly` — updated to verify `dotSubworkflowFill` fill color.
+
+**`internal/cli/compile_dot_styling_test.go`** (new, 12 tests)
+- `TestBuildAdapterColorMap_AssignsPaletteInOrder` — unit test, direct `buildAdapterColorMap` call.
+- `TestBuildAdapterColorMap_WrapsAtPaletteEnd` — unit test, wrap-around verified.
+- `TestBuildAdapterColorMap_SameTypeMultipleInstances` — unit test, shared type → single slot.
+- `TestDOT_StepHasFillColor` — compile HCL; assert hex fillcolor on step node line.
+- `TestDOT_TwoAdapterTypesDifferentColors` — compile HCL with noop + shell; different fill colors.
+- `TestDOT_SubworkflowStepColor` — `dotStepAttrs` direct call; `shape=component`, `#D5F5E3`.
+- `TestDOT_ForEachStepDashedBorder` — compile HCL; `style="filled,dashed"`.
+- `TestDOT_ParallelStepDoublePeripheries` — compile HCL; `peripheries=2`.
+- `TestDOT_SwitchFillColor` — compile HCL; `fillcolor="#FEF9E7"`.
+- `TestDOT_TerminalSuccessStateFill` — compile HCL; `fillcolor="#D5F5E3"`.
+- `TestDOT_TerminalFailureStateFill` — compile HCL; `fillcolor="#FADBD8"`.
+- `TestDOT_NonTerminalStateNoFill` — compile HCL; no `fillcolor` on non-terminal state.
+
+**Golden files regenerated** (all 30+ `.dot.golden` files in `internal/cli/testdata/compile/` now contain the new styled attributes).
+
+### Design decision: adapterColors threading to subworkflow clusters (updated)
+
+The design decision in the previous iteration was incorrect: `adapterColors` built from the root graph only caused subworkflow-local adapter types to fall back to white. The fix (`collectAdapterTypes` + depth-first traversal) builds the map from the entire reachable graph tree so every adapter type gets a palette color. The root-first traversal also ensures root adapter types retain lower palette indices.
+
+### Security review
+
+No user-controlled input reaches DOT attribute values. Step names and adapter types come from the compiler. Colors are fixed literals. No new dependencies introduced.
 
 ## Exit criteria
 
@@ -347,3 +390,158 @@ This workstream may **not** edit `README.md`, `PLAN.md`, `AGENTS.md`, `CHANGELOG
 - Terminal success states are green-filled; terminal failure states are pink-filled.
 - Plain adapter steps render with `style=filled` and a palette-assigned color.
 - `make test` clean.
+
+## Reviewer Notes
+
+### Review 2026-05-08 — changes-requested
+
+#### Summary
+
+The root-step, switch, terminal-state, and palette helper portions are implemented and the repository build/tests are green, but the actual compiled subworkflow render path still misses the workstream's visual semantics. Inlined subworkflow bodies can render valid adapter steps with the white unknown fallback, and compiled subworkflow clusters are still emitted with a hard-coded dashed border and no semantic subworkflow color, so the user-visible DOT output does not yet satisfy the acceptance bar.
+
+#### Plan Adherence
+
+- Steps 1, 3, and 4 are implemented as described for root graph adapter steps, switches, and terminal states.
+- Step 2 is only partially implemented. `dotStepAttrs` handles the fallback placeholder path, but compiled subworkflow bodies render through the cluster path in `renderDOT`, and that path does not apply the required subworkflow/fan-out styling semantics.
+- Step 5 is incomplete at the contract boundary that matters here: the new tests cover palette mapping, plain steps, switches, and terminal states, but they do not prove the styling of compiled subworkflow output produced by `renderDOT`.
+
+#### Required Remediations
+
+- **blocker** — `internal/cli/compile.go:303-308,338,396,545-552`: valid adapter steps inside compiled subworkflow bodies can fall back to `dotUnknownFill` (`#FFFFFF`) because the color map is built from the root graph only and then reused for nested bodies. Reproduction: a root workflow delegating to a subworkflow that contains a `shell` step renders `"delegate/shell_step" [shape=box, style="filled", fillcolor="#FFFFFF"]`. This violates the workstream's dynamic adapter-color assignment and the exit criterion that adding a new adapter type to a workflow automatically receives a color. **Acceptance criteria:** ensure every real adapter type reachable in the rendered workflow, including subworkflow-local adapter types, gets a palette color instead of the unknown fallback; add a regression test that compiles a workflow with a subworkflow-only adapter type and asserts a non-white palette color on the nested step node.
+- **blocker** — `internal/cli/compile.go:335-338,393-396`: every compiled subworkflow cluster is still emitted with `style=dashed` and no semantic subworkflow color, so plain delegated subworkflows render as iterating/fan-out nodes and compiled subworkflow output never shows the required fixed subworkflow styling. This misses the workstream's stated visual vocabulary (`subworkflow` semantic styling, dashed only for `for_each`/`count`, double border for `parallel`). **Acceptance criteria:** apply the workstream's target-kind and fan-out styling rules to the actual compiled subworkflow render path, not just the placeholder path, and add render tests that assert the compiled subworkflow output for plain, iterating, and parallel delegation cases.
+
+#### Test Intent Assessment
+
+The direct `buildAdapterColorMap` tests are strong for palette order, wrapping, and repeated adapter types, and the plain-step/switch/terminal-state render tests assert user-visible DOT attributes rather than implementation details. The weak spot is compiled subworkflow rendering: `internal/cli/compile_dot_styling_test.go` only checks subworkflow styling via the fallback `dotStepAttrs` path, while the real `renderDOT` contract for compiled subworkflows still routes through cluster rendering. As written, the suite would stay green while compiled subworkflow nodes render white nested adapter steps or the wrong border semantics. Add contract-level assertions against compiled DOT output for those cases.
+
+#### Validation Performed
+
+- `make build` — passed.
+- `make test` — passed.
+- Manual reproduction with `./bin/criteria compile --format dot <temp workflow>` using a root workflow that delegates to a subworkflow containing a `shell` adapter step — reproduced nested step output with `fillcolor="#FFFFFF"` and a plain delegated cluster rendered with unconditional `style=dashed`.
+
+### Remediation 2 (this session) — blockers addressed
+
+#### Changes made
+
+**`internal/cli/compile.go`**
+- Replaced `buildAdapterColorMap` with a two-pass approach: `buildAdapterColorMap` now calls `collectAdapterTypes`, a new depth-first recursive helper that walks `graph.AdapterOrder` and then recurses into each subworkflow body via `graph.SubworkflowOrder`. This ensures every adapter type reachable in the compiled tree gets a palette color; root types retain lower palette indices; shared types across parent/child consume one slot.
+- Added `dotWriteClusterStyle` — emits the Graphviz style attributes for a compiled subworkflow cluster based on the delegation step's fan-out kind: `peripheries=2` for parallel, `style="filled,dashed"` for for_each/count, `style=filled` for plain. All cluster kinds receive `fillcolor="#D5F5E3"` (the semantic subworkflow fill) as a visual indicator.
+- Replaced both hardcoded `style=dashed` calls in `dotWriteNodes` and `dotWriteClusterBody` with calls to `dotWriteClusterStyle`.
+- Removed the now-incorrect design decision note that rationalized the white fallback as acceptable.
+
+**`internal/cli/compile_dot_styling_test.go`** (4 new tests, total now 16)
+- `TestBuildAdapterColorMap_SubworkflowLocalType` — compiles a parent+subworkflow workflow where the subworkflow uses a `shell` adapter not declared in the parent; asserts the nested `delegate/do_shell` step has a non-white palette color.
+- `TestDOT_PlainSubworkflowClusterStyle` — compiles a plain delegation; asserts `fillcolor="#D5F5E3"`, no `style=filled,dashed`, no `peripheries=2`.
+- `TestDOT_IteratingSubworkflowClusterStyle` — compiles a for_each delegation; asserts `style="filled,dashed"` and `fillcolor="#D5F5E3"` in cluster header.
+- `TestDOT_ParallelSubworkflowClusterStyle` — compiles a parallel delegation; asserts `peripheries=2` and `fillcolor="#D5F5E3"`, no `style=filled,dashed`.
+
+#### Validation
+
+- `make test` — all 16 styling tests + full suite passes.
+- Golden files: no regeneration needed (no example workflows use compiled subworkflow clusters).
+- Security: no change to threat surface. All cluster attributes are fixed constants or step metadata from the compiler.
+
+### Review 2026-05-08-02 — changes-requested
+
+#### Summary
+
+The two prior implementation blockers are fixed: compiled subworkflow-local adapter types now receive palette colors, and compiled subworkflow clusters render with the intended plain/iterating/parallel border semantics. However, the new regression tests still do not fully prove the cluster-level styling contract, so this pass remains blocked on test intent rather than implementation behavior.
+
+#### Plan Adherence
+
+- Step 2 is now implemented on the actual compiled-subworkflow render path: manual DOT output shows semantic subworkflow fill, solid border for plain delegation, dashed border for iterating delegation, and double border for parallel delegation.
+- Step 5 improved materially with new compiled-subworkflow coverage, but the cluster-style assertions are still too broad to guarantee the intended cluster attributes themselves.
+
+#### Required Remediations
+
+- **blocker** — `internal/cli/compile_dot_styling_test.go:453-570,573-635`: the new compiled-subworkflow cluster tests search the full DOT output for `fillcolor="#D5F5E3"`, `style="filled,dashed"`, and `peripheries=2`, but they do not isolate the cluster header lines they are supposed to verify. A faulty implementation that drops the cluster `fillcolor` or `style=filled` while leaving nested terminal states green-filled could still pass these tests. Under the test-intent rubric, this is not regression-sensitive enough for the cluster-rendering contract. **Acceptance criteria:** tighten the plain/iterating/parallel compiled-subworkflow tests so they assert the attributes on the cluster declaration block itself (for example by extracting the `subgraph cluster_<name> { ... }` header lines or matching line-by-line within that block), including an explicit assertion for plain-cluster `style=filled`.
+
+#### Test Intent Assessment
+
+`buildAdapterColorMap` coverage is now strong, and the manual compiled DOT output demonstrates the implementation behavior is correct. The remaining weakness is precision: the cluster-style tests currently prove that the rendered graph contains those attribute strings somewhere, not that the cluster contract carries them. That means at least one plausible regression would still pass.
+
+#### Validation Performed
+
+- `make build` — passed.
+- `make test` — passed.
+- Manual `./bin/criteria compile --format dot <temp workflow>` reproduction confirmed:
+  - nested subworkflow adapter step rendered with a palette color instead of `#FFFFFF`
+  - plain compiled subworkflow cluster rendered with `fillcolor="#D5F5E3"` and `style=filled`
+  - parallel compiled subworkflow cluster rendered with `peripheries=2`
+
+### Remediation 3 (this session) — test precision
+
+#### Changes made
+
+**`internal/cli/compile_dot_styling_test.go`**
+- Added `clusterAttrLines(dot, stepName string) ([]string, bool)` helper: uses brace-depth tracking to locate the named `subgraph cluster_<id>` block, then extracts only the cluster-level attribute lines (skipping node declarations that start with `"`, edges containing `->`, nested subgraph openers, and blank/closing-brace-only lines). This scopes test assertions to the cluster contract and not the full graph.
+- Updated `TestDOT_PlainSubworkflowClusterStyle`: now calls `clusterAttrLines(dot, "delegate")` and asserts `fillcolor`, `style=filled`, absence of `style="filled,dashed"` and `peripheries=2` all against the extracted cluster attrs — a faulty implementation that omits cluster `fillcolor` or `style=filled` while leaving terminal-state styling intact will now fail.
+- Updated `TestDOT_IteratingSubworkflowClusterStyle`: now calls `clusterAttrLines(dot, "process_all")` and asserts `style="filled,dashed"` and `fillcolor` within the cluster header.
+- Updated `TestDOT_ParallelSubworkflowClusterStyle`: now calls `clusterAttrLines(dot, "run_tasks")` and asserts `peripheries=2`, `style=filled`, and `fillcolor` within the cluster header; also explicitly checks absence of `style="filled,dashed"`.
+
+#### Validation
+
+- `make test` — all 16 tests pass.
+- `make lint-go` — clean.
+
+### Review 2026-05-08-03 — changes-requested
+
+#### Summary
+
+The cluster-style assertions are now scoped much more tightly, and the implementation plus repository validation are clean. The remaining blocker is in the new `clusterAttrLines` helper itself: despite the comment and intended contract, it still captures nested cluster attribute lines, so the cluster-style tests are not yet reliably isolated to the cluster under test.
+
+#### Plan Adherence
+
+- The implementation path remains correct for the workstream's styling semantics.
+- Step 5 is still not fully closed because the new helper intended to enforce cluster-level precision does not actually restrict results to depth-1 cluster attributes.
+
+#### Required Remediations
+
+- **blocker** — `internal/cli/compile_dot_styling_test.go:453-499`: `clusterAttrLines` claims to return only top-level attribute lines from the named cluster, but the implementation never checks `depth == 1` before appending lines. It skips the nested `subgraph ... {` opener, yet still collects nested cluster attributes like `label=`, `fillcolor=`, and `style=`. A quick probe with a parent cluster containing a nested cluster returned both the parent attrs and the nested child's attrs, which reintroduces false-positive risk for exactly the contract these tests were added to protect. **Acceptance criteria:** update `clusterAttrLines` so it only records lines belonging to the named cluster's top level (excluding nested cluster contents), and add a focused regression test proving nested cluster attributes are excluded from the extracted attribute set.
+
+#### Test Intent Assessment
+
+This is very close now: the plain/iterating/parallel tests no longer scan the whole DOT blob. But because the extractor still leaks nested cluster attrs, the assertions are not yet fully regression-sensitive for recursive subworkflow rendering, which this renderer already supports.
+
+#### Validation Performed
+
+- `make build` — passed.
+- `make test` — passed.
+- `make lint-go` — passed.
+- Manual probe of the new `clusterAttrLines` logic with a parent cluster containing a nested child cluster showed the helper returning both parent and child attribute lines, confirming the isolation bug.
+
+### Remediation 4 (this session) — clusterAttrLines depth guard
+
+#### Changes made
+
+**`internal/cli/compile_dot_styling_test.go`**
+- Fixed `clusterAttrLines`: added `if depth != 1 { continue }` guard after the `depth == 0` break check. Lines at depth > 1 (inside nested sub-clusters) are now skipped entirely, so nested cluster attributes (fillcolor, style, peripheries) are never included in the result set.
+- Added `TestClusterAttrLines_ExcludesNestedCluster`: synthesises a DOT string with a parent `cluster_outer` (fillcolor `#AAAAAA`, `style=filled`) containing a nested `cluster_inner` (fillcolor `#BBBBBB`, `style="filled,dashed"`, `peripheries=2`); asserts that only the parent attrs appear in the extracted set and none of the nested attrs are present.
+
+#### Validation
+
+- `make test` — all 17 tests pass.
+- `make lint-go` — clean.
+
+### Review 2026-05-08-04 — approved
+
+#### Summary
+
+Approved. The remaining test-intent blocker is resolved: `clusterAttrLines` now excludes nested cluster contents, the new focused regression test proves that behavior, and the compiled-subworkflow styling coverage now matches the workstream's acceptance bar.
+
+#### Plan Adherence
+
+- Step 2 is fully implemented on both the root-step and compiled-subworkflow render paths, including palette assignment across reachable adapter types and the intended plain/iterating/parallel cluster styling semantics.
+- Step 5 is now sufficient: the suite directly verifies palette behavior, step/switch/state styling, compiled subworkflow cluster styling, and nested-cluster exclusion for the helper used to scope those assertions.
+
+#### Test Intent Assessment
+
+The regression tests now assert the right contract at the right boundary. In particular, cluster-style expectations are checked against extracted top-level cluster attributes rather than incidental matches elsewhere in the DOT output, and the new nested-cluster test makes the extractor itself regression-sensitive for recursive rendering.
+
+#### Validation Performed
+
+- `make build` — passed.
+- `make test` — passed.
+- `make lint-go` — passed.
+- Manual probe of the fixed `clusterAttrLines` logic with a parent cluster containing a nested child cluster returned only the parent attribute lines.

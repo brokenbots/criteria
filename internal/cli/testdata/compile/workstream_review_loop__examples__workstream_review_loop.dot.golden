@@ -1,23 +1,23 @@
 digraph "workstream_review_loop" {
   rankdir=LR;
 
-  "checkout_branch" [shape=box];
-  "execute_init" [shape=box];
-  "review_init" [shape=box];
-  "execute" [shape=box];
-  "verify" [shape=box];
-  "fix_verify" [shape=box];
-  "review" [shape=box];
-  "commit_and_prepare_pr" [shape=box];
-  "open_or_update_pr" [shape=box];
-  "watch_pr_warmup" [shape=box];
-  "watch_pr_backoff" [shape=box];
-  "watch_pr_gate" [shape=box];
-  "triage_pr_feedback" [shape=box];
-  "execute_pr_feedback" [shape=box];
-  "merge_pr_and_sync_main" [shape=box];
-  "done" [shape=doublecircle];
-  "failed" [shape=doublecircle];
+  "checkout_branch" [shape=box, style="filled", fillcolor="#E8DAEF"];
+  "execute_init" [shape=box, style="filled", fillcolor="#D6EAF8"];
+  "review_init" [shape=box, style="filled", fillcolor="#D6EAF8"];
+  "execute" [shape=box, style="filled", fillcolor="#D6EAF8"];
+  "verify" [shape=box, style="filled", fillcolor="#E8DAEF"];
+  "fix_verify" [shape=box, style="filled", fillcolor="#D6EAF8"];
+  "review" [shape=box, style="filled", fillcolor="#D6EAF8"];
+  "commit_and_prepare_pr" [shape=box, style="filled", fillcolor="#D6EAF8"];
+  "open_or_update_pr" [shape=box, style="filled", fillcolor="#D6EAF8"];
+  "watch_pr_warmup" [shape=box, style="filled", fillcolor="#E8DAEF"];
+  "watch_pr_backoff" [shape=box, style="filled", fillcolor="#E8DAEF"];
+  "watch_pr_gate" [shape=box, style="filled", fillcolor="#E8DAEF"];
+  "triage_pr_feedback" [shape=box, style="filled", fillcolor="#D6EAF8"];
+  "execute_pr_feedback" [shape=box, style="filled", fillcolor="#D6EAF8"];
+  "merge_pr_and_sync_main" [shape=box, style="filled", fillcolor="#E8DAEF"];
+  "done" [shape=doublecircle, style=filled, fillcolor="#D5F5E3"];
+  "failed" [shape=doublecircle, style=filled, fillcolor="#FADBD8"];
 
   "__start__" [shape=point,width=0.12,label=""];
   "__start__" -> "checkout_branch" [label="initial"];

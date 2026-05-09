@@ -1,12 +1,12 @@
 digraph "switch_basic" {
   rankdir=LR;
 
-  "build" [shape=box];
-  "decide" [shape=diamond];
-  "deploy" [shape=doublecircle];
-  "deploy_staging" [shape=doublecircle];
-  "done" [shape=doublecircle];
-  "skip_deploy" [shape=doublecircle];
+  "build" [shape=box, style="filled", fillcolor="#D6EAF8"];
+  "decide" [shape=diamond, style=filled, fillcolor="#FEF9E7"];
+  "deploy" [shape=doublecircle, style=filled, fillcolor="#D5F5E3"];
+  "deploy_staging" [shape=doublecircle, style=filled, fillcolor="#D5F5E3"];
+  "done" [shape=doublecircle, style=filled, fillcolor="#D5F5E3"];
+  "skip_deploy" [shape=doublecircle, style=filled, fillcolor="#D5F5E3"];
 
   "__start__" [shape=point,width=0.12,label=""];
   "__start__" -> "build" [label="initial"];
