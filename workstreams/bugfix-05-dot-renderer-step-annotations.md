@@ -332,6 +332,28 @@ The new tests validate contract-visible DOT behavior rather than helper internal
 - `make build`
 - `make test`
 
+### Review 2026-05-08-03 — approved
+
+#### Summary
+The repeated-call blocker is fixed. Subworkflow clusters and namespaced node IDs are now keyed by call-site step name instead of `SubworkflowRef`, so multiple parent steps targeting the same subworkflow declaration render as distinct inlined structures with correct rewired edges. The follow-up lint cleanup is mechanical and does not change behavior. I found no remaining plan, test-intent, or security gaps in scope.
+
+#### Plan Adherence
+- The cluster-rendering implementation now preserves distinct call sites for repeated subworkflow invocations by using the parent step path for cluster IDs, namespaces, exit-edge emission, and reference resolution.
+- `TestRenderDOT_RepeatedSubworkflowSameDeclaration` was added and exercises the previously missing case end-to-end through `compileWorkflowOutput`, asserting separate clusters, distinct node IDs, and the expected chained edges between the two invocations.
+- The later `preferFprint` / `gocognit` / `unparam` cleanup keeps the same rendering semantics while bringing the implementation back into repo lint compliance.
+- No `.golangci.baseline.yml` entries were added.
+
+#### Test Intent Assessment
+The new regression test now covers the previously untested failure mode directly: a faulty implementation that merged two calls to the same subworkflow declaration into one cluster would fail on both the distinct-cluster assertions and the rewired edge assertions. Together with the earlier single-call and nested-cluster tests, the suite now exercises the key contract-visible DOT behaviors for this workstream.
+
+#### Validation Performed
+- Inspected `git show` for commits `a10b136` and `1e58c47` plus the current `internal/cli/compile.go` and `internal/cli/compile_dot_test.go`.
+- `go test ./internal/cli -run 'TestRenderDOT_|TestDotStepAttrs_|TestCompileGolden_JSONAndDOT' -count=1`
+- `make build`
+- `make test`
+- `make lint-go`
+- Compiled an ad hoc workflow with two parent steps both targeting `subworkflow.shared`; DOT output contained distinct `cluster_first_call` / `cluster_second_call` blocks and correctly rewired edges between them.
+
 ### Review 2026-05-08-02 — changes-requested
 
 #### Summary
