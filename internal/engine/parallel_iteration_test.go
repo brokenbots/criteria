@@ -558,10 +558,11 @@ step "work" {
 }
 
 // TestParallelIteration_AdapterEventSink_NoConcurrentRace verifies that the
-// adapter.EventSink returned by StepEventSink is also concurrency-safe under
-// the race detector. Parallel adapter goroutines call Log concurrently; if
-// lockedEventSink did not wrap the returned sink under the same mutex, the
-// shared write inside sharedLogSink.Log would produce a DATA RACE.
+// adapter.EventSink returned by StepEventSink is concurrency-safe under the
+// race detector. Parallel adapter goroutines call Log concurrently; the
+// fanInEventSink drain goroutine serializes writes to sharedLogSink under the
+// shared mutex, so a DATA RACE on sharedLogSink.count would indicate that the
+// fan-in path is not holding the lock correctly.
 func TestParallelIteration_AdapterEventSink_NoConcurrentRace(t *testing.T) {
 	const n = 6
 	g := compile(t, parallelWorkflowHCL(`
@@ -621,8 +622,9 @@ func (p *loggingBarrierPlugin) Execute(ctx context.Context, _ string, _ *workflo
 	case <-ctx.Done():
 		return adapter.Result{}, ctx.Err()
 	}
-	// All goroutines call Log concurrently — races on sharedLogSink.count if
-	// the EventSink is not wrapped by lockedEventSink.
+	// All goroutines call Log concurrently — the fanInEventSink drain goroutine
+	// must hold the shared mutex while writing to sharedLogSink.count, or the
+	// race detector will fire.
 	sink.Log("stdout", []byte("parallel"))
 	return adapter.Result{Outcome: p.outcome}, nil
 }
@@ -633,8 +635,9 @@ func (p *loggingBarrierPlugin) CloseSession(context.Context, string) error { ret
 func (p *loggingBarrierPlugin) Kill()                                      {}
 
 // sharedLogSink is a test Sink whose StepEventSink returns an EventSink that
-// writes to a shared non-atomic counter. Without lockedEventSink, concurrent
-// calls to Log from parallel goroutines produce a DATA RACE.
+// writes to a shared non-atomic counter. The counter is deliberately not
+// atomic: concurrent calls to Log would produce a DATA RACE unless the
+// fanInEventSink drain goroutine serializes writes under the shared mutex.
 type sharedLogSink struct {
 	fakeSink
 	count int // deliberately non-atomic; safe only when Log is serialized
@@ -1134,3 +1137,225 @@ step "work" {
 		t.Errorf("terminal: %s ok=%v; want done/true", sink.terminal, sink.terminalOK)
 	}
 }
+
+// --- fanInEventSink unit tests ---
+
+// fanInCountSink is a shared counting adapter.EventSink for unit tests.
+// Its counters must only be written under the shared fanInEventSink mutex;
+// the race detector will fire if that guarantee is ever violated.
+type fanInCountSink struct {
+	logCount        int // non-atomic by design; safe only under the shared mutex
+	adapterCount    int
+	lastAdapterData any // most recent data argument to Adapter()
+}
+
+func (s *fanInCountSink) Log(string, []byte)      { s.logCount++ }
+func (s *fanInCountSink) Adapter(_ string, d any) { s.adapterCount++; s.lastAdapterData = d }
+
+// TestFanInEventSink_AllEventsDelivered verifies that all Log and Adapter events
+// sent from concurrent goroutines are delivered to the inner sink exactly once,
+// with no events dropped or duplicated. The inner sink's non-atomic counters
+// expose any concurrency violation to the race detector.
+func TestFanInEventSink_AllEventsDelivered(t *testing.T) {
+	const (
+		numGoroutines        = 8
+		logsPerGoroutine     = 100
+		adaptersPerGoroutine = 50
+	)
+
+	// All fanInEventSinks share one mutex — their drain goroutines serialize
+	// writes to the non-atomic counters in fanInCountSink.
+	var mu sync.Mutex
+	inner := &fanInCountSink{}
+
+	fans := make([]*fanInEventSink, numGoroutines)
+	for i := range fans {
+		fans[i] = newFanInEventSink(inner, &mu, 64)
+	}
+
+	chunk := []byte("hello world")
+	var wg sync.WaitGroup
+	for _, f := range fans {
+		f := f
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < logsPerGoroutine; j++ {
+				f.Log("stdout", chunk)
+			}
+			for j := 0; j < adaptersPerGoroutine; j++ {
+				f.Adapter("test.event", j)
+			}
+		}()
+	}
+	wg.Wait()
+
+	// Close all sinks — blocks until drain goroutines have flushed every event.
+	for _, f := range fans {
+		f.close()
+	}
+
+	wantLogs := numGoroutines * logsPerGoroutine
+	wantAdapters := numGoroutines * adaptersPerGoroutine
+	if inner.logCount != wantLogs {
+		t.Errorf("Log deliveries: got %d; want %d", inner.logCount, wantLogs)
+	}
+	if inner.adapterCount != wantAdapters {
+		t.Errorf("Adapter deliveries: got %d; want %d", inner.adapterCount, wantAdapters)
+	}
+}
+
+// TestFanInEventSink_RaceDetector is an integration test that verifies the
+// engine's fanInEventSink path passes -race with parallel_max=8 and a
+// high-concurrency logging adapter. Complements the unit test by exercising
+// the full engine path including lockedSink.closeEventSinks().
+func TestFanInEventSink_RaceDetector(t *testing.T) {
+	const n = 8
+	g := compile(t, parallelWorkflowHCL(`
+step "work" {
+  target       = adapter.fake
+  parallel     = ["a", "b", "c", "d", "e", "f", "g", "h"]
+  parallel_max = 8
+  outcome "all_succeeded" { next = "done" }
+  outcome "any_failed"    { next = "failed" }
+}`))
+
+	p := newLoggingBarrierPlugin("fake", n, "success")
+	sink := &sharedLogSink{}
+	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": p}}
+	if err := New(g, loader, sink).Run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if sink.count != n {
+		t.Errorf("log count: got %d; want %d (fanInEventSink must deliver all events)", sink.count, n)
+	}
+}
+
+// TestFanInEventSink_AdapterPayloadSafety verifies that Adapter events are not
+// affected by mutations to the map passed to Adapter() after the call returns.
+// fanInEventSink.Adapter() must snapshot (shallow-copy) map[string]any data
+// before enqueuing it so that post-call mutations by the caller are invisible
+// to the drain goroutine.
+func TestFanInEventSink_AdapterPayloadSafety(t *testing.T) {
+	inner := &fanInCountSink{}
+	var mu sync.Mutex
+	f := newFanInEventSink(inner, &mu, 64)
+
+	// Build a mutable map and enqueue it via Adapter.
+	payload := map[string]any{"key": "original", "num": 42}
+	f.Adapter("test.event", payload)
+
+	// Mutate the map immediately — before the drain goroutine has processed it.
+	payload["key"] = "mutated"
+	payload["num"] = 999
+
+	// Drain completely. After close() returns, all events are delivered.
+	f.close()
+
+	got, ok := inner.lastAdapterData.(map[string]any)
+	if !ok {
+		t.Fatalf("expected map[string]any delivered to Adapter; got %T", inner.lastAdapterData)
+	}
+	if got["key"] != "original" {
+		t.Errorf("Adapter payload key: got %q; want %q — copy not taken at enqueue time", got["key"], "original")
+	}
+	if got["num"] != 42 {
+		t.Errorf("Adapter payload num: got %v; want 42 — copy not taken at enqueue time", got["num"])
+	}
+}
+
+// TestRunParallelIterations_DrainBeforeReturn verifies that the engine does not
+// return from a parallel step until all fanInEventSink drain goroutines have
+// finished delivering their buffered events. This catches any regression where
+// closeEventSinks() is moved outside runParallelIterations: with a slow-writing
+// sink, events still in the channel buffer would not yet be counted when the
+// caller checks.
+func TestRunParallelIterations_DrainBeforeReturn(t *testing.T) {
+	const (
+		numItems    = 4
+		logsPerItem = 10
+		// writeDelay simulates gRPC/IO write latency. With parallel_max=4 and
+		// 10 log calls per adapter, a 200µs delay ensures drain goroutines are
+		// still working when the goroutine phase (wg.Wait) finishes if drain is
+		// not awaited inside runParallelIterations.
+		writeDelay = 200 * time.Microsecond
+	)
+
+	g := compile(t, parallelWorkflowHCL(`
+step "work" {
+  target       = adapter.fake
+  parallel     = ["a", "b", "c", "d"]
+  parallel_max = 4
+  outcome "all_succeeded" { next = "done" }
+  outcome "any_failed"    { next = "failed" }
+}`))
+
+	p := &slowLogPlugin{name: "fake", logsPerCall: logsPerItem}
+	sink := &slowCountingSink{delay: writeDelay}
+	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": p}}
+
+	if err := New(g, loader, sink).Run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	// All events must have been delivered before Run returns; if closeEventSinks
+	// is not awaited inside runParallelIterations, count will be < want.
+	want := numItems * logsPerItem
+	sink.mu.Lock()
+	got := sink.count
+	sink.mu.Unlock()
+	if got != want {
+		t.Errorf("event count after Run: got %d; want %d — drain not complete before runParallelIterations returned", got, want)
+	}
+}
+
+// slowLogPlugin calls sink.Log logsPerCall times per Execute call and succeeds.
+// It declares parallel_safe so the engine assigns it a fanInEventSink.
+type slowLogPlugin struct {
+	name        string
+	logsPerCall int
+}
+
+func (p *slowLogPlugin) Info(context.Context) (plugin.Info, error) {
+	return plugin.Info{Name: p.name, Version: "test", Capabilities: []string{"parallel_safe"}}, nil
+}
+func (p *slowLogPlugin) OpenSession(context.Context, string, map[string]string) error { return nil }
+func (p *slowLogPlugin) Execute(_ context.Context, _ string, _ *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+	chunk := []byte("x")
+	for i := 0; i < p.logsPerCall; i++ {
+		sink.Log("stdout", chunk)
+	}
+	return adapter.Result{Outcome: "success"}, nil
+}
+func (p *slowLogPlugin) Permit(context.Context, string, string, bool, string) error { return nil }
+func (p *slowLogPlugin) CloseSession(context.Context, string) error                 { return nil }
+func (p *slowLogPlugin) Kill()                                                      {}
+
+// slowCountingSink is a Sink whose StepEventSink-produced EventSink sleeps
+// writeDelay on every Log call. This models gRPC/IO write latency and exposes
+// any regression where drain goroutines are not awaited inside
+// runParallelIterations: buffered events would be uncounted when Run returns.
+type slowCountingSink struct {
+	fakeSink
+	delay time.Duration
+	mu    sync.Mutex
+	count int
+}
+
+func (s *slowCountingSink) StepEventSink(step string) adapter.EventSink {
+	return &slowCountingEventSink{parent: s}
+}
+
+type slowCountingEventSink struct {
+	parent *slowCountingSink
+}
+
+func (e *slowCountingEventSink) Log(_ string, _ []byte) {
+	if e.parent.delay > 0 {
+		time.Sleep(e.parent.delay)
+	}
+	e.parent.mu.Lock()
+	e.parent.count++
+	e.parent.mu.Unlock()
+}
+func (e *slowCountingEventSink) Adapter(string, any) {}
