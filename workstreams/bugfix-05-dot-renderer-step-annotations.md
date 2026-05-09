@@ -209,3 +209,25 @@ This workstream may **not** edit `README.md`, `PLAN.md`, `AGENTS.md`, `CHANGELOG
   exist); this is a pre-existing condition, out of scope for this workstream.
 
 **Validation:** `make build` clean; `make test` clean (all packages pass with -race).
+
+## Reviewer Notes
+
+### Review 2026-05-08 — approved
+
+#### Summary
+The implementation meets the workstream scope and exit criteria. `renderDOT` now annotates iterating steps, renders subworkflow-targeted steps as `shape=component`, preserves plain adapter steps without a label override, and the test coverage exercises both fixture-backed DOT output and dedicated end-to-end subworkflow cases.
+
+#### Plan Adherence
+- `dotStepAttrs(name string, st *workflow.StepNode) string` was added in `internal/cli/compile.go` and is used by `renderDOT` for step node emission.
+- Iteration annotations are emitted for `for_each`, `count`, and `parallel`, and subworkflow steps add the `[→ <name>]` label line with `shape=component`.
+- Plain adapter steps remain `[shape=box]` with no `label` attribute.
+- Required tests are present in `internal/cli/compile_dot_test.go`, and DOT goldens covering existing iterating fixtures were updated consistently with the behavior change.
+
+#### Test Intent Assessment
+The new tests validate contract-visible DOT behavior rather than helper internals alone: plain-step output asserts the absence of a label override, iterating-step tests assert the expected annotation strings, and the subworkflow cases compile real parent/subworkflow modules through `compileWorkflowOutput` so the CLI-facing path is exercised end-to-end. The existing golden suite adds regression coverage for real fixture workflows using `for_each`, `count`, and `parallel`.
+
+#### Validation Performed
+- `git show --stat --summary --format=fuller 6b51dcf` and targeted diff inspection for `internal/cli/compile.go`, `internal/cli/compile_dot_test.go`, and the DOT goldens.
+- `go test ./internal/cli -run 'TestRenderDOT_|TestDotStepAttrs_|TestCompileGolden_JSONAndDOT' -count=1`
+- `make build`
+- `make test`
