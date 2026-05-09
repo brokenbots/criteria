@@ -494,34 +494,6 @@ func dotStepAttrs(name string, st *workflow.StepNode) string {
 	return fmt.Sprintf("%s, label=%q", shape, label)
 }
 
-// dotStepAttrs returns the Graphviz attribute string for a step node.
-// Plain adapter steps get "shape=box". Iterating or subworkflow steps gain
-// a label annotation (e.g. "step\n[for_each]") and subworkflow steps use
-// shape=component.
-func dotStepAttrs(name string, st *workflow.StepNode) string {
-	var annotations []string
-	if st.ForEach != nil {
-		annotations = append(annotations, "[for_each]")
-	} else if st.Count != nil {
-		annotations = append(annotations, "[count]")
-	} else if st.Parallel != nil {
-		annotations = append(annotations, "[parallel]")
-	}
-	if st.SubworkflowRef != "" {
-		annotations = append(annotations, fmt.Sprintf("[→ %s]", st.SubworkflowRef))
-	}
-
-	shape := "shape=box"
-	if st.SubworkflowRef != "" {
-		shape = "shape=component"
-	}
-	if len(annotations) == 0 {
-		return shape
-	}
-	label := name + "\n" + strings.Join(annotations, "\n")
-	return fmt.Sprintf("%s, label=%q", shape, label)
-}
-
 func parseCompileForCli(ctx context.Context, workflowPath string, subworkflowRoots []string) (*workflow.Spec, *workflow.FSMGraph, error) {
 	spec, diags := workflow.ParseFileOrDir(workflowPath)
 	if diags.HasErrors() {

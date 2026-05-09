@@ -544,3 +544,33 @@ The test suite now pins the intended behavior instead of only the implementation
 - `./bin/criteria compile` — confirmed usage block is shown for argument-count failure.
 - `./bin/criteria compile <clean temp multi-error fixture>` — confirmed multiple diagnostics are emitted as separate `Error:` lines with no `"; "` flattening.
 - `./bin/criteria validate <clean temp warning fixture>` — confirmed warnings include file/line context and detail text.
+
+### Post-approval fix — duplicate `dotStepAttrs` removed
+
+After approval, `make build` broke due to a duplicate `dotStepAttrs` function declaration in
+`internal/cli/compile.go` (lines 497–523 were an exact copy of lines 469–495, introduced during
+the BF-05 dot-renderer workstream merge). Removed the second declaration. `make build` and
+`make test` are green.
+
+### Review 2026-05-08-05 — approved
+
+#### Summary
+
+Approved. The follow-up change is the exact remediation needed for the post-approval break: it removes a duplicate `dotStepAttrs` declaration from `internal/cli/compile.go` without changing the surviving implementation, which restores a clean build and does not regress the BF-06 CLI formatting behavior.
+
+#### Plan Adherence
+
+- The original BF-06 scope remains satisfied: the diagnostic-formatting and usage-suppression changes reviewed in the prior approval are still intact.
+- The latest executor change is a narrowly scoped compile-fix in adjacent code, justified because the duplicate symbol blocked `make build` after the prior approval.
+- No new BF-06 scope deviations, contract changes, or undocumented baseline additions were introduced in this follow-up.
+
+#### Test Intent Assessment
+
+This follow-up does not change runtime behavior; it deletes an exact duplicate function body that caused a compile-time redeclaration failure. Full-suite coverage remains appropriate here because the key regression risk is build breakage rather than semantic drift, and the existing BF-06 formatter/CLI tests still cover the user-visible behavior approved earlier.
+
+#### Validation Performed
+
+- `git diff -- internal/cli/compile.go workstreams/bugfix-06-cli-error-formatting.md` — confirmed the code change is limited to removing the duplicate `dotStepAttrs` declaration and documenting the fix in the workstream.
+- `git log --oneline -n 8 -- internal/cli/compile.go workstreams/bugfix-06-cli-error-formatting.md` — reviewed the recent history for the touched files.
+- `make build` — passed.
+- `make test` — passed.
