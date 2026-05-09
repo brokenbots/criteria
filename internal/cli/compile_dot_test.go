@@ -143,11 +143,10 @@ state "done" {
 }
 
 // TestRenderDOT_SubworkflowStepAnnotation verifies that a subworkflow-targeted
-// step uses shape=component and includes [→ <name>] in its label.
+// step is rendered as a subgraph cluster (not a shape=component placeholder).
 func TestRenderDOT_SubworkflowStepAnnotation(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	// Write the callee subworkflow.
 	calleeHCL := `
 workflow "inner" {
   version       = "1"
@@ -167,7 +166,6 @@ state "done" {
 		t.Fatalf("write callee hcl: %v", err)
 	}
 
-	// Write the parent workflow.
 	parentHCL := `
 workflow "parent" {
   version       = "1"
@@ -197,20 +195,23 @@ state "done" {
 	}
 	dot := string(out)
 
-	if !strings.Contains(dot, "shape=component") {
-		t.Errorf("subworkflow step must use shape=component, got:\n%s", dot)
+	// Subworkflow step must produce a cluster, not a shape=component placeholder.
+	if strings.Contains(dot, "shape=component") {
+		t.Errorf("subworkflow step must NOT render as shape=component; got:\n%s", dot)
 	}
-	if !strings.Contains(dot, "[→ inner]") {
-		t.Errorf("subworkflow step must include [→ inner] annotation, got:\n%s", dot)
+	if !strings.Contains(dot, "subgraph cluster_inner") {
+		t.Errorf("expected subgraph cluster_inner in DOT output, got:\n%s", dot)
+	}
+	if !strings.Contains(dot, `"inner/__start__"`) {
+		t.Errorf("expected namespaced inner/__start__ node, got:\n%s", dot)
 	}
 }
 
 // TestRenderDOT_IteratingSubworkflowStep verifies that a for_each step targeting
-// a subworkflow shows both [for_each] and [→ <name>] annotations.
+// a subworkflow renders as a cluster with the [for_each] annotation in its label.
 func TestRenderDOT_IteratingSubworkflowStep(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	// Write the callee subworkflow.
 	calleeHCL := `
 workflow "processor" {
   version       = "1"
@@ -231,7 +232,6 @@ state "done" {
 		t.Fatalf("write callee hcl: %v", err)
 	}
 
-	// Write the parent workflow with a for_each targeting the subworkflow.
 	parentHCL := `
 workflow "parent_iter" {
   version       = "1"
@@ -265,14 +265,16 @@ state "done" {
 	}
 	dot := string(out)
 
+	// Iterating subworkflow step renders as a cluster (no shape=component placeholder).
+	if strings.Contains(dot, "shape=component") {
+		t.Errorf("iterating subworkflow step must NOT render as shape=component; got:\n%s", dot)
+	}
+	if !strings.Contains(dot, "subgraph cluster_processor") {
+		t.Errorf("expected subgraph cluster_processor in DOT output, got:\n%s", dot)
+	}
+	// Iteration annotation appears in the cluster label.
 	if !strings.Contains(dot, "[for_each]") {
-		t.Errorf("iterating subworkflow step must include [for_each], got:\n%s", dot)
-	}
-	if !strings.Contains(dot, "[→ processor]") {
-		t.Errorf("iterating subworkflow step must include [→ processor], got:\n%s", dot)
-	}
-	if !strings.Contains(dot, "shape=component") {
-		t.Errorf("iterating subworkflow step must use shape=component, got:\n%s", dot)
+		t.Errorf("cluster label must include [for_each] annotation, got:\n%s", dot)
 	}
 }
 
@@ -295,5 +297,221 @@ func TestDotStepAttrs_SubworkflowOnly(t *testing.T) {
 	}
 	if !strings.Contains(got, "[→ review]") {
 		t.Errorf("expected [→ review] in %q", got)
+	}
+}
+
+// writeTempSubworkflow creates dir/name/main.hcl with a minimal subworkflow
+// containing an optional adapter step. If stepName is non-empty, a noop step
+// is added with an outcome that terminates.
+func writeTempSubworkflow(t *testing.T, parent, name, stepName string) string {
+	t.Helper()
+	dir := filepath.Join(parent, name)
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", dir, err)
+	}
+	var sb strings.Builder
+	termState := "done"
+	initial := termState
+	if stepName != "" {
+		initial = stepName
+	}
+	sb.WriteString("workflow " + `"` + name + `"` + " {\n")
+	sb.WriteString("  version       = \"1\"\n")
+	sb.WriteString("  initial_state = \"" + initial + "\"\n")
+	sb.WriteString("  target_state  = \"" + termState + "\"\n")
+	sb.WriteString("}\n")
+	if stepName != "" {
+		sb.WriteString("adapter \"noop\" \"default\" {}\n")
+		sb.WriteString("step \"" + stepName + "\" {\n")
+		sb.WriteString("  target = adapter.noop.default\n")
+		sb.WriteString("  outcome \"success\" { next = \"" + termState + "\" }\n")
+		sb.WriteString("}\n")
+	}
+	sb.WriteString("state \"" + termState + "\" {\n  terminal = true\n  success  = true\n}\n")
+	if err := os.WriteFile(filepath.Join(dir, "main.hcl"), []byte(sb.String()), 0o644); err != nil {
+		t.Fatalf("write %s/main.hcl: %v", name, err)
+	}
+	return dir
+}
+
+// TestRenderDOT_SubworkflowCluster verifies that a workflow with a subworkflow
+// step produces a subgraph cluster_ block with the subworkflow's nodes
+// namespaced as "<subwf_name>/<node_name>".
+func TestRenderDOT_SubworkflowCluster(t *testing.T) {
+	tmpDir := t.TempDir()
+	writeTempSubworkflow(t, tmpDir, "inner", "do_inner")
+
+	parentHCL := `
+workflow "parent" {
+  version       = "1"
+  initial_state = "delegate"
+  target_state  = "done"
+}
+subworkflow "inner" { source = "./inner" }
+step "delegate" {
+  target = subworkflow.inner
+  outcome "success" { next = "done" }
+}
+state "done" {
+  terminal = true
+  success  = true
+}
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "main.hcl"), []byte(parentHCL), 0o644); err != nil {
+		t.Fatalf("write parent: %v", err)
+	}
+
+	out, err := compileWorkflowOutput(context.Background(), tmpDir, "dot", nil)
+	if err != nil {
+		t.Fatalf("compile dot: %v", err)
+	}
+	dot := string(out)
+
+	if !strings.Contains(dot, "subgraph cluster_inner") {
+		t.Errorf("expected subgraph cluster_inner, got:\n%s", dot)
+	}
+	// Nodes inside the cluster must be namespaced.
+	if !strings.Contains(dot, `"inner/do_inner"`) {
+		t.Errorf("expected namespaced node inner/do_inner, got:\n%s", dot)
+	}
+	if !strings.Contains(dot, `"inner/done"`) {
+		t.Errorf("expected namespaced node inner/done, got:\n%s", dot)
+	}
+	if !strings.Contains(dot, `"inner/__start__"`) {
+		t.Errorf("expected namespaced inner/__start__, got:\n%s", dot)
+	}
+}
+
+// TestRenderDOT_SubworkflowClusterEdges verifies that parent edges are rewired
+// to/from the cluster boundary: the initial edge points into the cluster's
+// __start__ node, terminal-state exit edges point to the parent targets, and
+// no dangling shape=component placeholder node remains.
+func TestRenderDOT_SubworkflowClusterEdges(t *testing.T) {
+	tmpDir := t.TempDir()
+	writeTempSubworkflow(t, tmpDir, "inner", "do_inner")
+
+	parentHCL := `
+workflow "parent" {
+  version       = "1"
+  initial_state = "delegate"
+  target_state  = "done"
+}
+subworkflow "inner" { source = "./inner" }
+step "delegate" {
+  target = subworkflow.inner
+  outcome "success" { next = "done" }
+  outcome "failure" { next = "done" }
+}
+state "done" {
+  terminal = true
+  success  = true
+}
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "main.hcl"), []byte(parentHCL), 0o644); err != nil {
+		t.Fatalf("write parent: %v", err)
+	}
+
+	out, err := compileWorkflowOutput(context.Background(), tmpDir, "dot", nil)
+	if err != nil {
+		t.Fatalf("compile dot: %v", err)
+	}
+	dot := string(out)
+
+	// No shape=component placeholder.
+	if strings.Contains(dot, "shape=component") {
+		t.Errorf("shape=component placeholder must not appear; got:\n%s", dot)
+	}
+	// Initial edge must point into cluster entry.
+	if !strings.Contains(dot, `"__start__" -> "inner/__start__"`) {
+		t.Errorf("__start__ must route to inner/__start__, got:\n%s", dot)
+	}
+	// Exit edges from terminal state to parent outcomes.
+	if !strings.Contains(dot, `"inner/done" -> "done" [label="failure"]`) {
+		t.Errorf("expected exit edge inner/done -> done (failure), got:\n%s", dot)
+	}
+	if !strings.Contains(dot, `"inner/done" -> "done" [label="success"]`) {
+		t.Errorf("expected exit edge inner/done -> done (success), got:\n%s", dot)
+	}
+}
+
+// TestRenderDOT_NestedSubworkflowCluster verifies that a subworkflow which
+// itself contains a subworkflow step produces nested subgraph cluster_ blocks
+// with correctly doubly-namespaced node IDs.
+func TestRenderDOT_NestedSubworkflowCluster(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Innermost subworkflow (leaf): "leaf" with one step "leaf_work".
+	outerDir := filepath.Join(tmpDir, "outer")
+	if err := os.Mkdir(outerDir, 0o755); err != nil {
+		t.Fatalf("mkdir outer: %v", err)
+	}
+	writeTempSubworkflow(t, outerDir, "leaf", "leaf_work")
+
+	// Middle subworkflow "outer": has a step "run_leaf" targeting "leaf".
+	outerHCL := `
+workflow "outer" {
+  version       = "1"
+  initial_state = "run_leaf"
+  target_state  = "done"
+}
+subworkflow "leaf" { source = "./leaf" }
+step "run_leaf" {
+  target = subworkflow.leaf
+  outcome "success" { next = "done" }
+}
+state "done" {
+  terminal = true
+  success  = true
+}
+`
+	if err := os.WriteFile(filepath.Join(outerDir, "main.hcl"), []byte(outerHCL), 0o644); err != nil {
+		t.Fatalf("write outer/main.hcl: %v", err)
+	}
+
+	// Root workflow: step "run_outer" targets "outer".
+	parentHCL := `
+workflow "root" {
+  version       = "1"
+  initial_state = "run_outer"
+  target_state  = "done"
+}
+subworkflow "outer" { source = "./outer" }
+step "run_outer" {
+  target = subworkflow.outer
+  outcome "success" { next = "done" }
+}
+state "done" {
+  terminal = true
+  success  = true
+}
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "main.hcl"), []byte(parentHCL), 0o644); err != nil {
+		t.Fatalf("write main.hcl: %v", err)
+	}
+
+	out, err := compileWorkflowOutput(context.Background(), tmpDir, "dot", nil)
+	if err != nil {
+		t.Fatalf("compile dot: %v", err)
+	}
+	dot := string(out)
+
+	// Outer cluster.
+	if !strings.Contains(dot, "subgraph cluster_outer") {
+		t.Errorf("expected subgraph cluster_outer, got:\n%s", dot)
+	}
+	// Nested cluster for leaf (ID is sanitizeDotID("outer/" + "leaf") = "outer_leaf").
+	if !strings.Contains(dot, "subgraph cluster_outer_leaf") {
+		t.Errorf("expected nested subgraph cluster_outer_leaf, got:\n%s", dot)
+	}
+	// Doubly-namespaced leaf nodes.
+	if !strings.Contains(dot, `"outer/leaf/leaf_work"`) {
+		t.Errorf("expected doubly-namespaced outer/leaf/leaf_work, got:\n%s", dot)
+	}
+	if !strings.Contains(dot, `"outer/leaf/__start__"`) {
+		t.Errorf("expected doubly-namespaced outer/leaf/__start__, got:\n%s", dot)
+	}
+	// Outer cluster entry edge.
+	if !strings.Contains(dot, `"__start__" -> "outer/__start__"`) {
+		t.Errorf("root __start__ must route to outer/__start__, got:\n%s", dot)
 	}
 }

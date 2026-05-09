@@ -232,13 +232,13 @@ This workstream may **not** edit `README.md`, `PLAN.md`, `AGENTS.md`, `CHANGELOG
 - [x] Add 6 annotation tests.
 - [x] `make build` clean (annotations).
 - [x] `make test` clean (annotations).
-- [ ] Extend `renderDOT` (and its callers if needed) to inline referenced subworkflow graphs as `subgraph cluster_` blocks with namespaced node IDs.
-- [ ] Rewire parent edges to/from cluster boundary nodes; remove the `shape=component` placeholder node.
-- [ ] Apply cluster rendering recursively for nested subworkflows.
-- [ ] Add 3 subgraph cluster tests (`TestRenderDOT_SubworkflowCluster`, `_ClusterEdges`, `_NestedSubworkflowCluster`).
-- [ ] Update golden files for any fixtures with subworkflow steps.
-- [ ] `make build` clean.
-- [ ] `make test` clean.
+- [x] Extend `renderDOT` (and its callers if needed) to inline referenced subworkflow graphs as `subgraph cluster_` blocks with namespaced node IDs.
+- [x] Rewire parent edges to/from cluster boundary nodes; remove the `shape=component` placeholder node.
+- [x] Apply cluster rendering recursively for nested subworkflows.
+- [x] Add 3 subgraph cluster tests (`TestRenderDOT_SubworkflowCluster`, `_ClusterEdges`, `_NestedSubworkflowCluster`).
+- [x] Update golden files for any fixtures with subworkflow steps.
+- [x] `make build` clean.
+- [x] `make test` clean.
 
 ## Exit criteria
 
@@ -265,7 +265,7 @@ This workstream may **not** edit `README.md`, `PLAN.md`, `AGENTS.md`, `CHANGELOG
   (for_each), `phase3-parallel` (parallel × 1 visible step), `phase3-marquee` (parallel).
   Remaining golden files were unchanged (no iterating or subworkflow steps).
 
-**Key decisions:**
+**Steps 1–2 key decisions:**
 - `for_each`/`count`/`parallel` are mutually exclusive (enforced by the schema); the helper
   uses `if / else if / else if` rather than separate checks.
 - `SubworkflowRef` is checked independently so iterating subworkflow steps receive both
@@ -275,7 +275,58 @@ This workstream may **not** edit `README.md`, `PLAN.md`, `AGENTS.md`, `CHANGELOG
 - The `iteration_workflow_step` golden file is orphaned (its testdata directory does not
   exist); this is a pre-existing condition, out of scope for this workstream.
 
-**Validation:** `make build` clean; `make test` clean (all packages pass with -race).
+**Steps 3–4 files modified:**
+- `internal/cli/compile.go` — replaced the single `renderDOT` monolith (~50 lines) with a
+  ~200-line cluster-rendering refactor. New helpers: `dotWriteNodes`, `dotWriteClusterBody`,
+  `dotWriteEdges`, `dotWriteExitEdges`, `dotResolveRef`, `sanitizeDotID`, `dotClusterLabel`.
+  `dotStepAttrs` is unchanged; still used for adapter steps and the no-body fallback.
+- `internal/cli/compile_dot_test.go` — added `writeTempSubworkflow` helper + 3 new end-to-end
+  cluster tests; updated `TestRenderDOT_SubworkflowStepAnnotation` and
+  `TestRenderDOT_IteratingSubworkflowStep` to expect cluster output instead of
+  `shape=component`.
+- No golden files needed updating — existing fixtures have no subworkflow-targeted steps.
+
+**Steps 3–4 key decisions:**
+- `dotWriteNodes` does a two-pass over `StepOrder()`: first emits adapter/switch/state nodes,
+  then emits cluster blocks. This keeps all flat nodes before nested subgraphs.
+- Node namespace is a string prefix `"<subwf_name>/"` accumulated through recursion, giving
+  `"outer/leaf/node"` at three levels.
+- Cluster ID is `sanitizeDotID(namespace + subwf_name)` (slashes → underscores), giving
+  `cluster_outer_leaf` for nested `outer → leaf`.
+- Exit edges: ALL terminal states in a cluster emit ALL parent step outcome edges. This is a
+  visual approximation; it matches the spec's "terminal node(s) carry the original outbound
+  edges".
+- Fallback to `shape=component` node is preserved when `swNode == nil || swNode.Body == nil`.
+- Existing annotation tests (`TestRenderDOT_SubworkflowStepAnnotation`,
+  `TestRenderDOT_IteratingSubworkflowStep`) were updated in place to check cluster output;
+  the cluster label still embeds `[→ subwf_name]` and `[for_each]` so annotation semantics
+  are preserved at the cluster level.
+
+**Validation (Steps 3–4):** `go test ./internal/cli/... -run 'TestRenderDOT_|TestDotStepAttrs_'`
+— 11/11 pass. `make test` clean (all packages, -race).
+
+## Reviewer Notes
+
+### Review 2026-05-08 — approved
+
+#### Summary
+The implementation meets the workstream scope and exit criteria. `renderDOT` now annotates iterating steps, renders subworkflow-targeted steps as `shape=component`, preserves plain adapter steps without a label override, and the test coverage exercises both fixture-backed DOT output and dedicated end-to-end subworkflow cases.
+
+#### Plan Adherence
+- `dotStepAttrs(name string, st *workflow.StepNode) string` was added in `internal/cli/compile.go` and is used by `renderDOT` for step node emission.
+- Iteration annotations are emitted for `for_each`, `count`, and `parallel`, and subworkflow steps add the `[→ <name>]` label line with `shape=component`.
+- Plain adapter steps remain `[shape=box]` with no `label` attribute.
+- Required tests are present in `internal/cli/compile_dot_test.go`, and DOT goldens covering existing iterating fixtures were updated consistently with the behavior change.
+
+#### Test Intent Assessment
+The new tests validate contract-visible DOT behavior rather than helper internals alone: plain-step output asserts the absence of a label override, iterating-step tests assert the expected annotation strings, and the subworkflow cases compile real parent/subworkflow modules through `compileWorkflowOutput` so the CLI-facing path is exercised end-to-end. The existing golden suite adds regression coverage for real fixture workflows using `for_each`, `count`, and `parallel`.
+
+#### Validation Performed
+- `git show --stat --summary --format=fuller 6b51dcf` and targeted diff inspection for `internal/cli/compile.go`, `internal/cli/compile_dot_test.go`, and the DOT goldens.
+- `go test ./internal/cli -run 'TestRenderDOT_|TestDotStepAttrs_|TestCompileGolden_JSONAndDOT' -count=1`
+- `make build`
+- `make test`
+
 
 ## Reviewer Notes
 
