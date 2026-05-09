@@ -356,6 +356,7 @@ func AdapterInfoFromProto(resp *pb.InfoResponse) workflow.AdapterInfo {
 	return workflow.AdapterInfo{
 		ConfigSchema: protoToConfigSchema(resp.GetConfigSchema()),
 		InputSchema:  protoToConfigSchema(resp.GetInputSchema()),
+		Capabilities: append([]string(nil), resp.GetCapabilities()...),
 	}
 }
 

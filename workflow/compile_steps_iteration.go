@@ -80,6 +80,24 @@ func compileIteratingStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[str
 		// each.* references are valid inside iterating steps; no error emitted.
 		node = newAdapterStepNode(sp, spec, adapterRef, effectiveOnCrash, envKey, timeout, inputMap, inputExprs)
 		diags = append(diags, maybeCopilotAliasWarnings(sp.Name, adapterType, node.AllowTools)...)
+		// parallel_safe capability gate: when the step uses parallel = [...] the
+		// adapter must declare "parallel_safe". When the adapter is absent from the
+		// schemas map (binary not found during schema collection), we skip the check
+		// here and rely on the runtime gate in evaluateParallel instead.
+		if parallelExpr != nil {
+			if info, ok := adapterInfo(schemas, adapterType); ok {
+				if !adapterHasCapability(info, "parallel_safe") {
+					diags = append(diags, &hcl.Diagnostic{
+						Severity: hcl.DiagError,
+						Summary: fmt.Sprintf(
+							"step %q: adapter type %q does not declare the \"parallel_safe\" capability; "+
+								"parallel execution requires the adapter to be safe for concurrent Execute calls. "+
+								"Use for_each for sequential iteration or declare parallel_safe in the adapter's Info().",
+							sp.Name, adapterType),
+					})
+				}
+			}
+		}
 	}
 
 	node.ForEach = forEachExpr

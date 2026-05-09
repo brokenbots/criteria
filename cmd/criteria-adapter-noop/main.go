@@ -17,7 +17,11 @@ type noopService struct {
 }
 
 func (s *noopService) Info(context.Context, *pb.InfoRequest) (*pb.InfoResponse, error) {
-	return &pb.InfoResponse{Name: "noop", Version: "0.1.0"}, nil
+	return &pb.InfoResponse{
+		Name:         "noop",
+		Version:      "0.1.0",
+		Capabilities: []string{"parallel_safe"},
+	}, nil
 }
 
 func (s *noopService) OpenSession(_ context.Context, request *pb.OpenSessionRequest) (*pb.OpenSessionResponse, error) {

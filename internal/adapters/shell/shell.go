@@ -37,6 +37,7 @@ func (a *Adapter) Name() string { return Name }
 // optional strings to enable schema-aware compile-time validation.
 func (a *Adapter) Info() workflow.AdapterInfo {
 	return workflow.AdapterInfo{
+		Capabilities: []string{"parallel_safe"},
 		InputSchema: map[string]workflow.ConfigField{
 			"command": {
 				Required: true,

@@ -33,11 +33,12 @@ func (p *builtinAdapterPlugin) Info(context.Context) (Info, error) {
 	if p.adapter == nil {
 		return Info{}, fmt.Errorf("builtin adapter implementation is nil")
 	}
+	adInfo := p.adapter.Info()
 	return Info{
 		Name:         p.adapter.Name(),
 		Version:      "builtin",
-		Capabilities: nil,
-		AdapterInfo:  p.adapter.Info(),
+		Capabilities: append([]string(nil), adInfo.Capabilities...),
+		AdapterInfo:  adInfo,
 	}, nil
 }
 

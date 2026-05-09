@@ -3,6 +3,7 @@ package plugin
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 
@@ -562,5 +563,141 @@ func TestSession_ExecuteEOFWithoutCloseIsCrash(t *testing.T) {
 	// closing flag is NOT set — this simulates an unsolicited plugin exit
 	if !isLikelySessionCrash(sess, errors.New("read: eof")) {
 		t.Error("expected crash heuristic to fire for EOF without closing flag")
+	}
+}
+
+// TestSessionManager_HasCapability_AfterOpen verifies that after opening a
+// session with the noop adapter (which declares "parallel_safe"), HasCapability
+// returns true for "parallel_safe" and false for an undeclared capability.
+func TestSessionManager_HasCapability_AfterOpen(t *testing.T) {
+	pluginBin := buildNoopPlugin(t)
+	base := NewLoaderWithDiscovery(func(string) (string, error) { return pluginBin, nil })
+	loader := &recordingLoader{inner: base}
+	t.Cleanup(func() { _ = loader.Shutdown(context.Background()) })
+
+	sm := NewSessionManager(loader)
+	if err := sm.Open(context.Background(), "agent", "noop", OnCrashFail, nil); err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer sm.Close(context.Background(), "agent")
+
+	if !sm.HasCapability("agent", "parallel_safe") {
+		t.Error("HasCapability(\"agent\", \"parallel_safe\") = false; want true (noop declares parallel_safe)")
+	}
+	if sm.HasCapability("agent", "nonexistent_cap") {
+		t.Error("HasCapability(\"agent\", \"nonexistent_cap\") = true; want false")
+	}
+}
+
+// TestSessionManager_HasCapability_UnknownSession verifies that HasCapability
+// returns false for a session name that has not been opened.
+func TestSessionManager_HasCapability_UnknownSession(t *testing.T) {
+	sm := NewSessionManager(nil)
+	if sm.HasCapability("ghost", "parallel_safe") {
+		t.Error("HasCapability on unknown session = true; want false")
+	}
+}
+
+// TestLoader_Info_PropagatesCapabilitiesViaProto verifies the full production
+// path: loader.Resolve → plug.Info(ctx) → info.AdapterInfo.Capabilities carries
+// the capabilities declared by the real noop adapter binary. This asserts that
+// the AdapterInfoFromProto translation and the RPC Info() call chain work
+// together end-to-end, so collectSchemas (which stores info.AdapterInfo into the
+// schemas map used by workflow.Compile) carries parallel_safe correctly.
+func TestLoader_Info_PropagatesCapabilitiesViaProto(t *testing.T) {
+	pluginBin := buildNoopPlugin(t)
+	loader := NewLoaderWithDiscovery(func(string) (string, error) { return pluginBin, nil })
+	t.Cleanup(func() { _ = loader.Shutdown(context.Background()) })
+
+	plug, err := loader.Resolve(context.Background(), "noop")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	defer plug.Kill()
+
+	info, err := plug.Info(context.Background())
+	if err != nil {
+		t.Fatalf("Info: %v", err)
+	}
+
+	// AdapterInfo.Capabilities must carry "parallel_safe" from the noop binary.
+	found := false
+	for _, c := range info.AdapterInfo.Capabilities {
+		if c == "parallel_safe" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("AdapterInfo.Capabilities = %v; want to contain \"parallel_safe\"", info.AdapterInfo.Capabilities)
+	}
+}
+
+// TestCompile_ParallelGate_ViaRealAdapterInfo verifies the full schema-collection
+// → compile contract for the parallel_safe capability gate:
+//  1. With schemas built from the real noop loader (noop declares parallel_safe),
+//     compiling a parallel step targeting noop succeeds.
+//  2. With schemas that carry an adapter entry WITHOUT parallel_safe (simulating
+//     a resolvable but non-safe adapter), compiling the same step produces a
+//     DiagError containing "parallel_safe".
+//
+// This test covers the path: loader.Resolve → Info() → AdapterInfoFromProto
+// → schemas map → workflow.Compile → adapterHasCapability gate.
+func TestCompile_ParallelGate_ViaRealAdapterInfo(t *testing.T) {
+	const parallelWorkflowSrc = `
+workflow "t" {
+  version       = "0.1"
+  initial_state = "work"
+  target_state  = "done"
+}
+adapter "noop" "default" {}
+step "work" {
+  target   = adapter.noop.default
+  parallel = ["a", "b"]
+  outcome "all_succeeded" { next = "done" }
+  outcome "any_failed"    { next = "failed" }
+}
+state "done" {
+  terminal = true
+  success  = true
+}
+state "failed" {
+  terminal = true
+  success  = false
+}
+`
+
+	spec, diags := workflow.Parse("test.hcl", []byte(parallelWorkflowSrc))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %v", diags.Error())
+	}
+
+	// Case 1: schemas built from real noop Info() (declares parallel_safe).
+	pluginBin := buildNoopPlugin(t)
+	loader := NewLoaderWithDiscovery(func(string) (string, error) { return pluginBin, nil })
+	t.Cleanup(func() { _ = loader.Shutdown(context.Background()) })
+
+	plug, err := loader.Resolve(context.Background(), "noop")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	info, err := plug.Info(context.Background())
+	plug.Kill()
+	if err != nil {
+		t.Fatalf("Info: %v", err)
+	}
+	schemas := map[string]workflow.AdapterInfo{"noop": info.AdapterInfo}
+
+	_, diags = workflow.Compile(spec, schemas)
+	if diags.HasErrors() {
+		t.Errorf("Case 1 (noop with parallel_safe): unexpected compile error: %v", diags.Error())
+	}
+
+	// Case 2: schemas with adapter present but no parallel_safe.
+	schemasNotSafe := map[string]workflow.AdapterInfo{"noop": {}}
+	_, diags = workflow.Compile(spec, schemasNotSafe)
+	if !diags.HasErrors() {
+		t.Error("Case 2 (no parallel_safe): expected DiagError; got none")
+	} else if !strings.Contains(diags.Error(), "parallel_safe") {
+		t.Errorf("Case 2 error = %q; want mention of \"parallel_safe\"", diags.Error())
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"reflect"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -71,7 +72,7 @@ func newBarrierPlugin(name string, n int, outcome string) *barrierPlugin {
 }
 
 func (p *barrierPlugin) Info(context.Context) (plugin.Info, error) {
-	return plugin.Info{Name: p.name, Version: "test"}, nil
+	return plugin.Info{Name: p.name, Version: "test", Capabilities: []string{"parallel_safe"}}, nil
 }
 func (p *barrierPlugin) OpenSession(context.Context, string, map[string]string) error { return nil }
 func (p *barrierPlugin) Execute(ctx context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
@@ -101,7 +102,7 @@ type concurrencyTrackingPlugin struct {
 }
 
 func (p *concurrencyTrackingPlugin) Info(context.Context) (plugin.Info, error) {
-	return plugin.Info{Name: p.name, Version: "test"}, nil
+	return plugin.Info{Name: p.name, Version: "test", Capabilities: []string{"parallel_safe"}}, nil
 }
 func (p *concurrencyTrackingPlugin) OpenSession(context.Context, string, map[string]string) error {
 	return nil
@@ -140,7 +141,7 @@ type contextAwarePlugin struct {
 }
 
 func (p *contextAwarePlugin) Info(context.Context) (plugin.Info, error) {
-	return plugin.Info{Name: p.name, Version: "test"}, nil
+	return plugin.Info{Name: p.name, Version: "test", Capabilities: []string{"parallel_safe"}}, nil
 }
 func (p *contextAwarePlugin) OpenSession(context.Context, string, map[string]string) error {
 	return nil
@@ -154,6 +155,31 @@ func (p *contextAwarePlugin) Permit(context.Context, string, string, bool, strin
 }
 func (p *contextAwarePlugin) CloseSession(context.Context, string) error { return nil }
 func (p *contextAwarePlugin) Kill()                                      {}
+
+// parallelSafePlugin is a fakePlugin that declares the "parallel_safe" capability.
+// Use this instead of fakePlugin for parallel steps in tests.
+type parallelSafePlugin struct {
+	name    string
+	outcome string
+	err     error
+}
+
+func (p *parallelSafePlugin) Info(context.Context) (plugin.Info, error) {
+	return plugin.Info{Name: p.name, Version: "test", Capabilities: []string{"parallel_safe"}}, nil
+}
+
+func (p *parallelSafePlugin) OpenSession(context.Context, string, map[string]string) error {
+	return nil
+}
+func (p *parallelSafePlugin) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+	if p.err != nil {
+		return adapter.Result{}, p.err
+	}
+	return adapter.Result{Outcome: p.outcome}, nil
+}
+func (p *parallelSafePlugin) Permit(context.Context, string, string, bool, string) error { return nil }
+func (p *parallelSafePlugin) CloseSession(context.Context, string) error                 { return nil }
+func (p *parallelSafePlugin) Kill()                                                      {}
 
 // --- Tests ---
 
@@ -321,7 +347,7 @@ step "work" {
   outcome "any_failed"    { next = "failed" }
 }`))
 
-	p := &fakePlugin{name: "fake", outcome: "failure"}
+	p := &parallelSafePlugin{name: "fake", outcome: "failure"}
 	sink := &parallelSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": p}}
 	if err := New(g, loader, sink).Run(context.Background()); err != nil {
@@ -418,7 +444,7 @@ state "failed" {
 type declIdxPlugin struct{ name string }
 
 func (p *declIdxPlugin) Info(context.Context) (plugin.Info, error) {
-	return plugin.Info{Name: p.name, Version: "test"}, nil
+	return plugin.Info{Name: p.name, Version: "test", Capabilities: []string{"parallel_safe"}}, nil
 }
 func (p *declIdxPlugin) OpenSession(context.Context, string, map[string]string) error { return nil }
 func (p *declIdxPlugin) Execute(_ context.Context, _ string, step *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
@@ -486,7 +512,7 @@ step "work" {
   outcome "any_failed"    { next = "failed" }
 }`))
 
-	p := &fakePlugin{name: "fake", outcome: "success"}
+	p := &parallelSafePlugin{name: "fake", outcome: "success"}
 	sink := &parallelSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": p}}
 	if err := New(g, loader, sink).Run(context.Background()); err != nil {
@@ -580,7 +606,7 @@ func newLoggingBarrierPlugin(name string, n int, outcome string) *loggingBarrier
 }
 
 func (p *loggingBarrierPlugin) Info(context.Context) (plugin.Info, error) {
-	return plugin.Info{Name: p.name, Version: "test"}, nil
+	return plugin.Info{Name: p.name, Version: "test", Capabilities: []string{"parallel_safe"}}, nil
 }
 func (p *loggingBarrierPlugin) OpenSession(context.Context, string, map[string]string) error {
 	return nil
@@ -643,7 +669,7 @@ step "work" {
   outcome "any_failed"    { next = "failed" }
 }`))
 
-	p := &fakePlugin{name: "fake", outcome: "success"}
+	p := &parallelSafePlugin{name: "fake", outcome: "success"}
 	sink := &parallelSink{}
 	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": p}}
 	if err := New(g, loader, sink).Run(context.Background()); err != nil {
@@ -1020,5 +1046,91 @@ func TestParallelSubworkflow_IsolatedSessions_ConcurrentExecution(t *testing.T) 
 
 	if sink.terminal != "done" || !sink.terminalOK {
 		t.Errorf("terminal state: got %q (ok=%v); want \"done\" (true)", sink.terminal, sink.terminalOK)
+	}
+}
+
+// countingNotSafePlugin counts Execute calls and does NOT declare "parallel_safe".
+// Use in tests that verify the runtime gate fires before any iteration executes.
+type countingNotSafePlugin struct {
+	name         string
+	outcome      string
+	executeCount int32
+}
+
+func (p *countingNotSafePlugin) Info(context.Context) (plugin.Info, error) {
+	// Deliberately no Capabilities: parallel_safe — this plugin is not safe.
+	return plugin.Info{Name: p.name, Version: "test"}, nil
+}
+func (p *countingNotSafePlugin) OpenSession(context.Context, string, map[string]string) error {
+	return nil
+}
+func (p *countingNotSafePlugin) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+	atomic.AddInt32(&p.executeCount, 1)
+	return adapter.Result{Outcome: p.outcome}, nil
+}
+func (p *countingNotSafePlugin) Permit(context.Context, string, string, bool, string) error {
+	return nil
+}
+func (p *countingNotSafePlugin) CloseSession(context.Context, string) error { return nil }
+func (p *countingNotSafePlugin) Kill()                                      {}
+
+// TestEvaluateParallel_AdapterNotParallelSafe_RuntimeError verifies that when
+// an adapter step with parallel = [...] is backed by a session whose plugin
+// does NOT declare "parallel_safe", the runtime gate rejects execution with a
+// clear error mentioning "parallel_safe" and before any Execute call is made.
+func TestEvaluateParallel_AdapterNotParallelSafe_RuntimeError(t *testing.T) {
+	g := compile(t, parallelWorkflowHCL(`
+step "work" {
+  target   = adapter.fake
+  parallel = ["a", "b"]
+  outcome "all_succeeded" { next = "done" }
+  outcome "any_failed"    { next = "failed" }
+}`))
+
+	// countingNotSafePlugin does not declare "parallel_safe" and counts Execute
+	// calls so we can assert zero iterations executed when the gate fires.
+	p := &countingNotSafePlugin{name: "fake", outcome: "success"}
+	sink := &parallelSink{}
+	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": p}}
+	err := New(g, loader, sink).Run(context.Background())
+	if err == nil {
+		t.Fatal("expected error from adapter missing parallel_safe; got nil")
+	}
+	if !strings.Contains(err.Error(), "parallel_safe") {
+		t.Errorf("error = %q; want mention of 'parallel_safe'", err.Error())
+	}
+	// The gate must fire before any iteration executes.
+	if got := atomic.LoadInt32(&p.executeCount); got != 0 {
+		t.Errorf("Execute called %d time(s); want 0 (gate must fire before any iteration)", got)
+	}
+	// No iteration-entered or iteration-completed events should have fired.
+	if len(sink.iterationsStarted) != 0 {
+		t.Errorf("iterationsStarted = %d; want 0", len(sink.iterationsStarted))
+	}
+	if len(sink.iterationsCompleted) != 0 {
+		t.Errorf("iterationsCompleted = %d; want 0", len(sink.iterationsCompleted))
+	}
+}
+
+// TestEvaluateParallel_AdapterParallelSafe_Runs verifies that when an adapter
+// step with parallel = [...] is backed by a session whose plugin declares
+// "parallel_safe", execution proceeds without error.
+func TestEvaluateParallel_AdapterParallelSafe_Runs(t *testing.T) {
+	g := compile(t, parallelWorkflowHCL(`
+step "work" {
+  target   = adapter.fake
+  parallel = ["a", "b"]
+  outcome "all_succeeded" { next = "done" }
+  outcome "any_failed"    { next = "failed" }
+}`))
+
+	p := &parallelSafePlugin{name: "fake", outcome: "success"}
+	sink := &parallelSink{}
+	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": p}}
+	if err := New(g, loader, sink).Run(context.Background()); err != nil {
+		t.Fatalf("expected success; got error: %v", err)
+	}
+	if sink.terminal != "done" || !sink.terminalOK {
+		t.Errorf("terminal: %s ok=%v; want done/true", sink.terminal, sink.terminalOK)
 	}
 }
