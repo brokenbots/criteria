@@ -441,3 +441,46 @@ The direct `buildAdapterColorMap` tests are strong for palette order, wrapping, 
 - `make test` — all 16 styling tests + full suite passes.
 - Golden files: no regeneration needed (no example workflows use compiled subworkflow clusters).
 - Security: no change to threat surface. All cluster attributes are fixed constants or step metadata from the compiler.
+
+### Review 2026-05-08-02 — changes-requested
+
+#### Summary
+
+The two prior implementation blockers are fixed: compiled subworkflow-local adapter types now receive palette colors, and compiled subworkflow clusters render with the intended plain/iterating/parallel border semantics. However, the new regression tests still do not fully prove the cluster-level styling contract, so this pass remains blocked on test intent rather than implementation behavior.
+
+#### Plan Adherence
+
+- Step 2 is now implemented on the actual compiled-subworkflow render path: manual DOT output shows semantic subworkflow fill, solid border for plain delegation, dashed border for iterating delegation, and double border for parallel delegation.
+- Step 5 improved materially with new compiled-subworkflow coverage, but the cluster-style assertions are still too broad to guarantee the intended cluster attributes themselves.
+
+#### Required Remediations
+
+- **blocker** — `internal/cli/compile_dot_styling_test.go:453-570,573-635`: the new compiled-subworkflow cluster tests search the full DOT output for `fillcolor="#D5F5E3"`, `style="filled,dashed"`, and `peripheries=2`, but they do not isolate the cluster header lines they are supposed to verify. A faulty implementation that drops the cluster `fillcolor` or `style=filled` while leaving nested terminal states green-filled could still pass these tests. Under the test-intent rubric, this is not regression-sensitive enough for the cluster-rendering contract. **Acceptance criteria:** tighten the plain/iterating/parallel compiled-subworkflow tests so they assert the attributes on the cluster declaration block itself (for example by extracting the `subgraph cluster_<name> { ... }` header lines or matching line-by-line within that block), including an explicit assertion for plain-cluster `style=filled`.
+
+#### Test Intent Assessment
+
+`buildAdapterColorMap` coverage is now strong, and the manual compiled DOT output demonstrates the implementation behavior is correct. The remaining weakness is precision: the cluster-style tests currently prove that the rendered graph contains those attribute strings somewhere, not that the cluster contract carries them. That means at least one plausible regression would still pass.
+
+#### Validation Performed
+
+- `make build` — passed.
+- `make test` — passed.
+- Manual `./bin/criteria compile --format dot <temp workflow>` reproduction confirmed:
+  - nested subworkflow adapter step rendered with a palette color instead of `#FFFFFF`
+  - plain compiled subworkflow cluster rendered with `fillcolor="#D5F5E3"` and `style=filled`
+  - parallel compiled subworkflow cluster rendered with `peripheries=2`
+
+### Remediation 3 (this session) — test precision
+
+#### Changes made
+
+**`internal/cli/compile_dot_styling_test.go`**
+- Added `clusterAttrLines(dot, stepName string) ([]string, bool)` helper: uses brace-depth tracking to locate the named `subgraph cluster_<id>` block, then extracts only the cluster-level attribute lines (skipping node declarations that start with `"`, edges containing `->`, nested subgraph openers, and blank/closing-brace-only lines). This scopes test assertions to the cluster contract and not the full graph.
+- Updated `TestDOT_PlainSubworkflowClusterStyle`: now calls `clusterAttrLines(dot, "delegate")` and asserts `fillcolor`, `style=filled`, absence of `style="filled,dashed"` and `peripheries=2` all against the extracted cluster attrs — a faulty implementation that omits cluster `fillcolor` or `style=filled` while leaving terminal-state styling intact will now fail.
+- Updated `TestDOT_IteratingSubworkflowClusterStyle`: now calls `clusterAttrLines(dot, "process_all")` and asserts `style="filled,dashed"` and `fillcolor` within the cluster header.
+- Updated `TestDOT_ParallelSubworkflowClusterStyle`: now calls `clusterAttrLines(dot, "run_tasks")` and asserts `peripheries=2`, `style=filled`, and `fillcolor` within the cluster header; also explicitly checks absence of `style="filled,dashed"`.
+
+#### Validation
+
+- `make test` — all 16 tests pass.
+- `make lint-go` — clean.

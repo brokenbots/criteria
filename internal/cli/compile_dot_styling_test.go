@@ -450,6 +450,54 @@ state "done" {
 	}
 }
 
+// clusterAttrLines extracts the cluster-level attribute lines (e.g. label,
+// fillcolor, style, peripheries) from the named compiled-subworkflow cluster
+// block within a DOT output string. Only lines at the top level of the cluster
+// (depth 1) that are not node declarations or edges are returned, so assertions
+// are scoped to the cluster contract itself rather than the whole graph.
+//
+// Returns (lines, true) if the cluster was found, or (nil, false) if not.
+func clusterAttrLines(dot, stepName string) ([]string, bool) {
+	marker := "subgraph cluster_" + sanitizeDotID(stepName) + " {"
+	lines := strings.Split(dot, "\n")
+	start := -1
+	for i, line := range lines {
+		if strings.Contains(line, marker) {
+			start = i
+			break
+		}
+	}
+	if start < 0 {
+		return nil, false
+	}
+	var result []string
+	depth := 0
+	for i := start; i < len(lines); i++ {
+		line := lines[i]
+		depth += strings.Count(line, "{") - strings.Count(line, "}")
+		if i == start {
+			continue // skip the subgraph opening line
+		}
+		if depth == 0 {
+			break // reached the cluster's closing brace
+		}
+		trimmed := strings.TrimSpace(line)
+		switch {
+		case trimmed == "", trimmed == "}":
+			// blank line or bare closing brace
+		case strings.HasPrefix(trimmed, `"`):
+			// node declaration (quoted identifier)
+		case strings.Contains(trimmed, "->"):
+			// edge declaration
+		case strings.HasPrefix(trimmed, "subgraph"):
+			// nested cluster opening line
+		default:
+			result = append(result, trimmed)
+		}
+	}
+	return result, true
+}
+
 // TestDOT_PlainSubworkflowClusterStyle verifies that a plain (non-iterating)
 // compiled subworkflow cluster gets style=filled and the semantic subworkflow
 // fill color, but no dashed border (regression for blocker 2).
@@ -492,21 +540,26 @@ state "done" {
 
 	dot := compileDOTFromDir(t, tmpDir)
 
-	if !strings.Contains(dot, "subgraph cluster_delegate") {
-		t.Fatalf("expected cluster for plain delegation; got:\n%s", dot)
+	attrs, ok := clusterAttrLines(dot, "delegate")
+	if !ok {
+		t.Fatalf("expected subgraph cluster_delegate in DOT output; got:\n%s", dot)
 	}
-	// Cluster header lines must include the semantic fill and style=filled.
-	wantFill := fmt.Sprintf(`fillcolor=%q`, dotSubworkflowFill)
-	if !strings.Contains(dot, wantFill) {
-		t.Errorf("plain subworkflow cluster must have fillcolor=%q; got:\n%s", dotSubworkflowFill, dot)
+	attrBlock := strings.Join(attrs, "\n")
+
+	// Cluster must carry the semantic subworkflow fill.
+	wantFill := fmt.Sprintf(`fillcolor=%q;`, dotSubworkflowFill)
+	if !strings.Contains(attrBlock, wantFill) {
+		t.Errorf("plain subworkflow cluster must have %s in cluster attrs; got attrs:\n%s", wantFill, attrBlock)
 	}
-	// Must NOT have dashed style for a plain delegation.
-	if strings.Contains(dot, `style="filled,dashed"`) {
-		t.Errorf("plain subworkflow cluster must not have style=filled,dashed; got:\n%s", dot)
+	// Plain delegation must use solid filled style — not dashed, not double-border.
+	if !strings.Contains(attrBlock, "style=filled;") {
+		t.Errorf("plain subworkflow cluster must have style=filled; got attrs:\n%s", attrBlock)
 	}
-	// Must NOT have peripheries=2 (that's for parallel only).
-	if strings.Contains(dot, "peripheries=2") {
-		t.Errorf("plain subworkflow cluster must not have peripheries=2; got:\n%s", dot)
+	if strings.Contains(attrBlock, `style="filled,dashed"`) {
+		t.Errorf("plain subworkflow cluster must not have style=filled,dashed; got attrs:\n%s", attrBlock)
+	}
+	if strings.Contains(attrBlock, "peripheries=2") {
+		t.Errorf("plain subworkflow cluster must not have peripheries=2; got attrs:\n%s", attrBlock)
 	}
 }
 
@@ -556,17 +609,24 @@ state "done" {
 
 	dot := compileDOTFromDir(t, tmpDir)
 
-	if !strings.Contains(dot, "subgraph cluster_process_all") {
-		t.Fatalf("expected cluster for for_each delegation; got:\n%s", dot)
+	attrs, ok := clusterAttrLines(dot, "process_all")
+	if !ok {
+		t.Fatalf("expected subgraph cluster_process_all in DOT output; got:\n%s", dot)
 	}
+	attrBlock := strings.Join(attrs, "\n")
+
 	// Cluster must have the dashed fan-out border.
-	if !strings.Contains(dot, `style="filled,dashed"`) {
-		t.Errorf("for_each subworkflow cluster must have style=filled,dashed; got:\n%s", dot)
+	if !strings.Contains(attrBlock, `style="filled,dashed";`) {
+		t.Errorf("for_each subworkflow cluster must have style=filled,dashed; got attrs:\n%s", attrBlock)
 	}
 	// Cluster must also carry the semantic subworkflow fill color.
-	wantFill := fmt.Sprintf(`fillcolor=%q`, dotSubworkflowFill)
-	if !strings.Contains(dot, wantFill) {
-		t.Errorf("for_each subworkflow cluster must have fillcolor=%q; got:\n%s", dotSubworkflowFill, dot)
+	wantFill := fmt.Sprintf(`fillcolor=%q;`, dotSubworkflowFill)
+	if !strings.Contains(attrBlock, wantFill) {
+		t.Errorf("for_each subworkflow cluster must have %s; got attrs:\n%s", wantFill, attrBlock)
+	}
+	// Must NOT have peripheries=2 (that's for parallel only).
+	if strings.Contains(attrBlock, "peripheries=2") {
+		t.Errorf("for_each subworkflow cluster must not have peripheries=2; got attrs:\n%s", attrBlock)
 	}
 }
 
@@ -616,21 +676,28 @@ state "done" {
 
 	dot := compileDOTFromDir(t, tmpDir)
 
-	if !strings.Contains(dot, "subgraph cluster_run_tasks") {
-		t.Fatalf("expected cluster for parallel delegation; got:\n%s", dot)
+	attrs, ok := clusterAttrLines(dot, "run_tasks")
+	if !ok {
+		t.Fatalf("expected subgraph cluster_run_tasks in DOT output; got:\n%s", dot)
 	}
+	attrBlock := strings.Join(attrs, "\n")
+
 	// Cluster must have peripheries=2 for the double-border parallel semantic.
-	if !strings.Contains(dot, "peripheries=2") {
-		t.Errorf("parallel subworkflow cluster must have peripheries=2; got:\n%s", dot)
+	if !strings.Contains(attrBlock, "peripheries=2;") {
+		t.Errorf("parallel subworkflow cluster must have peripheries=2; got attrs:\n%s", attrBlock)
 	}
 	// Must carry the semantic subworkflow fill.
-	wantFill := fmt.Sprintf(`fillcolor=%q`, dotSubworkflowFill)
-	if !strings.Contains(dot, wantFill) {
-		t.Errorf("parallel subworkflow cluster must have fillcolor=%q; got:\n%s", dotSubworkflowFill, dot)
+	wantFill := fmt.Sprintf(`fillcolor=%q;`, dotSubworkflowFill)
+	if !strings.Contains(attrBlock, wantFill) {
+		t.Errorf("parallel subworkflow cluster must have %s; got attrs:\n%s", wantFill, attrBlock)
 	}
 	// Must NOT be dashed (that's for_each/count style, not parallel).
-	if strings.Contains(dot, `style="filled,dashed"`) {
-		t.Errorf("parallel subworkflow cluster must not have style=filled,dashed; got:\n%s", dot)
+	if strings.Contains(attrBlock, `style="filled,dashed"`) {
+		t.Errorf("parallel subworkflow cluster must not have style=filled,dashed; got attrs:\n%s", attrBlock)
+	}
+	// Must have style=filled (not some other fill variant).
+	if !strings.Contains(attrBlock, "style=filled;") {
+		t.Errorf("parallel subworkflow cluster must have style=filled; got attrs:\n%s", attrBlock)
 	}
 }
 
