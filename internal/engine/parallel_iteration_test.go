@@ -868,49 +868,75 @@ step "work" {
 	}
 }
 
-// sessionCountPlugin counts OpenSession calls and introduces a controlled delay
-// in Execute. It is used by TestParallelSubworkflow_IsolatedSessions_ConcurrentExecution
-// to verify that each parallel subworkflow iteration receives its own fresh adapter
-// session (OpenSession count == N) and that iterations run concurrently.
-type sessionCountPlugin struct {
-	name    string
+// perResolveLoader is a plugin.Loader that creates a fresh statefulPlugin on
+// every Resolve call, matching the production Loader contract ("Multiple calls
+// with the same name return distinct Plugin handles — one per session"). All
+// plugin instances share a rendezvous barrier and an open-session counter
+// through the loader struct so that assertions can be made at the loader level.
+type perResolveLoader struct {
 	opens   atomic.Int32
-	delay   time.Duration
-	barrier chan struct{}
 	ready   atomic.Int32
 	n       int32
+	barrier chan struct{}
+	delay   time.Duration
 }
 
-func (p *sessionCountPlugin) Info(context.Context) (plugin.Info, error) {
+func (l *perResolveLoader) Resolve(_ context.Context, name string) (plugin.Plugin, error) {
+	return &statefulPlugin{loader: l, name: name}, nil
+}
+func (l *perResolveLoader) Shutdown(context.Context) error { return nil }
+
+// statefulPlugin models a stateful adapter process with a per-instance execution
+// mutex. Each instance is returned by exactly one perResolveLoader.Resolve call.
+//
+// The per-instance execMu is the key to the regression test: when goroutines
+// share a single session (old broken behaviour) they all receive the same plugin
+// instance from the session manager and must serialize behind its execMu,
+// producing ≈ N × delay wall time. When each goroutine holds its own session
+// (correct behaviour) each holds an independent instance and all N sleeps
+// overlap, producing ≈ 1 × delay wall time.
+type statefulPlugin struct {
+	loader *perResolveLoader
+	name   string
+	execMu sync.Mutex // per-instance; models a Copilot-style per-session execution lock
+}
+
+func (p *statefulPlugin) Info(context.Context) (plugin.Info, error) {
 	return plugin.Info{Name: p.name, Version: "test"}, nil
 }
-func (p *sessionCountPlugin) OpenSession(context.Context, string, map[string]string) error {
-	p.opens.Add(1)
+func (p *statefulPlugin) OpenSession(context.Context, string, map[string]string) error {
+	p.loader.opens.Add(1)
 	return nil
 }
-func (p *sessionCountPlugin) Execute(ctx context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
-	// Rendezvous: when all n goroutines have arrived, release the barrier so they
-	// complete concurrently. This proves concurrent execution under the race detector.
-	if p.ready.Add(1) == p.n {
-		close(p.barrier)
+func (p *statefulPlugin) Execute(ctx context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+	// Shared rendezvous: all n goroutines must reach Execute before any proceeds.
+	// This ensures the per-instance mutex contention (or absence thereof) is the
+	// sole source of timing difference between the broken and fixed implementations.
+	if p.loader.ready.Add(1) == p.loader.n {
+		close(p.loader.barrier)
 	}
 	select {
-	case <-p.barrier:
+	case <-p.loader.barrier:
 	case <-ctx.Done():
 		return adapter.Result{}, ctx.Err()
 	}
+	// Per-instance execution lock: models a stateful adapter (e.g. Copilot) whose
+	// internal session mutex prevents concurrent dispatches on the same session handle.
+	// With isolated sessions each goroutine acquires its own instance's mutex and
+	// sleeps concurrently (≈ 1 × delay). When sessions are shared all goroutines
+	// contend on the same instance's mutex and serialise (≈ N × delay).
+	p.execMu.Lock()
+	defer p.execMu.Unlock()
 	select {
-	case <-time.After(p.delay):
+	case <-time.After(p.loader.delay):
 	case <-ctx.Done():
 		return adapter.Result{}, ctx.Err()
 	}
 	return adapter.Result{Outcome: "success"}, nil
 }
-func (p *sessionCountPlugin) Permit(context.Context, string, string, bool, string) error {
-	return nil
-}
-func (p *sessionCountPlugin) CloseSession(context.Context, string) error { return nil }
-func (p *sessionCountPlugin) Kill()                                      {}
+func (p *statefulPlugin) Permit(context.Context, string, string, bool, string) error { return nil }
+func (p *statefulPlugin) CloseSession(context.Context, string) error                 { return nil }
+func (p *statefulPlugin) Kill()                                                      {}
 
 // TestParallelSubworkflow_IsolatedSessions_ConcurrentExecution verifies that
 // parallel subworkflow iterations each receive a distinct adapter session (W19
@@ -920,20 +946,24 @@ func (p *sessionCountPlugin) Kill()                                      {}
 //  1. plugin.OpenSession is called N times (once per iteration, not once total).
 //  2. N iterations complete in ≤ 2×execDelay (concurrent, not serial).
 //  3. No data race under -race.
+//
+// Regression-sensitivity: without the per-iteration SessionManager fix, all
+// goroutines share one session → one plugin instance → all N Execute calls
+// contend on the same execMu → total wall time ≈ N×execDelay > 2×execDelay,
+// failing assertion 2. The perResolveLoader returns a distinct statefulPlugin
+// per Resolve call, matching production Loader semantics (one handle per session).
 func TestParallelSubworkflow_IsolatedSessions_ConcurrentExecution(t *testing.T) {
 	const (
 		n         = 3
-		execDelay = 50 * time.Millisecond
-		maxTotal  = 2 * execDelay
+		execDelay = 60 * time.Millisecond
+		maxTotal  = 2 * execDelay // ≈ 120ms; 3 serial executions take ≈ 180ms
 	)
 
-	plg := &sessionCountPlugin{
-		name:    "noop",
-		delay:   execDelay,
-		barrier: make(chan struct{}),
+	loader := &perResolveLoader{
 		n:       n,
+		barrier: make(chan struct{}),
+		delay:   execDelay,
 	}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"noop": plg}}
 
 	// Callee subworkflow: declares adapter "noop" and runs one step with it.
 	calleeBody := calleeBodyWithStep("noop")
@@ -976,13 +1006,16 @@ func TestParallelSubworkflow_IsolatedSessions_ConcurrentExecution(t *testing.T) 
 	elapsed := time.Since(start)
 
 	// Assertion 1: each iteration opened its own session (N opens, not 1).
-	if got := plg.opens.Load(); got != n {
+	// With the old shared-session bug, only goroutine 0 calls Resolve/OpenSession;
+	// goroutines 1..N-1 hit ErrSessionAlreadyOpen which is swallowed, so opens == 1.
+	if got := loader.opens.Load(); got != n {
 		t.Errorf("OpenSession call count = %d; want %d (each parallel iteration must open its own session)", got, n)
 	}
 
 	// Assertion 2: all iterations completed in ≤ 2×execDelay (concurrent, not serial).
+	// Three serial executions would take ≈ 3×execDelay ≈ 180ms, well above the 120ms cap.
 	if elapsed > maxTotal {
-		t.Errorf("elapsed %v > %v (2×execDelay=%v); iterations appear to have serialized", elapsed, maxTotal, execDelay)
+		t.Errorf("elapsed %v > %v (2×execDelay=%v); iterations appear to have serialized — per-iteration session isolation may be broken", elapsed, maxTotal, execDelay)
 	}
 
 	if sink.terminal != "done" || !sink.terminalOK {
