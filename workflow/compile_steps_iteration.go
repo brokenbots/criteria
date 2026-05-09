@@ -107,6 +107,7 @@ func compileIteratingStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[str
 
 	diags = append(diags, compileOutcomeBlock(sp, node, g, opts, schemas[adapterRef].OutputSchema)...)
 	diags = append(diags, validateIteratingOutcomes(sp, node)...)
+	diags = append(diags, warnParallelPerIterSharedWrites(sp.Name, parallelExpr, node)...)
 
 	g.Steps[sp.Name] = node
 	g.stepOrder = append(g.stepOrder, sp.Name)
@@ -222,6 +223,34 @@ func validateIteratingOutcomes(sp *StepSpec, node *StepNode) hcl.Diagnostics {
 			Severity: hcl.DiagWarning,
 			Summary:  fmt.Sprintf("step %q: outcome \"any_failed\" not declared; failed iterations will fall through to \"all_succeeded\"", sp.Name),
 		})
+	}
+	return diags
+}
+
+// warnParallelPerIterSharedWrites emits a DiagWarning for each per-iteration
+// outcome (_continue) on a parallel step that declares shared_writes. Goroutines
+// read a pre-parallel snapshot; writes are applied in index order after all
+// iterations complete, so accumulation patterns are not safe. Authors should use
+// aggregate outcomes with an output = { ... } projection instead.
+func warnParallelPerIterSharedWrites(stepName string, parallelExpr hcl.Expression, node *StepNode) hcl.Diagnostics {
+	if parallelExpr == nil {
+		return nil
+	}
+	var diags hcl.Diagnostics
+	for outcomeName, co := range node.Outcomes {
+		if co.Next == "_continue" && len(co.SharedWrites) > 0 {
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagWarning,
+				Summary: fmt.Sprintf(
+					"step %q outcome %q: shared_writes on a parallel step's per-iteration outcome "+
+						"are applied in index order after all iterations complete. "+
+						"All goroutines read a pre-parallel snapshot, so accumulation patterns "+
+						"(e.g. reading shared.x and writing back x+1) are not safe. "+
+						"Last-index-wins applies when multiple iterations write the same variable. "+
+						"Consider using an aggregate outcome with output = { ... } projection.",
+					stepName, outcomeName),
+			})
+		}
 	}
 	return diags
 }
