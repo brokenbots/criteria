@@ -378,3 +378,22 @@ The substantive blockers from the prior pass are fixed: the benchmark now demons
 - `go test -race -count=1 ./internal/engine/...` — passed.
 - `go test -run '^$' -bench 'BenchmarkParallelSinkContention' -benchtime=3s -timeout=60s ./internal/engine/` — passed; `BenchmarkParallelSinkContention` = `116349321 ns/op`, `BenchmarkParallelSinkContention_WithFanIn` = `36302101 ns/op`.
 - `make test` — passed.
+
+### Review 2026-05-09-03 — approved
+
+#### Summary
+Approved. The remaining documentation and test-comment nits from the prior pass are resolved: the executor notes now match the implemented fan-in design and benchmark model, the stale future-dated response metadata is gone, and the nearby race-test commentary now describes the current `fanInEventSink` path accurately. The previously required benchmark, payload-safety, and drain-before-return fixes remain in place and validated.
+
+#### Plan Adherence
+- **Step 1:** satisfied. The benchmark continues to demonstrate the intended slow-sink contention case and clears the `>= 2x` gate.
+- **Step 2:** satisfied. `runParallelIterations` closes and drains fan-in sinks before returning.
+- **Step 3:** satisfied. Metadata/lifecycle events remain serialized on the shared mutex path.
+- **Step 4:** satisfied. Delivery, adapter-payload snapshotting, and drain-before-return coverage are present and hold under `-race`.
+
+#### Test Intent Assessment
+- The targeted regression tests now align with the current implementation and assert the important contract-visible behaviors: no event loss, no adapter-payload mutation after enqueue, and no buffered-delivery lag after the parallel helper returns.
+- The benchmark now exercises the backpressure scenario this workstream was intended to address rather than only synchronization overhead.
+
+#### Validation Performed
+- `go test -race -count=1 -timeout=120s -run 'TestParallelIteration_AdapterEventSink_NoConcurrentRace|TestFanInEventSink|TestRunParallelIterations_DrainBeforeReturn' ./internal/engine/` — passed.
+- `go test -run '^$' -bench 'BenchmarkParallelSinkContention' -benchtime=2s -timeout=60s ./internal/engine/` — passed; `BenchmarkParallelSinkContention` = `110559556 ns/op`, `BenchmarkParallelSinkContention_WithFanIn` = `35578255 ns/op` (>3x improvement).
