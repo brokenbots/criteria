@@ -523,3 +523,25 @@ This is very close now: the plain/iterating/parallel tests no longer scan the wh
 
 - `make test` — all 17 tests pass.
 - `make lint-go` — clean.
+
+### Review 2026-05-08-04 — approved
+
+#### Summary
+
+Approved. The remaining test-intent blocker is resolved: `clusterAttrLines` now excludes nested cluster contents, the new focused regression test proves that behavior, and the compiled-subworkflow styling coverage now matches the workstream's acceptance bar.
+
+#### Plan Adherence
+
+- Step 2 is fully implemented on both the root-step and compiled-subworkflow render paths, including palette assignment across reachable adapter types and the intended plain/iterating/parallel cluster styling semantics.
+- Step 5 is now sufficient: the suite directly verifies palette behavior, step/switch/state styling, compiled subworkflow cluster styling, and nested-cluster exclusion for the helper used to scope those assertions.
+
+#### Test Intent Assessment
+
+The regression tests now assert the right contract at the right boundary. In particular, cluster-style expectations are checked against extracted top-level cluster attributes rather than incidental matches elsewhere in the DOT output, and the new nested-cluster test makes the extractor itself regression-sensitive for recursive rendering.
+
+#### Validation Performed
+
+- `make build` — passed.
+- `make test` — passed.
+- `make lint-go` — passed.
+- Manual probe of the fixed `clusterAttrLines` logic with a parent cluster containing a nested child cluster returned only the parent attribute lines.
