@@ -782,3 +782,25 @@ All three reviewer blockers addressed in commit `e1d38f1`:
 3. `docs/plugins.md` `allow_tools` bullet: removed "It is a compile error on adapter-backed lifecycle steps" (implies lifecycle steps are current); replaced with "Placing `allow_tools` on any other node type is a compile error."
 
 Broader stale-term sweep (`grep -n '\bAgent\b|\bagent\b'`) on both files confirms no remaining stale occurrences beyond intentional script filename `smoke-agent-hello.sh`.
+
+### Review 2026-05-09-02 — approved
+
+#### Summary
+The executor resolved all three blockers from the prior pass. The stale `Agent Workflows` title is gone, the header example comment now uses `adapters`, and the permission-gating prose no longer implies lifecycle steps remain part of the current v0.3.0 surface. The named workstream checklist items pass, the rename is correct, and `make validate` remains green. Approved.
+
+#### Plan Adherence
+- **I3, I4:** Pass. `docs/contributing/your-first-pr.md` still has the `brokenbots/criteria` GFI link and `Phase 3 (2026-05)` review marker.
+- **I5–I10:** Pass. `docs/workflow.md` reflects adapter terminology and syntax, the variable text/examples are current, and the `lifecycle` step-attribute documentation is absent.
+- **I11a, I11b, I12a–I12e:** Pass. `docs/plugins.md` uses the adapter-backed surface, contains no `transition_to`, retains the `switch` example, and no longer carries the stale lifecycle-step wording.
+- **R1, V1:** Pass. `docs/roadmap/phase-3-summary.md` exists, `phase-3.md` does not, and validation passed.
+- **Prior reviewer blockers:** Pass. `docs/plugins.md:1`, `docs/workflow.md:50`, and `docs/plugins.md:243` were corrected as requested.
+
+#### Test Intent Assessment
+For this docs-only workstream, the validation evidence is sufficient. The targeted grep checks are now broad enough to catch the previously missed stale terms, and the remaining `agent` hit is an intentional script filename (`smoke-agent-hello.sh`), not stale workflow terminology. `make validate` continues to prove the documentation edits did not break runnable example workflows.
+
+#### Validation Performed
+- `rg "Plugins and Agent Workflows|variables, agents, steps|adapter-backed lifecycle steps" docs/plugins.md docs/workflow.md` → no matches after remediation.
+- `rg "\bAgent\b|\bagent\b|agents|lifecycle steps" docs/plugins.md docs/workflow.md` → only intentional remaining hit is `smoke-agent-hello.sh`.
+- `make validate` → passed; all examples validated.
+- `test -f docs/roadmap/phase-3-summary.md && test ! -e docs/roadmap/phase-3.md` → passed.
+- `git --no-pager diff --check origin/main..HEAD -- docs/contributing/your-first-pr.md docs/workflow.md docs/plugins.md docs/roadmap/phase-3-summary.md workstreams/doc-01-docs-cleanup.md` → no diff-format issues.
