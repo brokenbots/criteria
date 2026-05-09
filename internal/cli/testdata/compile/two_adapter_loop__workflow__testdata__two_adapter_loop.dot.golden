@@ -1,9 +1,9 @@
 digraph "two_agent_loop" {
   rankdir=LR;
 
-  "execute" [shape=box];
-  "review" [shape=box];
-  "done" [shape=doublecircle];
+  "execute" [shape=box, style="filled", fillcolor="#D6EAF8"];
+  "review" [shape=box, style="filled", fillcolor="#D6EAF8"];
+  "done" [shape=doublecircle, style=filled, fillcolor="#D5F5E3"];
 
   "__start__" [shape=point,width=0.12,label=""];
   "__start__" -> "execute" [label="initial"];

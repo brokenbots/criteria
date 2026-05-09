@@ -1,9 +1,9 @@
 digraph "count_files" {
   rankdir=LR;
 
-  "count" [shape=box];
-  "done" [shape=doublecircle];
-  "failed" [shape=doublecircle];
+  "count" [shape=box, style="filled", fillcolor="#D6EAF8"];
+  "done" [shape=doublecircle, style=filled, fillcolor="#D5F5E3"];
+  "failed" [shape=doublecircle, style=filled, fillcolor="#FADBD8"];
 
   "__start__" [shape=point,width=0.12,label=""];
   "__start__" -> "count" [label="initial"];

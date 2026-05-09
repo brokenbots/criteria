@@ -25,7 +25,7 @@ func compileDOTFromHCL(t *testing.T, hclContent string) string {
 }
 
 // TestRenderDOT_PlainStepNoAnnotation verifies that a plain adapter step renders
-// with shape=box and no label attribute.
+// with shape=box, style=filled, fillcolor, and no label attribute.
 func TestRenderDOT_PlainStepNoAnnotation(t *testing.T) {
 	const hcl = `
 workflow "test_plain" {
@@ -44,11 +44,21 @@ state "done" {
 }
 `
 	dot := compileDOTFromHCL(t, hcl)
-	if !strings.Contains(dot, `"do_work" [shape=box];`) {
-		t.Errorf("expected plain step to have shape=box only, got:\n%s", dot)
+	if !strings.Contains(dot, `"do_work" [shape=box`) {
+		t.Errorf("expected plain step to have shape=box, got:\n%s", dot)
 	}
-	if strings.Contains(dot, `"do_work" [shape=box, label=`) {
-		t.Errorf("plain step must not have a label attribute, got:\n%s", dot)
+	if !strings.Contains(dot, `style="filled"`) {
+		t.Errorf("plain step must have style=filled, got:\n%s", dot)
+	}
+	if !strings.Contains(dot, `fillcolor=`) {
+		t.Errorf("plain step must have a fillcolor attribute, got:\n%s", dot)
+	}
+	// Verify no label= appears on the step's node declaration line.
+	for _, line := range strings.Split(dot, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, `"do_work" [`) && strings.Contains(line, "label=") {
+			t.Errorf("plain step node must not have a label attribute, got line: %s", line)
+		}
 	}
 }
 
@@ -283,9 +293,19 @@ state "done" {
 // TestDotStepAttrs_PlainAdapter verifies the attribute string for a plain step.
 func TestDotStepAttrs_PlainAdapter(t *testing.T) {
 	st := &workflow.StepNode{Name: "step1", AdapterRef: "noop.default"}
-	got := dotStepAttrs("step1", st)
-	if got != "shape=box" {
-		t.Errorf("got %q, want %q", got, "shape=box")
+	adapterColors := map[string]string{"noop": "#D6EAF8"}
+	got := dotStepAttrs("step1", st, adapterColors)
+	if !strings.Contains(got, "shape=box") {
+		t.Errorf("expected shape=box in %q", got)
+	}
+	if !strings.Contains(got, `fillcolor="#D6EAF8"`) {
+		t.Errorf("expected fillcolor=#D6EAF8 in %q", got)
+	}
+	if !strings.Contains(got, `style="filled"`) {
+		t.Errorf("expected style=filled in %q", got)
+	}
+	if strings.Contains(got, "label=") {
+		t.Errorf("plain step must not have label in %q", got)
 	}
 }
 
@@ -293,12 +313,15 @@ func TestDotStepAttrs_PlainAdapter(t *testing.T) {
 // plain subworkflow step (no iteration).
 func TestDotStepAttrs_SubworkflowOnly(t *testing.T) {
 	st := &workflow.StepNode{Name: "delegate", SubworkflowRef: "review"}
-	got := dotStepAttrs("delegate", st)
+	got := dotStepAttrs("delegate", st, nil)
 	if !strings.Contains(got, "shape=component") {
 		t.Errorf("expected shape=component in %q", got)
 	}
 	if !strings.Contains(got, "[→ review]") {
 		t.Errorf("expected [→ review] in %q", got)
+	}
+	if !strings.Contains(got, `fillcolor="`+dotSubworkflowFill+`"`) {
+		t.Errorf("expected subworkflow fill color in %q", got)
 	}
 }
 

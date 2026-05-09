@@ -248,17 +248,64 @@ func buildCompileOutputs(graph *workflow.FSMGraph) []compileOutput {
 	return outputs
 }
 
+// dotAdapterPalette is an ordered set of low-saturation pastel fill colors
+// assigned to adapter types in declaration order at render time. Colors wrap
+// if more distinct adapter types exist than palette entries.
+var dotAdapterPalette = []string{
+	"#D6EAF8", // light blue
+	"#E8DAEF", // light purple
+	"#FDEBD0", // light orange
+	"#EAECEE", // light gray
+	"#D5F5E3", // light green
+	"#FDFEFE", // near-white
+	"#FEF9E7", // light yellow
+	"#FDEDEC", // light rose
+}
+
+const (
+	dotSubworkflowFill = "#D5F5E3"
+	dotUnknownFill     = "#FFFFFF"
+	dotSwitchFill      = "#FEF9E7"
+	dotSuccessFill     = "#D5F5E3"
+	dotFailureFill     = "#FADBD8"
+)
+
+// buildAdapterColorMap assigns a palette color to each distinct adapter type
+// present in graph.AdapterOrder. New adapter types receive colors automatically;
+// no per-type hard-coding is required.
+func buildAdapterColorMap(graph *workflow.FSMGraph) map[string]string {
+	colors := make(map[string]string, len(graph.AdapterOrder))
+	i := 0
+	for _, ref := range graph.AdapterOrder {
+		ad := graph.Adapters[ref]
+		if _, seen := colors[ad.Type]; !seen {
+			colors[ad.Type] = dotAdapterPalette[i%len(dotAdapterPalette)]
+			i++
+		}
+	}
+	return colors
+}
+
+// adapterTypeOf extracts the type prefix from a "<type>.<name>" adapter ref.
+func adapterTypeOf(ref string) string {
+	if idx := strings.Index(ref, "."); idx >= 0 {
+		return ref[:idx]
+	}
+	return ref
+}
+
 // renderDOT renders the FSMGraph as a Graphviz DOT digraph string.
 // Subworkflow-targeted steps with compiled bodies are rendered as
 // subgraph cluster_ blocks with namespaced node IDs; parent edges are
 // rewired to the cluster boundaries. The rendering is recursive for nested
 // subworkflows.
 func renderDOT(graph *workflow.FSMGraph) string {
+	adapterColors := buildAdapterColorMap(graph)
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("digraph %q {\n", graph.Name))
 	b.WriteString("  rankdir=LR;\n")
 	b.WriteString("\n")
-	dotWriteNodes(&b, graph, "  ", "")
+	dotWriteNodes(&b, graph, adapterColors, "  ", "")
 	b.WriteString("\n")
 	dotWriteEdges(&b, graph, "  ", "")
 	b.WriteString("}\n")
@@ -269,8 +316,8 @@ func renderDOT(graph *workflow.FSMGraph) string {
 // namespace. Non-subworkflow steps, switches, and states are declared as
 // regular nodes. Subworkflow steps with compiled bodies become subgraph
 // cluster_ blocks whose interior is written by dotWriteClusterBody.
-func dotWriteNodes(b *strings.Builder, graph *workflow.FSMGraph, indent, namespace string) {
-	dotWriteNodeDecls(b, graph, indent, namespace)
+func dotWriteNodes(b *strings.Builder, graph *workflow.FSMGraph, adapterColors map[string]string, indent, namespace string) {
+	dotWriteNodeDecls(b, graph, adapterColors, indent, namespace)
 	for _, name := range graph.StepOrder() {
 		st := graph.Steps[name]
 		if st.SubworkflowRef == "" {
@@ -279,7 +326,7 @@ func dotWriteNodes(b *strings.Builder, graph *workflow.FSMGraph, indent, namespa
 		swNode := graph.Subworkflows[st.SubworkflowRef]
 		if swNode == nil || swNode.Body == nil {
 			// No compiled body: fall back to a shape=component placeholder.
-			attrs := dotStepAttrs(name, st)
+			attrs := dotStepAttrs(name, st, nil)
 			fmt.Fprintf(b, "%s%q [%s];\n", indent, namespace+name, attrs)
 			continue
 		}
@@ -288,31 +335,38 @@ func dotWriteNodes(b *strings.Builder, graph *workflow.FSMGraph, indent, namespa
 		fmt.Fprintf(b, "%ssubgraph cluster_%s {\n", indent, clusterID)
 		fmt.Fprintf(b, "%s  label=%q;\n", indent, dotClusterLabel(st))
 		fmt.Fprintf(b, "%s  style=dashed;\n", indent)
-		dotWriteClusterBody(b, swNode.Body, indent+"  ", clusterNS)
+		dotWriteClusterBody(b, swNode.Body, adapterColors, indent+"  ", clusterNS)
 		fmt.Fprintf(b, "%s}\n", indent)
 	}
 }
 
 // dotWriteNodeDecls writes flat node declarations for adapter steps, switches,
 // and states. Subworkflow steps are skipped (they are rendered as clusters).
-func dotWriteNodeDecls(b *strings.Builder, graph *workflow.FSMGraph, indent, namespace string) {
+func dotWriteNodeDecls(b *strings.Builder, graph *workflow.FSMGraph, adapterColors map[string]string, indent, namespace string) {
 	for _, name := range graph.StepOrder() {
 		st := graph.Steps[name]
 		if st.SubworkflowRef != "" {
 			continue // rendered as a cluster block by the caller
 		}
-		attrs := dotStepAttrs(name, st)
+		attrs := dotStepAttrs(name, st, adapterColors)
 		fmt.Fprintf(b, "%s%q [%s];\n", indent, namespace+name, attrs)
 	}
 	for _, name := range sortedSwitchNames(graph) {
-		fmt.Fprintf(b, "%s%q [shape=diamond];\n", indent, namespace+name)
+		fmt.Fprintf(b, "%s%q [shape=diamond, style=filled, fillcolor=%q];\n", indent, namespace+name, dotSwitchFill)
 	}
 	for _, name := range sortedStateNames(graph) {
+		st := graph.States[name]
 		shape := "ellipse"
-		if graph.States[name].Terminal {
+		if st.Terminal {
 			shape = "doublecircle"
 		}
-		fmt.Fprintf(b, "%s%q [shape=%s];\n", indent, namespace+name, shape)
+		fill := ""
+		if st.Terminal && st.Success {
+			fill = fmt.Sprintf(", style=filled, fillcolor=%q", dotSuccessFill)
+		} else if st.Terminal && !st.Success {
+			fill = fmt.Sprintf(", style=filled, fillcolor=%q", dotFailureFill)
+		}
+		fmt.Fprintf(b, "%s%q [shape=%s%s];\n", indent, namespace+name, shape, fill)
 	}
 }
 
@@ -320,8 +374,8 @@ func dotWriteNodeDecls(b *strings.Builder, graph *workflow.FSMGraph, indent, nam
 // edges for a subworkflow cluster. Exit edges (from the cluster's terminal
 // states to the parent's outcome targets) are NOT written here; the caller
 // emits them via dotWriteExitEdges after the cluster block closes.
-func dotWriteClusterBody(b *strings.Builder, graph *workflow.FSMGraph, indent, namespace string) {
-	dotWriteNodeDecls(b, graph, indent, namespace)
+func dotWriteClusterBody(b *strings.Builder, graph *workflow.FSMGraph, adapterColors map[string]string, indent, namespace string) {
+	dotWriteNodeDecls(b, graph, adapterColors, indent, namespace)
 	// Nested cluster subgraphs (second pass over steps).
 	for _, name := range graph.StepOrder() {
 		st := graph.Steps[name]
@@ -330,7 +384,7 @@ func dotWriteClusterBody(b *strings.Builder, graph *workflow.FSMGraph, indent, n
 		}
 		swNode := graph.Subworkflows[st.SubworkflowRef]
 		if swNode == nil || swNode.Body == nil {
-			attrs := dotStepAttrs(name, st)
+			attrs := dotStepAttrs(name, st, nil)
 			fmt.Fprintf(b, "%s%q [%s];\n", indent, namespace+name, attrs)
 			continue
 		}
@@ -339,7 +393,7 @@ func dotWriteClusterBody(b *strings.Builder, graph *workflow.FSMGraph, indent, n
 		fmt.Fprintf(b, "%ssubgraph cluster_%s {\n", indent, clusterID)
 		fmt.Fprintf(b, "%s  label=%q;\n", indent, dotClusterLabel(st))
 		fmt.Fprintf(b, "%s  style=dashed;\n", indent)
-		dotWriteClusterBody(b, swNode.Body, indent+"  ", nestedNS)
+		dotWriteClusterBody(b, swNode.Body, adapterColors, indent+"  ", nestedNS)
 		fmt.Fprintf(b, "%s}\n", indent)
 	}
 	// __start__ node and initial edge.
@@ -467,10 +521,10 @@ func dotClusterLabel(st *workflow.StepNode) string {
 }
 
 // dotStepAttrs returns the Graphviz attribute string for a step node.
-// Plain adapter steps get "shape=box". Iterating or subworkflow steps gain
-// a label annotation (e.g. "step\n[for_each]") and subworkflow steps use
-// shape=component (fallback when no compiled body is available).
-func dotStepAttrs(name string, st *workflow.StepNode) string {
+// Shape, fill color, border style, and peripheries are determined by the
+// step's target kind and iteration mode. adapterColors maps adapter type to
+// palette-assigned fill color; pass nil for subworkflow-fallback nodes.
+func dotStepAttrs(name string, st *workflow.StepNode, adapterColors map[string]string) string {
 	var annotations []string
 	if st.ForEach != nil {
 		annotations = append(annotations, "[for_each]")
@@ -483,15 +537,42 @@ func dotStepAttrs(name string, st *workflow.StepNode) string {
 		annotations = append(annotations, fmt.Sprintf("[→ %s]", st.SubworkflowRef))
 	}
 
-	shape := "shape=box"
+	shape := "box"
 	if st.SubworkflowRef != "" {
-		shape = "shape=component"
+		shape = "component"
 	}
-	if len(annotations) == 0 {
-		return shape
+
+	fillColor := dotUnknownFill
+	if st.SubworkflowRef != "" {
+		fillColor = dotSubworkflowFill
+	} else if adapterColors != nil {
+		if c, ok := adapterColors[adapterTypeOf(st.AdapterRef)]; ok {
+			fillColor = c
+		}
 	}
-	label := name + "\n" + strings.Join(annotations, "\n")
-	return fmt.Sprintf("%s, label=%q", shape, label)
+
+	style := "filled"
+	peripheries := 0
+	if st.Parallel != nil {
+		peripheries = 2
+	} else if st.ForEach != nil || st.Count != nil {
+		style = "filled,dashed"
+	}
+
+	label := ""
+	if len(annotations) > 0 {
+		label = name + "\n" + strings.Join(annotations, "\n")
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "shape=%s, style=%q, fillcolor=%q", shape, style, fillColor)
+	if peripheries > 0 {
+		fmt.Fprintf(&b, ", peripheries=%d", peripheries)
+	}
+	if label != "" {
+		fmt.Fprintf(&b, ", label=%q", label)
+	}
+	return b.String()
 }
 
 func parseCompileForCli(ctx context.Context, workflowPath string, subworkflowRoots []string) (*workflow.Spec, *workflow.FSMGraph, error) {

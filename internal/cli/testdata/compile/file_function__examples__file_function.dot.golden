@@ -1,8 +1,8 @@
 digraph "file_function_demo" {
   rankdir=LR;
 
-  "greet" [shape=box];
-  "done" [shape=doublecircle];
+  "greet" [shape=box, style="filled", fillcolor="#D6EAF8"];
+  "done" [shape=doublecircle, style=filled, fillcolor="#D5F5E3"];
 
   "__start__" [shape=point,width=0.12,label=""];
   "__start__" -> "greet" [label="initial"];

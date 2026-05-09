@@ -324,16 +324,59 @@ This workstream may **not** edit `README.md`, `PLAN.md`, `AGENTS.md`, `CHANGELOG
 
 ## Tasks
 
-- [ ] Add `dotAdapterPalette` slice and semantic fill color constants to `internal/cli/compile.go`.
-- [ ] Add `buildAdapterColorMap(graph *workflow.FSMGraph) map[string]string` helper.
-- [ ] Add `adapterTypeOf(ref string) string` helper (splits `"<type>.<name>"` on first `.`).
-- [ ] Implement/extend `dotStepAttrs` to accept `adapterColors map[string]string` and emit shape, fillcolor, style, and peripheries.
-- [ ] Call `buildAdapterColorMap` once at the top of `renderDOT`; pass result into step node loop.
-- [ ] Update switch node loop to add `style=filled` and `fillcolor`.
-- [ ] Update state node loop to add fill for terminal success/failure states.
-- [ ] Add 12 tests (3 unit tests for `buildAdapterColorMap`, 9 render tests).
-- [ ] `make build` clean.
-- [ ] `make test` clean.
+- [x] Add `dotAdapterPalette` slice and semantic fill color constants to `internal/cli/compile.go`.
+- [x] Add `buildAdapterColorMap(graph *workflow.FSMGraph) map[string]string` helper.
+- [x] Add `adapterTypeOf(ref string) string` helper (splits `"<type>.<name>"` on first `.`).
+- [x] Implement/extend `dotStepAttrs` to accept `adapterColors map[string]string` and emit shape, fillcolor, style, and peripheries.
+- [x] Call `buildAdapterColorMap` once at the top of `renderDOT`; pass result into step node loop.
+- [x] Update switch node loop to add `style=filled` and `fillcolor`.
+- [x] Update state node loop to add fill for terminal success/failure states.
+- [x] Add 12 tests (3 unit tests for `buildAdapterColorMap`, 9 render tests).
+- [x] `make build` clean.
+- [x] `make test` clean.
+
+## Implementation notes
+
+### Changes made
+
+**`internal/cli/compile.go`**
+- Added `dotAdapterPalette` (8-entry pastel slice) and semantic color constants (`dotSubworkflowFill`, `dotUnknownFill`, `dotSwitchFill`, `dotSuccessFill`, `dotFailureFill`).
+- Added `buildAdapterColorMap(graph *workflow.FSMGraph) map[string]string` — iterates `graph.AdapterOrder`, assigns palette entries to distinct adapter types with wrap-around.
+- Added `adapterTypeOf(ref string) string` — two-line helper that splits `"<type>.<name>"` on the first `.`.
+- Extended `dotStepAttrs` signature from `(name, st)` to `(name, st, adapterColors)`. Now emits `shape=`, `style=`, `fillcolor=`, optionally `peripheries=2`, and optionally `label=`.
+- Updated `renderDOT` to call `buildAdapterColorMap` once and pass `adapterColors` through `dotWriteNodes` → `dotWriteNodeDecls` and `dotWriteClusterBody`.
+- Updated `dotWriteNodes`, `dotWriteNodeDecls`, `dotWriteClusterBody` to accept and thread `adapterColors`.
+- Updated switch node loop: `[shape=diamond, style=filled, fillcolor="#FEF9E7"]`.
+- Updated state node loop: terminal-success gets green fill, terminal-failure gets pink fill, non-terminal gets no fill.
+
+**`internal/cli/compile_dot_test.go`** (updated for behavioral changes)
+- `TestRenderDOT_PlainStepNoAnnotation` — updated to check `style="filled"` and `fillcolor=`; node-level no-label check tightened to match only the node declaration line (not edge lines).
+- `TestDotStepAttrs_PlainAdapter` — updated to pass `adapterColors`; asserts fill color and style.
+- `TestDotStepAttrs_SubworkflowOnly` — updated to verify `dotSubworkflowFill` fill color.
+
+**`internal/cli/compile_dot_styling_test.go`** (new, 12 tests)
+- `TestBuildAdapterColorMap_AssignsPaletteInOrder` — unit test, direct `buildAdapterColorMap` call.
+- `TestBuildAdapterColorMap_WrapsAtPaletteEnd` — unit test, wrap-around verified.
+- `TestBuildAdapterColorMap_SameTypeMultipleInstances` — unit test, shared type → single slot.
+- `TestDOT_StepHasFillColor` — compile HCL; assert hex fillcolor on step node line.
+- `TestDOT_TwoAdapterTypesDifferentColors` — compile HCL with noop + shell; different fill colors.
+- `TestDOT_SubworkflowStepColor` — `dotStepAttrs` direct call; `shape=component`, `#D5F5E3`.
+- `TestDOT_ForEachStepDashedBorder` — compile HCL; `style="filled,dashed"`.
+- `TestDOT_ParallelStepDoublePeripheries` — compile HCL; `peripheries=2`.
+- `TestDOT_SwitchFillColor` — compile HCL; `fillcolor="#FEF9E7"`.
+- `TestDOT_TerminalSuccessStateFill` — compile HCL; `fillcolor="#D5F5E3"`.
+- `TestDOT_TerminalFailureStateFill` — compile HCL; `fillcolor="#FADBD8"`.
+- `TestDOT_NonTerminalStateNoFill` — compile HCL; no `fillcolor` on non-terminal state.
+
+**Golden files regenerated** (all 30+ `.dot.golden` files in `internal/cli/testdata/compile/` now contain the new styled attributes).
+
+### Design decision: adapterColors threading to subworkflow clusters
+
+The `adapterColors` map (built from the root graph's `AdapterOrder`) is passed down to `dotWriteClusterBody`. Steps inside a subworkflow cluster that share adapter types with the parent will receive palette colors; steps whose adapter types are not in the parent's map fall back to `#FFFFFF` (white). This is consistent with the workstream spec's "call `buildAdapterColorMap` once at the top of `renderDOT`". The behavior is acceptable because in practice, compiled subworkflows with inline bodies render identically to a separate workflow rendered in isolation; a future workstream can extend the map to aggregate adapter types across all subworkflow bodies if desired.
+
+### Security review
+
+No user-controlled input reaches DOT attribute values. Step names and adapter types come from the compiler. Colors are fixed literals. No new dependencies introduced.
 
 ## Exit criteria
 
