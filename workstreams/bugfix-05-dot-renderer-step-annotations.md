@@ -354,8 +354,6 @@ The new regression test now covers the previously untested failure mode directly
 - `make lint-go`
 - Compiled an ad hoc workflow with two parent steps both targeting `subworkflow.shared`; DOT output contained distinct `cluster_first_call` / `cluster_second_call` blocks and correctly rewired edges between them.
 
-### Review 2026-05-08-02 — changes-requested
-
 #### Summary
 The iterating-step annotations are in place and the new cluster rendering works for the single-call cases covered by the tests, but the subworkflow inlining is not correct for repeated call sites. `renderDOT` namespaces clusters and interior node IDs by `SubworkflowRef` alone, so two different steps targeting the same subworkflow collapse onto the same DOT IDs and edges. That breaks the "full execution structure" requirement for subworkflow rendering and needs remediation before approval.
 
