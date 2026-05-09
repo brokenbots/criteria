@@ -558,10 +558,11 @@ step "work" {
 }
 
 // TestParallelIteration_AdapterEventSink_NoConcurrentRace verifies that the
-// adapter.EventSink returned by StepEventSink is also concurrency-safe under
-// the race detector. Parallel adapter goroutines call Log concurrently; if
-// lockedEventSink did not wrap the returned sink under the same mutex, the
-// shared write inside sharedLogSink.Log would produce a DATA RACE.
+// adapter.EventSink returned by StepEventSink is concurrency-safe under the
+// race detector. Parallel adapter goroutines call Log concurrently; the
+// fanInEventSink drain goroutine serializes writes to sharedLogSink under the
+// shared mutex, so a DATA RACE on sharedLogSink.count would indicate that the
+// fan-in path is not holding the lock correctly.
 func TestParallelIteration_AdapterEventSink_NoConcurrentRace(t *testing.T) {
 	const n = 6
 	g := compile(t, parallelWorkflowHCL(`
@@ -621,8 +622,9 @@ func (p *loggingBarrierPlugin) Execute(ctx context.Context, _ string, _ *workflo
 	case <-ctx.Done():
 		return adapter.Result{}, ctx.Err()
 	}
-	// All goroutines call Log concurrently — races on sharedLogSink.count if
-	// the EventSink is not wrapped by lockedEventSink.
+	// All goroutines call Log concurrently — the fanInEventSink drain goroutine
+	// must hold the shared mutex while writing to sharedLogSink.count, or the
+	// race detector will fire.
 	sink.Log("stdout", []byte("parallel"))
 	return adapter.Result{Outcome: p.outcome}, nil
 }
@@ -633,8 +635,9 @@ func (p *loggingBarrierPlugin) CloseSession(context.Context, string) error { ret
 func (p *loggingBarrierPlugin) Kill()                                      {}
 
 // sharedLogSink is a test Sink whose StepEventSink returns an EventSink that
-// writes to a shared non-atomic counter. Without lockedEventSink, concurrent
-// calls to Log from parallel goroutines produce a DATA RACE.
+// writes to a shared non-atomic counter. The counter is deliberately not
+// atomic: concurrent calls to Log would produce a DATA RACE unless the
+// fanInEventSink drain goroutine serializes writes under the shared mutex.
 type sharedLogSink struct {
 	fakeSink
 	count int // deliberately non-atomic; safe only when Log is serialized

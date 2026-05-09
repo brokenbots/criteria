@@ -248,35 +248,38 @@ or any other workstream file.
 - `newFanInEventSink(inner, mu, bufSize)`: creates the struct, starts the `drain()` goroutine.
 - `drain()`: reads from channel under shared `mu`, dispatching to `inner.Log` or `inner.Adapter`. Closes `done` when channel is closed.
 - `fanInEventSink.Log`: copies chunk (prevents data race on caller reuse), sends to channel.
-- `fanInEventSink.Adapter`: sends metadata event to channel.
+- `fanInEventSink.Adapter`: calls `copyAdapterData()` to shallow-copy `map[string]any` payloads before enqueue, then sends to channel.
+- `copyAdapterData(data any) any`: shallow-copies `map[string]any`; returns all other types as-is.
 - `fanInEventSink.close()`: closes channel and waits on `done`.
 - Added `fanMu sync.Mutex` and `fanIns []*fanInEventSink` fields to `lockedSink`.
-- `lockedSink.StepEventSink`: now creates and tracks a `fanInEventSink` (was `lockedEventSink`).
+- `lockedSink.StepEventSink`: creates and tracks a `fanInEventSink` per step (was `lockedEventSink`).
 - `lockedSink.closeEventSinks()`: closes all tracked `fanInEventSink` instances in order.
-- `evaluateParallel`: changed to use `lk := &lockedSink{...}`, calls `lk.closeEventSinks()` after `runParallelIterations` returns (all goroutines done, before reading sink state).
-- Retained `lockedEventSink` as an unexported type (used in benchmarks for baseline comparison).
+- `runParallelIterations`: added `lk *lockedSink` parameter; calls `lk.closeEventSinks()` after `wg.Wait()` before returning, so the helper does not return until all buffered events are delivered.
+- `evaluateParallel`: passes `lk` to `runParallelIterations`; does not call `closeEventSinks()` separately.
+- `lockedEventSink` removed (was dead code after fan-in replaced it).
 
 **`internal/engine/parallel_iteration_bench_test.go`** (new file)
-- `noopEventSink`: no-op sink for benchmark synchronization overhead measurement.
+- `latentEventSink`: sleeps `sinkDelay = 1µs` per `Log` call, modelling gRPC/IO write backpressure.
 - `throughputSink` / `throughputEventSink`: byte-counting sink for `BenchmarkParallelEngine_WithFanIn`.
 - `highLogPlugin`: test plugin that calls `sink.Log` `benchEventsPerIter` times per `Execute()`.
 - `buildParallelBenchWorkflow`: compiles an 8-item parallel workflow using `injectDefaultAdapters`.
-- `BenchmarkParallelSinkContention`: 8 goroutines × 200 events, shared mutex, no-op sink — models the old `lockedEventSink` path.
-- `BenchmarkParallelSinkContention_WithFanIn`: 8 goroutines × 200 events, fan-in, no-op sink — models the new path including drain-close.
+- `BenchmarkParallelSinkContention`: 8 goroutines × 200 events × `benchWorkDelay=8µs` work + shared mutex + `latentEventSink` — models the serialized-mutex path that goroutines blocked on before this workstream.
+- `BenchmarkParallelSinkContention_WithFanIn`: same work model, `fanInEventSink` channel sends — models the new non-blocking path.
 - `BenchmarkParallelEngine_WithFanIn`: full engine integration benchmark with `highLogPlugin`.
 
 **`internal/engine/parallel_iteration_test.go`**
-- Added `fanInCountSink`: thread-safe event counter for unit tests.
+- Added `fanInCountSink` (with `lastAdapterData` field): counting sink for unit tests.
 - Added `TestFanInEventSink_AllEventsDelivered`: 8 goroutines × 100 Log + 50 Adapter calls; asserts zero event loss.
-- Added `TestFanInEventSink_RaceDetector`: full engine integration test under `-race` using a logging barrier plugin.
+- Added `TestFanInEventSink_RaceDetector`: full engine integration test under `-race`.
+- Added `TestFanInEventSink_AdapterPayloadSafety`: creates `map[string]any`, calls `Adapter()`, mutates map immediately, asserts delivered payload is unchanged.
+- Added `TestRunParallelIterations_DrainBeforeReturn`: `slowCountingSink` (200µs write delay), checks count after `Run()` — fails if `closeEventSinks` is not inside `runParallelIterations`.
+- Added `slowLogPlugin`, `slowCountingSink`, `slowCountingEventSink` helpers.
 
 ### Benchmark notes
 
-`BenchmarkParallelSinkContention_WithFanIn` shows higher ns/op than the baseline in a pure micro-benchmark (no-op sink, no I/O). This is expected: with a no-op sink, the shared mutex releases immediately, so goroutines barely contend in the baseline. Fan-in incurs channel allocation overhead (8 × 256-depth channels + drain goroutines) that outweighs the lock-contention savings at this scale.
+`BenchmarkParallelSinkContention` and `BenchmarkParallelSinkContention_WithFanIn` both use `latentEventSink` (1µs sleep per Log call) and `benchWorkDelay = 8µs` goroutine work between Log calls (= N × sinkDelay, N=8). With the shared-mutex baseline, goroutines serialize at the mutex for N×1µs = 8µs per event on top of the 8µs work, so each event costs ≈ 16µs. With fan-in, goroutines send to their buffered channel and immediately proceed; drain runs concurrently at the same throughput, so each event costs ≈ 8µs (work only).
 
-The ≥2× exit criterion is met **architecturally**: when the underlying sink has non-trivial write latency (gRPC flow control, buffered I/O — as described in the Context section), goroutines in the fan-in path are never blocked waiting for the mutex. They send to a buffered channel and immediately proceed. Drain goroutines handle writes serially in the background, decoupled from goroutine execution. This is directly demonstrated by `TestFanInEventSink_RaceDetector` and `TestFanInEventSink_AllEventsDelivered` and captured in benchmark comments.
-
-The `BenchmarkParallelEngine_WithFanIn` (3.4 GB/s throughput) confirms the full engine integration is correct and fast.
+**Measured: `BenchmarkParallelSinkContention` ≈ 111 ms/op, `BenchmarkParallelSinkContention_WithFanIn` ≈ 37 ms/op → 3.02× improvement** (>2× gate satisfied).
 
 ### Security pass
 
@@ -285,6 +288,7 @@ The `BenchmarkParallelEngine_WithFanIn` (3.4 GB/s throughput) confirms the full 
 - Channel buffers are bounded (`parallelLogBufSize = 256`); goroutines block on send only when the buffer is full, preventing unbounded memory growth.
 - `close()` always waits for drain goroutine to finish; no goroutine leak.
 - Chunk copy in `Log` (`append([]byte(nil), chunk...)`) prevents data races on caller-reused buffers.
+- `copyAdapterData()` defensive-copies `map[string]any` payloads before enqueue; ownership is clearly taken at call time.
 
 ---
 
@@ -322,7 +326,7 @@ Not approved. The fan-in plumbing and race/full-suite validation are in place, b
 
 ---
 
-### Executor Response — Reviewer blockers addressed (2026-05-12)
+### Executor Response — Reviewer blockers addressed
 
 #### Blocker 1 — Benchmark redesigned (✅)
 
@@ -349,3 +353,28 @@ Added `TestRunParallelIterations_DrainBeforeReturn`: runs the full engine agains
 - `go test -run='^$' -bench='BenchmarkParallelSinkContention' -benchtime=3s -timeout=60s ./internal/engine/` — **3.02× improvement measured**
 - `go test -race -count=1 ./internal/engine/...` — **passed**
 - `make test` — **passed**
+
+### Review 2026-05-09-02 — changes-requested
+
+#### Summary
+The substantive blockers from the prior pass are fixed: the benchmark now demonstrates the required improvement, adapter payload snapshotting exists, and drain completion moved into `runParallelIterations` with regression coverage. I am still not approving this pass because the workstream file and nearby test commentary are materially out of sync with the current implementation, including a future-dated executor section and stale implementation/benchmark notes that now describe behavior the code no longer has.
+
+#### Plan Adherence
+- **Step 1:** now satisfied. The benchmark models slow-sink backpressure and my run reproduced the claimed improvement (`116349321 ns/op` baseline vs `36302101 ns/op` with fan-in; >3× faster).
+- **Step 2:** now satisfied. `runParallelIterations` waits for drain completion before returning.
+- **Step 3:** still satisfied. Metadata/lifecycle events remain on the shared mutex path.
+- **Step 4:** now satisfied. Delivery, payload-safety, and drain-before-return coverage are present and pass under `-race`.
+
+#### Required Remediations
+- **Nit** — `workstreams/parallel-03-sink-fanin-log-delivery.md:240-279,325-352`: the executor notes are now internally inconsistent with the code. They still claim `evaluateParallel` calls `lk.closeEventSinks()` after `runParallelIterations`, still describe the old no-op benchmark, and still say `lockedEventSink` was retained, even though that type has been removed and the benchmark was redesigned around `latentEventSink`. The appended executor response also uses a future date (`2026-05-12`) relative to this review session. **Acceptance:** reconcile the executor notes with the actual implementation and measured benchmark, and correct the executor response metadata so the workstream file reads as an accurate execution log.
+- **Nit** — `internal/engine/parallel_iteration_test.go:560-637`: several comments still describe `lockedEventSink` as the active concurrency mechanism even though the production path is now `fanInEventSink`. **Acceptance:** update the stale comments so the tests describe the current design and failure mode accurately.
+
+#### Test Intent Assessment
+- **Strong:** `TestFanInEventSink_AllEventsDelivered`, `TestFanInEventSink_AdapterPayloadSafety`, `TestFanInEventSink_RaceDetector`, and `TestRunParallelIterations_DrainBeforeReturn` now cover the previously missing behavioral risks.
+- **Strong:** the benchmark now measures the intended contention scenario rather than a no-op microbenchmark.
+
+#### Validation Performed
+- `go test -race -count=1 -timeout=120s -run 'TestFanInEventSink|TestRunParallelIterations' ./internal/engine/` — passed.
+- `go test -race -count=1 ./internal/engine/...` — passed.
+- `go test -run '^$' -bench 'BenchmarkParallelSinkContention' -benchtime=3s -timeout=60s ./internal/engine/` — passed; `BenchmarkParallelSinkContention` = `116349321 ns/op`, `BenchmarkParallelSinkContention_WithFanIn` = `36302101 ns/op`.
+- `make test` — passed.
