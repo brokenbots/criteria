@@ -401,3 +401,25 @@ The new tests validate contract-visible DOT behavior rather than helper internal
 - `go test ./internal/cli -run 'TestRenderDOT_|TestDotStepAttrs_|TestCompileGolden_JSONAndDOT' -count=1`
 - `make build`
 - `make test`
+
+### Review 2026-05-08-04 — approved
+
+#### Summary
+The current implementation meets the workstream acceptance bar. DOT output now distinguishes iterating steps, inlines subworkflow bodies as recursively nested `subgraph cluster_` blocks, rewires parent edges through cluster boundaries, and preserves repeated calls to the same subworkflow declaration as separate inlined call sites. I found no remaining quality, security, or test-intent blockers in scope.
+
+#### Plan Adherence
+- Step 1 is implemented in `internal/cli/compile.go`: plain adapter steps remain `shape=box` without a label override, while `for_each`, `count`, and `parallel` steps gain the expected label annotations.
+- Steps 3-4 are implemented in the same renderer: subworkflow-targeted steps with compiled bodies are replaced by cluster blocks, nested subworkflows recurse through `dotWriteClusterBody`, and top-level / nested edge routing goes through `dotResolveRef` plus `dotWriteExitEdges`.
+- The cluster namespace now keys off the step call path rather than the declaration name alone. That is a sound refinement of the workstream intent because it preserves distinct execution structure for repeated invocations of the same subworkflow, which the earlier declaration-only scheme could not represent correctly.
+- Coverage matches the requested scope in `internal/cli/compile_dot_test.go`, including the six annotation cases, the three cluster cases, and the repeated-call regression case that closes the previously identified gap.
+- No `.golangci.baseline.yml` entries were added.
+
+#### Test Intent Assessment
+The tests are behavior-aligned and regression-sensitive. The annotation cases assert contract-visible DOT strings rather than helper-only internals; the cluster tests compile real parent/subworkflow layouts through `compileWorkflowOutput`, so they exercise the CLI-facing compile path; and `TestRenderDOT_RepeatedSubworkflowSameDeclaration` would fail a renderer that collapsed multiple call sites onto one cluster namespace. A plausible faulty implementation now has clear ways to fail this suite.
+
+#### Validation Performed
+- Inspected the current branch diff from `git merge-base HEAD origin/main`, plus targeted reads of `internal/cli/compile.go`, `internal/cli/compile_dot_test.go`, and the workstream implementation notes.
+- Rendered an ad hoc subworkflow workflow with `./bin/criteria compile --format dot` to confirm current cluster output shape and parent-edge rewiring.
+- `make build`
+- `make test`
+- `make lint-go`
