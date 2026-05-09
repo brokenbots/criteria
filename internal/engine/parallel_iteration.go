@@ -271,7 +271,22 @@ func (f *fanInEventSink) Log(stream string, chunk []byte) {
 }
 
 func (f *fanInEventSink) Adapter(kind string, data any) {
-	f.ch <- sinkEvent{kind: kind, data: data}
+	f.ch <- sinkEvent{kind: kind, data: copyAdapterData(data)}
+}
+
+// copyAdapterData returns a shallow copy of data to prevent callers from
+// mutating a map[string]any payload after the call returns. Primitive values
+// and nil are returned as-is. Nested maps share the same inner maps as the
+// original (deep copying is out of scope for this function).
+func copyAdapterData(data any) any {
+	if m, ok := data.(map[string]any); ok {
+		cp := make(map[string]any, len(m))
+		for k, v := range m {
+			cp[k] = v
+		}
+		return cp
+	}
+	return data
 }
 
 // close signals the drain goroutine to stop and blocks until it has flushed
@@ -380,7 +395,7 @@ func buildParallelIterState(i, total int, item, key cty.Value, st *RunState, vis
 	}
 }
 
-func runParallelIterations(ctx context.Context, n *stepNode, items, keys []cty.Value, st *RunState, deps Deps) []parallelIterResult {
+func runParallelIterations(ctx context.Context, n *stepNode, items, keys []cty.Value, st *RunState, deps Deps, lk *lockedSink) []parallelIterResult {
 	total := len(items)
 	results := make([]parallelIterResult, total)
 
@@ -414,6 +429,11 @@ func runParallelIterations(ctx context.Context, n *stepNode, items, keys []cty.V
 	}
 
 	wg.Wait()
+	// Flush all fan-in channels before returning. This guarantees that no
+	// buffered events are still in-flight when the caller reads sink state
+	// (e.g., in aggregateParallelResults). Drain goroutines are closed in
+	// order so the underlying sink sees a deterministic event stream.
+	lk.closeEventSinks()
 	return results
 }
 
@@ -650,13 +670,7 @@ func (n *stepNode) evaluateParallel(ctx context.Context, st *RunState, deps Deps
 	parallelDeps := deps
 	parallelDeps.Sink = lk
 
-	results := runParallelIterations(ctx, n, items, keys, st, parallelDeps)
-
-	// Flush all fan-in channels before aggregating results. Without this,
-	// fanInEventSink drain goroutines may still be writing to the sink after
-	// wg.Wait() returns — closing them here ensures all buffered events are
-	// delivered before the caller reads any sink state.
-	lk.closeEventSinks()
+	results := runParallelIterations(ctx, n, items, keys, st, parallelDeps, lk)
 
 	// If the parent context was cancelled (not just an internal abort), propagate
 	// the error rather than treating it as a normal failure outcome.

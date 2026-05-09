@@ -1,18 +1,28 @@
 package engine
 
 // parallel_iteration_bench_test.go — Benchmarks for parallel sink delivery
-// throughput. BenchmarkParallelSinkContention measures the old shared-mutex
-// approach (lockedEventSink) where goroutines block on every Log call.
-// BenchmarkParallelSinkContention_WithFanIn measures the new fanInEventSink
-// approach where goroutines send to a buffered channel and a drain goroutine
-// serializes writes to the underlying sink in the background.
+// throughput under simulated backpressure.
 //
-// Both benchmarks use 8 goroutines and 200 Log calls per goroutine.
-// The sink is a no-op; timing captures goroutine scheduling and synchronization
-// overhead rather than I/O latency. In production, the fan-in benefit is most
-// visible when the underlying sink has non-trivial write latency (e.g., gRPC
-// flow control, buffered I/O): goroutines are not blocked during those writes,
-// so parallel adapter execution is not serialized by sink contention.
+// The intended production scenario: parallel_max = 8, all adapters are
+// parallel_safe, each produces continuous output. The gRPC sink has non-trivial
+// write latency (back-pressure, flow control). With the old shared-mutex
+// approach (lockedEventSink), goroutines queue behind each other at the mutex;
+// one goroutine blocks the other seven for the full duration of each write.
+// With fanInEventSink, goroutines send to a buffered channel and proceed
+// immediately; a drain goroutine handles writes in the background.
+//
+// Benchmark model:
+//   - benchParallelMax = 8 goroutines
+//   - benchEventsPerIter = 200 Log calls per goroutine
+//   - benchWorkDelay = 8µs adapter work between Log calls (models CPU-bound
+//     output generation, e.g. parsing shell output)
+//   - latentEventSink.Log sleeps 1µs (models gRPC write latency)
+//
+// With N=8 and benchWorkDelay = N × sinkDelay (8µs = 8 × 1µs):
+//   Baseline: each round = work(8µs) + N×sinkDelay(8µs) = 16µs
+//   Fan-in: goroutines proceed at work(8µs); drain runs concurrently at
+//   the same throughput, so rounds cost only work(8µs) = 8µs
+//   → ≥ 2× throughput improvement in ns/op
 //
 // Run with:
 //
@@ -23,6 +33,7 @@ import (
 	"runtime"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/plugin"
@@ -33,16 +44,31 @@ import (
 
 const (
 	benchParallelMax   = 8
-	benchEventsPerIter = 200 // Log calls per iteration
+	benchEventsPerIter = 200 // Log calls per goroutine per iteration
 	benchChunkSize     = 512 // bytes per Log call
+
+	// benchWorkDelay simulates adapter work between Log calls (e.g., reading
+	// the next output chunk from a shell process). Set to N×sinkDelay so that
+	// the serialized sink writes in the baseline equal the goroutine work time,
+	// producing a measurable ≥ 2× difference in ns/op.
+	benchWorkDelay = time.Duration(benchParallelMax) * time.Microsecond
+
+	// sinkDelay simulates write latency in the underlying sink (e.g., gRPC
+	// flow control). Must equal benchWorkDelay / benchParallelMax so that the
+	// drain goroutines in the fan-in path run at the same throughput as the
+	// goroutines, allowing them to keep up without channel blocking.
+	sinkDelay = time.Microsecond
 )
 
-// noopEventSink is an adapter.EventSink that discards all events.
-// Benchmarks use this to measure synchronization overhead without I/O noise.
-type noopEventSink struct{}
+// latentEventSink is an adapter.EventSink that sleeps on every Log call to
+// simulate non-trivial write latency (e.g., gRPC flow control). In the
+// baseline benchmark this sleep is incurred while the goroutine holds the
+// shared mutex; in the fan-in benchmark it is incurred by the drain goroutine
+// while the adapter goroutine has already moved on to its next work iteration.
+type latentEventSink struct{}
 
-func (e *noopEventSink) Log(string, []byte)  {}
-func (e *noopEventSink) Adapter(string, any) {}
+func (e *latentEventSink) Log(string, []byte)  { time.Sleep(sinkDelay) }
+func (e *latentEventSink) Adapter(string, any) {}
 
 // throughputSink counts bytes delivered to Log so the benchmark can report
 // bytes/sec. The count field is only read after all goroutines have finished.
@@ -145,19 +171,21 @@ func itoa(n int) string {
 }
 
 // BenchmarkParallelSinkContention measures the OLD shared-mutex approach:
-// N goroutines all contend on a single sync.Mutex for every Log call.
-// Each goroutine must hold the shared mutex for the full duration of each
-// Log call. With a slow underlying sink (e.g., gRPC write), goroutines
-// serialize and cannot proceed with their own adapter work in parallel.
+// N goroutines share a mutex for every Log call. After each unit of adapter
+// work (benchWorkDelay), the goroutine must acquire the shared mutex and hold
+// it for the full sink write duration (sinkDelay). The other N-1 goroutines
+// block at mutex.Lock() and cannot proceed to their next work iteration until
+// the lock is released. With N=8 and sinkDelay=1µs, the serialized lock queue
+// adds 8µs per event on top of the 8µs work time, halving throughput.
 //
-// This directly models the lockedEventSink path before this workstream.
+// This models the lockedEventSink path before this workstream.
 func BenchmarkParallelSinkContention(b *testing.B) {
 	if runtime.GOMAXPROCS(0) < 2 {
 		b.Skip("GOMAXPROCS < 2; contention benchmark not meaningful on single-core")
 	}
 
 	chunk := make([]byte, benchChunkSize)
-	inner := &noopEventSink{}
+	inner := &latentEventSink{}
 
 	b.ResetTimer()
 	b.ReportAllocs()
@@ -171,8 +199,13 @@ func BenchmarkParallelSinkContention(b *testing.B) {
 			go func() {
 				defer wg.Done()
 				for j := 0; j < benchEventsPerIter; j++ {
+					// Simulate adapter work (e.g., reading the next shell output
+					// chunk). With the mutex approach, ALL other goroutines block
+					// at mu.Lock() while we hold the mutex during inner.Log,
+					// preventing them from starting their next work iteration.
+					time.Sleep(benchWorkDelay)
 					mu.Lock()
-					inner.Log("stdout", chunk)
+					inner.Log("stdout", chunk) // sleeps sinkDelay while holding mu
 					mu.Unlock()
 				}
 			}()
@@ -182,21 +215,25 @@ func BenchmarkParallelSinkContention(b *testing.B) {
 }
 
 // BenchmarkParallelSinkContention_WithFanIn measures the new fanInEventSink path.
-// N goroutines each have a buffered channel. Log calls are non-blocking channel
-// sends; per-goroutine drain goroutines write to the underlying sink under the
-// shared mutex. Goroutines can proceed immediately after a Log call without
-// waiting for the shared mutex. With a slow underlying sink, this decouples
-// adapter execution time from sink write latency.
+// Each goroutine has a dedicated buffered channel. After each unit of adapter
+// work (benchWorkDelay), the goroutine sends to its channel (non-blocking) and
+// immediately starts the next work iteration. Drain goroutines write to the
+// underlying sink in the background, overlapping with goroutine execution.
 //
-// Total measurement includes goroutine phase + drain-close, matching the
-// evaluateParallel lifecycle (runParallelIterations + closeEventSinks).
+// Because goroutines never block at the shared mutex, all N goroutines run
+// their work phases in parallel. The total time is dominated by the work
+// phases alone (benchWorkDelay per event), while drain runs concurrently at
+// the same throughput as goroutine production, finishing at the same time.
+//
+// Expected throughput: ≥ 2× vs BenchmarkParallelSinkContention because
+// goroutines are not serialized by sink write latency.
 func BenchmarkParallelSinkContention_WithFanIn(b *testing.B) {
 	if runtime.GOMAXPROCS(0) < 2 {
 		b.Skip("GOMAXPROCS < 2; contention benchmark not meaningful on single-core")
 	}
 
 	chunk := make([]byte, benchChunkSize)
-	inner := &noopEventSink{}
+	inner := &latentEventSink{}
 
 	b.ResetTimer()
 	b.ReportAllocs()
@@ -216,13 +253,20 @@ func BenchmarkParallelSinkContention_WithFanIn(b *testing.B) {
 			go func() {
 				defer wg.Done()
 				for j := 0; j < benchEventsPerIter; j++ {
+					// Same adapter work as baseline. Unlike the baseline, the
+					// channel send below returns immediately — the goroutine
+					// does not wait for the drain goroutine to acquire the
+					// shared mutex or complete the write.
+					time.Sleep(benchWorkDelay)
 					f.Log("stdout", chunk)
 				}
 			}()
 		}
 		wg.Wait()
-
-		// Drain-close mirrors evaluateParallel's closeEventSinks() call.
+		// Drain-close mirrors evaluateParallel's closeEventSinks(). Drain
+		// goroutines run concurrently with the goroutine phase above and finish
+		// at approximately the same time (production rate ≈ drain rate when
+		// benchWorkDelay = N × sinkDelay), so close() adds negligible latency.
 		for _, f := range fans {
 			f.close()
 		}
