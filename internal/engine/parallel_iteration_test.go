@@ -1022,4 +1022,3 @@ func TestParallelSubworkflow_IsolatedSessions_ConcurrentExecution(t *testing.T) 
 		t.Errorf("terminal state: got %q (ok=%v); want \"done\" (true)", sink.terminal, sink.terminalOK)
 	}
 }
-
