@@ -714,8 +714,61 @@ default is `continue`.
 When a step uses `parallel`, its adapter's `Execute` method is called
 concurrently from multiple goroutines. Adapter implementations must be
 goroutine-safe: avoid shared mutable state, or protect it with a mutex.
-Session handles (from `OpenSession`) are shared across parallel iterations for
-the same step; adapter authors should treat them as read-only or protect writes.
+Adapters that are safe for concurrent `Execute` calls must declare the
+`"parallel_safe"` capability in their `InfoResponse.Capabilities`. The engine
+rejects `parallel = [...]` steps that target an adapter lacking this
+declaration — at compile time when the adapter binary is resolvable, at runtime
+otherwise. See [docs/plugins.md](plugins.md) for details on declaring
+capabilities.
+
+Subworkflow steps that use `parallel` receive fully isolated adapter sessions
+per iteration — each goroutine's subworkflow opens and closes its own sessions
+independently.
+
+**Shared variables in `parallel` steps:**
+
+When a `parallel` step's per-iteration outcomes declare `shared_writes`, the
+engine applies them **after all iterations complete**, in declaration order
+(index 0, 1, 2, …). Every goroutine reads a **snapshot of shared variables
+taken before any goroutine starts** — there is no live-read between goroutines.
+
+Consequences:
+
+- **Last-index-wins**: when multiple iterations write the same variable, the
+  value after the step is the value written by the highest-index iteration that
+  reached that outcome.
+- **Accumulation is broken**: a pattern that reads `shared.counter`, increments
+  it, and writes it back will not produce `initial + N` — every goroutine reads
+  the same snapshot value, so the result is `initial + 1` regardless of N.
+
+For safe parallel accumulation, collect results into indexed outputs and compute
+the final value in an aggregate outcome's `output = { ... }` projection:
+
+<!-- validator: fragment -->
+```hcl
+step "fetch_all" {
+  target       = adapter.noop.default
+  parallel     = var.items
+  parallel_max = 4
+
+  outcome "success" {
+    next = "_continue"
+    # No shared_writes here — collect in aggregate
+  }
+
+  # After all goroutines complete, aggregate in the output projection.
+  outcome "all_succeeded" {
+    next   = "done"
+    output = {
+      total = length(steps.fetch_all.outputs)
+    }
+    shared_writes = { item_count = "total" }
+  }
+}
+```
+
+The compiler emits a warning when `shared_writes` appears on a `parallel`
+step's per-iteration outcome (`next = "_continue"`).
 
 **`each.*` bindings in `parallel`:**
 

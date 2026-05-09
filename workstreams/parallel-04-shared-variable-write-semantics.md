@@ -240,13 +240,32 @@ or any other workstream file.
 
 ## Tasks
 
-- [ ] Add compile warning for per-iteration `shared_writes` on `parallel` steps in `compileIteratingStep`
-- [ ] Write `TestStep_Parallel_PerIterationSharedWrites_Warning` test
-- [ ] Write `TestStep_ForEach_PerIterationSharedWrites_NoWarning` test
-- [ ] Write `TestStep_Parallel_AggregateSharedWrites_NoWarning` test
-- [ ] Add "Shared variables in `parallel` steps" section to `docs/workflow.md` (after parallel-01/02 merge)
-- [ ] Update the stale session-sharing sentence in `docs/workflow.md` (after parallel-01/02 merge)
-- [ ] Run `make test && make validate` and confirm green
+- [x] Add compile warning for per-iteration `shared_writes` on `parallel` steps in `compileIteratingStep`
+- [x] Write `TestStep_Parallel_PerIterationSharedWrites_Warning` test
+- [x] Write `TestStep_ForEach_PerIterationSharedWrites_NoWarning` test
+- [x] Write `TestStep_Parallel_AggregateSharedWrites_NoWarning` test
+- [x] Add "Shared variables in `parallel` steps" section to `docs/workflow.md` (after parallel-01/02 merge)
+- [x] Update the stale session-sharing sentence in `docs/workflow.md` (after parallel-01/02 merge)
+- [x] Run `make test && make validate` and confirm green
+
+## Reviewer notes
+
+### Implementation
+
+**`workflow/compile_steps_iteration.go`**: Added warning block between `validateIteratingOutcomes` and the `g.Steps[sp.Name] = node` assignment. Extracted into `warnParallelPerIterSharedWrites` helper to keep `compileIteratingStep` under the gocognit limit (complexity was 26 > 20 with inline nesting; helper drops it back to the acceptable range). Checks `parallelExpr != nil` then iterates `node.Outcomes` for any outcome where `co.Next == "_continue" && len(co.SharedWrites) > 0`, emitting a `DiagWarning`. String literal `"_continue"` used consistently with the rest of the compiler.
+
+**`workflow/compile_steps_iteration_test.go`**: Added `parallelWorkflowWithSharedVar` helper (includes `shared_variable "counter"` declaration) and three tests:
+- `TestStep_Parallel_PerIterationSharedWrites_Warning`: verifies exactly 1 `DiagWarning` with `"parallel"` and `"shared_writes"` in the summary.
+- `TestStep_ForEach_PerIterationSharedWrites_NoWarning`: same structure with `for_each` — zero parallel-shared_writes warnings.
+- `TestStep_Parallel_AggregateSharedWrites_NoWarning`: `shared_writes` only on `all_succeeded` aggregate outcome — zero parallel-shared_writes warnings.
+
+**`docs/workflow.md`**: Updated the `**Adapter concurrency requirements**` paragraph to replace the stale session-sharing sentence with the `parallel_safe` capability description and subworkflow isolation note. Added new `**Shared variables in `parallel` steps:**` section immediately after, explaining snapshot semantics, last-index-wins, broken accumulation, the safe aggregate-outcome pattern with HCL example, and the compile warning note.
+
+### Validation
+
+- `go test ./workflow/... -run TestStep_Parallel_PerIterationSharedWrites_Warning|TestStep_ForEach_PerIterationSharedWrites_NoWarning|TestStep_Parallel_AggregateSharedWrites_NoWarning` — PASS
+- `go test ./workflow/...` — PASS (0.044s)
+- `make validate` — all examples validated; no regressions
 
 ## Exit criteria
 
@@ -258,3 +277,84 @@ or any other workstream file.
 - `make validate` passes (example workflows all validate).
 - `docs/workflow.md` accurately describes snapshot-at-entry and last-index-wins
   semantics for `parallel` + `shared_writes`.
+
+## Reviewer Notes
+
+### Review 2026-05-09 — changes-requested
+
+#### Summary
+The compiler change and docs update match the workstream, and repository
+validation is green. The remaining blocker is test intent strength in
+`workflow/compile_steps_iteration_test.go`: the two "no warning" tests only
+fail when a warning summary still contains both `"parallel"` and
+`"shared_writes"`, so a regressed compiler warning with different wording could
+still pass.
+
+#### Plan Adherence
+- Step 1 is implemented in `workflow/compile_steps_iteration.go`; the warning is
+  emitted for `parallel` outcomes that route to `"_continue"` and declare
+  `shared_writes`.
+- Step 2 is implemented in `docs/workflow.md`; the stale session-sharing text is
+  replaced and the snapshot / last-index-wins semantics are documented.
+- Step 3 is only partially satisfied: the positive warning case is covered, but
+  the two negative cases do not robustly prove that compilation emits no
+  warnings.
+
+#### Required Remediations
+- **Blocker** — `workflow/compile_steps_iteration_test.go:L433-L489`: Strengthen
+  `TestStep_ForEach_PerIterationSharedWrites_NoWarning` and
+  `TestStep_Parallel_AggregateSharedWrites_NoWarning` so they assert that
+  compilation returns zero `hcl.DiagWarning` diagnostics for those workflows,
+  not just zero warnings whose summary contains both `"parallel"` and
+  `"shared_writes"`. **Acceptance criteria:** the tests must fail if any warning
+  is emitted for either workflow, even if the warning text changes.
+
+  **REMEDIATED**: Both tests now loop over all diagnostics and fail on any
+  `hcl.DiagWarning`, regardless of summary text. `go test ./workflow/...` — PASS.
+
+- **Lint failure** — `compile_steps_iteration.go`: `gocognit` complexity 26 > 20 caused
+  by the inline nested `if parallelExpr != nil { for { if { } } }` block.
+  **REMEDIATED**: Extracted the warning loop into `warnParallelPerIterSharedWrites` helper.
+  `make lint` — PASS.
+
+#### Test Intent Assessment
+The positive test is solid: it proves that the parallel per-iteration case emits
+exactly one warning. The negative tests are too coupled to the current warning
+wording, so they do not reliably prove that the safe `for_each` and
+aggregate-outcome cases stay warning-free across refactors.
+
+#### Validation Performed
+- `make test` — passed.
+- `make validate` — passed; example validation reported only the existing
+  Copilot alias warnings in `examples/copilot_planning_then_execution`.
+
+### Review 2026-05-09-02 — approved
+
+#### Summary
+The executor resolved the prior blocker. The warning helper remains aligned with
+the workstream intent, the docs update is accurate, and the negative tests now
+prove that the safe `for_each` and aggregate-outcome cases emit no compiler
+warnings at all.
+
+#### Plan Adherence
+- Step 1 is implemented in `workflow/compile_steps_iteration.go` via
+  `warnParallelPerIterSharedWrites`, which emits `DiagWarning` only for
+  `parallel` per-iteration (`next = "_continue"`) outcomes with
+  `shared_writes`.
+- Step 2 is implemented in `docs/workflow.md`; the stale session-sharing text is
+  replaced and the parallel shared-variable semantics are documented with the
+  requested guidance and example.
+- Step 3 is satisfied in `workflow/compile_steps_iteration_test.go`; the
+  positive case asserts one warning, and both negative cases now fail on any
+  `hcl.DiagWarning`, which closes the prior test-intent gap.
+
+#### Test Intent Assessment
+The tests now match the acceptance bar: one test proves the warning is emitted
+for the unsafe pattern, and the two negative tests prove the warning is absent
+for the safe patterns regardless of future warning-summary wording changes.
+
+#### Validation Performed
+- `make test` — passed.
+- `make validate` — passed; example validation reported only the existing
+  Copilot alias warnings in `examples/copilot_planning_then_execution`.
+- `make lint` — passed.

@@ -7,6 +7,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/hashicorp/hcl/v2"
 )
 
 // parallelWorkflow wraps a parallel step body in a minimal compilable workflow.
@@ -356,5 +358,133 @@ func TestStep_Parallel_AdapterAbsentFromSchemas_NoCompileError(t *testing.T) {
 	_, diags = Compile(spec, schemas)
 	if diags.HasErrors() {
 		t.Errorf("unexpected compile error when adapter absent from schemas: %v", diags.Error())
+	}
+}
+
+// parallelWorkflowWithSharedVar wraps a parallel step body in a minimal
+// compilable workflow that declares a shared_variable "counter".
+func parallelWorkflowWithSharedVar(stepBody string) string {
+	return `
+workflow "t" {
+  version       = "0.1"
+  initial_state = "work"
+  target_state  = "done"
+}
+shared_variable "counter" {
+  type = "number"
+}
+adapter "noop" "default" {}
+step "work" {
+  target   = adapter.noop.default
+  ` + stepBody + `
+}
+state "done" {
+  terminal = true
+  success  = true
+}
+state "failed" {
+  terminal = true
+  success  = false
+}
+`
+}
+
+// TestStep_Parallel_PerIterationSharedWrites_Warning verifies that a parallel
+// step with shared_writes on a _continue (per-iteration) outcome emits exactly
+// one DiagWarning whose summary mentions "parallel" and "shared_writes".
+func TestStep_Parallel_PerIterationSharedWrites_Warning(t *testing.T) {
+	src := parallelWorkflowWithSharedVar(`
+  parallel = ["a", "b"]
+  outcome "success" {
+    next          = "_continue"
+    shared_writes = { counter = "result" }
+  }
+  outcome "all_succeeded" { next = "done" }
+  outcome "any_failed"    { next = "failed" }
+`)
+	spec, diags := Parse("test.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse error: %v", diags.Error())
+	}
+	_, diags = Compile(spec, nil)
+	if diags.HasErrors() {
+		t.Fatalf("unexpected compile error: %v", diags.Error())
+	}
+	var warnings []string
+	for _, d := range diags {
+		if d.Severity == hcl.DiagWarning {
+			warnings = append(warnings, d.Summary)
+		}
+	}
+	if len(warnings) != 1 {
+		t.Fatalf("expected exactly 1 DiagWarning; got %d: %v", len(warnings), warnings)
+	}
+	if !strings.Contains(warnings[0], "parallel") {
+		t.Errorf("warning summary = %q; want mention of 'parallel'", warnings[0])
+	}
+	if !strings.Contains(warnings[0], "shared_writes") {
+		t.Errorf("warning summary = %q; want mention of 'shared_writes'", warnings[0])
+	}
+}
+
+// TestStep_ForEach_PerIterationSharedWrites_NoWarning verifies that a for_each
+// step with shared_writes on a _continue outcome does NOT emit the parallel
+// shared_writes warning (sequential per-iteration semantics are safe).
+func TestStep_ForEach_PerIterationSharedWrites_NoWarning(t *testing.T) {
+	src := parallelWorkflowWithSharedVar(`
+  for_each = ["a", "b"]
+  outcome "success" {
+    next          = "_continue"
+    shared_writes = { counter = "result" }
+  }
+  outcome "all_succeeded" { next = "done" }
+  outcome "any_failed"    { next = "failed" }
+`)
+	spec, diags := Parse("test.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse error: %v", diags.Error())
+	}
+	_, diags = Compile(spec, nil)
+	if diags.HasErrors() {
+		t.Fatalf("unexpected compile error: %v", diags.Error())
+	}
+	for _, d := range diags {
+		if d.Severity == hcl.DiagWarning {
+			t.Errorf("unexpected warning on for_each step with per-iteration shared_writes: %q", d.Summary)
+		}
+	}
+}
+
+// TestStep_Parallel_AggregateSharedWrites_NoWarning verifies that a parallel
+// step with shared_writes only on an aggregate outcome (all_succeeded, which
+// has next != "_continue") does NOT emit the per-iteration shared_writes
+// warning. Aggregate shared_writes are the recommended safe pattern.
+func TestStep_Parallel_AggregateSharedWrites_NoWarning(t *testing.T) {
+	src := parallelWorkflowWithSharedVar(`
+  parallel = ["a", "b"]
+  outcome "success" {
+    next = "_continue"
+  }
+  outcome "all_succeeded" {
+    next   = "done"
+    output = {
+      total = 2
+    }
+    shared_writes = { counter = "total" }
+  }
+  outcome "any_failed" { next = "failed" }
+`)
+	spec, diags := Parse("test.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse error: %v", diags.Error())
+	}
+	_, diags = Compile(spec, nil)
+	if diags.HasErrors() {
+		t.Fatalf("unexpected compile error: %v", diags.Error())
+	}
+	for _, d := range diags {
+		if d.Severity == hcl.DiagWarning {
+			t.Errorf("unexpected warning on parallel step with aggregate-only shared_writes: %q", d.Summary)
+		}
 	}
 }
