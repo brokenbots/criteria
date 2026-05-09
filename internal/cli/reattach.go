@@ -307,7 +307,7 @@ func parseWorkflowFromPath(ctx context.Context, path string) (*workflow.FSMGraph
 	}
 	spec, diags := workflow.ParseFileOrDir(path)
 	if diags.HasErrors() {
-		return nil, fmt.Errorf("parse workflow: %s", diags.Error())
+		return nil, fmt.Errorf("parse workflow:\n%w", newDiagsError(diags))
 	}
 
 	// Collect adapter schemas for compile-time validation.
@@ -321,7 +321,7 @@ func parseWorkflowFromPath(ctx context.Context, path string) (*workflow.FSMGraph
 		SubWorkflowResolver: &workflow.LocalSubWorkflowResolver{},
 	})
 	if diags.HasErrors() {
-		return nil, fmt.Errorf("compile workflow: %s", diags.Error())
+		return nil, fmt.Errorf("compile workflow:\n%w", newDiagsError(diags))
 	}
 	return graph, nil
 }

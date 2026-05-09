@@ -352,15 +352,15 @@ This workstream may **not** edit `README.md`, `PLAN.md`, `AGENTS.md`, `CHANGELOG
 
 ## Tasks
 
-- [ ] Add `SilenceUsage: true` and `SilenceErrors: true` to root command in `cmd/criteria/main.go`.
-- [ ] Create `internal/cli/diags.go` with `diagsError`, `newDiagsError`, `formatDiagnostics`.
-- [ ] Replace 2 `diags.Error()` calls in `internal/cli/compile.go`.
-- [ ] Replace 2 `diags.Error()` calls in `internal/cli/apply_setup.go`.
-- [ ] Replace 2 `diags.Error()` calls in `internal/cli/reattach.go`.
-- [ ] Replace 3 `diags.Error()` calls in `internal/cli/validate.go`.
-- [ ] Create `internal/cli/diags_test.go` with 7 unit tests.
-- [ ] `make build` clean.
-- [ ] `make test` clean.
+- [x] Add `SilenceUsage: true` and `SilenceErrors: true` to root command in `cmd/criteria/main.go`.
+- [x] Create `internal/cli/diags.go` with `diagsError`, `newDiagsError`, `formatDiagnostics`.
+- [x] Replace 2 `diags.Error()` calls in `internal/cli/compile.go`.
+- [x] Replace 2 `diags.Error()` calls in `internal/cli/apply_setup.go`.
+- [x] Replace 2 `diags.Error()` calls in `internal/cli/reattach.go`.
+- [x] Replace 3 `diags.Error()` calls in `internal/cli/validate.go`.
+- [x] Create `internal/cli/diags_test.go` with 7 unit tests.
+- [x] `make build` clean.
+- [x] `make test` clean.
 
 ## Exit criteria
 
@@ -369,3 +369,178 @@ This workstream may **not** edit `README.md`, `PLAN.md`, `AGENTS.md`, `CHANGELOG
 - The usage/help menu does not appear after a compile, parse, or file-not-found error.
 - `criteria validate` warnings include file/line context.
 - `make test` clean.
+
+## Reviewer notes
+
+**Implementation complete.** All 9 tasks checked; `make build` and `make test` both green.
+
+### Changes made
+
+- **`cmd/criteria/main.go`**: Added `SilenceUsage: true` and `SilenceErrors: true` to the root
+  cobra command. `SilenceErrors` prevents cobra's duplicate error print; `main.go` remains the
+  single error output path. `SilenceUsage` suppresses the help block after any `RunE` error.
+
+- **`internal/cli/diags.go`** (new): `diagsError` wraps `hcl.Diagnostics` and formats each
+  diagnostic with severity label, `file:line,col:` prefix (when `Subject` is set), summary, and
+  indented detail. `newDiagsError` filters out warnings and returns `nil` for warning-only slices.
+  `formatDiagnostics` is the shared formatter used by both the error type and `validate.go`'s
+  direct stderr writes.
+
+- **`internal/cli/compile.go`**: Two `diags.Error()` calls in `parseCompileForCli` replaced with
+  `fmt.Errorf("parse errors in %s:\n%w", workflowPath, newDiagsError(diags))` and
+  `fmt.Errorf("compile errors in %s:\n%w", workflowPath, newDiagsError(diags))`.
+
+- **`internal/cli/apply_setup.go`**: Two `diags.Error()` calls replaced with
+  `newDiagsError`-wrapped errors using `parse errors:` and `compile errors:` prefixes.
+
+- **`internal/cli/reattach.go`**: Two `diags.Error()` calls replaced with `newDiagsError`-wrapped
+  errors using `parse workflow:` and `compile workflow:` prefixes.
+
+- **`internal/cli/validate.go`**: Three `diags.Error()` calls replaced with
+  `formatDiagnostics(diags)` — parse failed, compile failed, and warnings paths.
+
+- **`internal/cli/diags_test.go`** (new): 7 unit tests covering all specified cases:
+  with-subject, with-detail, no-subject, multiple-errors (no semicolons), warning label,
+  nil-on-warnings-only, non-nil-on-errors (warnings dropped from output).
+
+### Validation
+
+- `make build`: exit 0
+- `make test -race ./...`: exit 0, all packages pass
+- Targeted test run: all 7 new diags tests + `TestParseCompileForCli_MissingFile` pass
+
+### Remediation — review-2026-05-08 blockers
+
+#### Blocker 1 — SilenceUsage split: per-RunE instead of root-level
+
+**Root cause**: In cobra v1.9.1, `ExecuteC` checks `!cmd.SilenceUsage && !c.SilenceUsage` (OR logic on root). Setting `SilenceUsage: true` on the root command causes it to suppress usage for ALL errors including argument-count failures.
+
+**Fix**: Removed `SilenceUsage: true` from the root command in `cmd/criteria/main.go`. Added `cmd.SilenceUsage = true` as the first statement in every `RunE` body across all subcommands: `compile.go`, `apply.go`, `plan.go`, `validate.go`, `status.go` (both status and stop), `run.go`. This ensures:
+- Argument-count errors (before `RunE` is entered): `SilenceUsage` is still `false` → usage IS printed ✓
+- Runtime/compile/parse errors (after `RunE` sets it): `SilenceUsage = true` → usage NOT printed ✓
+
+Verified manually: `criteria compile /no/such/file.hcl` → no usage block; `criteria compile` (no args) → usage block shown.
+
+#### Blocker 2 — Integration-level format and usage-behavior assertions
+
+Added three tests to `internal/cli/compile_test.go`:
+
+- **`TestParseCompileForCli_MissingFile`** (extended): now asserts error string does NOT contain `"; "` (old semicolon-flattened format).
+- **`TestCompileCmd_UsageSuppressedForRuntimeError`**: calls `NewCompileCmd()` with a non-existent path, captures stdout and stderr via `SetOut`/`SetErr`, asserts no `"Usage:"` in combined output.
+- **`TestCompileCmd_UsageShownForArgCountError`**: calls `NewCompileCmd()` with zero args (ExactArgs(1) violation), asserts cobra's usage block IS in stdout.
+- **`TestCompileCmd_MultiErrorFormat`**: writes a broken HCL workflow to a temp dir, compiles it, asserts the error uses multi-line format (no `"; "` separator).
+
+Note: cobra v1.9.1 prints usage via `c.Println` (→ stdout) and errors via `c.PrintErrln` (→ stderr). Tests capture both streams accordingly.
+
+### Review 2026-05-08-03 — remediation
+
+#### Blocker 1 — Root command hierarchy tests added
+
+Added `buildTestRoot()` helper in `compile_test.go` that mirrors the exact production wiring from `cmd/criteria/main.go` (`SilenceErrors: true` on root, no `SilenceUsage` on root). Added two root-level tests:
+
+- **`TestRootCmd_UsageSuppressedForRuntimeError`**: runs `criteria compile /no/such/workflow.hcl` through the wired root; asserts no `"Usage:"` in combined stdout/stderr. Would catch any regression where `root.SilenceUsage` is accidentally set.
+- **`TestRootCmd_UsageShownForArgCountError`**: runs `criteria compile` (no args) through the wired root; asserts `"Usage:"` IS in stdout. Proves arg-count UX is preserved end-to-end.
+
+#### Blocker 2 — Multi-error fixture produces and asserts 2+ diagnostics
+
+Replaced the single-error `workflow "bad"` fixture with a fixture that reliably produces 3 compile errors (missing `initial_state`, missing `target_state`, undeclared adapter reference). Added assertion: `strings.Count(errStr, "Error:") >= 2`. The test now fails if the formatter truncates or collapses diagnostics.
+
+#### Validation
+
+- `make build`: exit 0
+- `make test -race ./...`: exit 0, all packages pass
+- `make lint`: exit 0, no new baseline entries
+- All 6 new compile_test.go tests pass: `TestParseCompileForCli_MissingFile`, `TestCompileCmd_UsageSuppressedForRuntimeError`, `TestCompileCmd_UsageShownForArgCountError`, `TestRootCmd_UsageSuppressedForRuntimeError`, `TestRootCmd_UsageShownForArgCountError`, `TestCompileCmd_MultiErrorFormat`
+
+Adding `cmd.SilenceUsage = true` to `NewValidateCmd`'s `RunE` body pushed the function to 51 lines (funlen limit 50). Fixed by extracting the validate loop into `runValidate(paths, subworkflowRoots []string) bool`. The extraction also:
+- Matched the original `context.Background()` pattern (not threading an external context into the function) to avoid a `contextcheck` finding identical to those already in the baseline for `apply_setup.go`, `compile.go`, and `reattach.go`.
+- Combined same-type parameters (`paths, subworkflowRoots []string`) to satisfy `paramTypeCombine` (gocritic).
+
+`make build` + `make test` + `make lint` all clean after this fix. No new baseline entries needed.
+
+- `make build`: exit 0
+- `make test -race ./...`: exit 0, all packages pass
+- `criteria compile /no/such/file.hcl`: multi-line diagnostic, no usage block
+- `criteria compile` (no args): usage block shown correctly
+
+#### Summary
+
+Most of the formatter work is in place and the new diagnostic rendering behaves correctly for parse, compile, and warning output. However, the current root-command `SilenceUsage` change suppresses usage for argument-count errors too, which violates the workstream's Step 1 intent to suppress help only for non-argument/runtime failures. Test coverage is also below the acceptance bar: the required error-path assertions were not added, and there is still no automated proof for the changed CLI contract at the root-command boundary.
+
+#### Plan Adherence
+
+- Step 1 is only partially satisfied: `cmd/criteria/main.go` now suppresses usage for non-argument errors, but it also suppresses usage for `criteria compile` with missing args, which is outside the intended behavior.
+- Steps 2 through 4 are implemented and the observed parse/compile/validate formatting matches the desired multi-line diagnostic shape.
+- Step 5 is incomplete: `internal/cli/diags_test.go` covers the formatter helpers, but `internal/cli/compile_test.go` still leaves `TestParseCompileForCli_MissingFile` as a nil-check only, and there is no automated coverage for the root CLI behavior change.
+
+#### Required Remediations
+
+- **Blocker — `cmd/criteria/main.go:14-19`**: The root-level `SilenceUsage: true` currently removes usage output for argument-validation failures as well. Reproduce with `go run ./cmd/criteria compile`, which now prints only `accepts 1 arg(s), received 0` and no usage/help text. **Acceptance criteria:** preserve the intended behavior split: usage/help must remain available for argument-count/usage mistakes, while compile/parse/file-not-found/runtime errors must not print the help block.
+- **Blocker — `internal/cli/compile_test.go:169-174`, CLI boundary coverage missing**: the workstream required integration-level assertions on the changed error shape, but `TestParseCompileForCli_MissingFile` still does not assert the new formatting, lack of semicolon flattening, or file-context output. There is also no automated test proving that usage is suppressed for non-argument errors and retained for argument errors. **Acceptance criteria:** add regression tests that fail if the old `diags.Error()` one-line format returns, fail if non-argument errors print usage, and fail if argument-count errors stop printing usage/help.
+
+#### Test Intent Assessment
+
+The new helper tests in `internal/cli/diags_test.go` do a good job pinning the formatter's basic string rendering. What they do not prove is the actual CLI contract that changed in this workstream: root-command error handling, usage suppression semantics, and end-to-end stderr output for command failures. As written, the test suite can stay green while the CLI regresses on missing-arg UX, which is exactly what the current implementation does.
+
+#### Validation Performed
+
+- `make build` — passed.
+- `make test` — passed.
+- `go run ./cmd/criteria compile /no/such/file.hcl` — confirmed clean multi-line diagnostic output with no usage block.
+- `go run ./cmd/criteria compile` — confirmed usage/help is incorrectly suppressed for an argument-count error.
+- `go run ./cmd/criteria validate <temp warning fixture>` — confirmed warnings now include `file:line,col` context and detail text.
+
+### Review 2026-05-08-02 — changes-requested
+
+#### Summary
+
+The CLI behavior is now correct in manual validation: runtime/diagnostic failures no longer print usage, argument-count failures do, and formatted diagnostics still include location/detail context. I am not approving yet because the new tests still do not prove the real regression stays fixed at the root-command boundary, and the new “multi-error” regression test does not actually exercise multiple diagnostics.
+
+#### Plan Adherence
+
+- Step 1 is behaviorally fixed: the root command no longer suppresses usage globally, and `cmd.SilenceUsage = true` is now applied inside `RunE`, which preserves usage for argument validation while suppressing it for runtime failures.
+- Steps 2 through 4 remain correctly implemented.
+- Step 5 is still incomplete at the acceptance-bar level: new tests were added, but they do not fully validate the changed CLI contract.
+
+#### Required Remediations
+
+- **Blocker — root CLI contract test still missing (`cmd/criteria/main.go`, `internal/cli/compile_test.go:182-207`)**: the new usage-behavior tests call `NewCompileCmd()` directly, not the actual root command hierarchy. That means they would not have caught the original regression, which came from `root.SilenceUsage` in `cmd/criteria/main.go`. **Acceptance criteria:** add an automated test that executes the real command tree (`criteria compile ...`) through a root command equivalent to production wiring and proves both branches: missing args still print usage, runtime/parse/file errors do not.
+- **Blocker — `internal/cli/compile_test.go:210-230` does not test multi-error formatting**: `TestCompileCmd_MultiErrorFormat` writes a fixture that currently produces a single parse diagnostic (`Unsupported argument`) and then only asserts the absence of `"; "`. It does not prove multiple diagnostics are emitted on separate lines, so a broken formatter could still pass. **Acceptance criteria:** use a fixture that reliably produces multiple diagnostics and assert at least two distinct diagnostic blocks/lines are present, alongside the existing no-semicolon check.
+
+#### Test Intent Assessment
+
+`internal/cli/diags_test.go` remains solid for unit coverage of the formatter helper. The new command tests improve coverage, but the contract-strength is still insufficient: testing a subcommand in isolation does not pin the root-command wiring that caused the earlier bug, and the current “multi-error” test is not regression-sensitive because it exercises only a single diagnostic. The suite can still go green while the actual root CLI behavior regresses.
+
+#### Validation Performed
+
+- `make build` — passed.
+- `make test` — passed.
+- `./bin/criteria compile /no/such/file.hcl` — confirmed no usage block on runtime/parse failure.
+- `./bin/criteria compile` — confirmed usage block is shown for an argument-count failure.
+- `./bin/criteria compile <temp invalid HCL>` — confirmed multi-line diagnostic formatting for parse errors.
+
+### Review 2026-05-08-04 — approved
+
+#### Summary
+
+Approved. The previous blockers are resolved: the root command no longer suppresses usage globally, root-level regression tests now exercise the real production-style command wiring, and the multi-error regression test now proves multiple diagnostics are emitted without semicolon flattening or truncation.
+
+#### Plan Adherence
+
+- Step 1 is satisfied: argument-count failures still print usage, while runtime/parse/file errors do not.
+- Steps 2 through 4 are satisfied: all targeted `diags.Error()` call sites were replaced with structured multi-line formatting, and `validate` warnings include file/line context.
+- Step 5 is satisfied: helper-level formatter tests remain in place, and the added compile/root-command tests now cover the CLI contract that changed in this workstream.
+
+#### Test Intent Assessment
+
+The test suite now pins the intended behavior instead of only the implementation details. `buildTestRoot()` exercises the same `SilenceErrors`/subcommand wiring as production, so a future reintroduction of root-level `SilenceUsage` would fail the root command tests. `TestCompileCmd_MultiErrorFormat` now uses a fixture that reliably emits multiple compile diagnostics and asserts multiple `Error:` blocks, making it regression-sensitive to truncation or one-line collapsing.
+
+#### Validation Performed
+
+- `make build` — passed.
+- `make test` — passed.
+- `make lint` — passed.
+- `./bin/criteria compile /no/such/file.hcl` — confirmed no usage block on runtime/parse failure.
+- `./bin/criteria compile` — confirmed usage block is shown for argument-count failure.
+- `./bin/criteria compile <clean temp multi-error fixture>` — confirmed multiple diagnostics are emitted as separate `Error:` lines with no `"; "` flattening.
+- `./bin/criteria validate <clean temp warning fixture>` — confirmed warnings include file/line context and detail text.

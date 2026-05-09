@@ -12,8 +12,9 @@ import (
 
 func main() {
 	root := &cobra.Command{
-		Use:   "criteria",
-		Short: "Criteria agent — local workflow executor",
+		Use:           "criteria",
+		Short:         "Criteria agent — local workflow executor",
+		SilenceErrors: true,
 	}
 	root.AddCommand(cli.NewCompileCmd())
 	root.AddCommand(cli.NewPlanCmd())

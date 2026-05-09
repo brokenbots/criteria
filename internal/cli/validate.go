@@ -22,41 +22,8 @@ func NewValidateCmd() *cobra.Command {
 		Short: "Parse and validate a workflow HCL file or directory without executing it",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			anyErr := false
-			ctx := context.Background()
-			for _, path := range args {
-				spec, diags := workflow.ParseFileOrDir(path)
-				if diags.HasErrors() {
-					anyErr = true
-					fmt.Fprintf(os.Stderr, "%s: parse failed:\n%s\n", path, diags.Error())
-					continue
-				}
-				info, _ := os.Stat(path)
-				workflowDir := path
-				if info != nil && !info.IsDir() {
-					workflowDir = filepath.Dir(path)
-				}
-				loader := plugin.NewLoader()
-				loader.RegisterBuiltin(shell.Name, plugin.BuiltinFactoryForAdapter(shell.New()))
-				schemas := collectSchemas(ctx, loader, spec, nil)
-				_ = loader.Shutdown(ctx)
-
-				_, diags = workflow.CompileWithOpts(spec, schemas, workflow.CompileOpts{
-					WorkflowDir:         workflowDir,
-					SubWorkflowResolver: &workflow.LocalSubWorkflowResolver{AllowedRoots: subworkflowRoots},
-					Schemas:             schemas,
-				})
-				if diags.HasErrors() {
-					anyErr = true
-					fmt.Fprintf(os.Stderr, "%s: compile failed:\n%s\n", path, diags.Error())
-					continue
-				}
-				fmt.Printf("%s: ok\n", path)
-				if len(diags) > 0 {
-					fmt.Fprintf(os.Stderr, "%s: warnings:\n%s\n", path, diags.Error())
-				}
-			}
-			if anyErr {
+			cmd.SilenceUsage = true
+			if runValidate(args, subworkflowRoots) {
 				os.Exit(1)
 			}
 			return nil
@@ -65,4 +32,42 @@ func NewValidateCmd() *cobra.Command {
 
 	cmd.Flags().StringArrayVar(&subworkflowRoots, "subworkflow-root", nil, "Restrict subworkflow source resolution to this root path (repeatable; empty = no restriction)")
 	return cmd
+}
+
+func runValidate(paths, subworkflowRoots []string) bool {
+	ctx := context.Background()
+	anyErr := false
+	for _, path := range paths {
+		spec, diags := workflow.ParseFileOrDir(path)
+		if diags.HasErrors() {
+			anyErr = true
+			fmt.Fprintf(os.Stderr, "%s: parse failed:\n%s\n", path, formatDiagnostics(diags))
+			continue
+		}
+		info, _ := os.Stat(path)
+		workflowDir := path
+		if info != nil && !info.IsDir() {
+			workflowDir = filepath.Dir(path)
+		}
+		loader := plugin.NewLoader()
+		loader.RegisterBuiltin(shell.Name, plugin.BuiltinFactoryForAdapter(shell.New()))
+		schemas := collectSchemas(ctx, loader, spec, nil)
+		_ = loader.Shutdown(ctx)
+
+		_, diags = workflow.CompileWithOpts(spec, schemas, workflow.CompileOpts{
+			WorkflowDir:         workflowDir,
+			SubWorkflowResolver: &workflow.LocalSubWorkflowResolver{AllowedRoots: subworkflowRoots},
+			Schemas:             schemas,
+		})
+		if diags.HasErrors() {
+			anyErr = true
+			fmt.Fprintf(os.Stderr, "%s: compile failed:\n%s\n", path, formatDiagnostics(diags))
+			continue
+		}
+		fmt.Printf("%s: ok\n", path)
+		if len(diags) > 0 {
+			fmt.Fprintf(os.Stderr, "%s: warnings:\n%s\n", path, formatDiagnostics(diags))
+		}
+	}
+	return anyErr
 }

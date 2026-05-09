@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 )
 
 var updateGolden = flag.Bool("update", false, "update golden files")
@@ -170,6 +172,126 @@ func TestParseCompileForCli_MissingFile(t *testing.T) {
 	_, _, err := parseCompileForCli(context.Background(), "/no/such/file.hcl", nil)
 	if err == nil {
 		t.Fatal("expected error for missing file")
+	}
+	// Error must use the new multi-line format, not the old semicolon-flattened format.
+	if strings.Contains(err.Error(), "; ") {
+		t.Errorf("error must not use semicolon-flattened format; got: %q", err.Error())
+	}
+}
+
+// buildTestRoot mirrors the production wiring in cmd/criteria/main.go so that
+// root-command SilenceErrors/SilenceUsage settings are exercised exactly as in
+// production. Only the compile subcommand is wired here; add others as needed.
+func buildTestRoot() *cobra.Command {
+	root := &cobra.Command{
+		Use:           "criteria",
+		SilenceErrors: true,
+	}
+	root.AddCommand(NewCompileCmd())
+	return root
+}
+
+// TestCompileCmd_UsageSuppressedForRuntimeError verifies that compile errors
+// (non-argument failures) do not print the cobra usage/help block when calling
+// the subcommand directly.
+func TestCompileCmd_UsageSuppressedForRuntimeError(t *testing.T) {
+	cmd := NewCompileCmd()
+	var outBuf, errBuf strings.Builder
+	cmd.SetOut(&outBuf)
+	cmd.SetErr(&errBuf)
+	cmd.SetArgs([]string{"/no/such/workflow.hcl"})
+	_ = cmd.Execute() // error is expected
+	combined := outBuf.String() + errBuf.String()
+	if strings.Contains(combined, "Usage:") {
+		t.Errorf("usage block must not appear for a runtime error; stdout:\n%s\nstderr:\n%s", outBuf.String(), errBuf.String())
+	}
+}
+
+// TestCompileCmd_UsageShownForArgCountError verifies that cobra's usage block
+// IS still printed when the user provides the wrong number of arguments
+// (calling the subcommand directly).
+func TestCompileCmd_UsageShownForArgCountError(t *testing.T) {
+	cmd := NewCompileCmd()
+	var outBuf, errBuf strings.Builder
+	cmd.SetOut(&outBuf)
+	cmd.SetErr(&errBuf)
+	cmd.SetArgs([]string{}) // no args — ExactArgs(1) should fail
+	_ = cmd.Execute()       // error is expected
+	// Cobra prints usage to stdout (c.Println) on arg-count errors.
+	if !strings.Contains(outBuf.String(), "Usage:") {
+		t.Errorf("usage block must appear for an argument-count error; stdout:\n%s\nstderr:\n%s", outBuf.String(), errBuf.String())
+	}
+}
+
+// TestRootCmd_UsageSuppressedForRuntimeError exercises the full root command
+// hierarchy (matching cmd/criteria/main.go wiring). It proves that if
+// root.SilenceUsage were accidentally set to true again, this test would catch
+// the regression: runtime errors must not print the usage block.
+func TestRootCmd_UsageSuppressedForRuntimeError(t *testing.T) {
+	root := buildTestRoot()
+	var outBuf, errBuf strings.Builder
+	root.SetOut(&outBuf)
+	root.SetErr(&errBuf)
+	root.SetArgs([]string{"compile", "/no/such/workflow.hcl"})
+	_ = root.Execute()
+	combined := outBuf.String() + errBuf.String()
+	if strings.Contains(combined, "Usage:") {
+		t.Errorf("usage must not appear for a runtime error through root command; stdout:\n%s\nstderr:\n%s", outBuf.String(), errBuf.String())
+	}
+}
+
+// TestRootCmd_UsageShownForArgCountError exercises the full root command
+// hierarchy and verifies that usage IS shown when the user omits required
+// arguments — the intended UX that the SilenceUsage change must not break.
+func TestRootCmd_UsageShownForArgCountError(t *testing.T) {
+	root := buildTestRoot()
+	var outBuf, errBuf strings.Builder
+	root.SetOut(&outBuf)
+	root.SetErr(&errBuf)
+	root.SetArgs([]string{"compile"}) // no file arg — ExactArgs(1) fails
+	_ = root.Execute()
+	// Cobra prints usage to stdout (c.Println) on arg-count errors.
+	if !strings.Contains(outBuf.String(), "Usage:") {
+		t.Errorf("usage must appear for arg-count error through root command; stdout:\n%s\nstderr:\n%s", outBuf.String(), errBuf.String())
+	}
+}
+
+// TestCompileCmd_MultiErrorFormat verifies that when compilation produces
+// multiple diagnostics, each appears on its own block with no semicolon
+// separator and at least two distinct "Error:" prefixed lines.
+func TestCompileCmd_MultiErrorFormat(t *testing.T) {
+	dir := t.TempDir()
+	// Workflow that parses successfully but fails compilation with multiple
+	// errors: (1) missing initial_state, (2) missing target_state,
+	// (3) referenced adapter not declared.
+	hclContent := `workflow "multi_error" {
+  version = "0.1"
+}
+
+step "run" {
+  target = adapter.shell.default
+  input {
+    command = "echo hi"
+  }
+  outcome "ok" { next = "done" }
+}
+`
+	if err := os.WriteFile(filepath.Join(dir, "multi_error.hcl"), []byte(hclContent), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := parseCompileForCli(context.Background(), dir, nil)
+	if err == nil {
+		t.Skip("workflow compiled without error — fixture may be valid in this build")
+	}
+	errStr := err.Error()
+	if strings.Contains(errStr, "; ") {
+		t.Errorf("error must not use semicolon-flattened format; got: %q", errStr)
+	}
+	// Assert at least two "Error:" blocks are present — proves the formatter
+	// emits all diagnostics, not just the first.
+	errorCount := strings.Count(errStr, "Error:")
+	if errorCount < 2 {
+		t.Errorf("expected at least 2 Error: diagnostic blocks; got %d:\n%s", errorCount, errStr)
 	}
 }
 

@@ -25,6 +25,7 @@ func NewRunCmd() *cobra.Command {
 		Use:   "run",
 		Short: "Deprecated alias for apply --server",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
 			fmt.Fprintln(os.Stderr, "warning: `criteria run` is deprecated; use `criteria apply <workflow.hcl> --server <url>`")
 
 			if workflowPath == "" {
