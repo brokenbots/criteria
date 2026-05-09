@@ -261,8 +261,6 @@ adapter sessions).
 
 **No arch-review items.**
 
-## Reviewer Notes
-
 ### Review 2026-05-09 — changes-requested
 
 #### Summary
@@ -322,24 +320,3 @@ Replaced `sessionCountPlugin` + `fakeLoader` harness with `perResolveLoader` + `
 **Validation:**
 - `go test -race -count=5 ./internal/engine/...` → PASS
 - `make test` → PASS
-
-#### Summary
-Steps 1-3 are implemented as specified and the branch is green under the requested validation commands, but Step 4 does not fully exercise the failure mode described in the workstream. The new regression test proves `OpenSession` is called three times and that the current fake adapter finishes quickly, yet it does not model the serialized execution path caused by sharing a single stateful session with an internal execution lock.
-
-#### Plan Adherence
-- Step 1: implemented in `internal/engine/node.go`; matches the plan.
-- Step 2: implemented in `internal/engine/engine.go`; matches the plan.
-- Step 3: implemented in `internal/engine/parallel_iteration.go`; matches the plan and preserves the existing teardown path.
-- Step 4: only partially satisfied. `TestParallelSubworkflow_IsolatedSessions_ConcurrentExecution` exists and asserts `OpenSession == 3` plus elapsed time, but the test double does not simulate the required per-session mutex behavior and does not honor the loader contract's "distinct handle per Resolve" semantics.
-- Exit criteria are not met until the regression test is strengthened to cover the real serialization mechanism called out in the workstream context.
-
-#### Required Remediations
-- **Blocker** — `internal/engine/parallel_iteration_test.go:875-991`: replace the current `sessionCountPlugin` harness with one that actually models a stateful adapter session. The workstream explicitly required a per-session mutex analogue; the current fake plugin has no session-local lock, and the shared `fakeLoader` returns the same plugin instance on every `Resolve`, which diverges from production loader semantics. **Acceptance criteria:** the test must make a broken shared-session implementation serialize to roughly `N × single-execution` time, make the fixed implementation stay within the stated bound, and still assert `OpenSession` is called once per iteration.
-
-#### Test Intent Assessment
-The new test is strong on session-open counting: the original regression would fail the `OpenSession == 3` assertion. The weak spot is the timing assertion. Because the fake adapter does not serialize `Execute` per session, the wall-clock check currently proves only that the test double itself allows concurrency, not that session isolation removes the real adapter-level serialization risk described in the workstream. The executor needs to make the timing assertion regression-sensitive to a shared-session, stateful adapter implementation.
-
-#### Validation Performed
-- `go test -race -count=5 ./internal/engine/...` — passed
-- `make test` — passed
-- `go test -race -run TestParallelSubworkflow_IsolatedSessions_ConcurrentExecution -count=20 ./internal/engine` — passed
