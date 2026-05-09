@@ -305,7 +305,7 @@ func TestDotStepAttrs_SubworkflowOnly(t *testing.T) {
 // writeTempSubworkflow creates dir/name/main.hcl with a minimal subworkflow
 // containing an optional adapter step. If stepName is non-empty, a noop step
 // is added with an outcome that terminates.
-func writeTempSubworkflow(t *testing.T, parent, name, stepName string) string {
+func writeTempSubworkflow(t *testing.T, parent, name, stepName string) {
 	t.Helper()
 	dir := filepath.Join(parent, name)
 	if err := os.Mkdir(dir, 0o755); err != nil {
@@ -333,7 +333,6 @@ func writeTempSubworkflow(t *testing.T, parent, name, stepName string) string {
 	if err := os.WriteFile(filepath.Join(dir, "main.hcl"), []byte(sb.String()), 0o644); err != nil {
 		t.Fatalf("write %s/main.hcl: %v", name, err)
 	}
-	return dir
 }
 
 // TestRenderDOT_SubworkflowCluster verifies that a workflow with a subworkflow

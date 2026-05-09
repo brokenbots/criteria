@@ -269,25 +269,7 @@ func renderDOT(graph *workflow.FSMGraph) string {
 // regular nodes. Subworkflow steps with compiled bodies become subgraph
 // cluster_ blocks whose interior is written by dotWriteClusterBody.
 func dotWriteNodes(b *strings.Builder, graph *workflow.FSMGraph, indent, namespace string) {
-	for _, name := range graph.StepOrder() {
-		st := graph.Steps[name]
-		if st.SubworkflowRef != "" {
-			continue // written as a cluster below
-		}
-		attrs := dotStepAttrs(name, st)
-		b.WriteString(fmt.Sprintf("%s%q [%s];\n", indent, namespace+name, attrs))
-	}
-	for _, name := range sortedSwitchNames(graph) {
-		b.WriteString(fmt.Sprintf("%s%q [shape=diamond];\n", indent, namespace+name))
-	}
-	for _, name := range sortedStateNames(graph) {
-		state := graph.States[name]
-		shape := "ellipse"
-		if state.Terminal {
-			shape = "doublecircle"
-		}
-		b.WriteString(fmt.Sprintf("%s%q [shape=%s];\n", indent, namespace+name, shape))
-	}
+	dotWriteNodeDecls(b, graph, indent, namespace)
 	for _, name := range graph.StepOrder() {
 		st := graph.Steps[name]
 		if st.SubworkflowRef == "" {
@@ -297,16 +279,39 @@ func dotWriteNodes(b *strings.Builder, graph *workflow.FSMGraph, indent, namespa
 		if swNode == nil || swNode.Body == nil {
 			// No compiled body: fall back to a shape=component placeholder.
 			attrs := dotStepAttrs(name, st)
-			b.WriteString(fmt.Sprintf("%s%q [%s];\n", indent, namespace+name, attrs))
+			fmt.Fprintf(b, "%s%q [%s];\n", indent, namespace+name, attrs)
 			continue
 		}
 		clusterNS := namespace + name + "/"
 		clusterID := sanitizeDotID(namespace + name)
-		b.WriteString(fmt.Sprintf("%ssubgraph cluster_%s {\n", indent, clusterID))
-		b.WriteString(fmt.Sprintf("%s  label=%q;\n", indent, dotClusterLabel(st)))
-		b.WriteString(fmt.Sprintf("%s  style=dashed;\n", indent))
+		fmt.Fprintf(b, "%ssubgraph cluster_%s {\n", indent, clusterID)
+		fmt.Fprintf(b, "%s  label=%q;\n", indent, dotClusterLabel(st))
+		fmt.Fprintf(b, "%s  style=dashed;\n", indent)
 		dotWriteClusterBody(b, swNode.Body, indent+"  ", clusterNS)
-		b.WriteString(fmt.Sprintf("%s}\n", indent))
+		fmt.Fprintf(b, "%s}\n", indent)
+	}
+}
+
+// dotWriteNodeDecls writes flat node declarations for adapter steps, switches,
+// and states. Subworkflow steps are skipped (they are rendered as clusters).
+func dotWriteNodeDecls(b *strings.Builder, graph *workflow.FSMGraph, indent, namespace string) {
+	for _, name := range graph.StepOrder() {
+		st := graph.Steps[name]
+		if st.SubworkflowRef != "" {
+			continue // rendered as a cluster block by the caller
+		}
+		attrs := dotStepAttrs(name, st)
+		fmt.Fprintf(b, "%s%q [%s];\n", indent, namespace+name, attrs)
+	}
+	for _, name := range sortedSwitchNames(graph) {
+		fmt.Fprintf(b, "%s%q [shape=diamond];\n", indent, namespace+name)
+	}
+	for _, name := range sortedStateNames(graph) {
+		shape := "ellipse"
+		if graph.States[name].Terminal {
+			shape = "doublecircle"
+		}
+		fmt.Fprintf(b, "%s%q [shape=%s];\n", indent, namespace+name, shape)
 	}
 }
 
@@ -315,27 +320,8 @@ func dotWriteNodes(b *strings.Builder, graph *workflow.FSMGraph, indent, namespa
 // states to the parent's outcome targets) are NOT written here; the caller
 // emits them via dotWriteExitEdges after the cluster block closes.
 func dotWriteClusterBody(b *strings.Builder, graph *workflow.FSMGraph, indent, namespace string) {
-	// Node declarations.
-	for _, name := range graph.StepOrder() {
-		st := graph.Steps[name]
-		if st.SubworkflowRef != "" {
-			continue
-		}
-		attrs := dotStepAttrs(name, st)
-		b.WriteString(fmt.Sprintf("%s%q [%s];\n", indent, namespace+name, attrs))
-	}
-	for _, name := range sortedSwitchNames(graph) {
-		b.WriteString(fmt.Sprintf("%s%q [shape=diamond];\n", indent, namespace+name))
-	}
-	for _, name := range sortedStateNames(graph) {
-		state := graph.States[name]
-		shape := "ellipse"
-		if state.Terminal {
-			shape = "doublecircle"
-		}
-		b.WriteString(fmt.Sprintf("%s%q [shape=%s];\n", indent, namespace+name, shape))
-	}
-	// Nested cluster subgraphs.
+	dotWriteNodeDecls(b, graph, indent, namespace)
+	// Nested cluster subgraphs (second pass over steps).
 	for _, name := range graph.StepOrder() {
 		st := graph.Steps[name]
 		if st.SubworkflowRef == "" {
@@ -344,56 +330,23 @@ func dotWriteClusterBody(b *strings.Builder, graph *workflow.FSMGraph, indent, n
 		swNode := graph.Subworkflows[st.SubworkflowRef]
 		if swNode == nil || swNode.Body == nil {
 			attrs := dotStepAttrs(name, st)
-			b.WriteString(fmt.Sprintf("%s%q [%s];\n", indent, namespace+name, attrs))
+			fmt.Fprintf(b, "%s%q [%s];\n", indent, namespace+name, attrs)
 			continue
 		}
 		nestedNS := namespace + name + "/"
 		clusterID := sanitizeDotID(namespace + name)
-		b.WriteString(fmt.Sprintf("%ssubgraph cluster_%s {\n", indent, clusterID))
-		b.WriteString(fmt.Sprintf("%s  label=%q;\n", indent, dotClusterLabel(st)))
-		b.WriteString(fmt.Sprintf("%s  style=dashed;\n", indent))
+		fmt.Fprintf(b, "%ssubgraph cluster_%s {\n", indent, clusterID)
+		fmt.Fprintf(b, "%s  label=%q;\n", indent, dotClusterLabel(st))
+		fmt.Fprintf(b, "%s  style=dashed;\n", indent)
 		dotWriteClusterBody(b, swNode.Body, indent+"  ", nestedNS)
-		b.WriteString(fmt.Sprintf("%s}\n", indent))
+		fmt.Fprintf(b, "%s}\n", indent)
 	}
 	// __start__ node and initial edge.
 	initialTarget := dotResolveRef(graph, namespace, graph.InitialState)
-	b.WriteString(fmt.Sprintf("%s%q [shape=point,width=0.12,label=\"\"];\n", indent, namespace+"__start__"))
-	b.WriteString(fmt.Sprintf("%s%q -> %q [label=%q];\n", indent, namespace+"__start__", initialTarget, "initial"))
-	// Internal step edges and exit edges from nested subworkflow clusters.
-	for _, stepName := range graph.StepOrder() {
-		step := graph.Steps[stepName]
-		if step.SubworkflowRef != "" {
-			swNode := graph.Subworkflows[step.SubworkflowRef]
-			if swNode != nil && swNode.Body != nil {
-				nestedNS := namespace + stepName + "/"
-				dotWriteExitEdges(b, indent, graph, namespace, step, swNode.Body, nestedNS)
-			}
-			continue
-		}
-		for _, outcomeName := range sortedMapKeys(step.Outcomes) {
-			co := step.Outcomes[outcomeName]
-			if co.Next == "_continue" || co.Next == workflow.ReturnSentinel {
-				continue
-			}
-			nextRef := dotResolveRef(graph, namespace, co.Next)
-			b.WriteString(fmt.Sprintf("%s%q -> %q [label=%q];\n", indent, namespace+stepName, nextRef, outcomeName))
-		}
-	}
-	// Switch edges.
-	for _, switchName := range sortedSwitchNames(graph) {
-		sw := graph.Switches[switchName]
-		for i, cond := range sw.Conditions {
-			label := fmt.Sprintf("condition[%d]", i)
-			if cond.Next != workflow.ReturnSentinel {
-				nextRef := dotResolveRef(graph, namespace, cond.Next)
-				b.WriteString(fmt.Sprintf("%s%q -> %q [label=%q];\n", indent, namespace+switchName, nextRef, label))
-			}
-		}
-		if sw.DefaultNext != workflow.ReturnSentinel {
-			nextRef := dotResolveRef(graph, namespace, sw.DefaultNext)
-			b.WriteString(fmt.Sprintf("%s%q -> %q [label=%q];\n", indent, namespace+switchName, nextRef, "default"))
-		}
-	}
+	fmt.Fprintf(b, "%s%q [shape=point,width=0.12,label=\"\"];\n", indent, namespace+"__start__")
+	fmt.Fprintf(b, "%s%q -> %q [label=%q];\n", indent, namespace+"__start__", initialTarget, "initial")
+	dotWriteStepEdges(b, graph, indent, namespace)
+	dotWriteSwitchEdges(b, graph, indent, namespace)
 }
 
 // dotWriteEdges writes the top-level edge declarations for the root digraph:
@@ -402,8 +355,15 @@ func dotWriteClusterBody(b *strings.Builder, graph *workflow.FSMGraph, indent, n
 // and switch edges.
 func dotWriteEdges(b *strings.Builder, graph *workflow.FSMGraph, indent, namespace string) {
 	initialTarget := dotResolveRef(graph, namespace, graph.InitialState)
-	b.WriteString(fmt.Sprintf("%s%q [shape=point,width=0.12,label=\"\"];\n", indent, namespace+"__start__"))
-	b.WriteString(fmt.Sprintf("%s%q -> %q [label=%q];\n", indent, namespace+"__start__", initialTarget, "initial"))
+	fmt.Fprintf(b, "%s%q [shape=point,width=0.12,label=\"\"];\n", indent, namespace+"__start__")
+	fmt.Fprintf(b, "%s%q -> %q [label=%q];\n", indent, namespace+"__start__", initialTarget, "initial")
+	dotWriteStepEdges(b, graph, indent, namespace)
+	dotWriteSwitchEdges(b, graph, indent, namespace)
+}
+
+// dotWriteStepEdges writes outcome edges for adapter steps and, for subworkflow
+// steps with compiled bodies, the exit edges from the cluster's terminal states.
+func dotWriteStepEdges(b *strings.Builder, graph *workflow.FSMGraph, indent, namespace string) {
 	for _, stepName := range graph.StepOrder() {
 		step := graph.Steps[stepName]
 		if step.SubworkflowRef != "" {
@@ -420,21 +380,25 @@ func dotWriteEdges(b *strings.Builder, graph *workflow.FSMGraph, indent, namespa
 				continue
 			}
 			nextRef := dotResolveRef(graph, namespace, co.Next)
-			b.WriteString(fmt.Sprintf("%s%q -> %q [label=%q];\n", indent, namespace+stepName, nextRef, outcomeName))
+			fmt.Fprintf(b, "%s%q -> %q [label=%q];\n", indent, namespace+stepName, nextRef, outcomeName)
 		}
 	}
+}
+
+// dotWriteSwitchEdges writes all outgoing edges from switch nodes in graph.
+func dotWriteSwitchEdges(b *strings.Builder, graph *workflow.FSMGraph, indent, namespace string) {
 	for _, switchName := range sortedSwitchNames(graph) {
 		sw := graph.Switches[switchName]
 		for i, cond := range sw.Conditions {
 			label := fmt.Sprintf("condition[%d]", i)
 			if cond.Next != workflow.ReturnSentinel {
 				nextRef := dotResolveRef(graph, namespace, cond.Next)
-				b.WriteString(fmt.Sprintf("%s%q -> %q [label=%q];\n", indent, namespace+switchName, nextRef, label))
+				fmt.Fprintf(b, "%s%q -> %q [label=%q];\n", indent, namespace+switchName, nextRef, label)
 			}
 		}
 		if sw.DefaultNext != workflow.ReturnSentinel {
 			nextRef := dotResolveRef(graph, namespace, sw.DefaultNext)
-			b.WriteString(fmt.Sprintf("%s%q -> %q [label=%q];\n", indent, namespace+switchName, nextRef, "default"))
+			fmt.Fprintf(b, "%s%q -> %q [label=%q];\n", indent, namespace+switchName, nextRef, "default")
 		}
 	}
 }
@@ -454,7 +418,7 @@ func dotWriteExitEdges(b *strings.Builder, indent string, parentGraph *workflow.
 				continue
 			}
 			nextRef := dotResolveRef(parentGraph, parentNS, co.Next)
-			b.WriteString(fmt.Sprintf("%s%q -> %q [label=%q];\n", indent, clusterNS+termName, nextRef, outcomeName))
+			fmt.Fprintf(b, "%s%q -> %q [label=%q];\n", indent, clusterNS+termName, nextRef, outcomeName)
 		}
 	}
 }
