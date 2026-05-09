@@ -271,19 +271,38 @@ const (
 )
 
 // buildAdapterColorMap assigns a palette color to each distinct adapter type
-// present in graph.AdapterOrder. New adapter types receive colors automatically;
-// no per-type hard-coding is required.
+// reachable in graph and all compiled subworkflow bodies (depth-first).
+// New adapter types receive colors automatically; no per-type hard-coding is
+// required. Colors wrap if more distinct types exist than palette entries.
 func buildAdapterColorMap(graph *workflow.FSMGraph) map[string]string {
-	colors := make(map[string]string, len(graph.AdapterOrder))
-	i := 0
-	for _, ref := range graph.AdapterOrder {
-		ad := graph.Adapters[ref]
-		if _, seen := colors[ad.Type]; !seen {
-			colors[ad.Type] = dotAdapterPalette[i%len(dotAdapterPalette)]
-			i++
-		}
+	var orderedTypes []string
+	seen := map[string]bool{}
+	collectAdapterTypes(graph, seen, &orderedTypes)
+	colors := make(map[string]string, len(orderedTypes))
+	for i, t := range orderedTypes {
+		colors[t] = dotAdapterPalette[i%len(dotAdapterPalette)]
 	}
 	return colors
+}
+
+// collectAdapterTypes walks graph and its subworkflow bodies depth-first,
+// appending each newly encountered adapter type to types in declaration order.
+// Root adapter types are assigned lower palette indices than subworkflow-local
+// types, and types shared across the tree consume only one palette slot.
+func collectAdapterTypes(graph *workflow.FSMGraph, seen map[string]bool, types *[]string) {
+	for _, ref := range graph.AdapterOrder {
+		ad := graph.Adapters[ref]
+		if !seen[ad.Type] {
+			seen[ad.Type] = true
+			*types = append(*types, ad.Type)
+		}
+	}
+	for _, swName := range graph.SubworkflowOrder {
+		sw := graph.Subworkflows[swName]
+		if sw != nil && sw.Body != nil {
+			collectAdapterTypes(sw.Body, seen, types)
+		}
+	}
 }
 
 // adapterTypeOf extracts the type prefix from a "<type>.<name>" adapter ref.
@@ -292,6 +311,27 @@ func adapterTypeOf(ref string) string {
 		return ref[:idx]
 	}
 	return ref
+}
+
+// dotWriteClusterStyle emits Graphviz style attributes for a compiled
+// subworkflow cluster. The border style encodes the delegation fan-out kind:
+//   - parallel → filled background + double border (peripheries=2)
+//   - for_each / count → filled + dashed border
+//   - plain → filled background, solid border
+//
+// All cluster kinds share the semantic subworkflow fill color (#D5F5E3) as a
+// visual indicator that the cluster represents an inlined workflow body.
+func dotWriteClusterStyle(b *strings.Builder, indent string, st *workflow.StepNode) {
+	fmt.Fprintf(b, "%s  fillcolor=%q;\n", indent, dotSubworkflowFill)
+	switch {
+	case st.Parallel != nil:
+		fmt.Fprintf(b, "%s  style=filled;\n", indent)
+		fmt.Fprintf(b, "%s  peripheries=2;\n", indent)
+	case st.ForEach != nil || st.Count != nil:
+		fmt.Fprintf(b, "%s  style=\"filled,dashed\";\n", indent)
+	default:
+		fmt.Fprintf(b, "%s  style=filled;\n", indent)
+	}
 }
 
 // renderDOT renders the FSMGraph as a Graphviz DOT digraph string.
@@ -334,7 +374,7 @@ func dotWriteNodes(b *strings.Builder, graph *workflow.FSMGraph, adapterColors m
 		clusterID := sanitizeDotID(namespace + name)
 		fmt.Fprintf(b, "%ssubgraph cluster_%s {\n", indent, clusterID)
 		fmt.Fprintf(b, "%s  label=%q;\n", indent, dotClusterLabel(st))
-		fmt.Fprintf(b, "%s  style=dashed;\n", indent)
+		dotWriteClusterStyle(b, indent, st)
 		dotWriteClusterBody(b, swNode.Body, adapterColors, indent+"  ", clusterNS)
 		fmt.Fprintf(b, "%s}\n", indent)
 	}
@@ -392,7 +432,7 @@ func dotWriteClusterBody(b *strings.Builder, graph *workflow.FSMGraph, adapterCo
 		clusterID := sanitizeDotID(namespace + name)
 		fmt.Fprintf(b, "%ssubgraph cluster_%s {\n", indent, clusterID)
 		fmt.Fprintf(b, "%s  label=%q;\n", indent, dotClusterLabel(st))
-		fmt.Fprintf(b, "%s  style=dashed;\n", indent)
+		dotWriteClusterStyle(b, indent, st)
 		dotWriteClusterBody(b, swNode.Body, adapterColors, indent+"  ", nestedNS)
 		fmt.Fprintf(b, "%s}\n", indent)
 	}

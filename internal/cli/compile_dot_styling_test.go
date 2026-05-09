@@ -355,6 +355,285 @@ state "failed" {
 	}
 }
 
+// --- Regression tests for reviewer blockers ---
+
+// compileDOTFromDir compiles the workflow rooted at dir and returns the DOT output.
+func compileDOTFromDir(t *testing.T, dir string) string {
+	t.Helper()
+	out, err := compileWorkflowOutput(context.Background(), dir, "dot", nil)
+	if err != nil {
+		t.Fatalf("compile dot: %v", err)
+	}
+	return string(out)
+}
+
+// writeSubworkflowDir creates dir/name/ containing main.hcl with hclContent.
+func writeSubworkflowDir(t *testing.T, parentDir, name, hclContent string) {
+	t.Helper()
+	sub := filepath.Join(parentDir, name)
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", sub, err)
+	}
+	if err := os.WriteFile(filepath.Join(sub, "main.hcl"), []byte(hclContent), 0o644); err != nil {
+		t.Fatalf("write %s/main.hcl: %v", sub, err)
+	}
+}
+
+// TestBuildAdapterColorMap_SubworkflowLocalType verifies that an adapter type that
+// exists only in a compiled subworkflow body gets a palette color (not white fallback).
+// This is the regression test for blocker 1: previously the color map was built from
+// the root graph only, causing subworkflow-local adapter types to get dotUnknownFill.
+func TestBuildAdapterColorMap_SubworkflowLocalType(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Callee uses a "shell" adapter — distinct from the parent's "noop".
+	writeSubworkflowDir(t, tmpDir, "inner", `
+workflow "inner" {
+  version       = "1"
+  initial_state = "do_shell"
+  target_state  = "done"
+}
+adapter "shell" "default" {
+  config { }
+}
+step "do_shell" {
+  target = adapter.shell.default
+  outcome "success" { next = "done" }
+}
+state "done" {
+  terminal = true
+  success  = true
+}
+`)
+
+	// Parent uses "noop" only; "shell" is not declared here.
+	if err := os.WriteFile(filepath.Join(tmpDir, "main.hcl"), []byte(`
+workflow "parent" {
+  version       = "1"
+  initial_state = "delegate"
+  target_state  = "done"
+}
+adapter "noop" "default" {}
+step "delegate" {
+  target = subworkflow.inner
+  outcome "success" { next = "done" }
+  outcome "failure" { next = "done" }
+}
+subworkflow "inner" {
+  source = "./inner"
+}
+state "done" {
+  terminal = true
+  success  = true
+}
+`), 0o644); err != nil {
+		t.Fatalf("write parent hcl: %v", err)
+	}
+
+	dot := compileDOTFromDir(t, tmpDir)
+
+	// The nested "do_shell" step must get a palette-assigned fillcolor,
+	// not the unknown/fallback white #FFFFFF.
+	for _, line := range strings.Split(dot, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), `"delegate/do_shell" [`) {
+			if strings.Contains(line, `fillcolor="#FFFFFF"`) {
+				t.Errorf("subworkflow-local adapter type must not fall back to white; got line: %s", line)
+			}
+			if !strings.Contains(line, "fillcolor=") {
+				t.Errorf("nested step must have a fillcolor attribute; got line: %s", line)
+			}
+			m := hexColorRE.FindString(line)
+			if m == "" {
+				t.Errorf("nested step fillcolor must be a hex color; got line: %s", line)
+			}
+		}
+	}
+}
+
+// TestDOT_PlainSubworkflowClusterStyle verifies that a plain (non-iterating)
+// compiled subworkflow cluster gets style=filled and the semantic subworkflow
+// fill color, but no dashed border (regression for blocker 2).
+func TestDOT_PlainSubworkflowClusterStyle(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	writeSubworkflowDir(t, tmpDir, "inner", `
+workflow "inner" {
+  version       = "1"
+  initial_state = "done"
+  target_state  = "done"
+}
+state "done" {
+  terminal = true
+  success  = true
+}
+`)
+
+	if err := os.WriteFile(filepath.Join(tmpDir, "main.hcl"), []byte(`
+workflow "parent_plain" {
+  version       = "1"
+  initial_state = "delegate"
+  target_state  = "done"
+}
+subworkflow "inner" {
+  source = "./inner"
+}
+step "delegate" {
+  target = subworkflow.inner
+  outcome "success" { next = "done" }
+  outcome "failure" { next = "done" }
+}
+state "done" {
+  terminal = true
+  success  = true
+}
+`), 0o644); err != nil {
+		t.Fatalf("write parent hcl: %v", err)
+	}
+
+	dot := compileDOTFromDir(t, tmpDir)
+
+	if !strings.Contains(dot, "subgraph cluster_delegate") {
+		t.Fatalf("expected cluster for plain delegation; got:\n%s", dot)
+	}
+	// Cluster header lines must include the semantic fill and style=filled.
+	wantFill := fmt.Sprintf(`fillcolor=%q`, dotSubworkflowFill)
+	if !strings.Contains(dot, wantFill) {
+		t.Errorf("plain subworkflow cluster must have fillcolor=%q; got:\n%s", dotSubworkflowFill, dot)
+	}
+	// Must NOT have dashed style for a plain delegation.
+	if strings.Contains(dot, `style="filled,dashed"`) {
+		t.Errorf("plain subworkflow cluster must not have style=filled,dashed; got:\n%s", dot)
+	}
+	// Must NOT have peripheries=2 (that's for parallel only).
+	if strings.Contains(dot, "peripheries=2") {
+		t.Errorf("plain subworkflow cluster must not have peripheries=2; got:\n%s", dot)
+	}
+}
+
+// TestDOT_IteratingSubworkflowClusterStyle verifies that a for_each compiled
+// subworkflow cluster uses style="filled,dashed" (fan-out semantic border).
+func TestDOT_IteratingSubworkflowClusterStyle(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	writeSubworkflowDir(t, tmpDir, "processor", `
+workflow "processor" {
+  version       = "1"
+  initial_state = "done"
+  target_state  = "done"
+}
+variable "item" { type = "string" }
+state "done" {
+  terminal = true
+  success  = true
+}
+`)
+
+	if err := os.WriteFile(filepath.Join(tmpDir, "main.hcl"), []byte(`
+workflow "parent_iter" {
+  version       = "1"
+  initial_state = "process_all"
+  target_state  = "done"
+}
+subworkflow "processor" {
+  source = "./processor"
+  input = {
+    item = each.value
+  }
+}
+step "process_all" {
+  target   = subworkflow.processor
+  for_each = ["alpha", "beta"]
+  outcome "all_succeeded" { next = "done" }
+  outcome "any_failed"    { next = "done" }
+}
+state "done" {
+  terminal = true
+  success  = true
+}
+`), 0o644); err != nil {
+		t.Fatalf("write parent hcl: %v", err)
+	}
+
+	dot := compileDOTFromDir(t, tmpDir)
+
+	if !strings.Contains(dot, "subgraph cluster_process_all") {
+		t.Fatalf("expected cluster for for_each delegation; got:\n%s", dot)
+	}
+	// Cluster must have the dashed fan-out border.
+	if !strings.Contains(dot, `style="filled,dashed"`) {
+		t.Errorf("for_each subworkflow cluster must have style=filled,dashed; got:\n%s", dot)
+	}
+	// Cluster must also carry the semantic subworkflow fill color.
+	wantFill := fmt.Sprintf(`fillcolor=%q`, dotSubworkflowFill)
+	if !strings.Contains(dot, wantFill) {
+		t.Errorf("for_each subworkflow cluster must have fillcolor=%q; got:\n%s", dotSubworkflowFill, dot)
+	}
+}
+
+// TestDOT_ParallelSubworkflowClusterStyle verifies that a parallel compiled
+// subworkflow cluster uses peripheries=2 (double-border concurrency semantic).
+func TestDOT_ParallelSubworkflowClusterStyle(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	writeSubworkflowDir(t, tmpDir, "worker", `
+workflow "worker" {
+  version       = "1"
+  initial_state = "done"
+  target_state  = "done"
+}
+variable "task" { type = "string" }
+state "done" {
+  terminal = true
+  success  = true
+}
+`)
+
+	if err := os.WriteFile(filepath.Join(tmpDir, "main.hcl"), []byte(`
+workflow "parent_parallel" {
+  version       = "1"
+  initial_state = "run_tasks"
+  target_state  = "done"
+}
+subworkflow "worker" {
+  source = "./worker"
+  input = {
+    task = each.value
+  }
+}
+step "run_tasks" {
+  target   = subworkflow.worker
+  parallel = ["x", "y", "z"]
+  outcome "all_succeeded" { next = "done" }
+  outcome "any_failed"    { next = "done" }
+}
+state "done" {
+  terminal = true
+  success  = true
+}
+`), 0o644); err != nil {
+		t.Fatalf("write parent hcl: %v", err)
+	}
+
+	dot := compileDOTFromDir(t, tmpDir)
+
+	if !strings.Contains(dot, "subgraph cluster_run_tasks") {
+		t.Fatalf("expected cluster for parallel delegation; got:\n%s", dot)
+	}
+	// Cluster must have peripheries=2 for the double-border parallel semantic.
+	if !strings.Contains(dot, "peripheries=2") {
+		t.Errorf("parallel subworkflow cluster must have peripheries=2; got:\n%s", dot)
+	}
+	// Must carry the semantic subworkflow fill.
+	wantFill := fmt.Sprintf(`fillcolor=%q`, dotSubworkflowFill)
+	if !strings.Contains(dot, wantFill) {
+		t.Errorf("parallel subworkflow cluster must have fillcolor=%q; got:\n%s", dotSubworkflowFill, dot)
+	}
+	// Must NOT be dashed (that's for_each/count style, not parallel).
+	if strings.Contains(dot, `style="filled,dashed"`) {
+		t.Errorf("parallel subworkflow cluster must not have style=filled,dashed; got:\n%s", dot)
+	}
+}
+
 // TestDOT_NonTerminalStateNoFill verifies that a non-terminal state is rendered
 // without a fillcolor attribute.
 func TestDOT_NonTerminalStateNoFill(t *testing.T) {

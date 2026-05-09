@@ -370,9 +370,9 @@ This workstream may **not** edit `README.md`, `PLAN.md`, `AGENTS.md`, `CHANGELOG
 
 **Golden files regenerated** (all 30+ `.dot.golden` files in `internal/cli/testdata/compile/` now contain the new styled attributes).
 
-### Design decision: adapterColors threading to subworkflow clusters
+### Design decision: adapterColors threading to subworkflow clusters (updated)
 
-The `adapterColors` map (built from the root graph's `AdapterOrder`) is passed down to `dotWriteClusterBody`. Steps inside a subworkflow cluster that share adapter types with the parent will receive palette colors; steps whose adapter types are not in the parent's map fall back to `#FFFFFF` (white). This is consistent with the workstream spec's "call `buildAdapterColorMap` once at the top of `renderDOT`". The behavior is acceptable because in practice, compiled subworkflows with inline bodies render identically to a separate workflow rendered in isolation; a future workstream can extend the map to aggregate adapter types across all subworkflow bodies if desired.
+The design decision in the previous iteration was incorrect: `adapterColors` built from the root graph only caused subworkflow-local adapter types to fall back to white. The fix (`collectAdapterTypes` + depth-first traversal) builds the map from the entire reachable graph tree so every adapter type gets a palette color. The root-first traversal also ensures root adapter types retain lower palette indices.
 
 ### Security review
 
@@ -390,3 +390,54 @@ No user-controlled input reaches DOT attribute values. Step names and adapter ty
 - Terminal success states are green-filled; terminal failure states are pink-filled.
 - Plain adapter steps render with `style=filled` and a palette-assigned color.
 - `make test` clean.
+
+## Reviewer Notes
+
+### Review 2026-05-08 — changes-requested
+
+#### Summary
+
+The root-step, switch, terminal-state, and palette helper portions are implemented and the repository build/tests are green, but the actual compiled subworkflow render path still misses the workstream's visual semantics. Inlined subworkflow bodies can render valid adapter steps with the white unknown fallback, and compiled subworkflow clusters are still emitted with a hard-coded dashed border and no semantic subworkflow color, so the user-visible DOT output does not yet satisfy the acceptance bar.
+
+#### Plan Adherence
+
+- Steps 1, 3, and 4 are implemented as described for root graph adapter steps, switches, and terminal states.
+- Step 2 is only partially implemented. `dotStepAttrs` handles the fallback placeholder path, but compiled subworkflow bodies render through the cluster path in `renderDOT`, and that path does not apply the required subworkflow/fan-out styling semantics.
+- Step 5 is incomplete at the contract boundary that matters here: the new tests cover palette mapping, plain steps, switches, and terminal states, but they do not prove the styling of compiled subworkflow output produced by `renderDOT`.
+
+#### Required Remediations
+
+- **blocker** — `internal/cli/compile.go:303-308,338,396,545-552`: valid adapter steps inside compiled subworkflow bodies can fall back to `dotUnknownFill` (`#FFFFFF`) because the color map is built from the root graph only and then reused for nested bodies. Reproduction: a root workflow delegating to a subworkflow that contains a `shell` step renders `"delegate/shell_step" [shape=box, style="filled", fillcolor="#FFFFFF"]`. This violates the workstream's dynamic adapter-color assignment and the exit criterion that adding a new adapter type to a workflow automatically receives a color. **Acceptance criteria:** ensure every real adapter type reachable in the rendered workflow, including subworkflow-local adapter types, gets a palette color instead of the unknown fallback; add a regression test that compiles a workflow with a subworkflow-only adapter type and asserts a non-white palette color on the nested step node.
+- **blocker** — `internal/cli/compile.go:335-338,393-396`: every compiled subworkflow cluster is still emitted with `style=dashed` and no semantic subworkflow color, so plain delegated subworkflows render as iterating/fan-out nodes and compiled subworkflow output never shows the required fixed subworkflow styling. This misses the workstream's stated visual vocabulary (`subworkflow` semantic styling, dashed only for `for_each`/`count`, double border for `parallel`). **Acceptance criteria:** apply the workstream's target-kind and fan-out styling rules to the actual compiled subworkflow render path, not just the placeholder path, and add render tests that assert the compiled subworkflow output for plain, iterating, and parallel delegation cases.
+
+#### Test Intent Assessment
+
+The direct `buildAdapterColorMap` tests are strong for palette order, wrapping, and repeated adapter types, and the plain-step/switch/terminal-state render tests assert user-visible DOT attributes rather than implementation details. The weak spot is compiled subworkflow rendering: `internal/cli/compile_dot_styling_test.go` only checks subworkflow styling via the fallback `dotStepAttrs` path, while the real `renderDOT` contract for compiled subworkflows still routes through cluster rendering. As written, the suite would stay green while compiled subworkflow nodes render white nested adapter steps or the wrong border semantics. Add contract-level assertions against compiled DOT output for those cases.
+
+#### Validation Performed
+
+- `make build` — passed.
+- `make test` — passed.
+- Manual reproduction with `./bin/criteria compile --format dot <temp workflow>` using a root workflow that delegates to a subworkflow containing a `shell` adapter step — reproduced nested step output with `fillcolor="#FFFFFF"` and a plain delegated cluster rendered with unconditional `style=dashed`.
+
+### Remediation 2 (this session) — blockers addressed
+
+#### Changes made
+
+**`internal/cli/compile.go`**
+- Replaced `buildAdapterColorMap` with a two-pass approach: `buildAdapterColorMap` now calls `collectAdapterTypes`, a new depth-first recursive helper that walks `graph.AdapterOrder` and then recurses into each subworkflow body via `graph.SubworkflowOrder`. This ensures every adapter type reachable in the compiled tree gets a palette color; root types retain lower palette indices; shared types across parent/child consume one slot.
+- Added `dotWriteClusterStyle` — emits the Graphviz style attributes for a compiled subworkflow cluster based on the delegation step's fan-out kind: `peripheries=2` for parallel, `style="filled,dashed"` for for_each/count, `style=filled` for plain. All cluster kinds receive `fillcolor="#D5F5E3"` (the semantic subworkflow fill) as a visual indicator.
+- Replaced both hardcoded `style=dashed` calls in `dotWriteNodes` and `dotWriteClusterBody` with calls to `dotWriteClusterStyle`.
+- Removed the now-incorrect design decision note that rationalized the white fallback as acceptable.
+
+**`internal/cli/compile_dot_styling_test.go`** (4 new tests, total now 16)
+- `TestBuildAdapterColorMap_SubworkflowLocalType` — compiles a parent+subworkflow workflow where the subworkflow uses a `shell` adapter not declared in the parent; asserts the nested `delegate/do_shell` step has a non-white palette color.
+- `TestDOT_PlainSubworkflowClusterStyle` — compiles a plain delegation; asserts `fillcolor="#D5F5E3"`, no `style=filled,dashed`, no `peripheries=2`.
+- `TestDOT_IteratingSubworkflowClusterStyle` — compiles a for_each delegation; asserts `style="filled,dashed"` and `fillcolor="#D5F5E3"` in cluster header.
+- `TestDOT_ParallelSubworkflowClusterStyle` — compiles a parallel delegation; asserts `peripheries=2` and `fillcolor="#D5F5E3"`, no `style=filled,dashed`.
+
+#### Validation
+
+- `make test` — all 16 styling tests + full suite passes.
+- Golden files: no regeneration needed (no example workflows use compiled subworkflow clusters).
+- Security: no change to threat surface. All cluster attributes are fixed constants or step metadata from the compiler.
