@@ -452,9 +452,10 @@ state "done" {
 
 // clusterAttrLines extracts the cluster-level attribute lines (e.g. label,
 // fillcolor, style, peripheries) from the named compiled-subworkflow cluster
-// block within a DOT output string. Only lines at the top level of the cluster
-// (depth 1) that are not node declarations or edges are returned, so assertions
-// are scoped to the cluster contract itself rather than the whole graph.
+// block within a DOT output string. Only lines at depth 1 within the named
+// cluster (direct children, not content of nested sub-clusters) that are not
+// node declarations or edges are returned, so assertions are scoped to the
+// cluster contract itself rather than the whole graph.
 //
 // Returns (lines, true) if the cluster was found, or (nil, false) if not.
 func clusterAttrLines(dot, stepName string) ([]string, bool) {
@@ -476,17 +477,20 @@ func clusterAttrLines(dot, stepName string) ([]string, bool) {
 		line := lines[i]
 		depth += strings.Count(line, "{") - strings.Count(line, "}")
 		if i == start {
-			continue // skip the subgraph opening line
+			continue // skip the subgraph opening line itself
 		}
 		if depth == 0 {
-			break // reached the cluster's closing brace
+			break // reached the named cluster's closing brace
+		}
+		if depth != 1 {
+			continue // inside a nested sub-cluster; skip its content
 		}
 		trimmed := strings.TrimSpace(line)
 		switch {
 		case trimmed == "", trimmed == "}":
-			// blank line or bare closing brace
+			// blank line or bare closing brace of a nested cluster
 		case strings.HasPrefix(trimmed, `"`):
-			// node declaration (quoted identifier)
+			// node declaration (starts with a quoted identifier)
 		case strings.Contains(trimmed, "->"):
 			// edge declaration
 		case strings.HasPrefix(trimmed, "subgraph"):
@@ -496,6 +500,55 @@ func clusterAttrLines(dot, stepName string) ([]string, bool) {
 		}
 	}
 	return result, true
+}
+
+// TestClusterAttrLines_ExcludesNestedCluster verifies that clusterAttrLines
+// only returns attribute lines belonging to the named cluster's top level and
+// does not leak attribute lines from nested sub-clusters.
+func TestClusterAttrLines_ExcludesNestedCluster(t *testing.T) {
+	// Synthesised DOT with a parent cluster ("outer") containing a nested cluster
+	// ("inner") that has its own distinct fillcolor and style. The helper must
+	// return only the parent's attrs and exclude the child's.
+	const dot = `digraph "test" {
+  subgraph cluster_outer {
+    label="outer";
+    fillcolor="#AAAAAA";
+    style=filled;
+    subgraph cluster_inner {
+      label="inner";
+      fillcolor="#BBBBBB";
+      style="filled,dashed";
+      peripheries=2;
+      "inner/__start__" [shape=point];
+    }
+    "outer/__start__" [shape=point];
+  }
+}
+`
+	attrs, ok := clusterAttrLines(dot, "outer")
+	if !ok {
+		t.Fatal("clusterAttrLines: outer cluster not found")
+	}
+	attrBlock := strings.Join(attrs, "\n")
+
+	// Parent cluster attrs must be present.
+	if !strings.Contains(attrBlock, `fillcolor="#AAAAAA"`) {
+		t.Errorf("parent fillcolor must be present; got attrs:\n%s", attrBlock)
+	}
+	if !strings.Contains(attrBlock, "style=filled;") {
+		t.Errorf("parent style=filled must be present; got attrs:\n%s", attrBlock)
+	}
+
+	// Nested cluster attrs must NOT appear.
+	if strings.Contains(attrBlock, `fillcolor="#BBBBBB"`) {
+		t.Errorf("nested cluster fillcolor must not appear in parent attrs; got attrs:\n%s", attrBlock)
+	}
+	if strings.Contains(attrBlock, `style="filled,dashed"`) {
+		t.Errorf("nested cluster style must not appear in parent attrs; got attrs:\n%s", attrBlock)
+	}
+	if strings.Contains(attrBlock, "peripheries=2") {
+		t.Errorf("nested cluster peripheries must not appear in parent attrs; got attrs:\n%s", attrBlock)
+	}
 }
 
 // TestDOT_PlainSubworkflowClusterStyle verifies that a plain (non-iterating)

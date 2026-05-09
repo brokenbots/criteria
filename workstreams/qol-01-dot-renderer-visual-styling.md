@@ -484,3 +484,42 @@ The two prior implementation blockers are fixed: compiled subworkflow-local adap
 
 - `make test` — all 16 tests pass.
 - `make lint-go` — clean.
+
+### Review 2026-05-08-03 — changes-requested
+
+#### Summary
+
+The cluster-style assertions are now scoped much more tightly, and the implementation plus repository validation are clean. The remaining blocker is in the new `clusterAttrLines` helper itself: despite the comment and intended contract, it still captures nested cluster attribute lines, so the cluster-style tests are not yet reliably isolated to the cluster under test.
+
+#### Plan Adherence
+
+- The implementation path remains correct for the workstream's styling semantics.
+- Step 5 is still not fully closed because the new helper intended to enforce cluster-level precision does not actually restrict results to depth-1 cluster attributes.
+
+#### Required Remediations
+
+- **blocker** — `internal/cli/compile_dot_styling_test.go:453-499`: `clusterAttrLines` claims to return only top-level attribute lines from the named cluster, but the implementation never checks `depth == 1` before appending lines. It skips the nested `subgraph ... {` opener, yet still collects nested cluster attributes like `label=`, `fillcolor=`, and `style=`. A quick probe with a parent cluster containing a nested cluster returned both the parent attrs and the nested child's attrs, which reintroduces false-positive risk for exactly the contract these tests were added to protect. **Acceptance criteria:** update `clusterAttrLines` so it only records lines belonging to the named cluster's top level (excluding nested cluster contents), and add a focused regression test proving nested cluster attributes are excluded from the extracted attribute set.
+
+#### Test Intent Assessment
+
+This is very close now: the plain/iterating/parallel tests no longer scan the whole DOT blob. But because the extractor still leaks nested cluster attrs, the assertions are not yet fully regression-sensitive for recursive subworkflow rendering, which this renderer already supports.
+
+#### Validation Performed
+
+- `make build` — passed.
+- `make test` — passed.
+- `make lint-go` — passed.
+- Manual probe of the new `clusterAttrLines` logic with a parent cluster containing a nested child cluster showed the helper returning both parent and child attribute lines, confirming the isolation bug.
+
+### Remediation 4 (this session) — clusterAttrLines depth guard
+
+#### Changes made
+
+**`internal/cli/compile_dot_styling_test.go`**
+- Fixed `clusterAttrLines`: added `if depth != 1 { continue }` guard after the `depth == 0` break check. Lines at depth > 1 (inside nested sub-clusters) are now skipped entirely, so nested cluster attributes (fillcolor, style, peripheries) are never included in the result set.
+- Added `TestClusterAttrLines_ExcludesNestedCluster`: synthesises a DOT string with a parent `cluster_outer` (fillcolor `#AAAAAA`, `style=filled`) containing a nested `cluster_inner` (fillcolor `#BBBBBB`, `style="filled,dashed"`, `peripheries=2`); asserts that only the parent attrs appear in the extracted set and none of the nested attrs are present.
+
+#### Validation
+
+- `make test` — all 17 tests pass.
+- `make lint-go` — clean.
