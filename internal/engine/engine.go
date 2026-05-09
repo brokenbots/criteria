@@ -434,6 +434,7 @@ func (e *Engine) seedRunVars() map[string]cty.Value {
 func (e *Engine) buildDeps(sessions *plugin.SessionManager) Deps {
 	return Deps{
 		Sessions:            sessions,
+		Loader:              e.loader,
 		Sink:                e.sink,
 		SubWorkflowResolver: e.subWorkflowResolver,
 		BranchScheduler:     e.branchScheduler,

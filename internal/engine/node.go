@@ -17,6 +17,7 @@ type Node interface {
 // Deps carries interpreter runtime dependencies shared by node implementations.
 type Deps struct {
 	Sessions            *plugin.SessionManager
+	Loader              plugin.Loader
 	Sink                Sink
 	SubWorkflowResolver SubWorkflowResolver
 	BranchScheduler     BranchScheduler

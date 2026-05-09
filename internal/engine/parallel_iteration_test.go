@@ -867,3 +867,126 @@ step "work" {
 		t.Error("expected non-success terminal: fatal adapter error should not reach 'done'")
 	}
 }
+
+// sessionCountPlugin counts OpenSession calls and introduces a controlled delay
+// in Execute. It is used by TestParallelSubworkflow_IsolatedSessions_ConcurrentExecution
+// to verify that each parallel subworkflow iteration receives its own fresh adapter
+// session (OpenSession count == N) and that iterations run concurrently.
+type sessionCountPlugin struct {
+	name    string
+	opens   atomic.Int32
+	delay   time.Duration
+	barrier chan struct{}
+	ready   atomic.Int32
+	n       int32
+}
+
+func (p *sessionCountPlugin) Info(context.Context) (plugin.Info, error) {
+	return plugin.Info{Name: p.name, Version: "test"}, nil
+}
+func (p *sessionCountPlugin) OpenSession(context.Context, string, map[string]string) error {
+	p.opens.Add(1)
+	return nil
+}
+func (p *sessionCountPlugin) Execute(ctx context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+	// Rendezvous: when all n goroutines have arrived, release the barrier so they
+	// complete concurrently. This proves concurrent execution under the race detector.
+	if p.ready.Add(1) == p.n {
+		close(p.barrier)
+	}
+	select {
+	case <-p.barrier:
+	case <-ctx.Done():
+		return adapter.Result{}, ctx.Err()
+	}
+	select {
+	case <-time.After(p.delay):
+	case <-ctx.Done():
+		return adapter.Result{}, ctx.Err()
+	}
+	return adapter.Result{Outcome: "success"}, nil
+}
+func (p *sessionCountPlugin) Permit(context.Context, string, string, bool, string) error {
+	return nil
+}
+func (p *sessionCountPlugin) CloseSession(context.Context, string) error { return nil }
+func (p *sessionCountPlugin) Kill()                                      {}
+
+// TestParallelSubworkflow_IsolatedSessions_ConcurrentExecution verifies that
+// parallel subworkflow iterations each receive a distinct adapter session (W19
+// isolation fix) and execute concurrently.
+//
+// Acceptance criteria:
+//  1. plugin.OpenSession is called N times (once per iteration, not once total).
+//  2. N iterations complete in ≤ 2×execDelay (concurrent, not serial).
+//  3. No data race under -race.
+func TestParallelSubworkflow_IsolatedSessions_ConcurrentExecution(t *testing.T) {
+	const (
+		n         = 3
+		execDelay = 50 * time.Millisecond
+		maxTotal  = 2 * execDelay
+	)
+
+	plg := &sessionCountPlugin{
+		name:    "noop",
+		delay:   execDelay,
+		barrier: make(chan struct{}),
+		n:       n,
+	}
+	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"noop": plg}}
+
+	// Callee subworkflow: declares adapter "noop" and runs one step with it.
+	calleeBody := calleeBodyWithStep("noop")
+	swNode := subworkflowNodeFor("callee", calleeBody)
+
+	// Parent graph: parallel subworkflow step over an n-element list.
+	parallelExpr := parseExpr(t, `["a", "b", "c"]`)
+	parentStep := &workflow.StepNode{
+		Name:           "call",
+		TargetKind:     workflow.StepTargetSubworkflow,
+		SubworkflowRef: "callee",
+		Parallel:       parallelExpr,
+		ParallelMax:    n,
+		Outcomes: map[string]*workflow.CompiledOutcome{
+			"all_succeeded": {Next: "done"},
+			"any_failed":    {Next: "failed"},
+		},
+	}
+	parentGraph := &workflow.FSMGraph{
+		Name:         "parent",
+		InitialState: "call",
+		TargetState:  "done",
+		Policy:       workflow.DefaultPolicy,
+		Steps:        map[string]*workflow.StepNode{"call": parentStep},
+		States: map[string]*workflow.StateNode{
+			"done":   {Name: "done", Terminal: true, Success: true},
+			"failed": {Name: "failed", Terminal: true, Success: false},
+		},
+		Adapters:     map[string]*workflow.AdapterNode{},
+		Subworkflows: map[string]*workflow.SubworkflowNode{"callee": swNode},
+		Variables:    map[string]*workflow.VariableNode{},
+		Environments: map[string]*workflow.EnvironmentNode{},
+	}
+
+	sink := &parallelSink{}
+	start := time.Now()
+	if err := New(parentGraph, loader, sink).Run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	elapsed := time.Since(start)
+
+	// Assertion 1: each iteration opened its own session (N opens, not 1).
+	if got := plg.opens.Load(); got != n {
+		t.Errorf("OpenSession call count = %d; want %d (each parallel iteration must open its own session)", got, n)
+	}
+
+	// Assertion 2: all iterations completed in ≤ 2×execDelay (concurrent, not serial).
+	if elapsed > maxTotal {
+		t.Errorf("elapsed %v > %v (2×execDelay=%v); iterations appear to have serialized", elapsed, maxTotal, execDelay)
+	}
+
+	if sink.terminal != "done" || !sink.terminalOK {
+		t.Errorf("terminal state: got %q (ok=%v); want \"done\" (true)", sink.terminal, sink.terminalOK)
+	}
+}
+

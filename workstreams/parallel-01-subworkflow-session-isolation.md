@@ -215,13 +215,13 @@ or any other workstream file.
 
 ## Tasks
 
-- [ ] Add `Loader plugin.Loader` field to `Deps` in `internal/engine/node.go`
-- [ ] Wire `Loader: e.loader` into `buildDeps` in `internal/engine/engine.go`
-- [ ] Replace body of `runParallelSubworkflowIteration` to use per-iteration `SessionManager`
-- [ ] Fix any compilation failures in existing engine tests that construct `Deps{}` directly
-- [ ] Write `TestParallelSubworkflow_IsolatedSessions_ConcurrentExecution` test
-- [ ] Run `go test -race -count=5 ./internal/engine/...` and confirm pass
-- [ ] Run `make test` and confirm full suite green
+- [x] Add `Loader plugin.Loader` field to `Deps` in `internal/engine/node.go`
+- [x] Wire `Loader: e.loader` into `buildDeps` in `internal/engine/engine.go`
+- [x] Replace body of `runParallelSubworkflowIteration` to use per-iteration `SessionManager`
+- [x] Fix any compilation failures in existing engine tests that construct `Deps{}` directly
+- [x] Write `TestParallelSubworkflow_IsolatedSessions_ConcurrentExecution` test
+- [x] Run `go test -race -count=5 ./internal/engine/...` and confirm pass
+- [x] Run `make test` and confirm full suite green
 
 ## Exit criteria
 
@@ -230,3 +230,33 @@ or any other workstream file.
   complete in ≤ 2× single-iteration wall time; `OpenSession` call count = 3.
 - `make test` passes.
 - No changes outside the files listed above.
+
+## Reviewer notes
+
+### Implementation (2026-05-09)
+
+**Files modified:**
+- `internal/engine/node.go`: Added `Loader plugin.Loader` field to `Deps` struct after `Sessions`.
+- `internal/engine/engine.go`: Added `Loader: e.loader` to `buildDeps` return.
+- `internal/engine/parallel_iteration.go`: Replaced `runParallelSubworkflowIteration`
+  body to create a per-iteration `SessionManager` via `plugin.NewSessionManager(deps.Loader)`.
+  The original 5-line diff matches the workstream spec exactly.
+- `internal/engine/parallel_iteration_test.go`: Added `sessionCountPlugin` helper and
+  `TestParallelSubworkflow_IsolatedSessions_ConcurrentExecution`. The test uses a
+  barrier to force concurrent rendezvous of all 3 goroutines in Execute, counts OpenSession
+  calls (assertion: must equal 3), and checks wall time ≤ 2×execDelay.
+
+**Existing tests:** No compilation breakage — existing `Deps{}` struct literals use named
+fields; the new `Loader` field defaults to `nil` where not specified, which is correct for
+tests that pre-open sessions through a pre-configured `SessionManager`.
+
+**Validation:**
+- `go test -race -count=5 ./internal/engine/...` → PASS (16.5 s total, 5 runs × all engine tests)
+- `make test` → PASS (full workspace)
+
+**Security:** No new attack surface. The `Loader` field is an internal interface used only
+by the engine at runtime. `plugin.NewSessionManager(nil)` is safe to construct (only panics
+if `Open` is later called with a nil loader, which doesn't occur in paths that don't need
+adapter sessions).
+
+**No arch-review items.**

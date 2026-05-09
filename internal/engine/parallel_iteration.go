@@ -375,7 +375,15 @@ func (n *stepNode) runParallelSubworkflowIteration(ctx context.Context, st *RunS
 		}
 	}
 
-	swOutputs, runErr := runSubworkflow(ctx, swNode, st, stepInput, deps)
+	// Per-iteration session isolation: each parallel goroutine receives its own
+	// SessionManager so that initScopeAdapters inside runWorkflowBody opens
+	// fresh adapter sessions rather than colliding on the parent scope's sessions.
+	// runWorkflowBody's deferred tearDownScopeAdapters closes and kills all
+	// sessions it opened, so no explicit Shutdown is needed here.
+	iterDeps := deps
+	iterDeps.Sessions = plugin.NewSessionManager(deps.Loader)
+
+	swOutputs, runErr := runSubworkflow(ctx, swNode, st, stepInput, iterDeps)
 	if runErr != nil {
 		return "failure", nil, runErr
 	}
