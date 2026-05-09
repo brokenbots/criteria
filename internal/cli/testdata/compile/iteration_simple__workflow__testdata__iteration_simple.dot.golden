@@ -1,8 +1,8 @@
 digraph "iteration_simple" {
   rankdir=LR;
 
-  "process" [shape=box];
-  "count_phase" [shape=box];
+  "process" [shape=box, label="process\n[for_each]"];
+  "count_phase" [shape=box, label="count_phase\n[count]"];
   "done" [shape=doublecircle];
 
   "__start__" [shape=point,width=0.12,label=""];

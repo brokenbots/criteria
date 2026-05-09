@@ -171,11 +171,11 @@ This workstream may **not** edit `README.md`, `PLAN.md`, `AGENTS.md`, `CHANGELOG
 
 ## Tasks
 
-- [ ] Add `dotStepAttrs(name string, st *workflow.StepNode) string` helper in `internal/cli/compile.go`.
-- [ ] Replace unconditional `[shape=box]` step node loop in `renderDOT` with annotating loop.
-- [ ] Add 6 tests.
-- [ ] `make build` clean.
-- [ ] `make test` clean.
+- [x] Add `dotStepAttrs(name string, st *workflow.StepNode) string` helper in `internal/cli/compile.go`.
+- [x] Replace unconditional `[shape=box]` step node loop in `renderDOT` with annotating loop.
+- [x] Add 6 tests.
+- [x] `make build` clean.
+- [x] `make test` clean.
 
 ## Exit criteria
 
@@ -185,3 +185,27 @@ This workstream may **not** edit `README.md`, `PLAN.md`, `AGENTS.md`, `CHANGELOG
 - A subworkflow-targeted step renders with `shape=component` and `[→ <name>]` in its label.
 - A plain adapter step renders as `[shape=box]` with no `label` attribute.
 - `make test` clean.
+
+## Implementation notes
+
+**Files modified:**
+- `internal/cli/compile.go` — replaced unconditional `[shape=box]` loop in `renderDOT` with
+  `dotStepAttrs`-driven loop; added `dotStepAttrs` helper after `renderDOT`.
+- `internal/cli/compile_dot_test.go` (new) — 6 required `TestRenderDOT_*` tests plus 2
+  bonus `TestDotStepAttrs_*` unit tests for the helper directly.
+- `internal/cli/testdata/compile/*.dot.golden` — updated 7 golden files whose fixtures
+  contain iterating steps: `iteration_simple` (for_each + count), `demo_tour_local`
+  (for_each), `phase3-parallel` (parallel × 1 visible step), `phase3-marquee` (parallel).
+  Remaining golden files were unchanged (no iterating or subworkflow steps).
+
+**Key decisions:**
+- `for_each`/`count`/`parallel` are mutually exclusive (enforced by the schema); the helper
+  uses `if / else if / else if` rather than separate checks.
+- `SubworkflowRef` is checked independently so iterating subworkflow steps receive both
+  annotations.
+- Golden files regenerated with `-update` flag; all pass without modification after
+  regeneration.
+- The `iteration_workflow_step` golden file is orphaned (its testdata directory does not
+  exist); this is a pre-existing condition, out of scope for this workstream.
+
+**Validation:** `make build` clean; `make test` clean (all packages pass with -race).
