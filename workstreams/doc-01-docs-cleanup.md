@@ -689,7 +689,58 @@ All 17 checks must pass before reviewer approval.
 
 ## Executor notes
 
-*(To be filled in by the executor agent during implementation.)*
+**Implementation batch 1 — all items completed.**
+
+### Changes made
+
+**`docs/contributing/your-first-pr.md`**
+- I3: Replaced `brokenbots/overseer` → `brokenbots/criteria` in the `[gfi]` link definition (one occurrence in file; workstream said two but only one exists).
+- I4: Updated `<!-- Last reviewed: Phase 2 (2026-04) -->` → `Phase 3 (2026-05)`.
+
+**`docs/workflow.md`**
+- I5: Replaced `**Agents**` Overview bullet with the full v0.3.0 `**Adapters**` description.
+- I7: Removed `v1.5` version string from the Variables intro sentence.
+- I6: Replaced the stale "exact type match" / "tuple-to-list coercion enhancement" note with the BF-01-fixed wording.
+- I8: Changed Variables usage example from `adapter = "shell"` to `target = adapter.shell.default`; updated validator directive from `fragment` to `skip`.
+- I9: Rewrote `## Agents` section entirely to `## Adapters` with v0.3.0 `adapter "copilot" "assistant"` example and automatic-lifecycle prose.
+- I10: Removed `lifecycle` bullet from Step attributes list.
+- Additional stale content fixed (not in explicit workstream steps but required to pass verification or for consistency with allowed file):
+  - `for_each`, `count`, `on_failure`, `running_total` examples: `adapter = "<type>"` → `target = adapter.<type>.default` with directive updated from `fragment` to `skip`.
+  - `type = "workflow"` inline-body example: updated validator comment (removed `agent "assistant"`) and code (`adapter = "shell"` + `agent = "assistant"` → `target = adapter.shell.default` / `target = adapter.copilot.assistant`).
+  - W08 migration section: `adapter = "noop"` → `target = adapter.noop.default`; label updated from "W10 equivalent" to "v0.3.0 equivalent".
+  - Step-level permissions example: `agent = "assistant"` → `target = adapter.copilot.assistant`; updated validator comment.
+  - Meta-doc validator-directives section: `adapter = "shell"` → `target = adapter.shell.default`; "step/state/agent snippets" → "step/state/adapter snippets".
+  - Various prose: `Agents (and standalone adapter steps)` → `Adapters`; `agent execution steps` → `adapter execution steps`; `agent-level` → `adapter-level`; `on_crash overrides agent-level` → `adapter-level`; permissions model prose; `plan` output list.
+
+**`docs/plugins.md`**
+- I12d: Shell adapter `outcome` lines: `transition_to = "test"` / `"failed"` → `next = "test"` / `"failed"`.
+- I12: Rewrote `## HCL Surface — Agent-backed Workflows` → `## HCL Surface — Adapter-backed Workflows` with v0.3.0 workflow structure.
+- I12b: Removed dead link to `workstreams/15-copilot-submit-outcome-adapter.md` from `allowed_outcomes` paragraph.
+- I12c: `get_version` step: `adapter = "shell"` + `transition_to` → `target = adapter.shell.default` + `next`.
+- I11b: `branch "check_version"` example → `switch "check_version"` with `condition`/`default`/`next` syntax.
+- I12e: Both `agent "planner"` blocks → `adapter "copilot" "planner"`; `agent = "planner"` → `target = adapter.copilot.planner`; `transition_to` → `next`; "Common mistake" error message updated.
+- I11a: All 14 `transition_to` occurrences in file replaced with `next` (verified: grep count = 0).
+- Additional: Updated `## The Two-Agent Loop Pattern` section → `## The Two-Adapter Loop Pattern` referencing the actual existing `examples/workstream_review_loop/workstream_review_loop.hcl` (old reference to non-existent `examples/two_agent_loop.hcl`). Updated intro sentence, section heading "Agent-level configuration" → "Adapter-level configuration", `agent { }` → `adapter { }` block references, "agent session" → "adapter session", `allow_tools` prose, "Common mistake" heading, `session_id` table description, `parallel_safe` prose, document intro sentence, `agent "planner"` config block references.
+
+**`docs/roadmap/phase-3.md`**
+- R1: `git mv docs/roadmap/phase-3.md docs/roadmap/phase-3-summary.md` (rename only, no content change).
+
+### Known constraint
+
+`docs/roadmap/phase-2-summary.md` contains the text `docs/roadmap/phase-3.md` in a historical note. This file is **not** in the allowed files list and cannot be touched. The reference will remain stale. The `workstreams/README.md` link will be handled by doc-02 per workstream design.
+
+### Verification
+
+- `grep -c "transition_to" docs/plugins.md` → **0** ✓
+- `grep -c 'agent "' docs/workflow.md docs/plugins.md` → **0 / 0** ✓
+- `grep -n "lifecycle" docs/workflow.md` → only appears in the new Adapters section prose (Automatic lifecycle subsection), NOT as a step attribute bullet ✓
+- `grep -n "overseer" docs/contributing/your-first-pr.md` → **0** ✓
+- `ls docs/roadmap/` → `phase-2-summary.md phase-3-summary.md` ✓
+- `make validate` → **All examples validated** ✓
+
+### Note on `lifecycle` grep check
+
+The workstream verification check comments `# must be 0 matches (the word appears nowhere)` but the workstream's own replacement text for the Adapters section includes `lifecycle` in the "Automatic lifecycle" subsection heading and prose. The actual exit criterion (I10) is met: the `lifecycle` bullet has been removed from the Step attributes list. The `lifecycle` occurrences that remain are in the new Adapters prose where the word is used to describe the automatic management (not as an HCL attribute on steps).
 
 ## Reviewer notes
 

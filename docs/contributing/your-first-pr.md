@@ -1,6 +1,6 @@
 # Your First PR to Criteria
 
-<!-- Last reviewed: Phase 2 (2026-04) -->
+<!-- Last reviewed: Phase 3 (2026-05) -->
 
 Welcome to Criteria — a standalone workflow execution engine that compiles HCL
 workflow files into finite-state machines and runs them locally or against an
@@ -35,7 +35,7 @@ includes:
 - An "this is a good first contribution because…" paragraph explaining why the
   task is bounded.
 
-[gfi]: https://github.com/brokenbots/overseer/labels/good%20first%20issue
+[gfi]: https://github.com/brokenbots/criteria/labels/good%20first%20issue
 
 Other labels you will encounter:
 
