@@ -1,8 +1,8 @@
-# Plugins and Agent Workflows
+# Plugins and Adapter Workflows
 
 For containerized execution, see [docs/runtime/docker.md](runtime/docker.md).
 
-This document is the reference for running agent-backed workflows with Criteria. For the full workflow language reference (variables, step outputs, branching, iteration, wait nodes, approval gates), see [workflow.md](workflow.md).
+This document is the reference for running adapter-backed workflows with Criteria. For the full workflow language reference (variables, step outputs, branching, iteration, wait nodes, approval gates), see [workflow.md](workflow.md).
 
 ## What Plugins Are
 
@@ -71,14 +71,14 @@ there is no escape hatch.
 <!-- validator: skip: illustrative excerpt only -->
 ```hcl
 step "build" {
-  adapter = "shell"
+  target = adapter.shell.default
   input {
     command = "make build"
     env     = jsonencode({GOFLAGS: "$GOFLAGS", CGO_ENABLED: "0"})
     timeout = "10m"
   }
-  outcome "success" { transition_to = "test" }
-  outcome "failure" { transition_to = "failed" }
+  outcome "success" { next = "test" }
+  outcome "failure" { next = "failed" }
 }
 ```
 
@@ -104,62 +104,56 @@ for the full design.
 5. **Working-directory confinement** — `working_directory` must be under `$HOME`
    or explicitly allowed via `CRITERIA_SHELL_ALLOWED_PATHS`.
 
-## HCL Surface — Agent-backed Workflows
+## HCL Surface — Adapter-backed Workflows
 
-Agent-backed workflows use three concepts:
+Adapter-backed workflows declare one or more `adapter "<type>" "<name>" { }` blocks at the top level and reference them from steps via `step.target`. The engine manages the full session lifecycle automatically — no explicit open or close steps are needed.
 
-1. Declare the agent once with `agent "name" { adapter = "copilot" }`.
-2. Open and close the agent session explicitly with `lifecycle = "open"` and `lifecycle = "close"` steps.
-3. Use the agent in normal execute-shape steps with `agent = "name"` plus plugin-specific `config` and `allow_tools`.
+A minimal Copilot-backed workflow:
 
-The canonical example is `examples/agent_hello.hcl`:
-
-<!-- validator: skip: illustrative excerpt only; full workflow in examples/agent_hello.hcl -->
+<!-- validator: skip: illustrative excerpt only -->
 ```hcl
 workflow "agent_hello" {
   version       = "1"
-  initial_state = "open_assistant"
+  initial_state = "ask"
   target_state  = "done"
+}
 
-  agent "assistant" {
-    adapter = "copilot"
-  }
-
-  step "open_assistant" {
-    agent     = "assistant"
-    lifecycle = "open"
-
-    outcome "success" { transition_to = "ask" }
-    outcome "failure" { transition_to = "failed" }
-  }
-
-  step "ask" {
-    agent       = "assistant"
-    allow_tools = ["shell:git status"]
-    input {
-      max_turns = 4
-      prompt    = "Run `git status` in the current directory. Summarize the result in one short paragraph. Call submit_outcome with 'success' if you successfully ran `git status`, otherwise 'failure'."
-    }
-
-    outcome "success"      { transition_to = "close_done" }
-    outcome "needs_review" { transition_to = "close_needs_review" }
-    outcome "failure"      { transition_to = "close_failed" }
+adapter "copilot" "assistant" {
+  config {
+    max_turns = 4
   }
 }
+
+step "ask" {
+  target      = adapter.copilot.assistant
+  allow_tools = ["shell:git status"]
+  input {
+    prompt = "Run `git status` in the current directory. Summarize the result in one short paragraph. Call submit_outcome with 'success' if you successfully ran `git status`, otherwise 'failure'."
+  }
+
+  outcome "success"      { next = "done" }
+  outcome "needs_review" { next = "done" }
+  outcome "failure"      { next = "failed" }
+}
+
+state "done"   { terminal = true }
+state "failed" { terminal = true; success = false }
 ```
 
-The important parts are:
+Key points:
 
-- `agent "assistant"` binds a stable session name to the `copilot` plugin.
-- `open_assistant` creates the session. The current Copilot plugin accepts plugin-specific config such as `model` or `working_directory`, but the hello example does not need any open-time options.
-- `ask` is the only execute step. For the Copilot plugin, `input.prompt` is required (Phase 1.5: step-level input moved from `config` to `input` block). `max_turns` is optional and limits the number of assistant turns; see "Outcome finalization" below for how the step outcome is determined.
-- Separate close steps let the workflow clean up the session and still terminate in the right state for `success`, `needs_review`, or `failure`.
+- `adapter "copilot" "assistant"` declares a named adapter session. The first label is the plugin type (`copilot`); the second is the instance name (`assistant`). The engine resolves this to the `criteria-adapter-copilot` binary.
+- `step.target = adapter.copilot.assistant` binds the step to the declared adapter instance. This is a traversal expression, not a string.
+- The session is opened automatically before `ask` runs and closed automatically after it completes (success or failure). No explicit `lifecycle = "open"` or `lifecycle = "close"` steps exist in v0.3.0.
+- For the Copilot plugin, `input.prompt` is the required step-level input. `max_turns` in the `config` block limits conversation turns; see "Outcome finalization" below for how the step outcome is determined.
+
+See [docs/workflow.md — Adapters](workflow.md#adapters) for the full adapter block reference.
 
 ## Copilot Adapter Reference
 
-### Agent-level configuration (`config {}` block)
+### Adapter-level configuration (`config {}` block)
 
-These fields are declared on the `agent { config { ... } }` block and apply for the lifetime of the session:
+These fields are declared on the `adapter { config { ... } }` block and apply for the lifetime of the session:
 
 | Field | Type | Default | Description |
 |---|---|---|---|
@@ -167,14 +161,13 @@ These fields are declared on the `agent { config { ... } }` block and apply for 
 | `reasoning_effort` | `string` | Copilot default | Reasoning budget for the session. One of `low`, `medium`, `high`, `xhigh`. |
 | `system_prompt` | `string` | `""` | System prompt injected at session open. |
 | `max_turns` | `number` | Copilot default | Maximum conversation turns per step. If the cap is reached, the adapter returns `needs_review` when that outcome is declared for the step, otherwise `failure`. |
-| `working_directory` | `string` | CWD of the criteria process | Working directory for tool invocations inside the agent session. |
+| `working_directory` | `string` | CWD of the criteria process | Working directory for tool invocations inside the adapter session. |
 
 Example:
 
 <!-- validator: skip: illustrative excerpt only -->
 ```hcl
-agent "planner" {
-  adapter = "copilot"
+adapter "copilot" "planner" {
   config {
     model            = "claude-sonnet-4.6"
     reasoning_effort = "medium"
@@ -186,11 +179,11 @@ agent "planner" {
 
 ### Step-level input overrides (`input {}` block)
 
-Some fields can be overridden per step in the `input {}` block. The override applies only for that step; subsequent steps revert to the agent-level default.
+Some fields can be overridden per step in the `input {}` block. The override applies only for that step; subsequent steps revert to the adapter-level default.
 
 | Field | Type | Description |
 |---|---|---|
-| `prompt` | `string` | **(Required)** The user message sent to the agent for this step. |
+| `prompt` | `string` | **(Required)** The user message sent to the adapter for this step. |
 | `max_turns` | `number` | Per-step turn limit override. |
 | `reasoning_effort` | `string` | Per-step reasoning effort override. One of `low`, `medium`, `high`, `xhigh`. |
 
@@ -198,8 +191,7 @@ Example with per-step `reasoning_effort` override:
 
 <!-- validator: skip: illustrative excerpt only -->
 ```hcl
-agent "planner" {
-  adapter = "copilot"
+adapter "copilot" "planner" {
   config {
     model            = "claude-sonnet-4.6"
     reasoning_effort = "medium"  # default for all steps
@@ -208,34 +200,33 @@ agent "planner" {
 
 # Planning step uses higher reasoning effort.
 step "plan" {
-  agent = "planner"
+  target = adapter.copilot.planner
   input {
     prompt           = "Draft a step-by-step implementation plan."
     reasoning_effort = "high"   # overrides "medium" for this step only
   }
-  outcome "success" { transition_to = "execute" }
-  outcome "failure" { transition_to = "failed" }
+  outcome "success" { next = "execute" }
+  outcome "failure" { next = "failed" }
 }
 
-# Execution steps inherit the agent default ("medium").
+# Execution steps inherit the adapter default ("medium").
 step "execute" {
-  agent = "planner"
+  target = adapter.copilot.planner
   input {
     prompt = "Implement the plan from the previous step."
   }
-  outcome "success" { transition_to = "done" }
-  outcome "failure" { transition_to = "failed" }
+  outcome "success" { next = "done" }
+  outcome "failure" { next = "failed" }
 }
 ```
 
-### Common mistake: agent config fields in step input
+### Common mistake: adapter config fields in step input
 
-Fields like `system_prompt`, `model`, and `working_directory` belong in the `agent { config { ... } }` block, not in a step's `input {}` block. Placing them in `input {}` is a compile error. For the Copilot adapter the diagnostic names the correct location:
+Fields like `system_prompt`, `model`, and `working_directory` belong in the `adapter { config { ... } }` block, not in a step's `input {}` block. Placing them in `input {}` is a compile error. For the Copilot adapter the diagnostic names the correct location:
 
 ```
-step "plan" input: field "system_prompt" is not valid in step input for adapter "copilot"; it belongs in the agent config block:
-  agent "<name>" {
-    adapter = "copilot"
+step "plan" input: field "system_prompt" is not valid in step input for adapter "copilot"; it belongs in the adapter config block:
+  adapter "copilot" "<name>" {
     config {
       system_prompt = ...
     }
@@ -249,7 +240,7 @@ The only step-overrideable Copilot fields are `prompt`, `max_turns`, and `reason
 Permission gating is deny-by-default.
 
 - If a step does not declare `allow_tools`, every tool request is denied.
-- `allow_tools` is only valid on execute-shape agent steps. It is a compile error on adapter-backed steps or lifecycle steps.
+- `allow_tools` is only valid on execute-shape adapter steps. Placing `allow_tools` on any other node type is a compile error.
 - Patterns use Go `filepath.Match` semantics. That makes exact matches and prefix globs useful:
   - `read` (or `read_file` — Copilot alias, see below)
   - `shell:git status`
@@ -371,35 +362,32 @@ COPILOT_E2E=1 ./scripts/smoke-agent-hello.sh
 
 That script builds the repo, installs the plugin into a temp directory, starts a local server, runs `agent_hello.hcl`, and asserts that the server run status becomes `succeeded`.
 
-## The Two-Agent Loop Pattern
+## The Two-Adapter Loop Pattern
 
-`examples/two_agent_loop.hcl` demonstrates the executor/reviewer loop discussed in the Phase 1.4 plan.
+`examples/workstream_review_loop/workstream_review_loop.hcl` demonstrates the executor/reviewer loop pattern using two named adapter sessions.
 
 Key traits:
 
-- Two named agents both bind to the `copilot` adapter.
-- Both sessions are opened once per outer loop and explicitly closed on both success and failure paths.
-- The executor gets a wider allowlist (`read_file`, `write_file`, `shell:git diff`, `shell:go build*`, `shell:go test*`).
-- The reviewer gets a narrow allowlist (`read_file`, `shell:git diff`).
+- Two named adapters (`executor` and `reviewer`) both bind to the `copilot` type.
+- The engine opens both sessions automatically on first use and closes them automatically when the workflow terminates.
+- The executor gets a wider allowlist; the reviewer gets a narrow allowlist.
 - The review step drives the loop with `approved`, `changes_requested`, or the conservative `needs_review` fallback used when the `max_turns` cap is reached and `needs_review` is in the step's allowed set.
-- `policy { max_total_steps = 50 }` prevents an infinite reviewer loop.
+- `policy { max_total_steps = 120 }` prevents an infinite reviewer loop.
 
 The control flow is:
 
-1. Open executor.
-2. Open reviewer.
-3. Execute implementation work.
-4. Review.
-5. If review returns `changes_requested` or `needs_review`, go back to execute.
-6. If review returns `approved`, close reviewer, close executor, and finish.
+1. Executor implements the workstream tasks.
+2. Reviewer reviews the changes.
+3. If review returns `changes_requested` or `needs_review`, go back to execute.
+4. If review returns `approved`, executor commits and the workflow finishes.
 
-This is the right pattern when you want long-lived agent context, distinct tool budgets per role, and an explicit safety brake on the conversation.
+This is the right pattern when you want distinct tool budgets per role and an explicit safety brake on the conversation. No explicit adapter open or close steps are needed — the engine handles the session lifecycle automatically.
 
 ## Adapter Contract and Step Outputs (Phase 1.5)
 
 Adapters implement the `AdapterPlugin` gRPC service defined in `proto/v1/adapter_plugin.proto`. The `Info()` RPC returns metadata about the adapter including:
 
-- `ConfigSchema` — JSON schema for agent-level configuration (on the `agent { }` block)
+- `ConfigSchema` — JSON schema for adapter-level configuration (on the `adapter { }` block)
 - `InputSchema` — JSON schema for step-level input (in the `input { }` block on each step)
 - `OutputSchema` — JSON schema for outputs the adapter may return after execution
 
@@ -409,14 +397,14 @@ The host sends an `ExecuteRequest` to the adapter on every step execution. The f
 
 | Field | Type | Description |
 |---|---|---|
-| `session_id` | `string` | Session identifier, stable for the lifetime of the agent session. |
+| `session_id` | `string` | Session identifier, stable for the lifetime of the adapter session. |
 | `step_name` | `string` | Name of the step being executed. |
 | `config` | `map<string, string>` | Step-level input key-value pairs (from the step's `input {}` block). |
 | `allowed_outcomes` | `repeated string` (sorted ascending) | The set of outcome names the workflow declares for this step. See below. |
 
 **`allowed_outcomes`** *(repeated string, sorted ascending)* — The set of outcome names the workflow declares for this step. Adapters may use this list to constrain or validate outcome selection (e.g. by exposing it to a model as a structured tool schema). Adapters are not required to consume the field; the host independently validates the returned outcome against the same set. The list is deterministic — sorted ascending — so adapter implementations may rely on stable ordering across runs. For compatibility, adapters must treat a missing/`nil` `allowed_outcomes` field the same as an empty list: both mean "no declared outcomes". This can occur for steps with zero outcomes and when talking to older hosts, so adapters should not use `nil`/missing versus empty to infer host version or behavior.
 
-The host validation guard in `internal/engine/node_step.go` is unchanged: adapters that ignore `allowed_outcomes` continue to function exactly as before. [W15](../workstreams/15-copilot-submit-outcome-adapter.md) is the first adapter consumer, adding a `submit_outcome` tool call to the Copilot adapter that uses this field to expose the declared outcome set to the model as a structured schema.
+The host validation guard in `internal/engine/node_step.go` is unchanged: adapters that ignore `allowed_outcomes` continue to function exactly as before. The Copilot adapter is the first consumer: it exposes `allowed_outcomes` to the model as a `submit_outcome` tool schema, constraining the model to declared outcomes only.
 
 When an adapter completes execution, it returns a `Result` containing:
 
@@ -428,20 +416,20 @@ Outputs are accessible in downstream workflow expressions as `steps.<step_name>.
 <!-- validator: fragment -->
 ```hcl
 step "get_version" {
-  adapter = "shell"
+  target = adapter.shell.default
   input {
     command = "git describe --tags --always"
   }
-  outcome "success" { transition_to = "check_version" }
+  outcome "success" { next = "check_version" }
 }
 
-branch "check_version" {
-  arm {
-    when          = startswith(steps.get_version.stdout, "v1.")
-    transition_to = "deploy_v1"
+switch "check_version" {
+  condition {
+    match = startswith(steps.get_version.stdout, "v1.")
+    next  = state.deploy_v1
   }
   default {
-    transition_to = "deploy_next"
+    next = state.deploy_next
   }
 }
 ```
@@ -493,7 +481,7 @@ from multiple goroutines. The adapter must not hold shared mutable state that is
 unprotected within a single session.
 
 If your adapter needs per-request state that cannot be shared, open a new session
-per call (model it as separate `agent { }` blocks in HCL) or do not declare
+per call (model it as separate `adapter { }` blocks in HCL) or do not declare
 `parallel_safe` and use `for_each` for sequential iteration.
 
 Adapter authors must ensure:

@@ -689,8 +689,118 @@ All 17 checks must pass before reviewer approval.
 
 ## Executor notes
 
-*(To be filled in by the executor agent during implementation.)*
+**Implementation batch 1 — all items completed.**
+
+### Changes made
+
+**`docs/contributing/your-first-pr.md`**
+- I3: Replaced `brokenbots/overseer` → `brokenbots/criteria` in the `[gfi]` link definition (one occurrence in file; workstream said two but only one exists).
+- I4: Updated `<!-- Last reviewed: Phase 2 (2026-04) -->` → `Phase 3 (2026-05)`.
+
+**`docs/workflow.md`**
+- I5: Replaced `**Agents**` Overview bullet with the full v0.3.0 `**Adapters**` description.
+- I7: Removed `v1.5` version string from the Variables intro sentence.
+- I6: Replaced the stale "exact type match" / "tuple-to-list coercion enhancement" note with the BF-01-fixed wording.
+- I8: Changed Variables usage example from `adapter = "shell"` to `target = adapter.shell.default`; updated validator directive from `fragment` to `skip`.
+- I9: Rewrote `## Agents` section entirely to `## Adapters` with v0.3.0 `adapter "copilot" "assistant"` example and automatic-lifecycle prose.
+- I10: Removed `lifecycle` bullet from Step attributes list.
+- Additional stale content fixed (not in explicit workstream steps but required to pass verification or for consistency with allowed file):
+  - `for_each`, `count`, `on_failure`, `running_total` examples: `adapter = "<type>"` → `target = adapter.<type>.default` with directive updated from `fragment` to `skip`.
+  - `type = "workflow"` inline-body example: updated validator comment (removed `agent "assistant"`) and code (`adapter = "shell"` + `agent = "assistant"` → `target = adapter.shell.default` / `target = adapter.copilot.assistant`).
+  - W08 migration section: `adapter = "noop"` → `target = adapter.noop.default`; label updated from "W10 equivalent" to "v0.3.0 equivalent".
+  - Step-level permissions example: `agent = "assistant"` → `target = adapter.copilot.assistant`; updated validator comment.
+  - Meta-doc validator-directives section: `adapter = "shell"` → `target = adapter.shell.default`; "step/state/agent snippets" → "step/state/adapter snippets".
+  - Various prose: `Agents (and standalone adapter steps)` → `Adapters`; `agent execution steps` → `adapter execution steps`; `agent-level` → `adapter-level`; `on_crash overrides agent-level` → `adapter-level`; permissions model prose; `plan` output list.
+
+**`docs/plugins.md`**
+- I12d: Shell adapter `outcome` lines: `transition_to = "test"` / `"failed"` → `next = "test"` / `"failed"`.
+- I12: Rewrote `## HCL Surface — Agent-backed Workflows` → `## HCL Surface — Adapter-backed Workflows` with v0.3.0 workflow structure.
+- I12b: Removed dead link to `workstreams/15-copilot-submit-outcome-adapter.md` from `allowed_outcomes` paragraph.
+- I12c: `get_version` step: `adapter = "shell"` + `transition_to` → `target = adapter.shell.default` + `next`.
+- I11b: `branch "check_version"` example → `switch "check_version"` with `condition`/`default`/`next` syntax.
+- I12e: Both `agent "planner"` blocks → `adapter "copilot" "planner"`; `agent = "planner"` → `target = adapter.copilot.planner`; `transition_to` → `next`; "Common mistake" error message updated.
+- I11a: All 14 `transition_to` occurrences in file replaced with `next` (verified: grep count = 0).
+- Additional: Updated `## The Two-Agent Loop Pattern` section → `## The Two-Adapter Loop Pattern` referencing the actual existing `examples/workstream_review_loop/workstream_review_loop.hcl` (old reference to non-existent `examples/two_agent_loop.hcl`). Updated intro sentence, section heading "Agent-level configuration" → "Adapter-level configuration", `agent { }` → `adapter { }` block references, "agent session" → "adapter session", `allow_tools` prose, "Common mistake" heading, `session_id` table description, `parallel_safe` prose, document intro sentence, `agent "planner"` config block references.
+
+**`docs/roadmap/phase-3.md`**
+- R1: `git mv docs/roadmap/phase-3.md docs/roadmap/phase-3-summary.md` (rename only, no content change).
+
+### Known constraint
+
+`docs/roadmap/phase-2-summary.md` contains the text `docs/roadmap/phase-3.md` in a historical note. This file is **not** in the allowed files list and cannot be touched. The reference will remain stale. The `workstreams/README.md` link will be handled by doc-02 per workstream design.
+
+### Verification
+
+- `grep -c "transition_to" docs/plugins.md` → **0** ✓
+- `grep -c 'agent "' docs/workflow.md docs/plugins.md` → **0 / 0** ✓
+- `grep -n "lifecycle" docs/workflow.md` → only appears in the new Adapters section prose (Automatic lifecycle subsection), NOT as a step attribute bullet ✓
+- `grep -n "overseer" docs/contributing/your-first-pr.md` → **0** ✓
+- `ls docs/roadmap/` → `phase-2-summary.md phase-3-summary.md` ✓
+- `make validate` → **All examples validated** ✓
+
+### Note on `lifecycle` grep check
+
+The workstream verification check comments `# must be 0 matches (the word appears nowhere)` but the workstream's own replacement text for the Adapters section includes `lifecycle` in the "Automatic lifecycle" subsection heading and prose. The actual exit criterion (I10) is met: the `lifecycle` bullet has been removed from the Step attributes list. The `lifecycle` occurrences that remain are in the new Adapters prose where the word is used to describe the automatic management (not as an HCL attribute on steps).
 
 ## Reviewer notes
 
 *(To be filled in by the reviewer agent.)*
+
+### Review 2026-05-09 — changes-requested
+
+#### Summary
+The targeted doc rewrites landed and the explicit checklist items largely check out, but the workstream does **not** yet meet its stated bar of fixing every stale reference in the allowed `docs/` files. I found three remaining stale or inaccurate references in the edited docs: a user-facing `Agent Workflows` title in `docs/plugins.md`, a stale `agents` comment in the `docs/workflow.md` header example, and a permission-gating bullet in `docs/plugins.md` that still implies v0.3.0 has lifecycle steps. Approval is blocked until those are corrected and the stale-term sweep is rerun.
+
+#### Plan Adherence
+- **I3, I4:** Pass. `docs/contributing/your-first-pr.md` now points `[gfi]` at `brokenbots/criteria` and the review comment reads `Phase 3 (2026-05)`.
+- **I5–I10:** Pass for the named checklist items. `docs/workflow.md` now has the `Adapters` overview/section, the variable text is updated, the variables example uses `target = adapter.shell.default`, and the step-attributes list no longer documents `lifecycle`.
+- **I11a, I11b, I12a–I12e:** Pass for the named checklist items. `docs/plugins.md` has no `transition_to`, the stale HCL Surface section was rewritten, the `switch` example is in place, and the dead W15 link is gone.
+- **R1, V1:** Pass. The roadmap rename is in place and `make validate` passed.
+- **Deviation from scope:** The workstream context says this change set fixes **every stale reference** in the `docs/` directory for the allowed files. That is not yet true; see required remediations below.
+
+#### Required Remediations
+- **Severity: blocker** — `docs/plugins.md:1` still titles the page `# Plugins and Agent Workflows`. That is stale terminology after the file was explicitly rewritten around adapter-backed workflows. **Acceptance:** rename the title to adapter terminology consistent with the rest of the document (for example, `Plugins and Adapter Workflows`) and ensure no other user-facing headings in this file still describe the v0.2.0 agent surface as current.
+- **Severity: blocker** — `docs/workflow.md:50` still says `# ... variables, agents, steps, states, etc.` inside the top-level header example. That comment is part of the docs surface and still teaches the old term. **Acceptance:** change the comment to `adapters` (or equivalent current terminology) and rerun a broader stale-term sweep on `docs/workflow.md` so only intentional historical/example file names remain.
+- **Severity: blocker** — `docs/plugins.md:243` says ``allow_tools` is only valid on execute-shape adapter steps. It is a compile error on adapter-backed lifecycle steps.` This is inaccurate in v0.3.0 because explicit lifecycle steps no longer exist; the doc should not imply they are a current step shape. **Acceptance:** rewrite this bullet to describe the present rule without suggesting lifecycle steps are a supported adapter-step variant; if you want to mention old syntax, do so explicitly as removed/legacy syntax.
+
+#### Test Intent Assessment
+The executor's verification was strong on the explicit syntax rewrites: the greps for `transition_to`, `agent "` and the rename check are regression-sensitive for those exact items, and `make validate` usefully proves the docs edits did not disturb runnable examples. The weak spot is coverage breadth: the checks were too narrow to catch remaining stale prose/comments that did not match the exact grep patterns. Before resubmission, add a broader manual/grep sweep over the touched files (for example, `Agent`, `agents`, and lifecycle-step phrasing) and verify that any remaining hits are only intentional file or script names such as `agent_hello`.
+
+#### Validation Performed
+- `make validate` → passed; all examples validated.
+- `git --no-pager status --short` / `git --no-pager log --oneline -n 8` / commit diff review → inspected the executor submission and scoped files.
+- `git --no-pager show --stat --summary --find-renames --find-copies d98d015` → verified the rename and reviewed changed-file scope.
+- `git --no-pager diff --check 4826743..d98d015 -- docs/contributing/your-first-pr.md docs/workflow.md docs/plugins.md docs/roadmap/phase-3-summary.md workstreams/doc-01-docs-cleanup.md` → no diff-format issues.
+- `rg` checks over the touched docs confirmed the requested replacements and surfaced the remaining stale references at `docs/plugins.md:1`, `docs/plugins.md:243`, and `docs/workflow.md:50`.
+
+### Executor remediation 2026-05-09
+
+All three reviewer blockers addressed in commit `e1d38f1`:
+
+1. `docs/plugins.md` title: `# Plugins and Agent Workflows` → `# Plugins and Adapter Workflows`.
+2. `docs/workflow.md:50` comment: `# ... variables, agents, ...` → `# ... variables, adapters, ...`.
+3. `docs/plugins.md` `allow_tools` bullet: removed "It is a compile error on adapter-backed lifecycle steps" (implies lifecycle steps are current); replaced with "Placing `allow_tools` on any other node type is a compile error."
+
+Broader stale-term sweep (`grep -n '\bAgent\b|\bagent\b'`) on both files confirms no remaining stale occurrences beyond intentional script filename `smoke-agent-hello.sh`.
+
+### Review 2026-05-09-02 — approved
+
+#### Summary
+The executor resolved all three blockers from the prior pass. The stale `Agent Workflows` title is gone, the header example comment now uses `adapters`, and the permission-gating prose no longer implies lifecycle steps remain part of the current v0.3.0 surface. The named workstream checklist items pass, the rename is correct, and `make validate` remains green. Approved.
+
+#### Plan Adherence
+- **I3, I4:** Pass. `docs/contributing/your-first-pr.md` still has the `brokenbots/criteria` GFI link and `Phase 3 (2026-05)` review marker.
+- **I5–I10:** Pass. `docs/workflow.md` reflects adapter terminology and syntax, the variable text/examples are current, and the `lifecycle` step-attribute documentation is absent.
+- **I11a, I11b, I12a–I12e:** Pass. `docs/plugins.md` uses the adapter-backed surface, contains no `transition_to`, retains the `switch` example, and no longer carries the stale lifecycle-step wording.
+- **R1, V1:** Pass. `docs/roadmap/phase-3-summary.md` exists, `phase-3.md` does not, and validation passed.
+- **Prior reviewer blockers:** Pass. `docs/plugins.md:1`, `docs/workflow.md:50`, and `docs/plugins.md:243` were corrected as requested.
+
+#### Test Intent Assessment
+For this docs-only workstream, the validation evidence is sufficient. The targeted grep checks are now broad enough to catch the previously missed stale terms, and the remaining `agent` hit is an intentional script filename (`smoke-agent-hello.sh`), not stale workflow terminology. `make validate` continues to prove the documentation edits did not break runnable example workflows.
+
+#### Validation Performed
+- `rg "Plugins and Agent Workflows|variables, agents, steps|adapter-backed lifecycle steps" docs/plugins.md docs/workflow.md` → no matches after remediation.
+- `rg "\bAgent\b|\bagent\b|agents|lifecycle steps" docs/plugins.md docs/workflow.md` → only intentional remaining hit is `smoke-agent-hello.sh`.
+- `make validate` → passed; all examples validated.
+- `test -f docs/roadmap/phase-3-summary.md && test ! -e docs/roadmap/phase-3.md` → passed.
+- `git --no-pager diff --check origin/main..HEAD -- docs/contributing/your-first-pr.md docs/workflow.md docs/plugins.md docs/roadmap/phase-3-summary.md workstreams/doc-01-docs-cleanup.md` → no diff-format issues.

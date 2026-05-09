@@ -9,7 +9,7 @@ A Criteria workflow defines:
 - **Nodes**: steps (adapter invocations), waits (time or signal gates), approvals (human decisions), switches (conditional routing), and iterating steps (for_each / count / parallel).
 - **States**: named terminal or intermediate targets. The workflow FSM transitions between nodes and states based on outcomes.
 - **Variables**: read-only typed values that seed the workflow execution. Per-run variable overrides are a future enhancement.
-- **Agents**: long-lived adapter sessions that maintain state across multiple steps.
+- **Adapters**: out-of-process plugin sessions that execute steps. Declared with `adapter "<type>" "<name>" { }` and referenced via `step.target`. Lifecycle is automatic — the engine opens and closes sessions as steps enter and exit scope.
 
 ### Architecture model
 
@@ -47,7 +47,7 @@ permissions {
   allow_tools = ["shell:git*"]
 }
 
-# ... variables, agents, steps, states, etc.
+# ... variables, adapters, steps, states, etc.
 ```
 
 ### Attributes
@@ -98,7 +98,7 @@ Older Criteria workflows used a nested format where steps, adapters, and states 
 
 ## Variables
 
-Variables are typed, read-only values declared at the workflow level and optionally overridden at runtime (per-run override support is a future enhancement in v1.5; currently defaults are the only source).
+Variables are typed, read-only values declared at the workflow level. Per-run override support is a planned future enhancement; currently the `default` attribute is the only value source.
 
 <!-- validator: fragment -->
 ```hcl
@@ -131,16 +131,20 @@ variable "enabled" {
 
 The `default` attribute is optional. If omitted, the variable must be provided at runtime (future enhancement; currently default-only semantics apply).
 
-**Note**: In HCL, literal lists like `["a", "b"]` are tuples. For `list(string)` variables, the compiler currently requires an exact type match. Use inline list literals in `for_each` or `input` blocks rather than variable defaults for now, or wait for the tuple-to-list coercion enhancement.
+**Note**: In HCL, literal list syntax `["a", "b"]` produces a tuple. The compiler accepts tuple literals where a list type is declared and the element types are compatible — no explicit `tolist()` cast is needed.
 
 ### Usage in expressions
 
 Reference variables with `var.<name>`:
 
-<!-- validator: fragment -->
+<!-- validator: skip: illustrative fragment; adapter block not included in this excerpt -->
 ```hcl
+adapter "shell" "default" {
+  config {}
+}
+
 step "deploy" {
-  adapter = "shell"
+  target = adapter.shell.default
   input {
     command = "deploy --env ${var.env}"
   }
@@ -238,64 +242,52 @@ For now, the `config` is parsed and stored but ignored at runtime. A v0.3.0 work
 
 ---
 
-## Agents
+## Adapters
 
-Agents are long-lived adapter sessions that maintain state across multiple step executions. Declare agents at the workflow level and reference them from steps.
+Adapters are out-of-process plugin sessions declared at the workflow level and referenced from steps via `step.target`. The engine opens a session automatically when the first step that uses the adapter is entered and closes it automatically when the last step exits scope (LIFO order). No explicit open or close steps are needed.
 
-<!-- validator: fragment -->
+<!-- validator: skip: illustrative excerpt; workflow header and state blocks omitted -->
 ```hcl
-agent "assistant" {
-  adapter  = "copilot"
+adapter "copilot" "assistant" {
   on_crash = "fail"
   config {
-    max_turns = 10
+    model            = "claude-sonnet-4.6"
+    reasoning_effort = "medium"
+    max_turns        = 10
   }
 }
 
-step "open_assistant" {
-  agent     = "assistant"
-  lifecycle = "open"
-  outcome "success" { next = "ask_question" }
-  outcome "failure" { next = "failed" }
-}
-
-step "ask_question" {
-  agent       = "assistant"
+step "list_files" {
+  target      = adapter.copilot.assistant
   allow_tools = ["shell:ls*", "shell:cat*"]
   input {
     prompt = "List files in the current directory and summarize their purpose."
   }
-  outcome "success" { next = "close_assistant" }
-  outcome "failure" { next = "failed" }
-}
-
-step "close_assistant" {
-  agent     = "assistant"
-  lifecycle = "close"
   outcome "success" { next = "done" }
   outcome "failure" { next = "failed" }
 }
 ```
 
-### Agent attributes
+### Adapter block attributes
 
-- **`adapter`** (required): Adapter name (e.g., `"copilot"`, `"mcp"`).
+- **`<type>`** (first label, required): Plugin type. Determines which `criteria-adapter-<type>` binary is loaded.
+- **`<name>`** (second label, required): Logical instance name. Multiple adapters of the same type may be declared with different names.
 - **`on_crash`** (optional): Crash recovery policy: `"fail"` (default), `"respawn"`, `"abort_run"`.
-- **`config`** (optional): Session-open configuration block passed to the adapter when the agent is opened. Attributes depend on the adapter's schema.
+- **`config`** (optional): Session-open configuration block. Attributes are adapter-specific. See [plugins.md](plugins.md) for per-adapter config schemas.
 
-### Lifecycle steps
+### Automatic lifecycle
 
-Agent-backed steps support three lifecycle modes:
+The engine manages the full adapter session lifecycle without any explicit workflow steps:
 
-- **`lifecycle = "open"`**: Opens the agent session. Must not include `input` or `allow_tools`.
-- **`lifecycle = "close"`**: Closes the agent session. Must not include `input` or `allow_tools`.
-- **Execution steps** (no `lifecycle`): Invoke the agent with input. May include `input` and `allow_tools`.
+- **Open**: the session is opened before the first step targeting this adapter executes.
+- **Close**: the session is closed after the last step targeting this adapter in the current scope exits (including error paths).
+- **LIFO order**: when multiple adapters are declared, they close in reverse declaration order.
 
-A workflow that uses an agent must open it before use and close it when done. The engine enforces session state at runtime.
+Explicit `lifecycle = "open"` and `lifecycle = "close"` steps from v0.2.0 are no longer accepted and produce a compile error (`lifecycle attribute removed in v0.3.0`).
 
 ### Plugin discovery
 
-Agents (and standalone adapter steps) resolve to plugin binaries named `criteria-adapter-<name>`. Discovery order:
+Adapters resolve to plugin binaries named `criteria-adapter-<name>`. Discovery order:
 
 1. `$CRITERIA_PLUGINS/<name>`
 2. `~/.criteria/plugins/<name>`
@@ -327,13 +319,12 @@ step "build" {
   - `adapter.<type>.<name>` — invokes the named adapter instance (e.g. `adapter.shell.default`).
   - `subworkflow.<name>` — invokes a `subworkflow` block declared in the same workflow file (e.g. `subworkflow.setup`).
   Subworkflow steps always produce a `"success"` outcome on completion or `"failure"` on error.
-- **`lifecycle`** (optional, agent-backed adapter steps only): `"open"` or `"close"`. See [Agents](#agents).
 - **`timeout`** (optional): Duration string (e.g., `"30s"`, `"5m"`). Step aborts if exceeded.
 - **`max_visits`** (optional, default 0 = unlimited): Maximum number of adapter invocation attempts this step may consume in a single run. Each adapter invocation — including the initial attempt and each retry attempt within a `max_step_retries` budget — counts as one visit. For iterating steps (`for_each`/`count`), entering an iteration consumes one visit for that iteration's initial adapter invocation; any retries within that same iteration consume additional visits and also count against `max_visits`. When the visit count would exceed this limit, the run fails immediately with `step "<name>" exceeded max_visits (<N>)`. A value of `0` (default) means unlimited. Negative values are rejected at compile time. This is the preferred mechanism for bounding tight review loops; see also `max_total_steps` in the policy block for a coarser run-wide cap.
-- **`allow_tools`** (optional, agent execution steps only): List of glob patterns for permitted tool invocations. Unioned with workflow-level `allow_tools`.
+- **`allow_tools`** (optional, adapter execution steps only): List of glob patterns for permitted tool invocations. Unioned with workflow-level `allow_tools`.
 - **`input`** (optional): Input block for adapter configuration. Attributes are adapter-specific.
 - **`outcome`** (required): At least one outcome mapping adapter outcome names to transition targets.
-- **`on_crash`** (optional): Per-step crash policy; overrides agent-level or global default.
+- **`on_crash`** (optional): Per-step crash policy; overrides adapter-level or global default.
 
 ### Input block
 
@@ -631,10 +622,10 @@ separate `for_each` block type.
 
 ### `for_each` — iterate over a collection
 
-<!-- validator: fragment -->
+<!-- validator: skip: illustrative fragment; adapter block not included in this excerpt -->
 ```hcl
 step "deploy_services" {
-  adapter  = "shell"
+  target   = adapter.shell.default
   for_each = ["api", "web", "worker"]
   input {
     command = "deploy ${each.value} --index ${each._idx}"
@@ -650,11 +641,11 @@ step "deploy_services" {
 
 ### `count` — iterate N times
 
-<!-- validator: fragment -->
+<!-- validator: skip: illustrative fragment; adapter block not included in this excerpt -->
 ```hcl
 step "batch" {
-  adapter = "noop"
-  count   = 5
+  target = adapter.noop.default
+  count  = 5
   input {
     index = "${each._idx}"
   }
@@ -804,10 +795,10 @@ Referencing `each.*` outside any iterating step is a compile error.
 `each._prev` enables accumulation patterns across iterations. Because `_prev` is `null`
 on the first iteration, guard with `each._first` or a null check:
 
-<!-- validator: fragment -->
+<!-- validator: skip: illustrative fragment; adapter block not included in this excerpt -->
 ```hcl
 step "running_total" {
-  adapter  = "compute"
+  target   = adapter.compute.default
   for_each = var.amounts
   input {
     accumulator = each._first ? 0 : each._prev.total
@@ -840,10 +831,10 @@ Controls what happens when an iteration produces a non-success outcome.
 | `"abort"` | Stop immediately after the first failure. Route to `any_failed`. |
 | `"ignore"` | Run all iterations; treat all failures as successes. Always route to `all_succeeded`. |
 
-<!-- validator: fragment -->
+<!-- validator: skip: illustrative fragment; adapter block not included in this excerpt -->
 ```hcl
 step "deploy" {
-  adapter    = "shell"
+  target     = adapter.shell.default
   for_each   = var.targets
   on_failure = "abort"
   input { command = "deploy ${each.value}" }
@@ -859,7 +850,7 @@ inline. Each iteration runs the body as a sub-workflow; the body terminates
 by transitioning to the synthetic `_continue` state (normal completion) or
 to any other terminal state (early exit, counted as failure).
 
-<!-- validator: skip: uses agent "assistant" not defined in excerpt -->
+<!-- validator: skip: illustrative excerpt; adapter and state blocks omitted -->
 ```hcl
 step "process_items" {
   type     = "workflow"
@@ -867,14 +858,14 @@ step "process_items" {
 
   workflow {
     step "run" {
-      adapter = "shell"
+      target = adapter.shell.default
       input   { command = "process ${each.value}" }
       outcome "success" { next = "review" }
       outcome "failure" { next = "_continue" }
     }
 
     step "review" {
-      agent  = "assistant"
+      target = adapter.copilot.assistant
       input  { prompt = "Review result for ${each.value}" }
       outcome "approved" { next = "_continue" }
       outcome "rejected" { next = "_continue" }
@@ -970,9 +961,9 @@ W08 top-level `for_each` iteration blocks (with `items = …` and `do = "…"`) 
 #   outcome "success" { next = "_continue" }
 # }
 
-# W10 equivalent:
+# v0.3.0 equivalent:
 step "deploy" {
-  adapter  = "noop"
+  target   = adapter.noop.default
   for_each = ["a", "b"]
   outcome "all_succeeded" { next = "done" }
 }
@@ -986,7 +977,7 @@ step "deploy" {
   for_each = ["a", "b"]
   workflow {
     step "run_one" {
-      adapter = "noop"
+      target = adapter.noop.default
       outcome "success" { next = "_continue" }
     }
   }
@@ -1098,7 +1089,7 @@ The `examples/file_function.hcl` workflow demonstrates this pattern end-to-end.
 
 ## Permissions
 
-Criteria enforces a deny-by-default permission model for tool invocations (currently agent-based steps only; future: all adapter tool use).
+Criteria enforces a deny-by-default permission model for tool invocations (adapter-backed steps; future: all adapter tool use).
 
 ### Workflow-level permissions
 
@@ -1112,14 +1103,14 @@ workflow "secure_build" {
 }
 ```
 
-Applies to all agent steps unless overridden.
+Applies to all adapter steps unless overridden.
 
 ### Step-level permissions
 
-<!-- validator: skip: step uses agent = "assistant" which is declared outside this excerpt -->
+<!-- validator: skip: step targets adapter.copilot.assistant which is declared outside this excerpt -->
 ```hcl
 step "build" {
-  agent       = "assistant"
+  target      = adapter.copilot.assistant
   allow_tools = ["shell:go*build*"]
   input { prompt = "Run go build" }
   outcome "success" { next = "done" }
@@ -1166,7 +1157,7 @@ bin/criteria plan examples/demo_tour_local.hcl
 ```
 
 Prints:
-- Variables, agents, steps (in declaration order).
+- Variables, adapters, steps (in declaration order).
 - States, wait nodes, approval nodes, switch nodes, for-each loops.
 - Plugins required.
 
@@ -1236,19 +1227,19 @@ The `make validate-docs` CI gate extracts every fenced HCL code block from `docs
 
 Place these HTML comment directives on the line immediately before the opening ` ```hcl ` fence (no blank line between the directive and the fence):
 
-- **`<!-- validator: fragment -->`** — the block is a partial workflow (a step, state, agent, or other node declaration without a surrounding `workflow { }` block). The validator wraps it in a synthetic `workflow "doc_example" { ... }` shell and adds state stubs for any transition targets not defined in the fragment.
+- **`<!-- validator: fragment -->`** — the block is a partial workflow (a step, state, adapter, or other node declaration without a surrounding `workflow { }` block). The validator wraps it in a synthetic `workflow "doc_example" { ... }` shell and adds state stubs for any transition targets not defined in the fragment.
 
 - **`<!-- validator: skip: <reason> -->`** — skip this block entirely. Use sparingly. Always document why each skip exists. Valid reasons: the block is an incomplete `workflow { }` excerpt that references undeclared nodes; the block is a bare attribute or sub-block not valid at workflow level; the block shows a future language feature not yet implemented.
 
 ### Examples
 
-Fragment wrapping (most step/state/agent snippets):
+Fragment wrapping (most step/state/adapter snippets):
 
 ```
 <!-- validator: fragment -->
 ` ``` `hcl
 step "build" {
-  adapter = "shell"
+  target = adapter.shell.default
   ...
 }
 ` ``` `
