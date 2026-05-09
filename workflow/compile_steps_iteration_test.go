@@ -287,3 +287,74 @@ func TestStep_ParallelMapSyntax_Rejected(t *testing.T) {
 		t.Errorf("compile error = %q; want mention of 'parallel must be a list'", diags.Error())
 	}
 }
+
+// TestStep_Parallel_AdapterNotParallelSafe_CompileError verifies that when
+// schemas contains the adapter type but it does not declare "parallel_safe",
+// compiling a step with parallel = [...] emits a DiagError.
+func TestStep_Parallel_AdapterNotParallelSafe_CompileError(t *testing.T) {
+	src := parallelWorkflow(`
+  parallel = ["a", "b"]
+  outcome "all_succeeded" { next = "done" }
+  outcome "any_failed"    { next = "failed" }
+`)
+	spec, diags := Parse("test.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse error: %v", diags.Error())
+	}
+	// Schema has the adapter type but no parallel_safe capability.
+	schemas := map[string]AdapterInfo{
+		"noop": {}, // zero-value: no capabilities
+	}
+	_, diags = Compile(spec, schemas)
+	if !diags.HasErrors() {
+		t.Fatal("expected compile error for adapter missing parallel_safe capability; got none")
+	}
+	if !strings.Contains(diags.Error(), "parallel_safe") {
+		t.Errorf("compile error = %q; want mention of 'parallel_safe'", diags.Error())
+	}
+}
+
+// TestStep_Parallel_AdapterParallelSafe_NoError verifies that when schemas
+// contains the adapter type with Capabilities: []string{"parallel_safe"},
+// compiling a parallel step succeeds without errors.
+func TestStep_Parallel_AdapterParallelSafe_NoError(t *testing.T) {
+	src := parallelWorkflow(`
+  parallel = ["a", "b"]
+  outcome "all_succeeded" { next = "done" }
+  outcome "any_failed"    { next = "failed" }
+`)
+	spec, diags := Parse("test.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse error: %v", diags.Error())
+	}
+	schemas := map[string]AdapterInfo{
+		"noop": {Capabilities: []string{"parallel_safe"}},
+	}
+	_, diags = Compile(spec, schemas)
+	if diags.HasErrors() {
+		t.Errorf("unexpected compile error: %v", diags.Error())
+	}
+}
+
+// TestStep_Parallel_AdapterAbsentFromSchemas_NoCompileError verifies that when
+// the adapter type is absent from schemas (binary not found at compile time),
+// no compile error is emitted — the runtime gate fires instead.
+func TestStep_Parallel_AdapterAbsentFromSchemas_NoCompileError(t *testing.T) {
+	src := parallelWorkflow(`
+  parallel = ["a", "b"]
+  outcome "all_succeeded" { next = "done" }
+  outcome "any_failed"    { next = "failed" }
+`)
+	spec, diags := Parse("test.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse error: %v", diags.Error())
+	}
+	// Non-nil schemas, but does not contain "noop" → permissive for this adapter.
+	schemas := map[string]AdapterInfo{
+		"other_adapter": {Capabilities: []string{"parallel_safe"}},
+	}
+	_, diags = Compile(spec, schemas)
+	if diags.HasErrors() {
+		t.Errorf("unexpected compile error when adapter absent from schemas: %v", diags.Error())
+	}
+}

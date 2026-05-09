@@ -270,9 +270,10 @@ type ConfigField struct {
 // step input blocks against the adapter's declared requirements.
 // An empty (zero-value) AdapterInfo means "any keys accepted" (permissive).
 type AdapterInfo struct {
-	ConfigSchema map[string]ConfigField // schema for adapter-level config { }` blocks
+	ConfigSchema map[string]ConfigField // schema for adapter-level `config { }` blocks
 	InputSchema  map[string]ConfigField // schema for per-step `input { }` blocks
 	OutputSchema map[string]ConfigField // declared outputs the adapter promises to populate (W04)
+	Capabilities []string               // well-known capability strings (e.g. "parallel_safe")
 }
 
 // OutcomeSpec maps an adapter outcome name to the next node.

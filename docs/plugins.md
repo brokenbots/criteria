@@ -465,6 +465,37 @@ adapter's `Execute` method **concurrently from multiple goroutines** — one per
 parallel item, bounded by `parallel_max`. Session handles (from `OpenSession`)
 are shared across all parallel executions for the same step.
 
+#### Declaring `parallel_safe`
+
+To opt in to parallel execution, return `"parallel_safe"` in your `Info()` capabilities:
+
+```go
+func (p *myPlugin) Info(ctx context.Context, req *pb.InfoRequest) (*pb.InfoResponse, error) {
+    return &pb.InfoResponse{
+        Name:         "my-plugin",
+        Version:      "0.1.0",
+        Capabilities: []string{"parallel_safe"},
+    }, nil
+}
+```
+
+Without this declaration, the engine **rejects** `parallel = [...]` steps targeting
+your adapter:
+
+- **At compile time** (when the adapter binary is resolvable during schema
+  collection): the compiler emits a `DiagError`, so the workflow author learns
+  immediately.
+- **At runtime** (when the adapter was not resolvable at compile time): the engine
+  returns an error before any goroutine is launched.
+
+`parallel_safe` means: `Execute` may be called concurrently on **the same session**
+from multiple goroutines. The adapter must not hold shared mutable state that is
+unprotected within a single session.
+
+If your adapter needs per-request state that cannot be shared, open a new session
+per call (model it as separate `agent { }` blocks in HCL) or do not declare
+`parallel_safe` and use `for_each` for sequential iteration.
+
 Adapter authors must ensure:
 
 1. **`Execute` is goroutine-safe.** If your implementation touches any shared
@@ -478,7 +509,8 @@ Adapter authors must ensure:
    operations should select on `ctx.Done()`.
 
 Adapters that are already stateless (no shared mutable state) need no changes.
-The `noop` and `shell` bundled adapters are both goroutine-safe.
+The `noop` and `shell` bundled adapters are both goroutine-safe and declare
+`parallel_safe`.
 
 The public plugin SDK lives in `sdk/pluginhost`. External authors import:
 

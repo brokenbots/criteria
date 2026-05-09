@@ -532,6 +532,20 @@ func (n *stepNode) evaluateParallel(ctx context.Context, st *RunState, deps Deps
 		return "", fmt.Errorf("step %q: parallel must be a list [...]; map and object syntax are not supported", n.step.Name)
 	}
 
+	// Runtime parallel_safe gate. This catches adapters that were not resolvable
+	// at compile time (schema absent) and defends against schema-skipping paths.
+	// Sessions are already open at this point (initScopeAdapters runs at scope
+	// entry), so capabilities are available via HasCapability.
+	if n.step.TargetKind == workflow.StepTargetAdapter {
+		if !deps.Sessions.HasCapability(n.step.AdapterRef, "parallel_safe") {
+			return "", fmt.Errorf(
+				"step %q: adapter session %q does not declare the \"parallel_safe\" capability; "+
+					"parallel execution is not permitted. "+
+					"Declare parallel_safe in the adapter's Info() capabilities or use for_each for sequential iteration",
+				n.step.Name, n.step.AdapterRef)
+		}
+	}
+
 	total := len(items)
 	deps.Sink.OnForEachEntered(n.step.Name, total)
 

@@ -64,6 +64,44 @@ func TestInfoResponseSchemaRoundTrip(t *testing.T) {
 	}
 }
 
+// TestAdapterInfoFromProto_PropagatesCapabilities verifies that capabilities in
+// the InfoResponse are copied into AdapterInfo.Capabilities by AdapterInfoFromProto.
+// This covers the production proto→schema translation path used by collectSchemas.
+func TestAdapterInfoFromProto_PropagatesCapabilities(t *testing.T) {
+	resp := &pb.InfoResponse{
+		Name:         "test-adapter",
+		Version:      "1.0.0",
+		Capabilities: []string{"parallel_safe", "some_other_cap"},
+	}
+
+	info := pluginpkg.AdapterInfoFromProto(resp)
+
+	if len(info.Capabilities) != 2 {
+		t.Fatalf("Capabilities len = %d; want 2", len(info.Capabilities))
+	}
+	found := map[string]bool{}
+	for _, c := range info.Capabilities {
+		found[c] = true
+	}
+	if !found["parallel_safe"] {
+		t.Errorf("Capabilities does not contain 'parallel_safe'; got %v", info.Capabilities)
+	}
+	if !found["some_other_cap"] {
+		t.Errorf("Capabilities does not contain 'some_other_cap'; got %v", info.Capabilities)
+	}
+}
+
+// TestAdapterInfoFromProto_EmptyCapabilities verifies that when InfoResponse has
+// no capabilities, AdapterInfo.Capabilities is nil (not an empty non-nil slice)
+// so the compiler treats the adapter as having no declared capabilities.
+func TestAdapterInfoFromProto_EmptyCapabilities(t *testing.T) {
+	resp := &pb.InfoResponse{Name: "bare", Version: "0.1"}
+	info := pluginpkg.AdapterInfoFromProto(resp)
+	if len(info.Capabilities) != 0 {
+		t.Errorf("expected empty Capabilities for bare InfoResponse; got %v", info.Capabilities)
+	}
+}
+
 func TestInfoResponseBoolAndListTypes(t *testing.T) {
 	resp := &pb.InfoResponse{
 		InputSchema: &pb.AdapterSchemaProto{Fields: map[string]*pb.ConfigFieldProto{

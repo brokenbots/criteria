@@ -52,13 +52,14 @@ type SessionManager struct {
 }
 
 type Session struct {
-	Name      string
-	Adapter   string
-	Config    map[string]string
-	OnCrash   string
-	plugin    Plugin
-	respawned bool
-	closing   atomic.Bool
+	Name         string
+	Adapter      string
+	Config       map[string]string
+	OnCrash      string
+	Capabilities []string // cached from plug.Info() at Open time
+	plugin       Plugin
+	respawned    bool
+	closing      atomic.Bool
 }
 
 func NewSessionManager(loader Loader) *SessionManager {
@@ -87,6 +88,14 @@ func (m *SessionManager) Open(ctx context.Context, name, adapterName, onCrash st
 	if err != nil {
 		return err
 	}
+
+	// Cache capabilities so HasCapability can be called without a separate Info RPC.
+	// On error, capabilities default to nil — the runtime gate rejects parallel use.
+	var caps []string
+	if info, infoErr := plug.Info(ctx); infoErr == nil {
+		caps = append([]string(nil), info.Capabilities...)
+	}
+
 	if err := plug.OpenSession(ctx, name, config); err != nil {
 		plug.Kill()
 		return err
@@ -100,11 +109,12 @@ func (m *SessionManager) Open(ctx context.Context, name, adapterName, onCrash st
 		return fmt.Errorf("%w: %s", ErrSessionAlreadyOpen, name)
 	}
 	m.sessions[name] = &Session{
-		Name:    name,
-		Adapter: adapterName,
-		Config:  cloneConfig(config),
-		OnCrash: normalizeOnCrash(onCrash),
-		plugin:  plug,
+		Name:         name,
+		Adapter:      adapterName,
+		Config:       cloneConfig(config),
+		OnCrash:      normalizeOnCrash(onCrash),
+		Capabilities: caps,
+		plugin:       plug,
 	}
 	return nil
 }
@@ -179,6 +189,24 @@ func (m *SessionManager) Execute(ctx context.Context, name string, step *workflo
 	default:
 		return m.failResult(sink, sess, execErr)
 	}
+}
+
+// HasCapability reports whether the session identified by name has capName in
+// its cached capabilities slice. Returns false if the session is unknown or
+// has no capabilities cached. Thread-safe.
+func (m *SessionManager) HasCapability(name, capName string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	sess, ok := m.sessions[name]
+	if !ok {
+		return false
+	}
+	for _, c := range sess.Capabilities {
+		if c == capName {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *SessionManager) Shutdown(ctx context.Context) error {

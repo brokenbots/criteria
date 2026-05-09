@@ -136,6 +136,17 @@ func adapterInfo(schemas map[string]AdapterInfo, adapterType string) (AdapterInf
 	return info, ok
 }
 
+// adapterHasCapability reports whether info declares capName in its Capabilities
+// slice. Used to gate parallel = [...] steps at compile time.
+func adapterHasCapability(info AdapterInfo, capName string) bool {
+	for _, c := range info.Capabilities {
+		if c == capName {
+			return true
+		}
+	}
+	return false
+}
+
 // workflowAllowTools extracts the workflow-level AllowTools list from a Spec.
 func workflowAllowTools(spec *Spec) []string {
 	if spec.Permissions == nil {
