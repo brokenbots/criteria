@@ -32,9 +32,15 @@ import (
 // Parallel goroutines may call any Sink method (e.g. via subworkflow fan-out),
 // so every method must be protected. The embedding alone is not sufficient —
 // unoverridden embedded methods bypass the mutex.
+//
+// StepEventSink returns a fanInEventSink that buffers Log/Adapter events and
+// drains them asynchronously under mu, decoupling goroutine execution from sink
+// write latency. fanIns tracks all created sinks; closeEventSinks drains them.
 type lockedSink struct {
 	Sink
-	mu sync.Mutex
+	mu    sync.Mutex
+	fanMu sync.Mutex // protects fanIns slice
+	fanIns []*fanInEventSink
 }
 
 func (s *lockedSink) OnRunStarted(workflowName, initialStep string) {
@@ -185,17 +191,101 @@ func (s *lockedSink) StepEventSink(step string) adapter.EventSink {
 	s.mu.Lock()
 	inner := s.Sink.StepEventSink(step)
 	s.mu.Unlock()
-	// Wrap the returned EventSink so that concurrent Log/Adapter calls from
-	// parallel goroutines are serialized under the same mutex. Without this,
-	// goroutines calling Log/Adapter on their per-iteration EventSinks would
-	// race through any shared state in the underlying sink (e.g. ConsoleSink).
-	return &lockedEventSink{EventSink: inner, mu: &s.mu}
+	// Wrap the returned EventSink in a fanInEventSink. Log/Adapter calls from
+	// the parallel goroutine are buffered into a per-goroutine channel and
+	// drained asynchronously by a dedicated goroutine that holds the shared
+	// mutex only during the actual write. This decouples goroutine execution
+	// speed from sink write latency (gRPC flow control, disk I/O, slow tests).
+	f := newFanInEventSink(inner, &s.mu, parallelLogBufSize)
+	s.fanMu.Lock()
+	s.fanIns = append(s.fanIns, f)
+	s.fanMu.Unlock()
+	return f
+}
+
+// closeEventSinks closes every fanInEventSink created by StepEventSink and
+// waits for their drain goroutines to flush all buffered events. Must be
+// called after all parallel goroutines have finished (i.e. after wg.Wait()).
+func (s *lockedSink) closeEventSinks() {
+	s.fanMu.Lock()
+	fans := s.fanIns
+	s.fanIns = nil
+	s.fanMu.Unlock()
+	for _, f := range fans {
+		f.close()
+	}
+}
+
+// parallelLogBufSize is the number of log/adapter events each fanInEventSink
+// can buffer before a goroutine blocks on send. 256 events absorbs bursts from
+// fast adapters without requiring allocations in the common case.
+const parallelLogBufSize = 256
+
+// sinkEvent carries a single Log or Adapter call through the fan-in channel.
+type sinkEvent struct {
+	stream string
+	chunk  []byte // non-nil → Log event
+	kind   string // non-empty when chunk==nil → Adapter event
+	data   any
+}
+
+// fanInEventSink is a per-goroutine adapter.EventSink that decouples Log and
+// Adapter call latency from the underlying sink write latency. Callers send
+// events into a buffered channel; a single drain goroutine dequeues them and
+// writes to the inner sink under the shared lockedSink mutex so that the
+// underlying sink is never accessed concurrently.
+type fanInEventSink struct {
+	inner adapter.EventSink
+	mu    *sync.Mutex // shared with lockedSink; serializes drain writes
+	ch    chan sinkEvent
+	done  chan struct{}
+}
+
+func newFanInEventSink(inner adapter.EventSink, mu *sync.Mutex, bufSize int) *fanInEventSink {
+	f := &fanInEventSink{
+		inner: inner,
+		mu:    mu,
+		ch:    make(chan sinkEvent, bufSize),
+		done:  make(chan struct{}),
+	}
+	go f.drain()
+	return f
+}
+
+func (f *fanInEventSink) drain() {
+	defer close(f.done)
+	for e := range f.ch {
+		f.mu.Lock()
+		if e.chunk != nil {
+			f.inner.Log(e.stream, e.chunk)
+		} else {
+			f.inner.Adapter(e.kind, e.data)
+		}
+		f.mu.Unlock()
+	}
+}
+
+func (f *fanInEventSink) Log(stream string, chunk []byte) {
+	// Copy chunk so the caller's buffer cannot be mutated after the send.
+	f.ch <- sinkEvent{stream: stream, chunk: append([]byte(nil), chunk...)}
+}
+
+func (f *fanInEventSink) Adapter(kind string, data any) {
+	f.ch <- sinkEvent{kind: kind, data: data}
+}
+
+// close signals the drain goroutine to stop and blocks until it has flushed
+// all buffered events. Must be called exactly once after the goroutine using
+// this sink has finished sending events.
+func (f *fanInEventSink) close() {
+	close(f.ch)
+	<-f.done
 }
 
 // lockedEventSink wraps an adapter.EventSink and serializes Log and Adapter
-// under the same mutex used by lockedSink. Each parallel goroutine receives
-// its own lockedEventSink but all share the same *sync.Mutex, so concurrent
-// Log/Adapter traffic is serialized and cannot race through shared sink state.
+// under a provided mutex. Retained alongside fanInEventSink for use in
+// non-parallel contexts where a simple mutex guard suffices (e.g. benchmarks
+// comparing the two approaches directly).
 type lockedEventSink struct {
 	adapter.EventSink
 	mu *sync.Mutex
@@ -556,10 +646,17 @@ func (n *stepNode) evaluateParallel(ctx context.Context, st *RunState, deps Deps
 	}
 
 	// Serialize sink calls from goroutines to prevent data races on the sink.
+	lk := &lockedSink{Sink: deps.Sink}
 	parallelDeps := deps
-	parallelDeps.Sink = &lockedSink{Sink: deps.Sink}
+	parallelDeps.Sink = lk
 
 	results := runParallelIterations(ctx, n, items, keys, st, parallelDeps)
+
+	// Flush all fan-in channels before aggregating results. Without this,
+	// fanInEventSink drain goroutines may still be writing to the sink after
+	// wg.Wait() returns — closing them here ensures all buffered events are
+	// delivered before the caller reads any sink state.
+	lk.closeEventSinks()
 
 	// If the parent context was cancelled (not just an internal abort), propagate
 	// the error rather than treating it as a normal failure outcome.

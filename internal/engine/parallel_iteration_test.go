@@ -1134,3 +1134,97 @@ step "work" {
 		t.Errorf("terminal: %s ok=%v; want done/true", sink.terminal, sink.terminalOK)
 	}
 }
+
+// --- fanInEventSink unit tests ---
+
+// fanInCountSink is a shared counting adapter.EventSink for unit tests.
+// Its counters must only be written under the shared fanInEventSink mutex;
+// the race detector will fire if that guarantee is ever violated.
+type fanInCountSink struct {
+	logCount     int // non-atomic by design; safe only under the shared mutex
+	adapterCount int
+}
+
+func (s *fanInCountSink) Log(string, []byte)  { s.logCount++ }
+func (s *fanInCountSink) Adapter(string, any) { s.adapterCount++ }
+
+// TestFanInEventSink_AllEventsDelivered verifies that all Log and Adapter events
+// sent from concurrent goroutines are delivered to the inner sink exactly once,
+// with no events dropped or duplicated. The inner sink's non-atomic counters
+// expose any concurrency violation to the race detector.
+func TestFanInEventSink_AllEventsDelivered(t *testing.T) {
+	const (
+		numGoroutines        = 8
+		logsPerGoroutine     = 100
+		adaptersPerGoroutine = 50
+	)
+
+	// All fanInEventSinks share one mutex — their drain goroutines serialize
+	// writes to the non-atomic counters in fanInCountSink.
+	var mu sync.Mutex
+	inner := &fanInCountSink{}
+
+	fans := make([]*fanInEventSink, numGoroutines)
+	for i := range fans {
+		fans[i] = newFanInEventSink(inner, &mu, 64)
+	}
+
+	chunk := []byte("hello world")
+	var wg sync.WaitGroup
+	for _, f := range fans {
+		f := f
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < logsPerGoroutine; j++ {
+				f.Log("stdout", chunk)
+			}
+			for j := 0; j < adaptersPerGoroutine; j++ {
+				f.Adapter("test.event", j)
+			}
+		}()
+	}
+	wg.Wait()
+
+	// Close all sinks — blocks until drain goroutines have flushed every event.
+	for _, f := range fans {
+		f.close()
+	}
+
+	wantLogs := numGoroutines * logsPerGoroutine
+	wantAdapters := numGoroutines * adaptersPerGoroutine
+	if inner.logCount != wantLogs {
+		t.Errorf("Log deliveries: got %d; want %d", inner.logCount, wantLogs)
+	}
+	if inner.adapterCount != wantAdapters {
+		t.Errorf("Adapter deliveries: got %d; want %d", inner.adapterCount, wantAdapters)
+	}
+}
+
+// TestFanInEventSink_RaceDetector is an integration test that verifies the
+// engine's fanInEventSink path passes -race with parallel_max=8 and a
+// high-concurrency logging adapter. Complements the unit test by exercising
+// the full engine path including lockedSink.closeEventSinks().
+func TestFanInEventSink_RaceDetector(t *testing.T) {
+	const n = 8
+	g := compile(t, parallelWorkflowHCL(`
+step "work" {
+  target       = adapter.fake
+  parallel     = ["a", "b", "c", "d", "e", "f", "g", "h"]
+  parallel_max = 8
+  outcome "all_succeeded" { next = "done" }
+  outcome "any_failed"    { next = "failed" }
+}`))
+
+	p := newLoggingBarrierPlugin("fake", n, "success")
+	sink := &sharedLogSink{}
+	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": p}}
+	if err := New(g, loader, sink).Run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if sink.count != n {
+		t.Errorf("log count: got %d; want %d (fanInEventSink must deliver all events)", sink.count, n)
+	}
+}
+
+
