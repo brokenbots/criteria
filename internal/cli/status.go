@@ -40,6 +40,7 @@ func NewStatusCmd() *cobra.Command {
 		Use:   "status",
 		Short: "Show registered agents and local in-flight run details",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
 			if st, err := readLocalRunState(); err == nil {
 				fmt.Printf("local run: %-36s  %-20s  pid=%d\n", st.RunID, st.Workflow, st.PID)
 			}
@@ -71,6 +72,7 @@ func NewStopCmd() *cobra.Command {
 		Use:   "stop",
 		Short: "Request run cancellation via server -> agent control stream",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
 			if runID == "" {
 				return fmt.Errorf("--run-id is required")
 			}

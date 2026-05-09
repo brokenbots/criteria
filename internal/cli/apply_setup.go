@@ -81,7 +81,7 @@ func workflowDirFromPath(path string) string {
 func compileForExecution(ctx context.Context, workflowPath string, log *slog.Logger, subworkflowRoots ...string) ([]byte, *workflow.FSMGraph, *plugin.DefaultLoader, error) {
 	spec, diags := workflow.ParseFileOrDir(workflowPath)
 	if diags.HasErrors() {
-		return nil, nil, nil, fmt.Errorf("parse: %s", diags.Error())
+		return nil, nil, nil, fmt.Errorf("parse errors:\n%w", newDiagsError(diags))
 	}
 
 	loader := plugin.NewLoader()
@@ -98,7 +98,7 @@ func compileForExecution(ctx context.Context, workflowPath string, log *slog.Log
 	})
 	if diags.HasErrors() {
 		_ = loader.Shutdown(ctx)
-		return nil, nil, nil, fmt.Errorf("compile: %s", diags.Error())
+		return nil, nil, nil, fmt.Errorf("compile errors:\n%w", newDiagsError(diags))
 	}
 
 	return spec.SourceBytes, graph, loader, nil

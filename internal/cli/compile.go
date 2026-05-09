@@ -30,6 +30,7 @@ func NewCompileCmd() *cobra.Command {
 		Short: "Parse and compile a workflow to JSON or DOT",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
 			workflowPath := args[0]
 			output, err := compileWorkflowOutput(cmd.Context(), workflowPath, format, subworkflowRoots)
 			if err != nil {
@@ -496,7 +497,7 @@ func dotStepAttrs(name string, st *workflow.StepNode) string {
 func parseCompileForCli(ctx context.Context, workflowPath string, subworkflowRoots []string) (*workflow.Spec, *workflow.FSMGraph, error) {
 	spec, diags := workflow.ParseFileOrDir(workflowPath)
 	if diags.HasErrors() {
-		return nil, nil, fmt.Errorf("parse: %s", diags.Error())
+		return nil, nil, fmt.Errorf("parse errors in %s:\n%w", workflowPath, newDiagsError(diags))
 	}
 
 	loader := plugin.NewLoader()
@@ -515,7 +516,7 @@ func parseCompileForCli(ctx context.Context, workflowPath string, subworkflowRoo
 		Schemas:             schemas,
 	})
 	if diags.HasErrors() {
-		return nil, nil, fmt.Errorf("compile: %s", diags.Error())
+		return nil, nil, fmt.Errorf("compile errors in %s:\n%w", workflowPath, newDiagsError(diags))
 	}
 	return spec, graph, nil
 }

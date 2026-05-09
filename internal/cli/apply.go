@@ -38,6 +38,7 @@ func NewApplyCmd() *cobra.Command {
 		Short: "Execute a workflow locally or against a server",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
 			opts.workflowPath = args[0]
 
 			ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
