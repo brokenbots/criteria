@@ -215,13 +215,13 @@ or any other workstream file.
 
 ## Tasks
 
-- [ ] Add `Loader plugin.Loader` field to `Deps` in `internal/engine/node.go`
-- [ ] Wire `Loader: e.loader` into `buildDeps` in `internal/engine/engine.go`
-- [ ] Replace body of `runParallelSubworkflowIteration` to use per-iteration `SessionManager`
-- [ ] Fix any compilation failures in existing engine tests that construct `Deps{}` directly
-- [ ] Write `TestParallelSubworkflow_IsolatedSessions_ConcurrentExecution` test
-- [ ] Run `go test -race -count=5 ./internal/engine/...` and confirm pass
-- [ ] Run `make test` and confirm full suite green
+- [x] Add `Loader plugin.Loader` field to `Deps` in `internal/engine/node.go`
+- [x] Wire `Loader: e.loader` into `buildDeps` in `internal/engine/engine.go`
+- [x] Replace body of `runParallelSubworkflowIteration` to use per-iteration `SessionManager`
+- [x] Fix any compilation failures in existing engine tests that construct `Deps{}` directly
+- [x] Write `TestParallelSubworkflow_IsolatedSessions_ConcurrentExecution` test
+- [x] Run `go test -race -count=5 ./internal/engine/...` and confirm pass
+- [x] Run `make test` and confirm full suite green
 
 ## Exit criteria
 
@@ -230,3 +230,93 @@ or any other workstream file.
   complete in ≤ 2× single-iteration wall time; `OpenSession` call count = 3.
 - `make test` passes.
 - No changes outside the files listed above.
+
+## Reviewer notes
+
+### Implementation (2026-05-09)
+
+**Files modified:**
+- `internal/engine/node.go`: Added `Loader plugin.Loader` field to `Deps` struct after `Sessions`.
+- `internal/engine/engine.go`: Added `Loader: e.loader` to `buildDeps` return.
+- `internal/engine/parallel_iteration.go`: Replaced `runParallelSubworkflowIteration`
+  body to create a per-iteration `SessionManager` via `plugin.NewSessionManager(deps.Loader)`.
+  The original 5-line diff matches the workstream spec exactly.
+- `internal/engine/parallel_iteration_test.go`: Added `sessionCountPlugin` helper and
+  `TestParallelSubworkflow_IsolatedSessions_ConcurrentExecution`. The test uses a
+  barrier to force concurrent rendezvous of all 3 goroutines in Execute, counts OpenSession
+  calls (assertion: must equal 3), and checks wall time ≤ 2×execDelay.
+
+**Existing tests:** No compilation breakage — existing `Deps{}` struct literals use named
+fields; the new `Loader` field defaults to `nil` where not specified, which is correct for
+tests that pre-open sessions through a pre-configured `SessionManager`.
+
+**Validation:**
+- `go test -race -count=5 ./internal/engine/...` → PASS (16.5 s total, 5 runs × all engine tests)
+- `make test` → PASS (full workspace)
+
+**Security:** No new attack surface. The `Loader` field is an internal interface used only
+by the engine at runtime. `plugin.NewSessionManager(nil)` is safe to construct (only panics
+if `Open` is later called with a nil loader, which doesn't occur in paths that don't need
+adapter sessions).
+
+**No arch-review items.**
+
+### Review 2026-05-09 — changes-requested
+
+#### Summary
+Steps 1-3 are implemented as specified and the branch is green under the requested validation commands, but Step 4 does not fully exercise the failure mode described in the workstream. The new regression test proves `OpenSession` is called three times and that the current fake adapter finishes quickly, yet it does not model the serialized execution path caused by sharing a single stateful session with an internal execution lock.
+
+#### Plan Adherence
+- Step 1: implemented in `internal/engine/node.go`; matches the plan.
+- Step 2: implemented in `internal/engine/engine.go`; matches the plan.
+- Step 3: implemented in `internal/engine/parallel_iteration.go`; matches the plan and preserves the existing teardown path.
+- Step 4: only partially satisfied. `TestParallelSubworkflow_IsolatedSessions_ConcurrentExecution` exists and asserts `OpenSession == 3` plus elapsed time, but the test double does not simulate the required per-session mutex behavior and does not honor the loader contract's "distinct handle per Resolve" semantics.
+- Exit criteria are not met until the regression test is strengthened to cover the real serialization mechanism called out in the workstream context.
+
+#### Required Remediations
+- **Blocker** — `internal/engine/parallel_iteration_test.go:875-991`: replace the current `sessionCountPlugin` harness with one that actually models a stateful adapter session. The workstream explicitly required a per-session mutex analogue; the current fake plugin has no session-local lock, and the shared `fakeLoader` returns the same plugin instance on every `Resolve`, which diverges from production loader semantics. **Acceptance criteria:** the test must make a broken shared-session implementation serialize to roughly `N × single-execution` time, make the fixed implementation stay within the stated bound, and still assert `OpenSession` is called once per iteration.
+
+#### Test Intent Assessment
+The new test is strong on session-open counting: the original regression would fail the `OpenSession == 3` assertion. The weak spot is the timing assertion. Because the fake adapter does not serialize `Execute` per session, the wall-clock check currently proves only that the test double itself allows concurrency, not that session isolation removes the real adapter-level serialization risk described in the workstream. The executor needs to make the timing assertion regression-sensitive to a shared-session, stateful adapter implementation.
+
+#### Validation Performed
+- `go test -race -count=5 ./internal/engine/...` — passed
+- `make test` — passed
+- `go test -race -run TestParallelSubworkflow_IsolatedSessions_ConcurrentExecution -count=20 ./internal/engine` — passed
+
+### Review 2026-05-09-02 — approved
+
+#### Summary
+Approved. The test remediation closes the prior blocker: the new `perResolveLoader` and `statefulPlugin` harness now models the real shared-session serialization failure mode, preserves the `OpenSession == N` assertion, and makes the wall-clock check regression-sensitive to the exact bug this workstream set out to fix.
+
+#### Plan Adherence
+- Step 1: `Deps.Loader` is present in `internal/engine/node.go`.
+- Step 2: `buildDeps` wires `Loader: e.loader` in `internal/engine/engine.go`.
+- Step 3: `runParallelSubworkflowIteration` now creates a per-iteration `SessionManager` in `internal/engine/parallel_iteration.go` without disturbing sink or teardown semantics.
+- Step 4: `TestParallelSubworkflow_IsolatedSessions_ConcurrentExecution` now uses a loader that returns a distinct plugin handle per resolve and a per-instance execution mutex, so the timing assertion meaningfully distinguishes shared-session serialization from isolated-session concurrency.
+- Exit criteria are satisfied by the current code and validation results.
+
+#### Test Intent Assessment
+The strengthened regression test now validates behavioral intent rather than just pass-shape execution. A broken implementation that reuses the parent `SessionManager` would collapse to one resolved plugin instance, serialize on `execMu`, and fail the elapsed-time bound; the fixed implementation opens three sessions, executes on three independent instances, and stays within the threshold. That makes the test appropriately regression-sensitive at the session/loader contract boundary.
+
+#### Validation Performed
+- `go test -race -count=5 ./internal/engine/...` — passed
+- `go test -race -run TestParallelSubworkflow_IsolatedSessions_ConcurrentExecution -count=20 ./internal/engine` — passed
+- `make test` — passed
+
+### Remediation (2026-05-09)
+
+Replaced `sessionCountPlugin` + `fakeLoader` harness with `perResolveLoader` + `statefulPlugin`.
+
+**Key changes to the test double:**
+- `perResolveLoader.Resolve` returns a fresh `*statefulPlugin` on every call, matching the production Loader contract ("Multiple calls with the same name return distinct Plugin handles — one per session").
+- Each `statefulPlugin` instance has its own `execMu sync.Mutex` (models a Copilot-style per-session execution lock). Concurrent `Execute` calls on the same instance (old shared-session behaviour) serialize behind this mutex → ≈ N×execDelay. Concurrent calls on distinct instances (new per-iteration behaviour) each hold their own mutex and sleep in parallel → ≈ 1×execDelay.
+- A shared rendezvous barrier (via the loader) ensures all N goroutines reach `Execute` simultaneously before the timing-sensitive lock acquisition begins, preventing startup skew from falsifying the timing assertion.
+
+**Why this is regression-sensitive:**
+- Without the fix (shared `deps.Sessions`): `Open` is called once → 1 `Resolve` call → 1 plugin instance → all 3 goroutines share the same `execMu` → serialize → ≈ 180ms > 120ms cap → `elapsed > maxTotal` FAILS.
+- With the fix (per-iteration `iterDeps.Sessions`): 3 `Resolve` calls → 3 independent instances → each goroutine holds its own `execMu` → concurrent → ≈ 60ms ≤ 120ms → PASSES.
+
+**Validation:**
+- `go test -race -count=5 ./internal/engine/...` → PASS
+- `make test` → PASS
