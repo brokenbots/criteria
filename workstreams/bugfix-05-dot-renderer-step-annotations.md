@@ -153,18 +153,74 @@ setup complexity — executor should choose whichever approach is cleaner.
 - `workflow.StepNode` fields — nil checks only; no expression evaluation needed.
 - Graphviz `shape=component` — standard built-in shape, no external dependencies.
 
+### Step 3 — Render subworkflow bodies as `subgraph cluster_` blocks
+
+A `shape=component` node annotated `[→ subwf_name]` tells the reader that a subworkflow is
+invoked but gives no information about what it does. The DOT graph is only useful when it
+shows the full execution structure; a subworkflow step that just says "something happens here"
+is effectively a black box.
+
+For every step where `SubworkflowRef != ""`, `renderDOT` must inline the referenced
+subworkflow's graph as a Graphviz `subgraph cluster_<subwf_name>` block nested inside the
+parent digraph. Node IDs inside the cluster must be namespaced (e.g.
+`"<subwf_name>/<node_name>"`) to avoid collisions with the parent graph.
+
+The step node in the parent graph should become the cluster entry edge target, i.e. the
+parent edge that currently points to the step node should instead point to the
+`<subwf_name>/__start__` node inside the cluster, and the cluster's terminal node(s) should
+carry the original outbound edges.
+
+If `FSMGraph` does not expose the referenced subworkflow's graph directly, the caller
+(`compileWorkflowOutput` / `parseCompileForCli`) must pass a map of subworkflow graphs
+alongside the primary graph so `renderDOT` can look them up by ref name.
+
+Apply recursively: a subworkflow that itself contains subworkflow steps must also have its
+referenced graphs inlined as nested clusters.
+
+Cluster styling:
+
+```dot
+subgraph cluster_<subwf_name> {
+    label="<subwf_name>";
+    style=dashed;
+    "<subwf_name>/__start__" [shape=point,width=0.12,label=""];
+    "<subwf_name>/step_a"   [shape=box];
+    // ... remaining nodes with same annotation rules as Step 1 ...
+    "<subwf_name>/__start__" -> "<subwf_name>/step_a" [label="initial"];
+    // ... remaining edges ...
+}
+```
+
+The step node that previously carried `shape=component` is **replaced** by the cluster; the
+original parent edges are rewired to the cluster's `__start__` node and the cluster's sink
+nodes respectively.
+
+### Step 4 — Tests for subgraph cluster rendering
+
+Add to `internal/cli/compile_dot_test.go` (or a new sub-test section):
+
+1. **`TestRenderDOT_SubworkflowCluster`** — workflow with one subworkflow step; DOT output
+   contains a `subgraph cluster_<name>` block with the subworkflow's nodes namespaced.
+2. **`TestRenderDOT_SubworkflowClusterEdges`** — parent graph edges are rewired to/from the
+   cluster boundary (no dangling `shape=component` node remains in the output).
+3. **`TestRenderDOT_NestedSubworkflowCluster`** — subworkflow that itself contains a
+   subworkflow step; output contains nested `subgraph cluster_` blocks.
+
+Update golden files for any existing fixtures that include subworkflow steps to match the
+cluster output shape.
+
 ## Out of scope
 
 - Showing timeout, adapter ref, or `on_crash` values in the DOT label.
-- Rendering subworkflow body as a subgraph cluster — that is a larger DOT restructuring.
 - HTML-like (`<table>`) labels or custom Graphviz stylesheets.
 - The JSON output path (`buildCompileJSON`).
 - Any change to the `workflow/` package, wire contract, or engine.
 
 ## Files this workstream may modify
 
-- `internal/cli/compile.go` — `renderDOT` loop + new `dotStepAttrs` helper.
-- `internal/cli/compile_test.go` (or new `internal/cli/compile_dot_test.go`) — 6 new tests.
+- `internal/cli/compile.go` — `renderDOT` loop + new `dotStepAttrs` helper + subgraph cluster rendering.
+- `internal/cli/compile_test.go` (or new `internal/cli/compile_dot_test.go`) — unit tests.
+- `internal/cli/testdata/compile/*.dot.golden` — golden files for fixtures with subworkflow steps.
 
 This workstream may **not** edit `README.md`, `PLAN.md`, `AGENTS.md`, `CHANGELOG.md`,
 `CONTRIBUTING.md`, `workstreams/README.md`, or any other workstream file.
@@ -173,17 +229,28 @@ This workstream may **not** edit `README.md`, `PLAN.md`, `AGENTS.md`, `CHANGELOG
 
 - [x] Add `dotStepAttrs(name string, st *workflow.StepNode) string` helper in `internal/cli/compile.go`.
 - [x] Replace unconditional `[shape=box]` step node loop in `renderDOT` with annotating loop.
-- [x] Add 6 tests.
-- [x] `make build` clean.
-- [x] `make test` clean.
+- [x] Add 6 annotation tests.
+- [x] `make build` clean (annotations).
+- [x] `make test` clean (annotations).
+- [ ] Extend `renderDOT` (and its callers if needed) to inline referenced subworkflow graphs as `subgraph cluster_` blocks with namespaced node IDs.
+- [ ] Rewire parent edges to/from cluster boundary nodes; remove the `shape=component` placeholder node.
+- [ ] Apply cluster rendering recursively for nested subworkflows.
+- [ ] Add 3 subgraph cluster tests (`TestRenderDOT_SubworkflowCluster`, `_ClusterEdges`, `_NestedSubworkflowCluster`).
+- [ ] Update golden files for any fixtures with subworkflow steps.
+- [ ] `make build` clean.
+- [ ] `make test` clean.
 
 ## Exit criteria
 
 - `criteria compile --format dot` on a workflow with a `for_each` step: that step's node
   contains `[for_each]` in its label.
 - Same for `count` and `parallel` steps.
-- A subworkflow-targeted step renders with `shape=component` and `[→ <name>]` in its label.
 - A plain adapter step renders as `[shape=box]` with no `label` attribute.
+- A subworkflow-targeted step is **not** rendered as a `shape=component` placeholder node;
+  instead the parent digraph contains a `subgraph cluster_<subwf_name>` block with the
+  subworkflow's full node/edge set, node IDs namespaced as `"<subwf_name>/<node>"`, and
+  parent edges rewired to the cluster boundary.
+- Nested subworkflow references produce nested `subgraph cluster_` blocks.
 - `make test` clean.
 
 ## Implementation notes
