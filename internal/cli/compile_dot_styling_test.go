@@ -647,25 +647,6 @@ func TestDOT_NonTerminalStateNoFill(t *testing.T) {
 	// initial_state is a non-terminal state called "waiting", target_state is "done".
 	// We need at least one step for the workflow to be valid, so we'll use a step
 	// that transitions out of a non-terminal state.
-	const hcl = `
-workflow "non_terminal" {
-  version       = "1"
-  initial_state = "work"
-  target_state  = "done"
-}
-adapter "noop" "default" {}
-step "work" {
-  target = adapter.noop.default
-  outcome "success" { next = "done" }
-}
-state "done" {
-  terminal = true
-  success  = true
-}
-`
-	// "done" is terminal; the "work" step is not a state. We need a non-terminal state.
-	// The simplest non-terminal state that can appear is via a requires= state or
-	// by having a step outcome point to a non-terminal state. Let's add one.
 	const hcl2 = `
 workflow "non_terminal_state" {
   version       = "1"
