@@ -47,7 +47,7 @@ permissions {
   allow_tools = ["shell:git*"]
 }
 
-# ... variables, agents, steps, states, etc.
+# ... variables, adapters, steps, states, etc.
 ```
 
 ### Attributes

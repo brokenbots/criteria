@@ -1,4 +1,4 @@
-# Plugins and Agent Workflows
+# Plugins and Adapter Workflows
 
 For containerized execution, see [docs/runtime/docker.md](runtime/docker.md).
 
@@ -240,7 +240,7 @@ The only step-overrideable Copilot fields are `prompt`, `max_turns`, and `reason
 Permission gating is deny-by-default.
 
 - If a step does not declare `allow_tools`, every tool request is denied.
-- `allow_tools` is only valid on execute-shape adapter steps. It is a compile error on adapter-backed lifecycle steps.
+- `allow_tools` is only valid on execute-shape adapter steps. Placing `allow_tools` on any other node type is a compile error.
 - Patterns use Go `filepath.Match` semantics. That makes exact matches and prefix globs useful:
   - `read` (or `read_file` — Copilot alias, see below)
   - `shell:git status`
