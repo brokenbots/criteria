@@ -41,6 +41,25 @@ func decodeAttrsToStringMap(attrs hcl.Attributes, evalCtx *hcl.EvalContext) (map
 			continue
 		}
 		diags = append(diags, d...)
+		// A value may be unknown (e.g. a reference to a variable that has no
+		// compile-time value) without producing HCL error diagnostics. Calling
+		// type-specific accessors like AsString() on an unknown or null value
+		// panics in go-cty. Treat unknown/null the same way as an eval error:
+		// defer to runtime when evalCtx is nil, or surface an error otherwise.
+		if !val.IsKnown() || val.IsNull() {
+			if evalCtx == nil {
+				result[k] = ""
+				continue
+			}
+			rng := attr.Expr.Range()
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  "Unknown or null value",
+				Detail:   fmt.Sprintf("The attribute %q produced an unknown or null value at compile time.", k),
+				Subject:  &rng,
+			})
+			continue
+		}
 		switch val.Type() {
 		case cty.String:
 			result[k] = val.AsString()
