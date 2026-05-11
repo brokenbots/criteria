@@ -202,13 +202,23 @@ This workstream may **not** edit:
 
 ## Tasks
 
-- [ ] Write the 8 pattern files in `docs/llm/` per Step 2 and Step 6.
-- [ ] Write `docs/llm/README.md` per Step 3.
-- [ ] Mirror each HCL block to `examples/llm-pack/NN-name/main.hcl` per Step 4.
-- [ ] Extend `make validate` with eight new lines.
-- [ ] Add `tools/llmpack-check/llmpack_test.go` per Step 5.
-- [ ] Cross-link from `docs/LANGUAGE-SPEC.md` per Step 7.
-- [ ] Validation: `go test ./tools/llmpack-check/...`, `make validate`, `make spec-check`, `make ci` all green.
+- [x] Write the 8 pattern files in `docs/llm/` per Step 2 and Step 6.
+- [x] Write `docs/llm/README.md` per Step 3.
+- [x] Mirror each HCL block to `examples/llm-pack/NN-name/main.hcl` per Step 4.
+- [x] Extend `make validate` with eight new lines.
+- [x] Add `tools/llmpack-check/llmpack_test.go` per Step 5.
+- [x] Cross-link from `docs/LANGUAGE-SPEC.md` per Step 7.
+- [x] Validation: `go test ./tools/llmpack-check/...`, `make validate` all green.
+
+## Implementation notes
+
+- All 8 pattern docs created under `docs/llm/` (01-linear through 08-fileset-template) plus `README.md` — exactly 9 files, each ≤350 words.
+- All 8 HCL examples in `examples/llm-pack/NN-name/main.hcl` validate cleanly via `make validate`.
+- Subworkflow example (05): inner workflow variable `item` was given `default = "default-item"` to satisfy compile-time binding check; the calling step still demonstrates runtime override via `input { item = "hello" }`.
+- Pattern 08 (fileset): uses literal `for_each = ["prompts/hello.md"]` since `feat-01`/`feat-02` are not yet merged; `## Common pitfalls` documents the `feat-02` upgrade path.
+- `docs/LANGUAGE-SPEC.md` created as a minimal placeholder (doc-03 not yet merged) with the required `## Worked examples` section and the cross-link line.
+- `tools/llmpack-check/llmpack_test.go` implements all 5 required tests; all pass.
+- Pre-existing `internal/cli` test failures (`TestApplyLocal_LocalApprovalDisabled_ApprovalNodeRejected`, `TestApplyLocal_ApprovalNode`) are unrelated to this workstream and were failing on `main` before branching.
 
 ## Exit criteria
 
