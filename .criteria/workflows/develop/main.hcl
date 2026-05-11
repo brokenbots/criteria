@@ -225,9 +225,12 @@ switch "route_diff" {
 }
 
 # ── Parallel specialist reviews — 4 axes ─────────────────────────────────────
-# Reviewers emit RESULT: success when their review is complete (regardless of
-# verdict) — see comment in review_axis/main.hcl on engine outcome strictness.
-# on_failure="continue" so a real reviewer failure doesn't cancel siblings.
+# Reviewers always emit RESULT: success when their review is complete (regardless
+# of whether the verdict is approved or changes_requested) — see the comment in
+# review_axis/main.hcl explaining the engine's isSuccessOutcome strictness.
+# on_failure = "continue" so a real reviewer failure (broken tooling) doesn't
+# cancel the other in-flight reviewers; any_failed only fires if at least one
+# reviewer truly errors out.
 
 step "specialized_reviews" {
   target       = subworkflow.review_axis
@@ -286,7 +289,7 @@ step "owner_review" {
   timeout     = "20m"
   max_visits  = 20
   input {
-    prompt = "You are the workstream owner for ${var.workstream_file}. At least one of the four specialist reviewers requested changes; you must adjudicate. Read the workstream, the cached diff at .criteria/tmp/diff.patch, and the reports below. Each report contains a `VERDICT: approved` or `VERDICT: changes_requested` line followed by findings. Decide which requests are legitimate, in scope, and mandatory. Reject overreach, duplicates, speculative rewrites, or anything contradicting the workstream non-goals.\n\nRecord your verdict under `## Owner Review Notes` in ${var.workstream_file}. If changes are needed, write only must-fix items. If complete, record owner approval.\n\n--- security ---\n${steps.specialized_reviews[0].report}\n--- quality ---\n${steps.specialized_reviews[1].report}\n--- workstream ---\n${steps.specialized_reviews[2].report}\n--- api_compat ---\n${steps.specialized_reviews[3].report}\n--- end ---\n\nEnd your final message with exactly one of:\nRESULT: approved\nRESULT: changes_requested\nRESULT: failure"
+    prompt = "You are the workstream owner for ${var.workstream_file}. Read the workstream, current diff (`git diff origin/main...HEAD`), and the four specialist reviewer reports below. Each report contains a `VERDICT: approved` or `VERDICT: changes_requested` line followed by findings. Decide which requests are legitimate, in scope, and mandatory. Reject overreach, duplicates, speculative rewrites, or anything contradicting the workstream non-goals.\n\nRecord your verdict under `## Owner Review Notes` in ${var.workstream_file}. If changes are needed, write only must-fix items. If complete, record owner approval.\n\n--- security ---\n${steps.specialized_reviews[0].report}\n--- quality ---\n${steps.specialized_reviews[1].report}\n--- workstream ---\n${steps.specialized_reviews[2].report}\n--- api_compat ---\n${steps.specialized_reviews[3].report}\n--- end ---\n\nEnd your final message with exactly one of:\nRESULT: approved\nRESULT: changes_requested\nRESULT: failure"
   }
   outcome "approved"          { next = "commit" }
   outcome "changes_requested" { next = "count_cycle" }

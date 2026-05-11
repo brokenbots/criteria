@@ -1,5 +1,18 @@
-# Performance baseline workflow: generates 1000 StepLog events
+# Performance baseline workflow: runs 1000 shell echo commands to benchmark
+# step throughput and measure engine overhead per event.
+#
 # mode: standalone
+#
+# How to run:
+#   criteria apply examples/perf_1000_logs/
+#
+# What to expect:
+#   The workflow runs a single shell step that emits 1000 lines of output via
+#   a bash loop. It is useful for benchmarking step dispatch latency and engine
+#   event throughput. Total wall time should be well under 5 seconds on a
+#   modern machine; slower runs can indicate adapter or engine regressions.
+#   Run `criteria apply --output json examples/perf_1000_logs/ | wc -l` to
+#   count emitted events.
 workflow "perf_1000_logs" {
   version       = "0.1"
   initial_state = "generate_logs"
