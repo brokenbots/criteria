@@ -108,27 +108,27 @@ step "pr_status" {
 
 switch "route_status" {
   condition {
-    match = startswith(steps.pr_status.stdout, "status:merged")
+    match = steps.pr_status.stdout == "merged"
     next  = state.approved_and_merged
   }
   condition {
-    match = startswith(steps.pr_status.stdout, "status:ready")
+    match = steps.pr_status.stdout == "ready"
     next  = step.pr_review
   }
   condition {
-    match = startswith(steps.pr_status.stdout, "status:threads_open")
+    match = steps.pr_status.stdout == "threads_open"
     next  = step.pr_review
   }
   condition {
-    match = startswith(steps.pr_status.stdout, "status:pending")
+    match = steps.pr_status.stdout == "pending"
     next  = step.backoff
   }
   condition {
-    match = startswith(steps.pr_status.stdout, "status:changes_requested")
+    match = steps.pr_status.stdout == "changes_requested"
     next  = step.count_review_attempt
   }
   condition {
-    match = startswith(steps.pr_status.stdout, "status:checks_failed")
+    match = steps.pr_status.stdout == "checks_failed"
     next  = state.escalated
   }
   default { next = state.failed }
@@ -167,7 +167,7 @@ step "pr_review" {
   allow_tools = ["read", "search", "execute", "shell"]
   max_visits  = 10
   input {
-    prompt = "Review the open PR for ${var.workstream_file}. The deterministic status gate produced:\n\n--- pr-status.sh output ---\n${steps.pr_status.stdout}\n--- end ---\n\nUse `gh pr diff <pr_number>` and `git diff origin/main...HEAD` for the code. For each unresolved (and !outdated) review thread, either reply with citation evidence and resolve it via `sh .criteria/workflows/pr_review/scripts/resolve-thread.sh <thread_id>`, or leave it open and request changes.\n\nIf the diff meets the bar and all addressable threads are resolved: post a recommendation comment via `gh pr comment <pr_number> --body \"<your summary>\"` summarizing what you verified and that you recommend approval. Then emit RESULT: approve. DO NOT run `gh pr review --approve` — branch protection forbids self-approval by the PR author; the workflow will pause for a human to click Approve on GitHub before merging.\n\nIf code changes are required: emit a `### Required Changes` section in your final message and RESULT: changes_requested.\n\nDO NOT run `gh pr merge` — a deterministic shell step handles merge after human approval.\n\nEnd your final message with exactly one of:\nRESULT: approve\nRESULT: changes_requested\nRESULT: failure"
+    prompt = "Review the open PR for ${var.workstream_file}. The deterministic status gate classifier was `${steps.pr_status.stdout}` with context:\n\n--- pr-status.sh stderr ---\n${steps.pr_status.stderr}\n--- end ---\n\nUse `gh pr diff <pr_number>` and `git diff origin/main...HEAD` for the code. For each unresolved (and !outdated) review thread, either reply with citation evidence and resolve it via `sh .criteria/workflows/pr_review/scripts/resolve-thread.sh <thread_id>`, or leave it open and request changes.\n\nIf the diff meets the bar and all addressable threads are resolved: post a recommendation comment via `gh pr comment <pr_number> --body \"<your summary>\"` summarizing what you verified and that you recommend approval. Then emit RESULT: approve. DO NOT run `gh pr review --approve` — branch protection forbids self-approval by the PR author; the workflow will pause for a human to click Approve on GitHub before merging.\n\nIf code changes are required: emit a `### Required Changes` section in your final message and RESULT: changes_requested.\n\nDO NOT run `gh pr merge` — a deterministic shell step handles merge after human approval.\n\nEnd your final message with exactly one of:\nRESULT: approve\nRESULT: changes_requested\nRESULT: failure"
   }
   outcome "approve"           { next = "human_approval_required" }
   outcome "changes_requested" { next = "count_review_attempt" }

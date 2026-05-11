@@ -1,44 +1,50 @@
 #!/bin/sh
-# Deterministic aggregated PR status.
+# Deterministic aggregated PR status. Classifier word on stdout (no newline);
+# detail on stderr for downstream prompts.
 #
-# Always exits 0 on success; the workflow routes via `switch` on the first
-# stdout line. Non-zero exit means the call itself failed (no PR, bad git state).
+# Always exits 0 on success; the workflow switch routes via stdout equality.
+# Non-zero exit means the call itself failed (no PR, bad git state).
 #
-# First line is always one of:
-#   status:merged             — PR already MERGED; sync local main only
-#   status:ready              — checks green, no unresolved threads, !CHANGES_REQUESTED
-#   status:pending            — required checks still running; caller should backoff
-#   status:changes_requested  — reviewDecision = CHANGES_REQUESTED
-#   status:threads_open       — unresolved (and !outdated) threads remain
-#   status:checks_failed      — one or more required checks failed
+# Classifiers (stdout):
+#   merged             PR already MERGED; sync local main only
+#   ready              checks green, no unresolved threads, !CHANGES_REQUESTED
+#   pending            required checks still running; caller should backoff
+#   changes_requested  reviewDecision = CHANGES_REQUESTED
+#   threads_open       unresolved (and !outdated) threads remain
+#   checks_failed      one or more required checks failed
 #
-# Remaining lines are k=v context for downstream prompts (pr_number, checks
-# buckets, review_decision, unresolved_threads).
+# Stderr is k=v context (pr_number, checks state buckets, review_decision,
+# unresolved_threads) that downstream agent prompts interpolate.
 set -eu
+
+emit() {
+  # $1 = classifier word, rest = k=v context lines for stderr
+  printf '%s' "$1"
+  shift
+  while [ $# -gt 0 ]; do
+    echo "$1" >&2
+    shift
+  done
+}
 
 branch="$(git branch --show-current 2>/dev/null || true)"
 if [ -z "$branch" ] || [ "$branch" = "main" ]; then
-  echo "status:error" >&2
   echo "bad_branch:${branch:-detached}" >&2
   exit 1
 fi
 
 pr_number="$(gh pr view "$branch" --json number --jq '.number' 2>/dev/null || true)"
 if [ -z "$pr_number" ]; then
-  echo "status:error" >&2
   echo "no_pr:${branch}" >&2
   exit 1
 fi
 
 pr_state="$(gh pr view "$pr_number" --json state --jq '.state')"
 if [ "$pr_state" = "MERGED" ]; then
-  echo "status:merged"
-  echo "pr_number=${pr_number}"
-  echo "pr_state=${pr_state}"
+  emit "merged" "pr_number=${pr_number}" "pr_state=${pr_state}"
   exit 0
 fi
 if [ "$pr_state" = "CLOSED" ]; then
-  echo "status:error" >&2
   echo "pr_closed:${pr_number}" >&2
   exit 1
 fi
@@ -47,17 +53,12 @@ checks_rc=0
 checks_json="$(gh pr checks "$pr_number" --required --json bucket,name,state,workflow 2>&1)" || checks_rc=$?
 
 if [ "$checks_rc" -eq 8 ]; then
-  echo "status:pending"
-  echo "pr_number=${pr_number}"
-  echo "checks=pending"
-  printf '%s\n' "$checks_json" | jq -r 'group_by(.bucket) | map([.[0].bucket, (length|tostring)] | join("=")) | .[]' 2>/dev/null || true
+  bucket_summary="$(printf '%s\n' "$checks_json" | jq -r 'group_by(.bucket) | map([.[0].bucket, (length|tostring)] | join("=")) | .[]' 2>/dev/null || true)"
+  emit "pending" "pr_number=${pr_number}" "checks=pending" "${bucket_summary}"
   exit 0
 fi
 if [ "$checks_rc" -ne 0 ]; then
-  echo "status:checks_failed"
-  echo "pr_number=${pr_number}"
-  echo "checks=failed"
-  printf '%s\n' "$checks_json"
+  emit "checks_failed" "pr_number=${pr_number}" "checks=failed" "details=$(printf '%s' "$checks_json" | tr '\n' '|')"
   exit 0
 fi
 
@@ -71,26 +72,14 @@ threads_has_next="$(printf '%s' "$threads_json" | jq -r '.data.repository.pullRe
 unresolved="$(printf '%s' "$threads_json" | jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select((.isOutdated|not) and (.isResolved|not))] | length')"
 
 if [ "$review_decision" = "CHANGES_REQUESTED" ]; then
-  echo "status:changes_requested"
-  echo "pr_number=${pr_number}"
-  echo "review_decision=${review_decision}"
-  echo "unresolved_threads=${unresolved}"
+  emit "changes_requested" "pr_number=${pr_number}" "review_decision=${review_decision}" "unresolved_threads=${unresolved}"
   exit 0
 fi
 
 if [ "$unresolved" -gt 0 ] || [ "$threads_has_next" = "true" ]; then
-  echo "status:threads_open"
-  echo "pr_number=${pr_number}"
-  echo "review_decision=${review_decision}"
-  echo "unresolved_threads=${unresolved}"
-  echo "review_threads_has_next_page=${threads_has_next}"
+  emit "threads_open" "pr_number=${pr_number}" "review_decision=${review_decision}" "unresolved_threads=${unresolved}" "review_threads_has_next_page=${threads_has_next}"
   exit 0
 fi
 
-echo "status:ready"
-echo "pr_number=${pr_number}"
-echo "review_decision=${review_decision}"
-echo "checks=passed"
-echo "unresolved_threads=0"
-printf '%s\n' "$checks_json" | jq -r 'group_by(.bucket) | map([.[0].bucket, (length|tostring)] | join("=")) | .[]' 2>/dev/null || true
-exit 0
+bucket_summary="$(printf '%s\n' "$checks_json" | jq -r 'group_by(.bucket) | map([.[0].bucket, (length|tostring)] | join("=")) | .[]' 2>/dev/null || true)"
+emit "ready" "pr_number=${pr_number}" "review_decision=${review_decision}" "checks=passed" "unresolved_threads=0" "${bucket_summary}"
