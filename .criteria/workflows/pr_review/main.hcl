@@ -149,29 +149,71 @@ step "backoff" {
 }
 
 # ── Cold PR review ────────────────────────────────────────────────────────────
-# Distinct persona from developer / inner reviewers / owner. Can approve or
-# resolve threads with citation; cannot push code, cannot merge.
+# Distinct persona from developer / inner reviewers / owner.
+#
+# The agent can:
+#   • read the diff and threads
+#   • resolve addressable threads via `resolve-thread.sh` with citation evidence
+#   • post a recommendation comment via `gh pr comment`
+#
+# The agent CANNOT:
+#   • approve the PR (GitHub branch protection forbids self-approval by the PR
+#     author; the workflow handles approval via a human-in-the-loop node below)
+#   • merge the PR (a deterministic shell step owns merge)
+#   • push code
 
 step "pr_review" {
   target      = adapter.copilot.pr_reviewer
   allow_tools = ["read", "search", "execute", "shell"]
   max_visits  = 10
   input {
-    prompt = "Review the open PR for ${var.workstream_file}. The deterministic status gate produced:\n\n--- pr-status.sh output ---\n${steps.pr_status.stdout}\n--- end ---\n\nUse `gh pr diff <pr_number>` and `git diff origin/main...HEAD` for the code. For each unresolved (and !outdated) review thread, either reply with citation evidence and resolve it via `sh .criteria/workflows/pr_review/scripts/resolve-thread.sh <thread_id>`, or leave it open and request changes.\n\nIf the diff meets the bar and all addressable threads are resolved: run `gh pr review <pr_number> --approve --body \"<short summary>\"` and emit RESULT: approve.\n\nIf code changes are required: emit a `### Required Changes` section in your final message and RESULT: changes_requested.\n\nDO NOT run `gh pr merge` — a deterministic shell step handles merge after your approval.\n\nEnd your final message with exactly one of:\nRESULT: approve\nRESULT: changes_requested\nRESULT: failure"
+    prompt = "Review the open PR for ${var.workstream_file}. The deterministic status gate produced:\n\n--- pr-status.sh output ---\n${steps.pr_status.stdout}\n--- end ---\n\nUse `gh pr diff <pr_number>` and `git diff origin/main...HEAD` for the code. For each unresolved (and !outdated) review thread, either reply with citation evidence and resolve it via `sh .criteria/workflows/pr_review/scripts/resolve-thread.sh <thread_id>`, or leave it open and request changes.\n\nIf the diff meets the bar and all addressable threads are resolved: post a recommendation comment via `gh pr comment <pr_number> --body \"<your summary>\"` summarizing what you verified and that you recommend approval. Then emit RESULT: approve. DO NOT run `gh pr review --approve` — branch protection forbids self-approval by the PR author; the workflow will pause for a human to click Approve on GitHub before merging.\n\nIf code changes are required: emit a `### Required Changes` section in your final message and RESULT: changes_requested.\n\nDO NOT run `gh pr merge` — a deterministic shell step handles merge after human approval.\n\nEnd your final message with exactly one of:\nRESULT: approve\nRESULT: changes_requested\nRESULT: failure"
   }
-  outcome "approve"           { next = "approve_and_merge" }
+  outcome "approve"           { next = "human_approval_required" }
   outcome "changes_requested" { next = "count_review_attempt" }
   outcome "failure"           { next = "failed" }
 }
 
-# ── Auto-merge — shell step, not agent ───────────────────────────────────────
+# ── Human-in-the-loop approval bridge ────────────────────────────────────────
+# Branch protection on the upstream repo requires a non-author reviewer to
+# approve. We bridge that by pausing here: the operator goes to GitHub, clicks
+# Approve on the PR, then approves this workflow node. The verify step below
+# confirms the GitHub side actually happened before merging.
+#
+# Requires `CRITERIA_LOCAL_APPROVAL=stdin` (interactive) or a running server.
+# Rejecting this approval routes to `escalated`.
+
+approval "human_approval_required" {
+  approvers = ["operator"]
+  reason    = "The pr_reviewer agent recommends approval and has posted its summary as a PR comment. GitHub branch protection requires approval from someone other than the PR author. To continue: (1) open the PR in GitHub, (2) review the agent's recommendation comment, (3) click `Approve` on the PR, (4) approve this workflow node. The next step verifies that GitHub's reviewDecision is APPROVED before merging — if you approve here without clicking Approve on GitHub, the merge step will fail cleanly and loop back."
+  outcome "approved" { next = "verify_github_approval" }
+  outcome "rejected" { next = "escalated" }
+}
+
+# Verify the human actually clicked Approve on GitHub before we merge.
+# If reviewDecision is anything other than APPROVED, route back to the human
+# approval gate rather than failing the run outright.
+
+step "verify_github_approval" {
+  target     = adapter.shell.gh
+  timeout    = "60s"
+  max_visits = 5
+  input {
+    command           = "set -euo pipefail; branch=$(git branch --show-current); pr_number=$(gh pr view \"$branch\" --json number --jq '.number'); review_decision=$(gh pr view \"$pr_number\" --json reviewDecision --jq '.reviewDecision // \"REVIEW_REQUIRED\"'); echo \"pr_number=$pr_number\"; echo \"review_decision=$review_decision\"; if [ \"$review_decision\" != \"APPROVED\" ]; then echo \"GitHub reviewDecision=$review_decision; expected APPROVED. Did you click Approve on the PR in GitHub before approving the workflow node?\" >&2; exit 1; fi; echo 'github_approval_confirmed=true'"
+    working_directory = var.project_dir
+  }
+  outcome "success" { next = "merge_pr" }
+  outcome "failure" { next = "human_approval_required" }
+}
+
+# ── Merge — shell step, not agent ────────────────────────────────────────────
 # Runs `gh pr merge` and verifies origin/main advanced. Auditable in event log.
 
-step "approve_and_merge" {
+step "merge_pr" {
   target  = adapter.shell.gh
   timeout = "300s"
   input {
-    command           = "set -euo pipefail; branch=$(git branch --show-current); pr_number=$(gh pr view \"$branch\" --json number --jq '.number'); review_decision=$(gh pr view \"$pr_number\" --json reviewDecision --jq '.reviewDecision'); if [ \"$review_decision\" != \"APPROVED\" ]; then echo \"reviewDecision=$review_decision expected APPROVED\" >&2; exit 1; fi; gh pr merge \"$pr_number\" --squash --delete-branch; git fetch origin main; if git show-ref --verify --quiet refs/remotes/origin/main; then echo 'merged_pr_number='\"$pr_number\"'; main_advanced=true'; else echo 'main_ref_missing' >&2; exit 1; fi"
+    command           = "set -euo pipefail; branch=$(git branch --show-current); pr_number=$(gh pr view \"$branch\" --json number --jq '.number'); gh pr merge \"$pr_number\" --squash --delete-branch; git fetch origin main; if git show-ref --verify --quiet refs/remotes/origin/main; then echo 'merged_pr_number='\"$pr_number\"'; main_advanced=true'; else echo 'main_ref_missing' >&2; exit 1; fi"
     working_directory = var.project_dir
   }
   outcome "success" { next = "approved_and_merged" }
