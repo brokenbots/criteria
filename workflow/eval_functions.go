@@ -32,13 +32,13 @@ const (
 // workflow expression functions.
 //
 //   - WorkflowDir is the directory of the HCL file being evaluated.
-//     file() and fileexists() resolve paths relative to this directory.
-//     When empty, file() and fileexists() always error with
+//     file(), fileexists(), and templatefile() resolve paths relative to
+//     this directory. When empty, these functions always error with
 //     "workflow directory not configured".
-//   - MaxBytes is the read cap for file(). Sourced from
+//   - MaxBytes is the read cap for file() and templatefile(). Sourced from
 //     CRITERIA_FILE_FUNC_MAX_BYTES; defaults to 1 MiB.
-//   - AllowedPaths is the list of directories that file() and fileexists()
-//     may access outside WorkflowDir. Sourced from
+//   - AllowedPaths is the list of directories that file(), fileexists(),
+//     and templatefile() may access outside WorkflowDir. Sourced from
 //     CRITERIA_WORKFLOW_ALLOWED_PATHS (OS path-list separator).
 type FunctionOptions struct {
 	WorkflowDir  string
@@ -54,8 +54,8 @@ type FunctionOptions struct {
 // this ensures path confinement checks work correctly regardless of CWD.
 //
 // Environment variables read:
-//   - CRITERIA_FILE_FUNC_MAX_BYTES: integer, clamped to [1024, 64 MiB].
-//   - CRITERIA_WORKFLOW_ALLOWED_PATHS: OS path-list-separated list of directories (filepath.SplitList).
+//   - CRITERIA_FILE_FUNC_MAX_BYTES: integer, clamped to [1024, 64 MiB]; applies to file() and templatefile().
+//   - CRITERIA_WORKFLOW_ALLOWED_PATHS: OS path-list-separated list of directories (filepath.SplitList); applies to file(), fileexists(), and templatefile().
 func DefaultFunctionOptions(workflowDir string) FunctionOptions {
 	if workflowDir != "" {
 		if abs, err := filepath.Abs(workflowDir); err == nil {

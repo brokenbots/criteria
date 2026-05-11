@@ -1075,7 +1075,7 @@ step "draft" {
 **Constraints:**
 - `vars` must be an object or map value. Primitives and lists are rejected with a descriptive error.
 - Missing keys in `vars` are a render-time error (`missingkey=error` is set). Use `{{ if .key }}{{ .key }}{{ end }}` for optional keys.
-- Null values in `vars` become `nil` in the template context and render as `<nil>` by default.
+- Null values in `vars` become `nil` in the template context and render as `<no value>` (Go `text/template`'s default for nil map entries).
 - Same path confinement and size-cap rules as [`file()`](#filePath).
 
 > **Differences from Terraform's `templatefile`:** Terraform's `templatefile` uses HCL native template syntax (`${field}`). Criteria's uses Go `text/template` syntax (`{{ .field }}`). This is intentional — `text/template` is in the Go stdlib and does not auto-escape output, which is desirable for LLM prompt content.
