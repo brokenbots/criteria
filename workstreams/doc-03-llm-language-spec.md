@@ -683,3 +683,44 @@ The test suite now proves the intended behavior. It covers check-mode drift dete
 - `make ci` — **PASS** (no binaries recreated by any CI step).
 - `ls spec-gen tools/spec-gen/spec-gen` — both absent after CI.
 - All prior validation results from remediation batch 5 remain valid (no code changes in this batch).
+
+### Remediation batch — PR #117 review thread responses (commit c40a15c)
+
+Four reviewer blockers on `tools/spec-gen/extract.go` addressed.
+
+#### Changes made
+
+**Issue 1 (line 377) — Required-ness signal missing:**
+- Added `hasRequiredAnnotation(doc *ast.CommentGroup) bool` to `extract.go`: scans all comment lines for `spec:required` and returns true if found.
+- `extractBlockFromStruct()` now calls `hasRequiredAnnotation` when the HCL tag is `optional`; overrides `Required=true` when annotation is present.
+- Annotated `WorkflowHeaderSpec.Version` and `WorkflowHeaderSpec.InitialState` in `workflow/schema.go` with `// spec:required` (these are compile-time-enforced by `workflow/compile.go` lines 80 and 83).
+- Updated LANGUAGE-SPEC.md line 62 prose to explain the two paths to `Required: yes`.
+- Test: `TestExtractBlocks_SpecRequiredAnnotation` in `tools/spec-gen/main_test.go`.
+
+**Issue 2 (line 372) — remain-captured attributes silently dropped:**
+- Added `RemainNote string` to `BlockDoc` struct.
+- Added `remainNoteText(field *ast.Field) string` to extract the doc or line comment from a `remain`-tagged field.
+- `extractBlockFromStruct()` case `"remain"` calls `remainNoteText` and stores result in `RemainNote`.
+- `renderBlocks()` emits `- **Additional attributes:** <note>` line when `RemainNote != ""`.
+- Updated `workflow/schema.go` `EnvironmentSpec.Remain` and `StepSpec.Remain` with spec-informative comments describing the captured attributes.
+- Updated `testdata/schema_sample.go` with a `// Captures:` doc comment on `WidgetSpec.Remain`.
+- Tests: `TestExtractBlocks_RemainNote`, `TestRenderBlocks_RemainNote_InOutput`.
+
+**Issue 3 (line 204) — brittle hard-coded `ctxVars` variable name:**
+- Changed `extractCtxVarKeys` signature from `[]string` to `([]string, bool)` where the bool signals whether `ctxVars` was found.
+- `extractNamespaces()` returns a descriptive error if `varFound == false`: `"BuildEvalContextWithOpts: variable 'ctxVars' not found in function body — has the symbol been renamed?"`.
+- Test: `TestExtractNamespaces_CtxVarsNotFound`.
+
+**Issue 4 (line 588) — Description column duplicates Signature:**
+- Dropped the Description column from `renderFunctions()` in `render.go` (now a 4-column table).
+- Updated `testdata/functions.golden.md` to match.
+- Test: `TestRenderFunctions_NoDescriptionColumn`.
+
+#### Validation results (remediation batch 7 — PR thread responses)
+
+- `go test ./tools/spec-gen/...` — **PASS** (all new tests pass, all existing tests pass).
+- `make spec-check` — **PASS**.
+- `make test` — **PASS** (full suite, all packages).
+- All 4 review threads replied to with commit SHA + file:line citations.
+- All 4 review threads resolved via GraphQL `resolveReviewThread`.
+
