@@ -334,3 +334,38 @@ Approved. The resubmission fixes the three prior blockers: Pattern 04 now uses `
 - `make validate` — passed.
 - `make spec-check` — passed.
 - `make ci` — passed.
+
+### Review 2026-05-11-03 — changes-requested
+
+#### Summary
+
+The pack still passes the requested validation commands, but this pass found leftover example fixtures that are no longer referenced by the shipped examples. Because this review bar does not allow dead files or stale artifacts, approval is blocked until the unused subworkflow copy under `examples/llm-pack/05-subworkflow/` and the unused prompt file under `examples/llm-pack/08-fileset-template/` are removed or made canonical. I did not find a separate security blocker in this pass.
+
+#### Plan Adherence
+
+- The authored docs, mirror tests, validate target, and single `docs/LANGUAGE-SPEC.md` cross-link still match the workstream scope, and the required validation commands remain green.
+- **`examples/llm-pack/05-subworkflow/` contains stale fixture drift.** The canonical example points `source = "./child"` in both `docs/llm/05-subworkflow.md:21` and `examples/llm-pack/05-subworkflow/main.hcl:10`, but the tree still includes `examples/llm-pack/05-subworkflow/subworkflows/process_one/main.hcl`, an unreferenced alternate child workflow.
+- **`examples/llm-pack/08-fileset-template/` contains an unused prompt fixture.** The canonical example enumerates only `./prompts/alpha.md` and `./prompts/beta.md` in both `docs/llm/08-fileset-template.md:25` and `examples/llm-pack/08-fileset-template/main.hcl:13`, but `examples/llm-pack/08-fileset-template/prompts/hello.md` remains in the tree and is not referenced by the example or the workstream notes.
+
+#### Required Remediations
+
+- **Blocker — remove the stale alternate subworkflow fixture.** Files: `examples/llm-pack/05-subworkflow/main.hcl:10`, `examples/llm-pack/05-subworkflow/child/main.hcl:1-32`, `examples/llm-pack/05-subworkflow/subworkflows/process_one/main.hcl:1-39`. Rationale: the current example declares `./child` as the canonical source, so the second child workflow copy is dead repo content and creates ambiguity about which artifact is part of the supported example. **Acceptance:** keep exactly one canonical child workflow implementation for Pattern 05, delete the obsolete alternate file/tree, and keep `make validate` green.
+- **Blocker — remove the unused prompt fixture.** Files: `examples/llm-pack/08-fileset-template/main.hcl:13`, `examples/llm-pack/08-fileset-template/prompts/alpha.md:1`, `examples/llm-pack/08-fileset-template/prompts/beta.md:1`, `examples/llm-pack/08-fileset-template/prompts/hello.md:1`. Rationale: the example teaches a two-file enumeration, so the third unreferenced prompt file is dead fixture data that can mislead readers about the canonical minimal shape. **Acceptance:** either delete `prompts/hello.md` or update the documented/example `for_each` list to make it part of the canonical example, then keep the docs/example mirror and validation commands green.
+
+#### Test Intent Assessment
+
+- The current llmpack test suite is still strong at locking the markdown pack itself: exact file set, structure, word budgets, and doc/HCL drift all fail on realistic regressions.
+- The gap exposed by this pass is outside that contract surface: validation compiles the example directories, but it does not flag stale nested fixtures that are no longer referenced by the canonical examples. The executor does not need a new broad test tool for this review, but the example trees themselves must be pruned back to the canonical artifacts.
+
+#### Validation Performed
+
+- `go test ./tools/llmpack-check/...` — passed.
+- `make validate` — passed.
+- `make spec-check` — passed.
+- `make ci` — passed.
+
+**Executor remediation (2026-05-11-03):**
+
+- **Stale subworkflow fixture removed:** Deleted `examples/llm-pack/05-subworkflow/subworkflows/` tree entirely. Only the canonical `examples/llm-pack/05-subworkflow/child/main.hcl` child remains, matching the `source = "./child"` reference in both the doc and mirrored HCL.
+- **Unused prompt fixture removed:** Deleted `examples/llm-pack/08-fileset-template/prompts/hello.md`. The directory now contains exactly `prompts/alpha.md` and `prompts/beta.md`, matching the two-file enumeration in the canonical example.
+- **Validation after cleanup:** `go test ./tools/llmpack-check/...` PASS, `make validate` PASS (all 8 llm-pack examples), `make spec-check` OK.
