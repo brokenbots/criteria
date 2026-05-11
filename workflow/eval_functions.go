@@ -202,7 +202,7 @@ func renderTemplateFile(opts FunctionOptions, raw string, varsVal cty.Value) (ct
 	}
 	info, err := os.Stat(resolved)
 	if err != nil {
-		return cty.StringVal(""), mapOSErrorWithFuncName(raw, err, "templatefile()")
+		return cty.StringVal(""), rewriteFuncName(mapOSError(raw, err), "file()", "templatefile()")
 	}
 	if info.Size() > opts.MaxBytes {
 		return cty.StringVal(""), fmt.Errorf(
@@ -211,7 +211,7 @@ func renderTemplateFile(opts FunctionOptions, raw string, varsVal cty.Value) (ct
 	}
 	data, err := os.ReadFile(resolved)
 	if err != nil {
-		return cty.StringVal(""), mapOSErrorWithFuncName(raw, err, "templatefile()")
+		return cty.StringVal(""), rewriteFuncName(mapOSError(raw, err), "file()", "templatefile()")
 	}
 	if !utf8.Valid(data) {
 		offset := invalidUTF8Offset(data)
@@ -434,11 +434,6 @@ func rewriteFuncName(err error, from, to string) error {
 		return fmt.Errorf("%s%s", to, strings.TrimPrefix(msg, from))
 	}
 	return err
-}
-
-// mapOSErrorWithFuncName is like mapOSError but with a custom function-name prefix.
-func mapOSErrorWithFuncName(raw string, err error, funcName string) error {
-	return rewriteFuncName(mapOSError(raw, err), "file()", funcName)
 }
 
 // evalSymlinksOrSelf resolves dir through symlinks. If EvalSymlinks fails

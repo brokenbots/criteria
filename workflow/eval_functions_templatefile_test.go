@@ -148,7 +148,7 @@ func TestTemplatefile_NumberInt(t *testing.T) {
 }
 
 // Test 7: null attribute value renders as "<no value>" (Go text/template default for nil map entry).
-func TestTemplatefile_NullValueRendersAsNil(t *testing.T) {
+func TestTemplatefile_NullValueRendersAsNoValue(t *testing.T) {
 	dir := t.TempDir()
 	writeTmpl(t, dir, "null.tmpl", "got: {{ .x }}")
 	vars := cty.ObjectVal(map[string]cty.Value{"x": cty.NullVal(cty.String)})
@@ -214,15 +214,27 @@ func TestTemplatefile_NullVarsArg_ReturnsError(t *testing.T) {
 // Test 11: passing a primitive instead of an object/map returns an error.
 func TestTemplatefile_PrimitiveVarsArg_ReturnsError(t *testing.T) {
 	dir := t.TempDir()
-	_, err := templatefileFunction(tmplOpts(dir)).Call([]cty.Value{
-		cty.StringVal("x.tmpl"),
-		cty.StringVal("not a map"),
-	})
-	if err == nil {
-		t.Fatal("expected error for primitive vars; got none")
+	cases := []struct {
+		name string
+		val  cty.Value
+	}{
+		{"string", cty.StringVal("not a map")},
+		{"list", cty.ListVal([]cty.Value{cty.StringVal("a")})},
+		{"tuple", cty.TupleVal([]cty.Value{cty.StringVal("a"), cty.NumberIntVal(1)})},
 	}
-	if !strings.Contains(err.Error(), "object or map") {
-		t.Errorf("error %q should mention 'object or map'", err.Error())
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := templatefileFunction(tmplOpts(dir)).Call([]cty.Value{
+				cty.StringVal("x.tmpl"),
+				tc.val,
+			})
+			if err == nil {
+				t.Fatalf("expected error for %s vars; got none", tc.name)
+			}
+			if !strings.Contains(err.Error(), "object or map") {
+				t.Errorf("error %q should mention 'object or map'", err.Error())
+			}
+		})
 	}
 }
 
