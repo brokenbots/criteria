@@ -66,7 +66,9 @@ func testAckOrderingSequential(t *testing.T, s Subject) { //nolint:funlen // W03
 			t.Fatalf("Send[%d]: %v", i, err)
 		}
 	}
-	_ = stream.CloseRequest()
+	if err := stream.CloseRequest(); err != nil {
+		t.Logf("CloseRequest: %v", err)
+	}
 
 	var acks []*pb.Ack
 	for {
@@ -134,7 +136,9 @@ func testAckIdempotentDuplicate(t *testing.T, s Subject) { //nolint:funlen // W0
 		if err != nil {
 			t.Fatalf("Receive: %v", err)
 		}
-		_ = stream.CloseRequest()
+		if err := stream.CloseRequest(); err != nil {
+			t.Logf("CloseRequest: %v", err)
+		}
 		for {
 			if _, recvErr := stream.Receive(); recvErr != nil {
 				break
@@ -235,8 +239,12 @@ func testAckConcurrentStreams(t *testing.T, s Subject) { //nolint:funlen // W03:
 		sendReceive(streamB, "B", i)
 	}
 
-	_ = streamA.CloseRequest()
-	_ = streamB.CloseRequest()
+	if err := streamA.CloseRequest(); err != nil {
+		t.Logf("streamA CloseRequest: %v", err)
+	}
+	if err := streamB.CloseRequest(); err != nil {
+		t.Logf("streamB CloseRequest: %v", err)
+	}
 
 	total := nPerStream * 2
 	if len(seqs) != total {
