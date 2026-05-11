@@ -464,16 +464,16 @@ This workstream may **not** edit:
 
 ## Tasks
 
-- [ ] Define the new line format (Step 1).
-- [ ] Implement `tool_emoji.go` with category table (Step 2).
-- [ ] Extend `consoleStepSink` with `prefix` and rework rendering (Step 3).
-- [ ] Update step header line (Step 4).
-- [ ] Update step outcome line (Step 5).
-- [ ] Audit other On* methods and apply prefix where step-scoped (Step 6).
-- [ ] Add 27 unit tests across two test files (Step 7).
-- [ ] Capture pre/post output samples in reviewer notes (Step 8).
-- [ ] Update any existing golden-format tests to the new format.
-- [ ] Validation including manual visual inspection (Step 9).
+- [x] Define the new line format (Step 1).
+- [x] Implement `tool_emoji.go` with category table (Step 2).
+- [x] Extend `consoleStepSink` with `prefix` and rework rendering (Step 3).
+- [x] Update step header line (Step 4).
+- [x] Update step outcome line (Step 5).
+- [x] Audit other On* methods and apply prefix where step-scoped (Step 6).
+- [x] Add 27 unit tests across two test files (Step 7).
+- [x] Capture pre/post output samples in reviewer notes (Step 8).
+- [x] Update any existing golden-format tests to the new format.
+- [x] Validation including manual visual inspection (Step 9).
 
 ## Exit criteria
 
@@ -510,3 +510,223 @@ Specifically:
 | Tool name with no recognised category but containing whitespace breaks the substring match | Substring matching tolerates whitespace; the test case `"weird_thing"` covers. The `" sh "`-with-spaces edge case is the deliberate guard against false positives. |
 | Long tool names overflow the truncation in unhelpful ways (e.g. emoji + name + truncated args) | Truncation always preserves the prefix and emoji; the body truncates from the right. Test #15 covers. |
 | Future engine changes change the order of `OnStepEntered` and the first adapter event arriving for the same step | The defensive empty-prefix path (Test #11) handles the case. No crash, just a missing prefix on the early event. |
+
+## Reviewer Notes
+
+### Implementation summary
+
+**Option B chosen (stable Sink interface):** `ConsoleSink` gains a `Graph *workflow.FSMGraph` field and `adapterByStep map[string]struct{refName, kind string}`. The `NewConsoleSink` signature adds a `*workflow.FSMGraph` parameter (nil-safe). No `engine.Sink` interface changes.
+
+**Files created:**
+- `internal/run/tool_emoji.go` — emoji categoriser (`toolEmoji(string) string`), 5 categories + fallback `→`.
+- `internal/run/tool_emoji_test.go` — 11 tests covering all 27 workstream-specified cases #17–27.
+- `internal/run/console_sink_perline_test.go` — 16 tests covering workstream cases #1–16; uses `minimalGraph()` helper to build `*workflow.FSMGraph` test fixtures directly (no parser dependency).
+
+**Files modified:**
+- `internal/run/console_sink.go` — added `Graph`, `adapterByStep` fields; new helpers `buildLinePrefix`, `adapterFor`, `resolveAdapter`, `adapterLifecycleTag`; updated `OnStepEntered`, `OnStepOutcome`, `OnStepResumed`, `OnStepOutputCaptured`, `OnForEachEntered`, `OnStepIterationStarted`, `OnStepIterationCompleted`, `OnStepIterationItem`, `StepEventSink`, `consoleStepSink`, `renderAgentMessage`, `renderToolInvocation`, permission/limit handlers.
+- `internal/cli/apply_output.go` — `buildLocalSink` signature adds `graph *workflow.FSMGraph`; passes to `NewConsoleSink`.
+- `internal/cli/apply_local.go` — 3 `buildLocalSink` call sites updated to pass `graph`.
+- `internal/cli/apply_output_test.go` — 2 test call sites updated to pass `nil`.
+- `internal/run/console_sink_test.go` — all 10 existing tests updated: `NewConsoleSink` calls pass `nil`; assertions updated to new prefix format, `▶` header, emoji for bash tools.
+
+### Workstream doc note — adapter display order (CORRECTED)
+
+The initial implementation had `type(name)` order (e.g. `shell(compile)`). Per the reviewer, the correct format is `name(type)` — the adapter instance ref-name first, the parenthesized type second (e.g. `compile(shell)`, `default(shell)`). The implementation notes in the first submission incorrectly claimed the spec examples used type(name); the reviewer's interpretation of the spec is authoritative. Fixed in second submission.
+
+### idxByStep is already 1-based
+
+The workstream spec uses `idx+1` in the format-string snippet (Step 3), but `NewConsoleSink` already stores `idxByStep[s] = i+1` (1-based). The implementation uses `idx` directly from the map to avoid double-incrementing. Test #12 confirms the header shows `[1/N ...]` for the first step.
+
+### Pre-feat-05 output (from `main` before this workstream)
+
+```
+[2/7] build_step  (shell)
+  agent: Starting build...
+  → npm run build
+  → read package.json
+  ✓ success in 1.2s
+```
+
+### Post-feat-05 output (`examples/hello` with this workstream)
+
+```
+▶ hello  steps=1
+▶ [1/1 say_hello · default(shell)]
+[1/1 say_hello · default(shell)] ✓ success in 1ms  [adapter: started → exited]
+[1/1 say_hello · default(shell)] · outputs: stdout, stderr, exit_code
+  → done
+  output greeting (string) = "Execution complete"
+✔ run completed in 2ms
+```
+
+(Prefix is dim-colored on a real TTY; shown here without ANSI for readability.)
+
+### Post-feat-05 output (`examples/plugins/greeter` end-to-end)
+
+```
+▶ greeter_example  steps=1
+▶ [1/1 greet · default(greeter)]
+[1/1 greet · default(greeter)] ✓ success in 307µs  [adapter: started → exited]
+[1/1 greet · default(greeter)] · outputs: greeting
+  → done
+✔ run completed in 477µs
+```
+
+### JSON mode — byte-for-byte assertion
+
+Test #16 (`TestConsoleSink_PerLineFormat_JsonModeUnchanged`) asserts exact byte-for-byte ND-JSON output for a fixed deterministic event sequence (fixed RunID `"run-json-1"`, fixed duration `100ms`, no wall-clock fields). Any change to LocalSink payload structure or field encoding will fail this test.
+
+### Validation (second submission)
+
+```
+go test -race -count=2  ./internal/run/...      → ok (27+3 new tests pass: added OkIsSuccess, OutcomeDefaulted, OutcomeUnknown)
+go test -race -count=20 ./internal/run/ -run PerLineFormat → ok
+make lint-imports                               → Import boundaries OK
+make ci                                         → exit 0 (all packages green)
+```
+
+No new `//nolint` directives. No baseline cap change. No proto/SDK changes.
+
+### Review 2026-05-11 — changes-requested
+
+#### Summary
+
+`make ci` is green, but the implementation does not meet the workstream contract yet. The rendered prefix uses `type(name)` instead of the specified `name(type)`, step outcome rendering still treats only `"success"` as a success path, some step-scoped warning/error lines are still unprefixed, and the JSON regression test does not prove the required byte-identical contract.
+
+#### Plan Adherence
+
+- **Steps 2-3:** largely implemented. Tool emoji mapping, per-line agent/tool rendering, and graph-backed adapter lookup are in place.
+- **Step 4:** not accepted. The header and per-line prefix render `shell(default)` / `greeter(default)` instead of the specified `default(shell)` / `default(greeter)`.
+- **Step 5:** not accepted. The implementation still renders only `outcome == "success"` as a success line; the workstream explicitly called for `"success"` and `"ok"`.
+- **Step 6:** not accepted. `OnStepOutcomeDefaulted` and `OnStepOutcomeUnknown` are step-scoped lines and still use the old unprefixed format.
+- **Step 7:** incomplete. Existing tests encode the reversed adapter order, do not cover the `"ok"` outcome success path, do not cover the defaulted/unknown outcome warning lines, and Test #16 does not lock in byte-identical JSON output.
+- **Step 8:** incomplete. The executor notes document and justify the reversed adapter order instead of matching the workstream contract, and the JSON note overstates what the current test proves.
+
+#### Required Remediations
+
+- **Blocker — `internal/run/console_sink.go:105-125`, `internal/run/console_sink.go:351-396`, `internal/run/console_sink_perline_test.go:26-257`, `workstreams/feat-05-per-line-console-output.md:532-577`**  
+  The adapter label order is reversed. The workstream defines the prefix as `[I/N step · ADAPTER(TYPE)]`, where `ADAPTER` is the adapter ref/name and `TYPE` is the parenthesized adapter type. Current code and tests render `type(name)` and the implementation notes claim the spec is inverted.  
+  **Acceptance criteria:** render `default(shell)` for `adapter "shell" "default"` and equivalent `name(type)` formatting everywhere (header, agent lines, tool lines, outcome lines); update the tests to assert that shape; correct the workstream notes so they no longer contradict the spec.
+
+- **Blocker — `internal/run/console_sink.go:128-147`**  
+  `OnStepOutcome` still marks only `"success"` as successful. The workstream explicitly requires `"success"` and `"ok"` to take the green-check success path when `err == nil`.  
+  **Acceptance criteria:** `OnStepOutcome(..., "ok", ..., nil)` renders as a success line with the prefixed green check, and a regression test proves it.
+
+- **Blocker — `internal/run/console_sink.go:266-275`**  
+  `OnStepOutcomeDefaulted` and `OnStepOutcomeUnknown` remain unprefixed despite the exit criterion that every step-scoped concise-mode line carries the new `[I/N step · adapter(type)]` prefix.  
+  **Acceptance criteria:** both lines use `buildLinePrefix(step)` and dedicated tests cover both paths.
+
+- **Blocker — `internal/run/console_sink_perline_test.go:280-311`, `workstreams/feat-05-per-line-console-output.md:575-577`**  
+  The JSON regression check is too weak for the stated contract. Test #16 currently proves only “still JSON, no concise prefix/emoji,” not “byte-identical to pre-feat-05.” The reviewer note makes the stronger claim without evidence.  
+  **Acceptance criteria:** replace Test #16 with a deterministic byte-for-byte assertion for the JSON-mode output of a fixed event sequence or fixed `runApply` path, so that changes in payload content/order/line count fail the test; update the notes to reflect the actual evidence.
+
+#### Test Intent Assessment
+
+- The new per-line tests do exercise the main rendering path, multiline agent output, color/no-color behavior, emoji priority, and truncation.
+- The current suite is not strong enough on the load-bearing edges:
+  - it bakes in the wrong adapter label order,
+  - it omits the `"ok"` success-path behavior from Step 5,
+  - it omits the step-scoped defaulted/unknown outcome lines,
+  - and it does not make a byte-for-byte JSON contract regression possible.
+
+#### Validation Performed
+
+- `make build` → passed
+- `go test -race -count=2 ./internal/run/...` → passed
+- `go test -race -count=20 ./internal/run/ -run PerLineFormat` → passed
+- `make lint-imports` → passed
+- `make ci` → passed
+- `go run ./cmd/criteria apply examples/hello --output=concise` → rendered `shell(default)`, which confirms the current adapter order mismatch
+- `go run ./cmd/criteria apply examples/hello --output=json` → remained JSON output, but this manual check does not replace the missing byte-identical regression test
+
+### Review 2026-05-11-02 — changes-requested
+
+#### Summary
+
+The substantive blockers from the prior pass are resolved: runtime output now renders `name(type)`, the `"ok"` outcome takes the success path, step-scoped outcome warning lines are prefixed, and the JSON regression test is now byte-for-byte deterministic. I am still holding approval for one cleanup nit: two nearby comments in `internal/run/console_sink.go` still describe the old `type/name` semantics and now contradict the implementation.
+
+#### Plan Adherence
+
+- **Steps 1-6:** accepted. The concise output now renders `[I/N step · ADAPTER(TYPE)]` with `default(shell)` / `compile(shell)` style prefixes, including the previously-missing step-scoped warning lines.
+- **Step 7:** accepted on behavior. The added tests cover the `"ok"` success path, `OnStepOutcomeDefaulted`, `OnStepOutcomeUnknown`, and a byte-for-byte JSON assertion.
+- **Step 8:** accepted. The reviewer-note prose now reflects the corrected `name(type)` interpretation and documents the stronger JSON assertion.
+- **Step 9:** accepted. The claimed validation matches what I reproduced.
+
+#### Required Remediations
+
+- **Nit — `internal/run/console_sink.go:37-39`, `internal/run/console_sink.go:372-373`**  
+  The comments around `adapterByStep` and `adapterFor` still describe `refName` as the adapter type and `kind` as the instance name, but the implementation was correctly flipped to `refName=name`, `kind=type`. This is now misleading local documentation in the exact area that was fixed.  
+  **Acceptance criteria:** update those comments so they accurately describe the current `name(type)` semantics and no longer refer to the old ordering.
+
+#### Test Intent Assessment
+
+- The test intent is now strong enough for the changed behavior. The new assertions would fail on the prior reversed adapter order, would fail if `"ok"` regressed to the error path, would fail if the defaulted/unknown warning lines lost their prefixes again, and would fail if the fixed JSON event sequence changed byte-for-byte.
+
+#### Validation Performed
+
+- `go test -race -count=2 ./internal/run/...` → passed
+- `go test -race -count=20 ./internal/run/ -run PerLineFormat` → passed
+- `make lint-imports` → passed
+- `make ci` → passed
+- `go run ./cmd/criteria apply examples/hello --output=concise` → rendered `default(shell)` as required
+
+### Review 2026-05-11-03 — approved
+
+#### Summary
+
+Approved. The final submission clears the last remaining nit from the previous pass: the `adapterByStep` and `adapterFor` comments in `internal/run/console_sink.go` now match the implemented `name(type)` semantics. The earlier functional fixes remain intact, and the workstream now meets the acceptance bar.
+
+#### Plan Adherence
+
+- **Steps 1-9:** accepted. The concise output format, step-scoped prefixing, emoji mapping, success-path handling, warning rendering, regression coverage, and reviewer-note documentation all align with the workstream requirements.
+
+#### Validation Performed
+
+- `git diff HEAD~1..HEAD -- internal/run/console_sink.go` → confirmed the final delta is limited to the stale comment corrections
+- `go test ./internal/run/...` → passed
+
+### Post-approval remediation 2026-05-11 (PR review blockers)
+
+Three blockers raised by reviewer `handcaught` on the merged PR — all fixed before merge.
+
+#### Blocker 1 — `OnStepResumed` renders `?(?)` on the resume path (apply_local.go:208)
+
+**Root cause:** `adapterFor` returned `("", "")` on cache miss, so `buildLinePrefix` rendered `?(?)`
+whenever `OnStepResumed` fired before `OnStepEntered` (the `criteria apply --resume` reattach path).
+
+**Fix:** `adapterFor` in `internal/run/console_sink.go` now falls back to `resolveAdapter(step, "")`
+when the `adapterByStep` cache is cold, mirroring the Graph-lookup path used by `OnStepEntered`.
+
+**Test added:** `TestConsoleSink_PerLineFormat_StepResumed_ColdCache` in
+`internal/run/console_sink_perline_test.go` — calls `OnStepResumed` without a prior `OnStepEntered`,
+asserts the prefix renders `[1/1 build · compile(shell)]` and does NOT contain `?(?)`.
+
+#### Blocker 2 — `"run"` is an unguarded substring match in `tool_emoji.go:50`
+
+**Root cause:** `strings.Contains(n, "run")` fired on `return_value`, `get_current_run`,
+`run_query`, `prerun_check`, and any tool name containing the substring "run" — contradicting the
+false-positive-aware design philosophy of the adjacent `" sh "` keyword.
+
+**Fix:** Changed `"run"` → `" run "` (space-guarded) in `emojiCategories`, and changed the `toolEmoji`
+function to pad the input: `n := " " + strings.ToLower(toolName) + " "`. This makes all space-guarded
+keywords do full word-boundary matching: `"run"` → ⚡, but `"return_value"`, `"get_current_run"`,
+`"run_query"`, `"prerun_check"` → fallback →.
+
+The same padding also makes `" sh "` correctly handle `"sh "` (tool name starting with "sh" plus trailing
+space — Workstream Test #19), since `" sh  "` (padded) contains `" sh "`.
+
+**Tests added:** `TestToolEmoji_FalsePositive_RunSubstring` and `TestToolEmoji_Run` in
+`internal/run/tool_emoji_test.go`.
+
+#### Blocker 3 — `TestToolEmoji_ShellExec` masked a spec violation for `"sh "` input
+
+**Root cause:** The test used `"run sh cmd"` (spaces on both sides of `sh`) instead of the
+spec-mandated `"sh "` input from Workstream Test #19. With the original `n := strings.ToLower(toolName)`
+approach, `"sh "` did not match `" sh "` (no leading space), so the test silently substituted a
+different input that happened to work.
+
+**Fix:** Updated `TestToolEmoji_ShellExec` to include `"sh "` in the cases slice (fixes the spec
+gap) and retained `"run sh cmd"` as an additional documented case. The input-padding fix in Blocker 2
+makes `"sh "` match correctly.
+
+**Validation:** `go test -race -count=1 ./internal/run/...` → ok (all tests pass including new ones).

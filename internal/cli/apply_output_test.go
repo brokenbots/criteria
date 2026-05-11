@@ -87,7 +87,7 @@ func TestOpenNDJSONWriter_PrecedenceRules(t *testing.T) {
 
 func TestBuildLocalSink_ConciseModeReturnsMultiSink(t *testing.T) {
 	// concise mode must produce a MultiSink (LocalSink + ConsoleSink) not bare LocalSink.
-	sink := buildLocalSink("run-1", io.Discard, outputModeConcise, []string{"step-a"}, nil)
+	sink := buildLocalSink("run-1", io.Discard, outputModeConcise, []string{"step-a"}, nil, nil)
 	if sink == nil {
 		t.Fatal("expected non-nil sink")
 	}
@@ -98,7 +98,7 @@ func TestBuildLocalSink_ConciseModeReturnsMultiSink(t *testing.T) {
 
 func TestBuildLocalSink_JSONModeReturnsLocalSink(t *testing.T) {
 	var buf bytes.Buffer
-	sink := buildLocalSink("run-2", &buf, outputModeJSON, []string{"step-b"}, nil)
+	sink := buildLocalSink("run-2", &buf, outputModeJSON, []string{"step-b"}, nil, nil)
 	if sink == nil {
 		t.Fatal("expected non-nil sink")
 	}
