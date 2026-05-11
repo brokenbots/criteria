@@ -414,15 +414,15 @@ This workstream may **not** edit:
 
 ## Tasks
 
-- [ ] Register `templatefile` in `workflowFunctions` (Step 1).
-- [ ] Implement `templatefileFunction` and helpers (Step 1).
-- [ ] Implement `ctyToGoMap` and `ctyToGoValue` (Step 2).
-- [ ] Update package doc-comment (Step 3).
-- [ ] Add 20 unit tests (Step 4).
-- [ ] Add example workflow and wire into `make validate` (Step 5).
-- [ ] Update `docs/workflow.md` (Step 6).
-- [ ] Re-run `make spec-gen` if doc-03 has landed (Step 6).
-- [ ] Validation (Step 7).
+- [x] Register `templatefile` in `workflowFunctions` (Step 1).
+- [x] Implement `templatefileFunction` and helpers (Step 1).
+- [x] Implement `ctyToGoMap` and `ctyToGoValue` (Step 2).
+- [x] Update package doc-comment (Step 3).
+- [x] Add 20 unit tests (Step 4).
+- [x] Add example workflow and wire into `make validate` (Step 5).
+- [x] Update `docs/workflow.md` (Step 6).
+- [x] Re-run `make spec-gen` (doc-03 has landed) (Step 6).
+- [x] Validation (Step 7) — `make ci` exits 0.
 
 ## Exit criteria
 
@@ -450,3 +450,21 @@ The Step 4 list. Coverage of `templatefileFunction` ≥ 90%; coverage of `ctyToG
 | Templates with non-trivial logic (`range`, `if`) become hard to debug | Errors include the file path and Go template's line number context. Sufficient for the v1 surface. |
 | The `rewriteFuncName` hack is ugly and fragile | If `mapOSError` already accepts a function-name parameter (read it first), drop the hack. Otherwise, the alternative is to extend `mapOSError` itself, which is out-of-scope refactoring; the hack is the bounded choice. |
 | `examples/templatefile/` doesn't actually run end-to-end because shell adapter doesn't echo back the input | `criteria validate` only compiles, it does not run. The example proves the syntax compiles; runtime correctness is unit-tested in Step 4. |
+
+## Implementation Notes (Reviewer)
+
+**Deviations from spec:**
+- Test 7 (`TestTemplatefile_NullValueRendersAsEmpty`): The workstream spec said null renders as `"<nil>"`. The actual Go `text/template` behavior for a nil interface map entry is `"<no value>"`. Test and doc-comment updated accordingly; this is the correct behavior per Go stdlib.
+- `templatefileFunction` was refactored to delegate to `renderTemplateFile()` helper to satisfy the linter's gocognit threshold of 20 (the closure alone scored 21 due to nesting). No behavior change.
+- Example `main.hcl` uses `type = "string"` (quoted) per Criteria HCL requirements; the spec showed bare `type = string` which would fail validation.
+
+**Golden files generated:**
+- `internal/cli/testdata/plan/templatefile__examples__templatefile.golden`
+- `internal/cli/testdata/compile/templatefile__examples__templatefile.json.golden`
+- `internal/cli/testdata/compile/templatefile__examples__templatefile.dot.golden`
+
+These are auto-discovered by `TestPlanGolden`/`TestCompileGolden` and were generated with `-args -update`.
+
+**Validation summary:**
+- `go test -race -count=20 -run Templatefile ./workflow/...` — PASS (all 20 tests)
+- `make ci` — exits 0, all packages pass, lint clean, spec-check OK, all examples validate

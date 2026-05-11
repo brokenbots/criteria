@@ -1054,6 +1054,32 @@ input {
 }
 ```
 
+#### `templatefile(path, vars)`
+
+Reads the file at `path` (same path confinement and `CRITERIA_FILE_FUNC_MAX_BYTES` size cap as `file()`), then renders it as a Go [`text/template`](https://pkg.go.dev/text/template) template with `vars` as the data context. Returns the rendered string.
+
+```hcl
+step "draft" {
+  target = adapter.copilot.editor
+  input {
+    prompt = templatefile("prompts/draft.tmpl", {
+      topic   = var.topic
+      example = steps.outline.summary
+    })
+  }
+}
+```
+
+**Template syntax:** `{{ .fieldName }}`, `{{ range .list }}`, `{{ if .flag }}`, etc. — standard Go `text/template` syntax.
+
+**Constraints:**
+- `vars` must be an object or map value. Primitives and lists are rejected with a descriptive error.
+- Missing keys in `vars` are a render-time error (`missingkey=error` is set). Use `{{ if .key }}{{ .key }}{{ end }}` for optional keys.
+- Null values in `vars` become `nil` in the template context and render as `<nil>` by default.
+- Same path confinement and size-cap rules as [`file()`](#filePath).
+
+> **Differences from Terraform's `templatefile`:** Terraform's `templatefile` uses HCL native template syntax (`${field}`). Criteria's uses Go `text/template` syntax (`{{ .field }}`). This is intentional — `text/template` is in the Go stdlib and does not auto-escape output, which is desirable for LLM prompt content.
+
 #### `trimfrontmatter(content)`
 
 Strips a YAML frontmatter block from `content` and returns the remainder. If no frontmatter is present, or the closing `---` delimiter does not appear within the first 64 KiB, the input is returned unchanged.
@@ -1082,8 +1108,8 @@ The `examples/file_function.hcl` workflow demonstrates this pattern end-to-end.
 
 | Variable | Effect |
 |---|---|
-| `CRITERIA_FILE_FUNC_MAX_BYTES` | Integer; maximum bytes `file()` will read. Default 1 MiB. Clamped to [1024, 67108864]. |
-| `CRITERIA_WORKFLOW_ALLOWED_PATHS` | Colon-separated list of directories `file()` and `fileexists()` may access outside the workflow directory. |
+| `CRITERIA_FILE_FUNC_MAX_BYTES` | Integer; maximum bytes `file()` and `templatefile()` will read. Default 1 MiB. Clamped to [1024, 67108864]. |
+| `CRITERIA_WORKFLOW_ALLOWED_PATHS` | Colon-separated list of directories `file()`, `fileexists()`, and `templatefile()` may access outside the workflow directory. |
 
 ---
 
