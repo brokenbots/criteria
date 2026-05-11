@@ -17,13 +17,21 @@
 #   make self
 #
 # Or directly:
+#   CRITERIA_LOCAL_APPROVAL=stdin \
 #   CRITERIA_WORKFLOW_ALLOWED_PATHS=.criteria/workflows \
 #     ./bin/criteria apply .criteria/workflows/bootstrap \
 #       --var workstream_file=workstreams/td-01-lint-baseline-ratchet.md \
 #       --var project_dir=$(pwd)
 #
-# For fully unattended runs (no operator prompts at max-retries gates):
-#   CRITERIA_LOCAL_APPROVAL=auto-approve make self
+# Approval nodes that pause for the operator (CRITERIA_LOCAL_APPROVAL=stdin):
+#   • develop/request_user_assist     — fires at max_retries in the dev loop
+#   • pr_review/human_approval_required — fires before merge; operator must
+#     click Approve on the PR in GitHub (branch protection forbids self-
+#     approval by the PR author), then approve the workflow node to continue.
+#
+# CRITERIA_LOCAL_APPROVAL=auto-approve will auto-approve ALL gates including
+# the human-PR-approval bridge — DO NOT USE unless you have a CI bot account
+# with bypass-actors on the branch protection rule.
 
 workflow "bootstrap" {
   version       = "1"
