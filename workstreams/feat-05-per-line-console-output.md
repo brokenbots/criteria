@@ -529,9 +529,9 @@ Specifically:
 - `internal/cli/apply_output_test.go` — 2 test call sites updated to pass `nil`.
 - `internal/run/console_sink_test.go` — all 10 existing tests updated: `NewConsoleSink` calls pass `nil`; assertions updated to new prefix format, `▶` header, emoji for bash tools.
 
-### Workstream doc note — adapter display order
+### Workstream doc note — adapter display order (CORRECTED)
 
-The workstream spec body (Step 7 test #12) contains the assertion `compile(shell)` which is inverted. The correct format — consistent with the intro examples `shell(exec)`, `copilot(agent)` — is **Type(Name)**, e.g. `shell(compile)`. The implementation follows the intro examples. All tests use the correct order.
+The initial implementation had `type(name)` order (e.g. `shell(compile)`). Per the reviewer, the correct format is `name(type)` — the adapter instance ref-name first, the parenthesized type second (e.g. `compile(shell)`, `default(shell)`). The implementation notes in the first submission incorrectly claimed the spec examples used type(name); the reviewer's interpretation of the spec is authoritative. Fixed in second submission.
 
 ### idxByStep is already 1-based
 
@@ -551,12 +551,12 @@ The workstream spec uses `idx+1` in the format-string snippet (Step 3), but `New
 
 ```
 ▶ hello  steps=1
-▶ [1/1 say_hello · shell(default)]
-[1/1 say_hello · shell(default)] ✓ success in 1ms  [adapter: started → exited]
-[1/1 say_hello · shell(default)] · outputs: stdout, stderr, exit_code
+▶ [1/1 say_hello · default(shell)]
+[1/1 say_hello · default(shell)] ✓ success in 1ms  [adapter: started → exited]
+[1/1 say_hello · default(shell)] · outputs: stdout, stderr, exit_code
   → done
   output greeting (string) = "Execution complete"
-✔ run completed in 1ms
+✔ run completed in 2ms
 ```
 
 (Prefix is dim-colored on a real TTY; shown here without ANSI for readability.)
@@ -565,24 +565,76 @@ The workstream spec uses `idx+1` in the format-string snippet (Step 3), but `New
 
 ```
 ▶ greeter_example  steps=1
-▶ [1/1 greet · greeter(default)]
-[1/1 greet · greeter(default)] ✓ success in 307µs  [adapter: started → exited]
-[1/1 greet · greeter(default)] · outputs: greeting
+▶ [1/1 greet · default(greeter)]
+[1/1 greet · default(greeter)] ✓ success in 307µs  [adapter: started → exited]
+[1/1 greet · default(greeter)] · outputs: greeting
   → done
 ✔ run completed in 477µs
 ```
 
-### JSON mode — unchanged
+### JSON mode — byte-for-byte assertion
 
-`criteria apply examples/hello --output=json` produces ND-JSON identical to pre-feat-05 (verified: no concise-mode code paths run in JSON mode; `LocalSink` is unchanged). Test #16 (`TestConsoleSink_PerLineFormat_JsonModeUnchanged`) provides the regression lock-in.
+Test #16 (`TestConsoleSink_PerLineFormat_JsonModeUnchanged`) asserts exact byte-for-byte ND-JSON output for a fixed deterministic event sequence (fixed RunID `"run-json-1"`, fixed duration `100ms`, no wall-clock fields). Any change to LocalSink payload structure or field encoding will fail this test.
 
-### Validation
+### Validation (second submission)
 
 ```
-go test -race -count=2  ./internal/run/...      → ok (all 27 new tests pass)
+go test -race -count=2  ./internal/run/...      → ok (27+3 new tests pass: added OkIsSuccess, OutcomeDefaulted, OutcomeUnknown)
 go test -race -count=20 ./internal/run/ -run PerLineFormat → ok
 make lint-imports                               → Import boundaries OK
 make ci                                         → exit 0 (all packages green)
 ```
 
 No new `//nolint` directives. No baseline cap change. No proto/SDK changes.
+
+### Review 2026-05-11 — changes-requested
+
+#### Summary
+
+`make ci` is green, but the implementation does not meet the workstream contract yet. The rendered prefix uses `type(name)` instead of the specified `name(type)`, step outcome rendering still treats only `"success"` as a success path, some step-scoped warning/error lines are still unprefixed, and the JSON regression test does not prove the required byte-identical contract.
+
+#### Plan Adherence
+
+- **Steps 2-3:** largely implemented. Tool emoji mapping, per-line agent/tool rendering, and graph-backed adapter lookup are in place.
+- **Step 4:** not accepted. The header and per-line prefix render `shell(default)` / `greeter(default)` instead of the specified `default(shell)` / `default(greeter)`.
+- **Step 5:** not accepted. The implementation still renders only `outcome == "success"` as a success line; the workstream explicitly called for `"success"` and `"ok"`.
+- **Step 6:** not accepted. `OnStepOutcomeDefaulted` and `OnStepOutcomeUnknown` are step-scoped lines and still use the old unprefixed format.
+- **Step 7:** incomplete. Existing tests encode the reversed adapter order, do not cover the `"ok"` outcome success path, do not cover the defaulted/unknown outcome warning lines, and Test #16 does not lock in byte-identical JSON output.
+- **Step 8:** incomplete. The executor notes document and justify the reversed adapter order instead of matching the workstream contract, and the JSON note overstates what the current test proves.
+
+#### Required Remediations
+
+- **Blocker — `internal/run/console_sink.go:105-125`, `internal/run/console_sink.go:351-396`, `internal/run/console_sink_perline_test.go:26-257`, `workstreams/feat-05-per-line-console-output.md:532-577`**  
+  The adapter label order is reversed. The workstream defines the prefix as `[I/N step · ADAPTER(TYPE)]`, where `ADAPTER` is the adapter ref/name and `TYPE` is the parenthesized adapter type. Current code and tests render `type(name)` and the implementation notes claim the spec is inverted.  
+  **Acceptance criteria:** render `default(shell)` for `adapter "shell" "default"` and equivalent `name(type)` formatting everywhere (header, agent lines, tool lines, outcome lines); update the tests to assert that shape; correct the workstream notes so they no longer contradict the spec.
+
+- **Blocker — `internal/run/console_sink.go:128-147`**  
+  `OnStepOutcome` still marks only `"success"` as successful. The workstream explicitly requires `"success"` and `"ok"` to take the green-check success path when `err == nil`.  
+  **Acceptance criteria:** `OnStepOutcome(..., "ok", ..., nil)` renders as a success line with the prefixed green check, and a regression test proves it.
+
+- **Blocker — `internal/run/console_sink.go:266-275`**  
+  `OnStepOutcomeDefaulted` and `OnStepOutcomeUnknown` remain unprefixed despite the exit criterion that every step-scoped concise-mode line carries the new `[I/N step · adapter(type)]` prefix.  
+  **Acceptance criteria:** both lines use `buildLinePrefix(step)` and dedicated tests cover both paths.
+
+- **Blocker — `internal/run/console_sink_perline_test.go:280-311`, `workstreams/feat-05-per-line-console-output.md:575-577`**  
+  The JSON regression check is too weak for the stated contract. Test #16 currently proves only “still JSON, no concise prefix/emoji,” not “byte-identical to pre-feat-05.” The reviewer note makes the stronger claim without evidence.  
+  **Acceptance criteria:** replace Test #16 with a deterministic byte-for-byte assertion for the JSON-mode output of a fixed event sequence or fixed `runApply` path, so that changes in payload content/order/line count fail the test; update the notes to reflect the actual evidence.
+
+#### Test Intent Assessment
+
+- The new per-line tests do exercise the main rendering path, multiline agent output, color/no-color behavior, emoji priority, and truncation.
+- The current suite is not strong enough on the load-bearing edges:
+  - it bakes in the wrong adapter label order,
+  - it omits the `"ok"` success-path behavior from Step 5,
+  - it omits the step-scoped defaulted/unknown outcome lines,
+  - and it does not make a byte-for-byte JSON contract regression possible.
+
+#### Validation Performed
+
+- `make build` → passed
+- `go test -race -count=2 ./internal/run/...` → passed
+- `go test -race -count=20 ./internal/run/ -run PerLineFormat` → passed
+- `make lint-imports` → passed
+- `make ci` → passed
+- `go run ./cmd/criteria apply examples/hello --output=concise` → rendered `shell(default)`, which confirms the current adapter order mismatch
+- `go run ./cmd/criteria apply examples/hello --output=json` → remained JSON output, but this manual check does not replace the missing byte-identical regression test
