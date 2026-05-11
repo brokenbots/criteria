@@ -8,6 +8,12 @@ bin/
 go.work.sum
 tmp/
 
+# Self-development workflow runtime state (PR watch backoff counters, etc.)
+.criteria/tmp/
+
+# macOS Finder metadata
+.DS_Store
+
 # Ephemeral lint config produced by make lint-go; never commit this.
 .golangci.merged.yml
 
