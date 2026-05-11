@@ -5,8 +5,17 @@
 # ["security", "quality", "workstream", "api_compat"], so adapter sessions for
 # each axis are isolated.
 #
-# Each axis emits structured output { axis, verdict, report } that the parent
-# passes to the owner for adjudication.
+# Outcome convention (works around engine isSuccessOutcome strictness in
+# parallel iteration — internal/engine/extensions.go:115): each reviewer emits
+# `RESULT: success` once its review is complete, regardless of verdict. The
+# verdict (approved vs changes_requested) lives in the agent's stdout body,
+# which the output projection captures as `report`. The owner adjudicator
+# (develop/main.hcl) parses the verdict line from each report.
+#
+# Why not separate `approved`/`changes_requested` outcomes? The engine treats
+# any parallel-iteration outcome whose name is not the literal "success" as a
+# failure for aggregation purposes, which triggers `on_failure="abort"` and
+# cancels sibling reviewers mid-review.
 
 workflow "review_axis" {
   version       = "1"
@@ -101,15 +110,11 @@ step "security_review" {
   target      = adapter.copilot.security_reviewer
   allow_tools = ["read", "search", "shell", "execute"]
   input {
-    prompt = "Review the active diff for ${var.workstream_file} in ${var.project_dir} for security issues. Inspect `git diff origin/main...HEAD`, the workstream md, and the relevant code. Do not edit files. Return concrete findings only.\n\nEnd your final message with exactly one of:\nRESULT: approved\nRESULT: changes_requested\nRESULT: failure"
+    prompt = "Review the active diff for ${var.workstream_file} in ${var.project_dir} for security issues. Inspect `git diff origin/main...HEAD`, the workstream md, and the relevant code. Do not edit files. Return concrete findings only.\n\nYour review is COMPLETE when you have a verdict, even if that verdict is `changes_requested`. State your verdict on its own line as exactly one of:\nVERDICT: approved\nVERDICT: changes_requested\n\nThen end your final message with exactly:\nRESULT: success\n\nOnly emit `RESULT: failure` if you genuinely cannot perform the review (e.g. tools broken, prerequisite missing). Requesting changes is a successful review, not a failure."
   }
-  outcome "approved" {
+  outcome "success" {
     next   = "return"
-    output = { axis = "security", verdict = "approved", report = steps.security_review.stdout }
-  }
-  outcome "changes_requested" {
-    next   = "return"
-    output = { axis = "security", verdict = "changes_requested", report = steps.security_review.stdout }
+    output = { axis = "security", report = steps.security_review.stdout }
   }
   outcome "failure" { next = "failed" }
 }
@@ -118,15 +123,11 @@ step "quality_review" {
   target      = adapter.copilot.quality_reviewer
   allow_tools = ["read", "search", "shell", "execute"]
   input {
-    prompt = "Review the active diff for ${var.workstream_file} in ${var.project_dir} for code quality, test sufficiency, complexity additions, and maintainability. Inspect `git diff origin/main...HEAD` and the workstream md. Do not edit files. Return concrete findings only.\n\nEnd your final message with exactly one of:\nRESULT: approved\nRESULT: changes_requested\nRESULT: failure"
+    prompt = "Review the active diff for ${var.workstream_file} in ${var.project_dir} for code quality, test sufficiency, complexity additions, and maintainability. Inspect `git diff origin/main...HEAD` and the workstream md. Do not edit files. Return concrete findings only.\n\nYour review is COMPLETE when you have a verdict, even if that verdict is `changes_requested`. State your verdict on its own line as exactly one of:\nVERDICT: approved\nVERDICT: changes_requested\n\nThen end your final message with exactly:\nRESULT: success\n\nOnly emit `RESULT: failure` if you genuinely cannot perform the review."
   }
-  outcome "approved" {
+  outcome "success" {
     next   = "return"
-    output = { axis = "quality", verdict = "approved", report = steps.quality_review.stdout }
-  }
-  outcome "changes_requested" {
-    next   = "return"
-    output = { axis = "quality", verdict = "changes_requested", report = steps.quality_review.stdout }
+    output = { axis = "quality", report = steps.quality_review.stdout }
   }
   outcome "failure" { next = "failed" }
 }
@@ -135,15 +136,11 @@ step "workstream_review" {
   target      = adapter.copilot.workstream_reviewer
   allow_tools = ["read", "search", "shell", "execute"]
   input {
-    prompt = "Review the active diff for ${var.workstream_file} in ${var.project_dir} for adherence to the workstream scope: affected files, non-goals, acceptance criteria, required tests, and implementation notes. Inspect `git diff origin/main...HEAD` and the workstream md. Do not edit files. Return concrete findings only.\n\nEnd your final message with exactly one of:\nRESULT: approved\nRESULT: changes_requested\nRESULT: failure"
+    prompt = "Review the active diff for ${var.workstream_file} in ${var.project_dir} for adherence to the workstream scope: affected files, non-goals, acceptance criteria, required tests, and implementation notes. Inspect `git diff origin/main...HEAD` and the workstream md. Do not edit files. Return concrete findings only.\n\nYour review is COMPLETE when you have a verdict, even if that verdict is `changes_requested`. State your verdict on its own line as exactly one of:\nVERDICT: approved\nVERDICT: changes_requested\n\nThen end your final message with exactly:\nRESULT: success\n\nOnly emit `RESULT: failure` if you genuinely cannot perform the review."
   }
-  outcome "approved" {
+  outcome "success" {
     next   = "return"
-    output = { axis = "workstream", verdict = "approved", report = steps.workstream_review.stdout }
-  }
-  outcome "changes_requested" {
-    next   = "return"
-    output = { axis = "workstream", verdict = "changes_requested", report = steps.workstream_review.stdout }
+    output = { axis = "workstream", report = steps.workstream_review.stdout }
   }
   outcome "failure" { next = "failed" }
 }
@@ -152,15 +149,11 @@ step "api_compat_review" {
   target      = adapter.copilot.api_compat_reviewer
   allow_tools = ["read", "search", "shell", "execute"]
   input {
-    prompt = "Review the active diff for ${var.workstream_file} in ${var.project_dir} for API and backwards-compatibility risk: HCL DSL changes, plugin gRPC API surface (sdk/pb/*.proto), event-log schema, and semver discipline. Inspect `git diff origin/main...HEAD` and the workstream md. Do not edit files. Return concrete findings only.\n\nEnd your final message with exactly one of:\nRESULT: approved\nRESULT: changes_requested\nRESULT: failure"
+    prompt = "Review the active diff for ${var.workstream_file} in ${var.project_dir} for API and backwards-compatibility risk: HCL DSL changes, plugin gRPC API surface (sdk/pb/*.proto), event-log schema, and semver discipline. Inspect `git diff origin/main...HEAD` and the workstream md. Do not edit files. Return concrete findings only.\n\nYour review is COMPLETE when you have a verdict, even if that verdict is `changes_requested`. State your verdict on its own line as exactly one of:\nVERDICT: approved\nVERDICT: changes_requested\n\nThen end your final message with exactly:\nRESULT: success\n\nOnly emit `RESULT: failure` if you genuinely cannot perform the review."
   }
-  outcome "approved" {
+  outcome "success" {
     next   = "return"
-    output = { axis = "api_compat", verdict = "approved", report = steps.api_compat_review.stdout }
-  }
-  outcome "changes_requested" {
-    next   = "return"
-    output = { axis = "api_compat", verdict = "changes_requested", report = steps.api_compat_review.stdout }
+    output = { axis = "api_compat", report = steps.api_compat_review.stdout }
   }
   outcome "failure" { next = "failed" }
 }
