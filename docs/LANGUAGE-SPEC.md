@@ -539,6 +539,8 @@ state "done"   { terminal = true  success = true }
 state "failed" { terminal = true  success = false }
 ```
 
+> For pattern-by-pattern guidance, see [docs/llm/](./llm/). Concatenate this spec with the prompt pack to assemble a complete LLM authoring system prompt.
+
 ## Versioning
 
 This specification describes language `version = "1"`. Behavior changes and additions are documented per `v0.<minor>.0` release in [CHANGELOG.md](../CHANGELOG.md). A new language version value (`"2"`) will be introduced only for backwards-incompatible grammar changes.
