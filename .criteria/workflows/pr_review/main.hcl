@@ -1,25 +1,31 @@
 # PR Review Subworkflow
 # =====================
-# Owns the GitHub PR lifecycle for one committed workstream branch. Hands
-# control back to the parent on terminal states.
+# Owns the GitHub PR lifecycle for one committed workstream branch, then syncs
+# the local main after merge (formerly the merge_branch subworkflow's job —
+# folded in here to remove one moving part).
 #
 # Flow:
-#   open_pr (shell)        → push branch, idempotently create/update PR
-#   warm_up (shell)        → sleep 90s for first CI propagation
-#   pr_status (shell)      → emits `status:<state>` on first stdout line
-#   route_status (switch)  → dispatches to merge, review, escalate, or backoff
-#   pr_reviewer (agent)    → cold-review; can approve or request changes
-#   approve_and_merge (shell) → `gh pr review --approve` + `gh pr merge`
+#   open_pr (shell)            → push branch, idempotently create/update PR
+#   warm_up (shell)            → sleep 90s for first CI propagation
+#   pr_status (shell)          → emits classifier on stdout
+#   route_status (switch)      → dispatches to merge, review, escalate, or backoff
+#   pr_review (agent)          → cold-review; resolves threads + posts a recommendation
+#   human_approval_required    → operator clicks Approve on GH + approves node
+#   verify_github_approval     → confirms reviewDecision == APPROVED
+#   merge_pr (shell)           → `gh pr merge --squash --delete-branch`
+#   sync_main (shell)          → fetch origin + checkout main + ff-pull
+#   verify_main_in_sync (shell) → confirms merged commit is reachable from main
+#   finalize_ok (shell)        → sets status output = "ok"
 #
-# Separation of duties: the pr_reviewer agent runs `gh pr review --approve` to
-# record its approval. Merge is a separate deterministic shell step the agent
-# cannot invoke (its allow_tools forbids `gh pr merge`). This keeps the merge
-# command auditable in the workflow log and out of the agent transcript.
+# Failure-propagation workaround: like the develop subworkflow, the engine
+# ignores a subworkflow's terminal `success=false` flag at the parent
+# (internal/engine/node_step.go:477-480). The status output defaults to
+# "failed" and is flipped to "ok" only on the merge-and-sync success path.
 
 workflow "pr_review" {
   version       = "1"
   initial_state = "open_pr"
-  target_state  = "approved_and_merged"
+  target_state  = "returned"
 }
 
 policy {
@@ -29,13 +35,11 @@ policy {
 variable "workstream_file" {
   type        = "string"
   default     = ""
-  description = "Path to the workstream markdown file."
 }
 
 variable "project_dir" {
   type        = "string"
   default     = ""
-  description = "Absolute path to the criteria engine project root."
 }
 
 variable "max_review_attempts" {
@@ -47,12 +51,22 @@ variable "max_review_attempts" {
 variable "pr_reviewer_model" {
   type        = "string"
   default     = "gpt-5.5"
-  description = "Model for the PR reviewer. Deliberately distinct from the inner reviewer_model so the cold-review carries an independent signal."
+  description = "Model for the cold PR reviewer."
 }
 
 shared_variable "review_attempts" {
   type  = "number"
   value = 0
+}
+
+shared_variable "terminal_status" {
+  type  = "string"
+  value = "failed"
+}
+
+output "status" {
+  type  = "string"
+  value = shared.terminal_status
 }
 
 adapter "shell" "gh" {
@@ -71,8 +85,9 @@ adapter "copilot" "pr_reviewer" {
 # ── Open / refresh the PR ────────────────────────────────────────────────────
 
 step "open_pr" {
-  target  = adapter.shell.gh
-  timeout = "180s"
+  target     = adapter.shell.gh
+  timeout    = "180s"
+  max_visits = 5
   input {
     command           = "sh .criteria/workflows/pr_review/scripts/open-or-update-pr.sh \"${var.workstream_file}\""
     working_directory = var.project_dir
@@ -82,8 +97,9 @@ step "open_pr" {
 }
 
 step "warm_up" {
-  target  = adapter.shell.gh
-  timeout = "180s"
+  target     = adapter.shell.gh
+  timeout    = "180s"
+  max_visits = 5
   input {
     command           = "echo 'warming up CI before first status poll (90s)'; sleep 90"
     working_directory = var.project_dir
@@ -109,7 +125,7 @@ step "pr_status" {
 switch "route_status" {
   condition {
     match = steps.pr_status.stdout == "merged"
-    next  = state.approved_and_merged
+    next  = step.sync_main
   }
   condition {
     match = steps.pr_status.stdout == "ready"
@@ -134,8 +150,6 @@ switch "route_status" {
   default { next = state.failed }
 }
 
-# ── Exponential-ish backoff before re-polling ────────────────────────────────
-
 step "backoff" {
   target     = adapter.shell.gh
   timeout    = "300s"
@@ -149,25 +163,17 @@ step "backoff" {
 }
 
 # ── Cold PR review ────────────────────────────────────────────────────────────
-# Distinct persona from developer / inner reviewers / owner.
-#
-# The agent can:
-#   • read the diff and threads
-#   • resolve addressable threads via `resolve-thread.sh` with citation evidence
-#   • post a recommendation comment via `gh pr comment`
-#
-# The agent CANNOT:
-#   • approve the PR (GitHub branch protection forbids self-approval by the PR
-#     author; the workflow handles approval via a human-in-the-loop node below)
-#   • merge the PR (a deterministic shell step owns merge)
-#   • push code
+# Distinct persona (gpt-5.5) from inner reviewers; reviews PR cold. Can resolve
+# threads + post a recommendation comment. CANNOT approve (branch protection),
+# CANNOT merge (separate shell step), CANNOT push code.
 
 step "pr_review" {
   target      = adapter.copilot.pr_reviewer
   allow_tools = ["read", "search", "execute", "shell"]
+  timeout     = "20m"
   max_visits  = 10
   input {
-    prompt = "Review the open PR for ${var.workstream_file}. The deterministic status gate classifier was `${steps.pr_status.stdout}` with context:\n\n--- pr-status.sh stderr ---\n${steps.pr_status.stderr}\n--- end ---\n\nUse `gh pr diff <pr_number>` and `git diff origin/main...HEAD` for the code. For each unresolved (and !outdated) review thread, either reply with citation evidence and resolve it via `sh .criteria/workflows/pr_review/scripts/resolve-thread.sh <thread_id>`, or leave it open and request changes.\n\nIf the diff meets the bar and all addressable threads are resolved: post a recommendation comment via `gh pr comment <pr_number> --body \"<your summary>\"` summarizing what you verified and that you recommend approval. Then emit RESULT: approve. DO NOT run `gh pr review --approve` — branch protection forbids self-approval by the PR author; the workflow will pause for a human to click Approve on GitHub before merging.\n\nIf code changes are required: emit a `### Required Changes` section in your final message and RESULT: changes_requested.\n\nDO NOT run `gh pr merge` — a deterministic shell step handles merge after human approval.\n\nEnd your final message with exactly one of:\nRESULT: approve\nRESULT: changes_requested\nRESULT: failure"
+    prompt = "Review the open PR for ${var.workstream_file}. The deterministic status gate classifier was `${steps.pr_status.stdout}` with context:\n\n--- pr-status.sh stderr ---\n${steps.pr_status.stderr}\n--- end ---\n\nThe full diff is cached at `.criteria/tmp/diff.patch` from the develop workflow; read it instead of running `gh pr diff` (saves a network call). For each unresolved (and !outdated) review thread, either reply with citation evidence and resolve via `sh .criteria/workflows/pr_review/scripts/resolve-thread.sh <thread_id>`, or leave it open and request changes.\n\nIf the diff meets the bar and all addressable threads are resolved: post a recommendation comment via `gh pr comment <pr_number> --body \"<your summary>\"` summarizing what you verified and that you recommend approval. Then emit RESULT: approve. DO NOT run `gh pr review --approve` — branch protection forbids self-approval by the PR author; the workflow will pause for a human to click Approve on GitHub before merging.\n\nIf code changes are required: emit a `### Required Changes` section in your final message and RESULT: changes_requested.\n\nDO NOT run `gh pr merge` — a deterministic shell step handles merge after human approval.\n\nEnd your final message with exactly one of:\nRESULT: approve\nRESULT: changes_requested\nRESULT: failure"
   }
   outcome "approve"           { next = "human_approval_required" }
   outcome "changes_requested" { next = "count_review_attempt" }
@@ -175,13 +181,9 @@ step "pr_review" {
 }
 
 # ── Human-in-the-loop approval bridge ────────────────────────────────────────
-# Branch protection on the upstream repo requires a non-author reviewer to
-# approve. We bridge that by pausing here: the operator goes to GitHub, clicks
-# Approve on the PR, then approves this workflow node. The verify step below
-# confirms the GitHub side actually happened before merging.
-#
-# Requires `CRITERIA_LOCAL_APPROVAL=stdin` (interactive) or a running server.
-# Rejecting this approval routes to `escalated`.
+# Branch protection on the upstream repo requires a non-author reviewer. The
+# operator goes to GitHub, clicks Approve on the PR, then approves this node.
+# verify_github_approval below confirms the GitHub side actually happened.
 
 approval "human_approval_required" {
   approvers = ["operator"]
@@ -190,16 +192,12 @@ approval "human_approval_required" {
   outcome "rejected" { next = "escalated" }
 }
 
-# Verify the human actually clicked Approve on GitHub before we merge.
-# If reviewDecision is anything other than APPROVED, route back to the human
-# approval gate rather than failing the run outright.
-
 step "verify_github_approval" {
   target     = adapter.shell.gh
   timeout    = "60s"
   max_visits = 5
   input {
-    command           = "set -euo pipefail; branch=$(git branch --show-current); pr_number=$(gh pr view \"$branch\" --json number --jq '.number'); review_decision=$(gh pr view \"$pr_number\" --json reviewDecision --jq '.reviewDecision // \"REVIEW_REQUIRED\"'); echo \"pr_number=$pr_number\"; echo \"review_decision=$review_decision\"; if [ \"$review_decision\" != \"APPROVED\" ]; then echo \"GitHub reviewDecision=$review_decision; expected APPROVED. Did you click Approve on the PR in GitHub before approving the workflow node?\" >&2; exit 1; fi; echo 'github_approval_confirmed=true'"
+    command           = "set -eu; branch=$(git branch --show-current); pr_number=$(gh pr view \"$branch\" --json number --jq '.number'); review_decision=$(gh pr view \"$pr_number\" --json reviewDecision --jq '.reviewDecision // \"REVIEW_REQUIRED\"'); echo \"pr_number=$pr_number\"; echo \"review_decision=$review_decision\"; if [ \"$review_decision\" != \"APPROVED\" ]; then echo \"GitHub reviewDecision=$review_decision; expected APPROVED. Did you click Approve on the PR in GitHub before approving the workflow node?\" >&2; exit 1; fi; echo 'github_approval_confirmed=true'"
     working_directory = var.project_dir
   }
   outcome "success" { next = "merge_pr" }
@@ -207,23 +205,67 @@ step "verify_github_approval" {
 }
 
 # ── Merge — shell step, not agent ────────────────────────────────────────────
-# Runs `gh pr merge` and verifies origin/main advanced. Auditable in event log.
 
 step "merge_pr" {
-  target  = adapter.shell.gh
-  timeout = "300s"
+  target     = adapter.shell.gh
+  timeout    = "300s"
+  max_visits = 3
   input {
-    command           = "set -euo pipefail; branch=$(git branch --show-current); pr_number=$(gh pr view \"$branch\" --json number --jq '.number'); gh pr merge \"$pr_number\" --squash --delete-branch; git fetch origin main; if git show-ref --verify --quiet refs/remotes/origin/main; then echo 'merged_pr_number='\"$pr_number\"'; main_advanced=true'; else echo 'main_ref_missing' >&2; exit 1; fi"
+    command           = "set -eu; branch=$(git branch --show-current); pr_number=$(gh pr view \"$branch\" --json number --jq '.number'); gh pr merge \"$pr_number\" --squash --delete-branch; echo merged_pr_number=\"$pr_number\""
     working_directory = var.project_dir
   }
-  outcome "success" { next = "approved_and_merged" }
+  outcome "success" { next = "sync_main" }
+  outcome "failure" { next = "failed" }
+}
+
+# ── Local main sync (formerly the merge_branch subworkflow) ─────────────────
+
+step "sync_main" {
+  target     = adapter.shell.gh
+  timeout    = "120s"
+  max_visits = 3
+  input {
+    command           = "set -eu; git fetch origin main; git checkout main; git pull --ff-only origin main"
+    working_directory = var.project_dir
+  }
+  outcome "success" { next = "verify_main_in_sync" }
+  outcome "failure" { next = "failed" }
+}
+
+step "verify_main_in_sync" {
+  target     = adapter.shell.gh
+  timeout    = "30s"
+  max_visits = 3
+  input {
+    command           = "set -eu; branch=$(basename \"${var.workstream_file}\" .md); if git show-ref --verify --quiet refs/remotes/origin/$branch; then echo \"remote_branch_still_exists=$branch (gh pr merge --delete-branch may have skipped it)\" >&2; fi; echo \"main_at=$(git rev-parse HEAD)\"; echo \"origin_main_at=$(git rev-parse origin/main)\""
+    working_directory = var.project_dir
+  }
+  outcome "success" { next = "finalize_ok" }
+  outcome "failure" { next = "failed" }
+}
+
+# ── Status output ────────────────────────────────────────────────────────────
+
+step "finalize_ok" {
+  target     = adapter.shell.gh
+  timeout    = "10s"
+  max_visits = 5
+  input {
+    command           = "printf '%s' 'ok'"
+    working_directory = var.project_dir
+  }
+  outcome "success" {
+    next          = "returned"
+    shared_writes = { terminal_status = "stdout" }
+  }
   outcome "failure" { next = "failed" }
 }
 
 # ── Changes-requested counter → escalate after N attempts ────────────────────
 
 step "count_review_attempt" {
-  target = adapter.shell.gh
+  target     = adapter.shell.gh
+  max_visits = 10
   input {
     command           = "echo $(( ${shared.review_attempts} + 1 ))"
     working_directory = var.project_dir
@@ -245,7 +287,7 @@ switch "check_review_limit" {
 
 # ── Terminal states ──────────────────────────────────────────────────────────
 
-state "approved_and_merged" {
+state "returned" {
   terminal = true
   success  = true
 }

@@ -30,19 +30,17 @@ policy {
 variable "review_kind" {
   type        = "string"
   default     = ""
-  description = "Review axis to run: security, quality, workstream, or api_compat."
+  description = "Review axis: security, quality, workstream, or api_compat."
 }
 
 variable "workstream_file" {
   type        = "string"
   default     = ""
-  description = "Path to the workstream markdown file, relative to project_dir."
 }
 
 variable "project_dir" {
   type        = "string"
   default     = ""
-  description = "Absolute path to the criteria engine project root."
 }
 
 variable "reviewer_model" {
@@ -109,6 +107,7 @@ switch "select_reviewer" {
 step "security_review" {
   target      = adapter.copilot.security_reviewer
   allow_tools = ["read", "search", "shell", "execute"]
+  timeout     = "15m"
   input {
     prompt = "Review the active diff for ${var.workstream_file} in ${var.project_dir} for security issues. Inspect `git diff origin/main...HEAD`, the workstream md, and the relevant code. Do not edit files. Return concrete findings only.\n\nYour review is COMPLETE when you have a verdict, even if that verdict is `changes_requested`. State your verdict on its own line as exactly one of:\nVERDICT: approved\nVERDICT: changes_requested\n\nThen end your final message with exactly:\nRESULT: success\n\nOnly emit `RESULT: failure` if you genuinely cannot perform the review (e.g. tools broken, prerequisite missing). Requesting changes is a successful review, not a failure."
   }
@@ -122,6 +121,7 @@ step "security_review" {
 step "quality_review" {
   target      = adapter.copilot.quality_reviewer
   allow_tools = ["read", "search", "shell", "execute"]
+  timeout     = "15m"
   input {
     prompt = "Review the active diff for ${var.workstream_file} in ${var.project_dir} for code quality, test sufficiency, complexity additions, and maintainability. Inspect `git diff origin/main...HEAD` and the workstream md. Do not edit files. Return concrete findings only.\n\nYour review is COMPLETE when you have a verdict, even if that verdict is `changes_requested`. State your verdict on its own line as exactly one of:\nVERDICT: approved\nVERDICT: changes_requested\n\nThen end your final message with exactly:\nRESULT: success\n\nOnly emit `RESULT: failure` if you genuinely cannot perform the review."
   }
@@ -135,6 +135,7 @@ step "quality_review" {
 step "workstream_review" {
   target      = adapter.copilot.workstream_reviewer
   allow_tools = ["read", "search", "shell", "execute"]
+  timeout     = "15m"
   input {
     prompt = "Review the active diff for ${var.workstream_file} in ${var.project_dir} for adherence to the workstream scope: affected files, non-goals, acceptance criteria, required tests, and implementation notes. Inspect `git diff origin/main...HEAD` and the workstream md. Do not edit files. Return concrete findings only.\n\nYour review is COMPLETE when you have a verdict, even if that verdict is `changes_requested`. State your verdict on its own line as exactly one of:\nVERDICT: approved\nVERDICT: changes_requested\n\nThen end your final message with exactly:\nRESULT: success\n\nOnly emit `RESULT: failure` if you genuinely cannot perform the review."
   }
@@ -148,6 +149,7 @@ step "workstream_review" {
 step "api_compat_review" {
   target      = adapter.copilot.api_compat_reviewer
   allow_tools = ["read", "search", "shell", "execute"]
+  timeout     = "15m"
   input {
     prompt = "Review the active diff for ${var.workstream_file} in ${var.project_dir} for API and backwards-compatibility risk: HCL DSL changes, plugin gRPC API surface (sdk/pb/*.proto), event-log schema, and semver discipline. Inspect `git diff origin/main...HEAD` and the workstream md. Do not edit files. Return concrete findings only.\n\nYour review is COMPLETE when you have a verdict, even if that verdict is `changes_requested`. State your verdict on its own line as exactly one of:\nVERDICT: approved\nVERDICT: changes_requested\n\nThen end your final message with exactly:\nRESULT: success\n\nOnly emit `RESULT: failure` if you genuinely cannot perform the review."
   }

@@ -18,7 +18,7 @@ You are a security reviewer for the criteria engine. Review only security and sa
 
 ## Rules
 - Read the workstream md first; tighten scope to its declared affected files.
-- Inspect the actual diff (`git diff origin/main...HEAD`) and the relevant code paths.
+- Read the cached diff at `.criteria/tmp/diff.patch` (and `diff.stat` for an overview) — the develop workflow has already produced it. Do not re-run `git diff` unless the cache is missing.
 - Do not edit any files.
 - Do not block on generic security advice without a concrete defect in this diff.
 - Cite evidence: file:line, exact symbol, or a repro command.
