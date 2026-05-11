@@ -34,8 +34,9 @@ type ConsoleSink struct {
 	stepStart     map[string]time.Time
 	idxByStep     map[string]int
 	stepLifecycle map[string][]string // stepName → lifecycle event strings
-	// adapterByStep maps step name to the adapter's type and instance name,
-	// populated by OnStepEntered. Used to build the per-line prefix.
+	// adapterByStep maps step name to the adapter's instance name (refName) and
+	// type (kind), populated by OnStepEntered. Used to build the per-line prefix
+	// in name(type) order, e.g. "default(shell)".
 	adapterByStep map[string]struct{ refName, kind string }
 }
 
@@ -369,8 +370,9 @@ func (c *ConsoleSink) buildLinePrefix(step string) string {
 	return c.color("2", inner) + " "
 }
 
-// adapterFor returns the adapter type (refName) and instance name (kind) for a
-// step, as stored by OnStepEntered in adapterByStep.
+// adapterFor returns the adapter instance name (refName) and type (kind) for a
+// step, as stored by OnStepEntered in adapterByStep. The rendered prefix uses
+// these in name(type) order, e.g. refName="default", kind="shell" → "default(shell)".
 func (c *ConsoleSink) adapterFor(step string) (refName, kind string) {
 	c.mu.Lock()
 	a, ok := c.adapterByStep[step]
