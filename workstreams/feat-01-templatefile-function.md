@@ -501,3 +501,19 @@ Both items addressed:
 #### Validation Performed
 - `make ci` — passed.
 - `cd workflow && go test -race -count=20 -run Templatefile ./...` — passed.
+
+### Review 2026-05-11-02 — approved
+
+#### Summary
+Approved. The prior blockers are resolved: `docs/workflow.md` now matches the shipped null-rendering behavior (`<no value>`), and the `FunctionOptions` / `DefaultFunctionOptions` comments in `workflow/eval_functions.go` now correctly include `templatefile()` alongside the existing file functions. I did not find any remaining plan-adherence, quality, or security issues in scope for this workstream.
+
+#### Plan Adherence
+- Step 1 / Step 2 / Step 3 remain implemented as reviewed previously, with the documentation/comment accuracy issues now corrected.
+- Step 4 remains sufficiently covered by the existing test suite; no new behavior was introduced by the remediation pass.
+- Step 5 / Step 6 / Step 7 meet the workstream bar: example wiring is present, the docs/spec surfaces are aligned with behavior, and repository validation remains green.
+
+#### Test Intent Assessment
+The existing tests still prove the important contract behavior for `templatefile()`, including strict missing-key errors, confinement and file-safety checks, type conversion, null handling, and concurrent use. The remediation pass changed only docs/comments, so no additional test gaps were introduced.
+
+#### Validation Performed
+- `make ci` — passed.
