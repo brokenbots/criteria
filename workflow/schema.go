@@ -52,8 +52,8 @@ type LocalNode struct {
 //
 //	environment "shell" "default" { variables = {...}, config = {...} }
 type EnvironmentSpec struct {
-	Type   string   `hcl:"type,label"`
-	Name   string   `hcl:"name,label"`
+	Type string `hcl:"type,label"`
+	Name string `hcl:"name,label"`
 	// Captures: variables (optional, map of string env-vars), config (optional, type-specific config map).
 	Remain hcl.Body `hcl:",remain"`
 }
