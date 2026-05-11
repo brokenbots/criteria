@@ -638,3 +638,49 @@ No new `//nolint` directives. No baseline cap change. No proto/SDK changes.
 - `make ci` → passed
 - `go run ./cmd/criteria apply examples/hello --output=concise` → rendered `shell(default)`, which confirms the current adapter order mismatch
 - `go run ./cmd/criteria apply examples/hello --output=json` → remained JSON output, but this manual check does not replace the missing byte-identical regression test
+
+### Review 2026-05-11-02 — changes-requested
+
+#### Summary
+
+The substantive blockers from the prior pass are resolved: runtime output now renders `name(type)`, the `"ok"` outcome takes the success path, step-scoped outcome warning lines are prefixed, and the JSON regression test is now byte-for-byte deterministic. I am still holding approval for one cleanup nit: two nearby comments in `internal/run/console_sink.go` still describe the old `type/name` semantics and now contradict the implementation.
+
+#### Plan Adherence
+
+- **Steps 1-6:** accepted. The concise output now renders `[I/N step · ADAPTER(TYPE)]` with `default(shell)` / `compile(shell)` style prefixes, including the previously-missing step-scoped warning lines.
+- **Step 7:** accepted on behavior. The added tests cover the `"ok"` success path, `OnStepOutcomeDefaulted`, `OnStepOutcomeUnknown`, and a byte-for-byte JSON assertion.
+- **Step 8:** accepted. The reviewer-note prose now reflects the corrected `name(type)` interpretation and documents the stronger JSON assertion.
+- **Step 9:** accepted. The claimed validation matches what I reproduced.
+
+#### Required Remediations
+
+- **Nit — `internal/run/console_sink.go:37-39`, `internal/run/console_sink.go:372-373`**  
+  The comments around `adapterByStep` and `adapterFor` still describe `refName` as the adapter type and `kind` as the instance name, but the implementation was correctly flipped to `refName=name`, `kind=type`. This is now misleading local documentation in the exact area that was fixed.  
+  **Acceptance criteria:** update those comments so they accurately describe the current `name(type)` semantics and no longer refer to the old ordering.
+
+#### Test Intent Assessment
+
+- The test intent is now strong enough for the changed behavior. The new assertions would fail on the prior reversed adapter order, would fail if `"ok"` regressed to the error path, would fail if the defaulted/unknown warning lines lost their prefixes again, and would fail if the fixed JSON event sequence changed byte-for-byte.
+
+#### Validation Performed
+
+- `go test -race -count=2 ./internal/run/...` → passed
+- `go test -race -count=20 ./internal/run/ -run PerLineFormat` → passed
+- `make lint-imports` → passed
+- `make ci` → passed
+- `go run ./cmd/criteria apply examples/hello --output=concise` → rendered `default(shell)` as required
+
+### Review 2026-05-11-03 — approved
+
+#### Summary
+
+Approved. The final submission clears the last remaining nit from the previous pass: the `adapterByStep` and `adapterFor` comments in `internal/run/console_sink.go` now match the implemented `name(type)` semantics. The earlier functional fixes remain intact, and the workstream now meets the acceptance bar.
+
+#### Plan Adherence
+
+- **Steps 1-9:** accepted. The concise output format, step-scoped prefixing, emoji mapping, success-path handling, warning rendering, regression coverage, and reviewer-note documentation all align with the workstream requirements.
+
+#### Validation Performed
+
+- `git diff HEAD~1..HEAD -- internal/run/console_sink.go` → confirmed the final delta is limited to the stale comment corrections
+- `go test ./internal/run/...` → passed
