@@ -369,3 +369,27 @@ The pack still passes the requested validation commands, but this pass found lef
 - **Stale subworkflow fixture removed:** Deleted `examples/llm-pack/05-subworkflow/subworkflows/` tree entirely. Only the canonical `examples/llm-pack/05-subworkflow/child/main.hcl` child remains, matching the `source = "./child"` reference in both the doc and mirrored HCL.
 - **Unused prompt fixture removed:** Deleted `examples/llm-pack/08-fileset-template/prompts/hello.md`. The directory now contains exactly `prompts/alpha.md` and `prompts/beta.md`, matching the two-file enumeration in the canonical example.
 - **Validation after cleanup:** `go test ./tools/llmpack-check/...` PASS, `make validate` PASS (all 8 llm-pack examples), `make spec-check` OK.
+
+### Review 2026-05-11-04 — approved
+
+#### Summary
+
+Approved. The resubmission resolves the two remaining blockers by removing the dead alternate subworkflow fixture and the unused extra prompt file, leaving the example trees aligned with the canonical docs and mirrored HCL. I did not find any new quality, test-intent, or security issues in the reviewed scope.
+
+#### Plan Adherence
+
+- `examples/llm-pack/05-subworkflow/` now contains only the canonical parent workflow and the referenced `./child` workflow, so the shipped example no longer has ambiguous stale fixtures.
+- `examples/llm-pack/08-fileset-template/` now contains exactly the two prompt fixtures referenced by both `docs/llm/08-fileset-template.md` and `examples/llm-pack/08-fileset-template/main.hcl`.
+- The workstream remains within scope: the prompt-pack docs, mirrored examples, `Makefile` validation wiring, llmpack tests, and single `docs/LANGUAGE-SPEC.md` cross-link all still match the specified plan and exit criteria.
+
+#### Test Intent Assessment
+
+- The current guardrails are sufficient for this scope: llmpack tests lock down the documentation pack shape and doc/example drift, while `make validate` proves the canonical example directories still compile after pruning the stale fixtures.
+- This cleanup removes the only remaining ambiguity in the example trees; I did not find a plausible regression in the current reviewed scope that would still satisfy the workstream acceptance bar.
+
+#### Validation Performed
+
+- `go test ./tools/llmpack-check/...` — passed.
+- `make validate` — passed.
+- `make spec-check` — passed.
+- `make ci` — passed.
