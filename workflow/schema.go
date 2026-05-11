@@ -52,9 +52,10 @@ type LocalNode struct {
 //
 //	environment "shell" "default" { variables = {...}, config = {...} }
 type EnvironmentSpec struct {
-	Type   string   `hcl:"type,label"`
-	Name   string   `hcl:"name,label"`
-	Remain hcl.Body `hcl:",remain"` // captures variables and config attributes
+	Type string `hcl:"type,label"`
+	Name string `hcl:"name,label"`
+	// Captures: variables (optional, map of string env-vars), config (optional, type-specific config map).
+	Remain hcl.Body `hcl:",remain"`
 }
 
 // EnvironmentNode is a compiled environment declaration.
@@ -79,8 +80,14 @@ type OutputNode struct {
 // one .hcl file must contain this block; across multiple files, exactly one
 // WorkflowHeaderSpec may be non-nil after merging.
 type WorkflowHeaderSpec struct {
-	Name               string `hcl:"name,label"`
-	Version            string `hcl:"version,optional"`
+	Name string `hcl:"name,label"`
+	// Version is the HCL schema version string. Use "1".
+	//
+	// spec:required
+	Version string `hcl:"version,optional"`
+	// InitialState names the step or state where workflow execution begins.
+	//
+	// spec:required
 	InitialState       string `hcl:"initial_state,optional"`
 	TargetState        string `hcl:"target_state,optional"`
 	DefaultEnvironment string `hcl:"environment,optional"` // "<type>.<name>" reference to the workflow's default environment
@@ -172,10 +179,8 @@ type StepSpec struct {
 	// traversal captured from Remain by resolveStepEnvironmentOverride. A
 	// quoted-string form causes a compile error with a migration hint.
 	Outcomes []OutcomeSpec `hcl:"outcome,block"`
-	// Remain captures the target attribute and other expressions (for_each, count,
-	// etc.) for lazy extraction by the compiler. The target attribute, if present,
-	// must be an HCL traversal expression of the form adapter.<type>.<name> or
-	// subworkflow.<name>.
+	// Captures: target (required — adapter traversal e.g. adapter.copilot.main, or subworkflow.<name>);
+	// for_each, count, parallel (optional iteration controls); environment (optional, bare traversal e.g. shell.ci).
 	Remain hcl.Body `hcl:",remain"`
 	// LegacyConfigRange, when set by Parse, points at the source range for a
 	// legacy config = { ... } attribute so compile diagnostics can include
