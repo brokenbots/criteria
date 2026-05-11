@@ -49,8 +49,15 @@ func TestExtractBlocks_FromTestdata(t *testing.T) {
 	if enabled.Description != "Enabled controls whether the widget is active." {
 		t.Errorf("enabled.Description = %q, want exact text", enabled.Description)
 	}
+	// widget has a remain field with a doc comment; verify RemainNote is populated.
+	if w.RemainNote == "" {
+		t.Error("blocks[0].RemainNote is empty, want remain note from doc comment")
+	}
+	if !strings.Contains(w.RemainNote, "style") {
+		t.Errorf("blocks[0].RemainNote = %q, want it to mention 'style'", w.RemainNote)
+	}
 
-	// rule block — defined at line 26 of schema_sample.go
+	// rule block — defined at line 27 of schema_sample.go (after adding remain comment to widget)
 	r := blocks[1]
 	if r.Name != "rule" {
 		t.Errorf("blocks[1].Name = %q, want %q", r.Name, "rule")
@@ -58,8 +65,8 @@ func TestExtractBlocks_FromTestdata(t *testing.T) {
 	if len(r.Labels) != 1 || r.Labels[0] != "id" {
 		t.Errorf("blocks[1].Labels = %v, want [id]", r.Labels)
 	}
-	if r.SourceLine != 26 {
-		t.Errorf("blocks[1].SourceLine = %d, want 26", r.SourceLine)
+	if r.SourceLine != 27 {
+		t.Errorf("blocks[1].SourceLine = %d, want 27", r.SourceLine)
 	}
 	if len(r.Attributes) != 1 {
 		t.Fatalf("blocks[1].Attributes len = %d, want 1", len(r.Attributes))
@@ -537,5 +544,141 @@ inner content
 			t.Errorf("error should mention nesting or overlap, got: %v", err)
 		}
 	})
+}
+
+// TestExtractBlocks_SpecRequiredAnnotation verifies that a field tagged
+// hcl:",optional" is still reported as Required=true when its doc comment
+// contains the "spec:required" annotation.
+func TestExtractBlocks_SpecRequiredAnnotation(t *testing.T) {
+	src := `package x
+type Spec struct {
+	Foos []*FooSpec ` + "`hcl:\"foo,block\"`" + `
+}
+// FooSpec is the foo block.
+type FooSpec struct {
+	// Label for this foo.
+	Name string ` + "`hcl:\"name,label\"`" + `
+	// Description is an always-optional descriptor.
+	Desc string ` + "`hcl:\"description,optional\"`" + `
+	// Version is the format version.
+	//
+	// spec:required
+	Version string ` + "`hcl:\"version,optional\"`" + `
+}
+`
+	tmp := t.TempDir()
+	f := filepath.Join(tmp, "schema.go")
+	if err := os.WriteFile(f, []byte(src), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	blocks, err := extractBlocks(f)
+	if err != nil {
+		t.Fatalf("extractBlocks: %v", err)
+	}
+	if len(blocks) != 1 {
+		t.Fatalf("expected 1 block, got %d", len(blocks))
+	}
+	if len(blocks[0].Attributes) != 2 {
+		t.Fatalf("expected 2 attributes, got %d", len(blocks[0].Attributes))
+	}
+	desc := blocks[0].Attributes[0]
+	if desc.Name != "description" || desc.Required {
+		t.Errorf("description attr: want optional, got %+v", desc)
+	}
+	ver := blocks[0].Attributes[1]
+	if ver.Name != "version" || !ver.Required {
+		t.Errorf("version attr: want spec:required to force Required=true, got %+v", ver)
+	}
+	// The annotation line must not bleed into the Description column.
+	if strings.Contains(ver.Description, "spec:required") {
+		t.Errorf("version.Description must not contain annotation text, got %q", ver.Description)
+	}
+}
+
+// TestExtractBlocks_RemainNote verifies that remain fields with doc comments
+// produce a non-empty RemainNote in the BlockDoc.
+func TestExtractBlocks_RemainNote(t *testing.T) {
+	blocks, err := extractBlocks("testdata/schema_sample.go")
+	if err != nil {
+		t.Fatalf("extractBlocks: %v", err)
+	}
+	if len(blocks) == 0 {
+		t.Fatal("no blocks extracted")
+	}
+	widget := blocks[0]
+	if widget.Name != "widget" {
+		t.Fatalf("expected widget block, got %q", widget.Name)
+	}
+	if widget.RemainNote == "" {
+		t.Error("widget.RemainNote is empty; expected text from remain field doc comment")
+	}
+}
+
+// TestRenderBlocks_RemainNote_InOutput verifies that a block with a RemainNote
+// renders the "Additional attributes" line in the markdown output.
+func TestRenderBlocks_RemainNote_InOutput(t *testing.T) {
+	blocks := []BlockDoc{
+		{
+			Name:       "step",
+			Labels:     []string{"name"},
+			SourceLine: 10,
+			RemainNote: "target (required); for_each, count (optional iteration attrs).",
+		},
+	}
+	got := renderBlocks(blocks, "schema.go")
+	if !strings.Contains(got, "Additional attributes") {
+		t.Errorf("expected 'Additional attributes' line in output, got:\n%s", got)
+	}
+	if !strings.Contains(got, "target (required)") {
+		t.Errorf("expected remain note text in output, got:\n%s", got)
+	}
+}
+
+// TestExtractNamespaces_CtxVarsNotFound verifies that extractNamespaces returns
+// a helpful error when the 'ctxVars' variable does not appear in the function
+// body (e.g. after a rename).
+func TestExtractNamespaces_CtxVarsNotFound(t *testing.T) {
+	src := `package x
+import "github.com/zclconf/go-cty/cty"
+func BuildEvalContextWithOpts() {
+	renamedVars := map[string]cty.Value{
+		"foo": cty.StringVal(""),
+	}
+	_ = renamedVars
+}
+func WithEachBinding() {}
+`
+	tmp := t.TempDir()
+	f := filepath.Join(tmp, "eval.go")
+	if err := os.WriteFile(f, []byte(src), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	_, err := extractNamespaces(f)
+	if err == nil {
+		t.Fatal("expected error when ctxVars is not found, got nil")
+	}
+	if !strings.Contains(err.Error(), "ctxVars") {
+		t.Errorf("error should mention 'ctxVars', got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "renamed") {
+		t.Errorf("error should hint at rename, got: %v", err)
+	}
+}
+
+// TestRenderFunctions_NoDescriptionColumn verifies that the functions table
+// does not include a Description column.
+func TestRenderFunctions_NoDescriptionColumn(t *testing.T) {
+	funcs, err := extractFunctions("testdata/functions_sample.go")
+	if err != nil {
+		t.Fatalf("extractFunctions: %v", err)
+	}
+	got := renderFunctions(funcs, "testdata/functions_sample.go")
+	if strings.Contains(got, "Description") {
+		t.Errorf("functions table must not have a Description column, got:\n%s", got)
+	}
+	// Signature column must still be present.
+	if !strings.Contains(got, "Signature") {
+		t.Errorf("functions table must have a Signature column, got:\n%s", got)
+	}
 }
 

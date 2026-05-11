@@ -52,6 +52,10 @@ func renderBlocks(blocks []BlockDoc, schemaRelPath string) string {
 			fmt.Fprintf(&buf, "\n")
 		}
 
+		if b.RemainNote != "" {
+			fmt.Fprintf(&buf, "- **Additional attributes:** %s\n", b.RemainNote)
+		}
+
 		if len(b.NestedBlocks) > 0 {
 			parts := make([]string, len(b.NestedBlocks))
 			for i, nb := range b.NestedBlocks {
@@ -116,11 +120,13 @@ func blockAnchor(b BlockDoc) string {
 }
 
 // renderFunctions renders the functions section as a markdown table.
+// The Description column is omitted; the hand-authored "Function notes" prose
+// section below the generated region already provides the full explanation.
 // functionsRelPath is used in source links, e.g. "workflow/eval_functions.go".
 func renderFunctions(funcs []FuncDoc, functionsRelPath string) string {
 	var buf bytes.Buffer
-	fmt.Fprintf(&buf, "| Function | Signature | Returns | Source | Description |\n")
-	fmt.Fprintf(&buf, "|---|---|---|---|---|\n")
+	fmt.Fprintf(&buf, "| Function | Signature | Returns | Source |\n")
+	fmt.Fprintf(&buf, "|---|---|---|---|\n")
 	for _, fn := range funcs {
 		var paramParts []string
 		for _, p := range fn.Params {
@@ -132,8 +138,8 @@ func renderFunctions(funcs []FuncDoc, functionsRelPath string) string {
 		sig := fmt.Sprintf("%s(%s)", fn.Name, strings.Join(paramParts, ", "))
 		source := fmt.Sprintf("[%s:%d](../%s#L%d)",
 			functionsRelPath, fn.SourceLine, functionsRelPath, fn.SourceLine)
-		fmt.Fprintf(&buf, "| `%s` | `%s` | `%s` | %s | %s |\n",
-			fn.Name, sig, fn.ReturnType, source, fn.Description)
+		fmt.Fprintf(&buf, "| `%s` | `%s` | `%s` | %s |\n",
+			fn.Name, sig, fn.ReturnType, source)
 	}
 	return strings.TrimRight(buf.String(), "\n")
 }

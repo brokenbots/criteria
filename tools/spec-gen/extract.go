@@ -16,13 +16,14 @@ type BlockDoc struct {
 	Attributes   []AttrDoc // non-label, non-block, non-remain fields
 	NestedBlocks []string  // HCL block keywords of nested block types
 	SourceLine   int       // line number of the struct type in schema.go
+	RemainNote   string    // non-empty when the block's remain field carries documentation
 }
 
 // AttrDoc describes a single attribute within a block.
 type AttrDoc struct {
 	Name        string // HCL attribute name
 	Type        string // HCL type string, e.g. "string", "bool", "number", "list(string)"
-	Required    bool   // true when tag has no "optional" modifier
+	Required    bool   // true when tag has no "optional" modifier, or when spec:required annotation is present
 	Description string // from field doc comment, or "_(no description)_"
 }
 
@@ -42,7 +43,44 @@ type ParamDoc struct {
 	Type string
 }
 
-// hclTag holds the parsed name and kind from an hcl struct tag.
+// hasRequiredAnnotation reports whether the comment group contains a
+// "// spec:required" line, which marks a semantically compile-time-required
+// attribute despite having the hcl "optional" tag.
+func hasRequiredAnnotation(doc *ast.CommentGroup) bool {
+	if doc == nil {
+		return false
+	}
+	for _, c := range doc.List {
+		// Strip leading "// " or "//" to get the raw comment text.
+		line := strings.TrimPrefix(c.Text, "// ")
+		line = strings.TrimPrefix(line, "//")
+		line = strings.TrimSpace(line)
+		if line == "spec:required" {
+			return true
+		}
+	}
+	return false
+}
+
+// remainNoteText extracts a human-readable note from a remain field's doc
+// comment (lines above the field) or line comment (end-of-line). Returns empty
+// when neither is present.
+func remainNoteText(field *ast.Field) string {
+	if field.Doc != nil {
+		text := docText(field.Doc)
+		if text != "" {
+			return text
+		}
+	}
+	if field.Comment != nil {
+		text := docText(field.Comment)
+		if text != "" {
+			return text
+		}
+	}
+	return ""
+}
+
 type hclTag struct {
 	name string
 	kind string // "label", "block", "optional", "remain", "" (required attr)
@@ -167,7 +205,12 @@ func extractNamespaces(evalFile string) ([]NamespaceDoc, error) {
 	if !ok {
 		return nil, fmt.Errorf("BuildEvalContextWithOpts not found in %s", evalFile)
 	}
-	keys := extractCtxVarKeys(buildFn)
+	keys, varFound := extractCtxVarKeys(buildFn)
+	if !varFound {
+		return nil, fmt.Errorf(
+			"BuildEvalContextWithOpts: variable 'ctxVars' not found in function body — has the symbol been renamed?")
+	}
+
 
 	var eachSubKeys []string
 	if bindFn, ok := funcDecls["WithEachBinding"]; ok {
@@ -189,9 +232,13 @@ func extractNamespaces(evalFile string) ([]NamespaceDoc, error) {
 // assigned to the local variable named "ctxVars", in declaration order.
 // It handles both the initial composite literal (`ctxVars := map[...]{...}`)
 // and subsequent index assignments (`ctxVars["key"] = ...`).
-func extractCtxVarKeys(fn *ast.FuncDecl) []string {
+// The second return value is true when the "ctxVars" identifier was observed
+// at all; false means the variable was not found (likely renamed) and the
+// caller should return an actionable error.
+func extractCtxVarKeys(fn *ast.FuncDecl) ([]string, bool) {
 	var keys []string
 	seen := make(map[string]bool)
+	varFound := false
 
 	ast.Inspect(fn.Body, func(n ast.Node) bool {
 		assign, ok := n.(*ast.AssignStmt)
@@ -204,6 +251,7 @@ func extractCtxVarKeys(fn *ast.FuncDecl) []string {
 				if e.Name != "ctxVars" || i >= len(assign.Rhs) {
 					continue
 				}
+				varFound = true
 				cl, ok := assign.Rhs[i].(*ast.CompositeLit)
 				if !ok {
 					continue
@@ -229,6 +277,7 @@ func extractCtxVarKeys(fn *ast.FuncDecl) []string {
 				if !ok || ident.Name != "ctxVars" {
 					continue
 				}
+				varFound = true
 				bl, ok := e.Index.(*ast.BasicLit)
 				if !ok {
 					continue
@@ -243,7 +292,7 @@ func extractCtxVarKeys(fn *ast.FuncDecl) []string {
 		}
 		return true
 	})
-	return keys
+	return keys, varFound
 }
 
 // extractEachMapKeys finds the map[string]cty.Value literal assigned to
@@ -369,12 +418,21 @@ func extractBlockFromStruct(hclName string, si structInfo, structs map[string]st
 				bd.NestedBlocks = append(bd.NestedBlocks, tag.name)
 			}
 		case "remain":
-			// skip — captures the remaining HCL body
+			// Extract any documentation on the remain field as a note for the spec.
+			if note := remainNoteText(field); note != "" && bd.RemainNote == "" {
+				bd.RemainNote = note
+			}
 		case "", "attr", "optional":
 			if tag.name == "" {
 				continue // no valid hcl attribute name
 			}
 			required := tag.kind == "" || tag.kind == "attr"
+			// A field annotated with "// spec:required" is treated as required
+			// regardless of the HCL tag, because compile.go enforces it even
+			// though HCL-level parsing accepts absence.
+			if !required && hasRequiredAnnotation(field.Doc) {
+				required = true
+			}
 			desc := docText(field.Doc)
 			if desc == "" {
 				desc = "_(no description)_"

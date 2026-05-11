@@ -18,7 +18,8 @@ type WidgetSpec struct {
 	// Title is the display label shown in the UI.
 	Title   string `hcl:"title,attr"`
 	// Enabled controls whether the widget is active.
-	Enabled *bool  `hcl:"enabled,optional"`
+	Enabled *bool    `hcl:"enabled,optional"`
+	// Captures: style (optional, one of "compact" or "expanded"); icon (optional, string).
 	Remain  hcl.Body `hcl:",remain"`
 }
 
