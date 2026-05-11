@@ -132,7 +132,11 @@ validate: build ## Validate all example workflow directories
 		examples/perf_1000_logs \
 		examples/phase3-environment examples/phase3-fold examples/phase3-multi-file \
 		examples/phase3-output examples/phase3-subworkflow examples/phase3-shared-variable \
-		examples/phase3-parallel; do \
+		examples/phase3-parallel \
+		examples/llm-pack/01-linear examples/llm-pack/02-branching-switch \
+		examples/llm-pack/03-iteration-for-each examples/llm-pack/04-iteration-parallel \
+		examples/llm-pack/05-subworkflow examples/llm-pack/06-approval-and-wait \
+		examples/llm-pack/07-shared-variable examples/llm-pack/08-fileset-template; do \
 		echo "Validating $$d..."; \
 		CRITERIA_WORKFLOW_ALLOWED_PATHS="$(CURDIR)" ./bin/criteria validate "$$d" || exit 1; \
 	done
