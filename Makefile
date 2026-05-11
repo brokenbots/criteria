@@ -152,13 +152,14 @@ validate-self-workflows: build ## Validate + compile all .criteria/workflows/* t
 	done
 	@echo "All self-development workflows validated."
 
-self: build plugins ## Pick the next pending workstream and run the full self-development cycle
+self: build plugins ## Pick the next pending workstream and run the full self-development cycle (interactive: pauses on operator approval gates)
 	@ws=$$(sh .criteria/workflows/bootstrap/scripts/pick-next-workstream.sh); \
 	if [ -z "$$ws" ]; then \
 		echo "[self] no pending workstreams — main is up to date."; \
 		exit 0; \
 	fi; \
 	echo "[self] processing $$ws"; \
+	CRITERIA_LOCAL_APPROVAL="$${CRITERIA_LOCAL_APPROVAL:-stdin}" \
 	CRITERIA_PLUGINS="$(CURDIR)/bin" \
 	CRITERIA_WORKFLOW_ALLOWED_PATHS=".criteria/workflows" \
 		./bin/criteria apply .criteria/workflows/bootstrap \
