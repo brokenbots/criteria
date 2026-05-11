@@ -102,15 +102,15 @@ step "prepare_branch" {
 
 switch "route_branch_state" {
   condition {
-    match = startswith(steps.prepare_branch.stdout, "already_merged:")
+    match = steps.prepare_branch.stdout == "already_merged"
     next  = state.committed
   }
   condition {
-    match = startswith(steps.prepare_branch.stdout, "existing_local:")
+    match = steps.prepare_branch.stdout == "existing_local"
     next  = step.ci_gate
   }
   condition {
-    match = startswith(steps.prepare_branch.stdout, "existing_remote:")
+    match = steps.prepare_branch.stdout == "existing_remote"
     next  = step.ci_gate
   }
   default { next = step.develop_init }
@@ -122,7 +122,7 @@ step "develop_init" {
   target      = adapter.copilot.developer
   allow_tools = ["*"]
   input {
-    prompt = "Read ${var.workstream_file} for the full task scope. Branch state from the workflow: `${steps.prepare_branch.stdout}`. If newly created, implement every acceptance-criterion item. If existing, inspect the current state, preserve useful work, and complete only missing items. Write tests. Run `make ci` to confirm; if it fails, fix before declaring ready. Update ${var.workstream_file} with implementation notes and check off completed items.\n\nEnd your final message with exactly one of:\nRESULT: needs_review\nRESULT: failure"
+    prompt = "Read ${var.workstream_file} for the full task scope. Branch state classifier: `${steps.prepare_branch.stdout}` (one of: created, existing_local, existing_remote, existing_dirty; the branch name is `basename '${var.workstream_file}' .md`). If `created`, implement every acceptance-criterion item from a clean slate. If `existing_*`, inspect the current state, preserve useful work, and complete only missing items. Write tests. Run `make ci` to confirm; if it fails, fix before declaring ready. Update ${var.workstream_file} with implementation notes and check off completed items.\n\nEnd your final message with exactly one of:\nRESULT: needs_review\nRESULT: failure"
   }
   outcome "needs_review" { next = "ci_gate" }
   outcome "failure"      { next = "failed" }

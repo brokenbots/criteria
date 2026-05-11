@@ -117,8 +117,8 @@ step "pr_review" {
 step "merge_branch" {
   target = subworkflow.merge_branch
   input {
-    branch_name = trimsuffix(basename(var.workstream_file), ".md")
-    project_dir = var.project_dir
+    workstream_file = var.workstream_file
+    project_dir     = var.project_dir
   }
   outcome "success" { next = "done" }
   outcome "failure" { next = "failed" }

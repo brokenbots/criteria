@@ -2,13 +2,16 @@
 # Idempotent workstream branch preparation.
 #
 # Derives the branch name from the workstream filename (criteria convention:
-# `td-01-foo.md` -> branch `td-01-foo`). Routes the caller via structured stdout:
+# `td-01-foo.md` -> branch `td-01-foo`). Routes the caller via the classifier
+# word emitted on stdout (no trailing newline) so the workflow switch can match
+# it with `==`. Branch name and any context go to stderr for human visibility.
 #
-#   already_merged:<branch>   branch is a strict ancestor of main; skip work
-#   existing_local:<branch>   local branch exists, ahead of main; continue from it
-#   existing_remote:<branch>  remote branch exists, ahead of main; check it out
-#   existing_dirty:<branch>   we are on the branch with uncommitted changes
-#   created:<branch>          new branch created from main
+# Classifiers (stdout):
+#   already_merged   branch is a strict ancestor of main; skip work
+#   existing_local   local branch exists, ahead of main; continue from it
+#   existing_remote  remote branch exists, ahead of main; checked out now
+#   existing_dirty   we are on the branch with uncommitted changes
+#   created          new branch created from main
 #
 # Exits non-zero on dirty-other-branch or filesystem errors. Never deletes work.
 set -eu
@@ -29,9 +32,15 @@ fi
 current_branch="$(git branch --show-current 2>/dev/null || true)"
 dirty_status="$(git status --porcelain)"
 
+emit() {
+  # $1 = classifier, $2 = human note for stderr
+  printf '%s' "$1"
+  echo "branch=${branch} state=$1 ${2:-}" >&2
+}
+
 if [ -n "$dirty_status" ]; then
   if [ "$current_branch" = "$branch" ]; then
-    echo "existing_dirty:${branch}"
+    emit "existing_dirty"
     exit 0
   fi
   echo "dirty_other:${current_branch:-detached}; expected ${branch}" >&2
@@ -52,14 +61,14 @@ is_strict_ancestor() {
 
 if git show-ref --verify --quiet "refs/remotes/origin/${branch}"; then
   if is_strict_ancestor "origin/${branch}" "$main_ref"; then
-    echo "already_merged:${branch}"
+    emit "already_merged"
     exit 0
   fi
 fi
 
 if git show-ref --verify --quiet "refs/heads/${branch}"; then
   if is_strict_ancestor "$branch" "$main_ref"; then
-    echo "already_merged:${branch}"
+    emit "already_merged"
     exit 0
   fi
 
@@ -67,15 +76,15 @@ if git show-ref --verify --quiet "refs/heads/${branch}"; then
   if git show-ref --verify --quiet "refs/remotes/origin/${branch}"; then
     git pull --ff-only origin "$branch" >/dev/null 2>&1 || true
   fi
-  echo "existing_local:${branch}"
+  emit "existing_local"
   exit 0
 fi
 
 if git show-ref --verify --quiet "refs/remotes/origin/${branch}"; then
   git checkout -b "$branch" --track "origin/${branch}" >/dev/null 2>&1 || git checkout "$branch" >/dev/null 2>&1
-  echo "existing_remote:${branch}"
+  emit "existing_remote"
   exit 0
 fi
 
 git checkout -b "$branch" "$main_ref" >/dev/null 2>&1
-echo "created:${branch}"
+emit "created" "based_on=${main_ref}"

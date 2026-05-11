@@ -17,10 +17,10 @@ policy {
   max_total_steps = 100
 }
 
-variable "branch_name" {
+variable "workstream_file" {
   type        = "string"
   default     = ""
-  description = "Branch that was merged into main on GitHub. Used to verify the merge commit landed."
+  description = "Workstream markdown path. The branch name is derived as `basename(workstream_file, .md)` inside the verify step (since the engine does not yet provide a basename function in HCL eval)."
 }
 
 variable "project_dir" {
@@ -79,7 +79,7 @@ step "verify_branch_merged" {
   target  = adapter.shell.git
   timeout = "60s"
   input {
-    command           = "set -euo pipefail; if git show-ref --verify --quiet refs/remotes/origin/${var.branch_name}; then git merge-base --is-ancestor origin/${var.branch_name} HEAD && echo 'branch_in_main=true'; else echo 'branch_deleted=true'; fi"
+    command           = "set -euo pipefail; branch=$(basename \"${var.workstream_file}\" .md); if git show-ref --verify --quiet refs/remotes/origin/$branch; then git merge-base --is-ancestor origin/$branch HEAD && echo \"branch_in_main=true branch=$branch\"; else echo \"branch_deleted=true branch=$branch\"; fi"
     working_directory = var.project_dir
   }
   outcome "success" { next = "synced" }
@@ -112,7 +112,7 @@ step "repair_sync" {
   allow_tools = ["read", "edit", "shell", "execute"]
   max_visits  = 5
   input {
-    prompt = "The post-PR local main sync failed for branch `${var.branch_name}` in ${var.project_dir}. The PR has already been merged on GitHub via `gh pr merge --squash --delete-branch`. Inspect the repository state, resolve any dirty working tree or divergent-main issue without destructive git operations, and leave the repo on main with a clean working tree containing the merged commit.\n\nDo not push. Do not force any branch operation. If you cannot resolve cleanly, fail and let the operator step in.\n\nEnd your final message with exactly one of:\nRESULT: success\nRESULT: failure"
+    prompt = "The post-PR local main sync failed for workstream `${var.workstream_file}` in ${var.project_dir}. The PR has already been merged on GitHub via `gh pr merge --squash --delete-branch`. Inspect the repository state, resolve any dirty working tree or divergent-main issue without destructive git operations, and leave the repo on main with a clean working tree containing the merged commit. The branch name is `basename '${var.workstream_file}' .md`.\n\nDo not push. Do not force any branch operation. If you cannot resolve cleanly, fail and let the operator step in.\n\nEnd your final message with exactly one of:\nRESULT: success\nRESULT: failure"
   }
   outcome "success" { next = "fetch_main" }
   outcome "failure" { next = "failed" }
