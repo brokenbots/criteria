@@ -1,5 +1,5 @@
 .PHONY: help bootstrap tidy build plugins install proto proto-lint proto-check-drift \
-	test test-cover test-conformance test-flake-watch lint-imports lint-go lint-baseline-check lint validate validate-self-workflows example-plugin bench docker-runtime docker-runtime-smoke ci self clean
+	test test-cover test-conformance test-flake-watch lint-imports lint-go lint-baseline-check lint validate validate-self-workflows example-plugin bench docker-runtime docker-runtime-smoke ci self self-loop clean
 
 # Default target: list available targets.
 help:
@@ -153,7 +153,21 @@ validate-self-workflows: build ## Validate + compile all .criteria/workflows/* t
 	@echo "All self-development workflows validated."
 
 self: build plugins ## Pick the next pending workstream and run the full self-development cycle (interactive: pauses on operator approval gates)
-	@ws=$$(sh .criteria/workflows/bootstrap/scripts/pick-next-workstream.sh); \
+	@mkdir -p .criteria/tmp; \
+	lock=.criteria/tmp/self.lock; \
+	if [ -f "$$lock" ]; then \
+		pid=$$(cat "$$lock" 2>/dev/null || echo); \
+		if [ -n "$$pid" ] && kill -0 "$$pid" 2>/dev/null; then \
+			echo "[self] another run is in progress (pid=$$pid); refusing to start"; \
+			echo "[self] if you are sure no run is active: rm $$lock"; \
+			exit 1; \
+		fi; \
+		echo "[self] removing stale lock (no live pid=$$pid)"; \
+		rm -f "$$lock"; \
+	fi; \
+	echo $$$$ > "$$lock"; \
+	trap 'rm -f "$$lock"' EXIT INT TERM; \
+	ws=$$(sh .criteria/workflows/bootstrap/scripts/pick-next-workstream.sh); \
 	if [ -z "$$ws" ]; then \
 		echo "[self] no pending workstreams — main is up to date."; \
 		exit 0; \
@@ -165,6 +179,17 @@ self: build plugins ## Pick the next pending workstream and run the full self-de
 		./bin/criteria apply .criteria/workflows/bootstrap \
 			--var workstream_file=$$ws \
 			--var project_dir=$(CURDIR)
+
+self-loop: build plugins ## Drain the workstream backlog: run `make self` repeatedly until the picker returns empty
+	@while :; do \
+		ws=$$(sh .criteria/workflows/bootstrap/scripts/pick-next-workstream.sh); \
+		if [ -z "$$ws" ]; then \
+			echo "[self-loop] backlog empty — exiting clean."; \
+			exit 0; \
+		fi; \
+		echo "[self-loop] next workstream: $$ws"; \
+		$(MAKE) self || { echo "[self-loop] make self failed; stopping"; exit 1; }; \
+	done
 
 workflow_%: build plugins ## Run a single subworkflow by name (.criteria/workflows/<name>); pass vars via WORKFLOW_VARS="--var k=v ..."
 	@CRITERIA_PLUGINS="$(CURDIR)/bin" \
