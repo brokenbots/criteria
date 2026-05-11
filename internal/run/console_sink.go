@@ -373,12 +373,15 @@ func (c *ConsoleSink) buildLinePrefix(step string) string {
 // adapterFor returns the adapter instance name (refName) and type (kind) for a
 // step, as stored by OnStepEntered in adapterByStep. The rendered prefix uses
 // these in name(type) order, e.g. refName="default", kind="shell" → "default(shell)".
+// When the cache is cold (e.g. OnStepResumed fires before OnStepEntered on the
+// resume path), it falls back to resolveAdapter for graph-based lookup.
 func (c *ConsoleSink) adapterFor(step string) (refName, kind string) {
 	c.mu.Lock()
 	a, ok := c.adapterByStep[step]
 	c.mu.Unlock()
 	if !ok {
-		return "", ""
+		// Cache miss — fall back to graph lookup for the resume-before-OnStepEntered case.
+		a = c.resolveAdapter(step, "")
 	}
 	return a.refName, a.kind
 }

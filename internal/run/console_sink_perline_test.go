@@ -350,3 +350,24 @@ func TestConsoleSink_PerLineFormat_OutcomeUnknown(t *testing.T) {
 		t.Errorf("unknown outcome line missing outcome value, got:\n%s", out)
 	}
 }
+
+// TestConsoleSink_PerLineFormat_StepResumed_ColdCache confirms that
+// OnStepResumed renders the correct adapter label even when called before
+// OnStepEntered (the criteria apply --resume reattach path), by falling back
+// to the Graph for adapter resolution.
+func TestConsoleSink_PerLineFormat_StepResumed_ColdCache(t *testing.T) {
+	var buf bytes.Buffer
+	g := minimalGraph("build", "shell", "compile")
+	// Call OnStepResumed WITHOUT a prior OnStepEntered — simulates the resume path.
+	sink := NewConsoleSink(&buf, []string{"build"}, false, g)
+	sink.OnStepResumed("build", 2, "criteria_restart")
+
+	out := stripANSI(buf.String())
+	// Adapter label must be resolved from the Graph, not "?(?)".
+	if strings.Contains(out, "?(?)") {
+		t.Errorf("OnStepResumed rendered ?(?) on cold cache; expected graph-resolved label, output:\n%s", out)
+	}
+	if !strings.Contains(out, "[1/1 build · compile(shell)]") {
+		t.Errorf("OnStepResumed line missing correct prefix on cold cache, output:\n%s", out)
+	}
+}

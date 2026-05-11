@@ -684,3 +684,49 @@ Approved. The final submission clears the last remaining nit from the previous p
 
 - `git diff HEAD~1..HEAD -- internal/run/console_sink.go` → confirmed the final delta is limited to the stale comment corrections
 - `go test ./internal/run/...` → passed
+
+### Post-approval remediation 2026-05-11 (PR review blockers)
+
+Three blockers raised by reviewer `handcaught` on the merged PR — all fixed before merge.
+
+#### Blocker 1 — `OnStepResumed` renders `?(?)` on the resume path (apply_local.go:208)
+
+**Root cause:** `adapterFor` returned `("", "")` on cache miss, so `buildLinePrefix` rendered `?(?)`
+whenever `OnStepResumed` fired before `OnStepEntered` (the `criteria apply --resume` reattach path).
+
+**Fix:** `adapterFor` in `internal/run/console_sink.go` now falls back to `resolveAdapter(step, "")`
+when the `adapterByStep` cache is cold, mirroring the Graph-lookup path used by `OnStepEntered`.
+
+**Test added:** `TestConsoleSink_PerLineFormat_StepResumed_ColdCache` in
+`internal/run/console_sink_perline_test.go` — calls `OnStepResumed` without a prior `OnStepEntered`,
+asserts the prefix renders `[1/1 build · compile(shell)]` and does NOT contain `?(?)`.
+
+#### Blocker 2 — `"run"` is an unguarded substring match in `tool_emoji.go:50`
+
+**Root cause:** `strings.Contains(n, "run")` fired on `return_value`, `get_current_run`,
+`run_query`, `prerun_check`, and any tool name containing the substring "run" — contradicting the
+false-positive-aware design philosophy of the adjacent `" sh "` keyword.
+
+**Fix:** Changed `"run"` → `" run "` (space-guarded) in `emojiCategories`, and changed the `toolEmoji`
+function to pad the input: `n := " " + strings.ToLower(toolName) + " "`. This makes all space-guarded
+keywords do full word-boundary matching: `"run"` → ⚡, but `"return_value"`, `"get_current_run"`,
+`"run_query"`, `"prerun_check"` → fallback →.
+
+The same padding also makes `" sh "` correctly handle `"sh "` (tool name starting with "sh" plus trailing
+space — Workstream Test #19), since `" sh  "` (padded) contains `" sh "`.
+
+**Tests added:** `TestToolEmoji_FalsePositive_RunSubstring` and `TestToolEmoji_Run` in
+`internal/run/tool_emoji_test.go`.
+
+#### Blocker 3 — `TestToolEmoji_ShellExec` masked a spec violation for `"sh "` input
+
+**Root cause:** The test used `"run sh cmd"` (spaces on both sides of `sh`) instead of the
+spec-mandated `"sh "` input from Workstream Test #19. With the original `n := strings.ToLower(toolName)`
+approach, `"sh "` did not match `" sh "` (no leading space), so the test silently substituted a
+different input that happened to work.
+
+**Fix:** Updated `TestToolEmoji_ShellExec` to include `"sh "` in the cases slice (fixes the spec
+gap) and retained `"run sh cmd"` as an additional documented case. The input-padding fix in Blocker 2
+makes `"sh "` match correctly.
+
+**Validation:** `go test -race -count=1 ./internal/run/...` → ok (all tests pass including new ones).

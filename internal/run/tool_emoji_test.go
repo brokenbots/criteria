@@ -29,13 +29,14 @@ func TestToolEmoji_WriteEdit(t *testing.T) {
 }
 
 func TestToolEmoji_ShellExec(t *testing.T) {
-	cases := []string{"shell", "exec_command", "bash_run"}
+	cases := []string{"shell", "exec_command", "bash_run", "sh "}
 	for _, name := range cases {
 		if got := toolEmoji(name); got != "⚡" {
 			t.Errorf("toolEmoji(%q) = %q, want ⚡", name, got)
 		}
 	}
-	// " sh " with surrounding spaces — the keyword has embedded spaces.
+	// " sh " with surrounding spaces is a word-boundary keyword; the padded
+	// input means it also matches "sh" at the start of a tool name.
 	if got := toolEmoji("run sh cmd"); got != "⚡" {
 		t.Errorf("toolEmoji(\"run sh cmd\") = %q, want ⚡", got)
 	}
@@ -65,6 +66,24 @@ func TestToolEmoji_Fallback(t *testing.T) {
 		if got := toolEmoji(name); got != "→" {
 			t.Errorf("toolEmoji(%q) = %q, want →", name, got)
 		}
+	}
+}
+
+// TestToolEmoji_FalsePositive_RunSubstring confirms that tool names containing
+// "run" as a substring (not a whole word) do not match the ⚡ shell category.
+func TestToolEmoji_FalsePositive_RunSubstring(t *testing.T) {
+	falsepositives := []string{"return_value", "get_current_run", "run_query", "prerun_check"}
+	for _, name := range falsepositives {
+		if got := toolEmoji(name); got == "⚡" {
+			t.Errorf("toolEmoji(%q) = ⚡, want → (run must not match as substring)", name)
+		}
+	}
+}
+
+// TestToolEmoji_Run confirms that a bare "run" tool name returns ⚡.
+func TestToolEmoji_Run(t *testing.T) {
+	if got := toolEmoji("run"); got != "⚡" {
+		t.Errorf("toolEmoji(\"run\") = %q, want ⚡", got)
 	}
 }
 
