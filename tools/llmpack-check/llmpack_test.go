@@ -253,6 +253,63 @@ func TestPromptPack_HCLMirroredToExamples(t *testing.T) {
 	}
 }
 
+// allowedExampleFiles is the explicit allowlist of every file permitted to
+// exist under examples/llm-pack/ (relative paths from that directory).
+// Any file not in this list causes TestExamplesLLMPack_NoOrphanFiles to fail.
+// New fixtures must be added here deliberately.
+var allowedExampleFiles = func() map[string]bool {
+	m := map[string]bool{
+		// Child workflow fixture for example 05.
+		filepath.Join("05-subworkflow", "child", "main.hcl"): true,
+		// Prompt fixtures for example 08.
+		filepath.Join("08-fileset-template", "prompts", "alpha.md"): true,
+		filepath.Join("08-fileset-template", "prompts", "beta.md"):  true,
+	}
+	// The 8 canonical main.hcl mirrors.
+	for _, name := range canonicalFiles {
+		base := strings.TrimSuffix(name, ".md")
+		m[filepath.Join(base, "main.hcl")] = true
+	}
+	return m
+}()
+
+// TestExamplesLLMPack_NoOrphanFiles walks examples/llm-pack/ and fails if any
+// file is not in the explicit allowedExampleFiles allowlist.  This prevents
+// stale fixture files from accumulating silently.
+func TestExamplesLLMPack_NoOrphanFiles(t *testing.T) {
+	root := repoRoot(t)
+	examplesDir := filepath.Join(root, "examples", "llm-pack")
+
+	err := filepath.WalkDir(examplesDir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		rel, relErr := filepath.Rel(examplesDir, path)
+		if relErr != nil {
+			t.Errorf("cannot make %s relative: %v", path, relErr)
+			return nil
+		}
+		if !allowedExampleFiles[rel] {
+			t.Errorf("unexpected file in examples/llm-pack/: %s (add to allowedExampleFiles if intentional)", rel)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("error walking %s: %v", examplesDir, err)
+	}
+
+	// Also verify every expected file actually exists (catch renames/deletions).
+	for rel := range allowedExampleFiles {
+		full := filepath.Join(examplesDir, rel)
+		if _, statErr := os.Stat(full); os.IsNotExist(statErr) {
+			t.Errorf("allowlisted file missing from examples/llm-pack/: %s", rel)
+		}
+	}
+}
+
 // extractHCLBlock extracts the content of the first ```hcl ... ``` fenced
 // block from the given markdown body.
 func extractHCLBlock(t *testing.T, filename, body string) string {
