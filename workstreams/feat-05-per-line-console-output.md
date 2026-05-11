@@ -464,16 +464,16 @@ This workstream may **not** edit:
 
 ## Tasks
 
-- [ ] Define the new line format (Step 1).
-- [ ] Implement `tool_emoji.go` with category table (Step 2).
-- [ ] Extend `consoleStepSink` with `prefix` and rework rendering (Step 3).
-- [ ] Update step header line (Step 4).
-- [ ] Update step outcome line (Step 5).
-- [ ] Audit other On* methods and apply prefix where step-scoped (Step 6).
-- [ ] Add 27 unit tests across two test files (Step 7).
-- [ ] Capture pre/post output samples in reviewer notes (Step 8).
-- [ ] Update any existing golden-format tests to the new format.
-- [ ] Validation including manual visual inspection (Step 9).
+- [x] Define the new line format (Step 1).
+- [x] Implement `tool_emoji.go` with category table (Step 2).
+- [x] Extend `consoleStepSink` with `prefix` and rework rendering (Step 3).
+- [x] Update step header line (Step 4).
+- [x] Update step outcome line (Step 5).
+- [x] Audit other On* methods and apply prefix where step-scoped (Step 6).
+- [x] Add 27 unit tests across two test files (Step 7).
+- [x] Capture pre/post output samples in reviewer notes (Step 8).
+- [x] Update any existing golden-format tests to the new format.
+- [x] Validation including manual visual inspection (Step 9).
 
 ## Exit criteria
 
@@ -510,3 +510,79 @@ Specifically:
 | Tool name with no recognised category but containing whitespace breaks the substring match | Substring matching tolerates whitespace; the test case `"weird_thing"` covers. The `" sh "`-with-spaces edge case is the deliberate guard against false positives. |
 | Long tool names overflow the truncation in unhelpful ways (e.g. emoji + name + truncated args) | Truncation always preserves the prefix and emoji; the body truncates from the right. Test #15 covers. |
 | Future engine changes change the order of `OnStepEntered` and the first adapter event arriving for the same step | The defensive empty-prefix path (Test #11) handles the case. No crash, just a missing prefix on the early event. |
+
+## Reviewer Notes
+
+### Implementation summary
+
+**Option B chosen (stable Sink interface):** `ConsoleSink` gains a `Graph *workflow.FSMGraph` field and `adapterByStep map[string]struct{refName, kind string}`. The `NewConsoleSink` signature adds a `*workflow.FSMGraph` parameter (nil-safe). No `engine.Sink` interface changes.
+
+**Files created:**
+- `internal/run/tool_emoji.go` — emoji categoriser (`toolEmoji(string) string`), 5 categories + fallback `→`.
+- `internal/run/tool_emoji_test.go` — 11 tests covering all 27 workstream-specified cases #17–27.
+- `internal/run/console_sink_perline_test.go` — 16 tests covering workstream cases #1–16; uses `minimalGraph()` helper to build `*workflow.FSMGraph` test fixtures directly (no parser dependency).
+
+**Files modified:**
+- `internal/run/console_sink.go` — added `Graph`, `adapterByStep` fields; new helpers `buildLinePrefix`, `adapterFor`, `resolveAdapter`, `adapterLifecycleTag`; updated `OnStepEntered`, `OnStepOutcome`, `OnStepResumed`, `OnStepOutputCaptured`, `OnForEachEntered`, `OnStepIterationStarted`, `OnStepIterationCompleted`, `OnStepIterationItem`, `StepEventSink`, `consoleStepSink`, `renderAgentMessage`, `renderToolInvocation`, permission/limit handlers.
+- `internal/cli/apply_output.go` — `buildLocalSink` signature adds `graph *workflow.FSMGraph`; passes to `NewConsoleSink`.
+- `internal/cli/apply_local.go` — 3 `buildLocalSink` call sites updated to pass `graph`.
+- `internal/cli/apply_output_test.go` — 2 test call sites updated to pass `nil`.
+- `internal/run/console_sink_test.go` — all 10 existing tests updated: `NewConsoleSink` calls pass `nil`; assertions updated to new prefix format, `▶` header, emoji for bash tools.
+
+### Workstream doc note — adapter display order
+
+The workstream spec body (Step 7 test #12) contains the assertion `compile(shell)` which is inverted. The correct format — consistent with the intro examples `shell(exec)`, `copilot(agent)` — is **Type(Name)**, e.g. `shell(compile)`. The implementation follows the intro examples. All tests use the correct order.
+
+### idxByStep is already 1-based
+
+The workstream spec uses `idx+1` in the format-string snippet (Step 3), but `NewConsoleSink` already stores `idxByStep[s] = i+1` (1-based). The implementation uses `idx` directly from the map to avoid double-incrementing. Test #12 confirms the header shows `[1/N ...]` for the first step.
+
+### Pre-feat-05 output (from `main` before this workstream)
+
+```
+[2/7] build_step  (shell)
+  agent: Starting build...
+  → npm run build
+  → read package.json
+  ✓ success in 1.2s
+```
+
+### Post-feat-05 output (`examples/hello` with this workstream)
+
+```
+▶ hello  steps=1
+▶ [1/1 say_hello · shell(default)]
+[1/1 say_hello · shell(default)] ✓ success in 1ms  [adapter: started → exited]
+[1/1 say_hello · shell(default)] · outputs: stdout, stderr, exit_code
+  → done
+  output greeting (string) = "Execution complete"
+✔ run completed in 1ms
+```
+
+(Prefix is dim-colored on a real TTY; shown here without ANSI for readability.)
+
+### Post-feat-05 output (`examples/plugins/greeter` end-to-end)
+
+```
+▶ greeter_example  steps=1
+▶ [1/1 greet · greeter(default)]
+[1/1 greet · greeter(default)] ✓ success in 307µs  [adapter: started → exited]
+[1/1 greet · greeter(default)] · outputs: greeting
+  → done
+✔ run completed in 477µs
+```
+
+### JSON mode — unchanged
+
+`criteria apply examples/hello --output=json` produces ND-JSON identical to pre-feat-05 (verified: no concise-mode code paths run in JSON mode; `LocalSink` is unchanged). Test #16 (`TestConsoleSink_PerLineFormat_JsonModeUnchanged`) provides the regression lock-in.
+
+### Validation
+
+```
+go test -race -count=2  ./internal/run/...      → ok (all 27 new tests pass)
+go test -race -count=20 ./internal/run/ -run PerLineFormat → ok
+make lint-imports                               → Import boundaries OK
+make ci                                         → exit 0 (all packages green)
+```
+
+No new `//nolint` directives. No baseline cap change. No proto/SDK changes.

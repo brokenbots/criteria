@@ -8,6 +8,7 @@ import (
 
 	"github.com/brokenbots/criteria/internal/engine"
 	"github.com/brokenbots/criteria/internal/run"
+	"github.com/brokenbots/criteria/workflow"
 )
 
 type outputMode int
@@ -61,7 +62,7 @@ func openNDJSONWriter(eventsPath string, mode outputMode) (io.Writer, func(), er
 // always runs (drives the ND-JSON record and the checkpoint hook). When mode
 // is concise, a ConsoleSink is added in front of stdout and the two are
 // fanned out via MultiSink.
-func buildLocalSink(runID string, jsonOut io.Writer, mode outputMode, steps []string, checkpointFn func(step string, attempt int)) engine.Sink {
+func buildLocalSink(runID string, jsonOut io.Writer, mode outputMode, steps []string, checkpointFn func(step string, attempt int), graph *workflow.FSMGraph) engine.Sink {
 	local := &run.LocalSink{
 		RunID:        runID,
 		Out:          jsonOut,
@@ -70,6 +71,6 @@ func buildLocalSink(runID string, jsonOut io.Writer, mode outputMode, steps []st
 	if mode != outputModeConcise {
 		return local
 	}
-	console := run.NewConsoleSink(os.Stdout, steps, run.ColorEnabled(os.Stdout))
+	console := run.NewConsoleSink(os.Stdout, steps, run.ColorEnabled(os.Stdout), graph)
 	return run.NewMultiSink(local, console)
 }

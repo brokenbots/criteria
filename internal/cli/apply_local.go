@@ -62,7 +62,7 @@ func runApplyLocal( //nolint:funlen // W03: local apply orchestrates engine life
 		}
 		return nil
 	})
-	baseSink := buildLocalSink(runID, jsonOut, mode, graph.StepOrder(), checkpointFn)
+	baseSink := buildLocalSink(runID, jsonOut, mode, graph.StepOrder(), checkpointFn, graph)
 	tracker := &pauseTracker{
 		Sink: baseSink,
 		PauseCheckpointFn: func(node string) {
@@ -163,7 +163,7 @@ func resumeOneLocalRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint
 	nextAttempt := cp.Attempt + 1
 	maxAttempts := 1 + graph.Policy.MaxStepRetries
 	if nextAttempt > maxAttempts {
-		sink := buildLocalSink(cp.RunID, out, mode, graph.StepOrder(), nil)
+		sink := buildLocalSink(cp.RunID, out, mode, graph.StepOrder(), nil, graph)
 		reason := fmt.Sprintf("exceeded max_step_retries on resume at step %q (attempt %d)", cp.CurrentStep, nextAttempt)
 		sink.OnRunFailed(reason, cp.CurrentStep)
 		RemoveStepCheckpoint(cp.RunID)
@@ -205,7 +205,7 @@ func buildReattachTrackerAndEngine(cp *StepCheckpoint, log *slog.Logger, graph *
 			log.Warn("failed to update local checkpoint", "run_id", cp.RunID, "error", cpErr)
 		}
 	}
-	baseSink := buildLocalSink(cp.RunID, out, mode, graph.StepOrder(), checkpointFn)
+	baseSink := buildLocalSink(cp.RunID, out, mode, graph.StepOrder(), checkpointFn, graph)
 	tracker := &pauseTracker{
 		Sink:              baseSink,
 		PauseCheckpointFn: func(node string) { checkpointFn(node, 0) },

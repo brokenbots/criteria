@@ -13,6 +13,7 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/brokenbots/criteria/internal/adapter"
+	"github.com/brokenbots/criteria/workflow"
 )
 
 // ConsoleSink renders engine events as concise human-readable output. It is
@@ -23,17 +24,25 @@ type ConsoleSink struct {
 	Out   io.Writer
 	Steps []string // workflow step order (for "[i/N] step" rendering)
 	Color bool     // emit ANSI color codes
+	// Graph is an optional reference to the compiled FSMGraph. When non-nil,
+	// adapter type and name information is sourced from the graph for richer
+	// per-line prefix rendering.
+	Graph *workflow.FSMGraph
 
 	mu            sync.Mutex
 	runStart      time.Time
 	stepStart     map[string]time.Time
 	idxByStep     map[string]int
 	stepLifecycle map[string][]string // stepName → lifecycle event strings
+	// adapterByStep maps step name to the adapter's type and instance name,
+	// populated by OnStepEntered. Used to build the per-line prefix.
+	adapterByStep map[string]struct{ refName, kind string }
 }
 
 // NewConsoleSink builds a sink rendering to out. steps is the workflow step
-// order from FSMGraph.StepOrder(); color toggles ANSI escapes.
-func NewConsoleSink(out io.Writer, steps []string, color bool) *ConsoleSink {
+// order from FSMGraph.StepOrder(); color toggles ANSI escapes; graph, when
+// non-nil, enriches per-line prefix rendering with adapter type information.
+func NewConsoleSink(out io.Writer, steps []string, color bool, graph *workflow.FSMGraph) *ConsoleSink {
 	idx := make(map[string]int, len(steps))
 	for i, s := range steps {
 		idx[s] = i + 1
@@ -42,9 +51,11 @@ func NewConsoleSink(out io.Writer, steps []string, color bool) *ConsoleSink {
 		Out:           out,
 		Steps:         steps,
 		Color:         color,
+		Graph:         graph,
 		stepStart:     make(map[string]time.Time),
 		idxByStep:     idx,
 		stepLifecycle: make(map[string][]string),
+		adapterByStep: make(map[string]struct{ refName, kind string }),
 	}
 }
 
@@ -96,20 +107,22 @@ func (c *ConsoleSink) OnStepEntered(step, adapterName string, attempt int) {
 	c.stepStart[step] = time.Now()
 	idx := c.idxByStep[step]
 	total := len(c.Steps)
+	// Populate adapterByStep before building prefix so buildLinePrefix finds it.
+	c.adapterByStep[step] = c.resolveAdapter(step, adapterName)
 	c.mu.Unlock()
 
-	prefix := ""
-	if idx > 0 && total > 0 {
-		prefix = fmt.Sprintf("[%d/%d] ", idx, total)
+	adapterRef, adapterType := c.adapterFor(step)
+	if adapterRef == "" {
+		adapterRef = "?"
 	}
-	suffix := ""
-	if adapterName != "" {
-		suffix = "  (" + adapterName + ")"
+	if adapterType == "" {
+		adapterType = "?"
 	}
+	line := fmt.Sprintf("[%d/%d %s · %s(%s)]", idx, total, c.color("1", step), adapterRef, adapterType)
 	if attempt > 1 {
-		suffix += fmt.Sprintf(" attempt=%d", attempt)
+		line += fmt.Sprintf(" attempt=%d", attempt)
 	}
-	c.writeln(c.color("1", prefix+step) + suffix)
+	c.writeln(c.color("1;36", "▶") + " " + line)
 }
 
 func (c *ConsoleSink) OnStepOutcome(step, outcome string, duration time.Duration, err error) {
@@ -119,20 +132,19 @@ func (c *ConsoleSink) OnStepOutcome(step, outcome string, duration time.Duration
 	delete(c.stepLifecycle, step)
 	c.mu.Unlock()
 
-	tag := ""
-	if len(events) > 0 {
-		tag = "  " + c.color("2", "[adapter: "+strings.Join(events, " → ")+"]")
-	}
+	tag := c.adapterLifecycleTag(events)
+	prefix := c.buildLinePrefix(step)
 	if outcome == "success" && err == nil {
-		c.writeln("  " + c.color("32", "✓") + " success in " + formatDuration(duration) + tag)
+		c.writeln(prefix + c.color("1;32", "✓") + " success in " + formatDuration(duration) + tag)
 		return
 	}
-	msg := "  " + c.color("31", "✗") + " " + outcome
+	var body string
 	if err != nil {
-		msg += ": " + err.Error()
+		body = outcome + ": " + err.Error() + " (" + formatDuration(duration) + ")" + tag
+	} else {
+		body = outcome + " (" + formatDuration(duration) + ")" + tag
 	}
-	msg += " (" + formatDuration(duration) + ")" + tag
-	c.writeln(msg)
+	c.writeln(prefix + c.color("1;31", "✗") + " " + body)
 }
 
 func (c *ConsoleSink) OnStepTransition(from, to, viaOutcome string) {
@@ -148,7 +160,8 @@ func (c *ConsoleSink) OnStepTransition(from, to, viaOutcome string) {
 }
 
 func (c *ConsoleSink) OnStepResumed(step string, attempt int, reason string) {
-	c.writeln(fmt.Sprintf("%s resumed %s (attempt %d, %s)", c.color("33", "↻"), step, attempt, reason))
+	prefix := c.buildLinePrefix(step)
+	c.writeln(fmt.Sprintf("%s%s resumed (attempt %d, %s)", prefix, c.color("33", "↻"), attempt, reason))
 }
 
 func (c *ConsoleSink) OnVariableSet(name, value, source string) {
@@ -166,7 +179,8 @@ func (c *ConsoleSink) OnStepOutputCaptured(step string, outputs map[string]strin
 	for k := range outputs {
 		keys = append(keys, k)
 	}
-	c.writeln("  · outputs: " + strings.Join(keys, ", "))
+	prefix := c.buildLinePrefix(step)
+	c.writeln(prefix + "· outputs: " + strings.Join(keys, ", "))
 }
 
 func (c *ConsoleSink) OnRunPaused(node, mode, signal string) {}
@@ -198,19 +212,23 @@ func (c *ConsoleSink) OnBranchEvaluated(node, matchedArm, target, condition stri
 }
 
 func (c *ConsoleSink) OnForEachEntered(node string, count int) {
-	c.writeln(fmt.Sprintf("  ↻ iterating %s (%d items)", node, count))
+	prefix := c.buildLinePrefix(node)
+	c.writeln(fmt.Sprintf("%s↻ iterating %s (%d items)", prefix, node, count))
 }
 
 func (c *ConsoleSink) OnStepIterationStarted(node string, index int, value string, anyFailed bool) {
-	c.writeln(fmt.Sprintf("  ↻ %s [%d] = %s", node, index, truncate(value, 60)))
+	prefix := c.buildLinePrefix(node)
+	c.writeln(fmt.Sprintf("%s↻ %s [%d] = %s", prefix, node, index, truncate(value, 60)))
 }
 
 func (c *ConsoleSink) OnStepIterationCompleted(node, outcome, target string) {
-	c.writeln(fmt.Sprintf("  ↻ %s → %s (%s)", node, target, outcome))
+	prefix := c.buildLinePrefix(node)
+	c.writeln(fmt.Sprintf("%s↻ %s → %s (%s)", prefix, node, target, outcome))
 }
 
 func (c *ConsoleSink) OnStepIterationItem(node string, index int, step string) {
-	c.writeln(fmt.Sprintf("  ↻ %s [%d] → %s", node, index, step))
+	prefix := c.buildLinePrefix(node)
+	c.writeln(fmt.Sprintf("%s↻ %s [%d] → %s", prefix, node, index, step))
 }
 
 func (c *ConsoleSink) OnScopeIterCursorSet(cursorJSON string) {}
@@ -258,7 +276,8 @@ func (c *ConsoleSink) OnStepOutcomeUnknown(step, outcome string) {
 }
 
 func (c *ConsoleSink) StepEventSink(step string) adapter.EventSink {
-	return &consoleStepSink{parent: c, step: step}
+	prefix := c.buildLinePrefix(step)
+	return &consoleStepSink{parent: c, step: step, prefix: prefix}
 }
 
 // --- step-level adapter events ---
@@ -266,6 +285,9 @@ func (c *ConsoleSink) StepEventSink(step string) adapter.EventSink {
 type consoleStepSink struct {
 	parent *ConsoleSink
 	step   string
+	// prefix is the precomputed "[I/N step · adapter(type)] " string built at
+	// construction time. Empty string disables prefixing (defensive default).
+	prefix string
 }
 
 // Log drops raw stdout/stderr/agent stream chunks. The complete assistant
@@ -280,11 +302,11 @@ func (ss *consoleStepSink) Adapter(kind string, data any) {
 	case "tool.invocation":
 		ss.renderToolInvocation(data)
 	case "permission.granted":
-		ss.parent.writeln("  · permission granted: " + lookupString(data, "tool"))
+		ss.parent.writeln(ss.prefix + "· permission granted: " + lookupString(data, "tool"))
 	case "permission.denied":
-		ss.parent.writeln("  · permission denied: " + lookupString(data, "tool"))
+		ss.parent.writeln(ss.prefix + "· permission denied: " + lookupString(data, "tool"))
 	case "limit.reached":
-		ss.parent.writeln("  · " + ss.parent.color("33", "limit reached"))
+		ss.parent.writeln(ss.prefix + ss.parent.color("33", "limit reached"))
 	default:
 		// Drop unknown kinds in concise mode; they remain in the ND-JSON record.
 	}
@@ -300,13 +322,9 @@ func (ss *consoleStepSink) renderAgentMessage(data any) {
 	if strings.TrimSpace(content) == "" {
 		return
 	}
-	prefix := "  " + ss.parent.color("36", "agent:") + " "
-	for i, line := range strings.Split(strings.TrimRight(content, "\n"), "\n") {
-		if i == 0 {
-			ss.parent.writeln(prefix + line)
-		} else {
-			ss.parent.writeln("    " + line)
-		}
+	agentTag := ss.parent.color("36", "agent:")
+	for _, line := range strings.Split(strings.TrimRight(content, "\n"), "\n") {
+		ss.parent.writeln(ss.prefix + agentTag + " " + line)
 	}
 }
 
@@ -317,11 +335,73 @@ func (ss *consoleStepSink) renderToolInvocation(data any) {
 	}
 	args := lookupString(data, "arguments")
 	summary := summariseToolArgs(args)
-	line := "  " + ss.parent.color("35", "→") + " " + name
+	emoji := toolEmoji(name)
+	line := ss.prefix + emoji + " " + name
 	if summary != "" {
 		line += " " + summary
 	}
-	ss.parent.writeln(truncateLine(line, 120))
+	ss.parent.writeln(truncateLine(line, 160))
+}
+
+// --- helpers ---
+
+// buildLinePrefix returns "[I/N step · adapter(type)] " for per-event lines.
+// The prefix is dim-colored when Color is enabled. Returns "" when the step is
+// not registered in idxByStep (defensive: no crash, just no prefix).
+func (c *ConsoleSink) buildLinePrefix(step string) string {
+	c.mu.Lock()
+	idx, ok := c.idxByStep[step]
+	c.mu.Unlock()
+	if !ok {
+		return ""
+	}
+	total := len(c.Steps)
+	adapterRef, adapterType := c.adapterFor(step)
+	if adapterRef == "" {
+		adapterRef = "?"
+	}
+	if adapterType == "" {
+		adapterType = "?"
+	}
+	inner := fmt.Sprintf("[%d/%d %s · %s(%s)]", idx, total, step, adapterRef, adapterType)
+	return c.color("2", inner) + " "
+}
+
+// adapterFor returns the adapter type (refName) and instance name (kind) for a
+// step, as stored by OnStepEntered in adapterByStep.
+func (c *ConsoleSink) adapterFor(step string) (refName, kind string) {
+	c.mu.Lock()
+	a, ok := c.adapterByStep[step]
+	c.mu.Unlock()
+	if !ok {
+		return "", ""
+	}
+	return a.refName, a.kind
+}
+
+// resolveAdapter returns the adapter type and name for a step. When the Graph
+// is available, values are sourced from the compiled adapter declaration.
+// Otherwise adapterName (the type string passed from the engine) is used with
+// an empty kind.
+func (c *ConsoleSink) resolveAdapter(step, adapterName string) struct{ refName, kind string } {
+	if c.Graph != nil {
+		if stepNode, ok := c.Graph.Steps[step]; ok && stepNode.AdapterRef != "" {
+			if adapterDecl, ok := c.Graph.Adapters[stepNode.AdapterRef]; ok {
+				return struct{ refName, kind string }{refName: adapterDecl.Type, kind: adapterDecl.Name}
+			}
+		}
+	}
+	// Fallback: engine passes the type as adapterName; kind is unknown.
+	return struct{ refName, kind string }{refName: adapterName, kind: ""}
+}
+
+// adapterLifecycleTag returns the [adapter: ...] tag string for the step's
+// accumulated lifecycle events, or "" when no events were recorded.
+func (c *ConsoleSink) adapterLifecycleTag(events []string) string {
+	if len(events) == 0 {
+		return ""
+	}
+	return "  " + c.color("2", "[adapter: "+strings.Join(events, " → ")+"]")
 }
 
 // --- helpers ---
