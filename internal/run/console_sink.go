@@ -134,8 +134,8 @@ func (c *ConsoleSink) OnStepOutcome(step, outcome string, duration time.Duration
 
 	tag := c.adapterLifecycleTag(events)
 	prefix := c.buildLinePrefix(step)
-	if outcome == "success" && err == nil {
-		c.writeln(prefix + c.color("1;32", "✓") + " success in " + formatDuration(duration) + tag)
+	if err == nil && (outcome == "success" || outcome == "ok") {
+		c.writeln(prefix + c.color("1;32", "✓") + " " + outcome + " in " + formatDuration(duration) + tag)
 		return
 	}
 	var body string
@@ -266,13 +266,15 @@ func (c *ConsoleSink) OnRunOutputs(outputs []map[string]string) {
 // OnStepOutcomeDefaulted logs a warning when an unknown outcome is mapped to
 // the default_outcome (W15).
 func (c *ConsoleSink) OnStepOutcomeDefaulted(step, original, mapped string) {
-	c.writeln(fmt.Sprintf("  ⚠ step %q: unknown outcome %q mapped to default_outcome %q", step, original, mapped))
+	prefix := c.buildLinePrefix(step)
+	c.writeln(prefix + fmt.Sprintf("⚠ unknown outcome %q mapped to default_outcome %q", original, mapped))
 }
 
 // OnStepOutcomeUnknown logs a warning before the run fails due to an unmapped
 // outcome and no default_outcome (W15).
 func (c *ConsoleSink) OnStepOutcomeUnknown(step, outcome string) {
-	c.writeln(fmt.Sprintf("  ✗ step %q: unmapped outcome %q (no default_outcome declared)", step, outcome))
+	prefix := c.buildLinePrefix(step)
+	c.writeln(prefix + fmt.Sprintf("✗ unmapped outcome %q (no default_outcome declared)", outcome))
 }
 
 func (c *ConsoleSink) StepEventSink(step string) adapter.EventSink {
@@ -379,15 +381,18 @@ func (c *ConsoleSink) adapterFor(step string) (refName, kind string) {
 	return a.refName, a.kind
 }
 
-// resolveAdapter returns the adapter type and name for a step. When the Graph
-// is available, values are sourced from the compiled adapter declaration.
-// Otherwise adapterName (the type string passed from the engine) is used with
-// an empty kind.
+// resolveAdapter returns the adapter ref-name and type for a step. When the
+// Graph is available, values are sourced from the compiled adapter declaration:
+// refName is the instance name (second HCL literal, e.g. "default") and kind
+// is the adapter type (first HCL literal, e.g. "shell"). The format rendered
+// in the prefix is therefore name(type), e.g. "default(shell)".
+// Without a Graph, adapterName (the type string from the engine) is used as
+// refName with an empty kind rendered as "?".
 func (c *ConsoleSink) resolveAdapter(step, adapterName string) struct{ refName, kind string } {
 	if c.Graph != nil {
 		if stepNode, ok := c.Graph.Steps[step]; ok && stepNode.AdapterRef != "" {
 			if adapterDecl, ok := c.Graph.Adapters[stepNode.AdapterRef]; ok {
-				return struct{ refName, kind string }{refName: adapterDecl.Type, kind: adapterDecl.Name}
+				return struct{ refName, kind string }{refName: adapterDecl.Name, kind: adapterDecl.Type}
 			}
 		}
 	}
