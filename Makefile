@@ -1,5 +1,5 @@
 .PHONY: help bootstrap tidy build plugins install proto proto-lint proto-check-drift \
-	test test-cover test-conformance test-flake-watch lint-imports lint-go lint-baseline-check lint validate example-plugin bench docker-runtime docker-runtime-smoke ci clean
+	test test-cover test-conformance test-flake-watch lint-imports lint-go lint-baseline-check lint validate validate-self-workflows example-plugin bench docker-runtime docker-runtime-smoke ci self clean
 
 # Default target: list available targets.
 help:
@@ -127,12 +127,9 @@ lint-baseline-check: ## Fail if .golangci.baseline.yml exceeds the cap in tools/
 lint: lint-imports lint-go ## Run all linters
 
 validate: build ## Validate all example workflow directories
-	@# Some examples (e.g. workstream_review_loop) reference files outside
-	@# their own directory via file() in agent.config; allow the repo root so
-	@# compile-time file() resolution succeeds.
 	@for d in examples/build_and_test examples/copilot_planning_then_execution \
 		examples/demo_tour_local examples/file_function examples/hello \
-		examples/perf_1000_logs examples/workstream_review_loop \
+		examples/perf_1000_logs \
 		examples/phase3-environment examples/phase3-fold examples/phase3-multi-file \
 		examples/phase3-output examples/phase3-subworkflow examples/phase3-shared-variable \
 		examples/phase3-parallel; do \
@@ -144,6 +141,36 @@ validate: build ## Validate all example workflow directories
 		CRITERIA_WORKFLOW_ALLOWED_PATHS="$(CURDIR)" ./bin/criteria validate "$$f" || exit 1; \
 	done
 	@echo "All examples validated."
+
+validate-self-workflows: build ## Validate + compile all .criteria/workflows/* trees
+	@for d in .criteria/workflows/*/; do \
+		echo "Validating $$d..."; \
+		CRITERIA_WORKFLOW_ALLOWED_PATHS=".criteria/workflows" \
+			./bin/criteria validate "$$d" || exit 1; \
+		CRITERIA_WORKFLOW_ALLOWED_PATHS=".criteria/workflows" \
+			./bin/criteria compile "$$d" >/dev/null || exit 1; \
+	done
+	@echo "All self-development workflows validated."
+
+self: build plugins ## Pick the next pending workstream and run the full self-development cycle
+	@ws=$$(sh .criteria/workflows/bootstrap/scripts/pick-next-workstream.sh); \
+	if [ -z "$$ws" ]; then \
+		echo "[self] no pending workstreams — main is up to date."; \
+		exit 0; \
+	fi; \
+	echo "[self] processing $$ws"; \
+	CRITERIA_PLUGINS="$(CURDIR)/bin" \
+	CRITERIA_WORKFLOW_ALLOWED_PATHS=".criteria/workflows" \
+		./bin/criteria apply .criteria/workflows/bootstrap \
+			--var workstream_file=$$ws \
+			--var project_dir=$(CURDIR)
+
+workflow_%: build plugins ## Run a single subworkflow by name (.criteria/workflows/<name>); pass vars via WORKFLOW_VARS="--var k=v ..."
+	@CRITERIA_PLUGINS="$(CURDIR)/bin" \
+	CRITERIA_WORKFLOW_ALLOWED_PATHS=".criteria/workflows" \
+		./bin/criteria apply .criteria/workflows/$* \
+			--var project_dir=$(CURDIR) \
+			$(WORKFLOW_VARS)
 
 example-plugin: build ## Build and run the greeter example plugin end-to-end
 	@echo "Building greeter example plugin..."
@@ -167,7 +194,7 @@ example-plugin: build ## Build and run the greeter example plugin end-to-end
 	rm -rf "$$tmpdir" "$$eventsfile"; \
 	echo "example-plugin: OK"
 
-ci: build test lint-imports lint-go lint-baseline-check validate example-plugin ## Run all CI gates (build, test, lint-imports, lint-go, lint-baseline-check, validate, example-plugin)
+ci: build test lint-imports lint-go lint-baseline-check validate validate-self-workflows example-plugin ## Run all CI gates (build, test, lint-imports, lint-go, lint-baseline-check, validate, validate-self-workflows, example-plugin)
 
 clean: ## Remove build artifacts
 	rm -rf bin conformance.test
