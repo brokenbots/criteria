@@ -124,7 +124,14 @@ lint-baseline-check: ## Fail if .golangci.baseline.yml exceeds the cap in tools/
 	fi; \
 	echo "Lint baseline within cap ($$count / $$cap)."
 
-lint: lint-imports lint-go ## Run all linters
+.PHONY: spec-gen spec-check
+spec-gen: ## Regenerate the generated sections in docs/LANGUAGE-SPEC.md
+	go run ./tools/spec-gen -out docs/LANGUAGE-SPEC.md
+
+spec-check: ## Check that docs/LANGUAGE-SPEC.md is up to date with schema sources
+	go run ./tools/spec-gen -check -out docs/LANGUAGE-SPEC.md
+
+lint: lint-imports lint-go lint-baseline-check spec-check ## Run all linters
 
 validate: build ## Validate all example workflow directories
 	@for d in examples/build_and_test examples/copilot_planning_then_execution \
@@ -220,7 +227,7 @@ example-plugin: build ## Build and run the greeter example plugin end-to-end
 	rm -rf "$$tmpdir" "$$eventsfile"; \
 	echo "example-plugin: OK"
 
-ci: build test lint-imports lint-go lint-baseline-check validate validate-self-workflows example-plugin ## Run all CI gates (build, test, lint-imports, lint-go, lint-baseline-check, validate, validate-self-workflows, example-plugin)
+ci: build test lint-imports lint-go lint-baseline-check spec-check validate validate-self-workflows example-plugin ## Run all CI gates (build, test, lint-imports, lint-go, lint-baseline-check, spec-check, validate, validate-self-workflows, example-plugin)
 
 clean: ## Remove build artifacts
 	rm -rf bin conformance.test
