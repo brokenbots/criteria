@@ -414,15 +414,15 @@ This workstream may **not** edit:
 
 ## Tasks
 
-- [ ] Register `templatefile` in `workflowFunctions` (Step 1).
-- [ ] Implement `templatefileFunction` and helpers (Step 1).
-- [ ] Implement `ctyToGoMap` and `ctyToGoValue` (Step 2).
-- [ ] Update package doc-comment (Step 3).
-- [ ] Add 20 unit tests (Step 4).
-- [ ] Add example workflow and wire into `make validate` (Step 5).
-- [ ] Update `docs/workflow.md` (Step 6).
-- [ ] Re-run `make spec-gen` if doc-03 has landed (Step 6).
-- [ ] Validation (Step 7).
+- [x] Register `templatefile` in `workflowFunctions` (Step 1).
+- [x] Implement `templatefileFunction` and helpers (Step 1).
+- [x] Implement `ctyToGoMap` and `ctyToGoValue` (Step 2).
+- [x] Update package doc-comment (Step 3).
+- [x] Add 20 unit tests (Step 4).
+- [x] Add example workflow and wire into `make validate` (Step 5).
+- [x] Update `docs/workflow.md` (Step 6).
+- [x] Re-run `make spec-gen` (doc-03 has landed) (Step 6).
+- [x] Validation (Step 7) — `make ci` exits 0.
 
 ## Exit criteria
 
@@ -450,3 +450,70 @@ The Step 4 list. Coverage of `templatefileFunction` ≥ 90%; coverage of `ctyToG
 | Templates with non-trivial logic (`range`, `if`) become hard to debug | Errors include the file path and Go template's line number context. Sufficient for the v1 surface. |
 | The `rewriteFuncName` hack is ugly and fragile | If `mapOSError` already accepts a function-name parameter (read it first), drop the hack. Otherwise, the alternative is to extend `mapOSError` itself, which is out-of-scope refactoring; the hack is the bounded choice. |
 | `examples/templatefile/` doesn't actually run end-to-end because shell adapter doesn't echo back the input | `criteria validate` only compiles, it does not run. The example proves the syntax compiles; runtime correctness is unit-tested in Step 4. |
+
+## Implementation Notes (Reviewer)
+
+**Deviations from spec:**
+- Test 7 (`TestTemplatefile_NullValueRendersAsEmpty`): The workstream spec said null renders as `"<nil>"`. The actual Go `text/template` behavior for a nil interface map entry is `"<no value>"`. Test and doc-comment updated accordingly; this is the correct behavior per Go stdlib.
+- `templatefileFunction` was refactored to delegate to `renderTemplateFile()` helper to satisfy the linter's gocognit threshold of 20 (the closure alone scored 21 due to nesting). No behavior change.
+- Example `main.hcl` uses `type = "string"` (quoted) per Criteria HCL requirements; the spec showed bare `type = string` which would fail validation.
+
+**Golden files generated:**
+- `internal/cli/testdata/plan/templatefile__examples__templatefile.golden`
+- `internal/cli/testdata/compile/templatefile__examples__templatefile.json.golden`
+- `internal/cli/testdata/compile/templatefile__examples__templatefile.dot.golden`
+
+These are auto-discovered by `TestPlanGolden`/`TestCompileGolden` and were generated with `-args -update`.
+
+**Validation summary:**
+- `go test -race -count=20 -run Templatefile ./workflow/...` — PASS (all 20 tests)
+- `make ci` — exits 0, all packages pass, lint clean, spec-check OK, all examples validate
+
+## Reviewer Notes
+
+### Review 2026-05-11 — changes-requested
+
+#### Summary
+Implementation coverage is strong and the feature behaves correctly under the exercised paths, including path confinement, size limits, UTF-8 validation, example validation, and race pressure. I am not approving this pass because the user-facing workflow docs describe null rendering incorrectly, and the adjacent developer-facing comments in `eval_functions.go` were left stale after extending the same file/path controls to `templatefile()`.
+
+#### Plan Adherence
+- Step 1 / Step 2 / Step 3: `templatefile()` is registered, implemented, and backed by the expected cty-to-Go conversion helpers.
+- Step 4: the requested test surface is present and the targeted `-race -count=20` run passed; intent coverage is generally good across happy-path, failure-path, confinement, and concurrency cases.
+- Step 5 / Step 6: the example workflow, validate wiring, and generated spec entry are present.
+- Deviation requiring remediation: `docs/workflow.md` does not match the shipped null-rendering behavior, so the documentation portion of Step 6 is not yet accurate enough to approve.
+
+#### Required Remediations
+- **blocker** — `docs/workflow.md:1078`: the docs say null values "render as `<nil>` by default", but the implementation comment and test suite intentionally lock the behavior to Go `text/template`'s `<no value>` rendering (`workflow/eval_functions.go:165-167`, `workflow/eval_functions_templatefile_test.go:150-162`). This is a user-visible contract mismatch in the primary workflow reference. **Acceptance:** update the workflow docs so the rendered null behavior matches the actual implementation, or change the implementation/tests so the docs become true; all three surfaces must agree.
+- **nit** — `workflow/eval_functions.go:35-42` and `workflow/eval_functions.go:57-58`: the `FunctionOptions` and `DefaultFunctionOptions` comments still say `WorkflowDir`, `MaxBytes`, and `AllowedPaths` apply only to `file()` / `fileexists()`, but this workstream extended the same controls to `templatefile()`. **Acceptance:** refresh these comments so the developer-facing documentation accurately includes `templatefile()`.
+
+#### Test Intent Assessment
+The test suite is materially good: it proves substitution, nested objects, list iteration, booleans, integer-vs-float formatting, null rendering, strict missing-key execution errors, unknown/null/primitive var rejection, missing files, path escape, absolute-path rejection, size cap, invalid UTF-8, empty templates, allowed paths, parse failures, and concurrent access. The strongest aspect is that several plausible regressions (`missingkey` loosened, path confinement removed, UTF-8 checks dropped, int conversion regressed to float formatting) would fail these tests. I did not find a blocker in test intent; the remaining blockers are documentation accuracy and stale adjacent comments.
+
+### Remediation 2026-05-11
+
+Both items addressed:
+
+- **blocker fixed** — `docs/workflow.md`: changed "render as `<nil>` by default" to "render as `<no value>` (Go `text/template`'s default for nil map entries)". All three surfaces (implementation, tests, docs) now agree.
+- **nit fixed** — `workflow/eval_functions.go` `FunctionOptions` doc-comment: updated to list `file()`, `fileexists()`, and `templatefile()` for `WorkflowDir`, `MaxBytes`, and `AllowedPaths`. Updated `DefaultFunctionOptions` env-var bullets likewise.
+
+`make ci` exits 0 after both changes.
+
+#### Validation Performed
+- `make ci` — passed.
+- `cd workflow && go test -race -count=20 -run Templatefile ./...` — passed.
+
+### Review 2026-05-11-02 — approved
+
+#### Summary
+Approved. The prior blockers are resolved: `docs/workflow.md` now matches the shipped null-rendering behavior (`<no value>`), and the `FunctionOptions` / `DefaultFunctionOptions` comments in `workflow/eval_functions.go` now correctly include `templatefile()` alongside the existing file functions. I did not find any remaining plan-adherence, quality, or security issues in scope for this workstream.
+
+#### Plan Adherence
+- Step 1 / Step 2 / Step 3 remain implemented as reviewed previously, with the documentation/comment accuracy issues now corrected.
+- Step 4 remains sufficiently covered by the existing test suite; no new behavior was introduced by the remediation pass.
+- Step 5 / Step 6 / Step 7 meet the workstream bar: example wiring is present, the docs/spec surfaces are aligned with behavior, and repository validation remains green.
+
+#### Test Intent Assessment
+The existing tests still prove the important contract behavior for `templatefile()`, including strict missing-key errors, confinement and file-safety checks, type conversion, null handling, and concurrent use. The remediation pass changed only docs/comments, so no additional test gaps were introduced.
+
+#### Validation Performed
+- `make ci` — passed.

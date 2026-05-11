@@ -1,0 +1,11 @@
+digraph "templatefile_demo" {
+  rankdir=LR;
+
+  "render" [shape=box, style="filled", fillcolor="#D6EAF8"];
+  "done" [shape=doublecircle, style=filled, fillcolor="#D5F5E3"];
+
+  "__start__" [shape=point,width=0.12,label=""];
+  "__start__" -> "render" [label="initial"];
+  "render" -> "done" [label="failure"];
+  "render" -> "done" [label="success"];
+}

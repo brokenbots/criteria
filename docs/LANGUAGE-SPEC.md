@@ -353,9 +353,10 @@ Expression functions available in all HCL attribute values within a workflow. Fu
 <!-- BEGIN GENERATED:functions -->
 | Function | Signature | Returns | Source |
 |---|---|---|---|
-| `file` | `file(path: string)` | `string` | [workflow/eval_functions.go:109](../workflow/eval_functions.go#L109) |
-| `fileexists` | `fileexists(path: string)` | `bool` | [workflow/eval_functions.go:151](../workflow/eval_functions.go#L151) |
-| `trimfrontmatter` | `trimfrontmatter(content: string)` | `string` | [workflow/eval_functions.go:224](../workflow/eval_functions.go#L224) |
+| `file` | `file(path: string)` | `string` | [workflow/eval_functions.go:113](../workflow/eval_functions.go#L113) |
+| `fileexists` | `fileexists(path: string)` | `bool` | [workflow/eval_functions.go:246](../workflow/eval_functions.go#L246) |
+| `templatefile` | `templatefile(path: string, vars: any)` | `string` | [workflow/eval_functions.go:171](../workflow/eval_functions.go#L171) |
+| `trimfrontmatter` | `trimfrontmatter(content: string)` | `string` | [workflow/eval_functions.go:319](../workflow/eval_functions.go#L319) |
 <!-- END GENERATED:functions -->
 
 ### Function notes

@@ -1,14 +1,17 @@
 package workflow
 
 // eval_functions.go — HCL expression functions for workflow evaluation.
-// Implements file(), fileexists(), and trimfrontmatter().
+// Implements file(), fileexists(), templatefile(), and trimfrontmatter().
 
 import (
+	"bytes"
 	"fmt"
+	"math/big"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"text/template"
 	"unicode/utf8"
 
 	"github.com/zclconf/go-cty/cty"
@@ -29,13 +32,13 @@ const (
 // workflow expression functions.
 //
 //   - WorkflowDir is the directory of the HCL file being evaluated.
-//     file() and fileexists() resolve paths relative to this directory.
-//     When empty, file() and fileexists() always error with
+//     file(), fileexists(), and templatefile() resolve paths relative to
+//     this directory. When empty, these functions always error with
 //     "workflow directory not configured".
-//   - MaxBytes is the read cap for file(). Sourced from
+//   - MaxBytes is the read cap for file() and templatefile(). Sourced from
 //     CRITERIA_FILE_FUNC_MAX_BYTES; defaults to 1 MiB.
-//   - AllowedPaths is the list of directories that file() and fileexists()
-//     may access outside WorkflowDir. Sourced from
+//   - AllowedPaths is the list of directories that file(), fileexists(),
+//     and templatefile() may access outside WorkflowDir. Sourced from
 //     CRITERIA_WORKFLOW_ALLOWED_PATHS (OS path-list separator).
 type FunctionOptions struct {
 	WorkflowDir  string
@@ -51,8 +54,8 @@ type FunctionOptions struct {
 // this ensures path confinement checks work correctly regardless of CWD.
 //
 // Environment variables read:
-//   - CRITERIA_FILE_FUNC_MAX_BYTES: integer, clamped to [1024, 64 MiB].
-//   - CRITERIA_WORKFLOW_ALLOWED_PATHS: OS path-list-separated list of directories (filepath.SplitList).
+//   - CRITERIA_FILE_FUNC_MAX_BYTES: integer, clamped to [1024, 64 MiB]; applies to file() and templatefile().
+//   - CRITERIA_WORKFLOW_ALLOWED_PATHS: OS path-list-separated list of directories (filepath.SplitList); applies to file(), fileexists(), and templatefile().
 func DefaultFunctionOptions(workflowDir string) FunctionOptions {
 	if workflowDir != "" {
 		if abs, err := filepath.Abs(workflowDir); err == nil {
@@ -99,6 +102,7 @@ func workflowFunctions(opts FunctionOptions) map[string]function.Function {
 	return map[string]function.Function{
 		"file":            fileFunction(opts),
 		"fileexists":      fileExistsFunction(opts),
+		"templatefile":    templatefileFunction(opts),
 		"trimfrontmatter": trimFrontmatterFunction(),
 	}
 }
@@ -143,6 +147,97 @@ func fileFunction(opts FunctionOptions) function.Function {
 			return cty.StringVal(string(data)), nil
 		},
 	})
+}
+
+// templatefileFunction implements templatefile(path, vars) → string.
+//
+// Reads the UTF-8 file at path (resolved relative to WorkflowDir using the
+// same path-confinement and size-cap machinery as file()), then renders the
+// file contents as a Go text/template template with vars as the data context.
+// vars must be an object or map value; its attributes become the template's
+// . fields.
+//
+// Template syntax: Go text/template ({{ .field }}), not HCL native (${field}).
+// This is an intentional divergence from Terraform's templatefile() — rationale:
+// text/template is in the stdlib and does not auto-escape, which is desirable
+// for prompt content.
+//
+// Missing keys in vars cause a render error (missingkey=error is set). Null
+// values in vars become nil in the template context and render as "<no value>"
+// (Go text/template's default for nil map entries).
+//
+// Note: vars size is not capped; only the template file size is bounded by
+// MaxBytes. For large vars objects, callers own the performance consequences.
+func templatefileFunction(opts FunctionOptions) function.Function {
+	return function.New(&function.Spec{
+		Params: []function.Parameter{
+			{Name: "path", Type: cty.String},
+			{Name: "vars", Type: cty.DynamicPseudoType, AllowNull: false},
+		},
+		Type: function.StaticReturnType(cty.String),
+		Impl: func(args []cty.Value, _ cty.Type) (cty.Value, error) {
+			return renderTemplateFile(opts, args[0].AsString(), args[1])
+		},
+	})
+}
+
+// renderTemplateFile is the core implementation of templatefile(). It is
+// extracted from the Impl closure to keep cognitive complexity manageable.
+func renderTemplateFile(opts FunctionOptions, raw string, varsVal cty.Value) (cty.Value, error) {
+	if opts.WorkflowDir == "" {
+		return cty.StringVal(""), fmt.Errorf("templatefile(): workflow directory not configured")
+	}
+
+	// Validate vars is an object (or map). Reject primitives and lists.
+	ty := varsVal.Type()
+	if !ty.IsObjectType() && !ty.IsMapType() {
+		return cty.StringVal(""), fmt.Errorf(
+			"templatefile(): vars must be an object or map; got %s", ty.FriendlyName())
+	}
+
+	// Read file content via the same confinement + size cap as file().
+	resolved, err := resolveConfinedPath(raw, opts.WorkflowDir, opts.AllowedPaths)
+	if err != nil {
+		return cty.StringVal(""), rewriteFuncName(err, "file()", "templatefile()")
+	}
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return cty.StringVal(""), rewriteFuncName(mapOSError(raw, err), "file()", "templatefile()")
+	}
+	if info.Size() > opts.MaxBytes {
+		return cty.StringVal(""), fmt.Errorf(
+			"templatefile(): %q is %d bytes; max is %d (set CRITERIA_FILE_FUNC_MAX_BYTES to raise)",
+			raw, info.Size(), opts.MaxBytes)
+	}
+	data, err := os.ReadFile(resolved)
+	if err != nil {
+		return cty.StringVal(""), rewriteFuncName(mapOSError(raw, err), "file()", "templatefile()")
+	}
+	if !utf8.Valid(data) {
+		offset := invalidUTF8Offset(data)
+		return cty.StringVal(""), fmt.Errorf(
+			"templatefile(): %q contains invalid UTF-8 at byte %d", raw, offset)
+	}
+
+	// Convert cty vars to Go map for text/template.
+	ctxMap, err := ctyToGoMap(varsVal)
+	if err != nil {
+		return cty.StringVal(""), fmt.Errorf("templatefile(): converting vars: %w", err)
+	}
+
+	// Template name is the basename of path so error messages reference
+	// the source file.
+	tmpl, err := template.New(filepath.Base(raw)).
+		Option("missingkey=error").
+		Parse(string(data))
+	if err != nil {
+		return cty.StringVal(""), fmt.Errorf("templatefile(): %q parse: %w", raw, err)
+	}
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, ctxMap); err != nil {
+		return cty.StringVal(""), fmt.Errorf("templatefile(): %q execute: %w", raw, err)
+	}
+	return cty.StringVal(buf.String()), nil
 }
 
 // fileExistsFunction implements the fileexists(path) → bool expression function.
@@ -330,6 +425,17 @@ func mapOSError(path string, err error) error {
 	return fmt.Errorf("file(): %w", err)
 }
 
+// rewriteFuncName rewrites the prefix <from> to <to> in err's message.
+// Used to retag errors from shared confinement helpers with the calling
+// function's name (e.g. file()-prefixed errors become templatefile()-prefixed).
+func rewriteFuncName(err error, from, to string) error {
+	msg := err.Error()
+	if strings.HasPrefix(msg, from) {
+		return fmt.Errorf("%s%s", to, strings.TrimPrefix(msg, from))
+	}
+	return err
+}
+
 // evalSymlinksOrSelf resolves dir through symlinks. If EvalSymlinks fails
 // (e.g. the directory does not exist), the original value is returned unchanged.
 func evalSymlinksOrSelf(dir string) string {
@@ -364,4 +470,70 @@ func invalidUTF8Offset(data []byte) int {
 		i += size
 	}
 	return len(data)
+}
+
+// ctyToGoMap converts a cty object or map value into a Go map[string]any
+// suitable for text/template. Nested objects/maps recurse; lists/tuples/sets
+// become []any; primitives become string/int64/float64/bool. Null values
+// become nil. Unknown values return an error (templatefile cannot meaningfully
+// render an unknown).
+func ctyToGoMap(v cty.Value) (map[string]any, error) {
+	if !v.IsKnown() {
+		return nil, fmt.Errorf("vars value is unknown")
+	}
+	if v.IsNull() {
+		return nil, fmt.Errorf("vars must not be null")
+	}
+	out := make(map[string]any)
+	it := v.ElementIterator()
+	for it.Next() {
+		k, val := it.Element()
+		kStr := k.AsString()
+		gv, err := ctyToGoValue(val)
+		if err != nil {
+			return nil, fmt.Errorf("key %q: %w", kStr, err)
+		}
+		out[kStr] = gv
+	}
+	return out, nil
+}
+
+// ctyToGoValue converts a single cty.Value to its Go-template equivalent.
+func ctyToGoValue(v cty.Value) (any, error) {
+	if !v.IsKnown() {
+		return nil, fmt.Errorf("value is unknown")
+	}
+	if v.IsNull() {
+		return nil, nil
+	}
+	ty := v.Type()
+	switch {
+	case ty == cty.String:
+		return v.AsString(), nil
+	case ty == cty.Bool:
+		return v.True(), nil
+	case ty == cty.Number:
+		// Prefer int64 when exactly representable; else float64.
+		if i, acc := v.AsBigFloat().Int64(); acc == big.Exact {
+			return i, nil
+		}
+		f, _ := v.AsBigFloat().Float64()
+		return f, nil
+	case ty.IsListType() || ty.IsTupleType() || ty.IsSetType():
+		var out []any
+		it := v.ElementIterator()
+		for it.Next() {
+			_, elem := it.Element()
+			gv, err := ctyToGoValue(elem)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, gv)
+		}
+		return out, nil
+	case ty.IsObjectType() || ty.IsMapType():
+		return ctyToGoMap(v)
+	default:
+		return nil, fmt.Errorf("unsupported type: %s", ty.FriendlyName())
+	}
 }
