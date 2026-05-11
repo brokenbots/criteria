@@ -11,7 +11,7 @@ cat docs/LANGUAGE-SPEC.md docs/llm/0*.md > prompt.md
 
 **System prompt = `docs/LANGUAGE-SPEC.md` + the 8 pattern files concatenated in order.**
 
-Total token budget: ~12,000 tokens (≈8,000 for the spec + ≈4,000 for the pack).
+Total token budget: ~7,200 tokens (≈4,300 for the spec + ≈2,900 for the pack).
 For smaller-context models, drop individual patterns; each file is self-contained.
 
 ## Pattern index

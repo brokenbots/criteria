@@ -26,7 +26,7 @@ step "increment" {
   target = adapter.noop.default
   outcome "success" {
     next          = "double"
-    shared_writes = { counter = "next_value" }
+    shared_writes = { counter = "next_value" }  # "next_value" is a placeholder adapter output key
   }
 }
 

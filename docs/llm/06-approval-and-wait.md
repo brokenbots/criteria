@@ -4,7 +4,7 @@
 
 Use when workflow execution must pause for an external event or a human
 decision before continuing. `wait` blocks on a named signal; `approval`
-requires explicit sign-off from named approvers. Both require server mode
+requires explicit sign-off from named approvers. The signal-based forms require server mode
 (`criteria apply --server ...`); `criteria validate` compiles them fine.
 
 ## Minimal example
