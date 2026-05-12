@@ -14,116 +14,114 @@ import (
 // compileSubworkflows resolves each subworkflow.source via opts.SubWorkflowResolver,
 // parses and compiles the callee Spec into a child FSMGraph, validates input bindings,
 // and stores the result in g.Subworkflows. Cycle detection is enforced via opts.SubworkflowChain.
-func compileSubworkflows(g *FSMGraph, spec *Spec, opts CompileOpts) hcl.Diagnostics {
-	var diags hcl.Diagnostics
-
+func compileSubworkflows(ctx context.Context, g *FSMGraph, spec *Spec, opts CompileOpts) hcl.Diagnostics {
 	if len(spec.Subworkflows) == 0 {
-		return diags
+		return nil
 	}
-
 	if opts.SubWorkflowResolver == nil {
-		for _, sw := range spec.Subworkflows {
-			diags = append(diags, &hcl.Diagnostic{
-				Severity: hcl.DiagError,
-				Summary:  fmt.Sprintf("subworkflow %q requires SubWorkflowResolver in CompileOpts", sw.Name),
-			})
-		}
+		return missingResolverDiags(spec.Subworkflows)
+	}
+	seenNames := make(map[string]bool)
+	var diags hcl.Diagnostics
+	for _, swSpec := range spec.Subworkflows {
+		diags = append(diags, compileSingleSubworkflow(ctx, g, swSpec, opts, seenNames)...)
+	}
+	return diags
+}
+
+// missingResolverDiags returns an error diagnostic for each subworkflow when no
+// SubWorkflowResolver is configured in CompileOpts.
+func missingResolverDiags(subworkflows []SubworkflowSpec) hcl.Diagnostics {
+	diags := make(hcl.Diagnostics, 0, len(subworkflows))
+	for _, sw := range subworkflows {
+		diags = append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  fmt.Sprintf("subworkflow %q requires SubWorkflowResolver in CompileOpts", sw.Name),
+		})
+	}
+	return diags
+}
+
+// compileSingleSubworkflow resolves, parses, and compiles one subworkflow entry.
+// seenNames tracks duplicate names within the same parent call.
+func compileSingleSubworkflow(ctx context.Context, g *FSMGraph, swSpec SubworkflowSpec, opts CompileOpts, seenNames map[string]bool) hcl.Diagnostics {
+	var diags hcl.Diagnostics
+	if seenNames[swSpec.Name] {
+		return hcl.Diagnostics{{
+			Severity: hcl.DiagError,
+			Summary:  fmt.Sprintf("duplicate subworkflow name %q", swSpec.Name),
+		}}
+	}
+	seenNames[swSpec.Name] = true
+
+	resolvedDir, err := opts.SubWorkflowResolver.ResolveSource(ctx, opts.WorkflowDir, swSpec.Source)
+	if err != nil {
+		return hcl.Diagnostics{{
+			Severity: hcl.DiagError,
+			Summary:  fmt.Sprintf("failed to resolve subworkflow %q source: %v", swSpec.Name, err),
+		}}
+	}
+
+	if cycleDiag := detectSubworkflowCycle(resolvedDir, opts.SubworkflowChain); cycleDiag != nil {
+		return hcl.Diagnostics{cycleDiag}
+	}
+
+	calleeSpec, readDiags := ParseDir(resolvedDir)
+	diags = append(diags, readDiags...)
+	if calleeSpec == nil {
 		return diags
 	}
 
-	// Track which subworkflow names we've seen (for duplicate detection)
-	seenNames := make(map[string]bool)
-
-	for _, swSpec := range spec.Subworkflows {
-		// Check for duplicate names
-		if seenNames[swSpec.Name] {
-			diags = append(diags, &hcl.Diagnostic{
-				Severity: hcl.DiagError,
-				Summary:  fmt.Sprintf("duplicate subworkflow name %q", swSpec.Name),
-			})
-			continue
-		}
-		seenNames[swSpec.Name] = true
-
-		// Resolve the source using context.Background() (context propagation not available
-		// through CompileOpts to avoid increasing parameter size)
-		ctx := context.Background()
-		resolvedDir, err := opts.SubWorkflowResolver.ResolveSource(ctx, opts.WorkflowDir, swSpec.Source)
-		if err != nil {
-			diags = append(diags, &hcl.Diagnostic{
-				Severity: hcl.DiagError,
-				Summary:  fmt.Sprintf("failed to resolve subworkflow %q source: %v", swSpec.Name, err),
-			})
-			continue
-		}
-
-		// Check for cycles before recursing.
-		cycleDetected := false
-		for _, chainPath := range opts.SubworkflowChain {
-			if chainPath != resolvedDir {
-				continue
-			}
-			cycle := make([]string, len(opts.SubworkflowChain)+1)
-			copy(cycle, opts.SubworkflowChain)
-			cycle[len(cycle)-1] = resolvedDir
-			diags = append(diags, &hcl.Diagnostic{
-				Severity: hcl.DiagError,
-				Summary:  fmt.Sprintf("subworkflow cycle detected: %s", strings.Join(cycle, " -> ")),
-			})
-			cycleDetected = true
-			break
-		}
-		if cycleDetected {
-			continue
-		}
-
-		// Read and parse all .hcl files in the directory
-		calleeSpec, readDiags := ParseDir(resolvedDir)
-		diags = append(diags, readDiags...)
-		if calleeSpec == nil {
-			continue
-		}
-
-		// Create new compile options for the recursive call with updated chain
-		childOpts := opts
-		newChain := make([]string, len(opts.SubworkflowChain), len(opts.SubworkflowChain)+1)
-		copy(newChain, opts.SubworkflowChain)
-		newChain = append(newChain, resolvedDir)
-		childOpts.SubworkflowChain = newChain
-		childOpts.LoadDepth = opts.LoadDepth + 1
-		childOpts.WorkflowDir = resolvedDir
-
-		// Recursively compile the callee, propagating schemas for adapter validation.
-		calleeGraph, compileDiags := CompileWithOpts(calleeSpec, opts.Schemas, childOpts)
-		diags = append(diags, compileDiags...)
-		if compileDiags.HasErrors() {
-			continue
-		}
-
-		// Extract declared variable types from the compiled callee
-		declaredVars := make(map[string]*VariableNode)
-		for varName, varNode := range calleeGraph.Variables {
-			declaredVars[varName] = varNode
-		}
-
-		// Extract input expressions from the Remain body and validate against callee's declared variables.
-		inputs, inputDiags := extractSubworkflowInputs(swSpec, declaredVars)
-		diags = append(diags, inputDiags...)
-
-		// Store the SubworkflowNode
-		g.Subworkflows[swSpec.Name] = &SubworkflowNode{
-			Name:         swSpec.Name,
-			SourcePath:   resolvedDir,
-			Body:         calleeGraph,
-			BodyEntry:    calleeGraph.InitialState,
-			Environment:  swSpec.Environment,
-			Inputs:       inputs,
-			DeclaredVars: declaredVars,
-		}
-		g.SubworkflowOrder = append(g.SubworkflowOrder, swSpec.Name)
+	calleeGraph, compileDiags := CompileWithContext(ctx, calleeSpec, opts.Schemas, buildChildOpts(opts, resolvedDir))
+	diags = append(diags, compileDiags...)
+	if compileDiags.HasErrors() {
+		return diags
 	}
 
+	inputs, inputDiags := extractSubworkflowInputs(swSpec, calleeGraph.Variables)
+	diags = append(diags, inputDiags...)
+	g.Subworkflows[swSpec.Name] = &SubworkflowNode{
+		Name:         swSpec.Name,
+		SourcePath:   resolvedDir,
+		Body:         calleeGraph,
+		BodyEntry:    calleeGraph.InitialState,
+		Environment:  swSpec.Environment,
+		Inputs:       inputs,
+		DeclaredVars: calleeGraph.Variables,
+	}
+	g.SubworkflowOrder = append(g.SubworkflowOrder, swSpec.Name)
 	return diags
+}
+
+// buildChildOpts builds the CompileOpts for a recursive subworkflow compilation,
+// appending resolvedDir to the load chain and incrementing the depth.
+func buildChildOpts(opts CompileOpts, resolvedDir string) CompileOpts {
+	child := opts
+	newChain := make([]string, len(opts.SubworkflowChain), len(opts.SubworkflowChain)+1)
+	copy(newChain, opts.SubworkflowChain)
+	newChain = append(newChain, resolvedDir)
+	child.SubworkflowChain = newChain
+	child.LoadDepth = opts.LoadDepth + 1
+	child.WorkflowDir = resolvedDir
+	return child
+}
+
+// detectSubworkflowCycle returns a DiagError if resolvedDir already appears in
+// the current subworkflow load chain, indicating a recursive import cycle.
+func detectSubworkflowCycle(resolvedDir string, chain []string) *hcl.Diagnostic {
+	for _, chainPath := range chain {
+		if chainPath != resolvedDir {
+			continue
+		}
+		cycle := make([]string, len(chain)+1)
+		copy(cycle, chain)
+		cycle[len(chain)] = resolvedDir
+		return &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  fmt.Sprintf("subworkflow cycle detected: %s", strings.Join(cycle, " -> ")),
+		}
+	}
+	return nil
 }
 
 // extractSubworkflowInputs decodes the "input = { ... }" attribute from the

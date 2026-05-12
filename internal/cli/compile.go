@@ -631,7 +631,7 @@ func parseCompileForCli(ctx context.Context, workflowPath string, subworkflowRoo
 		workflowDir = filepath.Dir(workflowPath)
 	}
 
-	graph, diags := workflow.CompileWithOpts(spec, schemas, workflow.CompileOpts{
+	graph, diags := workflow.CompileWithContext(ctx, spec, schemas, workflow.CompileOpts{
 		WorkflowDir:         workflowDir,
 		SubWorkflowResolver: &workflow.LocalSubWorkflowResolver{AllowedRoots: subworkflowRoots},
 		Schemas:             schemas,

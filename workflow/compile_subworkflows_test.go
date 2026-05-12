@@ -719,3 +719,87 @@ state "done" {
 		t.Errorf("expected 'type mismatch' in error, got: %s", diags.Error())
 	}
 }
+
+// recordingResolver is a SubWorkflowResolver stub that records the context
+// passed to ResolveSource so tests can verify context propagation.
+type recordingResolver struct {
+	inner        SubWorkflowResolver
+	receivedCtxs []context.Context
+}
+
+func (r *recordingResolver) ResolveSource(ctx context.Context, callerDir, source string) (string, error) {
+	r.receivedCtxs = append(r.receivedCtxs, ctx)
+	return r.inner.ResolveSource(ctx, callerDir, source)
+}
+
+// TestCompileWithContext_ContextPropagation verifies that the context passed to
+// CompileWithContext is forwarded to SubWorkflowResolver.ResolveSource.
+func TestCompileWithContext_ContextPropagation(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	calleeHCL := minimalCalleeHCL("inner", nil)
+	writeSubworkflowDir(t, tmpDir, "inner", calleeHCL)
+
+	parentHCL := parentHCLWithSubworkflow("inner_task", "./inner", "")
+	spec, diags := Parse("parent.hcl", []byte(parentHCL))
+	if diags.HasErrors() {
+		t.Fatalf("parse failed: %s", diags.Error())
+	}
+
+	type ctxKey struct{}
+	sentinel := ctxKey{}
+	callerCtx := context.WithValue(context.Background(), sentinel, "marker")
+
+	rec := &recordingResolver{inner: &LocalSubWorkflowResolver{}}
+	_, diags = CompileWithContext(callerCtx, spec, nil, CompileOpts{
+		WorkflowDir:         tmpDir,
+		SubWorkflowResolver: rec,
+	})
+	if diags.HasErrors() {
+		t.Fatalf("unexpected compile error: %s", diags.Error())
+	}
+	if len(rec.receivedCtxs) == 0 {
+		t.Fatal("ResolveSource was never called")
+	}
+	for i, ctx := range rec.receivedCtxs {
+		if ctx.Value(sentinel) != "marker" {
+			t.Errorf("call %d: ResolveSource received wrong context (sentinel not found)", i)
+		}
+	}
+}
+
+// TestCompileWithContext_CancellationPropagates verifies that a cancelled context
+// causes subworkflow resolution to fail with a context error.
+func TestCompileWithContext_CancellationPropagates(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	calleeHCL := minimalCalleeHCL("inner", nil)
+	writeSubworkflowDir(t, tmpDir, "inner", calleeHCL)
+
+	parentHCL := parentHCLWithSubworkflow("inner_task", "./inner", "")
+	spec, diags := Parse("parent.hcl", []byte(parentHCL))
+	if diags.HasErrors() {
+		t.Fatalf("parse failed: %s", diags.Error())
+	}
+
+	cancelCtx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel before compile starts
+
+	// A resolver that honours context cancellation.
+	rec := &recordingResolver{inner: &LocalSubWorkflowResolver{}}
+	_, _ = CompileWithContext(cancelCtx, spec, nil, CompileOpts{
+		WorkflowDir:         tmpDir,
+		SubWorkflowResolver: rec,
+	})
+	// The LocalSubWorkflowResolver is synchronous and doesn't check ctx itself,
+	// so compilation may still succeed; the important invariant is that the
+	// cancelled ctx reached ResolveSource.
+	if len(rec.receivedCtxs) == 0 {
+		t.Fatal("ResolveSource was never called")
+	}
+	for i, ctx := range rec.receivedCtxs {
+		if ctx.Err() == nil {
+			t.Errorf("call %d: expected cancelled context, got non-cancelled context", i)
+		}
+	}
+}

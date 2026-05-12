@@ -23,24 +23,12 @@ issues:
       text: '`resolveTransitions`' # W04: resolveTransitions extracted from Compile
     - path: compile.go
       linters:
-        - gocognit
-      text: '`checkReachability`' # W04: checkReachability extracted from Compile
-    - path: compile.go
-      linters:
         - funlen
       text: 'Function ''resolveTransitions''' # W04: resolveTransitions extracted from Compile
     - path: compile.go
       linters:
-        - funlen
-      text: 'Function ''checkReachability''' # W04: checkReachability extracted from Compile
-    - path: compile.go
-      linters:
         - gocyclo
       text: '`resolveTransitions`' # W04: resolveTransitions extracted from Compile
-    - path: compile.go
-      linters:
-        - gocyclo
-      text: '`checkReachability`' # W04: checkReachability extracted from Compile
     - path: eval.go
       linters:
         - gocognit
@@ -58,28 +46,6 @@ issues:
       linters:
         - gocritic
       text: 'hugeParam: opts is heavy \(232 bytes\); consider passing it by pointer' # W13: applyOptions grew to 232 bytes when subworkflowRoots []string was added; by-pointer conversion is W02-split-cli-apply scope
-    # --- W13: contextcheck findings from subworkflow resolution (uses context.Background() inside compileSubworkflows) ---
-    - path: internal/cli/apply_setup.go
-      linters:
-        - contextcheck
-      text: 'should pass the context parameter'
-    - path: internal/cli/compile.go
-      linters:
-        - contextcheck
-      text: 'should pass the context parameter'
-    - path: internal/cli/reattach.go
-      linters:
-        - contextcheck
-      text: 'should pass the context parameter'
-    # --- W13: gocognit and funlen complexity in compileSubworkflows (cycle detection, multi-file parsing, validation) ---
-    - path: .*compile_subworkflows\.go
-      linters:
-        - gocognit
-      text: '`compileSubworkflows`'
-    - path: .*compile_subworkflows\.go
-      linters:
-        - funlen
-      text: 'compileSubworkflows'
     # --- W16: nodeTargets gocognit: grew from 21 to 22 when switch case was added alongside steps/waits/approvals ---
     - path: compile_steps_graph.go
       linters:

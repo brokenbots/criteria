@@ -240,14 +240,105 @@ This workstream may **not** edit:
 
 ## Tasks
 
-- [ ] Snapshot the starting state (Step 1).
-- [ ] Burn down all 3 `contextcheck` entries by ctx threading (Step 2).
-- [ ] Refactor `checkReachability` and remove its 3 baseline entries (Step 3).
-- [ ] Refactor `compileSubworkflows` and remove its 2 baseline entries (Step 4).
-- [ ] If any target resists, apply Step 5 substitutions to land exactly 8 deletions.
-- [ ] Lower `tools/lint-baseline/cap.txt` to 16 (Step 6).
-- [ ] Append the burn-down section to `docs/contributing/lint-baseline.md` (Step 7).
-- [ ] Validation (Step 8).
+- [x] Snapshot the starting state (Step 1).
+- [x] Burn down all 3 `contextcheck` entries by ctx threading (Step 2).
+- [x] Refactor `checkReachability` and remove its 3 baseline entries (Step 3).
+- [x] Refactor `compileSubworkflows` and remove its 2 baseline entries (Step 4).
+- [x] Lower `tools/lint-baseline/cap.txt` to 16 (Step 6).
+- [x] Append the burn-down section to `docs/contributing/lint-baseline.md` (Step 7).
+- [x] Validation (Step 8).
+
+## Reviewer Notes
+
+### Step 1 — Snapshot confirmed
+- `tools/lint-baseline/cap.txt` = 24
+- `grep -c '^\s*- path:' .golangci.baseline.yml` = 24 ✓
+- `make lint-baseline-check` → `Lint baseline within cap (24 / 24).`
+- Linter distribution in starting baseline:
+
+| Linter | Count |
+|--------|------:|
+| `gocognit` | 8 |
+| `funlen` | 8 |
+| `gocyclo` | 4 |
+| `contextcheck` | 3 |
+| `gocritic` | 1 |
+| **Total** | **24** |
+
+### Step 2 — contextcheck fix (3 entries removed)
+
+**Approach taken (post-reviewer-remediation):** Added `CompileWithContext(ctx, spec, schemas, opts)` as a new
+exported function that carries the context through to `compileSubworkflows` → `ResolveSource`. The existing
+`CompileWithOpts(spec, schemas, opts)` is kept as a backward-compatible wrapper that calls
+`CompileWithContext(context.Background(), ...)` — its signature is **unchanged**. `Compile(spec, schemas)`
+is also unchanged (calls `CompileWithOpts`).
+
+This preserves the public API for all existing external callers while giving internal CLI callers the ability
+to propagate their request context explicitly via `workflow.CompileWithContext(ctx, ...)`.
+
+**Call sites updated:**
+- `workflow/compile.go`: `Compile()` unchanged; `CompileWithOpts` is now a 1-line backward-compat wrapper; new `CompileWithContext` is the implementation; `compileSubworkflows` call updated
+- `workflow/compile_subworkflows.go`: `compileSubworkflows(ctx, g, spec, opts)` + recursive call updated to `CompileWithContext`
+- `internal/cli/apply_setup.go`: `workflow.CompileWithContext(ctx, spec, schemas, opts)`
+- `internal/cli/compile.go`: same
+- `internal/cli/reattach.go`: same
+- `internal/cli/validate.go`: same
+- 6 workflow test files reverted to `CompileWithOpts(spec, nil, opts)` (no ctx arg); `"context"` import removed from those files
+- `workflow/compile_subworkflows_test.go`: 4 existing calls reverted to `CompileWithOpts(spec, nil, opts)`; `"context"` import retained for new tests
+
+No `//nolint` added. `make lint-go` confirmed contextcheck entries gone.
+
+### Step 8 — Context propagation tests added
+
+Added two focused tests in `workflow/compile_subworkflows_test.go`:
+
+1. **`TestCompileWithContext_ContextPropagation`**: Defines a stub `recordingResolver` that wraps
+   `LocalSubWorkflowResolver` and records the context passed to each `ResolveSource` call. Calls
+   `CompileWithContext` with a context carrying a sentinel value. Asserts the resolver received that
+   exact context (sentinel present on every call). Proves caller context reaches the resolver boundary.
+
+2. **`TestCompileWithContext_CancellationPropagates`**: Calls `CompileWithContext` with a pre-cancelled
+   context. Asserts the cancelled context reached `ResolveSource` — proving the compiler does not mask
+   cancellation by substituting `context.Background()`.
+
+Both tests pass. `make test` exit 0.
+
+### Step 3 — checkReachability refactor (3 entries removed)
+
+Created `workflow/compile_reachability.go` with:
+- `collectReachableNodes(g, start)` — iterative BFS, reuses existing `nodeTargets(name, g)` from
+  `compile_steps_graph.go` (no duplication)
+- `diagnoseUnreachableSteps(g, reachable)` — error per unreachable step
+- `diagnoseUnreachableNodes(g, reachable)` — warning per unreachable wait/approval/switch/state
+
+`checkReachability` in `compile.go` became a 4-line orchestrator. Removed `"strings"` import from
+`compile.go` (no longer needed). Behavior identical to pre-refactor.
+
+### Step 4 — compileSubworkflows refactor (2 entries removed)
+
+Extracted from `compile_subworkflows.go`:
+- `missingResolverDiags(subworkflows)` — error per subworkflow when resolver is nil
+- `compileSingleSubworkflow(ctx, g, swSpec, opts, seenNames)` — inner loop body (~47 lines ≤ 50)
+- `buildChildOpts(opts, resolvedDir)` — builds child CompileOpts for recursive call
+- `detectSubworkflowCycle(resolvedDir, chain)` — returns `*hcl.Diagnostic` or nil
+
+`compileSubworkflows` became a 16-line orchestrator. Also removed intermediate `declaredVars` copy
+(was `make(map[string]*VariableNode)` + loop) — now passes `calleeGraph.Variables` directly.
+Fixed `appendAssign` gocritic warning in `buildChildOpts`.
+
+### Step 5 — No substitutions needed
+All 8 target entries removed as planned; no fallback substitutions required.
+
+### Validation
+- `make lint-go` → exit 0
+- `make lint-baseline-check` → "Lint baseline within cap (16 / 16)."
+- `go test -race -count=1 ./...` → all packages pass
+- `cd sdk && go test -race -count=1 ./...` → pass
+- `cd workflow && go test -race -count=1 ./...` → pass
+- `make test` → exit 0
+- No new `//nolint` directives added (verified)
+- `grep -c '^\s*- path:' .golangci.baseline.yml` = 16
+- `tools/lint-baseline/cap.txt` = 16
 
 ## Exit criteria
 
@@ -284,3 +375,90 @@ If `checkReachability` or `compileSubworkflows` lacks a regression test for a be
 | `contextcheck` fix in `internal/cli/reattach.go` causes a reattach goroutine to terminate when the parent ctx is cancelled, breaking unattended-mode behavior | Reattach is intentionally detached from the request lifecycle. Use `context.WithoutCancel(ctx)` if so. The test `TestReattach_SurvivesParentCancellation` (or equivalent) is the lock-in; if it doesn't exist, add it. |
 | The ratchet to 16 is reached but a subsequent merge from `main` brings the count back to 17 (e.g. an in-flight PR) | Run `make lint-baseline-check` immediately before merge; if the count differs from 16, rebase and re-extract one more entry to land exactly at the cap. |
 | A refactor accidentally introduces a new `//nolint` directive | The Step 8 verification step (`git diff` for `+.*//nolint`) catches this. If a directive is genuinely needed, the work belongs in [td-02-nolint-suppression-sweep.md](td-02-nolint-suppression-sweep.md) instead. |
+
+## Reviewer Notes
+
+### Review 2026-05-12 — changes-requested
+
+#### Summary
+The baseline ratchet itself lands at 16/16 and the full validation suite is green, but this pass does **not** meet the acceptance bar yet. Two blockers remain: the implementation breaks the exported `workflow.CompileWithOpts` API to thread context, and the required td-01 burn-down entry in `docs/contributing/lint-baseline.md` does not match the workstream's mandated format/content. There is also a coverage gap on the new context-threading behavior and the Step 1 snapshot evidence is incomplete in the workstream notes.
+
+#### Plan Adherence
+- **Step 1:** Not fully satisfied. The workstream notes record the starting cap/count, but they omit the requested `make lint-baseline-check` output and linter distribution snapshot.
+- **Step 2:** Functionally implemented, but not acceptably. Context is now threaded to subworkflow resolution, yet it was done by changing the exported `CompileWithOpts` signature instead of preserving the existing public API.
+- **Step 3:** Implemented. `checkReachability` was flattened into helpers and the three baseline entries were removed.
+- **Step 4:** Implemented. `compileSubworkflows` was split into helpers and the two baseline entries were removed.
+- **Step 6 / Step 8:** Implemented. The baseline count and cap are both 16, and the required validation commands pass on the current tree.
+- **Step 7:** Not satisfied. The new doc entry does not use the required td-01 heading/date, does not include the required removed-entries table, and does not enumerate the 16 kept entries.
+
+#### Required Remediations
+- **Blocker — `workflow/compile.go:56-68` and all `CompileWithOpts` call sites/tests updated in this patch.** The workstream turned `CompileWithOpts` into a breaking API change by adding a required `context.Context` parameter to an exported function in the standalone `workflow` module. The `workflow_test` package already proves there are external-package callers. The plan called for ctx threading through compile helpers, not a public API break. **Acceptance:** restore backwards compatibility for `CompileWithOpts(spec, schemas, opts)` while still propagating caller context to subworkflow resolution through a non-breaking path (for example an option field or private helper), update callers/tests accordingly, and rerun the full validation suite.
+- **Blocker — `docs/contributing/lint-baseline.md:228-264`.** Step 7 required a td-01 burn-down entry with the specified heading/date, starting/final/cap bullets, a `### Removed entries` table, and a `### Kept entries (16 remaining)` section with one line per remaining entry citing owner workstream. The current prose summary does not satisfy that contract. **Acceptance:** rewrite this td-01 section to match the required structure exactly, using the actual function/file names removed and a one-line note for each of the 16 remaining baseline entries.
+- **Blocker — `workflow/compile_subworkflows_test.go:53-64`, `136-138`, `525-527`, `711-713` (coverage gap).** Step 2's core behavioral change is caller-context propagation into the `SubWorkflowResolver` boundary, but the tests only adapted call sites to the new invocation shape. They do not prove that the resolver receives the caller context or that cancellation is no longer masked by `context.Background()`. **Acceptance:** add a focused compile/subworkflow test with a stub resolver that records the incoming context and proves the intended caller context reaches `ResolveSource`; include a failure-path assertion that would regress if the compiler fell back to `context.Background()` again.
+- **Nit — `workstreams/td-01-lint-baseline-ratchet.md:253-255`.** The Step 1 snapshot notes are incomplete: they omit the requested `make lint-baseline-check` result and linter distribution breakdown. **Acceptance:** append the missing starting-state evidence to the workstream notes so Step 1 is fully documented.
+
+#### Test Intent Assessment
+The reachability and subworkflow refactors are generally well covered by the existing workflow tests plus the full repo validation pass; those tests are plausibly regression-sensitive for the mechanical helper extractions. The weak spot is the context-threading change: the current tests prove only that callers were rewritten to compile, not that the compiler now forwards the caller context across the resolver interface or preserves the intended cancellation semantics. The remediation above needs a focused contract-style test at that boundary.
+
+#### Validation Performed
+- `make lint-go` — passed
+- `make lint-baseline-check` — passed (`16 / 16`)
+- `go test -race -count=1 ./...` — passed
+- `(cd sdk && go test -race -count=1 ./...)` — passed
+- `(cd workflow && go test -race -count=1 ./...)` — passed
+- `make ci` — passed
+- `git diff main -- '*.go' | grep '^+.*//nolint'` — no new inline `//nolint` directives found
+
+### Remediation 2026-05-12
+
+All three blockers and the nit have been addressed:
+
+**Blocker 1 (API break) — resolved.** Restored `CompileWithOpts(spec, schemas, opts)` as a
+backward-compatible wrapper. Added `CompileWithContext(ctx, spec, schemas, opts)` as the new exported
+context-bearing function. CLI callers updated to `CompileWithContext`. All 6 workflow test files that were
+incorrectly updated to pass `context.Background()` as the first arg have been reverted to the original
+`CompileWithOpts(spec, nil, opts)` signature with `"context"` import removed. Build and tests pass.
+
+**Blocker 2 (doc format) — resolved.** Rewrote the td-01 section in `docs/contributing/lint-baseline.md`
+to match the required structure: heading with date, starting/final/cap bullets, `### Removed entries`
+table (8 rows), `### Kept entries (16 remaining)` with one line per entry citing owner workstream.
+
+**Blocker 3 (coverage gap) — resolved.** Added `TestCompileWithContext_ContextPropagation` and
+`TestCompileWithContext_CancellationPropagates` in `workflow/compile_subworkflows_test.go` using a
+`recordingResolver` stub. Both tests pass; see Step 8 notes above for details.
+
+**Nit (Step 1 evidence) — resolved.** Added `make lint-baseline-check` output and full linter
+distribution table to Step 1 notes above.
+
+#### Validation after remediation
+- `make lint-go` → exit 0
+- `make lint-baseline-check` → `Lint baseline within cap (16 / 16).`
+- `go test ./workflow/... -run TestCompileWithContext` → PASS (2 tests)
+- `make test` → exit 0 (all packages pass)
+- `git diff main -- '*.go' | grep '^+.*//nolint'` → empty (no new inline nolint directives)
+
+### Review 2026-05-12-02 — approved
+
+#### Summary
+The executor addressed the prior blockers. `CompileWithOpts` is backward-compatible again via a wrapper, the context-bearing path is isolated in `CompileWithContext`, the td-01 burn-down entry now records the removed and kept baseline entries, and focused tests now verify that caller context reaches the `SubWorkflowResolver` boundary. The workstream now meets the acceptance bar.
+
+#### Plan Adherence
+- **Step 1:** Satisfied. The starting snapshot now includes `make lint-baseline-check`, the 24-entry count, and the per-linter distribution.
+- **Step 2:** Satisfied. The three `contextcheck` entries were removed without breaking the existing `CompileWithOpts` API; CLI callers use `CompileWithContext`.
+- **Step 3:** Satisfied. `checkReachability` was reduced to an orchestrator and its three baseline entries were removed.
+- **Step 4:** Satisfied. `compileSubworkflows` was flattened into helpers and its two baseline entries were removed.
+- **Step 6:** Satisfied. `.golangci.baseline.yml` and `tools/lint-baseline/cap.txt` both land at 16.
+- **Step 7:** Satisfied. `docs/contributing/lint-baseline.md` now contains the td-01 burn-down entry with removed-entry details and the 16 kept entries.
+- **Step 8:** Satisfied. The required validation suite passes on the current tree.
+
+#### Test Intent Assessment
+The new `recordingResolver` tests are appropriately contract-focused: they assert that the exact caller context reaches `ResolveSource` and that a cancelled caller context is not silently replaced with `context.Background()`. Those assertions would fail on the prior broken implementation, so they are regression-sensitive for the behavior this workstream changed.
+
+#### Validation Performed
+- `make lint-go` — passed
+- `make lint-baseline-check` — passed (`16 / 16`)
+- `go test -race -count=1 ./...` — passed
+- `(cd sdk && go test -race -count=1 ./...)` — passed
+- `(cd workflow && go test -race -count=1 ./...)` — passed
+- `make ci` — passed
+- `git diff main -- '*.go' | grep '^+.*//nolint'` — no new inline `//nolint` directives found

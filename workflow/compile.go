@@ -7,7 +7,6 @@ package workflow
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/hashicorp/hcl/v2"
 )
@@ -66,7 +65,17 @@ func Compile(spec *Spec, schemas map[string]AdapterInfo) (*FSMGraph, hcl.Diagnos
 //
 // When opts.WorkflowDir is set, constant file() arguments in step input
 // expressions are validated at compile time (path existence + confinement).
+//
+// Subworkflow resolution uses context.Background(). For caller-context
+// propagation use CompileWithContext.
 func CompileWithOpts(spec *Spec, schemas map[string]AdapterInfo, opts CompileOpts) (*FSMGraph, hcl.Diagnostics) {
+	return CompileWithContext(context.Background(), spec, schemas, opts)
+}
+
+// CompileWithContext is the context-bearing form of CompileWithOpts. The
+// supplied ctx is forwarded to SubWorkflowResolver.ResolveSource so that
+// callers can propagate cancellation and deadlines into subworkflow loading.
+func CompileWithContext(ctx context.Context, spec *Spec, schemas map[string]AdapterInfo, opts CompileOpts) (*FSMGraph, hcl.Diagnostics) {
 	var diags hcl.Diagnostics
 
 	if spec.Header == nil {
@@ -94,7 +103,7 @@ func CompileWithOpts(spec *Spec, schemas map[string]AdapterInfo, opts CompileOpt
 	diags = append(diags, compileLocals(g, spec, opts)...)
 	diags = append(diags, compileSharedVariables(g, spec, opts)...)
 	diags = append(diags, compileEnvironments(g, spec, opts)...)
-	diags = append(diags, compileSubworkflows(g, spec, opts)...)
+	diags = append(diags, compileSubworkflows(ctx, g, spec, opts)...)
 	diags = append(diags, compileOutputs(g, spec, opts)...)
 	diags = append(diags, compileAdapters(g, spec, schemas, opts)...)
 	diags = append(diags, compileStates(g, spec)...)
@@ -241,91 +250,9 @@ func resolveTransitions(g *FSMGraph) hcl.Diagnostics {
 // checkReachability performs a reachability walk from g.InitialState and
 // emits diagnostics for unreachable nodes.
 func checkReachability(g *FSMGraph) hcl.Diagnostics {
-	var diags hcl.Diagnostics
-	reachable := map[string]bool{g.InitialState: true}
-	var walk func(name string)
-	walk = func(name string) {
-		if step, isStep := g.Steps[name]; isStep {
-			for _, co := range step.Outcomes {
-				if co.Next == "_continue" || co.Next == ReturnSentinel {
-					// _continue is synthetic; the for_each's outgoing edges drive reachability.
-					// "return" is not a real node.
-					continue
-				}
-				if !reachable[co.Next] {
-					reachable[co.Next] = true
-					walk(co.Next)
-				}
-			}
-			return
-		}
-		if wait, isWait := g.Waits[name]; isWait {
-			for _, target := range wait.Outcomes {
-				if !reachable[target] {
-					reachable[target] = true
-					walk(target)
-				}
-			}
-			return
-		}
-		if appr, isAppr := g.Approvals[name]; isAppr {
-			for _, target := range appr.Outcomes {
-				if !reachable[target] {
-					reachable[target] = true
-					walk(target)
-				}
-			}
-			return
-		}
-		if sw, isSwitch := g.Switches[name]; isSwitch {
-			for _, cond := range sw.Conditions {
-				if cond.Next == ReturnSentinel {
-					continue
-				}
-				if !reachable[cond.Next] {
-					reachable[cond.Next] = true
-					walk(cond.Next)
-				}
-			}
-			if sw.DefaultNext != ReturnSentinel && sw.DefaultNext != "" && !reachable[sw.DefaultNext] {
-				reachable[sw.DefaultNext] = true
-				walk(sw.DefaultNext)
-			}
-			return
-		}
-	}
-	walk(g.InitialState)
-	for _, name := range g.stepOrder {
-		if !reachable[name] {
-			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q is unreachable from initial_state", name)})
-		}
-	}
-	for name := range g.Waits {
-		if !reachable[name] {
-			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagWarning, Summary: fmt.Sprintf("wait %q is unreachable from initial_state", name)})
-		}
-	}
-	for name := range g.Approvals {
-		if !reachable[name] {
-			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagWarning, Summary: fmt.Sprintf("approval %q is unreachable from initial_state", name)})
-		}
-	}
-	for name := range g.Switches {
-		if !reachable[name] {
-			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagWarning, Summary: fmt.Sprintf("switch %q is unreachable from initial_state", name)})
-		}
-	}
-	for name := range g.States {
-		if strings.HasPrefix(name, "_") {
-			// Synthetic states (e.g. _continue) are internal loop targets;
-			// skipping them here avoids spurious "unreachable" warnings.
-			continue
-		}
-		if !reachable[name] {
-			// Unreachable terminal states are a warning — they may be intentional placeholders.
-			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagWarning, Summary: fmt.Sprintf("state %q is unreachable from initial_state", name)})
-		}
-	}
+	reachable := collectReachableNodes(g, g.InitialState)
+	diags := diagnoseUnreachableSteps(g, reachable)
+	diags = append(diags, diagnoseUnreachableNodes(g, reachable)...)
 	return diags
 }
 
