@@ -285,7 +285,7 @@ all 6 to pointer is a broad refactor owned by W02-split-cli-apply. The entry car
 | Extracted `buildHTTPSClient` from `serverHTTPClient` | `internal/cli/http.go` | 1 × `gocognit` |
 | Extracted `advanceIteration` from `routeIteratingStepInGraph` | `internal/engine/engine.go` | 1 × `funlen` |
 
-### Category B — Moved to baseline (8 inline directives removed, 6 new baseline entries)
+### Category B — Moved to baseline (9 inline directives removed, 6 new baseline entries)
 
 These suppressions are structurally correct but inline noise is worse than baseline-file noise. Each carries a `# kept:` annotation in `.golangci.baseline.yml`.
 

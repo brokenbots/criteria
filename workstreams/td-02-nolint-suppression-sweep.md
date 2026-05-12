@@ -482,11 +482,11 @@ All workstream items (Steps 3–6) implemented and validated. Inline directives 
 - **A21 (bonus):** Extracted `buildHTTPSClient` from `serverHTTPClient` (`internal/cli/http.go`), removing a `gocognit` directive.
 - **A22 (bonus):** Extracted `advanceIteration` from `routeIteratingStepInGraph` (`internal/engine/engine.go`), removing a `funlen` directive.
 
-#### Category B — 8 inline directives moved to baseline, 6 new entries
+#### Category B — 9 inline directives moved to baseline, 6 new entries
 
-- Removed `//nolint:gocritic` from `Run` and `RunPlugin` (conformance public API; value receiver required for call-site compatibility).
-- Removed `//nolint:funlen` from `testConcurrentSessions` (baseline entry added).
-- Removed `//nolint:funlen` and `//nolint:gocritic` from 6 apply-command functions across `apply_local.go`, `apply_resume.go`, `apply_server.go` (W02-split-cli-apply scope).
+- Removed `//nolint:gocritic` from `Run` and `RunPlugin` (2 directives; conformance public API; value receiver required for call-site compatibility).
+- `testConcurrentSessions` had `//nolint:funlen,gocritic`; the whole line was removed in Category A (gocritic fixed by `*Options` conversion); a funlen baseline entry was added for it here (1 B-exclusive directive, 1 new baseline entry).
+- Removed 7 inline directives across 6 apply-command functions: `runApplyLocal` funlen (function line) + `runApplyLocal` gocritic/hugeParam (opts parameter line) in `apply_local.go`, `drainLocalResumeCycles` gocritic in `apply_resume.go`, and 4 functions (`applyClientOptions`, `executeServerRun`, `drainResumeCycles`, `runApplyServer`) gocritic in `apply_server.go`. All are W02-split-cli-apply scope.
 - Cap updated: 16 → 22 (matches exact baseline entry count).
 
 #### Category C — 22 W-number prefixes removed
@@ -591,3 +591,51 @@ The existing `TestCompileStep_EnvironmentOverride_QuotedStringRejected` was reta
 - `(cd sdk && go test -race -count=1 ./...)` → **pass**
 - `(cd workflow && go test -race -count=1 ./...)` → **pass**
 - Inline non-staticcheck count: 31 · W-number count: 0 · baseline cap: 22
+
+### Review 2026-05-12-03 — changes-requested
+
+#### Summary
+
+The code and test remediation is now in good shape: the diagnostic behavior is restored, focused regression tests exist, the scoped inline count is **31**, the baseline cap is **22**, and the full validation suite passes. I am still blocking approval on one remaining artifact issue: the td-02 reporting is not yet internally consistent about the Category B removal count.
+
+#### Plan Adherence
+
+- **Step 3 — Category A fixes:** Implemented and validated.
+- **Step 4 — Category B moves:** Implemented in code/baseline, but the reporting text is still inconsistent with the delivered counts.
+- **Step 5 — Category C tightening:** Implemented; surviving directives have self-contained rationales.
+- **Step 6 — Lint-baseline doc update:** Mostly implemented; survivor table is present and the before/after inline counts are corrected to 62 → 31.
+- **Step 7 — Validation:** Fully satisfied; I re-ran the required suite and it passed.
+
+#### Required Remediations
+
+- **Blocker — Category B reporting still does not reconcile** (`docs/contributing/lint-baseline.md:288`, `workstreams/td-02-nolint-suppression-sweep.md:485`): both artifacts still say **"8 inline directives moved to baseline"**, but the delivered result cannot reconcile with that number. With **62** starting directives, **31** surviving directives, and **22** Category A removals, Category B must account for **9** removed directive lines (the hybrid `testConcurrentSessions` line is already counted in Category A while still generating one baseline entry). **Acceptance:** update the Category B count and any dependent prose so the reported A/B/C totals reconcile exactly to the repository state.
+
+#### Test Intent Assessment
+
+The new diagnostic tests now do what was missing in the previous submission: they would fail on the exact Summary/Detail regressions introduced by the helper extraction. The remaining issue is documentation arithmetic only, not test intent.
+
+#### Validation Performed
+
+- `make lint-go` → passed.
+- `make lint-baseline-check` → passed (`22 / 22`).
+- `go test -race -count=1 ./...` → passed.
+- `(cd sdk && go test -race -count=1 ./...)` → passed.
+- `(cd workflow && go test -race -count=1 ./...)` → passed.
+- `make ci` → passed.
+- `grep -rn '//nolint' . --include='*.go' | grep -v 'staticcheck' | grep -v '^./vendor/' | grep -v '/testdata/' | wc -l` → `31`.
+- `grep -rE '//nolint:.*// .*W[0-9]+' --include='*.go' . | grep -v 'staticcheck' | grep -v '^./vendor/' | grep -v '/testdata/' | wc -l` → `0`.
+- `rg '^\s*- path:' .golangci.baseline.yml | wc -l` and `cat tools/lint-baseline/cap.txt` → both `22`.
+- `awk` count of td-02 survivor rows in `docs/contributing/lint-baseline.md` → `31`.
+
+### Remediation 2026-05-12-03 — Category B count corrected
+
+**Root cause:** `runApplyLocal` carries **two** separate inline nolint directives (one on the function line for `funlen`, one on the `opts applyOptions` parameter line for `gocritic/hugeParam`). The executor counted this function as 1 directive instead of 2, yielding 8 instead of 9. The `testConcurrentSessions` hybrid entry was an additional source of ambiguity (its line removal is already counted in Category A's 22, making it B-exclusive).
+
+**Reconciliation:** 62 (start) − 22 (Cat A) − 9 (Cat B) = 31 (Cat C survivors) ✓  
+Cat B breakdown: Run (1) + RunPlugin (1) from conformance.go + runApplyLocal funlen (1) + runApplyLocal gocritic param (1) + drainLocalResumeCycles (1) + 4 × apply_server (4) = 9 B-exclusive directive removals. testConcurrentSessions' line counted in A; its baseline funlen entry counted in the 6 new entries.
+
+**Changes made:**
+- `docs/contributing/lint-baseline.md:288`: "8 inline directives removed" → "9 inline directives removed"
+- `workstreams/td-02-nolint-suppression-sweep.md` Category B section: "8" → "9"; prose updated to name individual directives explicitly so arithmetic is auditable from the text alone
+
+**No code, test, or baseline changes needed** — the discrepancy was documentation arithmetic only.
