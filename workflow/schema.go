@@ -180,7 +180,7 @@ type StepSpec struct {
 	// quoted-string form causes a compile error with a migration hint.
 	Outcomes []OutcomeSpec `hcl:"outcome,block"`
 	// Captures: target (required — adapter traversal e.g. adapter.copilot.main, or subworkflow.<name>);
-	// for_each, count, parallel (optional iteration controls); environment (optional, bare traversal e.g. shell.ci).
+	// for_each, count, parallel, while (optional iteration controls); environment (optional, bare traversal e.g. shell.ci).
 	Remain hcl.Body `hcl:",remain"`
 	// LegacyConfigRange, when set by Parse, points at the source range for a
 	// legacy config = { ... } attribute so compile diagnostics can include
