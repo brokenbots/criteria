@@ -179,7 +179,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 | `allow_tools` | list(string) | no | _(no description)_ |
 | `default_outcome` | string | no | DefaultOutcome, when set, is the fallback outcome name used when an adapter returns an outcome name not in the declared set. Must refer to a declared outcome; validated at compile time. |
 
-- **Additional attributes:** Captures: target (required — adapter traversal e.g. adapter.copilot.main, or subworkflow.<name>); for_each, count, parallel (optional iteration controls); environment (optional, bare traversal e.g. shell.ci).
+- **Additional attributes:** Captures: target (required — adapter traversal e.g. adapter.copilot.main, or subworkflow.<name>); for_each, count, parallel, while (optional iteration controls); environment (optional, bare traversal e.g. shell.ci).
 - **Nested blocks:** [`input`](#input---), [`outcome`](#outcome-name---)
 
 ### `state "name" { ... }`
@@ -322,6 +322,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 | `var.*` | all expressions | Read-only typed input variables declared with `variable` blocks. |
 | `steps.<name>.<key>` | post-completion of `<name>` | Captured outputs from a prior step. |
 | `each.value` / `each.key` / `each._idx` / `each._total` / `each._first` / `each._last` / `each._prev` | iterating-step expressions only | Per-iteration bindings; see Iteration semantics. |
+| `while.*` | while-modified-step expressions only | Per-iteration bindings for while-driven steps; see While iteration. |
 | `local.*` | all expressions | Compile-time constants declared with `local` blocks. |
 | `shared.*` | all expressions; mutable via `shared_writes` | Runtime-mutable shared values declared with `shared_variable` blocks. |
 <!-- END GENERATED:namespaces -->
@@ -383,10 +384,11 @@ Expression functions available in all HCL attribute values within a workflow. Fu
 
 ## Iteration semantics
 
-Steps support two iteration forms, specified via attributes captured in the step's `remain` body:
+Steps support three iteration forms, specified via attributes captured in the step's `remain` body:
 
 1. **`for_each`** — Iterates over a list or map expression. One adapter call per element.
 2. **`count`** — Iterates a fixed number of times. `count = N` produces iterations `0` through `N-1`.
+3. **`while`** — Iterates while a boolean expression remains true. The expression is re-evaluated against the live eval context (including current `shared.*` values) before each iteration; when false, the loop exits via the aggregate outcome. The cursor's `Total = -1` signals the unbounded form. See [docs/workflow.md](workflow.md#while--condition-driven-iteration) for the full contract.
 
 **`each.*` bindings (available only inside iterating steps):**
 
@@ -399,6 +401,16 @@ Steps support two iteration forms, specified via attributes captured in the step
 | `each._last` | bool | True on the last iteration. |
 | `each._total` | number | Total number of iterations. |
 | `each._prev` | any | Output of the previous iteration (nil on first). |
+
+**`while.*` bindings (available only inside while-modified steps):**
+
+| Binding | Type | Description |
+|---|---|---|
+| `while.index` | number | Zero-based iteration counter. |
+| `while.first` | bool | True on the first iteration. |
+| `while._prev` | any | Output of the previous iteration (null on first). |
+
+**Mutual exclusion:** `for_each`, `count`, `parallel`, and `while` are mutually exclusive — at most one per step.
 
 **Parallelism:** Set `parallel = true` (remain attribute) on a step to run all iterations concurrently. Default is sequential.
 

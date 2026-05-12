@@ -1,0 +1,76 @@
+{
+  "name": "while-demo",
+  "initial_state": "work",
+  "target_state": "done",
+  "policy": {
+    "MaxTotalSteps": 100,
+    "MaxStepRetries": 0,
+    "MaxVisitsWarnThreshold": 200
+  },
+  "adapters": [
+    {
+      "type": "noop",
+      "name": "default",
+      "on_crash": "fail",
+      "config_keys": null
+    }
+  ],
+  "steps": [
+    {
+      "name": "work",
+      "adapter": "noop.default",
+      "input_keys": [
+        "is_first",
+        "iteration"
+      ],
+      "allow_tools": null,
+      "outcomes": [
+        {
+          "name": "all_succeeded",
+          "next": "report"
+        },
+        {
+          "name": "any_failed",
+          "next": "done"
+        },
+        {
+          "name": "success",
+          "next": "_continue"
+        }
+      ]
+    },
+    {
+      "name": "report",
+      "adapter": "noop.default",
+      "input_keys": [
+        "remaining"
+      ],
+      "allow_tools": null,
+      "outcomes": [
+        {
+          "name": "success",
+          "next": "done"
+        }
+      ]
+    }
+  ],
+  "states": [
+    {
+      "name": "done",
+      "terminal": true,
+      "success": true
+    }
+  ],
+  "outputs": [],
+  "switches": [],
+  "step_order": [
+    "work",
+    "report"
+  ],
+  "plugins_required": [
+    "noop"
+  ],
+  "metadata": {
+    "schema_version": 1
+  }
+}

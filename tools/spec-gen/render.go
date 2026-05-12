@@ -189,6 +189,7 @@ var namespaceColumnFormat = map[string]string{
 	"steps":  "`steps.<name>.<key>`",
 	"local":  "`local.*`",
 	"shared": "`shared.*`",
+	"while":  "`while.*`",
 }
 
 // namespaceAvailableIn gives the "Available in" column text per namespace key.
@@ -198,6 +199,7 @@ var namespaceAvailableIn = map[string]string{
 	"each":   "iterating-step expressions only",
 	"local":  "all expressions",
 	"shared": "all expressions; mutable via `shared_writes`",
+	"while":  "while-modified-step expressions only",
 }
 
 // namespaceDescription gives the description column text per namespace key.
@@ -208,4 +210,5 @@ var namespaceDescription = map[string]string{
 	"each":   "Per-iteration bindings; see Iteration semantics.",
 	"local":  "Compile-time constants declared with `local` blocks.",
 	"shared": "Runtime-mutable shared values declared with `shared_variable` blocks.",
+	"while":  "Per-iteration bindings for while-driven steps; see While iteration.",
 }

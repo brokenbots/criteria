@@ -6,7 +6,7 @@ package workflow
 // Per-kind implementations live in:
 //   - compile_steps_adapter.go      — adapter-targeted steps (non-iterating)
 //   - compile_steps_subworkflow.go  — subworkflow-targeted steps
-//   - compile_steps_iteration.go    — for_each/count iterating steps
+//   - compile_steps_iteration.go    — for_each/count/while iterating steps
 //   - compile_steps_graph.go        — shared graph helpers (warnBackEdges etc.)
 
 import (
@@ -48,7 +48,7 @@ func compileSteps(g *FSMGraph, spec *Spec, schemas map[string]AdapterInfo, opts 
 	return diags
 }
 
-// isIteratingStep reports whether sp has a for_each, count, or parallel
+// isIteratingStep reports whether sp has a for_each, count, parallel, or while
 // attribute in its Remain body. Uses JustAttributes which does not mark
 // attributes as consumed, so the per-kind compiler's decodeRemainIter call
 // still finds them.
@@ -64,7 +64,8 @@ func isIteratingStep(sp *StepSpec) bool {
 	_, hasForEach := attrs["for_each"]
 	_, hasCount := attrs["count"]
 	_, hasParallel := attrs["parallel"]
-	return hasForEach || hasCount || hasParallel
+	_, hasWhile := attrs["while"]
+	return hasForEach || hasCount || hasParallel || hasWhile
 }
 
 // validateStepRegistration checks for duplicate steps, state name clashes, and

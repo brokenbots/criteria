@@ -32,7 +32,7 @@ import (
 func compileOutcomeBlock(sp *StepSpec, node *StepNode, g *FSMGraph, opts CompileOpts, adapterOutputSchema map[string]ConfigField) hcl.Diagnostics {
 	var diags hcl.Diagnostics
 	seen := map[string]bool{}
-	isIter := node.ForEach != nil || node.Count != nil || node.Parallel != nil
+	isIter := node.ForEach != nil || node.Count != nil || node.Parallel != nil || node.While != nil
 	for _, o := range sp.Outcomes {
 		if seen[o.Name] {
 			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q: duplicate outcome %q", sp.Name, o.Name)})
@@ -455,8 +455,14 @@ func checkStepsFieldTraversals(context string, expr hcl.Expression, g *FSMGraph,
 // that loops mediated by non-step nodes are also detected. StateNodes have no
 // outgoing edges and are treated as dead-ends.
 func stepHasBackEdge(startName string, g *FSMGraph) bool {
-	if _, ok := g.Steps[startName]; !ok {
+	step, ok := g.Steps[startName]
+	if !ok {
 		return false
+	}
+	// while steps are inherently looping: the condition is re-evaluated before
+	// each iteration, so they always have an implicit back-edge.
+	if step.While != nil {
+		return true
 	}
 	visited := map[string]bool{}
 	var walk func(name string) bool

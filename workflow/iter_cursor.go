@@ -31,7 +31,10 @@ type IterCursor struct {
 	// Incremented by the engine loop after each iteration completes.
 	Index int
 	// Total is the total number of items to iterate. Populated when Items is
-	// set; used for each._total and each._last bindings.
+	// set; used for each._total and each._last bindings. When Total == -1, the
+	// iteration is unbounded (while-driven); Items is nil and the loop re-evaluates
+	// the while expression before each iteration rather than advancing through a
+	// pre-loaded slice.
 	Total int
 	// Key is the map key for the current iteration (for map for_each). Its
 	// type is cty.String. For list/count iteration, Key equals
@@ -58,6 +61,11 @@ type IterCursor struct {
 	// it applies only within a single live run, not across crash-resume.
 	EarlyExit bool
 }
+
+// IsWhile reports whether this cursor belongs to a while-driven iteration
+// (Total == -1). For while cursors the loop condition is re-evaluated before
+// each iteration rather than stepping through a pre-loaded items slice.
+func (c *IterCursor) IsWhile() bool { return c.Total < 0 }
 
 // SerializeIterCursor encodes the cursor to a JSON string suitable for
 // transmission via ScopeIterCursorSet. A nil cursor returns "" (signals

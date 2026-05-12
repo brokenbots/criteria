@@ -60,6 +60,7 @@ func compileAdapterStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[strin
 	// (LoadDepth > 0). Non-iterating top-level steps must not reference them.
 	if opts.LoadDepth == 0 {
 		diags = append(diags, validateEachRefs(sp.Name, inputExprs)...)
+		diags = append(diags, validateWhileRefs(sp.Name, inputExprs)...)
 	}
 
 	node := newAdapterStepNode(sp, spec, adapterRef, effectiveOnCrash, envKey, timeout, inputMap, inputExprs)
@@ -93,14 +94,14 @@ func adapterTypeFromRef(adapterRef string) string {
 }
 
 // validateOnFailureForNonIterating validates on_failure for steps that do not
-// carry for_each, count, or parallel. It checks the value is recognised and
+// carry for_each, count, parallel, or while. It checks the value is recognised and
 // always errors because on_failure requires an iterating modifier.
 func validateOnFailureForNonIterating(sp *StepSpec) hcl.Diagnostics {
 	diags := validateOnFailureValue(sp)
 	if sp.OnFailure != "" {
 		diags = append(diags, &hcl.Diagnostic{
 			Severity: hcl.DiagError,
-			Summary:  fmt.Sprintf("step %q: on_failure requires for_each, count, or parallel", sp.Name),
+			Summary:  fmt.Sprintf("step %q: on_failure requires for_each, count, parallel, or while", sp.Name),
 		})
 	}
 	return diags

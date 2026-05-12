@@ -455,3 +455,79 @@ func TestWithIndexedStepOutput_NilVarsInitializes(t *testing.T) {
 		t.Fatal("steps key missing")
 	}
 }
+
+// TestVarScope_RoundTrip_WhileCursor verifies that an IterCursor with
+// Total=-1 (the while sentinel) round-trips through SerializeVarScope →
+// RestoreVarScope, including the Prev cty.Value that provides while._prev
+// continuity across crash-resume.
+func TestVarScope_RoundTrip_WhileCursor(t *testing.T) {
+	g := &FSMGraph{Variables: map[string]*VariableNode{}}
+	vars := SeedVarsFromGraph(g)
+
+	prevVal := cty.ObjectVal(map[string]cty.Value{
+		"result": cty.StringVal("processed"),
+		"count":  cty.StringVal("7"),
+	})
+
+	stack := []IterCursor{{
+		StepName:   "drain",
+		Index:      3,
+		Total:      -1, // while sentinel
+		InProgress: true,
+		AnyFailed:  false,
+		OnFailure:  "continue",
+		Prev:       prevVal,
+	}}
+
+	scopeJSON, err := SerializeVarScope(vars, stack)
+	if err != nil {
+		t.Fatalf("SerializeVarScope: %v", err)
+	}
+	if scopeJSON == "" {
+		t.Fatal("expected non-empty scope JSON")
+	}
+
+	_, restoredStack, err := RestoreVarScope(scopeJSON, g)
+	if err != nil {
+		t.Fatalf("RestoreVarScope: %v", err)
+	}
+	if len(restoredStack) == 0 {
+		t.Fatal("expected non-empty cursor stack after restore")
+	}
+	c := restoredStack[0]
+
+	if c.Total != -1 {
+		t.Errorf("Total = %d; want -1 (while sentinel)", c.Total)
+	}
+	if !c.IsWhile() {
+		t.Error("IsWhile() = false; want true for Total=-1")
+	}
+	if c.StepName != "drain" {
+		t.Errorf("StepName = %q; want \"drain\"", c.StepName)
+	}
+	if c.Index != 3 {
+		t.Errorf("Index = %d; want 3", c.Index)
+	}
+	if !c.InProgress {
+		t.Error("InProgress = false; want true")
+	}
+	if c.OnFailure != "continue" {
+		t.Errorf("OnFailure = %q; want \"continue\"", c.OnFailure)
+	}
+
+	// Assert Prev survived the round-trip — this is the while._prev contract.
+	if c.Prev == cty.NilVal {
+		t.Fatal("Prev = cty.NilVal after restore; while._prev contract broken on crash-resume")
+	}
+	if !c.Prev.Type().IsObjectType() {
+		t.Fatalf("Prev.Type() = %s; want object type", c.Prev.Type().FriendlyName())
+	}
+	wantResult := "processed"
+	if got := c.Prev.GetAttr("result"); got == cty.NilVal || got.AsString() != wantResult {
+		t.Errorf("Prev.result = %v; want %q", got, wantResult)
+	}
+	wantCount := "7"
+	if got := c.Prev.GetAttr("count"); got == cty.NilVal || got.AsString() != wantCount {
+		t.Errorf("Prev.count = %v; want %q", got, wantCount)
+	}
+}

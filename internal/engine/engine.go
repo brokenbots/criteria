@@ -286,6 +286,13 @@ func routeIteratingStepInGraph(st *RunState, next string, graph *workflow.FSMGra
 		return next, nil
 	}
 
+	// while-cursor lifecycle is managed entirely inside evaluateWhile (which
+	// either re-enters the step or resolves the aggregate outcome directly).
+	// Skip the for_each/count routing path for while cursors.
+	if cur.IsWhile() {
+		return next, nil
+	}
+
 	stepName := cur.StepName
 	// Only intercept when the current node is the iterating step itself.
 	// When the step has a workflow body (_continue comes from the body's
