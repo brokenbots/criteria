@@ -100,13 +100,23 @@ func DefaultFunctionOptions(workflowDir string) FunctionOptions {
 // workflowFunctions returns the map of HCL expression functions to register
 // in the workflow evaluation context.
 func workflowFunctions(opts FunctionOptions) map[string]function.Function {
-	return map[string]function.Function{
+	out := map[string]function.Function{
 		"file":            fileFunction(opts),
 		"fileexists":      fileExistsFunction(opts),
 		"fileset":         filesetFunction(opts),
 		"templatefile":    templatefileFunction(opts),
 		"trimfrontmatter": trimFrontmatterFunction(),
 	}
+	for k, v := range registerHashFunctions() {
+		out[k] = v
+	}
+	for k, v := range registerEncodingFunctions() {
+		out[k] = v
+	}
+	for k, v := range registerDynamicFunctions() {
+		out[k] = v
+	}
+	return out
 }
 
 // fileFunction implements the file(path) → string expression function.
