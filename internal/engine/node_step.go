@@ -27,8 +27,7 @@ type stepNode struct {
 type policyLimitError struct{ err error }
 
 func (e *policyLimitError) Error() string { return e.err.Error() }
-func (e *policyLimitError) Unwrap() error  { return e.err }
-
+func (e *policyLimitError) Unwrap() error { return e.err }
 
 func (n *stepNode) Name() string {
 	return n.step.Name
