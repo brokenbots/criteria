@@ -225,11 +225,11 @@ func TestYamlEncode_Object(t *testing.T) {
 		"b": cty.StringVal("x"),
 	})
 	got := callFn(t, fn, obj)
-	// YAML encoders vary in formatting; assert key presence rather than exact format.
-	if !strings.Contains(got.AsString(), "a:") || !strings.Contains(got.AsString(), "1") {
+	// yaml.v3 serialises map keys alphabetically; assert exact field substrings.
+	if !strings.Contains(got.AsString(), "a: 1") {
 		t.Errorf("yamlencode: expected 'a: 1' in output, got: %q", got.AsString())
 	}
-	if !strings.Contains(got.AsString(), "b:") || !strings.Contains(got.AsString(), "x") {
+	if !strings.Contains(got.AsString(), "b: x") {
 		t.Errorf("yamlencode: expected 'b: x' in output, got: %q", got.AsString())
 	}
 }
@@ -244,6 +244,14 @@ func TestYamlDecode_Object(t *testing.T) {
 	}
 	if got.GetAttr("b").AsString() != "x" {
 		t.Errorf("yamldecode.b = %q; want x", got.GetAttr("b").AsString())
+	}
+	aVal := got.GetAttr("a")
+	if aVal.Type() != cty.Number {
+		t.Fatalf("yamldecode.a type = %s; want number", aVal.Type().FriendlyName())
+	}
+	n, _ := aVal.AsBigFloat().Int64()
+	if n != 1 {
+		t.Errorf("yamldecode.a = %d; want 1", n)
 	}
 }
 

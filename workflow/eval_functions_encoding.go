@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"strings"
 
 	"github.com/zclconf/go-cty/cty"
 	"github.com/zclconf/go-cty/cty/function"
@@ -55,9 +56,10 @@ func jsonEncodeFunction() function.Function {
 		Params: []function.Parameter{{Name: "value", Type: cty.DynamicPseudoType, AllowNull: true}},
 		Type:   function.StaticReturnType(cty.String),
 		Impl: func(args []cty.Value, _ cty.Type) (cty.Value, error) {
-			// ctyjson.Marshal cannot fail for concrete, known values; the function
-			// spec prevents unknown inputs from reaching this point.
-			data, _ := ctyjson.Marshal(args[0], args[0].Type())
+			data, err := ctyjson.Marshal(args[0], args[0].Type())
+			if err != nil {
+				return cty.StringVal(""), fmt.Errorf("jsonencode(): %w", err)
+			}
 			return cty.StringVal(string(data)), nil
 		},
 	})
@@ -102,13 +104,21 @@ func yamlEncodeFunction() function.Function {
 		Impl: func(args []cty.Value, _ cty.Type) (cty.Value, error) {
 			// Convert cty → Go via JSON round-trip for type-safe conversion,
 			// then YAML-encode the resulting Go value.
-			// ctyjson.Marshal, json.Unmarshal, and yaml.Marshal cannot fail for
-			// the concrete, known cty values that the function spec admits.
-			jsonBytes, _ := ctyjson.Marshal(args[0], args[0].Type())
+			jsonBytes, err := ctyjson.Marshal(args[0], args[0].Type())
+			if err != nil {
+				return cty.StringVal(""), fmt.Errorf("yamlencode(): cty→json: %w", err)
+			}
 			var goVal any
-			_ = json.Unmarshal(jsonBytes, &goVal)
-			yamlBytes, _ := yaml.Marshal(goVal)
-			return cty.StringVal(string(yamlBytes)), nil
+			if err := json.Unmarshal(jsonBytes, &goVal); err != nil {
+				return cty.StringVal(""), fmt.Errorf("yamlencode(): json→go: %w", err)
+			}
+			yamlBytes, err := yaml.Marshal(goVal)
+			if err != nil {
+				return cty.StringVal(""), fmt.Errorf("yamlencode(): %w", err)
+			}
+			// Strip the trailing newline that yaml.Marshal appends to match
+			// Terraform's yamlencode behaviour.
+			return cty.StringVal(strings.TrimRight(string(yamlBytes), "\n")), nil
 		},
 	})
 }
@@ -126,11 +136,18 @@ func yamlDecodeFunction() function.Function {
 				return cty.NilVal, fmt.Errorf("yamldecode(): %w", err)
 			}
 			// Convert Go value back to cty via JSON round-trip.
-			// json.Marshal, ctyjson.ImpliedType, and ctyjson.Unmarshal cannot fail
-			// for the standard Go types produced by yaml.Unmarshal.
-			jsonBytes, _ := json.Marshal(goVal)
-			ty, _ := ctyjson.ImpliedType(jsonBytes)
-			v, _ := ctyjson.Unmarshal(jsonBytes, ty)
+			jsonBytes, err := json.Marshal(goVal)
+			if err != nil {
+				return cty.NilVal, fmt.Errorf("yamldecode(): go→json: %w", err)
+			}
+			ty, err := ctyjson.ImpliedType(jsonBytes)
+			if err != nil {
+				return cty.NilVal, fmt.Errorf("yamldecode(): impliedtype: %w", err)
+			}
+			v, err := ctyjson.Unmarshal(jsonBytes, ty)
+			if err != nil {
+				return cty.NilVal, fmt.Errorf("yamldecode(): json→cty: %w", err)
+			}
 			return v, nil
 		},
 	})

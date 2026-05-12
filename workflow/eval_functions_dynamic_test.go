@@ -50,7 +50,7 @@ func TestTimestamp_FormatRFC3339(t *testing.T) {
 	}
 }
 
-func TestTimestamp_Monotonic(t *testing.T) {
+func TestTimestamp_NonRegressing(t *testing.T) {
 	fn := funcFromContext(t, "timestamp")
 	v1 := callFn(t, fn)
 	time.Sleep(10 * time.Millisecond)
