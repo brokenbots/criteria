@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"go/parser"
 	"os"
 	"path/filepath"
 	"strings"
@@ -87,11 +88,11 @@ func TestExtractFunctions_FromTestdata(t *testing.T) {
 	if err != nil {
 		t.Fatalf("extractFunctions: %v", err)
 	}
-	if len(funcs) != 2 {
-		t.Fatalf("expected 2 functions, got %d", len(funcs))
+	if len(funcs) != 3 {
+		t.Fatalf("expected 3 functions, got %d", len(funcs))
 	}
 
-	// greetFunction is defined at line 20 in functions_sample.go
+	// greetFunction is defined at line 21 in functions_sample.go
 	greet := funcs[0]
 	if greet.Name != "greet" {
 		t.Errorf("funcs[0].Name = %q, want %q", greet.Name, "greet")
@@ -102,14 +103,14 @@ func TestExtractFunctions_FromTestdata(t *testing.T) {
 	if greet.ReturnType != "string" {
 		t.Errorf("greet.ReturnType = %q, want %q", greet.ReturnType, "string")
 	}
-	if greet.SourceLine != 20 {
-		t.Errorf("greet.SourceLine = %d, want 20", greet.SourceLine)
+	if greet.SourceLine != 21 {
+		t.Errorf("greet.SourceLine = %d, want 21", greet.SourceLine)
 	}
 	if greet.Description != "the greet(name) → string function." {
 		t.Errorf("greet.Description = %q, want exact text", greet.Description)
 	}
 
-	// pingFunction is defined at line 29 in functions_sample.go
+	// pingFunction is defined at line 30 in functions_sample.go
 	ping := funcs[1]
 	if ping.Name != "ping" {
 		t.Errorf("funcs[1].Name = %q, want %q", ping.Name, "ping")
@@ -120,11 +121,59 @@ func TestExtractFunctions_FromTestdata(t *testing.T) {
 	if ping.ReturnType != "bool" {
 		t.Errorf("ping.ReturnType = %q, want %q", ping.ReturnType, "bool")
 	}
-	if ping.SourceLine != 29 {
-		t.Errorf("ping.SourceLine = %d, want 29", ping.SourceLine)
+	if ping.SourceLine != 30 {
+		t.Errorf("ping.SourceLine = %d, want 30", ping.SourceLine)
 	}
 	if ping.Description != "the ping() → bool function." {
 		t.Errorf("ping.Description = %q, want exact text", ping.Description)
+	}
+
+	// listFunction is defined at line 38 in functions_sample.go
+	list := funcs[2]
+	if list.Name != "list" {
+		t.Errorf("funcs[2].Name = %q, want %q", list.Name, "list")
+	}
+	if len(list.Params) != 1 || list.Params[0].Name != "pattern" || list.Params[0].Type != "string" {
+		t.Errorf("list.Params = %v, want [{pattern string}]", list.Params)
+	}
+	if list.ReturnType != "list(string)" {
+		t.Errorf("list.ReturnType = %q, want %q", list.ReturnType, "list(string)")
+	}
+	if list.SourceLine != 38 {
+		t.Errorf("list.SourceLine = %d, want 38", list.SourceLine)
+	}
+	if list.Description != "the list(pattern) → list(string) function." {
+		t.Errorf("list.Description = %q, want exact text", list.Description)
+	}
+}
+
+// TestExtractCtyType_ParameterizedTypes verifies that extractCtyType correctly
+// maps cty.List(X), cty.Set(X), and cty.Map(X) CallExpr forms to their
+// rendered type names.
+func TestExtractCtyType_ParameterizedTypes(t *testing.T) {
+	cases := []struct {
+		src  string
+		want string
+	}{
+		{"cty.List(cty.String)", "list(string)"},
+		{"cty.Set(cty.String)", "set(string)"},
+		{"cty.Map(cty.String)", "map(string)"},
+		{"cty.List(cty.Bool)", "list(bool)"},
+		{"cty.List(cty.Number)", "list(number)"},
+		// scalar types still handled correctly
+		{"cty.String", "string"},
+		{"cty.Bool", "bool"},
+		{"cty.Number", "number"},
+	}
+	for _, tc := range cases {
+		expr, err := parser.ParseExpr(tc.src)
+		if err != nil {
+			t.Fatalf("ParseExpr(%q): %v", tc.src, err)
+		}
+		got := extractCtyType(expr)
+		if got != tc.want {
+			t.Errorf("extractCtyType(%q) = %q, want %q", tc.src, got, tc.want)
+		}
 	}
 }
 

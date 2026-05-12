@@ -64,5 +64,3 @@ state "failed" {
 - [LANGUAGE-SPEC.md § Functions](../LANGUAGE-SPEC.md#functions)
 - [LANGUAGE-SPEC.md § Iteration semantics](../LANGUAGE-SPEC.md#iteration-semantics)
 - [03-iteration-for-each.md](03-iteration-for-each.md) for the sequential iteration baseline.
-
-

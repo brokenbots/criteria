@@ -485,3 +485,31 @@ The revised E2E test is now regression-sensitive in the right place: it will fai
 - `go test -race -count=20 ./workflow/ -run 'Fileset|ResolveConfinedDir'` — pass
 - `go test -coverprofile=<tmp> ./workflow && go tool cover -func <tmp>` — `filesetFunction` **95.0%**, `resolveConfinedDir` **95.7%**
 - `make ci` — pass
+
+### Post-approval remediations 2026-05-11-03
+
+#### Thread 1 — spec-gen `extractCtyType` missing parameterised-type support (required)
+
+**Root cause:** `tools/spec-gen/extract.go:extractCtyType` only handled `*ast.SelectorExpr`
+(e.g. `cty.String`). The `*ast.CallExpr` form used by `cty.List(cty.String)`, `cty.Set(X)`,
+and `cty.Map(X)` fell through to `"unknown"`, causing `fileset`'s return type to render
+as `unknown` in the spec table.
+
+**Fix:** Extended `extractCtyType` to match `*ast.CallExpr` where `Fun` is `cty.<List|Set|Map>`
+and recursively renders the inner type, e.g. `list(string)`, `set(bool)`. Added
+`TestExtractCtyType_ParameterizedTypes` (8 cases) in `tools/spec-gen/main_test.go`. Updated
+`testdata/functions_sample.go` to include `listFunction() → cty.List(cty.String)` as an
+integration fixture; updated `testdata/functions.golden.md` and
+`TestExtractFunctions_FromTestdata` to match. Regenerated `docs/LANGUAGE-SPEC.md` via
+`make spec-gen`; `make spec-check` clean.
+
+Files changed: `tools/spec-gen/extract.go`, `tools/spec-gen/main_test.go`,
+`tools/spec-gen/testdata/functions_sample.go`, `tools/spec-gen/testdata/functions.golden.md`,
+`docs/LANGUAGE-SPEC.md`.
+
+#### Thread 2 — trailing blank lines in `docs/llm/08-fileset-template.md` (nit)
+
+Trimmed two trailing blank lines to a single newline at EOF, matching the rest of the
+`docs/llm/0?-*.md` convention.
+
+File changed: `docs/llm/08-fileset-template.md`.
