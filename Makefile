@@ -142,6 +142,7 @@ validate: build ## Validate all example workflow directories
 		examples/phase3-output examples/phase3-subworkflow examples/phase3-shared-variable \
 		examples/phase3-parallel \
 		examples/templatefile \
+		examples/hash-encoding \
 		examples/llm-pack/01-linear \
 		examples/llm-pack/02-branching-switch \
 		examples/llm-pack/03-iteration-for-each \

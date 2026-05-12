@@ -1,0 +1,52 @@
+{
+  "name": "hash_encoding_demo",
+  "initial_state": "compute",
+  "target_state": "done",
+  "policy": {
+    "MaxTotalSteps": 100,
+    "MaxStepRetries": 0,
+    "MaxVisitsWarnThreshold": 200
+  },
+  "adapters": [
+    {
+      "type": "shell",
+      "name": "logger",
+      "on_crash": "fail",
+      "config_keys": null
+    }
+  ],
+  "steps": [
+    {
+      "name": "compute",
+      "adapter": "shell.logger",
+      "input_keys": [
+        "command"
+      ],
+      "allow_tools": null,
+      "outcomes": [
+        {
+          "name": "success",
+          "next": "done"
+        }
+      ]
+    }
+  ],
+  "states": [
+    {
+      "name": "done",
+      "terminal": true,
+      "success": true
+    }
+  ],
+  "outputs": [],
+  "switches": [],
+  "step_order": [
+    "compute"
+  ],
+  "plugins_required": [
+    "shell"
+  ],
+  "metadata": {
+    "schema_version": 1
+  }
+}

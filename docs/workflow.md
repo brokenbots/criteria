@@ -1153,6 +1153,156 @@ The `examples/file_function.hcl` workflow demonstrates this pattern end-to-end.
 | `CRITERIA_FILE_FUNC_MAX_BYTES` | Integer; maximum bytes `file()` and `templatefile()` will read. Default 1 MiB. Clamped to [1024, 67108864]. |
 | `CRITERIA_WORKFLOW_ALLOWED_PATHS` | Colon-separated list of directories `file()`, `fileexists()`, `fileset()`, and `templatefile()` may access outside the workflow directory. |
 
+#### Hash functions
+
+The following functions compute hex-encoded digests of a UTF-8 string. All four mirror the Terraform equivalents exactly, so existing muscle memory transfers.
+
+> **File hashing:** To hash a file's contents, compose with `file()`: `sha256(file("./data.bin"))`.
+
+##### `sha256(value)`
+
+Returns the hex-encoded SHA-256 digest of `value`.
+
+```hcl
+local "fingerprint" {
+  value = sha256(var.input)  # e.g. "ba7816bf…"
+}
+```
+
+##### `sha1(value)`
+
+Returns the hex-encoded SHA-1 digest of `value`.
+
+> ⚠️ **Security notice:** SHA-1 is cryptographically broken. Use only for non-security purposes such as cache keys or content identity. Never use for passwords, signatures, or integrity checks in a security context.
+
+```hcl
+local "cache_key" {
+  value = sha1(var.content)
+}
+```
+
+##### `sha512(value)`
+
+Returns the hex-encoded SHA-512 digest of `value` (128 hex characters).
+
+```hcl
+local "strong_hash" {
+  value = sha512(var.secret)
+}
+```
+
+##### `md5(value)`
+
+Returns the hex-encoded MD5 digest of `value`.
+
+> ⚠️ **Security notice:** MD5 is cryptographically broken. Use only for non-security purposes such as cache keys or content identity. Never use for passwords, signatures, or integrity checks in a security context.
+
+```hcl
+local "etag" {
+  value = md5(var.body)
+}
+```
+
+#### Encoding functions
+
+##### `base64encode(value)`
+
+Returns the standard Base64 encoding (RFC 4648) of `value`.
+
+```hcl
+local "encoded" {
+  value = base64encode("hello world")  # "aGVsbG8gd29ybGQ="
+}
+```
+
+##### `base64decode(value)`
+
+Decodes a standard Base64-encoded string. Errors if `value` is not valid Base64.
+
+```hcl
+local "decoded" {
+  value = base64decode("aGVsbG8gd29ybGQ=")  # "hello world"
+}
+```
+
+##### `jsonencode(value)`
+
+JSON-encodes any value (string, number, bool, list, object, or null) and returns the JSON string.
+
+```hcl
+local "envelope" {
+  value = jsonencode({ payload = var.input, ts = timestamp() })
+}
+```
+
+##### `jsondecode(value)`
+
+Decodes a JSON string and returns the appropriate cty value (string, number, bool, list, or object). The return type depends on the JSON content; use attribute access or list indexing downstream.
+
+> **Type stability:** Because the return type is inferred from the JSON content at call time, consumers who need type-stable access should use attribute access (`jsondecode(s).key`) rather than relying on the whole value being a specific type.
+
+```hcl
+local "parsed" {
+  value = jsondecode(steps.fetch.output.body)
+}
+```
+
+##### `urlencode(value)`
+
+URL-encodes `value` using query-component encoding (`net/url.QueryEscape`). Spaces are encoded as `+`; special characters are percent-encoded.
+
+> **Note:** This matches Terraform's `urlencode` semantics (spaces → `+`). If you need path encoding (spaces → `%20`), post-process with a template expression.
+
+```hcl
+local "query" {
+  value = urlencode("hello world")  # "hello+world"
+}
+```
+
+##### `yamlencode(value)`
+
+YAML-encodes any value (string, number, bool, list, or object) and returns the YAML string. The JSON → Go → YAML round-trip preserves structure but not YAML-specific types (e.g. timestamps become strings; comments are not supported).
+
+```hcl
+local "manifest" {
+  value = yamlencode({ name = "my-workflow", version = "1" })
+}
+```
+
+##### `yamldecode(value)`
+
+Decodes a YAML string and returns the appropriate cty value. Uses a JSON → cty round-trip internally, so YAML-specific types (timestamps, comments, anchors) are normalized to strings or standard JSON types.
+
+```hcl
+local "config" {
+  value = yamldecode(file("./config.yaml"))
+}
+```
+
+#### Dynamic functions
+
+> ⚠️ **Non-determinism and crash-resume:** Both functions below produce a new value on every call. If your workflow may crash and resume, capture the result into a step output and reference `steps.<name>.output.<key>` downstream so that the same value is used across resumes rather than generating a new one on re-evaluation.
+
+##### `uuid()`
+
+Returns a randomly-generated RFC 4122 v4 UUID string (36 characters, format `xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx`). **Non-deterministic** — each call returns a unique value.
+
+```hcl
+local "run_id" {
+  value = uuid()  # e.g. "f47ac10b-58cc-4372-a567-0e02b2c3d479"
+}
+```
+
+##### `timestamp()`
+
+Returns the current UTC time in RFC 3339 format (e.g. `"2024-01-15T12:34:56Z"`). **Non-deterministic** — successive calls return different values.
+
+```hcl
+local "started_at" {
+  value = timestamp()  # e.g. "2024-01-15T12:34:56Z"
+}
+```
+
 ---
 
 ## Permissions

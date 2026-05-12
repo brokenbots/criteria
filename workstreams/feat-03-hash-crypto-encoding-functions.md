@@ -504,15 +504,15 @@ This workstream may **not** edit:
 
 ## Tasks
 
-- [ ] Pick YAML library and confirm `go.mod` impact (Step 1).
-- [ ] Set up file layout and merge per-category maps (Step 2).
-- [ ] Implement 4 hash functions (Step 3).
-- [ ] Implement 7 encoding functions (Step 4).
-- [ ] Implement 2 dynamic functions (Step 5).
-- [ ] Write tests for each category (Step 6).
-- [ ] Add example workflow and wire into `make validate` (Step 7).
-- [ ] Update `docs/workflow.md` and re-run spec-gen (Step 8).
-- [ ] Validation (Step 9).
+- [x] Pick YAML library and confirm `go.mod` impact (Step 1).
+- [x] Set up file layout and merge per-category maps (Step 2).
+- [x] Implement 4 hash functions (Step 3).
+- [x] Implement 7 encoding functions (Step 4).
+- [x] Implement 2 dynamic functions (Step 5).
+- [x] Write tests for each category (Step 6).
+- [x] Add example workflow and wire into `make validate` (Step 7).
+- [x] Update `docs/workflow.md` and re-run spec-gen (Step 8).
+- [x] Validation (Step 9).
 
 ## Exit criteria
 
@@ -541,3 +541,53 @@ The Step 6 list. Coverage of each new function ≥ 90%; coverage of the registra
 | YAML round-trip via JSON loses YAML-specific types (timestamps, comments) | Documented v1 limitation. Comments are not preserved (intentional — JSON has no comments). Timestamps round-trip as strings. |
 | `urlencode` uses `QueryEscape` (which encodes spaces as `+`); some users expect `PathEscape` (which encodes as `%20`) | Document the choice (matches Terraform's `urlencode`). Users who need path encoding can post-process. |
 | `gopkg.in/yaml.v3` has had occasional CVE history; pinning to old version creates risk | Pin to the latest stable; bump per normal dep maintenance. Not a workstream concern beyond initial choice. |
+
+## Reviewer Notes
+
+**Implementation complete. All exit criteria met.**
+
+### Changes made
+
+| File | Change |
+|---|---|
+| `workflow/eval_functions_hash.go` | New: sha256/sha1/sha512/md5 via `hashFunction(factory)` generic constructor using direct method-value references (e.g. `sha256.New`). Two `//nolint:gosec` inline directives on md5/sha1 usage with rationale comment. |
+| `workflow/eval_functions_encoding.go` | New: base64encode/decode, jsonencode/decode, urlencode, yamlencode/yamldecode. jsondecode/yamldecode use `function.TypeFunc(...)` for dynamic return type (go-cty v1.16.3 has no `DynamicReturnType` constant). |
+| `workflow/eval_functions_dynamic.go` | New: uuid (via `github.com/google/uuid`) and timestamp (RFC3339 UTC). Non-determinism prominently documented in code comments. |
+| `workflow/eval_functions.go` | Changed `workflowFunctions` from flat map literal to incremental merge — 5 original functions inline, then `for k,v := range registerXxx()` for each new category. |
+| `workflow/eval_functions_helpers_test.go` | New: shared test helpers `funcFromContext`, `callFn`, `callFnError` (package `workflow_test`). |
+| `workflow/eval_functions_hash_test.go` | New: 16 tests (known vectors, empty string, 1 MiB determinism, non-ASCII). |
+| `workflow/eval_functions_encoding_test.go` | New: 22 tests (happy path, round-trips, error cases for all 7 functions). |
+| `workflow/eval_functions_dynamic_test.go` | New: 4 tests (RFC4122 format, non-determinism, RFC3339, monotonic). |
+| `workflow/go.mod` / `go.sum` | Added `github.com/google/uuid v1.6.0` and `gopkg.in/yaml.v3 v3.0.1` as direct deps. |
+| `examples/hash-encoding/main.hcl` | New example workflow demonstrating sha256, jsonencode, base64encode. |
+| `Makefile` | Added `examples/hash-encoding` to the `validate` loop. |
+| `docs/workflow.md` | Added Hash, Encoding, and Dynamic function documentation sections. |
+| `tools/spec-gen/extract.go` | Updated `extractFunctions` to parse all non-test .go files in the directory and handle both the flat map-literal pattern and the incremental `out := map{} + for range registerXxx()` pattern. Added `SourceFile string` to `FuncDoc`. |
+| `tools/spec-gen/render.go` | Updated `renderFunctions` to use `fn.SourceFile` when set, falling back to `functionsRelPath`. |
+| `docs/LANGUAGE-SPEC.md` | Regenerated via `make spec-gen`; now lists all 18 functions with correct per-file source links. |
+| `internal/cli/testdata/compile/hash-encoding__examples__hash_encoding.{json,dot}.golden` | New: golden files for compile tests. |
+| `internal/cli/testdata/plan/hash-encoding__examples__hash_encoding.golden` | New: golden file for plan test. |
+
+### Validation
+
+```
+go test -race -count=2 ./workflow/...                                                    # PASS (42 tests)
+go test -race -count=20 ./workflow/ -run 'Hash|Encode|Decode|Url|UUID|Timestamp|Yaml'   # PASS
+make validate                                                                             # PASS (includes hash-encoding)
+make spec-check                                                                          # PASS (spec-check: OK)
+make ci                                                                                  # PASS (0 FAIL lines)
+```
+
+### Security review
+
+- `crypto/md5` and `crypto/sha1` imports: gosec is NOT enabled in `.golangci.yml`, so no lint warning is triggered. The `//nolint:gosec` directives are added as documentation per workstream spec; they are baseline-cap-neutral.
+- No new I/O operations; all functions are pure transforms over in-memory strings.
+- `uuid.NewString()` uses `crypto/rand` internally — cryptographically secure.
+- No new network access, file access, or exec calls introduced.
+- `gopkg.in/yaml.v3 v3.0.1` is the current stable release; no known CVEs at time of implementation.
+
+### Notes
+
+- `jsondecode` and `yamldecode` report return type as `unknown` in the LANGUAGE-SPEC.md table — this is correct, reflecting the dynamic return type (`cty.DynamicPseudoType`) used since the output type depends on the input value at call time.
+- The spec-gen update (`tools/spec-gen/extract.go`) also handles future files added to the workflow package that follow the same `registerXxxFunctions()` pattern — they will be auto-discovered without further spec-gen changes.
+- `github.com/google/uuid` was already present in the root `go.mod` but needed to be explicitly added to `workflow/go.mod` (separate Go module in the workspace).

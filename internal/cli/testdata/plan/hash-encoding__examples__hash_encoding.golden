@@ -1,0 +1,22 @@
+workflow: hash_encoding_demo  (version 1)
+initial_state: compute   target_state: done
+policy: max_total_steps=100  max_step_retries=0
+
+variables:
+  input: string = hello world
+
+adapters:
+  shell.logger   type=shell   on_crash=fail
+    config: (none)
+
+steps (declaration order):
+  compute   adapter=shell.logger
+    input keys: command
+    allow_tools: (none)
+    outcomes: success -> done
+
+states:
+  done    terminal=true   success=true
+
+plugins required:
+  shell   (search: $CRITERIA_PLUGINS, ~/.criteria/plugins)

@@ -1,0 +1,10 @@
+digraph "hash_encoding_demo" {
+  rankdir=LR;
+
+  "compute" [shape=box, style="filled", fillcolor="#D6EAF8"];
+  "done" [shape=doublecircle, style=filled, fillcolor="#D5F5E3"];
+
+  "__start__" [shape=point,width=0.12,label=""];
+  "__start__" -> "compute" [label="initial"];
+  "compute" -> "done" [label="success"];
+}

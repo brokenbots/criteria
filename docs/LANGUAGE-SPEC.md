@@ -353,11 +353,24 @@ Expression functions available in all HCL attribute values within a workflow. Fu
 <!-- BEGIN GENERATED:functions -->
 | Function | Signature | Returns | Source |
 |---|---|---|---|
-| `file` | `file(path: string)` | `string` | [workflow/eval_functions.go:115](../workflow/eval_functions.go#L115) |
-| `fileexists` | `fileexists(path: string)` | `bool` | [workflow/eval_functions.go:248](../workflow/eval_functions.go#L248) |
-| `fileset` | `fileset(path: string, pattern: string)` | `list(string)` | [workflow/eval_functions.go:329](../workflow/eval_functions.go#L329) |
-| `templatefile` | `templatefile(path: string, vars: any)` | `string` | [workflow/eval_functions.go:173](../workflow/eval_functions.go#L173) |
-| `trimfrontmatter` | `trimfrontmatter(content: string)` | `string` | [workflow/eval_functions.go:452](../workflow/eval_functions.go#L452) |
+| `file` | `file(path: string)` | `string` | [workflow/eval_functions.go:125](../workflow/eval_functions.go#L125) |
+| `fileexists` | `fileexists(path: string)` | `bool` | [workflow/eval_functions.go:258](../workflow/eval_functions.go#L258) |
+| `fileset` | `fileset(path: string, pattern: string)` | `list(string)` | [workflow/eval_functions.go:339](../workflow/eval_functions.go#L339) |
+| `templatefile` | `templatefile(path: string, vars: any)` | `string` | [workflow/eval_functions.go:183](../workflow/eval_functions.go#L183) |
+| `trimfrontmatter` | `trimfrontmatter(content: string)` | `string` | [workflow/eval_functions.go:462](../workflow/eval_functions.go#L462) |
+| `sha256` | `sha256(value: string)` | `string` | [workflow/eval_functions_hash.go:28](../workflow/eval_functions_hash.go#L28) |
+| `sha1` | `sha1(value: string)` | `string` | [workflow/eval_functions_hash.go:28](../workflow/eval_functions_hash.go#L28) |
+| `sha512` | `sha512(value: string)` | `string` | [workflow/eval_functions_hash.go:28](../workflow/eval_functions_hash.go#L28) |
+| `md5` | `md5(value: string)` | `string` | [workflow/eval_functions_hash.go:28](../workflow/eval_functions_hash.go#L28) |
+| `base64encode` | `base64encode(value: string)` | `string` | [workflow/eval_functions_encoding.go:29](../workflow/eval_functions_encoding.go#L29) |
+| `base64decode` | `base64decode(value: string)` | `string` | [workflow/eval_functions_encoding.go:39](../workflow/eval_functions_encoding.go#L39) |
+| `jsonencode` | `jsonencode(value: any)` | `string` | [workflow/eval_functions_encoding.go:53](../workflow/eval_functions_encoding.go#L53) |
+| `jsondecode` | `jsondecode(value: string)` | `unknown` | [workflow/eval_functions_encoding.go:67](../workflow/eval_functions_encoding.go#L67) |
+| `urlencode` | `urlencode(value: string)` | `string` | [workflow/eval_functions_encoding.go:89](../workflow/eval_functions_encoding.go#L89) |
+| `yamlencode` | `yamlencode(value: any)` | `string` | [workflow/eval_functions_encoding.go:99](../workflow/eval_functions_encoding.go#L99) |
+| `yamldecode` | `yamldecode(value: string)` | `unknown` | [workflow/eval_functions_encoding.go:123](../workflow/eval_functions_encoding.go#L123) |
+| `uuid` | `uuid()` | `string` | [workflow/eval_functions_dynamic.go:28](../workflow/eval_functions_dynamic.go#L28) |
+| `timestamp` | `timestamp()` | `string` | [workflow/eval_functions_dynamic.go:41](../workflow/eval_functions_dynamic.go#L41) |
 <!-- END GENERATED:functions -->
 
 ### Function notes

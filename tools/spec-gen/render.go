@@ -122,7 +122,8 @@ func blockAnchor(b BlockDoc) string {
 // renderFunctions renders the functions section as a markdown table.
 // The Description column is omitted; the hand-authored "Function notes" prose
 // section below the generated region already provides the full explanation.
-// functionsRelPath is used in source links, e.g. "workflow/eval_functions.go".
+// functionsRelPath is used as the fallback source path when a function does not
+// carry its own SourceFile (e.g. for testdata or legacy single-file patterns).
 func renderFunctions(funcs []FuncDoc, functionsRelPath string) string {
 	var buf bytes.Buffer
 	fmt.Fprintf(&buf, "| Function | Signature | Returns | Source |\n")
@@ -136,8 +137,12 @@ func renderFunctions(funcs []FuncDoc, functionsRelPath string) string {
 			paramParts = append(paramParts, fmt.Sprintf("%s...: %s", fn.VarParam.Name, fn.VarParam.Type))
 		}
 		sig := fmt.Sprintf("%s(%s)", fn.Name, strings.Join(paramParts, ", "))
+		srcPath := functionsRelPath
+		if fn.SourceFile != "" {
+			srcPath = fn.SourceFile
+		}
 		source := fmt.Sprintf("[%s:%d](../%s#L%d)",
-			functionsRelPath, fn.SourceLine, functionsRelPath, fn.SourceLine)
+			srcPath, fn.SourceLine, srcPath, fn.SourceLine)
 		fmt.Fprintf(&buf, "| `%s` | `%s` | `%s` | %s |\n",
 			fn.Name, sig, fn.ReturnType, source)
 	}

@@ -5,6 +5,8 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -34,6 +36,7 @@ type FuncDoc struct {
 	VarParam    *ParamDoc // nil when no variadic param
 	ReturnType  string
 	SourceLine  int
+	SourceFile  string // relative path to the file defining the builder function
 	Description string
 }
 
@@ -539,31 +542,88 @@ func extractBlocks(schemaFile string) ([]BlockDoc, error) {
 	return result, nil
 }
 
-// extractFunctions reads functionsFile and returns one FuncDoc per entry in
-// the workflowFunctions map literal.
+// extractFunctions reads the workflow functions package directory and returns
+// one FuncDoc per entry registered by workflowFunctions. It handles two
+// registration patterns:
+//
+//  1. A single map literal returned directly: return map[string]function.Function{...}
+//  2. An incremental build with register helpers:
+//     out := map[string]function.Function{...}
+//     for k, v := range registerXxx() { out[k] = v }
+//
+// All non-test .go files in the same directory as functionsFile are parsed so
+// that builder function declarations in sibling files are discoverable.
 func extractFunctions(functionsFile string) ([]FuncDoc, error) {
 	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, functionsFile, nil, parser.ParseComments)
+
+	// Parse all non-test .go files in the package directory so that builder
+	// functions defined in sibling files (e.g. eval_functions_hash.go) are
+	// reachable when resolving map entries.
+	dir := filepath.Dir(functionsFile)
+	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return nil, fmt.Errorf("parse %s: %w", functionsFile, err)
+		return nil, fmt.Errorf("read dir %s: %w", dir, err)
 	}
 
-	// Build map of function name → *ast.FuncDecl.
 	funcDecls := make(map[string]*ast.FuncDecl)
-	for _, decl := range f.Decls {
-		fn, ok := decl.(*ast.FuncDecl)
-		if !ok {
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
 			continue
 		}
-		funcDecls[fn.Name.Name] = fn
+		parsed, parseErr := parser.ParseFile(fset, filepath.Join(dir, name), nil, parser.ParseComments)
+		if parseErr != nil {
+			return nil, fmt.Errorf("parse %s: %w", name, parseErr)
+		}
+		for _, decl := range parsed.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok {
+				continue
+			}
+			funcDecls[fn.Name.Name] = fn
+		}
 	}
 
-	// Find workflowFunctions and locate its return map literal.
+	// Find workflowFunctions (may live in any parsed file).
 	wfFn, ok := funcDecls["workflowFunctions"]
 	if !ok {
 		return nil, fmt.Errorf("workflowFunctions not found in %s", functionsFile)
 	}
 
+	// collectFromMapLit extracts FuncDoc entries from a composite map literal.
+	collectFromMapLit := func(mapLit *ast.CompositeLit) []FuncDoc {
+		var docs []FuncDoc
+		for _, elt := range mapLit.Elts {
+			kv, ok := elt.(*ast.KeyValueExpr)
+			if !ok {
+				continue
+			}
+			keyLit, ok := kv.Key.(*ast.BasicLit)
+			if !ok {
+				continue
+			}
+			funcName, err := strconv.Unquote(keyLit.Value)
+			if err != nil {
+				continue
+			}
+			// Value is a call to a builder function: builderName(opts) or builderName().
+			call, ok := kv.Value.(*ast.CallExpr)
+			if !ok {
+				continue
+			}
+			builderName := callFuncName(call.Fun)
+			builderDecl, ok := funcDecls[builderName]
+			if !ok {
+				continue
+			}
+			doc := extractFuncDoc(builderDecl, fset)
+			doc.Name = funcName
+			docs = append(docs, doc)
+		}
+		return docs
+	}
+
+	// Pattern 1: return map[string]function.Function{...}
 	var mapLit *ast.CompositeLit
 	ast.Inspect(wfFn.Body, func(n ast.Node) bool {
 		if mapLit != nil {
@@ -583,37 +643,66 @@ func extractFunctions(functionsFile string) ([]FuncDoc, error) {
 		mapLit = cl
 		return false
 	})
-	if mapLit == nil {
+	if mapLit != nil {
+		return collectFromMapLit(mapLit), nil
+	}
+
+	// Pattern 2: out := map[string]function.Function{...}
+	//            for k, v := range registerXxx() { out[k] = v }
+	var initMap *ast.CompositeLit
+	var registerCalls []string
+	for _, stmt := range wfFn.Body.List {
+		switch s := stmt.(type) {
+		case *ast.AssignStmt:
+			if len(s.Rhs) == 1 {
+				if cl, ok := s.Rhs[0].(*ast.CompositeLit); ok {
+					initMap = cl
+				}
+			}
+		case *ast.RangeStmt:
+			call, ok := s.X.(*ast.CallExpr)
+			if !ok {
+				continue
+			}
+			name := callFuncName(call.Fun)
+			if name != "" {
+				registerCalls = append(registerCalls, name)
+			}
+		}
+	}
+	if initMap == nil {
 		return nil, fmt.Errorf("workflowFunctions map literal not found in %s", functionsFile)
 	}
 
-	var docs []FuncDoc
-	for _, elt := range mapLit.Elts {
-		kv, ok := elt.(*ast.KeyValueExpr)
+	docs := collectFromMapLit(initMap)
+	// Follow each registerXxx() call to extract entries from its returned map.
+	for _, regName := range registerCalls {
+		regDecl, ok := funcDecls[regName]
 		if !ok {
 			continue
 		}
-		keyLit, ok := kv.Key.(*ast.BasicLit)
-		if !ok {
-			continue
+		var regMapLit *ast.CompositeLit
+		ast.Inspect(regDecl.Body, func(n ast.Node) bool {
+			if regMapLit != nil {
+				return false
+			}
+			ret, ok := n.(*ast.ReturnStmt)
+			if !ok {
+				return true
+			}
+			if len(ret.Results) != 1 {
+				return true
+			}
+			cl, ok := ret.Results[0].(*ast.CompositeLit)
+			if !ok {
+				return true
+			}
+			regMapLit = cl
+			return false
+		})
+		if regMapLit != nil {
+			docs = append(docs, collectFromMapLit(regMapLit)...)
 		}
-		funcName, err := strconv.Unquote(keyLit.Value)
-		if err != nil {
-			continue
-		}
-		// Value is a call to a builder function: builderName(opts) or builderName().
-		call, ok := kv.Value.(*ast.CallExpr)
-		if !ok {
-			continue
-		}
-		builderName := callFuncName(call.Fun)
-		builderDecl, ok := funcDecls[builderName]
-		if !ok {
-			continue
-		}
-		doc := extractFuncDoc(builderDecl, fset)
-		doc.Name = funcName
-		docs = append(docs, doc)
 	}
 	return docs, nil
 }
@@ -636,8 +725,10 @@ func callFuncName(expr ast.Expr) string {
 
 // extractFuncDoc builds a FuncDoc from a builder function declaration.
 func extractFuncDoc(decl *ast.FuncDecl, fset *token.FileSet) FuncDoc {
+	pos := fset.Position(decl.Pos())
 	doc := FuncDoc{
-		SourceLine: fset.Position(decl.Pos()).Line,
+		SourceLine: pos.Line,
+		SourceFile: pos.Filename,
 	}
 
 	// Description: first paragraph of the doc comment, minus "funcName implements" prefix.
