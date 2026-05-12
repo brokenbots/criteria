@@ -736,3 +736,27 @@ The strengthened tests now prove the intended behavior rather than just executio
 - `go test -race -count=1 ./internal/engine/... -run While` — all 18 while tests pass
 - `make test` — exit 0 (all packages)
 - `make validate` — `examples/while: ok`
+
+### Review 2026-05-12 — approved
+
+#### Summary
+
+Approved. The post-approval follow-up fixes close the remaining review threads: default `on_failure` now matches the documented sequential-loop semantics for transient execution errors, policy-limit failures still abort immediately, the missing regression test is present, the ADR status is flipped to `Accepted`, and the example file now clearly documents its compile-validation-only limitation. I did not find new quality or security issues in the follow-up delta.
+
+#### Plan Adherence
+
+- Step 1 remains satisfied: the ADR now reflects merged status (`Accepted`).
+- Step 5 remains satisfied after the follow-up: `while` keeps sequential default `on_failure = "continue"` behavior for non-fatal execution errors while still propagating fatal and policy-limit failures.
+- Step 9 remains satisfied: the added regression test proves the default `on_failure` contract that prompted the follow-up review thread.
+- Step 10 documentation is now accurate about the shipped example's validation-only scope.
+- Steps 11 and 12 remain satisfied: spec/docs are current and repository validation is green.
+
+#### Test Intent Assessment
+
+The new `TestWhile_DefaultOnFailure_ContinuesPastExecErr` is regression-sensitive: a loop that still treated empty `on_failure` as abort would stop after the first transient execution error and fail the explicit call-count and aggregate-outcome assertions. The broader validation run also confirms the follow-up changes did not regress the rest of the `while` surface.
+
+#### Validation Performed
+
+- `make test` — passed
+- `make validate` — passed
+- `make ci` — passed
