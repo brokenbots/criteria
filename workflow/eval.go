@@ -9,6 +9,7 @@ import (
 
 	"github.com/hashicorp/hcl/v2"
 	"github.com/zclconf/go-cty/cty"
+	ctyjson "github.com/zclconf/go-cty/cty/json"
 )
 
 // BuildEvalContext constructs an HCL evaluation context from the run-scoped
@@ -600,6 +601,14 @@ func SerializeVarScope(vars map[string]cty.Value, cursorStack ...[]IterCursor) (
 			}
 			if c.Key != cty.NilVal {
 				cm["key"] = CtyValueToString(c.Key)
+			}
+			if c.Prev != cty.NilVal {
+				typeBytes, err1 := ctyjson.MarshalType(c.Prev.Type())
+				valBytes, err2 := ctyjson.Marshal(c.Prev, c.Prev.Type())
+				if err1 == nil && err2 == nil {
+					cm["prev"] = string(valBytes)
+					cm["prev_type"] = string(typeBytes)
+				}
 			}
 			cursorList = append(cursorList, cm)
 		}

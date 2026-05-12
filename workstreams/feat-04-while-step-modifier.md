@@ -619,3 +619,51 @@ Ran `make spec-gen` — regenerated `docs/LANGUAGE-SPEC.md`. The `while.*` row n
 - `go test ./internal/engine/ -run TestWhile -v -count=1` — all 17 tests passed
 - `go test ./workflow/ -run "TestStep_WhileRefs|TestVarScope_RoundTrip_WhileCursor" -v -count=1` — all 3 tests passed
 - `make ci` — exit 0 (all tests, lint, import checks, spec-check, examples, self-workflows)
+
+### Review 2026-05-11-02 — changes-requested
+
+#### Summary
+
+Most of the prior blockers are fixed: `while` now covers subworkflow targets, `while.*` scoping is tightened, the spec row is corrected, and the test suite is materially better. This is still not approvable because crash-resume remains incomplete: the persisted var-scope cursor still drops `IterCursor.Prev`, so `while._prev` does not survive resume even though the workstream and ADR both require it.
+
+#### Plan Adherence
+
+- Steps 5, 6, 9, 11, and 12 are now substantially addressed.
+- Step 7 is **still incomplete**: the var-scope round-trip does not persist or restore `IterCursor.Prev`, and the new test does not assert it.
+
+#### Required Remediations
+
+- **Blocker** — `workflow/eval.go:581-607`, `workflow/eval.go:652-669`, `workflow/eval_test.go:459-504`: `SerializeVarScope` still writes only `step/index/total/any_failed/in_progress/on_failure/key` for cursor-stack entries, so `Prev` is lost on crash-resume. That breaks the documented `while._prev` contract after restart, and the new round-trip test misses it by not including or asserting `Prev`. **Acceptance:** persist `IterCursor.Prev` in the var-scope cursor JSON, restore it in `RestoreVarScope`, and strengthen `TestVarScope_RoundTrip_WhileCursor` to construct a while cursor with non-nil `Prev` and assert typed round-trip parity. Add a runtime resume assertion if needed to prove resumed `while._prev` is actually available to the next iteration.
+
+#### Test Intent Assessment
+
+The new tests close most of the earlier intent gaps, but the Step 7 regression is still under-tested. The current round-trip test proves only the sentinel and basic fields; it does not prove the behavior users rely on (`while._prev` continuity across resume), so a broken implementation still passes.
+
+#### Validation Performed
+
+- `go test -race -count=2 ./workflow/... ./internal/engine/...` — passed
+- `make ci` — passed
+
+---
+
+### Remediation 2026-05-11-03 — addressing review-3 blocker
+
+#### Blocker — `IterCursor.Prev` not persisted in `SerializeVarScope` (`workflow/eval.go`)
+
+**Root cause**: `SerializeVarScope` built cursor map entries without `prev`/`prev_type` keys, while `SerializeIterCursor` (the SDK-event path) did persist them. The var-scope cursor path (used for crash-resume) silently dropped `Prev` on every checkpoint write.
+
+**Fix** (`workflow/eval.go`):
+- Added `ctyjson "github.com/zclconf/go-cty/cty/json"` import.
+- In the cursor serialization loop (lines 588-606), added the same `prev`/`prev_type` encoding that `SerializeIterCursor` already uses: marshal `c.Prev` via `ctyjson.MarshalType` + `ctyjson.Marshal` when `c.Prev != cty.NilVal`.
+- `deserializeIterCursor` / `deserializePrev` already handled these keys correctly — only the write side was broken.
+
+**Test** (`workflow/eval_test.go` — `TestVarScope_RoundTrip_WhileCursor` strengthened):
+- Construct cursor with `Prev = cty.ObjectVal({"result": "processed", "count": "7"})`.
+- Assert `Prev != cty.NilVal` after restore.
+- Assert `Prev.GetAttr("result") == "processed"` and `Prev.GetAttr("count") == "7"` — proves typed value survives round-trip.
+- Test confirmed to fail before fix and pass after fix.
+
+#### Validation
+
+- `go test ./workflow/ -run TestVarScope_RoundTrip_WhileCursor -v -count=1` — confirmed FAIL before fix, PASS after fix
+- `make ci` — exit 0
