@@ -1,21 +1,19 @@
-workflow "file-prompts" {
+# Example: demonstrates fileset() — enumerates files matching a glob and
+# processes each one via for_each.
+workflow "fileset_demo" {
   version       = "1"
   initial_state = "process"
   target_state  = "done"
 }
 
-adapter "shell" "default" {
-  config {}
-}
+adapter "shell" "echoer" {}
 
 step "process" {
-  target   = adapter.shell.default
-  for_each = fileset("prompts", "*.md")
-
+  for_each = fileset("inputs", "*.txt")
+  target   = adapter.shell.echoer
   input {
-    command = file(each.value)
+    command = "echo Processing ${each.value}"
   }
-
   outcome "all_succeeded" { next = "done" }
   outcome "any_failed"    { next = "failed" }
 }

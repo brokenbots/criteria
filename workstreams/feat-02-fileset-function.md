@@ -353,15 +353,39 @@ This workstream may **not** edit:
 
 ## Tasks
 
-- [ ] Register `fileset` in `workflowFunctions` (Step 1).
-- [ ] Implement `filesetFunction` and `resolveConfinedDir` (Step 1).
-- [ ] Update package doc-comment (Step 2).
-- [ ] Add 20 unit tests (Step 3).
-- [ ] Add example workflow and wire into `make validate` (Step 4).
-- [ ] Update `docs/workflow.md` (Step 5).
-- [ ] If doc-04 has landed, replace pattern 8 placeholder.
-- [ ] Re-run `make spec-gen` if doc-03 has landed.
-- [ ] Validation (Step 6).
+- [x] Register `fileset` in `workflowFunctions` (Step 1).
+- [x] Implement `filesetFunction` and `resolveConfinedDir` (Step 1).
+- [x] Update package doc-comment (Step 2).
+- [x] Add 20 unit tests (Step 3).
+- [x] Add example workflow and wire into `make validate` (Step 4).
+- [x] Update `docs/workflow.md` (Step 5).
+- [x] If doc-04 has landed, replace pattern 8 placeholder.
+- [x] Re-run `make spec-gen` if doc-03 has landed.
+- [x] Validation (Step 6).
+
+## Reviewer Notes
+
+**Implementation**
+
+- `filesetFunction` and `resolveConfinedDir` added to `workflow/eval_functions.go` following the same two-phase confinement pattern as `resolveConfinedPath` (pre- and post-EvalSymlinks). The directory-entry matching loop was extracted into a standalone `collectMatchingFiles` helper to keep `filesetFunction`'s cognitive complexity within the `gocognit` ≤20 lint limit.
+- `sort.Strings` ensures lexicographic output regardless of OS directory listing order.
+- Pattern validation with `filepath.Match(pattern, "")` up-front gives a clear error; Go's `filepath.Glob` silently returns nothing on bad patterns.
+- `entry.Type().IsRegular()` excludes symlinks, directories, devices — v1 documented behavior.
+
+**Tests** (`workflow/eval_functions_fileset_test.go`)
+
+- 20 tests covering: happy path, no matches, dot path, no-recursion, dirs excluded, symlinks excluded, sort order, `?` and `[range]` patterns, invalid pattern, nonexistent path, file-not-dir, path escape, absolute path rejection, AllowedPaths, empty dir, wildcard, permission-denied, 50-goroutine concurrent race, and full E2E compile integration with `for_each`.
+- Validated with `-race -count=20`: pass.
+
+**Example & docs**
+
+- `examples/fileset/` (3 `.txt` inputs) added; `make validate` includes it; golden files auto-generated.
+- `docs/workflow.md` section added; `docs/LANGUAGE-SPEC.md` regenerated via `make spec-gen`.
+- `docs/llm/08-fileset-template.md` rewritten (310 words, ≤350 budget, correct 5-header structure); `examples/llm-pack/08-fileset-template/main.hcl` updated to use `fileset()`.
+
+**CI**
+
+- `make ci` exits 0. No new `//nolint` directives. No baseline cap change. No proto changes.
 
 ## Exit criteria
 
