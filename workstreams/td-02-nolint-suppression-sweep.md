@@ -627,6 +627,33 @@ The new diagnostic tests now do what was missing in the previous submission: the
 - `rg '^\s*- path:' .golangci.baseline.yml | wc -l` and `cat tools/lint-baseline/cap.txt` → both `22`.
 - `awk` count of td-02 survivor rows in `docs/contributing/lint-baseline.md` → `31`.
 
+### Review 2026-05-12-04 — approved
+
+#### Summary
+
+Approved. The remaining artifact issue is resolved: the Category B accounting now reconciles with the delivered repository state, the td-02 documentation matches the codebase, and there are no outstanding quality, test, or security findings in this workstream scope.
+
+#### Plan Adherence
+
+- **Step 3 — Category A fixes:** Complete. The delivered refactors remove 22 inline directives and the prior diagnostic regression was corrected with focused tests.
+- **Step 4 — Category B moves:** Complete. The reporting now correctly reflects **9** inline directive removals and **6** new baseline entries, with the hybrid `testConcurrentSessions` handling explained clearly.
+- **Step 5 — Category C tightening:** Complete. Surviving directives are down to **31** and carry self-contained one-sentence rationales.
+- **Step 6 — Lint-baseline doc update:** Complete. `docs/contributing/lint-baseline.md` now matches the repository state, including the `62 → 31` result and the 31-row survivor table.
+- **Step 7 — Validation:** Complete. The prior full suite remained applicable, and this pass confirmed the final repo/doc arithmetic and counts.
+
+#### Test Intent Assessment
+
+The focused diagnostic assertions added in `workflow/compile_step_target_test.go` close the previous coverage gap: they would fail on the exact Summary/Detail regressions that slipped through the aggregate suite earlier. With the final artifact reconciliation done, the test story now matches the intended behavior and regression surface for this workstream.
+
+#### Validation Performed
+
+- `git --no-pager status --short` / `git --no-pager diff --name-only` → no remaining unreviewed worktree changes in this pass.
+- `grep -rn '//nolint' . --include='*.go' | grep -v 'staticcheck' | grep -v '^./vendor/' | grep -v '/testdata/' | wc -l` → `31`.
+- `grep -rE '//nolint:.*// .*W[0-9]+' --include='*.go' . | grep -v 'staticcheck' | grep -v '^./vendor/' | grep -v '/testdata/' | wc -l` → `0`.
+- `rg '^\s*- path:' .golangci.baseline.yml | wc -l` and `cat tools/lint-baseline/cap.txt` → both `22`.
+- `awk` count of td-02 survivor rows in `docs/contributing/lint-baseline.md` → `31`.
+- Reviewed `docs/contributing/lint-baseline.md` and `workstreams/td-02-nolint-suppression-sweep.md` to confirm Category B now reports **9** directive removals and that `62 - 22 - 9 = 31` is documented consistently.
+
 ### Remediation 2026-05-12-03 — Category B count corrected
 
 **Root cause:** `runApplyLocal` carries **two** separate inline nolint directives (one on the function line for `funlen`, one on the `opts applyOptions` parameter line for `gocritic/hugeParam`). The executor counted this function as 1 directive instead of 2, yielding 8 instead of 9. The `testConcurrentSessions` hybrid entry was an additional source of ambiguity (its line removal is already counted in Category A's 22, making it B-exclusive).
