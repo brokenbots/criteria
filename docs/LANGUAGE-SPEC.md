@@ -362,13 +362,13 @@ Expression functions available in all HCL attribute values within a workflow. Fu
 | `sha1` | `sha1(value: string)` | `string` | [workflow/eval_functions_hash.go:28](../workflow/eval_functions_hash.go#L28) |
 | `sha512` | `sha512(value: string)` | `string` | [workflow/eval_functions_hash.go:28](../workflow/eval_functions_hash.go#L28) |
 | `md5` | `md5(value: string)` | `string` | [workflow/eval_functions_hash.go:28](../workflow/eval_functions_hash.go#L28) |
-| `base64encode` | `base64encode(value: string)` | `string` | [workflow/eval_functions_encoding.go:29](../workflow/eval_functions_encoding.go#L29) |
-| `base64decode` | `base64decode(value: string)` | `string` | [workflow/eval_functions_encoding.go:39](../workflow/eval_functions_encoding.go#L39) |
-| `jsonencode` | `jsonencode(value: any)` | `string` | [workflow/eval_functions_encoding.go:53](../workflow/eval_functions_encoding.go#L53) |
-| `jsondecode` | `jsondecode(value: string)` | `unknown` | [workflow/eval_functions_encoding.go:66](../workflow/eval_functions_encoding.go#L66) |
-| `urlencode` | `urlencode(value: string)` | `string` | [workflow/eval_functions_encoding.go:88](../workflow/eval_functions_encoding.go#L88) |
-| `yamlencode` | `yamlencode(value: any)` | `string` | [workflow/eval_functions_encoding.go:98](../workflow/eval_functions_encoding.go#L98) |
-| `yamldecode` | `yamldecode(value: string)` | `unknown` | [workflow/eval_functions_encoding.go:116](../workflow/eval_functions_encoding.go#L116) |
+| `base64encode` | `base64encode(value: string)` | `string` | [workflow/eval_functions_encoding.go:30](../workflow/eval_functions_encoding.go#L30) |
+| `base64decode` | `base64decode(value: string)` | `string` | [workflow/eval_functions_encoding.go:40](../workflow/eval_functions_encoding.go#L40) |
+| `jsonencode` | `jsonencode(value: any)` | `string` | [workflow/eval_functions_encoding.go:54](../workflow/eval_functions_encoding.go#L54) |
+| `jsondecode` | `jsondecode(value: string)` | `unknown` | [workflow/eval_functions_encoding.go:68](../workflow/eval_functions_encoding.go#L68) |
+| `urlencode` | `urlencode(value: string)` | `string` | [workflow/eval_functions_encoding.go:90](../workflow/eval_functions_encoding.go#L90) |
+| `yamlencode` | `yamlencode(value: any)` | `string` | [workflow/eval_functions_encoding.go:100](../workflow/eval_functions_encoding.go#L100) |
+| `yamldecode` | `yamldecode(value: string)` | `unknown` | [workflow/eval_functions_encoding.go:126](../workflow/eval_functions_encoding.go#L126) |
 | `uuid` | `uuid()` | `string` | [workflow/eval_functions_dynamic.go:28](../workflow/eval_functions_dynamic.go#L28) |
 | `timestamp` | `timestamp()` | `string` | [workflow/eval_functions_dynamic.go:41](../workflow/eval_functions_dynamic.go#L41) |
 <!-- END GENERATED:functions -->
