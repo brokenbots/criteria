@@ -71,7 +71,7 @@ func collectFileBlockRanges(src []byte, filename string) map[string]hcl.Range {
 //   - SourceBytes concatenates all file bytes separated by newlines.
 //   - The merged Spec must contain exactly one Header (workflow block); zero
 //     headers produces an error.
-func ParseDir(dir string) (*Spec, hcl.Diagnostics) { //nolint:funlen // W17: file discovery + per-file parse loop + merge + validation are sequential, extraction would obscure the flow
+func ParseDir(dir string) (*Spec, hcl.Diagnostics) { //nolint:funlen // file discovery + per-file parse loop + merge + validation are sequential phases; extraction would obscure the flow
 	dirEntries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, hcl.Diagnostics{{
@@ -174,7 +174,7 @@ func ParseFileOrDir(path string) (*Spec, hcl.Diagnostics) {
 // Slice fields are concatenated; singleton fields (Header, Policy, Permissions)
 // must appear in at most one file. Block ranges from each entry are used to
 // populate Subject/Detail fields in conflict diagnostics with file:line info.
-func mergeSpecs(dir string, entries []fileEntry) (*Spec, hcl.Diagnostics) { //nolint:cyclop,gocognit,gocyclo,funlen // W17: multi-field merge with singleton conflict detection requires sequential checks
+func mergeSpecs(dir string, entries []fileEntry) (*Spec, hcl.Diagnostics) { //nolint:cyclop,gocognit,gocyclo,funlen // multi-field merge with singleton conflict detection requires sequential checks across all spec fields
 	if len(entries) == 0 {
 		return nil, nil
 	}

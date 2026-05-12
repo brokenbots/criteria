@@ -48,7 +48,7 @@ func NewEnvelope(runID string, payload any) *pb.Envelope {
 // setPayload assigns a payload message to env.Payload by concrete type.
 // Unknown non-nil payloads panic to surface caller bugs at construction
 // time rather than producing an empty envelope that looks valid on the wire.
-func setPayload(env *pb.Envelope, payload any) { //nolint:funlen,gocyclo // W03: type switch must cover every concrete payload type in the oneof
+func setPayload(env *pb.Envelope, payload any) { //nolint:funlen,gocyclo // type switch must cover every concrete payload type in the oneof
 	switch p := payload.(type) {
 	case nil:
 		return
@@ -111,7 +111,7 @@ func setPayload(env *pb.Envelope, payload any) { //nolint:funlen,gocyclo // W03:
 // "step.log"). It is used as the `type` column in the server's event store and
 // by tests that want to inspect events without reaching into the oneof.
 // Envelopes with no payload return the empty string.
-func TypeString(env *pb.Envelope) string { //nolint:funlen,gocyclo // W03: discriminator switch must cover every concrete payload type in the oneof
+func TypeString(env *pb.Envelope) string { //nolint:funlen,gocyclo // discriminator switch must cover every concrete payload type in the oneof
 	if env == nil {
 		return ""
 	}

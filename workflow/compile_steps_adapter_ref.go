@@ -23,8 +23,6 @@ import (
 //
 // If an adapter attribute is found but invalid, present=true and diags contains errors.
 // If no adapter attribute is found, present=false and diags is empty.
-//
-//nolint:funlen // W11: function length unavoidable due to comprehensive traversal validation
 func ResolveStepAdapterRef(body hcl.Body) (adapterRef string, present bool, diags hcl.Diagnostics) {
 	if body == nil {
 		return "", false, nil
@@ -53,7 +51,20 @@ func ResolveStepAdapterRef(body hcl.Body) (adapterRef string, present bool, diag
 		return "", true, diags
 	}
 
-	// Validate shape: exactly 3 segments, rooted at "adapter".
+	typeName, nameStr, shapeDiags := validateAdapterTraversalShape(trav, attr)
+	diags = append(diags, shapeDiags...)
+	if shapeDiags.HasErrors() {
+		return "", true, diags
+	}
+
+	adapterRef = fmt.Sprintf("%s.%s", typeName, nameStr)
+	return adapterRef, true, nil
+}
+
+// validateAdapterTraversalShape validates that trav has exactly 3 segments,
+// is rooted at "adapter", and that segments 1 and 2 are bareword identifiers.
+// Returns the type and name strings on success.
+func validateAdapterTraversalShape(trav hcl.Traversal, attr *hcl.Attribute) (typeName, name string, diags hcl.Diagnostics) {
 	if len(trav) != 3 {
 		diags = append(diags, &hcl.Diagnostic{
 			Severity: hcl.DiagError,
@@ -61,7 +72,7 @@ func ResolveStepAdapterRef(body hcl.Body) (adapterRef string, present bool, diag
 			Detail:   fmt.Sprintf("adapter reference must have exactly 3 segments (adapter.<type>.<name>); got %d", len(trav)),
 			Subject:  attr.Expr.Range().Ptr(),
 		})
-		return "", true, diags
+		return "", "", diags
 	}
 
 	if trav.RootName() != "adapter" {
@@ -71,7 +82,7 @@ func ResolveStepAdapterRef(body hcl.Body) (adapterRef string, present bool, diag
 			Detail:   `adapter reference must take the form adapter.<type>.<name>`,
 			Subject:  attr.Expr.Range().Ptr(),
 		})
-		return "", true, diags
+		return "", "", diags
 	}
 
 	// Validate both remaining segments are attribute traversals (not index, etc).
@@ -84,9 +95,8 @@ func ResolveStepAdapterRef(body hcl.Body) (adapterRef string, present bool, diag
 			Detail:   `adapter reference must take the form adapter.<type>.<name>; segments after "adapter" must be identifiers, not indexing or function calls`,
 			Subject:  attr.Expr.Range().Ptr(),
 		})
-		return "", true, diags
+		return "", "", diags
 	}
 
-	adapterRef = fmt.Sprintf("%s.%s", typeAttr.Name, nameAttr.Name)
-	return adapterRef, true, nil
+	return typeAttr.Name, nameAttr.Name, nil
 }

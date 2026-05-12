@@ -21,7 +21,7 @@ import (
 //
 // serverURL selects the scheme. When caFile is non-empty it is loaded as the
 // root bundle for server verification; certFile/keyFile enable mTLS.
-func serverHTTPClient(serverURL, caFile, certFile, keyFile string) (*http.Client, error) { //nolint:gocognit // W03: TLS config branches across scheme/CA/mTLS combinations; extraction would obscure call site
+func serverHTTPClient(serverURL, caFile, certFile, keyFile string) (*http.Client, error) {
 	u, err := url.Parse(serverURL)
 	if err != nil {
 		return nil, fmt.Errorf("parse server url: %w", err)
@@ -38,30 +38,37 @@ func serverHTTPClient(serverURL, caFile, certFile, keyFile string) (*http.Client
 			},
 		}}, nil
 	case "https":
-		cfg := &tls.Config{MinVersion: tls.VersionTLS12}
-		if caFile != "" {
-			pemBytes, err := os.ReadFile(caFile)
-			if err != nil {
-				return nil, fmt.Errorf("read ca: %w", err)
-			}
-			pool := x509.NewCertPool()
-			if !pool.AppendCertsFromPEM(pemBytes) {
-				return nil, errors.New("invalid ca bundle")
-			}
-			cfg.RootCAs = pool
-		}
-		if certFile != "" || keyFile != "" {
-			if certFile == "" || keyFile == "" {
-				return nil, errors.New("mtls requires both --tls-cert and --tls-key")
-			}
-			crt, err := tls.LoadX509KeyPair(certFile, keyFile)
-			if err != nil {
-				return nil, fmt.Errorf("load client cert: %w", err)
-			}
-			cfg.Certificates = []tls.Certificate{crt}
-		}
-		return &http.Client{Transport: &http2.Transport{TLSClientConfig: cfg}}, nil
+		return buildHTTPSClient(caFile, certFile, keyFile)
 	default:
 		return nil, fmt.Errorf("unsupported server url scheme %q (want http or https)", u.Scheme)
 	}
+}
+
+// buildHTTPSClient constructs an HTTP/2 client with TLS configured for https://
+// server URLs. When caFile is set, it overrides the system root pool. When both
+// certFile and keyFile are set, mTLS is enabled.
+func buildHTTPSClient(caFile, certFile, keyFile string) (*http.Client, error) {
+	cfg := &tls.Config{MinVersion: tls.VersionTLS12}
+	if caFile != "" {
+		pemBytes, err := os.ReadFile(caFile)
+		if err != nil {
+			return nil, fmt.Errorf("read ca: %w", err)
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(pemBytes) {
+			return nil, errors.New("invalid ca bundle")
+		}
+		cfg.RootCAs = pool
+	}
+	if certFile != "" || keyFile != "" {
+		if certFile == "" || keyFile == "" {
+			return nil, errors.New("mtls requires both --tls-cert and --tls-key")
+		}
+		crt, err := tls.LoadX509KeyPair(certFile, keyFile)
+		if err != nil {
+			return nil, fmt.Errorf("load client cert: %w", err)
+		}
+		cfg.Certificates = []tls.Certificate{crt}
+	}
+	return &http.Client{Transport: &http2.Transport{TLSClientConfig: cfg}}, nil
 }

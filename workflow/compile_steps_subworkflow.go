@@ -12,7 +12,7 @@ import (
 // registers it in g. subworkflowRef is the pre-resolved subworkflow name from
 // resolveStepTarget.
 //
-//nolint:funlen // W14: sequential compile+validate phases; splitting adds indirection without clarity gain
+//nolint:funlen // sequential compile+validate phases for subworkflow step; splitting adds indirection without clarity gain
 func compileSubworkflowStep(g *FSMGraph, sp *StepSpec, _ *Spec, subworkflowRef string, opts CompileOpts) hcl.Diagnostics {
 	var diags hcl.Diagnostics
 

@@ -44,7 +44,7 @@ type executeTarget interface {
 type targetFactory func(*testing.T) executeTarget
 
 // Run executes the shared adapter conformance contract.
-func Run(t *testing.T, name string, factory func() adapter.Adapter, opts Options) { //nolint:gocritic // W15: Options passes by value for API clarity
+func Run(t *testing.T, name string, factory func() adapter.Adapter, opts Options) {
 	t.Helper()
 	if strings.TrimSpace(name) == "" {
 		t.Fatal("conformance: name is required")
@@ -53,13 +53,13 @@ func Run(t *testing.T, name string, factory func() adapter.Adapter, opts Options
 		t.Fatal("conformance: factory is required")
 	}
 
-	runContractTests(t, name, opts, func(_ *testing.T) executeTarget {
+	runContractTests(t, name, &opts, func(_ *testing.T) executeTarget {
 		return adapterTarget{impl: factory()}
 	})
 }
 
 // RunPlugin executes the shared adapter contract against a plugin binary.
-func RunPlugin(t *testing.T, name, binaryPath string, opts Options) { //nolint:gocritic // W15: Options passes by value for API clarity
+func RunPlugin(t *testing.T, name, binaryPath string, opts Options) {
 	t.Helper()
 	if strings.TrimSpace(name) == "" {
 		t.Fatal("conformance: name is required")
@@ -93,23 +93,23 @@ func RunPlugin(t *testing.T, name, binaryPath string, opts Options) { //nolint:g
 	}
 	probe.Kill()
 
-	runContractTests(t, name, opts, newPluginTargetFactory(name, loader, opts))
+	runContractTests(t, name, &opts, newPluginTargetFactory(name, loader, &opts))
 
 	t.Run("session_lifecycle", func(t *testing.T) {
-		testSessionLifecycle(t, name, loader, opts, info)
+		testSessionLifecycle(t, name, loader, &opts, &info)
 	})
 	t.Run("concurrent_sessions", func(t *testing.T) {
-		testConcurrentSessions(t, name, loader, opts, info)
+		testConcurrentSessions(t, name, loader, &opts, &info)
 	})
 	t.Run("session_crash_detection", func(t *testing.T) {
-		testSessionCrashDetection(t, name, loader, opts, info)
+		testSessionCrashDetection(t, name, loader, &opts, &info)
 	})
 	t.Run("permission_request_shape", func(t *testing.T) {
-		testPermissionRequestShape(t, name, loader, opts, info)
+		testPermissionRequestShape(t, name, loader, &opts, &info)
 	})
 }
 
-func runContractTests(t *testing.T, name string, opts Options, factory targetFactory) { //nolint:gocritic // W15: Options passes by value for API clarity
+func runContractTests(t *testing.T, name string, opts *Options, factory targetFactory) {
 	t.Run("name_stability", func(t *testing.T) { testNameStability(t, name, factory) })
 	t.Run("nil_sink", func(t *testing.T) { testNilSink(t, name, factory, opts) })
 	t.Run("happy_path", func(t *testing.T) { testHappyPath(t, name, factory, opts) })
@@ -124,7 +124,7 @@ func runContractTests(t *testing.T, name string, opts Options, factory targetFac
 	}
 }
 
-func newPluginTargetFactory(name string, loader plugin.Loader, opts Options) targetFactory { //nolint:gocritic // W15: Options passes by value for API clarity
+func newPluginTargetFactory(name string, loader plugin.Loader, opts *Options) targetFactory {
 	return func(t *testing.T) executeTarget {
 		t.Helper()
 		// 30 s matches the StartTimeout in the loader.

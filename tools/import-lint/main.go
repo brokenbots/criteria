@@ -136,7 +136,7 @@ func checkFile(absPath, relPath string) ([]violation, error) {
 	f, err := parser.ParseFile(fset, absPath, nil, parser.ParseComments)
 	if err != nil {
 		// Unparseable files are skipped (generated files, syntax errors in tests).
-		return nil, nil //nolint:nilerr
+		return nil, nil //nolint:nilerr // unparseable files are intentionally skipped; callers treat nil results as no-violations
 	}
 
 	var violations []violation

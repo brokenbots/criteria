@@ -147,7 +147,7 @@ var knownAdapterConfigFields = map[string][]string{
 // the type check is deferred to runtime (step.input{} mode). When evalCtx is
 // non-nil, the expression is evaluated against that context and any failure is
 // reported as a hard diagnostic (adapter.config{} mode — no runtime resolution).
-func validateSchemaAttrs(context string, attrs hcl.Attributes, schema map[string]ConfigField, missingRange hcl.Range, adapterName string, evalCtx *hcl.EvalContext) (map[string]string, hcl.Diagnostics) { //nolint:funlen,gocognit,gocyclo // W03: exhaustive schema validation with per-adapter diagnostics
+func validateSchemaAttrs(context string, attrs hcl.Attributes, schema map[string]ConfigField, missingRange hcl.Range, adapterName string, evalCtx *hcl.EvalContext) (map[string]string, hcl.Diagnostics) { //nolint:funlen,gocognit,gocyclo // exhaustive schema validation with per-field type checks, required-field enforcement, and per-adapter diagnostics
 	var diags hcl.Diagnostics
 	result := make(map[string]string, len(attrs))
 

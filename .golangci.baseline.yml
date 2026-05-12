@@ -69,3 +69,32 @@ issues:
       linters:
         - funlen
       text: 'testAdapterSessionEventsRoundTrip' # W12: SDK conformance test; 48-line function validates round-trip events exhaustively
+    # --- td-02: structural suppressions moved from inline nolint directives ---
+    # kept: Run and RunPlugin are public API exported by the conformance package; converting opts to *Options would require every external caller to pass an address
+    - path: internal/adapter/conformance/conformance\.go
+      linters:
+        - gocritic
+      text: 'hugeParam: opts is heavy \(80 bytes\); consider passing it by pointer' # td-02: public API value receiver; pointer conversion would break all external conformance test callers
+    # kept: testConcurrentSessions opens two full plugin sessions in parallel goroutines; the setup/teardown scaffolding is inherently long and cannot be sensibly split without obscuring the concurrency test intent
+    - path: internal/adapter/conformance/conformance_lifecycle\.go
+      linters:
+        - funlen
+      text: 'Function ''testConcurrentSessions''' # td-02: 55-statement test requiring full lifecycle scaffold for two parallel sessions; splitting degrades readability
+    # kept: runApplyLocal orchestrates engine creation, event routing, signal handling, and output rendering for the local apply path; the individual phases are already minimal and splitting would scatter the flow
+    - path: internal/cli/apply_local\.go
+      linters:
+        - funlen
+      text: 'Function ''runApplyLocal''' # td-02: 41-statement apply orchestrator; converting applyOptions to pointer is W02-split-cli-apply scope
+    # kept: applyOptions is a 232-byte struct that threads through the apply pipeline; converting to pointer is W02-split-cli-apply scope and not safe to do piecemeal
+    - path: internal/cli/apply_local\.go
+      linters:
+        - gocritic
+      text: 'hugeParam: opts is heavy \(232 bytes\); consider passing it by pointer' # td-02: applyOptions grew to 232 bytes; by-pointer conversion is W02-split-cli-apply scope
+    - path: internal/cli/apply_resume\.go
+      linters:
+        - gocritic
+      text: 'hugeParam: opts is heavy \(232 bytes\); consider passing it by pointer' # td-02: applyOptions passed by value; by-pointer conversion is W02-split-cli-apply scope
+    - path: internal/cli/apply_server\.go
+      linters:
+        - gocritic
+      text: 'hugeParam: opts is heavy \(232 bytes\); consider passing it by pointer' # td-02: applyOptions passed by value across 4 server-apply functions; by-pointer conversion is W02-split-cli-apply scope

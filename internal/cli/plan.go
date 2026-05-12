@@ -33,7 +33,7 @@ func NewPlanCmd() *cobra.Command {
 	return cmd
 }
 
-func renderPlanOutput(ctx context.Context, workflowPath string, overrides map[string]string) (string, error) { //nolint:funlen,gocognit,gocyclo // W03: renders full plan tree with agent/step/outcome formatting across multiple output paths
+func renderPlanOutput(ctx context.Context, workflowPath string, overrides map[string]string) (string, error) { //nolint:funlen,gocognit,gocyclo // renders full plan tree with agent/step/outcome formatting across multiple output paths
 	spec, graph, err := parseCompileForCli(ctx, workflowPath, nil)
 	if err != nil {
 		return "", err
@@ -145,46 +145,59 @@ func formatStepHeader(step *workflow.StepNode) string {
 	return strings.Join(parts, "   ")
 }
 
-func formatOutcomes(step *workflow.StepNode, spec *workflow.Spec) string { //nolint:gocognit // W03: outcome formatting branches on spec presence, ordering, and colour output
-	ordered := make([]string, 0, len(step.Outcomes))
-	if spec != nil {
-		for i := range spec.Steps {
-			st := &spec.Steps[i]
-			if st.Name != step.Name {
-				continue
-			}
-			for _, o := range st.Outcomes {
-				if co, ok := step.Outcomes[o.Name]; ok {
-					ordered = append(ordered, fmt.Sprintf("%s -> %s", o.Name, co.Next))
-				}
-			}
-			break
-		}
-	}
-
+func formatOutcomes(step *workflow.StepNode, spec *workflow.Spec) string {
+	ordered := buildOrderedOutcomes(step, spec)
 	if len(ordered) == 0 {
 		names := sortedMapKeys(step.Outcomes)
 		for _, name := range names {
 			ordered = append(ordered, fmt.Sprintf("%s -> %s", name, step.Outcomes[name].Next))
 		}
 	} else {
-		missing := make([]string, 0, len(step.Outcomes))
-		seen := map[string]bool{}
-		for _, line := range ordered {
-			parts := strings.SplitN(line, " -> ", 2)
-			if len(parts) == 2 {
-				seen[parts[0]] = true
-			}
-		}
-		for name := range step.Outcomes {
-			if !seen[name] {
-				missing = append(missing, name)
-			}
-		}
-		sort.Strings(missing)
-		for _, name := range missing {
-			ordered = append(ordered, fmt.Sprintf("%s -> %s", name, step.Outcomes[name].Next))
-		}
+		ordered = appendMissingOutcomes(step, ordered)
 	}
 	return strings.Join(ordered, ", ")
+}
+
+// buildOrderedOutcomes returns spec-ordered outcome strings for the given step,
+// or nil if spec is nil or doesn't contain the step.
+func buildOrderedOutcomes(step *workflow.StepNode, spec *workflow.Spec) []string {
+	if spec == nil {
+		return nil
+	}
+	for i := range spec.Steps {
+		st := &spec.Steps[i]
+		if st.Name != step.Name {
+			continue
+		}
+		ordered := make([]string, 0, len(st.Outcomes))
+		for _, o := range st.Outcomes {
+			if co, ok := step.Outcomes[o.Name]; ok {
+				ordered = append(ordered, fmt.Sprintf("%s -> %s", o.Name, co.Next))
+			}
+		}
+		return ordered
+	}
+	return nil
+}
+
+// appendMissingOutcomes appends any step outcomes not already covered by the
+// spec-ordered list (matched by name prefix before " -> ").
+func appendMissingOutcomes(step *workflow.StepNode, ordered []string) []string {
+	seen := make(map[string]bool, len(ordered))
+	for _, line := range ordered {
+		if parts := strings.SplitN(line, " -> ", 2); len(parts) == 2 {
+			seen[parts[0]] = true
+		}
+	}
+	missing := make([]string, 0, len(step.Outcomes))
+	for name := range step.Outcomes {
+		if !seen[name] {
+			missing = append(missing, name)
+		}
+	}
+	sort.Strings(missing)
+	for _, name := range missing {
+		ordered = append(ordered, fmt.Sprintf("%s -> %s", name, step.Outcomes[name].Next))
+	}
+	return ordered
 }
