@@ -462,3 +462,31 @@ The new `recordingResolver` tests are appropriately contract-focused: they asser
 - `(cd workflow && go test -race -count=1 ./...)` — passed
 - `make ci` — passed
 - `git diff main -- '*.go' | grep '^+.*//nolint'` — no new inline `//nolint` directives found
+
+### Review 2026-05-12-03 — approved
+
+#### Summary
+I re-reviewed the current branch against the td-01 plan and acceptance bar. The targeted eight baseline entries are gone, the cap is ratcheted to 16, the `CompileWithOpts` API remains backward-compatible, and the new context-propagation tests are contract-sensitive at the resolver boundary. The remaining adjacent `internal/cli/validate.go` update is a consistent ctx-threading follow-through, not a new deviation or risk.
+
+#### Plan Adherence
+- **Step 1:** Satisfied. The workstream notes now capture the starting `24 / 24` baseline state and per-linter distribution.
+- **Step 2:** Satisfied. The three `contextcheck` entries were removed by threading caller context through `CompileWithContext`, while preserving `CompileWithOpts(spec, schemas, opts)` as the stable exported entrypoint. `internal/cli/validate.go` was also updated consistently; this is acceptable adjacent scope.
+- **Step 3:** Satisfied. `checkReachability` is now a thin orchestrator over extracted helpers, and its three baseline entries were removed.
+- **Step 4:** Satisfied. `compileSubworkflows` was decomposed into smaller helpers and its two baseline entries were removed.
+- **Step 6:** Satisfied. `.golangci.baseline.yml` and `tools/lint-baseline/cap.txt` both land at exactly `16`.
+- **Step 7:** Satisfied. `docs/contributing/lint-baseline.md` contains the td-01 burn-down snapshot with removed-entry details and all 16 retained entries documented.
+- **Step 8:** Satisfied. The required validation suite passes on the current tree.
+
+#### Test Intent Assessment
+The added `recordingResolver` coverage is strong for the behavior this workstream changed: it proves both value-bearing context propagation and cancellation propagation at the `SubWorkflowResolver.ResolveSource` contract boundary. Those assertions would fail if compilation regressed to `context.Background()`. The broader race-enabled test suite and `make ci` run provide adequate regression coverage for the mechanical reachability and subworkflow refactors.
+
+#### Validation Performed
+- `make lint-go` — passed
+- `make lint-baseline-check` — passed (`16 / 16`)
+- `go test -race -count=1 ./...` — passed
+- `(cd sdk && go test -race -count=1 ./...)` — passed
+- `(cd workflow && go test -race -count=1 ./...)` — passed
+- `make ci` — passed
+- `grep -c '^\s*- path:' .golangci.baseline.yml` — `16`
+- `cat tools/lint-baseline/cap.txt` — `16`
+- `git diff main -- '*.go' | grep '^+.*//nolint'` — no new inline `//nolint` directives found
