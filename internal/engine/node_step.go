@@ -21,6 +21,15 @@ type stepNode struct {
 	step  *workflow.StepNode
 }
 
+// policyLimitError wraps errors that arise from hard policy limits (e.g.
+// max_visits exceeded). Unlike transient adapter errors, these must always
+// propagate out of while/for_each loops regardless of on_failure mode.
+type policyLimitError struct{ err error }
+
+func (e *policyLimitError) Error() string { return e.err.Error() }
+func (e *policyLimitError) Unwrap() error  { return e.err }
+
+
 func (n *stepNode) Name() string {
 	return n.step.Name
 }
@@ -611,7 +620,7 @@ func (n *stepNode) incrementVisit(st *RunState) error {
 			st.Visits = make(map[string]int)
 		}
 		if st.Visits[n.step.Name] >= n.step.MaxVisits {
-			return fmt.Errorf("step %q exceeded max_visits (%d)", n.step.Name, n.step.MaxVisits)
+			return &policyLimitError{err: fmt.Errorf("step %q exceeded max_visits (%d)", n.step.Name, n.step.MaxVisits)}
 		}
 	}
 	if st.Visits == nil {

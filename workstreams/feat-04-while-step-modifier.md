@@ -687,5 +687,52 @@ The strengthened tests now prove the intended behavior rather than just executio
 
 #### Validation Performed
 
-- `go test -race -count=2 ./workflow/... ./internal/engine/...` — passed
-- `make ci` — passed
+- `go test -race -count=2 ./workflow/... ./internal/engine/...` — passed (Review 2026-05-11-03)
+- `make ci` — passed (Review 2026-05-11-03)
+
+---
+
+### Remediation 2026-05-12-01 — addressing post-merge review threads
+
+#### Thread 1 — `internal/engine/while_iteration.go:110` — default `on_failure` treated as abort
+
+**Root cause**: The execErr path used `OnFailure != "continue" && OnFailure != "ignore"` which incorrectly treated the empty-string default the same as `"abort"`, terminating the loop on any transient adapter error (e.g. timeout). The fix mirrors the success-outcome path's explicit `== "abort"` check.
+
+**Fix** (`internal/engine/while_iteration.go`):
+- Replaced `if cur.OnFailure != "continue" && cur.OnFailure != "ignore"` with:
+  ```go
+  if cur.OnFailure == "abort" {
+      return n.finishWhileOutcome(cur, st, deps)
+  }
+  if cur.OnFailure == "ignore" {
+      cur.AnyFailed = false
+  }
+  ```
+  Default (`""`) now continues, matching `for_each` semantics.
+
+**Side-effect fix** (`internal/engine/node_step.go`):
+- Added `policyLimitError` type (wraps policy limit violations like `max_visits` exceeded).
+- `incrementVisit` now wraps its error in `policyLimitError`.
+- `runWhileIteration` propagates `policyLimitError` like `FatalRunError`, ensuring policy limits always abort the loop regardless of `on_failure`.
+
+#### Thread 2 — `examples/while/main.hcl:48` — example loops forever if actually executed
+
+**Fix** (`examples/while/main.hcl`):
+- Added a `NOTE:` block in the file header explaining that the example is for compile-validation only, that the noop adapter returns no outputs so `shared.attempts` is never decremented at runtime, and that actual execution would run to `policy.max_total_steps`.
+- `make validate` continues to pass.
+
+#### Thread 3 — `internal/engine/while_iteration_test.go:800` — missing regression test for default `on_failure`
+
+**Fix** (`internal/engine/while_iteration_test.go`):
+- Added `TestWhile_DefaultOnFailure_ContinuesPastExecErr`: omits `on_failure`, first iteration returns a transient `execErr`, asserts all 3 iterations execute and the aggregate outcome is `any_failed` (not `all_succeeded`).
+
+#### Thread 4 — `docs/adrs/ADR-0002-while-step-iteration.md:3` — status still `Proposed`
+
+**Fix** (`docs/adrs/ADR-0002-while-step-iteration.md`):
+- Changed `Status: Proposed` → `Status: Accepted`.
+
+#### Validation
+
+- `go test -race -count=1 ./internal/engine/... -run While` — all 18 while tests pass
+- `make test` — exit 0 (all packages)
+- `make validate` — `examples/while: ok`

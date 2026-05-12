@@ -836,6 +836,69 @@ state "done" {
 	}
 }
 
+// TestWhile_DefaultOnFailure_ContinuesPastExecErr verifies that omitting
+// on_failure (the default) causes the loop to continue past a non-fatal execErr,
+// matching for_each default semantics. This is a regression test for the bug
+// where the empty-string default was treated the same as "abort".
+func TestWhile_DefaultOnFailure_ContinuesPastExecErr(t *testing.T) {
+	const src = `
+workflow "t" {
+  version       = "0.1"
+  initial_state = "loop"
+  target_state  = "done"
+}
+adapter "fake" "default" {}
+step "loop" {
+  target = adapter.fake.default
+  while  = while.index < 3
+  # no on_failure — default should behave like "continue"
+  outcome "all_succeeded" { next = "done" }
+  outcome "any_failed"    { next = "done" }
+}
+state "done" {
+  terminal = true
+  success  = true
+}
+`
+	spec, diags := workflow.Parse("t.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %v", diags.Error())
+	}
+	g, diags := workflow.Compile(spec, nil)
+	if diags.HasErrors() {
+		t.Fatalf("compile: %v", diags.Error())
+	}
+
+	call := 0
+	// Iteration 1 returns an execErr; iterations 2 and 3 succeed.
+	plug := &pluginFunc{fn: func(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+		call++
+		if call == 1 {
+			return adapter.Result{}, fmt.Errorf("transient error")
+		}
+		return adapter.Result{Outcome: "success"}, nil
+	}}
+	sink := &iterSink{}
+	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": plug}}
+	err := NewTestEngine(g, loader, sink).Run(context.Background())
+	if err != nil {
+		t.Fatalf("run: %v (want nil: default on_failure should not abort loop)", err)
+	}
+	if call != 3 {
+		t.Errorf("plugin calls: got %d want 3 (loop must not abort on first execErr)", call)
+	}
+	if sink.terminal != "done" || !sink.terminalOK {
+		t.Errorf("terminal: %q ok=%v, want done/true", sink.terminal, sink.terminalOK)
+	}
+	if len(sink.iterationsCompleted) != 1 {
+		t.Fatalf("iterations completed: got %d want 1", len(sink.iterationsCompleted))
+	}
+	// execErr on iteration 1 sets AnyFailed, so aggregate is any_failed.
+	if sink.iterationsCompleted[0].outcome != "any_failed" {
+		t.Errorf("aggregate: got %q want any_failed", sink.iterationsCompleted[0].outcome)
+	}
+}
+
 // --- while + subworkflow dispatch ---
 
 // TestWhile_Subworkflow_Success verifies that a while-modified step targeting a

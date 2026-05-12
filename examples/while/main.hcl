@@ -9,6 +9,13 @@
 #   while = while.index < 10         — bounded by iteration index
 #   while = shared.queue_empty == false  — drain a work queue
 #
+# NOTE: This example is for compile-validation only (used by `make validate`).
+# The noop adapter does not return outputs, so `shared_writes = { attempts = "new_attempts" }`
+# never receives the key and `shared.attempts` is never decremented at runtime.
+# If actually executed, the loop runs until `policy.max_total_steps` fires.
+# A real queue-drain workflow would use an adapter that returns the updated counter
+# as an output key.
+#
 # This workflow simulates a simple retry-until-done pattern:
 #   - shared_variable "attempts" starts at 3
 #   - step "work" re-runs while attempts > 0

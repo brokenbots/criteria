@@ -106,9 +106,16 @@ func (n *stepNode) runWhileIteration(ctx context.Context, st *RunState, deps Dep
 		if errors.As(execErr, &fatal) {
 			return "", execErr
 		}
+		var policy *policyLimitError
+		if errors.As(execErr, &policy) {
+			return "", execErr
+		}
 		cur.AnyFailed = true
-		if cur.OnFailure != "continue" && cur.OnFailure != "ignore" {
+		if cur.OnFailure == "abort" {
 			return n.finishWhileOutcome(cur, st, deps)
+		}
+		if cur.OnFailure == "ignore" {
+			cur.AnyFailed = false
 		}
 		cur.Index++
 		n.persistWhileCursor(cur, deps.Sink)

@@ -1,6 +1,6 @@
 # ADR-0002 — `while` Step Iteration Modifier
 
-**Status:** Proposed
+**Status:** Accepted
 
 **Date:** 2026-05-11
 
