@@ -667,3 +667,25 @@ The new tests close most of the earlier intent gaps, but the Step 7 regression i
 
 - `go test ./workflow/ -run TestVarScope_RoundTrip_WhileCursor -v -count=1` — confirmed FAIL before fix, PASS after fix
 - `make ci` — exit 0
+
+### Review 2026-05-11-03 — approved
+
+#### Summary
+
+Approved. The remaining crash-resume blocker is fixed: var-scope persistence now round-trips `IterCursor.Prev`, the strengthened Step 7 test proves `while._prev` survives restore, and the previously requested while/subworkflow, scoping, spec, and regression coverage remains in place.
+
+#### Plan Adherence
+
+- Step 5: `while` runtime support now covers adapter and subworkflow targets.
+- Step 6: `while.*` is restricted to `while`-modified steps across adapter, subworkflow, and other iterating compile paths.
+- Step 7: crash-resume now preserves `Total = -1` and `Prev`, satisfying the `while._prev` continuity requirement.
+- Steps 9, 11, and 12: test coverage, spec/docs, and validation now meet the workstream bar.
+
+#### Test Intent Assessment
+
+The strengthened tests now prove the intended behavior rather than just execution success: subworkflow dispatch is exercised, non-`while` scoping is rejected, policy/timeout semantics are pinned, and the var-scope round-trip explicitly asserts the persisted `Prev` payload that powers resumed `while._prev`.
+
+#### Validation Performed
+
+- `go test -race -count=2 ./workflow/... ./internal/engine/...` — passed
+- `make ci` — passed
