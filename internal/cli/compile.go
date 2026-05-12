@@ -139,10 +139,54 @@ type compileSwitchArm struct {
 	Next  string `json:"next"`
 }
 
-func buildCompileJSON(graph *workflow.FSMGraph) compileJSON { //nolint:funlen // W03: serialises entire FSM graph structure; length driven by field count, not complexity
+func buildCompileJSON(graph *workflow.FSMGraph) compileJSON {
+	stateNames := sortedStateNames(graph)
+	states := make([]compileState, 0, len(stateNames))
+	for _, name := range stateNames {
+		st := graph.States[name]
+		states = append(states, compileState{Name: st.Name, Terminal: st.Terminal, Success: st.Success})
+	}
+
+	switches := make([]compileSwitch, 0, len(graph.Switches))
+	for _, name := range sortedMapKeys(graph.Switches) {
+		sw := graph.Switches[name]
+		arms := make([]compileSwitchArm, 0, len(sw.Conditions))
+		for _, c := range sw.Conditions {
+			arms = append(arms, compileSwitchArm{Match: c.MatchSrc, Next: c.Next})
+		}
+		switches = append(switches, compileSwitch{Name: sw.Name, Conditions: arms, DefaultNext: sw.DefaultNext})
+	}
+
+	subworkflows := make([]compileSubworkflow, 0, len(graph.SubworkflowOrder))
+	for _, swName := range graph.SubworkflowOrder {
+		sw := graph.Subworkflows[swName]
+		subworkflows = append(subworkflows, compileSubworkflow{
+			Name:       sw.Name,
+			SourcePath: sw.SourcePath,
+			Body:       buildCompileJSON(sw.Body),
+		})
+	}
+
+	return compileJSON{
+		Name:         graph.Name,
+		InitialState: graph.InitialState,
+		TargetState:  graph.TargetState,
+		Policy:       graph.Policy,
+		Adapters:     buildAdaptersJSON(graph),
+		Steps:        buildStepsJSON(graph),
+		States:       states,
+		Outputs:      buildCompileOutputs(graph),
+		Switches:     switches,
+		Subworkflows: subworkflows,
+		StepOrder:    graph.StepOrder(),
+		Plugins:      requiredPlugins(graph),
+		Metadata:     compileOutputMeta{SchemaVersion: 1},
+	}
+}
+
+func buildAdaptersJSON(graph *workflow.FSMGraph) []compileAdapter {
 	adapters := make([]compileAdapter, 0, len(graph.Adapters))
-	adapterNames := sortedAdapterNames(graph)
-	for _, name := range adapterNames {
+	for _, name := range sortedAdapterNames(graph) {
 		ad := graph.Adapters[name]
 		adapters = append(adapters, compileAdapter{
 			Type:       ad.Type,
@@ -151,7 +195,10 @@ func buildCompileJSON(graph *workflow.FSMGraph) compileJSON { //nolint:funlen //
 			ConfigKeys: sortedMapKeys(ad.Config),
 		})
 	}
+	return adapters
+}
 
+func buildStepsJSON(graph *workflow.FSMGraph) []compileStep {
 	steps := make([]compileStep, 0, len(graph.StepOrder()))
 	for _, name := range graph.StepOrder() {
 		st := graph.Steps[name]
@@ -180,51 +227,7 @@ func buildCompileJSON(graph *workflow.FSMGraph) compileJSON { //nolint:funlen //
 			Outcomes:    outcomes,
 		})
 	}
-
-	stateNames := sortedStateNames(graph)
-	states := make([]compileState, 0, len(stateNames))
-	for _, name := range stateNames {
-		st := graph.States[name]
-		states = append(states, compileState{Name: st.Name, Terminal: st.Terminal, Success: st.Success})
-	}
-
-	switches := make([]compileSwitch, 0, len(graph.Switches))
-	for _, name := range sortedMapKeys(graph.Switches) {
-		sw := graph.Switches[name]
-		arms := make([]compileSwitchArm, 0, len(sw.Conditions))
-		for _, c := range sw.Conditions {
-			arms = append(arms, compileSwitchArm{Match: c.MatchSrc, Next: c.Next})
-		}
-		switches = append(switches, compileSwitch{Name: sw.Name, Conditions: arms, DefaultNext: sw.DefaultNext})
-	}
-
-	outputs := buildCompileOutputs(graph)
-
-	subworkflows := make([]compileSubworkflow, 0, len(graph.SubworkflowOrder))
-	for _, swName := range graph.SubworkflowOrder {
-		sw := graph.Subworkflows[swName]
-		subworkflows = append(subworkflows, compileSubworkflow{
-			Name:       sw.Name,
-			SourcePath: sw.SourcePath,
-			Body:       buildCompileJSON(sw.Body),
-		})
-	}
-
-	return compileJSON{
-		Name:         graph.Name,
-		InitialState: graph.InitialState,
-		TargetState:  graph.TargetState,
-		Policy:       graph.Policy,
-		Adapters:     adapters,
-		Steps:        steps,
-		States:       states,
-		Outputs:      outputs,
-		Switches:     switches,
-		Subworkflows: subworkflows,
-		StepOrder:    graph.StepOrder(),
-		Plugins:      requiredPlugins(graph),
-		Metadata:     compileOutputMeta{SchemaVersion: 1},
-	}
+	return steps
 }
 
 func buildCompileOutputs(graph *workflow.FSMGraph) []compileOutput {

@@ -15,7 +15,7 @@ import (
 // compile still runs in permissive mode for those adapters — a missing binary
 // should not block validation. If log is nil, failures are suppressed silently.
 //
-//nolint:gocognit,gocyclo // W11: function is inherently complex due to error handling for multiple adapter types
+//nolint:gocognit,gocyclo // inherently complex: error handling branches per adapter type with partial failure tolerance
 func collectSchemas(ctx context.Context, loader plugin.Loader, spec *workflow.Spec, log *slog.Logger) map[string]workflow.AdapterInfo {
 	if loader == nil || spec == nil {
 		return nil

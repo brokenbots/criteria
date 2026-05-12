@@ -68,7 +68,7 @@ func (s *permissiveService) OpenSession(_ context.Context, req *pb.OpenSessionRe
 // Execute emits one PermissionRequest event per configured tool and waits for
 // the host to respond via Permit before proceeding to the next tool. The final
 // result is "needs_review" if any request was denied, "success" otherwise.
-func (s *permissiveService) Execute(ctx context.Context, req *pb.ExecuteRequest, sink pluginhost.ExecuteEventSender) error { //nolint:funlen // W03: test fixture serialises N permission request/response round-trips in sequence
+func (s *permissiveService) Execute(ctx context.Context, req *pb.ExecuteRequest, sink pluginhost.ExecuteEventSender) error {
 	s.mu.Lock()
 	_, ok := s.sessions[req.GetSessionId()]
 	s.mu.Unlock()
@@ -80,38 +80,10 @@ func (s *permissiveService) Execute(ctx context.Context, req *pb.ExecuteRequest,
 
 	anyDenied := false
 	for _, requested := range requests {
-		id := uuid.New().String()
-		ch := make(chan permitDecision, 1)
-
-		s.mu.Lock()
-		s.pending[id] = ch
-		s.mu.Unlock()
-
-		if err := sink.Send(&pb.ExecuteEvent{
-			Event: &pb.ExecuteEvent_Permission{
-				Permission: &pb.PermissionRequest{
-					Id:         id,
-					Permission: requested.tool,
-					Details:    requested.details,
-				},
-			},
-		}); err != nil {
-			s.mu.Lock()
-			delete(s.pending, id)
-			s.mu.Unlock()
-			return fmt.Errorf("send permission request: %w", err)
+		decision, err := s.sendPermissionRoundTrip(ctx, sink, requested)
+		if err != nil {
+			return err
 		}
-
-		var decision permitDecision
-		select {
-		case decision = <-ch:
-		case <-ctx.Done():
-			s.mu.Lock()
-			delete(s.pending, id)
-			s.mu.Unlock()
-			return ctx.Err()
-		}
-
 		if !decision.allow {
 			anyDenied = true
 		}
@@ -126,6 +98,42 @@ func (s *permissiveService) Execute(ctx context.Context, req *pb.ExecuteRequest,
 			Result: &pb.ExecuteResult{Outcome: outcome},
 		},
 	})
+}
+
+// sendPermissionRoundTrip sends a single permission request for the given spec,
+// waits for the host decision, and returns the decision or any error.
+func (s *permissiveService) sendPermissionRoundTrip(ctx context.Context, sink pluginhost.ExecuteEventSender, requested permissionSpec) (permitDecision, error) {
+	id := uuid.New().String()
+	ch := make(chan permitDecision, 1)
+
+	s.mu.Lock()
+	s.pending[id] = ch
+	s.mu.Unlock()
+
+	if err := sink.Send(&pb.ExecuteEvent{
+		Event: &pb.ExecuteEvent_Permission{
+			Permission: &pb.PermissionRequest{
+				Id:         id,
+				Permission: requested.tool,
+				Details:    requested.details,
+			},
+		},
+	}); err != nil {
+		s.mu.Lock()
+		delete(s.pending, id)
+		s.mu.Unlock()
+		return permitDecision{}, fmt.Errorf("send permission request: %w", err)
+	}
+
+	select {
+	case decision := <-ch:
+		return decision, nil
+	case <-ctx.Done():
+		s.mu.Lock()
+		delete(s.pending, id)
+		s.mu.Unlock()
+		return permitDecision{}, ctx.Err()
+	}
 }
 
 func (s *permissiveService) Permit(_ context.Context, req *pb.PermitRequest) (*pb.PermitResponse, error) {

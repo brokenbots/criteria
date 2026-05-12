@@ -11,7 +11,7 @@ import (
 	"github.com/brokenbots/criteria/internal/plugin"
 )
 
-func testOutcomeDomain(t *testing.T, name string, factory targetFactory, opts Options) { //nolint:gocritic // W15: Options passes by value for API clarity
+func testOutcomeDomain(t *testing.T, name string, factory targetFactory, opts *Options) {
 	t.Helper()
 	if len(opts.AllowedOutcomes) == 0 {
 		t.Skip("outcome-domain test skipped: no allowed outcomes configured")
@@ -32,7 +32,7 @@ func testOutcomeDomain(t *testing.T, name string, factory targetFactory, opts Op
 	}
 }
 
-func testPermissionRequestShape(t *testing.T, name string, loader plugin.Loader, opts Options, info plugin.Info) { //nolint:gocritic // W15: Options passes by value for API clarity
+func testPermissionRequestShape(t *testing.T, name string, loader plugin.Loader, opts *Options, info *plugin.Info) {
 	t.Helper()
 	if !hasCapability(info.Capabilities, "permission_gating") {
 		t.Skip("permission_request_shape skipped: plugin does not advertise permission_gating")

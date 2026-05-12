@@ -36,7 +36,7 @@ func testAckOrdering(t *testing.T, s Subject) {
 
 const ackTestN = 5
 
-func testAckOrderingSequential(t *testing.T, s Subject) { //nolint:funlen // W03: sequential ordering test exercises many event/ack sequence steps
+func testAckOrderingSequential(t *testing.T, s Subject) { //nolint:funlen // sequential ordering test exercises many event/ack sequence steps
 	baseURL, client, teardown := s.SetUp(t)
 	defer teardown()
 
@@ -103,7 +103,7 @@ func testAckOrderingSequential(t *testing.T, s Subject) { //nolint:funlen // W03
 	}
 }
 
-func testAckIdempotentDuplicate(t *testing.T, s Subject) { //nolint:funlen // W03: idempotency test requires constructing duplicate ack sequences end-to-end
+func testAckIdempotentDuplicate(t *testing.T, s Subject) { //nolint:funlen // idempotency test requires constructing duplicate ack sequences end-to-end
 	baseURL, client, teardown := s.SetUp(t)
 	defer teardown()
 
@@ -170,7 +170,7 @@ func testAckIdempotentDuplicate(t *testing.T, s Subject) { //nolint:funlen // W0
 	}
 }
 
-func testAckConcurrentStreams(t *testing.T, s Subject) { //nolint:funlen // W03: concurrent stream test serialises two interleaved sequences with many assertions
+func testAckConcurrentStreams(t *testing.T, s Subject) { //nolint:funlen // concurrent stream test serialises two interleaved sequences with many assertions
 	// Tests the contract: two simultaneously-open bidi streams targeting the
 	// SAME run_id both receive acks, and acks for that run are strictly
 	// monotonically increasing.

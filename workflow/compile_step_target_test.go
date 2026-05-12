@@ -10,10 +10,12 @@ package workflow
 import (
 	"strings"
 	"testing"
+
+	"github.com/hashicorp/hcl/v2"
 )
 
 // minimalWorkflow returns a minimal workflow HCL string with a single step using the given target line.
-func minimalWorkflow(extraDecls, stepBody string) string {
+func minimalWorkflow(stepBody string) string {
 	return `
 workflow "t" {
   version       = "0.1"
@@ -21,7 +23,6 @@ workflow "t" {
   target_state  = "done"
 }
 adapter "noop" "default" {}
-` + extraDecls + `
 step "s" {
 ` + stepBody + `
   outcome "success" { next = "done" }
@@ -31,7 +32,7 @@ state "done" { terminal = true }
 }
 
 func TestCompileStep_TargetAdapter(t *testing.T) {
-	src := minimalWorkflow("", "    target = adapter.noop.default\n")
+	src := minimalWorkflow("    target = adapter.noop.default\n")
 	spec, diags := Parse("t.hcl", []byte(src))
 	if diags.HasErrors() {
 		t.Fatalf("parse: %s", diags.Error())
@@ -99,7 +100,7 @@ state "done" { terminal = true }
 }
 
 func TestCompileStep_TargetUnresolvedAdapter(t *testing.T) {
-	src := minimalWorkflow("", "    target = adapter.missing.default\n")
+	src := minimalWorkflow("    target = adapter.missing.default\n")
 	spec, diags := Parse("t.hcl", []byte(src))
 	if diags.HasErrors() {
 		t.Fatalf("parse: %s", diags.Error())
@@ -170,7 +171,7 @@ state "done" { terminal = true }
 }
 
 func TestCompileStep_TargetStepKindRejected(t *testing.T) {
-	src := minimalWorkflow("", "    target = step.other\n")
+	src := minimalWorkflow("    target = step.other\n")
 	spec, diags := Parse("t.hcl", []byte(src))
 	if diags.HasErrors() {
 		t.Fatalf("parse: %s", diags.Error())
@@ -304,6 +305,89 @@ state "done" { terminal = true }
 	}
 	if !strings.Contains(diags.Error(), "bareword") {
 		t.Errorf("expected error to mention bareword syntax, got: %s", diags.Error())
+	}
+}
+
+// TestCompileStep_TargetQuotedString_DiagnosticText asserts that a quoted-string
+// target produces the exact Summary and Detail diagnostic text, providing
+// regression coverage against helper-extraction changes that silently drop Detail.
+func TestCompileStep_TargetQuotedString_DiagnosticText(t *testing.T) {
+	src := minimalWorkflow("    target = \"adapter.noop.default\"\n")
+	spec, diags := Parse("t.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	_, diags = Compile(spec, nil)
+	if !diags.HasErrors() {
+		t.Fatal("expected compile error for quoted target; got none")
+	}
+	var found *hcl.Diagnostic
+	for _, d := range diags {
+		if strings.Contains(d.Summary, "bareword traversal") {
+			found = d
+			break
+		}
+	}
+	if found == nil {
+		t.Fatalf("expected a diagnostic mentioning 'bareword traversal'; got: %s", diags.Error())
+	}
+	wantSummary := `must be a bareword traversal, not a string literal`
+	if !strings.Contains(found.Summary, wantSummary) {
+		t.Errorf("Summary = %q, want it to contain %q", found.Summary, wantSummary)
+	}
+	wantDetail := `Use target = adapter.<type>.<name> or target = subworkflow.<name>, not a quoted string.`
+	if found.Detail != wantDetail {
+		t.Errorf("Detail = %q, want %q", found.Detail, wantDetail)
+	}
+}
+
+// TestCompileStep_EnvironmentQuotedString_DiagnosticText asserts that a
+// quoted-string environment override produces the exact attribute-specific
+// Summary (including the "e.g. shell.ci" example) and Detail text, providing
+// regression coverage against helper-extraction changes that silently alter
+// the environment-specific error message.
+func TestCompileStep_EnvironmentQuotedString_DiagnosticText(t *testing.T) {
+	src := `
+workflow "t" {
+  version       = "0.1"
+  initial_state = "s"
+  target_state  = "done"
+}
+
+adapter "noop" "default" {}
+environment "shell" "ci" {}
+step "s" {
+  target      = adapter.noop.default
+  environment = "shell.ci"
+  outcome "success" { next = "done" }
+}
+state "done" { terminal = true }
+`
+	spec, diags := Parse("t.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	_, diags = Compile(spec, nil)
+	if !diags.HasErrors() {
+		t.Fatal("expected compile error for quoted environment override; got none")
+	}
+	var found *hcl.Diagnostic
+	for _, d := range diags {
+		if strings.Contains(d.Summary, "environment") && strings.Contains(d.Summary, "bareword") {
+			found = d
+			break
+		}
+	}
+	if found == nil {
+		t.Fatalf("expected environment bareword diagnostic; got: %s", diags.Error())
+	}
+	wantSummaryFragment := `bareword reference (e.g. shell.ci), not a quoted string`
+	if !strings.Contains(found.Summary, wantSummaryFragment) {
+		t.Errorf("Summary = %q, want it to contain %q", found.Summary, wantSummaryFragment)
+	}
+	wantDetail := `Use environment = shell.ci (no quotes). Quoted strings are not accepted for step environment overrides.`
+	if found.Detail != wantDetail {
+		t.Errorf("Detail = %q, want %q", found.Detail, wantDetail)
 	}
 }
 

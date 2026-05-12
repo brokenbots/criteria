@@ -280,7 +280,7 @@ func (e *Engine) routeIteratingStep(st *RunState, next string) (string, error) {
 //   - More iterations remain → re-bind each.*, emit started event, re-enter step.
 //   - All iterations done (or on_failure=abort after failure) → pop cursor,
 //     emit completed event, return aggregate outcome target from graph.
-func routeIteratingStepInGraph(st *RunState, next string, graph *workflow.FSMGraph, sink Sink) (string, error) { //nolint:funlen // iteration router is inherently stateful; splitting adds indirection
+func routeIteratingStepInGraph(st *RunState, next string, graph *workflow.FSMGraph, sink Sink) (string, error) {
 	cur := st.TopCursor()
 	if cur == nil || !cur.InProgress {
 		return next, nil
@@ -322,34 +322,40 @@ func routeIteratingStepInGraph(st *RunState, next string, graph *workflow.FSMGra
 	cur.InProgress = false
 
 	if cur.Index < cur.Total {
-		// More iterations remain: re-bind each.* and re-enter the step.
-		item := cur.Items[cur.Index]
-		var key cty.Value
-		if cur.Index < len(cur.Keys) {
-			key = cur.Keys[cur.Index]
-		} else {
-			key = cty.StringVal(fmt.Sprintf("%d", cur.Index))
-		}
-		cur.Key = key
-		cur.InProgress = true
-		st.Vars = workflow.WithEachBinding(st.Vars, &workflow.EachBinding{
-			Value: item,
-			Key:   key,
-			Index: cur.Index,
-			Total: cur.Total,
-			First: cur.Index == 0,
-			Last:  cur.Index == cur.Total-1,
-			Prev:  cur.Prev,
-		})
-		if curJSON, err := workflow.SerializeIterCursor(cur); err == nil {
-			sink.OnScopeIterCursorSet(curJSON)
-		}
-		sink.OnStepIterationStarted(stepName, cur.Index, workflow.CtyValueToString(item), cur.AnyFailed)
-		return stepName, nil // re-enter the same step
+		return advanceIteration(st, cur, stepName, sink)
 	}
 
 	// All iterations done.
 	return finishIterationInGraph(st, stepName, graph, sink)
+}
+
+// advanceIteration re-binds each.* variables and events for the next iteration.
+// It updates the cursor key, marks InProgress, emits scope/cursor events, and
+// returns the step name so the engine re-enters the same step.
+func advanceIteration(st *RunState, cur *workflow.IterCursor, stepName string, sink Sink) (string, error) {
+	item := cur.Items[cur.Index]
+	var key cty.Value
+	if cur.Index < len(cur.Keys) {
+		key = cur.Keys[cur.Index]
+	} else {
+		key = cty.StringVal(fmt.Sprintf("%d", cur.Index))
+	}
+	cur.Key = key
+	cur.InProgress = true
+	st.Vars = workflow.WithEachBinding(st.Vars, &workflow.EachBinding{
+		Value: item,
+		Key:   key,
+		Index: cur.Index,
+		Total: cur.Total,
+		First: cur.Index == 0,
+		Last:  cur.Index == cur.Total-1,
+		Prev:  cur.Prev,
+	})
+	if curJSON, err := workflow.SerializeIterCursor(cur); err == nil {
+		sink.OnScopeIterCursorSet(curJSON)
+	}
+	sink.OnStepIterationStarted(stepName, cur.Index, workflow.CtyValueToString(item), cur.AnyFailed)
+	return stepName, nil // re-enter the same step
 }
 
 // finishIterationInGraph closes out an iteration loop: pops the cursor, clears

@@ -11,7 +11,7 @@ import (
 	"testing"
 )
 
-func testHappyPath(t *testing.T, name string, factory targetFactory, opts Options) { //nolint:gocritic // W15: Options passes by value for API clarity
+func testHappyPath(t *testing.T, name string, factory targetFactory, opts *Options) {
 	t.Helper()
 	target := factory(t)
 	step := baseStep(name, target.Name(), opts.StepConfig)
@@ -34,7 +34,7 @@ func testHappyPath(t *testing.T, name string, factory targetFactory, opts Option
 	_ = sink.totalEvents()
 }
 
-func testNilSink(t *testing.T, name string, factory targetFactory, opts Options) { //nolint:gocritic // W15: Options passes by value for API clarity
+func testNilSink(t *testing.T, name string, factory targetFactory, opts *Options) {
 	t.Helper()
 	target := factory(t)
 	step := baseStep(name, target.Name(), opts.StepConfig)
@@ -49,7 +49,7 @@ func testNilSink(t *testing.T, name string, factory targetFactory, opts Options)
 	}
 }
 
-func testChunkedIO(t *testing.T, name string, factory targetFactory, opts Options) { //nolint:gocritic // W15: Options passes by value for API clarity
+func testChunkedIO(t *testing.T, name string, factory targetFactory, opts *Options) {
 	t.Helper()
 	cfg, expected, ok := chunkedIOConfig(opts.StepConfig)
 	if !ok {

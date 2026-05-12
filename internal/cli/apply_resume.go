@@ -125,7 +125,7 @@ func buildLocalResumer(log *slog.Logger, stdin io.Reader) (localresume.LocalResu
 // CRITERIA_LOCAL_APPROVAL set. Each time the engine pauses, it calls the
 // resumer, populates a new engine with the resulting payload, and re-invokes
 // RunFrom until the run is no longer paused.
-func drainLocalResumeCycles(ctx context.Context, log *slog.Logger, graph *workflow.FSMGraph, loader plugin.Loader, tracker *pauseTracker, resumer localresume.LocalResumer, runID string, opts applyOptions, eng *engine.Engine) error { //nolint:gocritic // hugeParam: opts passes applyOptions by value; pointer conversion is a separate workstream
+func drainLocalResumeCycles(ctx context.Context, log *slog.Logger, graph *workflow.FSMGraph, loader plugin.Loader, tracker *pauseTracker, resumer localresume.LocalResumer, runID string, opts applyOptions, eng *engine.Engine) error {
 	for tracker.IsPaused() {
 		pausedNode := tracker.PausedAt()
 		log.Info("local run paused; resolving via local resumer", "run_id", runID, "node", pausedNode)

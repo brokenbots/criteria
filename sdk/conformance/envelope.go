@@ -29,7 +29,7 @@ import (
 //
 // WatchReady is skipped: it is a server-synthetic event that the server rejects
 // on SubmitEvents ingestion (it has no persistence path).
-func testEnvelopeRoundTrip(t *testing.T, s Subject) { //nolint:funlen,gocognit // W03: round-trip test must cover every envelope type to ensure TypeString stability
+func testEnvelopeRoundTrip(t *testing.T, s Subject) { //nolint:funlen,gocognit // round-trip test must cover every envelope type to ensure TypeString stability
 	baseURL, client, teardown := s.SetUp(t)
 	defer teardown()
 

@@ -264,3 +264,83 @@ all 6 to pointer is a broad refactor owned by W02-split-cli-apply. The entry car
 15. `sdk/conformance/lifecycle.go` `funlen` `testAdapterSessionEventsOrdered` — deferred to W12
 16. `sdk/conformance/lifecycle.go` `funlen` `testAdapterSessionEventsRoundTrip` — deferred to W12
 
+## td-02 — Inline nolint suppression sweep (62 → 31) — 2026-05-13
+
+- **Inline directives before:** 62
+- **Inline directives after:** 31
+- **Baseline cap before:** 16. **After:** 22 (6 new structural entries added).
+
+### Category A — Directives removed by fixing the underlying code (22 removed)
+
+| Fix | Files touched | Directives removed |
+|-----|--------------|-------------------|
+| Converted 13 internal conformance functions from `opts Options` to `opts *Options` | `conformance.go`, `conformance_happy.go`, `conformance_lifecycle.go`, `conformance_outcomes.go`, `assertions.go` | 13 × `gocritic` |
+| Also converted `info plugin.Info` to `*plugin.Info` in 4 internal lifecycle/outcomes functions | same | 0 (newly exposed by opts conversion; fixed immediately) |
+| Extracted `buildAdaptersJSON` + `buildStepsJSON` from `buildCompileJSON` | `internal/cli/compile.go` | 1 × `funlen` |
+| Extracted `buildOrderedOutcomes` + `appendMissingOutcomes` from `formatOutcomes` | `internal/cli/plan.go` | 1 × `gocognit` |
+| Extracted `sendPermissionRoundTrip` from N-iteration loop body | `internal/plugin/testfixtures/permissive/main.go` | 1 × `funlen` |
+| Extracted `compileOneAdapter` + helpers (`resolveAdapterOnCrash`, `resolveAdapterEnv`, `resolveAdapterConfig`) | `workflow/compile_adapters.go` | 1 × `funlen` |
+| Extracted `validateAdapterTraversalShape` | `workflow/compile_steps_adapter_ref.go` | 1 × `funlen` |
+| Extracted `readStepBodyAttr` + `requireAbsTraversal` | `workflow/compile_step_target.go` | 2 × `funlen` |
+| Extracted `buildHTTPSClient` from `serverHTTPClient` | `internal/cli/http.go` | 1 × `gocognit` |
+| Extracted `advanceIteration` from `routeIteratingStepInGraph` | `internal/engine/engine.go` | 1 × `funlen` |
+
+### Category B — Moved to baseline (8 inline directives removed, 6 new baseline entries)
+
+These suppressions are structurally correct but inline noise is worse than baseline-file noise. Each carries a `# kept:` annotation in `.golangci.baseline.yml`.
+
+| Entry | Linter | Reason |
+|-------|--------|--------|
+| `internal/adapter/conformance/conformance.go` `gocritic` hugeParam opts 80 bytes | gocritic | `Run` and `RunPlugin` are public API; converting to `*Options` would break all external callers |
+| `internal/adapter/conformance/conformance_lifecycle.go` `funlen` `testConcurrentSessions` | funlen | Opens two full plugin sessions for parallel-goroutine isolation test; lifecycle scaffold is inherently long |
+| `internal/cli/apply_local.go` `funlen` `runApplyLocal` | funlen | Orchestrates engine lifecycle, event routing, and output rendering; the phases are already minimal |
+| `internal/cli/apply_local.go` `gocritic` hugeParam opts 232 bytes | gocritic | `applyOptions` threads through the apply pipeline; by-pointer conversion is W02-split-cli-apply scope |
+| `internal/cli/apply_resume.go` `gocritic` hugeParam opts 232 bytes | gocritic | Same W02 scope rationale |
+| `internal/cli/apply_server.go` `gocritic` hugeParam opts 232 bytes | gocritic | Same W02 scope rationale — covers 4 server-apply functions |
+
+### Category C — Survivors: 31 directives remain inline
+
+All surviving directives carry a self-contained one-sentence rationale. `W03`/`W11`/`W14`/`W17` workstream cross-references removed from all 22 that had them; missing rationale added to `tools/import-lint/main.go:139`.
+
+| File:line | Rule(s) | Rationale |
+|-----------|---------|-----------|
+| `cmd/criteria-adapter-copilot/copilot_permission.go:93` | funlen,gocognit,gocyclo | collecting optional fields from a struct; splitting into helpers would obscure the data contract |
+| `cmd/criteria-adapter-mcp/bridge.go:177` | funlen,gocognit | event-driven tool dispatch with permission gating and chunked output |
+| `cmd/criteria-adapter-mcp/bridge.go:96` | funlen,gocyclo | complex session setup across MCP config, TLS, and stdio transport |
+| `events/types.go:114` | funlen,gocyclo | discriminator switch must cover every concrete payload type in the oneof |
+| `events/types.go:51` | funlen,gocyclo | type switch must cover every concrete payload type in the oneof |
+| `internal/adapters/shell/shell.go:203` | nilerr | timeout is a step outcome, not a Go error |
+| `internal/cli/localresume/resumer.go:117` | gocritic | Options is a config struct; callers pass by value intentionally |
+| `internal/cli/plan.go:36` | funlen,gocognit,gocyclo | renders full plan tree with agent/step/outcome formatting across multiple output paths |
+| `internal/cli/schemas.go:18` | gocognit,gocyclo | inherently complex: error handling branches per adapter type with partial failure tolerance |
+| `internal/engine/engine_test.go:151` | gocritic | sprintfQuotedString: Sprintf needed to build HCL with literal quotes |
+| `internal/engine/node_step.go:433` | err113 | msg is already fully contextual |
+| `internal/plugin/loader.go:100` | funlen | resolver must handle builtin registry, discovery, launch, handshake, and caching paths |
+| `internal/plugin/loader.go:207` | funlen,gocognit,gocyclo | execute path handles permission gating, event routing, and partial failure recovery |
+| `internal/transport/server/client_streams.go:59` | funlen,gocognit,gocyclo | reconnect loop with backoff, ready signalling, and event dispatch across stream lifecycle |
+| `sdk/conformance/ack.go:39` | funlen | sequential ordering test exercises many event/ack sequence steps |
+| `sdk/conformance/ack.go:106` | funlen | idempotency test requires constructing duplicate ack sequences end-to-end |
+| `sdk/conformance/ack.go:173` | funlen | concurrent stream test serialises two interleaved sequences with many assertions |
+| `sdk/conformance/control.go:157` | funlen | agent isolation test requires full two-agent setup and cross-visibility assertions |
+| `sdk/conformance/envelope.go:32` | funlen,gocognit | round-trip test must cover every envelope type to ensure TypeString stability |
+| `sdk/conformance/inmem_subject_test.go:354` | nilerr | EOF is normal end-of-stream |
+| `sdk/conformance/typestring.go:28` | funlen,gocognit | stability test enumerates all envelope types with submit/retrieve/compare steps |
+| `sdk/events.go:1` | revive | Proto-generated Envelope_* alias names are wire-compatibility shims and cannot be renamed |
+| `sdk/payloads_step.go:1` | revive | Proto-generated LogStream_* constant names are wire-compatibility shims and cannot be renamed |
+| `tools/import-lint/main.go:139` | nilerr | unparseable files are intentionally skipped; callers treat nil results as no-violations |
+| `workflow/compile_steps_iteration.go:18` | funlen | comprehensive iteration step: validates parallel/serial, adapter schema, subworkflow ref, and environment override in sequence |
+| `workflow/compile_steps_subworkflow.go:15` | funlen | sequential compile+validate phases for subworkflow step; splitting adds indirection without clarity gain |
+| `workflow/compile_validation.go:150` | funlen,gocognit,gocyclo | exhaustive schema validation with per-field type checks, required-field enforcement, and per-adapter diagnostics |
+| `workflow/eval.go:628` | gocognit | scope restoration must handle iter cursors, nested vars, and multiple scope shapes |
+| `workflow/parse_dir.go:74` | funlen | file discovery + per-file parse loop + merge + validation are sequential phases; extraction would obscure the flow |
+| `workflow/parse_dir.go:177` | cyclop,gocognit,gocyclo,funlen | multi-field merge with singleton conflict detection requires sequential checks across all spec fields |
+| `workflow/switch_compile_test.go:44` | gocritic | sprintfQuotedString: Sprintf needed to build HCL with literal quotes |
+
+### New baseline entries (22 total, cap = 22)
+
+17. `internal/adapter/conformance/conformance.go` `gocritic` hugeParam opts 80 bytes — public API value receiver (Run/RunPlugin); by-pointer conversion breaks external callers
+18. `internal/adapter/conformance/conformance_lifecycle.go` `funlen` `testConcurrentSessions` — 55-statement test requiring full lifecycle scaffold for two parallel sessions
+19. `internal/cli/apply_local.go` `funlen` `runApplyLocal` — 41-statement apply orchestrator; by-pointer is W02-split-cli-apply scope
+20. `internal/cli/apply_local.go` `gocritic` hugeParam opts 232 bytes — applyOptions by value; W02 scope
+21. `internal/cli/apply_resume.go` `gocritic` hugeParam opts 232 bytes — applyOptions by value; W02 scope
+22. `internal/cli/apply_server.go` `gocritic` hugeParam opts 232 bytes — applyOptions by value across 4 functions; W02 scope

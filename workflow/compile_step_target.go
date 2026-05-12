@@ -26,8 +26,6 @@ import (
 //   - adapterRef: resolved "<type>.<name>" when kind == StepTargetAdapter.
 //   - subworkflowRef: resolved subworkflow name when kind == StepTargetSubworkflow.
 //   - diags: diagnostics for missing target, wrong shape, unresolved references.
-//
-//nolint:funlen // W14: comprehensive traversal validation requires length
 func resolveStepTarget(stepName string, body hcl.Body, g *FSMGraph) (kind StepTargetKind, adapterRef, subworkflowRef string, diags hcl.Diagnostics) {
 	if body == nil {
 		diags = append(diags, &hcl.Diagnostic{
@@ -37,18 +35,9 @@ func resolveStepTarget(stepName string, body hcl.Body, g *FSMGraph) (kind StepTa
 		return 0, "", "", diags
 	}
 
-	// Use PartialContent instead of JustAttributes so that blocks (outcome, input, etc.)
-	// remaining in the body do not cause "blocks are not allowed here" errors — those
-	// blocks are already decoded by the StepSpec schema before this function runs.
-	content, _, contentDiags := body.PartialContent(&hcl.BodySchema{
-		Attributes: []hcl.AttributeSchema{
-			{Name: "target", Required: false},
-		},
-	})
+	attr, contentDiags := readStepBodyAttr("target", body)
 	diags = append(diags, contentDiags...)
-
-	attr, ok := content.Attributes["target"]
-	if !ok {
+	if attr == nil {
 		diags = append(diags, &hcl.Diagnostic{
 			Severity: hcl.DiagError,
 			Summary:  fmt.Sprintf("step %q: target is required; use target = adapter.<type>.<name> or target = subworkflow.<name>", stepName),
@@ -56,18 +45,11 @@ func resolveStepTarget(stepName string, body hcl.Body, g *FSMGraph) (kind StepTa
 		return 0, "", "", diags
 	}
 
-	// The target must be a bare traversal expression, not a string literal.
-	trav, travDiags := hcl.AbsTraversalForExpr(attr.Expr)
+	trav, travDiags := requireAbsTraversal(stepName, "target", attr, "", `Use target = adapter.<type>.<name> or target = subworkflow.<name>, not a quoted string.`)
+	diags = append(diags, travDiags...)
 	if travDiags.HasErrors() {
-		diags = append(diags, &hcl.Diagnostic{
-			Severity: hcl.DiagError,
-			Summary:  fmt.Sprintf("step %q: target must be a bareword traversal, not a string literal", stepName),
-			Detail:   `Use target = adapter.<type>.<name> or target = subworkflow.<name>, not a quoted string.`,
-			Subject:  attr.Expr.Range().Ptr(),
-		})
 		return 0, "", "", diags
 	}
-
 	root := trav.RootName()
 	switch root {
 	case "adapter":
@@ -100,33 +82,22 @@ func resolveStepTarget(stepName string, body hcl.Body, g *FSMGraph) (kind StepTa
 // validates it against g.Environments. Returns the resolved "<type>.<name>" key,
 // or "" if no environment attribute is present. Returns an error diagnostic when
 // the attribute is a quoted string rather than a bare traversal.
-//
-//nolint:funlen // W14: multi-step traversal validation with per-error diagnostics; splitting adds indirection
 func resolveStepEnvironmentOverride(stepName string, body hcl.Body, g *FSMGraph) (envKey string, diags hcl.Diagnostics) {
 	if body == nil {
 		return "", nil
 	}
 
-	content, _, contentDiags := body.PartialContent(&hcl.BodySchema{
-		Attributes: []hcl.AttributeSchema{
-			{Name: "environment", Required: false},
-		},
-	})
+	attr, contentDiags := readStepBodyAttr("environment", body)
 	diags = append(diags, contentDiags...)
-
-	attr, ok := content.Attributes["environment"]
-	if !ok {
+	if attr == nil {
 		return "", diags
 	}
 
-	trav, travDiags := hcl.AbsTraversalForExpr(attr.Expr)
+	envSummary := fmt.Sprintf("step %q: environment must be a bareword reference (e.g. shell.ci), not a quoted string", stepName)
+	const envDetail = `Use environment = shell.ci (no quotes). Quoted strings are not accepted for step environment overrides.`
+	trav, travDiags := requireAbsTraversal(stepName, "environment", attr, envSummary, envDetail)
+	diags = append(diags, travDiags...)
 	if travDiags.HasErrors() {
-		diags = append(diags, &hcl.Diagnostic{
-			Severity: hcl.DiagError,
-			Summary:  fmt.Sprintf("step %q: environment must be a bareword reference (e.g. shell.ci), not a quoted string", stepName),
-			Detail:   `Use environment = shell.ci (no quotes). Quoted strings are not accepted for step environment overrides.`,
-			Subject:  attr.Expr.Range().Ptr(),
-		})
 		return "", diags
 	}
 
@@ -160,6 +131,41 @@ func resolveStepEnvironmentOverride(stepName string, body hcl.Body, g *FSMGraph)
 		return key, diags
 	}
 	return key, nil
+}
+
+// readStepBodyAttr extracts a single named attribute from a step's body using
+// PartialContent. PartialContent is used instead of JustAttributes so that
+// blocks (outcome, input, etc.) remaining in the body do not cause "blocks are
+// not allowed here" errors — those blocks are already decoded by the StepSpec
+// schema before this function runs. Returns (nil, diags) when absent.
+func readStepBodyAttr(attrName string, body hcl.Body) (*hcl.Attribute, hcl.Diagnostics) {
+	content, _, contentDiags := body.PartialContent(&hcl.BodySchema{
+		Attributes: []hcl.AttributeSchema{{Name: attrName, Required: false}},
+	})
+	return content.Attributes[attrName], contentDiags
+}
+
+// requireAbsTraversal parses attr.Expr as a bare HCL traversal.
+// summary and detail customise the error diagnostic when the expression is not
+// a valid traversal (e.g. a quoted string). When summary is empty, a generic
+// "must be a bareword traversal, not a string literal" message is used.
+func requireAbsTraversal(stepName, attrName string, attr *hcl.Attribute, summary, detail string) (hcl.Traversal, hcl.Diagnostics) {
+	trav, travDiags := hcl.AbsTraversalForExpr(attr.Expr)
+	if travDiags.HasErrors() {
+		if summary == "" {
+			summary = fmt.Sprintf("step %q: %s must be a bareword traversal, not a string literal", stepName, attrName)
+		}
+		diag := &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  summary,
+			Subject:  attr.Expr.Range().Ptr(),
+		}
+		if detail != "" {
+			diag.Detail = detail
+		}
+		return nil, hcl.Diagnostics{diag}
+	}
+	return trav, nil
 }
 
 // rejectEnvOverrideForSubworkflow emits a compile error if the step's Remain

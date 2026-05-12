@@ -97,7 +97,7 @@ func (l *DefaultLoader) RegisterBuiltin(name string, factory BuiltinFactory) {
 	l.builtins[name] = factory
 }
 
-func (l *DefaultLoader) Resolve(ctx context.Context, name string) (Plugin, error) { //nolint:funlen // W03: resolver must handle builtin registry, discovery, launch, handshake, and caching paths
+func (l *DefaultLoader) Resolve(ctx context.Context, name string) (Plugin, error) { //nolint:funlen // resolver must handle builtin registry, discovery, launch, handshake, and caching paths
 	if stringsTrim(name) == "" {
 		return nil, errors.New("adapter name is required")
 	}
@@ -204,7 +204,7 @@ func (p *rpcPlugin) OpenSession(ctx context.Context, id string, config map[strin
 	return err
 }
 
-func (p *rpcPlugin) Execute(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) { //nolint:funlen,gocognit,gocyclo // W03: execute path handles permission gating, event routing, and partial failure recovery
+func (p *rpcPlugin) Execute(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) { //nolint:funlen,gocognit,gocyclo // execute path handles permission gating, event routing, and partial failure recovery
 	recv, err := p.rpc.Execute(ctx, &pb.ExecuteRequest{
 		SessionId:       sessionID,
 		StepName:        step.Name,

@@ -16,7 +16,7 @@ import (
 	"github.com/brokenbots/criteria/internal/plugin"
 )
 
-func testCancel(t *testing.T, name string, factory targetFactory, opts Options) { //nolint:gocritic // W15: Options passes by value for API clarity
+func testCancel(t *testing.T, name string, factory targetFactory, opts *Options) {
 	t.Helper()
 
 	cfg, ok := longRunningConfig(opts.StepConfig)
@@ -55,7 +55,7 @@ func testCancel(t *testing.T, name string, factory targetFactory, opts Options) 
 	}
 }
 
-func testTimeout(t *testing.T, name string, factory targetFactory, opts Options) { //nolint:gocritic // W15: Options passes by value for API clarity
+func testTimeout(t *testing.T, name string, factory targetFactory, opts *Options) {
 	t.Helper()
 
 	cfg, ok := longRunningConfig(opts.StepConfig)
@@ -93,7 +93,7 @@ func testTimeout(t *testing.T, name string, factory targetFactory, opts Options)
 	}
 }
 
-func testSessionLifecycle(t *testing.T, name string, loader plugin.Loader, opts Options, info plugin.Info) { //nolint:gocritic // W15: Options passes by value for API clarity
+func testSessionLifecycle(t *testing.T, name string, loader plugin.Loader, opts *Options, info *plugin.Info) {
 	t.Helper()
 	defer goleak.VerifyNone(t)
 	// 30 s matches the StartTimeout in the loader.
@@ -134,7 +134,7 @@ func testSessionLifecycle(t *testing.T, name string, loader plugin.Loader, opts 
 	}
 }
 
-func testConcurrentSessions(t *testing.T, name string, loader plugin.Loader, opts Options, info plugin.Info) { //nolint:funlen,gocritic // W03: concurrent session test requires full lifecycle setup for N goroutines with assertions; W15: Options passes by value for API clarity
+func testConcurrentSessions(t *testing.T, name string, loader plugin.Loader, opts *Options, info *plugin.Info) {
 	t.Helper()
 	defer goleak.VerifyNone(t)
 	// 30 s matches the StartTimeout in the loader.
@@ -216,7 +216,7 @@ func testConcurrentSessions(t *testing.T, name string, loader plugin.Loader, opt
 	}
 }
 
-func testSessionCrashDetection(t *testing.T, name string, loader plugin.Loader, opts Options, info plugin.Info) { //nolint:gocritic // W15: Options passes by value for API clarity
+func testSessionCrashDetection(t *testing.T, name string, loader plugin.Loader, opts *Options, info *plugin.Info) {
 	t.Helper()
 	defer goleak.VerifyNone(t)
 

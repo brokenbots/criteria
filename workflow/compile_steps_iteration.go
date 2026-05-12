@@ -15,7 +15,7 @@ import (
 // compileIteratingStep compiles a for_each/count/while iterating step and registers
 // it in g. targetKind, adapterRef, and subworkflowRef come from resolveStepTarget.
 //
-//nolint:funlen // W11: function length unavoidable due to comprehensive iteration and adapter validation
+//nolint:funlen // comprehensive iteration step: validates parallel/serial, adapter schema, subworkflow ref, and environment override in sequence
 func compileIteratingStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[string]AdapterInfo, opts CompileOpts,
 	targetKind StepTargetKind, adapterRef, subworkflowRef string) hcl.Diagnostics {
 	var diags hcl.Diagnostics
