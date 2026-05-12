@@ -365,10 +365,10 @@ Expression functions available in all HCL attribute values within a workflow. Fu
 | `base64encode` | `base64encode(value: string)` | `string` | [workflow/eval_functions_encoding.go:29](../workflow/eval_functions_encoding.go#L29) |
 | `base64decode` | `base64decode(value: string)` | `string` | [workflow/eval_functions_encoding.go:39](../workflow/eval_functions_encoding.go#L39) |
 | `jsonencode` | `jsonencode(value: any)` | `string` | [workflow/eval_functions_encoding.go:53](../workflow/eval_functions_encoding.go#L53) |
-| `jsondecode` | `jsondecode(value: string)` | `unknown` | [workflow/eval_functions_encoding.go:67](../workflow/eval_functions_encoding.go#L67) |
-| `urlencode` | `urlencode(value: string)` | `string` | [workflow/eval_functions_encoding.go:89](../workflow/eval_functions_encoding.go#L89) |
-| `yamlencode` | `yamlencode(value: any)` | `string` | [workflow/eval_functions_encoding.go:99](../workflow/eval_functions_encoding.go#L99) |
-| `yamldecode` | `yamldecode(value: string)` | `unknown` | [workflow/eval_functions_encoding.go:123](../workflow/eval_functions_encoding.go#L123) |
+| `jsondecode` | `jsondecode(value: string)` | `unknown` | [workflow/eval_functions_encoding.go:66](../workflow/eval_functions_encoding.go#L66) |
+| `urlencode` | `urlencode(value: string)` | `string` | [workflow/eval_functions_encoding.go:88](../workflow/eval_functions_encoding.go#L88) |
+| `yamlencode` | `yamlencode(value: any)` | `string` | [workflow/eval_functions_encoding.go:98](../workflow/eval_functions_encoding.go#L98) |
+| `yamldecode` | `yamldecode(value: string)` | `unknown` | [workflow/eval_functions_encoding.go:116](../workflow/eval_functions_encoding.go#L116) |
 | `uuid` | `uuid()` | `string` | [workflow/eval_functions_dynamic.go:28](../workflow/eval_functions_dynamic.go#L28) |
 | `timestamp` | `timestamp()` | `string` | [workflow/eval_functions_dynamic.go:41](../workflow/eval_functions_dynamic.go#L41) |
 <!-- END GENERATED:functions -->

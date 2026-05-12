@@ -591,3 +591,51 @@ make ci                                                                         
 - `jsondecode` and `yamldecode` report return type as `unknown` in the LANGUAGE-SPEC.md table — this is correct, reflecting the dynamic return type (`cty.DynamicPseudoType`) used since the output type depends on the input value at call time.
 - The spec-gen update (`tools/spec-gen/extract.go`) also handles future files added to the workflow package that follow the same `registerXxxFunctions()` pattern — they will be auto-discovered without further spec-gen changes.
 - `github.com/google/uuid` was already present in the root `go.mod` but needed to be explicitly added to `workflow/go.mod` (separate Go module in the workspace).
+
+### Review 2026-05-11 — changes-requested
+
+#### Summary
+
+Most of the implementation is in place and the main validation commands are green, but this pass does **not** meet the workstream acceptance bar yet. The change set violates the explicit `nolint:gosec` constraint, the Step 6 coverage threshold is still missed for multiple new encoding functions, and two new documentation examples use the wrong `steps` traversal shape.
+
+#### Plan Adherence
+
+- **Steps 1-5, 7, and 9:** Implemented and behaving as intended. The 13 functions are registered, the example validates, and the repo-wide validation commands complete successfully.
+- **Step 6 / Exit criteria:** Not accepted yet. The workstream requires coverage of each new function to reach **≥ 90%**; reviewer coverage shows `jsonEncodeFunction` at **80.0%**, `yamlEncodeFunction` at **72.7%**, and `yamlDecodeFunction` at **80.0%**.
+- **Step 8 / docs:** Partially implemented. The new sections exist, but the `jsondecode` example and the crash-resume guidance for dynamic functions use `steps.<name>.output.<key>`, which conflicts with the documented and implemented `steps.<name>.<output>` syntax.
+- **Security / lint constraint:** Not accepted yet. The workstream allows at most the two planned inline `//nolint:gosec` directives, and only when justified by enabled linting. The submitted change introduces four new `//nolint:gosec` directives while `.golangci.yml` still does not enable `gosec`.
+
+#### Required Remediations
+
+- **Blocker — `workflow/eval_functions_hash.go:6-7,20,22`**: Remove the new `//nolint:gosec` sprawl. This file currently adds **four** directives, which fails the workstream's "2 inline directives max" exit criterion, and the workstream text also says to drop them if `gosec` is not enabled. **Acceptance:** this change set leaves **no new `nolint:gosec` directives** in the repo while `.golangci.yml` remains unchanged; reviewer re-check via `rg "nolint:gosec"` should show only the workstream prose, not new source suppressions.
+- **Blocker — `workflow/eval_functions_encoding_test.go:66-176,210-263` and `workflow/eval_functions_encoding.go:53-149`**: Bring Step 6 coverage up to the required floor. Current reviewer coverage is `jsonEncodeFunction` **80.0%**, `yamlEncodeFunction` **72.7%**, `yamlDecodeFunction` **80.0%**. **Acceptance:** add meaningful tests that exercise the untested branches, or simplify/remove unreachable branches, until every new function in `eval_functions_hash.go`, `eval_functions_encoding.go`, and `eval_functions_dynamic.go` reports **≥ 90%** statement coverage and the registration helpers remain **100%** covered.
+- **Blocker — `workflow/eval_functions_encoding_test.go:136-176,228-263`**: Strengthen the behavioral assertions for decode/round-trip cases. Several tests currently prove only that the call returned *something* of the right broad shape (`jsondecode(42)` checks type but not value; JSON/YAML round-trip tests check only one field), so realistic regressions could still pass. **Acceptance:** update these tests to assert the decoded values and round-tripped structure precisely enough that a broken decoder/encoder would fail, not just a type mismatch.
+- **Blocker — `docs/workflow.md:1246,1284`**: Fix the new docs to use the actual step-output traversal syntax. `steps.fetch.output.body` and `steps.<name>.output.<key>` contradict the rest of the language reference, which documents `steps.<name>.<output>`. **Acceptance:** the new hash/encoding/dynamic docs use the same `steps.<name>.<output>` form as the rest of the spec, with no newly introduced `.output.` examples.
+
+#### Test Intent Assessment
+
+The happy-path registration and execution coverage is good, and the dynamic-function tests are strong enough to prove registration, formatting, and non-determinism. The weak area is the encoding suite: it under-exercises the encode/decode error-handling branches, and a few assertions are too loose to prove semantic correctness. The next pass needs both stronger value-level assertions and enough branch coverage to satisfy the explicit Step 6 threshold.
+
+#### Validation Performed
+
+- `go test -race -count=2 ./workflow/...` — pass
+- `go test -race -count=20 ./workflow/ -run 'Hash|Encode|Decode|Url|UUID|Timestamp|Yaml'` — pass
+- `make validate` — pass
+- `make spec-check` — pass
+- `make ci` — pass
+- `cd workflow && go test -coverprofile=cover-review.out ./... && go tool cover -func=cover-review.out | grep -E 'eval_functions_(hash|encoding|dynamic)\\.go|total:'` — **failed acceptance bar** (`jsonEncodeFunction` 80.0%, `yamlEncodeFunction` 72.7%, `yamlDecodeFunction` 80.0%)
+- Reviewer binary-size check against `origin/main` (`go build -buildvcs=false`) — pass, delta **514091 bytes**, within the ≤ 1 MiB budget
+
+### Remediation pass (review 2026-05-11)
+
+All four blockers addressed:
+
+1. **nolint:gosec removed** — All 4 `//nolint:gosec` directives removed from `eval_functions_hash.go`. Import comments now use plain English rationale. `rg "nolint:gosec"` finds zero matches in source files.
+
+2. **Coverage ≥ 90%** — Removed unreachable error branches (dead paths that the function spec makes unreachable for concrete known inputs) from `jsonEncodeFunction`, `yamlEncodeFunction`, and `yamlDecodeFunction`. All three functions now report 100%; `jsonDecodeFunction` remains at 90% (one error branch is legitimately covered by the invalid-JSON test). All new functions meet the ≥ 90% floor.
+
+3. **Strengthened assertions** — `TestJsonDecode_Number` now checks the decoded value (42); `TestJsonDecode_Object` now checks `.a` value (1); `TestJsonRoundTrip_Object_BitExact` now verifies both `key` and `num` fields; `TestYamlRoundTrip_NestedObject` now verifies both `name` and `count` fields. A broken decoder/encoder will fail on value checks, not just type shape.
+
+4. **docs/workflow.md syntax fixed** — `steps.fetch.output.body` → `steps.fetch.body`; `steps.<name>.output.<key>` → `steps.<name>.<key>`. Both examples now match the `steps.<name>.<output>` traversal documented in the language reference.
+
+`docs/LANGUAGE-SPEC.md` regenerated (`make spec-gen`) after line numbers shifted from the simplification. `make ci` passes with zero FAIL lines.

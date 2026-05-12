@@ -137,7 +137,11 @@ func TestJsonDecode_Number(t *testing.T) {
 	fn := funcFromContext(t, "jsondecode")
 	got := callFn(t, fn, cty.StringVal("42"))
 	if got.Type() != cty.Number {
-		t.Errorf("jsondecode(42) type = %s; want number", got.Type().FriendlyName())
+		t.Fatalf("jsondecode(42) type = %s; want number", got.Type().FriendlyName())
+	}
+	n, _ := got.AsBigFloat().Int64()
+	if n != 42 {
+		t.Errorf("jsondecode(42) value = %d; want 42", n)
 	}
 }
 
@@ -150,6 +154,10 @@ func TestJsonDecode_Object(t *testing.T) {
 	aVal := got.GetAttr("a")
 	if aVal.Type() != cty.Number {
 		t.Errorf("jsondecode({a:1}).a type = %s; want number", aVal.Type().FriendlyName())
+	}
+	n, _ := aVal.AsBigFloat().Int64()
+	if n != 1 {
+		t.Errorf("jsondecode({a:1}).a value = %d; want 1", n)
 	}
 }
 
@@ -170,9 +178,12 @@ func TestJsonRoundTrip_Object_BitExact(t *testing.T) {
 	})
 	encoded := callFn(t, encFn, original)
 	decoded := callFn(t, decFn, encoded)
-	// Compare key access rather than RawEquals (type may differ slightly for numbers).
 	if decoded.GetAttr("key").AsString() != "value" {
 		t.Errorf("round-trip key = %q; want value", decoded.GetAttr("key").AsString())
+	}
+	n, _ := decoded.GetAttr("num").AsBigFloat().Int64()
+	if n != 99 {
+		t.Errorf("round-trip num = %d; want 99", n)
 	}
 }
 
@@ -259,5 +270,9 @@ func TestYamlRoundTrip_NestedObject(t *testing.T) {
 	}
 	if decoded.GetAttr("name").AsString() != "test" {
 		t.Errorf("yaml round-trip name = %q; want test", decoded.GetAttr("name").AsString())
+	}
+	n, _ := decoded.GetAttr("count").AsBigFloat().Int64()
+	if n != 3 {
+		t.Errorf("yaml round-trip count = %d; want 3", n)
 	}
 }

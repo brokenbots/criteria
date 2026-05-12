@@ -1243,7 +1243,7 @@ Decodes a JSON string and returns the appropriate cty value (string, number, boo
 
 ```hcl
 local "parsed" {
-  value = jsondecode(steps.fetch.output.body)
+  value = jsondecode(steps.fetch.body)
 }
 ```
 
@@ -1281,7 +1281,7 @@ local "config" {
 
 #### Dynamic functions
 
-> ⚠️ **Non-determinism and crash-resume:** Both functions below produce a new value on every call. If your workflow may crash and resume, capture the result into a step output and reference `steps.<name>.output.<key>` downstream so that the same value is used across resumes rather than generating a new one on re-evaluation.
+> ⚠️ **Non-determinism and crash-resume:** Both functions below produce a new value on every call. If your workflow may crash and resume, capture the result into a step output and reference `steps.<name>.<key>` downstream so that the same value is used across resumes rather than generating a new one on re-evaluation.
 
 ##### `uuid()`
 

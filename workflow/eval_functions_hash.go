@@ -3,8 +3,8 @@ package workflow
 // eval_functions_hash.go — SHA-256, SHA-1, SHA-512, and MD5 HCL functions.
 
 import (
-	"crypto/md5"  //nolint:gosec // exposed by deliberate design for caching/identity use; documented as insecure
-	"crypto/sha1" //nolint:gosec // same
+	"crypto/md5"  // weak hash; exposed by design for caching/identity use, not security
+	"crypto/sha1" // weak hash; exposed by design for caching/identity use, not security
 	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/hex"
@@ -17,9 +17,9 @@ import (
 func registerHashFunctions() map[string]function.Function {
 	return map[string]function.Function{
 		"sha256": hashFunction(sha256.New),
-		"sha1":   hashFunction(sha1.New), //nolint:gosec // intentional: weak hash exposed by design for caching/identity
+		"sha1":   hashFunction(sha1.New),
 		"sha512": hashFunction(sha512.New),
-		"md5":    hashFunction(md5.New), //nolint:gosec // intentional: weak hash exposed by design for caching/identity
+		"md5":    hashFunction(md5.New),
 	}
 }
 
