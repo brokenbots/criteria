@@ -1,0 +1,26 @@
+workflow: while-demo  (version 0.1)
+initial_state: work   target_state: done
+policy: max_total_steps=100  max_step_retries=0
+
+variables:
+  (none)
+
+adapters:
+  noop.default   type=noop   on_crash=fail
+    config: (none)
+
+steps (declaration order):
+  work   adapter=noop.default
+    input keys: is_first, iteration
+    allow_tools: (none)
+    outcomes: success -> _continue, all_succeeded -> report, any_failed -> done
+  report   adapter=noop.default
+    input keys: remaining
+    allow_tools: (none)
+    outcomes: success -> done
+
+states:
+  done    terminal=true   success=true
+
+plugins required:
+  noop   (search: $CRITERIA_PLUGINS, ~/.criteria/plugins)

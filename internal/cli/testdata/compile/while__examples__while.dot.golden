@@ -1,0 +1,13 @@
+digraph "while-demo" {
+  rankdir=LR;
+
+  "work" [shape=box, style="filled", fillcolor="#D6EAF8"];
+  "report" [shape=box, style="filled", fillcolor="#D6EAF8"];
+  "done" [shape=doublecircle, style=filled, fillcolor="#D5F5E3"];
+
+  "__start__" [shape=point,width=0.12,label=""];
+  "__start__" -> "work" [label="initial"];
+  "work" -> "report" [label="all_succeeded"];
+  "work" -> "done" [label="any_failed"];
+  "report" -> "done" [label="success"];
+}

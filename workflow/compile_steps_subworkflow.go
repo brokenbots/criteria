@@ -42,6 +42,7 @@ func compileSubworkflowStep(g *FSMGraph, sp *StepSpec, _ *Spec, subworkflowRef s
 	// caught at compile time rather than silently dropped at runtime.
 	inputExprs, d := compileSubworkflowStepInputExprs(g, sp, subworkflowRef)
 	diags = append(diags, d...)
+	diags = append(diags, validateWhileRefs(sp.Name, inputExprs)...)
 
 	diags = append(diags, validateLegacyConfig(sp)...)
 

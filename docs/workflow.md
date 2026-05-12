@@ -767,6 +767,66 @@ All standard `each.*` bindings are available per goroutine (see table below).
 `each._prev` is always `null` in `parallel` mode — there is no defined
 "previous" iteration when goroutines run concurrently.
 
+### `while` — condition-driven iteration
+
+`while` causes a step to be re-executed as long as a boolean expression is
+true. The condition is evaluated **before each iteration** (pre-condition loop);
+if false on the very first evaluation the step body is never invoked and the
+aggregate outcome fires immediately.
+
+```hcl
+step "poll" {
+  target     = adapter.http.default
+  while      = shared.queue_empty == false
+  on_failure = "abort"
+
+  input {
+    url        = "https://api.example.com/queue"
+    iteration  = while.index
+  }
+
+  outcome "success"       { next = "_continue" }
+  outcome "all_succeeded" { next = "done" }
+  outcome "any_failed"    { next = "error" }
+}
+```
+
+`while` is mutually exclusive with `for_each`, `count`, and `parallel`.
+
+#### `while.*` bindings
+
+| Name | Type | Description |
+|---|---|---|
+| `while.index` | number | Zero-based iteration counter (`0`, `1`, `2`, …). |
+| `while.first` | bool | `true` on the first iteration. |
+| `while._prev` | object or null | Adapter output object from the previous iteration. `null` on the first iteration. |
+
+`while.*` is only available inside `while`-modified steps. Referencing
+`while.*` outside such a step is a compile error.
+
+#### `while` condition expression
+
+The condition is any HCL expression that evaluates to `bool` at runtime.
+Typical patterns:
+
+```hcl
+while = shared.attempts > 0          # shared-variable counter
+while = while.index < 10             # bounded by iteration index
+while = var.flag == true             # static variable (loop runs or skips)
+while = true                         # infinite — requires max_visits or max_total_steps
+```
+
+If the expression references `while.*` bindings (e.g. `while.index`) the
+compiler cannot type-check it statically; type errors are reported at runtime
+on the first iteration where the expression produces a non-boolean value.
+
+#### Crash-resume under `while`
+
+The engine persists the iteration cursor — including the current index, failure
+status, and `while._prev` — as part of the run's variable scope. On resume the
+`while` condition is re-evaluated at the persisted index; the step resumes from
+where it left off without re-executing past iterations.
+
 ### `each.*` bindings
 
 All `each.*` names are available in `input { }` blocks (and `when` conditions)

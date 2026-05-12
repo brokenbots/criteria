@@ -14,6 +14,7 @@ import (
 // deferred to the engine; they are not errors at compile time.
 var runtimeOnlyNamespaces = map[string]bool{
 	"each":        true,
+	"while":       true, // while-iteration binding (while.index, while.first, while._prev)
 	"steps":       true,
 	"shared":      true, // shared_variable runtime values (W18)
 	"step":        true, // current adapter step outputs: step.output.<key> (W18)

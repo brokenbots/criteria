@@ -501,6 +501,11 @@ type StepNode struct {
 	// Evaluates to a list or tuple; the step body runs concurrently for every item.
 	// Mutually exclusive with ForEach and Count.
 	Parallel hcl.Expression
+	// While is the raw HCL expression for condition-driven iteration. Evaluated
+	// before each iteration; when false the loop exits and the aggregate outcome
+	// fires. Must evaluate to cty.Bool. Total = -1 in the cursor signals an
+	// unbounded while loop. Mutually exclusive with ForEach, Count, and Parallel.
+	While hcl.Expression
 	// ParallelMax is the maximum number of concurrent goroutines for a parallel step.
 	// Populated from the compile-time parallel_max attribute; default is
 	// runtime.GOMAXPROCS(0) when the attribute is absent. Never 0 at runtime.

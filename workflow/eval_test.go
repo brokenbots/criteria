@@ -455,3 +455,50 @@ func TestWithIndexedStepOutput_NilVarsInitializes(t *testing.T) {
 		t.Fatal("steps key missing")
 	}
 }
+
+// TestVarScope_RoundTrip_WhileCursor verifies that an IterCursor with
+// Total=-1 (the while sentinel) round-trips through SerializeVarScope →
+// RestoreVarScope and is correctly identified by IsWhile() after restore.
+func TestVarScope_RoundTrip_WhileCursor(t *testing.T) {
+	g := &FSMGraph{Variables: map[string]*VariableNode{}}
+	vars := SeedVarsFromGraph(g)
+
+	stack := []IterCursor{{
+		StepName:   "drain",
+		Index:      3,
+		Total:      -1, // while sentinel
+		InProgress: true,
+	}}
+
+	scopeJSON, err := SerializeVarScope(vars, stack)
+	if err != nil {
+		t.Fatalf("SerializeVarScope: %v", err)
+	}
+	if scopeJSON == "" {
+		t.Fatal("expected non-empty scope JSON")
+	}
+
+	_, restoredStack, err := RestoreVarScope(scopeJSON, g)
+	if err != nil {
+		t.Fatalf("RestoreVarScope: %v", err)
+	}
+	if len(restoredStack) == 0 {
+		t.Fatal("expected non-empty cursor stack after restore")
+	}
+	c := restoredStack[0]
+	if c.Total != -1 {
+		t.Errorf("Total = %d; want -1 (while sentinel)", c.Total)
+	}
+	if !c.IsWhile() {
+		t.Error("IsWhile() = false; want true for Total=-1")
+	}
+	if c.StepName != "drain" {
+		t.Errorf("StepName = %q; want \"drain\"", c.StepName)
+	}
+	if c.Index != 3 {
+		t.Errorf("Index = %d; want 3", c.Index)
+	}
+	if !c.InProgress {
+		t.Error("InProgress = false; want true")
+	}
+}

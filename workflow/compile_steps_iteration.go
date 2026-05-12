@@ -12,7 +12,7 @@ import (
 	"github.com/zclconf/go-cty/cty"
 )
 
-// compileIteratingStep compiles a for_each/count iterating step and registers
+// compileIteratingStep compiles a for_each/count/while iterating step and registers
 // it in g. targetKind, adapterRef, and subworkflowRef come from resolveStepTarget.
 //
 //nolint:funlen // W11: function length unavoidable due to comprehensive iteration and adapter validation
@@ -51,20 +51,15 @@ func compileIteratingStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[str
 		diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q: max_visits must be >= 0", sp.Name)})
 	}
 
-	forEachExpr, countExpr, parallelExpr, parallelMax, d := decodeRemainIter(sp, g)
+	ie, d := decodeRemainIter(sp, g)
 	diags = append(diags, d...)
-	if forEachExpr != nil && countExpr != nil {
-		diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q: for_each and count are mutually exclusive", sp.Name)})
+	diags = append(diags, validateIterMutualExclusion(sp.Name, ie.ForEach, ie.Count, ie.Parallel, ie.While)...)
+	diags = append(diags, validateIterExprFold(g, opts, ie.ForEach, ie.Count, ie.Parallel)...)
+	if ie.While != nil {
+		diags = append(diags, validateWhileExprType(g, opts, sp.Name, ie.While)...)
 	}
-	if parallelExpr != nil && forEachExpr != nil {
-		diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q: parallel and for_each are mutually exclusive", sp.Name)})
-	}
-	if parallelExpr != nil && countExpr != nil {
-		diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q: parallel and count are mutually exclusive", sp.Name)})
-	}
-	diags = append(diags, validateIterExprFold(g, opts, forEachExpr, countExpr, parallelExpr)...)
-	if parallelExpr != nil {
-		diags = append(diags, validateParallelIsList(g, opts, sp.Name, parallelExpr)...)
+	if ie.Parallel != nil {
+		diags = append(diags, validateParallelIsList(g, opts, sp.Name, ie.Parallel)...)
 	}
 
 	adapterType := adapterTypeFromRef(adapterRef)
@@ -73,10 +68,16 @@ func compileIteratingStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[str
 	if targetKind == StepTargetSubworkflow {
 		swInputExprs, d := compileSubworkflowStepInputExprs(g, sp, subworkflowRef)
 		diags = append(diags, d...)
+		if ie.While == nil {
+			diags = append(diags, validateWhileRefs(sp.Name, swInputExprs)...)
+		}
 		node = newSubworkflowIterStepNode(sp, spec, subworkflowRef, effectiveOnCrash, envKey, timeout, swInputExprs)
 	} else {
 		inputMap, inputExprs, d := decodeStepInput(g, sp, schemas, opts, adapterType)
 		diags = append(diags, d...)
+		if ie.While == nil {
+			diags = append(diags, validateWhileRefs(sp.Name, inputExprs)...)
+		}
 		// each.* references are valid inside iterating steps; no error emitted.
 		node = newAdapterStepNode(sp, spec, adapterRef, effectiveOnCrash, envKey, timeout, inputMap, inputExprs)
 		diags = append(diags, maybeCopilotAliasWarnings(sp.Name, adapterType, node.AllowTools)...)
@@ -84,7 +85,7 @@ func compileIteratingStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[str
 		// adapter must declare "parallel_safe". When the adapter is absent from the
 		// schemas map (binary not found during schema collection), we skip the check
 		// here and rely on the runtime gate in evaluateParallel instead.
-		if parallelExpr != nil {
+		if ie.Parallel != nil {
 			if info, ok := adapterInfo(schemas, adapterType); ok {
 				if !adapterHasCapability(info, "parallel_safe") {
 					diags = append(diags, &hcl.Diagnostic{
@@ -100,14 +101,15 @@ func compileIteratingStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[str
 		}
 	}
 
-	node.ForEach = forEachExpr
-	node.Count = countExpr
-	node.Parallel = parallelExpr
-	node.ParallelMax = parallelMax
+	node.ForEach = ie.ForEach
+	node.Count = ie.Count
+	node.Parallel = ie.Parallel
+	node.ParallelMax = ie.ParallelMax
+	node.While = ie.While
 
 	diags = append(diags, compileOutcomeBlock(sp, node, g, opts, schemas[adapterRef].OutputSchema)...)
 	diags = append(diags, validateIteratingOutcomes(sp, node)...)
-	diags = append(diags, warnParallelPerIterSharedWrites(sp.Name, parallelExpr, node)...)
+	diags = append(diags, warnParallelPerIterSharedWrites(sp.Name, ie.Parallel, node)...)
 
 	g.Steps[sp.Name] = node
 	g.stepOrder = append(g.stepOrder, sp.Name)
@@ -130,54 +132,140 @@ func newSubworkflowIterStepNode(sp *StepSpec, _ *Spec, subworkflowRef, effective
 	}
 }
 
-// decodeRemainIter reads the for_each, count, parallel, and parallel_max
-// expressions from sp.Remain without side-effects on any prior or future
-// PartialContent calls. parallelMax of 0 means "use default (GOMAXPROCS)".
-func decodeRemainIter(sp *StepSpec, g *FSMGraph) (forEachExpr, countExpr, parallelExpr hcl.Expression, parallelMax int, diags hcl.Diagnostics) {
-	if sp.Remain == nil {
-		return nil, nil, nil, 0, nil
+// validateIterMutualExclusion checks that at most one of for_each, count,
+// parallel, and while is set on a step.
+func validateIterMutualExclusion(stepName string, forEachExpr, countExpr, parallelExpr, whileExpr hcl.Expression) hcl.Diagnostics {
+	var diags hcl.Diagnostics
+	pairs := [][2]string{
+		{"for_each", "count"},
+		{"parallel", "for_each"},
+		{"parallel", "count"},
+		{"while", "for_each"},
+		{"while", "count"},
+		{"while", "parallel"},
 	}
-	content, _, d := sp.Remain.PartialContent(&hcl.BodySchema{
+	exprs := map[string]hcl.Expression{
+		"for_each": forEachExpr,
+		"count":    countExpr,
+		"parallel": parallelExpr,
+		"while":    whileExpr,
+	}
+	for _, pair := range pairs {
+		if exprs[pair[0]] != nil && exprs[pair[1]] != nil {
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  fmt.Sprintf("step %q: %s and %s are mutually exclusive", stepName, pair[0], pair[1]),
+			})
+		}
+	}
+	return diags
+}
+
+// iterExprs holds the parsed iteration modifier expressions for a step.
+type iterExprs struct {
+	ForEach     hcl.Expression
+	Count       hcl.Expression
+	Parallel    hcl.Expression
+	ParallelMax int
+	While       hcl.Expression
+}
+
+// decodeRemainIter reads the for_each, count, parallel, parallel_max, and while
+// expressions from sp.Remain without side-effects on any prior or future
+// PartialContent calls. ParallelMax of 0 means "use default (GOMAXPROCS)".
+func decodeRemainIter(sp *StepSpec, g *FSMGraph) (iterExprs, hcl.Diagnostics) {
+	var ie iterExprs
+	if sp.Remain == nil {
+		return ie, nil
+	}
+	content, _, diags := sp.Remain.PartialContent(&hcl.BodySchema{
 		Attributes: []hcl.AttributeSchema{
 			{Name: "for_each", Required: false},
 			{Name: "count", Required: false},
 			{Name: "parallel", Required: false},
 			{Name: "parallel_max", Required: false},
+			{Name: "while", Required: false},
 		},
 	})
-	diags = append(diags, d...)
-	if content != nil {
-		if attr, ok := content.Attributes["for_each"]; ok {
-			forEachExpr = attr.Expr
-		}
-		if attr, ok := content.Attributes["count"]; ok {
-			countExpr = attr.Expr
-		}
-		if attr, ok := content.Attributes["parallel"]; ok {
-			parallelExpr = attr.Expr
-		}
-		if attr, ok := content.Attributes["parallel_max"]; ok {
-			var val int
-			d2 := decodeIntAttr(attr, g, &val)
-			diags = append(diags, d2...)
-			if !d2.HasErrors() {
-				if val < 1 {
-					diags = append(diags, &hcl.Diagnostic{
-						Severity: hcl.DiagError,
-						Subject:  attr.Expr.StartRange().Ptr(),
-						Summary:  fmt.Sprintf("step %q: parallel_max must be >= 1; got %d", sp.Name, val),
-					})
-				} else {
-					parallelMax = val
-				}
-			}
+	if content == nil {
+		return ie, diags
+	}
+	if attr, ok := content.Attributes["for_each"]; ok {
+		ie.ForEach = attr.Expr
+	}
+	if attr, ok := content.Attributes["count"]; ok {
+		ie.Count = attr.Expr
+	}
+	if attr, ok := content.Attributes["parallel"]; ok {
+		ie.Parallel = attr.Expr
+	}
+	if attr, ok := content.Attributes["while"]; ok {
+		ie.While = attr.Expr
+	}
+	if attr, ok := content.Attributes["parallel_max"]; ok {
+		var d hcl.Diagnostics
+		ie.ParallelMax, d = decodeParallelMax(sp.Name, attr, g)
+		diags = append(diags, d...)
+	}
+	// Apply default for ParallelMax when parallel is set but parallel_max is absent.
+	if ie.Parallel != nil && ie.ParallelMax == 0 {
+		ie.ParallelMax = runtime.GOMAXPROCS(0)
+	}
+	return ie, diags
+}
+
+// decodeParallelMax decodes and validates the parallel_max attribute.
+func decodeParallelMax(stepName string, attr *hcl.Attribute, g *FSMGraph) (int, hcl.Diagnostics) {
+	var val int
+	diags := decodeIntAttr(attr, g, &val)
+	if diags.HasErrors() {
+		return 0, diags
+	}
+	if val < 1 {
+		return 0, hcl.Diagnostics{&hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Subject:  attr.Expr.StartRange().Ptr(),
+			Summary:  fmt.Sprintf("step %q: parallel_max must be >= 1; got %d", stepName, val),
+		}}
+	}
+	return val, nil
+}
+
+// validateWhileExprType performs a compile-time static type check on the while
+// expression. If the expression can be folded at compile time (i.e. it references
+// only known constants or compile-time-resolved variables) and the result is not
+// bool, a DiagError is returned. Runtime-only references defer to the runtime check.
+func validateWhileExprType(g *FSMGraph, opts CompileOpts, stepName string, expr hcl.Expression) hcl.Diagnostics {
+	val, folded, diags := FoldExpr(expr, graphVars(g), graphLocals(g), opts.WorkflowDir)
+	if diags.HasErrors() || !folded {
+		return nil // deferred to runtime
+	}
+	if !val.IsKnown() || val.IsNull() {
+		return nil
+	}
+	if !val.Type().Equals(cty.Bool) {
+		return hcl.Diagnostics{&hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Subject:  expr.StartRange().Ptr(),
+			Summary:  fmt.Sprintf("step %q: while must be a bool expression; got %s", stepName, val.Type().FriendlyName()),
+		}}
+	}
+	return nil
+}
+
+// validateWhileRefs emits a diagnostic for each input expression that
+// references while.* when the step is not a while-driven iterating step.
+func validateWhileRefs(stepName string, inputExprs map[string]hcl.Expression) hcl.Diagnostics {
+	var diags hcl.Diagnostics
+	for k, expr := range inputExprs {
+		if refsWhile(expr) {
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  fmt.Sprintf("step %q input.%s: while.index, while.first, and while._prev are only valid inside while-modified steps", stepName, k),
+			})
 		}
 	}
-	// Apply default for parallelMax when parallel is set but parallel_max is absent.
-	if parallelExpr != nil && parallelMax == 0 {
-		parallelMax = runtime.GOMAXPROCS(0)
-	}
-	return forEachExpr, countExpr, parallelExpr, parallelMax, diags
+	return diags
 }
 
 // validateOnFailureValue checks that sp.OnFailure is a recognised value.

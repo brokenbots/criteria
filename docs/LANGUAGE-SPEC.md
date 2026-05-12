@@ -322,6 +322,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 | `var.*` | all expressions | Read-only typed input variables declared with `variable` blocks. |
 | `steps.<name>.<key>` | post-completion of `<name>` | Captured outputs from a prior step. |
 | `each.value` / `each.key` / `each._idx` / `each._total` / `each._first` / `each._last` / `each._prev` | iterating-step expressions only | Per-iteration bindings; see Iteration semantics. |
+| `while.*` | while-modified-step expressions only | Per-iteration bindings for while-driven steps; see While iteration. |
 | `local.*` | all expressions | Compile-time constants declared with `local` blocks. |
 | `shared.*` | all expressions; mutable via `shared_writes` | Runtime-mutable shared values declared with `shared_variable` blocks. |
 <!-- END GENERATED:namespaces -->

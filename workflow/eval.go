@@ -59,6 +59,11 @@ func BuildEvalContextWithOpts(vars map[string]cty.Value, opts FunctionOptions) *
 		ctxVars["each"] = each
 	}
 
+	// Include "while" bindings when inside a while iteration.
+	if w, ok := objectFromVars(vars, "while"); ok {
+		ctxVars["while"] = w
+	}
+
 	// Expose compiled locals as "local.*" when they have been seeded (W07).
 	if local, ok := objectFromVars(vars, "local"); ok {
 		ctxVars["local"] = local
@@ -166,6 +171,19 @@ func refsEach(expr hcl.Expression) bool {
 	for _, traversal := range expr.Variables() {
 		if len(traversal) > 0 {
 			if root, ok := traversal[0].(hcl.TraverseRoot); ok && root.Name == "each" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// refsWhile reports whether the expression references the while.* namespace.
+// Used to reject while.* references outside while-driven iterating steps.
+func refsWhile(expr hcl.Expression) bool {
+	for _, traversal := range expr.Variables() {
+		if len(traversal) > 0 {
+			if root, ok := traversal[0].(hcl.TraverseRoot); ok && root.Name == "while" {
 				return true
 			}
 		}
@@ -366,6 +384,19 @@ type EachBinding struct {
 	Prev cty.Value
 }
 
+// WhileBinding carries the per-iteration binding values for while-driven
+// iteration steps. The engine sets these before each iteration so that input
+// expressions can reference while.index, while.first, and while._prev.
+type WhileBinding struct {
+	// Index is the zero-based iteration counter.
+	Index int
+	// First is true on the first iteration (Index == 0).
+	First bool
+	// Prev is the output of the previous iteration, or cty.NilVal before
+	// the first iteration.
+	Prev cty.Value
+}
+
 // WithEachBinding returns a new vars map with each.* bound for the current
 // step-level iteration. Called by the engine node before executing the
 // iteration step so that input expressions can reference each.value, each.key,
@@ -405,6 +436,42 @@ func ClearEachBinding(vars map[string]cty.Value) map[string]cty.Value {
 	newVars := make(map[string]cty.Value, len(vars))
 	for k, v := range vars {
 		if k != "each" {
+			newVars[k] = v
+		}
+	}
+	return newVars
+}
+
+// WithWhileBinding returns a new vars map with while.* bound for the current
+// iteration of a while-driven step. Called by the engine before each iteration
+// body so that input expressions can reference while.index, while.first, and
+// while._prev.
+func WithWhileBinding(vars map[string]cty.Value, b *WhileBinding) map[string]cty.Value {
+	newVars := make(map[string]cty.Value, len(vars)+1)
+	for k, v := range vars {
+		newVars[k] = v
+	}
+	prev := b.Prev
+	if prev == cty.NilVal {
+		prev = cty.NullVal(cty.DynamicPseudoType)
+	}
+	newVars["while"] = cty.ObjectVal(map[string]cty.Value{
+		"index": cty.NumberIntVal(int64(b.Index)),
+		"first": cty.BoolVal(b.First),
+		"_prev": prev,
+	})
+	return newVars
+}
+
+// ClearWhileBinding returns a new vars map with the while bindings removed.
+// Called by the engine loop after a while iteration completes.
+func ClearWhileBinding(vars map[string]cty.Value) map[string]cty.Value {
+	if _, ok := vars["while"]; !ok {
+		return vars
+	}
+	newVars := make(map[string]cty.Value, len(vars))
+	for k, v := range vars {
+		if k != "while" {
 			newVars[k] = v
 		}
 	}

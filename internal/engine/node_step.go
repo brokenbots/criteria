@@ -42,6 +42,11 @@ func (n *stepNode) Evaluate(ctx context.Context, st *RunState, deps Deps) (strin
 		return n.evaluateIterating(ctx, st, deps)
 	}
 
+	// Handle while-driven iteration.
+	if n.step.While != nil {
+		return n.evaluateWhile(ctx, st, deps)
+	}
+
 	// Handle parallel execution.
 	if n.step.Parallel != nil {
 		return n.evaluateParallel(ctx, st, deps)
