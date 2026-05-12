@@ -466,3 +466,22 @@ The only remaining uncovered branch is the `os.Stat` error path (lines 436-438),
 #### Validation
 - `go test -race -count=20 ./workflow/ -run "Fileset|ResolveConfinedDir"` — PASS
 - `make ci` — PASS (all packages green, lint within baseline, spec-check OK)
+
+### Review 2026-05-11-02 — approved
+
+#### Summary
+The previously-blocking test gaps are resolved. The E2E assertion now proves the runtime input-resolution path for `file(each.value)` across the `fileset()`-produced iteration set, and `resolveConfinedDir` coverage is now above the documented threshold. The implementation, docs, examples, generated spec output, and repository validation all meet the acceptance bar.
+
+#### Plan Adherence
+- **Step 1 / Step 2:** Still aligned with plan; implementation and registration remain correct.
+- **Step 3:** Now satisfies the intent of the load-bearing integration check. `TestFileset_PairsWithForEach_E2E` binds `each.value` and resolves `node.InputExprs` through `ResolveInputExprsWithOpts`, which is the same runtime helper path used by `internal/engine/node_step.go` before adapter dispatch.
+- **Coverage target:** Verified at **95.0%** for `filesetFunction` and **95.7%** for `resolveConfinedDir`, clearing the stated `>= 90%` thresholds.
+- **Step 4 / Step 5 / Step 6:** Example, docs, generated spec output, and full CI validation remain green.
+
+#### Test Intent Assessment
+The revised E2E test is now regression-sensitive in the right place: it will fail if `fileset()` emits the wrong ordered paths, if `each.value` is bound incorrectly, or if `file(each.value)` does not resolve the actual file content per iteration. The added `resolveConfinedDir` branch tests also strengthen the security boundary around post-symlink confinement and error-path handling.
+
+#### Validation Performed
+- `go test -race -count=20 ./workflow/ -run 'Fileset|ResolveConfinedDir'` — pass
+- `go test -coverprofile=<tmp> ./workflow && go tool cover -func <tmp>` — `filesetFunction` **95.0%**, `resolveConfinedDir` **95.7%**
+- `make ci` — pass
