@@ -1,0 +1,12 @@
+digraph "fileset_demo" {
+  rankdir=LR;
+
+  "process" [shape=box, style="filled,dashed", fillcolor="#D6EAF8", label="process\n[for_each]"];
+  "done" [shape=doublecircle, style=filled, fillcolor="#D5F5E3"];
+  "failed" [shape=doublecircle, style=filled, fillcolor="#FADBD8"];
+
+  "__start__" [shape=point,width=0.12,label=""];
+  "__start__" -> "process" [label="initial"];
+  "process" -> "done" [label="all_succeeded"];
+  "process" -> "failed" [label="any_failed"];
+}

@@ -792,27 +792,44 @@ func extractReturnType(expr ast.Expr) string {
 	return "unknown"
 }
 
-// extractCtyType maps a cty.X selector expression to a type name string.
+// extractCtyType maps a cty type expression to a type name string.
+// It handles simple selector expressions (cty.String, cty.Bool, etc.) and
+// parameterised call expressions (cty.List(cty.String), cty.Set(X), cty.Map(X)).
 func extractCtyType(expr ast.Expr) string {
-	sel, ok := expr.(*ast.SelectorExpr)
-	if !ok {
-		return "unknown"
-	}
-	x, ok := sel.X.(*ast.Ident)
-	if !ok {
-		return "unknown"
-	}
-	if x.Name == "cty" {
-		switch sel.Sel.Name {
-		case "String":
-			return "string"
-		case "Bool":
-			return "bool"
-		case "Number":
-			return "number"
-		case "DynamicPseudoType":
-			return "any"
+	switch e := expr.(type) {
+	case *ast.SelectorExpr:
+		x, ok := e.X.(*ast.Ident)
+		if !ok {
+			return "unknown"
 		}
+		if x.Name == "cty" {
+			switch e.Sel.Name {
+			case "String":
+				return "string"
+			case "Bool":
+				return "bool"
+			case "Number":
+				return "number"
+			case "DynamicPseudoType":
+				return "any"
+			}
+		}
+		return x.Name + "." + e.Sel.Name
+	case *ast.CallExpr:
+		fun, ok := e.Fun.(*ast.SelectorExpr)
+		if !ok || len(e.Args) == 0 {
+			return "unknown"
+		}
+		x, ok := fun.X.(*ast.Ident)
+		if !ok || x.Name != "cty" {
+			return "unknown"
+		}
+		switch fun.Sel.Name {
+		case "List", "Set", "Map":
+			inner := extractCtyType(e.Args[0])
+			return strings.ToLower(fun.Sel.Name) + "(" + inner + ")"
+		}
+		return "unknown"
 	}
-	return x.Name + "." + sel.Sel.Name
+	return "unknown"
 }

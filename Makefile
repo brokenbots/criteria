@@ -136,6 +136,7 @@ lint: lint-imports lint-go lint-baseline-check spec-check ## Run all linters
 validate: build ## Validate all example workflow directories
 	@for d in examples/build_and_test examples/copilot_planning_then_execution \
 		examples/demo_tour_local examples/file_function examples/hello \
+		examples/fileset \
 		examples/perf_1000_logs \
 		examples/phase3-environment examples/phase3-fold examples/phase3-multi-file \
 		examples/phase3-output examples/phase3-subworkflow examples/phase3-shared-variable \

@@ -353,10 +353,11 @@ Expression functions available in all HCL attribute values within a workflow. Fu
 <!-- BEGIN GENERATED:functions -->
 | Function | Signature | Returns | Source |
 |---|---|---|---|
-| `file` | `file(path: string)` | `string` | [workflow/eval_functions.go:113](../workflow/eval_functions.go#L113) |
-| `fileexists` | `fileexists(path: string)` | `bool` | [workflow/eval_functions.go:246](../workflow/eval_functions.go#L246) |
-| `templatefile` | `templatefile(path: string, vars: any)` | `string` | [workflow/eval_functions.go:171](../workflow/eval_functions.go#L171) |
-| `trimfrontmatter` | `trimfrontmatter(content: string)` | `string` | [workflow/eval_functions.go:319](../workflow/eval_functions.go#L319) |
+| `file` | `file(path: string)` | `string` | [workflow/eval_functions.go:115](../workflow/eval_functions.go#L115) |
+| `fileexists` | `fileexists(path: string)` | `bool` | [workflow/eval_functions.go:248](../workflow/eval_functions.go#L248) |
+| `fileset` | `fileset(path: string, pattern: string)` | `list(string)` | [workflow/eval_functions.go:329](../workflow/eval_functions.go#L329) |
+| `templatefile` | `templatefile(path: string, vars: any)` | `string` | [workflow/eval_functions.go:173](../workflow/eval_functions.go#L173) |
+| `trimfrontmatter` | `trimfrontmatter(content: string)` | `string` | [workflow/eval_functions.go:452](../workflow/eval_functions.go#L452) |
 <!-- END GENERATED:functions -->
 
 ### Function notes

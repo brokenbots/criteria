@@ -1,7 +1,7 @@
 package workflow
 
 // eval_functions.go — HCL expression functions for workflow evaluation.
-// Implements file(), fileexists(), templatefile(), and trimfrontmatter().
+// Implements file(), fileexists(), fileset(), templatefile(), and trimfrontmatter().
 
 import (
 	"bytes"
@@ -9,6 +9,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"text/template"
@@ -102,6 +103,7 @@ func workflowFunctions(opts FunctionOptions) map[string]function.Function {
 	return map[string]function.Function{
 		"file":            fileFunction(opts),
 		"fileexists":      fileExistsFunction(opts),
+		"fileset":         filesetFunction(opts),
 		"templatefile":    templatefileFunction(opts),
 		"trimfrontmatter": trimFrontmatterFunction(),
 	}
@@ -307,6 +309,137 @@ func fileExistsResolved(raw string, opts FunctionOptions) (bool, error) {
 		return false, fmt.Errorf("fileexists(): %w", err)
 	}
 	return info.Mode().IsRegular(), nil
+}
+
+// filesetFunction implements fileset(path, pattern) → list(string).
+//
+// Lists regular files inside `path` (resolved relative to WorkflowDir, with
+// the same confinement as file()) whose basename matches the glob `pattern`.
+// Returns matches as a sorted list of paths relative to WorkflowDir, suitable
+// for passing to file() / templatefile() via each.value.
+//
+// Glob syntax follows Go's filepath.Match: '*' matches any sequence of
+// non-slash chars, '?' matches a single non-slash char, and '[a-z]' matches a
+// character class. There is no '**' (recursive) syntax in v1; fileset does
+// not descend into subdirectories.
+//
+// Returns an empty list if no files match. Returns an error if path does not
+// exist, is not a directory, escapes the workflow directory, or pattern is
+// syntactically invalid.
+func filesetFunction(opts FunctionOptions) function.Function {
+	return function.New(&function.Spec{
+		Params: []function.Parameter{
+			{Name: "path", Type: cty.String},
+			{Name: "pattern", Type: cty.String},
+		},
+		Type: function.StaticReturnType(cty.List(cty.String)),
+		Impl: func(args []cty.Value, _ cty.Type) (cty.Value, error) {
+			if opts.WorkflowDir == "" {
+				return cty.ListValEmpty(cty.String), fmt.Errorf("fileset(): workflow directory not configured")
+			}
+			rawPath := args[0].AsString()
+			pattern := args[1].AsString()
+
+			// Validate the pattern syntax up-front (filepath.Glob silently
+			// returns no matches on invalid pattern; we want a clear error).
+			if _, err := filepath.Match(pattern, ""); err != nil {
+				return cty.ListValEmpty(cty.String), fmt.Errorf(
+					"fileset(): invalid pattern %q: %w", pattern, err)
+			}
+
+			// Resolve and confine the directory path.
+			resolvedDir, err := resolveConfinedDir(rawPath, opts.WorkflowDir, opts.AllowedPaths)
+			if err != nil {
+				return cty.ListValEmpty(cty.String), err
+			}
+
+			matches, err := collectMatchingFiles(resolvedDir, rawPath, pattern)
+			if err != nil {
+				return cty.ListValEmpty(cty.String), err
+			}
+
+			sort.Strings(matches)
+
+			if len(matches) == 0 {
+				return cty.ListValEmpty(cty.String), nil
+			}
+			vals := make([]cty.Value, len(matches))
+			for i, m := range matches {
+				vals[i] = cty.StringVal(m)
+			}
+			return cty.ListVal(vals), nil
+		},
+	})
+}
+
+// collectMatchingFiles reads resolvedDir and returns regular files whose
+// basenames match pattern. Results use rawPath as the directory prefix so
+// they are relative to WorkflowDir. The caller is responsible for sorting.
+func collectMatchingFiles(resolvedDir, rawPath, pattern string) ([]string, error) {
+	entries, err := os.ReadDir(resolvedDir)
+	if err != nil {
+		return nil, fmt.Errorf("fileset(): %w", err)
+	}
+	var matches []string
+	for _, entry := range entries {
+		if !entry.Type().IsRegular() {
+			continue // skip dirs, symlinks, devices, sockets
+		}
+		name := entry.Name()
+		ok, err := filepath.Match(pattern, name)
+		if err != nil {
+			// Pattern was validated up-front; this is defensive only.
+			return nil, fmt.Errorf("fileset(): pattern %q: %w", pattern, err)
+		}
+		if ok {
+			// Build path relative to WorkflowDir so each.value works
+			// with file() / templatefile() without adjustment.
+			matches = append(matches, filepath.Join(rawPath, name))
+		}
+	}
+	return matches, nil
+}
+
+// resolveConfinedDir is like resolveConfinedPath but verifies the resolved
+// path is a directory (not a regular file). Applies the same two-phase
+// confinement check (pre- and post-EvalSymlinks) as resolveConfinedPath.
+func resolveConfinedDir(raw, base string, allowed []string) (string, error) {
+	if filepath.IsAbs(raw) {
+		return "", fmt.Errorf("fileset(): absolute paths are not supported; use a path relative to the workflow directory")
+	}
+	abs := filepath.Clean(filepath.Join(base, raw))
+
+	if err := checkConfinement("fileset()", raw, abs, base, allowed); err != nil {
+		return "", err
+	}
+
+	resolved, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", fmt.Errorf("fileset(): %q does not exist", raw)
+		}
+		if os.IsPermission(err) {
+			return "", fmt.Errorf("fileset(): permission denied: %s", raw)
+		}
+		return "", fmt.Errorf("fileset(): %w", err)
+	}
+	resolved = filepath.Clean(resolved)
+
+	resolvedBase := evalSymlinksOrSelf(base)
+	resolvedAllowed := evalSymlinksAll(allowed)
+
+	if err := checkConfinement("fileset()", raw, resolved, resolvedBase, resolvedAllowed); err != nil {
+		return "", err
+	}
+
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return "", fmt.Errorf("fileset(): %w", err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("fileset(): %q is not a directory", raw)
+	}
+	return resolved, nil
 }
 
 // trimFrontmatterFunction implements the trimfrontmatter(content) → string

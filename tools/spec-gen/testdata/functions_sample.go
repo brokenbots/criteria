@@ -12,6 +12,7 @@ func workflowFunctions() map[string]function.Function {
 	return map[string]function.Function{
 		"greet": greetFunction(),
 		"ping":  pingFunction(),
+		"list":  listFunction(),
 	}
 }
 
@@ -29,5 +30,14 @@ func greetFunction() function.Function {
 func pingFunction() function.Function {
 	return function.New(&function.Spec{
 		Type: function.StaticReturnType(cty.Bool),
+	})
+}
+
+// listFunction implements the list(pattern) → list(string) function.
+// Returns the sorted list of matching paths.
+func listFunction() function.Function {
+	return function.New(&function.Spec{
+		Params: []function.Parameter{{Name: "pattern", Type: cty.String}},
+		Type:   function.StaticReturnType(cty.List(cty.String)),
 	})
 }

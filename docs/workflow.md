@@ -1081,6 +1081,47 @@ step "draft" {
 
 > **Differences from Terraform's `templatefile`:** Terraform's `templatefile` uses HCL native template syntax (`${field}`). Criteria's uses Go `text/template` syntax (`{{ .field }}`). This is intentional — `text/template` is in the Go stdlib and does not auto-escape output, which is desirable for LLM prompt content.
 
+#### `fileset(path, pattern)`
+
+Lists regular files inside `path` (resolved relative to the workflow directory) whose basenames match the glob `pattern`. Returns a sorted `list(string)` of paths **relative to the workflow directory**, suitable for passing directly to `file()` or `templatefile()` via `each.value`.
+
+```hcl
+step "process_prompts" {
+  for_each = fileset("prompts", "*.md")
+  target   = adapter.copilot.editor
+  input {
+    prompt = file(each.value)
+  }
+  outcome "all_succeeded" { next = "done" }
+  outcome "any_failed"    { next = "failed" }
+}
+```
+
+**Pattern syntax:** Go [`filepath.Match`](https://pkg.go.dev/path/filepath#Match) — `*` matches any sequence of non-slash characters, `?` matches a single non-slash character, `[a-z]` matches a character class. There is no `**` recursive syntax in v1.
+
+**Constraints:**
+- `path` must be relative and must not escape the workflow directory (same confinement rules as `file()`).
+- Returns an empty list when no files match. This is intentionally different from Terraform, which also returns an empty list for a missing directory; Criteria errors on a missing directory so failures are loud.
+- Symlinks inside `path` are **excluded** (v1 behavior: only `entry.Type().IsRegular()` entries are returned). Users who need symlink following can open a follow-up workstream.
+- Subdirectories are not recursed — `fileset` is shallow-only in v1.
+- Sort order is lexicographic (e.g. `a1, a10, a2`). For natural sort, post-process the result.
+
+**Example — enumerate and read all prompts in a directory:**
+
+```hcl
+step "run_prompts" {
+  for_each = fileset("prompts", "*.md")
+  target   = adapter.copilot.editor
+  input {
+    prompt = trimfrontmatter(file(each.value))
+  }
+  outcome "all_succeeded" { next = "done" }
+  outcome "any_failed"    { next = "failed" }
+}
+```
+
+`each.value` is a path relative to the workflow directory, so it can be passed directly to `file()` without further manipulation. See `examples/fileset/` for a working end-to-end example.
+
 #### `trimfrontmatter(content)`
 
 Strips a YAML frontmatter block from `content` and returns the remainder. If no frontmatter is present, or the closing `---` delimiter does not appear within the first 64 KiB, the input is returned unchanged.
@@ -1110,7 +1151,7 @@ The `examples/file_function.hcl` workflow demonstrates this pattern end-to-end.
 | Variable | Effect |
 |---|---|
 | `CRITERIA_FILE_FUNC_MAX_BYTES` | Integer; maximum bytes `file()` and `templatefile()` will read. Default 1 MiB. Clamped to [1024, 67108864]. |
-| `CRITERIA_WORKFLOW_ALLOWED_PATHS` | Colon-separated list of directories `file()`, `fileexists()`, and `templatefile()` may access outside the workflow directory. |
+| `CRITERIA_WORKFLOW_ALLOWED_PATHS` | Colon-separated list of directories `file()`, `fileexists()`, `fileset()`, and `templatefile()` may access outside the workflow directory. |
 
 ---
 

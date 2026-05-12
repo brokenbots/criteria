@@ -353,15 +353,39 @@ This workstream may **not** edit:
 
 ## Tasks
 
-- [ ] Register `fileset` in `workflowFunctions` (Step 1).
-- [ ] Implement `filesetFunction` and `resolveConfinedDir` (Step 1).
-- [ ] Update package doc-comment (Step 2).
-- [ ] Add 20 unit tests (Step 3).
-- [ ] Add example workflow and wire into `make validate` (Step 4).
-- [ ] Update `docs/workflow.md` (Step 5).
-- [ ] If doc-04 has landed, replace pattern 8 placeholder.
-- [ ] Re-run `make spec-gen` if doc-03 has landed.
-- [ ] Validation (Step 6).
+- [x] Register `fileset` in `workflowFunctions` (Step 1).
+- [x] Implement `filesetFunction` and `resolveConfinedDir` (Step 1).
+- [x] Update package doc-comment (Step 2).
+- [x] Add 20 unit tests (Step 3).
+- [x] Add example workflow and wire into `make validate` (Step 4).
+- [x] Update `docs/workflow.md` (Step 5).
+- [x] If doc-04 has landed, replace pattern 8 placeholder.
+- [x] Re-run `make spec-gen` if doc-03 has landed.
+- [x] Validation (Step 6).
+
+## Reviewer Notes
+
+**Implementation**
+
+- `filesetFunction` and `resolveConfinedDir` added to `workflow/eval_functions.go` following the same two-phase confinement pattern as `resolveConfinedPath` (pre- and post-EvalSymlinks). The directory-entry matching loop was extracted into a standalone `collectMatchingFiles` helper to keep `filesetFunction`'s cognitive complexity within the `gocognit` ≤20 lint limit.
+- `sort.Strings` ensures lexicographic output regardless of OS directory listing order.
+- Pattern validation with `filepath.Match(pattern, "")` up-front gives a clear error; Go's `filepath.Glob` silently returns nothing on bad patterns.
+- `entry.Type().IsRegular()` excludes symlinks, directories, devices — v1 documented behavior.
+
+**Tests** (`workflow/eval_functions_fileset_test.go`)
+
+- 20 tests covering: happy path, no matches, dot path, no-recursion, dirs excluded, symlinks excluded, sort order, `?` and `[range]` patterns, invalid pattern, nonexistent path, file-not-dir, path escape, absolute path rejection, AllowedPaths, empty dir, wildcard, permission-denied, 50-goroutine concurrent race, and full E2E compile integration with `for_each`.
+- Validated with `-race -count=20`: pass.
+
+**Example & docs**
+
+- `examples/fileset/` (3 `.txt` inputs) added; `make validate` includes it; golden files auto-generated.
+- `docs/workflow.md` section added; `docs/LANGUAGE-SPEC.md` regenerated via `make spec-gen`.
+- `docs/llm/08-fileset-template.md` rewritten (310 words, ≤350 budget, correct 5-header structure); `examples/llm-pack/08-fileset-template/main.hcl` updated to use `fileset()`.
+
+**CI**
+
+- `make ci` exits 0. No new `//nolint` directives. No baseline cap change. No proto changes.
 
 ## Exit criteria
 
@@ -389,3 +413,103 @@ The Step 3 list. Coverage of `filesetFunction` ≥ 90%; coverage of `resolveConf
 | `resolveConfinedDir` duplicates most of `resolveConfinedPath` | The duplication is acceptable — the only difference is the post-resolve `IsDir` check. Refactoring to share more would require a confinement-aware "what kind of path" parameter, which is a different scope. |
 | Pattern matching with `[` triggers a confusing error message because Go's `filepath.Match` errors are terse | The wrapper error includes the pattern verbatim and the `filepath.Match` error chain. Sufficient. |
 | `fileset` returns empty list for a missing directory (Terraform behavior) vs error (this workstream's behavior) | Document the divergence: Criteria errors on missing directory because workflow correctness is usually better served by failing loud. Terraform's "empty on missing" is a Terraform convention; we deliberately diverge with a one-line note in the doc. |
+
+### Review 2026-05-11 — changes-requested
+
+#### Summary
+Implementation scope is mostly in place and all requested validation commands pass, but the acceptance bar is not met yet. The required load-bearing E2E test does not actually prove that `for_each = fileset(...)` plus `file(each.value)` delivers the expected per-iteration file contents at runtime, and the documented coverage target for `resolveConfinedDir` is still below threshold.
+
+#### Plan Adherence
+- **Step 1 / Step 2:** Implemented as planned. `fileset` is registered, documented in the package comment, and uses the expected confinement helpers.
+- **Step 3:** Partially satisfied. Twenty tests exist, but the required E2E assertion from item 20 is weaker than specified: the current test only evaluates `ForEach` and inspects the expression tree, rather than proving runtime content delivery through iteration.
+- **Step 4 / Step 5 / Step 6:** Example, docs, generated spec output, and validation commands are present and green.
+- **Exit criteria:** `filesetFunction` coverage clears the stated bar at **95.0%**. `resolveConfinedDir` does **not** clear the stated bar; measured coverage is **78.3%**.
+
+#### Required Remediations
+- **Blocker** — `workflow/eval_functions_fileset_test.go:456-567`: Replace or strengthen `TestFileset_PairsWithForEach_E2E` so it executes through a runtime harness and asserts the actual per-iteration `prompt` values are the expected file contents from `file(each.value)`. The current test would still pass if `each.value` binding or per-iteration `file()` evaluation were broken at runtime. **Acceptance:** the test captures adapter-visible inputs (or equivalent runtime-observable behavior) and fails for at least one plausible broken implementation of iteration binding/content loading.
+- **Blocker** — `workflow/eval_functions.go:406-442` and `workflow/eval_functions_fileset_test.go`: Add targeted tests that raise `resolveConfinedDir` coverage to the documented **>= 90%** threshold. Current measured coverage is **78.3%** from both the fileset-focused and full `./workflow` coverage runs. **Acceptance:** add coverage for the remaining `resolveConfinedDir` branches and record function coverage at or above 90%.
+
+#### Test Intent Assessment
+The directory-enumeration tests are strong on matching semantics, ordering, confinement basics, symlink exclusion, and concurrency smoke coverage. The weak point is the one test that was supposed to be the load-bearing integration check: it currently proves compile-time list evaluation and AST wiring, not runtime behavior. As written, a regression in runtime `each.value` propagation or `file(each.value)` input resolution could ship while this suite stays green.
+
+#### Validation Performed
+- `go test -run TestFileset_PairsWithForEach_E2E ./workflow -count=1` — pass
+- `go test -race -count=2 ./workflow/...` — pass
+- `go test -race -count=20 ./workflow/ -run Fileset` — pass
+- `make validate` — pass
+- `make spec-check` — pass
+- `make ci` — pass
+- `go test -coverprofile=<tmp> ./workflow && go tool cover -func <tmp>` — `filesetFunction` **95.0%**, `resolveConfinedDir` **78.3%**
+
+### Remediation 2026-05-11
+
+#### Blocker 1 — E2E test strengthened
+
+`TestFileset_PairsWithForEach_E2E` replaced with a test that evaluates
+`file(each.value)` per iteration using `WithEachBinding` + `ResolveInputExprsWithOpts`.
+For each path from `fileset("prompts", "*.md")`, the test:
+1. Binds `each.value = path` via `WithEachBinding`
+2. Calls `ResolveInputExprsWithOpts(node.InputExprs, vars, fnOpts)` to evaluate `file(each.value)`
+3. Asserts the resolved `prompt` value equals the actual file content
+
+A regression in `each.value` binding, `file()` loading, or sort order will now cause the test to fail.
+
+#### Blocker 2 — `resolveConfinedDir` coverage: 78.3% → 95.7%
+
+Added three targeted tests covering the previously-missed branches:
+- `TestResolveConfinedDir_SymlinkEscapesAfterResolution` — symlink inside WorkflowDir pointing outside → post-EvalSymlinks confinement error (lines 431-433)
+- `TestResolveConfinedDir_PermissionDeniedInEvalSymlinks` — parent dir chmod 0o000 → `os.IsPermission` in EvalSymlinks (lines 421-423; skip on Windows)
+- `TestResolveConfinedDir_NonDirComponentInPath` — file as intermediate path component → ENOTDIR, generic EvalSymlinks error fallthrough (line 424)
+
+The only remaining uncovered branch is the `os.Stat` error path (lines 436-438), which requires a TOCTOU race between `EvalSymlinks` and `Stat` — not feasible to test deterministically. At 95.7%, the function is well above the 90% threshold.
+
+#### Validation
+- `go test -race -count=20 ./workflow/ -run "Fileset|ResolveConfinedDir"` — PASS
+- `make ci` — PASS (all packages green, lint within baseline, spec-check OK)
+
+### Review 2026-05-11-02 — approved
+
+#### Summary
+The previously-blocking test gaps are resolved. The E2E assertion now proves the runtime input-resolution path for `file(each.value)` across the `fileset()`-produced iteration set, and `resolveConfinedDir` coverage is now above the documented threshold. The implementation, docs, examples, generated spec output, and repository validation all meet the acceptance bar.
+
+#### Plan Adherence
+- **Step 1 / Step 2:** Still aligned with plan; implementation and registration remain correct.
+- **Step 3:** Now satisfies the intent of the load-bearing integration check. `TestFileset_PairsWithForEach_E2E` binds `each.value` and resolves `node.InputExprs` through `ResolveInputExprsWithOpts`, which is the same runtime helper path used by `internal/engine/node_step.go` before adapter dispatch.
+- **Coverage target:** Verified at **95.0%** for `filesetFunction` and **95.7%** for `resolveConfinedDir`, clearing the stated `>= 90%` thresholds.
+- **Step 4 / Step 5 / Step 6:** Example, docs, generated spec output, and full CI validation remain green.
+
+#### Test Intent Assessment
+The revised E2E test is now regression-sensitive in the right place: it will fail if `fileset()` emits the wrong ordered paths, if `each.value` is bound incorrectly, or if `file(each.value)` does not resolve the actual file content per iteration. The added `resolveConfinedDir` branch tests also strengthen the security boundary around post-symlink confinement and error-path handling.
+
+#### Validation Performed
+- `go test -race -count=20 ./workflow/ -run 'Fileset|ResolveConfinedDir'` — pass
+- `go test -coverprofile=<tmp> ./workflow && go tool cover -func <tmp>` — `filesetFunction` **95.0%**, `resolveConfinedDir` **95.7%**
+- `make ci` — pass
+
+### Post-approval remediations 2026-05-11-03
+
+#### Thread 1 — spec-gen `extractCtyType` missing parameterised-type support (required)
+
+**Root cause:** `tools/spec-gen/extract.go:extractCtyType` only handled `*ast.SelectorExpr`
+(e.g. `cty.String`). The `*ast.CallExpr` form used by `cty.List(cty.String)`, `cty.Set(X)`,
+and `cty.Map(X)` fell through to `"unknown"`, causing `fileset`'s return type to render
+as `unknown` in the spec table.
+
+**Fix:** Extended `extractCtyType` to match `*ast.CallExpr` where `Fun` is `cty.<List|Set|Map>`
+and recursively renders the inner type, e.g. `list(string)`, `set(bool)`. Added
+`TestExtractCtyType_ParameterizedTypes` (8 cases) in `tools/spec-gen/main_test.go`. Updated
+`testdata/functions_sample.go` to include `listFunction() → cty.List(cty.String)` as an
+integration fixture; updated `testdata/functions.golden.md` and
+`TestExtractFunctions_FromTestdata` to match. Regenerated `docs/LANGUAGE-SPEC.md` via
+`make spec-gen`; `make spec-check` clean.
+
+Files changed: `tools/spec-gen/extract.go`, `tools/spec-gen/main_test.go`,
+`tools/spec-gen/testdata/functions_sample.go`, `tools/spec-gen/testdata/functions.golden.md`,
+`docs/LANGUAGE-SPEC.md`.
+
+#### Thread 2 — trailing blank lines in `docs/llm/08-fileset-template.md` (nit)
+
+Trimmed two trailing blank lines to a single newline at EOF, matching the rest of the
+`docs/llm/0?-*.md` convention.
+
+File changed: `docs/llm/08-fileset-template.md`.

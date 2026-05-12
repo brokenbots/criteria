@@ -1,11 +1,12 @@
-# Pattern: File-driven prompts
+# Pattern: File-driven prompts with `fileset()`
 
 ## When to use
 
-Use when step inputs are stored as files (e.g., Markdown prompt templates)
-and loaded at runtime. The `file()` function reads a file relative to the
-workflow directory. Combined with `for_each`, it drives one step execution
-per file.
+Use when step inputs are stored as files (Markdown prompts, config snippets)
+and you want the workflow to enumerate them automatically. `fileset(path, pattern)`
+lists regular files matching a glob and returns sorted relative paths ready to
+pass to `file()` or `templatefile()` via `each.value`. Add or remove files in
+the directory and the workflow adapts without editing HCL.
 
 ## Minimal example
 
@@ -22,7 +23,7 @@ adapter "shell" "default" {
 
 step "process" {
   target   = adapter.shell.default
-  for_each = ["./prompts/alpha.md", "./prompts/beta.md"]
+  for_each = fileset("prompts", "*.md")
 
   input {
     command = file(each.value)
@@ -45,14 +46,18 @@ state "failed" {
 
 ## Key idioms
 
-- **`file(path)`** — reads the file at `path` relative to the workflow directory; the path must stay within the workflow directory or `CRITERIA_WORKFLOW_ALLOWED_PATHS`.
-- **`for_each = [...]` with `file(each.value)`** — drives one adapter call per file path; extend the list to process more files.
-- **`fileexists(path)`** — returns a bool; use it to guard optional file reads without causing a compile or runtime error.
+- **`fileset(path, pattern)`** — lists regular files in `path` matching `pattern` (Go `filepath.Match`); returns a sorted `list(string)` of paths relative to the workflow directory.
+- **`for_each = fileset(...)`** — one adapter call per matched file; `each.value` is the relative path.
+- **`file(each.value)`** — reads the file for the current iteration; no path adjustment needed.
+- **`trimfrontmatter(file(each.value))`** — compose with `trimfrontmatter` to strip YAML front matter from Markdown prompts.
 
 ## Common pitfalls
 
-- **`feat-02` will replace this hand-written enumeration with `fileset()`** — see [feat-02-fileset-function.md](../../workstreams/feat-02-fileset-function.md). When `feat-02` lands, use `for_each = fileset("./prompts", "*.md")` instead of a hard-coded list.
-- **Path confinement** — paths that escape the workflow directory (e.g., `../../etc/passwd`) are rejected at runtime with a security error; never construct paths from untrusted input.
+- **No recursive globbing** — `**` is not supported; `fileset` only lists files directly inside `path`.
+- **Symlinks excluded** — only regular files are returned (`entry.Type().IsRegular()`).
+- **Missing directory is an error** — unlike Terraform, Criteria errors when `path` does not exist.
+- **Lexicographic sort** — `a1, a10, a2` not `a1, a2, a10`. Post-process if natural sort is needed.
+- **Path confinement** — paths escaping the workflow directory are rejected with a security error.
 
 ## See also
 
