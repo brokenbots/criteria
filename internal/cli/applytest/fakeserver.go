@@ -1,6 +1,6 @@
 // Package applytest provides a fake Connect server harness for testing
 // server-mode apply functions in package cli. It stands up an in-memory
-// Connect server over an httptest.Server (h2c) and exposes hooks that drive
+// Connect server over an httptest.Server (HTTP/2 cleartext) and exposes hooks that drive
 // run lifecycle scenarios without requiring a real orchestrator.
 package applytest
 
@@ -26,8 +26,6 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
-	"golang.org/x/net/http2"
-	"golang.org/x/net/http2/h2c"
 
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 	"github.com/brokenbots/criteria/sdk/pb/criteria/v1/criteriav1connect"
@@ -129,7 +127,11 @@ func New(t testing.TB) *Fake {
 	path, h := criteriav1connect.NewCriteriaServiceHandler(f.handler)
 	mux.Handle(path, h)
 
-	srv := httptest.NewUnstartedServer(h2c.NewHandler(mux, &http2.Server{}))
+	srv := httptest.NewUnstartedServer(mux)
+	var protocols http.Protocols
+	protocols.SetHTTP1(true)
+	protocols.SetUnencryptedHTTP2(true)
+	srv.Config.Protocols = &protocols
 
 	// Intercept the ConnState hook before srv.Start() so httptest.Server.wrap()
 	// captures this as oldHook and calls it after its own tracking logic. We

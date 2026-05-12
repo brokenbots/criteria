@@ -20,7 +20,6 @@ import (
 
 	"connectrpc.com/connect"
 	"golang.org/x/net/http2"
-	"golang.org/x/net/http2/h2c"
 
 	criteria "github.com/brokenbots/criteria/sdk"
 	"github.com/brokenbots/criteria/sdk/conformance"
@@ -62,7 +61,11 @@ func (s *inMemSubject) SetUp(t *testing.T) (baseURL string, client *http.Client,
 	cPath, cHandler := criteriav1connect.NewServerServiceHandler(h)
 	mux.Handle(cPath, cHandler)
 
-	srv := httptest.NewUnstartedServer(h2c.NewHandler(mux, &http2.Server{}))
+	srv := httptest.NewUnstartedServer(mux)
+	var protocols http.Protocols
+	protocols.SetHTTP1(true)
+	protocols.SetUnencryptedHTTP2(true)
+	srv.Config.Protocols = &protocols
 	srv.Start()
 	httpClient := &http.Client{
 		Transport: &http2.Transport{
