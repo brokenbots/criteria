@@ -639,3 +639,30 @@ All four blockers addressed:
 4. **docs/workflow.md syntax fixed** — `steps.fetch.output.body` → `steps.fetch.body`; `steps.<name>.output.<key>` → `steps.<name>.<key>`. Both examples now match the `steps.<name>.<output>` traversal documented in the language reference.
 
 `docs/LANGUAGE-SPEC.md` regenerated (`make spec-gen`) after line numbers shifted from the simplification. `make ci` passes with zero FAIL lines.
+
+### Review 2026-05-11-02 — approved
+
+#### Summary
+
+Approved. The remediation pass closes the prior blockers: the extra `nolint:gosec` directives are gone, the new encoding-function coverage now meets the Step 6 floor, the decode/round-trip assertions are strong enough to prove value semantics, and the new workflow docs now use the correct `steps.<name>.<output>` traversal shape.
+
+#### Plan Adherence
+
+- **Steps 1-5, 7, and 9:** Still implemented as previously reviewed.
+- **Step 6 / Exit criteria:** Met. Reviewer coverage shows every new function at **≥ 90%**, with registration glue at **100%**.
+- **Step 8 / docs:** Met. `docs/workflow.md` now uses `steps.fetch.body` and `steps.<name>.<key>`, matching the existing output-access model.
+- **Security / lint constraint:** Met. There are no new source-level `nolint:gosec` directives, and `.golangci.yml` / `.golangci.baseline.yml` remain unchanged.
+
+#### Test Intent Assessment
+
+The revised encoding tests now assert decoded numeric values and both fields in the JSON/YAML round-trip objects, so plausible regressions in the encoder/decoder implementations would fail the suite. The dynamic-function tests remain sufficient to prove format and non-deterministic behavior, and the hash/base64/url tests continue to cover the intended contract surface well.
+
+#### Validation Performed
+
+- `go test -race -count=2 ./workflow/...` — pass
+- `go test -race -count=20 ./workflow/ -run 'Hash|Encode|Decode|Url|UUID|Timestamp|Yaml'` — pass
+- `cd workflow && go test -coverprofile=cover-review.out ./... && go tool cover -func=cover-review.out | grep 'eval_functions_'` — pass; `jsonEncodeFunction` **100.0%**, `jsonDecodeFunction` **90.0%**, `yamlEncodeFunction` **100.0%**, `yamlDecodeFunction` **100.0%**, registration helpers **100.0%**
+- `make validate` — pass
+- `make spec-check` — pass
+- `make ci` — pass
+- Reviewer binary-size check against `origin/main` (`go build -buildvcs=false`) — pass, delta **514275 bytes**, within the ≤ 1 MiB budget
