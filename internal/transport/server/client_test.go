@@ -24,7 +24,6 @@ import (
 	"connectrpc.com/connect"
 	"go.uber.org/goleak"
 	"golang.org/x/net/http2"
-	"golang.org/x/net/http2/h2c"
 
 	"github.com/brokenbots/criteria/events"
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
@@ -274,7 +273,11 @@ func startFakeServer(t *testing.T, f *fakeServer) string {
 	mux := http.NewServeMux()
 	path, handler := criteriav1connect.NewCriteriaServiceHandler(f)
 	mux.Handle(path, handler)
-	srv := httptest.NewUnstartedServer(h2c.NewHandler(mux, &http2.Server{}))
+	srv := httptest.NewUnstartedServer(mux)
+	var protocols http.Protocols
+	protocols.SetHTTP1(true)
+	protocols.SetUnencryptedHTTP2(true)
+	srv.Config.Protocols = &protocols
 
 	// Track hijacked h2c connections so cleanup can close them explicitly.
 	// httptest.Server.Close() cannot reach hijacked connections (they are
