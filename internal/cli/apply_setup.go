@@ -91,7 +91,7 @@ func compileForExecution(ctx context.Context, workflowPath string, log *slog.Log
 	workflowDir := workflowDirFromPath(workflowPath)
 
 	resolver := &workflow.LocalSubWorkflowResolver{AllowedRoots: subworkflowRoots}
-	graph, diags := workflow.CompileWithOpts(spec, schemas, workflow.CompileOpts{
+	graph, diags := workflow.CompileWithContext(ctx, spec, schemas, workflow.CompileOpts{
 		WorkflowDir:         workflowDir,
 		SubWorkflowResolver: resolver,
 		Schemas:             schemas,

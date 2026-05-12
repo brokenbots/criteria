@@ -54,7 +54,7 @@ func runValidate(paths, subworkflowRoots []string) bool {
 		schemas := collectSchemas(ctx, loader, spec, nil)
 		_ = loader.Shutdown(ctx)
 
-		_, diags = workflow.CompileWithOpts(spec, schemas, workflow.CompileOpts{
+		_, diags = workflow.CompileWithContext(ctx, spec, schemas, workflow.CompileOpts{
 			WorkflowDir:         workflowDir,
 			SubWorkflowResolver: &workflow.LocalSubWorkflowResolver{AllowedRoots: subworkflowRoots},
 			Schemas:             schemas,

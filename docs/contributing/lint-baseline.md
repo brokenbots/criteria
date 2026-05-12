@@ -225,3 +225,42 @@ One `hugeParam` entry remains for `applyOptions` in `internal/cli/apply.go`
 all 6 to pointer is a broad refactor owned by W02-split-cli-apply. The entry carries a
 `# kept:` annotation in `.golangci.baseline.yml`.
 
+## Phase 4 td-01 snapshot (lint baseline ratchet 24 → 16) — 2026-05-12
+
+- Starting count: **24**
+- Final count: **16**
+- Cap: 24 → **16**
+
+### Removed entries
+
+| Linter | Function | File | Reason |
+|--------|----------|------|--------|
+| `contextcheck` | CLI caller | `internal/cli/apply_setup.go` | Added `CompileWithContext(ctx, ...)` exported function; CLI callers now thread request context directly |
+| `contextcheck` | CLI caller | `internal/cli/compile.go` | Same: CLI caller updated to `CompileWithContext` |
+| `contextcheck` | CLI caller | `internal/cli/reattach.go` | Same: CLI caller updated to `CompileWithContext` |
+| — (adjacent consistency) | CLI caller | `internal/cli/validate.go` | Updated to `CompileWithContext` for consistency with sibling CLI entrypoints; not a baseline-entry removal. |
+| `gocognit` | `checkReachability` | `workflow/compile.go` | Extracted BFS + diagnostics into `compile_reachability.go`; function is now a 4-line delegator |
+| `gocyclo` | `checkReachability` | `workflow/compile.go` | Same extraction |
+| `funlen` | `checkReachability` | `workflow/compile.go` | Same extraction |
+| `gocognit` | `compileSubworkflows` | `workflow/compile_subworkflows.go` | Extracted `compileSingleSubworkflow`, `buildChildOpts`, `detectSubworkflowCycle`, `missingResolverDiags`; function is now a 16-line orchestrator |
+| `funlen` | `compileSubworkflows` | `workflow/compile_subworkflows.go` | Same extraction |
+
+### Kept entries (16 remaining)
+
+1. `workflow/compile_nodes.go` `gocognit` `compileWaits` — deferred to W04 (extract compile-node helpers)
+2. `workflow/compile_nodes.go` `gocognit` `compileForEachs` — deferred to W04
+3. `workflow/compile_nodes.go` `funlen` `compileForEachs` — deferred to W04
+4. `workflow/compile_nodes.go` `gocyclo` `compileForEachs` — deferred to W04
+5. `workflow/compile.go` `gocognit` `resolveTransitions` — deferred to W04
+6. `workflow/compile.go` `funlen` `resolveTransitions` — deferred to W04
+7. `workflow/compile.go` `gocyclo` `resolveTransitions` — deferred to W04
+8. `workflow/eval.go` `gocognit` `SerializeVarScope` — deferred to W10 (cursor-stack serialisation complexity)
+9. `workflow/eval.go` `gocyclo` `SerializeVarScope` — deferred to W10
+10. `workflow/eval.go` `funlen` `SerializeVarScope` — deferred to W10
+11. `internal/cli/apply.go` `gocritic` hugeParam `applyOptions` (232 bytes) — deferred to W02 (split-cli-apply); converting 6 threading sites to pointer is out of td-01 scope
+12. `workflow/compile_steps_graph.go` `gocognit` `nodeTargets` — deferred to W16 (switch case added complexity)
+13. `workflow/compile_switches.go` `funlen` `compileSwitchConditionBlock` — deferred to W16
+14. `sdk/conformance/lifecycle.go` `gocognit` `testAdapterSessionEventsRoundTrip` — deferred to W12 (conformance test, exhaustive event validation)
+15. `sdk/conformance/lifecycle.go` `funlen` `testAdapterSessionEventsOrdered` — deferred to W12
+16. `sdk/conformance/lifecycle.go` `funlen` `testAdapterSessionEventsRoundTrip` — deferred to W12
+
