@@ -13,7 +13,6 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/hashicorp/hcl/v2"
 	"github.com/zclconf/go-cty/cty"
 )
 
@@ -454,9 +453,17 @@ func TestFileset_ConcurrentCalls_NoRace(t *testing.T) {
 }
 
 // Test 20: E2E — compile a workflow that uses for_each = fileset(...) and
-// file(each.value) in the input block. This is the load-bearing integration
-// check verifying that fileset() is correctly registered and evaluated during
-// the compile-time fold pass.
+// file(each.value) in the input block. This test exercises the full evaluation
+// stack: fileset() list production, WithEachBinding wiring each.value to each
+// path, and file(each.value) loading actual file content per iteration.
+//
+// A regression in any of:
+//   - fileset() sorted list production
+//   - each.value binding via WithEachBinding
+//   - file(each.value) content resolution
+//
+// causes this test to fail. It would NOT pass if the engine delivered wrong
+// paths, silently skipped file loading, or bound the wrong value per iteration.
 func TestFileset_PairsWithForEach_E2E(t *testing.T) {
 	dir := t.TempDir()
 	mkdir(t, dir, "prompts")
@@ -492,12 +499,12 @@ state "failed" {
   success  = false
 }
 `
-	path := filepath.Join(dir, "main.hcl")
-	if err := os.WriteFile(path, []byte(hclContent), 0o644); err != nil {
+	hclPath := filepath.Join(dir, "main.hcl")
+	if err := os.WriteFile(hclPath, []byte(hclContent), 0o644); err != nil {
 		t.Fatalf("write main.hcl: %v", err)
 	}
 
-	spec, diags := Parse(path, []byte(hclContent))
+	spec, diags := Parse(hclPath, []byte(hclContent))
 	if diags.HasErrors() {
 		t.Fatalf("parse: %s", diags.Error())
 	}
@@ -515,53 +522,141 @@ state "failed" {
 		t.Fatal("step 'process': ForEach expression must not be nil")
 	}
 
-	// Evaluate the for_each expression to confirm fileset() produced the
-	// expected paths.
-	opts := DefaultFunctionOptions(dir)
-	ctx := BuildEvalContextWithOpts(nil, opts)
-	val, diags := node.ForEach.Value(ctx)
+	// Evaluate for_each to get the fileset() paths.
+	fnOpts := DefaultFunctionOptions(dir)
+	evalCtx := BuildEvalContextWithOpts(nil, fnOpts)
+	listVal, diags := node.ForEach.Value(evalCtx)
 	if diags.HasErrors() {
 		t.Fatalf("evaluate ForEach: %s", diags.Error())
 	}
-	if !val.Type().IsListType() {
-		t.Fatalf("ForEach value type = %s; want list", val.Type().FriendlyName())
+	if !listVal.Type().IsListType() {
+		t.Fatalf("ForEach value type = %s; want list", listVal.Type().FriendlyName())
 	}
 
-	var paths []string
-	it := val.ElementIterator()
+	var iterPaths []string
+	it := listVal.ElementIterator()
 	for it.Next() {
 		_, v := it.Element()
-		paths = append(paths, v.AsString())
+		iterPaths = append(iterPaths, v.AsString())
 	}
-	want := []string{"prompts/alpha.md", "prompts/beta.md"}
-	if len(paths) != len(want) {
-		t.Fatalf("ForEach paths = %v; want %v", paths, want)
+	wantPaths := []string{"prompts/alpha.md", "prompts/beta.md"}
+	if len(iterPaths) != len(wantPaths) {
+		t.Fatalf("ForEach paths = %v; want %v", iterPaths, wantPaths)
 	}
-	for i := range want {
-		if paths[i] != want[i] {
-			t.Errorf("[%d] path = %q; want %q", i, paths[i], want[i])
+	for i := range wantPaths {
+		if iterPaths[i] != wantPaths[i] {
+			t.Errorf("[%d] path = %q; want %q", i, iterPaths[i], wantPaths[i])
 		}
 	}
 
-	// Verify the input expressions reference each.value (runtime binding) so
-	// fileset() paths drive the per-iteration file() calls.
-	inputExpr, hasPrompt := node.InputExprs["prompt"]
-	if !hasPrompt {
-		t.Fatal("step 'process': input expr 'prompt' not found")
+	// For each path, bind each.value and evaluate file(each.value).
+	// This proves that per-iteration input resolution delivers actual file
+	// contents — the same evaluation the engine performs before dispatching
+	// to the adapter.
+	wantContents := map[string]string{
+		"prompts/alpha.md": "# alpha prompt",
+		"prompts/beta.md":  "# beta prompt",
 	}
-	// Confirm the expression references "each" — this is a runtime binding
-	// that the engine resolves per iteration with each matched path.
-	vars := inputExpr.Variables()
-	foundEach := false
-	for _, v := range vars {
-		if len(v) > 0 {
-			if root, ok := v[0].(hcl.TraverseRoot); ok && root.Name == "each" {
-				foundEach = true
-				break
-			}
+	total := len(iterPaths)
+	for i, iterPath := range iterPaths {
+		binding := &EachBinding{
+			Value: cty.StringVal(iterPath),
+			Index: i,
+			Total: total,
+			First: i == 0,
+			Last:  i == total-1,
+		}
+		vars := WithEachBinding(nil, binding)
+		resolved, err := ResolveInputExprsWithOpts(node.InputExprs, vars, fnOpts)
+		if err != nil {
+			t.Fatalf("iter %d (%s): ResolveInputExprs: %v", i, iterPath, err)
+		}
+		got, hasPrompt := resolved["prompt"]
+		if !hasPrompt {
+			t.Fatalf("iter %d (%s): input 'prompt' missing from resolved map", i, iterPath)
+		}
+		if want := wantContents[iterPath]; got != want {
+			t.Errorf("iter %d (%s): prompt = %q; want %q", i, iterPath, got, want)
 		}
 	}
-	if !foundEach {
-		t.Error("input 'prompt' expression should reference 'each' (runtime binding)")
+}
+
+// Tests for resolveConfinedDir branches not covered by the fileset surface tests.
+
+// TestResolveConfinedDir_SymlinkEscapesAfterResolution verifies the
+// post-EvalSymlinks confinement check: a symlink inside WorkflowDir that
+// resolves to a path outside WorkflowDir (and not in AllowedPaths) must be
+// rejected.
+func TestResolveConfinedDir_SymlinkEscapesAfterResolution(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation requires elevated privileges on Windows")
+	}
+	parent := t.TempDir()
+	wfDir := filepath.Join(parent, "wf")
+	outsideDir := filepath.Join(parent, "outside")
+	if err := os.MkdirAll(wfDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(outsideDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Symlink inside WorkflowDir that points to outside — passes pre-check but
+	// must fail the post-EvalSymlinks confinement check.
+	if err := os.Symlink(outsideDir, filepath.Join(wfDir, "escaped")); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := resolveConfinedDir("escaped", wfDir, nil)
+	if err == nil {
+		t.Fatal("expected confinement error for symlink escaping WorkflowDir; got none")
+	}
+	if !strings.Contains(err.Error(), "escapes") {
+		t.Errorf("error %q should mention 'escapes'", err.Error())
+	}
+}
+
+// TestResolveConfinedDir_PermissionDeniedInEvalSymlinks verifies the
+// os.IsPermission branch in EvalSymlinks error handling: a directory whose
+// parent has mode 0o000 cannot be traversed, so EvalSymlinks returns a
+// permission error.
+func TestResolveConfinedDir_PermissionDeniedInEvalSymlinks(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("permission model differs on Windows")
+	}
+	dir := t.TempDir()
+	restricted := filepath.Join(dir, "restricted")
+	inner := filepath.Join(restricted, "inner")
+	if err := os.MkdirAll(inner, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(restricted, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(restricted, 0o755) })
+
+	_, err := resolveConfinedDir("restricted/inner", dir, nil)
+	if err == nil {
+		t.Fatal("expected permission error from EvalSymlinks; got none")
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "permission") {
+		t.Errorf("error %q should mention 'permission'", err.Error())
+	}
+}
+
+// TestResolveConfinedDir_NonDirComponentInPath verifies the generic EvalSymlinks
+// error branch: when an intermediate path component is a regular file (not a
+// directory), EvalSymlinks returns ENOTDIR — neither IsNotExist nor IsPermission —
+// which falls to the generic error return.
+func TestResolveConfinedDir_NonDirComponentInPath(t *testing.T) {
+	dir := t.TempDir()
+	// "blob" is a regular file, so "blob/subdir" has a non-directory component.
+	writeFile(t, dir, "blob", "data")
+
+	_, err := resolveConfinedDir("blob/subdir", dir, nil)
+	if err == nil {
+		t.Fatal("expected error for non-dir component in path; got none")
+	}
+	if !strings.Contains(err.Error(), "fileset()") {
+		t.Errorf("error %q should mention 'fileset()'", err.Error())
 	}
 }
