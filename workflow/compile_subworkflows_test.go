@@ -732,6 +732,15 @@ func (r *recordingResolver) ResolveSource(ctx context.Context, callerDir, source
 	return r.inner.ResolveSource(ctx, callerDir, source)
 }
 
+// cancellationHonouringResolver implements SubWorkflowResolver and returns
+// ctx.Err() immediately when the context is already cancelled. This lets
+// tests assert that a cancelled context causes compilation to fail.
+type cancellationHonouringResolver struct{}
+
+func (cancellationHonouringResolver) ResolveSource(ctx context.Context, _, _ string) (string, error) {
+	return "", ctx.Err()
+}
+
 // TestCompileWithContext_ContextPropagation verifies that the context passed to
 // CompileWithContext is forwarded to SubWorkflowResolver.ResolveSource.
 func TestCompileWithContext_ContextPropagation(t *testing.T) {
@@ -773,9 +782,6 @@ func TestCompileWithContext_ContextPropagation(t *testing.T) {
 func TestCompileWithContext_CancellationPropagates(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	calleeHCL := minimalCalleeHCL("inner", nil)
-	writeSubworkflowDir(t, tmpDir, "inner", calleeHCL)
-
 	parentHCL := parentHCLWithSubworkflow("inner_task", "./inner", "")
 	spec, diags := Parse("parent.hcl", []byte(parentHCL))
 	if diags.HasErrors() {
@@ -785,21 +791,11 @@ func TestCompileWithContext_CancellationPropagates(t *testing.T) {
 	cancelCtx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel before compile starts
 
-	// A resolver that honours context cancellation.
-	rec := &recordingResolver{inner: &LocalSubWorkflowResolver{}}
-	_, _ = CompileWithContext(cancelCtx, spec, nil, CompileOpts{
+	_, diags = CompileWithContext(cancelCtx, spec, nil, CompileOpts{
 		WorkflowDir:         tmpDir,
-		SubWorkflowResolver: rec,
+		SubWorkflowResolver: cancellationHonouringResolver{},
 	})
-	// The LocalSubWorkflowResolver is synchronous and doesn't check ctx itself,
-	// so compilation may still succeed; the important invariant is that the
-	// cancelled ctx reached ResolveSource.
-	if len(rec.receivedCtxs) == 0 {
-		t.Fatal("ResolveSource was never called")
-	}
-	for i, ctx := range rec.receivedCtxs {
-		if ctx.Err() == nil {
-			t.Errorf("call %d: expected cancelled context, got non-cancelled context", i)
-		}
+	if !diags.HasErrors() {
+		t.Fatal("expected compile error due to cancelled context, got none")
 	}
 }

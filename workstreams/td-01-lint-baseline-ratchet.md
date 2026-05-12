@@ -322,6 +322,8 @@ Extracted from `compile_subworkflows.go`:
 - `buildChildOpts(opts, resolvedDir)` — builds child CompileOpts for recursive call
 - `detectSubworkflowCycle(resolvedDir, chain)` — returns `*hcl.Diagnostic` or nil
 
+Spec-named helpers `validateSubworkflowSourcePaths`/`parseSubworkflowSourceFile` were not extracted because path validation and `ParseDir` parsing are coupled through the `ParseDir` call; a clean three-way split as specified would have been artificial. The equivalent decomposition is `compileSingleSubworkflow` + `buildChildOpts` + `detectSubworkflowCycle` + `missingResolverDiags`.
+
 `compileSubworkflows` became a 16-line orchestrator. Also removed intermediate `declaredVars` copy
 (was `make(map[string]*VariableNode)` + loop) — now passes `calleeGraph.Variables` directly.
 Fixed `appendAssign` gocritic warning in `buildChildOpts`.

@@ -238,6 +238,7 @@ all 6 to pointer is a broad refactor owned by W02-split-cli-apply. The entry car
 | `contextcheck` | CLI caller | `internal/cli/apply_setup.go` | Added `CompileWithContext(ctx, ...)` exported function; CLI callers now thread request context directly |
 | `contextcheck` | CLI caller | `internal/cli/compile.go` | Same: CLI caller updated to `CompileWithContext` |
 | `contextcheck` | CLI caller | `internal/cli/reattach.go` | Same: CLI caller updated to `CompileWithContext` |
+| — (adjacent consistency) | CLI caller | `internal/cli/validate.go` | Updated to `CompileWithContext` for consistency with sibling CLI entrypoints; not a baseline-entry removal. |
 | `gocognit` | `checkReachability` | `workflow/compile.go` | Extracted BFS + diagnostics into `compile_reachability.go`; function is now a 4-line delegator |
 | `gocyclo` | `checkReachability` | `workflow/compile.go` | Same extraction |
 | `funlen` | `checkReachability` | `workflow/compile.go` | Same extraction |
@@ -246,10 +247,10 @@ all 6 to pointer is a broad refactor owned by W02-split-cli-apply. The entry car
 
 ### Kept entries (16 remaining)
 
-1. `compile_nodes.go` `gocognit` `compileWaits` — deferred to W04 (extract compile-node helpers)
-2. `compile_nodes.go` `gocognit` `compileForEachs` — deferred to W04
-3. `compile_nodes.go` `funlen` `compileForEachs` — deferred to W04
-4. `compile_nodes.go` `gocyclo` `compileForEachs` — deferred to W04
+1. `workflow/compile_nodes.go` `gocognit` `compileWaits` — deferred to W04 (extract compile-node helpers)
+2. `workflow/compile_nodes.go` `gocognit` `compileForEachs` — deferred to W04
+3. `workflow/compile_nodes.go` `funlen` `compileForEachs` — deferred to W04
+4. `workflow/compile_nodes.go` `gocyclo` `compileForEachs` — deferred to W04
 5. `workflow/compile.go` `gocognit` `resolveTransitions` — deferred to W04
 6. `workflow/compile.go` `funlen` `resolveTransitions` — deferred to W04
 7. `workflow/compile.go` `gocyclo` `resolveTransitions` — deferred to W04
