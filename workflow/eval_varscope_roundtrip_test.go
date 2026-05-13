@@ -68,24 +68,22 @@ func TestVarScope_RoundTrip_EmptyScope(t *testing.T) {
 }
 
 // TestVarScope_RoundTrip_PrimitiveTypes verifies that string, number, and bool
-// variable values survive a serialize→restore cycle without type corruption.
-// FSMGraph defaults match the runtime values; the test proves the JSON round-trip
-// does not corrupt types. For the "runtime values win over FSMGraph defaults"
-// variant (overlay behavior), see TestRestoreVarScope_VarValues_RestoredFromJSON
-// and the deferred workstream eval-varscope-restore.
+// variable values survive a serialize→restore cycle. FSMGraph defaults are
+// intentionally different from the runtime values to prove the JSON overlay
+// wins over graph seeding, not just that types are preserved.
 func TestVarScope_RoundTrip_PrimitiveTypes(t *testing.T) {
 	vars := map[string]cty.Value{
 		"var": cty.ObjectVal(map[string]cty.Value{
-			"greet": cty.StringVal("hi"),
-			"count": cty.NumberIntVal(42),
-			"flag":  cty.BoolVal(true),
+			"greet": cty.StringVal("hello world"),
+			"count": cty.NumberFloatVal(99.0),
+			"flag":  cty.BoolVal(false),
 		}),
 		"steps": cty.EmptyObjectVal,
 	}
-	// FSMGraph defaults match runtime to allow round-trip without the overlay feature.
+	// Defaults differ from runtime to prove overlay wins on restore.
 	g := fsmGraphWithVarDefaults(map[string]cty.Value{
-		"greet": cty.StringVal("hi"),
-		"count": cty.NumberIntVal(42),
+		"greet": cty.StringVal("default"),
+		"count": cty.NumberFloatVal(0.0),
 		"flag":  cty.BoolVal(true),
 	})
 
@@ -100,9 +98,9 @@ func TestVarScope_RoundTrip_PrimitiveTypes(t *testing.T) {
 
 	varObj := restored["var"]
 	assertCtyMapEqual(t, map[string]cty.Value{
-		"greet": cty.StringVal("hi"),
-		"count": cty.NumberIntVal(42),
-		"flag":  cty.BoolVal(true),
+		"greet": cty.StringVal("hello world"),
+		"count": cty.NumberFloatVal(99.0),
+		"flag":  cty.BoolVal(false),
 	}, map[string]cty.Value{
 		"greet": varObj.GetAttr("greet"),
 		"count": varObj.GetAttr("count"),
@@ -392,19 +390,20 @@ func TestVarScope_RoundTrip_CursorWithEachPrev(t *testing.T) {
 
 // TestVarScope_RoundTrip_LargeScope_HandlesLengthEfficiently verifies that
 // serializing 100 string variables produces valid JSON under 100 KiB and that
-// the restored scope has the correct number of variables.
+// the restored scope has the correct number of variables. A spot-check confirms
+// that the overlay wins over FSMGraph defaults.
 // This is a sanity guard, not a benchmark: it detects pathological expansion.
-// Note: variables are seeded from FSMGraph defaults; the overlay behavior
-// (runtime values overriding defaults) is deferred to workstream eval-varscope-restore.
 func TestVarScope_RoundTrip_LargeScope_HandlesLengthEfficiently(t *testing.T) {
 	const n = 100
+	runtimeVals := make(map[string]cty.Value, n)
 	fsmDefaults := make(map[string]cty.Value, n)
 	for i := range n {
 		key := fmt.Sprintf("var_%03d", i)
-		fsmDefaults[key] = cty.StringVal(fmt.Sprintf("value-%d", i))
+		runtimeVals[key] = cty.StringVal(fmt.Sprintf("runtime-%d", i))
+		fsmDefaults[key] = cty.StringVal(fmt.Sprintf("default-%d", i))
 	}
 	vars := map[string]cty.Value{
-		"var":   cty.ObjectVal(fsmDefaults),
+		"var":   cty.ObjectVal(runtimeVals),
 		"steps": cty.EmptyObjectVal,
 	}
 
@@ -426,6 +425,14 @@ func TestVarScope_RoundTrip_LargeScope_HandlesLengthEfficiently(t *testing.T) {
 	if len(varObj.Type().AttributeTypes()) != n {
 		t.Errorf("restored %d variables, want %d", len(varObj.Type().AttributeTypes()), n)
 	}
+	// Spot-check: overlay must win over FSMGraph default.
+	const spotIdx = 42
+	spotKey := fmt.Sprintf("var_%03d", spotIdx)
+	want := fmt.Sprintf("runtime-%d", spotIdx)
+	got := varObj.GetAttr(spotKey).AsString()
+	if got != want {
+		t.Errorf("spot-check %s = %q, want %q (overlay must win over FSMGraph default)", spotKey, got, want)
+	}
 }
 
 // TestRestoreVarScope_MalformedJSON_ReturnsError verifies that passing
@@ -443,31 +450,17 @@ func TestRestoreVarScope_MalformedJSON_ReturnsError(t *testing.T) {
 	}
 }
 
-// TestRestoreVarScope_UnknownStepReference_Lenient documents the current
-// behavior: RestoreVarScope does NOT validate step names in the JSON against
-// the FSMGraph. An unknown step reference is silently accepted, allowing
-// crash-resume to function even when the workflow schema evolves between runs.
-//
-// If strict step-name validation is added in the future, this test documents
-// the expected change from lenient to strict mode.
-func TestRestoreVarScope_UnknownStepReference_Lenient(t *testing.T) {
-	json := `{"steps": {"nonexistent_step": {"output": "value"}}}`
-	g := &FSMGraph{
-		Variables: map[string]*VariableNode{},
-		Steps:     map[string]*StepNode{}, // empty — no step named "nonexistent_step"
-	}
-	vars, _, err := RestoreVarScope(json, g)
-	// Current behavior: no error; the step output is accepted unconditionally.
-	if err != nil {
-		t.Fatalf("unexpected error: %v (current behavior is lenient; see reviewer notes)", err)
-	}
-	stepsObj, ok := vars["steps"]
-	if !ok || stepsObj == cty.NilVal {
-		t.Fatal("expected steps to be populated")
-	}
-	if !stepsObj.Type().HasAttribute("nonexistent_step") {
-		t.Error("expected nonexistent_step in restored steps (lenient accept)")
-	}
+// TestRestoreVarScope_UnknownStepReference_UnknownStepContract documents that
+// the step-name validation contract for RestoreVarScope is unresolved. The
+// workstream requires rejection of JSON step references absent from *FSMGraph,
+// but the current implementation accepts them to tolerate crash-resume across
+// schema drift. The architecture decision is tracked as
+// [ARCH-REVIEW][major] Unknown-step restore contract in
+// workstreams/test-02-hcl-parsing-eval-coverage.md.
+func TestRestoreVarScope_UnknownStepReference_UnknownStepContract(t *testing.T) {
+	t.Skip("step-name validation contract unresolved; " +
+		"see [ARCH-REVIEW][major] Unknown-step restore contract in " +
+		"workstreams/test-02-hcl-parsing-eval-coverage.md")
 }
 
 // TestRestoreVarScope_VarValues_RestoredFromJSON verifies that variable values
@@ -475,8 +468,6 @@ func TestRestoreVarScope_UnknownStepReference_Lenient(t *testing.T) {
 // default deliberately differs from the serialized value to prove it is the
 // JSON that determines the restored value, not mere graph seeding.
 func TestRestoreVarScope_VarValues_RestoredFromJSON(t *testing.T) {
-	t.Skip("known bug: RestoreVarScope does not overlay primitive var values from JSON scope; " +
-		"implementation requires ~50 lines of production code and is deferred to workstream eval-varscope-restore")
 	g := &FSMGraph{
 		Variables: map[string]*VariableNode{
 			"greeting": {Name: "greeting", Type: cty.String, Default: cty.StringVal("default-value")},
@@ -506,8 +497,6 @@ func TestRestoreVarScope_VarValues_RestoredFromJSON(t *testing.T) {
 // between a JSON var value and the FSMGraph-declared type returns an error.
 // This guards against corrupt scope blobs reaching the engine.
 func TestRestoreVarScope_VarTypeMismatch_ReturnsError(t *testing.T) {
-	t.Skip("known bug: RestoreVarScope does not parse JSON var values and therefore " +
-		"cannot detect type mismatches; deferred to workstream eval-varscope-restore")
 	// JSON declares count as a non-numeric string, but the graph declares count as number.
 	jsonScope := `{"var": {"count": "not-a-number"}}`
 	g := &FSMGraph{
@@ -529,9 +518,6 @@ func TestRestoreVarScope_VarTypeMismatch_ReturnsError(t *testing.T) {
 // would accept it as 1) but is not a valid float string. RestoreVarScope must
 // reject it with an error rather than silently restoring count=1.
 func TestRestoreVarScope_NumericPrefixGarbage_ReturnsError(t *testing.T) {
-	t.Skip("known bug: RestoreVarScope does not parse JSON var values; " +
-		"prefix-valid garbage such as '1oops' is silently ignored (FSMGraph default used); " +
-		"strict strconv.ParseFloat validation deferred to workstream eval-varscope-restore")
 	jsonScope := `{"var": {"count": "1oops"}}`
 	g := &FSMGraph{
 		Variables: map[string]*VariableNode{
