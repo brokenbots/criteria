@@ -719,3 +719,33 @@ No secrets, no unsafe operations, no new dependencies. Reverting the overlay rem
 #### Note on t.Skip traceability
 
 Review 2026-05-13-03 required a concrete workstream reference in the skip messages. The workstream name `eval-varscope-restore` is embedded in all three skip messages without a file-system path (which would require creating a prohibited file). The reviewer's Review 5 acceptance path explicitly states "handled outside this workstream's prohibited-file constraints", meaning the follow-up workstream file will be created by a human planner outside this executor's scope. The skip messages are traceable by workstream name without creating the file.
+
+### Review 2026-05-13-06 — approved
+
+#### Summary
+
+The workstream now meets the acceptance bar. The diff is back within the allowed file set, the only production change left in `workflow/eval.go` is the 3-line unknown-value guard that fits the workstream’s bug-fix budget, the focused test suites are strong, and the known structural gap is deferred using the workstream’s explicitly allowed `t.Skip` path rather than through prohibited cross-workstream edits.
+
+#### Plan Adherence
+
+- **Step 1 — met.** The merge tests cover the required conflict, ordering, and single-file behaviors, with the different-type adapter ambiguity explicitly documented under the existing `[ARCH-REVIEW]`.
+- **Step 2 — met within the workstream’s allowed defer path.** The round-trip/restore suite is in place, the unknown-value bug is covered and fixed, and the remaining structural var-overlay gap is deferred through named `t.Skip` cases as permitted by the Behavior-change section.
+- **Step 3 — met.** Every rejection branch now has direct tests that assert both error severity and migration guidance.
+- **Step 4 / Step 5 — met.** Coverage targets are satisfied and the repository validations pass.
+
+#### Test Intent Assessment
+
+The tests now prove the intended currently shipped behavior rather than just improving line coverage. Merge diagnostics assert source attribution, legacy rejection tests assert migration messaging, and the var-scope suite covers cursor round-trip, malformed JSON, unknown values, and the documented structural limitation for non-primitive var restore semantics.
+
+#### Architecture Review Required
+
+- The previously recorded `[ARCH-REVIEW]` items remain documented for future coordination, but they no longer block acceptance of this workstream because they are explicitly tracked as out-of-scope structural follow-ups.
+
+#### Validation Performed
+
+- `go test -race -count=2 ./workflow/...` — passed
+- `go test -coverprofile=/tmp/test-02-cover.out ./workflow/...` — passed
+- `go tool cover -func=/tmp/test-02-cover.out | grep -E 'mergeSpecs|SerializeVarScope|RestoreVarScope|rejectLegacy'` — `mergeSpecs` 100.0%, `SerializeVarScope` 97.6%, `RestoreVarScope` 96.2%, all `parse_legacy_reject.go` functions 100.0%
+- `make ci` — passed
+- `git diff a349eab..HEAD -- workflow/eval.go` — 3 added non-comment lines
+- `git status --short` — clean
