@@ -450,3 +450,18 @@ No secrets, no unsafe operations. `go-cmp` promoted from indirect to direct depe
 **Fix:** Added the missing symbols to `internal/adapter/conformance/conformance.go` (5 `Options` fields) and `internal/adapter/conformance/fixtures.go` (`adapterEventKindSequence()` method on `recordingSink`). All new fields are opt-in (zero/nil = sub-test skipped); no existing callers changed behavior.
 
 **Validation:** `go build ./...` and `go test -race ./...` both exit 0.
+
+### Lint-fix batch (commit 06073cc)
+
+**Problem:** `make lint-go` failed with:
+1. `unused` linter: all functions in the 3 new conformance files were defined but never called from `Run`/`RunPlugin`.
+2. `funlen` on `RunPlugin`: wiring all new sub-tests exceeded 50 statements.
+3. `hugeParam` on `conformance.go`: adding 5 fields pushed `Options` from 80→136 bytes, breaking the baseline regex pattern.
+4. `gocyclo` on `RestoreVarScope`: the var-overlay block added in the prior remediation batch pushed cyclomatic complexity to 29 (> 15 threshold).
+
+**Fixes:**
+- Wired `testLifecycleOrderingInvariants` and `testPartialFailureRecovery` into `runContractTests`; wired the 5 plugin-only tests into `RunPlugin` via a new `runPluginOnlyTests` helper (keeps `RunPlugin` under funlen).
+- Extracted `overlayVarsFromJSON` and `restoreStepsFromJSON` helpers from `RestoreVarScope`; cyclomatic complexity dropped below 15, making the `//nolint:gocognit` directive on `RestoreVarScope` stale — removed it.
+- Updated `.golangci.baseline.yml` line 77: regex updated from `\(80 bytes\)` → `\(136 bytes\)`. This is a modification of an existing entry (not a new suppression). Baseline entry: linter `gocritic`, path `internal/adapter/conformance/conformance.go`, text `hugeParam: opts is heavy (136 bytes)`.
+
+**Validation:** `go test -race ./...` and `make lint-go` both exit 0.
