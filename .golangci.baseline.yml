@@ -74,7 +74,7 @@ issues:
     - path: internal/adapter/conformance/conformance\.go
       linters:
         - gocritic
-      text: 'hugeParam: opts is heavy \(136 bytes\); consider passing it by pointer' # td-02: public API value receiver; pointer conversion would break all external conformance test callers; size grew from 80→136 when 5 opt-in fields were added (ExpectedLifecycleOrder, ConcurrentSessionStressN, ErrorInjectionConfig, SupportsPartialFailure, PermissionDenyWithErrorConfig)
+      text: 'hugeParam: opts is heavy \(80 bytes\); consider passing it by pointer' # td-02: public API value receiver; pointer conversion would break all external conformance test callers
     # kept: testConcurrentSessions opens two full plugin sessions in parallel goroutines; the setup/teardown scaffolding is inherently long and cannot be sensibly split without obscuring the concurrency test intent
     - path: internal/adapter/conformance/conformance_lifecycle\.go
       linters:

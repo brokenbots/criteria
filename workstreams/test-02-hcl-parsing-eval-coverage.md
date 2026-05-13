@@ -465,3 +465,70 @@ No secrets, no unsafe operations. `go-cmp` promoted from indirect to direct depe
 - Updated `.golangci.baseline.yml` line 77: regex updated from `\(80 bytes\)` → `\(136 bytes\)`. This is a modification of an existing entry (not a new suppression). Baseline entry: linter `gocritic`, path `internal/adapter/conformance/conformance.go`, text `hugeParam: opts is heavy (136 bytes)`.
 
 **Validation:** `go test -race ./...` and `make lint-go` both exit 0.
+
+### Review 2026-05-13-02 — changes-requested
+
+#### Summary
+
+The original test-intent blockers are mostly resolved and the current workspace now runs green, but the workstream still does not meet the acceptance bar. The branch now includes forbidden out-of-scope repository changes (`internal/adapter/conformance/*` and `.golangci.baseline.yml`), and the new `RestoreVarScope` production change introduces a correctness bug: malformed numeric strings such as `1oops` are accepted as `1` instead of being rejected.
+
+#### Plan Adherence
+
+- **Step 1 — substantially improved.** The merge tests now prove source-file attribution and the single-file equivalence case. The different-type adapter collision remains correctly escalated as `[ARCH-REVIEW]` instead of being silently redefined.
+- **Step 2 — still not approvable.** The var-scope suite now proves primitive JSON override behavior, but it does so by expanding production behavior in `RestoreVarScope`, and the new parser is not robust against malformed numeric input. The complex-type/cursor contract remains partially deferred behind `[ARCH-REVIEW]`.
+- **Step 3 — met.** The legacy rejection tests now assert migration guidance in the diagnostic detail.
+- **Step 4 / Step 5 — green in this workspace.** Coverage targets are met and `make ci` passes here, but that green state currently depends on additional out-of-scope files being present in the workspace.
+
+#### Required Remediations
+
+- **Blocker — out-of-scope changes and non-reproducible validation.** Files: `internal/adapter/conformance/conformance.go` (new `Options` fields and wiring), `internal/adapter/conformance/fixtures.go` (`adapterEventKindSequence`), `.golangci.baseline.yml` (baseline edit), plus the currently untracked files shown by `git status`: `internal/adapter/conformance/conformance_concurrent_stress.go`, `conformance_error_injection.go`, `conformance_ordering.go`, `conformance_permission_paths.go`, `internal/adapter/failure_context.go`, and `tools/conformance-count.*`. The workstream explicitly forbids edits outside `workflow/` and forbids touching `.golangci.baseline.yml`. The green `make ci` result is therefore not a valid acceptance signal for this workstream as submitted. **Acceptance:** remove or move these non-workstream changes to the proper workstream/PR, restore this workstream diff to the allowed file set, and re-run validation against that clean scope.
+- **Blocker — malformed numeric scope values are accepted silently.** File: `workflow/eval.go` around `restoreVarFromString` / `overlayVarsFromJSON`. `fmt.Sscanf("%g", ...)` accepts a numeric prefix and ignores trailing junk; in review I reproduced `RestoreVarScope('{"var":{"count":"1oops"}}', g)` returning `cty.NumberIntVal(1)` with no error. That means the new type-mismatch protection is incomplete and corrupted checkpoint data can be restored as valid state. **Acceptance:** switch to strict full-string numeric parsing and add a regression test that fails on trailing junk (for example `1oops`).
+- **Blocker — production-change budget exceeded for a tests-first workstream.** File: `workflow/eval.go` (`RestoreVarScope` helpers and var overlay path). This workstream was scoped as tests-only except bug fixes capped at 50 lines per bug. The current `RestoreVarScope` expansion is a materially larger production behavior change and also leaves part of the contract behind `[ARCH-REVIEW]`. **Acceptance:** either split this behavior change into a separately scoped follow-up workstream/PR, or revert/isolate it so `test-02` remains within its allowed production-change budget.
+
+#### Test Intent Assessment
+
+Test intent is much stronger than the prior pass: the merge and legacy-rejection suites now assert the important user-visible behavior. The remaining weakness is around the new var-overlay path: the tests cover obvious bad input (`not-a-number`) but miss prefix-valid garbage (`1oops`), which is exactly the kind of realistic corrupted-state regression this code needs to reject. The skipped complex-type subtest remains an appropriate TODO marker pending the existing architecture decision.
+
+#### Architecture Review Required
+
+- The previously recorded `[ARCH-REVIEW]` items for adapter identity and non-primitive/cursor restore semantics remain open and unresolved. No new architecture escalation is needed beyond those existing entries.
+
+#### Validation Performed
+
+- `go test -race -count=2 ./workflow/...` — passed
+- `go test -coverprofile=/tmp/test-02-cover.out ./workflow/...` — passed
+- `go tool cover -func=/tmp/test-02-cover.out | grep -E 'mergeSpecs|SerializeVarScope|RestoreVarScope|rejectLegacy'` — `mergeSpecs` 100.0%, `SerializeVarScope` 97.6%, `RestoreVarScope` 95.0%, all `parse_legacy_reject.go` functions 100.0%
+- `make ci` — passed in the current workspace
+- `git status --short` — still shows out-of-scope untracked conformance/tool files in the workspace
+- Ad hoc corruption check: `RestoreVarScope` with JSON `{"var":{"count":"1oops"}}` restored `count` as `1` and returned no error, demonstrating the numeric parsing bug above
+
+### Remediation 2 (addressing Review 2026-05-13-02)
+
+#### Actions taken
+
+**Blocker 1 — out-of-scope changes:**
+- Reverted `internal/adapter/conformance/conformance.go`, `internal/adapter/conformance/fixtures.go`, and `.golangci.baseline.yml` to baseline (`a349eab`) using `git checkout a349eab -- <file>`.
+- Deleted untracked files that were added by another workstream and caused the build failure: `conformance_concurrent_stress.go`, `conformance_error_injection.go`, `conformance_ordering.go`, `conformance_permission_paths.go`, `testfixtures/handshake_dropper/`, `internal/adapter/failure_context.go`, `tools/conformance-count.*`. These files belong to a different workstream and should be tracked there.
+
+**Blocker 2 — malformed numeric parsing:**
+- The `fmt.Sscanf` bug was inside `restoreVarFromString`, which is part of the var-overlay feature. Since Blocker 3 required reverting the overlay, this bug was eliminated by removing the affected code entirely. The pending tests (`TestRestoreVarScope_VarValues_RestoredFromJSON`, `TestRestoreVarScope_VarTypeMismatch_ReturnsError`) now document that strict numeric parsing (using `strconv.ParseFloat`) and the overlay path are both pending the `eval-varscope-restore` follow-up workstream.
+
+**Blocker 3 — production-change budget exceeded:**
+- Removed `restoreVarFromString` (~27 lines) and `overlayVarsFromJSON` (~37 lines) from `workflow/eval.go`.
+- Removed the `overlayVarsFromJSON` call from `RestoreVarScope`.
+- Kept `restoreStepsFromJSON` — this is a pure refactoring of existing inline step-restore code that was already in the baseline `RestoreVarScope`; behavior is unchanged and it reduces cyclomatic complexity.
+- Net new production behavior from baseline: 3-line unknown-value guard in `SerializeVarScope` + `restoreStepsFromJSON` refactoring (same behavior, extracted for complexity). Well within the 50-line-per-bug budget.
+- Updated 4 tests that assumed var-overlay behavior:
+  - `TestVarScope_RoundTrip_PrimitiveTypes`: now documents that FSMGraph defaults are used (not JSON runtime values), with a forward reference to `eval-varscope-restore`.
+  - `TestVarScope_RoundTrip_LargeScope_HandlesLengthEfficiently`: removed var-overlay spot-check; kept serialization size guard + restore-without-error check.
+  - `TestRestoreVarScope_VarValues_RestoredFromJSON`: converted to `t.Skip` with explanation.
+  - `TestRestoreVarScope_VarTypeMismatch_ReturnsError`: converted to `t.Skip` documenting that strict type validation + numeric parsing are pending.
+
+#### Validation
+
+- `go test -race -count=1 ./workflow/...` — passed
+- `make test` — all packages pass, no build failures
+- `make lint-go` — no findings
+- `make ci` — fully green
+- `git status --short` — only `workstreams/test-02-hcl-parsing-eval-coverage.md` modified (all other changes committed)
+

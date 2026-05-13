@@ -621,73 +621,6 @@ func SerializeVarScope(vars map[string]cty.Value, cursorStack ...[]IterCursor) (
 	return string(b), err
 }
 
-// restoreVarFromString converts a string scope value (as written by
-// CtyValueToString) back to a cty.Value of the given type. Only primitive
-// types (string, number, bool) are supported; callers must check the type
-// before calling and skip non-primitive types to fall back to FSMGraph defaults.
-func restoreVarFromString(s string, t cty.Type) (cty.Value, error) {
-	switch t {
-	case cty.String:
-		return cty.StringVal(s), nil
-	case cty.Number:
-		var f float64
-		if _, err := fmt.Sscanf(s, "%g", &f); err != nil {
-			return cty.NilVal, fmt.Errorf("parse number %q: %w", s, err)
-		}
-		return cty.NumberFloatVal(f), nil
-	case cty.Bool:
-		switch s {
-		case "true", "1":
-			return cty.True, nil
-		case "false", "0":
-			return cty.False, nil
-		default:
-			return cty.NilVal, fmt.Errorf("parse bool %q: expected 'true' or 'false'", s)
-		}
-	default:
-		return cty.NilVal, fmt.Errorf("unsupported type %s for primitive var restoration", t.FriendlyName())
-	}
-}
-
-// overlayVarsFromJSON merges the "var" section of a JSON scope snapshot onto
-// the pre-seeded vars map. Empty strings are skipped (null/empty ambiguity).
-// Non-primitive types are skipped and fall back to FSMGraph defaults because
-// CtyValueToString is lossy for them.
-func overlayVarsFromJSON(vars map[string]cty.Value, varData map[string]interface{}, g *FSMGraph) error {
-	varObj := vars["var"]
-	if varObj == cty.NilVal || !varObj.Type().IsObjectType() {
-		return nil
-	}
-	updated := make(map[string]cty.Value, len(varObj.Type().AttributeTypes()))
-	for k := range varObj.Type().AttributeTypes() {
-		updated[k] = varObj.GetAttr(k)
-	}
-	for k, rawVal := range varData {
-		sv, ok := rawVal.(string)
-		if !ok || sv == "" {
-			continue
-		}
-		node, ok := g.Variables[k]
-		if !ok {
-			continue
-		}
-		if node.Type != cty.String && node.Type != cty.Number && node.Type != cty.Bool {
-			continue
-		}
-		v, err := restoreVarFromString(sv, node.Type)
-		if err != nil {
-			return fmt.Errorf("restore var %q: %w", k, err)
-		}
-		if _, exists := updated[k]; exists {
-			updated[k] = v
-		}
-	}
-	if len(updated) > 0 {
-		vars["var"] = cty.ObjectVal(updated)
-	}
-	return nil
-}
-
 // restoreStepsFromJSON rebuilds the "steps" cty.Value from the raw JSON steps
 // section, preserving step output strings as cty.StringVal.
 func restoreStepsFromJSON(stepsData map[string]interface{}) cty.Value {
@@ -715,9 +648,9 @@ func restoreStepsFromJSON(stepsData map[string]interface{}) cty.Value {
 
 // RestoreVarScope rebuilds a run's vars map and iteration cursor stack from
 // a JSON-encoded scope snapshot and the compiled workflow graph. Variable
-// defaults come from the graph; step outputs and primitive var values are
-// restored from the JSON scope. Complex-typed vars (list, map, object) fall
-// back to FSMGraph defaults because CtyValueToString is lossy for those types.
+// defaults come from the FSMGraph; step outputs are restored from the JSON
+// scope. Primitive var values in the "var" section are not currently overlaid
+// from JSON — they always use FSMGraph defaults on restore.
 //
 // The returned []IterCursor is non-nil only when the scope JSON contains an
 // "iter" field. Each cursor's Items field is nil; the step re-evaluates the
@@ -732,13 +665,6 @@ func RestoreVarScope(scopeJSON string, g *FSMGraph) (map[string]cty.Value, []Ite
 	var raw map[string]interface{}
 	if err := json.Unmarshal([]byte(scopeJSON), &raw); err != nil {
 		return vars, nil, fmt.Errorf("restore scope: %w", err)
-	}
-
-	// Overlay serialized var values onto FSMGraph defaults.
-	if varData, ok := raw["var"].(map[string]interface{}); ok {
-		if err := overlayVarsFromJSON(vars, varData, g); err != nil {
-			return vars, nil, err
-		}
 	}
 
 	// Restore steps outputs.

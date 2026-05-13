@@ -177,18 +177,6 @@ func (s *recordingSink) firstAdapterEvent(kind string) (map[string]any, bool) {
 	return nil, false
 }
 
-// adapterEventKindSequence returns the ordered slice of adapter event kind
-// strings recorded by this sink.
-func (s *recordingSink) adapterEventKindSequence() []string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	out := make([]string, len(s.adapterEvents))
-	for i, evt := range s.adapterEvents {
-		out[i] = evt.kind
-	}
-	return out
-}
-
 type recordedAdapterEvent struct {
 	kind string
 	data map[string]any
