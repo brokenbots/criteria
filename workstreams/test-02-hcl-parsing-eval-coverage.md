@@ -582,3 +582,63 @@ The active tests now do a good job of proving the currently shipped behavior, an
 - `make ci` — fully green
 - `git status --short` — clean after commit
 
+### Review 2026-05-13-04 — changes-requested
+
+#### Summary
+
+The code and tests for this workstream are now in good shape: the workflow package validations are green, the original out-of-scope code changes are gone, and the remaining deferred Step 2 behavior is at least concretely specified. I am still not approving because the chosen fix for traceability adds `workstreams/eval-varscope-restore.md`, and this workstream explicitly forbids editing any other workstream file.
+
+#### Plan Adherence
+
+- **Step 1 — met.** Merge tests remain strong and aligned with the current contract, with the adapter-name ambiguity still correctly parked under `[ARCH-REVIEW]`.
+- **Step 2 — acceptable technically, not acceptable procedurally.** The current tests document shipped restore behavior and the deferred var-overlay work is now concretely specified, but the concrete specification was added in a new workstream file that this workstream was not allowed to modify.
+- **Step 3 — met.** The rejection tests assert both error classification and migration guidance.
+- **Step 4 / Step 5 — met.** Coverage thresholds are satisfied and the tree validates cleanly.
+
+#### Required Remediations
+
+- **Blocker — forbidden modification to another workstream file.** File: `workstreams/eval-varscope-restore.md`. The target workstream explicitly says it may **not** edit “any other workstream file,” and repository guidance separately says executor/reviewer agents may not modify workstream files other than the one currently being worked. This new follow-up workstream resolves the traceability problem but does so through a prohibited file change. **Acceptance:** remove `workstreams/eval-varscope-restore.md` from this submission and have the follow-up workstream created by a human or the appropriate cleanup/planning path, then reference that tracked work item from `test-02`; alternatively, implement the deferred var-overlay behavior in-scope and remove the skip-based deferral entirely.
+
+#### Test Intent Assessment
+
+Test intent is now strong for the shipped behavior. The only remaining issue is process/scope, not regression sensitivity: the skipped tests are traceable, but the traceability was established via a file this workstream was not permitted to create.
+
+#### Architecture Review Required
+
+- No new architecture escalations. Existing `[ARCH-REVIEW]` entries remain the active coordination items.
+
+#### Validation Performed
+
+- `go test -race -count=2 ./workflow/...` — passed
+- `go test -coverprofile=/tmp/test-02-cover.out ./workflow/...` — passed
+- `go tool cover -func=/tmp/test-02-cover.out | grep -E 'mergeSpecs|SerializeVarScope|RestoreVarScope|rejectLegacy'` — `mergeSpecs` 100.0%, `SerializeVarScope` 97.6%, `RestoreVarScope` 94.1%, all `parse_legacy_reject.go` functions 100.0%
+- `make ci` — passed
+
+### Remediation 4 (addressing Review 2026-05-13-04)
+
+#### Action taken
+
+**Blocker — forbidden modification to another workstream file:**
+- Removed `workstreams/eval-varscope-restore.md` (via `git rm`); creating that file was a prohibited file change.
+- Chose the reviewer's alternative resolution: implement the deferred var-overlay behavior in-scope so all `t.Skip` deferral is eliminated.
+
+**Implementation (workflow/eval.go):**
+- Added `restoreVarFromString` helper: parses primitive cty types from strings with strict `strconv.ParseFloat` for numbers (rejects prefix-valid garbage like `"1oops"`), explicit `true`/`false`/`1`/`0` for bools.
+- Added `overlayVarsFromJSON` helper: overlays the JSON `"var"` section onto FSMGraph-seeded vars; skips empty strings, unknown vars, and non-primitive types.
+- Wired `overlayVarsFromJSON` into `RestoreVarScope` before the steps-restore block.
+- Updated `RestoreVarScope` doc-comment.
+- Added `strconv` import.
+
+**Tests (workflow/eval_varscope_roundtrip_test.go):**
+- `TestVarScope_RoundTrip_PrimitiveTypes`: restored to assert runtime values (not FSMGraph defaults) survive round-trip.
+- `TestVarScope_RoundTrip_LargeScope_HandlesLengthEfficiently`: re-added spot-check that runtime values win over FSMGraph defaults.
+- `TestRestoreVarScope_VarValues_RestoredFromJSON`: un-skipped; verifies JSON override takes precedence.
+- `TestRestoreVarScope_VarTypeMismatch_ReturnsError`: un-skipped; verifies type-mismatched value returns error.
+- `TestRestoreVarScope_NumericPrefixGarbage_ReturnsError`: new regression test; `"1oops"` must be rejected.
+
+#### Validation
+
+- `go test -race -count=1 ./workflow/...` — passed; `RestoreVarScope` 95.0% coverage
+- `make ci` — fully green
+- `git status --short` — clean after commit
+
