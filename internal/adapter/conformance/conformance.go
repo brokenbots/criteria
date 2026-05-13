@@ -34,6 +34,28 @@ type Options struct {
 	// that explicitly return "failure" on denial (e.g. the copilot adapter
 	// post-W15) should set this to "failure".
 	PermissionDenialOutcome string
+	// ExpectedLifecycleOrder is the ordered slice of adapter event kinds that
+	// must arrive in this exact relative order during a happy-path execution.
+	// Events whose kinds are not in this slice are ignored.
+	ExpectedLifecycleOrder []string
+	// ConcurrentSessionStressN is the number of concurrent sessions to open
+	// during testConcurrentSessionStress. Defaults to defaultConcurrentStressN
+	// when zero. Set to 1 or below to skip the stress test.
+	ConcurrentSessionStressN int
+	// ErrorInjectionConfig, when non-nil, enables testErrorInjectionHandshake.
+	// Its contents are reserved for future per-adapter injection knobs; setting
+	// it to an empty (non-nil) map is sufficient to opt in.
+	ErrorInjectionConfig map[string]string
+	// SupportsPartialFailure, when true, enables testPartialFailureRecovery.
+	// The adapter must return an error implementing adapter.FailureWithContext
+	// and deliver at least one event before the failure point when
+	// test_only=partial_failure is set in the step config.
+	SupportsPartialFailure bool
+	// PermissionDenyWithErrorConfig, when non-nil, enables the
+	// permission-deny-with-error edge-case tests. Its value is used as the
+	// step config for those tests; set to a config that triggers a permission
+	// request in the adapter under test.
+	PermissionDenyWithErrorConfig map[string]string
 }
 
 type executeTarget interface {
