@@ -493,7 +493,36 @@ func TestRestoreVarScope_VarValues_RestoredFromJSON(t *testing.T) {
 	}
 }
 
-// TestRestoreVarScope_VarTypeMismatch_ReturnsError verifies that a type mismatch
+// TestRestoreVarScope_EmptyString_PreservedOverDefault is a regression test for
+// the empty-string overlay boundary. A string variable with a non-empty FSMGraph
+// default and a serialized runtime value of "" must restore to "" (the runtime
+// value), not to the default. Prior to the fix, s=="" caused the overlay to be
+// skipped, so the graph default incorrectly won.
+func TestRestoreVarScope_EmptyString_PreservedOverDefault(t *testing.T) {
+	g := &FSMGraph{
+		Variables: map[string]*VariableNode{
+			"greeting": {Name: "greeting", Type: cty.String, Default: cty.StringVal("non-empty-default")},
+		},
+	}
+	vars := map[string]cty.Value{
+		"var":   cty.ObjectVal(map[string]cty.Value{"greeting": cty.StringVal("")}),
+		"steps": cty.EmptyObjectVal,
+	}
+	scopeJSON, err := SerializeVarScope(vars)
+	if err != nil {
+		t.Fatalf("SerializeVarScope: %v", err)
+	}
+	restored, _, err := RestoreVarScope(scopeJSON, g)
+	if err != nil {
+		t.Fatalf("RestoreVarScope: %v", err)
+	}
+	got := restored["var"].GetAttr("greeting")
+	want := cty.StringVal("")
+	if !got.RawEquals(want) {
+		t.Errorf("greeting = %#v, want empty string (runtime value must win over non-empty default)", got)
+	}
+}
+
 // between a JSON var value and the FSMGraph-declared type returns an error.
 // This guards against corrupt scope blobs reaching the engine.
 func TestRestoreVarScope_VarTypeMismatch_ReturnsError(t *testing.T) {

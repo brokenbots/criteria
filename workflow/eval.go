@@ -558,13 +558,17 @@ func WithIndexedStepOutput(vars map[string]cty.Value, stepName string, index cty
 func SerializeVarScope(vars map[string]cty.Value, cursorStack ...[]IterCursor) (string, error) {
 	scope := map[string]interface{}{}
 	if varObj, ok := vars["var"]; ok && varObj != cty.NilVal && varObj.Type().IsObjectType() {
-		varMap := map[string]string{}
+		varMap := map[string]interface{}{}
 		for k := range varObj.Type().AttributeTypes() {
 			v := varObj.GetAttr(k)
 			if !v.IsKnown() {
 				return "", fmt.Errorf("cannot serialize unknown value for variable %q", k)
 			}
-			varMap[k] = CtyValueToString(v)
+			if v.IsNull() {
+				varMap[k] = nil
+			} else {
+				varMap[k] = CtyValueToString(v)
+			}
 		}
 		scope["var"] = varMap
 	}
@@ -626,6 +630,9 @@ func SerializeVarScope(vars map[string]cty.Value, cursorStack ...[]IterCursor) (
 // of the declared type t. Returns cty.NilVal for non-primitive types; callers
 // that receive cty.NilVal fall back to the FSMGraph default.
 func restoreVarFromString(s string, t cty.Type) (cty.Value, error) {
+	if s == "" && t != cty.String {
+		return cty.NilVal, nil
+	} // null sentinel for non-string types
 	switch t {
 	case cty.String:
 		return cty.StringVal(s), nil
@@ -662,7 +669,7 @@ func maybeOverlayVarsFromJSON(raw map[string]interface{}, g *FSMGraph, vars map[
 	for k, rv := range vd {
 		s, ok := rv.(string)
 		node, nok := g.Variables[k]
-		if !ok || !nok || s == "" {
+		if !ok || !nok {
 			continue
 		}
 		if v, err := restoreVarFromString(s, node.Type); err != nil {
