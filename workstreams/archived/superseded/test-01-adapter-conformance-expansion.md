@@ -1,5 +1,20 @@
 # test-01 — Adapter conformance suite expansion ⛔ adapter-rework gate
 
+> **Status: SUPERSEDED — not scheduled for execution.**
+>
+> This workstream was drafted as the safety net for an incremental Phase 4 adapter refactor. The actual adapter rework (see [`workstreams/adapter_v2/`](../../adapter_v2/)) is a hard cut to protocol v2 (D2: no v1 wire compatibility, v1 host code paths deleted, all in-tree adapters migrated to a new SDK). Under that plan, the deliverables here do not survive:
+>
+> - The four adapters this workstream adds test-only knobs to (`shell`, `copilot`, `mcp`, `noop`) are either replaced or migrated by WS31–WS36 / WS37.
+> - The v1 wire-protocol surface this workstream hardens (handshake, lifecycle event types, permission deny shape) is thrown away by WS02 / WS03.
+> - The `adapter.FailureWithContext` interface would land in `internal/adapter/`, the v1 package, which WS37 removes.
+> - The conformance-count ratchet (`tools/conformance-count.expected`) gets invalidated on the first migration PR.
+>
+> The *test ideas* in this workstream are good and have been lifted into [`workstreams/adapter_v2/WS26-conformance-harness.md`](../../adapter_v2/WS26-conformance-harness.md), targeted at the v2 protocol where they remain load-bearing: `error_injection_handshake`, `partial_failure_recovery`, `lifecycle_ordering_invariants`, `concurrent_session_stress` with cross-contamination assertion, and the three permission-deny paths (`deny_with_error`, `deny_after_timeout`, `deny_after_session_close`).
+>
+> The remainder of the file is preserved for reference only.
+>
+> ---
+
 **Phase:** Pre-Phase-4 (adapter-rework prep) · **Track:** C (test buffer) · **Owner:** Workstream executor · **Depends on:** none. · **Unblocks:** **Phase 4 (adapter rework)** — this workstream is the gate. The adapter rework cannot start until this lands.
 
 ## Context

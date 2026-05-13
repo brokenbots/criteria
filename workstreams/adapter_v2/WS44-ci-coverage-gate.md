@@ -1,14 +1,18 @@
-# test-03 — CI coverage ratchet gate
+# WS44 — CI coverage ratchet gate
 
-**Phase:** Pre-Phase-4 (adapter-rework prep) · **Track:** C (test buffer) · **Owner:** Workstream executor · **Depends on:** [test-01-adapter-conformance-expansion.md](test-01-adapter-conformance-expansion.md), [test-02-hcl-parsing-eval-coverage.md](test-02-hcl-parsing-eval-coverage.md). Both must merge first so the baseline ratchet captures the post-improvement floor, not the pre-improvement floor. · **Unblocks:** none.
+**Phase:** Adapter v2 · **Track:** Post-release hardening · **Owner:** Workstream executor · **Depends on:** [WS40](WS40-v2-release-gate.md) (release gate must merge first so the captured floors reflect the post-rewrite package layout). · **Unblocks:** none.
+
+> **Deferral note.** This workstream originated as the pre-Phase-4 `test-03-ci-coverage-gate.md`. It was deferred into adapter_v2 because applying a per-package coverage ratchet during a 43-workstream rewrite would create more friction than protection: WS37 deletes large amounts of v1 code (shifting package averages downward), WS30–WS36 add new code paths before tests catch up, and several new packages (sandbox, OCI cache, signing, lockfile, manifest) don't exist yet when the floors would be captured. Capturing the floor *after* WS40 means the contract reflects the steady-state codebase, not a transitional one.
+>
+> If interim regression protection is wanted during the rewrite, scope a much narrower variant: ratchet only on `workflow/` and any other package outside the adapter rework's blast radius. Track that separately — do not block this workstream on it.
 
 ## Context
 
-`make test-cover` already produces coverage profiles ([Makefile:75-80](../Makefile#L75-L80)) but **CI does not gate on them**. Coverage can silently regress on any merge. The Phase-4 adapter rework will refactor large amounts of code; without a regression gate, refactors can drop coverage by accident.
+`make test-cover` already produces coverage profiles ([Makefile:75-80](../../Makefile#L75-L80)) but **CI does not gate on them**. Coverage can silently regress on any merge. The adapter v2 rework refactors large amounts of code; this workstream lands *after* that work to lock in the new steady-state floor.
 
 This workstream establishes a **per-package coverage ratchet**:
 
-- Capture the current coverage percentage for each load-bearing package after test-01 + test-02 land.
+- Capture the current coverage percentage for each load-bearing package after WS40 lands.
 - Store the per-package floors in `tools/coverage-floors.txt` (one line per package).
 - Add a CI step that runs `go test -coverprofile`, parses the output, and fails if any package's coverage falls below its floor.
 - The floor only ever rises: a workstream that pushes coverage up MUST update the floor in the same PR. A workstream that legitimately reduces coverage (e.g. by removing dead code) MUST drop the floor with a documented reason in reviewer notes.
@@ -17,8 +21,8 @@ This is not a "minimum percentage" gate. It is a **non-regression** gate. The cu
 
 ## Prerequisites
 
-- [test-01-adapter-conformance-expansion.md](test-01-adapter-conformance-expansion.md) merged.
-- [test-02-hcl-parsing-eval-coverage.md](test-02-hcl-parsing-eval-coverage.md) merged.
+- [WS40](WS40-v2-release-gate.md) merged — adapter v2 release-gate roll-up has shipped and the package layout is stable.
+- [test-02-hcl-parsing-eval-coverage.md](../test-02-hcl-parsing-eval-coverage.md) merged (independent of adapter v2; raises `workflow/` coverage before the floor is captured).
 - `make ci` green on `main`.
 - `make test-cover` produces a usable `cover.out` (verify before starting):
   ```sh
@@ -29,7 +33,7 @@ This is not a "minimum percentage" gate. It is a **non-regression** gate. The cu
 
 ### Step 1 — Capture the per-package coverage floors
 
-Run `make test-cover` against `main` (after test-01 and test-02 have landed). Collect per-package coverage:
+Run `make test-cover` against `main` (after WS40 and test-02 have landed). Collect per-package coverage:
 
 ```sh
 go test -race -coverprofile=cover.out -covermode=atomic ./...
@@ -151,7 +155,7 @@ If bash + bc is too fragile, port to a tiny Go program at `tools/coverage-check/
 
 ### Step 3 — Add Makefile target
 
-Extend [Makefile](../Makefile):
+Extend [Makefile](../../Makefile):
 
 ```make
 .PHONY: coverage-check
@@ -167,7 +171,7 @@ make coverage-check
 
 ### Step 4 — Add CI step
 
-Extend [.github/workflows/ci.yml](../.github/workflows/ci.yml). Add a new top-level job (the existing `unit-tests` job already runs tests; this job runs them again with coverage and gates on the floor):
+Extend [.github/workflows/ci.yml](../../.github/workflows/ci.yml). Add a new top-level job (the existing `unit-tests` job already runs tests; this job runs them again with coverage and gates on the floor):
 
 ```yaml
   coverage-check:
@@ -206,7 +210,7 @@ If the existing CI structure prefers a single job, append coverage-check as a fi
 
 ### Step 5 — Document the ratchet workflow
 
-Append a new section to [docs/contributing/your-first-pr.md](../docs/contributing/your-first-pr.md):
+Append a new section to [docs/contributing/your-first-pr.md](../../docs/contributing/your-first-pr.md):
 
 ```markdown
 ## Coverage ratchet
@@ -250,13 +254,13 @@ The CI gate is **strict** — a regression below floor fails the build. This is 
 - Existing `make test-cover` target.
 - `go tool cover -func` output format.
 - Standard bash + bc OR small Go program for the check script — pick one.
-- Existing CI job structure in [.github/workflows/ci.yml](../.github/workflows/ci.yml) — extend.
+- Existing CI job structure in [.github/workflows/ci.yml](../../.github/workflows/ci.yml) — extend.
 
 ## Out of scope
 
 - A coverage badge on the README. Not in scope.
 - A web-rendered coverage report (codecov, coveralls). Not in scope.
-- Increasing coverage in any package. The floor is the **current** number; raising coverage is feature-workstream territory (test-01 and test-02 already did the bulk).
+- Increasing coverage in any package. The floor is the **current** number; raising coverage is feature-workstream territory (test-02 raised the `workflow/` numbers; WS26 raised the adapter conformance surface).
 - Per-file or per-function coverage gates. Per-package is the right granularity.
 - Coverage gates on specific functions (e.g. `mergeSpecs` ≥ 90%). test-02 already locks those numbers in via its tests; the per-package gate inherits them.
 - Including `cmd/criteria-adapter-*/` packages in the floor. External adapter binaries have low statement counts and high noise; rely on conformance tests instead.
@@ -264,22 +268,22 @@ The CI gate is **strict** — a regression below floor fails the build. This is 
 
 ## Files this workstream may modify
 
-- New file: [`tools/coverage-floors.txt`](../tools/) — the per-package floor data.
-- New file: [`tools/coverage-check.sh`](../tools/) — the gate script. (OR `tools/coverage-check/main.go` if Go is preferred.)
-- [`Makefile`](../Makefile) — add `coverage-check` target.
-- [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) — add the coverage-check job (or step under `unit-tests`).
-- [`docs/contributing/your-first-pr.md`](../docs/contributing/your-first-pr.md) — append the ratchet workflow section per Step 5.
+- New file: [`tools/coverage-floors.txt`](../../tools/) — the per-package floor data.
+- New file: [`tools/coverage-check.sh`](../../tools/) — the gate script. (OR `tools/coverage-check/main.go` if Go is preferred.)
+- [`Makefile`](../../Makefile) — add `coverage-check` target.
+- [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) — add the coverage-check job (or step under `unit-tests`).
+- [`docs/contributing/your-first-pr.md`](../../docs/contributing/your-first-pr.md) — append the ratchet workflow section per Step 5.
 
 This workstream may **not** edit:
 
 - `README.md`, `PLAN.md`, `AGENTS.md`, `CHANGELOG.md`, `CONTRIBUTING.md`, `workstreams/README.md`, or any other workstream file.
 - Any file under `workflow/`, `internal/`, `cmd/`, `sdk/`.
 - Generated proto files.
-- [`.golangci.yml`](../.golangci.yml), [`.golangci.baseline.yml`](../.golangci.baseline.yml).
+- [`.golangci.yml`](../../.golangci.yml), [`.golangci.baseline.yml`](../../.golangci.baseline.yml).
 
 ## Tasks
 
-- [ ] Run `make test-cover` on the post-test-01-test-02 tree; capture per-package floors with rounding (Step 1).
+- [ ] Run `make test-cover` on the post-WS40 + test-02 tree; capture per-package floors with rounding (Step 1).
 - [ ] Commit `tools/coverage-floors.txt` (Step 1).
 - [ ] Write `tools/coverage-check.sh` per Step 2 (or Go equivalent at `tools/coverage-check/main.go`).
 - [ ] Add `coverage-check` Makefile target (Step 3).
@@ -318,5 +322,5 @@ If the script is bash, no unit tests — manual validation per Step 6 is the loc
 | The 0.5% rounding leaves no headroom and a one-statement test removal trips the floor | The 0.5% buffer is intentionally tight. If a routine refactor trips the floor, that is a signal to update the floor — that's the workflow. The Step 5 doc explains. |
 | Bash script is brittle on macOS vs Linux (different `bc` / `awk` versions) | Test on both before commit. If brittleness shows, port to Go (`tools/coverage-check/main.go`). |
 | The floor data file becomes a merge-conflict hotspot when multiple PRs raise coverage simultaneously | Conflicts in `tools/coverage-floors.txt` resolve by taking the higher floor for each package. Document this in the Step 5 doc as a one-line note. |
-| Excluding `cmd/criteria-adapter-*/` packages misses regressions there | The conformance suite (test-01) is the gate for adapters, not coverage. Coverage of `cmd/` packages is a weak signal — the conformance contract is the strong signal. |
+| Excluding `cmd/criteria-adapter-*/` packages misses regressions there | The conformance suite ([WS26](WS26-conformance-harness.md)) is the gate for adapters, not coverage. Coverage of `cmd/` packages is a weak signal — the conformance contract is the strong signal. |
 | The new CI job adds 2-3 minutes to PR CI time | `make test-cover` was already runnable; only the coverage-check parsing is new (< 5s). The bulk is the test run, which is the same cost as the existing `unit-tests` job. Run the coverage check in parallel where possible (it can use the cover output from `unit-tests` if cached). |
