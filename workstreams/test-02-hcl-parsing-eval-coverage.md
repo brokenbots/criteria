@@ -532,3 +532,53 @@ Test intent is much stronger than the prior pass: the merge and legacy-rejection
 - `make ci` — fully green
 - `git status --short` — only `workstreams/test-02-hcl-parsing-eval-coverage.md` modified (all other changes committed)
 
+### Review 2026-05-13-03 — changes-requested
+
+#### Summary
+
+The prior blockers are largely resolved: the diff is back within the allowed file set, the malformed-number path is gone with the reverted overlay, coverage targets still clear, and `make ci` is green. I am still not approving because the remaining Step 2 gap is now deferred via skipped tests, but the required follow-up workstream does not exist and the skips do not point to a concrete workstream reference as the workstream instructions require.
+
+#### Plan Adherence
+
+- **Step 1 — acceptable for this pass.** The merge tests remain strong, and the same-name/different-type adapter contract is explicitly parked under `[ARCH-REVIEW]`.
+- **Step 2 — still not closed.** The current tests deliberately document baseline restore behavior instead of the workstream’s intended round-trip contract for JSON var restoration. That deferral is allowed only via the explicit “known bug / follow-up workstream” path in this workstream, and that path is not fully completed here.
+- **Step 3 — met.** The legacy rejection tests assert both error summaries and migration guidance.
+- **Step 4 / Step 5 — met.** Coverage thresholds are satisfied and the current tree validates cleanly.
+
+#### Required Remediations
+
+- **Blocker — missing concrete follow-up workstream for deferred Step 2 behavior.** Files: `workflow/eval_varscope_roundtrip_test.go`, `workstreams/test-02-hcl-parsing-eval-coverage.md`. The workstream explicitly allows a structural bug/contract gap to be deferred only if the test is marked as a known bug with a concrete workstream reference. The current skips reference `eval-varscope-restore`, but no such workstream file exists under `workstreams/`, and the skip text does not identify a real workstream path. **Acceptance:** create or otherwise register the concrete follow-up workstream and update the skipped tests / notes to reference that exact workstream, or implement the deferred behavior in-scope so the skips can be removed.
+
+#### Test Intent Assessment
+
+The active tests now do a good job of proving the currently shipped behavior, and the unknown-value regression remains well covered. The only remaining test-intent problem is traceability: the skipped Step 2 tests are acceptable only if they point to an actual tracked workstream so the missing contract is reviewable and cannot disappear into comments.
+
+#### Architecture Review Required
+
+- No new architecture escalations. The previously recorded `[ARCH-REVIEW]` items remain the active coordination points.
+
+#### Validation Performed
+
+- `go test -race -count=2 ./workflow/...` — passed
+- `go test -coverprofile=/tmp/test-02-cover.out ./workflow/...` — passed
+- `go tool cover -func=/tmp/test-02-cover.out | grep -E 'mergeSpecs|SerializeVarScope|RestoreVarScope|rejectLegacy'` — `mergeSpecs` 100.0%, `SerializeVarScope` 97.6%, `RestoreVarScope` 94.1%, all `parse_legacy_reject.go` functions 100.0%
+- `make ci` — passed
+- `git status --short` — clean
+
+### Remediation 3 (addressing Review 2026-05-13-03)
+
+#### Action taken
+
+**Blocker — missing concrete follow-up workstream:**
+- Created `workstreams/eval-varscope-restore.md` — a complete follow-up workstream that scopes the var-overlay feature deferred from `test-02`. It specifies:
+  - `restoreVarFromString` with strict `strconv.ParseFloat` (not `fmt.Sscanf`) to reject prefix-valid garbage like `"1oops"`.
+  - `overlayVarsFromJSON` wired into `RestoreVarScope`.
+  - Exit criteria: un-skip `TestRestoreVarScope_VarValues_RestoredFromJSON` and `TestRestoreVarScope_VarTypeMismatch_ReturnsError`, add `TestRestoreVarScope_NumericPrefixGarbage_ReturnsError`, and update `TestVarScope_RoundTrip_PrimitiveTypes` to assert runtime values win over FSMGraph defaults.
+- Updated the two `t.Skip` messages in `eval_varscope_roundtrip_test.go` and the comment for `TestRestoreVarScope_VarTypeMismatch_ReturnsError` to reference `workstreams/eval-varscope-restore.md` by exact path.
+
+#### Validation
+
+- `go test -race -count=1 ./workflow/...` — passed
+- `make ci` — fully green
+- `git status --short` — clean after commit
+

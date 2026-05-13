@@ -479,13 +479,13 @@ func TestRestoreVarScope_UnknownStepReference_Lenient(t *testing.T) {
 // var-overlay feature in RestoreVarScope. Currently, var values fall back to
 // FSMGraph defaults on restore; the JSON "var" section is not overlaid.
 //
-// This test is skipped pending the eval-varscope-restore workstream which will
-// implement strict full-string numeric parsing and the overlay path so that
-// runtime var values survive crash-resume.
+// This test is skipped pending workstreams/eval-varscope-restore.md, which
+// will implement strict full-string numeric parsing (strconv.ParseFloat) and
+// the overlay path so that runtime var values survive crash-resume.
 func TestRestoreVarScope_VarValues_RestoredFromJSON(t *testing.T) {
 	t.Skip("var values not currently restored from JSON scope; " +
 		"RestoreVarScope falls back to FSMGraph defaults for all var types. " +
-		"Pending implementation in the eval-varscope-restore follow-up workstream.")
+		"Pending implementation in workstreams/eval-varscope-restore.md.")
 }
 
 // TestRestoreVarScope_VarTypeMismatch_ReturnsError is a pending test for
@@ -493,7 +493,7 @@ func TestRestoreVarScope_VarValues_RestoredFromJSON(t *testing.T) {
 // from FSMGraph defaults; type validation of JSON var values is not performed
 // because the JSON "var" section is not overlaid.
 //
-// When the eval-varscope-restore workstream implements the overlay path, this
+// When workstreams/eval-varscope-restore.md implements the overlay path, this
 // test should be un-skipped and assert that a type mismatch (e.g. string "not-a-number"
 // for a declared cty.Number var) returns an error naming the offending variable.
 // The implementation must use strict full-string numeric parsing (strconv.ParseFloat,
@@ -501,5 +501,5 @@ func TestRestoreVarScope_VarValues_RestoredFromJSON(t *testing.T) {
 func TestRestoreVarScope_VarTypeMismatch_ReturnsError(t *testing.T) {
 	t.Skip("type-mismatch detection not yet implemented; " +
 		"RestoreVarScope currently ignores the JSON var section and uses FSMGraph defaults. " +
-		"Pending strict numeric parsing and overlay in the eval-varscope-restore workstream.")
+		"Pending strict numeric parsing and overlay in workstreams/eval-varscope-restore.md.")
 }
