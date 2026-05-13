@@ -401,3 +401,24 @@ Blocker addressed: `Makefile` `ci` target updated to depend on `lint` instead of
 
 - `make -n ci` → now includes the `lint-no-todos` recipe (confirmed)
 - `make ci` → passed (all gates green)
+
+### Review 2026-05-12-04 — approved
+
+#### Summary
+The remaining Step 5/6 blocker is resolved. `make ci` now depends on `lint`, which brings `lint-no-todos` into the aggregate local CI path and keeps the local gate set aligned with the workflow lint job. The workstream now meets its acceptance bar. Verdict: `approved`.
+
+#### Plan Adherence
+- Step 1: `NewClient` rejects incompatible `http://` + TLS combinations, and tests assert both rejection and diagnostic content.
+- Step 2: `criteria plan` renders `switches:`, with golden coverage in place.
+- Step 3: The stale `parallelNode` TODO remains removed with no stray artifacts.
+- Step 4: `InputSpec` documents current evaluation behavior and generated spec output remains synchronized.
+- Step 5: `lint-no-todos` is wired into GitHub Actions, `make lint`, and now the aggregate `make ci` target.
+- Step 6: Validation evidence satisfies the exit criteria.
+
+#### Test Intent Assessment
+The behavior-focused tests remain strong, and the repository-gate gap is now closed: a future production-code TODO would be caught through both the dedicated lint path and the aggregate local CI entrypoint.
+
+#### Validation Performed
+- `make -n ci` → includes the `lint-no-todos` recipe
+- `grep -rn 'TODO\|FIXME\|XXX' --include='*.go' . | grep -v vendor | grep -v testdata` → no matches
+- `make ci` → passed
