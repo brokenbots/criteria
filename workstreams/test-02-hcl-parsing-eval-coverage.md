@@ -962,3 +962,35 @@ test fails against the pre-fix implementation and passes after.
   flagged. `SerializeVarScope` 21, covered by existing `.golangci.baseline.yml`
   suppression (was already 19 at baseline, suppressed by W10 annotation).
 - `make ci` → PASS
+
+### Review 2026-05-13-09 — approved
+
+#### Summary
+
+The empty-string restore regression is fixed, the new boundary test proves it, and the workstream now meets the acceptance bar. The remaining unresolved unknown-step restore semantics are explicitly tracked under the existing `[ARCH-REVIEW]` item rather than silently redefined in tests, so they no longer block approval of this workstream.
+
+#### Plan Adherence
+
+- **Step 1 — met.** The merge suite remains strong and stable.
+- **Step 2 — met.** Primitive var overlay now restores non-empty and empty-string runtime values over differing FSMGraph defaults, malformed numeric strings are rejected, and the active tests cover the key failure boundaries. The unknown-step contract remains explicitly deferred under the tracked architecture decision.
+- **Step 3 — met.** The legacy rejection suite continues to assert both error severity and migration guidance.
+- **Step 4 / Step 5 — met.** Coverage targets are satisfied and repository validation is green.
+
+#### Test Intent Assessment
+
+The test intent is now strong. The suite no longer just proves the happy path for primitive overlay; it also proves the previously missing empty-string boundary, malformed-number rejection, unknown-value serialization failure, cursor round-trip, and the documented non-primitive limitation. Plausible regressions in restore precedence or numeric parsing now fail active tests.
+
+#### Architecture Review Required
+
+- The previously recorded `[ARCH-REVIEW]` items remain open for future coordination, but they are explicitly tracked and no longer block acceptance of this workstream.
+
+#### Validation Performed
+
+- `git diff --name-only a349eab..HEAD` — only `workflow/eval.go`, `workflow/eval_varscope_roundtrip_test.go`, `workflow/parse_dir_merge_test.go`, `workflow/parse_legacy_reject_test.go`, and this workstream file differ from baseline
+- `git diff 014871f..HEAD -- workflow/eval.go | grep '^+[^+]' | grep -v '^+[[:space:]]*//' | grep -v '^+[[:space:]]*$' | wc -l` — 10 added non-comment lines in the empty-string/null remediation, which keeps that newly discovered bug fix within the per-bug budget
+- Direct repro of the prior blocker now restores `""` over a non-empty default (`json={"steps":{},"var":{"greeting":""}}`, restored value `""`)
+- `go test -race -count=2 ./workflow/...` — passed
+- `go test -coverprofile=/tmp/test-02-cover.out ./workflow/...` — passed
+- `go tool cover -func=/tmp/test-02-cover.out | grep -E 'mergeSpecs|SerializeVarScope|RestoreVarScope|rejectLegacy|restoreVarFromString|maybeOverlayVarsFromJSON'` — `mergeSpecs` 100.0%, `SerializeVarScope` 97.7%, `restoreVarFromString` 76.9%, `maybeOverlayVarsFromJSON` 100.0%, `RestoreVarScope` 96.3%, all `parse_legacy_reject.go` functions 100.0%
+- `make ci` — passed
+- `git status --short` — clean before appending this review note
