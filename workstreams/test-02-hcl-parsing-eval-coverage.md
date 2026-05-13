@@ -1,6 +1,6 @@
 # test-02 — HCL parsing & eval coverage gaps
 
-**Phase:** Pre-Phase-4 (adapter-rework prep) · **Track:** C (test buffer) · **Owner:** Workstream executor · **Depends on:** none. · **Unblocks:** [test-03-ci-coverage-gate.md](test-03-ci-coverage-gate.md) (test-03 establishes a coverage ratchet; test-02 raises the floor first).
+**Phase:** Pre-Phase-4 (independent of adapter v2) · **Track:** C (test buffer) · **Owner:** Workstream executor · **Depends on:** none. · **Unblocks:** [adapter_v2/WS44-ci-coverage-gate.md](adapter_v2/WS44-ci-coverage-gate.md) (the coverage ratchet was deferred to post-WS40; this workstream raises the `workflow/` floor that ratchet will then lock in).
 
 ## Context
 
@@ -251,7 +251,7 @@ This workstream may **not** edit:
 
 The workstream IS tests. The exit-criteria coverage targets are the contract.
 
-Coverage reports for `internal/engine/` and other downstream packages may shift as a side effect; this workstream does not gate on those — that's [test-03-ci-coverage-gate.md](test-03-ci-coverage-gate.md)'s territory.
+Coverage reports for `internal/engine/` and other downstream packages may shift as a side effect; this workstream does not gate on those — that's [adapter_v2/WS44-ci-coverage-gate.md](adapter_v2/WS44-ci-coverage-gate.md)'s territory (deferred to post-WS40).
 
 ## Risks
 
