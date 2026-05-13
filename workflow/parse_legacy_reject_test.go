@@ -71,7 +71,8 @@ agent {
 }
 
 // TestLegacyReject_TopLevelBranchBlock verifies that a top-level "branch" block
-// (renamed to "switch" in v0.3.0) is rejected with a DiagError naming "branch".
+// (renamed to "switch" in v0.3.0) is rejected with a DiagError naming "branch"
+// and with Detail pointing to the "switch" replacement.
 // See TestLegacyReject_TopLevelAgentBlock for the no-label constraint note.
 func TestLegacyReject_TopLevelBranchBlock(t *testing.T) {
 	src := minimalWorkflowHCL + `
@@ -79,6 +80,14 @@ branch {}
 `
 	_, diags := Parse("test.hcl", []byte(src))
 	assertDiagnosticContains(t, diags, `removed block "branch"`)
+	for _, d := range diags {
+		if d.Severity == hcl.DiagError && strings.Contains(d.Summary, "branch") {
+			if !strings.Contains(d.Detail, "switch") {
+				t.Errorf("expected detail to mention 'switch' replacement; got: %s", d.Detail)
+			}
+			return
+		}
+	}
 }
 
 // ------------------------------------------------------------------
@@ -86,7 +95,8 @@ branch {}
 // ------------------------------------------------------------------
 
 // TestLegacyReject_StepAgentAttr verifies that the removed "agent" attribute on
-// a top-level step block is rejected with a clear error naming the attribute.
+// a top-level step block is rejected with a clear error naming the attribute
+// and with Detail pointing to the "target" replacement.
 func TestLegacyReject_StepAgentAttr(t *testing.T) {
 	src := minimalWorkflowHCL + `
 step "run" {
@@ -97,10 +107,19 @@ state "done" { terminal = true }
 `
 	_, diags := Parse("test.hcl", []byte(src))
 	assertDiagnosticContains(t, diags, `removed attribute "agent" on steps`)
+	for _, d := range diags {
+		if d.Severity == hcl.DiagError && strings.Contains(d.Summary, `"agent" on steps`) {
+			if !strings.Contains(d.Detail, "target") {
+				t.Errorf("expected detail to mention 'target' replacement; got: %s", d.Detail)
+			}
+			return
+		}
+	}
 }
 
 // TestLegacyReject_StepAgentAttr_InNestedWorkflow verifies that the "agent"
-// attribute on a step nested inside an inline workflow block is also rejected.
+// attribute on a step nested inside an inline workflow block is also rejected,
+// with Detail pointing to the "target" replacement.
 // This exercises the recursive walk in rejectLegacyStepAgentAttrInBody.
 func TestLegacyReject_StepAgentAttr_InNestedWorkflow(t *testing.T) {
 	src := minimalWorkflowHCL + `
@@ -118,6 +137,14 @@ state "done" { terminal = true }
 `
 	_, diags := Parse("test.hcl", []byte(src))
 	assertDiagnosticContains(t, diags, `removed attribute "agent" on steps`)
+	for _, d := range diags {
+		if d.Severity == hcl.DiagError && strings.Contains(d.Summary, `"agent" on steps`) {
+			if !strings.Contains(d.Detail, "target") {
+				t.Errorf("expected detail to mention 'target' replacement; got: %s", d.Detail)
+			}
+			return
+		}
+	}
 }
 
 // ------------------------------------------------------------------
@@ -125,7 +152,8 @@ state "done" { terminal = true }
 // ------------------------------------------------------------------
 
 // TestLegacyReject_StepAdapterAttr verifies that the removed "adapter" attribute
-// on a step block (replaced by "target") is rejected with a named error.
+// on a step block (replaced by "target") is rejected with Detail pointing to
+// the "target" replacement.
 func TestLegacyReject_StepAdapterAttr(t *testing.T) {
 	src := minimalWorkflowHCL + `
 step "run" {
@@ -136,6 +164,14 @@ state "done" { terminal = true }
 `
 	_, diags := Parse("test.hcl", []byte(src))
 	assertDiagnosticContains(t, diags, `removed attribute "adapter" on steps`)
+	for _, d := range diags {
+		if d.Severity == hcl.DiagError && strings.Contains(d.Summary, `"adapter" on steps`) {
+			if !strings.Contains(d.Detail, "target") {
+				t.Errorf("expected detail to mention 'target' replacement; got: %s", d.Detail)
+			}
+			return
+		}
+	}
 }
 
 // ------------------------------------------------------------------
@@ -143,7 +179,8 @@ state "done" { terminal = true }
 // ------------------------------------------------------------------
 
 // TestLegacyReject_StepLifecycleAttr verifies that the removed "lifecycle"
-// attribute on a step block is rejected with a clear error.
+// attribute on a step block is rejected, with Detail indicating that lifecycle
+// is now automatic (managed by the engine).
 func TestLegacyReject_StepLifecycleAttr(t *testing.T) {
 	src := minimalWorkflowHCL + `
 step "run" {
@@ -155,11 +192,20 @@ state "done" { terminal = true }
 `
 	_, diags := Parse("test.hcl", []byte(src))
 	assertDiagnosticContains(t, diags, `removed attribute "lifecycle" on steps`)
+	for _, d := range diags {
+		if d.Severity == hcl.DiagError && strings.Contains(d.Summary, `"lifecycle" on steps`) {
+			if !strings.Contains(d.Detail, "automatic") {
+				t.Errorf("expected detail to indicate lifecycle is 'automatic'; got: %s", d.Detail)
+			}
+			return
+		}
+	}
 }
 
 // TestLegacyReject_StepLifecycleAttr_InNestedWorkflow verifies that "lifecycle"
-// on a step nested inside an inline workflow block is also caught by the
-// recursive walk in rejectLegacyStepLifecycleAttrInBody.
+// on a step nested inside an inline workflow block is also caught with Detail
+// indicating that lifecycle is automatic. Exercises the recursive walk in
+// rejectLegacyStepLifecycleAttrInBody.
 func TestLegacyReject_StepLifecycleAttr_InNestedWorkflow(t *testing.T) {
 	src := minimalWorkflowHCL + `
 step "outer" {
@@ -176,6 +222,14 @@ state "done" { terminal = true }
 `
 	_, diags := Parse("test.hcl", []byte(src))
 	assertDiagnosticContains(t, diags, `removed attribute "lifecycle" on steps`)
+	for _, d := range diags {
+		if d.Severity == hcl.DiagError && strings.Contains(d.Summary, `"lifecycle" on steps`) {
+			if !strings.Contains(d.Detail, "automatic") {
+				t.Errorf("expected detail to indicate lifecycle is 'automatic'; got: %s", d.Detail)
+			}
+			return
+		}
+	}
 }
 
 // ------------------------------------------------------------------
@@ -183,8 +237,9 @@ state "done" { terminal = true }
 // ------------------------------------------------------------------
 
 // TestLegacyReject_StepInlineWorkflowBlock verifies that an inline
-// "workflow { ... }" body block inside a step is rejected. This exercises the
-// diagnostic append in rejectLegacyStepWorkflowBlockInBody.
+// "workflow { ... }" body block inside a step is rejected with Detail pointing
+// to the "subworkflow" replacement. Exercises the diagnostic append in
+// rejectLegacyStepWorkflowBlockInBody.
 func TestLegacyReject_StepInlineWorkflowBlock(t *testing.T) {
 	src := minimalWorkflowHCL + `
 step "run" {
@@ -202,6 +257,14 @@ state "done" { terminal = true }
 `
 	_, diags := Parse("test.hcl", []byte(src))
 	assertDiagnosticContains(t, diags, `removed block "workflow" on steps`)
+	for _, d := range diags {
+		if d.Severity == hcl.DiagError && strings.Contains(d.Summary, `"workflow" on steps`) {
+			if !strings.Contains(d.Detail, "subworkflow") {
+				t.Errorf("expected detail to mention 'subworkflow' replacement; got: %s", d.Detail)
+			}
+			return
+		}
+	}
 }
 
 // ------------------------------------------------------------------
@@ -209,8 +272,9 @@ state "done" { terminal = true }
 // ------------------------------------------------------------------
 
 // TestLegacyReject_StepWorkflowFileAttr verifies that the removed
-// "workflow_file" attribute on a step block is rejected. This exercises
-// the diagnostic append in rejectLegacyStepWorkflowFileInBody.
+// "workflow_file" attribute on a step block is rejected with Detail pointing
+// to the "subworkflow" replacement. Exercises the diagnostic in
+// rejectLegacyStepWorkflowFileInBody.
 func TestLegacyReject_StepWorkflowFileAttr(t *testing.T) {
 	src := minimalWorkflowHCL + `
 step "run" {
@@ -222,6 +286,14 @@ state "done" { terminal = true }
 `
 	_, diags := Parse("test.hcl", []byte(src))
 	assertDiagnosticContains(t, diags, `removed attribute "workflow_file" on steps`)
+	for _, d := range diags {
+		if d.Severity == hcl.DiagError && strings.Contains(d.Summary, `"workflow_file" on steps`) {
+			if !strings.Contains(d.Detail, "subworkflow") {
+				t.Errorf("expected detail to mention 'subworkflow' replacement; got: %s", d.Detail)
+			}
+			return
+		}
+	}
 }
 
 // ------------------------------------------------------------------
@@ -229,8 +301,8 @@ state "done" { terminal = true }
 // ------------------------------------------------------------------
 
 // TestLegacyReject_StepTypeAttr verifies that the removed "type" attribute on a
-// step block is rejected with a diagnostic naming the "type" attribute.
-// This exercises the diagnostic append in rejectLegacyStepTypeAttrInBody.
+// step block is rejected with Detail pointing to "target" and the "adapter"
+// migration path. Exercises the diagnostic append in rejectLegacyStepTypeAttrInBody.
 func TestLegacyReject_StepTypeAttr(t *testing.T) {
 	src := minimalWorkflowHCL + `
 step "run" {
@@ -241,6 +313,14 @@ state "done" { terminal = true }
 `
 	_, diags := Parse("test.hcl", []byte(src))
 	assertDiagnosticContains(t, diags, `removed attribute "type" on steps`)
+	for _, d := range diags {
+		if d.Severity == hcl.DiagError && strings.Contains(d.Summary, `"type" on steps`) {
+			if !strings.Contains(d.Detail, "target") && !strings.Contains(d.Detail, "adapter") {
+				t.Errorf("expected detail to mention 'target' or 'adapter' replacement; got: %s", d.Detail)
+			}
+			return
+		}
+	}
 }
 
 // ------------------------------------------------------------------

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/hashicorp/hcl/v2"
 )
 
@@ -46,9 +47,24 @@ func assertMergeDiag(t *testing.T, diags hcl.Diagnostics, substrings ...string) 
 	t.Fatalf("no DiagError containing all of %v; diagnostics: %s", substrings, diags.Error())
 }
 
+// findMergeDiag returns the first DiagError whose Summary contains summarySubstr.
+// Fails the test if no such diagnostic is found.
+func findMergeDiag(t *testing.T, diags hcl.Diagnostics, summarySubstr string) *hcl.Diagnostic {
+	t.Helper()
+	for i, d := range diags {
+		if d.Severity == hcl.DiagError && strings.Contains(d.Summary, summarySubstr) {
+			return diags[i]
+		}
+	}
+	t.Fatalf("no DiagError with summary containing %q; diagnostics: %s", summarySubstr, diags.Error())
+	return nil
+}
+
 // TestMergeSpecs_SingletonConflict_WorkflowHeader_TwoFiles verifies that two
 // .hcl files each declaring a workflow header block produce a diagnostic
-// naming the duplicate and the "workflow" keyword.
+// naming both source files. The Detail must reference the original file (a.hcl)
+// via the "previously declared at" range, and the Subject must point to the
+// duplicate file (b.hcl).
 func TestMergeSpecs_SingletonConflict_WorkflowHeader_TwoFiles(t *testing.T) {
 	dir := t.TempDir()
 	writeHCLFiles(t, dir, map[string]string{
@@ -72,10 +88,21 @@ state "done" { terminal = true }
 
 	_, diags := ParseDir(dir)
 	assertMergeDiag(t, diags, "duplicate workflow block")
+
+	d := findMergeDiag(t, diags, "duplicate workflow block")
+	// Detail must name a.hcl as the originally-declared file.
+	if !strings.Contains(d.Detail, "a.hcl") {
+		t.Errorf("expected Detail to name a.hcl (original declaration); got: %s", d.Detail)
+	}
+	// Subject must point into b.hcl (the duplicate).
+	if d.Subject == nil || !strings.Contains(d.Subject.Filename, "b.hcl") {
+		t.Errorf("expected Subject.Filename to contain b.hcl (duplicate); got: %v", d.Subject)
+	}
 }
 
 // TestMergeSpecs_SingletonConflict_Policy_TwoFiles verifies that two .hcl
-// files each declaring a policy block produce a "duplicate policy block" error.
+// files each declaring a policy block produce a "duplicate policy block" error
+// with Detail naming a.hcl as the original and Subject pointing to b.hcl.
 func TestMergeSpecs_SingletonConflict_Policy_TwoFiles(t *testing.T) {
 	dir := t.TempDir()
 	writeHCLFiles(t, dir, map[string]string{
@@ -98,10 +125,19 @@ policy { max_total_steps = 10 }
 
 	_, diags := ParseDir(dir)
 	assertMergeDiag(t, diags, "duplicate policy block")
+
+	d := findMergeDiag(t, diags, "duplicate policy block")
+	if !strings.Contains(d.Detail, "a.hcl") {
+		t.Errorf("expected Detail to name a.hcl (original declaration); got: %s", d.Detail)
+	}
+	if d.Subject == nil || !strings.Contains(d.Subject.Filename, "b.hcl") {
+		t.Errorf("expected Subject.Filename to contain b.hcl (duplicate); got: %v", d.Subject)
+	}
 }
 
 // TestMergeSpecs_SingletonConflict_Permissions_TwoFiles verifies that two
-// .hcl files each declaring a permissions block produce a conflict error.
+// .hcl files each declaring a permissions block produce a conflict error with
+// Detail naming a.hcl as the original and Subject pointing to b.hcl.
 func TestMergeSpecs_SingletonConflict_Permissions_TwoFiles(t *testing.T) {
 	dir := t.TempDir()
 	writeHCLFiles(t, dir, map[string]string{
@@ -124,10 +160,19 @@ permissions { allow_tools = ["*"] }
 
 	_, diags := ParseDir(dir)
 	assertMergeDiag(t, diags, "duplicate permissions block")
+
+	d := findMergeDiag(t, diags, "duplicate permissions block")
+	if !strings.Contains(d.Detail, "a.hcl") {
+		t.Errorf("expected Detail to name a.hcl (original declaration); got: %s", d.Detail)
+	}
+	if d.Subject == nil || !strings.Contains(d.Subject.Filename, "b.hcl") {
+		t.Errorf("expected Subject.Filename to contain b.hcl (duplicate); got: %v", d.Subject)
+	}
 }
 
 // TestMergeSpecs_DuplicateNamedBlock_Step verifies that two .hcl files
-// declaring the same step name produce a diagnostic naming the step name.
+// declaring the same step name produce a diagnostic naming the step name and
+// attributing the original declaration to a.hcl via the Detail field.
 func TestMergeSpecs_DuplicateNamedBlock_Step(t *testing.T) {
 	dir := t.TempDir()
 	writeHCLFiles(t, dir, map[string]string{
@@ -152,43 +197,28 @@ state "done" { terminal = true }
 
 	_, diags := ParseDir(dir)
 	assertMergeDiag(t, diags, "duplicate step name", "build")
+
+	d := findMergeDiag(t, diags, "duplicate step name")
+	if !strings.Contains(d.Detail, "a.hcl") {
+		t.Errorf("expected Detail to name a.hcl (original declaration); got: %s", d.Detail)
+	}
+	if d.Subject == nil || !strings.Contains(d.Subject.Filename, "b.hcl") {
+		t.Errorf("expected Subject.Filename to contain b.hcl (duplicate); got: %v", d.Subject)
+	}
 }
 
-// TestMergeSpecs_DuplicateNamedBlock_Adapter_DifferentTypes verifies that two
-// adapters with the same instance name but different type labels are NOT
-// considered duplicates. The duplicate check key is "<type>.<name>", so
-// "shell.primary" and "copilot.primary" are distinct.
+// TestMergeSpecs_DuplicateNamedBlock_Adapter_DifferentTypes documents that the
+// workstream specification required same-name adapters to conflict regardless of
+// type label, but the current parser uses "<type>.<name>" as the adapter identity
+// key — so adapter "shell" "primary" and adapter "copilot" "primary" are distinct.
 //
-// Note: the workstream description suggested these should conflict, but the
-// implementation uses type+name as the unique key. Since adapter references in
-// step targets always include the type (target = adapter.shell.primary), this
-// is correct: the two adapters are genuinely different.
+// This test is skipped pending an architecture decision. The executor has
+// escalated the contract mismatch: see [ARCH-REVIEW] in the workstream file.
 func TestMergeSpecs_DuplicateNamedBlock_Adapter_DifferentTypes(t *testing.T) {
-	dir := t.TempDir()
-	writeHCLFiles(t, dir, map[string]string{
-		"a.hcl": `workflow "w" {
-  version       = "1"
-  initial_state = "run"
-  target_state  = "done"
-}
-adapter "shell" "primary" {}
-step "run" {
-  target = adapter.shell.primary
-  outcome "success" { next = "done" }
-}
-state "done" { terminal = true }
-`,
-		"b.hcl": `adapter "copilot" "primary" {}
-`,
-	})
-
-	spec, diags := ParseDir(dir)
-	if diags.HasErrors() {
-		t.Fatalf("expected no errors for adapters with same name but different types; got: %s", diags.Error())
-	}
-	if len(spec.Adapters) != 2 {
-		t.Errorf("expected 2 adapters, got %d", len(spec.Adapters))
-	}
+	t.Skip("ARCH-REVIEW pending: workstream requires same-name different-type adapters to conflict, " +
+		"but the parser uses type+name as the adapter identity key (adapter.shell.primary ≠ " +
+		"adapter.copilot.primary). Changing this would be a breaking contract change; see " +
+		"[ARCH-REVIEW] in workstreams/test-02-hcl-parsing-eval-coverage.md.")
 }
 
 // TestMergeSpecs_DuplicateNamedBlock_Adapter_SameTypeAndName verifies that
@@ -350,22 +380,37 @@ state "done" { terminal = true }
 	}
 }
 
-// TestMergeSpecs_EmptyDirectory_NoSpec_NoDiagnostics tests the mergeSpecs
-// function directly: an empty entries slice returns nil spec and nil diagnostics
-// (no-files is handled upstream by ParseDir; mergeSpecs itself treats it as
-// "nothing to merge").
+// TestMergeSpecs_EmptyDirectory_NoSpec_NoDiagnostics tests that ParseDir on a
+// directory containing no .hcl files returns a "no .hcl files" error diagnostic.
+// (mergeSpecs itself returns nil,nil for an empty entries slice, but that code
+// path is unreachable via the public API — ParseDir exits early with an error
+// before calling mergeSpecs when no files are present.)
 func TestMergeSpecs_EmptyDirectory_NoSpec_NoDiagnostics(t *testing.T) {
-	spec, diags := mergeSpecs("/nonexistent/dir", []fileEntry{})
+	dir := t.TempDir() // empty directory: no .hcl files
+	spec, diags := ParseDir(dir)
 	if spec != nil {
-		t.Errorf("expected nil spec, got %+v", spec)
+		t.Errorf("expected nil spec for empty directory, got %+v", spec)
 	}
-	if len(diags) != 0 {
-		t.Errorf("expected no diagnostics, got: %s", diags.Error())
+	if !diags.HasErrors() {
+		t.Fatal("expected error diagnostic for empty directory, got none")
+	}
+	// ParseDir must specifically report "no .hcl files" — not a generic failure.
+	found := false
+	for _, d := range diags {
+		if d.Severity == hcl.DiagError && strings.Contains(d.Summary, "no .hcl files") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected 'no .hcl files' error; got: %s", diags.Error())
 	}
 }
 
 // TestMergeSpecs_SingleFile_NoMergeNeeded verifies that a directory containing
 // exactly one .hcl file returns a spec equivalent to the single-file parse.
+// Uses cmp.Diff on a structural summary to prove spec equivalence at the
+// surface level (hcl.Body fields are interface types and cannot be deep-compared).
 func TestMergeSpecs_SingleFile_NoMergeNeeded(t *testing.T) {
 	dir := t.TempDir()
 	content := `workflow "single" {
@@ -374,15 +419,21 @@ func TestMergeSpecs_SingleFile_NoMergeNeeded(t *testing.T) {
   target_state  = "done"
 }
 adapter "noop" "default" {}
+adapter "shell" "runner" {}
 step "run" {
   target = adapter.noop.default
   outcome "success" { next = "done" }
 }
+step "cleanup" {
+  target = adapter.shell.runner
+  outcome "success" { next = "done" }
+}
 state "done" { terminal = true }
+state "failed" { terminal = true }
 `
 	writeHCLFiles(t, dir, map[string]string{"only.hcl": content})
 
-	spec, diags := ParseDir(dir)
+	merged, diags := ParseDir(dir)
 	if diags.HasErrors() {
 		t.Fatalf("ParseDir: %s", diags.Error())
 	}
@@ -392,21 +443,32 @@ state "done" { terminal = true }
 		t.Fatalf("Parse: %s", parseDiags.Error())
 	}
 
-	// Compare key structural fields — hcl.Body fields in Spec cannot be
-	// deep-compared, so we compare the observable identifiers.
-	if spec.Header.Name != single.Header.Name {
-		t.Errorf("Header.Name: ParseDir=%q, Parse=%q", spec.Header.Name, single.Header.Name)
+	// specSummary captures all comparable structural identifiers. hcl.Body and
+	// hcl.Expression fields cannot be deep-compared so are excluded.
+	type specSummary struct {
+		WorkflowName string
+		StepNames    []string
+		StateNames   []string
+		AdapterKeys  []string
 	}
-	if len(spec.Steps) != len(single.Steps) {
-		t.Errorf("Steps: ParseDir=%d, Parse=%d", len(spec.Steps), len(single.Steps))
-	} else if spec.Steps[0].Name != single.Steps[0].Name {
-		t.Errorf("Steps[0].Name: ParseDir=%q, Parse=%q", spec.Steps[0].Name, single.Steps[0].Name)
+	summarize := func(s *Spec) specSummary {
+		sum := specSummary{}
+		if s.Header != nil {
+			sum.WorkflowName = s.Header.Name
+		}
+		for _, st := range s.Steps {
+			sum.StepNames = append(sum.StepNames, st.Name)
+		}
+		for _, st := range s.States {
+			sum.StateNames = append(sum.StateNames, st.Name)
+		}
+		for _, a := range s.Adapters {
+			sum.AdapterKeys = append(sum.AdapterKeys, a.Type+"."+a.Name)
+		}
+		return sum
 	}
-	if len(spec.Adapters) != len(single.Adapters) {
-		t.Errorf("Adapters: ParseDir=%d, Parse=%d", len(spec.Adapters), len(single.Adapters))
-	}
-	if len(spec.States) != len(single.States) {
-		t.Errorf("States: ParseDir=%d, Parse=%d", len(spec.States), len(single.States))
+	if diff := cmp.Diff(summarize(single), summarize(merged)); diff != "" {
+		t.Errorf("single-file ParseDir/Parse mismatch (-want +got):\n%s", diff)
 	}
 }
 

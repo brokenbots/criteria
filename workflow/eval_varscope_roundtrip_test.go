@@ -68,18 +68,28 @@ func TestVarScope_RoundTrip_EmptyScope(t *testing.T) {
 }
 
 // TestVarScope_RoundTrip_PrimitiveTypes verifies that string, number, and bool
-// variable defaults survive a serialize→restore round-trip via FSMGraph seeding.
+// variable values survive a genuine serialize→restore round-trip. The FSMGraph
+// defaults are deliberately different from the serialized values so that only a
+// real JSON restoration (not mere graph seeding) can produce the correct result.
 func TestVarScope_RoundTrip_PrimitiveTypes(t *testing.T) {
-	defaults := map[string]cty.Value{
-		"greet": cty.StringVal("hi"),
-		"count": cty.NumberIntVal(42),
+	// runtimeVars holds the values that exist in memory during a live run.
+	runtimeVars := map[string]cty.Value{
+		"greet": cty.StringVal("hello world"),
+		"count": cty.NumberFloatVal(99.0),
+		"flag":  cty.BoolVal(false),
+	}
+	// fsmDefaults differ from runtimeVars so that FSMGraph-only seeding would
+	// produce the wrong result.
+	fsmDefaults := map[string]cty.Value{
+		"greet": cty.StringVal("default"),
+		"count": cty.NumberFloatVal(0.0),
 		"flag":  cty.BoolVal(true),
 	}
 	vars := map[string]cty.Value{
-		"var":   cty.ObjectVal(defaults),
+		"var":   cty.ObjectVal(runtimeVars),
 		"steps": cty.EmptyObjectVal,
 	}
-	g := fsmGraphWithVarDefaults(defaults)
+	g := fsmGraphWithVarDefaults(fsmDefaults)
 
 	scopeJSON, err := SerializeVarScope(vars)
 	if err != nil {
@@ -91,46 +101,61 @@ func TestVarScope_RoundTrip_PrimitiveTypes(t *testing.T) {
 	}
 
 	varObj := restored["var"]
-	assertCtyMapEqual(t, defaults, map[string]cty.Value{
+	// Must match runtimeVars (from JSON), not fsmDefaults (from graph seeding).
+	assertCtyMapEqual(t, runtimeVars, map[string]cty.Value{
 		"greet": varObj.GetAttr("greet"),
 		"count": varObj.GetAttr("count"),
 		"flag":  varObj.GetAttr("flag"),
 	})
 }
 
-// TestVarScope_RoundTrip_ListAndMap verifies that step outputs stored as
-// multiple key→value pairs round-trip correctly. List/map cty types in step
-// outputs are serialized via CtyValueToString and restored as string values.
-// This test also verifies cursor Prev round-tripping with a list cty value,
-// which uses ctyjson for type-preserving serialization.
+// TestVarScope_RoundTrip_ListAndMap exercises two scenarios:
+//  1. Step outputs stored as multiple string key→value pairs (round-trips correctly).
+//  2. List/map vars in vars["var"] — demonstrates the known limitation that
+//     non-primitive cty types cannot be restored from the string serialization.
 func TestVarScope_RoundTrip_ListAndMap(t *testing.T) {
-	g := &FSMGraph{Variables: map[string]*VariableNode{}}
-	vars := SeedVarsFromGraph(g)
+	t.Run("step_outputs_round_trip", func(t *testing.T) {
+		g := &FSMGraph{Variables: map[string]*VariableNode{}}
+		vars := SeedVarsFromGraph(g)
+		vars = WithStepOutputs(vars, "fetch", map[string]string{
+			"url":    "https://example.com",
+			"status": "200",
+			"body":   "ok",
+		})
 
-	// Step outputs: multiple string values
-	vars = WithStepOutputs(vars, "fetch", map[string]string{
-		"url":    "https://example.com",
-		"status": "200",
-		"body":   "ok",
+		scopeJSON, err := SerializeVarScope(vars)
+		if err != nil {
+			t.Fatalf("SerializeVarScope: %v", err)
+		}
+		restored, _, err := RestoreVarScope(scopeJSON, g)
+		if err != nil {
+			t.Fatalf("RestoreVarScope: %v", err)
+		}
+		fetchObj := restored["steps"].GetAttr("fetch")
+		for _, key := range []string{"url", "status", "body"} {
+			if !fetchObj.Type().HasAttribute(key) {
+				t.Errorf("missing attribute %q in restored step output", key)
+			}
+		}
+		if fetchObj.GetAttr("status").AsString() != "200" {
+			t.Errorf("status = %q, want '200'", fetchObj.GetAttr("status").AsString())
+		}
 	})
 
-	scopeJSON, err := SerializeVarScope(vars)
-	if err != nil {
-		t.Fatalf("SerializeVarScope: %v", err)
-	}
-	restored, _, err := RestoreVarScope(scopeJSON, g)
-	if err != nil {
-		t.Fatalf("RestoreVarScope: %v", err)
-	}
-	fetchObj := restored["steps"].GetAttr("fetch")
-	for _, key := range []string{"url", "status", "body"} {
-		if !fetchObj.Type().HasAttribute(key) {
-			t.Errorf("missing attribute %q in restored step output", key)
-		}
-	}
-	if fetchObj.GetAttr("status").AsString() != "200" {
-		t.Errorf("status = %q, want '200'", fetchObj.GetAttr("status").AsString())
-	}
+	t.Run("list_var_override_not_restored", func(t *testing.T) {
+		// Known limitation: non-primitive (list, map, object) vars are not
+		// restored from the JSON scope because CtyValueToString is lossy for
+		// these types. A list var serializes to a comma-joined string and cannot
+		// be recovered as a cty.List on restore. Complex-type vars always fall
+		// back to the FSMGraph default value.
+		//
+		// This means CLI var overrides for list/map/object types (even if
+		// ApplyVarOverrides were extended to support them) would be silently lost
+		// on crash-resume. See [ARCH-REVIEW] in workstreams/test-02-hcl-parsing-eval-coverage.md.
+		t.Skip("known limitation: list/map/object vars fall back to FSMGraph defaults on restore; " +
+			"CtyValueToString is lossy for non-primitive types and overrides would be silently dropped. " +
+			"Tracked as [ARCH-REVIEW] in workstreams/test-02-hcl-parsing-eval-coverage.md.")
+	})
 }
 
 // TestVarScope_RoundTrip_NestedObject verifies that a cursor Prev value
@@ -224,7 +249,12 @@ func TestVarScope_RoundTrip_UnknownValue_Errors(t *testing.T) {
 // TestVarScope_RoundTrip_SingleCursor_ForEach verifies that a complete
 // IterCursor representing a paused for_each iteration round-trips through
 // SerializeVarScope → RestoreVarScope with all scalar fields preserved.
-// Items and Keys are intentionally omitted (re-evaluated on re-entry).
+//
+// Items and Keys are intentionally NOT serialized — they are re-evaluated from
+// the workflow expression on re-entry, so the restored cursor has nil slices.
+// EarlyExit is also not serialized — it is only meaningful during live execution
+// and resets to false on resume. These omissions are by design; see the comment
+// in SerializeVarScope.
 func TestVarScope_RoundTrip_SingleCursor_ForEach(t *testing.T) {
 	prev := cty.ObjectVal(map[string]cty.Value{"result": cty.StringVal("pass")})
 	original := IterCursor{
@@ -236,8 +266,9 @@ func TestVarScope_RoundTrip_SingleCursor_ForEach(t *testing.T) {
 		InProgress: true,
 		OnFailure:  "continue",
 		Prev:       prev,
-		// Items/Keys intentionally nil — not serialised.
-		// EarlyExit intentionally false — not serialised.
+		// Items/Keys intentionally set to demonstrate they are NOT preserved.
+		Items:     []cty.Value{cty.StringVal("item-0"), cty.StringVal("item-1")},
+		EarlyExit: true,
 	}
 
 	g := &FSMGraph{Variables: map[string]*VariableNode{}}
@@ -279,6 +310,19 @@ func TestVarScope_RoundTrip_SingleCursor_ForEach(t *testing.T) {
 	}
 	if !c.Prev.RawEquals(original.Prev) {
 		t.Errorf("Prev: want %#v, got %#v", original.Prev, c.Prev)
+	}
+
+	// Items, Keys, and EarlyExit are intentionally NOT serialized.
+	// Items is re-evaluated from the workflow expression on re-entry.
+	// Keys is similarly re-evaluated. EarlyExit resets to false on resume.
+	if len(c.Items) != 0 {
+		t.Errorf("Items: want nil (not serialized by design), got %d items", len(c.Items))
+	}
+	if len(c.Keys) != 0 {
+		t.Errorf("Keys: want nil (not serialized by design), got %d keys", len(c.Keys))
+	}
+	if c.EarlyExit {
+		t.Errorf("EarlyExit: want false (not serialized by design, resets on resume), got true")
 	}
 }
 
@@ -346,16 +390,21 @@ func TestVarScope_RoundTrip_CursorWithEachPrev(t *testing.T) {
 }
 
 // TestVarScope_RoundTrip_LargeScope_HandlesLengthEfficiently verifies that
-// serializing 100 string variables produces valid JSON under 100 KiB.
+// serializing 100 string variables produces valid JSON under 100 KiB and that
+// all values are correctly round-tripped (not just graph-seeded). FSMGraph
+// defaults are set to a different value to prove genuine JSON restoration.
 // This is a sanity guard, not a benchmark: it detects pathological expansion.
 func TestVarScope_RoundTrip_LargeScope_HandlesLengthEfficiently(t *testing.T) {
 	const n = 100
-	defaults := make(map[string]cty.Value, n)
+	runtimeVals := make(map[string]cty.Value, n)
+	fsmDefaults := make(map[string]cty.Value, n)
 	for i := range n {
-		defaults[fmt.Sprintf("var_%03d", i)] = cty.StringVal(fmt.Sprintf("value-%d", i))
+		key := fmt.Sprintf("var_%03d", i)
+		runtimeVals[key] = cty.StringVal(fmt.Sprintf("value-%d", i))
+		fsmDefaults[key] = cty.StringVal("default") // different from runtime
 	}
 	vars := map[string]cty.Value{
-		"var":   cty.ObjectVal(defaults),
+		"var":   cty.ObjectVal(runtimeVals),
 		"steps": cty.EmptyObjectVal,
 	}
 
@@ -368,7 +417,7 @@ func TestVarScope_RoundTrip_LargeScope_HandlesLengthEfficiently(t *testing.T) {
 		t.Errorf("serialized scope is %d bytes, want < %d", len(scopeJSON), maxBytes)
 	}
 
-	g := fsmGraphWithVarDefaults(defaults)
+	g := fsmGraphWithVarDefaults(fsmDefaults)
 	restored, _, err := RestoreVarScope(scopeJSON, g)
 	if err != nil {
 		t.Fatalf("RestoreVarScope: %v", err)
@@ -376,6 +425,15 @@ func TestVarScope_RoundTrip_LargeScope_HandlesLengthEfficiently(t *testing.T) {
 	varObj := restored["var"]
 	if len(varObj.Type().AttributeTypes()) != n {
 		t.Errorf("restored %d variables, want %d", len(varObj.Type().AttributeTypes()), n)
+	}
+	// Spot-check that runtime values (not FSMGraph defaults) were restored.
+	for i := range 3 {
+		key := fmt.Sprintf("var_%03d", i)
+		got := varObj.GetAttr(key).AsString()
+		want := fmt.Sprintf("value-%d", i)
+		if got != want {
+			t.Errorf("var_%03d = %q, want %q (runtime, not FSMGraph default)", i, got, want)
+		}
 	}
 }
 
@@ -421,31 +479,52 @@ func TestRestoreVarScope_UnknownStepReference_Lenient(t *testing.T) {
 	}
 }
 
-// TestRestoreVarScope_VarSectionIgnored documents that the "var" section of
-// the scope JSON is NOT applied to the restored vars map. Variable values are
-// always seeded from FSMGraph defaults, not from the serialized JSON.
-// This means the var section in JSON is informational only; it cannot cause
-// a type mismatch because it is never parsed back into the vars map.
-//
-// The workstream described a "type mismatch" error test (test 13), but that
-// scenario cannot occur with the current architecture because RestoreVarScope
-// ignores the JSON "var" section entirely.
-func TestRestoreVarScope_VarSectionIgnored(t *testing.T) {
-	// JSON has var.foo = "not-a-number" but the graph declares foo as number.
-	jsonScope := `{"var": {"foo": "not-a-number"}}`
+// TestRestoreVarScope_VarValues_RestoredFromJSON verifies that variable values
+// in the JSON "var" section are overlaid onto FSMGraph defaults. The FSMGraph
+// default deliberately differs from the serialized value to prove it is the
+// JSON that determines the restored value, not mere graph seeding.
+func TestRestoreVarScope_VarValues_RestoredFromJSON(t *testing.T) {
 	g := &FSMGraph{
 		Variables: map[string]*VariableNode{
-			"foo": {Name: "foo", Type: cty.Number, Default: cty.NumberIntVal(7)},
+			"greeting": {Name: "greeting", Type: cty.String, Default: cty.StringVal("default-value")},
 		},
 	}
-	vars, _, err := RestoreVarScope(jsonScope, g)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	// Serialize vars with a runtime value that differs from the FSMGraph default.
+	vars := map[string]cty.Value{
+		"var":   cty.ObjectVal(map[string]cty.Value{"greeting": cty.StringVal("hello-override")}),
+		"steps": cty.EmptyObjectVal,
 	}
-	// foo is restored from the FSMGraph default (7), not from the JSON string.
-	varObj := vars["var"]
-	fooVal := varObj.GetAttr("foo")
-	if !fooVal.RawEquals(cty.NumberIntVal(7)) {
-		t.Errorf("foo = %#v, want NumberIntVal(7) (from FSMGraph, not JSON)", fooVal)
+	scopeJSON, err := SerializeVarScope(vars)
+	if err != nil {
+		t.Fatalf("SerializeVarScope: %v", err)
+	}
+	restored, _, err := RestoreVarScope(scopeJSON, g)
+	if err != nil {
+		t.Fatalf("RestoreVarScope: %v", err)
+	}
+	got := restored["var"].GetAttr("greeting")
+	want := cty.StringVal("hello-override")
+	if !got.RawEquals(want) {
+		t.Errorf("greeting = %#v, want %#v (JSON override should take precedence over FSMGraph default)", got, want)
+	}
+}
+
+// TestRestoreVarScope_VarTypeMismatch_ReturnsError verifies that a type mismatch
+// between a JSON var value and the FSMGraph-declared type returns an error.
+// This guards against corrupt scope blobs reaching the engine.
+func TestRestoreVarScope_VarTypeMismatch_ReturnsError(t *testing.T) {
+	// JSON declares count as a non-numeric string, but the graph declares count as number.
+	jsonScope := `{"var": {"count": "not-a-number"}}`
+	g := &FSMGraph{
+		Variables: map[string]*VariableNode{
+			"count": {Name: "count", Type: cty.Number, Default: cty.NumberFloatVal(7.0)},
+		},
+	}
+	_, _, err := RestoreVarScope(jsonScope, g)
+	if err == nil {
+		t.Fatal("expected error for type-mismatched var value, got nil")
+	}
+	if !strings.Contains(err.Error(), "count") {
+		t.Errorf("error should name the offending variable; got: %v", err)
 	}
 }
