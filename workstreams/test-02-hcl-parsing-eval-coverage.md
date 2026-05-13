@@ -442,3 +442,11 @@ No secrets, no unsafe operations. `go-cmp` promoted from indirect to direct depe
 **Cannot be fixed incrementally:** Fixing list/map round-trip requires either changing the JSON schema (breaking existing serialized checkpoint files) or switching to a different serialization strategy (e.g. cty's own JSON codec). This is a non-trivial cross-cutting change.
 
 **Test status:** `list_var_override_not_restored` subtest is `t.Skip` with this [ARCH-REVIEW] reference.
+
+### Build-fix batch (commit 70ef78f)
+
+**Problem:** `go test -race ./...` failed to build `internal/adapter/conformance` because three files added by another workstream (`conformance_concurrent_stress.go`, `conformance_error_injection.go`, `conformance_permission_paths.go`) referenced fields and a method that had not been added to `Options` and `recordingSink`.
+
+**Fix:** Added the missing symbols to `internal/adapter/conformance/conformance.go` (5 `Options` fields) and `internal/adapter/conformance/fixtures.go` (`adapterEventKindSequence()` method on `recordingSink`). All new fields are opt-in (zero/nil = sub-test skipped); no existing callers changed behavior.
+
+**Validation:** `go build ./...` and `go test -race ./...` both exit 0.
