@@ -35,5 +35,8 @@ states:
   aborted    terminal=true   success=false
   done    terminal=true   success=true
 
+switches:
+  decide    conditions=1   default=aborted
+
 plugins required:
   shell   (search: $CRITERIA_PLUGINS, ~/.criteria/plugins)

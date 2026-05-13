@@ -119,7 +119,19 @@ func renderPlanOutput(ctx context.Context, workflowPath string, overrides map[st
 		b.WriteString(fmt.Sprintf("  %s    terminal=%t   success=%t%s\n", state.Name, state.Terminal, state.Success, requires))
 	}
 	b.WriteString("\n")
-	// TODO(W10): render branch nodes in plan output for human review.
+
+	if len(graph.Switches) > 0 {
+		b.WriteString("switches:\n")
+		for _, name := range sortedSwitchNames(graph) {
+			sw := graph.Switches[name]
+			defaultNext := sw.DefaultNext
+			if defaultNext == "" {
+				defaultNext = "(none)"
+			}
+			b.WriteString(fmt.Sprintf("  %s    conditions=%d   default=%s\n", name, len(sw.Conditions), defaultNext))
+		}
+		b.WriteString("\n")
+	}
 
 	b.WriteString("plugins required:\n")
 	plugs := requiredPlugins(graph)

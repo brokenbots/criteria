@@ -45,6 +45,9 @@ jobs:
       - name: spec-check
         run: make spec-check
 
+      - name: no-todo-markers-in-production-code
+        run: make lint-no-todos
+
   unit-tests:
     name: Unit tests
     runs-on: ubuntu-latest

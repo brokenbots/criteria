@@ -1,5 +1,5 @@
 .PHONY: help bootstrap tidy build plugins install proto proto-lint proto-check-drift \
-	test test-cover test-conformance test-flake-watch lint-imports lint-go lint-baseline-check lint validate validate-self-workflows example-plugin bench docker-runtime docker-runtime-smoke ci self self-loop clean
+	test test-cover test-conformance test-flake-watch lint-imports lint-go lint-baseline-check lint-no-todos lint validate validate-self-workflows example-plugin bench docker-runtime docker-runtime-smoke ci self self-loop clean
 
 # Default target: list available targets.
 help:
@@ -131,7 +131,18 @@ spec-gen: ## Regenerate the generated sections in docs/LANGUAGE-SPEC.md
 spec-check: ## Check that docs/LANGUAGE-SPEC.md is up to date with schema sources
 	go run ./tools/spec-gen -check -out docs/LANGUAGE-SPEC.md
 
-lint: lint-imports lint-go lint-baseline-check spec-check ## Run all linters
+lint-no-todos: ## Fail if any TODO/FIXME/XXX marker appears in non-test production Go source
+	@if grep -rn 'TODO\|FIXME\|XXX' --include='*.go' \
+	    --exclude-dir=vendor --exclude-dir=testdata \
+	    cmd/ internal/ workflow/ sdk/ 2>/dev/null \
+	    | grep -v '_test\.go' \
+	    | grep -E .; then \
+	    echo "FAIL: TODO/FIXME/XXX markers found in production code"; \
+	    exit 1; \
+	fi
+	@echo "OK: no TODO/FIXME/XXX markers in production code"
+
+lint: lint-imports lint-go lint-baseline-check spec-check lint-no-todos ## Run all linters
 
 validate: build ## Validate all example workflow directories
 	@for d in examples/build_and_test examples/copilot_planning_then_execution \
@@ -239,7 +250,7 @@ example-plugin: build ## Build and run the greeter example plugin end-to-end
 	rm -rf "$$tmpdir" "$$eventsfile"; \
 	echo "example-plugin: OK"
 
-ci: build test lint-imports lint-go lint-baseline-check spec-check validate validate-self-workflows example-plugin ## Run all CI gates (build, test, lint-imports, lint-go, lint-baseline-check, spec-check, validate, validate-self-workflows, example-plugin)
+ci: build test lint validate validate-self-workflows example-plugin ## Run all CI gates (build, test, lint, validate, validate-self-workflows, example-plugin)
 
 clean: ## Remove build artifacts
 	rm -rf bin conformance.test

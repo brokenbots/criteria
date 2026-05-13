@@ -135,9 +135,11 @@ type ConfigSpec struct {
 }
 
 // InputSpec holds the raw HCL body of a `step.input { ... }` block.
-// Attributes are decoded into string values by the compiler.
-// W04 will upgrade to expression-aware decoding (var.<name>, each.value).
-// TODO(W04): replace Remain decode with hcl.EvalContext for expression interpolation.
+// Attribute expressions are decoded by the compiler into a string map
+// (compile-time) and parallel hcl.Expression map (runtime).
+// Runtime evaluation uses ResolveInputExprs / ResolveInputExprsAsCty
+// in workflow/eval.go, which builds an hcl.EvalContext with var.*,
+// steps.*, local.*, shared.*, and each.* namespaces.
 type InputSpec struct {
 	Remain hcl.Body `hcl:",remain"`
 }
