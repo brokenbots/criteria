@@ -238,12 +238,12 @@ This workstream may **not** edit:
 
 ## Tasks
 
-- [ ] Implement `http://` rejection in `NewClient` and update both subtests (Step 1).
-- [ ] Delete TODO #3 in `internal/cli/plan.go`; verify or add switch rendering (Step 2).
-- [ ] Delete TODO #4 in `internal/engine/node.go` (Step 3).
-- [ ] Replace TODO #5 in `workflow/schema.go` with current-behavior comment (Step 4).
-- [ ] Add `lint-no-todos` Makefile target and CI step (Step 5).
-- [ ] Validation (Step 6).
+- [x] Implement `http://` rejection in `NewClient` and update both subtests (Step 1).
+- [x] Delete TODO #3 in `internal/cli/plan.go`; verify or add switch rendering (Step 2).
+- [x] Delete TODO #4 in `internal/engine/node.go` (Step 3).
+- [x] Replace TODO #5 in `workflow/schema.go` with current-behavior comment (Step 4).
+- [x] Add `lint-no-todos` Makefile target and CI step (Step 5).
+- [x] Validation (Step 6).
 
 ## Exit criteria
 
@@ -279,3 +279,92 @@ This workstream may **not** edit:
 | The `lint-no-todos` CI step rejects a legitimate TODO that a future contributor adds in good faith | The error message tells them to either close the TODO or move it to a workstream file. The convention is clear; the guard is a forcing function. |
 | The `lint-no-todos` grep is too restrictive and bans `TODO` from doc-comments that describe intentional design (e.g. "TODO callers must do X") | The pattern `TODO\|FIXME\|XXX` is intentionally aggressive. If a legitimate use needs the word `TODO`, the comment can rephrase (e.g. "Callers: do X" rather than "TODO callers: do X"). The guard is opinionated by design. |
 | Step 4 (`InputSpec` comment) understates the current decode path and a reader thinks the comment is wrong | The new comment is required to be accurate. If unsure, read `workflow/eval.go` `ResolveInputExprs` and `ResolveInputExprsAsCty` before writing the new comment text. |
+
+## Implementation notes (executor)
+
+### Step 1 — Behavior change detail
+`NewClient` now validates that TLS mode `TLSEnable`/`TLSMutual` is not combined with an `http://` URL. The validation fires after option defaults are resolved (so implicit TLS from `https://` is never incorrectly rejected). The option-resolution logic was extracted into a private `resolveOptions` helper to keep `NewClient` under the `funlen` limit.
+
+One additional caller was discovered and fixed: `TestSetupServerRun_MTLSMissingCert` in `internal/cli/apply_server_test.go` was passing `http://localhost:9999` with `TLSMutual` — it was testing the missing-cert error, but the new scheme check fires first. Updated the URL to `https://localhost:9999`; the test's intent (missing cert → error) is preserved since `buildHTTPClient` still rejects `TLSMutual` with no cert/key.
+
+### Step 2 — Switch rendering added
+`switches:` rendering was not present (only `states:` was). Added a `switches:` block between `states:` and `plugins required:`, formatted as `  <name>    conditions=<N>   default=<target>`. Used the existing `sortedSwitchNames` helper. Two golden files were regenerated: `switch_basic__workflow__testdata__switch_basic.golden` and `demo_tour_local__examples__demo_tour_local.golden`.
+
+### Step 4 — ConfigSpec comment
+`ConfigSpec` does NOT have expression-aware decoding (no `ResolveConfigExprs` equivalent). Per the workstream instructions ("If no, leave the ConfigSpec comment alone"), the ConfigSpec comment was left unchanged.
+
+### docs/LANGUAGE-SPEC.md regeneration
+The `workflow/schema.go` comment replacement shifted line numbers, causing `make spec-check` to fail. Ran `make spec-gen` to regenerate. This file is auto-generated and its update is a mandatory side-effect of editing schema.go.
+
+### Validation performed
+- `make lint-no-todos` → OK (zero matches)
+- Demonstrated non-zero exit with a temporary TODO in `internal/engine/node.go`, then reverted
+- `go test -race -count=1 ./internal/transport/server/...` → OK
+- `go test -race -count=1 ./internal/cli/...` → OK
+- `go test -race -count=1 ./internal/engine/...` → OK
+- `go test -race -count=1 ./workflow/...` → OK
+- `make ci` → OK (all gates green)
+- Zero TODO/FIXME/XXX markers in production Go source confirmed
+
+## Reviewer Notes
+
+### Review 2026-05-12 — changes-requested
+
+#### Summary
+The implementation is close: the TLS/http construction check is in place, `criteria plan` now renders `switches:`, the stale TODOs were removed, and the required validation commands pass. Verdict is `changes-requested` for two blockers: Step 1's new tests do not assert the required diagnostic contract, and executor validation left an untracked backup artifact in `internal/engine/`.
+
+#### Plan Adherence
+- Step 1: Implemented in `internal/transport/server/client.go`, and the affected CLI test caller was updated in `internal/cli/apply_server_test.go`. Coverage exists, but it only proves rejection, not the required error detail.
+- Step 2: Implemented. `internal/cli/plan.go` renders `switches:`, the golden files were updated, and reviewer validation confirmed `criteria plan examples/demo_tour_local/` includes the section.
+- Step 3: `internal/engine/node.go` no longer carries the stale TODO, but the worktree still contains a related backup file under `internal/engine/`.
+- Step 4: `workflow/schema.go` now documents current `InputSpec` behavior accurately enough, and `docs/LANGUAGE-SPEC.md` was regenerated consistently.
+- Step 5: `lint-no-todos` was added to both `Makefile` and CI and behaves as intended on the reviewed tree.
+- Step 6: The listed validation commands pass, but the acceptance bar is not met until the blockers below are fixed.
+
+#### Required Remediations
+- **Blocker** — `internal/transport/server/client_test.go:865-874`: the replacement Step 1 subtests only assert `err != nil`. The workstream explicitly requires the construction-time error to name both the TLS mode and the offending URL; that diagnostic contract is part of the intended behavior. **Acceptance:** update both rejection subtests to assert the returned error mentions the selected TLS mode and `http://example.com`, while keeping the existing `https://` regression check.
+- **Blocker** — `internal/engine/node.go.bak:1`: remove the untracked backup artifact left by the temporary TODO-validation workflow. It contains `// TODO: temporary test marker`, leaves executor-generated junk under `internal/`, and bypasses the new guard only because it is not a `*.go` file. **Acceptance:** delete `internal/engine/node.go.bak` and ensure the worktree no longer contains this file.
+
+### Remediation (executor)
+
+Both blockers addressed:
+
+1. **Error message assertions**: Updated `tls_enable_with_http_url_rejected` and `tls_mutual_with_http_url_rejected` to assert both that the error mentions the TLS mode constant value and `http://example.com`. Added `"strings"` import to the test file. All subtests pass.
+
+2. **Backup artifact**: Deleted `internal/engine/node.go.bak`. Confirmed `git status --short` shows no untracked files under `internal/engine/`.
+
+Validation re-run: `make ci` → OK.
+
+#### Test Intent Assessment
+The plan-output coverage is good: `internal/cli/plan_test.go` exercises `renderPlanOutput` across fixtures, and the updated goldens prove the new `switches:` block is present in real workflow plans. The TLS regression check for `https://` + `TLSEnable` is also useful. The weak point is the new rejection-path coverage: a broken implementation that returns an opaque or misleading error would still pass, even though debuggability is the stated reason for the behavior change. The tests need to lock in the diagnostic payload, not only the presence of an error.
+
+#### Validation Performed
+- `grep -rn 'TODO\|FIXME\|XXX' --include='*.go' . | grep -v vendor | grep -v testdata` → no matches
+- `make lint-no-todos` → passed
+- `go test -race -count=1 ./internal/transport/server/...` → passed
+- `go test -race -count=1 ./internal/cli/...` → passed
+- `go test -race -count=1 ./internal/engine/...` → passed
+- `go test -race -count=1 ./workflow/...` → passed
+- `make ci` → passed
+- `./bin/criteria plan examples/demo_tour_local/` → output includes `switches:`
+- `git status --short` → revealed untracked `internal/engine/node.go.bak`
+
+### Review 2026-05-12-02 — approved
+
+#### Summary
+The previous blockers are resolved. The TLS/http rejection tests now lock in the intended diagnostic payload, the stray backup artifact is gone, the TODO-closure changes remain aligned with the workstream, and the reviewed validation suite passes. Verdict: `approved`.
+
+#### Plan Adherence
+- Step 1: `internal/transport/server/client.go` rejects `TLSEnable`/`TLSMutual` with `http://`, and `internal/transport/server/client_test.go` now asserts both rejection and error-message content while preserving the `https://` regression check.
+- Step 2: `internal/cli/plan.go` renders `switches:`, and the corresponding plan goldens remain updated.
+- Step 3: `internal/engine/node.go` no longer carries the stale TODO, and the temporary backup artifact has been removed.
+- Step 4: `workflow/schema.go` documents current `InputSpec` behavior accurately, with generated spec output kept in sync.
+- Step 5: `lint-no-todos` remains wired into both `Makefile` and CI.
+- Step 6: Validation evidence matches the exit criteria.
+
+#### Test Intent Assessment
+The rejection-path tests are now strong enough: they would fail if construction stopped surfacing the TLS mode or offending URL, which is the core behavioral intent of the Step 1 tightening. The plan-output golden coverage remains appropriate for the `switches:` addition, and the existing `https://` success case still guards the non-regression path.
+
+#### Validation Performed
+- `git status --short` → no untracked backup artifact remains
+- `make ci` → passed

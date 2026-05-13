@@ -1,5 +1,5 @@
 .PHONY: help bootstrap tidy build plugins install proto proto-lint proto-check-drift \
-	test test-cover test-conformance test-flake-watch lint-imports lint-go lint-baseline-check lint validate validate-self-workflows example-plugin bench docker-runtime docker-runtime-smoke ci self self-loop clean
+	test test-cover test-conformance test-flake-watch lint-imports lint-go lint-baseline-check lint-no-todos lint validate validate-self-workflows example-plugin bench docker-runtime docker-runtime-smoke ci self self-loop clean
 
 # Default target: list available targets.
 help:
@@ -124,14 +124,25 @@ lint-baseline-check: ## Fail if .golangci.baseline.yml exceeds the cap in tools/
 	fi; \
 	echo "Lint baseline within cap ($$count / $$cap)."
 
-.PHONY: spec-gen spec-check
+.PHONY: spec-gen spec-check lint-no-todos
 spec-gen: ## Regenerate the generated sections in docs/LANGUAGE-SPEC.md
 	go run ./tools/spec-gen -out docs/LANGUAGE-SPEC.md
 
 spec-check: ## Check that docs/LANGUAGE-SPEC.md is up to date with schema sources
 	go run ./tools/spec-gen -check -out docs/LANGUAGE-SPEC.md
 
-lint: lint-imports lint-go lint-baseline-check spec-check ## Run all linters
+lint-no-todos: ## Fail if any TODO/FIXME/XXX marker appears in non-test production Go source
+	@if grep -rn 'TODO\|FIXME\|XXX' --include='*.go' \
+	    --exclude-dir=vendor --exclude-dir=testdata \
+	    cmd/ internal/ workflow/ sdk/ 2>&1 \
+	    | grep -v '_test\.go' \
+	    | grep -E .; then \
+	    echo "FAIL: TODO/FIXME/XXX markers found in production code"; \
+	    exit 1; \
+	fi
+	@echo "OK: no TODO/FIXME/XXX markers in production code"
+
+lint: lint-imports lint-go lint-baseline-check spec-check lint-no-todos ## Run all linters
 
 validate: build ## Validate all example workflow directories
 	@for d in examples/build_and_test examples/copilot_planning_then_execution \

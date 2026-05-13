@@ -466,7 +466,7 @@ func TestSetupServerRun_MTLSMissingCert(t *testing.T) {
 
 	log := newApplyLogger()
 	copts := servertrans.Options{TLSMode: servertrans.TLSMutual}
-	_, _, err := setupServerRun(context.Background(), log, nil, nil, "http://localhost:9999", "test", &copts, nil)
+	_, _, err := setupServerRun(context.Background(), log, nil, nil, "https://localhost:9999", "test", &copts, nil)
 	if err == nil {
 		t.Fatal("expected error for mtls without cert")
 	}

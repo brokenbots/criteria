@@ -21,5 +21,8 @@ states:
   done    terminal=true   success=true
   skip_deploy    terminal=true   success=true
 
+switches:
+  decide    conditions=3   default=skip_deploy
+
 plugins required:
   noop   (search: $CRITERIA_PLUGINS, ~/.criteria/plugins)

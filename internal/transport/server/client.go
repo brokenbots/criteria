@@ -101,22 +101,9 @@ func NewClient(serverURL string, log *slog.Logger, opts ...Options) (*Client, er
 		return nil, fmt.Errorf("server url must be http(s): %q", serverURL)
 	}
 
-	o := Options{}
-	if len(opts) > 0 {
-		o = opts[0]
-	}
-	if o.Codec == "" {
-		o.Codec = CodecProto
-	}
-	if o.SendBuffer <= 0 {
-		o.SendBuffer = 64
-	}
-	if o.TLSMode == "" {
-		if u.Scheme == "https" {
-			o.TLSMode = TLSEnable
-		} else {
-			o.TLSMode = TLSDisable
-		}
+	o, err := resolveOptions(u, serverURL, opts)
+	if err != nil {
+		return nil, err
 	}
 
 	httpClient, err := buildHTTPClient(u, &o)
@@ -142,6 +129,33 @@ func NewClient(serverURL string, log *slog.Logger, opts ...Options) (*Client, er
 		resumeCh:    make(chan *pb.ResumeRun, 32),
 		closed:      make(chan struct{}),
 	}, nil
+}
+
+// resolveOptions applies defaults and validates the given options against the
+// parsed server URL. It returns an error if the TLS mode is incompatible with
+// the URL scheme.
+func resolveOptions(u *url.URL, serverURL string, opts []Options) (Options, error) {
+	o := Options{}
+	if len(opts) > 0 {
+		o = opts[0]
+	}
+	if o.Codec == "" {
+		o.Codec = CodecProto
+	}
+	if o.SendBuffer <= 0 {
+		o.SendBuffer = 64
+	}
+	if o.TLSMode == "" {
+		if u.Scheme == "https" {
+			o.TLSMode = TLSEnable
+		} else {
+			o.TLSMode = TLSDisable
+		}
+	}
+	if (o.TLSMode == TLSEnable || o.TLSMode == TLSMutual) && u.Scheme == "http" {
+		return Options{}, fmt.Errorf("server: TLS mode %q requires an https:// URL; got %q", o.TLSMode, serverURL)
+	}
+	return o, nil
 }
 
 func buildHTTPClient(u *url.URL, o *Options) (*http.Client, error) {

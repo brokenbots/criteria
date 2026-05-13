@@ -17,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -862,31 +863,30 @@ func TestClientTLSErrors(t *testing.T) {
 			t.Fatal("expected error for unknown TLS mode")
 		}
 	})
-	t.Run("tls_enable_with_http_url", func(t *testing.T) {
-		// buildHTTPClient accepts TLSEnable against an http:// URL at
-		// construction time; the scheme mismatch surfaces only when RPCs are
-		// attempted. This subtest documents that accepted behaviour.
-		// TODO: reject http:// at construction time in a follow-up workstream.
-		c, err := NewClient("http://example.com", log, Options{TLSMode: TLSEnable})
-		if err != nil {
-			t.Fatalf("unexpected construction error for TLSEnable+http URL: %v", err)
+	t.Run("tls_enable_with_http_url_rejected", func(t *testing.T) {
+		_, err := NewClient("http://example.com", log, Options{TLSMode: TLSEnable})
+		if err == nil {
+			t.Fatal("expected error for TLSEnable + http URL; got nil")
 		}
-		defer c.Close()
+		if !strings.Contains(err.Error(), string(TLSEnable)) {
+			t.Errorf("error should mention TLS mode %q; got: %v", TLSEnable, err)
+		}
+		if !strings.Contains(err.Error(), "http://example.com") {
+			t.Errorf("error should mention the offending URL; got: %v", err)
+		}
 	})
-	t.Run("tls_mutual_with_http_url", func(t *testing.T) {
-		// TLSMutual also accepts an http:// URL at construction time when valid
-		// cert/key files are provided; same deferred-mismatch behaviour as TLSEnable.
-		// TODO: reject http:// at construction time in a follow-up workstream.
+	t.Run("tls_mutual_with_http_url_rejected", func(t *testing.T) {
 		certFile, keyFile := writeTempCertKey(t)
-		c, err := NewClient("http://example.com", log, Options{
-			TLSMode:  TLSMutual,
-			CertFile: certFile,
-			KeyFile:  keyFile,
-		})
-		if err != nil {
-			t.Fatalf("unexpected construction error for TLSMutual+http URL: %v", err)
+		_, err := NewClient("http://example.com", log, Options{TLSMode: TLSMutual, CertFile: certFile, KeyFile: keyFile})
+		if err == nil {
+			t.Fatal("expected error for TLSMutual + http URL; got nil")
 		}
-		defer c.Close()
+		if !strings.Contains(err.Error(), string(TLSMutual)) {
+			t.Errorf("error should mention TLS mode %q; got: %v", TLSMutual, err)
+		}
+		if !strings.Contains(err.Error(), "http://example.com") {
+			t.Errorf("error should mention the offending URL; got: %v", err)
+		}
 	})
 }
 
