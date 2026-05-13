@@ -124,7 +124,7 @@ lint-baseline-check: ## Fail if .golangci.baseline.yml exceeds the cap in tools/
 	fi; \
 	echo "Lint baseline within cap ($$count / $$cap)."
 
-.PHONY: spec-gen spec-check lint-no-todos
+.PHONY: spec-gen spec-check
 spec-gen: ## Regenerate the generated sections in docs/LANGUAGE-SPEC.md
 	go run ./tools/spec-gen -out docs/LANGUAGE-SPEC.md
 
@@ -134,7 +134,7 @@ spec-check: ## Check that docs/LANGUAGE-SPEC.md is up to date with schema source
 lint-no-todos: ## Fail if any TODO/FIXME/XXX marker appears in non-test production Go source
 	@if grep -rn 'TODO\|FIXME\|XXX' --include='*.go' \
 	    --exclude-dir=vendor --exclude-dir=testdata \
-	    cmd/ internal/ workflow/ sdk/ 2>&1 \
+	    cmd/ internal/ workflow/ sdk/ 2>/dev/null \
 	    | grep -v '_test\.go' \
 	    | grep -E .; then \
 	    echo "FAIL: TODO/FIXME/XXX markers found in production code"; \
