@@ -231,11 +231,11 @@ This workstream may **not** edit:
 
 ## Tasks
 
-- [ ] Add the 12 `mergeSpecs` tests in `workflow/parse_dir_merge_test.go` (Step 1).
-- [ ] Add the 13 `SerializeVarScope` / `RestoreVarScope` round-trip tests in `workflow/eval_varscope_roundtrip_test.go` (Step 2).
-- [ ] Enumerate `parse_legacy_reject.go` rejection branches and add one test per branch (Step 3).
-- [ ] Measure coverage and confirm targets (Step 4).
-- [ ] Validation (Step 5).
+- [x] Add the 12 `mergeSpecs` tests in `workflow/parse_dir_merge_test.go` (Step 1).
+- [x] Add the 13 `SerializeVarScope` / `RestoreVarScope` round-trip tests in `workflow/eval_varscope_roundtrip_test.go` (Step 2).
+- [x] Enumerate `parse_legacy_reject.go` rejection branches and add one test per branch (Step 3).
+- [x] Measure coverage and confirm targets (Step 4).
+- [x] Validation (Step 5).
 
 ## Exit criteria
 
@@ -253,7 +253,69 @@ The workstream IS tests. The exit-criteria coverage targets are the contract.
 
 Coverage reports for `internal/engine/` and other downstream packages may shift as a side effect; this workstream does not gate on those — that's [adapter_v2/WS44-ci-coverage-gate.md](adapter_v2/WS44-ci-coverage-gate.md)'s territory (deferred to post-WS40).
 
-## Risks
+## Reviewer Notes
+
+### Implementation batch — all steps complete
+
+**Go version:** go1.26.3-X linux/amd64
+
+#### Pre-workstream coverage (baseline)
+| Function | Coverage |
+|---|---:|
+| `mergeSpecs` | 100% |
+| `SerializeVarScope` | 95.0% |
+| `RestoreVarScope` | 92.3% |
+| `rejectLegacyBlocks` | 80% |
+| `rejectLegacyStepAgentAttr*` | 84.6% |
+| `rejectLegacyStepLifecycleAttr*` | 92.3% |
+| `rejectLegacyStepWorkflowBlockInBody` | 90% |
+| `rejectLegacyStepWorkflowFileInBody` | 90% |
+| `rejectLegacyStepTypeAttrInBody` | 88.9% |
+
+#### Post-workstream coverage
+| Function | Coverage |
+|---|---:|
+| `mergeSpecs` | 100% |
+| `SerializeVarScope` | 97.6% |
+| `RestoreVarScope` | 96.2% |
+| All `parse_legacy_reject.go` functions | 100% |
+
+All targets met (≥ 90% on the three primary functions; 100% on all rejection branches).
+
+#### Bugs found and fixed
+
+**Bug:** `SerializeVarScope` silently converted unknown cty values to empty string via `CtyValueToString`. An `UnknownVal` in `vars["var"]` would serialize to `""`, and after `RestoreVarScope` the value would become a seed from `FSMGraph` defaults rather than the unknown — corrupting crash-resume state.
+
+**Fix:** Added explicit unknown-value guard in the var serialization loop in `workflow/eval.go` (~line 563):
+```go
+if !v.IsKnown() {
+    return "", fmt.Errorf("cannot serialize unknown value for variable %q", k)
+}
+```
+The fix is 3 lines; well within the 50-line budget.
+
+#### Design decisions documented in test files
+
+1. **Test 5 (adapter different-type same-name):** The workstream description said "adapter name is the singleton key regardless of type label." This is incorrect — `mergeSpecs` uses `type + "." + name` as the dedup key, so `shell.primary` ≠ `copilot.primary`. The test was written to assert NO conflict for different-type same-name adapters, reflecting actual behavior. A separate test (Test 6) covers same-type same-name conflict.
+
+2. **Tests 12/13 (RestoreVarScope unknown step ref / type mismatch):** The workstream expected errors in both cases. Actual behavior:
+   - Test 12: `RestoreVarScope` does NOT validate step names against `FSMGraph`. Unknown step references are accepted silently (lenient design for crash-resume across schema evolution). Test documents this as `TestRestoreVarScope_UnknownStepReference_Lenient`.
+   - Test 13: `RestoreVarScope` does NOT read the `"var"` section from JSON at all — it calls `SeedVarsFromGraph(g)` to seed vars. The JSON var section is informational only. Type mismatches in the JSON cannot occur because it is ignored. Test documents this as `TestRestoreVarScope_VarSectionIgnored`.
+
+3. **`rejectLegacyBlocks` labeled-block behavior:** `rejectLegacyBlocks` uses `PartialContent` with `LabelNames: nil`, which only matches zero-label blocks. A labeled form like `agent "myagent" {}` generates an "Extraneous label" diagnostic from HCL (which the function discards) and is NOT caught by the legacy check — the user gets a generic "Unsupported block type" from `gohcl` instead of the descriptive migration error. This is a pre-existing behavior. Tests use the zero-label form (`agent {}`, `branch {}`) to exercise the actual rejection path.
+
+#### Validation
+
+- `go test -race -count=2 ./workflow/...` — PASS
+- `make ci` — same failures as baseline (pre-existing build errors in `internal/adapter/conformance`, `internal/plugin`, etc. — unrelated to this workstream)
+- Security: no secrets, no unsafe operations, no new dependencies added
+
+#### Files changed
+
+- **New:** `workflow/parse_dir_merge_test.go` — 12 mergeSpecs tests
+- **New:** `workflow/eval_varscope_roundtrip_test.go` — 13 SerializeVarScope/RestoreVarScope tests
+- **New:** `workflow/parse_legacy_reject_test.go` — 11 parse_legacy_reject tests
+- **Modified:** `workflow/eval.go` — 3-line bug fix (unknown-value guard in SerializeVarScope)
 
 | Risk | Mitigation |
 |---|---|

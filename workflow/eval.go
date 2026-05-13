@@ -560,6 +560,9 @@ func SerializeVarScope(vars map[string]cty.Value, cursorStack ...[]IterCursor) (
 		varMap := map[string]string{}
 		for k := range varObj.Type().AttributeTypes() {
 			v := varObj.GetAttr(k)
+			if !v.IsKnown() {
+				return "", fmt.Errorf("cannot serialize unknown value for variable %q", k)
+			}
 			varMap[k] = CtyValueToString(v)
 		}
 		scope["var"] = varMap
