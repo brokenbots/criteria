@@ -116,18 +116,39 @@ func RunPlugin(t *testing.T, name, binaryPath string, opts Options) {
 	probe.Kill()
 
 	runContractTests(t, name, &opts, newPluginTargetFactory(name, loader, &opts))
+	runPluginOnlyTests(t, name, loader, &opts, &info)
+}
 
+// runPluginOnlyTests registers sub-tests that require a plugin.Loader (i.e. are
+// not meaningful for plain adapter.Adapter targets).
+func runPluginOnlyTests(t *testing.T, name string, loader plugin.Loader, opts *Options, info *plugin.Info) {
+	t.Helper()
 	t.Run("session_lifecycle", func(t *testing.T) {
-		testSessionLifecycle(t, name, loader, &opts, &info)
+		testSessionLifecycle(t, name, loader, opts, info)
 	})
 	t.Run("concurrent_sessions", func(t *testing.T) {
-		testConcurrentSessions(t, name, loader, &opts, &info)
+		testConcurrentSessions(t, name, loader, opts, info)
+	})
+	t.Run("concurrent_session_stress", func(t *testing.T) {
+		testConcurrentSessionStress(t, name, loader, opts, info)
 	})
 	t.Run("session_crash_detection", func(t *testing.T) {
-		testSessionCrashDetection(t, name, loader, &opts, &info)
+		testSessionCrashDetection(t, name, loader, opts, info)
+	})
+	t.Run("error_injection_handshake", func(t *testing.T) {
+		testErrorInjectionHandshake(t, name, loader, opts, info)
 	})
 	t.Run("permission_request_shape", func(t *testing.T) {
-		testPermissionRequestShape(t, name, loader, &opts, &info)
+		testPermissionRequestShape(t, name, loader, opts, info)
+	})
+	t.Run("permission_deny_with_error", func(t *testing.T) {
+		testPermissionDenyWithError(t, name, loader, opts, info)
+	})
+	t.Run("permission_deny_after_timeout", func(t *testing.T) {
+		testPermissionDenyAfterTimeout(t, name, loader, opts, info)
+	})
+	t.Run("permission_deny_after_session_close", func(t *testing.T) {
+		testPermissionDenyAfterSessionClose(t, name, loader, opts, info)
 	})
 }
 
@@ -140,6 +161,8 @@ func runContractTests(t *testing.T, name string, opts *Options, factory targetFa
 		t.Run("context_cancellation", func(t *testing.T) { testCancel(t, name, factory, opts) })
 		t.Run("step_timeout", func(t *testing.T) { testTimeout(t, name, factory, opts) })
 		t.Run("outcome_domain", func(t *testing.T) { testOutcomeDomain(t, name, factory, opts) })
+		t.Run("lifecycle_ordering_invariants", func(t *testing.T) { testLifecycleOrderingInvariants(t, name, factory, opts) })
+		t.Run("partial_failure_recovery", func(t *testing.T) { testPartialFailureRecovery(t, name, factory, opts) })
 		if opts.Streaming {
 			t.Run("chunked_io", func(t *testing.T) { testChunkedIO(t, name, factory, opts) })
 		}

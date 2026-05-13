@@ -649,6 +649,70 @@ func restoreVarFromString(s string, t cty.Type) (cty.Value, error) {
 	}
 }
 
+// overlayVarsFromJSON merges the "var" section of a JSON scope snapshot onto
+// the pre-seeded vars map. Empty strings are skipped (null/empty ambiguity).
+// Non-primitive types are skipped and fall back to FSMGraph defaults because
+// CtyValueToString is lossy for them.
+func overlayVarsFromJSON(vars map[string]cty.Value, varData map[string]interface{}, g *FSMGraph) error {
+	varObj := vars["var"]
+	if varObj == cty.NilVal || !varObj.Type().IsObjectType() {
+		return nil
+	}
+	updated := make(map[string]cty.Value, len(varObj.Type().AttributeTypes()))
+	for k := range varObj.Type().AttributeTypes() {
+		updated[k] = varObj.GetAttr(k)
+	}
+	for k, rawVal := range varData {
+		sv, ok := rawVal.(string)
+		if !ok || sv == "" {
+			continue
+		}
+		node, ok := g.Variables[k]
+		if !ok {
+			continue
+		}
+		if node.Type != cty.String && node.Type != cty.Number && node.Type != cty.Bool {
+			continue
+		}
+		v, err := restoreVarFromString(sv, node.Type)
+		if err != nil {
+			return fmt.Errorf("restore var %q: %w", k, err)
+		}
+		if _, exists := updated[k]; exists {
+			updated[k] = v
+		}
+	}
+	if len(updated) > 0 {
+		vars["var"] = cty.ObjectVal(updated)
+	}
+	return nil
+}
+
+// restoreStepsFromJSON rebuilds the "steps" cty.Value from the raw JSON steps
+// section, preserving step output strings as cty.StringVal.
+func restoreStepsFromJSON(stepsData map[string]interface{}) cty.Value {
+	stepsAttrs := map[string]cty.Value{}
+	for stepName, stepOutputsRaw := range stepsData {
+		outputMap, ok := stepOutputsRaw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		stepVals := make(map[string]cty.Value, len(outputMap))
+		for k, v := range outputMap {
+			if sv, ok := v.(string); ok {
+				stepVals[k] = cty.StringVal(sv)
+			}
+		}
+		if len(stepVals) > 0 {
+			stepsAttrs[stepName] = cty.ObjectVal(stepVals)
+		}
+	}
+	if len(stepsAttrs) == 0 {
+		return cty.NilVal
+	}
+	return cty.ObjectVal(stepsAttrs)
+}
+
 // RestoreVarScope rebuilds a run's vars map and iteration cursor stack from
 // a JSON-encoded scope snapshot and the compiled workflow graph. Variable
 // defaults come from the graph; step outputs and primitive var values are
@@ -658,7 +722,7 @@ func restoreVarFromString(s string, t cty.Type) (cty.Value, error) {
 // The returned []IterCursor is non-nil only when the scope JSON contains an
 // "iter" field. Each cursor's Items field is nil; the step re-evaluates the
 // expression on re-entry.
-func RestoreVarScope(scopeJSON string, g *FSMGraph) (map[string]cty.Value, []IterCursor, error) { //nolint:gocognit // scope restoration must handle iter cursors, nested vars, and multiple scope shapes
+func RestoreVarScope(scopeJSON string, g *FSMGraph) (map[string]cty.Value, []IterCursor, error) {
 	vars := SeedVarsFromGraph(g)
 
 	if scopeJSON == "" {
@@ -670,62 +734,17 @@ func RestoreVarScope(scopeJSON string, g *FSMGraph) (map[string]cty.Value, []Ite
 		return vars, nil, fmt.Errorf("restore scope: %w", err)
 	}
 
-	// Overlay serialized var values onto FSMGraph defaults. Empty strings are
-	// skipped — they are indistinguishable from null/empty-default
-	// serializations. Complex types (list, map, object) are also skipped and
-	// fall back to FSMGraph defaults because CtyValueToString is lossy for them.
+	// Overlay serialized var values onto FSMGraph defaults.
 	if varData, ok := raw["var"].(map[string]interface{}); ok {
-		varObj := vars["var"]
-		if varObj != cty.NilVal && varObj.Type().IsObjectType() {
-			updated := make(map[string]cty.Value, len(varObj.Type().AttributeTypes()))
-			for k := range varObj.Type().AttributeTypes() {
-				updated[k] = varObj.GetAttr(k)
-			}
-			for k, rawVal := range varData {
-				sv, ok := rawVal.(string)
-				if !ok || sv == "" {
-					continue
-				}
-				node, ok := g.Variables[k]
-				if !ok {
-					continue
-				}
-				// Only primitive types support lossless string restoration.
-				if node.Type != cty.String && node.Type != cty.Number && node.Type != cty.Bool {
-					continue
-				}
-				v, err := restoreVarFromString(sv, node.Type)
-				if err != nil {
-					return vars, nil, fmt.Errorf("restore var %q: %w", k, err)
-				}
-				if _, exists := updated[k]; exists {
-					updated[k] = v
-				}
-			}
-			if len(updated) > 0 {
-				vars["var"] = cty.ObjectVal(updated)
-			}
+		if err := overlayVarsFromJSON(vars, varData, g); err != nil {
+			return vars, nil, err
 		}
 	}
 
 	// Restore steps outputs.
 	if stepsData, ok := raw["steps"].(map[string]interface{}); ok {
-		stepsAttrs := map[string]cty.Value{}
-		for stepName, stepOutputsRaw := range stepsData {
-			if outputMap, ok := stepOutputsRaw.(map[string]interface{}); ok {
-				stepVals := make(map[string]cty.Value, len(outputMap))
-				for k, v := range outputMap {
-					if sv, ok := v.(string); ok {
-						stepVals[k] = cty.StringVal(sv)
-					}
-				}
-				if len(stepVals) > 0 {
-					stepsAttrs[stepName] = cty.ObjectVal(stepVals)
-				}
-			}
-		}
-		if len(stepsAttrs) > 0 {
-			vars["steps"] = cty.ObjectVal(stepsAttrs)
+		if v := restoreStepsFromJSON(stepsData); v != cty.NilVal {
+			vars["steps"] = v
 		}
 	}
 
