@@ -5,7 +5,6 @@ package workflow
 import (
 	"encoding/json"
 	"fmt"
-	"strconv"
 	"strings"
 
 	"github.com/hashicorp/hcl/v2"
@@ -622,112 +621,14 @@ func SerializeVarScope(vars map[string]cty.Value, cursorStack ...[]IterCursor) (
 	return string(b), err
 }
 
-// restoreVarFromString converts a string scope value (as written by
-// CtyValueToString) back to a cty.Value of the given type. Only primitive
-// types (string, number, bool) are supported; callers skip non-primitive types
-// to fall back to FSMGraph defaults.
-//
-// Numeric strings are parsed with strconv.ParseFloat (full-string, strict) so
-// that prefix-valid garbage like "1oops" is rejected rather than silently
-// truncated to 1.
-func restoreVarFromString(s string, t cty.Type) (cty.Value, error) {
-	switch t {
-	case cty.String:
-		return cty.StringVal(s), nil
-	case cty.Number:
-		f, err := strconv.ParseFloat(s, 64)
-		if err != nil {
-			return cty.NilVal, fmt.Errorf("parse number %q: %w", s, err)
-		}
-		return cty.NumberFloatVal(f), nil
-	case cty.Bool:
-		switch s {
-		case "true", "1":
-			return cty.True, nil
-		case "false", "0":
-			return cty.False, nil
-		default:
-			return cty.NilVal, fmt.Errorf("parse bool %q: expected 'true' or 'false'", s)
-		}
-	default:
-		return cty.NilVal, fmt.Errorf("unsupported type %s for primitive var restoration", t.FriendlyName())
-	}
-}
-
-// overlayVarsFromJSON merges the "var" section of a JSON scope snapshot onto
-// the pre-seeded vars map. Empty strings are skipped (null/empty ambiguity).
-// Non-primitive types fall back to FSMGraph defaults because CtyValueToString
-// is lossy for list/map/object.
-func overlayVarsFromJSON(vars map[string]cty.Value, varData map[string]interface{}, g *FSMGraph) error {
-	varObj := vars["var"]
-	if varObj == cty.NilVal || !varObj.Type().IsObjectType() {
-		return nil
-	}
-	updated := make(map[string]cty.Value, len(varObj.Type().AttributeTypes()))
-	for k := range varObj.Type().AttributeTypes() {
-		updated[k] = varObj.GetAttr(k)
-	}
-	for k, rawVal := range varData {
-		sv, ok := rawVal.(string)
-		if !ok || sv == "" {
-			continue
-		}
-		node, ok := g.Variables[k]
-		if !ok {
-			continue
-		}
-		if node.Type != cty.String && node.Type != cty.Number && node.Type != cty.Bool {
-			continue
-		}
-		v, err := restoreVarFromString(sv, node.Type)
-		if err != nil {
-			return fmt.Errorf("restore var %q: %w", k, err)
-		}
-		if _, exists := updated[k]; exists {
-			updated[k] = v
-		}
-	}
-	if len(updated) > 0 {
-		vars["var"] = cty.ObjectVal(updated)
-	}
-	return nil
-}
-
-// restoreStepsFromJSON rebuilds the "steps" cty.Value from the raw JSON steps
-// section, preserving step output strings as cty.StringVal.
-func restoreStepsFromJSON(stepsData map[string]interface{}) cty.Value {
-	stepsAttrs := map[string]cty.Value{}
-	for stepName, stepOutputsRaw := range stepsData {
-		outputMap, ok := stepOutputsRaw.(map[string]interface{})
-		if !ok {
-			continue
-		}
-		stepVals := make(map[string]cty.Value, len(outputMap))
-		for k, v := range outputMap {
-			if sv, ok := v.(string); ok {
-				stepVals[k] = cty.StringVal(sv)
-			}
-		}
-		if len(stepVals) > 0 {
-			stepsAttrs[stepName] = cty.ObjectVal(stepVals)
-		}
-	}
-	if len(stepsAttrs) == 0 {
-		return cty.NilVal
-	}
-	return cty.ObjectVal(stepsAttrs)
-}
-
 // RestoreVarScope rebuilds a run's vars map and iteration cursor stack from
 // a JSON-encoded scope snapshot and the compiled workflow graph. Variable
-// defaults come from the FSMGraph; step outputs and primitive var values are
-// restored from the JSON scope. Complex-typed vars (list, map, object) fall
-// back to FSMGraph defaults because CtyValueToString is lossy for those types.
+// defaults come from the graph; step outputs are restored from the JSON scope.
 //
 // The returned []IterCursor is non-nil only when the scope JSON contains an
 // "iter" field. Each cursor's Items field is nil; the step re-evaluates the
 // expression on re-entry.
-func RestoreVarScope(scopeJSON string, g *FSMGraph) (map[string]cty.Value, []IterCursor, error) {
+func RestoreVarScope(scopeJSON string, g *FSMGraph) (map[string]cty.Value, []IterCursor, error) { //nolint:gocognit // scope restoration must handle iter cursors, nested vars, and multiple scope shapes
 	vars := SeedVarsFromGraph(g)
 
 	if scopeJSON == "" {
@@ -739,17 +640,24 @@ func RestoreVarScope(scopeJSON string, g *FSMGraph) (map[string]cty.Value, []Ite
 		return vars, nil, fmt.Errorf("restore scope: %w", err)
 	}
 
-	// Overlay serialized primitive var values onto FSMGraph defaults.
-	if varData, ok := raw["var"].(map[string]interface{}); ok {
-		if err := overlayVarsFromJSON(vars, varData, g); err != nil {
-			return vars, nil, err
-		}
-	}
-
 	// Restore steps outputs.
 	if stepsData, ok := raw["steps"].(map[string]interface{}); ok {
-		if v := restoreStepsFromJSON(stepsData); v != cty.NilVal {
-			vars["steps"] = v
+		stepsAttrs := map[string]cty.Value{}
+		for stepName, stepOutputsRaw := range stepsData {
+			if outputMap, ok := stepOutputsRaw.(map[string]interface{}); ok {
+				stepVals := make(map[string]cty.Value, len(outputMap))
+				for k, v := range outputMap {
+					if sv, ok := v.(string); ok {
+						stepVals[k] = cty.StringVal(sv)
+					}
+				}
+				if len(stepVals) > 0 {
+					stepsAttrs[stepName] = cty.ObjectVal(stepVals)
+				}
+			}
+		}
+		if len(stepsAttrs) > 0 {
+			vars["steps"] = cty.ObjectVal(stepsAttrs)
 		}
 	}
 
