@@ -36,7 +36,7 @@ func (p *copilotPlugin) Permit(_ context.Context, req *pb.PermitRequest) (*pb.Pe
 func (p *copilotPlugin) handlePermissionRequest(sessionID string, request *copilot.PermissionRequest) (copilot.PermissionRequestResult, error) {
 	s := p.getSession(sessionID)
 	if s == nil {
-		return copilot.PermissionRequestResult{Kind: copilot.PermissionRequestResultKindDeniedCouldNotRequestFromUser}, nil //nolint:staticcheck // deprecated kind; no replacement for user-absent denial
+		return copilot.PermissionRequestResult{Kind: copilot.PermissionRequestResultKindUserNotAvailable}, nil
 	}
 
 	permID := uuid.NewString()
@@ -48,26 +48,18 @@ func (p *copilotPlugin) handlePermissionRequest(sessionID string, request *copil
 	done := s.activeCh
 	if !active || sink == nil {
 		s.mu.Unlock()
-		return copilot.PermissionRequestResult{Kind: copilot.PermissionRequestResultKindDeniedCouldNotRequestFromUser}, nil //nolint:staticcheck // deprecated kind; no replacement for user-absent denial
+		return copilot.PermissionRequestResult{Kind: copilot.PermissionRequestResultKindUserNotAvailable}, nil
 	}
 	ch := make(chan permDecision, 1)
 	s.pending[permID] = ch
 	s.mu.Unlock()
 
-	sendErr := sink.Send(&pb.ExecuteEvent{
-		Event: &pb.ExecuteEvent_Permission{
-			Permission: &pb.PermissionRequest{
-				Id:         permID,
-				Permission: details["kind"],
-				Details:    details,
-			},
-		},
-	})
+	sendErr := sink.Send(buildPermissionEvent(permID, details))
 	if sendErr != nil {
 		s.mu.Lock()
 		delete(s.pending, permID)
 		s.mu.Unlock()
-		return copilot.PermissionRequestResult{Kind: copilot.PermissionRequestResultKindDeniedCouldNotRequestFromUser}, sendErr //nolint:staticcheck // deprecated kind; no replacement for user-absent denial
+		return copilot.PermissionRequestResult{Kind: copilot.PermissionRequestResultKindUserNotAvailable}, sendErr
 	}
 
 	select {
@@ -81,12 +73,24 @@ func (p *copilotPlugin) handlePermissionRequest(sessionID string, request *copil
 		if decision.allow {
 			return copilot.PermissionRequestResult{Kind: copilot.PermissionRequestResultKindApproved}, nil
 		}
-		return copilot.PermissionRequestResult{Kind: copilot.PermissionRequestResultKindDeniedInteractivelyByUser}, nil //nolint:staticcheck // deprecated kind; no replacement for interactive denial
+		return copilot.PermissionRequestResult{Kind: copilot.PermissionRequestResultKindRejected}, nil
 	case <-done:
 		s.mu.Lock()
 		delete(s.pending, permID)
 		s.mu.Unlock()
 		return copilot.PermissionRequestResult{Kind: copilot.PermissionRequestResultKindNoResult}, nil
+	}
+}
+
+func buildPermissionEvent(permID string, details map[string]string) *pb.ExecuteEvent {
+	return &pb.ExecuteEvent{
+		Event: &pb.ExecuteEvent_Permission{
+			Permission: &pb.PermissionRequest{
+				Id:         permID,
+				Permission: details["kind"],
+				Details:    details,
+			},
+		},
 	}
 }
 
