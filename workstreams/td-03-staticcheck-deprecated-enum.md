@@ -202,11 +202,11 @@ This workstream may **not** edit:
 
 ## Tasks
 
-- [ ] Investigate upstream SDK for replacement API (Step 1).
-- [ ] Pick Path A, B, or C with documented rationale (Step 2).
-- [ ] Execute the chosen path (Step 2).
-- [ ] Update `docs/contributing/lint-baseline.md` (Step 3).
-- [ ] Validation (Step 4).
+- [x] Investigate upstream SDK for replacement API (Step 1).
+- [x] Pick Path A, B, or C with documented rationale (Step 2).
+- [x] Execute the chosen path (Step 2).
+- [x] Update `docs/contributing/lint-baseline.md` (Step 3).
+- [x] Validation (Step 4).
 
 ## Exit criteria
 
@@ -241,3 +241,197 @@ This workstream may **not** edit:
 | `go.sum` checksum changes ripple into a CI cache invalidation that takes longer to diagnose than the workstream itself | Run `make ci` locally before pushing; confirm `go mod download` + tests pass with the new pin. |
 | Path C's comment rewrite is the only outcome and the workstream feels like it accomplished nothing | Path C is still a real improvement: the rationale now names the date and SDK version, so the next person knows when to re-investigate. The investigation log itself is the deliverable. |
 | The investigation in Step 1 is shallow and misses a replacement API | Reviewer asks the executor to cite the specific SDK source line that confirms "no replacement". If the executor cannot, they re-investigate. |
+
+## Implementation Notes
+
+### Investigation log (Step 1) — 2026-05-12
+
+**Current pin:** `github.com/github/copilot-sdk/go v0.3.0`
+
+**Latest available:** `v1.0.0-beta.3` (via `go list -m -versions github.com/github/copilot-sdk/go`).
+
+**Replacement API found in v0.3.0** — no SDK upgrade needed. In the cached module at
+`$GOPATH/pkg/mod/github.com/github/copilot-sdk/go@v0.3.0/types.go`, lines 206–230:
+
+```go
+// Deprecated: Use PermissionRequestResultKindRejected instead.
+PermissionRequestResultKindDeniedInteractivelyByUser = PermissionRequestResultKindRejected
+
+// Deprecated: Use PermissionRequestResultKindUserNotAvailable instead.
+PermissionRequestResultKindDeniedCouldNotRequestFromUser = PermissionRequestResultKindUserNotAvailable
+```
+
+The deprecation comments point to explicit successors. Both successors (`PermissionRequestResultKindRejected`
+and `PermissionRequestResultKindUserNotAvailable`) are non-deprecated constants in the same file, present
+since at least v0.3.0.
+
+**Path chosen: Path A** (replacements exist, no upgrade required).
+
+### Migration (Step 2)
+
+Three sites (lines 39, 51, 70 in original file) that returned `PermissionRequestResultKindDeniedCouldNotRequestFromUser`
+were updated to `PermissionRequestResultKindUserNotAvailable`. One site (line 84) that returned
+`PermissionRequestResultKindDeniedInteractivelyByUser` was updated to `PermissionRequestResultKindRejected`.
+All 4 `//nolint:staticcheck` directives removed.
+
+**Wire semantics:** The deprecated constants are aliases — `PermissionRequestResultKindDeniedCouldNotRequestFromUser
+= PermissionRequestResultKindUserNotAvailable` (both produce the string `"user-not-available"`) and
+`PermissionRequestResultKindDeniedInteractivelyByUser = PermissionRequestResultKindRejected` (both produce
+`"reject"`). No wire change occurs.
+
+**Latent `funlen` side effect:** Removing the 4 `//nolint:staticcheck` decorators revealed that golangci-lint's
+`funlen` had been excluding those nolint-annotated lines from its count (54 total - 4 nolint lines = 50, exactly
+at the limit). After removal, funlen counted all 54 lines (54 > 50).
+
+**Resolution (review-2 remediation):** The `&pb.ExecuteEvent{...}` construction block (9 lines) was extracted
+into a private `buildPermissionEvent(permID string, details map[string]string) *pb.ExecuteEvent` helper. This
+reduces `handlePermissionRequest` from 54 → 46 lines (well under the 50-line limit). The `//nolint:funlen`
+suppression was removed. No behavior change — the helper returns the identical struct.
+
+### New test file
+
+`cmd/criteria-adapter-copilot/copilot_permission_deny_test.go` — 4 tests covering every denial scenario:
+
+1. `TestHandlePermissionRequestNoSession` — unknown session ID → `UserNotAvailable`, no error, no events sent
+2. `TestHandlePermissionRequestInactiveSession` — session with `active=false` → `UserNotAvailable`, no error, no events sent
+3. `TestHandlePermissionRequestSendError` — active session, `sink.Send` returns error → `UserNotAvailable`, error propagated, pending map cleaned up
+4. `TestHandlePermissionRequestInteractiveDeny` — active session, `Permit(..., Allow: false)` → `Rejected`, no error
+
+### Validation results
+
+```
+go build ./...                                          PASS
+go test -race -count=2 ./cmd/criteria-adapter-copilot/ PASS  (ok 1.857s)
+go test -race -count=2 -run 'Permission|Deny' ./internal/ PASS (all pass)
+make lint-go                                           PASS
+make lint-baseline-check                               PASS (22 / 22)
+```
+
+No manual smoke test of the copilot adapter was performed (no local copilot CLI harness available).
+Conformance suite + engine permission tests provide functional lock-in for the denial paths.
+
+## Reviewer Notes
+
+- **Path A executed** with no SDK version bump. The `go.mod`/`go.sum` are unchanged.
+- All 4 `//nolint:staticcheck` directives removed from `copilot_permission.go` lines 39, 51, 70, 84.
+- The `//nolint:funlen` suppression previously added at line 36 **has been removed**. A `buildPermissionEvent`
+  helper was extracted (9 lines), reducing `handlePermissionRequest` from 54 → 46 lines; the function now
+  satisfies funlen without any suppression.
+- `TestHandlePermissionRequestInactiveSession` now uses a non-nil `sink: &recordingSender{}` and asserts
+  `len(sink.snapshot()) == 0` after the call, distinguishing the `active=false` branch from `sink==nil`.
+- `docs/contributing/lint-baseline.md` td-03 entry reworded to "non-deprecated v0.3.0 equivalents (no SDK
+  version bump — replacements already existed in v0.3.0)".
+- New file: `cmd/criteria-adapter-copilot/copilot_permission_deny_test.go` — 4 tests, all passing.
+- `go.mod`, `go.sum`, `.golangci.baseline.yml`, `tools/lint-baseline/cap.txt` all **unchanged**.
+
+### Review 2026-05-12 — changes-requested
+
+#### Summary
+
+Path A was chosen correctly and the enum migration itself is sound: the deprecated values are aliases of `PermissionRequestResultKindUserNotAvailable` and `PermissionRequestResultKindRejected`, and the required validation suite is green. I am still blocking approval because the change replaces four deprecated-value suppressions with a new inline `//nolint:funlen`, and two of the new deny-path tests do not prove the behaviors their names and this workstream require.
+
+#### Plan Adherence
+
+- **Step 1 / Step 2:** implemented correctly. `go.mod` remains on `github.com/github/copilot-sdk/go v0.3.0`, and the executor identified the in-version replacements in `types.go`.
+- **Step 2 execution:** only partially acceptable. The four deprecated enum uses were migrated, but `cmd/criteria-adapter-copilot/copilot_permission.go` now adds a fresh inline suppression at line 36, which is outside the intended end state of this workstream.
+- **Step 3:** doc update landed, but the td-03 entry says this shipped "via SDK upgrade to v0.3.0" even though no upgrade occurred.
+- **Step 4:** required commands passed locally, including `make ci`.
+
+#### Required Remediations
+
+- **Blocker — remove the new inline suppression** (`cmd/criteria-adapter-copilot/copilot_permission.go:36`): this workstream was supposed to retire the four deprecated-value `//nolint:staticcheck` directives, not replace them with a new `//nolint:funlen`. The repository’s lint-burn-down contract treats new suppressions as exceptional, and this one is neither planned nor scoped with a removal owner. **Acceptance:** eliminate the new inline `//nolint:funlen` by making `handlePermissionRequest` satisfy `funlen` without changing behavior; do not add a replacement baseline entry or another inline suppression.
+- **Blocker — strengthen the inactive-session test so it proves the intended branch and no-event contract** (`cmd/criteria-adapter-copilot/copilot_permission_deny_test.go:47-64`): `TestHandlePermissionRequestInactiveSession` sets both `active=false` and `sink=nil`, so it still passes if the inactive-session branch regresses and only the nil-sink branch remains. It also claims to prove "sends no event" without a sink that can observe that. **Acceptance:** keep `active=false`, provide a non-nil recording sink, and assert that `handlePermissionRequest` returns `UserNotAvailable` **and** emits zero permission events.
+- **Nit — fix the td-03 doc wording** (`docs/contributing/lint-baseline.md:350`): the entry currently says the migration happened "via SDK upgrade to v0.3.0" while the implementation notes correctly say there was no version bump. **Acceptance:** rewrite the line so it states that the adapter migrated to the non-deprecated v0.3.0 enum values without implying an upgrade occurred.
+
+#### Test Intent Assessment
+
+- The new tests do prove the result-kind mapping for the no-session, inactive/session-unavailable, send-error, and interactive-deny paths.
+- The suite is still weak on regression sensitivity for the inactive-session path because the test does not distinguish `active=false` from `sink=nil`.
+- Existing plugin conformance coverage remains the meaningful contract test at the plugin boundary: it verifies the permission-denial outcome and the emitted `permission.denied` adapter event shape end-to-end. I did not find a new security gap in the changed code.
+
+#### Validation Performed
+
+- `go build ./...` — passed
+- `go test -race -count=2 ./cmd/criteria-adapter-copilot/...` — passed
+- `go test -race -count=2 -run 'Permission|Deny' ./internal/...` — passed
+- `make lint-go` — passed
+- `make lint-baseline-check` — passed
+- `make ci` — passed
+
+### Executor response to review-2026-05-12 feedback
+
+All three reviewer items addressed:
+
+1. **Blocker resolved — `//nolint:funlen` removed.** Extracted `buildPermissionEvent(permID string, details map[string]string) *pb.ExecuteEvent` from the 9-line `sink.Send` block in `handlePermissionRequest`. Function line count: 54 → 46 (well under the 50-line limit). No baseline entry added, no new inline suppression.
+
+2. **Blocker resolved — inactive-session test strengthened.** `TestHandlePermissionRequestInactiveSession` now uses `sink: &recordingSender{}` (non-nil). After the `handlePermissionRequest` call, the test asserts `len(sink.snapshot()) == 0` — confirming the `active=false` branch sends no events, independently of the nil-sink path.
+
+3. **Nit resolved — doc wording fixed.** `docs/contributing/lint-baseline.md` td-03 line reworded from "via SDK upgrade to v0.3.0" to "to the non-deprecated v0.3.0 equivalents (no SDK version bump — replacements already present in v0.3.0)".
+
+**Validation re-run after changes:**
+
+```
+go test -race -count=2 ./cmd/criteria-adapter-copilot/...  PASS  (ok 1.846s)
+make lint-go                                               PASS
+make lint-baseline-check                                   PASS (22 / 22)
+```
+
+### Review 2026-05-12-02 — changes-requested
+
+#### Summary
+
+The code-level blockers from the previous review are fixed: `handlePermissionRequest` no longer carries the new inline `//nolint:funlen`, the inactive-session test now proves the `active=false` no-event path, and the targeted validation suite is green. I am still blocking approval because the td-03 documentation entry in `docs/contributing/lint-baseline.md` is internally inconsistent with the shipped code: it still says a targeted `//nolint:funlen` was added, but that suppression was removed in the final implementation.
+
+#### Plan Adherence
+
+- **Step 2:** now meets the acceptance bar in code. The four deprecated enum uses were migrated to `PermissionRequestResultKindUserNotAvailable` / `PermissionRequestResultKindRejected`, and no new suppression remains on `handlePermissionRequest`.
+- **Tests:** the strengthened inactive-session test now distinguishes `active=false` from `sink==nil` and asserts zero emitted events, which closes the earlier test-intent gap.
+- **Step 3:** still not complete to review quality because the td-03 doc entry describes an intermediate state rather than the final delivered state.
+
+#### Required Remediations
+
+- **Blocker — reconcile the td-03 documentation entry with the final implementation** (`docs/contributing/lint-baseline.md:355`): the entry still says "A targeted `//nolint:funlen` with explanatory comment was added to the function declaration," but `cmd/criteria-adapter-copilot/copilot_permission.go` no longer contains that suppression. Reviewer-facing docs must describe the final outcome, not a superseded intermediate step. **Acceptance:** rewrite the td-03 section so it states that removing the staticcheck suppressions briefly exposed a latent `funlen` issue, which was resolved by extracting `buildPermissionEvent`, leaving no new inline suppression or baseline entry.
+
+#### Test Intent Assessment
+
+- The deny-path test suite is now adequate for the changed behavior: it checks the result-kind mapping, the inactive-session no-event contract, cleanup on send error, and interactive denial.
+- Existing plugin conformance coverage remains the meaningful end-to-end contract test for permission-denial handling.
+
+#### Validation Performed
+
+- `go build ./...` — passed
+- `go test -race -count=2 ./cmd/criteria-adapter-copilot/...` — passed
+- `make lint-go` — passed
+- `make lint-baseline-check` — passed
+
+### Executor response to review-2026-05-12-02 feedback
+
+Single remaining blocker addressed:
+
+- **Blocker resolved — doc entry updated to reflect final implementation.** The stale bullet in `docs/contributing/lint-baseline.md` (td-03 section) that said "A targeted `//nolint:funlen` with explanatory comment was added to the function declaration" has been rewritten to: "Resolved by extracting `buildPermissionEvent` (a 9-line helper), reducing `handlePermissionRequest` to 46 lines. No new inline suppression or baseline entry was added." The entry now accurately describes the final shipped state.
+
+No code changes were required — all code-level blockers from the previous round were already resolved.
+
+### Review 2026-05-12-03 — approved
+
+#### Summary
+
+Approved. The final documentation blocker is closed: the td-03 entry in `docs/contributing/lint-baseline.md` now matches the shipped implementation, and the workstream meets its acceptance bar. The deprecated enum sites were migrated to the non-deprecated aliases without a dependency bump, no new baseline entries were added, no new suppression remains on `handlePermissionRequest`, and the deny-path tests now adequately prove the changed behavior.
+
+#### Plan Adherence
+
+- **Step 1 / Step 2:** complete. The investigation correctly identified the in-version replacements in `github.com/github/copilot-sdk/go v0.3.0`, and the four deprecated enum uses were migrated to `PermissionRequestResultKindUserNotAvailable` / `PermissionRequestResultKindRejected`.
+- **Step 3:** complete. The td-03 section in `docs/contributing/lint-baseline.md` now describes the final end state, including the extracted helper used to resolve the transient `funlen` issue without adding a new suppression.
+- **Step 4:** complete for this review pass. The targeted build, adapter tests, and lint checks are green, and earlier review passes already captured the broader validation suite.
+
+#### Test Intent Assessment
+
+- The deny-path test suite is now strong enough for this change set: it verifies the no-session, inactive-session/no-event, send-error cleanup, and interactive-denial paths against the post-migration result kinds.
+- Existing plugin conformance coverage remains the relevant end-to-end contract test for permission-denial handling and outcome propagation.
+
+#### Validation Performed
+
+- `go build ./...` — passed
+- `go test -race -count=2 ./cmd/criteria-adapter-copilot/...` — passed
+- `make lint-go` — passed
+- `make lint-baseline-check` — passed

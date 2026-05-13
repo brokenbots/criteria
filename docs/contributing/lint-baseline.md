@@ -344,3 +344,13 @@ All surviving directives carry a self-contained one-sentence rationale. `W03`/`W
 20. `internal/cli/apply_local.go` `gocritic` hugeParam opts 232 bytes — applyOptions by value; W02 scope
 21. `internal/cli/apply_resume.go` `gocritic` hugeParam opts 232 bytes — applyOptions by value; W02 scope
 22. `internal/cli/apply_server.go` `gocritic` hugeParam opts 232 bytes — applyOptions by value across 4 functions; W02 scope
+
+## td-03 (pre-Phase-4) — 2026-05-12
+
+- Migrated copilot adapter off deprecated `PermissionRequestResultKindDenied*` values to the non-deprecated v0.3.0 equivalents (no SDK version bump — replacements already existed in v0.3.0).
+- Path A: 4 inline `//nolint:staticcheck` directives removed; no baseline entries added.
+- SDK version checked: v0.3.0 (latest stable). Successor API confirmed in v0.3.0 `types.go`:
+  - `PermissionRequestResultKindDeniedCouldNotRequestFromUser` → `PermissionRequestResultKindUserNotAvailable`
+  - `PermissionRequestResultKindDeniedInteractivelyByUser` → `PermissionRequestResultKindRejected`
+- Side effect: removing the `//nolint:staticcheck` decorators revealed a latent `funlen` violation (function was 54 lines, exactly 4 over the 50-line limit; the 4 nolint-annotated lines had been excluded from golangci-lint's line count). Resolved by extracting `buildPermissionEvent` (a 9-line helper), reducing `handlePermissionRequest` to 46 lines. No new inline suppression or baseline entry was added.
+- 4 new deny-path tests added in `copilot_permission_deny_test.go` covering: no-session, inactive-session, send-error, and interactive-deny scenarios.
