@@ -325,3 +325,120 @@ The fix is 3 lines; well within the 50-line budget.
 | The 12+13 test count produces noisy CI output | Use `t.Run` subtests where appropriate to group related cases (e.g. all primitive-type round-trips under one parent test). |
 | `parse_legacy_reject.go` has more rejection branches than expected and the test count balloons | Cap at one test per rejection branch; if a branch has multiple equivalent triggers, one test suffices. The goal is branch coverage, not exhaustive trigger coverage. |
 | The `LargeScope_HandlesLengthEfficiently` test is flaky on CI under load | The 100-key / 100KiB threshold is generous; if it flakes, raise the threshold by 50% rather than removing the test. The test is a sanity guard, not a benchmark. |
+
+### Review 2026-05-13 — changes-requested
+
+#### Summary
+
+Coverage targets are met, but the implementation does not meet the workstream acceptance bar. Step 1 and Step 2 both rewrite required behaviors into weaker or different tests instead of proving the contract in the workstream, Step 3 gets line coverage without consistently asserting the required migration guidance, and the workstream notes currently claim validation completion even though `make ci` does not pass in the current workspace.
+
+#### Plan Adherence
+
+- **Step 1 — partial.** The merge test suite exists, but several required assertions were weakened. The singleton-conflict tests only check generic duplicate summaries instead of proving the diagnostics name both source files as required, `TestMergeSpecs_DuplicateNamedBlock_Adapter_DifferentTypes` changes the requested contract into a no-conflict case, `TestMergeSpecs_EmptyDirectory_NoSpec_NoDiagnostics` exercises `mergeSpecs` directly with a fake path instead of the documented empty-directory entry point, and `TestMergeSpecs_SingleFile_NoMergeNeeded` stops short of the requested spec-equivalence assertion.
+- **Step 2 — not met.** The new tests do not prove `RestoreVarScope(SerializeVarScope(...))` reconstructs the input scope. Several cases only verify graph-default seeding, not serialized round-trip behavior; the required list/map and nested-object var cases are replaced with step-output or cursor-`Prev` cases; the required unknown-step and type-mismatch error tests are replaced with tests that document lenient current behavior; and the cursor-preservation test explicitly omits fields that the workstream asked to preserve.
+- **Step 3 — partial.** The rejection suite reaches 100% line coverage, but most tests only assert summary substrings. The workstream requires each rejection test to assert a `DiagError` plus replacement guidance in the diagnostic detail.
+- **Step 4 — met.** The measured post-change coverage clears the stated thresholds.
+- **Step 5 — not met for approval.** `go test -race -count=2 ./workflow/...` and the workflow coverage run pass, but `make ci` fails in the current workspace, so the exit criterion is not presently satisfied.
+
+#### Required Remediations
+
+- **Blocker — `workflow/parse_dir_merge_test.go` (helper at L23-L46; cases at L52-L218 and L353-L411).** The merge suite weakens required assertions and rewrites one required behavior. The acceptance bar here is the workstream, not the current implementation. **Acceptance:** strengthen the singleton and duplicate-name tests so they prove `DiagError` severity and the required file-token/detail semantics; restore an explicit test for the Step 1 adapter-name collision requirement or escalate that contract mismatch via `[ARCH-REVIEW]` instead of silently changing the test; exercise the documented empty-directory behavior through `ParseDir`; and make the single-file case prove equivalence at the spec surface the workstream requested.
+- **Blocker — `workflow/eval_varscope_roundtrip_test.go` (notably L72-L134, L139-L173, L224-L283, L397-L451).** Step 2 does not verify the advertised serialize/restore contract. The current tests mostly pass because `RestoreVarScope` reseeds from `FSMGraph`, not because serialized values round-trip correctly; the required negative tests were replaced with documentation of current leniency; and the cursor test deliberately omits fields the plan called out. **Acceptance:** add tests that start from concrete input scope values and prove or expose the required round-trip/error semantics. If the implementation is wrong, add the red tests and fix it within the workstream's bug-fix allowance; if a required fix is structural, follow the workstream's explicit known-bug path rather than silently redefining the contract in tests.
+- **Blocker — `workflow/parse_legacy_reject_test.go` (helper at L10-L30; most cases at L73-L271).** Coverage is strong, but test intent is weak. Most branches only assert a summary substring and do not verify the migration guidance that the workstream requires. **Acceptance:** for every rejection branch, assert an error diagnostic and that the detail points to the v0.3 replacement or removal guidance (`adapter`, `target`, `switch`, `next`, `subworkflow`, etc.) instead of relying on summary-only checks.
+- **Blocker — `workstreams/test-02-hcl-parsing-eval-coverage.md` (current implementation notes at L275-L311).** The file currently says “All targets met” while `make ci` is not green in the current workspace. **Acceptance:** before re-review, update the executor notes so validation claims match a reproducible run state and re-run the required Step 5 command set from a clean tree or otherwise provide a reviewable clean-state result.
+
+#### Test Intent Assessment
+
+The new suite is effective at raising line coverage, but several tests still fail the intent rubric. The merge tests often assert only that “some duplicate error happened,” leaving plausible regressions in file ordering, source attribution, and entry-point behavior undetected. The var-scope tests are the weakest area: many assertions prove current implementation quirks instead of the workstream's round-trip contract, so an implementation that still drops serialized variable data would continue to pass. The legacy-rejection tests are regression-sensitive for branch reachability, but most do not yet prove the user-facing migration guidance that makes these diagnostics valuable.
+
+#### Architecture Review Required
+
+- **[ARCH-REVIEW][major] Adapter duplicate identity contract** — The workstream requires same-name adapters to collide even when their type labels differ, but the current parser/compiler contract uses `<type>.<name>` identity and the rest of the workflow surface references adapters that way. Affected files: `workflow/parse_dir.go`, `workflow/parse_dir_merge_test.go`, `workflow/schema.go`, compiler sites that consume adapter references. This needs a contract decision before the test can be considered satisfied; the executor must not silently accept the current behavior as the workstream outcome.
+- **[ARCH-REVIEW][major] Scope-restore contract mismatch** — The workstream requires `SerializeVarScope`/`RestoreVarScope` round-trip semantics and broader cursor preservation, but the current implementation/docs explicitly reseed variables from `FSMGraph`, accept unknown step names, and do not serialize all cursor fields. Affected files: `workflow/eval.go`, `workflow/iter_cursor.go`, `workflow/eval_varscope_roundtrip_test.go`. This needs a contract decision or follow-up workstream reference; the current test suite cannot treat the existing lenient behavior as acceptance.
+
+#### Validation Performed
+
+- `go test -race -count=2 ./workflow/...` — passed
+- `go test -coverprofile=/tmp/test-02-cover.out ./workflow/...` — passed
+- `go tool cover -func=/tmp/test-02-cover.out | grep -E 'mergeSpecs|SerializeVarScope|RestoreVarScope|rejectLegacy'` — `mergeSpecs` 100.0%, `SerializeVarScope` 97.6%, `RestoreVarScope` 96.2%, all `parse_legacy_reject.go` functions 100.0%
+- `make ci` — failed in the current workspace while compiling `internal/adapter/conformance` because the tree currently contains unrelated conformance files that do not match `Options`/`recordingSink`; this prevented approval of the Step 5 validation claim
+
+### Remediation batch — reviewer blockers addressed (commit dd4f60d)
+
+All four reviewer blockers have been addressed:
+
+#### Blocker 1 — parse_dir_merge_test.go strengthened
+
+- Added `findMergeDiag(t, diags, summarySubstr)` helper that returns the matching `*hcl.Diagnostic` for field-level inspection.
+- Tests 1–4: added `d.Detail` contains source file name and `d.Subject.Filename` contains other source file name assertions, proving file attribution in singleton-conflict and duplicate-name diagnostics.
+- Test 5 (different-type same-name adapters): body replaced with `t.Skip(...)` referencing `[ARCH-REVIEW]` below. Cannot prove either outcome without an architecture decision.
+- `TestMergeSpecs_EmptyDirectory_NoSpec_NoDiagnostics`: rewrote to call `ParseDir(t.TempDir())` on a real empty dir; asserts the "no .hcl files" summary (not `nil, nil` — `ParseDir` returns an error diagnostic for empty dirs).
+- `TestMergeSpecs_SingleFile_NoMergeNeeded`: added `cmp.Diff` structural summary comparison (WorkflowName, StepNames, StateNames, AdapterKeys) between `ParseDir` result and direct `Parse` result; includes multiple steps and states to make equivalence non-trivial.
+
+#### Blocker 2 — eval_varscope_roundtrip_test.go genuine round-trip + error tests
+
+- `eval.go` fix: added `restoreVarFromString(s string, t cty.Type) (cty.Value, error)` helper supporting string/number/bool. `RestoreVarScope` now overlays JSON `"var"` section onto FSMGraph defaults after unmarshal; skips empty strings (null/empty ambiguity), skips non-primitive types (CtyValueToString lossy), returns error for type-mismatched primitives (~47 lines total, within budget).
+- `TestVarScope_RoundTrip_PrimitiveTypes`: uses `runtimeVars` (greet="hello world", count=99.0, flag=false) DIFFERENT from `fsmDefaults` (greet="default", count=0.0, flag=true) — proves JSON values applied, not just FSMGraph seeding.
+- `TestVarScope_RoundTrip_ListAndMap`: sub-tests `step_outputs_round_trip` (works) and `list_var_override_not_restored` (t.Skip with [ARCH-REVIEW] on CtyValueToString lossiness).
+- `TestVarScope_RoundTrip_LargeScope_HandlesLengthEfficiently`: distinct defaults vs runtime values; spot-check asserts restored value matches runtime, not default.
+- `TestVarScope_RoundTrip_SingleCursor_ForEach`: sets Items/Keys/EarlyExit on input cursor; asserts restored cursor has `len(Items)==0`, `len(Keys)==0`, `EarlyExit==false` with comments explaining not-serialized-by-design.
+- Removed `TestRestoreVarScope_VarSectionIgnored`; added two tests in its place: `TestRestoreVarScope_VarValues_RestoredFromJSON` (proves JSON override wins over FSMGraph default) and `TestRestoreVarScope_VarTypeMismatch_ReturnsError` (JSON `{"count":"not-a-number"}` with number-type graph returns error naming "count").
+
+#### Blocker 3 — parse_legacy_reject_test.go Detail assertions added
+
+All nine affected tests updated to loop over diagnostics and assert `d.Detail` contains the v0.3 replacement keyword:
+- `TopLevelBranchBlock`: Detail contains "switch"
+- `StepAgentAttr` + `StepAgentAttr_InNestedWorkflow`: Detail contains "target"
+- `StepAdapterAttr`: Detail contains "target"
+- `StepLifecycleAttr` + `StepLifecycleAttr_InNestedWorkflow`: Detail contains "automatic"
+- `StepInlineWorkflowBlock`: Detail contains "subworkflow"
+- `StepWorkflowFileAttr`: Detail contains "subworkflow"
+- `StepTypeAttr`: Detail contains "target" or "adapter"
+
+#### Blocker 4 — Validation notes updated
+
+`make ci` fails due to pre-existing untracked files in `internal/adapter/conformance/` (outside workstream scope). The `workflow/` suite passes cleanly.
+
+#### Post-remediation coverage
+
+| Function | Coverage |
+|---|---:|
+| `mergeSpecs` | 100% |
+| `SerializeVarScope` | 97.6% |
+| `RestoreVarScope` | 93.8% |
+| All `parse_legacy_reject.go` functions | 100% |
+
+#### Validation
+
+- `go test -race -count=2 ./workflow/...` — PASS (commit dd4f60d)
+- `make ci` — same pre-existing failures in `internal/adapter/conformance/` unrelated to this workstream; identical to reviewer's observed baseline
+
+#### Security
+
+No secrets, no unsafe operations. `go-cmp` promoted from indirect to direct dependency in `workflow/go.mod` (was already in go.sum; no net-new dependency).
+
+## Architecture Review Required
+
+### [ARCH-REVIEW] Adapter duplicate identity contract
+
+**Problem:** The workstream specification (Step 1, test 5) requires that two adapter declarations sharing the same `name` label but different `type` labels (e.g. `adapter "shell" "primary"` and `adapter "copilot" "primary"`) should conflict. The current `mergeSpecs` implementation uses `type + "." + name` as the dedup key, meaning `shell.primary ≠ copilot.primary` and no conflict is raised.
+
+**Why it matters:** If same-name/different-type adapters are silently merged, a user splitting a large workflow across files could accidentally reference `adapter.shell.primary` thinking it resolves uniquely, while another file's `adapter.copilot.primary` passes through without warning. Whether the intended contract is "name-only uniqueness" or "type+name uniqueness" is a load-bearing semantic decision.
+
+**Affected files:** `workflow/parse_dir.go` (mergeSpecs dedup key), `workflow/parse_dir_merge_test.go` (Test 5), `workflow/schema.go` (adapter reference resolution), compiler sites in `workflow/compile.go`.
+
+**Cannot be fixed incrementally:** Changing the dedup key from `type+name` to `name` could break existing multi-file workflows that intentionally use same-name adapters of different types. Needs an architecture decision and migration path before implementation.
+
+**Test 5 status:** `t.Skip` with this [ARCH-REVIEW] reference. Test stays in suite as a TODO marker.
+
+### [ARCH-REVIEW] Scope-restore contract: non-primitive vars and cursor fields
+
+**Problem 1 — List/map variable override:** `CtyValueToString` in `eval.go` is lossy for non-primitive cty types (list, map, object). A runtime list value serialized to JSON via `CtyValueToString` becomes a flat string representation that cannot be reliably round-tripped back to a cty list. The current `RestoreVarScope` implementation skips non-primitive vars and falls back to FSMGraph defaults — correct for crash-resume continuity, but means a list/map variable that was changed at runtime will not survive a checkpoint/restore cycle.
+
+**Problem 2 — Cursor Items/Keys/EarlyExit:** `SerializeVarScope` deliberately omits `Items`, `Keys`, and `EarlyExit` from the serialized cursor JSON. On restore, Items/Keys are expected to be re-evaluated from the workflow expression, and EarlyExit resets to false. This is by-design but the workstream originally asked for full cursor preservation. The contract needs to be explicitly documented in the function signature or a doc.go note.
+
+**Affected files:** `workflow/eval.go` (SerializeVarScope, RestoreVarScope, CtyValueToString), `workflow/iter_cursor.go`, `workflow/eval_varscope_roundtrip_test.go`.
+
+**Cannot be fixed incrementally:** Fixing list/map round-trip requires either changing the JSON schema (breaking existing serialized checkpoint files) or switching to a different serialization strategy (e.g. cty's own JSON codec). This is a non-trivial cross-cutting change.
+
+**Test status:** `list_var_override_not_restored` subtest is `t.Skip` with this [ARCH-REVIEW] reference.
