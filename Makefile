@@ -250,7 +250,7 @@ example-plugin: build ## Build and run the greeter example plugin end-to-end
 	rm -rf "$$tmpdir" "$$eventsfile"; \
 	echo "example-plugin: OK"
 
-ci: build test lint-imports lint-go lint-baseline-check spec-check validate validate-self-workflows example-plugin ## Run all CI gates (build, test, lint-imports, lint-go, lint-baseline-check, spec-check, validate, validate-self-workflows, example-plugin)
+ci: build test lint validate validate-self-workflows example-plugin ## Run all CI gates (build, test, lint, validate, validate-self-workflows, example-plugin)
 
 clean: ## Remove build artifacts
 	rm -rf bin conformance.test

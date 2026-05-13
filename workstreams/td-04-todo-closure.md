@@ -368,3 +368,36 @@ The rejection-path tests are now strong enough: they would fail if construction 
 #### Validation Performed
 - `git status --short` → no untracked backup artifact remains
 - `make ci` → passed
+
+### Review 2026-05-12-03 — changes-requested
+
+#### Summary
+The code and test changes for Steps 1–4 are in good shape, and the repository currently has no remaining production-code TODO markers. Verdict returns to `changes-requested` for one Step 5/6 blocker: the new TODO guard was wired into GitHub Actions and `make lint`, but the aggregate local `make ci` target still bypasses it, so the repo's documented "all CI gates" entrypoint is no longer aligned with the actual CI gate set.
+
+#### Plan Adherence
+- Step 1: Implemented as required. `NewClient` rejects `TLSEnable`/`TLSMutual` with `http://`, and the tests assert both the rejection and the diagnostic payload.
+- Step 2: Implemented. `criteria plan` renders `switches:`, and the plan goldens cover the new output.
+- Step 3: Implemented. The stale `parallelNode` TODO is gone and no backup artifact remains.
+- Step 4: Implemented. `InputSpec` now documents current runtime evaluation behavior, and generated spec output is in sync.
+- Step 5: **Partially implemented.** The new guard exists in `Makefile` and the GitHub Actions lint job runs it, but the local `ci` aggregate target still does not invoke `lint-no-todos`.
+- Step 6: `make ci` exits 0 on the reviewed tree, but it is not yet exercising the full Step 5 gate set locally.
+
+#### Required Remediations
+- **Blocker** — `Makefile:253`: `ci` still expands to `build test lint-imports lint-go lint-baseline-check spec-check validate validate-self-workflows example-plugin`, so it never executes `lint-no-todos`. `make -n ci` confirms the TODO-check recipe is absent, while `make -n lint` includes it. This leaves the repo's advertised "Run all CI gates" target inconsistent with the real CI workflow and means a future production-code TODO can still slip past local `make ci`. **Acceptance:** update `ci` so it includes the TODO guard (either by depending on `lint` instead of spelling out the lint subtargets, or by adding `lint-no-todos` explicitly). Re-run `make -n ci` and confirm the TODO-check recipe is present.
+
+#### Test Intent Assessment
+The functional tests are now strong: the TLS rejection coverage locks in the intended error contract, and the plan-output goldens would fail on a regression in switch rendering. The remaining gap is not behavioral test coverage inside Go code; it is repository-gate coverage. The new TODO guard exists, but the main local CI entrypoint does not exercise it.
+
+#### Validation Performed
+- `grep -rn 'TODO\|FIXME\|XXX' --include='*.go' . | grep -v vendor | grep -v testdata` → no matches
+- `make ci` → passed
+- `./bin/criteria plan examples/demo_tour_local/` → output includes `switches:`
+- `make -n ci` → does **not** include the `lint-no-todos` recipe
+- `make -n lint` → includes the `lint-no-todos` recipe
+
+### Remediation (executor) 2026-05-12-03
+
+Blocker addressed: `Makefile` `ci` target updated to depend on `lint` instead of spelling out individual lint subtargets (`lint-imports lint-go lint-baseline-check spec-check`). This keeps `ci` and `lint` in sync automatically and ensures `lint-no-todos` is always exercised by `make ci`.
+
+- `make -n ci` → now includes the `lint-no-todos` recipe (confirmed)
+- `make ci` → passed (all gates green)
