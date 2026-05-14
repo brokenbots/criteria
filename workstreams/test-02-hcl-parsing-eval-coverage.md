@@ -1113,3 +1113,32 @@ No `.golangci.baseline.yml` changes.
 | `make ci` | PASS |
 | `git status --short` | clean (only workstream file uncommitted) |
 | JSON emits string-only `"var"` map | confirmed — null values absent, `""` for empty strings |
+
+### Review 2026-05-13-12 — approved
+
+#### Summary
+
+The latest remediation resolves the Review 11 blocker without introducing a new checkpoint-format contract. `SerializeVarScope` is back to a string-only `"var"` map, nulls are handled by omission rather than schema expansion, the empty-string restore regression remains fixed, and the added legacy/unknown-var tests close the compatibility paths that were previously unproven. This submission meets the acceptance bar.
+
+#### Plan Adherence
+
+- **Step 1 — met.** The merge tests remain complete and stable.
+- **Step 2 — met.** Primitive var overlay, malformed-value rejection, empty-string preservation, legacy empty-string fallback for non-string types, and unknown-var tolerance are all covered with active tests. The previously tracked unknown-step contract remains explicitly deferred under the existing architecture item and does not block this workstream.
+- **Step 3 — met.** The legacy-rejection suite still covers every rejection branch with the required diagnostics and migration guidance assertions.
+- **Step 4 / Step 5 — met.** Coverage targets are satisfied and repository validation remains green.
+
+#### Test Intent Assessment
+
+The test intent is now strong at the actual restore boundary this workstream owns. The suite proves non-empty and empty-string overlay precedence, malformed numeric rejection, legacy `""` handling for non-string vars, unknown-var schema drift tolerance, cursor restoration, and null preservation via omission-plus-default seeding. Plausible regressions in any of those restore paths now fail active tests.
+
+#### Architecture Review Required
+
+- The previously recorded `[ARCH-REVIEW]` items remain tracked for future coordination, but no architecture issue blocks approval of this submission.
+
+#### Validation Performed
+
+- `go test -race -count=2 ./workflow/...` — passed
+- `go test -coverprofile=/tmp/test-02-cover.out ./workflow/...` — passed
+- `go tool cover -func=/tmp/test-02-cover.out | grep -E 'mergeSpecs|SerializeVarScope|RestoreVarScope|rejectLegacy|restoreVarFromString|maybeOverlayVarsFromJSON'` — `SerializeVarScope` 97.7%, `restoreVarFromString` 84.6%, `maybeOverlayVarsFromJSON` 100.0%, `RestoreVarScope` 96.3%, `mergeSpecs` 100.0%, all `parse_legacy_reject.go` functions 100.0%
+- `make ci` — passed
+- Direct repro: serializing `{greeting:"", opt:null}` produced `{"steps":{},"var":{"greeting":""}}`, restored `greeting` as `""`, and restored `opt` as `cty.NullVal(cty.String)`
