@@ -994,3 +994,28 @@ The test intent is now strong. The suite no longer just proves the happy path fo
 - `go tool cover -func=/tmp/test-02-cover.out | grep -E 'mergeSpecs|SerializeVarScope|RestoreVarScope|rejectLegacy|restoreVarFromString|maybeOverlayVarsFromJSON'` — `mergeSpecs` 100.0%, `SerializeVarScope` 97.7%, `restoreVarFromString` 76.9%, `maybeOverlayVarsFromJSON` 100.0%, `RestoreVarScope` 96.3%, all `parse_legacy_reject.go` functions 100.0%
 - `make ci` — passed
 - `git status --short` — clean before appending this review note
+
+### Review 2026-05-13-10 — approved
+
+#### Summary
+
+The current submission still meets the acceptance bar. The final `RestoreVarScope` overlay path preserves both non-empty and empty-string primitive values, rejects malformed numeric input, keeps the production fix split within the per-bug budget documented in the workstream history, and leaves the remaining contract gaps explicitly tracked under the existing `[ARCH-REVIEW]` items rather than hidden behind ambiguous tests or comments.
+
+#### Plan Adherence
+
+- **Step 1 — met.** The focused merge suite is present with the required conflict, ordering, empty-directory, single-file, and non-HCL-ignore coverage; the same-name/different-type adapter case remains intentionally parked under the recorded architecture review item.
+- **Step 2 — met.** The active var-scope suite covers empty scope, primitive overlay precedence, malformed JSON, unknown-value serialization failure, cursor round-trip, strict malformed-number rejection, and the empty-string regression boundary. The unresolved unknown-step and non-primitive restore semantics are explicitly tracked as architecture items instead of being silently accepted as done.
+- **Step 3 — met.** The legacy-rejection suite covers each rejection branch with assertions on error severity and migration guidance.
+- **Step 4 / Step 5 — met.** Coverage targets are satisfied and repository validation is green.
+
+#### Test Intent Assessment
+
+The tests now prove behavior, not just execution. In particular, `TestRestoreVarScope_EmptyString_PreservedOverDefault` closes the realistic boundary that previously escaped the suite, and the malformed-number cases would fail a parser that accepted prefix-valid garbage or silently fell back to graph defaults. The remaining skipped/deferred behavior is clearly identified as contract work outside this executor-owned scope.
+
+#### Validation Performed
+
+- `go test -race -count=2 ./workflow/...` — passed
+- `go test -coverprofile=/tmp/test-02-cover.out ./workflow/...` — passed
+- `go tool cover -func=/tmp/test-02-cover.out | grep -E 'mergeSpecs|SerializeVarScope|RestoreVarScope|rejectLegacy'` — `mergeSpecs` 100.0%, `SerializeVarScope` 97.7%, `RestoreVarScope` 96.3%, all `parse_legacy_reject.go` functions 100.0%
+- `make ci` — passed
+- `git diff --numstat a349eab..HEAD -- workflow/eval.go` — 72 additions / 5 deletions total from baseline; workstream history records the primitive-overlay fix at 50 non-comment added lines and the later empty-string/null remediation at 10, with no `.golangci.baseline.yml` changes in this submission
