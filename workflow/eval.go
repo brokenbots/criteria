@@ -5,7 +5,6 @@ package workflow
 import (
 	"encoding/json"
 	"fmt"
-	"strconv"
 	"strings"
 
 	"github.com/hashicorp/hcl/v2"
@@ -626,62 +625,6 @@ func SerializeVarScope(vars map[string]cty.Value, cursorStack ...[]IterCursor) (
 	return string(b), err
 }
 
-// restoreVarFromString converts the string representation s into a cty.Value
-// of the declared type t. Returns cty.NilVal for non-primitive types; callers
-// that receive cty.NilVal fall back to the FSMGraph default.
-func restoreVarFromString(s string, t cty.Type) (cty.Value, error) {
-	if s == "" && t != cty.String {
-		return cty.NilVal, nil
-	} // null sentinel for non-string types
-	switch t {
-	case cty.String:
-		return cty.StringVal(s), nil
-	case cty.Number:
-		f, err := strconv.ParseFloat(s, 64)
-		if err != nil {
-			return cty.NilVal, fmt.Errorf("invalid number %q: %w", s, err)
-		}
-		return cty.NumberFloatVal(f), nil
-	case cty.Bool:
-		b, err := strconv.ParseBool(s)
-		if err != nil {
-			return cty.NilVal, fmt.Errorf("invalid bool %q: %w", s, err)
-		}
-		return cty.BoolVal(b), nil
-	default:
-		return cty.NilVal, nil
-	}
-}
-
-// maybeOverlayVarsFromJSON overlays primitive variable values from the JSON
-// "var" section onto the FSMGraph-seeded vars map. Non-primitive types and
-// unknown variable names are silently skipped for crash-resume schema tolerance.
-func maybeOverlayVarsFromJSON(raw map[string]interface{}, g *FSMGraph, vars map[string]cty.Value) error {
-	vd, _ := raw["var"].(map[string]interface{})
-	if len(vd) == 0 {
-		return nil
-	}
-	existing := vars["var"]
-	attrs := make(map[string]cty.Value, len(existing.Type().AttributeTypes()))
-	for k := range existing.Type().AttributeTypes() {
-		attrs[k] = existing.GetAttr(k)
-	}
-	for k, rv := range vd {
-		s, ok := rv.(string)
-		node, nok := g.Variables[k]
-		if !ok || !nok {
-			continue
-		}
-		if v, err := restoreVarFromString(s, node.Type); err != nil {
-			return fmt.Errorf("var %q: %w", k, err)
-		} else if v != cty.NilVal {
-			attrs[k] = v
-		}
-	}
-	vars["var"] = cty.ObjectVal(attrs)
-	return nil
-}
-
 // RestoreVarScope rebuilds a run's vars map and iteration cursor stack from
 // a JSON-encoded scope snapshot and the compiled workflow graph. Variable
 // defaults come from the graph; step outputs are restored from the JSON scope.
@@ -717,12 +660,9 @@ func RestoreVarScope(scopeJSON string, g *FSMGraph) (map[string]cty.Value, []Ite
 				}
 			}
 		}
-		vars["steps"] = cty.ObjectVal(stepsAttrs)
-	}
-
-	// Overlay primitive variable values from JSON scope.
-	if err := maybeOverlayVarsFromJSON(raw, g, vars); err != nil {
-		return vars, nil, err
+		if len(stepsAttrs) > 0 {
+			vars["steps"] = cty.ObjectVal(stepsAttrs)
+		}
 	}
 
 	// Restore iteration cursor stack.

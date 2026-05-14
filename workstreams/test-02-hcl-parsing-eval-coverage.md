@@ -1142,3 +1142,83 @@ The test intent is now strong at the actual restore boundary this workstream own
 - `go tool cover -func=/tmp/test-02-cover.out | grep -E 'mergeSpecs|SerializeVarScope|RestoreVarScope|rejectLegacy|restoreVarFromString|maybeOverlayVarsFromJSON'` — `SerializeVarScope` 97.7%, `restoreVarFromString` 84.6%, `maybeOverlayVarsFromJSON` 100.0%, `RestoreVarScope` 96.3%, `mergeSpecs` 100.0%, all `parse_legacy_reject.go` functions 100.0%
 - `make ci` — passed
 - Direct repro: serializing `{greeting:"", opt:null}` produced `{"steps":{},"var":{"greeting":""}}`, restored `greeting` as `""`, and restored `opt` as `cty.NullVal(cty.String)`
+
+### Remediation cycle-13 — PR review thread fixes
+
+#### Thread 1 (required) — truncated godoc in eval_varscope_roundtrip_test.go
+
+`TestRestoreVarScope_VarTypeMismatch_ReturnsError` had a godoc comment starting mid-clause
+(`// between a JSON var value…`) — an edit artifact from a prior cycle. Fixed by adding the
+function name prefix per Go doc convention:
+```diff
+-// between a JSON var value and the FSMGraph-declared type returns an error.
++// TestRestoreVarScope_VarTypeMismatch_ReturnsError verifies that a mismatch
++// between a JSON var value and the FSMGraph-declared type returns an error.
+```
+
+#### Thread 2 (required) — production-change budget (71 added / 4 deleted, cap 50/bug)
+
+Chose reviewer option (a) — revert the overlay to a follow-up workstream:
+
+**workflow/eval.go:** removed `restoreVarFromString` and `maybeOverlayVarsFromJSON`; removed
+the `maybeOverlayVarsFromJSON` call from `RestoreVarScope`; removed the `strconv` import.
+Net non-comment additions vs baseline `a349eab`: **3** (unknown-value guard only).
+
+**workflow/eval_varscope_roundtrip_test.go:** all 7 overlay-dependent tests reverted to
+`t.Skip` with message referencing workstream `eval-varscope-restore`:
+- `TestVarScope_RoundTrip_PrimitiveTypes`
+- `TestVarScope_RoundTrip_LargeScope_HandlesLengthEfficiently` (spot-check removed; size guard retained)
+- `TestRestoreVarScope_VarValues_RestoredFromJSON`
+- `TestRestoreVarScope_EmptyString_PreservedOverDefault`
+- `TestRestoreVarScope_VarTypeMismatch_ReturnsError`
+- `TestRestoreVarScope_NumericPrefixGarbage_ReturnsError`
+- `TestRestoreVarScope_LegacyEmptyStringForNumber_FallsBackToDefault`
+- `TestRestoreVarScope_UnknownVarInJSON_SilentlySkipped`
+
+#### Thread 3 (required) — unconditional `vars["steps"]` overwrite
+
+Restored the `if len(stepsAttrs) > 0` guard:
+```diff
+-		vars["steps"] = cty.ObjectVal(stepsAttrs)
++		if len(stepsAttrs) > 0 {
++			vars["steps"] = cty.ObjectVal(stepsAttrs)
++		}
+```
+
+#### Thread 4 (should-fix) — dangling inline comment in `restoreVarFromString`
+
+Moot — `restoreVarFromString` was removed as part of the thread 2 revert.
+
+#### Thread 5 (should-fix) — misleading test name
+
+Renamed `TestVarScope_RoundTrip_NestedObject` →
+`TestVarScope_RoundTrip_CursorPrev_NestedObject` and updated the doc comment to explicitly
+mention `cursor.Prev`.
+
+#### Thread 6 (should-fix) — `restoreVarFromString` coverage 84.6%
+
+Moot — `restoreVarFromString` was removed as part of the thread 2 revert.
+
+#### Thread 7 (should-fix) — `maybeOverlayVarsFromJSON` control flow readability
+
+Moot — `maybeOverlayVarsFromJSON` was removed as part of the thread 2 revert.
+
+#### Coverage after remediation cycle-13
+
+| Function | Coverage |
+|---|---:|
+| `mergeSpecs` | 100.0% |
+| `SerializeVarScope` | 97.7% |
+| `RestoreVarScope` | 96.2% |
+| All `parse_legacy_reject.go` functions | 100.0% |
+
+All workstream targets (≥ 90% on primary functions; 100% on rejection branches) remain met.
+
+#### Validation
+
+| Check | Result |
+|---|---|
+| `go test -race -count=1 ./workflow/...` | PASS |
+| `make ci` | PASS |
+| `git diff --numstat a349eab..HEAD -- workflow/eval.go` | 3 added / 4 deleted |
+| `git status --short` | clean after commit |
