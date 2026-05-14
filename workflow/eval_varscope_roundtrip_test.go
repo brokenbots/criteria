@@ -561,3 +561,52 @@ func TestRestoreVarScope_NumericPrefixGarbage_ReturnsError(t *testing.T) {
 		t.Errorf("error should name the offending variable; got: %v", err)
 	}
 }
+
+// TestRestoreVarScope_LegacyEmptyStringForNumber_FallsBackToDefault covers the
+// backward-compatibility path in restoreVarFromString: old checkpoint blobs
+// (produced before the null-omission fix) may contain {"count":""} for a
+// number-typed variable that had no runtime value. The empty string is treated
+// as a null sentinel for non-string types, so the FSMGraph default wins.
+func TestRestoreVarScope_LegacyEmptyStringForNumber_FallsBackToDefault(t *testing.T) {
+	jsonScope := `{"var": {"count": ""}}`
+	g := &FSMGraph{
+		Variables: map[string]*VariableNode{
+			"count": {Name: "count", Type: cty.Number, Default: cty.NumberFloatVal(7.0)},
+		},
+	}
+	restored, _, err := RestoreVarScope(jsonScope, g)
+	if err != nil {
+		t.Fatalf("RestoreVarScope: %v", err)
+	}
+	got := restored["var"].GetAttr("count")
+	want := cty.NumberFloatVal(7.0)
+	if !got.RawEquals(want) {
+		t.Errorf("count = %#v, want %#v (empty-string legacy sentinel should fall back to FSMGraph default)", got, want)
+	}
+}
+
+// TestRestoreVarScope_UnknownVarInJSON_SilentlySkipped verifies that a variable
+// present in the JSON "var" section but absent from the FSMGraph is silently
+// ignored. This supports crash-resume across schema drift where variables may
+// be removed from the workflow between runs.
+func TestRestoreVarScope_UnknownVarInJSON_SilentlySkipped(t *testing.T) {
+	jsonScope := `{"var": {"known": "hello", "gone": "orphan"}}`
+	g := &FSMGraph{
+		Variables: map[string]*VariableNode{
+			"known": {Name: "known", Type: cty.String, Default: cty.StringVal("default")},
+			// "gone" is not in the graph.
+		},
+	}
+	restored, _, err := RestoreVarScope(jsonScope, g)
+	if err != nil {
+		t.Fatalf("RestoreVarScope: %v", err)
+	}
+	varObj := restored["var"]
+	// "known" should be restored from JSON; "gone" should not be present in scope.
+	if got := varObj.GetAttr("known").AsString(); got != "hello" {
+		t.Errorf("known = %q, want %q", got, "hello")
+	}
+	if varObj.Type().HasAttribute("gone") {
+		t.Errorf("orphan variable 'gone' should not be present in restored scope")
+	}
+}
