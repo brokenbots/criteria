@@ -551,6 +551,8 @@ func WithIndexedStepOutput(vars map[string]cty.Value, stepName string, index cty
 //
 //	{"var": {"name": "value"}, "steps": {"step": {"key": "value"}}, "iter": [...]}
 //
+// The "var" map uses string values only; null-valued variables are omitted
+// (key absent). On restore, absent keys fall back to FSMGraph defaults.
 // The iter field is a JSON array of cursor objects; it is omitted when the
 // stack is empty. The server stores this blob verbatim without interpreting
 // cursor internals. See IterCursor for field documentation.
@@ -560,7 +562,12 @@ func SerializeVarScope(vars map[string]cty.Value, cursorStack ...[]IterCursor) (
 		varMap := map[string]string{}
 		for k := range varObj.Type().AttributeTypes() {
 			v := varObj.GetAttr(k)
-			varMap[k] = CtyValueToString(v)
+			if !v.IsKnown() {
+				return "", fmt.Errorf("cannot serialize unknown value for variable %q", k)
+			}
+			if !v.IsNull() {
+				varMap[k] = CtyValueToString(v)
+			}
 		}
 		scope["var"] = varMap
 	}
