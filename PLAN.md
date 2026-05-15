@@ -25,6 +25,16 @@ Workstream files for the active phase live at
   `errcheck`/`contextcheck`); Maintainability and Tech Debt lifted to B;
   release-process integrity (`tag-claim-check` CI guard) shipping. Archived under
   [workstreams/archived/v3/](workstreams/archived/v3/).
+- **v0.3.1 — Post-Phase-3 bugfixes + parallel correctness** — **closed
+  2026-05-xx**. Eleven workstreams (6 bugfix, 4 parallel, 1 QoL). Archived under
+  [workstreams/archived/v3.1/](workstreams/archived/v3.1/).
+- **v0.3.2 — Pre-Phase-4 feature + tech-debt prep** — **closed 2026-05-13**.
+  Twelve workstreams (2 doc, 5 feat, 4 tech debt, 1 test); all merged. Archived
+  under [workstreams/archived/v3.2/](workstreams/archived/v3.2/).
+- **Phase 4 — Adapter system v2** — **active**. 44 workstreams covering
+  terminology unification, protocol v2, OCI cache, sandboxing, secrets, remote
+  execution, multi-language SDKs, and adapter migration. Workstream files in
+  [workstreams/adapter_v2/](workstreams/adapter_v2/).
 
 ## Phase 0 — Post-separation cleanup ✅ closed 2026-04-27
 
@@ -155,6 +165,42 @@ per-workstream outcome summary.
 
 *Phase 3 closed 2026-05-06. Archived under [workstreams/archived/v3/](workstreams/archived/v3/).*
 
+## v0.3.2 — Pre-Phase-4 feature + tech-debt prep ✅ closed 2026-05-13
+
+Twelve workstreams in four tracks shipped as the last batch before the Phase 4
+adapter-system rewrite opens. All merged to `main` by commit #133.
+
+### v0.3.2 workstreams (archived to [workstreams/archived/v3.2/](workstreams/archived/v3.2/))
+
+- [doc-03](workstreams/archived/v3.2/doc-03-llm-language-spec.md) ✅ — `docs/LANGUAGE-SPEC.md` and `spec-gen` tool.
+- [doc-04](workstreams/archived/v3.2/doc-04-llm-prompt-pack.md) ✅ — LLM prompt pack (8 curated HCL examples in `docs/llm/`).
+- [feat-01](workstreams/archived/v3.2/feat-01-templatefile-function.md) ✅ — `templatefile(path, vars)` HCL function.
+- [feat-02](workstreams/archived/v3.2/feat-02-fileset-function.md) ✅ — `fileset(path, pattern)` → `list(string)` HCL function.
+- [feat-03](workstreams/archived/v3.2/feat-03-hash-crypto-encoding-functions.md) ✅ — 13 hash, encoding, and dynamic HCL functions.
+- [feat-04](workstreams/archived/v3.2/feat-04-while-step-modifier.md) ✅ — `while` step iteration modifier.
+- [feat-05](workstreams/archived/v3.2/feat-05-per-line-console-output.md) ✅ — Per-line console output streaming.
+- [td-01](workstreams/archived/v3.2/td-01-lint-baseline-ratchet.md) ✅ — Lint baseline ratchet 24 → 16.
+- [td-02](workstreams/archived/v3.2/td-02-nolint-suppression-sweep.md) ✅ — `//nolint` suppression sweep (62 → 31).
+- [td-03](workstreams/archived/v3.2/td-03-staticcheck-deprecated-enum.md) ✅ — Staticcheck deprecated-enum cleanup.
+- [td-04](workstreams/archived/v3.2/td-04-todo-closure.md) ✅ — TODO marker closure + lint-no-todos guard.
+- [test-02](workstreams/archived/v3.2/test-02-hcl-parsing-eval-coverage.md) ✅ — HCL parsing and eval coverage gaps (`mergeSpecs`, `VarScope`, legacy-reject).
+
+*v0.3.2 closed 2026-05-13. Archived under [workstreams/archived/v3.2/](workstreams/archived/v3.2/).*
+
+## Phase 4 — Adapter system v2 🔄 active
+
+**Goal:** redesign the adapter system end-to-end — pull-based distribution
+(OCI cache, lockfile, digest pinning), protocol v2 (designed for state
+transfer, pause/resume, inspection, remote execution), unified terminology
+("adapter" everywhere), multi-language SDKs with packaging scaffolding,
+stronger sandboxing (Linux + macOS OS-native isolation primitives), and a
+working remote adapter transport.
+
+44 workstreams in tracks WS01–WS44. Workstream files in
+[workstreams/adapter_v2/](workstreams/adapter_v2/). See
+[workstreams/adapter_v2/README.md](workstreams/adapter_v2/README.md) for the
+full scope and workstream index.
+
 ## Deferred / forward-pointers (Phase 4 and beyond)
 
 - **Environments / plug architecture** — the originally-planned Phase 3 theme. A new layer in [internal/plugin/loader.go:124](internal/plugin/loader.go) (the `exec.Command(path)` site) wraps an adapter subprocess inside an isolation environment. First reference implementation: a Docker environment, building on Phase 2 W09. New contributor's slot.
@@ -179,5 +225,5 @@ per-workstream outcome summary.
   (or a human) is the only writer for those.
 - Phase close-out uses `workstreams/archived/<phase>/`. Phase 0
   archived to `archived/v0/`, Phase 1 to `archived/v1/`, Phase 2 to
-  `archived/v2/`. Phase 3 archives to `archived/v3/` when its cleanup
-  gate lands.
+  `archived/v2/`, Phase 3 to `archived/v3/`, v0.3.1 to `archived/v3.1/`,
+  v0.3.2 to `archived/v3.2/`. Phase 4 archives to `archived/v4/` at close.
