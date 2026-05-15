@@ -149,7 +149,34 @@ func (p *copilotPlugin) buildSessionConfig(cfg map[string]string, pluginSessionI
 	if sp := strings.TrimSpace(cfg["system_prompt"]); sp != "" {
 		sc.SystemMessage = &copilot.SystemMessageConfig{Content: sp}
 	}
+	if pc := buildProviderConfig(cfg); pc != nil {
+		sc.Provider = pc
+	}
 	return sc
+}
+
+// buildProviderConfig assembles a Copilot SDK ProviderConfig (BYOK) from the
+// flat agent config map. Returns nil when provider_base_url is empty, so the
+// session falls back to GitHub Copilot's default backend.
+//
+// Telemetry: the adapter intentionally never sets ClientOptions.Telemetry, so
+// COPILOT_OTEL_ENABLED stays unset and the CLI does not export OTel traces.
+func buildProviderConfig(cfg map[string]string) *copilot.ProviderConfig {
+	baseURL := strings.TrimSpace(cfg["provider_base_url"])
+	if baseURL == "" {
+		return nil
+	}
+	pc := &copilot.ProviderConfig{
+		Type:        strings.TrimSpace(cfg["provider_type"]),
+		WireApi:     strings.TrimSpace(cfg["provider_wire_api"]),
+		BaseURL:     baseURL,
+		APIKey:      cfg["provider_api_key"],
+		BearerToken: cfg["provider_bearer_token"],
+	}
+	if v := strings.TrimSpace(cfg["provider_azure_api_version"]); v != "" {
+		pc.Azure = &copilot.AzureProviderOptions{APIVersion: v}
+	}
+	return pc
 }
 
 // applyOpenSessionModel validates and applies model/reasoning_effort at session open,
