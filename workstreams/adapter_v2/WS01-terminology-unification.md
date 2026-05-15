@@ -277,3 +277,31 @@ The current tests now correctly protect the machine-readable compile contract by
 - `! test -d internal/plugin` → passes
 - `rg -n -i 'plugin' internal/cli/*.go` / targeted CLI search → only remaining user-visible hit is `internal/cli/plan.go`
 - `make ci` → passed
+
+### Review 2026-05-15-02 — approved
+
+#### Summary
+Approved. The remaining Step 7 gap is fixed: the human-readable plan output now says `adapters required:` while the machine-readable compile JSON continues to preserve `plugins_required` for compatibility. The branch stays within WS01 scope, the rename sweep is clean, no baseline changes were introduced, and the full repository validation target passes.
+
+#### Plan Adherence
+- Step 1: Implemented with the documented `internal/adapterhost` deviation; `internal/plugin/` is removed and imports/callers are updated consistently.
+- Step 2: Implemented; `AdapterPluginService` was renamed to `AdapterService` and regenerated bindings/call sites are aligned.
+- Step 3: Implemented; `PluginName` was renamed to `AdapterName`.
+- Step 4: Implemented; `sdk/pluginhost/` moved to `sdk/adapterhost/`, including the required WS39 forward-pointer comment in `sdk/adapterhost/doc.go`.
+- Step 5: Implemented; `docs/plugins.md` was renamed to `docs/adapters.md`, with no remaining prohibited out-of-scope file edits on the branch.
+- Step 6: Implemented; the workstream sanity greps are clean.
+- Step 7: Implemented; `internal/cli/plan.go` and plan goldens now use `adapters required:` for user-visible output while compile JSON retains the existing compatibility key.
+- Exit criteria: met.
+
+#### Test Intent Assessment
+The tests now validate the intended split between user-facing terminology and compatibility-sensitive machine output: plan goldens assert `adapters required:` for human-readable CLI text, while compile goldens continue to lock `plugins_required` at the JSON contract boundary. Combined with the repo-wide sanity greps and `make ci`, this is sufficient evidence for a rename-only change.
+
+#### Validation Performed
+- `git diff --name-only origin/main...HEAD -- README.md CONTRIBUTING.md workstreams/adapter_v2/README.md workstreams/archived docs/adrs docs/workflow.md architecture_archive` → no out-of-scope diffs
+- `rg -n --glob '*.go' 'internal/plugin' .` → no matches
+- `rg -n -g '*.go' -g '*.proto' 'AdapterPluginService' .` → no matches
+- `rg -n --glob '*.go' 'PluginName' .` → no matches
+- `! test -f docs/plugins.md` → passes
+- `! test -d internal/plugin` → passes
+- `rg -n -i 'plugin' internal/cli/*.go` → only preserved compatibility/environment-path references remain; no stale user-facing CLI wording
+- `make ci` → passed
