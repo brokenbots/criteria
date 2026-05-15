@@ -106,6 +106,16 @@ func (p *copilotPlugin) Info(_ context.Context, _ *pb.InfoRequest) (*pb.InfoResp
 			"working_directory": {Type: "string", Doc: "Working directory for tool invocations."},
 			"max_turns":         {Type: "number", Doc: "Maximum assistant turns per Execute call (default: unlimited)."},
 			"system_prompt":     {Type: "string", Doc: "System prompt prepended at session open."},
+			// Custom provider (BYOK) — point the session at an OpenAI-compatible
+			// endpoint (Ollama, vLLM, Azure OpenAI, etc.). When provider_base_url
+			// is set, the session uses this provider instead of GitHub Copilot's
+			// default backend; in that case `model` is required.
+			"provider_type":              {Type: "string", Doc: "Custom provider type: openai, azure, or anthropic. Default: openai. Only used when provider_base_url is set."},
+			"provider_base_url":          {Type: "string", Doc: "Custom provider API endpoint URL. Setting this enables BYOK mode (e.g. http://localhost:11434/v1 for Ollama, vLLM endpoint). Requires `model` to be set."},
+			"provider_api_key":           {Type: "string", Doc: "Custom provider API key. Optional for local providers like Ollama. Prefer env() in HCL to keep secrets out of source."},
+			"provider_bearer_token":      {Type: "string", Doc: "Custom provider bearer token. Sets Authorization header directly; takes precedence over provider_api_key."},
+			"provider_wire_api":          {Type: "string", Doc: "Custom provider wire format (openai/azure only): completions or responses. Default: completions."},
+			"provider_azure_api_version": {Type: "string", Doc: "Azure API version, used when provider_type=azure. Default: 2024-10-21."},
 		}},
 		InputSchema: &pb.AdapterSchemaProto{Fields: map[string]*pb.ConfigFieldProto{
 			"prompt":           {Required: true, Type: "string", Doc: "User prompt to send to the assistant."},

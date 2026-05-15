@@ -162,6 +162,40 @@ These fields are declared on the `adapter { config { ... } }` block and apply fo
 | `system_prompt` | `string` | `""` | System prompt injected at session open. |
 | `max_turns` | `number` | Copilot default | Maximum conversation turns per step. If the cap is reached, the adapter returns `needs_review` when that outcome is declared for the step, otherwise `failure`. |
 | `working_directory` | `string` | CWD of the criteria process | Working directory for tool invocations inside the adapter session. |
+| `provider_type` | `string` | `openai` | Custom provider type when `provider_base_url` is set. One of `openai`, `azure`, `anthropic`. |
+| `provider_base_url` | `string` | `""` | OpenAI-compatible endpoint for BYOK mode (e.g. `http://localhost:11434/v1` for Ollama, your vLLM endpoint). When set, `model` is required and Copilot's default backend is bypassed. |
+| `provider_api_key` | `string` | `""` | API key for the custom provider. Optional for local providers (Ollama). Use `env()` in HCL to keep secrets out of source. |
+| `provider_bearer_token` | `string` | `""` | Bearer token; takes precedence over `provider_api_key`. |
+| `provider_wire_api` | `string` | `completions` | Wire format for `openai`/`azure` providers: `completions` or `responses`. |
+| `provider_azure_api_version` | `string` | `2024-10-21` | Azure API version; only used when `provider_type = "azure"`. |
+
+#### Hosting on vLLM / Ollama
+
+The custom-provider fields make it possible to point a Copilot adapter session
+at any OpenAI-compatible endpoint, including local model servers like
+[Ollama](https://ollama.com/) and [vLLM](https://docs.vllm.ai/):
+
+<!-- validator: skip: illustrative excerpt only -->
+```hcl
+adapter "copilot" "local" {
+  config {
+    provider_base_url = "http://localhost:11434/v1"  # Ollama
+    model             = "deepseek-coder-v2:16b"      # required with custom provider
+  }
+}
+
+adapter "copilot" "vllm" {
+  config {
+    provider_base_url = "http://vllm.internal:8000/v1"
+    provider_api_key  = env("VLLM_API_KEY")
+    model             = "meta-llama/Llama-3.1-70B-Instruct"
+  }
+}
+```
+
+The adapter does not enable OpenTelemetry export: it never sets the Copilot
+SDK's `Telemetry` config, so `COPILOT_OTEL_ENABLED` stays unset and the CLI
+process does not emit traces to an OTLP collector.
 
 Example:
 

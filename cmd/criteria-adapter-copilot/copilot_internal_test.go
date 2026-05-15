@@ -590,3 +590,51 @@ func TestExecutePerStepEffortRestoresWhenNoDefault(t *testing.T) {
 		t.Errorf("calls[1].effort = %q, want empty string (restore: clear effort)", calls[1].effort)
 	}
 }
+
+// TestBuildProviderConfig covers BYOK provider plumbing for vllm/ollama-style
+// custom endpoints. Provider is nil unless provider_base_url is set; otherwise
+// fields are passed through verbatim with Azure options materialized lazily.
+func TestBuildProviderConfig(t *testing.T) {
+	if got := buildProviderConfig(map[string]string{}); got != nil {
+		t.Fatalf("empty config: got %+v, want nil", got)
+	}
+	if got := buildProviderConfig(map[string]string{"provider_type": "openai"}); got != nil {
+		t.Fatalf("no base_url: got %+v, want nil (provider must be opt-in via base_url)", got)
+	}
+
+	// Ollama-style local endpoint, no API key required.
+	ollama := buildProviderConfig(map[string]string{
+		"provider_base_url": "http://localhost:11434/v1",
+	})
+	if ollama == nil {
+		t.Fatal("ollama config: got nil, want provider")
+	}
+	if ollama.BaseURL != "http://localhost:11434/v1" {
+		t.Errorf("BaseURL = %q, want ollama endpoint", ollama.BaseURL)
+	}
+	if ollama.Azure != nil {
+		t.Errorf("Azure = %+v, want nil when provider_azure_api_version unset", ollama.Azure)
+	}
+
+	// Azure provider with API version surfaces Azure options.
+	azure := buildProviderConfig(map[string]string{
+		"provider_type":              "azure",
+		"provider_base_url":          "https://example.openai.azure.com",
+		"provider_api_key":           "secret",
+		"provider_bearer_token":      "bearer",
+		"provider_wire_api":          "responses",
+		"provider_azure_api_version": "2024-10-21",
+	})
+	if azure == nil {
+		t.Fatal("azure config: got nil, want provider")
+	}
+	if azure.Type != "azure" || azure.WireApi != "responses" {
+		t.Errorf("Type/WireApi = %q/%q, want azure/responses", azure.Type, azure.WireApi)
+	}
+	if azure.APIKey != "secret" || azure.BearerToken != "bearer" {
+		t.Errorf("APIKey/BearerToken = %q/%q, want secret/bearer", azure.APIKey, azure.BearerToken)
+	}
+	if azure.Azure == nil || azure.Azure.APIVersion != "2024-10-21" {
+		t.Errorf("Azure.APIVersion = %+v, want 2024-10-21", azure.Azure)
+	}
+}
