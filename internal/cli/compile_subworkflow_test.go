@@ -157,10 +157,6 @@ state "done" {
 func TestCompileJSON_SubworkflowsArrayPresent(t *testing.T) {
 	dir := t.TempDir()
 	calleeDir := writeCallee(t, dir, "inner", nil)
-	// The resolver canonicalises symlinks (e.g. /var → /private/var on macOS).
-	if canonical, err := filepath.EvalSymlinks(calleeDir); err == nil {
-		calleeDir = canonical
-	}
 
 	hcl := `
 workflow "parent" {
