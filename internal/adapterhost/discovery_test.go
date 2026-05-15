@@ -1,4 +1,4 @@
-package plugin
+package adapterhost
 
 import (
 	"errors"
@@ -78,9 +78,9 @@ func TestDiscoverBinaryNotFoundIncludesSearchedPaths(t *testing.T) {
 		t.Fatal("expected error")
 	}
 
-	var notFound *ErrPluginNotFound
+	var notFound *ErrAdapterNotFound
 	if !errors.As(err, &notFound) {
-		t.Fatalf("error type=%T; want *ErrPluginNotFound", err)
+		t.Fatalf("error type=%T; want *ErrAdapterNotFound", err)
 	}
 	want := []string{
 		filepath.Join(envDir, "criteria-adapter-copilot"),

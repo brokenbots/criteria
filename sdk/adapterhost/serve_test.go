@@ -1,4 +1,4 @@
-package pluginhost
+package adapterhost
 
 import (
 	"testing"
@@ -9,15 +9,15 @@ import (
 // TestAdapterPluginWireNames verifies that the hard-coded wire-name constants
 // match the names declared in the compiled proto descriptor. A mismatch causes
 // host/plugin negotiation to fail at runtime.
-func TestAdapterPluginWireNames(t *testing.T) {
-	svc := pb.File_criteria_v1_adapter_plugin_proto.Services().ByName("AdapterPluginService")
+func TestAdapterWireNames(t *testing.T) {
+	svc := pb.File_criteria_v1_adapter_plugin_proto.Services().ByName("AdapterService")
 	if svc == nil {
-		t.Fatal("AdapterPluginService not found in proto descriptor")
+		t.Fatal("AdapterService not found in proto descriptor")
 	}
 
 	wantService := string(svc.FullName())
-	if adapterPluginServiceName != wantService {
-		t.Errorf("adapterPluginServiceName = %q; want %q", adapterPluginServiceName, wantService)
+	if adapterServiceName != wantService {
+		t.Errorf("adapterServiceName = %q; want %q", adapterServiceName, wantService)
 	}
 
 	for _, tc := range []struct {
@@ -25,11 +25,11 @@ func TestAdapterPluginWireNames(t *testing.T) {
 		got    string
 		method string
 	}{
-		{"Info", adapterPluginInfoMethod, "Info"},
-		{"OpenSession", adapterPluginOpenSessionMethod, "OpenSession"},
-		{"Execute", adapterPluginExecuteMethod, "Execute"},
-		{"Permit", adapterPluginPermitMethod, "Permit"},
-		{"CloseSession", adapterPluginCloseSessionMethod, "CloseSession"},
+		{"Info", adapterInfoMethod, "Info"},
+		{"OpenSession", adapterOpenSessionMethod, "OpenSession"},
+		{"Execute", adapterExecuteMethod, "Execute"},
+		{"Permit", adapterPermitMethod, "Permit"},
+		{"CloseSession", adapterCloseSessionMethod, "CloseSession"},
 	} {
 		var found bool
 		for i := 0; i < svc.Methods().Len(); i++ {
@@ -68,7 +68,7 @@ func TestHandshakeConfigValues(t *testing.T) {
 // returns an error rather than panicking. This guard prevents a subtle
 // misconfigured-plugin failure mode.
 func TestGRPCServerNilImpl(t *testing.T) {
-	p := &grpcPlugin{Impl: nil}
+	p := &grpcAdapter{Impl: nil}
 	err := p.GRPCServer(nil, nil)
 	if err == nil {
 		t.Fatal("expected non-nil error from GRPCServer with nil Impl, got nil")

@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/brokenbots/criteria/internal/adapter"
-	"github.com/brokenbots/criteria/internal/plugin"
+	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -94,7 +94,7 @@ func buildNStepWorkflow(b *testing.B, n int) *workflow.FSMGraph {
 func runBenchEngine(b *testing.B, graph *workflow.FSMGraph) {
 	b.Helper()
 	loader := &fakeLoader{
-		plugins: map[string]plugin.Plugin{
+		plugins: map[string]adapterhost.Handle{
 			"fake": &fakePlugin{name: "fake", outcome: "success"},
 		},
 	}

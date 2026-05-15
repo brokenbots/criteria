@@ -1,23 +1,23 @@
-// Package main implements a configurable test plugin that emits N permission
+// Package main implements a configurable test adapter that emits N permission
 // requests and returns an outcome based on the grant/deny decisions it receives.
 //
 // # Configuration
 //
-// The plugin reads perm_tools from the step config (comma-separated list of
+// The adapter reads perm_tools from the step config (comma-separated list of
 // permission specs) or from the PERM_TOOLS environment variable.
 //
 // Supported spec forms:
 //   - "read_file" -> Permission="read_file"
 //   - "shell|git status" -> Permission="shell", Details["commands"]="git status"
 //
-// If neither source is set the plugin emits no permission requests and returns
+// If neither source is set the adapter emits no permission requests and returns
 // "success".
 //
 // Outcome semantics:
 //   - All requests granted → "success"
 //   - Any request denied   → "needs_review"
 //
-// This plugin is only built and used by tests. It is NOT registered with
+// This adapter is only built and used by tests. It is NOT registered with
 // `make plugins` and must not be installed in ~/.criteria/plugins/.
 package main
 
@@ -30,8 +30,8 @@ import (
 
 	"github.com/google/uuid"
 
+	adapterhost "github.com/brokenbots/criteria/sdk/adapterhost"
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
-	pluginhost "github.com/brokenbots/criteria/sdk/pluginhost"
 )
 
 type permitDecision struct {
@@ -68,7 +68,7 @@ func (s *permissiveService) OpenSession(_ context.Context, req *pb.OpenSessionRe
 // Execute emits one PermissionRequest event per configured tool and waits for
 // the host to respond via Permit before proceeding to the next tool. The final
 // result is "needs_review" if any request was denied, "success" otherwise.
-func (s *permissiveService) Execute(ctx context.Context, req *pb.ExecuteRequest, sink pluginhost.ExecuteEventSender) error {
+func (s *permissiveService) Execute(ctx context.Context, req *pb.ExecuteRequest, sink adapterhost.ExecuteEventSender) error {
 	s.mu.Lock()
 	_, ok := s.sessions[req.GetSessionId()]
 	s.mu.Unlock()
@@ -102,7 +102,7 @@ func (s *permissiveService) Execute(ctx context.Context, req *pb.ExecuteRequest,
 
 // sendPermissionRoundTrip sends a single permission request for the given spec,
 // waits for the host decision, and returns the decision or any error.
-func (s *permissiveService) sendPermissionRoundTrip(ctx context.Context, sink pluginhost.ExecuteEventSender, requested permissionSpec) (permitDecision, error) {
+func (s *permissiveService) sendPermissionRoundTrip(ctx context.Context, sink adapterhost.ExecuteEventSender, requested permissionSpec) (permitDecision, error) {
 	id := uuid.New().String()
 	ch := make(chan permitDecision, 1)
 
@@ -194,7 +194,7 @@ func parsePermissionSpecs(s string) []permissionSpec {
 }
 
 func main() {
-	pluginhost.Serve(&permissiveService{
+	adapterhost.Serve(&permissiveService{
 		sessions: map[string]struct{}{},
 		pending:  map[string]chan permitDecision{},
 	})

@@ -36,7 +36,7 @@ import (
 	"time"
 
 	"github.com/brokenbots/criteria/internal/adapter"
-	"github.com/brokenbots/criteria/internal/plugin"
+	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -100,8 +100,8 @@ type highLogPlugin struct {
 	chunk []byte
 }
 
-func (p *highLogPlugin) Info(context.Context) (plugin.Info, error) {
-	return plugin.Info{Name: p.name, Version: "bench", Capabilities: []string{"parallel_safe"}}, nil
+func (p *highLogPlugin) Info(context.Context) (adapterhost.Info, error) {
+	return adapterhost.Info{Name: p.name, Version: "bench", Capabilities: []string{"parallel_safe"}}, nil
 }
 func (p *highLogPlugin) OpenSession(context.Context, string, map[string]string) error { return nil }
 func (p *highLogPlugin) Execute(_ context.Context, _ string, _ *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
@@ -284,7 +284,7 @@ func BenchmarkParallelEngine_WithFanIn(b *testing.B) {
 	graph := buildParallelBenchWorkflow(b, benchParallelMax)
 	chunk := make([]byte, benchChunkSize)
 	plug := &highLogPlugin{name: "fake", chunk: chunk}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": plug}}
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": plug}}
 
 	b.ResetTimer()
 	b.ReportAllocs()

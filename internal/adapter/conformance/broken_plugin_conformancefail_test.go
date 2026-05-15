@@ -11,12 +11,12 @@ import (
 	"github.com/brokenbots/criteria/internal/adapter/conformance"
 )
 
-func TestBrokenPluginConformanceFixture(t *testing.T) {
-	pluginBin := buildBrokenPlugin(t)
-	conformance.RunPlugin(
+func TestBrokenAdapterConformanceFixture(t *testing.T) {
+	adapterBin := buildBrokenAdapter(t)
+	conformance.RunAdapter(
 		t,
 		"broken",
-		pluginBin,
+		adapterBin,
 		conformance.Options{
 			StepConfig:      map[string]string{"prompt": "hello"},
 			AllowedOutcomes: []string{"success", "failure", "needs_review"},
@@ -24,7 +24,7 @@ func TestBrokenPluginConformanceFixture(t *testing.T) {
 	)
 }
 
-func buildBrokenPlugin(t *testing.T) string {
+func buildBrokenAdapter(t *testing.T) string {
 	t.Helper()
 
 	_, file, _, ok := runtime.Caller(0)
@@ -32,13 +32,13 @@ func buildBrokenPlugin(t *testing.T) string {
 		t.Fatal("resolve caller path")
 	}
 	moduleRoot := filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..", ".."))
-	pluginBin := filepath.Join(t.TempDir(), "criteria-adapter-broken")
+	adapterBin := filepath.Join(t.TempDir(), "criteria-adapter-broken")
 
-	cmd := exec.Command("go", "build", "-o", pluginBin, "./internal/adapter/conformance/testfixtures/broken")
+	cmd := exec.Command("go", "build", "-o", adapterBin, "./internal/adapter/conformance/testfixtures/broken")
 	cmd.Dir = moduleRoot
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("build broken plugin: %v\n%s", err, string(output))
+		t.Fatalf("build broken adapter: %v\n%s", err, string(output))
 	}
-	return pluginBin
+	return adapterBin
 }

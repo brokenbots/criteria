@@ -1,4 +1,4 @@
-package plugin
+package adapterhost
 
 import (
 	"path/filepath"
@@ -6,15 +6,15 @@ import (
 	"strings"
 )
 
-// PermissionRequest is the host-side view of a plugin's permission request.
+// PermissionRequest is the host-side view of an adapter's permission request.
 type PermissionRequest struct {
-	// ID is the opaque request identifier assigned by the plugin. It must be
-	// echoed back in the Permit RPC so the plugin can correlate responses.
+	// ID is the opaque request identifier assigned by the adapter. It must be
+	// echoed back in the Permit RPC so the adapter can correlate responses.
 	ID string
 	// Tool is the tool or permission name being requested (e.g. "read_file",
 	// "shell:git status"). This is matched against the AllowTools patterns.
 	Tool string
-	// Details is an optional map of extra context from the plugin.
+	// Details is an optional map of extra context from the adapter.
 	Details map[string]string
 }
 
@@ -149,7 +149,7 @@ func permissionMatchTargets(req PermissionRequest) []string {
 	return dedupeStrings(targets)
 }
 
-// requestFingerprints extracts optional arg/command fingerprints from plugin
+// requestFingerprints extracts optional arg/command fingerprints from adapter
 // request details so callers can allow specific subcommands like
 // "shell:git status" while denying broad "shell:*".
 func requestFingerprints(details map[string]string) []string {

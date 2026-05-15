@@ -17,7 +17,7 @@ import (
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/zclconf/go-cty/cty"
 
-	"github.com/brokenbots/criteria/internal/plugin"
+	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -49,7 +49,7 @@ state "done" { terminal = true }`)
 	}
 
 	sink := &fakeSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{
 		"fake": &fakePlugin{name: "fake", outcome: "success"},
 	}}
 	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
@@ -97,7 +97,7 @@ func TestStep_Evaluate_SubworkflowTarget(t *testing.T) {
 	}
 
 	sink := &fakeSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{}}
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{}}
 	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -162,7 +162,7 @@ func TestStep_EnvironmentOverride_AppliesToSubprocess(t *testing.T) {
 func TestStep_EnvironmentOverride_InjectedIntoAdapter(t *testing.T) {
 	var captured []map[string]string
 	capPlugin := &captureInputPlugin{outcome: "success", capture: &captured}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"noop": capPlugin}}
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"noop": capPlugin}}
 	sink := &fakeSink{}
 
 	g := &workflow.FSMGraph{
@@ -285,7 +285,7 @@ func TestStep_SubworkflowStepInput_ReachesCallee(t *testing.T) {
 	}
 
 	sink := &captureOutputSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{}}
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{}}
 	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("Run: %v", err)
 	}

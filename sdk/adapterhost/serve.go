@@ -1,4 +1,4 @@
-package pluginhost
+package adapterhost
 
 import (
 	"context"
@@ -12,12 +12,12 @@ import (
 )
 
 const (
-	adapterPluginServiceName        = "criteria.v1.AdapterPluginService"
-	adapterPluginInfoMethod         = "/criteria.v1.AdapterPluginService/Info"
-	adapterPluginOpenSessionMethod  = "/criteria.v1.AdapterPluginService/OpenSession"
-	adapterPluginExecuteMethod      = "/criteria.v1.AdapterPluginService/Execute"
-	adapterPluginPermitMethod       = "/criteria.v1.AdapterPluginService/Permit"
-	adapterPluginCloseSessionMethod = "/criteria.v1.AdapterPluginService/CloseSession"
+	adapterServiceName        = "criteria.v1.AdapterService"
+	adapterInfoMethod         = "/criteria.v1.AdapterService/Info"
+	adapterOpenSessionMethod  = "/criteria.v1.AdapterService/OpenSession"
+	adapterExecuteMethod      = "/criteria.v1.AdapterService/Execute"
+	adapterPermitMethod       = "/criteria.v1.AdapterService/Permit"
+	adapterCloseSessionMethod = "/criteria.v1.AdapterService/CloseSession"
 )
 
 // Serve starts the adapter plugin process using the shared [HandshakeConfig].
@@ -26,30 +26,30 @@ func Serve(impl Service) {
 	hplugin.Serve(&hplugin.ServeConfig{
 		HandshakeConfig: HandshakeConfig,
 		Plugins: map[string]hplugin.Plugin{
-			PluginName: &grpcPlugin{Impl: impl},
+			AdapterName: &grpcAdapter{Impl: impl},
 		},
 		GRPCServer: hplugin.DefaultGRPCServer,
 	})
 }
 
-// grpcPlugin adapts a Service implementation to hashicorp/go-plugin on the
+// grpcAdapter adapts a Service implementation to hashicorp/go-plugin on the
 // plugin (server) side. It is intentionally unexported: callers use [Serve].
-type grpcPlugin struct {
+type grpcAdapter struct {
 	hplugin.NetRPCUnsupportedPlugin
 	Impl Service
 }
 
-func (p *grpcPlugin) GRPCServer(_ *hplugin.GRPCBroker, s *grpc.Server) error {
+func (p *grpcAdapter) GRPCServer(_ *hplugin.GRPCBroker, s *grpc.Server) error {
 	if p.Impl == nil {
 		return errors.New("adapter plugin implementation is nil")
 	}
-	s.RegisterService(&adapterPluginServiceDesc, &grpcAdapterServer{impl: p.Impl})
+	s.RegisterService(&adapterServiceDesc, &grpcAdapterServer{impl: p.Impl})
 	return nil
 }
 
 // GRPCClient is not used in the plugin process; the host-side client lives in
-// internal/plugin. This stub satisfies the hplugin.GRPCPlugin interface.
-func (p *grpcPlugin) GRPCClient(_ context.Context, _ *hplugin.GRPCBroker, _ *grpc.ClientConn) (interface{}, error) {
+// internal/adapterhost. This stub satisfies the hplugin.GRPCPlugin interface.
+func (p *grpcAdapter) GRPCClient(_ context.Context, _ *hplugin.GRPCBroker, _ *grpc.ClientConn) (interface{}, error) {
 	return nil, errors.New("GRPCClient is not implemented in the plugin process")
 }
 
@@ -58,9 +58,9 @@ type grpcAdapterServer struct {
 	impl Service
 }
 
-// adapterPluginGRPCServer is the internal interface that the service desc
+// adapterGRPCServer is the internal interface that the service desc
 // handler functions cast to.
-type adapterPluginGRPCServer interface {
+type adapterGRPCServer interface {
 	Info(context.Context, *pb.InfoRequest) (*pb.InfoResponse, error)
 	OpenSession(context.Context, *pb.OpenSessionRequest) (*pb.OpenSessionResponse, error)
 	Execute(context.Context, *pb.ExecuteRequest, ExecuteEventSender) error
@@ -103,84 +103,84 @@ func (s *grpcExecuteEventServer) Send(evt *pb.ExecuteEvent) error {
 	return s.stream.SendMsg(evt)
 }
 
-var adapterPluginServiceDesc = grpc.ServiceDesc{
-	ServiceName: adapterPluginServiceName,
-	HandlerType: (*adapterPluginGRPCServer)(nil),
+var adapterServiceDesc = grpc.ServiceDesc{
+	ServiceName: adapterServiceName,
+	HandlerType: (*adapterGRPCServer)(nil),
 	Methods: []grpc.MethodDesc{
-		{MethodName: "Info", Handler: adapterPluginInfoHandler},
-		{MethodName: "OpenSession", Handler: adapterPluginOpenSessionHandler},
-		{MethodName: "Permit", Handler: adapterPluginPermitHandler},
-		{MethodName: "CloseSession", Handler: adapterPluginCloseSessionHandler},
+		{MethodName: "Info", Handler: adapterInfoHandler},
+		{MethodName: "OpenSession", Handler: adapterOpenSessionHandler},
+		{MethodName: "Permit", Handler: adapterPermitHandler},
+		{MethodName: "CloseSession", Handler: adapterCloseSessionHandler},
 	},
 	Streams: []grpc.StreamDesc{
-		{StreamName: "Execute", Handler: adapterPluginExecuteHandler, ServerStreams: true},
+		{StreamName: "Execute", Handler: adapterExecuteHandler, ServerStreams: true},
 	},
 }
 
-func adapterPluginInfoHandler(srv interface{}, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
+func adapterInfoHandler(srv interface{}, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	in := new(pb.InfoRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	handler := func(ctx context.Context, req any) (any, error) {
-		return srv.(adapterPluginGRPCServer).Info(ctx, req.(*pb.InfoRequest))
+		return srv.(adapterGRPCServer).Info(ctx, req.(*pb.InfoRequest))
 	}
 	if interceptor == nil {
 		return handler(ctx, in)
 	}
-	info := &grpc.UnaryServerInfo{Server: srv, FullMethod: adapterPluginInfoMethod}
+	info := &grpc.UnaryServerInfo{Server: srv, FullMethod: adapterInfoMethod}
 	return interceptor(ctx, in, info, handler)
 }
 
-func adapterPluginOpenSessionHandler(srv interface{}, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
+func adapterOpenSessionHandler(srv interface{}, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	in := new(pb.OpenSessionRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	handler := func(ctx context.Context, req any) (any, error) {
-		return srv.(adapterPluginGRPCServer).OpenSession(ctx, req.(*pb.OpenSessionRequest))
+		return srv.(adapterGRPCServer).OpenSession(ctx, req.(*pb.OpenSessionRequest))
 	}
 	if interceptor == nil {
 		return handler(ctx, in)
 	}
-	info := &grpc.UnaryServerInfo{Server: srv, FullMethod: adapterPluginOpenSessionMethod}
+	info := &grpc.UnaryServerInfo{Server: srv, FullMethod: adapterOpenSessionMethod}
 	return interceptor(ctx, in, info, handler)
 }
 
-func adapterPluginPermitHandler(srv interface{}, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
+func adapterPermitHandler(srv interface{}, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	in := new(pb.PermitRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	handler := func(ctx context.Context, req any) (any, error) {
-		return srv.(adapterPluginGRPCServer).Permit(ctx, req.(*pb.PermitRequest))
+		return srv.(adapterGRPCServer).Permit(ctx, req.(*pb.PermitRequest))
 	}
 	if interceptor == nil {
 		return handler(ctx, in)
 	}
-	info := &grpc.UnaryServerInfo{Server: srv, FullMethod: adapterPluginPermitMethod}
+	info := &grpc.UnaryServerInfo{Server: srv, FullMethod: adapterPermitMethod}
 	return interceptor(ctx, in, info, handler)
 }
 
-func adapterPluginCloseSessionHandler(srv interface{}, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
+func adapterCloseSessionHandler(srv interface{}, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	in := new(pb.CloseSessionRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	handler := func(ctx context.Context, req any) (any, error) {
-		return srv.(adapterPluginGRPCServer).CloseSession(ctx, req.(*pb.CloseSessionRequest))
+		return srv.(adapterGRPCServer).CloseSession(ctx, req.(*pb.CloseSessionRequest))
 	}
 	if interceptor == nil {
 		return handler(ctx, in)
 	}
-	info := &grpc.UnaryServerInfo{Server: srv, FullMethod: adapterPluginCloseSessionMethod}
+	info := &grpc.UnaryServerInfo{Server: srv, FullMethod: adapterCloseSessionMethod}
 	return interceptor(ctx, in, info, handler)
 }
 
-func adapterPluginExecuteHandler(srv interface{}, stream grpc.ServerStream) error {
+func adapterExecuteHandler(srv interface{}, stream grpc.ServerStream) error {
 	in := new(pb.ExecuteRequest)
 	if err := stream.RecvMsg(in); err != nil {
 		return err
 	}
-	return srv.(adapterPluginGRPCServer).Execute(stream.Context(), in, &grpcExecuteEventServer{stream: stream})
+	return srv.(adapterGRPCServer).Execute(stream.Context(), in, &grpcExecuteEventServer{stream: stream})
 }

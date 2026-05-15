@@ -1,4 +1,4 @@
-package pluginhost
+package adapterhost
 
 import (
 	"context"
@@ -6,10 +6,10 @@ import (
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 )
 
-// PluginName is the dispenser key shared between the host and every plugin
+// AdapterName is the dispenser key shared between the host and every plugin
 // process. Plugin authors do not need to reference this constant directly;
 // [Serve] registers it automatically.
-const PluginName = "adapter"
+const AdapterName = "adapter"
 
 // Service is the contract an out-of-process adapter plugin must implement.
 // The Criteria host creates one subprocess per plugin binary and calls these

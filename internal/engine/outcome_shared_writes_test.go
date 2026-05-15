@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/brokenbots/criteria/internal/adapter"
-	"github.com/brokenbots/criteria/internal/plugin"
+	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -22,8 +22,8 @@ type sharedWritesPlugin struct {
 	outputs map[string]string
 }
 
-func (p *sharedWritesPlugin) Info(context.Context) (plugin.Info, error) {
-	return plugin.Info{Name: "sw", Version: "test"}, nil
+func (p *sharedWritesPlugin) Info(context.Context) (adapterhost.Info, error) {
+	return adapterhost.Info{Name: "sw", Version: "test"}, nil
 }
 func (p *sharedWritesPlugin) OpenSession(context.Context, string, map[string]string) error {
 	return nil
@@ -37,14 +37,14 @@ func (p *sharedWritesPlugin) Permit(context.Context, string, string, bool, strin
 func (p *sharedWritesPlugin) CloseSession(context.Context, string) error { return nil }
 func (p *sharedWritesPlugin) Kill()                                      {}
 
-// pluginFunc is a plugin.Plugin backed by a function, for flexible test control.
+// pluginFunc is a adapterhost.Handle backed by a function, for flexible test control.
 type pluginFunc struct {
 	name string
 	fn   func(context.Context, string, *workflow.StepNode, adapter.EventSink) (adapter.Result, error)
 }
 
-func (p *pluginFunc) Info(context.Context) (plugin.Info, error) {
-	return plugin.Info{Name: p.name, Version: "test"}, nil
+func (p *pluginFunc) Info(context.Context) (adapterhost.Info, error) {
+	return adapterhost.Info{Name: p.name, Version: "test"}, nil
 }
 func (p *pluginFunc) OpenSession(context.Context, string, map[string]string) error { return nil }
 func (p *pluginFunc) Execute(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
@@ -91,7 +91,7 @@ state "done" {
 
 	sink := &fakeSink{}
 	plug := &sharedWritesPlugin{outcome: "success", outputs: map[string]string{"count_val": "7"}}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"sw": plug}}
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"sw": plug}}
 
 	eng := NewTestEngine(g, loader, sink)
 	require.NoError(t, eng.Run(context.Background()))
@@ -158,7 +158,7 @@ state "done" {
 			return adapter.Result{Outcome: "success"}, nil
 		},
 	}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"sw": plug}}
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"sw": plug}}
 
 	eng := NewTestEngine(g, loader, capturedSink)
 	require.NoError(t, eng.Run(context.Background()))
@@ -208,7 +208,7 @@ state "done" {
 	sink := &fakeSink{}
 	// Plugin returns "success" but WITHOUT "nonexistent_key" in outputs
 	plug := &sharedWritesPlugin{outcome: "success", outputs: map[string]string{"other_key": "val"}}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"sw": plug}}
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"sw": plug}}
 
 	eng := NewTestEngine(g, loader, sink)
 	err := eng.Run(context.Background())
@@ -255,7 +255,7 @@ state "done" {
 
 	sink := &fakeSink{}
 	plug := &sharedWritesPlugin{outcome: "success", outputs: map[string]string{"val": "not-a-number"}}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"sw": plug}}
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"sw": plug}}
 
 	eng := NewTestEngine(g, loader, sink)
 	err := eng.Run(context.Background())
@@ -330,7 +330,7 @@ state "done" {
 			return adapter.Result{Outcome: "success"}, nil
 		},
 	}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"sw": plug}}
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"sw": plug}}
 
 	eng := NewTestEngine(g, loader, capturedSink)
 	require.NoError(t, eng.Run(context.Background()))
@@ -379,7 +379,7 @@ state "done" {
 
 	capturedSink := &outputCaptureSink{}
 	plug := &sharedWritesPlugin{outcome: "success", outputs: map[string]string{}}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"sw": plug}}
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"sw": plug}}
 
 	eng := NewTestEngine(g, loader, capturedSink)
 	require.NoError(t, eng.Run(context.Background()))
@@ -453,7 +453,7 @@ state "done" {
 			return adapter.Result{Outcome: "success"}, nil
 		},
 	}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"sw": plug}}
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"sw": plug}}
 
 	eng := NewTestEngine(g, loader, capturedSink)
 	require.NoError(t, eng.Run(context.Background()))
@@ -515,7 +515,7 @@ state "done" {
 
 	capturedSink := &outputCaptureSink{}
 	plug := &sharedWritesPlugin{outcome: "success", outputs: map[string]string{}}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"sw": plug}}
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"sw": plug}}
 
 	eng := NewTestEngine(g, loader, capturedSink)
 	require.NoError(t, eng.Run(context.Background()))

@@ -12,8 +12,8 @@ import (
 	"github.com/zclconf/go-cty/cty"
 
 	"github.com/brokenbots/criteria/internal/adapter"
+	"github.com/brokenbots/criteria/internal/adapterhost"
 	engineruntime "github.com/brokenbots/criteria/internal/engine/runtime"
-	"github.com/brokenbots/criteria/internal/plugin"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -102,7 +102,7 @@ type Sink interface {
 // Engine executes a single workflow run to a terminal state.
 type Engine struct {
 	graph               *workflow.FSMGraph
-	loader              plugin.Loader
+	loader              adapterhost.Loader
 	sink                Sink
 	subWorkflowResolver SubWorkflowResolver
 	branchScheduler     BranchScheduler
@@ -141,7 +141,7 @@ type Engine struct {
 	log *slog.Logger
 }
 
-func New(graph *workflow.FSMGraph, loader plugin.Loader, sink Sink, opts ...Option) *Engine {
+func New(graph *workflow.FSMGraph, loader adapterhost.Loader, sink Sink, opts ...Option) *Engine {
 	e := &Engine{graph: graph, loader: loader, sink: sink}
 	for _, opt := range opts {
 		if opt != nil {
@@ -172,7 +172,7 @@ func (e *Engine) VisitCounts() map[string]int {
 // Run executes the workflow until a terminal state is reached, the global
 // step limit is exceeded, or ctx is cancelled.
 func (e *Engine) Run(ctx context.Context) error {
-	sessions := plugin.NewSessionManager(e.loader)
+	sessions := adapterhost.NewSessionManager(e.loader)
 	defer func() { _ = sessions.Shutdown(context.WithoutCancel(ctx)) }()
 
 	deps := Deps{
@@ -201,7 +201,7 @@ func (e *Engine) Run(ctx context.Context) error {
 // Adapter sessions are provisioned fresh on each run (resumed or not),
 // allowing the workflow to be resumed in a new process context.
 func (e *Engine) RunFrom(ctx context.Context, startStep string, initialAttempt int) error {
-	sessions := plugin.NewSessionManager(e.loader)
+	sessions := adapterhost.NewSessionManager(e.loader)
 	defer func() { _ = sessions.Shutdown(context.WithoutCancel(ctx)) }()
 
 	deps := Deps{
@@ -226,7 +226,7 @@ func (e *Engine) RunFrom(ctx context.Context, startStep string, initialAttempt i
 
 // runLoop is the shared execution loop. firstStepAttempt is the attempt index
 // used for the initial step when resuming; subsequent steps start at attempt 1.
-func (e *Engine) runLoop(ctx context.Context, sessions *plugin.SessionManager, current string, firstStepAttempt int) error {
+func (e *Engine) runLoop(ctx context.Context, sessions *adapterhost.SessionManager, current string, firstStepAttempt int) error {
 	vars := e.seedRunVars()
 	st := &RunState{
 		Current:          current,
@@ -444,7 +444,7 @@ func (e *Engine) seedRunVars() map[string]cty.Value {
 }
 
 // buildDeps constructs the Deps bundle injected into each node's Evaluate call.
-func (e *Engine) buildDeps(sessions *plugin.SessionManager) Deps {
+func (e *Engine) buildDeps(sessions *adapterhost.SessionManager) Deps {
 	return Deps{
 		Sessions:            sessions,
 		Loader:              e.loader,
@@ -552,7 +552,7 @@ func cloneVisits(v map[string]int) map[string]int {
 	return out
 }
 
-func (e *Engine) bootstrapSessionsForResume(ctx context.Context, sessions *plugin.SessionManager, startStep string) error {
+func (e *Engine) bootstrapSessionsForResume(ctx context.Context, sessions *adapterhost.SessionManager, startStep string) error {
 	// Sessions are process-local and do not survive adapter restarts.
 	// With automatic lifecycle management (W12), adapters are provisioned at scope start.
 	// Crash recovery no longer needs to replay lifecycle steps since there are no longer

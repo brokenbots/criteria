@@ -1,4 +1,4 @@
-package plugin
+package adapterhost
 
 import (
 	"bytes"
@@ -14,10 +14,10 @@ import (
 	"github.com/brokenbots/criteria/workflow"
 )
 
-func TestLoaderResolveNoopPlugin(t *testing.T) {
-	pluginBin := buildNoopPlugin(t)
+func TestLoaderResolveNoopAdapter(t *testing.T) {
+	adapterBin := buildNoopAdapter(t)
 	loader := NewLoaderWithDiscovery(func(string) (string, error) {
-		return pluginBin, nil
+		return adapterBin, nil
 	})
 	t.Cleanup(func() {
 		_ = loader.Shutdown(context.Background())
@@ -32,28 +32,28 @@ func TestLoaderResolveNoopPlugin(t *testing.T) {
 		t.Fatalf("info: %v", err)
 	}
 	if info.Name != "noop" {
-		t.Fatalf("plugin name=%q want noop", info.Name)
+		t.Fatalf("adapter name=%q want noop", info.Name)
 	}
 	if info.Version == "" {
-		t.Fatal("expected non-empty plugin version")
+		t.Fatal("expected non-empty adapter version")
 	}
 }
 
-// canceledCtxPlugin is a minimal Plugin stub that always returns a
+// canceledCtxHandle is a minimal Handle stub that always returns a
 // context-canceled error from Execute. Used to test log-level gating for
 // host-canceled context expected-close path (W12).
-type canceledCtxPlugin struct{}
+type canceledCtxHandle struct{}
 
-func (c *canceledCtxPlugin) Info(context.Context) (Info, error) {
+func (c *canceledCtxHandle) Info(context.Context) (Info, error) {
 	return Info{Name: "cancel-stub"}, nil
 }
-func (c *canceledCtxPlugin) OpenSession(context.Context, string, map[string]string) error { return nil }
-func (c *canceledCtxPlugin) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+func (c *canceledCtxHandle) OpenSession(context.Context, string, map[string]string) error { return nil }
+func (c *canceledCtxHandle) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
 	return adapter.Result{Outcome: "failure"}, context.Canceled
 }
-func (c *canceledCtxPlugin) Permit(context.Context, string, string, bool, string) error { return nil }
-func (c *canceledCtxPlugin) CloseSession(context.Context, string) error                 { return nil }
-func (c *canceledCtxPlugin) Kill()                                                      {}
+func (c *canceledCtxHandle) Permit(context.Context, string, string, bool, string) error { return nil }
+func (c *canceledCtxHandle) CloseSession(context.Context, string) error                 { return nil }
+func (c *canceledCtxHandle) Kill()                                                      {}
 
 // TestLoader_HostCanceledContextLogsAtDebug verifies that when the surrounding
 // context is canceled by the host (and the session closing flag is NOT set),
@@ -69,7 +69,7 @@ func TestLoader_HostCanceledContextLogsAtDebug(t *testing.T) {
 		loader:   nil,
 		sessions: map[string]*Session{},
 	}
-	sess := &Session{Name: "agent", Adapter: "cancel-stub", plugin: &canceledCtxPlugin{}}
+	sess := &Session{Name: "agent", Adapter: "cancel-stub", handle: &canceledCtxHandle{}}
 	// closing flag intentionally NOT set — this simulates the host canceling
 	// the run context rather than an explicit SessionManager.Close call.
 	sm.mu.Lock()
@@ -92,16 +92,16 @@ func TestLoader_HostCanceledContextLogsAtDebug(t *testing.T) {
 }
 
 // from Execute. Used to test log-level gating for expected closes (W12).
-type eofPlugin struct{}
+type eofHandle struct{}
 
-func (e *eofPlugin) Info(context.Context) (Info, error)                           { return Info{Name: "eof-stub"}, nil }
-func (e *eofPlugin) OpenSession(context.Context, string, map[string]string) error { return nil }
-func (e *eofPlugin) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+func (e *eofHandle) Info(context.Context) (Info, error)                           { return Info{Name: "eof-stub"}, nil }
+func (e *eofHandle) OpenSession(context.Context, string, map[string]string) error { return nil }
+func (e *eofHandle) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
 	return adapter.Result{Outcome: "failure"}, errors.New("eof: connection terminated")
 }
-func (e *eofPlugin) Permit(context.Context, string, string, bool, string) error { return nil }
-func (e *eofPlugin) CloseSession(context.Context, string) error                 { return nil }
-func (e *eofPlugin) Kill()                                                      {}
+func (e *eofHandle) Permit(context.Context, string, string, bool, string) error { return nil }
+func (e *eofHandle) CloseSession(context.Context, string) error                 { return nil }
+func (e *eofHandle) Kill()                                                      {}
 
 // TestLoader_ExpectedCloseLogsAtDebug verifies that when the closing flag is
 // set on a session and Execute returns an EOF-like error, the session manager
@@ -116,7 +116,7 @@ func TestLoader_ExpectedCloseLogsAtDebug(t *testing.T) {
 		loader:   nil,
 		sessions: map[string]*Session{},
 	}
-	sess := &Session{Name: "agent", Adapter: "eof-stub", plugin: &eofPlugin{}}
+	sess := &Session{Name: "agent", Adapter: "eof-stub", handle: &eofHandle{}}
 	sess.closing.Store(true)
 	sm.mu.Lock()
 	sm.sessions["agent"] = sess
@@ -149,9 +149,9 @@ func TestLoader_HostCanceledContextWithEOFLogsAtDebug(t *testing.T) {
 		loader:   nil,
 		sessions: map[string]*Session{},
 	}
-	// eofPlugin returns "eof: connection terminated" — matches the crash heuristic.
+	// eofHandle returns "eof: connection terminated" — matches the crash heuristic.
 	// closing flag NOT set; only ctx.Err() should suppress crash classification.
-	sess := &Session{Name: "agent", Adapter: "eof-stub", plugin: &eofPlugin{}}
+	sess := &Session{Name: "agent", Adapter: "eof-stub", handle: &eofHandle{}}
 	sm.mu.Lock()
 	sm.sessions["agent"] = sess
 	sm.mu.Unlock()
@@ -226,7 +226,7 @@ func (r *immediateResultReceiver) Recv() (*pb.ExecuteEvent, error) {
 // outcome set, sorted ascending.
 func TestLoader_PopulatesAllowedOutcomes(t *testing.T) {
 	rc := &recordingClient{}
-	p := &rpcPlugin{name: "recording-stub", rpc: rc}
+	p := &rpcHandle{name: "recording-stub", rpc: rc}
 
 	step := &workflow.StepNode{
 		Name: "review",
@@ -272,7 +272,7 @@ func TestLoader_PopulatesAllowedOutcomes(t *testing.T) {
 // must not use nil vs empty to infer host version or behavior.
 func TestLoader_PopulatesAllowedOutcomes_Empty(t *testing.T) {
 	rc := &recordingClient{}
-	p := &rpcPlugin{name: "recording-stub", rpc: rc}
+	p := &rpcHandle{name: "recording-stub", rpc: rc}
 
 	step := &workflow.StepNode{Name: "open", Outcomes: nil}
 

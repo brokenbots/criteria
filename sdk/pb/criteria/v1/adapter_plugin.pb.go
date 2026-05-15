@@ -936,8 +936,8 @@ const file_criteria_v1_adapter_plugin_proto_rawDesc = "" +
 	"\x13CloseSessionRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\"\x16\n" +
-	"\x14CloseSessionResponse2\x82\x03\n" +
-	"\x14AdapterPluginService\x12;\n" +
+	"\x14CloseSessionResponse2\xfc\x02\n" +
+	"\x0eAdapterService\x12;\n" +
 	"\x04Info\x12\x18.criteria.v1.InfoRequest\x1a\x19.criteria.v1.InfoResponse\x12P\n" +
 	"\vOpenSession\x12\x1f.criteria.v1.OpenSessionRequest\x1a .criteria.v1.OpenSessionResponse\x12C\n" +
 	"\aExecute\x12\x1b.criteria.v1.ExecuteRequest\x1a\x19.criteria.v1.ExecuteEvent0\x01\x12A\n" +
@@ -993,16 +993,16 @@ var file_criteria_v1_adapter_plugin_proto_depIdxs = []int32{
 	18, // 9: criteria.v1.PermissionRequest.details:type_name -> criteria.v1.PermissionRequest.DetailsEntry
 	19, // 10: criteria.v1.ExecuteResult.outputs:type_name -> criteria.v1.ExecuteResult.OutputsEntry
 	1,  // 11: criteria.v1.AdapterSchemaProto.FieldsEntry.value:type_name -> criteria.v1.ConfigFieldProto
-	0,  // 12: criteria.v1.AdapterPluginService.Info:input_type -> criteria.v1.InfoRequest
-	4,  // 13: criteria.v1.AdapterPluginService.OpenSession:input_type -> criteria.v1.OpenSessionRequest
-	6,  // 14: criteria.v1.AdapterPluginService.Execute:input_type -> criteria.v1.ExecuteRequest
-	11, // 15: criteria.v1.AdapterPluginService.Permit:input_type -> criteria.v1.PermitRequest
-	13, // 16: criteria.v1.AdapterPluginService.CloseSession:input_type -> criteria.v1.CloseSessionRequest
-	3,  // 17: criteria.v1.AdapterPluginService.Info:output_type -> criteria.v1.InfoResponse
-	5,  // 18: criteria.v1.AdapterPluginService.OpenSession:output_type -> criteria.v1.OpenSessionResponse
-	7,  // 19: criteria.v1.AdapterPluginService.Execute:output_type -> criteria.v1.ExecuteEvent
-	12, // 20: criteria.v1.AdapterPluginService.Permit:output_type -> criteria.v1.PermitResponse
-	14, // 21: criteria.v1.AdapterPluginService.CloseSession:output_type -> criteria.v1.CloseSessionResponse
+	0,  // 12: criteria.v1.AdapterService.Info:input_type -> criteria.v1.InfoRequest
+	4,  // 13: criteria.v1.AdapterService.OpenSession:input_type -> criteria.v1.OpenSessionRequest
+	6,  // 14: criteria.v1.AdapterService.Execute:input_type -> criteria.v1.ExecuteRequest
+	11, // 15: criteria.v1.AdapterService.Permit:input_type -> criteria.v1.PermitRequest
+	13, // 16: criteria.v1.AdapterService.CloseSession:input_type -> criteria.v1.CloseSessionRequest
+	3,  // 17: criteria.v1.AdapterService.Info:output_type -> criteria.v1.InfoResponse
+	5,  // 18: criteria.v1.AdapterService.OpenSession:output_type -> criteria.v1.OpenSessionResponse
+	7,  // 19: criteria.v1.AdapterService.Execute:output_type -> criteria.v1.ExecuteEvent
+	12, // 20: criteria.v1.AdapterService.Permit:output_type -> criteria.v1.PermitResponse
+	14, // 21: criteria.v1.AdapterService.CloseSession:output_type -> criteria.v1.CloseSessionResponse
 	17, // [17:22] is the sub-list for method output_type
 	12, // [12:17] is the sub-list for method input_type
 	12, // [12:12] is the sub-list for extension type_name

@@ -16,7 +16,7 @@ import (
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 
-	"github.com/brokenbots/criteria/internal/plugin"
+	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -58,7 +58,7 @@ step "work" {
 }
 state "done" { terminal = true }`)
 	sink := &outcomeSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{
 		"fake": &fakePlugin{name: "fake", outcome: "unmapped_name"},
 	}}
 	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
@@ -99,7 +99,7 @@ step "work" {
 }
 state "done" { terminal = true }`)
 	sink := &outcomeSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{
 		"fake": &fakePlugin{name: "fake", outcome: "not_declared"},
 	}}
 	err := NewTestEngine(g, loader, sink).Run(context.Background())
@@ -134,7 +134,7 @@ step "work" {
 }
 state "done" { terminal = true }`)
 	sink := &fakeSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{
 		"fake": &fakePlugin{name: "fake", outcome: "success"},
 	}}
 	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
@@ -207,7 +207,7 @@ func TestStep_OutcomeReturn_BubblesToParent(t *testing.T) {
 	}
 
 	sink := &fakeSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{
 		"fake":         &fakePlugin{name: "fake", outcome: "success"},
 		"fake.default": &fakePlugin{name: "fake", outcome: "success"},
 	}}
@@ -244,7 +244,7 @@ step "b" {
 }
 state "done" { terminal = true }`)
 	sink := &fakeSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{
 		"fake": &fakePlugin{name: "fake", outcome: "success"},
 	}}
 	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
@@ -275,7 +275,7 @@ step "work" {
 }
 state "done" { terminal = true }`)
 	sink := &outcomeSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{
 		"fake": &fakePlugin{name: "fake", outcome: "success"},
 	}}
 	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
@@ -367,7 +367,7 @@ func TestStep_OutcomeReturn_EndToEnd(t *testing.T) {
 	}
 
 	sink := &fakeSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{
 		"fake":         &fakePlugin{name: "fake", outcome: "success"},
 		"fake.default": &fakePlugin{name: "fake", outcome: "success"},
 	}}
@@ -462,7 +462,7 @@ func TestStep_OutcomeOutput_SubworkflowOutputAvailable(t *testing.T) {
 	}
 
 	sink := &outcomeSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{
 		"fake":         &fakePlugin{name: "fake", outcome: "success"},
 		"fake.default": &fakePlugin{name: "fake", outcome: "success"},
 	}}

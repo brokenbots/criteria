@@ -11,8 +11,8 @@ import (
 
 	copilot "github.com/github/copilot-sdk/go"
 
+	adapterhost "github.com/brokenbots/criteria/sdk/adapterhost"
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
-	pluginhost "github.com/brokenbots/criteria/sdk/pluginhost"
 )
 
 const maxFinalizeAttempts = 3
@@ -48,7 +48,7 @@ func (ts *turnState) sendErr(err error) {
 
 // handleEvent returns a SessionEventHandler that dispatches SDK events to the
 // appropriate per-event-type methods on ts.
-func (ts *turnState) handleEvent(sink pluginhost.ExecuteEventSender) func(copilot.SessionEvent) {
+func (ts *turnState) handleEvent(sink adapterhost.ExecuteEventSender) func(copilot.SessionEvent) {
 	return func(event copilot.SessionEvent) {
 		switch d := event.Data.(type) {
 		case *copilot.AssistantMessageDeltaData:
@@ -78,7 +78,7 @@ func (ts *turnState) handleEvent(sink pluginhost.ExecuteEventSender) func(copilo
 }
 
 // handleAssistantDelta forwards a streaming delta event.
-func (ts *turnState) handleAssistantDelta(sink pluginhost.ExecuteEventSender, eventType copilot.SessionEventType, d *copilot.AssistantMessageDeltaData) {
+func (ts *turnState) handleAssistantDelta(sink adapterhost.ExecuteEventSender, eventType copilot.SessionEventType, d *copilot.AssistantMessageDeltaData) {
 	if d.DeltaContent == "" {
 		return
 	}
@@ -92,7 +92,7 @@ func (ts *turnState) handleAssistantDelta(sink pluginhost.ExecuteEventSender, ev
 
 // handleAssistantMessage processes a complete assistant turn, forwarding
 // content and tool invocations, then enforcing the max_turns limit.
-func (ts *turnState) handleAssistantMessage(sink pluginhost.ExecuteEventSender, eventType copilot.SessionEventType, d *copilot.AssistantMessageData) {
+func (ts *turnState) handleAssistantMessage(sink adapterhost.ExecuteEventSender, eventType copilot.SessionEventType, d *copilot.AssistantMessageData) {
 	ts.finalContent = d.Content
 	ts.sendErr(sink.Send(logEvent("agent", d.Content)))
 	ts.sendErr(sink.Send(adapterEvent("agent.message", map[string]any{
@@ -120,7 +120,7 @@ func (ts *turnState) handleAssistantMessage(sink pluginhost.ExecuteEventSender, 
 // awaitOutcome blocks until the session idles with a valid finalized outcome,
 // a reprompt-exhaustion failure, a context cancellation, or an error. It runs
 // up to maxFinalizeAttempts (1 initial + 2 reprompts) before returning failure.
-func (ts *turnState) awaitOutcome(ctx context.Context, s *sessionState, sink pluginhost.ExecuteEventSender) error {
+func (ts *turnState) awaitOutcome(ctx context.Context, s *sessionState, sink adapterhost.ExecuteEventSender) error {
 	for attempt := 1; attempt <= maxFinalizeAttempts; attempt++ {
 		select {
 		case <-ctx.Done():
@@ -144,7 +144,7 @@ func (ts *turnState) awaitOutcome(ctx context.Context, s *sessionState, sink plu
 // handleIdleTurn processes a SessionIdle event during the awaitOutcome loop.
 // Returns (done=true, err) when execution should end; (done=false, nil) when a
 // reprompt was sent and the loop should continue to the next turn.
-func (ts *turnState) handleIdleTurn(ctx context.Context, s *sessionState, sink pluginhost.ExecuteEventSender, attempt int) (done bool, err error) {
+func (ts *turnState) handleIdleTurn(ctx context.Context, s *sessionState, sink adapterhost.ExecuteEventSender, attempt int) (done bool, err error) {
 	s.mu.Lock()
 	denied := s.permissionDeny
 	outcome := s.finalizedOutcome
@@ -201,7 +201,7 @@ func (ts *turnState) reprompt(ctx context.Context, s *sessionState) error {
 //   - kind:   machine-readable category ("missing", "invalid_outcome", "duplicate", "no_outcomes")
 //   - allowed_outcomes: sorted list of the step's declared outcomes (for operator alerting)
 //   - attempts: how many tool-call attempts were made
-func (ts *turnState) failExhausted(s *sessionState, sink pluginhost.ExecuteEventSender) error {
+func (ts *turnState) failExhausted(s *sessionState, sink adapterhost.ExecuteEventSender) error {
 	s.mu.Lock()
 	attempts := s.finalizeAttempts
 	kind := s.finalizeFailureKind
@@ -237,7 +237,7 @@ func (ts *turnState) failExhausted(s *sessionState, sink pluginhost.ExecuteEvent
 
 // handleMaxTurnsReached returns failure unless "needs_review" is in the
 // allowed set, in which case it preserves the historical max-turns behavior.
-func (ts *turnState) handleMaxTurnsReached(s *sessionState, sink pluginhost.ExecuteEventSender) error {
+func (ts *turnState) handleMaxTurnsReached(s *sessionState, sink adapterhost.ExecuteEventSender) error {
 	s.mu.Lock()
 	_, needsReviewAllowed := s.activeAllowedOutcomes["needs_review"]
 	s.mu.Unlock()
@@ -247,7 +247,7 @@ func (ts *turnState) handleMaxTurnsReached(s *sessionState, sink pluginhost.Exec
 	return sink.Send(resultEvent("failure"))
 }
 
-func (p *copilotPlugin) Execute(ctx context.Context, req *pb.ExecuteRequest, sink pluginhost.ExecuteEventSender) error {
+func (p *copilotAdapter) Execute(ctx context.Context, req *pb.ExecuteRequest, sink adapterhost.ExecuteEventSender) error {
 	s, prompt, maxTurns, err := p.prepareExecute(req)
 	if err != nil {
 		return err
@@ -302,7 +302,7 @@ func (p *copilotPlugin) Execute(ctx context.Context, req *pb.ExecuteRequest, sin
 // prepareExecute validates the request and returns the session state, prompt,
 // and max_turns limit. Returns an error when any required field is missing or
 // the session is unknown.
-func (p *copilotPlugin) prepareExecute(req *pb.ExecuteRequest) (s *sessionState, prompt string, maxTurns int, err error) {
+func (p *copilotAdapter) prepareExecute(req *pb.ExecuteRequest) (s *sessionState, prompt string, maxTurns int, err error) {
 	s = p.getSession(req.GetSessionId())
 	if s == nil {
 		return nil, "", 0, fmt.Errorf("copilot: unknown session %q", req.GetSessionId())
@@ -325,7 +325,7 @@ func (p *copilotPlugin) prepareExecute(req *pb.ExecuteRequest) (s *sessionState,
 
 // beginExecution marks the session active and wires up the event sink.
 // The returned cleanup function must be deferred by the caller.
-func (s *sessionState) beginExecution(sink pluginhost.ExecuteEventSender) func() {
+func (s *sessionState) beginExecution(sink adapterhost.ExecuteEventSender) func() {
 	execDone := make(chan struct{})
 	s.mu.Lock()
 	s.active = true

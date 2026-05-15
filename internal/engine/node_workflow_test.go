@@ -19,7 +19,7 @@ import (
 
 	"github.com/zclconf/go-cty/cty"
 
-	"github.com/brokenbots/criteria/internal/plugin"
+	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -135,7 +135,7 @@ state "done" {
 
 	var captured []map[string]string
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{
 		"fake": &captureInputPlugin{outcome: "success", capture: &captured},
 	}}
 	if err := New(g, loader, sink).Run(context.Background()); err != nil {
@@ -209,7 +209,7 @@ state "done" {
 }`)
 
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{
 		"fake_producer": &captureOutputPlugin{
 			outcomes: []string{"success"},
 			outputs:  []map[string]string{{"result": "body-only-output"}},
@@ -272,7 +272,7 @@ state "done" {
 	// Body step "inner" returns output "result" = "child-output".
 	var consumeCapture []map[string]string
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{
 		"fake_producer": &captureOutputPlugin{
 			outcomes: []string{"success"},
 			outputs:  []map[string]string{{"result": "child-output"}},
@@ -337,7 +337,7 @@ state "done" {
 }`)
 
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{
 		"fake": &fakePlugin{name: "fake", outcome: "success"},
 	}}
 
@@ -386,7 +386,7 @@ state "done" {
 		fakePlugin: fakePlugin{name: "noop", outcome: "success"},
 	}
 
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{
 		"noop": bodyTracker,
 	}}
 
@@ -465,7 +465,7 @@ state "done" {
 		fakePlugin: fakePlugin{name: "noop_b", outcome: "success"},
 	}
 
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{
 		"noop_a": adapterA,
 		"noop_b": adapterB,
 	}}

@@ -19,7 +19,7 @@ import (
 	"github.com/zclconf/go-cty/cty"
 
 	"github.com/brokenbots/criteria/internal/adapter"
-	"github.com/brokenbots/criteria/internal/plugin"
+	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -55,7 +55,7 @@ func traversalExpr(root string, attrs ...string) hcl.Expression {
 
 func testDeps(t *testing.T) Deps {
 	t.Helper()
-	sessions := plugin.NewSessionManager(plugin.NewLoader())
+	sessions := adapterhost.NewSessionManager(adapterhost.NewLoader())
 	t.Cleanup(func() { sessions.Shutdown(context.Background()) })
 	return Deps{
 		Sessions: sessions,
@@ -356,9 +356,9 @@ func subworkflowNodeFor(name string, body *workflow.FSMGraph) *workflow.Subworkf
 }
 
 // depsWithLoader builds a Deps whose SessionManager uses the given loader.
-func depsWithLoader(t *testing.T, loader plugin.Loader) Deps {
+func depsWithLoader(t *testing.T, loader adapterhost.Loader) Deps {
 	t.Helper()
-	sessions := plugin.NewSessionManager(loader)
+	sessions := adapterhost.NewSessionManager(loader)
 	t.Cleanup(func() { sessions.Shutdown(context.Background()) })
 	return Deps{Sessions: sessions, Sink: &fakeSink{}}
 }
@@ -372,7 +372,7 @@ func depsWithLoader(t *testing.T, loader plugin.Loader) Deps {
 // closes==0 after runSubworkflow returns, failing the test.
 func TestRunSubworkflow_AdaptersIsolatedFromParent(t *testing.T) {
 	tracker := &lifecycleTrackingPlugin{fakePlugin: fakePlugin{name: "noop"}}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"noop": tracker}}
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"noop": tracker}}
 
 	node := subworkflowNodeFor("isolated", calleeBodyWithAdapter("noop"))
 	parentSt := &RunState{
@@ -406,7 +406,7 @@ func TestRunSubworkflow_AdaptersIsolatedFromParent(t *testing.T) {
 // without returning an error would fail this test.
 func TestRunSubworkflow_ErrorPropagatesToParent(t *testing.T) {
 	errPlugin := &fakePlugin{name: "noop", err: fmt.Errorf("simulated step failure")}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"noop": errPlugin}}
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"noop": errPlugin}}
 
 	node := subworkflowNodeFor("fail-test", calleeBodyWithStep("noop"))
 	parentSt := &RunState{
@@ -431,7 +431,7 @@ func TestRunSubworkflow_ErrorPropagatesToParent(t *testing.T) {
 // return nil error, failing this test.
 func TestRunSubworkflow_CalleeCancellation(t *testing.T) {
 	checkPlugin := &ctxCheckPlugin{fakePlugin: fakePlugin{name: "noop"}}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"noop": checkPlugin}}
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"noop": checkPlugin}}
 
 	node := subworkflowNodeFor("cancel-test", calleeBodyWithStep("noop"))
 	parentSt := &RunState{
@@ -486,7 +486,7 @@ func TestRunSubworkflow_ReturnSentinelWithNilOutputs(t *testing.T) {
 	}
 	swNode := &workflow.SubworkflowNode{Name: "callee", Body: calleeGraph}
 
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{
 		"fake":         &fakePlugin{name: "fake", outcome: "success"},
 		"fake.default": &fakePlugin{name: "fake", outcome: "success"},
 	}}

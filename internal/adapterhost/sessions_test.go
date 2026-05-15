@@ -1,4 +1,4 @@
-package plugin
+package adapterhost
 
 import (
 	"context"
@@ -16,29 +16,29 @@ type recordingLoader struct {
 	inner Loader
 
 	mu      sync.Mutex
-	plugins []Plugin
+	handles []Handle
 }
 
-func (l *recordingLoader) Resolve(ctx context.Context, name string) (Plugin, error) {
+func (l *recordingLoader) Resolve(ctx context.Context, name string) (Handle, error) {
 	p, err := l.inner.Resolve(ctx, name)
 	if err != nil {
 		return nil, err
 	}
 	l.mu.Lock()
-	l.plugins = append(l.plugins, p)
+	l.handles = append(l.handles, p)
 	l.mu.Unlock()
 	return p, nil
 }
 
 func (l *recordingLoader) Shutdown(ctx context.Context) error { return l.inner.Shutdown(ctx) }
 
-func (l *recordingLoader) lastPlugin() Plugin {
+func (l *recordingLoader) lastHandle() Handle {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if len(l.plugins) == 0 {
+	if len(l.handles) == 0 {
 		return nil
 	}
-	return l.plugins[len(l.plugins)-1]
+	return l.handles[len(l.handles)-1]
 }
 
 type adapterEventCollector struct {
@@ -86,8 +86,8 @@ func (c *adapterEventCollector) first(kind string) (map[string]any, bool) {
 }
 
 func TestSessionManagerOpenExecuteClose(t *testing.T) {
-	pluginBin := buildNoopPlugin(t)
-	base := NewLoaderWithDiscovery(func(string) (string, error) { return pluginBin, nil })
+	adapterBin := buildNoopAdapter(t)
+	base := NewLoaderWithDiscovery(func(string) (string, error) { return adapterBin, nil })
 	loader := &recordingLoader{inner: base}
 	t.Cleanup(func() {
 		_ = loader.Shutdown(context.Background())
@@ -115,8 +115,8 @@ func TestSessionManagerOpenExecuteClose(t *testing.T) {
 }
 
 func TestSessionManagerUnknownExecuteAndDoubleOpen(t *testing.T) {
-	pluginBin := buildNoopPlugin(t)
-	loader := NewLoaderWithDiscovery(func(string) (string, error) { return pluginBin, nil })
+	adapterBin := buildNoopAdapter(t)
+	loader := NewLoaderWithDiscovery(func(string) (string, error) { return adapterBin, nil })
 	t.Cleanup(func() {
 		_ = loader.Shutdown(context.Background())
 	})
@@ -135,8 +135,8 @@ func TestSessionManagerUnknownExecuteAndDoubleOpen(t *testing.T) {
 }
 
 func TestSessionManagerCrashPolicyFail(t *testing.T) {
-	pluginBin := buildNoopPlugin(t)
-	base := NewLoaderWithDiscovery(func(string) (string, error) { return pluginBin, nil })
+	adapterBin := buildNoopAdapter(t)
+	base := NewLoaderWithDiscovery(func(string) (string, error) { return adapterBin, nil })
 	loader := &recordingLoader{inner: base}
 	t.Cleanup(func() {
 		_ = loader.Shutdown(context.Background())
@@ -149,7 +149,7 @@ func TestSessionManagerCrashPolicyFail(t *testing.T) {
 	if _, err := sm.Execute(context.Background(), "agent", &workflow.StepNode{Name: "first"}, &adapterEventCollector{}); err != nil {
 		t.Fatalf("first execute: %v", err)
 	}
-	loader.lastPlugin().Kill()
+	loader.lastHandle().Kill()
 
 	sink := &adapterEventCollector{}
 	result, err := sm.Execute(context.Background(), "agent", &workflow.StepNode{Name: "second"}, sink)
@@ -165,8 +165,8 @@ func TestSessionManagerCrashPolicyFail(t *testing.T) {
 }
 
 func TestSessionManagerCrashPolicyRespawn(t *testing.T) {
-	pluginBin := buildNoopPlugin(t)
-	base := NewLoaderWithDiscovery(func(string) (string, error) { return pluginBin, nil })
+	adapterBin := buildNoopAdapter(t)
+	base := NewLoaderWithDiscovery(func(string) (string, error) { return adapterBin, nil })
 	loader := &recordingLoader{inner: base}
 	t.Cleanup(func() {
 		_ = loader.Shutdown(context.Background())
@@ -179,7 +179,7 @@ func TestSessionManagerCrashPolicyRespawn(t *testing.T) {
 	if _, err := sm.Execute(context.Background(), "agent", &workflow.StepNode{Name: "first"}, &adapterEventCollector{}); err != nil {
 		t.Fatalf("first execute: %v", err)
 	}
-	loader.lastPlugin().Kill()
+	loader.lastHandle().Kill()
 
 	sink := &adapterEventCollector{}
 	result, err := sm.Execute(context.Background(), "agent", &workflow.StepNode{Name: "second"}, sink)
@@ -195,8 +195,8 @@ func TestSessionManagerCrashPolicyRespawn(t *testing.T) {
 }
 
 func TestSessionManagerCrashPolicyAbortRun(t *testing.T) {
-	pluginBin := buildNoopPlugin(t)
-	base := NewLoaderWithDiscovery(func(string) (string, error) { return pluginBin, nil })
+	adapterBin := buildNoopAdapter(t)
+	base := NewLoaderWithDiscovery(func(string) (string, error) { return adapterBin, nil })
 	loader := &recordingLoader{inner: base}
 	t.Cleanup(func() {
 		_ = loader.Shutdown(context.Background())
@@ -209,7 +209,7 @@ func TestSessionManagerCrashPolicyAbortRun(t *testing.T) {
 	if _, err := sm.Execute(context.Background(), "agent", &workflow.StepNode{Name: "first"}, &adapterEventCollector{}); err != nil {
 		t.Fatalf("first execute: %v", err)
 	}
-	loader.lastPlugin().Kill()
+	loader.lastHandle().Kill()
 
 	_, err := sm.Execute(context.Background(), "agent", &workflow.StepNode{Name: "second"}, &adapterEventCollector{})
 	var fatal *FatalRunError
@@ -222,8 +222,8 @@ func TestSessionManagerCrashPolicyAbortRun(t *testing.T) {
 // emits permission.granted and permission.denied events when executing a step
 // that requests multiple tools against the permissive test plugin.
 func TestSessionManagerPermissionGrantAndDeny(t *testing.T) {
-	pluginBin := testutil.BuildPermissivePlugin(t)
-	loader := NewLoaderWithDiscovery(func(string) (string, error) { return pluginBin, nil })
+	adapterBin := testutil.BuildPermissiveAdapter(t)
+	loader := NewLoaderWithDiscovery(func(string) (string, error) { return adapterBin, nil })
 	t.Cleanup(func() { _ = loader.Shutdown(context.Background()) })
 
 	sm := NewSessionManager(loader)
@@ -288,8 +288,8 @@ func TestSessionManagerPermissionGrantAndDeny(t *testing.T) {
 // fields that the host must include in every permission.denied event:
 // tool, reason, request_id, and allow_tools.
 func TestSessionManagerDenialPayloadFullContract(t *testing.T) {
-	pluginBin := testutil.BuildPermissivePlugin(t)
-	loader := NewLoaderWithDiscovery(func(string) (string, error) { return pluginBin, nil })
+	adapterBin := testutil.BuildPermissiveAdapter(t)
+	loader := NewLoaderWithDiscovery(func(string) (string, error) { return adapterBin, nil })
 	t.Cleanup(func() { _ = loader.Shutdown(context.Background()) })
 
 	sm := NewSessionManager(loader)
@@ -335,10 +335,10 @@ func TestSessionManagerDenialPayloadFullContract(t *testing.T) {
 // A denied request for "write" must carry allow_tools and a non-empty
 // suggestion field in its payload.
 func TestSessionManagerCopilotAliasGrantAtHostBoundary(t *testing.T) {
-	pluginBin := testutil.BuildPermissivePlugin(t)
+	adapterBin := testutil.BuildPermissiveAdapter(t)
 	// Register the permissive test binary under the "copilot" adapter name so
 	// the host applies copilot alias expansion when evaluating permission kinds.
-	loader := NewLoaderWithDiscovery(func(string) (string, error) { return pluginBin, nil })
+	loader := NewLoaderWithDiscovery(func(string) (string, error) { return adapterBin, nil })
 	t.Cleanup(func() { _ = loader.Shutdown(context.Background()) })
 
 	sm := NewSessionManager(loader)
@@ -393,8 +393,8 @@ func TestSessionManagerCopilotAliasGrantAtHostBoundary(t *testing.T) {
 // the permission.denied payload so the field is always present and correctly
 // typed (not JSON null, not absent).
 func TestSessionManagerNilAllowToolsEmitsEmptyList(t *testing.T) {
-	pluginBin := testutil.BuildPermissivePlugin(t)
-	loader := NewLoaderWithDiscovery(func(string) (string, error) { return pluginBin, nil })
+	adapterBin := testutil.BuildPermissiveAdapter(t)
+	loader := NewLoaderWithDiscovery(func(string) (string, error) { return adapterBin, nil })
 	t.Cleanup(func() { _ = loader.Shutdown(context.Background()) })
 
 	sm := NewSessionManager(loader)
@@ -434,8 +434,8 @@ func TestSessionManagerNilAllowToolsEmitsEmptyList(t *testing.T) {
 }
 
 func TestSessionManagerDefaultDenyAll(t *testing.T) {
-	pluginBin := testutil.BuildPermissivePlugin(t)
-	loader := NewLoaderWithDiscovery(func(string) (string, error) { return pluginBin, nil })
+	adapterBin := testutil.BuildPermissiveAdapter(t)
+	loader := NewLoaderWithDiscovery(func(string) (string, error) { return adapterBin, nil })
 	t.Cleanup(func() { _ = loader.Shutdown(context.Background()) })
 
 	sm := NewSessionManager(loader)
@@ -474,8 +474,8 @@ func TestSessionManagerDefaultDenyAll(t *testing.T) {
 }
 
 func TestSessionManagerShellFingerprintAllowlist(t *testing.T) {
-	pluginBin := testutil.BuildPermissivePlugin(t)
-	loader := NewLoaderWithDiscovery(func(string) (string, error) { return pluginBin, nil })
+	adapterBin := testutil.BuildPermissiveAdapter(t)
+	loader := NewLoaderWithDiscovery(func(string) (string, error) { return adapterBin, nil })
 	t.Cleanup(func() { _ = loader.Shutdown(context.Background()) })
 
 	sm := NewSessionManager(loader)
@@ -570,8 +570,8 @@ func TestSession_ExecuteEOFWithoutCloseIsCrash(t *testing.T) {
 // session with the noop adapter (which declares "parallel_safe"), HasCapability
 // returns true for "parallel_safe" and false for an undeclared capability.
 func TestSessionManager_HasCapability_AfterOpen(t *testing.T) {
-	pluginBin := buildNoopPlugin(t)
-	base := NewLoaderWithDiscovery(func(string) (string, error) { return pluginBin, nil })
+	adapterBin := buildNoopAdapter(t)
+	base := NewLoaderWithDiscovery(func(string) (string, error) { return adapterBin, nil })
 	loader := &recordingLoader{inner: base}
 	t.Cleanup(func() { _ = loader.Shutdown(context.Background()) })
 
@@ -605,8 +605,8 @@ func TestSessionManager_HasCapability_UnknownSession(t *testing.T) {
 // together end-to-end, so collectSchemas (which stores info.AdapterInfo into the
 // schemas map used by workflow.Compile) carries parallel_safe correctly.
 func TestLoader_Info_PropagatesCapabilitiesViaProto(t *testing.T) {
-	pluginBin := buildNoopPlugin(t)
-	loader := NewLoaderWithDiscovery(func(string) (string, error) { return pluginBin, nil })
+	adapterBin := buildNoopAdapter(t)
+	loader := NewLoaderWithDiscovery(func(string) (string, error) { return adapterBin, nil })
 	t.Cleanup(func() { _ = loader.Shutdown(context.Background()) })
 
 	plug, err := loader.Resolve(context.Background(), "noop")
@@ -672,8 +672,8 @@ state "failed" {
 	}
 
 	// Case 1: schemas built from real noop Info() (declares parallel_safe).
-	pluginBin := buildNoopPlugin(t)
-	loader := NewLoaderWithDiscovery(func(string) (string, error) { return pluginBin, nil })
+	adapterBin := buildNoopAdapter(t)
+	loader := NewLoaderWithDiscovery(func(string) (string, error) { return adapterBin, nil })
 	t.Cleanup(func() { _ = loader.Shutdown(context.Background()) })
 
 	plug, err := loader.Resolve(context.Background(), "noop")

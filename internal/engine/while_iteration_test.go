@@ -12,7 +12,7 @@ import (
 	"testing"
 
 	"github.com/brokenbots/criteria/internal/adapter"
-	"github.com/brokenbots/criteria/internal/plugin"
+	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -38,7 +38,7 @@ state "done" {
   success  = true
 }`)
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{
 		"fake": &fakePlugin{name: "fake", outcome: "success"},
 	}}
 	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
@@ -112,7 +112,7 @@ state "done" {
 	}}
 
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": plug}}
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": plug}}
 	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -187,7 +187,7 @@ state "done" {
 	}}
 
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": plug}}
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": plug}}
 	_ = NewTestEngine(g, loader, sink).Run(context.Background())
 
 	// Check that each captured input has the exact iteration index.
@@ -249,7 +249,7 @@ state "done" {
 		return adapter.Result{Outcome: "success"}, nil
 	}}
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": plug}}
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": plug}}
 	_ = NewTestEngine(g, loader, sink).Run(context.Background())
 
 	if len(capturedInputs) == 0 {
@@ -286,7 +286,7 @@ state "done" {
   success  = true
 }`)
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{
 		// First call fails; second would succeed but should not be reached.
 		"fake": &multiOutcomePlugin{name: "fake", outcomes: []string{"failure", "success"}},
 	}}
@@ -365,7 +365,7 @@ state "done" {
 	}}
 
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": plug}}
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": plug}}
 	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -439,7 +439,7 @@ state "done" {
 	}}
 
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": plug}}
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": plug}}
 	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -494,7 +494,7 @@ state "done" {
 	}}
 
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": plug}}
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": plug}}
 	eng := New(g, loader, sink, WithResumedIter(resumeStack))
 	if err := eng.RunFrom(context.Background(), "loop", 1); err != nil {
 		t.Fatalf("run: %v", err)
@@ -574,7 +574,7 @@ state "failed" {
   success  = false
 }`)
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{
 		"fake": &fakePlugin{name: "fake", outcome: "success"},
 	}}
 	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
@@ -643,7 +643,7 @@ state "done" {
 	}}
 
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": plug}}
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": plug}}
 	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -714,7 +714,7 @@ state "done" {
 		return adapter.Result{Outcome: "success"}, nil
 	}}
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": plug}}
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": plug}}
 	err := NewTestEngine(g, loader, sink).Run(context.Background())
 	if err != nil {
 		if !strings.Contains(err.Error(), "max_visits") {
@@ -767,7 +767,7 @@ state "done" {
 		return adapter.Result{Outcome: "success"}, nil
 	}}
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": plug}}
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": plug}}
 	err := NewTestEngine(g, loader, sink).Run(context.Background())
 	if err == nil {
 		t.Fatal("expected error for max_total_steps exceeded, got nil")
@@ -820,7 +820,7 @@ state "done" {
 		return adapter.Result{}, ctx.Err()
 	}}
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": plug}}
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": plug}}
 	err := NewTestEngine(g, loader, sink).Run(context.Background())
 	if err != nil {
 		t.Fatalf("run: %v (want nil: timeout should abort loop, not crash run)", err)
@@ -879,7 +879,7 @@ state "done" {
 		return adapter.Result{Outcome: "success"}, nil
 	}}
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": plug}}
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": plug}}
 	err := NewTestEngine(g, loader, sink).Run(context.Background())
 	if err != nil {
 		t.Fatalf("run: %v (want nil: default on_failure should not abort loop)", err)
@@ -937,7 +937,7 @@ func TestWhile_Subworkflow_Success(t *testing.T) {
 		return adapter.Result{Outcome: "success"}, nil
 	}}
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": plug}}
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": plug}}
 	err := NewTestEngine(parentGraph, loader, sink).Run(context.Background())
 	if err != nil {
 		t.Fatalf("run: %v", err)
@@ -994,7 +994,7 @@ func TestWhile_Subworkflow_FailureAborts(t *testing.T) {
 		return adapter.Result{}, fmt.Errorf("callee failure")
 	}}
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": plug}}
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": plug}}
 	err := NewTestEngine(parentGraph, loader, sink).Run(context.Background())
 	if err != nil {
 		t.Fatalf("run: %v (want nil: abort should not propagate callee error)", err)

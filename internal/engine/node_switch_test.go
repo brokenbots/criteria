@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/brokenbots/criteria/internal/adapter"
+	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/internal/engine"
-	"github.com/brokenbots/criteria/internal/plugin"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -123,7 +123,7 @@ state "done"           { terminal = true }
 	vars := workflow.SeedVarsFromGraph(g)
 
 	sink := &switchSink{}
-	eng := engine.New(g, plugin.NewLoader(), sink,
+	eng := engine.New(g, adapterhost.NewLoader(), sink,
 		engine.WithResumedVars(vars))
 	if err := eng.Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
@@ -196,7 +196,7 @@ state "done"           { terminal = true }
 	vars := workflow.SeedVarsFromGraph(g)
 
 	sink := &switchSink{}
-	eng := engine.New(g, plugin.NewLoader(), sink, engine.WithResumedVars(vars))
+	eng := engine.New(g, adapterhost.NewLoader(), sink, engine.WithResumedVars(vars))
 	if err := eng.Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -256,7 +256,7 @@ state "done" { terminal = true }
 	vars := workflow.SeedVarsFromGraph(g)
 
 	sink := &switchSink{}
-	eng := engine.New(g, plugin.NewLoader(), sink, engine.WithResumedVars(vars))
+	eng := engine.New(g, adapterhost.NewLoader(), sink, engine.WithResumedVars(vars))
 	err := eng.Run(context.Background())
 	if err == nil {
 		t.Fatal("expected error for non-bool switch condition, got nil")
@@ -326,7 +326,7 @@ state "tier_fail" {
 	vars := workflow.SeedVarsFromGraph(g)
 
 	sink := &switchSink{}
-	eng := engine.New(g, plugin.NewLoader(), sink, engine.WithResumedVars(vars))
+	eng := engine.New(g, adapterhost.NewLoader(), sink, engine.WithResumedVars(vars))
 	if err := eng.Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -385,7 +385,7 @@ state "done" { terminal = true }
 	vars := workflow.SeedVarsFromGraph(g)
 
 	sink := &switchSink{}
-	eng := engine.New(g, plugin.NewLoader(), sink, engine.WithResumedVars(vars))
+	eng := engine.New(g, adapterhost.NewLoader(), sink, engine.WithResumedVars(vars))
 	if err := eng.Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -443,7 +443,7 @@ state "failed" {
 	vars := workflow.SeedVarsFromGraph(g)
 
 	sink := &switchSink{}
-	eng := engine.New(g, plugin.NewLoader(), sink, engine.WithResumedVars(vars))
+	eng := engine.New(g, adapterhost.NewLoader(), sink, engine.WithResumedVars(vars))
 	if err := eng.Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -500,7 +500,7 @@ state "done" { terminal = true }
 	vars := workflow.SeedVarsFromGraph(g)
 
 	sink := &switchSink{}
-	eng := engine.New(g, plugin.NewLoader(), sink, engine.WithResumedVars(vars))
+	eng := engine.New(g, adapterhost.NewLoader(), sink, engine.WithResumedVars(vars))
 	if err := eng.Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}

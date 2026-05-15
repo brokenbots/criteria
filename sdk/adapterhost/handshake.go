@@ -1,4 +1,4 @@
-package pluginhost
+package adapterhost
 
 import hplugin "github.com/hashicorp/go-plugin"
 

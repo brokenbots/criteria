@@ -6,8 +6,8 @@ import "criteria/v1/events.proto";
 
 option go_package = "github.com/brokenbots/criteria/sdk/pb/criteria/v1;criteriav1";
 
-// AdapterPluginService defines the out-of-process adapter contract.
-service AdapterPluginService {
+// AdapterService defines the out-of-process adapter contract.
+service AdapterService {
   rpc Info(InfoRequest) returns (InfoResponse);
   rpc OpenSession(OpenSessionRequest) returns (OpenSessionResponse);
   rpc Execute(ExecuteRequest) returns (stream ExecuteEvent);

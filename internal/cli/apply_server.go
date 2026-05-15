@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/internal/engine"
-	"github.com/brokenbots/criteria/internal/plugin"
 	"github.com/brokenbots/criteria/internal/run"
 	servertrans "github.com/brokenbots/criteria/internal/transport/server"
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
@@ -45,7 +45,7 @@ func buildServerSink(ctx context.Context, client *servertrans.Client, runID stri
 	}
 }
 
-func executeServerRun(ctx context.Context, log *slog.Logger, loader plugin.Loader, client *servertrans.Client, state *localRunState, graph *workflow.FSMGraph, opts applyOptions) error {
+func executeServerRun(ctx context.Context, log *slog.Logger, loader adapterhost.Loader, client *servertrans.Client, state *localRunState, graph *workflow.FSMGraph, opts applyOptions) error {
 	_ = writeLocalRunState(state)
 	defer removeLocalRunState()
 	defer RemoveStepCheckpoint(state.RunID)
@@ -88,7 +88,7 @@ func executeServerRun(ctx context.Context, log *slog.Logger, loader plugin.Loade
 // drainResumeCycles handles the pause/resume loop: each time the sink is
 // paused it waits for a matching ResumeRun message and restarts the engine
 // from the paused node, updating eng to the most recently completed engine.
-func drainResumeCycles(ctx context.Context, log *slog.Logger, loader plugin.Loader, sink *run.Sink, client *servertrans.Client, state *localRunState, graph *workflow.FSMGraph, opts applyOptions, eng *engine.Engine) error {
+func drainResumeCycles(ctx context.Context, log *slog.Logger, loader adapterhost.Loader, sink *run.Sink, client *servertrans.Client, state *localRunState, graph *workflow.FSMGraph, opts applyOptions, eng *engine.Engine) error {
 	for sink.IsPaused() {
 		log.Info("run paused; waiting for resume signal", "run_id", state.RunID, "node", sink.PausedAt())
 		var resumeMsg *pb.ResumeRun

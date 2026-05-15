@@ -12,19 +12,19 @@ import (
 	servertrans "github.com/brokenbots/criteria/internal/transport/server"
 )
 
-func TestApplyLocal_NoopPlugin_EmitsExpectedEvents(t *testing.T) {
-	pluginBin := buildNoopPluginBinary(t)
-	pluginDir := t.TempDir()
-	pluginPath := filepath.Join(pluginDir, "criteria-adapter-noop")
-	b, err := os.ReadFile(pluginBin)
+func TestApplyLocal_NoopAdapter_EmitsExpectedEvents(t *testing.T) {
+	adapterBin := buildNoopAdapterBinary(t)
+	adapterDir := t.TempDir()
+	pluginPath := filepath.Join(adapterDir, "criteria-adapter-noop")
+	b, err := os.ReadFile(adapterBin)
 	if err != nil {
-		t.Fatalf("read plugin binary: %v", err)
+		t.Fatalf("read adapter binary: %v", err)
 	}
 	if err := os.WriteFile(pluginPath, b, 0o755); err != nil {
-		t.Fatalf("write plugin binary: %v", err)
+		t.Fatalf("write adapter binary: %v", err)
 	}
 
-	t.Setenv("CRITERIA_PLUGINS", pluginDir)
+	t.Setenv("CRITERIA_PLUGINS", adapterDir)
 	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
 
 	workflowPath := writeWorkflowFile(t, `

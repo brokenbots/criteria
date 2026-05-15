@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/brokenbots/criteria/internal/adapter"
-	"github.com/brokenbots/criteria/internal/plugin"
+	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -29,15 +29,15 @@ func (s *outputCaptureSink) OnStepOutputCaptured(step string, outputs map[string
 	s.order = append(s.order, step)
 }
 
-// fakeOutputPlugin is a plugin.Plugin that returns Outputs.
+// fakeOutputPlugin is a adapterhost.Handle that returns Outputs.
 type fakeOutputPlugin struct {
 	name    string
 	outcome string
 	outputs map[string]string
 }
 
-func (p *fakeOutputPlugin) Info(context.Context) (plugin.Info, error) {
-	return plugin.Info{Name: p.name, Version: "test"}, nil
+func (p *fakeOutputPlugin) Info(context.Context) (adapterhost.Info, error) {
+	return adapterhost.Info{Name: p.name, Version: "test"}, nil
 }
 func (p *fakeOutputPlugin) OpenSession(context.Context, string, map[string]string) error { return nil }
 func (p *fakeOutputPlugin) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
@@ -85,7 +85,7 @@ func TestOutputCapture_StepOutputsCapturedInVars(t *testing.T) {
 	}
 
 	sink := &outputCaptureSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{
 		"fake_out": plug,
 	}}
 
@@ -134,8 +134,8 @@ type fakeConsumerPlugin struct {
 	receivedInput map[string]string
 }
 
-func (p *fakeConsumerPlugin) Info(context.Context) (plugin.Info, error) {
-	return plugin.Info{Name: p.name, Version: "test"}, nil
+func (p *fakeConsumerPlugin) Info(context.Context) (adapterhost.Info, error) {
+	return adapterhost.Info{Name: p.name, Version: "test"}, nil
 }
 func (p *fakeConsumerPlugin) OpenSession(context.Context, string, map[string]string) error {
 	return nil
@@ -175,7 +175,7 @@ func TestOutputCapture_ExpressionInterpolation(t *testing.T) {
 	consumer := &fakeConsumerPlugin{name: "fake_consumer"}
 
 	sink := &outputCaptureSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{
 		"fake_out":      producer,
 		"fake_consumer": consumer,
 	}}
@@ -230,7 +230,7 @@ func TestOutputCapture_EmissionOrder(t *testing.T) {
 
 	plug := &fakeOutputPlugin{name: "fake_out", outcome: "success", outputs: map[string]string{"k": "v"}}
 	sink := &outputCaptureSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake_out": plug}}
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake_out": plug}}
 
 	eng := New(g, loader, sink)
 	if err := eng.Run(context.Background()); err != nil {

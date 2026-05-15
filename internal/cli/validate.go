@@ -9,8 +9,8 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/internal/adapters/shell"
-	"github.com/brokenbots/criteria/internal/plugin"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -49,8 +49,8 @@ func runValidate(paths, subworkflowRoots []string) bool {
 		if info != nil && !info.IsDir() {
 			workflowDir = filepath.Dir(path)
 		}
-		loader := plugin.NewLoader()
-		loader.RegisterBuiltin(shell.Name, plugin.BuiltinFactoryForAdapter(shell.New()))
+		loader := adapterhost.NewLoader()
+		loader.RegisterBuiltin(shell.Name, adapterhost.BuiltinFactoryForAdapter(shell.New()))
 		schemas := collectSchemas(ctx, loader, spec, nil)
 		_ = loader.Shutdown(ctx)
 

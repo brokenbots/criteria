@@ -11,7 +11,7 @@ import (
 
 func TestNoopPluginConformance(t *testing.T) {
 	pluginBin := buildNoopPlugin(t)
-	conformance.RunPlugin(
+	conformance.RunAdapter(
 		t,
 		"noop",
 		pluginBin,

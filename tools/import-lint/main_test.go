@@ -67,7 +67,7 @@ func TestInternalImportsSDKTop_Forbidden(t *testing.T) {
 // TestInternalImportsSDKOther_Forbidden checks that internal/ importing a non-pb sdk subpackage is caught.
 func TestInternalImportsSDKOther_Forbidden(t *testing.T) {
 	root := tempRepoWith(t, map[string]string{
-		"internal/plugin/foo.go": internalImportsSDKOther,
+		"internal/adapterhost/foo.go": internalImportsSDKOther,
 	})
 	vs, err := lint(root)
 	if err != nil {
@@ -78,12 +78,12 @@ func TestInternalImportsSDKOther_Forbidden(t *testing.T) {
 	}
 }
 
-// TestInternalImportsSDKPluginhost_Clean checks that sdk/pluginhost is allowed
+// TestInternalImportsSDKPluginhost_Clean checks that sdk/adapterhost is allowed
 // from testfixtures/ plugin binary paths within internal/.
 func TestInternalImportsSDKPluginhost_Clean(t *testing.T) {
 	root := tempRepoWith(t, map[string]string{
-		"internal/plugin/testfixtures/foo.go": `package foo
-import _ "github.com/brokenbots/criteria/sdk/pluginhost"
+		"internal/adapterhost/testfixtures/foo.go": `package foo
+import _ "github.com/brokenbots/criteria/sdk/adapterhost"
 `,
 	})
 	vs, err := lint(root)
@@ -91,16 +91,16 @@ import _ "github.com/brokenbots/criteria/sdk/pluginhost"
 		t.Fatal(err)
 	}
 	if len(vs) != 0 {
-		t.Fatalf("expected no violations for sdk/pluginhost import from testfixtures/, got %d: %+v", len(vs), vs)
+		t.Fatalf("expected no violations for sdk/adapterhost import from testfixtures/, got %d: %+v", len(vs), vs)
 	}
 }
 
-// TestInternalNonFixtureImportsSDKPluginhost_Forbidden checks that sdk/pluginhost
+// TestInternalNonFixtureImportsSDKPluginhost_Forbidden checks that sdk/adapterhost
 // is forbidden from non-testfixture internal/ code (e.g. production packages).
 func TestInternalNonFixtureImportsSDKPluginhost_Forbidden(t *testing.T) {
 	root := tempRepoWith(t, map[string]string{
 		"internal/engine/foo.go": `package foo
-import _ "github.com/brokenbots/criteria/sdk/pluginhost"
+import _ "github.com/brokenbots/criteria/sdk/adapterhost"
 `,
 	})
 	vs, err := lint(root)
@@ -108,7 +108,7 @@ import _ "github.com/brokenbots/criteria/sdk/pluginhost"
 		t.Fatal(err)
 	}
 	if len(vs) != 1 {
-		t.Fatalf("expected 1 violation for sdk/pluginhost import from non-testfixture internal/, got %d: %+v", len(vs), vs)
+		t.Fatalf("expected 1 violation for sdk/adapterhost import from non-testfixture internal/, got %d: %+v", len(vs), vs)
 	}
 }
 

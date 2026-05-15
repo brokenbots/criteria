@@ -126,18 +126,18 @@ func TestValidateDir_FilePathDelegatesToParentDir(t *testing.T) {
 // TestApplyLocal_DirectoryPath verifies that runApply accepts a directory path,
 // correctly resolves the workflow dir, and runs the noop adapter successfully.
 func TestApplyLocal_DirectoryPath(t *testing.T) {
-	pluginBin := buildNoopPluginBinary(t)
-	pluginDir := t.TempDir()
-	pluginPath := filepath.Join(pluginDir, "criteria-adapter-noop")
-	b, err := os.ReadFile(pluginBin)
+	adapterBin := buildNoopAdapterBinary(t)
+	adapterDir := t.TempDir()
+	adapterPath := filepath.Join(adapterDir, "criteria-adapter-noop")
+	b, err := os.ReadFile(adapterBin)
 	if err != nil {
 		t.Fatalf("read plugin binary: %v", err)
 	}
-	if err := os.WriteFile(pluginPath, b, 0o755); err != nil {
+	if err := os.WriteFile(adapterPath, b, 0o755); err != nil {
 		t.Fatalf("write plugin binary: %v", err)
 	}
 
-	t.Setenv("CRITERIA_PLUGINS", pluginDir)
+	t.Setenv("CRITERIA_PLUGINS", adapterDir)
 	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
 
 	dir, _ := writeMultiFileWorkflow(t)
@@ -163,18 +163,18 @@ func TestApplyLocal_DirectoryPath(t *testing.T) {
 // file path merges all sibling files. This specifically catches the regression
 // where a file path would parse only the named file and miss steps in siblings.
 func TestApplyLocal_FilePathDelegatesToParentDir(t *testing.T) {
-	pluginBin := buildNoopPluginBinary(t)
-	pluginDir := t.TempDir()
-	pluginPath := filepath.Join(pluginDir, "criteria-adapter-noop")
-	b, err := os.ReadFile(pluginBin)
+	adapterBin := buildNoopAdapterBinary(t)
+	adapterDir := t.TempDir()
+	adapterPath := filepath.Join(adapterDir, "criteria-adapter-noop")
+	b, err := os.ReadFile(adapterBin)
 	if err != nil {
 		t.Fatalf("read plugin binary: %v", err)
 	}
-	if err := os.WriteFile(pluginPath, b, 0o755); err != nil {
+	if err := os.WriteFile(adapterPath, b, 0o755); err != nil {
 		t.Fatalf("write plugin binary: %v", err)
 	}
 
-	t.Setenv("CRITERIA_PLUGINS", pluginDir)
+	t.Setenv("CRITERIA_PLUGINS", adapterDir)
 	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
 
 	_, filePath := writeMultiFileWorkflow(t)

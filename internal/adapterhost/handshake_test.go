@@ -1,4 +1,4 @@
-package plugin
+package adapterhost
 
 import (
 	"context"
@@ -12,12 +12,12 @@ import (
 )
 
 func TestHandshakeInfo(t *testing.T) {
-	pluginBin := buildNoopPlugin(t)
+	adapterBin := buildNoopAdapter(t)
 
 	client := hplugin.NewClient(&hplugin.ClientConfig{
 		HandshakeConfig:  HandshakeConfig,
-		Plugins:          PluginMap(),
-		Cmd:              exec.Command(pluginBin),
+		Plugins:          AdapterMap(),
+		Cmd:              exec.Command(adapterBin),
 		AllowedProtocols: []hplugin.Protocol{hplugin.ProtocolGRPC},
 		// 30 s matches loader.go's StartTimeout to handle CPU pressure from
 		// -race -count=20 with many parallel packages.
@@ -27,17 +27,17 @@ func TestHandshakeInfo(t *testing.T) {
 
 	rpcClient, err := client.Client()
 	if err != nil {
-		t.Fatalf("create plugin rpc client: %v", err)
+		t.Fatalf("create adapter rpc client: %v", err)
 	}
 
-	raw, err := rpcClient.Dispense(PluginName)
+	raw, err := rpcClient.Dispense(AdapterName)
 	if err != nil {
-		t.Fatalf("dispense plugin client: %v", err)
+		t.Fatalf("dispense adapter client: %v", err)
 	}
 
 	adapterClient, ok := raw.(Client)
 	if !ok {
-		t.Fatalf("unexpected plugin type: %T", raw)
+		t.Fatalf("unexpected adapter type: %T", raw)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -48,19 +48,19 @@ func TestHandshakeInfo(t *testing.T) {
 		t.Fatalf("info rpc: %v", err)
 	}
 	if resp.GetName() != "noop" {
-		t.Fatalf("unexpected plugin name: %q", resp.GetName())
+		t.Fatalf("unexpected adapter name: %q", resp.GetName())
 	}
 	if resp.GetVersion() == "" {
 		t.Fatal("expected non-empty version")
 	}
 }
 
-// buildNoopPlugin returns the noop adapter binary compiled once for the test
+// buildNoopAdapter returns the noop adapter binary compiled once for the test
 // binary lifetime. The actual build happens in TestMain (see main_test.go).
-func buildNoopPlugin(t *testing.T) string {
+func buildNoopAdapter(t *testing.T) string {
 	t.Helper()
-	if testNoopPluginBin == "" {
-		t.Fatal("testNoopPluginBin not set; ensure TestMain ran")
+	if testNoopAdapterBin == "" {
+		t.Fatal("testNoopAdapterBin not set; ensure TestMain ran")
 	}
-	return testNoopPluginBin
+	return testNoopAdapterBin
 }

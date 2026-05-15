@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/brokenbots/criteria/internal/adapter"
-	"github.com/brokenbots/criteria/internal/plugin"
+	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/internal/testutil"
 	"github.com/brokenbots/criteria/workflow"
 )
@@ -84,8 +84,8 @@ type fakePlugin struct {
 	err     error
 }
 
-func (p *fakePlugin) Info(context.Context) (plugin.Info, error) {
-	return plugin.Info{Name: p.name, Version: "test"}, nil
+func (p *fakePlugin) Info(context.Context) (adapterhost.Info, error) {
+	return adapterhost.Info{Name: p.name, Version: "test"}, nil
 }
 
 func (p *fakePlugin) OpenSession(context.Context, string, map[string]string) error { return nil }
@@ -99,10 +99,10 @@ func (p *fakePlugin) CloseSession(context.Context, string) error                
 func (p *fakePlugin) Kill()                                                      {}
 
 type fakeLoader struct {
-	plugins map[string]plugin.Plugin
+	plugins map[string]adapterhost.Handle
 }
 
-func (l *fakeLoader) Resolve(_ context.Context, name string) (plugin.Plugin, error) {
+func (l *fakeLoader) Resolve(_ context.Context, name string) (adapterhost.Handle, error) {
 	p, ok := l.plugins[name]
 	if !ok {
 		return nil, fmt.Errorf("no plugin named %q", name)
@@ -204,7 +204,7 @@ func compile(t *testing.T, src string) *workflow.FSMGraph {
 
 // NewTestEngine creates an engine with auto-bootstrap enabled for testing.
 // This is a convenience helper for tests that don't explicitly manage adapter lifecycle.
-func NewTestEngine(g *workflow.FSMGraph, loader plugin.Loader, sink Sink, opts ...Option) *Engine {
+func NewTestEngine(g *workflow.FSMGraph, loader adapterhost.Loader, sink Sink, opts ...Option) *Engine {
 	return New(g, loader, sink, opts...)
 }
 
@@ -225,7 +225,7 @@ step "b" {
 }
 state "done" { terminal = true }`)
 	sink := &fakeSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": &fakePlugin{name: "fake", outcome: "success"}}}
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": &fakePlugin{name: "fake", outcome: "success"}}}
 	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -255,7 +255,7 @@ state "fail" {
   success  = false
 }`)
 	sink := &fakeSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": &fakePlugin{name: "fake", outcome: "", err: errors.New("boom")}}}
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": &fakePlugin{name: "fake", outcome: "", err: errors.New("boom")}}}
 	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -278,7 +278,7 @@ step "a" {
 state "done" { terminal = true }
 policy { max_total_steps = 3 }`)
 	sink := &fakeSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": &fakePlugin{name: "fake", outcome: "again"}}}
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": &fakePlugin{name: "fake", outcome: "again"}}}
 	err := NewTestEngine(g, loader, sink).Run(context.Background())
 	if err == nil {
 		t.Fatal("expected loop guard error")
@@ -286,9 +286,9 @@ policy { max_total_steps = 3 }`)
 }
 
 func TestEngineLifecycleWithNoopPlugin(t *testing.T) {
-	pluginBin := buildNoopPlugin(t)
-	loader := plugin.NewLoaderWithDiscovery(func(string) (string, error) {
-		return pluginBin, nil
+	adapterBin := buildNoopPlugin(t)
+	loader := adapterhost.NewLoaderWithDiscovery(func(string) (string, error) {
+		return adapterBin, nil
 	})
 	t.Cleanup(func() { _ = loader.Shutdown(context.Background()) })
 
@@ -306,9 +306,9 @@ func TestEngineLifecycleWithNoopPlugin(t *testing.T) {
 // that OnAdapterLifecycle events for a named-agent workflow are emitted on the
 // execution step ("run_agent"), not on the open/close lifecycle steps (W12).
 func TestNamedAgentLifecycleEventsOnExecutionStep(t *testing.T) {
-	pluginBin := buildNoopPlugin(t)
-	loader := plugin.NewLoaderWithDiscovery(func(string) (string, error) {
-		return pluginBin, nil
+	adapterBin := buildNoopPlugin(t)
+	loader := adapterhost.NewLoaderWithDiscovery(func(string) (string, error) {
+		return adapterBin, nil
 	})
 	t.Cleanup(func() { _ = loader.Shutdown(context.Background()) })
 
@@ -360,9 +360,9 @@ func (s *lifecycleCaptureSink) OnAdapterLifecycle(step, _ /*adapter*/, status, _
 }
 
 func TestEngineLifecycleOpenTimeoutKeepsSessionAlive(t *testing.T) {
-	pluginBin := buildNoopPlugin(t)
-	loader := plugin.NewLoaderWithDiscovery(func(string) (string, error) {
-		return pluginBin, nil
+	adapterBin := buildNoopPlugin(t)
+	loader := adapterhost.NewLoaderWithDiscovery(func(string) (string, error) {
+		return adapterBin, nil
 	})
 	t.Cleanup(func() { _ = loader.Shutdown(context.Background()) })
 
@@ -465,16 +465,16 @@ func buildNoopPlugin(t *testing.T) string {
 		t.Fatal("resolve caller path")
 	}
 	moduleRoot := filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
-	pluginBin := filepath.Join(t.TempDir(), "criteria-adapter-noop")
+	adapterBin := filepath.Join(t.TempDir(), "criteria-adapter-noop")
 
-	cmd := exec.Command("go", "build", "-o", pluginBin, "./cmd/criteria-adapter-noop")
+	cmd := exec.Command("go", "build", "-o", adapterBin, "./cmd/criteria-adapter-noop")
 	cmd.Dir = moduleRoot
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("build noop plugin: %v\n%s", err, string(output))
 	}
 
-	return pluginBin
+	return adapterBin
 }
 
 // TestEnginePermissionGrantAndDeny verifies the full permission-gating flow:
@@ -483,9 +483,9 @@ func buildNoopPlugin(t *testing.T) string {
 // read_file and one permission.denied event for write_file, and the run ends
 // in needs_review (because the plugin returns needs_review on any denial).
 func TestEnginePermissionGrantAndDeny(t *testing.T) {
-	pluginBin := testutil.BuildPermissivePlugin(t)
-	loader := plugin.NewLoaderWithDiscovery(func(string) (string, error) {
-		return pluginBin, nil
+	adapterBin := testutil.BuildPermissiveAdapter(t)
+	loader := adapterhost.NewLoaderWithDiscovery(func(string) (string, error) {
+		return adapterBin, nil
 	})
 	t.Cleanup(func() { _ = loader.Shutdown(context.Background()) })
 
@@ -546,9 +546,9 @@ state "done" { terminal = true }`)
 // produces a permission.denied event for every tool request and no
 // permission.granted events.
 func TestEngineDefaultPolicyDeniesAll(t *testing.T) {
-	pluginBin := testutil.BuildPermissivePlugin(t)
-	loader := plugin.NewLoaderWithDiscovery(func(string) (string, error) {
-		return pluginBin, nil
+	adapterBin := testutil.BuildPermissiveAdapter(t)
+	loader := adapterhost.NewLoaderWithDiscovery(func(string) (string, error) {
+		return adapterBin, nil
 	})
 	t.Cleanup(func() { _ = loader.Shutdown(context.Background()) })
 
@@ -582,9 +582,9 @@ state "done" { terminal = true }`)
 }
 
 func TestEngineShellFingerprintAllowlist(t *testing.T) {
-	pluginBin := testutil.BuildPermissivePlugin(t)
-	loader := plugin.NewLoaderWithDiscovery(func(string) (string, error) {
-		return pluginBin, nil
+	adapterBin := testutil.BuildPermissiveAdapter(t)
+	loader := adapterhost.NewLoaderWithDiscovery(func(string) (string, error) {
+		return adapterBin, nil
 	})
 	t.Cleanup(func() { _ = loader.Shutdown(context.Background()) })
 
@@ -640,7 +640,7 @@ step "loop" {
 state "done" { terminal = true }
 policy { max_total_steps = 1000 }`)
 	sink := &fakeSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": &fakePlugin{name: "fake", outcome: "again"}}}
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": &fakePlugin{name: "fake", outcome: "again"}}}
 	err := NewTestEngine(g, loader, sink).Run(context.Background())
 	if err == nil {
 		t.Fatal("expected max_visits error")
@@ -695,7 +695,7 @@ step "loop" {
 state "done" { terminal = true }
 policy { max_total_steps = 1000 }`)
 	sink := &fakeSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": plg}}
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": plg}}
 	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -723,7 +723,7 @@ state "done" { terminal = true }`)
 		t.Errorf("MaxVisits = %d, want 0 (unlimited)", step.MaxVisits)
 	}
 	sink := &fakeSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": &fakePlugin{name: "fake", outcome: "success"}}}
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": &fakePlugin{name: "fake", outcome: "success"}}}
 	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -751,7 +751,7 @@ policy {
   max_step_retries = 3
 }`)
 	// Plugin that always errors so the retry loop is exercised.
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": &errPlugin{name: "fake", err: errors.New("boom")}}}
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": &errPlugin{name: "fake", err: errors.New("boom")}}}
 	sink := &fakeSink{}
 	err := NewTestEngine(g, loader, sink).Run(context.Background())
 	if err == nil {
@@ -793,7 +793,7 @@ step "loop" {
 state "done" { terminal = true }
 policy { max_total_steps = 2 }`)
 	sink := &fakeSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": &fakePlugin{name: "fake", outcome: "again"}}}
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": &fakePlugin{name: "fake", outcome: "again"}}}
 	eng := NewTestEngine(g, loader, sink)
 	err := eng.Run(context.Background())
 	if err == nil {
@@ -857,8 +857,8 @@ type callCountPlugin struct {
 	mu         *sync.Mutex
 }
 
-func (p *callCountPlugin) Info(context.Context) (plugin.Info, error) {
-	return plugin.Info{Name: p.name, Version: "test"}, nil
+func (p *callCountPlugin) Info(context.Context) (adapterhost.Info, error) {
+	return adapterhost.Info{Name: p.name, Version: "test"}, nil
 }
 func (p *callCountPlugin) OpenSession(context.Context, string, map[string]string) error {
 	return nil
@@ -881,8 +881,8 @@ type errPlugin struct {
 	err  error
 }
 
-func (p *errPlugin) Info(context.Context) (plugin.Info, error) {
-	return plugin.Info{Name: p.name, Version: "test"}, nil
+func (p *errPlugin) Info(context.Context) (adapterhost.Info, error) {
+	return adapterhost.Info{Name: p.name, Version: "test"}, nil
 }
 func (p *errPlugin) OpenSession(context.Context, string, map[string]string) error { return nil }
 func (p *errPlugin) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
@@ -911,7 +911,7 @@ step "work" {
 }
 state "done" { terminal = true }
 policy { max_total_steps = 1000 }`)
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": &fakePlugin{name: "fake", outcome: "done"}}}
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": &fakePlugin{name: "fake", outcome: "done"}}}
 	sink := &fakeSink{}
 	eng := NewTestEngine(g, loader, sink)
 
@@ -953,7 +953,7 @@ step "a" {
 state "done" { terminal = true }`)
 
 	// Adapter returns "unexpected-outcome" which is not in the declared set.
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{
 		"fake": &fakePlugin{name: "fake", outcome: "unexpected-outcome"},
 	}}
 	sink := &fakeSink{}
@@ -1000,7 +1000,7 @@ step "process" {
 }
 state "done" { terminal = true }
 policy { max_total_steps = 1000 }`)
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": &fakePlugin{name: "fake", outcome: "success"}}}
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": &fakePlugin{name: "fake", outcome: "success"}}}
 	sink := &fakeSink{}
 	eng := NewTestEngine(g, loader, sink)
 

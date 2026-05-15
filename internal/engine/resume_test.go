@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/brokenbots/criteria/internal/plugin"
+	"github.com/brokenbots/criteria/internal/adapterhost"
 )
 
 const multiStepWorkflow = `
@@ -43,7 +43,7 @@ func (s *trackSink) OnStepResumed(step string, attempt int, reason string) {
 func TestResume_HappyPath(t *testing.T) {
 	g := compile(t, multiStepWorkflow)
 	sink := &trackSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": &fakePlugin{name: "fake", outcome: "success"}}}
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": &fakePlugin{name: "fake", outcome: "success"}}}
 
 	eng := New(g, loader, sink)
 	// Simulate crash at step2 attempt 1 — resume from step2 at attempt 2.
@@ -85,7 +85,7 @@ func TestResume_RunFrom_AttemptOffsetApplied(t *testing.T) {
 		},
 	}
 
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": &fakePlugin{name: "fake", outcome: "success"}}}
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": &fakePlugin{name: "fake", outcome: "success"}}}
 	eng := New(g, loader, sink)
 	// Resume from step1 at attempt 2 (already failed once).
 	if err := eng.RunFrom(context.Background(), "step1", 2); err != nil {
@@ -110,7 +110,7 @@ func TestResume_RespectsMaxRetries(t *testing.T) {
 
 	sink := &fakeSink{}
 	// Adapter always fails.
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": &fakePlugin{name: "fake", err: errors.New("always fails")}}}
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": &fakePlugin{name: "fake", err: errors.New("always fails")}}}
 
 	eng := New(g, loader, sink)
 	// Resume at attempt 3 (= maxAttempts): only 1 attempt allowed; it fails.
@@ -127,7 +127,7 @@ func TestResume_ExceedsMaxRetries_FailsImmediately(t *testing.T) {
 	g := compile(t, multiStepWorkflow) // max_step_retries = 2, maxAttempts = 3
 
 	sink := &fakeSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": &fakePlugin{name: "fake", outcome: "success"}}}
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": &fakePlugin{name: "fake", outcome: "success"}}}
 
 	eng := New(g, loader, sink)
 	// Resume at attempt 4 (exceeds maxAttempts=3): no attempts possible.

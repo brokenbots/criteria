@@ -21,8 +21,8 @@ import (
 const _ = connect.IsAtLeastVersion1_13_0
 
 const (
-	// AdapterPluginServiceName is the fully-qualified name of the AdapterPluginService service.
-	AdapterPluginServiceName = "criteria.v1.AdapterPluginService"
+	// AdapterServiceName is the fully-qualified name of the AdapterService service.
+	AdapterServiceName = "criteria.v1.AdapterService"
 )
 
 // These constants are the fully-qualified names of the RPCs defined in this package. They're
@@ -33,25 +33,22 @@ const (
 // reflection-formatted method names, remove the leading slash and convert the remaining slash to a
 // period.
 const (
-	// AdapterPluginServiceInfoProcedure is the fully-qualified name of the AdapterPluginService's Info
-	// RPC.
-	AdapterPluginServiceInfoProcedure = "/criteria.v1.AdapterPluginService/Info"
-	// AdapterPluginServiceOpenSessionProcedure is the fully-qualified name of the
-	// AdapterPluginService's OpenSession RPC.
-	AdapterPluginServiceOpenSessionProcedure = "/criteria.v1.AdapterPluginService/OpenSession"
-	// AdapterPluginServiceExecuteProcedure is the fully-qualified name of the AdapterPluginService's
-	// Execute RPC.
-	AdapterPluginServiceExecuteProcedure = "/criteria.v1.AdapterPluginService/Execute"
-	// AdapterPluginServicePermitProcedure is the fully-qualified name of the AdapterPluginService's
-	// Permit RPC.
-	AdapterPluginServicePermitProcedure = "/criteria.v1.AdapterPluginService/Permit"
-	// AdapterPluginServiceCloseSessionProcedure is the fully-qualified name of the
-	// AdapterPluginService's CloseSession RPC.
-	AdapterPluginServiceCloseSessionProcedure = "/criteria.v1.AdapterPluginService/CloseSession"
+	// AdapterServiceInfoProcedure is the fully-qualified name of the AdapterService's Info RPC.
+	AdapterServiceInfoProcedure = "/criteria.v1.AdapterService/Info"
+	// AdapterServiceOpenSessionProcedure is the fully-qualified name of the AdapterService's
+	// OpenSession RPC.
+	AdapterServiceOpenSessionProcedure = "/criteria.v1.AdapterService/OpenSession"
+	// AdapterServiceExecuteProcedure is the fully-qualified name of the AdapterService's Execute RPC.
+	AdapterServiceExecuteProcedure = "/criteria.v1.AdapterService/Execute"
+	// AdapterServicePermitProcedure is the fully-qualified name of the AdapterService's Permit RPC.
+	AdapterServicePermitProcedure = "/criteria.v1.AdapterService/Permit"
+	// AdapterServiceCloseSessionProcedure is the fully-qualified name of the AdapterService's
+	// CloseSession RPC.
+	AdapterServiceCloseSessionProcedure = "/criteria.v1.AdapterService/CloseSession"
 )
 
-// AdapterPluginServiceClient is a client for the criteria.v1.AdapterPluginService service.
-type AdapterPluginServiceClient interface {
+// AdapterServiceClient is a client for the criteria.v1.AdapterService service.
+type AdapterServiceClient interface {
 	Info(context.Context, *connect.Request[v1.InfoRequest]) (*connect.Response[v1.InfoResponse], error)
 	OpenSession(context.Context, *connect.Request[v1.OpenSessionRequest]) (*connect.Response[v1.OpenSessionResponse], error)
 	Execute(context.Context, *connect.Request[v1.ExecuteRequest]) (*connect.ServerStreamForClient[v1.ExecuteEvent], error)
@@ -59,52 +56,52 @@ type AdapterPluginServiceClient interface {
 	CloseSession(context.Context, *connect.Request[v1.CloseSessionRequest]) (*connect.Response[v1.CloseSessionResponse], error)
 }
 
-// NewAdapterPluginServiceClient constructs a client for the criteria.v1.AdapterPluginService
-// service. By default, it uses the Connect protocol with the binary Protobuf Codec, asks for
-// gzipped responses, and sends uncompressed requests. To use the gRPC or gRPC-Web protocols, supply
-// the connect.WithGRPC() or connect.WithGRPCWeb() options.
+// NewAdapterServiceClient constructs a client for the criteria.v1.AdapterService service. By
+// default, it uses the Connect protocol with the binary Protobuf Codec, asks for gzipped responses,
+// and sends uncompressed requests. To use the gRPC or gRPC-Web protocols, supply the
+// connect.WithGRPC() or connect.WithGRPCWeb() options.
 //
 // The URL supplied here should be the base URL for the Connect or gRPC server (for example,
 // http://api.acme.com or https://acme.com/grpc).
-func NewAdapterPluginServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...connect.ClientOption) AdapterPluginServiceClient {
+func NewAdapterServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...connect.ClientOption) AdapterServiceClient {
 	baseURL = strings.TrimRight(baseURL, "/")
-	adapterPluginServiceMethods := v1.File_criteria_v1_adapter_plugin_proto.Services().ByName("AdapterPluginService").Methods()
-	return &adapterPluginServiceClient{
+	adapterServiceMethods := v1.File_criteria_v1_adapter_plugin_proto.Services().ByName("AdapterService").Methods()
+	return &adapterServiceClient{
 		info: connect.NewClient[v1.InfoRequest, v1.InfoResponse](
 			httpClient,
-			baseURL+AdapterPluginServiceInfoProcedure,
-			connect.WithSchema(adapterPluginServiceMethods.ByName("Info")),
+			baseURL+AdapterServiceInfoProcedure,
+			connect.WithSchema(adapterServiceMethods.ByName("Info")),
 			connect.WithClientOptions(opts...),
 		),
 		openSession: connect.NewClient[v1.OpenSessionRequest, v1.OpenSessionResponse](
 			httpClient,
-			baseURL+AdapterPluginServiceOpenSessionProcedure,
-			connect.WithSchema(adapterPluginServiceMethods.ByName("OpenSession")),
+			baseURL+AdapterServiceOpenSessionProcedure,
+			connect.WithSchema(adapterServiceMethods.ByName("OpenSession")),
 			connect.WithClientOptions(opts...),
 		),
 		execute: connect.NewClient[v1.ExecuteRequest, v1.ExecuteEvent](
 			httpClient,
-			baseURL+AdapterPluginServiceExecuteProcedure,
-			connect.WithSchema(adapterPluginServiceMethods.ByName("Execute")),
+			baseURL+AdapterServiceExecuteProcedure,
+			connect.WithSchema(adapterServiceMethods.ByName("Execute")),
 			connect.WithClientOptions(opts...),
 		),
 		permit: connect.NewClient[v1.PermitRequest, v1.PermitResponse](
 			httpClient,
-			baseURL+AdapterPluginServicePermitProcedure,
-			connect.WithSchema(adapterPluginServiceMethods.ByName("Permit")),
+			baseURL+AdapterServicePermitProcedure,
+			connect.WithSchema(adapterServiceMethods.ByName("Permit")),
 			connect.WithClientOptions(opts...),
 		),
 		closeSession: connect.NewClient[v1.CloseSessionRequest, v1.CloseSessionResponse](
 			httpClient,
-			baseURL+AdapterPluginServiceCloseSessionProcedure,
-			connect.WithSchema(adapterPluginServiceMethods.ByName("CloseSession")),
+			baseURL+AdapterServiceCloseSessionProcedure,
+			connect.WithSchema(adapterServiceMethods.ByName("CloseSession")),
 			connect.WithClientOptions(opts...),
 		),
 	}
 }
 
-// adapterPluginServiceClient implements AdapterPluginServiceClient.
-type adapterPluginServiceClient struct {
+// adapterServiceClient implements AdapterServiceClient.
+type adapterServiceClient struct {
 	info         *connect.Client[v1.InfoRequest, v1.InfoResponse]
 	openSession  *connect.Client[v1.OpenSessionRequest, v1.OpenSessionResponse]
 	execute      *connect.Client[v1.ExecuteRequest, v1.ExecuteEvent]
@@ -112,33 +109,33 @@ type adapterPluginServiceClient struct {
 	closeSession *connect.Client[v1.CloseSessionRequest, v1.CloseSessionResponse]
 }
 
-// Info calls criteria.v1.AdapterPluginService.Info.
-func (c *adapterPluginServiceClient) Info(ctx context.Context, req *connect.Request[v1.InfoRequest]) (*connect.Response[v1.InfoResponse], error) {
+// Info calls criteria.v1.AdapterService.Info.
+func (c *adapterServiceClient) Info(ctx context.Context, req *connect.Request[v1.InfoRequest]) (*connect.Response[v1.InfoResponse], error) {
 	return c.info.CallUnary(ctx, req)
 }
 
-// OpenSession calls criteria.v1.AdapterPluginService.OpenSession.
-func (c *adapterPluginServiceClient) OpenSession(ctx context.Context, req *connect.Request[v1.OpenSessionRequest]) (*connect.Response[v1.OpenSessionResponse], error) {
+// OpenSession calls criteria.v1.AdapterService.OpenSession.
+func (c *adapterServiceClient) OpenSession(ctx context.Context, req *connect.Request[v1.OpenSessionRequest]) (*connect.Response[v1.OpenSessionResponse], error) {
 	return c.openSession.CallUnary(ctx, req)
 }
 
-// Execute calls criteria.v1.AdapterPluginService.Execute.
-func (c *adapterPluginServiceClient) Execute(ctx context.Context, req *connect.Request[v1.ExecuteRequest]) (*connect.ServerStreamForClient[v1.ExecuteEvent], error) {
+// Execute calls criteria.v1.AdapterService.Execute.
+func (c *adapterServiceClient) Execute(ctx context.Context, req *connect.Request[v1.ExecuteRequest]) (*connect.ServerStreamForClient[v1.ExecuteEvent], error) {
 	return c.execute.CallServerStream(ctx, req)
 }
 
-// Permit calls criteria.v1.AdapterPluginService.Permit.
-func (c *adapterPluginServiceClient) Permit(ctx context.Context, req *connect.Request[v1.PermitRequest]) (*connect.Response[v1.PermitResponse], error) {
+// Permit calls criteria.v1.AdapterService.Permit.
+func (c *adapterServiceClient) Permit(ctx context.Context, req *connect.Request[v1.PermitRequest]) (*connect.Response[v1.PermitResponse], error) {
 	return c.permit.CallUnary(ctx, req)
 }
 
-// CloseSession calls criteria.v1.AdapterPluginService.CloseSession.
-func (c *adapterPluginServiceClient) CloseSession(ctx context.Context, req *connect.Request[v1.CloseSessionRequest]) (*connect.Response[v1.CloseSessionResponse], error) {
+// CloseSession calls criteria.v1.AdapterService.CloseSession.
+func (c *adapterServiceClient) CloseSession(ctx context.Context, req *connect.Request[v1.CloseSessionRequest]) (*connect.Response[v1.CloseSessionResponse], error) {
 	return c.closeSession.CallUnary(ctx, req)
 }
 
-// AdapterPluginServiceHandler is an implementation of the criteria.v1.AdapterPluginService service.
-type AdapterPluginServiceHandler interface {
+// AdapterServiceHandler is an implementation of the criteria.v1.AdapterService service.
+type AdapterServiceHandler interface {
 	Info(context.Context, *connect.Request[v1.InfoRequest]) (*connect.Response[v1.InfoResponse], error)
 	OpenSession(context.Context, *connect.Request[v1.OpenSessionRequest]) (*connect.Response[v1.OpenSessionResponse], error)
 	Execute(context.Context, *connect.Request[v1.ExecuteRequest], *connect.ServerStream[v1.ExecuteEvent]) error
@@ -146,80 +143,80 @@ type AdapterPluginServiceHandler interface {
 	CloseSession(context.Context, *connect.Request[v1.CloseSessionRequest]) (*connect.Response[v1.CloseSessionResponse], error)
 }
 
-// NewAdapterPluginServiceHandler builds an HTTP handler from the service implementation. It returns
-// the path on which to mount the handler and the handler itself.
+// NewAdapterServiceHandler builds an HTTP handler from the service implementation. It returns the
+// path on which to mount the handler and the handler itself.
 //
 // By default, handlers support the Connect, gRPC, and gRPC-Web protocols with the binary Protobuf
 // and JSON codecs. They also support gzip compression.
-func NewAdapterPluginServiceHandler(svc AdapterPluginServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
-	adapterPluginServiceMethods := v1.File_criteria_v1_adapter_plugin_proto.Services().ByName("AdapterPluginService").Methods()
-	adapterPluginServiceInfoHandler := connect.NewUnaryHandler(
-		AdapterPluginServiceInfoProcedure,
+func NewAdapterServiceHandler(svc AdapterServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
+	adapterServiceMethods := v1.File_criteria_v1_adapter_plugin_proto.Services().ByName("AdapterService").Methods()
+	adapterServiceInfoHandler := connect.NewUnaryHandler(
+		AdapterServiceInfoProcedure,
 		svc.Info,
-		connect.WithSchema(adapterPluginServiceMethods.ByName("Info")),
+		connect.WithSchema(adapterServiceMethods.ByName("Info")),
 		connect.WithHandlerOptions(opts...),
 	)
-	adapterPluginServiceOpenSessionHandler := connect.NewUnaryHandler(
-		AdapterPluginServiceOpenSessionProcedure,
+	adapterServiceOpenSessionHandler := connect.NewUnaryHandler(
+		AdapterServiceOpenSessionProcedure,
 		svc.OpenSession,
-		connect.WithSchema(adapterPluginServiceMethods.ByName("OpenSession")),
+		connect.WithSchema(adapterServiceMethods.ByName("OpenSession")),
 		connect.WithHandlerOptions(opts...),
 	)
-	adapterPluginServiceExecuteHandler := connect.NewServerStreamHandler(
-		AdapterPluginServiceExecuteProcedure,
+	adapterServiceExecuteHandler := connect.NewServerStreamHandler(
+		AdapterServiceExecuteProcedure,
 		svc.Execute,
-		connect.WithSchema(adapterPluginServiceMethods.ByName("Execute")),
+		connect.WithSchema(adapterServiceMethods.ByName("Execute")),
 		connect.WithHandlerOptions(opts...),
 	)
-	adapterPluginServicePermitHandler := connect.NewUnaryHandler(
-		AdapterPluginServicePermitProcedure,
+	adapterServicePermitHandler := connect.NewUnaryHandler(
+		AdapterServicePermitProcedure,
 		svc.Permit,
-		connect.WithSchema(adapterPluginServiceMethods.ByName("Permit")),
+		connect.WithSchema(adapterServiceMethods.ByName("Permit")),
 		connect.WithHandlerOptions(opts...),
 	)
-	adapterPluginServiceCloseSessionHandler := connect.NewUnaryHandler(
-		AdapterPluginServiceCloseSessionProcedure,
+	adapterServiceCloseSessionHandler := connect.NewUnaryHandler(
+		AdapterServiceCloseSessionProcedure,
 		svc.CloseSession,
-		connect.WithSchema(adapterPluginServiceMethods.ByName("CloseSession")),
+		connect.WithSchema(adapterServiceMethods.ByName("CloseSession")),
 		connect.WithHandlerOptions(opts...),
 	)
-	return "/criteria.v1.AdapterPluginService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return "/criteria.v1.AdapterService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case AdapterPluginServiceInfoProcedure:
-			adapterPluginServiceInfoHandler.ServeHTTP(w, r)
-		case AdapterPluginServiceOpenSessionProcedure:
-			adapterPluginServiceOpenSessionHandler.ServeHTTP(w, r)
-		case AdapterPluginServiceExecuteProcedure:
-			adapterPluginServiceExecuteHandler.ServeHTTP(w, r)
-		case AdapterPluginServicePermitProcedure:
-			adapterPluginServicePermitHandler.ServeHTTP(w, r)
-		case AdapterPluginServiceCloseSessionProcedure:
-			adapterPluginServiceCloseSessionHandler.ServeHTTP(w, r)
+		case AdapterServiceInfoProcedure:
+			adapterServiceInfoHandler.ServeHTTP(w, r)
+		case AdapterServiceOpenSessionProcedure:
+			adapterServiceOpenSessionHandler.ServeHTTP(w, r)
+		case AdapterServiceExecuteProcedure:
+			adapterServiceExecuteHandler.ServeHTTP(w, r)
+		case AdapterServicePermitProcedure:
+			adapterServicePermitHandler.ServeHTTP(w, r)
+		case AdapterServiceCloseSessionProcedure:
+			adapterServiceCloseSessionHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
 	})
 }
 
-// UnimplementedAdapterPluginServiceHandler returns CodeUnimplemented from all methods.
-type UnimplementedAdapterPluginServiceHandler struct{}
+// UnimplementedAdapterServiceHandler returns CodeUnimplemented from all methods.
+type UnimplementedAdapterServiceHandler struct{}
 
-func (UnimplementedAdapterPluginServiceHandler) Info(context.Context, *connect.Request[v1.InfoRequest]) (*connect.Response[v1.InfoResponse], error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("criteria.v1.AdapterPluginService.Info is not implemented"))
+func (UnimplementedAdapterServiceHandler) Info(context.Context, *connect.Request[v1.InfoRequest]) (*connect.Response[v1.InfoResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("criteria.v1.AdapterService.Info is not implemented"))
 }
 
-func (UnimplementedAdapterPluginServiceHandler) OpenSession(context.Context, *connect.Request[v1.OpenSessionRequest]) (*connect.Response[v1.OpenSessionResponse], error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("criteria.v1.AdapterPluginService.OpenSession is not implemented"))
+func (UnimplementedAdapterServiceHandler) OpenSession(context.Context, *connect.Request[v1.OpenSessionRequest]) (*connect.Response[v1.OpenSessionResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("criteria.v1.AdapterService.OpenSession is not implemented"))
 }
 
-func (UnimplementedAdapterPluginServiceHandler) Execute(context.Context, *connect.Request[v1.ExecuteRequest], *connect.ServerStream[v1.ExecuteEvent]) error {
-	return connect.NewError(connect.CodeUnimplemented, errors.New("criteria.v1.AdapterPluginService.Execute is not implemented"))
+func (UnimplementedAdapterServiceHandler) Execute(context.Context, *connect.Request[v1.ExecuteRequest], *connect.ServerStream[v1.ExecuteEvent]) error {
+	return connect.NewError(connect.CodeUnimplemented, errors.New("criteria.v1.AdapterService.Execute is not implemented"))
 }
 
-func (UnimplementedAdapterPluginServiceHandler) Permit(context.Context, *connect.Request[v1.PermitRequest]) (*connect.Response[v1.PermitResponse], error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("criteria.v1.AdapterPluginService.Permit is not implemented"))
+func (UnimplementedAdapterServiceHandler) Permit(context.Context, *connect.Request[v1.PermitRequest]) (*connect.Response[v1.PermitResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("criteria.v1.AdapterService.Permit is not implemented"))
 }
 
-func (UnimplementedAdapterPluginServiceHandler) CloseSession(context.Context, *connect.Request[v1.CloseSessionRequest]) (*connect.Response[v1.CloseSessionResponse], error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("criteria.v1.AdapterPluginService.CloseSession is not implemented"))
+func (UnimplementedAdapterServiceHandler) CloseSession(context.Context, *connect.Request[v1.CloseSessionRequest]) (*connect.Response[v1.CloseSessionResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("criteria.v1.AdapterService.CloseSession is not implemented"))
 }

@@ -6,9 +6,9 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/internal/adapters/shell"
 	"github.com/brokenbots/criteria/internal/engine"
-	"github.com/brokenbots/criteria/internal/plugin"
 	"github.com/brokenbots/criteria/internal/run"
 	servertrans "github.com/brokenbots/criteria/internal/transport/server"
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
@@ -161,8 +161,8 @@ func resumePausedRun(ctx context.Context, log *slog.Logger, rc reattachTransport
 		return
 	}
 	sink := &run.Sink{RunID: cp.RunID, Client: rc, Log: log, Ctx: ctx}
-	loader := plugin.NewLoader()
-	loader.RegisterBuiltin(shell.Name, plugin.BuiltinFactoryForAdapter(shell.New()))
+	loader := adapterhost.NewLoader()
+	loader.RegisterBuiltin(shell.Name, adapterhost.BuiltinFactoryForAdapter(shell.New()))
 
 	restoredVars, restoredIter, restoreErr := workflow.RestoreVarScope(resp.VariableScope, graph)
 	if restoreErr != nil {
@@ -186,7 +186,7 @@ func resumePausedRun(ctx context.Context, log *slog.Logger, rc reattachTransport
 
 // serviceResumeSignals waits for and dispatches resume signals while the run
 // remains paused, then drains and removes the checkpoint.
-func serviceResumeSignals(ctx context.Context, log *slog.Logger, rc reattachTransport, cp *StepCheckpoint, graph *workflow.FSMGraph, loader plugin.Loader, sink *run.Sink, initialEng *engine.Engine) {
+func serviceResumeSignals(ctx context.Context, log *slog.Logger, rc reattachTransport, cp *StepCheckpoint, graph *workflow.FSMGraph, loader adapterhost.Loader, sink *run.Sink, initialEng *engine.Engine) {
 	eng := initialEng
 	for sink.IsPaused() {
 		log.Info("run remains paused after reattach; waiting for resume",
@@ -277,8 +277,8 @@ func resumeActiveRun(ctx context.Context, log *slog.Logger, rc reattachTransport
 
 	sink := &run.Sink{RunID: cp.RunID, Client: rc, Log: log, Ctx: ctx}
 	sink.StepResumed(ctx, resp.CurrentStep, nextAttempt, "criteria_restart")
-	loader := plugin.NewLoader()
-	loader.RegisterBuiltin(shell.Name, plugin.BuiltinFactoryForAdapter(shell.New()))
+	loader := adapterhost.NewLoader()
+	loader.RegisterBuiltin(shell.Name, adapterhost.BuiltinFactoryForAdapter(shell.New()))
 
 	// Restore variable scope and iter cursor from the server (W04/W07).
 	restoredVars, restoredIter, restoreErr := workflow.RestoreVarScope(resp.VariableScope, graph)
@@ -311,8 +311,8 @@ func parseWorkflowFromPath(ctx context.Context, path string) (*workflow.FSMGraph
 	}
 
 	// Collect adapter schemas for compile-time validation.
-	loader := plugin.NewLoader()
-	loader.RegisterBuiltin(shell.Name, plugin.BuiltinFactoryForAdapter(shell.New()))
+	loader := adapterhost.NewLoader()
+	loader.RegisterBuiltin(shell.Name, adapterhost.BuiltinFactoryForAdapter(shell.New()))
 	schemas := collectSchemas(ctx, loader, spec, nil)
 	_ = loader.Shutdown(ctx)
 

@@ -23,5 +23,5 @@ states:
   done    terminal=true   success=true
   failed    terminal=true   success=false
 
-plugins required:
+adapters required:
   copilot   (search: $CRITERIA_PLUGINS, ~/.criteria/plugins)

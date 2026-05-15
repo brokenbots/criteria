@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/brokenbots/criteria/internal/plugin"
+	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -16,8 +16,8 @@ type Node interface {
 
 // Deps carries interpreter runtime dependencies shared by node implementations.
 type Deps struct {
-	Sessions            *plugin.SessionManager
-	Loader              plugin.Loader
+	Sessions            *adapterhost.SessionManager
+	Loader              adapterhost.Loader
 	Sink                Sink
 	SubWorkflowResolver SubWorkflowResolver
 	BranchScheduler     BranchScheduler

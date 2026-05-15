@@ -1,4 +1,4 @@
-package plugin
+package adapterhost
 
 import (
 	"context"

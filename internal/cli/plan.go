@@ -133,12 +133,12 @@ func renderPlanOutput(ctx context.Context, workflowPath string, overrides map[st
 		b.WriteString("\n")
 	}
 
-	b.WriteString("plugins required:\n")
-	plugs := requiredPlugins(graph)
-	if len(plugs) == 0 {
+	b.WriteString("adapters required:\n")
+	adapts := requiredAdapters(graph)
+	if len(adapts) == 0 {
 		b.WriteString("  (none)\n")
 	} else {
-		for _, p := range plugs {
+		for _, p := range adapts {
 			b.WriteString(fmt.Sprintf("  %s   (search: $CRITERIA_PLUGINS, ~/.criteria/plugins)\n", p))
 		}
 	}

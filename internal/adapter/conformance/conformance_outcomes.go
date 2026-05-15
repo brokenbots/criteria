@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/brokenbots/criteria/internal/plugin"
+	"github.com/brokenbots/criteria/internal/adapterhost"
 )
 
 func testOutcomeDomain(t *testing.T, name string, factory targetFactory, opts *Options) {
@@ -32,10 +32,10 @@ func testOutcomeDomain(t *testing.T, name string, factory targetFactory, opts *O
 	}
 }
 
-func testPermissionRequestShape(t *testing.T, name string, loader plugin.Loader, opts *Options, info *plugin.Info) {
+func testPermissionRequestShape(t *testing.T, name string, loader adapterhost.Loader, opts *Options, info *adapterhost.Info) {
 	t.Helper()
 	if !hasCapability(info.Capabilities, "permission_gating") {
-		t.Skip("permission_request_shape skipped: plugin does not advertise permission_gating")
+		t.Skip("permission_request_shape skipped: adapter does not advertise permission_gating")
 	}
 
 	// 30 s matches the StartTimeout in the loader.
@@ -44,7 +44,7 @@ func testPermissionRequestShape(t *testing.T, name string, loader plugin.Loader,
 
 	plug, err := loader.Resolve(ctx, name)
 	if err != nil {
-		t.Fatalf("resolve plugin: %v", err)
+		t.Fatalf("resolve adapter: %v", err)
 	}
 	defer plug.Kill()
 
@@ -63,7 +63,7 @@ func testPermissionRequestShape(t *testing.T, name string, loader plugin.Loader,
 	// No allow_tools on the step → default deny-all policy applies.
 	step := baseStep(name, info.Name, cfg)
 	sink := &recordingSink{}
-	res, err := executeNoPanic(t, pluginSessionTarget{plugin: plug, sessionID: sessionID, name: info.Name}, context.Background(), step, sink)
+	res, err := executeNoPanic(t, pluginSessionTarget{handle: plug, sessionID: sessionID, name: info.Name}, context.Background(), step, sink)
 	if err != nil {
 		t.Fatalf("execute with permission request config: %v", err)
 	}
@@ -83,7 +83,7 @@ func assertPermissionDeniedEvent(t *testing.T, sink *recordingSink) {
 	t.Helper()
 	// The host policy emits permission.denied (not the legacy permission.request)
 	// for every denied request. Verify the event carries the request_id so the
-	// plugin's original request can be correlated.
+	// adapter's original request can be correlated.
 	deniedEvent, ok := sink.firstAdapterEvent("permission.denied")
 	if !ok {
 		t.Fatal("expected permission.denied adapter event from host deny policy")

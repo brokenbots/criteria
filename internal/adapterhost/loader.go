@@ -1,4 +1,4 @@
-package plugin
+package adapterhost
 
 import (
 	"context"
@@ -20,11 +20,11 @@ import (
 	"github.com/brokenbots/criteria/workflow"
 )
 
-// pluginClientLogger returns the hclog logger handed to go-plugin clients.
+// adapterClientLogger returns the hclog logger handed to go-plugin clients.
 // go-plugin's default logger emits TRACE/DEBUG lines for every handshake and
 // stdio frame, which dominates standalone output. Default to WARN; allow
 // override via CRITERIA_LOG_LEVEL=trace|debug|info|warn|error.
-func pluginClientLogger() hclog.Logger {
+func adapterClientLogger() hclog.Logger {
 	level := hclog.Warn
 	if v := strings.TrimSpace(os.Getenv("CRITERIA_LOG_LEVEL")); v != "" {
 		if parsed := hclog.LevelFromString(v); parsed != hclog.NoLevel {
@@ -32,21 +32,21 @@ func pluginClientLogger() hclog.Logger {
 		}
 	}
 	return hclog.New(&hclog.LoggerOptions{
-		Name:   "plugin",
+		Name:   "adapter",
 		Output: os.Stderr,
 		Level:  level,
 	})
 }
 
 type Loader interface {
-	// Resolve returns a Plugin handle for the named adapter, spawning
+	// Resolve returns a Handle for the named adapter, spawning
 	// the binary if necessary. Multiple calls with the same name return
-	// distinct Plugin handles (one per session).
-	Resolve(ctx context.Context, name string) (Plugin, error)
+	// distinct Handle values (one per session).
+	Resolve(ctx context.Context, name string) (Handle, error)
 	Shutdown(ctx context.Context) error
 }
 
-type Plugin interface {
+type Handle interface {
 	Info(ctx context.Context) (Info, error)
 	OpenSession(ctx context.Context, id string, config map[string]string) error
 	Execute(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error)
@@ -63,20 +63,20 @@ type Info struct {
 }
 
 type DiscoveryFunc func(name string) (string, error)
-type BuiltinFactory func() Plugin
+type BuiltinFactory func() Handle
 
 type DefaultLoader struct {
 	mu       sync.Mutex
 	discover DiscoveryFunc
 	builtins map[string]BuiltinFactory
-	active   map[*rpcPlugin]struct{}
+	active   map[*rpcHandle]struct{}
 }
 
 func NewLoader() *DefaultLoader {
 	return &DefaultLoader{
 		discover: DiscoverBinary,
 		builtins: map[string]BuiltinFactory{},
-		active:   map[*rpcPlugin]struct{}{},
+		active:   map[*rpcHandle]struct{}{},
 	}
 }
 
@@ -97,7 +97,7 @@ func (l *DefaultLoader) RegisterBuiltin(name string, factory BuiltinFactory) {
 	l.builtins[name] = factory
 }
 
-func (l *DefaultLoader) Resolve(ctx context.Context, name string) (Plugin, error) { //nolint:funlen // resolver must handle builtin registry, discovery, launch, handshake, and caching paths
+func (l *DefaultLoader) Resolve(ctx context.Context, name string) (Handle, error) { //nolint:funlen // resolver must handle builtin registry, discovery, launch, handshake, and caching paths
 	if stringsTrim(name) == "" {
 		return nil, errors.New("adapter name is required")
 	}
@@ -120,7 +120,7 @@ func (l *DefaultLoader) Resolve(ctx context.Context, name string) (Plugin, error
 
 	client := hplugin.NewClient(&hplugin.ClientConfig{
 		HandshakeConfig: HandshakeConfig,
-		Plugins:         PluginMap(),
+		Plugins:         AdapterMap(),
 		// Use a process command decoupled from per-step timeout contexts.
 		// Session and loader shutdown are the only teardown mechanisms.
 		Cmd:              exec.Command(path),
@@ -129,27 +129,27 @@ func (l *DefaultLoader) Resolve(ctx context.Context, name string) (Plugin, error
 		// and under the Go race detector, where process scheduling can be delayed
 		// significantly. A typical local start takes well under 1 s.
 		StartTimeout: 30 * time.Second,
-		Logger:       pluginClientLogger(),
+		Logger:       adapterClientLogger(),
 	})
 
 	rpcClient, err := client.Client()
 	if err != nil {
 		client.Kill()
-		return nil, fmt.Errorf("start plugin %q: %w", name, err)
+		return nil, fmt.Errorf("start adapter %q: %w", name, err)
 	}
-	raw, err := rpcClient.Dispense(PluginName)
+	raw, err := rpcClient.Dispense(AdapterName)
 	if err != nil {
 		client.Kill()
-		return nil, fmt.Errorf("dispense plugin %q: %w", name, err)
+		return nil, fmt.Errorf("dispense adapter %q: %w", name, err)
 	}
 
 	adapterClient, ok := raw.(Client)
 	if !ok {
 		client.Kill()
-		return nil, fmt.Errorf("unexpected plugin client type %T for %q", raw, name)
+		return nil, fmt.Errorf("unexpected adapter client type %T for %q", raw, name)
 	}
 
-	rp := &rpcPlugin{name: name, client: client, rpc: adapterClient}
+	rp := &rpcHandle{name: name, client: client, rpc: adapterClient}
 	l.mu.Lock()
 	l.active[rp] = struct{}{}
 	l.mu.Unlock()
@@ -164,11 +164,11 @@ func (l *DefaultLoader) Resolve(ctx context.Context, name string) (Plugin, error
 
 func (l *DefaultLoader) Shutdown(context.Context) error {
 	l.mu.Lock()
-	active := make([]*rpcPlugin, 0, len(l.active))
+	active := make([]*rpcHandle, 0, len(l.active))
 	for p := range l.active {
 		active = append(active, p)
 	}
-	l.active = map[*rpcPlugin]struct{}{}
+	l.active = map[*rpcHandle]struct{}{}
 	l.mu.Unlock()
 
 	for _, p := range active {
@@ -177,7 +177,7 @@ func (l *DefaultLoader) Shutdown(context.Context) error {
 	return nil
 }
 
-type rpcPlugin struct {
+type rpcHandle struct {
 	name   string
 	client *hplugin.Client
 	rpc    Client
@@ -186,7 +186,7 @@ type rpcPlugin struct {
 	onKill func()
 }
 
-func (p *rpcPlugin) Info(ctx context.Context) (Info, error) {
+func (p *rpcHandle) Info(ctx context.Context) (Info, error) {
 	resp, err := p.rpc.Info(ctx, &pb.InfoRequest{})
 	if err != nil {
 		return Info{}, err
@@ -199,12 +199,12 @@ func (p *rpcPlugin) Info(ctx context.Context) (Info, error) {
 	}, nil
 }
 
-func (p *rpcPlugin) OpenSession(ctx context.Context, id string, config map[string]string) error {
+func (p *rpcHandle) OpenSession(ctx context.Context, id string, config map[string]string) error {
 	_, err := p.rpc.OpenSession(ctx, &pb.OpenSessionRequest{SessionId: id, Config: cloneConfig(config)})
 	return err
 }
 
-func (p *rpcPlugin) Execute(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) { //nolint:funlen,gocognit,gocyclo // execute path handles permission gating, event routing, and partial failure recovery
+func (p *rpcHandle) Execute(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) { //nolint:funlen,gocognit,gocyclo // execute path handles permission gating, event routing, and partial failure recovery
 	recv, err := p.rpc.Execute(ctx, &pb.ExecuteRequest{
 		SessionId:       sessionID,
 		StepName:        step.Name,
@@ -219,7 +219,7 @@ func (p *rpcPlugin) Execute(ctx context.Context, sessionID string, step *workflo
 		evt, recvErr := recv.Recv()
 		if recvErr != nil {
 			if errors.Is(recvErr, io.EOF) {
-				return adapter.Result{Outcome: "failure"}, errors.New("plugin execute stream ended without result")
+				return adapter.Result{Outcome: "failure"}, errors.New("adapter execute stream ended without result")
 			}
 			return adapter.Result{Outcome: "failure"}, recvErr
 		}
@@ -282,7 +282,7 @@ func (p *rpcPlugin) Execute(ctx context.Context, sessionID string, step *workflo
 	}
 }
 
-func (p *rpcPlugin) Permit(ctx context.Context, sessionID, permID string, allow bool, reason string) error {
+func (p *rpcHandle) Permit(ctx context.Context, sessionID, permID string, allow bool, reason string) error {
 	_, err := p.rpc.Permit(ctx, &pb.PermitRequest{
 		SessionId:    sessionID,
 		PermissionId: permID,
@@ -292,12 +292,12 @@ func (p *rpcPlugin) Permit(ctx context.Context, sessionID, permID string, allow 
 	return err
 }
 
-func (p *rpcPlugin) CloseSession(ctx context.Context, id string) error {
+func (p *rpcHandle) CloseSession(ctx context.Context, id string) error {
 	_, err := p.rpc.CloseSession(ctx, &pb.CloseSessionRequest{SessionId: id})
 	return err
 }
 
-func (p *rpcPlugin) Kill() {
+func (p *rpcHandle) Kill() {
 	p.mu.Do(func() {
 		if p.client != nil {
 			p.client.Kill()

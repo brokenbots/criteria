@@ -15,13 +15,13 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/brokenbots/criteria/cmd/criteria-adapter-mcp/mcpclient"
+	adapterhost "github.com/brokenbots/criteria/sdk/adapterhost"
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
-	pluginhost "github.com/brokenbots/criteria/sdk/pluginhost"
 )
 
 const (
-	pluginName    = "mcp"
-	pluginVersion = "0.1.0"
+	adapterName    = "mcp"
+	adapterVersion = "0.1.0"
 
 	closeGrace  = 5 * time.Second
 	initTimeout = 5 * time.Second
@@ -46,18 +46,18 @@ type sessionState struct {
 
 	mu       sync.Mutex
 	tools    map[string]struct{}
-	sink     pluginhost.ExecuteEventSender
+	sink     adapterhost.ExecuteEventSender
 	inFlight bool
 }
 
-func (s *sessionState) setSink(sink pluginhost.ExecuteEventSender, inFlight bool) {
+func (s *sessionState) setSink(sink adapterhost.ExecuteEventSender, inFlight bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.sink = sink
 	s.inFlight = inFlight
 }
 
-func (s *sessionState) currentSink() (pluginhost.ExecuteEventSender, bool) {
+func (s *sessionState) currentSink() (adapterhost.ExecuteEventSender, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.sink, s.inFlight
@@ -77,8 +77,8 @@ type MCPBridge struct {
 
 func (b *MCPBridge) Info(_ context.Context, _ *pb.InfoRequest) (*pb.InfoResponse, error) {
 	return &pb.InfoResponse{
-		Name:         pluginName,
-		Version:      pluginVersion,
+		Name:         adapterName,
+		Version:      adapterVersion,
 		Capabilities: []string{"single_shot"},
 		ConfigSchema: &pb.AdapterSchemaProto{Fields: map[string]*pb.ConfigFieldProto{
 			"command": {Required: true, Type: "string", Doc: "MCP server binary to launch."},
@@ -146,7 +146,7 @@ func (b *MCPBridge) OpenSession(ctx context.Context, req *pb.OpenSessionRequest)
 
 	handshakeCtx, cancel := context.WithTimeout(ctx, initTimeout)
 	defer cancel()
-	if err := state.client.Initialize(handshakeCtx, "criteria-adapter-mcp", pluginVersion); err != nil {
+	if err := state.client.Initialize(handshakeCtx, "criteria-adapter-mcp", adapterVersion); err != nil {
 		_ = shutdownSession(ctx, state)
 		return nil, fmt.Errorf("mcp: initialize: %w", err)
 	}
@@ -174,7 +174,7 @@ func (b *MCPBridge) OpenSession(ctx context.Context, req *pb.OpenSessionRequest)
 	return &pb.OpenSessionResponse{}, nil
 }
 
-func (b *MCPBridge) Execute(ctx context.Context, req *pb.ExecuteRequest, sink pluginhost.ExecuteEventSender) error { //nolint:funlen,gocognit // event-driven tool dispatch with permission gating and chunked output
+func (b *MCPBridge) Execute(ctx context.Context, req *pb.ExecuteRequest, sink adapterhost.ExecuteEventSender) error { //nolint:funlen,gocognit // event-driven tool dispatch with permission gating and chunked output
 	s := b.getSession(req.GetSessionId())
 	if s == nil {
 		return fmt.Errorf("mcp: unknown session %q", req.GetSessionId())

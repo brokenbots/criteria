@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/brokenbots/criteria/internal/adapterhost"
 	engineruntime "github.com/brokenbots/criteria/internal/engine/runtime"
-	"github.com/brokenbots/criteria/internal/plugin"
 )
 
 func TestNodeForDispatchesStepStateAndUnknown(t *testing.T) {
@@ -59,7 +59,7 @@ step "a" {
 state "done" { terminal = true }`)
 
 	sink := &fakeSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": &fakePlugin{name: "fake", outcome: "success"}}}
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": &fakePlugin{name: "fake", outcome: "success"}}}
 	err := New(g, loader, sink).RunFrom(context.Background(), "missing", 1)
 	if err == nil {
 		t.Fatal("expected unknown node error")
@@ -87,8 +87,8 @@ step "a" {
 state "done" { terminal = true }`)
 
 	sink := &fakeSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": &fakePlugin{name: "fake", outcome: "success"}}}
-	sessions := plugin.NewSessionManager(loader)
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": &fakePlugin{name: "fake", outcome: "success"}}}
+	sessions := adapterhost.NewSessionManager(loader)
 	t.Cleanup(func() { sessions.Shutdown(context.Background()) })
 
 	// Bootstrap the adapter session
@@ -143,7 +143,7 @@ state "done" { terminal = true }
 policy { max_total_steps = 3 }`)
 
 	sink := &fakeSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": &fakePlugin{name: "fake", outcome: "again"}}}
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": &fakePlugin{name: "fake", outcome: "again"}}}
 	err := New(g, loader, sink).Run(context.Background())
 	if err == nil {
 		t.Fatal("expected max_total_steps error")
@@ -171,7 +171,7 @@ state "done" {
 }`)
 
 	sink := &fakeSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": &fakePlugin{name: "fake", outcome: "success"}}}
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": &fakePlugin{name: "fake", outcome: "success"}}}
 	err := New(g, loader, sink).Run(context.Background())
 	if err != nil {
 		t.Fatalf("run: %v", err)

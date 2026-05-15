@@ -1,4 +1,4 @@
-package plugin
+package adapterhost
 
 import (
 	"context"
@@ -57,7 +57,7 @@ type Session struct {
 	Config       map[string]string
 	OnCrash      string
 	Capabilities []string // cached from plug.Info() at Open time
-	plugin       Plugin
+	handle       Handle
 	respawned    bool
 	closing      atomic.Bool
 }
@@ -114,7 +114,7 @@ func (m *SessionManager) Open(ctx context.Context, name, adapterName, onCrash st
 		Config:       cloneConfig(config),
 		OnCrash:      normalizeOnCrash(onCrash),
 		Capabilities: caps,
-		plugin:       plug,
+		handle:       plug,
 	}
 	return nil
 }
@@ -132,8 +132,8 @@ func (m *SessionManager) Close(ctx context.Context, name string) error {
 		return nil
 	}
 	sess.closing.Store(true)
-	err := sess.plugin.CloseSession(ctx, name)
-	sess.plugin.Kill()
+	err := sess.handle.CloseSession(ctx, name)
+	sess.handle.Kill()
 	return err
 }
 
@@ -143,7 +143,7 @@ func (m *SessionManager) Execute(ctx context.Context, name string, step *workflo
 		return adapter.Result{Outcome: "failure"}, err
 	}
 
-	result, execErr := sess.plugin.Execute(ctx, name, step, sink)
+	result, execErr := sess.handle.Execute(ctx, name, step, sink)
 	if execErr == nil {
 		return result, nil
 	}
@@ -173,7 +173,7 @@ func (m *SessionManager) Execute(ctx context.Context, name string, step *workflo
 		if respawnErr := m.respawn(ctx, sess); respawnErr != nil {
 			return m.failResult(sink, sess, execErr)
 		}
-		result, retryErr := sess.plugin.Execute(ctx, name, step, sink)
+		result, retryErr := sess.handle.Execute(ctx, name, step, sink)
 		if retryErr == nil {
 			return result, nil
 		}
@@ -221,10 +221,10 @@ func (m *SessionManager) Shutdown(ctx context.Context) error {
 	var errs []error
 	for _, sess := range sessions {
 		sess.closing.Store(true)
-		if err := sess.plugin.CloseSession(ctx, sess.Name); err != nil {
+		if err := sess.handle.CloseSession(ctx, sess.Name); err != nil {
 			errs = append(errs, err)
 		}
-		sess.plugin.Kill()
+		sess.handle.Kill()
 	}
 	if err := m.loader.Shutdown(ctx); err != nil {
 		errs = append(errs, err)
@@ -243,7 +243,7 @@ func (m *SessionManager) lookup(name string) (*Session, error) {
 }
 
 func (m *SessionManager) respawn(ctx context.Context, sess *Session) error {
-	sess.plugin.Kill()
+	sess.handle.Kill()
 	plug, err := m.loader.Resolve(ctx, sess.Adapter)
 	if err != nil {
 		return err
@@ -252,7 +252,7 @@ func (m *SessionManager) respawn(ctx context.Context, sess *Session) error {
 		plug.Kill()
 		return err
 	}
-	sess.plugin = plug
+	sess.handle = plug
 	sess.respawned = true
 	return nil
 }

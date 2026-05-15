@@ -13,9 +13,9 @@ import (
 	"github.com/zclconf/go-cty/cty"
 
 	"github.com/brokenbots/criteria/internal/adapter"
+	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/internal/adapters/shell"
 	"github.com/brokenbots/criteria/internal/engine"
-	"github.com/brokenbots/criteria/internal/plugin"
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 	"github.com/brokenbots/criteria/sdk/pb/criteria/v1/criteriav1connect"
 	"github.com/brokenbots/criteria/workflow"
@@ -139,8 +139,8 @@ func TestReattachRun_RestoresVarScope(t *testing.T) {
 	// captures the resolved "command" input so we can assert interpolation
 	// produced the expected string at execution time.
 	rec := &recordingAdapter{inner: shell.New()}
-	loader := &integrationLoader{plugins: map[string]plugin.Plugin{
-		"shell": plugin.BuiltinFactoryForAdapter(rec)(),
+	loader := &integrationLoader{plugins: map[string]adapterhost.Handle{
+		"shell": adapterhost.BuiltinFactoryForAdapter(rec)(),
 	}}
 	sink := &integrationSink{}
 	eng := engine.New(graph, loader, sink, engine.WithResumedVars(restoredVars))
@@ -172,12 +172,12 @@ func startScopeServer(t *testing.T, h criteriav1connect.CriteriaServiceHandler) 
 	return srv.URL
 }
 
-// integrationLoader implements plugin.Loader using pre-built plugin instances.
+// integrationLoader implements adapterhost.Loader using pre-built plugin instances.
 type integrationLoader struct {
-	plugins map[string]plugin.Plugin
+	plugins map[string]adapterhost.Handle
 }
 
-func (l *integrationLoader) Resolve(_ context.Context, name string) (plugin.Plugin, error) {
+func (l *integrationLoader) Resolve(_ context.Context, name string) (adapterhost.Handle, error) {
 	p, ok := l.plugins[name]
 	if !ok {
 		return nil, fmt.Errorf("adapter %q not registered", name)

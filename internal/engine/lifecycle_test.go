@@ -7,7 +7,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/brokenbots/criteria/internal/plugin"
+	"github.com/brokenbots/criteria/internal/adapterhost"
 )
 
 // lifecycleTrackingSink captures lifecycle events for verification
@@ -99,7 +99,7 @@ state "done" {
 		fakePlugin: fakePlugin{name: "noop", outcome: "success"},
 	}
 
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{
 		"noop": trackingPlugin,
 	}}
 
@@ -176,7 +176,7 @@ state "done" {
 		fakePlugin: fakePlugin{name: "noop", outcome: "success"},
 	}
 
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{
 		"noop": trackingPlugin,
 	}}
 
@@ -226,7 +226,7 @@ state "done" {
 		fakePlugin: fakePlugin{name: "noop", outcome: "success", err: fmt.Errorf("step execution failed")},
 	}
 
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{
 		"noop": trackingPlugin,
 	}}
 
@@ -282,7 +282,7 @@ state "done" {
 		fakePlugin: fakePlugin{name: "noop_b", outcome: "success"},
 	}
 
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{
 		"noop_a": trackingA,
 		"noop_b": trackingB,
 	}}
@@ -373,7 +373,7 @@ state "done" {
 		fakePlugin: fakePlugin{name: "noop", outcome: "success"},
 	}
 
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{
 		"noop": trackingPlugin,
 	}}
 
@@ -433,7 +433,7 @@ state "done" {
 		shouldFail:      true,
 	}
 
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{
 		"noop_a": trackingA,
 		"noop_b": failingPlugin,
 	}}

@@ -1,4 +1,4 @@
-package plugin
+package adapterhost
 
 import (
 	"context"
@@ -10,12 +10,12 @@ import (
 )
 
 func BuiltinFactoryForAdapter(ad adapter.Adapter) BuiltinFactory {
-	return func() Plugin {
+	return func() Handle {
 		return NewBuiltinAdapterPlugin(ad)
 	}
 }
 
-func NewBuiltinAdapterPlugin(ad adapter.Adapter) Plugin {
+func NewBuiltinAdapterPlugin(ad adapter.Adapter) Handle {
 	return &builtinAdapterPlugin{
 		adapter:  ad,
 		sessions: map[string]map[string]string{},

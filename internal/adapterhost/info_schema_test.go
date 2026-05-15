@@ -1,9 +1,9 @@
-package plugin_test
+package adapterhost_test
 
 import (
 	"testing"
 
-	pluginpkg "github.com/brokenbots/criteria/internal/plugin"
+	adapterhostpkg "github.com/brokenbots/criteria/internal/adapterhost"
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 	"github.com/brokenbots/criteria/workflow"
 )
@@ -23,7 +23,7 @@ func TestInfoResponseSchemaRoundTrip(t *testing.T) {
 		}},
 	}
 
-	info := pluginpkg.AdapterInfoFromProto(resp)
+	info := adapterhostpkg.AdapterInfoFromProto(resp)
 
 	// Verify config schema round-trip.
 	maxTurns, ok := info.ConfigSchema["max_turns"]
@@ -74,7 +74,7 @@ func TestAdapterInfoFromProto_PropagatesCapabilities(t *testing.T) {
 		Capabilities: []string{"parallel_safe", "some_other_cap"},
 	}
 
-	info := pluginpkg.AdapterInfoFromProto(resp)
+	info := adapterhostpkg.AdapterInfoFromProto(resp)
 
 	if len(info.Capabilities) != 2 {
 		t.Fatalf("Capabilities len = %d; want 2", len(info.Capabilities))
@@ -96,7 +96,7 @@ func TestAdapterInfoFromProto_PropagatesCapabilities(t *testing.T) {
 // so the compiler treats the adapter as having no declared capabilities.
 func TestAdapterInfoFromProto_EmptyCapabilities(t *testing.T) {
 	resp := &pb.InfoResponse{Name: "bare", Version: "0.1"}
-	info := pluginpkg.AdapterInfoFromProto(resp)
+	info := adapterhostpkg.AdapterInfoFromProto(resp)
 	if len(info.Capabilities) != 0 {
 		t.Errorf("expected empty Capabilities for bare InfoResponse; got %v", info.Capabilities)
 	}
@@ -109,7 +109,7 @@ func TestInfoResponseBoolAndListTypes(t *testing.T) {
 			"items": {Type: "list_string"},
 		}},
 	}
-	info := pluginpkg.AdapterInfoFromProto(resp)
+	info := adapterhostpkg.AdapterInfoFromProto(resp)
 
 	flag, ok := info.InputSchema["flag"]
 	if !ok {
@@ -136,7 +136,7 @@ func TestLegacyInfoResponseWithoutSchema(t *testing.T) {
 		Version: "0.0.1",
 	}
 
-	info := pluginpkg.AdapterInfoFromProto(resp)
+	info := adapterhostpkg.AdapterInfoFromProto(resp)
 
 	if info.ConfigSchema != nil {
 		t.Errorf("expected nil ConfigSchema for legacy plugin, got %v", info.ConfigSchema)
@@ -152,7 +152,7 @@ func TestUnknownFieldTypeDefaultsToString(t *testing.T) {
 			"future_type": {Type: "some_future_type"},
 		}},
 	}
-	info := pluginpkg.AdapterInfoFromProto(resp)
+	info := adapterhostpkg.AdapterInfoFromProto(resp)
 	ft, ok := info.InputSchema["future_type"]
 	if !ok {
 		t.Fatal("expected field future_type")

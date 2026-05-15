@@ -13,8 +13,8 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/zclconf/go-cty/cty"
 
+	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/internal/adapters/shell"
-	"github.com/brokenbots/criteria/internal/plugin"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -69,19 +69,19 @@ func compileWorkflowOutput(ctx context.Context, workflowPath, format string, sub
 }
 
 type compileJSON struct {
-	Name         string               `json:"name"`
-	InitialState string               `json:"initial_state"`
-	TargetState  string               `json:"target_state"`
-	Policy       workflow.Policy      `json:"policy"`
-	Adapters     []compileAdapter     `json:"adapters"`
-	Steps        []compileStep        `json:"steps"`
-	States       []compileState       `json:"states"`
-	Outputs      []compileOutput      `json:"outputs"`
-	Switches     []compileSwitch      `json:"switches"`
-	Subworkflows []compileSubworkflow `json:"subworkflows,omitempty"`
-	StepOrder    []string             `json:"step_order"`
-	Plugins      []string             `json:"plugins_required"`
-	Metadata     compileOutputMeta    `json:"metadata"`
+	Name             string               `json:"name"`
+	InitialState     string               `json:"initial_state"`
+	TargetState      string               `json:"target_state"`
+	Policy           workflow.Policy      `json:"policy"`
+	Adapters         []compileAdapter     `json:"adapters"`
+	Steps            []compileStep        `json:"steps"`
+	States           []compileState       `json:"states"`
+	Outputs          []compileOutput      `json:"outputs"`
+	Switches         []compileSwitch      `json:"switches"`
+	Subworkflows     []compileSubworkflow `json:"subworkflows,omitempty"`
+	StepOrder        []string             `json:"step_order"`
+	RequiredAdapters []string             `json:"plugins_required"`
+	Metadata         compileOutputMeta    `json:"metadata"`
 }
 
 type compileOutputMeta struct {
@@ -168,19 +168,19 @@ func buildCompileJSON(graph *workflow.FSMGraph) compileJSON {
 	}
 
 	return compileJSON{
-		Name:         graph.Name,
-		InitialState: graph.InitialState,
-		TargetState:  graph.TargetState,
-		Policy:       graph.Policy,
-		Adapters:     buildAdaptersJSON(graph),
-		Steps:        buildStepsJSON(graph),
-		States:       states,
-		Outputs:      buildCompileOutputs(graph),
-		Switches:     switches,
-		Subworkflows: subworkflows,
-		StepOrder:    graph.StepOrder(),
-		Plugins:      requiredPlugins(graph),
-		Metadata:     compileOutputMeta{SchemaVersion: 1},
+		Name:             graph.Name,
+		InitialState:     graph.InitialState,
+		TargetState:      graph.TargetState,
+		Policy:           graph.Policy,
+		Adapters:         buildAdaptersJSON(graph),
+		Steps:            buildStepsJSON(graph),
+		States:           states,
+		Outputs:          buildCompileOutputs(graph),
+		Switches:         switches,
+		Subworkflows:     subworkflows,
+		StepOrder:        graph.StepOrder(),
+		RequiredAdapters: requiredAdapters(graph),
+		Metadata:         compileOutputMeta{SchemaVersion: 1},
 	}
 }
 
@@ -624,8 +624,8 @@ func parseCompileForCli(ctx context.Context, workflowPath string, subworkflowRoo
 		return nil, nil, fmt.Errorf("parse errors in %s:\n%w", workflowPath, newDiagsError(diags))
 	}
 
-	loader := plugin.NewLoader()
-	loader.RegisterBuiltin(shell.Name, plugin.BuiltinFactoryForAdapter(shell.New()))
+	loader := adapterhost.NewLoader()
+	loader.RegisterBuiltin(shell.Name, adapterhost.BuiltinFactoryForAdapter(shell.New()))
 	schemas := collectSchemas(ctx, loader, spec, nil)
 	defer func() { _ = loader.Shutdown(ctx) }()
 
@@ -681,7 +681,7 @@ func sortedSwitchNames(graph *workflow.FSMGraph) []string {
 	return sortedMapKeys(graph.Switches)
 }
 
-func requiredPlugins(graph *workflow.FSMGraph) []string {
+func requiredAdapters(graph *workflow.FSMGraph) []string {
 	seen := map[string]bool{}
 	for _, ad := range graph.Adapters {
 		if ad.Type != "" {

@@ -17,7 +17,7 @@ import (
 	"github.com/zclconf/go-cty/cty"
 
 	"github.com/brokenbots/criteria/internal/adapter"
-	"github.com/brokenbots/criteria/internal/plugin"
+	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -57,8 +57,8 @@ type multiOutcomePlugin struct {
 	call     int
 }
 
-func (p *multiOutcomePlugin) Info(context.Context) (plugin.Info, error) {
-	return plugin.Info{Name: p.name, Version: "test"}, nil
+func (p *multiOutcomePlugin) Info(context.Context) (adapterhost.Info, error) {
+	return adapterhost.Info{Name: p.name, Version: "test"}, nil
 }
 func (p *multiOutcomePlugin) OpenSession(context.Context, string, map[string]string) error {
 	return nil
@@ -97,7 +97,7 @@ state "done" {
   success  = true
 }`)
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{
 		"fake": &fakePlugin{name: "fake", outcome: "success"},
 	}}
 	if err := New(g, loader, sink).Run(context.Background()); err != nil {
@@ -138,7 +138,7 @@ state "done" {
   success  = true
 }`)
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{
 		// First call returns "failure", subsequent calls return "success".
 		"fake": &multiOutcomePlugin{name: "fake", outcomes: []string{"failure", "success"}},
 	}}
@@ -174,7 +174,7 @@ state "done" {
   success  = true
 }`)
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{
 		"fake": &fakePlugin{name: "fake", outcome: "success"},
 	}}
 	if err := New(g, loader, sink).Run(context.Background()); err != nil {
@@ -212,7 +212,7 @@ state "done" {
   success  = true
 }`)
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{
 		"fake": &fakePlugin{name: "fake", outcome: "success"},
 	}}
 	if err := New(g, loader, sink).Run(context.Background()); err != nil {
@@ -249,7 +249,7 @@ state "done" {
 }`)
 	sink := &iterSink{}
 	// First call: failure; subsequent calls: success (should not be reached).
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{
 		"fake": &multiOutcomePlugin{name: "fake", outcomes: []string{"failure", "success", "success"}},
 	}}
 	if err := New(g, loader, sink).Run(context.Background()); err != nil {
@@ -287,7 +287,7 @@ state "done" {
 }`)
 	sink := &iterSink{}
 	// All calls return "failure".
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{
 		"fake": &fakePlugin{name: "fake", outcome: "failure"},
 	}}
 	if err := New(g, loader, sink).Run(context.Background()); err != nil {
@@ -328,7 +328,7 @@ state "done" {
   success  = true
 }`)
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{
 		"fake": &fakePlugin{name: "fake", outcome: "success"},
 	}}
 	if err := New(g, loader, sink).Run(context.Background()); err != nil {
@@ -387,7 +387,7 @@ state "done" {
   success  = true
 }`)
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{
 		"fake": &fakePlugin{name: "fake", outcome: "success"},
 	}}
 	if err := New(g, loader, sink).Run(context.Background()); err != nil {
@@ -441,7 +441,7 @@ state "done" {
 	sink := &iterSink{}
 	// Track which body steps ran.
 	p := &fakePlugin{name: "fake", outcome: "success"}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": p}}
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": p}}
 	if err := New(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -485,7 +485,7 @@ state "done" {
 		capture: &capturedInputs,
 	}
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": capturePlugin}}
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": capturePlugin}}
 	if err := New(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -507,8 +507,8 @@ type captureInputPlugin struct {
 	capture *[]map[string]string
 }
 
-func (p *captureInputPlugin) Info(context.Context) (plugin.Info, error) {
-	return plugin.Info{Name: "fake", Version: "test"}, nil
+func (p *captureInputPlugin) Info(context.Context) (adapterhost.Info, error) {
+	return adapterhost.Info{Name: "fake", Version: "test"}, nil
 }
 func (p *captureInputPlugin) OpenSession(context.Context, string, map[string]string) error {
 	return nil
@@ -583,7 +583,7 @@ state "done" {
   success  = true
 }`)
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{
 		"fake": &fakePlugin{name: "fake", outcome: "success"},
 	}}
 
@@ -673,8 +673,8 @@ type captureOutputPlugin struct {
 	call     int
 }
 
-func (p *captureOutputPlugin) Info(context.Context) (plugin.Info, error) {
-	return plugin.Info{Name: "fake", Version: "test"}, nil
+func (p *captureOutputPlugin) Info(context.Context) (adapterhost.Info, error) {
+	return adapterhost.Info{Name: "fake", Version: "test"}, nil
 }
 func (p *captureOutputPlugin) OpenSession(context.Context, string, map[string]string) error {
 	return nil
@@ -727,7 +727,7 @@ state "done" {
 	var capturedInputs []map[string]string
 	cp := &captureInputPlugin{outcome: "success", capture: &capturedInputs}
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": cp}}
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": cp}}
 	if err := New(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -774,7 +774,7 @@ state "done" {
 		capture:  &capturedInputs,
 	}
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": combined}}
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": combined}}
 	if err := New(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -815,7 +815,7 @@ state "done" {
 	// Second iteration fails; others succeed.
 	plug := &multiOutcomePlugin{name: "fake", outcomes: []string{"success", "failure", "success"}}
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": plug}}
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": plug}}
 	if err := New(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -854,7 +854,7 @@ state "done" {
 }`)
 	plug := &multiOutcomePlugin{name: "fake", outcomes: []string{"failure", "success"}}
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": plug}}
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": plug}}
 	if err := New(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -911,7 +911,7 @@ state "done" {
 		outputs:  []map[string]string{{"val": "result_x"}, {"val": "result_y"}},
 	}
 	sink := &perIterSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{
 		"fake_produce": producePlug,
 	}}
 	if err := New(g, loader, sink).Run(context.Background()); err != nil {
@@ -956,7 +956,7 @@ state "done" {
 	var capturedInputs []map[string]string
 	capturePlugin := &captureInputPlugin{outcome: "success", capture: &capturedInputs}
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": capturePlugin}}
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": capturePlugin}}
 
 	// Resume at index=1 with no Items (crash path: Items is nil).
 	resumeStack := []workflow.IterCursor{{
@@ -1013,7 +1013,7 @@ state "done" {
 	var capturedInputs []map[string]string
 	capturePlugin := &captureInputPlugin{outcome: "success", capture: &capturedInputs}
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": capturePlugin}}
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": capturePlugin}}
 	if err := New(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -1081,7 +1081,7 @@ state "done" {
 	// Wire both: mp for outcome routing, cp for input capture.
 	combined := &combinedPlugin{captureInputPlugin: cp, outcomePlugin: mp}
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": combined}}
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": combined}}
 	if err := New(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -1161,7 +1161,7 @@ state "done" {
 }`)
 	var capturedConsume []map[string]string
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{
 		"fake": &captureInputPlugin{outcome: "success", capture: &capturedConsume},
 	}}
 	if err := New(g, loader, sink).Run(context.Background()); err != nil {
@@ -1227,7 +1227,7 @@ state "done" {
 	var consumeInputs []map[string]string
 	consumePlug := &captureInputPlugin{outcome: "success", capture: &consumeInputs}
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{
 		"fake_produce": producePlug,
 		"fake_consume": consumePlug,
 	}}
@@ -1284,7 +1284,7 @@ state "done" {
 	var capturedInputs []map[string]string
 	combined.capture = &capturedInputs
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": combined}}
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": combined}}
 	if err := New(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -1337,7 +1337,7 @@ state "done" {
 	var capturedInputs []map[string]string
 	cp := &captureInputPlugin{outcome: "success", capture: &capturedInputs}
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": cp}}
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": cp}}
 	if err := New(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -1417,7 +1417,7 @@ state "done" {
 	var capturedInputs []map[string]string
 	capturePlugin := &captureInputPlugin{outcome: "success", capture: &capturedInputs}
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": capturePlugin}}
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": capturePlugin}}
 
 	eng := New(g, loader, sink, WithResumedIter([]workflow.IterCursor{*restored}))
 	if err := eng.RunFrom(context.Background(), "items", 1); err != nil {
@@ -1472,7 +1472,7 @@ state "done" {
   terminal = true
   success  = true
 }`)
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"seq": seqPlugin}}
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"seq": seqPlugin}}
 	eng := New(g, loader, &fakeSink{})
 	if err := eng.Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
@@ -1513,7 +1513,7 @@ state "done" {
 }`)
 	var capturedInputs []map[string]string
 	capturePlugin := &captureInputPlugin{outcome: "success", capture: &capturedInputs}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{
 		"out":     outPlugin,
 		"capture": capturePlugin,
 	}}
@@ -1571,8 +1571,8 @@ type callbackPlugin struct {
 	fn func(map[string]string) (string, map[string]string)
 }
 
-func (p *callbackPlugin) Info(context.Context) (plugin.Info, error) {
-	return plugin.Info{Name: "callback", Version: "test"}, nil
+func (p *callbackPlugin) Info(context.Context) (adapterhost.Info, error) {
+	return adapterhost.Info{Name: "callback", Version: "test"}, nil
 }
 func (p *callbackPlugin) OpenSession(context.Context, string, map[string]string) error { return nil }
 func (p *callbackPlugin) Execute(_ context.Context, _ string, step *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
@@ -1589,8 +1589,8 @@ type outputPlugin struct {
 	outputs map[string]string
 }
 
-func (p *outputPlugin) Info(context.Context) (plugin.Info, error) {
-	return plugin.Info{Name: "output", Version: "test"}, nil
+func (p *outputPlugin) Info(context.Context) (adapterhost.Info, error) {
+	return adapterhost.Info{Name: "output", Version: "test"}, nil
 }
 func (p *outputPlugin) OpenSession(context.Context, string, map[string]string) error { return nil }
 func (p *outputPlugin) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
@@ -1699,7 +1699,7 @@ func TestIter_AggregateOutcome_ReturnOutputProjection(t *testing.T) {
 	}
 
 	sink := &outcomeSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
+	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{
 		"fake":         &fakePlugin{name: "fake", outcome: "success"},
 		"fake.default": &fakePlugin{name: "fake", outcome: "success"},
 	}}

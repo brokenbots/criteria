@@ -6,15 +6,15 @@ import (
 	"time"
 
 	"github.com/brokenbots/criteria/internal/adapter"
+	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/internal/engine"
-	"github.com/brokenbots/criteria/internal/plugin"
 	"github.com/brokenbots/criteria/workflow"
 )
 
 // emptyLoader is a plugin loader with no adapters registered, suitable for
 // wait/approval node tests that don't execute step adapters.
-func emptyLoader() *plugin.DefaultLoader {
-	return plugin.NewLoader()
+func emptyLoader() *adapterhost.DefaultLoader {
+	return adapterhost.NewLoader()
 }
 
 // minimalWaitGraph builds a graph with a single duration-wait node.

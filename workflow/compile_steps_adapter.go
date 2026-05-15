@@ -16,9 +16,9 @@ import (
 // the canonical form.
 //
 // This map is a workflow-package copy of the alias table in
-// internal/plugin/policy.go (adapterPermissionAliases["copilot"]). The two must
+// internal/adapterhost/policy.go (adapterPermissionAliases["copilot"]). The two must
 // stay in sync; the duplication is intentional since the workflow package cannot
-// import internal/plugin due to import-boundary rules.
+// import internal/adapterhost due to import-boundary rules.
 var copilotAllowToolsAliases = map[string]string{
 	"read_file":  "read",
 	"write_file": "write",

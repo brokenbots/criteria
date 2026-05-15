@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/brokenbots/criteria/sdk/adapterhost"
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
-	"github.com/brokenbots/criteria/sdk/pluginhost"
 )
 
 // fakeEventSender collects Execute events for assertions.
@@ -18,7 +18,7 @@ func (f *fakeEventSender) Send(ev *pb.ExecuteEvent) error {
 	return nil
 }
 
-var _ pluginhost.ExecuteEventSender = (*fakeEventSender)(nil)
+var _ adapterhost.ExecuteEventSender = (*fakeEventSender)(nil)
 
 // TestParseCSVList covers all parseCSVList branches.
 func TestParseCSVList(t *testing.T) {
@@ -94,11 +94,11 @@ func TestMCPBridge_Info(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Info: %v", err)
 	}
-	if resp.GetName() != pluginName {
-		t.Fatalf("name=%q want %q", resp.GetName(), pluginName)
+	if resp.GetName() != adapterName {
+		t.Fatalf("name=%q want %q", resp.GetName(), adapterName)
 	}
-	if resp.GetVersion() != pluginVersion {
-		t.Fatalf("version=%q want %q", resp.GetVersion(), pluginVersion)
+	if resp.GetVersion() != adapterVersion {
+		t.Fatalf("version=%q want %q", resp.GetVersion(), adapterVersion)
 	}
 
 	// ConfigSchema must have "command" as required field.

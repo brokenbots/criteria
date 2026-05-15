@@ -1,4 +1,4 @@
-package plugin_test
+package adapterhost_test
 
 import (
 	"os"
@@ -12,19 +12,19 @@ import (
 )
 
 // TestPublicSDKFixtureConformance proves that a plugin built exclusively
-// against sdk/pluginhost (no internal/ reach-through) passes the full adapter
+// against sdk/adapterhost (no internal/ reach-through) passes the full adapter
 // conformance harness. This is the golden signal that the public package
 // surface is sufficient for external adapter authors.
 func TestPublicSDKFixtureConformance(t *testing.T) {
 	bin := buildPublicSDKFixture(t)
-	conformance.RunPlugin(
+	conformance.RunAdapter(
 		t,
 		"public-sdk-fixture",
 		bin,
 		conformance.Options{
 			// StepConfig with delay_ms enables context_cancellation and step_timeout
 			// sub-tests, proving context propagation works across the plugin subprocess
-			// boundary when using only the public sdk/pluginhost surface.
+			// boundary when using only the public sdk/adapterhost surface.
 			StepConfig:      map[string]string{"delay_ms": "0"},
 			AllowedOutcomes: []string{"success", "failure", "needs_review"},
 		},
@@ -53,7 +53,7 @@ func buildPublicSDKFixture(t *testing.T) string {
 		}
 		bin := filepath.Join(dir, "criteria-adapter-public-sdk-fixture")
 		cmd := exec.Command("go", "build", "-o", bin,
-			"./internal/plugin/testfixtures/publicsdk")
+			"./internal/adapterhost/testfixtures/publicsdk")
 		cmd.Dir = moduleRoot
 		if output, err := cmd.CombinedOutput(); err != nil {
 			panic("plugin_test: build public-sdk fixture: " + err.Error() + "\n" + string(output))

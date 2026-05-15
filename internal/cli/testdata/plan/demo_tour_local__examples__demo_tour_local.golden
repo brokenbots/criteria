@@ -38,5 +38,5 @@ states:
 switches:
   decide    conditions=1   default=aborted
 
-plugins required:
+adapters required:
   shell   (search: $CRITERIA_PLUGINS, ~/.criteria/plugins)

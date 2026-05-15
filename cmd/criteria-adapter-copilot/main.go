@@ -1,11 +1,11 @@
 package main
 
 import (
-	pluginhost "github.com/brokenbots/criteria/sdk/pluginhost"
+	adapterhost "github.com/brokenbots/criteria/sdk/adapterhost"
 )
 
 func main() {
-	pluginhost.Serve(&copilotPlugin{
+	adapterhost.Serve(&copilotAdapter{
 		sessions: map[string]*sessionState{},
 	})
 }

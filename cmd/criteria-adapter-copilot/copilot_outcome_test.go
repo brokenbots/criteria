@@ -15,8 +15,8 @@ import (
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
-func outcomePlugin(s *sessionState) *copilotPlugin {
-	return &copilotPlugin{sessions: map[string]*sessionState{"s1": s}}
+func outcomePlugin(s *sessionState) *copilotAdapter {
+	return &copilotAdapter{sessions: map[string]*sessionState{"s1": s}}
 }
 
 func stateWithOutcomes(allowed ...string) *sessionState {
@@ -225,7 +225,7 @@ func TestHandleSubmitOutcomeDuplicateInvalidArgs(t *testing.T) {
 
 // Test 5.5: Unknown session ID returns failure ToolResult (not a Go error).
 func TestHandleSubmitOutcomeUnknownSession(t *testing.T) {
-	p := &copilotPlugin{sessions: map[string]*sessionState{}}
+	p := &copilotAdapter{sessions: map[string]*sessionState{}}
 	res, err := p.handleSubmitOutcome("no-such-session", SubmitOutcomeArgs{Outcome: "success"})
 	if err != nil {
 		t.Fatalf("unexpected Go error: %v", err)

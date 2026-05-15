@@ -1,9 +1,9 @@
 package main
 
 import (
-	pluginhost "github.com/brokenbots/criteria/sdk/pluginhost"
+	adapterhost "github.com/brokenbots/criteria/sdk/adapterhost"
 )
 
 func main() {
-	pluginhost.Serve(&MCPBridge{sessions: map[string]*sessionState{}})
+	adapterhost.Serve(&MCPBridge{sessions: map[string]*sessionState{}})
 }

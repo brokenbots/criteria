@@ -1,6 +1,6 @@
 package conformance
 
-// conformance.go — Run/RunPlugin entry points and contract test orchestration.
+// conformance.go — Run/RunAdapter entry points and contract test orchestration.
 
 import (
 	"context"
@@ -10,13 +10,13 @@ import (
 	"time"
 
 	"github.com/brokenbots/criteria/internal/adapter"
-	"github.com/brokenbots/criteria/internal/plugin"
+	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/workflow"
 )
 
 // Options configures adapter-specific conformance expectations.
 type Options struct {
-	// OpenConfig is optional plugin OpenSession config for RunPlugin tests.
+	// OpenConfig is optional adapter OpenSession config for RunAdapter tests.
 	OpenConfig map[string]string
 	// StepConfig is the HCL-style config passed to the step node under test.
 	StepConfig map[string]string
@@ -58,8 +58,8 @@ func Run(t *testing.T, name string, factory func() adapter.Adapter, opts Options
 	})
 }
 
-// RunPlugin executes the shared adapter contract against a plugin binary.
-func RunPlugin(t *testing.T, name, binaryPath string, opts Options) {
+// RunAdapter executes the shared adapter contract against an adapter binary.
+func RunAdapter(t *testing.T, name, binaryPath string, opts Options) {
 	t.Helper()
 	if strings.TrimSpace(name) == "" {
 		t.Fatal("conformance: name is required")
@@ -68,9 +68,9 @@ func RunPlugin(t *testing.T, name, binaryPath string, opts Options) {
 		t.Fatal("conformance: binaryPath is required")
 	}
 
-	loader := plugin.NewLoaderWithDiscovery(func(requested string) (string, error) {
+	loader := adapterhost.NewLoaderWithDiscovery(func(requested string) (string, error) {
 		if requested != name {
-			return "", fmt.Errorf("unexpected plugin request %q (expected %q)", requested, name)
+			return "", fmt.Errorf("unexpected adapter request %q (expected %q)", requested, name)
 		}
 		return binaryPath, nil
 	})
@@ -79,17 +79,17 @@ func RunPlugin(t *testing.T, name, binaryPath string, opts Options) {
 	})
 
 	// 30 s matches the StartTimeout in the loader so the context does not
-	// expire before the plugin process finishes advertising its socket.
+	// expire before the adapter process finishes advertising its socket.
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	probe, err := loader.Resolve(ctx, name)
 	if err != nil {
-		t.Fatalf("resolve plugin: %v", err)
+		t.Fatalf("resolve adapter: %v", err)
 	}
 	info, err := probe.Info(ctx)
 	if err != nil {
 		probe.Kill()
-		t.Fatalf("plugin info: %v", err)
+		t.Fatalf("adapter info: %v", err)
 	}
 	probe.Kill()
 
@@ -124,7 +124,7 @@ func runContractTests(t *testing.T, name string, opts *Options, factory targetFa
 	}
 }
 
-func newPluginTargetFactory(name string, loader plugin.Loader, opts *Options) targetFactory {
+func newPluginTargetFactory(name string, loader adapterhost.Loader, opts *Options) targetFactory {
 	return func(t *testing.T) executeTarget {
 		t.Helper()
 		// 30 s matches the StartTimeout in the loader.
@@ -133,12 +133,12 @@ func newPluginTargetFactory(name string, loader plugin.Loader, opts *Options) ta
 
 		plug, err := loader.Resolve(ctx, name)
 		if err != nil {
-			t.Fatalf("resolve plugin: %v", err)
+			t.Fatalf("resolve adapter: %v", err)
 		}
 		info, err := plug.Info(ctx)
 		if err != nil {
 			plug.Kill()
-			t.Fatalf("plugin info: %v", err)
+			t.Fatalf("adapter info: %v", err)
 		}
 
 		sessionID := newSessionID("conformance")
@@ -154,6 +154,6 @@ func newPluginTargetFactory(name string, loader plugin.Loader, opts *Options) ta
 			plug.Kill()
 		})
 
-		return pluginSessionTarget{plugin: plug, sessionID: sessionID, name: info.Name}
+		return pluginSessionTarget{handle: plug, sessionID: sessionID, name: info.Name}
 	}
 }

@@ -1,4 +1,4 @@
-package plugin
+package adapterhost
 
 import (
 	"errors"
@@ -9,30 +9,30 @@ import (
 )
 
 const (
-	pluginBinaryPrefix = "criteria-adapter-"
-	pluginsEnvVar      = "CRITERIA_PLUGINS"
+	adapterBinaryPrefix = "criteria-adapter-"
+	pluginsEnvVar       = "CRITERIA_PLUGINS"
 )
 
 var ErrInvalidAdapterName = errors.New("invalid adapter name")
 
-// ErrPluginNotFound reports that adapter discovery failed after checking all
-// configured plugin directories.
-type ErrPluginNotFound struct {
+// ErrAdapterNotFound reports that adapter discovery failed after checking all
+// configured adapter directories.
+type ErrAdapterNotFound struct {
 	Name     string
 	Searched []string
 }
 
-func (e *ErrPluginNotFound) Error() string {
+func (e *ErrAdapterNotFound) Error() string {
 	if e == nil {
-		return "plugin not found"
+		return "adapter not found"
 	}
 	if len(e.Searched) == 0 {
-		return fmt.Sprintf("plugin %q not found", e.Name)
+		return fmt.Sprintf("adapter %q not found", e.Name)
 	}
-	return fmt.Sprintf("plugin %q not found (searched: %s)", e.Name, strings.Join(e.Searched, ", "))
+	return fmt.Sprintf("adapter %q not found (searched: %s)", e.Name, strings.Join(e.Searched, ", "))
 }
 
-// DiscoverBinary resolves an adapter plugin binary path.
+// DiscoverBinary resolves an adapter binary path.
 //
 // Discovery intentionally does not consult PATH to avoid unintentionally
 // executing similarly named binaries from user/system toolchains.
@@ -44,7 +44,7 @@ func DiscoverBinary(name string) (string, error) {
 	if !isValidAdapterName(name) {
 		return "", fmt.Errorf("%w %q", ErrInvalidAdapterName, name)
 	}
-	binary := pluginBinaryPrefix + name
+	binary := adapterBinaryPrefix + name
 	searched := make([]string, 0, 2)
 
 	if envDir := strings.TrimSpace(os.Getenv(pluginsEnvVar)); envDir != "" {
@@ -64,7 +64,7 @@ func DiscoverBinary(name string) (string, error) {
 		}
 	}
 
-	return "", &ErrPluginNotFound{Name: name, Searched: searched}
+	return "", &ErrAdapterNotFound{Name: name, Searched: searched}
 }
 
 func isRunnableFile(path string) bool {
