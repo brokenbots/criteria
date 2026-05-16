@@ -56,15 +56,17 @@ docker-runtime-smoke: docker-runtime ## Run a workflow inside the runtime image
 		criteria/runtime:dev apply /workspace/examples/hello
 
 proto: ## Regenerate Go bindings from proto files (requires buf)
-	buf generate
+	buf generate --path proto/criteria/v1
+	buf generate --template buf.gen.v2.yaml --path proto/criteria/v2
 	@echo "Generated SDK proto bindings."
 
 proto-lint: ## Lint proto files
 	buf lint
 
 proto-check-drift: ## Fail if generated proto code is out of sync with proto sources
-	buf generate
-	@git diff --exit-code sdk/pb/ || \
+	buf generate --path proto/criteria/v1
+	buf generate --template buf.gen.v2.yaml --path proto/criteria/v2
+	@git diff --exit-code sdk/pb/ proto/criteria/v2/ || \
 		(echo "ERROR: Generated proto files are out of sync. Run 'make proto' and commit."; exit 1)
 
 test: ## Run all unit tests
