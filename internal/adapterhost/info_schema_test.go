@@ -9,7 +9,7 @@ import (
 )
 
 // TestInfoResponseSchemaRoundTrip exercises the production AdapterInfoFromProto
-// translation used by the loader when a plugin responds to an Info() call.
+// translation used by the loader when an adapter responds to an Info() call.
 func TestInfoResponseSchemaRoundTrip(t *testing.T) {
 	resp := &pb.InfoResponse{
 		Name:    "test-adapter",
@@ -129,7 +129,7 @@ func TestInfoResponseBoolAndListTypes(t *testing.T) {
 }
 
 func TestLegacyInfoResponseWithoutSchema(t *testing.T) {
-	// A legacy plugin that does not populate schema fields should yield a
+	// A legacy adapter that does not populate schema fields should yield a
 	// permissive (nil-schema) AdapterInfo so the compiler does not block it.
 	resp := &pb.InfoResponse{
 		Name:    "legacy",
@@ -139,10 +139,10 @@ func TestLegacyInfoResponseWithoutSchema(t *testing.T) {
 	info := adapterhostpkg.AdapterInfoFromProto(resp)
 
 	if info.ConfigSchema != nil {
-		t.Errorf("expected nil ConfigSchema for legacy plugin, got %v", info.ConfigSchema)
+		t.Errorf("expected nil ConfigSchema for legacy adapter, got %v", info.ConfigSchema)
 	}
 	if info.InputSchema != nil {
-		t.Errorf("expected nil InputSchema for legacy plugin, got %v", info.InputSchema)
+		t.Errorf("expected nil InputSchema for legacy adapter, got %v", info.InputSchema)
 	}
 }
 

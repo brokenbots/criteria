@@ -411,3 +411,46 @@ The validation now proves both the mechanical rename and the compatibility bound
 - `rg -n 'sdk/pluginhost|pluginhost\.|AdapterPlugin\b|OutputSchema|# Plugins|What Plugins Are|Installing a Plugin|Writing Your Own Plugin' docs/adapters.md` → no matches
 - `rg -n 'TestCopilotPluginConformance|TestMCPPluginConformance|TestNoopPluginConformance|pluginSessionTarget|fakePlugin|errPlugin|callCountPlugin|BenchmarkPluginExecuteNoop|BenchmarkBuiltinPlugin_Execute|BenchmarkBuiltinPlugin_Info' --glob '*.go' .` → no matches
 - `rg -n '\bplugin\b' docs/adapters.md` → only preserved `go-plugin` references remain
+
+### Remediation 2026-05-16-02 — addressing Review 2026-05-16-03 blockers
+
+#### Blocker 1: `NewBuiltinAdapterPlugin` / `builtinAdapterPlugin` in `internal/adapterhost/builtin.go`
+- `NewBuiltinAdapterPlugin` → `NewBuiltinAdapter` (exported constructor + call site in `BuiltinFactoryForAdapter`)
+- `builtinAdapterPlugin` → `builtinAdapter` (unexported struct + all 5 method receivers)
+
+#### Blocker 2: `internal/adapter/conformance/README.md` stale docs
+- Rewrote README: `RunPlugin` → `RunAdapter`, "Plugin-only sub-tests" → "Adapter-only sub-tests", "kill the plugin process" → "kill the adapter process", "Plugin adoption example" → "Adapter adoption example", `TestMyPlugin_Conformance`/`myplugin`/`criteria-adapter-myplugin` → `TestMyAdapter_Conformance`/`myadapter`/`criteria-adapter-myadapter`.
+- `conformance.go`: `newPluginTargetFactory` → `newAdapterTargetFactory` (definition + call site).
+
+#### Blocker 3: Test helper types/funcs in engine and copilot tests
+- `internal/engine/parallel_iteration_test.go`: `barrierPlugin` → `barrierAdapter`, `newBarrierPlugin` → `newBarrierAdapter`, `concurrencyTrackingPlugin` → `concurrencyTrackingAdapter`, `contextAwarePlugin` → `contextAwareAdapter`, `declIdxPlugin` → `declIdxAdapter`, `loggingBarrierPlugin` → `loggingBarrierAdapter`, `newLoggingBarrierPlugin` → `newLoggingBarrierAdapter`, `countingNotSafePlugin` → `countingNotSafeAdapter`, `slowLogPlugin` → `slowLogAdapter`.
+- `internal/engine/outcome_shared_writes_test.go`: `sharedWritesPlugin` → `sharedWritesAdapter`, `pluginFunc` → `adapterFunc`.
+- `internal/engine/iteration_engine_test.go`: `combinedPlugin` → `combinedAdapter`; field `outcomePlugin` → `outcomeAdapter`.
+- `internal/engine/parallel_iteration_bench_test.go`: `highLogPlugin` → `highLogAdapter`.
+- `internal/engine/output_capture_test.go`: `fakeOutputPlugin` → `fakeOutputAdapter`, `fakeConsumerPlugin` → `fakeConsumerAdapter`.
+- `internal/engine/engine_test.go`: `TestEngineLifecycleWithNoopPlugin` → `TestEngineLifecycleWithNoopAdapter`.
+- `cmd/criteria-adapter-copilot/copilot_outcome_test.go`: `outcomePlugin` → `outcomeAdapter`.
+
+#### Blocker 4: File renames
+- `internal/adapter/conformance/broken_plugin_conformancefail_test.go` → `broken_adapter_conformancefail_test.go`
+- `internal/testutil/plugins.go` → `internal/testutil/adapters.go`; `pluginBin` → `adapterBin` inside.
+
+#### Blocker 5: `tools/import-lint/` test names and comments
+- `TestInternalImportsSDKPluginhost_Clean` → `TestInternalImportsSDKAdapterhost_Clean`
+- `TestInternalNonFixtureImportsSDKPluginhost_Forbidden` → `TestInternalNonFixtureImportsSDKAdapterhost_Forbidden`
+- Comments in `main.go`: "standalone plugin binaries" / "testfixture plugin binaries" → "adapter binaries".
+
+#### Blocker 6: Stale concept-level "plugin" comments and error strings
+- `internal/adapterhost/info_schema_test.go`: "legacy plugin" → "legacy adapter", "plugin responds" → "adapter responds".
+- `internal/adapterhost/loader.go`: "plugin binaries" → "adapter binaries".
+- `internal/adapterhost/serve_test.go`, `sdk/adapterhost/serve_test.go`: "host/plugin negotiation" → "host/adapter negotiation", handshake/failure-mode comment updates.
+- `internal/adapterhost/sessions_test.go`: 6 comment fixes ("permissive test adapter", "adapter requests", "unsolicited adapter exit", etc.).
+- `internal/adapterhost/publicsdk_conformance_test.go`: "plugin built exclusively" → "adapter built exclusively", "plugin subprocess" → "adapter subprocess".
+- `sdk/adapterhost/handshake.go`: public doc comments updated — "plugin subprocess" → "adapter subprocess", "every adapter plugin process" → "every adapter process".
+- `internal/cli/cli_dir_mode_test.go`: `t.Fatalf("read/write plugin binary")` → `t.Fatalf("read/write adapter binary")`.
+- `cmd/criteria-adapter-copilot/conformance_test.go`: "real plugin binary" → "real adapter binary".
+- `examples/plugins/greeter/main.go`: "public plugin SDK" → "public adapter SDK" (path strings preserved).
+
+#### Validation
+- Pre-flight: `rg -n '\b[Pp]lugin\b' -g '*.go' -g '*.md' -g '!sdk/pb/**' -g '!examples/plugins/**' $(git diff --name-only origin/main...HEAD) | grep -vE 'go-plugin|hplugin|adapter_plugin\.proto|CRITERIA_PLUGINS|\.criteria/plugins|CRITERIA_PLUGIN\b' | grep -v 'WS01-terminology' | grep -v '\.golden'` → no matches
+- `make ci` → passed

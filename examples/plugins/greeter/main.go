@@ -1,6 +1,6 @@
 // Package main is the greeter adapter — a minimal example of a
 // third-party Criteria adapter that lives in its own module, imports only
-// the public plugin SDK, and is discovered at runtime from CRITERIA_PLUGINS
+// the public adapter SDK, and is discovered at runtime from CRITERIA_PLUGINS
 // or ~/.criteria/plugins/.
 //
 // The adapter accepts one input key, "name", and returns:

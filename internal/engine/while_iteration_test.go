@@ -105,7 +105,7 @@ state "done" {
 
 	call := 0
 	countdowns := []string{"2", "1", "0"}
-	plug := &pluginFunc{fn: func(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+	plug := &adapterFunc{fn: func(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
 		out := countdowns[call]
 		call++
 		return adapter.Result{Outcome: "success", Outputs: map[string]string{"remaining": out}}, nil
@@ -169,7 +169,7 @@ state "done" {
 	var capturedInputs []map[string]string
 	call := 0
 	outcomes := []string{"success", "success", "success"}
-	plug := &pluginFunc{fn: func(_ context.Context, _ string, step *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+	plug := &adapterFunc{fn: func(_ context.Context, _ string, step *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
 		inp := make(map[string]string)
 		for k, v := range step.Input {
 			inp[k] = v
@@ -236,7 +236,7 @@ state "done" {
 
 	var capturedInputs []map[string]string
 	n := 0
-	plug := &pluginFunc{fn: func(_ context.Context, _ string, step *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+	plug := &adapterFunc{fn: func(_ context.Context, _ string, step *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
 		inp := make(map[string]string)
 		for k, v := range step.Input {
 			inp[k] = v
@@ -358,7 +358,7 @@ state "done" {
 		{"failure", "1"}, // iteration 0 fails but continues
 		{"success", "0"}, // iteration 1 succeeds; remaining → 0
 	}
-	plug := &pluginFunc{fn: func(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+	plug := &adapterFunc{fn: func(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
 		r := outcomes[call]
 		call++
 		return adapter.Result{Outcome: r.o, Outputs: map[string]string{"remaining": r.rem}}, nil
@@ -432,7 +432,7 @@ state "done" {
 		{"failure", "1"},
 		{"success", "0"},
 	}
-	plug := &pluginFunc{fn: func(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+	plug := &adapterFunc{fn: func(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
 		r := outcomes[call]
 		call++
 		return adapter.Result{Outcome: r.o, Outputs: map[string]string{"remaining": r.rem}}, nil
@@ -489,7 +489,7 @@ state "done" {
 		InProgress: true,
 	}}
 
-	plug := &pluginFunc{fn: func(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+	plug := &adapterFunc{fn: func(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
 		return adapter.Result{Outcome: "success"}, nil
 	}}
 
@@ -634,7 +634,7 @@ state "done" {
 
 	call := 0
 	decrements := []string{"1", "0"}
-	plug := &pluginFunc{fn: func(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+	plug := &adapterFunc{fn: func(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
 		out := decrements[call]
 		if call < len(decrements)-1 {
 			call++
@@ -709,7 +709,7 @@ state "done" {
 	}
 
 	call := 0
-	plug := &pluginFunc{fn: func(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+	plug := &adapterFunc{fn: func(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
 		call++
 		return adapter.Result{Outcome: "success"}, nil
 	}}
@@ -762,7 +762,7 @@ state "done" {
 	}
 
 	call := 0
-	plug := &pluginFunc{fn: func(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+	plug := &adapterFunc{fn: func(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
 		call++
 		return adapter.Result{Outcome: "success"}, nil
 	}}
@@ -815,7 +815,7 @@ state "done" {
 		t.Fatalf("compile: %v", diags.Error())
 	}
 
-	plug := &pluginFunc{fn: func(ctx context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+	plug := &adapterFunc{fn: func(ctx context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
 		<-ctx.Done()
 		return adapter.Result{}, ctx.Err()
 	}}
@@ -871,7 +871,7 @@ state "done" {
 
 	call := 0
 	// Iteration 1 returns an execErr; iterations 2 and 3 succeed.
-	plug := &pluginFunc{fn: func(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+	plug := &adapterFunc{fn: func(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
 		call++
 		if call == 1 {
 			return adapter.Result{}, fmt.Errorf("transient error")
@@ -932,7 +932,7 @@ func TestWhile_Subworkflow_Success(t *testing.T) {
 	}
 
 	call := 0
-	plug := &pluginFunc{fn: func(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+	plug := &adapterFunc{fn: func(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
 		call++
 		return adapter.Result{Outcome: "success"}, nil
 	}}
@@ -989,7 +989,7 @@ func TestWhile_Subworkflow_FailureAborts(t *testing.T) {
 	}
 
 	call := 0
-	plug := &pluginFunc{fn: func(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+	plug := &adapterFunc{fn: func(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
 		call++
 		return adapter.Result{}, fmt.Errorf("callee failure")
 	}}

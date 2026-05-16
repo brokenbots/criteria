@@ -384,7 +384,7 @@ func openFixtureSession(t *testing.T, plug adapterhost.Handle, sessionID string)
 }
 
 // TestConformance_InvalidOutcomeScenario_Fixture (W15 Blocker-1a) drives the
-// "invalid-outcome" fake scenario end-to-end through the real plugin binary.
+// "invalid-outcome" fake scenario end-to-end through the real adapter binary.
 //
 // The fake submits "not-a-real-outcome" on turn 1 (rejected by the handler) and
 // "success" on turn 2 (accepted). This validates:
@@ -465,7 +465,7 @@ func TestConformance_InvalidOutcomeScenario_Fixture(t *testing.T) {
 }
 
 // TestConformance_DuplicateCallScenario_Fixture (W15 Blocker-1b) drives the
-// "duplicate-call" fake scenario end-to-end through the real plugin binary.
+// "duplicate-call" fake scenario end-to-end through the real adapter binary.
 //
 // The fake submits submit_outcome("success") and submit_outcome("failure") in
 // the same turn (no idle between them). This validates:

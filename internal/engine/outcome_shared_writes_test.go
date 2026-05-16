@@ -16,43 +16,43 @@ import (
 	"github.com/brokenbots/criteria/workflow"
 )
 
-// sharedWritesPlugin returns a fixed outcome and outputs map for shared_writes tests.
-type sharedWritesPlugin struct {
+// sharedWritesAdapter returns a fixed outcome and outputs map for shared_writes tests.
+type sharedWritesAdapter struct {
 	outcome string
 	outputs map[string]string
 }
 
-func (p *sharedWritesPlugin) Info(context.Context) (adapterhost.Info, error) {
+func (p *sharedWritesAdapter) Info(context.Context) (adapterhost.Info, error) {
 	return adapterhost.Info{Name: "sw", Version: "test"}, nil
 }
-func (p *sharedWritesPlugin) OpenSession(context.Context, string, map[string]string) error {
+func (p *sharedWritesAdapter) OpenSession(context.Context, string, map[string]string) error {
 	return nil
 }
-func (p *sharedWritesPlugin) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+func (p *sharedWritesAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
 	return adapter.Result{Outcome: p.outcome, Outputs: p.outputs}, nil
 }
-func (p *sharedWritesPlugin) Permit(context.Context, string, string, bool, string) error {
+func (p *sharedWritesAdapter) Permit(context.Context, string, string, bool, string) error {
 	return nil
 }
-func (p *sharedWritesPlugin) CloseSession(context.Context, string) error { return nil }
-func (p *sharedWritesPlugin) Kill()                                      {}
+func (p *sharedWritesAdapter) CloseSession(context.Context, string) error { return nil }
+func (p *sharedWritesAdapter) Kill()                                      {}
 
-// pluginFunc is a adapterhost.Handle backed by a function, for flexible test control.
-type pluginFunc struct {
+// adapterFunc is a adapterhost.Handle backed by a function, for flexible test control.
+type adapterFunc struct {
 	name string
 	fn   func(context.Context, string, *workflow.StepNode, adapter.EventSink) (adapter.Result, error)
 }
 
-func (p *pluginFunc) Info(context.Context) (adapterhost.Info, error) {
+func (p *adapterFunc) Info(context.Context) (adapterhost.Info, error) {
 	return adapterhost.Info{Name: p.name, Version: "test"}, nil
 }
-func (p *pluginFunc) OpenSession(context.Context, string, map[string]string) error { return nil }
-func (p *pluginFunc) Execute(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+func (p *adapterFunc) OpenSession(context.Context, string, map[string]string) error { return nil }
+func (p *adapterFunc) Execute(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
 	return p.fn(ctx, sessionID, step, sink)
 }
-func (p *pluginFunc) Permit(context.Context, string, string, bool, string) error { return nil }
-func (p *pluginFunc) CloseSession(context.Context, string) error                 { return nil }
-func (p *pluginFunc) Kill()                                                      {}
+func (p *adapterFunc) Permit(context.Context, string, string, bool, string) error { return nil }
+func (p *adapterFunc) CloseSession(context.Context, string) error                 { return nil }
+func (p *adapterFunc) Kill()                                                      {}
 
 // TestSharedWrites_AppliedAfterStep verifies that a workflow with shared_writes
 // compiles, runs, and completes successfully.
@@ -90,7 +90,7 @@ state "done" {
 	require.False(t, diags.HasErrors(), "compile: %s", diags.Error())
 
 	sink := &fakeSink{}
-	plug := &sharedWritesPlugin{outcome: "success", outputs: map[string]string{"count_val": "7"}}
+	plug := &sharedWritesAdapter{outcome: "success", outputs: map[string]string{"count_val": "7"}}
 	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"sw": plug}}
 
 	eng := NewTestEngine(g, loader, sink)
@@ -146,7 +146,7 @@ state "done" {
 	callNum := 0
 	capturedSink := &outputCaptureSink{}
 
-	plug := &pluginFunc{
+	plug := &adapterFunc{
 		name: "sw",
 		fn: func(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
 			callNum++
@@ -206,8 +206,8 @@ state "done" {
 	require.False(t, diags.HasErrors(), "compile: %s", diags.Error())
 
 	sink := &fakeSink{}
-	// Plugin returns "success" but WITHOUT "nonexistent_key" in outputs
-	plug := &sharedWritesPlugin{outcome: "success", outputs: map[string]string{"other_key": "val"}}
+	// Adapter returns "success" but WITHOUT "nonexistent_key" in outputs
+	plug := &sharedWritesAdapter{outcome: "success", outputs: map[string]string{"other_key": "val"}}
 	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"sw": plug}}
 
 	eng := NewTestEngine(g, loader, sink)
@@ -254,7 +254,7 @@ state "done" {
 	require.False(t, diags.HasErrors(), "compile: %s", diags.Error())
 
 	sink := &fakeSink{}
-	plug := &sharedWritesPlugin{outcome: "success", outputs: map[string]string{"val": "not-a-number"}}
+	plug := &sharedWritesAdapter{outcome: "success", outputs: map[string]string{"val": "not-a-number"}}
 	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"sw": plug}}
 
 	eng := NewTestEngine(g, loader, sink)
@@ -318,7 +318,7 @@ state "done" {
 	callNum := 0
 	capturedSink := &outputCaptureSink{}
 
-	plug := &pluginFunc{
+	plug := &adapterFunc{
 		name: "sw",
 		fn: func(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
 			callNum++
@@ -378,7 +378,7 @@ state "done" {
 	require.False(t, diags.HasErrors(), "compile: %s", diags.Error())
 
 	capturedSink := &outputCaptureSink{}
-	plug := &sharedWritesPlugin{outcome: "success", outputs: map[string]string{}}
+	plug := &sharedWritesAdapter{outcome: "success", outputs: map[string]string{}}
 	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"sw": plug}}
 
 	eng := NewTestEngine(g, loader, capturedSink)
@@ -441,7 +441,7 @@ state "done" {
 	callNum := 0
 	capturedSink := &outputCaptureSink{}
 
-	plug := &pluginFunc{
+	plug := &adapterFunc{
 		name: "sw",
 		fn: func(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
 			if callNum < len(items) {
@@ -514,7 +514,7 @@ state "done" {
 	require.False(t, diags.HasErrors(), "compile: %s", diags.Error())
 
 	capturedSink := &outputCaptureSink{}
-	plug := &sharedWritesPlugin{outcome: "success", outputs: map[string]string{}}
+	plug := &sharedWritesAdapter{outcome: "success", outputs: map[string]string{}}
 	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"sw": plug}}
 
 	eng := NewTestEngine(g, loader, capturedSink)

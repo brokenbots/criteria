@@ -29,23 +29,23 @@ func (s *outputCaptureSink) OnStepOutputCaptured(step string, outputs map[string
 	s.order = append(s.order, step)
 }
 
-// fakeOutputPlugin is a adapterhost.Handle that returns Outputs.
-type fakeOutputPlugin struct {
+// fakeOutputAdapter is a adapterhost.Handle that returns Outputs.
+type fakeOutputAdapter struct {
 	name    string
 	outcome string
 	outputs map[string]string
 }
 
-func (p *fakeOutputPlugin) Info(context.Context) (adapterhost.Info, error) {
+func (p *fakeOutputAdapter) Info(context.Context) (adapterhost.Info, error) {
 	return adapterhost.Info{Name: p.name, Version: "test"}, nil
 }
-func (p *fakeOutputPlugin) OpenSession(context.Context, string, map[string]string) error { return nil }
-func (p *fakeOutputPlugin) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+func (p *fakeOutputAdapter) OpenSession(context.Context, string, map[string]string) error { return nil }
+func (p *fakeOutputAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
 	return adapter.Result{Outcome: p.outcome, Outputs: p.outputs}, nil
 }
-func (p *fakeOutputPlugin) Permit(context.Context, string, string, bool, string) error { return nil }
-func (p *fakeOutputPlugin) CloseSession(context.Context, string) error                 { return nil }
-func (p *fakeOutputPlugin) Kill()                                                      {}
+func (p *fakeOutputAdapter) Permit(context.Context, string, string, bool, string) error { return nil }
+func (p *fakeOutputAdapter) CloseSession(context.Context, string) error                 { return nil }
+func (p *fakeOutputAdapter) Kill()                                                      {}
 
 const outputWorkflow = `
 workflow "outputs" {
@@ -78,7 +78,7 @@ func TestOutputCapture_StepOutputsCapturedInVars(t *testing.T) {
 		t.Fatalf("compile: %s", diags)
 	}
 
-	plug := &fakeOutputPlugin{
+	plug := &fakeOutputAdapter{
 		name:    "fake_out",
 		outcome: "success",
 		outputs: map[string]string{"result": "hello_output"},
@@ -128,25 +128,25 @@ step "deploy" {
 state "__done__" { terminal = true }
 `
 
-// fakeConsumerPlugin records what Input it received.
-type fakeConsumerPlugin struct {
+// fakeConsumerAdapter records what Input it received.
+type fakeConsumerAdapter struct {
 	name          string
 	receivedInput map[string]string
 }
 
-func (p *fakeConsumerPlugin) Info(context.Context) (adapterhost.Info, error) {
+func (p *fakeConsumerAdapter) Info(context.Context) (adapterhost.Info, error) {
 	return adapterhost.Info{Name: p.name, Version: "test"}, nil
 }
-func (p *fakeConsumerPlugin) OpenSession(context.Context, string, map[string]string) error {
+func (p *fakeConsumerAdapter) OpenSession(context.Context, string, map[string]string) error {
 	return nil
 }
-func (p *fakeConsumerPlugin) Execute(_ context.Context, _ string, step *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+func (p *fakeConsumerAdapter) Execute(_ context.Context, _ string, step *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
 	p.receivedInput = step.Input
 	return adapter.Result{Outcome: "success"}, nil
 }
-func (p *fakeConsumerPlugin) Permit(context.Context, string, string, bool, string) error { return nil }
-func (p *fakeConsumerPlugin) CloseSession(context.Context, string) error                 { return nil }
-func (p *fakeConsumerPlugin) Kill()                                                      {}
+func (p *fakeConsumerAdapter) Permit(context.Context, string, string, bool, string) error { return nil }
+func (p *fakeConsumerAdapter) CloseSession(context.Context, string) error                 { return nil }
+func (p *fakeConsumerAdapter) Kill()                                                      {}
 
 func TestOutputCapture_ExpressionInterpolation(t *testing.T) {
 	adapterSchemas := map[string]workflow.AdapterInfo{
@@ -167,12 +167,12 @@ func TestOutputCapture_ExpressionInterpolation(t *testing.T) {
 		t.Fatalf("compile: %s", diags)
 	}
 
-	producer := &fakeOutputPlugin{
+	producer := &fakeOutputAdapter{
 		name:    "fake_out",
 		outcome: "success",
 		outputs: map[string]string{"result": "myapp-1.0.tar.gz"},
 	}
-	consumer := &fakeConsumerPlugin{name: "fake_consumer"}
+	consumer := &fakeConsumerAdapter{name: "fake_consumer"}
 
 	sink := &outputCaptureSink{}
 	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{
@@ -228,7 +228,7 @@ func TestOutputCapture_EmissionOrder(t *testing.T) {
 		t.Fatalf("compile: %s", diags)
 	}
 
-	plug := &fakeOutputPlugin{name: "fake_out", outcome: "success", outputs: map[string]string{"k": "v"}}
+	plug := &fakeOutputAdapter{name: "fake_out", outcome: "success", outputs: map[string]string{"k": "v"}}
 	sink := &outputCaptureSink{}
 	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake_out": plug}}
 

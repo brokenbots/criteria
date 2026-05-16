@@ -17,14 +17,14 @@ func BuildPermissiveAdapter(t *testing.T) string {
 		t.Fatal("resolve caller path")
 	}
 	moduleRoot := filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
-	pluginBin := filepath.Join(t.TempDir(), "criteria-adapter-permissive")
+	adapterBin := filepath.Join(t.TempDir(), "criteria-adapter-permissive")
 
-	cmd := exec.Command("go", "build", "-o", pluginBin, "./internal/adapterhost/testfixtures/permissive")
+	cmd := exec.Command("go", "build", "-o", adapterBin, "./internal/adapterhost/testfixtures/permissive")
 	cmd.Dir = moduleRoot
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("build permissive adapter: %v\n%s", err, string(output))
 	}
 
-	return pluginBin
+	return adapterBin
 }

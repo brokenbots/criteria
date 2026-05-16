@@ -93,7 +93,7 @@ func RunAdapter(t *testing.T, name, binaryPath string, opts Options) {
 	}
 	probe.Kill()
 
-	runContractTests(t, name, &opts, newPluginTargetFactory(name, loader, &opts))
+	runContractTests(t, name, &opts, newAdapterTargetFactory(name, loader, &opts))
 
 	t.Run("session_lifecycle", func(t *testing.T) {
 		testSessionLifecycle(t, name, loader, &opts, &info)
@@ -124,7 +124,7 @@ func runContractTests(t *testing.T, name string, opts *Options, factory targetFa
 	}
 }
 
-func newPluginTargetFactory(name string, loader adapterhost.Loader, opts *Options) targetFactory {
+func newAdapterTargetFactory(name string, loader adapterhost.Loader, opts *Options) targetFactory {
 	return func(t *testing.T) executeTarget {
 		t.Helper()
 		// 30 s matches the StartTimeout in the loader.

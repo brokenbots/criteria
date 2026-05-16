@@ -172,7 +172,7 @@ func startScopeServer(t *testing.T, h criteriav1connect.CriteriaServiceHandler) 
 	return srv.URL
 }
 
-// integrationLoader implements adapterhost.Loader using pre-built plugin instances.
+// integrationLoader implements adapterhost.Loader using pre-built adapter instances.
 type integrationLoader struct {
 	plugins map[string]adapterhost.Handle
 }

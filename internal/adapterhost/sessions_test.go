@@ -220,7 +220,7 @@ func TestSessionManagerCrashPolicyAbortRun(t *testing.T) {
 
 // TestSessionManagerPermissionGrantAndDeny verifies that the session manager
 // emits permission.granted and permission.denied events when executing a step
-// that requests multiple tools against the permissive test plugin.
+// that requests multiple tools against the permissive test adapter.
 func TestSessionManagerPermissionGrantAndDeny(t *testing.T) {
 	adapterBin := testutil.BuildPermissiveAdapter(t)
 	loader := NewLoaderWithDiscovery(func(string) (string, error) { return adapterBin, nil })
@@ -231,7 +231,7 @@ func TestSessionManagerPermissionGrantAndDeny(t *testing.T) {
 		t.Fatalf("open: %v", err)
 	}
 
-	// allow_tools = ["read_file"]; plugin requests read_file + write_file
+	// allow_tools = ["read_file"]; adapter requests read_file + write_file
 	step := &workflow.StepNode{
 		Name:       "run",
 		Input:      map[string]string{"perm_tools": "read_file,write_file"},
@@ -242,7 +242,7 @@ func TestSessionManagerPermissionGrantAndDeny(t *testing.T) {
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
-	// permissive plugin returns needs_review when any tool is denied
+	// permissive adapter returns needs_review when any tool is denied
 	if result.Outcome != "needs_review" {
 		t.Fatalf("outcome=%q want needs_review", result.Outcome)
 	}
@@ -329,8 +329,8 @@ func TestSessionManagerDenialPayloadFullContract(t *testing.T) {
 }
 
 // TestSessionManagerCopilotAliasGrantAtHostBoundary verifies end-to-end alias
-// expansion at the host boundary: allow_tools=["read_file"] must grant a
-// plugin permission request for the canonical kind "read", because the host
+// expansion at the host boundary: allow_tools=["read_file"] must grant an
+// adapter permission request for the canonical kind "read", because the host
 // expands "read_file" → "read" via the copilot adapter alias map.
 // A denied request for "write" must carry allow_tools and a non-empty
 // suggestion field in its payload.
@@ -346,7 +346,7 @@ func TestSessionManagerCopilotAliasGrantAtHostBoundary(t *testing.T) {
 		t.Fatalf("open: %v", err)
 	}
 
-	// Plugin requests canonical kinds: "read" (should be granted via alias)
+	// Adapter requests canonical kinds: "read" (should be granted via alias)
 	// and "write" (should be denied: no "write_file" in allow_tools).
 	step := &workflow.StepNode{
 		Name:       "run",
@@ -560,7 +560,7 @@ func TestSession_UnexpectedExitTriggersHeuristic(t *testing.T) {
 // crash heuristic (W12 risk mitigation).
 func TestSession_ExecuteEOFWithoutCloseIsCrash(t *testing.T) {
 	sess := &Session{}
-	// closing flag is NOT set — this simulates an unsolicited plugin exit
+	// closing flag is NOT set — this simulates an unsolicited adapter exit
 	if !isLikelySessionCrash(sess, errors.New("read: eof")) {
 		t.Error("expected crash heuristic to fire for EOF without closing flag")
 	}

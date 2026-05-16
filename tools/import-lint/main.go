@@ -7,7 +7,7 @@
 //  1. No file in internal/ may import github.com/brokenbots/criteria/sdk
 //     top-level; only sdk/pb subtree is permitted for production code.
 //     Exception: sdk/adapterhost is permitted from internal/*/testfixtures/
-//     paths only (these are standalone plugin binaries that must use the
+//     paths only (these are standalone adapter binaries that must use the
 //     public surface to prove external authors need no internal/ reach-through).
 //  2. No file in workflow/ may import github.com/brokenbots/criteria/internal/.
 //
@@ -161,7 +161,7 @@ outer:
 				continue
 			}
 			// For the sdk rule: allow sdk/pb subtree everywhere in internal/; allow
-			// sdk/adapterhost only from testfixtures/ plugin binaries (which are
+			// sdk/adapterhost only from testfixtures/ adapter binaries (which are
 			// standalone processes that must use the public surface). Block all other
 			// sdk imports from production internal/ code.
 			if r.filePrefix == "internal/" && strings.Contains(impPath, "github.com/brokenbots/criteria/sdk") {
@@ -170,7 +170,7 @@ outer:
 				}
 				if strings.Contains(impPath, "github.com/brokenbots/criteria/sdk/adapterhost") &&
 					strings.Contains(relPath, "testfixtures/") {
-					continue // sdk/adapterhost is permitted only in testfixture plugin binaries
+					continue // sdk/adapterhost is permitted only in testfixture adapter binaries
 				}
 			}
 			if strings.Contains(impPath, r.forbidden) || impPath == strings.TrimSuffix(r.forbidden, "/") {

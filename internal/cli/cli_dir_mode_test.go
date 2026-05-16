@@ -131,10 +131,10 @@ func TestApplyLocal_DirectoryPath(t *testing.T) {
 	adapterPath := filepath.Join(adapterDir, "criteria-adapter-noop")
 	b, err := os.ReadFile(adapterBin)
 	if err != nil {
-		t.Fatalf("read plugin binary: %v", err)
+		t.Fatalf("read adapter binary: %v", err)
 	}
 	if err := os.WriteFile(adapterPath, b, 0o755); err != nil {
-		t.Fatalf("write plugin binary: %v", err)
+		t.Fatalf("write adapter binary: %v", err)
 	}
 
 	t.Setenv("CRITERIA_PLUGINS", adapterDir)
@@ -168,10 +168,10 @@ func TestApplyLocal_FilePathDelegatesToParentDir(t *testing.T) {
 	adapterPath := filepath.Join(adapterDir, "criteria-adapter-noop")
 	b, err := os.ReadFile(adapterBin)
 	if err != nil {
-		t.Fatalf("read plugin binary: %v", err)
+		t.Fatalf("read adapter binary: %v", err)
 	}
 	if err := os.WriteFile(adapterPath, b, 0o755); err != nil {
-		t.Fatalf("write plugin binary: %v", err)
+		t.Fatalf("write adapter binary: %v", err)
 	}
 
 	t.Setenv("CRITERIA_PLUGINS", adapterDir)

@@ -8,7 +8,7 @@ import (
 
 // TestAdapterPluginWireNames verifies that the hard-coded wire-name constants
 // match the names declared in the compiled proto descriptor. A mismatch causes
-// host/plugin negotiation to fail at runtime.
+// host/adapter negotiation to fail at runtime.
 func TestAdapterWireNames(t *testing.T) {
 	svc := pb.File_criteria_v1_adapter_plugin_proto.Services().ByName("AdapterService")
 	if svc == nil {

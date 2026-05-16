@@ -78,9 +78,9 @@ func TestInternalImportsSDKOther_Forbidden(t *testing.T) {
 	}
 }
 
-// TestInternalImportsSDKPluginhost_Clean checks that sdk/adapterhost is allowed
-// from testfixtures/ plugin binary paths within internal/.
-func TestInternalImportsSDKPluginhost_Clean(t *testing.T) {
+// TestInternalImportsSDKAdapterhost_Clean checks that sdk/adapterhost is allowed
+// from testfixtures/ adapter binary paths within internal/.
+func TestInternalImportsSDKAdapterhost_Clean(t *testing.T) {
 	root := tempRepoWith(t, map[string]string{
 		"internal/adapterhost/testfixtures/foo.go": `package foo
 import _ "github.com/brokenbots/criteria/sdk/adapterhost"
@@ -95,9 +95,9 @@ import _ "github.com/brokenbots/criteria/sdk/adapterhost"
 	}
 }
 
-// TestInternalNonFixtureImportsSDKPluginhost_Forbidden checks that sdk/adapterhost
+// TestInternalNonFixtureImportsSDKAdapterhost_Forbidden checks that sdk/adapterhost
 // is forbidden from non-testfixture internal/ code (e.g. production packages).
-func TestInternalNonFixtureImportsSDKPluginhost_Forbidden(t *testing.T) {
+func TestInternalNonFixtureImportsSDKAdapterhost_Forbidden(t *testing.T) {
 	root := tempRepoWith(t, map[string]string{
 		"internal/engine/foo.go": `package foo
 import _ "github.com/brokenbots/criteria/sdk/adapterhost"

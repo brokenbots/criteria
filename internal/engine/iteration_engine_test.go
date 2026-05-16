@@ -1081,7 +1081,7 @@ state "done" {
 	mp := &multiOutcomeAdapter{name: "fake", outcomes: []string{"success", "failure", "success"}}
 	cp := &captureInputAdapter{outcome: "", capture: &capturedInputs}
 	// Wire both: mp for outcome routing, cp for input capture.
-	combined := &combinedPlugin{captureInputAdapter: cp, outcomePlugin: mp}
+	combined := &combinedAdapter{captureInputAdapter: cp, outcomeAdapter: mp}
 	sink := &iterSink{}
 	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": combined}}
 	if err := New(g, loader, sink).Run(context.Background()); err != nil {
@@ -1100,14 +1100,14 @@ state "done" {
 	}
 }
 
-// combinedPlugin wires a captureInputAdapter for input recording and a
+// combinedAdapter wires a captureInputAdapter for input recording and a
 // multiOutcomeAdapter for outcome routing.
-type combinedPlugin struct {
+type combinedAdapter struct {
 	*captureInputAdapter
-	outcomePlugin *multiOutcomeAdapter
+	outcomeAdapter *multiOutcomeAdapter
 }
 
-func (c *combinedPlugin) Execute(ctx context.Context, runID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+func (c *combinedAdapter) Execute(ctx context.Context, runID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
 	// Record input via captureInputAdapter.
 	if c.captureInputAdapter.capture != nil && step != nil {
 		cp := make(map[string]string, len(step.Input))
@@ -1117,7 +1117,7 @@ func (c *combinedPlugin) Execute(ctx context.Context, runID string, step *workfl
 		*c.captureInputAdapter.capture = append(*c.captureInputAdapter.capture, cp)
 	}
 	// Outcome from multiOutcomeAdapter.
-	return c.outcomePlugin.Execute(ctx, runID, step, sink)
+	return c.outcomeAdapter.Execute(ctx, runID, step, sink)
 }
 
 // TestIter_OutputBlocks_OnlyDeclaredVisible verifies that a type="workflow"

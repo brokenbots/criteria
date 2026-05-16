@@ -93,26 +93,26 @@ func (e *throughputEventSink) Log(_ string, chunk []byte) {
 }
 func (e *throughputEventSink) Adapter(string, any) {}
 
-// highLogPlugin calls sink.Log benchEventsPerIter times per Execute call,
+// highLogAdapter calls sink.Log benchEventsPerIter times per Execute call,
 // simulating a shell adapter streaming continuous output.
-type highLogPlugin struct {
+type highLogAdapter struct {
 	name  string
 	chunk []byte
 }
 
-func (p *highLogPlugin) Info(context.Context) (adapterhost.Info, error) {
+func (p *highLogAdapter) Info(context.Context) (adapterhost.Info, error) {
 	return adapterhost.Info{Name: p.name, Version: "bench", Capabilities: []string{"parallel_safe"}}, nil
 }
-func (p *highLogPlugin) OpenSession(context.Context, string, map[string]string) error { return nil }
-func (p *highLogPlugin) Execute(_ context.Context, _ string, _ *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+func (p *highLogAdapter) OpenSession(context.Context, string, map[string]string) error { return nil }
+func (p *highLogAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
 	for i := 0; i < benchEventsPerIter; i++ {
 		sink.Log("stdout", p.chunk)
 	}
 	return adapter.Result{Outcome: "success"}, nil
 }
-func (p *highLogPlugin) Permit(context.Context, string, string, bool, string) error { return nil }
-func (p *highLogPlugin) CloseSession(context.Context, string) error                 { return nil }
-func (p *highLogPlugin) Kill()                                                      {}
+func (p *highLogAdapter) Permit(context.Context, string, string, bool, string) error { return nil }
+func (p *highLogAdapter) CloseSession(context.Context, string) error                 { return nil }
+func (p *highLogAdapter) Kill()                                                      {}
 
 // buildParallelBenchWorkflow compiles a parallel step with n items all using
 // the "fake" adapter. Uses injectDefaultAdapters (same package) to resolve
@@ -283,7 +283,7 @@ func BenchmarkParallelEngine_WithFanIn(b *testing.B) {
 
 	graph := buildParallelBenchWorkflow(b, benchParallelMax)
 	chunk := make([]byte, benchChunkSize)
-	plug := &highLogPlugin{name: "fake", chunk: chunk}
+	plug := &highLogAdapter{name: "fake", chunk: chunk}
 	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": plug}}
 
 	b.ResetTimer()

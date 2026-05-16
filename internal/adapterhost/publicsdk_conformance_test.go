@@ -11,7 +11,7 @@ import (
 	"github.com/brokenbots/criteria/internal/adapter/conformance"
 )
 
-// TestPublicSDKFixtureConformance proves that a plugin built exclusively
+// TestPublicSDKFixtureConformance proves that an adapter built exclusively
 // against sdk/adapterhost (no internal/ reach-through) passes the full adapter
 // conformance harness. This is the golden signal that the public package
 // surface is sufficient for external adapter authors.
@@ -23,7 +23,7 @@ func TestPublicSDKFixtureConformance(t *testing.T) {
 		bin,
 		conformance.Options{
 			// StepConfig with delay_ms enables context_cancellation and step_timeout
-			// sub-tests, proving context propagation works across the plugin subprocess
+			// sub-tests, proving context propagation works across the adapter subprocess
 			// boundary when using only the public sdk/adapterhost surface.
 			StepConfig:      map[string]string{"delay_ms": "0"},
 			AllowedOutcomes: []string{"success", "failure", "needs_review"},

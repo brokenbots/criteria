@@ -11,25 +11,25 @@ import (
 
 func BuiltinFactoryForAdapter(ad adapter.Adapter) BuiltinFactory {
 	return func() Handle {
-		return NewBuiltinAdapterPlugin(ad)
+		return NewBuiltinAdapter(ad)
 	}
 }
 
-func NewBuiltinAdapterPlugin(ad adapter.Adapter) Handle {
-	return &builtinAdapterPlugin{
+func NewBuiltinAdapter(ad adapter.Adapter) Handle {
+	return &builtinAdapter{
 		adapter:  ad,
 		sessions: map[string]map[string]string{},
 	}
 }
 
-type builtinAdapterPlugin struct {
+type builtinAdapter struct {
 	adapter adapter.Adapter
 
 	mu       sync.Mutex
 	sessions map[string]map[string]string
 }
 
-func (p *builtinAdapterPlugin) Info(context.Context) (Info, error) {
+func (p *builtinAdapter) Info(context.Context) (Info, error) {
 	if p.adapter == nil {
 		return Info{}, fmt.Errorf("builtin adapter implementation is nil")
 	}
@@ -42,7 +42,7 @@ func (p *builtinAdapterPlugin) Info(context.Context) (Info, error) {
 	}, nil
 }
 
-func (p *builtinAdapterPlugin) OpenSession(_ context.Context, id string, config map[string]string) error {
+func (p *builtinAdapter) OpenSession(_ context.Context, id string, config map[string]string) error {
 	if p.adapter == nil {
 		return fmt.Errorf("builtin adapter implementation is nil")
 	}
@@ -55,7 +55,7 @@ func (p *builtinAdapterPlugin) OpenSession(_ context.Context, id string, config 
 	return nil
 }
 
-func (p *builtinAdapterPlugin) Execute(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+func (p *builtinAdapter) Execute(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
 	if p.adapter == nil {
 		return adapter.Result{Outcome: "failure"}, fmt.Errorf("builtin adapter implementation is nil")
 	}
@@ -68,15 +68,15 @@ func (p *builtinAdapterPlugin) Execute(ctx context.Context, sessionID string, st
 	return p.adapter.Execute(ctx, step, sink)
 }
 
-func (p *builtinAdapterPlugin) Permit(context.Context, string, string, bool, string) error {
+func (p *builtinAdapter) Permit(context.Context, string, string, bool, string) error {
 	return fmt.Errorf("permission gating is not implemented for builtin adapters")
 }
 
-func (p *builtinAdapterPlugin) CloseSession(_ context.Context, id string) error {
+func (p *builtinAdapter) CloseSession(_ context.Context, id string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	delete(p.sessions, id)
 	return nil
 }
 
-func (p *builtinAdapterPlugin) Kill() {}
+func (p *builtinAdapter) Kill() {}

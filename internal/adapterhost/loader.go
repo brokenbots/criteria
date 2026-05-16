@@ -125,7 +125,7 @@ func (l *DefaultLoader) Resolve(ctx context.Context, name string) (Handle, error
 		// Session and loader shutdown are the only teardown mechanisms.
 		Cmd:              exec.Command(path),
 		AllowedProtocols: []hplugin.Protocol{hplugin.ProtocolGRPC},
-		// 30 s gives plugin binaries enough time to start on loaded CI machines
+		// 30 s gives adapter binaries enough time to start on loaded CI machines
 		// and under the Go race detector, where process scheduling can be delayed
 		// significantly. A typical local start takes well under 1 s.
 		StartTimeout: 30 * time.Second,

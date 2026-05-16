@@ -8,7 +8,7 @@ import (
 
 // TestAdapterPluginWireNames verifies that the hard-coded wire-name constants
 // match the names declared in the compiled proto descriptor. A mismatch causes
-// host/plugin negotiation to fail at runtime.
+// host/adapter negotiation to fail at runtime.
 func TestAdapterWireNames(t *testing.T) {
 	svc := pb.File_criteria_v1_adapter_plugin_proto.Services().ByName("AdapterService")
 	if svc == nil {
@@ -51,7 +51,7 @@ func TestAdapterWireNames(t *testing.T) {
 
 // TestHandshakeConfigValues confirms that the magic cookie constants are
 // consistent with the HandshakeConfig. An accidental edit to one without
-// updating the other would break the host/plugin handshake.
+// updating the other would break the host/adapter handshake.
 func TestHandshakeConfigValues(t *testing.T) {
 	if HandshakeConfig.MagicCookieKey != MagicCookieKey {
 		t.Errorf("HandshakeConfig.MagicCookieKey = %q; want %q", HandshakeConfig.MagicCookieKey, MagicCookieKey)
@@ -66,7 +66,7 @@ func TestHandshakeConfigValues(t *testing.T) {
 
 // TestGRPCServerNilImpl confirms that calling GRPCServer with a nil Impl
 // returns an error rather than panicking. This guard prevents a subtle
-// misconfigured-plugin failure mode.
+// misconfigured-adapter failure mode.
 func TestGRPCServerNilImpl(t *testing.T) {
 	p := &grpcAdapter{Impl: nil}
 	err := p.GRPCServer(nil, nil)

@@ -285,7 +285,7 @@ policy { max_total_steps = 3 }`)
 	}
 }
 
-func TestEngineLifecycleWithNoopPlugin(t *testing.T) {
+func TestEngineLifecycleWithNoopAdapter(t *testing.T) {
 	adapterBin := buildNoopAdapter(t)
 	loader := adapterhost.NewLoaderWithDiscovery(func(string) (string, error) {
 		return adapterBin, nil
@@ -750,7 +750,7 @@ policy {
   max_total_steps  = 1000
   max_step_retries = 3
 }`)
-	// Plugin that always errors so the retry loop is exercised.
+	// Adapter that always errors so the retry loop is exercised.
 	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": &errAdapter{name: "fake", err: errors.New("boom")}}}
 	sink := &fakeSink{}
 	err := NewTestEngine(g, loader, sink).Run(context.Background())
