@@ -1,8 +1,10 @@
 package criteriav2_test
 
 import (
+	"encoding/json"
 	"testing"
 
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protodesc"
 	"google.golang.org/protobuf/reflect/protoreflect"
@@ -365,30 +367,94 @@ func TestInspectResponse_RoundTrip(t *testing.T) {
 }
 
 // ─── Chunked payload round-trips ─────────────────────────────────────────────
+//
+// These tests prove the full on-wire chunking contract: typed payloads are
+// serialised to JSON bytes, split into fragments, each fragment is proto-
+// marshalled and unmarshalled as a real stream message, and the original typed
+// value is reconstructable from those messages alone.
 
-func TestAdapterEvent_WithChunk_RoundTrip(t *testing.T) {
-	msg := &criteriav2.ExecuteEvent{
-		Event: &criteriav2.ExecuteEvent_Adapter{
-			Adapter: &criteriav2.AdapterEvent{
-				EventKind: "thought",
-				Chunk:     &criteriav2.Chunk{Seq: 1, Total: 3, Final: false},
-			},
-		},
+// TestAdapterEvent_ChunkedPayload_FullRoundTrip proves the end-to-end chunked
+// encoding for AdapterEvent.payload_json: marshal → split → proto round-trip
+// each fragment → join → unmarshal back to Struct.
+func TestAdapterEvent_ChunkedPayload_FullRoundTrip(t *testing.T) {
+	originalPayload, err := structpb.NewStruct(map[string]interface{}{
+		"model":   "gpt-4",
+		"tokens":  float64(42),
+		"choices": []interface{}{"a", "b", "c"},
+	})
+	require.NoError(t, err)
+
+	payloadJSON, err := protojson.Marshal(originalPayload)
+	require.NoError(t, err)
+
+	// Use a tiny chunk size to force multiple fragments.
+	const chunkSize = 20
+	base := &criteriav2.AdapterEvent{
+		EventKind: "model.response",
+		EmittedAt: timestamppb.Now(),
 	}
-	got := roundTrip(t, msg)
-	assert.True(t, proto.Equal(msg, got))
-	assert.Equal(t, uint32(1), got.GetAdapter().Chunk.Seq)
-	assert.Equal(t, uint32(3), got.GetAdapter().Chunk.Total)
+	fragments := criteriav2.ChunkAdapterEventPayload(base, payloadJSON, chunkSize)
+	require.Greater(t, len(fragments), 1, "payload must be split into multiple fragments")
+
+	// proto.Marshal / proto.Unmarshal each fragment as it would arrive on the stream.
+	reconstituted := make([]*criteriav2.AdapterEvent, len(fragments))
+	for i, frag := range fragments {
+		b, merr := proto.Marshal(frag)
+		require.NoError(t, merr)
+		var decoded criteriav2.AdapterEvent
+		require.NoError(t, proto.Unmarshal(b, &decoded))
+		assert.NotNil(t, decoded.Chunk, "fragment[%d] must carry Chunk metadata", i)
+		assert.Equal(t, base.EventKind, decoded.EventKind)
+		assert.Nil(t, decoded.Payload, "payload must be nil on chunked fragment")
+		reconstituted[i] = &decoded
+	}
+
+	// Reassemble from the reconstituted proto messages alone.
+	joined, jerr := criteriav2.JoinAdapterEventPayload(reconstituted)
+	require.NoError(t, jerr)
+
+	var gotPayload structpb.Struct
+	require.NoError(t, protojson.Unmarshal(joined, &gotPayload))
+	assert.True(t, proto.Equal(originalPayload, &gotPayload))
 }
 
-func TestExecuteResult_WithChunk_RoundTrip(t *testing.T) {
-	msg := &criteriav2.ExecuteResult{
-		Outcome: "success",
-		Chunk:   &criteriav2.Chunk{Seq: 0, Total: 1, Final: true},
+// TestExecuteResult_ChunkedOutputs_FullRoundTrip proves the end-to-end chunked
+// encoding for ExecuteResult.outputs_json: marshal → split → proto round-trip
+// each fragment → join → unmarshal back to map[string]string.
+func TestExecuteResult_ChunkedOutputs_FullRoundTrip(t *testing.T) {
+	originalOutputs := map[string]string{
+		"result":   "some-long-result-value",
+		"artifact": "another-output-value",
+		"summary":  "a third output",
 	}
-	got := roundTrip(t, msg)
-	assert.True(t, proto.Equal(msg, got))
-	assert.True(t, got.Chunk.Final)
+	outputsJSON, err := json.Marshal(originalOutputs)
+	require.NoError(t, err)
+
+	const chunkSize = 15
+	base := &criteriav2.ExecuteResult{Outcome: "success"}
+	fragments := criteriav2.ChunkExecuteResultOutputs(base, outputsJSON, chunkSize)
+	require.Greater(t, len(fragments), 1, "outputs must be split into multiple fragments")
+
+	// proto.Marshal / proto.Unmarshal each fragment.
+	reconstituted := make([]*criteriav2.ExecuteResult, len(fragments))
+	for i, frag := range fragments {
+		b, merr := proto.Marshal(frag)
+		require.NoError(t, merr)
+		var decoded criteriav2.ExecuteResult
+		require.NoError(t, proto.Unmarshal(b, &decoded))
+		assert.NotNil(t, decoded.Chunk, "fragment[%d] must carry Chunk metadata", i)
+		assert.Equal(t, base.Outcome, decoded.Outcome)
+		assert.Nil(t, decoded.Outputs, "outputs must be nil on chunked fragment")
+		reconstituted[i] = &decoded
+	}
+
+	// Reassemble from the reconstituted proto messages alone.
+	joined, jerr := criteriav2.JoinExecuteResultOutputs(reconstituted)
+	require.NoError(t, jerr)
+
+	var gotOutputs map[string]string
+	require.NoError(t, json.Unmarshal(joined, &gotOutputs))
+	assert.Equal(t, originalOutputs, gotOutputs)
 }
 
 func TestOpenSessionRequest_WithChunk_RoundTrip(t *testing.T) {
@@ -437,13 +503,15 @@ func TestChunkedProtocol_NegotiationAndSplit(t *testing.T) {
 	}
 	assert.Equal(t, payload, reassembled)
 
-	// Wrap in an AdapterEvent and verify proto round-trip preserves chunk metadata.
+	// Wrap the first fragment in an AdapterEvent and verify proto round-trip.
 	event := &criteriav2.AdapterEvent{
-		EventKind: "data",
-		Chunk:     chunks[0],
+		EventKind:   "data",
+		Chunk:       chunks[0],
+		PayloadJson: payloads[0],
 	}
 	got := roundTrip(t, event)
 	assert.True(t, proto.Equal(event, got))
+	assert.Equal(t, payloads[0], got.PayloadJson)
 }
 
 // TestReservedFields_OpenSessionRequest verifies the reserved range in
