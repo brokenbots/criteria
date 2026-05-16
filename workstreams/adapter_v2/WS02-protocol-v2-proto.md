@@ -588,3 +588,21 @@ Added four new helpers to `chunking.go`:
 - `make proto` — idempotent (no additional diff after re-run).
 - `go vet ./proto/criteria/v2/...` — clean.
 - `goimports -l` — clean on all edited files.
+
+### Review 2026-05-16-06 — approved
+
+#### Summary
+approved. The latest remediation closes the remaining WS02 blocker by defining an explicit on-wire fragment representation for the two structured streaming payloads that were still underspecified: `AdapterEvent.payload` now chunks via `payload_json`, and `ExecuteResult.outputs` now chunks via `outputs_json`. The helper code and tests match that contract, and the stale chunking/heartbeat comments are corrected. The previously documented unary large-payload architecture item remains forward-looking only and no longer blocks this workstream.
+
+#### Plan Adherence
+- Step 3 / D78 now matches the updated workstream contract. All three streaming payload surfaces named by WS02 have a representable chunking story on the wire: `LogEvent.line` carries partial line text directly, while `AdapterEvent` and `ExecuteResult` carry fragment bytes in explicit `*_json` fields when `chunk` is present.
+- Steps 4 and 5 remain satisfied: the generated v2 bindings are in tree and the generated-file set stays within the allowed scope.
+- Step 6 is now satisfied at the intended level. The chunking tests no longer stop at metadata; they exercise real protobuf messages and reconstruct the original typed payloads from the fragment messages alone.
+
+#### Test Intent Assessment
+The new tests are materially stronger than the prior metadata-only coverage. `TestAdapterEvent_ChunkedPayload_FullRoundTrip` and `TestExecuteResult_ChunkedOutputs_FullRoundTrip` each build a real typed value, serialize it, split it into fragments, round-trip every fragment through `proto.Marshal` / `proto.Unmarshal`, join the fragment bytes back together, and unmarshal into the original typed form. They also assert that the typed fields are nil on chunked fragments, which proves the intended wire contract rather than merely exercising helper plumbing.
+
+#### Validation Performed
+- `make ci` — passed.
+- `go test ./proto/criteria/v2 -run 'TestAdapterEvent_ChunkedPayload_FullRoundTrip|TestExecuteResult_ChunkedOutputs_FullRoundTrip|TestChunkedProtocol_NegotiationAndSplit'` — passed.
+- `go vet ./proto/criteria/v2/...` — passed.
