@@ -126,6 +126,14 @@ func (l *DefaultLoader) LocalSocketDialer(ctx context.Context, socketPath string
 
 Unit test with a fake adapter binary that listens on a UDS — exercises both the reattach handshake and the typed dispatch.
 
+**Socket security contract (S3.4).** The dialer's caller (this WS for the local case; WS20 for the remote shim) is responsible for:
+
+- Creating the socket file in a host-only temp directory (`os.MkdirTemp("", "criteria-adapter-*")` with mode `0o700`, never `/tmp/<predictable>`).
+- Setting the socket file's mode to `0o600` after `net.Listen("unix", ...)` returns (chmod the file path; `Listen` does not let you pass a mode).
+- Cleaning up the directory and socket file when the session closes, including on panic (use `defer` + recover-aware cleanup).
+
+`LocalSocketDialer` itself does not create the socket — it consumes one. The dialer documents this contract in its godoc so WS20 inherits the same rules. A helper `NewHostOnlyUDSSocket() (path string, cleanup func(), err error)` lives next to the dialer for both this WS's tests and WS20's shim to use.
+
 ### Step 5 — Update `Session` to use v2
 
 In `internal/adapter/sessions.go`:

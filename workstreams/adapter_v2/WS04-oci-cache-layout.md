@@ -47,6 +47,23 @@ func (l *Layout) Lock() (release func(), err error)                       // flo
 
 The lock uses `golang.org/x/sys/unix` flock on Linux/macOS. Windows-later: replaced by a portable equivalent — leave a TODO comment.
 
+**Per-artifact protocol-version annotation (S3.3).** When the puller writes a manifest reference into `index.json`, it sets two OCI annotations on the descriptor so the loader can discriminate cached artifacts by protocol version without re-parsing `adapter.yaml`:
+
+```
+dev.criteria.adapter.protocol_version: "2"
+dev.criteria.adapter.schema_version:   "1"
+```
+
+Annotation keys match WS05's namespace decision (D87). The Layout exposes a typed accessor:
+
+```go
+// ArtifactProtocolVersion returns the sdk_protocol_version annotation on the
+// descriptor for `d`, or 0 if absent (treat as "unknown — re-read adapter.yaml").
+func (l *Layout) ArtifactProtocolVersion(d digest.Digest) uint32
+```
+
+The host loader (WS03, WS08 wiring) consults this on every load and refuses any artifact whose protocol version is outside the host's supported range. This means a host upgrade that introduces protocol v3 alongside v2 can coexist with a cache mixing both versions — no cache wipe required.
+
 ### Step 2 — Reference parser
 
 Create `internal/adapter/oci/reference.go`:
