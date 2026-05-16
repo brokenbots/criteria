@@ -91,7 +91,7 @@ state "done" {
 
 	sink := &fakeSink{}
 	plug := &sharedWritesPlugin{outcome: "success", outputs: map[string]string{"count_val": "7"}}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"sw": plug}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"sw": plug}}
 
 	eng := NewTestEngine(g, loader, sink)
 	require.NoError(t, eng.Run(context.Background()))
@@ -158,7 +158,7 @@ state "done" {
 			return adapter.Result{Outcome: "success"}, nil
 		},
 	}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"sw": plug}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"sw": plug}}
 
 	eng := NewTestEngine(g, loader, capturedSink)
 	require.NoError(t, eng.Run(context.Background()))
@@ -208,7 +208,7 @@ state "done" {
 	sink := &fakeSink{}
 	// Plugin returns "success" but WITHOUT "nonexistent_key" in outputs
 	plug := &sharedWritesPlugin{outcome: "success", outputs: map[string]string{"other_key": "val"}}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"sw": plug}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"sw": plug}}
 
 	eng := NewTestEngine(g, loader, sink)
 	err := eng.Run(context.Background())
@@ -218,7 +218,7 @@ state "done" {
 
 // TestSharedWrites_TypeMismatchAtRuntime verifies that writing an incompatible
 // type value to a shared_variable fails the run with a clear type error.
-// shared_writes maps "counter" (type=number) to output key "val". The plugin
+// shared_writes maps "counter" (type=number) to output key "val". The adapter
 // returns val="not-a-number" (a string). Since rawOutputs produce cty.String
 // values, Store.Set will reject the type mismatch.
 func TestSharedWrites_TypeMismatchAtRuntime(t *testing.T) {
@@ -255,7 +255,7 @@ state "done" {
 
 	sink := &fakeSink{}
 	plug := &sharedWritesPlugin{outcome: "success", outputs: map[string]string{"val": "not-a-number"}}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"sw": plug}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"sw": plug}}
 
 	eng := NewTestEngine(g, loader, sink)
 	err := eng.Run(context.Background())
@@ -330,7 +330,7 @@ state "done" {
 			return adapter.Result{Outcome: "success"}, nil
 		},
 	}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"sw": plug}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"sw": plug}}
 
 	eng := NewTestEngine(g, loader, capturedSink)
 	require.NoError(t, eng.Run(context.Background()))
@@ -379,7 +379,7 @@ state "done" {
 
 	capturedSink := &outputCaptureSink{}
 	plug := &sharedWritesPlugin{outcome: "success", outputs: map[string]string{}}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"sw": plug}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"sw": plug}}
 
 	eng := NewTestEngine(g, loader, capturedSink)
 	require.NoError(t, eng.Run(context.Background()))
@@ -453,7 +453,7 @@ state "done" {
 			return adapter.Result{Outcome: "success"}, nil
 		},
 	}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"sw": plug}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"sw": plug}}
 
 	eng := NewTestEngine(g, loader, capturedSink)
 	require.NoError(t, eng.Run(context.Background()))
@@ -515,7 +515,7 @@ state "done" {
 
 	capturedSink := &outputCaptureSink{}
 	plug := &sharedWritesPlugin{outcome: "success", outputs: map[string]string{}}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"sw": plug}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"sw": plug}}
 
 	eng := NewTestEngine(g, loader, capturedSink)
 	require.NoError(t, eng.Run(context.Background()))

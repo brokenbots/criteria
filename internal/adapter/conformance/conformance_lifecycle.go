@@ -24,7 +24,7 @@ func testCancel(t *testing.T, name string, factory targetFactory, opts *Options)
 		t.Skip("cancellation test skipped: no long-running config available")
 	}
 	target := factory(t)
-	if !isPluginTarget(target) {
+	if !isAdapterTarget(target) {
 		defer goleak.VerifyNone(t)
 	}
 	step := baseStep(name, target.Name(), cfg)
@@ -63,7 +63,7 @@ func testTimeout(t *testing.T, name string, factory targetFactory, opts *Options
 		t.Skip("timeout test skipped: no long-running config available")
 	}
 	target := factory(t)
-	if !isPluginTarget(target) {
+	if !isAdapterTarget(target) {
 		defer goleak.VerifyNone(t)
 	}
 	step := baseStep(name, target.Name(), cfg)
@@ -112,13 +112,13 @@ func testSessionLifecycle(t *testing.T, name string, loader adapterhost.Loader, 
 	}
 
 	step := baseStep(name, info.Name, opts.StepConfig)
-	res1, err := executeNoPanic(t, pluginSessionTarget{handle: plug, sessionID: sessionID, name: info.Name}, context.Background(), step, &recordingSink{})
+	res1, err := executeNoPanic(t, adapterSessionTarget{handle: plug, sessionID: sessionID, name: info.Name}, context.Background(), step, &recordingSink{})
 	if err != nil {
 		t.Fatalf("first execute: %v", err)
 	}
 	assertValidOutcome(t, res1.Outcome, opts)
 
-	res2, err := executeNoPanic(t, pluginSessionTarget{handle: plug, sessionID: sessionID, name: info.Name}, context.Background(), step, &recordingSink{})
+	res2, err := executeNoPanic(t, adapterSessionTarget{handle: plug, sessionID: sessionID, name: info.Name}, context.Background(), step, &recordingSink{})
 	if err != nil {
 		t.Fatalf("second execute: %v", err)
 	}
@@ -128,7 +128,7 @@ func testSessionLifecycle(t *testing.T, name string, loader adapterhost.Loader, 
 		t.Fatalf("close session: %v", err)
 	}
 
-	_, err = executeNoPanic(t, pluginSessionTarget{handle: plug, sessionID: sessionID, name: info.Name}, context.Background(), step, &recordingSink{})
+	_, err = executeNoPanic(t, adapterSessionTarget{handle: plug, sessionID: sessionID, name: info.Name}, context.Background(), step, &recordingSink{})
 	if err == nil {
 		t.Fatal("expected execute on closed session to fail")
 	}
@@ -172,8 +172,8 @@ func testConcurrentSessions(t *testing.T, name string, loader adapterhost.Loader
 		_ = plugB.CloseSession(context.Background(), sessionB)
 	}()
 
-	targetA := pluginSessionTarget{handle: plugA, sessionID: sessionA, name: info.Name}
-	targetB := pluginSessionTarget{handle: plugB, sessionID: sessionB, name: info.Name}
+	targetA := adapterSessionTarget{handle: plugA, sessionID: sessionA, name: info.Name}
+	targetB := adapterSessionTarget{handle: plugB, sessionID: sessionB, name: info.Name}
 
 	stepConfigA := cloneConfig(opts.StepConfig)
 	stepConfigA["conformance_session_marker"] = sessionA
@@ -238,7 +238,7 @@ func testSessionCrashDetection(t *testing.T, name string, loader adapterhost.Loa
 		_ = plug.CloseSession(context.Background(), sessionID)
 	}()
 
-	target := pluginSessionTarget{handle: plug, sessionID: sessionID, name: info.Name}
+	target := adapterSessionTarget{handle: plug, sessionID: sessionID, name: info.Name}
 	step := baseStep(name, info.Name, opts.StepConfig)
 	if _, err := executeNoPanic(t, target, context.Background(), step, &recordingSink{}); err != nil {
 		t.Fatalf("initial execute before crash: %v", err)

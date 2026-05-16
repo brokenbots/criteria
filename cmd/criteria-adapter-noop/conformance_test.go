@@ -9,12 +9,12 @@ import (
 	"github.com/brokenbots/criteria/internal/adapter/conformance"
 )
 
-func TestNoopPluginConformance(t *testing.T) {
-	pluginBin := buildNoopPlugin(t)
+func TestNoopAdapterConformance(t *testing.T) {
+	adapterBin := buildNoopAdapter(t)
 	conformance.RunAdapter(
 		t,
 		"noop",
-		pluginBin,
+		adapterBin,
 		conformance.Options{
 			StepConfig:      map[string]string{"prompt": "hello", "delay_ms": "10"},
 			AllowedOutcomes: []string{"success", "failure", "needs_review"},
@@ -22,7 +22,7 @@ func TestNoopPluginConformance(t *testing.T) {
 	)
 }
 
-func buildNoopPlugin(t *testing.T) string {
+func buildNoopAdapter(t *testing.T) string {
 	t.Helper()
 
 	_, file, _, ok := runtime.Caller(0)
@@ -30,13 +30,13 @@ func buildNoopPlugin(t *testing.T) string {
 		t.Fatal("resolve caller path")
 	}
 	moduleRoot := filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
-	pluginBin := filepath.Join(t.TempDir(), "criteria-adapter-noop")
+	adapterBin := filepath.Join(t.TempDir(), "criteria-adapter-noop")
 
-	cmd := exec.Command("go", "build", "-o", pluginBin, "./cmd/criteria-adapter-noop")
+	cmd := exec.Command("go", "build", "-o", adapterBin, "./cmd/criteria-adapter-noop")
 	cmd.Dir = moduleRoot
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("build noop plugin: %v\n%s", err, string(output))
+		t.Fatalf("build noop adapter: %v\n%s", err, string(output))
 	}
-	return pluginBin
+	return adapterBin
 }

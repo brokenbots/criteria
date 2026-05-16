@@ -29,18 +29,18 @@ func (a adapterTarget) Execute(ctx context.Context, step *workflow.StepNode, sin
 	return a.impl.Execute(ctx, step, sink)
 }
 
-// pluginSessionTarget wraps a adapterhost.Handle + session ID for use as an executeTarget.
-type pluginSessionTarget struct {
+// adapterSessionTarget wraps a adapterhost.Handle + session ID for use as an executeTarget.
+type adapterSessionTarget struct {
 	handle    adapterhost.Handle
 	sessionID string
 	name      string
 }
 
-func (p pluginSessionTarget) Name() string {
+func (p adapterSessionTarget) Name() string {
 	return p.name
 }
 
-func (p pluginSessionTarget) Execute(ctx context.Context, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+func (p adapterSessionTarget) Execute(ctx context.Context, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
 	return p.handle.Execute(ctx, p.sessionID, step, sink)
 }
 

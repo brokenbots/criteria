@@ -135,8 +135,8 @@ state "done" {
 
 	var captured []map[string]string
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{
-		"fake": &captureInputPlugin{outcome: "success", capture: &captured},
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{
+		"fake": &captureInputAdapter{outcome: "success", capture: &captured},
 	}}
 	if err := New(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
@@ -209,12 +209,12 @@ state "done" {
 }`)
 
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{
-		"fake_producer": &captureOutputPlugin{
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{
+		"fake_producer": &captureOutputAdapter{
 			outcomes: []string{"success"},
 			outputs:  []map[string]string{{"result": "body-only-output"}},
 		},
-		"fake_consumer": &captureInputPlugin{outcome: "success", capture: &[]map[string]string{}},
+		"fake_consumer": &captureInputAdapter{outcome: "success", capture: &[]map[string]string{}},
 	}}
 
 	err := New(g, loader, sink).Run(context.Background())
@@ -226,7 +226,7 @@ state "done" {
 // TestRunWorkflowBody_OutputUsesChildStepsScope verifies that output{} block
 // expressions in a type="workflow" step are evaluated against the body's final
 // variable scope (childFinalVars), so that references to `steps.<body_step>.*`
-// resolve correctly. This test uses a plugin that returns a known output value
+// resolve correctly. This test uses a adapter that returns a known output value
 // from the body step, then checks that the outer step accumulates it via the
 // output{} block.
 func TestRunWorkflowBody_OutputUsesChildStepsScope(t *testing.T) {
@@ -272,12 +272,12 @@ state "done" {
 	// Body step "inner" returns output "result" = "child-output".
 	var consumeCapture []map[string]string
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{
-		"fake_producer": &captureOutputPlugin{
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{
+		"fake_producer": &captureOutputAdapter{
 			outcomes: []string{"success"},
 			outputs:  []map[string]string{{"result": "child-output"}},
 		},
-		"fake_consumer": &captureInputPlugin{outcome: "success", capture: &consumeCapture},
+		"fake_consumer": &captureInputAdapter{outcome: "success", capture: &consumeCapture},
 	}}
 	if err := New(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
@@ -337,8 +337,8 @@ state "done" {
 }`)
 
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{
-		"fake": &fakePlugin{name: "fake", outcome: "success"},
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{
+		"fake": &fakeAdapter{name: "fake", outcome: "success"},
 	}}
 
 	err := New(g, loader, sink).Run(context.Background())
@@ -382,11 +382,11 @@ state "done" {
   success  = true
 }`)
 
-	bodyTracker := &lifecycleTrackingPlugin{
-		fakePlugin: fakePlugin{name: "noop", outcome: "success"},
+	bodyTracker := &lifecycleTrackingAdapter{
+		fakeAdapter: fakeAdapter{name: "noop", outcome: "success"},
 	}
 
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{
 		"noop": bodyTracker,
 	}}
 
@@ -458,14 +458,14 @@ state "done" {
 }`)
 
 	// We'll use two separate plugins to track each adapter's lifecycle independently
-	adapterA := &lifecycleTrackingPlugin{
-		fakePlugin: fakePlugin{name: "noop_a", outcome: "success"},
+	adapterA := &lifecycleTrackingAdapter{
+		fakeAdapter: fakeAdapter{name: "noop_a", outcome: "success"},
 	}
-	adapterB := &lifecycleTrackingPlugin{
-		fakePlugin: fakePlugin{name: "noop_b", outcome: "success"},
+	adapterB := &lifecycleTrackingAdapter{
+		fakeAdapter: fakeAdapter{name: "noop_b", outcome: "success"},
 	}
 
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{
 		"noop_a": adapterA,
 		"noop_b": adapterB,
 	}}

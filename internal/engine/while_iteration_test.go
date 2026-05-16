@@ -3,7 +3,7 @@ package engine
 // while_iteration_test.go — engine-level tests for the while step modifier.
 //
 // Tests use the same helpers as iteration_engine_test.go: compile(), iterSink,
-// fakePlugin, multiOutcomePlugin, captureInputPlugin, fakeLoader.
+// fakeAdapter, multiOutcomeAdapter, captureInputAdapter, fakeLoader.
 
 import (
 	"context"
@@ -38,8 +38,8 @@ state "done" {
   success  = true
 }`)
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{
-		"fake": &fakePlugin{name: "fake", outcome: "success"},
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{
+		"fake": &fakeAdapter{name: "fake", outcome: "success"},
 	}}
 	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
@@ -112,7 +112,7 @@ state "done" {
 	}}
 
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": plug}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": plug}}
 	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -187,7 +187,7 @@ state "done" {
 	}}
 
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": plug}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": plug}}
 	_ = NewTestEngine(g, loader, sink).Run(context.Background())
 
 	// Check that each captured input has the exact iteration index.
@@ -249,7 +249,7 @@ state "done" {
 		return adapter.Result{Outcome: "success"}, nil
 	}}
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": plug}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": plug}}
 	_ = NewTestEngine(g, loader, sink).Run(context.Background())
 
 	if len(capturedInputs) == 0 {
@@ -286,9 +286,9 @@ state "done" {
   success  = true
 }`)
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{
 		// First call fails; second would succeed but should not be reached.
-		"fake": &multiOutcomePlugin{name: "fake", outcomes: []string{"failure", "success"}},
+		"fake": &multiOutcomeAdapter{name: "fake", outcomes: []string{"failure", "success"}},
 	}}
 	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
@@ -365,7 +365,7 @@ state "done" {
 	}}
 
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": plug}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": plug}}
 	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -439,7 +439,7 @@ state "done" {
 	}}
 
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": plug}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": plug}}
 	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -494,7 +494,7 @@ state "done" {
 	}}
 
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": plug}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": plug}}
 	eng := New(g, loader, sink, WithResumedIter(resumeStack))
 	if err := eng.RunFrom(context.Background(), "loop", 1); err != nil {
 		t.Fatalf("run: %v", err)
@@ -574,8 +574,8 @@ state "failed" {
   success  = false
 }`)
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{
-		"fake": &fakePlugin{name: "fake", outcome: "success"},
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{
+		"fake": &fakeAdapter{name: "fake", outcome: "success"},
 	}}
 	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
@@ -643,7 +643,7 @@ state "done" {
 	}}
 
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": plug}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": plug}}
 	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -714,7 +714,7 @@ state "done" {
 		return adapter.Result{Outcome: "success"}, nil
 	}}
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": plug}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": plug}}
 	err := NewTestEngine(g, loader, sink).Run(context.Background())
 	if err != nil {
 		if !strings.Contains(err.Error(), "max_visits") {
@@ -767,7 +767,7 @@ state "done" {
 		return adapter.Result{Outcome: "success"}, nil
 	}}
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": plug}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": plug}}
 	err := NewTestEngine(g, loader, sink).Run(context.Background())
 	if err == nil {
 		t.Fatal("expected error for max_total_steps exceeded, got nil")
@@ -776,7 +776,7 @@ state "done" {
 		t.Errorf("error = %q; want mention of 'max_total_steps'", err.Error())
 	}
 	if call != 3 {
-		t.Errorf("plugin calls: got %d want 3", call)
+		t.Errorf("adapter calls: got %d want 3", call)
 	}
 }
 
@@ -820,7 +820,7 @@ state "done" {
 		return adapter.Result{}, ctx.Err()
 	}}
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": plug}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": plug}}
 	err := NewTestEngine(g, loader, sink).Run(context.Background())
 	if err != nil {
 		t.Fatalf("run: %v (want nil: timeout should abort loop, not crash run)", err)
@@ -879,13 +879,13 @@ state "done" {
 		return adapter.Result{Outcome: "success"}, nil
 	}}
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": plug}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": plug}}
 	err := NewTestEngine(g, loader, sink).Run(context.Background())
 	if err != nil {
 		t.Fatalf("run: %v (want nil: default on_failure should not abort loop)", err)
 	}
 	if call != 3 {
-		t.Errorf("plugin calls: got %d want 3 (loop must not abort on first execErr)", call)
+		t.Errorf("adapter calls: got %d want 3 (loop must not abort on first execErr)", call)
 	}
 	if sink.terminal != "done" || !sink.terminalOK {
 		t.Errorf("terminal: %q ok=%v, want done/true", sink.terminal, sink.terminalOK)
@@ -937,7 +937,7 @@ func TestWhile_Subworkflow_Success(t *testing.T) {
 		return adapter.Result{Outcome: "success"}, nil
 	}}
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": plug}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": plug}}
 	err := NewTestEngine(parentGraph, loader, sink).Run(context.Background())
 	if err != nil {
 		t.Fatalf("run: %v", err)
@@ -946,7 +946,7 @@ func TestWhile_Subworkflow_Success(t *testing.T) {
 		t.Errorf("terminal: %q ok=%v", sink.terminal, sink.terminalOK)
 	}
 	if call != 3 {
-		t.Errorf("callee plugin calls: got %d want 3", call)
+		t.Errorf("callee adapter calls: got %d want 3", call)
 	}
 	if len(sink.iterationsCompleted) != 1 {
 		t.Fatalf("iterations completed: got %d want 1", len(sink.iterationsCompleted))
@@ -994,7 +994,7 @@ func TestWhile_Subworkflow_FailureAborts(t *testing.T) {
 		return adapter.Result{}, fmt.Errorf("callee failure")
 	}}
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": plug}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": plug}}
 	err := NewTestEngine(parentGraph, loader, sink).Run(context.Background())
 	if err != nil {
 		t.Fatalf("run: %v (want nil: abort should not propagate callee error)", err)
@@ -1003,7 +1003,7 @@ func TestWhile_Subworkflow_FailureAborts(t *testing.T) {
 		t.Errorf("terminal: %q ok=%v", sink.terminal, sink.terminalOK)
 	}
 	if call != 1 {
-		t.Errorf("callee plugin calls: got %d want 1 (abort after first failure)", call)
+		t.Errorf("callee adapter calls: got %d want 1 (abort after first failure)", call)
 	}
 	if len(sink.iterationsCompleted) != 1 {
 		t.Fatalf("iterations completed: got %d want 1", len(sink.iterationsCompleted))

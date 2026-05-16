@@ -9,7 +9,7 @@ import (
 	"github.com/brokenbots/criteria/workflow"
 )
 
-// benchEventSink discards all plugin events during benchmarks.
+// benchEventSink discards all adapter events during benchmarks.
 type benchEventSink struct{}
 
 func (benchEventSink) Log(string, []byte)  {}
@@ -18,8 +18,8 @@ func (benchEventSink) Adapter(string, any) {}
 var _ adapter.EventSink = benchEventSink{}
 
 // noopAdapter is an in-process adapter that returns "success" immediately
-// without spawning any subprocess. It lets BenchmarkPluginExecuteNoop
-// measure pure plugin-dispatch overhead.
+// without spawning any subprocess. It lets BenchmarkAdapterExecuteNoop
+// measure pure adapter-dispatch overhead.
 type noopAdapter struct{}
 
 func (noopAdapter) Name() string               { return "noop" }
@@ -40,10 +40,10 @@ func minimalStep(name string) *workflow.StepNode {
 	}
 }
 
-// BenchmarkBuiltinPlugin_Execute measures the full per-step dispatch cost
-// (OpenSession → Execute → CloseSession) through the shell builtin plugin.
+// BenchmarkBuiltinAdapter_Execute measures the full per-step dispatch cost
+// (OpenSession → Execute → CloseSession) through the shell builtin adapter.
 // Subprocess spawn dominates the ~18 ms cost.
-func BenchmarkBuiltinPlugin_Execute(b *testing.B) {
+func BenchmarkBuiltinAdapter_Execute(b *testing.B) {
 	factory := BuiltinFactoryForAdapter(shell.New())
 	ctx := context.Background()
 	step := minimalStep("bench-step")
@@ -63,10 +63,10 @@ func BenchmarkBuiltinPlugin_Execute(b *testing.B) {
 	}
 }
 
-// BenchmarkPluginExecuteNoop measures pure Execute throughput with an
+// BenchmarkAdapterExecuteNoop measures pure Execute throughput with an
 // in-process noop adapter. The session is opened once before b.ResetTimer()
 // so each iteration measures only dispatch overhead without session setup cost.
-func BenchmarkPluginExecuteNoop(b *testing.B) {
+func BenchmarkAdapterExecuteNoop(b *testing.B) {
 	factory := BuiltinFactoryForAdapter(noopAdapter{})
 	ctx := context.Background()
 	step := &workflow.StepNode{
@@ -89,9 +89,9 @@ func BenchmarkPluginExecuteNoop(b *testing.B) {
 	}
 }
 
-// BenchmarkBuiltinPlugin_Info measures the Info() call overhead — called
+// BenchmarkBuiltinAdapter_Info measures the Info() call overhead — called
 // during schema collection before every workflow execution.
-func BenchmarkBuiltinPlugin_Info(b *testing.B) {
+func BenchmarkBuiltinAdapter_Info(b *testing.B) {
 	factory := BuiltinFactoryForAdapter(shell.New())
 	p := factory()
 	ctx := context.Background()

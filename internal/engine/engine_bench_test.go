@@ -94,8 +94,8 @@ func buildNStepWorkflow(b *testing.B, n int) *workflow.FSMGraph {
 func runBenchEngine(b *testing.B, graph *workflow.FSMGraph) {
 	b.Helper()
 	loader := &fakeLoader{
-		plugins: map[string]adapterhost.Handle{
-			"fake": &fakePlugin{name: "fake", outcome: "success"},
+		adapters: map[string]adapterhost.Handle{
+			"fake": &fakeAdapter{name: "fake", outcome: "success"},
 		},
 	}
 	sink := benchSink{}

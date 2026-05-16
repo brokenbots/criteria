@@ -1,21 +1,21 @@
-# Plugins and Adapter Workflows
+# Adapters
 
 For containerized execution, see [docs/runtime/docker.md](runtime/docker.md).
 
 This document is the reference for running adapter-backed workflows with Criteria. For the full workflow language reference (variables, step outputs, branching, iteration, wait nodes, approval gates), see [workflow.md](workflow.md).
 
-## What Plugins Are
+## What Adapters Are
 
-A Criteria plugin is an out-of-process binary named `criteria-adapter-<name>`. Criteria discovers plugins in this order:
+A Criteria adapter is an out-of-process binary named `criteria-adapter-<name>`. Criteria discovers adapters in this order:
 
 1. `${CRITERIA_PLUGINS}/criteria-adapter-<name>`
 2. `~/.criteria/plugins/criteria-adapter-<name>`
 
-Criteria does not look on `PATH`. The host starts the plugin with HashiCorp `go-plugin`; the plugin then speaks the shared gRPC adapter protocol over a local transport. The binary stays outside the Criteria process boundary, so adapter-specific runtime failures are isolated from the engine.
+Criteria does not look on `PATH`. The host starts the adapter with HashiCorp `go-plugin`; the adapter then speaks the shared gRPC adapter protocol over a local transport. The binary stays outside the Criteria process boundary, so adapter-specific runtime failures are isolated from the engine.
 
-The first production plugin in this repo is `copilot`, shipped as `bin/criteria-adapter-copilot`.
+The first production adapter in this repo is `copilot`, shipped as `bin/criteria-adapter-copilot`.
 
-## Installing a Plugin
+## Installing an Adapter
 
 Build the repo first:
 
@@ -23,7 +23,7 @@ Build the repo first:
 make build
 ```
 
-Install the plugin by copying the built binary into a plugin directory:
+Install the adapter by copying the built binary into an adapter directory:
 
 ```bash
 mkdir -p ~/.criteria/plugins
@@ -31,7 +31,7 @@ cp bin/criteria-adapter-copilot ~/.criteria/plugins/
 chmod +x ~/.criteria/plugins/criteria-adapter-copilot
 ```
 
-To use a temporary plugin directory instead, point Criteria at it explicitly:
+To use a temporary adapter directory instead, point Criteria at it explicitly:
 
 ```bash
 tmpdir="$(mktemp -d)"
@@ -142,10 +142,10 @@ state "failed" { terminal = true; success = false }
 
 Key points:
 
-- `adapter "copilot" "assistant"` declares a named adapter session. The first label is the plugin type (`copilot`); the second is the instance name (`assistant`). The engine resolves this to the `criteria-adapter-copilot` binary.
+- `adapter "copilot" "assistant"` declares a named adapter session. The first label is the adapter type (`copilot`); the second is the instance name (`assistant`). The engine resolves this to the `criteria-adapter-copilot` binary.
 - `step.target = adapter.copilot.assistant` binds the step to the declared adapter instance. This is a traversal expression, not a string.
 - The session is opened automatically before `ask` runs and closed automatically after it completes (success or failure). No explicit `lifecycle = "open"` or `lifecycle = "close"` steps exist in v0.3.0.
-- For the Copilot plugin, `input.prompt` is the required step-level input. `max_turns` in the `config` block limits conversation turns; see "Outcome finalization" below for how the step outcome is determined.
+- For the Copilot adapter, `input.prompt` is the required step-level input. `max_turns` in the `config` block limits conversation turns; see "Outcome finalization" below for how the step outcome is determined.
 
 See [docs/workflow.md — Adapters](workflow.md#adapters) for the full adapter block reference.
 
@@ -281,7 +281,7 @@ Permission gating is deny-by-default.
   - `shell:go test*`
   - `shell:*`
 
-The host evaluates plugin permission requests against those patterns. When a request matches, the run emits `permission.granted`; otherwise it emits `permission.denied` with reason `no matching allow_tools entry` and (for the Copilot adapter) includes a `suggestion` field only when a relevant canonical-kind suggestion exists (for example, for denied kinds with known aliases such as `read`/`write`). The Copilot plugin then surfaces the denied turn as `failure`.
+The host evaluates adapter permission requests against those patterns. When a request matches, the run emits `permission.granted`; otherwise it emits `permission.denied` with reason `no matching allow_tools entry` and (for the Copilot adapter) includes a `suggestion` field only when a relevant canonical-kind suggestion exists (for example, for denied kinds with known aliases such as `read`/`write`). The Copilot adapter then surfaces the denied turn as `failure`.
 
 ### Copilot permission-kind aliases
 
@@ -384,7 +384,7 @@ In a second terminal, run:
 Expected result on the success path:
 
 1. Criteria logs a `starting run` line with a `run_id`.
-2. The Copilot plugin opens a session, requests permission for `shell:git status`, and receives a grant because the step allowlist matches.
+2. The Copilot adapter opens a session, requests permission for `shell:git status`, and receives a grant because the step allowlist matches.
 3. The assistant reports the repository status and calls `submit_outcome("success")`.
 4. Criteria closes the session and the server records the run as `succeeded`.
 
@@ -394,7 +394,7 @@ For a one-command smoke check, use:
 COPILOT_E2E=1 ./scripts/smoke-agent-hello.sh
 ```
 
-That script builds the repo, installs the plugin into a temp directory, starts a local server, runs `agent_hello.hcl`, and asserts that the server run status becomes `succeeded`.
+That script builds the repo, installs the adapter into a temp directory, starts a local server, runs `agent_hello.hcl`, and asserts that the server run status becomes `succeeded`.
 
 ## The Two-Adapter Loop Pattern
 
@@ -419,11 +419,10 @@ This is the right pattern when you want distinct tool budgets per role and an ex
 
 ## Adapter Contract and Step Outputs (Phase 1.5)
 
-Adapters implement the `AdapterPlugin` gRPC service defined in `proto/v1/adapter_plugin.proto`. The `Info()` RPC returns metadata about the adapter including:
+Adapters implement the `AdapterService` gRPC service defined in `proto/criteria/v1/adapter_plugin.proto`. The `Info()` RPC returns metadata about the adapter including:
 
 - `ConfigSchema` — JSON schema for adapter-level configuration (on the `adapter { }` block)
 - `InputSchema` — JSON schema for step-level input (in the `input { }` block on each step)
-- `OutputSchema` — JSON schema for outputs the adapter may return after execution
 
 ### `Execute` request fields
 
@@ -476,9 +475,9 @@ In this example:
 
 Step outputs also flow into `for_each` iteration contexts. See [workflow.md](workflow.md) for the full expression reference.
 
-## Writing Your Own Plugin
+## Writing Your Own Adapter
 
-The canonical third-party plugin example is [`examples/plugins/greeter/`](../examples/plugins/greeter/). It lives in its own Go module (no `replace` directive once an SDK tag exists), imports only `sdk/pluginhost` and the generated proto bindings, and demonstrates the full workflow from `go build` to `criteria apply`. Read that directory first — it is the minimum viable plugin.
+The canonical third-party adapter example is [`examples/plugins/greeter/`](../examples/plugins/greeter/). It lives in its own Go module (no `replace` directive once an SDK tag exists), imports only `sdk/adapterhost` and the generated proto bindings, and demonstrates the full workflow from `go build` to `criteria apply`. Read that directory first — it is the minimum viable adapter.
 
 ### Concurrency requirements for `parallel` steps
 
@@ -492,9 +491,9 @@ are shared across all parallel executions for the same step.
 To opt in to parallel execution, return `"parallel_safe"` in your `Info()` capabilities:
 
 ```go
-func (p *myPlugin) Info(ctx context.Context, req *pb.InfoRequest) (*pb.InfoResponse, error) {
+func (p *myAdapter) Info(ctx context.Context, req *pb.InfoRequest) (*pb.InfoResponse, error) {
     return &pb.InfoResponse{
-        Name:         "my-plugin",
+        Name:         "my-adapter",
         Version:      "0.1.0",
         Capabilities: []string{"parallel_safe"},
     }, nil
@@ -534,38 +533,38 @@ Adapters that are already stateless (no shared mutable state) need no changes.
 The `noop` and `shell` bundled adapters are both goroutine-safe and declare
 `parallel_safe`.
 
-The public plugin SDK lives in `sdk/pluginhost`. External authors import:
+The public adapter SDK lives in `sdk/adapterhost`. External authors import:
 
 ```
-github.com/brokenbots/criteria/sdk/pluginhost
+github.com/brokenbots/criteria/sdk/adapterhost
 ```
 
-The smallest plugin entrypoint is:
+The smallest adapter entrypoint is:
 
 ```go
 package main
 
 import (
     "context"
-    pluginhost "github.com/brokenbots/criteria/sdk/pluginhost"
+    adapterhost "github.com/brokenbots/criteria/sdk/adapterhost"
     pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 )
 
-type myPlugin struct{}
+type myAdapter struct{}
 
-func (p *myPlugin) Info(ctx context.Context, req *pb.InfoRequest) (*pb.InfoResponse, error) {
-    return &pb.InfoResponse{Name: "my-plugin", Version: "0.1.0"}, nil
+func (p *myAdapter) Info(ctx context.Context, req *pb.InfoRequest) (*pb.InfoResponse, error) {
+    return &pb.InfoResponse{Name: "my-adapter", Version: "0.1.0"}, nil
 }
 
 // ... implement OpenSession, Execute, Permit, CloseSession ...
 
 func main() {
-    pluginhost.Serve(&myPlugin{})
+    adapterhost.Serve(&myAdapter{})
 }
 ```
 
-Implement `pluginhost.Service` and call `pluginhost.Serve` from `main()`. The
-`Execute` method receives a `pluginhost.ExecuteEventSender`; send at least one
+Implement `adapterhost.Service` and call `adapterhost.Serve` from `main()`. The
+`Execute` method receives an `adapterhost.ExecuteEventSender`; send at least one
 `*pb.ExecuteResult` event before returning `nil`, or return a non-nil error.
 
 See [`examples/plugins/greeter/main.go`](../examples/plugins/greeter/main.go) for a complete, runnable example. For more complex references:
@@ -574,7 +573,7 @@ See [`examples/plugins/greeter/main.go`](../examples/plugins/greeter/main.go) fo
 - `cmd/criteria-adapter-mcp/main.go`
 - `cmd/criteria-adapter-noop/main.go`
 
-If you add a new plugin, wire it through the conformance harness before relying on it in a real workflow. That is the fastest way to confirm `Info`, `OpenSession`, `Execute`, `Permit`, and `CloseSession` all obey the host contract.
+If you add a new adapter, wire it through the conformance harness before relying on it in a real workflow. That is the fastest way to confirm `Info`, `OpenSession`, `Execute`, `Permit`, and `CloseSession` all obey the host contract.
 
 ## Adapter lifecycle logs
 
@@ -595,7 +594,7 @@ mode:
 | Unexpected exit / crash heuristic                         | `WARN`  | `adapter session crashed` |
 
 An **expected close** is one where `SessionManager.Close` or `Shutdown` was
-called by the host before the plugin's gRPC stream ended, **or** the
+called by the host before the adapter's gRPC stream ended, **or** the
 surrounding execute context was canceled by the host (run timeout, user abort).
 An **unexpected exit** is an EOF or broken-pipe error received when neither
 condition holds.

@@ -76,36 +76,36 @@ type noopSink struct{}
 func (noopSink) Log(string, []byte)  {}
 func (noopSink) Adapter(string, any) {}
 
-// fakePlugin returns a programmable outcome.
-type fakePlugin struct {
+// fakeAdapter returns a programmable outcome.
+type fakeAdapter struct {
 	name string
 
 	outcome string
 	err     error
 }
 
-func (p *fakePlugin) Info(context.Context) (adapterhost.Info, error) {
+func (p *fakeAdapter) Info(context.Context) (adapterhost.Info, error) {
 	return adapterhost.Info{Name: p.name, Version: "test"}, nil
 }
 
-func (p *fakePlugin) OpenSession(context.Context, string, map[string]string) error { return nil }
+func (p *fakeAdapter) OpenSession(context.Context, string, map[string]string) error { return nil }
 
-func (p *fakePlugin) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+func (p *fakeAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
 	return adapter.Result{Outcome: p.outcome}, p.err
 }
 
-func (p *fakePlugin) Permit(context.Context, string, string, bool, string) error { return nil }
-func (p *fakePlugin) CloseSession(context.Context, string) error                 { return nil }
-func (p *fakePlugin) Kill()                                                      {}
+func (p *fakeAdapter) Permit(context.Context, string, string, bool, string) error { return nil }
+func (p *fakeAdapter) CloseSession(context.Context, string) error                 { return nil }
+func (p *fakeAdapter) Kill()                                                      {}
 
 type fakeLoader struct {
-	plugins map[string]adapterhost.Handle
+	adapters map[string]adapterhost.Handle
 }
 
 func (l *fakeLoader) Resolve(_ context.Context, name string) (adapterhost.Handle, error) {
-	p, ok := l.plugins[name]
+	p, ok := l.adapters[name]
 	if !ok {
-		return nil, fmt.Errorf("no plugin named %q", name)
+		return nil, fmt.Errorf("no adapter named %q", name)
 	}
 	return p, nil
 }
@@ -225,7 +225,7 @@ step "b" {
 }
 state "done" { terminal = true }`)
 	sink := &fakeSink{}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": &fakePlugin{name: "fake", outcome: "success"}}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": &fakeAdapter{name: "fake", outcome: "success"}}}
 	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -255,7 +255,7 @@ state "fail" {
   success  = false
 }`)
 	sink := &fakeSink{}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": &fakePlugin{name: "fake", outcome: "", err: errors.New("boom")}}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": &fakeAdapter{name: "fake", outcome: "", err: errors.New("boom")}}}
 	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -278,7 +278,7 @@ step "a" {
 state "done" { terminal = true }
 policy { max_total_steps = 3 }`)
 	sink := &fakeSink{}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": &fakePlugin{name: "fake", outcome: "again"}}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": &fakeAdapter{name: "fake", outcome: "again"}}}
 	err := NewTestEngine(g, loader, sink).Run(context.Background())
 	if err == nil {
 		t.Fatal("expected loop guard error")
@@ -286,7 +286,7 @@ policy { max_total_steps = 3 }`)
 }
 
 func TestEngineLifecycleWithNoopPlugin(t *testing.T) {
-	adapterBin := buildNoopPlugin(t)
+	adapterBin := buildNoopAdapter(t)
 	loader := adapterhost.NewLoaderWithDiscovery(func(string) (string, error) {
 		return adapterBin, nil
 	})
@@ -306,7 +306,7 @@ func TestEngineLifecycleWithNoopPlugin(t *testing.T) {
 // that OnAdapterLifecycle events for a named-agent workflow are emitted on the
 // execution step ("run_agent"), not on the open/close lifecycle steps (W12).
 func TestNamedAgentLifecycleEventsOnExecutionStep(t *testing.T) {
-	adapterBin := buildNoopPlugin(t)
+	adapterBin := buildNoopAdapter(t)
 	loader := adapterhost.NewLoaderWithDiscovery(func(string) (string, error) {
 		return adapterBin, nil
 	})
@@ -360,7 +360,7 @@ func (s *lifecycleCaptureSink) OnAdapterLifecycle(step, _ /*adapter*/, status, _
 }
 
 func TestEngineLifecycleOpenTimeoutKeepsSessionAlive(t *testing.T) {
-	adapterBin := buildNoopPlugin(t)
+	adapterBin := buildNoopAdapter(t)
 	loader := adapterhost.NewLoaderWithDiscovery(func(string) (string, error) {
 		return adapterBin, nil
 	})
@@ -458,7 +458,7 @@ func compileFile(t *testing.T, rel string) *workflow.FSMGraph {
 	return g
 }
 
-func buildNoopPlugin(t *testing.T) string {
+func buildNoopAdapter(t *testing.T) string {
 	t.Helper()
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {
@@ -471,17 +471,17 @@ func buildNoopPlugin(t *testing.T) string {
 	cmd.Dir = moduleRoot
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("build noop plugin: %v\n%s", err, string(output))
+		t.Fatalf("build noop adapter: %v\n%s", err, string(output))
 	}
 
 	return adapterBin
 }
 
 // TestEnginePermissionGrantAndDeny verifies the full permission-gating flow:
-// a step with allow_tools=["read_file"] against the permissive test plugin
+// a step with allow_tools=["read_file"] against the permissive test adapter
 // that requests two tools produces exactly one permission.granted event for
 // read_file and one permission.denied event for write_file, and the run ends
-// in needs_review (because the plugin returns needs_review on any denial).
+// in needs_review (because the adapter returns needs_review on any denial).
 func TestEnginePermissionGrantAndDeny(t *testing.T) {
 	adapterBin := testutil.BuildPermissiveAdapter(t)
 	loader := adapterhost.NewLoaderWithDiscovery(func(string) (string, error) {
@@ -640,7 +640,7 @@ step "loop" {
 state "done" { terminal = true }
 policy { max_total_steps = 1000 }`)
 	sink := &fakeSink{}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": &fakePlugin{name: "fake", outcome: "again"}}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": &fakeAdapter{name: "fake", outcome: "again"}}}
 	err := NewTestEngine(g, loader, sink).Run(context.Background())
 	if err == nil {
 		t.Fatal("expected max_visits error")
@@ -666,10 +666,10 @@ policy { max_total_steps = 1000 }`)
 // TestMaxVisits_NotHit verifies that a workflow with a back-edge loop and
 // max_visits = 100 completes normally when the loop exits before the limit.
 func TestMaxVisits_NotHit(t *testing.T) {
-	// The plugin returns "again" for the first 4 calls, then "done".
+	// The adapter returns "again" for the first 4 calls, then "done".
 	callCount := 0
 	var mu sync.Mutex
-	plg := &callCountPlugin{
+	plg := &callCountAdapter{
 		name: "fake",
 		outcomeFor: func(n int) string {
 			if n < 5 {
@@ -695,7 +695,7 @@ step "loop" {
 state "done" { terminal = true }
 policy { max_total_steps = 1000 }`)
 	sink := &fakeSink{}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": plg}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": plg}}
 	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -723,7 +723,7 @@ state "done" { terminal = true }`)
 		t.Errorf("MaxVisits = %d, want 0 (unlimited)", step.MaxVisits)
 	}
 	sink := &fakeSink{}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": &fakePlugin{name: "fake", outcome: "success"}}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": &fakeAdapter{name: "fake", outcome: "success"}}}
 	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -751,7 +751,7 @@ policy {
   max_step_retries = 3
 }`)
 	// Plugin that always errors so the retry loop is exercised.
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": &errPlugin{name: "fake", err: errors.New("boom")}}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": &errAdapter{name: "fake", err: errors.New("boom")}}}
 	sink := &fakeSink{}
 	err := NewTestEngine(g, loader, sink).Run(context.Background())
 	if err == nil {
@@ -793,7 +793,7 @@ step "loop" {
 state "done" { terminal = true }
 policy { max_total_steps = 2 }`)
 	sink := &fakeSink{}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": &fakePlugin{name: "fake", outcome: "again"}}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": &fakeAdapter{name: "fake", outcome: "again"}}}
 	eng := NewTestEngine(g, loader, sink)
 	err := eng.Run(context.Background())
 	if err == nil {
@@ -848,49 +848,49 @@ policy { max_total_steps = 1000 }`)
 	}
 }
 
-// callCountPlugin is a fakePlugin variant that tracks call count and uses a
+// callCountAdapter is a fakeAdapter variant that tracks call count and uses a
 // caller-supplied function to determine the outcome per call.
-type callCountPlugin struct {
+type callCountAdapter struct {
 	name       string
 	outcomeFor func(int) string
 	count      *int
 	mu         *sync.Mutex
 }
 
-func (p *callCountPlugin) Info(context.Context) (adapterhost.Info, error) {
+func (p *callCountAdapter) Info(context.Context) (adapterhost.Info, error) {
 	return adapterhost.Info{Name: p.name, Version: "test"}, nil
 }
-func (p *callCountPlugin) OpenSession(context.Context, string, map[string]string) error {
+func (p *callCountAdapter) OpenSession(context.Context, string, map[string]string) error {
 	return nil
 }
-func (p *callCountPlugin) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+func (p *callCountAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
 	p.mu.Lock()
 	*p.count++
 	n := *p.count
 	p.mu.Unlock()
 	return adapter.Result{Outcome: p.outcomeFor(n)}, nil
 }
-func (p *callCountPlugin) Permit(context.Context, string, string, bool, string) error { return nil }
-func (p *callCountPlugin) CloseSession(context.Context, string) error                 { return nil }
-func (p *callCountPlugin) Kill()                                                      {}
+func (p *callCountAdapter) Permit(context.Context, string, string, bool, string) error { return nil }
+func (p *callCountAdapter) CloseSession(context.Context, string) error                 { return nil }
+func (p *callCountAdapter) Kill()                                                      {}
 
-// errPlugin is a plugin that always returns an error, used to exercise the
+// errAdapter is an adapter that always returns an error, used to exercise the
 // retry loop in runStepFromAttempt for max_visits retry-counting tests.
-type errPlugin struct {
+type errAdapter struct {
 	name string
 	err  error
 }
 
-func (p *errPlugin) Info(context.Context) (adapterhost.Info, error) {
+func (p *errAdapter) Info(context.Context) (adapterhost.Info, error) {
 	return adapterhost.Info{Name: p.name, Version: "test"}, nil
 }
-func (p *errPlugin) OpenSession(context.Context, string, map[string]string) error { return nil }
-func (p *errPlugin) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+func (p *errAdapter) OpenSession(context.Context, string, map[string]string) error { return nil }
+func (p *errAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
 	return adapter.Result{}, p.err
 }
-func (p *errPlugin) Permit(context.Context, string, string, bool, string) error { return nil }
-func (p *errPlugin) CloseSession(context.Context, string) error                 { return nil }
-func (p *errPlugin) Kill()                                                      {}
+func (p *errAdapter) Permit(context.Context, string, string, bool, string) error { return nil }
+func (p *errAdapter) CloseSession(context.Context, string) error                 { return nil }
+func (p *errAdapter) Kill()                                                      {}
 
 // TestMaxVisits_CancelledAttemptDoesNotConsumeVisit verifies that a pre-cancelled
 // context returns a cancellation error WITHOUT incrementing the visit count in
@@ -911,7 +911,7 @@ step "work" {
 }
 state "done" { terminal = true }
 policy { max_total_steps = 1000 }`)
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": &fakePlugin{name: "fake", outcome: "done"}}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": &fakeAdapter{name: "fake", outcome: "done"}}}
 	sink := &fakeSink{}
 	eng := NewTestEngine(g, loader, sink)
 
@@ -953,8 +953,8 @@ step "a" {
 state "done" { terminal = true }`)
 
 	// Adapter returns "unexpected-outcome" which is not in the declared set.
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{
-		"fake": &fakePlugin{name: "fake", outcome: "unexpected-outcome"},
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{
+		"fake": &fakeAdapter{name: "fake", outcome: "unexpected-outcome"},
 	}}
 	sink := &fakeSink{}
 	err := NewTestEngine(g, loader, sink).Run(context.Background())
@@ -1000,7 +1000,7 @@ step "process" {
 }
 state "done" { terminal = true }
 policy { max_total_steps = 1000 }`)
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": &fakePlugin{name: "fake", outcome: "success"}}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": &fakeAdapter{name: "fake", outcome: "success"}}}
 	sink := &fakeSink{}
 	eng := NewTestEngine(g, loader, sink)
 

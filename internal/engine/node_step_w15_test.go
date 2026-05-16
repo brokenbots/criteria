@@ -58,8 +58,8 @@ step "work" {
 }
 state "done" { terminal = true }`)
 	sink := &outcomeSink{}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{
-		"fake": &fakePlugin{name: "fake", outcome: "unmapped_name"},
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{
+		"fake": &fakeAdapter{name: "fake", outcome: "unmapped_name"},
 	}}
 	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
@@ -99,8 +99,8 @@ step "work" {
 }
 state "done" { terminal = true }`)
 	sink := &outcomeSink{}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{
-		"fake": &fakePlugin{name: "fake", outcome: "not_declared"},
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{
+		"fake": &fakeAdapter{name: "fake", outcome: "not_declared"},
 	}}
 	err := NewTestEngine(g, loader, sink).Run(context.Background())
 	if err == nil {
@@ -134,8 +134,8 @@ step "work" {
 }
 state "done" { terminal = true }`)
 	sink := &fakeSink{}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{
-		"fake": &fakePlugin{name: "fake", outcome: "success"},
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{
+		"fake": &fakeAdapter{name: "fake", outcome: "success"},
 	}}
 	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
@@ -207,9 +207,9 @@ func TestStep_OutcomeReturn_BubblesToParent(t *testing.T) {
 	}
 
 	sink := &fakeSink{}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{
-		"fake":         &fakePlugin{name: "fake", outcome: "success"},
-		"fake.default": &fakePlugin{name: "fake", outcome: "success"},
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{
+		"fake":         &fakeAdapter{name: "fake", outcome: "success"},
+		"fake.default": &fakeAdapter{name: "fake", outcome: "success"},
 	}}
 	if err := NewTestEngine(parentGraph, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
@@ -244,8 +244,8 @@ step "b" {
 }
 state "done" { terminal = true }`)
 	sink := &fakeSink{}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{
-		"fake": &fakePlugin{name: "fake", outcome: "success"},
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{
+		"fake": &fakeAdapter{name: "fake", outcome: "success"},
 	}}
 	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
@@ -275,8 +275,8 @@ step "work" {
 }
 state "done" { terminal = true }`)
 	sink := &outcomeSink{}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{
-		"fake": &fakePlugin{name: "fake", outcome: "success"},
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{
+		"fake": &fakeAdapter{name: "fake", outcome: "success"},
 	}}
 	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
@@ -367,9 +367,9 @@ func TestStep_OutcomeReturn_EndToEnd(t *testing.T) {
 	}
 
 	sink := &fakeSink{}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{
-		"fake":         &fakePlugin{name: "fake", outcome: "success"},
-		"fake.default": &fakePlugin{name: "fake", outcome: "success"},
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{
+		"fake":         &fakeAdapter{name: "fake", outcome: "success"},
+		"fake.default": &fakeAdapter{name: "fake", outcome: "success"},
 	}}
 	if err := NewTestEngine(parentGraph, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
@@ -462,9 +462,9 @@ func TestStep_OutcomeOutput_SubworkflowOutputAvailable(t *testing.T) {
 	}
 
 	sink := &outcomeSink{}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{
-		"fake":         &fakePlugin{name: "fake", outcome: "success"},
-		"fake.default": &fakePlugin{name: "fake", outcome: "success"},
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{
+		"fake":         &fakeAdapter{name: "fake", outcome: "success"},
+		"fake.default": &fakeAdapter{name: "fake", outcome: "success"},
 	}}
 	if err := NewTestEngine(parentGraph, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)

@@ -154,6 +154,6 @@ func newPluginTargetFactory(name string, loader adapterhost.Loader, opts *Option
 			plug.Kill()
 		})
 
-		return pluginSessionTarget{handle: plug, sessionID: sessionID, name: info.Name}
+		return adapterSessionTarget{handle: plug, sessionID: sessionID, name: info.Name}
 	}
 }

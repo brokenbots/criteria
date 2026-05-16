@@ -63,7 +63,7 @@ func testPermissionRequestShape(t *testing.T, name string, loader adapterhost.Lo
 	// No allow_tools on the step → default deny-all policy applies.
 	step := baseStep(name, info.Name, cfg)
 	sink := &recordingSink{}
-	res, err := executeNoPanic(t, pluginSessionTarget{handle: plug, sessionID: sessionID, name: info.Name}, context.Background(), step, sink)
+	res, err := executeNoPanic(t, adapterSessionTarget{handle: plug, sessionID: sessionID, name: info.Name}, context.Background(), step, sink)
 	if err != nil {
 		t.Fatalf("execute with permission request config: %v", err)
 	}

@@ -59,7 +59,7 @@ step "a" {
 state "done" { terminal = true }`)
 
 	sink := &fakeSink{}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": &fakePlugin{name: "fake", outcome: "success"}}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": &fakeAdapter{name: "fake", outcome: "success"}}}
 	err := New(g, loader, sink).RunFrom(context.Background(), "missing", 1)
 	if err == nil {
 		t.Fatal("expected unknown node error")
@@ -87,7 +87,7 @@ step "a" {
 state "done" { terminal = true }`)
 
 	sink := &fakeSink{}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": &fakePlugin{name: "fake", outcome: "success"}}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": &fakeAdapter{name: "fake", outcome: "success"}}}
 	sessions := adapterhost.NewSessionManager(loader)
 	t.Cleanup(func() { sessions.Shutdown(context.Background()) })
 
@@ -143,7 +143,7 @@ state "done" { terminal = true }
 policy { max_total_steps = 3 }`)
 
 	sink := &fakeSink{}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": &fakePlugin{name: "fake", outcome: "again"}}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": &fakeAdapter{name: "fake", outcome: "again"}}}
 	err := New(g, loader, sink).Run(context.Background())
 	if err == nil {
 		t.Fatal("expected max_total_steps error")
@@ -171,7 +171,7 @@ state "done" {
 }`)
 
 	sink := &fakeSink{}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": &fakePlugin{name: "fake", outcome: "success"}}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": &fakeAdapter{name: "fake", outcome: "success"}}}
 	err := New(g, loader, sink).Run(context.Background())
 	if err != nil {
 		t.Fatalf("run: %v", err)

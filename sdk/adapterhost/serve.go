@@ -20,8 +20,8 @@ const (
 	adapterCloseSessionMethod = "/criteria.v1.AdapterService/CloseSession"
 )
 
-// Serve starts the adapter plugin process using the shared [HandshakeConfig].
-// Call this from your plugin's main() function.
+// Serve starts the adapter process using the shared [HandshakeConfig].
+// Call this from your adapter's main() function.
 func Serve(impl Service) {
 	hplugin.Serve(&hplugin.ServeConfig{
 		HandshakeConfig: HandshakeConfig,
@@ -33,7 +33,7 @@ func Serve(impl Service) {
 }
 
 // grpcAdapter adapts a Service implementation to hashicorp/go-plugin on the
-// plugin (server) side. It is intentionally unexported: callers use [Serve].
+// adapter (server) side. It is intentionally unexported: callers use [Serve].
 type grpcAdapter struct {
 	hplugin.NetRPCUnsupportedPlugin
 	Impl Service
@@ -41,16 +41,16 @@ type grpcAdapter struct {
 
 func (p *grpcAdapter) GRPCServer(_ *hplugin.GRPCBroker, s *grpc.Server) error {
 	if p.Impl == nil {
-		return errors.New("adapter plugin implementation is nil")
+		return errors.New("adapter implementation is nil")
 	}
 	s.RegisterService(&adapterServiceDesc, &grpcAdapterServer{impl: p.Impl})
 	return nil
 }
 
-// GRPCClient is not used in the plugin process; the host-side client lives in
+// GRPCClient is not used in the adapter process; the host-side client lives in
 // internal/adapterhost. This stub satisfies the hplugin.GRPCPlugin interface.
 func (p *grpcAdapter) GRPCClient(_ context.Context, _ *hplugin.GRPCBroker, _ *grpc.ClientConn) (interface{}, error) {
-	return nil, errors.New("GRPCClient is not implemented in the plugin process")
+	return nil, errors.New("GRPCClient is not implemented in the adapter process")
 }
 
 // grpcAdapterServer is the server-side gRPC adapter that delegates to a Service.

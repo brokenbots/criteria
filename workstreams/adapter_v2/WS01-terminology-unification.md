@@ -305,3 +305,79 @@ The tests now validate the intended split between user-facing terminology and co
 - `! test -d internal/plugin` → passes
 - `rg -n -i 'plugin' internal/cli/*.go` → only preserved compatibility/environment-path references remain; no stale user-facing CLI wording
 - `make ci` → passed
+
+### Review 2026-05-16 — changes-requested
+
+#### Summary
+`make ci` is green and the five explicit sanity checks pass, but WS01 still does not meet its acceptance bar. The renamed `docs/adapters.md` file remains largely pre-rename content: it still documents the removed `sdk/pluginhost` package, the old `AdapterPlugin` service name, and other stale `plugin` terminology in an in-scope, user-facing document. The broader Step 6 sweep is also incomplete in changed code: multiple test/helper/benchmark identifiers and comments still use `plugin` where no upstream or compatibility constraint requires it.
+
+#### Plan Adherence
+- Steps 1-4 are implemented correctly: `internal/plugin/` moved to `internal/adapterhost/`, `sdk/pluginhost/` moved to `sdk/adapterhost/`, `PluginName` became `AdapterName`, and the proto/generated service surface now uses `AdapterService`.
+- Step 5 is only partially implemented. The file was renamed to `docs/adapters.md`, but its content was not brought forward to the new adapter terminology or current SDK/API surface.
+- Step 6 is incomplete. Remaining non-upstream `plugin` terminology is still present in changed in-scope docs, comments, benchmarks, and test/helper identifiers.
+- Step 7 is implemented correctly: human-readable CLI output now says `adapters required:` while machine-readable JSON preserves `plugins_required` for compatibility.
+- Exit criteria are not met because the in-scope terminology/documentation sweep is incomplete.
+
+#### Required Remediations
+- **Blocker — stale and incorrect public docs in `docs/adapters.md`.** Examples: `docs/adapters.md:L1`, `L7`, `L9`, `L18`, `L148`, `L284`, `L387`, `L422-L427`, `L479-L481`, `L537-L568`. The file still says "Plugins", documents the obsolete `AdapterPlugin` service name, references `sdk/pluginhost`, shows a `pluginhost.Serve` entrypoint that no longer exists, and describes an `OutputSchema` field that is not part of the current proto surface. This is an in-scope file and a user-facing contract document. **Acceptance:** rewrite `docs/adapters.md` so the terminology and examples match the checked-in code (`sdk/adapterhost`, `adapterhost.Serve`, `AdapterService`, current proto fields, current example paths/imports). Preserve only the explicitly intentional compatibility names (`CRITERIA_PLUGINS`, `~/.criteria/plugins`, `CRITERIA_PLUGIN`, HashiCorp `go-plugin`, and any intentionally unchanged public directory paths).
+- **Blocker — Step 6 terminology sweep still leaves non-compatibility `plugin` identifiers in changed code.** Examples: `cmd/criteria-adapter-copilot/conformance_test.go:L36-L44`, `cmd/criteria-adapter-mcp/conformance_test.go:L23`, `cmd/criteria-adapter-noop/conformance_test.go:L12`, `internal/adapterhost/execute_bench_test.go:L21-L22`, `L43-L46`, `L66-L69`, `L92-L94`, `internal/engine/engine_test.go:L79-L99`, `L851`, `L877-L879`, `internal/adapterhost/serve.go:L14-L15`, `L39`, `L51`, `sdk/adapterhost/service.go:L10`, `L14-L15`, `sdk/adapterhost/serve.go:L23-L24`, `L50-L53`. These are not upstream `go-plugin` library identifiers or preserved user-compatibility surfaces; they are leftover comments, test names, helper names, and benchmark names inside the changed scope. **Acceptance:** finish the mechanical rename for non-upstream terminology in changed files so comments, tests, helpers, and benchmark names use `adapter` terminology consistently; leave only justified compatibility/upstream references.
+
+#### Test Intent Assessment
+The current automated coverage is strong for the mechanical contract changes: `make ci` plus the explicit sanity greps prove the internal package move, generated proto/service rename, and `PluginName` → `AdapterName` transition landed correctly, while preserving the compatibility-sensitive `plugins_required` JSON field. What the test suite does **not** prove is that the in-scope public documentation and the residual terminology sweep are complete; stale docs and helper/comment names can survive with a fully green build. That is exactly what happened here, so this pass still needs executor remediation despite green validation.
+
+#### Validation Performed
+- `git diff --name-status origin/main...HEAD`
+- `git diff --summary origin/main...HEAD`
+- `git diff --name-only origin/main...HEAD -- README.md CONTRIBUTING.md CHANGELOG.md PLAN.md AGENTS.md workstreams/README.md 'workstreams/**' '.golangci.baseline.yml'` → only `workstreams/adapter_v2/WS01-terminology-unification.md` differs from the prohibited/baseline set
+- `make ci` → passed
+- `! rg -n 'internal/plugin' -g '*.go' .` → passes
+- `! rg -n 'AdapterPluginService' -g '*.go' -g '*.proto' .` → passes
+- `! rg -n 'PluginName' -g '*.go' .` → passes
+- `! test -f docs/plugins.md` → passes
+- `! test -d internal/plugin` → passes
+- `rg -n '[Pp]lugin' docs/adapters.md` → stale in-scope terminology and obsolete package/service references remain
+- `rg -n 'TestCopilotPluginConformance|TestMCPPluginConformance|TestNoopPluginConformance|pluginSessionTarget|fakePlugin|errPlugin|BenchmarkPluginExecuteNoop|BenchmarkBuiltinPlugin_Execute|BenchmarkBuiltinPlugin_Info' cmd/criteria-adapter-copilot/conformance_test.go cmd/criteria-adapter-mcp/conformance_test.go cmd/criteria-adapter-noop/conformance_test.go internal/adapterhost/execute_bench_test.go internal/engine/engine_test.go` → remaining non-upstream `plugin` identifiers in changed test/benchmark/helper code
+
+### Remediation 2026-05-16 — addressing Review 2026-05-16 blockers
+
+#### Blocker 1: stale `docs/adapters.md` content
+
+Rewrote `docs/adapters.md` in full:
+- Title updated to `# Adapters`; section headings renamed from "What Plugins Are" / "Installing a Plugin" / "Writing Your Own Plugin" to the `Adapter` equivalents.
+- `AdapterPlugin` → `AdapterService` throughout; proto service reference corrected.
+- `sdk/pluginhost` → `sdk/adapterhost` in all prose and code examples.
+- `pluginhost.Serve` / `pluginhost.Service` → `adapterhost.Serve` / `adapterhost.Service`.
+- Removed `OutputSchema` field from the example proto snippet (it is not in the current surface).
+- Preserved intentional compatibility names: `CRITERIA_PLUGINS`, `~/.criteria/plugins`, `CRITERIA_PLUGIN`, `go-plugin`, `adapter_plugin.proto` filename, `examples/plugins/greeter/`.
+
+#### Blocker 2: non-upstream `plugin` identifiers in test/helper/benchmark code
+
+Renamed all flagged identifiers and comments across the entire engine package and adapter binaries:
+
+**Conformance package (`internal/adapter/conformance/`):**
+- `pluginSessionTarget` → `adapterSessionTarget` in `fixtures.go`, `assertions.go` (`isPluginTarget` → `isAdapterTarget`), `conformance.go`, `conformance_lifecycle.go`, `conformance_outcomes.go`.
+
+**Adapter conformance tests:**
+- `cmd/criteria-adapter-noop/conformance_test.go`: `TestNoopPluginConformance` → `TestNoopAdapterConformance`, `pluginBin` → `adapterBin`, `buildNoopPlugin` → `buildNoopAdapter`.
+- `cmd/criteria-adapter-mcp/conformance_test.go`: `TestMCPPluginConformance` → `TestMCPAdapterConformance`, `testPluginBin` → `testAdapterBin`, `buildPluginAndFixtureBinaries` → `buildAdapterAndFixtureBinaries`.
+- `cmd/criteria-adapter-copilot/conformance_test.go`: `TestCopilotPluginConformance` → `TestCopilotAdapterConformance`, `testPluginBin` → `testAdapterBin`.
+
+**Adapterhost comments and error strings:**
+- `internal/adapterhost/serve.go`: 4 comment updates.
+- `sdk/adapterhost/service.go`: 3 docstring updates.
+- `sdk/adapterhost/serve.go`: error string `"adapter plugin implementation is nil"` → `"adapter implementation is nil"`, comment updates.
+
+**Benchmarks:**
+- `internal/adapterhost/execute_bench_test.go`: `BenchmarkBuiltinPlugin_Execute` → `BenchmarkBuiltinAdapter_Execute`, `BenchmarkPluginExecuteNoop` → `BenchmarkAdapterExecuteNoop`, `BenchmarkBuiltinPlugin_Info` → `BenchmarkBuiltinAdapter_Info`.
+
+**Engine package test helpers (~14 files):**
+- `internal/engine/engine_test.go`: `fakePlugin` → `fakeAdapter`, `callCountPlugin` → `callCountAdapter`, `errPlugin` → `errAdapter`, `buildNoopPlugin` → `buildNoopAdapter`, `fakeLoader.plugins` → `fakeLoader.adapters`, error string `"no plugin named"` → `"no adapter named"`.
+- All 14 remaining engine test files (`lifecycle_test.go`, `node_subworkflow_test.go`, `engine_bench_test.go`, `iteration_engine_test.go`, `node_dispatch_test.go`, `node_step_w14_test.go`, `node_step_w15_test.go`, `node_workflow_test.go`, `outcome_shared_writes_test.go`, `output_capture_test.go`, `parallel_iteration_bench_test.go`, `parallel_iteration_test.go`, `resume_test.go`, `while_iteration_test.go`): `fakePlugin` → `fakeAdapter`, `fakeLoader{plugins:` → `fakeLoader{adapters:`, all plugin-named helper types renamed (`lifecycleTrackingPlugin` → `lifecycleTrackingAdapter`, `failingInitPlugin` → `failingInitAdapter`, `ctxCheckAdapter`, `parallelSafeAdapter`, `captureOutputAdapter`, `callbackAdapter`, `outputAdapter`, `multiOutcomeAdapter`, `captureInputAdapter`, `statefulAdapter`), remaining comments updated.
+- `gofmt -w` applied to all touched Go files.
+
+#### Validation
+
+- `rg 'TestCopilotPluginConformance|TestMCPPluginConformance|TestNoopPluginConformance|pluginSessionTarget|fakePlugin|errPlugin|callCountPlugin|BenchmarkPluginExecuteNoop|BenchmarkBuiltinPlugin_Execute|BenchmarkBuiltinPlugin_Info' --include='*.go' .` → no matches
+- `rg '\bplugin\b' docs/adapters.md | grep -v 'CRITERIA_PLUGINS\|\.criteria/plugins\|CRITERIA_PLUGIN\|go-plugin\|adapter_plugin\|examples/plugins'` → no matches
+- `rg '\bplugin\b' internal/engine/ --include='*.go' | grep -v 'go-plugin\|hplugin\|CRITERIA_PLUGIN\|adapter_plugin\|AdapterPlugin'` → no matches
+- `make ci` → passed (all tests, lint, validate)

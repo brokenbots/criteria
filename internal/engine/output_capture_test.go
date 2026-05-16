@@ -85,7 +85,7 @@ func TestOutputCapture_StepOutputsCapturedInVars(t *testing.T) {
 	}
 
 	sink := &outputCaptureSink{}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{
 		"fake_out": plug,
 	}}
 
@@ -175,7 +175,7 @@ func TestOutputCapture_ExpressionInterpolation(t *testing.T) {
 	consumer := &fakeConsumerPlugin{name: "fake_consumer"}
 
 	sink := &outputCaptureSink{}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{
 		"fake_out":      producer,
 		"fake_consumer": consumer,
 	}}
@@ -230,7 +230,7 @@ func TestOutputCapture_EmissionOrder(t *testing.T) {
 
 	plug := &fakeOutputPlugin{name: "fake_out", outcome: "success", outputs: map[string]string{"k": "v"}}
 	sink := &outputCaptureSink{}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake_out": plug}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake_out": plug}}
 
 	eng := New(g, loader, sink)
 	if err := eng.Run(context.Background()); err != nil {

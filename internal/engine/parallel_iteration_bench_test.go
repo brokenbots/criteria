@@ -284,7 +284,7 @@ func BenchmarkParallelEngine_WithFanIn(b *testing.B) {
 	graph := buildParallelBenchWorkflow(b, benchParallelMax)
 	chunk := make([]byte, benchChunkSize)
 	plug := &highLogPlugin{name: "fake", chunk: chunk}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": plug}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": plug}}
 
 	b.ResetTimer()
 	b.ReportAllocs()

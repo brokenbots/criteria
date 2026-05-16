@@ -156,30 +156,30 @@ func (p *contextAwarePlugin) Permit(context.Context, string, string, bool, strin
 func (p *contextAwarePlugin) CloseSession(context.Context, string) error { return nil }
 func (p *contextAwarePlugin) Kill()                                      {}
 
-// parallelSafePlugin is a fakePlugin that declares the "parallel_safe" capability.
-// Use this instead of fakePlugin for parallel steps in tests.
-type parallelSafePlugin struct {
+// parallelSafeAdapter is a fakeAdapter that declares the "parallel_safe" capability.
+// Use this instead of fakeAdapter for parallel steps in tests.
+type parallelSafeAdapter struct {
 	name    string
 	outcome string
 	err     error
 }
 
-func (p *parallelSafePlugin) Info(context.Context) (adapterhost.Info, error) {
+func (p *parallelSafeAdapter) Info(context.Context) (adapterhost.Info, error) {
 	return adapterhost.Info{Name: p.name, Version: "test", Capabilities: []string{"parallel_safe"}}, nil
 }
 
-func (p *parallelSafePlugin) OpenSession(context.Context, string, map[string]string) error {
+func (p *parallelSafeAdapter) OpenSession(context.Context, string, map[string]string) error {
 	return nil
 }
-func (p *parallelSafePlugin) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+func (p *parallelSafeAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
 	if p.err != nil {
 		return adapter.Result{}, p.err
 	}
 	return adapter.Result{Outcome: p.outcome}, nil
 }
-func (p *parallelSafePlugin) Permit(context.Context, string, string, bool, string) error { return nil }
-func (p *parallelSafePlugin) CloseSession(context.Context, string) error                 { return nil }
-func (p *parallelSafePlugin) Kill()                                                      {}
+func (p *parallelSafeAdapter) Permit(context.Context, string, string, bool, string) error { return nil }
+func (p *parallelSafeAdapter) CloseSession(context.Context, string) error                 { return nil }
+func (p *parallelSafeAdapter) Kill()                                                      {}
 
 // --- Tests ---
 
@@ -199,7 +199,7 @@ step "work" {
   outcome "any_failed"    { next = "failed" }
 }`))
 	sink := &parallelSink{}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": barrier}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": barrier}}
 	if err := New(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -239,7 +239,7 @@ step "work" {
   outcome "any_failed"    { next = "failed" }
 }`))
 	sink := &parallelSink{}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": p}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": p}}
 	if err := New(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -280,7 +280,7 @@ step "work" {
 	}
 
 	sink := &parallelSink{}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": p}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": p}}
 	if err := New(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -318,7 +318,7 @@ step "work" {
 	}
 
 	sink := &parallelSink{}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": p}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": p}}
 	if err := New(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -347,9 +347,9 @@ step "work" {
   outcome "any_failed"    { next = "failed" }
 }`))
 
-	p := &parallelSafePlugin{name: "fake", outcome: "failure"}
+	p := &parallelSafeAdapter{name: "fake", outcome: "failure"}
 	sink := &parallelSink{}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": p}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": p}}
 	if err := New(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -367,7 +367,7 @@ step "work" {
 
 // TestParallelIteration_OutputAggregationOrder verifies that indexed outputs
 // are stored in declaration order regardless of goroutine completion order.
-// The step passes each._idx to the plugin via input. The plugin sleeps for
+// The step passes each._idx to the adapter via input. The adapter sleeps for
 // (2 - decl_idx) × 5ms so that iteration 2 completes first and iteration 0
 // completes last. Outputs encode the declaration index; if aggregation stored
 // them in completion order, steps.work[0].idx would be "2".
@@ -411,10 +411,10 @@ state "failed" {
 	workPlug := &declIdxPlugin{name: "fake_work"}
 
 	var capturedInputs []map[string]string
-	checkPlug := &captureInputPlugin{outcome: "success", capture: &capturedInputs}
+	checkPlug := &captureInputAdapter{outcome: "success", capture: &capturedInputs}
 
 	sink := &parallelSink{}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{
 		"fake_work":  workPlug,
 		"fake_check": checkPlug,
 	}}
@@ -490,7 +490,7 @@ step "work" {
 	defer cancel()
 
 	sink := &parallelSink{}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": p}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": p}}
 	err := New(g, loader, sink).Run(ctx)
 	// Run should return an error (context deadline or cancellation).
 	if err == nil {
@@ -512,9 +512,9 @@ step "work" {
   outcome "any_failed"    { next = "failed" }
 }`))
 
-	p := &parallelSafePlugin{name: "fake", outcome: "success"}
+	p := &parallelSafeAdapter{name: "fake", outcome: "success"}
 	sink := &parallelSink{}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": p}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": p}}
 	if err := New(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -551,7 +551,7 @@ step "work" {
 	// Execute simultaneously — maximizes the chance of catching a race.
 	sink := &parallelSink{}
 	p := newBarrierPlugin("fake", 8, "success")
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": p}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": p}}
 	if err := New(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -578,7 +578,7 @@ step "work" {
 	// concurrently so the race detector can observe unsynchronized writes.
 	p := newLoggingBarrierPlugin("fake", n, "success")
 	sink := &sharedLogSink{}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": p}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": p}}
 	if err := New(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -672,9 +672,9 @@ step "work" {
   outcome "any_failed"    { next = "failed" }
 }`))
 
-	p := &parallelSafePlugin{name: "fake", outcome: "success"}
+	p := &parallelSafeAdapter{name: "fake", outcome: "success"}
 	sink := &parallelSink{}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": p}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": p}}
 	if err := New(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("unexpected run error: %v", err)
 	}
@@ -686,7 +686,7 @@ step "work" {
 }
 
 // TestParallelIteration_TimeoutEnforced verifies that a per-step timeout is
-// applied to each parallel adapter iteration. The plugin blocks indefinitely;
+// applied to each parallel adapter iteration. The adapter blocks indefinitely;
 // with timeout="100ms" the iterations should be cancelled well before the
 // natural completion time. Before the fix, runParallelAdapterIteration called
 // executeStep directly without wrapping the context with a timeout, so the step
@@ -732,7 +732,7 @@ state "failed" {
 
 	start := time.Now()
 	sink := &parallelSink{}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": p}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": p}}
 	if err := New(g, loader, sink).Run(context.Background()); err != nil {
 		t.Logf("run error (expected due to timeout): %v", err)
 	}
@@ -858,7 +858,7 @@ func TestParallelIteration_SubworkflowOutputRenderErrorPropagated(t *testing.T) 
 	}
 
 	sink := &parallelSink{}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{}}
 	err := New(parentGraph, loader, sink).Run(context.Background())
 	if err == nil {
 		t.Error("expected Engine.Run to return an error for unrenderable subworkflow output; got nil")
@@ -885,7 +885,7 @@ step "work" {
 	}
 
 	sink := &parallelSink{}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": p}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": p}}
 	// Fatal errors must surface as Engine.Run errors, not be silently routed
 	// to "failed" terminal state.
 	err := New(g, loader, sink).Run(context.Background())
@@ -897,10 +897,10 @@ step "work" {
 	}
 }
 
-// perResolveLoader is a adapterhost.Loader that creates a fresh statefulPlugin on
+// perResolveLoader is a adapterhost.Loader that creates a fresh statefulAdapter on
 // every Resolve call, matching the production Loader contract ("Multiple calls
 // with the same name return distinct Plugin handles — one per session"). All
-// plugin instances share a rendezvous barrier and an open-session counter
+// adapter instances share a rendezvous barrier and an open-session counter
 // through the loader struct so that assertions can be made at the loader level.
 type perResolveLoader struct {
 	opens   atomic.Int32
@@ -911,33 +911,33 @@ type perResolveLoader struct {
 }
 
 func (l *perResolveLoader) Resolve(_ context.Context, name string) (adapterhost.Handle, error) {
-	return &statefulPlugin{loader: l, name: name}, nil
+	return &statefulAdapter{loader: l, name: name}, nil
 }
 func (l *perResolveLoader) Shutdown(context.Context) error { return nil }
 
-// statefulPlugin models a stateful adapter process with a per-instance execution
+// statefulAdapter models a stateful adapter process with a per-instance execution
 // mutex. Each instance is returned by exactly one perResolveLoader.Resolve call.
 //
 // The per-instance execMu is the key to the regression test: when goroutines
-// share a single session (old broken behaviour) they all receive the same plugin
+// share a single session (old broken behaviour) they all receive the same adapter
 // instance from the session manager and must serialize behind its execMu,
 // producing ≈ N × delay wall time. When each goroutine holds its own session
 // (correct behaviour) each holds an independent instance and all N sleeps
 // overlap, producing ≈ 1 × delay wall time.
-type statefulPlugin struct {
+type statefulAdapter struct {
 	loader *perResolveLoader
 	name   string
 	execMu sync.Mutex // per-instance; models a Copilot-style per-session execution lock
 }
 
-func (p *statefulPlugin) Info(context.Context) (adapterhost.Info, error) {
+func (p *statefulAdapter) Info(context.Context) (adapterhost.Info, error) {
 	return adapterhost.Info{Name: p.name, Version: "test"}, nil
 }
-func (p *statefulPlugin) OpenSession(context.Context, string, map[string]string) error {
+func (p *statefulAdapter) OpenSession(context.Context, string, map[string]string) error {
 	p.loader.opens.Add(1)
 	return nil
 }
-func (p *statefulPlugin) Execute(ctx context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+func (p *statefulAdapter) Execute(ctx context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
 	// Shared rendezvous: all n goroutines must reach Execute before any proceeds.
 	// This ensures the per-instance mutex contention (or absence thereof) is the
 	// sole source of timing difference between the broken and fixed implementations.
@@ -963,9 +963,9 @@ func (p *statefulPlugin) Execute(ctx context.Context, _ string, _ *workflow.Step
 	}
 	return adapter.Result{Outcome: "success"}, nil
 }
-func (p *statefulPlugin) Permit(context.Context, string, string, bool, string) error { return nil }
-func (p *statefulPlugin) CloseSession(context.Context, string) error                 { return nil }
-func (p *statefulPlugin) Kill()                                                      {}
+func (p *statefulAdapter) Permit(context.Context, string, string, bool, string) error { return nil }
+func (p *statefulAdapter) CloseSession(context.Context, string) error                 { return nil }
+func (p *statefulAdapter) Kill()                                                      {}
 
 // TestParallelSubworkflow_IsolatedSessions_ConcurrentExecution verifies that
 // parallel subworkflow iterations each receive a distinct adapter session (W19
@@ -977,9 +977,9 @@ func (p *statefulPlugin) Kill()                                                 
 //  3. No data race under -race.
 //
 // Regression-sensitivity: without the per-iteration SessionManager fix, all
-// goroutines share one session → one plugin instance → all N Execute calls
+// goroutines share one session → one adapter instance → all N Execute calls
 // contend on the same execMu → total wall time ≈ N×execDelay > 2×execDelay,
-// failing assertion 2. The perResolveLoader returns a distinct statefulPlugin
+// failing assertion 2. The perResolveLoader returns a distinct statefulAdapter
 // per Resolve call, matching production Loader semantics (one handle per session).
 func TestParallelSubworkflow_IsolatedSessions_ConcurrentExecution(t *testing.T) {
 	const (
@@ -1061,7 +1061,7 @@ type countingNotSafePlugin struct {
 }
 
 func (p *countingNotSafePlugin) Info(context.Context) (adapterhost.Info, error) {
-	// Deliberately no Capabilities: parallel_safe — this plugin is not safe.
+	// Deliberately no Capabilities: parallel_safe — this adapter is not safe.
 	return adapterhost.Info{Name: p.name, Version: "test"}, nil
 }
 func (p *countingNotSafePlugin) OpenSession(context.Context, string, map[string]string) error {
@@ -1078,7 +1078,7 @@ func (p *countingNotSafePlugin) CloseSession(context.Context, string) error { re
 func (p *countingNotSafePlugin) Kill()                                      {}
 
 // TestEvaluateParallel_AdapterNotParallelSafe_RuntimeError verifies that when
-// an adapter step with parallel = [...] is backed by a session whose plugin
+// an adapter step with parallel = [...] is backed by a session whose adapter
 // does NOT declare "parallel_safe", the runtime gate rejects execution with a
 // clear error mentioning "parallel_safe" and before any Execute call is made.
 func TestEvaluateParallel_AdapterNotParallelSafe_RuntimeError(t *testing.T) {
@@ -1094,7 +1094,7 @@ step "work" {
 	// calls so we can assert zero iterations executed when the gate fires.
 	p := &countingNotSafePlugin{name: "fake", outcome: "success"}
 	sink := &parallelSink{}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": p}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": p}}
 	err := New(g, loader, sink).Run(context.Background())
 	if err == nil {
 		t.Fatal("expected error from adapter missing parallel_safe; got nil")
@@ -1116,7 +1116,7 @@ step "work" {
 }
 
 // TestEvaluateParallel_AdapterParallelSafe_Runs verifies that when an adapter
-// step with parallel = [...] is backed by a session whose plugin declares
+// step with parallel = [...] is backed by a session whose adapter declares
 // "parallel_safe", execution proceeds without error.
 func TestEvaluateParallel_AdapterParallelSafe_Runs(t *testing.T) {
 	g := compile(t, parallelWorkflowHCL(`
@@ -1127,9 +1127,9 @@ step "work" {
   outcome "any_failed"    { next = "failed" }
 }`))
 
-	p := &parallelSafePlugin{name: "fake", outcome: "success"}
+	p := &parallelSafeAdapter{name: "fake", outcome: "success"}
 	sink := &parallelSink{}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": p}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": p}}
 	if err := New(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("expected success; got error: %v", err)
 	}
@@ -1222,7 +1222,7 @@ step "work" {
 
 	p := newLoggingBarrierPlugin("fake", n, "success")
 	sink := &sharedLogSink{}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": p}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": p}}
 	if err := New(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -1292,7 +1292,7 @@ step "work" {
 
 	p := &slowLogPlugin{name: "fake", logsPerCall: logsPerItem}
 	sink := &slowCountingSink{delay: writeDelay}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"fake": p}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": p}}
 
 	if err := New(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)

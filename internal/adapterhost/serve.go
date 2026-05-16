@@ -11,8 +11,8 @@ import (
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 )
 
-// AdapterName is the dispenser key shared between host and plugin process.
-// Plugin authors should use sdk/adapterhost.AdapterName; this constant is kept
+// AdapterName is the dispenser key shared between host and adapter process.
+// Adapter authors should use sdk/adapterhost.AdapterName; this constant is kept
 // here for the host-side loader.
 const AdapterName = "adapter"
 
@@ -36,19 +36,19 @@ type Client interface {
 	CloseSession(context.Context, *pb.CloseSessionRequest) (*pb.CloseSessionResponse, error)
 }
 
-// ExecuteEventReceiver reads Execute stream events from a plugin process.
+// ExecuteEventReceiver reads Execute stream events from an adapter process.
 type ExecuteEventReceiver interface {
 	Recv() (*pb.ExecuteEvent, error)
 }
 
 // GRPCAdapter is the host-side go-plugin adapter for the Criteria adapter
 // protocol. It only implements GRPCClient; GRPCServer is a no-op stub because
-// the host never acts as a plugin server.
+// the host never acts as an adapter server.
 type GRPCAdapter struct {
 	hplugin.NetRPCUnsupportedPlugin
 }
 
-// AdapterMap returns the host-side plugin registry map used when creating a
+// AdapterMap returns the host-side adapter registry map used when creating a
 // go-plugin client.
 func AdapterMap() map[string]hplugin.Plugin {
 	return map[string]hplugin.Plugin{AdapterName: &GRPCAdapter{}}

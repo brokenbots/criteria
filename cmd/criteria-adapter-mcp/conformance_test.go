@@ -11,20 +11,20 @@ import (
 )
 
 var (
-	testPluginBin string
-	testEchoBin   string
+	testAdapterBin string
+	testEchoBin    string
 )
 
 func TestMain(m *testing.M) {
-	testPluginBin, testEchoBin = buildPluginAndFixtureBinaries()
+	testAdapterBin, testEchoBin = buildAdapterAndFixtureBinaries()
 	os.Exit(m.Run())
 }
 
-func TestMCPPluginConformance(t *testing.T) {
+func TestMCPAdapterConformance(t *testing.T) {
 	conformance.RunAdapter(
 		t,
 		"mcp",
-		testPluginBin,
+		testAdapterBin,
 		conformance.Options{
 			OpenConfig: map[string]string{
 				"command": testEchoBin,
@@ -39,7 +39,7 @@ func TestMCPPluginConformance(t *testing.T) {
 	)
 }
 
-func buildPluginAndFixtureBinaries() (adapterBin, echoBin string) {
+func buildAdapterAndFixtureBinaries() (adapterBin, echoBin string) {
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {
 		panic("resolve caller path")

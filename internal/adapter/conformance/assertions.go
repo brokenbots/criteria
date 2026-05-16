@@ -75,9 +75,9 @@ func hasCapability(capabilities []string, capability string) bool {
 	return false
 }
 
-// isPluginTarget reports whether target is a pluginSessionTarget.
-func isPluginTarget(target executeTarget) bool {
-	_, ok := target.(pluginSessionTarget)
+// isAdapterTarget reports whether target is a adapterSessionTarget.
+func isAdapterTarget(target executeTarget) bool {
+	_, ok := target.(adapterSessionTarget)
 	return ok
 }
 

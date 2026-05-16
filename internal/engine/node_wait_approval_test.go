@@ -11,7 +11,7 @@ import (
 	"github.com/brokenbots/criteria/workflow"
 )
 
-// emptyLoader is a plugin loader with no adapters registered, suitable for
+// emptyLoader is an adapter loader with no adapters registered, suitable for
 // wait/approval node tests that don't execute step adapters.
 func emptyLoader() *adapterhost.DefaultLoader {
 	return adapterhost.NewLoader()

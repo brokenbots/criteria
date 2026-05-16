@@ -22,7 +22,7 @@ import (
 )
 
 // TestStep_Evaluate_AdapterTarget verifies that a step compiled with
-// TargetKind=StepTargetAdapter runs via the adapter plugin path and
+// TargetKind=StepTargetAdapter runs via the adapter path and
 // produces the expected outcome.
 func TestStep_Evaluate_AdapterTarget(t *testing.T) {
 	g := compile(t, `
@@ -49,8 +49,8 @@ state "done" { terminal = true }`)
 	}
 
 	sink := &fakeSink{}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{
-		"fake": &fakePlugin{name: "fake", outcome: "success"},
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{
+		"fake": &fakeAdapter{name: "fake", outcome: "success"},
 	}}
 	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("Run: %v", err)
@@ -97,7 +97,7 @@ func TestStep_Evaluate_SubworkflowTarget(t *testing.T) {
 	}
 
 	sink := &fakeSink{}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{}}
 	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -157,12 +157,12 @@ func TestStep_EnvironmentOverride_AppliesToSubprocess(t *testing.T) {
 
 // TestStep_EnvironmentOverride_InjectedIntoAdapter verifies that a per-step
 // environment override is injected into the adapter's Input["env"] field before
-// the adapter receives the step. The existing captureInputPlugin records all
+// the adapter receives the step. The existing captureInputAdapter records all
 // Input maps from Execute calls so we can inspect the resolved env vars.
 func TestStep_EnvironmentOverride_InjectedIntoAdapter(t *testing.T) {
 	var captured []map[string]string
-	capPlugin := &captureInputPlugin{outcome: "success", capture: &captured}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{"noop": capPlugin}}
+	capPlugin := &captureInputAdapter{outcome: "success", capture: &captured}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"noop": capPlugin}}
 	sink := &fakeSink{}
 
 	g := &workflow.FSMGraph{
@@ -202,7 +202,7 @@ func TestStep_EnvironmentOverride_InjectedIntoAdapter(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 	if len(captured) == 0 {
-		t.Fatal("captureInputPlugin was never called; adapter not reached")
+		t.Fatal("captureInputAdapter was never called; adapter not reached")
 	}
 	rawEnv, ok := captured[0]["env"]
 	if !ok {
@@ -285,7 +285,7 @@ func TestStep_SubworkflowStepInput_ReachesCallee(t *testing.T) {
 	}
 
 	sink := &captureOutputSink{}
-	loader := &fakeLoader{plugins: map[string]adapterhost.Handle{}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{}}
 	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
