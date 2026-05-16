@@ -7,7 +7,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/brokenbots/criteria/internal/plugin"
+	"github.com/brokenbots/criteria/internal/adapterhost"
 )
 
 // lifecycleTrackingSink captures lifecycle events for verification
@@ -24,16 +24,16 @@ func (s *lifecycleTrackingSink) OnAdapterLifecycle(runID, adapter, status, detai
 	s.adapterLifecycleEvents = append(s.adapterLifecycleEvents, adapter+":"+status)
 }
 
-// lifecycleTrackingPlugin tracks session open/close calls
-type lifecycleTrackingPlugin struct {
-	fakePlugin
+// lifecycleTrackingAdapter tracks session open/close calls
+type lifecycleTrackingAdapter struct {
+	fakeAdapter
 	mu          sync.Mutex
 	opensCount  int
 	closesCount int
 	sessionOpen bool
 }
 
-func (p *lifecycleTrackingPlugin) OpenSession(ctx context.Context, sessionID string, config map[string]string) error {
+func (p *lifecycleTrackingAdapter) OpenSession(ctx context.Context, sessionID string, config map[string]string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.opensCount++
@@ -41,7 +41,7 @@ func (p *lifecycleTrackingPlugin) OpenSession(ctx context.Context, sessionID str
 	return nil
 }
 
-func (p *lifecycleTrackingPlugin) CloseSession(ctx context.Context, sessionID string) error {
+func (p *lifecycleTrackingAdapter) CloseSession(ctx context.Context, sessionID string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.closesCount++
@@ -49,9 +49,9 @@ func (p *lifecycleTrackingPlugin) CloseSession(ctx context.Context, sessionID st
 	return nil
 }
 
-// failingInitPlugin tracks session operations but fails on init for a specific session ID
-type failingInitPlugin struct {
-	fakePlugin
+// failingInitAdapter tracks session operations but fails on init for a specific session ID
+type failingInitAdapter struct {
+	fakeAdapter
 	mu              sync.Mutex
 	opensCount      int
 	closesCount     int
@@ -59,7 +59,7 @@ type failingInitPlugin struct {
 	shouldFail      bool   // whether to fail
 }
 
-func (p *failingInitPlugin) OpenSession(ctx context.Context, sessionID string, config map[string]string) error {
+func (p *failingInitAdapter) OpenSession(ctx context.Context, sessionID string, config map[string]string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.opensCount++
@@ -69,7 +69,7 @@ func (p *failingInitPlugin) OpenSession(ctx context.Context, sessionID string, c
 	return nil
 }
 
-func (p *failingInitPlugin) CloseSession(ctx context.Context, sessionID string) error {
+func (p *failingInitAdapter) CloseSession(ctx context.Context, sessionID string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.closesCount++
@@ -95,11 +95,11 @@ state "done" {
   success  = true
 }`)
 
-	trackingPlugin := &lifecycleTrackingPlugin{
-		fakePlugin: fakePlugin{name: "noop", outcome: "success"},
+	trackingPlugin := &lifecycleTrackingAdapter{
+		fakeAdapter: fakeAdapter{name: "noop", outcome: "success"},
 	}
 
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{
 		"noop": trackingPlugin,
 	}}
 
@@ -172,11 +172,11 @@ state "done" {
   success  = true
 }`)
 
-	trackingPlugin := &lifecycleTrackingPlugin{
-		fakePlugin: fakePlugin{name: "noop", outcome: "success"},
+	trackingPlugin := &lifecycleTrackingAdapter{
+		fakeAdapter: fakeAdapter{name: "noop", outcome: "success"},
 	}
 
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{
 		"noop": trackingPlugin,
 	}}
 
@@ -222,11 +222,11 @@ state "done" {
   success  = true
 }`)
 
-	trackingPlugin := &lifecycleTrackingPlugin{
-		fakePlugin: fakePlugin{name: "noop", outcome: "success", err: fmt.Errorf("step execution failed")},
+	trackingPlugin := &lifecycleTrackingAdapter{
+		fakeAdapter: fakeAdapter{name: "noop", outcome: "success", err: fmt.Errorf("step execution failed")},
 	}
 
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{
 		"noop": trackingPlugin,
 	}}
 
@@ -275,14 +275,14 @@ state "done" {
   success  = true
 }`)
 
-	trackingA := &lifecycleTrackingPlugin{
-		fakePlugin: fakePlugin{name: "noop_a", outcome: "success"},
+	trackingA := &lifecycleTrackingAdapter{
+		fakeAdapter: fakeAdapter{name: "noop_a", outcome: "success"},
 	}
-	trackingB := &lifecycleTrackingPlugin{
-		fakePlugin: fakePlugin{name: "noop_b", outcome: "success"},
+	trackingB := &lifecycleTrackingAdapter{
+		fakeAdapter: fakeAdapter{name: "noop_b", outcome: "success"},
 	}
 
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{
 		"noop_a": trackingA,
 		"noop_b": trackingB,
 	}}
@@ -369,11 +369,11 @@ state "done" {
   success  = true
 }`)
 
-	trackingPlugin := &lifecycleTrackingPlugin{
-		fakePlugin: fakePlugin{name: "noop", outcome: "success"},
+	trackingPlugin := &lifecycleTrackingAdapter{
+		fakeAdapter: fakeAdapter{name: "noop", outcome: "success"},
 	}
 
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{
 		"noop": trackingPlugin,
 	}}
 
@@ -422,18 +422,18 @@ state "done" {
   success  = true
 }`)
 
-	trackingA := &lifecycleTrackingPlugin{
-		fakePlugin: fakePlugin{name: "noop_a", outcome: "success"},
+	trackingA := &lifecycleTrackingAdapter{
+		fakeAdapter: fakeAdapter{name: "noop_a", outcome: "success"},
 	}
 
 	// noop_b will fail to initialize
-	failingPlugin := &failingInitPlugin{
-		fakePlugin:      fakePlugin{name: "noop_b", outcome: "success"},
+	failingPlugin := &failingInitAdapter{
+		fakeAdapter:     fakeAdapter{name: "noop_b", outcome: "success"},
 		failOnSessionID: "noop_b.default",
 		shouldFail:      true,
 	}
 
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{
 		"noop_a": trackingA,
 		"noop_b": failingPlugin,
 	}}

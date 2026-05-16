@@ -22,5 +22,5 @@ steps (declaration order):
 states:
   done    terminal=true   success=true
 
-plugins required:
+adapters required:
   shell   (search: $CRITERIA_PLUGINS, ~/.criteria/plugins)

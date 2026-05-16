@@ -24,7 +24,7 @@ import (
 	"github.com/zclconf/go-cty/cty"
 
 	"github.com/brokenbots/criteria/internal/adapter"
-	"github.com/brokenbots/criteria/internal/plugin"
+	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -470,7 +470,7 @@ func (n *stepNode) runParallelSubworkflowIteration(ctx context.Context, st *RunS
 	// runWorkflowBody's deferred tearDownScopeAdapters closes and kills all
 	// sessions it opened, so no explicit Shutdown is needed here.
 	iterDeps := deps
-	iterDeps.Sessions = plugin.NewSessionManager(deps.Loader)
+	iterDeps.Sessions = adapterhost.NewSessionManager(deps.Loader)
 
 	swOutputs, runErr := runSubworkflow(ctx, swNode, st, stepInput, iterDeps)
 	if runErr != nil {
@@ -531,7 +531,7 @@ func classifyIterError(r parallelIterResult) (isRunError, isFailure bool) {
 		}
 		return false, true
 	}
-	var fatal *plugin.FatalRunError
+	var fatal *adapterhost.FatalRunError
 	if errors.As(r.err, &fatal) {
 		return true, false
 	}

@@ -14,12 +14,12 @@ import (
 
 // All tests in this file exercise local-mode approval and signal-wait via
 // runApply with CRITERIA_LOCAL_APPROVAL set. The noop adapter binary must be
-// built once per test binary via buildNoopPluginBinary.
+// built once per test binary via buildNoopAdapterBinary.
 
 func TestApplyLocal_AutoApprove_ApprovalNode(t *testing.T) {
-	pluginDir := filepath.Dir(buildNoopPluginBinary(t))
+	adapterDir := filepath.Dir(buildNoopAdapterBinary(t))
 	stateDir := t.TempDir()
-	t.Setenv("CRITERIA_PLUGINS", pluginDir)
+	t.Setenv("CRITERIA_PLUGINS", adapterDir)
 	t.Setenv("CRITERIA_STATE_DIR", stateDir)
 	t.Setenv("CRITERIA_LOCAL_APPROVAL", "auto-approve")
 
@@ -40,9 +40,9 @@ func TestApplyLocal_AutoApprove_ApprovalNode(t *testing.T) {
 }
 
 func TestApplyLocal_AutoApprove_SignalWait(t *testing.T) {
-	pluginDir := filepath.Dir(buildNoopPluginBinary(t))
+	adapterDir := filepath.Dir(buildNoopAdapterBinary(t))
 	stateDir := t.TempDir()
-	t.Setenv("CRITERIA_PLUGINS", pluginDir)
+	t.Setenv("CRITERIA_PLUGINS", adapterDir)
 	t.Setenv("CRITERIA_STATE_DIR", stateDir)
 	t.Setenv("CRITERIA_LOCAL_APPROVAL", "auto-approve")
 
@@ -63,9 +63,9 @@ func TestApplyLocal_AutoApprove_SignalWait(t *testing.T) {
 }
 
 func TestApplyLocal_EnvMode_ApprovalApproved(t *testing.T) {
-	pluginDir := filepath.Dir(buildNoopPluginBinary(t))
+	adapterDir := filepath.Dir(buildNoopAdapterBinary(t))
 	stateDir := t.TempDir()
-	t.Setenv("CRITERIA_PLUGINS", pluginDir)
+	t.Setenv("CRITERIA_PLUGINS", adapterDir)
 	t.Setenv("CRITERIA_STATE_DIR", stateDir)
 	t.Setenv("CRITERIA_LOCAL_APPROVAL", "env")
 	t.Setenv("CRITERIA_APPROVAL_REVIEW", "approved")
@@ -78,9 +78,9 @@ func TestApplyLocal_EnvMode_ApprovalApproved(t *testing.T) {
 }
 
 func TestApplyLocal_EnvMode_ApprovalRejected(t *testing.T) {
-	pluginDir := filepath.Dir(buildNoopPluginBinary(t))
+	adapterDir := filepath.Dir(buildNoopAdapterBinary(t))
 	stateDir := t.TempDir()
-	t.Setenv("CRITERIA_PLUGINS", pluginDir)
+	t.Setenv("CRITERIA_PLUGINS", adapterDir)
 	t.Setenv("CRITERIA_STATE_DIR", stateDir)
 	t.Setenv("CRITERIA_LOCAL_APPROVAL", "env")
 	t.Setenv("CRITERIA_APPROVAL_REVIEW", "rejected")
@@ -96,9 +96,9 @@ func TestApplyLocal_EnvMode_ApprovalRejected(t *testing.T) {
 }
 
 func TestApplyLocal_EnvMode_SignalWait(t *testing.T) {
-	pluginDir := filepath.Dir(buildNoopPluginBinary(t))
+	adapterDir := filepath.Dir(buildNoopAdapterBinary(t))
 	stateDir := t.TempDir()
-	t.Setenv("CRITERIA_PLUGINS", pluginDir)
+	t.Setenv("CRITERIA_PLUGINS", adapterDir)
 	t.Setenv("CRITERIA_STATE_DIR", stateDir)
 	t.Setenv("CRITERIA_LOCAL_APPROVAL", "env")
 	t.Setenv("CRITERIA_SIGNAL_GATE", "success") // matches the "success" outcome in local_signal_wait.hcl
@@ -111,9 +111,9 @@ func TestApplyLocal_EnvMode_SignalWait(t *testing.T) {
 }
 
 func TestApplyLocal_FileMode_ApprovalApproved(t *testing.T) {
-	pluginDir := filepath.Dir(buildNoopPluginBinary(t))
+	adapterDir := filepath.Dir(buildNoopAdapterBinary(t))
 	stateDir := t.TempDir()
-	t.Setenv("CRITERIA_PLUGINS", pluginDir)
+	t.Setenv("CRITERIA_PLUGINS", adapterDir)
 	t.Setenv("CRITERIA_STATE_DIR", stateDir)
 	t.Setenv("CRITERIA_LOCAL_APPROVAL", "file")
 	// Short timeout so the test fails fast if the goroutine doesn't deliver.
@@ -179,9 +179,9 @@ func TestApplyLocal_LocalApprovalDisabled_SignalWaitRejected(t *testing.T) {
 }
 
 func TestApplyLocal_StdinMode_Approved(t *testing.T) {
-	pluginDir := filepath.Dir(buildNoopPluginBinary(t))
+	adapterDir := filepath.Dir(buildNoopAdapterBinary(t))
 	stateDir := t.TempDir()
-	t.Setenv("CRITERIA_PLUGINS", pluginDir)
+	t.Setenv("CRITERIA_PLUGINS", adapterDir)
 	t.Setenv("CRITERIA_STATE_DIR", stateDir)
 	t.Setenv("CRITERIA_LOCAL_APPROVAL", "stdin")
 
@@ -201,9 +201,9 @@ func TestApplyLocal_StdinMode_Approved(t *testing.T) {
 }
 
 func TestApplyLocal_StdinMode_Rejected(t *testing.T) {
-	pluginDir := filepath.Dir(buildNoopPluginBinary(t))
+	adapterDir := filepath.Dir(buildNoopAdapterBinary(t))
 	stateDir := t.TempDir()
-	t.Setenv("CRITERIA_PLUGINS", pluginDir)
+	t.Setenv("CRITERIA_PLUGINS", adapterDir)
 	t.Setenv("CRITERIA_STATE_DIR", stateDir)
 	t.Setenv("CRITERIA_LOCAL_APPROVAL", "stdin")
 
@@ -224,9 +224,9 @@ func TestApplyLocal_StdinMode_Rejected(t *testing.T) {
 }
 
 func TestApplyLocal_FileMode_SignalWait(t *testing.T) {
-	pluginDir := filepath.Dir(buildNoopPluginBinary(t))
+	adapterDir := filepath.Dir(buildNoopAdapterBinary(t))
 	stateDir := t.TempDir()
-	t.Setenv("CRITERIA_PLUGINS", pluginDir)
+	t.Setenv("CRITERIA_PLUGINS", adapterDir)
 	t.Setenv("CRITERIA_STATE_DIR", stateDir)
 	t.Setenv("CRITERIA_LOCAL_APPROVAL", "file")
 	t.Setenv("CRITERIA_LOCAL_APPROVAL_FILE_TIMEOUT", "10s")
@@ -260,9 +260,9 @@ func TestApplyLocal_FileMode_SignalWait(t *testing.T) {
 }
 
 func TestApplyLocal_FileMode_Timeout(t *testing.T) {
-	pluginDir := filepath.Dir(buildNoopPluginBinary(t))
+	adapterDir := filepath.Dir(buildNoopAdapterBinary(t))
 	stateDir := t.TempDir()
-	t.Setenv("CRITERIA_PLUGINS", pluginDir)
+	t.Setenv("CRITERIA_PLUGINS", adapterDir)
 	t.Setenv("CRITERIA_STATE_DIR", stateDir)
 	t.Setenv("CRITERIA_LOCAL_APPROVAL", "file")
 	// Very short timeout — no goroutine writes the file, so the run must fail.
@@ -279,9 +279,9 @@ func TestApplyLocal_FileMode_Timeout(t *testing.T) {
 }
 
 func TestApplyLocal_MultiApproval_EnvMode(t *testing.T) {
-	pluginDir := filepath.Dir(buildNoopPluginBinary(t))
+	adapterDir := filepath.Dir(buildNoopAdapterBinary(t))
 	stateDir := t.TempDir()
-	t.Setenv("CRITERIA_PLUGINS", pluginDir)
+	t.Setenv("CRITERIA_PLUGINS", adapterDir)
 	t.Setenv("CRITERIA_STATE_DIR", stateDir)
 	t.Setenv("CRITERIA_LOCAL_APPROVAL", "env")
 	t.Setenv("CRITERIA_APPROVAL_FIRST_REVIEW", "approved")
@@ -294,9 +294,9 @@ func TestApplyLocal_MultiApproval_EnvMode(t *testing.T) {
 }
 
 func TestApplyLocal_EnvMode_SignalWait_UnknownOutcome_Error(t *testing.T) {
-	pluginDir := filepath.Dir(buildNoopPluginBinary(t))
+	adapterDir := filepath.Dir(buildNoopAdapterBinary(t))
 	stateDir := t.TempDir()
-	t.Setenv("CRITERIA_PLUGINS", pluginDir)
+	t.Setenv("CRITERIA_PLUGINS", adapterDir)
 	t.Setenv("CRITERIA_STATE_DIR", stateDir)
 	t.Setenv("CRITERIA_LOCAL_APPROVAL", "env")
 	t.Setenv("CRITERIA_SIGNAL_GATE", "bogus") // "bogus" is not declared in local_signal_wait.hcl
@@ -315,9 +315,9 @@ func TestApplyLocal_EnvMode_SignalWait_UnknownOutcome_Error(t *testing.T) {
 }
 
 func TestApplyLocal_StdinMode_SignalWait_UnknownOutcome_Error(t *testing.T) {
-	pluginDir := filepath.Dir(buildNoopPluginBinary(t))
+	adapterDir := filepath.Dir(buildNoopAdapterBinary(t))
 	stateDir := t.TempDir()
-	t.Setenv("CRITERIA_PLUGINS", pluginDir)
+	t.Setenv("CRITERIA_PLUGINS", adapterDir)
 	t.Setenv("CRITERIA_STATE_DIR", stateDir)
 	t.Setenv("CRITERIA_LOCAL_APPROVAL", "stdin")
 
@@ -341,9 +341,9 @@ func TestApplyLocal_StdinMode_SignalWait_UnknownOutcome_Error(t *testing.T) {
 }
 
 func TestApplyLocal_FileMode_SignalWait_UnknownOutcome_Error(t *testing.T) {
-	pluginDir := filepath.Dir(buildNoopPluginBinary(t))
+	adapterDir := filepath.Dir(buildNoopAdapterBinary(t))
 	stateDir := t.TempDir()
-	t.Setenv("CRITERIA_PLUGINS", pluginDir)
+	t.Setenv("CRITERIA_PLUGINS", adapterDir)
 	t.Setenv("CRITERIA_STATE_DIR", stateDir)
 	t.Setenv("CRITERIA_LOCAL_APPROVAL", "file")
 	t.Setenv("CRITERIA_LOCAL_APPROVAL_FILE_TIMEOUT", "10s")
@@ -384,9 +384,9 @@ func TestApplyLocal_Reattach_ReusePersistedDecision(t *testing.T) {
 	// Verify that when a decision is already persisted on disk, resumeOneLocalRun
 	// reuses it without re-prompting. We use stdin mode with NO piped input so the
 	// test would hang if the persisted decision were not found.
-	pluginDir := filepath.Dir(buildNoopPluginBinary(t))
+	adapterDir := filepath.Dir(buildNoopAdapterBinary(t))
 	stateDir := t.TempDir()
-	t.Setenv("CRITERIA_PLUGINS", pluginDir)
+	t.Setenv("CRITERIA_PLUGINS", adapterDir)
 	t.Setenv("CRITERIA_STATE_DIR", stateDir)
 	t.Setenv("CRITERIA_LOCAL_APPROVAL", "stdin")
 
@@ -439,9 +439,9 @@ func TestApplyLocal_Reattach_ReusePersistedDecision(t *testing.T) {
 func TestApplyLocal_Reattach_InvalidPersistedSignalOutcome_Error(t *testing.T) {
 	// Verify that a persisted signal outcome that is not declared in the workflow
 	// is rejected on reattach rather than silently selecting a fallback branch.
-	pluginDir := filepath.Dir(buildNoopPluginBinary(t))
+	adapterDir := filepath.Dir(buildNoopAdapterBinary(t))
 	stateDir := t.TempDir()
-	t.Setenv("CRITERIA_PLUGINS", pluginDir)
+	t.Setenv("CRITERIA_PLUGINS", adapterDir)
 	t.Setenv("CRITERIA_STATE_DIR", stateDir)
 	t.Setenv("CRITERIA_LOCAL_APPROVAL", "stdin") // would block if reattach doesn't fail first
 

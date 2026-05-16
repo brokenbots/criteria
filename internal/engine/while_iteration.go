@@ -22,7 +22,7 @@ import (
 	"github.com/zclconf/go-cty/cty"
 
 	"github.com/brokenbots/criteria/internal/adapter"
-	"github.com/brokenbots/criteria/internal/plugin"
+	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -102,7 +102,7 @@ func (n *stepNode) evaluateWhileCondition(cur *workflow.IterCursor, st *RunState
 func (n *stepNode) runWhileIteration(ctx context.Context, st *RunState, deps Deps, cur *workflow.IterCursor) (string, error) {
 	result, execErr := n.runWhileStep(ctx, st, deps)
 	if execErr != nil {
-		var fatal *plugin.FatalRunError
+		var fatal *adapterhost.FatalRunError
 		if errors.As(execErr, &fatal) {
 			return "", execErr
 		}

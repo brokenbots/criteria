@@ -23,8 +23,8 @@ type SubmitOutcomeArgs struct {
 
 // handleSubmitOutcome is the tool handler for submit_outcome. It is goroutine-safe:
 // the SDK dispatches tool handlers from its own goroutines.
-func (p *copilotPlugin) handleSubmitOutcome(pluginSessionID string, args SubmitOutcomeArgs) (copilot.ToolResult, error) {
-	s := p.getSession(pluginSessionID)
+func (p *copilotAdapter) handleSubmitOutcome(adapterSessionID string, args SubmitOutcomeArgs) (copilot.ToolResult, error) {
+	s := p.getSession(adapterSessionID)
 	if s == nil {
 		return submitOutcomeError("unknown session"), nil
 	}

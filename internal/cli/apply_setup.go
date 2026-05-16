@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/internal/adapters/shell"
-	"github.com/brokenbots/criteria/internal/plugin"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -78,14 +78,14 @@ func workflowDirFromPath(path string) string {
 	return filepath.Dir(path)
 }
 
-func compileForExecution(ctx context.Context, workflowPath string, log *slog.Logger, subworkflowRoots ...string) ([]byte, *workflow.FSMGraph, *plugin.DefaultLoader, error) {
+func compileForExecution(ctx context.Context, workflowPath string, log *slog.Logger, subworkflowRoots ...string) ([]byte, *workflow.FSMGraph, *adapterhost.DefaultLoader, error) {
 	spec, diags := workflow.ParseFileOrDir(workflowPath)
 	if diags.HasErrors() {
 		return nil, nil, nil, fmt.Errorf("parse errors:\n%w", newDiagsError(diags))
 	}
 
-	loader := plugin.NewLoader()
-	loader.RegisterBuiltin(shell.Name, plugin.BuiltinFactoryForAdapter(shell.New()))
+	loader := adapterhost.NewLoader()
+	loader.RegisterBuiltin(shell.Name, adapterhost.BuiltinFactoryForAdapter(shell.New()))
 	schemas := collectSchemas(ctx, loader, spec, log)
 
 	workflowDir := workflowDirFromPath(workflowPath)

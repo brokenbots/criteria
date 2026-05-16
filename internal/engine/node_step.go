@@ -12,7 +12,7 @@ import (
 	"github.com/zclconf/go-cty/cty"
 
 	"github.com/brokenbots/criteria/internal/adapter"
-	"github.com/brokenbots/criteria/internal/plugin"
+	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -666,7 +666,7 @@ func (n *stepNode) runStepFromAttempt(ctx context.Context, st *RunState, deps De
 			return result, nil
 		}
 
-		var fatal *plugin.FatalRunError
+		var fatal *adapterhost.FatalRunError
 		if errors.As(err, &fatal) {
 			deps.Sink.OnStepOutcome(step.Name, "failure", dur, err)
 			return adapter.Result{}, err

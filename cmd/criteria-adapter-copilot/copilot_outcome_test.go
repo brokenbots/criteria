@@ -15,8 +15,8 @@ import (
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
-func outcomePlugin(s *sessionState) *copilotPlugin {
-	return &copilotPlugin{sessions: map[string]*sessionState{"s1": s}}
+func outcomeAdapter(s *sessionState) *copilotAdapter {
+	return &copilotAdapter{sessions: map[string]*sessionState{"s1": s}}
 }
 
 func stateWithOutcomes(allowed ...string) *sessionState {
@@ -36,7 +36,7 @@ func stateWithOutcomes(allowed ...string) *sessionState {
 // Test 5.1: Valid outcome sets finalizedOutcome, returns success ToolResult.
 func TestHandleSubmitOutcomeSuccess(t *testing.T) {
 	s := stateWithOutcomes("success", "failure")
-	p := outcomePlugin(s)
+	p := outcomeAdapter(s)
 
 	res, err := p.handleSubmitOutcome("s1", SubmitOutcomeArgs{Outcome: "success", Reason: "looks good"})
 	if err != nil {
@@ -68,7 +68,7 @@ func TestHandleSubmitOutcomeSuccess(t *testing.T) {
 // Test 5.2: Invalid outcome not in allowed set returns failure ToolResult.
 func TestHandleSubmitOutcomeInvalidOutcome(t *testing.T) {
 	s := stateWithOutcomes("success", "failure")
-	p := outcomePlugin(s)
+	p := outcomeAdapter(s)
 
 	res, err := p.handleSubmitOutcome("s1", SubmitOutcomeArgs{Outcome: "unknown"})
 	if err != nil {
@@ -106,7 +106,7 @@ func TestHandleSubmitOutcomeInvalidOutcome(t *testing.T) {
 // accurately reflects a misconfigured step rather than a model error.
 func TestHandleSubmitOutcomeNoOutcomesDeclared(t *testing.T) {
 	s := stateWithOutcomes() // empty allowed set
-	p := outcomePlugin(s)
+	p := outcomeAdapter(s)
 
 	res, err := p.handleSubmitOutcome("s1", SubmitOutcomeArgs{Outcome: "success"})
 	if err != nil {
@@ -131,7 +131,7 @@ func TestHandleSubmitOutcomeNoOutcomesDeclared(t *testing.T) {
 // Test 5.3: Empty outcome string returns failure ToolResult.
 func TestHandleSubmitOutcomeEmptyOutcome(t *testing.T) {
 	s := stateWithOutcomes("success")
-	p := outcomePlugin(s)
+	p := outcomeAdapter(s)
 
 	res, err := p.handleSubmitOutcome("s1", SubmitOutcomeArgs{Outcome: "   "})
 	if err != nil {
@@ -160,7 +160,7 @@ func TestHandleSubmitOutcomeEmptyOutcome(t *testing.T) {
 // the first outcome.
 func TestHandleSubmitOutcomeDuplicate(t *testing.T) {
 	s := stateWithOutcomes("success", "failure")
-	p := outcomePlugin(s)
+	p := outcomeAdapter(s)
 
 	if _, err := p.handleSubmitOutcome("s1", SubmitOutcomeArgs{Outcome: "success"}); err != nil {
 		t.Fatalf("first call: unexpected Go error: %v", err)
@@ -197,7 +197,7 @@ func TestHandleSubmitOutcomeDuplicate(t *testing.T) {
 // → invalid, not the reverse.
 func TestHandleSubmitOutcomeDuplicateInvalidArgs(t *testing.T) {
 	s := stateWithOutcomes("success", "failure")
-	p := outcomePlugin(s)
+	p := outcomeAdapter(s)
 
 	if _, err := p.handleSubmitOutcome("s1", SubmitOutcomeArgs{Outcome: "success"}); err != nil {
 		t.Fatalf("first call: unexpected Go error: %v", err)
@@ -225,7 +225,7 @@ func TestHandleSubmitOutcomeDuplicateInvalidArgs(t *testing.T) {
 
 // Test 5.5: Unknown session ID returns failure ToolResult (not a Go error).
 func TestHandleSubmitOutcomeUnknownSession(t *testing.T) {
-	p := &copilotPlugin{sessions: map[string]*sessionState{}}
+	p := &copilotAdapter{sessions: map[string]*sessionState{}}
 	res, err := p.handleSubmitOutcome("no-such-session", SubmitOutcomeArgs{Outcome: "success"})
 	if err != nil {
 		t.Fatalf("unexpected Go error: %v", err)
@@ -243,7 +243,7 @@ func TestHandleSubmitOutcomeEmitsEvent(t *testing.T) {
 	s.active = true
 	s.sink = sink
 	s.mu.Unlock()
-	p := outcomePlugin(s)
+	p := outcomeAdapter(s)
 
 	if _, err := p.handleSubmitOutcome("s1", SubmitOutcomeArgs{Outcome: "success", Reason: "done"}); err != nil {
 		t.Fatalf("unexpected Go error: %v", err)
@@ -301,7 +301,7 @@ func TestAwaitOutcomeSuccessOnFirstTurn(t *testing.T) {
 		s.finalizedOutcome = "success"
 		s.mu.Unlock()
 	}
-	p := outcomePlugin(s)
+	p := outcomeAdapter(s)
 	sender := &recordingSender{}
 
 	if err := p.Execute(context.Background(), &pb.ExecuteRequest{
@@ -341,7 +341,7 @@ func TestAwaitOutcomeSuccessAfterOneReprompt(t *testing.T) {
 			s.mu.Unlock()
 		}
 	}
-	p := outcomePlugin(s)
+	p := outcomeAdapter(s)
 	sender := &recordingSender{}
 
 	if err := p.Execute(context.Background(), &pb.ExecuteRequest{
@@ -375,7 +375,7 @@ func TestAwaitOutcomeExhaustedReturnsFailure(t *testing.T) {
 		{Type: copilot.SessionEventTypeSessionIdle, Data: &copilot.SessionIdleData{}},
 	}
 	fake.sendSequence = [][]copilot.SessionEvent{idle, idle, idle}
-	p := outcomePlugin(s)
+	p := outcomeAdapter(s)
 	sender := &recordingSender{}
 
 	if err := p.Execute(context.Background(), &pb.ExecuteRequest{
@@ -427,7 +427,7 @@ func TestMaxTurnsWithNeedsReviewAllowed(t *testing.T) {
 	fake.emitOnSend = []copilot.SessionEvent{
 		{Type: copilot.SessionEventTypeAssistantMessage, Data: &copilot.AssistantMessageData{MessageID: "m1", Content: "thinking"}},
 	}
-	p := outcomePlugin(s)
+	p := outcomeAdapter(s)
 	sender := &recordingSender{}
 
 	if err := p.Execute(context.Background(), &pb.ExecuteRequest{
@@ -478,7 +478,7 @@ func TestSubmitOutcome_RepromptTwice(t *testing.T) {
 	}
 
 	sender := &recordingSender{}
-	if err := outcomePlugin(s).Execute(context.Background(), &pb.ExecuteRequest{
+	if err := outcomeAdapter(s).Execute(context.Background(), &pb.ExecuteRequest{
 		SessionId:       "s1",
 		Config:          map[string]string{"prompt": "do work"},
 		AllowedOutcomes: []string{"failure", "success"},
@@ -505,7 +505,7 @@ func TestSubmitOutcome_InvalidEnumThenSuccess(t *testing.T) {
 	}
 	fake.sendSequence = [][]copilot.SessionEvent{idle, withIdle}
 
-	p := outcomePlugin(s)
+	p := outcomeAdapter(s)
 	fake.onSend = func(callIndex int, _ copilot.MessageOptions) {
 		switch callIndex {
 		case 0:
@@ -565,7 +565,7 @@ func TestSubmitOutcome_PermissionDeniedFailure(t *testing.T) {
 	}
 
 	sender := &recordingSender{}
-	if err := outcomePlugin(s).Execute(context.Background(), &pb.ExecuteRequest{
+	if err := outcomeAdapter(s).Execute(context.Background(), &pb.ExecuteRequest{
 		SessionId:       "s1",
 		Config:          map[string]string{"prompt": "do work"},
 		AllowedOutcomes: []string{"failure", "success"},
@@ -587,7 +587,7 @@ func TestSubmitOutcome_MaxTurnsReached_NoNeedsReviewInAllowed(t *testing.T) {
 	}
 
 	sender := &recordingSender{}
-	if err := outcomePlugin(s).Execute(context.Background(), &pb.ExecuteRequest{
+	if err := outcomeAdapter(s).Execute(context.Background(), &pb.ExecuteRequest{
 		SessionId:       "s1",
 		Config:          map[string]string{"prompt": "do work", "max_turns": "1"},
 		AllowedOutcomes: []string{"failure", "success"},
@@ -610,7 +610,7 @@ func TestSubmitOutcome_EmptyAllowedSetFailsClosed(t *testing.T) {
 	fake.sendSequence = [][]copilot.SessionEvent{idle, idle, idle}
 
 	sender := &recordingSender{}
-	if err := outcomePlugin(s).Execute(context.Background(), &pb.ExecuteRequest{
+	if err := outcomeAdapter(s).Execute(context.Background(), &pb.ExecuteRequest{
 		SessionId: "s1",
 		Config:    map[string]string{"prompt": "do work"},
 		// No AllowedOutcomes: empty set.
@@ -663,7 +663,7 @@ func TestSubmitOutcome_PreamblePresentInPrompt(t *testing.T) {
 	fake.sendSequence = [][]copilot.SessionEvent{idle, idle, idle}
 
 	sender := &recordingSender{}
-	_ = outcomePlugin(s).Execute(context.Background(), &pb.ExecuteRequest{
+	_ = outcomeAdapter(s).Execute(context.Background(), &pb.ExecuteRequest{
 		SessionId:       "s1",
 		Config:          map[string]string{"prompt": "do the task"},
 		AllowedOutcomes: []string{"failure", "success"},

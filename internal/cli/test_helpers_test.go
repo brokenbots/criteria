@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-func buildNoopPluginBinary(t *testing.T) string {
+func buildNoopAdapterBinary(t *testing.T) string {
 	t.Helper()
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {
@@ -22,7 +22,7 @@ func buildNoopPluginBinary(t *testing.T) string {
 	cmd.Dir = moduleRoot
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("build noop plugin: %v\n%s", err, string(out))
+		t.Fatalf("build noop adapter: %v\n%s", err, string(out))
 	}
 	return binary
 }

@@ -12,7 +12,7 @@ import (
 	"sync"
 
 	"github.com/brokenbots/criteria/internal/adapter"
-	"github.com/brokenbots/criteria/internal/plugin"
+	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -29,19 +29,19 @@ func (a adapterTarget) Execute(ctx context.Context, step *workflow.StepNode, sin
 	return a.impl.Execute(ctx, step, sink)
 }
 
-// pluginSessionTarget wraps a plugin.Plugin + session ID for use as an executeTarget.
-type pluginSessionTarget struct {
-	plugin    plugin.Plugin
+// adapterSessionTarget wraps a adapterhost.Handle + session ID for use as an executeTarget.
+type adapterSessionTarget struct {
+	handle    adapterhost.Handle
 	sessionID string
 	name      string
 }
 
-func (p pluginSessionTarget) Name() string {
+func (p adapterSessionTarget) Name() string {
 	return p.name
 }
 
-func (p pluginSessionTarget) Execute(ctx context.Context, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
-	return p.plugin.Execute(ctx, p.sessionID, step, sink)
+func (p adapterSessionTarget) Execute(ctx context.Context, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+	return p.handle.Execute(ctx, p.sessionID, step, sink)
 }
 
 // baseStep returns a minimal StepNode for use in conformance tests.

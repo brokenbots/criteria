@@ -3,8 +3,8 @@ package main
 import (
 	"context"
 
+	adapterhost "github.com/brokenbots/criteria/sdk/adapterhost"
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
-	pluginhost "github.com/brokenbots/criteria/sdk/pluginhost"
 )
 
 type brokenService struct{}
@@ -17,7 +17,7 @@ func (brokenService) OpenSession(context.Context, *pb.OpenSessionRequest) (*pb.O
 	return &pb.OpenSessionResponse{}, nil
 }
 
-func (brokenService) Execute(_ context.Context, _ *pb.ExecuteRequest, sink pluginhost.ExecuteEventSender) error {
+func (brokenService) Execute(_ context.Context, _ *pb.ExecuteRequest, sink adapterhost.ExecuteEventSender) error {
 	return sink.Send(&pb.ExecuteEvent{
 		Event: &pb.ExecuteEvent_Result{Result: &pb.ExecuteResult{Outcome: ""}},
 	})
@@ -32,5 +32,5 @@ func (brokenService) CloseSession(context.Context, *pb.CloseSessionRequest) (*pb
 }
 
 func main() {
-	pluginhost.Serve(brokenService{})
+	adapterhost.Serve(brokenService{})
 }

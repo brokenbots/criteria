@@ -12,10 +12,10 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/internal/adapters/shell"
 	"github.com/brokenbots/criteria/internal/cli/localresume"
 	"github.com/brokenbots/criteria/internal/engine"
-	"github.com/brokenbots/criteria/internal/plugin"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -127,10 +127,10 @@ func resumeLocalInFlightRuns(ctx context.Context, log *slog.Logger, out io.Write
 	}
 }
 
-// prepareReattach validates the checkpoint, builds a plugin loader, and
+// prepareReattach validates the checkpoint, builds an adapter loader, and
 // constructs a local resumer. On failure it logs, clears the checkpoint,
 // and returns zero values with false so the caller can skip the run.
-func prepareReattach(ctx context.Context, log *slog.Logger, cp *StepCheckpoint) (*workflow.FSMGraph, plugin.Loader, localresume.LocalResumer, bool) {
+func prepareReattach(ctx context.Context, log *slog.Logger, cp *StepCheckpoint) (*workflow.FSMGraph, adapterhost.Loader, localresume.LocalResumer, bool) {
 	graph, err := parseWorkflowFromPath(ctx, cp.WorkflowPath)
 	if err != nil {
 		log.Warn("cannot parse workflow for crashed local run; abandoning", "run_id", cp.RunID, "error", err)
@@ -148,8 +148,8 @@ func prepareReattach(ctx context.Context, log *slog.Logger, cp *StepCheckpoint) 
 		RemoveStepCheckpoint(cp.RunID)
 		return nil, nil, nil, false
 	}
-	loader := plugin.NewLoader()
-	loader.RegisterBuiltin(shell.Name, plugin.BuiltinFactoryForAdapter(shell.New()))
+	loader := adapterhost.NewLoader()
+	loader.RegisterBuiltin(shell.Name, adapterhost.BuiltinFactoryForAdapter(shell.New()))
 	return graph, loader, resumer, true
 }
 
@@ -190,7 +190,7 @@ func resumeOneLocalRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint
 // buildReattachTrackerAndEngine wires the checkpoint sink, pause tracker, and
 // engine for a crash-reattach run. The checkpointFn closure captures eng so
 // that each checkpoint write includes the current visit counts (W07).
-func buildReattachTrackerAndEngine(cp *StepCheckpoint, log *slog.Logger, graph *workflow.FSMGraph, loader plugin.Loader, out io.Writer, mode outputMode, nextAttempt int) (applyOptions, *pauseTracker, *engine.Engine) {
+func buildReattachTrackerAndEngine(cp *StepCheckpoint, log *slog.Logger, graph *workflow.FSMGraph, loader adapterhost.Loader, out io.Writer, mode outputMode, nextAttempt int) (applyOptions, *pauseTracker, *engine.Engine) {
 	opts := applyOptions{workflowPath: cp.WorkflowPath}
 	var eng *engine.Engine // captured by checkpointFn; assigned below before any callbacks fire
 	checkpointFn := func(step string, attempt int) {

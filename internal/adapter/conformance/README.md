@@ -2,7 +2,7 @@
 
 This package defines a reusable contract test for all Criteria adapters.
 
-Use `conformance.Run` for in-process adapters, and `conformance.RunPlugin` for out-of-process plugin binaries.
+Use `conformance.Run` for in-process adapters, and `conformance.RunAdapter` for out-of-process adapter binaries.
 
 Shared contract sub-tests (both entry points):
 
@@ -14,12 +14,12 @@ Shared contract sub-tests (both entry points):
 - outcome-domain correctness
 - optional chunked streaming output for stream-producing adapters
 
-Plugin-only sub-tests (`RunPlugin`):
+Adapter-only sub-tests (`RunAdapter`):
 
 - `session_lifecycle`: open -> execute -> execute -> close, then verify execute-after-close errors.
 - `concurrent_sessions`: open two sessions in parallel and verify per-session isolation.
-- `session_crash_detection`: kill the plugin process and verify the next execute returns an error (no panic/hang).
-- `permission_request_shape`: for plugins advertising `permission_gating`, verify `permission.request` event shape and deny -> `needs_review` outcome.
+- `session_crash_detection`: kill the adapter process and verify the next execute returns an error (no panic/hang).
+- `permission_request_shape`: for adapters advertising `permission_gating`, verify `permission.request` event shape and deny -> `needs_review` outcome.
 
 ## One-line adoption example
 
@@ -35,12 +35,12 @@ func TestMyAdapter_Conformance(t *testing.T) {
 }
 ```
 
-## Plugin adoption example
+## Adapter adoption example
 
 ```go
-func TestMyPlugin_Conformance(t *testing.T) {
-    conformance.RunPlugin(t, "myplugin",
-        filepath.Join("..", "..", "..", "bin", "criteria-adapter-myplugin"),
+func TestMyAdapter_Conformance(t *testing.T) {
+    conformance.RunAdapter(t, "myadapter",
+        filepath.Join("..", "..", "..", "bin", "criteria-adapter-myadapter"),
         conformance.Options{
             StepConfig: map[string]string{"prompt": "hello"},
             AllowedOutcomes: []string{"success", "failure", "needs_review"},

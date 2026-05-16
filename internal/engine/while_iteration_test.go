@@ -3,7 +3,7 @@ package engine
 // while_iteration_test.go — engine-level tests for the while step modifier.
 //
 // Tests use the same helpers as iteration_engine_test.go: compile(), iterSink,
-// fakePlugin, multiOutcomePlugin, captureInputPlugin, fakeLoader.
+// fakeAdapter, multiOutcomeAdapter, captureInputAdapter, fakeLoader.
 
 import (
 	"context"
@@ -12,7 +12,7 @@ import (
 	"testing"
 
 	"github.com/brokenbots/criteria/internal/adapter"
-	"github.com/brokenbots/criteria/internal/plugin"
+	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -38,8 +38,8 @@ state "done" {
   success  = true
 }`)
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
-		"fake": &fakePlugin{name: "fake", outcome: "success"},
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{
+		"fake": &fakeAdapter{name: "fake", outcome: "success"},
 	}}
 	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
@@ -105,14 +105,14 @@ state "done" {
 
 	call := 0
 	countdowns := []string{"2", "1", "0"}
-	plug := &pluginFunc{fn: func(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+	plug := &adapterFunc{fn: func(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
 		out := countdowns[call]
 		call++
 		return adapter.Result{Outcome: "success", Outputs: map[string]string{"remaining": out}}, nil
 	}}
 
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": plug}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": plug}}
 	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -169,7 +169,7 @@ state "done" {
 	var capturedInputs []map[string]string
 	call := 0
 	outcomes := []string{"success", "success", "success"}
-	plug := &pluginFunc{fn: func(_ context.Context, _ string, step *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+	plug := &adapterFunc{fn: func(_ context.Context, _ string, step *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
 		inp := make(map[string]string)
 		for k, v := range step.Input {
 			inp[k] = v
@@ -187,7 +187,7 @@ state "done" {
 	}}
 
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": plug}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": plug}}
 	_ = NewTestEngine(g, loader, sink).Run(context.Background())
 
 	// Check that each captured input has the exact iteration index.
@@ -236,7 +236,7 @@ state "done" {
 
 	var capturedInputs []map[string]string
 	n := 0
-	plug := &pluginFunc{fn: func(_ context.Context, _ string, step *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+	plug := &adapterFunc{fn: func(_ context.Context, _ string, step *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
 		inp := make(map[string]string)
 		for k, v := range step.Input {
 			inp[k] = v
@@ -249,7 +249,7 @@ state "done" {
 		return adapter.Result{Outcome: "success"}, nil
 	}}
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": plug}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": plug}}
 	_ = NewTestEngine(g, loader, sink).Run(context.Background())
 
 	if len(capturedInputs) == 0 {
@@ -286,9 +286,9 @@ state "done" {
   success  = true
 }`)
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{
 		// First call fails; second would succeed but should not be reached.
-		"fake": &multiOutcomePlugin{name: "fake", outcomes: []string{"failure", "success"}},
+		"fake": &multiOutcomeAdapter{name: "fake", outcomes: []string{"failure", "success"}},
 	}}
 	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
@@ -358,14 +358,14 @@ state "done" {
 		{"failure", "1"}, // iteration 0 fails but continues
 		{"success", "0"}, // iteration 1 succeeds; remaining → 0
 	}
-	plug := &pluginFunc{fn: func(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+	plug := &adapterFunc{fn: func(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
 		r := outcomes[call]
 		call++
 		return adapter.Result{Outcome: r.o, Outputs: map[string]string{"remaining": r.rem}}, nil
 	}}
 
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": plug}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": plug}}
 	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -432,14 +432,14 @@ state "done" {
 		{"failure", "1"},
 		{"success", "0"},
 	}
-	plug := &pluginFunc{fn: func(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+	plug := &adapterFunc{fn: func(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
 		r := outcomes[call]
 		call++
 		return adapter.Result{Outcome: r.o, Outputs: map[string]string{"remaining": r.rem}}, nil
 	}}
 
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": plug}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": plug}}
 	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -489,12 +489,12 @@ state "done" {
 		InProgress: true,
 	}}
 
-	plug := &pluginFunc{fn: func(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+	plug := &adapterFunc{fn: func(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
 		return adapter.Result{Outcome: "success"}, nil
 	}}
 
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": plug}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": plug}}
 	eng := New(g, loader, sink, WithResumedIter(resumeStack))
 	if err := eng.RunFrom(context.Background(), "loop", 1); err != nil {
 		t.Fatalf("run: %v", err)
@@ -574,8 +574,8 @@ state "failed" {
   success  = false
 }`)
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
-		"fake": &fakePlugin{name: "fake", outcome: "success"},
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{
+		"fake": &fakeAdapter{name: "fake", outcome: "success"},
 	}}
 	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
@@ -634,7 +634,7 @@ state "done" {
 
 	call := 0
 	decrements := []string{"1", "0"}
-	plug := &pluginFunc{fn: func(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+	plug := &adapterFunc{fn: func(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
 		out := decrements[call]
 		if call < len(decrements)-1 {
 			call++
@@ -643,7 +643,7 @@ state "done" {
 	}}
 
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": plug}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": plug}}
 	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -709,12 +709,12 @@ state "done" {
 	}
 
 	call := 0
-	plug := &pluginFunc{fn: func(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+	plug := &adapterFunc{fn: func(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
 		call++
 		return adapter.Result{Outcome: "success"}, nil
 	}}
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": plug}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": plug}}
 	err := NewTestEngine(g, loader, sink).Run(context.Background())
 	if err != nil {
 		if !strings.Contains(err.Error(), "max_visits") {
@@ -762,12 +762,12 @@ state "done" {
 	}
 
 	call := 0
-	plug := &pluginFunc{fn: func(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+	plug := &adapterFunc{fn: func(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
 		call++
 		return adapter.Result{Outcome: "success"}, nil
 	}}
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": plug}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": plug}}
 	err := NewTestEngine(g, loader, sink).Run(context.Background())
 	if err == nil {
 		t.Fatal("expected error for max_total_steps exceeded, got nil")
@@ -776,7 +776,7 @@ state "done" {
 		t.Errorf("error = %q; want mention of 'max_total_steps'", err.Error())
 	}
 	if call != 3 {
-		t.Errorf("plugin calls: got %d want 3", call)
+		t.Errorf("adapter calls: got %d want 3", call)
 	}
 }
 
@@ -815,12 +815,12 @@ state "done" {
 		t.Fatalf("compile: %v", diags.Error())
 	}
 
-	plug := &pluginFunc{fn: func(ctx context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+	plug := &adapterFunc{fn: func(ctx context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
 		<-ctx.Done()
 		return adapter.Result{}, ctx.Err()
 	}}
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": plug}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": plug}}
 	err := NewTestEngine(g, loader, sink).Run(context.Background())
 	if err != nil {
 		t.Fatalf("run: %v (want nil: timeout should abort loop, not crash run)", err)
@@ -871,7 +871,7 @@ state "done" {
 
 	call := 0
 	// Iteration 1 returns an execErr; iterations 2 and 3 succeed.
-	plug := &pluginFunc{fn: func(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+	plug := &adapterFunc{fn: func(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
 		call++
 		if call == 1 {
 			return adapter.Result{}, fmt.Errorf("transient error")
@@ -879,13 +879,13 @@ state "done" {
 		return adapter.Result{Outcome: "success"}, nil
 	}}
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": plug}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": plug}}
 	err := NewTestEngine(g, loader, sink).Run(context.Background())
 	if err != nil {
 		t.Fatalf("run: %v (want nil: default on_failure should not abort loop)", err)
 	}
 	if call != 3 {
-		t.Errorf("plugin calls: got %d want 3 (loop must not abort on first execErr)", call)
+		t.Errorf("adapter calls: got %d want 3 (loop must not abort on first execErr)", call)
 	}
 	if sink.terminal != "done" || !sink.terminalOK {
 		t.Errorf("terminal: %q ok=%v, want done/true", sink.terminal, sink.terminalOK)
@@ -932,12 +932,12 @@ func TestWhile_Subworkflow_Success(t *testing.T) {
 	}
 
 	call := 0
-	plug := &pluginFunc{fn: func(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+	plug := &adapterFunc{fn: func(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
 		call++
 		return adapter.Result{Outcome: "success"}, nil
 	}}
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": plug}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": plug}}
 	err := NewTestEngine(parentGraph, loader, sink).Run(context.Background())
 	if err != nil {
 		t.Fatalf("run: %v", err)
@@ -946,7 +946,7 @@ func TestWhile_Subworkflow_Success(t *testing.T) {
 		t.Errorf("terminal: %q ok=%v", sink.terminal, sink.terminalOK)
 	}
 	if call != 3 {
-		t.Errorf("callee plugin calls: got %d want 3", call)
+		t.Errorf("callee adapter calls: got %d want 3", call)
 	}
 	if len(sink.iterationsCompleted) != 1 {
 		t.Fatalf("iterations completed: got %d want 1", len(sink.iterationsCompleted))
@@ -989,12 +989,12 @@ func TestWhile_Subworkflow_FailureAborts(t *testing.T) {
 	}
 
 	call := 0
-	plug := &pluginFunc{fn: func(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+	plug := &adapterFunc{fn: func(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
 		call++
 		return adapter.Result{}, fmt.Errorf("callee failure")
 	}}
 	sink := &iterSink{}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"fake": plug}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": plug}}
 	err := NewTestEngine(parentGraph, loader, sink).Run(context.Background())
 	if err != nil {
 		t.Fatalf("run: %v (want nil: abort should not propagate callee error)", err)
@@ -1003,7 +1003,7 @@ func TestWhile_Subworkflow_FailureAborts(t *testing.T) {
 		t.Errorf("terminal: %q ok=%v", sink.terminal, sink.terminalOK)
 	}
 	if call != 1 {
-		t.Errorf("callee plugin calls: got %d want 1 (abort after first failure)", call)
+		t.Errorf("callee adapter calls: got %d want 1 (abort after first failure)", call)
 	}
 	if len(sink.iterationsCompleted) != 1 {
 		t.Fatalf("iterations completed: got %d want 1", len(sink.iterationsCompleted))

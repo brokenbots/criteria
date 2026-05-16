@@ -16,7 +16,7 @@ import (
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 )
 
-func (p *copilotPlugin) Permit(_ context.Context, req *pb.PermitRequest) (*pb.PermitResponse, error) {
+func (p *copilotAdapter) Permit(_ context.Context, req *pb.PermitRequest) (*pb.PermitResponse, error) {
 	s := p.getSession(req.GetSessionId())
 	if s == nil {
 		return nil, fmt.Errorf("copilot: unknown session %q", req.GetSessionId())
@@ -33,7 +33,7 @@ func (p *copilotPlugin) Permit(_ context.Context, req *pb.PermitRequest) (*pb.Pe
 	return &pb.PermitResponse{}, nil
 }
 
-func (p *copilotPlugin) handlePermissionRequest(sessionID string, request *copilot.PermissionRequest) (copilot.PermissionRequestResult, error) {
+func (p *copilotAdapter) handlePermissionRequest(sessionID string, request *copilot.PermissionRequest) (copilot.PermissionRequestResult, error) {
 	s := p.getSession(sessionID)
 	if s == nil {
 		return copilot.PermissionRequestResult{Kind: copilot.PermissionRequestResultKindUserNotAvailable}, nil

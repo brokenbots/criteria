@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/brokenbots/criteria/internal/plugin"
+	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -34,7 +34,7 @@ func initScopeAdapters(ctx context.Context, g *workflow.FSMGraph, deps Deps) (or
 		// (in workflow/compile_adapters.go:57-61), so already-open here always means
 		// a parent-scope adapter being re-opened in a child scope.
 		// Only adapters we newly opened are tracked for teardown.
-		if openErr != nil && !errors.Is(openErr, plugin.ErrSessionAlreadyOpen) {
+		if openErr != nil && !errors.Is(openErr, adapterhost.ErrSessionAlreadyOpen) {
 			// Rollback: tear down all successfully provisioned adapters in reverse order
 			for i := len(provisioned) - 1; i >= 0; i-- {
 				adapterID := provisioned[i]

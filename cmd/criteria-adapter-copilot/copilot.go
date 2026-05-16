@@ -1,22 +1,22 @@
-// Package main implements the criteria-adapter-copilot out-of-process plugin.
+// Package main implements the criteria-adapter-copilot out-of-process adapter.
 //
-// The plugin preserves the Criteria plugin boundary while using the Copilot SDK
+// The adapter preserves the Criteria adapter boundary while using the Copilot SDK
 // internally for a structured session protocol (instead of parsing free-form CLI
 // stdout). The SDK manages CLI daemon startup/transport and exposes typed events.
 //
 // One SDK session is created per OpenSession and can be reused for multiple
 // Execute calls (multi-turn). Permission requests are bridged to the host via
-// plugin Permit RPC: Execute blocks until Permit resolves each request.
+// adapter Permit RPC: Execute blocks until Permit resolves each request.
 //
 // max_turns semantics:
-//   - max_turns is enforced plugin-side per Execute call by counting assistant
+//   - max_turns is enforced adapter-side per Execute call by counting assistant
 //     message events for that turn.
-//   - if the cap is reached, the plugin emits Adapter("limit.reached", ...)
+//   - if the cap is reached, the adapter emits Adapter("limit.reached", ...)
 //     and returns outcome "failure" (or "needs_review" if that outcome is in
 //     the step's allowed set).
 //
 // Outcome semantics:
-//   - the plugin registers a `submit_outcome` tool at OpenSession.
+//   - the adapter registers a `submit_outcome` tool at OpenSession.
 //   - per Execute, the host's allowed outcomes are loaded onto sessionState
 //     before the prompt is sent.
 //   - the model MUST call submit_outcome exactly once with a valid outcome;
@@ -27,7 +27,7 @@
 //   - permission denial returns "failure".
 //
 // File layout:
-//   - copilot.go         — constants, types (copilotPlugin), Info/ensureClient/getSession
+//   - copilot.go         — constants, types (copilotAdapter), Info/ensureClient/getSession
 //   - copilot_session.go — session lifecycle: copilotSession interface, sdkSession, sessionState, Open/CloseSession
 //   - copilot_turn.go    — Execute, turnState, event handlers
 //   - copilot_outcome.go — submit_outcome tool: SubmitOutcomeArgs, handleSubmitOutcome, helpers
@@ -51,8 +51,8 @@ import (
 )
 
 const (
-	pluginName    = "copilot"
-	pluginVersion = "0.1.0"
+	adapterName    = "copilot"
+	adapterVersion = "0.1.0"
 
 	defaultBinEnv = "CRITERIA_COPILOT_BIN"
 	defaultBin    = "copilot"
@@ -83,7 +83,7 @@ type permDecision struct {
 	reason string
 }
 
-type copilotPlugin struct {
+type copilotAdapter struct {
 	mu       sync.Mutex
 	sessions map[string]*sessionState
 
@@ -91,10 +91,10 @@ type copilotPlugin struct {
 	client   *copilot.Client
 }
 
-func (p *copilotPlugin) Info(_ context.Context, _ *pb.InfoRequest) (*pb.InfoResponse, error) {
+func (p *copilotAdapter) Info(_ context.Context, _ *pb.InfoRequest) (*pb.InfoResponse, error) {
 	return &pb.InfoResponse{
-		Name:    pluginName,
-		Version: pluginVersion,
+		Name:    adapterName,
+		Version: adapterVersion,
 		Capabilities: []string{
 			"multi_turn",
 			"permission_gating",
@@ -125,7 +125,7 @@ func (p *copilotPlugin) Info(_ context.Context, _ *pb.InfoRequest) (*pb.InfoResp
 	}, nil
 }
 
-func (p *copilotPlugin) ensureClient(ctx context.Context) (*copilot.Client, error) {
+func (p *copilotAdapter) ensureClient(ctx context.Context) (*copilot.Client, error) {
 	p.clientMu.Lock()
 	defer p.clientMu.Unlock()
 	if p.client != nil {
@@ -169,7 +169,7 @@ func resolveGitHubToken() string {
 	return ""
 }
 
-func (p *copilotPlugin) getSession(sessionID string) *sessionState {
+func (p *copilotAdapter) getSession(sessionID string) *sessionState {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.sessions[sessionID]

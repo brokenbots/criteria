@@ -13,13 +13,13 @@ import (
 	"time"
 
 	"github.com/brokenbots/criteria/internal/adapter/conformance"
-	"github.com/brokenbots/criteria/internal/plugin"
+	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/workflow"
 )
 
 var (
-	testPluginBin string
-	testFakeBin   string
+	testAdapterBin string
+	testFakeBin    string
 )
 
 func TestMain(m *testing.M) {
@@ -28,20 +28,20 @@ func TestMain(m *testing.M) {
 		panic("resolve caller path")
 	}
 	moduleRoot := filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
-	testPluginBin = buildBinary(moduleRoot, "./cmd/criteria-adapter-copilot", "criteria-adapter-copilot-test")
+	testAdapterBin = buildBinary(moduleRoot, "./cmd/criteria-adapter-copilot", "criteria-adapter-copilot-test")
 	testFakeBin = buildBinary(moduleRoot, "./cmd/criteria-adapter-copilot/testfixtures/fake-copilot", "fake-copilot-test")
 	os.Exit(m.Run())
 }
 
-// TestCopilotPluginConformance runs the full conformance suite against the
-// copilot plugin binary.
+// TestCopilotAdapterConformance runs the full conformance suite against the
+// copilot adapter binary.
 //
 // By default it uses the deterministic fake-copilot stub so no real copilot
 // CLI or network access is required. Set COPILOT_E2E=1 to use the real copilot
 // CLI instead (requires copilot CLI on PATH or CRITERIA_COPILOT_BIN set):
 //
 //	COPILOT_E2E=1 go test ./cmd/criteria-adapter-copilot/... -run Conformance
-func TestCopilotPluginConformance(t *testing.T) {
+func TestCopilotAdapterConformance(t *testing.T) {
 	opts := conformance.Options{
 		StepConfig: map[string]string{
 			"prompt": "Reply with only: RESULT: success",
@@ -58,7 +58,7 @@ func TestCopilotPluginConformance(t *testing.T) {
 	}
 
 	applyFakeIfNeeded(t)
-	conformance.RunPlugin(t, "copilot", testPluginBin, opts)
+	conformance.RunAdapter(t, "copilot", testAdapterBin, opts)
 }
 
 // applyFakeIfNeeded sets CRITERIA_COPILOT_BIN to the deterministic fake
@@ -88,7 +88,7 @@ func TestCopilotE2ERouting(t *testing.T) {
 	})
 
 	t.Run("fake_not_used_when_e2e_set", func(t *testing.T) {
-		sentinel := testPluginBin + "-real"
+		sentinel := testAdapterBin + "-real"
 		t.Setenv("COPILOT_E2E", "1")
 		t.Setenv("CRITERIA_COPILOT_BIN", sentinel)
 		applyFakeIfNeeded(t)
@@ -98,10 +98,10 @@ func TestCopilotE2ERouting(t *testing.T) {
 	})
 }
 
-// TestCopilotPluginBuilds verifies the plugin binary exists and is executable.
-func TestCopilotPluginBuilds(t *testing.T) {
-	if _, err := os.Stat(testPluginBin); err != nil {
-		t.Fatalf("plugin binary not found at %q: %v", testPluginBin, err)
+// TestCopilotAdapterBuilds verifies the adapter binary exists and is executable.
+func TestCopilotAdapterBuilds(t *testing.T) {
+	if _, err := os.Stat(testAdapterBin); err != nil {
+		t.Fatalf("adapter binary not found at %q: %v", testAdapterBin, err)
 	}
 }
 
@@ -118,11 +118,11 @@ func TestCopilotPluginBuilds(t *testing.T) {
 func TestCopilotReasoningEffortOverride(t *testing.T) {
 	applyFakeIfNeeded(t)
 
-	loader := plugin.NewLoaderWithDiscovery(func(requested string) (string, error) {
+	loader := adapterhost.NewLoaderWithDiscovery(func(requested string) (string, error) {
 		if requested != "copilot" {
-			return "", fmt.Errorf("unexpected plugin %q", requested)
+			return "", fmt.Errorf("unexpected adapter %q", requested)
 		}
-		return testPluginBin, nil
+		return testAdapterBin, nil
 	})
 	t.Cleanup(func() { _ = loader.Shutdown(context.Background()) })
 
@@ -131,7 +131,7 @@ func TestCopilotReasoningEffortOverride(t *testing.T) {
 
 	plug, err := loader.Resolve(ctx, "copilot")
 	if err != nil {
-		t.Fatalf("resolve plugin: %v", err)
+		t.Fatalf("resolve adapter: %v", err)
 	}
 
 	sessionID := "effort-override-test-session"
@@ -187,7 +187,7 @@ func TestCopilotReasoningEffortOverride(t *testing.T) {
 
 // TestConformance_AllowedOutcomesPropagation (W15 Step 5.2) verifies that
 // AllowedOutcomes derived from a step's declared outcome set are propagated
-// end-to-end through the plugin loader to the copilot adapter, and that the
+// end-to-end through the adapter loader to the copilot adapter, and that the
 // adapter returns an outcome that is a member of the declared set.
 //
 // The loader's collectAllowedOutcomes helper converts step.Outcomes into
@@ -199,11 +199,11 @@ func TestConformance_AllowedOutcomesPropagation(t *testing.T) {
 	}
 	applyFakeIfNeeded(t)
 
-	loader := plugin.NewLoaderWithDiscovery(func(requested string) (string, error) {
+	loader := adapterhost.NewLoaderWithDiscovery(func(requested string) (string, error) {
 		if requested != "copilot" {
-			return "", fmt.Errorf("unexpected plugin %q", requested)
+			return "", fmt.Errorf("unexpected adapter %q", requested)
 		}
-		return testPluginBin, nil
+		return testAdapterBin, nil
 	})
 	t.Cleanup(func() { _ = loader.Shutdown(context.Background()) })
 
@@ -212,7 +212,7 @@ func TestConformance_AllowedOutcomesPropagation(t *testing.T) {
 
 	plug, err := loader.Resolve(ctx, "copilot")
 	if err != nil {
-		t.Fatalf("resolve plugin: %v", err)
+		t.Fatalf("resolve adapter: %v", err)
 	}
 
 	sessionID := "allowed-outcomes-propagation-test"
@@ -271,11 +271,11 @@ func TestConformance_AllowedOutcomesPropagation_SetProof(t *testing.T) {
 	t.Setenv("FAKE_COPILOT_SCENARIO", "missing")
 	applyFakeIfNeeded(t)
 
-	loader := plugin.NewLoaderWithDiscovery(func(requested string) (string, error) {
+	loader := adapterhost.NewLoaderWithDiscovery(func(requested string) (string, error) {
 		if requested != "copilot" {
-			return "", fmt.Errorf("unexpected plugin %q", requested)
+			return "", fmt.Errorf("unexpected adapter %q", requested)
 		}
-		return testPluginBin, nil
+		return testAdapterBin, nil
 	})
 	t.Cleanup(func() { _ = loader.Shutdown(context.Background()) })
 
@@ -284,7 +284,7 @@ func TestConformance_AllowedOutcomesPropagation_SetProof(t *testing.T) {
 
 	plug, err := loader.Resolve(ctx, "copilot")
 	if err != nil {
-		t.Fatalf("resolve plugin: %v", err)
+		t.Fatalf("resolve adapter: %v", err)
 	}
 
 	sessionID := "allowed-outcomes-setproof-test"
@@ -344,30 +344,30 @@ func TestConformance_AllowedOutcomesPropagation_SetProof(t *testing.T) {
 	}
 }
 
-// newFixturePlugin returns a plugin loaded from testPluginBin for use in
+// newFixtureHandle returns a Handle loaded from testAdapterBin for use in
 // scenario fixture tests. The binary inherits the current process environment,
 // so set FAKE_COPILOT_SCENARIO before calling this.
-func newFixturePlugin(t *testing.T) plugin.Plugin {
+func newFixtureHandle(t *testing.T) adapterhost.Handle {
 	t.Helper()
-	loader := plugin.NewLoaderWithDiscovery(func(requested string) (string, error) {
+	loader := adapterhost.NewLoaderWithDiscovery(func(requested string) (string, error) {
 		if requested != "copilot" {
-			return "", fmt.Errorf("unexpected plugin %q", requested)
+			return "", fmt.Errorf("unexpected adapter %q", requested)
 		}
-		return testPluginBin, nil
+		return testAdapterBin, nil
 	})
 	t.Cleanup(func() { _ = loader.Shutdown(context.Background()) })
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	t.Cleanup(cancel)
 	plug, err := loader.Resolve(ctx, "copilot")
 	if err != nil {
-		t.Fatalf("resolve plugin: %v", err)
+		t.Fatalf("resolve adapter: %v", err)
 	}
 	return plug
 }
 
 // openFixtureSession opens a session on plug and registers cleanup. Returns
 // a context with a 30-second deadline.
-func openFixtureSession(t *testing.T, plug plugin.Plugin, sessionID string) context.Context {
+func openFixtureSession(t *testing.T, plug adapterhost.Handle, sessionID string) context.Context {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	t.Cleanup(cancel)
@@ -384,7 +384,7 @@ func openFixtureSession(t *testing.T, plug plugin.Plugin, sessionID string) cont
 }
 
 // TestConformance_InvalidOutcomeScenario_Fixture (W15 Blocker-1a) drives the
-// "invalid-outcome" fake scenario end-to-end through the real plugin binary.
+// "invalid-outcome" fake scenario end-to-end through the real adapter binary.
 //
 // The fake submits "not-a-real-outcome" on turn 1 (rejected by the handler) and
 // "success" on turn 2 (accepted). This validates:
@@ -402,7 +402,7 @@ func TestConformance_InvalidOutcomeScenario_Fixture(t *testing.T) {
 	t.Setenv("FAKE_COPILOT_SCENARIO", "invalid-outcome")
 	applyFakeIfNeeded(t)
 
-	plug := newFixturePlugin(t)
+	plug := newFixtureHandle(t)
 	ctx := openFixtureSession(t, plug, "invalid-outcome-fixture-test")
 
 	step := &workflow.StepNode{
@@ -465,7 +465,7 @@ func TestConformance_InvalidOutcomeScenario_Fixture(t *testing.T) {
 }
 
 // TestConformance_DuplicateCallScenario_Fixture (W15 Blocker-1b) drives the
-// "duplicate-call" fake scenario end-to-end through the real plugin binary.
+// "duplicate-call" fake scenario end-to-end through the real adapter binary.
 //
 // The fake submits submit_outcome("success") and submit_outcome("failure") in
 // the same turn (no idle between them). This validates:
@@ -483,7 +483,7 @@ func TestConformance_DuplicateCallScenario_Fixture(t *testing.T) {
 	t.Setenv("FAKE_COPILOT_SCENARIO", "duplicate-call")
 	applyFakeIfNeeded(t)
 
-	plug := newFixturePlugin(t)
+	plug := newFixtureHandle(t)
 	ctx := openFixtureSession(t, plug, "duplicate-call-fixture-test")
 
 	step := &workflow.StepNode{

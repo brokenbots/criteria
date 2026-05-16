@@ -14,7 +14,7 @@ func runBrokenAdapterFixtureAssertion(t *testing.T) {
 		"conformancefail",
 		"./internal/adapter/conformance",
 		"-run",
-		"TestBrokenPluginConformanceFixture",
+		"TestBrokenAdapterConformanceFixture",
 	)
 	cmd.Dir = "../../.."
 	out, err := cmd.CombinedOutput()

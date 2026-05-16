@@ -1,6 +1,6 @@
-// Package main is the greeter adapter plugin — a minimal example of a
+// Package main is the greeter adapter — a minimal example of a
 // third-party Criteria adapter that lives in its own module, imports only
-// the public plugin SDK, and is discovered at runtime from CRITERIA_PLUGINS
+// the public adapter SDK, and is discovered at runtime from CRITERIA_PLUGINS
 // or ~/.criteria/plugins/.
 //
 // The adapter accepts one input key, "name", and returns:
@@ -14,8 +14,8 @@ import (
 	"context"
 	"fmt"
 
+	adapterhost "github.com/brokenbots/criteria/sdk/adapterhost"
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
-	pluginhost "github.com/brokenbots/criteria/sdk/pluginhost"
 )
 
 type greeterService struct{}
@@ -31,7 +31,7 @@ func (g *greeterService) OpenSession(_ context.Context, _ *pb.OpenSessionRequest
 	return &pb.OpenSessionResponse{}, nil
 }
 
-func (g *greeterService) Execute(_ context.Context, req *pb.ExecuteRequest, sink pluginhost.ExecuteEventSender) error {
+func (g *greeterService) Execute(_ context.Context, req *pb.ExecuteRequest, sink adapterhost.ExecuteEventSender) error {
 	name := req.GetConfig()["name"]
 	if name == "" {
 		name = "world"
@@ -71,5 +71,5 @@ func (g *greeterService) CloseSession(_ context.Context, _ *pb.CloseSessionReque
 }
 
 func main() {
-	pluginhost.Serve(&greeterService{})
+	adapterhost.Serve(&greeterService{})
 }

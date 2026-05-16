@@ -19,7 +19,7 @@ import (
 	"github.com/zclconf/go-cty/cty"
 
 	"github.com/brokenbots/criteria/internal/adapter"
-	"github.com/brokenbots/criteria/internal/plugin"
+	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -55,7 +55,7 @@ func traversalExpr(root string, attrs ...string) hcl.Expression {
 
 func testDeps(t *testing.T) Deps {
 	t.Helper()
-	sessions := plugin.NewSessionManager(plugin.NewLoader())
+	sessions := adapterhost.NewSessionManager(adapterhost.NewLoader())
 	t.Cleanup(func() { sessions.Shutdown(context.Background()) })
 	return Deps{
 		Sessions: sessions,
@@ -291,13 +291,13 @@ func TestRunSubworkflow_FileFromCalleeDir(t *testing.T) {
 	}
 }
 
-// ctxCheckPlugin is a test plugin whose Execute returns ctx.Err() immediately
+// ctxCheckAdapter is a test adapter whose Execute returns ctx.Err() immediately
 // when the context is already cancelled, allowing deterministic cancellation tests.
-type ctxCheckPlugin struct {
-	fakePlugin
+type ctxCheckAdapter struct {
+	fakeAdapter
 }
 
-func (p *ctxCheckPlugin) Execute(ctx context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+func (p *ctxCheckAdapter) Execute(ctx context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
 	if err := ctx.Err(); err != nil {
 		return adapter.Result{}, err
 	}
@@ -356,9 +356,9 @@ func subworkflowNodeFor(name string, body *workflow.FSMGraph) *workflow.Subworkf
 }
 
 // depsWithLoader builds a Deps whose SessionManager uses the given loader.
-func depsWithLoader(t *testing.T, loader plugin.Loader) Deps {
+func depsWithLoader(t *testing.T, loader adapterhost.Loader) Deps {
 	t.Helper()
-	sessions := plugin.NewSessionManager(loader)
+	sessions := adapterhost.NewSessionManager(loader)
 	t.Cleanup(func() { sessions.Shutdown(context.Background()) })
 	return Deps{Sessions: sessions, Sink: &fakeSink{}}
 }
@@ -371,8 +371,8 @@ func depsWithLoader(t *testing.T, loader plugin.Loader) Deps {
 // A broken teardown (missing deferred tearDownScopeAdapters) would leave
 // closes==0 after runSubworkflow returns, failing the test.
 func TestRunSubworkflow_AdaptersIsolatedFromParent(t *testing.T) {
-	tracker := &lifecycleTrackingPlugin{fakePlugin: fakePlugin{name: "noop"}}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"noop": tracker}}
+	tracker := &lifecycleTrackingAdapter{fakeAdapter: fakeAdapter{name: "noop"}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"noop": tracker}}
 
 	node := subworkflowNodeFor("isolated", calleeBodyWithAdapter("noop"))
 	parentSt := &RunState{
@@ -405,8 +405,8 @@ func TestRunSubworkflow_AdaptersIsolatedFromParent(t *testing.T) {
 // A broken implementation that converts callee errors to empty/nil outputs
 // without returning an error would fail this test.
 func TestRunSubworkflow_ErrorPropagatesToParent(t *testing.T) {
-	errPlugin := &fakePlugin{name: "noop", err: fmt.Errorf("simulated step failure")}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"noop": errPlugin}}
+	errAdapter := &fakeAdapter{name: "noop", err: fmt.Errorf("simulated step failure")}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"noop": errAdapter}}
 
 	node := subworkflowNodeFor("fail-test", calleeBodyWithStep("noop"))
 	parentSt := &RunState{
@@ -430,8 +430,8 @@ func TestRunSubworkflow_ErrorPropagatesToParent(t *testing.T) {
 // A broken implementation that ignored ctx would execute to completion and
 // return nil error, failing this test.
 func TestRunSubworkflow_CalleeCancellation(t *testing.T) {
-	checkPlugin := &ctxCheckPlugin{fakePlugin: fakePlugin{name: "noop"}}
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{"noop": checkPlugin}}
+	checkPlugin := &ctxCheckAdapter{fakeAdapter: fakeAdapter{name: "noop"}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"noop": checkPlugin}}
 
 	node := subworkflowNodeFor("cancel-test", calleeBodyWithStep("noop"))
 	parentSt := &RunState{
@@ -439,7 +439,7 @@ func TestRunSubworkflow_CalleeCancellation(t *testing.T) {
 		WorkflowDir: t.TempDir(),
 	}
 
-	// Pre-cancel the context: ctxCheckPlugin.Execute returns ctx.Err() immediately,
+	// Pre-cancel the context: ctxCheckAdapter.Execute returns ctx.Err() immediately,
 	// which propagates up through runWorkflowBody as a non-terminal error.
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -486,9 +486,9 @@ func TestRunSubworkflow_ReturnSentinelWithNilOutputs(t *testing.T) {
 	}
 	swNode := &workflow.SubworkflowNode{Name: "callee", Body: calleeGraph}
 
-	loader := &fakeLoader{plugins: map[string]plugin.Plugin{
-		"fake":         &fakePlugin{name: "fake", outcome: "success"},
-		"fake.default": &fakePlugin{name: "fake", outcome: "success"},
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{
+		"fake":         &fakeAdapter{name: "fake", outcome: "success"},
+		"fake.default": &fakeAdapter{name: "fake", outcome: "success"},
 	}}
 	parentSt := &RunState{
 		Vars:        map[string]cty.Value{},

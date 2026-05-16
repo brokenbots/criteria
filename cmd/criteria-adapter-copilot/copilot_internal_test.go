@@ -279,7 +279,7 @@ func TestPermissionPermitHandshake(t *testing.T) {
 		activeCh: make(chan struct{}),
 		sink:     sender,
 	}
-	p := &copilotPlugin{sessions: map[string]*sessionState{"s1": s}}
+	p := &copilotAdapter{sessions: map[string]*sessionState{"s1": s}}
 
 	toolCallID := "tc-123"
 	request := copilot.PermissionRequest{
@@ -331,7 +331,7 @@ func TestExecuteMaxTurnsLimit(t *testing.T) {
 			{Type: copilot.SessionEventTypeAssistantMessage, Data: &copilot.AssistantMessageData{MessageID: "m1", Content: "hello"}},
 		},
 	}
-	p := &copilotPlugin{sessions: map[string]*sessionState{
+	p := &copilotAdapter{sessions: map[string]*sessionState{
 		"s1": {session: fake, pending: map[string]chan permDecision{}},
 	}}
 	sender := &recordingSender{}
@@ -371,7 +371,7 @@ func TestCloseSessionTimeoutEscalatesToDestroy(t *testing.T) {
 			return nil
 		},
 	}
-	p := &copilotPlugin{sessions: map[string]*sessionState{
+	p := &copilotAdapter{sessions: map[string]*sessionState{
 		"s1": {session: fake, pending: map[string]chan permDecision{}},
 	}}
 
@@ -398,7 +398,7 @@ func TestCloseSessionTimeoutEscalatesToDestroy(t *testing.T) {
 // applyOpenSessionModel so any regression in it fails this test.
 func TestOpenSessionReasoningEffortWithoutModel(t *testing.T) {
 	fake := &fakeSession{}
-	p := &copilotPlugin{sessions: map[string]*sessionState{}}
+	p := &copilotAdapter{sessions: map[string]*sessionState{}}
 
 	s := &sessionState{
 		session: fake,
@@ -432,7 +432,7 @@ func TestOpenSessionReasoningEffortWithoutModel(t *testing.T) {
 // Calls the production helper applyOpenSessionModel so any regression in it fails this test.
 func TestOpenSessionReasoningEffortWithModel(t *testing.T) {
 	fake := &fakeSession{}
-	p := &copilotPlugin{sessions: map[string]*sessionState{}}
+	p := &copilotAdapter{sessions: map[string]*sessionState{}}
 
 	s := &sessionState{
 		session: fake,
@@ -490,7 +490,7 @@ func TestExecutePerStepReasoningEffortRestoresDefault(t *testing.T) {
 		defaultEffort: "medium",
 		defaultModel:  "",
 	}
-	p := &copilotPlugin{sessions: map[string]*sessionState{"s1": s}}
+	p := &copilotAdapter{sessions: map[string]*sessionState{"s1": s}}
 	sender := &recordingSender{}
 
 	// W15: simulate submit_outcome tool by setting finalizedOutcome via onSend hook
@@ -557,7 +557,7 @@ func TestExecutePerStepEffortRestoresWhenNoDefault(t *testing.T) {
 		defaultEffort: "",
 		defaultModel:  "",
 	}
-	p := &copilotPlugin{sessions: map[string]*sessionState{"s1": s}}
+	p := &copilotAdapter{sessions: map[string]*sessionState{"s1": s}}
 	sender := &recordingSender{}
 
 	// W15: simulate submit_outcome tool via onSend hook.

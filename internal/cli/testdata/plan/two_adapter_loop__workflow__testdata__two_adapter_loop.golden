@@ -24,5 +24,5 @@ steps (declaration order):
 states:
   done    terminal=true   success=true
 
-plugins required:
+adapters required:
   copilot   (search: $CRITERIA_PLUGINS, ~/.criteria/plugins)

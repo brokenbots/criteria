@@ -11,8 +11,8 @@ import (
 
 	copilot "github.com/github/copilot-sdk/go"
 
+	adapterhost "github.com/brokenbots/criteria/sdk/adapterhost"
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
-	pluginhost "github.com/brokenbots/criteria/sdk/pluginhost"
 )
 
 // copilotSession abstracts the Copilot SDK session for testing.
@@ -63,7 +63,7 @@ type sessionState struct {
 	pending        map[string]chan permDecision
 	active         bool
 	activeCh       chan struct{}
-	sink           pluginhost.ExecuteEventSender
+	sink           adapterhost.ExecuteEventSender
 	permissionDeny bool
 
 	// defaultModel and defaultEffort record the agent-level model and
@@ -90,15 +90,15 @@ type sessionState struct {
 	finalizeFailureKind   string
 }
 
-func (p *copilotPlugin) OpenSession(ctx context.Context, req *pb.OpenSessionRequest) (*pb.OpenSessionResponse, error) {
+func (p *copilotAdapter) OpenSession(ctx context.Context, req *pb.OpenSessionRequest) (*pb.OpenSessionResponse, error) {
 	client, err := p.ensureClient(ctx)
 	if err != nil {
 		return nil, err
 	}
 
 	cfg := req.GetConfig()
-	pluginSessionID := req.GetSessionId()
-	sessionConfig := p.buildSessionConfig(cfg, pluginSessionID)
+	adapterSessionID := req.GetSessionId()
+	sessionConfig := p.buildSessionConfig(cfg, adapterSessionID)
 
 	session, err := client.CreateSession(ctx, sessionConfig)
 	if err != nil {
@@ -111,7 +111,7 @@ func (p *copilotPlugin) OpenSession(ctx context.Context, req *pb.OpenSessionRequ
 	}
 
 	p.mu.Lock()
-	p.sessions[pluginSessionID] = s
+	p.sessions[adapterSessionID] = s
 	p.mu.Unlock()
 
 	if err := p.applyOpenSessionModel(ctx, s, cfg); err != nil {
@@ -122,7 +122,7 @@ func (p *copilotPlugin) OpenSession(ctx context.Context, req *pb.OpenSessionRequ
 }
 
 // buildSessionConfig constructs the SDK SessionConfig from agent-level config fields.
-func (p *copilotPlugin) buildSessionConfig(cfg map[string]string, pluginSessionID string) *copilot.SessionConfig {
+func (p *copilotAdapter) buildSessionConfig(cfg map[string]string, adapterSessionID string) *copilot.SessionConfig {
 	// Register submit_outcome once per session. Validation against the active
 	// step's allowed set happens in handleSubmitOutcome at call time so that
 	// per-step scoping works without recreating the session.
@@ -130,7 +130,7 @@ func (p *copilotPlugin) buildSessionConfig(cfg map[string]string, pluginSessionI
 		submitOutcomeToolName,
 		submitOutcomeToolDescription,
 		func(args SubmitOutcomeArgs, _ copilot.ToolInvocation) (copilot.ToolResult, error) {
-			return p.handleSubmitOutcome(pluginSessionID, args)
+			return p.handleSubmitOutcome(adapterSessionID, args)
 		},
 	)
 	submitTool.SkipPermission = true
@@ -139,7 +139,7 @@ func (p *copilotPlugin) buildSessionConfig(cfg map[string]string, pluginSessionI
 		Streaming: true,
 		Model:     cfg["model"],
 		OnPermissionRequest: func(r copilot.PermissionRequest, _ copilot.PermissionInvocation) (copilot.PermissionRequestResult, error) {
-			return p.handlePermissionRequest(pluginSessionID, &r)
+			return p.handlePermissionRequest(adapterSessionID, &r)
 		},
 		Tools: []copilot.Tool{submitTool},
 	}
@@ -181,7 +181,7 @@ func buildProviderConfig(cfg map[string]string) *copilot.ProviderConfig {
 
 // applyOpenSessionModel validates and applies model/reasoning_effort at session open,
 // then captures the agent-level defaults into s for per-step restore.
-func (p *copilotPlugin) applyOpenSessionModel(ctx context.Context, s *sessionState, cfg map[string]string) error {
+func (p *copilotAdapter) applyOpenSessionModel(ctx context.Context, s *sessionState, cfg map[string]string) error {
 	model := strings.TrimSpace(cfg["model"])
 	effort := strings.TrimSpace(cfg["reasoning_effort"])
 
@@ -207,7 +207,7 @@ func (p *copilotPlugin) applyOpenSessionModel(ctx context.Context, s *sessionSta
 	return nil
 }
 
-func (p *copilotPlugin) CloseSession(_ context.Context, req *pb.CloseSessionRequest) (*pb.CloseSessionResponse, error) {
+func (p *copilotAdapter) CloseSession(_ context.Context, req *pb.CloseSessionRequest) (*pb.CloseSessionResponse, error) {
 	p.mu.Lock()
 	s, ok := p.sessions[req.GetSessionId()]
 	if ok {

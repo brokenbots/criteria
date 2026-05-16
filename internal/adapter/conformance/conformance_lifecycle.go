@@ -1,7 +1,7 @@
 package conformance
 
 // conformance_lifecycle.go — session lifecycle, cancellation, timeout, and
-// crash-detection contract tests (plugin-only).
+// crash-detection contract tests (adapter-only).
 
 import (
 	"context"
@@ -13,7 +13,7 @@ import (
 	"go.uber.org/goleak"
 
 	"github.com/brokenbots/criteria/internal/adapter"
-	"github.com/brokenbots/criteria/internal/plugin"
+	"github.com/brokenbots/criteria/internal/adapterhost"
 )
 
 func testCancel(t *testing.T, name string, factory targetFactory, opts *Options) {
@@ -24,7 +24,7 @@ func testCancel(t *testing.T, name string, factory targetFactory, opts *Options)
 		t.Skip("cancellation test skipped: no long-running config available")
 	}
 	target := factory(t)
-	if !isPluginTarget(target) {
+	if !isAdapterTarget(target) {
 		defer goleak.VerifyNone(t)
 	}
 	step := baseStep(name, target.Name(), cfg)
@@ -63,7 +63,7 @@ func testTimeout(t *testing.T, name string, factory targetFactory, opts *Options
 		t.Skip("timeout test skipped: no long-running config available")
 	}
 	target := factory(t)
-	if !isPluginTarget(target) {
+	if !isAdapterTarget(target) {
 		defer goleak.VerifyNone(t)
 	}
 	step := baseStep(name, target.Name(), cfg)
@@ -93,7 +93,7 @@ func testTimeout(t *testing.T, name string, factory targetFactory, opts *Options
 	}
 }
 
-func testSessionLifecycle(t *testing.T, name string, loader plugin.Loader, opts *Options, info *plugin.Info) {
+func testSessionLifecycle(t *testing.T, name string, loader adapterhost.Loader, opts *Options, info *adapterhost.Info) {
 	t.Helper()
 	defer goleak.VerifyNone(t)
 	// 30 s matches the StartTimeout in the loader.
@@ -102,7 +102,7 @@ func testSessionLifecycle(t *testing.T, name string, loader plugin.Loader, opts 
 
 	plug, err := loader.Resolve(ctx, name)
 	if err != nil {
-		t.Fatalf("resolve plugin: %v", err)
+		t.Fatalf("resolve adapter: %v", err)
 	}
 	defer plug.Kill()
 
@@ -112,13 +112,13 @@ func testSessionLifecycle(t *testing.T, name string, loader plugin.Loader, opts 
 	}
 
 	step := baseStep(name, info.Name, opts.StepConfig)
-	res1, err := executeNoPanic(t, pluginSessionTarget{plugin: plug, sessionID: sessionID, name: info.Name}, context.Background(), step, &recordingSink{})
+	res1, err := executeNoPanic(t, adapterSessionTarget{handle: plug, sessionID: sessionID, name: info.Name}, context.Background(), step, &recordingSink{})
 	if err != nil {
 		t.Fatalf("first execute: %v", err)
 	}
 	assertValidOutcome(t, res1.Outcome, opts)
 
-	res2, err := executeNoPanic(t, pluginSessionTarget{plugin: plug, sessionID: sessionID, name: info.Name}, context.Background(), step, &recordingSink{})
+	res2, err := executeNoPanic(t, adapterSessionTarget{handle: plug, sessionID: sessionID, name: info.Name}, context.Background(), step, &recordingSink{})
 	if err != nil {
 		t.Fatalf("second execute: %v", err)
 	}
@@ -128,13 +128,13 @@ func testSessionLifecycle(t *testing.T, name string, loader plugin.Loader, opts 
 		t.Fatalf("close session: %v", err)
 	}
 
-	_, err = executeNoPanic(t, pluginSessionTarget{plugin: plug, sessionID: sessionID, name: info.Name}, context.Background(), step, &recordingSink{})
+	_, err = executeNoPanic(t, adapterSessionTarget{handle: plug, sessionID: sessionID, name: info.Name}, context.Background(), step, &recordingSink{})
 	if err == nil {
 		t.Fatal("expected execute on closed session to fail")
 	}
 }
 
-func testConcurrentSessions(t *testing.T, name string, loader plugin.Loader, opts *Options, info *plugin.Info) {
+func testConcurrentSessions(t *testing.T, name string, loader adapterhost.Loader, opts *Options, info *adapterhost.Info) {
 	t.Helper()
 	defer goleak.VerifyNone(t)
 	// 30 s matches the StartTimeout in the loader.
@@ -143,19 +143,19 @@ func testConcurrentSessions(t *testing.T, name string, loader plugin.Loader, opt
 
 	plugA, err := loader.Resolve(ctx, name)
 	if err != nil {
-		t.Fatalf("resolve plugin A: %v", err)
+		t.Fatalf("resolve adapter A: %v", err)
 	}
 	defer plugA.Kill()
 
 	plugB, err := loader.Resolve(ctx, name)
 	if err != nil {
-		t.Fatalf("resolve plugin B: %v", err)
+		t.Fatalf("resolve adapter B: %v", err)
 	}
 	defer plugB.Kill()
 
-	if pidA, okA := plugin.ProcessPID(plugA); okA {
-		if pidB, okB := plugin.ProcessPID(plugB); okB && pidA == pidB {
-			t.Fatalf("expected distinct plugin PIDs per session, got %d", pidA)
+	if pidA, okA := adapterhost.ProcessPID(plugA); okA {
+		if pidB, okB := adapterhost.ProcessPID(plugB); okB && pidA == pidB {
+			t.Fatalf("expected distinct adapter PIDs per session, got %d", pidA)
 		}
 	}
 
@@ -172,8 +172,8 @@ func testConcurrentSessions(t *testing.T, name string, loader plugin.Loader, opt
 		_ = plugB.CloseSession(context.Background(), sessionB)
 	}()
 
-	targetA := pluginSessionTarget{plugin: plugA, sessionID: sessionA, name: info.Name}
-	targetB := pluginSessionTarget{plugin: plugB, sessionID: sessionB, name: info.Name}
+	targetA := adapterSessionTarget{handle: plugA, sessionID: sessionA, name: info.Name}
+	targetB := adapterSessionTarget{handle: plugB, sessionID: sessionB, name: info.Name}
 
 	stepConfigA := cloneConfig(opts.StepConfig)
 	stepConfigA["conformance_session_marker"] = sessionA
@@ -216,7 +216,7 @@ func testConcurrentSessions(t *testing.T, name string, loader plugin.Loader, opt
 	}
 }
 
-func testSessionCrashDetection(t *testing.T, name string, loader plugin.Loader, opts *Options, info *plugin.Info) {
+func testSessionCrashDetection(t *testing.T, name string, loader adapterhost.Loader, opts *Options, info *adapterhost.Info) {
 	t.Helper()
 	defer goleak.VerifyNone(t)
 
@@ -226,7 +226,7 @@ func testSessionCrashDetection(t *testing.T, name string, loader plugin.Loader, 
 
 	plug, err := loader.Resolve(ctx, name)
 	if err != nil {
-		t.Fatalf("resolve plugin: %v", err)
+		t.Fatalf("resolve adapter: %v", err)
 	}
 	defer plug.Kill()
 
@@ -238,22 +238,22 @@ func testSessionCrashDetection(t *testing.T, name string, loader plugin.Loader, 
 		_ = plug.CloseSession(context.Background(), sessionID)
 	}()
 
-	target := pluginSessionTarget{plugin: plug, sessionID: sessionID, name: info.Name}
+	target := adapterSessionTarget{handle: plug, sessionID: sessionID, name: info.Name}
 	step := baseStep(name, info.Name, opts.StepConfig)
 	if _, err := executeNoPanic(t, target, context.Background(), step, &recordingSink{}); err != nil {
 		t.Fatalf("initial execute before crash: %v", err)
 	}
 
-	pid, ok := plugin.ProcessPID(plug)
+	pid, ok := adapterhost.ProcessPID(plug)
 	if !ok || pid <= 0 {
-		t.Skip("session crash detection skipped: plugin PID unavailable")
+		t.Skip("session crash detection skipped: adapter PID unavailable")
 	}
 	proc, err := os.FindProcess(pid)
 	if err != nil {
-		t.Fatalf("find plugin process %d: %v", pid, err)
+		t.Fatalf("find adapter process %d: %v", pid, err)
 	}
 	if err := proc.Kill(); err != nil {
-		t.Fatalf("kill plugin process %d: %v", pid, err)
+		t.Fatalf("kill adapter process %d: %v", pid, err)
 	}
 
 	timeoutCtx, timeoutCancel := context.WithTimeout(context.Background(), 500*time.Millisecond)

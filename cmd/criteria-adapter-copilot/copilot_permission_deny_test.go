@@ -30,7 +30,7 @@ func (f *failSender) Send(_ *pb.ExecuteEvent) error {
 // TestHandlePermissionRequestNoSession asserts that an unknown session ID
 // returns UserNotAvailable with no error and sends no event.
 func TestHandlePermissionRequestNoSession(t *testing.T) {
-	p := &copilotPlugin{sessions: map[string]*sessionState{}}
+	p := &copilotAdapter{sessions: map[string]*sessionState{}}
 	req := &copilot.PermissionRequest{Kind: copilot.PermissionRequestKindShell}
 
 	result, err := p.handlePermissionRequest("nonexistent", req)
@@ -55,7 +55,7 @@ func TestHandlePermissionRequestInactiveSession(t *testing.T) {
 		activeCh: make(chan struct{}),
 		sink:     sink,
 	}
-	p := &copilotPlugin{sessions: map[string]*sessionState{"s1": s}}
+	p := &copilotAdapter{sessions: map[string]*sessionState{"s1": s}}
 	req := &copilot.PermissionRequest{Kind: copilot.PermissionRequestKindShell}
 
 	result, err := p.handlePermissionRequest("s1", req)
@@ -81,7 +81,7 @@ func TestHandlePermissionRequestSendError(t *testing.T) {
 		activeCh: make(chan struct{}),
 		sink:     &failSender{err: sendErr},
 	}
-	p := &copilotPlugin{sessions: map[string]*sessionState{"s1": s}}
+	p := &copilotAdapter{sessions: map[string]*sessionState{"s1": s}}
 	req := &copilot.PermissionRequest{Kind: copilot.PermissionRequestKindShell}
 
 	result, err := p.handlePermissionRequest("s1", req)
@@ -115,7 +115,7 @@ func TestHandlePermissionRequestInteractiveDeny(t *testing.T) {
 		activeCh: make(chan struct{}),
 		sink:     sender,
 	}
-	p := &copilotPlugin{sessions: map[string]*sessionState{"s1": s}}
+	p := &copilotAdapter{sessions: map[string]*sessionState{"s1": s}}
 
 	req := &copilot.PermissionRequest{Kind: copilot.PermissionRequestKindShell}
 	resCh := make(chan copilot.PermissionRequestResult, 1)

@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
+	adapterhost "github.com/brokenbots/criteria/sdk/adapterhost"
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
-	pluginhost "github.com/brokenbots/criteria/sdk/pluginhost"
 )
 
 type noopService struct {
@@ -34,7 +34,7 @@ func (s *noopService) OpenSession(_ context.Context, request *pb.OpenSessionRequ
 	return &pb.OpenSessionResponse{}, nil
 }
 
-func (s *noopService) Execute(ctx context.Context, request *pb.ExecuteRequest, sink pluginhost.ExecuteEventSender) error {
+func (s *noopService) Execute(ctx context.Context, request *pb.ExecuteRequest, sink adapterhost.ExecuteEventSender) error {
 	s.mu.Lock()
 	_, ok := s.sessions[request.GetSessionId()]
 	s.mu.Unlock()
@@ -74,5 +74,5 @@ func (s *noopService) CloseSession(_ context.Context, request *pb.CloseSessionRe
 }
 
 func main() {
-	pluginhost.Serve(&noopService{sessions: map[string]struct{}{}})
+	adapterhost.Serve(&noopService{sessions: map[string]struct{}{}})
 }
