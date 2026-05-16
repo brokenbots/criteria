@@ -473,6 +473,27 @@ func TestOpenSessionInvalidReasoningEffort(t *testing.T) {
 	}
 }
 
+func TestValidateReasoningEffort(t *testing.T) {
+	tests := []struct {
+		name    string
+		effort  string
+		wantErr bool
+	}{
+		{name: "low", effort: "low"},
+		{name: "xhigh", effort: "xhigh"},
+		{name: "empty", effort: "", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateReasoningEffort(tt.effort)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("validateReasoningEffort(%q) error = %v, wantErr %v", tt.effort, err, tt.wantErr)
+			}
+		})
+	}
+}
+
 // Test 6.4: Execute with per-step reasoning_effort="high" applies the override and
 // restores the agent default ("medium") after the step. Assert the SDK call sequence.
 func TestExecutePerStepReasoningEffortRestoresDefault(t *testing.T) {
