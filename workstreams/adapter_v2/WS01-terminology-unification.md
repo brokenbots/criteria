@@ -381,3 +381,33 @@ Renamed all flagged identifiers and comments across the entire engine package an
 - `rg '\bplugin\b' docs/adapters.md | grep -v 'CRITERIA_PLUGINS\|\.criteria/plugins\|CRITERIA_PLUGIN\|go-plugin\|adapter_plugin\|examples/plugins'` → no matches
 - `rg '\bplugin\b' internal/engine/ --include='*.go' | grep -v 'go-plugin\|hplugin\|CRITERIA_PLUGIN\|adapter_plugin\|AdapterPlugin'` → no matches
 - `make ci` → passed (all tests, lint, validate)
+
+### Review 2026-05-16-02 — approved
+
+#### Summary
+Approved. The executor closed both prior blockers: `docs/adapters.md` now reflects the current adapter terminology and public SDK surface, and the remaining non-compatibility `plugin` names in changed tests/helpers/comments were renamed consistently. The branch stays within WS01 scope, the compatibility-sensitive `plugins_required` JSON key remains preserved, and the repository acceptance target is green.
+
+#### Plan Adherence
+- Step 1: Implemented with the documented `internal/adapterhost` deviation; `internal/plugin/` is removed and callers/imports are aligned.
+- Step 2: Implemented; the proto and generated/client surfaces now use `AdapterService`.
+- Step 3: Implemented; `PluginName` was renamed to `AdapterName`.
+- Step 4: Implemented; `sdk/pluginhost/` moved to `sdk/adapterhost/`, including the WS39 forward-pointer comment.
+- Step 5: Implemented; `docs/adapters.md` now matches the checked-in adapter terminology and current SDK/API examples.
+- Step 6: Implemented; the remaining non-upstream/non-compatibility `plugin` identifiers in changed scope were swept.
+- Step 7: Implemented; user-visible CLI text says `adapter`, while the machine-readable compile JSON retains `plugins_required` for compatibility.
+- Exit criteria: met.
+
+#### Test Intent Assessment
+The validation now proves both the mechanical rename and the compatibility boundaries that matter. The repository sanity checks confirm the old internal service/package/constant names are gone, while targeted searches verify the previously blocked stale documentation and helper/test terminology were actually removed rather than simply re-blessed. `make ci` provides sufficient regression coverage for this rename-only workstream.
+
+#### Validation Performed
+- `git diff --name-only origin/main...HEAD -- README.md CONTRIBUTING.md CHANGELOG.md PLAN.md AGENTS.md workstreams/README.md 'workstreams/**' '.golangci.baseline.yml'` → only `workstreams/adapter_v2/WS01-terminology-unification.md` differs from the prohibited/baseline set
+- `make ci` → passed
+- `! rg -n 'internal/plugin' -g '*.go' .` → passes
+- `! rg -n 'AdapterPluginService' -g '*.go' -g '*.proto' .` → passes
+- `! rg -n 'PluginName' -g '*.go' .` → passes
+- `! test -f docs/plugins.md` → passes
+- `! test -d internal/plugin` → passes
+- `rg -n 'sdk/pluginhost|pluginhost\.|AdapterPlugin\b|OutputSchema|# Plugins|What Plugins Are|Installing a Plugin|Writing Your Own Plugin' docs/adapters.md` → no matches
+- `rg -n 'TestCopilotPluginConformance|TestMCPPluginConformance|TestNoopPluginConformance|pluginSessionTarget|fakePlugin|errPlugin|callCountPlugin|BenchmarkPluginExecuteNoop|BenchmarkBuiltinPlugin_Execute|BenchmarkBuiltinPlugin_Info' --glob '*.go' .` → no matches
+- `rg -n '\bplugin\b' docs/adapters.md` → only preserved `go-plugin` references remain
