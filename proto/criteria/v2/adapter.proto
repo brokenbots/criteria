@@ -30,11 +30,15 @@ service AdapterService {
 
 // ─── Chunked framing ────────────────────────────────────────────────────────
 
-// Chunk is the framing envelope for large payload fields.
+// Chunk is the framing envelope for large payload fields on server-streaming
+// RPCs (Execute, Log).  Within WS02, chunking applies only to
+// AdapterEvent.payload_json, LogEvent.line, and ExecuteResult.outputs_json.
+// seq is zero-based; final is true on the last chunk.
 //
-// Any user-controllable bytes/string/map field exceeding the negotiated
-// max_chunk_bytes (see InfoResponse) must be sent as multiple messages with a
-// Chunk envelope.  seq is zero-based; final is true on the last chunk.
+// When chunk is non-nil on a payload-bearing message, the typed payload field
+// (payload, outputs) is nil; the raw bytes are carried in the corresponding
+// *_json field instead.  Receivers concatenate *_json bytes in seq order and
+// then unmarshal the result back to the typed form.
 message Chunk {
   uint32 seq   = 1;
   uint32 total = 2;
@@ -45,9 +49,9 @@ message Chunk {
 // ─── Heartbeat ──────────────────────────────────────────────────────────────
 
 // Heartbeat is sent on every server-stream when no other traffic is flowing.
-// The host sends one every 30 s; two missed heartbeats (~60 s) trigger the
-// crash-recovery policy.  SDKs provide a heartbeat helper so adapter authors
-// do not need to manage timers.
+// Server streams send one every 30 s; two missed heartbeats (~60 s) trigger
+// the crash-recovery policy.  SDKs provide a heartbeat helper so adapter
+// authors do not need to manage timers.
 message Heartbeat {
   string                    stream_name = 1;
   google.protobuf.Timestamp sent_at     = 2;
@@ -149,12 +153,20 @@ message ExecuteRequest {
 // AdapterEvent is a typed semantic event emitted by the adapter.
 // event_kind is a dot-separated identifier; well-known values are registered
 // in docs/adapters.md (WS39).  Unknown kinds are forwarded unchanged.
-// chunk is non-nil when payload is a partial segment of a larger JSON payload.
+//
+// Chunked encoding: when chunk is non-nil, payload is nil and payload_json
+// carries the raw JSON bytes of this fragment.  Reassemble payload_json bytes
+// in Chunk.seq order and unmarshal the result to google.protobuf.Struct.
 message AdapterEvent {
-  string                    event_kind  = 1;
-  google.protobuf.Struct    payload     = 2;
-  google.protobuf.Timestamp emitted_at  = 3;
-  Chunk                     chunk       = 4;
+  string                    event_kind   = 1;
+  // payload is set when chunk == nil (non-chunked or single-message payload).
+  google.protobuf.Struct    payload      = 2;
+  google.protobuf.Timestamp emitted_at   = 3;
+  Chunk                     chunk        = 4;
+  // payload_json carries the JSON-encoded bytes of a payload fragment when
+  // chunk is non-nil.  Collect all fragments in Chunk.seq order, concatenate,
+  // then unmarshal to google.protobuf.Struct.
+  bytes                     payload_json = 5;
   reserved 100 to 999;
 }
 
@@ -167,10 +179,14 @@ message ToolInvocation {
 }
 
 message ExecuteResult {
-  string              outcome = 1;
-  map<string, string> outputs = 2;
-  // chunk is non-nil when outputs is a partial segment; reassemble before use.
-  Chunk               chunk   = 3;
+  string              outcome      = 1;
+  // outputs is set when chunk == nil (non-chunked or single-message payload).
+  map<string, string> outputs      = 2;
+  Chunk               chunk        = 3;
+  // outputs_json carries the JSON-encoded bytes of an outputs map fragment when
+  // chunk is non-nil.  Collect all fragments in Chunk.seq order, concatenate,
+  // then unmarshal to map<string,string>.
+  bytes               outputs_json = 4;
   reserved 100 to 999;
 }
 

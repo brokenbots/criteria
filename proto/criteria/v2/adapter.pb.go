@@ -29,11 +29,15 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-// Chunk is the framing envelope for large payload fields.
+// Chunk is the framing envelope for large payload fields on server-streaming
+// RPCs (Execute, Log).  Within WS02, chunking applies only to
+// AdapterEvent.payload_json, LogEvent.line, and ExecuteResult.outputs_json.
+// seq is zero-based; final is true on the last chunk.
 //
-// Any user-controllable bytes/string/map field exceeding the negotiated
-// max_chunk_bytes (see InfoResponse) must be sent as multiple messages with a
-// Chunk envelope.  seq is zero-based; final is true on the last chunk.
+// When chunk is non-nil on a payload-bearing message, the typed payload field
+// (payload, outputs) is nil; the raw bytes are carried in the corresponding
+// *_json field instead.  Receivers concatenate *_json bytes in seq order and
+// then unmarshal the result back to the typed form.
 type Chunk struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Seq           uint32                 `protobuf:"varint,1,opt,name=seq,proto3" json:"seq,omitempty"`
@@ -95,9 +99,9 @@ func (x *Chunk) GetFinal() bool {
 }
 
 // Heartbeat is sent on every server-stream when no other traffic is flowing.
-// The host sends one every 30 s; two missed heartbeats (~60 s) trigger the
-// crash-recovery policy.  SDKs provide a heartbeat helper so adapter authors
-// do not need to manage timers.
+// Server streams send one every 30 s; two missed heartbeats (~60 s) trigger
+// the crash-recovery policy.  SDKs provide a heartbeat helper so adapter
+// authors do not need to manage timers.
 type Heartbeat struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	StreamName    string                 `protobuf:"bytes,1,opt,name=stream_name,json=streamName,proto3" json:"stream_name,omitempty"`
@@ -744,13 +748,21 @@ func (x *ExecuteRequest) GetAllowedOutcomes() []string {
 // AdapterEvent is a typed semantic event emitted by the adapter.
 // event_kind is a dot-separated identifier; well-known values are registered
 // in docs/adapters.md (WS39).  Unknown kinds are forwarded unchanged.
-// chunk is non-nil when payload is a partial segment of a larger JSON payload.
+//
+// Chunked encoding: when chunk is non-nil, payload is nil and payload_json
+// carries the raw JSON bytes of this fragment.  Reassemble payload_json bytes
+// in Chunk.seq order and unmarshal the result to google.protobuf.Struct.
 type AdapterEvent struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	EventKind     string                 `protobuf:"bytes,1,opt,name=event_kind,json=eventKind,proto3" json:"event_kind,omitempty"`
-	Payload       *structpb.Struct       `protobuf:"bytes,2,opt,name=payload,proto3" json:"payload,omitempty"`
-	EmittedAt     *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=emitted_at,json=emittedAt,proto3" json:"emitted_at,omitempty"`
-	Chunk         *Chunk                 `protobuf:"bytes,4,opt,name=chunk,proto3" json:"chunk,omitempty"`
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	EventKind string                 `protobuf:"bytes,1,opt,name=event_kind,json=eventKind,proto3" json:"event_kind,omitempty"`
+	// payload is set when chunk == nil (non-chunked or single-message payload).
+	Payload   *structpb.Struct       `protobuf:"bytes,2,opt,name=payload,proto3" json:"payload,omitempty"`
+	EmittedAt *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=emitted_at,json=emittedAt,proto3" json:"emitted_at,omitempty"`
+	Chunk     *Chunk                 `protobuf:"bytes,4,opt,name=chunk,proto3" json:"chunk,omitempty"`
+	// payload_json carries the JSON-encoded bytes of a payload fragment when
+	// chunk is non-nil.  Collect all fragments in Chunk.seq order, concatenate,
+	// then unmarshal to google.protobuf.Struct.
+	PayloadJson   []byte `protobuf:"bytes,5,opt,name=payload_json,json=payloadJson,proto3" json:"payload_json,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -809,6 +821,13 @@ func (x *AdapterEvent) GetEmittedAt() *timestamppb.Timestamp {
 func (x *AdapterEvent) GetChunk() *Chunk {
 	if x != nil {
 		return x.Chunk
+	}
+	return nil
+}
+
+func (x *AdapterEvent) GetPayloadJson() []byte {
+	if x != nil {
+		return x.PayloadJson
 	}
 	return nil
 }
@@ -877,9 +896,13 @@ func (x *ToolInvocation) GetInvokedAt() *timestamppb.Timestamp {
 type ExecuteResult struct {
 	state   protoimpl.MessageState `protogen:"open.v1"`
 	Outcome string                 `protobuf:"bytes,1,opt,name=outcome,proto3" json:"outcome,omitempty"`
-	Outputs map[string]string      `protobuf:"bytes,2,rep,name=outputs,proto3" json:"outputs,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	// chunk is non-nil when outputs is a partial segment; reassemble before use.
-	Chunk         *Chunk `protobuf:"bytes,3,opt,name=chunk,proto3" json:"chunk,omitempty"`
+	// outputs is set when chunk == nil (non-chunked or single-message payload).
+	Outputs map[string]string `protobuf:"bytes,2,rep,name=outputs,proto3" json:"outputs,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Chunk   *Chunk            `protobuf:"bytes,3,opt,name=chunk,proto3" json:"chunk,omitempty"`
+	// outputs_json carries the JSON-encoded bytes of an outputs map fragment when
+	// chunk is non-nil.  Collect all fragments in Chunk.seq order, concatenate,
+	// then unmarshal to map<string,string>.
+	OutputsJson   []byte `protobuf:"bytes,4,opt,name=outputs_json,json=outputsJson,proto3" json:"outputs_json,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -931,6 +954,13 @@ func (x *ExecuteResult) GetOutputs() map[string]string {
 func (x *ExecuteResult) GetChunk() *Chunk {
 	if x != nil {
 		return x.Chunk
+	}
+	return nil
+}
+
+func (x *ExecuteResult) GetOutputsJson() []byte {
+	if x != nil {
+		return x.OutputsJson
 	}
 	return nil
 }
@@ -2149,23 +2179,25 @@ const file_criteria_v2_adapter_proto_rawDesc = "" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1a?\n" +
 	"\x11SecretInputsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01J\x05\bd\x10\xe8\a\"\xcc\x01\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01J\x05\bd\x10\xe8\a\"\xef\x01\n" +
 	"\fAdapterEvent\x12\x1d\n" +
 	"\n" +
 	"event_kind\x18\x01 \x01(\tR\teventKind\x121\n" +
 	"\apayload\x18\x02 \x01(\v2\x17.google.protobuf.StructR\apayload\x129\n" +
 	"\n" +
 	"emitted_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\temittedAt\x12(\n" +
-	"\x05chunk\x18\x04 \x01(\v2\x12.criteria.v2.ChunkR\x05chunkJ\x05\bd\x10\xe8\a\"\x9c\x01\n" +
+	"\x05chunk\x18\x04 \x01(\v2\x12.criteria.v2.ChunkR\x05chunk\x12!\n" +
+	"\fpayload_json\x18\x05 \x01(\fR\vpayloadJsonJ\x05\bd\x10\xe8\a\"\x9c\x01\n" +
 	"\x0eToolInvocation\x12\x1b\n" +
 	"\ttool_name\x18\x01 \x01(\tR\btoolName\x12+\n" +
 	"\x04args\x18\x02 \x01(\v2\x17.google.protobuf.StructR\x04args\x129\n" +
 	"\n" +
-	"invoked_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\tinvokedAtJ\x05\bd\x10\xe8\a\"\xd9\x01\n" +
+	"invoked_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\tinvokedAtJ\x05\bd\x10\xe8\a\"\xfc\x01\n" +
 	"\rExecuteResult\x12\x18\n" +
 	"\aoutcome\x18\x01 \x01(\tR\aoutcome\x12A\n" +
 	"\aoutputs\x18\x02 \x03(\v2'.criteria.v2.ExecuteResult.OutputsEntryR\aoutputs\x12(\n" +
-	"\x05chunk\x18\x03 \x01(\v2\x12.criteria.v2.ChunkR\x05chunk\x1a:\n" +
+	"\x05chunk\x18\x03 \x01(\v2\x12.criteria.v2.ChunkR\x05chunk\x12!\n" +
+	"\foutputs_json\x18\x04 \x01(\fR\voutputsJson\x1a:\n" +
 	"\fOutputsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01J\x05\bd\x10\xe8\a\"\xf6\x01\n" +

@@ -511,3 +511,80 @@ The tests now validate the intended WS02 behavior rather than an alternate schem
 
 #### Validation Performed
 - `make ci` — passed.
+
+### Review 2026-05-16-05 — changes-requested
+
+#### Summary
+changes-requested. The branch is close and the repo validation bar now passes, but WS02 is still missing a workable chunked wire contract for two of the three streaming payload surfaces it names: `AdapterEvent.payload` and `ExecuteResult.outputs`. The checked-in proto adds `Chunk` metadata, yet neither the schema nor the helper/tests define how a `google.protobuf.Struct` or `map<string,string>` payload is actually fragmented and reassembled across multiple stream messages. I also found stale contract comments that now contradict the final WS02 heartbeat/chunking semantics.
+
+#### Plan Adherence
+- Steps 1, 2, 4, and 5 are implemented and align with the current workstream text.
+- Step 3 / D78 is only partially implemented. `LogEvent.line` can plausibly carry a partial string plus `Chunk` metadata, but `AdapterEvent.payload` and `ExecuteResult.outputs` still lack a defined fragment encoding on the wire.
+- Step 6 is only partially satisfied for chunking intent. The suite covers chunk metadata, negotiation, sensitive annotations, reservations, fuzzing, and heartbeat helper behavior, but it does not prove end-to-end chunked reconstruction for the structured/map payloads WS02 marks as chunkable.
+
+#### Required Remediations
+- **blocker** `proto/criteria/v2/adapter.proto:149-174`, `proto/criteria/v2/chunking.go:27-60`, `proto/criteria/v2/proto_test.go:367-447`: define an actual on-wire chunking contract for `AdapterEvent.payload` and `ExecuteResult.outputs`. Today `Chunk` only carries metadata, while `SplitChunks` returns raw byte slices outside protobuf, so the contract never explains how a fragmented `Struct` or output map is encoded into the stream messages themselves. **Acceptance:** update the proto/helper design so multi-message fragments for these payloads are representable and reconstructable from actual proto fields, then add tests that marshal/unmarshal full multi-chunk `AdapterEvent` and `ExecuteResult` sequences and reassemble the original payloads from those messages alone.
+- **major** `proto/criteria/v2/adapter.proto:33-49`, `proto/criteria/v2/chunking.go:9-14`: fix stale contract comments. `Chunk`'s comment is broader than the final WS02 rule, `Heartbeat` currently says "The host sends one every 30 s" even though heartbeats are emitted on server streams, and `NegotiateChunkSize`'s comment claims clamping to `DefaultMaxChunkBytes` that the code does not perform. **Acceptance:** comments match the approved WS02 behavior and the implemented negotiation logic exactly.
+
+#### Test Intent Assessment
+The non-chunking coverage is strong: sensitive-field reflection, reservation checks, canonical digest determinism, heartbeat cancellation/error handling, fuzzing, and the updated flat wire shapes all test intended behavior. The chunking tests are still not intent-complete for the structured/map payload paths. `TestAdapterEvent_WithChunk_RoundTrip` exercises only metadata with an empty `payload`, `TestExecuteResult_WithChunk_RoundTrip` does the same with empty `outputs`, and `TestChunkedProtocol_NegotiationAndSplit` reassembles raw byte slices outside the proto layer before round-tripping only one `Chunk` metadata instance. Those tests would still pass if the actual wire encoding for chunked `Struct`/map payloads were unusable or undefined.
+
+#### Architecture Review Required
+- **[ARCH-REVIEW][blocker]** `proto/criteria/v2/adapter.proto:149-174`, `workstreams/adapter_v2/WS02-protocol-v2-proto.md:140-143` — WS02 names `AdapterEvent.payload` and `ExecuteResult.outputs` as chunkable streaming payload fields, but the published contract still does not specify how those typed values are fragmented and reassembled. Resolving this is architectural because any fix changes the normative protocol surface or the rules WS03/SDK implementations must follow when interoperating on chunked streams.
+
+#### Validation Performed
+- `make ci` — passed.
+- `go vet ./...` — passed.
+- `buf lint && make proto-check-drift` — blocked locally (`buf: command not found`).
+- `go tool staticcheck ./...` — blocked locally (`go: no such tool "staticcheck"`).
+
+### Remediation 2026-05-16-05
+
+All blockers and major issues from Review 2026-05-16-05 resolved.
+
+**Blocker: on-wire chunking contract for AdapterEvent and ExecuteResult**
+
+Added `bytes payload_json = 5` to `AdapterEvent` and `bytes outputs_json = 4` to
+`ExecuteResult`. When `chunk != nil`, the typed field (`payload`, `outputs`) is nil
+and the raw JSON bytes of that fragment are carried in the `*_json` field. Receivers
+concatenate `*_json` in `Chunk.seq` order and unmarshal back to the typed form.
+
+Added four new helpers to `chunking.go`:
+- `ChunkAdapterEventPayload(base, payloadJSON, chunkSize)` — splits JSON bytes, returns
+  `[]*AdapterEvent` with `chunk` and `payload_json` set on each fragment.
+- `JoinAdapterEventPayload(events)` — joins `payload_json` bytes from fragments; caller
+  unmarshals to `google.protobuf.Struct`.
+- `ChunkExecuteResultOutputs(base, outputsJSON, chunkSize)` — same pattern for
+  `ExecuteResult.outputs_json`.
+- `JoinExecuteResultOutputs(events)` — joins `outputs_json`; caller unmarshals to
+  `map[string]string`.
+
+**Major: stale contract comments**
+- `Chunk` comment narrowed: now explicitly scoped to "server-streaming RPCs (Execute, Log)
+  in WS02" with a brief description of the `*_json` contract.
+- `Heartbeat` comment fixed: "Server streams send" replacing "The host sends".
+- `NegotiateChunkSize` comment fixed: removed the incorrect "clamped to
+  DefaultMaxChunkBytes" claim; now accurately describes min(adapterMax, hostMax) after
+  zero-substitution.
+
+**Tests replaced with intent-complete versions:**
+- `TestAdapterEvent_ChunkedPayload_FullRoundTrip`: builds a real `structpb.Struct`,
+  marshals to JSON, splits with a 20-byte chunk size, proto-marshals/unmarshals each
+  fragment, joins, and verifies the original Struct is reconstructable from those
+  messages alone.
+- `TestExecuteResult_ChunkedOutputs_FullRoundTrip`: same pattern for
+  `map[string]string` outputs with 15-byte chunk size.
+- Both tests assert that `payload`/`outputs` are nil on fragment messages (only
+  `payload_json`/`outputs_json` carry data), confirming the wire contract.
+- `TestChunkedProtocol_NegotiationAndSplit` updated to set `PayloadJson` on the
+  fragment event (rather than testing with empty payload_json).
+- Old stub tests (`TestAdapterEvent_WithChunk_RoundTrip`,
+  `TestExecuteResult_WithChunk_RoundTrip`) replaced by the full round-trips above.
+
+**Validation (remediation-05 run)**:
+- `go test -race ./...` — all 24+ packages pass.
+- `make lint-go` — clean, no new baseline entries.
+- `buf lint --path proto/criteria/v2/` — clean.
+- `make proto` — idempotent (no additional diff after re-run).
+- `go vet ./proto/criteria/v2/...` — clean.
+- `goimports -l` — clean on all edited files.
