@@ -61,6 +61,12 @@ adapter "copilot" "default" {
     listen_address    = "0.0.0.0:7778"
     server_cert_fingerprint = "sha256:..."
   }
+
+  # If the workflow used a compatible_environments override on this adapter
+  # (D88), record it here so security review can audit overrides and a
+  # downstream stricter project that forbids overrides can fail closed.
+  compatible_environments_override = ["shell"]   # absent when no override in effect
+  overridden_by                    = "workflow.hcl:42"  # source location of the override
 }
 ```
 
@@ -85,8 +91,12 @@ type LockedAdapter struct {
     Signature          *LockedSignature        `hcl:"signature,block"`
     ContainerImage     *LockedContainerImage   `hcl:"container_image,block"`
     Remote             *LockedRemote           `hcl:"remote,block"`
+    CompatibleEnvironmentsOverride []string    `hcl:"compatible_environments_override,optional"`  // D88
+    OverriddenBy       string                  `hcl:"overridden_by,optional"`                     // D88: HCL source ref where the override was declared
 }
 ```
+
+The override fields are populated by the compiler (WS09) when a workflow's `adapter "X" "Y" { compatible_environments_override = [...] }` is used to relax a manifest-declared constraint. The lockfile thus records every override; `criteria adapter list --show-overrides` and CI gates can flag them.
 
 (plus the nested types, all decoded via `gohcl.DecodeBody`).
 

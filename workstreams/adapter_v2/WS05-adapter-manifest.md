@@ -88,30 +88,34 @@ func (m *Manifest) Validate() error
 ```
 
 Validation rules:
-- `schema_version == 1`.
+- `schema_version >= 1 && schema_version <= ManifestMaxSchemaVersion` (host build constant; currently `1`). Forward-compat: a v2.1 host bumps the constant to `2` and accepts both. **Never use strict equality** — that turns every future field addition into a breaking change for hosts that haven't upgraded.
 - `name` matches `^[a-z][a-z0-9-]*$`.
 - `version` is valid semver per `golang.org/x/mod/semver`.
-- `source_url` is a parseable URL with scheme `https` (or `http` only for localhost).
-- `platforms` non-empty; each `(os, arch)` from the closed set `{linux, darwin, windows} × {amd64, arm64}`.
-- `sdk_protocol_version == 2`.
-- Every `SchemaField.Type` is a known value.
-- `compatible_environments` entries match `^[a-z][a-z_]*$` or are `"*"`.
+- `source_url` is a parseable URL with at least a scheme of `^[a-z][a-z0-9+.-]{1,}$` (RFC 3986). Allows `https`, `http`, `git`, `git+ssh`, on-prem schemes. The host does not fetch the URL; it only quotes it back in error messages (D13), so loose scheme acceptance is safe.
+- `platforms` non-empty; each `(os, arch)` matches `^[a-z][a-z0-9]*$/ ^[a-z0-9_]+$` (open-ended `goos/goarch` tokens). Validation accepts any well-formed pair — including `linux/riscv64`, future Go arches, etc. The decision "can I run this on *this* host" is the per-host platform-mismatch check (D12c-alt), not the manifest validator. **Closing the platform set here would defeat the decentralized-publishing goal** (S1.2) — an adapter author shouldn't need a criteria release to publish a new arch.
+- `sdk_protocol_version >= 2 && sdk_protocol_version <= ProtocolMaxSDKVersion` (host build constant; currently `2`). Same range/bump rule as `schema_version`.
+- Every `SchemaField.Type` is one of the documented values (`string`, `number`, `boolean`, `object`, `array`). Unknown types pass through as a warning rather than an error so adapters can experiment with new types before they're standardised — but only with a `--manifest-allow-unknown-types` flag set, default off.
+- `compatible_environments` entries match `^[a-z][a-z_]*$` or are `"*"`. Empty list is treated as `["*"]` (default = any per D36); `["*"]` is the canonical-explicit form.
 - `container_image.digest` (if set) parses as a valid OCI digest.
 
 Each failing rule returns an error that names the field and the offending value.
 
 ### Step 3 — OCI annotation mirror
 
-`internal/adapter/manifest/annotations.go`: defines the OCI annotation keys used so consumers (the host's pull path, the CLI's `info` verb in WS08) can read top-level fields without parsing the YAML blob:
+`internal/adapter/manifest/annotations.go`: defines the OCI annotation keys used so consumers (the host's pull path, the CLI's `info` verb in WS08) can read top-level fields without parsing the YAML blob.
+
+**Namespace decision (D87):** annotations use `dev.criteria.adapter.*`, not `com.brokenbots.criteria.adapter.*`. Project-name-based namespacing is durable across any future org or trademark change — the published artifacts will outlive the GitHub home. Matches the `org.opencontainers.image.*` convention.
 
 ```go
 const (
-    AnnotationName        = "com.brokenbots.criteria.adapter.name"
-    AnnotationVersion     = "com.brokenbots.criteria.adapter.version"
-    AnnotationSourceURL   = "com.brokenbots.criteria.adapter.source_url"
-    AnnotationCapabilities = "com.brokenbots.criteria.adapter.capabilities" // comma-joined
-    AnnotationPlatforms   = "com.brokenbots.criteria.adapter.platforms"     // comma-joined GOOS/GOARCH pairs
-    AnnotationProtoVer    = "com.brokenbots.criteria.adapter.protocol_version"
+    AnnotationName         = "dev.criteria.adapter.name"
+    AnnotationVersion      = "dev.criteria.adapter.version"
+    AnnotationSourceURL    = "dev.criteria.adapter.source_url"
+    AnnotationCapabilities = "dev.criteria.adapter.capabilities"      // comma-joined
+    AnnotationPlatforms    = "dev.criteria.adapter.platforms"          // comma-joined GOOS/GOARCH pairs
+    AnnotationProtoVer     = "dev.criteria.adapter.protocol_version"
+    AnnotationSchemaVer    = "dev.criteria.adapter.schema_version"     // manifest schema_version
+    AnnotationSigner       = "dev.criteria.adapter.signer"             // cosign identity (issuer|subject or key fingerprint) — set by WS28 publish action so `adapter list --show-signer` works without referrer deref
 )
 ```
 
@@ -130,13 +134,18 @@ const (
 //   - sdk_protocol_version
 //   - capabilities (set equality)
 //   - platforms (set equality)
-//   - config_schema, input_schema, output_schema (structural equality)
+//   - config_schema, input_schema, output_schema (structural equality, see below)
 //   - declared secrets (set of names)
+//   - compatible_environments (set equality; absent and ["*"] normalised to "any")
 //
 // Other fields (description, source_url, permissions) are allowed to differ
 // at runtime: they're advisory or human-facing.
 func Verify(static *Manifest, runtime *v2.InfoResponse) error
 ```
+
+**Structural equality of schemas (S3.5).** Two schemas are equal iff they have the same set of field names, and for every name the `(type, required, sensitive)` triple is equal. `description` and `default` are **explicitly ignored** — runtime SDKs commonly elide defaults during marshalling, and human-facing descriptions may carry templated values. Comparison iterates fields in sorted name order; the function returns the first divergence found with both sides quoted in the error message.
+
+**Set equality** is defined as: convert both sides to a sorted unique slice, then `slices.Equal`. Order-insensitive, duplicate-insensitive.
 
 Returns a structured error with each diverging field enumerated, so the host can surface a clear message to the user (e.g., *"adapter `claude` declares version `1.2.3` in adapter.yaml but reports `1.2.2` at runtime; refusing to load"*).
 

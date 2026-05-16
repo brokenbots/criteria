@@ -12,6 +12,13 @@ The `shell` adapter is the only in-tree builtin. It lives at `internal/builtin/s
 
 WS03 (host wire on v2), WS09 (env block extension), WS13 (secrets channel), WS25 (Go SDK RC).
 
+**Sequencing note (added in post-review hardening).** The README workstream list now flags that WS31 should land **with** WS03, not after WS04–WS29. The full-scope dependency on WS09/WS13/WS25 makes a single-PR co-landing impractical. Resolution: split WS31 into two PRs against this same file:
+
+- **WS31a (lands with WS03):** minimum-viable shell migration using a vendored slice of the Go SDK that only implements `serve(...)` (no `secrets.Get`, no env-block hints yet). Existing `environment.variables` and `allow_tools` paths port over as-is. The point is to keep the in-tree shell adapter green through WS04–WS29 so CI exercises a real adapter.
+- **WS31b (lands when WS09/WS13/WS25 are ready):** the full migration described in the rest of this file — `secrets.Get`, env-block hints, Go SDK as a real dependency.
+
+Without WS31a, the only v2-speaking adapter during WS04–WS29 is the `noop` conformance fixture, which doesn't exercise any of the real adapter mechanics.
+
 ## In scope
 
 ### Step 1 — Refactor `internal/builtin/shell/shell.go` against the Go SDK
