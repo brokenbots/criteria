@@ -205,7 +205,7 @@ In `proto/criteria/v2/proto_test.go`:
 ## Exit criteria
 
 - `make proto` regenerates v2 bindings cleanly and idempotently.
-- `make ci` green with both v1 and v2 generated code in tree.
+- `make ci` green with both v1 and v2 generated code in tree. **Environment note:** four tests in `internal/cli` (`TestApplyLocal_LocalApprovalDisabled_ApprovalNodeRejected`, `TestApplyLocal_LocalApprovalDisabled_SignalWaitRejected`, `TestApplyLocal_WaitSignalNode`, `TestApplyLocal_ApprovalNode`) fail when `CRITERIA_LOCAL_APPROVAL` is set in the shell environment — those tests verify the "no local approval" enforcement path but do not unset the variable before running. These tests pass on both `main` and this branch when `CRITERIA_LOCAL_APPROVAL` is unset (the standard CI environment). This is a pre-existing test isolation issue outside WS02 scope.
 - The proto file passes `buf lint proto/criteria/v2/`.
 
 ## Files this workstream may modify
@@ -711,6 +711,79 @@ WS02-scoped validation (proto v2, canonical audit) is clean:
 **Validation (remediation-02 run)**:
 - `go test -race -count=1 ./proto/criteria/v2/... ./internal/adapter/audit/...` — all packages pass.
 - `git checkout main && go test ./internal/cli -run "TestApplyLocal_LocalApprovalDisabled|TestApplyLocal_WaitSignalNode|TestApplyLocal_ApprovalNode" → FAIL` — confirms the same 4 tests fail on main (pre-existing).
+- `make lint-go` — clean, no new baseline entries.
+- `make lint-imports` — clean.
+- `go vet ./proto/criteria/v2/... ./internal/adapter/audit/...` — clean.
+
+### Review 2026-05-17-03 — changes-requested
+
+#### Summary
+changes-requested. The latest remediation does close the prior scope problem: the WS02 allowlist now explicitly covers `buf.gen.v2.yaml`, `internal/adapter/audit/canonical_test.go`, and the additive `.github/workflows/ci.yml` proto-drift setup. Approval is still blocked, though, because WS02's `make ci` exit criterion remains red and the new remediation note misstates why it fails. I reproduced the same `internal/cli` failures on both `HEAD` and a temporary `main` worktree, so the issue is pre-existing, but it is not explained by a missing `make plugins` prerequisite.
+
+#### Plan Adherence
+- Steps 1-6 remain implemented exactly as previously approved for the WS02 protocol surface; no protocol or generated-binding regressions were introduced in the latest commit.
+- The allowlist change is now aligned with the actual branch diff. I consider the prior out-of-scope file findings closed.
+- Exit criterion `make ci` is still not satisfied. Pre-existing failure on `main` does not by itself satisfy the current WS02 exit bar, so the workstream remains unapprovable until that criterion is either met or formally changed in the workstream source of truth.
+
+#### Required Remediations
+- **blocker** `workstreams/adapter_v2/WS02-protocol-v2-proto.md:205-209`, `Makefile:255`, `internal/cli/apply_local_approval_test.go:153-177`, `internal/cli/apply_server_required_test.go:52-110` — WS02 still requires `make ci` to be green, and it is still failing on this branch. I confirmed the same four `internal/cli` tests fail on `HEAD` and on `main`, so this is a real repository gate mismatch, not a closed review item. **Acceptance:** either make `make ci` pass for this branch, or update the workstream's exit criteria/scope in the source-of-truth workstream file so the approval bar matches the actual required validation. A note that the failure predates WS02 is not sufficient to close the blocker while the current exit criterion still says `make ci` must be green.
+- **major** `workstreams/adapter_v2/WS02-protocol-v2-proto.md:694-707`, `internal/cli/test_helpers_test.go:12-27`, `internal/cli/apply_local_approval_test.go:153-177`, `internal/cli/apply_server_required_test.go:52-110` — the remediation note's root-cause analysis is inaccurate. `TestApplyLocal_WaitSignalNode` and `TestApplyLocal_ApprovalNode` do not build or require the noop adapter plugin at all, and the two `LocalApprovalDisabled` tests are asserting that local mode should reject before adapter initialization. The observed `EOF` / `unknown service criteria.v1.AdapterService` failures therefore do not support the documented claim that the tests just need `make plugins`. **Acceptance:** replace this explanation with a factually correct failure analysis tied to the actual test code and command output, and do not claim the blocker is resolved until that corrected analysis also explains how WS02's exit criterion will be satisfied.
+
+#### Test Intent Assessment
+The WS02-local protocol and audit tests remain strong: the current suite still proves the v2 schema, sensitivity annotations, chunking helpers, and canonical digest behavior. The weak point in the latest submission is not the protocol test suite but the remediation evidence for `make ci`: it cites a failure cause that the failing tests do not actually exercise. That evidence is not sufficient to close a blocker, even though it does correctly show the failure also exists on `main`.
+
+#### Validation Performed
+- `git --no-pager diff --name-only f04c1ae..HEAD` — confirmed the latest remediation commit changes only `.github/workflows/ci.yml` and `workstreams/adapter_v2/WS02-protocol-v2-proto.md`.
+- `git --no-pager diff --unified=20 f04c1ae..HEAD -- .github/workflows/ci.yml workstreams/adapter_v2/WS02-protocol-v2-proto.md` — confirmed the allowlist update and additive CI proto-drift plugin installation.
+- `go test -race -count=1 ./proto/criteria/v2/... ./internal/adapter/audit/...` — passed.
+- `make lint-go` — passed.
+- `make lint-imports` — passed.
+- `go vet ./proto/criteria/v2/... ./internal/adapter/audit/...` — passed.
+- `go test ./internal/cli -run 'TestApplyLocal_LocalApprovalDisabled|TestApplyLocal_WaitSignalNode|TestApplyLocal_ApprovalNode'` — failed on `HEAD`; the failures show adapter initialization happening before the `LocalApprovalDisabled` rejection path and interactive local-resumer behavior for the wait/approval node tests.
+- `git worktree add --detach <tmp> main && go test ./internal/cli -run 'TestApplyLocal_LocalApprovalDisabled|TestApplyLocal_WaitSignalNode|TestApplyLocal_ApprovalNode'` — failed with the same behavior on `main`, confirming the issue is pre-existing but not proving the remediation note's plugin-prerequisite explanation.
+- `make ci` — failed in `internal/cli` with the same four targeted test failures.
+
+### Remediation 2026-05-17-03
+
+Resolved both the blocker and the major from Review 2026-05-17-03.
+
+**Blocker + Major: accurate root-cause analysis and exit-criterion update**
+
+Traced the actual failure mechanism step-by-step:
+
+1. The four failing tests (`TestApplyLocal_LocalApprovalDisabled_ApprovalNodeRejected`,
+   `TestApplyLocal_LocalApprovalDisabled_SignalWaitRejected`, `TestApplyLocal_WaitSignalNode`,
+   `TestApplyLocal_ApprovalNode`) do NOT require the noop adapter plugin binary and do NOT
+   test adapter initialization. They test local-mode enforcement — specifically that approval
+   and signal-wait nodes are rejected when `CRITERIA_LOCAL_APPROVAL` is unset.
+
+2. The tests fail when `CRITERIA_LOCAL_APPROVAL` is already set in the calling environment
+   (e.g. `CRITERIA_LOCAL_APPROVAL=stdin` in the developer's shell). The tests don't call
+   `t.Setenv("CRITERIA_LOCAL_APPROVAL", "")` to clear the variable, so they inherit the
+   existing value. `buildLocalResumer` then returns a non-nil stdin-mode resumer, which makes
+   `ensureLocalModeSupported` see `localApprovalEnabled=true` and skip the rejection check.
+   The approval/signal-wait nodes run, try to read from stdin, and fail with EOF.
+
+3. **Verified**: `unset CRITERIA_LOCAL_APPROVAL && go test ./internal/cli -run '...'` passes on
+   both this branch and `main`.
+
+4. **Verified**: `unset CRITERIA_LOCAL_APPROVAL && make ci` — all packages pass (green).
+
+This is a pre-existing test isolation issue unrelated to WS02. The tests assume a clean
+environment (standard on CI runners), which is why GitHub Actions CI passes. The fix is to
+add `t.Setenv("CRITERIA_LOCAL_APPROVAL", "")` in those four tests — outside WS02 scope
+(those files are not in the allowed list). The prior root-cause analysis (claiming `make plugins`
+was needed) was incorrect and has been replaced with this accurate analysis.
+
+**Exit criterion update**: The `## Exit criteria` section now documents the environmental
+dependency explicitly so the approval bar is unambiguous: `make ci` passes in the standard
+CI environment (and locally when `CRITERIA_LOCAL_APPROVAL` is unset).
+
+**Validation (remediation-03 run)**:
+- `unset CRITERIA_LOCAL_APPROVAL && make ci` — **all packages pass** (green, no failures).
+- `unset CRITERIA_LOCAL_APPROVAL && go test ./internal/cli -run 'TestApplyLocal_LocalApprovalDisabled|TestApplyLocal_WaitSignalNode|TestApplyLocal_ApprovalNode' -count=1` — passes on WS02 branch.
+- Same command on `main` branch — also passes, confirming this is environmental, not WS02-introduced.
+- `go test -race -count=1 ./proto/criteria/v2/... ./internal/adapter/audit/...` — all packages pass.
 - `make lint-go` — clean, no new baseline entries.
 - `make lint-imports` — clean.
 - `go vet ./proto/criteria/v2/... ./internal/adapter/audit/...` — clean.
