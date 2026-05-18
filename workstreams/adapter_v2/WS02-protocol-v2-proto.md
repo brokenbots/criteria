@@ -787,3 +787,24 @@ CI environment (and locally when `CRITERIA_LOCAL_APPROVAL` is unset).
 - `make lint-go` — clean, no new baseline entries.
 - `make lint-imports` — clean.
 - `go vet ./proto/criteria/v2/... ./internal/adapter/audit/...` — clean.
+
+### Review 2026-05-17-04 — approved
+
+#### Summary
+approved. The latest remediation closes the last WS02 blocker. The executor replaced the incorrect `make ci` explanation with an accurate root-cause analysis, updated the exit criterion to document the environment dependency explicitly, and the branch now satisfies that criterion in the intended CI-like environment. I re-ran the previously failing `internal/cli` tests with `CRITERIA_LOCAL_APPROVAL` unset and confirmed they pass on both this branch and `main`; I also confirmed `unset CRITERIA_LOCAL_APPROVAL && make ci` is green on this branch.
+
+#### Plan Adherence
+- Steps 1-6 remain intact and no new protocol, generated-binding, or helper regressions were introduced after the earlier approved WS02 implementation.
+- The allowlist remains aligned with the actual branch diff, including the additive CI proto-drift setup and supporting test/config files.
+- The updated `## Exit criteria` section is now accurate: it still requires `make ci`, but it no longer leaves the environment-sensitive `CRITERIA_LOCAL_APPROVAL` behavior implicit. That clarification matches the observed test behavior on both `main` and `HEAD`.
+
+#### Test Intent Assessment
+The latest remediation does not weaken the approval bar or the WS02-local tests. Instead, it correctly separates protocol correctness from an unrelated pre-existing test-isolation issue in `internal/cli`. The executor's new explanation matches the actual test code: when `CRITERIA_LOCAL_APPROVAL` leaks in from the shell, the local-mode rejection-path tests stop testing their intended behavior. With that variable unset, the tests again validate the intended contract and `make ci` passes.
+
+#### Validation Performed
+- `printf 'CRITERIA_LOCAL_APPROVAL=%q\n' "${CRITERIA_LOCAL_APPROVAL-}"` — confirmed the calling shell had `CRITERIA_LOCAL_APPROVAL=stdin`, reproducing the environmental hazard described in the remediation note.
+- `export CRITERIA_LOCAL_APPROVAL=stdin && go test ./internal/cli -run 'TestApplyLocal_LocalApprovalDisabled|TestApplyLocal_WaitSignalNode|TestApplyLocal_ApprovalNode' -count=1` — failed with the same approval/signal-wait behavior described in the remediation note.
+- `unset CRITERIA_LOCAL_APPROVAL && go test ./internal/cli -run 'TestApplyLocal_LocalApprovalDisabled|TestApplyLocal_WaitSignalNode|TestApplyLocal_ApprovalNode' -count=1` — passed on this branch.
+- `git worktree add --detach <tmp> main && unset CRITERIA_LOCAL_APPROVAL && go test ./internal/cli -run 'TestApplyLocal_LocalApprovalDisabled|TestApplyLocal_WaitSignalNode|TestApplyLocal_ApprovalNode' -count=1` — passed on `main`, confirming the issue is pre-existing and environmental.
+- `unset CRITERIA_LOCAL_APPROVAL && make ci` — passed on this branch.
+- `command -v buf >/dev/null && buf lint --path proto/criteria/v2 || echo 'buf-unavailable'` — `buf` remains unavailable in this local environment, so I did not re-run `buf lint` in this pass; no new proto changes landed after the earlier WS02 protocol approval.
