@@ -362,6 +362,16 @@ If a step declares no `outcome` blocks, `AllowedOutcomes` is empty: no preamble 
 
 `submit_outcome` is used only for workflow `step` nodes. Iteration/`for_each` cursor outcomes (`all_succeeded`, `any_failed`) are computed by the engine from individual step results and are **not** finalized via `submit_outcome`.
 
+### Step outputs
+
+On successful finalization the adapter emits one output key:
+
+| Key | Type | Description |
+|---|---|---|
+| `reason` | `string` | The optional `reason` argument passed by the model to `submit_outcome`. Empty string when the model did not supply one. |
+
+Downstream steps can read it as `steps.<step_name>.reason`. No outputs are emitted on failure paths (reprompt exhaustion, permission denial, `max_turns` reached).
+
 ## Running the Demo
 
 The shortest manual path for `examples/agent_hello.hcl` is:
