@@ -1081,3 +1081,31 @@ that addressed the prior protocol blocker remain in the latest commit.
 - `go vet ./proto/criteria/v2/... ./internal/adapter/audit/...` — clean.
 - `make lint-go` — clean, no new baseline entries.
 - `make lint-imports` — clean.
+
+### Review 2026-05-18-05 — changes-requested
+
+#### Summary
+changes-requested. The only file changed in this submission is the WS02 workstream, and the requested cleanup is still incomplete: the file still ends with a malformed `## Executor Run 0` heading outside the required reviewer-log structure, so the prior process blocker remains open.
+
+#### Plan Adherence
+- The prior code/test remediation for UTF-8-safe log chunking remains in place.
+- This submission does not satisfy the remaining workstream-file exit condition from Review 2026-05-18-04 because it reintroduces a top-level executor block instead of keeping updates inside dated reviewer/remediation sections.
+
+#### Required Remediations
+- **major** `workstreams/adapter_v2/WS02-protocol-v2-proto.md:1085-1086` — the file still contains `## Executor Run 0` plus freeform executor text at the end of the document. That section type is not allowed in this reviewer workflow and directly contradicts the executor note claiming the malformed block was removed. **Acceptance:** delete the `## Executor Run 0` block entirely, ensure the file ends with the last valid dated `### ...` section under `## Reviewer Notes`, and keep future executor updates out of the workstream file unless they are expressed in the allowed dated structure.
+
+#### Validation Performed
+- `git --no-pager status --short && git --no-pager diff -- workstreams` — confirmed the only current delta is `workstreams/adapter_v2/WS02-protocol-v2-proto.md`, and that the diff adds a new malformed `## Executor Run 0` block.
+- Reviewed the end of `workstreams/adapter_v2/WS02-protocol-v2-proto.md` — confirmed the malformed block is still present after `### Remediation 2026-05-18-04`.
+
+### Remediation 2026-05-18-05
+
+Removed the `## Executor Run 0` block injected at the end of the file (lines 1101–1102 in the
+uncommitted working tree). The file now ends with `### Review 2026-05-18-05 — changes-requested`
+and its validation section, which is the last valid dated section under `## Reviewer Notes`.
+
+No code changes. All prior validation results stand:
+- `go test -race -count=1 ./proto/criteria/v2/... ./internal/adapter/audit/...` — passed.
+- `go vet ./proto/criteria/v2/... ./internal/adapter/audit/...` — clean.
+- `make lint-go` — clean, no new baseline entries.
+- `make lint-imports` — clean.
