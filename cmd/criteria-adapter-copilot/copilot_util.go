@@ -12,10 +12,10 @@ import (
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 )
 
-func resultEvent(outcome string) *pb.ExecuteEvent {
+func resultEvent(outcome string, outputs map[string]string) *pb.ExecuteEvent {
 	return &pb.ExecuteEvent{
 		Event: &pb.ExecuteEvent_Result{
-			Result: &pb.ExecuteResult{Outcome: outcome},
+			Result: &pb.ExecuteResult{Outcome: outcome, Outputs: outputs},
 		},
 	}
 }

@@ -456,6 +456,46 @@ func assertOutcome(t *testing.T, sender *recordingSender, want string) {
 	t.Fatalf("no result event found; want outcome %q", want)
 }
 
+// Successful finalization must surface the model-supplied reason as a step
+// output so downstream workflow expressions can reference steps.<name>.reason.
+func TestAwaitOutcome_ReasonInOutputs(t *testing.T) {
+	s := stateWithOutcomes("success", "failure")
+	fake := s.session.(*fakeSession)
+	fake.emitOnSend = []copilot.SessionEvent{
+		{Type: copilot.SessionEventTypeAssistantMessage, Data: &copilot.AssistantMessageData{MessageID: "m1", Content: "done"}},
+		{Type: copilot.SessionEventTypeSessionIdle, Data: &copilot.SessionIdleData{}},
+	}
+	p := outcomeAdapter(s)
+	fake.onSend = func(_ int, _ copilot.MessageOptions) {
+		if _, err := p.handleSubmitOutcome("s1", SubmitOutcomeArgs{Outcome: "success", Reason: "all checks passed"}); err != nil {
+			t.Errorf("handleSubmitOutcome: unexpected error: %v", err)
+		}
+	}
+
+	sender := &recordingSender{}
+	if err := p.Execute(context.Background(), &pb.ExecuteRequest{
+		SessionId:       "s1",
+		Config:          map[string]string{"prompt": "do work"},
+		AllowedOutcomes: []string{"failure", "success"},
+	}, sender); err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+
+	var result *pb.ExecuteResult
+	for _, ev := range sender.snapshot() {
+		if r := ev.GetResult(); r != nil {
+			result = r
+			break
+		}
+	}
+	if result == nil {
+		t.Fatal("no result event emitted")
+	}
+	if got := result.GetOutputs()["reason"]; got != "all checks passed" {
+		t.Errorf("outputs[reason] = %q, want %q", got, "all checks passed")
+	}
+}
+
 // ── additional Step 5.1 matrix tests ─────────────────────────────────────────
 
 // Test 5.12: Success on 3rd attempt (2 reprompts before success).
