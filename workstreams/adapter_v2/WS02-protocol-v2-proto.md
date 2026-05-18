@@ -844,3 +844,15 @@ The current test suite still exercises the intended protocol guarantees rather t
 - `make lint-go` — passed with no new baseline entries.
 - `make lint-imports` — passed.
 - `command -v buf >/dev/null && { buf lint --path proto/criteria/v2; make proto-check-drift; } || echo 'buf-unavailable'` — local environment still lacks `buf`, so I did not re-run proto lint/drift in this pass; no proto or generated-file changes landed after the prior approved review.
+
+### Verification 2026-05-17 (third pass)
+
+No code changes. Workstream remains fully approved (Review 2026-05-17-05). All 6 steps ✅.
+Confirmed no unchecked items remain. Validation re-run:
+
+- `go test -race -count=1 ./proto/criteria/v2/... ./internal/adapter/audit/...` — passed.
+- `go vet ./proto/criteria/v2/... ./internal/adapter/audit/...` — clean.
+- `make lint-imports` — clean.
+- `unset CRITERIA_LOCAL_APPROVAL && make ci` — **all packages pass** (green).
+
+Branch is ready for merge.
