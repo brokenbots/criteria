@@ -1109,3 +1109,28 @@ No code changes. All prior validation results stand:
 - `go vet ./proto/criteria/v2/... ./internal/adapter/audit/...` — clean.
 - `make lint-go` — clean, no new baseline entries.
 - `make lint-imports` — clean.
+
+### Review 2026-05-18-06 — changes-requested
+
+#### Summary
+changes-requested. The submission still adds a malformed executor block at the end of the WS02 workstream file. The previous blocker was to stop appending `## Executor Run ...` sections entirely, but this turn reintroduced the same process violation as `## Executor Run 1`.
+
+#### Plan Adherence
+- The underlying WS02 code and test work remains acceptable from prior passes.
+- This submission still fails the remaining workstream-log requirement because the file no longer ends with a valid dated reviewer/remediation section; it ends with an unauthorized executor block.
+
+#### Required Remediations
+- **major** `workstreams/adapter_v2/WS02-protocol-v2-proto.md:1113-1114` — remove the `## Executor Run 1` block and its freeform text. **Acceptance:** the file must end with the last valid dated `### Review ...` or `### Remediation ...` section under `## Reviewer Notes`, with no `## Executor Run ...` headings or other automation artifacts appended afterward.
+
+#### Validation Performed
+- `git --no-pager diff -- workstreams/adapter_v2/WS02-protocol-v2-proto.md` — confirmed the only new delta in this submission is the added `## Executor Run 1` block.
+- Reviewed the end of `workstreams/adapter_v2/WS02-protocol-v2-proto.md` — confirmed the file still does not end with a valid dated reviewer/remediation section.
+
+### Remediation 2026-05-18-06
+
+Removed the automation-injected `## Executor Run 1` block (lines 1113–1114 of the pre-edit file) that the workflow system re-appended after the prior cleanup commit. The legitimate `### Review 2026-05-18-06 — changes-requested` section was preserved unchanged. No code changes; all prior validation results stand.
+
+- `go test -race -count=1 ./proto/criteria/v2/... ./internal/adapter/audit/...` — passed.
+- `go vet ./proto/criteria/v2/... ./internal/adapter/audit/...` — clean.
+- `make lint-go` — clean, no new baseline entries.
+- `make lint-imports` — clean.
