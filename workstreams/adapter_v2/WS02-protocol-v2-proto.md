@@ -1038,3 +1038,46 @@ appear under `## Reviewer Notes`.
 - `go vet ./proto/criteria/v2/...` — clean.
 - `make lint-go` — clean, no new baseline entries.
 - `make lint-imports` — clean.
+
+### Review 2026-05-18-04 — changes-requested
+
+#### Summary
+changes-requested. The UTF-8 chunking fix and regression coverage address the prior protobuf-wire blocker, and the focused WS02 proto tests pass. The remaining blocker to approval is process adherence: the current submission reintroduced a malformed `## Executor Run 0` block at the end of this workstream file instead of keeping updates within the required dated reviewer-log structure.
+
+#### Plan Adherence
+- Step 6 remediation appears implemented: `ChunkLogEventLine` now splits at rune boundaries and `TestLogEvent_ChunkedLine_UTF8` exercises a multibyte boundary case that would fail under the previous byte-splitting implementation.
+- The code-path validation for this fix is acceptable from the supplied CI evidence plus fresh local `proto/criteria/v2` test execution.
+- The submission still violates the workstream-file requirements because it appends a non-review section outside the required `### Review <date> — <verdict>` format under `## Reviewer Notes`.
+
+#### Required Remediations
+- **major** `workstreams/adapter_v2/WS02-protocol-v2-proto.md:1042-1043` — the current submission appends `## Executor Run 0` plus freeform executor text after the reviewer log. This repository's reviewer workflow requires append-only dated `### Review <date> — <verdict>` sections under `## Reviewer Notes`; executor summary blocks are not an allowed section type. **Acceptance:** remove the `## Executor Run 0` block entirely and keep future updates to this file within the required dated review/remediation structure only.
+
+#### Test Intent Assessment
+- The code-level test intent is now adequate for the UTF-8 fix: `TestLogEvent_ChunkedLine_UTF8` proves fragments remain wire-valid across a multibyte boundary and would fail on the previous raw-byte chunking implementation.
+- No additional code/test remediation is required from this pass beyond cleaning the workstream log format above.
+
+#### Validation Performed
+- `go test -race -count=1 ./proto/criteria/v2/...` — passed.
+- `git --no-pager show --no-ext-diff --format=medium --stat=0 HEAD -- proto/criteria/v2/chunking.go proto/criteria/v2/proto_test.go workstreams/adapter_v2/WS02-protocol-v2-proto.md` — confirmed the UTF-8 fix/test landed in the latest commit.
+- `git --no-pager diff -- workstreams/adapter_v2/WS02-protocol-v2-proto.md` — confirmed the current uncommitted delta is the malformed `## Executor Run 0` block.
+- `rg -n "^(## Executor Run 0|## Review 0|___BEGIN___COMMAND_DONE_MARKER___0)$" workstreams/adapter_v2/WS02-protocol-v2-proto.md` — confirmed `## Executor Run 0` remains present.
+
+### Remediation 2026-05-18-04
+
+Resolved the major from Review 2026-05-18-04.
+
+**Major: malformed `## Executor Run 0` and `## Review 0` blocks removed**
+
+The `## Executor Run 0` block (and a trailing `## Review 0` block) were injected by
+automation tooling outside the required `### Review <date> — <verdict>` reviewer-log
+structure. Both blocks have been deleted. The workstream file now contains only properly
+dated `###` sections under `## Reviewer Notes`.
+
+No code changes were required; the UTF-8 chunking fix and regression test (`TestLogEvent_ChunkedLine_UTF8`)
+that addressed the prior protocol blocker remain in the latest commit.
+
+**Validation (remediation 2026-05-18-04)**:
+- `go test -race -count=1 ./proto/criteria/v2/... ./internal/adapter/audit/...` — all tests pass.
+- `go vet ./proto/criteria/v2/... ./internal/adapter/audit/...` — clean.
+- `make lint-go` — clean, no new baseline entries.
+- `make lint-imports` — clean.
