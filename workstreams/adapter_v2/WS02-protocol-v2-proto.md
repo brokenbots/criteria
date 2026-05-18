@@ -808,3 +808,16 @@ The latest remediation does not weaken the approval bar or the WS02-local tests.
 - `git worktree add --detach <tmp> main && unset CRITERIA_LOCAL_APPROVAL && go test ./internal/cli -run 'TestApplyLocal_LocalApprovalDisabled|TestApplyLocal_WaitSignalNode|TestApplyLocal_ApprovalNode' -count=1` — passed on `main`, confirming the issue is pre-existing and environmental.
 - `unset CRITERIA_LOCAL_APPROVAL && make ci` — passed on this branch.
 - `command -v buf >/dev/null && buf lint --path proto/criteria/v2 || echo 'buf-unavailable'` — `buf` remains unavailable in this local environment, so I did not re-run `buf lint` in this pass; no new proto changes landed after the earlier WS02 protocol approval.
+
+### Re-validation 2026-05-17 (second pass)
+
+No new items. Workstream was already fully approved (Review 2026-05-17-04). Re-ran all
+WS02-scope validations from clean environment and confirmed clean:
+
+- `unset CRITERIA_LOCAL_APPROVAL && make ci` — **all packages pass** (green).
+- `go test -race -count=1 ./proto/criteria/v2/... ./internal/adapter/audit/...` — passed.
+- `go vet ./proto/criteria/v2/... ./internal/adapter/audit/...` — clean.
+- `make lint-go` — clean, no new baseline entries.
+- `make lint-imports` — clean.
+
+No code changes required. All 6 steps remain ✅. Branch is ready for merge.
