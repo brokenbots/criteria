@@ -457,6 +457,80 @@ func TestExecuteResult_ChunkedOutputs_FullRoundTrip(t *testing.T) {
 	assert.Equal(t, originalOutputs, gotOutputs)
 }
 
+// TestLogEvent_ChunkedLine_FullRoundTrip proves the end-to-end chunked
+// encoding for LogEvent.line: a large line string is split into fragment
+// LogEvent messages, each fragment is proto-marshalled and unmarshalled as it
+// would arrive on the Log stream, and the original line is reconstructable
+// from those messages alone.
+func TestLogEvent_ChunkedLine_FullRoundTrip(t *testing.T) {
+	// Build a line longer than the chunk size so multiple fragments are required.
+	originalLine := "this is a very long log line that must be split across multiple stream messages for chunked transport"
+
+	const chunkSize = 20
+	base := &criteriav2.LogEvent{
+		SessionId:  "sess-1",
+		StepName:   "compile",
+		StreamName: "stdout",
+		Timestamp:  timestamppb.Now(),
+		Line:       originalLine,
+	}
+	fragments := criteriav2.ChunkLogEventLine(base, chunkSize)
+	require.Greater(t, len(fragments), 1, "log line must be split into multiple fragments")
+
+	// proto.Marshal / proto.Unmarshal each fragment as it would arrive on the Log stream.
+	reconstituted := make([]*criteriav2.LogEvent, len(fragments))
+	for i, frag := range fragments {
+		b, merr := proto.Marshal(frag)
+		require.NoError(t, merr)
+		var decoded criteriav2.LogEvent
+		require.NoError(t, proto.Unmarshal(b, &decoded))
+		assert.NotNil(t, decoded.Chunk, "fragment[%d] must carry Chunk metadata", i)
+		assert.Equal(t, base.SessionId, decoded.SessionId)
+		assert.Equal(t, base.StepName, decoded.StepName)
+		assert.Equal(t, base.StreamName, decoded.StreamName)
+		assert.NotEqual(t, originalLine, decoded.Line, "fragment line must be partial, not the full original")
+		reconstituted[i] = &decoded
+	}
+
+	// Reassemble from the reconstituted proto messages alone.
+	joined, jerr := criteriav2.JoinLogEventLine(reconstituted)
+	require.NoError(t, jerr)
+	assert.Equal(t, originalLine, joined)
+}
+
+// TestLogEvent_ChunkedLine_UTF8 proves that ChunkLogEventLine splits at rune
+// boundaries, so every fragment is valid UTF-8 and proto.Marshal succeeds even
+// when a multibyte rune would fall on a raw-byte chunk boundary.
+func TestLogEvent_ChunkedLine_UTF8(t *testing.T) {
+	// "a🙂b" — the emoji is 4 bytes; with chunkSize=2 a byte-level split would
+	// produce an invalid UTF-8 fragment starting at byte offset 2.
+	originalLine := "a🙂b"
+	const chunkSize = 2
+	base := &criteriav2.LogEvent{
+		SessionId:  "sess-utf8",
+		StepName:   "log",
+		StreamName: "stdout",
+		Line:       originalLine,
+	}
+	fragments := criteriav2.ChunkLogEventLine(base, chunkSize)
+	require.Greater(t, len(fragments), 1, "emoji line must produce multiple fragments")
+
+	reconstituted := make([]*criteriav2.LogEvent, len(fragments))
+	for i, frag := range fragments {
+		// Every fragment must marshal without "invalid UTF-8" error.
+		b, merr := proto.Marshal(frag)
+		require.NoError(t, merr, "fragment[%d] must marshal with valid UTF-8", i)
+		var decoded criteriav2.LogEvent
+		require.NoError(t, proto.Unmarshal(b, &decoded))
+		require.NotEmpty(t, decoded.Line, "fragment[%d] line must be non-empty", i)
+		reconstituted[i] = &decoded
+	}
+
+	joined, jerr := criteriav2.JoinLogEventLine(reconstituted)
+	require.NoError(t, jerr)
+	assert.Equal(t, originalLine, joined)
+}
+
 func TestOpenSessionRequest_WithChunk_RoundTrip(t *testing.T) {
 	// OpenSession is a unary RPC; chunking does not apply to its request.
 	// This test verifies that the message round-trips correctly without a Chunk field.

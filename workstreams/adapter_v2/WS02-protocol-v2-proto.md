@@ -875,3 +875,166 @@ Because the latest submission adds no product or test code, it does not weaken t
 - `git --no-pager diff --name-only main...HEAD` — confirmed the branch scope remains within the WS02 allowlist.
 - `unset CRITERIA_LOCAL_APPROVAL && make ci` — passed.
 - `command -v buf >/dev/null && { buf lint --path proto/criteria/v2; make proto-check-drift; } || echo 'buf-unavailable'` — local environment still lacks `buf`, so I did not re-run proto lint/drift in this pass; no proto or generated-file changes landed after the earlier approved reviews.
+
+### Review 2026-05-17-07 — approved
+
+#### Summary
+approved. The current submission is documentation-only, and the branch still contains the previously approved WS02 implementation without any new product-code drift. I rechecked plan alignment, branch scope, repo validation, and the proto-specific gates and found no unresolved quality, security, or test-intent issues.
+
+#### Plan Adherence
+- Steps 1-6 remain implemented within the WS02 allowlist: `proto/criteria/v2/options.proto`, `proto/criteria/v2/adapter.proto`, generated v2 Go bindings, the chunking and heartbeat helpers, the audit canonicalization helper, and the authorized unit/fuzz tests.
+- The branch diff against `main` remains confined to the WS02-authorized files plus this workstream log.
+- The documented exit criteria remain satisfied on the current branch: repo CI passes with `CRITERIA_LOCAL_APPROVAL` unset, the v2 proto lints cleanly, and generated bindings are drift-free.
+
+#### Test Intent Assessment
+The WS02 test suite still proves contract-visible behavior rather than incidental implementation details: reflection checks assert the `criteria.sensitive` option on secret-bearing fields, descriptor-based tests enforce the reserved field numbers and the `100 to 999` reservation block, chunk negotiation and reassembly are exercised across real marshal/unmarshal boundaries, `internal/adapter/audit` tests prove deterministic canonicalization and digest stability, heartbeat tests cover cancellation and send-error paths, and the fuzz target exercises malformed-input unmarshalling for the top-level wire messages. This pass found no new gaps.
+
+#### Validation Performed
+- `git --no-pager show --stat --summary --format=fuller HEAD -- workstreams/adapter_v2/WS02-protocol-v2-proto.md` — confirmed the latest committed change is workstream-note-only.
+- `git --no-pager diff --name-only "$(git --no-pager merge-base HEAD origin/main 2>/dev/null || git --no-pager merge-base HEAD main 2>/dev/null)"...HEAD` and `git --no-pager diff --stat "$(git --no-pager merge-base HEAD origin/main 2>/dev/null || git --no-pager merge-base HEAD main 2>/dev/null)"...HEAD -- .github/workflows/ci.yml Makefile buf.gen.v2.yaml proto/criteria/v2 internal/adapter/audit` — confirmed branch scope stays within the WS02 allowlist.
+- `unset CRITERIA_LOCAL_APPROVAL && make ci` — passed.
+- `buf lint --path proto/criteria/v2` — passed.
+- `make proto-check-drift` — passed.
+
+### Review 2026-05-18 — approved
+
+#### Summary
+approved. The current submission does not change shipped WS02 implementation behavior: the branch still matches the previously approved proto/helper/test surface, and the latest evidence plus fresh local validation show no reopened quality, security, or test-intent issues.
+
+#### Plan Adherence
+- Steps 1-6 remain implemented within the WS02 allowlist. The branch diff from the merge-base still consists of the approved v2 proto/binding work, the authorized generation/CI support files, and this workstream log.
+- The current uncommitted submission is workstream-note-only; I found no new product, test, generated-code, or build-script drift beyond the already approved WS02 scope.
+- The documented exit criteria remain satisfied for the current branch state: repo CI is green with `CRITERIA_LOCAL_APPROVAL` unset, and WS02-scoped test/lint/import checks remain clean.
+
+#### Test Intent Assessment
+The existing WS02 evidence still tests contract-visible behavior rather than incidental plumbing. Sensitive-field reflection checks, reserved-field/range assertions, chunk negotiation plus fragment reassembly across real proto marshal/unmarshal boundaries, canonical JSON digest determinism, heartbeat cancellation/send-error coverage, and malformed-input fuzzing remain intact. This pass found no weakened assertions or missing new coverage because no new implementation changes landed.
+
+#### Validation Performed
+- `git --no-pager diff --name-only "$(git merge-base HEAD origin/main 2>/dev/null || git merge-base HEAD main)"..HEAD` — confirmed the branch diff remains within the approved WS02 file set.
+- `git --no-pager diff -- workstreams/adapter_v2/WS02-protocol-v2-proto.md` and `git --no-pager show --stat --summary --format=fuller HEAD -- workstreams/adapter_v2/WS02-protocol-v2-proto.md` — confirmed the latest committed/uncommitted deltas are workstream-note-only.
+- `unset CRITERIA_LOCAL_APPROVAL && make ci` — passed.
+- `go test -race -count=1 ./proto/criteria/v2/... ./internal/adapter/audit/...` — passed.
+- `make lint-imports` — passed.
+- `make lint-go` — passed.
+- `make proto-check-drift` — blocked locally (`buf: No such file or directory`); no proto or generated-file changes were introduced after the previously approved WS02 implementation.
+
+### Review 2026-05-18-02 — changes-requested
+
+#### Summary
+changes-requested. The previously approved WS02 protocol surface is still broadly intact, and the branch-level CI gate is green in the documented environment. But the current approval claim is too broad: WS02's chunked-stream contract explicitly includes `LogEvent.line`, and the implementation/tests still do not prove that behavior end-to-end. The current suite only exercises chunk helpers for `AdapterEvent.payload_json` and `ExecuteResult.outputs_json`, plus a metadata-only `LogEvent` round-trip, so a regression in chunked log-line framing/reassembly could still ship unnoticed.
+
+#### Plan Adherence
+- Steps 1-5 remain implemented within the WS02 allowlist: the v2 proto, generated bindings, chunking/heartbeat helpers, audit canonicalization helper, and additive proto-generation/CI support are present and consistent with the approved branch diff.
+- Step 6 is still incomplete for the full chunking contract described in this workstream. `proto/criteria/v2/chunking.go` only provides structured helpers for `AdapterEvent` and `ExecuteResult`, and `proto/criteria/v2/proto_test.go` does not include a split/reassemble proof for oversized `LogEvent.line` payloads even though the workstream text makes that a first-class streaming payload.
+- Exit-criteria evidence remains partially validated locally: `make ci` passes with `CRITERIA_LOCAL_APPROVAL` unset, but I could not re-run `buf lint` / `make proto-check-drift` in this environment because `buf` is unavailable.
+
+#### Required Remediations
+- **blocker** `workstreams/adapter_v2/WS02-protocol-v2-proto.md:140-143,174-179`, `proto/criteria/v2/chunking.go:78-160`, `proto/criteria/v2/proto_test.go:194-227,369-458` — WS02 defines chunked framing for all payload-bearing streaming fields, including `LogEvent.line`, but the implementation/test surface only proves structured chunking for `AdapterEvent.payload_json` and `ExecuteResult.outputs_json`. The existing `TestLogEvent_WithChunk_RoundTrip` asserts that a pre-populated `Chunk` field survives marshal/unmarshal; it does not prove oversized log lines can be split, carried over the wire, and reassembled according to the declared contract. **Acceptance:** add WS02-scoped coverage for `LogEvent.line` chunking that demonstrates real fragment split + proto marshal/unmarshal + reassembly back to the original log line. If the intended API is a generic helper rather than a dedicated log-line helper, the test must still exercise the actual `LogEvent` contract and fail on a plausible regression in line chunk framing or reconstruction.
+
+#### Test Intent Assessment
+The existing tests are strong for the parts they touch: sensitivity annotations, reserved ranges, canonical digest determinism, heartbeat cancellation/send-error behavior, and chunked `AdapterEvent`/`ExecuteResult` payload reassembly all validate contract-visible outcomes. The gap is specific and material: the `Log` RPC's chunked payload contract is only covered by a shallow round-trip of pre-filled fields, so the suite would still pass if oversized log-line fragmentation/reassembly were broken or never implemented.
+
+#### Validation Performed
+- `git --no-pager diff --name-only "$(git merge-base HEAD main 2>/dev/null || git merge-base HEAD origin/main 2>/dev/null)"...HEAD` / `git --no-pager diff --stat "$(git merge-base HEAD main 2>/dev/null || git merge-base HEAD origin/main 2>/dev/null)"...HEAD` — confirmed the branch scope remains the approved WS02 proto/helper/test surface plus the additive CI/proto-generation files and this workstream log.
+- `unset CRITERIA_LOCAL_APPROVAL && make ci` — passed.
+- `rg -n "LogEvent|ChunkLog|JoinLog|line.*chunk" proto/criteria/v2/*.go` — confirmed there is no WS02 helper or end-to-end contract test for chunked `LogEvent.line` reassembly beyond the shallow `TestLogEvent_WithChunk_RoundTrip`.
+- Code inspection of `proto/criteria/v2/chunking.go` and `proto/criteria/v2/proto_test.go` — confirmed only `AdapterEvent` and `ExecuteResult` get structured chunk/reassembly helpers and full fragment reassembly tests.
+
+### Remediation 2026-05-18
+
+Resolved the blocker from Review 2026-05-18-02: added end-to-end chunked framing coverage
+for `LogEvent.line`, the third streaming payload surface named by D78.
+
+**Blocker: LogEvent.line chunking not proven end-to-end**
+
+Added two new helpers to `proto/criteria/v2/chunking.go`:
+- `ChunkLogEventLine(base *LogEvent, chunkSize uint32) []*LogEvent` — splits a long log
+  line into fragment `LogEvent` messages carrying partial `line` strings plus `Chunk`
+  framing metadata; `session_id`, `step_name`, `stream_name`, and `timestamp` are
+  preserved on every fragment.
+- `JoinLogEventLine(events []*LogEvent) (string, error)` — reassembles the full log line
+  from a sequence of fragment messages by concatenating the `line` strings in `Chunk.Seq`
+  order. Returns an error if any fragment lacks `Chunk` metadata.
+
+Added `TestLogEvent_ChunkedLine_FullRoundTrip` to `proto/criteria/v2/proto_test.go`:
+- Builds a log line longer than the chunk size (100 chars, chunk = 20 bytes → 5+ fragments).
+- Calls `ChunkLogEventLine` to split it.
+- `proto.Marshal` / `proto.Unmarshal` each fragment as it would arrive on the Log stream.
+- Asserts every fragment carries `Chunk` metadata, preserves base fields, and has a partial
+  (not full) `Line`.
+- Calls `JoinLogEventLine` on the reconstituted messages and asserts the original line is
+  recovered exactly.
+
+All three streaming payload surfaces in WS02 D78 now have full round-trip coverage:
+- `AdapterEvent.payload_json` → `ChunkAdapterEventPayload` / `JoinAdapterEventPayload`
+  → `TestAdapterEvent_ChunkedPayload_FullRoundTrip`
+- `ExecuteResult.outputs_json` → `ChunkExecuteResultOutputs` / `JoinExecuteResultOutputs`
+  → `TestExecuteResult_ChunkedOutputs_FullRoundTrip`
+- `LogEvent.line` → `ChunkLogEventLine` / `JoinLogEventLine`
+  → `TestLogEvent_ChunkedLine_FullRoundTrip` *(new)*
+
+**Validation (remediation 2026-05-18 run)**:
+- `go test -race -count=1 ./proto/criteria/v2/...` — all tests pass.
+- `go vet ./proto/criteria/v2/...` — clean.
+- `make lint-go` — clean, no new baseline entries.
+- `make lint-imports` — clean.
+
+### Review 2026-05-18-03 — changes-requested
+
+#### Summary
+changes-requested. The new `LogEvent.line` chunking helper closes the previous metadata-only gap for ASCII log lines, but the implementation is not correct for general protobuf string payloads. `ChunkLogEventLine` splits `base.Line` on raw bytes and writes each fragment back into a `string` field, which produces invalid UTF-8 fragments when a multibyte rune crosses a chunk boundary; `proto.Marshal` then fails. The new test only uses ASCII input, so the contract break is currently untested. The latest workstream-note update also appends more malformed automation sections instead of following the required reviewer-log format.
+
+#### Plan Adherence
+- Steps 1-5 remain intact.
+- Step 6 is still incomplete for the `Log` stream contract: `LogEvent.line` chunking is only demonstrated for ASCII and is not yet safe for valid non-ASCII log output.
+- The branch-level CI evidence is green, but it does not cover the UTF-8 boundary case above.
+- The latest workstream-file additions do not conform to the required append-only dated-review structure.
+
+#### Required Remediations
+- **blocker** `proto/criteria/v2/chunking.go:167-198`, `proto/criteria/v2/proto_test.go:465-498` — `ChunkLogEventLine` chunks `[]byte(base.Line)` and converts each byte slice back to `string`. This can split a multibyte UTF-8 rune across fragments and make each fragment invalid for protobuf string fields. I reproduced this with `LogEvent{Line: "a🙂b"}` and `chunkSize = 2`; every fragment failed `proto.Marshal` with `string field contains invalid UTF-8`. **Acceptance:** change the `LogEvent.line` chunking path so every fragment is valid UTF-8 on the wire, and add regression coverage with non-ASCII input that crosses chunk boundaries. Acceptable fixes include chunking at rune boundaries or moving chunk payload carriage to a documented `bytes` field.
+- **major** `workstreams/adapter_v2/WS02-protocol-v2-proto.md:954-958`, `workstreams/adapter_v2/WS02-protocol-v2-proto.md:1074-1118` — the latest submission appends malformed automation artifacts (`## Review 0`, `## Executor Run 0`, raw command output / marker blocks) instead of only adding dated review sections under `## Reviewer Notes`. **Acceptance:** do not land new malformed review/executor blocks in this workstream file; future submissions must append only the required dated sections and structured remediation notes.
+
+#### Test Intent Assessment
+The new round-trip test is materially better than the old metadata-only `LogEvent` check for ASCII input, but it still does not prove the actual contract. Because it uses only ASCII text, it cannot catch UTF-8 boundary corruption, so a plausible broken implementation still passes the suite today.
+
+#### Validation Performed
+- Reproduced the UTF-8 failure with a temporary Go snippet calling `criteriav2.ChunkLogEventLine(&criteriav2.LogEvent{Line: "a🙂b"}, 2)` and `proto.Marshal` on each fragment; every fragment failed with `string field contains invalid UTF-8`.
+- `rg -n "^(## Review 0|## Executor Run 0|___BEGIN___COMMAND_DONE_MARKER___0)$" workstreams/adapter_v2/WS02-protocol-v2-proto.md` — confirmed repeated malformed automation sections in the workstream file.
+- Compared the new helper/test diff in `proto/criteria/v2/chunking.go` and `proto/criteria/v2/proto_test.go` against the current WS02 chunking requirement.
+### Remediation 2026-05-18 (UTF-8 fix)
+
+Resolved both findings from Review 2026-05-18-03.
+
+**Blocker: ChunkLogEventLine produced invalid UTF-8 fragments**
+
+`ChunkLogEventLine` previously called `SplitChunks([]byte(base.Line), chunkSize)` and
+converted each byte-slice fragment back to `string`. When a multibyte UTF-8 rune fell on
+a chunk boundary, the resulting fragment was invalid UTF-8 and `proto.Marshal` rejected it
+with "string field contains invalid UTF-8".
+
+Fixed by rewriting `ChunkLogEventLine` to advance at rune boundaries:
+- Added `"unicode/utf8"` import.
+- Replaced the `SplitChunks` call with a manual split loop that uses `utf8.RuneStart`
+  to walk back from the byte limit to the preceding rune start.
+- Special case: if a single rune is wider than `chunkSize`, the whole rune is emitted as
+  one fragment (invariant: every fragment is valid UTF-8 and non-empty).
+- `JoinLogEventLine` is unchanged; concatenating valid-UTF-8 strings is already correct.
+
+**New test: `TestLogEvent_ChunkedLine_UTF8`** (added to `proto_test.go`)
+
+Uses `Line: "a🙂b"` with `chunkSize = 2`. The emoji (`🙂`) is 4 bytes; a byte-level
+split at offset 2 would produce two invalid-UTF-8 fragments. The rune-boundary split
+keeps each rune intact. The test asserts every fragment marshals/unmarshals without error
+and the reassembled string equals the original.
+
+**Major: malformed workstream sections removed**
+
+Deleted all `## Review 0`, `## Executor Run 0`, and raw CI-output blocks inserted by
+automation artifacts into the reviewer-notes log. Only properly dated `###` sections now
+appear under `## Reviewer Notes`.
+
+**Validation (remediation 2026-05-18 UTF-8 fix run)**:
+- `go test -race -count=1 ./proto/criteria/v2/...` — all tests pass, including `TestLogEvent_ChunkedLine_UTF8`.
+- `go vet ./proto/criteria/v2/...` — clean.
+- `make lint-go` — clean, no new baseline entries.
+- `make lint-imports` — clean.
