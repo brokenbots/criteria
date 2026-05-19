@@ -50,7 +50,13 @@ func compileWaits(g *FSMGraph, spec *Spec) hcl.Diagnostics {
 		if len(ws.Outcomes) == 0 {
 			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("wait %q: at least one outcome is required", name)})
 		}
+		seen := map[string]bool{}
 		for _, o := range ws.Outcomes {
+			if seen[o.Name] {
+				diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("wait %q: duplicate outcome %q", name, o.Name)})
+				continue
+			}
+			seen[o.Name] = true
 			if o.Next == "" {
 				diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("wait %q outcome %q: next is required", name, o.Name)})
 				continue
@@ -90,7 +96,13 @@ func compileApprovals(g *FSMGraph, spec *Spec) hcl.Diagnostics {
 			Reason:    as.Reason,
 			Outcomes:  map[string]string{},
 		}
+		seenOutcomes := map[string]bool{}
 		for _, o := range as.Outcomes {
+			if seenOutcomes[o.Name] {
+				diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("approval %q: duplicate outcome %q", name, o.Name)})
+				continue
+			}
+			seenOutcomes[o.Name] = true
 			if o.Next == "" {
 				diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("approval %q outcome %q: next is required", name, o.Name)})
 				continue

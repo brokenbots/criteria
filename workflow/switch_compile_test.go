@@ -436,6 +436,32 @@ state "done" { terminal = true }
 	}
 }
 
+// TestSwitchCompile_ReservedNameContinue verifies that a switch named "_continue"
+// is rejected — it is an engine-internal loop target reserved for all node kinds.
+func TestSwitchCompile_ReservedNameContinue(t *testing.T) {
+	src := `
+workflow "w" {
+  version       = "0.1"
+  initial_state = "check"
+  target_state  = "done"
+}
+
+switch "_continue" {
+  condition {
+    match = true
+    next  = state.done
+  }
+  default {
+    next = state.done
+  }
+}
+
+state "check" { terminal = false }
+state "done"  { terminal = true  }
+`
+	compileExpectError(t, src, `"_continue"`)
+}
+
 // TestCompileSwitch_NextIsReturn verifies that next = "return" is accepted by
 // the compiler and stored as the condition's Next target.
 func TestCompileSwitch_NextIsReturn(t *testing.T) {
