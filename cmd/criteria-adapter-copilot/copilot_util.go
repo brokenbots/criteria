@@ -12,10 +12,22 @@ import (
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 )
 
-func resultEvent(outcome string, outputs map[string]string) *pb.ExecuteEvent {
+// resultEvent constructs the terminal ExecuteEvent for a step. The Outputs map
+// always carries `outcome` and `reason` keys so downstream workflow expressions
+// can read `steps.<name>.outcome` and `steps.<name>.reason` consistently across
+// success and failure paths. `reason` is empty when the model did not call
+// `submit_outcome` with one (e.g. permission denial, reprompt exhaustion,
+// max_turns).
+func resultEvent(outcome, reason string) *pb.ExecuteEvent {
 	return &pb.ExecuteEvent{
 		Event: &pb.ExecuteEvent_Result{
-			Result: &pb.ExecuteResult{Outcome: outcome, Outputs: outputs},
+			Result: &pb.ExecuteResult{
+				Outcome: outcome,
+				Outputs: map[string]string{
+					"outcome": outcome,
+					"reason":  reason,
+				},
+			},
 		},
 	}
 }

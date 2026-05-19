@@ -364,13 +364,14 @@ If a step declares no `outcome` blocks, `AllowedOutcomes` is empty: no preamble 
 
 ### Step outputs
 
-On successful finalization the adapter emits one output key:
+The adapter emits the following output keys on every result, success or failure, so downstream workflow expressions have a consistent shape:
 
 | Key | Type | Description |
 |---|---|---|
-| `reason` | `string` | The optional `reason` argument passed by the model to `submit_outcome`. Empty string when the model did not supply one. |
+| `outcome` | `string` | The finalized outcome name (mirrors the FSM transition outcome). |
+| `reason` | `string` | The optional `reason` argument the model passed to `submit_outcome`. Empty on failure paths (reprompt exhaustion, permission denial, `max_turns` reached) since the model did not supply one. |
 
-Downstream steps can read it as `steps.<step_name>.reason`. No outputs are emitted on failure paths (reprompt exhaustion, permission denial, `max_turns` reached).
+Downstream steps can read these as `steps.<step_name>.outcome` and `steps.<step_name>.reason`.
 
 ## Running the Demo
 
