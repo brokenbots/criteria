@@ -54,9 +54,7 @@ func checkReservedNames(spec *Spec) hcl.Diagnostics {
 		diags = append(diags, reservedNameDiags("approval", a.Name)...)
 	}
 	for _, s := range spec.Switches {
-		if s.Name == ReturnSentinel {
-			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: `"return" is a reserved outcome routing sentinel and may not be declared as a switch`})
-		}
+		diags = append(diags, reservedNameDiags("switch", s.Name)...)
 	}
 	return diags
 }

@@ -270,6 +270,66 @@ state "done" {
 	}
 }
 
+func TestCompile_WaitDuplicateOutcome_Error(t *testing.T) {
+	src := []byte(`
+workflow "w" {
+  version       = "0.1"
+  initial_state = "pause"
+  target_state  = "done"
+}
+
+wait "pause" {
+  signal  = "go"
+  outcome "received" { next = "done" }
+  outcome "received" { next = "done" }
+}
+
+state "done" { terminal = true }
+`)
+	spec, diags := workflow.Parse("test.hcl", src)
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	_, diags = workflow.Compile(spec, nil)
+	if !diags.HasErrors() {
+		t.Fatal("expected compile error for duplicate wait outcome, got none")
+	}
+	if !strings.Contains(diags.Error(), "duplicate outcome") {
+		t.Errorf("expected 'duplicate outcome' in error; got: %v", diags)
+	}
+}
+
+func TestCompile_ApprovalDuplicateOutcome_Error(t *testing.T) {
+	src := []byte(`
+workflow "w" {
+  version       = "0.1"
+  initial_state = "gate"
+  target_state  = "done"
+}
+
+approval "gate" {
+  approvers = ["alice"]
+  reason    = "LGTM?"
+  outcome "approved" { next = "done" }
+  outcome "approved" { next = "done" }
+  outcome "rejected" { next = "done" }
+}
+
+state "done" { terminal = true }
+`)
+	spec, diags := workflow.Parse("test.hcl", src)
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	_, diags = workflow.Compile(spec, nil)
+	if !diags.HasErrors() {
+		t.Fatal("expected compile error for duplicate approval outcome, got none")
+	}
+	if !strings.Contains(diags.Error(), "duplicate outcome") {
+		t.Errorf("expected 'duplicate outcome' in error; got: %v", diags)
+	}
+}
+
 func TestCompile_ApprovalMissingRejected_Error(t *testing.T) {
 	src := []byte(`
 workflow "w" {
