@@ -34,11 +34,7 @@ func compileWaits(g *FSMGraph, spec *Spec) hcl.Diagnostics {
 			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("wait %q: exactly one of duration or signal must be set", name)})
 			continue
 		}
-		node := &WaitNode{
-			Name:     name,
-			Signal:   ws.Signal,
-			Outcomes: map[string]string{},
-		}
+		node := &WaitNode{Name: name, Signal: ws.Signal}
 		if hasDuration {
 			d, err := time.ParseDuration(ws.Duration)
 			if err != nil {
@@ -50,19 +46,9 @@ func compileWaits(g *FSMGraph, spec *Spec) hcl.Diagnostics {
 		if len(ws.Outcomes) == 0 {
 			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("wait %q: at least one outcome is required", name)})
 		}
-		seen := map[string]bool{}
-		for _, o := range ws.Outcomes {
-			if seen[o.Name] {
-				diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("wait %q: duplicate outcome %q", name, o.Name)})
-				continue
-			}
-			seen[o.Name] = true
-			if o.Next == "" {
-				diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("wait %q outcome %q: next is required", name, o.Name)})
-				continue
-			}
-			node.Outcomes[o.Name] = o.Next
-		}
+		outcomeMap, od := compileSimpleOutcomes("wait", name, ws.Outcomes)
+		diags = append(diags, od...)
+		node.Outcomes = outcomeMap
 		g.Waits[name] = node
 	}
 	return diags
@@ -90,25 +76,10 @@ func compileApprovals(g *FSMGraph, spec *Spec) hcl.Diagnostics {
 			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("duplicate approval %q", name)})
 			continue
 		}
-		node := &ApprovalNode{
-			Name:      name,
-			Approvers: as.Approvers,
-			Reason:    as.Reason,
-			Outcomes:  map[string]string{},
-		}
-		seenOutcomes := map[string]bool{}
-		for _, o := range as.Outcomes {
-			if seenOutcomes[o.Name] {
-				diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("approval %q: duplicate outcome %q", name, o.Name)})
-				continue
-			}
-			seenOutcomes[o.Name] = true
-			if o.Next == "" {
-				diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("approval %q outcome %q: next is required", name, o.Name)})
-				continue
-			}
-			node.Outcomes[o.Name] = o.Next
-		}
+		node := &ApprovalNode{Name: name, Approvers: as.Approvers, Reason: as.Reason}
+		outcomeMap, od := compileSimpleOutcomes("approval", name, as.Outcomes)
+		diags = append(diags, od...)
+		node.Outcomes = outcomeMap
 		// Enforce required outcomes: approved and rejected must both be present.
 		if _, ok := node.Outcomes["approved"]; !ok {
 			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("approval %q: outcome \"approved\" is required", name)})
@@ -119,6 +90,28 @@ func compileApprovals(g *FSMGraph, spec *Spec) hcl.Diagnostics {
 		g.Approvals[name] = node
 	}
 	return diags
+}
+
+// compileSimpleOutcomes validates and collects a flat list of outcome blocks
+// (name → next). Shared by compileWaits and compileApprovals. kind is used
+// only in diagnostic messages ("wait" / "approval").
+func compileSimpleOutcomes(kind, nodeName string, outcomes []OutcomeSpec) (map[string]string, hcl.Diagnostics) {
+	var diags hcl.Diagnostics
+	seen := map[string]bool{}
+	result := make(map[string]string, len(outcomes))
+	for _, o := range outcomes {
+		if seen[o.Name] {
+			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("%s %q: duplicate outcome %q", kind, nodeName, o.Name)})
+			continue
+		}
+		seen[o.Name] = true
+		if o.Next == "" {
+			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("%s %q outcome %q: next is required", kind, nodeName, o.Name)})
+			continue
+		}
+		result[o.Name] = o.Next
+	}
+	return result, diags
 }
 
 // compileSwitches is now in compile_switches.go.
