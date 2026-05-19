@@ -315,7 +315,7 @@ state "done" { terminal = true }
 	compileExpectError(t, src, `self-reference steps.check is always empty at match time`)
 }
 
-func TestSwitchCompile_UnreachableSwitchWarns(t *testing.T) {
+func TestSwitchCompile_UnreachableSwitchErrors(t *testing.T) {
 	// The switch node is not reachable from initial_state (a step is initial).
 	src := `
 workflow "w" {
@@ -348,18 +348,18 @@ state "done" { terminal = true }
 		t.Fatalf("parse: %v", diags)
 	}
 	_, diags = workflow.Compile(spec, nil)
-	// Should produce a warning, not an error.
-	if diags.HasErrors() {
-		t.Fatalf("unexpected compile error: %v", diags)
+	// Unreachable switch is a compile error.
+	if !diags.HasErrors() {
+		t.Fatal("expected compile error for unreachable switch, got none")
 	}
-	hasWarn := false
+	found := false
 	for _, d := range diags {
 		if strings.Contains(d.Summary, "unreachable") && strings.Contains(d.Summary, "orphan") {
-			hasWarn = true
+			found = true
 		}
 	}
-	if !hasWarn {
-		t.Error("expected unreachability warning for 'orphan' switch, got none")
+	if !found {
+		t.Errorf("expected unreachability error for 'orphan' switch; got: %v", diags)
 	}
 }
 

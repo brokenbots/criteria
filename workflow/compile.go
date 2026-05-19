@@ -177,13 +177,13 @@ func resolveTransitions(g *FSMGraph) hcl.Diagnostics {
 	var diags hcl.Diagnostics
 	if g.InitialState != "" {
 		if _, ok := g.Lookup(g.InitialState); !ok {
-			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("initial_state %q does not refer to a declared step or state", g.InitialState)})
+			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("initial_state %q does not refer to a declared step, state, wait, approval, or switch", g.InitialState)})
 		}
 	}
 	if g.TargetState != "" {
 		kind, ok := g.Lookup(g.TargetState)
 		if !ok {
-			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("target_state %q does not refer to a declared step or state", g.TargetState)})
+			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("target_state %q does not refer to a declared step, state, wait, approval, or switch", g.TargetState)})
 		} else if kind == "state" && !g.States[g.TargetState].Terminal {
 			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("target_state %q must be terminal", g.TargetState)})
 		}
