@@ -152,10 +152,10 @@ func (ts *turnState) handleIdleTurn(ctx context.Context, s *sessionState, sink a
 	s.mu.Unlock()
 
 	if denied {
-		return true, sink.Send(resultEvent("failure", nil))
+		return true, sink.Send(resultEvent("failure", ""))
 	}
 	if outcome != "" {
-		return true, sink.Send(resultEvent(outcome, map[string]string{"reason": reason}))
+		return true, sink.Send(resultEvent(outcome, reason))
 	}
 
 	// No valid finalize this turn. Fail if exhausted.
@@ -233,7 +233,7 @@ func (ts *turnState) failExhausted(s *sessionState, sink adapterhost.ExecuteEven
 		"allowed_outcomes": allowedAny,
 		"attempts":         attempts,
 	}))
-	return sink.Send(resultEvent("failure", nil))
+	return sink.Send(resultEvent("failure", ""))
 }
 
 // handleMaxTurnsReached returns failure unless "needs_review" is in the
@@ -243,9 +243,9 @@ func (ts *turnState) handleMaxTurnsReached(s *sessionState, sink adapterhost.Exe
 	_, needsReviewAllowed := s.activeAllowedOutcomes["needs_review"]
 	s.mu.Unlock()
 	if needsReviewAllowed {
-		return sink.Send(resultEvent("needs_review", nil))
+		return sink.Send(resultEvent("needs_review", ""))
 	}
-	return sink.Send(resultEvent("failure", nil))
+	return sink.Send(resultEvent("failure", ""))
 }
 
 func (p *copilotAdapter) Execute(ctx context.Context, req *pb.ExecuteRequest, sink adapterhost.ExecuteEventSender) error {

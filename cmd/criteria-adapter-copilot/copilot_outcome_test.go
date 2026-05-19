@@ -456,9 +456,21 @@ func assertOutcome(t *testing.T, sender *recordingSender, want string) {
 	t.Fatalf("no result event found; want outcome %q", want)
 }
 
-// Successful finalization must surface the model-supplied reason as a step
-// output so downstream workflow expressions can reference steps.<name>.reason.
-func TestAwaitOutcome_ReasonInOutputs(t *testing.T) {
+// resultFromSender returns the ExecuteResult from the last result event, or
+// nil if none was emitted.
+func resultFromSender(sender *recordingSender) *pb.ExecuteResult {
+	for _, ev := range sender.snapshot() {
+		if r := ev.GetResult(); r != nil {
+			return r
+		}
+	}
+	return nil
+}
+
+// Successful finalization must surface both the outcome and the model-supplied
+// reason as step outputs so downstream workflow expressions can reference
+// steps.<name>.outcome and steps.<name>.reason.
+func TestAwaitOutcome_OutcomeAndReasonInOutputs(t *testing.T) {
 	s := stateWithOutcomes("success", "failure")
 	fake := s.session.(*fakeSession)
 	fake.emitOnSend = []copilot.SessionEvent{
@@ -481,18 +493,45 @@ func TestAwaitOutcome_ReasonInOutputs(t *testing.T) {
 		t.Fatalf("Execute returned error: %v", err)
 	}
 
-	var result *pb.ExecuteResult
-	for _, ev := range sender.snapshot() {
-		if r := ev.GetResult(); r != nil {
-			result = r
-			break
-		}
-	}
+	result := resultFromSender(sender)
 	if result == nil {
 		t.Fatal("no result event emitted")
 	}
+	if got := result.GetOutputs()["outcome"]; got != "success" {
+		t.Errorf("outputs[outcome] = %q, want %q", got, "success")
+	}
 	if got := result.GetOutputs()["reason"]; got != "all checks passed" {
 		t.Errorf("outputs[reason] = %q, want %q", got, "all checks passed")
+	}
+}
+
+// Failure paths must still emit outputs with the outcome key populated and
+// reason empty, so downstream expressions have a consistent shape regardless
+// of how the step ended.
+func TestAwaitOutcome_FailurePathPopulatesOutcomeOutput(t *testing.T) {
+	s := stateWithOutcomes("success", "failure")
+	fake := s.session.(*fakeSession)
+	idle := []copilot.SessionEvent{{Type: copilot.SessionEventTypeSessionIdle, Data: &copilot.SessionIdleData{}}}
+	fake.sendSequence = [][]copilot.SessionEvent{idle, idle, idle}
+
+	sender := &recordingSender{}
+	if err := outcomeAdapter(s).Execute(context.Background(), &pb.ExecuteRequest{
+		SessionId:       "s1",
+		Config:          map[string]string{"prompt": "do work"},
+		AllowedOutcomes: []string{"failure", "success"},
+	}, sender); err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+
+	result := resultFromSender(sender)
+	if result == nil {
+		t.Fatal("no result event emitted")
+	}
+	if got := result.GetOutputs()["outcome"]; got != "failure" {
+		t.Errorf("outputs[outcome] = %q, want %q", got, "failure")
+	}
+	if got, ok := result.GetOutputs()["reason"]; !ok || got != "" {
+		t.Errorf("outputs[reason] = (%q, present=%v), want (\"\", true)", got, ok)
 	}
 }
 
