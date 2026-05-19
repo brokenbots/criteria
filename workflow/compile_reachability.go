@@ -39,14 +39,15 @@ func diagnoseUnreachableSteps(g *FSMGraph, reachable map[string]bool) hcl.Diagno
 	return diags
 }
 
-// diagnoseUnreachableNodes emits DiagWarning for every wait, approval, switch,
-// and non-synthetic state not in reachable.
+// diagnoseUnreachableNodes emits DiagError for every unreachable wait, approval,
+// and switch (active control-flow nodes whose presence is always intentional) and
+// DiagWarning for every non-synthetic state (which may be a placeholder terminal).
 func diagnoseUnreachableNodes(g *FSMGraph, reachable map[string]bool) hcl.Diagnostics {
 	var diags hcl.Diagnostics
 	for name := range g.Waits {
 		if !reachable[name] {
 			diags = append(diags, &hcl.Diagnostic{
-				Severity: hcl.DiagWarning,
+				Severity: hcl.DiagError,
 				Summary:  fmt.Sprintf("wait %q is unreachable from initial_state", name),
 			})
 		}
@@ -54,7 +55,7 @@ func diagnoseUnreachableNodes(g *FSMGraph, reachable map[string]bool) hcl.Diagno
 	for name := range g.Approvals {
 		if !reachable[name] {
 			diags = append(diags, &hcl.Diagnostic{
-				Severity: hcl.DiagWarning,
+				Severity: hcl.DiagError,
 				Summary:  fmt.Sprintf("approval %q is unreachable from initial_state", name),
 			})
 		}
@@ -62,7 +63,7 @@ func diagnoseUnreachableNodes(g *FSMGraph, reachable map[string]bool) hcl.Diagno
 	for name := range g.Switches {
 		if !reachable[name] {
 			diags = append(diags, &hcl.Diagnostic{
-				Severity: hcl.DiagWarning,
+				Severity: hcl.DiagError,
 				Summary:  fmt.Sprintf("switch %q is unreachable from initial_state", name),
 			})
 		}

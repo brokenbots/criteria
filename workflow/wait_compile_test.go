@@ -1,6 +1,7 @@
 package workflow_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/brokenbots/criteria/workflow"
@@ -176,6 +177,96 @@ state "done" {
 	}
 	if _, ok := a.Outcomes["rejected"]; !ok {
 		t.Error("approval missing 'rejected' outcome")
+	}
+}
+
+func TestCompile_UnreachableWaitErrors(t *testing.T) {
+	src := []byte(`
+workflow "w" {
+  version       = "0.1"
+  initial_state = "start"
+  target_state  = "done"
+}
+
+adapter "noop" "default" {}
+
+step "start" {
+  target = adapter.noop.default
+  outcome "success" { next = "done" }
+}
+
+wait "orphan" {
+  signal = "go"
+  outcome "received" { next = "done" }
+}
+
+state "done" {
+  terminal = true
+  success  = true
+}
+`)
+	spec, diags := workflow.Parse("test.hcl", src)
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	_, diags = workflow.Compile(spec, nil)
+	if !diags.HasErrors() {
+		t.Fatal("expected compile error for unreachable wait, got none")
+	}
+	found := false
+	for _, d := range diags {
+		if strings.Contains(d.Summary, "unreachable") && strings.Contains(d.Summary, "orphan") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected unreachability error for 'orphan' wait; got: %v", diags)
+	}
+}
+
+func TestCompile_UnreachableApprovalErrors(t *testing.T) {
+	src := []byte(`
+workflow "w" {
+  version       = "0.1"
+  initial_state = "start"
+  target_state  = "done"
+}
+
+adapter "noop" "default" {}
+
+step "start" {
+  target = adapter.noop.default
+  outcome "success" { next = "done" }
+}
+
+approval "orphan" {
+  approvers = ["alice"]
+  reason    = "LGTM?"
+  outcome "approved" { next = "done" }
+  outcome "rejected" { next = "done" }
+}
+
+state "done" {
+  terminal = true
+  success  = true
+}
+`)
+	spec, diags := workflow.Parse("test.hcl", src)
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	_, diags = workflow.Compile(spec, nil)
+	if !diags.HasErrors() {
+		t.Fatal("expected compile error for unreachable approval, got none")
+	}
+	found := false
+	for _, d := range diags {
+		if strings.Contains(d.Summary, "unreachable") && strings.Contains(d.Summary, "orphan") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected unreachability error for 'orphan' approval; got: %v", diags)
 	}
 }
 
