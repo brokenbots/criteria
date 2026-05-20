@@ -1,6 +1,6 @@
 # WS14 — Output schema + compile-time output-reference validation + sensitive output taint
 
-**Phase:** Adapter v2 · **Track:** Protocol features · **Owner:** Workstream executor · **Depends on:** [WS02](WS02-protocol-v2-proto.md), [WS09](WS09-environment-block-and-secret-taint.md). · **Unblocks:** clearer error messages for downstream output usage; closes a known v1 gap.
+**Phase:** Adapter v2 · **Track:** Protocol features · **Owner:** Workstream executor · **Depends on:** [WS02](WS02-protocol-v2-proto.md), [WS09](WS09-environment-block-and-secret-taint.md). · **Unblocks:** clearer error messages for downstream output usage; closes a known v1 gap. · **Base branch:** `adapter-v2`
 
 ## Context
 

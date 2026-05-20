@@ -1,6 +1,6 @@
 # WS04 — OCI cache layout (`oras-go` integration)
 
-**Phase:** Adapter v2 · **Track:** Distribution · **Owner:** Workstream executor · **Depends on:** [WS03](WS03-host-v2-wire.md) (host wire stable). · **Unblocks:** [WS05](WS05-adapter-manifest.md), [WS06](WS06-cosign-signing.md), [WS07](WS07-lockfile.md), [WS08](WS08-cli-adapter-group.md).
+**Phase:** Adapter v2 · **Track:** Distribution · **Owner:** Workstream executor · **Depends on:** [WS03](WS03-host-v2-wire.md) (host wire stable). · **Unblocks:** [WS05](WS05-adapter-manifest.md), [WS06](WS06-cosign-signing.md), [WS07](WS07-lockfile.md), [WS08](WS08-cli-adapter-group.md). · **Base branch:** `adapter-v2`
 
 ## Context
 

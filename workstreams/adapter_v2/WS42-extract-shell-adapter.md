@@ -1,6 +1,6 @@
 # WS42 — Extract `shell` adapter to its own repo
 
-**Phase:** Adapter v2 · **Track:** End-state independence · **Owner:** Workstream executor · **Depends on:** [WS31](WS31-migrate-shell.md), [WS40](WS40-v2-release-gate.md), [WS41](WS41-extract-adapter-proto-repo.md). · **Unblocks:** [WS43](WS43-independence-verification.md).
+**Phase:** Adapter v2 · **Track:** End-state independence · **Owner:** Workstream executor · **Depends on:** [WS31](WS31-migrate-shell.md), [WS40](WS40-v2-release-gate.md), [WS41](WS41-extract-adapter-proto-repo.md). · **Unblocks:** [WS43](WS43-independence-verification.md). · **Base branch:** `main`
 
 ## Context
 

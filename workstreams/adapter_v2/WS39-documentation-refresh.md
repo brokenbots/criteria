@@ -1,6 +1,6 @@
 # WS39 — Documentation refresh (cleanup gate)
 
-**Phase:** Adapter v2 · **Track:** Release gate · **Owner:** Workstream executor (cleanup-gate role: only WS allowed to edit `README.md`, `PLAN.md`, `AGENTS.md`, `CHANGELOG.md`, `CONTRIBUTING.md`, `workstreams/README.md`). · **Depends on:** WS01–WS38 (all substantive WSes done). · **Unblocks:** [WS40](WS40-v2-release-gate.md).
+**Phase:** Adapter v2 · **Track:** Release gate · **Owner:** Workstream executor (cleanup-gate role: only WS allowed to edit `README.md`, `PLAN.md`, `AGENTS.md`, `CHANGELOG.md`, `CONTRIBUTING.md`, `workstreams/README.md`). · **Depends on:** WS01–WS38 (all substantive WSes done). · **Unblocks:** [WS40](WS40-v2-release-gate.md). · **Base branch:** `adapter-v2`
 
 ## Context
 

@@ -1,6 +1,6 @@
 # WS30 — Migrate `greeter` adapter to protocol v2
 
-**Phase:** Adapter v2 · **Track:** Adapter migration · **Owner:** Workstream executor (in repo `criteria-typescript-adapter-greeter`) · **Depends on:** [WS23](WS23-typescript-sdk-v2.md), [WS28](WS28-reusable-publish-action.md). · **Unblocks:** later migrations validate the SDK + publish path against the simplest adapter first.
+**Phase:** Adapter v2 · **Track:** Adapter migration · **Owner:** Workstream executor (in repo `criteria-typescript-adapter-greeter`) · **Depends on:** [WS23](WS23-typescript-sdk-v2.md), [WS28](WS28-reusable-publish-action.md). · **Unblocks:** later migrations validate the SDK + publish path against the simplest adapter first. · **Base branch:** `adapter-v2`
 
 ## Context
 

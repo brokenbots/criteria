@@ -1,6 +1,6 @@
 # WS44 — CI coverage ratchet gate
 
-**Phase:** Adapter v2 · **Track:** Post-release hardening · **Owner:** Workstream executor · **Depends on:** [WS40](WS40-v2-release-gate.md) (release gate must merge first so the captured floors reflect the post-rewrite package layout). · **Unblocks:** none.
+**Phase:** Adapter v2 · **Track:** Post-release hardening · **Owner:** Workstream executor · **Depends on:** [WS40](WS40-v2-release-gate.md) (release gate must merge first so the captured floors reflect the post-rewrite package layout). · **Unblocks:** none. · **Base branch:** `main`
 
 > **Deferral note.** This workstream originated as the pre-Phase-4 `test-03-ci-coverage-gate.md`. It was deferred into adapter_v2 because applying a per-package coverage ratchet during a 43-workstream rewrite would create more friction than protection: WS37 deletes large amounts of v1 code (shifting package averages downward), WS30–WS36 add new code paths before tests catch up, and several new packages (sandbox, OCI cache, signing, lockfile, manifest) don't exist yet when the floors would be captured. Capturing the floor *after* WS40 means the contract reflects the steady-state codebase, not a transitional one.
 >

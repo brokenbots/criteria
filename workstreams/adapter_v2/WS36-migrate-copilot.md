@@ -1,6 +1,6 @@
 # WS36 — Migrate `copilot` adapter to protocol v2
 
-**Phase:** Adapter v2 · **Track:** Adapter migration · **Owner:** Workstream executor (in `criteria-adapter-copilot` repo — verify language before kickoff) · **Depends on:** [WS23](WS23-typescript-sdk-v2.md) or [WS25](WS25-go-sdk-v1.md), [WS28](WS28-reusable-publish-action.md), [WS16](WS16-bidi-permission-stream.md). · **Unblocks:** [WS37](WS37-v1-protocol-code-removal.md).
+**Phase:** Adapter v2 · **Track:** Adapter migration · **Owner:** Workstream executor (in `criteria-adapter-copilot` repo — verify language before kickoff) · **Depends on:** [WS23](WS23-typescript-sdk-v2.md) or [WS25](WS25-go-sdk-v1.md), [WS28](WS28-reusable-publish-action.md), [WS16](WS16-bidi-permission-stream.md). · **Unblocks:** [WS37](WS37-v1-protocol-code-removal.md). · **Base branch:** `adapter-v2`
 
 ## Context
 

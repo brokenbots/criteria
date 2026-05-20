@@ -1,6 +1,6 @@
 # WS18 — `Snapshot` / `Restore` lifecycle RPCs
 
-**Phase:** Adapter v2 · **Track:** Protocol features · **Owner:** Workstream executor · **Depends on:** [WS02](WS02-protocol-v2-proto.md), [WS13](WS13-secrets-channel-redaction.md), [WS16](WS16-bidi-permission-stream.md), [WS17](WS17-pause-resume-inspect.md). · **Unblocks:** long-running workflow durability story.
+**Phase:** Adapter v2 · **Track:** Protocol features · **Owner:** Workstream executor · **Depends on:** [WS02](WS02-protocol-v2-proto.md), [WS13](WS13-secrets-channel-redaction.md), [WS16](WS16-bidi-permission-stream.md), [WS17](WS17-pause-resume-inspect.md). · **Unblocks:** long-running workflow durability story. · **Base branch:** `adapter-v2`
 
 ## Context
 

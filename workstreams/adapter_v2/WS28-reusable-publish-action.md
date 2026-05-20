@@ -1,6 +1,6 @@
 # WS28 — Reusable composite GitHub Action `criteria/publish-adapter`
 
-**Phase:** Adapter v2 · **Track:** CI scaffolding · **Owner:** Workstream executor (new repo `criteria/publish-adapter` under brokenbots org) · **Depends on:** [WS05](WS05-adapter-manifest.md), [WS23](WS23-typescript-sdk-v2.md) / [WS24](WS24-python-sdk-v2.md) / [WS25](WS25-go-sdk-v1.md). · **Unblocks:** [WS27](WS27-starter-repos.md), every adapter migration.
+**Phase:** Adapter v2 · **Track:** CI scaffolding · **Owner:** Workstream executor (new repo `criteria/publish-adapter` under brokenbots org) · **Depends on:** [WS05](WS05-adapter-manifest.md), [WS23](WS23-typescript-sdk-v2.md) / [WS24](WS24-python-sdk-v2.md) / [WS25](WS25-go-sdk-v1.md). · **Unblocks:** [WS27](WS27-starter-repos.md), every adapter migration. · **Base branch:** `adapter-v2`
 
 ## Context
 

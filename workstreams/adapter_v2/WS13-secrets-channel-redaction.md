@@ -1,6 +1,6 @@
 # WS13 — Secret channel + provider stack + redaction registry
 
-**Phase:** Adapter v2 · **Track:** Security · **Owner:** Workstream executor · **Depends on:** [WS02](WS02-protocol-v2-proto.md), [WS09](WS09-environment-block-and-secret-taint.md). · **Unblocks:** every adapter migration WS that uses secrets.
+**Phase:** Adapter v2 · **Track:** Security · **Owner:** Workstream executor · **Depends on:** [WS02](WS02-protocol-v2-proto.md), [WS09](WS09-environment-block-and-secret-taint.md). · **Unblocks:** every adapter migration WS that uses secrets. · **Base branch:** `adapter-v2`
 
 ## Context
 
