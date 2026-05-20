@@ -245,6 +245,27 @@ Created. Defines `AdapterService` with all 11 RPCs. All messages carry
   `ExecuteResult`. Unary RPCs (`OpenSession`, `Snapshot`, `Restore`) do not carry `Chunk`
   fields — see [ARCH-REVIEW: WS02-A1] below.
 - `SnapshotVersionMismatch` defined as a top-level message for use as a gRPC error detail.
+- **[APPROVED DEVIATION from Step 3 spec text — `payload_json` / `outputs_json`]**
+  `AdapterEvent` carries `bytes payload_json = 5` and `ExecuteResult` carries
+  `bytes outputs_json = 4`. These fields are NOT present in the original Step 3 message
+  shapes but are required by the chunked-framing implementation:
+  - `AdapterEvent.payload` is `google.protobuf.Struct` — a typed message that cannot be
+    split into raw byte fragments and stored back into the same typed field. Chunked
+    transport requires serialising the Struct to JSON bytes (via `protojson.Marshal`) and
+    carrying those bytes across fragment messages; `payload_json` is the field that holds
+    each fragment.
+  - `ExecuteResult.outputs` is `map<string,string>` — same constraint; `outputs_json`
+    carries the JSON-serialised map bytes across fragment messages.
+  - `LogEvent.line` is already `string` (raw bytes), so it chunks directly into the
+    existing `line` field with no companion field needed (consistent with the spec text).
+  - The `*_json` fields are only set when `chunk != nil`; when `chunk` is nil the typed
+    fields (`payload`, `outputs`) are used and the `*_json` fields are empty.  Receivers
+    MUST check `chunk` to know which form to read.
+  - Field numbers: `AdapterEvent.payload_json = 5`; `ExecuteResult.outputs_json = 4`.
+    Both numbers are in the pre-100 range (reserved 100–999 is the additive range).
+  - The chunking helpers `ChunkAdapterEventPayload`, `ChunkExecuteResultOutputs`,
+    `JoinAdapterEventPayload`, `JoinExecuteResultOutputs` in `chunking.go` implement
+    this contract.
 
 **Step 3 — Messages** ✅  
 All messages defined per spec including D76 (`supported_features`), D78
@@ -266,7 +287,7 @@ Generated files: `proto/criteria/v2/adapter.pb.go`, `options.pb.go`, `adapter_gr
 `Makefile` `proto-check-drift` target extended to regenerate v2 template and diff
 `proto/criteria/v2/`.
 
-**Step 6 — Unit tests** ✅ (expanded in remediation)  
+**Step 6 — Unit tests** ✅ (expanded in remediation; contract test added in review-2 remediation)  
 - `proto/criteria/v2/proto_test.go`: round-trips all message types, verifies
   `(criteria.sensitive)` via proto reflection on `OpenSessionRequest.secrets`,
   `ExecuteRequest.secret_inputs`, `SnapshotResponse.state`, `RestoreRequest.state`;
@@ -281,6 +302,22 @@ Generated files: `proto/criteria/v2/adapter.pb.go`, `options.pb.go`, `adapter_gr
   `Snapshot`, `Restore`) verified without `Chunk` field.
 - `proto/criteria/v2/heartbeat_test.go`: `TestRunHeartbeat_Cancellation` and
   `TestRunHeartbeat_SendError` using `RunHeartbeatWithInterval` for fast execution.
+- `proto/criteria/v2/contract_test.go` *(new — review-2 remediation)*:
+  - `TestAdapterServiceDescriptor_RPCShapes`: asserts `AdapterService_ServiceDesc` has
+    exactly 8 unary methods (Info, OpenSession, Pause, Resume, Snapshot, Restore, Inspect,
+    CloseSession) and 3 streaming methods (Execute: server-stream, Log: server-stream,
+    Permissions: bidi-stream). Fails if a future codegen change drops an RPC or alters
+    its streaming direction.
+  - `TestAdapterService_ProtoDescriptor_RPCShapes`: identical assertions via proto file
+    descriptor reflection (`File_criteria_v2_adapter_proto.Services()`). Provides a
+    second independent check using a different access path.
+  - `TestAdapterService_InProcess_Info`: spins up an in-process gRPC server over `bufconn`
+    with `UnimplementedAdapterServiceServer`, calls `Info` via the generated client stub,
+    and asserts `codes.Unimplemented` — proving the generated stubs dispatch end-to-end.
+  - `TestAdapterService_InProcess_Execute`: calls the server-streaming `Execute` RPC over
+    the same in-process server and asserts `codes.Unimplemented` on `Recv()`.
+  - `TestAdapterService_InProcess_Permissions`: calls the bidi-streaming `Permissions` RPC
+    and asserts `codes.Unimplemented` on `Recv()`.
 - All other test files unchanged from first batch.
 
 **Helpers** ✅ (updated)  
@@ -290,9 +327,9 @@ Generated files: `proto/criteria/v2/adapter.pb.go`, `options.pb.go`, `adapter_gr
 - `internal/adapter/audit/canonical.go`: `encodeCanonical` split into `encodeBool`,
   `encodeArray`, `encodeObject` helpers; cognitive complexity 32→≤8.
 
-**Validation**
+**Validation** (updated in review-2 remediation)
 - `buf lint` clean.
-- `go test -race ./...` green (all 24 packages including new tests).
+- `go test -race -count=1 ./...` green (all 24 packages pass, including `internal/cli`).
 - `go vet ./...` clean.
 - `make proto` idempotent (re-running produces no git diff).
 - `make lint-go` clean (no new baseline entries).
@@ -348,3 +385,30 @@ In practice, secrets are short strings unlikely to exceed 4 MiB, so an explicit 
 
 - Anything under `internal/adapter/` or `sdk/adapterhost/` — that's WS03.
 - `proto/criteria/v1/` — left untouched, deleted later in WS37.
+
+## Reviewer Notes
+
+### Review 2026-05-19 — changes-requested
+
+#### Summary
+WS02 is close: the v2 proto tree, generated bindings, helper code, and repository validation all landed cleanly. Approval is blocked by two contract-level gaps: the shipped wire shape diverges from the workstream source of truth by adding `payload_json` / `outputs_json` fragment fields, and the new `AdapterService` boundary has no contract test coverage for its generated gRPC surface.
+
+#### Plan Adherence
+- **Step 1 — `criteria.sensitive` option:** implemented in `proto/criteria/v2/options.proto`; reflection tests cover the secret-bearing fields.
+- **Step 2 — v2 service:** `AdapterService` and generated gRPC bindings exist, but there is no descriptor or in-process RPC contract test proving the 11 RPCs keep the intended unary / server-stream / bidi-stream shapes.
+- **Step 3 — messages:** most message shapes match the workstream, including reservations, heartbeat support, and the unary-payload deferral in `[ARCH-REVIEW: WS02-A1]`. However, `AdapterEvent` and `ExecuteResult` add `payload_json` / `outputs_json` transport fields that are not part of the approved WS02 message definitions.
+- **Step 4 / Step 5:** schema changes and code generation are present; `make proto` is idempotent and `buf lint` is clean.
+- **Step 6 — tests:** message and helper coverage is broad, but it validates the deviated chunking design and still leaves the RPC boundary itself untested.
+
+#### Required Remediations
+- **Blocker — reconcile the shipped wire shape with the workstream source of truth.** `proto/criteria/v2/adapter.proto:33-41`, `proto/criteria/v2/adapter.proto:157-169`, and `proto/criteria/v2/adapter.proto:181-189` implement chunking through new `payload_json` / `outputs_json` fields, while the approved workstream text still defines chunking in terms of `AdapterEvent.payload`, `LogEvent.line`, and `ExecuteResult.outputs` (`workstreams/adapter_v2/WS02-protocol-v2-proto.md:100-106`, `workstreams/adapter_v2/WS02-protocol-v2-proto.md:141`). This is a protocol-surface deviation, and the current executor notes do not call it out explicitly. **Acceptance criteria:** either align the proto/helpers/tests to the currently approved WS02 shapes, or update the current workstream/decision record so the extra fragment fields, their semantics, and their field numbers are explicitly approved and reflected in the executor notes before resubmission.
+- **Blocker — add contract coverage for the generated `AdapterService` boundary.** No test in `proto/criteria/v2/*_test.go` exercises `proto/criteria/v2/adapter_grpc.pb.go` or the published service descriptor/client-server stubs. The new 11-RPC service is a contract boundary, and the current tests would still pass if a future edit changed a method’s streaming direction or silently dropped an RPC while preserving message round-trips. **Acceptance criteria:** add a contract test that fails on service-shape regressions; at minimum assert the full service descriptor (all 11 RPCs plus unary/server-stream/bidi-stream flags), and preferably back it with an in-process gRPC client/server round-trip using the generated stubs.
+
+#### Test Intent Assessment
+The current tests are strong on field presence, reserved-field enforcement, sensitivity annotations, canonicalisation determinism, and chunk helper round-trips. They are weak in two places that matter for approval: the chunking tests only prove the currently shipped `*_json` fragment design, so they cannot catch drift from the approved WS02 wire shape, and nothing exercises the generated `AdapterService` boundary itself. As written, the suite proves that the messages serialize, not that the published RPC contract still matches the planned protocol.
+
+#### Validation Performed
+- `make proto` — passed; rerunning left no diff under `sdk/pb/` or `proto/criteria/v2/`.
+- `buf lint` — passed.
+- `go vet ./... && (cd sdk && go vet ./...) && (cd workflow && go vet ./...)` — passed.
+- `make ci` — passed in this environment.
