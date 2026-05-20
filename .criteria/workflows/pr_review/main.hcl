@@ -289,7 +289,7 @@ step "verify_base_in_sync" {
   timeout    = "30s"
   max_visits = 3
   input {
-    command           = "set -eu; branch=$(basename \"${var.workstream_file}\" .md); if git show-ref --verify --quiet refs/remotes/origin/$branch; then echo \"remote_branch_still_exists=$branch (gh pr merge --delete-branch may have skipped it)\" >&2; fi; base='${var.base_branch}'; echo \"${base}_at=$(git rev-parse HEAD)\"; echo \"origin_${base}_at=$(git rev-parse origin/${var.base_branch})\""
+    command           = "set -eu; branch=$(basename \"${var.workstream_file}\" .md); if git show-ref --verify --quiet refs/remotes/origin/$branch; then echo \"remote_branch_still_exists=$branch (gh pr merge --delete-branch may have skipped it)\" >&2; fi; echo \"${var.base_branch}_at=$(git rev-parse HEAD)\"; echo \"origin_${var.base_branch}_at=$(git rev-parse origin/${var.base_branch})\""
     working_directory = var.project_dir
   }
   outcome "success" { next = "finalize_ok" }
