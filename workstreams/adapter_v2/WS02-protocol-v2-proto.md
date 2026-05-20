@@ -454,3 +454,35 @@ Six inline comments from reviewer `handcaught` addressed:
 Follow-on from change 1: `ChunkLogEventLine` simplified to use `SplitChunks` directly (rune-boundary logic removed); `JoinLogEventLine` return type changed from `(string, error)` to `([]byte, error)`; `unicode/utf8` import removed. `TestLogEvent_ChunkedLine_UTF8` replaced by `TestLogEvent_ChunkedLine_BinaryContent` which proves byte-exact round-trip including a 4-byte emoji sequence spanning a chunk boundary.
 
 **Validation**: `make test` — all packages green; `go test -race -count=1 ./proto/criteria/v2/...` — pass.
+
+### Verification 2026-05-19 — implementation batch check
+
+All 6 steps confirmed complete and passing. No unchecked items remain.
+
+- `buf lint --path proto/criteria/v2` — clean.
+- `go test -race -count=1 ./proto/criteria/v2/... ./internal/adapter/audit/...` — both packages green.
+- `go vet ./proto/criteria/v2/... ./internal/adapter/audit/...` — clean.
+- `make build` — binary compiles cleanly.
+
+All exit criteria satisfied. WS02 is complete.
+
+### Review 2026-05-19-03 — approved
+
+#### Summary
+Approved. The post-approval follow-up changes keep WS02 within scope and improve the protocol implementation: `LogEvent.line` now uses `bytes`, log chunking no longer depends on UTF-8 boundary logic, and `NeedsChunking` no longer risks length truncation through `uint32` conversion. The updated tests remain contract-focused and the workstream validation target stays green.
+
+#### Plan Adherence
+- **Step 1 / Step 2 / Step 4 / Step 5:** unchanged since the prior approval and still aligned with the approved WS02 service, schema, and generation contract.
+- **Step 3 — messages:** `LogEvent.line` now carries raw bytes, which is consistent with byte-count chunking and the v1 precedent; generated bindings and helper comments were updated together, so the on-wire contract remains coherent.
+- **Step 6 — tests:** log chunking coverage now proves byte-exact reconstruction for arbitrary binary content across chunk boundaries, while the previously added descriptor and in-process gRPC tests continue to protect the `AdapterService` boundary.
+
+#### Test Intent Assessment
+The latest test updates strengthen behavioral proof rather than just preserving pass status. Replacing the UTF-8-boundary test with a binary-content round-trip makes the assertion match the actual protocol contract for `bytes line = 4`, and the existing service descriptor plus generated-stub tests still make RPC-shape regressions fail loudly.
+
+#### Validation Performed
+- `make proto` — passed; scoped diff check over `proto/criteria/v2`, `Makefile`, `buf.gen.v2.yaml`, and `.github/workflows/ci.yml` stayed clean.
+- `buf lint --path proto/criteria/v2` — passed.
+- `go test -race -count=1 ./proto/criteria/v2/... ./internal/adapter/audit/...` — passed.
+- `go vet ./proto/criteria/v2/... ./internal/adapter/audit/...` — passed.
+- `make build` — passed.
+- `make ci` — passed.
