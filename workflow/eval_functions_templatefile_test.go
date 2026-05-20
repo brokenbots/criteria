@@ -256,12 +256,35 @@ func TestTemplatefile_FileNotFound_ReturnsError(t *testing.T) {
 }
 
 // Test 13: path that escapes the workflow directory returns a confinement error.
-func TestTemplatefile_PathEscape_ReturnsError(t *testing.T) {
+// Test 13a: templatefile() reports "no such file" when the escaped path does not exist.
+func TestTemplatefile_PathEscape_NonExistent(t *testing.T) {
 	dir := t.TempDir()
 	vars := cty.ObjectVal(map[string]cty.Value{})
 	_, err := callTemplateFile(tmplOpts(dir), "../escape.tmpl", vars)
 	if err == nil {
-		t.Fatal("expected error for path escape; got none")
+		t.Fatal("expected error for non-existent escape path; got none")
+	}
+	if !strings.Contains(err.Error(), "no such file") {
+		t.Errorf("error %q should mention 'no such file'", err.Error())
+	}
+}
+
+// Test 13b: templatefile() still reports "escapes workflow directory" when the
+// escaped path refers to a file that actually exists outside the workflow directory.
+func TestTemplatefile_PathEscape_ExistingFile(t *testing.T) {
+	parent := t.TempDir()
+	workflowDir := filepath.Join(parent, "workflow")
+	if err := os.MkdirAll(workflowDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	secret := filepath.Join(parent, "secret.tmpl")
+	if err := os.WriteFile(secret, []byte("secret"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	vars := cty.ObjectVal(map[string]cty.Value{})
+	_, err := callTemplateFile(tmplOpts(workflowDir), "../secret.tmpl", vars)
+	if err == nil {
+		t.Fatal("expected confinement error for existing file outside workflow dir; got none")
 	}
 	msg := err.Error()
 	if !strings.Contains(msg, "templatefile()") {

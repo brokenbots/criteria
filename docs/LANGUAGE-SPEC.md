@@ -356,9 +356,9 @@ Expression functions available in all HCL attribute values within a workflow. Fu
 |---|---|---|---|
 | `file` | `file(path: string)` | `string` | [workflow/eval_functions.go:125](../workflow/eval_functions.go#L125) |
 | `fileexists` | `fileexists(path: string)` | `bool` | [workflow/eval_functions.go:258](../workflow/eval_functions.go#L258) |
-| `fileset` | `fileset(path: string, pattern: string)` | `list(string)` | [workflow/eval_functions.go:339](../workflow/eval_functions.go#L339) |
+| `fileset` | `fileset(path: string, pattern: string)` | `list(string)` | [workflow/eval_functions.go:342](../workflow/eval_functions.go#L342) |
 | `templatefile` | `templatefile(path: string, vars: any)` | `string` | [workflow/eval_functions.go:183](../workflow/eval_functions.go#L183) |
-| `trimfrontmatter` | `trimfrontmatter(content: string)` | `string` | [workflow/eval_functions.go:462](../workflow/eval_functions.go#L462) |
+| `trimfrontmatter` | `trimfrontmatter(content: string)` | `string` | [workflow/eval_functions.go:468](../workflow/eval_functions.go#L468) |
 | `sha256` | `sha256(value: string)` | `string` | [workflow/eval_functions_hash.go:28](../workflow/eval_functions_hash.go#L28) |
 | `sha1` | `sha1(value: string)` | `string` | [workflow/eval_functions_hash.go:28](../workflow/eval_functions_hash.go#L28) |
 | `sha512` | `sha512(value: string)` | `string` | [workflow/eval_functions_hash.go:28](../workflow/eval_functions_hash.go#L28) |
