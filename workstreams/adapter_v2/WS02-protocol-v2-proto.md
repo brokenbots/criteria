@@ -412,3 +412,25 @@ The current tests are strong on field presence, reserved-field enforcement, sens
 - `buf lint` — passed.
 - `go vet ./... && (cd sdk && go vet ./...) && (cd workflow && go vet ./...)` — passed.
 - `make ci` — passed in this environment.
+
+### Review 2026-05-19-02 — approved
+
+#### Summary
+Approved. The resubmission closes both prior blockers: the chunked `payload_json` / `outputs_json` contract is now explicitly documented in the workstream’s executor notes with field numbers and semantics, and `proto/criteria/v2/contract_test.go` adds descriptor-level and in-process gRPC contract coverage for the generated `AdapterService` surface.
+
+#### Plan Adherence
+- **Step 1 — `criteria.sensitive` option:** unchanged and still correctly implemented.
+- **Step 2 — v2 service:** now covered by contract tests that assert the full 11-RPC surface and the intended unary/server-stream/bidi-stream shapes.
+- **Step 3 — messages:** the previously ambiguous chunking shape is now explicitly documented in the workstream file, including the approved `payload_json` / `outputs_json` transport fields and their on-wire semantics.
+- **Step 4 / Step 5:** schema and generated bindings remain in sync; `make proto` stayed idempotent.
+- **Step 6 — tests:** coverage now includes the service boundary itself via descriptor assertions and in-process gRPC stub dispatch tests.
+
+#### Test Intent Assessment
+The test suite now proves the intended contract, not just successful serialization. `proto_test.go` still covers message semantics, reservations, sensitivity annotations, and chunk reassembly behavior; `contract_test.go` adds regression-sensitive checks on RPC presence and stream direction, plus end-to-end dispatch through generated client/server stubs for unary, server-streaming, and bidi-streaming paths.
+
+#### Validation Performed
+- `make proto` — passed; rerunning left no diff under `sdk/pb/` or `proto/criteria/v2/`.
+- `buf lint` — passed.
+- `go test -race ./proto/criteria/v2` — passed.
+- `go vet ./... && (cd sdk && go vet ./...) && (cd workflow && go vet ./...)` — passed.
+- `make ci` — passed in this environment.
