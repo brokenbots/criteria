@@ -18,7 +18,7 @@ func TestRunHeartbeat_Cancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	var sent []*criteriav2.Heartbeat
-	sender := func(hb *criteriav2.Heartbeat) error {
+	sender := func(hb *criteriav2.Heartbeat) error { //nolint:unparam // satisfies sender interface; nil is correct for cancellation test
 		sent = append(sent, hb)
 		return nil
 	}
