@@ -1,6 +1,6 @@
 # WS06 — Cosign keyless + key-based signature verification
 
-**Phase:** Adapter v2 · **Track:** Distribution · **Owner:** Workstream executor · **Depends on:** [WS04](WS04-oci-cache-layout.md), [WS05](WS05-adapter-manifest.md). · **Unblocks:** [WS07](WS07-lockfile.md), [WS08](WS08-cli-adapter-group.md).
+**Phase:** Adapter v2 · **Track:** Distribution · **Owner:** Workstream executor · **Depends on:** [WS04](WS04-oci-cache-layout.md), [WS05](WS05-adapter-manifest.md). · **Unblocks:** [WS07](WS07-lockfile.md), [WS08](WS08-cli-adapter-group.md). · **Base branch:** `adapter-v2`
 
 ## Context
 

@@ -1,6 +1,6 @@
 # WS10 — Linux sandbox: in-process namespaces + landlock + seccomp (pure Go, no cgo)
 
-**Phase:** Adapter v2 · **Track:** Security · **Owner:** Workstream executor · **Depends on:** [WS09](WS09-environment-block-and-secret-taint.md). · **Unblocks:** [WS40](WS40-v2-release-gate.md) verification gate 1.
+**Phase:** Adapter v2 · **Track:** Security · **Owner:** Workstream executor · **Depends on:** [WS09](WS09-environment-block-and-secret-taint.md). · **Unblocks:** [WS40](WS40-v2-release-gate.md) verification gate 1. · **Base branch:** `adapter-v2`
 
 ## Context
 

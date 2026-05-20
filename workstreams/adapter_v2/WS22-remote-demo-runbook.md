@@ -1,6 +1,6 @@
 # WS22 — End-to-end remote demo runbook + CI smoke test
 
-**Phase:** Adapter v2 · **Track:** Remote · **Owner:** Workstream executor · **Depends on:** [WS20](WS20-remote-environment-and-shim.md), [WS21](WS21-sdk-serveremote.md). · **Unblocks:** [WS40](WS40-v2-release-gate.md) verification gate 3.
+**Phase:** Adapter v2 · **Track:** Remote · **Owner:** Workstream executor · **Depends on:** [WS20](WS20-remote-environment-and-shim.md), [WS21](WS21-sdk-serveremote.md). · **Unblocks:** [WS40](WS40-v2-release-gate.md) verification gate 3. · **Base branch:** `adapter-v2`
 
 ## Context
 

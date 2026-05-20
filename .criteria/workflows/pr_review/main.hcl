@@ -1,21 +1,33 @@
 # PR Review Subworkflow
 # =====================
 # Owns the GitHub PR lifecycle for one committed workstream branch, then syncs
-# the local main after merge (formerly the merge_branch subworkflow's job —
-# folded in here to remove one moving part).
+# the local base branch after merge (formerly the merge_branch subworkflow's
+# job — folded in here to remove one moving part).
 #
 # Flow:
-#   open_pr (shell)            → push branch, idempotently create/update PR
-#   warm_up (shell)            → sleep 90s for first CI propagation
-#   pr_status (shell)          → emits classifier on stdout
-#   route_status (switch)      → dispatches to merge, review, escalate, or backoff
-#   pr_review (agent)          → cold-review; resolves threads + posts a recommendation
-#   human_approval_required    → operator clicks Approve on GH + approves node
-#   verify_github_approval     → confirms reviewDecision == APPROVED
-#   merge_pr (shell)           → `gh pr merge --squash --delete-branch`
-#   sync_main (shell)          → fetch origin + checkout main + ff-pull
-#   verify_main_in_sync (shell) → confirms merged commit is reachable from main
-#   finalize_ok (shell)        → sets status output = "ok"
+#   open_pr (shell)              → push branch, idempotently create/update PR
+#   warm_up (shell)              → sleep 90s for first CI propagation
+#   pr_status (shell)            → emits classifier on stdout
+#   route_status (switch)        → dispatches to merge, review, escalate, or backoff
+#   pr_review (agent)            → cold-review; resolves threads + posts recommendation
+#   route_after_cold_review      → switch: require_workflow_approval=true → approval node
+#                                           require_workflow_approval=false → await_github_approval
+#   human_approval_required      → (optional) operator approves workflow node
+#   await_github_approval        → polls GitHub until reviewDecision == APPROVED
+#   backoff_await_approval       → sleep between approval polls
+#   merge_pr (shell)             → `gh pr merge --squash --delete-branch`
+#   sync_base (shell)            → fetch origin + checkout base_branch + ff-pull
+#   verify_base_in_sync (shell)  → confirms merged commit is reachable from base_branch
+#   finalize_ok (shell)          → sets status output = "ok"
+#
+# Approval modes:
+#   require_workflow_approval=false (default, feature branches):
+#     After the cold reviewer posts its recommendation, the workflow polls
+#     GitHub every ~2 minutes until reviewDecision == APPROVED. No workflow
+#     node approval needed — the operator just clicks Approve on GitHub at
+#     their leisure and the workflow auto-merges.
+#   require_workflow_approval=true (main-targeting PRs):
+#     Retains the explicit workflow-node approval gate before merge.
 #
 # Failure-propagation workaround: like the develop subworkflow, the engine
 # ignores a subworkflow's terminal `success=false` flag at the parent
@@ -33,13 +45,13 @@ policy {
 }
 
 variable "workstream_file" {
-  type        = "string"
-  default     = ""
+  type    = "string"
+  default = ""
 }
 
 variable "project_dir" {
-  type        = "string"
-  default     = ""
+  type    = "string"
+  default = ""
 }
 
 variable "max_review_attempts" {
@@ -52,6 +64,18 @@ variable "pr_reviewer_model" {
   type        = "string"
   default     = "gpt-5.5"
   description = "Model for the cold PR reviewer."
+}
+
+variable "base_branch" {
+  type        = "string"
+  default     = "adapter-v2"
+  description = "Integration branch that workstream PRs target. Used for PR base, sync, and diff."
+}
+
+variable "require_workflow_approval" {
+  type        = "string"
+  default     = "false"
+  description = "Set to 'true' to require explicit workflow-node approval before merge (for main-targeting PRs). Default 'false' uses async GitHub approval polling."
 }
 
 shared_variable "review_attempts" {
@@ -89,7 +113,7 @@ step "open_pr" {
   timeout    = "180s"
   max_visits = 5
   input {
-    command           = "sh .criteria/workflows/pr_review/scripts/open-or-update-pr.sh \"${var.workstream_file}\""
+    command           = "BASE_BRANCH='${var.base_branch}' sh .criteria/workflows/pr_review/scripts/open-or-update-pr.sh \"${var.workstream_file}\""
     working_directory = var.project_dir
   }
   outcome "success" { next = "warm_up" }
@@ -125,7 +149,7 @@ step "pr_status" {
 switch "route_status" {
   condition {
     match = steps.pr_status.stdout == "merged"
-    next  = step.sync_main
+    next  = step.sync_base
   }
   condition {
     match = steps.pr_status.stdout == "ready"
@@ -173,35 +197,63 @@ step "pr_review" {
   timeout     = "20m"
   max_visits  = 10
   input {
-    prompt = "Review the open PR for ${var.workstream_file}. The deterministic status gate classifier was `${steps.pr_status.stdout}` with context:\n\n--- pr-status.sh stderr ---\n${steps.pr_status.stderr}\n--- end ---\n\nThe full diff is cached at `.criteria/tmp/diff.patch` from the develop workflow; read it instead of running `gh pr diff` (saves a network call). For each unresolved (and !outdated) review thread, either reply with citation evidence and resolve via `sh .criteria/workflows/pr_review/scripts/resolve-thread.sh <thread_id>`, or leave it open and request changes.\n\nIf the diff meets the bar and all addressable threads are resolved: post a recommendation comment via `gh pr comment <pr_number> --body \"<your summary>\"` summarizing what you verified and that you recommend approval. Then emit RESULT: approve. DO NOT run `gh pr review --approve` — branch protection forbids self-approval by the PR author; the workflow will pause for a human to click Approve on GitHub before merging.\n\nIf code changes are required: emit a `### Required Changes` section in your final message and RESULT: changes_requested.\n\nDO NOT run `gh pr merge` — a deterministic shell step handles merge after human approval.\n\nEnd your final message with exactly one of:\nRESULT: approve\nRESULT: changes_requested\nRESULT: failure"
+    prompt = "Review the open PR for ${var.workstream_file}. The deterministic status gate classifier was `${steps.pr_status.stdout}` with context:\n\n--- pr-status.sh stderr ---\n${steps.pr_status.stderr}\n--- end ---\n\nThe full diff is cached at `.criteria/tmp/diff.patch` from the develop workflow; read it instead of running `gh pr diff` (saves a network call). For each unresolved (and !outdated) review thread, either reply with citation evidence and resolve via `sh .criteria/workflows/pr_review/scripts/resolve-thread.sh <thread_id>`, or leave it open and request changes.\n\nIf the diff meets the bar and all addressable threads are resolved: post a recommendation comment via `gh pr comment <pr_number> --body \"<your summary>\"` summarizing what you verified and that you recommend approval. Then emit RESULT: approve. DO NOT run `gh pr review --approve` — branch protection forbids self-approval by the PR author; a human must click Approve on GitHub before merging.\n\nIf code changes are required: emit a `### Required Changes` section in your final message and RESULT: changes_requested.\n\nDO NOT run `gh pr merge` — a deterministic shell step handles merge after human approval.\n\nEnd your final message with exactly one of:\nRESULT: approve\nRESULT: changes_requested\nRESULT: failure"
   }
-  outcome "approve"           { next = "human_approval_required" }
+  outcome "approve"           { next = "route_after_cold_review" }
   outcome "changes_requested" { next = "count_review_attempt" }
   outcome "failure"           { next = "failed" }
 }
 
-# ── Human-in-the-loop approval bridge ────────────────────────────────────────
-# Branch protection on the upstream repo requires a non-author reviewer. The
-# operator goes to GitHub, clicks Approve on the PR, then approves this node.
-# verify_github_approval below confirms the GitHub side actually happened.
+# ── Approval routing — workflow node vs. async GitHub poll ───────────────────
+# require_workflow_approval=true  → pause at human_approval_required node
+# require_workflow_approval=false → poll GitHub for APPROVED status (default)
+
+switch "route_after_cold_review" {
+  condition {
+    match = var.require_workflow_approval == "true"
+    next  = approval.human_approval_required
+  }
+  default { next = step.await_github_approval }
+}
+
+# ── Human-in-the-loop approval bridge (workflow-node mode) ───────────────────
+# Used only when require_workflow_approval=true. The operator goes to GitHub,
+# clicks Approve on the PR, then approves this node.
 
 approval "human_approval_required" {
   approvers = ["operator"]
   reason    = "The pr_reviewer agent recommends approval and has posted its summary as a PR comment. GitHub branch protection requires approval from someone other than the PR author. To continue: (1) open the PR in GitHub, (2) review the agent's recommendation comment, (3) click `Approve` on the PR, (4) approve this workflow node. The next step verifies that GitHub's reviewDecision is APPROVED before merging — if you approve here without clicking Approve on GitHub, the merge step will fail cleanly and loop back."
-  outcome "approved" { next = "verify_github_approval" }
+  outcome "approved" { next = "await_github_approval" }
   outcome "rejected" { next = "escalated" }
 }
 
-step "verify_github_approval" {
+# ── Async GitHub approval poll ────────────────────────────────────────────────
+# Polls until reviewDecision == APPROVED, then proceeds to merge.
+# In the default (non-workflow-node) mode the human just clicks Approve on
+# GitHub at any time; no workflow babysitting required.
+
+step "await_github_approval" {
   target     = adapter.shell.gh
-  timeout    = "60s"
-  max_visits = 5
+  timeout    = "5m"
+  max_visits = 300
   input {
-    command           = "set -eu; branch=$(git branch --show-current); pr_number=$(gh pr view \"$branch\" --json number --jq '.number'); review_decision=$(gh pr view \"$pr_number\" --json reviewDecision --jq '.reviewDecision // \"REVIEW_REQUIRED\"'); echo \"pr_number=$pr_number\"; echo \"review_decision=$review_decision\"; if [ \"$review_decision\" != \"APPROVED\" ]; then echo \"GitHub reviewDecision=$review_decision; expected APPROVED. Did you click Approve on the PR in GitHub before approving the workflow node?\" >&2; exit 1; fi; echo 'github_approval_confirmed=true'"
+    command           = "set -eu; branch=$(git branch --show-current); pr_num=$(gh pr view \"$branch\" --json number --jq '.number'); decision=$(gh pr view \"$pr_num\" --json reviewDecision --jq '.reviewDecision // \"NONE\"'); echo \"review_decision=$decision\"; if [ \"$decision\" = \"APPROVED\" ]; then exit 0; fi; echo 'Waiting for human to click Approve on GitHub...'; exit 1"
     working_directory = var.project_dir
   }
   outcome "success" { next = "merge_pr" }
-  outcome "failure" { next = "human_approval_required" }
+  outcome "failure" { next = "backoff_await_approval" }
+}
+
+step "backoff_await_approval" {
+  target     = adapter.shell.gh
+  timeout    = "3m"
+  max_visits = 300
+  input {
+    command           = "echo 'GitHub approval not yet detected; sleeping 120s'; sleep 120"
+    working_directory = var.project_dir
+  }
+  outcome "success" { next = "await_github_approval" }
+  outcome "failure" { next = "await_github_approval" }
 }
 
 # ── Merge — shell step, not agent ────────────────────────────────────────────
@@ -214,30 +266,30 @@ step "merge_pr" {
     command           = "set -eu; branch=$(git branch --show-current); pr_number=$(gh pr view \"$branch\" --json number --jq '.number'); gh pr merge \"$pr_number\" --squash --delete-branch; echo merged_pr_number=\"$pr_number\""
     working_directory = var.project_dir
   }
-  outcome "success" { next = "sync_main" }
+  outcome "success" { next = "sync_base" }
   outcome "failure" { next = "failed" }
 }
 
-# ── Local main sync (formerly the merge_branch subworkflow) ─────────────────
+# ── Local base-branch sync ───────────────────────────────────────────────────
 
-step "sync_main" {
+step "sync_base" {
   target     = adapter.shell.gh
   timeout    = "120s"
   max_visits = 3
   input {
-    command           = "set -eu; git fetch origin main; git checkout main; git pull --ff-only origin main"
+    command           = "set -eu; git fetch origin '${var.base_branch}'; git checkout '${var.base_branch}'; git pull --ff-only origin '${var.base_branch}'"
     working_directory = var.project_dir
   }
-  outcome "success" { next = "verify_main_in_sync" }
+  outcome "success" { next = "verify_base_in_sync" }
   outcome "failure" { next = "failed" }
 }
 
-step "verify_main_in_sync" {
+step "verify_base_in_sync" {
   target     = adapter.shell.gh
   timeout    = "30s"
   max_visits = 3
   input {
-    command           = "set -eu; branch=$(basename \"${var.workstream_file}\" .md); if git show-ref --verify --quiet refs/remotes/origin/$branch; then echo \"remote_branch_still_exists=$branch (gh pr merge --delete-branch may have skipped it)\" >&2; fi; echo \"main_at=$(git rev-parse HEAD)\"; echo \"origin_main_at=$(git rev-parse origin/main)\""
+    command           = "set -eu; branch=$(basename \"${var.workstream_file}\" .md); if git show-ref --verify --quiet refs/remotes/origin/$branch; then echo \"remote_branch_still_exists=$branch (gh pr merge --delete-branch may have skipped it)\" >&2; fi; echo \"${var.base_branch}_at=$(git rev-parse HEAD)\"; echo \"origin_${var.base_branch}_at=$(git rev-parse origin/${var.base_branch})\""
     working_directory = var.project_dir
   }
   outcome "success" { next = "finalize_ok" }

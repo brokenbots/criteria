@@ -1,6 +1,6 @@
 # WS25 — Go adapter SDK v1.0 (new repo)
 
-**Phase:** Adapter v2 · **Track:** SDK · **Owner:** Workstream executor (creates new repo `criteria-go-adapter-sdk`) · **Depends on:** [WS02](WS02-protocol-v2-proto.md). · **Unblocks:** [WS21](WS21-sdk-serveremote.md), [WS27](WS27-starter-repos.md), [WS31](WS31-migrate-shell.md), [WS42](WS42-extract-shell-adapter.md).
+**Phase:** Adapter v2 · **Track:** SDK · **Owner:** Workstream executor (creates new repo `criteria-go-adapter-sdk`) · **Depends on:** [WS02](WS02-protocol-v2-proto.md). · **Unblocks:** [WS21](WS21-sdk-serveremote.md), [WS27](WS27-starter-repos.md), [WS31](WS31-migrate-shell.md), [WS42](WS42-extract-shell-adapter.md). · **Base branch:** `adapter-v2`
 
 ## Context
 

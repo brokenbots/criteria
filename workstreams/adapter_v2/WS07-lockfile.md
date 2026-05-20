@@ -1,6 +1,6 @@
 # WS07 — `.criteria.lock.hcl` format and helpers
 
-**Phase:** Adapter v2 · **Track:** Distribution · **Owner:** Workstream executor · **Depends on:** [WS04](WS04-oci-cache-layout.md), [WS05](WS05-adapter-manifest.md), [WS06](WS06-cosign-signing.md). · **Unblocks:** [WS08](WS08-cli-adapter-group.md), [WS09](WS09-environment-block-and-secret-taint.md), [WS20](WS20-remote-environment-and-shim.md).
+**Phase:** Adapter v2 · **Track:** Distribution · **Owner:** Workstream executor · **Depends on:** [WS04](WS04-oci-cache-layout.md), [WS05](WS05-adapter-manifest.md), [WS06](WS06-cosign-signing.md). · **Unblocks:** [WS08](WS08-cli-adapter-group.md), [WS09](WS09-environment-block-and-secret-taint.md), [WS20](WS20-remote-environment-and-shim.md). · **Base branch:** `adapter-v2`
 
 ## Context
 

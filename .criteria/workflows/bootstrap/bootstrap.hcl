@@ -57,6 +57,18 @@ variable "max_retries" {
   description = "Maximum developer/owner cycles before requesting operator assistance inside develop."
 }
 
+variable "base_branch" {
+  type        = "string"
+  default     = "adapter-v2"
+  description = "Integration branch all workstream PRs target. Use 'main' for post-release workstreams (WS41+)."
+}
+
+variable "require_workflow_approval" {
+  type        = "string"
+  default     = "false"
+  description = "Set to 'true' to require explicit workflow-node approval before merge. Default false suits feature-branch work; set true when targeting main."
+}
+
 variable "developer_model" {
   type        = "string"
   default     = "claude-sonnet-4.6"
@@ -115,6 +127,7 @@ step "develop" {
     max_retries     = var.max_retries
     developer_model = var.developer_model
     reviewer_model  = var.reviewer_model
+    base_branch     = var.base_branch
   }
   outcome "success" { next = "after_develop" }
   outcome "failure" { next = "failed" }
@@ -133,9 +146,11 @@ switch "after_develop" {
 step "pr_review" {
   target = subworkflow.pr_review
   input {
-    workstream_file   = var.workstream_file
-    project_dir       = var.project_dir
-    pr_reviewer_model = var.pr_reviewer_model
+    workstream_file           = var.workstream_file
+    project_dir               = var.project_dir
+    pr_reviewer_model         = var.pr_reviewer_model
+    base_branch               = var.base_branch
+    require_workflow_approval = var.require_workflow_approval
   }
   outcome "success" { next = "after_pr_review" }
   outcome "failure" { next = "escalated" }

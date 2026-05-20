@@ -1,6 +1,6 @@
 # WS33 — Migrate `claude-agent` adapter to protocol v2
 
-**Phase:** Adapter v2 · **Track:** Adapter migration · **Owner:** Workstream executor (in repo `criteria-typescript-adapter-claude-agent`) · **Depends on:** [WS23](WS23-typescript-sdk-v2.md), [WS28](WS28-reusable-publish-action.md), [WS16](WS16-bidi-permission-stream.md). · **Unblocks:** [WS37](WS37-v1-protocol-code-removal.md).
+**Phase:** Adapter v2 · **Track:** Adapter migration · **Owner:** Workstream executor (in repo `criteria-typescript-adapter-claude-agent`) · **Depends on:** [WS23](WS23-typescript-sdk-v2.md), [WS28](WS28-reusable-publish-action.md), [WS16](WS16-bidi-permission-stream.md). · **Unblocks:** [WS37](WS37-v1-protocol-code-removal.md). · **Base branch:** `adapter-v2`
 
 ## Context
 

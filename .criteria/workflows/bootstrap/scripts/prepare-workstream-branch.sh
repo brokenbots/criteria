@@ -7,11 +7,14 @@
 # it with `==`. Branch name and any context go to stderr for human visibility.
 #
 # Classifiers (stdout):
-#   already_merged   branch is a strict ancestor of main; skip work
-#   existing_local   local branch exists, ahead of main; continue from it
-#   existing_remote  remote branch exists, ahead of main; checked out now
+#   already_merged   branch is a strict ancestor of BASE_BRANCH; skip work
+#   existing_local   local branch exists, ahead of BASE_BRANCH; continue from it
+#   existing_remote  remote branch exists, ahead of BASE_BRANCH; checked out now
 #   existing_dirty   we are on the branch with uncommitted changes
-#   created          new branch created from main
+#   created          new branch created from BASE_BRANCH
+#
+# Environment:
+#   BASE_BRANCH  integration branch to branch from (default: adapter-v2)
 #
 # Exits non-zero on dirty-other-branch or filesystem errors. Never deletes work.
 set -eu
@@ -49,9 +52,10 @@ fi
 
 git fetch origin --prune >/dev/null 2>&1 || git fetch origin >/dev/null 2>&1 || true
 
-main_ref="main"
-if git show-ref --verify --quiet refs/remotes/origin/main; then
-  main_ref="origin/main"
+BASE_BRANCH="${BASE_BRANCH:-adapter-v2}"
+main_ref="$BASE_BRANCH"
+if git show-ref --verify --quiet "refs/remotes/origin/${BASE_BRANCH}"; then
+  main_ref="origin/${BASE_BRANCH}"
 fi
 
 is_strict_ancestor() {
@@ -87,4 +91,4 @@ if git show-ref --verify --quiet "refs/remotes/origin/${branch}"; then
 fi
 
 git checkout -b "$branch" "$main_ref" >/dev/null 2>&1
-emit "created" "based_on=${main_ref}"
+emit "created" "based_on=${main_ref} base_branch=${BASE_BRANCH}"

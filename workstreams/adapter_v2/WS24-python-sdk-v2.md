@@ -1,6 +1,6 @@
 # WS24 — Python adapter SDK v2
 
-**Phase:** Adapter v2 · **Track:** SDK · **Owner:** Workstream executor (in repo `criteria-python-adapter-sdk`) · **Depends on:** [WS02](WS02-protocol-v2-proto.md). · **Unblocks:** [WS21](WS21-sdk-serveremote.md), [WS27](WS27-starter-repos.md), Python adapter migrations.
+**Phase:** Adapter v2 · **Track:** SDK · **Owner:** Workstream executor (in repo `criteria-python-adapter-sdk`) · **Depends on:** [WS02](WS02-protocol-v2-proto.md). · **Unblocks:** [WS21](WS21-sdk-serveremote.md), [WS27](WS27-starter-repos.md), Python adapter migrations. · **Base branch:** `adapter-v2`
 
 ## Context
 

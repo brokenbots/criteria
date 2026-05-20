@@ -1,6 +1,6 @@
 # WS16 — Bidirectional `Permissions` stream + per-session permission state
 
-**Phase:** Adapter v2 · **Track:** Protocol features · **Owner:** Workstream executor · **Depends on:** [WS02](WS02-protocol-v2-proto.md), [WS03](WS03-host-v2-wire.md). · **Unblocks:** [WS18](WS18-snapshot-restore.md) (snapshots carry permission state).
+**Phase:** Adapter v2 · **Track:** Protocol features · **Owner:** Workstream executor · **Depends on:** [WS02](WS02-protocol-v2-proto.md), [WS03](WS03-host-v2-wire.md). · **Unblocks:** [WS18](WS18-snapshot-restore.md) (snapshots carry permission state). · **Base branch:** `adapter-v2`
 
 ## Context
 

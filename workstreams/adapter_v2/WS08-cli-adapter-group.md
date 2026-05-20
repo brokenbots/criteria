@@ -1,6 +1,6 @@
 # WS08 — `criteria adapter` CLI command group + compile-time auto-pull
 
-**Phase:** Adapter v2 · **Track:** Distribution · **Owner:** Workstream executor · **Depends on:** [WS04](WS04-oci-cache-layout.md), [WS05](WS05-adapter-manifest.md), [WS06](WS06-cosign-signing.md), [WS07](WS07-lockfile.md). · **Unblocks:** every workstream that needs adapters to be installable by users; the migration WSes can finally use the new path.
+**Phase:** Adapter v2 · **Track:** Distribution · **Owner:** Workstream executor · **Depends on:** [WS04](WS04-oci-cache-layout.md), [WS05](WS05-adapter-manifest.md), [WS06](WS06-cosign-signing.md), [WS07](WS07-lockfile.md). · **Unblocks:** every workstream that needs adapters to be installable by users; the migration WSes can finally use the new path. · **Base branch:** `adapter-v2`
 
 ## Context
 

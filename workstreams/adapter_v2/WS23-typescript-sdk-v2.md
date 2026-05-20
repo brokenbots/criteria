@@ -1,6 +1,6 @@
 # WS23 — TypeScript adapter SDK v2
 
-**Phase:** Adapter v2 · **Track:** SDK · **Owner:** Workstream executor (in repo `criteria-typescript-adapter-sdk`) · **Depends on:** [WS02](WS02-protocol-v2-proto.md). · **Unblocks:** [WS21](WS21-sdk-serveremote.md), [WS27](WS27-starter-repos.md), all TS adapter migrations (WS30, WS32–WS35, WS36 if applicable).
+**Phase:** Adapter v2 · **Track:** SDK · **Owner:** Workstream executor (in repo `criteria-typescript-adapter-sdk`) · **Depends on:** [WS02](WS02-protocol-v2-proto.md). · **Unblocks:** [WS21](WS21-sdk-serveremote.md), [WS27](WS27-starter-repos.md), all TS adapter migrations (WS30, WS32–WS35, WS36 if applicable). · **Base branch:** `adapter-v2`
 
 ## Context
 

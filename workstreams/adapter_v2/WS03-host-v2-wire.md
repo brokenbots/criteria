@@ -1,6 +1,6 @@
 # WS03 — Host adapter wire wired to v2; delete v1 code paths
 
-**Phase:** Adapter v2 · **Track:** Foundation · **Owner:** Workstream executor · **Depends on:** [WS01](WS01-terminology-unification.md), [WS02](WS02-protocol-v2-proto.md) · **Unblocks:** every host workstream that talks to the adapter (WS09, WS13, WS14–WS19, WS20).
+**Phase:** Adapter v2 · **Track:** Foundation · **Owner:** Workstream executor · **Depends on:** [WS01](WS01-terminology-unification.md), [WS02](WS02-protocol-v2-proto.md) · **Unblocks:** every host workstream that talks to the adapter (WS09, WS13, WS14–WS19, WS20). · **Base branch:** `adapter-v2`
 
 ## Context
 
@@ -20,7 +20,7 @@ The host never speaks the v2 wire over anything but local UDS gRPC. Remote execu
 ## Prerequisites
 
 - WS01 and WS02 merged.
-- `make ci` green on the branch this workstream lands against.
+- `make ci` green on `adapter-v2` (the branch this workstream lands against).
 - Familiarity with go-plugin's `Reattach` mode — used here for the `LocalSocketDialer` helper.
 
 ## In scope

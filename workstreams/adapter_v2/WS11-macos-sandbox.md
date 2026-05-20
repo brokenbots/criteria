@@ -1,6 +1,6 @@
 # WS11 — macOS sandbox: auto-generated `sandbox-exec` profile
 
-**Phase:** Adapter v2 · **Track:** Security · **Owner:** Workstream executor · **Depends on:** [WS09](WS09-environment-block-and-secret-taint.md). · **Unblocks:** [WS40](WS40-v2-release-gate.md) verification gate 1 on darwin.
+**Phase:** Adapter v2 · **Track:** Security · **Owner:** Workstream executor · **Depends on:** [WS09](WS09-environment-block-and-secret-taint.md). · **Unblocks:** [WS40](WS40-v2-release-gate.md) verification gate 1 on darwin. · **Base branch:** `adapter-v2`
 
 ## Context
 
