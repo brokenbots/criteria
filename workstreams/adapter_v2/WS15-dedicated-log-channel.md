@@ -1,6 +1,6 @@
 # WS15 — Dedicated `Log` channel separate from `Execute` events
 
-**Phase:** Adapter v2 · **Track:** Protocol features · **Owner:** Workstream executor · **Depends on:** [WS02](WS02-protocol-v2-proto.md), [WS03](WS03-host-v2-wire.md), [WS13](WS13-secrets-channel-redaction.md). · **Unblocks:** cleaner adapter UX; redaction-correctness on log surfaces.
+**Phase:** Adapter v2 · **Track:** Protocol features · **Owner:** Workstream executor · **Depends on:** [WS02](WS02-protocol-v2-proto.md), [WS03](WS03-host-v2-wire.md), [WS13](WS13-secrets-channel-redaction.md). · **Unblocks:** cleaner adapter UX; redaction-correctness on log surfaces. · **Base branch:** `adapter-v2`
 
 ## Context
 

@@ -1,6 +1,6 @@
 # WS37 — Remove v1 protocol code paths
 
-**Phase:** Adapter v2 · **Track:** Release gate · **Owner:** Workstream executor · **Depends on:** [WS30](WS30-migrate-greeter.md), [WS31](WS31-migrate-shell.md), [WS32](WS32-migrate-claude.md), [WS33](WS33-migrate-claude-agent.md), [WS34](WS34-migrate-codex.md), [WS35](WS35-migrate-openai.md), [WS36](WS36-migrate-copilot.md). · **Unblocks:** [WS41](WS41-extract-adapter-proto-repo.md).
+**Phase:** Adapter v2 · **Track:** Release gate · **Owner:** Workstream executor · **Depends on:** [WS30](WS30-migrate-greeter.md), [WS31](WS31-migrate-shell.md), [WS32](WS32-migrate-claude.md), [WS33](WS33-migrate-claude-agent.md), [WS34](WS34-migrate-codex.md), [WS35](WS35-migrate-openai.md), [WS36](WS36-migrate-copilot.md). · **Unblocks:** [WS41](WS41-extract-adapter-proto-repo.md). · **Base branch:** `adapter-v2`
 
 ## Context
 

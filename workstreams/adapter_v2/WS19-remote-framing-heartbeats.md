@@ -1,6 +1,6 @@
 # WS19 — Chunked framing + heartbeats in the v2 wire
 
-**Phase:** Adapter v2 · **Track:** Protocol features · **Owner:** Workstream executor · **Depends on:** [WS02](WS02-protocol-v2-proto.md), [WS03](WS03-host-v2-wire.md), [WS15](WS15-dedicated-log-channel.md). · **Unblocks:** [WS20](WS20-remote-environment-and-shim.md) (remote benefits most from this; local works too).
+**Phase:** Adapter v2 · **Track:** Protocol features · **Owner:** Workstream executor · **Depends on:** [WS02](WS02-protocol-v2-proto.md), [WS03](WS03-host-v2-wire.md), [WS15](WS15-dedicated-log-channel.md). · **Unblocks:** [WS20](WS20-remote-environment-and-shim.md) (remote benefits most from this; local works too). · **Base branch:** `adapter-v2`
 
 ## Context
 

@@ -1,6 +1,6 @@
 # WS05 — `adapter.yaml` manifest format + runtime verification
 
-**Phase:** Adapter v2 · **Track:** Distribution · **Owner:** Workstream executor · **Depends on:** [WS02](WS02-protocol-v2-proto.md), [WS04](WS04-oci-cache-layout.md). · **Unblocks:** [WS06](WS06-cosign-signing.md), [WS07](WS07-lockfile.md), [WS08](WS08-cli-adapter-group.md), [WS28](WS28-reusable-publish-action.md).
+**Phase:** Adapter v2 · **Track:** Distribution · **Owner:** Workstream executor · **Depends on:** [WS02](WS02-protocol-v2-proto.md), [WS04](WS04-oci-cache-layout.md). · **Unblocks:** [WS06](WS06-cosign-signing.md), [WS07](WS07-lockfile.md), [WS08](WS08-cli-adapter-group.md), [WS28](WS28-reusable-publish-action.md). · **Base branch:** `adapter-v2`
 
 ## Context
 

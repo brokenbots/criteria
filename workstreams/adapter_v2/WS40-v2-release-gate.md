@@ -1,6 +1,6 @@
 # WS40 — v2 release gate: tag and ship
 
-**Phase:** Adapter v2 · **Track:** Release gate · **Owner:** Workstream executor · **Depends on:** WS01–WS39 (all). · **Unblocks:** [WS41](WS41-extract-adapter-proto-repo.md), [WS42](WS42-extract-shell-adapter.md), [WS43](WS43-independence-verification.md).
+**Phase:** Adapter v2 · **Track:** Release gate · **Owner:** Workstream executor · **Depends on:** WS01–WS39 (all). · **Unblocks:** [WS41](WS41-extract-adapter-proto-repo.md), [WS42](WS42-extract-shell-adapter.md), [WS43](WS43-independence-verification.md). · **Base branch:** `adapter-v2`
 
 ## Context
 

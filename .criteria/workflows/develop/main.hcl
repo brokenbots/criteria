@@ -9,8 +9,8 @@
 # Optimizations vs the v1 design:
 #   • ci_retry — one automatic retry of `make ci` before invoking the LLM
 #     repair agent (CI flakes are the most common transient failure).
-#   • cache_diff — runs `git diff origin/main...HEAD` once into a shared file;
-#     all four reviewers read the file instead of each invoking git diff.
+#   • cache_diff — runs `git diff origin/$base_branch...HEAD` once into a shared
+#     file; all four reviewers read the file instead of each invoking git diff.
 #   • verdict_aggregate + check_unanimous — when all four reviewers emit
 #     "VERDICT: approved", skip the owner adjudication LLM call and go
 #     straight to commit. Saves one expensive agent invocation on the happy
@@ -60,6 +60,12 @@ variable "developer_model" {
 variable "reviewer_model" {
   type        = "string"
   default     = "gpt-5.4"
+}
+
+variable "base_branch" {
+  type        = "string"
+  default     = "adapter-v2"
+  description = "Integration branch to branch from and diff against."
 }
 
 shared_variable "cycle_count" {
@@ -119,7 +125,7 @@ step "prepare_branch" {
   timeout    = "180s"
   max_visits = 10
   input {
-    command           = "sh .criteria/workflows/bootstrap/scripts/prepare-workstream-branch.sh \"${var.workstream_file}\""
+    command           = "BASE_BRANCH='${var.base_branch}' sh .criteria/workflows/bootstrap/scripts/prepare-workstream-branch.sh \"${var.workstream_file}\""
     working_directory = var.project_dir
   }
   outcome "success" { next = "route_branch_state" }
@@ -198,14 +204,14 @@ step "repair_ci" {
 
 # ── Cache the diff for reviewers ─────────────────────────────────────────────
 # Writes .criteria/tmp/diff.patch + diff.stat once so all 4 reviewers can read
-# the same file instead of each invoking `git diff origin/main...HEAD`.
+# the same file instead of each invoking `git diff origin/$base_branch...HEAD`.
 
 step "cache_diff" {
   target     = adapter.shell.ci
   timeout    = "60s"
   max_visits = 10
   input {
-    command           = "sh .criteria/workflows/develop/scripts/cache-diff.sh"
+    command           = "BASE_BRANCH='${var.base_branch}' sh .criteria/workflows/develop/scripts/cache-diff.sh"
     working_directory = var.project_dir
   }
   outcome "success" { next = "route_diff" }
@@ -289,7 +295,7 @@ step "owner_review" {
   timeout     = "20m"
   max_visits  = 20
   input {
-    prompt = "You are the workstream owner for ${var.workstream_file}. Read the workstream, current diff (`git diff origin/main...HEAD`), and the four specialist reviewer reports below. Each report contains a `VERDICT: approved` or `VERDICT: changes_requested` line followed by findings. Decide which requests are legitimate, in scope, and mandatory. Reject overreach, duplicates, speculative rewrites, or anything contradicting the workstream non-goals.\n\nRecord your verdict under `## Owner Review Notes` in ${var.workstream_file}. If changes are needed, write only must-fix items. If complete, record owner approval.\n\n--- security ---\n${steps.specialized_reviews[0].report}\n--- quality ---\n${steps.specialized_reviews[1].report}\n--- workstream ---\n${steps.specialized_reviews[2].report}\n--- api_compat ---\n${steps.specialized_reviews[3].report}\n--- end ---\n\nEnd your final message with exactly one of:\nRESULT: approved\nRESULT: changes_requested\nRESULT: failure"
+    prompt = "You are the workstream owner for ${var.workstream_file}. Read the workstream and `.criteria/tmp/diff.patch` (pre-cached; do not run git diff). The four specialist reviewer reports are below — each contains a `VERDICT:` line and findings. Decide which requests are legitimate, in scope, and mandatory. Reject overreach, duplicates, speculative rewrites, or anything contradicting the workstream non-goals.\n\nRecord your verdict under `## Owner Review Notes` in ${var.workstream_file}. If changes are needed, write only must-fix items there.\n\nIn the submit_outcome reason, include a concise must-fix list (specific, actionable, file:line where possible) if requesting changes, or a brief 'approved' confirmation if complete. This reason is passed directly to the developer — keep it tight.\n\n--- security ---\n${steps.specialized_reviews[0].report}\n--- quality ---\n${steps.specialized_reviews[1].report}\n--- workstream ---\n${steps.specialized_reviews[2].report}\n--- api_compat ---\n${steps.specialized_reviews[3].report}\n--- end ---\n\nOutcomes: approved, changes_requested, failure"
   }
   outcome "approved"          { next = "commit" }
   outcome "changes_requested" { next = "count_cycle" }
@@ -349,7 +355,7 @@ step "develop" {
   timeout     = "30m"
   max_visits  = 20
   input {
-    prompt = "The workstream owner has requested changes for ${var.workstream_file}. Read only the owner-approved must-fix list under `## Owner Review Notes`; do not chase raw specialist reviewer suggestions the owner rejected. Address every must-fix item completely, then run `make ci`.\n\nEnd your final message with exactly one of:\nRESULT: needs_review\nRESULT: failure"
+    prompt = "The workstream owner has requested changes for ${var.workstream_file}. Owner must-fix list:\n\n${steps.owner_review.reason}\n\nAddress every item above completely. Do not chase raw specialist reviewer suggestions the owner rejected. Run `make ci` before declaring ready.\n\nIn the submit_outcome reason, briefly summarize the specific changes you made (file:line and what changed).\n\nEnd your final message with exactly one of:\nRESULT: needs_review\nRESULT: failure"
   }
   outcome "needs_review" { next = "ci_gate" }
   outcome "failure"      { next = "failed" }

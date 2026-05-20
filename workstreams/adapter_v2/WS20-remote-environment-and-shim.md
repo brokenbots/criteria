@@ -1,6 +1,6 @@
 # WS20 — `remote` environment type + host phone-home shim
 
-**Phase:** Adapter v2 · **Track:** Remote · **Owner:** Workstream executor · **Depends on:** [WS03](WS03-host-v2-wire.md), [WS07](WS07-lockfile.md), [WS09](WS09-environment-block-and-secret-taint.md), [WS19](WS19-remote-framing-heartbeats.md). · **Unblocks:** [WS21](WS21-sdk-serveremote.md), [WS22](WS22-remote-demo-runbook.md).
+**Phase:** Adapter v2 · **Track:** Remote · **Owner:** Workstream executor · **Depends on:** [WS03](WS03-host-v2-wire.md), [WS07](WS07-lockfile.md), [WS09](WS09-environment-block-and-secret-taint.md), [WS19](WS19-remote-framing-heartbeats.md). · **Unblocks:** [WS21](WS21-sdk-serveremote.md), [WS22](WS22-remote-demo-runbook.md). · **Base branch:** `adapter-v2`
 
 ## Context
 

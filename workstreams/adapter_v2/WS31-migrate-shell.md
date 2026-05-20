@@ -1,6 +1,6 @@
 # WS31 — Migrate `shell` builtin to protocol v2 (still in-tree)
 
-**Phase:** Adapter v2 · **Track:** Adapter migration · **Owner:** Workstream executor · **Depends on:** [WS03](WS03-host-v2-wire.md), [WS09](WS09-environment-block-and-secret-taint.md), [WS13](WS13-secrets-channel-redaction.md), [WS25](WS25-go-sdk-v1.md). · **Unblocks:** [WS37](WS37-v1-protocol-code-removal.md) (one of seven gates) and [WS42](WS42-extract-shell-adapter.md).
+**Phase:** Adapter v2 · **Track:** Adapter migration · **Owner:** Workstream executor · **Depends on:** [WS03](WS03-host-v2-wire.md), [WS09](WS09-environment-block-and-secret-taint.md), [WS13](WS13-secrets-channel-redaction.md), [WS25](WS25-go-sdk-v1.md). · **Unblocks:** [WS37](WS37-v1-protocol-code-removal.md) (one of seven gates) and [WS42](WS42-extract-shell-adapter.md). · **Base branch:** `adapter-v2`
 
 ## Context
 

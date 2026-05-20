@@ -109,7 +109,7 @@ step "security_review" {
   allow_tools = ["read", "search", "shell", "execute"]
   timeout     = "15m"
   input {
-    prompt = "Review the active diff for ${var.workstream_file} in ${var.project_dir} for security issues. Inspect `git diff origin/main...HEAD`, the workstream md, and the relevant code. Do not edit files. Return concrete findings only.\n\nYour review is COMPLETE when you have a verdict, even if that verdict is `changes_requested`. State your verdict on its own line as exactly one of:\nVERDICT: approved\nVERDICT: changes_requested\n\nThen end your final message with exactly:\nRESULT: success\n\nOnly emit `RESULT: failure` if you genuinely cannot perform the review (e.g. tools broken, prerequisite missing). Requesting changes is a successful review, not a failure."
+    prompt = "Review the active diff for ${var.workstream_file} in ${var.project_dir} for security issues. Read `.criteria/tmp/diff.patch` (pre-cached; do not run git diff), the workstream md, and the relevant code. Do not edit files. Return concrete findings only.\n\nYour review is COMPLETE when you have a verdict, even if that verdict is `changes_requested`. State your verdict on its own line as exactly one of:\nVERDICT: approved\nVERDICT: changes_requested\n\nIn the submit_outcome reason, list any must-fix findings (file:line + issue) or confirm 'no findings'.\n\nThen end your final message with exactly:\nRESULT: success\n\nOnly emit `RESULT: failure` if you genuinely cannot perform the review (e.g. tools broken, prerequisite missing). Requesting changes is a successful review, not a failure."
   }
   outcome "success" {
     next   = "return"
@@ -123,7 +123,7 @@ step "quality_review" {
   allow_tools = ["read", "search", "shell", "execute"]
   timeout     = "15m"
   input {
-    prompt = "Review the active diff for ${var.workstream_file} in ${var.project_dir} for code quality, test sufficiency, complexity additions, and maintainability. Inspect `git diff origin/main...HEAD` and the workstream md. Do not edit files. Return concrete findings only.\n\nYour review is COMPLETE when you have a verdict, even if that verdict is `changes_requested`. State your verdict on its own line as exactly one of:\nVERDICT: approved\nVERDICT: changes_requested\n\nThen end your final message with exactly:\nRESULT: success\n\nOnly emit `RESULT: failure` if you genuinely cannot perform the review."
+    prompt = "Review the active diff for ${var.workstream_file} in ${var.project_dir} for code quality, test sufficiency, complexity additions, and maintainability. Read `.criteria/tmp/diff.patch` (pre-cached; do not run git diff) and the workstream md. Do not edit files. Return concrete findings only.\n\nYour review is COMPLETE when you have a verdict, even if that verdict is `changes_requested`. State your verdict on its own line as exactly one of:\nVERDICT: approved\nVERDICT: changes_requested\n\nIn the submit_outcome reason, list any must-fix findings (file:line + issue) or confirm 'no findings'.\n\nThen end your final message with exactly:\nRESULT: success\n\nOnly emit `RESULT: failure` if you genuinely cannot perform the review."
   }
   outcome "success" {
     next   = "return"
@@ -137,7 +137,7 @@ step "workstream_review" {
   allow_tools = ["read", "search", "shell", "execute"]
   timeout     = "15m"
   input {
-    prompt = "Review the active diff for ${var.workstream_file} in ${var.project_dir} for adherence to the workstream scope: affected files, non-goals, acceptance criteria, required tests, and implementation notes. Inspect `git diff origin/main...HEAD` and the workstream md. Do not edit files. Return concrete findings only.\n\nYour review is COMPLETE when you have a verdict, even if that verdict is `changes_requested`. State your verdict on its own line as exactly one of:\nVERDICT: approved\nVERDICT: changes_requested\n\nThen end your final message with exactly:\nRESULT: success\n\nOnly emit `RESULT: failure` if you genuinely cannot perform the review."
+    prompt = "Review the active diff for ${var.workstream_file} in ${var.project_dir} for adherence to the workstream scope: affected files, non-goals, acceptance criteria, required tests, and implementation notes. Read `.criteria/tmp/diff.patch` (pre-cached; do not run git diff) and the workstream md. Do not edit files. Return concrete findings only.\n\nYour review is COMPLETE when you have a verdict, even if that verdict is `changes_requested`. State your verdict on its own line as exactly one of:\nVERDICT: approved\nVERDICT: changes_requested\n\nIn the submit_outcome reason, list any must-fix findings (file:line + issue) or confirm 'no findings'.\n\nThen end your final message with exactly:\nRESULT: success\n\nOnly emit `RESULT: failure` if you genuinely cannot perform the review."
   }
   outcome "success" {
     next   = "return"
@@ -151,7 +151,7 @@ step "api_compat_review" {
   allow_tools = ["read", "search", "shell", "execute"]
   timeout     = "15m"
   input {
-    prompt = "Review the active diff for ${var.workstream_file} in ${var.project_dir} for API and backwards-compatibility risk: HCL DSL changes, plugin gRPC API surface (sdk/pb/*.proto), event-log schema, and semver discipline. Inspect `git diff origin/main...HEAD` and the workstream md. Do not edit files. Return concrete findings only.\n\nYour review is COMPLETE when you have a verdict, even if that verdict is `changes_requested`. State your verdict on its own line as exactly one of:\nVERDICT: approved\nVERDICT: changes_requested\n\nThen end your final message with exactly:\nRESULT: success\n\nOnly emit `RESULT: failure` if you genuinely cannot perform the review."
+    prompt = "Review the active diff for ${var.workstream_file} in ${var.project_dir} for API and backwards-compatibility risk: HCL DSL changes, plugin gRPC API surface (sdk/pb/*.proto), event-log schema, and semver discipline. Read `.criteria/tmp/diff.patch` (pre-cached; do not run git diff) and the workstream md. Do not edit files. Return concrete findings only.\n\nYour review is COMPLETE when you have a verdict, even if that verdict is `changes_requested`. State your verdict on its own line as exactly one of:\nVERDICT: approved\nVERDICT: changes_requested\n\nIn the submit_outcome reason, list any must-fix findings (file:line + issue) or confirm 'no findings'.\n\nThen end your final message with exactly:\nRESULT: success\n\nOnly emit `RESULT: failure` if you genuinely cannot perform the review."
   }
   outcome "success" {
     next   = "return"

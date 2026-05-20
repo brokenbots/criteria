@@ -1,6 +1,6 @@
 # WS41 — Extract adapter wire contract to `criteria-adapter-proto` repo
 
-**Phase:** Adapter v2 · **Track:** End-state independence · **Owner:** Workstream executor (creates new repo) · **Depends on:** [WS40](WS40-v2-release-gate.md) (v2 shipped). · **Unblocks:** [WS43](WS43-independence-verification.md).
+**Phase:** Adapter v2 · **Track:** End-state independence · **Owner:** Workstream executor (creates new repo) · **Depends on:** [WS40](WS40-v2-release-gate.md) (v2 shipped). · **Unblocks:** [WS43](WS43-independence-verification.md). · **Base branch:** `main`
 
 ## Context
 

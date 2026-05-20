@@ -1,6 +1,6 @@
 # WS09 — Environment block extension + secret-taint compiler
 
-**Phase:** Adapter v2 · **Track:** Security · **Owner:** Workstream executor · **Depends on:** [WS02](WS02-protocol-v2-proto.md), [WS05](WS05-adapter-manifest.md), [WS07](WS07-lockfile.md). · **Unblocks:** [WS10](WS10-linux-sandbox.md), [WS11](WS11-macos-sandbox.md), [WS12](WS12-container-runtime.md), [WS13](WS13-secrets-channel-redaction.md), [WS20](WS20-remote-environment-and-shim.md).
+**Phase:** Adapter v2 · **Track:** Security · **Owner:** Workstream executor · **Depends on:** [WS02](WS02-protocol-v2-proto.md), [WS05](WS05-adapter-manifest.md), [WS07](WS07-lockfile.md). · **Unblocks:** [WS10](WS10-linux-sandbox.md), [WS11](WS11-macos-sandbox.md), [WS12](WS12-container-runtime.md), [WS13](WS13-secrets-channel-redaction.md), [WS20](WS20-remote-environment-and-shim.md). · **Base branch:** `adapter-v2`
 
 ## Context
 

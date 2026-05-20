@@ -1,6 +1,6 @@
 # WS17 — `Pause`, `Resume`, `Inspect` lifecycle RPCs
 
-**Phase:** Adapter v2 · **Track:** Protocol features · **Owner:** Workstream executor · **Depends on:** [WS02](WS02-protocol-v2-proto.md), [WS03](WS03-host-v2-wire.md), [WS16](WS16-bidi-permission-stream.md). · **Unblocks:** [WS18](WS18-snapshot-restore.md).
+**Phase:** Adapter v2 · **Track:** Protocol features · **Owner:** Workstream executor · **Depends on:** [WS02](WS02-protocol-v2-proto.md), [WS03](WS03-host-v2-wire.md), [WS16](WS16-bidi-permission-stream.md). · **Unblocks:** [WS18](WS18-snapshot-restore.md). · **Base branch:** `adapter-v2`
 
 ## Context
 

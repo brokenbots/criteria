@@ -1,6 +1,6 @@
 # WS38 — End-to-end remote demo + publishing-flow gate
 
-**Phase:** Adapter v2 · **Track:** Release gate · **Owner:** Workstream executor · **Depends on:** [WS22](WS22-remote-demo-runbook.md), [WS27](WS27-starter-repos.md), [WS28](WS28-reusable-publish-action.md), [WS37](WS37-v1-protocol-code-removal.md). · **Unblocks:** [WS40](WS40-v2-release-gate.md).
+**Phase:** Adapter v2 · **Track:** Release gate · **Owner:** Workstream executor · **Depends on:** [WS22](WS22-remote-demo-runbook.md), [WS27](WS27-starter-repos.md), [WS28](WS28-reusable-publish-action.md), [WS37](WS37-v1-protocol-code-removal.md). · **Unblocks:** [WS40](WS40-v2-release-gate.md). · **Base branch:** `adapter-v2`
 
 ## Context
 

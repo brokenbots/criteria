@@ -1,6 +1,6 @@
 # WS12 — Container-mode runtime (docker / podman) with fail-closed selection
 
-**Phase:** Adapter v2 · **Track:** Security · **Owner:** Workstream executor · **Depends on:** [WS04](WS04-oci-cache-layout.md), [WS09](WS09-environment-block-and-secret-taint.md). · **Unblocks:** [WS40](WS40-v2-release-gate.md) verification gate 1 for container path.
+**Phase:** Adapter v2 · **Track:** Security · **Owner:** Workstream executor · **Depends on:** [WS04](WS04-oci-cache-layout.md), [WS09](WS09-environment-block-and-secret-taint.md). · **Unblocks:** [WS40](WS40-v2-release-gate.md) verification gate 1 for container path. · **Base branch:** `adapter-v2`
 
 ## Context
 

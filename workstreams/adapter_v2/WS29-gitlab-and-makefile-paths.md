@@ -1,6 +1,6 @@
 # WS29 — GitLab CI + registry-agnostic Makefile equivalents
 
-**Phase:** Adapter v2 · **Track:** CI scaffolding · **Owner:** Workstream executor · **Depends on:** [WS28](WS28-reusable-publish-action.md). · **Unblocks:** adoption by non-GitHub users.
+**Phase:** Adapter v2 · **Track:** CI scaffolding · **Owner:** Workstream executor · **Depends on:** [WS28](WS28-reusable-publish-action.md). · **Unblocks:** adoption by non-GitHub users. · **Base branch:** `adapter-v2`
 
 ## Context
 

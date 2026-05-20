@@ -8,9 +8,14 @@
 #   updated:<number>    existing PR body refreshed
 #   exists:<number>     PR exists, no body update needed
 #
+# Environment:
+#   BASE_BRANCH  target branch for the PR (default: adapter-v2)
+#
 # The PR title is derived from the workstream filename. The body is the first
 # H1 + Context section from the workstream md, plus a footer noting the run.
 set -eu
+
+BASE_BRANCH="${BASE_BRANCH:-adapter-v2}"
 
 workstream_file="${1:-}"
 
@@ -49,7 +54,7 @@ printf '\n\n---\n_Opened by `.criteria/workflows/pr_review`._\n' >> "$body_file"
 existing="$(gh pr view "$branch" --json number,state --jq '.number' 2>/dev/null || true)"
 
 if [ -z "$existing" ]; then
-  number="$(gh pr create --base main --head "$branch" --title "$title" --body-file "$body_file" --json number --jq '.number')"
+  number="$(gh pr create --base "$BASE_BRANCH" --head "$branch" --title "$title" --body-file "$body_file" --json number --jq '.number')"
   echo "created:${number}"
   exit 0
 fi

@@ -2,29 +2,33 @@
 #
 # Workstream Review Loop
 # ======================
-# Runs a two-agent review loop against a single workstream file.
-# Pass the target file via the workstream_file variable default, or override
-# it by editing the default value before running.
+# Runs a two-agent review loop against a single workstream file, then opens a
+# PR, performs a cold review, and merges to the integration branch once a human
+# approves on GitHub.
 #
-#   executor  — implements workstream tasks in focused passes
-#   reviewer  — reviews executor changes for correctness and completeness
+# Pass the target file via the workstream_file variable.
+#
+#   executor     — implements workstream tasks in focused passes
+#   reviewer     — reviews executor changes for correctness and completeness
+#   cold_reviewer — post-implementation cold PR review (external perspective)
 #
 # Loop mechanics:
 #   • Executor and reviewer iterate until the reviewer is satisfied.
 #   • Once approved, reviewer hands back to executor for a final commit pass.
-#   • After commit success, the workflow closes both sessions and ends.
+#   • After commit, a PR is opened, CI warmup runs, then pr_status_check gates.
+#   • cold_reviewer performs a proactive review and posts a recommendation.
+#   • await_github_approval polls GitHub every 2 minutes until APPROVED.
+#   • On APPROVED, the PR is squash-merged and base_branch is synced.
 #
 # Usage (run once per workstream file):
 #   CRITERIA_WORKFLOW_ALLOWED_PATHS=.github/agents:workstreams \
-#     bin/criteria apply examples/workstream_review_loop.hcl
+#     bin/criteria apply examples/archived/workstream_review_loop --var workstream_file=workstreams/adapter_v2/WS03-host-v2-wire.md
 #
-# The allowed-paths env var lets the file() expression function read the agent
-# profile markdown files in .github/agents/ (outside this workflow's directory).
-# Profiles are loaded into each agent's system_prompt at compile time.
-#
-# Note: for_each multi-step agent chains are not supported by the engine —
-# the do-step must return _continue to advance the loop. Use this single-file
-# pattern and invoke once per workstream instead.
+# For post-release workstreams (WS41+) that target main:
+#   bin/criteria apply examples/archived/workstream_review_loop \
+#     --var workstream_file=workstreams/adapter_v2/WS41-extract-adapter-proto-repo.md \
+#     --var base_branch=main \
+#     --var require_workflow_approval=true
 
 workflow "workstream_review_loop" {
   version       = "1"
@@ -33,21 +37,44 @@ workflow "workstream_review_loop" {
 }
 
 policy {
-  max_total_steps = 120  # caps execute/review/pr loops; fails safely if automation cannot converge
+  max_total_steps = 200
 }
 
 variable "workstream_file" {
   type        = "string"
-  default     = "workstreams/05-shell-adapter-sandbox.md"
-  description = "Path to the workstream file to process. Change default or re-run for each file."
+  default     = "workstreams/adapter_v2/WS03-host-v2-wire.md"
+  description = "Path to the workstream file to process."
 }
 
-# ── Adapters ────────────────────────────────────────────────────────────────
+variable "base_branch" {
+  type        = "string"
+  default     = "adapter-v2"
+  description = "Integration branch this workstream's PR targets. Use 'main' for post-release workstreams (WS41+)."
+}
 
-# Adapter profile markdowns are loaded into each session via system_prompt at
-# compile time (file() + trimfrontmatter()). The profile is established at
-# session-open and persists for every subsequent turn — step prompts can be
-# short coordination signals.
+variable "require_workflow_approval" {
+  type        = "string"
+  default     = "false"
+  description = "Set to 'true' to require explicit workflow-node approval before merge. Default 'false' uses async GitHub approval polling — no babysitting needed."
+}
+
+# ── Shared state for reason-passing between loop steps ───────────────────────
+# Instead of re-reading the workstream file on every loop iteration (which
+# causes context corruption as agents see stale vs. current file content),
+# each step writes a concise targeted summary into these shared variables via
+# submit_outcome reason. The next step receives only the targeted delta.
+
+shared_variable "last_review_reason" {
+  type  = "string"
+  value = ""
+}
+
+shared_variable "last_execute_reason" {
+  type  = "string"
+  value = ""
+}
+
+# ── Adapters ─────────────────────────────────────────────────────────────────
 
 adapter "copilot" "executor" {
   config {
@@ -75,23 +102,45 @@ adapter "copilot" "pr_manager" {
   }
 }
 
+adapter "copilot" "cold_reviewer" {
+  config {
+    model            = "gpt-5.5"
+    reasoning_effort = "high"
+    max_turns        = 15
+    system_prompt    = trimfrontmatter(file("../../.criteria/workflows/pr_review/agents/pr_reviewer.agent.md"))
+  }
+}
+
 adapter "shell" "default" {
   config { }
 }
 
+# ── Branch checkout ───────────────────────────────────────────────────────────
+
 step "checkout_branch" {
   target = adapter.shell.default
   input {
-    command = "branch=$(basename '${var.workstream_file}' .md) && current=$(git branch --show-current) && if [ \"$current\" = \"main\" ]; then git checkout -b \"$branch\"; else echo \"already on branch: $current\"; fi"
+    command = "BASE_BRANCH='${var.base_branch}' sh .criteria/workflows/bootstrap/scripts/prepare-workstream-branch.sh '${var.workstream_file}'"
   }
-  timeout = "10s"
-  outcome "success" { next = "execute_init" }
+  timeout = "30s"
+  outcome "success" { next = "route_branch_state" }
   outcome "failure" { next = "failed" }
 }
 
-# ── Init pass: bootstrap agent context ─────────────────────────────────────
-# Each agent reads its own profile and the workstream file on its first turn.
-# That context persists in the live session for all subsequent loop turns.
+switch "route_branch_state" {
+  condition {
+    match = steps.checkout_branch.stdout == "already_merged"
+    next  = state.done
+  }
+  default { next = step.execute_init }
+}
+
+# ── Init pass: bootstrap agent context ───────────────────────────────────────
+# Each agent reads the workstream file ONCE here to establish context. That
+# context persists in the live session for all subsequent loop turns.
+# Loop steps pass targeted feedback via submit_outcome reason (stored in
+# shared variables) instead of asking agents to re-read the workstream file,
+# which causes context corruption when agents see stale vs. current content.
 
 step "execute_init" {
   target = adapter.copilot.executor
@@ -99,11 +148,17 @@ step "execute_init" {
     "*",
   ]
   input {
-    prompt = "Read ${var.workstream_file} for the full task scope.\n\nExecute the first implementation batch: complete the next unchecked items, write code and tests as needed, keep changes scoped and verifiable. Record your progress and notes in ${var.workstream_file}.\n\nEnd your final line with exactly one of:\nRESULT: needs_review\nRESULT: failure"
+    prompt = "Read ${var.workstream_file} for the full task scope.\n\nExecute the first implementation batch: complete the next unchecked items, write code and tests as needed, keep changes scoped and verifiable. Record your progress in ${var.workstream_file}.\n\nIn the submit_outcome reason, include a brief summary of what you implemented (specific file paths and what was added/changed). This summary is passed directly to the reviewer — keep it targeted.\n\nOutcomes: needs_review, failure"
   }
-  outcome "needs_review"   { next = "review_init" }
-  outcome "needs_approval" { next = "review_init" }
-  outcome "failure"        { next = "failed" }
+  outcome "needs_review" {
+    next          = "review_init"
+    shared_writes = { last_execute_reason = "reason" }
+  }
+  outcome "needs_approval" {
+    next          = "review_init"
+    shared_writes = { last_execute_reason = "reason" }
+  }
+  outcome "failure" { next = "failed" }
 }
 
 step "review_init" {
@@ -112,18 +167,28 @@ step "review_init" {
     "*",
   ]
   input {
-    prompt = "Read ${var.workstream_file} for the workstream scope and the executor's latest work.\n\nReview the executor's changes against the acceptance bar. Write all findings and your verdict into the reviewer notes section of ${var.workstream_file}.\n\nEnd your final line with exactly one of:\nRESULT: approved\nRESULT: changes_requested\nRESULT: failure"
+    prompt = "Read ${var.workstream_file} for the workstream scope. The executor's first pass summary:\n\n${shared.last_execute_reason}\n\nReview the executor's changes against the acceptance bar. Write full findings into the reviewer notes section of ${var.workstream_file}.\n\nIn the submit_outcome reason, include a concise actionable list of must-fix items (if requesting changes), or a brief approval confirmation. This is passed directly to the executor — keep it targeted and specific (file:line where relevant).\n\nOutcomes: approved, changes_requested, failure"
   }
-  outcome "approved"          { next = "commit_and_prepare_pr" }
-  outcome "changes_requested" { next = "execute" }
-  outcome "needs_review"      { next = "execute" }
-  outcome "needs_approval"    { next = "execute" }
-  outcome "failure"           { next = "failed" }
+  outcome "approved" { next = "commit_and_prepare_pr" }
+  outcome "changes_requested" {
+    next          = "execute"
+    shared_writes = { last_review_reason = "reason" }
+  }
+  outcome "needs_review" {
+    next          = "execute"
+    shared_writes = { last_review_reason = "reason" }
+  }
+  outcome "needs_approval" {
+    next          = "execute"
+    shared_writes = { last_review_reason = "reason" }
+  }
+  outcome "failure" { next = "failed" }
 }
 
-# ── Review loop: minimal signal prompts ─────────────────────────────────────
-# Agent context is fully established after the init pass.
-# These prompts are coordination signals only — not instructions.
+# ── Review loop: reason-passing prompts ──────────────────────────────────────
+# Agent context is established from the init pass. These steps pass targeted
+# feedback between agents via shared.last_review_reason / last_execute_reason
+# rather than directing agents to re-read the workstream file.
 
 step "execute" {
   target = adapter.copilot.executor
@@ -131,12 +196,21 @@ step "execute" {
     "*",
   ]
   input {
-    prompt = "Reviewer requested changes. Notes are in ${var.workstream_file}."
+    prompt = "Reviewer requested changes:\n\n${shared.last_review_reason}\n\nAddress each finding. In the submit_outcome reason, briefly summarize the specific changes you made (file:line and what changed). This is passed directly to the reviewer.\n\nOutcomes: needs_review, failure"
   }
-  outcome "success"        { next = "verify" }
-  outcome "needs_review"   { next = "verify" }
-  outcome "needs_approval" { next = "verify" }
-  outcome "failure"        { next = "failed" }
+  outcome "success" {
+    next          = "verify"
+    shared_writes = { last_execute_reason = "reason" }
+  }
+  outcome "needs_review" {
+    next          = "verify"
+    shared_writes = { last_execute_reason = "reason" }
+  }
+  outcome "needs_approval" {
+    next          = "verify"
+    shared_writes = { last_execute_reason = "reason" }
+  }
+  outcome "failure" { next = "failed" }
 }
 
 step "verify" {
@@ -168,16 +242,25 @@ step "review" {
     "*",
   ]
   input {
-    prompt = "Ready for review. Latest work is in ${var.workstream_file}."
+    prompt = "Executor addressed your findings. Changes made:\n\n${shared.last_execute_reason}\n\nVerify these changes are correct and complete. In the submit_outcome reason, include a concise list of remaining must-fix items (if requesting changes) or a brief approval confirmation.\n\nOutcomes: approved, changes_requested, failure"
   }
-  outcome "approved"          { next = "commit_and_prepare_pr" }
-  outcome "changes_requested" { next = "execute" }
-  outcome "needs_review"      { next = "execute" }
-  outcome "needs_approval"    { next = "execute" }
-  outcome "failure"           { next = "failed" }
+  outcome "approved" { next = "commit_and_prepare_pr" }
+  outcome "changes_requested" {
+    next          = "execute"
+    shared_writes = { last_review_reason = "reason" }
+  }
+  outcome "needs_review" {
+    next          = "execute"
+    shared_writes = { last_review_reason = "reason" }
+  }
+  outcome "needs_approval" {
+    next          = "execute"
+    shared_writes = { last_review_reason = "reason" }
+  }
+  outcome "failure" { next = "failed" }
 }
 
-# ── Finalize: executor commit ──────────────────────────────────────────────
+# ── Finalize: executor commit ─────────────────────────────────────────────────
 
 step "commit_and_prepare_pr" {
   target = adapter.copilot.executor
@@ -191,9 +274,7 @@ step "commit_and_prepare_pr" {
   outcome "failure" { next = "failed" }
 }
 
-# ── PR automation loop ────────────────────────────────────────────────────
-# PR manager owns creation/updates and comment replies.
-# Shell step blocks on required checks and returns gate status.
+# ── PR automation ─────────────────────────────────────────────────────────────
 
 step "open_or_update_pr" {
   target = adapter.copilot.pr_manager
@@ -201,7 +282,7 @@ step "open_or_update_pr" {
     "*",
   ]
   input {
-    prompt = "Read ${var.workstream_file}. Ensure branch is pushed, then create or update the PR from the current branch to main.\n\nInclude a concise summary and test evidence from the workstream notes/reviewer notes.\n\nEnd your final line with exactly one of:\nRESULT: watch_pr\nRESULT: failure"
+    prompt = "Read ${var.workstream_file}. Ensure branch is pushed (BASE_BRANCH=${var.base_branch}), then create or update the PR from the current branch to ${var.base_branch}.\n\nInclude a concise summary and test evidence from the workstream notes/reviewer notes. Use: BASE_BRANCH='${var.base_branch}' sh .criteria/workflows/pr_review/scripts/open-or-update-pr.sh '${var.workstream_file}'\n\nEnd your final line with exactly one of:\nRESULT: watch_pr\nRESULT: failure"
   }
   outcome "watch_pr"       { next = "watch_pr_warmup" }
   outcome "needs_review"   { next = "watch_pr_warmup" }
@@ -212,49 +293,122 @@ step "open_or_update_pr" {
 step "watch_pr_warmup" {
   target = adapter.shell.default
   input {
-    command = "set -euo pipefail; branch=$(git branch --show-current | tr '/ ' '__'); mkdir -p .criteria/tmp; echo 0 > .criteria/tmp/pr_watch_backoff_$branch.txt; echo 'warming up CI checks before first poll (90s)'; sleep 90"
+    command = "echo 'warming up CI before first status poll (90s)'; sleep 90"
   }
   timeout = "3m"
-  outcome "success" { next = "watch_pr_gate" }
-  outcome "failure" { next = "triage_pr_feedback" }
+  outcome "success" { next = "pr_status_check" }
+  outcome "failure" { next = "pr_status_check" }
 }
 
-step "watch_pr_backoff" {
+# ── Deterministic PR status gate ──────────────────────────────────────────────
+
+step "pr_status_check" {
   target = adapter.shell.default
   input {
-    command = "set -euo pipefail; branch=$(git branch --show-current | tr '/ ' '__'); mkdir -p .criteria/tmp; state=.criteria/tmp/pr_watch_backoff_$branch.txt; attempt=0; if [ -f \"$state\" ]; then attempt=$(cat \"$state\" 2>/dev/null || echo 0); fi; attempt=$((attempt + 1)); echo \"$attempt\" > \"$state\"; if [ \"$attempt\" -le 1 ]; then delay=20; elif [ \"$attempt\" -le 2 ]; then delay=40; elif [ \"$attempt\" -le 3 ]; then delay=80; elif [ \"$attempt\" -le 4 ]; then delay=120; else delay=180; fi; echo \"backoff_attempt=$attempt\"; echo \"sleep_seconds=$delay\"; sleep \"$delay\""
+    command = "sh .criteria/workflows/pr_review/scripts/pr-status.sh"
   }
-  timeout = "5m"
-  outcome "success" { next = "watch_pr_gate" }
-  outcome "failure" { next = "triage_pr_feedback" }
+  timeout = "120s"
+  outcome "success" { next = "route_pr_status" }
+  outcome "failure" { next = "failed" }
 }
 
-step "watch_pr_gate" {
+switch "route_pr_status" {
+  condition {
+    match = steps.pr_status_check.stdout == "merged"
+    next  = step.sync_base
+  }
+  condition {
+    match = steps.pr_status_check.stdout == "ready"
+    next  = step.cold_review
+  }
+  condition {
+    match = steps.pr_status_check.stdout == "threads_open"
+    next  = step.cold_review
+  }
+  condition {
+    match = steps.pr_status_check.stdout == "pending"
+    next  = step.pr_backoff
+  }
+  condition {
+    match = steps.pr_status_check.stdout == "changes_requested"
+    next  = step.execute_pr_feedback
+  }
+  condition {
+    match = steps.pr_status_check.stdout == "checks_failed"
+    next  = state.failed
+  }
+  default { next = state.failed }
+}
+
+step "pr_backoff" {
   target = adapter.shell.default
   input {
-    command = "set -euo pipefail; exec 2>&1; branch=$(git branch --show-current); pr_number=$(gh pr view \"$branch\" --json number --jq '.number'); echo \"pr_number=$pr_number\"; pr_state=$(gh pr view \"$pr_number\" --json state --jq '.state'); echo \"pr_state=$pr_state\"; if [ \"$pr_state\" = \"MERGED\" ]; then echo \"checks=already_merged\"; echo \"ready_to_merge=true\"; exit 0; fi; checks_rc=0; checks_json=$(gh pr checks \"$pr_number\" --required --json bucket,name,state,workflow 2>&1) || checks_rc=$?; if [ \"$checks_rc\" -eq 8 ]; then echo \"checks=pending\"; printf '%s\n' \"$checks_json\" | jq -r 'group_by(.bucket) | map([.[0].bucket, (length|tostring)] | join(\"=\")) | .[]'; exit 1; fi; if [ \"$checks_rc\" -ne 0 ]; then echo \"checks=failed\"; printf '%s\n' \"$checks_json\"; exit 1; fi; echo \"checks=passed\"; printf '%s\n' \"$checks_json\" | jq -r 'group_by(.bucket) | map([.[0].bucket, (length|tostring)] | join(\"=\")) | .[]'; owner=$(gh repo view --json owner --jq '.owner.login'); repo=$(gh repo view --json name --jq '.name'); review_decision=$(gh pr view \"$pr_number\" --json reviewDecision --jq '.reviewDecision // \"REVIEW_REQUIRED\"'); review_threads_json=$(gh api graphql -f query='query($owner:String!, $repo:String!, $number:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$number){reviewThreads(first:100){totalCount pageInfo{hasNextPage endCursor} nodes{isResolved isOutdated}}}}}' -f owner=\"$owner\" -f repo=\"$repo\" -F number=\"$pr_number\"); review_threads_total=$(printf '%s' \"$review_threads_json\" | jq -r '.data.repository.pullRequest.reviewThreads.totalCount'); review_threads_has_next_page=$(printf '%s' \"$review_threads_json\" | jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage'); unresolved_threads=$(printf '%s' \"$review_threads_json\" | jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select((.isOutdated|not) and (.isResolved|not))] | length'); echo \"review_decision=$review_decision\"; echo \"review_threads_total=$review_threads_total\"; echo \"review_threads_has_next_page=$review_threads_has_next_page\"; echo \"unresolved_threads=$unresolved_threads\"; if [ \"$review_decision\" = \"APPROVED\" ] && [ \"$review_threads_has_next_page\" = \"false\" ] && [ \"$unresolved_threads\" -eq 0 ]; then echo \"ready_to_merge=true\"; exit 0; fi; if [ \"$review_threads_has_next_page\" = \"true\" ]; then echo \"review_threads_complete=false\"; fi; echo \"ready_to_merge=false\"; exit 1"
+    command = "echo 'CI still pending; sleeping 60s before re-poll'; sleep 60"
   }
-  timeout = "45m"
-  outcome "success" { next = "merge_pr_and_sync_main" }
-  outcome "failure" { next = "triage_pr_feedback" }
+  timeout = "3m"
+  outcome "success" { next = "pr_status_check" }
+  outcome "failure" { next = "pr_status_check" }
 }
 
-step "triage_pr_feedback" {
-  target = adapter.copilot.pr_manager
+# ── Cold PR review ────────────────────────────────────────────────────────────
+# External-perspective review before requesting human GitHub approval.
+# Posts a recommendation comment; cannot approve or merge directly.
+
+step "cold_review" {
+  target = adapter.copilot.cold_reviewer
   allow_tools = [
     "*",
   ]
   input {
-    prompt = "PR watch gate reported unresolved feedback or failed checks.\n\nUse this gate output as context:\n--- watch_pr_gate output ---\n${steps.watch_pr_gate.stdout}\n--- end ---\n\nHARD RULES:\n1. DO NOT run `gh pr merge` — the workflow's merge_pr_and_sync_main step owns merging. Self-merging breaks the workflow and bypasses required-resolution policy.\n2. The repository requires every review thread to be resolved before merge. You MUST drive every unresolved (and not-outdated) thread to a resolved state.\n\nFirst: `gh pr view <num> --json state` — if state is MERGED, return RESULT: merged immediately.\n\nOtherwise enumerate every review thread via the GraphQL API (reviewThreads.nodes) and process each one where isResolved=false AND isOutdated=false:\n  • If the comment is already addressed by code on the branch or by reviewer notes in the workstream file: reply on the thread with concrete evidence (commit SHA, file:line, or quoted reviewer note) and resolve the thread (resolveReviewThread mutation, or `gh api graphql` with resolveReviewThread).\n  • If the comment requires NEW code changes you cannot resolve by citation: leave the thread unresolved, return RESULT: needs_executor so the executor can fix it. Do not resolve threads you have not addressed.\n  • If a check (CI) failed: investigate via `gh pr checks` / `gh run view`. Reply on related threads with the diagnosis. If a code fix is needed, return RESULT: needs_executor.\n\nAfter processing, re-query reviewThreads to confirm zero unresolved+not-outdated threads remain before returning recheck.\n\nReturn values:\n  RESULT: merged          — PR is already MERGED on GitHub.\n  RESULT: needs_executor  — code changes are required (unresolved threads remain that need fixes, or checks failed needing a fix).\n  RESULT: recheck         — you replied to and resolved every addressable thread; gate should re-poll after backoff.\n  RESULT: watch_pr        — checks still running, no review action available yet.\n  RESULT: failure         — unrecoverable error.\n\nEnd your final line with exactly one of:\nRESULT: merged\nRESULT: needs_executor\nRESULT: recheck\nRESULT: watch_pr\nRESULT: failure"
+    prompt = "Review the open PR for ${var.workstream_file}. PR status gate emitted: `${steps.pr_status_check.stdout}`\n\nContext from pr-status.sh:\n--- stderr ---\n${steps.pr_status_check.stderr}\n--- end ---\n\nFor each unresolved (and !outdated) review thread, either reply with citation evidence and resolve via `sh .criteria/workflows/pr_review/scripts/resolve-thread.sh <thread_id>`, or leave it open and request changes.\n\nIf the diff meets the bar and all addressable threads are resolved: post a recommendation comment via `gh pr comment <pr_number> --body \"<your summary>\"` summarizing what you verified and that you recommend approval. Then emit RESULT: approve.\n\nDO NOT run `gh pr review --approve` — branch protection forbids self-approval.\nDO NOT run `gh pr merge` — the workflow handles merge after human approval.\n\nEnd your final message with exactly one of:\nRESULT: approve\nRESULT: changes_requested\nRESULT: failure"
   }
-  outcome "merged"         { next = "merge_pr_and_sync_main" }
-  outcome "needs_executor" { next = "execute_pr_feedback" }
-  outcome "recheck"        { next = "watch_pr_backoff" }
-  outcome "watch_pr"       { next = "watch_pr_backoff" }
-  outcome "needs_review"   { next = "watch_pr_backoff" }
-  outcome "needs_approval" { next = "watch_pr_backoff" }
-  outcome "failure"        { next = "failed" }
+  outcome "approve"           { next = "route_after_cold_review" }
+  outcome "changes_requested" { next = "execute_pr_feedback" }
+  outcome "failure"           { next = "failed" }
 }
+
+# ── Approval routing ──────────────────────────────────────────────────────────
+
+switch "route_after_cold_review" {
+  condition {
+    match = var.require_workflow_approval == "true"
+    next  = approval.human_approval_required
+  }
+  default { next = step.await_github_approval }
+}
+
+approval "human_approval_required" {
+  approvers = ["operator"]
+  reason    = "The cold reviewer recommends approval and has posted a summary comment on the PR. Go to GitHub, review the comment, click Approve on the PR, then approve this node."
+  outcome "approved" { next = "await_github_approval" }
+  outcome "rejected" { next = "failed" }
+}
+
+# ── Async GitHub approval poll ────────────────────────────────────────────────
+# The cold reviewer has posted its recommendation. Just click Approve on GitHub
+# whenever you're ready — no workflow babysitting needed.
+
+step "await_github_approval" {
+  target = adapter.shell.default
+  input {
+    command = "set -eu; branch=$(git branch --show-current); pr_num=$(gh pr view \"$branch\" --json number --jq '.number'); decision=$(gh pr view \"$pr_num\" --json reviewDecision --jq '.reviewDecision // \"NONE\"'); echo \"review_decision=$decision\"; if [ \"$decision\" = \"APPROVED\" ]; then exit 0; fi; echo 'Waiting for human to click Approve on GitHub...'; exit 1"
+  }
+  timeout = "5m"
+  outcome "success" { next = "merge_pr_and_sync_base" }
+  outcome "failure" { next = "backoff_await_approval" }
+}
+
+step "backoff_await_approval" {
+  target = adapter.shell.default
+  input {
+    command = "echo 'not yet approved; sleeping 120s'; sleep 120"
+  }
+  timeout = "3m"
+  outcome "success" { next = "await_github_approval" }
+  outcome "failure" { next = "await_github_approval" }
+}
+
+# ── PR feedback from human reviewers ─────────────────────────────────────────
 
 step "execute_pr_feedback" {
   target = adapter.copilot.executor
@@ -262,7 +416,7 @@ step "execute_pr_feedback" {
     "*",
   ]
   input {
-    prompt = "PR manager determined code changes are required from review comments or check failures.\n\nUse this gate output as context:\n--- watch_pr_gate output ---\n${steps.watch_pr_gate.stdout}\n--- end ---\n\nFor every unresolved (and not-outdated) review thread that requires a code change:\n  1. Implement the fix.\n  2. Update ${var.workstream_file} notes with the remediation.\n  3. Commit and push.\n  4. Reply on the thread citing the fix (commit SHA + file:line) and resolve the thread via the GraphQL resolveReviewThread mutation (`gh api graphql -f query='mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{isResolved}}}' -f id=<thread_id>`).\n\nThe repository requires zero unresolved threads before merge. Do not leave any addressed thread unresolved. Do not resolve threads you have not actually addressed."
+    prompt = "PR requires code changes from review comments or failed checks.\n\nPR status context:\n--- pr_status_check stderr ---\n${steps.pr_status_check.stderr}\n--- end ---\n\nFor every unresolved (and !outdated) review thread that requires a code change:\n  1. Implement the fix.\n  2. Update ${var.workstream_file} notes with the remediation.\n  3. Commit and push.\n  4. Reply on the thread citing the fix (commit SHA + file:line) and resolve via: gh api graphql -f query='mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{isResolved}}}' -f id=<thread_id>\n\nEnd your final line with exactly one of:\nRESULT: needs_review\nRESULT: failure"
   }
   outcome "success"        { next = "verify" }
   outcome "needs_review"   { next = "verify" }
@@ -270,17 +424,29 @@ step "execute_pr_feedback" {
   outcome "failure"        { next = "failed" }
 }
 
-step "merge_pr_and_sync_main" {
+# ── Merge and sync ────────────────────────────────────────────────────────────
+
+step "merge_pr_and_sync_base" {
   target = adapter.shell.default
   input {
-    command = "set -uo pipefail; exec 2>&1; branch=$(git branch --show-current); pr_state=\"\"; pr_number=\"\"; if [ -n \"$branch\" ] && [ \"$branch\" != \"main\" ]; then pr_view=$(gh pr view \"$branch\" --json number,state 2>/dev/null || true); if [ -n \"$pr_view\" ]; then pr_number=$(printf '%s' \"$pr_view\" | jq -r '.number // empty'); pr_state=$(printf '%s' \"$pr_view\" | jq -r '.state // empty'); fi; fi; echo \"branch=$branch pr_number=$${pr_number:-unknown} pr_state=$${pr_state:-unknown}\"; if [ -n \"$pr_number\" ] && [ \"$pr_state\" != \"MERGED\" ] && [ \"$pr_state\" != \"CLOSED\" ]; then gh pr merge \"$pr_number\" --squash --delete-branch || { echo 'merge command failed'; exit 1; }; else echo 'skip_merge=true'; fi; git fetch origin main || exit 1; git checkout main || exit 1; git pull --ff-only origin main || exit 1; echo \"synced_main=true merged_pr=$${pr_number:-unknown}\"; exit 0"
+    command = "set -uo pipefail; exec 2>&1; branch=$(git branch --show-current); pr_state=''; pr_number=''; if [ -n \"$branch\" ] && [ \"$branch\" != '${var.base_branch}' ]; then pr_view=$(gh pr view \"$branch\" --json number,state 2>/dev/null || true); if [ -n \"$pr_view\" ]; then pr_number=$(printf '%s' \"$pr_view\" | jq -r '.number // empty'); pr_state=$(printf '%s' \"$pr_view\" | jq -r '.state // empty'); fi; fi; echo \"branch=$branch pr_number=${pr_number:-unknown} pr_state=${pr_state:-unknown}\"; if [ -n \"$pr_number\" ] && [ \"$pr_state\" != 'MERGED' ] && [ \"$pr_state\" != 'CLOSED' ]; then gh pr merge \"$pr_number\" --squash --delete-branch || { echo 'merge command failed'; exit 1; }; else echo 'skip_merge=true'; fi; git fetch origin '${var.base_branch}' || exit 1; git checkout '${var.base_branch}' || exit 1; git pull --ff-only origin '${var.base_branch}' || exit 1; echo \"synced_base=${var.base_branch} merged_pr=${pr_number:-unknown}\"; exit 0"
   }
   timeout = "5m"
   outcome "success" { next = "done" }
   outcome "failure" { next = "done" }
 }
 
-# ── Terminal states ────────────────────────────────────────────────────────
+step "sync_base" {
+  target = adapter.shell.default
+  input {
+    command = "set -eu; git fetch origin '${var.base_branch}'; git checkout '${var.base_branch}'; git pull --ff-only origin '${var.base_branch}'; echo synced_base='${var.base_branch}'"
+  }
+  timeout = "2m"
+  outcome "success" { next = "done" }
+  outcome "failure" { next = "done" }
+}
+
+# ── Terminal states ───────────────────────────────────────────────────────────
 
 state "done" {
   terminal = true

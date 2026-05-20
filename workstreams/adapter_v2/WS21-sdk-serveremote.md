@@ -1,6 +1,6 @@
 # WS21 — `sdk.serveRemote(...)` across TypeScript / Python / Go SDKs
 
-**Phase:** Adapter v2 · **Track:** Remote · **Owner:** Workstream executor · **Depends on:** [WS20](WS20-remote-environment-and-shim.md), [WS23](WS23-typescript-sdk-v2.md) (skeleton), [WS24](WS24-python-sdk-v2.md) (skeleton), [WS25](WS25-go-sdk-v1.md) (skeleton).
+**Phase:** Adapter v2 · **Track:** Remote · **Owner:** Workstream executor · **Depends on:** [WS20](WS20-remote-environment-and-shim.md), [WS23](WS23-typescript-sdk-v2.md) (skeleton), [WS24](WS24-python-sdk-v2.md) (skeleton), [WS25](WS25-go-sdk-v1.md) (skeleton). · **Base branch:** `adapter-v2`
 
 ## Context
 
