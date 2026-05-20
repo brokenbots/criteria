@@ -304,12 +304,35 @@ func TestFileset_PathIsFile_ReturnsError(t *testing.T) {
 }
 
 // Test 13: path escaping WorkflowDir returns a confinement error.
-func TestFileset_PathEscape_ReturnsError(t *testing.T) {
+// Test 13a: fileset() reports "does not exist" when the escaped path does not exist.
+func TestFileset_PathEscape_NonExistent(t *testing.T) {
 	dir := t.TempDir()
 
 	_, err := callFileset(fsOpts(dir), "../escape", "*")
 	if err == nil {
-		t.Fatal("expected confinement error; got none")
+		t.Fatal("expected error for non-existent escape path; got none")
+	}
+	if !strings.Contains(err.Error(), "does not exist") {
+		t.Errorf("error %q should mention 'does not exist'", err.Error())
+	}
+}
+
+// Test 13b: fileset() still reports "escapes workflow directory" when the
+// escaped path is a directory that actually exists outside the workflow dir.
+func TestFileset_PathEscape_ExistingDir(t *testing.T) {
+	parent := t.TempDir()
+	workflowDir := filepath.Join(parent, "workflow")
+	if err := os.MkdirAll(workflowDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	outsideDir := filepath.Join(parent, "outside")
+	if err := os.MkdirAll(outsideDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := callFileset(fsOpts(workflowDir), "../outside", "*")
+	if err == nil {
+		t.Fatal("expected confinement error for existing dir outside workflow dir; got none")
 	}
 	if !strings.Contains(err.Error(), "escapes workflow directory") {
 		t.Errorf("error %q should mention 'escapes workflow directory'", err.Error())

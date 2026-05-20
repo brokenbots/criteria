@@ -50,10 +50,35 @@ func TestFileFunction_ReadFile(t *testing.T) {
 }
 
 // Test 2: file() errors when path escapes workflow directory.
-func TestFileFunction_PathEscape(t *testing.T) {
+// Test 2a: file() reports "no such file" when the escaped path does not exist.
+// The confinement check is bypassed in favour of a clearer error — a wrong
+// number of "../" segments should look like a missing file, not a security
+// violation.
+func TestFileFunction_PathEscape_NonExistent(t *testing.T) {
 	_, diags := evalExpr(t, `file("../../etc/passwd")`, opts(testdataDir))
 	if !diags.HasErrors() {
-		t.Fatal("expected error for path escape; got none")
+		t.Fatal("expected error for non-existent escape path; got none")
+	}
+	if !strings.Contains(diags.Error(), "no such file") {
+		t.Errorf("error message %q should mention 'no such file'", diags.Error())
+	}
+}
+
+// Test 2b: file() still reports "escapes workflow directory" when the escaped
+// path refers to a file that actually exists outside the workflow directory.
+func TestFileFunction_PathEscape_ExistingFile(t *testing.T) {
+	parent := t.TempDir()
+	workflowDir := filepath.Join(parent, "workflow")
+	if err := os.MkdirAll(workflowDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	secret := filepath.Join(parent, "secret.txt")
+	if err := os.WriteFile(secret, []byte("secret"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, diags := evalExpr(t, `file("../secret.txt")`, opts(workflowDir))
+	if !diags.HasErrors() {
+		t.Fatal("expected confinement error for existing file outside workflow dir; got none")
 	}
 	if !strings.Contains(diags.Error(), "escapes workflow directory") {
 		t.Errorf("error message %q should mention 'escapes workflow directory'", diags.Error())
@@ -348,10 +373,33 @@ func TestFileFunction_AllowedPathsEnvVarRelative(t *testing.T) {
 }
 
 // Test 18 (R7+R6): fileexists() confinement error says "fileexists()" not "file()".
-func TestFileExistsFunction_PathEscape(t *testing.T) {
-	_, diags := evalExpr(t, `fileexists("../../etc/passwd")`, opts(testdataDir))
+// Test 16a: fileexists() returns false (no error) when the escaped path does
+// not exist — consistent with the non-escaped missing-file behaviour.
+func TestFileExistsFunction_PathEscape_NonExistent(t *testing.T) {
+	val, diags := evalExpr(t, `fileexists("../../etc/passwd")`, opts(testdataDir))
+	if diags.HasErrors() {
+		t.Fatalf("expected false with no error for non-existent escape path; got: %s", diags.Error())
+	}
+	if val.IsKnown() && val.True() {
+		t.Error("expected fileexists() to return false for non-existent escape path")
+	}
+}
+
+// Test 16b: fileexists() still returns a confinement error when the escaped
+// path refers to a file that actually exists outside the workflow directory.
+func TestFileExistsFunction_PathEscape_ExistingFile(t *testing.T) {
+	parent := t.TempDir()
+	workflowDir := filepath.Join(parent, "workflow")
+	if err := os.MkdirAll(workflowDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	secret := filepath.Join(parent, "secret.txt")
+	if err := os.WriteFile(secret, []byte("secret"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, diags := evalExpr(t, `fileexists("../secret.txt")`, opts(workflowDir))
 	if !diags.HasErrors() {
-		t.Fatal("expected confinement error; got none")
+		t.Fatal("expected confinement error for existing file outside workflow dir; got none")
 	}
 	msg := diags.Error()
 	if !strings.Contains(msg, "fileexists()") {

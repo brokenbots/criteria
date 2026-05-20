@@ -283,6 +283,9 @@ func fileExistsResolved(raw string, opts FunctionOptions) (bool, error) {
 
 	abs := filepath.Clean(filepath.Join(opts.WorkflowDir, raw))
 	if err := checkConfinement("fileexists()", raw, abs, opts.WorkflowDir, opts.AllowedPaths); err != nil {
+		if _, statErr := os.Stat(abs); os.IsNotExist(statErr) {
+			return false, nil
+		}
 		return false, err
 	}
 
@@ -420,6 +423,9 @@ func resolveConfinedDir(raw, base string, allowed []string) (string, error) {
 	abs := filepath.Clean(filepath.Join(base, raw))
 
 	if err := checkConfinement("fileset()", raw, abs, base, allowed); err != nil {
+		if _, statErr := os.Stat(abs); os.IsNotExist(statErr) {
+			return "", fmt.Errorf("fileset(): %q does not exist", raw)
+		}
 		return "", err
 	}
 
@@ -507,7 +513,13 @@ func resolveConfinedPath(raw, base string, allowed []string) (string, error) {
 	abs := filepath.Clean(filepath.Join(base, raw))
 
 	// Check confinement on the pre-symlink cleaned path (catches .. escapes).
+	// If confinement fails but the path doesn't exist, report "no such file"
+	// so callers with wrong ../ depth get a useful error instead of a
+	// misleading "escapes workflow directory" message.
 	if err := checkConfinement("file()", raw, abs, base, allowed); err != nil {
+		if _, statErr := os.Stat(abs); os.IsNotExist(statErr) {
+			return "", mapOSError(raw, statErr)
+		}
 		return "", err
 	}
 
