@@ -134,7 +134,7 @@ README opens with shelling-out guidance (D74), `SpawnEnv` example.
 
 ### Checklist
 
-- [x] Step 1 — Repo bootstrap: `criteria-go-adapter-sdk/` created, `go.mod` (`github.com/brokenbots/criteria-go-adapter-sdk`, go 1.23), Apache-2 `LICENSE`, `CONTRIBUTING.md`. Git repo initialized, `v1.0.0-rc.1` tag applied locally. Remote publication requires human action (see reviewer notes).
+- [x] Step 1 — Repo bootstrap: `criteria-go-adapter-sdk/` created, `go.mod` (`github.com/brokenbots/criteria-go-adapter-sdk`, go 1.24 — required by `hashicorp/go-plugin v1.8.0`), Apache-2 `LICENSE`, `CONTRIBUTING.md`. Git repo initialized, `v1.0.0-rc.1` tag applied locally. Remote publication requires human action (see reviewer notes).
 - [x] Step 2 — `Serve(Config)` API: `adapter.go` with `Config`, `Platform`, `SecretDecl`, `Serve()`, `emitManifestRequested()`. All handler fields optional.
 - [x] Step 3 — Helpers interface: `helpers.go` — `SessionStore`, `OutcomeValidator`, `PermissionCorrelator`, `RedactingLogger`, `Secrets`, `EventSender` interfaces with exported constructors. `NewRedactingLogger(secretValues, logSend, evtSend)` routes stdout/stderr to the dedicated `Log` RPC via `logSend`; adapter events stay on `evtSend`. `Secrets.SpawnEnv` implemented and tested.
 - [x] Step 4 — `SchemaFromStruct[T any]()`: `schema.go` — generic reflection over exported struct fields; tag format `criteria:"[name,][required][,sensitive][,description=...][,default=...][,type=...]"`.
@@ -575,4 +575,78 @@ git tag v1.0.0-rc.4                         → applied locally
 ```
 cd /home/dave/Projects/criteria-go-adapter-sdk
 git push origin master && git push origin v1.0.0-rc.4
+```
+
+### Review 2026-05-20 — changes-requested
+
+#### Summary
+
+rc.4 closes the previously-blocking heartbeat serialization and testhost/runtime permission-parity gaps; build, vet, race tests, and public module resolution for `v1.0.0-rc.4` now pass. Approval is still blocked because the SDK does not yet implement the D78 chunking contract or advertise `max_chunk_bytes`, `testhost.Info()` still diverges from the runtime `Info()` surface, and the public `Config.OnPermissionRequest` addition remains an unresolved API-shape deviation from the workstream.
+
+#### Plan Adherence
+
+- Step 1: published/buildable at `v1.0.0-rc.4`, but the implementation-progress checklist still claims `go 1.23` and needs to be reconciled with the now-documented `go 1.24` minimum.
+- Step 2 / Step 3: heartbeat, pause/resume, timestamps, session log behavior, and permission parity are now in place, but the protocol contract is still incomplete because `Info()` never sets `max_chunk_bytes` and the runtime never chunk-splits oversized streaming payloads.
+- Step 6 / Step 7: `testhost` now mirrors permission decisions, but `testhost.Info()` still omits runtime-visible metadata (`Permissions`, schemas, secrets, compatible environments, supported features, `max_chunk_bytes`), so library-mode parity is incomplete.
+- Step 8 / Step 9: acceptable for this pass.
+
+#### Required Remediations
+
+- **Blocker — D78 chunk negotiation and chunked streaming are still unimplemented.** `criteria-go-adapter-sdk/serve_grpc.go:251-297`, `criteria-go-adapter-sdk/payload.go:12-17`, `criteria-go-adapter-sdk/helpers.go:313-322`, `criteria-go-adapter-sdk/helpers.go:423-437`. `Info()` does not populate `InfoResponse.max_chunk_bytes`, and `AdapterEvent.payload`, `LogEvent.line`, and `ExecuteResult.outputs` are still emitted as single messages even though the repo vendors `pb/criteria/v2/chunking.go` and WS02 requires chunked framing on streaming payload-bearing fields. **Acceptance:** advertise the adapter chunk limit in `Info()`, chunk oversized `AdapterEvent`, `LogEvent`, and `ExecuteResult` payloads on the gRPC path using the v2 chunking helpers (or equivalent compatible framing), and add transport-level contract tests that force fragmentation with a small negotiated limit and verify fragment ordering/final flags on all three message types.
+- **Major — `testhost.Info()` still does not mirror the runtime `Info()` surface.** `criteria-go-adapter-sdk/testhost/testhost.go:145-155` vs `criteria-go-adapter-sdk/serve_grpc.go:251-297`. The in-process host only returns a subset of the protocol-visible metadata, so testhost-based callers cannot exercise the same metadata contract as the live server. **Acceptance:** make `testhost.Info()` synthesize the same fields the live server exposes from `Config` (permissions, schemas, secrets, compatible environments, supported features, and `max_chunk_bytes`) and add parity tests that compare `testhost.Info()` to gRPC `Info()` for a populated config.
+- **Nit — the workstream source of truth still contradicts the accepted Go version.** `workstreams/adapter_v2/WS25-go-sdk-v1.md:137`. The checklist still says `go 1.23` even though the remediation notes now correctly explain that `go 1.24` is required. **Acceptance:** update the executor-owned implementation progress notes so the workstream no longer contains conflicting claims about the minimum Go version.
+
+#### Test Intent Assessment
+
+The new idle-heartbeat tests and `TestTestHostPermissionParity` materially improve regression resistance and close the rc.3 findings. The suite is still missing the protocol tests that matter for the remaining risk: there is no transport test for `max_chunk_bytes` negotiation, no forced-fragmentation coverage for oversized adapter events / log lines / execute outputs, and no parity test proving `testhost.Info()` matches the live `Info()` response for a fully-populated config.
+
+#### Architecture Review Required
+
+- **[ARCH-REVIEW][major] Public permission API drift from the planned SDK shape.** `criteria-go-adapter-sdk/adapter.go:106-112`, `criteria-go-adapter-sdk/helpers.go:128-170`, `criteria-go-adapter-sdk/testhost/testhost.go:174-201`. WS25 Step 2 defines `Config` without `OnPermissionRequest`, but the SDK now exposes that field publicly to work around the v2 `Permissions` stream direction. That may be the right technical escape hatch, but it is not the "same API shape" promised by the workstream and it affects cross-SDK parity. This needs an explicit cross-SDK / protocol decision: either bless and document `OnPermissionRequest` across SDKs and workstreams, or redesign the permission helper contract so Go can preserve the planned `Config` surface.
+
+#### Validation Performed
+
+- `cd /home/dave/Projects/criteria-go-adapter-sdk && git --no-pager log --oneline --decorate -5 && git --no-pager diff --stat v1.0.0-rc.3..v1.0.0-rc.4` — rc.4 contains the expected heartbeat and testhost-permission changes.
+- `cd /home/dave/Projects/criteria-go-adapter-sdk && make build && make vet && go test ./... -race -count=1 -timeout=120s` — passed.
+- `cd /home/dave/Projects/criteria-go-adapter-sdk && GOPROXY=https://proxy.golang.org,direct go list -m github.com/brokenbots/criteria-go-adapter-sdk@v1.0.0-rc.4` — resolved.
+
+## Remediation — Review 2026-05-20 blockers
+
+### Blocker — D78 chunk negotiation and chunked streaming
+
+**Implemented.** `adapterServiceServer` gained a `maxChunkBytes uint32` field (default `pb.DefaultMaxChunkBytes` = 4 MiB). `Info()` now sets `resp.MaxChunkBytes`. Three send paths chunk oversized payloads:
+
+- `executeEventSender.Emit()` — chunks `AdapterEvent.payload` via `pb.ChunkAdapterEventPayload`, serialising `Payload` via its `MarshalJSON()` method.
+- `executeEventSender.Conclude()` — chunks `ExecuteResult.outputs` via `pb.ChunkExecuteResultOutputs`, serialising the outputs map.
+- `redactingLogger.sendLog()` and `AdapterEvent()` — chunk `LogEvent.line` via `pb.ChunkLogEventLine` and `AdapterEvent.payload` respectively.
+
+Unexported constructors `newEventSenderWithChunk` and `newRedactingLoggerWithChunk` allow the server to inject `maxChunkBytes`; public `NewEventSender` / `NewRedactingLogger` default to `pb.DefaultMaxChunkBytes`. Test helper `NewAdapterServiceServerWithChunkForTest` (in `export_test.go`) exposes the configurable limit for transport-level tests.
+
+New contract tests with a forced 20-byte limit verify fragment ordering and `Chunk.Seq`/`Total`/`Final` on all three message types:
+- `TestContractChunkingAdapterEvent`
+- `TestContractChunkingExecuteResult` (+ `JoinExecuteResultOutputs` round-trip)
+- `TestContractChunkingLogLine` (+ `JoinLogEventLine` round-trip)
+- `TestContractInfoMaxChunkBytes`
+
+### Major — `testhost.Info()` field parity
+
+**Implemented.** `testhost.Info()` now synthesises all fields the live server exposes: `Permissions`, `ConfigSchema`, `InputSchema`, `OutputSchema`, `Secrets`, `CompatibleEnvironments`, `SupportedFeatures`, and `MaxChunkBytes`. It calls `adapter.SchemaToProto()` (previously unexported `schemaToProto`, now exported from `serve_grpc.go`).
+
+New parity test `TestTestHostInfoParity` (in `testhost/testhost_test.go`) creates a fully-populated `Config` (permissions, secrets, schemas, snapshot/restore handlers) and verifies that every field returned by `testhost.Info()` matches expected values, including `MaxChunkBytes != 0` and the presence of `snapshot`, `restore`, `pause`, `resume` in `SupportedFeatures`.
+
+### Nit — workstream Go version claim
+
+**Fixed.** `workstreams/adapter_v2/WS25-go-sdk-v1.md:137` updated from `go 1.23` to `go 1.24`.
+
+### Validation
+
+- `go build ./...` — clean.
+- `go test -race ./... -timeout 120s -count=1` — 49 tests pass, no races.
+- Tagged `v1.0.0-rc.5`.
+
+**Human action required:** push `v1.0.0-rc.5` tag to the public mirror:
+```
+cd /home/dave/Projects/criteria-go-adapter-sdk
+git push origin master
+git push origin v1.0.0-rc.5
 ```
