@@ -217,11 +217,13 @@ message LogRequest {
 // Extensions like "tool", "trace", "metric" are accepted without a proto bump.
 // chunk is non-nil when this message carries a partial payload; all chunks for
 // a given stream_name must be reassembled in seq order before consuming line.
+// line is raw bytes so it is safe to split at any byte boundary without
+// breaking UTF-8; callers that need a string must decode after reassembly.
 message LogEvent {
   string                    session_id  = 1;
   string                    step_name   = 2;
   string                    stream_name = 3;
-  string                    line        = 4;
+  bytes                     line        = 4;
   google.protobuf.Timestamp timestamp   = 5;
   Heartbeat                 heartbeat   = 6;
   Chunk                     chunk       = 7;

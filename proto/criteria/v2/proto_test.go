@@ -196,7 +196,7 @@ func TestLogEvent_RoundTrip(t *testing.T) {
 		SessionId:  "sess-1",
 		StepName:   "step-a",
 		StreamName: "stdout",
-		Line:       "hello world\n",
+		Line:       []byte("hello world\n"),
 		Timestamp:  timestamppb.Now(),
 	}
 	got := roundTrip(t, msg)
@@ -217,7 +217,7 @@ func TestLogEvent_WithChunk_RoundTrip(t *testing.T) {
 		SessionId:  "sess-1",
 		StepName:   "step-a",
 		StreamName: "stdout",
-		Line:       "partial line segment",
+		Line:       []byte("partial line segment"),
 		Chunk:      &criteriav2.Chunk{Seq: 0, Total: 3, Final: false},
 	}
 	got := roundTrip(t, msg)
@@ -458,13 +458,13 @@ func TestExecuteResult_ChunkedOutputs_FullRoundTrip(t *testing.T) {
 }
 
 // TestLogEvent_ChunkedLine_FullRoundTrip proves the end-to-end chunked
-// encoding for LogEvent.line: a large line string is split into fragment
+// encoding for LogEvent.line: a large payload is split into fragment
 // LogEvent messages, each fragment is proto-marshalled and unmarshalled as it
-// would arrive on the Log stream, and the original line is reconstructable
+// would arrive on the Log stream, and the original bytes are reconstructable
 // from those messages alone.
 func TestLogEvent_ChunkedLine_FullRoundTrip(t *testing.T) {
-	// Build a line longer than the chunk size so multiple fragments are required.
-	originalLine := "this is a very long log line that must be split across multiple stream messages for chunked transport"
+	// Build a payload longer than the chunk size so multiple fragments are required.
+	originalLine := []byte("this is a very long log line that must be split across multiple stream messages for chunked transport")
 
 	const chunkSize = 20
 	base := &criteriav2.LogEvent{
@@ -498,28 +498,27 @@ func TestLogEvent_ChunkedLine_FullRoundTrip(t *testing.T) {
 	assert.Equal(t, originalLine, joined)
 }
 
-// TestLogEvent_ChunkedLine_UTF8 proves that ChunkLogEventLine splits at rune
-// boundaries, so every fragment is valid UTF-8 and proto.Marshal succeeds even
-// when a multibyte rune would fall on a raw-byte chunk boundary.
-func TestLogEvent_ChunkedLine_UTF8(t *testing.T) {
-	// "a🙂b" — the emoji is 4 bytes; with chunkSize=2 a byte-level split would
-	// produce an invalid UTF-8 fragment starting at byte offset 2.
-	originalLine := "a🙂b"
+// TestLogEvent_ChunkedLine_BinaryContent proves that ChunkLogEventLine handles
+// arbitrary bytes (including sequences that would be invalid UTF-8) and that
+// the original content is faithfully reconstructed after split/marshal/unmarshal/join.
+func TestLogEvent_ChunkedLine_BinaryContent(t *testing.T) {
+	// Build a payload containing arbitrary bytes, including a 4-byte sequence
+	// that spans a chunk boundary at chunk size 2.
+	originalLine := []byte{'a', 0xF0, 0x9F, 0x99, 0x82, 'b'} // 'a' + 4-byte emoji bytes + 'b'
 	const chunkSize = 2
 	base := &criteriav2.LogEvent{
-		SessionId:  "sess-utf8",
+		SessionId:  "sess-binary",
 		StepName:   "log",
 		StreamName: "stdout",
 		Line:       originalLine,
 	}
 	fragments := criteriav2.ChunkLogEventLine(base, chunkSize)
-	require.Greater(t, len(fragments), 1, "emoji line must produce multiple fragments")
+	require.Greater(t, len(fragments), 1, "binary line must produce multiple fragments")
 
 	reconstituted := make([]*criteriav2.LogEvent, len(fragments))
 	for i, frag := range fragments {
-		// Every fragment must marshal without "invalid UTF-8" error.
 		b, merr := proto.Marshal(frag)
-		require.NoError(t, merr, "fragment[%d] must marshal with valid UTF-8", i)
+		require.NoError(t, merr, "fragment[%d] must marshal", i)
 		var decoded criteriav2.LogEvent
 		require.NoError(t, proto.Unmarshal(b, &decoded))
 		require.NotEmpty(t, decoded.Line, "fragment[%d] line must be non-empty", i)
@@ -576,16 +575,8 @@ func TestChunkedProtocol_NegotiationAndSplit(t *testing.T) {
 		reassembled = append(reassembled, p...)
 	}
 	assert.Equal(t, payload, reassembled)
-
-	// Wrap the first fragment in an AdapterEvent and verify proto round-trip.
-	event := &criteriav2.AdapterEvent{
-		EventKind:   "data",
-		Chunk:       chunks[0],
-		PayloadJson: payloads[0],
-	}
-	got := roundTrip(t, event)
-	assert.True(t, proto.Equal(event, got))
-	assert.Equal(t, payloads[0], got.PayloadJson)
+	// Full end-to-end chunked AdapterEvent round-trip (split → marshal → unmarshal → join) is
+	// exercised in TestAdapterEvent_ChunkedPayload_FullRoundTrip.
 }
 
 // TestReservedFields_OpenSessionRequest verifies the reserved range in

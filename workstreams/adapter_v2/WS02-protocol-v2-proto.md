@@ -434,3 +434,23 @@ The test suite now proves the intended contract, not just successful serializati
 - `go test -race ./proto/criteria/v2` — passed.
 - `go vet ./... && (cd sdk && go vet ./...) && (cd workflow && go vet ./...)` — passed.
 - `make ci` — passed in this environment.
+
+### Review comment remediation 2026-05-19-03
+
+Six inline comments from reviewer `handcaught` addressed:
+
+1. **`LogEvent.line` → `bytes`** (`adapter.proto:224`, thread `PRRT_kwDOSOBb1s6Cl2IO`): Changed `string line = 4` to `bytes line = 4` in `LogEvent`. `bytes` is the natural type for a payload split by byte length; eliminates the UTF-8 well-formedness constraint and aligns with v1's `bytes chunk` on `LogEvent`. Updated proto comment to document that callers decode to string after reassembly. Ran `make proto`; `LogEvent.Line` is now `[]byte` in generated Go.
+
+2. **`NeedsChunking` truncation** (`chunking.go:76`, thread `PRRT_kwDOSOBb1s6Cl2IT`): Replaced `return uint32(len(data)) > negotiatedMax` with `return len(data) > int(negotiatedMax)`. Eliminates silent wrap-around for payloads exceeding 4 GiB.
+
+3. **`SplitChunks` doc** (`chunking.go:42`, thread `PRRT_kwDOSOBb1s6Cl2IU`): Added doc comment explicitly naming `SplitChunks` as the low-level bytes primitive and listing `ChunkAdapterEventPayload`, `ChunkExecuteResultOutputs`, and `ChunkLogEventLine` as the only officially supported callers.
+
+4. **`TestChunkedProtocol_NegotiationAndSplit` envelope test** (`proto_test.go:581`, thread `PRRT_kwDOSOBb1s6Cl2IV`): Removed the redundant hand-crafted `AdapterEvent` envelope-only round-trip; replaced with a comment referencing `TestAdapterEvent_ChunkedPayload_FullRoundTrip` which already exercises the full split → marshal → unmarshal → join contract.
+
+5. **Heartbeat test simplification** (`heartbeat_test.go:28`, thread `PRRT_kwDOSOBb1s6Cl2IW`): Replaced the `state` struct + closure with `func(hb *criteriav2.Heartbeat) error { return nil }` as requested.
+
+6. **`wantMin`/`wantMax` collapse** (`chunking_test.go:31`, thread `PRRT_kwDOSOBb1s6Cl2IX`): Collapsed `wantMin uint32` + `wantMax uint32` to a single `want uint32` with one `assert.Equal`.
+
+Follow-on from change 1: `ChunkLogEventLine` simplified to use `SplitChunks` directly (rune-boundary logic removed); `JoinLogEventLine` return type changed from `(string, error)` to `([]byte, error)`; `unicode/utf8` import removed. `TestLogEvent_ChunkedLine_UTF8` replaced by `TestLogEvent_ChunkedLine_BinaryContent` which proves byte-exact round-trip including a 4-byte emoji sequence spanning a chunk boundary.
+
+**Validation**: `make test` — all packages green; `go test -race -count=1 ./proto/criteria/v2/...` — pass.

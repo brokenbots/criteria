@@ -1140,12 +1140,14 @@ func (x *LogRequest) GetStepName() string {
 // Extensions like "tool", "trace", "metric" are accepted without a proto bump.
 // chunk is non-nil when this message carries a partial payload; all chunks for
 // a given stream_name must be reassembled in seq order before consuming line.
+// line is raw bytes so it is safe to split at any byte boundary without
+// breaking UTF-8; callers that need a string must decode after reassembly.
 type LogEvent struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	StepName      string                 `protobuf:"bytes,2,opt,name=step_name,json=stepName,proto3" json:"step_name,omitempty"`
 	StreamName    string                 `protobuf:"bytes,3,opt,name=stream_name,json=streamName,proto3" json:"stream_name,omitempty"`
-	Line          string                 `protobuf:"bytes,4,opt,name=line,proto3" json:"line,omitempty"`
+	Line          []byte                 `protobuf:"bytes,4,opt,name=line,proto3" json:"line,omitempty"`
 	Timestamp     *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
 	Heartbeat     *Heartbeat             `protobuf:"bytes,6,opt,name=heartbeat,proto3" json:"heartbeat,omitempty"`
 	Chunk         *Chunk                 `protobuf:"bytes,7,opt,name=chunk,proto3" json:"chunk,omitempty"`
@@ -1204,11 +1206,11 @@ func (x *LogEvent) GetStreamName() string {
 	return ""
 }
 
-func (x *LogEvent) GetLine() string {
+func (x *LogEvent) GetLine() []byte {
 	if x != nil {
 		return x.Line
 	}
-	return ""
+	return nil
 }
 
 func (x *LogEvent) GetTimestamp() *timestamppb.Timestamp {
@@ -2218,7 +2220,7 @@ const file_criteria_v2_adapter_proto_rawDesc = "" +
 	"\tstep_name\x18\x02 \x01(\tR\bstepName\x12\x1f\n" +
 	"\vstream_name\x18\x03 \x01(\tR\n" +
 	"streamName\x12\x12\n" +
-	"\x04line\x18\x04 \x01(\tR\x04line\x128\n" +
+	"\x04line\x18\x04 \x01(\fR\x04line\x128\n" +
 	"\ttimestamp\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\ttimestamp\x124\n" +
 	"\theartbeat\x18\x06 \x01(\v2\x16.criteria.v2.HeartbeatR\theartbeat\x12(\n" +
 	"\x05chunk\x18\a \x01(\v2\x12.criteria.v2.ChunkR\x05chunkJ\x05\bd\x10\xe8\a\"\x9d\x01\n" +

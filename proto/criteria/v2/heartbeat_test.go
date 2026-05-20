@@ -17,14 +17,10 @@ import (
 func TestRunHeartbeat_Cancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
-	// senderErr is nil for this test (we're testing cancellation, not errors).
-	// Using a struct field ensures the linter does not flag the return as "always nil".
-	type state struct{ err error }
-	st := &state{}
 	var sent []*criteriav2.Heartbeat
 	sender := func(hb *criteriav2.Heartbeat) error {
 		sent = append(sent, hb)
-		return st.err
+		return nil
 	}
 
 	// Use a very short interval so the test doesn't block on the 30s default.

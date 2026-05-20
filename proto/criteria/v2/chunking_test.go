@@ -15,20 +15,18 @@ func TestNegotiateChunkSize(t *testing.T) {
 		name       string
 		adapterMax uint32
 		hostMax    uint32
-		wantMin    uint32
-		wantMax    uint32
+		want       uint32
 	}{
-		{"both zero uses default", 0, 0, criteriav2.DefaultMaxChunkBytes, criteriav2.DefaultMaxChunkBytes},
-		{"adapter smaller than host", 1 * 1024 * 1024, 4 * 1024 * 1024, 1 * 1024 * 1024, 1 * 1024 * 1024},
-		{"host smaller than adapter", 4 * 1024 * 1024, 2 * 1024 * 1024, 2 * 1024 * 1024, 2 * 1024 * 1024},
-		{"adapter zero host set", 0, 2 * 1024 * 1024, 2 * 1024 * 1024, 2 * 1024 * 1024},
-		{"host zero adapter set", 1 * 1024 * 1024, 0, 1 * 1024 * 1024, 1 * 1024 * 1024},
+		{"both zero uses default", 0, 0, criteriav2.DefaultMaxChunkBytes},
+		{"adapter smaller than host", 1 * 1024 * 1024, 4 * 1024 * 1024, 1 * 1024 * 1024},
+		{"host smaller than adapter", 4 * 1024 * 1024, 2 * 1024 * 1024, 2 * 1024 * 1024},
+		{"adapter zero host set", 0, 2 * 1024 * 1024, 2 * 1024 * 1024},
+		{"host zero adapter set", 1 * 1024 * 1024, 0, 1 * 1024 * 1024},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			got := criteriav2.NegotiateChunkSize(tc.adapterMax, tc.hostMax)
-			assert.Equal(t, tc.wantMin, got)
-			assert.Equal(t, tc.wantMax, got)
+			assert.Equal(t, tc.want, got)
 		})
 	}
 }

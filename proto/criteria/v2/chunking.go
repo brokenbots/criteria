@@ -3,7 +3,6 @@ package criteriav2
 import (
 	"errors"
 	"fmt"
-	"unicode/utf8"
 )
 
 const (
@@ -31,12 +30,20 @@ func NegotiateChunkSize(adapterMax, hostMax uint32) uint32 {
 	return hostMax
 }
 
-// SplitChunks splits data into a slice of Chunk messages whose payload size
-// does not exceed chunkSize bytes.  chunkSize == 0 uses DefaultMaxChunkBytes.
+// SplitChunks is the low-level bytes splitter.  It splits data into a slice of
+// Chunk messages whose payload size does not exceed chunkSize bytes.
+// chunkSize == 0 uses DefaultMaxChunkBytes.
 //
 // The returned Chunk messages carry only the framing metadata (seq, total,
 // final).  Callers embed the corresponding data slice (returned as the second
 // return value) into whatever payload field is being chunked.
+//
+// Splitting is done at arbitrary byte boundaries.  Callers that need to
+// preserve encoding invariants (e.g. codepoint-aligned UTF-8) must do so
+// before calling this function.  For the three officially chunkable fields in
+// this package, all splitting goes through the high-level helpers:
+// ChunkAdapterEventPayload, ChunkExecuteResultOutputs, and ChunkLogEventLine.
+// Those helpers are the only officially supported callers of SplitChunks.
 //
 // If len(data) == 0 a single empty chunk is returned.
 func SplitChunks(data []byte, chunkSize uint32) (chunks []*Chunk, payloads [][]byte) {
@@ -73,7 +80,7 @@ func NeedsChunking(data []byte, negotiatedMax uint32) bool {
 	if negotiatedMax == 0 {
 		negotiatedMax = DefaultMaxChunkBytes
 	}
-	return uint32(len(data)) > negotiatedMax
+	return len(data) > int(negotiatedMax)
 }
 
 // ─── Structured chunking helpers ────────────────────────────────────────────
@@ -163,71 +170,40 @@ func JoinExecuteResultOutputs(events []*ExecuteResult) ([]byte, error) {
 // ChunkLogEventLine splits a long log line from base into multiple LogEvent
 // fragment messages.  base fields session_id, step_name, stream_name, and
 // timestamp are copied to every fragment; each fragment carries a portion of
-// the line string in its line field plus Chunk framing metadata.
+// the line bytes in its line field plus Chunk framing metadata.
 //
-// Splitting is done at rune boundaries so every fragment is valid UTF-8 and
-// safe to carry in a protobuf string field.  chunkSize == 0 uses DefaultMaxChunkBytes.
+// Because LogEvent.line is bytes, splitting is done at arbitrary byte
+// boundaries using SplitChunks.  chunkSize == 0 uses DefaultMaxChunkBytes.
 func ChunkLogEventLine(base *LogEvent, chunkSize uint32) []*LogEvent {
-	if chunkSize == 0 {
-		chunkSize = DefaultMaxChunkBytes
-	}
-	// Split at rune boundaries to guarantee valid UTF-8 in each fragment.
-	var fragments []string
-	line := base.Line
-	for line != "" {
-		if uint32(len(line)) <= chunkSize {
-			fragments = append(fragments, line)
-			break
-		}
-		// Walk back from the byte limit to find the preceding rune boundary.
-		end := int(chunkSize)
-		for end > 0 && !utf8.RuneStart(line[end]) {
-			end--
-		}
-		if end == 0 {
-			// A single rune is wider than chunkSize; emit it as one fragment.
-			_, size := utf8.DecodeRuneInString(line)
-			end = size
-		}
-		fragments = append(fragments, line[:end])
-		line = line[end:]
-	}
-	if len(fragments) == 0 {
-		fragments = []string{""}
-	}
-	total := uint32(len(fragments))
-	result := make([]*LogEvent, total)
-	for i, frag := range fragments {
+	chunks, payloads := SplitChunks(base.Line, chunkSize)
+	result := make([]*LogEvent, len(chunks))
+	for i, c := range chunks {
 		result[i] = &LogEvent{
 			SessionId:  base.SessionId,
 			StepName:   base.StepName,
 			StreamName: base.StreamName,
 			Timestamp:  base.Timestamp,
-			Line:       frag,
-			Chunk: &Chunk{
-				Seq:   uint32(i),
-				Total: total,
-				Final: uint32(i) == total-1,
-			},
+			Line:       payloads[i],
+			Chunk:      c,
 		}
 	}
 	return result
 }
 
 // JoinLogEventLine reassembles the line field from a sequence of LogEvent
-// fragment messages (ordered by Chunk.Seq) and returns the full log line.
+// fragment messages (ordered by Chunk.Seq) and returns the full log line bytes.
 //
 // Returns an error if any message in events lacks Chunk metadata.
-func JoinLogEventLine(events []*LogEvent) (string, error) {
+func JoinLogEventLine(events []*LogEvent) ([]byte, error) {
 	if len(events) == 0 {
-		return "", errors.New("no LogEvent fragments to join")
+		return nil, errors.New("no LogEvent fragments to join")
 	}
 	var buf []byte
 	for i, ev := range events {
 		if ev.Chunk == nil {
-			return "", fmt.Errorf("LogEvent fragment[%d] has no Chunk metadata", i)
+			return nil, fmt.Errorf("LogEvent fragment[%d] has no Chunk metadata", i)
 		}
-		buf = append(buf, []byte(ev.Line)...)
+		buf = append(buf, ev.Line...)
 	}
-	return string(buf), nil
+	return buf, nil
 }
