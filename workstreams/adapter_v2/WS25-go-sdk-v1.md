@@ -650,3 +650,35 @@ cd /home/dave/Projects/criteria-go-adapter-sdk
 git push origin master
 git push origin v1.0.0-rc.5
 ```
+
+### Review 2026-05-20-02 — changes-requested
+
+#### Summary
+
+rc.5 closes the concrete runtime gaps from the prior pass: D78 chunking is now implemented on the outbound streaming paths, `Info()` advertises `max_chunk_bytes`, `testhost.Info()` exposes the missing metadata, the workstream notes now match the `go 1.24` minimum, and build/vet/race/module-resolution checks pass at `v1.0.0-rc.5`. Approval is still blocked because the previously-escalated `Config.OnPermissionRequest` API-shape deviation remains unresolved, and the new `TestTestHostInfoParity` does not yet prove actual parity with the live gRPC `Info()` surface.
+
+#### Plan Adherence
+
+- Step 1: now aligned — the workstream notes and repo metadata both reflect `go 1.24`, and `v1.0.0-rc.5` resolves publicly.
+- Step 2 / Step 3: chunked streaming and `max_chunk_bytes` advertisement are implemented and covered well enough to close the rc.4 blocker.
+- Step 6 / Step 7: `testhost.Info()` now returns the missing metadata, but the parity test still checks only synthesized expected values rather than comparing `testhost.Info()` to the live `Info()` RPC for the same config.
+- The workstream still does not meet the “same API shape” requirement while `Config.OnPermissionRequest` remains part of the public surface without an approved spec/workstream update.
+
+#### Required Remediations
+
+- **Major — `testhost.Info()` parity is still not proven at the runtime boundary.** `criteria-go-adapter-sdk/testhost/testhost_test.go:278-341`, `criteria-go-adapter-sdk/contract_test.go:423-447`. The new test verifies a subset of expected field values on `testhost.Info()` only; it does not compare against the live gRPC `Info()` response and does not exercise schemas or the `inspect` feature path. **Acceptance:** add a real parity test that instantiates one fully-populated `Config`, fetches both `testhost.Info()` and gRPC `Info()`, and asserts field-for-field equality across metadata, schema conversions, secrets, compatible environments, supported features (including `inspect`), and `max_chunk_bytes`.
+
+#### Test Intent Assessment
+
+The new chunking tests are meaningful: they force fragmentation with a tiny limit and verify on-wire behavior for adapter events, execute results, log lines, and `Info().max_chunk_bytes`. The new `TestTestHostInfoParity` is weaker than its name suggests; a faulty implementation could still diverge from the live server on schema/feature handling and this test would pass because it never compares the two surfaces directly.
+
+#### Architecture Review Required
+
+- **[ARCH-REVIEW][major] Public permission API drift from the planned SDK shape.** `criteria-go-adapter-sdk/adapter.go:106-112`, `criteria-go-adapter-sdk/helpers.go:128-170`, `criteria-go-adapter-sdk/testhost/testhost.go:174-201`, `workstreams/adapter_v2/WS25-go-sdk-v1.md:31-51`. WS25 still defines `Config` without `OnPermissionRequest`, but the shipped SDK exposes that field publicly to work around the v2 `Permissions` stream direction. That is still not the “same API shape” promised by the workstream and affects cross-SDK parity. A human architectural decision is required: either bless and document `OnPermissionRequest` across the shared SDK contract/workstreams, or direct an implementation that restores the planned `Config` surface.
+- **process-failure:** this blocker has now been issued 3 times without remediation attempt (`2026-05-19-04`, `2026-05-20`, `2026-05-20-02`). No further justification will change this finding. A human must intervene to either grant an explicit exception and update the spec/workstreams accordingly, or require an implementation that removes the public API drift before approval.
+
+#### Validation Performed
+
+- `cd /home/dave/Projects/criteria-go-adapter-sdk && git --no-pager log --oneline --decorate -6 && git --no-pager status --short && git --no-pager tag --sort=version:refname | tail -5` — confirmed clean rc.5 repo state and local tag.
+- `cd /home/dave/Projects/criteria-go-adapter-sdk && make build && go test -race ./... -timeout 120s -count=1 && GOPROXY=https://proxy.golang.org,direct go list -m github.com/brokenbots/criteria-go-adapter-sdk@v1.0.0-rc.5` — passed.
+- `cd /home/dave/Projects/criteria-go-adapter-sdk && go vet ./... && git --no-pager diff --stat v1.0.0-rc.4..v1.0.0-rc.5` — passed; diff matches the claimed rc.5 scope.
