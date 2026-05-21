@@ -370,7 +370,7 @@ step "commit" {
   timeout    = "120s"
   max_visits = 5
   input {
-    command           = "set -eu; branch=$(git branch --show-current); if [ -z \"$branch\" ] || [ \"$branch\" = \"main\" ] || [ \"$branch\" = \"adapter-v2\" ]; then echo \"refusing to commit on protected branch: ${branch:-detached}\" >&2; exit 1; fi; git add -A; if git diff --cached --quiet; then echo 'no changes to commit; ensuring branch is pushed'; else git commit -m \"feat: complete ${var.workstream_file}\"; fi; git push --set-upstream origin \"$branch\" 2>/dev/null || git push origin \"$branch\""
+    command           = "set -eu; branch=$(git branch --show-current); if [ -z \"$branch\" ] || [ \"$branch\" = \"main\" ] || [ \"$branch\" = \"adapter-v2\" ]; then echo \"refusing to commit on protected branch: $${branch:-detached}\" >&2; exit 1; fi; git add -A; if git diff --cached --quiet; then echo 'no changes to commit; ensuring branch is pushed'; else git commit -m \"feat: complete ${var.workstream_file}\"; fi; git push --set-upstream origin \"$branch\" 2>/dev/null || git push origin \"$branch\""
     working_directory = var.project_dir
   }
   outcome "success" { next = "finalize_ok" }
