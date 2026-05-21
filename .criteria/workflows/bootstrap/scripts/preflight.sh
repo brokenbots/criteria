@@ -5,10 +5,11 @@
 # switch can match it with `==`. Diagnostic detail goes to stderr.
 #
 # Classifiers (stdout):
-#   ok               all required tooling present, repo clean, main up to date
+#   ok               all required tooling present, repo clean, branches up to date
 #   missing_tool     a required CLI (copilot|gh|jq) is not on PATH
 #   gh_unauth        gh is not authenticated
 #   stale_main       local main is behind origin/main (fast-forward needed)
+#   stale_base       local adapter-v2 is behind origin/adapter-v2 (fast-forward needed)
 #   dirty_main       working tree is dirty and we are on main (won't auto-resolve)
 #   not_a_repo       current directory is not a git work tree
 set -eu
@@ -66,5 +67,15 @@ if git show-ref --verify --quiet refs/remotes/origin/main && \
   fi
 fi
 
-note "preflight ok: copilot+gh+jq present, gh authenticated, main is fresh"
+if git show-ref --verify --quiet refs/remotes/origin/adapter-v2 && \
+   git show-ref --verify --quiet refs/heads/adapter-v2; then
+  ahead=$(git rev-list --count adapter-v2..origin/adapter-v2 2>/dev/null || echo 0)
+  if [ "$ahead" -gt 0 ]; then
+    note "local adapter-v2 is ${ahead} commit(s) behind origin/adapter-v2; run: git checkout adapter-v2 && git pull --ff-only origin adapter-v2"
+    printf '%s' "stale_base"
+    exit 0
+  fi
+fi
+
+note "preflight ok: copilot+gh+jq present, gh authenticated, branches up to date"
 printf '%s' "ok"

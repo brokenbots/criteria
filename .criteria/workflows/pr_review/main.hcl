@@ -334,7 +334,7 @@ switch "check_review_limit" {
     match = shared.review_attempts >= var.max_review_attempts
     next  = state.escalated
   }
-  default { next = state.escalated }
+  default { next = step.pr_status }
 }
 
 # ── Terminal states ──────────────────────────────────────────────────────────

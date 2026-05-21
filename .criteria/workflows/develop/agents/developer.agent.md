@@ -35,7 +35,7 @@ Use these exclusively — no manual `go build`, `go test`, `golangci-lint`:
 1. Read the workstream md file. Treat it as the implementation plan: tasks, affected files, non-goals, acceptance criteria.
 2. Inspect the relevant code areas before editing — find existing patterns, helpers, and tests to reuse.
 3. Implement the plan completely with tests. Keep changes minimal, coherent, reviewable.
-4. Run `make ci` before declaring ready. If anything fails, fix it — never declare ready with a red gate.
+4. Run `make build` to verify compilation before declaring ready. Do not run `make ci` or `make test` — the CI gate step handles the full test suite after you submit.
 5. If workflow files or agent prompts changed, run `make validate-self-workflows` too.
 6. Update only the active workstream file for progress notes — never edit other workstream md files.
 

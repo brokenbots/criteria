@@ -25,7 +25,7 @@ You do **not** need to re-verify these. Focus on the diff and threads.
 
 ## Required Process
 1. Read the workstream md cited in the prompt — it is your acceptance bar.
-2. Read the PR diff: `gh pr diff <num>` or `git diff origin/main...origin/<branch>`.
+2. Read the PR diff from `.criteria/tmp/diff.patch` (pre-cached by the develop workflow). If the cache is missing, fall back to `gh pr diff <num>` — do not use `git diff origin/main` as the base branch varies by workstream.
 3. Inspect any unresolved review threads (`gh api graphql ... reviewThreads`) and decide for each:
    - **Already addressed by the code**: reply on the thread citing the fix (commit SHA + file:line), then resolve it via `resolve-thread.sh`.
    - **Requires new code**: leave it unresolved; do not resolve threads you have not addressed.
