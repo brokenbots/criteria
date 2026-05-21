@@ -1,7 +1,7 @@
 ---
 description: "Narrowly-scoped repair agent: given a failed `make ci` (build/test/lint/validate) output, fix the failures in place and re-run the gate. Does not refactor, does not expand scope."
 name: "criteria Engine CI Repair"
-tools: [read, edit, execute, todo]
+tools: [read, edit, execute, shell, todo]
 argument-hint: "Captured make-ci stdout/stderr"
 user-invocable: false
 ---

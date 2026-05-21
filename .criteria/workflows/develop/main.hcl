@@ -155,7 +155,7 @@ step "develop_init" {
   allow_tools = ["*"]
   timeout     = "30m"
   input {
-    prompt = "Read ${var.workstream_file} for the full task scope. Branch state classifier: `${steps.prepare_branch.stdout}` (one of: created, existing_local, existing_remote, existing_dirty; the branch name is `basename '${var.workstream_file}' .md`). If `created`, implement every acceptance-criterion item from a clean slate. If `existing_*`, inspect the current state, preserve useful work, and complete only missing items. Write tests. Run `make ci` to confirm; if it fails, fix before declaring ready. Update ${var.workstream_file} with implementation notes and check off completed items.\n\nEnd your final message with exactly one of:\nRESULT: needs_review\nRESULT: failure"
+    prompt = "Read ${var.workstream_file} for the full task scope. Branch state classifier: `${steps.prepare_branch.stdout}` (one of: created, existing_local, existing_remote, existing_dirty; the branch name is `basename '${var.workstream_file}' .md`). If `created`, implement every acceptance-criterion item from a clean slate. If `existing_*`, inspect the current state, preserve useful work, and complete only missing items. Write tests. Run `make build` to verify the code compiles clean before declaring ready — do not run the full test suite, the CI gate step handles that. Update ${var.workstream_file} with implementation notes and check off completed items.\n\nEnd your final message with exactly one of:\nRESULT: needs_review\nRESULT: failure"
   }
   outcome "needs_review" { next = "ci_gate" }
   outcome "failure"      { next = "failed" }
@@ -265,12 +265,12 @@ step "verdict_aggregate" {
   input {
     command           = <<-CMD
       mkdir -p .criteria/tmp
-      cat > .criteria/tmp/verdict_agg_input.txt <<'__END_REPORTS__'
+      cat > .criteria/tmp/verdict_agg_input.txt <<'CRITERIA_VERDICT_REPORTS_EOF'
       ${steps.specialized_reviews[0].report}
       ${steps.specialized_reviews[1].report}
       ${steps.specialized_reviews[2].report}
       ${steps.specialized_reviews[3].report}
-      __END_REPORTS__
+      CRITERIA_VERDICT_REPORTS_EOF
       sh .criteria/workflows/develop/scripts/aggregate-verdicts.sh < .criteria/tmp/verdict_agg_input.txt
     CMD
     working_directory = var.project_dir
@@ -295,7 +295,7 @@ step "owner_review" {
   timeout     = "20m"
   max_visits  = 20
   input {
-    prompt = "You are the workstream owner for ${var.workstream_file}. Read the workstream and `.criteria/tmp/diff.patch` (pre-cached; do not run git diff). The four specialist reviewer reports are below — each contains a `VERDICT:` line and findings. Decide which requests are legitimate, in scope, and mandatory. Reject overreach, duplicates, speculative rewrites, or anything contradicting the workstream non-goals.\n\nRecord your verdict under `## Owner Review Notes` in ${var.workstream_file}. If changes are needed, write only must-fix items there.\n\nIn the submit_outcome reason, include a concise must-fix list (specific, actionable, file:line where possible) if requesting changes, or a brief 'approved' confirmation if complete. This reason is passed directly to the developer — keep it tight.\n\n--- security ---\n${steps.specialized_reviews[0].report}\n--- quality ---\n${steps.specialized_reviews[1].report}\n--- workstream ---\n${steps.specialized_reviews[2].report}\n--- api_compat ---\n${steps.specialized_reviews[3].report}\n--- end ---\n\nOutcomes: approved, changes_requested, failure"
+    prompt = "You are the workstream owner for ${var.workstream_file}. Read the workstream and `.criteria/tmp/diff.patch` (pre-cached; do not run git diff). The four specialist reviewer reports are below — each contains a `VERDICT:` line and findings. Decide which requests are legitimate, in scope, and mandatory. Reject overreach, duplicates, speculative rewrites, or anything contradicting the workstream non-goals.\n\nRecord your verdict under `## Owner Review Notes` in ${var.workstream_file}. If changes are needed, write only must-fix items there.\n\nIn the submit_outcome reason, include a concise must-fix list (specific, actionable, file:line where possible) if requesting changes, or a brief 'approved' confirmation if complete. This reason is passed directly to the developer — keep it tight.\n\n--- security ---\n${steps.specialized_reviews[0].report}\n--- quality ---\n${steps.specialized_reviews[1].report}\n--- workstream ---\n${steps.specialized_reviews[2].report}\n--- api_compat ---\n${steps.specialized_reviews[3].report}\n--- end ---\n\nEnd your final message with exactly one of:\nRESULT: approved\nRESULT: changes_requested\nRESULT: failure"
   }
   outcome "approved"          { next = "commit" }
   outcome "changes_requested" { next = "count_cycle" }
@@ -355,7 +355,7 @@ step "develop" {
   timeout     = "30m"
   max_visits  = 20
   input {
-    prompt = "The workstream owner has requested changes for ${var.workstream_file}. Owner must-fix list:\n\n${steps.owner_review.reason}\n\nAddress every item above completely. Do not chase raw specialist reviewer suggestions the owner rejected. Run `make ci` before declaring ready.\n\nIn the submit_outcome reason, briefly summarize the specific changes you made (file:line and what changed).\n\nEnd your final message with exactly one of:\nRESULT: needs_review\nRESULT: failure"
+    prompt = "The workstream owner has requested changes for ${var.workstream_file}. Owner must-fix list:\n\n${steps.owner_review.reason}\n\nAddress every item above completely. Do not chase raw specialist reviewer suggestions the owner rejected. Run `make build` to verify compilation before declaring ready — the CI gate step handles the full test suite.\n\nIn the submit_outcome reason, briefly summarize the specific changes you made (file:line and what changed).\n\nEnd your final message with exactly one of:\nRESULT: needs_review\nRESULT: failure"
   }
   outcome "needs_review" { next = "ci_gate" }
   outcome "failure"      { next = "failed" }
@@ -370,7 +370,7 @@ step "commit" {
   timeout    = "120s"
   max_visits = 5
   input {
-    command           = "set -eu; branch=$(git branch --show-current); if [ -z \"$branch\" ] || [ \"$branch\" = \"main\" ]; then echo 'refusing to commit on main' >&2; exit 1; fi; git add -A; if git diff --cached --quiet; then echo 'no changes to commit; ensuring branch is pushed'; else git commit -m \"feat: complete ${var.workstream_file}\"; fi; git push --set-upstream origin \"$branch\" 2>/dev/null || git push origin \"$branch\""
+    command           = "set -eu; branch=$(git branch --show-current); if [ -z \"$branch\" ] || [ \"$branch\" = \"main\" ] || [ \"$branch\" = \"adapter-v2\" ]; then echo \"refusing to commit on protected branch: ${branch:-detached}\" >&2; exit 1; fi; git add -A; if git diff --cached --quiet; then echo 'no changes to commit; ensuring branch is pushed'; else git commit -m \"feat: complete ${var.workstream_file}\"; fi; git push --set-upstream origin \"$branch\" 2>/dev/null || git push origin \"$branch\""
     working_directory = var.project_dir
   }
   outcome "success" { next = "finalize_ok" }
