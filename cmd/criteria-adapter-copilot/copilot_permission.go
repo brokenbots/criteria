@@ -1,37 +1,19 @@
-// copilot_permission.go — Copilot permission-request bridging: Permit RPC and
-// the SDK OnPermissionRequest callback that forwards requests to the host engine.
+// copilot_permission.go — Copilot permission-request bridging: the SDK
+// OnPermissionRequest callback that forwards requests to the host engine as
+// AdapterEvent(kind="permission.request"). The host applies PermissionPolicy and
+// records the grant/deny decision in the run event log. WS16 adds a proper
+// Permissions bidi stream for interactive decisions.
 
 package main
 
 import (
-	"context"
 	"encoding/json"
-	"fmt"
 	"os"
 	"strings"
 
 	copilot "github.com/github/copilot-sdk/go"
 	"github.com/google/uuid"
-
-	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 )
-
-func (p *copilotAdapter) Permit(_ context.Context, req *pb.PermitRequest) (*pb.PermitResponse, error) {
-	s := p.getSession(req.GetSessionId())
-	if s == nil {
-		return nil, fmt.Errorf("copilot: unknown session %q", req.GetSessionId())
-	}
-
-	s.mu.Lock()
-	ch, ok := s.pending[req.GetPermissionId()]
-	s.mu.Unlock()
-	if !ok {
-		return nil, fmt.Errorf("copilot: no pending permission %q", req.GetPermissionId())
-	}
-
-	ch <- permDecision{allow: req.GetAllow(), reason: req.GetReason()}
-	return &pb.PermitResponse{}, nil
-}
 
 func (p *copilotAdapter) handlePermissionRequest(sessionID string, request copilot.PermissionRequest) (copilot.PermissionRequestResult, error) {
 	s := p.getSession(sessionID)
@@ -39,59 +21,30 @@ func (p *copilotAdapter) handlePermissionRequest(sessionID string, request copil
 		return copilot.PermissionRequestResult{Kind: copilot.PermissionRequestResultKindUserNotAvailable}, nil
 	}
 
-	permID := uuid.NewString()
 	details := permissionDetails(request)
 
 	s.mu.Lock()
 	sink := s.sink
 	active := s.active
-	done := s.activeCh
-	if !active || sink == nil {
-		s.mu.Unlock()
-		return copilot.PermissionRequestResult{Kind: copilot.PermissionRequestResultKindUserNotAvailable}, nil
-	}
-	ch := make(chan permDecision, 1)
-	s.pending[permID] = ch
 	s.mu.Unlock()
 
-	sendErr := sink.Send(buildPermissionEvent(permID, details))
-	if sendErr != nil {
-		s.mu.Lock()
-		delete(s.pending, permID)
-		s.mu.Unlock()
+	if !active || sink == nil {
+		return copilot.PermissionRequestResult{Kind: copilot.PermissionRequestResultKindUserNotAvailable}, nil
+	}
+
+	permID := uuid.NewString()
+	payload := make(map[string]any, len(details)+1)
+	payload["permission_id"] = permID
+	for k, v := range details {
+		payload[k] = v
+	}
+	if sendErr := sink.Send(adapterEvent("permission.request", payload)); sendErr != nil {
 		return copilot.PermissionRequestResult{Kind: copilot.PermissionRequestResultKindUserNotAvailable}, sendErr
 	}
 
-	select {
-	case decision := <-ch:
-		s.mu.Lock()
-		delete(s.pending, permID)
-		if !decision.allow {
-			s.permissionDeny = true
-		}
-		s.mu.Unlock()
-		if decision.allow {
-			return copilot.PermissionRequestResult{Kind: copilot.PermissionRequestResultKindApproved}, nil
-		}
-		return copilot.PermissionRequestResult{Kind: copilot.PermissionRequestResultKindRejected}, nil
-	case <-done:
-		s.mu.Lock()
-		delete(s.pending, permID)
-		s.mu.Unlock()
-		return copilot.PermissionRequestResult{Kind: copilot.PermissionRequestResultKindNoResult}, nil
-	}
-}
-
-func buildPermissionEvent(permID string, details map[string]string) *pb.ExecuteEvent {
-	return &pb.ExecuteEvent{
-		Event: &pb.ExecuteEvent_Permission{
-			Permission: &pb.PermissionRequest{
-				Id:         permID,
-				Permission: details["kind"],
-				Details:    details,
-			},
-		},
-	}
+	// In WS03, auto-approve all permissions. The host records the request and
+	// applies PermissionPolicy in its captureSink. WS16 adds interactive denial.
+	return copilot.PermissionRequestResult{Kind: copilot.PermissionRequestResultKindApproved}, nil
 }
 
 func permissionDetails(request copilot.PermissionRequest) map[string]string { //nolint:funlen,gocognit,gocyclo // collecting optional fields from SDK request variants; splitting further would obscure the boundary mapping

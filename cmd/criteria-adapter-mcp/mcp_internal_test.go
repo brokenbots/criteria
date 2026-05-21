@@ -5,15 +5,15 @@ import (
 	"testing"
 
 	"github.com/brokenbots/criteria/sdk/adapterhost"
-	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
+	v2 "github.com/brokenbots/criteria/proto/criteria/v2"
 )
 
 // fakeEventSender collects Execute events for assertions.
 type fakeEventSender struct {
-	events []*pb.ExecuteEvent
+	events []*v2.ExecuteEvent
 }
 
-func (f *fakeEventSender) Send(ev *pb.ExecuteEvent) error {
+func (f *fakeEventSender) Send(ev *v2.ExecuteEvent) error {
 	f.events = append(f.events, ev)
 	return nil
 }
@@ -90,7 +90,7 @@ func TestParseEnvPairs(t *testing.T) {
 // TestMCPBridge_Info validates the Info response schema shape.
 func TestMCPBridge_Info(t *testing.T) {
 	b := &MCPBridge{sessions: map[string]*sessionState{}}
-	resp, err := b.Info(context.Background(), &pb.InfoRequest{})
+	resp, err := b.Info(context.Background(), &v2.InfoRequest{})
 	if err != nil {
 		t.Fatalf("Info: %v", err)
 	}
@@ -132,7 +132,7 @@ func TestMCPBridge_Info(t *testing.T) {
 // a request with no command configured.
 func TestMCPBridge_OpenSession_MissingCommand(t *testing.T) {
 	b := &MCPBridge{sessions: map[string]*sessionState{}}
-	_, err := b.OpenSession(context.Background(), &pb.OpenSessionRequest{
+	_, err := b.OpenSession(context.Background(), &v2.OpenSessionRequest{
 		SessionId: "sess-1",
 		Config:    map[string]string{},
 	})
@@ -145,7 +145,7 @@ func TestMCPBridge_OpenSession_MissingCommand(t *testing.T) {
 // command binary that does not exist.
 func TestMCPBridge_OpenSession_BadCommand(t *testing.T) {
 	b := &MCPBridge{sessions: map[string]*sessionState{}}
-	_, err := b.OpenSession(context.Background(), &pb.OpenSessionRequest{
+	_, err := b.OpenSession(context.Background(), &v2.OpenSessionRequest{
 		SessionId: "sess-bad",
 		Config: map[string]string{
 			"command": "/no/such/binary-does-not-exist",
@@ -160,7 +160,7 @@ func TestMCPBridge_OpenSession_BadCommand(t *testing.T) {
 // an unknown session ID without panicking.
 func TestMCPBridge_Execute_UnknownSession(t *testing.T) {
 	b := &MCPBridge{sessions: map[string]*sessionState{}}
-	err := b.Execute(context.Background(), &pb.ExecuteRequest{SessionId: "ghost"}, nil)
+	err := b.Execute(context.Background(), &v2.ExecuteRequest{SessionId: "ghost"}, nil)
 	if err == nil {
 		t.Fatal("expected error for unknown session")
 	}
@@ -170,7 +170,7 @@ func TestMCPBridge_Execute_UnknownSession(t *testing.T) {
 // for unknown session IDs.
 func TestMCPBridge_CloseSession_UnknownSession(t *testing.T) {
 	b := &MCPBridge{sessions: map[string]*sessionState{}}
-	_, err := b.CloseSession(context.Background(), &pb.CloseSessionRequest{SessionId: "ghost"})
+	_, err := b.CloseSession(context.Background(), &v2.CloseSessionRequest{SessionId: "ghost"})
 	if err != nil {
 		t.Fatalf("CloseSession unknown session: %v", err)
 	}
@@ -180,7 +180,7 @@ func TestMCPBridge_CloseSession_UnknownSession(t *testing.T) {
 // malformed env pair config.
 func TestMCPBridge_OpenSession_BadEnvPairs(t *testing.T) {
 	b := &MCPBridge{sessions: map[string]*sessionState{}}
-	_, err := b.OpenSession(context.Background(), &pb.OpenSessionRequest{
+	_, err := b.OpenSession(context.Background(), &v2.OpenSessionRequest{
 		SessionId: "sess-env",
 		Config: map[string]string{
 			"command": "/bin/echo",
@@ -202,7 +202,7 @@ func TestMCPBridge_FullRoundTrip(t *testing.T) {
 	ctx := context.Background()
 
 	// OpenSession.
-	_, err := b.OpenSession(ctx, &pb.OpenSessionRequest{
+	_, err := b.OpenSession(ctx, &v2.OpenSessionRequest{
 		SessionId: "sess-rt",
 		Config:    map[string]string{"command": testEchoBin},
 	})
@@ -212,7 +212,7 @@ func TestMCPBridge_FullRoundTrip(t *testing.T) {
 
 	// Execute the echo tool.
 	sender := &fakeEventSender{}
-	err = b.Execute(ctx, &pb.ExecuteRequest{
+	err = b.Execute(ctx, &v2.ExecuteRequest{
 		SessionId: "sess-rt",
 		Config: map[string]string{
 			"tool":            "echo",
@@ -238,7 +238,7 @@ func TestMCPBridge_FullRoundTrip(t *testing.T) {
 	}
 
 	// CloseSession.
-	if _, err := b.CloseSession(ctx, &pb.CloseSessionRequest{SessionId: "sess-rt"}); err != nil {
+	if _, err := b.CloseSession(ctx, &v2.CloseSessionRequest{SessionId: "sess-rt"}); err != nil {
 		t.Fatalf("CloseSession: %v", err)
 	}
 }
@@ -252,15 +252,15 @@ func TestMCPBridge_Execute_UnknownTool(t *testing.T) {
 	b := &MCPBridge{sessions: map[string]*sessionState{}}
 	ctx := context.Background()
 
-	if _, err := b.OpenSession(ctx, &pb.OpenSessionRequest{
+	if _, err := b.OpenSession(ctx, &v2.OpenSessionRequest{
 		SessionId: "sess-unk",
 		Config:    map[string]string{"command": testEchoBin},
 	}); err != nil {
 		t.Fatalf("OpenSession: %v", err)
 	}
-	defer func() { _, _ = b.CloseSession(ctx, &pb.CloseSessionRequest{SessionId: "sess-unk"}) }()
+	defer func() { _, _ = b.CloseSession(ctx, &v2.CloseSessionRequest{SessionId: "sess-unk"}) }()
 
-	err := b.Execute(ctx, &pb.ExecuteRequest{
+	err := b.Execute(ctx, &v2.ExecuteRequest{
 		SessionId: "sess-unk",
 		Config:    map[string]string{"tool": "no-such-tool"},
 	}, &fakeEventSender{})
@@ -278,15 +278,15 @@ func TestMCPBridge_Execute_MissingTool(t *testing.T) {
 	b := &MCPBridge{sessions: map[string]*sessionState{}}
 	ctx := context.Background()
 
-	if _, err := b.OpenSession(ctx, &pb.OpenSessionRequest{
+	if _, err := b.OpenSession(ctx, &v2.OpenSessionRequest{
 		SessionId: "sess-notool",
 		Config:    map[string]string{"command": testEchoBin},
 	}); err != nil {
 		t.Fatalf("OpenSession: %v", err)
 	}
-	defer func() { _, _ = b.CloseSession(ctx, &pb.CloseSessionRequest{SessionId: "sess-notool"}) }()
+	defer func() { _, _ = b.CloseSession(ctx, &v2.CloseSessionRequest{SessionId: "sess-notool"}) }()
 
-	err := b.Execute(ctx, &pb.ExecuteRequest{
+	err := b.Execute(ctx, &v2.ExecuteRequest{
 		SessionId: "sess-notool",
 		Config:    map[string]string{}, // missing "tool"
 	}, &fakeEventSender{})

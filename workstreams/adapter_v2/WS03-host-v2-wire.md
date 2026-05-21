@@ -223,3 +223,48 @@ Enumerated:
 - `README.md`, `PLAN.md`, `AGENTS.md`, `CHANGELOG.md`, `CONTRIBUTING.md`, `workstreams/README.md`.
 - Other workstream files in `workstreams/adapter_v2/`.
 - HCL grammar files in `workflow/` — those are touched by WS09.
+
+## Implementation Notes (WS03 complete)
+
+### What was done
+
+**Host-side (internal/adapterhost/)**
+- `serve.go` — replaced `Client` interface with v2 methods; implemented `grpcClient` adapter wrapping generated v2 stubs.
+- `loader.go` — updated all call sites to v2 types; added concurrent `Log` stream fan-in alongside `Execute` stream.
+- `loader_reattach.go` (new) — `LocalSocketDialer` + `NewHostOnlyUDSSocket` helpers for plugin reattach.
+- `loader_reattach_test.go` (new) — unit tests for both helpers.
+- `sessions.go` — added `PermissionState` stub field; all v1 type references removed.
+
+**SDK (sdk/adapterhost/)**
+- `serve.go` — v2 `grpcAdapterServer` bridge with `Permissions` bidi stub.
+- `service.go` — `Service` interface updated to v2; `ExecuteEventSender`, `LogEventSender`, `PermissionsStream`, `UnimplementedPermissions` types added.
+- `handshake.go` — plugin handshake updated.
+
+**Bundled adapters**
+- `cmd/criteria-adapter-noop/main.go` — v2 implementation with `UnimplementedPermissions`.
+- `cmd/criteria-adapter-mcp/bridge.go` — fully migrated to v2; `Log` is no-op; text emitted as `AdapterEvent(kind="mcp.text")`; `Execute`'s config field renamed to `Input`.
+- `cmd/criteria-adapter-copilot/` — all files migrated:
+  - `copilot.go` — embeds `UnimplementedPermissions`; `Log` reads from `session.logCh`; stubs for Pause/Resume/Snapshot/Restore/Inspect.
+  - `copilot_session.go` — `sessionState` gains `logCh chan *v2.LogEvent`; `CloseSession` closes logCh; `pending`/`activeCh`/`permissionDeny` removed.
+  - `copilot_permission.go` — `Permit` RPC removed; `handlePermissionRequest` emits `AdapterEvent(kind="permission.request")` + auto-returns Approved.
+  - `copilot_turn.go` — `turnState` gains `logCh`; log lines sent non-blocking to channel; `Execute` request field `Config` → `Input`.
+  - `copilot_util.go` — `logEvent` returns `*v2.LogEvent`; `adapterEvent`/`resultEvent` use v2 types.
+
+**Test fixtures**
+- `internal/adapterhost/testfixtures/permissive/main.go` — v2.
+- `internal/adapter/conformance/testfixtures/broken/main.go` — v2.
+- All adapter test files updated to v2 (copilot: 3 test files; mcp: 1 test file).
+
+### Key design decisions
+- `ExecuteRequest.Config` renamed to `Input` in v2 proto; all adapters/tests updated.
+- Permission handling is host-side: adapter emits `AdapterEvent(kind="permission.request")`, host intercepts and auto-approves (full policy is WS16).
+- Log stream is separate from Execute stream; MCP uses `AdapterEvent(kind="mcp.text")` for text output (WS15 adds proper routing).
+- `permDecision` struct and `Permit` RPC flow removed entirely.
+
+### ✅ Acceptance criteria
+- [x] `make build` green
+- [x] `make plugins` green
+- [x] All host call sites use v2 types
+- [x] `LocalSocketDialer` + `NewHostOnlyUDSSocket` helpers with tests
+- [x] Bundled adapters (noop, mcp, copilot) fully migrated to v2
+- [x] `criteria/v1` adapter imports removed from adapter host scope

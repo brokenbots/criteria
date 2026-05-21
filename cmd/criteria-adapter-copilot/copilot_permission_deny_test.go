@@ -1,29 +1,29 @@
-// copilot_permission_deny_test.go — denial-path tests for handlePermissionRequest.
-// Covers the three scenarios that previously used deprecated PermissionRequestResultKind values:
-//   - no session found   → PermissionRequestResultKindUserNotAvailable (was DeniedCouldNotRequestFromUser)
-//   - session inactive   → PermissionRequestResultKindUserNotAvailable (was DeniedCouldNotRequestFromUser)
-//   - sink.Send failure  → PermissionRequestResultKindUserNotAvailable + non-nil error (was DeniedCouldNotRequestFromUser)
-//   - interactive deny   → PermissionRequestResultKindRejected (was DeniedInteractivelyByUser)
+// copilot_permission_deny_test.go — non-happy-path tests for handlePermissionRequest.
+// Covers the failure scenarios:
+//   - no session found   → PermissionRequestResultKindUserNotAvailable
+//   - session inactive   → PermissionRequestResultKindUserNotAvailable
+//   - sink.Send failure  → PermissionRequestResultKindUserNotAvailable + non-nil error
+//
+// In v2 the adapter always auto-approves; the host applies PermissionPolicy via its
+// captureSink. WS16 adds interactive denial via the Permissions bidi stream.
 
 package main
 
 import (
-	"context"
 	"errors"
 	"testing"
-	"time"
 
 	copilot "github.com/github/copilot-sdk/go"
 
-	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
+	v2 "github.com/brokenbots/criteria/proto/criteria/v2"
 )
 
-// failSender is an executeEventSender that always returns the configured error.
+// failSender is an ExecuteEventSender that always returns the configured error.
 type failSender struct {
 	err error
 }
 
-func (f *failSender) Send(_ *pb.ExecuteEvent) error {
+func (f *failSender) Send(_ *v2.ExecuteEvent) error {
 	return f.err
 }
 
@@ -49,11 +49,9 @@ func TestHandlePermissionRequestNoSession(t *testing.T) {
 func TestHandlePermissionRequestInactiveSession(t *testing.T) {
 	sink := &recordingSender{}
 	s := &sessionState{
-		session:  &fakeSession{},
-		pending:  map[string]chan permDecision{},
-		active:   false,
-		activeCh: make(chan struct{}),
-		sink:     sink,
+		session: &fakeSession{},
+		active:  false,
+		sink:    sink,
 	}
 	p := &copilotAdapter{sessions: map[string]*sessionState{"s1": s}}
 	req := copilot.PermissionRequestShell{}
@@ -75,11 +73,9 @@ func TestHandlePermissionRequestInactiveSession(t *testing.T) {
 func TestHandlePermissionRequestSendError(t *testing.T) {
 	sendErr := errors.New("connection closed")
 	s := &sessionState{
-		session:  &fakeSession{},
-		pending:  map[string]chan permDecision{},
-		active:   true,
-		activeCh: make(chan struct{}),
-		sink:     &failSender{err: sendErr},
+		session: &fakeSession{},
+		active:  true,
+		sink:    &failSender{err: sendErr},
 	}
 	p := &copilotAdapter{sessions: map[string]*sessionState{"s1": s}}
 	req := copilot.PermissionRequestShell{}
@@ -94,68 +90,36 @@ func TestHandlePermissionRequestSendError(t *testing.T) {
 	if result.Kind != copilot.PermissionRequestResultKindUserNotAvailable {
 		t.Fatalf("result.Kind = %q, want %q", result.Kind, copilot.PermissionRequestResultKindUserNotAvailable)
 	}
-
-	// The pending entry must have been cleaned up after the send error.
-	s.mu.Lock()
-	pendingCount := len(s.pending)
-	s.mu.Unlock()
-	if pendingCount != 0 {
-		t.Fatalf("pending map has %d entries after send error, want 0", pendingCount)
-	}
 }
 
-// TestHandlePermissionRequestInteractiveDeny asserts that an explicit user denial
-// (Allow=false via Permit) returns PermissionRequestResultKindRejected.
-func TestHandlePermissionRequestInteractiveDeny(t *testing.T) {
+// TestHandlePermissionRequestActiveSessionApproved verifies the v2 auto-approve
+// behavior: an active session with a valid sink emits a permission.request
+// AdapterEvent and returns Approved. The host applies PermissionPolicy separately.
+func TestHandlePermissionRequestActiveSessionApproved(t *testing.T) {
 	sender := &recordingSender{}
 	s := &sessionState{
-		session:  &fakeSession{},
-		pending:  map[string]chan permDecision{},
-		active:   true,
-		activeCh: make(chan struct{}),
-		sink:     sender,
+		session: &fakeSession{},
+		active:  true,
+		sink:    sender,
 	}
 	p := &copilotAdapter{sessions: map[string]*sessionState{"s1": s}}
 
 	req := copilot.PermissionRequestShell{}
-	resCh := make(chan copilot.PermissionRequestResult, 1)
-	go func() {
-		result, _ := p.handlePermissionRequest("s1", req)
-		resCh <- result
-	}()
-
-	// Wait for the permission-request event to arrive on the sink.
-	var permID string
-	deadline := time.After(300 * time.Millisecond)
-	for permID == "" {
-		select {
-		case <-deadline:
-			t.Fatal("timeout waiting for permission request event on sink")
-		default:
-			for _, ev := range sender.snapshot() {
-				if r := ev.GetPermission(); r != nil {
-					permID = r.GetId()
-				}
-			}
-		}
-	}
-
-	_, err := p.Permit(context.Background(), &pb.PermitRequest{
-		SessionId:    "s1",
-		PermissionId: permID,
-		Allow:        false,
-		Reason:       "test deny",
-	})
+	result, err := p.handlePermissionRequest("s1", req)
 	if err != nil {
-		t.Fatalf("Permit returned error: %v", err)
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Kind != copilot.PermissionRequestResultKindApproved {
+		t.Fatalf("result.Kind = %q, want %q", result.Kind, copilot.PermissionRequestResultKindApproved)
 	}
 
-	select {
-	case result := <-resCh:
-		if result.Kind != copilot.PermissionRequestResultKindRejected {
-			t.Fatalf("result.Kind = %q, want %q", result.Kind, copilot.PermissionRequestResultKindRejected)
+	var found bool
+	for _, ev := range sender.snapshot() {
+		if a := ev.GetAdapter(); a != nil && a.GetEventKind() == "permission.request" {
+			found = true
 		}
-	case <-time.After(300 * time.Millisecond):
-		t.Fatal("timeout waiting for permission handler result")
+	}
+	if !found {
+		t.Fatal("expected permission.request adapter event on sink")
 	}
 }

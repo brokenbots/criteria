@@ -12,7 +12,7 @@ import (
 	copilot "github.com/github/copilot-sdk/go"
 
 	adapterhost "github.com/brokenbots/criteria/sdk/adapterhost"
-	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
+	v2 "github.com/brokenbots/criteria/proto/criteria/v2"
 )
 
 // copilotSession abstracts the Copilot SDK session for testing.
@@ -59,12 +59,14 @@ type sessionState struct {
 
 	execMu sync.Mutex
 
-	mu             sync.Mutex
-	pending        map[string]chan permDecision
-	active         bool
-	activeCh       chan struct{}
-	sink           adapterhost.ExecuteEventSender
-	permissionDeny bool
+	mu    sync.Mutex
+	active bool
+	sink   adapterhost.ExecuteEventSender
+
+	// logCh is the per-session channel for log lines. Execute-time callbacks
+	// write here non-blockingly; the Log RPC handler reads from it until the
+	// host cancels the Log stream context.
+	logCh chan *v2.LogEvent
 
 	// defaultModel and defaultEffort record the agent-level model and
 	// reasoning_effort values set at OpenSession time. applyRequestEffort uses
@@ -90,7 +92,7 @@ type sessionState struct {
 	finalizeFailureKind   string
 }
 
-func (p *copilotAdapter) OpenSession(ctx context.Context, req *pb.OpenSessionRequest) (*pb.OpenSessionResponse, error) {
+func (p *copilotAdapter) OpenSession(ctx context.Context, req *v2.OpenSessionRequest) (*v2.OpenSessionResponse, error) {
 	client, err := p.ensureClient(ctx)
 	if err != nil {
 		return nil, err
@@ -107,7 +109,7 @@ func (p *copilotAdapter) OpenSession(ctx context.Context, req *pb.OpenSessionReq
 
 	s := &sessionState{
 		session: &sdkSession{inner: session},
-		pending: make(map[string]chan permDecision),
+		logCh:   make(chan *v2.LogEvent, 256),
 	}
 
 	p.mu.Lock()
@@ -118,7 +120,7 @@ func (p *copilotAdapter) OpenSession(ctx context.Context, req *pb.OpenSessionReq
 		return nil, err
 	}
 
-	return &pb.OpenSessionResponse{}, nil
+	return &v2.OpenSessionResponse{}, nil
 }
 
 // buildSessionConfig constructs the SDK SessionConfig from agent-level config fields.
@@ -207,7 +209,7 @@ func (p *copilotAdapter) applyOpenSessionModel(ctx context.Context, s *sessionSt
 	return nil
 }
 
-func (p *copilotAdapter) CloseSession(_ context.Context, req *pb.CloseSessionRequest) (*pb.CloseSessionResponse, error) {
+func (p *copilotAdapter) CloseSession(_ context.Context, req *v2.CloseSessionRequest) (*v2.CloseSessionResponse, error) {
 	p.mu.Lock()
 	s, ok := p.sessions[req.GetSessionId()]
 	if ok {
@@ -215,7 +217,7 @@ func (p *copilotAdapter) CloseSession(_ context.Context, req *pb.CloseSessionReq
 	}
 	p.mu.Unlock()
 	if !ok {
-		return &pb.CloseSessionResponse{}, nil
+		return &v2.CloseSessionResponse{}, nil
 	}
 
 	disconnectDone := make(chan error, 1)
@@ -227,11 +229,12 @@ func (p *copilotAdapter) CloseSession(_ context.Context, req *pb.CloseSessionReq
 	case err := <-disconnectDone:
 		if err != nil {
 			_ = s.session.Destroy()
-			return &pb.CloseSessionResponse{}, fmt.Errorf("copilot: disconnect session: %w", err)
+			return &v2.CloseSessionResponse{}, fmt.Errorf("copilot: disconnect session: %w", err)
 		}
 	case <-time.After(closeSessionGrace):
 		_ = s.session.Destroy()
 	}
 
-	return &pb.CloseSessionResponse{}, nil
+	close(s.logCh)
+	return &v2.CloseSessionResponse{}, nil
 }

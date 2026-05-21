@@ -5,8 +5,10 @@
 // stdout). The SDK manages CLI daemon startup/transport and exposes typed events.
 //
 // One SDK session is created per OpenSession and can be reused for multiple
-// Execute calls (multi-turn). Permission requests are bridged to the host via
-// adapter Permit RPC: Execute blocks until Permit resolves each request.
+// Execute calls (multi-turn). Permission requests are forwarded to the host engine
+// as AdapterEvent(kind="permission.request"); the host applies PermissionPolicy
+// and records the decision in the run event log. WS16 adds a proper Permissions
+// bidi stream for interactive decisions.
 //
 // max_turns semantics:
 //   - max_turns is enforced adapter-side per Execute call by counting assistant
@@ -24,7 +26,6 @@
 //   - on missing / invalid finalize, the adapter reprompts up to 2 additional
 //     times. After 3 failed attempts the adapter returns "failure" with a
 //     structured diagnostic event.
-//   - permission denial returns "failure".
 //
 // File layout:
 //   - copilot.go         — constants, types (copilotAdapter), Info/ensureClient/getSession
@@ -32,7 +33,7 @@
 //   - copilot_turn.go    — Execute, turnState, event handlers
 //   - copilot_outcome.go — submit_outcome tool: SubmitOutcomeArgs, handleSubmitOutcome, helpers
 //   - copilot_model.go   — model/effort helpers: applyRequestModel, applyRequestEffort, validateReasoningEffort
-//   - copilot_permission.go — Permit, handlePermissionRequest, permissionDetails
+//   - copilot_permission.go — handlePermissionRequest, permissionDetails
 //   - copilot_util.go    — resultEvent, logEvent, adapterEvent, stringifyAny
 package main
 
@@ -47,7 +48,8 @@ import (
 
 	copilot "github.com/github/copilot-sdk/go"
 
-	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
+	adapterhost "github.com/brokenbots/criteria/sdk/adapterhost"
+	v2 "github.com/brokenbots/criteria/proto/criteria/v2"
 )
 
 const (
@@ -78,12 +80,9 @@ var validReasoningEfforts = map[string]bool{
 	"xhigh":  true,
 }
 
-type permDecision struct {
-	allow  bool
-	reason string
-}
-
 type copilotAdapter struct {
+	adapterhost.UnimplementedPermissions
+
 	mu       sync.Mutex
 	sessions map[string]*sessionState
 
@@ -91,8 +90,8 @@ type copilotAdapter struct {
 	client   *copilot.Client
 }
 
-func (p *copilotAdapter) Info(_ context.Context, _ *pb.InfoRequest) (*pb.InfoResponse, error) {
-	return &pb.InfoResponse{
+func (p *copilotAdapter) Info(_ context.Context, _ *v2.InfoRequest) (*v2.InfoResponse, error) {
+	return &v2.InfoResponse{
 		Name:    adapterName,
 		Version: adapterVersion,
 		Capabilities: []string{
@@ -100,27 +99,27 @@ func (p *copilotAdapter) Info(_ context.Context, _ *pb.InfoRequest) (*pb.InfoRes
 			"permission_gating",
 			"structured_events",
 		},
-		ConfigSchema: &pb.AdapterSchemaProto{Fields: map[string]*pb.ConfigFieldProto{
-			"model":             {Type: "string", Doc: "Copilot model to use for this session."},
-			"reasoning_effort":  {Type: "string", Doc: "Reasoning effort level for the model: low, medium, high, xhigh."},
-			"working_directory": {Type: "string", Doc: "Working directory for tool invocations."},
-			"max_turns":         {Type: "number", Doc: "Maximum assistant turns per Execute call (default: unlimited)."},
-			"system_prompt":     {Type: "string", Doc: "System prompt prepended at session open."},
+		ConfigSchema: &v2.AdapterSchemaProto{Fields: map[string]*v2.ConfigFieldProto{
+			"model":             {Type: "string", Description: "Copilot model to use for this session."},
+			"reasoning_effort":  {Type: "string", Description: "Reasoning effort level for the model: low, medium, high, xhigh."},
+			"working_directory": {Type: "string", Description: "Working directory for tool invocations."},
+			"max_turns":         {Type: "number", Description: "Maximum assistant turns per Execute call (default: unlimited)."},
+			"system_prompt":     {Type: "string", Description: "System prompt prepended at session open."},
 			// Custom provider (BYOK) — point the session at an OpenAI-compatible
 			// endpoint (Ollama, vLLM, Azure OpenAI, etc.). When provider_base_url
 			// is set, the session uses this provider instead of GitHub Copilot's
 			// default backend; in that case `model` is required.
-			"provider_type":              {Type: "string", Doc: "Custom provider type: openai, azure, or anthropic. Default: openai. Only used when provider_base_url is set."},
-			"provider_base_url":          {Type: "string", Doc: "Custom provider API endpoint URL. Setting this enables BYOK mode (e.g. http://localhost:11434/v1 for Ollama, vLLM endpoint). Requires `model` to be set."},
-			"provider_api_key":           {Type: "string", Doc: "Custom provider API key. Optional for local providers like Ollama. Prefer env() in HCL to keep secrets out of source."},
-			"provider_bearer_token":      {Type: "string", Doc: "Custom provider bearer token. Sets Authorization header directly; takes precedence over provider_api_key."},
-			"provider_wire_api":          {Type: "string", Doc: "Custom provider wire format (openai/azure only): completions or responses. Default: completions."},
-			"provider_azure_api_version": {Type: "string", Doc: "Azure API version, used when provider_type=azure. Default: 2024-10-21."},
+			"provider_type":              {Type: "string", Description: "Custom provider type: openai, azure, or anthropic. Default: openai. Only used when provider_base_url is set."},
+			"provider_base_url":          {Type: "string", Description: "Custom provider API endpoint URL. Setting this enables BYOK mode (e.g. http://localhost:11434/v1 for Ollama, vLLM endpoint). Requires `model` to be set."},
+			"provider_api_key":           {Type: "string", Description: "Custom provider API key. Optional for local providers like Ollama. Prefer env() in HCL to keep secrets out of source."},
+			"provider_bearer_token":      {Type: "string", Description: "Custom provider bearer token. Sets Authorization header directly; takes precedence over provider_api_key."},
+			"provider_wire_api":          {Type: "string", Description: "Custom provider wire format (openai/azure only): completions or responses. Default: completions."},
+			"provider_azure_api_version": {Type: "string", Description: "Azure API version, used when provider_type=azure. Default: 2024-10-21."},
 		}},
-		InputSchema: &pb.AdapterSchemaProto{Fields: map[string]*pb.ConfigFieldProto{
-			"prompt":           {Required: true, Type: "string", Doc: "User prompt to send to the assistant."},
-			"max_turns":        {Type: "number", Doc: "Per-step override for max assistant turns."},
-			"reasoning_effort": {Type: "string", Doc: "Per-step override for reasoning effort. Resets to the session default after this step. Valid: low, medium, high, xhigh."},
+		InputSchema: &v2.AdapterSchemaProto{Fields: map[string]*v2.ConfigFieldProto{
+			"prompt":           {Required: true, Type: "string", Description: "User prompt to send to the assistant."},
+			"max_turns":        {Type: "number", Description: "Per-step override for max assistant turns."},
+			"reasoning_effort": {Type: "string", Description: "Per-step override for reasoning effort. Resets to the session default after this step. Valid: low, medium, high, xhigh."},
 		}},
 	}, nil
 }
@@ -172,4 +171,46 @@ func (p *copilotAdapter) getSession(sessionID string) *sessionState {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.sessions[sessionID]
+}
+
+// Log forwards log lines from the per-session logCh to the host's Log stream.
+// The host cancels ctx after Execute returns and then waits for Log to drain.
+func (p *copilotAdapter) Log(ctx context.Context, req *v2.LogRequest, sink adapterhost.LogEventSender) error {
+	s := p.getSession(req.GetSessionId())
+	if s == nil {
+		return nil
+	}
+	for {
+		select {
+		case ev, ok := <-s.logCh:
+			if !ok {
+				return nil
+			}
+			if err := sink.Send(ev); err != nil {
+				return nil
+			}
+		case <-ctx.Done():
+			return nil
+		}
+	}
+}
+
+func (p *copilotAdapter) Pause(_ context.Context, _ *v2.PauseRequest) (*v2.PauseResponse, error) {
+	return &v2.PauseResponse{}, nil
+}
+
+func (p *copilotAdapter) Resume(_ context.Context, _ *v2.ResumeRequest) (*v2.ResumeResponse, error) {
+	return &v2.ResumeResponse{}, nil
+}
+
+func (p *copilotAdapter) Snapshot(_ context.Context, _ *v2.SnapshotRequest) (*v2.SnapshotResponse, error) {
+	return &v2.SnapshotResponse{}, nil
+}
+
+func (p *copilotAdapter) Restore(_ context.Context, _ *v2.RestoreRequest) (*v2.RestoreResponse, error) {
+	return &v2.RestoreResponse{}, nil
+}
+
+func (p *copilotAdapter) Inspect(_ context.Context, _ *v2.InspectRequest) (*v2.InspectResponse, error) {
+	return &v2.InspectResponse{}, nil
 }

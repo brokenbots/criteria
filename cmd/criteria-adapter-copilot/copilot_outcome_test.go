@@ -10,7 +10,7 @@ import (
 
 	copilot "github.com/github/copilot-sdk/go"
 
-	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
+	v2 "github.com/brokenbots/criteria/proto/criteria/v2"
 )
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -26,7 +26,6 @@ func stateWithOutcomes(allowed ...string) *sessionState {
 	}
 	return &sessionState{
 		session:               &fakeSession{},
-		pending:               make(map[string]chan permDecision),
 		activeAllowedOutcomes: set,
 	}
 }
@@ -304,9 +303,9 @@ func TestAwaitOutcomeSuccessOnFirstTurn(t *testing.T) {
 	p := outcomeAdapter(s)
 	sender := &recordingSender{}
 
-	if err := p.Execute(context.Background(), &pb.ExecuteRequest{
+	if err := p.Execute(context.Background(), &v2.ExecuteRequest{
 		SessionId:       "s1",
-		Config:          map[string]string{"prompt": "do work"},
+		Input: map[string]string{"prompt": "do work"},
 		AllowedOutcomes: []string{"failure", "success"},
 	}, sender); err != nil {
 		t.Fatalf("Execute returned error: %v", err)
@@ -344,9 +343,9 @@ func TestAwaitOutcomeSuccessAfterOneReprompt(t *testing.T) {
 	p := outcomeAdapter(s)
 	sender := &recordingSender{}
 
-	if err := p.Execute(context.Background(), &pb.ExecuteRequest{
+	if err := p.Execute(context.Background(), &v2.ExecuteRequest{
 		SessionId:       "s1",
-		Config:          map[string]string{"prompt": "do work"},
+		Input: map[string]string{"prompt": "do work"},
 		AllowedOutcomes: []string{"failure", "success"},
 	}, sender); err != nil {
 		t.Fatalf("Execute returned error: %v", err)
@@ -378,9 +377,9 @@ func TestAwaitOutcomeExhaustedReturnsFailure(t *testing.T) {
 	p := outcomeAdapter(s)
 	sender := &recordingSender{}
 
-	if err := p.Execute(context.Background(), &pb.ExecuteRequest{
+	if err := p.Execute(context.Background(), &v2.ExecuteRequest{
 		SessionId:       "s1",
-		Config:          map[string]string{"prompt": "do work"},
+		Input: map[string]string{"prompt": "do work"},
 		AllowedOutcomes: []string{"failure", "success"},
 	}, sender); err != nil {
 		t.Fatalf("Execute returned error: %v", err)
@@ -430,9 +429,9 @@ func TestMaxTurnsWithNeedsReviewAllowed(t *testing.T) {
 	p := outcomeAdapter(s)
 	sender := &recordingSender{}
 
-	if err := p.Execute(context.Background(), &pb.ExecuteRequest{
+	if err := p.Execute(context.Background(), &v2.ExecuteRequest{
 		SessionId:       "s1",
-		Config:          map[string]string{"prompt": "do work", "max_turns": "1"},
+		Input: map[string]string{"prompt": "do work", "max_turns": "1"},
 		AllowedOutcomes: []string{"failure", "needs_review", "success"},
 	}, sender); err != nil {
 		t.Fatalf("Execute returned error: %v", err)
@@ -458,7 +457,7 @@ func assertOutcome(t *testing.T, sender *recordingSender, want string) {
 
 // resultFromSender returns the ExecuteResult from the last result event, or
 // nil if none was emitted.
-func resultFromSender(sender *recordingSender) *pb.ExecuteResult {
+func resultFromSender(sender *recordingSender) *v2.ExecuteResult {
 	for _, ev := range sender.snapshot() {
 		if r := ev.GetResult(); r != nil {
 			return r
@@ -485,9 +484,9 @@ func TestAwaitOutcome_OutcomeAndReasonInOutputs(t *testing.T) {
 	}
 
 	sender := &recordingSender{}
-	if err := p.Execute(context.Background(), &pb.ExecuteRequest{
+	if err := p.Execute(context.Background(), &v2.ExecuteRequest{
 		SessionId:       "s1",
-		Config:          map[string]string{"prompt": "do work"},
+		Input: map[string]string{"prompt": "do work"},
 		AllowedOutcomes: []string{"failure", "success"},
 	}, sender); err != nil {
 		t.Fatalf("Execute returned error: %v", err)
@@ -515,9 +514,9 @@ func TestAwaitOutcome_FailurePathPopulatesOutcomeOutput(t *testing.T) {
 	fake.sendSequence = [][]copilot.SessionEvent{idle, idle, idle}
 
 	sender := &recordingSender{}
-	if err := outcomeAdapter(s).Execute(context.Background(), &pb.ExecuteRequest{
+	if err := outcomeAdapter(s).Execute(context.Background(), &v2.ExecuteRequest{
 		SessionId:       "s1",
-		Config:          map[string]string{"prompt": "do work"},
+		Input: map[string]string{"prompt": "do work"},
 		AllowedOutcomes: []string{"failure", "success"},
 	}, sender); err != nil {
 		t.Fatalf("Execute returned error: %v", err)
@@ -557,9 +556,9 @@ func TestSubmitOutcome_RepromptTwice(t *testing.T) {
 	}
 
 	sender := &recordingSender{}
-	if err := outcomeAdapter(s).Execute(context.Background(), &pb.ExecuteRequest{
+	if err := outcomeAdapter(s).Execute(context.Background(), &v2.ExecuteRequest{
 		SessionId:       "s1",
-		Config:          map[string]string{"prompt": "do work"},
+		Input: map[string]string{"prompt": "do work"},
 		AllowedOutcomes: []string{"failure", "success"},
 	}, sender); err != nil {
 		t.Fatalf("Execute returned error: %v", err)
@@ -604,9 +603,9 @@ func TestSubmitOutcome_InvalidEnumThenSuccess(t *testing.T) {
 	}
 
 	sender := &recordingSender{}
-	if err := p.Execute(context.Background(), &pb.ExecuteRequest{
+	if err := p.Execute(context.Background(), &v2.ExecuteRequest{
 		SessionId:       "s1",
-		Config:          map[string]string{"prompt": "do work"},
+		Input: map[string]string{"prompt": "do work"},
 		AllowedOutcomes: []string{"failure", "success"},
 	}, sender); err != nil {
 		t.Fatalf("Execute returned error: %v", err)
@@ -644,9 +643,9 @@ func TestSubmitOutcome_PermissionDeniedFailure(t *testing.T) {
 	}
 
 	sender := &recordingSender{}
-	if err := outcomeAdapter(s).Execute(context.Background(), &pb.ExecuteRequest{
+	if err := outcomeAdapter(s).Execute(context.Background(), &v2.ExecuteRequest{
 		SessionId:       "s1",
-		Config:          map[string]string{"prompt": "do work"},
+		Input: map[string]string{"prompt": "do work"},
 		AllowedOutcomes: []string{"failure", "success"},
 	}, sender); err != nil {
 		t.Fatalf("Execute returned error: %v", err)
@@ -666,9 +665,9 @@ func TestSubmitOutcome_MaxTurnsReached_NoNeedsReviewInAllowed(t *testing.T) {
 	}
 
 	sender := &recordingSender{}
-	if err := outcomeAdapter(s).Execute(context.Background(), &pb.ExecuteRequest{
+	if err := outcomeAdapter(s).Execute(context.Background(), &v2.ExecuteRequest{
 		SessionId:       "s1",
-		Config:          map[string]string{"prompt": "do work", "max_turns": "1"},
+		Input: map[string]string{"prompt": "do work", "max_turns": "1"},
 		AllowedOutcomes: []string{"failure", "success"},
 	}, sender); err != nil {
 		t.Fatalf("Execute returned error: %v", err)
@@ -689,9 +688,9 @@ func TestSubmitOutcome_EmptyAllowedSetFailsClosed(t *testing.T) {
 	fake.sendSequence = [][]copilot.SessionEvent{idle, idle, idle}
 
 	sender := &recordingSender{}
-	if err := outcomeAdapter(s).Execute(context.Background(), &pb.ExecuteRequest{
+	if err := outcomeAdapter(s).Execute(context.Background(), &v2.ExecuteRequest{
 		SessionId: "s1",
-		Config:    map[string]string{"prompt": "do work"},
+		Input: map[string]string{"prompt": "do work"},
 		// No AllowedOutcomes: empty set.
 	}, sender); err != nil {
 		t.Fatalf("Execute returned error: %v", err)
@@ -742,9 +741,9 @@ func TestSubmitOutcome_PreamblePresentInPrompt(t *testing.T) {
 	fake.sendSequence = [][]copilot.SessionEvent{idle, idle, idle}
 
 	sender := &recordingSender{}
-	_ = outcomeAdapter(s).Execute(context.Background(), &pb.ExecuteRequest{
+	_ = outcomeAdapter(s).Execute(context.Background(), &v2.ExecuteRequest{
 		SessionId:       "s1",
-		Config:          map[string]string{"prompt": "do the task"},
+		Input: map[string]string{"prompt": "do the task"},
 		AllowedOutcomes: []string{"failure", "success"},
 	}, sender)
 

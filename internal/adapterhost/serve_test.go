@@ -1,50 +1,37 @@
 package adapterhost
 
 import (
-	"testing"
+"testing"
 
-	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
+v2 "github.com/brokenbots/criteria/proto/criteria/v2"
 )
 
-// TestAdapterPluginWireNames verifies that the hard-coded wire-name constants
-// match the names declared in the compiled proto descriptor. A mismatch causes
-// host/adapter negotiation to fail at runtime.
+// TestAdapterWireNames verifies that the v2 AdapterService descriptor has the
+// expected methods. A mismatch causes host/adapter negotiation to fail at runtime.
 func TestAdapterWireNames(t *testing.T) {
-	svc := pb.File_criteria_v1_adapter_plugin_proto.Services().ByName("AdapterService")
-	if svc == nil {
-		t.Fatal("AdapterService not found in proto descriptor")
-	}
+svc := v2.File_criteria_v2_adapter_proto.Services().ByName("AdapterService")
+if svc == nil {
+t.Fatal("AdapterService not found in v2 proto descriptor")
+}
 
-	wantService := string(svc.FullName())
-	if adapterServiceName != wantService {
-		t.Errorf("adapterServiceName = %q; want %q", adapterServiceName, wantService)
-	}
+const wantService = "criteria.v2.AdapterService"
+if string(svc.FullName()) != wantService {
+t.Errorf("service full name = %q; want %q", string(svc.FullName()), wantService)
+}
 
-	for _, tc := range []struct {
-		name   string
-		got    string
-		method string
-	}{
-		{"Info", adapterInfoMethod, "Info"},
-		{"OpenSession", adapterOpenSessionMethod, "OpenSession"},
-		{"Execute", adapterExecuteMethod, "Execute"},
-		{"Permit", adapterPermitMethod, "Permit"},
-		{"CloseSession", adapterCloseSessionMethod, "CloseSession"},
-	} {
-		var found bool
-		for i := 0; i < svc.Methods().Len(); i++ {
-			if string(svc.Methods().Get(i).Name()) == tc.method {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Errorf("method %q not found in proto descriptor", tc.method)
-			continue
-		}
-		want := "/" + wantService + "/" + tc.method
-		if tc.got != want {
-			t.Errorf("%s method constant = %q; want %q", tc.name, tc.got, want)
-		}
-	}
+for _, method := range []string{
+"Info", "OpenSession", "Execute", "Log", "Permissions",
+"Pause", "Resume", "Snapshot", "Restore", "Inspect", "CloseSession",
+} {
+found := false
+for i := 0; i < svc.Methods().Len(); i++ {
+if string(svc.Methods().Get(i).Name()) == method {
+found = true
+break
+}
+}
+if !found {
+t.Errorf("method %q not found in v2 proto descriptor", method)
+}
+}
 }

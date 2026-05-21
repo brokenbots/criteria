@@ -8,7 +8,7 @@ import (
 	hplugin "github.com/hashicorp/go-plugin"
 	"google.golang.org/grpc"
 
-	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
+	v2 "github.com/brokenbots/criteria/proto/criteria/v2"
 )
 
 // AdapterName is the dispenser key shared between host and adapter process.
@@ -16,29 +16,41 @@ import (
 // here for the host-side loader.
 const AdapterName = "adapter"
 
-// These wire-name constants must match the proto service descriptor.
-// Validated by TestAdapterPluginWireNames against the compiled descriptor.
-const (
-	adapterServiceName        = "criteria.v1.AdapterService"
-	adapterInfoMethod         = "/criteria.v1.AdapterService/Info"
-	adapterOpenSessionMethod  = "/criteria.v1.AdapterService/OpenSession"
-	adapterExecuteMethod      = "/criteria.v1.AdapterService/Execute"
-	adapterPermitMethod       = "/criteria.v1.AdapterService/Permit"
-	adapterCloseSessionMethod = "/criteria.v1.AdapterService/CloseSession"
-)
-
 // Client is the host-side typed client returned from go-plugin dispense.
+// All methods correspond 1:1 with the v2 AdapterService RPC surface.
 type Client interface {
-	Info(context.Context, *pb.InfoRequest) (*pb.InfoResponse, error)
-	OpenSession(context.Context, *pb.OpenSessionRequest) (*pb.OpenSessionResponse, error)
-	Execute(context.Context, *pb.ExecuteRequest) (ExecuteEventReceiver, error)
-	Permit(context.Context, *pb.PermitRequest) (*pb.PermitResponse, error)
-	CloseSession(context.Context, *pb.CloseSessionRequest) (*pb.CloseSessionResponse, error)
+	Info(ctx context.Context, req *v2.InfoRequest) (*v2.InfoResponse, error)
+	OpenSession(ctx context.Context, req *v2.OpenSessionRequest) (*v2.OpenSessionResponse, error)
+	// Execute drives the server-streaming Execute RPC, dispatching each event
+	// to sink.Emit. It returns nil when the stream closes cleanly (after the
+	// adapter has sent an ExecuteResult event).
+	Execute(ctx context.Context, req *v2.ExecuteRequest, sink ExecuteEventSink) error
+	// Log drives the server-streaming Log RPC, dispatching each log event to
+	// sink.Emit. Callers typically invoke this concurrently with Execute.
+	Log(ctx context.Context, req *v2.LogRequest, sink LogEventSink) error
+	// Permissions drives the bidi Permissions RPC. The caller sends
+	// PermissionEvent messages on requests and reads PermissionDecision
+	// messages from decisions. Closing requests causes CloseSend; the call
+	// returns when the response stream is exhausted.
+	Permissions(ctx context.Context, requests <-chan *v2.PermissionEvent, decisions chan<- *v2.PermissionDecision) error
+	Pause(ctx context.Context, req *v2.PauseRequest) (*v2.PauseResponse, error)
+	Resume(ctx context.Context, req *v2.ResumeRequest) (*v2.ResumeResponse, error)
+	Snapshot(ctx context.Context, req *v2.SnapshotRequest) (*v2.SnapshotResponse, error)
+	Restore(ctx context.Context, req *v2.RestoreRequest) (*v2.RestoreResponse, error)
+	Inspect(ctx context.Context, req *v2.InspectRequest) (*v2.InspectResponse, error)
+	CloseSession(ctx context.Context, req *v2.CloseSessionRequest) (*v2.CloseSessionResponse, error)
 }
 
-// ExecuteEventReceiver reads Execute stream events from an adapter process.
-type ExecuteEventReceiver interface {
-	Recv() (*pb.ExecuteEvent, error)
+// ExecuteEventSink receives events from the adapter's Execute RPC stream.
+// Emit is called once per received message; it must not be called concurrently.
+type ExecuteEventSink interface {
+	Emit(*v2.ExecuteEvent) error
+}
+
+// LogEventSink receives events from the adapter's Log RPC stream.
+// Emit is called once per received message; it must not be called concurrently.
+type LogEventSink interface {
+	Emit(*v2.LogEvent) error
 }
 
 // GRPCAdapter is the host-side go-plugin adapter for the Criteria adapter
@@ -59,71 +71,111 @@ func (p *GRPCAdapter) GRPCServer(_ *hplugin.GRPCBroker, _ *grpc.Server) error {
 }
 
 func (p *GRPCAdapter) GRPCClient(_ context.Context, _ *hplugin.GRPCBroker, cc *grpc.ClientConn) (interface{}, error) {
-	return &grpcAdapterClient{cc: cc}, nil
+	return &grpcClient{c: v2.NewAdapterServiceClient(cc)}, nil
 }
 
-type grpcAdapterClient struct {
-	cc *grpc.ClientConn
+type grpcClient struct {
+	c v2.AdapterServiceClient
 }
 
-func (c *grpcAdapterClient) Info(ctx context.Context, req *pb.InfoRequest) (*pb.InfoResponse, error) {
-	out := new(pb.InfoResponse)
-	if err := c.cc.Invoke(ctx, adapterInfoMethod, req, out); err != nil {
-		return nil, err
-	}
-	return out, nil
+func (g *grpcClient) Info(ctx context.Context, req *v2.InfoRequest) (*v2.InfoResponse, error) {
+	return g.c.Info(ctx, req)
 }
 
-func (c *grpcAdapterClient) OpenSession(ctx context.Context, req *pb.OpenSessionRequest) (*pb.OpenSessionResponse, error) {
-	out := new(pb.OpenSessionResponse)
-	if err := c.cc.Invoke(ctx, adapterOpenSessionMethod, req, out); err != nil {
-		return nil, err
-	}
-	return out, nil
+func (g *grpcClient) OpenSession(ctx context.Context, req *v2.OpenSessionRequest) (*v2.OpenSessionResponse, error) {
+	return g.c.OpenSession(ctx, req)
 }
 
-func (c *grpcAdapterClient) Execute(ctx context.Context, req *pb.ExecuteRequest) (ExecuteEventReceiver, error) {
-	sd := &grpc.StreamDesc{ServerStreams: true}
-	stream, err := c.cc.NewStream(ctx, sd, adapterExecuteMethod)
+func (g *grpcClient) Execute(ctx context.Context, req *v2.ExecuteRequest, sink ExecuteEventSink) error {
+	stream, err := g.c.Execute(ctx, req)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	if err := stream.SendMsg(req); err != nil {
-		return nil, err
-	}
-	if err := stream.CloseSend(); err != nil {
-		return nil, err
-	}
-	return &grpcExecuteEventClient{stream: stream}, nil
-}
-
-func (c *grpcAdapterClient) Permit(ctx context.Context, req *pb.PermitRequest) (*pb.PermitResponse, error) {
-	out := new(pb.PermitResponse)
-	if err := c.cc.Invoke(ctx, adapterPermitMethod, req, out); err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *grpcAdapterClient) CloseSession(ctx context.Context, req *pb.CloseSessionRequest) (*pb.CloseSessionResponse, error) {
-	out := new(pb.CloseSessionResponse)
-	if err := c.cc.Invoke(ctx, adapterCloseSessionMethod, req, out); err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-type grpcExecuteEventClient struct {
-	stream grpc.ClientStream
-}
-
-func (c *grpcExecuteEventClient) Recv() (*pb.ExecuteEvent, error) {
-	out := new(pb.ExecuteEvent)
-	if err := c.stream.RecvMsg(out); err != nil {
+	for {
+		ev, err := stream.Recv()
 		if errors.Is(err, io.EOF) {
-			return nil, io.EOF
+			return nil
 		}
-		return nil, err
+		if err != nil {
+			return err
+		}
+		if err := sink.Emit(ev); err != nil {
+			return err
+		}
 	}
-	return out, nil
+}
+
+func (g *grpcClient) Log(ctx context.Context, req *v2.LogRequest, sink LogEventSink) error {
+	stream, err := g.c.Log(ctx, req)
+	if err != nil {
+		return err
+	}
+	for {
+		ev, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if err := sink.Emit(ev); err != nil {
+			return err
+		}
+	}
+}
+
+func (g *grpcClient) Permissions(ctx context.Context, requests <-chan *v2.PermissionEvent, decisions chan<- *v2.PermissionDecision) error {
+	stream, err := g.c.Permissions(ctx)
+	if err != nil {
+		return err
+	}
+	sendDone := make(chan error, 1)
+	go func() {
+		for req := range requests {
+			if err := stream.Send(req); err != nil {
+				sendDone <- err
+				return
+			}
+		}
+		sendDone <- stream.CloseSend()
+	}()
+	for {
+		dec, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		select {
+		case decisions <- dec:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return <-sendDone
+}
+
+func (g *grpcClient) Pause(ctx context.Context, req *v2.PauseRequest) (*v2.PauseResponse, error) {
+	return g.c.Pause(ctx, req)
+}
+
+func (g *grpcClient) Resume(ctx context.Context, req *v2.ResumeRequest) (*v2.ResumeResponse, error) {
+	return g.c.Resume(ctx, req)
+}
+
+func (g *grpcClient) Snapshot(ctx context.Context, req *v2.SnapshotRequest) (*v2.SnapshotResponse, error) {
+	return g.c.Snapshot(ctx, req)
+}
+
+func (g *grpcClient) Restore(ctx context.Context, req *v2.RestoreRequest) (*v2.RestoreResponse, error) {
+	return g.c.Restore(ctx, req)
+}
+
+func (g *grpcClient) Inspect(ctx context.Context, req *v2.InspectRequest) (*v2.InspectResponse, error) {
+	return g.c.Inspect(ctx, req)
+}
+
+func (g *grpcClient) CloseSession(ctx context.Context, req *v2.CloseSessionRequest) (*v2.CloseSessionResponse, error) {
+	return g.c.CloseSession(ctx, req)
 }
