@@ -85,14 +85,11 @@ type sessionState struct {
 	// reason category for the most-recent failed invocation ("missing",
 	// "invalid_outcome", "duplicate", or "no_outcomes") and is used by
 	// failExhausted to emit a structured diagnostic event.
-	// permissionDeny is set to true when a permission request is denied during
-	// execution, causing awaitOutcome to return "failure" immediately.
 	activeAllowedOutcomes map[string]struct{}
 	finalizedOutcome      string
 	finalizedReason       string
 	finalizeAttempts      int
 	finalizeFailureKind   string
-	permissionDeny        bool
 }
 
 func (p *copilotAdapter) OpenSession(ctx context.Context, req *v2.OpenSessionRequest) (*v2.OpenSessionResponse, error) {

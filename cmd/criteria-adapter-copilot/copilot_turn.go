@@ -161,15 +161,10 @@ func (ts *turnState) handleIdleTurn(ctx context.Context, s *sessionState, sink a
 	s.mu.Lock()
 	outcome := s.finalizedOutcome
 	reason := s.finalizedReason
-	permDenied := s.permissionDeny
 	s.mu.Unlock()
 
 	if outcome != "" {
 		return true, sink.Send(resultEvent(outcome, reason))
-	}
-
-	if permDenied {
-		return true, sink.Send(resultEvent("failure", ""))
 	}
 
 	// No valid finalize this turn. Fail if exhausted.
@@ -351,7 +346,6 @@ func (s *sessionState) beginExecution(sink adapterhost.ExecuteEventSender) func(
 	s.finalizedReason = ""
 	s.finalizeAttempts = 0
 	s.finalizeFailureKind = ""
-	s.permissionDeny = false
 	s.mu.Unlock()
 
 	return func() {

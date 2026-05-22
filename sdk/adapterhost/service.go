@@ -3,6 +3,9 @@ package adapterhost
 import (
 	"context"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	v2 "github.com/brokenbots/criteria/proto/criteria/v2"
 )
 
@@ -85,4 +88,29 @@ func (UnimplementedPermissions) Permissions(_ context.Context, stream Permission
 			return nil //nolint:nilerr // send failure = stream closed
 		}
 	}
+}
+
+// UnimplementedLifecycle satisfies the Pause/Resume/Snapshot/Restore/Inspect
+// methods of [Service] with gRPC Unimplemented errors. Embed this in your
+// adapter implementation until lifecycle management (WS17/WS18) is ready.
+type UnimplementedLifecycle struct{}
+
+func (UnimplementedLifecycle) Pause(_ context.Context, _ *v2.PauseRequest) (*v2.PauseResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "Pause is not implemented in this adapter")
+}
+
+func (UnimplementedLifecycle) Resume(_ context.Context, _ *v2.ResumeRequest) (*v2.ResumeResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "Resume is not implemented in this adapter")
+}
+
+func (UnimplementedLifecycle) Snapshot(_ context.Context, _ *v2.SnapshotRequest) (*v2.SnapshotResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "Snapshot is not implemented in this adapter")
+}
+
+func (UnimplementedLifecycle) Restore(_ context.Context, _ *v2.RestoreRequest) (*v2.RestoreResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "Restore is not implemented in this adapter")
+}
+
+func (UnimplementedLifecycle) Inspect(_ context.Context, _ *v2.InspectRequest) (*v2.InspectResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "Inspect is not implemented in this adapter")
 }

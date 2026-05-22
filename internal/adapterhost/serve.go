@@ -129,31 +129,48 @@ func (g *grpcClient) Permissions(ctx context.Context, requests <-chan *v2.Permis
 	if err != nil {
 		return err
 	}
+	senderCtx, cancelSender := context.WithCancel(ctx)
 	sendDone := make(chan error, 1)
 	go func() {
-		for req := range requests {
-			if err := stream.Send(req); err != nil {
-				sendDone <- err
+		for {
+			select {
+			case req, ok := <-requests:
+				if !ok {
+					sendDone <- stream.CloseSend()
+					return
+				}
+				if err := stream.Send(req); err != nil {
+					sendDone <- err
+					return
+				}
+			case <-senderCtx.Done():
+				sendDone <- nil
 				return
 			}
 		}
-		sendDone <- stream.CloseSend()
 	}()
+
+	var recvErr error
+loop:
 	for {
 		dec, err := stream.Recv()
 		if errors.Is(err, io.EOF) {
-			break
+			break loop
 		}
 		if err != nil {
-			return err
+			recvErr = err
+			break loop
 		}
 		select {
 		case decisions <- dec:
 		case <-ctx.Done():
-			return ctx.Err()
+			recvErr = ctx.Err()
+			break loop
 		}
 	}
-	return <-sendDone
+	cancelSender()
+	<-sendDone
+	return recvErr
 }
 
 func (g *grpcClient) Pause(ctx context.Context, req *v2.PauseRequest) (*v2.PauseResponse, error) {

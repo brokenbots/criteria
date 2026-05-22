@@ -237,10 +237,13 @@ func (p *rpcHandle) Execute(ctx context.Context, sessionID string, step *workflo
 
 	// Cancel the log stream and wait for the goroutine regardless of execErr.
 	cancelLog()
-	<-logDone
+	logErr := <-logDone
 
 	if execErr != nil {
 		return adapter.Result{Outcome: "failure"}, execErr
+	}
+	if logErr != nil && !errors.Is(logErr, context.Canceled) {
+		return adapter.Result{Outcome: "failure"}, fmt.Errorf("adapter log stream: %w", logErr)
 	}
 	if !captureSink.done {
 		return adapter.Result{Outcome: "failure"}, errors.New("adapter execute stream ended without result")

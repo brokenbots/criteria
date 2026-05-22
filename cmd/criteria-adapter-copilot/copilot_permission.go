@@ -43,14 +43,12 @@ func (p *copilotAdapter) handlePermissionRequest(sessionID string, request copil
 		return copilot.PermissionRequestResult{Kind: copilot.PermissionRequestResultKindUserNotAvailable}, sendErr
 	}
 
-	// WS15: mark the execution as permission-denied so awaitOutcome returns
-	// "failure" after session.idle. The host evaluates the allow_tools policy
-	// independently. WS16 will add a back-channel to get the actual decision.
-	s.mu.Lock()
-	s.permissionDeny = true
-	s.mu.Unlock()
-
-	return copilot.PermissionRequestResult{Kind: copilot.PermissionRequestResultKindApproved}, nil
+	// Always reject at the Copilot SDK level so the tool never runs without an
+	// explicit host grant. The host's executeCaptureSink evaluates allow_tools
+	// policy independently and overrides the step outcome to "needs_review" when
+	// any tool was denied. WS16 adds a real-time back-channel for interactive
+	// grant/deny decisions.
+	return copilot.PermissionRequestResult{Kind: copilot.PermissionRequestResultKindRejected}, nil
 }
 
 func permissionDetails(request copilot.PermissionRequest) map[string]string { //nolint:funlen,gocognit,gocyclo // collecting optional fields from SDK request variants; splitting further would obscure the boundary mapping

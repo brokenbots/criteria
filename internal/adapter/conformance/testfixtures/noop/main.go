@@ -18,7 +18,7 @@ type noopService struct {
 	sessions map[string]struct{}
 }
 
-func (s *noopService) Info(context.Context, *v2.InfoRequest) (*v2.InfoResponse, error) {
+func (s *noopService) Info(_ context.Context, _ *v2.InfoRequest) (*v2.InfoResponse, error) {
 	return &v2.InfoResponse{
 		Name:         "noop",
 		Version:      "0.1.0",
@@ -26,24 +26,21 @@ func (s *noopService) Info(context.Context, *v2.InfoRequest) (*v2.InfoResponse, 
 	}, nil
 }
 
-func (s *noopService) OpenSession(_ context.Context, request *v2.OpenSessionRequest) (*v2.OpenSessionResponse, error) {
+func (s *noopService) OpenSession(_ context.Context, req *v2.OpenSessionRequest) (*v2.OpenSessionResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.sessions == nil {
-		s.sessions = map[string]struct{}{}
-	}
-	s.sessions[request.GetSessionId()] = struct{}{}
+	s.sessions[req.GetSessionId()] = struct{}{}
 	return &v2.OpenSessionResponse{}, nil
 }
 
-func (s *noopService) Execute(ctx context.Context, request *v2.ExecuteRequest, sink adapterhost.ExecuteEventSender) error {
+func (s *noopService) Execute(ctx context.Context, req *v2.ExecuteRequest, sink adapterhost.ExecuteEventSender) error {
 	s.mu.Lock()
-	_, ok := s.sessions[request.GetSessionId()]
+	_, ok := s.sessions[req.GetSessionId()]
 	s.mu.Unlock()
 	if !ok {
-		return fmt.Errorf("unknown session %q", request.GetSessionId())
+		return fmt.Errorf("unknown session %q", req.GetSessionId())
 	}
-	if rawDelay := request.GetInput()["delay_ms"]; rawDelay != "" {
+	if rawDelay := req.GetInput()["delay_ms"]; rawDelay != "" {
 		delayMS, err := strconv.Atoi(rawDelay)
 		if err != nil || delayMS < 0 {
 			return fmt.Errorf("invalid delay_ms %q", rawDelay)
@@ -58,7 +55,6 @@ func (s *noopService) Execute(ctx context.Context, request *v2.ExecuteRequest, s
 			}
 		}
 	}
-
 	return sink.Send(&v2.ExecuteEvent{
 		Event: &v2.ExecuteEvent_Result{Result: &v2.ExecuteResult{Outcome: "success"}},
 	})
@@ -68,10 +64,10 @@ func (s *noopService) Log(_ context.Context, _ *v2.LogRequest, _ adapterhost.Log
 	return nil
 }
 
-func (s *noopService) CloseSession(_ context.Context, request *v2.CloseSessionRequest) (*v2.CloseSessionResponse, error) {
+func (s *noopService) CloseSession(_ context.Context, req *v2.CloseSessionRequest) (*v2.CloseSessionResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	delete(s.sessions, request.GetSessionId())
+	delete(s.sessions, req.GetSessionId())
 	return &v2.CloseSessionResponse{}, nil
 }
 

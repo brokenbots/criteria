@@ -4,8 +4,9 @@
 //   - session inactive   → PermissionRequestResultKindUserNotAvailable
 //   - sink.Send failure  → PermissionRequestResultKindUserNotAvailable + non-nil error
 //
-// In v2 the adapter always auto-approves; the host applies PermissionPolicy via its
-// captureSink. WS16 adds interactive denial via the Permissions bidi stream.
+// In v2 the adapter always denies at the SDK level so the tool never runs;
+// the host applies PermissionPolicy via its captureSink and overrides the step
+// outcome to "needs_review" when a tool is denied. WS16 adds interactive grant/deny.
 
 package main
 
@@ -92,10 +93,11 @@ func TestHandlePermissionRequestSendError(t *testing.T) {
 	}
 }
 
-// TestHandlePermissionRequestActiveSessionApproved verifies the v2 auto-approve
+// TestHandlePermissionRequestActiveSessionDenied verifies the v2 deny-first
 // behavior: an active session with a valid sink emits a permission.request
-// AdapterEvent and returns Approved. The host applies PermissionPolicy separately.
-func TestHandlePermissionRequestActiveSessionApproved(t *testing.T) {
+// AdapterEvent and returns Rejected. The host applies PermissionPolicy separately
+// and overrides the step outcome to "needs_review" when a tool is denied.
+func TestHandlePermissionRequestActiveSessionDenied(t *testing.T) {
 	sender := &recordingSender{}
 	s := &sessionState{
 		session: &fakeSession{},
@@ -109,8 +111,8 @@ func TestHandlePermissionRequestActiveSessionApproved(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result.Kind != copilot.PermissionRequestResultKindApproved {
-		t.Fatalf("result.Kind = %q, want %q", result.Kind, copilot.PermissionRequestResultKindApproved)
+	if result.Kind != copilot.PermissionRequestResultKindRejected {
+		t.Fatalf("result.Kind = %q, want %q", result.Kind, copilot.PermissionRequestResultKindRejected)
 	}
 
 	var found bool
