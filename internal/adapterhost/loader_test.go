@@ -1,41 +1,41 @@
 package adapterhost
 
 import (
-"bytes"
-"context"
-"errors"
-"log/slog"
-"strings"
-"testing"
+	"bytes"
+	"context"
+	"errors"
+	"log/slog"
+	"strings"
+	"testing"
 
-"github.com/brokenbots/criteria/internal/adapter"
-v2 "github.com/brokenbots/criteria/proto/criteria/v2"
-"github.com/brokenbots/criteria/workflow"
+	"github.com/brokenbots/criteria/internal/adapter"
+	v2 "github.com/brokenbots/criteria/proto/criteria/v2"
+	"github.com/brokenbots/criteria/workflow"
 )
 
 func TestLoaderResolveNoopAdapter(t *testing.T) {
-adapterBin := buildNoopAdapter(t)
-loader := NewLoaderWithDiscovery(func(string) (string, error) {
-return adapterBin, nil
-})
-t.Cleanup(func() {
-_ = loader.Shutdown(context.Background())
-})
+	adapterBin := buildNoopAdapter(t)
+	loader := NewLoaderWithDiscovery(func(string) (string, error) {
+		return adapterBin, nil
+	})
+	t.Cleanup(func() {
+		_ = loader.Shutdown(context.Background())
+	})
 
-p, err := loader.Resolve(context.Background(), "noop")
-if err != nil {
-t.Fatalf("resolve: %v", err)
-}
-info, err := p.Info(context.Background())
-if err != nil {
-t.Fatalf("info: %v", err)
-}
-if info.Name != "noop" {
-t.Fatalf("adapter name=%q want noop", info.Name)
-}
-if info.Version == "" {
-t.Fatal("expected non-empty adapter version")
-}
+	p, err := loader.Resolve(context.Background(), "noop")
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	info, err := p.Info(context.Background())
+	if err != nil {
+		t.Fatalf("info: %v", err)
+	}
+	if info.Name != "noop" {
+		t.Fatalf("adapter name=%q want noop", info.Name)
+	}
+	if info.Version == "" {
+		t.Fatal("expected non-empty adapter version")
+	}
 }
 
 // canceledCtxHandle is a minimal Handle stub that always returns a
@@ -44,11 +44,11 @@ t.Fatal("expected non-empty adapter version")
 type canceledCtxHandle struct{}
 
 func (c *canceledCtxHandle) Info(context.Context) (Info, error) {
-return Info{Name: "cancel-stub"}, nil
+	return Info{Name: "cancel-stub"}, nil
 }
 func (c *canceledCtxHandle) OpenSession(context.Context, string, map[string]string) error { return nil }
 func (c *canceledCtxHandle) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
-return adapter.Result{Outcome: "failure"}, context.Canceled
+	return adapter.Result{Outcome: "failure"}, context.Canceled
 }
 func (c *canceledCtxHandle) CloseSession(context.Context, string) error { return nil }
 func (c *canceledCtxHandle) Kill()                                      {}
@@ -58,35 +58,35 @@ func (c *canceledCtxHandle) Kill()                                      {}
 // Execute still logs at DEBUG rather than WARN, treating host cancellation as
 // an expected close (W12 step 2).
 func TestLoader_HostCanceledContextLogsAtDebug(t *testing.T) {
-var buf bytes.Buffer
-old := slog.Default()
-slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
-t.Cleanup(func() { slog.SetDefault(old) })
+	var buf bytes.Buffer
+	old := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(old) })
 
-sm := &SessionManager{
-loader:   nil,
-sessions: map[string]*Session{},
-}
-sess := &Session{Name: "agent", Adapter: "cancel-stub", handle: &canceledCtxHandle{}}
-// closing flag intentionally NOT set — this simulates the host canceling
-// the run context rather than an explicit SessionManager.Close call.
-sm.mu.Lock()
-sm.sessions["agent"] = sess
-sm.mu.Unlock()
+	sm := &SessionManager{
+		loader:   nil,
+		sessions: map[string]*Session{},
+	}
+	sess := &Session{Name: "agent", Adapter: "cancel-stub", handle: &canceledCtxHandle{}}
+	// closing flag intentionally NOT set — this simulates the host canceling
+	// the run context rather than an explicit SessionManager.Close call.
+	sm.mu.Lock()
+	sm.sessions["agent"] = sess
+	sm.mu.Unlock()
 
-ctx, cancel := context.WithCancel(context.Background())
-cancel() // pre-cancel to simulate host-initiated cancellation
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // pre-cancel to simulate host-initiated cancellation
 
-sink := &adapterEventCollector{}
-_, _ = sm.Execute(ctx, "agent", &workflow.StepNode{Name: "run"}, sink)
+	sink := &adapterEventCollector{}
+	_, _ = sm.Execute(ctx, "agent", &workflow.StepNode{Name: "run"}, sink)
 
-out := buf.String()
-if !strings.Contains(out, "DEBUG") {
-t.Fatalf("expected DEBUG log entry for host-canceled context, got:\n%s", out)
-}
-if strings.Contains(out, "WARN") {
-t.Errorf("expected no WARN log entry for host-canceled context, got:\n%s", out)
-}
+	out := buf.String()
+	if !strings.Contains(out, "DEBUG") {
+		t.Fatalf("expected DEBUG log entry for host-canceled context, got:\n%s", out)
+	}
+	if strings.Contains(out, "WARN") {
+		t.Errorf("expected no WARN log entry for host-canceled context, got:\n%s", out)
+	}
 }
 
 // from Execute. Used to test log-level gating for expected closes (W12).
@@ -95,7 +95,7 @@ type eofHandle struct{}
 func (e *eofHandle) Info(context.Context) (Info, error)                           { return Info{Name: "eof-stub"}, nil }
 func (e *eofHandle) OpenSession(context.Context, string, map[string]string) error { return nil }
 func (e *eofHandle) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
-return adapter.Result{Outcome: "failure"}, errors.New("eof: connection terminated")
+	return adapter.Result{Outcome: "failure"}, errors.New("eof: connection terminated")
 }
 func (e *eofHandle) CloseSession(context.Context, string) error { return nil }
 func (e *eofHandle) Kill()                                      {}
@@ -104,31 +104,31 @@ func (e *eofHandle) Kill()                                      {}
 // set on a session and Execute returns an EOF-like error, the session manager
 // logs at DEBUG (not WARN), indicating an expected close (W12 step 2).
 func TestLoader_ExpectedCloseLogsAtDebug(t *testing.T) {
-var buf bytes.Buffer
-old := slog.Default()
-slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
-t.Cleanup(func() { slog.SetDefault(old) })
+	var buf bytes.Buffer
+	old := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(old) })
 
-sm := &SessionManager{
-loader:   nil,
-sessions: map[string]*Session{},
-}
-sess := &Session{Name: "agent", Adapter: "eof-stub", handle: &eofHandle{}}
-sess.closing.Store(true)
-sm.mu.Lock()
-sm.sessions["agent"] = sess
-sm.mu.Unlock()
+	sm := &SessionManager{
+		loader:   nil,
+		sessions: map[string]*Session{},
+	}
+	sess := &Session{Name: "agent", Adapter: "eof-stub", handle: &eofHandle{}}
+	sess.closing.Store(true)
+	sm.mu.Lock()
+	sm.sessions["agent"] = sess
+	sm.mu.Unlock()
 
-sink := &adapterEventCollector{}
-_, _ = sm.Execute(context.Background(), "agent", &workflow.StepNode{Name: "run"}, sink)
+	sink := &adapterEventCollector{}
+	_, _ = sm.Execute(context.Background(), "agent", &workflow.StepNode{Name: "run"}, sink)
 
-out := buf.String()
-if !strings.Contains(out, "DEBUG") {
-t.Fatalf("expected DEBUG log entry for expected close, got:\n%s", out)
-}
-if strings.Contains(out, "WARN") {
-t.Errorf("expected no WARN log entry for expected close, got:\n%s", out)
-}
+	out := buf.String()
+	if !strings.Contains(out, "DEBUG") {
+		t.Fatalf("expected DEBUG log entry for expected close, got:\n%s", out)
+	}
+	if strings.Contains(out, "WARN") {
+		t.Errorf("expected no WARN log entry for expected close, got:\n%s", out)
+	}
 }
 
 // TestLoader_HostCanceledContextWithEOFLogsAtDebug is the regression test for
@@ -137,139 +137,139 @@ t.Errorf("expected no WARN log entry for expected close, got:\n%s", out)
 // the canceled context must suppress crash classification → DEBUG not WARN
 // (W12 step 2).
 func TestLoader_HostCanceledContextWithEOFLogsAtDebug(t *testing.T) {
-var buf bytes.Buffer
-old := slog.Default()
-slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
-t.Cleanup(func() { slog.SetDefault(old) })
+	var buf bytes.Buffer
+	old := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(old) })
 
-sm := &SessionManager{
-loader:   nil,
-sessions: map[string]*Session{},
-}
-// eofHandle returns "eof: connection terminated" — matches the crash heuristic.
-// closing flag NOT set; only ctx.Err() should suppress crash classification.
-sess := &Session{Name: "agent", Adapter: "eof-stub", handle: &eofHandle{}}
-sm.mu.Lock()
-sm.sessions["agent"] = sess
-sm.mu.Unlock()
+	sm := &SessionManager{
+		loader:   nil,
+		sessions: map[string]*Session{},
+	}
+	// eofHandle returns "eof: connection terminated" — matches the crash heuristic.
+	// closing flag NOT set; only ctx.Err() should suppress crash classification.
+	sess := &Session{Name: "agent", Adapter: "eof-stub", handle: &eofHandle{}}
+	sm.mu.Lock()
+	sm.sessions["agent"] = sess
+	sm.mu.Unlock()
 
-ctx, cancel := context.WithCancel(context.Background())
-cancel() // simulate host aborting the run
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // simulate host aborting the run
 
-sink := &adapterEventCollector{}
-_, _ = sm.Execute(ctx, "agent", &workflow.StepNode{Name: "run"}, sink)
+	sink := &adapterEventCollector{}
+	_, _ = sm.Execute(ctx, "agent", &workflow.StepNode{Name: "run"}, sink)
 
-out := buf.String()
-if !strings.Contains(out, "DEBUG") {
-t.Fatalf("expected DEBUG log for canceled-context + EOF error, got:\n%s", out)
-}
-if strings.Contains(out, "WARN") {
-t.Errorf("expected no WARN log for canceled-context + EOF error, got:\n%s", out)
-}
+	out := buf.String()
+	if !strings.Contains(out, "DEBUG") {
+		t.Fatalf("expected DEBUG log for canceled-context + EOF error, got:\n%s", out)
+	}
+	if strings.Contains(out, "WARN") {
+		t.Errorf("expected no WARN log for canceled-context + EOF error, got:\n%s", out)
+	}
 }
 
 // recordingClient implements Client and captures the last ExecuteRequest it
 // received. It returns a single ExecuteResult with the first outcome it finds
 // in the request's AllowedOutcomes list (or "success" if the list is empty).
 type recordingClient struct {
-lastExecuteReq *v2.ExecuteRequest
+	lastExecuteReq *v2.ExecuteRequest
 }
 
 func (r *recordingClient) Info(_ context.Context, _ *v2.InfoRequest) (*v2.InfoResponse, error) {
-return &v2.InfoResponse{Name: "recording-stub"}, nil
+	return &v2.InfoResponse{Name: "recording-stub"}, nil
 }
 
 func (r *recordingClient) OpenSession(_ context.Context, _ *v2.OpenSessionRequest) (*v2.OpenSessionResponse, error) {
-return &v2.OpenSessionResponse{}, nil
+	return &v2.OpenSessionResponse{}, nil
 }
 
 func (r *recordingClient) Execute(_ context.Context, req *v2.ExecuteRequest, sink ExecuteEventSink) error {
-r.lastExecuteReq = req
-outcome := "success"
-if len(req.AllowedOutcomes) > 0 {
-outcome = req.AllowedOutcomes[0]
-}
-return sink.Emit(&v2.ExecuteEvent{
-Event: &v2.ExecuteEvent_Result{
-Result: &v2.ExecuteResult{Outcome: outcome},
-},
-})
+	r.lastExecuteReq = req
+	outcome := "success"
+	if len(req.AllowedOutcomes) > 0 {
+		outcome = req.AllowedOutcomes[0]
+	}
+	return sink.Emit(&v2.ExecuteEvent{
+		Event: &v2.ExecuteEvent_Result{
+			Result: &v2.ExecuteResult{Outcome: outcome},
+		},
+	})
 }
 
 func (r *recordingClient) Log(_ context.Context, _ *v2.LogRequest, _ LogEventSink) error {
-return nil
+	return nil
 }
 
 func (r *recordingClient) Permissions(_ context.Context, _ <-chan *v2.PermissionEvent, _ chan<- *v2.PermissionDecision) error {
-return nil
+	return nil
 }
 
 func (r *recordingClient) Pause(_ context.Context, _ *v2.PauseRequest) (*v2.PauseResponse, error) {
-return &v2.PauseResponse{}, nil
+	return &v2.PauseResponse{}, nil
 }
 
 func (r *recordingClient) Resume(_ context.Context, _ *v2.ResumeRequest) (*v2.ResumeResponse, error) {
-return &v2.ResumeResponse{}, nil
+	return &v2.ResumeResponse{}, nil
 }
 
 func (r *recordingClient) Snapshot(_ context.Context, _ *v2.SnapshotRequest) (*v2.SnapshotResponse, error) {
-return &v2.SnapshotResponse{}, nil
+	return &v2.SnapshotResponse{}, nil
 }
 
 func (r *recordingClient) Restore(_ context.Context, _ *v2.RestoreRequest) (*v2.RestoreResponse, error) {
-return &v2.RestoreResponse{}, nil
+	return &v2.RestoreResponse{}, nil
 }
 
 func (r *recordingClient) Inspect(_ context.Context, _ *v2.InspectRequest) (*v2.InspectResponse, error) {
-return &v2.InspectResponse{}, nil
+	return &v2.InspectResponse{}, nil
 }
 
 func (r *recordingClient) CloseSession(_ context.Context, _ *v2.CloseSessionRequest) (*v2.CloseSessionResponse, error) {
-return &v2.CloseSessionResponse{}, nil
+	return &v2.CloseSessionResponse{}, nil
 }
 
 // TestLoader_PopulatesAllowedOutcomes verifies that ExecuteRequest is
 // constructed with AllowedOutcomes derived from the step's declared
 // outcome set, sorted ascending.
 func TestLoader_PopulatesAllowedOutcomes(t *testing.T) {
-rc := &recordingClient{}
-p := &rpcHandle{name: "recording-stub", rpc: rc}
+	rc := &recordingClient{}
+	p := &rpcHandle{name: "recording-stub", rpc: rc}
 
-step := &workflow.StepNode{
-Name: "review",
-// Insert in non-sorted order to verify sorting.
-Outcomes: map[string]*workflow.CompiledOutcome{
-"failure":           {Next: "failed"},
-"approved":          {Next: "done"},
-"changes_requested": {Next: "rework"},
-},
-}
+	step := &workflow.StepNode{
+		Name: "review",
+		// Insert in non-sorted order to verify sorting.
+		Outcomes: map[string]*workflow.CompiledOutcome{
+			"failure":           {Next: "failed"},
+			"approved":          {Next: "done"},
+			"changes_requested": {Next: "rework"},
+		},
+	}
 
-sink := &adapterEventCollector{}
-result, err := p.Execute(context.Background(), "sess-1", step, sink)
-if err != nil {
-t.Fatalf("Execute: %v", err)
-}
+	sink := &adapterEventCollector{}
+	result, err := p.Execute(context.Background(), "sess-1", step, sink)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
 
-req := rc.lastExecuteReq
-if req == nil {
-t.Fatal("no ExecuteRequest was captured")
-}
+	req := rc.lastExecuteReq
+	if req == nil {
+		t.Fatal("no ExecuteRequest was captured")
+	}
 
-want := []string{"approved", "changes_requested", "failure"}
-if len(req.AllowedOutcomes) != len(want) {
-t.Fatalf("AllowedOutcomes = %v, want %v", req.AllowedOutcomes, want)
-}
-for i, v := range want {
-if req.AllowedOutcomes[i] != v {
-t.Errorf("AllowedOutcomes[%d] = %q, want %q", i, req.AllowedOutcomes[i], v)
-}
-}
+	want := []string{"approved", "changes_requested", "failure"}
+	if len(req.AllowedOutcomes) != len(want) {
+		t.Fatalf("AllowedOutcomes = %v, want %v", req.AllowedOutcomes, want)
+	}
+	for i, v := range want {
+		if req.AllowedOutcomes[i] != v {
+			t.Errorf("AllowedOutcomes[%d] = %q, want %q", i, req.AllowedOutcomes[i], v)
+		}
+	}
 
-// The recording client returns the first allowed outcome.
-if result.Outcome != "approved" {
-t.Errorf("result.Outcome = %q, want %q", result.Outcome, "approved")
-}
+	// The recording client returns the first allowed outcome.
+	if result.Outcome != "approved" {
+		t.Errorf("result.Outcome = %q, want %q", result.Outcome, "approved")
+	}
 }
 
 // TestLoader_PopulatesAllowedOutcomes_Empty verifies that a step with no
@@ -278,74 +278,74 @@ t.Errorf("result.Outcome = %q, want %q", result.Outcome, "approved")
 // wire, proto3 repeated fields treat nil and empty equivalently; adapters
 // must not use nil vs empty to infer host version or behavior.
 func TestLoader_PopulatesAllowedOutcomes_Empty(t *testing.T) {
-rc := &recordingClient{}
-p := &rpcHandle{name: "recording-stub", rpc: rc}
+	rc := &recordingClient{}
+	p := &rpcHandle{name: "recording-stub", rpc: rc}
 
-step := &workflow.StepNode{Name: "open", Outcomes: nil}
+	step := &workflow.StepNode{Name: "open", Outcomes: nil}
 
-sink := &adapterEventCollector{}
-if _, err := p.Execute(context.Background(), "sess-2", step, sink); err != nil {
-t.Fatalf("Execute: %v", err)
-}
+	sink := &adapterEventCollector{}
+	if _, err := p.Execute(context.Background(), "sess-2", step, sink); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
 
-req := rc.lastExecuteReq
-if req == nil {
-t.Fatal("no ExecuteRequest was captured")
-}
-if req.AllowedOutcomes == nil {
-t.Fatal("AllowedOutcomes should be non-nil empty slice, got nil")
-}
-if len(req.AllowedOutcomes) != 0 {
-t.Fatalf("AllowedOutcomes = %v, want empty", req.AllowedOutcomes)
-}
+	req := rc.lastExecuteReq
+	if req == nil {
+		t.Fatal("no ExecuteRequest was captured")
+	}
+	if req.AllowedOutcomes == nil {
+		t.Fatal("AllowedOutcomes should be non-nil empty slice, got nil")
+	}
+	if len(req.AllowedOutcomes) != 0 {
+		t.Fatalf("AllowedOutcomes = %v, want empty", req.AllowedOutcomes)
+	}
 }
 
 // TestLoader_ExecuteUsesInputNotConfig verifies that the ExecuteRequest uses
 // the Input field (v2 rename from Config).
 func TestLoader_ExecuteUsesInputNotConfig(t *testing.T) {
-rc := &recordingClient{}
-p := &rpcHandle{name: "recording-stub", rpc: rc}
+	rc := &recordingClient{}
+	p := &rpcHandle{name: "recording-stub", rpc: rc}
 
-step := &workflow.StepNode{
-Name:  "task",
-Input: map[string]string{"prompt": "hello"},
-Outcomes: map[string]*workflow.CompiledOutcome{
-"success": {Next: "done"},
-},
-}
+	step := &workflow.StepNode{
+		Name:  "task",
+		Input: map[string]string{"prompt": "hello"},
+		Outcomes: map[string]*workflow.CompiledOutcome{
+			"success": {Next: "done"},
+		},
+	}
 
-sink := &adapterEventCollector{}
-if _, err := p.Execute(context.Background(), "sess-3", step, sink); err != nil {
-t.Fatalf("Execute: %v", err)
-}
+	sink := &adapterEventCollector{}
+	if _, err := p.Execute(context.Background(), "sess-3", step, sink); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
 
-req := rc.lastExecuteReq
-if req == nil {
-t.Fatal("no ExecuteRequest was captured")
-}
-if req.Input["prompt"] != "hello" {
-t.Errorf("ExecuteRequest.Input[prompt] = %q; want %q", req.Input["prompt"], "hello")
-}
+	req := rc.lastExecuteReq
+	if req == nil {
+		t.Fatal("no ExecuteRequest was captured")
+	}
+	if req.Input["prompt"] != "hello" {
+		t.Errorf("ExecuteRequest.Input[prompt] = %q; want %q", req.Input["prompt"], "hello")
+	}
 }
 
 // TestCollectAllowedOutcomes_Sorted verifies that collectAllowedOutcomes
 // returns outcome names sorted ascending regardless of map insertion order.
 func TestCollectAllowedOutcomes_Sorted(t *testing.T) {
-step := &workflow.StepNode{Outcomes: map[string]*workflow.CompiledOutcome{
-"failure":           {Next: "failed"},
-"approved":          {Next: "done"},
-"changes_requested": {Next: "rework"},
-}}
-got := collectAllowedOutcomes(step)
-want := []string{"approved", "changes_requested", "failure"}
-if len(got) != len(want) {
-t.Fatalf("got %v, want %v", got, want)
-}
-for i, v := range want {
-if got[i] != v {
-t.Errorf("got[%d] = %q, want %q", i, got[i], v)
-}
-}
+	step := &workflow.StepNode{Outcomes: map[string]*workflow.CompiledOutcome{
+		"failure":           {Next: "failed"},
+		"approved":          {Next: "done"},
+		"changes_requested": {Next: "rework"},
+	}}
+	got := collectAllowedOutcomes(step)
+	want := []string{"approved", "changes_requested", "failure"}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i, v := range want {
+		if got[i] != v {
+			t.Errorf("got[%d] = %q, want %q", i, got[i], v)
+		}
+	}
 }
 
 // TestCollectAllowedOutcomes_Empty verifies that a step with no outcomes
@@ -353,11 +353,11 @@ t.Errorf("got[%d] = %q, want %q", i, got[i], v)
 // over the wire where proto3 nil and empty are equivalent, but the host
 // helper must produce []string{} rather than nil for clarity and consistency.
 func TestCollectAllowedOutcomes_Empty(t *testing.T) {
-got := collectAllowedOutcomes(&workflow.StepNode{})
-if got == nil {
-t.Fatal("expected non-nil empty slice, got nil")
-}
-if len(got) != 0 {
-t.Fatalf("got %v, want empty", got)
-}
+	got := collectAllowedOutcomes(&workflow.StepNode{})
+	if got == nil {
+		t.Fatal("expected non-nil empty slice, got nil")
+	}
+	if len(got) != 0 {
+		t.Fatalf("got %v, want empty", got)
+	}
 }

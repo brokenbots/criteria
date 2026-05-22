@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/brokenbots/criteria/sdk/adapterhost"
 	v2 "github.com/brokenbots/criteria/proto/criteria/v2"
+	"github.com/brokenbots/criteria/sdk/adapterhost"
 )
 
 // fakeEventSender collects Execute events for assertions.
@@ -214,7 +214,7 @@ func TestMCPBridge_FullRoundTrip(t *testing.T) {
 	sender := &fakeEventSender{}
 	err = b.Execute(ctx, &v2.ExecuteRequest{
 		SessionId: "sess-rt",
-		Config: map[string]string{
+		Input: map[string]string{
 			"tool":            "echo",
 			"success_outcome": "success",
 			"message":         "hello",
@@ -262,7 +262,7 @@ func TestMCPBridge_Execute_UnknownTool(t *testing.T) {
 
 	err := b.Execute(ctx, &v2.ExecuteRequest{
 		SessionId: "sess-unk",
-		Config:    map[string]string{"tool": "no-such-tool"},
+		Input:     map[string]string{"tool": "no-such-tool"},
 	}, &fakeEventSender{})
 	if err == nil {
 		t.Fatal("expected error for unknown tool")
@@ -288,7 +288,7 @@ func TestMCPBridge_Execute_MissingTool(t *testing.T) {
 
 	err := b.Execute(ctx, &v2.ExecuteRequest{
 		SessionId: "sess-notool",
-		Config:    map[string]string{}, // missing "tool"
+		Input:     map[string]string{}, // missing "tool"
 	}, &fakeEventSender{})
 	if err == nil {
 		t.Fatal("expected error for missing tool")

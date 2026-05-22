@@ -11,8 +11,8 @@ import (
 
 	copilot "github.com/github/copilot-sdk/go"
 
-	adapterhost "github.com/brokenbots/criteria/sdk/adapterhost"
 	v2 "github.com/brokenbots/criteria/proto/criteria/v2"
+	adapterhost "github.com/brokenbots/criteria/sdk/adapterhost"
 )
 
 // copilotSession abstracts the Copilot SDK session for testing.
@@ -59,7 +59,7 @@ type sessionState struct {
 
 	execMu sync.Mutex
 
-	mu    sync.Mutex
+	mu     sync.Mutex
 	active bool
 	sink   adapterhost.ExecuteEventSender
 
@@ -85,11 +85,14 @@ type sessionState struct {
 	// reason category for the most-recent failed invocation ("missing",
 	// "invalid_outcome", "duplicate", or "no_outcomes") and is used by
 	// failExhausted to emit a structured diagnostic event.
+	// permissionDeny is set to true when a permission request is denied during
+	// execution, causing awaitOutcome to return "failure" immediately.
 	activeAllowedOutcomes map[string]struct{}
 	finalizedOutcome      string
 	finalizedReason       string
 	finalizeAttempts      int
 	finalizeFailureKind   string
+	permissionDeny        bool
 }
 
 func (p *copilotAdapter) OpenSession(ctx context.Context, req *v2.OpenSessionRequest) (*v2.OpenSessionResponse, error) {
@@ -235,6 +238,8 @@ func (p *copilotAdapter) CloseSession(_ context.Context, req *v2.CloseSessionReq
 		_ = s.session.Destroy()
 	}
 
-	close(s.logCh)
+	if s.logCh != nil {
+		close(s.logCh)
+	}
 	return &v2.CloseSessionResponse{}, nil
 }

@@ -7,7 +7,14 @@ go 1.26
 // External plugin authors should pin a published version instead of using replace.
 replace github.com/brokenbots/criteria/sdk => ../../../sdk
 
-require github.com/brokenbots/criteria/sdk v0.0.0-00010101000000-000000000000
+// TODO(W08): Remove this replace directive after the first criteria tag is cut.
+// Until then, the example builds against the in-tree root module via this local path override.
+replace github.com/brokenbots/criteria => ../../..
+
+require (
+	github.com/brokenbots/criteria v0.3.0
+	github.com/brokenbots/criteria/sdk v0.0.0
+)
 
 require (
 	github.com/fatih/color v1.18.0 // indirect

@@ -33,8 +33,9 @@ func (p *copilotAdapter) handlePermissionRequest(sessionID string, request copil
 	}
 
 	permID := uuid.NewString()
-	payload := make(map[string]any, len(details)+1)
-	payload["permission_id"] = permID
+	payload := make(map[string]any, len(details)+2)
+	payload["request_id"] = permID
+	payload["tool"] = permissionTool(request)
 	for k, v := range details {
 		payload[k] = v
 	}
@@ -42,8 +43,13 @@ func (p *copilotAdapter) handlePermissionRequest(sessionID string, request copil
 		return copilot.PermissionRequestResult{Kind: copilot.PermissionRequestResultKindUserNotAvailable}, sendErr
 	}
 
-	// In WS03, auto-approve all permissions. The host records the request and
-	// applies PermissionPolicy in its captureSink. WS16 adds interactive denial.
+	// WS15: mark the execution as permission-denied so awaitOutcome returns
+	// "failure" after session.idle. The host evaluates the allow_tools policy
+	// independently. WS16 will add a back-channel to get the actual decision.
+	s.mu.Lock()
+	s.permissionDeny = true
+	s.mu.Unlock()
+
 	return copilot.PermissionRequestResult{Kind: copilot.PermissionRequestResultKindApproved}, nil
 }
 
@@ -168,6 +174,27 @@ func setString(details map[string]string, key string, value *string) {
 	if value != nil && *value != "" {
 		details[key] = *value
 	}
+}
+
+// permissionTool returns the host policy tool name for a permission request.
+// Tool-specific names win when the SDK exposes them; otherwise we fall back to
+// the canonical permission kind such as "read", "write", or "shell".
+func permissionTool(request copilot.PermissionRequest) string {
+	switch req := request.(type) {
+	case copilot.PermissionRequestCustomTool:
+		if req.ToolName != "" {
+			return req.ToolName
+		}
+	case copilot.PermissionRequestHook:
+		if req.ToolName != "" {
+			return req.ToolName
+		}
+	case copilot.PermissionRequestMcp:
+		if req.ToolName != "" {
+			return req.ToolName
+		}
+	}
+	return string(request.Kind())
 }
 
 // includeSensitivePermissionDetails controls whether rich permission payload

@@ -250,9 +250,9 @@ func TestHandleSubmitOutcomeEmitsEvent(t *testing.T) {
 
 	found := false
 	for _, ev := range sink.snapshot() {
-		if a := ev.GetAdapter(); a != nil && a.GetKind() == "outcome.finalized" {
+		if a := ev.GetAdapter(); a != nil && a.GetEventKind() == "outcome.finalized" {
 			found = true
-			d := a.GetData().AsMap()
+			d := a.GetPayload().AsMap()
 			if d["outcome"] != "success" {
 				t.Errorf("outcome.finalized event outcome = %v, want %q", d["outcome"], "success")
 			}
@@ -305,7 +305,7 @@ func TestAwaitOutcomeSuccessOnFirstTurn(t *testing.T) {
 
 	if err := p.Execute(context.Background(), &v2.ExecuteRequest{
 		SessionId:       "s1",
-		Input: map[string]string{"prompt": "do work"},
+		Input:           map[string]string{"prompt": "do work"},
 		AllowedOutcomes: []string{"failure", "success"},
 	}, sender); err != nil {
 		t.Fatalf("Execute returned error: %v", err)
@@ -345,7 +345,7 @@ func TestAwaitOutcomeSuccessAfterOneReprompt(t *testing.T) {
 
 	if err := p.Execute(context.Background(), &v2.ExecuteRequest{
 		SessionId:       "s1",
-		Input: map[string]string{"prompt": "do work"},
+		Input:           map[string]string{"prompt": "do work"},
 		AllowedOutcomes: []string{"failure", "success"},
 	}, sender); err != nil {
 		t.Fatalf("Execute returned error: %v", err)
@@ -379,7 +379,7 @@ func TestAwaitOutcomeExhaustedReturnsFailure(t *testing.T) {
 
 	if err := p.Execute(context.Background(), &v2.ExecuteRequest{
 		SessionId:       "s1",
-		Input: map[string]string{"prompt": "do work"},
+		Input:           map[string]string{"prompt": "do work"},
 		AllowedOutcomes: []string{"failure", "success"},
 	}, sender); err != nil {
 		t.Fatalf("Execute returned error: %v", err)
@@ -395,11 +395,11 @@ func TestAwaitOutcomeExhaustedReturnsFailure(t *testing.T) {
 	hasFailureEvent := false
 	for _, ev := range sender.snapshot() {
 		a := ev.GetAdapter()
-		if a == nil || a.GetKind() != "outcome.failure" {
+		if a == nil || a.GetEventKind() != "outcome.failure" {
 			continue
 		}
 		hasFailureEvent = true
-		d := a.GetData().AsMap()
+		d := a.GetPayload().AsMap()
 		// Verify the structured fields are present.
 		if _, ok := d["kind"]; !ok {
 			t.Error("outcome.failure event missing 'kind' field")
@@ -431,7 +431,7 @@ func TestMaxTurnsWithNeedsReviewAllowed(t *testing.T) {
 
 	if err := p.Execute(context.Background(), &v2.ExecuteRequest{
 		SessionId:       "s1",
-		Input: map[string]string{"prompt": "do work", "max_turns": "1"},
+		Input:           map[string]string{"prompt": "do work", "max_turns": "1"},
 		AllowedOutcomes: []string{"failure", "needs_review", "success"},
 	}, sender); err != nil {
 		t.Fatalf("Execute returned error: %v", err)
@@ -486,7 +486,7 @@ func TestAwaitOutcome_OutcomeAndReasonInOutputs(t *testing.T) {
 	sender := &recordingSender{}
 	if err := p.Execute(context.Background(), &v2.ExecuteRequest{
 		SessionId:       "s1",
-		Input: map[string]string{"prompt": "do work"},
+		Input:           map[string]string{"prompt": "do work"},
 		AllowedOutcomes: []string{"failure", "success"},
 	}, sender); err != nil {
 		t.Fatalf("Execute returned error: %v", err)
@@ -516,7 +516,7 @@ func TestAwaitOutcome_FailurePathPopulatesOutcomeOutput(t *testing.T) {
 	sender := &recordingSender{}
 	if err := outcomeAdapter(s).Execute(context.Background(), &v2.ExecuteRequest{
 		SessionId:       "s1",
-		Input: map[string]string{"prompt": "do work"},
+		Input:           map[string]string{"prompt": "do work"},
 		AllowedOutcomes: []string{"failure", "success"},
 	}, sender); err != nil {
 		t.Fatalf("Execute returned error: %v", err)
@@ -558,7 +558,7 @@ func TestSubmitOutcome_RepromptTwice(t *testing.T) {
 	sender := &recordingSender{}
 	if err := outcomeAdapter(s).Execute(context.Background(), &v2.ExecuteRequest{
 		SessionId:       "s1",
-		Input: map[string]string{"prompt": "do work"},
+		Input:           map[string]string{"prompt": "do work"},
 		AllowedOutcomes: []string{"failure", "success"},
 	}, sender); err != nil {
 		t.Fatalf("Execute returned error: %v", err)
@@ -605,7 +605,7 @@ func TestSubmitOutcome_InvalidEnumThenSuccess(t *testing.T) {
 	sender := &recordingSender{}
 	if err := p.Execute(context.Background(), &v2.ExecuteRequest{
 		SessionId:       "s1",
-		Input: map[string]string{"prompt": "do work"},
+		Input:           map[string]string{"prompt": "do work"},
 		AllowedOutcomes: []string{"failure", "success"},
 	}, sender); err != nil {
 		t.Fatalf("Execute returned error: %v", err)
@@ -645,7 +645,7 @@ func TestSubmitOutcome_PermissionDeniedFailure(t *testing.T) {
 	sender := &recordingSender{}
 	if err := outcomeAdapter(s).Execute(context.Background(), &v2.ExecuteRequest{
 		SessionId:       "s1",
-		Input: map[string]string{"prompt": "do work"},
+		Input:           map[string]string{"prompt": "do work"},
 		AllowedOutcomes: []string{"failure", "success"},
 	}, sender); err != nil {
 		t.Fatalf("Execute returned error: %v", err)
@@ -667,7 +667,7 @@ func TestSubmitOutcome_MaxTurnsReached_NoNeedsReviewInAllowed(t *testing.T) {
 	sender := &recordingSender{}
 	if err := outcomeAdapter(s).Execute(context.Background(), &v2.ExecuteRequest{
 		SessionId:       "s1",
-		Input: map[string]string{"prompt": "do work", "max_turns": "1"},
+		Input:           map[string]string{"prompt": "do work", "max_turns": "1"},
 		AllowedOutcomes: []string{"failure", "success"},
 	}, sender); err != nil {
 		t.Fatalf("Execute returned error: %v", err)
@@ -690,7 +690,7 @@ func TestSubmitOutcome_EmptyAllowedSetFailsClosed(t *testing.T) {
 	sender := &recordingSender{}
 	if err := outcomeAdapter(s).Execute(context.Background(), &v2.ExecuteRequest{
 		SessionId: "s1",
-		Input: map[string]string{"prompt": "do work"},
+		Input:     map[string]string{"prompt": "do work"},
 		// No AllowedOutcomes: empty set.
 	}, sender); err != nil {
 		t.Fatalf("Execute returned error: %v", err)
@@ -709,11 +709,11 @@ func TestSubmitOutcome_EmptyAllowedSetFailsClosed(t *testing.T) {
 	hasFailureEvent := false
 	for _, ev := range sender.snapshot() {
 		a := ev.GetAdapter()
-		if a == nil || a.GetKind() != "outcome.failure" {
+		if a == nil || a.GetEventKind() != "outcome.failure" {
 			continue
 		}
 		hasFailureEvent = true
-		d := a.GetData().AsMap()
+		d := a.GetPayload().AsMap()
 		if kind, _ := d["kind"].(string); kind != "no_outcomes" {
 			t.Errorf("outcome.failure kind = %q, want %q", kind, "no_outcomes")
 		}
@@ -743,7 +743,7 @@ func TestSubmitOutcome_PreamblePresentInPrompt(t *testing.T) {
 	sender := &recordingSender{}
 	_ = outcomeAdapter(s).Execute(context.Background(), &v2.ExecuteRequest{
 		SessionId:       "s1",
-		Input: map[string]string{"prompt": "do the task"},
+		Input:           map[string]string{"prompt": "do the task"},
 		AllowedOutcomes: []string{"failure", "success"},
 	}, sender)
 

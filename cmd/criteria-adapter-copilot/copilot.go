@@ -48,8 +48,8 @@ import (
 
 	copilot "github.com/github/copilot-sdk/go"
 
-	adapterhost "github.com/brokenbots/criteria/sdk/adapterhost"
 	v2 "github.com/brokenbots/criteria/proto/criteria/v2"
+	adapterhost "github.com/brokenbots/criteria/sdk/adapterhost"
 )
 
 const (
@@ -187,7 +187,7 @@ func (p *copilotAdapter) Log(ctx context.Context, req *v2.LogRequest, sink adapt
 				return nil
 			}
 			if err := sink.Send(ev); err != nil {
-				return nil
+				return err
 			}
 		case <-ctx.Done():
 			return nil
