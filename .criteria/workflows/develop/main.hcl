@@ -291,7 +291,7 @@ switch "check_unanimous" {
 
 step "owner_review" {
   target      = adapter.copilot.owner
-  allow_tools = ["read", "search", "edit", "execute"]
+  allow_tools = ["read", "search", "write", "edit", "execute"]
   timeout     = "20m"
   max_visits  = 20
   input {
