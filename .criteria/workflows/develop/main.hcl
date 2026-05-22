@@ -192,7 +192,7 @@ step "ci_retry" {
 
 step "repair_ci" {
   target      = adapter.copilot.repair
-  allow_tools = ["read", "edit", "execute", "shell"]
+  allow_tools = ["read", "write", "edit", "execute", "shell"]
   timeout     = "20m"
   max_visits  = 10
   input {
@@ -291,7 +291,7 @@ switch "check_unanimous" {
 
 step "owner_review" {
   target      = adapter.copilot.owner
-  allow_tools = ["read", "search", "edit", "execute"]
+  allow_tools = ["read", "search", "write", "edit", "execute"]
   timeout     = "20m"
   max_visits  = 20
   input {
