@@ -268,3 +268,4 @@ Enumerated:
 - [x] `LocalSocketDialer` + `NewHostOnlyUDSSocket` helpers with tests
 - [x] Bundled adapters (noop, mcp, copilot) fully migrated to v2
 - [x] `criteria/v1` adapter imports removed from adapter host scope
+- [x] `proto/criteria/v1/adapter_plugin.proto` and generated bindings deleted (server-side v1 protos kept; CLI still uses `server.proto`)
