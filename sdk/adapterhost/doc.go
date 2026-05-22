@@ -10,12 +10,12 @@
 //	import (
 //		"context"
 //		adapterhost "github.com/brokenbots/criteria/sdk/adapterhost"
-//		pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
+//		v2 "github.com/brokenbots/criteria/proto/criteria/v2"
 //	)
 //
-//	type myAdapter struct{}
+//	type myAdapter struct{ adapterhost.UnimplementedPermissions }
 //
-//	func (a *myAdapter) Info(ctx context.Context, req *pb.InfoRequest) (*pb.InfoResponse, error) { ... }
+//	func (a *myAdapter) Info(ctx context.Context, req *v2.InfoRequest) (*v2.InfoResponse, error) { ... }
 //	// ... implement remaining Service methods ...
 //
 //	func main() { adapterhost.Serve(&myAdapter{}) }
