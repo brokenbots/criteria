@@ -192,7 +192,7 @@ step "ci_retry" {
 
 step "repair_ci" {
   target      = adapter.copilot.repair
-  allow_tools = ["read", "edit", "execute", "shell"]
+  allow_tools = ["read", "write", "edit", "execute", "shell"]
   timeout     = "20m"
   max_visits  = 10
   input {
