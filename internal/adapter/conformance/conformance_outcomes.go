@@ -33,8 +33,8 @@ func testOutcomeDomain(t *testing.T, name string, factory targetFactory, opts *O
 
 func testPermissionRequestShape(t *testing.T, name string, loader adapterhost.Loader, opts *Options, info *adapterhost.Info) {
 	t.Helper()
-	if !hasCapability(info.Capabilities, "permission_gating") {
-		t.Skip("permission_request_shape skipped: adapter does not advertise permission_gating")
+	if !hasCapability(info.Capabilities, "permission_request_forwarding") {
+		t.Skip("permission_request_shape skipped: adapter does not advertise permission_request_forwarding")
 	}
 
 	// 30 s matches the StartTimeout in the loader.
@@ -71,15 +71,19 @@ func testPermissionRequestShape(t *testing.T, name string, loader adapterhost.Lo
 	assertPermissionDeniedEvent(t, sink)
 }
 
-// assertPermissionRequestEvent verifies that the recording sink contains a
+// assertPermissionDeniedEvent verifies that the recording sink contains a
 // permission.request adapter event forwarded from the adapter, confirming that
-// the host passes permission events through to the upstream sink.
+// the host passes permission events through to the upstream sink. It also
+// checks the minimal WS03 payload shape: the "kind" field must be present.
 func assertPermissionDeniedEvent(t *testing.T, sink *recordingSink) {
 	t.Helper()
 	// WS03: the adapter emits permission.request; the host forwards it to the
 	// upstream sink without policy evaluation. WS16 adds grant/deny semantics.
-	_, ok := sink.firstAdapterEvent("permission.request")
+	data, ok := sink.firstAdapterEvent("permission.request")
 	if !ok {
 		t.Fatal("expected permission.request adapter event forwarded to upstream sink")
+	}
+	if _, hasKind := data["kind"]; !hasKind {
+		t.Fatal("permission.request payload missing required \"kind\" field")
 	}
 }

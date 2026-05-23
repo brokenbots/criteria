@@ -7,8 +7,9 @@ import (
 	"sync"
 	"time"
 
-	v2 "github.com/brokenbots/criteria/sdk/pb/criteria/v2"
 	adapterhost "github.com/brokenbots/criteria/sdk/adapterhost"
+	v2 "github.com/brokenbots/criteria/sdk/pb/criteria/v2"
+	"google.golang.org/protobuf/types/known/structpb"
 )
 
 type noopService struct {
@@ -21,7 +22,7 @@ func (s *noopService) Info(_ context.Context, _ *v2.InfoRequest) (*v2.InfoRespon
 	return &v2.InfoResponse{
 		Name:         "noop",
 		Version:      "0.1.0",
-		Capabilities: []string{"parallel_safe"},
+		Capabilities: []string{"parallel_safe", "permission_request_forwarding"},
 	}, nil
 }
 
@@ -52,6 +53,22 @@ func (s *noopService) Execute(ctx context.Context, req *v2.ExecuteRequest, sink 
 			case <-ctx.Done():
 				return ctx.Err()
 			}
+		}
+	}
+	if req.GetInput()["emit_permission_request"] == "true" {
+		payload, err := structpb.NewStruct(map[string]any{"kind": "shell"})
+		if err != nil {
+			return fmt.Errorf("build permission.request payload: %w", err)
+		}
+		if err := sink.Send(&v2.ExecuteEvent{
+			Event: &v2.ExecuteEvent_Adapter{
+				Adapter: &v2.AdapterEvent{
+					EventKind: "permission.request",
+					Payload:   payload,
+				},
+			},
+		}); err != nil {
+			return err
 		}
 	}
 	return sink.Send(&v2.ExecuteEvent{

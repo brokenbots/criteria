@@ -21,8 +21,9 @@ func TestNoopAdapterConformance(t *testing.T) {
 		"noop",
 		adapterBin,
 		conformance.Options{
-			StepConfig:      map[string]string{"delay_ms": "0"},
-			AllowedOutcomes: []string{"success"},
+			StepConfig:       map[string]string{"delay_ms": "0"},
+			AllowedOutcomes:  []string{"success"},
+			PermissionConfig: map[string]string{"emit_permission_request": "true"},
 		},
 	)
 }

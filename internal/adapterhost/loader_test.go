@@ -466,25 +466,22 @@ func (r *unimplementedPermClient) Permissions(_ context.Context, reqs <-chan *v2
 		for range reqs {
 		}
 	}()
-	return errors.New("rpc error: code = Unimplemented desc = method not implemented")
+	return status.Error(codes.Unimplemented, "method Permissions not implemented")
 }
 
-// TestExecute_UnimplementedPermissionsStreamSurfacesError verifies that a
-// gRPC Unimplemented error from Permissions surfaces as an Execute error
-// (fail-closed: the host rejects adapters that don't implement the stream).
-func TestExecute_UnimplementedPermissionsStreamSurfacesError(t *testing.T) {
+// TestExecute_UnimplementedPermissionsIsOptOut verifies that a gRPC Unimplemented
+// error from the Permissions stream is treated as an expected opt-out (the adapter
+// does not implement the Permissions bidi stream) and Execute succeeds — no error
+// is surfaced to the caller.
+func TestExecute_UnimplementedPermissionsIsOptOut(t *testing.T) {
 	rc := &unimplementedPermClient{}
 	p := &rpcHandle{name: "test-stub", rpc: rc}
 	step := &workflow.StepNode{Name: "run"}
 	sink := &adapterEventCollector{}
 
 	_, err := p.Execute(context.Background(), "sess", step, sink)
-	if err == nil {
-		t.Fatal("expected error for unimplemented Permissions stream, got nil")
-	}
-	// Error should mention permissions, not just "context canceled".
-	if !strings.Contains(err.Error(), "permissions") {
-		t.Errorf("error %q should mention permissions", err.Error())
+	if err != nil {
+		t.Fatalf("expected no error for Unimplemented Permissions stream (opt-out), got: %v", err)
 	}
 }
 
