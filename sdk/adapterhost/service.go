@@ -20,6 +20,10 @@ const AdapterName = "adapter"
 //
 // All methods receive a context that is cancelled when the host initiates
 // teardown. Implementations must respect context cancellation.
+//
+// Lifecycle methods (Pause, Resume, Snapshot, Restore, Inspect) are NOT part
+// of this interface — they are out-of-scope for WS03 and will be added as an
+// optional LifecycleService interface in WS17/WS18.
 type Service interface {
 	Info(context.Context, *v2.InfoRequest) (*v2.InfoResponse, error)
 	OpenSession(context.Context, *v2.OpenSessionRequest) (*v2.OpenSessionResponse, error)
@@ -35,11 +39,6 @@ type Service interface {
 	// messages; the adapter responds with PermissionDecision messages. Embed
 	// [UnimplementedPermissions] to satisfy this until WS16.
 	Permissions(context.Context, PermissionsStream) error
-	Pause(context.Context, *v2.PauseRequest) (*v2.PauseResponse, error)
-	Resume(context.Context, *v2.ResumeRequest) (*v2.ResumeResponse, error)
-	Snapshot(context.Context, *v2.SnapshotRequest) (*v2.SnapshotResponse, error)
-	Restore(context.Context, *v2.RestoreRequest) (*v2.RestoreResponse, error)
-	Inspect(context.Context, *v2.InspectRequest) (*v2.InspectResponse, error)
 	CloseSession(context.Context, *v2.CloseSessionRequest) (*v2.CloseSessionResponse, error)
 }
 

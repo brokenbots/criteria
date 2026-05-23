@@ -131,46 +131,51 @@ func (g *grpcClient) Permissions(ctx context.Context, requests <-chan *v2.Permis
 	}
 	senderCtx, cancelSender := context.WithCancel(ctx)
 	sendDone := make(chan error, 1)
-	go func() {
-		for {
-			select {
-			case req, ok := <-requests:
-				if !ok {
-					sendDone <- stream.CloseSend()
-					return
-				}
-				if err := stream.Send(req); err != nil {
-					sendDone <- err
-					return
-				}
-			case <-senderCtx.Done():
-				sendDone <- nil
-				return
-			}
-		}
-	}()
+	go func() { sendDone <- runPermissionSender(senderCtx, stream, requests) }()
 
-	var recvErr error
-loop:
+	recvErr := recvPermissionDecisions(ctx, stream, decisions)
+	cancelSender()
+	if senderErr := <-sendDone; recvErr == nil {
+		return senderErr
+	}
+	return recvErr
+}
+
+// runPermissionSender forwards PermissionEvent messages from requests to stream
+// until requests is closed, a send error occurs, or senderCtx is cancelled.
+func runPermissionSender(ctx context.Context, stream v2.AdapterService_PermissionsClient, requests <-chan *v2.PermissionEvent) error {
+	for {
+		select {
+		case req, ok := <-requests:
+			if !ok {
+				return stream.CloseSend()
+			}
+			if err := stream.Send(req); err != nil {
+				return err
+			}
+		case <-ctx.Done():
+			return nil
+		}
+	}
+}
+
+// recvPermissionDecisions reads PermissionDecision messages from stream and
+// forwards them to decisions until EOF, a receive error, or ctx is cancelled.
+func recvPermissionDecisions(ctx context.Context, stream v2.AdapterService_PermissionsClient, decisions chan<- *v2.PermissionDecision) error {
 	for {
 		dec, err := stream.Recv()
 		if errors.Is(err, io.EOF) {
-			break loop
+			return nil
 		}
 		if err != nil {
-			recvErr = err
-			break loop
+			return err
 		}
 		select {
 		case decisions <- dec:
 		case <-ctx.Done():
-			recvErr = ctx.Err()
-			break loop
+			return ctx.Err()
 		}
 	}
-	cancelSender()
-	<-sendDone
-	return recvErr
 }
 
 func (g *grpcClient) Pause(ctx context.Context, req *v2.PauseRequest) (*v2.PauseResponse, error) {

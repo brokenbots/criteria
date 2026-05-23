@@ -73,26 +73,6 @@ func (s *grpcAdapterServer) Permissions(stream v2.AdapterService_PermissionsServ
 	return s.impl.Permissions(stream.Context(), &grpcPermissionsServer{stream: stream})
 }
 
-func (s *grpcAdapterServer) Pause(ctx context.Context, req *v2.PauseRequest) (*v2.PauseResponse, error) {
-	return s.impl.Pause(ctx, req)
-}
-
-func (s *grpcAdapterServer) Resume(ctx context.Context, req *v2.ResumeRequest) (*v2.ResumeResponse, error) {
-	return s.impl.Resume(ctx, req)
-}
-
-func (s *grpcAdapterServer) Snapshot(ctx context.Context, req *v2.SnapshotRequest) (*v2.SnapshotResponse, error) {
-	return s.impl.Snapshot(ctx, req)
-}
-
-func (s *grpcAdapterServer) Restore(ctx context.Context, req *v2.RestoreRequest) (*v2.RestoreResponse, error) {
-	return s.impl.Restore(ctx, req)
-}
-
-func (s *grpcAdapterServer) Inspect(ctx context.Context, req *v2.InspectRequest) (*v2.InspectResponse, error) {
-	return s.impl.Inspect(ctx, req)
-}
-
 func (s *grpcAdapterServer) CloseSession(ctx context.Context, req *v2.CloseSessionRequest) (*v2.CloseSessionResponse, error) {
 	return s.impl.CloseSession(ctx, req)
 }

@@ -9,7 +9,6 @@ import (
 
 type brokenService struct {
 	adapterhost.UnimplementedPermissions
-	adapterhost.UnimplementedLifecycle
 }
 
 func (brokenService) Info(context.Context, *v2.InfoRequest) (*v2.InfoResponse, error) {

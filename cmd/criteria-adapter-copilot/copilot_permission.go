@@ -1,8 +1,8 @@
 // copilot_permission.go — Copilot permission-request bridging: the SDK
 // OnPermissionRequest callback that forwards requests to the host engine as
-// AdapterEvent(kind="permission.request"). The host applies PermissionPolicy and
-// records the grant/deny decision in the run event log. WS16 adds a proper
-// Permissions bidi stream for interactive decisions.
+// AdapterEvent(kind="permission.request"). WS03 auto-approves every request
+// so tool calls proceed normally; WS16 adds a bidi Permissions stream for
+// interactive grant/deny decisions.
 
 package main
 
@@ -43,12 +43,10 @@ func (p *copilotAdapter) handlePermissionRequest(sessionID string, request copil
 		return copilot.PermissionRequestResult{Kind: copilot.PermissionRequestResultKindUserNotAvailable}, sendErr
 	}
 
-	// Always reject at the Copilot SDK level so the tool never runs without an
-	// explicit host grant. The host's executeCaptureSink evaluates allow_tools
-	// policy independently and overrides the step outcome to "needs_review" when
-	// any tool was denied. WS16 adds a real-time back-channel for interactive
-	// grant/deny decisions.
-	return copilot.PermissionRequestResult{Kind: copilot.PermissionRequestResultKindRejected}, nil
+	// WS03 auto-approve stub: allow every permission request at the Copilot SDK
+	// level so tool calls proceed normally. The host records the permission.request
+	// event in the run log. WS16 adds an interactive bidi grant/deny back-channel.
+	return copilot.PermissionRequestResult{Kind: copilot.PermissionRequestResultKindApproved}, nil
 }
 
 func permissionDetails(request copilot.PermissionRequest) map[string]string { //nolint:funlen,gocognit,gocyclo // collecting optional fields from SDK request variants; splitting further would obscure the boundary mapping

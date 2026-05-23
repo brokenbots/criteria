@@ -56,26 +56,6 @@ func (g *greeterService) Log(_ context.Context, _ *v2.LogRequest, _ adapterhost.
 	return nil
 }
 
-func (g *greeterService) Pause(_ context.Context, _ *v2.PauseRequest) (*v2.PauseResponse, error) {
-	return &v2.PauseResponse{}, nil
-}
-
-func (g *greeterService) Resume(_ context.Context, _ *v2.ResumeRequest) (*v2.ResumeResponse, error) {
-	return &v2.ResumeResponse{}, nil
-}
-
-func (g *greeterService) Snapshot(_ context.Context, _ *v2.SnapshotRequest) (*v2.SnapshotResponse, error) {
-	return &v2.SnapshotResponse{}, nil
-}
-
-func (g *greeterService) Restore(_ context.Context, _ *v2.RestoreRequest) (*v2.RestoreResponse, error) {
-	return &v2.RestoreResponse{}, nil
-}
-
-func (g *greeterService) Inspect(_ context.Context, _ *v2.InspectRequest) (*v2.InspectResponse, error) {
-	return &v2.InspectResponse{}, nil
-}
-
 func (g *greeterService) CloseSession(_ context.Context, _ *v2.CloseSessionRequest) (*v2.CloseSessionResponse, error) {
 	return &v2.CloseSessionResponse{}, nil
 }

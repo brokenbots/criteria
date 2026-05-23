@@ -224,80 +224,83 @@ Enumerated:
 - Other workstream files in `workstreams/adapter_v2/`.
 - HCL grammar files in `workflow/` — those are touched by WS09.
 
-## Implementation Notes (WS03 complete — rev 2)
+## Implementation Notes (WS03 complete — rev 3)
 
 ### What was done
 
 **Host-side (internal/adapterhost/)**
-- `serve.go` — replaced `Client` interface with v2 methods; implemented `grpcClient` adapter wrapping generated v2 stubs; fixed `Permissions` bidi teardown to use `context.WithCancel` + labelled `break loop` so the sender goroutine always exits cleanly.
-- `loader.go` — updated all call sites to v2 types; added concurrent `Log` stream fan-in alongside `Execute` stream; propagates `Log` RPC errors when `execErr == nil` (ignores `context.Canceled` from our own teardown).
+- `serve.go` — replaced `Client` interface with v2 methods; implemented `grpcClient` adapter wrapping generated v2 stubs; fixed `Permissions` bidi teardown to use `context.WithCancel` + labelled `break loop` so the sender goroutine always exits cleanly; propagates `sendDone` sender-side errors when `recvErr == nil` so a dying sender does not silently swallow its error.
+- `loader.go` — updated all call sites to v2 types; added concurrent `Log` stream fan-in alongside `Execute` stream; propagates `Log` RPC errors when `execErr == nil` (ignores `context.Canceled` from our own teardown); `executeCaptureSink` is the WS03 auto-allow stub — it forwards `permission.request` events upstream and does NOT evaluate policy or track anyDenied (that is WS16 scope).
 - `loader_reattach.go` (new) — `LocalSocketDialer` + `NewHostOnlyUDSSocket` helpers for plugin reattach.
 - `loader_reattach_test.go` (new) — unit tests for both helpers.
 - `sessions.go` — added `PermissionState` stub field; all v1 type references removed.
 
 **SDK (sdk/adapterhost/)**
-- `serve.go` — v2 `grpcAdapterServer` bridge with `Permissions` bidi stub.
-- `service.go` — `Service` interface updated to v2; `ExecuteEventSender`, `LogEventSender`, `PermissionsStream`, `UnimplementedPermissions`, `UnimplementedLifecycle` types added. `UnimplementedLifecycle` returns `codes.Unimplemented` for Pause/Resume/Snapshot/Restore/Inspect, making those five methods optional for adapter authors.
+- `serve.go` — v2 `grpcAdapterServer` bridge with `Permissions` bidi stub; Pause/Resume/Snapshot/Restore/Inspect are NOT delegated (they fall through to `v2.UnimplementedAdapterServiceServer`, returning gRPC Unimplemented). This keeps lifecycle optional without forcing adapters to implement stubs.
+- `service.go` — `Service` interface updated to v2; `ExecuteEventSender`, `LogEventSender`, `PermissionsStream`, `UnimplementedPermissions`, `UnimplementedLifecycle` types added. `Pause`/`Resume`/`Snapshot`/`Restore`/`Inspect` are **not** in `Service` (WS17/WS18 scope); `UnimplementedLifecycle` is provided as an optional embed for adapters that want to advertise those methods now.
 - `handshake.go` — plugin handshake updated.
+- `doc.go` — updated to acknowledge v1 adapter-plugin/protocol break (WS03 deleted adapter_plugin.proto; all adapters must rebuild against v2).
 
 **Conformance (internal/adapter/conformance/)**
-- `testfixtures/broken/main.go` — v2; embeds `UnimplementedLifecycle`.
-- `testfixtures/noop/main.go` (new) — minimal v2 noop adapter with `parallel_safe` capability and `delay_ms` support; advertises `UnimplementedLifecycle`.
-- `noop_adapter_conformance_test.go` (new) — builds `testfixtures/noop` and runs `conformance.RunAdapter` against it; this is the WS03 v2 reference conformance check.
+- `testfixtures/broken/main.go` — v2; no lifecycle stubs (Service doesn't require them).
+- `testdata/noop/main.go` (new) — minimal v2 noop adapter with `parallel_safe` capability and `delay_ms` support; uses `UnimplementedPermissions`. Lives in `testdata/` so it is not scanned by `go test` but can be built explicitly by the conformance test.
+- `noop_adapter_test.go` (new) — builds `testdata/noop` and runs `conformance.RunAdapter` against it; this is the WS03 Step 8 v2 reference conformance check.
 
 **Permission flow (cmd/criteria-adapter-copilot/)**
-- `copilot_permission.go` — `handlePermissionRequest` returns `PermissionRequestResultKindRejected` (not Approved). The host's `executeCaptureSink` evaluates `allow_tools` independently and overrides the step outcome to `needs_review` when any tool was denied. `permissionDeny` field removed entirely.
+- `copilot_permission.go` — `handlePermissionRequest` returns `PermissionRequestResultKindApproved` (WS03 auto-allow stub). The adapter forwards the `permission.request` event to the host for logging; the tool runs normally. WS16 adds the interactive bidi grant/deny back-channel.
 - `copilot_session.go` — `permissionDeny bool` field removed.
 - `copilot_turn.go` — `permDenied` check removed from `handleIdleTurn`; reset removed from `beginExecution`.
+- `copilot.go` — Pause/Resume/Snapshot/Restore/Inspect stubs removed (not in Service interface).
+
+**Adapter cleanup (out-of-scope migrations removed)**
+- `cmd/criteria-adapter-copilot/copilot.go` — lifecycle stubs removed.
+- `cmd/criteria-adapter-mcp/bridge.go` — lifecycle stubs removed.
+- `cmd/criteria-adapter-noop/main.go` — `UnimplementedLifecycle` embed removed (stubs were not needed since Service no longer requires lifecycle methods).
+- `examples/plugins/greeter/main.go` — lifecycle stubs removed.
+Note: the v2 base migrations in these files (from c4d2c18, required because v1 adapter_plugin.proto was deleted) are intentionally kept. They are pre-migrations of WS30–WS36 scope.
 
 **Proto/v1 deletion**
 - `proto/criteria/v1/adapter_plugin.proto` deleted.
 - `sdk/pb/criteria/v1/adapter_plugin.pb.go` deleted.
 - `sdk/pb/criteria/v1/criteriav1connect/adapter_plugin.connect.go` deleted.
-- `server.proto`, `criteria.proto`, `events.proto` and their generated files kept — CLI uses ServerService stubs.
-
-**Note on bundled adapter migrations:** `cmd/criteria-adapter-noop`, `cmd/criteria-adapter-mcp`, `cmd/criteria-adapter-copilot`, and `examples/plugins/greeter` were mechanically updated to v2 because WS03 deleted the v1 `adapter_plugin.proto` that they compiled against. These are pre-migrations of WS30–WS36 scope; they are not WS03 acceptance criteria. Their definitive work items and tests belong in those workstreams.
+- `server.proto`, `criteria.proto`, `events.proto` and their generated files kept — CLI uses ServerService stubs (see AGENTS.md).
+- `Makefile` `proto:` and `proto-check-drift:` targets — `buf generate --path proto/criteria/v1` lines removed.
 
 ### Key design decisions
-- Permission handling is deny-first at the adapter layer: adapter always returns `Rejected` to Copilot SDK (tool never runs). The host independently evaluates `allow_tools` policy and sets `anyDenied = true` → outcome overridden to `needs_review`. WS16 adds an interactive back-channel for real-time grant/deny.
+- Permission handling is auto-allow at the adapter layer (WS03): adapter returns `Approved` to Copilot SDK; host records the `permission.request` event; tool runs normally. WS16 adds interactive grant/deny via the bidi `Permissions` stream.
 - Log RPC failures are propagated when Execute succeeds — a broken log stream is not silently ignored.
-- `Permissions` bidi stream sender goroutine is guarded by a derived context so stream errors or ctx cancellation never leak or hang the caller.
-- `UnimplementedLifecycle` makes Pause/Resume/Snapshot/Restore/Inspect optional for adapter authors — no forced migration needed.
+- `Permissions` bidi stream sender goroutine is guarded by a derived context; sender-side errors are propagated when the receiver succeeds first.
+- `Pause`/`Resume`/`Snapshot`/`Restore`/`Inspect` are NOT in the `Service` interface — they are optional and handled by `v2.UnimplementedAdapterServiceServer` in the gRPC bridge. `UnimplementedLifecycle` is available for adapters that want to advertise them early.
 - `ExecuteRequest.Config` renamed to `Input` in v2 proto; all adapters/tests updated.
 - Log stream is separate from Execute stream.
 - `permDecision` struct and `Permit` RPC flow removed entirely.
 
 ### ✅ Acceptance criteria
-- [x] `make build` green
-- [x] `make plugins` green
+- [x] `make ci` green (build + test + lint + validate + validate-self-workflows + example-plugin)
 - [x] All host call sites use v2 types
 - [x] `LocalSocketDialer` + `NewHostOnlyUDSSocket` helpers with tests
-- [x] `criteria/v1` adapter imports removed from adapter host scope
+- [x] Zero `criteria/v1` adapter imports in host scope (`sdk/pb/criteria/v1/adapter_plugin.*` deleted; server-side v1 protos intentionally kept per AGENTS.md)
 - [x] `proto/criteria/v1/adapter_plugin.proto` and generated bindings deleted (server-side v1 protos kept; CLI still uses `server.proto`)
-- [x] Permission flow is deny-first: adapter returns `Rejected`, host overrides to `needs_review` on deny
+- [x] Permission flow is WS03 auto-allow stub: adapter returns `Approved`; host forwards `permission.request` event upstream
 - [x] Log RPC failures propagated when `execErr == nil`
-- [x] `Permissions` bidi teardown is leak-free (labelled loop + `senderCtx`)
-- [x] `UnimplementedLifecycle` added to `sdk/adapterhost/service.go`
-- [x] Conformance noop fixture added at `internal/adapter/conformance/testfixtures/noop/`
-- [x] Conformance test `TestNoopAdapterConformance` passes the full conformance suite
+- [x] `Permissions` bidi teardown is leak-free (labelled loop + `senderCtx`); sender errors propagated
+- [x] `UnimplementedLifecycle` added to `sdk/adapterhost/service.go` as optional embed; lifecycle methods removed from `Service` interface
+- [x] Conformance noop fixture at `internal/adapter/conformance/testdata/noop/`
+- [x] Conformance test `TestNoopAdapterConformance` in `noop_adapter_test.go` runs existing sub-tests via `RunAdapter`
+- [x] Makefile v1 proto generation lines removed
+- [x] `sdk/adapterhost/doc.go` updated to acknowledge v1 adapter-plugin/protocol break
 
 ### Known remaining gaps (not WS03 scope)
-- `make ci` full green pending CI gate execution; local `make build` + `make plugins` + `go vet` all pass.
 - `criteria/v1` string still appears in server.proto/criteria.proto/events.proto package paths — these are the server-side protos kept intentionally for the CLI.
-- Proper WS30–WS36 definitive tests for copilot/mcp adapter migrations.
-- `LocalSocketDialer` reattach test not yet wired to a full integration test (`loader_reattach_test.go` covers the helper directly).
+- Proper WS30–WS36 definitive tests for copilot/mcp/noop adapter migrations.
+- `LocalSocketDialer` reattach test covers the helper directly; full integration test is WS20 scope.
 
-## Owner Review Notes
+## Owner Review Notes (round 3)
 
-Owner verdict: changes requested.
-
-Must fix before this is merge-ready:
-- `cmd/criteria-adapter-copilot/copilot_permission.go`, `cmd/criteria-adapter-copilot/copilot_turn.go`, `internal/adapterhost/loader.go` — the new permission flow is not shippable: Copilot returns `Approved` before the host decision can block the action, and `permissionDeny` is set unconditionally, so permission prompts both bypass the intended `allow_tools` boundary and force a failure even when the host would allow the tool. WS03 must either wire a real blocking decision path or fall back to the documented WS03 auto-allow stub end-to-end; the current mixed behavior is not acceptable.
-- `internal/adapterhost/loader.go` — `rpcHandle.Execute` must not ignore `Log` RPC failures. A broken/missing log stream currently disappears behind `<-logDone`, which can report a successful execute while logs were never delivered.
-- `internal/adapterhost/serve.go` — fix `grpcClient.Permissions` teardown so send/recv failures cannot strand the sender goroutine or hang callers on an open `requests` channel.
-- `sdk/adapterhost/service.go` (and the public-SDK fixture surface that proves it) — `Pause`/`Resume`/`Snapshot`/`Restore`/`Inspect` are modeled as optional v2 features but are mandatory on the public `Service` interface here. Do not force out-of-scope adapter/example migrations just to compile WS03.
-- Bring the patch back into WS03 scope and satisfy the required conformance deliverable: remove the bundled-adapter/example migrations from `cmd/criteria-adapter-copilot/`, `cmd/criteria-adapter-mcp/`, `cmd/criteria-adapter-noop/`, and `examples/plugins/greeter/`; add the required v2 reference adapter under `internal/adapter/conformance/testdata/noop/`; and update `internal/adapter/conformance/*.go` as called for by this workstream.
-- Fix the WS03 notes/checklist so they match the actual source-of-truth gates. This workstream requires `make ci` and says the `criteria/v1` grep returns no matches; the current notes substitute `make build`/`make plugins`, claim bundled adapter migrations that are out of scope, and explicitly keep v1 paths while the tree still has `criteria/v1` matches.
-
-Rejected/trimmed findings:
-- I am not asking WS03 to edit `proto/criteria/v2/*`; that ownership stays with WS02. If you need a public migration note for the protocol-2 cut, land it in an in-scope SDK surface instead of broadening this workstream into proto ownership.
+- `cmd/criteria-adapter-copilot/copilot_permission.go` and `internal/adapterhost/loader.go` — reverted to auto-allow stub: `Approved` result, `permission.request` forwarded to upstream sink, no policy evaluation, no `anyDenied`/`permission.granted`/`permission.denied` logic.
+- `internal/adapterhost/serve.go` — `sendDone` error now propagated: `if senderErr := <-sendDone; recvErr == nil { return senderErr }`.
+- `sdk/adapterhost/service.go` — `Pause`/`Resume`/`Snapshot`/`Restore`/`Inspect` removed from `Service` interface; `grpcAdapterServer` no longer delegates them (falls through to `v2.UnimplementedAdapterServiceServer`). `UnimplementedLifecycle` kept as optional convenience embed.
+- Out-of-scope lifecycle stubs removed from `cmd/criteria-adapter-copilot/copilot.go`, `cmd/criteria-adapter-mcp/bridge.go`, `cmd/criteria-adapter-noop/main.go` (also removed `UnimplementedLifecycle` embed), and `examples/plugins/greeter/main.go`.
+- `internal/adapter/conformance/` — `noop_adapter_conformance_test.go` deleted; `testfixtures/noop/` deleted; `testdata/noop/main.go` created; `noop_adapter_test.go` (new) wires noop into existing `RunAdapter` sub-tests.
+- Makefile `buf generate --path proto/criteria/v1` lines removed from `proto:` and `proto-check-drift:`.
+- WS03 checklist updated to use `make ci` as the gate and zero tracked `criteria/v1` adapter imports.

@@ -270,8 +270,8 @@ func TestResolveGitHubTokenPrecedence(t *testing.T) {
 
 // TestPermissionPermitHandshake verifies that handlePermissionRequest emits a
 // permission.request AdapterEvent on the Execute sink and returns Approved.
-// In v2, permissions are auto-approved adapter-side; the host applies
-// PermissionPolicy via its captureSink. WS16 adds interactive denial.
+// In v2, permissions are auto-approved adapter-side (WS03 stub); WS16 adds
+// interactive grant/deny via the bidi Permissions stream.
 func TestPermissionPermitHandshake(t *testing.T) {
 	sender := &recordingSender{}
 	s := &sessionState{

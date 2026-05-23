@@ -20,11 +20,18 @@
 //
 //	func main() { adapterhost.Serve(&myAdapter{}) }
 //
+// # v1 → v2 protocol break (WS03)
+//
+// WS03 deleted the v1 adapter-plugin protocol (proto/criteria/v1/adapter_plugin.proto)
+// and migrated the host wire layer to v2. Adapter binaries compiled against the
+// v1 SDK will fail the go-plugin handshake with a protocol version mismatch.
+// All adapters must be rebuilt against the v2 proto and this package.
+//
 // # Package stability
 //
-// This package is v0. The [Service] interface and wire protocol are stable
-// across minor Criteria releases; breaking changes follow the SDK bump policy
-// in CONTRIBUTING.md before any external consumer depends on them.
+// This package is v0. The [Service] interface and v2 wire protocol are the
+// stable surface for adapter authors; breaking changes follow the SDK bump
+// policy in CONTRIBUTING.md. The v1 adapter-plugin API is permanently removed.
 //
 // # CHANGELOG forward-pointer
 //

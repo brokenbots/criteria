@@ -13,7 +13,6 @@ import (
 
 type noopService struct {
 	adapterhost.UnimplementedPermissions
-	adapterhost.UnimplementedLifecycle
 	mu       sync.Mutex
 	sessions map[string]struct{}
 }

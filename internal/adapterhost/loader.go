@@ -13,6 +13,8 @@ import (
 
 	"github.com/hashicorp/go-hclog"
 	hplugin "github.com/hashicorp/go-plugin"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/brokenbots/criteria/internal/adapter"
 	v2 "github.com/brokenbots/criteria/proto/criteria/v2"
@@ -212,16 +214,8 @@ func (p *rpcHandle) Execute(ctx context.Context, sessionID string, step *workflo
 		AllowedOutcomes: collectAllowedOutcomes(step),
 	}
 
-	policy := NewPolicyWithAliases(step.AllowTools, adapterPermissionAliases[p.name])
-	allowTools := step.AllowTools
-	if allowTools == nil {
-		allowTools = []string{}
-	}
 	captureSink := &executeCaptureSink{
-		sink:        sink,
-		policy:      policy,
-		adapterName: p.name,
-		allowTools:  allowTools,
+		sink: sink,
 	}
 
 	// Open the Log stream concurrently with Execute. Adapters may emit log lines
@@ -242,30 +236,23 @@ func (p *rpcHandle) Execute(ctx context.Context, sessionID string, step *workflo
 	if execErr != nil {
 		return adapter.Result{Outcome: "failure"}, execErr
 	}
-	if logErr != nil && !errors.Is(logErr, context.Canceled) {
+	if logErr != nil && !errors.Is(logErr, context.Canceled) && status.Code(logErr) != codes.Canceled {
 		return adapter.Result{Outcome: "failure"}, fmt.Errorf("adapter log stream: %w", logErr)
 	}
 	if !captureSink.done {
 		return adapter.Result{Outcome: "failure"}, errors.New("adapter execute stream ended without result")
 	}
-	result := captureSink.result
-	if captureSink.anyDenied && result.Outcome != "failure" {
-		result.Outcome = "needs_review"
-	}
-	return result, nil
+	return captureSink.result, nil
 }
 
 // executeCaptureSink implements ExecuteEventSink for use in rpcHandle.Execute.
-// It routes AdapterEvent to the upstream EventSink, intercepts permission
-// requests for host-side policy evaluation, and captures the final ExecuteResult.
+// It routes AdapterEvent to the upstream EventSink, forwards permission
+// requests upstream as informational records (WS03 auto-allow stub; WS16
+// wires the interactive bidi Permissions stream), and captures the final ExecuteResult.
 type executeCaptureSink struct {
-	sink        adapter.EventSink
-	policy      PermissionPolicy
-	adapterName string
-	allowTools  []string
-	result      adapter.Result
-	done        bool
-	anyDenied   bool
+	sink   adapter.EventSink
+	result adapter.Result
+	done   bool
 }
 
 func (s *executeCaptureSink) Emit(ev *v2.ExecuteEvent) error {
@@ -296,43 +283,14 @@ func (s *executeCaptureSink) Emit(ev *v2.ExecuteEvent) error {
 	return nil
 }
 
-// handlePermissionRequest evaluates a permission.request AdapterEvent against
-// the host policy and emits a permission.granted or permission.denied event.
-// The raw permission.request is never forwarded to the upstream sink.
+// handlePermissionRequest forwards a permission.request AdapterEvent to the
+// upstream sink as an informational record. This is the WS03 auto-allow stub;
+// WS16 adds host-side policy evaluation via the bidi Permissions stream.
 func (s *executeCaptureSink) handlePermissionRequest(adapterEvt *v2.AdapterEvent) {
-	payload := map[string]any{}
 	if adapterEvt.GetPayload() != nil {
-		payload = adapterEvt.GetPayload().AsMap()
-	}
-	requestID, _ := payload["request_id"].(string)
-	tool, _ := payload["tool"].(string)
-	fullCommandText, _ := payload["full_command_text"].(string)
-
-	var details map[string]string
-	if fullCommandText != "" {
-		details = map[string]string{"full_command_text": fullCommandText}
-	}
-
-	req := PermissionRequest{ID: requestID, Tool: tool, Details: details}
-	allow, reason := s.policy.Decide(req)
-
-	if allow {
-		pattern := strings.TrimPrefix(reason, "matched: ")
-		s.sink.Adapter("permission.granted", map[string]any{
-			"request_id": requestID,
-			"tool":       tool,
-			"pattern":    pattern,
-		})
+		s.sink.Adapter("permission.request", adapterEvt.GetPayload().AsMap())
 	} else {
-		suggestion := PermissionDenialSuggestion(s.adapterName, tool)
-		s.sink.Adapter("permission.denied", map[string]any{
-			"request_id":  requestID,
-			"tool":        tool,
-			"reason":      reason,
-			"allow_tools": s.allowTools,
-			"suggestion":  suggestion,
-		})
-		s.anyDenied = true
+		s.sink.Adapter("permission.request", nil)
 	}
 }
 

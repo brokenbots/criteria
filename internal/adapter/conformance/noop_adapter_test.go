@@ -1,5 +1,10 @@
 package conformance_test
 
+// noop_adapter_test.go — v2 reference conformance check.
+// Builds the in-tree noop adapter from testdata/noop/ and runs the full
+// conformance suite against it. This is the WS03 Step 8 deliverable: a
+// v2-protocol adapter that passes every applicable sub-test.
+
 import (
 	"os/exec"
 	"path/filepath"
@@ -9,9 +14,6 @@ import (
 	"github.com/brokenbots/criteria/internal/adapter/conformance"
 )
 
-// TestNoopAdapterConformance builds the in-tree noop conformance fixture and
-// runs the full conformance suite against it. This is the v2 reference adapter
-// for WS03: it must pass every applicable sub-test.
 func TestNoopAdapterConformance(t *testing.T) {
 	adapterBin := buildNoopAdapter(t)
 	conformance.RunAdapter(
@@ -19,8 +21,8 @@ func TestNoopAdapterConformance(t *testing.T) {
 		"noop",
 		adapterBin,
 		conformance.Options{
-			StepConfig:      map[string]string{"prompt": "hello"},
-			AllowedOutcomes: []string{"success", "failure", "needs_review"},
+			StepConfig:      map[string]string{"delay_ms": "0"},
+			AllowedOutcomes: []string{"success"},
 		},
 	)
 }
@@ -35,7 +37,7 @@ func buildNoopAdapter(t *testing.T) string {
 	moduleRoot := filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..", ".."))
 	adapterBin := filepath.Join(t.TempDir(), "criteria-adapter-noop-conformance")
 
-	cmd := exec.Command("go", "build", "-o", adapterBin, "./internal/adapter/conformance/testfixtures/noop")
+	cmd := exec.Command("go", "build", "-o", adapterBin, "./internal/adapter/conformance/testdata/noop")
 	cmd.Dir = moduleRoot
 	output, err := cmd.CombinedOutput()
 	if err != nil {

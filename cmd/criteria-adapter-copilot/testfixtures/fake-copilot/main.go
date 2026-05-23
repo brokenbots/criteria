@@ -225,8 +225,8 @@ func handleSessionSend(msg *rpcMsg) {
 	if isPermissionPrompt(p.Prompt) {
 		// Permission scenario: emit a permission request, wait for the SDK to
 		// call handlePendingPermissionRequest, then end the turn. The adapter's
-		// awaitOutcome will see permissionDeny=true and return "failure" -- no
-		// submit_outcome tool call is needed.
+		// WS03 auto-approve stub returns Approved, so the tool runs normally;
+		// the session returns to idle without needing submit_outcome.
 		permReqID := newPermID()
 		ch := make(chan struct{})
 		permsMu.Lock()
