@@ -1,12 +1,7 @@
-// copilot_permission_deny_test.go — non-happy-path tests for handlePermissionRequest.
-// Covers the failure scenarios:
-//   - no session found   → PermissionRequestResultKindUserNotAvailable
-//   - session inactive   → PermissionRequestResultKindUserNotAvailable
-//   - sink.Send failure  → PermissionRequestResultKindUserNotAvailable + non-nil error
-//
-// The happy-path is covered by TestHandlePermissionRequestActiveSessionApproved below.
-// WS03 auto-approves every request at the Copilot SDK level; WS16 adds interactive
-// grant/deny via the bidi Permissions stream.
+// copilot_permission_deny_test.go — denial-path tests for handlePermissionRequest.
+// WS03: permissions are auto-approved; this file covers the paths that return
+// UserNotAvailable (no session, inactive session, or failed observability send)
+// and verifies that a working active session returns Approved.
 
 package main
 
@@ -69,8 +64,10 @@ func TestHandlePermissionRequestInactiveSession(t *testing.T) {
 	}
 }
 
-// TestHandlePermissionRequestSendError asserts that a sink.Send failure returns
-// UserNotAvailable and propagates the send error to the caller.
+// TestHandlePermissionRequestSendError verifies that a sink.Send failure causes
+// the adapter to return UserNotAvailable instead of Approved — fail closed so
+// that a tool action never proceeds when the only in-scope observability event
+// cannot be recorded.
 func TestHandlePermissionRequestSendError(t *testing.T) {
 	sendErr := errors.New("connection closed")
 	s := &sessionState{
@@ -82,14 +79,11 @@ func TestHandlePermissionRequestSendError(t *testing.T) {
 	req := copilot.PermissionRequestShell{}
 
 	result, err := p.handlePermissionRequest("s1", req)
-	if err == nil {
-		t.Fatal("expected non-nil error when sink.Send fails, got nil")
-	}
-	if !errors.Is(err, sendErr) {
-		t.Fatalf("error = %v, want wrapping %v", err, sendErr)
+	if err != nil {
+		t.Fatalf("unexpected error (non-nil means SDK-level failure): %v", err)
 	}
 	if result.Kind != copilot.PermissionRequestResultKindUserNotAvailable {
-		t.Fatalf("result.Kind = %q, want %q", result.Kind, copilot.PermissionRequestResultKindUserNotAvailable)
+		t.Fatalf("result.Kind = %q, want %q (fail-closed when observability send fails)", result.Kind, copilot.PermissionRequestResultKindUserNotAvailable)
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"sync"
 
 	hplugin "github.com/hashicorp/go-plugin"
 	"github.com/hashicorp/go-plugin/runner"
@@ -65,19 +66,45 @@ func externalProcessReattach(socketPath string) runner.ReattachFunc {
 			return nil, fmt.Errorf("verify socket %q: %w", socketPath, err)
 		}
 		_ = conn.Close()
-		return &noopAttachedRunner{}, nil
+		return newNoopAttachedRunner(), nil
 	}
 }
 
 // noopAttachedRunner is an AttachedRunner whose lifecycle is managed entirely
-// by the caller. Kill and Wait are no-ops; the external process is not touched.
-type noopAttachedRunner struct{}
+// by the caller. The external process is never touched; Kill signals Wait to
+// return so that go-plugin's internal client goroutine unblocks cleanly.
+type noopAttachedRunner struct {
+	once sync.Once
+	done chan struct{}
+}
 
-func (*noopAttachedRunner) Wait(_ context.Context) error                            { return nil }
-func (*noopAttachedRunner) Kill(_ context.Context) error                            { return nil }
-func (*noopAttachedRunner) ID() string                                              { return "external" }
-func (*noopAttachedRunner) PluginToHost(n, a string) (host, addr string, err error) { return n, a, nil }
-func (*noopAttachedRunner) HostToPlugin(n, a string) (plugin, addr string, err error) {
+func newNoopAttachedRunner() *noopAttachedRunner {
+	return &noopAttachedRunner{done: make(chan struct{})}
+}
+
+// Wait blocks until Kill is called or the context is cancelled.  This is
+// required so that go-plugin's client goroutine does not mark the plugin as
+// exited (and cancel all in-flight RPCs) the instant the reattach handshake
+// completes.
+func (r *noopAttachedRunner) Wait(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-r.done:
+		return nil
+	}
+}
+
+// Kill unblocks Wait, signalling that the externally managed adapter has been
+// released by the host side. It does not send any signal to the external process.
+func (r *noopAttachedRunner) Kill(_ context.Context) error {
+	r.once.Do(func() { close(r.done) })
+	return nil
+}
+
+func (r *noopAttachedRunner) ID() string                                              { return "external" }
+func (r *noopAttachedRunner) PluginToHost(n, a string) (host, addr string, err error) { return n, a, nil }
+func (r *noopAttachedRunner) HostToPlugin(n, a string) (plugin, addr string, err error) {
 	return n, a, nil
 }
 

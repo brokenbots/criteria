@@ -330,10 +330,15 @@ Completed in commit `165b6b9`:
 - Proper WS30–WS36 definitive tests for copilot/mcp/noop adapter migrations.
 - `LocalSocketDialer` reattach test covers the helper directly; full integration test is WS20 scope.
 
-## Owner Review Notes (round 9) — resolved
+## Owner Review Notes (round 10)
 
-- `internal/adapter/conformance/conformance_outcomes.go`: capability gate changed from `"permission_gating"` → `"permission_request_forwarding"`; `assertPermissionDeniedEvent` now validates the `"kind"` field in the forwarded payload.
-- `internal/adapter/conformance/testdata/noop/main.go`: added `"permission_request_forwarding"` capability; emits `permission.request` AdapterEvent with `{"kind":"shell"}` when `input["emit_permission_request"]=="true"`.
-- `internal/adapter/conformance/noop_adapter_test.go`: added `PermissionConfig: map[string]string{"emit_permission_request": "true"}` so `permission_request_shape` runs against the noop reference adapter.
-- `internal/adapterhost/loader_test.go`: `unimplementedPermClient.Permissions` now returns `status.Error(codes.Unimplemented, ...)` (proper gRPC status); `TestExecute_UnimplementedPermissionsStreamSurfacesError` renamed and rewritten as `TestExecute_UnimplementedPermissionsIsOptOut` — asserts no error (opt-out behavior).
-- Committed as `e7f45b0`.
+- `internal/adapterhost/loader_reattach.go:72-79` and `internal/adapterhost/loader_reattach_test.go` — fix the `AttachedRunner` contract violation. `noopAttachedRunner.Wait` cannot return immediately; it must block until the externally managed adapter is actually gone (or the caller cancels), otherwise `LocalSocketDialer` is unreliable for the long-lived WS20 reattach path. Add regression coverage for the expected wait behavior.
+- `cmd/criteria-adapter-copilot/copilot_permission.go:34-42` — do not fail open when forwarding the WS03 `permission.request` event to the host fails. If the adapter cannot emit the only in-scope observability event, it must not still return `Approved` and let the tool action proceed silently.
+
+### Round 10 — AttachedRunner contract + permission fail-closed (complete)
+
+1. **`noopAttachedRunner` contract fix** (`internal/adapterhost/loader_reattach.go`) — `Wait` now blocks until `Kill` is called or the context is cancelled. Go-plugin calls `Wait(context.Background())` in a background goroutine; when it returned immediately the client immediately set `exited=true` and cancelled `doneCtx`, breaking all subsequent RPCs over the reattached connection. Added `done chan struct{}` + `sync.Once` guard to `Kill` (idempotent close). Added `newNoopAttachedRunner()` constructor; `externalProcessReattach` uses it.
+2. **Regression tests** (`internal/adapterhost/loader_reattach_test.go`) — three new tests: `TestNoopAttachedRunnerWaitBlocksUntilKill` (Wait does not return before Kill, unblocks after Kill), `TestNoopAttachedRunnerWaitContextCancel` (Wait unblocks on context cancel with non-nil error), `TestNoopAttachedRunnerKillIdempotent` (double Kill does not panic).
+3. **Permission fail-closed** (`cmd/criteria-adapter-copilot/copilot_permission.go`) — `sink.Send` error now causes `UserNotAvailable` return instead of `Approved`; a failing observability send must not silently allow the tool action to proceed.
+4. **Test updated** (`cmd/criteria-adapter-copilot/copilot_permission_deny_test.go`) — `TestHandlePermissionRequestSendError` expectation flipped from `Approved` to `UserNotAvailable`; comment updated to explain fail-closed rationale.
+

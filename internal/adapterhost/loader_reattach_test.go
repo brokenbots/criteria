@@ -15,6 +15,78 @@ import (
 	v2 "github.com/brokenbots/criteria/sdk/pb/criteria/v2"
 )
 
+// TestNoopAttachedRunnerWaitBlocksUntilKill verifies that Wait does not return
+// immediately (the former bug) and only unblocks after Kill is called.
+func TestNoopAttachedRunnerWaitBlocksUntilKill(t *testing.T) {
+	r := newNoopAttachedRunner()
+
+	done := make(chan error, 1)
+	go func() {
+		done <- r.Wait(context.Background())
+	}()
+
+	// Wait must still be blocking after a short interval.
+	select {
+	case err := <-done:
+		t.Fatalf("Wait returned early (before Kill): %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	// Kill must unblock Wait.
+	if err := r.Kill(context.Background()); err != nil {
+		t.Fatalf("Kill returned error: %v", err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Wait returned non-nil error after Kill: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Wait did not unblock within 2 s after Kill")
+	}
+}
+
+// TestNoopAttachedRunnerWaitContextCancel verifies that Wait unblocks when the
+// context is cancelled even without calling Kill.
+func TestNoopAttachedRunnerWaitContextCancel(t *testing.T) {
+	r := newNoopAttachedRunner()
+	ctx, cancel := context.WithCancel(context.Background())
+
+	done := make(chan error, 1)
+	go func() {
+		done <- r.Wait(ctx)
+	}()
+
+	// Wait must still be blocking before cancel.
+	select {
+	case err := <-done:
+		t.Fatalf("Wait returned early (before cancel): %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("Wait returned nil; expected context.Canceled")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Wait did not unblock within 2 s after context cancel")
+	}
+}
+
+// TestNoopAttachedRunnerKillIdempotent verifies that calling Kill multiple
+// times does not panic (close of closed channel guard).
+func TestNoopAttachedRunnerKillIdempotent(t *testing.T) {
+	r := newNoopAttachedRunner()
+	if err := r.Kill(context.Background()); err != nil {
+		t.Fatalf("first Kill: %v", err)
+	}
+	if err := r.Kill(context.Background()); err != nil {
+		t.Fatalf("second Kill: %v", err)
+	}
+}
+
 // TestNewHostOnlyUDSSocket verifies that the helper creates a 0700 directory
 // and that cleanup removes it.
 func TestNewHostOnlyUDSSocket(t *testing.T) {

@@ -40,7 +40,7 @@ func (p *copilotAdapter) handlePermissionRequest(sessionID string, request copil
 		payload[k] = v
 	}
 	if sendErr := sink.Send(adapterEvent("permission.request", payload)); sendErr != nil {
-		return copilot.PermissionRequestResult{Kind: copilot.PermissionRequestResultKindUserNotAvailable}, sendErr
+		return copilot.PermissionRequestResult{Kind: copilot.PermissionRequestResultKindUserNotAvailable}, nil
 	}
 
 	s.mu.Lock()
