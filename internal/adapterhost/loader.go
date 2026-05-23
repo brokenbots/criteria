@@ -217,40 +217,31 @@ func (p *rpcHandle) Execute(ctx context.Context, sessionID string, step *workflo
 		AllowedOutcomes: collectAllowedOutcomes(step),
 	}
 
-	// Build the host-side permission policy for this step.
-	allowTools := step.AllowTools
-	if allowTools == nil {
-		allowTools = []string{}
-	}
-	policy := NewPolicyWithAliases(allowTools, adapterPermissionAliases[p.name])
-
-	// execCtx is canceled if the Permissions stream fails unexpectedly, so that
-	// Execute is aborted rather than continuing without a functioning decision channel.
+	// execCtx is canceled if the Permissions stream fails for a non-expected
+	// reason, so that Execute is aborted rather than continuing with a broken
+	// decision channel. Unimplemented is treated as expected (adapter opts out).
 	execCtx, cancelExec := context.WithCancel(ctx)
 	defer cancelExec()
 
-	// Open the Permissions bidi stream so the adapter can receive grant/deny
-	// decisions for each permission.request it emits during Execute.
+	// Open the Permissions bidi stream. WS03: the host sends no decisions; the
+	// channel is closed after Execute to signal CloseSend. WS16 wires policy.
 	requests := make(chan *v2.PermissionEvent, 16)
 	permCtx, cancelPerm := context.WithCancel(ctx)
 	permDone := make(chan error, 1)
 	go func() {
 		err := p.rpc.Permissions(permCtx, requests)
 		permDone <- err
-		// Abort Execute if Permissions failed for a non-expected reason so the
-		// adapter is not left blocking on permission decisions that will never arrive.
-		if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, context.Canceled) && status.Code(err) != codes.Canceled {
+		if err != nil &&
+			!errors.Is(err, io.EOF) &&
+			!errors.Is(err, context.Canceled) &&
+			status.Code(err) != codes.Canceled &&
+			status.Code(err) != codes.Unimplemented {
 			cancelExec()
 		}
 	}()
 
 	captureSink := &executeCaptureSink{
-		ctx:         ctx,
-		sink:        sink,
-		policy:      policy,
-		allowTools:  allowTools,
-		adapterName: p.name,
-		requests:    requests,
+		sink: sink,
 	}
 
 	// Open the Log stream concurrently with Execute. Adapters may emit log lines
@@ -286,7 +277,7 @@ func (p *rpcHandle) Execute(ctx context.Context, sessionID string, step *workflo
 		}
 		return adapter.Result{Outcome: "failure"}, execErr
 	}
-	if permErr != nil && !errors.Is(permErr, io.EOF) && !errors.Is(permErr, context.Canceled) && status.Code(permErr) != codes.Canceled {
+	if permErr != nil && !errors.Is(permErr, io.EOF) && !errors.Is(permErr, context.Canceled) && status.Code(permErr) != codes.Canceled && status.Code(permErr) != codes.Unimplemented {
 		return adapter.Result{Outcome: "failure"}, fmt.Errorf("adapter permissions stream: %w", permErr)
 	}
 	if logErr != nil && !errors.Is(logErr, context.Canceled) && status.Code(logErr) != codes.Canceled {
@@ -294,13 +285,6 @@ func (p *rpcHandle) Execute(ctx context.Context, sessionID string, step *workflo
 	}
 	if !captureSink.done {
 		return adapter.Result{Outcome: "failure"}, errors.New("adapter execute stream ended without result")
-	}
-	// When any permission request was denied and the adapter returned "success",
-	// override to "needs_review" so the run is not silently passed with unapproved
-	// tool calls (adapters that terminate on first denial — e.g. copilot — return
-	// "failure" themselves; this override applies only to permissive adapters).
-	if captureSink.anyDenied && captureSink.result.Outcome == "success" {
-		captureSink.result.Outcome = "needs_review"
 	}
 	return captureSink.result, nil
 }
@@ -311,24 +295,13 @@ func (p *rpcHandle) Execute(ctx context.Context, sessionID string, step *workflo
 const maxChunkBufBytes = 64 * 1024 * 1024 // 64 MiB
 
 // executeCaptureSink implements ExecuteEventSink for use in rpcHandle.Execute.
-// It routes AdapterEvent to the upstream EventSink, evaluates the host-side
-// permission policy for permission.request events (WS16), translates
-// ToolInvocation to a tool.invocation adapter event, reassembles WS02 chunked
-// payloads and outputs before forwarding, and captures the final ExecuteResult.
+// It routes AdapterEvent to the upstream EventSink, translates ToolInvocation
+// to a tool.invocation adapter event, reassembles WS02 chunked payloads and
+// outputs before forwarding, and captures the final ExecuteResult.
 type executeCaptureSink struct {
-	ctx       context.Context
-	sink      adapter.EventSink
-	result    adapter.Result
-	done      bool
-	anyDenied bool // true if any permission request was denied this Execute
-
-	// Host-side permission policy for this step.
-	policy      PermissionPolicy
-	allowTools  []string // echoed in permission.denied payloads
-	adapterName string   // used for alias-aware denial suggestions
-	// requests is the send side of the Permissions bidi stream; permission
-	// decisions are forwarded to the adapter via this channel.
-	requests chan<- *v2.PermissionEvent
+	sink   adapter.EventSink
+	result adapter.Result
+	done   bool
 
 	// Chunk reassembly buffers for the Execute stream.
 	// adapterChunkBuf accumulates AdapterEvent.payload_json fragments.
@@ -459,10 +432,6 @@ func (s *executeCaptureSink) emitResult(resultEvt *v2.ExecuteResult) error {
 
 // emitAdapterEvent dispatches a fully assembled (non-chunked) AdapterEvent.
 func (s *executeCaptureSink) emitAdapterEvent(adapterEvt *v2.AdapterEvent) error {
-	if adapterEvt.GetEventKind() == "permission.request" {
-		s.handlePermissionRequest(adapterEvt)
-		return nil
-	}
 	if adapterEvt.GetPayload() != nil {
 		s.sink.Adapter(adapterEvt.GetEventKind(), adapterEvt.GetPayload().AsMap())
 	} else {
@@ -471,87 +440,34 @@ func (s *executeCaptureSink) emitAdapterEvent(adapterEvt *v2.AdapterEvent) error
 	return nil
 }
 
-// handlePermissionRequest evaluates a permission.request AdapterEvent against
-// the host-side policy for this step (WS16). It emits either permission.granted
-// or permission.denied to the upstream sink, and forwards the corresponding
-// PermissionEvent to the adapter via the bidi Permissions stream.
-func (s *executeCaptureSink) handlePermissionRequest(adapterEvt *v2.AdapterEvent) { //nolint:funlen // grant/deny branches each require extracting payload, calling policy, emitting event, and forwarding to stream
-	var payload map[string]any
-	if adapterEvt.GetPayload() != nil {
-		payload = adapterEvt.GetPayload().AsMap()
-	}
-
-	requestID, _ := payload["request_id"].(string)
-	tool, _ := payload["tool"].(string)
-	fullCmd, _ := payload["full_command_text"].(string)
-
-	req := PermissionRequest{ID: requestID, Tool: tool}
-	if fullCmd != "" {
-		req.Details = map[string]string{"full_command_text": fullCmd}
-	}
-
-	allow, reason := s.policy.Decide(req)
-	if allow {
-		// Strip "matched: " prefix to get the raw pattern for the payload.
-		pattern := strings.TrimPrefix(reason, "matched: ")
-		if idx := strings.Index(pattern, " (alias for "); idx >= 0 {
-			pattern = pattern[:idx]
-		}
-		s.sink.Adapter("permission.granted", map[string]any{
-			"request_id": requestID,
-			"tool":       tool,
-			"pattern":    pattern,
-		})
-		if s.requests != nil {
-			select {
-			case s.requests <- &v2.PermissionEvent{
-				Event: &v2.PermissionEvent_Request{
-					Request: &v2.PermissionRequest{RequestId: requestID},
-				},
-			}:
-			case <-s.ctx.Done():
-			}
-		}
-		return
-	}
-
-	// Denied.
-	s.anyDenied = true
-	deniedPayload := map[string]any{
-		"request_id":  requestID,
-		"tool":        tool,
-		"reason":      reason,
-		"allow_tools": s.allowTools,
-	}
-	if s.adapterName != "" {
-		if suggestion := PermissionDenialSuggestion(s.adapterName, tool); suggestion != "" {
-			deniedPayload["suggestion"] = suggestion
-		}
-	}
-	s.sink.Adapter("permission.denied", deniedPayload)
-	if s.requests != nil {
-		select {
-		case s.requests <- &v2.PermissionEvent{
-			Event: &v2.PermissionEvent_Cancel{
-				Cancel: &v2.PermissionCancel{RequestId: requestID},
-			},
-		}:
-		case <-s.ctx.Done():
-		}
-	}
-}
-
-// maxLogLineBufBytes is the upper bound for log chunk reassembly buffers and
-// individual log lines. Log lines that would exceed this limit are rejected to
-// prevent unbounded memory growth from a misbehaving adapter.
+// maxLogLineBufBytes is the upper bound for a single log chunk reassembly
+// buffer or individual log line. Log content exceeding this limit is rejected
+// to prevent unbounded memory growth from a misbehaving adapter.
 const maxLogLineBufBytes = 4 * 1024 * 1024 // 4 MiB per stream
+
+// maxTotalLogBufBytes is the aggregate upper bound across all concurrent chunk
+// reassembly buffers within one Log stream. A misbehaving adapter cannot
+// exhaust host memory by opening many parallel named streams.
+const maxTotalLogBufBytes = 16 * 1024 * 1024 // 16 MiB total
 
 // logForwardSink implements LogEventSink, forwarding log lines to the
 // upstream adapter.EventSink.Log. Chunked log lines (LogEvent.chunk != nil)
-// are reassembled per stream_name before forwarding.
+// are reassembled per stream_name before forwarding, with per-stream and
+// aggregate memory caps plus seq-number validation to fail closed on
+// out-of-order or corrupt chunk sequences.
 type logForwardSink struct {
 	sink      adapter.EventSink
-	chunkBufs map[string][]byte // keyed by stream_name
+	chunkBufs map[string][]byte   // keyed by stream_name
+	chunkSeqs map[string]uint32   // expected next seq per stream (0 = no seq in progress)
+}
+
+// totalLogBufSize returns the sum of all in-progress chunk buffer lengths.
+func totalLogBufSize(m map[string][]byte) int {
+	n := 0
+	for _, b := range m {
+		n += len(b)
+	}
+	return n
 }
 
 func (s *logForwardSink) Emit(ev *v2.LogEvent) error {
@@ -560,15 +476,42 @@ func (s *logForwardSink) Emit(ev *v2.LogEvent) error {
 	}
 	if chunk := ev.GetChunk(); chunk != nil {
 		stream := ev.GetStreamName()
-		if chunk.GetSeq() == 0 {
+		seq := chunk.GetSeq()
+		if seq == 0 {
+			// New sequence; reset this stream's buffer and seq counter.
 			if s.chunkBufs == nil {
 				s.chunkBufs = make(map[string][]byte)
 			}
+			if s.chunkSeqs == nil {
+				s.chunkSeqs = make(map[string]uint32)
+			}
 			s.chunkBufs[stream] = nil
+			s.chunkSeqs[stream] = 1
+		} else {
+			expected := s.chunkSeqs[stream]
+			if expected == 0 {
+				// Non-zero seq with no sequence in progress for this stream.
+				return fmt.Errorf("log chunk: stream %q received seq %d with no sequence in progress", stream, seq)
+			}
+			if seq != expected {
+				// Out-of-order chunk; discard buffer and fail closed.
+				delete(s.chunkBufs, stream)
+				delete(s.chunkSeqs, stream)
+				return fmt.Errorf("log chunk: stream %q out-of-order seq %d (expected %d)", stream, seq, expected)
+			}
+			s.chunkSeqs[stream] = expected + 1
 		}
+		// Per-stream cap check.
 		if len(s.chunkBufs[stream])+len(ev.GetLine()) > maxLogLineBufBytes {
 			delete(s.chunkBufs, stream)
+			delete(s.chunkSeqs, stream)
 			return fmt.Errorf("log chunk reassembly: stream %q exceeds %d bytes", stream, maxLogLineBufBytes)
+		}
+		// Aggregate cap check across all concurrent buffers.
+		if totalLogBufSize(s.chunkBufs)+len(ev.GetLine()) > maxTotalLogBufBytes {
+			delete(s.chunkBufs, stream)
+			delete(s.chunkSeqs, stream)
+			return fmt.Errorf("log chunk reassembly: aggregate buffer exceeds %d bytes", maxTotalLogBufBytes)
 		}
 		s.chunkBufs[stream] = append(s.chunkBufs[stream], ev.GetLine()...)
 		if !chunk.GetFinal() {
@@ -576,6 +519,7 @@ func (s *logForwardSink) Emit(ev *v2.LogEvent) error {
 		}
 		line := s.chunkBufs[stream]
 		delete(s.chunkBufs, stream)
+		delete(s.chunkSeqs, stream)
 		s.sink.Log(stream, line)
 		return nil
 	}

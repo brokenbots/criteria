@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/brokenbots/criteria/internal/adapter"
@@ -493,7 +495,6 @@ func TestExecute_UnimplementedPermissionsStreamSurfacesError(t *testing.T) {
 func TestEmitAdapter_ChunkOutOfOrder(t *testing.T) {
 	cs := &executeCaptureSink{
 		sink: &adapterEventCollector{},
-		ctx:  context.Background(),
 	}
 
 	// seq=0 — start a new sequence.
@@ -531,7 +532,6 @@ func TestEmitAdapter_ChunkOutOfOrder(t *testing.T) {
 func TestEmitAdapter_ChunkOversize(t *testing.T) {
 	cs := &executeCaptureSink{
 		sink: &adapterEventCollector{},
-		ctx:  context.Background(),
 		// Pre-fill buffer to exactly maxChunkBufBytes-1 bytes, simulating
 		// a long in-progress sequence. adapterChunkNextSeq=1 means seq=1 is next.
 		adapterChunkBuf:     make([]byte, maxChunkBufBytes-1),
@@ -560,9 +560,12 @@ func TestEmitAdapter_ChunkOversize(t *testing.T) {
 func TestLogForwardSink_ChunkOversize(t *testing.T) {
 	ls := &logForwardSink{
 		sink: &adapterEventCollector{},
-		// Pre-fill buffer near limit.
+		// Pre-fill buffer near limit; chunkSeqs[stdout]=1 means seq=1 is expected.
 		chunkBufs: map[string][]byte{
 			"stdout": make([]byte, maxLogLineBufBytes-1),
+		},
+		chunkSeqs: map[string]uint32{
+			"stdout": 1,
 		},
 	}
 
@@ -584,6 +587,164 @@ func TestLogForwardSink_ChunkOversize(t *testing.T) {
 	}
 }
 
+// TestLogForwardSink_ChunkOutOfOrder verifies that an out-of-order seq number
+// in a multi-chunk log event produces an error and resets the stream state.
+func TestLogForwardSink_ChunkOutOfOrder(t *testing.T) {
+	sink := &adapterEventCollector{}
+	ls := &logForwardSink{sink: sink}
+
+	// seq=0 starts a new sequence for stream "stdout".
+	if err := ls.Emit(&v2.LogEvent{
+		StreamName: "stdout",
+		Line:       []byte("hello "),
+		Chunk:      &v2.Chunk{Seq: 0},
+	}); err != nil {
+		t.Fatalf("seq=0: unexpected error: %v", err)
+	}
+
+	// seq=2 — skipped seq=1; must be rejected.
+	err := ls.Emit(&v2.LogEvent{
+		StreamName: "stdout",
+		Line:       []byte("world"),
+		Chunk:      &v2.Chunk{Seq: 2},
+	})
+	if err == nil {
+		t.Fatal("expected out-of-order error, got nil")
+	}
+	if !strings.Contains(err.Error(), "out-of-order") {
+		t.Errorf("error %q should mention out-of-order", err.Error())
+	}
+	// Buffer and seq must be cleared after error.
+	if _, ok := ls.chunkBufs["stdout"]; ok {
+		t.Error("stream buffer should be deleted after out-of-order error")
+	}
+	if ls.chunkSeqs["stdout"] != 0 {
+		t.Errorf("chunkSeqs[stdout] should be 0 after error, got %d", ls.chunkSeqs["stdout"])
+	}
+}
+
+// TestLogForwardSink_ChunkNonZeroSeqWithNoSequence verifies that a non-zero
+// seq chunk received when no sequence is in progress for that stream is rejected.
+func TestLogForwardSink_ChunkNonZeroSeqWithNoSequence(t *testing.T) {
+	ls := &logForwardSink{sink: &adapterEventCollector{}}
+
+	err := ls.Emit(&v2.LogEvent{
+		StreamName: "stderr",
+		Line:       []byte("orphan"),
+		Chunk:      &v2.Chunk{Seq: 3},
+	})
+	if err == nil {
+		t.Fatal("expected error for non-zero seq with no sequence in progress, got nil")
+	}
+	if !strings.Contains(err.Error(), "no sequence in progress") {
+		t.Errorf("error %q should mention 'no sequence in progress'", err.Error())
+	}
+}
+
+// TestLogForwardSink_AggregateCapRejectsNewStream verifies that the aggregate
+// memory cap across all concurrent log chunk buffers is enforced so a
+// misbehaving adapter cannot open many streams each near the per-stream limit.
+func TestLogForwardSink_AggregateCapRejectsNewStream(t *testing.T) {
+	// Fill several streams with near-cap buffers so total is close to maxTotalLogBufBytes.
+	existing := make(map[string][]byte)
+	existingSeqs := make(map[string]uint32)
+	// Divide aggregate cap among 4 streams, leaving 1 byte of headroom total.
+	perStream := maxTotalLogBufBytes / 4
+	for _, name := range []string{"s1", "s2", "s3", "s4"} {
+		existing[name] = make([]byte, perStream)
+		existingSeqs[name] = 1
+	}
+	ls := &logForwardSink{
+		sink:      &adapterEventCollector{},
+		chunkBufs: existing,
+		chunkSeqs: existingSeqs,
+	}
+
+	// A new stream starting at seq=0 pushes aggregate over maxTotalLogBufBytes.
+	err := ls.Emit(&v2.LogEvent{
+		StreamName: "overflow",
+		Line:       make([]byte, 2),
+		Chunk:      &v2.Chunk{Seq: 0},
+	})
+	if err == nil {
+		t.Fatal("expected aggregate cap error, got nil")
+	}
+	if !strings.Contains(err.Error(), "aggregate") {
+		t.Errorf("error %q should mention aggregate", err.Error())
+	}
+}
+
+// TestPermissionsStreamUnimplemented verifies that an adapter returning
+// Unimplemented for the Permissions RPC does not abort or block Execute.
+// This is the regression test for the "dead Permissions stream cannot block
+// Execute" hardening added in WS03.
+func TestPermissionsStreamUnimplemented(t *testing.T) {
+	handle := &rpcHandle{
+		name: "stub",
+		rpc:  &unimplementedPermissionsClient{},
+	}
+
+	step := &workflow.StepNode{
+		Name: "test-step",
+		Outcomes: map[string]*workflow.CompiledOutcome{
+			"success": {},
+			"failure": {},
+		},
+	}
+	sink := &adapterEventCollector{}
+	res, err := handle.Execute(context.Background(), "sess-1", step, sink)
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+	if res.Outcome != "success" {
+		t.Errorf("outcome = %q; want success", res.Outcome)
+	}
+}
+
+// unimplementedPermissionsClient is a minimal Client stub whose Permissions
+// method returns codes.Unimplemented immediately, simulating an adapter that
+// has not implemented the Permissions RPC.
+type unimplementedPermissionsClient struct{}
+
+func (c *unimplementedPermissionsClient) Info(_ context.Context, _ *v2.InfoRequest) (*v2.InfoResponse, error) {
+	return nil, errors.New("not called")
+}
+func (c *unimplementedPermissionsClient) OpenSession(_ context.Context, _ *v2.OpenSessionRequest) (*v2.OpenSessionResponse, error) {
+	return nil, errors.New("not called")
+}
+func (c *unimplementedPermissionsClient) Execute(_ context.Context, _ *v2.ExecuteRequest, sink ExecuteEventSink) error {
+	// Send a valid success result so Execute completes normally.
+	return sink.Emit(&v2.ExecuteEvent{
+		Event: &v2.ExecuteEvent_Result{
+			Result: &v2.ExecuteResult{Outcome: "success"},
+		},
+	})
+}
+func (c *unimplementedPermissionsClient) Log(_ context.Context, _ *v2.LogRequest, _ LogEventSink) error {
+	return nil
+}
+func (c *unimplementedPermissionsClient) Permissions(_ context.Context, _ <-chan *v2.PermissionEvent) error {
+	return status.Error(codes.Unimplemented, "Permissions not implemented")
+}
+func (c *unimplementedPermissionsClient) Pause(_ context.Context, _ *v2.PauseRequest) (*v2.PauseResponse, error) {
+	return nil, errors.New("not called")
+}
+func (c *unimplementedPermissionsClient) Resume(_ context.Context, _ *v2.ResumeRequest) (*v2.ResumeResponse, error) {
+	return nil, errors.New("not called")
+}
+func (c *unimplementedPermissionsClient) Snapshot(_ context.Context, _ *v2.SnapshotRequest) (*v2.SnapshotResponse, error) {
+	return nil, errors.New("not called")
+}
+func (c *unimplementedPermissionsClient) Restore(_ context.Context, _ *v2.RestoreRequest) (*v2.RestoreResponse, error) {
+	return nil, errors.New("not called")
+}
+func (c *unimplementedPermissionsClient) Inspect(_ context.Context, _ *v2.InspectRequest) (*v2.InspectResponse, error) {
+	return nil, errors.New("not called")
+}
+func (c *unimplementedPermissionsClient) CloseSession(_ context.Context, _ *v2.CloseSessionRequest) (*v2.CloseSessionResponse, error) {
+	return &v2.CloseSessionResponse{}, nil
+}
+
 // TestToolInvocationPayloadSchema verifies that ToolInvocation events are
 // forwarded with the canonical {"name", "arguments"} payload shape, not
 // the old {"tool_name", "args"} shape that was temporarily introduced.
@@ -596,7 +757,6 @@ func TestToolInvocationPayloadSchema(t *testing.T) {
 	collector := &adapterEventCollector{}
 	cs := &executeCaptureSink{
 		sink: collector,
-		ctx:  context.Background(),
 	}
 
 	if err := cs.emitTool(&v2.ToolInvocation{

@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 
-	v2 "github.com/brokenbots/criteria/proto/criteria/v2"
+	v2 "github.com/brokenbots/criteria/sdk/pb/criteria/v2"
 	adapterhost "github.com/brokenbots/criteria/sdk/adapterhost"
 )
 

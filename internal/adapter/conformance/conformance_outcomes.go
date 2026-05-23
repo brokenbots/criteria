@@ -4,7 +4,6 @@ package conformance
 
 import (
 	"context"
-	"strings"
 	"testing"
 	"time"
 
@@ -60,7 +59,9 @@ func testPermissionRequestShape(t *testing.T, name string, loader adapterhost.Lo
 	if len(cfg) == 0 {
 		cfg = opts.StepConfig
 	}
-	// No allow_tools on the step → default deny-all policy applies.
+	// No allow_tools on the step; the adapter emits permission.request events
+	// which the host forwards upstream. The adapter's own handling determines
+	// the outcome (WS16 adds full grant/deny policy).
 	step := baseStep(name, info.Name, cfg)
 	sink := &recordingSink{}
 	res, err := executeNoPanic(t, adapterSessionTarget{handle: plug, sessionID: sessionID, name: info.Name}, context.Background(), step, sink)
@@ -77,25 +78,15 @@ func testPermissionRequestShape(t *testing.T, name string, loader adapterhost.Lo
 	assertPermissionDeniedEvent(t, sink)
 }
 
-// assertPermissionDeniedEvent verifies that the recording sink contains a
-// well-formed permission.denied adapter event (non-empty request_id and tool).
+// assertPermissionRequestEvent verifies that the recording sink contains a
+// permission.request adapter event forwarded from the adapter, confirming that
+// the host passes permission events through to the upstream sink.
 func assertPermissionDeniedEvent(t *testing.T, sink *recordingSink) {
 	t.Helper()
-	// The host policy emits permission.denied (not the legacy permission.request)
-	// for every denied request. Verify the event carries the request_id so the
-	// adapter's original request can be correlated.
-	deniedEvent, ok := sink.firstAdapterEvent("permission.denied")
+	// WS03: the adapter emits permission.request; the host forwards it to the
+	// upstream sink without policy evaluation. WS16 adds grant/deny semantics.
+	_, ok := sink.firstAdapterEvent("permission.request")
 	if !ok {
-		t.Fatal("expected permission.denied adapter event from host deny policy")
-	}
-	// Use type assertion so a missing or nil field (which fmt.Sprint renders as
-	// "<nil>") is correctly treated as an absent value.
-	requestID, _ := deniedEvent["request_id"].(string)
-	tool, _ := deniedEvent["tool"].(string)
-	if strings.TrimSpace(requestID) == "" {
-		t.Fatal("permission.denied event must include non-empty request_id")
-	}
-	if strings.TrimSpace(tool) == "" {
-		t.Fatal("permission.denied event must include non-empty tool")
+		t.Fatal("expected permission.request adapter event forwarded to upstream sink")
 	}
 }

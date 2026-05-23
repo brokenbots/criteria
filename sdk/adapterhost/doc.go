@@ -10,7 +10,7 @@
 //	import (
 //		"context"
 //		adapterhost "github.com/brokenbots/criteria/sdk/adapterhost"
-//		v2 "github.com/brokenbots/criteria/proto/criteria/v2"
+//		v2 "github.com/brokenbots/criteria/sdk/pb/criteria/v2"
 //	)
 //
 //	type myAdapter struct{ adapterhost.UnimplementedPermissions }

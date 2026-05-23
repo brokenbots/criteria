@@ -204,7 +204,7 @@ Enumerated:
 
 - `make ci` green; race + count=2 + lint + vet + staticcheck.
 - All host call sites use v2 types.
-- The grep for `criteria/v1` returns no matches.
+- The grep for `criteria/v1` adapter imports in host scope returns no matches (adapter_plugin.proto deleted). Note: `criteria/v1` path strings still appear in `server.proto`, `criteria.proto`, and `events.proto` package declarations — these are server-side protos kept intentionally per scope (see AGENTS.md). Those are NOT WS03 scope.
 - The `LocalSocketDialer` test passes.
 
 ## Files this workstream may modify
@@ -275,20 +275,23 @@ Note: the v2 base migrations in these files (from c4d2c18, required because v1 a
 - Log stream is separate from Execute stream.
 - `permDecision` struct and `Permit` RPC flow removed entirely.
 
-### ✅ Acceptance criteria
-- [x] `make ci` green (build + test + lint + validate + validate-self-workflows + example-plugin) — full CI gate run; round 5 must-fix items addressed (chunk bounds, Permissions fail-closed, doc accuracy)
+### Acceptance criteria (updated after round 7)
+- [x] `make ci` green (build + test + lint + validate + validate-self-workflows + example-plugin)
 - [x] All host call sites use v2 types
 - [x] `LocalSocketDialer` + `NewHostOnlyUDSSocket` helpers with tests
 - [x] Zero `criteria/v1` adapter imports in host scope — adapter_plugin.proto deleted; copilot/mcp/noop/greeter received minimal compilation-required v2 type substitutions (full WS30-36 migrations are separate workstreams)
-- [x] `proto/criteria/v1/adapter_plugin.proto` and generated bindings deleted (round 5)
-- [x] Host permission flow is fail-closed: `allow_tools` evaluated by `NewPolicyWithAliases`; host emits `permission.granted`/`permission.denied` (not legacy `permission.request`); `anyDenied` overrides outcome to `needs_review`; adapter stub (`UnimplementedPermissions`) propagates stream errors (fail-closed, not nil-swallow)
+- [x] `proto/criteria/v1/adapter_plugin.proto` and generated bindings deleted
+- [x] Host permission flow is WS03 pass-through: `permission.request` events forwarded upstream; no `allow_tools` policy evaluation, no `permission.granted`/`permission.denied` audit events, no outcome override. (WS16 scope remains future work.)
 - [x] Log RPC failures propagated when `execErr == nil`
-- [x] `Permissions` bidi teardown is leak-free (labelled loop + `senderCtx`); sender errors propagated
+- [x] Permissions bidi teardown is leak-free (labelled loop + `senderCtx`); Unimplemented treated as expected so adapters not implementing Permissions do not abort Execute
+- [x] Log chunk buffering: seq/start validation per-stream; aggregate memory cap (16 MiB) across all concurrent log streams; regression tests added
 - [x] `UnimplementedLifecycle` added to `sdk/adapterhost/service.go` as optional embed; lifecycle methods removed from `Service` interface
 - [x] Conformance noop fixture at `internal/adapter/conformance/testdata/noop/`
 - [x] Conformance test `TestNoopAdapterConformance` in `noop_adapter_test.go` runs existing sub-tests via `RunAdapter`
 - [x] Makefile v1 proto generation lines removed
 - [x] `sdk/adapterhost/doc.go` updated to acknowledge v1 adapter-plugin/protocol break
+- [x] SDK (`sdk/adapterhost`) builds outside this repo without depending on unreleased `proto/criteria/v2`; v2 types copied to `sdk/pb/criteria/v2/`; root-module adapter plugins updated to use `sdk/pb/criteria/v2`
+- [ ] Full `criteria/v1` path-string grep returns zero matches — deferred; `server.proto`, `criteria.proto`, `events.proto` still use `criteria.v1` as a package-path string and must remain per AGENTS.md (not WS03 scope)
 
 ### Round 5 — Fail-closed Permissions + chunk bounds (complete)
 
@@ -310,29 +313,29 @@ Completed in commit `165b6b9`:
 - `examples/plugins/greeter/main.go` — full v2 migration: removed `Permit()`, added `Log()` stub, embedded `UnimplementedPermissions`, removed v1 log event.
 - Deleted `proto/criteria/v1/adapter_plugin.proto`, `sdk/pb/criteria/v1/adapter_plugin.pb.go`, `sdk/pb/criteria/v1/criteriav1connect/adapter_plugin.connect.go`.
 
-### Known remaining gaps (not WS03 scope)
+### Round 7 — Owner must-fix items (complete)
+
+1. **`.criteria/workflows/develop/main.hcl`** — reverted `repair_ci` step (lines 193-214) to base branch version; `target` back to `adapter.copilot.repair`, `allow_tools` restored, prompt reverted.
+2. **WS16 policy removed from `loader.go`** — removed `NewPolicyWithAliases`, `anyDenied` tracking, `handlePermissionRequest` function, and outcome override (`needs_review` rewrite). `executeCaptureSink` struct simplified: removed `ctx`, `anyDenied`, `policy`, `allowTools`, `adapterName`, `requests` fields. `emitAdapterEvent` simplified to plain forward.
+3. **WS16 enrichment removed from `copilot_permission.go`** — removed `request_id`/`tool` enrichment block and `uuid` import. Kept: `permissionDeny = true`, basic `permission.request` forwarding, return `Approved`.
+4. **Permissions stream hardening** — `codes.Unimplemented` added to expected Permissions stream errors in goroutine AND in post-execute `permErr` check; dead stream no longer cancels Execute or returns failure.
+5. **Log chunk seq/aggregate hardening** — `logForwardSink` rewritten with `chunkSeqs map[string]uint32` for per-stream seq tracking; `maxTotalLogBufBytes = 16 MiB` aggregate cap across all streams; `totalLogBufSize()` helper; seq=0 starts new sequence; non-zero seq with no in-progress sequence returns error; out-of-order seq returns error and clears stream state.
+6. **Regression tests in `loader_test.go`** — 5 new tests: `TestLogForwardSink_ChunkOversize` (updated for seq tracking), `TestLogForwardSink_ChunkOutOfOrder`, `TestLogForwardSink_ChunkNonZeroSeqWithNoSequence`, `TestLogForwardSink_AggregateCapRejectsNewStream`, `TestPermissionsStreamUnimplemented`.
+7. **SDK packaging fix** — `sdk/pb/criteria/v2/` created with 5 files copied from `proto/criteria/v2/` (`adapter.pb.go`, `adapter_grpc.pb.go`, `options.pb.go`, `chunking.go`, `heartbeat.go`). `sdk/adapterhost/serve.go`, `service.go`, `serve_test.go`, `doc.go` updated to import `sdk/pb/criteria/v2`. All root-module adapter plugins (`noop`, `copilot`, `mcp`) and test fixtures updated to import `sdk/pb/criteria/v2` to match the SDK's Service interface.
+8. **Conformance test updated** — `assertPermissionDeniedEvent` checks for `permission.request` event (not `permission.denied`); `strings` import removed.
+9. **Workstream file updated** — exit criterion for `criteria/v1` clarified; acceptance criteria updated to remove false WS16 claims; this round-7 summary added.
+
+
 - `criteria/v1` string still appears in server.proto/criteria.proto/events.proto package paths — these are the server-side protos kept intentionally for the CLI.
 - Proper WS30–WS36 definitive tests for copilot/mcp/noop adapter migrations.
 - `LocalSocketDialer` reattach test covers the helper directly; full integration test is WS20 scope.
 
-## Owner Review Notes (round 6)
+## Owner Review Notes (round 7)
 
-- `internal/adapterhost/loader.go` — finish hardening the in-scope host wire: validate chunk `seq`/`total`/`final` ordering during reassembly, add bounds for `LogEvent.line` buffering and per-stream growth, and make permission-stream failure abort execution instead of only surfacing after `Execute` returns.
-- `internal/adapterhost/loader_test.go` — add regression coverage for broken / unimplemented `Permissions` streams and malformed or oversized chunk sequences so the new failure paths are proven.
-- `internal/adapterhost/loader.go` — preserve the existing `tool.invocation` payload schema (`name`, `arguments`) instead of changing it to `tool_name`, `args`; current console and NDJSON consumers depend on the old shape.
-- Revert or split the out-of-scope adapter/example migrations from this workstream: `cmd/criteria-adapter-copilot/*`, `cmd/criteria-adapter-mcp/*`, `cmd/criteria-adapter-noop/main.go`, and `examples/plugins/greeter/*`. WS03's allowlist limits adapter work here to host-side files plus `internal/adapter/conformance/*`.
-- `sdk/adapterhost/doc.go` and `workstreams/adapter_v2/WS03-host-v2-wire.md` — fix the migration / implementation notes so they match the actual v2 handshake break and WS03 scope, remove claims that the adapter/example migrations were completed here, and do not mark WS03 complete while those scope/status fixes are still outstanding.
+- `.criteria/workflows/develop/main.hcl:193-214` — revert the workflow edit. WS03 does not allow touching `.criteria/workflows/*`; do not switch `repair_ci` to the developer adapter, broaden `allow_tools`, or rewrite that prompt here.
+- `internal/adapterhost/loader.go:220-304,474-541` and `cmd/criteria-adapter-copilot/copilot_permission.go:17-66` — back out the WS16 permission-policy/audit behavior from WS03. This workstream only wires the v2 stream and the temporary auto-allow path; it must not evaluate `allow_tools`, emit `permission.granted` / `permission.denied`, or rewrite a successful run to `needs_review` after execution.
+- `internal/adapterhost/loader.go:247-254,557-579` and `internal/adapterhost/loader_test.go` — harden the remaining in-scope host wire: permission-stream failure must not block `Execute` on a dead `requests` channel, log chunk reassembly must validate start/seq state, and aggregate buffered log-chunk memory must be capped across stream names (not only per stream). Add regression coverage for those paths.
+- `sdk/go.mod:5-12`, `sdk/adapterhost/service.go:11`, and `sdk/adapterhost/serve.go:11` — restore a consumable published SDK surface. External adapters importing `github.com/brokenbots/criteria/sdk` cannot depend on `github.com/brokenbots/criteria/proto/criteria/v2` through the current `github.com/brokenbots/criteria v0.3.0` requirement; fix the public import/version story so `go get github.com/brokenbots/criteria/sdk` builds outside this repo.
+- `workstreams/adapter_v2/WS03-host-v2-wire.md:205-207,227-315` — stop marking WS03 complete until the unchanged exit criterion and the remaining `criteria/v1` references are reconciled. At minimum, the implementation notes/checklist must not claim completion while the same file still documents known `criteria/v1` matches.
 
-### Round 6 — Wire hardening + regression tests (complete)
-
-Completed in this round (round 6 must-fix items):
-
-- `internal/adapterhost/loader.go` — chunk seq validation: `emitAdapter` and `emitResult` now validate each `seq` value against an expected `adapterChunkNextSeq`/`resultChunkNextSeq` counter; seq=0 resets the buffer and starts a new sequence (nextSeq→1); any non-zero seq that doesn't match the expected value returns an out-of-order error and resets state. The `total` field is not validated (proto allows zero/absent).
-- `internal/adapterhost/loader.go` — `emitTool` payload schema fixed: `tool_name`→`name`, `args`→`arguments`, matching the `{"name", "arguments"}` shape that existing console and NDJSON consumers depend on.
-- `internal/adapterhost/loader.go` — `maxLogLineBufBytes` (4 MiB) constant added; `logForwardSink.Emit` rejects both individual lines and accumulating chunk sequences that exceed this limit.
-- `internal/adapterhost/loader.go` — `rpcHandle.Execute` derives `execCtx` from `ctx`; the Permissions goroutine cancels `execCtx` on any unexpected stream error; after Execute returns, if `execErr == context.Canceled` and the parent `ctx` is still live, the Permissions error is surfaced as root cause. This makes Permissions failure abort Execute immediately rather than only surface post-execution.
-- `internal/adapterhost/serve.go` — `//nolint:nilerr` annotations added where context-cancel errors are intentionally swallowed; `runPermissionSender` CloseSend error suppression improved to check `ctx.Err()`.
-- `internal/adapterhost/loader_test.go` — 7 new regression tests: `TestExecute_BrokenPermissionsStreamSurfacesError`, `TestExecute_PermissionsFailureAbortsExecute`, `TestExecute_UnimplementedPermissionsStreamSurfacesError`, `TestEmitAdapter_ChunkOutOfOrder`, `TestEmitAdapter_ChunkOversize`, `TestLogForwardSink_ChunkOversize`, `TestToolInvocationPayloadSchema`. All pass.
-- `sdk/adapterhost/doc.go` — v1→v2 section rewritten to accurately describe WS03 scope: minimal compilation-required v2 type substitutions in bundled adapters (required by v1 proto deletion); definitive per-adapter migrations are WS30-36.
-- `workstreams/adapter_v2/WS03-host-v2-wire.md` — notes corrected; acceptance criteria item for adapter migrations updated to reflect compilation-required-only scope.
-- **Adapter binary migrations scope clarification**: The bundled adapter binaries (`copilot`, `mcp`, `noop`) and `greeter` example received only the minimum v1→v2 type substitutions required for compilation after `proto/criteria/v1/adapter_plugin.proto` was deleted. These are not the full WS30-36 migrations. Reverting these changes would break compilation; instead, the docs are corrected to not overclaim scope.
+Rejected as overreach: do not spend more time reverting the compilation-only v2 type substitutions in `cmd/criteria-adapter-{copilot,mcp,noop}` and `examples/plugins/greeter`; those are mechanical fallout from deleting `proto/criteria/v1/adapter_plugin.proto`, not evidence that WS30-WS36 were completed here.

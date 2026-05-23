@@ -16,7 +16,7 @@ import (
 
 	copilot "github.com/github/copilot-sdk/go"
 
-	v2 "github.com/brokenbots/criteria/proto/criteria/v2"
+	v2 "github.com/brokenbots/criteria/sdk/pb/criteria/v2"
 )
 
 // failSender is an ExecuteEventSender that always returns the configured error.

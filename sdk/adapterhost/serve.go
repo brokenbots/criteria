@@ -8,7 +8,7 @@ import (
 	hplugin "github.com/hashicorp/go-plugin"
 	"google.golang.org/grpc"
 
-	v2 "github.com/brokenbots/criteria/proto/criteria/v2"
+	v2 "github.com/brokenbots/criteria/sdk/pb/criteria/v2"
 )
 
 // Serve starts the adapter process using the shared [HandshakeConfig].

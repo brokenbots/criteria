@@ -8,7 +8,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	v2 "github.com/brokenbots/criteria/proto/criteria/v2"
+	v2 "github.com/brokenbots/criteria/sdk/pb/criteria/v2"
 )
 
 // AdapterName is the dispenser key shared between the host and every adapter
