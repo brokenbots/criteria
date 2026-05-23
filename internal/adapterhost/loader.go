@@ -258,6 +258,7 @@ func (p *rpcHandle) Execute(ctx context.Context, sessionID string, step *workflo
 		allowTools:  allowTools,
 		adapterName: p.name,
 		requests:    requests,
+		ctx:         execCtx,
 	}
 
 	// Open the Log stream concurrently with Execute. Adapters may emit log lines
@@ -341,7 +342,11 @@ type executeCaptureSink struct {
 	adapterName string   // used for alias-aware denial suggestions
 	// requests is the send side of the Permissions bidi stream; permission
 	// events (allow=request, deny=cancel) are forwarded to the adapter here.
+	// ctx is the Execute context; it unblocks permission signal sends when
+	// the execution is cancelled so that handlePermissionRequest never drops
+	// a signal silently.
 	requests chan<- *v2.PermissionEvent
+	ctx      context.Context
 
 	// Chunk reassembly buffers for the Execute stream.
 	// adapterChunkBuf accumulates AdapterEvent.payload_json fragments.
@@ -526,7 +531,7 @@ func (s *executeCaptureSink) handlePermissionRequest(adapterEvt *v2.AdapterEvent
 					Request: &v2.PermissionRequest{RequestId: requestID},
 				},
 			}:
-			default:
+			case <-s.ctx.Done():
 			}
 		}
 		return
@@ -553,7 +558,7 @@ func (s *executeCaptureSink) handlePermissionRequest(adapterEvt *v2.AdapterEvent
 				Cancel: &v2.PermissionCancel{RequestId: requestID, Reason: reason},
 			},
 		}:
-		default:
+		case <-s.ctx.Done():
 		}
 	}
 }

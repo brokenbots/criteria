@@ -807,6 +807,7 @@ func TestHandlePermissionRequest_Allow(t *testing.T) {
 		policy:     NewPolicy([]string{"read_file"}),
 		allowTools: []string{"read_file"},
 		requests:   requests,
+		ctx:        context.Background(),
 	}
 	cs.handlePermissionRequest(permissionRequestEvent("req-1", "read_file"))
 
@@ -840,6 +841,7 @@ func TestHandlePermissionRequest_Deny(t *testing.T) {
 		policy:     NewPolicy(nil), // deny-all
 		allowTools: []string{},
 		requests:   requests,
+		ctx:        context.Background(),
 	}
 	cs.handlePermissionRequest(permissionRequestEvent("req-2", "shell"))
 

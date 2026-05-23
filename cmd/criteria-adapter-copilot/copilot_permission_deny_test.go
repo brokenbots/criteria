@@ -8,6 +8,7 @@ package main
 import (
 	"errors"
 	"testing"
+	"time"
 
 	copilot "github.com/github/copilot-sdk/go"
 
@@ -87,20 +88,33 @@ func TestHandlePermissionRequestSendError(t *testing.T) {
 	}
 }
 
-// TestHandlePermissionRequestActiveSessionApproved verifies the WS03 auto-approve
-// stub: an active session with a valid sink emits a permission.request AdapterEvent
-// and returns Approved. WS16 adds interactive grant/deny via the bidi Permissions
-// stream.
-func TestHandlePermissionRequestActiveSessionApproved(t *testing.T) {
+// TestHandlePermissionRequestAutoApproveActive verifies that an active session
+// with a working sink returns Approved and emits a permission.request event
+// when the host approves the request.
+func TestHandlePermissionRequestAutoApproveActive(t *testing.T) {
 	sender := &recordingSender{}
 	s := &sessionState{
-		session: &fakeSession{},
-		active:  true,
-		sink:    sender,
+		session:  &fakeSession{},
+		active:   true,
+		activeCh: make(chan struct{}),
+		sink:     sender,
 	}
 	p := &copilotAdapter{sessions: map[string]*sessionState{"s1": s}}
+	toolCallID := "tc-active"
+	req := copilot.PermissionRequestShell{ToolCallID: &toolCallID}
 
-	req := copilot.PermissionRequestShell{}
+	// handlePermissionRequest blocks until the host resolves the pending perm.
+	// Simulate the host approving once the pending perm is registered.
+	go func() {
+		for {
+			if ch := p.resolvePendingPerm(toolCallID); ch != nil {
+				ch <- "allow"
+				return
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}()
+
 	result, err := p.handlePermissionRequest("s1", req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

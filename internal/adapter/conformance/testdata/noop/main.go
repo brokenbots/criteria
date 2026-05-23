@@ -22,7 +22,7 @@ func (s *noopService) Info(_ context.Context, _ *v2.InfoRequest) (*v2.InfoRespon
 	return &v2.InfoResponse{
 		Name:         "noop",
 		Version:      "0.1.0",
-		Capabilities: []string{"parallel_safe", "permission_request_forwarding"},
+		Capabilities: []string{"parallel_safe", "permission_gating", "permission_request_forwarding"},
 	}, nil
 }
 
@@ -56,7 +56,11 @@ func (s *noopService) Execute(ctx context.Context, req *v2.ExecuteRequest, sink 
 		}
 	}
 	if req.GetInput()["emit_permission_request"] == "true" {
-		payload, err := structpb.NewStruct(map[string]any{"kind": "shell"})
+		payload, err := structpb.NewStruct(map[string]any{
+			"kind":       "shell",
+			"request_id": "noop-perm-1",
+			"tool":       "shell",
+		})
 		if err != nil {
 			return fmt.Errorf("build permission.request payload: %w", err)
 		}

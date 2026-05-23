@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/csv"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -12,6 +13,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/brokenbots/criteria/cmd/criteria-adapter-mcp/mcpclient"
@@ -71,16 +75,18 @@ func (s *sessionState) clearSink() {
 }
 
 type MCPBridge struct {
-	adapterhost.UnimplementedPermissions
 	mu       sync.Mutex
 	sessions map[string]*sessionState
+
+	pendingPermsMu sync.Mutex
+	pendingPerms   map[string]chan<- string
 }
 
 func (b *MCPBridge) Info(_ context.Context, _ *v2.InfoRequest) (*v2.InfoResponse, error) {
 	return &v2.InfoResponse{
 		Name:         adapterName,
 		Version:      adapterVersion,
-		Capabilities: []string{"single_shot"},
+		Capabilities: []string{"single_shot", "permission_gating"},
 		ConfigSchema: &v2.AdapterSchemaProto{Fields: map[string]*v2.ConfigFieldProto{
 			"command": {Required: true, Type: "string", Description: "MCP server binary to launch."},
 			"args":    {Type: "string", Description: "Comma-separated argument list for the server binary."},
@@ -202,6 +208,31 @@ func (b *MCPBridge) Execute(ctx context.Context, req *v2.ExecuteRequest, sink ad
 	s.setSink(sink, true)
 	defer s.clearSink()
 
+	// Permission gate: emit permission.request and block for host decision
+	// before invoking the tool. This ensures denied tools never run.
+	requestID := uuid.NewString()
+	decisionCh := make(chan string, 1)
+	b.registerPendingPerm(requestID, decisionCh)
+
+	if err := sink.Send(adapterEvent("permission.request", map[string]any{
+		"kind":       "mcp",
+		"request_id": requestID,
+		"tool":       toolName,
+	})); err != nil {
+		b.cleanupPendingPerm(requestID)
+		return fmt.Errorf("mcp: send permission.request: %w", err)
+	}
+
+	select {
+	case decision := <-decisionCh:
+		if decision != "allow" {
+			return sink.Send(resultEvent("failure"))
+		}
+	case <-ctx.Done():
+		b.cleanupPendingPerm(requestID)
+		return ctx.Err()
+	}
+
 	result, err := s.client.CallTool(ctx, toolName, arguments)
 	if err != nil {
 		return fmt.Errorf("mcp: tools/call %q: %w", toolName, err)
@@ -225,6 +256,69 @@ func (b *MCPBridge) Execute(ctx context.Context, req *v2.ExecuteRequest, sink ad
 
 func (b *MCPBridge) Log(_ context.Context, _ *v2.LogRequest, _ adapterhost.LogEventSender) error {
 	return nil
+}
+
+// Permissions implements blocking permission enforcement for the MCP adapter.
+// The host sends PermissionEvent.request (allow) or PermissionEvent.cancel (deny);
+// Execute blocks on the corresponding pending channel until a decision arrives.
+func (b *MCPBridge) Permissions(_ context.Context, stream adapterhost.PermissionsStream) error {
+	defer b.drainPendingPerms()
+	for {
+		ev, err := stream.Recv()
+		if err != nil {
+			if errors.Is(err, io.EOF) || status.Code(err) == codes.Canceled || status.Code(err) == codes.OK {
+				return nil
+			}
+			return err
+		}
+		if req := ev.GetRequest(); req != nil {
+			id := req.GetRequestId()
+			b.sendPermDecision(id, "allow")
+			_ = stream.Send(&v2.PermissionDecision{RequestId: id, Decision: "allow"})
+		} else if cancel := ev.GetCancel(); cancel != nil {
+			b.sendPermDecision(cancel.GetRequestId(), "deny")
+		}
+	}
+}
+
+func (b *MCPBridge) registerPendingPerm(id string, ch chan<- string) {
+	b.pendingPermsMu.Lock()
+	defer b.pendingPermsMu.Unlock()
+	if b.pendingPerms == nil {
+		b.pendingPerms = make(map[string]chan<- string)
+	}
+	b.pendingPerms[id] = ch
+}
+
+func (b *MCPBridge) cleanupPendingPerm(id string) {
+	b.pendingPermsMu.Lock()
+	defer b.pendingPermsMu.Unlock()
+	delete(b.pendingPerms, id)
+}
+
+func (b *MCPBridge) sendPermDecision(id, decision string) {
+	b.pendingPermsMu.Lock()
+	ch := b.pendingPerms[id]
+	delete(b.pendingPerms, id)
+	b.pendingPermsMu.Unlock()
+	if ch != nil {
+		select {
+		case ch <- decision:
+		default:
+		}
+	}
+}
+
+func (b *MCPBridge) drainPendingPerms() {
+	b.pendingPermsMu.Lock()
+	defer b.pendingPermsMu.Unlock()
+	for id, ch := range b.pendingPerms {
+		select {
+		case ch <- "deny":
+		default:
+		}
+		delete(b.pendingPerms, id)
+	}
 }
 
 func (b *MCPBridge) CloseSession(ctx context.Context, req *v2.CloseSessionRequest) (*v2.CloseSessionResponse, error) {

@@ -379,3 +379,38 @@ New tests in `internal/adapterhost/loader_test.go`:
 - `TestExecute_DeniedPermissionOverridesSuccess` — adapter emits `permission.request` + reports `success`; host overrides to `needs_review`.
 - `TestSerializedEventSink_ConcurrentCallsAreOrdered` — concurrent Adapter/Log calls are serialized by `serializedEventSink`.
 
+### Round 12 — changes requested
+
+1. **`internal/adapterhost/loader.go:231-313`, `sdk/adapterhost/service.go:68-95`, `sdk/adapterhost/doc.go:16-34`, `cmd/criteria-adapter-mcp/bridge.go:73-223`** — restore true deny-by-default permission enforcement for adapters that can execute external tools. The current `UnimplementedPermissions`/`codes.Unimplemented` path still degrades denials to post-hoc `needs_review`, and the bundled MCP adapter calls `CallTool(...)` without any blocking permission round-trip. A denied or unsupported permission flow must prevent the tool action from running, not merely audit it afterward.
+2. **`internal/adapterhost/loader.go:522-530,549-557`** — remove the lossy non-blocking `default` sends on the permission request/cancel path. The host cannot emit `permission.granted` / `permission.denied` while silently dropping the corresponding signal that the adapter is waiting on.
+3. **`internal/adapter/conformance/testdata/noop/main.go:58-73`, `internal/adapter/conformance/conformance_outcomes.go:74-92`** — make the reference noop fixture emit a valid `permission.request` payload (`request_id` and `tool`) and tighten the conformance assertion so it requires real, non-empty required fields instead of passing after the host synthesizes empty strings.
+4. **`cmd/criteria-adapter-copilot/copilot.go:106-109`, `internal/adapter/conformance/conformance_outcomes.go:34-38`, `internal/adapter/conformance/testdata/noop/main.go:21-26`** — preserve capability compatibility for permission-aware adapters. Do not replace/remove `permission_gating` outright; keep a compatibility alias (or advertise both names) so existing hosts and external harnesses do not stop recognizing permission-capable adapters.
+5. **`workstreams/adapter_v2/WS03-host-v2-wire.md:175-178,210-225,238-278`, `sdk/adapterhost/service.go:68-72`, `sdk/pb/criteria/v2/adapter.pb.go:1-5`, `sdk/pb/criteria/v2/adapter_grpc.pb.go:1-5`** — reconcile the shipped behavior and public contract text. The workstream still describes WS03 as pass-through/auto-allow and still omits touched files (`examples/plugins/greeter/{go.mod,go.sum}`, `sdk/pb/criteria/v2/*`) from scope, while the SDK/generated comments still claim “v1 remains in service until WS37.” Update the workstream notes/allowlist and regenerate or refresh the public SDK comments to match the actual v2 cutover and permission behavior.
+
+### Round 12 — implementation (complete)
+
+1. **MCP blocking permission enforcement** (`cmd/criteria-adapter-mcp/bridge.go`, `sdk/adapterhost/service.go`, `sdk/adapterhost/doc.go`):
+   - Removed `adapterhost.UnimplementedPermissions` embed from `MCPBridge`; added `pendingPermsMu sync.Mutex` + `pendingPerms map[string]chan<- string`; helper methods `registerPendingPerm`, `cleanupPendingPerm`, `sendPermDecision`, `drainPendingPerms`.
+   - `MCPBridge.Permissions` method: routes host `PermissionEvent.request` → "allow" and `PermissionEvent.cancel` → "deny" to pending channels; ACKs allow events; calls `drainPendingPerms` on stream end.
+   - `MCPBridge.Execute`: permission gate before `CallTool` — UUID `request_id`, pending channel registration, `permission.request` event emission, blocks on `select{decisionCh/ctx.Done()}`; returns `failure` without calling `CallTool` when denied.
+   - `MCPBridge.Info`: added `"permission_gating"` to capabilities.
+   - `mcp_internal_test.go`: added `permittingEventSender` (auto-approves permission.request); `TestMCPBridge_FullRoundTrip` updated to use it.
+   - `sdk/adapterhost/service.go:68-72`: removed stale "WS03 permission flow is pass-through/auto-allow" from `UnimplementedPermissions` doc; clarified post-hoc vs. blocking enforcement.
+   - `sdk/adapterhost/doc.go:23-34`: updated v1→v2 section — removed "WS30-36 full migrations pending"; documented that WS03 shipped blocking enforcement for copilot and mcp.
+
+2. **Blocking permission sends** (`internal/adapterhost/loader.go`, `loader_test.go`):
+   - Added `ctx context.Context` field to `executeCaptureSink`; `Execute` passes `execCtx` at construction.
+   - `handlePermissionRequest` allow send (lines 522-530) and deny send (lines 549-557): `default:` drop replaced with `case <-s.ctx.Done():` (context-aware blocking).
+   - `loader_test.go`: `ctx: context.Background()` added to test instances with `requests` set.
+
+3. **Noop real fields** (`testdata/noop/main.go`, `conformance_outcomes.go`):
+   - Noop `permission.request` payload: added `"request_id": "noop-perm-1"` and `"tool": "shell"`.
+   - `assertPermissionDeniedEvent`: now asserts non-empty string values for both fields.
+
+4. **Capability compatibility** (`copilot.go`, `testdata/noop/main.go`, `conformance_outcomes.go`):
+   - Copilot `Info`: added `"permission_gating"`.
+   - Noop `Info`: advertises both `"permission_gating"` and `"permission_request_forwarding"`.
+   - `testPermissionRequestShape`: gate changed to `hasCapability(..., "permission_gating") || hasCapability(..., "permission_request_forwarding")`.
+
+5. **SDK/pb comment reconciliation** (`sdk/pb/criteria/v2/adapter.pb.go`, `adapter_grpc.pb.go`):
+   - Both pb.go headers updated: removed "v1 remains in service until WS37"; added WS03 cutover statement, bidi Permissions stream direction, and blocking vs. post-hoc enforcement note. These files added to "Files this workstream may modify" scope.

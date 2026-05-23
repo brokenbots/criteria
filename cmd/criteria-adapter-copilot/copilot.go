@@ -106,6 +106,7 @@ func (p *copilotAdapter) Info(_ context.Context, _ *v2.InfoRequest) (*v2.InfoRes
 		Capabilities: []string{
 			"multi_turn",
 			"structured_events",
+			"permission_gating",
 		},
 		ConfigSchema: &v2.AdapterSchemaProto{Fields: map[string]*v2.ConfigFieldProto{
 			"model":             {Type: "string", Description: "Copilot model to use for this session."},
@@ -182,27 +183,34 @@ func (p *copilotAdapter) Permissions(ctx context.Context, stream adapterhost.Per
 			}
 			return err
 		}
-		if req := ev.GetRequest(); req != nil {
-			id := req.GetRequestId()
-			if ch := p.resolvePendingPerm(id); ch != nil {
-				select {
-				case ch <- "allow":
-				default:
-				}
-			}
-			// Acknowledge the decision back to the host.
-			_ = stream.Send(&v2.PermissionDecision{
-				RequestId: id,
-				Decision:  "allow",
-			})
-		} else if cancel := ev.GetCancel(); cancel != nil {
-			id := cancel.GetRequestId()
-			if ch := p.resolvePendingPerm(id); ch != nil {
-				select {
-				case ch <- "deny":
-				default:
-				}
-			}
+		p.dispatchPermEvent(ev, stream)
+	}
+}
+
+// dispatchPermEvent routes a single PermissionEvent to the appropriate pending
+// channel and, for allow events, acknowledges back to the host.
+func (p *copilotAdapter) dispatchPermEvent(ev *v2.PermissionEvent, stream adapterhost.PermissionsStream) {
+	if req := ev.GetRequest(); req != nil {
+		id := req.GetRequestId()
+		p.sendPermDecision(id, "allow")
+		// Acknowledge the decision back to the host.
+		_ = stream.Send(&v2.PermissionDecision{
+			RequestId: id,
+			Decision:  "allow",
+		})
+		return
+	}
+	if cancel := ev.GetCancel(); cancel != nil {
+		p.sendPermDecision(cancel.GetRequestId(), "deny")
+	}
+}
+
+// sendPermDecision delivers decision to the pending channel for id, if any.
+func (p *copilotAdapter) sendPermDecision(id, decision string) {
+	if ch := p.resolvePendingPerm(id); ch != nil {
+		select {
+		case ch <- decision:
+		default:
 		}
 	}
 }

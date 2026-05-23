@@ -33,8 +33,8 @@ func testOutcomeDomain(t *testing.T, name string, factory targetFactory, opts *O
 
 func testPermissionRequestShape(t *testing.T, name string, loader adapterhost.Loader, opts *Options, info *adapterhost.Info) {
 	t.Helper()
-	if !hasCapability(info.Capabilities, "permission_request_forwarding") {
-		t.Skip("permission_request_shape skipped: adapter does not advertise permission_request_forwarding")
+	if !hasCapability(info.Capabilities, "permission_gating") && !hasCapability(info.Capabilities, "permission_request_forwarding") {
+		t.Skip("permission_request_shape skipped: adapter does not advertise permission_gating or permission_request_forwarding")
 	}
 
 	// 30 s matches the StartTimeout in the loader.
@@ -74,7 +74,7 @@ func testPermissionRequestShape(t *testing.T, name string, loader adapterhost.Lo
 // assertPermissionDeniedEvent verifies that the recording sink contains a
 // permission.denied adapter event, confirming that the host applied the
 // allow_tools policy and denied the request. It checks the minimal payload
-// shape: request_id and tool fields must be present.
+// shape: request_id and tool fields must be present and non-empty.
 func assertPermissionDeniedEvent(t *testing.T, sink *recordingSink) {
 	t.Helper()
 	// WS03: the host evaluates allow_tools policy; with no allow_tools the
@@ -83,10 +83,18 @@ func assertPermissionDeniedEvent(t *testing.T, sink *recordingSink) {
 	if !ok {
 		t.Fatal("expected permission.denied adapter event in upstream sink (allow_tools policy denied the request)")
 	}
-	if _, hasID := data["request_id"]; !hasID {
+	reqID, hasID := data["request_id"]
+	if !hasID {
 		t.Fatal("permission.denied payload missing required \"request_id\" field")
 	}
-	if _, hasTool := data["tool"]; !hasTool {
+	if s, _ := reqID.(string); s == "" {
+		t.Fatal("permission.denied payload \"request_id\" must be non-empty")
+	}
+	tool, hasTool := data["tool"]
+	if !hasTool {
 		t.Fatal("permission.denied payload missing required \"tool\" field")
+	}
+	if s, _ := tool.(string); s == "" {
+		t.Fatal("permission.denied payload \"tool\" must be non-empty")
 	}
 }

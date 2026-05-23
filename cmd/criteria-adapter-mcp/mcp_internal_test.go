@@ -20,6 +20,28 @@ func (f *fakeEventSender) Send(ev *v2.ExecuteEvent) error {
 
 var _ adapterhost.ExecuteEventSender = (*fakeEventSender)(nil)
 
+// permittingEventSender wraps fakeEventSender and auto-approves permission.request
+// events by resolving the bridge pending channel immediately. This is required for
+// unit tests that call Execute without a real Permissions stream goroutine.
+type permittingEventSender struct {
+	inner  fakeEventSender
+	bridge *MCPBridge
+}
+
+func (s *permittingEventSender) Send(ev *v2.ExecuteEvent) error {
+	_ = s.inner.Send(ev)
+	if a := ev.GetAdapter(); a != nil && a.GetEventKind() == "permission.request" {
+		if p := a.GetPayload(); p != nil {
+			if v, ok := p.GetFields()["request_id"]; ok {
+				if reqID := v.GetStringValue(); reqID != "" {
+					s.bridge.sendPermDecision(reqID, "allow")
+				}
+			}
+		}
+	}
+	return nil
+}
+
 // TestParseCSVList covers all parseCSVList branches.
 func TestParseCSVList(t *testing.T) {
 	tests := []struct {
@@ -211,7 +233,7 @@ func TestMCPBridge_FullRoundTrip(t *testing.T) {
 	}
 
 	// Execute the echo tool.
-	sender := &fakeEventSender{}
+	sender := &permittingEventSender{bridge: b}
 	err = b.Execute(ctx, &v2.ExecuteRequest{
 		SessionId: "sess-rt",
 		Input: map[string]string{
@@ -226,10 +248,10 @@ func TestMCPBridge_FullRoundTrip(t *testing.T) {
 
 	// Verify a result event was sent and it is the last event (ordering contract).
 	// The echo-mcp server emits Log events first, then a Result last.
-	if len(sender.events) == 0 {
+	if len(sender.inner.events) == 0 {
 		t.Fatal("expected at least one event, got none")
 	}
-	last := sender.events[len(sender.events)-1]
+	last := sender.inner.events[len(sender.inner.events)-1]
 	if last.GetResult() == nil {
 		t.Fatalf("last event must be a Result; got %T", last.GetEvent())
 	}

@@ -67,9 +67,11 @@ type PermissionsStream interface {
 
 // UnimplementedPermissions satisfies the Permissions method of [Service] with
 // fail-closed semantics: unexpected stream errors are propagated rather than
-// swallowed. Embed this in your adapter until full permission semantics (WS16)
-// are ready. WS03 permission flow is pass-through/auto-allow: the host
-// forwards permission.request events upstream without policy evaluation.
+// swallowed. Embed this in your adapter when the adapter does not need to block
+// tool execution on host decisions; the host applies post-hoc enforcement
+// (overriding a success outcome to needs_review) when any permission was denied.
+// Adapters that must prevent tool execution on denial should implement Permissions
+// themselves (see cmd/criteria-adapter-copilot for a blocking example).
 type UnimplementedPermissions struct{}
 
 func (UnimplementedPermissions) Permissions(_ context.Context, stream PermissionsStream) error {

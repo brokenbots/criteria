@@ -40,17 +40,7 @@ func (p *copilotAdapter) handlePermissionRequest(sessionID string, request copil
 		return copilot.PermissionRequestResult{Kind: copilot.PermissionRequestResultKindUserNotAvailable}, nil
 	}
 
-	permID := uuid.NewString()
-	payload := make(map[string]any, len(details)+2)
-	payload["request_id"] = permID
-	payload["tool"] = permissionTool(request)
-	if toolCallID := strings.TrimSpace(details["tool_call_id"]); toolCallID != "" {
-		payload["request_id"] = toolCallID
-	}
-	for k, v := range details {
-		payload[k] = v
-	}
-	requestID := payload["request_id"].(string)
+	payload, requestID := buildPermEventPayload(request)
 
 	decisionCh := make(chan string, 1)
 	p.registerPendingPerm(requestID, decisionCh)
@@ -70,6 +60,25 @@ func (p *copilotAdapter) handlePermissionRequest(sessionID string, request copil
 		p.resolvePendingPerm(requestID)
 		return copilot.PermissionRequestResult{Kind: copilot.PermissionRequestResultKindRejected}, nil
 	}
+}
+
+// buildPermEventPayload converts the Copilot SDK request into the detailsAny
+// map sent as the permission.request event payload, and derives a stable
+// requestID and canonical tool name for the pending-perm registry.
+func buildPermEventPayload(request copilot.PermissionRequest) (detailsAny map[string]any, requestID string) {
+	raw := permissionDetails(request)
+	detailsAny = make(map[string]any, len(raw)+2)
+	for k, v := range raw {
+		detailsAny[k] = v
+	}
+	if toolCallID := strings.TrimSpace(raw["tool_call_id"]); toolCallID != "" {
+		requestID = toolCallID
+	} else {
+		requestID = uuid.NewString()
+	}
+	detailsAny["request_id"] = requestID
+	detailsAny["tool"] = permissionTool(request)
+	return
 }
 
 func permissionDetails(request copilot.PermissionRequest) map[string]string { //nolint:funlen,gocognit,gocyclo // collecting optional fields from SDK request variants; splitting further would obscure the boundary mapping
