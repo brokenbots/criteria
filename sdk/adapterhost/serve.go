@@ -45,6 +45,10 @@ func (p *grpcAdapter) GRPCClient(_ context.Context, _ *hplugin.GRPCBroker, _ *gr
 }
 
 // grpcAdapterServer bridges the generated AdapterServiceServer interface to Service.
+// Only the RPCs in Service (Info, OpenSession, Execute, Log, Permissions,
+// CloseSession) are explicitly bridged; lifecycle RPCs (Pause, Resume,
+// Snapshot, Restore, Inspect) fall back to the generated Unimplemented stubs
+// via the embedded v2.UnimplementedAdapterServiceServer.
 type grpcAdapterServer struct {
 	v2.UnimplementedAdapterServiceServer
 	impl Service

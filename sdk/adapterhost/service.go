@@ -24,8 +24,7 @@ const AdapterName = "adapter"
 // teardown. Implementations must respect context cancellation.
 //
 // Lifecycle methods (Pause, Resume, Snapshot, Restore, Inspect) are NOT part
-// of this interface — they are out-of-scope for WS03 and will be added as an
-// optional LifecycleService interface in WS17/WS18.
+// of this interface and are not wired through the WS03 gRPC bridge.
 type Service interface {
 	Info(context.Context, *v2.InfoRequest) (*v2.InfoResponse, error)
 	OpenSession(context.Context, *v2.OpenSessionRequest) (*v2.OpenSessionResponse, error)
@@ -69,8 +68,8 @@ type PermissionsStream interface {
 // UnimplementedPermissions satisfies the Permissions method of [Service] with
 // fail-closed semantics: unexpected stream errors are propagated rather than
 // swallowed. Embed this in your adapter until full permission semantics (WS16)
-// are ready; the host evaluates allow_tools and sends grant/cancel events on
-// this stream.
+// are ready. WS03 permission flow is pass-through/auto-allow: the host
+// forwards permission.request events upstream without policy evaluation.
 type UnimplementedPermissions struct{}
 
 func (UnimplementedPermissions) Permissions(_ context.Context, stream PermissionsStream) error {
@@ -93,29 +92,4 @@ func (UnimplementedPermissions) Permissions(_ context.Context, stream Permission
 			return err // fail closed on send failure
 		}
 	}
-}
-
-// UnimplementedLifecycle satisfies the Pause/Resume/Snapshot/Restore/Inspect
-// methods of [Service] with gRPC Unimplemented errors. Embed this in your
-// adapter implementation until lifecycle management (WS17/WS18) is ready.
-type UnimplementedLifecycle struct{}
-
-func (UnimplementedLifecycle) Pause(_ context.Context, _ *v2.PauseRequest) (*v2.PauseResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "Pause is not implemented in this adapter")
-}
-
-func (UnimplementedLifecycle) Resume(_ context.Context, _ *v2.ResumeRequest) (*v2.ResumeResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "Resume is not implemented in this adapter")
-}
-
-func (UnimplementedLifecycle) Snapshot(_ context.Context, _ *v2.SnapshotRequest) (*v2.SnapshotResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "Snapshot is not implemented in this adapter")
-}
-
-func (UnimplementedLifecycle) Restore(_ context.Context, _ *v2.RestoreRequest) (*v2.RestoreResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "Restore is not implemented in this adapter")
-}
-
-func (UnimplementedLifecycle) Inspect(_ context.Context, _ *v2.InspectRequest) (*v2.InspectResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "Inspect is not implemented in this adapter")
 }

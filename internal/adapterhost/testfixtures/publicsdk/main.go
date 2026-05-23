@@ -72,26 +72,6 @@ func (p *publicSDKAdapter) Log(_ context.Context, _ *v2.LogRequest, _ adapterhos
 	return nil
 }
 
-func (p *publicSDKAdapter) Pause(_ context.Context, _ *v2.PauseRequest) (*v2.PauseResponse, error) {
-	return &v2.PauseResponse{}, nil
-}
-
-func (p *publicSDKAdapter) Resume(_ context.Context, _ *v2.ResumeRequest) (*v2.ResumeResponse, error) {
-	return &v2.ResumeResponse{}, nil
-}
-
-func (p *publicSDKAdapter) Snapshot(_ context.Context, _ *v2.SnapshotRequest) (*v2.SnapshotResponse, error) {
-	return &v2.SnapshotResponse{}, nil
-}
-
-func (p *publicSDKAdapter) Restore(_ context.Context, _ *v2.RestoreRequest) (*v2.RestoreResponse, error) {
-	return &v2.RestoreResponse{}, nil
-}
-
-func (p *publicSDKAdapter) Inspect(_ context.Context, _ *v2.InspectRequest) (*v2.InspectResponse, error) {
-	return &v2.InspectResponse{}, nil
-}
-
 func (p *publicSDKAdapter) CloseSession(_ context.Context, req *v2.CloseSessionRequest) (*v2.CloseSessionResponse, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()

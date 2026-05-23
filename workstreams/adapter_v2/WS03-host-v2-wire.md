@@ -248,9 +248,9 @@ Enumerated:
 
 **Permission flow (cmd/criteria-adapter-copilot/)**
 - `copilot_permission.go` — `handlePermissionRequest` returns `PermissionRequestResultKindApproved` (WS03 auto-allow stub). The adapter forwards the `permission.request` event to the host for logging; the tool runs normally. WS16 adds the interactive bidi grant/deny back-channel.
-- `copilot_session.go` — `permissionDeny bool` field removed.
-- `copilot_turn.go` — `permDenied` check removed from `handleIdleTurn`; reset removed from `beginExecution`.
-- `copilot.go` — Pause/Resume/Snapshot/Restore/Inspect stubs removed (not in Service interface).
+- `copilot_session.go` — `permissionDeny bool` field not present; pass-through only.
+- `copilot_turn.go` — no permission-related state in `handleIdleTurn`; WS03 is pure pass-through.
+- `copilot.go` — `permission_gating` capability not advertised (WS03 is auto-allow, not interactive gating).
 
 **Adapter cleanup (out-of-scope migrations removed)**
 - `cmd/criteria-adapter-copilot/copilot.go` — lifecycle stubs removed.
@@ -270,7 +270,7 @@ Note: the v2 base migrations in these files (from c4d2c18, required because v1 a
 - Permission handling is auto-allow at the adapter layer (WS03): adapter returns `Approved` to Copilot SDK; host records the `permission.request` event; tool runs normally. WS16 adds interactive grant/deny via the bidi `Permissions` stream.
 - Log RPC failures are propagated when Execute succeeds — a broken log stream is not silently ignored.
 - `Permissions` bidi stream sender goroutine is guarded by a derived context; sender-side errors are propagated when the receiver succeeds first.
-- `Pause`/`Resume`/`Snapshot`/`Restore`/`Inspect` are NOT in the `Service` interface — they are optional and handled by `v2.UnimplementedAdapterServiceServer` in the gRPC bridge. `UnimplementedLifecycle` is available for adapters that want to advertise them early.
+- `Pause`/`Resume`/`Snapshot`/`Restore`/`Inspect` are NOT in the `Service` interface and are not wired through the gRPC bridge; `v2.UnimplementedAdapterServiceServer` returns `codes.Unimplemented` for all lifecycle RPCs. `UnimplementedLifecycle` removed from `sdk/adapterhost` — adapters must not implement these methods until a lifecycle workstream wires them through.
 - `ExecuteRequest.Config` renamed to `Input` in v2 proto; all adapters/tests updated.
 - Log stream is separate from Execute stream.
 - `permDecision` struct and `Permit` RPC flow removed entirely.
@@ -285,7 +285,7 @@ Note: the v2 base migrations in these files (from c4d2c18, required because v1 a
 - [x] Log RPC failures propagated when `execErr == nil`
 - [x] Permissions bidi teardown is leak-free (labelled loop + `senderCtx`); Unimplemented treated as expected so adapters not implementing Permissions do not abort Execute
 - [x] Log chunk buffering: seq/start validation per-stream; aggregate memory cap (16 MiB) across all concurrent log streams; regression tests added
-- [x] `UnimplementedLifecycle` added to `sdk/adapterhost/service.go` as optional embed; lifecycle methods removed from `Service` interface
+- [x] `UnimplementedLifecycle` removed from `sdk/adapterhost/service.go`; lifecycle methods are not in `Service` and are not wired through the gRPC bridge; adapters must not implement them
 - [x] Conformance noop fixture at `internal/adapter/conformance/testdata/noop/`
 - [x] Conformance test `TestNoopAdapterConformance` in `noop_adapter_test.go` runs existing sub-tests via `RunAdapter`
 - [x] Makefile v1 proto generation lines removed
@@ -297,8 +297,8 @@ Note: the v2 base migrations in these files (from c4d2c18, required because v1 a
 
 Completed in this round (round 5 must-fix items):
 
-- `internal/adapterhost/serve.go` — removed `decisions chan<-` backpressure trap from `Client.Permissions` interface and `grpcClient.Permissions`; `recvPermissionDecisions` now drains and discards adapter decisions (host evaluates policy synchronously before forwarding).
-- `internal/adapterhost/loader.go` — `maxChunkBufBytes` (64 MiB) added; `emitAdapter` and `emitResult` reject oversized chunk sequences; `executeCaptureSink` carries `ctx` so grant/deny sends use `case <-s.ctx.Done()` instead of `default`; `permDone` error surfaced and checked after Execute.
+- `internal/adapterhost/serve.go` — removed `decisions chan<-` backpressure trap from `Client.Permissions` interface and `grpcClient.Permissions`; `recvPermissionDecisions` now drains and discards adapter decisions.
+- `internal/adapterhost/loader.go` — `maxChunkBufBytes` (64 MiB) added; `emitAdapter` and `emitResult` reject oversized chunk sequences; `permDone` error surfaced and checked after Execute.
 - `sdk/adapterhost/doc.go` — corrected v1→v2 section to reflect that adapter binaries received only minimal compilation-required v2 type substitutions; full per-adapter migrations are WS30-36.
 - `cmd/criteria-adapter-copilot/*`, `cmd/criteria-adapter-mcp/bridge.go` — reverted out-of-scope WS16 dirty changes.
 
@@ -330,12 +330,10 @@ Completed in commit `165b6b9`:
 - Proper WS30–WS36 definitive tests for copilot/mcp/noop adapter migrations.
 - `LocalSocketDialer` reattach test covers the helper directly; full integration test is WS20 scope.
 
-## Owner Review Notes (round 7)
+## Owner Review Notes (round 8)
 
-- `.criteria/workflows/develop/main.hcl:193-214` — revert the workflow edit. WS03 does not allow touching `.criteria/workflows/*`; do not switch `repair_ci` to the developer adapter, broaden `allow_tools`, or rewrite that prompt here.
-- `internal/adapterhost/loader.go:220-304,474-541` and `cmd/criteria-adapter-copilot/copilot_permission.go:17-66` — back out the WS16 permission-policy/audit behavior from WS03. This workstream only wires the v2 stream and the temporary auto-allow path; it must not evaluate `allow_tools`, emit `permission.granted` / `permission.denied`, or rewrite a successful run to `needs_review` after execution.
-- `internal/adapterhost/loader.go:247-254,557-579` and `internal/adapterhost/loader_test.go` — harden the remaining in-scope host wire: permission-stream failure must not block `Execute` on a dead `requests` channel, log chunk reassembly must validate start/seq state, and aggregate buffered log-chunk memory must be capped across stream names (not only per stream). Add regression coverage for those paths.
-- `sdk/go.mod:5-12`, `sdk/adapterhost/service.go:11`, and `sdk/adapterhost/serve.go:11` — restore a consumable published SDK surface. External adapters importing `github.com/brokenbots/criteria/sdk` cannot depend on `github.com/brokenbots/criteria/proto/criteria/v2` through the current `github.com/brokenbots/criteria v0.3.0` requirement; fix the public import/version story so `go get github.com/brokenbots/criteria/sdk` builds outside this repo.
-- `workstreams/adapter_v2/WS03-host-v2-wire.md:205-207,227-315` — stop marking WS03 complete until the unchanged exit criterion and the remaining `criteria/v1` references are reconciled. At minimum, the implementation notes/checklist must not claim completion while the same file still documents known `criteria/v1` matches.
-
-Rejected as overreach: do not spend more time reverting the compilation-only v2 type substitutions in `cmd/criteria-adapter-{copilot,mcp,noop}` and `examples/plugins/greeter`; those are mechanical fallout from deleting `proto/criteria/v1/adapter_plugin.proto`, not evidence that WS30-WS36 were completed here.
+- `cmd/criteria-adapter-copilot/copilot_session.go:66`, `cmd/criteria-adapter-copilot/copilot_permission.go:25-34`, and `cmd/criteria-adapter-copilot/copilot_turn.go:145-158` — remove the stale `permissionDeny` state/failure path. WS03's permission flow is pass-through/auto-allow; a permission request must not force a terminal `failure` when no `submit_outcome` follows.
+- `cmd/criteria-adapter-copilot/copilot.go:95-99` — stop advertising `permission_gating` until WS16 lands. The current adapter behavior is observability/pass-through, not enforced gating.
+- `internal/adapter/conformance/conformance_outcomes.go:71-78` — fix `permission_request_shape` to the WS03 contract: forwarded `permission.request` event and no hard-coded deny/`needs_review` expectation.
+- `sdk/adapterhost/service.go:69-73` and `workstreams/adapter_v2/WS03-host-v2-wire.md:249-253,284,300-301` — correct the stale permission docs/notes so they match the shipped WS03 behavior. They must not claim host `allow_tools` evaluation, grant/cancel decisions, or removed `permissionDeny`/no-override work that is still present.
+- `sdk/adapterhost/service.go:26-28,98-120`, `sdk/adapterhost/serve.go:47-78`, and `internal/adapterhost/testfixtures/publicsdk/main.go:75-92` — stop over-promising lifecycle support in the public SDK. WS03 either needs those RPCs actually delegated or, per scope, the exported optional lifecycle surface and fixture methods removed until WS17/WS18.

@@ -144,18 +144,9 @@ func (ts *turnState) awaitOutcome(ctx context.Context, s *sessionState, sink ada
 // reprompt was sent and the loop should continue to the next turn.
 func (ts *turnState) handleIdleTurn(ctx context.Context, s *sessionState, sink adapterhost.ExecuteEventSender, attempt int) (done bool, err error) {
 	s.mu.Lock()
-	denied := s.permissionDeny
 	outcome := s.finalizedOutcome
 	reason := s.finalizedReason
 	s.mu.Unlock()
-
-	// A permission request was seen this turn and the session ended without a
-	// submit_outcome call. Return "failure" rather than reprompting — the model
-	// could not complete its task at the permission boundary. WS16 replaces this
-	// with the interactive grant/deny back-channel.
-	if denied && outcome == "" {
-		return true, sink.Send(resultEvent("failure", ""))
-	}
 
 	if outcome != "" {
 		return true, sink.Send(resultEvent(outcome, reason))

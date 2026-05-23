@@ -59,11 +59,10 @@ type sessionState struct {
 
 	execMu sync.Mutex
 
-	mu             sync.Mutex
-	active         bool
-	activeCh       chan struct{}
-	sink           adapterhost.ExecuteEventSender
-	permissionDeny bool
+	mu       sync.Mutex
+	active   bool
+	activeCh chan struct{}
+	sink     adapterhost.ExecuteEventSender
 
 	// defaultModel and defaultEffort record the agent-level model and
 	// reasoning_effort values set at OpenSession time. applyRequestEffort uses

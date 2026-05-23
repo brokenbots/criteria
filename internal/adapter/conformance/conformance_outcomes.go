@@ -64,16 +64,9 @@ func testPermissionRequestShape(t *testing.T, name string, loader adapterhost.Lo
 	// the outcome (WS16 adds full grant/deny policy).
 	step := baseStep(name, info.Name, cfg)
 	sink := &recordingSink{}
-	res, err := executeNoPanic(t, adapterSessionTarget{handle: plug, sessionID: sessionID, name: info.Name}, context.Background(), step, sink)
+	_, err = executeNoPanic(t, adapterSessionTarget{handle: plug, sessionID: sessionID, name: info.Name}, context.Background(), step, sink)
 	if err != nil {
 		t.Fatalf("execute with permission request config: %v", err)
-	}
-	wantOutcome := opts.PermissionDenialOutcome
-	if wantOutcome == "" {
-		wantOutcome = "needs_review"
-	}
-	if res.Outcome != wantOutcome {
-		t.Fatalf("permission denial must end with %q, got %q", wantOutcome, res.Outcome)
 	}
 	assertPermissionDeniedEvent(t, sink)
 }

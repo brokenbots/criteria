@@ -94,7 +94,6 @@ func (p *copilotAdapter) Info(_ context.Context, _ *v2.InfoRequest) (*v2.InfoRes
 		Version: adapterVersion,
 		Capabilities: []string{
 			"multi_turn",
-			"permission_gating",
 			"structured_events",
 		},
 		ConfigSchema: &v2.AdapterSchemaProto{Fields: map[string]*v2.ConfigFieldProto{

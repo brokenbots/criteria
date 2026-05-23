@@ -43,9 +43,8 @@
 //
 //	All turns: session.idle with no tool call (exhausts 3 attempts => failure)
 //
-// Permission prompt (contains "fetch"): emits permission.requested, waits for
-// handlePendingPermissionRequest, then emits session.idle (no tool call needed:
-// permissionDeny takes precedence in awaitOutcome).
+// Permission prompt (contains "fetch"): emits permission.requested (auto-approved),
+// waits for handlePendingPermissionRequest, then emits session.idle with no tool call.
 package main
 
 import (
@@ -223,10 +222,9 @@ func handleSessionSend(msg *rpcMsg) {
 	respond(msg.ID, map[string]any{"messageId": msgID})
 
 	if isPermissionPrompt(p.Prompt) {
-		// Permission scenario: emit a permission request, wait for the SDK to
-		// call handlePendingPermissionRequest, then end the turn. The adapter's
-		// awaitOutcome will see permissionDeny=true and return "failure" -- no
-		// submit_outcome tool call is needed.
+		// Permission scenario: emit a permission request (auto-approved), then
+		// end the turn without a submit_outcome call. The adapter's awaitOutcome
+		// will reprompt up to maxFinalizeAttempts before returning failure.
 		permReqID := newPermID()
 		ch := make(chan struct{})
 		permsMu.Lock()
