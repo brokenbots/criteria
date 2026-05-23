@@ -316,3 +316,156 @@ func TestMCPBridge_Execute_MissingTool(t *testing.T) {
 		t.Fatal("expected error for missing tool")
 	}
 }
+
+// denyingEventSender wraps fakeEventSender and immediately denies permission
+// requests. Used to test that Execute stops and never calls the MCP tool
+// when the host denies the permission.
+type denyingEventSender struct {
+	inner  fakeEventSender
+	bridge *MCPBridge
+}
+
+func (s *denyingEventSender) Send(ev *v2.ExecuteEvent) error {
+	_ = s.inner.Send(ev)
+	if a := ev.GetAdapter(); a != nil && a.GetEventKind() == "permission.request" {
+		if p := a.GetPayload(); p != nil {
+			if v, ok := p.GetFields()["request_id"]; ok {
+				if reqID := v.GetStringValue(); reqID != "" {
+					s.bridge.sendPermDecision(reqID, "deny")
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// drainingEventSender wraps fakeEventSender and simulates a Permissions stream
+// teardown (context cancel) by draining all pending permissions as denied. Used
+// to test that Execute stops when the Permissions bidi stream closes.
+type drainingEventSender struct {
+	inner  fakeEventSender
+	bridge *MCPBridge
+}
+
+func (s *drainingEventSender) Send(ev *v2.ExecuteEvent) error {
+	_ = s.inner.Send(ev)
+	if a := ev.GetAdapter(); a != nil && a.GetEventKind() == "permission.request" {
+		s.bridge.drainPendingPerms()
+	}
+	return nil
+}
+
+// hasMCPContentEvent returns true if any of the collected events carries an
+// mcp.content payload, which would indicate CallTool was reached.
+func hasMCPContentEvent(events []*v2.ExecuteEvent) bool {
+	for _, ev := range events {
+		if a := ev.GetAdapter(); a != nil && a.GetEventKind() == "mcp.content" {
+			return true
+		}
+	}
+	return false
+}
+
+// TestMCPBridge_Execute_PermissionDenied asserts that when the host denies a
+// permission.request event the Execute call returns a failure result and
+// CallTool is never reached (no mcp.content event is emitted).
+func TestMCPBridge_Execute_PermissionDenied(t *testing.T) {
+	if testEchoBin == "" {
+		t.Skip("echo-mcp binary not available")
+	}
+	b := &MCPBridge{sessions: map[string]*sessionState{}}
+	ctx := context.Background()
+
+	if _, err := b.OpenSession(ctx, &v2.OpenSessionRequest{
+		SessionId: "sess-deny",
+		Config: map[string]string{
+			"command":    testEchoBin,
+			"allow_tools": "",  // block all tools — requires permission for every call
+		},
+	}); err != nil {
+		t.Fatalf("OpenSession: %v", err)
+	}
+	defer func() { _, _ = b.CloseSession(ctx, &v2.CloseSessionRequest{SessionId: "sess-deny"}) }()
+
+	sender := &denyingEventSender{bridge: b}
+	err := b.Execute(ctx, &v2.ExecuteRequest{
+		SessionId: "sess-deny",
+		Input: map[string]string{
+			"tool":            "echo",
+			"success_outcome": "success",
+			"message":         "hi",
+		},
+	}, sender)
+	// Execute must complete without a Go error (the failure is communicated
+	// via the Result event, not the error return).
+	if err != nil {
+		t.Fatalf("Execute: unexpected error: %v", err)
+	}
+
+	if hasMCPContentEvent(sender.inner.events) {
+		t.Error("mcp.content event emitted after permission denied — CallTool must not run")
+	}
+
+	// Expect a failure result event.
+	if len(sender.inner.events) == 0 {
+		t.Fatal("no events emitted")
+	}
+	last := sender.inner.events[len(sender.inner.events)-1]
+	if last.GetResult() == nil {
+		t.Fatalf("last event must be a Result; got %T", last.GetEvent())
+	}
+	if last.GetResult().GetOutcome() == "success" {
+		t.Error("result outcome should not be success after permission denied")
+	}
+}
+
+// TestMCPBridge_Execute_PermissionsStreamTeardown asserts that when the
+// Permissions stream closes (drainPendingPerms called on all pending requests)
+// the Execute call returns a failure result and CallTool is never reached.
+func TestMCPBridge_Execute_PermissionsStreamTeardown(t *testing.T) {
+	if testEchoBin == "" {
+		t.Skip("echo-mcp binary not available")
+	}
+	b := &MCPBridge{sessions: map[string]*sessionState{}}
+	ctx := context.Background()
+
+	if _, err := b.OpenSession(ctx, &v2.OpenSessionRequest{
+		SessionId: "sess-drain",
+		Config: map[string]string{
+			"command":    testEchoBin,
+			"allow_tools": "",  // block all tools
+		},
+	}); err != nil {
+		t.Fatalf("OpenSession: %v", err)
+	}
+	defer func() { _, _ = b.CloseSession(ctx, &v2.CloseSessionRequest{SessionId: "sess-drain"}) }()
+
+	sender := &drainingEventSender{bridge: b}
+	err := b.Execute(ctx, &v2.ExecuteRequest{
+		SessionId: "sess-drain",
+		Input: map[string]string{
+			"tool":            "echo",
+			"success_outcome": "success",
+			"message":         "hi",
+		},
+	}, sender)
+	if err != nil {
+		t.Fatalf("Execute: unexpected error: %v", err)
+	}
+
+	if hasMCPContentEvent(sender.inner.events) {
+		t.Error("mcp.content event emitted after stream teardown — CallTool must not run")
+	}
+
+	if len(sender.inner.events) == 0 {
+		t.Fatal("no events emitted")
+	}
+	last := sender.inner.events[len(sender.inner.events)-1]
+	if last.GetResult() == nil {
+		t.Fatalf("last event must be a Result; got %T", last.GetEvent())
+	}
+	if last.GetResult().GetOutcome() == "success" {
+		t.Error("result outcome should not be success after stream teardown")
+	}
+}
+

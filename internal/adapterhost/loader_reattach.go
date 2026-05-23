@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"sync"
 
 	hplugin "github.com/hashicorp/go-plugin"
@@ -19,9 +20,13 @@ import (
 // Socket security contract (S3.4): the caller is responsible for creating the
 // socket in a host-only directory (mode 0o700), setting the socket file's mode
 // to 0o600 after Listen, and cleaning up the directory on session close.
-// LocalSocketDialer does not create or manage the socket file.
+// LocalSocketDialer validates both the directory and file modes before dialing
+// and returns an error if either constraint is violated.
 func LocalSocketDialer(ctx context.Context, socketPath string) (adapterClient Client, pluginClient *hplugin.Client, err error) {
 	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	if err := validateSocketSecurity(socketPath); err != nil {
 		return nil, nil, err
 	}
 	cfg := &hplugin.ClientConfig{
@@ -129,4 +134,28 @@ func NewHostOnlyUDSSocket() (path string, cleanup func(), err error) {
 	socketPath := dir + "/adapter.sock"
 	cleanup = func() { _ = os.RemoveAll(dir) }
 	return socketPath, cleanup, nil
+}
+
+// validateSocketSecurity rejects socketPath unless:
+//   - its parent directory exists and has mode exactly 0700 (host-only)
+//   - the socket file itself exists and has mode exactly 0600
+//
+// This guards against sockets created in world-readable directories where
+// another local process could observe or race the connection handshake.
+func validateSocketSecurity(socketPath string) error {
+	dirInfo, err := os.Stat(filepath.Dir(socketPath))
+	if err != nil {
+		return fmt.Errorf("reattach socket dir: %w", err)
+	}
+	if dirInfo.Mode()&os.ModePerm != 0o700 {
+		return fmt.Errorf("reattach socket dir %q has mode %04o, want 0700", filepath.Dir(socketPath), dirInfo.Mode()&os.ModePerm)
+	}
+	sockInfo, err := os.Stat(socketPath)
+	if err != nil {
+		return fmt.Errorf("reattach socket: %w", err)
+	}
+	if sockInfo.Mode()&os.ModePerm != 0o600 {
+		return fmt.Errorf("reattach socket %q has mode %04o, want 0600", socketPath, sockInfo.Mode()&os.ModePerm)
+	}
+	return nil
 }

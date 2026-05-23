@@ -73,7 +73,7 @@ message Heartbeat {
 
 // ConfigFieldProto describes a single field in an adapter schema.
 message ConfigFieldProto {
-  string type        = 1;  // "string" | "number" | "boolean" | ...
+  string type        = 1;  // "string" | "number" | "bool" | "boolean" (alias for "bool") | "list_string"
   bool   required    = 2;
   string description = 3;
   string default_str = 4;

@@ -289,9 +289,15 @@ func TestPermissionAutoApprove(t *testing.T) {
 	// Simulate the host approving once the pending perm is registered.
 	go func() {
 		for {
-			if ch := p.resolvePendingPerm(toolCallID); ch != nil {
-				ch <- "allow"
-				return
+			for _, ev := range sender.snapshot() {
+				if a := ev.GetAdapter(); a != nil && a.GetEventKind() == "permission.request" && a.GetPayload() != nil {
+					if requestID, ok := a.GetPayload().AsMap()["request_id"].(string); ok && requestID != "" {
+						if ch := p.resolvePendingPerm(requestID); ch != nil {
+							ch <- "allow"
+							return
+						}
+					}
+				}
 			}
 			time.Sleep(time.Millisecond)
 		}

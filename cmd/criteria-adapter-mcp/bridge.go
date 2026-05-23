@@ -195,13 +195,7 @@ func (b *MCPBridge) Execute(ctx context.Context, req *v2.ExecuteRequest, sink ad
 		return fmt.Errorf("mcp: unknown tool %q", toolName)
 	}
 
-	arguments := make(map[string]any, len(req.GetInput()))
-	for k, v := range req.GetInput() {
-		if _, reserved := reservedExecuteKeys[k]; reserved {
-			continue
-		}
-		arguments[k] = v
-	}
+	arguments := buildToolArguments(req.GetInput())
 
 	s.execMu.Lock()
 	defer s.execMu.Unlock()
@@ -210,27 +204,12 @@ func (b *MCPBridge) Execute(ctx context.Context, req *v2.ExecuteRequest, sink ad
 
 	// Permission gate: emit permission.request and block for host decision
 	// before invoking the tool. This ensures denied tools never run.
-	requestID := uuid.NewString()
-	decisionCh := make(chan string, 1)
-	b.registerPendingPerm(requestID, decisionCh)
-
-	if err := sink.Send(adapterEvent("permission.request", map[string]any{
-		"kind":       "mcp",
-		"request_id": requestID,
-		"tool":       toolName,
-	})); err != nil {
-		b.cleanupPendingPerm(requestID)
-		return fmt.Errorf("mcp: send permission.request: %w", err)
+	allowed, permErr := b.awaitPermission(ctx, sink, toolName)
+	if permErr != nil {
+		return permErr
 	}
-
-	select {
-	case decision := <-decisionCh:
-		if decision != "allow" {
-			return sink.Send(resultEvent("failure"))
-		}
-	case <-ctx.Done():
-		b.cleanupPendingPerm(requestID)
-		return ctx.Err()
+	if !allowed {
+		return sink.Send(resultEvent("failure"))
 	}
 
 	result, err := s.client.CallTool(ctx, toolName, arguments)
@@ -252,6 +231,46 @@ func (b *MCPBridge) Execute(ctx context.Context, req *v2.ExecuteRequest, sink ad
 		outcome = "failure"
 	}
 	return sink.Send(resultEvent(outcome))
+}
+
+// buildToolArguments converts the Execute input map into the arguments map
+// for CallTool, omitting reserved keys that are not passed to the MCP server.
+func buildToolArguments(input map[string]string) map[string]any {
+	args := make(map[string]any, len(input))
+	for k, v := range input {
+		if _, reserved := reservedExecuteKeys[k]; reserved {
+			continue
+		}
+		args[k] = v
+	}
+	return args
+}
+
+// awaitPermission emits a permission.request event for toolName and blocks
+// until the host grants or denies the request, or the context is cancelled.
+// Returns (true, nil) when the tool may proceed, (false, nil) when denied, and
+// a non-nil error on send failure or context cancellation.
+func (b *MCPBridge) awaitPermission(ctx context.Context, sink adapterhost.ExecuteEventSender, toolName string) (bool, error) {
+	requestID := uuid.NewString()
+	decisionCh := make(chan string, 1)
+	b.registerPendingPerm(requestID, decisionCh)
+
+	if err := sink.Send(adapterEvent("permission.request", map[string]any{
+		"kind":       "mcp",
+		"request_id": requestID,
+		"tool":       toolName,
+	})); err != nil {
+		b.cleanupPendingPerm(requestID)
+		return false, fmt.Errorf("mcp: send permission.request: %w", err)
+	}
+
+	select {
+	case decision := <-decisionCh:
+		return decision == "allow", nil
+	case <-ctx.Done():
+		b.cleanupPendingPerm(requestID)
+		return false, ctx.Err()
+	}
 }
 
 func (b *MCPBridge) Log(_ context.Context, _ *v2.LogRequest, _ adapterhost.LogEventSender) error {

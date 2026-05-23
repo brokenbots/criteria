@@ -207,7 +207,7 @@ func (r *recordingClient) Log(_ context.Context, _ *v2.LogRequest, _ LogEventSin
 	return nil
 }
 
-func (r *recordingClient) Permissions(_ context.Context, _ <-chan *v2.PermissionEvent, _ chan<- *v2.PermissionDecision) error {
+func (r *recordingClient) Permissions(_ context.Context, _ <-chan *v2.PermissionEvent) error {
 	return nil
 }
 
@@ -378,7 +378,7 @@ type brokenPermClient struct {
 	permErr error
 }
 
-func (r *brokenPermClient) Permissions(_ context.Context, reqs <-chan *v2.PermissionEvent, _ chan<- *v2.PermissionDecision) error {
+func (r *brokenPermClient) Permissions(_ context.Context, reqs <-chan *v2.PermissionEvent) error {
 	// Drain the channel so the sender goroutine is not blocked.
 	go func() {
 		for range reqs {
@@ -428,7 +428,7 @@ func (r *blockingExecuteClient) Execute(ctx context.Context, _ *v2.ExecuteReques
 	}
 }
 
-func (r *blockingExecuteClient) Permissions(_ context.Context, reqs <-chan *v2.PermissionEvent, _ chan<- *v2.PermissionDecision) error {
+func (r *blockingExecuteClient) Permissions(_ context.Context, reqs <-chan *v2.PermissionEvent) error {
 	go func() {
 		for range reqs {
 		}
@@ -464,7 +464,7 @@ type unimplementedPermClient struct {
 	recordingClient
 }
 
-func (r *unimplementedPermClient) Permissions(_ context.Context, reqs <-chan *v2.PermissionEvent, _ chan<- *v2.PermissionDecision) error {
+func (r *unimplementedPermClient) Permissions(_ context.Context, reqs <-chan *v2.PermissionEvent) error {
 	go func() {
 		for range reqs {
 		}
@@ -723,7 +723,7 @@ func (c *unimplementedPermissionsClient) Execute(_ context.Context, _ *v2.Execut
 func (c *unimplementedPermissionsClient) Log(_ context.Context, _ *v2.LogRequest, _ LogEventSink) error {
 	return nil
 }
-func (c *unimplementedPermissionsClient) Permissions(_ context.Context, _ <-chan *v2.PermissionEvent, _ chan<- *v2.PermissionDecision) error {
+func (c *unimplementedPermissionsClient) Permissions(_ context.Context, _ <-chan *v2.PermissionEvent) error {
 	return status.Error(codes.Unimplemented, "Permissions not implemented")
 }
 func (c *unimplementedPermissionsClient) Pause(_ context.Context, _ *v2.PauseRequest) (*v2.PauseResponse, error) {

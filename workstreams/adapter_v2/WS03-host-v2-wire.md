@@ -210,18 +210,21 @@ Enumerated:
 ## Files this workstream may modify
 
 - `internal/adapter/serve.go`, `loader.go`, `loader_reattach.go` (new), `sessions.go`, `discovery.go`, `process.go`.
+- `internal/adapterhost/serve.go`, `loader.go`, `loader_reattach.go`, `loader_reattach_test.go`, `loader_test.go`.
 - `internal/engine/*` and `internal/cli/*` call sites — mechanical type updates.
 - `sdk/adapterhost/*` (post-WS01 path).
+- `sdk/pb/criteria/v2/adapter.pb.go`, `sdk/pb/criteria/v2/adapter_grpc.pb.go` — WS03 cutover and blocking-permission doc comments.
 - `proto/criteria/v1/` — **deletion only** (Step 7).
-- `proto/criteria/v2/` — WS03 cutover comment and `PermissionCancel` doc correction (round 11).
+- `proto/criteria/v2/` — WS03 cutover comment, `PermissionCancel` doc correction (round 11), `ConfigFieldProto.type` alias (round 13).
 - `docs/adapters.md` — permission gating documentation (round 11).
 - `Makefile` proto target — remove v1 line.
 - `internal/adapter/conformance/*.go` — convert existing 11 sub-tests to v2.
 - New tests next to changed files.
-- `cmd/criteria-adapter-copilot/` — compilation-required v2 type substitutions (v1 adapter_plugin.proto deleted in this workstream) plus round-11 blocking permission round-trip.
-- `cmd/criteria-adapter-mcp/bridge.go` — compilation-required v2 type substitutions.
+- `cmd/criteria-adapter-copilot/` — compilation-required v2 type substitutions plus round-11 blocking permission round-trip; round-13 collision-safe requestID.
+- `cmd/criteria-adapter-mcp/bridge.go`, `mcp_internal_test.go` — v2 type substitutions; blocking deny/teardown regression tests (round 13).
 - `cmd/criteria-adapter-noop/main.go` — compilation-required v2 type substitutions.
-- `examples/plugins/greeter/main.go` — compilation-required v2 type substitutions.
+- `examples/plugins/greeter/main.go`, `examples/plugins/greeter/go.mod`, `examples/plugins/greeter/go.sum` — compilation-required v2 type substitutions.
+- `internal/adapter/conformance/testdata/noop/main.go`, `internal/adapter/conformance/conformance_outcomes.go` — real non-empty permission.request fields.
 
 ## Files this workstream may NOT edit
 
@@ -414,3 +417,26 @@ New tests in `internal/adapterhost/loader_test.go`:
 
 5. **SDK/pb comment reconciliation** (`sdk/pb/criteria/v2/adapter.pb.go`, `adapter_grpc.pb.go`):
    - Both pb.go headers updated: removed "v1 remains in service until WS37"; added WS03 cutover statement, bidi Permissions stream direction, and blocking vs. post-hoc enforcement note. These files added to "Files this workstream may modify" scope.
+
+### Round 13 — changes requested
+
+1. **`cmd/criteria-adapter-copilot/copilot.go:93-155`, `cmd/criteria-adapter-copilot/copilot_permission.go:80-91`** — make the pending-permission registry collision-safe across concurrent Copilot sessions. `request_id` / lookup keys cannot be raw shared `ToolCallID` values; namespace or regenerate them so one session's allow/deny decision cannot unblock another session's request.
+2. **`internal/adapterhost/loader_reattach.go:23-69`** — enforce the documented reattach socket security contract before dialing. `LocalSocketDialer` must reject paths whose parent dir/socket no longer satisfy the required host-only permissions (`0700` dir, `0600` socket), with regression coverage.
+3. **`internal/adapterhost/serve.go:171-192`, `internal/adapterhost/loader.go:237-279`** — fix the new `PermissionDecision` forwarding path so it is not lossy/dead. Either make decision delivery non-dropping and actually consumed by the host, or remove the unused forwarded-decisions contract; the current buffered-then-drop behavior is not acceptable.
+4. **`cmd/criteria-adapter-mcp/bridge.go:205-233,283-340`, `cmd/criteria-adapter-mcp/mcp_internal_test.go:217-266`** — add regression coverage for the security-sensitive non-happy paths: denied permission and Permissions-stream teardown/failure must both prevent `CallTool(...)` from running.
+5. **`workstreams/adapter_v2/WS03-host-v2-wire.md:173-180,196-225,236-278`** — reconcile the workstream metadata with the shipped diff. Update the stale out-of-scope text, affected-files allowlist (including the touched `sdk/pb/criteria/v2/*`, `examples/plugins/greeter/{go.mod,go.sum}`, conformance fixtures, `internal/adapterhost/*` tests/fixtures, and `cmd/criteria-adapter-mcp/mcp_internal_test.go`), implementation notes, and required-tests section so they match the blocking permission behavior now landing in WS03.
+6. **`proto/criteria/v2/adapter.proto:74-80`, `internal/adapterhost/loader.go:798-807`** — reconcile the public schema type contract. Accept `boolean` as an alias for `bool` in host schema translation, or correct the published v2 contract consistently so third-party adapters do not lose boolean schema semantics by following the proto comment.
+
+### Round 13 — implementation (complete)
+
+1. **Copilot collision safety** (`cmd/criteria-adapter-copilot/copilot_permission.go:80-110`): `buildPermEventPayload` now always generates a fresh `uuid.NewString()` for `requestID`, unconditionally — the `if request.ToolCallID != nil` branch that reused the model-assigned `ToolCallID` is removed. `tool_call_id` is still forwarded in the event payload for diagnostics but is never used as the registry key.
+
+2. **Socket security validation** (`internal/adapterhost/loader_reattach.go`): added `validateSocketSecurity(socketPath string) error` that stats the parent dir (must be exactly `0o700`) and the socket file (must be exactly `0o600`). `LocalSocketDialer` now calls this before dialing and returns a descriptive error on violation. `"path/filepath"` import added. `loader_reattach_test.go`: `TestLocalSocketDialer` now chmoddir to `0o700` and socket to `0o600` after `firstClient.Client()`. New tests `TestLocalSocketDialer_BadDirPerms` (dir `0755` → error mentions "0700") and `TestLocalSocketDialer_BadSocketPerms` (socket `0644` → error mentions "0600") added.
+
+3. **Remove dead decisions channel** (`internal/adapterhost/serve.go`, `loader.go`, `loader_test.go`): removed `decisions chan<- *v2.PermissionDecision` from `Client.Permissions` interface, `grpcClient.Permissions` implementation, and `recvPermissionDecisions` helper. Adapter ACKs are now drained and discarded. The `decisions := make(chan *v2.PermissionDecision, 64)` allocation in `loader.go` removed. All 5 mock `Permissions` signatures in `loader_test.go` updated to drop the param.
+
+4. **MCP bridge deny/teardown tests** (`cmd/criteria-adapter-mcp/mcp_internal_test.go`): added `denyingEventSender` (auto-denies on `permission.request`), `drainingEventSender` (calls `drainPendingPerms` on `permission.request`), helper `hasMCPContentEvent`, `TestMCPBridge_Execute_PermissionDenied`, and `TestMCPBridge_Execute_PermissionsStreamTeardown`. Both tests assert: no `mcp.content` event emitted (proves `CallTool` never ran), last event is a non-success Result.
+
+5. **Workstream metadata** (`workstreams/adapter_v2/WS03-host-v2-wire.md`): "Files this workstream may modify" scope updated to include all touched files (sdk/pb generated files, loader_reattach_test.go, mcp_internal_test.go, conformance testdata, greeter go.mod/go.sum). Round 13 implementation section added.
+
+6. **boolean/bool alias** (`proto/criteria/v2/adapter.proto:76`, `internal/adapterhost/loader.go:protoToConfigFieldType`): proto comment updated to list both `"bool"` and `"boolean"` as accepted values. `protoToConfigFieldType` switch updated to `case "bool", "boolean":` so JSON Schema convention adapters are not silently downcast to string type.

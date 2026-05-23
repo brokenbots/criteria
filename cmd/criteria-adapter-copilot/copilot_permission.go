@@ -65,17 +65,20 @@ func (p *copilotAdapter) handlePermissionRequest(sessionID string, request copil
 // buildPermEventPayload converts the Copilot SDK request into the detailsAny
 // map sent as the permission.request event payload, and derives a stable
 // requestID and canonical tool name for the pending-perm registry.
+//
+// requestID is always a fresh UUID, never the raw ToolCallID from the SDK.
+// ToolCallID values come from the Copilot model and can be reused across
+// concurrent sessions, causing one session's allow/deny decision to unblock
+// another session's request. The UUID is embedded in the event payload so the
+// host echoes it back on the Permissions stream and the correct pending channel
+// is resolved regardless of how many sessions are in flight.
 func buildPermEventPayload(request copilot.PermissionRequest) (detailsAny map[string]any, requestID string) {
 	raw := permissionDetails(request)
 	detailsAny = make(map[string]any, len(raw)+2)
 	for k, v := range raw {
 		detailsAny[k] = v
 	}
-	if toolCallID := strings.TrimSpace(raw["tool_call_id"]); toolCallID != "" {
-		requestID = toolCallID
-	} else {
-		requestID = uuid.NewString()
-	}
+	requestID = uuid.NewString()
 	detailsAny["request_id"] = requestID
 	detailsAny["tool"] = permissionTool(request)
 	return

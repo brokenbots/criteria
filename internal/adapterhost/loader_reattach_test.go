@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -127,6 +128,12 @@ func TestLocalSocketDialer(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(socketDir) })
 
+	// Set host-only permissions before starting the adapter so the socket
+	// directory satisfies validateSocketSecurity.
+	if err := os.Chmod(socketDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
 	// Start the permissive adapter, instructing go-plugin's server to bind
 	// to a UDS in socketDir instead of a random TCP port.
 	cmd := exec.Command(adapterBin)
@@ -156,6 +163,11 @@ func TestLocalSocketDialer(t *testing.T) {
 		t.Skipf("adapter bound to %T (not UDS) — set PLUGIN_UNIX_SOCKET_DIR and try again", reattach.Addr)
 	}
 
+	// Enforce host-only socket file permissions so validateSocketSecurity passes.
+	if err := os.Chmod(unixAddr.Name, 0o600); err != nil {
+		t.Fatalf("chmod socket: %v", err)
+	}
+
 	// Reattach using LocalSocketDialer.
 	ctx := context.Background()
 	c, client2, err := LocalSocketDialer(ctx, unixAddr.Name)
@@ -170,5 +182,66 @@ func TestLocalSocketDialer(t *testing.T) {
 	}
 	if resp.GetName() != "permissive" {
 		t.Errorf("adapter name=%q want permissive", resp.GetName())
+	}
+}
+
+// TestLocalSocketDialer_BadDirPerms checks that LocalSocketDialer rejects a
+// socket whose parent directory is not mode 0700.
+func TestLocalSocketDialer_BadDirPerms(t *testing.T) {
+	dir, err := os.MkdirTemp("", "criteria-reattach-baddir-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+
+	// World-readable directory — should be rejected.
+	if err := os.Chmod(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	socketPath := filepath.Join(dir, "adapter.sock")
+	// Create a dummy file at the socket path so Stat on the file wouldn't be
+	// the reason for failure (the dir check comes first).
+	f, err := os.Create(socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+
+	_, _, err = LocalSocketDialer(context.Background(), socketPath)
+	if err == nil {
+		t.Fatal("expected error for bad dir perms, got nil")
+	}
+	if !strings.Contains(err.Error(), "0700") {
+		t.Errorf("error %q should mention 0700", err.Error())
+	}
+}
+
+// TestLocalSocketDialer_BadSocketPerms checks that LocalSocketDialer rejects a
+// socket file that is not mode 0600.
+func TestLocalSocketDialer_BadSocketPerms(t *testing.T) {
+	dir, err := os.MkdirTemp("", "criteria-reattach-badsock-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	socketPath := filepath.Join(dir, "adapter.sock")
+	f, err := os.OpenFile(socketPath, os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+
+	_, _, err = LocalSocketDialer(context.Background(), socketPath)
+	if err == nil {
+		t.Fatal("expected error for bad socket perms, got nil")
+	}
+	if !strings.Contains(err.Error(), "0600") {
+		t.Errorf("error %q should mention 0600", err.Error())
 	}
 }

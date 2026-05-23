@@ -29,11 +29,11 @@ type Client interface {
 	// sink.Emit. Callers typically invoke this concurrently with Execute.
 	Log(ctx context.Context, req *v2.LogRequest, sink LogEventSink) error
 	// Permissions drives the bidi Permissions RPC. The caller sends
-	// PermissionEvent messages on requests; the adapter's PermissionDecision
-	// responses are forwarded to the decisions channel for the host to consume.
-	// Closing requests causes CloseSend; the call returns when the response
-	// stream is exhausted.
-	Permissions(ctx context.Context, requests <-chan *v2.PermissionEvent, decisions chan<- *v2.PermissionDecision) error
+	// PermissionEvent messages on requests (allow/deny signals to the adapter);
+	// PermissionDecision ACKs from the adapter are received and discarded —
+	// the host does not consume them. Closing requests causes CloseSend; the
+	// call returns when the response stream is exhausted.
+	Permissions(ctx context.Context, requests <-chan *v2.PermissionEvent) error
 	Pause(ctx context.Context, req *v2.PauseRequest) (*v2.PauseResponse, error)
 	Resume(ctx context.Context, req *v2.ResumeRequest) (*v2.ResumeResponse, error)
 	Snapshot(ctx context.Context, req *v2.SnapshotRequest) (*v2.SnapshotResponse, error)
@@ -125,7 +125,7 @@ func (g *grpcClient) Log(ctx context.Context, req *v2.LogRequest, sink LogEventS
 	}
 }
 
-func (g *grpcClient) Permissions(ctx context.Context, requests <-chan *v2.PermissionEvent, decisions chan<- *v2.PermissionDecision) error {
+func (g *grpcClient) Permissions(ctx context.Context, requests <-chan *v2.PermissionEvent) error {
 	stream, err := g.c.Permissions(ctx)
 	if err != nil {
 		return err
@@ -134,7 +134,7 @@ func (g *grpcClient) Permissions(ctx context.Context, requests <-chan *v2.Permis
 	sendDone := make(chan error, 1)
 	go func() { sendDone <- runPermissionSender(senderCtx, stream, requests) }()
 
-	recvErr := recvPermissionDecisions(ctx, stream, decisions)
+	recvErr := recvPermissionDecisions(ctx, stream)
 	cancelSender()
 	if senderErr := <-sendDone; recvErr == nil {
 		return senderErr
@@ -168,13 +168,12 @@ func runPermissionSender(ctx context.Context, stream v2.AdapterService_Permissio
 	}
 }
 
-// recvPermissionDecisions drains PermissionDecision messages from stream until
-// EOF, a receive error, or ctx is cancelled. Decisions are forwarded to the
-// decisions channel (buffered) so the host can consume adapter ACKs. The
-// channel is not closed by this function — the caller manages its lifetime.
-func recvPermissionDecisions(ctx context.Context, stream v2.AdapterService_PermissionsClient, decisions chan<- *v2.PermissionDecision) error {
+// recvPermissionDecisions drains PermissionDecision ACKs from the adapter until
+// EOF, a receive error, or ctx is cancelled. ACKs confirm the adapter received
+// the host's allow decision; no host-side action is required.
+func recvPermissionDecisions(ctx context.Context, stream v2.AdapterService_PermissionsClient) error {
 	for {
-		dec, err := stream.Recv()
+		_, err := stream.Recv()
 		if errors.Is(err, io.EOF) {
 			return nil
 		}
@@ -183,12 +182,6 @@ func recvPermissionDecisions(ctx context.Context, stream v2.AdapterService_Permi
 				return nil //nolint:nilerr // context cancelled; suppressing recv error is intentional
 			}
 			return err
-		}
-		if decisions != nil {
-			select {
-			case decisions <- dec:
-			default: // drop if buffer full; host may lag behind adapter ACKs
-			}
 		}
 	}
 }

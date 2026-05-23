@@ -235,13 +235,12 @@ func (p *rpcHandle) Execute(ctx context.Context, sessionID string, step *workflo
 	defer cancelExec()
 
 	// Open the Permissions bidi stream. requests carries PermissionEvent to the
-	// adapter (allow/deny signals); decisions receives the adapter's ACK responses.
+	// adapter (allow/deny signals); adapter ACKs are discarded by the host.
 	requests := make(chan *v2.PermissionEvent, 16)
-	decisions := make(chan *v2.PermissionDecision, 64)
 	permCtx, cancelPerm := context.WithCancel(ctx)
 	permDone := make(chan error, 1)
 	go func() {
-		err := p.rpc.Permissions(permCtx, requests, decisions)
+		err := p.rpc.Permissions(permCtx, requests)
 		permDone <- err
 		if err != nil &&
 			!errors.Is(err, io.EOF) &&
@@ -799,7 +798,7 @@ func protoToConfigFieldType(t string) workflow.ConfigFieldType {
 	switch t {
 	case "number":
 		return workflow.ConfigFieldNumber
-	case "bool":
+	case "bool", "boolean": // accept both; "boolean" is the JSON Schema convention
 		return workflow.ConfigFieldBool
 	case "list_string":
 		return workflow.ConfigFieldListString
