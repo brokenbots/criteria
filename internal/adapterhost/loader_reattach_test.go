@@ -12,7 +12,7 @@ import (
 	hplugin "github.com/hashicorp/go-plugin"
 
 	"github.com/brokenbots/criteria/internal/testutil"
-	v2 "github.com/brokenbots/criteria/proto/criteria/v2"
+	v2 "github.com/brokenbots/criteria/sdk/pb/criteria/v2"
 )
 
 // TestNewHostOnlyUDSSocket verifies that the helper creates a 0700 directory

@@ -3,7 +3,7 @@ package adapterhost
 import (
 	"testing"
 
-	v2 "github.com/brokenbots/criteria/proto/criteria/v2"
+	v2 "github.com/brokenbots/criteria/sdk/pb/criteria/v2"
 )
 
 // TestAdapterWireNames verifies that the v2 AdapterService descriptor has the
