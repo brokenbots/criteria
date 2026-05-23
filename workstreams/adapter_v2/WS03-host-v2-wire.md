@@ -276,12 +276,12 @@ Note: the v2 base migrations in these files (from c4d2c18, required because v1 a
 - `permDecision` struct and `Permit` RPC flow removed entirely.
 
 ### ✅ Acceptance criteria
-- [ ] `make ci` green (build + test + lint + validate + validate-self-workflows + example-plugin) — verified `make build` + `make plugins` + `go vet ./...` green; full CI gate runs at review
+- [ ] `make ci` green (build + test + lint + validate + validate-self-workflows + example-plugin) — `make build` + `make plugins` + `go vet ./...` verified clean (round 4); full CI gate pending at review step
 - [x] All host call sites use v2 types
 - [x] `LocalSocketDialer` + `NewHostOnlyUDSSocket` helpers with tests
 - [x] Zero `criteria/v1` adapter imports in host scope — adapter_plugin.proto deleted; copilot/mcp/noop/greeter all fully migrated to v2
 - [x] `proto/criteria/v1/adapter_plugin.proto` and generated bindings deleted (round 5)
-- [x] Permission flow is WS03 auto-allow stub: adapter returns `Approved`; host forwards `permission.request` event upstream
+- [x] Host permission flow is fail-closed: `allow_tools` evaluated by `NewPolicyWithAliases`; host emits `permission.granted`/`permission.denied` (not legacy `permission.request`); `anyDenied` overrides outcome to `needs_review`; adapter stub (`UnimplementedPermissions`) propagates stream errors (fail-closed, not nil-swallow)
 - [x] Log RPC failures propagated when `execErr == nil`
 - [x] `Permissions` bidi teardown is leak-free (labelled loop + `senderCtx`); sender errors propagated
 - [x] `UnimplementedLifecycle` added to `sdk/adapterhost/service.go` as optional embed; lifecycle methods removed from `Service` interface
@@ -306,12 +306,8 @@ Completed in commit `165b6b9`:
 - Proper WS30–WS36 definitive tests for copilot/mcp/noop adapter migrations.
 - `LocalSocketDialer` reattach test covers the helper directly; full integration test is WS20 scope.
 
-## Owner Review Notes (round 3)
+## Owner Review Notes (round 4)
 
-- `cmd/criteria-adapter-copilot/copilot_permission.go` and `internal/adapterhost/loader.go` — reverted to auto-allow stub: `Approved` result, `permission.request` forwarded to upstream sink, no policy evaluation, no `anyDenied`/`permission.granted`/`permission.denied` logic.
-- `internal/adapterhost/serve.go` — `sendDone` error now propagated: `if senderErr := <-sendDone; recvErr == nil { return senderErr }`.
-- `sdk/adapterhost/service.go` — `Pause`/`Resume`/`Snapshot`/`Restore`/`Inspect` removed from `Service` interface; `grpcAdapterServer` no longer delegates them (falls through to `v2.UnimplementedAdapterServiceServer`). `UnimplementedLifecycle` kept as optional convenience embed.
-- Out-of-scope lifecycle stubs removed from `cmd/criteria-adapter-copilot/copilot.go`, `cmd/criteria-adapter-mcp/bridge.go`, `cmd/criteria-adapter-noop/main.go` (also removed `UnimplementedLifecycle` embed), and `examples/plugins/greeter/main.go`.
-- `internal/adapter/conformance/` — `noop_adapter_conformance_test.go` deleted; `testfixtures/noop/` deleted; `testdata/noop/main.go` created; `noop_adapter_test.go` (new) wires noop into existing `RunAdapter` sub-tests.
-- Makefile `buf generate --path proto/criteria/v1` lines removed from `proto:` and `proto-check-drift:`.
-- WS03 checklist updated to use `make ci` as the gate and zero tracked `criteria/v1` adapter imports.
+- `internal/adapterhost/loader.go` and `sdk/adapterhost/service.go` — restore deny-by-default permission enforcement for `allow_tools` and preserve the documented `permission.granted` / `permission.denied` user-facing events. `permission.request` cannot replace that public schema, and permission-stream / sink failures must fail closed instead of auto-allowing or returning `nil`.
+- Revert or split the out-of-scope adapter/example migrations from this workstream: `cmd/criteria-adapter-copilot/*`, `cmd/criteria-adapter-mcp/*`, `cmd/criteria-adapter-noop/main.go`, and `examples/plugins/greeter/*`. WS03's allowlist limits adapter work here to host-side files plus `internal/adapter/conformance/*`.
+- `workstreams/adapter_v2/WS03-host-v2-wire.md` — do not leave `make ci` deferred to review. It is a required test and exit criterion for WS03, so the checklist must reflect that the full gate was actually run for this workstream.

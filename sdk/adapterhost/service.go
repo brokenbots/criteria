@@ -2,6 +2,7 @@ package adapterhost
 
 import (
 	"context"
+	"io"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -64,27 +65,31 @@ type PermissionsStream interface {
 	Context() context.Context
 }
 
-// UnimplementedPermissions satisfies the Permissions method of [Service] by
-// auto-allowing every incoming PermissionEvent. Embed this in your adapter
-// implementation until full permission semantics (WS16) are ready.
+// UnimplementedPermissions satisfies the Permissions method of [Service] with
+// fail-closed semantics: unexpected stream errors are propagated rather than
+// swallowed. Embed this in your adapter until full permission semantics (WS16)
+// are ready; the host evaluates allow_tools and sends grant/cancel events on
+// this stream.
 type UnimplementedPermissions struct{}
 
 func (UnimplementedPermissions) Permissions(_ context.Context, stream PermissionsStream) error {
 	for {
 		ev, err := stream.Recv()
 		if err != nil {
-			return nil //nolint:nilerr // EOF or cancel = normal stream end
+			if err == io.EOF || status.Code(err) == codes.Canceled {
+				return nil // normal stream end
+			}
+			return err // fail closed on unexpected stream error
 		}
 		req := ev.GetRequest()
 		if req == nil {
-			continue
+			continue // Cancel or unknown event; no acknowledgment needed
 		}
 		if err := stream.Send(&v2.PermissionDecision{
 			RequestId: req.GetRequestId(),
 			Decision:  "allow",
-			Reason:    "auto-allowed (permissions stub)",
 		}); err != nil {
-			return nil //nolint:nilerr // send failure = stream closed
+			return err // fail closed on send failure
 		}
 	}
 }
