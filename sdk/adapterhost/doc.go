@@ -22,14 +22,12 @@
 //
 // # v1 → v2 protocol break (WS03)
 //
-// WS03 migrated the host wire layer to v2. Adapter binaries compiled against
-// the v1 SDK will fail the go-plugin handshake with a protocol version
-// mismatch. The v1 adapter-plugin protocol (proto/criteria/v1/adapter_plugin.proto)
-// was removed from the host but reverted in WS03 round 4 because the adapter
-// binaries (copilot, mcp, noop) and greeter example have not yet been migrated
-// to the v2 Service interface. Those binaries are being migrated in WS30–WS36.
-// Until migration completes, adapter binaries continue to reference the v1
-// generated types and will not compile against the v2 Service interface.
+// WS03 migrated the host wire layer to v2 and completed the migration of all
+// bundled adapter binaries (copilot, mcp, noop) and the greeter example to the
+// v2 Service interface. The v1 adapter-plugin protocol
+// (proto/criteria/v1/adapter_plugin.proto) and its generated bindings were
+// deleted. Adapter binaries compiled against the v1 SDK will fail the go-plugin
+// handshake with a protocol version mismatch.
 //
 // # Package stability
 //

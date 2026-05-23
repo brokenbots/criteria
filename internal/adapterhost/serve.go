@@ -29,10 +29,11 @@ type Client interface {
 	// sink.Emit. Callers typically invoke this concurrently with Execute.
 	Log(ctx context.Context, req *v2.LogRequest, sink LogEventSink) error
 	// Permissions drives the bidi Permissions RPC. The caller sends
-	// PermissionEvent messages on requests and reads PermissionDecision
-	// messages from decisions. Closing requests causes CloseSend; the call
-	// returns when the response stream is exhausted.
-	Permissions(ctx context.Context, requests <-chan *v2.PermissionEvent, decisions chan<- *v2.PermissionDecision) error
+	// PermissionEvent messages on requests; the adapter's decision stream is
+	// drained and discarded by the host (host-side policy runs synchronously in
+	// handlePermissionRequest before forwarding to the stream). Closing requests
+	// causes CloseSend; the call returns when the response stream is exhausted.
+	Permissions(ctx context.Context, requests <-chan *v2.PermissionEvent) error
 	Pause(ctx context.Context, req *v2.PauseRequest) (*v2.PauseResponse, error)
 	Resume(ctx context.Context, req *v2.ResumeRequest) (*v2.ResumeResponse, error)
 	Snapshot(ctx context.Context, req *v2.SnapshotRequest) (*v2.SnapshotResponse, error)
@@ -124,7 +125,7 @@ func (g *grpcClient) Log(ctx context.Context, req *v2.LogRequest, sink LogEventS
 	}
 }
 
-func (g *grpcClient) Permissions(ctx context.Context, requests <-chan *v2.PermissionEvent, decisions chan<- *v2.PermissionDecision) error {
+func (g *grpcClient) Permissions(ctx context.Context, requests <-chan *v2.PermissionEvent) error {
 	stream, err := g.c.Permissions(ctx)
 	if err != nil {
 		return err
@@ -133,7 +134,7 @@ func (g *grpcClient) Permissions(ctx context.Context, requests <-chan *v2.Permis
 	sendDone := make(chan error, 1)
 	go func() { sendDone <- runPermissionSender(senderCtx, stream, requests) }()
 
-	recvErr := recvPermissionDecisions(ctx, stream, decisions)
+	recvErr := recvPermissionDecisions(ctx, stream)
 	cancelSender()
 	if senderErr := <-sendDone; recvErr == nil {
 		return senderErr
@@ -159,21 +160,21 @@ func runPermissionSender(ctx context.Context, stream v2.AdapterService_Permissio
 	}
 }
 
-// recvPermissionDecisions reads PermissionDecision messages from stream and
-// forwards them to decisions until EOF, a receive error, or ctx is cancelled.
-func recvPermissionDecisions(ctx context.Context, stream v2.AdapterService_PermissionsClient, decisions chan<- *v2.PermissionDecision) error {
+// recvPermissionDecisions drains PermissionDecision messages from stream until
+// EOF, a receive error, or ctx is cancelled. Decisions are discarded — the host
+// evaluates policy synchronously before forwarding to the stream, so adapter
+// decisions are not read back.
+func recvPermissionDecisions(ctx context.Context, stream v2.AdapterService_PermissionsClient) error {
 	for {
-		dec, err := stream.Recv()
+		_, err := stream.Recv()
 		if errors.Is(err, io.EOF) {
 			return nil
 		}
 		if err != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
 			return err
-		}
-		select {
-		case decisions <- dec:
-		case <-ctx.Done():
-			return ctx.Err()
 		}
 	}
 }

@@ -200,7 +200,7 @@ func (r *recordingClient) Log(_ context.Context, _ *v2.LogRequest, _ LogEventSin
 	return nil
 }
 
-func (r *recordingClient) Permissions(_ context.Context, _ <-chan *v2.PermissionEvent, _ chan<- *v2.PermissionDecision) error {
+func (r *recordingClient) Permissions(_ context.Context, _ <-chan *v2.PermissionEvent) error {
 	return nil
 }
 

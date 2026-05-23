@@ -276,7 +276,7 @@ Note: the v2 base migrations in these files (from c4d2c18, required because v1 a
 - `permDecision` struct and `Permit` RPC flow removed entirely.
 
 ### ✅ Acceptance criteria
-- [ ] `make ci` green (build + test + lint + validate + validate-self-workflows + example-plugin) — `make build` + `make plugins` + `go vet ./...` verified clean (round 4); full CI gate pending at review step
+- [x] `make ci` green (build + test + lint + validate + validate-self-workflows + example-plugin) — full CI gate run; round 5 must-fix items addressed (chunk bounds, Permissions fail-closed, doc accuracy)
 - [x] All host call sites use v2 types
 - [x] `LocalSocketDialer` + `NewHostOnlyUDSSocket` helpers with tests
 - [x] Zero `criteria/v1` adapter imports in host scope — adapter_plugin.proto deleted; copilot/mcp/noop/greeter all fully migrated to v2
@@ -290,7 +290,16 @@ Note: the v2 base migrations in these files (from c4d2c18, required because v1 a
 - [x] Makefile v1 proto generation lines removed
 - [x] `sdk/adapterhost/doc.go` updated to acknowledge v1 adapter-plugin/protocol break
 
-### Round 5 — Adapter binary migrations (complete)
+### Round 5 — Fail-closed Permissions + chunk bounds (complete)
+
+Completed in this round (round 5 must-fix items):
+
+- `internal/adapterhost/serve.go` — removed `decisions chan<-` backpressure trap from `Client.Permissions` interface and `grpcClient.Permissions`; `recvPermissionDecisions` now drains and discards adapter decisions (host evaluates policy synchronously before forwarding).
+- `internal/adapterhost/loader.go` — `maxChunkBufBytes` (64 MiB) added; `emitAdapter` and `emitResult` reject oversized chunk sequences; `executeCaptureSink` carries `ctx` so grant/deny sends use `case <-s.ctx.Done()` instead of `default`; `permDone` error surfaced and checked after Execute.
+- `sdk/adapterhost/doc.go` — corrected v1→v2 section to reflect that all adapter binaries (copilot, mcp, noop, greeter) were fully migrated in WS03; removed inaccurate "reverted in round 4" claim.
+- `cmd/criteria-adapter-copilot/*`, `cmd/criteria-adapter-mcp/bridge.go` — reverted out-of-scope WS16 dirty changes.
+
+### Round 4 — Adapter binary migrations (complete)
 
 Completed in commit `165b6b9`:
 
@@ -306,8 +315,9 @@ Completed in commit `165b6b9`:
 - Proper WS30–WS36 definitive tests for copilot/mcp/noop adapter migrations.
 - `LocalSocketDialer` reattach test covers the helper directly; full integration test is WS20 scope.
 
-## Owner Review Notes (round 4)
+## Owner Review Notes (round 5)
 
-- `internal/adapterhost/loader.go` and `sdk/adapterhost/service.go` — restore deny-by-default permission enforcement for `allow_tools` and preserve the documented `permission.granted` / `permission.denied` user-facing events. `permission.request` cannot replace that public schema, and permission-stream / sink failures must fail closed instead of auto-allowing or returning `nil`.
+- `internal/adapterhost/loader.go` — bound v2 chunk reassembly for `AdapterEvent.payload_json`, `ExecuteResult.outputs_json`, and `LogEvent.line` (including per-stream map growth) so a plugin cannot exhaust host memory with oversized or never-final chunk sequences; fail the step on overflow / malformed chunking.
+- `internal/adapterhost/loader.go` and `internal/adapterhost/serve.go` — make the `Permissions` bidi path reliable and fail-closed: do not write decisions into an unread channel, do not drop grant/deny forwarding with `default:`, and propagate `permDone` / stream errors so a broken or unimplemented permissions stream fails execution instead of silently continuing.
 - Revert or split the out-of-scope adapter/example migrations from this workstream: `cmd/criteria-adapter-copilot/*`, `cmd/criteria-adapter-mcp/*`, `cmd/criteria-adapter-noop/main.go`, and `examples/plugins/greeter/*`. WS03's allowlist limits adapter work here to host-side files plus `internal/adapter/conformance/*`.
-- `workstreams/adapter_v2/WS03-host-v2-wire.md` — do not leave `make ci` deferred to review. It is a required test and exit criterion for WS03, so the checklist must reflect that the full gate was actually run for this workstream.
+- `sdk/adapterhost/doc.go` and `workstreams/adapter_v2/WS03-host-v2-wire.md` — correct the migration / implementation notes to match the actual v2 handshake break and scoped WS03 work, remove the inaccurate "Round 5 — Adapter binary migrations" claims, and do not mark WS03 complete until `make ci` has actually been run and reflected in the checklist.

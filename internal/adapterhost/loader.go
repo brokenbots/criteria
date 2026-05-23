@@ -226,12 +226,12 @@ func (p *rpcHandle) Execute(ctx context.Context, sessionID string, step *workflo
 	// Open the Permissions bidi stream so the adapter can receive grant/deny
 	// decisions for each permission.request it emits during Execute.
 	requests := make(chan *v2.PermissionEvent, 16)
-	decisions := make(chan *v2.PermissionDecision, 64) // buffered; host discards these
 	permCtx, cancelPerm := context.WithCancel(ctx)
 	permDone := make(chan error, 1)
-	go func() { permDone <- p.rpc.Permissions(permCtx, requests, decisions) }()
+	go func() { permDone <- p.rpc.Permissions(permCtx, requests) }()
 
 	captureSink := &executeCaptureSink{
+		ctx:         ctx,
 		sink:        sink,
 		policy:      policy,
 		allowTools:  allowTools,
@@ -255,7 +255,7 @@ func (p *rpcHandle) Execute(ctx context.Context, sessionID string, step *workflo
 	// exits promptly regardless of whether the adapter has finished sending.
 	close(requests)
 	cancelPerm()
-	<-permDone
+	permErr := <-permDone
 
 	// Cancel the log stream and wait for the goroutine regardless of execErr.
 	cancelLog()
@@ -263,6 +263,9 @@ func (p *rpcHandle) Execute(ctx context.Context, sessionID string, step *workflo
 
 	if execErr != nil {
 		return adapter.Result{Outcome: "failure"}, execErr
+	}
+	if permErr != nil && !errors.Is(permErr, context.Canceled) && status.Code(permErr) != codes.Canceled {
+		return adapter.Result{Outcome: "failure"}, fmt.Errorf("adapter permissions stream: %w", permErr)
 	}
 	if logErr != nil && !errors.Is(logErr, context.Canceled) && status.Code(logErr) != codes.Canceled {
 		return adapter.Result{Outcome: "failure"}, fmt.Errorf("adapter log stream: %w", logErr)
@@ -280,12 +283,18 @@ func (p *rpcHandle) Execute(ctx context.Context, sessionID string, step *workflo
 	return captureSink.result, nil
 }
 
+// maxChunkBufBytes is the upper bound for chunk-reassembly buffers in
+// executeCaptureSink. Payloads that would exceed this limit are rejected with
+// an error to prevent unbounded memory growth from a misbehaving adapter.
+const maxChunkBufBytes = 64 * 1024 * 1024 // 64 MiB
+
 // executeCaptureSink implements ExecuteEventSink for use in rpcHandle.Execute.
 // It routes AdapterEvent to the upstream EventSink, evaluates the host-side
 // permission policy for permission.request events (WS16), translates
 // ToolInvocation to a tool.invocation adapter event, reassembles WS02 chunked
 // payloads and outputs before forwarding, and captures the final ExecuteResult.
 type executeCaptureSink struct {
+	ctx       context.Context
 	sink      adapter.EventSink
 	result    adapter.Result
 	done      bool
@@ -329,6 +338,10 @@ func (s *executeCaptureSink) emitAdapter(adapterEvt *v2.AdapterEvent) error {
 			s.adapterChunkBuf = nil
 			s.adapterChunkKind = adapterEvt.GetEventKind()
 		}
+		if len(s.adapterChunkBuf)+len(adapterEvt.GetPayloadJson()) > maxChunkBufBytes {
+			s.adapterChunkBuf = nil
+			return fmt.Errorf("adapter event chunk reassembly: payload exceeds %d bytes", maxChunkBufBytes)
+		}
 		s.adapterChunkBuf = append(s.adapterChunkBuf, adapterEvt.GetPayloadJson()...)
 		if !chunk.GetFinal() {
 			return nil
@@ -361,6 +374,10 @@ func (s *executeCaptureSink) emitResult(resultEvt *v2.ExecuteResult) error {
 		if chunk.GetSeq() == 0 {
 			s.resultChunkBuf = nil
 			s.resultOutcome = resultEvt.GetOutcome()
+		}
+		if len(s.resultChunkBuf)+len(resultEvt.GetOutputsJson()) > maxChunkBufBytes {
+			s.resultChunkBuf = nil
+			return fmt.Errorf("execute result chunk reassembly: outputs exceed %d bytes", maxChunkBufBytes)
 		}
 		s.resultChunkBuf = append(s.resultChunkBuf, resultEvt.GetOutputsJson()...)
 		if !chunk.GetFinal() {
@@ -438,7 +455,7 @@ func (s *executeCaptureSink) handlePermissionRequest(adapterEvt *v2.AdapterEvent
 					Request: &v2.PermissionRequest{RequestId: requestID},
 				},
 			}:
-			default:
+			case <-s.ctx.Done():
 			}
 		}
 		return
@@ -465,7 +482,7 @@ func (s *executeCaptureSink) handlePermissionRequest(adapterEvt *v2.AdapterEvent
 				Cancel: &v2.PermissionCancel{RequestId: requestID},
 			},
 		}:
-		default:
+		case <-s.ctx.Done():
 		}
 	}
 }

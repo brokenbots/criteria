@@ -2,6 +2,7 @@ package adapterhost
 
 import (
 	"context"
+	"errors"
 	"io"
 
 	"google.golang.org/grpc/codes"
@@ -76,7 +77,7 @@ func (UnimplementedPermissions) Permissions(_ context.Context, stream Permission
 	for {
 		ev, err := stream.Recv()
 		if err != nil {
-			if err == io.EOF || status.Code(err) == codes.Canceled {
+			if errors.Is(err, io.EOF) || status.Code(err) == codes.Canceled {
 				return nil // normal stream end
 			}
 			return err // fail closed on unexpected stream error
