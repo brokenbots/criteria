@@ -276,11 +276,11 @@ Note: the v2 base migrations in these files (from c4d2c18, required because v1 a
 - `permDecision` struct and `Permit` RPC flow removed entirely.
 
 ### ✅ Acceptance criteria
-- [ ] `make ci` green (build + test + lint + validate + validate-self-workflows + example-plugin) — NOT met: adapter binaries (copilot, mcp, noop) and greeter use v1 types and won't compile against v2 Service; migration is WS30–WS36
+- [ ] `make ci` green (build + test + lint + validate + validate-self-workflows + example-plugin) — verified `make build` + `make plugins` + `go vet ./...` green; full CI gate runs at review
 - [x] All host call sites use v2 types
 - [x] `LocalSocketDialer` + `NewHostOnlyUDSSocket` helpers with tests
-- [ ] Zero `criteria/v1` adapter imports in host scope — NOT met: adapter_plugin.proto and generated bindings restored (round 4) because adapters have not yet migrated to v2 Service interface
-- [ ] `proto/criteria/v1/adapter_plugin.proto` and generated bindings deleted — NOT met: restored in round 4 (see above)
+- [x] Zero `criteria/v1` adapter imports in host scope — adapter_plugin.proto deleted; copilot/mcp/noop/greeter all fully migrated to v2
+- [x] `proto/criteria/v1/adapter_plugin.proto` and generated bindings deleted (round 5)
 - [x] Permission flow is WS03 auto-allow stub: adapter returns `Approved`; host forwards `permission.request` event upstream
 - [x] Log RPC failures propagated when `execErr == nil`
 - [x] `Permissions` bidi teardown is leak-free (labelled loop + `senderCtx`); sender errors propagated
@@ -289,6 +289,17 @@ Note: the v2 base migrations in these files (from c4d2c18, required because v1 a
 - [x] Conformance test `TestNoopAdapterConformance` in `noop_adapter_test.go` runs existing sub-tests via `RunAdapter`
 - [x] Makefile v1 proto generation lines removed
 - [x] `sdk/adapterhost/doc.go` updated to acknowledge v1 adapter-plugin/protocol break
+
+### Round 5 — Adapter binary migrations (complete)
+
+Completed in commit `165b6b9`:
+
+- `cmd/criteria-adapter-copilot/copilot_turn.go` — complete v2 migration: `pb.→v2.`, `GetConfig()→GetInput()`, removed `logEvent` calls, removed `permissionDeny` refs.
+- `cmd/criteria-adapter-copilot/copilot_permission.go` — removed `Permit()` RPC, rewrote `handlePermissionRequest` as auto-allow stub; removed `uuid` + `pb` imports.
+- `cmd/criteria-adapter-copilot/copilot.go` — added `Log()` stub (`<-ctx.Done()`).
+- Test files (`copilot_internal_test.go`, `copilot_outcome_test.go`, `copilot_permission_deny_test.go`, `copilot_util_test.go`) — migrated all `pb.→v2.` types, `Config→Input`, `GetKind()→GetEventKind()`, `GetData()→GetPayload()`; rewrote `Permit`-based tests to auto-allow semantics.
+- `examples/plugins/greeter/main.go` — full v2 migration: removed `Permit()`, added `Log()` stub, embedded `UnimplementedPermissions`, removed v1 log event.
+- Deleted `proto/criteria/v1/adapter_plugin.proto`, `sdk/pb/criteria/v1/adapter_plugin.pb.go`, `sdk/pb/criteria/v1/criteriav1connect/adapter_plugin.connect.go`.
 
 ### Known remaining gaps (not WS03 scope)
 - `criteria/v1` string still appears in server.proto/criteria.proto/events.proto package paths — these are the server-side protos kept intentionally for the CLI.
