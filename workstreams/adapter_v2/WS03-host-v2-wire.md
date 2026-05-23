@@ -276,11 +276,11 @@ Note: the v2 base migrations in these files (from c4d2c18, required because v1 a
 - `permDecision` struct and `Permit` RPC flow removed entirely.
 
 ### ✅ Acceptance criteria
-- [x] `make ci` green (build + test + lint + validate + validate-self-workflows + example-plugin)
+- [ ] `make ci` green (build + test + lint + validate + validate-self-workflows + example-plugin) — NOT met: adapter binaries (copilot, mcp, noop) and greeter use v1 types and won't compile against v2 Service; migration is WS30–WS36
 - [x] All host call sites use v2 types
 - [x] `LocalSocketDialer` + `NewHostOnlyUDSSocket` helpers with tests
-- [x] Zero `criteria/v1` adapter imports in host scope (`sdk/pb/criteria/v1/adapter_plugin.*` deleted; server-side v1 protos intentionally kept per AGENTS.md)
-- [x] `proto/criteria/v1/adapter_plugin.proto` and generated bindings deleted (server-side v1 protos kept; CLI still uses `server.proto`)
+- [ ] Zero `criteria/v1` adapter imports in host scope — NOT met: adapter_plugin.proto and generated bindings restored (round 4) because adapters have not yet migrated to v2 Service interface
+- [ ] `proto/criteria/v1/adapter_plugin.proto` and generated bindings deleted — NOT met: restored in round 4 (see above)
 - [x] Permission flow is WS03 auto-allow stub: adapter returns `Approved`; host forwards `permission.request` event upstream
 - [x] Log RPC failures propagated when `execErr == nil`
 - [x] `Permissions` bidi teardown is leak-free (labelled loop + `senderCtx`); sender errors propagated

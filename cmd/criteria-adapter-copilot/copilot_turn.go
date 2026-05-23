@@ -11,8 +11,8 @@ import (
 
 	copilot "github.com/github/copilot-sdk/go"
 
-	v2 "github.com/brokenbots/criteria/proto/criteria/v2"
 	adapterhost "github.com/brokenbots/criteria/sdk/adapterhost"
+	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 )
 
 const maxFinalizeAttempts = 3
@@ -25,17 +25,13 @@ type turnState struct {
 	turnDone       chan struct{}
 	errCh          chan error
 	maxTurns       int
-	// logCh is a reference to the session's log channel; non-blocking sends
-	// route assistant output to the host's Log stream.
-	logCh chan *v2.LogEvent
 }
 
-func newTurnState(maxTurns int, logCh chan *v2.LogEvent) *turnState {
+func newTurnState(maxTurns int) *turnState {
 	return &turnState{
 		turnDone: make(chan struct{}, 1),
 		errCh:    make(chan error, 1),
 		maxTurns: maxTurns,
-		logCh:    logCh,
 	}
 }
 
@@ -86,12 +82,7 @@ func (ts *turnState) handleAssistantDelta(sink adapterhost.ExecuteEventSender, e
 	if d.DeltaContent == "" {
 		return
 	}
-	// Route log line to the dedicated Log stream; non-blocking to avoid stalling
-	// the SDK callback goroutine if the host's Log reader is slow.
-	select {
-	case ts.logCh <- logEvent("agent", d.DeltaContent):
-	default:
-	}
+	ts.sendErr(sink.Send(logEvent("agent", d.DeltaContent)))
 	ts.sendErr(sink.Send(adapterEvent("agent.message", map[string]any{
 		"message_id": d.MessageID,
 		"delta":      d.DeltaContent,
@@ -103,11 +94,7 @@ func (ts *turnState) handleAssistantDelta(sink adapterhost.ExecuteEventSender, e
 // content and tool invocations, then enforcing the max_turns limit.
 func (ts *turnState) handleAssistantMessage(sink adapterhost.ExecuteEventSender, eventType copilot.SessionEventType, d *copilot.AssistantMessageData) {
 	ts.finalContent = d.Content
-	// Route log line to the dedicated Log stream; non-blocking.
-	select {
-	case ts.logCh <- logEvent("agent", d.Content):
-	default:
-	}
+	ts.sendErr(sink.Send(logEvent("agent", d.Content)))
 	ts.sendErr(sink.Send(adapterEvent("agent.message", map[string]any{
 		"message_id": d.MessageID,
 		"content":    d.Content,
@@ -159,10 +146,14 @@ func (ts *turnState) awaitOutcome(ctx context.Context, s *sessionState, sink ada
 // reprompt was sent and the loop should continue to the next turn.
 func (ts *turnState) handleIdleTurn(ctx context.Context, s *sessionState, sink adapterhost.ExecuteEventSender, attempt int) (done bool, err error) {
 	s.mu.Lock()
+	denied := s.permissionDeny
 	outcome := s.finalizedOutcome
 	reason := s.finalizedReason
 	s.mu.Unlock()
 
+	if denied {
+		return true, sink.Send(resultEvent("failure", ""))
+	}
 	if outcome != "" {
 		return true, sink.Send(resultEvent(outcome, reason))
 	}
@@ -257,7 +248,7 @@ func (ts *turnState) handleMaxTurnsReached(s *sessionState, sink adapterhost.Exe
 	return sink.Send(resultEvent("failure", ""))
 }
 
-func (p *copilotAdapter) Execute(ctx context.Context, req *v2.ExecuteRequest, sink adapterhost.ExecuteEventSender) error {
+func (p *copilotAdapter) Execute(ctx context.Context, req *pb.ExecuteRequest, sink adapterhost.ExecuteEventSender) error {
 	s, prompt, maxTurns, err := p.prepareExecute(req)
 	if err != nil {
 		return err
@@ -288,17 +279,17 @@ func (p *copilotAdapter) Execute(ctx context.Context, req *v2.ExecuteRequest, si
 		)
 	}
 
-	state := newTurnState(maxTurns, s.logCh)
+	state := newTurnState(maxTurns)
 	unsubscribe := s.session.On(state.handleEvent(sink))
 	defer unsubscribe()
 
-	restoreEffort, err := applyRequestEffort(ctx, s, s.session, req.GetInput())
+	restoreEffort, err := applyRequestEffort(ctx, s, s.session, req.GetConfig())
 	if err != nil {
 		return err
 	}
 	defer restoreEffort()
 
-	if err := applyRequestModel(ctx, s.session, req.GetInput()); err != nil {
+	if err := applyRequestModel(ctx, s.session, req.GetConfig()); err != nil {
 		return err
 	}
 
@@ -312,18 +303,18 @@ func (p *copilotAdapter) Execute(ctx context.Context, req *v2.ExecuteRequest, si
 // prepareExecute validates the request and returns the session state, prompt,
 // and max_turns limit. Returns an error when any required field is missing or
 // the session is unknown.
-func (p *copilotAdapter) prepareExecute(req *v2.ExecuteRequest) (s *sessionState, prompt string, maxTurns int, err error) {
+func (p *copilotAdapter) prepareExecute(req *pb.ExecuteRequest) (s *sessionState, prompt string, maxTurns int, err error) {
 	s = p.getSession(req.GetSessionId())
 	if s == nil {
 		return nil, "", 0, fmt.Errorf("copilot: unknown session %q", req.GetSessionId())
 	}
 
-	prompt = strings.TrimSpace(req.GetInput()["prompt"])
+	prompt = strings.TrimSpace(req.GetConfig()["prompt"])
 	if prompt == "" {
 		return nil, "", 0, fmt.Errorf("copilot: config.prompt is required")
 	}
 
-	if raw := strings.TrimSpace(req.GetInput()["max_turns"]); raw != "" {
+	if raw := strings.TrimSpace(req.GetConfig()["max_turns"]); raw != "" {
 		n, parseErr := strconv.Atoi(raw)
 		if parseErr != nil || n < 0 {
 			return nil, "", 0, fmt.Errorf("copilot: invalid max_turns %q", raw)
@@ -336,9 +327,12 @@ func (p *copilotAdapter) prepareExecute(req *v2.ExecuteRequest) (s *sessionState
 // beginExecution marks the session active and wires up the event sink.
 // The returned cleanup function must be deferred by the caller.
 func (s *sessionState) beginExecution(sink adapterhost.ExecuteEventSender) func() {
+	execDone := make(chan struct{})
 	s.mu.Lock()
 	s.active = true
+	s.activeCh = execDone
 	s.sink = sink
+	s.permissionDeny = false
 
 	// W15: reset per-execute finalize state. activeAllowedOutcomes is set by
 	// Execute *after* this returns; do not reset it here.
@@ -352,6 +346,10 @@ func (s *sessionState) beginExecution(sink adapterhost.ExecuteEventSender) func(
 		s.mu.Lock()
 		s.active = false
 		s.sink = nil
+		if s.activeCh != nil {
+			close(s.activeCh)
+			s.activeCh = nil
+		}
 		s.mu.Unlock()
 	}
 }

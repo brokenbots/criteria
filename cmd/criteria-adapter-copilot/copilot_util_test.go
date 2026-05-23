@@ -19,13 +19,13 @@ func TestAdapterEventEncodeErrorFallback(t *testing.T) {
 	if adap == nil {
 		t.Fatal("expected non-nil adapter event")
 	}
-	if adap.EventKind != "test.kind" {
-		t.Fatalf("kind=%q want test.kind", adap.EventKind)
+	if adap.Kind != "test.kind" {
+		t.Fatalf("kind=%q want test.kind", adap.Kind)
 	}
-	if adap.Payload == nil {
+	if adap.Data == nil {
 		t.Fatal("expected non-nil Data on encode error")
 	}
-	fields := adap.Payload.GetFields()
+	fields := adap.Data.GetFields()
 	errField, ok := fields["_encode_error"]
 	if !ok {
 		t.Fatalf("expected _encode_error field in fallback struct, got fields: %v", fields)

@@ -2,6 +2,7 @@ package adapterhost
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -15,6 +16,7 @@ import (
 	hplugin "github.com/hashicorp/go-plugin"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/brokenbots/criteria/internal/adapter"
 	v2 "github.com/brokenbots/criteria/proto/criteria/v2"
@@ -248,27 +250,76 @@ func (p *rpcHandle) Execute(ctx context.Context, sessionID string, step *workflo
 // executeCaptureSink implements ExecuteEventSink for use in rpcHandle.Execute.
 // It routes AdapterEvent to the upstream EventSink, forwards permission
 // requests upstream as informational records (WS03 auto-allow stub; WS16
-// wires the interactive bidi Permissions stream), and captures the final ExecuteResult.
+// wires the interactive bidi Permissions stream), translates ToolInvocation
+// to a tool.invocation adapter event, reassembles WS02 chunked payloads and
+// outputs before forwarding, and captures the final ExecuteResult.
 type executeCaptureSink struct {
 	sink   adapter.EventSink
 	result adapter.Result
 	done   bool
+
+	// Chunk reassembly buffers for the Execute stream.
+	// adapterChunkBuf accumulates AdapterEvent.payload_json fragments.
+	// resultChunkBuf accumulates ExecuteResult.outputs_json fragments.
+	// Chunks within each oneof arrive sequentially (one sequence at a time).
+	adapterChunkBuf []byte
+	adapterChunkKind string // event_kind carried across chunk fragments
+	resultChunkBuf  []byte
+	resultOutcome   string // outcome carried across result chunk fragments
 }
 
 func (s *executeCaptureSink) Emit(ev *v2.ExecuteEvent) error {
 	if adapterEvt := ev.GetAdapter(); adapterEvt != nil {
-		if adapterEvt.GetEventKind() == "permission.request" {
-			s.handlePermissionRequest(adapterEvt)
-			return nil
+		if chunk := adapterEvt.GetChunk(); chunk != nil {
+			// Accumulate payload_json fragment; forward when the final chunk arrives.
+			if chunk.GetSeq() == 0 {
+				s.adapterChunkBuf = nil
+				s.adapterChunkKind = adapterEvt.GetEventKind()
+			}
+			s.adapterChunkBuf = append(s.adapterChunkBuf, adapterEvt.GetPayloadJson()...)
+			if !chunk.GetFinal() {
+				return nil
+			}
+			payload, err := structFromJSON(s.adapterChunkBuf)
+			s.adapterChunkBuf = nil
+			if err != nil {
+				return fmt.Errorf("adapter event chunk reassembly: %w", err)
+			}
+			return s.emitAdapterEvent(&v2.AdapterEvent{
+				EventKind: s.adapterChunkKind,
+				Payload:   payload,
+			})
 		}
-		if adapterEvt.GetPayload() != nil {
-			s.sink.Adapter(adapterEvt.GetEventKind(), adapterEvt.GetPayload().AsMap())
-		} else {
-			s.sink.Adapter(adapterEvt.GetEventKind(), nil)
+		return s.emitAdapterEvent(adapterEvt)
+	}
+	if toolEvt := ev.GetTool(); toolEvt != nil {
+		payload := map[string]any{"tool_name": toolEvt.GetToolName()}
+		if args := toolEvt.GetArgs(); args != nil {
+			payload["args"] = args.AsMap()
 		}
+		s.sink.Adapter("tool.invocation", payload)
 		return nil
 	}
 	if resultEvt := ev.GetResult(); resultEvt != nil {
+		if chunk := resultEvt.GetChunk(); chunk != nil {
+			// Accumulate outputs_json fragment; capture result when final chunk arrives.
+			if chunk.GetSeq() == 0 {
+				s.resultChunkBuf = nil
+				s.resultOutcome = resultEvt.GetOutcome()
+			}
+			s.resultChunkBuf = append(s.resultChunkBuf, resultEvt.GetOutputsJson()...)
+			if !chunk.GetFinal() {
+				return nil
+			}
+			outputs, err := outputsFromJSON(s.resultChunkBuf)
+			s.resultChunkBuf = nil
+			if err != nil {
+				return fmt.Errorf("execute result chunk reassembly: %w", err)
+			}
+			s.result = adapter.Result{Outcome: s.resultOutcome, Outputs: outputs}
+			s.done = true
+			return nil
+		}
 		s.result = adapter.Result{Outcome: resultEvt.GetOutcome()}
 		if outs := resultEvt.GetOutputs(); len(outs) > 0 {
 			s.result.Outputs = make(map[string]string, len(outs))
@@ -279,7 +330,20 @@ func (s *executeCaptureSink) Emit(ev *v2.ExecuteEvent) error {
 		s.done = true
 		return nil
 	}
-	// ToolInvocation and Heartbeat are intentionally ignored at this layer.
+	return nil
+}
+
+// emitAdapterEvent dispatches a fully assembled (non-chunked) AdapterEvent.
+func (s *executeCaptureSink) emitAdapterEvent(adapterEvt *v2.AdapterEvent) error {
+	if adapterEvt.GetEventKind() == "permission.request" {
+		s.handlePermissionRequest(adapterEvt)
+		return nil
+	}
+	if adapterEvt.GetPayload() != nil {
+		s.sink.Adapter(adapterEvt.GetEventKind(), adapterEvt.GetPayload().AsMap())
+	} else {
+		s.sink.Adapter(adapterEvt.GetEventKind(), nil)
+	}
 	return nil
 }
 
@@ -295,13 +359,32 @@ func (s *executeCaptureSink) handlePermissionRequest(adapterEvt *v2.AdapterEvent
 }
 
 // logForwardSink implements LogEventSink, forwarding log lines to the
-// upstream adapter.EventSink.Log.
+// upstream adapter.EventSink.Log. Chunked log lines (LogEvent.chunk != nil)
+// are reassembled per stream_name before forwarding.
 type logForwardSink struct {
-	sink adapter.EventSink
+	sink      adapter.EventSink
+	chunkBufs map[string][]byte // keyed by stream_name
 }
 
 func (s *logForwardSink) Emit(ev *v2.LogEvent) error {
 	if ev.GetHeartbeat() != nil {
+		return nil
+	}
+	if chunk := ev.GetChunk(); chunk != nil {
+		stream := ev.GetStreamName()
+		if chunk.GetSeq() == 0 {
+			if s.chunkBufs == nil {
+				s.chunkBufs = make(map[string][]byte)
+			}
+			s.chunkBufs[stream] = nil
+		}
+		s.chunkBufs[stream] = append(s.chunkBufs[stream], ev.GetLine()...)
+		if !chunk.GetFinal() {
+			return nil
+		}
+		line := s.chunkBufs[stream]
+		delete(s.chunkBufs, stream)
+		s.sink.Log(stream, line)
 		return nil
 	}
 	s.sink.Log(ev.GetStreamName(), ev.GetLine())
@@ -322,6 +405,30 @@ func (p *rpcHandle) Kill() {
 			p.onKill()
 		}
 	})
+}
+
+// structFromJSON unmarshals raw JSON bytes into a *structpb.Struct so that
+// reassembled AdapterEvent.payload_json chunks can be forwarded as the
+// standard payload type.
+func structFromJSON(b []byte) (*structpb.Struct, error) {
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		return nil, err
+	}
+	return structpb.NewStruct(m)
+}
+
+// outputsFromJSON unmarshals raw JSON bytes (ExecuteResult.outputs_json)
+// into the flat string map used by adapter.Result.Outputs.
+func outputsFromJSON(b []byte) (map[string]string, error) {
+	if len(b) == 0 {
+		return nil, nil
+	}
+	var m map[string]string
+	if err := json.Unmarshal(b, &m); err != nil {
+		return nil, err
+	}
+	return m, nil
 }
 
 // collectAllowedOutcomes returns the declared outcome names for a step,

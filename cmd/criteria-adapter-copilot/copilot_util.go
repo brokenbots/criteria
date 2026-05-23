@@ -9,7 +9,7 @@ import (
 
 	"google.golang.org/protobuf/types/known/structpb"
 
-	v2 "github.com/brokenbots/criteria/proto/criteria/v2"
+	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 )
 
 // resultEvent constructs the terminal ExecuteEvent for a step. The Outputs map
@@ -18,10 +18,10 @@ import (
 // success and failure paths. `reason` is empty when the model did not call
 // `submit_outcome` with one (e.g. permission denial, reprompt exhaustion,
 // max_turns).
-func resultEvent(outcome, reason string) *v2.ExecuteEvent {
-	return &v2.ExecuteEvent{
-		Event: &v2.ExecuteEvent_Result{
-			Result: &v2.ExecuteResult{
+func resultEvent(outcome, reason string) *pb.ExecuteEvent {
+	return &pb.ExecuteEvent{
+		Event: &pb.ExecuteEvent_Result{
+			Result: &pb.ExecuteResult{
 				Outcome: outcome,
 				Outputs: map[string]string{
 					"outcome": outcome,
@@ -32,28 +32,29 @@ func resultEvent(outcome, reason string) *v2.ExecuteEvent {
 	}
 }
 
-// logEvent constructs a LogEvent for the dedicated Log stream. In v2, log lines
-// flow separately from Execute events so they can be filtered and redacted
-// independently.
-func logEvent(stream, chunk string) *v2.LogEvent {
+func logEvent(stream, chunk string) *pb.ExecuteEvent {
 	if !strings.HasSuffix(chunk, "\n") {
 		chunk += "\n"
 	}
-	return &v2.LogEvent{StreamName: stream, Line: []byte(chunk)}
+	return &pb.ExecuteEvent{
+		Event: &pb.ExecuteEvent_Log{
+			Log: &pb.LogEvent{Stream: stream, Chunk: []byte(chunk)},
+		},
+	}
 }
 
-func adapterEvent(kind string, data map[string]any) *v2.ExecuteEvent {
+func adapterEvent(kind string, data map[string]any) *pb.ExecuteEvent {
 	s, err := structpb.NewStruct(data)
 	if err != nil {
 		// Encoding failed; emit a minimal struct so the event kind is preserved
 		// and the encode error is diagnosable rather than silently dropped.
 		s, _ = structpb.NewStruct(map[string]any{"_encode_error": err.Error()})
 	}
-	return &v2.ExecuteEvent{
-		Event: &v2.ExecuteEvent_Adapter{
-			Adapter: &v2.AdapterEvent{
-				EventKind: kind,
-				Payload:   s,
+	return &pb.ExecuteEvent{
+		Event: &pb.ExecuteEvent_Adapter{
+			Adapter: &pb.AdapterEvent{
+				Kind: kind,
+				Data: s,
 			},
 		},
 	}
