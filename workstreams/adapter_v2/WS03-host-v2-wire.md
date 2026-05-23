@@ -330,10 +330,10 @@ Completed in commit `165b6b9`:
 - Proper WS30–WS36 definitive tests for copilot/mcp/noop adapter migrations.
 - `LocalSocketDialer` reattach test covers the helper directly; full integration test is WS20 scope.
 
-## Owner Review Notes (round 8)
+## Owner Review Notes (round 9) — resolved
 
-- `cmd/criteria-adapter-copilot/copilot_session.go:66`, `cmd/criteria-adapter-copilot/copilot_permission.go:25-34`, and `cmd/criteria-adapter-copilot/copilot_turn.go:145-158` — remove the stale `permissionDeny` state/failure path. WS03's permission flow is pass-through/auto-allow; a permission request must not force a terminal `failure` when no `submit_outcome` follows.
-- `cmd/criteria-adapter-copilot/copilot.go:95-99` — stop advertising `permission_gating` until WS16 lands. The current adapter behavior is observability/pass-through, not enforced gating.
-- `internal/adapter/conformance/conformance_outcomes.go:71-78` — fix `permission_request_shape` to the WS03 contract: forwarded `permission.request` event and no hard-coded deny/`needs_review` expectation.
-- `sdk/adapterhost/service.go:69-73` and `workstreams/adapter_v2/WS03-host-v2-wire.md:249-253,284,300-301` — correct the stale permission docs/notes so they match the shipped WS03 behavior. They must not claim host `allow_tools` evaluation, grant/cancel decisions, or removed `permissionDeny`/no-override work that is still present.
-- `sdk/adapterhost/service.go:26-28,98-120`, `sdk/adapterhost/serve.go:47-78`, and `internal/adapterhost/testfixtures/publicsdk/main.go:75-92` — stop over-promising lifecycle support in the public SDK. WS03 either needs those RPCs actually delegated or, per scope, the exported optional lifecycle surface and fixture methods removed until WS17/WS18.
+- `internal/adapter/conformance/conformance_outcomes.go`: capability gate changed from `"permission_gating"` → `"permission_request_forwarding"`; `assertPermissionDeniedEvent` now validates the `"kind"` field in the forwarded payload.
+- `internal/adapter/conformance/testdata/noop/main.go`: added `"permission_request_forwarding"` capability; emits `permission.request` AdapterEvent with `{"kind":"shell"}` when `input["emit_permission_request"]=="true"`.
+- `internal/adapter/conformance/noop_adapter_test.go`: added `PermissionConfig: map[string]string{"emit_permission_request": "true"}` so `permission_request_shape` runs against the noop reference adapter.
+- `internal/adapterhost/loader_test.go`: `unimplementedPermClient.Permissions` now returns `status.Error(codes.Unimplemented, ...)` (proper gRPC status); `TestExecute_UnimplementedPermissionsStreamSurfacesError` renamed and rewritten as `TestExecute_UnimplementedPermissionsIsOptOut` — asserts no error (opt-out behavior).
+- Committed as `e7f45b0`.
