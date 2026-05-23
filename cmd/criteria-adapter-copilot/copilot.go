@@ -47,7 +47,8 @@ import (
 
 	copilot "github.com/github/copilot-sdk/go"
 
-	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
+	v2 "github.com/brokenbots/criteria/proto/criteria/v2"
+	adapterhost "github.com/brokenbots/criteria/sdk/adapterhost"
 )
 
 const (
@@ -84,6 +85,7 @@ type permDecision struct {
 }
 
 type copilotAdapter struct {
+	adapterhost.UnimplementedPermissions
 	mu       sync.Mutex
 	sessions map[string]*sessionState
 
@@ -91,8 +93,8 @@ type copilotAdapter struct {
 	client   *copilot.Client
 }
 
-func (p *copilotAdapter) Info(_ context.Context, _ *pb.InfoRequest) (*pb.InfoResponse, error) {
-	return &pb.InfoResponse{
+func (p *copilotAdapter) Info(_ context.Context, _ *v2.InfoRequest) (*v2.InfoResponse, error) {
+	return &v2.InfoResponse{
 		Name:    adapterName,
 		Version: adapterVersion,
 		Capabilities: []string{
@@ -100,27 +102,27 @@ func (p *copilotAdapter) Info(_ context.Context, _ *pb.InfoRequest) (*pb.InfoRes
 			"permission_gating",
 			"structured_events",
 		},
-		ConfigSchema: &pb.AdapterSchemaProto{Fields: map[string]*pb.ConfigFieldProto{
-			"model":             {Type: "string", Doc: "Copilot model to use for this session."},
-			"reasoning_effort":  {Type: "string", Doc: "Reasoning effort level for the model: low, medium, high, xhigh."},
-			"working_directory": {Type: "string", Doc: "Working directory for tool invocations."},
-			"max_turns":         {Type: "number", Doc: "Maximum assistant turns per Execute call (default: unlimited)."},
-			"system_prompt":     {Type: "string", Doc: "System prompt prepended at session open."},
+		ConfigSchema: &v2.AdapterSchemaProto{Fields: map[string]*v2.ConfigFieldProto{
+			"model":             {Type: "string", Description: "Copilot model to use for this session."},
+			"reasoning_effort":  {Type: "string", Description: "Reasoning effort level for the model: low, medium, high, xhigh."},
+			"working_directory": {Type: "string", Description: "Working directory for tool invocations."},
+			"max_turns":         {Type: "number", Description: "Maximum assistant turns per Execute call (default: unlimited)."},
+			"system_prompt":     {Type: "string", Description: "System prompt prepended at session open."},
 			// Custom provider (BYOK) — point the session at an OpenAI-compatible
 			// endpoint (Ollama, vLLM, Azure OpenAI, etc.). When provider_base_url
 			// is set, the session uses this provider instead of GitHub Copilot's
 			// default backend; in that case `model` is required.
-			"provider_type":              {Type: "string", Doc: "Custom provider type: openai, azure, or anthropic. Default: openai. Only used when provider_base_url is set."},
-			"provider_base_url":          {Type: "string", Doc: "Custom provider API endpoint URL. Setting this enables BYOK mode (e.g. http://localhost:11434/v1 for Ollama, vLLM endpoint). Requires `model` to be set."},
-			"provider_api_key":           {Type: "string", Doc: "Custom provider API key. Optional for local providers like Ollama. Prefer env() in HCL to keep secrets out of source."},
-			"provider_bearer_token":      {Type: "string", Doc: "Custom provider bearer token. Sets Authorization header directly; takes precedence over provider_api_key."},
-			"provider_wire_api":          {Type: "string", Doc: "Custom provider wire format (openai/azure only): completions or responses. Default: completions."},
-			"provider_azure_api_version": {Type: "string", Doc: "Azure API version, used when provider_type=azure. Default: 2024-10-21."},
+			"provider_type":              {Type: "string", Description: "Custom provider type: openai, azure, or anthropic. Default: openai. Only used when provider_base_url is set."},
+			"provider_base_url":          {Type: "string", Description: "Custom provider API endpoint URL. Setting this enables BYOK mode (e.g. http://localhost:11434/v1 for Ollama, vLLM endpoint). Requires `model` to be set."},
+			"provider_api_key":           {Type: "string", Description: "Custom provider API key. Optional for local providers like Ollama. Prefer env() in HCL to keep secrets out of source."},
+			"provider_bearer_token":      {Type: "string", Description: "Custom provider bearer token. Sets Authorization header directly; takes precedence over provider_api_key."},
+			"provider_wire_api":          {Type: "string", Description: "Custom provider wire format (openai/azure only): completions or responses. Default: completions."},
+			"provider_azure_api_version": {Type: "string", Description: "Azure API version, used when provider_type=azure. Default: 2024-10-21."},
 		}},
-		InputSchema: &pb.AdapterSchemaProto{Fields: map[string]*pb.ConfigFieldProto{
-			"prompt":           {Required: true, Type: "string", Doc: "User prompt to send to the assistant."},
-			"max_turns":        {Type: "number", Doc: "Per-step override for max assistant turns."},
-			"reasoning_effort": {Type: "string", Doc: "Per-step override for reasoning effort. Resets to the session default after this step. Valid: low, medium, high, xhigh."},
+		InputSchema: &v2.AdapterSchemaProto{Fields: map[string]*v2.ConfigFieldProto{
+			"prompt":           {Required: true, Type: "string", Description: "User prompt to send to the assistant."},
+			"max_turns":        {Type: "number", Description: "Per-step override for max assistant turns."},
+			"reasoning_effort": {Type: "string", Description: "Per-step override for reasoning effort. Resets to the session default after this step. Valid: low, medium, high, xhigh."},
 		}},
 	}, nil
 }
@@ -166,6 +168,13 @@ func resolveGitHubToken() string {
 		return token
 	}
 	return ""
+}
+
+// Log blocks until ctx is cancelled (when the host closes the Log stream after
+// Execute returns). WS15 wires real log line forwarding; WS03 drops log lines.
+func (p *copilotAdapter) Log(ctx context.Context, _ *v2.LogRequest, _ adapterhost.LogEventSender) error {
+	<-ctx.Done()
+	return nil
 }
 
 func (p *copilotAdapter) getSession(sessionID string) *sessionState {

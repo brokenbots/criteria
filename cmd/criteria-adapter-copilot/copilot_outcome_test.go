@@ -625,21 +625,15 @@ func TestSubmitOutcome_InvalidEnumThenSuccess(t *testing.T) {
 	}
 }
 
-// Test 5.14: Permission denied during execution → "failure" outcome.
-// The permissionDeny flag is set synchronously in onSend (before SessionIdle
-// fires), so awaitOutcome sees the flag and returns "failure" without exhausting
-// the reprompt loop.
+// Test 5.14: No submit_outcome called after idle turns → "failure" outcome.
+// WS03: permissions are auto-approved; this test verifies the reprompt-exhaustion
+// path that results in "failure" when the model never calls submit_outcome.
 func TestSubmitOutcome_PermissionDeniedFailure(t *testing.T) {
 	s := stateWithOutcomes("success", "failure")
 	fake := s.session.(*fakeSession)
-	// Turn 1: permission denied → just idle.
+	// All turns: session idles without the model calling submit_outcome.
 	fake.emitOnSend = []copilot.SessionEvent{
 		{Data: &copilot.SessionIdleData{}},
-	}
-	fake.onSend = func(_ int, _ copilot.MessageOptions) {
-		s.mu.Lock()
-		s.permissionDeny = true
-		s.mu.Unlock()
 	}
 
 	sender := &recordingSender{}

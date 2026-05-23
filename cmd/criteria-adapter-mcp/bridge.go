@@ -15,8 +15,8 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/brokenbots/criteria/cmd/criteria-adapter-mcp/mcpclient"
+	v2 "github.com/brokenbots/criteria/proto/criteria/v2"
 	adapterhost "github.com/brokenbots/criteria/sdk/adapterhost"
-	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 )
 
 const (
@@ -71,29 +71,30 @@ func (s *sessionState) clearSink() {
 }
 
 type MCPBridge struct {
+	adapterhost.UnimplementedPermissions
 	mu       sync.Mutex
 	sessions map[string]*sessionState
 }
 
-func (b *MCPBridge) Info(_ context.Context, _ *pb.InfoRequest) (*pb.InfoResponse, error) {
-	return &pb.InfoResponse{
+func (b *MCPBridge) Info(_ context.Context, _ *v2.InfoRequest) (*v2.InfoResponse, error) {
+	return &v2.InfoResponse{
 		Name:         adapterName,
 		Version:      adapterVersion,
 		Capabilities: []string{"single_shot"},
-		ConfigSchema: &pb.AdapterSchemaProto{Fields: map[string]*pb.ConfigFieldProto{
-			"command": {Required: true, Type: "string", Doc: "MCP server binary to launch."},
-			"args":    {Type: "string", Doc: "Comma-separated argument list for the server binary."},
-			"env":     {Type: "string", Doc: "Comma-separated KEY=VALUE environment variable pairs."},
-			"cwd":     {Type: "string", Doc: "Working directory for the MCP server process."},
+		ConfigSchema: &v2.AdapterSchemaProto{Fields: map[string]*v2.ConfigFieldProto{
+			"command": {Required: true, Type: "string", Description: "MCP server binary to launch."},
+			"args":    {Type: "string", Description: "Comma-separated argument list for the server binary."},
+			"env":     {Type: "string", Description: "Comma-separated KEY=VALUE environment variable pairs."},
+			"cwd":     {Type: "string", Description: "Working directory for the MCP server process."},
 		}},
-		InputSchema: &pb.AdapterSchemaProto{Fields: map[string]*pb.ConfigFieldProto{
-			"tool":            {Required: true, Type: "string", Doc: "MCP tool name to invoke."},
-			"success_outcome": {Type: "string", Doc: "Outcome to report on success (default: success)."},
+		InputSchema: &v2.AdapterSchemaProto{Fields: map[string]*v2.ConfigFieldProto{
+			"tool":            {Required: true, Type: "string", Description: "MCP tool name to invoke."},
+			"success_outcome": {Type: "string", Description: "Outcome to report on success (default: success)."},
 		}},
 	}, nil
 }
 
-func (b *MCPBridge) OpenSession(ctx context.Context, req *pb.OpenSessionRequest) (*pb.OpenSessionResponse, error) { //nolint:funlen,gocyclo // complex session setup across MCP config, TLS, and stdio transport
+func (b *MCPBridge) OpenSession(ctx context.Context, req *v2.OpenSessionRequest) (*v2.OpenSessionResponse, error) { //nolint:funlen,gocyclo // complex session setup across MCP config, TLS, and stdio transport
 	cfg := req.GetConfig()
 	command := strings.TrimSpace(cfg["command"])
 	if command == "" {
@@ -171,16 +172,16 @@ func (b *MCPBridge) OpenSession(ctx context.Context, req *pb.OpenSessionRequest)
 	b.sessions[req.GetSessionId()] = state
 	b.mu.Unlock()
 
-	return &pb.OpenSessionResponse{}, nil
+	return &v2.OpenSessionResponse{}, nil
 }
 
-func (b *MCPBridge) Execute(ctx context.Context, req *pb.ExecuteRequest, sink adapterhost.ExecuteEventSender) error { //nolint:funlen,gocognit // event-driven tool dispatch with permission gating and chunked output
+func (b *MCPBridge) Execute(ctx context.Context, req *v2.ExecuteRequest, sink adapterhost.ExecuteEventSender) error { //nolint:funlen,gocognit // event-driven tool dispatch with permission gating and chunked output
 	s := b.getSession(req.GetSessionId())
 	if s == nil {
 		return fmt.Errorf("mcp: unknown session %q", req.GetSessionId())
 	}
 
-	toolName := strings.TrimSpace(req.GetConfig()["tool"])
+	toolName := strings.TrimSpace(req.GetInput()["tool"])
 	if toolName == "" {
 		return fmt.Errorf("mcp: config.tool is required")
 	}
@@ -188,8 +189,8 @@ func (b *MCPBridge) Execute(ctx context.Context, req *pb.ExecuteRequest, sink ad
 		return fmt.Errorf("mcp: unknown tool %q", toolName)
 	}
 
-	arguments := make(map[string]any, len(req.GetConfig()))
-	for k, v := range req.GetConfig() {
+	arguments := make(map[string]any, len(req.GetInput()))
+	for k, v := range req.GetInput() {
 		if _, reserved := reservedExecuteKeys[k]; reserved {
 			continue
 		}
@@ -207,23 +208,13 @@ func (b *MCPBridge) Execute(ctx context.Context, req *pb.ExecuteRequest, sink ad
 	}
 
 	for _, item := range result.Content {
-		typ, _ := item["type"].(string)
-		if typ == "text" {
-			text, _ := item["text"].(string)
-			if strings.TrimSpace(text) != "" {
-				if err := sink.Send(logEvent("agent", text)); err != nil {
-					return err
-				}
-			}
-			continue
-		}
 		if err := sink.Send(adapterEvent("mcp.content", item)); err != nil {
 			return err
 		}
 	}
 
 	outcome := "success"
-	if configured := strings.TrimSpace(req.GetConfig()["success_outcome"]); configured != "" {
+	if configured := strings.TrimSpace(req.GetInput()["success_outcome"]); configured != "" {
 		outcome = configured
 	}
 	if result.IsError {
@@ -232,11 +223,11 @@ func (b *MCPBridge) Execute(ctx context.Context, req *pb.ExecuteRequest, sink ad
 	return sink.Send(resultEvent(outcome))
 }
 
-func (b *MCPBridge) Permit(context.Context, *pb.PermitRequest) (*pb.PermitResponse, error) {
-	return &pb.PermitResponse{}, nil
+func (b *MCPBridge) Log(_ context.Context, _ *v2.LogRequest, _ adapterhost.LogEventSender) error {
+	return nil
 }
 
-func (b *MCPBridge) CloseSession(ctx context.Context, req *pb.CloseSessionRequest) (*pb.CloseSessionResponse, error) {
+func (b *MCPBridge) CloseSession(ctx context.Context, req *v2.CloseSessionRequest) (*v2.CloseSessionResponse, error) {
 	b.mu.Lock()
 	s, ok := b.sessions[req.GetSessionId()]
 	if ok {
@@ -244,12 +235,12 @@ func (b *MCPBridge) CloseSession(ctx context.Context, req *pb.CloseSessionReques
 	}
 	b.mu.Unlock()
 	if !ok {
-		return &pb.CloseSessionResponse{}, nil
+		return &v2.CloseSessionResponse{}, nil
 	}
 	if err := shutdownSession(ctx, s); err != nil {
-		return &pb.CloseSessionResponse{}, err
+		return &v2.CloseSessionResponse{}, err
 	}
-	return &pb.CloseSessionResponse{}, nil
+	return &v2.CloseSessionResponse{}, nil
 }
 
 func (b *MCPBridge) getSession(id string) *sessionState {
@@ -287,29 +278,20 @@ func shutdownSession(ctx context.Context, s *sessionState) error {
 	}
 }
 
-func logEvent(stream, chunk string) *pb.ExecuteEvent {
-	if !strings.HasSuffix(chunk, "\n") {
-		chunk += "\n"
-	}
-	return &pb.ExecuteEvent{
-		Event: &pb.ExecuteEvent_Log{Log: &pb.LogEvent{Stream: stream, Chunk: []byte(chunk)}},
+func resultEvent(outcome string) *v2.ExecuteEvent {
+	return &v2.ExecuteEvent{
+		Event: &v2.ExecuteEvent_Result{Result: &v2.ExecuteResult{Outcome: outcome}},
 	}
 }
 
-func resultEvent(outcome string) *pb.ExecuteEvent {
-	return &pb.ExecuteEvent{
-		Event: &pb.ExecuteEvent_Result{Result: &pb.ExecuteResult{Outcome: outcome}},
-	}
-}
-
-func adapterEvent(kind string, data map[string]any) *pb.ExecuteEvent {
+func adapterEvent(kind string, data map[string]any) *v2.ExecuteEvent {
 	payload := map[string]any{}
 	for k, v := range data {
 		payload[k] = v
 	}
 	s, _ := structpb.NewStruct(payload)
-	return &pb.ExecuteEvent{
-		Event: &pb.ExecuteEvent_Adapter{Adapter: &pb.AdapterEvent{Kind: kind, Data: s}},
+	return &v2.ExecuteEvent{
+		Event: &v2.ExecuteEvent_Adapter{Adapter: &v2.AdapterEvent{EventKind: kind, Payload: s}},
 	}
 }
 
