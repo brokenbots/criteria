@@ -102,8 +102,10 @@ func (r *noopAttachedRunner) Kill(_ context.Context) error {
 	return nil
 }
 
-func (r *noopAttachedRunner) ID() string                                              { return "external" }
-func (r *noopAttachedRunner) PluginToHost(n, a string) (host, addr string, err error) { return n, a, nil }
+func (r *noopAttachedRunner) ID() string { return "external" }
+func (r *noopAttachedRunner) PluginToHost(n, a string) (host, addr string, err error) {
+	return n, a, nil
+}
 func (r *noopAttachedRunner) HostToPlugin(n, a string) (plugin, addr string, err error) {
 	return n, a, nil
 }

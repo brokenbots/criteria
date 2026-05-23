@@ -213,13 +213,18 @@ Enumerated:
 - `internal/engine/*` and `internal/cli/*` call sites — mechanical type updates.
 - `sdk/adapterhost/*` (post-WS01 path).
 - `proto/criteria/v1/` — **deletion only** (Step 7).
+- `proto/criteria/v2/` — WS03 cutover comment and `PermissionCancel` doc correction (round 11).
+- `docs/adapters.md` — permission gating documentation (round 11).
 - `Makefile` proto target — remove v1 line.
 - `internal/adapter/conformance/*.go` — convert existing 11 sub-tests to v2.
 - New tests next to changed files.
+- `cmd/criteria-adapter-copilot/` — compilation-required v2 type substitutions (v1 adapter_plugin.proto deleted in this workstream) plus round-11 blocking permission round-trip.
+- `cmd/criteria-adapter-mcp/bridge.go` — compilation-required v2 type substitutions.
+- `cmd/criteria-adapter-noop/main.go` — compilation-required v2 type substitutions.
+- `examples/plugins/greeter/main.go` — compilation-required v2 type substitutions.
 
 ## Files this workstream may NOT edit
 
-- Anything under `proto/criteria/v2/` — owned by WS02.
 - `README.md`, `PLAN.md`, `AGENTS.md`, `CHANGELOG.md`, `CONTRIBUTING.md`, `workstreams/README.md`.
 - Other workstream files in `workstreams/adapter_v2/`.
 - HCL grammar files in `workflow/` — those are touched by WS09.
@@ -281,7 +286,7 @@ Note: the v2 base migrations in these files (from c4d2c18, required because v1 a
 - [x] `LocalSocketDialer` + `NewHostOnlyUDSSocket` helpers with tests
 - [x] Zero `criteria/v1` adapter imports in host scope — adapter_plugin.proto deleted; copilot/mcp/noop/greeter received minimal compilation-required v2 type substitutions (full WS30-36 migrations are separate workstreams)
 - [x] `proto/criteria/v1/adapter_plugin.proto` and generated bindings deleted
-- [x] Host permission flow is WS03 pass-through: `permission.request` events forwarded upstream; no `allow_tools` policy evaluation, no `permission.granted`/`permission.denied` audit events, no outcome override. (WS16 scope remains future work.)
+- [x] Host permission flow is real bidi round-trip (round 11): `permission.request` events intercepted by `executeCaptureSink.handlePermissionRequest`; host evaluates `allow_tools` via `NewPolicyWithAliases`; emits `permission.granted` or `permission.denied`; forwards `PermissionEvent.request` (allow) or `PermissionEvent.cancel` (deny) to the adapter via the `Permissions` bidi stream; anyDenied override (success→needs_review) applied after Execute; copilot adapter blocks in `handlePermissionRequest` waiting for host decision via `pendingPerms` channel.
 - [x] Log RPC failures propagated when `execErr == nil`
 - [x] Permissions bidi teardown is leak-free (labelled loop + `senderCtx`); Unimplemented treated as expected so adapters not implementing Permissions do not abort Execute
 - [x] Log chunk buffering: seq/start validation per-stream; aggregate memory cap (16 MiB) across all concurrent log streams; regression tests added
@@ -341,4 +346,36 @@ Completed in commit `165b6b9`:
 2. **Regression tests** (`internal/adapterhost/loader_reattach_test.go`) — three new tests: `TestNoopAttachedRunnerWaitBlocksUntilKill` (Wait does not return before Kill, unblocks after Kill), `TestNoopAttachedRunnerWaitContextCancel` (Wait unblocks on context cancel with non-nil error), `TestNoopAttachedRunnerKillIdempotent` (double Kill does not panic).
 3. **Permission fail-closed** (`cmd/criteria-adapter-copilot/copilot_permission.go`) — `sink.Send` error now causes `UserNotAvailable` return instead of `Approved`; a failing observability send must not silently allow the tool action to proceed.
 4. **Test updated** (`cmd/criteria-adapter-copilot/copilot_permission_deny_test.go`) — `TestHandlePermissionRequestSendError` expectation flipped from `Approved` to `UserNotAvailable`; comment updated to explain fail-closed rationale.
+
+### Round 11 — changes requested
+
+1. **`internal/adapterhost/loader.go:226-285,333-440`, `internal/adapterhost/serve.go:128-188`, `cmd/criteria-adapter-copilot/copilot_permission.go:19-46`** — restore a real v2 permission round-trip. Permission requests must travel over the `Permissions` bidi RPC, the host must keep enforcing the current `allow_tools` deny-by-default behavior and emitting the corresponding grant/deny audit behavior, and the Copilot adapter must wait for the host decision instead of locally approving the action.
+2. **`internal/adapterhost/loader.go:247-267`** — serialize `Execute` and `Log` fan-in before they call the shared `adapter.EventSink`. The current two-goroutine write path races non-goroutine-safe sinks and can destabilize event ordering; add regression coverage with a sink that would fail under concurrent calls.
+3. **`workstreams/adapter_v2/WS03-host-v2-wire.md:210-218,255-260`** — reconcile scope metadata with the active diff. Either remove the WS30-WS36 pre-migration edits from `cmd/criteria-adapter-*`, `examples/plugins/greeter/*`, `sdk/pb/criteria/v2/*`, etc., or explicitly bring those files into WS03's allowed scope with the required rationale. The workstream cannot keep the narrower allowlist while also keeping those edits.
+4. **`proto/criteria/v2/adapter.proto:1-5`, `docs/adapters.md:272-285,431-587`** — update the public contract text and examples to match the shipped WS03 cutover: `adapter_plugin.proto` is gone now, third-party adapters must use the v2 SDK/imports and `Permissions` flow, and the permission-gating docs must match the restored host behavior above.
+
+### Round 11 — implementation (complete)
+
+1. **Real v2 Permissions round-trip** (`internal/adapterhost/serve.go`, `internal/adapterhost/loader.go`, `cmd/criteria-adapter-copilot/copilot.go`, `cmd/criteria-adapter-copilot/copilot_permission.go`):
+   - `internal/adapterhost/serve.go` — `Client.Permissions` and `grpcClient.Permissions` now take `decisions chan<- *v2.PermissionDecision`; `recvPermissionDecisions` routes ACKs to this channel instead of discarding.
+   - `internal/adapterhost/loader.go` — `executeCaptureSink` struct restored with `anyDenied`, `policy`, `allowTools`, `adapterName`, `requests` fields; `emitAdapterEvent` now intercepts `permission.request` events and calls `handlePermissionRequest`; `handlePermissionRequest` evaluates `allow_tools` via `NewPolicyWithAliases`, emits `permission.granted`/`permission.denied` to upstream sink, and forwards `PermissionEvent.request`/`PermissionEvent.cancel` to adapter via `requests` channel; `anyDenied → needs_review` outcome override applied after Execute completes.
+   - `cmd/criteria-adapter-copilot/copilot.go` — `copilotAdapter` struct gets `pendingPermsMu sync.Mutex`, `pendingPerms map[string]chan<- string`; helper methods `registerPendingPerm`, `resolvePendingPerm`, `drainPendingPerms`; `Permissions` method override that routes host `request`→allow and `cancel`→deny signals to pending channels.
+   - `cmd/criteria-adapter-copilot/copilot_permission.go` — `handlePermissionRequest` now generates `request_id`, registers pending channel, forwards `permission.request` event, **blocks** on `select { case decision := <-decisionCh; case <-activeCh }`, returns `Approved` or `Rejected` (not `UserNotAvailable`) to the Copilot SDK based on host decision.
+
+2. **Serialized EventSink** (`internal/adapterhost/loader.go`):
+   - `serializedEventSink` struct (mutex wrapping `adapter.EventSink`) added; `Execute` wraps the caller's sink in `serializedEventSink` before passing to both `executeCaptureSink` (Execute goroutine) and `logForwardSink` (Log goroutine). Prevents data races on non-goroutine-safe sinks.
+   - `internal/adapterhost/loader_test.go` — `TestSerializedEventSink_ConcurrentCallsAreOrdered`: `nonThreadSafeSink` (detects concurrent access via `atomic.CompareAndSwapInt32`) spawns 2×500 goroutines calling `Adapter` and `Log`; asserts no concurrent access detected.
+
+3. **Scope metadata** (`workstreams/adapter_v2/WS03-host-v2-wire.md`):
+   - "Files this workstream may modify" expanded to include `cmd/criteria-adapter-copilot/`, `cmd/criteria-adapter-mcp/bridge.go`, `cmd/criteria-adapter-noop/main.go`, `examples/plugins/greeter/main.go` with rationale; `proto/criteria/v2/` restriction removed from "may NOT edit" (round-11 needs comments there).
+
+4. **Proto and docs** (`proto/criteria/v2/adapter.proto`, `docs/adapters.md`):
+   - `proto/criteria/v2/adapter.proto` file header updated to note v1 deletion, explain the bidi Permissions stream direction (host=client, adapter=server), and distinguish blocking vs. post-hoc enforcement; stale `PermissionCancel` comment corrected (it is NOT "sent by the adapter" — it is the host's deny signal).
+   - `docs/adapters.md` Permission Gating section expanded with "How the permission round-trip works" subsection documenting the 5-step bidi flow; post-hoc vs. blocking enforcement distinction documented.
+
+New tests in `internal/adapterhost/loader_test.go`:
+- `TestHandlePermissionRequest_Allow` — allow policy: emits `permission.granted`, forwards `PermissionEvent.request` to requests channel.
+- `TestHandlePermissionRequest_Deny` — deny-all policy: emits `permission.denied`, sets `anyDenied`, forwards `PermissionEvent.cancel` to requests channel.
+- `TestExecute_DeniedPermissionOverridesSuccess` — adapter emits `permission.request` + reports `success`; host overrides to `needs_review`.
+- `TestSerializedEventSink_ConcurrentCallsAreOrdered` — concurrent Adapter/Log calls are serialized by `serializedEventSink`.
 

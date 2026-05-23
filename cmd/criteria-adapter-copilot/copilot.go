@@ -40,12 +40,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"sync"
 	"time"
 
 	copilot "github.com/github/copilot-sdk/go"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	adapterhost "github.com/brokenbots/criteria/sdk/adapterhost"
 	v2 "github.com/brokenbots/criteria/sdk/pb/criteria/v2"
@@ -86,6 +89,14 @@ type copilotAdapter struct {
 
 	clientMu sync.Mutex
 	client   *copilot.Client
+
+	// pendingPerms tracks in-flight permission requests from Copilot SDK
+	// callbacks that are waiting for a host decision over the Permissions
+	// bidi stream. Each entry is a buffered (size 1) channel; a decision
+	// value of "allow" or "deny" is sent by the Permissions stream handler
+	// when the host sends a PermissionEvent.request or PermissionEvent.cancel.
+	pendingPermsMu sync.Mutex
+	pendingPerms   map[string]chan<- string
 }
 
 func (p *copilotAdapter) Info(_ context.Context, _ *v2.InfoRequest) (*v2.InfoResponse, error) {
@@ -119,6 +130,81 @@ func (p *copilotAdapter) Info(_ context.Context, _ *v2.InfoRequest) (*v2.InfoRes
 			"reasoning_effort": {Type: "string", Description: "Per-step override for reasoning effort. Resets to the session default after this step. Valid: low, medium, high, xhigh."},
 		}},
 	}, nil
+}
+
+// registerPendingPerm registers a pending permission request. The caller must
+// read from ch exactly once after calling handlePermissionRequest to get the
+// host's decision ("allow" or "deny").
+func (p *copilotAdapter) registerPendingPerm(id string, ch chan<- string) {
+	p.pendingPermsMu.Lock()
+	defer p.pendingPermsMu.Unlock()
+	if p.pendingPerms == nil {
+		p.pendingPerms = make(map[string]chan<- string)
+	}
+	p.pendingPerms[id] = ch
+}
+
+// resolvePendingPerm retrieves and removes the pending-perm channel for id.
+// Returns nil if the id is not registered.
+func (p *copilotAdapter) resolvePendingPerm(id string) chan<- string {
+	p.pendingPermsMu.Lock()
+	defer p.pendingPermsMu.Unlock()
+	ch := p.pendingPerms[id]
+	delete(p.pendingPerms, id)
+	return ch
+}
+
+// drainPendingPerms signals all outstanding pending permission channels with
+// "deny" and clears the map. Called when the Permissions stream ends.
+func (p *copilotAdapter) drainPendingPerms() {
+	p.pendingPermsMu.Lock()
+	defer p.pendingPermsMu.Unlock()
+	for id, ch := range p.pendingPerms {
+		select {
+		case ch <- "deny":
+		default:
+		}
+		delete(p.pendingPerms, id)
+	}
+}
+
+// Permissions implements the adapter-side Permissions bidi stream. The host
+// sends PermissionEvent messages (request=allow, cancel=deny); the adapter
+// resolves the corresponding pending channel so that handlePermissionRequest
+// can unblock the Copilot SDK callback and return the correct result.
+func (p *copilotAdapter) Permissions(ctx context.Context, stream adapterhost.PermissionsStream) error {
+	defer p.drainPendingPerms()
+	for {
+		ev, err := stream.Recv()
+		if err != nil {
+			if errors.Is(err, io.EOF) || status.Code(err) == codes.Canceled || status.Code(err) == codes.OK {
+				return nil
+			}
+			return err
+		}
+		if req := ev.GetRequest(); req != nil {
+			id := req.GetRequestId()
+			if ch := p.resolvePendingPerm(id); ch != nil {
+				select {
+				case ch <- "allow":
+				default:
+				}
+			}
+			// Acknowledge the decision back to the host.
+			_ = stream.Send(&v2.PermissionDecision{
+				RequestId: id,
+				Decision:  "allow",
+			})
+		} else if cancel := ev.GetCancel(); cancel != nil {
+			id := cancel.GetRequestId()
+			if ch := p.resolvePendingPerm(id); ch != nil {
+				select {
+				case ch <- "deny":
+				default:
+				}
+			}
+		}
+	}
 }
 
 func (p *copilotAdapter) ensureClient(ctx context.Context) (*copilot.Client, error) {

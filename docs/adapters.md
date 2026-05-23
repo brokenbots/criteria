@@ -283,6 +283,20 @@ Permission gating is deny-by-default.
 
 The host evaluates adapter permission requests against those patterns. When a request matches, the run emits `permission.granted`; otherwise it emits `permission.denied` with reason `no matching allow_tools entry` and (for the Copilot adapter) includes a `suggestion` field only when a relevant canonical-kind suggestion exists (for example, for denied kinds with known aliases such as `read`/`write`). The Copilot adapter then surfaces the denied turn as `failure`.
 
+### How the permission round-trip works
+
+The Criteria adapter protocol uses a bidirectional `Permissions` gRPC stream alongside the `Execute` stream. The flow for each tool-use attempt is:
+
+1. The Copilot SDK calls `OnPermissionRequest` inside the adapter process.
+2. The adapter emits a `permission.request` AdapterEvent (carrying `request_id` and `tool`) via the `Execute` stream and **blocks** waiting for the host's decision.
+3. The host intercepts the event, evaluates `allow_tools`, and sends one of:
+   - `PermissionEvent.request{request_id}` (allow) over the `Permissions` stream, then emits `permission.granted`.
+   - `PermissionEvent.cancel{request_id}` (deny) over the `Permissions` stream, then emits `permission.denied`.
+4. The adapter unblocks and returns `Approved` or `Denied` to the SDK. A `Denied` result prevents the tool from running.
+5. If any permission was denied during Execute and the adapter still reported `success`, the host overrides the outcome to `needs_review`.
+
+Adapters that do not implement the `Permissions` RPC (embedding `UnimplementedPermissions`) use **post-hoc enforcement**: the tool runs anyway, but any denial overrides the outcome to `needs_review`. The Copilot adapter implements `Permissions` and uses **blocking enforcement** so the tool never runs when denied.
+
 ### Copilot permission-kind aliases
 
 The Copilot SDK reports permission requests using short kind names (`read`, `write`, `shell`, `mcp`, `url`, `memory`, `custom-tool`, `hook`). For convenience, two user-friendly aliases are recognised in `allow_tools` entries for Copilot-backed steps:

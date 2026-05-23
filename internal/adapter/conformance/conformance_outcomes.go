@@ -72,18 +72,21 @@ func testPermissionRequestShape(t *testing.T, name string, loader adapterhost.Lo
 }
 
 // assertPermissionDeniedEvent verifies that the recording sink contains a
-// permission.request adapter event forwarded from the adapter, confirming that
-// the host passes permission events through to the upstream sink. It also
-// checks the minimal WS03 payload shape: the "kind" field must be present.
+// permission.denied adapter event, confirming that the host applied the
+// allow_tools policy and denied the request. It checks the minimal payload
+// shape: request_id and tool fields must be present.
 func assertPermissionDeniedEvent(t *testing.T, sink *recordingSink) {
 	t.Helper()
-	// WS03: the adapter emits permission.request; the host forwards it to the
-	// upstream sink without policy evaluation. WS16 adds grant/deny semantics.
-	data, ok := sink.firstAdapterEvent("permission.request")
+	// WS03: the host evaluates allow_tools policy; with no allow_tools the
+	// policy denies all requests and the host emits permission.denied.
+	data, ok := sink.firstAdapterEvent("permission.denied")
 	if !ok {
-		t.Fatal("expected permission.request adapter event forwarded to upstream sink")
+		t.Fatal("expected permission.denied adapter event in upstream sink (allow_tools policy denied the request)")
 	}
-	if _, hasKind := data["kind"]; !hasKind {
-		t.Fatal("permission.request payload missing required \"kind\" field")
+	if _, hasID := data["request_id"]; !hasID {
+		t.Fatal("permission.denied payload missing required \"request_id\" field")
+	}
+	if _, hasTool := data["tool"]; !hasTool {
+		t.Fatal("permission.denied payload missing required \"tool\" field")
 	}
 }

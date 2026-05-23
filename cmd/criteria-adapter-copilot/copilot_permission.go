@@ -1,8 +1,8 @@
-// copilot_permission.go — Copilot permission-request bridging: the SDK
-// OnPermissionRequest callback that forwards requests to the host engine as
-// AdapterEvent(kind="permission.request"). The adapter auto-approves requests,
-// but marks the turn as permission-denied so idle-without-submit_outcome
-// resolves to failure until WS16 wires the bidi grant/deny back-channel.
+// copilot_permission.go — Copilot permission-request bridging: the Copilot SDK
+// OnPermissionRequest callback blocks on a pending channel until the host sends
+// a PermissionEvent.request (allow) or PermissionEvent.cancel (deny) via the
+// Permissions bidi stream. The Permissions method on copilotAdapter drives the
+// host-side decisions.
 
 package main
 
@@ -15,6 +15,13 @@ import (
 	"github.com/google/uuid"
 )
 
+// handlePermissionRequest is the SDK OnPermissionRequest callback. It:
+//  1. Assembles the permission event payload (including a request_id).
+//  2. Registers a pending channel with copilotAdapter.pendingPerms.
+//  3. Forwards the permission.request event upstream via the Execute stream sink.
+//  4. Blocks until the host sends a decision via the Permissions bidi stream
+//     or the active Execute call ends.
+//  5. Returns Approved or Rejected to the Copilot SDK based on the host decision.
 func (p *copilotAdapter) handlePermissionRequest(sessionID string, request copilot.PermissionRequest) (copilot.PermissionRequestResult, error) {
 	s := p.getSession(sessionID)
 	if s == nil {
@@ -26,6 +33,7 @@ func (p *copilotAdapter) handlePermissionRequest(sessionID string, request copil
 	s.mu.Lock()
 	sink := s.sink
 	active := s.active
+	activeCh := s.activeCh
 	s.mu.Unlock()
 
 	if !active || sink == nil {
@@ -36,21 +44,32 @@ func (p *copilotAdapter) handlePermissionRequest(sessionID string, request copil
 	payload := make(map[string]any, len(details)+2)
 	payload["request_id"] = permID
 	payload["tool"] = permissionTool(request)
+	if toolCallID := strings.TrimSpace(details["tool_call_id"]); toolCallID != "" {
+		payload["request_id"] = toolCallID
+	}
 	for k, v := range details {
 		payload[k] = v
 	}
-	if sendErr := sink.Send(adapterEvent("permission.request", payload)); sendErr != nil {
-		return copilot.PermissionRequestResult{Kind: copilot.PermissionRequestResultKindUserNotAvailable}, nil
+	requestID := payload["request_id"].(string)
+
+	decisionCh := make(chan string, 1)
+	p.registerPendingPerm(requestID, decisionCh)
+
+	if err := sink.Send(adapterEvent("permission.request", payload)); err != nil {
+		p.resolvePendingPerm(requestID)
+		return copilot.PermissionRequestResult{Kind: copilot.PermissionRequestResultKindUserNotAvailable}, nil //nolint:nilerr
 	}
 
-	s.mu.Lock()
-	s.permissionDeny = true
-	s.mu.Unlock()
-
-	// Auto-approve at the SDK layer so the session can continue. The turn is
-	// still marked as permission-denied above so idle-without-outcome resolves
-	// to failure until WS16 adds an interactive decision back-channel.
-	return copilot.PermissionRequestResult{Kind: copilot.PermissionRequestResultKindApproved}, nil
+	select {
+	case decision := <-decisionCh:
+		if decision == "allow" {
+			return copilot.PermissionRequestResult{Kind: copilot.PermissionRequestResultKindApproved}, nil
+		}
+		return copilot.PermissionRequestResult{Kind: copilot.PermissionRequestResultKindRejected}, nil
+	case <-activeCh:
+		p.resolvePendingPerm(requestID)
+		return copilot.PermissionRequestResult{Kind: copilot.PermissionRequestResultKindRejected}, nil
+	}
 }
 
 func permissionDetails(request copilot.PermissionRequest) map[string]string { //nolint:funlen,gocognit,gocyclo // collecting optional fields from SDK request variants; splitting further would obscure the boundary mapping

@@ -6,7 +6,10 @@ import (
 	"errors"
 	"log/slog"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -204,7 +207,7 @@ func (r *recordingClient) Log(_ context.Context, _ *v2.LogRequest, _ LogEventSin
 	return nil
 }
 
-func (r *recordingClient) Permissions(_ context.Context, _ <-chan *v2.PermissionEvent) error {
+func (r *recordingClient) Permissions(_ context.Context, _ <-chan *v2.PermissionEvent, _ chan<- *v2.PermissionDecision) error {
 	return nil
 }
 
@@ -375,7 +378,7 @@ type brokenPermClient struct {
 	permErr error
 }
 
-func (r *brokenPermClient) Permissions(_ context.Context, reqs <-chan *v2.PermissionEvent) error {
+func (r *brokenPermClient) Permissions(_ context.Context, reqs <-chan *v2.PermissionEvent, _ chan<- *v2.PermissionDecision) error {
 	// Drain the channel so the sender goroutine is not blocked.
 	go func() {
 		for range reqs {
@@ -425,7 +428,7 @@ func (r *blockingExecuteClient) Execute(ctx context.Context, _ *v2.ExecuteReques
 	}
 }
 
-func (r *blockingExecuteClient) Permissions(_ context.Context, reqs <-chan *v2.PermissionEvent) error {
+func (r *blockingExecuteClient) Permissions(_ context.Context, reqs <-chan *v2.PermissionEvent, _ chan<- *v2.PermissionDecision) error {
 	go func() {
 		for range reqs {
 		}
@@ -461,7 +464,7 @@ type unimplementedPermClient struct {
 	recordingClient
 }
 
-func (r *unimplementedPermClient) Permissions(_ context.Context, reqs <-chan *v2.PermissionEvent) error {
+func (r *unimplementedPermClient) Permissions(_ context.Context, reqs <-chan *v2.PermissionEvent, _ chan<- *v2.PermissionDecision) error {
 	go func() {
 		for range reqs {
 		}
@@ -720,7 +723,7 @@ func (c *unimplementedPermissionsClient) Execute(_ context.Context, _ *v2.Execut
 func (c *unimplementedPermissionsClient) Log(_ context.Context, _ *v2.LogRequest, _ LogEventSink) error {
 	return nil
 }
-func (c *unimplementedPermissionsClient) Permissions(_ context.Context, _ <-chan *v2.PermissionEvent) error {
+func (c *unimplementedPermissionsClient) Permissions(_ context.Context, _ <-chan *v2.PermissionEvent, _ chan<- *v2.PermissionDecision) error {
 	return status.Error(codes.Unimplemented, "Permissions not implemented")
 }
 func (c *unimplementedPermissionsClient) Pause(_ context.Context, _ *v2.PauseRequest) (*v2.PauseResponse, error) {
@@ -778,5 +781,216 @@ func TestToolInvocationPayloadSchema(t *testing.T) {
 	}
 	if _, hasBad := payload["args"]; hasBad {
 		t.Error("payload must not contain 'args' (old schema)")
+	}
+}
+
+// ── Permission policy enforcement tests ──────────────────────────────────────
+
+// permissionRequestEvent creates an AdapterEvent with kind "permission.request"
+// and the given request_id and tool fields.
+func permissionRequestEvent(requestID, tool string) *v2.AdapterEvent {
+	p, _ := structpb.NewStruct(map[string]any{
+		"request_id": requestID,
+		"tool":       tool,
+	})
+	return &v2.AdapterEvent{EventKind: "permission.request", Payload: p}
+}
+
+// TestHandlePermissionRequest_Allow verifies that when the step's allow_tools
+// matches the requested tool, handlePermissionRequest emits permission.granted
+// and forwards a PermissionEvent.request to the requests channel.
+func TestHandlePermissionRequest_Allow(t *testing.T) {
+	collector := &adapterEventCollector{}
+	requests := make(chan *v2.PermissionEvent, 4)
+	cs := &executeCaptureSink{
+		sink:       collector,
+		policy:     NewPolicy([]string{"read_file"}),
+		allowTools: []string{"read_file"},
+		requests:   requests,
+	}
+	cs.handlePermissionRequest(permissionRequestEvent("req-1", "read_file"))
+
+	if !collector.saw("permission.granted") {
+		t.Fatal("expected permission.granted event")
+	}
+	if collector.saw("permission.denied") {
+		t.Error("unexpected permission.denied event")
+	}
+	select {
+	case ev := <-requests:
+		if ev.GetRequest() == nil {
+			t.Error("expected PermissionEvent.request (allow); got cancel")
+		}
+		if ev.GetRequest().GetRequestId() != "req-1" {
+			t.Errorf("request_id = %q; want req-1", ev.GetRequest().GetRequestId())
+		}
+	default:
+		t.Fatal("expected PermissionEvent forwarded to requests channel")
+	}
+}
+
+// TestHandlePermissionRequest_Deny verifies that when the step has no allow_tools
+// (deny-all policy), handlePermissionRequest emits permission.denied, sets
+// anyDenied, and forwards a PermissionEvent.cancel to the requests channel.
+func TestHandlePermissionRequest_Deny(t *testing.T) {
+	collector := &adapterEventCollector{}
+	requests := make(chan *v2.PermissionEvent, 4)
+	cs := &executeCaptureSink{
+		sink:       collector,
+		policy:     NewPolicy(nil), // deny-all
+		allowTools: []string{},
+		requests:   requests,
+	}
+	cs.handlePermissionRequest(permissionRequestEvent("req-2", "shell"))
+
+	if !collector.saw("permission.denied") {
+		t.Fatal("expected permission.denied event")
+	}
+	if collector.saw("permission.granted") {
+		t.Error("unexpected permission.granted event")
+	}
+	if !cs.anyDenied {
+		t.Error("anyDenied should be true after denial")
+	}
+	select {
+	case ev := <-requests:
+		if ev.GetCancel() == nil {
+			t.Error("expected PermissionEvent.cancel (deny); got request")
+		}
+		if ev.GetCancel().GetRequestId() != "req-2" {
+			t.Errorf("cancel request_id = %q; want req-2", ev.GetCancel().GetRequestId())
+		}
+	default:
+		t.Fatal("expected PermissionEvent.cancel forwarded to requests channel")
+	}
+}
+
+// TestExecute_DeniedPermissionOverridesSuccess verifies that when any
+// permission request was denied during Execute, a "success" outcome from the
+// adapter is overridden to "needs_review".
+func TestExecute_DeniedPermissionOverridesSuccess(t *testing.T) {
+	// Build an adapter event payload with request_id and tool.
+	permPayload, _ := structpb.NewStruct(map[string]any{
+		"request_id": "req-99",
+		"tool":       "write_file",
+	})
+	rc := &deniedPermOverrideClient{permPayload: permPayload}
+	p := &rpcHandle{name: "test-stub", rpc: rc}
+	// Step with no allow_tools → deny-all policy.
+	step := &workflow.StepNode{
+		Name:       "run",
+		AllowTools: nil,
+		Outcomes: map[string]*workflow.CompiledOutcome{
+			"success":      {Name: "success"},
+			"needs_review": {Name: "needs_review"},
+		},
+	}
+	sink := &adapterEventCollector{}
+	res, err := p.Execute(context.Background(), "sess", step, sink)
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+	if res.Outcome != "needs_review" {
+		t.Errorf("outcome = %q; want needs_review (denied permission should override success)", res.Outcome)
+	}
+	if !sink.saw("permission.denied") {
+		t.Error("expected permission.denied event in sink")
+	}
+}
+
+// deniedPermOverrideClient simulates an adapter that emits a permission.request
+// event and then returns outcome "success".
+type deniedPermOverrideClient struct {
+	recordingClient
+	permPayload *structpb.Struct
+}
+
+func (r *deniedPermOverrideClient) Execute(_ context.Context, _ *v2.ExecuteRequest, sink ExecuteEventSink) error {
+	// Emit a permission.request event.
+	_ = sink.Emit(&v2.ExecuteEvent{
+		Event: &v2.ExecuteEvent_Adapter{
+			Adapter: &v2.AdapterEvent{
+				EventKind: "permission.request",
+				Payload:   r.permPayload,
+			},
+		},
+	})
+	// Emit success result.
+	return sink.Emit(&v2.ExecuteEvent{
+		Event: &v2.ExecuteEvent_Result{
+			Result: &v2.ExecuteResult{Outcome: "success"},
+		},
+	})
+}
+
+// ── Concurrent EventSink serialization regression test ───────────────────────
+
+// nonThreadSafeSink is an adapter.EventSink that panics if Adapter or Log are
+// called concurrently. The race detector catches this, but the explicit check
+// makes the test self-documenting and works without -race.
+type nonThreadSafeSink struct {
+	mu      sync.Mutex
+	inUse   int32 // atomic: 0=idle, 1=in-use
+	events  []string
+	paniced bool
+}
+
+func (s *nonThreadSafeSink) Log(stream string, _ []byte) {
+	if !atomic.CompareAndSwapInt32(&s.inUse, 0, 1) {
+		s.mu.Lock()
+		s.paniced = true
+		s.mu.Unlock()
+		return
+	}
+	time.Sleep(time.Microsecond) // hold briefly to expose races
+	atomic.StoreInt32(&s.inUse, 0)
+	s.mu.Lock()
+	s.events = append(s.events, "log:"+stream)
+	s.mu.Unlock()
+}
+
+func (s *nonThreadSafeSink) Adapter(kind string, _ any) {
+	if !atomic.CompareAndSwapInt32(&s.inUse, 0, 1) {
+		s.mu.Lock()
+		s.paniced = true
+		s.mu.Unlock()
+		return
+	}
+	time.Sleep(time.Microsecond) // hold briefly to expose races
+	atomic.StoreInt32(&s.inUse, 0)
+	s.mu.Lock()
+	s.events = append(s.events, "adapter:"+kind)
+	s.mu.Unlock()
+}
+
+// TestSerializedEventSink_ConcurrentCallsAreOrdered verifies that
+// serializedEventSink prevents concurrent calls to the underlying
+// adapter.EventSink even when Adapter and Log are called from different
+// goroutines simultaneously. The underlying nonThreadSafeSink detects
+// concurrent access and sets paniced=true if serialization is missing.
+func TestSerializedEventSink_ConcurrentCallsAreOrdered(t *testing.T) {
+	inner := &nonThreadSafeSink{}
+	wrapped := &serializedEventSink{inner: inner}
+
+	const n = 500
+	var wg sync.WaitGroup
+	wg.Add(2 * n)
+	for i := 0; i < n; i++ {
+		go func() {
+			defer wg.Done()
+			wrapped.Adapter("test.event", nil)
+		}()
+		go func() {
+			defer wg.Done()
+			wrapped.Log("stdout", []byte("hello"))
+		}()
+	}
+	wg.Wait()
+
+	inner.mu.Lock()
+	paniced := inner.paniced
+	inner.mu.Unlock()
+	if paniced {
+		t.Error("serializedEventSink allowed concurrent access to the underlying sink")
 	}
 }
