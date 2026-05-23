@@ -209,7 +209,7 @@ func (p *rpcHandle) OpenSession(ctx context.Context, id string, config map[strin
 
 // Execute streams step execution via the RPC adapter, handling concurrent log streaming,
 // event routing, and partial failure recovery.
-func (p *rpcHandle) Execute(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) { //nolint:funlen // Permissions stream lifecycle, log stream, execute RPC, and result coercion are all required in one place
+func (p *rpcHandle) Execute(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) { //nolint:funlen,gocyclo // Permissions stream lifecycle, log stream, execute RPC, and result coercion are all required in one place
 	req := &v2.ExecuteRequest{
 		SessionId:       sessionID,
 		StepName:        step.Name,
@@ -336,12 +336,12 @@ type executeCaptureSink struct {
 	// Chunks within each oneof arrive sequentially (one sequence at a time).
 	// adapterChunkNextSeq / resultChunkNextSeq track the expected next seq
 	// value (0 means no sequence in progress; >0 means expecting that value).
-	adapterChunkBuf      []byte
-	adapterChunkKind     string // event_kind carried across chunk fragments
-	adapterChunkNextSeq  uint32 // expected next adapter chunk seq (0 = idle)
-	resultChunkBuf       []byte
-	resultOutcome        string // outcome carried across result chunk fragments
-	resultChunkNextSeq   uint32 // expected next result chunk seq (0 = idle)
+	adapterChunkBuf     []byte
+	adapterChunkKind    string // event_kind carried across chunk fragments
+	adapterChunkNextSeq uint32 // expected next adapter chunk seq (0 = idle)
+	resultChunkBuf      []byte
+	resultOutcome       string // outcome carried across result chunk fragments
+	resultChunkNextSeq  uint32 // expected next result chunk seq (0 = idle)
 }
 
 func (s *executeCaptureSink) Emit(ev *v2.ExecuteEvent) error {

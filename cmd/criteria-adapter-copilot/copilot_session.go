@@ -11,8 +11,8 @@ import (
 
 	copilot "github.com/github/copilot-sdk/go"
 
-	adapterhost "github.com/brokenbots/criteria/sdk/adapterhost"
 	v2 "github.com/brokenbots/criteria/proto/criteria/v2"
+	adapterhost "github.com/brokenbots/criteria/sdk/adapterhost"
 )
 
 // copilotSession abstracts the Copilot SDK session for testing.
@@ -60,7 +60,6 @@ type sessionState struct {
 	execMu sync.Mutex
 
 	mu             sync.Mutex
-	pending        map[string]chan permDecision
 	active         bool
 	activeCh       chan struct{}
 	sink           adapterhost.ExecuteEventSender
@@ -107,7 +106,6 @@ func (p *copilotAdapter) OpenSession(ctx context.Context, req *v2.OpenSessionReq
 
 	s := &sessionState{
 		session: &sdkSession{inner: session},
-		pending: make(map[string]chan permDecision),
 	}
 
 	p.mu.Lock()

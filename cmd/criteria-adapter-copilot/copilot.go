@@ -79,11 +79,6 @@ var validReasoningEfforts = map[string]bool{
 	"xhigh":  true,
 }
 
-type permDecision struct {
-	allow  bool
-	reason string
-}
-
 type copilotAdapter struct {
 	adapterhost.UnimplementedPermissions
 	mu       sync.Mutex

@@ -175,7 +175,7 @@ func (b *MCPBridge) OpenSession(ctx context.Context, req *v2.OpenSessionRequest)
 	return &v2.OpenSessionResponse{}, nil
 }
 
-func (b *MCPBridge) Execute(ctx context.Context, req *v2.ExecuteRequest, sink adapterhost.ExecuteEventSender) error { //nolint:funlen,gocognit // event-driven tool dispatch with permission gating and chunked output
+func (b *MCPBridge) Execute(ctx context.Context, req *v2.ExecuteRequest, sink adapterhost.ExecuteEventSender) error {
 	s := b.getSession(req.GetSessionId())
 	if s == nil {
 		return fmt.Errorf("mcp: unknown session %q", req.GetSessionId())
