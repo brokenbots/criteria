@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"google.golang.org/protobuf/types/known/structpb"
+
 	"github.com/brokenbots/criteria/internal/adapter"
 	v2 "github.com/brokenbots/criteria/proto/criteria/v2"
 	"github.com/brokenbots/criteria/workflow"
@@ -359,5 +361,265 @@ func TestCollectAllowedOutcomes_Empty(t *testing.T) {
 	}
 	if len(got) != 0 {
 		t.Fatalf("got %v, want empty", got)
+	}
+}
+
+// ── Permissions stream failure tests ─────────────────────────────────────────
+
+// brokenPermClient is a recordingClient variant whose Permissions method
+// returns the configured error immediately (simulating a broken bidi stream).
+type brokenPermClient struct {
+	recordingClient
+	permErr error
+}
+
+func (r *brokenPermClient) Permissions(_ context.Context, reqs <-chan *v2.PermissionEvent) error {
+	// Drain the channel so the sender goroutine is not blocked.
+	go func() {
+		for range reqs {
+		}
+	}()
+	return r.permErr
+}
+
+// TestExecute_BrokenPermissionsStreamSurfacesError verifies that when the
+// adapter's Permissions bidi stream returns an unexpected error, Execute
+// surfaces it instead of silently swallowing it.
+func TestExecute_BrokenPermissionsStreamSurfacesError(t *testing.T) {
+	rc := &brokenPermClient{permErr: errors.New("permissions: rpc error: internal")}
+	p := &rpcHandle{name: "test-stub", rpc: rc}
+	step := &workflow.StepNode{Name: "run"}
+	sink := &adapterEventCollector{}
+
+	_, err := p.Execute(context.Background(), "sess", step, sink)
+	if err == nil {
+		t.Fatal("expected error for broken Permissions stream, got nil")
+	}
+	if !strings.Contains(err.Error(), "permissions") {
+		t.Errorf("error %q should mention permissions", err.Error())
+	}
+}
+
+// blockingExecuteClient is a Client stub where Execute blocks until the
+// blockExec channel is closed (or ctx is canceled). Used to test the
+// "Permissions failure aborts Execute" path.
+type blockingExecuteClient struct {
+	recordingClient
+	blockExec chan struct{}
+	permErr   error
+}
+
+func (r *blockingExecuteClient) Execute(ctx context.Context, _ *v2.ExecuteRequest, sink ExecuteEventSink) error {
+	select {
+	case <-r.blockExec:
+		// Unblocked normally; emit a result.
+		return sink.Emit(&v2.ExecuteEvent{
+			Event: &v2.ExecuteEvent_Result{
+				Result: &v2.ExecuteResult{Outcome: "success"},
+			},
+		})
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (r *blockingExecuteClient) Permissions(_ context.Context, reqs <-chan *v2.PermissionEvent) error {
+	go func() {
+		for range reqs {
+		}
+	}()
+	return r.permErr
+}
+
+// TestExecute_PermissionsFailureAbortsExecute verifies that when Permissions
+// fails while Execute is still running (blocking), the execCtx is canceled so
+// Execute returns promptly and the Permissions error is surfaced as root cause.
+func TestExecute_PermissionsFailureAbortsExecute(t *testing.T) {
+	blockExec := make(chan struct{}) // never closed; Execute will block until ctx canceled
+	rc := &blockingExecuteClient{
+		blockExec: blockExec,
+		permErr:   errors.New("permissions: stream reset"),
+	}
+	p := &rpcHandle{name: "test-stub", rpc: rc}
+	step := &workflow.StepNode{Name: "run"}
+	sink := &adapterEventCollector{}
+
+	_, err := p.Execute(context.Background(), "sess", step, sink)
+	if err == nil {
+		t.Fatal("expected error when Permissions aborts Execute, got nil")
+	}
+	if !strings.Contains(err.Error(), "permissions") {
+		t.Errorf("error %q should mention permissions as root cause", err.Error())
+	}
+}
+
+// unimplementedPermClient returns a gRPC Unimplemented error from Permissions,
+// simulating an adapter that does not support the Permissions bidi stream.
+type unimplementedPermClient struct {
+	recordingClient
+}
+
+func (r *unimplementedPermClient) Permissions(_ context.Context, reqs <-chan *v2.PermissionEvent) error {
+	go func() {
+		for range reqs {
+		}
+	}()
+	return errors.New("rpc error: code = Unimplemented desc = method not implemented")
+}
+
+// TestExecute_UnimplementedPermissionsStreamSurfacesError verifies that a
+// gRPC Unimplemented error from Permissions surfaces as an Execute error
+// (fail-closed: the host rejects adapters that don't implement the stream).
+func TestExecute_UnimplementedPermissionsStreamSurfacesError(t *testing.T) {
+	rc := &unimplementedPermClient{}
+	p := &rpcHandle{name: "test-stub", rpc: rc}
+	step := &workflow.StepNode{Name: "run"}
+	sink := &adapterEventCollector{}
+
+	_, err := p.Execute(context.Background(), "sess", step, sink)
+	if err == nil {
+		t.Fatal("expected error for unimplemented Permissions stream, got nil")
+	}
+	// Error should mention permissions, not just "context canceled".
+	if !strings.Contains(err.Error(), "permissions") {
+		t.Errorf("error %q should mention permissions", err.Error())
+	}
+}
+
+// ── Chunk reassembly regression tests ────────────────────────────────────────
+
+// TestEmitAdapter_ChunkOutOfOrder verifies that an out-of-order seq number in
+// a multi-chunk adapter event produces an error and resets the reassembly state.
+func TestEmitAdapter_ChunkOutOfOrder(t *testing.T) {
+	cs := &executeCaptureSink{
+		sink: &adapterEventCollector{},
+		ctx:  context.Background(),
+	}
+
+	// seq=0 — start a new sequence.
+	if err := cs.emitAdapter(&v2.AdapterEvent{
+		EventKind:   "test.event",
+		PayloadJson: []byte(`{"a"`),
+		Chunk:       &v2.Chunk{Seq: 0},
+	}); err != nil {
+		t.Fatalf("seq=0: unexpected error: %v", err)
+	}
+
+	// seq=2 — skipped seq=1; should be rejected.
+	err := cs.emitAdapter(&v2.AdapterEvent{
+		EventKind:   "test.event",
+		PayloadJson: []byte(`:"b"}`),
+		Chunk:       &v2.Chunk{Seq: 2},
+	})
+	if err == nil {
+		t.Fatal("expected out-of-order error, got nil")
+	}
+	if !strings.Contains(err.Error(), "out-of-order") {
+		t.Errorf("error %q should mention out-of-order", err.Error())
+	}
+	// Buffer must be reset after error.
+	if len(cs.adapterChunkBuf) != 0 {
+		t.Errorf("buffer not reset after out-of-order error, len=%d", len(cs.adapterChunkBuf))
+	}
+	if cs.adapterChunkNextSeq != 0 {
+		t.Errorf("nextSeq not reset after out-of-order error, got %d", cs.adapterChunkNextSeq)
+	}
+}
+
+// TestEmitAdapter_ChunkOversize verifies that accumulating chunk data beyond
+// maxChunkBufBytes returns an error and resets the reassembly buffer.
+func TestEmitAdapter_ChunkOversize(t *testing.T) {
+	cs := &executeCaptureSink{
+		sink: &adapterEventCollector{},
+		ctx:  context.Background(),
+		// Pre-fill buffer to exactly maxChunkBufBytes-1 bytes, simulating
+		// a long in-progress sequence. adapterChunkNextSeq=1 means seq=1 is next.
+		adapterChunkBuf:     make([]byte, maxChunkBufBytes-1),
+		adapterChunkNextSeq: 1,
+	}
+
+	// seq=1 with 2 bytes pushes total to maxChunkBufBytes+1 — must be rejected.
+	err := cs.emitAdapter(&v2.AdapterEvent{
+		EventKind:   "test.event",
+		PayloadJson: []byte("xx"),
+		Chunk:       &v2.Chunk{Seq: 1},
+	})
+	if err == nil {
+		t.Fatal("expected oversize error, got nil")
+	}
+	if !strings.Contains(err.Error(), "exceeds") {
+		t.Errorf("error %q should mention exceeds", err.Error())
+	}
+	if len(cs.adapterChunkBuf) != 0 {
+		t.Errorf("buffer not reset after oversize error, len=%d", len(cs.adapterChunkBuf))
+	}
+}
+
+// TestLogForwardSink_ChunkOversize verifies that a log chunk sequence that
+// would exceed maxLogLineBufBytes is rejected with an error.
+func TestLogForwardSink_ChunkOversize(t *testing.T) {
+	ls := &logForwardSink{
+		sink: &adapterEventCollector{},
+		// Pre-fill buffer near limit.
+		chunkBufs: map[string][]byte{
+			"stdout": make([]byte, maxLogLineBufBytes-1),
+		},
+	}
+
+	// seq=1 with 2 bytes pushes total over maxLogLineBufBytes.
+	err := ls.Emit(&v2.LogEvent{
+		StreamName: "stdout",
+		Line:       []byte("xx"),
+		Chunk:      &v2.Chunk{Seq: 1},
+	})
+	if err == nil {
+		t.Fatal("expected oversize error for log chunk, got nil")
+	}
+	if !strings.Contains(err.Error(), "exceeds") {
+		t.Errorf("error %q should mention exceeds", err.Error())
+	}
+	// Stream buffer should be removed after oversize error.
+	if _, ok := ls.chunkBufs["stdout"]; ok {
+		t.Error("stream buffer should be deleted after oversize error")
+	}
+}
+
+// TestToolInvocationPayloadSchema verifies that ToolInvocation events are
+// forwarded with the canonical {"name", "arguments"} payload shape, not
+// the old {"tool_name", "args"} shape that was temporarily introduced.
+func TestToolInvocationPayloadSchema(t *testing.T) {
+	args, err := structpb.NewStruct(map[string]any{"path": "/tmp/x"})
+	if err != nil {
+		t.Fatalf("structpb.NewStruct: %v", err)
+	}
+
+	collector := &adapterEventCollector{}
+	cs := &executeCaptureSink{
+		sink: collector,
+		ctx:  context.Background(),
+	}
+
+	if err := cs.emitTool(&v2.ToolInvocation{
+		ToolName: "read_file",
+		Args:     args,
+	}); err != nil {
+		t.Fatalf("emitTool: %v", err)
+	}
+
+	payload, ok := collector.first("tool.invocation")
+	if !ok {
+		t.Fatal("expected tool.invocation event")
+	}
+	if payload["name"] != "read_file" {
+		t.Errorf("payload[name] = %v; want read_file", payload["name"])
+	}
+	if _, hasArgs := payload["arguments"]; !hasArgs {
+		t.Error("payload missing 'arguments' key")
+	}
+	if _, hasBad := payload["tool_name"]; hasBad {
+		t.Error("payload must not contain 'tool_name' (old schema)")
+	}
+	if _, hasBad := payload["args"]; hasBad {
+		t.Error("payload must not contain 'args' (old schema)")
 	}
 }

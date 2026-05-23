@@ -191,12 +191,24 @@ step "ci_retry" {
 }
 
 step "repair_ci" {
-  target      = adapter.copilot.repair
+  target      = adapter.copilot.developer
   allow_tools = ["read", "write", "edit", "execute", "shell"]
   timeout     = "20m"
   max_visits  = 10
   input {
-    prompt = "`make ci` failed twice (initial + one retry). Fix all failures with the smallest correct changes; do not refactor or expand scope. Do not raise the lint baseline cap or add to .golangci.baseline.yml — fix the finding instead.\n\n--- ci stdout (last attempt) ---\n${steps.ci_retry.stdout}\n--- ci stderr (last attempt) ---\n${steps.ci_retry.stderr}\n--- end ---\n\nEnd your final message with exactly one of:\nRESULT: needs_review\nRESULT: failure"
+    prompt = <<-PROMPT
+      `make ci` failed twice (initial + one retry). Fix all failures with the smallest correct changes; do not refactor or expand scope. Do not raise the lint baseline cap or add to .golangci.baseline.yml — fix the finding instead.
+      
+      --- ci stdout (last attempt) ---
+      ${steps.ci_retry.stdout}
+
+      -- ci stderr (last attempt) ---
+      ${steps.ci_retry.stderr}\n--- end ---
+      
+      End your final message with exactly one of:
+      RESULT: needs_review
+      RESULT: failure
+    PROMPT
   }
   outcome "needs_review" { next = "ci_gate" }
   outcome "failure"      { next = "failed" }

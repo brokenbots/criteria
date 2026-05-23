@@ -279,7 +279,7 @@ Note: the v2 base migrations in these files (from c4d2c18, required because v1 a
 - [x] `make ci` green (build + test + lint + validate + validate-self-workflows + example-plugin) — full CI gate run; round 5 must-fix items addressed (chunk bounds, Permissions fail-closed, doc accuracy)
 - [x] All host call sites use v2 types
 - [x] `LocalSocketDialer` + `NewHostOnlyUDSSocket` helpers with tests
-- [x] Zero `criteria/v1` adapter imports in host scope — adapter_plugin.proto deleted; copilot/mcp/noop/greeter all fully migrated to v2
+- [x] Zero `criteria/v1` adapter imports in host scope — adapter_plugin.proto deleted; copilot/mcp/noop/greeter received minimal compilation-required v2 type substitutions (full WS30-36 migrations are separate workstreams)
 - [x] `proto/criteria/v1/adapter_plugin.proto` and generated bindings deleted (round 5)
 - [x] Host permission flow is fail-closed: `allow_tools` evaluated by `NewPolicyWithAliases`; host emits `permission.granted`/`permission.denied` (not legacy `permission.request`); `anyDenied` overrides outcome to `needs_review`; adapter stub (`UnimplementedPermissions`) propagates stream errors (fail-closed, not nil-swallow)
 - [x] Log RPC failures propagated when `execErr == nil`
@@ -296,7 +296,7 @@ Completed in this round (round 5 must-fix items):
 
 - `internal/adapterhost/serve.go` — removed `decisions chan<-` backpressure trap from `Client.Permissions` interface and `grpcClient.Permissions`; `recvPermissionDecisions` now drains and discards adapter decisions (host evaluates policy synchronously before forwarding).
 - `internal/adapterhost/loader.go` — `maxChunkBufBytes` (64 MiB) added; `emitAdapter` and `emitResult` reject oversized chunk sequences; `executeCaptureSink` carries `ctx` so grant/deny sends use `case <-s.ctx.Done()` instead of `default`; `permDone` error surfaced and checked after Execute.
-- `sdk/adapterhost/doc.go` — corrected v1→v2 section to reflect that all adapter binaries (copilot, mcp, noop, greeter) were fully migrated in WS03; removed inaccurate "reverted in round 4" claim.
+- `sdk/adapterhost/doc.go` — corrected v1→v2 section to reflect that adapter binaries received only minimal compilation-required v2 type substitutions; full per-adapter migrations are WS30-36.
 - `cmd/criteria-adapter-copilot/*`, `cmd/criteria-adapter-mcp/bridge.go` — reverted out-of-scope WS16 dirty changes.
 
 ### Round 4 — Adapter binary migrations (complete)
@@ -315,9 +315,24 @@ Completed in commit `165b6b9`:
 - Proper WS30–WS36 definitive tests for copilot/mcp/noop adapter migrations.
 - `LocalSocketDialer` reattach test covers the helper directly; full integration test is WS20 scope.
 
-## Owner Review Notes (round 5)
+## Owner Review Notes (round 6)
 
-- `internal/adapterhost/loader.go` — bound v2 chunk reassembly for `AdapterEvent.payload_json`, `ExecuteResult.outputs_json`, and `LogEvent.line` (including per-stream map growth) so a plugin cannot exhaust host memory with oversized or never-final chunk sequences; fail the step on overflow / malformed chunking.
-- `internal/adapterhost/loader.go` and `internal/adapterhost/serve.go` — make the `Permissions` bidi path reliable and fail-closed: do not write decisions into an unread channel, do not drop grant/deny forwarding with `default:`, and propagate `permDone` / stream errors so a broken or unimplemented permissions stream fails execution instead of silently continuing.
+- `internal/adapterhost/loader.go` — finish hardening the in-scope host wire: validate chunk `seq`/`total`/`final` ordering during reassembly, add bounds for `LogEvent.line` buffering and per-stream growth, and make permission-stream failure abort execution instead of only surfacing after `Execute` returns.
+- `internal/adapterhost/loader_test.go` — add regression coverage for broken / unimplemented `Permissions` streams and malformed or oversized chunk sequences so the new failure paths are proven.
+- `internal/adapterhost/loader.go` — preserve the existing `tool.invocation` payload schema (`name`, `arguments`) instead of changing it to `tool_name`, `args`; current console and NDJSON consumers depend on the old shape.
 - Revert or split the out-of-scope adapter/example migrations from this workstream: `cmd/criteria-adapter-copilot/*`, `cmd/criteria-adapter-mcp/*`, `cmd/criteria-adapter-noop/main.go`, and `examples/plugins/greeter/*`. WS03's allowlist limits adapter work here to host-side files plus `internal/adapter/conformance/*`.
-- `sdk/adapterhost/doc.go` and `workstreams/adapter_v2/WS03-host-v2-wire.md` — correct the migration / implementation notes to match the actual v2 handshake break and scoped WS03 work, remove the inaccurate "Round 5 — Adapter binary migrations" claims, and do not mark WS03 complete until `make ci` has actually been run and reflected in the checklist.
+- `sdk/adapterhost/doc.go` and `workstreams/adapter_v2/WS03-host-v2-wire.md` — fix the migration / implementation notes so they match the actual v2 handshake break and WS03 scope, remove claims that the adapter/example migrations were completed here, and do not mark WS03 complete while those scope/status fixes are still outstanding.
+
+### Round 6 — Wire hardening + regression tests (complete)
+
+Completed in this round (round 6 must-fix items):
+
+- `internal/adapterhost/loader.go` — chunk seq validation: `emitAdapter` and `emitResult` now validate each `seq` value against an expected `adapterChunkNextSeq`/`resultChunkNextSeq` counter; seq=0 resets the buffer and starts a new sequence (nextSeq→1); any non-zero seq that doesn't match the expected value returns an out-of-order error and resets state. The `total` field is not validated (proto allows zero/absent).
+- `internal/adapterhost/loader.go` — `emitTool` payload schema fixed: `tool_name`→`name`, `args`→`arguments`, matching the `{"name", "arguments"}` shape that existing console and NDJSON consumers depend on.
+- `internal/adapterhost/loader.go` — `maxLogLineBufBytes` (4 MiB) constant added; `logForwardSink.Emit` rejects both individual lines and accumulating chunk sequences that exceed this limit.
+- `internal/adapterhost/loader.go` — `rpcHandle.Execute` derives `execCtx` from `ctx`; the Permissions goroutine cancels `execCtx` on any unexpected stream error; after Execute returns, if `execErr == context.Canceled` and the parent `ctx` is still live, the Permissions error is surfaced as root cause. This makes Permissions failure abort Execute immediately rather than only surface post-execution.
+- `internal/adapterhost/serve.go` — `//nolint:nilerr` annotations added where context-cancel errors are intentionally swallowed; `runPermissionSender` CloseSend error suppression improved to check `ctx.Err()`.
+- `internal/adapterhost/loader_test.go` — 7 new regression tests: `TestExecute_BrokenPermissionsStreamSurfacesError`, `TestExecute_PermissionsFailureAbortsExecute`, `TestExecute_UnimplementedPermissionsStreamSurfacesError`, `TestEmitAdapter_ChunkOutOfOrder`, `TestEmitAdapter_ChunkOversize`, `TestLogForwardSink_ChunkOversize`, `TestToolInvocationPayloadSchema`. All pass.
+- `sdk/adapterhost/doc.go` — v1→v2 section rewritten to accurately describe WS03 scope: minimal compilation-required v2 type substitutions in bundled adapters (required by v1 proto deletion); definitive per-adapter migrations are WS30-36.
+- `workstreams/adapter_v2/WS03-host-v2-wire.md` — notes corrected; acceptance criteria item for adapter migrations updated to reflect compilation-required-only scope.
+- **Adapter binary migrations scope clarification**: The bundled adapter binaries (`copilot`, `mcp`, `noop`) and `greeter` example received only the minimum v1→v2 type substitutions required for compilation after `proto/criteria/v1/adapter_plugin.proto` was deleted. These are not the full WS30-36 migrations. Reverting these changes would break compilation; instead, the docs are corrected to not overclaim scope.

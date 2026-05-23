@@ -144,14 +144,22 @@ func (g *grpcClient) Permissions(ctx context.Context, requests <-chan *v2.Permis
 
 // runPermissionSender forwards PermissionEvent messages from requests to stream
 // until requests is closed, a send error occurs, or senderCtx is cancelled.
+// Stream errors (send or close) are suppressed when the context is already done,
+// since the cancellation racing with CloseSend is expected and benign.
 func runPermissionSender(ctx context.Context, stream v2.AdapterService_PermissionsClient, requests <-chan *v2.PermissionEvent) error {
 	for {
 		select {
 		case req, ok := <-requests:
 			if !ok {
-				return stream.CloseSend()
+				if err := stream.CloseSend(); err != nil && ctx.Err() == nil {
+					return err
+				}
+				return nil
 			}
 			if err := stream.Send(req); err != nil {
+				if ctx.Err() != nil {
+					return nil //nolint:nilerr // context cancelled; suppressing send error is intentional
+				}
 				return err
 			}
 		case <-ctx.Done():
@@ -172,7 +180,7 @@ func recvPermissionDecisions(ctx context.Context, stream v2.AdapterService_Permi
 		}
 		if err != nil {
 			if ctx.Err() != nil {
-				return nil
+				return nil //nolint:nilerr // context cancelled; suppressing recv error is intentional
 			}
 			return err
 		}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"sort"
@@ -223,12 +224,25 @@ func (p *rpcHandle) Execute(ctx context.Context, sessionID string, step *workflo
 	}
 	policy := NewPolicyWithAliases(allowTools, adapterPermissionAliases[p.name])
 
+	// execCtx is canceled if the Permissions stream fails unexpectedly, so that
+	// Execute is aborted rather than continuing without a functioning decision channel.
+	execCtx, cancelExec := context.WithCancel(ctx)
+	defer cancelExec()
+
 	// Open the Permissions bidi stream so the adapter can receive grant/deny
 	// decisions for each permission.request it emits during Execute.
 	requests := make(chan *v2.PermissionEvent, 16)
 	permCtx, cancelPerm := context.WithCancel(ctx)
 	permDone := make(chan error, 1)
-	go func() { permDone <- p.rpc.Permissions(permCtx, requests) }()
+	go func() {
+		err := p.rpc.Permissions(permCtx, requests)
+		permDone <- err
+		// Abort Execute if Permissions failed for a non-expected reason so the
+		// adapter is not left blocking on permission decisions that will never arrive.
+		if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, context.Canceled) && status.Code(err) != codes.Canceled {
+			cancelExec()
+		}
+	}()
 
 	captureSink := &executeCaptureSink{
 		ctx:         ctx,
@@ -248,7 +262,7 @@ func (p *rpcHandle) Execute(ctx context.Context, sessionID string, step *workflo
 		logDone <- p.rpc.Log(logCtx, logReq, &logForwardSink{sink: sink})
 	}()
 
-	execErr := p.rpc.Execute(ctx, req, captureSink)
+	execErr := p.rpc.Execute(execCtx, req, captureSink)
 
 	// Signal end of the Permissions stream and wait for the goroutine.
 	// Closing requests triggers CloseSend; cancelPerm ensures recvPermissionDecisions
@@ -262,9 +276,17 @@ func (p *rpcHandle) Execute(ctx context.Context, sessionID string, step *workflo
 	logErr := <-logDone
 
 	if execErr != nil {
+		// If execCtx was canceled by the Permissions goroutine (parent ctx still OK),
+		// the Permissions failure is the root cause; surface it instead of
+		// context.Canceled from the aborted Execute stream.
+		if errors.Is(execErr, context.Canceled) && ctx.Err() == nil {
+			if permErr != nil && !errors.Is(permErr, io.EOF) && !errors.Is(permErr, context.Canceled) && status.Code(permErr) != codes.Canceled {
+				return adapter.Result{Outcome: "failure"}, fmt.Errorf("permissions stream failure aborted execute: %w", permErr)
+			}
+		}
 		return adapter.Result{Outcome: "failure"}, execErr
 	}
-	if permErr != nil && !errors.Is(permErr, context.Canceled) && status.Code(permErr) != codes.Canceled {
+	if permErr != nil && !errors.Is(permErr, io.EOF) && !errors.Is(permErr, context.Canceled) && status.Code(permErr) != codes.Canceled {
 		return adapter.Result{Outcome: "failure"}, fmt.Errorf("adapter permissions stream: %w", permErr)
 	}
 	if logErr != nil && !errors.Is(logErr, context.Canceled) && status.Code(logErr) != codes.Canceled {
@@ -312,10 +334,14 @@ type executeCaptureSink struct {
 	// adapterChunkBuf accumulates AdapterEvent.payload_json fragments.
 	// resultChunkBuf accumulates ExecuteResult.outputs_json fragments.
 	// Chunks within each oneof arrive sequentially (one sequence at a time).
-	adapterChunkBuf  []byte
-	adapterChunkKind string // event_kind carried across chunk fragments
-	resultChunkBuf   []byte
-	resultOutcome    string // outcome carried across result chunk fragments
+	// adapterChunkNextSeq / resultChunkNextSeq track the expected next seq
+	// value (0 means no sequence in progress; >0 means expecting that value).
+	adapterChunkBuf      []byte
+	adapterChunkKind     string // event_kind carried across chunk fragments
+	adapterChunkNextSeq  uint32 // expected next adapter chunk seq (0 = idle)
+	resultChunkBuf       []byte
+	resultOutcome        string // outcome carried across result chunk fragments
+	resultChunkNextSeq   uint32 // expected next result chunk seq (0 = idle)
 }
 
 func (s *executeCaptureSink) Emit(ev *v2.ExecuteEvent) error {
@@ -333,13 +359,25 @@ func (s *executeCaptureSink) Emit(ev *v2.ExecuteEvent) error {
 
 func (s *executeCaptureSink) emitAdapter(adapterEvt *v2.AdapterEvent) error {
 	if chunk := adapterEvt.GetChunk(); chunk != nil {
-		// Accumulate payload_json fragment; forward when the final chunk arrives.
-		if chunk.GetSeq() == 0 {
+		// Validate and accumulate payload_json fragment; forward when final arrives.
+		seq := chunk.GetSeq()
+		if seq == 0 {
+			// New sequence; reset any prior in-progress buffer.
 			s.adapterChunkBuf = nil
 			s.adapterChunkKind = adapterEvt.GetEventKind()
+			s.adapterChunkNextSeq = 1
+		} else if seq != s.adapterChunkNextSeq {
+			// Out-of-order chunk; discard buffer and reject.
+			expected := s.adapterChunkNextSeq
+			s.adapterChunkBuf = nil
+			s.adapterChunkNextSeq = 0
+			return fmt.Errorf("adapter event chunk out-of-order: seq %d expected %d", seq, expected)
+		} else {
+			s.adapterChunkNextSeq = seq + 1
 		}
 		if len(s.adapterChunkBuf)+len(adapterEvt.GetPayloadJson()) > maxChunkBufBytes {
 			s.adapterChunkBuf = nil
+			s.adapterChunkNextSeq = 0
 			return fmt.Errorf("adapter event chunk reassembly: payload exceeds %d bytes", maxChunkBufBytes)
 		}
 		s.adapterChunkBuf = append(s.adapterChunkBuf, adapterEvt.GetPayloadJson()...)
@@ -348,6 +386,7 @@ func (s *executeCaptureSink) emitAdapter(adapterEvt *v2.AdapterEvent) error {
 		}
 		payload, err := structFromJSON(s.adapterChunkBuf)
 		s.adapterChunkBuf = nil
+		s.adapterChunkNextSeq = 0
 		if err != nil {
 			return fmt.Errorf("adapter event chunk reassembly: %w", err)
 		}
@@ -359,10 +398,14 @@ func (s *executeCaptureSink) emitAdapter(adapterEvt *v2.AdapterEvent) error {
 	return s.emitAdapterEvent(adapterEvt)
 }
 
+// emitTool converts a ToolInvocation proto event into the canonical
+// tool.invocation adapter event forwarded to the upstream EventSink.
+// The payload shape is {"name": string, "arguments": map} — preserved
+// from v1 so existing console and NDJSON consumers do not break.
 func (s *executeCaptureSink) emitTool(toolEvt *v2.ToolInvocation) error {
-	payload := map[string]any{"tool_name": toolEvt.GetToolName()}
+	payload := map[string]any{"name": toolEvt.GetToolName()}
 	if args := toolEvt.GetArgs(); args != nil {
-		payload["args"] = args.AsMap()
+		payload["arguments"] = args.AsMap()
 	}
 	s.sink.Adapter("tool.invocation", payload)
 	return nil
@@ -370,13 +413,23 @@ func (s *executeCaptureSink) emitTool(toolEvt *v2.ToolInvocation) error {
 
 func (s *executeCaptureSink) emitResult(resultEvt *v2.ExecuteResult) error {
 	if chunk := resultEvt.GetChunk(); chunk != nil {
-		// Accumulate outputs_json fragment; capture result when final chunk arrives.
-		if chunk.GetSeq() == 0 {
+		// Validate and accumulate outputs_json fragment; capture result when final arrives.
+		seq := chunk.GetSeq()
+		if seq == 0 {
 			s.resultChunkBuf = nil
 			s.resultOutcome = resultEvt.GetOutcome()
+			s.resultChunkNextSeq = 1
+		} else if seq != s.resultChunkNextSeq {
+			expected := s.resultChunkNextSeq
+			s.resultChunkBuf = nil
+			s.resultChunkNextSeq = 0
+			return fmt.Errorf("execute result chunk out-of-order: seq %d expected %d", seq, expected)
+		} else {
+			s.resultChunkNextSeq = seq + 1
 		}
 		if len(s.resultChunkBuf)+len(resultEvt.GetOutputsJson()) > maxChunkBufBytes {
 			s.resultChunkBuf = nil
+			s.resultChunkNextSeq = 0
 			return fmt.Errorf("execute result chunk reassembly: outputs exceed %d bytes", maxChunkBufBytes)
 		}
 		s.resultChunkBuf = append(s.resultChunkBuf, resultEvt.GetOutputsJson()...)
@@ -385,6 +438,7 @@ func (s *executeCaptureSink) emitResult(resultEvt *v2.ExecuteResult) error {
 		}
 		outputs, err := outputsFromJSON(s.resultChunkBuf)
 		s.resultChunkBuf = nil
+		s.resultChunkNextSeq = 0
 		if err != nil {
 			return fmt.Errorf("execute result chunk reassembly: %w", err)
 		}
@@ -487,6 +541,11 @@ func (s *executeCaptureSink) handlePermissionRequest(adapterEvt *v2.AdapterEvent
 	}
 }
 
+// maxLogLineBufBytes is the upper bound for log chunk reassembly buffers and
+// individual log lines. Log lines that would exceed this limit are rejected to
+// prevent unbounded memory growth from a misbehaving adapter.
+const maxLogLineBufBytes = 4 * 1024 * 1024 // 4 MiB per stream
+
 // logForwardSink implements LogEventSink, forwarding log lines to the
 // upstream adapter.EventSink.Log. Chunked log lines (LogEvent.chunk != nil)
 // are reassembled per stream_name before forwarding.
@@ -507,6 +566,10 @@ func (s *logForwardSink) Emit(ev *v2.LogEvent) error {
 			}
 			s.chunkBufs[stream] = nil
 		}
+		if len(s.chunkBufs[stream])+len(ev.GetLine()) > maxLogLineBufBytes {
+			delete(s.chunkBufs, stream)
+			return fmt.Errorf("log chunk reassembly: stream %q exceeds %d bytes", stream, maxLogLineBufBytes)
+		}
 		s.chunkBufs[stream] = append(s.chunkBufs[stream], ev.GetLine()...)
 		if !chunk.GetFinal() {
 			return nil
@@ -515,6 +578,9 @@ func (s *logForwardSink) Emit(ev *v2.LogEvent) error {
 		delete(s.chunkBufs, stream)
 		s.sink.Log(stream, line)
 		return nil
+	}
+	if len(ev.GetLine()) > maxLogLineBufBytes {
+		return fmt.Errorf("log event: stream %q line exceeds %d bytes", ev.GetStreamName(), maxLogLineBufBytes)
 	}
 	s.sink.Log(ev.GetStreamName(), ev.GetLine())
 	return nil
