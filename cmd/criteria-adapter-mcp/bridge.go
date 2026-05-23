@@ -15,8 +15,8 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/brokenbots/criteria/cmd/criteria-adapter-mcp/mcpclient"
-	v2 "github.com/brokenbots/criteria/sdk/pb/criteria/v2"
 	adapterhost "github.com/brokenbots/criteria/sdk/adapterhost"
+	v2 "github.com/brokenbots/criteria/sdk/pb/criteria/v2"
 )
 
 const (

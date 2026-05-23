@@ -457,8 +457,8 @@ const maxTotalLogBufBytes = 16 * 1024 * 1024 // 16 MiB total
 // out-of-order or corrupt chunk sequences.
 type logForwardSink struct {
 	sink      adapter.EventSink
-	chunkBufs map[string][]byte   // keyed by stream_name
-	chunkSeqs map[string]uint32   // expected next seq per stream (0 = no seq in progress)
+	chunkBufs map[string][]byte // keyed by stream_name
+	chunkSeqs map[string]uint32 // expected next seq per stream (0 = no seq in progress)
 }
 
 // totalLogBufSize returns the sum of all in-progress chunk buffer lengths.
@@ -475,58 +475,71 @@ func (s *logForwardSink) Emit(ev *v2.LogEvent) error {
 		return nil
 	}
 	if chunk := ev.GetChunk(); chunk != nil {
-		stream := ev.GetStreamName()
-		seq := chunk.GetSeq()
-		if seq == 0 {
-			// New sequence; reset this stream's buffer and seq counter.
-			if s.chunkBufs == nil {
-				s.chunkBufs = make(map[string][]byte)
-			}
-			if s.chunkSeqs == nil {
-				s.chunkSeqs = make(map[string]uint32)
-			}
-			s.chunkBufs[stream] = nil
-			s.chunkSeqs[stream] = 1
-		} else {
-			expected := s.chunkSeqs[stream]
-			if expected == 0 {
-				// Non-zero seq with no sequence in progress for this stream.
-				return fmt.Errorf("log chunk: stream %q received seq %d with no sequence in progress", stream, seq)
-			}
-			if seq != expected {
-				// Out-of-order chunk; discard buffer and fail closed.
-				delete(s.chunkBufs, stream)
-				delete(s.chunkSeqs, stream)
-				return fmt.Errorf("log chunk: stream %q out-of-order seq %d (expected %d)", stream, seq, expected)
-			}
-			s.chunkSeqs[stream] = expected + 1
-		}
-		// Per-stream cap check.
-		if len(s.chunkBufs[stream])+len(ev.GetLine()) > maxLogLineBufBytes {
-			delete(s.chunkBufs, stream)
-			delete(s.chunkSeqs, stream)
-			return fmt.Errorf("log chunk reassembly: stream %q exceeds %d bytes", stream, maxLogLineBufBytes)
-		}
-		// Aggregate cap check across all concurrent buffers.
-		if totalLogBufSize(s.chunkBufs)+len(ev.GetLine()) > maxTotalLogBufBytes {
-			delete(s.chunkBufs, stream)
-			delete(s.chunkSeqs, stream)
-			return fmt.Errorf("log chunk reassembly: aggregate buffer exceeds %d bytes", maxTotalLogBufBytes)
-		}
-		s.chunkBufs[stream] = append(s.chunkBufs[stream], ev.GetLine()...)
-		if !chunk.GetFinal() {
-			return nil
-		}
-		line := s.chunkBufs[stream]
-		delete(s.chunkBufs, stream)
-		delete(s.chunkSeqs, stream)
-		s.sink.Log(stream, line)
-		return nil
+		return s.emitChunk(ev, chunk)
 	}
 	if len(ev.GetLine()) > maxLogLineBufBytes {
 		return fmt.Errorf("log event: stream %q line exceeds %d bytes", ev.GetStreamName(), maxLogLineBufBytes)
 	}
 	s.sink.Log(ev.GetStreamName(), ev.GetLine())
+	return nil
+}
+
+// emitChunk handles a chunked log event: validates seq ordering, enforces memory
+// caps, and forwards the reassembled line when the final chunk arrives.
+func (s *logForwardSink) emitChunk(ev *v2.LogEvent, chunk *v2.Chunk) error {
+	stream := ev.GetStreamName()
+	seq := chunk.GetSeq()
+	if seq == 0 {
+		// New sequence; reset this stream's buffer and seq counter.
+		if s.chunkBufs == nil {
+			s.chunkBufs = make(map[string][]byte)
+		}
+		if s.chunkSeqs == nil {
+			s.chunkSeqs = make(map[string]uint32)
+		}
+		s.chunkBufs[stream] = nil
+		s.chunkSeqs[stream] = 1
+	} else {
+		if err := s.validateSeq(stream, seq); err != nil {
+			return err
+		}
+	}
+	// Per-stream cap check.
+	if len(s.chunkBufs[stream])+len(ev.GetLine()) > maxLogLineBufBytes {
+		delete(s.chunkBufs, stream)
+		delete(s.chunkSeqs, stream)
+		return fmt.Errorf("log chunk reassembly: stream %q exceeds %d bytes", stream, maxLogLineBufBytes)
+	}
+	// Aggregate cap check across all concurrent buffers.
+	if totalLogBufSize(s.chunkBufs)+len(ev.GetLine()) > maxTotalLogBufBytes {
+		delete(s.chunkBufs, stream)
+		delete(s.chunkSeqs, stream)
+		return fmt.Errorf("log chunk reassembly: aggregate buffer exceeds %d bytes", maxTotalLogBufBytes)
+	}
+	s.chunkBufs[stream] = append(s.chunkBufs[stream], ev.GetLine()...)
+	if !chunk.GetFinal() {
+		return nil
+	}
+	line := s.chunkBufs[stream]
+	delete(s.chunkBufs, stream)
+	delete(s.chunkSeqs, stream)
+	s.sink.Log(stream, line)
+	return nil
+}
+
+// validateSeq checks the sequence number for a continuation chunk and
+// advances the counter; returns an error and clears state on mismatch.
+func (s *logForwardSink) validateSeq(stream string, seq uint32) error {
+	expected := s.chunkSeqs[stream]
+	if expected == 0 {
+		return fmt.Errorf("log chunk: stream %q received seq %d with no sequence in progress", stream, seq)
+	}
+	if seq != expected {
+		delete(s.chunkBufs, stream)
+		delete(s.chunkSeqs, stream)
+		return fmt.Errorf("log chunk: stream %q out-of-order seq %d (expected %d)", stream, seq, expected)
+	}
+	s.chunkSeqs[stream] = expected + 1
 	return nil
 }
 

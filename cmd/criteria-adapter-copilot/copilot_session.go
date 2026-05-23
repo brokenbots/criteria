@@ -11,8 +11,8 @@ import (
 
 	copilot "github.com/github/copilot-sdk/go"
 
-	v2 "github.com/brokenbots/criteria/sdk/pb/criteria/v2"
 	adapterhost "github.com/brokenbots/criteria/sdk/adapterhost"
+	v2 "github.com/brokenbots/criteria/sdk/pb/criteria/v2"
 )
 
 // copilotSession abstracts the Copilot SDK session for testing.

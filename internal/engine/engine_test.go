@@ -408,17 +408,6 @@ func (s *captureStepEventSink) sawAdapterKind(kind string) bool {
 	return false
 }
 
-func (s *captureStepEventSink) firstAdapterEvent(kind string) (map[string]any, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for _, evt := range s.events {
-		if evt.kind == kind {
-			return evt.data, true
-		}
-	}
-	return nil, false
-}
-
 type captureEventSink struct {
 	s *captureStepEventSink
 }

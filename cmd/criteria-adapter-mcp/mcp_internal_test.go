@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	v2 "github.com/brokenbots/criteria/sdk/pb/criteria/v2"
 	"github.com/brokenbots/criteria/sdk/adapterhost"
+	v2 "github.com/brokenbots/criteria/sdk/pb/criteria/v2"
 )
 
 // fakeEventSender collects Execute events for assertions.
