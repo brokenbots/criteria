@@ -4,7 +4,8 @@
 // conformance test so those tests run in the default (no env-var) lane.
 //
 // Supported methods:
-//   - ping                                                => {protocolVersion:3}
+//   - connect                                             => {ok:true, version, protocolVersion:3}
+//   - ping                                                => {timestamp, protocolVersion}
 //   - status.get                                         => {version, protocolVersion}
 //   - session.create                                     => {sessionId}
 //   - session.send                                       => {messageId}; async events follow
@@ -99,6 +100,7 @@ var (
 
 	// sendCounts tracks the per-session turn counter for scenario dispatch.
 	sendCounts sync.Map // sessionID => *int64
+	stdout     io.Writer = os.Stdout
 )
 
 func main() {
@@ -121,12 +123,18 @@ func main() {
 
 func handleRequest(msg *rpcMsg) {
 	switch msg.Method {
+	case "connect":
+		respond(msg.ID, map[string]any{
+			"ok":              true,
+			"version":         "fake-copilot-0.0.1",
+			"protocolVersion": 3,
+		})
+
 	case "ping":
-		ts := time.Now().UnixMilli()
 		v := 3
 		respond(msg.ID, map[string]any{
 			"message":         "",
-			"timestamp":       ts,
+			"timestamp":       time.Now().UTC().Format(time.RFC3339Nano),
 			"protocolVersion": v,
 		})
 
@@ -391,7 +399,7 @@ func writeJSON(v any) {
 	}
 	wrMu.Lock()
 	defer wrMu.Unlock()
-	_ = writeFrame(os.Stdout, data)
+	_ = writeFrame(stdout, data)
 }
 
 // writeFrame writes a Content-Length-framed payload.

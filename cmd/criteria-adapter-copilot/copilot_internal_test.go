@@ -174,19 +174,18 @@ func TestPermissionDetails(t *testing.T) {
 	fullCommand := "echo hi > out.txt"
 	warning := "danger"
 	path := "out.txt"
-	cmds := []copilot.PermissionRequestCommand{{Identifier: "echo", ReadOnly: false}}
+	cmds := []copilot.PermissionRequestShellCommand{{Identifier: "echo", ReadOnly: false}}
 
-	request := copilot.PermissionRequest{
-		Kind:            copilot.PermissionRequestKindShell,
+	request := copilot.PermissionRequestShell{
 		ToolCallID:      &toolCallID,
-		Intention:       &intention,
-		FullCommandText: &fullCommand,
+		Intention:       intention,
+		FullCommandText: fullCommand,
 		Warning:         &warning,
-		Path:            &path,
+		PossiblePaths:   []string{path},
 		Commands:        cmds,
 	}
 
-	details := permissionDetails(&request)
+	details := permissionDetails(request)
 	if details["kind"] == "" {
 		t.Fatalf("expected kind in details")
 	}
@@ -213,14 +212,13 @@ func TestPermissionDetailsSensitiveOptIn(t *testing.T) {
 	toolCallID := "tc-2"
 	fullCommand := "echo hello > secret.txt"
 	path := "secret.txt"
-	request := copilot.PermissionRequest{
-		Kind:            copilot.PermissionRequestKindShell,
+	request := copilot.PermissionRequestShell{
 		ToolCallID:      &toolCallID,
-		FullCommandText: &fullCommand,
-		Path:            &path,
+		FullCommandText: fullCommand,
+		PossiblePaths:   []string{path},
 	}
 
-	details := permissionDetails(&request)
+	details := permissionDetails(request)
 	if details["request_json"] == "" {
 		t.Fatalf("expected request_json when sensitive details are enabled")
 	}
@@ -282,14 +280,13 @@ func TestPermissionPermitHandshake(t *testing.T) {
 	p := &copilotAdapter{sessions: map[string]*sessionState{"s1": s}}
 
 	toolCallID := "tc-123"
-	request := copilot.PermissionRequest{
-		Kind:       copilot.PermissionRequestKindShell,
+	request := copilot.PermissionRequestShell{
 		ToolCallID: &toolCallID,
 	}
 
 	resCh := make(chan copilot.PermissionRequestResult, 1)
 	go func() {
-		result, _ := p.handlePermissionRequest("s1", &request)
+		result, _ := p.handlePermissionRequest("s1", request)
 		resCh <- result
 	}()
 
@@ -328,7 +325,7 @@ func TestPermissionPermitHandshake(t *testing.T) {
 func TestExecuteMaxTurnsLimit(t *testing.T) {
 	fake := &fakeSession{
 		emitOnSend: []copilot.SessionEvent{
-			{Type: copilot.SessionEventTypeAssistantMessage, Data: &copilot.AssistantMessageData{MessageID: "m1", Content: "hello"}},
+			{Data: &copilot.AssistantMessageData{MessageID: "m1", Content: "hello"}},
 		},
 	}
 	p := &copilotAdapter{sessions: map[string]*sessionState{
@@ -499,8 +496,8 @@ func TestValidateReasoningEffort(t *testing.T) {
 func TestExecutePerStepReasoningEffortRestoresDefault(t *testing.T) {
 	fake := &fakeSession{
 		emitOnSend: []copilot.SessionEvent{
-			{Type: copilot.SessionEventTypeAssistantMessage, Data: &copilot.AssistantMessageData{MessageID: "m1", Content: "working..."}},
-			{Type: copilot.SessionEventTypeSessionIdle, Data: &copilot.SessionIdleData{}},
+			{Data: &copilot.AssistantMessageData{MessageID: "m1", Content: "working..."}},
+			{Data: &copilot.SessionIdleData{}},
 		},
 	}
 
@@ -566,8 +563,8 @@ func TestExecutePerStepReasoningEffortRestoresDefault(t *testing.T) {
 func TestExecutePerStepEffortRestoresWhenNoDefault(t *testing.T) {
 	fake := &fakeSession{
 		emitOnSend: []copilot.SessionEvent{
-			{Type: copilot.SessionEventTypeAssistantMessage, Data: &copilot.AssistantMessageData{MessageID: "m1", Content: "working..."}},
-			{Type: copilot.SessionEventTypeSessionIdle, Data: &copilot.SessionIdleData{}},
+			{Data: &copilot.AssistantMessageData{MessageID: "m1", Content: "working..."}},
+			{Data: &copilot.SessionIdleData{}},
 		},
 	}
 

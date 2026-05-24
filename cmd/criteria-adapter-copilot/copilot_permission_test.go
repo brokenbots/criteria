@@ -9,7 +9,7 @@ import (
 )
 
 func TestPermissionDetailsKindField(t *testing.T) {
-	req := &copilot.PermissionRequest{Kind: copilot.PermissionRequestKindRead}
+	req := copilot.PermissionRequestRead{}
 	details := permissionDetails(req)
 	if details["kind"] != "read" {
 		t.Errorf("details[kind] = %q, want %q", details["kind"], "read")
@@ -19,10 +19,9 @@ func TestPermissionDetailsKindField(t *testing.T) {
 func TestPermissionDetailsOptionalFields(t *testing.T) {
 	toolCallID := "tc-123"
 	intention := "read source file"
-	req := &copilot.PermissionRequest{
-		Kind:       copilot.PermissionRequestKindRead,
+	req := copilot.PermissionRequestRead{
 		ToolCallID: &toolCallID,
-		Intention:  &intention,
+		Intention:  intention,
 	}
 	details := permissionDetails(req)
 	if details["tool_call_id"] != toolCallID {
@@ -36,10 +35,9 @@ func TestPermissionDetailsOptionalFields(t *testing.T) {
 func TestPermissionDetailsSensitiveFieldsRedactedByDefault(t *testing.T) {
 	path := "/etc/passwd"
 	cmd := "cat /etc/passwd"
-	req := &copilot.PermissionRequest{
-		Kind:            copilot.PermissionRequestKindRead,
-		Path:            &path,
-		FullCommandText: &cmd,
+	req := copilot.PermissionRequestShell{
+		FullCommandText: cmd,
+		PossiblePaths:   []string{path},
 	}
 	details := permissionDetails(req)
 	if _, ok := details["path"]; ok {
@@ -51,9 +49,8 @@ func TestPermissionDetailsSensitiveFieldsRedactedByDefault(t *testing.T) {
 }
 
 func TestPermissionDetailsCommandsField(t *testing.T) {
-	req := &copilot.PermissionRequest{
-		Kind: copilot.PermissionRequestKindShell,
-		Commands: []copilot.PermissionRequestCommand{
+	req := copilot.PermissionRequestShell{
+		Commands: []copilot.PermissionRequestShellCommand{
 			{Identifier: "git status"},
 		},
 	}

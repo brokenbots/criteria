@@ -33,7 +33,7 @@ func (p *copilotAdapter) Permit(_ context.Context, req *pb.PermitRequest) (*pb.P
 	return &pb.PermitResponse{}, nil
 }
 
-func (p *copilotAdapter) handlePermissionRequest(sessionID string, request *copilot.PermissionRequest) (copilot.PermissionRequestResult, error) {
+func (p *copilotAdapter) handlePermissionRequest(sessionID string, request copilot.PermissionRequest) (copilot.PermissionRequestResult, error) {
 	s := p.getSession(sessionID)
 	if s == nil {
 		return copilot.PermissionRequestResult{Kind: copilot.PermissionRequestResultKindUserNotAvailable}, nil
@@ -94,54 +94,112 @@ func buildPermissionEvent(permID string, details map[string]string) *pb.ExecuteE
 	}
 }
 
-func permissionDetails(request *copilot.PermissionRequest) map[string]string { //nolint:funlen,gocognit,gocyclo // collecting optional fields from a struct; splitting into helpers would obscure the data contract
+func permissionDetails(request copilot.PermissionRequest) map[string]string { //nolint:funlen,gocognit,gocyclo // collecting optional fields from SDK request variants; splitting further would obscure the boundary mapping
 	includeSensitive := includeSensitivePermissionDetails()
 
 	details := map[string]string{
-		"kind": string(request.Kind),
+		"kind": string(request.Kind()),
 	}
-	if request.ToolCallID != nil {
-		details["tool_call_id"] = *request.ToolCallID
-	}
-	if request.Intention != nil {
-		details["intention"] = *request.Intention
-	}
-	if includeSensitive && request.FullCommandText != nil {
-		details["full_command_text"] = *request.FullCommandText
-	}
-	if includeSensitive && request.Path != nil {
-		details["path"] = *request.Path
-	}
-	if includeSensitive && request.URL != nil {
-		details["url"] = *request.URL
-	}
-	if request.ServerName != nil {
-		details["server_name"] = *request.ServerName
-	}
-	if request.ToolName != nil {
-		details["tool_name"] = *request.ToolName
-	}
-	if request.Warning != nil {
-		details["warning"] = *request.Warning
-	}
-	if includeSensitive && request.Args != nil {
-		details["args"] = stringifyAny(request.Args)
-	}
-	if includeSensitive && request.ToolArgs != nil {
-		details["tool_args"] = stringifyAny(request.ToolArgs)
-	}
-	if includeSensitive && len(request.PossiblePaths) > 0 {
-		details["possible_paths"] = strings.Join(request.PossiblePaths, ",")
-	}
-	if len(request.Commands) > 0 {
-		cmds := make([]string, 0, len(request.Commands))
-		for _, cmd := range request.Commands {
-			if strings.TrimSpace(cmd.Identifier) != "" {
-				cmds = append(cmds, cmd.Identifier)
+	switch req := request.(type) {
+	case copilot.PermissionRequestCustomTool:
+		setString(details, "tool_call_id", req.ToolCallID)
+		if req.ToolName != "" {
+			details["tool_name"] = req.ToolName
+		}
+		if includeSensitive && req.Args != nil {
+			details["args"] = stringifyAny(req.Args)
+		}
+	case copilot.PermissionRequestExtensionManagement:
+		setString(details, "tool_call_id", req.ToolCallID)
+		setString(details, "extension_name", req.ExtensionName)
+		if req.Operation != "" {
+			details["operation"] = req.Operation
+		}
+	case copilot.PermissionRequestExtensionPermissionAccess:
+		setString(details, "tool_call_id", req.ToolCallID)
+		if req.ExtensionName != "" {
+			details["extension_name"] = req.ExtensionName
+		}
+		if len(req.Capabilities) > 0 {
+			details["capabilities"] = strings.Join(req.Capabilities, ",")
+		}
+	case copilot.PermissionRequestHook:
+		setString(details, "tool_call_id", req.ToolCallID)
+		if req.ToolName != "" {
+			details["tool_name"] = req.ToolName
+		}
+		setString(details, "hook_message", req.HookMessage)
+		if includeSensitive && req.ToolArgs != nil {
+			details["tool_args"] = stringifyAny(req.ToolArgs)
+		}
+	case copilot.PermissionRequestMcp:
+		setString(details, "tool_call_id", req.ToolCallID)
+		if req.ServerName != "" {
+			details["server_name"] = req.ServerName
+		}
+		if req.ToolName != "" {
+			details["tool_name"] = req.ToolName
+		}
+		if includeSensitive && req.Args != nil {
+			details["args"] = stringifyAny(req.Args)
+		}
+	case copilot.PermissionRequestMemory:
+		setString(details, "tool_call_id", req.ToolCallID)
+		if req.Fact != "" {
+			details["fact"] = req.Fact
+		}
+		setString(details, "subject", req.Subject)
+		setString(details, "citations", req.Citations)
+		setString(details, "reason", req.Reason)
+	case copilot.PermissionRequestRead:
+		setString(details, "tool_call_id", req.ToolCallID)
+		if req.Intention != "" {
+			details["intention"] = req.Intention
+		}
+		if includeSensitive && req.Path != "" {
+			details["path"] = req.Path
+		}
+	case copilot.PermissionRequestShell:
+		setString(details, "tool_call_id", req.ToolCallID)
+		if req.Intention != "" {
+			details["intention"] = req.Intention
+		}
+		setString(details, "warning", req.Warning)
+		if includeSensitive && req.FullCommandText != "" {
+			details["full_command_text"] = req.FullCommandText
+		}
+		if includeSensitive && len(req.PossiblePaths) > 0 {
+			if len(req.PossiblePaths) == 1 {
+				details["path"] = req.PossiblePaths[0]
+			}
+			details["possible_paths"] = strings.Join(req.PossiblePaths, ",")
+		}
+		if len(req.Commands) > 0 {
+			cmds := make([]string, 0, len(req.Commands))
+			for _, cmd := range req.Commands {
+				if strings.TrimSpace(cmd.Identifier) != "" {
+					cmds = append(cmds, cmd.Identifier)
+				}
+			}
+			if len(cmds) > 0 {
+				details["commands"] = strings.Join(cmds, ",")
 			}
 		}
-		if len(cmds) > 0 {
-			details["commands"] = strings.Join(cmds, ",")
+	case copilot.PermissionRequestURL:
+		setString(details, "tool_call_id", req.ToolCallID)
+		if req.Intention != "" {
+			details["intention"] = req.Intention
+		}
+		if includeSensitive && req.URL != "" {
+			details["url"] = req.URL
+		}
+	case copilot.PermissionRequestWrite:
+		setString(details, "tool_call_id", req.ToolCallID)
+		if req.Intention != "" {
+			details["intention"] = req.Intention
+		}
+		if includeSensitive && req.FileName != "" {
+			details["path"] = req.FileName
 		}
 	}
 
@@ -151,6 +209,12 @@ func permissionDetails(request *copilot.PermissionRequest) map[string]string { /
 		}
 	}
 	return details
+}
+
+func setString(details map[string]string, key string, value *string) {
+	if value != nil && *value != "" {
+		details[key] = *value
+	}
 }
 
 // includeSensitivePermissionDetails controls whether rich permission payload

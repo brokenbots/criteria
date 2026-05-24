@@ -52,21 +52,21 @@ func (ts *turnState) handleEvent(sink adapterhost.ExecuteEventSender) func(copil
 	return func(event copilot.SessionEvent) {
 		switch d := event.Data.(type) {
 		case *copilot.AssistantMessageDeltaData:
-			ts.handleAssistantDelta(sink, event.Type, d)
+			ts.handleAssistantDelta(sink, event.Type(), d)
 		case *copilot.AssistantMessageData:
-			ts.handleAssistantMessage(sink, event.Type, d)
+			ts.handleAssistantMessage(sink, event.Type(), d)
 		case *copilot.ExternalToolRequestedData:
 			ts.sendErr(sink.Send(adapterEvent("tool.invocation", map[string]any{
 				"request_id":   d.RequestID,
 				"tool_call_id": d.ToolCallID,
 				"name":         d.ToolName,
 				"arguments":    stringifyAny(d.Arguments),
-				"event_type":   string(event.Type),
+				"event_type":   string(event.Type()),
 			})))
 		case *copilot.ExternalToolCompletedData:
 			ts.sendErr(sink.Send(adapterEvent("tool.result", map[string]any{
 				"request_id": d.RequestID,
-				"event_type": string(event.Type),
+				"event_type": string(event.Type()),
 			})))
 		case *copilot.SessionIdleData:
 			select {
