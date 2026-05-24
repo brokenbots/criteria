@@ -149,6 +149,7 @@ step "pr_review" {
     workstream_file           = var.workstream_file
     project_dir               = var.project_dir
     pr_reviewer_model         = var.pr_reviewer_model
+    reviewer_model            = var.reviewer_model
     base_branch               = var.base_branch
     require_workflow_approval = var.require_workflow_approval
   }

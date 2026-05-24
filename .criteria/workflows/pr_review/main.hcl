@@ -8,7 +8,13 @@
 #   open_pr (shell)              → push branch, idempotently create/update PR
 #   warm_up (shell)              → sleep 90s for first CI propagation
 #   pr_status (shell)            → emits classifier on stdout
-#   route_status (switch)        → dispatches to merge, review, escalate, or backoff
+#   route_status (switch)        → dispatches to merge, deep-review, thread-review, escalate, or backoff
+#   specialized_reviews (agent×4)→ deep parallel 4-axis review (security, quality, workstream, api_compat)
+#   verdict_aggregate (shell)    → checks whether all 4 axes approved unanimously
+#   check_unanimous (switch)     → unanimous → pr_review; not → owner_review
+#   owner_review (agent)         → adjudicates specialist reports; approved → pr_review
+#                                                                changes_requested → post_pr_findings
+#   post_pr_findings (shell)     → posts must-fix list as a PR comment; → count_review_attempt
 #   pr_review (agent)            → cold-review; resolves threads + posts recommendation
 #   route_after_cold_review      → switch: require_workflow_approval=true → approval node
 #                                           require_workflow_approval=false → await_github_approval
@@ -19,6 +25,15 @@
 #   sync_base (shell)            → fetch origin + checkout base_branch + ff-pull
 #   verify_base_in_sync (shell)  → confirms merged commit is reachable from base_branch
 #   finalize_ok (shell)          → sets status output = "ok"
+#
+# Approval modes and deep review:
+#   When pr_status == "ready" (CI green, no open threads), the workflow runs a
+#   deep 4-axis parallel review before the cold pr_review agent. This is the
+#   exhaustive multi-axis audit deferred from the develop loop. The develop loop
+#   uses a lightweight pair reviewer to keep iteration tight; the deep review
+#   happens here as the final gate before human approval and merge.
+#   When pr_status == "threads_open", the cold pr_review agent handles thread
+#   triage directly (no deep review needed — CI is green, just resolve threads).
 #
 # Approval modes:
 #   require_workflow_approval=false (default, feature branches):
@@ -60,6 +75,18 @@ variable "max_review_attempts" {
   description = "Number of pr_reviewer escalations before returning `escalated` to the parent."
 }
 
+variable "reviewer_model" {
+  type        = "string"
+  default     = "gpt-5.4"
+  description = "Model for the deep specialist reviewers (security, quality, workstream, api_compat)."
+}
+
+variable "reviewer_base_url" {
+  type        = "string"
+  default     = ""
+  description = "Optional base URL override for the specialist reviewer model."
+}
+
 variable "pr_reviewer_model" {
   type        = "string"
   default     = "gpt-5.5"
@@ -93,8 +120,31 @@ output "status" {
   value = shared.terminal_status
 }
 
+subworkflow "review_axis" {
+  source = "./review_axis"
+}
+
 adapter "shell" "gh" {
   config {}
+}
+
+adapter "copilot" "reviewer" {
+  config {
+    model            = var.reviewer_model
+    provider_base_url   = var.reviewer_base_url
+    reasoning_effort = "high"
+    max_turns        = 10
+  }
+}
+
+adapter "copilot" "owner" {
+  config {
+    model            = var.reviewer_model
+    #provider_base_url   = var.reviewer_base_url
+    reasoning_effort = "high"
+    max_turns        = 15
+    system_prompt    = trimfrontmatter(file("agents/owner.agent.md"))
+  }
 }
 
 adapter "copilot" "pr_reviewer" {
@@ -153,7 +203,7 @@ switch "route_status" {
   }
   condition {
     match = steps.pr_status.stdout == "ready"
-    next  = step.pr_review
+    next  = step.specialized_reviews
   }
   condition {
     match = steps.pr_status.stdout == "threads_open"
@@ -172,6 +222,128 @@ switch "route_status" {
     next  = state.escalated
   }
   default { next = state.failed }
+}
+
+# ── Deep parallel specialist reviews — 4 axes ──────────────────────────────
+# Runs only when pr_status == "ready" (CI green, no open threads). This is the
+# exhaustive review deferred from the develop loop. Each axis runs in parallel
+# and always emits RESULT: success when complete (verdict is in the report body).
+# on_failure = "continue" so one broken axis doesn't cancel the others.
+
+step "specialized_reviews" {
+  target       = subworkflow.review_axis
+  parallel     = ["security", "quality", "workstream", "api_compat"]
+  parallel_max = 4
+  on_failure   = "continue"
+  max_visits   = 10
+  input {
+    review_kind     = each.value
+    workstream_file = var.workstream_file
+    project_dir     = var.project_dir
+    reviewer_model  = var.reviewer_model
+  }
+  outcome "success"       { next = "_continue" }
+  outcome "failure"       { next = "_continue" }
+  outcome "all_succeeded" { next = "verdict_aggregate" }
+  outcome "any_failed"    { next = "failed" }
+}
+
+# ── Verdict aggregation: skip owner adjudication on unanimous approval ─────────
+
+step "verdict_aggregate" {
+  target     = adapter.shell.gh
+  timeout    = "30s"
+  max_visits = 10
+  input {
+    command           = <<-CMD
+      mkdir -p .criteria/tmp
+      cat > .criteria/tmp/verdict_agg_input.txt <<'CRITERIA_VERDICT_REPORTS_EOF'
+      ${steps.specialized_reviews[0].report}
+      ${steps.specialized_reviews[1].report}
+      ${steps.specialized_reviews[2].report}
+      ${steps.specialized_reviews[3].report}
+      CRITERIA_VERDICT_REPORTS_EOF
+      sh .criteria/workflows/develop/scripts/aggregate-verdicts.sh < .criteria/tmp/verdict_agg_input.txt
+    CMD
+    working_directory = var.project_dir
+  }
+  outcome "success" { next = "check_unanimous" }
+  outcome "failure" { next = "owner_review" }
+}
+
+switch "check_unanimous" {
+  condition {
+    match = steps.verdict_aggregate.stdout == "unanimous"
+    next  = step.pr_review
+  }
+  default { next = step.owner_review }
+}
+
+# ── Owner adjudication (only when specialists disagree) ─────────────────────
+# Reads all four specialist reports and the workstream md, then decides what
+# is genuinely blocking. Approved work proceeds to the cold pr_review.
+# Changes requested are posted as a PR comment and the workflow backs off to
+# wait for the developer to push fixes.
+
+step "owner_review" {
+  target      = adapter.copilot.owner
+  allow_tools = ["read", "search", "execute"]
+  timeout     = "20m"
+  max_visits  = 10
+  input {
+    prompt = <<-PROMPT
+      You are the workstream owner adjudicating the four specialist reviewer reports for ${var.workstream_file}.
+      Read the workstream md and `.criteria/tmp/diff.patch` (pre-cached; do not run git diff).
+      The four specialist reviewer reports are below — each contains a `VERDICT:` line and findings.
+      Decide which requests are legitimate, in scope, and mandatory.
+      Reject overreach, duplicates, speculative rewrites, or anything contradicting the workstream non-goals.
+
+      Record your verdict under `## Owner Review Notes` in ${var.workstream_file}.
+      If changes are needed, write only must-fix items there.
+
+      In the submit_outcome reason, include a concise must-fix list (file:line + issue) if requesting changes,
+      or a brief approval note if complete. This reason is posted as a PR comment if changes are requested.
+
+      --- security ---
+      ${steps.specialized_reviews[0].report}
+      --- quality ---
+      ${steps.specialized_reviews[1].report}
+      --- workstream ---
+      ${steps.specialized_reviews[2].report}
+      --- api_compat ---
+      ${steps.specialized_reviews[3].report}
+      --- end ---
+
+      End your final message with exactly one of:
+      RESULT: approved
+      RESULT: changes_requested
+      RESULT: failure
+    PROMPT
+  }
+  outcome "approved"          { next = "pr_review" }
+  outcome "changes_requested" { next = "post_pr_findings" }
+  outcome "failure"           { next = "failed" }
+}
+
+# ── Post findings as PR comment, then back off ─────────────────────────────
+# Posts the owner must-fix list as a PR comment so the developer can see what
+# needs to be fixed, then counts the attempt and enters the backoff-poll loop.
+
+step "post_pr_findings" {
+  target     = adapter.shell.gh
+  timeout    = "60s"
+  max_visits = 5
+  input {
+    command           = <<-CMD
+      set -eu
+      branch=$(git branch --show-current)
+      pr_num=$(gh pr view "$branch" --json number --jq '.number')
+      gh pr comment "$pr_num" --body "### Deep Review: Changes Requested\n\n${steps.owner_review.reason}\n\n_Posted by the automated review workflow. Please push fixes to the branch and CI will re-run._"
+    CMD
+    working_directory = var.project_dir
+  }
+  outcome "success" { next = "count_review_attempt" }
+  outcome "failure" { next = "count_review_attempt" }
 }
 
 step "backoff" {
