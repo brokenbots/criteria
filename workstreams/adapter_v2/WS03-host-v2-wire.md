@@ -233,40 +233,38 @@ Enumerated:
 - HCL grammar files in `workflow/` — those are touched by WS09.
 - `.criteria/workflows/**` — all workflow/prompt files are out of WS03 scope (reverted in round 14).
 
-## Implementation Notes (WS03 complete — rev 3)
+## Implementation Notes (WS03 complete — rounds 1–14)
 
 ### What was done
 
 **Host-side (internal/adapterhost/)**
-- `serve.go` — replaced `Client` interface with v2 methods; implemented `grpcClient` adapter wrapping generated v2 stubs; fixed `Permissions` bidi teardown to use `context.WithCancel` + labelled `break loop` so the sender goroutine always exits cleanly; propagates `sendDone` sender-side errors when `recvErr == nil` so a dying sender does not silently swallow its error.
-- `loader.go` — updated all call sites to v2 types; added concurrent `Log` stream fan-in alongside `Execute` stream; propagates `Log` RPC errors when `execErr == nil` (ignores `context.Canceled` from our own teardown); `executeCaptureSink` is the WS03 auto-allow stub — it forwards `permission.request` events upstream and does NOT evaluate policy or track anyDenied (that is WS16 scope).
-- `loader_reattach.go` (new) — `LocalSocketDialer` + `NewHostOnlyUDSSocket` helpers for plugin reattach.
-- `loader_reattach_test.go` (new) — unit tests for both helpers.
+- `serve.go` — replaced `Client` interface with v2 methods; implemented `grpcClient` adapter wrapping generated v2 stubs; `Permissions` bidi takes `requests <-chan *v2.PermissionEvent`; adapter ACKs are drained and discarded (dead decisions channel removed in round 13); teardown uses labelled `break loop` + `senderCtx` so the sender goroutine always exits cleanly.
+- `loader.go` — updated all call sites to v2 types; concurrent `Log` + `Execute` streams wrapped in `serializedEventSink` to prevent concurrent sink calls; `executeCaptureSink` intercepts `permission.request` events, evaluates `allow_tools` policy via `NewPolicyWithAliases`, emits `permission.granted`/`permission.denied` audit events, and forwards `PermissionEvent.request` (allow) or `PermissionEvent.cancel` (deny) to the adapter via the `Permissions` bidi stream; `anyDenied` override rewrites `success` outcome to `needs_review` after Execute; Log chunk seq/aggregate cap enforced (16 MiB); `codes.Unimplemented` from adapters not implementing `Permissions` treated as opt-out (not an error).
+- `loader_reattach.go` (new) — `LocalSocketDialer` + `NewHostOnlyUDSSocket` helpers; `validateSocketSecurity` enforces `0700` dir / `0600` socket before dialing; `noopAttachedRunner.Wait` blocks until `Kill` (prevents go-plugin from marking the reattached plugin as exited prematurely).
+- `loader_reattach_test.go` (new) — unit tests covering normal reattach, socket security rejection, `noopAttachedRunner` wait/kill contract.
 - `sessions.go` — added `PermissionState` stub field; all v1 type references removed.
 
 **SDK (sdk/adapterhost/)**
-- `serve.go` — v2 `grpcAdapterServer` bridge with `Permissions` bidi stub; Pause/Resume/Snapshot/Restore/Inspect are NOT delegated (they fall through to `v2.UnimplementedAdapterServiceServer`, returning gRPC Unimplemented). This keeps lifecycle optional without forcing adapters to implement stubs.
-- `service.go` — `Service` interface updated to v2; `ExecuteEventSender`, `LogEventSender`, `PermissionsStream`, `UnimplementedPermissions`, `UnimplementedLifecycle` types added. `Pause`/`Resume`/`Snapshot`/`Restore`/`Inspect` are **not** in `Service` (WS17/WS18 scope); `UnimplementedLifecycle` is provided as an optional embed for adapters that want to advertise those methods now.
-- `handshake.go` — plugin handshake updated.
-- `doc.go` — updated to acknowledge v1 adapter-plugin/protocol break (WS03 deleted adapter_plugin.proto; all adapters must rebuild against v2).
+- `serve.go` — v2 `grpcAdapterServer` bridge; Pause/Resume/Snapshot/Restore/Inspect fall through to `v2.UnimplementedAdapterServiceServer` (gRPC Unimplemented) — lifecycle methods intentionally not wired (WS17/WS18 scope).
+- `service.go` — `Service` interface updated to v2; `ExecuteEventSender`, `LogEventSender`, `PermissionsStream`, `UnimplementedPermissions` types added. `Pause`/`Resume`/`Snapshot`/`Restore`/`Inspect` are **not** in `Service` (WS17/WS18 scope). `UnimplementedLifecycle` is **not** present — adapters must not implement lifecycle methods until a lifecycle workstream wires them through.
+- `handshake.go` — plugin handshake updated to v2 protocol version.
+- `doc.go` — updated: v1 adapter-plugin/protocol break acknowledged; WS03 ships blocking permission enforcement for copilot and mcp.
 
 **Conformance (internal/adapter/conformance/)**
-- `testfixtures/broken/main.go` — v2; no lifecycle stubs (Service doesn't require them).
-- `testdata/noop/main.go` (new) — minimal v2 noop adapter with `parallel_safe` capability and `delay_ms` support; uses `UnimplementedPermissions`. Lives in `testdata/` so it is not scanned by `go test` but can be built explicitly by the conformance test.
-- `noop_adapter_test.go` (new) — builds `testdata/noop` and runs `conformance.RunAdapter` against it; this is the WS03 Step 8 v2 reference conformance check.
+- `testfixtures/broken/main.go` — v2; no lifecycle stubs.
+- `testdata/noop/main.go` (new) — minimal v2 noop adapter with `parallel_safe`, `permission_gating`, and `permission_request_forwarding` capabilities; emits a real `permission.request` payload with non-empty `request_id` and `tool` fields.
+- `noop_adapter_test.go` (new) — builds `testdata/noop` and runs `conformance.RunAdapter` against it.
+- `conformance_outcomes.go` — `assertPermissionDeniedEvent` validates non-empty `request_id` and `tool` fields; capability gate uses `permission_gating || permission_request_forwarding`.
 
 **Permission flow (cmd/criteria-adapter-copilot/)**
-- `copilot_permission.go` — `handlePermissionRequest` returns `PermissionRequestResultKindApproved` (WS03 auto-allow stub). The adapter forwards the `permission.request` event to the host for logging; the tool runs normally. WS16 adds the interactive bidi grant/deny back-channel.
-- `copilot_session.go` — `permissionDeny bool` field not present; pass-through only.
-- `copilot_turn.go` — no permission-related state in `handleIdleTurn`; WS03 is pure pass-through.
-- `copilot.go` — `permission_gating` capability not advertised (WS03 is auto-allow, not interactive gating).
+- `copilot.go` — advertises `permission_gating` capability; `copilotAdapter` struct has `pendingPermsMu sync.Mutex` + `pendingPerms map[string]chan<- string`; `Permissions` method routes host `PermissionEvent.request` → "allow" and `PermissionEvent.cancel` → "deny" to pending channels.
+- `copilot_permission.go` — `handlePermissionRequest` generates a fresh UUID `request_id` (collision-safe; ToolCallID is never reused as the registry key), registers a pending channel, forwards `permission.request` event, **blocks** on `select{decisionCh/activeCh}`, returns `Approved` or `Rejected` based on host decision; emitting the event fails closed (`UserNotAvailable`) rather than silently allowing the tool action.
 
-**Adapter cleanup (out-of-scope migrations removed)**
-- `cmd/criteria-adapter-copilot/copilot.go` — lifecycle stubs removed.
-- `cmd/criteria-adapter-mcp/bridge.go` — lifecycle stubs removed.
-- `cmd/criteria-adapter-noop/main.go` — `UnimplementedLifecycle` embed removed (stubs were not needed since Service no longer requires lifecycle methods).
-- `examples/plugins/greeter/main.go` — lifecycle stubs removed.
-Note: the v2 base migrations in these files (from c4d2c18, required because v1 adapter_plugin.proto was deleted) are intentionally kept. They are pre-migrations of WS30–WS36 scope.
+**MCP permission flow (cmd/criteria-adapter-mcp/)**
+- `bridge.go` — `MCPBridge` has `pendingPermsMu`/`pendingPerms`; `Execute` gates `CallTool` behind a blocking permission round-trip (UUID `request_id`, pending channel, `permission.request` emission, `select{decisionCh/ctx.Done()}`); returns `failure` without calling `CallTool` when denied; advertises `permission_gating`.
+
+**Adapter cleanup**
+- `cmd/criteria-adapter-copilot/copilot.go`, `cmd/criteria-adapter-mcp/bridge.go`, `cmd/criteria-adapter-noop/main.go`, `examples/plugins/greeter/main.go` — v2 base type migrations (required because v1 adapter_plugin.proto deleted; full WS30-36 migrations are separate workstreams).
 
 **Proto/v1 deletion**
 - `proto/criteria/v1/adapter_plugin.proto` deleted.
@@ -276,15 +274,18 @@ Note: the v2 base migrations in these files (from c4d2c18, required because v1 a
 - `Makefile` `proto:` and `proto-check-drift:` targets — `buf generate --path proto/criteria/v1` lines removed.
 
 ### Key design decisions
-- Permission handling is auto-allow at the adapter layer (WS03): adapter returns `Approved` to Copilot SDK; host records the `permission.request` event; tool runs normally. WS16 adds interactive grant/deny via the bidi `Permissions` stream.
+- **Permission enforcement is blocking and host-evaluated**: `executeCaptureSink.handlePermissionRequest` intercepts `permission.request` events, evaluates `allow_tools` via `NewPolicyWithAliases`, emits `permission.granted`/`permission.denied` audit events, and sends the host decision to the adapter over the `Permissions` bidi stream before the adapter proceeds. Denied permissions rewrite `success` to `needs_review` after Execute. Adapters that do not implement `Permissions` (`codes.Unimplemented`) are treated as opt-out — they lose blocking enforcement but Execute is not aborted.
+- **`permission_gating` capability is advertised** by copilot and mcp adapters; noop fixture advertises both `permission_gating` and `permission_request_forwarding` for compatibility.
 - Log RPC failures are propagated when Execute succeeds — a broken log stream is not silently ignored.
-- `Permissions` bidi stream sender goroutine is guarded by a derived context; sender-side errors are propagated when the receiver succeeds first.
-- `Pause`/`Resume`/`Snapshot`/`Restore`/`Inspect` are NOT in the `Service` interface and are not wired through the gRPC bridge; `v2.UnimplementedAdapterServiceServer` returns `codes.Unimplemented` for all lifecycle RPCs. `UnimplementedLifecycle` removed from `sdk/adapterhost` — adapters must not implement these methods until a lifecycle workstream wires them through.
+- Log + Execute streams are serialized through `serializedEventSink` before reaching any shared `adapter.EventSink`.
+- `Permissions` bidi stream sender goroutine is guarded by a derived context (`senderCtx`); the dead `decisions chan<- *v2.PermissionDecision` parameter was removed in round 13 — adapter ACKs are drained and discarded.
+- `Pause`/`Resume`/`Snapshot`/`Restore`/`Inspect` are NOT in the `Service` interface and are not wired through the gRPC bridge; `v2.UnimplementedAdapterServiceServer` returns `codes.Unimplemented` for all lifecycle RPCs. `UnimplementedLifecycle` is **not** in `sdk/adapterhost` — adapters must not implement these methods until WS17/WS18.
 - `ExecuteRequest.Config` renamed to `Input` in v2 proto; all adapters/tests updated.
 - Log stream is separate from Execute stream.
 - `permDecision` struct and `Permit` RPC flow removed entirely.
+- Socket security contract: `LocalSocketDialer` validates `0700` parent dir and `0600` socket file before dialing; `NewHostOnlyUDSSocket` creates the host-only directory.
 
-### Acceptance criteria (updated after round 7)
+### Acceptance criteria (updated through round 14)
 - [x] `make ci` green (build + test + lint + validate + validate-self-workflows + example-plugin)
 - [x] All host call sites use v2 types
 - [x] `LocalSocketDialer` + `NewHostOnlyUDSSocket` helpers with tests
