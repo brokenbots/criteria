@@ -35,7 +35,7 @@ type Client interface {
     OpenSession(ctx context.Context, req *v2.OpenSessionRequest) (*v2.OpenSessionResponse, error)
     Execute(ctx context.Context, req *v2.ExecuteRequest, sink ExecuteEventSink) error
     Log(ctx context.Context, req *v2.LogRequest, sink LogEventSink) error
-    Permissions(ctx context.Context, requests <-chan *v2.PermissionEvent, decisions chan<- *v2.PermissionDecision) error
+    Permissions(ctx context.Context, requests <-chan *v2.PermissionEvent) error
     Pause(ctx context.Context, req *v2.PauseRequest) (*v2.PauseResponse, error)
     Resume(ctx context.Context, req *v2.ResumeRequest) (*v2.ResumeResponse, error)
     Snapshot(ctx context.Context, req *v2.SnapshotRequest) (*v2.SnapshotResponse, error)
@@ -211,6 +211,15 @@ Enumerated:
 
 - `internal/adapter/serve.go`, `loader.go`, `loader_reattach.go` (new), `sessions.go`, `discovery.go`, `process.go`.
 - `internal/adapterhost/serve.go`, `loader.go`, `loader_reattach.go`, `loader_reattach_test.go`, `loader_test.go`.
+- `internal/adapterhost/builtin.go` — v2 type updates for the builtin adapter wrapper; aligns with the host-side v2 Service interface.
+- `internal/adapterhost/handshake.go` — updated protocol version constant to v2; required for go-plugin handshake.
+- `internal/adapterhost/handshake_test.go` — wire-name consistency test proving SDK `HandshakeConfig` and host `HandshakeConfig` stay in sync.
+- `internal/adapterhost/info_schema_test.go` — `AdapterInfoFromProto` round-trip test, added to cover the new v2 schema translation path (`boolean`/`bool` alias, round 13).
+- `internal/adapterhost/serve_test.go` — `TestAdapterWireNames` verifies the v2 proto descriptor contains all expected RPC methods; guards against drift between host `Client` interface and proto.
+- `internal/adapterhost/sessions.go` — `PermissionState` stub field (Step 5); v1 type references removed; `HasCapability` helper added (used by engine for permission-gating capability gate).
+- `internal/adapterhost/sessions_test.go` — updated tests covering v2 types, `PermissionState` field presence, and `HasCapability`.
+- `internal/adapterhost/testfixtures/permissive/main.go` — test fixture that emits configurable `permission.request` events; used by `loader_test.go` permission round-trip tests.
+- `internal/adapterhost/testfixtures/publicsdk/main.go` — reference fixture proving public-SDK-only adapter authorship; used by `publicsdk_conformance_test.go`.
 - `internal/engine/*` and `internal/cli/*` call sites — mechanical type updates.
 - `sdk/adapterhost/*` (post-WS01 path).
 - `sdk/pb/criteria/v2/adapter.pb.go`, `sdk/pb/criteria/v2/adapter_grpc.pb.go` — WS03 cutover and blocking-permission doc comments.

@@ -38,7 +38,12 @@ type Service interface {
 	Log(context.Context, *v2.LogRequest, LogEventSender) error
 	// Permissions is the bidi permission stream. The host sends PermissionEvent
 	// messages; the adapter responds with PermissionDecision messages. Embed
-	// [UnimplementedPermissions] to satisfy this until WS16.
+	// [UnimplementedPermissions] if the adapter does not need to block tool
+	// execution on host decisions — the host applies post-hoc enforcement
+	// (overriding success to needs_review) when any permission was denied.
+	// Adapters that must prevent tool execution on denial should implement
+	// Permissions themselves (see cmd/criteria-adapter-copilot for a blocking
+	// example).
 	Permissions(context.Context, PermissionsStream) error
 	CloseSession(context.Context, *v2.CloseSessionRequest) (*v2.CloseSessionResponse, error)
 }
