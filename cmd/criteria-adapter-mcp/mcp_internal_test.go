@@ -379,8 +379,8 @@ func TestMCPBridge_Execute_PermissionDenied(t *testing.T) {
 	if _, err := b.OpenSession(ctx, &v2.OpenSessionRequest{
 		SessionId: "sess-deny",
 		Config: map[string]string{
-			"command":    testEchoBin,
-			"allow_tools": "",  // block all tools — requires permission for every call
+			"command":     testEchoBin,
+			"allow_tools": "", // block all tools — requires permission for every call
 		},
 	}); err != nil {
 		t.Fatalf("OpenSession: %v", err)
@@ -432,8 +432,8 @@ func TestMCPBridge_Execute_PermissionsStreamTeardown(t *testing.T) {
 	if _, err := b.OpenSession(ctx, &v2.OpenSessionRequest{
 		SessionId: "sess-drain",
 		Config: map[string]string{
-			"command":    testEchoBin,
-			"allow_tools": "",  // block all tools
+			"command":     testEchoBin,
+			"allow_tools": "", // block all tools
 		},
 	}); err != nil {
 		t.Fatalf("OpenSession: %v", err)
@@ -468,4 +468,3 @@ func TestMCPBridge_Execute_PermissionsStreamTeardown(t *testing.T) {
 		t.Error("result outcome should not be success after stream teardown")
 	}
 }
-
