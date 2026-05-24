@@ -164,10 +164,27 @@ step "ci_gate" {
     working_directory = var.project_dir
   }
   outcome "success" { next = "cache_diff" }
-  outcome "failure" { next = "develop" }
+  outcome "failure" { next = "fix_ci" }
 }
 
+step "fix_ci" {
+  target = adapter.copilot.developer
+  allow_tools = [ "*" ]
+  timeout = "30m"
+  max_visits = 30
+  input {
+    prompt = <<-PROMPT
+    ci failed with the following output: ${step.ci_gate.stdout}
+    error: ${step.ci_gate.stderr}
 
+    evaluate the tests and ensure they are still valid, then fix the error either in code, by fixing the tests or removing invalid tests withe appropriate notes.   do not add rules for bypassing or ignoring linting errors address the issue instead of working around it.  the issue is due to work that is out of scope, resolve the test or comment it out with a note about why its out of scope and the reason an out of scope test change is being made but make sure ci passes.
+
+    exit by calling the `submit_outcome` come tool with the appropriate `outcome` of either `needs_review` or `failure` and the appropriate reason. 
+    PROMPT
+  }
+  outcome "needs_review" { next = "ci_gate" }
+  outcome "failure" { next = "failed" }
+}
 # ── Cache the diff for reviewers ─────────────────────────────────────────────
 # Writes .criteria/tmp/diff.patch + diff.stat once so all 4 reviewers can read
 # the same file instead of each invoking `git diff origin/$base_branch...HEAD`.
