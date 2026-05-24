@@ -231,6 +231,7 @@ Enumerated:
 - `README.md`, `PLAN.md`, `AGENTS.md`, `CHANGELOG.md`, `CONTRIBUTING.md`, `workstreams/README.md`.
 - Other workstream files in `workstreams/adapter_v2/`.
 - HCL grammar files in `workflow/` — those are touched by WS09.
+- `.criteria/workflows/**` — all workflow/prompt files are out of WS03 scope (reverted in round 14).
 
 ## Implementation Notes (WS03 complete — rev 3)
 
@@ -440,3 +441,11 @@ New tests in `internal/adapterhost/loader_test.go`:
 5. **Workstream metadata** (`workstreams/adapter_v2/WS03-host-v2-wire.md`): "Files this workstream may modify" scope updated to include all touched files (sdk/pb generated files, loader_reattach_test.go, mcp_internal_test.go, conformance testdata, greeter go.mod/go.sum). Round 13 implementation section added.
 
 6. **boolean/bool alias** (`proto/criteria/v2/adapter.proto:76`, `internal/adapterhost/loader.go:protoToConfigFieldType`): proto comment updated to list both `"bool"` and `"boolean"` as accepted values. `protoToConfigFieldType` switch updated to `case "bool", "boolean":` so JSON Schema convention adapters are not silently downcast to string type.
+
+### Round 14 — Revert out-of-scope workflow changes (complete)
+
+1. **`.criteria/workflows/bootstrap/bootstrap.hcl`** — restored to adapter-v2 base; removed the out-of-scope `reviewer_model` variable passthrough added in `a7be77f`.
+2. **`.criteria/workflows/develop/main.hcl`** — restored to adapter-v2 base; removed pair_review loop, fix_ci step, and associated step-reference fixes added in commits `a7be77f`, `44be73e`, `c06f781`.
+3. **`.criteria/workflows/pr_review/main.hcl`** — restored to adapter-v2 base; removed 4-axis specialist review loop, `owner_review` step (the buggy `allow_tools = ["read", "search", "execute"]` step that could not satisfy its own write-to-workstream contract), and all associated switch routing.
+4. **Deleted new files** — removed `develop/agents/pair.agent.md`, `pr_review/agents/owner.agent.md`, and entire `pr_review/review_axis/` tree (agents/*.md + main.hcl). None of these existed in the adapter-v2 base.
+5. **Workstream allowlist** — added `.criteria/workflows/**` to "Files this workstream may NOT edit" to make the constraint explicit and prevent future scope creep.
