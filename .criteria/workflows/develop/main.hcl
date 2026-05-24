@@ -174,8 +174,8 @@ step "fix_ci" {
   max_visits = 30
   input {
     prompt = <<-PROMPT
-    ci failed with the following output: ${step.ci_gate.stdout}
-    error: ${step.ci_gate.stderr}
+    ci failed with the following output: ${steps.ci_gate.stdout}
+    error: ${steps.ci_gate.stderr}
 
     evaluate the tests and ensure they are still valid, then fix the error either in code, by fixing the tests or removing invalid tests withe appropriate notes.   do not add rules for bypassing or ignoring linting errors address the issue instead of working around it.  the issue is due to work that is out of scope, resolve the test or comment it out with a note about why its out of scope and the reason an out of scope test change is being made but make sure ci passes.
 
