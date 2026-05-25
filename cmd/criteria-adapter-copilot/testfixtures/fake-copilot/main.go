@@ -97,8 +97,9 @@ var (
 	permSeq int64 // monotonic counter for permission request IDs
 	toolSeq int64 // monotonic counter for tool request IDs
 
-	// sendCounts tracks the per-session turn counter for scenario dispatch.
-	sendCounts sync.Map  // sessionID => *int64
+	// sendCounts tracks the per-session turn counter for scenario dispatch
+	// (sessionID => *int64).
+	sendCounts sync.Map
 	stdout     io.Writer = os.Stdout
 )
 
