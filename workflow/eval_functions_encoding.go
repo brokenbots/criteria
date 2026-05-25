@@ -1,6 +1,6 @@
 package workflow
 
-// eval_functions_encoding.go — base64, JSON, URL, and YAML HCL functions.
+// eval_functions_encoding.go — base64, URL, and YAML HCL functions.
 
 import (
 	"encoding/base64"
@@ -19,8 +19,6 @@ func registerEncodingFunctions() map[string]function.Function {
 	return map[string]function.Function{
 		"base64encode": base64EncodeFunction(),
 		"base64decode": base64DecodeFunction(),
-		"jsonencode":   jsonEncodeFunction(),
-		"jsondecode":   jsonDecodeFunction(),
 		"urlencode":    urlEncodeFunction(),
 		"yamlencode":   yamlEncodeFunction(),
 		"yamldecode":   yamlDecodeFunction(),
@@ -47,42 +45,6 @@ func base64DecodeFunction() function.Function {
 				return cty.StringVal(""), fmt.Errorf("base64decode(): %w", err)
 			}
 			return cty.StringVal(string(decoded)), nil
-		},
-	})
-}
-
-func jsonEncodeFunction() function.Function {
-	return function.New(&function.Spec{
-		Params: []function.Parameter{{Name: "value", Type: cty.DynamicPseudoType, AllowNull: true}},
-		Type:   function.StaticReturnType(cty.String),
-		Impl: func(args []cty.Value, _ cty.Type) (cty.Value, error) {
-			data, err := ctyjson.Marshal(args[0], args[0].Type())
-			if err != nil {
-				return cty.StringVal(""), fmt.Errorf("jsonencode(): %w", err)
-			}
-			return cty.StringVal(string(data)), nil
-		},
-	})
-}
-
-func jsonDecodeFunction() function.Function {
-	return function.New(&function.Spec{
-		Params: []function.Parameter{{Name: "value", Type: cty.String}},
-		Type: function.TypeFunc(func(_ []cty.Value) (cty.Type, error) {
-			// Type is determined from the JSON content at call time.
-			return cty.DynamicPseudoType, nil
-		}),
-		Impl: func(args []cty.Value, _ cty.Type) (cty.Value, error) {
-			raw := []byte(args[0].AsString())
-			ty, err := ctyjson.ImpliedType(raw)
-			if err != nil {
-				return cty.NilVal, fmt.Errorf("jsondecode(): %w", err)
-			}
-			v, err := ctyjson.Unmarshal(raw, ty)
-			if err != nil {
-				return cty.NilVal, fmt.Errorf("jsondecode(): %w", err)
-			}
-			return v, nil
 		},
 	})
 }

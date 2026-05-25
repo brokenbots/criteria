@@ -354,25 +354,37 @@ Expression functions available in all HCL attribute values within a workflow. Fu
 <!-- BEGIN GENERATED:functions -->
 | Function | Signature | Returns | Source |
 |---|---|---|---|
-| `file` | `file(path: string)` | `string` | [workflow/eval_functions.go:125](../workflow/eval_functions.go#L125) |
-| `fileexists` | `fileexists(path: string)` | `bool` | [workflow/eval_functions.go:258](../workflow/eval_functions.go#L258) |
-| `fileset` | `fileset(path: string, pattern: string)` | `list(string)` | [workflow/eval_functions.go:342](../workflow/eval_functions.go#L342) |
-| `templatefile` | `templatefile(path: string, vars: any)` | `string` | [workflow/eval_functions.go:183](../workflow/eval_functions.go#L183) |
-| `trimfrontmatter` | `trimfrontmatter(content: string)` | `string` | [workflow/eval_functions.go:468](../workflow/eval_functions.go#L468) |
 | `sha256` | `sha256(value: string)` | `string` | [workflow/eval_functions_hash.go:28](../workflow/eval_functions_hash.go#L28) |
 | `sha1` | `sha1(value: string)` | `string` | [workflow/eval_functions_hash.go:28](../workflow/eval_functions_hash.go#L28) |
 | `sha512` | `sha512(value: string)` | `string` | [workflow/eval_functions_hash.go:28](../workflow/eval_functions_hash.go#L28) |
 | `md5` | `md5(value: string)` | `string` | [workflow/eval_functions_hash.go:28](../workflow/eval_functions_hash.go#L28) |
-| `base64encode` | `base64encode(value: string)` | `string` | [workflow/eval_functions_encoding.go:30](../workflow/eval_functions_encoding.go#L30) |
-| `base64decode` | `base64decode(value: string)` | `string` | [workflow/eval_functions_encoding.go:40](../workflow/eval_functions_encoding.go#L40) |
-| `jsonencode` | `jsonencode(value: any)` | `string` | [workflow/eval_functions_encoding.go:54](../workflow/eval_functions_encoding.go#L54) |
-| `jsondecode` | `jsondecode(value: string)` | `unknown` | [workflow/eval_functions_encoding.go:68](../workflow/eval_functions_encoding.go#L68) |
-| `urlencode` | `urlencode(value: string)` | `string` | [workflow/eval_functions_encoding.go:90](../workflow/eval_functions_encoding.go#L90) |
-| `yamlencode` | `yamlencode(value: any)` | `string` | [workflow/eval_functions_encoding.go:100](../workflow/eval_functions_encoding.go#L100) |
-| `yamldecode` | `yamldecode(value: string)` | `unknown` | [workflow/eval_functions_encoding.go:126](../workflow/eval_functions_encoding.go#L126) |
+| `base64encode` | `base64encode(value: string)` | `string` | [workflow/eval_functions_encoding.go:28](../workflow/eval_functions_encoding.go#L28) |
+| `base64decode` | `base64decode(value: string)` | `string` | [workflow/eval_functions_encoding.go:38](../workflow/eval_functions_encoding.go#L38) |
+| `urlencode` | `urlencode(value: string)` | `string` | [workflow/eval_functions_encoding.go:52](../workflow/eval_functions_encoding.go#L52) |
+| `yamlencode` | `yamlencode(value: any)` | `string` | [workflow/eval_functions_encoding.go:62](../workflow/eval_functions_encoding.go#L62) |
+| `yamldecode` | `yamldecode(value: string)` | `unknown` | [workflow/eval_functions_encoding.go:88](../workflow/eval_functions_encoding.go#L88) |
 | `uuid` | `uuid()` | `string` | [workflow/eval_functions_dynamic.go:28](../workflow/eval_functions_dynamic.go#L28) |
 | `timestamp` | `timestamp()` | `string` | [workflow/eval_functions_dynamic.go:41](../workflow/eval_functions_dynamic.go#L41) |
+| `startswith` | `startswith(string: string, prefix: string)` | `bool` | [workflow/eval_functions.go:143](../workflow/eval_functions.go#L143) |
+| `endswith` | `endswith(string: string, suffix: string)` | `bool` | [workflow/eval_functions.go:156](../workflow/eval_functions.go#L156) |
+| `strrev` | `strrev(string: string)` | `string` | [workflow/eval_functions.go:169](../workflow/eval_functions.go#L169) |
 <!-- END GENERATED:functions -->
+
+### Standard library functions
+
+In addition to the Criteria-specific functions listed in the table above, the following functions from `github.com/zclconf/go-cty/cty/function/stdlib` are available in all workflow expressions:
+
+| Category | Functions |
+|---|---|
+| Numeric | `abs`, `add`, `ceil`, `divide`, `floor`, `int`, `log`, `max`, `min`, `modulo`, `multiply`, `negate`, `parseint`, `pow`, `signum`, `subtract` |
+| String | `chomp`, `format`, `formatlist`, `indent`, `join`, `lower`, `replace`, `split`, `strlen`, `substr`, `title`, `trim`, `trimprefix`, `trimspace`, `trimsuffix`, `upper` |
+| Collection | `chunklist`, `coalesce`, `coalescelist`, `compact`, `concat`, `contains`, `csvdecode`, `distinct`, `element`, `flatten`, `index`, `keys`, `length`, `lookup`, `merge`, `range`, `regex`, `regexall`, `regexreplace`, `reverse`, `reverselist`, `slice`, `sort`, `values`, `zipmap` |
+| Set | `sethaselement`, `setintersection`, `setproduct`, `setsubtract`, `setsymmetricdifference`, `setunion` |
+| Encoding | `byteslen`, `bytesslice`, `jsondecode`, `jsonencode` |
+| Logical / comparison | `and`, `assertnotnull`, `equal`, `greaterthan`, `greaterthanorequalto`, `hasindex`, `lessthan`, `lessthanorequalto`, `not`, `notequal`, `or` |
+| Date / time | `formatdate`, `timeadd` |
+
+> **Note:** `jsonencode` and `jsondecode` are provided by the CTY stdlib. Criteria previously maintained local wrappers but now delegates to the community implementation.
 
 ### Function notes
 
