@@ -99,7 +99,7 @@ var (
 	toolSeq int64 // monotonic counter for tool request IDs
 
 	// sendCounts tracks the per-session turn counter for scenario dispatch.
-	sendCounts sync.Map // sessionID => *int64
+	sendCounts sync.Map  // sessionID => *int64
 	stdout     io.Writer = os.Stdout
 )
 
