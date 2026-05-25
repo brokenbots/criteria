@@ -273,7 +273,7 @@ func (l *Layout) collectReachable(d string, set map[string]bool) {
 	}
 
 	var manifest ocispec.Manifest
-	if err := json.Unmarshal(data, &manifest); err != nil || len(manifest.Layers) == 0 {
+	if err := json.Unmarshal(data, &manifest); err != nil {
 		return
 	}
 

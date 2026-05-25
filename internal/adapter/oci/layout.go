@@ -186,7 +186,7 @@ func (l *Layout) ArtifactProtocolVersion(d digest.Digest) uint32 {
 		return 0
 	}
 	for _, desc := range ix.Manifests {
-		if digest.Digest(desc.Digest.String()) == d {
+		if desc.Digest == d {
 			if v, ok := desc.Annotations[AnnotationProtocolVersion]; ok {
 				var n uint32
 				if _, err := fmt.Sscanf(v, "%d", &n); err == nil {

@@ -98,7 +98,7 @@ func (p *Puller) Pull(ctx context.Context, ref Reference) (digest.Digest, error)
 		return "", err
 	}
 
-	return digest.Digest(desc.Digest.String()), nil
+	return desc.Digest, nil
 }
 
 // Resolve queries the registry for the canonical digest of ref without
@@ -126,7 +126,7 @@ func (p *Puller) Resolve(ctx context.Context, ref Reference) (digest.Digest, err
 	if err != nil {
 		return "", fmt.Errorf("oci: resolve %s: %w", ref, err)
 	}
-	return digest.Digest(desc.Digest.String()), nil
+	return desc.Digest, nil
 }
 
 // newRepository builds the oras-go remote.Repository for ref.
@@ -179,6 +179,6 @@ func (p *Puller) annotateIndex(desc *ocispec.Descriptor) error {
 			return p.Layout.WriteIndex(ix)
 		}
 	}
-	// Descriptor not yet in index — oras-go will have added it; re-read.
-	return nil
+	// Descriptor not yet in index — unexpected after a successful oras.Copy.
+	return fmt.Errorf("oci: annotateIndex: descriptor %s not found in index.json after pull", desc.Digest)
 }
