@@ -136,10 +136,10 @@ func (p *copilotAdapter) buildSessionConfig(cfg map[string]string, adapterSessio
 	submitTool.SkipPermission = true
 
 	sc := &copilot.SessionConfig{
-		Streaming: true,
+		Streaming: copilot.Bool(true),
 		Model:     cfg["model"],
 		OnPermissionRequest: func(r copilot.PermissionRequest, _ copilot.PermissionInvocation) (copilot.PermissionRequestResult, error) {
-			return p.handlePermissionRequest(adapterSessionID, &r)
+			return p.handlePermissionRequest(adapterSessionID, r)
 		},
 		Tools: []copilot.Tool{submitTool},
 	}

@@ -3,9 +3,11 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"testing"
 	"time"
 )
@@ -73,6 +75,37 @@ func TestIsPermissionPrompt(t *testing.T) {
 		if got := isPermissionPrompt(tc.prompt); got != tc.wantPerm {
 			t.Errorf("isPermissionPrompt(%q) = %v, want %v", tc.prompt, got, tc.wantPerm)
 		}
+	}
+}
+
+func TestPingResponseUsesRFC3339Timestamp(t *testing.T) {
+	var buf bytes.Buffer
+	stdout = &buf
+	t.Cleanup(func() { stdout = os.Stdout })
+
+	handleRequest(&rpcMsg{
+		ID:     json.RawMessage(`1`),
+		Method: "ping",
+	})
+
+	frame, err := readFrame(bufio.NewReader(&buf))
+	if err != nil {
+		t.Fatalf("readFrame: %v", err)
+	}
+
+	var resp struct {
+		Result struct {
+			Timestamp string `json:"timestamp"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(frame, &resp); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+	if resp.Result.Timestamp == "" {
+		t.Fatal("ping response timestamp is empty")
+	}
+	if _, err := time.Parse(time.RFC3339Nano, resp.Result.Timestamp); err != nil {
+		t.Fatalf("ping response timestamp %q is not RFC3339Nano: %v", resp.Result.Timestamp, err)
 	}
 }
 

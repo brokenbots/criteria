@@ -292,8 +292,8 @@ func TestAwaitOutcomeSuccessOnFirstTurn(t *testing.T) {
 	s := stateWithOutcomes("success", "failure")
 	fake := s.session.(*fakeSession)
 	fake.emitOnSend = []copilot.SessionEvent{
-		{Type: copilot.SessionEventTypeAssistantMessage, Data: &copilot.AssistantMessageData{MessageID: "m1", Content: "done"}},
-		{Type: copilot.SessionEventTypeSessionIdle, Data: &copilot.SessionIdleData{}},
+		{Data: &copilot.AssistantMessageData{MessageID: "m1", Content: "done"}},
+		{Data: &copilot.SessionIdleData{}},
 	}
 	// Simulate tool call via onSend hook.
 	fake.onSend = func(_ int, _ copilot.MessageOptions) {
@@ -326,11 +326,11 @@ func TestAwaitOutcomeSuccessAfterOneReprompt(t *testing.T) {
 	// Turn 2: tool call simulated, then idle.
 	fake.sendSequence = [][]copilot.SessionEvent{
 		{ // turn 1: just idle, no outcome
-			{Type: copilot.SessionEventTypeSessionIdle, Data: &copilot.SessionIdleData{}},
+			{Data: &copilot.SessionIdleData{}},
 		},
 		{ // turn 2: message + idle
-			{Type: copilot.SessionEventTypeAssistantMessage, Data: &copilot.AssistantMessageData{MessageID: "m2", Content: "ok"}},
-			{Type: copilot.SessionEventTypeSessionIdle, Data: &copilot.SessionIdleData{}},
+			{Data: &copilot.AssistantMessageData{MessageID: "m2", Content: "ok"}},
+			{Data: &copilot.SessionIdleData{}},
 		},
 	}
 	// Simulate submit_outcome on second Send call.
@@ -372,7 +372,7 @@ func TestAwaitOutcomeExhaustedReturnsFailure(t *testing.T) {
 	fake := s.session.(*fakeSession)
 	// All 3 turns: idle without any submit_outcome call.
 	idle := []copilot.SessionEvent{
-		{Type: copilot.SessionEventTypeSessionIdle, Data: &copilot.SessionIdleData{}},
+		{Data: &copilot.SessionIdleData{}},
 	}
 	fake.sendSequence = [][]copilot.SessionEvent{idle, idle, idle}
 	p := outcomeAdapter(s)
@@ -425,7 +425,7 @@ func TestMaxTurnsWithNeedsReviewAllowed(t *testing.T) {
 	s := stateWithOutcomes("success", "failure", "needs_review")
 	fake := s.session.(*fakeSession)
 	fake.emitOnSend = []copilot.SessionEvent{
-		{Type: copilot.SessionEventTypeAssistantMessage, Data: &copilot.AssistantMessageData{MessageID: "m1", Content: "thinking"}},
+		{Data: &copilot.AssistantMessageData{MessageID: "m1", Content: "thinking"}},
 	}
 	p := outcomeAdapter(s)
 	sender := &recordingSender{}
@@ -474,8 +474,8 @@ func TestAwaitOutcome_OutcomeAndReasonInOutputs(t *testing.T) {
 	s := stateWithOutcomes("success", "failure")
 	fake := s.session.(*fakeSession)
 	fake.emitOnSend = []copilot.SessionEvent{
-		{Type: copilot.SessionEventTypeAssistantMessage, Data: &copilot.AssistantMessageData{MessageID: "m1", Content: "done"}},
-		{Type: copilot.SessionEventTypeSessionIdle, Data: &copilot.SessionIdleData{}},
+		{Data: &copilot.AssistantMessageData{MessageID: "m1", Content: "done"}},
+		{Data: &copilot.SessionIdleData{}},
 	}
 	p := outcomeAdapter(s)
 	fake.onSend = func(_ int, _ copilot.MessageOptions) {
@@ -511,7 +511,7 @@ func TestAwaitOutcome_OutcomeAndReasonInOutputs(t *testing.T) {
 func TestAwaitOutcome_FailurePathPopulatesOutcomeOutput(t *testing.T) {
 	s := stateWithOutcomes("success", "failure")
 	fake := s.session.(*fakeSession)
-	idle := []copilot.SessionEvent{{Type: copilot.SessionEventTypeSessionIdle, Data: &copilot.SessionIdleData{}}}
+	idle := []copilot.SessionEvent{{Data: &copilot.SessionIdleData{}}}
 	fake.sendSequence = [][]copilot.SessionEvent{idle, idle, idle}
 
 	sender := &recordingSender{}
@@ -541,10 +541,10 @@ func TestAwaitOutcome_FailurePathPopulatesOutcomeOutput(t *testing.T) {
 func TestSubmitOutcome_RepromptTwice(t *testing.T) {
 	s := stateWithOutcomes("success", "failure")
 	fake := s.session.(*fakeSession)
-	idle := []copilot.SessionEvent{{Type: copilot.SessionEventTypeSessionIdle, Data: &copilot.SessionIdleData{}}}
+	idle := []copilot.SessionEvent{{Data: &copilot.SessionIdleData{}}}
 	withIdle := []copilot.SessionEvent{
-		{Type: copilot.SessionEventTypeAssistantMessage, Data: &copilot.AssistantMessageData{MessageID: "m3", Content: "ok"}},
-		{Type: copilot.SessionEventTypeSessionIdle, Data: &copilot.SessionIdleData{}},
+		{Data: &copilot.AssistantMessageData{MessageID: "m3", Content: "ok"}},
+		{Data: &copilot.SessionIdleData{}},
 	}
 	// Turn 1, 2: no outcome. Turn 3: outcome submitted.
 	fake.sendSequence = [][]copilot.SessionEvent{idle, idle, withIdle}
@@ -578,9 +578,9 @@ func TestSubmitOutcome_RepromptTwice(t *testing.T) {
 func TestSubmitOutcome_InvalidEnumThenSuccess(t *testing.T) {
 	s := stateWithOutcomes("success", "failure")
 	fake := s.session.(*fakeSession)
-	idle := []copilot.SessionEvent{{Type: copilot.SessionEventTypeSessionIdle, Data: &copilot.SessionIdleData{}}}
+	idle := []copilot.SessionEvent{{Data: &copilot.SessionIdleData{}}}
 	withIdle := []copilot.SessionEvent{
-		{Type: copilot.SessionEventTypeSessionIdle, Data: &copilot.SessionIdleData{}},
+		{Data: &copilot.SessionIdleData{}},
 	}
 	fake.sendSequence = [][]copilot.SessionEvent{idle, withIdle}
 
@@ -635,7 +635,7 @@ func TestSubmitOutcome_PermissionDeniedFailure(t *testing.T) {
 	fake := s.session.(*fakeSession)
 	// Turn 1: permission denied → just idle.
 	fake.emitOnSend = []copilot.SessionEvent{
-		{Type: copilot.SessionEventTypeSessionIdle, Data: &copilot.SessionIdleData{}},
+		{Data: &copilot.SessionIdleData{}},
 	}
 	fake.onSend = func(_ int, _ copilot.MessageOptions) {
 		s.mu.Lock()
@@ -662,7 +662,7 @@ func TestSubmitOutcome_MaxTurnsReached_NoNeedsReviewInAllowed(t *testing.T) {
 	s := stateWithOutcomes("success", "failure")
 	fake := s.session.(*fakeSession)
 	fake.emitOnSend = []copilot.SessionEvent{
-		{Type: copilot.SessionEventTypeAssistantMessage, Data: &copilot.AssistantMessageData{MessageID: "m1", Content: "thinking..."}},
+		{Data: &copilot.AssistantMessageData{MessageID: "m1", Content: "thinking..."}},
 	}
 
 	sender := &recordingSender{}
@@ -684,7 +684,7 @@ func TestSubmitOutcome_MaxTurnsReached_NoNeedsReviewInAllowed(t *testing.T) {
 func TestSubmitOutcome_EmptyAllowedSetFailsClosed(t *testing.T) {
 	s := stateWithOutcomes() // no outcomes declared
 	fake := s.session.(*fakeSession)
-	idle := []copilot.SessionEvent{{Type: copilot.SessionEventTypeSessionIdle, Data: &copilot.SessionIdleData{}}}
+	idle := []copilot.SessionEvent{{Data: &copilot.SessionIdleData{}}}
 	// Provide multiple idles so the test catches any unwanted reprompt turns.
 	fake.sendSequence = [][]copilot.SessionEvent{idle, idle, idle}
 
@@ -735,10 +735,10 @@ func TestSubmitOutcome_PreamblePresentInPrompt(t *testing.T) {
 	fake := s.session.(*fakeSession)
 	// Use a single idle turn; we only care about the sent prompt, not the result.
 	fake.emitOnSend = []copilot.SessionEvent{
-		{Type: copilot.SessionEventTypeSessionIdle, Data: &copilot.SessionIdleData{}},
+		{Data: &copilot.SessionIdleData{}},
 	}
 	// Turn 2 and 3 produce idle too (for exhaustion path).
-	idle := []copilot.SessionEvent{{Type: copilot.SessionEventTypeSessionIdle, Data: &copilot.SessionIdleData{}}}
+	idle := []copilot.SessionEvent{{Data: &copilot.SessionIdleData{}}}
 	fake.sendSequence = [][]copilot.SessionEvent{idle, idle, idle}
 
 	sender := &recordingSender{}

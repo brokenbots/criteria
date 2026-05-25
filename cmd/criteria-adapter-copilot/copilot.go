@@ -139,9 +139,8 @@ func (p *copilotAdapter) ensureClient(ctx context.Context) (*copilot.Client, err
 
 	token := resolveGitHubToken()
 	options := &copilot.ClientOptions{
-		CLIPath:   cliPath,
-		LogLevel:  "info",
-		AutoStart: copilot.Bool(true),
+		Connection: copilot.StdioConnection{Path: cliPath},
+		LogLevel:   "info",
 	}
 	if token != "" {
 		options.GitHubToken = token

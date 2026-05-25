@@ -31,7 +31,7 @@ func (f *failSender) Send(_ *pb.ExecuteEvent) error {
 // returns UserNotAvailable with no error and sends no event.
 func TestHandlePermissionRequestNoSession(t *testing.T) {
 	p := &copilotAdapter{sessions: map[string]*sessionState{}}
-	req := &copilot.PermissionRequest{Kind: copilot.PermissionRequestKindShell}
+	req := copilot.PermissionRequestShell{}
 
 	result, err := p.handlePermissionRequest("nonexistent", req)
 	if err != nil {
@@ -56,7 +56,7 @@ func TestHandlePermissionRequestInactiveSession(t *testing.T) {
 		sink:     sink,
 	}
 	p := &copilotAdapter{sessions: map[string]*sessionState{"s1": s}}
-	req := &copilot.PermissionRequest{Kind: copilot.PermissionRequestKindShell}
+	req := copilot.PermissionRequestShell{}
 
 	result, err := p.handlePermissionRequest("s1", req)
 	if err != nil {
@@ -82,7 +82,7 @@ func TestHandlePermissionRequestSendError(t *testing.T) {
 		sink:     &failSender{err: sendErr},
 	}
 	p := &copilotAdapter{sessions: map[string]*sessionState{"s1": s}}
-	req := &copilot.PermissionRequest{Kind: copilot.PermissionRequestKindShell}
+	req := copilot.PermissionRequestShell{}
 
 	result, err := p.handlePermissionRequest("s1", req)
 	if err == nil {
@@ -117,7 +117,7 @@ func TestHandlePermissionRequestInteractiveDeny(t *testing.T) {
 	}
 	p := &copilotAdapter{sessions: map[string]*sessionState{"s1": s}}
 
-	req := &copilot.PermissionRequest{Kind: copilot.PermissionRequestKindShell}
+	req := copilot.PermissionRequestShell{}
 	resCh := make(chan copilot.PermissionRequestResult, 1)
 	go func() {
 		result, _ := p.handlePermissionRequest("s1", req)
