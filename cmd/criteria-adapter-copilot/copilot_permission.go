@@ -45,7 +45,7 @@ func (p *copilotAdapter) handlePermissionRequest(sessionID string, request copil
 
 	if err := sink.Send(adapterEvent("permission.request", payload)); err != nil {
 		p.resolvePendingPerm(requestID)
-		return copilot.PermissionRequestResult{Kind: copilot.PermissionRequestResultKindUserNotAvailable}, nil //nolint:nilerr
+		return copilot.PermissionRequestResult{Kind: copilot.PermissionRequestResultKindUserNotAvailable}, nil //nolint:nilerr // fail closed at the SDK boundary; the host-visible result carries the denial reason
 	}
 
 	select {
