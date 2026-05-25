@@ -35,7 +35,8 @@ type parallelSink struct {
 // Uses "adapter.fake" (bare), which compile() auto-injects as adapter "fake" "default".
 func parallelWorkflowHCL(steps string) string {
 	return `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "work"
   target_state  = "done"
@@ -373,7 +374,8 @@ step "work" {
 // them in completion order, steps.work[0].idx would be "2".
 func TestParallelIteration_OutputAggregationOrder(t *testing.T) {
 	g := compile(t, `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "work"
   target_state  = "done"
@@ -693,7 +695,8 @@ step "work" {
 // ran to natural completion (~2s) ignoring the declared timeout.
 func TestParallelIteration_TimeoutEnforced(t *testing.T) {
 	g := compile(t, `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "work"
   target_state  = "done"

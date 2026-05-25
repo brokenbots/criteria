@@ -392,24 +392,23 @@ When a step outcome specifies `next = "return"`, the engine exits the current sc
 
 **Precedence**: `outcome.output` always wins over top-level `output` block declarations when `next = "return"` is used. Top-level `output` blocks provide the default output set for normal terminal-state exits.
 
-#### `default_outcome`
+#### `outcome "default"`
 
-The optional `default_outcome = "<name>"` step attribute provides a fallback when an adapter returns an outcome name that is not in the step's declared outcome set:
+The optional `outcome "default"` block provides a fallback when an adapter returns an outcome name that is not in the step's declared outcome set:
 
-- If set, the unknown outcome name is silently mapped to the named default. A `step.outcome.defaulted` event is emitted with both the original and mapped names so operators can audit the mapping.
-- If not set, an unknown outcome is a runtime error (`step.outcome.unknown` event).
+- If declared, the unknown outcome name is silently mapped to the default block. A `step.outcome.defaulted` event is emitted with both the original and mapped names so operators can audit the mapping.
+- If not declared, an unknown outcome is a runtime error (`step.outcome.unknown` event).
 
-`default_outcome` must refer to one of the declared `outcome` blocks on the same step (compile-time error otherwise).
+The `outcome "default"` block is declared just like any other outcome block, using the reserved name `"default"`. It may include `next`, `output`, and `shared_writes` the same way every other outcome does.
 
 ```hcl
 step "call_agent" {
-  target          = adapter.copilot.reviewer
-  default_outcome = "needs_review"
+  target = adapter.copilot.reviewer
 
   outcome "approved" {
     next = "deploy"
   }
-  outcome "needs_review" {
+  outcome "default" {
     next   = "return"
     output = { reason = "review required" }
   }

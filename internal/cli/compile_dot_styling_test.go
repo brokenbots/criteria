@@ -98,7 +98,8 @@ var hexColorRE = regexp.MustCompile(`#[0-9A-Fa-f]{6}`)
 // step node line contains style=filled and a valid hex fillcolor.
 func TestDOT_StepHasFillColor(t *testing.T) {
 	const hcl = `
-workflow "styled" {
+workflow {
+  name = "styled"
   version       = "1"
   initial_state = "work"
   target_state  = "done"
@@ -133,7 +134,8 @@ state "done" {
 // targeting two different adapter types and verifies they receive distinct fill colors.
 func TestDOT_TwoAdapterTypesDifferentColors(t *testing.T) {
 	const hcl = `
-workflow "two_adapters" {
+workflow {
+  name = "two_adapters"
   version       = "1"
   initial_state = "step_a"
   target_state  = "done"
@@ -198,7 +200,8 @@ func TestDOT_SubworkflowStepColor(t *testing.T) {
 // style="filled,dashed".
 func TestDOT_ForEachStepDashedBorder(t *testing.T) {
 	const hcl = `
-workflow "dashed" {
+workflow {
+  name = "dashed"
   version       = "1"
   initial_state = "fan"
   target_state  = "done"
@@ -225,7 +228,8 @@ state "done" {
 // with peripheries=2.
 func TestDOT_ParallelStepDoublePeripheries(t *testing.T) {
 	const hcl = `
-workflow "double_border" {
+workflow {
+  name = "double_border"
   version       = "1"
   initial_state = "concurrent"
   target_state  = "done"
@@ -252,7 +256,8 @@ state "done" {
 // semantic fill color.
 func TestDOT_SwitchFillColor(t *testing.T) {
 	const hcl = `
-workflow "switched" {
+workflow {
+  name = "switched"
   version       = "1"
   initial_state = "build"
   target_state  = "done"
@@ -288,7 +293,8 @@ state "done" {
 // rendered with the fixed green fill color.
 func TestDOT_TerminalSuccessStateFill(t *testing.T) {
 	const hcl = `
-workflow "success_fill" {
+workflow {
+  name = "success_fill"
   version       = "1"
   initial_state = "work"
   target_state  = "done"
@@ -321,7 +327,8 @@ state "done" {
 // rendered with the fixed pink fill color.
 func TestDOT_TerminalFailureStateFill(t *testing.T) {
 	const hcl = `
-workflow "failure_fill" {
+workflow {
+  name = "failure_fill"
   version       = "1"
   initial_state = "work"
   target_state  = "done"
@@ -388,7 +395,8 @@ func TestBuildAdapterColorMap_SubworkflowLocalType(t *testing.T) {
 
 	// Callee uses a "shell" adapter — distinct from the parent's "noop".
 	writeSubworkflowDir(t, tmpDir, "inner", `
-workflow "inner" {
+workflow {
+  name = "inner"
   version       = "1"
   initial_state = "do_shell"
   target_state  = "done"
@@ -408,7 +416,8 @@ state "done" {
 
 	// Parent uses "noop" only; "shell" is not declared here.
 	if err := os.WriteFile(filepath.Join(tmpDir, "main.hcl"), []byte(`
-workflow "parent" {
+workflow {
+  name = "parent"
   version       = "1"
   initial_state = "delegate"
   target_state  = "done"
@@ -558,7 +567,8 @@ func TestDOT_PlainSubworkflowClusterStyle(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	writeSubworkflowDir(t, tmpDir, "inner", `
-workflow "inner" {
+workflow {
+  name = "inner"
   version       = "1"
   initial_state = "done"
   target_state  = "done"
@@ -570,7 +580,8 @@ state "done" {
 `)
 
 	if err := os.WriteFile(filepath.Join(tmpDir, "main.hcl"), []byte(`
-workflow "parent_plain" {
+workflow {
+  name = "parent_plain"
   version       = "1"
   initial_state = "delegate"
   target_state  = "done"
@@ -622,12 +633,13 @@ func TestDOT_IteratingSubworkflowClusterStyle(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	writeSubworkflowDir(t, tmpDir, "processor", `
-workflow "processor" {
+workflow {
+  name = "processor"
   version       = "1"
   initial_state = "done"
   target_state  = "done"
 }
-variable "item" { type = "string" }
+variable "item" { type = string }
 state "done" {
   terminal = true
   success  = true
@@ -635,7 +647,8 @@ state "done" {
 `)
 
 	if err := os.WriteFile(filepath.Join(tmpDir, "main.hcl"), []byte(`
-workflow "parent_iter" {
+workflow {
+  name = "parent_iter"
   version       = "1"
   initial_state = "process_all"
   target_state  = "done"
@@ -689,12 +702,13 @@ func TestDOT_ParallelSubworkflowClusterStyle(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	writeSubworkflowDir(t, tmpDir, "worker", `
-workflow "worker" {
+workflow {
+  name = "worker"
   version       = "1"
   initial_state = "done"
   target_state  = "done"
 }
-variable "task" { type = "string" }
+variable "task" { type = string }
 state "done" {
   terminal = true
   success  = true
@@ -702,7 +716,8 @@ state "done" {
 `)
 
 	if err := os.WriteFile(filepath.Join(tmpDir, "main.hcl"), []byte(`
-workflow "parent_parallel" {
+workflow {
+  name = "parent_parallel"
   version       = "1"
   initial_state = "run_tasks"
   target_state  = "done"
@@ -768,7 +783,8 @@ func TestDOT_NonTerminalStateNoFill(t *testing.T) {
 	// We need at least one step for the workflow to be valid, so we'll use a step
 	// that transitions out of a non-terminal state.
 	const hcl2 = `
-workflow "non_terminal_state" {
+workflow {
+  name = "non_terminal_state"
   version       = "1"
   initial_state = "work"
   target_state  = "done"

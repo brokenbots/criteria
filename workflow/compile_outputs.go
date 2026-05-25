@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	"github.com/hashicorp/hcl/v2"
+	"github.com/hashicorp/hcl/v2/ext/typeexpr"
 	"github.com/zclconf/go-cty/cty"
 	"github.com/zclconf/go-cty/cty/convert"
 )
@@ -67,15 +68,12 @@ func compileOneOutput(g *FSMGraph, os OutputSpec, opts CompileOpts) hcl.Diagnost
 		return diags
 	}
 
-	// Parse and validate type attribute from schema (os.TypeStr).
+	// Parse and validate type expression from schema (os.Type).
 	declaredType := cty.NilType
-	if os.TypeStr != "" {
-		parsedType, err := parseVariableType(os.TypeStr)
-		if err != nil {
-			diags = append(diags, &hcl.Diagnostic{
-				Severity: hcl.DiagError,
-				Summary:  fmt.Sprintf("output %q: %v", os.Name, err),
-			})
+	if !isAbsentExpr(os.Type) {
+		parsedType, typeDiags := typeexpr.Type(os.Type)
+		if typeDiags.HasErrors() {
+			diags = append(diags, typeDiags...)
 			return diags
 		}
 		declaredType = parsedType

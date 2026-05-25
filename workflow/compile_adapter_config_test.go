@@ -10,13 +10,14 @@ import (
 // resolves at compile time without a "Variables not allowed" error.
 func TestAdapterConfigFoldsVarRef(t *testing.T) {
 	src := `
-workflow "x" {
+workflow {
+  name = "x"
   version       = "0.1"
   initial_state = "work"
   target_state  = "done"
 }
 variable "prompt_val" {
-  type    = "string"
+  type = string
   default = "You are a helpful assistant."
 }
 adapter "copilot" "bot" {
@@ -48,7 +49,8 @@ state "done" { terminal = true }
 // resolves at compile time without a "Variables not allowed" error.
 func TestAdapterConfigFoldsLocalRef(t *testing.T) {
 	src := `
-workflow "x" {
+workflow {
+  name = "x"
   version       = "0.1"
   initial_state = "work"
   target_state  = "done"
@@ -91,13 +93,14 @@ func TestAdapterConfigFileVarPath_SuccessNoSpuriousError(t *testing.T) {
 		t.Fatal(err)
 	}
 	src := `
-workflow "x" {
+workflow {
+  name = "x"
   version       = "0.1"
   initial_state = "work"
   target_state  = "done"
 }
 variable "prompt_file" {
-  type    = "string"
+  type = string
   default = "prompt.txt"
 }
 adapter "copilot" "bot" {

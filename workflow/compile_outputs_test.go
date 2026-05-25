@@ -8,7 +8,8 @@ import (
 
 func TestCompileOutputs_SimpleViaIntegration(t *testing.T) {
 	src := `
-workflow "test" {
+workflow {
+  name = "test"
   version      = "1"
   initial_state = "start"
   target_state  = "end"
@@ -46,7 +47,8 @@ state "end" {
 
 func TestCompileOutputs_DuplicateName(t *testing.T) {
 	src := `
-workflow "test" {
+workflow {
+  name = "test"
   version      = "1"
   initial_state = "start"
   target_state  = "end"
@@ -83,7 +85,8 @@ state "end" { terminal = true }
 
 func TestCompileOutputs_MissingValueAttr(t *testing.T) {
 	src := `
-workflow "test" {
+workflow {
+  name = "test"
   version      = "1"
   initial_state = "start"
   target_state  = "end"
@@ -133,14 +136,15 @@ func contains(s, substr string) bool {
 // TestCompileOutputs_TypeValidation_MatchingType tests type checking for outputs.
 func TestCompileOutputs_TypeValidation_MatchingType(t *testing.T) {
 	src := `
-workflow "test" {
+workflow {
+  name = "test"
   version      = "1"
   initial_state = "start"
   target_state  = "end"
 }
   
 output "num" {
-  type  = "number"
+  type = number
   value = 42
 }
   
@@ -166,14 +170,15 @@ state "end" { terminal = true }
 // TestCompileOutputs_TypeValidation_MismatchingType tests type checking for outputs.
 func TestCompileOutputs_TypeValidation_MismatchingType(t *testing.T) {
 	src := `
-workflow "test" {
+workflow {
+  name = "test"
   version      = "1"
   initial_state = "start"
   target_state  = "end"
 }
   
 output "str_not_num" {
-  type  = "number"
+  type = number
   value = "hello"
 }
   
@@ -212,7 +217,8 @@ state "end" { terminal = true }
 // TestCompileOutputs_RuntimeExpressionDeferred tests that step references are deferred.
 func TestCompileOutputs_RuntimeExpressionDeferred(t *testing.T) {
 	src := `
-workflow "test" {
+workflow {
+  name = "test"
   version      = "1"
   initial_state = "start"
   target_state  = "end"
@@ -251,7 +257,8 @@ state "end" { terminal = true }
 // TestCompileOutputs_OptionalDescription tests optional description attribute.
 func TestCompileOutputs_OptionalDescription(t *testing.T) {
 	src := `
-workflow "test" {
+workflow {
+  name = "test"
   version      = "1"
   initial_state = "start"
   target_state  = "end"
@@ -295,7 +302,8 @@ state "end" { terminal = true }
 // TestCompileOutputs_LocalReference tests outputs can reference locals.
 func TestCompileOutputs_LocalReference(t *testing.T) {
 	src := `
-workflow "test" {
+workflow {
+  name = "test"
   version      = "1"
   initial_state = "start"
   target_state  = "end"
@@ -335,7 +343,8 @@ state "end" { terminal = true }
 // TestCompileOutputs_VarReference tests outputs can reference variables.
 func TestCompileOutputs_VarReference(t *testing.T) {
 	src := `
-workflow "test" {
+workflow {
+  name = "test"
   version      = "1"
   initial_state = "start"
   target_state  = "end"
@@ -368,7 +377,8 @@ state "end" { terminal = true }
 // TestCompileOutputs_InvalidIdentifier tests error on invalid variable reference.
 func TestCompileOutputs_InvalidIdentifier(t *testing.T) {
 	src := `
-workflow "test" {
+workflow {
+  name = "test"
   version      = "1"
   initial_state = "start"
   target_state  = "end"
@@ -397,7 +407,8 @@ state "end" { terminal = true }
 // TestCompileOutputs_OrderPreservation tests outputs preserve declaration order.
 func TestCompileOutputs_OrderPreservation(t *testing.T) {
 	src := `
-workflow "test" {
+workflow {
+  name = "test"
   version      = "1"
   initial_state = "start"
   target_state  = "end"

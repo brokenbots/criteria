@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/hashicorp/hcl/v2/ext/typeexpr"
 	"github.com/spf13/cobra"
 	"github.com/zclconf/go-cty/cty"
 
@@ -236,11 +237,8 @@ func buildCompileOutputs(graph *workflow.FSMGraph) []compileOutput {
 		on := graph.Outputs[name]
 		typeStr := ""
 		if on.DeclaredType != cty.NilType {
-			// TypeToString only supports types accepted by parseVariableType.
-			// This should never error at compile time since declared types come from HCL schema.
-			if s, err := workflow.TypeToString(on.DeclaredType); err == nil {
-				typeStr = s
-			}
+			// TypeString serialises the cty.Type back to an HCL type expression string.
+			typeStr = typeexpr.TypeString(on.DeclaredType)
 		}
 		outputs = append(outputs, compileOutput{
 			Name:        on.Name,

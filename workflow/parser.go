@@ -63,6 +63,8 @@ func Parse(filename string, src []byte) (*Spec, hcl.Diagnostics) {
 // checkLegacyAttributes runs all legacy attribute and block rejection checks.
 func checkLegacyAttributes(body hcl.Body) hcl.Diagnostics {
 	checks := []func(hcl.Body) hcl.Diagnostics{
+		rejectLegacyWorkflowLabel,
+		rejectLegacyPolicyBlock,
 		rejectLegacyBlocks,
 		rejectLegacyStepAgentAttr,
 		rejectLegacyStepAdapterAttr,
@@ -71,6 +73,9 @@ func checkLegacyAttributes(body hcl.Body) hcl.Diagnostics {
 		rejectLegacyStepWorkflowFile,
 		rejectLegacyStepTypeAttr,
 		rejectLegacyOutcomeTransitionTo,
+		rejectLegacyDefaultOutcome,
+		rejectLegacyTypeString,
+		rejectLegacyEnvironmentString,
 	}
 
 	var diags hcl.Diagnostics

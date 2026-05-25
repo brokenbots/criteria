@@ -1,4 +1,5 @@
-workflow "local_approval_multi" {
+workflow {
+  name = "local_approval_multi"
   version       = "0.1"
   initial_state = "first_review"
   target_state  = "done"

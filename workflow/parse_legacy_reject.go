@@ -4,6 +4,8 @@ import (
 	"fmt"
 
 	"github.com/hashicorp/hcl/v2"
+	"github.com/hashicorp/hcl/v2/hclsyntax"
+	"github.com/zclconf/go-cty/cty"
 )
 
 // rejectLegacyBlocks checks for and rejects blocks that were renamed in v0.3.0.
@@ -293,8 +295,10 @@ func rejectLegacyOutcomeTransitionToInBody(body hcl.Body) hcl.Diagnostics {
 
 	return diags
 }
+
+// rejectLegacyStepTypeAttr checks for and rejects the old `type` attribute on step blocks.
+// Steps are now at the top level of the file (not inside a workflow block).
 func rejectLegacyStepTypeAttr(body hcl.Body) hcl.Diagnostics {
-	// Steps are now at the top level of the file (not inside a workflow block).
 	return rejectLegacyStepTypeAttrInBody(body)
 }
 
@@ -326,4 +330,165 @@ func rejectLegacyStepTypeAttrInBody(body hcl.Body) hcl.Diagnostics {
 	}
 
 	return diags
+}
+
+// rejectLegacyAttrInBlocks is a helper that searches for a single legacy attribute
+// inside blocks of a given type and emits a diagnostic when found.
+func rejectLegacyAttrInBlocks(body hcl.Body, blockType string, blockLabels []string, attrName, summary, detail string) hcl.Diagnostics {
+	var diags hcl.Diagnostics
+	schema := &hcl.BodySchema{
+		Blocks: []hcl.BlockHeaderSchema{
+			{Type: blockType, LabelNames: blockLabels},
+		},
+	}
+	content, _, _ := body.PartialContent(schema)
+	for _, block := range content.Blocks {
+		attrSchema := &hcl.BodySchema{Attributes: []hcl.AttributeSchema{{Name: attrName}}}
+		attrContent, _, _ := block.Body.PartialContent(attrSchema)
+		if attr, ok := attrContent.Attributes[attrName]; ok {
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  summary,
+				Detail:   detail,
+				Subject:  &attr.NameRange,
+			})
+		}
+	}
+	return diags
+}
+
+// rejectLegacyWorkflowLabel checks for and rejects the legacy labelled
+// workflow "name" { ... } header block. The new syntax is workflow { name = "..." ... }.
+func rejectLegacyWorkflowLabel(body hcl.Body) hcl.Diagnostics {
+	var diags hcl.Diagnostics
+	schema := &hcl.BodySchema{
+		Blocks: []hcl.BlockHeaderSchema{
+			{Type: "workflow", LabelNames: []string{"name"}},
+		},
+	}
+	content, _, _ := body.PartialContent(schema)
+	for _, block := range content.Blocks {
+		diags = append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  `removed labelled workflow block`,
+			Detail:   `the workflow block no longer takes a label. Move the name into the block body: workflow { name = "..." version = "..." initial_state = "..." target_state = "..." }. See CHANGELOG.md migration note.`,
+			Subject:  &block.DefRange,
+		})
+	}
+	return diags
+}
+
+// rejectLegacyPolicyBlock checks for and rejects a top-level policy { ... } block.
+// Policy is now nested inside the workflow header block: workflow { policy { ... } }.
+func rejectLegacyPolicyBlock(body hcl.Body) hcl.Diagnostics {
+	var diags hcl.Diagnostics
+	schema := &hcl.BodySchema{
+		Blocks: []hcl.BlockHeaderSchema{
+			{Type: "policy", LabelNames: nil},
+		},
+	}
+	content, _, _ := body.PartialContent(schema)
+	for _, block := range content.Blocks {
+		diags = append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  `removed top-level policy block`,
+			Detail:   `the policy block must now be nested inside the workflow header block: workflow { policy { ... } }. See CHANGELOG.md migration note.`,
+			Subject:  &block.DefRange,
+		})
+	}
+	return diags
+}
+
+// rejectLegacyDefaultOutcome checks for and rejects the legacy default_outcome
+// attribute on step blocks. Use outcome "default" { ... } instead.
+func rejectLegacyDefaultOutcome(body hcl.Body) hcl.Diagnostics {
+	return rejectLegacyAttrInBlocks(body, "step", []string{"name"}, "default_outcome",
+		`removed attribute "default_outcome" on steps`,
+		`the "default_outcome" attribute was replaced by an outcome "default" { ... } block in v0.3.0. Declare outcome "default" { next = "..." } inside the step block. See CHANGELOG.md migration note.`)
+}
+
+// rejectLegacyTypeString checks for and rejects string-literal type attributes on
+// variable, shared_variable, and output blocks. The new syntax uses type
+// expressions: type = string, type = list(string), etc.
+func rejectLegacyTypeString(body hcl.Body) hcl.Diagnostics {
+	var diags hcl.Diagnostics
+	blockTypes := []struct {
+		typ        string
+		labelNames []string
+	}{
+		{"variable", []string{"name"}},
+		{"shared_variable", []string{"name"}},
+		{"output", []string{"name"}},
+	}
+	for _, bt := range blockTypes {
+		schema := &hcl.BodySchema{Blocks: []hcl.BlockHeaderSchema{{Type: bt.typ, LabelNames: bt.labelNames}}}
+		content, _, _ := body.PartialContent(schema)
+		for _, block := range content.Blocks {
+			attrSchema := &hcl.BodySchema{Attributes: []hcl.AttributeSchema{{Name: "type"}}}
+			attrContent, _, _ := block.Body.PartialContent(attrSchema)
+			if attr, ok := attrContent.Attributes["type"]; ok {
+				if isStringLiteralExpr(attr.Expr) {
+					diags = append(diags, &hcl.Diagnostic{
+						Severity: hcl.DiagError,
+						Summary:  fmt.Sprintf("removed quoted-string type on %s block", bt.typ),
+						Detail:   fmt.Sprintf("the \"type\" attribute on %s blocks now uses a type expression, not a quoted string. Remove the quotes: type = string, type = number, type = bool, type = list(string), type = map(string). See CHANGELOG.md migration note.", bt.typ),
+						Subject:  &attr.NameRange,
+					})
+				}
+			}
+		}
+	}
+	return diags
+}
+
+// rejectLegacyEnvironmentString checks for and rejects quoted-string
+// environment attributes on workflow, step, adapter, and subworkflow blocks.
+// The new syntax uses a bare traversal: environment = shell.default.
+func rejectLegacyEnvironmentString(body hcl.Body) hcl.Diagnostics {
+	var diags hcl.Diagnostics
+	blockTypes := []struct {
+		typ        string
+		labelNames []string
+	}{
+		{"workflow", nil},
+		{"step", []string{"name"}},
+		{"adapter", []string{"type", "name"}},
+		{"subworkflow", []string{"name"}},
+	}
+	for _, bt := range blockTypes {
+		schema := &hcl.BodySchema{Blocks: []hcl.BlockHeaderSchema{{Type: bt.typ, LabelNames: bt.labelNames}}}
+		content, _, _ := body.PartialContent(schema)
+		for _, block := range content.Blocks {
+			attrSchema := &hcl.BodySchema{Attributes: []hcl.AttributeSchema{{Name: "environment"}}}
+			attrContent, _, _ := block.Body.PartialContent(attrSchema)
+			if attr, ok := attrContent.Attributes["environment"]; ok {
+				if isStringLiteralExpr(attr.Expr) {
+					diags = append(diags, &hcl.Diagnostic{
+						Severity: hcl.DiagError,
+						Summary:  fmt.Sprintf("removed quoted-string environment on %s block", bt.typ),
+						Detail:   fmt.Sprintf("the \"environment\" attribute on %s blocks now uses a bare traversal reference, not a quoted string. Remove the quotes: environment = shell.default. See CHANGELOG.md migration note.", bt.typ),
+						Subject:  &attr.NameRange,
+					})
+				}
+			}
+		}
+	}
+	return diags
+}
+
+// isStringLiteralExpr reports whether expr is a literal string expression.
+// HCL v2 parses "string" as *hclsyntax.TemplateExpr containing a single
+// *hclsyntax.LiteralValueExpr part, so both shapes must be checked.
+func isStringLiteralExpr(expr hcl.Expression) bool {
+	if lit, ok := expr.(*hclsyntax.LiteralValueExpr); ok {
+		return lit.Val.Type() == cty.String
+	}
+	if tmpl, ok := expr.(*hclsyntax.TemplateExpr); ok {
+		if len(tmpl.Parts) == 1 {
+			if lit, ok := tmpl.Parts[0].(*hclsyntax.LiteralValueExpr); ok {
+				return lit.Val.Type() == cty.String
+			}
+		}
+	}
+	return false
 }

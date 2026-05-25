@@ -24,62 +24,63 @@
 # that defaults to "failed" and is flipped to "ok" only along the success
 # path. The parent (bootstrap.hcl) switches on this status.
 
-workflow "develop" {
+workflow {
+
+  name = "develop"
   version       = "1"
   initial_state = "prepare_branch"
   target_state  = "returned"
-}
-
-policy {
-  max_total_steps = 500
+  policy {
+    max_total_steps = 500
+  }
 }
 
 variable "workstream_file" {
-  type        = "string"
+  type = string
   default     = ""
   description = "Path to the workstream markdown file, relative to project_dir."
 }
 
 variable "max_retries" {
-  type        = "number"
+  type = number
   default     = 3
   description = "Maximum developer→owner cycles before requesting operator assistance."
 }
 
 variable "project_dir" {
-  type        = "string"
+  type = string
   default     = ""
   description = "Absolute path to the criteria engine project root."
 }
 
 variable "developer_model" {
-  type        = "string"
+  type = string
   default     = "claude-sonnet-4.6"
 }
 
 variable "reviewer_model" {
-  type        = "string"
+  type = string
   default     = "gpt-5.4"
 }
 
 variable "base_branch" {
-  type        = "string"
+  type = string
   default     = "adapter-v2"
   description = "Integration branch to branch from and diff against."
 }
 
 shared_variable "cycle_count" {
-  type  = "number"
+  type = number
   value = 0
 }
 
 shared_variable "terminal_status" {
-  type  = "string"
+  type = string
   value = "failed"
 }
 
 output "status" {
-  type  = "string"
+  type = string
   value = shared.terminal_status
 }
 

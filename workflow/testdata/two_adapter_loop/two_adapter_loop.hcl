@@ -1,4 +1,5 @@
-workflow "two_agent_loop" {
+workflow {
+  name = "two_agent_loop"
   version       = "0.1"
   initial_state = "execute"
   target_state  = "done"

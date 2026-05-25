@@ -2,14 +2,15 @@
 // A three-condition switch selects between "deploy", "deploy_staging", and
 // "skip_deploy" based on var.env and a captured step output. A default arm
 // handles the fallback.
-workflow "switch_basic" {
+workflow {
+  name = "switch_basic"
   version       = "0.1"
   initial_state = "build"
   target_state  = "done"
 }
 
 variable "env" {
-  type    = "string"
+  type = string
   default = "staging"
 }
 

@@ -12,7 +12,8 @@ import (
 
 // environmentWorkflow wraps environment and step blocks into a minimal compilable workflow HCL.
 func environmentWorkflow(envBlocks, extraHeaderAttrs string) string {
-	header := `workflow "test" {
+	header := `workflow {
+  name = "test"
   version       = "0.1"
   initial_state = "done"
   target_state  = "done"
@@ -270,7 +271,7 @@ func TestCompileEnvironments_ExplicitDefault(t *testing.T) {
   }
   environment "shell" "prod" {
   }
-`, `  environment = "shell.prod"
+`, `  environment = shell.prod
 `)
 	spec, diags := Parse("test.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -291,7 +292,7 @@ func TestCompileEnvironments_NonexistentDefault(t *testing.T) {
 	src := environmentWorkflow(`
   environment "shell" "real" {
   }
-`, `  environment = "shell.nonexistent"
+`, `  environment = shell.nonexistent
 `)
 	spec, diags := Parse("test.hcl", []byte(src))
 	if diags.HasErrors() {

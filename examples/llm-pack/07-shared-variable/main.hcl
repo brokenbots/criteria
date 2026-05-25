@@ -1,4 +1,5 @@
-workflow "shared-var" {
+workflow {
+  name = "shared-var"
   version       = "1"
   initial_state = "increment"
   target_state  = "done"
@@ -7,7 +8,7 @@ workflow "shared-var" {
 adapter "noop" "default" {}
 
 shared_variable "counter" {
-  type  = "string"
+  type = string
   value = "0"
 }
 

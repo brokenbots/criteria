@@ -17,34 +17,35 @@
 # failure for aggregation purposes, which triggers `on_failure="abort"` and
 # cancels sibling reviewers mid-review.
 
-workflow "review_axis" {
+workflow {
+
+  name = "review_axis"
   version       = "1"
   initial_state = "select_reviewer"
   target_state  = "failed"
-}
-
-policy {
-  max_total_steps = 60
+  policy {
+    max_total_steps = 60
+  }
 }
 
 variable "review_kind" {
-  type        = "string"
+  type = string
   default     = ""
   description = "Review axis: security, quality, workstream, or api_compat."
 }
 
 variable "workstream_file" {
-  type        = "string"
+  type = string
   default     = ""
 }
 
 variable "project_dir" {
-  type        = "string"
+  type = string
   default     = ""
 }
 
 variable "reviewer_model" {
-  type        = "string"
+  type = string
   default     = "gpt-5.4"
 }
 

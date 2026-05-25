@@ -9,7 +9,8 @@ import (
 
 func TestCompile_WaitDurationOnly(t *testing.T) {
 	src := []byte(`
-workflow "w" {
+workflow {
+  name = "w"
   version       = "0.1"
   initial_state = "pause"
   target_state  = "done"
@@ -50,7 +51,8 @@ state "done" {
 
 func TestCompile_WaitSignalOnly(t *testing.T) {
 	src := []byte(`
-workflow "w" {
+workflow {
+  name = "w"
   version       = "0.1"
   initial_state = "gating"
   target_state  = "done"
@@ -86,7 +88,8 @@ state "done" {
 
 func TestCompile_WaitBothDurationAndSignal_Error(t *testing.T) {
 	src := []byte(`
-workflow "w" {
+workflow {
+  name = "w"
   version       = "0.1"
   initial_state = "pause"
   target_state  = "done"
@@ -115,7 +118,8 @@ state "done" {
 
 func TestCompile_WaitNoOutcomes_Error(t *testing.T) {
 	src := []byte(`
-workflow "w" {
+workflow {
+  name = "w"
   version       = "0.1"
   initial_state = "pause"
   target_state  = "done"
@@ -142,7 +146,8 @@ state "done" {
 
 func TestCompile_ApprovalRequiresApprovedAndRejected(t *testing.T) {
 	src := []byte(`
-workflow "w" {
+workflow {
+  name = "w"
   version       = "0.1"
   initial_state = "check"
   target_state  = "done"
@@ -182,7 +187,8 @@ state "done" {
 
 func TestCompile_UnreachableWaitErrors(t *testing.T) {
 	src := []byte(`
-workflow "w" {
+workflow {
+  name = "w"
   version       = "0.1"
   initial_state = "start"
   target_state  = "done"
@@ -226,7 +232,8 @@ state "done" {
 
 func TestCompile_UnreachableApprovalErrors(t *testing.T) {
 	src := []byte(`
-workflow "w" {
+workflow {
+  name = "w"
   version       = "0.1"
   initial_state = "start"
   target_state  = "done"
@@ -272,7 +279,8 @@ state "done" {
 
 func TestCompile_WaitDuplicateOutcome_Error(t *testing.T) {
 	src := []byte(`
-workflow "w" {
+workflow {
+  name = "w"
   version       = "0.1"
   initial_state = "pause"
   target_state  = "done"
@@ -301,7 +309,8 @@ state "done" { terminal = true }
 
 func TestCompile_ApprovalDuplicateOutcome_Error(t *testing.T) {
 	src := []byte(`
-workflow "w" {
+workflow {
+  name = "w"
   version       = "0.1"
   initial_state = "gate"
   target_state  = "done"
@@ -332,7 +341,8 @@ state "done" { terminal = true }
 
 func TestCompile_ApprovalMissingRejected_Error(t *testing.T) {
 	src := []byte(`
-workflow "w" {
+workflow {
+  name = "w"
   version       = "0.1"
   initial_state = "check"
   target_state  = "done"

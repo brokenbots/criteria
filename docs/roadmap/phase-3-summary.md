@@ -36,7 +36,7 @@ A clean break from v0.2.0 with comprehensive HCL language rework and runtime arc
 | 12 | Adapter lifecycle automation | `lifecycle = "open"\|"close"` removed. Adapters auto-open on scope entry, auto-close on exit (LIFO). | **YES** |
 | 13 | Subworkflow first-class | New `subworkflow "<name>" { source = "path" }` top-level block. Inline `step.workflow { ... }` and `step.workflow_file` removed. | **YES** |
 | 14 | Universal step target | Unified `step.target = adapter.<type>.<name> \| subworkflow.<name>` (replaces `step.adapter`, `step.agent`, `step.workflow*`). | **YES** |
-| 15 | Outcome and return | `outcome.next` replaces `transition_to`. Reserved `return` outcome. `outcome.output` projection. `default_outcome` attribute. | **YES** |
+| 15 | Outcome and return | `outcome.next` replaces `transition_to`. Reserved `return` outcome. `outcome.output` projection. `outcome "default" { }` block. | **YES** |
 | 16 | Switch and if flow | `branch { arm { ... } }` → `switch { condition { match = ..., next = ... } }`. `if` deferred to Phase 4. | **YES** |
 | 17 | Directory-mode modules | Single-file entry point removed; directory-only. Workflow attributes wrap in `workflow "<name>" { ... }` block. | **YES** |
 

@@ -7,24 +7,26 @@
 #
 # Adapters are isolated from the parent and PR pipeline subworkflow.
 
-workflow "execute_review" {
+workflow {
+
+  name = "execute_review"
   version       = "1"
   initial_state = "execute_init"
   target_state  = "approved"
 }
 
 variable "workstream_file" {
-  type = "string"
+  type = string
 }
 
 variable "max_execute_cycles" {
-  type    = "number"
+  type = number
   default = 5
   description = "Maximum execute-review cycles before requesting user assistance."
 }
 
 shared_variable "execute_cycle_count" {
-  type  = "number"
+  type = number
   value = 0
 }
 
@@ -199,6 +201,6 @@ state "failed" {
 }
 
 output "result" {
-  type  = "string"
+  type = string
   value = "approved"
 }

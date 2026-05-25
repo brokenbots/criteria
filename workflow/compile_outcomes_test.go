@@ -1,7 +1,7 @@
 package workflow
 
 // compile_outcomes_test.go — W15 tests for the outcome block schema (next,
-// output expression, return sentinel, default_outcome, and legacy rejection).
+// output expression, return sentinel, outcome "default", and legacy rejection).
 
 import (
 	"strings"
@@ -11,7 +11,8 @@ import (
 // minimalWorkflowWithStep wraps a step body in a minimal compilable workflow.
 func minimalWorkflowWithStep(stepBody string) string {
 	return `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "work"
   target_state  = "done"
@@ -36,7 +37,8 @@ state "failed" {
 // and stores the target step name in CompiledOutcome.Next.
 func TestCompileOutcome_NextIsStep(t *testing.T) {
 	src := `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "a"
   target_state  = "done"
@@ -102,7 +104,8 @@ func TestCompileOutcome_NextIsState(t *testing.T) {
 // ReturnSentinel constant (not treated as an unknown node name).
 func TestCompileOutcome_NextIsReturn(t *testing.T) {
 	src := `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "work"
   target_state  = "done"
@@ -165,7 +168,8 @@ func TestCompileOutcome_OutputExprFolds(t *testing.T) {
 // not evaluated until the step runs.
 func TestCompileOutcome_OutputExprRuntimeRef(t *testing.T) {
 	src := `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "a"
   target_state  = "done"
@@ -212,12 +216,12 @@ func TestCompileOutcome_LegacyTransitionTo_HardError(t *testing.T) {
 	}
 }
 
-// TestCompileStep_DefaultOutcomeMissing verifies that default_outcome referring
-// to an undeclared outcome name is a compile error.
+// TestCompileStep_DefaultOutcomeMissing verifies that an outcome "default" block
+// pointing to a nonexistent state is a compile error.
 func TestCompileStep_DefaultOutcomeMissing(t *testing.T) {
 	src := minimalWorkflowWithStep(`
     outcome "success" { next = "done" }
-    default_outcome = "nonexistent"
+    outcome "default" { next = "nonexistent" }
 `)
 	spec, diags := Parse("t.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -225,10 +229,10 @@ func TestCompileStep_DefaultOutcomeMissing(t *testing.T) {
 	}
 	_, diags = Compile(spec, nil)
 	if !diags.HasErrors() {
-		t.Fatal("expected compile error for undeclared default_outcome, got none")
+		t.Fatal("expected compile error for default outcome pointing to nonexistent state, got none")
 	}
-	if !strings.Contains(diags.Error(), "default_outcome") {
-		t.Errorf("error should mention default_outcome, got: %s", diags.Error())
+	if !strings.Contains(diags.Error(), "nonexistent") {
+		t.Errorf("error should mention nonexistent, got: %s", diags.Error())
 	}
 }
 
@@ -278,7 +282,8 @@ func TestCompileOutcome_OutputExprBadRef(t *testing.T) {
 // time — it is only resolved at runtime when the subworkflow step has executed.
 func TestCompileOutcome_OutputExprSubworkflowRef(t *testing.T) {
 	src := `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "a"
   target_state  = "done"
@@ -308,7 +313,8 @@ state "done" {
 
 func TestCompileStep_NameReturn_HardError(t *testing.T) {
 	src := `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "return"
   target_state  = "done"
@@ -341,7 +347,8 @@ state "done" {
 // <field> is declared in the adapter's OutputSchema.
 func TestCompileOutcome_StepOutputRef_KnownField(t *testing.T) {
 	src := `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "work"
   target_state  = "done"
@@ -377,7 +384,8 @@ state "done" {
 // adapter's OutputSchema produces a compile error containing the field name.
 func TestCompileOutcome_StepOutputRef_UnknownField(t *testing.T) {
 	src := `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "work"
   target_state  = "done"
@@ -416,7 +424,8 @@ state "done" {
 // OutputSchema is provided (permissive when schema is absent).
 func TestCompileOutcome_StepOutputRef_NoSchema(t *testing.T) {
 	src := `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "work"
   target_state  = "done"
@@ -453,7 +462,8 @@ state "done" {
 // !isAggregateIter guard is removed.
 func TestCompileOutcome_StepOutputRef_AggregateIter_Permissive(t *testing.T) {
 	src := `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "work"
   target_state  = "done"
@@ -502,7 +512,8 @@ func TestCompileReservedName_ReturnForNonStepNodes(t *testing.T) {
 		{
 			name: "state",
 			src: `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "step1"
   target_state  = "return"
@@ -520,7 +531,8 @@ state "return" {
 		{
 			name: "switch",
 			src: `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "step1"
   target_state  = "done"

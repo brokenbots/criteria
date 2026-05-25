@@ -66,19 +66,20 @@ Rules:
 The following block types are defined. Tables are auto-generated from [`workflow/schema.go`](../workflow/schema.go).
 
 <!-- BEGIN GENERATED:blocks -->
-### `workflow "name" { ... }`
+### `workflow { ... }`
 
 - **Source:** [`workflow/schema.go:82`](../workflow/schema.go#L82)
-- **Labels:** `name`
 - **Attributes:**
 
 | Attribute | Type | Required | Description |
 |---|---|---|---|
+| `name` | string | yes | _(no description)_ |
 | `version` | string | yes | Version is the HCL schema version string. Use "1". |
 | `initial_state` | string | yes | InitialState names the step or state where workflow execution begins. |
 | `target_state` | string | no | _(no description)_ |
-| `environment` | string | no | _(no description)_ |
+| `environment` | hcl.Expression | no | _(no description)_ |
 
+- **Nested blocks:** [`policy`](#policy---)
 
 ### `variable "name" { ... }`
 
@@ -88,7 +89,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 | Attribute | Type | Required | Description |
 |---|---|---|---|
-| `type` | string | no | _(no description)_ |
+| `type` | hcl.Expression | no | _(no description)_ |
 | `description` | string | no | _(no description)_ |
 
 - **Additional attributes:** captures the "default" expression
@@ -114,7 +115,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 | Attribute | Type | Required | Description |
 |---|---|---|---|
 | `description` | string | no | _(no description)_ |
-| `type` | string | no | _(no description)_ |
+| `type` | hcl.Expression | no | _(no description)_ |
 
 - **Additional attributes:** captures the optional "value" expression
 
@@ -126,14 +127,14 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `output "name" { ... }`
 
-- **Source:** [`workflow/schema.go:241`](../workflow/schema.go#L241)
+- **Source:** [`workflow/schema.go:236`](../workflow/schema.go#L236)
 - **Labels:** `name`
 - **Attributes:**
 
 | Attribute | Type | Required | Description |
 |---|---|---|---|
 | `description` | string | no | _(no description)_ |
-| `type` | string | no | _(no description)_ |
+| `type` | hcl.Expression | no | _(no description)_ |
 
 - **Additional attributes:** captures the "value" expression
 
@@ -145,21 +146,21 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 | Attribute | Type | Required | Description |
 |---|---|---|---|
-| `environment` | string | no | _(no description)_ |
+| `environment` | hcl.Expression | no | _(no description)_ |
 | `on_crash` | string | no | _(no description)_ |
 
 - **Nested blocks:** [`config`](#config---)
 
 ### `subworkflow "name" { ... }`
 
-- **Source:** [`workflow/schema.go:251`](../workflow/schema.go#L251)
+- **Source:** [`workflow/schema.go:246`](../workflow/schema.go#L246)
 - **Labels:** `name`
 - **Attributes:**
 
 | Attribute | Type | Required | Description |
 |---|---|---|---|
 | `source` | string | yes | _(no description)_ |
-| `environment` | string | no | _(no description)_ |
+| `environment` | hcl.Expression | no | _(no description)_ |
 
 - **Additional attributes:** captures the "input" block
 
@@ -177,14 +178,13 @@ The following block types are defined. Tables are auto-generated from [`workflow
 | `config` | map(string) | no | Config is the legacy map attribute; retained for parse-time detection so the compiler can emit a helpful "use input { } block" diagnostic. |
 | `timeout` | string | no | _(no description)_ |
 | `allow_tools` | list(string) | no | _(no description)_ |
-| `default_outcome` | string | no | DefaultOutcome, when set, is the fallback outcome name used when an adapter returns an outcome name not in the declared set. Must refer to a declared outcome; validated at compile time. |
 
 - **Additional attributes:** Captures: target (required — adapter traversal e.g. adapter.copilot.main, or subworkflow.<name>); for_each, count, parallel, while (optional iteration controls); environment (optional, bare traversal e.g. shell.ci).
 - **Nested blocks:** [`input`](#input---), [`outcome`](#outcome-name---)
 
 ### `state "name" { ... }`
 
-- **Source:** [`workflow/schema.go:314`](../workflow/schema.go#L314)
+- **Source:** [`workflow/schema.go:309`](../workflow/schema.go#L309)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -197,7 +197,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `wait "name" { ... }`
 
-- **Source:** [`workflow/schema.go:297`](../workflow/schema.go#L297)
+- **Source:** [`workflow/schema.go:292`](../workflow/schema.go#L292)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -210,7 +210,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `approval "name" { ... }`
 
-- **Source:** [`workflow/schema.go:306`](../workflow/schema.go#L306)
+- **Source:** [`workflow/schema.go:301`](../workflow/schema.go#L301)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -223,13 +223,23 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `switch "name" { ... }`
 
-- **Source:** [`workflow/schema.go:325`](../workflow/schema.go#L325)
+- **Source:** [`workflow/schema.go:320`](../workflow/schema.go#L320)
 - **Labels:** `name`
 - **Nested blocks:** [`condition`](#condition---), [`default`](#default---)
 
+### `permissions { ... }`
+
+- **Source:** [`workflow/schema.go:359`](../workflow/schema.go#L359)
+- **Attributes:**
+
+| Attribute | Type | Required | Description |
+|---|---|---|---|
+| `allow_tools` | list(string) | no | AllowTools is the workflow-wide list of glob patterns for permitted tool invocations. Step-level allow_tools is unioned with this list. See StepSpec.AllowTools for matching semantics. |
+
+
 ### `policy { ... }`
 
-- **Source:** [`workflow/schema.go:345`](../workflow/schema.go#L345)
+- **Source:** [`workflow/schema.go:340`](../workflow/schema.go#L340)
 - **Attributes:**
 
 | Attribute | Type | Required | Description |
@@ -237,16 +247,6 @@ The following block types are defined. Tables are auto-generated from [`workflow
 | `max_total_steps` | number | no | _(no description)_ |
 | `max_step_retries` | number | no | _(no description)_ |
 | `max_visits_warn_threshold` | number | no | MaxVisitsWarnThreshold controls when the engine emits a warning for excessive revisits while executing a workflow. |
-
-
-### `permissions { ... }`
-
-- **Source:** [`workflow/schema.go:364`](../workflow/schema.go#L364)
-- **Attributes:**
-
-| Attribute | Type | Required | Description |
-|---|---|---|---|
-| `allow_tools` | list(string) | no | AllowTools is the workflow-wide list of glob patterns for permitted tool invocations. Step-level allow_tools is unioned with this list. See StepSpec.AllowTools for matching semantics. |
 
 
 ### `config { ... }`
@@ -259,7 +259,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `outcome "name" { ... }`
 
-- **Source:** [`workflow/schema.go:290`](../workflow/schema.go#L290)
+- **Source:** [`workflow/schema.go:285`](../workflow/schema.go#L285)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -271,12 +271,12 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `condition { ... }`
 
-- **Source:** [`workflow/schema.go:334`](../workflow/schema.go#L334)
+- **Source:** [`workflow/schema.go:329`](../workflow/schema.go#L329)
 - **Additional attributes:** captures: match (required), next (required), output (optional)
 
 ### `default { ... }`
 
-- **Source:** [`workflow/schema.go:340`](../workflow/schema.go#L340)
+- **Source:** [`workflow/schema.go:335`](../workflow/schema.go#L335)
 - **Additional attributes:** captures: next (required), output (optional)
 <!-- END GENERATED:blocks -->
 
@@ -424,7 +424,7 @@ Steps support three iteration forms, specified via attributes captured in the st
 
 - `all_succeeded` — all iterations returned a success outcome.
 - `any_failed` — at least one iteration returned a failure outcome.
-- The step's declared `outcome` blocks must cover both aggregate values (or use `default_outcome`).
+- The step's declared `outcome` blocks must cover both aggregate values (or use an `outcome "default"` block).
 
 **`each._prev`** is populated with the compiled output map from the preceding iteration. On the first iteration it is `null`. This enables sequential pipelines where each step depends on the previous result.
 
@@ -435,8 +435,8 @@ Each step, wait, and approval node declares one or more `outcome` blocks mapping
 **Routing rules (in precedence order):**
 
 1. If the adapter returns a named outcome matching a declared `outcome` block, route to that block's `next`.
-2. If no match and `default_outcome` is set, route to the `default_outcome` block's `next`.
-3. If no match and no `default_outcome`, the run fails with a routing error.
+2. If no match and an `outcome "default"` block is declared, route to its `next`.
+3. If no match and no `outcome "default"` block is declared, the run fails with a routing error.
 
 **`output` projection:** An `outcome` block may include an `output = {...}` expression to project a custom output map. If absent, the adapter's full output is passed downstream as `steps.<name>.*`.
 
@@ -444,7 +444,7 @@ Each step, wait, and approval node declares one or more `outcome` blocks mapping
 
 **Terminal routing:** A `state` block with `terminal = true` terminates the run. `success = true` marks the run as succeeded; `success = false` marks it as failed. A run that reaches no terminal state is a runtime error (infinite loop guard via `policy.max_total_steps`).
 
-**Default outcome:** If a step declares only one `outcome` block and the adapter returns no named outcome, the engine routes to that single outcome automatically (implicit default). With multiple outcomes, `default_outcome` must be explicit.
+**Default outcome:** If a step declares only one `outcome` block and the adapter returns no named outcome, the engine routes to that single outcome automatically (implicit default). With multiple outcomes, an `outcome "default"` block must be declared.
 
 ## Error model
 
@@ -452,9 +452,9 @@ Each step, wait, and approval node declares one or more `outcome` blocks mapping
 
 **Runtime errors** are non-fatal by default unless they propagate to a terminal routing failure. Categories:
 
-- **Adapter crash** — the adapter process exited unexpectedly. Controlled by `on_crash` on the step or adapter block: `abort` (default, fails the run) or `ignore` (routes to the `default_outcome`).
+- **Adapter crash** — the adapter process exited unexpectedly. Controlled by `on_crash` on the step or adapter block: `abort` (default, fails the run) or `ignore` (routes to the `outcome "default"` block).
 - **Expression evaluation error** — a namespace binding is missing or a function throws. The run fails with a diagnostic including the source location.
-- **Routing error** — no matching outcome and no `default_outcome`. Always fatal.
+- **Routing error** — no matching outcome and no `outcome "default"` block. Always fatal.
 - **Policy violation** — `max_total_steps` exceeded. Always fatal.
 
 **`on_crash` propagation:** If `on_crash` is set on both the step and the adapter, the step-level setting takes precedence.

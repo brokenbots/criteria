@@ -9,7 +9,8 @@ state with deterministic write ordering.
 ## Minimal example
 
 ```hcl
-workflow "shared-var" {
+workflow {
+  name = "shared-var"
   version       = "1"
   initial_state = "increment"
   target_state  = "done"
@@ -18,7 +19,7 @@ workflow "shared-var" {
 adapter "noop" "default" {}
 
 shared_variable "counter" {
-  type  = "string"
+  type = string
   value = "0"
 }
 
@@ -49,7 +50,7 @@ state "done" {
 
 ## Key idioms
 
-- **`shared_variable "name" { type = "string" value = "..." }`** — declares a workflow-scoped variable with an optional initial value.
+- **`shared_variable "name" { type = string value = "..." }`** — declares a workflow-scoped variable with an optional initial value.
 - **`shared.<name>`** — reads the current value of the variable in any expression including step inputs.
 - **`shared_writes = { var_name = "adapter_output_key" }`** — in an outcome block, maps a shared variable name to an adapter output key whose value is written atomically on that transition.
 

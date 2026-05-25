@@ -42,26 +42,42 @@ func injectDefaultAdapters(src string) string {
 	var injected strings.Builder
 	for adapterType := range adapters {
 		//nolint:gocritic // sprintfQuotedString: Sprintf needed to build HCL with literal quotes
-		injected.WriteString(fmt.Sprintf("  adapter \"%s\" \"default\" {}\n", adapterType))
+		injected.WriteString(fmt.Sprintf("adapter \"%s\" \"default\" {}\n", adapterType))
 	}
 
-	// Insert the adapters after the workflow header
-	workflowStart := strings.Index(src, "workflow \"")
+	// Insert the adapters after the workflow block closing brace (top level)
+	workflowStart := strings.Index(src, "workflow {")
 	if workflowStart == -1 {
 		return src
 	}
-	headerEnd := strings.Index(src[workflowStart:], "\n") + workflowStart + 1
-
-	result := src[:headerEnd] + "\n" + injected.String() + src[headerEnd:]
+	bracePos := strings.Index(src[workflowStart:], "{") + workflowStart
+	depth := 0
+	closeIdx := -1
+	for i := bracePos; i < len(src); i++ {
+		switch src[i] {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				closeIdx = i
+				i = len(src) // exit loop
+			}
+		}
+	}
+	if closeIdx != -1 {
+		insertAt := closeIdx + 1
+		src = src[:insertAt] + "\n" + injected.String() + src[insertAt:]
+	}
 
 	// Replace all bare adapter references with dotted references
 	for adapterType := range adapters {
 		pattern := regexp.MustCompile(fmt.Sprintf(`target\s*=\s*adapter\.%s\b`, regexp.QuoteMeta(adapterType)))
 		replacement := fmt.Sprintf(`target = adapter.%s.default`, adapterType)
-		result = pattern.ReplaceAllString(result, replacement)
+		src = pattern.ReplaceAllString(src, replacement)
 	}
 
-	return result
+	return src
 }
 
 // parseAndCompile is a test helper that parses src and compiles it.
@@ -115,14 +131,15 @@ func TestSwitchCompile_HappyPath(t *testing.T) {
 	// Note: "prev" is unreachable from "check" (initial_state), but "check" is
 	// the initial state itself. Build a reachable workflow.
 	src := `
-workflow "w" {
+workflow {
+  name = "w"
   version       = "0.1"
   initial_state = "check"
   target_state  = "done"
 }
 
 variable "env" {
-  type    = "string"
+  type = string
   default = "staging"
 }
 
@@ -159,7 +176,8 @@ state "done"           { terminal = true }
 
 func TestSwitchCompile_MissingDefault(t *testing.T) {
 	src := `
-workflow "w" {
+workflow {
+  name = "w"
   version       = "0.1"
   initial_state = "check"
   target_state  = "done"
@@ -173,7 +191,7 @@ switch "check" {
 }
 
 variable "env" {
-  type = "string"
+  type = string
 }
 
 state "done" { terminal = true }
@@ -200,7 +218,8 @@ state "done" { terminal = true }
 
 func TestSwitchCompile_UnknownArmTarget(t *testing.T) {
 	src := `
-workflow "w" {
+workflow {
+  name = "w"
   version       = "0.1"
   initial_state = "check"
   target_state  = "done"
@@ -223,7 +242,8 @@ state "done" { terminal = true }
 
 func TestSwitchCompile_UnknownDefaultTarget(t *testing.T) {
 	src := `
-workflow "w" {
+workflow {
+  name = "w"
   version       = "0.1"
   initial_state = "check"
   target_state  = "done"
@@ -246,7 +266,8 @@ state "done" { terminal = true }
 
 func TestSwitchCompile_UndeclaredVariable(t *testing.T) {
 	src := `
-workflow "w" {
+workflow {
+  name = "w"
   version       = "0.1"
   initial_state = "check"
   target_state  = "done"
@@ -269,7 +290,8 @@ state "done" { terminal = true }
 
 func TestSwitchCompile_UnknownStepReference(t *testing.T) {
 	src := `
-workflow "w" {
+workflow {
+  name = "w"
   version       = "0.1"
   initial_state = "check"
   target_state  = "done"
@@ -292,7 +314,8 @@ state "done" { terminal = true }
 
 func TestSwitchCompile_SelfReferenceRejected(t *testing.T) {
 	src := `
-workflow "w" {
+workflow {
+  name = "w"
   version       = "0.1"
   initial_state = "check"
   target_state  = "done"
@@ -318,7 +341,8 @@ state "done" { terminal = true }
 func TestSwitchCompile_UnreachableSwitchErrors(t *testing.T) {
 	// The switch node is not reachable from initial_state (a step is initial).
 	src := `
-workflow "w" {
+workflow {
+  name = "w"
   version       = "0.1"
   initial_state = "start"
   target_state  = "done"
@@ -365,7 +389,8 @@ state "done" { terminal = true }
 
 func TestSwitchCompile_DuplicateSwitch(t *testing.T) {
 	src := `
-workflow "w" {
+workflow {
+  name = "w"
   version       = "0.1"
   initial_state = "check"
   target_state  = "done"
@@ -402,7 +427,8 @@ func TestSwitchCompile_FixtureFile(t *testing.T) {
 // is hard-rejected at parse time.
 func TestSwitchCompile_LegacyBranchBlock_HardError(t *testing.T) {
 	src := `
-workflow "w" {
+workflow {
+  name = "w"
   version       = "0.1"
   initial_state = "check"
   target_state  = "done"
@@ -440,7 +466,8 @@ state "done" { terminal = true }
 // is rejected — it is an engine-internal loop target reserved for all node kinds.
 func TestSwitchCompile_ReservedNameContinue(t *testing.T) {
 	src := `
-workflow "w" {
+workflow {
+  name = "w"
   version       = "0.1"
   initial_state = "check"
   target_state  = "done"
@@ -466,7 +493,8 @@ state "done"  { terminal = true  }
 // the compiler and stored as the condition's Next target.
 func TestCompileSwitch_NextIsReturn(t *testing.T) {
 	src := `
-workflow "w" {
+workflow {
+  name = "w"
   version       = "0.1"
   initial_state = "check"
   target_state  = "done"
@@ -501,7 +529,8 @@ state "done" { terminal = true }
 // the old "transition_to" attribute inside a condition block is rejected.
 func TestCompileSwitch_LegacyTransitionToOnArm_HardError(t *testing.T) {
 	src := `
-workflow "w" {
+workflow {
+  name = "w"
   version       = "0.1"
   initial_state = "check"
   target_state  = "done"
@@ -528,7 +557,8 @@ state "done" { terminal = true }
 // is accepted.
 func TestCompileSwitch_OutputExprFolds(t *testing.T) {
 	bad := `
-workflow "w" {
+workflow {
+  name = "w"
   version       = "0.1"
   initial_state = "check"
   target_state  = "done"
@@ -550,7 +580,8 @@ state "done" { terminal = true }
 	compileExpectError(t, bad, `output must be an object literal`)
 
 	good := `
-workflow "w" {
+workflow {
+  name = "w"
   version       = "0.1"
   initial_state = "check"
   target_state  = "done"

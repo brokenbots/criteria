@@ -9,7 +9,8 @@ routes to the first matching arm.
 ## Minimal example
 
 ```hcl
-workflow "branching" {
+workflow {
+  name = "branching"
   version       = "1"
   initial_state = "classify"
   target_state  = "done"

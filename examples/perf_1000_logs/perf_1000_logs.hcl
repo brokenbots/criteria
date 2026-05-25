@@ -13,7 +13,8 @@
 #   modern machine; slower runs can indicate adapter or engine regressions.
 #   Run `criteria apply --output json examples/perf_1000_logs/ | wc -l` to
 #   count emitted events.
-workflow "perf_1000_logs" {
+workflow {
+  name = "perf_1000_logs"
   version       = "0.1"
   initial_state = "generate_logs"
   target_state  = "done"

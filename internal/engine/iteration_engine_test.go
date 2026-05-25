@@ -81,7 +81,8 @@ func (p *multiOutcomeAdapter) Kill()                                            
 // all items and emits all_succeeded when all iterations return "success".
 func TestIteration_ForEach_AllSucceeded(t *testing.T) {
 	g := compile(t, `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "items"
   target_state  = "done"
@@ -122,7 +123,8 @@ state "done" {
 // any_failed when at least one iteration returns a non-success outcome.
 func TestIteration_ForEach_AnyFailed(t *testing.T) {
 	g := compile(t, `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "items"
   target_state  = "done"
@@ -158,7 +160,8 @@ state "done" {
 // list emits all_succeeded immediately without running any iterations.
 func TestIteration_ForEach_EmptyList(t *testing.T) {
 	g := compile(t, `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "items"
   target_state  = "done"
@@ -196,7 +199,8 @@ state "done" {
 // times and emits all_succeeded when all succeed.
 func TestIteration_Count_AllSucceeded(t *testing.T) {
 	g := compile(t, `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "n"
   target_state  = "done"
@@ -231,7 +235,8 @@ state "done" {
 // the first failed iteration and emits any_failed.
 func TestIteration_OnFailure_Abort(t *testing.T) {
 	g := compile(t, `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "items"
   target_state  = "done"
@@ -269,7 +274,8 @@ state "done" {
 // iterations and always emits all_succeeded regardless of individual failures.
 func TestIteration_OnFailure_Ignore(t *testing.T) {
 	g := compile(t, `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "items"
   target_state  = "done"
@@ -308,7 +314,8 @@ state "done" {
 // the engine correctly continues to the next step.
 func TestIteration_IterationFollowedByStep(t *testing.T) {
 	g := compile(t, `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "items"
   target_state  = "done"
@@ -365,7 +372,8 @@ state "done" {
 func TestIteration_WorkflowStep_RunsBodyPerIteration(t *testing.T) {
 	t.Skip("test uses removed inline workflow body feature (W13); pending W14 subworkflow invocation support")
 	g := compile(t, `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "run"
   target_state  = "done"
@@ -413,7 +421,8 @@ state "done" {
 func TestIteration_WorkflowStep_MultiStepBody(t *testing.T) {
 	t.Skip("test uses removed inline workflow body feature (W13); pending W14 subworkflow invocation support")
 	g := compile(t, `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "run"
   target_state  = "done"
@@ -460,7 +469,8 @@ state "done" {
 // each._idx are correctly bound during iteration.
 func TestIteration_EachBindings_ValueAndIndex(t *testing.T) {
 	g := compile(t, `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "items"
   target_state  = "done"
@@ -567,7 +577,8 @@ func TestIteration_VarScope_SerializeRestore(t *testing.T) {
 // pre-existing IterStack (simulating resume after crash mid-iteration).
 func TestIteration_WithResumedIter(t *testing.T) {
 	g := compile(t, `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "items"
   target_state  = "done"
@@ -708,7 +719,8 @@ func (p *captureOutputAdapter) Kill()                                      {}
 // binds each.key to the map key string and each._total to the map size.
 func TestIter_MapForEach_KeyAndTotal(t *testing.T) {
 	g := compile(t, `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "items"
   target_state  = "done"
@@ -751,7 +763,8 @@ state "done" {
 // previous iteration's output object).
 func TestIter_Prev_NullOnFirst_ObjectAfter(t *testing.T) {
 	g := compile(t, `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "items"
   target_state  = "done"
@@ -798,7 +811,8 @@ state "done" {
 // runs all iterations even when one fails, then emits any_failed aggregate.
 func TestIter_OnFailure_Continue_AggregatesAnyFailed(t *testing.T) {
 	g := compile(t, `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "items"
   target_state  = "done"
@@ -838,7 +852,8 @@ state "done" {
 // stops iteration immediately after the first failing iteration.
 func TestIter_OnFailure_Abort_StopsAfterFirstFailure(t *testing.T) {
 	g := compile(t, `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "items"
   target_state  = "done"
@@ -893,7 +908,8 @@ func (s *perIterSink) OnStepOutputCaptured(step string, outputs map[string]strin
 // the correct output key-value pairs in order.
 func TestIter_IndexedOutputs_StoredInStepsVar(t *testing.T) {
 	g := compile(t, `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "produce"
   target_state  = "done"
@@ -937,7 +953,8 @@ state "done" {
 // step input reflects the correct iteration item.
 func TestIter_CrashResume_RebindEach(t *testing.T) {
 	g := compile(t, `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "items"
   target_state  = "done"
@@ -990,7 +1007,8 @@ state "done" {
 func TestIter_NestedIteration_WorkflowBody(t *testing.T) {
 	t.Skip("test uses removed inline workflow body feature (W13); pending W14 subworkflow invocation support")
 	g := compile(t, `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "outer"
   target_state  = "done"
@@ -1045,7 +1063,8 @@ state "done" {
 func TestIter_EarlyExit_OutsideBody_TerminatesLoop(t *testing.T) {
 	t.Skip("test uses removed inline workflow body feature (W13); pending W14 subworkflow invocation support")
 	g := compile(t, `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "outer"
   target_state  = "done"
@@ -1127,7 +1146,8 @@ func (c *combinedAdapter) Execute(ctx context.Context, runID string, step *workf
 func TestIter_OutputBlocks_OnlyDeclaredVisible(t *testing.T) {
 	t.Skip("test uses removed inline workflow body feature (W13); pending W14 subworkflow invocation support")
 	g := compile(t, `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "produce"
   target_state  = "done"
@@ -1196,7 +1216,8 @@ state "done" {
 // expression evaluator could not resolve numeric-indexed adapter outputs.
 func TestIter_OutputBlocks_NoneDeclared_AdapterStep(t *testing.T) {
 	g := compile(t, `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "produce"
   target_state  = "done"
@@ -1256,7 +1277,8 @@ state "done" {
 // non-null after any completed iteration, regardless of its outcome.
 func TestIter_Prev_PopulatedAfterFailedIterationContinue(t *testing.T) {
 	g := compile(t, `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "items"
   target_state  = "done"
@@ -1310,7 +1332,8 @@ state "done" {
 func TestIter_NestedIteration_CursorStack(t *testing.T) {
 	t.Skip("test uses removed inline workflow body feature (W13); pending W14 subworkflow invocation support")
 	g := compile(t, `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "outer"
   target_state  = "done"
@@ -1370,7 +1393,8 @@ state "done" {
 //  4. Asserts that the resumed step receives each._prev == "first_out" (not null).
 func TestIter_CrashResume_PrevRestoredFromJSON(t *testing.T) {
 	g := compile(t, `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "items"
   target_state  = "done"
@@ -1451,7 +1475,8 @@ func TestIter_WorkflowBody_EarlyExit_StopsLoop(t *testing.T) {
 		return "failure", nil
 	}}
 	g := compile(t, `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "loop"
   target_state  = "done"
@@ -1491,7 +1516,8 @@ state "done" {
 func TestIter_MapForEach_UsesKeyForIndexedOutput(t *testing.T) {
 	outPlugin := &outputAdapter{outcome: "success", outputs: map[string]string{"val": "out"}}
 	g := compile(t, `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "produce"
   target_state  = "consume"

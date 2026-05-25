@@ -11,7 +11,8 @@ import (
 
 // sharedVarWorkflow wraps a snippet into a minimal compilable workflow HCL.
 func sharedVarWorkflow(sharedBlocks, extraBlocks string) string {
-	return `workflow "test" {
+	return `workflow {
+  name = "test"
   version       = "0.1"
   initial_state = "done"
   target_state  = "done"
@@ -27,7 +28,7 @@ state "done" {
 func TestCompileSharedVariables_Simple(t *testing.T) {
 	src := sharedVarWorkflow(`
 shared_variable "counter" {
-  type  = "number"
+  type = number
   value = 0
 }
 `, "")
@@ -62,7 +63,7 @@ shared_variable "counter" {
 func TestCompileSharedVariables_StringType(t *testing.T) {
 	src := sharedVarWorkflow(`
 shared_variable "status" {
-  type  = "string"
+  type = string
   value = "pending"
 }
 `, "")
@@ -89,7 +90,7 @@ shared_variable "status" {
 func TestCompileSharedVariables_NoInitialValue(t *testing.T) {
 	src := sharedVarWorkflow(`
 shared_variable "flag" {
-  type = "bool"
+  type = bool
 }
 `, "")
 	spec, diags := Parse("test.hcl", []byte(src))
@@ -138,7 +139,7 @@ shared_variable "bad" {
 func TestCompileSharedVariables_TypeMismatch(t *testing.T) {
 	src := sharedVarWorkflow(`
 shared_variable "bad" {
-  type  = "number"
+  type = number
   value = "not-a-number"
 }
 `, "")
@@ -155,11 +156,11 @@ shared_variable "bad" {
 func TestCompileSharedVariables_NameCollisionWithVariable(t *testing.T) {
 	src := sharedVarWorkflow(`
 shared_variable "env" {
-  type = "string"
+  type = string
 }
 `, `
 variable "env" {
-  type    = "string"
+  type = string
   default = "dev"
 }
 `)
@@ -179,7 +180,7 @@ variable "env" {
 func TestCompileSharedVariables_NameCollisionWithLocal(t *testing.T) {
 	src := sharedVarWorkflow(`
 shared_variable "greeting" {
-  type = "string"
+  type = string
 }
 `, `
 local "greeting" {
@@ -202,10 +203,10 @@ local "greeting" {
 func TestCompileSharedVariables_DuplicateDeclaration(t *testing.T) {
 	src := sharedVarWorkflow(`
 shared_variable "counter" {
-  type = "number"
+  type = number
 }
 shared_variable "counter" {
-  type = "string"
+  type = string
 }
 `, "")
 	spec, diags := Parse("test.hcl", []byte(src))
@@ -221,10 +222,10 @@ shared_variable "counter" {
 func TestCompileSharedVariables_Order(t *testing.T) {
 	src := sharedVarWorkflow(`
 shared_variable "alpha" {
-  type = "string"
+  type = string
 }
 shared_variable "beta" {
-  type = "number"
+  type = number
 }
 `, "")
 	spec, diags := Parse("test.hcl", []byte(src))
@@ -245,7 +246,8 @@ shared_variable "beta" {
 
 func TestCompileSharedWrites_ValidKey(t *testing.T) {
 	src := `
-workflow "test" {
+workflow {
+  name = "test"
   version       = "0.1"
   initial_state = "inc"
   target_state  = "done"
@@ -257,7 +259,7 @@ state "done" {
 }
 
 shared_variable "counter" {
-  type = "number"
+  type = number
 }
 
 adapter "noop" "default" {}
@@ -293,7 +295,8 @@ step "inc" {
 
 func TestCompileSharedWrites_UnknownKey(t *testing.T) {
 	src := `
-workflow "test" {
+workflow {
+  name = "test"
   version       = "0.1"
   initial_state = "inc"
   target_state  = "done"
@@ -305,7 +308,7 @@ state "done" {
 }
 
 shared_variable "counter" {
-  type = "number"
+  type = number
 }
 
 adapter "noop" "default" {}
@@ -336,7 +339,8 @@ step "inc" {
 // is rejected at compile time.
 func TestCompileSharedWrites_OutputKeyNotInProjection(t *testing.T) {
 	src := `
-workflow "test" {
+workflow {
+  name = "test"
   version       = "0.1"
   initial_state = "inc"
   target_state  = "done"
@@ -348,7 +352,7 @@ state "done" {
 }
 
 shared_variable "counter" {
-  type = "number"
+  type = number
 }
 
 adapter "noop" "default" {}
@@ -379,7 +383,8 @@ step "inc" {
 // referencing a key declared in the outcome's output projection compiles cleanly.
 func TestCompileSharedWrites_OutputKeyInProjection(t *testing.T) {
 	src := `
-workflow "test" {
+workflow {
+  name = "test"
   version       = "0.1"
   initial_state = "inc"
   target_state  = "done"
@@ -391,7 +396,7 @@ state "done" {
 }
 
 shared_variable "counter" {
-  type = "number"
+  type = number
 }
 
 adapter "noop" "default" {}
@@ -424,7 +429,8 @@ step "inc" {
 // shared_writes values not in the schema are rejected at compile time.
 func TestCompileSharedWrites_OutputKeyNotInAdapterSchema(t *testing.T) {
 	src := `
-workflow "test" {
+workflow {
+  name = "test"
   version       = "0.1"
   initial_state = "inc"
   target_state  = "done"
@@ -436,7 +442,7 @@ state "done" {
 }
 
 shared_variable "counter" {
-  type = "number"
+  type = number
 }
 
 adapter "noop" "default" {}
@@ -475,7 +481,8 @@ step "inc" {
 // succeeds.
 func TestCompileSharedWrites_OutputKeyInAdapterSchema(t *testing.T) {
 	src := `
-workflow "test" {
+workflow {
+  name = "test"
   version       = "0.1"
   initial_state = "inc"
   target_state  = "done"
@@ -487,7 +494,7 @@ state "done" {
 }
 
 shared_variable "counter" {
-  type = "number"
+  type = number
 }
 
 adapter "noop" "default" {}
@@ -526,7 +533,8 @@ step "inc" {
 // accepted (permissive — runtime validation only).
 func TestCompileSharedWrites_NoSchemaNoProjection_Permissive(t *testing.T) {
 	src := `
-workflow "test" {
+workflow {
+  name = "test"
   version       = "0.1"
   initial_state = "inc"
   target_state  = "done"
@@ -538,7 +546,7 @@ state "done" {
 }
 
 shared_variable "counter" {
-  type = "number"
+  type = number
 }
 
 adapter "noop" "default" {}
@@ -573,7 +581,8 @@ step "inc" {
 // so the compiler must prevent mappings that would silently fail at runtime.
 func TestCompileSharedWrites_AggregateIterating_RequiresProjection(t *testing.T) {
 	src := `
-workflow "test" {
+workflow {
+  name = "test"
   version       = "0.1"
   initial_state = "process"
   target_state  = "done"
@@ -585,7 +594,7 @@ state "done" {
 }
 
 shared_variable "result" {
-  type = "string"
+  type = string
 }
 
 adapter "noop" "default" {}
@@ -630,7 +639,8 @@ step "process" {
 // bypassed for parallel steps.
 func TestCompileSharedWrites_AggregateParallel_RequiresProjection(t *testing.T) {
 	src := `
-workflow "test" {
+workflow {
+  name = "test"
   version       = "0.1"
   initial_state = "process"
   target_state  = "done"
@@ -642,7 +652,7 @@ state "done" {
 }
 
 shared_variable "result" {
-  type = "string"
+  type = string
 }
 
 adapter "noop" "default" {}
@@ -680,7 +690,8 @@ step "process" {
 // an explicit output = { ... } projection is present that declares the referenced key.
 func TestCompileSharedWrites_AggregateIterating_WithProjection(t *testing.T) {
 	src := `
-workflow "test" {
+workflow {
+  name = "test"
   version       = "0.1"
   initial_state = "process"
   target_state  = "done"
@@ -692,7 +703,7 @@ state "done" {
 }
 
 shared_variable "result" {
-  type = "string"
+  type = string
 }
 
 adapter "noop" "default" {}
@@ -742,7 +753,7 @@ func TestCompileSharedVariables_AllSupportedTypesAccepted(t *testing.T) {
 	for _, typeStr := range allTypes {
 		src := sharedVarWorkflow(`
 shared_variable "x" {
-  type = "`+typeStr+`"
+  type = `+typeStr+`
 }
 `, "")
 		spec, diags := Parse("test.hcl", []byte(src))

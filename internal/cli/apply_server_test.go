@@ -35,7 +35,8 @@ func requireNoGoroutineLeak(t *testing.T) {
 
 // twoStepWorkflow is a minimal two-step shell workflow used by happy-path tests.
 const twoStepWorkflow = `
-workflow "two_step" {
+workflow {
+  name = "two_step"
   version       = "0.1"
   initial_state = "step_one"
   target_state  = "done"
@@ -67,7 +68,8 @@ state "done" {
 // step_two intentionally has no "failure" outcome so context.Canceled propagates
 // as an error instead of being silently routed through the failure transition.
 const cancelWorkflow = `
-workflow "cancel_test" {
+workflow {
+  name = "cancel_test"
   version       = "0.1"
   initial_state = "step_one"
   target_state  = "done"
@@ -96,7 +98,8 @@ state "done" {
 
 // pauseResumeWorkflow has a wait/signal node between step_one and step_three.
 const pauseResumeWorkflow = `
-workflow "pause_resume" {
+workflow {
+  name = "pause_resume"
   version       = "0.1"
   initial_state = "step_one"
   target_state  = "done"

@@ -11,7 +11,8 @@ import (
 
 func TestNodeForDispatchesStepStateAndUnknown(t *testing.T) {
 	g := compile(t, `
-workflow "t" {
+workflow {
+  name = "t"
   version = "0.1"
   initial_state = "a"
   target_state  = "done"
@@ -47,7 +48,8 @@ state "done" { terminal = true }`)
 
 func TestRunFromUnknownNodeSurfacesTypedFailure(t *testing.T) {
 	g := compile(t, `
-workflow "t" {
+workflow {
+  name = "t"
   version = "0.1"
   initial_state = "a"
   target_state  = "done"
@@ -75,7 +77,8 @@ state "done" { terminal = true }`)
 
 func TestRunStateTotalStepsIncrementsOnlyForStepEvaluation(t *testing.T) {
 	g := compile(t, `
-workflow "t" {
+workflow {
+  name = "t"
   version = "0.1"
   initial_state = "a"
   target_state  = "done"
@@ -130,17 +133,20 @@ state "done" { terminal = true }`)
 
 func TestInterpreterMaxTotalStepsGuardUsesExistingReason(t *testing.T) {
 	g := compile(t, `
-workflow "t" {
+workflow {
+  name = "t"
   version = "0.1"
   initial_state = "a"
   target_state  = "done"
+
+  policy { max_total_steps = 3 }
 }
 step "a" {
   target = adapter.fake
   outcome "again" { next = "a" }
 }
 state "done" { terminal = true }
-policy { max_total_steps = 3 }`)
+`)
 
 	sink := &fakeSink{}
 	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": &fakeAdapter{name: "fake", outcome: "again"}}}
@@ -156,7 +162,8 @@ policy { max_total_steps = 3 }`)
 
 func TestInterpreterCompletesOnTerminalState(t *testing.T) {
 	g := compile(t, `
-workflow "t" {
+workflow {
+  name = "t"
   version = "0.1"
   initial_state = "a"
   target_state  = "done"

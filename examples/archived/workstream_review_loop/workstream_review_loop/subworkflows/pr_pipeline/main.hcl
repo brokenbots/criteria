@@ -10,24 +10,26 @@
 #
 # Adapters are isolated from the parent and execute-review subworkflow.
 
-workflow "pr_pipeline" {
+workflow {
+
+  name = "pr_pipeline"
   version       = "1"
   initial_state = "open_or_update_pr"
   target_state  = "merged"
 }
 
 variable "workstream_file" {
-  type = "string"
+  type = string
 }
 
 variable "max_pr_cycles" {
-  type    = "number"
+  type = number
   default = 3
   description = "Maximum PR triage cycles before requesting user assistance."
 }
 
 shared_variable "pr_cycle_count" {
-  type  = "number"
+  type = number
   value = 0
 }
 
@@ -448,6 +450,6 @@ state "failed" {
 }
 
 output "result" {
-  type  = "string"
+  type = string
   value = "merged"
 }

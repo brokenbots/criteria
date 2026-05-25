@@ -125,7 +125,8 @@ func buildParallelBenchWorkflow(b *testing.B, n int) *workflow.FSMGraph {
 	}
 	items += `]`
 	src := `
-workflow "bench" {
+workflow {
+  name = "bench"
   version       = "0.1"
   initial_state = "work"
   target_state  = "done"
