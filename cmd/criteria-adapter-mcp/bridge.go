@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/csv"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -12,11 +13,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/brokenbots/criteria/cmd/criteria-adapter-mcp/mcpclient"
 	adapterhost "github.com/brokenbots/criteria/sdk/adapterhost"
-	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
+	v2 "github.com/brokenbots/criteria/sdk/pb/criteria/v2"
 )
 
 const (
@@ -73,27 +77,30 @@ func (s *sessionState) clearSink() {
 type MCPBridge struct {
 	mu       sync.Mutex
 	sessions map[string]*sessionState
+
+	pendingPermsMu sync.Mutex
+	pendingPerms   map[string]chan<- string
 }
 
-func (b *MCPBridge) Info(_ context.Context, _ *pb.InfoRequest) (*pb.InfoResponse, error) {
-	return &pb.InfoResponse{
+func (b *MCPBridge) Info(_ context.Context, _ *v2.InfoRequest) (*v2.InfoResponse, error) {
+	return &v2.InfoResponse{
 		Name:         adapterName,
 		Version:      adapterVersion,
-		Capabilities: []string{"single_shot"},
-		ConfigSchema: &pb.AdapterSchemaProto{Fields: map[string]*pb.ConfigFieldProto{
-			"command": {Required: true, Type: "string", Doc: "MCP server binary to launch."},
-			"args":    {Type: "string", Doc: "Comma-separated argument list for the server binary."},
-			"env":     {Type: "string", Doc: "Comma-separated KEY=VALUE environment variable pairs."},
-			"cwd":     {Type: "string", Doc: "Working directory for the MCP server process."},
+		Capabilities: []string{"single_shot", "permission_gating"},
+		ConfigSchema: &v2.AdapterSchemaProto{Fields: map[string]*v2.ConfigFieldProto{
+			"command": {Required: true, Type: "string", Description: "MCP server binary to launch."},
+			"args":    {Type: "string", Description: "Comma-separated argument list for the server binary."},
+			"env":     {Type: "string", Description: "Comma-separated KEY=VALUE environment variable pairs."},
+			"cwd":     {Type: "string", Description: "Working directory for the MCP server process."},
 		}},
-		InputSchema: &pb.AdapterSchemaProto{Fields: map[string]*pb.ConfigFieldProto{
-			"tool":            {Required: true, Type: "string", Doc: "MCP tool name to invoke."},
-			"success_outcome": {Type: "string", Doc: "Outcome to report on success (default: success)."},
+		InputSchema: &v2.AdapterSchemaProto{Fields: map[string]*v2.ConfigFieldProto{
+			"tool":            {Required: true, Type: "string", Description: "MCP tool name to invoke."},
+			"success_outcome": {Type: "string", Description: "Outcome to report on success (default: success)."},
 		}},
 	}, nil
 }
 
-func (b *MCPBridge) OpenSession(ctx context.Context, req *pb.OpenSessionRequest) (*pb.OpenSessionResponse, error) { //nolint:funlen,gocyclo // complex session setup across MCP config, TLS, and stdio transport
+func (b *MCPBridge) OpenSession(ctx context.Context, req *v2.OpenSessionRequest) (*v2.OpenSessionResponse, error) { //nolint:funlen,gocyclo // complex session setup across MCP config, TLS, and stdio transport
 	cfg := req.GetConfig()
 	command := strings.TrimSpace(cfg["command"])
 	if command == "" {
@@ -171,16 +178,16 @@ func (b *MCPBridge) OpenSession(ctx context.Context, req *pb.OpenSessionRequest)
 	b.sessions[req.GetSessionId()] = state
 	b.mu.Unlock()
 
-	return &pb.OpenSessionResponse{}, nil
+	return &v2.OpenSessionResponse{}, nil
 }
 
-func (b *MCPBridge) Execute(ctx context.Context, req *pb.ExecuteRequest, sink adapterhost.ExecuteEventSender) error { //nolint:funlen,gocognit // event-driven tool dispatch with permission gating and chunked output
+func (b *MCPBridge) Execute(ctx context.Context, req *v2.ExecuteRequest, sink adapterhost.ExecuteEventSender) error {
 	s := b.getSession(req.GetSessionId())
 	if s == nil {
 		return fmt.Errorf("mcp: unknown session %q", req.GetSessionId())
 	}
 
-	toolName := strings.TrimSpace(req.GetConfig()["tool"])
+	toolName := strings.TrimSpace(req.GetInput()["tool"])
 	if toolName == "" {
 		return fmt.Errorf("mcp: config.tool is required")
 	}
@@ -188,18 +195,22 @@ func (b *MCPBridge) Execute(ctx context.Context, req *pb.ExecuteRequest, sink ad
 		return fmt.Errorf("mcp: unknown tool %q", toolName)
 	}
 
-	arguments := make(map[string]any, len(req.GetConfig()))
-	for k, v := range req.GetConfig() {
-		if _, reserved := reservedExecuteKeys[k]; reserved {
-			continue
-		}
-		arguments[k] = v
-	}
+	arguments := buildToolArguments(req.GetInput())
 
 	s.execMu.Lock()
 	defer s.execMu.Unlock()
 	s.setSink(sink, true)
 	defer s.clearSink()
+
+	// Permission gate: emit permission.request and block for host decision
+	// before invoking the tool. This ensures denied tools never run.
+	allowed, permErr := b.awaitPermission(ctx, sink, toolName)
+	if permErr != nil {
+		return permErr
+	}
+	if !allowed {
+		return sink.Send(resultEvent("failure"))
+	}
 
 	result, err := s.client.CallTool(ctx, toolName, arguments)
 	if err != nil {
@@ -207,23 +218,13 @@ func (b *MCPBridge) Execute(ctx context.Context, req *pb.ExecuteRequest, sink ad
 	}
 
 	for _, item := range result.Content {
-		typ, _ := item["type"].(string)
-		if typ == "text" {
-			text, _ := item["text"].(string)
-			if strings.TrimSpace(text) != "" {
-				if err := sink.Send(logEvent("agent", text)); err != nil {
-					return err
-				}
-			}
-			continue
-		}
 		if err := sink.Send(adapterEvent("mcp.content", item)); err != nil {
 			return err
 		}
 	}
 
 	outcome := "success"
-	if configured := strings.TrimSpace(req.GetConfig()["success_outcome"]); configured != "" {
+	if configured := strings.TrimSpace(req.GetInput()["success_outcome"]); configured != "" {
 		outcome = configured
 	}
 	if result.IsError {
@@ -232,11 +233,114 @@ func (b *MCPBridge) Execute(ctx context.Context, req *pb.ExecuteRequest, sink ad
 	return sink.Send(resultEvent(outcome))
 }
 
-func (b *MCPBridge) Permit(context.Context, *pb.PermitRequest) (*pb.PermitResponse, error) {
-	return &pb.PermitResponse{}, nil
+// buildToolArguments converts the Execute input map into the arguments map
+// for CallTool, omitting reserved keys that are not passed to the MCP server.
+func buildToolArguments(input map[string]string) map[string]any {
+	args := make(map[string]any, len(input))
+	for k, v := range input {
+		if _, reserved := reservedExecuteKeys[k]; reserved {
+			continue
+		}
+		args[k] = v
+	}
+	return args
 }
 
-func (b *MCPBridge) CloseSession(ctx context.Context, req *pb.CloseSessionRequest) (*pb.CloseSessionResponse, error) {
+// awaitPermission emits a permission.request event for toolName and blocks
+// until the host grants or denies the request, or the context is cancelled.
+// Returns (true, nil) when the tool may proceed, (false, nil) when denied, and
+// a non-nil error on send failure or context cancellation.
+func (b *MCPBridge) awaitPermission(ctx context.Context, sink adapterhost.ExecuteEventSender, toolName string) (bool, error) {
+	requestID := uuid.NewString()
+	decisionCh := make(chan string, 1)
+	b.registerPendingPerm(requestID, decisionCh)
+
+	if err := sink.Send(adapterEvent("permission.request", map[string]any{
+		"kind":       "mcp",
+		"request_id": requestID,
+		"tool":       toolName,
+	})); err != nil {
+		b.cleanupPendingPerm(requestID)
+		return false, fmt.Errorf("mcp: send permission.request: %w", err)
+	}
+
+	select {
+	case decision := <-decisionCh:
+		return decision == "allow", nil
+	case <-ctx.Done():
+		b.cleanupPendingPerm(requestID)
+		return false, ctx.Err()
+	}
+}
+
+func (b *MCPBridge) Log(_ context.Context, _ *v2.LogRequest, _ adapterhost.LogEventSender) error {
+	return nil
+}
+
+// Permissions implements blocking permission enforcement for the MCP adapter.
+// The host sends PermissionEvent.request (allow) or PermissionEvent.cancel (deny);
+// Execute blocks on the corresponding pending channel until a decision arrives.
+func (b *MCPBridge) Permissions(_ context.Context, stream adapterhost.PermissionsStream) error {
+	defer b.drainPendingPerms()
+	for {
+		ev, err := stream.Recv()
+		if err != nil {
+			if errors.Is(err, io.EOF) || status.Code(err) == codes.Canceled || status.Code(err) == codes.OK {
+				return nil
+			}
+			return err
+		}
+		if req := ev.GetRequest(); req != nil {
+			id := req.GetRequestId()
+			b.sendPermDecision(id, "allow")
+			_ = stream.Send(&v2.PermissionDecision{RequestId: id, Decision: "allow"})
+		} else if cancel := ev.GetCancel(); cancel != nil {
+			b.sendPermDecision(cancel.GetRequestId(), "deny")
+		}
+	}
+}
+
+func (b *MCPBridge) registerPendingPerm(id string, ch chan<- string) {
+	b.pendingPermsMu.Lock()
+	defer b.pendingPermsMu.Unlock()
+	if b.pendingPerms == nil {
+		b.pendingPerms = make(map[string]chan<- string)
+	}
+	b.pendingPerms[id] = ch
+}
+
+func (b *MCPBridge) cleanupPendingPerm(id string) {
+	b.pendingPermsMu.Lock()
+	defer b.pendingPermsMu.Unlock()
+	delete(b.pendingPerms, id)
+}
+
+func (b *MCPBridge) sendPermDecision(id, decision string) {
+	b.pendingPermsMu.Lock()
+	ch := b.pendingPerms[id]
+	delete(b.pendingPerms, id)
+	b.pendingPermsMu.Unlock()
+	if ch != nil {
+		select {
+		case ch <- decision:
+		default:
+		}
+	}
+}
+
+func (b *MCPBridge) drainPendingPerms() {
+	b.pendingPermsMu.Lock()
+	defer b.pendingPermsMu.Unlock()
+	for id, ch := range b.pendingPerms {
+		select {
+		case ch <- "deny":
+		default:
+		}
+		delete(b.pendingPerms, id)
+	}
+}
+
+func (b *MCPBridge) CloseSession(ctx context.Context, req *v2.CloseSessionRequest) (*v2.CloseSessionResponse, error) {
 	b.mu.Lock()
 	s, ok := b.sessions[req.GetSessionId()]
 	if ok {
@@ -244,12 +348,12 @@ func (b *MCPBridge) CloseSession(ctx context.Context, req *pb.CloseSessionReques
 	}
 	b.mu.Unlock()
 	if !ok {
-		return &pb.CloseSessionResponse{}, nil
+		return &v2.CloseSessionResponse{}, nil
 	}
 	if err := shutdownSession(ctx, s); err != nil {
-		return &pb.CloseSessionResponse{}, err
+		return &v2.CloseSessionResponse{}, err
 	}
-	return &pb.CloseSessionResponse{}, nil
+	return &v2.CloseSessionResponse{}, nil
 }
 
 func (b *MCPBridge) getSession(id string) *sessionState {
@@ -287,29 +391,20 @@ func shutdownSession(ctx context.Context, s *sessionState) error {
 	}
 }
 
-func logEvent(stream, chunk string) *pb.ExecuteEvent {
-	if !strings.HasSuffix(chunk, "\n") {
-		chunk += "\n"
-	}
-	return &pb.ExecuteEvent{
-		Event: &pb.ExecuteEvent_Log{Log: &pb.LogEvent{Stream: stream, Chunk: []byte(chunk)}},
+func resultEvent(outcome string) *v2.ExecuteEvent {
+	return &v2.ExecuteEvent{
+		Event: &v2.ExecuteEvent_Result{Result: &v2.ExecuteResult{Outcome: outcome}},
 	}
 }
 
-func resultEvent(outcome string) *pb.ExecuteEvent {
-	return &pb.ExecuteEvent{
-		Event: &pb.ExecuteEvent_Result{Result: &pb.ExecuteResult{Outcome: outcome}},
-	}
-}
-
-func adapterEvent(kind string, data map[string]any) *pb.ExecuteEvent {
+func adapterEvent(kind string, data map[string]any) *v2.ExecuteEvent {
 	payload := map[string]any{}
 	for k, v := range data {
 		payload[k] = v
 	}
 	s, _ := structpb.NewStruct(payload)
-	return &pb.ExecuteEvent{
-		Event: &pb.ExecuteEvent_Adapter{Adapter: &pb.AdapterEvent{Kind: kind, Data: s}},
+	return &v2.ExecuteEvent{
+		Event: &v2.ExecuteEvent_Adapter{Adapter: &v2.AdapterEvent{EventKind: kind, Payload: s}},
 	}
 }
 

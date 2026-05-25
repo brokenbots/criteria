@@ -4,22 +4,22 @@ import (
 	"testing"
 
 	adapterhostpkg "github.com/brokenbots/criteria/internal/adapterhost"
-	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
+	v2 "github.com/brokenbots/criteria/sdk/pb/criteria/v2"
 	"github.com/brokenbots/criteria/workflow"
 )
 
 // TestInfoResponseSchemaRoundTrip exercises the production AdapterInfoFromProto
 // translation used by the loader when an adapter responds to an Info() call.
 func TestInfoResponseSchemaRoundTrip(t *testing.T) {
-	resp := &pb.InfoResponse{
+	resp := &v2.InfoResponse{
 		Name:    "test-adapter",
 		Version: "1.0.0",
-		ConfigSchema: &pb.AdapterSchemaProto{Fields: map[string]*pb.ConfigFieldProto{
-			"max_turns":     {Type: "number", Doc: "max turns"},
+		ConfigSchema: &v2.AdapterSchemaProto{Fields: map[string]*v2.ConfigFieldProto{
+			"max_turns":     {Type: "number", Description: "max turns"},
 			"system_prompt": {Required: false, Type: "string"},
 		}},
-		InputSchema: &pb.AdapterSchemaProto{Fields: map[string]*pb.ConfigFieldProto{
-			"prompt": {Required: true, Type: "string", Doc: "user prompt"},
+		InputSchema: &v2.AdapterSchemaProto{Fields: map[string]*v2.ConfigFieldProto{
+			"prompt": {Required: true, Type: "string", Description: "user prompt"},
 		}},
 	}
 
@@ -68,7 +68,7 @@ func TestInfoResponseSchemaRoundTrip(t *testing.T) {
 // the InfoResponse are copied into AdapterInfo.Capabilities by AdapterInfoFromProto.
 // This covers the production proto→schema translation path used by collectSchemas.
 func TestAdapterInfoFromProto_PropagatesCapabilities(t *testing.T) {
-	resp := &pb.InfoResponse{
+	resp := &v2.InfoResponse{
 		Name:         "test-adapter",
 		Version:      "1.0.0",
 		Capabilities: []string{"parallel_safe", "some_other_cap"},
@@ -95,7 +95,7 @@ func TestAdapterInfoFromProto_PropagatesCapabilities(t *testing.T) {
 // no capabilities, AdapterInfo.Capabilities is nil (not an empty non-nil slice)
 // so the compiler treats the adapter as having no declared capabilities.
 func TestAdapterInfoFromProto_EmptyCapabilities(t *testing.T) {
-	resp := &pb.InfoResponse{Name: "bare", Version: "0.1"}
+	resp := &v2.InfoResponse{Name: "bare", Version: "0.1"}
 	info := adapterhostpkg.AdapterInfoFromProto(resp)
 	if len(info.Capabilities) != 0 {
 		t.Errorf("expected empty Capabilities for bare InfoResponse; got %v", info.Capabilities)
@@ -103,8 +103,8 @@ func TestAdapterInfoFromProto_EmptyCapabilities(t *testing.T) {
 }
 
 func TestInfoResponseBoolAndListTypes(t *testing.T) {
-	resp := &pb.InfoResponse{
-		InputSchema: &pb.AdapterSchemaProto{Fields: map[string]*pb.ConfigFieldProto{
+	resp := &v2.InfoResponse{
+		InputSchema: &v2.AdapterSchemaProto{Fields: map[string]*v2.ConfigFieldProto{
 			"flag":  {Type: "bool"},
 			"items": {Type: "list_string"},
 		}},
@@ -131,7 +131,7 @@ func TestInfoResponseBoolAndListTypes(t *testing.T) {
 func TestLegacyInfoResponseWithoutSchema(t *testing.T) {
 	// A legacy adapter that does not populate schema fields should yield a
 	// permissive (nil-schema) AdapterInfo so the compiler does not block it.
-	resp := &pb.InfoResponse{
+	resp := &v2.InfoResponse{
 		Name:    "legacy",
 		Version: "0.0.1",
 	}
@@ -147,8 +147,8 @@ func TestLegacyInfoResponseWithoutSchema(t *testing.T) {
 }
 
 func TestUnknownFieldTypeDefaultsToString(t *testing.T) {
-	resp := &pb.InfoResponse{
-		InputSchema: &pb.AdapterSchemaProto{Fields: map[string]*pb.ConfigFieldProto{
+	resp := &v2.InfoResponse{
+		InputSchema: &v2.AdapterSchemaProto{Fields: map[string]*v2.ConfigFieldProto{
 			"future_type": {Type: "some_future_type"},
 		}},
 	}

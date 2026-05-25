@@ -51,6 +51,9 @@ state "failed" {
 
 func TestApplyLocal_WaitSignalNode(t *testing.T) {
 	// W05: first-class wait { signal } node must be rejected in local mode.
+	// Clear CRITERIA_LOCAL_APPROVAL so the global env value does not
+	// auto-approve the signal wait and cause the test to pass spuriously.
+	t.Setenv("CRITERIA_LOCAL_APPROVAL", "")
 	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
 	workflowPath := writeWorkflowFile(t, `
 workflow "wait_signal" {
@@ -81,6 +84,9 @@ state "done" {
 
 func TestApplyLocal_ApprovalNode(t *testing.T) {
 	// W05: approval nodes must be rejected in local mode.
+	// Clear CRITERIA_LOCAL_APPROVAL so the global env value does not
+	// auto-approve the approval node and cause the test to pass spuriously.
+	t.Setenv("CRITERIA_LOCAL_APPROVAL", "")
 	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
 	workflowPath := writeWorkflowFile(t, `
 workflow "needs_approval" {

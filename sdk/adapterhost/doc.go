@@ -10,21 +10,35 @@
 //	import (
 //		"context"
 //		adapterhost "github.com/brokenbots/criteria/sdk/adapterhost"
-//		pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
+//		v2 "github.com/brokenbots/criteria/sdk/pb/criteria/v2"
 //	)
 //
-//	type myAdapter struct{}
+//	type myAdapter struct{ adapterhost.UnimplementedPermissions }
 //
-//	func (a *myAdapter) Info(ctx context.Context, req *pb.InfoRequest) (*pb.InfoResponse, error) { ... }
+//	func (a *myAdapter) Info(ctx context.Context, req *v2.InfoRequest) (*v2.InfoResponse, error) { ... }
 //	// ... implement remaining Service methods ...
 //
 //	func main() { adapterhost.Serve(&myAdapter{}) }
 //
+// # v1 → v2 protocol break (WS03)
+//
+// WS03 migrated the host wire layer to v2 proto types and deleted the v1
+// adapter-plugin protocol (proto/criteria/v1/adapter_plugin.proto) and its
+// generated bindings. All bundled adapter binaries (copilot, mcp, noop,
+// shell-builtin) and the greeter example have been updated to the v2 wire
+// contract. Adapter binaries compiled against the v1 SDK will fail the
+// go-plugin handshake with a protocol version mismatch.
+//
+// WS03 also shipped blocking permission enforcement: adapters that implement
+// Permissions themselves (e.g. copilot, mcp) block tool execution until the
+// host grants or denies the request. Adapters that embed UnimplementedPermissions
+// receive post-hoc enforcement only (outcome override to needs_review on denial).
+//
 // # Package stability
 //
-// This package is v0. The [Service] interface and wire protocol are stable
-// across minor Criteria releases; breaking changes follow the SDK bump policy
-// in CONTRIBUTING.md before any external consumer depends on them.
+// This package is v0. The [Service] interface and v2 wire protocol are the
+// stable surface for adapter authors; breaking changes follow the SDK bump
+// policy in CONTRIBUTING.md.
 //
 // # CHANGELOG forward-pointer
 //

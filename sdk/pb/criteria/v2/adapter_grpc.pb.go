@@ -10,8 +10,8 @@
 // server) sends PermissionDecision acknowledgments back. Adapters that embed
 // sdk/adapterhost.UnimplementedPermissions receive post-hoc enforcement
 // (outcome override to needs_review on denial); adapters that implement
-// Permissions themselves (e.g. copilot) get blocking enforcement so the tool
-// never runs when denied.
+// Permissions themselves (e.g. copilot, mcp) get blocking enforcement so the
+// tool never runs when denied.
 //
 // See docs/adapters.md for the feature roadmap and well-known event_kind registry.
 

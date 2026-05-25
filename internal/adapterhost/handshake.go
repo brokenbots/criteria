@@ -13,7 +13,7 @@ const (
 )
 
 var HandshakeConfig = hplugin.HandshakeConfig{
-	ProtocolVersion:  1,
+	ProtocolVersion:  2,
 	MagicCookieKey:   MagicCookieKey,
 	MagicCookieValue: MagicCookieValue,
 }

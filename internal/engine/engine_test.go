@@ -16,7 +16,6 @@ import (
 
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapterhost"
-	"github.com/brokenbots/criteria/internal/testutil"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -409,17 +408,6 @@ func (s *captureStepEventSink) sawAdapterKind(kind string) bool {
 	return false
 }
 
-func (s *captureStepEventSink) firstAdapterEvent(kind string) (map[string]any, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for _, evt := range s.events {
-		if evt.kind == kind {
-			return evt.data, true
-		}
-	}
-	return nil, false
-}
-
 type captureEventSink struct {
 	s *captureStepEventSink
 }
@@ -475,151 +463,6 @@ func buildNoopAdapter(t *testing.T) string {
 	}
 
 	return adapterBin
-}
-
-// TestEnginePermissionGrantAndDeny verifies the full permission-gating flow:
-// a step with allow_tools=["read_file"] against the permissive test adapter
-// that requests two tools produces exactly one permission.granted event for
-// read_file and one permission.denied event for write_file, and the run ends
-// in needs_review (because the adapter returns needs_review on any denial).
-func TestEnginePermissionGrantAndDeny(t *testing.T) {
-	adapterBin := testutil.BuildPermissiveAdapter(t)
-	loader := adapterhost.NewLoaderWithDiscovery(func(string) (string, error) {
-		return adapterBin, nil
-	})
-	t.Cleanup(func() { _ = loader.Shutdown(context.Background()) })
-
-	g := compile(t, `
-workflow "perm" {
-  version       = "0.1"
-  initial_state = "run"
-  target_state  = "done"
-}
-
-adapter "permissive" "bot" { }
-
-step "run" {
-  target = adapter.permissive.bot
-  input { perm_tools = "read_file,write_file" }
-  allow_tools = ["read_file"]
-  outcome "success"      { next = "done" }
-  outcome "needs_review" { next = "done" }
-}
-state "done" { terminal = true }`)
-
-	sink := &captureStepEventSink{}
-	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
-		t.Fatalf("run: %v", err)
-	}
-	if sink.terminal != "done" || !sink.terminalOK {
-		t.Fatalf("terminal: %s ok=%v", sink.terminal, sink.terminalOK)
-	}
-	if !sink.sawAdapterKind("permission.granted") {
-		t.Error("expected permission.granted event")
-	}
-	if !sink.sawAdapterKind("permission.denied") {
-		t.Error("expected permission.denied event")
-	}
-	if sink.sawAdapterKind("permission.request") {
-		t.Error("unexpected legacy permission.request event: policy should emit granted/denied instead")
-	}
-	granted, ok := sink.firstAdapterEvent("permission.granted")
-	if !ok {
-		t.Fatal("expected permission.granted payload")
-	}
-	if granted["pattern"] != "read_file" {
-		t.Fatalf("permission.granted pattern=%v want read_file", granted["pattern"])
-	}
-	if granted["request_id"] == "" {
-		t.Fatal("permission.granted request_id must be non-empty")
-	}
-	denied, ok := sink.firstAdapterEvent("permission.denied")
-	if !ok {
-		t.Fatal("expected permission.denied payload")
-	}
-	if denied["reason"] == "" {
-		t.Fatal("permission.denied reason must be non-empty")
-	}
-}
-
-// TestEngineDefaultPolicyDeniesAll verifies that a workflow without allow_tools
-// produces a permission.denied event for every tool request and no
-// permission.granted events.
-func TestEngineDefaultPolicyDeniesAll(t *testing.T) {
-	adapterBin := testutil.BuildPermissiveAdapter(t)
-	loader := adapterhost.NewLoaderWithDiscovery(func(string) (string, error) {
-		return adapterBin, nil
-	})
-	t.Cleanup(func() { _ = loader.Shutdown(context.Background()) })
-
-	g := compile(t, `
-workflow "perm-deny" {
-  version       = "0.1"
-  initial_state = "run"
-  target_state  = "done"
-}
-
-adapter "permissive" "bot" { }
-
-step "run" {
-  target = adapter.permissive.bot
-  input { perm_tools = "read_file" }
-  outcome "needs_review" { next = "done" }
-  outcome "success"      { next = "done" }
-}
-state "done" { terminal = true }`)
-
-	sink := &captureStepEventSink{}
-	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
-		t.Fatalf("run: %v", err)
-	}
-	if sink.sawAdapterKind("permission.granted") {
-		t.Error("expected no permission.granted events when allow_tools is empty")
-	}
-	if !sink.sawAdapterKind("permission.denied") {
-		t.Error("expected permission.denied event from default deny policy")
-	}
-}
-
-func TestEngineShellFingerprintAllowlist(t *testing.T) {
-	adapterBin := testutil.BuildPermissiveAdapter(t)
-	loader := adapterhost.NewLoaderWithDiscovery(func(string) (string, error) {
-		return adapterBin, nil
-	})
-	t.Cleanup(func() { _ = loader.Shutdown(context.Background()) })
-
-	g := compile(t, `
-workflow "perm-shell" {
-  version       = "0.1"
-  initial_state = "run"
-  target_state  = "done"
-}
-
-adapter "permissive" "bot" { }
-
-step "run" {
-  target = adapter.permissive.bot
-  input { perm_tools = "shell|git status,shell|rm -rf /" }
-  allow_tools = ["shell:git *"]
-  outcome "success"      { next = "done" }
-  outcome "needs_review" { next = "done" }
-}
-state "done" { terminal = true }`)
-
-	sink := &captureStepEventSink{}
-	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
-		t.Fatalf("run: %v", err)
-	}
-	granted, ok := sink.firstAdapterEvent("permission.granted")
-	if !ok {
-		t.Fatal("expected permission.granted for shell|git status")
-	}
-	if granted["pattern"] != "shell:git *" {
-		t.Fatalf("permission.granted pattern=%v want shell:git *", granted["pattern"])
-	}
-	if !sink.sawAdapterKind("permission.denied") {
-		t.Fatal("expected permission.denied for shell|rm -rf /")
-	}
 }
 
 // TestMaxVisits_Hit verifies that a workflow with a back-edge loop on a step

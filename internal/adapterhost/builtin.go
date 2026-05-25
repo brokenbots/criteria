@@ -68,10 +68,6 @@ func (p *builtinAdapter) Execute(ctx context.Context, sessionID string, step *wo
 	return p.adapter.Execute(ctx, step, sink)
 }
 
-func (p *builtinAdapter) Permit(context.Context, string, string, bool, string) error {
-	return fmt.Errorf("permission gating is not implemented for builtin adapters")
-}
-
 func (p *builtinAdapter) CloseSession(_ context.Context, id string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()

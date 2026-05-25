@@ -8,40 +8,41 @@ import (
 	"time"
 
 	adapterhost "github.com/brokenbots/criteria/sdk/adapterhost"
-	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
+	v2 "github.com/brokenbots/criteria/sdk/pb/criteria/v2"
 )
 
 type noopService struct {
+	adapterhost.UnimplementedPermissions
 	mu       sync.Mutex
 	sessions map[string]struct{}
 }
 
-func (s *noopService) Info(context.Context, *pb.InfoRequest) (*pb.InfoResponse, error) {
-	return &pb.InfoResponse{
+func (s *noopService) Info(context.Context, *v2.InfoRequest) (*v2.InfoResponse, error) {
+	return &v2.InfoResponse{
 		Name:         "noop",
 		Version:      "0.1.0",
 		Capabilities: []string{"parallel_safe"},
 	}, nil
 }
 
-func (s *noopService) OpenSession(_ context.Context, request *pb.OpenSessionRequest) (*pb.OpenSessionResponse, error) {
+func (s *noopService) OpenSession(_ context.Context, request *v2.OpenSessionRequest) (*v2.OpenSessionResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.sessions == nil {
 		s.sessions = map[string]struct{}{}
 	}
 	s.sessions[request.GetSessionId()] = struct{}{}
-	return &pb.OpenSessionResponse{}, nil
+	return &v2.OpenSessionResponse{}, nil
 }
 
-func (s *noopService) Execute(ctx context.Context, request *pb.ExecuteRequest, sink adapterhost.ExecuteEventSender) error {
+func (s *noopService) Execute(ctx context.Context, request *v2.ExecuteRequest, sink adapterhost.ExecuteEventSender) error {
 	s.mu.Lock()
 	_, ok := s.sessions[request.GetSessionId()]
 	s.mu.Unlock()
 	if !ok {
 		return fmt.Errorf("unknown session %q", request.GetSessionId())
 	}
-	if rawDelay := request.GetConfig()["delay_ms"]; rawDelay != "" {
+	if rawDelay := request.GetInput()["delay_ms"]; rawDelay != "" {
 		delayMS, err := strconv.Atoi(rawDelay)
 		if err != nil || delayMS < 0 {
 			return fmt.Errorf("invalid delay_ms %q", rawDelay)
@@ -57,20 +58,20 @@ func (s *noopService) Execute(ctx context.Context, request *pb.ExecuteRequest, s
 		}
 	}
 
-	return sink.Send(&pb.ExecuteEvent{
-		Event: &pb.ExecuteEvent_Result{Result: &pb.ExecuteResult{Outcome: "success"}},
+	return sink.Send(&v2.ExecuteEvent{
+		Event: &v2.ExecuteEvent_Result{Result: &v2.ExecuteResult{Outcome: "success"}},
 	})
 }
 
-func (s *noopService) Permit(context.Context, *pb.PermitRequest) (*pb.PermitResponse, error) {
-	return &pb.PermitResponse{}, nil
+func (s *noopService) Log(_ context.Context, _ *v2.LogRequest, _ adapterhost.LogEventSender) error {
+	return nil
 }
 
-func (s *noopService) CloseSession(_ context.Context, request *pb.CloseSessionRequest) (*pb.CloseSessionResponse, error) {
+func (s *noopService) CloseSession(_ context.Context, request *v2.CloseSessionRequest) (*v2.CloseSessionResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.sessions, request.GetSessionId())
-	return &pb.CloseSessionResponse{}, nil
+	return &v2.CloseSessionResponse{}, nil
 }
 
 func main() {

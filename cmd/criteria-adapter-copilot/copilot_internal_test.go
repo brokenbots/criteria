@@ -9,25 +9,25 @@ import (
 
 	copilot "github.com/github/copilot-sdk/go"
 
-	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
+	v2 "github.com/brokenbots/criteria/sdk/pb/criteria/v2"
 )
 
 type recordingSender struct {
 	mu     sync.Mutex
-	events []*pb.ExecuteEvent
+	events []*v2.ExecuteEvent
 }
 
-func (r *recordingSender) Send(event *pb.ExecuteEvent) error {
+func (r *recordingSender) Send(event *v2.ExecuteEvent) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.events = append(r.events, event)
 	return nil
 }
 
-func (r *recordingSender) snapshot() []*pb.ExecuteEvent {
+func (r *recordingSender) snapshot() []*v2.ExecuteEvent {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	out := make([]*pb.ExecuteEvent, len(r.events))
+	out := make([]*v2.ExecuteEvent, len(r.events))
 	copy(out, r.events)
 	return out
 }
@@ -268,11 +268,12 @@ func TestResolveGitHubTokenPrecedence(t *testing.T) {
 	})
 }
 
-func TestPermissionPermitHandshake(t *testing.T) {
+// TestPermissionAutoApprove verifies that handlePermissionRequest returns
+// Approved and emits a permission.request adapter event when the host approves.
+func TestPermissionAutoApprove(t *testing.T) {
 	sender := &recordingSender{}
 	s := &sessionState{
 		session:  &fakeSession{},
-		pending:  map[string]chan permDecision{},
 		active:   true,
 		activeCh: make(chan struct{}),
 		sink:     sender,
@@ -284,41 +285,51 @@ func TestPermissionPermitHandshake(t *testing.T) {
 		ToolCallID: &toolCallID,
 	}
 
-	resCh := make(chan copilot.PermissionRequestResult, 1)
+	// handlePermissionRequest blocks until the host resolves the pending perm.
+	// Simulate the host approving once the pending perm is registered.
 	go func() {
-		result, _ := p.handlePermissionRequest("s1", request)
-		resCh <- result
+		deadline := time.After(2 * time.Second)
+		for {
+			for _, ev := range sender.snapshot() {
+				if a := ev.GetAdapter(); a != nil && a.GetEventKind() == "permission.request" && a.GetPayload() != nil {
+					if requestID, ok := a.GetPayload().AsMap()["request_id"].(string); ok && requestID != "" {
+						if ch := p.resolvePendingPerm(requestID); ch != nil {
+							ch <- "allow"
+							return
+						}
+					}
+				}
+			}
+			select {
+			case <-deadline:
+				t.Errorf("timeout waiting for permission.request event")
+				return
+			default:
+				time.Sleep(time.Millisecond)
+			}
+		}
 	}()
 
-	var permissionID string
-	deadline := time.After(300 * time.Millisecond)
-	for permissionID == "" {
-		select {
-		case <-deadline:
-			t.Fatal("timeout waiting for permission request event")
-		default:
-			events := sender.snapshot()
-			for _, ev := range events {
-				if req := ev.GetPermission(); req != nil {
-					permissionID = req.GetId()
-					break
-				}
+	result, err := p.handlePermissionRequest("s1", request)
+	if err != nil {
+		t.Fatalf("handlePermissionRequest returned error: %v", err)
+	}
+	if result.Kind != copilot.PermissionRequestResultKindApproved {
+		t.Fatalf("permission result kind = %q, want approved", result.Kind)
+	}
+
+	// Verify the permission.request AdapterEvent was emitted.
+	var found bool
+	for _, ev := range sender.snapshot() {
+		if a := ev.GetAdapter(); a != nil && a.GetEventKind() == "permission.request" {
+			found = true
+			if a.GetPayload() == nil {
+				t.Error("permission.request event must carry a payload")
 			}
 		}
 	}
-
-	_, err := p.Permit(context.Background(), &pb.PermitRequest{SessionId: "s1", PermissionId: permissionID, Allow: true})
-	if err != nil {
-		t.Fatalf("Permit returned error: %v", err)
-	}
-
-	select {
-	case result := <-resCh:
-		if result.Kind != copilot.PermissionRequestResultKindApproved {
-			t.Fatalf("permission result kind = %q, want approved", result.Kind)
-		}
-	case <-time.After(300 * time.Millisecond):
-		t.Fatal("timeout waiting for permission handler result")
+	if !found {
+		t.Fatal("expected permission.request adapter event on Execute sink")
 	}
 }
 
@@ -329,11 +340,11 @@ func TestExecuteMaxTurnsLimit(t *testing.T) {
 		},
 	}
 	p := &copilotAdapter{sessions: map[string]*sessionState{
-		"s1": {session: fake, pending: map[string]chan permDecision{}},
+		"s1": {session: fake},
 	}}
 	sender := &recordingSender{}
 
-	err := p.Execute(context.Background(), &pb.ExecuteRequest{SessionId: "s1", Config: map[string]string{"prompt": "hi", "max_turns": "1"}}, sender)
+	err := p.Execute(context.Background(), &v2.ExecuteRequest{SessionId: "s1", Input: map[string]string{"prompt": "hi", "max_turns": "1"}}, sender)
 	if err != nil {
 		t.Fatalf("Execute returned error: %v", err)
 	}
@@ -341,7 +352,7 @@ func TestExecuteMaxTurnsLimit(t *testing.T) {
 	hasLimitReached := false
 	hasFailure := false
 	for _, ev := range sender.snapshot() {
-		if adapter := ev.GetAdapter(); adapter != nil && adapter.GetKind() == "limit.reached" {
+		if adapter := ev.GetAdapter(); adapter != nil && adapter.GetEventKind() == "limit.reached" {
 			hasLimitReached = true
 		}
 		if result := ev.GetResult(); result != nil && result.GetOutcome() == "failure" {
@@ -369,11 +380,11 @@ func TestCloseSessionTimeoutEscalatesToDestroy(t *testing.T) {
 		},
 	}
 	p := &copilotAdapter{sessions: map[string]*sessionState{
-		"s1": {session: fake, pending: map[string]chan permDecision{}},
+		"s1": {session: fake},
 	}}
 
 	start := time.Now()
-	_, err := p.CloseSession(context.Background(), &pb.CloseSessionRequest{SessionId: "s1"})
+	_, err := p.CloseSession(context.Background(), &v2.CloseSessionRequest{SessionId: "s1"})
 	if err != nil {
 		t.Fatalf("CloseSession returned error: %v", err)
 	}
@@ -399,7 +410,6 @@ func TestOpenSessionReasoningEffortWithoutModel(t *testing.T) {
 
 	s := &sessionState{
 		session: fake,
-		pending: make(map[string]chan permDecision),
 	}
 
 	cfg := map[string]string{"reasoning_effort": "high"}
@@ -433,7 +443,6 @@ func TestOpenSessionReasoningEffortWithModel(t *testing.T) {
 
 	s := &sessionState{
 		session: fake,
-		pending: make(map[string]chan permDecision),
 	}
 
 	cfg := map[string]string{"model": "claude-sonnet-4.6", "reasoning_effort": "medium"}
@@ -504,7 +513,6 @@ func TestExecutePerStepReasoningEffortRestoresDefault(t *testing.T) {
 	// Session has agent-level default effort "medium".
 	s := &sessionState{
 		session:       fake,
-		pending:       make(map[string]chan permDecision),
 		defaultEffort: "medium",
 		defaultModel:  "",
 	}
@@ -519,9 +527,9 @@ func TestExecutePerStepReasoningEffortRestoresDefault(t *testing.T) {
 		s.mu.Unlock()
 	}
 
-	err := p.Execute(context.Background(), &pb.ExecuteRequest{
+	err := p.Execute(context.Background(), &v2.ExecuteRequest{
 		SessionId:       "s1",
-		Config:          map[string]string{"prompt": "hi", "reasoning_effort": "high"},
+		Input:           map[string]string{"prompt": "hi", "reasoning_effort": "high"},
 		AllowedOutcomes: []string{"failure", "success"},
 	}, sender)
 	if err != nil {
@@ -571,7 +579,6 @@ func TestExecutePerStepEffortRestoresWhenNoDefault(t *testing.T) {
 	// Session has NO agent-level default effort (opened without reasoning_effort in config).
 	s := &sessionState{
 		session:       fake,
-		pending:       make(map[string]chan permDecision),
 		defaultEffort: "",
 		defaultModel:  "",
 	}
@@ -585,9 +592,9 @@ func TestExecutePerStepEffortRestoresWhenNoDefault(t *testing.T) {
 		s.mu.Unlock()
 	}
 
-	if err := p.Execute(context.Background(), &pb.ExecuteRequest{
+	if err := p.Execute(context.Background(), &v2.ExecuteRequest{
 		SessionId:       "s1",
-		Config:          map[string]string{"prompt": "hi", "reasoning_effort": "high"},
+		Input:           map[string]string{"prompt": "hi", "reasoning_effort": "high"},
 		AllowedOutcomes: []string{"failure", "success"},
 	}, sender); err != nil {
 		t.Fatalf("Execute returned error: %v", err)

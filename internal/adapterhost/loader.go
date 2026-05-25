@@ -2,6 +2,7 @@ package adapterhost
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -14,9 +15,12 @@ import (
 
 	"github.com/hashicorp/go-hclog"
 	hplugin "github.com/hashicorp/go-plugin"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/brokenbots/criteria/internal/adapter"
-	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
+	v2 "github.com/brokenbots/criteria/sdk/pb/criteria/v2"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -50,7 +54,6 @@ type Handle interface {
 	Info(ctx context.Context) (Info, error)
 	OpenSession(ctx context.Context, id string, config map[string]string) error
 	Execute(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error)
-	Permit(ctx context.Context, sessionID, permID string, allow bool, reason string) error
 	CloseSession(ctx context.Context, id string) error
 	Kill()
 }
@@ -187,7 +190,7 @@ type rpcHandle struct {
 }
 
 func (p *rpcHandle) Info(ctx context.Context) (Info, error) {
-	resp, err := p.rpc.Info(ctx, &pb.InfoRequest{})
+	resp, err := p.rpc.Info(ctx, &v2.InfoRequest{})
 	if err != nil {
 		return Info{}, err
 	}
@@ -200,100 +203,514 @@ func (p *rpcHandle) Info(ctx context.Context) (Info, error) {
 }
 
 func (p *rpcHandle) OpenSession(ctx context.Context, id string, config map[string]string) error {
-	_, err := p.rpc.OpenSession(ctx, &pb.OpenSessionRequest{SessionId: id, Config: cloneConfig(config)})
+	_, err := p.rpc.OpenSession(ctx, &v2.OpenSessionRequest{SessionId: id, Config: cloneConfig(config)})
 	return err
 }
 
-func (p *rpcHandle) Execute(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) { //nolint:funlen,gocognit,gocyclo // execute path handles permission gating, event routing, and partial failure recovery
-	recv, err := p.rpc.Execute(ctx, &pb.ExecuteRequest{
+// isExpectedStreamClose reports whether err is a benign end-of-stream error
+// (nil, EOF, context cancellation, or an optionally supplied gRPC status code).
+func isExpectedStreamClose(err error, extra ...codes.Code) bool {
+	if err == nil || errors.Is(err, io.EOF) || errors.Is(err, context.Canceled) {
+		return true
+	}
+	c := status.Code(err)
+	if c == codes.Canceled {
+		return true
+	}
+	for _, x := range extra {
+		if c == x {
+			return true
+		}
+	}
+	return false
+}
+
+// Execute streams step execution via the RPC adapter, handling concurrent log streaming,
+// event routing, and partial failure recovery.
+func (p *rpcHandle) Execute(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) { //nolint:funlen // Permissions stream lifecycle, log stream, execute RPC, and result coercion are all required in one place
+	req := &v2.ExecuteRequest{
 		SessionId:       sessionID,
 		StepName:        step.Name,
-		Config:          cloneConfig(step.Input),
+		Input:           cloneConfig(step.Input),
 		AllowedOutcomes: collectAllowedOutcomes(step),
-	})
-	if err != nil {
-		return adapter.Result{Outcome: "failure"}, err
 	}
-	policy := NewPolicyWithAliases(step.AllowTools, adapterPermissionAliases[p.name])
-	for {
-		evt, recvErr := recv.Recv()
-		if recvErr != nil {
-			if errors.Is(recvErr, io.EOF) {
-				return adapter.Result{Outcome: "failure"}, errors.New("adapter execute stream ended without result")
+
+	// Build the host-side permission policy for this step.
+	allowTools := step.AllowTools
+	if allowTools == nil {
+		allowTools = []string{}
+	}
+	policy := NewPolicyWithAliases(allowTools, adapterPermissionAliases[p.name])
+
+	// serialized wraps sink so concurrent Adapter/Log calls from executeCaptureSink
+	// and logForwardSink are safe regardless of the sink implementation.
+	serialized := &serializedEventSink{inner: sink}
+
+	// execCtx is canceled if the Permissions stream fails for a non-expected
+	// reason, so that Execute is aborted rather than continuing with a broken
+	// decision channel. Unimplemented is treated as expected (adapter opts out).
+	execCtx, cancelExec := context.WithCancel(ctx)
+	defer cancelExec()
+
+	// Open the Permissions bidi stream. requests carries PermissionEvent to the
+	// adapter (allow/deny signals); adapter ACKs are discarded by the host.
+	requests := make(chan *v2.PermissionEvent, 16)
+	permCtx, cancelPerm := context.WithCancel(ctx)
+	permDone := make(chan error, 1)
+	go func() {
+		err := p.rpc.Permissions(permCtx, requests)
+		permDone <- err
+		if status.Code(err) == codes.Unimplemented {
+			// Drain the requests channel so handlePermissionRequest never
+			// blocks on a full buffer after the Permissions stream has
+			// already exited. The loop exits when Execute closes the channel.
+			for range requests {
 			}
-			return adapter.Result{Outcome: "failure"}, recvErr
+			return
 		}
-		if logEvt := evt.GetLog(); logEvt != nil {
-			sink.Log(logEvt.GetStream(), logEvt.GetChunk())
-			continue
+		if !isExpectedStreamClose(err) {
+			cancelExec()
 		}
-		if adapterEvt := evt.GetAdapter(); adapterEvt != nil {
-			if adapterEvt.GetData() != nil {
-				sink.Adapter(adapterEvt.GetKind(), adapterEvt.GetData().AsMap())
-			} else {
-				sink.Adapter(adapterEvt.GetKind(), nil)
+	}()
+
+	captureSink := &executeCaptureSink{
+		sink:        serialized,
+		policy:      policy,
+		allowTools:  allowTools,
+		adapterName: p.name,
+		requests:    requests,
+		ctx:         execCtx,
+	}
+
+	// Open the Log stream concurrently with Execute. Adapters may emit log lines
+	// at any time during Execute; we must be ready to receive them.
+	logCtx, cancelLog := context.WithCancel(ctx)
+	logDone := make(chan error, 1)
+	go func() {
+		logReq := &v2.LogRequest{SessionId: sessionID, StepName: step.Name}
+		logDone <- p.rpc.Log(logCtx, logReq, &logForwardSink{sink: serialized})
+	}()
+
+	execErr := p.rpc.Execute(execCtx, req, captureSink)
+
+	// Signal end of the Permissions stream and wait for the goroutine.
+	// Closing requests triggers CloseSend; cancelPerm ensures recvPermissionDecisions
+	// exits promptly regardless of whether the adapter has finished sending.
+	close(requests)
+	cancelPerm()
+	permErr := <-permDone
+
+	// Cancel the log stream and wait for the goroutine regardless of execErr.
+	cancelLog()
+	logErr := <-logDone
+
+	if execErr != nil {
+		// If execCtx was canceled by the Permissions goroutine (parent ctx still OK),
+		// the Permissions failure is the root cause; surface it instead of
+		// context.Canceled from the aborted Execute stream.
+		if errors.Is(execErr, context.Canceled) && ctx.Err() == nil {
+			if !isExpectedStreamClose(permErr) {
+				return adapter.Result{Outcome: "failure"}, fmt.Errorf("permissions stream failure aborted execute: %w", permErr)
 			}
-			continue
 		}
-		if req := evt.GetPermission(); req != nil {
-			pr := PermissionRequest{
-				ID:      req.GetId(),
-				Tool:    req.GetPermission(),
-				Details: req.GetDetails(),
-			}
-			allow, reason := policy.Decide(pr)
-			if allow {
-				sink.Adapter("permission.granted", map[string]any{
-					"tool":       pr.Tool,
-					"pattern":    strings.TrimPrefix(reason, "matched: "),
-					"request_id": pr.ID,
-				})
-			} else {
-				allowTools := step.AllowTools
-				if allowTools == nil {
-					allowTools = []string{}
-				}
-				denial := map[string]any{
-					"tool":        pr.Tool,
-					"reason":      reason,
-					"request_id":  pr.ID,
-					"allow_tools": allowTools,
-				}
-				if suggestion := PermissionDenialSuggestion(p.name, pr.Tool); suggestion != "" {
-					denial["suggestion"] = suggestion
-				}
-				sink.Adapter("permission.denied", denial)
-			}
-			if permitErr := p.Permit(ctx, sessionID, req.GetId(), allow, reason); permitErr != nil {
-				return adapter.Result{Outcome: "failure"}, permitErr
-			}
-			continue
+		return adapter.Result{Outcome: "failure"}, execErr
+	}
+	if !isExpectedStreamClose(permErr, codes.Unimplemented) {
+		return adapter.Result{Outcome: "failure"}, fmt.Errorf("adapter permissions stream: %w", permErr)
+	}
+	if !isExpectedStreamClose(logErr) {
+		return adapter.Result{Outcome: "failure"}, fmt.Errorf("adapter log stream: %w", logErr)
+	}
+	if !captureSink.done {
+		return adapter.Result{Outcome: "failure"}, errors.New("adapter execute stream ended without result")
+	}
+
+	// When any permission request was denied and the adapter reported "success",
+	// override to "needs_review" so the run is not silently passed with unapproved
+	// tool calls. Adapters that terminate on first denial return "failure" themselves
+	// (e.g. copilot with blocking Permissions); this override applies to permissive
+	// adapters using UnimplementedPermissions.
+	if captureSink.anyDenied && captureSink.result.Outcome == "success" {
+		captureSink.result.Outcome = "needs_review"
+	}
+	return captureSink.result, nil
+}
+
+// maxChunkBufBytes is the upper bound for chunk-reassembly buffers in
+// executeCaptureSink. Payloads that would exceed this limit are rejected with
+// an error to prevent unbounded memory growth from a misbehaving adapter.
+const maxChunkBufBytes = 64 * 1024 * 1024 // 64 MiB
+
+// executeCaptureSink implements ExecuteEventSink for use in rpcHandle.Execute.
+// It routes AdapterEvent to the upstream EventSink, evaluates the host-side
+// permission policy for permission.request events (emitting permission.granted
+// or permission.denied and forwarding to the adapter via the Permissions stream),
+// translates ToolInvocation to a tool.invocation adapter event, reassembles
+// WS02 chunked payloads and outputs before forwarding, and captures the final
+// ExecuteResult.
+type executeCaptureSink struct {
+	sink   adapter.EventSink
+	result adapter.Result
+	done   bool
+
+	// anyDenied is set true when any permission request was denied this Execute.
+	// It triggers the outcome override (success → needs_review) after Execute.
+	anyDenied bool
+
+	// Host-side permission policy for this step.
+	policy      PermissionPolicy
+	allowTools  []string // echoed in permission.denied payloads
+	adapterName string   // used for alias-aware denial suggestions
+	// requests is the send side of the Permissions bidi stream; permission
+	// events (allow=request, deny=cancel) are forwarded to the adapter here.
+	// ctx is the Execute context; it unblocks permission signal sends when
+	// the execution is cancelled so that handlePermissionRequest never drops
+	// a signal silently.
+	requests chan<- *v2.PermissionEvent
+	ctx      context.Context
+
+	// Chunk reassembly buffers for the Execute stream.
+	// adapterChunkBuf accumulates AdapterEvent.payload_json fragments.
+	// resultChunkBuf accumulates ExecuteResult.outputs_json fragments.
+	// Chunks within each oneof arrive sequentially (one sequence at a time).
+	// adapterChunkNextSeq / resultChunkNextSeq track the expected next seq
+	// value (0 means no sequence in progress; >0 means expecting that value).
+	adapterChunkBuf     []byte
+	adapterChunkKind    string // event_kind carried across chunk fragments
+	adapterChunkNextSeq uint32 // expected next adapter chunk seq (0 = idle)
+	resultChunkBuf      []byte
+	resultOutcome       string // outcome carried across result chunk fragments
+	resultChunkNextSeq  uint32 // expected next result chunk seq (0 = idle)
+}
+
+func (s *executeCaptureSink) Emit(ev *v2.ExecuteEvent) error {
+	if adapterEvt := ev.GetAdapter(); adapterEvt != nil {
+		return s.emitAdapter(adapterEvt)
+	}
+	if toolEvt := ev.GetTool(); toolEvt != nil {
+		return s.emitTool(toolEvt)
+	}
+	if resultEvt := ev.GetResult(); resultEvt != nil {
+		return s.emitResult(resultEvt)
+	}
+	return nil
+}
+
+func (s *executeCaptureSink) emitAdapter(adapterEvt *v2.AdapterEvent) error {
+	if chunk := adapterEvt.GetChunk(); chunk != nil {
+		// Validate and accumulate payload_json fragment; forward when final arrives.
+		seq := chunk.GetSeq()
+		if seq == 0 {
+			// New sequence; reset any prior in-progress buffer.
+			s.adapterChunkBuf = nil
+			s.adapterChunkKind = adapterEvt.GetEventKind()
+			s.adapterChunkNextSeq = 1
+		} else if seq != s.adapterChunkNextSeq {
+			// Out-of-order chunk; discard buffer and reject.
+			expected := s.adapterChunkNextSeq
+			s.adapterChunkBuf = nil
+			s.adapterChunkNextSeq = 0
+			return fmt.Errorf("adapter event chunk out-of-order: seq %d expected %d", seq, expected)
+		} else {
+			s.adapterChunkNextSeq = seq + 1
 		}
-		if resultEvt := evt.GetResult(); resultEvt != nil {
-			result := adapter.Result{Outcome: resultEvt.GetOutcome()}
-			if outs := resultEvt.GetOutputs(); len(outs) > 0 {
-				result.Outputs = make(map[string]string, len(outs))
-				for k, v := range outs {
-					result.Outputs[k] = v
-				}
+		if len(s.adapterChunkBuf)+len(adapterEvt.GetPayloadJson()) > maxChunkBufBytes {
+			s.adapterChunkBuf = nil
+			s.adapterChunkNextSeq = 0
+			return fmt.Errorf("adapter event chunk reassembly: payload exceeds %d bytes", maxChunkBufBytes)
+		}
+		s.adapterChunkBuf = append(s.adapterChunkBuf, adapterEvt.GetPayloadJson()...)
+		if !chunk.GetFinal() {
+			return nil
+		}
+		payload, err := structFromJSON(s.adapterChunkBuf)
+		s.adapterChunkBuf = nil
+		s.adapterChunkNextSeq = 0
+		if err != nil {
+			return fmt.Errorf("adapter event chunk reassembly: %w", err)
+		}
+		return s.emitAdapterEvent(&v2.AdapterEvent{
+			EventKind: s.adapterChunkKind,
+			Payload:   payload,
+		})
+	}
+	return s.emitAdapterEvent(adapterEvt)
+}
+
+// emitTool converts a ToolInvocation proto event into the canonical
+// tool.invocation adapter event forwarded to the upstream EventSink.
+// The payload shape is {"name": string, "arguments": map} — preserved
+// from v1 so existing console and NDJSON consumers do not break.
+func (s *executeCaptureSink) emitTool(toolEvt *v2.ToolInvocation) error {
+	payload := map[string]any{"name": toolEvt.GetToolName()}
+	if args := toolEvt.GetArgs(); args != nil {
+		payload["arguments"] = args.AsMap()
+	}
+	s.sink.Adapter("tool.invocation", payload)
+	return nil
+}
+
+func (s *executeCaptureSink) emitResult(resultEvt *v2.ExecuteResult) error {
+	if chunk := resultEvt.GetChunk(); chunk != nil {
+		// Validate and accumulate outputs_json fragment; capture result when final arrives.
+		seq := chunk.GetSeq()
+		if seq == 0 {
+			s.resultChunkBuf = nil
+			s.resultOutcome = resultEvt.GetOutcome()
+			s.resultChunkNextSeq = 1
+		} else if seq != s.resultChunkNextSeq {
+			expected := s.resultChunkNextSeq
+			s.resultChunkBuf = nil
+			s.resultChunkNextSeq = 0
+			return fmt.Errorf("execute result chunk out-of-order: seq %d expected %d", seq, expected)
+		} else {
+			s.resultChunkNextSeq = seq + 1
+		}
+		if len(s.resultChunkBuf)+len(resultEvt.GetOutputsJson()) > maxChunkBufBytes {
+			s.resultChunkBuf = nil
+			s.resultChunkNextSeq = 0
+			return fmt.Errorf("execute result chunk reassembly: outputs exceed %d bytes", maxChunkBufBytes)
+		}
+		s.resultChunkBuf = append(s.resultChunkBuf, resultEvt.GetOutputsJson()...)
+		if !chunk.GetFinal() {
+			return nil
+		}
+		outputs, err := outputsFromJSON(s.resultChunkBuf)
+		s.resultChunkBuf = nil
+		s.resultChunkNextSeq = 0
+		if err != nil {
+			return fmt.Errorf("execute result chunk reassembly: %w", err)
+		}
+		s.result = adapter.Result{Outcome: s.resultOutcome, Outputs: outputs}
+		s.done = true
+		return nil
+	}
+	s.result = adapter.Result{Outcome: resultEvt.GetOutcome()}
+	if outs := resultEvt.GetOutputs(); len(outs) > 0 {
+		s.result.Outputs = make(map[string]string, len(outs))
+		for k, v := range outs {
+			s.result.Outputs[k] = v
+		}
+	}
+	s.done = true
+	return nil
+}
+
+// emitAdapterEvent dispatches a fully assembled (non-chunked) AdapterEvent.
+// permission.request events are intercepted for host-side allow_tools evaluation;
+// all other events are forwarded directly to the upstream sink.
+func (s *executeCaptureSink) emitAdapterEvent(adapterEvt *v2.AdapterEvent) error {
+	if adapterEvt.GetEventKind() == "permission.request" {
+		s.handlePermissionRequest(adapterEvt)
+		return nil
+	}
+	if adapterEvt.GetPayload() != nil {
+		s.sink.Adapter(adapterEvt.GetEventKind(), adapterEvt.GetPayload().AsMap())
+	} else {
+		s.sink.Adapter(adapterEvt.GetEventKind(), nil)
+	}
+	return nil
+}
+
+// handlePermissionRequest evaluates a permission.request AdapterEvent against
+// the host-side allow_tools policy. It emits either permission.granted or
+// permission.denied to the upstream sink, and forwards the corresponding
+// PermissionEvent to the adapter via the bidi Permissions stream (request=allow,
+// cancel=deny). A denied request sets anyDenied so Execute can override the
+// adapter's "success" outcome to "needs_review" after all events are processed.
+func (s *executeCaptureSink) handlePermissionRequest(adapterEvt *v2.AdapterEvent) { //nolint:funlen // grant/deny branches each require extracting payload, calling policy, emitting event, and forwarding to stream
+	var payload map[string]any
+	if adapterEvt.GetPayload() != nil {
+		payload = adapterEvt.GetPayload().AsMap()
+	}
+
+	requestID, _ := payload["request_id"].(string)
+	tool, _ := payload["tool"].(string)
+	fullCmd, _ := payload["full_command_text"].(string)
+
+	req := PermissionRequest{ID: requestID, Tool: tool}
+	if fullCmd != "" {
+		req.Details = map[string]string{"full_command_text": fullCmd}
+	}
+
+	allow, reason := s.policy.Decide(req)
+	if allow {
+		// Strip "matched: " prefix to get the raw pattern for the payload.
+		pattern := strings.TrimPrefix(reason, "matched: ")
+		if idx := strings.Index(pattern, " (alias for "); idx >= 0 {
+			pattern = pattern[:idx]
+		}
+		s.sink.Adapter("permission.granted", map[string]any{
+			"request_id": requestID,
+			"tool":       tool,
+			"pattern":    pattern,
+		})
+		if s.requests != nil {
+			select {
+			case s.requests <- &v2.PermissionEvent{
+				Event: &v2.PermissionEvent_Request{
+					Request: &v2.PermissionRequest{RequestId: requestID},
+				},
+			}:
+			case <-s.ctx.Done():
 			}
-			return result, nil
+		}
+		return
+	}
+
+	// Denied.
+	s.anyDenied = true
+	deniedPayload := map[string]any{
+		"request_id":  requestID,
+		"tool":        tool,
+		"reason":      reason,
+		"allow_tools": s.allowTools,
+	}
+	if s.adapterName != "" {
+		if suggestion := PermissionDenialSuggestion(s.adapterName, tool); suggestion != "" {
+			deniedPayload["suggestion"] = suggestion
+		}
+	}
+	s.sink.Adapter("permission.denied", deniedPayload)
+	if s.requests != nil {
+		select {
+		case s.requests <- &v2.PermissionEvent{
+			Event: &v2.PermissionEvent_Cancel{
+				Cancel: &v2.PermissionCancel{RequestId: requestID, Reason: reason},
+			},
+		}:
+		case <-s.ctx.Done():
 		}
 	}
 }
 
-func (p *rpcHandle) Permit(ctx context.Context, sessionID, permID string, allow bool, reason string) error {
-	_, err := p.rpc.Permit(ctx, &pb.PermitRequest{
-		SessionId:    sessionID,
-		PermissionId: permID,
-		Allow:        allow,
-		Reason:       reason,
-	})
-	return err
+// maxLogLineBufBytes is the upper bound for a single log chunk reassembly
+// buffer or individual log line. Log content exceeding this limit is rejected
+// to prevent unbounded memory growth from a misbehaving adapter.
+const maxLogLineBufBytes = 4 * 1024 * 1024 // 4 MiB per stream
+
+// maxTotalLogBufBytes is the aggregate upper bound across all concurrent chunk
+// reassembly buffers within one Log stream. A misbehaving adapter cannot
+// exhaust host memory by opening many parallel named streams.
+const maxTotalLogBufBytes = 16 * 1024 * 1024 // 16 MiB total
+
+// logForwardSink implements LogEventSink, forwarding log lines to the
+// upstream adapter.EventSink.Log. Chunked log lines (LogEvent.chunk != nil)
+// are reassembled per stream_name before forwarding, with per-stream and
+// aggregate memory caps plus seq-number validation to fail closed on
+// out-of-order or corrupt chunk sequences.
+type logForwardSink struct {
+	sink      adapter.EventSink
+	chunkBufs map[string][]byte // keyed by stream_name
+	chunkSeqs map[string]uint32 // expected next seq per stream (0 = no seq in progress)
+}
+
+// totalLogBufSize returns the sum of all in-progress chunk buffer lengths.
+func totalLogBufSize(m map[string][]byte) int {
+	n := 0
+	for _, b := range m {
+		n += len(b)
+	}
+	return n
+}
+
+func (s *logForwardSink) Emit(ev *v2.LogEvent) error {
+	if ev.GetHeartbeat() != nil {
+		return nil
+	}
+	if chunk := ev.GetChunk(); chunk != nil {
+		return s.emitChunk(ev, chunk)
+	}
+	if len(ev.GetLine()) > maxLogLineBufBytes {
+		return fmt.Errorf("log event: stream %q line exceeds %d bytes", ev.GetStreamName(), maxLogLineBufBytes)
+	}
+	s.sink.Log(ev.GetStreamName(), ev.GetLine())
+	return nil
+}
+
+// emitChunk handles a chunked log event: validates seq ordering, enforces memory
+// caps, and forwards the reassembled line when the final chunk arrives.
+func (s *logForwardSink) emitChunk(ev *v2.LogEvent, chunk *v2.Chunk) error {
+	stream := ev.GetStreamName()
+	seq := chunk.GetSeq()
+	if seq == 0 {
+		// New sequence; reset this stream's buffer and seq counter.
+		if s.chunkBufs == nil {
+			s.chunkBufs = make(map[string][]byte)
+		}
+		if s.chunkSeqs == nil {
+			s.chunkSeqs = make(map[string]uint32)
+		}
+		s.chunkBufs[stream] = nil
+		s.chunkSeqs[stream] = 1
+	} else {
+		if err := s.validateSeq(stream, seq); err != nil {
+			return err
+		}
+	}
+	// Per-stream cap check.
+	if len(s.chunkBufs[stream])+len(ev.GetLine()) > maxLogLineBufBytes {
+		delete(s.chunkBufs, stream)
+		delete(s.chunkSeqs, stream)
+		return fmt.Errorf("log chunk reassembly: stream %q exceeds %d bytes", stream, maxLogLineBufBytes)
+	}
+	// Aggregate cap check across all concurrent buffers.
+	if totalLogBufSize(s.chunkBufs)+len(ev.GetLine()) > maxTotalLogBufBytes {
+		delete(s.chunkBufs, stream)
+		delete(s.chunkSeqs, stream)
+		return fmt.Errorf("log chunk reassembly: aggregate buffer exceeds %d bytes", maxTotalLogBufBytes)
+	}
+	s.chunkBufs[stream] = append(s.chunkBufs[stream], ev.GetLine()...)
+	if !chunk.GetFinal() {
+		return nil
+	}
+	line := s.chunkBufs[stream]
+	delete(s.chunkBufs, stream)
+	delete(s.chunkSeqs, stream)
+	s.sink.Log(stream, line)
+	return nil
+}
+
+// validateSeq checks the sequence number for a continuation chunk and
+// advances the counter; returns an error and clears state on mismatch.
+func (s *logForwardSink) validateSeq(stream string, seq uint32) error {
+	expected := s.chunkSeqs[stream]
+	if expected == 0 {
+		return fmt.Errorf("log chunk: stream %q received seq %d with no sequence in progress", stream, seq)
+	}
+	if seq != expected {
+		delete(s.chunkBufs, stream)
+		delete(s.chunkSeqs, stream)
+		return fmt.Errorf("log chunk: stream %q out-of-order seq %d (expected %d)", stream, seq, expected)
+	}
+	s.chunkSeqs[stream] = expected + 1
+	return nil
+}
+
+// serializedEventSink serializes concurrent calls to adapter.EventSink.Adapter
+// and adapter.EventSink.Log behind a mutex. The Execute goroutine (via
+// executeCaptureSink) and the Log goroutine (via logForwardSink) both call the
+// upstream sink concurrently; wrapping the sink here prevents data races on
+// non-thread-safe sink implementations.
+type serializedEventSink struct {
+	mu    sync.Mutex
+	inner adapter.EventSink
+}
+
+func (s *serializedEventSink) Log(stream string, chunk []byte) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.inner.Log(stream, chunk)
+}
+
+func (s *serializedEventSink) Adapter(kind string, data any) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.inner.Adapter(kind, data)
 }
 
 func (p *rpcHandle) CloseSession(ctx context.Context, id string) error {
-	_, err := p.rpc.CloseSession(ctx, &pb.CloseSessionRequest{SessionId: id})
+	_, err := p.rpc.CloseSession(ctx, &v2.CloseSessionRequest{SessionId: id})
 	return err
 }
 
@@ -306,6 +723,30 @@ func (p *rpcHandle) Kill() {
 			p.onKill()
 		}
 	})
+}
+
+// structFromJSON unmarshals raw JSON bytes into a *structpb.Struct so that
+// reassembled AdapterEvent.payload_json chunks can be forwarded as the
+// standard payload type.
+func structFromJSON(b []byte) (*structpb.Struct, error) {
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		return nil, err
+	}
+	return structpb.NewStruct(m)
+}
+
+// outputsFromJSON unmarshals raw JSON bytes (ExecuteResult.outputs_json)
+// into the flat string map used by adapter.Result.Outputs.
+func outputsFromJSON(b []byte) (map[string]string, error) {
+	if len(b) == 0 {
+		return nil, nil
+	}
+	var m map[string]string
+	if err := json.Unmarshal(b, &m); err != nil {
+		return nil, err
+	}
+	return m, nil
 }
 
 // collectAllowedOutcomes returns the declared outcome names for a step,
@@ -349,10 +790,10 @@ func stringsTrim(s string) string {
 	return s
 }
 
-// AdapterInfoFromProto translates a proto InfoResponse into a workflow.AdapterInfo.
+// AdapterInfoFromProto translates a v2 proto InfoResponse into a workflow.AdapterInfo.
 // Legacy plugins that do not populate config_schema or input_schema will yield
 // an empty AdapterInfo (permissive: any keys accepted by the compiler).
-func AdapterInfoFromProto(resp *pb.InfoResponse) workflow.AdapterInfo {
+func AdapterInfoFromProto(resp *v2.InfoResponse) workflow.AdapterInfo {
 	return workflow.AdapterInfo{
 		ConfigSchema: protoToConfigSchema(resp.GetConfigSchema()),
 		InputSchema:  protoToConfigSchema(resp.GetInputSchema()),
@@ -360,7 +801,7 @@ func AdapterInfoFromProto(resp *pb.InfoResponse) workflow.AdapterInfo {
 	}
 }
 
-func protoToConfigSchema(s *pb.AdapterSchemaProto) map[string]workflow.ConfigField {
+func protoToConfigSchema(s *v2.AdapterSchemaProto) map[string]workflow.ConfigField {
 	if s == nil || len(s.GetFields()) == 0 {
 		return nil
 	}
@@ -369,7 +810,7 @@ func protoToConfigSchema(s *pb.AdapterSchemaProto) map[string]workflow.ConfigFie
 		out[k] = workflow.ConfigField{
 			Required: f.GetRequired(),
 			Type:     protoToConfigFieldType(f.GetType()),
-			Doc:      f.GetDoc(),
+			Doc:      f.GetDescription(),
 		}
 	}
 	return out
@@ -379,7 +820,7 @@ func protoToConfigFieldType(t string) workflow.ConfigFieldType {
 	switch t {
 	case "number":
 		return workflow.ConfigFieldNumber
-	case "bool":
+	case "bool", "boolean": // accept both; "boolean" is the JSON Schema convention
 		return workflow.ConfigFieldBool
 	case "list_string":
 		return workflow.ConfigFieldListString

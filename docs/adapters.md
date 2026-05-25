@@ -283,6 +283,20 @@ Permission gating is deny-by-default.
 
 The host evaluates adapter permission requests against those patterns. When a request matches, the run emits `permission.granted`; otherwise it emits `permission.denied` with reason `no matching allow_tools entry` and (for the Copilot adapter) includes a `suggestion` field only when a relevant canonical-kind suggestion exists (for example, for denied kinds with known aliases such as `read`/`write`). The Copilot adapter then surfaces the denied turn as `failure`.
 
+### How the permission round-trip works
+
+The Criteria adapter protocol uses a bidirectional `Permissions` gRPC stream alongside the `Execute` stream. The flow for each tool-use attempt is:
+
+1. The Copilot SDK calls `OnPermissionRequest` inside the adapter process.
+2. The adapter emits a `permission.request` AdapterEvent (carrying `request_id` and `tool`) via the `Execute` stream and **blocks** waiting for the host's decision.
+3. The host intercepts the event, evaluates `allow_tools`, and sends one of:
+   - `PermissionEvent.request{request_id}` (allow) over the `Permissions` stream, then emits `permission.granted`.
+   - `PermissionEvent.cancel{request_id}` (deny) over the `Permissions` stream, then emits `permission.denied`.
+4. The adapter unblocks and returns `Approved` or `Denied` to the SDK. A `Denied` result prevents the tool from running.
+5. If any permission was denied during Execute and the adapter still reported `success`, the host overrides the outcome to `needs_review`.
+
+Adapters that do not implement the `Permissions` RPC (embedding `UnimplementedPermissions`) use **post-hoc enforcement**: the tool runs anyway, but any denial overrides the outcome to `needs_review`. The Copilot adapter implements `Permissions` and uses **blocking enforcement** so the tool never runs when denied.
+
 ### Copilot permission-kind aliases
 
 The Copilot SDK reports permission requests using short kind names (`read`, `write`, `shell`, `mcp`, `url`, `memory`, `custom-tool`, `hook`). For convenience, two user-friendly aliases are recognised in `allow_tools` entries for Copilot-backed steps:
@@ -430,7 +444,7 @@ This is the right pattern when you want distinct tool budgets per role and an ex
 
 ## Adapter Contract and Step Outputs (Phase 1.5)
 
-Adapters implement the `AdapterService` gRPC service defined in `proto/criteria/v1/adapter_plugin.proto`. The `Info()` RPC returns metadata about the adapter including:
+Adapters implement the `AdapterService` gRPC service defined in `proto/criteria/v2/adapter.proto` (generated Go bindings in `sdk/pb/criteria/v2`). The `Info()` RPC returns metadata about the adapter including:
 
 - `ConfigSchema` — JSON schema for adapter-level configuration (on the `adapter { }` block)
 - `InputSchema` — JSON schema for step-level input (in the `input { }` block on each step)
@@ -443,7 +457,7 @@ The host sends an `ExecuteRequest` to the adapter on every step execution. The f
 |---|---|---|
 | `session_id` | `string` | Session identifier, stable for the lifetime of the adapter session. |
 | `step_name` | `string` | Name of the step being executed. |
-| `config` | `map<string, string>` | Step-level input key-value pairs (from the step's `input {}` block). |
+| `input` | `map<string, string>` | Step-level input key-value pairs (from the step's `input {}` block). |
 | `allowed_outcomes` | `repeated string` (sorted ascending) | The set of outcome names the workflow declares for this step. See below. |
 
 **`allowed_outcomes`** *(repeated string, sorted ascending)* — The set of outcome names the workflow declares for this step. Adapters may use this list to constrain or validate outcome selection (e.g. by exposing it to a model as a structured tool schema). Adapters are not required to consume the field; the host independently validates the returned outcome against the same set. The list is deterministic — sorted ascending — so adapter implementations may rely on stable ordering across runs. For compatibility, adapters must treat a missing/`nil` `allowed_outcomes` field the same as an empty list: both mean "no declared outcomes". This can occur for steps with zero outcomes and when talking to older hosts, so adapters should not use `nil`/missing versus empty to infer host version or behavior.
@@ -502,8 +516,8 @@ are shared across all parallel executions for the same step.
 To opt in to parallel execution, return `"parallel_safe"` in your `Info()` capabilities:
 
 ```go
-func (p *myAdapter) Info(ctx context.Context, req *pb.InfoRequest) (*pb.InfoResponse, error) {
-    return &pb.InfoResponse{
+func (p *myAdapter) Info(_ context.Context, _ *v2.InfoRequest) (*v2.InfoResponse, error) {
+    return &v2.InfoResponse{
         Name:         "my-adapter",
         Version:      "0.1.0",
         Capabilities: []string{"parallel_safe"},
@@ -558,16 +572,18 @@ package main
 import (
     "context"
     adapterhost "github.com/brokenbots/criteria/sdk/adapterhost"
-    pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
+    v2 "github.com/brokenbots/criteria/sdk/pb/criteria/v2"
 )
 
-type myAdapter struct{}
-
-func (p *myAdapter) Info(ctx context.Context, req *pb.InfoRequest) (*pb.InfoResponse, error) {
-    return &pb.InfoResponse{Name: "my-adapter", Version: "0.1.0"}, nil
+type myAdapter struct {
+    adapterhost.UnimplementedPermissions
 }
 
-// ... implement OpenSession, Execute, Permit, CloseSession ...
+func (p *myAdapter) Info(_ context.Context, _ *v2.InfoRequest) (*v2.InfoResponse, error) {
+    return &v2.InfoResponse{Name: "my-adapter", Version: "0.1.0"}, nil
+}
+
+// ... implement OpenSession, Execute, Log, CloseSession ...
 
 func main() {
     adapterhost.Serve(&myAdapter{})
@@ -576,7 +592,10 @@ func main() {
 
 Implement `adapterhost.Service` and call `adapterhost.Serve` from `main()`. The
 `Execute` method receives an `adapterhost.ExecuteEventSender`; send at least one
-`*pb.ExecuteResult` event before returning `nil`, or return a non-nil error.
+`v2.ExecuteResult` inside a `v2.ExecuteEvent` before returning `nil`, or return a
+non-nil error. Embed `adapterhost.UnimplementedPermissions` to opt out of blocking
+permission enforcement (the host applies post-hoc enforcement instead — overriding
+`success` to `needs_review` when any permission request was denied).
 
 See [`examples/plugins/greeter/main.go`](../examples/plugins/greeter/main.go) for a complete, runnable example. For more complex references:
 
@@ -584,7 +603,7 @@ See [`examples/plugins/greeter/main.go`](../examples/plugins/greeter/main.go) fo
 - `cmd/criteria-adapter-mcp/main.go`
 - `cmd/criteria-adapter-noop/main.go`
 
-If you add a new adapter, wire it through the conformance harness before relying on it in a real workflow. That is the fastest way to confirm `Info`, `OpenSession`, `Execute`, `Permit`, and `CloseSession` all obey the host contract.
+If you add a new adapter, wire it through the conformance harness before relying on it in a real workflow. That is the fastest way to confirm `Info`, `OpenSession`, `Execute`, `Permissions`, and `CloseSession` all obey the host contract.
 
 ## Adapter lifecycle logs
 

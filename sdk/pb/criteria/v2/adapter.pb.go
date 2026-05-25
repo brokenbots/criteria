@@ -10,8 +10,8 @@
 // server) sends PermissionDecision acknowledgments back. Adapters that embed
 // sdk/adapterhost.UnimplementedPermissions receive post-hoc enforcement
 // (outcome override to needs_review on denial); adapters that implement
-// Permissions themselves (e.g. copilot) get blocking enforcement so the tool
-// never runs when denied.
+// Permissions themselves (e.g. copilot, mcp) get blocking enforcement so the
+// tool never runs when denied.
 //
 // See docs/adapters.md for the feature roadmap and well-known event_kind registry.
 
@@ -168,7 +168,7 @@ func (x *Heartbeat) GetSentAt() *timestamppb.Timestamp {
 // ConfigFieldProto describes a single field in an adapter schema.
 type ConfigFieldProto struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Type          string                 `protobuf:"bytes,1,opt,name=type,proto3" json:"type,omitempty"` // "string" | "number" | "bool" | "boolean" (alias for "bool") | "list_string"
+	Type          string                 `protobuf:"bytes,1,opt,name=type,proto3" json:"type,omitempty"` // "string" | "number" | "boolean" | ...
 	Required      bool                   `protobuf:"varint,2,opt,name=required,proto3" json:"required,omitempty"`
 	Description   string                 `protobuf:"bytes,3,opt,name=description,proto3" json:"description,omitempty"`
 	DefaultStr    string                 `protobuf:"bytes,4,opt,name=default_str,json=defaultStr,proto3" json:"default_str,omitempty"`
@@ -1316,11 +1316,9 @@ func (x *PermissionRequest) GetArgsPreview() string {
 	return ""
 }
 
-// PermissionCancel carries a deny decision from the HOST to the ADAPTER on the
-// Permissions stream. When the host denies a tool request, it sends a
-// PermissionEvent with cancel set; the adapter unblocks the pending request
-// and returns Denied to the Copilot SDK so the tool does not run.
-// reason is optional human-readable text (e.g. "no matching allow_tools entry").
+// PermissionCancel is sent by the adapter to withdraw a pending request.
+// The host marks the request cancelled in the audit log and will not respond
+// with a PermissionDecision for this request_id.
 type PermissionCancel struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	RequestId     string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`

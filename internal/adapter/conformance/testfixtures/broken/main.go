@@ -4,31 +4,33 @@ import (
 	"context"
 
 	adapterhost "github.com/brokenbots/criteria/sdk/adapterhost"
-	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
+	v2 "github.com/brokenbots/criteria/sdk/pb/criteria/v2"
 )
 
-type brokenService struct{}
-
-func (brokenService) Info(context.Context, *pb.InfoRequest) (*pb.InfoResponse, error) {
-	return &pb.InfoResponse{Name: "broken", Version: "0.1.0"}, nil
+type brokenService struct {
+	adapterhost.UnimplementedPermissions
 }
 
-func (brokenService) OpenSession(context.Context, *pb.OpenSessionRequest) (*pb.OpenSessionResponse, error) {
-	return &pb.OpenSessionResponse{}, nil
+func (brokenService) Info(context.Context, *v2.InfoRequest) (*v2.InfoResponse, error) {
+	return &v2.InfoResponse{Name: "broken", Version: "0.1.0"}, nil
 }
 
-func (brokenService) Execute(_ context.Context, _ *pb.ExecuteRequest, sink adapterhost.ExecuteEventSender) error {
-	return sink.Send(&pb.ExecuteEvent{
-		Event: &pb.ExecuteEvent_Result{Result: &pb.ExecuteResult{Outcome: ""}},
+func (brokenService) OpenSession(context.Context, *v2.OpenSessionRequest) (*v2.OpenSessionResponse, error) {
+	return &v2.OpenSessionResponse{}, nil
+}
+
+func (brokenService) Execute(_ context.Context, _ *v2.ExecuteRequest, sink adapterhost.ExecuteEventSender) error {
+	return sink.Send(&v2.ExecuteEvent{
+		Event: &v2.ExecuteEvent_Result{Result: &v2.ExecuteResult{Outcome: ""}},
 	})
 }
 
-func (brokenService) Permit(context.Context, *pb.PermitRequest) (*pb.PermitResponse, error) {
-	return &pb.PermitResponse{}, nil
+func (brokenService) Log(_ context.Context, _ *v2.LogRequest, _ adapterhost.LogEventSender) error {
+	return nil
 }
 
-func (brokenService) CloseSession(context.Context, *pb.CloseSessionRequest) (*pb.CloseSessionResponse, error) {
-	return &pb.CloseSessionResponse{}, nil
+func (brokenService) CloseSession(context.Context, *v2.CloseSessionRequest) (*v2.CloseSessionResponse, error) {
+	return &v2.CloseSessionResponse{}, nil
 }
 
 func main() {

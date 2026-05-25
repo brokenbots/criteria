@@ -16,7 +16,7 @@ const (
 // and every adapter process. A mismatch causes the adapter to exit with a
 // clear error instead of attempting a broken RPC session.
 var HandshakeConfig = hplugin.HandshakeConfig{
-	ProtocolVersion:  1,
+	ProtocolVersion:  2,
 	MagicCookieKey:   MagicCookieKey,
 	MagicCookieValue: MagicCookieValue,
 }

@@ -40,14 +40,18 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"sync"
 	"time"
 
 	copilot "github.com/github/copilot-sdk/go"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
-	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
+	adapterhost "github.com/brokenbots/criteria/sdk/adapterhost"
+	v2 "github.com/brokenbots/criteria/sdk/pb/criteria/v2"
 )
 
 const (
@@ -78,51 +82,137 @@ var validReasoningEfforts = map[string]bool{
 	"xhigh":  true,
 }
 
-type permDecision struct {
-	allow  bool
-	reason string
-}
-
 type copilotAdapter struct {
+	adapterhost.UnimplementedPermissions
 	mu       sync.Mutex
 	sessions map[string]*sessionState
 
 	clientMu sync.Mutex
 	client   *copilot.Client
+
+	// pendingPerms tracks in-flight permission requests from Copilot SDK
+	// callbacks that are waiting for a host decision over the Permissions
+	// bidi stream. Each entry is a buffered (size 1) channel; a decision
+	// value of "allow" or "deny" is sent by the Permissions stream handler
+	// when the host sends a PermissionEvent.request or PermissionEvent.cancel.
+	pendingPermsMu sync.Mutex
+	pendingPerms   map[string]chan<- string
 }
 
-func (p *copilotAdapter) Info(_ context.Context, _ *pb.InfoRequest) (*pb.InfoResponse, error) {
-	return &pb.InfoResponse{
+func (p *copilotAdapter) Info(_ context.Context, _ *v2.InfoRequest) (*v2.InfoResponse, error) {
+	return &v2.InfoResponse{
 		Name:    adapterName,
 		Version: adapterVersion,
 		Capabilities: []string{
 			"multi_turn",
-			"permission_gating",
 			"structured_events",
+			"permission_gating",
 		},
-		ConfigSchema: &pb.AdapterSchemaProto{Fields: map[string]*pb.ConfigFieldProto{
-			"model":             {Type: "string", Doc: "Copilot model to use for this session."},
-			"reasoning_effort":  {Type: "string", Doc: "Reasoning effort level for the model: low, medium, high, xhigh."},
-			"working_directory": {Type: "string", Doc: "Working directory for tool invocations."},
-			"max_turns":         {Type: "number", Doc: "Maximum assistant turns per Execute call (default: unlimited)."},
-			"system_prompt":     {Type: "string", Doc: "System prompt prepended at session open."},
+		ConfigSchema: &v2.AdapterSchemaProto{Fields: map[string]*v2.ConfigFieldProto{
+			"model":             {Type: "string", Description: "Copilot model to use for this session."},
+			"reasoning_effort":  {Type: "string", Description: "Reasoning effort level for the model: low, medium, high, xhigh."},
+			"working_directory": {Type: "string", Description: "Working directory for tool invocations."},
+			"max_turns":         {Type: "number", Description: "Maximum assistant turns per Execute call (default: unlimited)."},
+			"system_prompt":     {Type: "string", Description: "System prompt prepended at session open."},
 			// Custom provider (BYOK) — point the session at an OpenAI-compatible
 			// endpoint (Ollama, vLLM, Azure OpenAI, etc.). When provider_base_url
 			// is set, the session uses this provider instead of GitHub Copilot's
 			// default backend; in that case `model` is required.
-			"provider_type":              {Type: "string", Doc: "Custom provider type: openai, azure, or anthropic. Default: openai. Only used when provider_base_url is set."},
-			"provider_base_url":          {Type: "string", Doc: "Custom provider API endpoint URL. Setting this enables BYOK mode (e.g. http://localhost:11434/v1 for Ollama, vLLM endpoint). Requires `model` to be set."},
-			"provider_api_key":           {Type: "string", Doc: "Custom provider API key. Optional for local providers like Ollama. Prefer env() in HCL to keep secrets out of source."},
-			"provider_bearer_token":      {Type: "string", Doc: "Custom provider bearer token. Sets Authorization header directly; takes precedence over provider_api_key."},
-			"provider_wire_api":          {Type: "string", Doc: "Custom provider wire format (openai/azure only): completions or responses. Default: completions."},
-			"provider_azure_api_version": {Type: "string", Doc: "Azure API version, used when provider_type=azure. Default: 2024-10-21."},
+			"provider_type":              {Type: "string", Description: "Custom provider type: openai, azure, or anthropic. Default: openai. Only used when provider_base_url is set."},
+			"provider_base_url":          {Type: "string", Description: "Custom provider API endpoint URL. Setting this enables BYOK mode (e.g. http://localhost:11434/v1 for Ollama, vLLM endpoint). Requires `model` to be set."},
+			"provider_api_key":           {Type: "string", Description: "Custom provider API key. Optional for local providers like Ollama. Prefer env() in HCL to keep secrets out of source."},
+			"provider_bearer_token":      {Type: "string", Description: "Custom provider bearer token. Sets Authorization header directly; takes precedence over provider_api_key."},
+			"provider_wire_api":          {Type: "string", Description: "Custom provider wire format (openai/azure only): completions or responses. Default: completions."},
+			"provider_azure_api_version": {Type: "string", Description: "Azure API version, used when provider_type=azure. Default: 2024-10-21."},
 		}},
-		InputSchema: &pb.AdapterSchemaProto{Fields: map[string]*pb.ConfigFieldProto{
-			"prompt":           {Required: true, Type: "string", Doc: "User prompt to send to the assistant."},
-			"max_turns":        {Type: "number", Doc: "Per-step override for max assistant turns."},
-			"reasoning_effort": {Type: "string", Doc: "Per-step override for reasoning effort. Resets to the session default after this step. Valid: low, medium, high, xhigh."},
+		InputSchema: &v2.AdapterSchemaProto{Fields: map[string]*v2.ConfigFieldProto{
+			"prompt":           {Required: true, Type: "string", Description: "User prompt to send to the assistant."},
+			"max_turns":        {Type: "number", Description: "Per-step override for max assistant turns."},
+			"reasoning_effort": {Type: "string", Description: "Per-step override for reasoning effort. Resets to the session default after this step. Valid: low, medium, high, xhigh."},
 		}},
 	}, nil
+}
+
+// registerPendingPerm registers a pending permission request. The caller must
+// read from ch exactly once after calling handlePermissionRequest to get the
+// host's decision ("allow" or "deny").
+func (p *copilotAdapter) registerPendingPerm(id string, ch chan<- string) {
+	p.pendingPermsMu.Lock()
+	defer p.pendingPermsMu.Unlock()
+	if p.pendingPerms == nil {
+		p.pendingPerms = make(map[string]chan<- string)
+	}
+	p.pendingPerms[id] = ch
+}
+
+// resolvePendingPerm retrieves and removes the pending-perm channel for id.
+// Returns nil if the id is not registered.
+func (p *copilotAdapter) resolvePendingPerm(id string) chan<- string {
+	p.pendingPermsMu.Lock()
+	defer p.pendingPermsMu.Unlock()
+	ch := p.pendingPerms[id]
+	delete(p.pendingPerms, id)
+	return ch
+}
+
+// drainPendingPerms signals all outstanding pending permission channels with
+// "deny" and clears the map. Called when the Permissions stream ends.
+func (p *copilotAdapter) drainPendingPerms() {
+	p.pendingPermsMu.Lock()
+	defer p.pendingPermsMu.Unlock()
+	for id, ch := range p.pendingPerms {
+		select {
+		case ch <- "deny":
+		default:
+		}
+		delete(p.pendingPerms, id)
+	}
+}
+
+// Permissions implements the adapter-side Permissions bidi stream. The host
+// sends PermissionEvent messages (request=allow, cancel=deny); the adapter
+// resolves the corresponding pending channel so that handlePermissionRequest
+// can unblock the Copilot SDK callback and return the correct result.
+func (p *copilotAdapter) Permissions(ctx context.Context, stream adapterhost.PermissionsStream) error {
+	defer p.drainPendingPerms()
+	for {
+		ev, err := stream.Recv()
+		if err != nil {
+			if errors.Is(err, io.EOF) || status.Code(err) == codes.Canceled || status.Code(err) == codes.OK {
+				return nil
+			}
+			return err
+		}
+		p.dispatchPermEvent(ev, stream)
+	}
+}
+
+// dispatchPermEvent routes a single PermissionEvent to the appropriate pending
+// channel and, for allow events, acknowledges back to the host.
+func (p *copilotAdapter) dispatchPermEvent(ev *v2.PermissionEvent, stream adapterhost.PermissionsStream) {
+	if req := ev.GetRequest(); req != nil {
+		id := req.GetRequestId()
+		p.sendPermDecision(id, "allow")
+		// Acknowledge the decision back to the host.
+		_ = stream.Send(&v2.PermissionDecision{
+			RequestId: id,
+			Decision:  "allow",
+		})
+		return
+	}
+	if cancel := ev.GetCancel(); cancel != nil {
+		p.sendPermDecision(cancel.GetRequestId(), "deny")
+	}
+}
+
+// sendPermDecision delivers decision to the pending channel for id, if any.
+func (p *copilotAdapter) sendPermDecision(id, decision string) {
+	if ch := p.resolvePendingPerm(id); ch != nil {
+		select {
+		case ch <- decision:
+		default:
+		}
+	}
 }
 
 func (p *copilotAdapter) ensureClient(ctx context.Context) (*copilot.Client, error) {
@@ -166,6 +256,13 @@ func resolveGitHubToken() string {
 		return token
 	}
 	return ""
+}
+
+// Log blocks until ctx is cancelled (when the host closes the Log stream after
+// Execute returns). WS15 wires real log line forwarding; WS03 drops log lines.
+func (p *copilotAdapter) Log(ctx context.Context, _ *v2.LogRequest, _ adapterhost.LogEventSender) error {
+	<-ctx.Done()
+	return nil
 }
 
 func (p *copilotAdapter) getSession(sessionID string) *sessionState {

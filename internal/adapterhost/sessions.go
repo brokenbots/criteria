@@ -51,15 +51,20 @@ type SessionManager struct {
 	sessions map[string]*Session
 }
 
+// PermissionState holds runtime permission audit data for a session.
+// Populated by WS16; present as a stub field in this workstream.
+type PermissionState struct{}
+
 type Session struct {
-	Name         string
-	Adapter      string
-	Config       map[string]string
-	OnCrash      string
-	Capabilities []string // cached from plug.Info() at Open time
-	handle       Handle
-	respawned    bool
-	closing      atomic.Bool
+	Name            string
+	Adapter         string
+	Config          map[string]string
+	OnCrash         string
+	Capabilities    []string // cached from plug.Info() at Open time
+	PermissionState PermissionState
+	handle          Handle
+	respawned       bool
+	closing         atomic.Bool
 }
 
 func NewSessionManager(loader Loader) *SessionManager {

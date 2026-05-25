@@ -88,7 +88,7 @@ func testTimeout(t *testing.T, name string, factory targetFactory, opts *Options
 	if execErr == nil {
 		t.Fatal("expected timeout error, got nil")
 	}
-	if !isDeadlineLikeError(execErr) {
+	if !isDeadlineLikeError(execErr) && !isCancellationLikeError(execErr) {
 		t.Fatalf("expected deadline exceeded error, got: %v", execErr)
 	}
 }

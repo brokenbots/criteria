@@ -3,33 +3,38 @@ package adapterhost
 import (
 	"testing"
 
-	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
+	v2 "github.com/brokenbots/criteria/sdk/pb/criteria/v2"
 )
 
-// TestAdapterPluginWireNames verifies that the hard-coded wire-name constants
-// match the names declared in the compiled proto descriptor. A mismatch causes
-// host/adapter negotiation to fail at runtime.
+// TestAdapterWireNames verifies that the v2 service descriptor has the expected
+// methods. A mismatch causes host/adapter negotiation to fail at runtime.
 func TestAdapterWireNames(t *testing.T) {
-	svc := pb.File_criteria_v1_adapter_plugin_proto.Services().ByName("AdapterService")
+	svc := v2.File_criteria_v2_adapter_proto.Services().ByName("AdapterService")
 	if svc == nil {
-		t.Fatal("AdapterService not found in proto descriptor")
+		t.Fatal("AdapterService not found in v2 proto descriptor")
 	}
 
 	wantService := string(svc.FullName())
-	if adapterServiceName != wantService {
-		t.Errorf("adapterServiceName = %q; want %q", adapterServiceName, wantService)
+	const wantServiceName = "criteria.v2.AdapterService"
+	if wantService != wantServiceName {
+		t.Errorf("service full name = %q; want %q", wantService, wantServiceName)
 	}
 
 	for _, tc := range []struct {
 		name   string
-		got    string
 		method string
 	}{
-		{"Info", adapterInfoMethod, "Info"},
-		{"OpenSession", adapterOpenSessionMethod, "OpenSession"},
-		{"Execute", adapterExecuteMethod, "Execute"},
-		{"Permit", adapterPermitMethod, "Permit"},
-		{"CloseSession", adapterCloseSessionMethod, "CloseSession"},
+		{"Info", "Info"},
+		{"OpenSession", "OpenSession"},
+		{"Execute", "Execute"},
+		{"Log", "Log"},
+		{"Permissions", "Permissions"},
+		{"Pause", "Pause"},
+		{"Resume", "Resume"},
+		{"Snapshot", "Snapshot"},
+		{"Restore", "Restore"},
+		{"Inspect", "Inspect"},
+		{"CloseSession", "CloseSession"},
 	} {
 		var found bool
 		for i := 0; i < svc.Methods().Len(); i++ {
@@ -39,12 +44,7 @@ func TestAdapterWireNames(t *testing.T) {
 			}
 		}
 		if !found {
-			t.Errorf("method %q not found in proto descriptor", tc.method)
-			continue
-		}
-		want := "/" + wantService + "/" + tc.method
-		if tc.got != want {
-			t.Errorf("%s method constant = %q; want %q", tc.name, tc.got, want)
+			t.Errorf("method %q not found in v2 proto descriptor", tc.method)
 		}
 	}
 }
@@ -59,8 +59,8 @@ func TestHandshakeConfigValues(t *testing.T) {
 	if HandshakeConfig.MagicCookieValue != MagicCookieValue {
 		t.Errorf("HandshakeConfig.MagicCookieValue = %q; want %q", HandshakeConfig.MagicCookieValue, MagicCookieValue)
 	}
-	if HandshakeConfig.ProtocolVersion != 1 {
-		t.Errorf("HandshakeConfig.ProtocolVersion = %d; want 1", HandshakeConfig.ProtocolVersion)
+	if HandshakeConfig.ProtocolVersion != 2 {
+		t.Errorf("HandshakeConfig.ProtocolVersion = %d; want 2", HandshakeConfig.ProtocolVersion)
 	}
 }
 

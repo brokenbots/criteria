@@ -8,7 +8,7 @@ import (
 
 	hplugin "github.com/hashicorp/go-plugin"
 
-	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
+	v2 "github.com/brokenbots/criteria/sdk/pb/criteria/v2"
 )
 
 func TestHandshakeInfo(t *testing.T) {
@@ -43,7 +43,7 @@ func TestHandshakeInfo(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	resp, err := adapterClient.Info(ctx, &pb.InfoRequest{})
+	resp, err := adapterClient.Info(ctx, &v2.InfoRequest{})
 	if err != nil {
 		t.Fatalf("info rpc: %v", err)
 	}
