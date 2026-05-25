@@ -745,6 +745,74 @@ func (c *unimplementedPermissionsClient) CloseSession(_ context.Context, _ *v2.C
 	return &v2.CloseSessionResponse{}, nil
 }
 
+// TestPermissionsStreamUnimplemented_ManyRequests is a regression test for the
+// "dead Permissions stream blocks Execute" bug. When Permissions returns
+// codes.Unimplemented, the goroutine must drain the requests channel so that
+// handlePermissionRequest never blocks on a full buffer (capacity 16) waiting
+// for a consumer that has already exited. The test emits 20 permission.request
+// events — more than the channel buffer — and verifies Execute completes
+// without hanging.
+func TestPermissionsStreamUnimplemented_ManyRequests(t *testing.T) {
+	// A short deadline turns a deadlock into a fast test failure.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	handle := &rpcHandle{
+		name: "stub",
+		rpc:  &manyPermRequestsUnimplClient{count: 20},
+	}
+	step := &workflow.StepNode{
+		Name:       "test-step",
+		AllowTools: []string{}, // deny-all so every request is denied
+		Outcomes: map[string]*workflow.CompiledOutcome{
+			"success":      {},
+			"needs_review": {},
+			"failure":      {},
+		},
+	}
+	sink := &adapterEventCollector{}
+	res, err := handle.Execute(ctx, "sess-1", step, sink)
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+	// All 20 denials flip "success" → "needs_review".
+	if res.Outcome != "needs_review" {
+		t.Errorf("outcome = %q; want needs_review", res.Outcome)
+	}
+}
+
+// manyPermRequestsUnimplClient is a Client stub that returns Unimplemented
+// from Permissions and emits count permission.request events from Execute
+// before returning "success". This exercises the drain path introduced to
+// prevent handlePermissionRequest from blocking on a full channel after the
+// Permissions goroutine has exited.
+type manyPermRequestsUnimplClient struct {
+	*unimplementedPermissionsClient
+	count int
+}
+
+func (c *manyPermRequestsUnimplClient) Execute(_ context.Context, _ *v2.ExecuteRequest, sink ExecuteEventSink) error {
+	p, _ := structpb.NewStruct(map[string]any{
+		"request_id": "req-1",
+		"tool":       "shell",
+	})
+	permEv := &v2.ExecuteEvent{
+		Event: &v2.ExecuteEvent_Adapter{
+			Adapter: &v2.AdapterEvent{EventKind: "permission.request", Payload: p},
+		},
+	}
+	for range c.count {
+		if err := sink.Emit(permEv); err != nil {
+			return err
+		}
+	}
+	return sink.Emit(&v2.ExecuteEvent{
+		Event: &v2.ExecuteEvent_Result{
+			Result: &v2.ExecuteResult{Outcome: "success"},
+		},
+	})
+}
+
 // TestToolInvocationPayloadSchema verifies that ToolInvocation events are
 // forwarded with the canonical {"name", "arguments"} payload shape, not
 // the old {"tool_name", "args"} shape that was temporarily introduced.

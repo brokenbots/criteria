@@ -207,9 +207,27 @@ func (p *rpcHandle) OpenSession(ctx context.Context, id string, config map[strin
 	return err
 }
 
+// isExpectedStreamClose reports whether err is a benign end-of-stream error
+// (nil, EOF, context cancellation, or an optionally supplied gRPC status code).
+func isExpectedStreamClose(err error, extra ...codes.Code) bool {
+	if err == nil || errors.Is(err, io.EOF) || errors.Is(err, context.Canceled) {
+		return true
+	}
+	c := status.Code(err)
+	if c == codes.Canceled {
+		return true
+	}
+	for _, x := range extra {
+		if c == x {
+			return true
+		}
+	}
+	return false
+}
+
 // Execute streams step execution via the RPC adapter, handling concurrent log streaming,
 // event routing, and partial failure recovery.
-func (p *rpcHandle) Execute(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) { //nolint:funlen,gocyclo // Permissions stream lifecycle, log stream, execute RPC, and result coercion are all required in one place
+func (p *rpcHandle) Execute(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) { //nolint:funlen // Permissions stream lifecycle, log stream, execute RPC, and result coercion are all required in one place
 	req := &v2.ExecuteRequest{
 		SessionId:       sessionID,
 		StepName:        step.Name,
@@ -242,11 +260,15 @@ func (p *rpcHandle) Execute(ctx context.Context, sessionID string, step *workflo
 	go func() {
 		err := p.rpc.Permissions(permCtx, requests)
 		permDone <- err
-		if err != nil &&
-			!errors.Is(err, io.EOF) &&
-			!errors.Is(err, context.Canceled) &&
-			status.Code(err) != codes.Canceled &&
-			status.Code(err) != codes.Unimplemented {
+		if status.Code(err) == codes.Unimplemented {
+			// Drain the requests channel so handlePermissionRequest never
+			// blocks on a full buffer after the Permissions stream has
+			// already exited. The loop exits when Execute closes the channel.
+			for range requests {
+			}
+			return
+		}
+		if !isExpectedStreamClose(err) {
 			cancelExec()
 		}
 	}()
@@ -287,16 +309,16 @@ func (p *rpcHandle) Execute(ctx context.Context, sessionID string, step *workflo
 		// the Permissions failure is the root cause; surface it instead of
 		// context.Canceled from the aborted Execute stream.
 		if errors.Is(execErr, context.Canceled) && ctx.Err() == nil {
-			if permErr != nil && !errors.Is(permErr, io.EOF) && !errors.Is(permErr, context.Canceled) && status.Code(permErr) != codes.Canceled {
+			if !isExpectedStreamClose(permErr) {
 				return adapter.Result{Outcome: "failure"}, fmt.Errorf("permissions stream failure aborted execute: %w", permErr)
 			}
 		}
 		return adapter.Result{Outcome: "failure"}, execErr
 	}
-	if permErr != nil && !errors.Is(permErr, io.EOF) && !errors.Is(permErr, context.Canceled) && status.Code(permErr) != codes.Canceled && status.Code(permErr) != codes.Unimplemented {
+	if !isExpectedStreamClose(permErr, codes.Unimplemented) {
 		return adapter.Result{Outcome: "failure"}, fmt.Errorf("adapter permissions stream: %w", permErr)
 	}
-	if logErr != nil && !errors.Is(logErr, context.Canceled) && status.Code(logErr) != codes.Canceled {
+	if !isExpectedStreamClose(logErr) {
 		return adapter.Result{Outcome: "failure"}, fmt.Errorf("adapter log stream: %w", logErr)
 	}
 	if !captureSink.done {

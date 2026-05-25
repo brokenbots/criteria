@@ -156,6 +156,8 @@ Per `README.md` D2:
 git rm proto/criteria/v1/*.proto
 git rm proto/criteria/v1/*.pb.go
 git rm proto/criteria/v1/*_grpc.pb.go
+git rm sdk/pb/criteria/v1/adapter_plugin.pb.go
+git rm sdk/pb/criteria/v1/criteriav1connect/adapter_plugin.connect.go
 ```
 
 Remove the `proto` Makefile target's v1 line. Remove any v1-specific helper functions in `internal/adapter/` that are no longer reachable. The grep:
@@ -166,14 +168,13 @@ Remove the `proto` Makefile target's v1 line. Remove any v1-specific helper func
 
 must return no matches (modulo `archived/` directories which are read-only history).
 
-### Step 8 — Conformance suite skeleton update
+### Step 8 — Conformance suite update
 
-`internal/adapter/conformance/` — update the existing 11 sub-tests to call v2 methods. Do not add new tests in this WS — that's WS26. Tests that exercise `Permit` need only a stub for the bidi `Permissions` stream that auto-allows; full coverage of the bidi semantics is WS16/WS26.
+`internal/adapter/conformance/` — updated existing sub-tests to v2 types. Added `testdata/noop/main.go` (minimal v2 noop adapter) and `noop_adapter_test.go` to run conformance against it. `conformance_outcomes.go` validates non-empty `request_id`/`tool` fields in `permission.request` events. `testfixtures/broken/main.go` updated to v2 with no lifecycle stubs.
 
 ## Out of scope
 
 - Implementing `Pause` / `Resume` / `Snapshot` / `Restore` / `Inspect` behavior — WS17, WS18.
-- Wiring the bidi `Permissions` stream's policy/audit logic — WS16.
 - Wiring the dedicated `Log` channel's redaction registry — WS13, WS15.
 - Secret-channel population — WS13.
 - Output-schema enforcement — WS14.
@@ -197,6 +198,7 @@ Enumerated:
 
 - `internal/adapter/sessions_test.go` and `loader_test.go` updated to v2.
 - `loader_reattach_test.go` (new) — fake adapter binary listens on UDS, host dialer connects and dispenses, calls `Info()` successfully.
+- `TestPermissionsStreamUnimplemented_ManyRequests` in `loader_test.go` — regression for the dead-Permissions-stream buffer-full path; emits 20 permission.request events (4× the channel buffer) with an Unimplemented Permissions stream and verifies Execute completes without hanging.
 - Conformance suite (`internal/adapter/conformance/`) passes against a v2-built reference adapter (an in-tree `noop` adapter in `internal/adapter/conformance/testdata/noop/`).
 - `make ci` green.
 
@@ -223,14 +225,19 @@ Enumerated:
 - `internal/engine/*` and `internal/cli/*` call sites — mechanical type updates.
 - `sdk/adapterhost/*` (post-WS01 path).
 - `sdk/pb/criteria/v2/adapter.pb.go`, `sdk/pb/criteria/v2/adapter_grpc.pb.go` — WS03 cutover and blocking-permission doc comments.
+- `sdk/pb/criteria/v2/chunking.go`, `sdk/pb/criteria/v2/heartbeat.go`, `sdk/pb/criteria/v2/options.pb.go` — hand-written helpers and proto-generated options updated alongside adapter bindings.
+- `sdk/go.sum` — dependency changes in the sdk sub-module.
 - `proto/criteria/v1/` — **deletion only** (Step 7).
+- `sdk/pb/criteria/v1/adapter_plugin.pb.go`, `sdk/pb/criteria/v1/criteriav1connect/adapter_plugin.connect.go` — **deletion only** (Step 7; buf-generated bindings for the deleted `adapter_plugin.proto`).
 - `proto/criteria/v2/` — WS03 cutover comment, `PermissionCancel` doc correction (round 11), `ConfigFieldProto.type` alias (round 13).
 - `docs/adapters.md` — permission gating documentation (round 11).
 - `Makefile` proto target — remove v1 line.
 - `internal/adapter/conformance/*.go` — convert existing 11 sub-tests to v2.
+- `internal/adapter/conformance/noop_adapter_test.go` (new) — runs conformance suite against the in-tree noop adapter fixture.
+- `internal/adapter/conformance/testfixtures/broken/main.go` — v2 type migration, no lifecycle stubs.
 - New tests next to changed files.
 - `cmd/criteria-adapter-copilot/` — compilation-required v2 type substitutions plus round-11 blocking permission round-trip; round-13 collision-safe requestID.
-- `cmd/criteria-adapter-mcp/bridge.go`, `mcp_internal_test.go` — v2 type substitutions; blocking deny/teardown regression tests (round 13).
+- `cmd/criteria-adapter-mcp/bridge.go`, `cmd/criteria-adapter-mcp/mcp_internal_test.go` — v2 type substitutions; blocking deny/teardown regression tests (round 13).
 - `cmd/criteria-adapter-noop/main.go` — compilation-required v2 type substitutions.
 - `examples/plugins/greeter/main.go`, `examples/plugins/greeter/go.mod`, `examples/plugins/greeter/go.sum` — compilation-required v2 type substitutions.
 - `internal/adapter/conformance/testdata/noop/main.go`, `internal/adapter/conformance/conformance_outcomes.go` — real non-empty permission.request fields.
@@ -242,7 +249,7 @@ Enumerated:
 - HCL grammar files in `workflow/` — those are touched by WS09.
 - `.criteria/workflows/**` — all workflow/prompt files are out of WS03 scope (reverted in round 14).
 
-## Implementation Notes (WS03 complete — rounds 1–14)
+## Implementation Notes (WS03 complete — rounds 1–16)
 
 ### What was done
 
@@ -294,7 +301,7 @@ Enumerated:
 - `permDecision` struct and `Permit` RPC flow removed entirely.
 - Socket security contract: `LocalSocketDialer` validates `0700` parent dir and `0600` socket file before dialing; `NewHostOnlyUDSSocket` creates the host-only directory.
 
-### Acceptance criteria (updated through round 14)
+### Acceptance criteria (updated through round 16)
 - [x] `make ci` green (build + test + lint + validate + validate-self-workflows + example-plugin)
 - [x] All host call sites use v2 types
 - [x] `LocalSocketDialer` + `NewHostOnlyUDSSocket` helpers with tests
@@ -302,7 +309,8 @@ Enumerated:
 - [x] `proto/criteria/v1/adapter_plugin.proto` and generated bindings deleted
 - [x] Host permission flow is real bidi round-trip (round 11): `permission.request` events intercepted by `executeCaptureSink.handlePermissionRequest`; host evaluates `allow_tools` via `NewPolicyWithAliases`; emits `permission.granted` or `permission.denied`; forwards `PermissionEvent.request` (allow) or `PermissionEvent.cancel` (deny) to the adapter via the `Permissions` bidi stream; anyDenied override (success→needs_review) applied after Execute; copilot adapter blocks in `handlePermissionRequest` waiting for host decision via `pendingPerms` channel.
 - [x] Log RPC failures propagated when `execErr == nil`
-- [x] Permissions bidi teardown is leak-free (labelled loop + `senderCtx`); Unimplemented treated as expected so adapters not implementing Permissions do not abort Execute
+- [x] Permissions bidi teardown is leak-free (labelled loop + `senderCtx`); Unimplemented treated as expected so adapters not implementing Permissions do not abort Execute; goroutine drains `requests` channel after Unimplemented so `handlePermissionRequest` never blocks on a full buffer (round 15)
+- [x] `TestPermissionsStreamUnimplemented_ManyRequests` regression in `loader_test.go`: 20 permission.request events with Unimplemented stream, verifies no hang and needs_review outcome (round 15)
 - [x] Log chunk buffering: seq/start validation per-stream; aggregate memory cap (16 MiB) across all concurrent log streams; regression tests added
 - [x] `UnimplementedLifecycle` removed from `sdk/adapterhost/service.go`; lifecycle methods are not in `Service` and are not wired through the gRPC bridge; adapters must not implement them
 - [x] Conformance noop fixture at `internal/adapter/conformance/testdata/noop/`
@@ -310,6 +318,8 @@ Enumerated:
 - [x] Makefile v1 proto generation lines removed
 - [x] `sdk/adapterhost/doc.go` updated to acknowledge v1 adapter-plugin/protocol break
 - [x] SDK (`sdk/adapterhost`) builds outside this repo without depending on unreleased `proto/criteria/v2`; v2 types copied to `sdk/pb/criteria/v2/`; root-module adapter plugins updated to use `sdk/pb/criteria/v2`
+- [x] `docs/adapters.md` adapter-author guide updated to v2 contract: references `proto/criteria/v2/adapter.proto` and `sdk/pb/criteria/v2`; `ExecuteRequest.input` field; `Permissions`/`UnimplementedPermissions`; `Permit` removed (round 16)
+- [x] Workstream metadata reconciled through round 16: Step 7 covers SDK v1 file deletions, allowlist expanded, Tests required updated, notes past round 14 (round 16)
 - [ ] Full `criteria/v1` path-string grep returns zero matches — deferred; `server.proto`, `criteria.proto`, `events.proto` still use `criteria.v1` as a package-path string and must remain per AGENTS.md (not WS03 scope)
 
 ### Round 5 — Fail-closed Permissions + chunk bounds (complete)
@@ -459,3 +469,27 @@ New tests in `internal/adapterhost/loader_test.go`:
 3. **`.criteria/workflows/pr_review/main.hcl`** — restored to adapter-v2 base; removed 4-axis specialist review loop, `owner_review` step (the buggy `allow_tools = ["read", "search", "execute"]` step that could not satisfy its own write-to-workstream contract), and all associated switch routing.
 4. **Deleted new files** — removed `develop/agents/pair.agent.md`, `pr_review/agents/owner.agent.md`, and entire `pr_review/review_axis/` tree (agents/*.md + main.hcl). None of these existed in the adapter-v2 base.
 5. **Workstream allowlist** — added `.criteria/workflows/**` to "Files this workstream may NOT edit" to make the constraint explicit and prevent future scope creep.
+
+### Round 15 — complete
+
+1. **`internal/adapterhost/loader.go:237-260,526-560` and `internal/adapterhost/loader_test.go:677-727`** — keep the documented `codes.Unimplemented` opt-out path from hanging `Execute`. Once the host knows the adapter does not implement `Permissions`, it must stop forwarding into the unread `requests` channel (or keep it drained) so repeated `permission.request` events cannot block after the 16-slot buffer fills. Add a regression that emits repeated permission requests after an unimplemented `Permissions` stream.
+2. **`workstreams/adapter_v2/WS03-host-v2-wire.md:169-177,196-200`** — reconcile the stale behavior/test metadata with the shipped diff. Step 8 still says "Do not add new tests in this WS," the out-of-scope section still says WS16 owns `Permissions` policy/audit wiring, and the required-tests section still points at stale paths. Update those sections so they match the behavior and tests that are actually landing in WS03.
+3. **`workstreams/adapter_v2/WS03-host-v2-wire.md:224-236`** — reconcile the allowlist with the active diff (or trim the diff to match the allowlist). At minimum, account for the touched `sdk/pb/criteria/v2/{chunking.go,heartbeat.go,options.pb.go}`, `sdk/go.sum`, `internal/adapter/conformance/testfixtures/broken/main.go`, `internal/adapter/conformance/noop_adapter_test.go`, and `cmd/criteria-adapter-mcp/mcp_internal_test.go`.
+
+Not blocking: the security request to remove the documented `UnimplementedPermissions` / `codes.Unimplemented` opt-out entirely is broader than WS03 as currently scoped. Keep this round focused on making the opt-out path non-hanging and on reconciling the workstream metadata with the shipped diff.
+
+Completed:
+- `loader.go` — Permissions goroutine drains `requests` channel via `for range requests {}` after `codes.Unimplemented`; removed redundant `!= codes.Unimplemented` guard from `cancelExec` condition.
+- `loader_test.go` — `TestPermissionsStreamUnimplemented_ManyRequests` + `manyPermRequestsUnimplClient` added; 20 permission.request events (> buffer 16), 5-second deadline.
+- `WS03-host-v2-wire.md` — Step 8 rewritten; stale WS16 out-of-scope bullet removed; allowlist expanded to cover all touched files.
+
+### Round 16 — complete
+
+1. **`docs/adapters.md:447-463,575-601`** — update the public adapter-author guide to the shipped v2 contract. It still points external authors at deleted v1 surfaces (`proto/criteria/v1/adapter_plugin.proto`, `sdk/pb/criteria/v1`, `ExecuteRequest.config`, `Permit`). The docs must describe the WS03 v2 wire (`sdk/pb/criteria/v2`, `ExecuteRequest.input`, `Permissions`) so a third-party adapter built from the guide actually works after this cutover.
+2. **`workstreams/adapter_v2/WS03-host-v2-wire.md:155-158,195-200,223-228,248-316,466-472`** — reconcile the workstream metadata with the current diff. Step 7 and the allowlist must cover the actual v1 generated-code deletions in `sdk/pb/criteria/v1/{adapter_plugin.pb.go,criteriav1connect/adapter_plugin.connect.go}`, the required-tests section must match the shipped host tests, and the notes/acceptance criteria must be updated past round 14 so they no longer leave round 15 marked as outstanding after the drain fix and `TestPermissionsStreamUnimplemented_ManyRequests` landed.
+
+Not blocking: removing the documented `UnimplementedPermissions` / `codes.Unimplemented` opt-out entirely is still broader than WS03 as written, and the `sdk/CHANGELOG.md` bump note is cleanup-owned per repo policy rather than a WS03 executor must-fix. The api_compat docs report is otherwise duplicated by the docs fix above.
+
+Completed:
+- `docs/adapters.md` — updated adapter-author guide: `proto/criteria/v2/adapter.proto` + `sdk/pb/criteria/v2` reference; `ExecuteRequest.config` → `ExecuteRequest.input` in fields table; code example updated to v2 import + `UnimplementedPermissions` embed; `Permit` replaced with `Permissions`; `parallel_safe` snippet updated to v2 types.
+- `WS03-host-v2-wire.md` — Step 7 expanded with SDK v1 file deletions; Tests required updated with `TestPermissionsStreamUnimplemented_ManyRequests`; allowlist covers `sdk/pb/criteria/v1` deletions; notes header updated to rounds 1–16; acceptance criteria updated through round 16 with round 15/16 items marked complete.
