@@ -28,8 +28,6 @@ func (p *copilotAdapter) handlePermissionRequest(sessionID string, request copil
 		return copilot.PermissionRequestResult{Kind: copilot.PermissionRequestResultKindUserNotAvailable}, nil
 	}
 
-	details := permissionDetails(request)
-
 	s.mu.Lock()
 	sink := s.sink
 	active := s.active
