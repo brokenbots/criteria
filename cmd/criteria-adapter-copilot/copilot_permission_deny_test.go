@@ -106,6 +106,7 @@ func TestHandlePermissionRequestAutoApproveActive(t *testing.T) {
 	// handlePermissionRequest blocks until the host resolves the pending perm.
 	// Simulate the host approving once the pending perm is registered.
 	go func() {
+		deadline := time.After(2 * time.Second)
 		for {
 			for _, ev := range sender.snapshot() {
 				if a := ev.GetAdapter(); a != nil && a.GetEventKind() == "permission.request" && a.GetPayload() != nil {
@@ -117,7 +118,13 @@ func TestHandlePermissionRequestAutoApproveActive(t *testing.T) {
 					}
 				}
 			}
-			time.Sleep(time.Millisecond)
+			select {
+			case <-deadline:
+				t.Errorf("timeout waiting for permission.request event")
+				return
+			default:
+				time.Sleep(time.Millisecond)
+			}
 		}
 	}()
 
