@@ -70,17 +70,19 @@ func compileOneOutput(g *FSMGraph, os OutputSpec, opts CompileOpts) hcl.Diagnost
 
 	// Parse and validate type expression from schema (os.Type).
 	declaredType := cty.NilType
+	var typeDefaults *typeexpr.Defaults
 	if !isAbsentExpr(os.Type) {
-		parsedType, typeDiags := typeexpr.Type(os.Type)
+		parsedType, defs, typeDiags := resolveTypeConstraint(os.Type)
 		if typeDiags.HasErrors() {
 			diags = append(diags, typeDiags...)
 			return diags
 		}
 		declaredType = parsedType
+		typeDefaults = defs
 	}
 
 	// Validate and fold the value expression.
-	d = validateOutputValue(os.Name, valAttr, declaredType, g, opts)
+	d = validateOutputValue(os.Name, valAttr, declaredType, typeDefaults, g, opts)
 	diags = append(diags, d...)
 	if diags.HasErrors() {
 		return diags
@@ -91,6 +93,7 @@ func compileOneOutput(g *FSMGraph, os OutputSpec, opts CompileOpts) hcl.Diagnost
 		Name:         os.Name,
 		Description:  os.Description,
 		DeclaredType: declaredType,
+		TypeDefaults: typeDefaults,
 		Value:        valAttr.Expr,
 	}
 	g.OutputOrder = append(g.OutputOrder, os.Name)
@@ -99,7 +102,7 @@ func compileOneOutput(g *FSMGraph, os OutputSpec, opts CompileOpts) hcl.Diagnost
 }
 
 // validateOutputValue validates the value expression and its type match.
-func validateOutputValue(name string, valAttr *hcl.Attribute, declaredType cty.Type, g *FSMGraph, opts CompileOpts) hcl.Diagnostics {
+func validateOutputValue(name string, valAttr *hcl.Attribute, declaredType cty.Type, defs *typeexpr.Defaults, g *FSMGraph, opts CompileOpts) hcl.Diagnostics {
 	var result hcl.Diagnostics
 
 	// Validate the value expression's free variables.
@@ -119,6 +122,7 @@ func validateOutputValue(name string, valAttr *hcl.Attribute, declaredType cty.T
 
 	// If foldable at compile time, validate declared type match.
 	if foldable && declaredType != cty.NilType {
+		val = applyDefaultsIfAny(val, defs)
 		_, err := convert.Convert(val, declaredType)
 		if err != nil {
 			r := valueExpr.StartRange()

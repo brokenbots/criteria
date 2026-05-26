@@ -21,39 +21,40 @@ func compileVariables(g *FSMGraph, spec *Spec) hcl.Diagnostics {
 			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("duplicate variable %q", name)})
 			continue
 		}
-		typ, typeDiags := resolveVariableType(vs)
+		typ, defs, typeDiags := resolveVariableType(vs)
 		if typeDiags.HasErrors() {
 			diags = append(diags, typeDiags...)
 			continue
 		}
-		defaultVal, defaultDiags := resolveVariableDefault(vs, typ)
-		diags = append(diags, defaultDiags...)
+		defaultVal, defaultDiags := resolveVariableDefault(vs, typ, defs)
+		if defaultDiags.HasErrors() {
+			diags = append(diags, defaultDiags...)
+			continue
+		}
 		g.Variables[name] = &VariableNode{
-			Name:        name,
-			Type:        typ,
-			Default:     defaultVal,
-			Description: vs.Description,
+			Name:         name,
+			Type:         typ,
+			TypeDefaults: defs,
+			Default:      defaultVal,
+			Description:  vs.Description,
 		}
 	}
 	return diags
 }
 
-// resolveVariableType returns the cty.Type for a variable spec, defaulting to
-// cty.String when the type expression is absent.
-func resolveVariableType(vs VariableSpec) (cty.Type, hcl.Diagnostics) {
+// resolveVariableType returns the cty.Type (and any optional defaults) for a
+// variable spec, defaulting to cty.String when the type expression is absent.
+func resolveVariableType(vs VariableSpec) (cty.Type, *typeexpr.Defaults, hcl.Diagnostics) {
 	if isAbsentExpr(vs.Type) {
-		return cty.String, nil
+		return cty.String, nil, nil
 	}
-	typ, diags := typeexpr.Type(vs.Type)
-	if diags.HasErrors() {
-		return cty.NilType, diags
-	}
-	return typ, nil
+	return resolveTypeConstraint(vs.Type)
 }
 
 // resolveVariableDefault extracts and coerces the optional default value from
-// a variable spec's Remain body against the declared type.
-func resolveVariableDefault(vs VariableSpec, typ cty.Type) (cty.Value, hcl.Diagnostics) {
+// a variable spec's Remain body against the declared type.  If defs is non-nil,
+// type-level optional defaults are applied to the folded value before coercion.
+func resolveVariableDefault(vs VariableSpec, typ cty.Type, defs *typeexpr.Defaults) (cty.Value, hcl.Diagnostics) {
 	var diags hcl.Diagnostics
 	if vs.Remain == nil {
 		return cty.NilVal, diags
@@ -69,6 +70,7 @@ func resolveVariableDefault(vs VariableSpec, typ cty.Type) (cty.Value, hcl.Diagn
 		diags = append(diags, defDiags...)
 		return cty.NilVal, diags
 	}
+	defaultVal = applyDefaultsIfAny(defaultVal, defs)
 	coerced, err := convertCtyValue(defaultVal, typ)
 	if err != nil {
 		diags = append(diags, &hcl.Diagnostic{

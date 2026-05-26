@@ -214,6 +214,46 @@ state "end" { terminal = true }
 	}
 }
 
+// TestCompileOutputs_TypeDefaults_Object tests that optional object defaults
+// are applied at compile time for foldable output values.
+func TestCompileOutputs_TypeDefaults_Object(t *testing.T) {
+	src := `
+workflow {
+  name = "test"
+  version      = "1"
+  initial_state = "start"
+  target_state  = "end"
+}
+
+output "config" {
+  type = object({ name = optional(string, "default_name") })
+  value = {}
+}
+
+state "start" {}
+state "end" { terminal = true }
+`
+	spec, diags := Parse("test.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse error: %v", diags.Errs())
+	}
+
+	g := newFSMGraph(spec)
+	diags = compileOutputs(g, spec, CompileOpts{})
+
+	if diags.HasErrors() {
+		t.Fatalf("unexpected errors: %v", diags.Errs())
+	}
+
+	on, ok := g.Outputs["config"]
+	if !ok {
+		t.Fatal("output 'config' not found")
+	}
+	if on.TypeDefaults == nil {
+		t.Fatal("expected TypeDefaults to be non-nil")
+	}
+}
+
 // TestCompileOutputs_RuntimeExpressionDeferred tests that step references are deferred.
 func TestCompileOutputs_RuntimeExpressionDeferred(t *testing.T) {
 	src := `
