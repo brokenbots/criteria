@@ -22,7 +22,8 @@
 #   - each iteration decrements attempts via shared_writes
 #   - when attempts reaches 0 the condition is false and the loop exits
 #   - step "report" reads the final shared state
-workflow "while-demo" {
+workflow {
+  name = "while-demo"
   version       = "0.1"
   initial_state = "work"
   target_state  = "done"
@@ -32,7 +33,7 @@ adapter "noop" "default" {}
 
 # Runtime counter: each iteration of step "work" decrements this value.
 shared_variable "attempts" {
-  type  = "number"
+  type = number
   value = 3
 }
 

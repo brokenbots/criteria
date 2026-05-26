@@ -9,7 +9,8 @@ based on the collection result.
 ## Minimal example
 
 ```hcl
-workflow "for-each" {
+workflow {
+  name = "for-each"
   version       = "1"
   initial_state = "process"
   target_state  = "done"
@@ -50,7 +51,7 @@ state "failed" {
 ## Common pitfalls
 
 - **Using `parallel` outcomes** — `for_each` without `parallel` is sequential; do not expect concurrent execution.
-- **Missing aggregate outcomes** — both `all_succeeded` and `any_failed` must be declared (or use `default_outcome`).
+- **Missing aggregate outcomes** — both `all_succeeded` and `any_failed` must be declared (or declare an `outcome "default" { }` block).
 
 ## See also
 

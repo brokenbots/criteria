@@ -1,4 +1,5 @@
-workflow "inner_task" {
+workflow {
+  name = "inner_task"
   version       = "0.1"
   initial_state = "execute"
   target_state  = "complete"
@@ -9,11 +10,11 @@ adapter "shell" "default" {
 }
 
 variable "work" {
-  type = "string"
+  type = string
 }
 
 output "result" {
-  type  = "string"
+  type = string
   value = "Task completed successfully"
 }
 

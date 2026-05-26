@@ -30,30 +30,32 @@
 #     --var base_branch=main \
 #     --var require_workflow_approval=true
 
-workflow "workstream_review_loop" {
+workflow {
+
+  name = "workstream_review_loop"
   version       = "1"
   initial_state = "checkout_branch"
   target_state  = "done"
+  policy {
+    max_total_steps = 200
+  }
 }
 
-policy {
-  max_total_steps = 200
-}
 
 variable "workstream_file" {
-  type        = "string"
+  type = string
   default     = "workstreams/adapter_v2/WS03-host-v2-wire.md"
   description = "Path to the workstream file to process."
 }
 
 variable "base_branch" {
-  type        = "string"
+  type = string
   default     = "adapter-v2"
   description = "Integration branch this workstream's PR targets. Use 'main' for post-release workstreams (WS41+)."
 }
 
 variable "require_workflow_approval" {
-  type        = "string"
+  type = string
   default     = "false"
   description = "Set to 'true' to require explicit workflow-node approval before merge. Default 'false' uses async GitHub approval polling — no babysitting needed."
 }
@@ -65,12 +67,12 @@ variable "require_workflow_approval" {
 # submit_outcome reason. The next step receives only the targeted delta.
 
 shared_variable "last_review_reason" {
-  type  = "string"
+  type = string
   value = ""
 }
 
 shared_variable "last_execute_reason" {
-  type  = "string"
+  type = string
   value = ""
 }
 

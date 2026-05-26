@@ -68,7 +68,8 @@ func findMergeDiag(t *testing.T, diags hcl.Diagnostics, summarySubstr string) *h
 func TestMergeSpecs_SingletonConflict_WorkflowHeader_TwoFiles(t *testing.T) {
 	dir := t.TempDir()
 	writeHCLFiles(t, dir, map[string]string{
-		"a.hcl": `workflow "first" {
+		"a.hcl": `workflow {
+  name = "first"
   version       = "1"
   initial_state = "run"
   target_state  = "done"
@@ -80,7 +81,8 @@ step "run" {
 }
 state "done" { terminal = true }
 `,
-		"b.hcl": `workflow "second" {
+		"b.hcl": `workflow {
+  name = "second"
   version = "1"
 }
 `,
@@ -100,13 +102,13 @@ state "done" { terminal = true }
 	}
 }
 
-// TestMergeSpecs_SingletonConflict_Policy_TwoFiles verifies that two .hcl
-// files each declaring a policy block produce a "duplicate policy block" error
-// with Detail naming a.hcl as the original and Subject pointing to b.hcl.
-func TestMergeSpecs_SingletonConflict_Policy_TwoFiles(t *testing.T) {
+// TestMergeSpecs_LegacyTopLevelPolicy_TwoFiles verifies that a top-level
+// policy block in any .hcl file is rejected with a legacy-removal diagnostic.
+func TestMergeSpecs_LegacyTopLevelPolicy_TwoFiles(t *testing.T) {
 	dir := t.TempDir()
 	writeHCLFiles(t, dir, map[string]string{
-		"a.hcl": `workflow "w" {
+		"a.hcl": `workflow {
+  name = "w"
   version       = "1"
   initial_state = "run"
   target_state  = "done"
@@ -124,14 +126,18 @@ policy { max_total_steps = 10 }
 	})
 
 	_, diags := ParseDir(dir)
-	assertMergeDiag(t, diags, "duplicate policy block")
-
-	d := findMergeDiag(t, diags, "duplicate policy block")
-	if !strings.Contains(d.Detail, "a.hcl") {
-		t.Errorf("expected Detail to name a.hcl (original declaration); got: %s", d.Detail)
+	if !diags.HasErrors() {
+		t.Fatal("expected error for legacy top-level policy block")
 	}
-	if d.Subject == nil || !strings.Contains(d.Subject.Filename, "b.hcl") {
-		t.Errorf("expected Subject.Filename to contain b.hcl (duplicate); got: %v", d.Subject)
+	found := false
+	for _, d := range diags {
+		if strings.Contains(d.Summary, "removed top-level policy block") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected 'removed top-level policy block' diagnostic, got: %s", diags.Error())
 	}
 }
 
@@ -141,7 +147,8 @@ policy { max_total_steps = 10 }
 func TestMergeSpecs_SingletonConflict_Permissions_TwoFiles(t *testing.T) {
 	dir := t.TempDir()
 	writeHCLFiles(t, dir, map[string]string{
-		"a.hcl": `workflow "w" {
+		"a.hcl": `workflow {
+  name = "w"
   version       = "1"
   initial_state = "run"
   target_state  = "done"
@@ -176,7 +183,8 @@ permissions { allow_tools = ["*"] }
 func TestMergeSpecs_DuplicateNamedBlock_Step(t *testing.T) {
 	dir := t.TempDir()
 	writeHCLFiles(t, dir, map[string]string{
-		"a.hcl": `workflow "w" {
+		"a.hcl": `workflow {
+  name = "w"
   version       = "1"
   initial_state = "build"
   target_state  = "done"
@@ -227,7 +235,8 @@ func TestMergeSpecs_DuplicateNamedBlock_Adapter_DifferentTypes(t *testing.T) {
 func TestMergeSpecs_DuplicateNamedBlock_Adapter_SameTypeAndName(t *testing.T) {
 	dir := t.TempDir()
 	writeHCLFiles(t, dir, map[string]string{
-		"a.hcl": `workflow "w" {
+		"a.hcl": `workflow {
+  name = "w"
   version       = "1"
   initial_state = "run"
   target_state  = "done"
@@ -252,7 +261,8 @@ state "done" { terminal = true }
 func TestMergeSpecs_DistinctBlocksAcrossFiles_NoConflict(t *testing.T) {
 	dir := t.TempDir()
 	writeHCLFiles(t, dir, map[string]string{
-		"a.hcl": `workflow "w" {
+		"a.hcl": `workflow {
+  name = "w"
   version       = "1"
   initial_state = "step_a"
   target_state  = "done"
@@ -296,7 +306,8 @@ state "done" { terminal = true }
 func TestMergeSpecs_AlphabeticalMergeOrder_DiagnosticsStable(t *testing.T) {
 	dir := t.TempDir()
 	writeHCLFiles(t, dir, map[string]string{
-		"a.hcl": `workflow "w" {
+		"a.hcl": `workflow {
+  name = "w"
   version       = "1"
   initial_state = "a_step"
   target_state  = "done"
@@ -344,7 +355,8 @@ state "done" { terminal = true }
 func TestMergeSpecs_AlphabeticalMergeOrder_ConflictDiagnostic_StableSourceFile(t *testing.T) {
 	dir := t.TempDir()
 	writeHCLFiles(t, dir, map[string]string{
-		"a.hcl": `workflow "w" {
+		"a.hcl": `workflow {
+  name = "w"
   version       = "1"
   initial_state = "build"
   target_state  = "done"
@@ -413,7 +425,8 @@ func TestMergeSpecs_EmptyDirectory_NoSpec_NoDiagnostics(t *testing.T) {
 // surface level (hcl.Body fields are interface types and cannot be deep-compared).
 func TestMergeSpecs_SingleFile_NoMergeNeeded(t *testing.T) {
 	dir := t.TempDir()
-	content := `workflow "single" {
+	content := `workflow {
+  name = "single"
   version       = "1"
   initial_state = "run"
   target_state  = "done"
@@ -479,7 +492,8 @@ func TestMergeSpecs_MultipleNonHCLFiles_Ignored(t *testing.T) {
 	writeHCLFiles(t, dir, map[string]string{
 		"foo.txt":  "this is not HCL",
 		"bar.json": `{"key": "value"}`,
-		"main.hcl": `workflow "w" {
+		"main.hcl": `workflow {
+  name = "w"
   version       = "1"
   initial_state = "run"
   target_state  = "done"

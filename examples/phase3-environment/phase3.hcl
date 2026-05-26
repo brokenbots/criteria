@@ -1,8 +1,9 @@
-workflow "phase3-environment" {
+workflow {
+  name = "phase3-environment"
   version = "0.3.0"
   initial_state = "print_env"
   target_state = "done"
-  environment = "shell.ci"
+  environment = shell.ci
 }
 
 environment "shell" "ci" {

@@ -17,7 +17,8 @@ import (
 func TestValidateFoldableAttrs_AgentConfigFile(t *testing.T) {
 	dir := t.TempDir()
 	// "missing.txt" does NOT exist in dir.
-	hclContent := `workflow "test" {
+	hclContent := `workflow {
+  name = "test"
   version       = "0.1"
   initial_state = "done"
   target_state  = "done"
@@ -29,7 +30,7 @@ state "done" {
 }
 
 variable "prompt_file" {
-  type    = "string"
+  type = string
   default = "missing.txt"
 }
 

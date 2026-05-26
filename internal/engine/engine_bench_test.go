@@ -51,7 +51,8 @@ func (benchEventSink) Adapter(string, any) {}
 func buildNStepWorkflow(b *testing.B, n int) *workflow.FSMGraph {
 	b.Helper()
 	var hcl string
-	hcl += fmt.Sprintf(`workflow "bench_%d" {
+	hcl += fmt.Sprintf(`workflow {
+  name = "bench_%d"
   version       = "0.1"
   initial_state = "step_0"
   target_state  = "done"

@@ -1,10 +1,14 @@
 # Example: shell-only build → test → terminal
 # Demonstrates linear flow with two terminal states.
 # mode: standalone
-workflow "build_and_test" {
+workflow {
+  name = "build_and_test"
   version       = "0.1"
   initial_state = "build"
   target_state  = "verified"
+  policy {
+    max_total_steps = 20
+  }
 }
 
 adapter "shell" "default" {
@@ -39,6 +43,3 @@ state "failed" {
   success  = false
 }
 
-policy {
-  max_total_steps = 20
-}

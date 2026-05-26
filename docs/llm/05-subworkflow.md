@@ -9,7 +9,8 @@ the parent can read via `steps.<name>.<output_key>`.
 ## Minimal example
 
 ```hcl
-workflow "subwf-parent" {
+workflow {
+  name = "subwf-parent"
   version       = "1"
   initial_state = "prepare"
   target_state  = "done"
@@ -57,7 +58,7 @@ state "failed" {
 
 ## Key idioms
 
-- **`subworkflow "name" { source = "./path" }`** — declares a child module; `source` is a relative path to a directory containing `.hcl` files.
+- **`subworkflow "process_one" { source = "./path" }`** — declares a child module; `source` is a relative path to a directory containing `.hcl` files.
 - **`input = { key = expr }`** — static inputs to the child; the child receives them as `variable` bindings.
 - **`target = subworkflow.<name>`** — routes a step to execute the declared subworkflow.
 - **`steps.<invoke_step>.<output_key>`** — reads a named `output` value exported by the child after it completes.

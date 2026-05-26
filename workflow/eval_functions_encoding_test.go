@@ -1,7 +1,13 @@
 package workflow_test
 
 // eval_functions_encoding_test.go — tests for base64encode, base64decode,
-// jsonencode, jsondecode, urlencode, yamlencode, and yamldecode HCL functions.
+// urlencode, yamlencode, and yamldecode HCL functions.
+//
+// jsonencode and jsondecode are now provided by cty/function/stdlib; the
+// functional assertions below remain valid because stdlib output is byte-
+// identical for normal inputs. Error-message tests that asserted Criteria-
+// specific wrapping have been removed because stdlib produces its own
+// diagnostics.
 
 import (
 	"encoding/json"
@@ -158,14 +164,6 @@ func TestJsonDecode_Object(t *testing.T) {
 	n, _ := aVal.AsBigFloat().Int64()
 	if n != 1 {
 		t.Errorf("jsondecode({a:1}).a value = %d; want 1", n)
-	}
-}
-
-func TestJsonDecode_InvalidJSON_Error(t *testing.T) {
-	fn := funcFromContext(t, "jsondecode")
-	err := callFnError(t, fn, cty.StringVal("{not json"))
-	if !strings.Contains(err.Error(), "jsondecode()") {
-		t.Errorf("error %q should mention jsondecode()", err.Error())
 	}
 }
 

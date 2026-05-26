@@ -8,8 +8,10 @@ import (
 
 func TestApplyLocal_ServerRequiredSignalWait(t *testing.T) {
 	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
+	t.Setenv("CRITERIA_LOCAL_APPROVAL", "")
 	workflowPath := writeWorkflowFile(t, `
-workflow "requires_signal" {
+workflow {
+  name = "requires_signal"
   version = "0.1"
   initial_state = "execute"
   target_state  = "done"
@@ -52,8 +54,10 @@ state "failed" {
 func TestApplyLocal_WaitSignalNode(t *testing.T) {
 	// W05: first-class wait { signal } node must be rejected in local mode.
 	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
+	t.Setenv("CRITERIA_LOCAL_APPROVAL", "")
 	workflowPath := writeWorkflowFile(t, `
-workflow "wait_signal" {
+workflow {
+  name = "wait_signal"
   version       = "0.1"
   initial_state = "gate"
   target_state  = "done"
@@ -82,8 +86,10 @@ state "done" {
 func TestApplyLocal_ApprovalNode(t *testing.T) {
 	// W05: approval nodes must be rejected in local mode.
 	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
+	t.Setenv("CRITERIA_LOCAL_APPROVAL", "")
 	workflowPath := writeWorkflowFile(t, `
-workflow "needs_approval" {
+workflow {
+  name = "needs_approval"
   version       = "0.1"
   initial_state = "review"
   target_state  = "done"

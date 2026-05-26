@@ -6,10 +6,16 @@ import (
 )
 
 const validHCL = `
-workflow "build_and_test" {
+workflow {
+  name = "build_and_test"
   version       = "0.1"
   initial_state = "build"
   target_state  = "verified"
+
+  policy {
+    max_total_steps  = 10
+    max_step_retries = 2
+  }
 }
 
 adapter "shell" "default" {}
@@ -39,11 +45,6 @@ state "verified" { terminal = true }
 state "failed" {
   terminal = true
   success  = false
-}
-
-policy {
-  max_total_steps  = 10
-  max_step_retries = 2
 }
 `
 
@@ -75,7 +76,8 @@ func TestParseAndCompileValid(t *testing.T) {
 
 func TestCompileDanglingTransition(t *testing.T) {
 	src := `
-workflow "x" {
+workflow {
+  name = "x"
   version = "0.1"
   initial_state = "a"
   target_state  = "done"
@@ -103,7 +105,8 @@ state "done" { terminal = true }
 
 func TestCompileNonTerminalTarget(t *testing.T) {
 	src := `
-workflow "x" {
+workflow {
+  name = "x"
   version = "0.1"
   initial_state = "a"
   target_state  = "halfway"
@@ -125,7 +128,8 @@ state "halfway" {}
 
 func TestCompileUnreachableStep(t *testing.T) {
 	src := `
-workflow "x" {
+workflow {
+  name = "x"
   version = "0.1"
   initial_state = "a"
   target_state  = "done"
@@ -151,7 +155,8 @@ state "done" { terminal = true }
 
 func TestCompileMissingOutcome(t *testing.T) {
 	src := `
-workflow "x" {
+workflow {
+  name = "x"
   version = "0.1"
   initial_state = "a"
   target_state  = "done"
@@ -172,7 +177,8 @@ state "done" { terminal = true }
 
 func TestCompileAllowToolsOnLifecycleStepIsError(t *testing.T) {
 	src := `
-workflow "x" {
+workflow {
+  name = "x"
   version       = "0.1"
   initial_state = "open"
   target_state  = "done"
@@ -205,7 +211,8 @@ func TestCompileAllowToolsWithoutAgentIsError(t *testing.T) {
 	// TestCompileAllowToolsWithoutAgentIsError verifies that using allow_tools on a
 	// step referencing an undeclared adapter produces an error about the undeclared adapter.
 	src := `
-workflow "x" {
+workflow {
+  name = "x"
   version       = "0.1"
   initial_state = "run"
   target_state  = "done"
@@ -233,7 +240,8 @@ state "done" { terminal = true }
 
 func TestCompileAllowToolsUnionedWithWorkflowLevel(t *testing.T) {
 	src := `
-workflow "x" {
+workflow {
+  name = "x"
   version       = "0.1"
   initial_state = "run"
   target_state  = "done"

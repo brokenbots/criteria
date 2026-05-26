@@ -34,62 +34,63 @@
 # (internal/engine/node_step.go:477-480). The status output defaults to
 # "failed" and is flipped to "ok" only on the merge-and-sync success path.
 
-workflow "pr_review" {
+workflow {
+
+  name = "pr_review"
   version       = "1"
   initial_state = "open_pr"
   target_state  = "returned"
-}
-
-policy {
-  max_total_steps = 300
+  policy {
+    max_total_steps = 300
+  }
 }
 
 variable "workstream_file" {
-  type    = "string"
+  type = string
   default = ""
 }
 
 variable "project_dir" {
-  type    = "string"
+  type = string
   default = ""
 }
 
 variable "max_review_attempts" {
-  type        = "number"
+  type = number
   default     = 2
   description = "Number of pr_reviewer escalations before returning `escalated` to the parent."
 }
 
 variable "pr_reviewer_model" {
-  type        = "string"
+  type = string
   default     = "gpt-5.5"
   description = "Model for the cold PR reviewer."
 }
 
 variable "base_branch" {
-  type        = "string"
+  type = string
   default     = "adapter-v2"
   description = "Integration branch that workstream PRs target. Used for PR base, sync, and diff."
 }
 
 variable "require_workflow_approval" {
-  type        = "string"
+  type = string
   default     = "false"
   description = "Set to 'true' to require explicit workflow-node approval before merge (for main-targeting PRs). Default 'false' uses async GitHub approval polling."
 }
 
 shared_variable "review_attempts" {
-  type  = "number"
+  type = number
   value = 0
 }
 
 shared_variable "terminal_status" {
-  type  = "string"
+  type = string
   value = "failed"
 }
 
 output "status" {
-  type  = "string"
+  type = string
   value = shared.terminal_status
 }
 

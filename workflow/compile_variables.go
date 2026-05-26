@@ -5,9 +5,9 @@ package workflow
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/hashicorp/hcl/v2"
+	"github.com/hashicorp/hcl/v2/ext/typeexpr"
 	"github.com/zclconf/go-cty/cty"
 	"github.com/zclconf/go-cty/cty/convert"
 )
@@ -21,34 +21,13 @@ func compileVariables(g *FSMGraph, spec *Spec) hcl.Diagnostics {
 			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("duplicate variable %q", name)})
 			continue
 		}
-		typ, err := parseVariableType(vs.TypeStr)
-		if err != nil {
-			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("variable %q: %v", name, err)})
+		typ, typeDiags := resolveVariableType(vs)
+		if typeDiags.HasErrors() {
+			diags = append(diags, typeDiags...)
 			continue
 		}
-		defaultVal := cty.NilVal
-		if vs.Remain != nil {
-			attrs, d := vs.Remain.JustAttributes()
-			diags = append(diags, d...)
-			if defAttr, ok := attrs["default"]; ok {
-				var defDiags hcl.Diagnostics
-				defaultVal, defDiags = defAttr.Expr.Value(nil)
-				if defDiags.HasErrors() {
-					diags = append(diags, defDiags...)
-					defaultVal = cty.NilVal
-				} else {
-					// Coerce to declared type.
-					defaultVal, err = convertCtyValue(defaultVal, typ)
-					if err != nil {
-						diags = append(diags, &hcl.Diagnostic{
-							Severity: hcl.DiagError,
-							Summary:  fmt.Sprintf("variable %q: default value does not match declared type %q: %v", name, vs.TypeStr, err),
-						})
-						defaultVal = cty.NilVal
-					}
-				}
-			}
-		}
+		defaultVal, defaultDiags := resolveVariableDefault(vs, typ)
+		diags = append(diags, defaultDiags...)
 		g.Variables[name] = &VariableNode{
 			Name:        name,
 			Type:        typ,
@@ -59,58 +38,46 @@ func compileVariables(g *FSMGraph, spec *Spec) hcl.Diagnostics {
 	return diags
 }
 
-// parseVariableType converts a type string from a variable declaration into
-// a cty.Type. Only the subset documented in W04 is supported.
-func parseVariableType(typeStr string) (cty.Type, error) {
-	switch strings.TrimSpace(typeStr) {
-	case "", "string":
+// resolveVariableType returns the cty.Type for a variable spec, defaulting to
+// cty.String when the type expression is absent.
+func resolveVariableType(vs VariableSpec) (cty.Type, hcl.Diagnostics) {
+	if isAbsentExpr(vs.Type) {
 		return cty.String, nil
-	case "number":
-		return cty.Number, nil
-	case "bool":
-		return cty.Bool, nil
-	case "list(string)":
-		return cty.List(cty.String), nil
-	case "list(number)":
-		return cty.List(cty.Number), nil
-	case "list(bool)":
-		return cty.List(cty.Bool), nil
-	case "map(string)":
-		return cty.Map(cty.String), nil
-	default:
-		return cty.NilType, fmt.Errorf("unsupported type %q; supported: string, number, bool, list(string), list(number), list(bool), map(string)", typeStr)
 	}
+	typ, diags := typeexpr.Type(vs.Type)
+	if diags.HasErrors() {
+		return cty.NilType, diags
+	}
+	return typ, nil
 }
 
-// TypeToString converts a cty.Type back to its declared type string representation.
-// This is the inverse of parseVariableType: only types accepted by parseVariableType
-// are supported. Returns an error for unsupported types instead of a fallback string,
-// ensuring round-trip guarantees for type serialization.
-func TypeToString(t cty.Type) (string, error) {
-	switch {
-	case t.Equals(cty.String):
-		return "string", nil
-	case t.Equals(cty.Number):
-		return "number", nil
-	case t.Equals(cty.Bool):
-		return "bool", nil
-	case t.IsListType():
-		switch t.ElementType() {
-		case cty.String:
-			return "list(string)", nil
-		case cty.Number:
-			return "list(number)", nil
-		case cty.Bool:
-			return "list(bool)", nil
-		}
-	case t.IsMapType():
-		if t.ElementType().Equals(cty.String) {
-			return "map(string)", nil
-		}
+// resolveVariableDefault extracts and coerces the optional default value from
+// a variable spec's Remain body against the declared type.
+func resolveVariableDefault(vs VariableSpec, typ cty.Type) (cty.Value, hcl.Diagnostics) {
+	var diags hcl.Diagnostics
+	if vs.Remain == nil {
+		return cty.NilVal, diags
 	}
-	// Unsupported type: return error instead of falling back to FriendlyName().
-	// This ensures TypeToString is a strict inverse of parseVariableType.
-	return "", fmt.Errorf("unsupported type %s; supported: string, number, bool, list(string), list(number), list(bool), map(string)", t.FriendlyName())
+	attrs, d := vs.Remain.JustAttributes()
+	diags = append(diags, d...)
+	defAttr, ok := attrs["default"]
+	if !ok {
+		return cty.NilVal, diags
+	}
+	defaultVal, defDiags := defAttr.Expr.Value(nil)
+	if defDiags.HasErrors() {
+		diags = append(diags, defDiags...)
+		return cty.NilVal, diags
+	}
+	coerced, err := convertCtyValue(defaultVal, typ)
+	if err != nil {
+		diags = append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  fmt.Sprintf("variable %q: default value does not match declared type %s: %v", vs.Name, typ.FriendlyName(), err),
+		})
+		return cty.NilVal, diags
+	}
+	return coerced, diags
 }
 
 // convertCtyValue coerces v to typ. Exact type matches are accepted immediately.
@@ -143,4 +110,15 @@ func isListStringValue(val cty.Value) bool {
 		}
 	}
 	return true
+}
+
+// isAbsentExpr reports whether an optional hcl.Expression decoded by gohcl
+// was actually absent. gohcl sets absent optional expression fields to a
+// zero-length-range sentinel rather than nil.
+func isAbsentExpr(expr hcl.Expression) bool {
+	if expr == nil {
+		return true
+	}
+	rng := expr.Range()
+	return rng.Start == rng.End
 }

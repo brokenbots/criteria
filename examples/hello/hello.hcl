@@ -1,6 +1,7 @@
 # mode: standalone
 # Example: trivial single-step workflow used by smoke tests.
-workflow "hello" {
+workflow {
+  name = "hello"
   version       = "0.1"
   initial_state = "say_hello"
   target_state  = "done"
@@ -11,7 +12,7 @@ adapter "shell" "default" {
 }
 
 output "greeting" {
-  type        = "string"
+  type = string
   description = "The greeting message produced by the workflow"
   value       = "Execution complete"
 }

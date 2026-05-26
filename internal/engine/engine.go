@@ -88,12 +88,12 @@ type Sink interface {
 	// This method is called before OnRunCompleted.
 	OnRunOutputs(outputs []map[string]string)
 	// OnStepOutcomeDefaulted is emitted when a step produces an outcome not in
-	// its declared set and default_outcome is applied (W15). original is the
-	// outcome name the adapter returned; mapped is the default_outcome name used.
+	// its declared set and the outcome "default" block is applied (W15).
+	// original is the outcome name the adapter returned; mapped is "default".
 	OnStepOutcomeDefaulted(step, original, mapped string)
 	// OnStepOutcomeUnknown is emitted when a step produces an outcome not in its
-	// declared set and no default_outcome is configured (W15). This precedes a
-	// run failure.
+	// declared set and no outcome "default" block is configured (W15).
+	// This precedes a run failure.
 	OnStepOutcomeUnknown(step, outcome string)
 	// StepEventSink returns the per-step adapter sink (logs + adapter events).
 	StepEventSink(step string) adapter.EventSink

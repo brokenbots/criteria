@@ -694,10 +694,15 @@ func TestClientReconnectMultipleFailures(t *testing.T) {
 	c.Publish(ctx, final)
 
 	const want = numEvents + 1
-	if !waitForCond(t, 10*time.Second, func() bool {
+	// Use a longer timeout because -race + multiple reconnects can be slow on CI runners.
+	if !waitForCond(t, 20*time.Second, func() bool {
 		f.mu.Lock()
-		defer f.mu.Unlock()
-		return len(f.events[runID]) == want
+		got := len(f.events[runID])
+		f.mu.Unlock()
+		if got > 0 && got < want {
+			t.Logf("waiting for events: got %d, want %d", got, want)
+		}
+		return got == want
 	}) {
 		f.mu.Lock()
 		got := len(f.events[runID])

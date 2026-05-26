@@ -168,7 +168,8 @@ func TestResolveInputExprs_EachProducesPlannedMessage(t *testing.T) {
 	// returning "each is only valid inside for_each"), but compile-time validation
 	// is the correct enforcement point.
 	src := `
-workflow "test" {
+workflow {
+  name = "test"
   version       = "0.1"
   initial_state = "s"
   target_state  = "__done__"

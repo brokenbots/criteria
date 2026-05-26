@@ -17,7 +17,8 @@ import (
 // minimalWorkflow returns a minimal workflow HCL string with a single step using the given target line.
 func minimalWorkflow(stepBody string) string {
 	return `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "s"
   target_state  = "done"
@@ -60,7 +61,8 @@ func TestCompileStep_TargetSubworkflow(t *testing.T) {
 	writeSubworkflowDir(t, dir, "inner", subHCL)
 
 	src := `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "s"
   target_state  = "done"
@@ -116,7 +118,8 @@ func TestCompileStep_TargetUnresolvedAdapter(t *testing.T) {
 
 func TestCompileStep_TargetUnresolvedSubworkflow(t *testing.T) {
 	src := `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "s"
   target_state  = "done"
@@ -144,7 +147,8 @@ state "done" { terminal = true }
 
 func TestCompileStep_LegacyAdapterAttr_HardError(t *testing.T) {
 	src := `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "s"
   target_state  = "done"
@@ -187,7 +191,8 @@ func TestCompileStep_TargetStepKindRejected(t *testing.T) {
 
 func TestCompileStep_MissingTarget_Error(t *testing.T) {
 	src := `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "s"
   target_state  = "done"
@@ -214,7 +219,8 @@ state "done" { terminal = true }
 
 func TestCompileStep_EnvironmentOverride_Resolves(t *testing.T) {
 	src := `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "s"
   target_state  = "done"
@@ -248,7 +254,8 @@ state "done" { terminal = true }
 
 func TestCompileStep_EnvironmentOverride_Missing(t *testing.T) {
 	src := `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "s"
   target_state  = "done"
@@ -276,11 +283,12 @@ state "done" { terminal = true }
 }
 
 // TestCompileStep_EnvironmentOverride_QuotedStringRejected verifies that a
-// step using the quoted-string form (environment = "shell.ci") produces a
-// compile error pointing to the bare-traversal form.
+// step using the quoted-string form (environment = "shell.ci") is rejected at
+// parse time by rejectLegacyEnvironmentString.
 func TestCompileStep_EnvironmentOverride_QuotedStringRejected(t *testing.T) {
 	src := `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "s"
   target_state  = "done"
@@ -295,16 +303,12 @@ step "s" {
 }
 state "done" { terminal = true }
 `
-	spec, diags := Parse("t.hcl", []byte(src))
-	if diags.HasErrors() {
-		t.Fatalf("parse: %s", diags.Error())
-	}
-	_, diags = Compile(spec, nil)
+	_, diags := Parse("t.hcl", []byte(src))
 	if !diags.HasErrors() {
-		t.Fatal("expected compile error for quoted environment override; got none")
+		t.Fatal("expected parse error for quoted environment override; got none")
 	}
-	if !strings.Contains(diags.Error(), "bareword") {
-		t.Errorf("expected error to mention bareword syntax, got: %s", diags.Error())
+	if !strings.Contains(diags.Error(), "removed quoted-string environment") {
+		t.Errorf("expected error to mention 'removed quoted-string environment', got: %s", diags.Error())
 	}
 }
 
@@ -342,13 +346,13 @@ func TestCompileStep_TargetQuotedString_DiagnosticText(t *testing.T) {
 }
 
 // TestCompileStep_EnvironmentQuotedString_DiagnosticText asserts that a
-// quoted-string environment override produces the exact attribute-specific
-// Summary (including the "e.g. shell.ci" example) and Detail text, providing
-// regression coverage against helper-extraction changes that silently alter
-// the environment-specific error message.
+// quoted-string environment override produces the exact parse-time diagnostic
+// from rejectLegacyEnvironmentString, providing regression coverage against
+// changes that silently alter the error message.
 func TestCompileStep_EnvironmentQuotedString_DiagnosticText(t *testing.T) {
 	src := `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "s"
   target_state  = "done"
@@ -363,29 +367,25 @@ step "s" {
 }
 state "done" { terminal = true }
 `
-	spec, diags := Parse("t.hcl", []byte(src))
-	if diags.HasErrors() {
-		t.Fatalf("parse: %s", diags.Error())
-	}
-	_, diags = Compile(spec, nil)
+	_, diags := Parse("t.hcl", []byte(src))
 	if !diags.HasErrors() {
-		t.Fatal("expected compile error for quoted environment override; got none")
+		t.Fatal("expected parse error for quoted environment override; got none")
 	}
 	var found *hcl.Diagnostic
 	for _, d := range diags {
-		if strings.Contains(d.Summary, "environment") && strings.Contains(d.Summary, "bareword") {
+		if strings.Contains(d.Summary, "removed quoted-string environment") {
 			found = d
 			break
 		}
 	}
 	if found == nil {
-		t.Fatalf("expected environment bareword diagnostic; got: %s", diags.Error())
+		t.Fatalf("expected 'removed quoted-string environment' diagnostic; got: %s", diags.Error())
 	}
-	wantSummaryFragment := `bareword reference (e.g. shell.ci), not a quoted string`
-	if !strings.Contains(found.Summary, wantSummaryFragment) {
-		t.Errorf("Summary = %q, want it to contain %q", found.Summary, wantSummaryFragment)
+	wantSummary := `removed quoted-string environment on step block`
+	if !strings.Contains(found.Summary, wantSummary) {
+		t.Errorf("Summary = %q, want it to contain %q", found.Summary, wantSummary)
 	}
-	wantDetail := `Use environment = shell.ci (no quotes). Quoted strings are not accepted for step environment overrides.`
+	wantDetail := `the "environment" attribute on step blocks now uses a bare traversal reference, not a quoted string. Remove the quotes: environment = shell.default. See CHANGELOG.md migration note.`
 	if found.Detail != wantDetail {
 		t.Errorf("Detail = %q, want %q", found.Detail, wantDetail)
 	}
@@ -402,7 +402,8 @@ func TestCompileStep_SubworkflowStepInput(t *testing.T) {
 	writeSubworkflowDir(t, dir, "inner", subHCL)
 
 	src := `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "s"
   target_state  = "done"
@@ -456,7 +457,8 @@ func TestCompileStep_SubworkflowStepInput_UndeclaredKeyRejected(t *testing.T) {
 	writeSubworkflowDir(t, dir, "inner", subHCL)
 
 	src := `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "s"
   target_state  = "done"
@@ -499,7 +501,8 @@ func TestCompileStep_SubworkflowIterStepInput_UndeclaredKeyRejected(t *testing.T
 	writeSubworkflowDir(t, dir, "inner", subHCL)
 
 	src := `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "s"
   target_state  = "done"
@@ -550,7 +553,8 @@ func TestCompileStep_SubworkflowTarget_EnvironmentRejected(t *testing.T) {
 	writeSubworkflowDir(t, dir, "inner", minimalCalleeHCL("inner", nil))
 
 	src := `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "s"
   target_state  = "done"
@@ -591,7 +595,8 @@ func TestCompileStep_SubworkflowIterTarget_EnvironmentRejected(t *testing.T) {
 	writeSubworkflowDir(t, dir, "inner", minimalCalleeHCL("inner", nil))
 
 	src := `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "s"
   target_state  = "done"

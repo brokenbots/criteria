@@ -1,14 +1,14 @@
 // iteration_simple.hcl — exercises step-level for_each and count (W10).
 // A step with for_each iterates over a list; a step with count iterates
 // N times. Both declare all_succeeded and any_failed aggregate outcomes.
-workflow "iteration_simple" {
+workflow {
+  name = "iteration_simple"
   version       = "0.1"
   initial_state = "process"
   target_state  = "done"
-}
-
-policy {
-  max_total_steps = 30
+  policy {
+    max_total_steps = 30
+  }
 }
 
 adapter "noop" "default" {}

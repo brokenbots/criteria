@@ -1,13 +1,14 @@
 # mode: standalone
 # Example: demonstrates hash, encoding, and dynamic HCL functions.
-workflow "hash_encoding_demo" {
+workflow {
+  name = "hash_encoding_demo"
   version       = "1"
   initial_state = "compute"
   target_state  = "done"
 }
 
 variable "input" {
-  type    = "string"
+  type = string
   default = "hello world"
 }
 

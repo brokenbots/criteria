@@ -1,15 +1,16 @@
-workflow "process_one" {
+workflow {
+  name = "process_one"
   version       = "0.1"
   initial_state = "process"
   target_state  = "success_outcome"
 }
 
 variable "idx" {
-  type = "number"
+  type = number
 }
 
 variable "limit" {
-  type = "number"
+  type = number
 }
 
 adapter "shell" "default" {
@@ -31,6 +32,6 @@ state "success_outcome" {
 }
 
 output "reason" {
-  type  = "string"
+  type = string
   value = "Processed ${var.idx}"
 }

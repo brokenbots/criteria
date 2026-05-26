@@ -1,4 +1,5 @@
-workflow "subwf-parent" {
+workflow {
+  name = "subwf-parent"
   version       = "1"
   initial_state = "prepare"
   target_state  = "done"

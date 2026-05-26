@@ -264,7 +264,8 @@ func TestCompileCmd_MultiErrorFormat(t *testing.T) {
 	// Workflow that parses successfully but fails compilation with multiple
 	// errors: (1) missing initial_state, (2) missing target_state,
 	// (3) referenced adapter not declared.
-	hclContent := `workflow "multi_error" {
+	hclContent := `workflow {
+  name = "multi_error"
   version = "0.1"
 }
 

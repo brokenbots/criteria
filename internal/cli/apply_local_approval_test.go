@@ -153,6 +153,7 @@ func TestApplyLocal_FileMode_ApprovalApproved(t *testing.T) {
 func TestApplyLocal_LocalApprovalDisabled_ApprovalNodeRejected(t *testing.T) {
 	// Without CRITERIA_LOCAL_APPROVAL, approval nodes must be rejected.
 	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
+	t.Setenv("CRITERIA_LOCAL_APPROVAL", "")
 
 	wf := filepath.Join("testdata", "local_approval_simple")
 	err := runApply(context.Background(), applyOptions{workflowPath: wf})
@@ -167,6 +168,7 @@ func TestApplyLocal_LocalApprovalDisabled_ApprovalNodeRejected(t *testing.T) {
 func TestApplyLocal_LocalApprovalDisabled_SignalWaitRejected(t *testing.T) {
 	// Without CRITERIA_LOCAL_APPROVAL, wait {signal} nodes must be rejected.
 	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
+	t.Setenv("CRITERIA_LOCAL_APPROVAL", "")
 
 	wf := filepath.Join("testdata", "local_signal_wait")
 	err := runApply(context.Background(), applyOptions{workflowPath: wf})

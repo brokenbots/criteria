@@ -253,6 +253,40 @@ func decodeEnvironmentConfig(attrs hcl.Attributes, opts CompileOpts) (map[string
 	return result, diags
 }
 
+// resolveEnvironmentExpr evaluates an environment expression (e.g. shell.ci) and
+// returns the "<type>.<name>" key, or "" if the expression is absent.
+// It emits a diagnostic if the expression is not a bare traversal.
+func resolveEnvironmentExpr(expr hcl.Expression, context string) (string, hcl.Diagnostics) {
+	if isAbsentExpr(expr) {
+		return "", nil
+	}
+	trav, diags := hcl.AbsTraversalForExpr(expr)
+	if diags.HasErrors() {
+		return "", hcl.Diagnostics{{
+			Severity: hcl.DiagError,
+			Summary:  fmt.Sprintf("%s: environment must be a bareword reference (e.g. shell.ci), not a quoted string", context),
+			Subject:  expr.Range().Ptr(),
+		}}
+	}
+	if len(trav) != 2 {
+		return "", hcl.Diagnostics{{
+			Severity: hcl.DiagError,
+			Summary:  fmt.Sprintf("%s: environment must have exactly 2 segments (<type>.<name>); got %d", context, len(trav)),
+			Subject:  expr.Range().Ptr(),
+		}}
+	}
+	typeRoot, typeOK := trav[0].(hcl.TraverseRoot)
+	nameAttr, nameOK := trav[1].(hcl.TraverseAttr)
+	if !typeOK || !nameOK {
+		return "", hcl.Diagnostics{{
+			Severity: hcl.DiagError,
+			Summary:  fmt.Sprintf("%s: environment segments must be bareword identifiers (<type>.<name>)", context),
+			Subject:  expr.Range().Ptr(),
+		}}
+	}
+	return fmt.Sprintf("%s.%s", typeRoot.Name, nameAttr.Name), nil
+}
+
 // resolveDefaultEnvironment implements the default-environment resolution rules.
 // If multiple environments are declared and no explicit default is set,
 // error if any consumer uses an environment.
@@ -260,16 +294,20 @@ func resolveDefaultEnvironment(g *FSMGraph, spec *Spec) hcl.Diagnostics {
 	var diags hcl.Diagnostics
 
 	// If the workflow header specifies an explicit default, use it.
-	if spec.Header != nil && spec.Header.DefaultEnvironment != "" {
-		g.DefaultEnvironment = spec.Header.DefaultEnvironment
-		// Validate that the referenced environment exists.
-		if _, ok := g.Environments[spec.Header.DefaultEnvironment]; !ok {
-			diags = append(diags, &hcl.Diagnostic{
-				Severity: hcl.DiagError,
-				Summary:  fmt.Sprintf("workflow environment %q does not refer to a declared environment block", spec.Header.DefaultEnvironment),
-			})
+	if spec.Header != nil {
+		key, d := resolveEnvironmentExpr(spec.Header.DefaultEnvironment, "workflow")
+		diags = append(diags, d...)
+		if key != "" {
+			g.DefaultEnvironment = key
+			// Validate that the referenced environment exists.
+			if _, ok := g.Environments[key]; !ok {
+				diags = append(diags, &hcl.Diagnostic{
+					Severity: hcl.DiagError,
+					Summary:  fmt.Sprintf("workflow environment %q does not refer to a declared environment block", key),
+				})
+			}
+			return diags
 		}
-		return diags
 	}
 
 	// If exactly one environment is declared, make it the default.

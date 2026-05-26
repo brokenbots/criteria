@@ -25,16 +25,16 @@ type LocalSpec struct {
 //
 // The optional "value" initial expression is decoded by the compiler via Remain.
 type SharedVariableSpec struct {
-	Name        string   `hcl:"name,label"`
-	Description string   `hcl:"description,optional"`
-	TypeStr     string   `hcl:"type,optional"`
-	Remain      hcl.Body `hcl:",remain"` // captures the optional "value" expression
+	Name        string         `hcl:"name,label"`
+	Description string         `hcl:"description,optional"`
+	Type        hcl.Expression `hcl:"type,optional"`
+	Remain      hcl.Body       `hcl:",remain"` // captures the optional "value" expression
 }
 
 // SharedVariableNode is a compiled shared_variable declaration.
 type SharedVariableNode struct {
 	Name         string
-	Type         cty.Type  // explicit (parsed from TypeStr)
+	Type         cty.Type  // explicit (parsed from type expression)
 	InitialValue cty.Value // compile-folded; cty.NullVal(Type) if not declared
 	Description  string
 }
@@ -76,11 +76,11 @@ type OutputNode struct {
 }
 
 // WorkflowHeaderSpec carries the workflow identity and routing fields declared
-// in the `workflow "<name>" { ... }` header block. In a directory module, exactly
+// in the `workflow { ... }` header block. In a directory module, exactly
 // one .hcl file must contain this block; across multiple files, exactly one
 // WorkflowHeaderSpec may be non-nil after merging.
 type WorkflowHeaderSpec struct {
-	Name string `hcl:"name,label"`
+	Name string `hcl:"name"`
 	// Version is the HCL schema version string. Use "1".
 	//
 	// spec:required
@@ -88,13 +88,14 @@ type WorkflowHeaderSpec struct {
 	// InitialState names the step or state where workflow execution begins.
 	//
 	// spec:required
-	InitialState       string `hcl:"initial_state,optional"`
-	TargetState        string `hcl:"target_state,optional"`
-	DefaultEnvironment string `hcl:"environment,optional"` // "<type>.<name>" reference to the workflow's default environment
+	InitialState       string         `hcl:"initial_state,optional"`
+	TargetState        string         `hcl:"target_state,optional"`
+	DefaultEnvironment hcl.Expression `hcl:"environment,optional"` // bare traversal reference to the workflow's default environment (e.g. shell.default)
+	Policy             *PolicySpec    `hcl:"policy,block"`
 }
 
 // Spec is the parsed (but unvalidated) HCL workflow document. After workstream
-// 17, the `workflow "<name>" { ... }` block is header-only; all content blocks
+// 17, the `workflow { ... }` block is header-only; all content blocks
 // (step, state, adapter, etc.) live at the top level of the HCL file.
 type Spec struct {
 	Header          *WorkflowHeaderSpec  `hcl:"workflow,block"`
@@ -110,7 +111,6 @@ type Spec struct {
 	Waits           []WaitSpec           `hcl:"wait,block"`
 	Approvals       []ApprovalSpec       `hcl:"approval,block"`
 	Switches        []SwitchSpec         `hcl:"switch,block"`
-	Policy          *PolicySpec          `hcl:"policy,block"`
 	Permissions     *PermissionsSpec     `hcl:"permissions,block"`
 	// SourceBytes holds the raw HCL source that was parsed to produce this Spec.
 	// Populated by Parse/ParseFile; used by the compiler to extract expression
@@ -121,10 +121,10 @@ type Spec struct {
 // VariableSpec is the parsed (but unvalidated) variable declaration.
 // The `type` and `default` attributes are decoded by the compiler.
 type VariableSpec struct {
-	Name        string   `hcl:"name,label"`
-	TypeStr     string   `hcl:"type,optional"`
-	Description string   `hcl:"description,optional"`
-	Remain      hcl.Body `hcl:",remain"` // captures the "default" expression
+	Name        string         `hcl:"name,label"`
+	Type        hcl.Expression `hcl:"type,optional"`
+	Description string         `hcl:"description,optional"`
+	Remain      hcl.Body       `hcl:",remain"` // captures the "default" expression
 }
 
 // ConfigSpec holds the raw HCL body of an `adapter.config { ... }` block.
@@ -148,11 +148,11 @@ type InputSpec struct {
 // This is the HCL schema for the `adapter "<type>" "<name>"` block.
 // Note: This is distinct from AdapterInfo, which describes an adapter's schema.
 type AdapterDeclSpec struct {
-	Type        string      `hcl:"type,label"`           // first label: adapter type
-	Name        string      `hcl:"name,label"`           // second label: instance name
-	Environment string      `hcl:"environment,optional"` // "<env_type>.<env_name>" reference
-	OnCrash     string      `hcl:"on_crash,optional"`
-	Config      *ConfigSpec `hcl:"config,block"`
+	Type        string         `hcl:"type,label"`           // first label: adapter type
+	Name        string         `hcl:"name,label"`           // second label: instance name
+	Environment hcl.Expression `hcl:"environment,optional"` // bare traversal reference (e.g. shell.default)
+	OnCrash     string         `hcl:"on_crash,optional"`
+	Config      *ConfigSpec    `hcl:"config,block"`
 }
 
 // StepSpec describes a single step in the workflow.
@@ -172,10 +172,6 @@ type StepSpec struct {
 	Input      *InputSpec        `hcl:"input,block"`
 	Timeout    string            `hcl:"timeout,optional"`
 	AllowTools []string          `hcl:"allow_tools,optional"`
-	// DefaultOutcome, when set, is the fallback outcome name used when an adapter
-	// returns an outcome name not in the declared set. Must refer to a declared
-	// outcome; validated at compile time.
-	DefaultOutcome string `hcl:"default_outcome,optional"`
 	// Outcomes lists the declared outcome blocks for this step.
 	// Environment (e.g. shell.ci) is not decoded as a struct field; it is a bare
 	// traversal captured from Remain by resolveStepEnvironmentOverride. A
@@ -210,7 +206,6 @@ type SpecContent struct {
 	Waits           []WaitSpec           `hcl:"wait,block"`
 	Approvals       []ApprovalSpec       `hcl:"approval,block"`
 	Switches        []SwitchSpec         `hcl:"switch,block"`
-	Policy          *PolicySpec          `hcl:"policy,block"`
 	Permissions     *PermissionsSpec     `hcl:"permissions,block"`
 }
 
@@ -239,20 +234,20 @@ type BodySpec struct {
 // OutputSpec declares a named output value exposed by a workflow or workflow-step body.
 // The value expression is extracted from Remain by the compiler.
 type OutputSpec struct {
-	Name        string   `hcl:"name,label"`
-	Description string   `hcl:"description,optional"`
-	TypeStr     string   `hcl:"type,optional"`
-	Remain      hcl.Body `hcl:",remain"` // captures the "value" expression
+	Name        string         `hcl:"name,label"`
+	Description string         `hcl:"description,optional"`
+	Type        hcl.Expression `hcl:"type,optional"`
+	Remain      hcl.Body       `hcl:",remain"` // captures the "value" expression
 }
 
 // SubworkflowSpec declares a reusable sub-workflow to be resolved and compiled.
 // The name is a single label; source and input are attributes.
 // The Remain body captures any additional attributes like the "input" block.
 type SubworkflowSpec struct {
-	Name        string   `hcl:"name,label"`
-	Source      string   `hcl:"source"`               // directory path; local or remote
-	Environment string   `hcl:"environment,optional"` // "<env_type>.<env_name>" reference
-	Remain      hcl.Body `hcl:",remain"`              // captures the "input" block
+	Name        string         `hcl:"name,label"`
+	Source      string         `hcl:"source"`               // directory path; local or remote
+	Environment hcl.Expression `hcl:"environment,optional"` // bare traversal reference (e.g. shell.default)
+	Remain      hcl.Body       `hcl:",remain"`              // captures the "input" block
 }
 
 // ConfigFieldType enumerates the types a config or input field may carry.
@@ -485,10 +480,10 @@ type StepNode struct {
 	InputExprs map[string]hcl.Expression
 	Timeout    time.Duration               // zero = no timeout
 	Outcomes   map[string]*CompiledOutcome // outcome name -> compiled outcome
-	// DefaultOutcome, when non-empty, is applied when the adapter returns an
+	// DefaultOutcome, when set, is applied when the adapter returns an
 	// outcome name not present in Outcomes. The unknown name is silently mapped
-	// to this outcome. When empty, an unknown outcome is a runtime error.
-	DefaultOutcome string
+	// to this outcome. When nil, an unknown outcome is a runtime error.
+	DefaultOutcome *CompiledOutcome
 	// AllowTools is the union of step-level and workflow-level allow_tools glob
 	// patterns. An empty slice means deny-all (default). Only valid for adapter steps.
 	AllowTools []string

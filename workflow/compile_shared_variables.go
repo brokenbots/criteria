@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	"github.com/hashicorp/hcl/v2"
+	"github.com/hashicorp/hcl/v2/ext/typeexpr"
 	"github.com/zclconf/go-cty/cty"
 )
 
@@ -29,7 +30,7 @@ func compileSharedVariables(g *FSMGraph, spec *Spec, opts CompileOpts) hcl.Diagn
 			continue
 		}
 
-		typ, typDiags := compileSharedVarType(name, sv.TypeStr)
+		typ, typDiags := compileSharedVarType(name, sv.Type)
 		diags = append(diags, typDiags...)
 		if typDiags.HasErrors() {
 			continue
@@ -68,21 +69,18 @@ func checkSharedVarNameCollisions(g *FSMGraph, name string) *hcl.Diagnostic {
 	return nil
 }
 
-// compileSharedVarType parses the TypeStr attribute of a shared_variable block
+// compileSharedVarType parses the Type expression of a shared_variable block
 // and returns the resolved cty.Type plus any diagnostics.
-func compileSharedVarType(name, typeStr string) (cty.Type, hcl.Diagnostics) {
-	if typeStr == "" {
+func compileSharedVarType(name string, typeExpr hcl.Expression) (cty.Type, hcl.Diagnostics) {
+	if isAbsentExpr(typeExpr) {
 		return cty.NilType, hcl.Diagnostics{&hcl.Diagnostic{
 			Severity: hcl.DiagError,
 			Summary:  fmt.Sprintf("shared_variable %q: attribute \"type\" is required", name),
 		}}
 	}
-	typ, err := parseVariableType(typeStr)
-	if err != nil {
-		return cty.NilType, hcl.Diagnostics{&hcl.Diagnostic{
-			Severity: hcl.DiagError,
-			Summary:  fmt.Sprintf("shared_variable %q: %v", name, err),
-		}}
+	typ, typeDiags := typeexpr.Type(typeExpr)
+	if typeDiags.HasErrors() {
+		return cty.NilType, typeDiags
 	}
 	return typ, nil
 }

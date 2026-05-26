@@ -94,14 +94,15 @@ func TestSeedChildVars_MissingRequiredVar(t *testing.T) {
 func TestRunWorkflowBody_BodyInputBindsVar(t *testing.T) {
 	t.Skip("test uses removed inline workflow body feature (W13); pending W14 subworkflow invocation support")
 	g := compile(t, `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "process"
   target_state  = "done"
 }
 
 variable "prefix" {
-  type    = "string"
+  type = string
   default = "hello"
 }
 
@@ -113,7 +114,7 @@ step "process" {
 
   workflow {
     variable "prefix" {
-      type = "string"
+      type = string
     }
     step "body" {
       target = adapter.fake
@@ -174,7 +175,8 @@ state "done" {
 func TestRunWorkflowBody_NoOuterStepLeakage(t *testing.T) {
 	t.Skip("test uses removed inline workflow body feature (W13); pending W14 subworkflow invocation support")
 	g := compile(t, `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "produce"
   target_state  = "done"
@@ -232,7 +234,8 @@ state "done" {
 func TestRunWorkflowBody_OutputUsesChildStepsScope(t *testing.T) {
 	t.Skip("test uses removed inline workflow body feature (W13); pending W14 subworkflow invocation support")
 	g := compile(t, `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "produce"
   target_state  = "done"
@@ -308,7 +311,8 @@ func TestRunWorkflowBody_ScalarInputFails(t *testing.T) {
 	// Compile succeeds: each.value is a runtime-only namespace, so FoldExpr
 	// returns foldable=false and the object-shape check is deferred to runtime.
 	g := compile(t, `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "process"
   target_state  = "done"
@@ -356,7 +360,8 @@ func TestRunWorkflowBody_BodyAdapterIsolated(t *testing.T) {
 	t.Skip("test uses removed inline workflow body feature (W13); pending W14 subworkflow invocation support")
 	// A simple iteration with a workflow body that uses an adapter
 	parentG := compile(t, `
-workflow "parent" {
+workflow {
+  name = "parent"
   version       = "0.1"
   initial_state = "process"
   target_state  = "done"
@@ -421,7 +426,8 @@ func TestRunWorkflowBody_BodyAndParentAdaptersIsolated(t *testing.T) {
 	// Body uses adapter noop_b
 	// Verify a opens/closes once for parent, b opens/closes once for body
 	parentG := compile(t, `
-workflow "parent" {
+workflow {
+  name = "parent"
   version       = "0.1"
   initial_state = "pre"
   target_state  = "done"
@@ -533,7 +539,8 @@ state "done" {
 func TestRunWorkflowBody_BodyDoesNotInheritParentAdapter(t *testing.T) {
 	t.Skip("test uses removed inline workflow body feature (W13); pending W14 subworkflow invocation support")
 	src := `
-workflow "parent" {
+workflow {
+  name = "parent"
   version       = "0.1"
   initial_state = "outer"
   target_state  = "done"

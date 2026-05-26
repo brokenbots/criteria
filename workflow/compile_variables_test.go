@@ -7,7 +7,8 @@ import (
 )
 
 const varWorkflow = `
-workflow "test" {
+workflow {
+  name = "test"
   version       = "0.1"
   initial_state = "start"
   target_state  = "__done__"
@@ -16,16 +17,16 @@ workflow "test" {
 adapter "noop" "default" {}
 
 variable "greeting" {
-  type        = "string"
+  type = string
   default     = "hello"
   description = "A greeting"
 }
 variable "count" {
-  type    = "number"
+  type = number
   default = 3
 }
 variable "no_default" {
-  type = "string"
+  type = string
 }
 step "start" {
   target = adapter.noop.default
@@ -35,7 +36,8 @@ state "__done__" { terminal = true }
 `
 
 const varWorkflowNoVars = `
-workflow "novars" {
+workflow {
+  name = "novars"
   version       = "0.1"
   initial_state = "start"
   target_state  = "__done__"
@@ -114,18 +116,19 @@ func TestVariableCompile_NoVariables(t *testing.T) {
 
 func TestVariableCompile_DuplicateName(t *testing.T) {
 	src := `
-workflow "test" {
+workflow {
+  name = "test"
   version       = "0.1"
   initial_state = "s"
   target_state  = "__done__"
 }
 
 variable "x" {
-  type    = "string"
+  type = string
   default = "a"
 }
 variable "x" {
-  type    = "string"
+  type = string
   default = "b"
 }
 step "s" {
@@ -146,14 +149,15 @@ state "__done__" { terminal = true }
 
 func TestVariableCompile_InvalidType(t *testing.T) {
 	src := `
-workflow "test" {
+workflow {
+  name = "test"
   version       = "0.1"
   initial_state = "s"
   target_state  = "__done__"
 }
 
 variable "x" {
-  type    = "badtype"
+  type    = badtype
   default = "a"
 }
 step "s" {
@@ -176,14 +180,15 @@ func TestVariableCompile_DefaultTypeMismatch(t *testing.T) {
 	// Declare a string variable but provide a number default — must be rejected
 	// under the strict "default must match declared type" rule.
 	src := `
-workflow "test" {
+workflow {
+  name = "test"
   version       = "0.1"
   initial_state = "s"
   target_state  = "__done__"
 }
 
 variable "x" {
-  type    = "string"
+  type = string
   default = 42
 }
 step "s" {
@@ -205,14 +210,15 @@ state "__done__" { terminal = true }
 func TestVariableCompile_DefaultBoolMismatch(t *testing.T) {
 	// Declare a number variable but provide a bool default — must be rejected.
 	src := `
-workflow "test" {
+workflow {
+  name = "test"
   version       = "0.1"
   initial_state = "s"
   target_state  = "__done__"
 }
 
 variable "flag" {
-  type    = "number"
+  type = number
   default = true
 }
 step "s" {
@@ -231,48 +237,10 @@ state "__done__" { terminal = true }
 	}
 }
 
-func TestTypeToString_RoundTrip(t *testing.T) {
-	tests := []struct {
-		typeStr string
-	}{
-		{"string"},
-		{"number"},
-		{"bool"},
-		{"list(string)"},
-		{"list(number)"},
-		{"list(bool)"},
-		{"map(string)"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.typeStr, func(t *testing.T) {
-			// Parse the type string.
-			parsed, err := parseVariableType(tt.typeStr)
-			if err != nil {
-				t.Fatalf("parseVariableType failed: %v", err)
-			}
-
-			// Convert back to string.
-			converted, err := TypeToString(parsed)
-			if err != nil {
-				t.Fatalf("TypeToString failed: %v", err)
-			}
-
-			// Should match the original.
-			if converted != tt.typeStr {
-				t.Errorf("TypeToString round-trip failed: got %q, want %q", converted, tt.typeStr)
-			}
-		})
-	}
-}
-
-// TestVariableCompile_ListDefaultTupleLiteral proves that a variable declared
-// as list(string) accepts a `["a", "b"]` literal default. HCL evaluates that
-// syntax to a cty.Tuple, so convertCtyValue must coerce it via convert.Convert
-// rather than rejecting it with a strict type-equality check.
 func TestVariableCompile_ListDefaultTupleLiteral(t *testing.T) {
 	src := `
-workflow "test" {
+workflow {
+  name = "test"
   version       = "0.1"
   initial_state = "s"
   target_state  = "__done__"
@@ -281,7 +249,7 @@ workflow "test" {
 adapter "noop" "default" {}
 
 variable "tags" {
-  type    = "list(string)"
+  type = list(string)
   default = ["foo", "bar"]
 }
 step "s" {
@@ -312,18 +280,5 @@ state "__done__" { terminal = true }
 	}
 	if len(elems) != 2 || elems[0] != "foo" || elems[1] != "bar" {
 		t.Errorf("unexpected default elements: %v", elems)
-	}
-}
-
-func TestTypeToString_UnsupportedType(t *testing.T) {
-	// Create an unsupported type (e.g., tuple).
-	unsupported := cty.Tuple([]cty.Type{cty.String, cty.Number})
-
-	_, err := TypeToString(unsupported)
-	if err == nil {
-		t.Error("TypeToString should return error for unsupported type, got nil")
-	}
-	if err.Error() == "" {
-		t.Error("TypeToString error message is empty")
 	}
 }

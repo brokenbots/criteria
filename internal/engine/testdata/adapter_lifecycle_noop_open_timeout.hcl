@@ -1,4 +1,5 @@
-workflow "agent_lifecycle_noop_open_timeout" {
+workflow {
+  name = "agent_lifecycle_noop_open_timeout"
   version = "0.1"
   initial_state = "run_agent"
   target_state  = "done"

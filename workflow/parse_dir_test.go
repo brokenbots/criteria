@@ -15,7 +15,8 @@ func writeHCLFile(t *testing.T, dir, name, content string) {
 	}
 }
 
-const singleFileContent = `workflow "test" {
+const singleFileContent = `workflow {
+  name = "test"
   version       = "0.1"
   initial_state = "run"
   target_state  = "done"
@@ -70,7 +71,8 @@ func TestParseDir_SingleFile(t *testing.T) {
 func TestParseDir_MultipleFiles(t *testing.T) {
 	dir := t.TempDir()
 
-	writeHCLFile(t, dir, "workflow", `workflow "multi" {
+	writeHCLFile(t, dir, "workflow", `workflow {
+  name = "multi"
   version       = "0.1"
   initial_state = "step_a"
   target_state  = "done"
@@ -149,7 +151,8 @@ func TestParseDir_DirNotExist_Error(t *testing.T) {
 func TestParseDir_DuplicateStepAcrossFiles_Error(t *testing.T) {
 	dir := t.TempDir()
 
-	writeHCLFile(t, dir, "main", `workflow "dup" {
+	writeHCLFile(t, dir, "main", `workflow {
+  name = "dup"
   version       = "0.1"
   initial_state = "run"
   target_state  = "done"
@@ -210,14 +213,16 @@ state "done" { terminal = true }
 func TestParseDir_DuplicateWorkflowBlock_Error(t *testing.T) {
 	dir := t.TempDir()
 
-	writeHCLFile(t, dir, "a", `workflow "a" {
+	writeHCLFile(t, dir, "a", `workflow {
+  name = "a"
   version       = "0.1"
   initial_state = "done"
   target_state  = "done"
 }
 state "done" { terminal = true }
 `)
-	writeHCLFile(t, dir, "b", `workflow "b" {
+	writeHCLFile(t, dir, "b", `workflow {
+  name = "b"
   version       = "0.1"
   initial_state = "done"
   target_state  = "done"
@@ -257,51 +262,31 @@ state "done" { terminal = true }
 	}
 }
 
-// TestParseDir_PolicyMergeAndDuplicateBlock_Error verifies that:
-//   - A single policy block in the directory is merged successfully (covers
-//     the first-seen policyRange setter path in mergeSpecs).
-//   - A second policy block across files produces a "duplicate policy block"
-//     error that includes the previous-declaration location in the detail text.
-func TestParseDir_PolicyMergeAndDuplicateBlock_Error(t *testing.T) {
+// TestParseDir_LegacyTopLevelPolicyBlock_Error verifies that a top-level
+// policy { ... } block (outside the workflow header) is rejected with a
+// legacy-removal diagnostic.
+func TestParseDir_LegacyTopLevelPolicyBlock_Error(t *testing.T) {
 	dir := t.TempDir()
 
-	writeHCLFile(t, dir, "workflow", `workflow "pol" {
+	writeHCLFile(t, dir, "workflow", `workflow {
+  name = "pol"
   version       = "0.1"
   initial_state = "done"
   target_state  = "done"
 }
 state "done" { terminal = true }
 `)
-	// First policy block — should be accepted; policyRange will be set.
 	writeHCLFile(t, dir, "policy_a", `policy {
   max_total_steps = 10
-}
-`)
-	// Second policy block — must produce a duplicate error with first-file location.
-	writeHCLFile(t, dir, "policy_b", `policy {
-  max_total_steps = 20
 }
 `)
 
 	_, diags := ParseDir(dir)
 	if !diags.HasErrors() {
-		t.Fatal("expected error for duplicate policy blocks")
+		t.Fatal("expected error for legacy top-level policy block")
 	}
-	if !strings.Contains(diags.Error(), "duplicate policy block") {
-		t.Errorf("expected 'duplicate policy block' in error, got: %s", diags.Error())
-	}
-	// The detail must mention the first declaration location (policy_a.hcl).
-	var found bool
-	for _, d := range diags {
-		if strings.Contains(d.Summary, "duplicate policy block") {
-			found = true
-			if !strings.Contains(d.Detail, "previously declared at") {
-				t.Errorf("Detail = %q; expected 'previously declared at' with first-file location", d.Detail)
-			}
-		}
-	}
-	if !found {
-		t.Error("no diagnostic with summary 'duplicate policy block' found")
+	if !strings.Contains(diags.Error(), "removed top-level policy block") {
+		t.Errorf("expected 'removed top-level policy block' in error, got: %s", diags.Error())
 	}
 }
 
@@ -313,7 +298,8 @@ state "done" { terminal = true }
 func TestParseDir_PermissionsMergeAndDuplicateBlock_Error(t *testing.T) {
 	dir := t.TempDir()
 
-	writeHCLFile(t, dir, "workflow", `workflow "perm" {
+	writeHCLFile(t, dir, "workflow", `workflow {
+  name = "perm"
   version       = "0.1"
   initial_state = "done"
   target_state  = "done"
@@ -359,7 +345,8 @@ func TestParseDir_UnreadableFile_Error(t *testing.T) {
 	}
 	dir := t.TempDir()
 	path := filepath.Join(dir, "unreadable.hcl")
-	if err := os.WriteFile(path, []byte(`workflow "x" {}`), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(`workflow {
+  name = "x"}`), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	if err := os.Chmod(path, 0o000); err != nil {

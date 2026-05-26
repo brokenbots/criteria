@@ -19,18 +19,19 @@ func loopWorkflowSrc(maxVisits, maxTotalSteps, warnThreshold int) string {
 		if warnThreshold >= 0 {
 			parts += "  max_visits_warn_threshold = " + strconv.Itoa(warnThreshold) + "\n"
 		}
-		policyBlock = "policy {\n" + parts + "}\n"
+		policyBlock = "  policy {\n" + parts + "  }\n"
 	}
 	maxVisitsAttr := ""
 	if maxVisits != 0 {
 		maxVisitsAttr = "  max_visits = " + strconv.Itoa(maxVisits) + "\n"
 	}
 	return `
-workflow "loop" {
+workflow {
+  name = "loop"
   version       = "0.1"
   initial_state = "execute"
   target_state  = "done"
-}
+` + policyBlock + `}
 adapter "fake" "default" {}
 step "execute" {
   target = adapter.fake.default
@@ -38,7 +39,7 @@ step "execute" {
   outcome "success" { next = "done" }
 }
 state "done" { terminal = true }
-` + policyBlock
+`
 }
 
 // TestCompile_MaxVisits_Decodes verifies that max_visits = 5 on a step
@@ -192,10 +193,13 @@ func TestCompile_BackEdgeWarning_CustomThreshold(t *testing.T) {
 // warning fires even when there is no direct step-to-step edge.
 func TestCompile_BackEdgeWarning_ThroughBranch(t *testing.T) {
 	src := `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "work"
   target_state  = "done"
+
+  policy { max_total_steps = 500 }
 }
 
 adapter "fake" "default" {}
@@ -214,7 +218,6 @@ switch "decide" {
   }
 }
 state "done" { terminal = true }
-policy { max_total_steps = 500 }
 `
 	spec, diags := Parse("t.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -239,13 +242,15 @@ policy { max_total_steps = 500 }
 // max_visits_warn_threshold is rejected at compile time with a clear diagnostic.
 func TestCompile_NegativeMaxVisitsWarnThreshold_Rejected(t *testing.T) {
 	src := `
-workflow "loop" {
+workflow {
+  name = "loop"
   version       = "0.1"
   initial_state = "execute"
   target_state  = "done"
-}
-policy {
-  max_visits_warn_threshold = -1
+
+  policy {
+    max_visits_warn_threshold = -1
+  }
 }
 step "execute" {
   target = adapter.fake.default
