@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/hcl/v2"
+	"github.com/hashicorp/hcl/v2/ext/typeexpr"
 	"github.com/zclconf/go-cty/cty"
 )
 
@@ -34,8 +35,9 @@ type SharedVariableSpec struct {
 // SharedVariableNode is a compiled shared_variable declaration.
 type SharedVariableNode struct {
 	Name         string
-	Type         cty.Type  // explicit (parsed from type expression)
-	InitialValue cty.Value // compile-folded; cty.NullVal(Type) if not declared
+	Type         cty.Type           // explicit (parsed from type expression)
+	TypeDefaults *typeexpr.Defaults // nil when type has no optional defaults
+	InitialValue cty.Value          // compile-folded; cty.NullVal(Type) if not declared
 	Description  string
 }
 
@@ -71,8 +73,9 @@ type EnvironmentNode struct {
 type OutputNode struct {
 	Name         string
 	Description  string
-	DeclaredType cty.Type       // cty.NilType if no explicit type was declared
-	Value        hcl.Expression // evaluated at runtime
+	DeclaredType cty.Type           // cty.NilType if no explicit type was declared
+	TypeDefaults *typeexpr.Defaults // nil when type has no optional defaults
+	Value        hcl.Expression     // evaluated at runtime
 }
 
 // WorkflowHeaderSpec carries the workflow identity and routing fields declared
@@ -393,10 +396,11 @@ type FSMGraph struct {
 // VariableNode is a compiled variable declaration.
 // Variables are read-only in W04; write support is tracked as future work.
 type VariableNode struct {
-	Name        string
-	Type        cty.Type
-	Default     cty.Value // cty.NilVal when no default was declared
-	Description string
+	Name         string
+	Type         cty.Type
+	TypeDefaults *typeexpr.Defaults // nil when type has no optional defaults
+	Default      cty.Value          // cty.NilVal when no default was declared
+	Description  string
 }
 
 // IsRequired returns true when the variable has no declared default.
