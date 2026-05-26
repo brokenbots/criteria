@@ -1,4 +1,5 @@
-workflow "process-one" {
+workflow {
+  name = "process-one"
   version       = "1"
   initial_state = "execute"
   target_state  = "done"
@@ -7,11 +8,11 @@ workflow "process-one" {
 adapter "noop" "default" {}
 
 variable "item" {
-  type = "string"
+  type = string
 }
 
 output "result" {
-  type  = "string"
+  type = string
   value = "processed:${var.item}"
 }
 

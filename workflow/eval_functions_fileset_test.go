@@ -494,7 +494,8 @@ func TestFileset_PairsWithForEach_E2E(t *testing.T) {
 	writeFile(t, filepath.Join(dir, "prompts"), "beta.md", "# beta prompt")
 
 	hclContent := `
-workflow "fileset_e2e" {
+workflow {
+  name = "fileset_e2e"
   version       = "1"
   initial_state = "process"
   target_state  = "done"

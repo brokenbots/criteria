@@ -13,12 +13,12 @@ import (
 // Variables is a map from varName -> hasDefault (true = has default, false = required).
 func minimalCalleeHCL(name string, variables map[string]bool) string {
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("workflow %q {\n  version = \"1\"\n  initial_state = \"done\"\n  target_state  = \"done\"\n}\n\n", name))
+	sb.WriteString(fmt.Sprintf("workflow {\n  name = %q\n  version = \"1\"\n  initial_state = \"done\"\n  target_state  = \"done\"\n}\n\n", name))
 	for varName, hasDefault := range variables {
 		if hasDefault {
-			sb.WriteString(fmt.Sprintf("variable %q {\n  type    = \"string\"\n  default = \"default_value\"\n}\n", varName))
+			sb.WriteString(fmt.Sprintf("variable %q {\n  type    = string\n  default = \"default_value\"\n}\n", varName))
 		} else {
-			sb.WriteString(fmt.Sprintf("variable %q {\n  type = \"string\"\n}\n", varName))
+			sb.WriteString(fmt.Sprintf("variable %q {\n  type = string\n}\n", varName))
 		}
 	}
 	sb.WriteString("state \"done\" {\n  terminal = true\n  success  = true\n}\n")
@@ -47,7 +47,7 @@ func parentHCLWithSubworkflow(swName, source, inputAttrs string) string {
 	} else {
 		sw = fmt.Sprintf("subworkflow %q {\n  source = %q\n}\n\n", swName, source)
 	}
-	return fmt.Sprintf("workflow \"parent\" {\n  version = \"1\"\n  initial_state = \"done\"\n  target_state  = \"done\"\n}\n\n%sstate \"done\" {\n  terminal = true\n  success  = true\n}\n", sw)
+	return fmt.Sprintf("workflow {\n  name = \"parent\"\n  version = \"1\"\n  initial_state = \"done\"\n  target_state  = \"done\"\n}\n\n%sstate \"done\" {\n  terminal = true\n  success  = true\n}\n", sw)
 }
 
 // compileParentSpec parses and compiles a workflow HCL with a LocalSubWorkflowResolver.
@@ -190,7 +190,7 @@ func TestCompileSubworkflows_DirEmptyOfHCL(t *testing.T) {
 func TestCompileSubworkflows_Cycle_Direct(t *testing.T) {
 	tmpDir := t.TempDir()
 	// A subworkflow that references itself.
-	cycleHCL := fmt.Sprintf("workflow \"cycle\" {\n  version = \"1\"\n  initial_state = \"done\"\n  target_state  = \"done\"\n}\n\nsubworkflow \"self\" {\n  source = %q\n}\n\nstate \"done\" {\n  terminal = true\n  success  = true\n}\n", tmpDir+"/cycle")
+	cycleHCL := fmt.Sprintf("workflow {\n  name = \"cycle\"\n  version = \"1\"\n  initial_state = \"done\"\n  target_state  = \"done\"\n}\n\nsubworkflow \"self\" {\n  source = %q\n}\n\nstate \"done\" {\n  terminal = true\n  success  = true\n}\n", tmpDir+"/cycle")
 	innerDir := filepath.Join(tmpDir, "cycle")
 	if err := os.Mkdir(innerDir, 0o755); err != nil {
 		t.Fatalf("create cycle dir: %v", err)
@@ -199,7 +199,7 @@ func TestCompileSubworkflows_Cycle_Direct(t *testing.T) {
 		t.Fatalf("write cycle main.hcl: %v", err)
 	}
 
-	parentHCL := fmt.Sprintf("workflow \"parent\" {\n  version = \"1\"\n  initial_state = \"done\"\n  target_state  = \"done\"\n}\n\nsubworkflow \"cycle\" {\n  source = %q\n}\n\nstate \"done\" {\n  terminal = true\n  success  = true\n}\n", "./cycle")
+	parentHCL := fmt.Sprintf("workflow {\n  name = \"parent\"\n  version = \"1\"\n  initial_state = \"done\"\n  target_state  = \"done\"\n}\n\nsubworkflow \"cycle\" {\n  source = %q\n}\n\nstate \"done\" {\n  terminal = true\n  success  = true\n}\n", "./cycle")
 	_, diags := compileParentSpec(t, parentHCL, tmpDir)
 	if !diags.HasErrors() {
 		t.Fatal("expected cycle detection error, got none")
@@ -224,19 +224,19 @@ func TestCompileSubworkflows_Cycle_Indirect(t *testing.T) {
 	}
 
 	// wf_b references wf_a (back-edge).
-	bHCL := fmt.Sprintf("workflow \"wf_b\" {\n  version = \"1\"\n  initial_state = \"done\"\n  target_state  = \"done\"\n}\n\nsubworkflow \"back\" {\n  source = %q\n}\n\nstate \"done\" {\n  terminal = true\n  success  = true\n}\n", aDir)
+	bHCL := fmt.Sprintf("workflow {\n  name = \"wf_b\"\n  version = \"1\"\n  initial_state = \"done\"\n  target_state  = \"done\"\n}\n\nsubworkflow \"back\" {\n  source = %q\n}\n\nstate \"done\" {\n  terminal = true\n  success  = true\n}\n", aDir)
 	if err := os.WriteFile(filepath.Join(bDir, "main.hcl"), []byte(bHCL), 0o644); err != nil {
 		t.Fatalf("write b main.hcl: %v", err)
 	}
 
 	// wf_a references wf_b.
-	aHCL := fmt.Sprintf("workflow \"wf_a\" {\n  version = \"1\"\n  initial_state = \"done\"\n  target_state  = \"done\"\n}\n\nsubworkflow \"forward\" {\n  source = %q\n}\n\nstate \"done\" {\n  terminal = true\n  success  = true\n}\n", bDir)
+	aHCL := fmt.Sprintf("workflow {\n  name = \"wf_a\"\n  version = \"1\"\n  initial_state = \"done\"\n  target_state  = \"done\"\n}\n\nsubworkflow \"forward\" {\n  source = %q\n}\n\nstate \"done\" {\n  terminal = true\n  success  = true\n}\n", bDir)
 	if err := os.WriteFile(filepath.Join(aDir, "main.hcl"), []byte(aHCL), 0o644); err != nil {
 		t.Fatalf("write a main.hcl: %v", err)
 	}
 
 	// Parent references A.
-	parentHCL := fmt.Sprintf("workflow \"parent\" {\n  version = \"1\"\n  initial_state = \"done\"\n  target_state  = \"done\"\n}\n\nsubworkflow \"wf_a\" {\n  source = %q\n}\n\nstate \"done\" {\n  terminal = true\n  success  = true\n}\n", "./wf_a")
+	parentHCL := fmt.Sprintf("workflow {\n  name = \"parent\"\n  version = \"1\"\n  initial_state = \"done\"\n  target_state  = \"done\"\n}\n\nsubworkflow \"wf_a\" {\n  source = %q\n}\n\nstate \"done\" {\n  terminal = true\n  success  = true\n}\n", "./wf_a")
 	_, diags := compileParentSpec(t, parentHCL, tmpDir)
 	if !diags.HasErrors() {
 		t.Fatal("expected cycle detection error for indirect cycle A→B→A, got none")
@@ -289,7 +289,8 @@ func TestCompileSubworkflows_DeclaredEnvironmentResolves(t *testing.T) {
 	writeSubworkflowDir(t, tmpDir, "inner", minimalCalleeHCL("inner", nil))
 
 	// Parent workflow with a declared environment and a subworkflow referencing it.
-	parentHCL := `workflow "parent" {
+	parentHCL := `workflow {
+  name = "parent"
   version       = "1"
   initial_state = "done"
   target_state  = "done"
@@ -301,7 +302,7 @@ environment "shell" "ci" {
 
 subworkflow "inner_task" {
   source      = "./inner"
-  environment = "shell.ci"
+  environment = shell.ci
 }
 
 state "done" {
@@ -329,7 +330,8 @@ func TestCompileSubworkflows_MultipleDeclarations(t *testing.T) {
 	writeSubworkflowDir(t, tmpDir, "alpha", minimalCalleeHCL("alpha", nil))
 	writeSubworkflowDir(t, tmpDir, "beta", minimalCalleeHCL("beta", nil))
 
-	parentHCL := `workflow "parent" {
+	parentHCL := `workflow {
+  name = "parent"
   version       = "1"
   initial_state = "done"
   target_state  = "done"
@@ -375,7 +377,8 @@ func TestCompileSubworkflows_MultiFileDirectory(t *testing.T) {
 	}
 
 	// main.hcl: workflow header + step + terminal state.
-	mainHCL := `workflow "inner" {
+	mainHCL := `workflow {
+  name = "inner"
   version       = "1"
   initial_state = "done"
   target_state  = "done"
@@ -390,7 +393,7 @@ state "done" {
 	// Content files in a multi-file subworkflow directory do NOT include a
 	// workflow{} header — only one file (typically main.hcl) carries it.
 	varsHCL := `variable "task_name" {
-  type    = "string"
+  type    = string
   default = "default_task"
 }
 `
@@ -427,7 +430,8 @@ func TestCompileSubworkflows_MultiFileSubworkflowDeclarations(t *testing.T) {
 	}
 
 	// main.hcl: workflow with one subworkflow declaration.
-	mainHCL := `workflow "inner" {
+	mainHCL := `workflow {
+  name = "inner"
   version       = "1"
   initial_state = "done"
   target_state  = "done"
@@ -465,7 +469,8 @@ state "done" {
 		t.Fatalf("create sub2 dir: %v", err)
 	}
 	// Each needs at least one .hcl file.
-	if err := os.WriteFile(filepath.Join(sub1Dir, "main.hcl"), []byte(`workflow "sub1" {
+	if err := os.WriteFile(filepath.Join(sub1Dir, "main.hcl"), []byte(`workflow {
+  name = "sub1"
   version       = "1"
   initial_state = "done"
   target_state  = "done"
@@ -473,7 +478,8 @@ state "done" {
 state "done" { terminal = true }`), 0o644); err != nil {
 		t.Fatalf("write sub1/main.hcl: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(sub2Dir, "main.hcl"), []byte(`workflow "sub2" {
+	if err := os.WriteFile(filepath.Join(sub2Dir, "main.hcl"), []byte(`workflow {
+  name = "sub2"
   version       = "1"
   initial_state = "done"
   target_state  = "done"
@@ -502,7 +508,8 @@ state "done" { terminal = true }`), 0o644); err != nil {
 
 // TestCompileSubworkflows_NilResolver errors when SubWorkflowResolver is nil.
 func TestCompileSubworkflows_NilResolver(t *testing.T) {
-	parentHCL := `workflow "parent" {
+	parentHCL := `workflow {
+  name = "parent"
   version       = "1"
   initial_state = "done"
   target_state  = "done"
@@ -683,14 +690,15 @@ func TestCompileSubworkflows_InputTypeMismatch(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	// Callee declares a number variable.
-	calleeHCL := `workflow "inner" {
+	calleeHCL := `workflow {
+  name = "inner"
   version       = "1"
   initial_state = "done"
   target_state  = "done"
 }
 
 variable "count" {
-  type = "number"
+  type = number
 }
 
 state "done" {

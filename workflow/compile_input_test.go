@@ -52,7 +52,8 @@ var testSchemas = map[string]AdapterInfo{
 
 func TestInputRequiredFieldMissing(t *testing.T) {
 	src := `
-workflow "x" {
+workflow {
+  name = "x"
   version       = "0.1"
   initial_state = "run"
   target_state  = "done"
@@ -85,7 +86,8 @@ state "done" { terminal = true }
 
 func TestInputUnknownField(t *testing.T) {
 	src := `
-workflow "x" {
+workflow {
+  name = "x"
   version       = "0.1"
   initial_state = "run"
   target_state  = "done"
@@ -119,7 +121,8 @@ state "done" { terminal = true }
 // TestInputOnLifecycleOpenIsError tests that lifecycle="open" on steps produces a parse-time error.
 func TestInputOnLifecycleOpenIsError(t *testing.T) {
 	src := `
-workflow "x" {
+workflow {
+  name = "x"
   version       = "0.1"
   initial_state = "open"
   target_state  = "done"
@@ -148,7 +151,8 @@ state "done" { terminal = true }
 // TestInputOnLifecycleCloseIsError tests that lifecycle="close" on steps produces a parse-time error.
 func TestInputOnLifecycleCloseIsError(t *testing.T) {
 	src := `
-workflow "x" {
+workflow {
+  name = "x"
   version       = "0.1"
   initial_state = "open"
   target_state  = "done"
@@ -185,7 +189,8 @@ state "done" { terminal = true }
 
 func TestLegacyConfigAttributeEmitsDiagnostic(t *testing.T) {
 	src := `
-workflow "x" {
+workflow {
+  name = "x"
   version       = "0.1"
   initial_state = "run"
   target_state  = "done"
@@ -224,7 +229,8 @@ state "done" { terminal = true }
 func TestInputPermissiveWhenNoSchema(t *testing.T) {
 	// When schemas = nil, any keys should be accepted without error.
 	src := `
-workflow "x" {
+workflow {
+  name = "x"
   version       = "0.1"
   initial_state = "run"
   target_state  = "done"
@@ -257,7 +263,8 @@ state "done" { terminal = true }
 
 func TestInputDecodesNumberAndBoolToString(t *testing.T) {
 	src := `
-workflow "x" {
+workflow {
+  name = "x"
   version       = "0.1"
   initial_state = "run"
   target_state  = "done"
@@ -290,7 +297,8 @@ state "done" { terminal = true }
 func TestInputTypeMismatch_StringForNumber(t *testing.T) {
 	// max_turns is declared as ConfigFieldNumber; passing a string should fail.
 	src := `
-workflow "x" {
+workflow {
+  name = "x"
   version       = "0.1"
   initial_state = "open"
   target_state  = "done"
@@ -331,7 +339,8 @@ state "done" { terminal = true }
 func TestInputTypeMismatch_NumberForString(t *testing.T) {
 	// prompt is declared as ConfigFieldString; passing a number should fail.
 	src := `
-workflow "x" {
+workflow {
+  name = "x"
   version       = "0.1"
   initial_state = "open"
   target_state  = "done"
@@ -370,7 +379,8 @@ state "done" { terminal = true }
 
 func TestInputListStringAcceptsStringTupleLiteral(t *testing.T) {
 	src := `
-workflow "x" {
+workflow {
+  name = "x"
   version       = "0.1"
   initial_state = "run"
   target_state  = "done"
@@ -398,7 +408,8 @@ state "done" { terminal = true }
 
 func TestInputListStringRejectsMixedTupleLiteral(t *testing.T) {
 	src := `
-workflow "x" {
+workflow {
+  name = "x"
   version       = "0.1"
   initial_state = "run"
   target_state  = "done"

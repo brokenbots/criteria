@@ -346,7 +346,8 @@ func TestLoader_Info_PropagatesCapabilitiesViaProto(t *testing.T) {
 // → schemas map → workflow.Compile → adapterHasCapability gate.
 func TestCompile_ParallelGate_ViaRealAdapterInfo(t *testing.T) {
 	const parallelWorkflowSrc = `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "work"
   target_state  = "done"

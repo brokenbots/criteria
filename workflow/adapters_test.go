@@ -28,7 +28,8 @@ func requireExactErrorSummary(t *testing.T, diags hcl.Diagnostics, want string) 
 
 func TestParseAndCompileAdapterLifecycleWorkflow(t *testing.T) {
 	src := `
-workflow "session_flow" {
+workflow {
+  name = "session_flow"
   version       = "0.1"
   initial_state = "run"
   target_state  = "done"
@@ -84,7 +85,8 @@ state "done" { terminal = true }
 // TestStep_LegacyLifecycleAttr_HardError tests that lifecycle attributes on steps produce a hard parse error.
 func TestStep_LegacyLifecycleAttr_HardError(t *testing.T) {
 	src := `
-workflow "test" {
+workflow {
+  name = "test"
   version       = "0.1"
   initial_state = "step_one"
   target_state  = "done"
@@ -116,7 +118,8 @@ func TestCompileAdapterValidationErrors(t *testing.T) {
 		{
 			name: "undeclared adapter",
 			src: `
-workflow "x" {
+workflow {
+  name = "x"
   version = "0.1"
   initial_state = "a"
   target_state = "done"
@@ -132,7 +135,8 @@ state "done" { terminal = true }
 		{
 			name: "duplicate adapter",
 			src: `
-workflow "x" {
+workflow {
+  name = "x"
   version = "0.1"
   initial_state = "a"
   target_state = "done"
@@ -154,7 +158,8 @@ state "done" { terminal = true }
 		{
 			name: "invalid on_crash enum",
 			src: `
-workflow "x" {
+workflow {
+  name = "x"
   version = "0.1"
   initial_state = "a"
   target_state = "done"

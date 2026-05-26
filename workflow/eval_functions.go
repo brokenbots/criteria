@@ -17,6 +17,7 @@ import (
 
 	"github.com/zclconf/go-cty/cty"
 	"github.com/zclconf/go-cty/cty/function"
+	"github.com/zclconf/go-cty/cty/function/stdlib"
 )
 
 const (
@@ -99,13 +100,15 @@ func DefaultFunctionOptions(workflowDir string) FunctionOptions {
 
 // workflowFunctions returns the map of HCL expression functions to register
 // in the workflow evaluation context.
+//
+// Registration order: stdlib goes first, then Criteria-specific functions
+// are layered on top. This means our custom implementations (file, fileexists,
+// etc.) take precedence if a name collision ever occurs. In practice we rely on
+// community stdlib implementations and do not intentionally override.
 func workflowFunctions(opts FunctionOptions) map[string]function.Function {
-	out := map[string]function.Function{
-		"file":            fileFunction(opts),
-		"fileexists":      fileExistsFunction(opts),
-		"fileset":         filesetFunction(opts),
-		"templatefile":    templatefileFunction(opts),
-		"trimfrontmatter": trimFrontmatterFunction(),
+	out := map[string]function.Function{}
+	for k, v := range stdlibFunctions() {
+		out[k] = v
 	}
 	for k, v := range registerHashFunctions() {
 		out[k] = v
@@ -116,7 +119,204 @@ func workflowFunctions(opts FunctionOptions) map[string]function.Function {
 	for k, v := range registerDynamicFunctions() {
 		out[k] = v
 	}
+	for k, v := range registerStringFunctions() {
+		out[k] = v
+	}
+	out["file"] = fileFunction(opts)
+	out["fileexists"] = fileExistsFunction(opts)
+	out["fileset"] = filesetFunction(opts)
+	out["templatefile"] = templatefileFunction(opts)
+	out["trimfrontmatter"] = trimFrontmatterFunction()
 	return out
+}
+
+// registerStringFunctions provides string utility functions that exist in
+// Terraform but are not yet available in cty/function/stdlib.
+func registerStringFunctions() map[string]function.Function {
+	return map[string]function.Function{
+		"startswith": startswithFunction(),
+		"endswith":   endswithFunction(),
+		"strrev":     strrevFunction(),
+	}
+}
+
+func startswithFunction() function.Function {
+	return function.New(&function.Spec{
+		Params: []function.Parameter{
+			{Name: "string", Type: cty.String},
+			{Name: "prefix", Type: cty.String},
+		},
+		Type: function.StaticReturnType(cty.Bool),
+		Impl: func(args []cty.Value, _ cty.Type) (cty.Value, error) {
+			return cty.BoolVal(strings.HasPrefix(args[0].AsString(), args[1].AsString())), nil
+		},
+	})
+}
+
+func endswithFunction() function.Function {
+	return function.New(&function.Spec{
+		Params: []function.Parameter{
+			{Name: "string", Type: cty.String},
+			{Name: "suffix", Type: cty.String},
+		},
+		Type: function.StaticReturnType(cty.Bool),
+		Impl: func(args []cty.Value, _ cty.Type) (cty.Value, error) {
+			return cty.BoolVal(strings.HasSuffix(args[0].AsString(), args[1].AsString())), nil
+		},
+	})
+}
+
+func strrevFunction() function.Function {
+	return function.New(&function.Spec{
+		Params: []function.Parameter{{Name: "string", Type: cty.String}},
+		Type:   function.StaticReturnType(cty.String),
+		Impl: func(args []cty.Value, _ cty.Type) (cty.Value, error) {
+			s := args[0].AsString()
+			// Reverse by rune to preserve multi-byte UTF-8 characters.
+			runes := []rune(s)
+			for i, j := 0, len(runes)-1; i < j; i, j = i+1, j-1 {
+				runes[i], runes[j] = runes[j], runes[i]
+			}
+			return cty.StringVal(string(runes)), nil
+		},
+	})
+}
+
+// stdlibFunctions registers all functions from cty/function/stdlib.
+// Criteria-specific functions are layered on top in workflowFunctions so that
+// custom implementations (file, fileexists, etc.) take precedence only when
+// we explicitly choose to override.
+func stdlibFunctions() map[string]function.Function {
+	out := make(map[string]function.Function)
+	mergeFunctions(out, stdlibArithmeticFunctions())
+	mergeFunctions(out, stdlibStringFunctions())
+	mergeFunctions(out, stdlibCollectionFunctions())
+	mergeFunctions(out, stdlibSetFunctions())
+	mergeFunctions(out, stdlibEncodingFunctions())
+	mergeFunctions(out, stdlibLogicalFunctions())
+	mergeFunctions(out, stdlibDateFunctions())
+	return out
+}
+
+func mergeFunctions(dst, src map[string]function.Function) {
+	for k, v := range src {
+		dst[k] = v
+	}
+}
+
+func stdlibArithmeticFunctions() map[string]function.Function {
+	return map[string]function.Function{
+		"abs":      stdlib.AbsoluteFunc,
+		"add":      stdlib.AddFunc,
+		"ceil":     stdlib.CeilFunc,
+		"divide":   stdlib.DivideFunc,
+		"floor":    stdlib.FloorFunc,
+		"int":      stdlib.IntFunc,
+		"log":      stdlib.LogFunc,
+		"max":      stdlib.MaxFunc,
+		"min":      stdlib.MinFunc,
+		"modulo":   stdlib.ModuloFunc,
+		"multiply": stdlib.MultiplyFunc,
+		"negate":   stdlib.NegateFunc,
+		"parseint": stdlib.ParseIntFunc,
+		"pow":      stdlib.PowFunc,
+		"signum":   stdlib.SignumFunc,
+		"subtract": stdlib.SubtractFunc,
+	}
+}
+
+func stdlibStringFunctions() map[string]function.Function {
+	return map[string]function.Function{
+		"chomp":      stdlib.ChompFunc,
+		"format":     stdlib.FormatFunc,
+		"formatdate": stdlib.FormatDateFunc,
+		"formatlist": stdlib.FormatListFunc,
+		"indent":     stdlib.IndentFunc,
+		"join":       stdlib.JoinFunc,
+		"length":     stdlib.LengthFunc,
+		"lower":      stdlib.LowerFunc,
+		"replace":    stdlib.ReplaceFunc,
+		"reverse":    stdlib.ReverseFunc,
+		"split":      stdlib.SplitFunc,
+		"strlen":     stdlib.StrlenFunc,
+		"substr":     stdlib.SubstrFunc,
+		"title":      stdlib.TitleFunc,
+		"trim":       stdlib.TrimFunc,
+		"trimprefix": stdlib.TrimPrefixFunc,
+		"trimspace":  stdlib.TrimSpaceFunc,
+		"trimsuffix": stdlib.TrimSuffixFunc,
+		"upper":      stdlib.UpperFunc,
+	}
+}
+
+func stdlibCollectionFunctions() map[string]function.Function {
+	return map[string]function.Function{
+		"chunklist":    stdlib.ChunklistFunc,
+		"coalesce":     stdlib.CoalesceFunc,
+		"coalescelist": stdlib.CoalesceListFunc,
+		"compact":      stdlib.CompactFunc,
+		"concat":       stdlib.ConcatFunc,
+		"contains":     stdlib.ContainsFunc,
+		"csvdecode":    stdlib.CSVDecodeFunc,
+		"distinct":     stdlib.DistinctFunc,
+		"element":      stdlib.ElementFunc,
+		"flatten":      stdlib.FlattenFunc,
+		"index":        stdlib.IndexFunc,
+		"keys":         stdlib.KeysFunc,
+		"lookup":       stdlib.LookupFunc,
+		"merge":        stdlib.MergeFunc,
+		"range":        stdlib.RangeFunc,
+		"regex":        stdlib.RegexFunc,
+		"regexall":     stdlib.RegexAllFunc,
+		"regexreplace": stdlib.RegexReplaceFunc,
+		"reverselist":  stdlib.ReverseListFunc,
+		"slice":        stdlib.SliceFunc,
+		"sort":         stdlib.SortFunc,
+		"values":       stdlib.ValuesFunc,
+		"zipmap":       stdlib.ZipmapFunc,
+	}
+}
+
+func stdlibSetFunctions() map[string]function.Function {
+	return map[string]function.Function{
+		"sethaselement":          stdlib.SetHasElementFunc,
+		"setintersection":        stdlib.SetIntersectionFunc,
+		"setproduct":             stdlib.SetProductFunc,
+		"setsubtract":            stdlib.SetSubtractFunc,
+		"setsymmetricdifference": stdlib.SetSymmetricDifferenceFunc,
+		"setunion":               stdlib.SetUnionFunc,
+	}
+}
+
+func stdlibEncodingFunctions() map[string]function.Function {
+	return map[string]function.Function{
+		"byteslen":   stdlib.BytesLenFunc,
+		"bytesslice": stdlib.BytesSliceFunc,
+		"jsondecode": stdlib.JSONDecodeFunc,
+		"jsonencode": stdlib.JSONEncodeFunc,
+	}
+}
+
+func stdlibLogicalFunctions() map[string]function.Function {
+	return map[string]function.Function{
+		"and":                  stdlib.AndFunc,
+		"assertnotnull":        stdlib.AssertNotNullFunc,
+		"equal":                stdlib.EqualFunc,
+		"greaterthan":          stdlib.GreaterThanFunc,
+		"greaterthanorequalto": stdlib.GreaterThanOrEqualToFunc,
+		"hasindex":             stdlib.HasIndexFunc,
+		"lessthan":             stdlib.LessThanFunc,
+		"lessthanorequalto":    stdlib.LessThanOrEqualToFunc,
+		"not":                  stdlib.NotFunc,
+		"notequal":             stdlib.NotEqualFunc,
+		"or":                   stdlib.OrFunc,
+	}
+}
+
+func stdlibDateFunctions() map[string]function.Function {
+	return map[string]function.Function{
+		"timeadd": stdlib.TimeAddFunc,
+	}
 }
 
 // fileFunction implements the file(path) → string expression function.

@@ -1,4 +1,5 @@
-workflow "for-each" {
+workflow {
+  name = "for-each"
   version       = "1"
   initial_state = "process"
   target_state  = "done"

@@ -155,6 +155,7 @@ func TestApplyLocal_LocalApprovalDisabled_ApprovalNodeRejected(t *testing.T) {
 	// Explicitly clear in case the process environment has it set.
 	t.Setenv("CRITERIA_LOCAL_APPROVAL", "")
 	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
+	t.Setenv("CRITERIA_LOCAL_APPROVAL", "")
 
 	wf := filepath.Join("testdata", "local_approval_simple")
 	err := runApply(context.Background(), applyOptions{workflowPath: wf})
@@ -171,6 +172,7 @@ func TestApplyLocal_LocalApprovalDisabled_SignalWaitRejected(t *testing.T) {
 	// Explicitly clear in case the process environment has it set.
 	t.Setenv("CRITERIA_LOCAL_APPROVAL", "")
 	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
+	t.Setenv("CRITERIA_LOCAL_APPROVAL", "")
 
 	wf := filepath.Join("testdata", "local_signal_wait")
 	err := runApply(context.Background(), applyOptions{workflowPath: wf})

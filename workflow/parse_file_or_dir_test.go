@@ -14,7 +14,8 @@ func TestParseFileOrDir_FilePath_DelegatesToParentDir(t *testing.T) {
 	dir := t.TempDir()
 
 	// workflow.hcl — the file we'll reference by path
-	writeHCLFile(t, dir, "workflow", `workflow "multi" {
+	writeHCLFile(t, dir, "workflow", `workflow {
+  name = "multi"
   version       = "0.1"
   initial_state = "run"
   target_state  = "done"
@@ -79,7 +80,8 @@ func TestParseFileOrDir_FilePath_SingleFileDir(t *testing.T) {
 func TestParseFileOrDir_DirPath(t *testing.T) {
 	dir := t.TempDir()
 
-	writeHCLFile(t, dir, "workflow", `workflow "dir_test" {
+	writeHCLFile(t, dir, "workflow", `workflow {
+  name = "dir_test"
   version       = "0.1"
   initial_state = "run"
   target_state  = "done"
@@ -126,7 +128,8 @@ func TestParseFileOrDir_NonHCLFile_Error(t *testing.T) {
 	dir := t.TempDir()
 
 	// Create a valid workflow directory alongside a non-.hcl file.
-	writeHCLFile(t, dir, "workflow", `workflow "test" {
+	writeHCLFile(t, dir, "workflow", `workflow {
+  name = "test"
   version       = "0.1"
   initial_state = "run"
   target_state  = "done"
@@ -165,7 +168,8 @@ func TestParseFileOrDir_FilePath_RejectsCollectionDirectory(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "wf_a.hcl"), []byte(singleFileContent), 0o644); err != nil {
 		t.Fatalf("write wf_a.hcl: %v", err)
 	}
-	bContent := `workflow "other" {
+	bContent := `workflow {
+  name = "other"
   version       = "0.1"
   initial_state = "run"
   target_state  = "done"

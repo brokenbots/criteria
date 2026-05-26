@@ -82,7 +82,7 @@ func CompileWithContext(ctx context.Context, spec *Spec, schemas map[string]Adap
 		return nil, hcl.Diagnostics{{
 			Severity: hcl.DiagError,
 			Summary:  "no workflow block declared",
-			Detail:   `each workflow directory must contain exactly one workflow "<name>" { version = "..." initial_state = "..." target_state = "..." } header block; none was found. Wrap the workflow header attributes in a workflow "<name>" { ... } block.`,
+			Detail:   `each workflow directory must contain exactly one workflow { name = "..." version = "..." initial_state = "..." target_state = "..." } header block; none was found. Wrap the workflow header attributes in a workflow { ... } block.`,
 		}}
 	}
 	if spec.Header.Version == "" {
@@ -94,7 +94,7 @@ func CompileWithContext(ctx context.Context, spec *Spec, schemas map[string]Adap
 	if spec.Header.TargetState == "" {
 		diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: "workflow.target_state is required"})
 	}
-	if spec.Policy != nil && spec.Policy.MaxVisitsWarnThreshold != nil && *spec.Policy.MaxVisitsWarnThreshold < 0 {
+	if spec.Header.Policy != nil && spec.Header.Policy.MaxVisitsWarnThreshold != nil && *spec.Header.Policy.MaxVisitsWarnThreshold < 0 {
 		diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: "policy.max_visits_warn_threshold must be >= 0 (use 0 to disable warnings, omit to use the default of 200)"})
 	}
 
@@ -154,18 +154,18 @@ func newFSMGraph(spec *Spec) *FSMGraph {
 		Switches:        map[string]*SwitchNode{},
 		Policy:          DefaultPolicy,
 	}
-	if spec.Policy != nil {
-		if spec.Policy.MaxTotalSteps > 0 {
-			g.Policy.MaxTotalSteps = spec.Policy.MaxTotalSteps
+	if spec.Header.Policy != nil {
+		if spec.Header.Policy.MaxTotalSteps > 0 {
+			g.Policy.MaxTotalSteps = spec.Header.Policy.MaxTotalSteps
 		}
-		if spec.Policy.MaxStepRetries > 0 {
-			g.Policy.MaxStepRetries = spec.Policy.MaxStepRetries
+		if spec.Header.Policy.MaxStepRetries > 0 {
+			g.Policy.MaxStepRetries = spec.Header.Policy.MaxStepRetries
 		}
 		// MaxVisitsWarnThreshold: nil means "not set" (keep default of 200);
 		// 0 explicitly disables the warning; positive values override the default.
 		// Negative values are rejected at compile time before this point.
-		if spec.Policy.MaxVisitsWarnThreshold != nil {
-			g.Policy.MaxVisitsWarnThreshold = *spec.Policy.MaxVisitsWarnThreshold
+		if spec.Header.Policy.MaxVisitsWarnThreshold != nil {
+			g.Policy.MaxVisitsWarnThreshold = *spec.Header.Policy.MaxVisitsWarnThreshold
 		}
 	}
 	return g
@@ -189,6 +189,7 @@ func resolveTransitions(g *FSMGraph) hcl.Diagnostics {
 		}
 	}
 	for _, step := range g.Steps {
+		// Validate explicit outcomes.
 		for outcome, co := range step.Outcomes {
 			if co.Next == "_continue" || co.Next == ReturnSentinel {
 				// _continue is a synthetic engine-internal target, not a graph node.
@@ -200,6 +201,18 @@ func resolveTransitions(g *FSMGraph) hcl.Diagnostics {
 					Severity: hcl.DiagError,
 					Summary:  fmt.Sprintf("step %q outcome %q -> unknown target %q", step.Name, outcome, co.Next),
 				})
+			}
+		}
+		// Validate default outcome, if present.
+		if step.DefaultOutcome != nil {
+			co := step.DefaultOutcome
+			if co.Next != "_continue" && co.Next != ReturnSentinel {
+				if _, ok := g.Lookup(co.Next); !ok {
+					diags = append(diags, &hcl.Diagnostic{
+						Severity: hcl.DiagError,
+						Summary:  fmt.Sprintf("step %q default outcome -> unknown target %q", step.Name, co.Next),
+					})
+				}
 			}
 		}
 	}

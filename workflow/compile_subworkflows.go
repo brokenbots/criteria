@@ -80,12 +80,14 @@ func compileSingleSubworkflow(ctx context.Context, g *FSMGraph, swSpec Subworkfl
 
 	inputs, inputDiags := extractSubworkflowInputs(swSpec, calleeGraph.Variables)
 	diags = append(diags, inputDiags...)
+	envKey, envDiags := resolveEnvironmentExpr(swSpec.Environment, fmt.Sprintf("subworkflow %q", swSpec.Name))
+	diags = append(diags, envDiags...)
 	g.Subworkflows[swSpec.Name] = &SubworkflowNode{
 		Name:         swSpec.Name,
 		SourcePath:   resolvedDir,
 		Body:         calleeGraph,
 		BodyEntry:    calleeGraph.InitialState,
-		Environment:  swSpec.Environment,
+		Environment:  envKey,
 		Inputs:       inputs,
 		DeclaredVars: calleeGraph.Variables,
 	}

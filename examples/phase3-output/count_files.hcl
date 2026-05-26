@@ -9,7 +9,9 @@
 # Outputs are declared at the workflow's top level and are emitted
 # when the workflow reaches its terminal state.
 
-workflow "count_files" {
+workflow {
+
+  name = "count_files"
   version       = "0.1"
   initial_state = "count"
   target_state  = "done"
@@ -26,21 +28,21 @@ local "total" {
 
 # Output 1: A summary message (computed from local variable).
 output "summary" {
-  type        = "string"
+  type = string
   description = "A summary of the file count operation"
   value       = "Found ${local.total} files in the directory"
 }
 
 # Output 2: The actual count (number type, using local variable).
 output "file_count" {
-  type        = "number"
+  type = number
   description = "Total number of files counted"
   value       = local.total
 }
 
 # Output 3: A summary status.
 output "status" {
-  type        = "string"
+  type = string
   description = "Final execution status"
   value       = "File counting completed"
 }

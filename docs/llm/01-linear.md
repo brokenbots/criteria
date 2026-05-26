@@ -9,7 +9,8 @@ looping. Each step can consume outputs from any earlier step via
 ## Minimal example
 
 ```hcl
-workflow "linear" {
+workflow {
+  name = "linear"
   version       = "1"
   initial_state = "fetch"
   target_state  = "done"

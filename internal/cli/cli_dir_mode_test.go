@@ -18,7 +18,8 @@ func writeMultiFileWorkflow(t *testing.T) (dir, filePath string) {
 	dir = t.TempDir()
 
 	header := strings.TrimSpace(`
-workflow "dir_mode" {
+workflow {
+  name = "dir_mode"
   version       = "0.1"
   initial_state = "run"
   target_state  = "done"
@@ -217,7 +218,8 @@ func writeFileFunctionWorkflow(t *testing.T) (dir, filePath string) {
 	}
 
 	header := strings.TrimSpace(`
-workflow "file_func_dir_mode" {
+workflow {
+  name = "file_func_dir_mode"
   version       = "0.1"
   initial_state = "run"
   target_state  = "done"

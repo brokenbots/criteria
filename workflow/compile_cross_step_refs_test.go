@@ -30,7 +30,8 @@ func outputSchemaFor(fields ...string) map[string]AdapterInfo {
 //   - state targets for both arms
 func crossStepSwitchSrc(field string) string {
 	return `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "build"
   target_state  = "done"
@@ -55,7 +56,8 @@ state "done" { terminal = true }
 // that carries an output projection referencing steps.build.<field>.
 func crossStepSwitchCondOutputSrc(field string) string {
 	return `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "build"
   target_state  = "done"
@@ -82,7 +84,8 @@ state "done" { terminal = true }
 //   - step "run" whose input references steps.build.<field>
 func crossStepInputSrc(field string) string {
 	return `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "build"
   target_state  = "done"
@@ -107,7 +110,8 @@ state "done" { terminal = true }
 // success outcome has an output projection referencing steps.build.<field>.
 func crossStepOutcomeSrc(field string) string {
 	return `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "build"
   target_state  = "done"
@@ -298,7 +302,8 @@ func TestWarnCrossStepField_SwitchCondOutputUnknownField(t *testing.T) {
 // returns a valid graph.
 func TestWarnCrossStepField_UnknownStepName(t *testing.T) {
 	src := `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "run"
   target_state  = "done"

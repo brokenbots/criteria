@@ -1,4 +1,5 @@
-workflow "linear" {
+workflow {
+  name = "linear"
   version       = "1"
   initial_state = "fetch"
   target_state  = "done"

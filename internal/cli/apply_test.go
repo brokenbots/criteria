@@ -28,7 +28,8 @@ func TestApplyLocal_NoopAdapter_EmitsExpectedEvents(t *testing.T) {
 	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
 
 	workflowPath := writeWorkflowFile(t, `
-workflow "local_apply_noop" {
+workflow {
+  name = "local_apply_noop"
   version = "0.1"
   initial_state = "run_adapter"
   target_state  = "done"
@@ -172,7 +173,8 @@ func TestWriteRunCheckpoint_Success(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("CRITERIA_STATE_DIR", dir)
 
-	wfFile := writeWorkflowFile(t, `workflow "w" {
+	wfFile := writeWorkflowFile(t, `workflow {
+  name = "w"
  version = "0.1" 
 }`)
 	log := newApplyLogger()
@@ -204,7 +206,8 @@ func TestRunApply_InvalidWorkflow_ReturnsError(t *testing.T) {
 
 func TestRunApply_BadEventsFile_ReturnsError(t *testing.T) {
 	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
-	wfFile := writeWorkflowFile(t, `workflow "w" {
+	wfFile := writeWorkflowFile(t, `workflow {
+  name = "w"
   version = "0.1"
   initial_state = "done"
   target_state  = "done"
@@ -234,7 +237,8 @@ func TestResumeInFlightRuns_ServerFn_EmptyCheckpoints(t *testing.T) {
 
 func TestRunApplyLocal_InvalidOutputMode_ReturnsError(t *testing.T) {
 	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
-	wfFile := writeWorkflowFile(t, `workflow "w" {
+	wfFile := writeWorkflowFile(t, `workflow {
+  name = "w"
  version = "0.1" 
 }`)
 	err := runApply(context.Background(), applyOptions{

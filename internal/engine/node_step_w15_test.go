@@ -1,11 +1,11 @@
 package engine
 
 // node_step_w15_test.go — W15 engine tests for outcome routing:
-//   - default_outcome mapping for unknown adapter outcomes
+//   - outcome "default" mapping for unknown adapter outcomes
 //   - next = "return" at top-level exits successfully
 //   - next = "return" in a subworkflow scope bubbles to parent
 //   - output projection stores projected keys in run vars for subsequent steps
-//   - unknown outcome without default_outcome causes run failure
+//   - unknown outcome without outcome "default" block causes run failure
 //   - event emission for defaulted/unknown outcomes
 //   - subworkflow.* namespace accessible in outcome.output expressions
 
@@ -41,20 +41,21 @@ func (s *outcomeSink) OnRunOutputs(outputs []map[string]string) {
 }
 
 // TestStep_DefaultOutcome_AppliedOnUnknownName verifies that when an adapter
-// returns an outcome not in the declared set and default_outcome is configured,
+// returns an outcome not in the declared set and outcome "default" is configured,
 // the engine maps the outcome, the run completes successfully, and the
 // OnStepOutcomeDefaulted event is emitted with the original and mapped names.
 func TestStep_DefaultOutcome_AppliedOnUnknownName(t *testing.T) {
 	g := compile(t, `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "work"
   target_state  = "done"
 }
 step "work" {
   target          = adapter.fake
-  default_outcome = "success"
   outcome "success" { next = "done" }
+  outcome "default" { next = "done" }
 }
 state "done" { terminal = true }`)
 	sink := &outcomeSink{}
@@ -78,17 +79,18 @@ state "done" { terminal = true }`)
 	if d.orig != "unmapped_name" {
 		t.Errorf("defaulted.orig=%q want %q", d.orig, "unmapped_name")
 	}
-	if d.mapped != "success" {
-		t.Errorf("defaulted.mapped=%q want %q", d.mapped, "success")
+	if d.mapped != "default" {
+		t.Errorf("defaulted.mapped=%q want %q", d.mapped, "default")
 	}
 }
 
 // TestStep_DefaultOutcomeUnset_UnknownNameErrors verifies that an adapter
-// returning an unknown outcome with no default_outcome set causes a run error
+// returning an unknown outcome with no outcome "default" block set causes a run error
 // and emits OnStepOutcomeUnknown.
 func TestStep_DefaultOutcomeUnset_UnknownNameErrors(t *testing.T) {
 	g := compile(t, `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "work"
   target_state  = "done"
@@ -104,7 +106,7 @@ state "done" { terminal = true }`)
 	}}
 	err := NewTestEngine(g, loader, sink).Run(context.Background())
 	if err == nil {
-		t.Fatal("expected error for unknown outcome without default_outcome, got nil")
+		t.Fatal("expected error for unknown outcome without outcome \"default\" block, got nil")
 	}
 	// Verify OnStepOutcomeUnknown was emitted.
 	if len(sink.unknown) != 1 {
@@ -123,7 +125,8 @@ state "done" { terminal = true }`)
 // next = "return" at the top level completes the run as terminal-success.
 func TestStep_OutcomeReturn_TopLevelTerminal(t *testing.T) {
 	g := compile(t, `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "work"
   target_state  = "done"
@@ -226,7 +229,8 @@ func TestStep_OutcomeOutputProjection_PassedToNextStep(t *testing.T) {
 	// This test uses an HCL workflow where step "a" projects its output,
 	// and step "b" references it in its input. The run must succeed end-to-end.
 	g := compile(t, `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "a"
   target_state  = "done"
@@ -261,7 +265,8 @@ state "done" { terminal = true }`)
 // OnRunOutputs with correct type encoding (not double-stringified).
 func TestStep_OutcomeReturnOutputOverridesOutputBlocks(t *testing.T) {
 	g := compile(t, `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "work"
   target_state  = "done"

@@ -241,7 +241,7 @@ func (s *Sink) OnRunOutputs(outputs []map[string]string) {
 }
 
 // OnStepOutcomeDefaulted is emitted when a step returns an unknown outcome and
-// default_outcome mapping is applied (W15).
+// the outcome "default" block is applied (W15).
 func (s *Sink) OnStepOutcomeDefaulted(step, original, mapped string) {
 	s.publish(&pb.AdapterEvent{Step: step, Kind: "step.outcome.defaulted", Data: encodeAdapterData(map[string]any{
 		"original": original,
@@ -250,7 +250,7 @@ func (s *Sink) OnStepOutcomeDefaulted(step, original, mapped string) {
 }
 
 // OnStepOutcomeUnknown is emitted when a step returns an outcome not in its
-// declared set and no default_outcome is configured (W15).
+// declared set and no outcome "default" block is configured (W15).
 func (s *Sink) OnStepOutcomeUnknown(step, outcome string) {
 	s.publish(&pb.AdapterEvent{Step: step, Kind: "step.outcome.unknown", Data: encodeAdapterData(map[string]any{
 		"outcome": outcome,

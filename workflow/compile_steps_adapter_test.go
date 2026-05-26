@@ -11,7 +11,8 @@ import (
 // compile with the targeted diagnostic naming the agent config block as the fix.
 func TestStepInputMisplacedCopilotAgentField(t *testing.T) {
 	src := `
-workflow "x" {
+workflow {
+  name = "x"
   version       = "0.1"
   initial_state = "open"
   target_state  = "done"
@@ -61,7 +62,8 @@ state "done" { terminal = true }
 // adapter-known agent-level fields.
 func TestStepInputUnknownFieldNonCopilotAdapterKeepsGenericDiagnostic(t *testing.T) {
 	src := `
-workflow "x" {
+workflow {
+  name = "x"
   version       = "0.1"
   initial_state = "run"
   target_state  = "done"
@@ -100,7 +102,8 @@ state "done" { terminal = true }
 // Additional: reasoning_effort in step input for copilot is valid (it's in InputSchema).
 func TestStepInputReasoningEffortAcceptedForCopilot(t *testing.T) {
 	src := `
-workflow "x" {
+workflow {
+  name = "x"
   version       = "0.1"
   initial_state = "open"
   target_state  = "done"
@@ -147,7 +150,8 @@ state "done" { terminal = true }
 // canonical SDK kind "read". The alias must still be accepted (no error).
 func TestCopilotAllowToolsAliasWarning(t *testing.T) {
 	src := `
-workflow "x" {
+workflow {
+  name = "x"
   version       = "0.1"
   initial_state = "open"
   target_state  = "done"
@@ -222,7 +226,8 @@ state "done" { terminal = true }
 // Copilot SDK kind like "read" does NOT trigger a warning.
 func TestCopilotAllowToolsCanonicalNoWarning(t *testing.T) {
 	src := `
-workflow "x" {
+workflow {
+  name = "x"
   version       = "0.1"
   initial_state = "open"
   target_state  = "done"

@@ -16,6 +16,7 @@ import (
 
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapterhost"
+	"github.com/brokenbots/criteria/internal/testutil"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -153,7 +154,7 @@ func injectDefaultAdapters(src string) string {
 	adapterDecls := injected.String()
 
 	// Inject adapters after the workflow block closing brace (top level)
-	workflowStart := strings.Index(src, "workflow \"")
+	workflowStart := strings.Index(src, "workflow {")
 	if workflowStart != -1 {
 		bracePos := strings.Index(src[workflowStart:], "{") + workflowStart
 		depth := 0
@@ -209,7 +210,8 @@ func NewTestEngine(g *workflow.FSMGraph, loader adapterhost.Loader, sink Sink, o
 
 func TestEngineHappyPath(t *testing.T) {
 	g := compile(t, `
-workflow "t" {
+workflow {
+  name = "t"
   version = "0.1"
   initial_state = "a"
   target_state  = "done"
@@ -238,7 +240,8 @@ state "done" { terminal = true }`)
 
 func TestEngineErrorMappedToFailureOutcome(t *testing.T) {
 	g := compile(t, `
-workflow "t" {
+workflow {
+  name = "t"
   version = "0.1"
   initial_state = "a"
   target_state  = "fail"
@@ -265,17 +268,20 @@ state "fail" {
 
 func TestEngineMaxStepsGuard(t *testing.T) {
 	g := compile(t, `
-workflow "t" {
+workflow {
+  name = "t"
   version = "0.1"
   initial_state = "a"
   target_state  = "done"
+
+  policy { max_total_steps = 3 }
 }
 step "a" {
   target = adapter.fake
   outcome "again" { next = "a" }
 }
 state "done" { terminal = true }
-policy { max_total_steps = 3 }`)
+`)
 	sink := &fakeSink{}
 	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": &fakeAdapter{name: "fake", outcome: "again"}}}
 	err := NewTestEngine(g, loader, sink).Run(context.Background())
@@ -397,6 +403,17 @@ func (s *captureStepEventSink) StepEventSink(string) adapter.EventSink {
 	return captureEventSink{s: s}
 }
 
+func (s *captureStepEventSink) firstAdapterEvent(kind string) (map[string]any, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, evt := range s.events {
+		if evt.kind == kind {
+			return evt.data, true
+		}
+	}
+	return nil, false
+}
+
 func (s *captureStepEventSink) sawAdapterKind(kind string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -465,14 +482,165 @@ func buildNoopAdapter(t *testing.T) string {
 	return adapterBin
 }
 
+// TestEnginePermissionGrantAndDeny verifies the full permission-gating flow:
+// a step with allow_tools=["read_file"] against the permissive test adapter
+// that requests two tools produces exactly one permission.granted event for
+// read_file and one permission.denied event for write_file, and the run ends
+// in needs_review (because the adapter returns needs_review on any denial).
+func TestEnginePermissionGrantAndDeny(t *testing.T) {
+	adapterBin := testutil.BuildPermissiveAdapter(t)
+	loader := adapterhost.NewLoaderWithDiscovery(func(string) (string, error) {
+		return adapterBin, nil
+	})
+	t.Cleanup(func() { _ = loader.Shutdown(context.Background()) })
+
+	g := compile(t, `
+workflow {
+  name = "perm"
+  version       = "0.1"
+  initial_state = "run"
+  target_state  = "done"
+}
+
+adapter "permissive" "bot" { }
+
+step "run" {
+  target = adapter.permissive.bot
+  input { perm_tools = "read_file,write_file" }
+  allow_tools = ["read_file"]
+  outcome "success"      { next = "done" }
+  outcome "needs_review" { next = "done" }
+}
+state "done" { terminal = true }`)
+
+	sink := &captureStepEventSink{}
+	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if sink.terminal != "done" || !sink.terminalOK {
+		t.Fatalf("terminal: %s ok=%v", sink.terminal, sink.terminalOK)
+	}
+	if !sink.sawAdapterKind("permission.granted") {
+		t.Error("expected permission.granted event")
+	}
+	if !sink.sawAdapterKind("permission.denied") {
+		t.Error("expected permission.denied event")
+	}
+	if sink.sawAdapterKind("permission.request") {
+		t.Error("unexpected legacy permission.request event: policy should emit granted/denied instead")
+	}
+	granted, ok := sink.firstAdapterEvent("permission.granted")
+	if !ok {
+		t.Fatal("expected permission.granted payload")
+	}
+	if granted["pattern"] != "read_file" {
+		t.Fatalf("permission.granted pattern=%v want read_file", granted["pattern"])
+	}
+	if granted["request_id"] == "" {
+		t.Fatal("permission.granted request_id must be non-empty")
+	}
+	denied, ok := sink.firstAdapterEvent("permission.denied")
+	if !ok {
+		t.Fatal("expected permission.denied payload")
+	}
+	if denied["reason"] == "" {
+		t.Fatal("permission.denied reason must be non-empty")
+	}
+}
+
+// TestEngineDefaultPolicyDeniesAll verifies that a workflow without allow_tools
+// produces a permission.denied event for every tool request and no
+// permission.granted events.
+func TestEngineDefaultPolicyDeniesAll(t *testing.T) {
+	adapterBin := testutil.BuildPermissiveAdapter(t)
+	loader := adapterhost.NewLoaderWithDiscovery(func(string) (string, error) {
+		return adapterBin, nil
+	})
+	t.Cleanup(func() { _ = loader.Shutdown(context.Background()) })
+
+	g := compile(t, `
+workflow {
+  name = "perm-deny"
+  version       = "0.1"
+  initial_state = "run"
+  target_state  = "done"
+}
+
+adapter "permissive" "bot" { }
+
+step "run" {
+  target = adapter.permissive.bot
+  input { perm_tools = "read_file" }
+  outcome "needs_review" { next = "done" }
+  outcome "success"      { next = "done" }
+}
+state "done" { terminal = true }`)
+
+	sink := &captureStepEventSink{}
+	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if sink.sawAdapterKind("permission.granted") {
+		t.Error("expected no permission.granted events when allow_tools is empty")
+	}
+	if !sink.sawAdapterKind("permission.denied") {
+		t.Error("expected permission.denied event from default deny policy")
+	}
+}
+
+func TestEngineShellFingerprintAllowlist(t *testing.T) {
+	adapterBin := testutil.BuildPermissiveAdapter(t)
+	loader := adapterhost.NewLoaderWithDiscovery(func(string) (string, error) {
+		return adapterBin, nil
+	})
+	t.Cleanup(func() { _ = loader.Shutdown(context.Background()) })
+
+	g := compile(t, `
+workflow {
+  name = "perm-shell"
+  version       = "0.1"
+  initial_state = "run"
+  target_state  = "done"
+}
+
+adapter "permissive" "bot" { }
+
+step "run" {
+  target = adapter.permissive.bot
+  input { perm_tools = "shell|git status,shell|rm -rf /" }
+  allow_tools = ["shell:git *"]
+  outcome "success"      { next = "done" }
+  outcome "needs_review" { next = "done" }
+}
+state "done" { terminal = true }`)
+
+	sink := &captureStepEventSink{}
+	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	granted, ok := sink.firstAdapterEvent("permission.granted")
+	if !ok {
+		t.Fatal("expected permission.granted for shell|git status")
+	}
+	if granted["pattern"] != "shell:git *" {
+		t.Fatalf("permission.granted pattern=%v want shell:git *", granted["pattern"])
+	}
+	if !sink.sawAdapterKind("permission.denied") {
+		t.Fatal("expected permission.denied for shell|rm -rf /")
+	}
+}
+
 // TestMaxVisits_Hit verifies that a workflow with a back-edge loop on a step
 // with max_visits = 3 fails on the 4th visit with the expected error message.
 func TestMaxVisits_Hit(t *testing.T) {
 	g := compile(t, `
-workflow "t" {
+workflow {
+  name = "t"
   version = "0.1"
   initial_state = "loop"
   target_state  = "done"
+
+  policy { max_total_steps = 1000 }
 }
 step "loop" {
   target = adapter.fake
@@ -481,7 +649,7 @@ step "loop" {
   outcome "done"  { next = "done" }
 }
 state "done" { terminal = true }
-policy { max_total_steps = 1000 }`)
+`)
 	sink := &fakeSink{}
 	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": &fakeAdapter{name: "fake", outcome: "again"}}}
 	err := NewTestEngine(g, loader, sink).Run(context.Background())
@@ -524,10 +692,13 @@ func TestMaxVisits_NotHit(t *testing.T) {
 		mu:    &mu,
 	}
 	g := compile(t, `
-workflow "t" {
+workflow {
+  name = "t"
   version = "0.1"
   initial_state = "loop"
   target_state  = "done"
+
+  policy { max_total_steps = 1000 }
 }
 step "loop" {
   target = adapter.fake
@@ -536,7 +707,7 @@ step "loop" {
   outcome "done"  { next = "done" }
 }
 state "done" { terminal = true }
-policy { max_total_steps = 1000 }`)
+`)
 	sink := &fakeSink{}
 	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": plg}}
 	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
@@ -551,7 +722,8 @@ policy { max_total_steps = 1000 }`)
 // does not trip any limit and completes normally.
 func TestMaxVisits_OmittedIsUnlimited(t *testing.T) {
 	g := compile(t, `
-workflow "t" {
+workflow {
+  name = "t"
   version = "0.1"
   initial_state = "a"
   target_state  = "done"
@@ -578,10 +750,16 @@ state "done" { terminal = true }`)
 // attempt 3 is blocked by max_visits before it can execute.
 func TestMaxVisits_RetryCounts(t *testing.T) {
 	g := compile(t, `
-workflow "t" {
+workflow {
+  name = "t"
   version = "0.1"
   initial_state = "work"
   target_state  = "done"
+
+  policy {
+  max_total_steps  = 1000
+  max_step_retries = 3
+}
 }
 step "work" {
   target = adapter.fake
@@ -589,10 +767,7 @@ step "work" {
   outcome "done" { next = "done" }
 }
 state "done" { terminal = true }
-policy {
-  max_total_steps  = 1000
-  max_step_retries = 3
-}`)
+`)
 	// Adapter that always errors so the retry loop is exercised.
 	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": &errAdapter{name: "fake", err: errors.New("boom")}}}
 	sink := &fakeSink{}
@@ -622,10 +797,13 @@ func TestMaxVisits_Persists(t *testing.T) {
 	//   Entry 5: Visits++ → 5 (<5), step executes
 	//   Entry 6: 5 >= 5 → max_visits fires
 	g := compile(t, `
-workflow "t" {
+workflow {
+  name = "t"
   version = "0.1"
   initial_state = "loop"
   target_state  = "done"
+
+  policy { max_total_steps = 2 }
 }
 step "loop" {
   target = adapter.fake
@@ -634,7 +812,7 @@ step "loop" {
   outcome "done"  { next = "done" }
 }
 state "done" { terminal = true }
-policy { max_total_steps = 2 }`)
+`)
 	sink := &fakeSink{}
 	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": &fakeAdapter{name: "fake", outcome: "again"}}}
 	eng := NewTestEngine(g, loader, sink)
@@ -656,10 +834,13 @@ policy { max_total_steps = 2 }`)
 	// Resume with saved visit counts; raise max_total_steps so it doesn't
 	// interfere, and expect max_visits to fire after 3 more executions.
 	g2 := compile(t, `
-workflow "t" {
+workflow {
+  name = "t"
   version = "0.1"
   initial_state = "loop"
   target_state  = "done"
+
+  policy { max_total_steps = 1000 }
 }
 step "loop" {
   target = adapter.fake
@@ -668,7 +849,7 @@ step "loop" {
   outcome "done"  { next = "done" }
 }
 state "done" { terminal = true }
-policy { max_total_steps = 1000 }`)
+`)
 	sink2 := &fakeSink{}
 	eng2 := New(g2, loader, sink2, WithResumedVisits(visits))
 	err2 := eng2.RunFrom(context.Background(), "loop", 1)
@@ -742,10 +923,13 @@ func (p *errAdapter) Kill()                                                     
 // inflate the visit count and could incorrectly trip max_visits on resume.
 func TestMaxVisits_CancelledAttemptDoesNotConsumeVisit(t *testing.T) {
 	g := compile(t, `
-workflow "t" {
+workflow {
+  name = "t"
   version = "0.1"
   initial_state = "work"
   target_state  = "done"
+
+  policy { max_total_steps = 1000 }
 }
 step "work" {
   target = adapter.fake
@@ -753,7 +937,7 @@ step "work" {
   outcome "done" { next = "done" }
 }
 state "done" { terminal = true }
-policy { max_total_steps = 1000 }`)
+`)
 	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": &fakeAdapter{name: "fake", outcome: "done"}}}
 	sink := &fakeSink{}
 	eng := NewTestEngine(g, loader, sink)
@@ -783,7 +967,8 @@ policy { max_total_steps = 1000 }`)
 // independently (locked decision §6).
 func TestEngine_GuardRemainsForCopilotAdapterFailure(t *testing.T) {
 	g := compile(t, `
-workflow "t" {
+workflow {
+  name = "t"
   version = "0.1"
   initial_state = "a"
   target_state  = "done"
@@ -823,10 +1008,13 @@ state "done" { terminal = true }`)
 func TestMaxVisits_CancelledWorkflowIterationDoesNotConsumeVisit(t *testing.T) {
 	t.Skip("test uses removed inline workflow body feature (W13); pending W14 subworkflow invocation support")
 	g := compile(t, `
-workflow "t" {
+workflow {
+  name = "t"
   version = "0.1"
   initial_state = "process"
   target_state  = "done"
+
+  policy { max_total_steps = 1000 }
 }
 step "process" {
   type       = "workflow"
@@ -842,7 +1030,7 @@ step "process" {
   outcome "any_failed"    { next = "done" }
 }
 state "done" { terminal = true }
-policy { max_total_steps = 1000 }`)
+`)
 	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": &fakeAdapter{name: "fake", outcome: "success"}}}
 	sink := &fakeSink{}
 	eng := NewTestEngine(g, loader, sink)

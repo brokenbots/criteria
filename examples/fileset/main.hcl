@@ -1,6 +1,7 @@
 # Example: demonstrates fileset() — enumerates files matching a glob and
 # processes each one via for_each.
-workflow "fileset_demo" {
+workflow {
+  name = "fileset_demo"
   version       = "1"
   initial_state = "process"
   target_state  = "done"

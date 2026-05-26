@@ -1,4 +1,5 @@
-workflow "approval-wait" {
+workflow {
+  name = "approval-wait"
   version       = "1"
   initial_state = "deploy_window"
   target_state  = "done"

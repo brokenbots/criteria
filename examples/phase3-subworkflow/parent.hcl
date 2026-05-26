@@ -1,4 +1,5 @@
-workflow "phase3_subworkflow_demo" {
+workflow {
+  name = "phase3_subworkflow_demo"
   version       = "0.1"
   initial_state = "setup"
   target_state  = "done"
