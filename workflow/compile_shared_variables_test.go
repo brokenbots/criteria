@@ -60,6 +60,39 @@ shared_variable "counter" {
 	}
 }
 
+func TestCompileSharedVariables_TypeDefaults(t *testing.T) {
+	src := sharedVarWorkflow(`
+shared_variable "config" {
+  type = object({
+    label = optional(string, "default_label")
+    retry = optional(number, 3)
+  })
+  value = {}
+}
+`, "")
+	spec, diags := Parse("test.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	g, diags := Compile(spec, nil)
+	if diags.HasErrors() {
+		t.Fatalf("compile: %s", diags.Error())
+	}
+	sv, ok := g.SharedVariables["config"]
+	if !ok {
+		t.Fatal("shared_variable 'config' not found")
+	}
+	if sv.InitialValue == cty.NilVal || sv.InitialValue.IsNull() {
+		t.Fatal("expected non-null initial value")
+	}
+	if got := sv.InitialValue.GetAttr("label").AsString(); got != "default_label" {
+		t.Errorf("label default: got %q, want %q", got, "default_label")
+	}
+	if got, _ := sv.InitialValue.GetAttr("retry").AsBigFloat().Int64(); got != 3 {
+		t.Errorf("retry default: got %d, want %d", got, 3)
+	}
+}
+
 func TestCompileSharedVariables_StringType(t *testing.T) {
 	src := sharedVarWorkflow(`
 shared_variable "status" {
