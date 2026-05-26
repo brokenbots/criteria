@@ -1,4 +1,5 @@
-workflow "local_signal_wait" {
+workflow {
+  name = "local_signal_wait"
   version       = "0.1"
   initial_state = "gate"
   target_state  = "done"

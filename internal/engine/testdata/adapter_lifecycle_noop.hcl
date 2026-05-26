@@ -1,4 +1,5 @@
-workflow "agent_lifecycle_noop" {
+workflow {
+  name = "agent_lifecycle_noop"
   version = "0.1"
   initial_state = "run_agent"
   target_state  = "done"

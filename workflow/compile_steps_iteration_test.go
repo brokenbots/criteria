@@ -14,7 +14,8 @@ import (
 // parallelWorkflow wraps a parallel step body in a minimal compilable workflow.
 func parallelWorkflow(stepBody string) string {
 	return `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "work"
   target_state  = "done"
@@ -208,13 +209,14 @@ func TestStep_ParallelRequiresAllSucceededOutcome(t *testing.T) {
 // compiles successfully when the variable has a known numeric default.
 func TestStep_ParallelMaxVarRef_Accepted(t *testing.T) {
 	src := `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "work"
   target_state  = "done"
 }
 variable "cap" {
-  type    = "number"
+  type = number
   default = 3
 }
 adapter "noop" "default" {}
@@ -365,13 +367,14 @@ func TestStep_Parallel_AdapterAbsentFromSchemas_NoCompileError(t *testing.T) {
 // compilable workflow that declares a shared_variable "counter".
 func parallelWorkflowWithSharedVar(stepBody string) string {
 	return `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "work"
   target_state  = "done"
 }
 shared_variable "counter" {
-  type = "number"
+  type = number
 }
 adapter "noop" "default" {}
 step "work" {

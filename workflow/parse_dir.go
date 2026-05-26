@@ -45,7 +45,7 @@ func collectFileBlockRanges(src []byte, filename string) map[string]hcl.Range {
 			if len(block.Labels) >= 2 {
 				key = "adapter:" + block.Labels[0] + "." + block.Labels[1]
 			}
-		case "workflow", "policy", "permissions":
+		case "workflow", "permissions":
 			key = block.Type
 		}
 		if key != "" {
@@ -186,7 +186,7 @@ func mergeSpecs(dir string, entries []fileEntry) (*Spec, hcl.Diagnostics) { //no
 	var srcParts [][]byte
 
 	// Track first-seen ranges for singleton blocks.
-	var headerRange, policyRange, permissionsRange *hcl.Range
+	var headerRange, permissionsRange *hcl.Range
 
 	for _, entry := range entries {
 		s := entry.spec
@@ -209,7 +209,7 @@ func mergeSpecs(dir string, entries []fileEntry) (*Spec, hcl.Diagnostics) { //no
 		// Merge singleton: Header.
 		if s.Header != nil {
 			if merged.Header != nil {
-				detail := fmt.Sprintf("directory %q contains more than one workflow \"<name>\" { ... } header block; only one is allowed across all .hcl files in a directory module", dir)
+				detail := fmt.Sprintf("directory %q contains more than one workflow { ... } header block; only one is allowed across all .hcl files in a directory module", dir)
 				if headerRange != nil {
 					detail += fmt.Sprintf("; previously declared at %s", headerRange.String())
 				}
@@ -226,30 +226,6 @@ func mergeSpecs(dir string, entries []fileEntry) (*Spec, hcl.Diagnostics) { //no
 				merged.Header = s.Header
 				if rng, ok := ranges["workflow"]; ok {
 					headerRange = &rng
-				}
-			}
-		}
-
-		// Merge singleton: Policy.
-		if s.Policy != nil {
-			if merged.Policy != nil {
-				detail := fmt.Sprintf("directory %q contains more than one policy { ... } block; only one is allowed across all .hcl files in a directory module", dir)
-				if policyRange != nil {
-					detail += fmt.Sprintf("; previously declared at %s", policyRange.String())
-				}
-				d := &hcl.Diagnostic{
-					Severity: hcl.DiagError,
-					Summary:  "duplicate policy block",
-					Detail:   detail,
-				}
-				if rng, ok := ranges["policy"]; ok {
-					d.Subject = &rng
-				}
-				diags = append(diags, d)
-			} else {
-				merged.Policy = s.Policy
-				if rng, ok := ranges["policy"]; ok {
-					policyRange = &rng
 				}
 			}
 		}
@@ -287,7 +263,7 @@ func mergeSpecs(dir string, entries []fileEntry) (*Spec, hcl.Diagnostics) { //no
 		diags = append(diags, &hcl.Diagnostic{
 			Severity: hcl.DiagError,
 			Summary:  "no workflow block declared",
-			Detail:   fmt.Sprintf("directory %q contains no workflow \"<name>\" { ... } header block; exactly one is required. Add a workflow block (typically in workflow.hcl) with version, initial_state, and target_state attributes.", dir),
+			Detail:   fmt.Sprintf("directory %q contains no workflow { name = \"...\" ... } header block; exactly one is required. Add a workflow block (typically in workflow.hcl) with name, version, initial_state, and target_state attributes.", dir),
 		})
 	}
 

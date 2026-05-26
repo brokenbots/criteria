@@ -17,7 +17,7 @@ import (
 //   - no duplicate outcome names
 //   - "next" is present (non-empty)
 //   - "return" is not used as a step name (reserved sentinel)
-//   - default_outcome, if set, refers to a declared outcome
+//   - outcome "default" block, if present, has a valid next target
 //   - the optional "output" expression, when present, references only known
 //     vars/locals (runtime-only refs like steps.* are deferred, not errors)
 //     and, when foldable at compile time, evaluates to an object type.
@@ -53,18 +53,10 @@ func compileOutcomeBlock(sp *StepSpec, node *StepNode, g *FSMGraph, opts Compile
 			d := compileOutcomeRemain(sp.Name, o.Name, o.Remain, g, opts, adapterOutputSchema, compiled, isAggregateIter)
 			diags = append(diags, d...)
 		}
-		node.Outcomes[o.Name] = compiled
-	}
-
-	// Validate default_outcome refers to a declared outcome.
-	if sp.DefaultOutcome != "" {
-		if !seen[sp.DefaultOutcome] {
-			diags = append(diags, &hcl.Diagnostic{
-				Severity: hcl.DiagError,
-				Summary:  fmt.Sprintf("step %q: default_outcome %q is not a declared outcome", sp.Name, sp.DefaultOutcome),
-			})
+		if o.Name == "default" {
+			node.DefaultOutcome = compiled
 		} else {
-			node.DefaultOutcome = sp.DefaultOutcome
+			node.Outcomes[o.Name] = compiled
 		}
 	}
 

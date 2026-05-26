@@ -1,16 +1,17 @@
 // the work flow defines the worflow metadata, the goal is treat the workflow as a collection of files and load them all from one directory
 // this is same behavior as terraform, the workflow file can be one or more files
-workflow "<name>" {
+workflow {
+  name = "<name>"
 	name = "" // optional, if not defined, it default to id
 	version = "" // optional, if not defined, it default to 0.1
 
 	file = "" // optional, if not defined the steps should be take from the block
-	environment "<id>"
+	environment = <type>.<name>
 }
 
 variable "<name>" {
 	description = "" // optional, if not defined, it default to ""
-	type = "string" // variable type, it can be string, number, boolean, list, map, etc
+	type = string // variable type, it can be string, number, boolean, list, map, etc
 	default = any // default value, it can be empty if no default value is needed
 }
 
@@ -64,7 +65,7 @@ step "<name>" {
 		output = any,  // output is optional, if not defined, it default adapter output'
 	} 
 
-	default_outcome = "<outcome_name>" // optional used for adapter like agents that can return invalid outcomes
+	outcome "default" { next = "<outcome_name>" } // optional used for adapter like agents that can return invalid outcomes
 
 	output = any // output is optional, if not defined, it default adapter output
 }

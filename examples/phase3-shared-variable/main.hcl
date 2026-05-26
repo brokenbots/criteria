@@ -10,7 +10,8 @@
 # - step "start" writes "processing" into status via shared_writes
 # - step "finish" writes "complete" into status via shared_writes
 # - step "report" reads shared.status in its input expression
-workflow "shared-variable-demo" {
+workflow {
+  name = "shared-variable-demo"
   version       = "0.1"
   initial_state = "start"
   target_state  = "done"
@@ -20,7 +21,7 @@ adapter "noop" "default" {}
 
 # Runtime-mutable workflow-scoped variable, initialised to "pending".
 shared_variable "status" {
-  type  = "string"
+  type = string
   value = "pending"
 }
 

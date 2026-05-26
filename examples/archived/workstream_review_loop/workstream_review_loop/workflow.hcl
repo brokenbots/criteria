@@ -26,32 +26,34 @@
 # For approval nodes (user assistance after max execute cycles):
 #   CRITERIA_LOCAL_APPROVAL=stdin criteria apply examples/workstream_review_loop/workstream_review_loop
 
-workflow "workstream_reviewer_loop" {
+workflow {
+
+  name = "workstream_reviewer_loop"
   version       = "2"
   initial_state = "checkout_branch"
   target_state  = "done"
+  policy {
+    max_total_steps = 500
+  }
 }
 
-policy {
-  max_total_steps = 500
-}
 
 # ── Variables ──────────────────────────────────────────────────────────────
 
 variable "workstream_file" {
-  type        = "string"
+  type = string
   default     = "workstreams/05-shell-adapter-sandbox.md"
   description = "Path to the workstream file to process."
 }
 
 variable "max_execute_cycles" {
-  type    = "number"
+  type = number
   default = 5
   description = "Maximum execute-review cycles before requesting user assistance."
 }
 
 variable "max_pr_cycles" {
-  type    = "number"
+  type = number
   default = 3
   description = "Maximum PR triage cycles before requesting user assistance."
 }

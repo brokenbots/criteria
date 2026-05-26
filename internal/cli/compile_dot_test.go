@@ -28,7 +28,8 @@ func compileDOTFromHCL(t *testing.T, hclContent string) string {
 // with shape=box, style=filled, fillcolor, and no label attribute.
 func TestRenderDOT_PlainStepNoAnnotation(t *testing.T) {
 	const hcl = `
-workflow "test_plain" {
+workflow {
+  name = "test_plain"
   version       = "1"
   initial_state = "do_work"
   target_state  = "done"
@@ -66,7 +67,8 @@ state "done" {
 // [for_each] annotation in its label.
 func TestRenderDOT_ForEachStepAnnotation(t *testing.T) {
 	const hcl = `
-workflow "test_for_each" {
+workflow {
+  name = "test_for_each"
   version       = "1"
   initial_state = "fan_out"
   target_state  = "done"
@@ -96,7 +98,8 @@ state "done" {
 // annotation in its label.
 func TestRenderDOT_CountStepAnnotation(t *testing.T) {
 	const hcl = `
-workflow "test_count" {
+workflow {
+  name = "test_count"
   version       = "1"
   initial_state = "repeat"
   target_state  = "done"
@@ -126,7 +129,8 @@ state "done" {
 // [parallel] annotation in its label.
 func TestRenderDOT_ParallelStepAnnotation(t *testing.T) {
 	const hcl = `
-workflow "test_parallel" {
+workflow {
+  name = "test_parallel"
   version       = "1"
   initial_state = "concurrent"
   target_state  = "done"
@@ -158,7 +162,8 @@ func TestRenderDOT_SubworkflowStepAnnotation(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	calleeHCL := `
-workflow "inner" {
+workflow {
+  name = "inner"
   version       = "1"
   initial_state = "done"
   target_state  = "done"
@@ -177,7 +182,8 @@ state "done" {
 	}
 
 	parentHCL := `
-workflow "parent" {
+workflow {
+  name = "parent"
   version       = "1"
   initial_state = "delegate"
   target_state  = "done"
@@ -224,12 +230,13 @@ func TestRenderDOT_IteratingSubworkflowStep(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	calleeHCL := `
-workflow "processor" {
+workflow {
+  name = "processor"
   version       = "1"
   initial_state = "done"
   target_state  = "done"
 }
-variable "item" { type = "string" }
+variable "item" { type = string }
 state "done" {
   terminal = true
   success  = true
@@ -244,7 +251,8 @@ state "done" {
 	}
 
 	parentHCL := `
-workflow "parent_iter" {
+workflow {
+  name = "parent_iter"
   version       = "1"
   initial_state = "process_all"
   target_state  = "done"
@@ -340,7 +348,8 @@ func writeTempSubworkflow(t *testing.T, parent, name, stepName string) {
 	if stepName != "" {
 		initial = stepName
 	}
-	sb.WriteString("workflow " + `"` + name + `"` + " {\n")
+	sb.WriteString("workflow {\n")
+	sb.WriteString("  name          = \"" + name + "\"\n")
 	sb.WriteString("  version       = \"1\"\n")
 	sb.WriteString("  initial_state = \"" + initial + "\"\n")
 	sb.WriteString("  target_state  = \"" + termState + "\"\n")
@@ -366,12 +375,15 @@ func TestRenderDOT_SubworkflowCluster(t *testing.T) {
 	writeTempSubworkflow(t, tmpDir, "inner", "do_inner")
 
 	parentHCL := `
-workflow "parent" {
+workflow {
+  name = "parent"
   version       = "1"
   initial_state = "delegate"
   target_state  = "done"
 }
-subworkflow "inner" { source = "./inner" }
+subworkflow "inner" {
+  source = "./inner"
+}
 step "delegate" {
   target = subworkflow.inner
   outcome "success" { next = "done" }
@@ -416,12 +428,15 @@ func TestRenderDOT_SubworkflowClusterEdges(t *testing.T) {
 	writeTempSubworkflow(t, tmpDir, "inner", "do_inner")
 
 	parentHCL := `
-workflow "parent" {
+workflow {
+  name = "parent"
   version       = "1"
   initial_state = "delegate"
   target_state  = "done"
 }
-subworkflow "inner" { source = "./inner" }
+subworkflow "inner" {
+  source = "./inner"
+}
 step "delegate" {
   target = subworkflow.inner
   outcome "success" { next = "done" }
@@ -474,12 +489,15 @@ func TestRenderDOT_NestedSubworkflowCluster(t *testing.T) {
 
 	// Middle subworkflow "outer": has a step "run_leaf" targeting "leaf".
 	outerHCL := `
-workflow "outer" {
+workflow {
+  name = "outer"
   version       = "1"
   initial_state = "run_leaf"
   target_state  = "done"
 }
-subworkflow "leaf" { source = "./leaf" }
+subworkflow "leaf" {
+  source = "./leaf"
+}
 step "run_leaf" {
   target = subworkflow.leaf
   outcome "success" { next = "done" }
@@ -495,12 +513,15 @@ state "done" {
 
 	// Root workflow: step "run_outer" targets "outer".
 	parentHCL := `
-workflow "root" {
+workflow {
+  name = "root"
   version       = "1"
   initial_state = "run_outer"
   target_state  = "done"
 }
-subworkflow "outer" { source = "./outer" }
+subworkflow "outer" {
+  source = "./outer"
+}
 step "run_outer" {
   target = subworkflow.outer
   outcome "success" { next = "done" }
@@ -550,12 +571,15 @@ func TestRenderDOT_RepeatedSubworkflowSameDeclaration(t *testing.T) {
 	writeTempSubworkflow(t, tmpDir, "shared", "shared_work")
 
 	parentHCL := `
-workflow "parent" {
+workflow {
+  name = "parent"
   version       = "1"
   initial_state = "first_call"
   target_state  = "done"
 }
-subworkflow "shared" { source = "./shared" }
+subworkflow "shared" {
+  source = "./shared"
+}
 step "first_call" {
   target = subworkflow.shared
   outcome "success" { next = "second_call" }

@@ -343,10 +343,10 @@ func (n *stepNode) applyIterationSharedWrites(outcomeName string, rawOutputs map
 func (n *stepNode) applyOutcome(outcomeName string, rawOutputs map[string]string, swOutputs map[string]cty.Value, st *RunState, deps Deps) (string, error) {
 	compiled, ok := n.step.Outcomes[outcomeName]
 	if !ok {
-		if n.step.DefaultOutcome != "" {
-			deps.Sink.OnStepOutcomeDefaulted(n.step.Name, outcomeName, n.step.DefaultOutcome)
-			outcomeName = n.step.DefaultOutcome
-			compiled = n.step.Outcomes[outcomeName]
+		if n.step.DefaultOutcome != nil {
+			deps.Sink.OnStepOutcomeDefaulted(n.step.Name, outcomeName, n.step.DefaultOutcome.Name)
+			compiled = n.step.DefaultOutcome
+			outcomeName = compiled.Name
 		} else {
 			deps.Sink.OnStepOutcomeUnknown(n.step.Name, outcomeName)
 			return "", fmt.Errorf("step %q produced unmapped outcome %q", n.step.Name, outcomeName)

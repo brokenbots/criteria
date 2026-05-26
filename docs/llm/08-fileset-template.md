@@ -11,7 +11,8 @@ the directory and the workflow adapts without editing HCL.
 ## Minimal example
 
 ```hcl
-workflow "file-prompts" {
+workflow {
+  name = "file-prompts"
   version       = "1"
   initial_state = "process"
   target_state  = "done"

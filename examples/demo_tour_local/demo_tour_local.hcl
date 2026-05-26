@@ -3,22 +3,22 @@
 # mode: standalone
 #
 # Demonstrates variables, for_each, wait (duration), and switch without requiring a server.
-workflow "demo_tour_local" {
+workflow {
+  name = "demo_tour_local"
   version       = "1"
   initial_state = "boot"
   target_state  = "done"
+  policy {
+    max_total_steps = 40
+  }
 }
 
 adapter "shell" "default" {
   config { }
 }
 
-policy {
-  max_total_steps = 40
-}
-
 variable "mode" {
-  type        = "string"
+  type = string
   default     = "local"
   description = "Execution mode identifier"
 }

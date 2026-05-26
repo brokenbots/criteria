@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/hashicorp/hcl/v2"
+	"github.com/hashicorp/hcl/v2/ext/typeexpr"
 )
 
 // assertDiagnosticContains asserts that diags contains at least one DiagError
@@ -32,12 +33,19 @@ func assertDiagnosticContains(t *testing.T, diags hcl.Diagnostics, summarySubstr
 
 // minimalWorkflowHCL is a minimal, syntactically valid workflow preamble used
 // as a prefix in tests that need a parse-able file body.
-const minimalWorkflowHCL = `workflow "test" {
+const minimalWorkflowHCL = `workflow {
+  name = "test"
   version       = "1"
-  initial_state = "run"
+  initial_state = "start"
   target_state  = "done"
 }
 adapter "noop" "default" {}
+
+step "start" {
+  target = adapter.noop.default
+  outcome "success" { next = "done" }
+}
+state "done" { terminal = true }
 `
 
 // ------------------------------------------------------------------
@@ -347,5 +355,394 @@ state "done" { terminal = true }
 			}
 			return
 		}
+	}
+}
+
+// ------------------------------------------------------------------
+// rejectLegacyWorkflowLabel — workflow "name" { ... }
+// ------------------------------------------------------------------
+
+func TestLegacyReject_WorkflowLabel(t *testing.T) {
+	src := `workflow "test" {
+  version       = "1"
+  initial_state = "run"
+  target_state  = "done"
+}
+`
+	_, diags := Parse("test.hcl", []byte(src))
+	assertDiagnosticContains(t, diags, "removed labelled workflow block")
+	for _, d := range diags {
+		if d.Severity == hcl.DiagError && strings.Contains(d.Summary, "removed labelled workflow block") {
+			if !strings.Contains(d.Detail, `name = "..."`) {
+				t.Errorf("expected detail to mention 'name = \"...\"' replacement; got: %s", d.Detail)
+			}
+			return
+		}
+	}
+}
+
+func TestLegacyReject_WorkflowLabel_AcceptsNewForm(t *testing.T) {
+	src := minimalWorkflowHCL
+	_, diags := Parse("test.hcl", []byte(src))
+	for _, d := range diags {
+		if d.Severity == hcl.DiagError && strings.Contains(d.Summary, "removed labelled workflow block") {
+			t.Fatalf("new-form workflow should not trigger legacy label rejection: %s", d.Summary)
+		}
+	}
+}
+
+// ------------------------------------------------------------------
+// rejectLegacyPolicyBlock — top-level policy { ... }
+// ------------------------------------------------------------------
+
+func TestLegacyReject_PolicyBlock_TopLevel(t *testing.T) {
+	src := minimalWorkflowHCL + `
+policy { max_total_steps = 100 }
+`
+	_, diags := Parse("test.hcl", []byte(src))
+	assertDiagnosticContains(t, diags, "removed top-level policy block")
+	for _, d := range diags {
+		if d.Severity == hcl.DiagError && strings.Contains(d.Summary, "removed top-level policy block") {
+			if !strings.Contains(d.Detail, "nested inside the workflow") {
+				t.Errorf("expected detail to mention nested workflow; got: %s", d.Detail)
+			}
+			return
+		}
+	}
+}
+
+func TestLegacyReject_PolicyBlock_NestedAccepted(t *testing.T) {
+	src := `workflow {
+  name          = "test"
+  version       = "1"
+  initial_state = "run"
+  target_state  = "done"
+  policy { max_total_steps = 100 }
+}
+adapter "noop" "default" {}
+`
+	_, diags := Parse("test.hcl", []byte(src))
+	for _, d := range diags {
+		if d.Severity == hcl.DiagError && strings.Contains(d.Summary, "removed top-level policy block") {
+			t.Fatalf("nested policy should not trigger top-level rejection: %s", d.Summary)
+		}
+	}
+}
+
+// ------------------------------------------------------------------
+// rejectLegacyTypeString — type = "string" (quoted)
+// ------------------------------------------------------------------
+
+func TestLegacyReject_TypeString_Quoted(t *testing.T) {
+	src := minimalWorkflowHCL + `
+variable "count" {
+  type = "number"
+}
+`
+	_, diags := Parse("test.hcl", []byte(src))
+	assertDiagnosticContains(t, diags, "removed quoted-string type on variable block")
+	for _, d := range diags {
+		if d.Severity == hcl.DiagError && strings.Contains(d.Summary, "removed quoted-string type") {
+			if !strings.Contains(d.Detail, "type = string") {
+				t.Errorf("expected detail to mention unquoted type expression; got: %s", d.Detail)
+			}
+			return
+		}
+	}
+}
+
+func TestLegacyReject_TypeString_QuotedSharedVar(t *testing.T) {
+	src := minimalWorkflowHCL + `
+shared_variable "name" {
+  type = "string"
+}
+`
+	_, diags := Parse("test.hcl", []byte(src))
+	assertDiagnosticContains(t, diags, "removed quoted-string type on shared_variable block")
+}
+
+func TestLegacyReject_TypeString_QuotedOutput(t *testing.T) {
+	src := minimalWorkflowHCL + `
+output "result" {
+  type = "string"
+}
+`
+	_, diags := Parse("test.hcl", []byte(src))
+	assertDiagnosticContains(t, diags, "removed quoted-string type on output block")
+}
+
+func TestLegacyReject_TypeString_BareAccepted(t *testing.T) {
+	src := minimalWorkflowHCL + `
+variable "count" {
+  type = number
+}
+`
+	_, diags := Parse("test.hcl", []byte(src))
+	for _, d := range diags {
+		if d.Severity == hcl.DiagError && strings.Contains(d.Summary, "removed quoted-string type") {
+			t.Fatalf("bare type expression should not trigger legacy rejection: %s", d.Summary)
+		}
+	}
+}
+
+// ------------------------------------------------------------------
+// rejectLegacyDefaultOutcome — default_outcome = "..."
+// ------------------------------------------------------------------
+
+func TestLegacyReject_DefaultOutcomeAttr(t *testing.T) {
+	src := minimalWorkflowHCL + `
+step "run" {
+  target         = adapter.noop.default
+  default_outcome = "success"
+  outcome "success" { next = "done" }
+}
+state "done" { terminal = true }
+`
+	_, diags := Parse("test.hcl", []byte(src))
+	assertDiagnosticContains(t, diags, `removed attribute "default_outcome" on steps`)
+	for _, d := range diags {
+		if d.Severity == hcl.DiagError && strings.Contains(d.Summary, "default_outcome") {
+			if !strings.Contains(d.Detail, `outcome "default"`) {
+				t.Errorf("expected detail to mention outcome \"default\" replacement; got: %s", d.Detail)
+			}
+			return
+		}
+	}
+}
+
+func TestLegacyReject_DefaultOutcomeBlock_AcceptsNewForm(t *testing.T) {
+	src := minimalWorkflowHCL + `
+step "run" {
+  target = adapter.noop.default
+  outcome "success" { next = "done" }
+  outcome "default" { next = "done" }
+}
+state "done" { terminal = true }
+`
+	_, diags := Parse("test.hcl", []byte(src))
+	for _, d := range diags {
+		if d.Severity == hcl.DiagError && strings.Contains(d.Summary, "default_outcome") {
+			t.Fatalf("outcome \"default\" block should not trigger legacy rejection: %s", d.Summary)
+		}
+	}
+}
+
+// ------------------------------------------------------------------
+// rejectLegacyEnvironmentString — environment = "..." (quoted)
+// ------------------------------------------------------------------
+
+func TestLegacyReject_EnvironmentString_QuotedOnWorkflow(t *testing.T) {
+	src := `workflow {
+  name          = "test"
+  version       = "1"
+  initial_state = "run"
+  target_state  = "done"
+  environment   = "shell.ci"
+}
+`
+	_, diags := Parse("test.hcl", []byte(src))
+	assertDiagnosticContains(t, diags, "removed quoted-string environment on workflow block")
+	for _, d := range diags {
+		if d.Severity == hcl.DiagError && strings.Contains(d.Summary, "removed quoted-string environment") {
+			if !strings.Contains(d.Detail, "bare traversal") {
+				t.Errorf("expected detail to mention bare traversal; got: %s", d.Detail)
+			}
+			return
+		}
+	}
+}
+
+func TestLegacyReject_EnvironmentString_QuotedOnStep(t *testing.T) {
+	src := minimalWorkflowHCL + `
+step "run" {
+  target      = adapter.noop.default
+  environment = "shell.ci"
+  outcome "success" { next = "done" }
+}
+state "done" { terminal = true }
+`
+	_, diags := Parse("test.hcl", []byte(src))
+	assertDiagnosticContains(t, diags, "removed quoted-string environment on step block")
+}
+
+func TestLegacyReject_EnvironmentString_QuotedOnAdapter(t *testing.T) {
+	src := minimalWorkflowHCL + `
+adapter "shell" "ci" {
+  environment = "shell.ci"
+}
+`
+	_, diags := Parse("test.hcl", []byte(src))
+	assertDiagnosticContains(t, diags, "removed quoted-string environment on adapter block")
+}
+
+func TestLegacyReject_EnvironmentString_QuotedOnSubworkflow(t *testing.T) {
+	src := minimalWorkflowHCL + `
+subworkflow "child" {
+  environment = "shell.ci"
+}
+`
+	_, diags := Parse("test.hcl", []byte(src))
+	assertDiagnosticContains(t, diags, "removed quoted-string environment on subworkflow block")
+}
+
+func TestLegacyReject_EnvironmentString_BareAccepted(t *testing.T) {
+	src := minimalWorkflowHCL + `
+step "run" {
+  target      = adapter.noop.default
+  environment = shell.ci
+  outcome "success" { next = "done" }
+}
+state "done" { terminal = true }
+`
+	_, diags := Parse("test.hcl", []byte(src))
+	for _, d := range diags {
+		if d.Severity == hcl.DiagError && strings.Contains(d.Summary, "removed quoted-string environment") {
+			t.Fatalf("bare traversal environment should not trigger legacy rejection: %s", d.Summary)
+		}
+	}
+}
+
+// ------------------------------------------------------------------
+// Positive feature tests — new forms compile correctly
+// ------------------------------------------------------------------
+
+func TestPositive_NestedPolicy(t *testing.T) {
+	src := `workflow {
+  name          = "test"
+  version       = "1"
+  initial_state = "run"
+  target_state  = "done"
+  policy { max_total_steps = 100 }
+}
+adapter "noop" "default" {}
+`
+	g, diags := Parse("test.hcl", []byte(src))
+	for _, d := range diags {
+		if d.Severity == hcl.DiagError {
+			t.Fatalf("unexpected error: %s: %s", d.Summary, d.Detail)
+		}
+	}
+	if g.Header.Policy == nil {
+		t.Fatal("expected Header.Policy to be non-nil")
+	}
+	if g.Header.Policy.MaxTotalSteps != 100 {
+		t.Fatalf("expected MaxTotalSteps=100, got %d", g.Header.Policy.MaxTotalSteps)
+	}
+}
+
+func TestPositive_TypeExpressions(t *testing.T) {
+	cases := []struct {
+		name     string
+		varName  string
+		src      string
+		wantType string
+	}{
+		{
+			name:     "string",
+			varName:  "s",
+			src:      `variable "s" { type = string }`,
+			wantType: "string",
+		},
+		{
+			name:     "number",
+			varName:  "n",
+			src:      `variable "n" { type = number }`,
+			wantType: "number",
+		},
+		{
+			name:     "bool",
+			varName:  "b",
+			src:      `variable "b" { type = bool }`,
+			wantType: "bool",
+		},
+		{
+			name:     "list(string)",
+			varName:  "l",
+			src:      `variable "l" { type = list(string) }`,
+			wantType: "list(string)",
+		},
+		{
+			name:     "map(string)",
+			varName:  "m",
+			src:      `variable "m" { type = map(string) }`,
+			wantType: "map(string)",
+		},
+		{
+			name:     "object",
+			varName:  "o",
+			src:      `variable "o" { type = object({ a = string, b = number }) }`,
+			wantType: "object({a=string,b=number})",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			src := minimalWorkflowHCL + tc.src + "\n"
+			spec, diags := Parse("test.hcl", []byte(src))
+			for _, d := range diags {
+				if d.Severity == hcl.DiagError {
+					t.Fatalf("unexpected parse error: %s: %s", d.Summary, d.Detail)
+				}
+			}
+			g, diags := Compile(spec, nil)
+			for _, d := range diags {
+				if d.Severity == hcl.DiagError {
+					t.Fatalf("unexpected compile error: %s: %s", d.Summary, d.Detail)
+				}
+			}
+			if len(g.Variables) == 0 {
+				t.Fatal("expected at least one compiled variable")
+			}
+			vn, ok := g.Variables[tc.varName]
+			if !ok {
+				t.Fatalf("expected compiled variable %q", tc.varName)
+			}
+			got := typeexpr.TypeString(vn.Type)
+			if got != tc.wantType {
+				t.Fatalf("expected type %q, got %q", tc.wantType, got)
+			}
+		})
+	}
+}
+
+func TestPositive_DefaultOutcomeBlock(t *testing.T) {
+	src := `workflow {
+  name = "test"
+  version       = "1"
+  initial_state = "start"
+  target_state  = "done"
+}
+adapter "noop" "default" {}
+
+step "start" {
+  target = adapter.noop.default
+  outcome "success" { next = "done" }
+  outcome "default" { next = "done" }
+}
+state "done" { terminal = true }
+`
+	spec, diags := Parse("test.hcl", []byte(src))
+	for _, d := range diags {
+		if d.Severity == hcl.DiagError {
+			t.Fatalf("unexpected parse error: %s: %s", d.Summary, d.Detail)
+		}
+	}
+	g, diags := Compile(spec, nil)
+	for _, d := range diags {
+		if d.Severity == hcl.DiagError {
+			t.Fatalf("unexpected compile error: %s: %s", d.Summary, d.Detail)
+		}
+	}
+	step, ok := g.Steps["start"]
+	if !ok {
+		t.Fatal("expected compiled step 'start'")
+	}
+	if step.DefaultOutcome == nil {
+		t.Fatal("expected DefaultOutcome to be non-nil")
+	}
+	if step.DefaultOutcome.Name != "default" {
+		t.Fatalf("expected DefaultOutcome.Name=\"default\", got %q", step.DefaultOutcome.Name)
+	}
+	if step.DefaultOutcome.Next != "done" {
+		t.Fatalf("expected DefaultOutcome.Next=\"done\", got %q", step.DefaultOutcome.Next)
 	}
 }

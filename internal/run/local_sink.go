@@ -169,11 +169,11 @@ func (s *LocalSink) OnRunOutputs(outputs []map[string]string) {
 }
 
 // OnStepOutcomeDefaulted is emitted when a step returns an unknown outcome and
-// default_outcome mapping is applied (W15).
+// the outcome "default" block is applied (W15).
 func (s *LocalSink) OnStepOutcomeDefaulted(step, original, mapped string) {}
 
 // OnStepOutcomeUnknown is emitted when a step returns an outcome not in its
-// declared set and no default_outcome is configured (W15).
+// declared set and no outcome "default" block is configured (W15).
 func (s *LocalSink) OnStepOutcomeUnknown(step, outcome string) {}
 
 func (s *LocalSink) StepEventSink(step string) adapter.EventSink {

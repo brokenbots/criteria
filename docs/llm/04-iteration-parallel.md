@@ -10,7 +10,8 @@ when some fail.
 ## Minimal example
 
 ```hcl
-workflow "parallel" {
+workflow {
+  name = "parallel"
   version       = "1"
   initial_state = "fanout"
   target_state  = "done"

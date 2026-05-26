@@ -26,7 +26,8 @@ import (
 // produces the expected outcome.
 func TestStep_Evaluate_AdapterTarget(t *testing.T) {
 	g := compile(t, `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "do"
   target_state  = "done"

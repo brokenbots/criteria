@@ -29,7 +29,8 @@ func TestDefaultPolicyMatchesDoc(t *testing.T) {
 func TestStepOrder_ReturnsDeclarationOrder(t *testing.T) {
 	// Compile a small workflow and check that StepOrder matches the HCL order.
 	src := []byte(`
-workflow "ord" {
+workflow {
+  name = "ord"
   version       = "0.1"
   initial_state = "a"
   target_state  = "done"

@@ -41,7 +41,8 @@ func (s *scopeServer) ReattachRun(_ context.Context, req *connect.Request[pb.Rea
 // resumeWorkflow has a single "deploy" step whose command is interpolated from
 // a prior step output: ${steps.build.stdout}.
 const resumeWorkflow = `
-workflow "resume" {
+workflow {
+  name = "resume"
   version       = "0.1"
   initial_state = "deploy"
   target_state  = "__done__"

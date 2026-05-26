@@ -154,14 +154,15 @@ func TestApplyLocal_OutputsEmittedInEventStream(t *testing.T) {
 	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
 
 	workflowPath := writeWorkflowFile(t, `
-workflow "test_outputs" {
+workflow {
+  name = "test_outputs"
   version       = "1"
   initial_state = "start"
   target_state  = "done"
 }
 
 output "count" {
-  type        = "number"
+  type = number
   description = "The count value"
   value       = 42
 }

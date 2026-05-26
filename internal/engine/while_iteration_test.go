@@ -22,7 +22,8 @@ import (
 // statically false condition completes with all_succeeded and zero iterations.
 func TestWhile_ConditionFalseFromStart(t *testing.T) {
 	g := compile(t, `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "loop"
   target_state  = "done"
@@ -65,14 +66,15 @@ state "done" {
 // becomes false.
 func TestWhile_SharedVariableCountdown(t *testing.T) {
 	const src = `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "loop"
   target_state  = "done"
 }
 
 shared_variable "remaining" {
-  type  = "number"
+  type = number
   value = 3
 }
 
@@ -136,7 +138,8 @@ state "done" {
 // current iteration count and is accessible in step input expressions.
 func TestWhile_IndexInInput(t *testing.T) {
 	const src = `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "loop"
   target_state  = "done"
@@ -204,7 +207,8 @@ state "done" {
 // TestWhile_FirstBinding verifies that while.first is true only on index 0.
 func TestWhile_FirstBinding(t *testing.T) {
 	const src = `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "loop"
   target_state  = "done"
@@ -269,7 +273,8 @@ state "done" {
 // after the first failing iteration and emits any_failed.
 func TestWhile_OnFailureAbort(t *testing.T) {
 	g := compile(t, `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "loop"
   target_state  = "done"
@@ -310,14 +315,15 @@ state "done" {
 func TestWhile_OnFailureContinue(t *testing.T) {
 	// 3 iterations: fail, succeed, then the condition becomes false.
 	const src = `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "loop"
   target_state  = "done"
 }
 
 shared_variable "remaining" {
-  type  = "number"
+  type = number
   value = 2
 }
 
@@ -384,14 +390,15 @@ state "done" {
 // iterations to be suppressed, resulting in all_succeeded aggregate.
 func TestWhile_OnFailureIgnore(t *testing.T) {
 	const src = `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "loop"
   target_state  = "done"
 }
 
 shared_variable "remaining" {
-  type  = "number"
+  type = number
   value = 2
 }
 
@@ -454,7 +461,8 @@ state "done" {
 // back, and that a resumed run picks up from the right index.
 func TestWhile_CrashResume(t *testing.T) {
 	const src = `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "loop"
   target_state  = "done"
@@ -554,7 +562,8 @@ func TestWhile_CursorSerialisation(t *testing.T) {
 // declared next node.
 func TestWhile_AggregateRoutesToDone(t *testing.T) {
 	g := compile(t, `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "loop"
   target_state  = "completed"
@@ -594,14 +603,15 @@ state "failed" {
 // loop does not intercept a while cursor and prematurely pop it.
 func TestWhile_RoutingSkipsWhileCursor(t *testing.T) {
 	const src = `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "loop"
   target_state  = "done"
 }
 
 shared_variable "n" {
-  type  = "number"
+  type = number
   value = 2
 }
 
@@ -681,7 +691,8 @@ func TestWhile_IsWhileSentinel(t *testing.T) {
 // while iterations (each iteration counts as one visit).
 func TestWhile_MaxVisitsEnforced(t *testing.T) {
 	const src = `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "loop"
   target_state  = "done"
@@ -732,14 +743,17 @@ state "done" {
 // every stepNode.Evaluate call including while re-entries.
 func TestWhile_MaxTotalStepsEnforced(t *testing.T) {
 	const src = `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "loop"
   target_state  = "done"
-}
-policy {
+
+  policy {
   max_total_steps = 3
 }
+}
+
 adapter "fake" "default" {}
 step "loop" {
   target = adapter.fake.default
@@ -787,7 +801,8 @@ state "done" {
 // aggregate outcome "any_failed" and Run() returning nil (not an error).
 func TestWhile_TimeoutEnforced(t *testing.T) {
 	const src = `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "loop"
   target_state  = "done"
@@ -842,7 +857,8 @@ state "done" {
 // where the empty-string default was treated the same as "abort".
 func TestWhile_DefaultOnFailure_ContinuesPastExecErr(t *testing.T) {
 	const src = `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "loop"
   target_state  = "done"

@@ -12,7 +12,8 @@ import (
 // whileWorkflow wraps a while step body in a minimal compilable workflow.
 func whileWorkflow(stepBody string) string {
 	return `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "work"
   target_state  = "done"
@@ -180,7 +181,8 @@ func TestWhile_RequiresAllSucceededOutcome(t *testing.T) {
 // diagnostic or by the HCL evaluator reporting an unknown variable).
 func TestWhile_WhileRefInNonWhileStep_Error(t *testing.T) {
 	src := `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "work"
   target_state  = "done"
@@ -218,7 +220,8 @@ state "done" {
 // in a while-modified step's input expression without compile errors.
 func TestWhile_WhileRefInInputExpr_IsValid(t *testing.T) {
 	src := `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "work"
   target_state  = "done"
@@ -314,7 +317,8 @@ func TestWhile_OnFailure_Valid(t *testing.T) {
 // on a non-while/non-iterating step with an appropriate error message.
 func TestWhile_OnFailure_NonIterating_Error(t *testing.T) {
 	src := `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "work"
   target_state  = "done"
@@ -349,7 +353,8 @@ state "done" {
 // cursor and validateWhileRefs must catch the reference at compile time.
 func TestStep_WhileRefs_InForEachStep_Error(t *testing.T) {
 	src := `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "work"
   target_state  = "done"
@@ -389,7 +394,8 @@ func TestStep_WhileRefs_InSubworkflowStep_Error(t *testing.T) {
 	writeSubworkflowDir(t, dir, "inner", minimalCalleeHCL("inner", map[string]bool{"x": true}))
 
 	src := `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "s"
   target_state  = "done"

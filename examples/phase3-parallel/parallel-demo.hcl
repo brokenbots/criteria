@@ -8,7 +8,9 @@
 # Run with:
 #   criteria apply examples/phase3-parallel/parallel-demo.hcl
 
-workflow "parallel-demo" {
+workflow {
+
+  name = "parallel-demo"
   version       = "0.1"
   initial_state = "fetch"
   target_state  = "done"

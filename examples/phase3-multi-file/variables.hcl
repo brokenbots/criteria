@@ -1,5 +1,5 @@
 variable "name" {
-  type        = "string"
+  type = string
   default     = "world"
   description = "The name to greet"
 }

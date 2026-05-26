@@ -78,7 +78,9 @@ func compileOneAdapter(g *FSMGraph, ad AdapterDeclSpec, schemas map[string]Adapt
 	effectiveOnCrash, d := resolveAdapterOnCrash(key, ad.OnCrash)
 	diags = append(diags, d...)
 
-	effectiveEnv, d := resolveAdapterEnv(g, key, ad.Environment)
+	envKey, d := resolveEnvironmentExpr(ad.Environment, fmt.Sprintf("adapter %q", key))
+	diags = append(diags, d...)
+	effectiveEnv, d := resolveAdapterEnv(g, key, envKey)
 	diags = append(diags, d...)
 
 	adapterConfig, d := resolveAdapterConfig(key, ad, schemas, typeName, configEvalCtx)

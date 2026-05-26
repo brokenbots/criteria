@@ -11,7 +11,8 @@
 # The fold pass resolves all three locals at compile time. file(local.prompt_path)
 # is validated during compilation — a missing file is caught before the workflow
 # ever runs.
-workflow "fold-demo" {
+workflow {
+  name = "fold-demo"
   version       = "0.1"
   initial_state = "greet"
   target_state  = "done"
@@ -22,7 +23,7 @@ adapter "shell" "default" {
 }
 
 variable "name" {
-  type        = "string"
+  type = string
   default     = "world"
   description = "Name to greet"
 }

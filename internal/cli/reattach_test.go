@@ -95,7 +95,8 @@ func writeCheckpointDirect(t *testing.T, stateDir string, cp *StepCheckpoint) {
 // minimalWorkflow is a no-step single-terminal-state workflow for tests that
 // only need a compilable workflow without running any adapter.
 const minimalWorkflow = `
-workflow "minimal" {
+workflow {
+  name = "minimal"
   version       = "0.1"
   initial_state = "done"
   target_state  = "done"
@@ -109,7 +110,8 @@ state "done" {
 
 // twoStepShellWorkflow is used for resume tests that need an executable workflow.
 const twoStepShellWorkflow = `
-workflow "shell_resume" {
+workflow {
+  name = "shell_resume"
   version       = "0.1"
   initial_state = "greet"
   target_state  = "done"
@@ -138,17 +140,17 @@ state "failed" {
 
 // maxRetryWorkflow has max_step_retries = 0 to trigger retry-exceeded paths.
 const maxRetryWorkflow = `
-workflow "max_retry" {
+workflow {
+  name = "max_retry"
   version       = "0.1"
   initial_state = "greet"
   target_state  = "done"
+  policy {
+    max_step_retries = 0
+  }
 }
 
 adapter "shell" "default" {}
-
-policy {
-  max_step_retries = 0
-}
 
 step "greet" {
   target = adapter.shell.default
@@ -964,7 +966,8 @@ func TestResumeActiveRun_HappyPath(t *testing.T) {
 // maxVisitsWorkflow has max_visits = 1 on step "work" for testing visit-count
 // persistence across reattach.
 const maxVisitsWorkflow = `
-workflow "max_visits_test" {
+workflow {
+  name = "max_visits_test"
   version       = "0.1"
   initial_state = "work"
   target_state  = "done"
@@ -1126,7 +1129,8 @@ func TestResumeOneLocalRun_ServerNodeRejected(t *testing.T) {
 	t.Setenv("CRITERIA_STATE_DIR", stateDir)
 
 	wfFile := writeWorkflowFile(t, `
-workflow "needs_approval" {
+workflow {
+  name = "needs_approval"
   version       = "0.1"
   initial_state = "review"
   target_state  = "done"
@@ -1183,7 +1187,8 @@ func TestIter_ResumeRejectsModifiedBody(t *testing.T) {
 }
 
 const iterCursorWorkflow = `
-workflow "iter_cursor" {
+workflow {
+  name = "iter_cursor"
   version       = "0.1"
   initial_state = "execute"
   target_state  = "done"

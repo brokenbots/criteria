@@ -9,7 +9,8 @@ import (
 
 // localWorkflow wraps a snippet into a minimal compilable workflow HCL.
 func localWorkflow(localBlocks, extraBlocks string) string {
-	return `workflow "test" {
+	return `workflow {
+  name = "test"
   version       = "0.1"
   initial_state = "done"
   target_state  = "done"
@@ -55,7 +56,7 @@ func TestCompileLocals_DependsOnVar(t *testing.T) {
   }
 `, `
   variable "name" {
-    type    = "string"
+    type = string
     default = "world"
   }
 `)
@@ -166,7 +167,8 @@ func TestCompileLocals_NoValueAttr(t *testing.T) {
 
 func TestCompileLocals_RuntimeRef(t *testing.T) {
 	// local.x = steps.foo.out is a compile error — locals must fold.
-	src := `workflow "test" {
+	src := `workflow {
+  name = "test"
   version       = "0.1"
   initial_state = "step1"
   target_state  = "done"
@@ -205,7 +207,8 @@ step "step1" {
 // known values at compile time; an unknown result is not allowed.
 func TestCompileLocals_FileWithNoWorkflowDir(t *testing.T) {
 	src := `
-workflow "x" {
+workflow {
+  name = "x"
   version       = "0.1"
   initial_state = "open"
   target_state  = "done"

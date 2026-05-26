@@ -47,7 +47,8 @@ func BenchmarkCompile_Hello(b *testing.B) {
 // generated string exercises the HCL parser and compiler at scale.
 func gen1000StepHCL(n int) []byte {
 	var b strings.Builder
-	fmt.Fprintf(&b, `workflow "perf_%d_steps" {
+	fmt.Fprintf(&b, `workflow {
+  name = "perf_%d_steps"
   version       = "0.1"
   initial_state = "step_0"
   target_state  = "done"

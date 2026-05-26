@@ -79,7 +79,8 @@ func (p *failingInitAdapter) CloseSession(ctx context.Context, sessionID string)
 // TestEngine_LifecycleEventsEmitted verifies that lifecycle events are emitted when adapters are provisioned/torn down.
 func TestEngine_LifecycleEventsEmitted(t *testing.T) {
 	g := compile(t, `
-workflow "test" {
+workflow {
+  name = "test"
   version       = "0.1"
   initial_state = "step1"
   target_state  = "done"
@@ -156,7 +157,8 @@ state "done" {
 // TestEngine_AdapterTeardownOnCompletion verifies adapters are torn down after workflow completes.
 func TestEngine_AdapterTeardownOnCompletion(t *testing.T) {
 	g := compile(t, `
-workflow "test" {
+workflow {
+  name = "test"
   version       = "0.1"
   initial_state = "step1"
   target_state  = "done"
@@ -206,7 +208,8 @@ state "done" {
 // TestEngine_AdapterTeardownOnError verifies adapters are torn down even if step execution returns an error.
 func TestEngine_AdapterTeardownOnError(t *testing.T) {
 	g := compile(t, `
-workflow "test" {
+workflow {
+  name = "test"
   version       = "0.1"
   initial_state = "fail_step"
   target_state  = "done"
@@ -254,7 +257,8 @@ state "done" {
 // TestEngine_MultipleAdaptersProvisioned verifies all declared adapters are provisioned and torn down in order.
 func TestEngine_MultipleAdaptersProvisioned(t *testing.T) {
 	g := compile(t, `
-workflow "test" {
+workflow {
+  name = "test"
   version       = "0.1"
   initial_state = "step1"
   target_state  = "done"
@@ -353,7 +357,8 @@ state "done" {
 // demonstrating that teardown uses context.WithoutCancel to complete cleanup.
 func TestEngine_AdapterTeardownOnCancel(t *testing.T) {
 	g := compile(t, `
-workflow "test" {
+workflow {
+  name = "test"
   version       = "0.1"
   initial_state = "step1"
   target_state  = "done"
@@ -401,7 +406,8 @@ state "done" {
 // all previously provisioned adapters are rolled back in reverse order.
 func TestEngine_AdapterInitFailureRollsBack(t *testing.T) {
 	g := compile(t, `
-workflow "test" {
+workflow {
+  name = "test"
   version       = "0.1"
   initial_state = "step1"
   target_state  = "done"

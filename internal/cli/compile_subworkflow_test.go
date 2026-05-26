@@ -20,12 +20,17 @@ func writeCallee(t *testing.T, parent, name string, vars map[string]bool) string
 		t.Fatalf("create callee dir %q: %v", dir, err)
 	}
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("workflow %q {\n  version = \"1\"\n  initial_state = \"done\"\n  target_state  = \"done\"\n}\n\n", name))
+	sb.WriteString("workflow {\n")
+	sb.WriteString(fmt.Sprintf("  name          = %q\n", name))
+	sb.WriteString("  version       = \"1\"\n")
+	sb.WriteString("  initial_state = \"done\"\n")
+	sb.WriteString("  target_state  = \"done\"\n")
+	sb.WriteString("}\n\n")
 	for varName, hasDef := range vars {
 		if hasDef {
-			sb.WriteString(fmt.Sprintf("variable %q {\n  type    = \"string\"\n  default = \"x\"\n}\n", varName))
+			sb.WriteString(fmt.Sprintf("variable %q {\n  type    = string\n  default = \"x\"\n}\n", varName))
 		} else {
-			sb.WriteString(fmt.Sprintf("variable %q {\n  type = \"string\"\n}\n", varName))
+			sb.WriteString(fmt.Sprintf("variable %q {\n  type = string\n}\n", varName))
 		}
 	}
 	sb.WriteString("state \"done\" {\n  terminal = true\n  success  = true\n}\n")
@@ -67,7 +72,8 @@ func TestCompileJSON_SubworkflowStepHasSubworkflowField(t *testing.T) {
 	writeCallee(t, dir, "inner", nil)
 
 	hcl := `
-workflow "parent" {
+workflow {
+  name = "parent"
   version       = "1"
   initial_state = "run_inner"
   target_state  = "done"
@@ -112,7 +118,8 @@ func TestCompileJSON_SubworkflowStepInputKeys(t *testing.T) {
 	writeCallee(t, dir, "inner", map[string]bool{"greeting": true})
 
 	hcl := `
-workflow "parent" {
+workflow {
+  name = "parent"
   version       = "1"
   initial_state = "run_inner"
   target_state  = "done"
@@ -163,7 +170,8 @@ func TestCompileJSON_SubworkflowsArrayPresent(t *testing.T) {
 	}
 
 	hcl := `
-workflow "parent" {
+workflow {
+  name = "parent"
   version       = "1"
   initial_state = "run_inner"
   target_state  = "done"
@@ -217,7 +225,8 @@ state "done" {
 func TestCompileJSON_NoSubworkflows_SubworkflowsFieldOmitted(t *testing.T) {
 	dir := t.TempDir()
 	hcl := `
-workflow "simple" {
+workflow {
+  name = "simple"
   version       = "1"
   initial_state = "run"
   target_state  = "done"
@@ -250,7 +259,8 @@ state "done" {
 func TestCompileJSON_AdapterStepUnchanged(t *testing.T) {
 	dir := t.TempDir()
 	hcl := `
-workflow "simple" {
+workflow {
+  name = "simple"
   version       = "1"
   initial_state = "run"
   target_state  = "done"
@@ -305,7 +315,8 @@ func TestCompileJSON_SubworkflowStepExactContract(t *testing.T) {
 	writeCallee(t, dir, "callee", map[string]bool{"greeting": true})
 
 	hcl := `
-workflow "contract_test" {
+workflow {
+  name = "contract_test"
   version       = "1"
   initial_state = "greet"
   target_state  = "done"

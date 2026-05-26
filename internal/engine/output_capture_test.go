@@ -48,7 +48,8 @@ func (p *fakeOutputAdapter) CloseSession(context.Context, string) error         
 func (p *fakeOutputAdapter) Kill()                                                      {}
 
 const outputWorkflow = `
-workflow "outputs" {
+workflow {
+  name = "outputs"
   version       = "0.1"
   initial_state = "produce"
   target_state  = "__done__"
@@ -105,7 +106,8 @@ func TestOutputCapture_StepOutputsCapturedInVars(t *testing.T) {
 }
 
 const interpolOutputWorkflow = `
-workflow "interp_outputs" {
+workflow {
+  name = "interp_outputs"
   version       = "0.1"
   initial_state = "build"
   target_state  = "__done__"
@@ -193,7 +195,8 @@ func TestOutputCapture_ExpressionInterpolation(t *testing.T) {
 }
 
 const sequenceWorkflow = `
-workflow "sequence" {
+workflow {
+  name = "sequence"
   version       = "0.1"
   initial_state = "first"
   target_state  = "__done__"

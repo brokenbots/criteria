@@ -82,14 +82,15 @@ func (s *switchSink) StepEventSink(string) adapter.EventSink            { return
 // TestSwitch_FirstMatchWins verifies that the first matching condition wins.
 func TestSwitch_FirstMatchWins(t *testing.T) {
 	src := `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "decide"
   target_state  = "done"
 }
 
 variable "env" {
-  type    = "string"
+  type = string
   default = "staging"
 }
 
@@ -156,14 +157,15 @@ state "done"           { terminal = true }
 // the default branch is taken.
 func TestSwitch_NoMatchFallsToDefault(t *testing.T) {
 	src := `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "decide"
   target_state  = "done"
 }
 
 variable "env" {
-  type    = "string"
+  type = string
   default = "dev"
 }
 
@@ -222,14 +224,15 @@ state "done"           { terminal = true }
 // results in a run failure.
 func TestSwitch_NonBoolConditionErrors(t *testing.T) {
 	src := `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "decide"
   target_state  = "done"
 }
 
 variable "env" {
-  type    = "string"
+  type = string
   default = "dev"
 }
 
@@ -277,14 +280,15 @@ state "done" { terminal = true }
 // default branch ("tier_fail") and the terminal assertion would catch the bug.
 func TestSwitch_OutputProjection_AppliedBeforeNext(t *testing.T) {
 	src := `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "decide"
   target_state  = "tier_ok"
 }
 
 variable "env" {
-  type    = "string"
+  type = string
   default = "prod"
 }
 
@@ -356,7 +360,8 @@ state "tier_fail" {
 // empty terminal state and success = true.
 func TestSwitch_ReturnFromCondition_BubblesToCaller(t *testing.T) {
 	src := `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "decide"
   target_state  = "done"
@@ -401,14 +406,15 @@ state "done" { terminal = true }
 // TestSwitch_EndToEnd exercises a switch choosing between two terminal states.
 func TestSwitch_EndToEnd_StepOutputSwitch(t *testing.T) {
 	src := `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "decide"
   target_state  = "succeeded"
 }
 
 variable "result" {
-  type    = "string"
+  type = string
   default = "pass"
 }
 
@@ -466,14 +472,15 @@ state "failed" {
 // handleReturnExit path correctly.
 func TestSwitch_EndToEnd_ReturnExitsWorkflow(t *testing.T) {
 	src := `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "gate"
   target_state  = "done"
 }
 
 variable "early_exit" {
-  type    = "string"
+  type = string
   default = "yes"
 }
 

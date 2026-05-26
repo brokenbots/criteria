@@ -30,7 +30,8 @@ func compileWorkflowInDir(t *testing.T, dir, hclContent string) hcl.Diagnostics 
 // minimalWorkflowHCL is a minimal valid workflow that uses file() with the
 // given path in the input block of a step.
 func minimalWorkflowWithFile(filePath string) string {
-	return `workflow "test" {
+	return `workflow {
+  name = "test"
   version       = "0.1"
   initial_state = "step1"
   target_state  = "done"
@@ -94,7 +95,8 @@ func TestCompileFileFunctionValidation_VarArgFileExists(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "some.txt"), []byte("hello\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	hclContent := `workflow "test" {
+	hclContent := `workflow {
+  name = "test"
   version       = "0.1"
   initial_state = "step1"
   target_state  = "done"
@@ -106,7 +108,7 @@ state "done" {
 }
 
 variable "path" {
-  type    = "string"
+  type = string
   default = "some.txt"
 }
 
@@ -134,7 +136,8 @@ step "step1" {
 func TestCompileFileFunctionValidation_VarArgFileMissing(t *testing.T) {
 	dir := t.TempDir()
 	// "some.txt" does NOT exist in dir — fold-time file() validation should catch it.
-	hclContent := `workflow "test" {
+	hclContent := `workflow {
+  name = "test"
   version       = "0.1"
   initial_state = "step1"
   target_state  = "done"
@@ -146,7 +149,7 @@ state "done" {
 }
 
 variable "path" {
-  type    = "string"
+  type = string
   default = "some.txt"
 }
 

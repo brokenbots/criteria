@@ -58,14 +58,15 @@ func (p *adapterFunc) Kill()                                                    
 // compiles, runs, and completes successfully.
 func TestSharedWrites_AppliedAfterStep(t *testing.T) {
 	const src = `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "inc"
   target_state  = "done"
 }
 
 shared_variable "counter" {
-  type  = "number"
+  type = number
   value = 0
 }
 
@@ -104,14 +105,15 @@ state "done" {
 // by step 1.
 func TestSharedWrites_StoreReflectsWrittenValue(t *testing.T) {
 	const src = `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "set_val"
   target_state  = "done"
 }
 
 shared_variable "msg" {
-  type  = "string"
+  type = string
   value = "initial"
 }
 
@@ -175,14 +177,15 @@ state "done" {
 // shared_writes causes the engine to fail with a clear error.
 func TestSharedWrites_OutputKeyMissing(t *testing.T) {
 	const src = `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "bad"
   target_state  = "done"
 }
 
 shared_variable "v" {
-  type = "string"
+  type = string
 }
 
 adapter "sw" "default" {}
@@ -223,14 +226,15 @@ state "done" {
 // values, Store.Set will reject the type mismatch.
 func TestSharedWrites_TypeMismatchAtRuntime(t *testing.T) {
 	const src = `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "bad"
   target_state  = "done"
 }
 
 shared_variable "counter" {
-  type = "number"
+  type = number
 }
 
 adapter "sw" "default" {}
@@ -276,14 +280,15 @@ state "done" {
 //  3. The full typed projection path (projectedCty) used by resolveSharedWriteValue
 func TestSharedWrites_NonScalarViaTypedProjection(t *testing.T) {
 	const src = `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "collect"
   target_state  = "done"
 }
 
 shared_variable "items" {
-  type = "list(string)"
+  type = list(string)
 }
 
 adapter "sw" "default" {}
@@ -346,14 +351,15 @@ state "done" {
 // initial value is readable in HCL expressions via shared.* at the first step.
 func TestSharedWrites_InitialValueVisibleInExpr(t *testing.T) {
 	const src = `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "read_initial"
   target_state  = "done"
 }
 
 shared_variable "greeting" {
-  type  = "string"
+  type = string
   value = "hello"
 }
 
@@ -395,14 +401,15 @@ state "done" {
 // step reads the final value to confirm the last write was committed.
 func TestSharedWrites_PerIterationOutcome(t *testing.T) {
 	const src = `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "loop"
   target_state  = "done"
 }
 
 shared_variable "last_tag" {
-  type  = "string"
+  type = string
   value = ""
 }
 
@@ -470,14 +477,15 @@ state "done" {
 // when finishIterationInGraph fires, not during any individual iteration.
 func TestSharedWrites_AggregateOutcome(t *testing.T) {
 	const src = `
-workflow "t" {
+workflow {
+  name = "t"
   version       = "0.1"
   initial_state = "loop"
   target_state  = "done"
 }
 
 shared_variable "done_flag" {
-  type  = "string"
+  type = string
   value = "pending"
 }
 

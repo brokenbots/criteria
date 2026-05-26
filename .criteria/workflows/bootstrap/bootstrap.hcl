@@ -29,58 +29,59 @@
 #     click Approve on the PR in GitHub (branch protection forbids self-
 #     approval), then approve the workflow node to continue.
 
-workflow "bootstrap" {
+workflow {
+
+  name = "bootstrap"
   version       = "1"
   initial_state = "preflight"
   target_state  = "done"
-}
-
-policy {
-  max_total_steps = 5000
+  policy {
+    max_total_steps = 5000
+  }
 }
 
 variable "workstream_file" {
-  type        = "string"
+  type = string
   default     = ""
   description = "Path to the workstream markdown file to process, relative to project_dir."
 }
 
 variable "project_dir" {
-  type        = "string"
+  type = string
   default     = ""
   description = "Absolute path to the criteria engine project root."
 }
 
 variable "max_retries" {
-  type        = "number"
+  type = number
   default     = 3
   description = "Maximum developer/owner cycles before requesting operator assistance inside develop."
 }
 
 variable "base_branch" {
-  type        = "string"
+  type = string
   default     = "adapter-v2"
   description = "Integration branch all workstream PRs target. Use 'main' for post-release workstreams (WS41+)."
 }
 
 variable "require_workflow_approval" {
-  type        = "string"
+  type = string
   default     = "false"
   description = "Set to 'true' to require explicit workflow-node approval before merge. Default false suits feature-branch work; set true when targeting main."
 }
 
 variable "developer_model" {
-  type        = "string"
+  type = string
   default     = "claude-sonnet-4.6"
 }
 
 variable "reviewer_model" {
-  type        = "string"
+  type = string
   default     = "gpt-5.4"
 }
 
 variable "pr_reviewer_model" {
-  type        = "string"
+  type = string
   default     = "gpt-5.5"
 }
 

@@ -3,6 +3,7 @@ package engine
 import (
 	"fmt"
 
+	"github.com/hashicorp/hcl/v2/ext/typeexpr"
 	"github.com/zclconf/go-cty/cty"
 	"github.com/zclconf/go-cty/cty/convert"
 	"github.com/zclconf/go-cty/cty/json"
@@ -58,11 +59,8 @@ func evalRunOutputs(g *workflow.FSMGraph, st *RunState) ([]map[string]string, er
 		// Build declared type string (empty if not set).
 		declaredTypeStr := ""
 		if on.DeclaredType != cty.NilType {
-			// TypeToString only supports types accepted by parseVariableType.
-			// This should never error at runtime since declared types are validated at compile time.
-			if s, err := workflow.TypeToString(on.DeclaredType); err == nil {
-				declaredTypeStr = s
-			}
+			// typeexpr.TypeString handles all cty types; types are validated at compile time.
+			declaredTypeStr = typeexpr.TypeString(on.DeclaredType)
 		}
 
 		result = append(result, map[string]string{

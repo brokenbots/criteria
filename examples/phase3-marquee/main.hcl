@@ -1,11 +1,12 @@
-workflow "phase3_marquee" {
+workflow {
+  name = "phase3_marquee"
   version       = "0.1"
   initial_state = "process_items"
   target_state  = "done"
 }
 
 variable "input_count" {
-  type    = "number"
+  type = number
   default = 3
 }
 
@@ -51,6 +52,6 @@ state "done" {
 
 # Top-level output block (Phase 3 W09 feature)
 output "processed_count" {
-  type  = "number"
+  type = number
   value = var.input_count
 }
