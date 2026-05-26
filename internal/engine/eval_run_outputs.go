@@ -42,6 +42,7 @@ func evalRunOutputs(g *workflow.FSMGraph, st *RunState) ([]map[string]string, er
 
 		// Check type match if declared type is set, using cty conversion semantics.
 		if on.DeclaredType != cty.NilType {
+			val = workflow.ApplyDefaultsIfAny(val, on.TypeDefaults)
 			converted, err := convert.Convert(val, on.DeclaredType)
 			if err != nil {
 				return nil, fmt.Errorf("output %q: value of type %s is not assignable to declared type %s: %w",
@@ -90,6 +91,7 @@ func evalRunOutputsAsValues(g *workflow.FSMGraph, st *RunState) (map[string]cty.
 			return nil, fmt.Errorf("output %q: evaluation failed: %s", name, diags.Error())
 		}
 		if on.DeclaredType != cty.NilType {
+			val = workflow.ApplyDefaultsIfAny(val, on.TypeDefaults)
 			converted, err := convert.Convert(val, on.DeclaredType)
 			if err != nil {
 				return nil, fmt.Errorf("output %q: value of type %s is not assignable to declared type %s: %w",

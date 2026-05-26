@@ -52,6 +52,154 @@ step "start" {
 state "__done__" { terminal = true }
 `
 
+func TestVariableCompile_TypeDefaults(t *testing.T) {
+	src := `
+workflow {
+  name = "test"
+  version       = "0.1"
+  initial_state = "start"
+  target_state  = "__done__"
+}
+
+adapter "noop" "default" {}
+
+variable "config" {
+  type = object({
+    greeting = optional(string, "hello")
+    count    = optional(number, 42)
+  })
+  default = {}
+}
+
+step "start" {
+  target = adapter.noop.default
+  outcome "success" { next = "__done__" }
+}
+state "__done__" { terminal = true }
+`
+
+	spec, diags := Parse("test.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags)
+	}
+	g, diags := Compile(spec, nil)
+	if diags.HasErrors() {
+		t.Fatalf("compile: %s", diags)
+	}
+
+	vn, ok := g.Variables["config"]
+	if !ok {
+		t.Fatal("variable 'config' not compiled")
+	}
+
+	// The default {} should have type defaults applied: greeting="hello", count=42.
+	if vn.Default == cty.NilVal {
+		t.Fatal("expected default value")
+	}
+	if !vn.Default.Type().IsObjectType() {
+		t.Fatalf("expected object default, got %s", vn.Default.Type().FriendlyName())
+	}
+	if got := vn.Default.GetAttr("greeting").AsString(); got != "hello" {
+		t.Errorf("greeting default: got %q, want %q", got, "hello")
+	}
+	if got, _ := vn.Default.GetAttr("count").AsBigFloat().Int64(); got != 42 {
+		t.Errorf("count default: got %d, want %d", got, 42)
+	}
+}
+
+func TestVariableCompile_TypeDefaults_MissingDefault(t *testing.T) {
+	// When no variable-level default is declared, the type defaults don't
+	// auto-populate a default — the variable remains required.
+	src := `
+workflow {
+  name = "test"
+  version       = "0.1"
+  initial_state = "start"
+  target_state  = "__done__"
+}
+
+adapter "noop" "default" {}
+
+variable "config" {
+  type = object({
+    greeting = optional(string, "hello")
+  })
+}
+
+step "start" {
+  target = adapter.noop.default
+  outcome "success" { next = "__done__" }
+}
+state "__done__" { terminal = true }
+`
+
+	spec, diags := Parse("test.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags)
+	}
+	g, diags := Compile(spec, nil)
+	if diags.HasErrors() {
+		t.Fatalf("compile: %s", diags)
+	}
+
+	vn, ok := g.Variables["config"]
+	if !ok {
+		t.Fatal("variable 'config' not compiled")
+	}
+	if !vn.IsRequired() {
+		t.Error("expected variable to be required (no var-level default)")
+	}
+}
+
+func TestVariableCompile_TypeDefaults_SingleArgOptional(t *testing.T) {
+	// optional(string) without default value should parse fine.
+	src := `
+workflow {
+  name = "test"
+  version       = "0.1"
+  initial_state = "start"
+  target_state  = "__done__"
+}
+
+adapter "noop" "default" {}
+
+variable "config" {
+  type = object({
+    greeting = optional(string)
+  })
+  default = {}
+}
+
+step "start" {
+  target = adapter.noop.default
+  outcome "success" { next = "__done__" }
+}
+state "__done__" { terminal = true }
+`
+
+	spec, diags := Parse("test.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags)
+	}
+	g, diags := Compile(spec, nil)
+	if diags.HasErrors() {
+		t.Fatalf("compile: %s", diags)
+	}
+
+	vn, ok := g.Variables["config"]
+	if !ok {
+		t.Fatal("variable 'config' not compiled")
+	}
+	if vn.Default == cty.NilVal {
+		t.Fatal("expected default value")
+	}
+	// optional(string) without default means attribute can be omitted; it
+	// does not provide a default value. The convert should fill with null.
+	if !vn.Default.GetAttr("greeting").IsNull() {
+		t.Errorf("greeting should be null when optional has no default")
+	}
+}
+
 func TestVariableCompile_Defaults(t *testing.T) {
 	spec, diags := Parse("test.hcl", []byte(varWorkflow))
 	if diags.HasErrors() {

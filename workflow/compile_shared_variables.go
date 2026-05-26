@@ -10,6 +10,7 @@ import (
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/ext/typeexpr"
 	"github.com/zclconf/go-cty/cty"
+	"github.com/zclconf/go-cty/cty/convert"
 )
 
 // compileSharedVariables compiles all shared_variable blocks from spec into
@@ -30,13 +31,13 @@ func compileSharedVariables(g *FSMGraph, spec *Spec, opts CompileOpts) hcl.Diagn
 			continue
 		}
 
-		typ, typDiags := compileSharedVarType(name, sv.Type)
+		typ, defs, typDiags := compileSharedVarType(name, sv.Type)
 		diags = append(diags, typDiags...)
 		if typDiags.HasErrors() {
 			continue
 		}
 
-		initialVal, valDiags, skip := compileSharedVarInitialValue(name, sv.Remain, typ, g, opts)
+		initialVal, valDiags, skip := compileSharedVarInitialValue(name, sv.Remain, typ, defs, g, opts)
 		diags = append(diags, valDiags...)
 		if skip {
 			continue
@@ -45,6 +46,7 @@ func compileSharedVariables(g *FSMGraph, spec *Spec, opts CompileOpts) hcl.Diagn
 		g.SharedVariables[name] = &SharedVariableNode{
 			Name:         name,
 			Type:         typ,
+			TypeDefaults: defs,
 			InitialValue: initialVal,
 			Description:  sv.Description,
 		}
@@ -70,26 +72,26 @@ func checkSharedVarNameCollisions(g *FSMGraph, name string) *hcl.Diagnostic {
 }
 
 // compileSharedVarType parses the Type expression of a shared_variable block
-// and returns the resolved cty.Type plus any diagnostics.
-func compileSharedVarType(name string, typeExpr hcl.Expression) (cty.Type, hcl.Diagnostics) {
+// and returns the resolved cty.Type, optional defaults, plus any diagnostics.
+func compileSharedVarType(name string, typeExpr hcl.Expression) (cty.Type, *typeexpr.Defaults, hcl.Diagnostics) {
 	if isAbsentExpr(typeExpr) {
-		return cty.NilType, hcl.Diagnostics{&hcl.Diagnostic{
+		return cty.NilType, nil, hcl.Diagnostics{&hcl.Diagnostic{
 			Severity: hcl.DiagError,
 			Summary:  fmt.Sprintf("shared_variable %q: attribute \"type\" is required", name),
 		}}
 	}
-	typ, typeDiags := typeexpr.Type(typeExpr)
+	typ, defs, typeDiags := resolveTypeConstraint(typeExpr)
 	if typeDiags.HasErrors() {
-		return cty.NilType, typeDiags
+		return cty.NilType, nil, typeDiags
 	}
-	return typ, nil
+	return typ, defs, nil
 }
 
 // compileSharedVarInitialValue parses and validates the optional "value"
 // attribute from remain. Returns (value, diags, shouldSkip). shouldSkip is true
 // when diags has a fatal error that means this shared_variable should be
 // skipped (the caller must not register it).
-func compileSharedVarInitialValue(name string, remain hcl.Body, typ cty.Type, g *FSMGraph, opts CompileOpts) (cty.Value, hcl.Diagnostics, bool) {
+func compileSharedVarInitialValue(name string, remain hcl.Body, typ cty.Type, defs *typeexpr.Defaults, g *FSMGraph, opts CompileOpts) (cty.Value, hcl.Diagnostics, bool) {
 	initialVal := cty.NullVal(typ)
 	if remain == nil {
 		return initialVal, nil, false
@@ -115,13 +117,13 @@ func compileSharedVarInitialValue(name string, remain hcl.Body, typ cty.Type, g 
 		return initialVal, diags, false
 	}
 
-	folded, valDiags, skip := validateFoldedInitialValue(name, valAttr, typ, g, opts)
+	folded, valDiags, skip := validateFoldedInitialValue(name, valAttr, typ, defs, g, opts)
 	return folded, append(diags, valDiags...), skip
 }
 
 // validateFoldedInitialValue folds and type-checks the value expression for a
 // shared_variable declaration. Returns (folded value, diags, shouldSkip).
-func validateFoldedInitialValue(name string, valAttr *hcl.Attribute, typ cty.Type, g *FSMGraph, opts CompileOpts) (cty.Value, hcl.Diagnostics, bool) {
+func validateFoldedInitialValue(name string, valAttr *hcl.Attribute, typ cty.Type, defs *typeexpr.Defaults, g *FSMGraph, opts CompileOpts) (cty.Value, hcl.Diagnostics, bool) {
 	var diags hcl.Diagnostics
 	folded, foldable, foldDiags := FoldExpr(valAttr.Expr, graphVars(g), graphLocals(g), opts.WorkflowDir)
 	diags = append(diags, foldDiags...)
@@ -146,7 +148,9 @@ func validateFoldedInitialValue(name string, valAttr *hcl.Attribute, typ cty.Typ
 		})
 		return cty.NullVal(typ), diags, true
 	}
-	if !folded.Type().Equals(typ) {
+	folded = applyDefaultsIfAny(folded, defs)
+	coerced, err := convert.Convert(folded, typ)
+	if err != nil {
 		r := valAttr.Expr.StartRange()
 		diags = append(diags, &hcl.Diagnostic{
 			Severity: hcl.DiagError,
@@ -155,7 +159,7 @@ func validateFoldedInitialValue(name string, valAttr *hcl.Attribute, typ cty.Typ
 		})
 		return cty.NullVal(typ), diags, true
 	}
-	return folded, diags, false
+	return coerced, diags, false
 }
 
 // compileSharedWritesAttr decodes and validates a shared_writes = { var_name = "output_key" }
