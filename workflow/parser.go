@@ -21,7 +21,7 @@ func ParseFile(path string) (*Spec, hcl.Diagnostics) {
 	return Parse(path, src)
 }
 
-// Parse decodes HCL source into a Spec. The workflow "name" { ... } block is
+// Parse decodes HCL source into a Spec. The workflow { ... } block is
 // header-only in the new format; all content blocks (step, state, adapter, etc.)
 // live at the top level of the file. A nil Header is valid here (for content-only
 // files in a multi-file directory); callers that require a header (ParseDir,

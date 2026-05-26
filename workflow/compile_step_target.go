@@ -170,7 +170,7 @@ func requireAbsTraversal(stepName, attrName string, attr *hcl.Attribute, summary
 
 // rejectEnvOverrideForSubworkflow emits a compile error if the step's Remain
 // body contains an `environment` attribute. Environment is set at the
-// subworkflow declaration level (subworkflow { environment = "shell.ci" }),
+// subworkflow declaration level (subworkflow { environment = shell.ci }),
 // not per-step; step-level environment overrides are only valid for
 // adapter-targeted steps.
 func rejectEnvOverrideForSubworkflow(stepName string, body hcl.Body) hcl.Diagnostics {
@@ -188,7 +188,7 @@ func rejectEnvOverrideForSubworkflow(stepName string, body hcl.Body) hcl.Diagnos
 	return hcl.Diagnostics{&hcl.Diagnostic{
 		Severity: hcl.DiagError,
 		Summary:  fmt.Sprintf("step %q: environment override is not valid for subworkflow-targeted steps", stepName),
-		Detail:   `Set environment on the subworkflow declaration instead: subworkflow "<name>" { environment = "<type>.<name>" }.`,
+		Detail:   `Set environment on the subworkflow declaration instead: subworkflow "<name>" { environment = <type>.<name> }.`,
 		Subject:  &r,
 	}}
 }

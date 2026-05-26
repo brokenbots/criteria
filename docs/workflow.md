@@ -211,7 +211,7 @@ workflow "multi_env_workflow" {
 }
 ```
 
-In the workflow header, the `environment = "<type>.<name>"` attribute serves as the explicit default environment for the workflow. If no environment is set and multiple environments are declared, the workflow is valid at compile time, but runtime execution may fail if steps expect an environment to be bound.
+In the workflow header, the `environment = <type>.<name>` attribute serves as the explicit default environment for the workflow. If no environment is set and multiple environments are declared, the workflow is valid at compile time, but runtime execution may fail if steps expect an environment to be bound.
 
 ### Runtime behavior (v0.3.0)
 
@@ -361,7 +361,7 @@ step "deploy" {
 Key points:
 - **Bare traversal required**: `environment = shell.production` (no quotes). Quoted strings are rejected at compile time with a migration hint.
 - **Validated at compile time**: the referenced environment (`<type>.<name>`) must be declared in the same workflow; a missing reference is a compile error.
-- **Adapter steps only**: `environment` on a subworkflow-targeted step (`target = subworkflow.<name>`) is a compile error. To bind a subworkflow to an environment, set it on the subworkflow declaration: `subworkflow "inner" { environment = "shell.ci" }`.
+- **Adapter steps only**: `environment` on a subworkflow-targeted step (`target = subworkflow.<name>`) is a compile error. To bind a subworkflow to an environment, set it on the subworkflow declaration: `subworkflow "inner" { environment = shell.ci }`.
 
 ### Adapter outputs
 
@@ -1702,7 +1702,7 @@ workflow "deploy_pipeline" {
   # Declare the sub-workflow to deep-compile.
   subworkflow "smoke_test" {
     source      = "./subworkflows/smoke"   # local directory containing one or more .hcl files
-    environment = "shell.ci"              # optional: bind callee to a declared environment
+    environment = shell.ci                # optional: bind callee to a declared environment
     input = {
       target_env = var.env               # bind parent-scope expressions to callee variables
       retries    = 3

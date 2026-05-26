@@ -95,7 +95,7 @@ type WorkflowHeaderSpec struct {
 }
 
 // Spec is the parsed (but unvalidated) HCL workflow document. After workstream
-// 17, the `workflow "<name>" { ... }` block is header-only; all content blocks
+// 17, the `workflow { ... }` block is header-only; all content blocks
 // (step, state, adapter, etc.) live at the top level of the HCL file.
 type Spec struct {
 	Header          *WorkflowHeaderSpec  `hcl:"workflow,block"`
