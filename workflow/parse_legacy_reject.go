@@ -16,6 +16,7 @@ func rejectLegacyBlocks(body hcl.Body) hcl.Diagnostics {
 		"branch": `block "branch" was renamed to "switch" in v0.3.0. The arm shape changed ` +
 			`from arm { when, transition_to } to condition { match, next, output }. ` +
 			`The default block uses next instead of transition_to. See CHANGELOG.md migration note.`,
+		"shared_variable": `the "shared_variable" block was replaced by "data" blocks in WS02. Use data "internal" "<name>" { type = ... value = ... } and reference values as data.internal.<name>.value.`,
 	}
 
 	var diags hcl.Diagnostics
@@ -286,7 +287,7 @@ func rejectLegacyOutcomeTransitionToInBody(body hcl.Body) hcl.Diagnostics {
 				diags = append(diags, &hcl.Diagnostic{
 					Severity: hcl.DiagError,
 					Summary:  `removed attribute "transition_to" on outcome blocks`,
-					Detail:   `attribute "transition_to" was renamed to "next" in v0.3.0. For outcomes that bubble the result to the caller, use next = "return". See CHANGELOG.md migration note.`,
+					Detail:   `attribute "transition_to" was renamed to "next" in v0.3.0. For outcomes that bubble the result to the caller, use next = step.return. See CHANGELOG.md migration note.`,
 					Subject:  &attr.NameRange,
 				})
 			}
@@ -332,8 +333,76 @@ func rejectLegacyStepTypeAttrInBody(body hcl.Body) hcl.Diagnostics {
 	return diags
 }
 
+// rejectLegacySharedWrites checks for and rejects the old `shared_writes`
+// attribute inside outcome blocks. It was replaced by `write` blocks in WS02.
+func rejectLegacySharedWrites(body hcl.Body) hcl.Diagnostics {
+	return rejectLegacySharedWritesInBody(body)
+}
+
+// rejectLegacySharedWritesInBody recursively checks for shared_writes attributes
+// in all outcome blocks within step/wait/approval blocks.
+func rejectLegacySharedWritesInBody(body hcl.Body) hcl.Diagnostics {
+	var diags hcl.Diagnostics
+
+	containerSchema := &hcl.BodySchema{
+		Blocks: []hcl.BlockHeaderSchema{
+			{Type: "step", LabelNames: []string{"name"}},
+			{Type: "wait", LabelNames: []string{"name"}},
+			{Type: "approval", LabelNames: []string{"name"}},
+		},
+	}
+	containerContent, _, _ := body.PartialContent(containerSchema)
+
+	for _, block := range containerContent.Blocks {
+		outcomeSchema := &hcl.BodySchema{
+			Blocks: []hcl.BlockHeaderSchema{
+				{Type: "outcome", LabelNames: []string{"name"}},
+			},
+		}
+		outcomeContent, _, _ := block.Body.PartialContent(outcomeSchema)
+
+		for _, outcomeBlock := range outcomeContent.Blocks {
+			attrSchema := &hcl.BodySchema{
+				Attributes: []hcl.AttributeSchema{{Name: "shared_writes"}},
+			}
+			attrContent, _, _ := outcomeBlock.Body.PartialContent(attrSchema)
+
+			if attr, ok := attrContent.Attributes["shared_writes"]; ok {
+				diags = append(diags, &hcl.Diagnostic{
+					Severity: hcl.DiagError,
+					Summary:  `removed attribute "shared_writes" on outcome blocks`,
+					Detail:   `shared_writes has been replaced by per-target write blocks: write { target = data.internal.<name>.value, value = output.<key> }. See CHANGELOG.md migration note.`,
+					Subject:  &attr.NameRange,
+				})
+			}
+		}
+	}
+
+	return diags
+}
+
+// rejectLegacySharedVariableBlock checks for and rejects the legacy
+// `shared_variable "name" { ... }` block, replaced by `data "internal" "name"` in WS02.
+func rejectLegacySharedVariableBlock(body hcl.Body) hcl.Diagnostics {
+	var diags hcl.Diagnostics
+	schema := &hcl.BodySchema{
+		Blocks: []hcl.BlockHeaderSchema{
+			{Type: "shared_variable", LabelNames: []string{"name"}},
+		},
+	}
+	content, _, _ := body.PartialContent(schema)
+	for _, block := range content.Blocks {
+		diags = append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  `removed block "shared_variable"`,
+			Detail:   `the "shared_variable" block was replaced by "data" blocks in WS02. Use data "internal" "<name>" { type = ... value = ... } and reference values as data.internal.<name>.value.`,
+			Subject:  &block.DefRange,
+		})
+	}
+	return diags
+}
+
 // rejectLegacyAttrInBlocks is a helper that searches for a single legacy attribute
-// inside blocks of a given type and emits a diagnostic when found.
 func rejectLegacyAttrInBlocks(body hcl.Body, blockType string, blockLabels []string, attrName, summary, detail string) hcl.Diagnostics {
 	var diags hcl.Diagnostics
 	schema := &hcl.BodySchema{
@@ -404,7 +473,7 @@ func rejectLegacyPolicyBlock(body hcl.Body) hcl.Diagnostics {
 func rejectLegacyDefaultOutcome(body hcl.Body) hcl.Diagnostics {
 	return rejectLegacyAttrInBlocks(body, "step", []string{"name"}, "default_outcome",
 		`removed attribute "default_outcome" on steps`,
-		`the "default_outcome" attribute was replaced by an outcome "default" { ... } block in v0.3.0. Declare outcome "default" { next = "..." } inside the step block. See CHANGELOG.md migration note.`)
+		`the "default_outcome" attribute was replaced by an outcome "default" { ... } block in v0.3.0. Declare outcome "default" { next = step.... } inside the step block. See CHANGELOG.md migration note.`)
 }
 
 // rejectLegacyTypeString checks for and rejects string-literal type attributes on
@@ -418,6 +487,7 @@ func rejectLegacyTypeString(body hcl.Body) hcl.Diagnostics {
 	}{
 		{"variable", []string{"name"}},
 		{"shared_variable", []string{"name"}},
+		{"data", []string{"kind", "name"}},
 		{"output", []string{"name"}},
 	}
 	for _, bt := range blockTypes {

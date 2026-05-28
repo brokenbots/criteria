@@ -509,8 +509,8 @@ step "process" {
   input {
     prompt = file(each.value)
   }
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "failed" }
+  outcome "all_succeeded" { next = step.done }
+  outcome "any_failed"    { next = step.failed }
 }
 
 state "done" {

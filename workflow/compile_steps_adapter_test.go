@@ -21,7 +21,7 @@ workflow {
 adapter "copilot" "default" {}
 step "open" {
   target = adapter.copilot.default
-  outcome "success" { next = "run" }
+  outcome "success" { next = step.run }
 }
 step "run" {
   target = adapter.copilot.default
@@ -29,11 +29,11 @@ step "run" {
     prompt        = "hello"
     system_prompt = "You are a bot."
   }
-  outcome "success" { next = "close" }
+  outcome "success" { next = step.close }
 }
 step "close" {
   target = adapter.copilot.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -76,8 +76,8 @@ step "run" {
     command       = "echo hi"
     system_prompt = "not-valid-for-shell"
   }
-  outcome "success" { next = "done" }
-  outcome "failure" { next = "done" }
+  outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -112,7 +112,7 @@ workflow {
 adapter "copilot" "default" {}
 step "open" {
   target = adapter.copilot.default
-  outcome "success" { next = "run" }
+  outcome "success" { next = step.run }
 }
 step "run" {
   target = adapter.copilot.default
@@ -120,11 +120,11 @@ step "run" {
     prompt           = "hello"
     reasoning_effort = "high"
   }
-  outcome "success" { next = "close" }
+  outcome "success" { next = step.close }
 }
 step "close" {
   target = adapter.copilot.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -160,7 +160,7 @@ workflow {
 adapter "copilot" "default" {}
 step "open" {
   target = adapter.copilot.default
-  outcome "success" { next = "run" }
+  outcome "success" { next = step.run }
 }
 step "run" {
   target = adapter.copilot.default
@@ -168,11 +168,11 @@ step "run" {
   input {
     prompt = "hello"
   }
-  outcome "success" { next = "close" }
+  outcome "success" { next = step.close }
 }
 step "close" {
   target = adapter.copilot.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -236,7 +236,7 @@ workflow {
 adapter "copilot" "default" {}
 step "open" {
   target = adapter.copilot.default
-  outcome "success" { next = "run" }
+  outcome "success" { next = step.run }
 }
 step "run" {
   target = adapter.copilot.default
@@ -244,11 +244,11 @@ step "run" {
   input {
     prompt = "hello"
   }
-  outcome "success" { next = "close" }
+  outcome "success" { next = step.close }
 }
 step "close" {
   target = adapter.copilot.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `

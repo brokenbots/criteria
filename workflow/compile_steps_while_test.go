@@ -39,8 +39,8 @@ state "failed" {
 func TestWhile_CompileBasic(t *testing.T) {
 	src := whileWorkflow(`
   while  = true
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "failed" }
+  outcome "all_succeeded" { next = step.done }
+  outcome "any_failed"    { next = step.failed }
 `)
 	spec, diags := Parse("test.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -75,8 +75,8 @@ func TestWhile_MutualExclusion_ForEach_Error(t *testing.T) {
 	src := whileWorkflow(`
   while    = true
   for_each = ["a", "b"]
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "failed" }
+  outcome "all_succeeded" { next = step.done }
+  outcome "any_failed"    { next = step.failed }
 `)
 	spec, diags := Parse("test.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -97,8 +97,8 @@ func TestWhile_MutualExclusion_Count_Error(t *testing.T) {
 	src := whileWorkflow(`
   while = true
   count = 3
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "failed" }
+  outcome "all_succeeded" { next = step.done }
+  outcome "any_failed"    { next = step.failed }
 `)
 	spec, diags := Parse("test.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -119,8 +119,8 @@ func TestWhile_MutualExclusion_Parallel_Error(t *testing.T) {
 	src := whileWorkflow(`
   while    = true
   parallel = ["a", "b"]
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "failed" }
+  outcome "all_succeeded" { next = step.done }
+  outcome "any_failed"    { next = step.failed }
 `)
 	spec, diags := Parse("test.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -140,8 +140,8 @@ func TestWhile_MutualExclusion_Parallel_Error(t *testing.T) {
 func TestWhile_StaticNonBoolExpr_Error(t *testing.T) {
 	src := whileWorkflow(`
   while  = 5
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "failed" }
+  outcome "all_succeeded" { next = step.done }
+  outcome "any_failed"    { next = step.failed }
 `)
 	spec, diags := Parse("test.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -161,7 +161,7 @@ func TestWhile_StaticNonBoolExpr_Error(t *testing.T) {
 func TestWhile_RequiresAllSucceededOutcome(t *testing.T) {
 	src := whileWorkflow(`
   while  = true
-  outcome "any_failed" { next = "failed" }
+  outcome "any_failed" { next = step.failed }
 `)
 	spec, diags := Parse("test.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -193,7 +193,7 @@ step "work" {
   input {
     msg = while.index
   }
-  outcome "succeeded" { next = "done" }
+  outcome "succeeded" { next = step.done }
 }
 state "done" {
   terminal = true
@@ -234,8 +234,8 @@ step "work" {
     index      = while.index
     is_first   = while.first
   }
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "failed" }
+  outcome "all_succeeded" { next = step.done }
+  outcome "any_failed"    { next = step.failed }
 }
 state "done" {
   terminal = true
@@ -261,8 +261,8 @@ state "failed" {
 func TestWhile_IsIterInGraph(t *testing.T) {
 	src := whileWorkflow(`
   while  = true
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "failed" }
+  outcome "all_succeeded" { next = step.done }
+  outcome "any_failed"    { next = step.failed }
 `)
 	spec, diags := Parse("test.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -287,7 +287,7 @@ func TestWhile_IsIterInGraph(t *testing.T) {
 		t.Fatal("outcome all_succeeded not found")
 	}
 	if co.Next != "done" {
-		t.Errorf("outcome all_succeeded.next = %q; want 'done'", co.Next)
+		t.Errorf("outcome all_succeeded.next = step.%q; want 'done'", co.Next)
 	}
 }
 
@@ -298,8 +298,8 @@ func TestWhile_OnFailure_Valid(t *testing.T) {
 			src := whileWorkflow(`
   while      = true
   on_failure = "` + mode + `"
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "failed" }
+  outcome "all_succeeded" { next = step.done }
+  outcome "any_failed"    { next = step.failed }
 `)
 			spec, diags := Parse("test.hcl", []byte(src))
 			if diags.HasErrors() {
@@ -327,7 +327,7 @@ adapter "noop" "default" {}
 step "work" {
   target     = adapter.noop.default
   on_failure = "continue"
-  outcome "succeeded" { next = "done" }
+  outcome "succeeded" { next = step.done }
 }
 state "done" {
   terminal = true
@@ -366,8 +366,8 @@ step "work" {
   input {
     idx = while.index
   }
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "done" }
+  outcome "all_succeeded" { next = step.done }
+  outcome "any_failed"    { next = step.done }
 }
 state "done" {
   terminal = true
@@ -408,7 +408,7 @@ step "s" {
   input {
     x = while.index
   }
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" {
   terminal = true

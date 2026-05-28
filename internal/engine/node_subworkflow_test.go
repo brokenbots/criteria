@@ -454,12 +454,12 @@ func TestRunSubworkflow_CalleeCancellation(t *testing.T) {
 }
 
 // TestRunSubworkflow_ReturnSentinelWithNilOutputs verifies that when a
-// subworkflow exits via next = "return" with no output projection, runSubworkflow
+// subworkflow exits via next = step.return with no output projection, runSubworkflow
 // returns (nil, nil) rather than falling through to evalRunOutputsAsValues.
 // Prior to the fix, `_ = terminal` and `if returnOutputs != nil` caused the
 // nil-output return path to silently evaluate the callee's output blocks instead.
 func TestRunSubworkflow_ReturnSentinelWithNilOutputs(t *testing.T) {
-	// Callee: single step with next = "return" but no output = {...} projection.
+	// Callee: single step with next = step.return but no output = {...} projection.
 	// The callee also declares an output block so we can detect a fall-through:
 	// if evalRunOutputsAsValues is called it would populate "leaked" in the output.
 	returnStep := &workflow.StepNode{

@@ -24,8 +24,7 @@ variable "max_execute_cycles" {
   default = 5
   description = "Maximum execute-review cycles before requesting user assistance."
 }
-
-shared_variable "execute_cycle_count" {
+data "internal" "execute_cycle_count" {
   type = number
   value = 0
 }
@@ -62,9 +61,9 @@ step "execute_init" {
   input {
     prompt = "Read ${var.workstream_file} for the full task scope.\n\nExecute the first implementation batch: complete the next unchecked items, write code and tests as needed, keep changes scoped and verifiable. Record your progress and notes in ${var.workstream_file}.\n\nEnd your final line with exactly one of:\nRESULT: needs_review\nRESULT: failure"
   }
-  outcome "needs_review"   { next = "review_init" }
-  outcome "needs_approval" { next = "review_init" }
-  outcome "failure"        { next = "failed" }
+  outcome "needs_review"   { next = step.review_init }
+  outcome "needs_approval" { next = step.review_init }
+  outcome "failure"        { next = state.failed }
 }
 
 step "review_init" {
@@ -73,11 +72,11 @@ step "review_init" {
   input {
     prompt = "Read ${var.workstream_file} for the workstream scope and the executor's latest work.\n\nReview the executor's changes against the acceptance bar. Write all findings and your verdict into the reviewer notes section of ${var.workstream_file}.\n\nEnd your final line with exactly one of:\nRESULT: approved\nRESULT: changes_requested\nRESULT: failure"
   }
-  outcome "approved"          { next = "commit_and_prepare_pr" }
-  outcome "changes_requested" { next = "count_execute_cycle" }
-  outcome "needs_review"      { next = "count_execute_cycle" }
-  outcome "needs_approval"    { next = "count_execute_cycle" }
-  outcome "failure"           { next = "failed" }
+  outcome "approved"          { next = step.commit_and_prepare_pr }
+  outcome "changes_requested" { next = step.count_execute_cycle }
+  outcome "needs_review"      { next = step.count_execute_cycle }
+  outcome "needs_approval"    { next = step.count_execute_cycle }
+  outcome "failure"           { next = state.failed }
 }
 
 # ── Review loop: minimal signal prompts ────────────────────────────────────
@@ -91,10 +90,10 @@ step "execute" {
   input {
     prompt = "Reviewer requested changes. Notes are in ${var.workstream_file}."
   }
-  outcome "success"        { next = "verify" }
-  outcome "needs_review"   { next = "verify" }
-  outcome "needs_approval" { next = "verify" }
-  outcome "failure"        { next = "failed" }
+  outcome "success"        { next = step.verify }
+  outcome "needs_review"   { next = step.verify }
+  outcome "needs_approval" { next = step.verify }
+  outcome "failure"        { next = state.failed }
 }
 
 step "verify" {
@@ -103,8 +102,8 @@ step "verify" {
     command = "make ci 2>&1"
   }
   timeout = "120s"
-  outcome "success" { next = "review" }
-  outcome "failure" { next = "fix_verify" }
+  outcome "success" { next = step.review }
+  outcome "failure" { next = step.fix_verify }
 }
 
 step "fix_verify" {
@@ -114,9 +113,9 @@ step "fix_verify" {
   input {
     prompt = "Build/test verification failed. Fix all failures before this goes to review.\n\n--- verify output ---\n${steps.verify.stdout}\n--- end ---"
   }
-  outcome "needs_review"   { next = "verify" }
-  outcome "needs_approval" { next = "verify" }
-  outcome "failure"        { next = "failed" }
+  outcome "needs_review"   { next = step.verify }
+  outcome "needs_approval" { next = step.verify }
+  outcome "failure"        { next = state.failed }
 }
 
 step "review" {
@@ -126,11 +125,11 @@ step "review" {
   input {
     prompt = "Ready for review. Latest work is in ${var.workstream_file}."
   }
-  outcome "approved"          { next = "commit_and_prepare_pr" }
-  outcome "changes_requested" { next = "count_execute_cycle" }
-  outcome "needs_review"      { next = "count_execute_cycle" }
-  outcome "needs_approval"    { next = "count_execute_cycle" }
-  outcome "failure"           { next = "failed" }
+  outcome "approved"          { next = step.commit_and_prepare_pr }
+  outcome "changes_requested" { next = step.count_execute_cycle }
+  outcome "needs_review"      { next = step.count_execute_cycle }
+  outcome "needs_approval"    { next = step.count_execute_cycle }
+  outcome "failure"           { next = state.failed }
 }
 
 # ── Cycle counting and user assistance ─────────────────────────────────────
@@ -138,19 +137,22 @@ step "review" {
 step "count_execute_cycle" {
   target = adapter.shell.default
   input {
-    command = "echo $(( ${shared.execute_cycle_count} + 1 ))"
+    command = "echo $(( ${data.internal.execute_cycle_count.value} + 1 ))"
   }
   outcome "success" {
-    next          = "check_execute_cycles"
-    shared_writes = { execute_cycle_count = "stdout" }
+    next = switch.check_execute_cycles
+      write {
+    target = data.internal.execute_cycle_count.value
+    value  = output.stdout
   }
-  outcome "failure" { next = "failed" }
+  }
+  outcome "failure" { next = state.failed }
 }
 
 switch "check_execute_cycles" {
   condition {
-    match = shared.execute_cycle_count >= var.max_execute_cycles
-    next  = state.request_user_assist
+    match = data.internal.execute_cycle_count.value >= var.max_execute_cycles
+    next = state.request_user_assist
   }
   default {
     next = state.execute
@@ -160,8 +162,8 @@ switch "check_execute_cycles" {
 approval "request_user_assist" {
   approvers = ["operator"]
   reason    = "Execute-review loop has cycled without convergence. Continue with another cycle or abort?"
-  outcome "approved" { next = "reset_execute_counter" }
-  outcome "rejected" { next = "failed" }
+  outcome "approved" { next = step.reset_execute_counter }
+  outcome "rejected" { next = state.failed }
 }
 
 step "reset_execute_counter" {
@@ -170,10 +172,13 @@ step "reset_execute_counter" {
     command = "echo 0"
   }
   outcome "success" {
-    next          = "execute"
-    shared_writes = { execute_cycle_count = "stdout" }
+    next = step.execute
+      write {
+    target = data.internal.execute_cycle_count.value
+    value  = output.stdout
   }
-  outcome "failure" { next = "failed" }
+  }
+  outcome "failure" { next = state.failed }
 }
 
 # ── Commit approved work ────────────────────────────────────────────────────
@@ -184,8 +189,8 @@ step "commit_and_prepare_pr" {
   input {
     prompt = "Approved. Commit all workstream changes with message:\nworkstream: complete ${var.workstream_file}\n\nEnd your final line with exactly one of:\nRESULT: success\nRESULT: failure"
   }
-  outcome "success" { next = "approved" }
-  outcome "failure" { next = "failed" }
+  outcome "success" { next = state.approved }
+  outcome "failure" { next = state.failed }
 }
 
 # ── Terminal states ─────────────────────────────────────────────────────────

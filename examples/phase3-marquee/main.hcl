@@ -30,8 +30,8 @@ step "process_items" {
     command = "echo Processing ${each.value}"
   }
   
-  outcome "all_succeeded" { next = "report" }
-  outcome "any_failed" { next = "report" }
+  outcome "all_succeeded" { next = step.report }
+  outcome "any_failed" { next = step.report }
 }
 
 # Report step
@@ -41,8 +41,8 @@ step "report" {
     command = "echo Processing complete"
   }
   
-  outcome "success" { next = "done" }
-  outcome "failure" { next = "done" }
+  outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
 }
 
 state "done" {

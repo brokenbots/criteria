@@ -3,8 +3,8 @@ step "greet" {
   input {
     command = "echo hello ${var.name}"
   }
-  outcome "success" { next = "done" }
-  outcome "failure" { next = "done" }
+  outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
 }
 
 state "done" {

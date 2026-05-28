@@ -10,15 +10,15 @@ adapter "noop" "demo" {}
 approval "first_review" {
   approvers = ["alice"]
   reason    = "first gate"
-  outcome "approved" { next = "second_review" }
-  outcome "rejected" { next = "rejected_state" }
+  outcome "approved" { next = approval.second_review }
+  outcome "rejected" { next = state.rejected_state }
 }
 
 approval "second_review" {
   approvers = ["bob"]
   reason    = "second gate"
-  outcome "approved" { next = "run_step" }
-  outcome "rejected" { next = "rejected_state" }
+  outcome "approved" { next = step.run_step }
+  outcome "rejected" { next = state.rejected_state }
 }
 
 step "run_step" {
@@ -26,8 +26,8 @@ step "run_step" {
   input {
     prompt = "continue"
   }
-  outcome "success" { next = "done" }
-  outcome "failure" { next = "failed" }
+  outcome "success" { next = state.done }
+  outcome "failure" { next = state.failed }
 }
 
 state "done" {

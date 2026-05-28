@@ -49,8 +49,8 @@ step "greet" {
     # The default var.name="world" resolves to "world_prompt.txt".
     command = "printf '%s\\n%s' '${local.banner_line}' '${file(local.prompt_path)}'"
   }
-  outcome "success" { next = "done" }
-  outcome "failure" { next = "failed" }
+  outcome "success" { next = state.done }
+  outcome "failure" { next = state.failed }
 }
 
 state "done"   { terminal = true }

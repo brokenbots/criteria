@@ -30,7 +30,7 @@ variable "no_default" {
 }
 step "start" {
   target = adapter.noop.default
-  outcome "success" { next = "__done__" }
+  outcome "success" { next = step.__done__ }
 }
 state "__done__" { terminal = true }
 `
@@ -47,7 +47,7 @@ adapter "noop" "default" {}
 
 step "start" {
   target = adapter.noop.default
-  outcome "success" { next = "__done__" }
+  outcome "success" { next = step.__done__ }
 }
 state "__done__" { terminal = true }
 `
@@ -73,7 +73,7 @@ variable "config" {
 
 step "start" {
   target = adapter.noop.default
-  outcome "success" { next = "__done__" }
+  outcome "success" { next = step.__done__ }
 }
 state "__done__" { terminal = true }
 `
@@ -128,7 +128,7 @@ variable "config" {
 
 step "start" {
   target = adapter.noop.default
-  outcome "success" { next = "__done__" }
+  outcome "success" { next = step.__done__ }
 }
 state "__done__" { terminal = true }
 `
@@ -172,7 +172,7 @@ variable "config" {
 
 step "start" {
   target = adapter.noop.default
-  outcome "success" { next = "__done__" }
+  outcome "success" { next = step.__done__ }
 }
 state "__done__" { terminal = true }
 `
@@ -281,7 +281,7 @@ variable "x" {
 }
 step "s" {
   target = adapter.noop.default
-  outcome "success" { next = "__done__" }
+  outcome "success" { next = step.__done__ }
 }
 state "__done__" { terminal = true }
 `
@@ -310,7 +310,7 @@ variable "x" {
 }
 step "s" {
   target = adapter.noop.default
-  outcome "success" { next = "__done__" }
+  outcome "success" { next = step.__done__ }
 }
 state "__done__" { terminal = true }
 `
@@ -341,7 +341,7 @@ variable "x" {
 }
 step "s" {
   target = adapter.noop.default
-  outcome "success" { next = "__done__" }
+  outcome "success" { next = step.__done__ }
 }
 state "__done__" { terminal = true }
 `
@@ -371,7 +371,7 @@ variable "flag" {
 }
 step "s" {
   target = adapter.noop.default
-  outcome "success" { next = "__done__" }
+  outcome "success" { next = step.__done__ }
 }
 state "__done__" { terminal = true }
 `
@@ -402,7 +402,7 @@ variable "tags" {
 }
 step "s" {
   target = adapter.noop.default
-  outcome "success" { next = "__done__" }
+  outcome "success" { next = step.__done__ }
 }
 state "__done__" { terminal = true }
 `

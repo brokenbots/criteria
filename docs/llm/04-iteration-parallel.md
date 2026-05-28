@@ -31,8 +31,8 @@ step "fanout" {
     command = each.value
   }
 
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "report" }
+  outcome "all_succeeded" { next = state.done }
+  outcome "any_failed"    { next = step.report }
 }
 
 step "report" {
@@ -40,7 +40,7 @@ step "report" {
   input {
     command = "echo some-failed"
   }
-  outcome "success" { next = "done" }
+  outcome "success" { next = state.done }
 }
 
 state "done" {
@@ -58,7 +58,7 @@ state "done" {
 
 ## Common pitfalls
 
-- **Shared mutable state** — avoid reading and writing `shared_variable` inside a parallel step; concurrent writes are not safe without `on_failure = "continue"` ordering guarantees.
+- **Shared mutable state** — avoid reading and writing `data "internal"` values inside a parallel step; concurrent writes are not safe without `on_failure = "continue"` ordering guarantees.
 - **Missing `report` path** — always handle `any_failed`; routing to a recovery or logging step is better than routing to a failure terminal.
 
 ## See also

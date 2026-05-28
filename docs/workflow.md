@@ -148,7 +148,7 @@ step "deploy" {
   input {
     command = "deploy --env ${var.env}"
   }
-  outcome "success" { next = "done" }
+  outcome "success" { next = state.done }
 }
 ```
 
@@ -223,7 +223,7 @@ step "deploy" {
   input {
     command = "echo $LOG_LEVEL"  # will print "debug" (or "info" for prod env)
   }
-  outcome "success" { next = "done" }
+  outcome "success" { next = state.done }
 }
 ```
 
@@ -263,8 +263,8 @@ step "list_files" {
   input {
     prompt = "List files in the current directory and summarize their purpose."
   }
-  outcome "success" { next = "done" }
-  outcome "failure" { next = "failed" }
+  outcome "success" { next = state.done }
+  outcome "failure" { next = state.failed }
 }
 ```
 
@@ -308,8 +308,8 @@ step "build" {
   input {
     command = "go build ./..."
   }
-  outcome "success" { next = "test" }
-  outcome "failure" { next = "failed" }
+  outcome "success" { next = step.test }
+  outcome "failure" { next = state.failed }
 }
 ```
 
@@ -337,7 +337,7 @@ step "publish" {
   input {
     command = "echo Build ID: ${steps.build.stdout}"
   }
-  outcome "success" { next = "done" }
+  outcome "success" { next = state.done }
 }
 ```
 
@@ -354,7 +354,7 @@ step "deploy" {
   input {
     command = "deploy.sh"
   }
-  outcome "success" { next = "done" }
+  outcome "success" { next = state.done }
 }
 ```
 
@@ -383,14 +383,14 @@ Each `outcome` block maps an adapter-emitted outcome name to a transition target
   - **`"return"`** — halts the current scope (the workflow body or a subworkflow invocation) and returns to the caller. In a subworkflow, the caller's step outcome is then applied. At the top level, `return` terminates the run as successful with any projected outputs. See **Return semantics** below.
 - **`output`** (optional): An HCL object expression that projects a custom output map for this outcome. When present, the projected map replaces the step's full adapter output for the purpose of downstream `steps.<name>.*` references and subworkflow return values. When absent, the step's full adapter output passes through unchanged.
 
-#### Return semantics (`next = "return"`)
+#### Return semantics (`next = return`)
 
-When a step outcome specifies `next = "return"`, the engine exits the current scope immediately:
+When a step outcome specifies `next = return`, the engine exits the current scope immediately:
 
 - **In a subworkflow**: the subworkflow exits and the parent step sees a `"success"` outcome (or `"failure"` if the return was triggered by an error path). The `output` projection from the triggering outcome becomes the subworkflow step's outputs, accessible as `steps.<step_name>.*` in the parent scope.
 - **At the top level**: the run terminates as successful. If the outcome includes `output = { ... }`, that projection IS the run's output set — it overrides any top-level `output` blocks declared in the workflow.
 
-**Precedence**: `outcome.output` always wins over top-level `output` block declarations when `next = "return"` is used. Top-level `output` blocks provide the default output set for normal terminal-state exits.
+**Precedence**: `outcome.output` always wins over top-level `output` block declarations when `next = return` is used. Top-level `output` blocks provide the default output set for normal terminal-state exits.
 
 #### `outcome "default"`
 
@@ -399,14 +399,14 @@ The optional `outcome "default"` block provides a fallback when an adapter retur
 - If declared, the unknown outcome name is silently mapped to the default block. A `step.outcome.defaulted` event is emitted with both the original and mapped names so operators can audit the mapping.
 - If not declared, an unknown outcome is a runtime error (`step.outcome.unknown` event).
 
-The `outcome "default"` block is declared just like any other outcome block, using the reserved name `"default"`. It may include `next`, `output`, and `shared_writes` the same way every other outcome does.
+The `outcome "default"` block is declared just like any other outcome block, using the reserved name `"default"`. It may include `next`, `output`, and `write` the same way every other outcome does.
 
 ```hcl
 step "call_agent" {
   target = adapter.copilot.reviewer
 
   outcome "approved" {
-    next = "deploy"
+    next = step.deploy
   }
   outcome "default" {
     next   = "return"
@@ -454,7 +454,7 @@ Wait nodes pause execution for a duration or external signal.
 ```hcl
 wait "cool_down" {
   duration = "10s"
-  outcome "elapsed" { next = "retry_deploy" }
+  outcome "elapsed" { next = step.retry_deploy }
 }
 ```
 
@@ -469,8 +469,8 @@ wait "cool_down" {
 ```hcl
 wait "approval_gate" {
   signal = "deploy_approved"
-  outcome "approved" { next = "deploy" }
-  outcome "rejected" { next = "aborted" }
+  outcome "approved" { next = step.deploy }
+  outcome "rejected" { next = state.aborted }
 }
 ```
 
@@ -490,8 +490,8 @@ Approval nodes are human decision gates. Paused runs wait for an approver to sub
 approval "ship_to_prod" {
   approvers = ["alice", "bob"]
   reason    = "Production deployment requires approval"
-  outcome "approved" { next = "deploy_prod" }
-  outcome "rejected" { next = "cancel_deploy" }
+  outcome "approved" { next = step.deploy_prod }
+  outcome "rejected" { next = step.cancel_deploy }
 }
 ```
 
@@ -629,8 +629,8 @@ step "deploy_services" {
   input {
     command = "deploy ${each.value} --index ${each._idx}"
   }
-  outcome "all_succeeded" { next = "verify" }
-  outcome "any_failed"    { next = "rollback" }
+  outcome "all_succeeded" { next = step.verify }
+  outcome "any_failed"    { next = step.rollback }
 }
 ```
 
@@ -648,7 +648,7 @@ step "batch" {
   input {
     index = "${each._idx}"
   }
-  outcome "all_succeeded" { next = "done" }
+  outcome "all_succeeded" { next = state.done }
 }
 ```
 
@@ -675,8 +675,8 @@ step "fetch" {
     service = each.value
   }
 
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "handle_errors" }
+  outcome "all_succeeded" { next = state.done }
+  outcome "any_failed"    { next = step.handle_errors }
 }
 ```
 
@@ -715,11 +715,11 @@ Subworkflow steps that use `parallel` receive fully isolated adapter sessions
 per iteration — each goroutine's subworkflow opens and closes its own sessions
 independently.
 
-**Shared variables in `parallel` steps:**
+**Data values in `parallel` steps:**
 
-When a `parallel` step's per-iteration outcomes declare `shared_writes`, the
+When a `parallel` step's per-iteration outcomes declare `write`, the
 engine applies them **after all iterations complete**, in declaration order
-(index 0, 1, 2, …). Every goroutine reads a **snapshot of shared variables
+(index 0, 1, 2, …). Every goroutine reads a **snapshot of data values
 taken before any goroutine starts** — there is no live-read between goroutines.
 
 Consequences:
@@ -727,7 +727,7 @@ Consequences:
 - **Last-index-wins**: when multiple iterations write the same variable, the
   value after the step is the value written by the highest-index iteration that
   reached that outcome.
-- **Accumulation is broken**: a pattern that reads `shared.counter`, increments
+- **Accumulation is broken**: a pattern that reads `data.internal.counter.value`, increments
   it, and writes it back will not produce `initial + N` — every goroutine reads
   the same snapshot value, so the result is `initial + 1` regardless of N.
 
@@ -742,8 +742,8 @@ step "fetch_all" {
   parallel_max = 4
 
   outcome "success" {
-    next = "_continue"
-    # No shared_writes here — collect in aggregate
+    next = continue
+    # No write blocks here — collect in aggregate
   }
 
   # After all goroutines complete, aggregate in the output projection.
@@ -752,13 +752,16 @@ step "fetch_all" {
     output = {
       total = length(steps.fetch_all.outputs)
     }
-    shared_writes = { item_count = "total" }
+      write {
+    target = data.internal.item_count.value
+    value  = output.total
+  }
   }
 }
 ```
 
-The compiler emits a warning when `shared_writes` appears on a `parallel`
-step's per-iteration outcome (`next = "_continue"`).
+The compiler emits a warning when `write` appears on a `parallel`
+step's per-iteration outcome (`next = continue`).
 
 **`each.*` bindings in `parallel`:**
 
@@ -776,7 +779,7 @@ aggregate outcome fires immediately.
 ```hcl
 step "poll" {
   target     = adapter.http.default
-  while      = shared.queue_empty == false
+  while      = data.internal.queue_empty.value == false
   on_failure = "abort"
 
   input {
@@ -784,9 +787,9 @@ step "poll" {
     iteration  = while.index
   }
 
-  outcome "success"       { next = "_continue" }
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "error" }
+  outcome "success"       { next = continue }
+  outcome "all_succeeded" { next = state.done }
+  outcome "any_failed"    { next = state.error }
 }
 ```
 
@@ -809,7 +812,7 @@ The condition is any HCL expression that evaluates to `bool` at runtime.
 Typical patterns:
 
 ```hcl
-while = shared.attempts > 0          # shared-variable counter
+while = data.internal.attempts.value > 0          # shared-variable counter
 while = while.index < 10             # bounded by iteration index
 while = var.flag == true             # static variable (loop runs or skips)
 while = true                         # infinite — requires max_visits or max_total_steps
@@ -863,8 +866,8 @@ step "running_total" {
     accumulator = each._first ? 0 : each._prev.total
     addend      = each.value
   }
-  outcome "all_succeeded" { next = "summarize" }
-  outcome "any_failed"    { next = "failed" }
+  outcome "all_succeeded" { next = step.summarize }
+  outcome "any_failed"    { next = state.failed }
 }
 ```
 
@@ -897,8 +900,8 @@ step "deploy" {
   for_each   = var.targets
   on_failure = "abort"
   input { command = "deploy ${each.value}" }
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "rollback" }
+  outcome "all_succeeded" { next = state.done }
+  outcome "any_failed"    { next = step.rollback }
 }
 ```
 
@@ -919,22 +922,22 @@ step "process_items" {
     step "run" {
       target = adapter.shell.default
       input   { command = "process ${each.value}" }
-      outcome "success" { next = "review" }
-      outcome "failure" { next = "_continue" }
+      outcome "success" { next = step.review }
+      outcome "failure" { next = continue }
     }
 
     step "review" {
       target = adapter.copilot.assistant
       input  { prompt = "Review result for ${each.value}" }
-      outcome "approved" { next = "_continue" }
-      outcome "rejected" { next = "_continue" }
+      outcome "approved" { next = continue }
+      outcome "rejected" { next = continue }
     }
   }
 
   output "last_review" { value = steps.review.stdout }
 
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "handle_errors" }
+  outcome "all_succeeded" { next = state.done }
+  outcome "any_failed"    { next = step.handle_errors }
 }
 ```
 
@@ -1013,18 +1016,18 @@ W08 top-level `for_each` iteration blocks (with `items = …` and `do = "…"`) 
 # {
 #   items = ["a", "b"]
 #   do    = "run_one"
-#   outcome "all_succeeded" { next = "done" }
+#   outcome "all_succeeded" { next = state.done }
 # }
 # step "run_one" {
 #   adapter = "noop"
-#   outcome "success" { next = "_continue" }
+#   outcome "success" { next = continue }
 # }
 
 # v0.3.0 equivalent:
 step "deploy" {
   target   = adapter.noop.default
   for_each = ["a", "b"]
-  outcome "all_succeeded" { next = "done" }
+  outcome "all_succeeded" { next = state.done }
 }
 ```
 
@@ -1037,10 +1040,10 @@ step "deploy" {
   workflow {
     step "run_one" {
       target = adapter.noop.default
-      outcome "success" { next = "_continue" }
+      outcome "success" { next = continue }
     }
   }
-  outcome "all_succeeded" { next = "done" }
+  outcome "all_succeeded" { next = state.done }
 }
 ```
 
@@ -1151,8 +1154,8 @@ step "process_prompts" {
   input {
     prompt = file(each.value)
   }
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "failed" }
+  outcome "all_succeeded" { next = state.done }
+  outcome "any_failed"    { next = state.failed }
 }
 ```
 
@@ -1174,8 +1177,8 @@ step "run_prompts" {
   input {
     prompt = trimfrontmatter(file(each.value))
   }
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "failed" }
+  outcome "all_succeeded" { next = state.done }
+  outcome "any_failed"    { next = state.failed }
 }
 ```
 
@@ -1390,7 +1393,7 @@ step "build" {
   target      = adapter.copilot.assistant
   allow_tools = ["shell:go*build*"]
   input { prompt = "Run go build" }
-  outcome "success" { next = "done" }
+  outcome "success" { next = state.done }
 }
 ```
 
@@ -1554,8 +1557,8 @@ parallel "build_and_test" {
   region "test" {
     steps = ["unit_tests", "integration_tests"]
   }
-  outcome "all_succeeded" { next = "deploy" }
-  outcome "any_failed"    { next = "failed" }
+  outcome "all_succeeded" { next = step.deploy }
+  outcome "any_failed"    { next = state.failed }
 }
 ```
 
@@ -1563,21 +1566,21 @@ parallel "build_and_test" {
 
 ---
 
-## Shared Variables
+## Data Values
 
-`shared_variable "<name>"` blocks declare workflow-scoped mutable state that
-steps can read from eval expressions and write via the `shared_writes` outcome
-attribute. The engine manages locking — step code never sees a partial write.
+`data "internal" "<name>"` blocks declare workflow-scoped mutable state that
+steps can read from eval expressions and write via the `write` outcome
+block. The engine manages locking — step code never sees a partial write.
 
-### Declaring a shared variable
+### Declaring a data value
 
 ```hcl
-shared_variable "counter" {
+data "internal" "counter" {
   type  = "number"
   value = 0
 }
 
-shared_variable "status_msg" {
+data "internal" "status_msg" {
   type  = "string"
   value = "pending"
 }
@@ -1589,23 +1592,23 @@ shared_variable "status_msg" {
 
 `value` sets the initial value; it must be a literal (no expression references).
 If `value` is omitted the variable starts as a **typed `null`** for its declared
-type. Reading `shared.<name>` before any `shared_writes` has applied will yield
+type. Reading `data.internal.<name>.value` before any `write` has applied will yield
 `null`; expressions that require a concrete value (e.g. arithmetic on a `null
 number`) will produce a runtime error. Provide an explicit `value` if you need a
 non-null default.
 
-### Reading a shared variable
+### Reading a data value
 
 Inside any HCL expression (step input, condition, output projection) use the
-`shared.<name>` namespace:
+`data.internal.<name>.value` namespace:
 
 ```hcl
 step "notify" {
   target = adapter.noop.default
   input {
-    message = "counter is ${shared.counter}"
+    message = "counter is ${data.internal.counter.value}"
   }
-  outcome "done" { next = "done" }
+  outcome "done" { next = state.done }
 }
 ```
 
@@ -1613,28 +1616,31 @@ The snapshot is captured **once per step entry** so all expressions within a
 step see a consistent point-in-time view, even if another concurrent step
 updates the variable during execution.
 
-### Writing a shared variable (shared_writes)
+### Writing a data value (write blocks)
 
-Use `shared_writes` on an outcome block to write one or more variables when
-that outcome is reached. The value maps a `shared_variable` name to an output
+Use `write` on an outcome block to write one or more variables when
+that outcome is reached. The value maps a `data "internal"` name to an output
 key from the step's adapter output:
 
 ```hcl
 step "count_lines" {
   target = adapter.noop.default
   outcome "done" {
-    next         = "done"
-    shared_writes = { counter = "line_count" }
+    next = state.done
+    write {
+      target = data.internal.counter.value
+      value  = output.line_count
+    }
   }
 }
 ```
 
-`counter` is a declared `shared_variable`; `"line_count"` is the key in the
-adapter's output map. All writes in one `shared_writes` block are committed
+`counter` is a declared `data "internal"`; `"line_count"` is the key in the
+adapter's output map. All writes in one `write` block are committed
 atomically — partial writes are never observable.
 
 When an `output = { ... }` projection is also declared on the outcome, the
-engine validates at **compile time** that every `shared_writes` value key
+engine validates at **compile time** that every `write` value key
 appears in the projection. When no projection is present but the adapter
 declares an output schema, the compiler validates against that schema instead.
 If neither is available the check is deferred to runtime.
@@ -1649,19 +1655,22 @@ There are two write paths, with different type capabilities:
 
 **Typed output projection** (`output = { ... }` declared on the outcome): the
 projection is evaluated as an HCL expression, producing a fully-typed cty value.
-All declared `shared_variable` types are supported — including `list(string)`,
+All declared `data "internal"` types are supported — including `list(string)`,
 `list(number)`, `list(bool)`, and `map(string)`. Use this path for non-scalar
 accumulation:
 
 ```hcl
 outcome "success" {
-  next          = "done"
-  output        = { tag_list = [step.output.tag1, step.output.tag2] }
-  shared_writes = { tags = "tag_list" }
+  next   = state.done
+  output = { tag_list = [step.output.tag1, step.output.tag2] }
+  write {
+    target = data.internal.tags.value
+    value  = output.tag_list
+  }
 }
 ```
 
-Here `step.output.<key>` exposes the raw adapter output strings for the current step. Each value is a `string`, so `[step.output.tag1, step.output.tag2]` constructs a `list(string)` that the engine converts to the declared type of the shared variable.
+Here `step.output.<key>` exposes the raw adapter output strings for the current step. Each value is a `string`, so `[step.output.tag1, step.output.tag2]` constructs a `list(string)` that the engine converts to the declared type of the data value.
 
 **Raw adapter string coercion** (no `output = { ... }` projection, or the key is
 absent from the projection): the engine coerces the adapter's raw string output
@@ -1669,7 +1678,7 @@ to the declared type. Only scalar types are supported this way. For `"number"`
 variables, the string must be a valid numeric literal with no trailing
 non-numeric characters (`"42"` and `"3.14"` are accepted; `"7abc"` and `"1e2x"`
 are rejected). For `"bool"` variables, accepted values are `"true"`, `"false"`,
-`"1"`, and `"0"`. Declaring a non-scalar shared variable and writing to it via
+`"1"`, and `"0"`. Declaring a non-scalar data value and writing to it via
 raw coercion is a runtime error; use an output projection instead.
 
 ### Isolation across subworkflow bodies
@@ -1719,8 +1728,8 @@ workflow "deploy_pipeline" {
     input {
       command = "run-lint"
     }
-    outcome "success" { next = "done" }
-    outcome "failure" { next = "done" }
+    outcome "success" { next = state.done }
+    outcome "failure" { next = state.done }
   }
 
   state "done" {

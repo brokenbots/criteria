@@ -21,7 +21,7 @@ output "<name>" {
 }
 
 // fenced workflow scoped variable that can be updated during runtime, engine ensure access and locking
-shared_variable "<name>" {
+data "internal" "<name>" {
 	description = "" // optional, if not defined, it default to ""
 	type = <varible_type>
 	value = any // optional, intial value if not set it defaults to the null or default for the type
@@ -61,11 +61,11 @@ step "<name>" {
 
 	// a special outcome of return, it will return the output to caller on step return
 	outcome "<name>" {
-		next = "<step_name>",  
+		next = step.<step_name>,
 		output = any,  // output is optional, if not defined, it default adapter output'
-	} 
+	}
 
-	outcome "default" { next = "<outcome_name>" } // optional used for adapter like agents that can return invalid outcomes
+	outcome "default" { next = step.<outcome_name> } // optional used for adapter like agents that can return invalid outcomes
 
 	output = any // output is optional, if not defined, it default adapter output
 }
@@ -75,12 +75,12 @@ switch "<name>" {
 	condition {
 		match = <conditional logic, must return boolean value>
 		output = any // optional output, will forward input by default
-		next = "<step_name>"
+		next = step.<step_name>
 	}
 
 	condition {}
 
 	default {
-		next = "<step_name>"
+		next = step.<step_name>
 	}
 }

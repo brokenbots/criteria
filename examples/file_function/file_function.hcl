@@ -31,6 +31,6 @@ step "greet" {
   input {
     command = trimfrontmatter(file("./file_function_prompt.md"))
   }
-  outcome "success" { next = "done" }
-  outcome "failure" { next = "done" }
+  outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
 }

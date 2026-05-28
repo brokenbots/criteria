@@ -15,15 +15,15 @@ step "execute" {
   target = adapter.copilot.executor
   on_crash = "abort_run"
 
-  outcome "approved" { next = "review" }
-  outcome "retry"    { next = "review" }
+  outcome "approved" { next = step.review }
+  outcome "retry"    { next = step.review }
 }
 
 step "review" {
   target = adapter.copilot.reviewer
 
-  outcome "approved" { next = "done" }
-  outcome "changes"  { next = "execute" }
+  outcome "approved" { next = state.done }
+  outcome "changes"  { next = step.execute }
 }
 
 state "done" {

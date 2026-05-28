@@ -31,8 +31,8 @@ workflow {
 step "loop" {
   target = adapter.fake
   while  = false
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "done" }
+  outcome "all_succeeded" { next = step.done }
+  outcome "any_failed"    { next = step.done }
 }
 state "done" {
   terminal = true
@@ -62,7 +62,7 @@ state "done" {
 // --- while condition driven by shared variable ---
 
 // TestWhile_SharedVariableCountdown verifies that a while condition referencing
-// a shared_variable iterates the correct number of times before the condition
+// a data block iterates the correct number of times before the condition
 // becomes false.
 func TestWhile_SharedVariableCountdown(t *testing.T) {
 	const src = `
@@ -73,7 +73,8 @@ workflow {
   target_state  = "done"
 }
 
-shared_variable "remaining" {
+data "internal" "remaining" {
+
   type = number
   value = 3
 }
@@ -82,13 +83,16 @@ adapter "fake" "default" {}
 
 step "loop" {
   target = adapter.fake.default
-  while  = shared.remaining > 0
+  while  = data.internal.remaining.value > 0
   outcome "success" {
-    next          = "_continue"
-    shared_writes = { remaining = "remaining" }
+    next = continue
+      write {
+    target = data.internal.remaining.value
+    value  = output.remaining
   }
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "done" }
+  }
+  outcome "all_succeeded" { next = step.done }
+  outcome "any_failed"    { next = step.done }
 }
 
 state "done" {
@@ -151,9 +155,9 @@ step "loop" {
   input {
     idx = while.index
   }
-  outcome "success" { next = "_continue" }
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "done" }
+  outcome "success" { next = continue }
+  outcome "all_succeeded" { next = step.done }
+  outcome "any_failed"    { next = step.done }
 }
 state "done" {
   terminal = true
@@ -220,9 +224,9 @@ step "loop" {
   input {
     is_first = while.first
   }
-  outcome "success"       { next = "_continue" }
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "done" }
+  outcome "success"       { next = continue }
+  outcome "all_succeeded" { next = step.done }
+  outcome "any_failed"    { next = step.done }
 }
 state "done" {
   terminal = true
@@ -283,8 +287,8 @@ step "loop" {
   target     = adapter.fake
   while      = true
   on_failure = "abort"
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "done" }
+  outcome "all_succeeded" { next = step.done }
+  outcome "any_failed"    { next = step.done }
 }
 state "done" {
   terminal = true
@@ -322,7 +326,8 @@ workflow {
   target_state  = "done"
 }
 
-shared_variable "remaining" {
+data "internal" "remaining" {
+
   type = number
   value = 2
 }
@@ -331,18 +336,24 @@ adapter "fake" "default" {}
 
 step "loop" {
   target     = adapter.fake.default
-  while      = shared.remaining > 0
+  while      = data.internal.remaining.value > 0
   on_failure = "continue"
   outcome "failure" {
-    next          = "_continue"
-    shared_writes = { remaining = "remaining" }
+    next = continue
+      write {
+    target = data.internal.remaining.value
+    value  = output.remaining
+  }
   }
   outcome "success" {
-    next          = "_continue"
-    shared_writes = { remaining = "remaining" }
+    next = continue
+      write {
+    target = data.internal.remaining.value
+    value  = output.remaining
   }
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "done" }
+  }
+  outcome "all_succeeded" { next = step.done }
+  outcome "any_failed"    { next = step.done }
 }
 
 state "done" {
@@ -397,7 +408,8 @@ workflow {
   target_state  = "done"
 }
 
-shared_variable "remaining" {
+data "internal" "remaining" {
+
   type = number
   value = 2
 }
@@ -406,18 +418,24 @@ adapter "fake" "default" {}
 
 step "loop" {
   target     = adapter.fake.default
-  while      = shared.remaining > 0
+  while      = data.internal.remaining.value > 0
   on_failure = "ignore"
   outcome "failure" {
-    next          = "_continue"
-    shared_writes = { remaining = "remaining" }
+    next = continue
+      write {
+    target = data.internal.remaining.value
+    value  = output.remaining
+  }
   }
   outcome "success" {
-    next          = "_continue"
-    shared_writes = { remaining = "remaining" }
+    next = continue
+      write {
+    target = data.internal.remaining.value
+    value  = output.remaining
   }
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "done" }
+  }
+  outcome "all_succeeded" { next = step.done }
+  outcome "any_failed"    { next = step.done }
 }
 
 state "done" {
@@ -471,9 +489,9 @@ adapter "fake" "default" {}
 step "loop" {
   target = adapter.fake.default
   while  = while.index < 5
-  outcome "success"       { next = "_continue" }
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "done" }
+  outcome "success"       { next = continue }
+  outcome "all_succeeded" { next = step.done }
+  outcome "any_failed"    { next = step.done }
 }
 state "done" {
   terminal = true
@@ -571,8 +589,8 @@ workflow {
 step "loop" {
   target = adapter.fake
   while  = false
-  outcome "all_succeeded" { next = "completed" }
-  outcome "any_failed"    { next = "failed" }
+  outcome "all_succeeded" { next = step.completed }
+  outcome "any_failed"    { next = step.failed }
 }
 state "completed" {
   terminal = true
@@ -610,7 +628,8 @@ workflow {
   target_state  = "done"
 }
 
-shared_variable "n" {
+data "internal" "n" {
+
   type = number
   value = 2
 }
@@ -619,13 +638,16 @@ adapter "fake" "default" {}
 
 step "loop" {
   target = adapter.fake.default
-  while  = shared.n > 0
+  while  = data.internal.n.value > 0
   outcome "success" {
-    next          = "_continue"
-    shared_writes = { n = "n_out" }
+    next = continue
+      write {
+    target = data.internal.n.value
+    value  = output.n_out
   }
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "done" }
+  }
+  outcome "all_succeeded" { next = step.done }
+  outcome "any_failed"    { next = step.done }
 }
 
 state "done" {
@@ -702,8 +724,8 @@ step "loop" {
   target     = adapter.fake.default
   max_visits = 2
   while      = true
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "done" }
+  outcome "all_succeeded" { next = step.done }
+  outcome "any_failed"    { next = step.done }
 }
 state "done" {
   terminal = true
@@ -758,8 +780,8 @@ adapter "fake" "default" {}
 step "loop" {
   target = adapter.fake.default
   while  = true
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "done" }
+  outcome "all_succeeded" { next = step.done }
+  outcome "any_failed"    { next = step.done }
 }
 state "done" {
   terminal = true
@@ -813,8 +835,8 @@ step "loop" {
   while      = true
   timeout    = "1ms"
   on_failure = "abort"
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "done" }
+  outcome "all_succeeded" { next = step.done }
+  outcome "any_failed"    { next = step.done }
 }
 state "done" {
   terminal = true
@@ -868,8 +890,8 @@ step "loop" {
   target = adapter.fake.default
   while  = while.index < 3
   # no on_failure — default should behave like "continue"
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "done" }
+  outcome "all_succeeded" { next = step.done }
+  outcome "any_failed"    { next = step.done }
 }
 state "done" {
   terminal = true

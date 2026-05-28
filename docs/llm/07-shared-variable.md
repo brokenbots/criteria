@@ -3,7 +3,7 @@
 ## When to use
 
 Use when two or more steps need to read and update a common value during the
-same run. `shared_variable` provides engine-managed, workflow-scoped mutable
+same run. `data "internal"` provides engine-managed, workflow-scoped mutable
 state with deterministic write ordering.
 
 ## Minimal example
@@ -17,8 +17,7 @@ workflow {
 }
 
 adapter "noop" "default" {}
-
-shared_variable "counter" {
+data "internal" "counter" {
   type = string
   value = "0"
 }
@@ -26,19 +25,25 @@ shared_variable "counter" {
 step "increment" {
   target = adapter.noop.default
   outcome "success" {
-    next          = "double"
-    shared_writes = { counter = "next_value" }  # "next_value" is a placeholder adapter output key
+    next = step.double
+    write {
+      target = data.internal.counter.value
+      value  = "1"
+    }
   }
 }
 
 step "double" {
   target = adapter.noop.default
   input {
-    current = shared.counter
+    current = data.internal.counter.value
   }
   outcome "success" {
-    next          = "done"
-    shared_writes = { counter = "next_value" }
+    next = state.done
+    write {
+      target = data.internal.counter.value
+      value  = "2"
+    }
   }
 }
 
@@ -50,17 +55,17 @@ state "done" {
 
 ## Key idioms
 
-- **`shared_variable "name" { type = string value = "..." }`** — declares a workflow-scoped variable with an optional initial value.
-- **`shared.<name>`** — reads the current value of the variable in any expression including step inputs.
-- **`shared_writes = { var_name = "adapter_output_key" }`** — in an outcome block, maps a shared variable name to an adapter output key whose value is written atomically on that transition.
+- **`data "internal" "name" { type = string value = "..." }`** — declares a workflow-scoped variable with an optional initial value.
+- **`data.internal.<name>.value`** — reads the current value of the variable in any expression including step inputs.
+- **`write { target = data.internal.<name>.value, value = output.<key> }`** — in an outcome block, evaluates `value` against the step output scope and atomically writes the result into the targeted data block.
 
 ## Common pitfalls
 
-- **Parallel write races** — writing the same `shared_variable` from concurrent parallel iterations produces non-deterministic values; prefer sequential `for_each` when order matters.
-- **Write semantics** — `shared_writes` values are adapter output key names (strings), not the new values themselves; the engine resolves the key from the adapter result.
+- **Parallel write races** — writing the same `data.internal` value from concurrent parallel iterations produces non-deterministic values; prefer sequential `for_each` when order matters.
+- **Write semantics** — `write.value` is an expression evaluated against the step output scope (or any literal value), not a raw adapter output key name.
 
 ## See also
 
-- [LANGUAGE-SPEC.md § shared_variable](../LANGUAGE-SPEC.md#shared_variable-name--)
+- [LANGUAGE-SPEC.md § data](../LANGUAGE-SPEC.md#data-kind-name--)
 - [LANGUAGE-SPEC.md § Outcome model](../LANGUAGE-SPEC.md#outcome-model)
 - [04-iteration-parallel.md](04-iteration-parallel.md) for cautions about shared state in parallel steps.

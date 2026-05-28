@@ -43,7 +43,7 @@ adapter "noop" "default" {}
 
 step "start" {
   target = adapter.noop.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -109,7 +109,7 @@ func TestLegacyReject_StepAgentAttr(t *testing.T) {
 	src := minimalWorkflowHCL + `
 step "run" {
   agent = "gpt-4"
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -136,10 +136,10 @@ step "outer" {
   workflow {
     step "inner" {
       agent = "gpt-4"
-      outcome "success" { next = "done" }
+      outcome "success" { next = step.done }
     }
   }
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -166,7 +166,7 @@ func TestLegacyReject_StepAdapterAttr(t *testing.T) {
 	src := minimalWorkflowHCL + `
 step "run" {
   adapter = adapter.noop.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -194,7 +194,7 @@ func TestLegacyReject_StepLifecycleAttr(t *testing.T) {
 step "run" {
   target    = adapter.noop.default
   lifecycle = "open"
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -221,10 +221,10 @@ step "outer" {
   workflow {
     step "inner" {
       lifecycle = "open"
-      outcome "success" { next = "done" }
+      outcome "success" { next = step.done }
     }
   }
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -255,11 +255,11 @@ step "run" {
   workflow {
     step "child" {
       target = adapter.noop.default
-      outcome "success" { next = "done" }
+      outcome "success" { next = step.done }
     }
     state "done" { terminal = true }
   }
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -288,7 +288,7 @@ func TestLegacyReject_StepWorkflowFileAttr(t *testing.T) {
 step "run" {
   target        = adapter.noop.default
   workflow_file = "child.hcl"
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -315,7 +315,7 @@ func TestLegacyReject_StepTypeAttr(t *testing.T) {
 	src := minimalWorkflowHCL + `
 step "run" {
   type = "adapter"
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -451,14 +451,14 @@ variable "count" {
 	}
 }
 
-func TestLegacyReject_TypeString_QuotedSharedVar(t *testing.T) {
+func TestLegacyReject_TypeString_QuotedData(t *testing.T) {
 	src := minimalWorkflowHCL + `
-shared_variable "name" {
+data "internal" "name" {
   type = "string"
 }
 `
 	_, diags := Parse("test.hcl", []byte(src))
-	assertDiagnosticContains(t, diags, "removed quoted-string type on shared_variable block")
+	assertDiagnosticContains(t, diags, "removed quoted-string type on data block")
 }
 
 func TestLegacyReject_TypeString_QuotedOutput(t *testing.T) {
@@ -494,7 +494,7 @@ func TestLegacyReject_DefaultOutcomeAttr(t *testing.T) {
 step "run" {
   target         = adapter.noop.default
   default_outcome = "success"
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -514,8 +514,8 @@ func TestLegacyReject_DefaultOutcomeBlock_AcceptsNewForm(t *testing.T) {
 	src := minimalWorkflowHCL + `
 step "run" {
   target = adapter.noop.default
-  outcome "success" { next = "done" }
-  outcome "default" { next = "done" }
+  outcome "success" { next = step.done }
+  outcome "default" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -557,7 +557,7 @@ func TestLegacyReject_EnvironmentString_QuotedOnStep(t *testing.T) {
 step "run" {
   target      = adapter.noop.default
   environment = "shell.ci"
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -590,7 +590,7 @@ func TestLegacyReject_EnvironmentString_BareAccepted(t *testing.T) {
 step "run" {
   target      = adapter.noop.default
   environment = shell.ci
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -715,8 +715,8 @@ adapter "noop" "default" {}
 
 step "start" {
   target = adapter.noop.default
-  outcome "success" { next = "done" }
-  outcome "default" { next = "done" }
+  outcome "success" { next = step.done }
+  outcome "default" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -745,4 +745,68 @@ state "done" { terminal = true }
 	if step.DefaultOutcome.Next != "done" {
 		t.Fatalf("expected DefaultOutcome.Next=\"done\", got %q", step.DefaultOutcome.Next)
 	}
+}
+
+// ------------------------------------------------------------------
+// WS02 legacy rejections — shared_variable, shared_writes, string next
+// ------------------------------------------------------------------
+
+func TestLegacyReject_SharedVariableBlock(t *testing.T) {
+	src := `workflow {
+  name = "test"
+  version       = "1"
+  initial_state = "start"
+  target_state  = "done"
+}
+shared_variable "counter" {
+  type  = number
+  value = 0
+}
+state "done" { terminal = true }
+`
+	_, diags := Parse("test.hcl", []byte(src))
+	assertDiagnosticContains(t, diags, "shared_variable")
+}
+
+func TestLegacyReject_SharedWritesAttr(t *testing.T) {
+	src := `workflow {
+  name = "test"
+  version       = "1"
+  initial_state = "start"
+  target_state  = "done"
+}
+adapter "noop" "default" {}
+step "start" {
+  target = adapter.noop.default
+  outcome "success" {
+    next = step.done
+    shared_writes = { counter = "stdout" }
+  }
+}
+state "done" { terminal = true }
+`
+	_, diags := Parse("test.hcl", []byte(src))
+	assertDiagnosticContains(t, diags, "shared_writes")
+}
+
+func TestLegacyReject_StringNext(t *testing.T) {
+	src := `workflow {
+  name = "test"
+  version       = "1"
+  initial_state = "start"
+  target_state  = "done"
+}
+adapter "noop" "default" {}
+step "start" {
+  target = adapter.noop.default
+  outcome "success" { next = "done" }
+}
+state "done" { terminal = true }
+`
+	spec, diags := Parse("test.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("unexpected parse error: %s", diags.Error())
+	}
+	_, diags = Compile(spec, nil)
+	assertDiagnosticContains(t, diags, "next is now a node reference")
 }

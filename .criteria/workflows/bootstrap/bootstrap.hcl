@@ -106,14 +106,14 @@ step "preflight" {
     command           = "sh .criteria/workflows/bootstrap/scripts/preflight.sh"
     working_directory = var.project_dir
   }
-  outcome "success" { next = "route_preflight" }
-  outcome "failure" { next = "failed" }
+  outcome "success" { next = switch.route_preflight }
+  outcome "failure" { next = state.failed }
 }
 
 switch "route_preflight" {
   condition {
     match = steps.preflight.stdout == "ok"
-    next  = step.develop
+    next = step.develop
   }
   default { next = state.failed }
 }
@@ -130,14 +130,14 @@ step "develop" {
     reviewer_model  = var.reviewer_model
     base_branch     = var.base_branch
   }
-  outcome "success" { next = "after_develop" }
-  outcome "failure" { next = "failed" }
+  outcome "success" { next = switch.after_develop }
+  outcome "failure" { next = state.failed }
 }
 
 switch "after_develop" {
   condition {
     match = steps.develop.status == "ok"
-    next  = step.pr_review
+    next = step.pr_review
   }
   default { next = state.failed }
 }
@@ -153,14 +153,14 @@ step "pr_review" {
     base_branch               = var.base_branch
     require_workflow_approval = var.require_workflow_approval
   }
-  outcome "success" { next = "after_pr_review" }
-  outcome "failure" { next = "escalated" }
+  outcome "success" { next = switch.after_pr_review }
+  outcome "failure" { next = state.escalated }
 }
 
 switch "after_pr_review" {
   condition {
     match = steps.pr_review.status == "ok"
-    next  = state.done
+    next = state.done
   }
   default { next = state.escalated }
 }

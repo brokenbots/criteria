@@ -30,8 +30,8 @@ step "generate_logs" {
     command = "for i in {1..1000}; do echo \"Log line $i: This is a test log entry to measure throughput and latency.\"; done"
   }
 
-  outcome "success" { next = "done" }
-  outcome "failure" { next = "failed" }
+  outcome "success" { next = state.done }
+  outcome "failure" { next = state.failed }
 }
 
 state "done"   { terminal = true }

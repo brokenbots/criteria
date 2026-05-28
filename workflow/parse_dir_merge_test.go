@@ -77,7 +77,7 @@ func TestMergeSpecs_SingletonConflict_WorkflowHeader_TwoFiles(t *testing.T) {
 adapter "noop" "default" {}
 step "run" {
   target = adapter.noop.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `,
@@ -116,7 +116,7 @@ func TestMergeSpecs_LegacyTopLevelPolicy_TwoFiles(t *testing.T) {
 adapter "noop" "default" {}
 step "run" {
   target = adapter.noop.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 policy { max_total_steps = 10 }
@@ -156,7 +156,7 @@ func TestMergeSpecs_SingletonConflict_Permissions_TwoFiles(t *testing.T) {
 adapter "noop" "default" {}
 step "run" {
   target = adapter.noop.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 permissions { allow_tools = ["*"] }
@@ -192,13 +192,13 @@ func TestMergeSpecs_DuplicateNamedBlock_Step(t *testing.T) {
 adapter "noop" "default" {}
 step "build" {
   target = adapter.noop.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `,
 		"b.hcl": `step "build" {
   target = adapter.noop.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 `,
 	})
@@ -244,7 +244,7 @@ func TestMergeSpecs_DuplicateNamedBlock_Adapter_SameTypeAndName(t *testing.T) {
 adapter "shell" "primary" {}
 step "run" {
   target = adapter.shell.primary
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `,
@@ -270,13 +270,13 @@ func TestMergeSpecs_DistinctBlocksAcrossFiles_NoConflict(t *testing.T) {
 adapter "noop" "default" {}
 step "step_a" {
   target = adapter.noop.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `,
 		"b.hcl": `step "step_b" {
   target = adapter.noop.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 `,
 	})
@@ -315,18 +315,18 @@ func TestMergeSpecs_AlphabeticalMergeOrder_DiagnosticsStable(t *testing.T) {
 adapter "noop" "default" {}
 step "a_step" {
   target = adapter.noop.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `,
 		"b.hcl": `step "b_step" {
   target = adapter.noop.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 `,
 		"c.hcl": `step "c_step" {
   target = adapter.noop.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 `,
 	})
@@ -364,13 +364,13 @@ func TestMergeSpecs_AlphabeticalMergeOrder_ConflictDiagnostic_StableSourceFile(t
 adapter "noop" "default" {}
 step "build" {
   target = adapter.noop.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `,
 		"b.hcl": `step "build" {
   target = adapter.noop.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 `,
 	})
@@ -435,11 +435,11 @@ adapter "noop" "default" {}
 adapter "shell" "runner" {}
 step "run" {
   target = adapter.noop.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 step "cleanup" {
   target = adapter.shell.runner
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 state "failed" { terminal = true }
@@ -501,7 +501,7 @@ func TestMergeSpecs_MultipleNonHCLFiles_Ignored(t *testing.T) {
 adapter "noop" "default" {}
 step "run" {
   target = adapter.noop.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `,

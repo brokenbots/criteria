@@ -14,8 +14,8 @@ step "fetch" {
   input {
     command = "echo rawdata"
   }
-  outcome "success" { next = "transform" }
-  outcome "failure" { next = "failed" }
+  outcome "success" { next = step.transform }
+  outcome "failure" { next = state.failed }
 }
 
 step "transform" {
@@ -23,8 +23,8 @@ step "transform" {
   input {
     command = "echo processed:${steps.fetch.stdout}"
   }
-  outcome "success" { next = "publish" }
-  outcome "failure" { next = "failed" }
+  outcome "success" { next = step.publish }
+  outcome "failure" { next = state.failed }
 }
 
 step "publish" {
@@ -32,8 +32,8 @@ step "publish" {
   input {
     command = "echo done:${steps.transform.stdout}"
   }
-  outcome "success" { next = "done" }
-  outcome "failure" { next = "failed" }
+  outcome "success" { next = state.done }
+  outcome "failure" { next = state.failed }
 }
 
 state "done" {

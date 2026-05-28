@@ -30,11 +30,11 @@ step "fetch" {
   }
 
   # all_succeeded: all iterations produced a success outcome.
-  outcome "all_succeeded" { next = "done" }
+  outcome "all_succeeded" { next = state.done }
 
   # any_failed: at least one iteration produced a non-success outcome.
   # on_failure = "continue" ensures all iterations always run even if one fails.
-  outcome "any_failed" { next = "done" }
+  outcome "any_failed" { next = state.done }
 }
 
 state "done" {

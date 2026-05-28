@@ -181,7 +181,7 @@ step "s" {
   input {
     command = "${each.value}"
   }
-  outcome "success" { next = "__done__" }
+  outcome "success" { next = step.__done__ }
 }
 state "__done__" { terminal = true }
 `

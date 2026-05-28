@@ -97,11 +97,11 @@ variable "env" {
 switch "decide" {
   condition {
     match = var.env == "prod"
-    next  = state.deploy
+    next = state.deploy
   }
   condition {
     match = var.env == "staging"
-    next  = state.staging_deploy
+    next = state.staging_deploy
   }
   default {
     next = state.skip
@@ -172,11 +172,11 @@ variable "env" {
 switch "decide" {
   condition {
     match = var.env == "prod"
-    next  = state.deploy
+    next = state.deploy
   }
   condition {
     match = var.env == "staging"
-    next  = state.staging_deploy
+    next = state.staging_deploy
   }
   default {
     next = state.done
@@ -239,7 +239,7 @@ variable "env" {
 switch "decide" {
   condition {
     match = var.env
-    next  = state.done
+    next = state.done
   }
   default {
     next = state.done
@@ -295,7 +295,7 @@ variable "env" {
 switch "decide" {
   condition {
     match  = var.env == "prod"
-    next   = switch.check_tier
+    next = switch.check_tier
     output = { tier = "production" }
   }
   default {
@@ -306,7 +306,7 @@ switch "decide" {
 switch "check_tier" {
   condition {
     match = steps.decide.tier == "production"
-    next  = state.tier_ok
+    next = state.tier_ok
   }
   default {
     next = state.tier_fail
@@ -355,7 +355,7 @@ state "tier_fail" {
 	}
 }
 
-// TestSwitch_ReturnFromCondition_BubblesToCaller verifies that next = "return"
+// TestSwitch_ReturnFromCondition_BubblesToCaller verifies that next = step.return
 // in a switch condition causes the run to complete at the top level with
 // empty terminal state and success = true.
 func TestSwitch_ReturnFromCondition_BubblesToCaller(t *testing.T) {
@@ -370,7 +370,7 @@ workflow {
 switch "decide" {
   condition {
     match = true
-    next  = "return"
+    next = step.return
   }
   default {
     next = state.done
@@ -421,11 +421,11 @@ variable "result" {
 switch "decide" {
   condition {
     match = var.result == "pass"
-    next  = state.succeeded
+    next = state.succeeded
   }
   condition {
     match = var.result == "fail"
-    next  = state.failed
+    next = state.failed
   }
   default {
     next = state.failed
@@ -465,7 +465,7 @@ state "failed" {
 }
 
 // TestSwitch_EndToEnd_ReturnExitsWorkflow is an end-to-end test verifying that
-// a switch with next = "return" terminates the full workflow execution cleanly.
+// a switch with next = step.return terminates the full workflow execution cleanly.
 //
 // This validates the complete contract boundary: parse → compile → engine run
 // → OnRunCompleted, with the return sentinel propagating through the engine's
@@ -487,7 +487,7 @@ variable "early_exit" {
 switch "gate" {
   condition {
     match = var.early_exit == "yes"
-    next  = "return"
+    next = step.return
   }
   default {
     next = state.done

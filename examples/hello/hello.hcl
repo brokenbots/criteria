@@ -23,8 +23,8 @@ step "say_hello" {
     command = "echo hello from criteria"
   }
 
-  outcome "success" { next = "done" }
-  outcome "failure" { next = "failed" }
+  outcome "success" { next = state.done }
+  outcome "failure" { next = state.failed }
 }
 
 state "done"   { terminal = true }

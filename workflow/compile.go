@@ -101,7 +101,7 @@ func CompileWithContext(ctx context.Context, spec *Spec, schemas map[string]Adap
 	g := newFSMGraph(spec)
 	diags = append(diags, compileVariables(g, spec)...)
 	diags = append(diags, compileLocals(g, spec, opts)...)
-	diags = append(diags, compileSharedVariables(g, spec, opts)...)
+	diags = append(diags, compileData(g, spec, opts)...)
 	diags = append(diags, compileEnvironments(g, spec, opts)...)
 	diags = append(diags, compileSubworkflows(ctx, g, spec, opts)...)
 	diags = append(diags, compileOutputs(g, spec, opts)...)
@@ -135,24 +135,24 @@ func CompileWithContext(ctx context.Context, spec *Spec, schemas map[string]Adap
 // newFSMGraph allocates a fresh FSMGraph seeded from spec's top-level fields.
 func newFSMGraph(spec *Spec) *FSMGraph {
 	g := &FSMGraph{
-		Name:            spec.Header.Name,
-		InitialState:    spec.Header.InitialState,
-		TargetState:     spec.Header.TargetState,
-		Variables:       map[string]*VariableNode{},
-		Locals:          map[string]*LocalNode{},
-		SharedVariables: map[string]*SharedVariableNode{},
-		Environments:    map[string]*EnvironmentNode{},
-		Outputs:         map[string]*OutputNode{},
-		OutputOrder:     []string{},
-		Adapters:        map[string]*AdapterNode{},
-		AdapterOrder:    []string{},
-		Subworkflows:    map[string]*SubworkflowNode{},
-		Steps:           map[string]*StepNode{},
-		States:          map[string]*StateNode{},
-		Waits:           map[string]*WaitNode{},
-		Approvals:       map[string]*ApprovalNode{},
-		Switches:        map[string]*SwitchNode{},
-		Policy:          DefaultPolicy,
+		Name:         spec.Header.Name,
+		InitialState: spec.Header.InitialState,
+		TargetState:  spec.Header.TargetState,
+		Variables:    map[string]*VariableNode{},
+		Locals:       map[string]*LocalNode{},
+		Data:         map[string]map[string]*DataNode{},
+		Environments: map[string]*EnvironmentNode{},
+		Outputs:      map[string]*OutputNode{},
+		OutputOrder:  []string{},
+		Adapters:     map[string]*AdapterNode{},
+		AdapterOrder: []string{},
+		Subworkflows: map[string]*SubworkflowNode{},
+		Steps:        map[string]*StepNode{},
+		States:       map[string]*StateNode{},
+		Waits:        map[string]*WaitNode{},
+		Approvals:    map[string]*ApprovalNode{},
+		Switches:     map[string]*SwitchNode{},
+		Policy:       DefaultPolicy,
 	}
 	if spec.Header.Policy != nil {
 		if spec.Header.Policy.MaxTotalSteps > 0 {

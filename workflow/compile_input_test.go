@@ -63,8 +63,8 @@ adapter "shell" "default" {}
 step "run" {
   target = adapter.shell.default
   input {}
-  outcome "success" { next = "done" }
-  outcome "failure" { next = "done" }
+  outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -100,8 +100,8 @@ step "run" {
     command = "echo hi"
     unknown_key = "bad"
   }
-  outcome "success" { next = "done" }
-  outcome "failure" { next = "done" }
+  outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -135,7 +135,7 @@ step "open" {
   input {
     prompt = "hello"
   }
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -162,11 +162,11 @@ adapter "copilot" "default" {}
 step "open" {
   target = adapter.copilot.default
   lifecycle = "open"
-  outcome "success" { next = "run" }
+  outcome "success" { next = step.run }
 }
 step "run" {
   target = adapter.copilot.default
-  outcome "success" { next = "close" }
+  outcome "success" { next = step.close }
 }
 step "close" {
   target = adapter.copilot.default
@@ -174,7 +174,7 @@ step "close" {
   input {
     prompt = "bye"
   }
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -202,8 +202,8 @@ step "run" {
   config = {
     command = "echo old"
   }
-  outcome "success" { next = "done" }
-  outcome "failure" { next = "done" }
+  outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -243,8 +243,8 @@ step "run" {
     command  = "echo hi"
     extra    = "ok"
   }
-  outcome "success" { next = "done" }
-  outcome "failure" { next = "done" }
+  outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -276,8 +276,8 @@ step "run" {
   input {
     command = "echo hi"
   }
-  outcome "success" { next = "done" }
-  outcome "failure" { next = "done" }
+  outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -307,7 +307,7 @@ workflow {
 adapter "copilot" "default" {}
 step "open" {
   target = adapter.copilot.default
-  outcome "success" { next = "run" }
+  outcome "success" { next = step.run }
 }
 step "run" {
   target = adapter.copilot.default
@@ -315,11 +315,11 @@ step "run" {
     prompt    = "do work"
     max_turns = "not-a-number"
   }
-  outcome "success" { next = "close" }
+  outcome "success" { next = step.close }
 }
 step "close" {
   target = adapter.copilot.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -349,18 +349,18 @@ workflow {
 adapter "copilot" "default" {}
 step "open" {
   target = adapter.copilot.default
-  outcome "success" { next = "run" }
+  outcome "success" { next = step.run }
 }
 step "run" {
   target = adapter.copilot.default
   input {
     prompt = 42
   }
-  outcome "success" { next = "close" }
+  outcome "success" { next = step.close }
 }
 step "close" {
   target = adapter.copilot.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -392,7 +392,7 @@ step "run" {
   input {
     items = ["a", "b"]
   }
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -421,7 +421,7 @@ step "run" {
   input {
     items = ["a", 1]
   }
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `

@@ -146,11 +146,11 @@ variable "env" {
 switch "check" {
   condition {
     match = var.env == "prod"
-    next  = state.deploy
+    next = state.deploy
   }
   condition {
     match = var.env == "staging"
-    next  = state.deploy_staging
+    next = state.deploy_staging
   }
   default {
     next = state.done
@@ -186,7 +186,7 @@ workflow {
 switch "check" {
   condition {
     match = var.env == "prod"
-    next  = state.done
+    next = state.done
   }
 }
 
@@ -228,7 +228,7 @@ workflow {
 switch "check" {
   condition {
     match = true
-    next  = "nonexistent"
+    next = step.nonexistent
   }
   default {
     next = state.done
@@ -252,10 +252,10 @@ workflow {
 switch "check" {
   condition {
     match = true
-    next  = state.done
+    next = state.done
   }
   default {
-    next = "missing"
+    next = step.missing
   }
 }
 
@@ -276,7 +276,7 @@ workflow {
 switch "check" {
   condition {
     match = var.undeclared == "x"
-    next  = state.done
+    next = state.done
   }
   default {
     next = state.done
@@ -300,7 +300,7 @@ workflow {
 switch "check" {
   condition {
     match = steps.ghoststep.exit_code == "0"
-    next  = state.done
+    next = state.done
   }
   default {
     next = state.done
@@ -326,7 +326,7 @@ adapter "noop" "default" {}
 switch "check" {
   condition {
     match = steps.check.exit_code == "0"
-    next  = state.done
+    next = state.done
   }
   default {
     next = state.done
@@ -352,13 +352,13 @@ adapter "noop" "default" {}
 
 step "start" {
   target = adapter.noop.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 
 switch "orphan" {
   condition {
     match = true
-    next  = state.done
+    next = state.done
   }
   default {
     next = state.done
@@ -476,7 +476,7 @@ workflow {
 switch "_continue" {
   condition {
     match = true
-    next  = state.done
+    next = state.done
   }
   default {
     next = state.done
@@ -489,7 +489,7 @@ state "done"  { terminal = true  }
 	compileExpectError(t, src, `"_continue"`)
 }
 
-// TestCompileSwitch_NextIsReturn verifies that next = "return" is accepted by
+// TestCompileSwitch_NextIsReturn verifies that next = step.return is accepted by
 // the compiler and stored as the condition's Next target.
 func TestCompileSwitch_NextIsReturn(t *testing.T) {
 	src := `
@@ -503,7 +503,7 @@ workflow {
 switch "check" {
   condition {
     match = true
-    next  = "return"
+    next = step.return
   }
   default {
     next = state.done
@@ -539,7 +539,7 @@ workflow {
 switch "check" {
   condition {
     match         = true
-    next          = state.done
+    next = state.done
     transition_to = "done"
   }
   default {
@@ -567,7 +567,7 @@ workflow {
 switch "check" {
   condition {
     match  = true
-    next   = state.done
+    next = state.done
     output = "oops"
   }
   default {
@@ -590,7 +590,7 @@ workflow {
 switch "check" {
   condition {
     match  = true
-    next   = state.done
+    next = state.done
     output = { tier = "prod" }
   }
   default {

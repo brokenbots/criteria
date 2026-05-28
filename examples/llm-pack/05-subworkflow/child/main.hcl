@@ -18,8 +18,8 @@ output "result" {
 
 step "execute" {
   target = adapter.noop.default
-  outcome "success" { next = "done" }
-  outcome "failure" { next = "failed" }
+  outcome "success" { next = state.done }
+  outcome "failure" { next = state.failed }
 }
 
 state "done" {

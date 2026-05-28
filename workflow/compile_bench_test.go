@@ -63,8 +63,8 @@ func gen1000StepHCL(n int) []byte {
   step "step_%d" {
     target = adapter.shell.default
     input { command = "echo step_%d" }
-    outcome "success" { next = "%s" }
-    outcome "failure" { next = "done" }
+    outcome "success" { next = step.%s }
+    outcome "failure" { next = step.done }
   }
 `, i, i, next)
 	}

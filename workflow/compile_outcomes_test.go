@@ -33,7 +33,7 @@ state "failed" {
 `
 }
 
-// TestCompileOutcome_NextIsStep verifies that next = "<step_name>" compiles
+// TestCompileOutcome_NextIsStep verifies that next = step.<step_name> compiles
 // and stores the target step name in CompiledOutcome.Next.
 func TestCompileOutcome_NextIsStep(t *testing.T) {
 	src := `
@@ -46,11 +46,11 @@ workflow {
 adapter "noop" "default" {}
 step "a" {
   target = adapter.noop.default
-  outcome "success" { next = "b" }
+  outcome "success" { next = step.b }
 }
 step "b" {
   target = adapter.noop.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" {
   terminal = true
@@ -77,12 +77,12 @@ state "done" {
 	}
 }
 
-// TestCompileOutcome_NextIsState verifies that next = "<terminal_state>" compiles
+// TestCompileOutcome_NextIsState verifies that next = step.<terminal_state> compiles
 // and routes to the terminal state node.
 func TestCompileOutcome_NextIsState(t *testing.T) {
 	src := minimalWorkflowWithStep(`
-    outcome "success" { next = "done" }
-    outcome "failure" { next = "failed" }
+    outcome "success" { next = step.done }
+    outcome "failure" { next = step.failed }
 `)
 	spec, diags := Parse("t.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -100,7 +100,44 @@ func TestCompileOutcome_NextIsState(t *testing.T) {
 	}
 }
 
-// TestCompileOutcome_NextIsReturn verifies that next = "return" stores the
+// TestCompileOutcome_NextIsBareReturn verifies that the bare keyword
+// next = return compiles to ReturnSentinel.
+func TestCompileOutcome_NextIsBareReturn(t *testing.T) {
+	src := `
+workflow {
+  name = "t"
+  version       = "0.1"
+  initial_state = "work"
+  target_state  = "done"
+}
+adapter "noop" "default" {}
+step "work" {
+  target = adapter.noop.default
+  outcome "success" { next = return }
+}
+state "done" {
+  terminal = true
+  success  = true
+}
+`
+	spec, diags := Parse("t.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	g, diags := Compile(spec, nil)
+	if diags.HasErrors() {
+		t.Fatalf("compile: %s", diags.Error())
+	}
+	co, ok := g.Steps["work"].Outcomes["success"]
+	if !ok {
+		t.Fatal("outcome 'success' not found")
+	}
+	if co.Next != ReturnSentinel {
+		t.Errorf("Next: got %q want %q", co.Next, ReturnSentinel)
+	}
+}
+
+// TestCompileOutcome_NextIsReturn verifies that next = step.return stores the
 // ReturnSentinel constant (not treated as an unknown node name).
 func TestCompileOutcome_NextIsReturn(t *testing.T) {
 	src := `
@@ -113,7 +150,7 @@ workflow {
 adapter "noop" "default" {}
 step "work" {
   target = adapter.noop.default
-  outcome "success" { next = "return" }
+  outcome "success" { next = step.return }
 }
 state "done" {
   terminal = true
@@ -142,7 +179,7 @@ state "done" {
 func TestCompileOutcome_OutputExprFolds(t *testing.T) {
 	src := minimalWorkflowWithStep(`
     outcome "success" {
-      next   = "done"
+      next = step.done
       output = { status = "ok" }
     }
 `)
@@ -178,13 +215,13 @@ adapter "noop" "default" {}
 step "a" {
   target = adapter.noop.default
   outcome "success" {
-    next   = "b"
+    next = step.b
     output = { result = steps.a.exit_code }
   }
 }
 step "b" {
   target = adapter.noop.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" {
   terminal = true
@@ -220,8 +257,8 @@ func TestCompileOutcome_LegacyTransitionTo_HardError(t *testing.T) {
 // pointing to a nonexistent state is a compile error.
 func TestCompileStep_DefaultOutcomeMissing(t *testing.T) {
 	src := minimalWorkflowWithStep(`
-    outcome "success" { next = "done" }
-    outcome "default" { next = "nonexistent" }
+    outcome "success" { next = step.done }
+    outcome "default" { next = step.nonexistent }
 `)
 	spec, diags := Parse("t.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -241,7 +278,7 @@ func TestCompileStep_DefaultOutcomeMissing(t *testing.T) {
 func TestCompileOutcome_OutputExprNotObject(t *testing.T) {
 	src := minimalWorkflowWithStep(`
     outcome "success" {
-      next   = "done"
+      next = step.done
       output = "not-an-object"
     }
 `)
@@ -263,7 +300,7 @@ func TestCompileOutcome_OutputExprNotObject(t *testing.T) {
 func TestCompileOutcome_OutputExprBadRef(t *testing.T) {
 	src := minimalWorkflowWithStep(`
     outcome "success" {
-      next   = "done"
+      next = step.done
       output = { bad = nope.missing }
     }
 `)
@@ -292,7 +329,7 @@ adapter "noop" "default" {}
 step "a" {
   target = adapter.noop.default
   outcome "success" {
-    next   = "done"
+    next = step.done
     output = { result = subworkflow.answer }
   }
 }
@@ -322,7 +359,7 @@ workflow {
 adapter "noop" "default" {}
 step "return" {
   target = adapter.noop.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" {
   terminal = true
@@ -357,7 +394,7 @@ adapter "noop" "default" {}
 step "work" {
   target = adapter.noop.default
   outcome "success" {
-    next   = "done"
+    next = step.done
     output = { x = step.output.result }
   }
 }
@@ -394,7 +431,7 @@ adapter "noop" "default" {}
 step "work" {
   target = adapter.noop.default
   outcome "success" {
-    next   = "done"
+    next = step.done
     output = { x = step.output.ghost }
   }
 }
@@ -434,7 +471,7 @@ adapter "noop" "default" {}
 step "work" {
   target = adapter.noop.default
   outcome "success" {
-    next   = "done"
+    next = step.done
     output = { x = step.output.ghost }
   }
 }
@@ -473,10 +510,10 @@ step "work" {
   target   = adapter.noop.default
   for_each = ["a", "b"]
   outcome "item_ok" {
-    next = "_continue"
+    next = continue
   }
   outcome "all_succeeded" {
-    next   = "done"
+    next = step.done
     output = { x = step.output.ghost }
   }
 }
@@ -502,7 +539,7 @@ state "done" {
 // TestCompileReservedName_ReturnForNonStepNodes verifies that "return" is
 // rejected as a name for states, waits, approvals, and branches in addition
 // to steps — since any such node named "return" would silently cause
-// resolveTransitions to treat next = "return" as a ReturnSentinel instead of
+// resolveTransitions to treat next = step.return as a ReturnSentinel instead of
 // a real node reference.
 func TestCompileReservedName_ReturnForNonStepNodes(t *testing.T) {
 	cases := []struct {
@@ -521,7 +558,7 @@ workflow {
 adapter "noop" "default" {}
 step "step1" {
   target = adapter.noop.default
-  outcome "success" { next = "return" }
+  outcome "success" { next = step.return }
 }
 state "return" {
   terminal = true
@@ -540,12 +577,12 @@ workflow {
 adapter "noop" "default" {}
 step "step1" {
   target = adapter.noop.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 switch "return" {
   condition {
     match = true
-    next  = state.done
+    next = state.done
   }
   default { next = state.done }
 }

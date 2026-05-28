@@ -218,11 +218,11 @@ workflow {
 }
 step "a" {
   target = adapter.fake
-  outcome "success" { next = "b" }
+  outcome "success" { next = step.b }
 }
 step "b" {
   target = adapter.fake
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }`)
 	sink := &fakeSink{}
@@ -248,8 +248,8 @@ workflow {
 }
 step "a" {
   target = adapter.fake
-  outcome "success" { next = "ok" }
-  outcome "failure" { next = "fail" }
+  outcome "success" { next = step.ok }
+  outcome "failure" { next = step.fail }
 }
 state "ok" { terminal = true }
 state "fail" {
@@ -278,7 +278,7 @@ workflow {
 }
 step "a" {
   target = adapter.fake
-  outcome "again" { next = "a" }
+  outcome "again" { next = step.a }
 }
 state "done" { terminal = true }
 `)
@@ -508,8 +508,8 @@ step "run" {
   target = adapter.permissive.bot
   input { perm_tools = "read_file,write_file" }
   allow_tools = ["read_file"]
-  outcome "success"      { next = "done" }
-  outcome "needs_review" { next = "done" }
+  outcome "success"      { next = step.done }
+  outcome "needs_review" { next = step.done }
 }
 state "done" { terminal = true }`)
 
@@ -571,8 +571,8 @@ adapter "permissive" "bot" { }
 step "run" {
   target = adapter.permissive.bot
   input { perm_tools = "read_file" }
-  outcome "needs_review" { next = "done" }
-  outcome "success"      { next = "done" }
+  outcome "needs_review" { next = step.done }
+  outcome "success"      { next = step.done }
 }
 state "done" { terminal = true }`)
 
@@ -609,8 +609,8 @@ step "run" {
   target = adapter.permissive.bot
   input { perm_tools = "shell|git status,shell|rm -rf /" }
   allow_tools = ["shell:git *"]
-  outcome "success"      { next = "done" }
-  outcome "needs_review" { next = "done" }
+  outcome "success"      { next = step.done }
+  outcome "needs_review" { next = step.done }
 }
 state "done" { terminal = true }`)
 
@@ -645,8 +645,8 @@ workflow {
 step "loop" {
   target = adapter.fake
   max_visits = 3
-  outcome "again" { next = "loop" }
-  outcome "done"  { next = "done" }
+  outcome "again" { next = step.loop }
+  outcome "done"  { next = step.done }
 }
 state "done" { terminal = true }
 `)
@@ -703,8 +703,8 @@ workflow {
 step "loop" {
   target = adapter.fake
   max_visits = 100
-  outcome "again" { next = "loop" }
-  outcome "done"  { next = "done" }
+  outcome "again" { next = step.loop }
+  outcome "done"  { next = step.done }
 }
 state "done" { terminal = true }
 `)
@@ -730,7 +730,7 @@ workflow {
 }
 step "a" {
   target = adapter.fake
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }`)
 	step := g.Steps["a"]
@@ -764,7 +764,7 @@ workflow {
 step "work" {
   target = adapter.fake
   max_visits = 2
-  outcome "done" { next = "done" }
+  outcome "done" { next = step.done }
 }
 state "done" { terminal = true }
 `)
@@ -808,8 +808,8 @@ workflow {
 step "loop" {
   target = adapter.fake
   max_visits = 5
-  outcome "again" { next = "loop" }
-  outcome "done"  { next = "done" }
+  outcome "again" { next = step.loop }
+  outcome "done"  { next = step.done }
 }
 state "done" { terminal = true }
 `)
@@ -845,8 +845,8 @@ workflow {
 step "loop" {
   target = adapter.fake
   max_visits = 5
-  outcome "again" { next = "loop" }
-  outcome "done"  { next = "done" }
+  outcome "again" { next = step.loop }
+  outcome "done"  { next = step.done }
 }
 state "done" { terminal = true }
 `)
@@ -934,7 +934,7 @@ workflow {
 step "work" {
   target = adapter.fake
   max_visits = 1
-  outcome "done" { next = "done" }
+  outcome "done" { next = step.done }
 }
 state "done" { terminal = true }
 `)
@@ -975,8 +975,8 @@ workflow {
 }
 step "a" {
   target = adapter.fake
-  outcome "success" { next = "done" }
-  outcome "failure" { next = "done" }
+  outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }`)
 
@@ -1023,11 +1023,11 @@ step "process" {
   workflow {
     step "inner" {
       target = adapter.fake
-      outcome "success" { next = "_continue" }
+      outcome "success" { next = continue }
     }
   }
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "done" }
+  outcome "all_succeeded" { next = step.done }
+  outcome "any_failed"    { next = step.done }
 }
 state "done" { terminal = true }
 `)

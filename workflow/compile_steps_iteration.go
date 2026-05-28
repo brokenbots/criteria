@@ -109,7 +109,7 @@ func compileIteratingStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[str
 
 	diags = append(diags, compileOutcomeBlock(sp, node, g, opts, schemas[adapterRef].OutputSchema)...)
 	diags = append(diags, validateIteratingOutcomes(sp, node)...)
-	diags = append(diags, warnParallelPerIterSharedWrites(sp.Name, ie.Parallel, node)...)
+	diags = append(diags, warnParallelPerIterDataWrites(sp.Name, ie.Parallel, node)...)
 
 	g.Steps[sp.Name] = node
 	g.stepOrder = append(g.stepOrder, sp.Name)
@@ -315,26 +315,26 @@ func validateIteratingOutcomes(sp *StepSpec, node *StepNode) hcl.Diagnostics {
 	return diags
 }
 
-// warnParallelPerIterSharedWrites emits a DiagWarning for each per-iteration
-// outcome (_continue) on a parallel step that declares shared_writes. Goroutines
+// warnParallelPerIterWrites emits a DiagWarning for each per-iteration
+// outcome (_continue) on a parallel step that declares write blocks. Goroutines
 // read a pre-parallel snapshot; writes are applied in index order after all
 // iterations complete, so accumulation patterns are not safe. Authors should use
 // aggregate outcomes with an output = { ... } projection instead.
-func warnParallelPerIterSharedWrites(stepName string, parallelExpr hcl.Expression, node *StepNode) hcl.Diagnostics {
+func warnParallelPerIterDataWrites(stepName string, parallelExpr hcl.Expression, node *StepNode) hcl.Diagnostics {
 	if parallelExpr == nil {
 		return nil
 	}
 	var diags hcl.Diagnostics
 	for outcomeName, co := range node.Outcomes {
-		if co.Next == "_continue" && len(co.SharedWrites) > 0 {
+		if co.Next == "_continue" && len(co.Writes) > 0 {
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagWarning,
 				Summary: fmt.Sprintf(
-					"step %q outcome %q: shared_writes on a parallel step's per-iteration outcome "+
+					"step %q outcome %q: write blocks on a parallel step's per-iteration outcome "+
 						"are applied in index order after all iterations complete. "+
 						"All goroutines read a pre-parallel snapshot, so accumulation patterns "+
-						"(e.g. reading shared.x and writing back x+1) are not safe. "+
-						"Last-index-wins applies when multiple iterations write the same variable. "+
+						"(e.g. reading data.internal.x and writing back x+1) are not safe. "+
+						"Last-index-wins applies when multiple iterations write the same data block. "+
 						"Consider using an aggregate outcome with output = { ... } projection.",
 					stepName, outcomeName),
 			})
@@ -344,7 +344,7 @@ func warnParallelPerIterSharedWrites(stepName string, parallelExpr hcl.Expressio
 }
 
 // validateIterExprFold runs the compile-time fold pass on for_each, count, and
-// parallel expressions. Runtime-only references (steps.*, shared_variable.*) are
+// parallel expressions. Runtime-only references (steps.*, data.*) are
 // silently deferred; any other fold errors are returned.
 func validateIterExprFold(g *FSMGraph, opts CompileOpts, forEachExpr, countExpr, parallelExpr hcl.Expression) hcl.Diagnostics {
 	var diags hcl.Diagnostics
