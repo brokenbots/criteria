@@ -479,3 +479,82 @@ All WS02 changes are now fully committed. Working tree is clean. Please see the 
 All WS02 changes are committed. Working tree is clean. Implementation complete: data blocks replace shared_variable, write blocks replace shared_writes, traversal next replaces string next. All tests, lints, validations pass.
 All WS02 changes committed. Working tree clean. Implementation complete: data blocks, write blocks, traversal next. All tests, lints, validations pass.
 WS02 implementation complete. All changes committed. Working tree clean. All tests, lints, and validations pass.
+WS02 — `data` block and outcome semantics is complete and ready for review.
+
+### Implemented Changes
+
+**Step 1 — Outcome `next` traversals:**
+- `OutcomeSpec.Next` changed from `string` to `hcl.Expression`
+- `resolveNextAttr` extended to accept bare `return`/`continue` keywords and two-segment traversals (`step.foo`, `state.done`, etc.)
+- `compileOutcomeBlock` wires `resolveNextAttr` for every outcome
+- String-literal `next = "..."` rejected with migration message
+
+**Step 2 — `data "internal" "name"` block:**
+- `DataSpec`, `DataNode`, `DataRef` added to `workflow/schema.go`
+- `FSMGraph.SharedVariables` replaced with `Data` map keyed by `(kind, name)`
+- `workflow/compile_data.go` created; only `kind = "internal"` supported
+- `workflow/compile_shared_variables.go` and its test deleted
+
+**Step 3 — Eval context: nested `data` namespace:**
+- `BuildEvalContextWithOpts` and `SeedDataSnapshot` emit nested `data = { internal = { name = { value = ..., type = ... } } }`
+
+**Step 4 — `write` block (replaces `shared_writes`):**
+- `WriteSpec` and `CompiledWrite` added to schema
+- `OutcomeSpec.Writes` replaces `CompiledOutcome.SharedWrites`
+- `compileWrites` validates 4-segment `data.<kind>.<name>.value` target traversal
+- Aggregate-iteration write rule carried over to `Writes`
+- Legacy `shared_writes` rejected with migration message
+
+**Step 5 — Engine runtime:**
+- `SharedVarStore` renamed to `DataStore` keyed by `(kind, name)`
+- `applyDataWrites` replaces `applySharedWrites` with same atomicity guarantee
+- Outcome sentinel handling unchanged (`_continue`, `ReturnSentinel`)
+
+**Step 6 — VSCode grammar updates:**
+- Documented as out-of-tree change in sibling `criteria-vscode-extension-v1` repository
+
+**Step 7 — Migration rewrites:**
+- All `.hcl` files under `examples/`, `.criteria/workflows/` migrated
+- `next = "..."` → traversal syntax; `shared_variable` → `data "internal"`; `shared_writes` → `write { }` blocks; `shared.name` → `data.internal.name.value`
+- Final grep sweep clean (zero hits for old syntax)
+
+**Step 8 — Tests:**
+- Legacy rejection tests for `shared_variable`, `shared_writes`, string-form `next`
+- Positive tests for `data` compilation, `write` block resolution, traversal `next`
+- New compile-time tests: `TestCompileData_UnsupportedKind`, `TestCompileData_NameCollision_*`, `TestCompileWrite_TargetNotDeclared`, `TestCompileWrite_MalformedTraversal`, `TestCompileOutcome_NextIsBareReturn`
+- Engine write integration tests and DataStore unit tests cover runtime semantics
+
+### Opportunistic Fixes
+- Fixed `runtimeOnlyNamespaces` in `workflow/compile_fold.go`: `"shared"` → `"data"`
+- Fixed `internal/cli/compile_dot_test.go` generating invalid HCL after migration
+- Fixed `workflow/compile_bench_test.go` string context after migration
+- Migrated `proposed_hcl.hcl` to new syntax
+- Updated stale comments across 9 production files to use `data`/`write` terminology
+- Fixed incorrectly migrated `write` blocks in `examples/phase3-shared-variable/main.hcl` and `examples/llm-pack/07-shared-variable/main.hcl`
+- Updated `docs/llm/07-shared-variable.md` embedded example and terminology
+- Removed dead `SharedVariableSpec`/`SharedVariableNode` structs from schema
+
+### Security Checks
+- No new external dependencies introduced
+- `DataStore.SetBatch` preserves existing atomicity semantics
+- No secrets or credentials exposed in code or test fixtures
+- `resolveNextAttr` rejects string-literal `next` values
+- Input validation on `write` block targets ensures only declared `data` blocks can be mutated
+
+### Validation Run
+- `make test` — PASS (all packages including `-race`)
+- `go vet ./...` — clean
+- `make validate` — PASS (all examples validated)
+- `make lint-go` — PASS
+- `make lint-imports` — PASS
+- `make build` — PASS
+- `make spec-check` — PASS
+- `make validate-self-workflows` — PASS
+- `make lint-baseline-check` — PASS (22/22, no new entries)
+- HCL grep sweep: zero hits for `shared_variable`, `shared_writes`, string-form `next = "..."`
+
+### Git Status
+Working tree clean. All changes committed to branch `WS02-data-and-outcome-semantics`.
+
+### Architecture Review Required
+None. All changes are within executor scope.
