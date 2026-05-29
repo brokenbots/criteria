@@ -48,7 +48,7 @@ func runPublish(ctx context.Context, binPath, registry string, withImage bool) e
 		return fmt.Errorf("--emit-manifest failed: %w", err)
 	}
 
-	// TODO: construct OCI artifact and push via oras-go/v2.
+	// OCI artifact construction and push will be added when the shared publish library is ready.
 	_ = out
 	_ = registry
 	_ = withImage

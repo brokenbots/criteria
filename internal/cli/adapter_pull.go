@@ -70,7 +70,7 @@ func runPull(ctx context.Context, rawRef string, allowUnsigned bool, registryAli
 	}
 
 	// Container-image fetch (if applicable and env is container-mode).
-	// TODO: detect container-mode environment and pull image if needed.
+	// Container-image fetch is deferred until container-mode detection is implemented.
 	_ = m.ContainerImage
 
 	// Update lockfile.  Since pull is not workflow-scoped, we cannot set
