@@ -2,11 +2,12 @@ package cli
 
 import (
 	"fmt"
-	"os"
+	"io"
 	"sort"
 
 	"github.com/spf13/cobra"
 
+	"github.com/brokenbots/criteria/internal/adapter/manifest"
 	"github.com/brokenbots/criteria/internal/adapter/oci"
 	"github.com/brokenbots/criteria/workflow/lockfile"
 )
@@ -25,7 +26,7 @@ func newAdapterListCmd() *cobra.Command {
 			if !installed && !referenced {
 				installed = true
 			}
-			return runList(installed, referenced)
+			return runList(cmd.OutOrStdout(), installed, referenced)
 		},
 	}
 
@@ -34,21 +35,21 @@ func newAdapterListCmd() *cobra.Command {
 	return cmd
 }
 
-func runList(installed, referenced bool) error {
+func runList(out io.Writer, installed, referenced bool) error {
 	if installed {
-		if err := listInstalled(); err != nil {
+		if err := listInstalled(out); err != nil {
 			return err
 		}
 	}
 	if referenced {
-		if err := listReferenced(); err != nil {
+		if err := listReferenced(out); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func listInstalled() error {
+func listInstalled(out io.Writer) error {
 	cacheRoot, err := defaultCacheRoot()
 	if err != nil {
 		return err
@@ -64,30 +65,31 @@ func listInstalled() error {
 	}
 
 	if len(ix.Manifests) == 0 {
-		fmt.Fprintln(os.Stdout, "(no cached adapters)")
+		fmt.Fprintln(out, "(no cached adapters)")
 		return nil
 	}
 
 	for _, m := range ix.Manifests {
 		dg := m.Digest.String()
-		ref := "(unknown)"
-		if m.Annotations != nil {
-			if v, ok := m.Annotations[oci.AnnotationProtocolVersion]; ok {
-				ref = "protocol=" + v
+		name := "(unknown)"
+		artFS, err := layout.Open(m.Digest)
+		if err == nil {
+			if mf, err := manifest.ParseFromFS(artFS, "adapter.yaml"); err == nil {
+				name = mf.Name
 			}
 		}
-		fmt.Fprintf(os.Stdout, "%s  %s\n", dg, ref)
+		fmt.Fprintf(out, "%s  %s\n", dg, name)
 	}
 	return nil
 }
 
-func listReferenced() error {
+func listReferenced(out io.Writer) error {
 	lf, err := lockfile.ReadFromDir(".")
 	if err != nil {
 		return fmt.Errorf("read lockfile: %w", err)
 	}
 	if lf == nil {
-		fmt.Fprintln(os.Stdout, "(no lockfile in current directory)")
+		fmt.Fprintln(out, "(no lockfile in current directory)")
 		return nil
 	}
 
@@ -98,7 +100,7 @@ func listReferenced() error {
 	})
 
 	for i := range sorted {
-		fmt.Fprintf(os.Stdout, "%s.%s  %s  %s\n", sorted[i].Type, sorted[i].Name, sorted[i].Reference, sorted[i].ResolvedDigest)
+		fmt.Fprintf(out, "%s.%s  %s  %s\n", sorted[i].Type, sorted[i].Name, sorted[i].Reference, sorted[i].ResolvedDigest)
 	}
 	return nil
 }

@@ -2,7 +2,7 @@ package cli
 
 import (
 	"fmt"
-	"os"
+	"io"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -18,13 +18,13 @@ func newAdapterInfoCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
-			return runInfo(args[0])
+			return runInfo(cmd.OutOrStdout(), args[0])
 		},
 	}
 	return cmd
 }
 
-func runInfo(refOrName string) error {
+func runInfo(out io.Writer, refOrName string) error {
 	cacheRoot, err := defaultCacheRoot()
 	if err != nil {
 		return err
@@ -49,14 +49,14 @@ func runInfo(refOrName string) error {
 		return fmt.Errorf("read adapter.yaml: %w", err)
 	}
 
-	fmt.Fprintf(os.Stdout, "Name:         %s\n", m.Name)
-	fmt.Fprintf(os.Stdout, "Version:      %s\n", m.Version)
-	fmt.Fprintf(os.Stdout, "Description:  %s\n", m.Description)
-	fmt.Fprintf(os.Stdout, "Source:       %s\n", m.SourceURL)
-	fmt.Fprintf(os.Stdout, "Protocol:     %d\n", m.SDKProtocolVersion)
-	fmt.Fprintf(os.Stdout, "Platforms:    %s\n", strings.Join(platformStrings(m.Platforms), ", "))
+	fmt.Fprintf(out, "Name:         %s\n", m.Name)
+	fmt.Fprintf(out, "Version:      %s\n", m.Version)
+	fmt.Fprintf(out, "Description:  %s\n", m.Description)
+	fmt.Fprintf(out, "Source:       %s\n", m.SourceURL)
+	fmt.Fprintf(out, "Protocol:     %d\n", m.SDKProtocolVersion)
+	fmt.Fprintf(out, "Platforms:    %s\n", strings.Join(platformStrings(m.Platforms), ", "))
 	if m.ContainerImage != nil {
-		fmt.Fprintf(os.Stdout, "Container:    %s (%s)\n", m.ContainerImage.Ref, m.ContainerImage.Digest)
+		fmt.Fprintf(out, "Container:    %s (%s)\n", m.ContainerImage.Ref, m.ContainerImage.Digest)
 	}
 	return nil
 }

@@ -3,7 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
-	"os"
+	"io"
 	"runtime"
 
 	"github.com/opencontainers/go-digest"
@@ -27,7 +27,7 @@ func newAdapterPullCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
-			return runPull(cmd.Context(), args[0], allowUnsigned, registryAlias)
+			return runPull(cmd.Context(), cmd.OutOrStdout(), args[0], allowUnsigned, registryAlias)
 		},
 	}
 
@@ -36,7 +36,7 @@ func newAdapterPullCmd() *cobra.Command {
 	return cmd
 }
 
-func runPull(ctx context.Context, rawRef string, allowUnsigned bool, registryAlias string) error {
+func runPull(ctx context.Context, out io.Writer, rawRef string, allowUnsigned bool, registryAlias string) error {
 	layout, err := openDefaultCache()
 	if err != nil {
 		return err
@@ -78,7 +78,7 @@ func runPull(ctx context.Context, rawRef string, allowUnsigned bool, registryAli
 	// (e.g. `adapter lock`) knows the workflow adapter mapping.
 	_ = lockfile.BuildEntry
 
-	printPullSummary(ref, dg, signer, m)
+	printPullSummary(out, ref, dg, signer, m)
 	return nil
 }
 
@@ -130,17 +130,17 @@ func assertHostPlatformSupported(ref oci.Reference, m *manifest.Manifest) error 
 	return fmt.Errorf("adapter %s does not support host platform %s; contact the publisher to add support", ref, hostPlatform)
 }
 
-func printPullSummary(ref oci.Reference, dg digest.Digest, signer *signing.SignerIdentity, m *manifest.Manifest) {
-	fmt.Fprintf(os.Stdout, "Pulled %s\n", ref)
-	fmt.Fprintf(os.Stdout, "Digest:    %s\n", dg)
+func printPullSummary(out io.Writer, ref oci.Reference, dg digest.Digest, signer *signing.SignerIdentity, m *manifest.Manifest) {
+	fmt.Fprintf(out, "Pulled %s\n", ref)
+	fmt.Fprintf(out, "Digest:    %s\n", dg)
 	if signer != nil {
 		if signer.Keyless != nil {
-			fmt.Fprintf(os.Stdout, "Signer:    %s (issuer: %s)\n", signer.Keyless.Subject, signer.Keyless.Issuer)
+			fmt.Fprintf(out, "Signer:    %s (issuer: %s)\n", signer.Keyless.Subject, signer.Keyless.Issuer)
 		} else if signer.Key != nil {
-			fmt.Fprintf(os.Stdout, "Signer:    key %s/%s\n", signer.Key.Algorithm, signer.Key.Fingerprint)
+			fmt.Fprintf(out, "Signer:    key %s/%s\n", signer.Key.Algorithm, signer.Key.Fingerprint)
 		}
 	} else {
-		fmt.Fprintf(os.Stdout, "Signer:    (unsigned)\n")
+		fmt.Fprintf(out, "Signer:    (unsigned)\n")
 	}
-	fmt.Fprintf(os.Stdout, "Platforms: %v\n", m.Platforms)
+	fmt.Fprintf(out, "Platforms: %v\n", m.Platforms)
 }

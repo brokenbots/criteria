@@ -10,7 +10,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -65,8 +64,11 @@ func pushSyntheticArtifact(t *testing.T, addr, tag string) digest.Digest {
 	store := memory.New()
 
 	// Adapter manifest layer.
-	adapterYAML := fmt.Sprintf(`name: test-adapter
-protocol: v2
+	adapterYAML := fmt.Sprintf(`schema_version: 1
+name: test-adapter
+version: 1.0.0
+source_url: https://example.com/test-adapter
+sdk_protocol_version: 2
 platforms:
   - os: %s
     arch: %s
@@ -161,7 +163,7 @@ func TestAdapterE2E_PullInfoWhere(t *testing.T) {
 	cmd = newAdapterInfoCmd()
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
-	cmd.SetArgs([]string{ref})
+	cmd.SetArgs([]string{"test-adapter"})
 	require.NoError(t, cmd.Execute(), "info command failed: %s", out.String())
 
 	output = out.String()
@@ -172,7 +174,7 @@ func TestAdapterE2E_PullInfoWhere(t *testing.T) {
 	cmd = newAdapterWhereCmd()
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
-	cmd.SetArgs([]string{ref})
+	cmd.SetArgs([]string{"test-adapter"})
 	require.NoError(t, cmd.Execute(), "where command failed: %s", out.String())
 
 	binPath := strings.TrimSpace(out.String())

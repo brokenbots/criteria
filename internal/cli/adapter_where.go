@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"runtime"
 	"strings"
@@ -20,13 +21,13 @@ func newAdapterWhereCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
-			return runWhere(args[0])
+			return runWhere(cmd.OutOrStdout(), args[0])
 		},
 	}
 	return cmd
 }
 
-func runWhere(refOrName string) error {
+func runWhere(out io.Writer, refOrName string) error {
 	cacheRoot, err := defaultCacheRoot()
 	if err != nil {
 		return err
@@ -65,7 +66,7 @@ func runWhere(refOrName string) error {
 			continue
 		}
 		if strings.HasPrefix(title, expectedPrefix) {
-			fmt.Fprintln(os.Stdout, layout.BlobPath(layer.Digest))
+			fmt.Fprintln(out, layout.BlobPath(layer.Digest))
 			return nil
 		}
 	}

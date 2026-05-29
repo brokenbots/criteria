@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
@@ -139,7 +140,7 @@ func (p *Puller) newRepository(ref Reference) (*remote.Repository, error) {
 	if err != nil {
 		return nil, fmt.Errorf("oci: build remote repository for %q: %w", repoRef, err)
 	}
-	repo.PlainHTTP = p.PlainHTTP
+	repo.PlainHTTP = p.PlainHTTP || isLocalhost(ref.Registry)
 
 	ap := p.Auth
 	if ap == nil {
@@ -181,4 +182,15 @@ func (p *Puller) annotateIndex(desc *ocispec.Descriptor) error {
 	}
 	// Descriptor not yet in index — unexpected after a successful oras.Copy.
 	return fmt.Errorf("oci: annotateIndex: descriptor %s not found in index.json after pull", desc.Digest)
+}
+
+// isLocalhost reports whether host (which may include a :port suffix) refers
+// to the local machine. When true, the puller defaults to PlainHTTP so that
+// local test registries work without an explicit flag.
+func isLocalhost(host string) bool {
+	host = strings.ToLower(host)
+	if idx := strings.LastIndex(host, ":"); idx != -1 {
+		host = host[:idx]
+	}
+	return host == "localhost" || host == "127.0.0.1" || host == "::1"
 }
