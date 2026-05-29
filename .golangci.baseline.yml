@@ -98,3 +98,8 @@ issues:
       linters:
         - gocritic
       text: 'hugeParam: opts is heavy \(232 bytes\); consider passing it by pointer' # td-02: applyOptions passed by value across 4 server-apply functions; by-pointer conversion is W02-split-cli-apply scope
+    # --- WS06: Verify public API signature defines policy as value parameter per workstream spec; changing to pointer would break callers ---
+    - path: internal/adapter/signing/verify\.go
+      linters:
+        - gocritic
+      text: 'hugeParam: policy is heavy \(88 bytes\); consider passing it by pointer' # WS06: public API signature specified in workstream; pointer conversion would break callers
