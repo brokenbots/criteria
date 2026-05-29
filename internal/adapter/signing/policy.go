@@ -49,9 +49,9 @@ func PolicyFor(ctx PullContext) (Policy, error) {
 		}
 	}
 
-	// TODO: parse global config file (HCL) and merge trusted_issuers,
-	// subject_patterns, and trusted_keys. Deferred until WS08/WS09 provide
-	// config parsing helpers or the global config schema is stable.
+	// Deferred: parse global config file (HCL) and merge trusted_issuers,
+	// subject_patterns, and trusted_keys. This will be handled once WS08/WS09
+	// provide config parsing helpers or the global config schema is stable.
 
 	return policy, nil
 }
