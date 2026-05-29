@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/brokenbots/criteria/internal/adapter/oci"
+
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	ctypes "github.com/sigstore/cosign/v2/pkg/types"

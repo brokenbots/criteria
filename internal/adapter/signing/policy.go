@@ -2,8 +2,6 @@ package signing
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 )
 
@@ -56,17 +54,4 @@ func PolicyFor(ctx PullContext) (Policy, error) {
 	// config parsing helpers or the global config schema is stable.
 
 	return policy, nil
-}
-
-// defaultConfigPath returns the path to the global config file.
-func defaultConfigPath() (string, error) {
-	base := os.Getenv("CRITERIA_STATE_DIR")
-	if base == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", err
-		}
-		base = filepath.Join(home, ".criteria")
-	}
-	return filepath.Join(base, "config.hcl"), nil
 }

@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/brokenbots/criteria/internal/adapter/oci"
+
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	ctypes "github.com/sigstore/cosign/v2/pkg/types"
@@ -73,7 +74,7 @@ type Policy struct {
 
 // IsKeyless returns true when the policy requires keyless verification (no
 // explicit trusted keys).
-func (p Policy) IsKeyless() bool {
+func (p *Policy) IsKeyless() bool {
 	return len(p.TrustedKeys) == 0
 }
 
@@ -99,7 +100,7 @@ func Verify(ctx context.Context, layout *oci.Layout, manifestDigest digest.Diges
 
 	var lastErr error
 	for _, sig := range sigs {
-		id, err := verifyOne(ctx, layout, manifestDigest, sig, policy)
+		id, err := verifyOne(ctx, manifestDigest, &sig, &policy)
 		if err == nil {
 			return id, nil
 		}
@@ -149,44 +150,56 @@ func findSignatures(layout *oci.Layout, manifestDigest digest.Digest) ([]signatu
 	}
 
 	for _, desc := range ix.Manifests {
-		if !layout.HasBlob(desc.Digest) {
-			continue
-		}
-		data, err := os.ReadFile(layout.BlobPath(desc.Digest))
-		if err != nil {
-			continue
-		}
-		var m ocispec.Manifest
-		if err := json.Unmarshal(data, &m); err != nil {
+		m, ok := readManifestBlob(layout, desc.Digest)
+		if !ok {
 			continue
 		}
 
 		if m.Subject != nil && m.Subject.Digest == manifestDigest {
-			rec, ok := recordFromManifest(layout, m, desc.Digest)
-			if ok {
+			if rec, ok := recordFromManifest(layout, m, desc.Digest); ok {
 				out = append(out, rec)
 			}
 			continue
 		}
 
 		if desc.Digest == manifestDigest {
-			for _, layer := range m.Layers {
-				if title, ok := layer.Annotations[oci.AnnotationTitle]; ok && title == "signatures/cosign.sig" {
-					rec, ok := recordFromEmbedded(layout, layer)
-					if ok {
-						out = append(out, rec)
-					}
-				}
-			}
+			out = append(out, embeddedSigs(layout, m)...)
 		}
 	}
 
 	return out, nil
 }
 
+func readManifestBlob(layout *oci.Layout, d digest.Digest) (*ocispec.Manifest, bool) {
+	if !layout.HasBlob(d) {
+		return nil, false
+	}
+	data, err := os.ReadFile(layout.BlobPath(d))
+	if err != nil {
+		return nil, false
+	}
+	var m ocispec.Manifest
+	if err := json.Unmarshal(data, &m); err != nil {
+		return nil, false
+	}
+	return &m, true
+}
+
+func embeddedSigs(layout *oci.Layout, m *ocispec.Manifest) []signatureRecord {
+	var out []signatureRecord
+	for _, layer := range m.Layers {
+		if title, ok := layer.Annotations[oci.AnnotationTitle]; ok && title == "signatures/cosign.sig" {
+			if rec, ok := recordFromEmbedded(layout, &layer); ok {
+				out = append(out, rec)
+			}
+		}
+	}
+	return out
+}
+
 // recordFromManifest extracts a signatureRecord from a cosign signature
 // manifest.
-func recordFromManifest(layout *oci.Layout, m ocispec.Manifest, manifestDigest digest.Digest) (signatureRecord, bool) {
+func recordFromManifest(layout *oci.Layout, m *ocispec.Manifest, manifestDigest digest.Digest) (signatureRecord, bool) {
 	rec := signatureRecord{manifestDigest: manifestDigest}
 
 	anns := mergeAnnotations(m.Annotations, m.Layers)
@@ -200,33 +213,35 @@ func recordFromManifest(layout *oci.Layout, m ocispec.Manifest, manifestDigest d
 		return signatureRecord{}, false
 	}
 
+	rec.payload = readPayload(layout, m)
+	return rec, rec.payload != nil
+}
+
+func readPayload(layout *oci.Layout, m *ocispec.Manifest) []byte {
 	for _, layer := range m.Layers {
 		if layer.MediaType == ctypes.SimpleSigningMediaType {
 			if layout.HasBlob(layer.Digest) {
 				data, err := os.ReadFile(layout.BlobPath(layer.Digest))
 				if err == nil {
-					rec.payload = data
+					return data
 				}
 			}
 			break
 		}
 	}
-	if rec.payload == nil {
-		for _, layer := range m.Layers {
-			if layout.HasBlob(layer.Digest) {
-				data, err := os.ReadFile(layout.BlobPath(layer.Digest))
-				if err == nil {
-					rec.payload = data
-				}
-				break
+	for _, layer := range m.Layers {
+		if layout.HasBlob(layer.Digest) {
+			data, err := os.ReadFile(layout.BlobPath(layer.Digest))
+			if err == nil {
+				return data
 			}
+			break
 		}
 	}
-
-	return rec, rec.payload != nil
+	return nil
 }
 
-func recordFromEmbedded(layout *oci.Layout, layer ocispec.Descriptor) (signatureRecord, bool) {
+func recordFromEmbedded(layout *oci.Layout, layer *ocispec.Descriptor) (signatureRecord, bool) {
 	if !layout.HasBlob(layer.Digest) {
 		return signatureRecord{}, false
 	}
@@ -253,15 +268,15 @@ func mergeAnnotations(manifestAnns map[string]string, layers []ocispec.Descripto
 	return out
 }
 
-func verifyOne(ctx context.Context, layout *oci.Layout, manifestDigest digest.Digest, rec signatureRecord, policy Policy) (*SignerIdentity, error) {
+func verifyOne(ctx context.Context, manifestDigest digest.Digest, rec *signatureRecord, policy *Policy) (*SignerIdentity, error) {
 	if policy.IsKeyless() {
 		return verifyKeyless(ctx, manifestDigest, rec, policy)
 	}
-	return verifyKeyBased(ctx, manifestDigest, rec, policy)
+	return verifyKeyBased(rec, policy)
 }
 
 // verifyKeyless verifies a keyless cosign signature.
-func verifyKeyless(ctx context.Context, manifestDigest digest.Digest, rec signatureRecord, policy Policy) (*SignerIdentity, error) {
+func verifyKeyless(ctx context.Context, manifestDigest digest.Digest, rec *signatureRecord, policy *Policy) (*SignerIdentity, error) {
 	if rec.bundleJSON != "" {
 		id, err := verifyKeylessBundle(ctx, manifestDigest, rec, policy)
 		if err == nil {
@@ -273,12 +288,12 @@ func verifyKeyless(ctx context.Context, manifestDigest digest.Digest, rec signat
 		return nil, fmt.Errorf("keyless signature missing certificate")
 	}
 
-	return verifyKeylessLegacy(ctx, manifestDigest, rec, policy)
+	return verifyKeylessLegacy(ctx, rec, policy)
 }
 
 // verifyKeylessBundle verifies a cosign signature that includes a sigstore
 // bundle (protobundle format).
-func verifyKeylessBundle(ctx context.Context, manifestDigest digest.Digest, rec signatureRecord, policy Policy) (*SignerIdentity, error) {
+func verifyKeylessBundle(ctx context.Context, manifestDigest digest.Digest, rec *signatureRecord, policy *Policy) (*SignerIdentity, error) {
 	var pb protobundle.Bundle
 	if err := json.Unmarshal([]byte(rec.bundleJSON), &pb); err != nil {
 		return nil, fmt.Errorf("unmarshal bundle: %w", err)
@@ -317,11 +332,9 @@ func verifyKeylessBundle(ctx context.Context, manifestDigest digest.Digest, rec 
 	if err != nil {
 		return nil, fmt.Errorf("bundle verify: %w", err)
 	}
-
 	if res.Signature == nil || res.Signature.Certificate == nil {
 		return nil, fmt.Errorf("bundle missing certificate")
 	}
-
 	vc, err := b.VerificationContent()
 	if err != nil {
 		return nil, fmt.Errorf("bundle verification content: %w", err)
@@ -335,7 +348,7 @@ func verifyKeylessBundle(ctx context.Context, manifestDigest digest.Digest, rec 
 
 // verifyKeylessLegacy verifies a keyless signature using the certificate and
 // raw signature (no bundle).
-func verifyKeylessLegacy(ctx context.Context, manifestDigest digest.Digest, rec signatureRecord, policy Policy) (*SignerIdentity, error) {
+func verifyKeylessLegacy(ctx context.Context, rec *signatureRecord, policy *Policy) (*SignerIdentity, error) {
 	certBlock, _ := pem.Decode([]byte(rec.certPEM))
 	if certBlock == nil {
 		return nil, fmt.Errorf("invalid certificate PEM")
@@ -362,7 +375,7 @@ func verifyKeylessLegacy(ctx context.Context, manifestDigest digest.Digest, rec 
 // verifyKeyBased verifies a signature against an explicit set of trusted
 // public keys. It matches the signing key by fingerprint and validates the
 // signature over the simplesigning payload.
-func verifyKeyBased(ctx context.Context, manifestDigest digest.Digest, rec signatureRecord, policy Policy) (*SignerIdentity, error) {
+func verifyKeyBased(rec *signatureRecord, policy *Policy) (*SignerIdentity, error) {
 	if rec.signatureB64 == "" {
 		return nil, fmt.Errorf("missing signature")
 	}
@@ -419,7 +432,7 @@ func fingerprintBytes(raw []byte) string {
 
 // identityFromCert extracts KeylessIdentity from a Fulcio certificate and
 // validates it against the policy.
-func identityFromCert(cert *x509.Certificate, policy Policy) (*SignerIdentity, error) {
+func identityFromCert(cert *x509.Certificate, policy *Policy) (*SignerIdentity, error) {
 	summary, err := certificate.SummarizeCertificate(cert)
 	if err != nil {
 		return nil, fmt.Errorf("summarize certificate: %w", err)
@@ -480,7 +493,7 @@ var trustedMaterialOverride root.TrustedMaterial
 // trustedMaterial returns the Sigstore trusted root. In production this
 // fetches the live TUF root; for air-gapped environments a vendored fallback
 // may be used. The root is cached at ~/.criteria/cache/sigstore/.
-func trustedMaterial(ctx context.Context) (root.TrustedMaterial, error) {
+func trustedMaterial(_ context.Context) (root.TrustedMaterial, error) {
 	if trustedMaterialOverride != nil {
 		return trustedMaterialOverride, nil
 	}

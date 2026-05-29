@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/brokenbots/criteria/internal/adapter/oci"
+
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	ctypes "github.com/sigstore/cosign/v2/pkg/types"
@@ -210,7 +211,7 @@ func TestIdentityFromCert(t *testing.T) {
 		SubjectPatterns: []string{"https://github.com/brokenbots/*"},
 	}
 
-	id, err := identityFromCert(cert, policy)
+	id, err := identityFromCert(cert, &policy)
 	if err != nil {
 		t.Fatalf("identityFromCert: %v", err)
 	}
@@ -232,7 +233,7 @@ func TestIdentityFromCert_UntrustedIssuer(t *testing.T) {
 		TrustedIssuers: []string{"https://token.actions.githubusercontent.com"},
 	}
 
-	_, err := identityFromCert(cert, policy)
+	_, err := identityFromCert(cert, &policy)
 	if err == nil {
 		t.Fatal("expected error for untrusted issuer")
 	}
@@ -246,7 +247,7 @@ func TestIdentityFromCert_SubjectMismatch(t *testing.T) {
 		SubjectPatterns: []string{"https://github.com/brokenbots/*"},
 	}
 
-	_, err := identityFromCert(cert, policy)
+	_, err := identityFromCert(cert, &policy)
 	if err == nil {
 		t.Fatal("expected error for subject mismatch")
 	}
@@ -303,7 +304,7 @@ func TestVerifyKeyBased(t *testing.T) {
 		},
 	}
 
-	id, err := verifyKeyBased(t.Context(), digest.FromBytes(payload), rec, policy)
+	id, err := verifyKeyBased(&rec, &policy)
 	if err != nil {
 		t.Fatalf("verifyKeyBased: %v", err)
 	}
@@ -348,7 +349,7 @@ func TestVerifyKeyBased_WrongKey(t *testing.T) {
 		},
 	}
 
-	_, err = verifyKeyBased(t.Context(), digest.FromBytes(payload), rec, policy)
+	_, err = verifyKeyBased(&rec, &policy)
 	if err == nil {
 		t.Fatal("expected error when signature does not verify")
 	}
@@ -385,7 +386,7 @@ func TestLockfileFields(t *testing.T) {
 	id2 := &SignerIdentity{Key: &KeyIdentity{Algorithm: "ed25519", Fingerprint: "abc"}}
 	m2 := LockfileFields(id2)
 	if _, ok := m2["key"]; !ok {
-		t.Fatal("expected key key")
+		t.Fatal("expected key field")
 	}
 
 	if LockfileFields(nil) != nil {
