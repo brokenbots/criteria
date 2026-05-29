@@ -163,3 +163,31 @@ func TestParseFromFS_MissingFile(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "open")
 }
+
+func TestParse_InvalidYAML(t *testing.T) {
+	data := "schema_version: [\n  invalid"
+	_, err := manifest.Parse(strings.NewReader(data))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unmarshal")
+}
+
+func TestParse_ReaderError(t *testing.T) {
+	r := &errReader{err: assert.AnError}
+	_, err := manifest.Parse(r)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "read")
+}
+
+func TestParseFile_ReferenceFixtureValidates(t *testing.T) {
+	m, err := manifest.ParseFile("testdata/adapter.yaml")
+	require.NoError(t, err)
+	assert.NoError(t, m.Validate())
+}
+
+type errReader struct {
+	err error
+}
+
+func (e *errReader) Read(_ []byte) (int, error) {
+	return 0, e.err
+}

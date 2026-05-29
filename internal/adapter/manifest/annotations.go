@@ -1,6 +1,9 @@
 package manifest
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 // OCI annotation keys used for adapter metadata. These use the
 // dev.criteria.adapter.* namespace so they survive any future org or
@@ -44,16 +47,5 @@ func AnnotationMap(m *Manifest) map[string]string {
 }
 
 func fmtInt(v int) string {
-	if v == 0 {
-		return "0"
-	}
-	// Fast path for small positive ints.
-	var buf [20]byte
-	i := len(buf) - 1
-	for v > 0 {
-		buf[i] = byte('0' + v%10)
-		v /= 10
-		i--
-	}
-	return string(buf[i+1:])
+	return fmt.Sprintf("%d", v)
 }

@@ -30,7 +30,7 @@ var (
 	platformOSPattern   = regexp.MustCompile(`^[a-z][a-z0-9]*$`)
 	platformArchPattern = regexp.MustCompile(`^[a-z0-9_]+$`)
 	envPattern          = regexp.MustCompile(`^[a-z][a-z_]*$`)
-	schemePattern       = regexp.MustCompile(`^[a-z][a-z0-9+.-]*$`)
+	schemePattern       = regexp.MustCompile(`^[a-z][a-z0-9+.-]+$`)
 )
 
 // Validate checks the manifest against the spec rules. Each failing rule

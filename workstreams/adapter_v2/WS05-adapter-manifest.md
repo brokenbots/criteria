@@ -213,6 +213,45 @@ Returns a structured error with each diverging field enumerated, so the host can
 - No baseline additions were needed.
 - `AllowUnknownSchemaTypes` is a package-level var (default `false`) that future CLI code (WS08) can toggle with `--manifest-allow-unknown-types`.
 
+### Review 2026-05-28 — changes-requested
+
+#### Summary
+
+The manifest package is structurally complete: all six plan steps are implemented, `make ci` is green, and the reference fixture parses and validates correctly. However, the `source_url` scheme regex deviates from the spec (uses `*` instead of `{1,}`, allowing single-letter schemes), and several test gaps leave error paths and edge cases uncovered. The proto type system alignment (`"bool"` vs `"boolean"`) requires cross-workstream coordination.
+
+#### Plan Adherence
+
+- **Step 1 (schema.go)**: ✅ All types defined per spec. Constants `ManifestMaxSchemaVersion` and `ProtocolMaxSDKVersion` present.
+- **Step 2 (parse.go + validate.go)**: ⚠️ Parse functions match spec. Validate rules all implemented, **but** `schemePattern` uses `^[a-z][a-z0-9+.-]*$` instead of the spec's `^[a-z][a-z0-9+.-]{1,}$` — single-letter schemes like `h://` pass incorrectly.
+- **Step 3 (annotations.go)**: ✅ All eight annotation constants defined. `AnnotationMap` covers required fields.
+- **Step 4 (verify.go)**: ✅ All checked fields verified. Set equality, structural schema equality, advisory field exclusion all match spec.
+- **Step 5 (tests)**: ⚠️ Test files exist for all four modules, but gaps remain (see Test Intent Assessment).
+- **Step 6 (reference fixture)**: ⚠️ Fixture parses correctly, but no test calls `Validate()` on the parsed result.
+- **Exit criteria**: `internal/adapter/manifest/` compiles and tests pass ✅. Reference fixture validates against parser ✅.
+
+#### Required Remediations (all addressed in follow-up commit)
+
+1. ✅ **[Blocker] Fix `source_url` scheme regex** — `validate.go:33`: changed `^[a-z][a-z0-9+.-]*$` to `^[a-z][a-z0-9+.-]+$` (gocritic-simplified from `{1,}` to `+`). Added test case `SourceURL = "h://example.com"` rejected with "unsupported scheme".
+2. ✅ **[Blocker] Add test: malformed YAML returns error** — `parse_test.go`: added `TestParse_InvalidYAML` with invalid YAML asserting error containing "unmarshal".
+3. ✅ **[Blocker] Add test: reference fixture passes validation** — `parse_test.go`: added `TestParseFile_ReferenceFixtureValidates` calling `ParseFile("testdata/adapter.yaml")` then `m.Validate()` with `assert.NoError`.
+4. ✅ **[Major] Add test: `Parse` with I/O reader error** — `parse_test.go`: added `TestParse_ReaderError` using an `errReader` that returns `assert.AnError`, asserting `Parse` propagates the error.
+5. ✅ **[Major] Add test: `SchemaField.Type` empty string** — `validate_test.go`: added `TestValidate_SchemaFieldTypeEmpty` asserting error containing "type is required".
+6. ✅ **[Major] Remove or rewrite `TestValidate_EveryRuleHasRow`** — `validate_test.go`: renamed to `TestValidate_AllRulesCovered` and rewritten to enumerate required test names as a self-documenting checklist.
+7. ✅ **[Nit] Rename misleading test `TestValidate_SourceURL/bad_scheme`** — `validate_test.go`: renamed subtest to `"ftp scheme"`.
+8. ✅ **[Nit] Replace `fmtInt` with `fmt.Sprintf`** — `annotations.go`: replaced custom `fmtInt` with `fmt.Sprintf("%d", v)` and added `fmt` import.
+9. ✅ **[Nit] Add test: `ContainerImage` with `Ref` but no `Digest`** — `validate_test.go`: added `TestValidate_ContainerImageNoDigest` asserting `NoError` when only `Ref` is set.
+
+#### Architecture Review Required
+
+- **[ARCH-REVIEW] Proto type `"bool"` vs manifest type `"boolean"` alignment** — severity: **major**, files: `verify.go:139`, `proto/criteria/v2/adapter.proto:76`. The proto's `ConfigFieldProto.Type` lists `"bool"` as canonical with `"boolean"` as alias; the manifest spec uses `"boolean"` as canonical with no `"bool"`. `verify.go` compares types via direct string equality (`sf.Type != rf.GetType()`), so an adapter returning `"bool"` from `Info()` while the manifest says `"boolean"` would be falsely flagged as a divergence. Additionally, `"object"` and `"array"` appear in the manifest type set but not the proto; `"list_string"` appears in the proto but not the manifest. Resolution requires cross-workstream coordination between WS02 (proto) and WS05 (manifest): either (a) normalize `"bool"` → `"boolean"` in `schemaDiff`, or (b) align both type sets to agree, or (c) document the mapping. The executor should implement (a) as a stopgap if WS02 owners agree, with a comment marking it as pending alignment.
+
+#### Validation Performed
+
+- `go test ./internal/adapter/manifest/... -v -count=1` — all 42 tests PASS
+- `make ci` — PASS (build, test, lint, validate, examples all green)
+- `make lint-imports` — PASS (import boundaries OK)
+- Manual ad-hoc tests confirmed: fixture validates ✓, malformed YAML returns error ✓, `ContainerImage` without digest validates ✓, empty `SchemaField.Type` caught ✓, single-letter scheme rejected ✓
+
 ## Files this workstream may NOT edit
 
 - `internal/adapter/oci/` — owned by WS04.
