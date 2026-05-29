@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -113,6 +114,9 @@ func Verify(ctx context.Context, layout *oci.Layout, manifestDigest digest.Diges
 func handlePolicyMode(mode VerificationMode, id *SignerIdentity, err error) (*SignerIdentity, error) {
 	switch mode {
 	case ModeWarn:
+		if err != nil {
+			slog.Warn("signature verification warning", "mode", mode, "error", err)
+		}
 		return id, nil
 	case ModeStrict:
 		return nil, err
@@ -369,6 +373,11 @@ func verifyKeylessLegacy(ctx context.Context, rec *signatureRecord, policy *Poli
 		return nil, fmt.Errorf("certificate verification failed: %w", err)
 	}
 
+	// Verify the signature was produced by the certificate's public key.
+	if err := verifySignatureWithCert(rec, cert); err != nil {
+		return nil, fmt.Errorf("signature verification failed: %w", err)
+	}
+
 	return identityFromCert(cert, policy)
 }
 
@@ -423,6 +432,31 @@ func verifyKeyBased(rec *signatureRecord, policy *Policy) (*SignerIdentity, erro
 	}
 
 	return nil, fmt.Errorf("no trusted key matched signature")
+}
+
+// verifySignatureWithCert verifies that rec.signatureB64 is a valid signature
+// over rec.payload produced by the public key in cert.
+func verifySignatureWithCert(rec *signatureRecord, cert *x509.Certificate) error {
+	if rec.signatureB64 == "" {
+		return fmt.Errorf("missing signature")
+	}
+	sigBytes, err := base64.StdEncoding.DecodeString(rec.signatureB64)
+	if err != nil {
+		return fmt.Errorf("decode signature: %w", err)
+	}
+
+	verifier, err := sigsignature.LoadVerifier(cert.PublicKey, crypto.SHA256)
+	if err != nil {
+		return fmt.Errorf("load verifier: %w", err)
+	}
+
+	if err := verifier.VerifySignature(
+		bytes.NewReader(sigBytes),
+		bytes.NewReader(rec.payload),
+	); err != nil {
+		return fmt.Errorf("verify signature: %w", err)
+	}
+	return nil
 }
 
 func fingerprintBytes(raw []byte) string {

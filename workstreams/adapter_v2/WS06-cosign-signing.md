@@ -158,3 +158,66 @@ Defers actual lockfile writing to WS07, which owns the file format.
 - `internal/adapter/manifest/` — owned by WS05.
 - `workflow/` — owned by WS09.
 - `internal/cli/` — owned by WS08.
+
+## Reviewer Notes
+
+### Review 2026-05-28 — changes-requested
+
+#### Summary
+
+The WS06 signing package is well-structured and mostly complete, with solid test coverage for key-based verification, policy resolution, and identity extraction. However, one security-critical finding and one spec deviation require executor remediation before approval. CI gates all pass (`make build`, `make test`, `make lint-go`, `make lint-imports`, `make lint-no-todos`, `make lint-baseline-check`, `make validate`).
+
+#### Plan Adherence
+
+- **Step 1 (Verification interface)** — ✅ Implemented. All types and `Verify()` match the spec signature. `KeyIdentity` adds `RawKey` field with `json:"-"` (correct security practice). `IsKeyless()` convenience method added (not in spec but reasonable).
+- **Step 2 (Keyless verification)** — ⚠️ Bundle path correctly uses `sigstore-go` `Verify()`. Legacy (certificate-only) path has a security gap — see Required Remediations below.
+- **Step 3 (Explicit-key verification)** — ✅ Fingerprint matching and Ed25519/RSA/ECDSA signature verification via `sigstore.LoadVerifier` are correct.
+- **Step 4 (Policy resolution)** — ⚠️ `PolicyFor` implemented with correct defaults and case-insensitive mode parsing. Global HCL config parsing correctly deferred. Missing `ModeWarn` logging — see Required Remediations below.
+- **Step 5 (Lockfile helper)** — ✅ `LockfileFields` correctly maps keyless/key identity fields.
+- **Step 6 (Tests)** — ✅ 13 test functions across 3 files. Key-based E2E, ModeOff/Strict/Warn, `findSignatures`, `identityFromCert`, `matchGlob`, `fingerprintBytes`, `LockfileFields`, `PolicyFor`. Keyless integration test properly skipped with documentation.
+
+#### Required Remediations
+
+1. **[Security] `verifyKeylessLegacy` does not verify the signature against the certificate's public key** — Severity: blocker
+   - **File:** `internal/adapter/signing/verify.go`, `verifyKeylessLegacy()` (line ~351)
+   - **Problem:** After verifying the certificate chain with `verify.VerifyLeafCertificate()`, the function immediately calls `identityFromCert()` without checking that the certificate's public key actually produced the signature in `rec.signatureB64`. An attacker could attach any valid Fulcio-issued certificate to a signature they did not produce and the legacy path would accept it. The bundle path (`verifyKeylessBundle`) correctly delegates to `sigstore-go`'s `Verify()` which checks everything, but the legacy path does not.
+   - **Acceptance criteria:** After `VerifyLeafCertificate` succeeds, extract the public key from `cert` and verify that the base64-decoded `rec.signatureB64` is a valid signature over `rec.payload` using that public key. Add a unit test that demonstrates a wrong-signature rejection in the legacy path (self-signed cert + wrong key signature → error). Alternatively, if the legacy path is not expected to be used in practice, document this limitation and consider removing it or gating it behind an explicit opt-in.
+
+2. **[Spec deviation] `ModeWarn` does not log failures** — Severity: blocker
+   - **File:** `internal/adapter/signing/verify.go`, `handlePolicyMode()` (line ~113)
+   - **Problem:** The workstream spec states `ModeWarn: logs failures but returns nil error and a nil identity.` The implementation silently discards errors in `handlePolicyMode(ModeWarn, nil, err)` — there is no `slog` or `log` call anywhere in the package. Per AGENTS.md convention ("Keep logs structured — `slog` JSON style in entrypoints"), warnings should be emitted using `slog`.
+   - **Acceptance criteria:** Add `slog.Warn` (or `slog.Info` at log level warn) calls in `handlePolicyMode` for the `ModeWarn` case, including the error message. Add a test that verifies the warning is emitted (e.g., capture `slog` output with `slogtest` or a test handler).
+
+#### Test Intent Assessment
+
+- **Strong areas:** Key-based verification (`TestVerifyKeyBased`, `TestVerifyKeyBased_WrongKey`) correctly asserts that valid keys pass and wrong keys fail. Policy resolution tests cover all mode combinations and edge cases. `findSignatures` tests validate both OCI referrer and embedded layer discovery. `identityFromCert` tests validate trusted/untrusted issuers and subject pattern matching.
+- **Weak areas:** `verifyKeylessLegacy` has no unit test (requires a real Fulcio chain). `handlePolicyMode` is only tested indirectly via `TestVerify_ModeWarn_NoSignatures`. `matchGlob` tests don't cover mid-string wildcards like `prefix*suffix` — though the current implementation doesn't support them, this should be documented or the function renamed. `ModeWarn` behavior is tested only for the "no signatures" case, not for "signature found but verification failed."
+- **Missing scenario:** No test verifies that `ModeWarn` actually logs warning messages. The current test only checks that `(nil, nil)` is returned, not that a warning was emitted.
+
+#### Architecture Review Required
+
+None.
+
+#### Remediations Applied (2026-05-28)
+
+1. **Security blocker — `verifyKeylessLegacy` signature verification:**
+   - Added `verifySignatureWithCert` helper in `verify.go` that extracts the public key from the certificate and verifies the base64-decoded signature over the payload using `sigsignature.LoadVerifier`.
+   - `verifyKeylessLegacy` now calls `verifySignatureWithCert` after `VerifyLeafCertificate` succeeds and before `identityFromCert`.
+   - Added `TestVerifyKeylessLegacy_WrongSignature` in `verify_test.go`: creates a self-signed Ed25519 cert, mocks `trustedMaterialOverride` with a `FulcioCertificateAuthority` using the cert as root, and asserts that a wrong-key signature is rejected while a correct-key signature is accepted.
+
+2. **Spec deviation blocker — `ModeWarn` logging:**
+   - Added `log/slog` import to `verify.go`.
+   - `handlePolicyMode` now emits `slog.Warn("signature verification warning", "mode", mode, "error", err)` when `mode == ModeWarn` and `err != nil`.
+   - Updated `TestVerify_ModeWarn_NoSignatures` to capture `slog` output via `slog.NewTextHandler` and asserts the warning message contains `"signature verification warning"`.
+
+#### Validation Performed
+
+- `make build` — PASS
+- `make test` (with `-race`) — PASS (all packages including `internal/adapter/signing`)
+- `make lint-go` — PASS (golangci-lint clean)
+- `make lint-imports` — PASS
+- `make lint-no-todos` — PASS
+- `make lint-baseline-check` — PASS (23/23)
+- `make validate` — PASS
+- Manual code review of all `internal/adapter/signing/*.go` files
+- Verified import boundaries: signing package does not import `internal/cli/` or `workflow/`

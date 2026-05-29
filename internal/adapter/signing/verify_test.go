@@ -9,6 +9,9 @@ import (
 	"encoding/asn1"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
+	"fmt"
+	"log/slog"
 	"math/big"
 	neturl "net/url"
 	"os"
@@ -21,6 +24,7 @@ import (
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	ctypes "github.com/sigstore/cosign/v2/pkg/types"
+	"github.com/sigstore/sigstore-go/pkg/root"
 )
 
 func TestVerify_ModeOff(t *testing.T) {
@@ -56,6 +60,11 @@ func TestVerify_ModeWarn_NoSignatures(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	var buf bytes.Buffer
+	oldLog := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	defer slog.SetDefault(oldLog)
+
 	id, err := Verify(t.Context(), l, "sha256:0000000000000000000000000000000000000000000000000000000000000000", Policy{Mode: ModeWarn})
 	if err != nil {
 		t.Fatalf("Warn mode should not return error: %v", err)
@@ -63,6 +72,120 @@ func TestVerify_ModeWarn_NoSignatures(t *testing.T) {
 	if id != nil {
 		t.Fatal("Warn mode should return nil identity when no signatures match")
 	}
+
+	out := buf.String()
+	if out == "" {
+		t.Fatal("expected warning log in ModeWarn")
+	}
+	if !bytes.Contains(buf.Bytes(), []byte("signature verification warning")) {
+		t.Fatalf("expected warning log to contain 'signature verification warning', got: %s", out)
+	}
+}
+
+func TestVerifyKeylessLegacy_WrongSignature(t *testing.T) {
+	// Create a self-signed cert with an Ed25519 key.
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	template := x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject: pkix.Name{
+			CommonName: "test",
+		},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageCodeSigning},
+		BasicConstraintsValid: true,
+		URIs:                  []*neturl.URL{{Scheme: "https", Host: "example.com", Path: "/"}},
+	}
+
+	issuerExt := pkix.Extension{
+		Id:    asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 57264, 1, 1},
+		Value: []byte("https://token.actions.githubusercontent.com"),
+	}
+	template.ExtraExtensions = append(template.ExtraExtensions, issuerExt)
+
+	uri, err := neturl.Parse("https://github.com/brokenbots/criteria/.github/workflows/publish.yml@refs/tags/v1.0.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	template.URIs = []*neturl.URL{uri}
+
+	certDER, err := x509.CreateCertificate(rand.Reader, &template, &template, priv.Public(), priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert, err := x509.ParseCertificate(certDER)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Set up mock trusted material so VerifyLeafCertificate passes.
+	ca := &root.FulcioCertificateAuthority{
+		Root: cert,
+	}
+	tm := &mockTrustedMaterial{ca: ca}
+	oldOverride := trustedMaterialOverride
+	trustedMaterialOverride = tm
+	defer func() { trustedMaterialOverride = oldOverride }()
+
+	payload := []byte("test payload")
+	// Sign with the correct key.
+	goodSig := ed25519.Sign(priv, payload)
+	// Generate a wrong key and sign with it.
+	_, wrongPriv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	badSig := ed25519.Sign(wrongPriv, payload)
+
+	policy := &Policy{
+		TrustedIssuers:  []string{"https://token.actions.githubusercontent.com"},
+		SubjectPatterns: []string{"*"},
+	}
+
+	// Good signature should pass certificate verification and signature verification.
+	recGood := &signatureRecord{
+		payload:      payload,
+		signatureB64: base64.StdEncoding.EncodeToString(goodSig),
+		certPEM:      string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})),
+	}
+	id, err := verifyKeylessLegacy(t.Context(), recGood, policy)
+	if err != nil {
+		t.Fatalf("verifyKeylessLegacy with good sig: %v", err)
+	}
+	if id == nil || id.Keyless == nil {
+		t.Fatal("expected keyless identity")
+	}
+
+	// Wrong signature should fail at signature verification.
+	recBad := &signatureRecord{
+		payload:      payload,
+		signatureB64: base64.StdEncoding.EncodeToString(badSig),
+		certPEM:      string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})),
+	}
+	_, err = verifyKeylessLegacy(t.Context(), recBad, policy)
+	if err == nil {
+		t.Fatal("expected error for wrong signature")
+	}
+}
+
+// mockTrustedMaterial is a test-only implementation of root.TrustedMaterial.
+type mockTrustedMaterial struct {
+	ca *root.FulcioCertificateAuthority
+}
+
+func (m *mockTrustedMaterial) TimestampingAuthorities() []root.TimestampingAuthority { return nil }
+func (m *mockTrustedMaterial) FulcioCertificateAuthorities() []root.CertificateAuthority {
+	return []root.CertificateAuthority{m.ca}
+}
+func (m *mockTrustedMaterial) RekorLogs() map[string]*root.TransparencyLog { return nil }
+func (m *mockTrustedMaterial) CTLogs() map[string]*root.TransparencyLog    { return nil }
+func (m *mockTrustedMaterial) PublicKeyVerifier(string) (root.TimeConstrainedVerifier, error) {
+	return nil, fmt.Errorf("not implemented")
 }
 
 func TestFindSignatures_SignatureManifest(t *testing.T) {
