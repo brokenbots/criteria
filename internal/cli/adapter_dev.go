@@ -74,7 +74,7 @@ func runDev(localPath, as string, out io.Writer) error {
 	}
 
 	devBindings[key] = devBinding{Path: localPath}
-	fmt.Fprintf(out, "dev: registered %s as %s.%s (not yet wired into apply — see TODO(WS09))\n", localPath, typ, name)
+	fmt.Fprintf(out, "dev: registered %s as %s.%s (not yet wired into apply — see WS09)\n", localPath, typ, name)
 	return nil
 }
 
@@ -89,7 +89,7 @@ func findDevBinding(typ, name string) (string, bool) {
 // checkDevAllowed returns an error when the workflow verification mode is
 // "strict" and a dev binding exists for the adapter.  Callers should pass the
 // effective verification mode read from the workflow configuration.
-// TODO(WS09): Wire findDevBinding into the adapter loader path so that
+// WS09 follow-up: wire findDevBinding into the adapter loader path so that
 // criteria apply resolves dev bindings before falling back to OCI cache.
 func checkDevAllowed(verificationMode, typ, name string) error {
 	if _, ok := findDevBinding(typ, name); !ok {
