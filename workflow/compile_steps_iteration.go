@@ -90,7 +90,7 @@ func compileIteratingStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[str
 		// here and rely on the runtime gate in evaluateParallel instead.
 		if ie.Parallel != nil {
 			if info, ok := adapterInfo(schemas, adapterType); ok {
-				if !adapterHasCapability(info, "parallel_safe") {
+				if !adapterHasCapability(&info, "parallel_safe") {
 					diags = append(diags, &hcl.Diagnostic{
 						Severity: hcl.DiagError,
 						Summary: fmt.Sprintf(

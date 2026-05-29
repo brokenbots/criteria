@@ -3,6 +3,7 @@ package workflow
 // compile_environments_test.go — unit tests for environment block compilation.
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -538,7 +539,318 @@ type testPermissiveHandler struct {
 	typ string
 }
 
-func (h *testPermissiveHandler) Type() string                              { return h.typ }
-func (h *testPermissiveHandler) SupportedOSes() []string                   { return nil }
-func (h *testPermissiveHandler) ValidateFields(_ hcl.Body) hcl.Diagnostics { return nil }
-func (h *testPermissiveHandler) IsolationKind() EnvIsolationKind           { return EnvIsolationNone }
+func (h *testPermissiveHandler) Type() string                                { return h.typ }
+func (h *testPermissiveHandler) SupportedOSes() []string                     { return nil }
+func (h *testPermissiveHandler) ValidateFields(_ hcl.Body) hcl.Diagnostics   { return nil }
+func (h *testPermissiveHandler) IsolationKind() EnvIsolationKind             { return EnvIsolationNone }
+func (h *testPermissiveHandler) Prepare(_ context.Context, _ hcl.Body) error { return nil }
+
+func TestCompileEnvironments_OSGateMismatch(t *testing.T) {
+	// If the environment declares an os that does not match the host GOOS,
+	// compilation should fail with a clear error.
+	old := envRegistryHostOS
+	envRegistryHostOS = "darwin" // override host OS for this test
+	defer func() { envRegistryHostOS = old }()
+
+	src := environmentWorkflow(`
+  environment "shell" "wasi_env" {
+    os = "wasi"
+  }
+`, "")
+	spec, diags := Parse("test.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	_, diags = Compile(spec, nil)
+	if !diags.HasErrors() {
+		t.Fatal("expected compile error for OS mismatch")
+	}
+	if !strings.Contains(diags.Error(), "wasi") {
+		t.Errorf("expected error mentioning 'wasi', got: %s", diags.Error())
+	}
+	if !strings.Contains(diags.Error(), "darwin") {
+		t.Errorf("expected error mentioning host OS 'darwin', got: %s", diags.Error())
+	}
+}
+
+// TestResolveEnvironmentPolicy_ThreeRules verifies D37's three-rule field
+// resolution with table-driven cases covering all combinations.
+func TestResolveEnvironmentPolicy_ThreeRules(t *testing.T) {
+	fsRO := &FilesystemPolicy{ReadOnly: true}
+	fsRW := &FilesystemPolicy{ReadOnly: false}
+	netAllow := &NetworkPolicy{AllowEgress: true}
+	netDeny := &NetworkPolicy{AllowEgress: false}
+	secVault := &SecretsPolicy{Provider: "vault"}
+	res1G := &ResourcesPolicy{MaxMemory: "1G"}
+
+	tests := []struct {
+		name  string
+		env   *EnvironmentNode
+		hints *PolicyHints
+		want  *ResolvedPolicy
+	}{
+		{
+			name: "rule1_env_wins_over_hint_and_mode",
+			env: &EnvironmentNode{
+				PolicyMode:   "permissive",
+				OS:           "linux",
+				Filesystem:   fsRO,
+				Network:      netDeny,
+				Secrets:      secVault,
+				Resources:    res1G,
+				TypeSpecific: map[string]cty.Value{"runtime": cty.StringVal("docker")},
+			},
+			hints: &PolicyHints{
+				OS:           "darwin",
+				Filesystem:   fsRW,
+				Network:      netAllow,
+				Secrets:      &SecretsPolicy{Provider: "aws"},
+				Resources:    &ResourcesPolicy{MaxMemory: "2G"},
+				TypeSpecific: map[string]cty.Value{"runtime": cty.StringVal("podman")},
+			},
+			want: &ResolvedPolicy{
+				PolicyMode:   "permissive",
+				OS:           "linux",
+				Filesystem:   fsRO,
+				Network:      netDeny,
+				Secrets:      secVault,
+				Resources:    res1G,
+				TypeSpecific: map[string]cty.Value{"runtime": cty.StringVal("docker")},
+			},
+		},
+		{
+			name: "rule2_permissive_falls_back_to_hint",
+			env: &EnvironmentNode{
+				PolicyMode: "permissive",
+				OS:         "",
+				Filesystem: nil,
+				Network:    nil,
+				Secrets:    nil,
+				Resources:  nil,
+			},
+			hints: &PolicyHints{
+				OS:           "darwin",
+				Filesystem:   fsRW,
+				Network:      netAllow,
+				Secrets:      &SecretsPolicy{Provider: "aws"},
+				Resources:    &ResourcesPolicy{MaxMemory: "2G"},
+				TypeSpecific: map[string]cty.Value{"runtime": cty.StringVal("podman")},
+			},
+			want: &ResolvedPolicy{
+				PolicyMode:   "permissive",
+				OS:           "darwin",
+				Filesystem:   fsRW,
+				Network:      netAllow,
+				Secrets:      &SecretsPolicy{Provider: "aws"},
+				Resources:    &ResourcesPolicy{MaxMemory: "2G"},
+				TypeSpecific: map[string]cty.Value{"runtime": cty.StringVal("podman")},
+			},
+		},
+		{
+			name: "rule3_strict_default_deny",
+			env: &EnvironmentNode{
+				PolicyMode: "strict",
+				OS:         "",
+				Filesystem: nil,
+				Network:    nil,
+				Secrets:    nil,
+				Resources:  nil,
+			},
+			hints: &PolicyHints{
+				OS:           "darwin",
+				Filesystem:   fsRW,
+				Network:      netAllow,
+				Secrets:      &SecretsPolicy{Provider: "aws"},
+				Resources:    &ResourcesPolicy{MaxMemory: "2G"},
+				TypeSpecific: map[string]cty.Value{"runtime": cty.StringVal("podman")},
+			},
+			want: &ResolvedPolicy{
+				PolicyMode: "strict",
+				OS:         "",
+				// All other fields remain nil / zero → default-deny.
+			},
+		},
+		{
+			name: "rule1_partial_env_wins_rest_hint_in_permissive",
+			env: &EnvironmentNode{
+				PolicyMode: "permissive",
+				OS:         "linux",
+				Filesystem: fsRO,
+				// Network, Secrets, Resources, TypeSpecific left unset.
+			},
+			hints: &PolicyHints{
+				OS:           "darwin",
+				Filesystem:   fsRW,
+				Network:      netAllow,
+				Secrets:      &SecretsPolicy{Provider: "aws"},
+				Resources:    &ResourcesPolicy{MaxMemory: "2G"},
+				TypeSpecific: map[string]cty.Value{"runtime": cty.StringVal("podman")},
+			},
+			want: &ResolvedPolicy{
+				PolicyMode:   "permissive",
+				OS:           "linux",
+				Filesystem:   fsRO,
+				Network:      netAllow,
+				Secrets:      &SecretsPolicy{Provider: "aws"},
+				Resources:    &ResourcesPolicy{MaxMemory: "2G"},
+				TypeSpecific: map[string]cty.Value{"runtime": cty.StringVal("podman")},
+			},
+		},
+		{
+			name: "nil_env_returns_defaults",
+			env:  nil,
+			hints: &PolicyHints{
+				OS: "darwin",
+			},
+			want: &ResolvedPolicy{PolicyMode: "permissive"},
+		},
+		{
+			name: "permissive_no_hints_all_zero",
+			env: &EnvironmentNode{
+				PolicyMode: "permissive",
+			},
+			hints: nil,
+			want:  &ResolvedPolicy{PolicyMode: "permissive"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := resolveEnvironmentPolicy(tt.env, tt.hints)
+			if got.PolicyMode != tt.want.PolicyMode {
+				t.Errorf("PolicyMode = %q, want %q", got.PolicyMode, tt.want.PolicyMode)
+			}
+			if got.OS != tt.want.OS {
+				t.Errorf("OS = %q, want %q", got.OS, tt.want.OS)
+			}
+			if !filesystemPolicyEqual(got.Filesystem, tt.want.Filesystem) {
+				t.Errorf("Filesystem = %v, want %v", got.Filesystem, tt.want.Filesystem)
+			}
+			if !networkPolicyEqual(got.Network, tt.want.Network) {
+				t.Errorf("Network = %v, want %v", got.Network, tt.want.Network)
+			}
+			if !secretsPolicyEqual(got.Secrets, tt.want.Secrets) {
+				t.Errorf("Secrets = %v, want %v", got.Secrets, tt.want.Secrets)
+			}
+			if !resourcesPolicyEqual(got.Resources, tt.want.Resources) {
+				t.Errorf("Resources = %v, want %v", got.Resources, tt.want.Resources)
+			}
+			if !ctyMapEqual(got.TypeSpecific, tt.want.TypeSpecific) {
+				t.Errorf("TypeSpecific = %v, want %v", got.TypeSpecific, tt.want.TypeSpecific)
+			}
+		})
+	}
+}
+
+// TestResolvedPolicy_CachedOnFSMGraph verifies that compiling an adapter bound
+// to an environment stores a ResolvedPolicy in FSMGraph.ResolvedPolicies.
+func TestResolvedPolicy_CachedOnFSMGraph(t *testing.T) {
+	schemas := map[string]AdapterInfo{
+		"shell": {
+			ConfigSchema: map[string]ConfigField{},
+			PolicyHints: &PolicyHints{
+				OS:         "linux",
+				Filesystem: &FilesystemPolicy{ReadOnly: true},
+			},
+		},
+	}
+
+	old := envRegistryHostOS
+	envRegistryHostOS = "linux"
+	defer func() { envRegistryHostOS = old }()
+
+	src := `
+workflow {
+  name = "test"
+  version       = "0.1"
+  initial_state = "done"
+  target_state  = "done"
+}
+
+environment "shell" "prod" {
+  os = "linux"
+}
+
+adapter "shell" "default" {
+  environment = shell.prod
+}
+
+state "done" { terminal = true }
+`
+	spec, diags := Parse("test.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	g, diags := Compile(spec, schemas)
+	if diags.HasErrors() {
+		t.Fatalf("compile: %s", diags.Error())
+	}
+
+	cacheKey := "shell.default:shell.prod"
+	rp, ok := g.ResolvedPolicies[cacheKey]
+	if !ok {
+		t.Fatalf("expected ResolvedPolicies[%q] to exist", cacheKey)
+	}
+	// Rule 1: env.OS = "linux" wins over hint.OS = "linux" (same value, but env set it).
+	if rp.OS != "linux" {
+		t.Errorf("expected OS='linux' (env wins), got %q", rp.OS)
+	}
+	// Rule 1: env.Filesystem is nil, but we're in permissive mode (default).
+	// Since env didn't set it, hint should apply.
+	if rp.Filesystem == nil || rp.Filesystem.ReadOnly != true {
+		t.Errorf("expected Filesystem.ReadOnly=true from hint, got %v", rp.Filesystem)
+	}
+}
+
+func filesystemPolicyEqual(a, b *FilesystemPolicy) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return a.ReadOnly == b.ReadOnly
+}
+
+func networkPolicyEqual(a, b *NetworkPolicy) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return a.AllowEgress == b.AllowEgress
+}
+
+func secretsPolicyEqual(a, b *SecretsPolicy) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return a.Provider == b.Provider
+}
+
+func resourcesPolicyEqual(a, b *ResourcesPolicy) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return a.MaxMemory == b.MaxMemory
+}
+
+func ctyMapEqual(a, b map[string]cty.Value) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, va := range a {
+		vb, ok := b[k]
+		if !ok || !va.RawEquals(vb) {
+			return false
+		}
+	}
+	return true
+}

@@ -73,6 +73,31 @@ type SecretsPolicy struct{ Provider string }
 // ResourcesPolicy caps compute resources for an environment.
 type ResourcesPolicy struct{ MaxMemory string }
 
+// PolicyHints provides default values for environment policy fields that an
+// adapter manifest may declare. These hints are consumed by the three-rule
+// field resolver when policy_mode = "permissive".
+type PolicyHints struct {
+	PolicyMode   string
+	OS           string
+	Filesystem   *FilesystemPolicy
+	Network      *NetworkPolicy
+	Secrets      *SecretsPolicy
+	Resources    *ResourcesPolicy
+	TypeSpecific map[string]cty.Value
+}
+
+// ResolvedPolicy is the result of resolving an environment block against an
+// adapter's manifest hints and the three D37 rules.
+type ResolvedPolicy struct {
+	PolicyMode   string
+	OS           string
+	Filesystem   *FilesystemPolicy
+	Network      *NetworkPolicy
+	Secrets      *SecretsPolicy
+	Resources    *ResourcesPolicy
+	TypeSpecific map[string]cty.Value
+}
+
 // EnvironmentNode is a compiled environment declaration.
 type EnvironmentNode struct {
 	Type      string
@@ -305,6 +330,7 @@ type AdapterInfo struct {
 	OutputSchema           map[string]ConfigField // declared outputs the adapter promises to populate (W04)
 	Capabilities           []string               // well-known capability strings (e.g. "parallel_safe")
 	CompatibleEnvironments []string               // nil/empty means any (default)
+	PolicyHints            *PolicyHints           // D36 manifest hints for environment policy fields
 }
 
 // OutcomeSpec maps an adapter outcome name to the next node.
@@ -414,6 +440,7 @@ type FSMGraph struct {
 	Waits               map[string]*WaitNode           // by wait node name (W05)
 	Approvals           map[string]*ApprovalNode       // by approval node name (W05)
 	Switches            map[string]*SwitchNode         // by switch node name (W16)
+	ResolvedPolicies    map[string]*ResolvedPolicy     // cached per (adapter, environment); key = "adapterRef:envKey"
 	Policy              Policy
 	// Order of step declarations (stable for diagnostics).
 	stepOrder []string
@@ -445,6 +472,10 @@ type AdapterNode struct {
 	// Secrets holds raw HCL expressions from the adapter-level `secrets { }` block.
 	// These are treated as taint sources.
 	Secrets map[string]hcl.Expression
+	// ConfigExprs holds the raw HCL attribute expressions from the adapter-level
+	// `config { }` block. Preserved so that TaintPass can detect tainted values
+	// flowing into non-secret adapter config channels (D65).
+	ConfigExprs map[string]hcl.Expression
 }
 
 // StepTargetKind enumerates the kinds of compiled step targets.

@@ -3,13 +3,14 @@ package workflow
 // compile_taint.go — secret-taint propagation pass.
 //
 // A step is tainted when:
-//   1. Any secret_input{} expression references a variable or shared_variable
-//      with Secret=true.
-//   2. Any regular input{} expression references a variable or shared_variable
-//      with Secret=true.
-//   3. Any predecessor step (reachable via outcome edges) is tainted.
+//   1. Any secret_input{} expression references a tainted origin.
+//   2. Any regular input{} expression references a tainted origin (this also
+//      emits a hard compile error per D65).
+//   3. The step's target adapter has a non-empty secrets{} block.
+//   4. Any predecessor step (reachable via outcome edges) is tainted.
 //
-// Taint propagates forward until a fixed point is reached.
+// Additionally, adapter config{} expressions that reference tainted origins
+// emit hard compile errors (D65).
 
 import (
 	"fmt"
@@ -17,11 +18,27 @@ import (
 	"github.com/hashicorp/hcl/v2"
 )
 
+// taintOrigin describes where a tainted value came from.
+type taintOrigin struct {
+	kind string // "variable", "shared_variable", "adapter_secret", "sensitive_output"
+	name string // e.g. "var.api_key", "shared.token", "adapter.shell.default.secrets"
+}
+
+// newTaintError builds the hard compile-error diagnostic required by D65.
+func newTaintError(origin taintOrigin, subject *hcl.Range) *hcl.Diagnostic {
+	return &hcl.Diagnostic{
+		Severity: hcl.DiagError,
+		Summary:  fmt.Sprintf("tainted value %s cannot be used in a non-secret channel", origin.name),
+		Detail:   "Tainted values may only flow through secret channels. Bind it via adapter.X.secrets { ... } or step.X.secret_inputs { ... } instead.",
+		Subject:  subject,
+	}
+}
+
 // TaintPass walks the compiled FSM graph and marks StepNode.Tainted on every
 // step that transitively receives secret data. It returns diagnostics when
-// tainted variables are used in non-secret input contexts (future-proofing).
+// tainted values are used in non-secret channels (input{} and adapter.config{}).
 //
-//nolint:gocognit // WS09: multi-pass taint propagation (mark origins, build predecessors, fixed-point propagation) is inherently complex
+//nolint:gocognit,gocyclo,funlen // WS09: multi-pass taint propagation is inherently complex
 func TaintPass(g *FSMGraph, schemas map[string]AdapterInfo) hcl.Diagnostics {
 	if g == nil || len(g.Steps) == 0 {
 		return nil
@@ -29,15 +46,32 @@ func TaintPass(g *FSMGraph, schemas map[string]AdapterInfo) hcl.Diagnostics {
 
 	// Build reverse adjacency: for each step, which steps point to it.
 	preds := buildPredecessors(g)
+	var diags hcl.Diagnostics
 
-	// Phase 1: mark steps that directly reference secret variables.
+	// Phase 1: mark steps that directly reference tainted origins.
 	for _, name := range g.stepOrder {
 		step := g.Steps[name]
 		if step == nil {
 			continue
 		}
-		if referencesSecretVar(step.SecretInputExprs, g) || referencesSecretVar(step.InputExprs, g) {
-			step.Tainted = true
+		// secret_input is a secret channel — mark tainted but do not error.
+		for _, expr := range step.SecretInputExprs {
+			if _, tainted := checkExprForTaint(expr, g, schemas); tainted {
+				step.Tainted = true
+				break
+			}
+		}
+		// input is a non-secret channel — mark tainted and collect errors in Phase 3.
+		for _, expr := range step.InputExprs {
+			if _, tainted := checkExprForTaint(expr, g, schemas); tainted {
+				step.Tainted = true
+			}
+		}
+		// Adapter with secrets taints the step.
+		if step.AdapterRef != "" {
+			if ad, ok := g.Adapters[step.AdapterRef]; ok && len(ad.Secrets) > 0 {
+				step.Tainted = true
+			}
 		}
 	}
 
@@ -60,7 +94,27 @@ func TaintPass(g *FSMGraph, schemas map[string]AdapterInfo) hcl.Diagnostics {
 		}
 	}
 
-	return nil
+	// Phase 3: emit hard errors for tainted values in non-secret channels.
+	for _, name := range g.stepOrder {
+		step := g.Steps[name]
+		if step == nil {
+			continue
+		}
+		for _, expr := range step.InputExprs {
+			if origin, tainted := checkExprForTaint(expr, g, schemas); tainted {
+				diags = append(diags, newTaintError(origin, expr.Range().Ptr()))
+			}
+		}
+	}
+	for _, ad := range g.Adapters {
+		for _, expr := range ad.ConfigExprs {
+			if origin, tainted := checkExprForTaint(expr, g, schemas); tainted {
+				diags = append(diags, newTaintError(origin, expr.Range().Ptr()))
+			}
+		}
+	}
+
+	return diags
 }
 
 // buildPredecessors returns a map from step name to the list of step names
@@ -95,46 +149,86 @@ func buildPredecessors(g *FSMGraph) map[string][]string {
 	return preds
 }
 
-// referencesSecretVar inspects every variable traversal in exprs and returns
-// true if any traversal references a variable or shared_variable whose
-// Secret flag is true.
+// checkExprForTaint inspects every variable traversal in expr and returns
+// (origin, true) if any traversal references a tainted origin.
 //
-//nolint:gocognit // WS09: traversal type-switch for var/shared namespaces is straightforward
-func referencesSecretVar(exprs map[string]hcl.Expression, g *FSMGraph) bool {
-	for _, expr := range exprs {
-		for _, traversal := range expr.Variables() {
-			if len(traversal) < 2 {
+//nolint:gocognit,gocyclo,funlen // WS09: traversal type-switch for var/shared/adapter/steps namespaces
+func checkExprForTaint(expr hcl.Expression, g *FSMGraph, schemas map[string]AdapterInfo) (taintOrigin, bool) {
+	for _, traversal := range expr.Variables() {
+		if len(traversal) < 2 {
+			continue
+		}
+		root, ok := traversal[0].(hcl.TraverseRoot)
+		if !ok {
+			continue
+		}
+		attr, ok := traversal[1].(hcl.TraverseAttr)
+		if !ok {
+			continue
+		}
+		switch root.Name {
+		case "var":
+			if v, ok := g.Variables[attr.Name]; ok && v.Secret {
+				return taintOrigin{kind: "variable", name: "var." + attr.Name}, true
+			}
+		case "shared":
+			if sv, ok := g.SharedVariables[attr.Name]; ok && sv.Secret {
+				return taintOrigin{kind: "shared_variable", name: "shared." + attr.Name}, true
+			}
+		case "adapter":
+			// adapter.TYPE.NAME.secrets.KEY
+			if len(traversal) < 4 {
 				continue
 			}
-			root, ok := traversal[0].(hcl.TraverseRoot)
-			if !ok {
+			typeAttr, ok2 := traversal[1].(hcl.TraverseAttr)
+			nameAttr, ok3 := traversal[2].(hcl.TraverseAttr)
+			if !ok2 || !ok3 {
 				continue
 			}
-			attr, ok := traversal[1].(hcl.TraverseAttr)
-			if !ok {
-				continue
-			}
-			switch root.Name {
-			case "var":
-				if v, ok := g.Variables[attr.Name]; ok && v.Secret {
-					return true
+			adapterRef := typeAttr.Name + "." + nameAttr.Name
+			if ad, ok := g.Adapters[adapterRef]; ok && len(ad.Secrets) > 0 {
+				if secAttr, ok4 := traversal[3].(hcl.TraverseAttr); ok4 && secAttr.Name == "secrets" {
+					return taintOrigin{kind: "adapter_secret", name: "adapter." + adapterRef + ".secrets"}, true
 				}
-			case "shared":
-				if sv, ok := g.SharedVariables[attr.Name]; ok && sv.Secret {
-					return true
+			}
+		case "steps":
+			// steps.STEP.FIELD  (3 parts)
+			// steps.STEP.outputs.FIELD (4 parts)
+			if len(traversal) < 3 {
+				continue
+			}
+			stepName, ok2 := traversal[1].(hcl.TraverseAttr)
+			if !ok2 {
+				continue
+			}
+			var fieldAttr hcl.TraverseAttr
+			if len(traversal) == 3 {
+				// steps.STEP.FIELD
+				fieldAttr, ok2 = traversal[2].(hcl.TraverseAttr)
+				if !ok2 {
+					continue
+				}
+			} else if len(traversal) >= 4 {
+				// steps.STEP.outputs.FIELD
+				outAttr, ok3 := traversal[2].(hcl.TraverseAttr)
+				if !ok3 || outAttr.Name != "outputs" {
+					continue
+				}
+				fieldAttr, ok2 = traversal[3].(hcl.TraverseAttr)
+				if !ok2 {
+					continue
+				}
+			}
+			upstreamStep := g.Steps[stepName.Name]
+			if upstreamStep != nil && upstreamStep.AdapterRef != "" {
+				adapterType := adapterTypeFromRef(upstreamStep.AdapterRef)
+				if info, ok := adapterInfo(schemas, adapterType); ok {
+					if field, ok := info.OutputSchema[fieldAttr.Name]; ok && field.Sensitive {
+						return taintOrigin{kind: "sensitive_output", name: "steps." + stepName.Name + "." + fieldAttr.Name}, true
+					}
 				}
 			}
 		}
 	}
-	return false
-}
-
-// IsTaintedDiagnostic returns a diagnostic that can be used when a tainted
-// step is used in a context that requires non-secret data. Currently a
-// no-op placeholder for future policy enforcement.
-func IsTaintedDiagnostic(stepName, context string) *hcl.Diagnostic {
-	return &hcl.Diagnostic{
-		Severity: hcl.DiagWarning,
-		Summary:  fmt.Sprintf("step %q (%s): step is tainted by secret data", stepName, context),
-	}
+	return taintOrigin{}, false
 }

@@ -290,3 +290,38 @@ state "done" { terminal = true }
 		t.Errorf("expected error about compatible_environments, got: %s", diags.Error())
 	}
 }
+
+// TestAdapterEnvironmentCompatibility_Wildcard verifies that an adapter with
+// CompatibleEnvironments containing "*" compiles with any environment type.
+func TestAdapterEnvironmentCompatibility_Wildcard(t *testing.T) {
+	src := `
+workflow {
+  name = "x"
+  version       = "0.1"
+  initial_state = "run"
+  target_state  = "done"
+}
+
+environment "shell" "default" {}
+adapter "shell" "main" {}
+
+step "run" {
+  target = adapter.shell.main
+  outcome "success" { next = "done" }
+}
+state "done" { terminal = true }
+`
+	spec, diags := Parse("test.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	schemas := map[string]AdapterInfo{
+		"shell": {
+			CompatibleEnvironments: []string{"*"},
+		},
+	}
+	_, diags = Compile(spec, schemas)
+	if diags.HasErrors() {
+		t.Fatalf("expected wildcard compatibility to compile without error, got: %s", diags.Error())
+	}
+}

@@ -453,3 +453,66 @@ func checkShellControlledSetConflicts(envType string, variables map[string]strin
 
 	return diags
 }
+
+// resolveEnvironmentPolicy applies D37's three-rule field resolution to an
+// environment node and an adapter's optional manifest hints. It returns a
+// ResolvedPolicy with the final values for each policy field.
+//
+//nolint:gocyclo // WS09: sequential field-by-field resolution is clearer than a table-driven loop
+func resolveEnvironmentPolicy(env *EnvironmentNode, hints *PolicyHints) *ResolvedPolicy {
+	if env == nil {
+		return &ResolvedPolicy{PolicyMode: "permissive"}
+	}
+
+	// PolicyMode is always set (defaults to "permissive" during parsing).
+	mode := env.PolicyMode
+	if mode == "" {
+		mode = "permissive"
+	}
+
+	rp := &ResolvedPolicy{PolicyMode: mode}
+
+	// OS
+	if env.OS != "" {
+		rp.OS = env.OS
+	} else if mode == "permissive" && hints != nil && hints.OS != "" {
+		rp.OS = hints.OS
+	} // strict → zero value ("")
+
+	// Filesystem
+	if env.Filesystem != nil {
+		rp.Filesystem = env.Filesystem
+	} else if mode == "permissive" && hints != nil && hints.Filesystem != nil {
+		rp.Filesystem = hints.Filesystem
+	} // strict → nil (default-deny)
+
+	// Network
+	if env.Network != nil {
+		rp.Network = env.Network
+	} else if mode == "permissive" && hints != nil && hints.Network != nil {
+		rp.Network = hints.Network
+	} // strict → nil
+
+	// Secrets
+	if env.Secrets != nil {
+		rp.Secrets = env.Secrets
+	} else if mode == "permissive" && hints != nil && hints.Secrets != nil {
+		rp.Secrets = hints.Secrets
+	} // strict → nil
+
+	// Resources
+	if env.Resources != nil {
+		rp.Resources = env.Resources
+	} else if mode == "permissive" && hints != nil && hints.Resources != nil {
+		rp.Resources = hints.Resources
+	} // strict → nil
+
+	// TypeSpecific
+	if len(env.TypeSpecific) > 0 {
+		rp.TypeSpecific = env.TypeSpecific
+	} else if mode == "permissive" && hints != nil && len(hints.TypeSpecific) > 0 {
+		rp.TypeSpecific = hints.TypeSpecific
+	} // strict → nil
+
+	return rp
+}

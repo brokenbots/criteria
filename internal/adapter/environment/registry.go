@@ -4,6 +4,7 @@
 package environment
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/hashicorp/hcl/v2"
@@ -94,6 +95,9 @@ func (h *ShellHandler) ValidateFields(body hcl.Body) hcl.Diagnostics {
 // IsolationKind returns workflow.EnvIsolationNone.
 func (h *ShellHandler) IsolationKind() workflow.EnvIsolationKind { return workflow.EnvIsolationNone }
 
+// Prepare is a no-op skeleton for the shell handler.
+func (h *ShellHandler) Prepare(_ context.Context, _ hcl.Body) error { return nil }
+
 // --- Sandbox handler (skeleton) ---
 
 // SandboxHandler validates sandbox environment blocks.
@@ -130,6 +134,9 @@ func (h *SandboxHandler) ValidateFields(body hcl.Body) hcl.Diagnostics {
 func (h *SandboxHandler) IsolationKind() workflow.EnvIsolationKind {
 	return workflow.EnvIsolationSandbox
 }
+
+// Prepare is a no-op skeleton for the sandbox handler.
+func (h *SandboxHandler) Prepare(_ context.Context, _ hcl.Body) error { return nil }
 
 // --- Container handler (skeleton) ---
 
@@ -169,6 +176,9 @@ func (h *ContainerHandler) IsolationKind() workflow.EnvIsolationKind {
 	return workflow.EnvIsolationContainer
 }
 
+// Prepare is a no-op skeleton for the container handler.
+func (h *ContainerHandler) Prepare(_ context.Context, _ hcl.Body) error { return nil }
+
 // --- Remote handler (skeleton) ---
 
 // RemoteHandler validates remote environment blocks.
@@ -203,3 +213,6 @@ func (h *RemoteHandler) ValidateFields(body hcl.Body) hcl.Diagnostics {
 
 // IsolationKind returns workflow.EnvIsolationRemote.
 func (h *RemoteHandler) IsolationKind() workflow.EnvIsolationKind { return workflow.EnvIsolationRemote }
+
+// Prepare is a no-op skeleton for the remote handler.
+func (h *RemoteHandler) Prepare(_ context.Context, _ hcl.Body) error { return nil }

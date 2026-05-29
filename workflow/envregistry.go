@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"context"
 	"fmt"
 	"runtime"
 
@@ -48,6 +49,10 @@ type EnvHandler interface {
 	// and returns diagnostics for unknown or malformed fields.
 	ValidateFields(body hcl.Body) hcl.Diagnostics
 
+	// Prepare is called at session-open to prepare the execution context.
+	// Skeleton implementations in WS09 return nil, nil; WS10/11/12/20 fill in.
+	Prepare(ctx context.Context, body hcl.Body) error
+
 	// IsolationKind reports the isolation class for D40-compat reporting.
 	IsolationKind() EnvIsolationKind
 }
@@ -62,27 +67,37 @@ type EnvRegistry interface {
 }
 
 // defaultEnvRegistry is the built-in fallback registry used when no external
-// registry is injected via CompileOpts. It only knows "shell".
+// registry is injected via CompileOpts. It knows shell, sandbox, container,
+// and remote so that the compiler can reference all four types.
 type defaultEnvRegistry struct{}
 
 func (defaultEnvRegistry) Lookup(envType string) EnvHandler {
-	if envType == "shell" {
+	switch envType {
+	case "shell":
 		return shellHandlerInstance
+	case "sandbox":
+		return sandboxHandlerInstance
+	case "container":
+		return containerHandlerInstance
+	case "remote":
+		return remoteHandlerInstance
 	}
 	return nil
 }
 
-func (defaultEnvRegistry) Registered() []string { return []string{"shell"} }
+func (defaultEnvRegistry) Registered() []string {
+	return []string{"shell", "sandbox", "container", "remote"}
+}
 
 // shellHandlerInstance is the compile-time shell handler baked into workflow.
-// It validates accepted fields and returns no-op runtime info.
 var shellHandlerInstance = &builtinShellHandler{}
 
 type builtinShellHandler struct{}
 
-func (h *builtinShellHandler) Type() string                    { return "shell" }
-func (h *builtinShellHandler) SupportedOSes() []string         { return nil }
-func (h *builtinShellHandler) IsolationKind() EnvIsolationKind { return EnvIsolationNone }
+func (h *builtinShellHandler) Type() string                                { return "shell" }
+func (h *builtinShellHandler) SupportedOSes() []string                     { return nil }
+func (h *builtinShellHandler) IsolationKind() EnvIsolationKind             { return EnvIsolationNone }
+func (h *builtinShellHandler) Prepare(_ context.Context, _ hcl.Body) error { return nil }
 
 func (h *builtinShellHandler) ValidateFields(body hcl.Body) hcl.Diagnostics {
 	attrs, diags := body.JustAttributes()
@@ -96,6 +111,97 @@ func (h *builtinShellHandler) ValidateFields(body hcl.Body) hcl.Diagnostics {
 				Severity: hcl.DiagError,
 				Summary:  fmt.Sprintf("shell environment: unknown attribute %q", name),
 				Detail:   "shell environments accept only variables, policy_mode, and os.",
+				Subject:  &rng,
+			})
+		}
+	}
+	return diags
+}
+
+// sandboxHandlerInstance is the compile-time sandbox skeleton handler.
+var sandboxHandlerInstance = &builtinSandboxHandler{}
+
+type builtinSandboxHandler struct{}
+
+func (h *builtinSandboxHandler) Type() string                                { return "sandbox" }
+func (h *builtinSandboxHandler) SupportedOSes() []string                     { return []string{"linux"} }
+func (h *builtinSandboxHandler) IsolationKind() EnvIsolationKind             { return EnvIsolationSandbox }
+func (h *builtinSandboxHandler) Prepare(_ context.Context, _ hcl.Body) error { return nil }
+
+func (h *builtinSandboxHandler) ValidateFields(body hcl.Body) hcl.Diagnostics {
+	attrs, diags := body.JustAttributes()
+	for name := range attrs {
+		switch name {
+		case "variables", "policy_mode", "os",
+			"filesystem", "network", "resources", "secrets", "config":
+			// accepted
+		default:
+			rng := attrs[name].Range
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  fmt.Sprintf("sandbox environment: unknown attribute %q", name),
+				Detail:   "sandbox environments accept variables, policy_mode, os, filesystem, network, resources, and secrets.",
+				Subject:  &rng,
+			})
+		}
+	}
+	return diags
+}
+
+// containerHandlerInstance is the compile-time container skeleton handler.
+var containerHandlerInstance = &builtinContainerHandler{}
+
+type builtinContainerHandler struct{}
+
+func (h *builtinContainerHandler) Type() string                                { return "container" }
+func (h *builtinContainerHandler) SupportedOSes() []string                     { return []string{"linux"} }
+func (h *builtinContainerHandler) IsolationKind() EnvIsolationKind             { return EnvIsolationContainer }
+func (h *builtinContainerHandler) Prepare(_ context.Context, _ hcl.Body) error { return nil }
+
+func (h *builtinContainerHandler) ValidateFields(body hcl.Body) hcl.Diagnostics {
+	attrs, diags := body.JustAttributes()
+	for name := range attrs {
+		switch name {
+		case "variables", "policy_mode", "os",
+			"runtime", "image",
+			"filesystem", "network", "resources", "secrets", "config":
+			// accepted
+		default:
+			rng := attrs[name].Range
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  fmt.Sprintf("container environment: unknown attribute %q", name),
+				Detail:   "container environments accept variables, policy_mode, os, runtime, image, filesystem, network, resources, and secrets.",
+				Subject:  &rng,
+			})
+		}
+	}
+	return diags
+}
+
+// remoteHandlerInstance is the compile-time remote skeleton handler.
+var remoteHandlerInstance = &builtinRemoteHandler{}
+
+type builtinRemoteHandler struct{}
+
+func (h *builtinRemoteHandler) Type() string                                { return "remote" }
+func (h *builtinRemoteHandler) SupportedOSes() []string                     { return nil }
+func (h *builtinRemoteHandler) IsolationKind() EnvIsolationKind             { return EnvIsolationRemote }
+func (h *builtinRemoteHandler) Prepare(_ context.Context, _ hcl.Body) error { return nil }
+
+func (h *builtinRemoteHandler) ValidateFields(body hcl.Body) hcl.Diagnostics {
+	attrs, diags := body.JustAttributes()
+	for name := range attrs {
+		switch name {
+		case "variables", "policy_mode", "os",
+			"listen_address", "mtls", "accept_token", "config":
+			// accepted
+		default:
+			rng := attrs[name].Range
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  fmt.Sprintf("remote environment: unknown attribute %q", name),
+				Detail:   "remote environments accept variables, policy_mode, os, listen_address, mtls, accept_token, and config.",
 				Subject:  &rng,
 			})
 		}
