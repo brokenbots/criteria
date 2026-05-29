@@ -50,56 +50,49 @@ func PushArtifact(ctx context.Context, ref oci.Reference, binPath, manifestPath 
 		return "", fmt.Errorf("publish: reference must be fully-qualified (got %q)", ref)
 	}
 
-	// Read the binary and manifest bytes.
-	binData, err := os.ReadFile(binPath)
+	binData, mfData, err := readArtifactInputs(binPath, manifestPath)
 	if err != nil {
-		return "", fmt.Errorf("publish: read binary: %w", err)
-	}
-	mfData, err := os.ReadFile(manifestPath)
-	if err != nil {
-		return "", fmt.Errorf("publish: read manifest: %w", err)
+		return "", err
 	}
 
 	store := memory.New()
+	_, err = buildManifestInStore(ctx, store, ref, binData, mfData, binPath)
+	if err != nil {
+		return "", err
+	}
 
-	// Build layer descriptors.
+	return pushToRemote(ctx, store, ref, opts)
+}
+
+func readArtifactInputs(binPath, manifestPath string) (binData, mfData []byte, err error) {
+	binData, err = os.ReadFile(binPath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("publish: read binary: %w", err)
+	}
+	mfData, err = os.ReadFile(manifestPath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("publish: read manifest: %w", err)
+	}
+	return binData, mfData, nil
+}
+
+func buildManifestInStore(ctx context.Context, store *memory.Store, ref oci.Reference, binData, mfData []byte, binPath string) (ocispec.Descriptor, error) {
 	binTitle := filepath.ToSlash(filepath.Join("bin", runtimeGOOS, runtimeGOARCH, filepath.Base(binPath)))
-	binDesc := ocispec.Descriptor{
-		MediaType: mediaTypeAdapterBinary,
-		Digest:    digest.FromBytes(binData),
-		Size:      int64(len(binData)),
-		Annotations: map[string]string{
-			oci.AnnotationTitle: binTitle,
-		},
-	}
-	if err := store.Push(ctx, binDesc, bytes.NewReader(binData)); err != nil {
-		return "", fmt.Errorf("publish: push binary layer: %w", err)
+	binDesc, err := stageLayer(ctx, store, binData, mediaTypeAdapterBinary, binTitle)
+	if err != nil {
+		return ocispec.Descriptor{}, err
 	}
 
-	mfDesc := ocispec.Descriptor{
-		MediaType: ocispec.MediaTypeImageLayer,
-		Digest:    digest.FromBytes(mfData),
-		Size:      int64(len(mfData)),
-		Annotations: map[string]string{
-			oci.AnnotationTitle: "adapter.yaml",
-		},
-	}
-	if err := store.Push(ctx, mfDesc, bytes.NewReader(mfData)); err != nil {
-		return "", fmt.Errorf("publish: push manifest layer: %w", err)
+	mfDesc, err := stageLayer(ctx, store, mfData, ocispec.MediaTypeImageLayer, "adapter.yaml")
+	if err != nil {
+		return ocispec.Descriptor{}, err
 	}
 
-	// Config blob (per D10).
-	cfgData := []byte("{}")
-	cfgDesc := ocispec.Descriptor{
-		MediaType: mediaTypeAdapterConfig,
-		Digest:    digest.FromBytes(cfgData),
-		Size:      int64(len(cfgData)),
-	}
-	if err := store.Push(ctx, cfgDesc, bytes.NewReader(cfgData)); err != nil {
-		return "", fmt.Errorf("publish: push config: %w", err)
+	cfgDesc, err := stageConfig(ctx, store)
+	if err != nil {
+		return ocispec.Descriptor{}, err
 	}
 
-	// Assemble the image manifest.
 	manifest := ocispec.Manifest{
 		Versioned: specs.Versioned{SchemaVersion: 2},
 		MediaType: ocispec.MediaTypeImageManifest,
@@ -108,7 +101,7 @@ func PushArtifact(ctx context.Context, ref oci.Reference, binPath, manifestPath 
 	}
 	manifestJSON, err := json.Marshal(manifest)
 	if err != nil {
-		return "", fmt.Errorf("publish: marshal manifest: %w", err)
+		return ocispec.Descriptor{}, fmt.Errorf("publish: marshal manifest: %w", err)
 	}
 	manifestDesc := ocispec.Descriptor{
 		MediaType: ocispec.MediaTypeImageManifest,
@@ -116,13 +109,43 @@ func PushArtifact(ctx context.Context, ref oci.Reference, binPath, manifestPath 
 		Size:      int64(len(manifestJSON)),
 	}
 	if err := store.Push(ctx, manifestDesc, bytes.NewReader(manifestJSON)); err != nil {
-		return "", fmt.Errorf("publish: push manifest: %w", err)
+		return ocispec.Descriptor{}, fmt.Errorf("publish: push manifest: %w", err)
 	}
 	if err := store.Tag(ctx, manifestDesc, ref.Tag); err != nil {
-		return "", fmt.Errorf("publish: tag manifest: %w", err)
+		return ocispec.Descriptor{}, fmt.Errorf("publish: tag manifest: %w", err)
 	}
+	return manifestDesc, nil
+}
 
-	// Push to remote registry.
+func stageLayer(ctx context.Context, store *memory.Store, data []byte, mediaType, title string) (ocispec.Descriptor, error) {
+	desc := ocispec.Descriptor{
+		MediaType: mediaType,
+		Digest:    digest.FromBytes(data),
+		Size:      int64(len(data)),
+		Annotations: map[string]string{
+			oci.AnnotationTitle: title,
+		},
+	}
+	if err := store.Push(ctx, desc, bytes.NewReader(data)); err != nil {
+		return ocispec.Descriptor{}, fmt.Errorf("publish: push layer %q: %w", title, err)
+	}
+	return desc, nil
+}
+
+func stageConfig(ctx context.Context, store *memory.Store) (ocispec.Descriptor, error) {
+	data := []byte("{}")
+	desc := ocispec.Descriptor{
+		MediaType: mediaTypeAdapterConfig,
+		Digest:    digest.FromBytes(data),
+		Size:      int64(len(data)),
+	}
+	if err := store.Push(ctx, desc, bytes.NewReader(data)); err != nil {
+		return ocispec.Descriptor{}, fmt.Errorf("publish: push config: %w", err)
+	}
+	return desc, nil
+}
+
+func pushToRemote(ctx context.Context, store *memory.Store, ref oci.Reference, opts Options) (digest.Digest, error) {
 	repo, err := newRepository(ref, opts)
 	if err != nil {
 		return "", err

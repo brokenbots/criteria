@@ -7,10 +7,10 @@ import (
 	"runtime"
 	"strings"
 
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/spf13/cobra"
 
 	"github.com/brokenbots/criteria/internal/adapter/oci"
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
 func newAdapterWhereCmd() *cobra.Command {
