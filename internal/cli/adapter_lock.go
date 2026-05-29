@@ -42,52 +42,45 @@ func newAdapterLockCmd() *cobra.Command {
 	return cmd
 }
 
-func runLock(ctx context.Context, workflowDir string, upgrade bool) error {
+type lockState struct {
+	workflowDir string
+	oldLF       *lockfile.Lockfile
+	wfAdapters  map[string]*workflowAdapter
+	aliases     map[string]string
+	layout      *oci.Layout
+	puller      *oci.Puller
+	policy      signing.Policy
+}
+
+func prepareLockState(workflowDir string, upgrade bool) (*lockState, error) {
 	workflowDir, err := filepath.Abs(workflowDir)
 	if err != nil {
-		return fmt.Errorf("resolve workflow dir: %w", err)
+		return nil, fmt.Errorf("resolve workflow dir: %w", err)
 	}
 
 	spec, diags := workflow.ParseFileOrDir(workflowDir)
 	if diags.HasErrors() {
-		return fmt.Errorf("parse workflow: %w", newDiagsError(diags))
+		return nil, fmt.Errorf("parse workflow: %w", newDiagsError(diags))
 	}
 
-	// Read existing lockfile.
 	oldLF, err := lockfile.ReadFromDir(workflowDir)
 	if err != nil {
-		return fmt.Errorf("read lockfile: %w", err)
+		return nil, fmt.Errorf("read lockfile: %w", err)
 	}
 
-	// Collect workflow adapters and their OCI references from raw HCL.
 	wfAdapters, err := collectWorkflowAdapters(workflowDir, spec)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	// Build alias map from workflow HCL registry blocks.
 	aliases, err := collectWorkflowAliases(workflowDir, spec)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	newLF := &lockfile.Lockfile{SchemaVersion: 1}
-	if oldLF != nil {
-		newLF.SchemaVersion = oldLF.SchemaVersion
-	}
-
-	cacheRoot, err := defaultCacheRoot()
+	layout, policy, err := openCacheAndPolicy()
 	if err != nil {
-		return err
-	}
-	layout, err := oci.Open(cacheRoot)
-	if err != nil {
-		return fmt.Errorf("open OCI cache: %w", err)
-	}
-
-	policy, err := signing.PolicyFor(signing.PullContext{})
-	if err != nil {
-		return fmt.Errorf("signing policy: %w", err)
+		return nil, err
 	}
 
 	var puller *oci.Puller
@@ -95,76 +88,132 @@ func runLock(ctx context.Context, workflowDir string, upgrade bool) error {
 		puller = &oci.Puller{Layout: layout}
 	}
 
-	// Process each workflow adapter.
-	for key, wa := range wfAdapters {
-		if wa.Reference == "" {
-			// No OCI reference configured in workflow HCL.
-			if oldLF != nil {
-				if oldA := findLocked(oldLF, wa.Type, wa.Name); oldA != nil {
-					// Keep existing entry even without a reference.
-					newLF.Adapters = append(newLF.Adapters, *oldA)
-					continue
-				}
-			}
-			return fmt.Errorf("adapter %q has no OCI reference in workflow HCL and no existing lockfile entry; add a `reference = \"...\"` attribute or run `criteria adapter pull \u003cref\u003e` manually", key)
-		}
+	return &lockState{
+		workflowDir: workflowDir,
+		oldLF:       oldLF,
+		wfAdapters:  wfAdapters,
+		aliases:     aliases,
+		layout:      layout,
+		puller:      puller,
+		policy:      policy,
+	}, nil
+}
 
-		ref, err := resolveWithAliases(aliases, wa.Reference)
+func openCacheAndPolicy() (*oci.Layout, signing.Policy, error) {
+	var policy signing.Policy
+	cacheRoot, err := defaultCacheRoot()
+	if err != nil {
+		return nil, policy, err
+	}
+	layout, err := oci.Open(cacheRoot)
+	if err != nil {
+		return nil, policy, fmt.Errorf("open OCI cache: %w", err)
+	}
+	policy, err = signing.PolicyFor(signing.PullContext{})
+	if err != nil {
+		return nil, policy, fmt.Errorf("signing policy: %w", err)
+	}
+	return layout, policy, nil
+}
+
+func runLock(ctx context.Context, workflowDir string, upgrade bool) error {
+	state, err := prepareLockState(workflowDir, upgrade)
+	if err != nil {
+		return err
+	}
+
+	newLF := &lockfile.Lockfile{SchemaVersion: 1}
+	if state.oldLF != nil {
+		newLF.SchemaVersion = state.oldLF.SchemaVersion
+	}
+
+	for key, wa := range state.wfAdapters {
+		entry, err := resolveOneAdapter(ctx, wa, state.oldLF, state.layout, state.puller, state.aliases, upgrade, &state.policy)
 		if err != nil {
 			return fmt.Errorf("adapter %q: %w", key, err)
 		}
+		newLF.Adapters = append(newLF.Adapters, entry)
+	}
 
-		var entry lockfile.LockedAdapter
-		var foundOld bool
+	printLockDiff(state.oldLF, newLF)
+
+	lockPath := filepath.Join(state.workflowDir, ".criteria.lock.hcl")
+	if err := lockfile.Write(lockPath, newLF); err != nil {
+		return fmt.Errorf("write lockfile: %w", err)
+	}
+	return nil
+}
+
+// resolveOneAdapter returns the lockfile entry for a single workflow adapter.
+func resolveOneAdapter(ctx context.Context, wa *workflowAdapter, oldLF *lockfile.Lockfile, layout *oci.Layout, puller *oci.Puller, aliases map[string]string, upgrade bool, policy *signing.Policy) (lockfile.LockedAdapter, error) {
+	var entry lockfile.LockedAdapter
+
+	if wa.Reference == "" {
 		if oldLF != nil {
 			if oldA := findLocked(oldLF, wa.Type, wa.Name); oldA != nil {
-				foundOld = true
-				if !upgrade {
-					// Re-use pinned digest if binary is cached.
-					if layout.HasBlob(digest.Digest(oldA.ResolvedDigest)) {
-						entry = *oldA
-						entry.Reference = ref.String()
-					} else {
-						// Binary missing — need to pull.
-						dg, pulledEntry, err := pullAndBuild(ctx, puller, layout, ref, policy)
-						if err != nil {
-							return fmt.Errorf("adapter %q: %w", key, err)
-						}
-						entry = pulledEntry
-						entry.Reference = ref.String()
-						entry.ResolvedDigest = dg.String()
-					}
-					entry.Type = wa.Type
-					entry.Name = wa.Name
-					newLF.Adapters = append(newLF.Adapters, entry)
-					if !foundOld {
-						fmt.Fprintf(os.Stderr, "locked %s -> %s\n", key, entry.ResolvedDigest)
-					}
-					continue
-				}
+				return *oldA, nil
 			}
 		}
+		return entry, fmt.Errorf("no OCI reference in workflow HCL and no existing lockfile entry; add a `reference = \"...\"` attribute or run `criteria adapter pull \u003cref\u003e` manually")
+	}
 
-		// Upgrade or new entry: pull and build.
-		dg, pulledEntry, err := pullAndBuild(ctx, puller, layout, ref, policy)
-		if err != nil {
-			return fmt.Errorf("adapter %q: %w", key, err)
+	ref, err := resolveWithAliases(aliases, wa.Reference)
+	if err != nil {
+		return entry, err
+	}
+
+	entry, reused, err := tryReuseEntry(ctx, wa, oldLF, layout, puller, ref, upgrade, policy)
+	if err != nil {
+		return entry, err
+	}
+	if reused {
+		return entry, nil
+	}
+
+	dg, pulledEntry, err := pullAndBuild(ctx, puller, layout, ref, policy)
+	if err != nil {
+		return entry, err
+	}
+	entry = pulledEntry
+	entry.Reference = ref.String()
+	entry.ResolvedDigest = dg.String()
+	entry.Type = wa.Type
+	entry.Name = wa.Name
+
+	fmt.Fprintf(os.Stderr, "locked %s.%s -> %s\n", wa.Type, wa.Name, entry.ResolvedDigest)
+	return entry, nil
+}
+
+func tryReuseEntry(ctx context.Context, wa *workflowAdapter, oldLF *lockfile.Lockfile, layout *oci.Layout, puller *oci.Puller, ref oci.Reference, upgrade bool, policy *signing.Policy) (lockfile.LockedAdapter, bool, error) {
+	var entry lockfile.LockedAdapter
+	if oldLF == nil || upgrade {
+		return entry, false, nil
+	}
+	oldA := findLocked(oldLF, wa.Type, wa.Name)
+	if oldA == nil {
+		return entry, false, nil
+	}
+	if layout.HasBlob(digest.Digest(oldA.ResolvedDigest)) {
+		entry = *oldA
+		entry.Reference = ref.String()
+	} else {
+		dg, pulledEntry, pullErr := pullAndBuild(ctx, puller, layout, ref, policy)
+		if pullErr != nil {
+			return entry, false, pullErr
 		}
 		entry = pulledEntry
 		entry.Reference = ref.String()
 		entry.ResolvedDigest = dg.String()
-		entry.Type = wa.Type
-		entry.Name = wa.Name
-		newLF.Adapters = append(newLF.Adapters, entry)
-
-		if !foundOld {
-			fmt.Fprintf(os.Stderr, "locked %s -> %s\n", key, entry.ResolvedDigest)
-		}
 	}
+	entry.Type = wa.Type
+	entry.Name = wa.Name
+	return entry, true, nil
+}
 
-	// Detect stale entries (in lockfile but not in workflow).
+func printLockDiff(oldLF, newLF *lockfile.Lockfile) {
 	changes := lockfile.Diff(oldLF, newLF)
-	for _, c := range changes {
+	for i := range changes {
+		c := &changes[i]
 		switch c.Kind {
 		case lockfile.Added:
 			fmt.Fprintf(os.Stderr, "+ %s\n", c.Adapter)
@@ -184,12 +233,6 @@ func runLock(ctx context.Context, workflowDir string, upgrade bool) error {
 			fmt.Fprintf(os.Stderr, "~ %s override changed\n", c.Adapter)
 		}
 	}
-
-	lockPath := filepath.Join(workflowDir, ".criteria.lock.hcl")
-	if err := lockfile.Write(lockPath, newLF); err != nil {
-		return fmt.Errorf("write lockfile: %w", err)
-	}
-	return nil
 }
 
 // workflowAdapter holds the parsed adapter declaration plus an optional OCI
@@ -201,7 +244,7 @@ type workflowAdapter struct {
 }
 
 // collectWorkflowAliases extracts registry alias blocks from workflow HCL.
-func collectWorkflowAliases(workflowDir string, spec *workflow.Spec) (map[string]string, error) {
+func collectWorkflowAliases(workflowDir string, _ *workflow.Spec) (map[string]string, error) {
 	aliases := make(map[string]string)
 
 	hclFiles, err := listHCLFiles(workflowDir)
@@ -210,41 +253,48 @@ func collectWorkflowAliases(workflowDir string, spec *workflow.Spec) (map[string
 	}
 
 	for _, path := range hclFiles {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return nil, fmt.Errorf("read %q: %w", path, err)
-		}
-		file, diags := hclparse.NewParser().ParseHCL(data, path)
-		if diags.HasErrors() {
-			continue
-		}
-		body, ok := file.Body.(*hclsyntax.Body)
-		if !ok {
-			continue
-		}
-		for _, block := range body.Blocks {
-			if block.Type != "registry" || len(block.Labels) != 1 {
-				continue
-			}
-			alias := block.Labels[0]
-			attrs, _, _ := block.Body.PartialContent(&hcl.BodySchema{
-				Attributes: []hcl.AttributeSchema{{Name: "source"}},
-			})
-			if attr, ok := attrs.Attributes["source"]; ok {
-				val, valDiags := attr.Expr.Value(nil)
-				if !valDiags.HasErrors() && val.Type() == cty.String && !val.IsNull() {
-					aliases[alias] = val.AsString()
-				}
-			}
+		if parseErr := parseAliasesFromFile(path, aliases); parseErr != nil {
+			return nil, parseErr
 		}
 	}
 
 	return aliases, nil
 }
 
+func parseAliasesFromFile(path string, aliases map[string]string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read %q: %w", path, err)
+	}
+	file, diags := hclparse.NewParser().ParseHCL(data, path)
+	if diags.HasErrors() {
+		return nil
+	}
+	body, ok := file.Body.(*hclsyntax.Body)
+	if !ok {
+		return nil
+	}
+	for _, block := range body.Blocks {
+		if block.Type != "registry" || len(block.Labels) != 1 {
+			continue
+		}
+		alias := block.Labels[0]
+		attrs, _, _ := block.Body.PartialContent(&hcl.BodySchema{
+			Attributes: []hcl.AttributeSchema{{Name: "source"}},
+		})
+		if attr, ok := attrs.Attributes["source"]; ok {
+			val, valDiags := attr.Expr.Value(nil)
+			if !valDiags.HasErrors() && val.Type() == cty.String && !val.IsNull() {
+				aliases[alias] = val.AsString()
+			}
+		}
+	}
+	return nil
+}
+
 func missingRefs(lf *lockfile.Lockfile, adapters map[string]*workflowAdapter) []string {
 	if lf == nil {
-		var out []string
+		out := make([]string, 0, len(adapters))
 		for k := range adapters {
 			out = append(out, k)
 		}
@@ -252,10 +302,10 @@ func missingRefs(lf *lockfile.Lockfile, adapters map[string]*workflowAdapter) []
 		return out
 	}
 	set := make(map[string]struct{}, len(lf.Adapters))
-	for _, a := range lf.Adapters {
-		set[a.Type+"."+a.Name] = struct{}{}
+	for i := range lf.Adapters {
+		set[lf.Adapters[i].Type+"."+lf.Adapters[i].Name] = struct{}{}
 	}
-	var out []string
+	out := make([]string, 0, len(adapters))
 	for k := range adapters {
 		if _, ok := set[k]; !ok {
 			out = append(out, k)
@@ -274,7 +324,7 @@ func findLocked(lf *lockfile.Lockfile, typ, name string) *lockfile.LockedAdapter
 	return nil
 }
 
-func pullAndBuild(ctx context.Context, puller *oci.Puller, layout *oci.Layout, ref oci.Reference, policy signing.Policy) (digest.Digest, lockfile.LockedAdapter, error) {
+func pullAndBuild(ctx context.Context, puller *oci.Puller, layout *oci.Layout, ref oci.Reference, policy *signing.Policy) (digest.Digest, lockfile.LockedAdapter, error) {
 	var zero lockfile.LockedAdapter
 	if puller == nil {
 		return "", zero, fmt.Errorf("puller is nil")
@@ -297,7 +347,7 @@ func pullAndBuild(ctx context.Context, puller *oci.Puller, layout *oci.Layout, r
 		return "", zero, fmt.Errorf("validate manifest: %w", err)
 	}
 
-	signer, err := signing.Verify(ctx, layout, dg, policy)
+	signer, err := signing.Verify(ctx, layout, dg, *policy)
 	if err != nil {
 		return "", zero, fmt.Errorf("signature verification: %w", err)
 	}

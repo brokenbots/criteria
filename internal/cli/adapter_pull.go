@@ -6,6 +6,7 @@ import (
 	"os"
 	"runtime"
 
+	"github.com/opencontainers/go-digest"
 	"github.com/spf13/cobra"
 
 	"github.com/brokenbots/criteria/internal/adapter/manifest"
@@ -36,28 +37,16 @@ func newAdapterPullCmd() *cobra.Command {
 }
 
 func runPull(ctx context.Context, rawRef string, allowUnsigned bool, registryAlias string) error {
-	cacheRoot, err := defaultCacheRoot()
+	layout, err := openDefaultCache()
 	if err != nil {
 		return err
 	}
 
-	layout, err := oci.Open(cacheRoot)
-	if err != nil {
-		return fmt.Errorf("open OCI cache: %w", err)
-	}
-
-	// Build resolve context.
-	rctx := ResolveContext{}
-	if registryAlias != "" {
-		rctx.WorkflowAliases = map[string]string{"default": registryAlias}
-	}
-
-	ref, err := Resolve(rctx, rawRef)
+	ref, err := resolveInput(rawRef, registryAlias)
 	if err != nil {
 		return err
 	}
 
-	// Build signing policy.
 	policy, err := signing.PolicyFor(signing.PullContext{
 		AllowUnsigned: allowUnsigned,
 	})
@@ -71,38 +60,13 @@ func runPull(ctx context.Context, rawRef string, allowUnsigned bool, registryAli
 		return fmt.Errorf("pull %s: %w", ref, err)
 	}
 
-	// Open the artifact and read adapter.yaml.
-	artFS, err := layout.Open(dg)
+	m, signer, err := validatePulledArtifact(ctx, layout, dg, &policy)
 	if err != nil {
-		return fmt.Errorf("open pulled artifact: %w", err)
+		return err
 	}
 
-	m, err := manifest.ParseFromFS(artFS, "adapter.yaml")
-	if err != nil {
-		return fmt.Errorf("read adapter.yaml: %w", err)
-	}
-
-	if err := m.Validate(); err != nil {
-		return fmt.Errorf("validate manifest: %w", err)
-	}
-
-	// Verify signature against policy.
-	signer, err := signing.Verify(ctx, layout, dg, policy)
-	if err != nil {
-		return fmt.Errorf("signature verification: %w", err)
-	}
-
-	// Platform check.
-	hostPlatform := runtime.GOOS + "/" + runtime.GOARCH
-	found := false
-	for _, p := range m.Platforms {
-		if p.OS+"/"+p.Arch == hostPlatform {
-			found = true
-			break
-		}
-	}
-	if !found {
-		return fmt.Errorf("adapter %s does not support host platform %s; contact the publisher to add support", ref, hostPlatform)
+	if err := assertHostPlatformSupported(ref, m); err != nil {
+		return err
 	}
 
 	// Container-image fetch (if applicable and env is container-mode).
@@ -114,7 +78,59 @@ func runPull(ctx context.Context, rawRef string, allowUnsigned bool, registryAli
 	// (e.g. `adapter lock`) knows the workflow adapter mapping.
 	_ = lockfile.BuildEntry
 
-	// Print summary.
+	printPullSummary(ref, dg, signer, m)
+	return nil
+}
+
+func openDefaultCache() (*oci.Layout, error) {
+	cacheRoot, err := defaultCacheRoot()
+	if err != nil {
+		return nil, err
+	}
+	return oci.Open(cacheRoot)
+}
+
+func resolveInput(rawRef, registryAlias string) (oci.Reference, error) {
+	rctx := ResolveContext{}
+	if registryAlias != "" {
+		rctx.WorkflowAliases = map[string]string{"default": registryAlias}
+	}
+	return Resolve(rctx, rawRef)
+}
+
+func validatePulledArtifact(ctx context.Context, layout *oci.Layout, dg digest.Digest, policy *signing.Policy) (*manifest.Manifest, *signing.SignerIdentity, error) {
+	artFS, err := layout.Open(dg)
+	if err != nil {
+		return nil, nil, fmt.Errorf("open pulled artifact: %w", err)
+	}
+
+	m, err := manifest.ParseFromFS(artFS, "adapter.yaml")
+	if err != nil {
+		return nil, nil, fmt.Errorf("read adapter.yaml: %w", err)
+	}
+
+	if err := m.Validate(); err != nil {
+		return nil, nil, fmt.Errorf("validate manifest: %w", err)
+	}
+
+	signer, err := signing.Verify(ctx, layout, dg, *policy)
+	if err != nil {
+		return nil, nil, fmt.Errorf("signature verification: %w", err)
+	}
+	return m, signer, nil
+}
+
+func assertHostPlatformSupported(ref oci.Reference, m *manifest.Manifest) error {
+	hostPlatform := runtime.GOOS + "/" + runtime.GOARCH
+	for _, p := range m.Platforms {
+		if p.OS+"/"+p.Arch == hostPlatform {
+			return nil
+		}
+	}
+	return fmt.Errorf("adapter %s does not support host platform %s; contact the publisher to add support", ref, hostPlatform)
+}
+
+func printPullSummary(ref oci.Reference, dg digest.Digest, signer *signing.SignerIdentity, m *manifest.Manifest) {
 	fmt.Fprintf(os.Stdout, "Pulled %s\n", ref)
 	fmt.Fprintf(os.Stdout, "Digest:    %s\n", dg)
 	if signer != nil {
@@ -127,5 +143,4 @@ func runPull(ctx context.Context, rawRef string, allowUnsigned bool, registryAli
 		fmt.Fprintf(os.Stdout, "Signer:    (unsigned)\n")
 	}
 	fmt.Fprintf(os.Stdout, "Platforms: %v\n", m.Platforms)
-	return nil
 }

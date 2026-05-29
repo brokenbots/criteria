@@ -74,56 +74,63 @@ func autoPullCompileAdapters(ctx context.Context, workflowDir string, spec *work
 		if wa.Reference == "" {
 			continue
 		}
-		entry := findLocked(lf, wa.Type, wa.Name)
-		if entry == nil {
-			continue // validated above
-		}
-
-		dg := digest.Digest(entry.ResolvedDigest)
-		if dg == "" {
-			return fmt.Errorf("adapter %q lockfile entry has empty digest", key)
-		}
-
-		// If binary already cached, ensure it's in the plugin directory.
-		if layout.HasBlob(dg) {
-			if err := extractOCIAdapterBinary(layout, dg, wa.Type); err != nil {
-				return fmt.Errorf("adapter %q extract binary: %w", key, err)
-			}
-			continue
-		}
-
-		// Binary missing from cache — pull silently.
-		ref, err := oci.Parse(entry.Reference)
-		if err != nil {
-			return fmt.Errorf("adapter %q parse reference %q: %w", key, entry.Reference, err)
-		}
-
-		pulledDg, err := puller.Pull(ctx, ref)
-		if err != nil {
-			return fmt.Errorf("adapter %q pull %s: %w", key, ref, err)
-		}
-
-		artFS, err := layout.Open(pulledDg)
-		if err != nil {
-			return fmt.Errorf("adapter %q open artifact: %w", key, err)
-		}
-		m, err := manifest.ParseFromFS(artFS, "adapter.yaml")
-		if err != nil {
-			return fmt.Errorf("adapter %q read manifest: %w", key, err)
-		}
-		if err := m.Validate(); err != nil {
-			return fmt.Errorf("adapter %q validate manifest: %w", key, err)
-		}
-		_, err = signing.Verify(ctx, layout, pulledDg, policy)
-		if err != nil {
-			return fmt.Errorf("adapter %q signature verification: %w", key, err)
-		}
-
-		if err := extractOCIAdapterBinary(layout, pulledDg, wa.Type); err != nil {
-			return fmt.Errorf("adapter %q extract binary: %w", key, err)
+		if err := ensureAdapterCached(ctx, key, wa, lf, layout, puller, &policy); err != nil {
+			return err
 		}
 	}
 
+	return nil
+}
+
+func ensureAdapterCached(ctx context.Context, key string, wa *workflowAdapter, lf *lockfile.Lockfile, layout *oci.Layout, puller *oci.Puller, policy *signing.Policy) error {
+	entry := findLocked(lf, wa.Type, wa.Name)
+	if entry == nil {
+		return nil // validated above
+	}
+
+	dg := digest.Digest(entry.ResolvedDigest)
+	if dg == "" {
+		return fmt.Errorf("adapter %q lockfile entry has empty digest", key)
+	}
+
+	// If binary already cached, ensure it's in the plugin directory.
+	if layout.HasBlob(dg) {
+		if err := extractOCIAdapterBinary(layout, dg, wa.Type); err != nil {
+			return fmt.Errorf("adapter %q extract binary: %w", key, err)
+		}
+		return nil
+	}
+
+	// Binary missing from cache — pull silently.
+	ref, err := oci.Parse(entry.Reference)
+	if err != nil {
+		return fmt.Errorf("adapter %q parse reference %q: %w", key, entry.Reference, err)
+	}
+
+	pulledDg, err := puller.Pull(ctx, ref)
+	if err != nil {
+		return fmt.Errorf("adapter %q pull %s: %w", key, ref, err)
+	}
+
+	artFS, err := layout.Open(pulledDg)
+	if err != nil {
+		return fmt.Errorf("adapter %q open artifact: %w", key, err)
+	}
+	m, err := manifest.ParseFromFS(artFS, "adapter.yaml")
+	if err != nil {
+		return fmt.Errorf("adapter %q read manifest: %w", key, err)
+	}
+	if err := m.Validate(); err != nil {
+		return fmt.Errorf("adapter %q validate manifest: %w", key, err)
+	}
+	_, err = signing.Verify(ctx, layout, pulledDg, *policy)
+	if err != nil {
+		return fmt.Errorf("adapter %q signature verification: %w", key, err)
+	}
+
+	if err := extractOCIAdapterBinary(layout, pulledDg, wa.Type); err != nil {
+		return fmt.Errorf("adapter %q extract binary: %w", key, err)
+	}
 	return nil
 }
 
@@ -201,40 +208,47 @@ func collectWorkflowAdapters(workflowDir string, spec *workflow.Spec) (map[strin
 	}
 
 	for _, path := range hclFiles {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return nil, fmt.Errorf("read %q: %w", path, err)
-		}
-		file, diags := hclparse.NewParser().ParseHCL(data, path)
-		if diags.HasErrors() {
+		if err := scanFileForReferences(path, out); err != nil {
 			continue
-		}
-		body, ok := file.Body.(*hclsyntax.Body)
-		if !ok {
-			continue
-		}
-		for _, block := range body.Blocks {
-			if block.Type != "adapter" || len(block.Labels) != 2 {
-				continue
-			}
-			key := block.Labels[0] + "." + block.Labels[1]
-			wa, ok := out[key]
-			if !ok {
-				continue
-			}
-			attrs, _, _ := block.Body.PartialContent(&hcl.BodySchema{
-				Attributes: []hcl.AttributeSchema{{Name: "reference"}},
-			})
-			if attr, ok := attrs.Attributes["reference"]; ok {
-				val, valDiags := attr.Expr.Value(nil)
-				if !valDiags.HasErrors() && val.Type() == cty.String && !val.IsNull() {
-					wa.Reference = val.AsString()
-				}
-			}
 		}
 	}
 
 	return out, nil
+}
+
+func scanFileForReferences(path string, out map[string]*workflowAdapter) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	file, diags := hclparse.NewParser().ParseHCL(data, path)
+	if diags.HasErrors() {
+		return nil
+	}
+	body, ok := file.Body.(*hclsyntax.Body)
+	if !ok {
+		return nil
+	}
+	for _, block := range body.Blocks {
+		if block.Type != "adapter" || len(block.Labels) != 2 {
+			continue
+		}
+		key := block.Labels[0] + "." + block.Labels[1]
+		wa, ok := out[key]
+		if !ok {
+			continue
+		}
+		attrs, _, _ := block.Body.PartialContent(&hcl.BodySchema{
+			Attributes: []hcl.AttributeSchema{{Name: "reference"}},
+		})
+		if attr, ok := attrs.Attributes["reference"]; ok {
+			val, valDiags := attr.Expr.Value(nil)
+			if !valDiags.HasErrors() && val.Type() == cty.String && !val.IsNull() {
+				wa.Reference = val.AsString()
+			}
+		}
+	}
+	return nil
 }
 
 // listHCLFiles returns all .hcl files in a directory (not recursive).
@@ -243,7 +257,7 @@ func listHCLFiles(dir string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	var out []string
+	out := make([]string, 0, len(entries))
 	for _, e := range entries {
 		if e.IsDir() || !hasSuffix(e.Name(), ".hcl") {
 			continue

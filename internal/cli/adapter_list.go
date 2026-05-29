@@ -8,14 +8,13 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/brokenbots/criteria/internal/adapter/oci"
-	"github.com/brokenbots/criteria/workflow"
 	"github.com/brokenbots/criteria/workflow/lockfile"
 )
 
 func newAdapterListCmd() *cobra.Command {
 	var (
-		installed   bool
-		referenced  bool
+		installed  bool
+		referenced bool
 	)
 
 	cmd := &cobra.Command{
@@ -98,22 +97,8 @@ func listReferenced() error {
 		return sorted[i].Type+"."+sorted[i].Name < sorted[j].Type+"."+sorted[j].Name
 	})
 
-	for _, a := range sorted {
-		fmt.Fprintf(os.Stdout, "%s.%s  %s  %s\n", a.Type, a.Name, a.Reference, a.ResolvedDigest)
+	for i := range sorted {
+		fmt.Fprintf(os.Stdout, "%s.%s  %s  %s\n", sorted[i].Type, sorted[i].Name, sorted[i].Reference, sorted[i].ResolvedDigest)
 	}
 	return nil
-}
-
-// listWorkflowAdapters returns the set of adapter type.name keys declared in
-// the workflow at dir.
-func listWorkflowAdapters(dir string) (map[string]struct{}, error) {
-	spec, diags := workflow.ParseFileOrDir(dir)
-	if diags.HasErrors() {
-		return nil, fmt.Errorf("parse workflow: %w", newDiagsError(diags))
-	}
-	out := make(map[string]struct{}, len(spec.Adapters))
-	for _, a := range spec.Adapters {
-		out[a.Type+"."+a.Name] = struct{}{}
-	}
-	return out, nil
 }

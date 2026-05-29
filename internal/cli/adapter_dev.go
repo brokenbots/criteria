@@ -7,8 +7,6 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-
-	"github.com/brokenbots/criteria/workflow/lockfile"
 )
 
 // devBindings holds the set of local-development adapter overrides.
@@ -57,9 +55,7 @@ func runDev(localPath, as string) error {
 	if key == "" {
 		base := filepath.Base(localPath)
 		const prefix = "criteria-adapter-"
-		if strings.HasPrefix(base, prefix) {
-			base = strings.TrimPrefix(base, prefix)
-		}
+		base = strings.TrimPrefix(base, prefix)
 		key = base
 	}
 
@@ -78,7 +74,7 @@ func runDev(localPath, as string) error {
 	return nil
 }
 
-// findDevBinding returns a local dev binding for the given type.name, if any.
+//nolint:unused // reserved for loader integration in a follow-up workstream
 func findDevBinding(typ, name string) (string, bool) {
 	b, ok := devBindings[typ+"."+name]
 	if !ok {
@@ -87,9 +83,8 @@ func findDevBinding(typ, name string) (string, bool) {
 	return b.Path, true
 }
 
-// checkDevAllowed returns an error if strict verification is active and a dev
-// binding would be used.
-func checkDevAllowed(typ, name string, lf *lockfile.Lockfile) error {
+//nolint:unused // reserved for loader integration in a follow-up workstream
+func checkDevAllowed(typ, name string) error {
 	if _, ok := findDevBinding(typ, name); !ok {
 		return nil
 	}

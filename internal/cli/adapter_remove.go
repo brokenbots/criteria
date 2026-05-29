@@ -5,10 +5,10 @@ import (
 	"os"
 
 	"github.com/opencontainers/go-digest"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/spf13/cobra"
 
 	"github.com/brokenbots/criteria/internal/adapter/oci"
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
 func newAdapterRemoveCmd() *cobra.Command {
@@ -55,13 +55,13 @@ func runRemove(refOrName string, doPrune bool) error {
 	}
 
 	found := false
-	var keep []ocispec.Descriptor
-	for _, m := range ix.Manifests {
-		if m.Digest == dg {
+	keep := make([]ocispec.Descriptor, 0, len(ix.Manifests))
+	for i := range ix.Manifests {
+		if ix.Manifests[i].Digest == dg {
 			found = true
 			continue
 		}
-		keep = append(keep, m)
+		keep = append(keep, ix.Manifests[i])
 	}
 	if !found {
 		return fmt.Errorf("adapter %s not found in cache index", dg)
@@ -75,11 +75,16 @@ func runRemove(refOrName string, doPrune bool) error {
 	fmt.Fprintf(os.Stderr, "removed %s from cache index\n", dg)
 
 	if doPrune {
-		result, err := layout.GC(oci.GCOptions{})
-		if err != nil {
-			return fmt.Errorf("gc: %w", err)
-		}
-		fmt.Fprintf(os.Stderr, "pruned %d blobs, freed %d bytes\n", result.RemovedBlobs, result.FreedBytes)
+		return pruneAfterRemove(layout)
 	}
+	return nil
+}
+
+func pruneAfterRemove(layout *oci.Layout) error {
+	result, err := layout.GC(oci.GCOptions{})
+	if err != nil {
+		return fmt.Errorf("gc: %w", err)
+	}
+	fmt.Fprintf(os.Stderr, "pruned %d blobs, freed %d bytes\n", result.RemovedBlobs, result.FreedBytes)
 	return nil
 }

@@ -6,18 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/spf13/cobra"
 )
-
-func buildAdapterTestRoot() *cobra.Command {
-	root := &cobra.Command{
-		Use:           "criteria",
-		SilenceErrors: true,
-	}
-	root.AddCommand(NewAdapterCmd())
-	return root
-}
 
 func TestAdapterCmd_NoSubcommand(t *testing.T) {
 	cmd := NewAdapterCmd()
@@ -50,9 +39,8 @@ func TestAdapterLockCmd_NoArgs(t *testing.T) {
 	cmd.SetOut(&out)
 	cmd.SetErr(&errOut)
 	cmd.SetArgs([]string{t.TempDir()})
-	if err := cmd.Execute(); err == nil {
-		// Empty workflow dir with no .hcl files is fine.
-	}
+	_ = cmd.Execute()
+	// Empty workflow dir with no .hcl files returns an error about missing workflow.
 }
 
 func TestAdapterListCmd_FlagParsing(t *testing.T) {
@@ -172,7 +160,7 @@ state "done" {
 adapter "noop" "default" {
 }
 `
-	if err := writeFile(filepath.Join(dir, "test.hcl"), []byte(hcl), 0o600); err != nil {
+	if err := writeFile(filepath.Join(dir, "test.hcl"), []byte(hcl)); err != nil {
 		t.Fatal(err)
 	}
 	spec, _, err := parseCompileForCli(context.Background(), dir, nil)
@@ -188,6 +176,6 @@ adapter "noop" "default" {
 	}
 }
 
-func writeFile(path string, data []byte, perm int) error {
+func writeFile(path string, data []byte) error {
 	return writeOutput(path, nil, data)
 }
