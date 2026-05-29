@@ -191,6 +191,28 @@ Returns a structured error with each diverging field enumerated, so the host can
 - `internal/adapter/manifest/*.go` *(all new)*
 - `internal/adapter/manifest/testdata/*.yaml` *(new)*
 
+## Checklist
+
+- [x] Step 1 — schema.go types defined
+- [x] Step 2 — parse.go + validate.go with all rules
+- [x] Step 3 — annotations.go with OCI keys and AnnotationMap
+- [x] Step 4 — verify.go runtime cross-check
+- [x] Step 5 — all test files (parse, validate, annotations, verify)
+- [x] Step 6 — reference fixture testdata/adapter.yaml
+- [x] `make test` passes
+- [x] `make ci` passes (lint, imports, spec-check, examples)
+- [x] `make lint-imports` passes
+- [x] Reference fixture validates against parser
+- [x] Committed to branch `WS05-adapter-manifest`
+
+## Reviewer notes
+
+- `golang.org/x/mod` and `github.com/opencontainers/go-digest` were promoted from indirect to direct dependencies via `go mod tidy`; both are required by the new package.
+- `validate.go` was refactored into small helpers (`validateMeta`, `validatePlatforms`, `validateSchemas`, etc.) to keep cognitive complexity under the `gocognit` threshold.
+- `verify.go` was refactored with `appendScalarDiffs`, `appendSetDiff`, and `schemaDiffFromKind` to keep `funlen` under the threshold.
+- No baseline additions were needed.
+- `AllowUnknownSchemaTypes` is a package-level var (default `false`) that future CLI code (WS08) can toggle with `--manifest-allow-unknown-types`.
+
 ## Files this workstream may NOT edit
 
 - `internal/adapter/oci/` — owned by WS04.
