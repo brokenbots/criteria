@@ -60,6 +60,30 @@ shared_variable "counter" {
 	}
 }
 
+func TestCompileSharedVariables_SecretFlag(t *testing.T) {
+	src := sharedVarWorkflow(`
+shared_variable "token" {
+  type = string
+  secret = true
+}
+`, "")
+	spec, diags := Parse("test.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	g, diags := Compile(spec, nil)
+	if diags.HasErrors() {
+		t.Fatalf("compile: %s", diags.Error())
+	}
+	sv := g.SharedVariables["token"]
+	if sv == nil {
+		t.Fatal("shared_variable 'token' not found")
+	}
+	if !sv.Secret {
+		t.Errorf("expected shared_variable 'token' to have Secret=true")
+	}
+}
+
 func TestCompileSharedVariables_TypeDefaults(t *testing.T) {
 	src := sharedVarWorkflow(`
 shared_variable "config" {

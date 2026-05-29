@@ -5,6 +5,7 @@ package workflow
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/hashicorp/hcl/v2"
 	"github.com/zclconf/go-cty/cty"
@@ -86,12 +87,20 @@ func compileOneAdapter(g *FSMGraph, ad AdapterDeclSpec, schemas map[string]Adapt
 	adapterConfig, d := resolveAdapterConfig(key, ad, schemas, typeName, configEvalCtx)
 	diags = append(diags, d...)
 
+	secrets, d := resolveAdapterSecrets(key, ad)
+	diags = append(diags, d...)
+
+	if info, ok := adapterInfo(schemas, typeName); ok {
+		diags = append(diags, checkAdapterEnvCompatibility(key, info, effectiveEnv, g)...)
+	}
+
 	g.Adapters[key] = &AdapterNode{
 		Type:        typeName,
 		Name:        instanceName,
 		Environment: effectiveEnv,
 		OnCrash:     effectiveOnCrash,
 		Config:      adapterConfig,
+		Secrets:     secrets,
 	}
 	// Track adapter declaration order for stable iteration
 	g.AdapterOrder = append(g.AdapterOrder, key)
@@ -150,6 +159,61 @@ func resolveAdapterConfig(key string, ad AdapterDeclSpec, schemas map[string]Ada
 	}
 	diags = append(diags, d...)
 	return adapterConfig, diags
+}
+
+// resolveAdapterSecrets extracts the optional `secrets { }` block from the
+// adapter declaration's Remain body. Each attribute in the block is preserved
+// as an hcl.Expression so that it can be evaluated at runtime.
+func resolveAdapterSecrets(key string, ad AdapterDeclSpec) (map[string]hcl.Expression, hcl.Diagnostics) {
+	schema := &hcl.BodySchema{
+		Blocks: []hcl.BlockHeaderSchema{
+			{Type: "secrets"},
+		},
+	}
+	content, _, diags := ad.Remain.PartialContent(schema)
+	if diags.HasErrors() {
+		return nil, diags
+	}
+	for _, block := range content.Blocks {
+		if block.Type == "secrets" {
+			attrs, attrDiags := block.Body.JustAttributes()
+			if attrDiags.HasErrors() {
+				return nil, attrDiags
+			}
+			out := make(map[string]hcl.Expression, len(attrs))
+			for k, attr := range attrs {
+				out[k] = attr.Expr
+			}
+			return out, nil
+		}
+	}
+	return nil, nil
+}
+
+// checkAdapterEnvCompatibility emits a diagnostic when an adapter's schema
+// declares a set of compatible environments and the resolved environment type
+// is not among them.
+func checkAdapterEnvCompatibility(key string, info AdapterInfo, envKey string, g *FSMGraph) hcl.Diagnostics {
+	if len(info.CompatibleEnvironments) == 0 {
+		return nil
+	}
+	if envKey == "" {
+		return nil
+	}
+	// Extract environment type from "env_type.env_name" key.
+	envType := envKey
+	if idx := strings.LastIndex(envKey, "."); idx != -1 {
+		envType = envKey[:idx]
+	}
+	for _, compat := range info.CompatibleEnvironments {
+		if compat == envType {
+			return nil
+		}
+	}
+	return hcl.Diagnostics{{
+		Severity: hcl.DiagError,
+		Summary:  fmt.Sprintf("adapter %q: environment type %q is not in the adapter's compatible_environments %v", key, envType, info.CompatibleEnvironments),
+	}}
 }
 
 // adapterInfo looks up the AdapterInfo for a given adapter type in the schemas

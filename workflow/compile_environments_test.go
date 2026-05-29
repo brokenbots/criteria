@@ -406,3 +406,136 @@ func TestCompileEnvironments_ControlledSetConflictWarning(t *testing.T) {
 		t.Error("environment variables not stored correctly")
 	}
 }
+
+func TestCompileEnvironments_PolicyMode(t *testing.T) {
+	// Environment with policy_mode = "strict" should parse correctly.
+	src := environmentWorkflow(`
+  environment "shell" "strict_env" {
+    policy_mode = "strict"
+  }
+`, "")
+	spec, diags := Parse("test.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	g, diags := Compile(spec, nil)
+	if diags.HasErrors() {
+		t.Fatalf("compile: %s", diags.Error())
+	}
+	env := g.Environments["shell.strict_env"]
+	if env == nil {
+		t.Fatal("environment shell.strict_env not found")
+	}
+	if env.PolicyMode != "strict" {
+		t.Errorf("expected policy_mode 'strict', got %q", env.PolicyMode)
+	}
+}
+
+func TestCompileEnvironments_InvalidPolicyMode(t *testing.T) {
+	// Invalid policy_mode should error.
+	src := environmentWorkflow(`
+  environment "shell" "bad" {
+    policy_mode = "lax"
+  }
+`, "")
+	spec, diags := Parse("test.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	_, diags = Compile(spec, nil)
+	if !diags.HasErrors() {
+		t.Fatal("expected compile error for invalid policy_mode")
+	}
+	if !strings.Contains(diags.Error(), "policy_mode") {
+		t.Errorf("expected error about policy_mode, got: %s", diags.Error())
+	}
+}
+
+func TestCompileEnvironments_OSAttribute(t *testing.T) {
+	// Environment with os attribute should parse correctly.
+	src := environmentWorkflow(`
+  environment "shell" "linux_env" {
+    os = "linux"
+  }
+`, "")
+	spec, diags := Parse("test.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	g, diags := Compile(spec, nil)
+	if diags.HasErrors() {
+		t.Fatalf("compile: %s", diags.Error())
+	}
+	env := g.Environments["shell.linux_env"]
+	if env == nil {
+		t.Fatal("environment shell.linux_env not found")
+	}
+	if env.OS != "linux" {
+		t.Errorf("expected os 'linux', got %q", env.OS)
+	}
+}
+
+func TestCompileEnvironments_TypeSpecific(t *testing.T) {
+	// Environment with unknown attributes should be collected in TypeSpecific
+	// when the registry handler permits them.
+	src := environmentWorkflow(`
+  environment "permissive" "custom" {
+    custom_attr = "value"
+    another     = 42
+  }
+`, "")
+	spec, diags := Parse("test.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	// Use a permissive test registry that allows any attribute.
+	registry := &testEnvRegistry{handler: &testPermissiveHandler{typ: "permissive"}}
+	g, diags := CompileWithOpts(spec, nil, CompileOpts{EnvRegistry: registry})
+	if diags.HasErrors() {
+		t.Fatalf("compile: %s", diags.Error())
+	}
+	env := g.Environments["permissive.custom"]
+	if env == nil {
+		t.Fatal("environment permissive.custom not found")
+	}
+	if len(env.TypeSpecific) == 0 {
+		t.Fatal("expected TypeSpecific to contain unknown attributes")
+	}
+	val := env.TypeSpecific["custom_attr"]
+	if val == cty.NilVal || !val.IsKnown() || val.AsString() != "value" {
+		t.Errorf("expected TypeSpecific['custom_attr'] = 'value', got %v", val)
+	}
+	val2 := env.TypeSpecific["another"]
+	if val2 == cty.NilVal || !val2.IsKnown() || !cty.NumberIntVal(42).RawEquals(val2) {
+		t.Errorf("expected TypeSpecific['another'] = 42, got %v", val2)
+	}
+}
+
+// testEnvRegistry is a test double that returns a single handler.
+type testEnvRegistry struct {
+	handler EnvHandler
+}
+
+func (r *testEnvRegistry) Lookup(envType string) EnvHandler {
+	if r.handler != nil && r.handler.Type() == envType {
+		return r.handler
+	}
+	return nil
+}
+
+func (r *testEnvRegistry) Registered() []string {
+	if r.handler == nil {
+		return nil
+	}
+	return []string{r.handler.Type()}
+}
+
+// testPermissiveHandler is a test double that accepts any environment attribute.
+type testPermissiveHandler struct {
+	typ string
+}
+
+func (h *testPermissiveHandler) Type() string                          { return h.typ }
+func (h *testPermissiveHandler) SupportedOSes() []string               { return nil }
+func (h *testPermissiveHandler) ValidateFields(_ hcl.Body) hcl.Diagnostics { return nil }
+func (h *testPermissiveHandler) IsolationKind() EnvIsolationKind         { return EnvIsolationNone }

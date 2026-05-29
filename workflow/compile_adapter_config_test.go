@@ -3,6 +3,7 @@ package workflow
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -168,5 +169,124 @@ state "done" { terminal = true }
 	}
 	if ad.Environment != "shell.ci" {
 		t.Errorf("adapter Environment = %q, want 'shell.ci'", ad.Environment)
+	}
+}
+
+// TestAdapterSecretsBlock_Compiles verifies that a secrets block inside an
+// adapter declaration is extracted into AdapterNode.Secrets.
+func TestAdapterSecretsBlock_Compiles(t *testing.T) {
+	src := `
+workflow {
+  name = "x"
+  version       = "0.1"
+  initial_state = "work"
+  target_state  = "done"
+}
+
+adapter "shell" "bot" {
+  secrets {
+    api_key = "key123"
+  }
+}
+
+step "work" {
+  target = adapter.shell.bot
+  outcome "success" { next = "done" }
+}
+state "done" { terminal = true }
+`
+	spec, diags := Parse("t.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	g, diags := Compile(spec, testSchemas)
+	if diags.HasErrors() {
+		t.Fatalf("expected adapter secrets to compile without error, got: %s", diags.Error())
+	}
+	ad := g.Adapters["shell.bot"]
+	if ad == nil {
+		t.Fatal("adapter 'shell.bot' not found")
+	}
+	if len(ad.Secrets) != 1 || ad.Secrets["api_key"] == nil {
+		t.Errorf("expected Secrets to contain api_key expression, got %v", ad.Secrets)
+	}
+}
+
+// TestAdapterEnvironmentCompatibility_Match verifies that an adapter with
+// CompatibleEnvironments compiles when the environment type matches.
+func TestAdapterEnvironmentCompatibility_Match(t *testing.T) {
+	src := `
+workflow {
+  name = "x"
+  version       = "0.1"
+  initial_state = "work"
+  target_state  = "done"
+}
+
+environment "shell" "default" {
+  variables = { CI = "true" }
+}
+
+adapter "shell" "bot" {}
+
+step "work" {
+  target = adapter.shell.bot
+  outcome "success" { next = "done" }
+}
+state "done" { terminal = true }
+`
+	spec, diags := Parse("t.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	schemas := map[string]AdapterInfo{
+		"shell": {
+			CompatibleEnvironments: []string{"shell"},
+		},
+	}
+	_, diags = Compile(spec, schemas)
+	if diags.HasErrors() {
+		t.Fatalf("expected compatibility match to compile without error, got: %s", diags.Error())
+	}
+}
+
+// TestAdapterEnvironmentCompatibility_Mismatch verifies that an adapter with
+// CompatibleEnvironments emits an error when the environment type does not match.
+func TestAdapterEnvironmentCompatibility_Mismatch(t *testing.T) {
+	src := `
+workflow {
+  name = "x"
+  version       = "0.1"
+  initial_state = "work"
+  target_state  = "done"
+}
+
+environment "shell" "default" {}
+
+adapter "shell" "bot" {
+  environment = shell.default
+}
+
+step "work" {
+  target = adapter.shell.bot
+  outcome "success" { next = "done" }
+}
+state "done" { terminal = true }
+`
+	spec, diags := Parse("t.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	schemas := map[string]AdapterInfo{
+		"shell": {
+			CompatibleEnvironments: []string{"container"},
+		},
+	}
+	_, diags = Compile(spec, schemas)
+	if !diags.HasErrors() {
+		t.Fatal("expected compile error for incompatible environment")
+	}
+	if !strings.Contains(diags.Error(), "compatible_environments") {
+		t.Errorf("expected error about compatible_environments, got: %s", diags.Error())
 	}
 }

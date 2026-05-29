@@ -52,6 +52,46 @@ step "start" {
 state "__done__" { terminal = true }
 `
 
+func TestVariableCompile_SecretFlag(t *testing.T) {
+	src := `
+workflow {
+  name = "test"
+  version       = "0.1"
+  initial_state = "start"
+  target_state  = "__done__"
+}
+
+adapter "noop" "default" {}
+
+variable "api_key" {
+  type    = string
+  secret  = true
+  default = "shh"
+}
+
+step "start" {
+  target = adapter.noop.default
+  outcome "success" { next = "__done__" }
+}
+state "__done__" { terminal = true }
+`
+	spec, diags := Parse("t.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	g, diags := Compile(spec, nil)
+	if diags.HasErrors() {
+		t.Fatalf("compile: %s", diags.Error())
+	}
+	v := g.Variables["api_key"]
+	if v == nil {
+		t.Fatal("variable 'api_key' not found")
+	}
+	if !v.Secret {
+		t.Errorf("expected variable 'api_key' to have Secret=true")
+	}
+}
+
 func TestVariableCompile_TypeDefaults(t *testing.T) {
 	src := `
 workflow {
@@ -77,7 +117,6 @@ step "start" {
 }
 state "__done__" { terminal = true }
 `
-
 	spec, diags := Parse("test.hcl", []byte(src))
 	if diags.HasErrors() {
 		t.Fatalf("parse: %s", diags)

@@ -12,12 +12,6 @@ import (
 	"github.com/zclconf/go-cty/cty"
 )
 
-// Registered environment types for v0.3.0. Phase 4 will introduce a plugin-based
-// type registry; for now we hardcode "shell" as the only supported type.
-var registeredEnvironmentTypes = map[string]bool{
-	"shell": true,
-}
-
 // environmentNamePattern validates that environment names match ^[a-zA-Z][a-zA-Z0-9_-]*$
 var environmentNamePattern = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_-]*$`)
 
@@ -64,7 +58,7 @@ func compileEnvironments(g *FSMGraph, spec *Spec, opts CompileOpts) hcl.Diagnost
 // compileEnvironmentBlock validates and compiles a single environment declaration.
 func compileEnvironmentBlock(g *FSMGraph, envSpec EnvironmentSpec, opts CompileOpts, seen map[string]bool) hcl.Diagnostics {
 	// Validate block basics (type, name, duplicates)
-	diags := validateEnvironmentBasics(envSpec, seen)
+	diags := validateEnvironmentBasics(envSpec, opts, seen)
 	if diags.HasErrors() {
 		return diags
 	}
@@ -72,11 +66,69 @@ func compileEnvironmentBlock(g *FSMGraph, envSpec EnvironmentSpec, opts CompileO
 	key := fmt.Sprintf("%s.%s", envSpec.Type, envSpec.Name)
 	seen[key] = true
 
+	registry := effectiveEnvRegistry(&opts)
+	handler := registry.Lookup(envSpec.Type)
+	if handler == nil {
+		// Already diagnosed in validateEnvironmentBasics; skip further work.
+		return diags
+	}
+
+	// Validate known fields via handler.
+	diags = append(diags, handler.ValidateFields(envSpec.Remain)...)
+
 	// Parse variables and config attributes
 	attrs, d := envSpec.Remain.JustAttributes()
 	diags = append(diags, d...)
 
-	// Decode variables and config
+	// Parse optional policy_mode (default "permissive").
+	policyMode := "permissive"
+	if attr, ok := attrs["policy_mode"]; ok {
+		val, valDiags := attr.Expr.Value(nil)
+		diags = append(diags, valDiags...)
+		if valDiags.HasErrors() {
+			return diags
+		}
+		if val.Type() == cty.String && val.IsKnown() && !val.IsNull() {
+			pm := val.AsString()
+			if pm != "permissive" && pm != "strict" {
+				diags = append(diags, &hcl.Diagnostic{
+					Severity: hcl.DiagError,
+					Summary:  fmt.Sprintf("environment %q: policy_mode must be \"permissive\" or \"strict\"", key),
+					Subject:  attr.Expr.Range().Ptr(),
+				})
+			} else {
+				policyMode = pm
+			}
+		}
+	}
+
+	// Parse optional os attribute.
+	var osVal string
+	if attr, ok := attrs["os"]; ok {
+		val, valDiags := attr.Expr.Value(nil)
+		diags = append(diags, valDiags...)
+		if valDiags.HasErrors() {
+			return diags
+		}
+		if val.Type() == cty.String && val.IsKnown() && !val.IsNull() {
+			osVal = val.AsString()
+		}
+	}
+
+	// OS gate: if os is set and does not match the host GOOS, emit error.
+	if osVal != "" && osVal != envRegistryHostOS {
+		var supportedList string
+		if supported := handler.SupportedOSes(); len(supported) > 0 {
+			supportedList = fmt.Sprintf("; handler supports %v", supported)
+		}
+		diags = append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  fmt.Sprintf("environment %q: os %q does not match host %q%s", key, osVal, envRegistryHostOS, supportedList),
+			Subject:  attrRangePtr(attrs, "os"),
+		})
+	}
+
+	// Decode variables and config.
 	variables, d := decodeEnvironmentVariables(attrs, opts)
 	diags = append(diags, d...)
 	config, d := decodeEnvironmentConfig(attrs, opts)
@@ -86,29 +138,63 @@ func compileEnvironmentBlock(g *FSMGraph, envSpec EnvironmentSpec, opts CompileO
 		return diags
 	}
 
-	// Check for controlled-set conflicts
+	// Collect type-specific attributes (everything other than known ones).
+	typeSpecific := make(map[string]cty.Value)
+	for name, attr := range attrs {
+		switch name {
+		case "variables", "config", "policy_mode", "os":
+			continue
+		}
+		val, valDiags := attr.Expr.Value(nil)
+		diags = append(diags, valDiags...)
+		if !valDiags.HasErrors() {
+			typeSpecific[name] = val
+		}
+	}
+
+	// Check for controlled-set conflicts.
 	diags = append(diags, checkShellControlledSetConflicts(envSpec.Type, variables, attrs)...)
 
-	// Store the compiled environment
+	// Store the compiled environment.
 	g.Environments[key] = &EnvironmentNode{
-		Type:      envSpec.Type,
-		Name:      envSpec.Name,
-		Variables: variables,
-		Config:    config,
+		Type:         envSpec.Type,
+		Name:         envSpec.Name,
+		Variables:    variables,
+		Config:       config,
+		PolicyMode:   policyMode,
+		OS:           osVal,
+		TypeSpecific: typeSpecific,
 	}
 
 	return diags
 }
 
+// attrRangePtr returns the source range pointer for an attribute by name,
+// or nil if the attribute is absent.
+func attrRangePtr(attrs hcl.Attributes, name string) *hcl.Range {
+	if attr, ok := attrs[name]; ok {
+		r := attr.Range
+		return &r
+	}
+	return nil
+}
+
 // validateEnvironmentBasics validates type, name, and duplicate checks for an environment block.
-func validateEnvironmentBasics(envSpec EnvironmentSpec, seen map[string]bool) hcl.Diagnostics {
+func validateEnvironmentBasics(envSpec EnvironmentSpec, opts CompileOpts, seen map[string]bool) hcl.Diagnostics {
 	var diags hcl.Diagnostics
 
-	// Validate type is registered.
-	if !registeredEnvironmentTypes[envSpec.Type] {
+	registry := effectiveEnvRegistry(&opts)
+	if handler := registry.Lookup(envSpec.Type); handler == nil {
+		types := registry.Registered()
+		var typesList string
+		if len(types) == 0 {
+			typesList = "(none registered)"
+		} else {
+			typesList = fmt.Sprintf("registered types: %v", types)
+		}
 		diags = append(diags, &hcl.Diagnostic{
 			Severity: hcl.DiagError,
-			Summary:  fmt.Sprintf("environment type %q is not registered (v0.3.0 only supports 'shell'; other types are Phase 4 work)", envSpec.Type),
+			Summary:  fmt.Sprintf("environment type %q is not registered (%s)", envSpec.Type, typesList),
 			Subject:  envSpec.Remain.MissingItemRange().Ptr(),
 		})
 	}

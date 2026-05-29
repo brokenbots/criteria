@@ -48,6 +48,9 @@ type CompileOpts struct {
 	// compiles so callee adapter config and step input are fully validated.
 	// Set by the CLI compile path; nil when compiling standalone without adapters.
 	Schemas map[string]AdapterInfo
+	// EnvRegistry is the environment-type registry used to validate environment
+	// blocks. When nil, a built-in registry that only knows "shell" is used.
+	EnvRegistry EnvRegistry
 }
 
 // Compile validates a Spec and returns an executable FSMGraph. It is a
@@ -115,6 +118,10 @@ func CompileWithContext(ctx context.Context, spec *Spec, schemas map[string]Adap
 	// available for the back-edge walk (W07).
 	diags = append(diags, warnBackEdges(g)...)
 	diags = append(diags, warnCrossStepFieldRefs(g, schemas)...)
+	// Secret-taint propagation pass: marks steps that transitively receive
+	// secret data via secret_input, input referencing secret variables, or
+	// predecessor taint propagation.
+	diags = append(diags, TaintPass(g, schemas)...)
 	// Reserved-name checks only apply to user-authored top-level workflows.
 	// Sub-workflow bodies (LoadDepth > 0) are synthetic and intentionally use
 	// the "_continue" name as a terminal state.

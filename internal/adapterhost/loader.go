@@ -795,9 +795,10 @@ func stringsTrim(s string) string {
 // an empty AdapterInfo (permissive: any keys accepted by the compiler).
 func AdapterInfoFromProto(resp *v2.InfoResponse) workflow.AdapterInfo {
 	return workflow.AdapterInfo{
-		ConfigSchema: protoToConfigSchema(resp.GetConfigSchema()),
-		InputSchema:  protoToConfigSchema(resp.GetInputSchema()),
-		Capabilities: append([]string(nil), resp.GetCapabilities()...),
+		ConfigSchema:           protoToConfigSchema(resp.GetConfigSchema()),
+		InputSchema:            protoToConfigSchema(resp.GetInputSchema()),
+		Capabilities:           append([]string(nil), resp.GetCapabilities()...),
+		CompatibleEnvironments: append([]string(nil), resp.GetCompatibleEnvironments()...),
 	}
 }
 
@@ -808,9 +809,10 @@ func protoToConfigSchema(s *v2.AdapterSchemaProto) map[string]workflow.ConfigFie
 	out := make(map[string]workflow.ConfigField, len(s.GetFields()))
 	for k, f := range s.GetFields() {
 		out[k] = workflow.ConfigField{
-			Required: f.GetRequired(),
-			Type:     protoToConfigFieldType(f.GetType()),
-			Doc:      f.GetDescription(),
+			Required:  f.GetRequired(),
+			Type:      protoToConfigFieldType(f.GetType()),
+			Doc:       f.GetDescription(),
+			Sensitive: f.GetSensitive(),
 		}
 	}
 	return out
