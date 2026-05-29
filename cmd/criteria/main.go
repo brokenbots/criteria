@@ -23,6 +23,7 @@ func main() {
 	root.AddCommand(cli.NewValidateCmd())
 	root.AddCommand(cli.NewStatusCmd())
 	root.AddCommand(cli.NewStopCmd())
+	root.AddCommand(cli.NewAdapterCmd())
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

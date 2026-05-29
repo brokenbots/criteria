@@ -632,6 +632,14 @@ func parseCompileForCli(ctx context.Context, workflowPath string, subworkflowRoo
 		workflowDir = filepath.Dir(workflowPath)
 	}
 
+	// Compile-time auto-pull: if the workflow declares OCI adapter references,
+	// ensure the lockfile is present, complete, and binaries are cached.
+	if oci, err := hasOCIReferences(workflowDir, spec); err == nil && oci {
+		if err := autoPullCompileAdapters(ctx, workflowDir, spec); err != nil {
+			return nil, nil, err
+		}
+	}
+
 	graph, diags := workflow.CompileWithContext(ctx, spec, schemas, workflow.CompileOpts{
 		WorkflowDir:         workflowDir,
 		SubWorkflowResolver: &workflow.LocalSubWorkflowResolver{AllowedRoots: subworkflowRoots},
