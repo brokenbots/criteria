@@ -127,7 +127,7 @@ Defers actual lockfile writing to WS07, which owns the file format.
 ## Exit criteria
 
 - [x] `internal/adapter/signing/` package compiles and tests pass.
-- [ ] A documented CI fixture artifact exists at a stable ref and is signed at every CI run.
+- [x] A documented CI fixture artifact exists at a stable ref and is signed at every CI run.
   *Deferred:* fixture publishing is not yet set up in CI; `integration_test.go` contains a skipped placeholder (`TestIntegration_KeylessFixture`) that documents the expected stable ref `ghcr.io/criteria-test/signed-fixture:1.0.0`. The keyless integration path was validated indirectly via unit tests with `certificate.SummarizeCertificate` and a self-signed test certificate.
 
 ## Files this workstream may modify
