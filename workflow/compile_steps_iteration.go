@@ -75,11 +75,14 @@ func compileIteratingStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[str
 	} else {
 		inputMap, inputExprs, d := decodeStepInput(g, sp, schemas, opts, adapterType)
 		diags = append(diags, d...)
+		secretInputMap, secretInputExprs, d := decodeStepSecretInput(g, sp, schemas, opts, adapterType)
+		diags = append(diags, d...)
 		if ie.While == nil {
 			diags = append(diags, validateWhileRefs(sp.Name, inputExprs)...)
+			diags = append(diags, validateWhileRefs(sp.Name, secretInputExprs)...)
 		}
 		// each.* references are valid inside iterating steps; no error emitted.
-		node = newAdapterStepNode(sp, spec, adapterRef, effectiveOnCrash, envKey, timeout, inputMap, inputExprs)
+		node = newAdapterStepNode(sp, spec, adapterRef, effectiveOnCrash, envKey, timeout, inputMap, inputExprs, secretInputMap, secretInputExprs)
 		diags = append(diags, maybeCopilotAliasWarnings(sp.Name, adapterType, node.AllowTools)...)
 		// parallel_safe capability gate: when the step uses parallel = [...] the
 		// adapter must declare "parallel_safe". When the adapter is absent from the
@@ -87,7 +90,7 @@ func compileIteratingStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[str
 		// here and rely on the runtime gate in evaluateParallel instead.
 		if ie.Parallel != nil {
 			if info, ok := adapterInfo(schemas, adapterType); ok {
-				if !adapterHasCapability(info, "parallel_safe") {
+				if !adapterHasCapability(&info, "parallel_safe") {
 					diags = append(diags, &hcl.Diagnostic{
 						Severity: hcl.DiagError,
 						Summary: fmt.Sprintf(

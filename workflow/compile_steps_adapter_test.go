@@ -266,3 +266,51 @@ state "done" { terminal = true }
 		}
 	}
 }
+
+// TestStepSecretInput_Compiles verifies that a step with a secret_input block
+// compiles correctly and the expressions are stored in the node.
+func TestStepSecretInput_Compiles(t *testing.T) {
+	src := `
+workflow {
+  name = "x"
+  version       = "0.1"
+  initial_state = "run"
+  target_state  = "done"
+}
+
+variable "api_key" { type = string }
+
+adapter "shell" "default" {}
+
+step "run" {
+  target = adapter.shell.default
+  input {
+    command = "echo hi"
+  }
+  secret_input {
+    api_key = var.api_key
+  }
+  outcome "success" { next = "done" }
+}
+state "done" { terminal = true }
+`
+	spec, diags := Parse("t.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	// Use nil schemas to skip input validation so secret_input fields are accepted.
+	g, diags := Compile(spec, nil)
+	if diags.HasErrors() {
+		t.Fatalf("expected secret_input to compile without error, got: %s", diags.Error())
+	}
+	step := g.Steps["run"]
+	if step == nil {
+		t.Fatal("step 'run' not found")
+	}
+	if len(step.SecretInputs) != 1 || step.SecretInputs["api_key"] != "" {
+		t.Errorf("expected SecretInputs to contain api_key, got %v", step.SecretInputs)
+	}
+	if len(step.SecretInputExprs) != 1 || step.SecretInputExprs["api_key"] == nil {
+		t.Errorf("expected SecretInputExprs to contain api_key expression, got %v", step.SecretInputExprs)
+	}
+}

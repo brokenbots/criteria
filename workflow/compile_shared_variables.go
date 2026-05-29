@@ -50,6 +50,15 @@ func compileSharedVariables(g *FSMGraph, spec *Spec, opts CompileOpts) hcl.Diagn
 			InitialValue: initialVal,
 			Description:  sv.Description,
 		}
+		if sv.Remain != nil {
+			attrs, _ := sv.Remain.JustAttributes()
+			if secretAttr, ok := attrs["secret"]; ok {
+				val, valDiags := secretAttr.Expr.Value(nil)
+				if !valDiags.HasErrors() && val.Type() == cty.Bool && val.IsKnown() && !val.IsNull() {
+					g.SharedVariables[name].Secret = val.True()
+				}
+			}
+		}
 		g.SharedVariableOrder = append(g.SharedVariableOrder, name)
 	}
 
@@ -102,7 +111,7 @@ func compileSharedVarInitialValue(name string, remain hcl.Body, typ cty.Type, de
 	diags = append(diags, d...)
 
 	for k, attr := range attrs {
-		if k != "value" {
+		if k != "value" && k != "secret" {
 			r := attr.NameRange
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagError,

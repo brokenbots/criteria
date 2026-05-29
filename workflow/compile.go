@@ -102,7 +102,7 @@ func CompileWithContext(ctx context.Context, spec *Spec, schemas map[string]Adap
 	diags = append(diags, compileVariables(g, spec)...)
 	diags = append(diags, compileLocals(g, spec, opts)...)
 	diags = append(diags, compileSharedVariables(g, spec, opts)...)
-	diags = append(diags, compileEnvironments(g, spec, opts)...)
+	diags = append(diags, compileEnvironments(g, spec, opts, builtinEnvRegistry())...)
 	diags = append(diags, compileSubworkflows(ctx, g, spec, opts)...)
 	diags = append(diags, compileOutputs(g, spec, opts)...)
 	diags = append(diags, compileAdapters(g, spec, schemas, opts)...)
@@ -115,6 +115,10 @@ func CompileWithContext(ctx context.Context, spec *Spec, schemas map[string]Adap
 	// available for the back-edge walk (W07).
 	diags = append(diags, warnBackEdges(g)...)
 	diags = append(diags, warnCrossStepFieldRefs(g, schemas)...)
+	// Secret-taint propagation pass: marks steps that transitively receive
+	// secret data via secret_input, input referencing secret variables, or
+	// predecessor taint propagation.
+	diags = append(diags, TaintPass(g, schemas)...)
 	// Reserved-name checks only apply to user-authored top-level workflows.
 	// Sub-workflow bodies (LoadDepth > 0) are synthetic and intentionally use
 	// the "_continue" name as a terminal state.
@@ -135,24 +139,25 @@ func CompileWithContext(ctx context.Context, spec *Spec, schemas map[string]Adap
 // newFSMGraph allocates a fresh FSMGraph seeded from spec's top-level fields.
 func newFSMGraph(spec *Spec) *FSMGraph {
 	g := &FSMGraph{
-		Name:            spec.Header.Name,
-		InitialState:    spec.Header.InitialState,
-		TargetState:     spec.Header.TargetState,
-		Variables:       map[string]*VariableNode{},
-		Locals:          map[string]*LocalNode{},
-		SharedVariables: map[string]*SharedVariableNode{},
-		Environments:    map[string]*EnvironmentNode{},
-		Outputs:         map[string]*OutputNode{},
-		OutputOrder:     []string{},
-		Adapters:        map[string]*AdapterNode{},
-		AdapterOrder:    []string{},
-		Subworkflows:    map[string]*SubworkflowNode{},
-		Steps:           map[string]*StepNode{},
-		States:          map[string]*StateNode{},
-		Waits:           map[string]*WaitNode{},
-		Approvals:       map[string]*ApprovalNode{},
-		Switches:        map[string]*SwitchNode{},
-		Policy:          DefaultPolicy,
+		Name:             spec.Header.Name,
+		InitialState:     spec.Header.InitialState,
+		TargetState:      spec.Header.TargetState,
+		Variables:        map[string]*VariableNode{},
+		Locals:           map[string]*LocalNode{},
+		SharedVariables:  map[string]*SharedVariableNode{},
+		Environments:     map[string]*EnvironmentNode{},
+		Outputs:          map[string]*OutputNode{},
+		OutputOrder:      []string{},
+		Adapters:         map[string]*AdapterNode{},
+		AdapterOrder:     []string{},
+		Subworkflows:     map[string]*SubworkflowNode{},
+		Steps:            map[string]*StepNode{},
+		States:           map[string]*StateNode{},
+		Waits:            map[string]*WaitNode{},
+		Approvals:        map[string]*ApprovalNode{},
+		Switches:         map[string]*SwitchNode{},
+		ResolvedPolicies: map[string]*ResolvedPolicy{},
+		Policy:           DefaultPolicy,
 	}
 	if spec.Header.Policy != nil {
 		if spec.Header.Policy.MaxTotalSteps > 0 {
