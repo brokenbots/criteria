@@ -18,21 +18,21 @@ adapter "noop" "default" {}
 
 step "build" {
   target = adapter.noop.default
-  outcome "success" { next = "decide" }
+  outcome "success" { next = switch.decide }
 }
 
 switch "decide" {
   condition {
     match = var.env == "prod"
-    next  = state.deploy
+    next = state.deploy
   }
   condition {
     match = var.env == "staging"
-    next  = state.deploy_staging
+    next = state.deploy_staging
   }
   condition {
     match = steps.build.exit_code == "0"
-    next  = state.deploy_staging
+    next = state.deploy_staging
   }
   default {
     next = state.skip_deploy

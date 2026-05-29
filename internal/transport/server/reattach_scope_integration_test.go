@@ -55,8 +55,8 @@ step "deploy" {
   input {
     command = "echo ${steps.build.stdout}"
   }
-  outcome "success" { next = "__done__" }
-  outcome "failure" { next = "__done__" }
+  outcome "success" { next = step.__done__ }
+  outcome "failure" { next = step.__done__ }
 }
 state "__done__" { terminal = true }
 `

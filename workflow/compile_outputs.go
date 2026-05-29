@@ -14,7 +14,7 @@ import (
 )
 
 // compileOutputs decodes each output{ value=... } block, validates the value
-// expression's free variables (must be in var/local/each/steps/shared_variable),
+// expression's free variables (must be in var/local/each/steps/data),
 // parses optional type and description attributes, and stores the compiled
 // output in g.Outputs.
 //

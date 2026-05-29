@@ -29,7 +29,7 @@ step "compute" {
   input {
     command = "echo Envelope: ${local.envelope}"
   }
-  outcome "success" { next = "done" }
+  outcome "success" { next = state.done }
 }
 
 state "done" {

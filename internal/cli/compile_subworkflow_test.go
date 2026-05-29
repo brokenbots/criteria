@@ -85,7 +85,7 @@ subworkflow "inner" {
 
 step "run_inner" {
   target = subworkflow.inner
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 
 state "done" {
@@ -134,7 +134,7 @@ step "run_inner" {
   input {
     greeting = "hello"
   }
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 
 state "done" {
@@ -183,7 +183,7 @@ subworkflow "inner" {
 
 step "run_inner" {
   target = subworkflow.inner
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 
 state "done" {
@@ -239,7 +239,7 @@ step "run" {
   input {
     command = "echo hi"
   }
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 
 state "done" {
@@ -273,7 +273,7 @@ step "run" {
   input {
     command = "echo hi"
   }
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 
 state "done" {
@@ -331,7 +331,7 @@ step "greet" {
   input {
     greeting = "hello"
   }
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 
 state "done" {

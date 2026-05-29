@@ -28,7 +28,7 @@ func (n *switchNode) Name() string { return n.node.Name }
 // is evaluated and stored as the switch node's step outputs so that subsequent
 // nodes can reference switch.<name>.<key> (accessible via steps.<name>.<key>).
 //
-// When next = "return" is set on a matched condition or the default, the switch
+// When next = step.return is set on a matched condition or the default, the switch
 // bubbles the return to the caller (mirrors outcome block behaviour from W15).
 func (n *switchNode) Evaluate(ctx context.Context, st *RunState, deps Deps) (string, error) {
 	_ = ctx

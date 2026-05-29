@@ -1,6 +1,6 @@
 package engine
 
-// shared_var_store_test.go — unit tests for SharedVarStore.
+// data_store_test.go — unit tests for DataStore.
 
 import (
 	"sync"
@@ -13,101 +13,110 @@ import (
 	"github.com/brokenbots/criteria/workflow"
 )
 
-func newTestStore(vars map[string]*workflow.SharedVariableNode) *SharedVarStore {
+func newTestStore(vars map[string]*workflow.DataNode) *DataStore {
 	g := &workflow.FSMGraph{
-		SharedVariables: vars,
+		Data: map[string]map[string]*workflow.DataNode{
+			"internal": vars,
+		},
+		DataOrder: make([]workflow.DataRef, 0, len(vars)),
 	}
-	return NewSharedVarStore(g)
+	for name := range vars {
+		g.DataOrder = append(g.DataOrder, workflow.DataRef{Kind: "internal", Name: name})
+	}
+	return NewDataStore(g)
 }
 
-func TestSharedVarStore_GetSet_String(t *testing.T) {
-	store := newTestStore(map[string]*workflow.SharedVariableNode{
-		"status": {Name: "status", Type: cty.String, InitialValue: cty.StringVal("pending")},
+func TestDataStore_GetSet_String(t *testing.T) {
+	store := newTestStore(map[string]*workflow.DataNode{
+		"status": {Kind: "internal", Name: "status", Type: cty.String, InitialValue: cty.StringVal("pending")},
 	})
 
-	v, err := store.Get("status")
+	v, err := store.Get("internal", "status")
 	require.NoError(t, err)
 	assert.Equal(t, "pending", v.AsString())
 
-	require.NoError(t, store.Set("status", cty.StringVal("done")))
+	require.NoError(t, store.Set("internal", "status", cty.StringVal("done")))
 
-	v, err = store.Get("status")
+	v, err = store.Get("internal", "status")
 	require.NoError(t, err)
 	assert.Equal(t, "done", v.AsString())
 }
 
-func TestSharedVarStore_GetSet_Number(t *testing.T) {
-	store := newTestStore(map[string]*workflow.SharedVariableNode{
-		"counter": {Name: "counter", Type: cty.Number, InitialValue: cty.NumberIntVal(0)},
+func TestDataStore_GetSet_Number(t *testing.T) {
+	store := newTestStore(map[string]*workflow.DataNode{
+		"counter": {Kind: "internal", Name: "counter", Type: cty.Number, InitialValue: cty.NumberIntVal(0)},
 	})
 
-	v, err := store.Get("counter")
+	v, err := store.Get("internal", "counter")
 	require.NoError(t, err)
 	f, _ := v.AsBigFloat().Float64()
 	assert.Equal(t, float64(0), f)
 
-	require.NoError(t, store.Set("counter", cty.NumberIntVal(42)))
-	v, err = store.Get("counter")
+	require.NoError(t, store.Set("internal", "counter", cty.NumberIntVal(42)))
+	v, err = store.Get("internal", "counter")
 	require.NoError(t, err)
 	f, _ = v.AsBigFloat().Float64()
 	assert.Equal(t, float64(42), f)
 }
 
-func TestSharedVarStore_Get_Undeclared(t *testing.T) {
-	store := newTestStore(map[string]*workflow.SharedVariableNode{})
-	_, err := store.Get("nope")
+func TestDataStore_Get_Undeclared(t *testing.T) {
+	store := newTestStore(map[string]*workflow.DataNode{})
+	_, err := store.Get("internal", "nope")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not declared")
 }
 
-func TestSharedVarStore_Set_Undeclared(t *testing.T) {
-	store := newTestStore(map[string]*workflow.SharedVariableNode{})
-	err := store.Set("nope", cty.StringVal("x"))
+func TestDataStore_Set_Undeclared(t *testing.T) {
+	store := newTestStore(map[string]*workflow.DataNode{})
+	err := store.Set("internal", "nope", cty.StringVal("x"))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not declared")
 }
 
-func TestSharedVarStore_Set_TypeMismatch(t *testing.T) {
-	store := newTestStore(map[string]*workflow.SharedVariableNode{
-		"counter": {Name: "counter", Type: cty.Number, InitialValue: cty.NumberIntVal(0)},
+func TestDataStore_Set_TypeMismatch(t *testing.T) {
+	store := newTestStore(map[string]*workflow.DataNode{
+		"counter": {Kind: "internal", Name: "counter", Type: cty.Number, InitialValue: cty.NumberIntVal(0)},
 	})
-	err := store.Set("counter", cty.StringVal("not-a-number"))
+	err := store.Set("internal", "counter", cty.StringVal("not-a-number"))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "type")
 }
 
-func TestSharedVarStore_NoInitialValue_NullDefault(t *testing.T) {
-	// When no value is declared, compile sets InitialValue = cty.NullVal(type).
-	store := newTestStore(map[string]*workflow.SharedVariableNode{
-		"flag": {Name: "flag", Type: cty.Bool, InitialValue: cty.NullVal(cty.Bool)},
+func TestDataStore_NoInitialValue_NullDefault(t *testing.T) {
+	store := newTestStore(map[string]*workflow.DataNode{
+		"flag": {Kind: "internal", Name: "flag", Type: cty.Bool, InitialValue: cty.NullVal(cty.Bool)},
 	})
-	v, err := store.Get("flag")
+	v, err := store.Get("internal", "flag")
 	require.NoError(t, err)
 	assert.True(t, v.IsNull(), "expected null initial value when no value declared")
 	assert.Equal(t, cty.Bool, v.Type())
 }
 
-func TestSharedVarStore_Snapshot(t *testing.T) {
-	store := newTestStore(map[string]*workflow.SharedVariableNode{
-		"a": {Name: "a", Type: cty.String, InitialValue: cty.StringVal("x")},
-		"b": {Name: "b", Type: cty.Number, InitialValue: cty.NumberIntVal(1)},
+func TestDataStore_Snapshot(t *testing.T) {
+	store := newTestStore(map[string]*workflow.DataNode{
+		"a": {Kind: "internal", Name: "a", Type: cty.String, InitialValue: cty.StringVal("x")},
+		"b": {Kind: "internal", Name: "b", Type: cty.Number, InitialValue: cty.NumberIntVal(1)},
 	})
 
 	snap := store.Snapshot()
-	assert.Len(t, snap, 2)
-	assert.Equal(t, "x", snap["a"].AsString())
-	f, _ := snap["b"].AsBigFloat().Float64()
+	require.Contains(t, snap, "internal")
+	internal := snap["internal"]
+	require.True(t, internal.Type().IsObjectType())
+	vals := internal.AsValueMap()
+	require.Len(t, vals, 2)
+	assert.Equal(t, "x", vals["a"].GetAttr("value").AsString())
+	f, _ := vals["b"].GetAttr("value").AsBigFloat().Float64()
 	assert.Equal(t, float64(1), f)
 
 	// Mutating the snapshot must not affect the store.
-	snap["a"] = cty.StringVal("mutated")
-	v, _ := store.Get("a")
+	vals["a"] = cty.ObjectVal(map[string]cty.Value{"value": cty.StringVal("mutated"), "type": cty.StringVal("string")})
+	v, _ := store.Get("internal", "a")
 	assert.Equal(t, "x", v.AsString())
 }
 
-func TestSharedVarStore_ConcurrentReadWrite(t *testing.T) {
-	store := newTestStore(map[string]*workflow.SharedVariableNode{
-		"counter": {Name: "counter", Type: cty.Number, InitialValue: cty.NumberIntVal(0)},
+func TestDataStore_ConcurrentReadWrite(t *testing.T) {
+	store := newTestStore(map[string]*workflow.DataNode{
+		"counter": {Kind: "internal", Name: "counter", Type: cty.Number, InitialValue: cty.NumberIntVal(0)},
 	})
 
 	const goroutines = 50
@@ -119,23 +128,23 @@ func TestSharedVarStore_ConcurrentReadWrite(t *testing.T) {
 		i := i
 		go func() {
 			defer wg.Done()
-			_ = store.Set("counter", cty.NumberIntVal(int64(i)))
+			_ = store.Set("internal", "counter", cty.NumberIntVal(int64(i)))
 		}()
 	}
 	// Readers
 	for i := 0; i < goroutines; i++ {
 		go func() {
 			defer wg.Done()
-			_, _ = store.Get("counter")
+			_, _ = store.Get("internal", "counter")
 		}()
 	}
 	wg.Wait()
 	// No panic == concurrent access is safe.
 }
 
-func TestSharedVarStore_SnapshotConcurrent(t *testing.T) {
-	store := newTestStore(map[string]*workflow.SharedVariableNode{
-		"v": {Name: "v", Type: cty.String, InitialValue: cty.StringVal("init")},
+func TestDataStore_SnapshotConcurrent(t *testing.T) {
+	store := newTestStore(map[string]*workflow.DataNode{
+		"v": {Kind: "internal", Name: "v", Type: cty.String, InitialValue: cty.StringVal("init")},
 	})
 
 	var wg sync.WaitGroup
@@ -149,34 +158,34 @@ func TestSharedVarStore_SnapshotConcurrent(t *testing.T) {
 		}()
 		go func() {
 			defer wg.Done()
-			_ = store.Set("v", cty.StringVal("new"))
+			_ = store.Set("internal", "v", cty.StringVal("new"))
 		}()
 	}
 	wg.Wait()
 }
 
-func TestNewSharedVarStore_EmptyGraph(t *testing.T) {
-	g := &workflow.FSMGraph{SharedVariables: map[string]*workflow.SharedVariableNode{}}
-	store := NewSharedVarStore(g)
+func TestNewDataStore_EmptyGraph(t *testing.T) {
+	g := &workflow.FSMGraph{Data: map[string]map[string]*workflow.DataNode{}}
+	store := NewDataStore(g)
 	snap := store.Snapshot()
 	assert.Empty(t, snap)
 }
 
-// TestSharedVarStore_SetBatch_ListType proves that the store accepts a
-// list(string) value via SetBatch. Non-scalar shared variables can only be
+// TestDataStore_SetBatch_ListType proves that the store accepts a
+// list(string) value via SetBatch. Non-scalar data can only be
 // written through a typed outcome output projection (not raw string coercion),
 // but the store itself is type-agnostic — it enforces the declared cty.Type.
-func TestSharedVarStore_SetBatch_ListType(t *testing.T) {
+func TestDataStore_SetBatch_ListType(t *testing.T) {
 	listType := cty.List(cty.String)
-	store := newTestStore(map[string]*workflow.SharedVariableNode{
-		"tags": {Name: "tags", Type: listType, InitialValue: cty.NullVal(listType)},
+	store := newTestStore(map[string]*workflow.DataNode{
+		"tags": {Kind: "internal", Name: "tags", Type: listType, InitialValue: cty.NullVal(listType)},
 	})
 
 	// Simulate the typed write path: projectedCty produces a proper list value.
 	listVal := cty.ListVal([]cty.Value{cty.StringVal("foo"), cty.StringVal("bar")})
-	require.NoError(t, store.SetBatch(map[string]cty.Value{"tags": listVal}))
+	require.NoError(t, store.SetBatch([]DataWrite{{Kind: "internal", Name: "tags", Value: listVal}}))
 
-	v, err := store.Get("tags")
+	v, err := store.Get("internal", "tags")
 	require.NoError(t, err)
 	assert.Equal(t, listType, v.Type())
 
@@ -188,33 +197,33 @@ func TestSharedVarStore_SetBatch_ListType(t *testing.T) {
 	assert.Equal(t, []string{"foo", "bar"}, elems)
 }
 
-// TestSharedVarStore_SetBatch_ListType_TypeMismatch proves that setting a
-// scalar value into a list-typed shared variable is rejected.
-func TestSharedVarStore_SetBatch_ListType_TypeMismatch(t *testing.T) {
+// TestDataStore_SetBatch_ListType_TypeMismatch proves that setting a
+// scalar value into a list-typed data is rejected.
+func TestDataStore_SetBatch_ListType_TypeMismatch(t *testing.T) {
 	listType := cty.List(cty.String)
-	store := newTestStore(map[string]*workflow.SharedVariableNode{
-		"tags": {Name: "tags", Type: listType, InitialValue: cty.NullVal(listType)},
+	store := newTestStore(map[string]*workflow.DataNode{
+		"tags": {Kind: "internal", Name: "tags", Type: listType, InitialValue: cty.NullVal(listType)},
 	})
-	err := store.SetBatch(map[string]cty.Value{"tags": cty.StringVal("not-a-list")})
+	err := store.SetBatch([]DataWrite{{Kind: "internal", Name: "tags", Value: cty.StringVal("not-a-list")}})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "type")
 }
 
-// TestSharedVarStore_SetBatch_TupleConvertsToList proves that an HCL tuple
+// TestDataStore_SetBatch_TupleConvertsToList proves that an HCL tuple
 // value (the type produced by `[a, b]` expressions) is converted to the
 // declared list type via go-cty's convert package. This is the mechanism that
 // enables `output = { items = [step.output.x, step.output.y] }` projections
-// to write to list(string) shared variables.
-func TestSharedVarStore_SetBatch_TupleConvertsToList(t *testing.T) {
+// to write to list(string) data blocks.
+func TestDataStore_SetBatch_TupleConvertsToList(t *testing.T) {
 	listType := cty.List(cty.String)
-	store := newTestStore(map[string]*workflow.SharedVariableNode{
-		"tags": {Name: "tags", Type: listType, InitialValue: cty.NullVal(listType)},
+	store := newTestStore(map[string]*workflow.DataNode{
+		"tags": {Kind: "internal", Name: "tags", Type: listType, InitialValue: cty.NullVal(listType)},
 	})
 	// HCL evaluates `[expr, expr]` as a cty.Tuple, not a cty.List.
 	tupleVal := cty.TupleVal([]cty.Value{cty.StringVal("alpha"), cty.StringVal("beta")})
-	require.NoError(t, store.SetBatch(map[string]cty.Value{"tags": tupleVal}))
+	require.NoError(t, store.SetBatch([]DataWrite{{Kind: "internal", Name: "tags", Value: tupleVal}}))
 
-	v, err := store.Get("tags")
+	v, err := store.Get("internal", "tags")
 	require.NoError(t, err)
 	assert.Equal(t, listType, v.Type())
 	var elems []string

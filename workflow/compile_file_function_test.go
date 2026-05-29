@@ -51,7 +51,7 @@ step "step1" {
   input {
     prompt = file("` + filePath + `")
   }
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 `
 }
@@ -121,7 +121,7 @@ step "step1" {
   input {
     prompt = file(var.path)
   }
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 `
 	diags := compileWorkflowInDir(t, dir, hclContent)
@@ -162,7 +162,7 @@ step "step1" {
   input {
     prompt = file(var.path)
   }
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 `
 	diags := compileWorkflowInDir(t, dir, hclContent)

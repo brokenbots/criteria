@@ -29,8 +29,8 @@ step "boot" {
     command = "printf '=== Demo (${var.mode} mode) ===\\n'"
   }
   timeout = "10s"
-  outcome "success" { next = "discover" }
-  outcome "failure" { next = "aborted" }
+  outcome "success" { next = step.discover }
+  outcome "failure" { next = state.aborted }
 }
 
 step "discover" {
@@ -39,8 +39,8 @@ step "discover" {
     command = "printf 'discovering...\\n'; for t in alpha beta gamma; do printf '  -> %s\\n' \"$t\"; sleep 0.2; done"
   }
   timeout = "30s"
-  outcome "success" { next = "process_each" }
-  outcome "failure" { next = "aborted" }
+  outcome "success" { next = step.process_each }
+  outcome "failure" { next = state.aborted }
 }
 
 step "process_each" {
@@ -50,8 +50,8 @@ step "process_each" {
     command = "printf 'processing %s (#%s)\\n' \"${each.value}\" \"${each._idx}\"; sleep 0.3"
   }
   timeout = "30s"
-  outcome "all_succeeded" { next = "review" }
-  outcome "any_failed"    { next = "aborted" }
+  outcome "all_succeeded" { next = step.review }
+  outcome "any_failed"    { next = state.aborted }
 }
 
 step "review" {
@@ -60,19 +60,19 @@ step "review" {
     command = "printf 'review ok\\n'; echo 'ok'"
   }
   timeout = "10s"
-  outcome "success" { next = "wait_brief" }
-  outcome "failure" { next = "aborted" }
+  outcome "success" { next = wait.wait_brief }
+  outcome "failure" { next = state.aborted }
 }
 
 wait "wait_brief" {
   duration = "2s"
-  outcome "elapsed" { next = "decide" }
+  outcome "elapsed" { next = switch.decide }
 }
 
 switch "decide" {
   condition {
     match = steps.review.exit_code == "0"
-    next  = step.celebrate
+    next = step.celebrate
   }
   default {
     next = state.aborted
@@ -85,8 +85,8 @@ step "celebrate" {
     command = "printf '\\n=== DONE ===\\n'"
   }
   timeout = "10s"
-  outcome "success" { next = "done" }
-  outcome "failure" { next = "aborted" }
+  outcome "success" { next = state.done }
+  outcome "failure" { next = state.aborted }
 }
 
 state "done" {

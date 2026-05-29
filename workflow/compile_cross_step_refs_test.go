@@ -39,12 +39,12 @@ workflow {
 adapter "noop" "default" {}
 step "build" {
   target = adapter.noop.default
-  outcome "success" { next = "check" }
+  outcome "success" { next = step.check }
 }
 switch "check" {
   condition {
     match = steps.build.` + field + ` == "ok"
-    next  = state.done
+    next = state.done
   }
   default { next = state.done }
 }
@@ -65,12 +65,12 @@ workflow {
 adapter "noop" "default" {}
 step "build" {
   target = adapter.noop.default
-  outcome "success" { next = "check" }
+  outcome "success" { next = step.check }
 }
 switch "check" {
   condition {
     match  = true
-    next   = state.done
+    next = state.done
     output = { x = steps.build.` + field + ` }
   }
   default { next = state.done }
@@ -93,14 +93,14 @@ workflow {
 adapter "noop" "default" {}
 step "build" {
   target = adapter.noop.default
-  outcome "success" { next = "run" }
+  outcome "success" { next = step.run }
 }
 step "run" {
   target = adapter.noop.default
   input {
     command = steps.build.` + field + `
   }
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -120,13 +120,13 @@ adapter "noop" "default" {}
 step "build" {
   target = adapter.noop.default
   outcome "success" {
-    next   = "run"
+    next = step.run
     output = { x = steps.build.` + field + ` }
   }
 }
 step "run" {
   target = adapter.noop.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -314,7 +314,7 @@ step "run" {
   input {
     command = steps.bulid.stdout
   }
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `

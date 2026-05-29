@@ -19,7 +19,7 @@ Encoding: UTF-8. Max file size: implementation-defined (default 64 MiB for file(
 
 ```ebnf
 workflow_module  := content_decl*
-content_decl     := workflow_block | variable_block | local_block | shared_var_block
+content_decl     := workflow_block | variable_block | local_block | data_block
                   | environment_block | output_block | adapter_block | subworkflow_block
                   | step_block | state_block | wait_block | approval_block
                   | switch_block | policy_block | permissions_block
@@ -32,7 +32,7 @@ workflow_attr    := "version" "=" STRING
 
 variable_block   := "variable" STRING "{" variable_attr* "}"
 local_block      := "local" STRING "{" local_attr* "}"
-shared_var_block := "shared_variable" STRING "{" shared_var_attr* "}"
+data_block       := "data" STRING STRING "{" data_attr* "}"
 environment_block:= "environment" STRING STRING "{" "}"
 output_block     := "output" STRING "{" output_attr* "}"
 adapter_block    := "adapter" STRING STRING "{" adapter_attr* config_block? "}"
@@ -45,11 +45,12 @@ switch_block     := "switch" STRING "{" condition_block* default_block? "}"
 policy_block     := "policy" "{" policy_attr* "}"
 permissions_block:= "permissions" "{" permissions_attr* "}"
 
-outcome_block    := "outcome" STRING "{" "next" "=" STRING "}"
+outcome_block    := "outcome" STRING "{" "next" "=" traversal write_block* "}"
 input_block      := "input" "{" (STRING "=" expr)* "}"
 config_block     := "config" "{" (STRING "=" expr)* "}"
-condition_block  := "condition" "{" "match" "=" expr "next" "=" STRING "}"
-default_block    := "default" "{" "next" "=" STRING "}"
+write_block      := "write" "{" "target" "=" traversal "value" "=" expr "}"
+condition_block  := "condition" "{" "match" "=" expr "next" "=" traversal "}"
+default_block    := "default" "{" "next" "=" traversal "}"
 
 expr             := STRING | NUMBER | BOOL | hcl_template | traversal
                   | func_call | binary_op | unary_op | tuple | object
@@ -68,7 +69,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 <!-- BEGIN GENERATED:blocks -->
 ### `workflow { ... }`
 
-- **Source:** [`workflow/schema.go:85`](../workflow/schema.go#L85)
+- **Source:** [`workflow/schema.go:92`](../workflow/schema.go#L92)
 - **Attributes:**
 
 | Attribute | Type | Required | Description |
@@ -83,7 +84,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `variable "name" { ... }`
 
-- **Source:** [`workflow/schema.go:126`](../workflow/schema.go#L126)
+- **Source:** [`workflow/schema.go:133`](../workflow/schema.go#L133)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -106,28 +107,28 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 - **Additional attributes:** captures the "value" expression
 
-### `shared_variable "name" { ... }`
+### `data "kind" "name" { ... }`
 
-- **Source:** [`workflow/schema.go:28`](../workflow/schema.go#L28)
-- **Labels:** `name`
+- **Source:** [`workflow/schema.go:27`](../workflow/schema.go#L27)
+- **Labels:** `kind` `name`
 - **Attributes:**
 
 | Attribute | Type | Required | Description |
 |---|---|---|---|
 | `description` | string | no | _(no description)_ |
-| `type` | hcl.Expression | no | _(no description)_ |
+| `type` | hcl.Expression | yes | _(no description)_ |
 
 - **Additional attributes:** captures the optional "value" expression
 
 ### `environment "type" "name" { ... }`
 
-- **Source:** [`workflow/schema.go:56`](../workflow/schema.go#L56)
+- **Source:** [`workflow/schema.go:63`](../workflow/schema.go#L63)
 - **Labels:** `type` `name`
 - **Additional attributes:** Captures: variables (optional, map of string env-vars), config (optional, type-specific config map).
 
 ### `output "name" { ... }`
 
-- **Source:** [`workflow/schema.go:239`](../workflow/schema.go#L239)
+- **Source:** [`workflow/schema.go:246`](../workflow/schema.go#L246)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -140,7 +141,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `adapter "type" "name" { ... }`
 
-- **Source:** [`workflow/schema.go:153`](../workflow/schema.go#L153)
+- **Source:** [`workflow/schema.go:160`](../workflow/schema.go#L160)
 - **Labels:** `type` `name`
 - **Attributes:**
 
@@ -153,7 +154,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `subworkflow "name" { ... }`
 
-- **Source:** [`workflow/schema.go:249`](../workflow/schema.go#L249)
+- **Source:** [`workflow/schema.go:256`](../workflow/schema.go#L256)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -166,7 +167,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `step "name" { ... }`
 
-- **Source:** [`workflow/schema.go:162`](../workflow/schema.go#L162)
+- **Source:** [`workflow/schema.go:169`](../workflow/schema.go#L169)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -184,7 +185,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `state "name" { ... }`
 
-- **Source:** [`workflow/schema.go:312`](../workflow/schema.go#L312)
+- **Source:** [`workflow/schema.go:337`](../workflow/schema.go#L337)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -197,7 +198,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `wait "name" { ... }`
 
-- **Source:** [`workflow/schema.go:295`](../workflow/schema.go#L295)
+- **Source:** [`workflow/schema.go:320`](../workflow/schema.go#L320)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -210,7 +211,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `approval "name" { ... }`
 
-- **Source:** [`workflow/schema.go:304`](../workflow/schema.go#L304)
+- **Source:** [`workflow/schema.go:329`](../workflow/schema.go#L329)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -223,13 +224,13 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `switch "name" { ... }`
 
-- **Source:** [`workflow/schema.go:323`](../workflow/schema.go#L323)
+- **Source:** [`workflow/schema.go:348`](../workflow/schema.go#L348)
 - **Labels:** `name`
 - **Nested blocks:** [`condition`](#condition---), [`default`](#default---)
 
 ### `permissions { ... }`
 
-- **Source:** [`workflow/schema.go:362`](../workflow/schema.go#L362)
+- **Source:** [`workflow/schema.go:387`](../workflow/schema.go#L387)
 - **Attributes:**
 
 | Attribute | Type | Required | Description |
@@ -239,7 +240,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `policy { ... }`
 
-- **Source:** [`workflow/schema.go:343`](../workflow/schema.go#L343)
+- **Source:** [`workflow/schema.go:368`](../workflow/schema.go#L368)
 - **Attributes:**
 
 | Attribute | Type | Required | Description |
@@ -251,33 +252,44 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `config { ... }`
 
-- **Source:** [`workflow/schema.go:136`](../workflow/schema.go#L136)
+- **Source:** [`workflow/schema.go:143`](../workflow/schema.go#L143)
 
 ### `input { ... }`
 
-- **Source:** [`workflow/schema.go:146`](../workflow/schema.go#L146)
+- **Source:** [`workflow/schema.go:153`](../workflow/schema.go#L153)
 
 ### `outcome "name" { ... }`
 
-- **Source:** [`workflow/schema.go:288`](../workflow/schema.go#L288)
+- **Source:** [`workflow/schema.go:298`](../workflow/schema.go#L298)
 - **Labels:** `name`
 - **Attributes:**
 
 | Attribute | Type | Required | Description |
 |---|---|---|---|
-| `next` | string | yes | _(no description)_ |
+| `next` | hcl.Expression | yes | _(no description)_ |
 
 - **Additional attributes:** captures the optional "output" expression
+- **Nested blocks:** [`write`](#write---)
 
 ### `condition { ... }`
 
-- **Source:** [`workflow/schema.go:332`](../workflow/schema.go#L332)
+- **Source:** [`workflow/schema.go:357`](../workflow/schema.go#L357)
 - **Additional attributes:** captures: match (required), next (required), output (optional)
 
 ### `default { ... }`
 
-- **Source:** [`workflow/schema.go:338`](../workflow/schema.go#L338)
+- **Source:** [`workflow/schema.go:363`](../workflow/schema.go#L363)
 - **Additional attributes:** captures: next (required), output (optional)
+
+### `write { ... }`
+
+- **Source:** [`workflow/schema.go:306`](../workflow/schema.go#L306)
+- **Attributes:**
+
+| Attribute | Type | Required | Description |
+|---|---|---|---|
+| `target` | hcl.Expression | yes | _(no description)_ |
+| `value` | hcl.Expression | yes | _(no description)_ |
 <!-- END GENERATED:blocks -->
 
 ### Notes on specific blocks
@@ -288,7 +300,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 **`local`** — Compile-time constant. Evaluate a single `value` expression; the result is frozen for the run. No side effects.
 
-**`shared_variable`** — Runtime-mutable, workflow-scoped value. `type` declares the cty type; `value` is the optional initial expression. Reads via `shared.<name>`; writes via `shared_writes` in outcome blocks.
+**`data "internal" "<name>"`** — Runtime-mutable, workflow-scoped value. `type` declares the cty type; `value` is the optional initial expression. Reads via `data.internal.<name>.value`; writes via `write { }` blocks in outcomes.
 
 **`environment`** — Declares an execution environment. First label is type (e.g. `shell`), second is name. Attributes are free-form and type-specific; no fixed schema beyond the two labels.
 
@@ -324,7 +336,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 | `each.value` / `each.key` / `each._idx` / `each._total` / `each._first` / `each._last` / `each._prev` | iterating-step expressions only | Per-iteration bindings; see Iteration semantics. |
 | `while.*` | while-modified-step expressions only | Per-iteration bindings for while-driven steps; see While iteration. |
 | `local.*` | all expressions | Compile-time constants declared with `local` blocks. |
-| `shared.*` | all expressions; mutable via `shared_writes` | Runtime-mutable shared values declared with `shared_variable` blocks. |
+| `data.<kind>.<name>.value` | all expressions; mutable via `write` blocks | Runtime-mutable values declared with `data` blocks (e.g. `data "internal"`); write via `write` blocks. |
 <!-- END GENERATED:namespaces -->
 
 ### Operator precedence (HCL)
@@ -400,7 +412,7 @@ Steps support three iteration forms, specified via attributes captured in the st
 
 1. **`for_each`** — Iterates over a list or map expression. One adapter call per element.
 2. **`count`** — Iterates a fixed number of times. `count = N` produces iterations `0` through `N-1`.
-3. **`while`** — Iterates while a boolean expression remains true. The expression is re-evaluated against the live eval context (including current `shared.*` values) before each iteration; when false, the loop exits via the aggregate outcome. The cursor's `Total = -1` signals the unbounded form. See [docs/workflow.md](workflow.md#while--condition-driven-iteration) for the full contract.
+3. **`while`** — Iterates while a boolean expression remains true. The expression is re-evaluated against the live eval context (including current `data.*` values) before each iteration; when false, the loop exits via the aggregate outcome. The cursor's `Total = -1` signals the unbounded form. See [docs/workflow.md](workflow.md#while--condition-driven-iteration) for the full contract.
 
 **`each.*` bindings (available only inside iterating steps):**
 
@@ -452,7 +464,7 @@ Each step, wait, and approval node declares one or more `outcome` blocks mapping
 
 **`output` projection:** An `outcome` block may include an `output = {...}` expression to project a custom output map. If absent, the adapter's full output is passed downstream as `steps.<name>.*`.
 
-**`shared_writes`:** An `outcome` block may include `shared_writes = { key = expr, ... }` to atomically update shared variables on that transition. Write ordering within a single outcome block is deterministic (declaration order).
+**`write`:** An `outcome` block may include one or more `write { target = data.<kind>.<name>.value, value = expr }` blocks to atomically update data values on that transition. Write ordering within a single outcome block is deterministic (declaration order).
 
 **Terminal routing:** A `state` block with `terminal = true` terminates the run. `success = true` marks the run as succeeded; `success = false` marks it as failed. A run that reaches no terminal state is a runtime error (infinite loop guard via `policy.max_total_steps`).
 
@@ -486,7 +498,7 @@ adapter "noop" "default" {}
 
 step "hello" {
   target = adapter.noop.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = state.done }
 }
 
 state "done" { terminal = true  success = true }
@@ -503,8 +515,8 @@ adapter "noop" "default" {}
 
 step "check" {
   target = adapter.noop.default
-  outcome "ok"   { next = "switch_env" }
-  outcome "fail" { next = "failed" }
+  outcome "ok"   { next = step.switch_env }
+  outcome "fail" { next = state.failed }
 }
 
 switch "switch_env" {
@@ -512,7 +524,7 @@ switch "switch_env" {
     match = var.env == "prod"
     next  = "deploy_prod"
   }
-  default { next = "deploy_dev" }
+  default { next = state.deploy_dev }
 }
 
 state "deploy_prod" { terminal = true  success = true }
@@ -533,7 +545,7 @@ step "process" {
   target   = adapter.noop.default
   for_each = var.items
   input    { item = each.value }
-  outcome "success" { next = "done" }
+  outcome "success" { next = state.done }
 }
 
 state "done" { terminal = true  success = true }
@@ -553,7 +565,7 @@ step "fanout" {
   for_each = var.ids
   parallel = true
   input    { id = each.value }
-  outcome "success" { next = "done" }
+  outcome "success" { next = state.done }
 }
 
 state "done" { terminal = true  success = true }
@@ -570,8 +582,8 @@ subworkflow "child" {
 
 step "run_child" {
   target = subworkflow.child
-  outcome "success" { next = "done" }
-  outcome "failure" { next = "failed" }
+  outcome "success" { next = state.done }
+  outcome "failure" { next = state.failed }
 }
 
 state "done"   { terminal = true  success = true }

@@ -21,11 +21,11 @@ workflow {
 }
 step "step1" {
   target = adapter.fake
-  outcome "success" { next = "step2" }
+  outcome "success" { next = step.step2 }
 }
 step "step2" {
   target = adapter.fake
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `

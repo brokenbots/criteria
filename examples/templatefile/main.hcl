@@ -25,6 +25,6 @@ step "render" {
   input {
     command = templatefile("prompts/intro.tmpl", { topic = var.topic })
   }
-  outcome "success" { next = "done" }
-  outcome "failure" { next = "done" }
+  outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
 }

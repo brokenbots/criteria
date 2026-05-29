@@ -27,7 +27,7 @@ adapter "copilot" "bot" {
 }
 step "work" {
   target = adapter.copilot.bot
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -65,7 +65,7 @@ adapter "copilot" "bot" {
 }
 step "work" {
   target = adapter.copilot.bot
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -110,7 +110,7 @@ adapter "copilot" "bot" {
 }
 step "work" {
   target = adapter.copilot.bot
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -149,7 +149,7 @@ adapter "copilot" "bot" {
 
 step "work" {
   target = adapter.copilot.bot
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 
 state "done" { terminal = true }

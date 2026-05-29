@@ -92,20 +92,20 @@ step "checkout_branch" {
     command = "branch=$(basename '${var.workstream_file}' .md) && current=$(git branch --show-current) && if [ \"$current\" = \"main\" ]; then git checkout -b \"$branch\"; else echo \"already on branch: $current\"; fi"
   }
   timeout = "10s"
-  outcome "success" { next = "run_execute_review" }
-  outcome "failure" { next = "failed" }
+  outcome "success" { next = step.run_execute_review }
+  outcome "failure" { next = state.failed }
 }
 
 step "run_execute_review" {
   target = subworkflow.execute_review
-  outcome "success" { next = "run_pr_pipeline" }
-  outcome "failure" { next = "failed" }
+  outcome "success" { next = step.run_pr_pipeline }
+  outcome "failure" { next = state.failed }
 }
 
 step "run_pr_pipeline" {
   target = subworkflow.pr_pipeline
-  outcome "success" { next = "done" }
-  outcome "failure" { next = "failed" }
+  outcome "success" { next = state.done }
+  outcome "failure" { next = state.failed }
 }
 
 # ── Terminal states ──────────────────────────────────────────────────────────

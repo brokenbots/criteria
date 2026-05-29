@@ -10,8 +10,8 @@ package engine
 //     timeout, retry, and fatal-error propagation all apply.
 //   - cursor.Total is set to -1 (IsWhile sentinel) so crash-resume can
 //     distinguish a while cursor from a bounded for_each/count cursor.
-//   - Per-iteration shared_writes are applied via applyIterationSharedWrites
-//     (same path as for_each) so the next iteration sees the updated shared.*
+//   - Per-iteration write blocks are applied via applyIterationDataWrites
+//     (same path as for_each) so the next iteration sees the updated data.*
 //     values when the condition is re-evaluated.
 
 import (
@@ -28,7 +28,7 @@ import (
 
 // evaluateWhile is the entry-point called from stepNode.Evaluate when
 // n.step.While != nil. It manages the full while loop lifecycle:
-// condition check → iteration body → shared_writes → repeat.
+// condition check → iteration body → write blocks → repeat.
 func (n *stepNode) evaluateWhile(ctx context.Context, st *RunState, deps Deps) (string, error) {
 	cur := n.whileCursor(st, deps)
 
@@ -131,7 +131,7 @@ func (n *stepNode) runWhileIteration(ctx context.Context, st *RunState, deps Dep
 	deps.Sink.OnStepOutputCaptured(n.step.Name, result.Outputs)
 	deps.Sink.OnStepTransition(n.step.Name, result.Outcome, result.Outcome)
 
-	if err := n.applyIterationSharedWrites(result.Outcome, result.Outputs, st, deps.Sink); err != nil {
+	if err := n.applyIterationDataWrites(result.Outcome, result.Outputs, st, deps.Sink); err != nil {
 		return "", err
 	}
 
@@ -153,7 +153,7 @@ func (n *stepNode) runWhileIteration(ctx context.Context, st *RunState, deps Dep
 
 // finishWhileOutcome closes out a while loop: pops the cursor, clears while.*
 // bindings, emits OnStepIterationCompleted, applies the aggregate outcome's
-// output projection and shared_writes, and returns the next node.
+// output projection and write blocks, and returns the next node.
 func (n *stepNode) finishWhileOutcome(cur *workflow.IterCursor, st *RunState, deps Deps) (string, error) {
 	st.PopCursor()
 	st.Vars = workflow.ClearWhileBinding(st.Vars)
@@ -183,8 +183,8 @@ func (n *stepNode) finishWhileOutcome(cur *workflow.IterCursor, st *RunState, de
 		}
 	}
 
-	if len(co.SharedWrites) > 0 && st.SharedVarStore != nil {
-		if writeErr := applySharedWrites(n.step.Name, aggregateOutcome, co.SharedWrites, projectedCty, nil, st, deps.Sink); writeErr != nil {
+	if len(co.Writes) > 0 && st.DataStore != nil {
+		if writeErr := applyDataWrites(n.step.Name, aggregateOutcome, co.Writes, projectedCty, nil, st, deps.Sink); writeErr != nil {
 			return "", writeErr
 		}
 	}

@@ -47,15 +47,15 @@ adapter "shell" "default" {}
 step "step_one" {
   target = adapter.shell.default
   input { command = "echo step_one" }
-  outcome "success" { next = "step_two" }
-  outcome "failure" { next = "done" }
+  outcome "success" { next = step.step_two }
+  outcome "failure" { next = step.done }
 }
 
 step "step_two" {
   target = adapter.shell.default
   input { command = "echo step_two" }
-  outcome "success" { next = "done" }
-  outcome "failure" { next = "done" }
+  outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 
 state "done" {
@@ -80,14 +80,14 @@ adapter "shell" "default" {}
 step "step_one" {
   target = adapter.shell.default
   input { command = "echo step_one" }
-  outcome "success" { next = "step_two" }
-  outcome "failure" { next = "done" }
+  outcome "success" { next = step.step_two }
+  outcome "failure" { next = step.done }
 }
 
 step "step_two" {
   target = adapter.shell.default
   input { command = "sleep 30" }
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 
 state "done" {
@@ -110,20 +110,20 @@ adapter "shell" "default" {}
 step "step_one" {
   target = adapter.shell.default
   input { command = "echo step_one" }
-  outcome "success" { next = "gate" }
-  outcome "failure" { next = "done" }
+  outcome "success" { next = step.gate }
+  outcome "failure" { next = step.done }
 }
 
 wait "gate" {
   signal = "resume"
-  outcome "received" { next = "step_three" }
+  outcome "received" { next = step.step_three }
 }
 
 step "step_three" {
   target = adapter.shell.default
   input { command = "echo step_three" }
-  outcome "success" { next = "done" }
-  outcome "failure" { next = "done" }
+  outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 
 state "done" {

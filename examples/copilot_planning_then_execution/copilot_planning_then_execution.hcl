@@ -49,8 +49,8 @@ step "plan" {
     EOT
   }
 
-  outcome "success" { next = "execute" }
-  outcome "failure" { next = "failed" }
+  outcome "success" { next = step.execute }
+  outcome "failure" { next = state.failed }
 }
 
 # ── Execution (inherits adapter-level "medium") ────────────────────────────────
@@ -65,8 +65,8 @@ step "execute" {
     EOT
   }
 
-  outcome "success" { next = "done" }
-  outcome "failure" { next = "failed" }
+  outcome "success" { next = state.done }
+  outcome "failure" { next = state.failed }
 }
 
 # ── Terminal states ────────────────────────────────────────────────────────

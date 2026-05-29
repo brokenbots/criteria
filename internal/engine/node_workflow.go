@@ -132,13 +132,13 @@ func runWorkflowBody(ctx context.Context, body *workflow.FSMGraph, bodyEntry str
 	defer func() { tearDownScopeAdapters(ctx, bodyOrder, deps) }()
 
 	childSt := &RunState{
-		Current:        bodyEntry,
-		Vars:           childVars,
-		WorkflowDir:    workflowDir,
-		PendingSignal:  "",
-		ResumePayload:  nil,
-		SharedVarStore: NewSharedVarStore(body),
-		firstStep:      false,
+		Current:       bodyEntry,
+		Vars:          childVars,
+		WorkflowDir:   workflowDir,
+		PendingSignal: "",
+		ResumePayload: nil,
+		DataStore:     NewDataStore(body),
+		firstStep:     false,
 	}
 
 	for {

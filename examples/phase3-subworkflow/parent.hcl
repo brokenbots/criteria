@@ -22,8 +22,8 @@ step "setup" {
   input {
     command = "echo 'Starting subworkflow demo'"
   }
-  outcome "success" { next = "done" }
-  outcome "failure" { next = "done" }
+  outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
 }
 
 state "done" {

@@ -209,63 +209,88 @@ func validateSwitchOutputExpr(switchName, location string, attr *hcl.Attribute, 
 }
 
 // resolveNextAttr resolves a `next` attribute expression to a node name string.
-// Accepts traversal form (step.foo, state.done) or bare string ("done", "return").
-// Traversals must be exactly two parts: <kind>.<name>. Extra segments are rejected.
+// Accepts:
+//   - Two-segment traversals: step.<name>, state.<name>, switch.<name>,
+//     wait.<name>, approval.<name>.
+//   - Single-segment bare keywords: return, continue.
+//
+// Rejects legacy quoted-string form with a migration hint.
 // Returns the resolved name and any diagnostics.
-func resolveNextAttr(expr hcl.Expression, switchName, location string) (string, hcl.Diagnostics) {
+func resolveNextAttr(expr hcl.Expression, context, location string) (string, hcl.Diagnostics) {
 	var diags hcl.Diagnostics
 
 	vars := expr.Variables()
 	if len(vars) == 0 {
-		// Literal string form: next = "done" or next = "return".
-		val, evalDiags := expr.Value(nil)
-		if evalDiags.HasErrors() {
-			diags = append(diags, &hcl.Diagnostic{
-				Severity: hcl.DiagError,
-				Summary:  fmt.Sprintf("switch %q %s: could not evaluate next: %s", switchName, location, evalDiags.Error()),
-				Subject:  expr.StartRange().Ptr(),
-			})
-			return "", diags
-		}
-		if val.Type() != cty.String {
-			diags = append(diags, &hcl.Diagnostic{
-				Severity: hcl.DiagError,
-				Summary:  fmt.Sprintf("switch %q %s: next must be a string or traversal, got %s", switchName, location, val.Type().FriendlyName()),
-				Subject:  expr.StartRange().Ptr(),
-			})
-			return "", diags
-		}
-		return val.AsString(), diags
+		return resolveLiteralNext(expr, context, location)
 	}
 
-	// Traversal form: next = step.foo  or  next = state.done.
-	// Must be exactly two segments: <kind>.<name>. Reject step.foo.bar etc.
 	if len(vars) == 1 {
-		traversal := vars[0]
-		if len(traversal) != 2 {
-			diags = append(diags, &hcl.Diagnostic{
-				Severity: hcl.DiagError,
-				Summary:  fmt.Sprintf("switch %q %s: next traversal must be exactly <kind>.<name> (e.g. step.foo, state.done); got %d segments", switchName, location, len(traversal)),
-				Subject:  expr.StartRange().Ptr(),
-			})
-			return "", diags
-		}
-		root, rootOK := traversal[0].(hcl.TraverseRoot)
-		attr, attrOK := traversal[1].(hcl.TraverseAttr)
-		if rootOK && attrOK {
-			switch root.Name {
-			case "step", "state", "wait", "approval", "switch":
-				return attr.Name, diags
-			}
+		if name, ok := resolveTraversalNext(vars[0]); ok {
+			return name, diags
 		}
 	}
 
 	diags = append(diags, &hcl.Diagnostic{
 		Severity: hcl.DiagError,
-		Summary:  fmt.Sprintf("switch %q %s: next must be a string literal (\"name\") or a node traversal (step.name, state.name)", switchName, location),
+		Summary:  fmt.Sprintf("%s %s: next must be a node traversal (step.name, state.name, switch.name, wait.name, approval.name) or bare keyword (return, continue)", context, location),
 		Subject:  expr.StartRange().Ptr(),
 	})
 	return "", diags
+}
+
+// resolveLiteralNext handles the zero-variables case: literal strings are
+// legacy syntax; other literals are rejected with a type error.
+func resolveLiteralNext(expr hcl.Expression, context, location string) (string, hcl.Diagnostics) {
+	var diags hcl.Diagnostics
+	val, evalDiags := expr.Value(nil)
+	if evalDiags.HasErrors() {
+		diags = append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  fmt.Sprintf("%s %s: could not evaluate next: %s", context, location, evalDiags.Error()),
+			Subject:  expr.StartRange().Ptr(),
+		})
+		return "", diags
+	}
+	if val.Type() == cty.String {
+		diags = append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  fmt.Sprintf("%s %s: next is now a node reference: write next = step.foo, next = state.done, next = return, or next = continue", context, location),
+			Subject:  expr.StartRange().Ptr(),
+		})
+		return "", diags
+	}
+	diags = append(diags, &hcl.Diagnostic{
+		Severity: hcl.DiagError,
+		Summary:  fmt.Sprintf("%s %s: next must be a node traversal (step.name, state.name) or bare keyword (return, continue), got %s", context, location, val.Type().FriendlyName()),
+		Subject:  expr.StartRange().Ptr(),
+	})
+	return "", diags
+}
+
+// resolveTraversalNext resolves a single traversal to a next-target name.
+// Returns (name, true) for valid traversals, ("", false) otherwise.
+func resolveTraversalNext(traversal hcl.Traversal) (string, bool) {
+	if len(traversal) == 1 {
+		if root, ok := traversal[0].(hcl.TraverseRoot); ok {
+			switch root.Name {
+			case "return":
+				return ReturnSentinel, true
+			case "continue":
+				return "_continue", true
+			}
+		}
+	}
+	if len(traversal) == 2 {
+		root, rootOK := traversal[0].(hcl.TraverseRoot)
+		attr, attrOK := traversal[1].(hcl.TraverseAttr)
+		if rootOK && attrOK {
+			switch root.Name {
+			case "step", "state", "wait", "approval", "switch":
+				return attr.Name, true
+			}
+		}
+	}
+	return "", false
 }
 
 // validateSwitchExprRefs validates that variable and step traversals referenced

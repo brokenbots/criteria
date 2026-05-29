@@ -135,8 +135,8 @@ step "work" {
   target       = adapter.fake
   parallel     = ` + items + `
   parallel_max = ` + itoa(n) + `
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "failed" }
+  outcome "all_succeeded" { next = step.done }
+  outcome "any_failed"    { next = step.failed }
 }
 state "done" {
   terminal = true

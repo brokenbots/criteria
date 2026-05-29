@@ -18,27 +18,34 @@ type LocalSpec struct {
 	Remain      hcl.Body `hcl:",remain"` // captures the "value" expression
 }
 
-// SharedVariableSpec is the parsed (but unvalidated) shared_variable declaration.
-// shared_variable blocks declare runtime-mutable, workflow-scoped values with
-// engine-managed locking. Unlike variable blocks (compile-time defaults, read-only
-// after run start) and local blocks (compile-time constants), shared_variables
-// are read-write throughout the run.
+// DataSpec is the parsed (but unvalidated) data block declaration.
+// data blocks declare workflow-scoped values. The "internal" kind is
+// runtime-mutable under engine-managed locking; future kinds (e.g. "http")
+// would be read-only.
 //
 // The optional "value" initial expression is decoded by the compiler via Remain.
-type SharedVariableSpec struct {
-	Name        string         `hcl:"name,label"`
+type DataSpec struct {
+	Kind        string         `hcl:"kind,label"` // first label, e.g. "internal"
+	Name        string         `hcl:"name,label"` // second label
 	Description string         `hcl:"description,optional"`
-	Type        hcl.Expression `hcl:"type,optional"`
+	Type        hcl.Expression `hcl:"type"`    // required; WS01-style type expression
 	Remain      hcl.Body       `hcl:",remain"` // captures the optional "value" expression
 }
 
-// SharedVariableNode is a compiled shared_variable declaration.
-type SharedVariableNode struct {
+// DataNode is a compiled data block declaration.
+type DataNode struct {
+	Kind         string
 	Name         string
 	Type         cty.Type           // explicit (parsed from type expression)
 	TypeDefaults *typeexpr.Defaults // nil when type has no optional defaults
 	InitialValue cty.Value          // compile-folded; cty.NullVal(Type) if not declared
 	Description  string
+}
+
+// DataRef identifies a data block by kind and name for stable ordering.
+type DataRef struct {
+	Kind string
+	Name string
 }
 
 // LocalNode is a compiled local declaration with its fully-resolved value.
@@ -101,20 +108,20 @@ type WorkflowHeaderSpec struct {
 // 17, the `workflow { ... }` block is header-only; all content blocks
 // (step, state, adapter, etc.) live at the top level of the HCL file.
 type Spec struct {
-	Header          *WorkflowHeaderSpec  `hcl:"workflow,block"`
-	Variables       []VariableSpec       `hcl:"variable,block"`
-	Locals          []LocalSpec          `hcl:"local,block"`
-	SharedVariables []SharedVariableSpec `hcl:"shared_variable,block"`
-	Environments    []EnvironmentSpec    `hcl:"environment,block"`
-	Outputs         []OutputSpec         `hcl:"output,block"`
-	Adapters        []AdapterDeclSpec    `hcl:"adapter,block"`
-	Subworkflows    []SubworkflowSpec    `hcl:"subworkflow,block"`
-	Steps           []StepSpec           `hcl:"step,block"`
-	States          []StateSpec          `hcl:"state,block"`
-	Waits           []WaitSpec           `hcl:"wait,block"`
-	Approvals       []ApprovalSpec       `hcl:"approval,block"`
-	Switches        []SwitchSpec         `hcl:"switch,block"`
-	Permissions     *PermissionsSpec     `hcl:"permissions,block"`
+	Header       *WorkflowHeaderSpec `hcl:"workflow,block"`
+	Variables    []VariableSpec      `hcl:"variable,block"`
+	Locals       []LocalSpec         `hcl:"local,block"`
+	Data         []DataSpec          `hcl:"data,block"`
+	Environments []EnvironmentSpec   `hcl:"environment,block"`
+	Outputs      []OutputSpec        `hcl:"output,block"`
+	Adapters     []AdapterDeclSpec   `hcl:"adapter,block"`
+	Subworkflows []SubworkflowSpec   `hcl:"subworkflow,block"`
+	Steps        []StepSpec          `hcl:"step,block"`
+	States       []StateSpec         `hcl:"state,block"`
+	Waits        []WaitSpec          `hcl:"wait,block"`
+	Approvals    []ApprovalSpec      `hcl:"approval,block"`
+	Switches     []SwitchSpec        `hcl:"switch,block"`
+	Permissions  *PermissionsSpec    `hcl:"permissions,block"`
 	// SourceBytes holds the raw HCL source that was parsed to produce this Spec.
 	// Populated by Parse/ParseFile; used by the compiler to extract expression
 	// source text (e.g. for SwitchEvaluated.Condition).
@@ -142,7 +149,7 @@ type ConfigSpec struct {
 // (compile-time) and parallel hcl.Expression map (runtime).
 // Runtime evaluation uses ResolveInputExprs / ResolveInputExprsAsCty
 // in workflow/eval.go, which builds an hcl.EvalContext with var.*,
-// steps.*, local.*, shared.*, and each.* namespaces.
+// steps.*, local.*, data.*, and each.* namespaces.
 type InputSpec struct {
 	Remain hcl.Body `hcl:",remain"`
 }
@@ -199,17 +206,17 @@ type StepSpec struct {
 // this struct is decoded separately by compileWorkflowBodyInline rather than
 // embedded directly in BodySpec.
 type SpecContent struct {
-	Variables       []VariableSpec       `hcl:"variable,block"`
-	Locals          []LocalSpec          `hcl:"local,block"`
-	SharedVariables []SharedVariableSpec `hcl:"shared_variable,block"`
-	Environments    []EnvironmentSpec    `hcl:"environment,block"`
-	Adapters        []AdapterDeclSpec    `hcl:"adapter,block"`
-	Steps           []StepSpec           `hcl:"step,block"`
-	States          []StateSpec          `hcl:"state,block"`
-	Waits           []WaitSpec           `hcl:"wait,block"`
-	Approvals       []ApprovalSpec       `hcl:"approval,block"`
-	Switches        []SwitchSpec         `hcl:"switch,block"`
-	Permissions     *PermissionsSpec     `hcl:"permissions,block"`
+	Variables    []VariableSpec    `hcl:"variable,block"`
+	Locals       []LocalSpec       `hcl:"local,block"`
+	Data         []DataSpec        `hcl:"data,block"`
+	Environments []EnvironmentSpec `hcl:"environment,block"`
+	Adapters     []AdapterDeclSpec `hcl:"adapter,block"`
+	Steps        []StepSpec        `hcl:"step,block"`
+	States       []StateSpec       `hcl:"state,block"`
+	Waits        []WaitSpec        `hcl:"wait,block"`
+	Approvals    []ApprovalSpec    `hcl:"approval,block"`
+	Switches     []SwitchSpec      `hcl:"switch,block"`
+	Permissions  *PermissionsSpec  `hcl:"permissions,block"`
 }
 
 // BodySpec is the thin parsed header for an inline `workflow { ... }` block
@@ -283,12 +290,30 @@ type AdapterInfo struct {
 
 // OutcomeSpec maps an adapter outcome name to the next node.
 // The Next attribute replaces the removed transition_to attribute (v0.3.0).
+// It is an hcl.Expression decoded by the compiler (traversal form: step.foo,
+// state.done, return, continue).
 // An optional "output" expression may appear in the Remain body to project
 // a custom output map instead of passing the step's full output downstream.
+// Zero or more write { target = ..., value = ... } blocks declare data writes.
 type OutcomeSpec struct {
-	Name   string   `hcl:"name,label"`
-	Next   string   `hcl:"next"`
-	Remain hcl.Body `hcl:",remain"` // captures the optional "output" expression
+	Name   string         `hcl:"name,label"`
+	Next   hcl.Expression `hcl:"next"`
+	Writes []WriteSpec    `hcl:"write,block"`
+	Remain hcl.Body       `hcl:",remain"` // captures the optional "output" expression
+}
+
+// WriteSpec is a single data write declaration inside an outcome block.
+type WriteSpec struct {
+	Target hcl.Expression `hcl:"target"` // traversal: data.<kind>.<name>.value
+	Value  hcl.Expression `hcl:"value"`  // runtime-evaluated expression
+}
+
+// CompiledWrite is a compiled data write with resolved kind/name and the
+// value expression to evaluate at runtime.
+type CompiledWrite struct {
+	DataKind  string         // resolved from target traversal
+	DataName  string         // resolved from target traversal
+	ValueExpr hcl.Expression // runtime-evaluated against the step's output scope
 }
 
 // WaitSpec declares a wait node. Exactly one of duration or signal must be set.
@@ -368,27 +393,27 @@ type PermissionsSpec struct {
 
 // FSMGraph is the validated, executable representation of a workflow.
 type FSMGraph struct {
-	Name                string
-	InitialState        string
-	TargetState         string
-	Variables           map[string]*VariableNode       // compiled variable declarations (W04)
-	Locals              map[string]*LocalNode          // compiled local declarations (W07)
-	SharedVariables     map[string]*SharedVariableNode // compiled shared_variable declarations (W18)
-	SharedVariableOrder []string                       // declaration order for stable iteration (W18)
-	Environments        map[string]*EnvironmentNode    // compiled environment declarations; keyed by "<type>.<name>"
-	DefaultEnvironment  string                         // optional; set if exactly one env is declared or explicitly set on workflow header
-	Outputs             map[string]*OutputNode         // compiled output declarations (W09)
-	OutputOrder         []string                       // declaration order for stable iteration
-	Adapters            map[string]*AdapterNode        // compiled adapter declarations; keyed by "<type>.<name>"
-	AdapterOrder        []string                       // declaration order for stable iteration
-	Subworkflows        map[string]*SubworkflowNode    // compiled subworkflow declarations; keyed by subworkflow name
-	SubworkflowOrder    []string                       // declaration order for stable iteration
-	Steps               map[string]*StepNode           // by step name
-	States              map[string]*StateNode          // by state name (terminal etc.)
-	Waits               map[string]*WaitNode           // by wait node name (W05)
-	Approvals           map[string]*ApprovalNode       // by approval node name (W05)
-	Switches            map[string]*SwitchNode         // by switch node name (W16)
-	Policy              Policy
+	Name               string
+	InitialState       string
+	TargetState        string
+	Variables          map[string]*VariableNode        // compiled variable declarations (W04)
+	Locals             map[string]*LocalNode           // compiled local declarations (W07)
+	Data               map[string]map[string]*DataNode // compiled data declarations; keyed by kind then name (W02)
+	DataOrder          []DataRef                       // declaration order for stable iteration (W02)
+	Environments       map[string]*EnvironmentNode     // compiled environment declarations; keyed by "<type>.<name>"
+	DefaultEnvironment string                          // optional; set if exactly one env is declared or explicitly set on workflow header
+	Outputs            map[string]*OutputNode          // compiled output declarations (W09)
+	OutputOrder        []string                        // declaration order for stable iteration
+	Adapters           map[string]*AdapterNode         // compiled adapter declarations; keyed by "<type>.<name>"
+	AdapterOrder       []string                        // declaration order for stable iteration
+	Subworkflows       map[string]*SubworkflowNode     // compiled subworkflow declarations; keyed by subworkflow name
+	SubworkflowOrder   []string                        // declaration order for stable iteration
+	Steps              map[string]*StepNode            // by step name
+	States             map[string]*StateNode           // by state name (terminal etc.)
+	Waits              map[string]*WaitNode            // by wait node name (W05)
+	Approvals          map[string]*ApprovalNode        // by approval node name (W05)
+	Switches           map[string]*SwitchNode          // by switch node name (W16)
+	Policy             Policy
 	// Order of step declarations (stable for diagnostics).
 	stepOrder []string
 }
@@ -441,14 +466,12 @@ type CompiledOutcome struct {
 	// run scope to produce the projected output map. When nil, the step's
 	// full adapter output is passed downstream unchanged.
 	OutputExpr hcl.Expression
-	// SharedWrites maps shared_variable names to output keys. After output
-	// projection, the engine applies these writes atomically to the scope's
-	// SharedVarStore. The key is the shared_variable name; the value is the
-	// key from the outcome's projected output (or step raw output when no
-	// output projection is declared).
+	// Writes is the list of compiled data writes for this outcome. After output
+	// projection, the engine evaluates each ValueExpr against the post-projection
+	// scope and applies the writes atomically to the scope's DataStore.
 	//
-	// HCL form: shared_writes = { var_name = "output_key" }
-	SharedWrites map[string]string
+	// HCL form: write { target = data.<kind>.<name>.value, value = output.<key> }
+	Writes []CompiledWrite
 }
 
 // ReturnSentinel is the reserved next value that signals scope-exit.

@@ -188,7 +188,7 @@ var namespaceColumnFormat = map[string]string{
 	"var":    "`var.*`",
 	"steps":  "`steps.<name>.<key>`",
 	"local":  "`local.*`",
-	"shared": "`shared.*`",
+	"data":   "`data.<kind>.<name>.value`",
 	"while":  "`while.*`",
 }
 
@@ -198,7 +198,7 @@ var namespaceAvailableIn = map[string]string{
 	"steps":  "post-completion of `<name>`",
 	"each":   "iterating-step expressions only",
 	"local":  "all expressions",
-	"shared": "all expressions; mutable via `shared_writes`",
+	"data":   "all expressions; mutable via `write` blocks",
 	"while":  "while-modified-step expressions only",
 }
 
@@ -209,6 +209,6 @@ var namespaceDescription = map[string]string{
 	"steps":  "Captured outputs from a prior step.",
 	"each":   "Per-iteration bindings; see Iteration semantics.",
 	"local":  "Compile-time constants declared with `local` blocks.",
-	"shared": "Runtime-mutable shared values declared with `shared_variable` blocks.",
+	"data":   "Runtime-mutable values declared with `data` blocks (e.g. `data \"internal\"`); write via `write` blocks.",
 	"while":  "Per-iteration bindings for while-driven steps; see While iteration.",
 }

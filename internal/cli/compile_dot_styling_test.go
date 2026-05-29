@@ -107,7 +107,7 @@ workflow {
 adapter "noop" "default" {}
 step "work" {
   target = adapter.noop.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" {
   terminal = true
@@ -146,11 +146,11 @@ adapter "shell" "b" {
 }
 step "step_a" {
   target = adapter.noop.a
-  outcome "success" { next = "step_b" }
+  outcome "success" { next = step.step_b }
 }
 step "step_b" {
   target = adapter.shell.b
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" {
   terminal = true
@@ -210,8 +210,8 @@ adapter "noop" "default" {}
 step "fan" {
   target   = adapter.noop.default
   for_each = ["a", "b"]
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "done" }
+  outcome "all_succeeded" { next = step.done }
+  outcome "any_failed"    { next = step.done }
 }
 state "done" {
   terminal = true
@@ -238,8 +238,8 @@ adapter "noop" "default" {}
 step "concurrent" {
   target   = adapter.noop.default
   parallel = ["x", "y"]
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "done" }
+  outcome "all_succeeded" { next = step.done }
+  outcome "any_failed"    { next = step.done }
 }
 state "done" {
   terminal = true
@@ -265,12 +265,12 @@ workflow {
 adapter "noop" "default" {}
 step "build" {
   target = adapter.noop.default
-  outcome "success" { next = "decide" }
+  outcome "success" { next = step.decide }
 }
 switch "decide" {
   condition {
     match = true
-    next  = state.done
+    next = state.done
   }
   default { next = state.done }
 }
@@ -302,7 +302,7 @@ workflow {
 adapter "noop" "default" {}
 step "work" {
   target = adapter.noop.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" {
   terminal = true
@@ -336,8 +336,8 @@ workflow {
 adapter "noop" "default" {}
 step "work" {
   target = adapter.noop.default
-  outcome "success" { next = "done" }
-  outcome "failure" { next = "failed" }
+  outcome "success" { next = step.done }
+  outcome "failure" { next = step.failed }
 }
 state "done" {
   terminal = true
@@ -406,7 +406,7 @@ adapter "shell" "default" {
 }
 step "do_shell" {
   target = adapter.shell.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" {
   terminal = true
@@ -425,8 +425,8 @@ workflow {
 adapter "noop" "default" {}
 step "delegate" {
   target = subworkflow.inner
-  outcome "success" { next = "done" }
-  outcome "failure" { next = "done" }
+  outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 subworkflow "inner" {
   source = "./inner"
@@ -591,8 +591,8 @@ subworkflow "inner" {
 }
 step "delegate" {
   target = subworkflow.inner
-  outcome "success" { next = "done" }
-  outcome "failure" { next = "done" }
+  outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" {
   terminal = true
@@ -662,8 +662,8 @@ subworkflow "processor" {
 step "process_all" {
   target   = subworkflow.processor
   for_each = ["alpha", "beta"]
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "done" }
+  outcome "all_succeeded" { next = step.done }
+  outcome "any_failed"    { next = step.done }
 }
 state "done" {
   terminal = true
@@ -731,8 +731,8 @@ subworkflow "worker" {
 step "run_tasks" {
   target   = subworkflow.worker
   parallel = ["x", "y", "z"]
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "done" }
+  outcome "all_succeeded" { next = step.done }
+  outcome "any_failed"    { next = step.done }
 }
 state "done" {
   terminal = true
@@ -792,8 +792,8 @@ workflow {
 adapter "noop" "default" {}
 step "work" {
   target = adapter.noop.default
-  outcome "success" { next = "done" }
-  outcome "retry"   { next = "pending" }
+  outcome "success" { next = step.done }
+  outcome "retry"   { next = step.pending }
 }
 state "pending" {}
 state "done" {

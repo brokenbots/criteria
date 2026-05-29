@@ -2,8 +2,8 @@ package engine
 
 // node_step_w15_test.go — W15 engine tests for outcome routing:
 //   - outcome "default" mapping for unknown adapter outcomes
-//   - next = "return" at top-level exits successfully
-//   - next = "return" in a subworkflow scope bubbles to parent
+//   - next = step.return at top-level exits successfully
+//   - next = step.return in a subworkflow scope bubbles to parent
 //   - output projection stores projected keys in run vars for subsequent steps
 //   - unknown outcome without outcome "default" block causes run failure
 //   - event emission for defaulted/unknown outcomes
@@ -54,8 +54,8 @@ workflow {
 }
 step "work" {
   target          = adapter.fake
-  outcome "success" { next = "done" }
-  outcome "default" { next = "done" }
+  outcome "success" { next = step.done }
+  outcome "default" { next = step.done }
 }
 state "done" { terminal = true }`)
 	sink := &outcomeSink{}
@@ -97,7 +97,7 @@ workflow {
 }
 step "work" {
   target = adapter.fake
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }`)
 	sink := &outcomeSink{}
@@ -122,7 +122,7 @@ state "done" { terminal = true }`)
 }
 
 // TestStep_OutcomeReturn_TopLevelTerminal verifies that a step with
-// next = "return" at the top level completes the run as terminal-success.
+// next = step.return at the top level completes the run as terminal-success.
 func TestStep_OutcomeReturn_TopLevelTerminal(t *testing.T) {
 	g := compile(t, `
 workflow {
@@ -133,7 +133,7 @@ workflow {
 }
 step "work" {
   target = adapter.fake
-  outcome "success" { next = "return" }
+  outcome "success" { next = step.return }
 }
 state "done" { terminal = true }`)
 	sink := &fakeSink{}
@@ -150,7 +150,7 @@ state "done" { terminal = true }`)
 }
 
 // TestStep_OutcomeReturn_BubblesToParent verifies that a subworkflow step with
-// next = "return" exits the subworkflow and maps the result to the parent step's
+// next = step.return exits the subworkflow and maps the result to the parent step's
 // declared outcome.
 func TestStep_OutcomeReturn_BubblesToParent(t *testing.T) {
 	// Build the callee graph: one adapter step that routes to "return".
@@ -238,13 +238,13 @@ workflow {
 step "a" {
   target = adapter.fake
   outcome "success" {
-    next   = "b"
+    next = step.b
     output = { result = "projected" }
   }
 }
 step "b" {
   target = adapter.fake
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }`)
 	sink := &fakeSink{}
@@ -260,7 +260,7 @@ state "done" { terminal = true }`)
 }
 
 // TestStep_OutcomeReturnOutputOverridesOutputBlocks verifies that when a step
-// exits via next = "return" with an output projection, the return path is
+// exits via next = step.return with an output projection, the return path is
 // treated as successful and the projected output values are emitted via
 // OnRunOutputs with correct type encoding (not double-stringified).
 func TestStep_OutcomeReturnOutputOverridesOutputBlocks(t *testing.T) {
@@ -274,7 +274,7 @@ workflow {
 step "work" {
   target = adapter.fake
   outcome "success" {
-    next   = "return"
+    next = step.return
     output = { status = "from_return", count = 42 }
   }
 }
@@ -304,7 +304,7 @@ state "done" { terminal = true }`)
 }
 
 // TestStep_OutcomeReturn_EndToEnd verifies an end-to-end workflow that uses
-// a subworkflow with next = "return" and checks that the parent run completes.
+// a subworkflow with next = step.return and checks that the parent run completes.
 func TestStep_OutcomeReturn_EndToEnd(t *testing.T) {
 	// Reuse the BubblesToParent test pattern but via compile() for coverage.
 	calleeStep := &workflow.StepNode{
@@ -399,7 +399,7 @@ func parseExpr(t *testing.T, src string) hcl.Expression {
 // callee's output map are accessible and the projected values are emitted as
 // top-level run outputs (via OnRunOutputs) with the correct encoding.
 func TestStep_OutcomeOutput_SubworkflowOutputAvailable(t *testing.T) {
-	// Callee: single step returns next = "return" with output = { val = "hello" }.
+	// Callee: single step returns next = step.return with output = { val = "hello" }.
 	// This puts val="hello" in the callee's ReturnOutputs, which runSubworkflow
 	// returns as map[string]cty.Value{"val": cty.StringVal("hello")}.
 	calleeStep := &workflow.StepNode{
@@ -432,7 +432,7 @@ func TestStep_OutcomeOutput_SubworkflowOutputAvailable(t *testing.T) {
 	}
 
 	// Parent: subworkflow step projects via subworkflow.val, then returns.
-	// next = "return" makes the projected output the top-level run output set,
+	// next = step.return makes the projected output the top-level run output set,
 	// which is emitted via OnRunOutputs and can be cleanly asserted.
 	callStep := &workflow.StepNode{
 		Name:           "call",

@@ -10,8 +10,8 @@ adapter "noop" "demo" {}
 approval "review" {
   approvers = ["alice"]
   reason    = "needs review"
-  outcome "approved" { next = "run_step" }
-  outcome "rejected" { next = "rejected_state" }
+  outcome "approved" { next = step.run_step }
+  outcome "rejected" { next = state.rejected_state }
 }
 
 step "run_step" {
@@ -19,8 +19,8 @@ step "run_step" {
   input {
     prompt = "continue"
   }
-  outcome "success" { next = "done" }
-  outcome "failure" { next = "failed" }
+  outcome "success" { next = state.done }
+  outcome "failure" { next = state.failed }
 }
 
 state "done" {

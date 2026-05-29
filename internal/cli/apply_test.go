@@ -46,8 +46,8 @@ step "run_adapter" {
   input {
     prompt = "hello"
   }
-  outcome "success" { next = "done" }
-  outcome "failure" { next = "failed" }
+  outcome "success" { next = step.done }
+  outcome "failure" { next = step.failed }
 }
 
 state "done" {

@@ -9,7 +9,7 @@ adapter "noop" "demo" {}
 
 wait "gate" {
   signal = "proceed"
-  outcome "success" { next = "run_step" }
+  outcome "success" { next = step.run_step }
 }
 
 step "run_step" {
@@ -17,8 +17,8 @@ step "run_step" {
   input {
     prompt = "continue"
   }
-  outcome "success" { next = "done" }
-  outcome "failure" { next = "failed" }
+  outcome "success" { next = state.done }
+  outcome "failure" { next = state.failed }
 }
 
 state "done" {

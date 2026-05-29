@@ -30,8 +30,8 @@ step "process" {
     command = file(each.value)
   }
 
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "failed" }
+  outcome "all_succeeded" { next = state.done }
+  outcome "any_failed"    { next = state.failed }
 }
 
 state "done" {

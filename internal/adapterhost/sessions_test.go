@@ -654,8 +654,8 @@ adapter "noop" "default" {}
 step "work" {
   target   = adapter.noop.default
   parallel = ["a", "b"]
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "failed" }
+  outcome "all_succeeded" { next = step.done }
+  outcome "any_failed"    { next = step.failed }
 }
 state "done" {
   terminal = true

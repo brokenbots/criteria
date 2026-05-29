@@ -105,11 +105,16 @@ func compileSimpleOutcomes(kind, nodeName string, outcomes []OutcomeSpec) (map[s
 			continue
 		}
 		seen[o.Name] = true
-		if o.Next == "" {
+		if o.Next == nil {
 			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("%s %q outcome %q: next is required", kind, nodeName, o.Name)})
 			continue
 		}
-		result[o.Name] = o.Next
+		nextStr, d := resolveNextAttr(o.Next, fmt.Sprintf("%s %q", kind, nodeName), fmt.Sprintf("outcome %q", o.Name))
+		diags = append(diags, d...)
+		if nextStr == "" {
+			continue
+		}
+		result[o.Name] = nextStr
 	}
 	return result, diags
 }

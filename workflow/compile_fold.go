@@ -16,14 +16,14 @@ var runtimeOnlyNamespaces = map[string]bool{
 	"each":        true,
 	"while":       true, // while-iteration binding (while.index, while.first, while._prev)
 	"steps":       true,
-	"shared":      true, // shared_variable runtime values (W18)
+	"data":        true, // data block runtime values (WS02)
 	"step":        true, // current adapter step outputs: step.output.<key> (W18)
 	"subworkflow": true, // outputs from the subworkflow the step invoked
 }
 
 // FoldExpr evaluates expr in the closure (var ∪ local ∪ literal ∪ funcs).
 // Returns the cty.Value if the expression folds, or (cty.NilVal, false, nil)
-// when the expression references runtime-only namespaces (each, steps, shared,
+// when the expression references runtime-only namespaces (each, steps, data,
 // step, subworkflow). Runtime-only refs are not errors — they signal "leave
 // this expression for the engine".
 //
