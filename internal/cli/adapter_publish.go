@@ -3,13 +3,13 @@ package cli
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
 
-	"github.com/brokenbots/criteria/internal/adapter/oci"
 	"github.com/brokenbots/criteria/internal/adapter/publish"
 )
 
@@ -25,7 +25,7 @@ func newAdapterPublishCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
-			return runPublish(cmd.Context(), args[0], registry, withImage)
+			return runPublish(cmd.Context(), args[0], registry, withImage, cmd.OutOrStdout())
 		},
 	}
 
@@ -34,7 +34,10 @@ func newAdapterPublishCmd() *cobra.Command {
 	return cmd
 }
 
-func runPublish(ctx context.Context, binPath, registry string, withImage bool) error {
+func runPublish(ctx context.Context, binPath, registry string, withImage bool, out io.Writer) error {
+	if out == nil {
+		out = os.Stdout
+	}
 	binPath, err := filepath.Abs(binPath)
 	if err != nil {
 		return fmt.Errorf("resolve path: %w", err)
@@ -46,7 +49,7 @@ func runPublish(ctx context.Context, binPath, registry string, withImage bool) e
 	}
 
 	// Run binary with --emit-manifest to extract adapter.yaml.
-	out, err := exec.CommandContext(ctx, binPath, "--emit-manifest").Output()
+	outBytes, err := exec.CommandContext(ctx, binPath, "--emit-manifest").Output()
 	if err != nil {
 		return fmt.Errorf("--emit-manifest failed: %w", err)
 	}
@@ -59,7 +62,7 @@ func runPublish(ctx context.Context, binPath, registry string, withImage bool) e
 	defer os.RemoveAll(tmpDir)
 
 	mfPath := filepath.Join(tmpDir, "adapter.yaml")
-	if err := os.WriteFile(mfPath, out, 0o644); err != nil {
+	if err := os.WriteFile(mfPath, outBytes, 0o644); err != nil {
 		return fmt.Errorf("write manifest: %w", err)
 	}
 
@@ -78,12 +81,11 @@ func runPublish(ctx context.Context, binPath, registry string, withImage bool) e
 	}
 
 	// Push the artifact.
-	var _ oci.Reference = ref // ensure import is used
 	dg, err := publish.PushArtifact(ctx, ref, binPath, mfPath, publish.Options{})
 	if err != nil {
 		return fmt.Errorf("publish artifact: %w", err)
 	}
 
-	fmt.Printf("Published %s to %s (digest: %s)\n", filepath.Base(binPath), ref, dg)
+	fmt.Fprintf(out, "Published %s to %s (digest: %s)\n", filepath.Base(binPath), ref, dg)
 	return nil
 }

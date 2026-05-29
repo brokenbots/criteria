@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 
 	"github.com/opencontainers/go-digest"
 	"github.com/opencontainers/image-spec/specs-go"
@@ -160,18 +161,9 @@ func pushToRemote(ctx context.Context, store *memory.Store, ref oci.Reference, o
 
 // runtimeGOOS and runtimeGOARCH are overridden by tests.
 var (
-	runtimeGOOS   = os.Getenv("GOOS")
-	runtimeGOARCH = os.Getenv("GOARCH")
+	runtimeGOOS   = runtime.GOOS
+	runtimeGOARCH = runtime.GOARCH
 )
-
-func init() {
-	if runtimeGOOS == "" {
-		runtimeGOOS = "linux"
-	}
-	if runtimeGOARCH == "" {
-		runtimeGOARCH = "amd64"
-	}
-}
 
 func newRepository(ref oci.Reference, opts Options) (*remote.Repository, error) {
 	repoRef := ref.Registry

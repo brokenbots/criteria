@@ -18,6 +18,11 @@ func TestAdapterE2E_PullResolve(t *testing.T) {
 	}
 
 	// Create a minimal adapter.yaml manifest.
+	// NOTE: This fixture intentionally uses a Kubernetes-style YAML shape
+	// because the test only exercises the CLI surface (info/where error
+	// paths and list empty), not the manifest parser or validator.
+	// The integration test in adapter_e2e_integration_test.go uses the
+	// Criteria-native schema required by manifest.Validate().
 	manifestPath := filepath.Join(dir, "adapter.yaml")
 	manifestContent := `apiVersion: criteria.brokenbots.io/v1
 kind: Adapter

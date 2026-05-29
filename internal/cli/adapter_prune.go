@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -23,7 +24,7 @@ func newAdapterPruneCmd() *cobra.Command {
 		Short: "Remove unused or old adapter blobs from the local cache",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
-			return runPrune(olderThan, maxSize)
+			return runPrune(olderThan, maxSize, cmd.OutOrStdout())
 		},
 	}
 
@@ -32,7 +33,10 @@ func newAdapterPruneCmd() *cobra.Command {
 	return cmd
 }
 
-func runPrune(olderThan string, maxSize int64) error {
+func runPrune(olderThan string, maxSize int64, out io.Writer) error {
+	if out == nil {
+		out = os.Stderr
+	}
 	var opts oci.GCOptions
 	if olderThan != "" {
 		d, err := parseHumanDuration(olderThan)
@@ -59,10 +63,10 @@ func runPrune(olderThan string, maxSize int64) error {
 		return fmt.Errorf("gc: %w", err)
 	}
 
-	fmt.Fprintf(os.Stderr, "pruned %d blobs, freed %d bytes\n", result.RemovedBlobs, result.FreedBytes)
+	fmt.Fprintf(out, "pruned %d blobs, freed %d bytes\n", result.RemovedBlobs, result.FreedBytes)
 	if len(result.Errors) > 0 {
 		for _, e := range result.Errors {
-			fmt.Fprintf(os.Stderr, "warning: %v\n", e)
+			fmt.Fprintf(out, "warning: %v\n", e)
 		}
 	}
 	return nil

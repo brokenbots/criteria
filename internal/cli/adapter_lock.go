@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -34,7 +35,7 @@ func newAdapterLockCmd() *cobra.Command {
 			if len(args) > 0 {
 				workflowDir = args[0]
 			}
-			return runLock(cmd.Context(), workflowDir, upgrade)
+			return runLock(cmd.Context(), workflowDir, upgrade, cmd.OutOrStdout())
 		},
 	}
 
@@ -116,7 +117,10 @@ func openCacheAndPolicy() (*oci.Layout, signing.Policy, error) {
 	return layout, policy, nil
 }
 
-func runLock(ctx context.Context, workflowDir string, upgrade bool) error {
+func runLock(ctx context.Context, workflowDir string, upgrade bool, out io.Writer) error {
+	if out == nil {
+		out = os.Stderr
+	}
 	state, err := prepareLockState(workflowDir, upgrade)
 	if err != nil {
 		return err
@@ -128,14 +132,14 @@ func runLock(ctx context.Context, workflowDir string, upgrade bool) error {
 	}
 
 	for key, wa := range state.wfAdapters {
-		entry, err := resolveOneAdapter(ctx, wa, state.oldLF, state.layout, state.puller, state.aliases, upgrade, &state.policy)
+		entry, err := resolveOneAdapter(ctx, wa, state.oldLF, state.layout, state.puller, state.aliases, upgrade, &state.policy, out)
 		if err != nil {
 			return fmt.Errorf("adapter %q: %w", key, err)
 		}
 		newLF.Adapters = append(newLF.Adapters, entry)
 	}
 
-	printLockDiff(state.oldLF, newLF)
+	printLockDiff(state.oldLF, newLF, out)
 
 	lockPath := filepath.Join(state.workflowDir, ".criteria.lock.hcl")
 	if err := lockfile.Write(lockPath, newLF); err != nil {
@@ -145,7 +149,7 @@ func runLock(ctx context.Context, workflowDir string, upgrade bool) error {
 }
 
 // resolveOneAdapter returns the lockfile entry for a single workflow adapter.
-func resolveOneAdapter(ctx context.Context, wa *workflowAdapter, oldLF *lockfile.Lockfile, layout *oci.Layout, puller *oci.Puller, aliases map[string]string, upgrade bool, policy *signing.Policy) (lockfile.LockedAdapter, error) {
+func resolveOneAdapter(ctx context.Context, wa *workflowAdapter, oldLF *lockfile.Lockfile, layout *oci.Layout, puller *oci.Puller, aliases map[string]string, upgrade bool, policy *signing.Policy, out io.Writer) (lockfile.LockedAdapter, error) {
 	var entry lockfile.LockedAdapter
 
 	if wa.Reference == "" {
@@ -180,7 +184,7 @@ func resolveOneAdapter(ctx context.Context, wa *workflowAdapter, oldLF *lockfile
 	entry.Type = wa.Type
 	entry.Name = wa.Name
 
-	fmt.Fprintf(os.Stderr, "locked %s.%s -> %s\n", wa.Type, wa.Name, entry.ResolvedDigest)
+	fmt.Fprintf(out, "locked %s.%s -> %s\n", wa.Type, wa.Name, entry.ResolvedDigest)
 	return entry, nil
 }
 
@@ -210,27 +214,30 @@ func tryReuseEntry(ctx context.Context, wa *workflowAdapter, oldLF *lockfile.Loc
 	return entry, true, nil
 }
 
-func printLockDiff(oldLF, newLF *lockfile.Lockfile) {
+func printLockDiff(oldLF, newLF *lockfile.Lockfile, out io.Writer) {
+	if out == nil {
+		out = os.Stderr
+	}
 	changes := lockfile.Diff(oldLF, newLF)
 	for i := range changes {
 		c := &changes[i]
 		switch c.Kind {
 		case lockfile.Added:
-			fmt.Fprintf(os.Stderr, "+ %s\n", c.Adapter)
+			fmt.Fprintf(out, "+ %s\n", c.Adapter)
 		case lockfile.Removed:
-			fmt.Fprintf(os.Stderr, "- %s (stale)\n", c.Adapter)
+			fmt.Fprintf(out, "- %s (stale)\n", c.Adapter)
 		case lockfile.DigestChanged:
-			fmt.Fprintf(os.Stderr, "~ %s digest %s -> %s\n", c.Adapter, c.Before, c.After)
+			fmt.Fprintf(out, "~ %s digest %s -> %s\n", c.Adapter, c.Before, c.After)
 		case lockfile.SignerChanged:
-			fmt.Fprintf(os.Stderr, "~ %s signer changed\n", c.Adapter)
+			fmt.Fprintf(out, "~ %s signer changed\n", c.Adapter)
 		case lockfile.PlatformsChanged:
-			fmt.Fprintf(os.Stderr, "~ %s platforms changed\n", c.Adapter)
+			fmt.Fprintf(out, "~ %s platforms changed\n", c.Adapter)
 		case lockfile.ContainerImageChanged:
-			fmt.Fprintf(os.Stderr, "~ %s container image changed\n", c.Adapter)
+			fmt.Fprintf(out, "~ %s container image changed\n", c.Adapter)
 		case lockfile.RemoteChanged:
-			fmt.Fprintf(os.Stderr, "~ %s remote changed\n", c.Adapter)
+			fmt.Fprintf(out, "~ %s remote changed\n", c.Adapter)
 		case lockfile.OverrideChanged:
-			fmt.Fprintf(os.Stderr, "~ %s override changed\n", c.Adapter)
+			fmt.Fprintf(out, "~ %s override changed\n", c.Adapter)
 		}
 	}
 }

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -26,7 +27,7 @@ func newAdapterDevCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
-			return runDev(args[0], as)
+			return runDev(args[0], as, cmd.OutOrStdout())
 		},
 	}
 
@@ -34,7 +35,10 @@ func newAdapterDevCmd() *cobra.Command {
 	return cmd
 }
 
-func runDev(localPath, as string) error {
+func runDev(localPath, as string, out io.Writer) error {
+	if out == nil {
+		out = os.Stderr
+	}
 	localPath, err := filepath.Abs(localPath)
 	if err != nil {
 		return fmt.Errorf("resolve path: %w", err)
@@ -70,11 +74,10 @@ func runDev(localPath, as string) error {
 	}
 
 	devBindings[key] = devBinding{Path: localPath}
-	fmt.Fprintf(os.Stderr, "dev: registered %s as %s.%s\n", localPath, typ, name)
+	fmt.Fprintf(out, "dev: registered %s as %s.%s (not yet wired into apply — see TODO(WS09))\n", localPath, typ, name)
 	return nil
 }
 
-//nolint:unused // reserved for loader integration in a follow-up workstream
 func findDevBinding(typ, name string) (string, bool) {
 	b, ok := devBindings[typ+"."+name]
 	if !ok {
@@ -83,15 +86,16 @@ func findDevBinding(typ, name string) (string, bool) {
 	return b.Path, true
 }
 
-//nolint:unused // reserved for loader integration in a follow-up workstream
-func checkDevAllowed(typ, name string) error {
+// checkDevAllowed returns an error when the workflow verification mode is
+// "strict" and a dev binding exists for the adapter.  Callers should pass the
+// effective verification mode read from the workflow configuration.
+// TODO(WS09): Wire findDevBinding into the adapter loader path so that
+// criteria apply resolves dev bindings before falling back to OCI cache.
+func checkDevAllowed(verificationMode, typ, name string) error {
 	if _, ok := findDevBinding(typ, name); !ok {
 		return nil
 	}
-	// If workflow verification is strict, dev bindings are forbidden.
-	// The caller should pass the effective verification mode; for now we
-	// allow dev bindings unless explicitly forbidden by env.
-	if os.Getenv("CRITERIA_DEV_STRICT") == "1" {
+	if verificationMode == "strict" {
 		return fmt.Errorf("dev binding for %s.%s is not allowed when strict verification is enabled", typ, name)
 	}
 	return nil
