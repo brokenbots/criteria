@@ -8,6 +8,9 @@ import (
 	"path/filepath"
 
 	"github.com/spf13/cobra"
+
+	"github.com/brokenbots/criteria/internal/adapter/oci"
+	"github.com/brokenbots/criteria/internal/adapter/publish"
 )
 
 func newAdapterPublishCmd() *cobra.Command {
@@ -48,10 +51,39 @@ func runPublish(ctx context.Context, binPath, registry string, withImage bool) e
 		return fmt.Errorf("--emit-manifest failed: %w", err)
 	}
 
-	// OCI artifact construction and push will be added when the shared publish library is ready.
-	_ = out
-	_ = registry
-	_ = withImage
+	// Write manifest to a temporary file for the publish package.
+	tmpDir, err := os.MkdirTemp("", "criteria-publish-")
+	if err != nil {
+		return fmt.Errorf("create temp dir: %w", err)
+	}
+	defer os.RemoveAll(tmpDir)
 
-	return fmt.Errorf("publish is not yet fully implemented (waiting on internal/adapter/publish/ shared library)")
+	mfPath := filepath.Join(tmpDir, "adapter.yaml")
+	if err := os.WriteFile(mfPath, out, 0o644); err != nil {
+		return fmt.Errorf("write manifest: %w", err)
+	}
+
+	// Resolve registry reference.
+	if registry == "" {
+		return fmt.Errorf("--registry is required (provide a fully-qualified reference or alias)")
+	}
+
+	ref, err := Resolve(ResolveContext{}, registry)
+	if err != nil {
+		return fmt.Errorf("resolve registry: %w", err)
+	}
+
+	if withImage {
+		return fmt.Errorf("--with-image is not yet implemented")
+	}
+
+	// Push the artifact.
+	var _ oci.Reference = ref // ensure import is used
+	dg, err := publish.PushArtifact(ctx, ref, binPath, mfPath, publish.Options{})
+	if err != nil {
+		return fmt.Errorf("publish artifact: %w", err)
+	}
+
+	fmt.Printf("Published %s to %s (digest: %s)\n", filepath.Base(binPath), ref, dg)
+	return nil
 }

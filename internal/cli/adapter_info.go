@@ -5,7 +5,6 @@ import (
 	"os"
 	"strings"
 
-	"github.com/opencontainers/go-digest"
 	"github.com/spf13/cobra"
 
 	"github.com/brokenbots/criteria/internal/adapter/manifest"
@@ -35,25 +34,9 @@ func runInfo(refOrName string) error {
 		return fmt.Errorf("open cache: %w", err)
 	}
 
-	// Try to resolve as a digest first.
-	dg, err := digest.Parse(refOrName)
+	dg, err := resolveRefOrName(layout, refOrName)
 	if err != nil {
-		// If not a digest, search index by annotation or treat as unknown.
-		ix, idxErr := layout.Index()
-		if idxErr != nil {
-			return fmt.Errorf("read index: %w", idxErr)
-		}
-		found := false
-		for _, m := range ix.Manifests {
-			if m.Annotations != nil && m.Annotations["org.opencontainers.image.title"] == refOrName {
-				dg = m.Digest
-				found = true
-				break
-			}
-		}
-		if !found {
-			return fmt.Errorf("adapter %q not found in cache", refOrName)
-		}
+		return err
 	}
 
 	artFS, err := layout.Open(dg)

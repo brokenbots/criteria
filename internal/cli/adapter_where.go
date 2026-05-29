@@ -1,14 +1,16 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"runtime"
+	"strings"
 
-	"github.com/opencontainers/go-digest"
 	"github.com/spf13/cobra"
 
 	"github.com/brokenbots/criteria/internal/adapter/oci"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
 func newAdapterWhereCmd() *cobra.Command {
@@ -34,24 +36,39 @@ func runWhere(refOrName string) error {
 		return fmt.Errorf("open cache: %w", err)
 	}
 
-	dg, err := digest.Parse(refOrName)
+	dg, err := resolveRefOrName(layout, refOrName)
 	if err != nil {
-		return fmt.Errorf("where requires a digest reference: %w", err)
+		return err
 	}
 
-	artFS, err := layout.Open(dg)
+	_, err = layout.Open(dg)
 	if err != nil {
 		return fmt.Errorf("open artifact: %w", err)
 	}
 
 	platformBin := fmt.Sprintf("bin/%s/%s", runtime.GOOS, runtime.GOARCH)
-	f, err := artFS.Open(platformBin)
-	if err != nil {
-		return fmt.Errorf("host platform binary not found in artifact: %w", err)
-	}
-	_ = f.Close()
+	expectedPrefix := platformBin + "/"
 
-	// Print the actual blob path.
-	fmt.Fprintln(os.Stdout, layout.BlobPath(dg))
-	return nil
+	// Read the manifest blob directly to find the binary layer digest.
+	manifestData, err := os.ReadFile(layout.BlobPath(dg))
+	if err != nil {
+		return fmt.Errorf("read manifest blob: %w", err)
+	}
+	var manifestDesc ocispec.Manifest
+	if err := json.Unmarshal(manifestData, &manifestDesc); err != nil {
+		return fmt.Errorf("parse manifest: %w", err)
+	}
+
+	for _, layer := range manifestDesc.Layers {
+		title, ok := layer.Annotations[oci.AnnotationTitle]
+		if !ok {
+			continue
+		}
+		if strings.HasPrefix(title, expectedPrefix) {
+			fmt.Fprintln(os.Stdout, layout.BlobPath(layer.Digest))
+			return nil
+		}
+	}
+
+	return fmt.Errorf("host platform binary not found in artifact for %s/%s", runtime.GOOS, runtime.GOARCH)
 }

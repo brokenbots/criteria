@@ -3,6 +3,8 @@ package cli
 import (
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -33,7 +35,7 @@ func newAdapterPruneCmd() *cobra.Command {
 func runPrune(olderThan string, maxSize int64) error {
 	var opts oci.GCOptions
 	if olderThan != "" {
-		d, err := time.ParseDuration(olderThan)
+		d, err := parseHumanDuration(olderThan)
 		if err != nil {
 			return fmt.Errorf("parse --older-than: %w", err)
 		}
@@ -64,4 +66,46 @@ func runPrune(olderThan string, maxSize int64) error {
 		}
 	}
 	return nil
+}
+
+// parseHumanDuration extends Go's time.ParseDuration with support for days
+// (e.g. "30d", "1d12h").
+func parseHumanDuration(s string) (time.Duration, error) {
+	if s == "" {
+		return 0, fmt.Errorf("empty duration")
+	}
+	// Simple replacement: convert whole days to hours before delegating.
+	var days float64
+	rest := s
+	for {
+		i := strings.Index(rest, "d")
+		if i == -1 {
+			break
+		}
+		if i == 0 {
+			return 0, fmt.Errorf("invalid duration %q", s)
+		}
+		// Parse the numeric prefix.
+		j := i - 1
+		for j >= 0 && (rest[j] >= '0' && rest[j] <= '9' || rest[j] == '.') {
+			j--
+		}
+		if j == i-1 {
+			return 0, fmt.Errorf("invalid duration %q", s)
+		}
+		n, err := strconv.ParseFloat(rest[j+1:i], 64)
+		if err != nil {
+			return 0, fmt.Errorf("invalid duration %q: %w", s, err)
+		}
+		days += n
+		rest = rest[:j+1] + rest[i+1:]
+	}
+	if rest == "" {
+		return time.Duration(days*24) * time.Hour, nil
+	}
+	d, err := time.ParseDuration(rest)
+	if err != nil {
+		return 0, err
+	}
+	return d + time.Duration(days*24)*time.Hour, nil
 }
