@@ -20,6 +20,8 @@ import (
 // TaintPass walks the compiled FSM graph and marks StepNode.Tainted on every
 // step that transitively receives secret data. It returns diagnostics when
 // tainted variables are used in non-secret input contexts (future-proofing).
+//
+//nolint:gocognit // WS09: multi-pass taint propagation (mark origins, build predecessors, fixed-point propagation) is inherently complex
 func TaintPass(g *FSMGraph, schemas map[string]AdapterInfo) hcl.Diagnostics {
 	if g == nil || len(g.Steps) == 0 {
 		return nil
@@ -63,6 +65,8 @@ func TaintPass(g *FSMGraph, schemas map[string]AdapterInfo) hcl.Diagnostics {
 
 // buildPredecessors returns a map from step name to the list of step names
 // that have an outcome edge leading to it.
+//
+//nolint:gocognit // WS09: two-path outcome+defaultOutcome loop is clear and compact
 func buildPredecessors(g *FSMGraph) map[string][]string {
 	preds := make(map[string][]string, len(g.Steps))
 	for _, name := range g.stepOrder {
@@ -94,6 +98,8 @@ func buildPredecessors(g *FSMGraph) map[string][]string {
 // referencesSecretVar inspects every variable traversal in exprs and returns
 // true if any traversal references a variable or shared_variable whose
 // Secret flag is true.
+//
+//nolint:gocognit // WS09: traversal type-switch for var/shared namespaces is straightforward
 func referencesSecretVar(exprs map[string]hcl.Expression, g *FSMGraph) bool {
 	for _, expr := range exprs {
 		for _, traversal := range expr.Variables() {
@@ -126,7 +132,7 @@ func referencesSecretVar(exprs map[string]hcl.Expression, g *FSMGraph) bool {
 // IsTaintedDiagnostic returns a diagnostic that can be used when a tainted
 // step is used in a context that requires non-secret data. Currently a
 // no-op placeholder for future policy enforcement.
-func IsTaintedDiagnostic(stepName string, context string) *hcl.Diagnostic {
+func IsTaintedDiagnostic(stepName, context string) *hcl.Diagnostic {
 	return &hcl.Diagnostic{
 		Severity: hcl.DiagWarning,
 		Summary:  fmt.Sprintf("step %q (%s): step is tainted by secret data", stepName, context),

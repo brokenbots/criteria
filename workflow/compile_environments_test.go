@@ -490,10 +490,13 @@ func TestCompileEnvironments_TypeSpecific(t *testing.T) {
 	}
 	// Use a permissive test registry that allows any attribute.
 	registry := &testEnvRegistry{handler: &testPermissiveHandler{typ: "permissive"}}
-	g, diags := CompileWithOpts(spec, nil, CompileOpts{EnvRegistry: registry})
+	g := newFSMGraph(spec)
+	diags = compileEnvironments(g, spec, CompileOpts{}, registry)
 	if diags.HasErrors() {
 		t.Fatalf("compile: %s", diags.Error())
 	}
+	// Resolve default environment manually since compileEnvironments does it.
+	g.DefaultEnvironment = "permissive.custom"
 	env := g.Environments["permissive.custom"]
 	if env == nil {
 		t.Fatal("environment permissive.custom not found")
@@ -535,7 +538,7 @@ type testPermissiveHandler struct {
 	typ string
 }
 
-func (h *testPermissiveHandler) Type() string                          { return h.typ }
-func (h *testPermissiveHandler) SupportedOSes() []string               { return nil }
+func (h *testPermissiveHandler) Type() string                              { return h.typ }
+func (h *testPermissiveHandler) SupportedOSes() []string                   { return nil }
 func (h *testPermissiveHandler) ValidateFields(_ hcl.Body) hcl.Diagnostics { return nil }
-func (h *testPermissiveHandler) IsolationKind() EnvIsolationKind         { return EnvIsolationNone }
+func (h *testPermissiveHandler) IsolationKind() EnvIsolationKind           { return EnvIsolationNone }

@@ -82,7 +82,7 @@ type EnvironmentNode struct {
 	// PolicyMode is "permissive" (default) or "strict".
 	PolicyMode string
 	// OS is "" (any) or a specific GOOS value like "linux" or "darwin".
-	OS string
+	OS           string
 	Filesystem   *FilesystemPolicy
 	Network      *NetworkPolicy
 	Secrets      *SecretsPolicy
@@ -178,7 +178,7 @@ type AdapterDeclSpec struct {
 	Environment hcl.Expression `hcl:"environment,optional"` // bare traversal reference (e.g. shell.default)
 	OnCrash     string         `hcl:"on_crash,optional"`
 	Config      *ConfigSpec    `hcl:"config,block"`
-	Remain      hcl.Body       `hcl:",remain"` // captures any remaining blocks/attributes (e.g. secrets)
+	Secrets     *ConfigSpec    `hcl:"secrets,block"` // optional secrets block
 }
 
 // StepSpec describes a single step in the workflow.

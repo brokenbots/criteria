@@ -36,7 +36,7 @@ func IsShellLCPrefix(name string) bool {
 
 // compileEnvironments folds and stores every environment block.
 // Both variables and config maps must fold at compile (no runtime-only refs).
-func compileEnvironments(g *FSMGraph, spec *Spec, opts CompileOpts) hcl.Diagnostics {
+func compileEnvironments(g *FSMGraph, spec *Spec, opts CompileOpts, envReg EnvRegistry) hcl.Diagnostics {
 	if len(spec.Environments) == 0 {
 		return nil
 	}
@@ -46,7 +46,7 @@ func compileEnvironments(g *FSMGraph, spec *Spec, opts CompileOpts) hcl.Diagnost
 	// Validate all environment declarations and fold their variables/config.
 	seen := make(map[string]bool) // tracks "<type>.<name>" uniqueness
 	for _, envSpec := range spec.Environments {
-		diags = append(diags, compileEnvironmentBlock(g, envSpec, opts, seen)...)
+		diags = append(diags, compileEnvironmentBlock(g, envSpec, opts, envReg, seen)...)
 	}
 
 	// Resolve default environment rules.
@@ -56,9 +56,11 @@ func compileEnvironments(g *FSMGraph, spec *Spec, opts CompileOpts) hcl.Diagnost
 }
 
 // compileEnvironmentBlock validates and compiles a single environment declaration.
-func compileEnvironmentBlock(g *FSMGraph, envSpec EnvironmentSpec, opts CompileOpts, seen map[string]bool) hcl.Diagnostics {
+//
+//nolint:gocognit,gocyclo,funlen // WS09: multi-phase validation is intentionally sequential; length/complexity from policy+os+variables+config+type-specific paths
+func compileEnvironmentBlock(g *FSMGraph, envSpec EnvironmentSpec, opts CompileOpts, envReg EnvRegistry, seen map[string]bool) hcl.Diagnostics {
 	// Validate block basics (type, name, duplicates)
-	diags := validateEnvironmentBasics(envSpec, opts, seen)
+	diags := validateEnvironmentBasics(envSpec, envReg, seen)
 	if diags.HasErrors() {
 		return diags
 	}
@@ -66,8 +68,7 @@ func compileEnvironmentBlock(g *FSMGraph, envSpec EnvironmentSpec, opts CompileO
 	key := fmt.Sprintf("%s.%s", envSpec.Type, envSpec.Name)
 	seen[key] = true
 
-	registry := effectiveEnvRegistry(&opts)
-	handler := registry.Lookup(envSpec.Type)
+	handler := envReg.Lookup(envSpec.Type)
 	if handler == nil {
 		// Already diagnosed in validateEnvironmentBasics; skip further work.
 		return diags
@@ -180,12 +181,11 @@ func attrRangePtr(attrs hcl.Attributes, name string) *hcl.Range {
 }
 
 // validateEnvironmentBasics validates type, name, and duplicate checks for an environment block.
-func validateEnvironmentBasics(envSpec EnvironmentSpec, opts CompileOpts, seen map[string]bool) hcl.Diagnostics {
+func validateEnvironmentBasics(envSpec EnvironmentSpec, envReg EnvRegistry, seen map[string]bool) hcl.Diagnostics {
 	var diags hcl.Diagnostics
 
-	registry := effectiveEnvRegistry(&opts)
-	if handler := registry.Lookup(envSpec.Type); handler == nil {
-		types := registry.Registered()
+	if handler := envReg.Lookup(envSpec.Type); handler == nil {
+		types := envReg.Registered()
 		var typesList string
 		if len(types) == 0 {
 			typesList = "(none registered)"

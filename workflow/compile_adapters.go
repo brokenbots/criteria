@@ -47,14 +47,14 @@ func compileAdapters(g *FSMGraph, spec *Spec, schemas map[string]AdapterInfo, op
 	var diags hcl.Diagnostics
 	configEvalCtx := adapterConfigEvalContext(graphVars(g), graphLocals(g), opts.WorkflowDir)
 	for _, ad := range spec.Adapters {
-		diags = append(diags, compileOneAdapter(g, ad, schemas, configEvalCtx)...)
+		diags = append(diags, compileOneAdapter(g, &ad, schemas, configEvalCtx)...)
 	}
 	return diags
 }
 
 // compileOneAdapter compiles a single adapter declaration into g.Adapters and
 // g.AdapterOrder. Returns any diagnostics.
-func compileOneAdapter(g *FSMGraph, ad AdapterDeclSpec, schemas map[string]AdapterInfo, configEvalCtx *hcl.EvalContext) hcl.Diagnostics {
+func compileOneAdapter(g *FSMGraph, ad *AdapterDeclSpec, schemas map[string]AdapterInfo, configEvalCtx *hcl.EvalContext) hcl.Diagnostics {
 	var diags hcl.Diagnostics
 	typeName := ad.Type
 	instanceName := ad.Name
@@ -91,7 +91,7 @@ func compileOneAdapter(g *FSMGraph, ad AdapterDeclSpec, schemas map[string]Adapt
 	diags = append(diags, d...)
 
 	if info, ok := adapterInfo(schemas, typeName); ok {
-		diags = append(diags, checkAdapterEnvCompatibility(key, info, effectiveEnv, g)...)
+		diags = append(diags, checkAdapterEnvCompatibility(key, info, effectiveEnv)...)
 	}
 
 	g.Adapters[key] = &AdapterNode{
@@ -142,7 +142,7 @@ func resolveAdapterEnv(g *FSMGraph, key, envRef string) (string, hcl.Diagnostics
 // resolveAdapterConfig decodes the adapter config block. When the adapter type
 // has a registered schema, it validates attribute types and required fields.
 // Without a schema, it falls back to a permissive string-map decode.
-func resolveAdapterConfig(key string, ad AdapterDeclSpec, schemas map[string]AdapterInfo, typeName string, configEvalCtx *hcl.EvalContext) (map[string]string, hcl.Diagnostics) {
+func resolveAdapterConfig(key string, ad *AdapterDeclSpec, schemas map[string]AdapterInfo, typeName string, configEvalCtx *hcl.EvalContext) (map[string]string, hcl.Diagnostics) {
 	if ad.Config == nil {
 		return nil, nil
 	}
@@ -162,38 +162,27 @@ func resolveAdapterConfig(key string, ad AdapterDeclSpec, schemas map[string]Ada
 }
 
 // resolveAdapterSecrets extracts the optional `secrets { }` block from the
-// adapter declaration's Remain body. Each attribute in the block is preserved
-// as an hcl.Expression so that it can be evaluated at runtime.
-func resolveAdapterSecrets(key string, ad AdapterDeclSpec) (map[string]hcl.Expression, hcl.Diagnostics) {
-	schema := &hcl.BodySchema{
-		Blocks: []hcl.BlockHeaderSchema{
-			{Type: "secrets"},
-		},
+// adapter declaration. Each attribute in the block is preserved as an
+// hcl.Expression so that it can be evaluated at runtime.
+func resolveAdapterSecrets(_key string, ad *AdapterDeclSpec) (map[string]hcl.Expression, hcl.Diagnostics) {
+	if ad.Secrets == nil {
+		return nil, nil
 	}
-	content, _, diags := ad.Remain.PartialContent(schema)
+	attrs, diags := ad.Secrets.Remain.JustAttributes()
 	if diags.HasErrors() {
 		return nil, diags
 	}
-	for _, block := range content.Blocks {
-		if block.Type == "secrets" {
-			attrs, attrDiags := block.Body.JustAttributes()
-			if attrDiags.HasErrors() {
-				return nil, attrDiags
-			}
-			out := make(map[string]hcl.Expression, len(attrs))
-			for k, attr := range attrs {
-				out[k] = attr.Expr
-			}
-			return out, nil
-		}
+	out := make(map[string]hcl.Expression, len(attrs))
+	for k, attr := range attrs {
+		out[k] = attr.Expr
 	}
-	return nil, nil
+	return out, nil
 }
 
 // checkAdapterEnvCompatibility emits a diagnostic when an adapter's schema
 // declares a set of compatible environments and the resolved environment type
 // is not among them.
-func checkAdapterEnvCompatibility(key string, info AdapterInfo, envKey string, g *FSMGraph) hcl.Diagnostics {
+func checkAdapterEnvCompatibility(key string, info AdapterInfo, envKey string) hcl.Diagnostics {
 	if len(info.CompatibleEnvironments) == 0 {
 		return nil
 	}

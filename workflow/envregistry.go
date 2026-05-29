@@ -11,10 +11,10 @@ import (
 type EnvIsolationKind int
 
 const (
-	EnvIsolationNone     EnvIsolationKind = iota // shell — no extra isolation
-	EnvIsolationSandbox                          // sandbox — OS-level sandbox
-	EnvIsolationContainer                        // container — container runtime
-	EnvIsolationRemote                           // remote — out-of-process shim
+	EnvIsolationNone      EnvIsolationKind = iota // shell — no extra isolation
+	EnvIsolationSandbox                           // sandbox — OS-level sandbox
+	EnvIsolationContainer                         // container — container runtime
+	EnvIsolationRemote                            // remote — out-of-process shim
 )
 
 // String returns the human-readable isolation kind name.
@@ -80,8 +80,8 @@ var shellHandlerInstance = &builtinShellHandler{}
 
 type builtinShellHandler struct{}
 
-func (h *builtinShellHandler) Type() string              { return "shell" }
-func (h *builtinShellHandler) SupportedOSes() []string     { return nil }
+func (h *builtinShellHandler) Type() string                    { return "shell" }
+func (h *builtinShellHandler) SupportedOSes() []string         { return nil }
 func (h *builtinShellHandler) IsolationKind() EnvIsolationKind { return EnvIsolationNone }
 
 func (h *builtinShellHandler) ValidateFields(body hcl.Body) hcl.Diagnostics {
@@ -108,34 +108,6 @@ func builtinEnvRegistry() EnvRegistry {
 	return defaultEnvRegistry{}
 }
 
-// effectiveEnvRegistry returns opts.EnvRegistry if set; otherwise the built-in
-// shell-only registry so that standalone compiles continue to work.
-func effectiveEnvRegistry(opts *CompileOpts) EnvRegistry {
-	if opts != nil && opts.EnvRegistry != nil {
-		return opts.EnvRegistry
-	}
-	return builtinEnvRegistry()
-}
-
-
 // envRegistryHostOS returns the host operating system name used for compile-time
 // gating. It is a variable so tests can override it.
 var envRegistryHostOS = runtime.GOOS
-
-// validateEnvOS checks whether hostOS is in the list of supported OSes.
-// If supported is empty, any OS is accepted.
-func validateEnvOS(hostOS string, supported []string, subject *hcl.Range) hcl.Diagnostics {
-	if len(supported) == 0 {
-		return nil
-	}
-	for _, os := range supported {
-		if os == hostOS {
-			return nil
-		}
-	}
-	return hcl.Diagnostics{&hcl.Diagnostic{
-		Severity: hcl.DiagError,
-		Summary:  fmt.Sprintf("environment type requires OS %v; host is %q", supported, hostOS),
-		Subject:  subject,
-	}}
-}

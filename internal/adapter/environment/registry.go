@@ -127,7 +127,9 @@ func (h *SandboxHandler) ValidateFields(body hcl.Body) hcl.Diagnostics {
 }
 
 // IsolationKind returns workflow.EnvIsolationSandbox.
-func (h *SandboxHandler) IsolationKind() workflow.EnvIsolationKind { return workflow.EnvIsolationSandbox }
+func (h *SandboxHandler) IsolationKind() workflow.EnvIsolationKind {
+	return workflow.EnvIsolationSandbox
+}
 
 // --- Container handler (skeleton) ---
 
@@ -163,7 +165,9 @@ func (h *ContainerHandler) ValidateFields(body hcl.Body) hcl.Diagnostics {
 }
 
 // IsolationKind returns workflow.EnvIsolationContainer.
-func (h *ContainerHandler) IsolationKind() workflow.EnvIsolationKind { return workflow.EnvIsolationContainer }
+func (h *ContainerHandler) IsolationKind() workflow.EnvIsolationKind {
+	return workflow.EnvIsolationContainer
+}
 
 // --- Remote handler (skeleton) ---
 

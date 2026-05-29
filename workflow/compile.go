@@ -48,9 +48,6 @@ type CompileOpts struct {
 	// compiles so callee adapter config and step input are fully validated.
 	// Set by the CLI compile path; nil when compiling standalone without adapters.
 	Schemas map[string]AdapterInfo
-	// EnvRegistry is the environment-type registry used to validate environment
-	// blocks. When nil, a built-in registry that only knows "shell" is used.
-	EnvRegistry EnvRegistry
 }
 
 // Compile validates a Spec and returns an executable FSMGraph. It is a
@@ -105,7 +102,7 @@ func CompileWithContext(ctx context.Context, spec *Spec, schemas map[string]Adap
 	diags = append(diags, compileVariables(g, spec)...)
 	diags = append(diags, compileLocals(g, spec, opts)...)
 	diags = append(diags, compileSharedVariables(g, spec, opts)...)
-	diags = append(diags, compileEnvironments(g, spec, opts)...)
+	diags = append(diags, compileEnvironments(g, spec, opts, builtinEnvRegistry())...)
 	diags = append(diags, compileSubworkflows(ctx, g, spec, opts)...)
 	diags = append(diags, compileOutputs(g, spec, opts)...)
 	diags = append(diags, compileAdapters(g, spec, schemas, opts)...)
