@@ -4,70 +4,49 @@ import (
 	"fmt"
 
 	"github.com/opencontainers/go-digest"
+
+	"github.com/brokenbots/criteria/internal/adapter/manifest"
+	"github.com/brokenbots/criteria/internal/adapter/oci"
+	"github.com/brokenbots/criteria/internal/adapter/signing"
 )
 
-// BuildInput carries the data required to assemble a LockedAdapter.
-// Callers (e.g. WS08 CLI) populate this from the results of a pull,
-// manifest parse, and optional signer verification.
-type BuildInput struct {
-	Type                           string
-	Name                           string
-	Reference                      string
-	ResolvedDigest                 digest.Digest
-	SourceURL                      string
-	SDKProtocolVersion             int
-	Platforms                      []string
-	ContainerImage                 *LockedContainerImage
-	Signer                         *LockedSignature
-	Remote                         *LockedRemote
-	CompatibleEnvironmentsOverride []string
-	OverriddenBy                   string
-}
-
 // BuildEntry assembles a LockedAdapter from a successful pull.
-func BuildEntry(in *BuildInput) (LockedAdapter, error) {
-	if in == nil {
-		return LockedAdapter{}, fmt.Errorf("build input is nil")
+//
+// Fields populated from the inputs:
+//   - Reference from ref.String()
+//   - ResolvedDigest from dg.String()
+//   - SourceURL, SDKProtocolVersion, Platforms, and ContainerImage from m
+//   - Signature from signer (may be nil if unsigned and policy allows it)
+//   - Remote from remote (may be nil if not bound to a remote environment)
+//
+// The caller (e.g. WS08) must set Type and Name on the returned value,
+// since those are workflow-scoped identifiers not present in the pull inputs.
+func BuildEntry(ref oci.Reference, dg digest.Digest, m *manifest.Manifest, signer *signing.SignerIdentity, remote *RemoteFields) (LockedAdapter, error) {
+	if m == nil {
+		return LockedAdapter{}, fmt.Errorf("manifest is required")
 	}
-	if in.Type == "" {
-		return LockedAdapter{}, fmt.Errorf("adapter type is required")
+	if dg == "" {
+		return LockedAdapter{}, fmt.Errorf("resolved digest is required")
 	}
-	if in.Name == "" {
-		return LockedAdapter{}, fmt.Errorf("adapter name is required")
-	}
-	if in.Reference == "" {
-		return LockedAdapter{}, fmt.Errorf("reference is required")
-	}
-	if in.ResolvedDigest == "" {
-		return LockedAdapter{}, fmt.Errorf("resolved_digest is required")
+
+	platforms := make([]string, 0, len(m.Platforms))
+	for _, p := range m.Platforms {
+		platforms = append(platforms, p.OS+"/"+p.Arch)
 	}
 
 	return LockedAdapter{
-		Type:                           in.Type,
-		Name:                           in.Name,
-		Reference:                      in.Reference,
-		ResolvedDigest:                 in.ResolvedDigest.String(),
-		SourceURL:                      in.SourceURL,
-		SDKProtocolVersion:             in.SDKProtocolVersion,
-		Platforms:                      copyStringSlice(in.Platforms),
-		Signature:                      cloneSignature(in.Signer),
-		ContainerImage:                 cloneContainerImage(in.ContainerImage),
-		Remote:                         cloneRemote(in.Remote),
-		CompatibleEnvironmentsOverride: copyStringSlice(in.CompatibleEnvironmentsOverride),
-		OverriddenBy:                   in.OverriddenBy,
+		Reference:          ref.String(),
+		ResolvedDigest:     dg.String(),
+		SourceURL:          m.SourceURL,
+		SDKProtocolVersion: m.SDKProtocolVersion,
+		Platforms:          platforms,
+		Signature:          lockedSignatureFromSigner(signer),
+		ContainerImage:     lockedContainerImageFromManifest(m.ContainerImage),
+		Remote:             lockedRemoteFromFields(remote),
 	}, nil
 }
 
-func copyStringSlice(s []string) []string {
-	if s == nil {
-		return nil
-	}
-	out := make([]string, len(s))
-	copy(out, s)
-	return out
-}
-
-func cloneSignature(s *LockedSignature) *LockedSignature {
+func lockedSignatureFromSigner(s *signing.SignerIdentity) *LockedSignature {
 	if s == nil {
 		return nil
 	}
@@ -87,17 +66,17 @@ func cloneSignature(s *LockedSignature) *LockedSignature {
 	return out
 }
 
-func cloneContainerImage(c *LockedContainerImage) *LockedContainerImage {
-	if c == nil {
+func lockedContainerImageFromManifest(ci *manifest.ContainerImageRef) *LockedContainerImage {
+	if ci == nil {
 		return nil
 	}
 	return &LockedContainerImage{
-		Ref:    c.Ref,
-		Digest: c.Digest,
+		Ref:    ci.Ref,
+		Digest: ci.Digest,
 	}
 }
 
-func cloneRemote(r *LockedRemote) *LockedRemote {
+func lockedRemoteFromFields(r *RemoteFields) *LockedRemote {
 	if r == nil {
 		return nil
 	}
