@@ -654,8 +654,15 @@ func (s *executeCaptureSink) emitResult(resultEvt *v2.ExecuteResult) error {
 // is handled session-scoped by permissionInterceptSink in SessionManager.Execute.
 func (s *executeCaptureSink) emitAdapterEvent(adapterEvt *v2.AdapterEvent) error {
 	if adapterEvt.GetEventKind() == "permission.request" {
-		s.handlePermissionRequest(adapterEvt)
-		return nil
+		if s.requests != nil {
+			// Fallback per-Execute path: evaluate locally and forward
+			// PermissionEvents to the adapter stream.
+			s.handlePermissionRequest(adapterEvt)
+			return nil
+		}
+		// Active stream path: forward to the upstream sink so the
+		// session-scoped permissionInterceptSink can evaluate with
+		// CombinedPolicy, audit, and stream event dispatch.
 	}
 	if adapterEvt.GetPayload() != nil {
 		s.sink.Adapter(adapterEvt.GetEventKind(), adapterEvt.GetPayload().AsMap())

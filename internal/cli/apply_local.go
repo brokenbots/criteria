@@ -91,9 +91,12 @@ func runApplyLocal(
 	// src (raw HCL bytes) is consumed only by server mode for signed payload delivery;
 	// local mode has no signing step, so src is intentionally unused here.
 	_ = src
+	auditPath, _ := auditLogPath(runID)
+	auditWriter := adapterhost.NewFileAuditWriter(auditPath)
 	eng = engine.New(graph, loader, tracker,
 		engine.WithVarOverrides(parseVarOverrides(opts.varOverrides)),
 		engine.WithWorkflowDir(workflowDirFromPath(opts.workflowPath)),
+		engine.WithAuditWriter(auditWriter),
 	)
 	if err := eng.Run(ctx); err != nil {
 		log.Error("local run failed", "run_id", runID, "error", err)

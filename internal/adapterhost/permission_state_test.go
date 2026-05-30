@@ -2,6 +2,8 @@ package adapterhost
 
 import (
 	"context"
+	"encoding/json"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -338,6 +340,112 @@ func TestSessionManager_ExecutePermissionOutcomeOverride(t *testing.T) {
 	}
 	if !inner.saw("permission.denied") {
 		t.Error("expected permission.denied event")
+	}
+}
+
+// TestSessionManager_ExecutePermissionFlowWithAliases verifies the full
+// session-scoped permission flow: Execute → permissionInterceptSink →
+// CombinedPolicy with aliases → audit write.
+func TestSessionManager_ExecutePermissionFlowWithAliases(t *testing.T) {
+	// Register an alias so that the adapter's runtime tool name "read" maps to
+	// the user-facing allow_tools pattern "read_file".
+	adapterPermissionAliases["alias-test"] = map[string]string{
+		"read_file": "read",
+	}
+	t.Cleanup(func() { delete(adapterPermissionAliases, "alias-test") })
+
+	loader := NewLoaderWithDiscovery(func(string) (string, error) {
+		return "", nil
+	})
+	loader.RegisterBuiltin("alias-test", func() Handle {
+		return &permissionEmittingAdapter{tool: "read"}
+	})
+
+	sm := NewSessionManager(loader)
+	audit := &sliceAuditWriter{}
+	sm.Audit = audit
+
+	ctx := context.Background()
+	if err := sm.Open(ctx, "agent", "alias-test", "", nil, nil); err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() { _ = sm.Close(ctx, "agent") }()
+
+	step := &workflow.StepNode{
+		Name:       "run",
+		AllowTools: []string{"read_file"}, // matches via alias "read" → "read_file"
+		Outcomes:   map[string]*workflow.CompiledOutcome{"success": {Name: "success"}},
+	}
+	inner := &adapterEventCollector{}
+	res, err := sm.Execute(ctx, "agent", step, inner)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if res.Outcome != "success" {
+		t.Fatalf("outcome=%q want success", res.Outcome)
+	}
+	if !inner.saw("permission.granted") {
+		t.Fatal("expected permission.granted event")
+	}
+
+	if audit.len() != 1 {
+		t.Fatalf("expected 1 audit entry, got %d", audit.len())
+	}
+	entries := audit.all()
+	if entries[0].Decision != "allow" {
+		t.Errorf("audit decision=%q want allow", entries[0].Decision)
+	}
+	if entries[0].Tool != "read" {
+		t.Errorf("audit tool=%q want read", entries[0].Tool)
+	}
+	if entries[0].SessionID == "" {
+		t.Error("expected non-empty audit session_id")
+	}
+}
+
+// TestFileAuditWriter writes JSON-lines to a temp file and verifies the output.
+func TestFileAuditWriter(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/audit.log"
+	w := NewFileAuditWriter(path)
+
+	w.Write(&DecisionLogEntry{
+		SessionID: "sess-1",
+		RequestID: "req-1",
+		Tool:      "read_file",
+		Decision:  "allow",
+	})
+	w.Write(&DecisionLogEntry{
+		SessionID: "sess-1",
+		RequestID: "req-2",
+		Tool:      "write_file",
+		Decision:  "deny",
+	})
+	if err := w.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 lines, got %d: %s", len(lines), string(b))
+	}
+	var first DecisionLogEntry
+	if err := json.Unmarshal([]byte(lines[0]), &first); err != nil {
+		t.Fatalf("unmarshal first: %v", err)
+	}
+	if first.Decision != "allow" {
+		t.Errorf("first decision=%q want allow", first.Decision)
+	}
+	var second DecisionLogEntry
+	if err := json.Unmarshal([]byte(lines[1]), &second); err != nil {
+		t.Fatalf("unmarshal second: %v", err)
+	}
+	if second.Decision != "deny" {
+		t.Errorf("second decision=%q want deny", second.Decision)
 	}
 }
 

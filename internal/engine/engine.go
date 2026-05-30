@@ -144,6 +144,9 @@ type Engine struct {
 	// log is an optional structured logger for internal engine warnings.
 	// Falls back to slog.Default() when nil.
 	log *slog.Logger
+	// auditWriter, when non-nil, is wired into the SessionManager so that
+	// permission decisions are recorded to a file (WS16).
+	auditWriter adapterhost.AuditWriter
 }
 
 func New(graph *workflow.FSMGraph, loader adapterhost.Loader, sink Sink, opts ...Option) *Engine {
@@ -199,6 +202,7 @@ func (e *Engine) setLockfileOnSessions(sessions *adapterhost.SessionManager) err
 func (e *Engine) Run(ctx context.Context) error {
 	sessions := adapterhost.NewSessionManager(e.loader)
 	sessions.SetGraph(e.graph)
+	sessions.Audit = e.auditWriter
 	if err := e.setLockfileOnSessions(sessions); err != nil {
 		return err
 	}
@@ -245,6 +249,7 @@ func (e *Engine) Run(ctx context.Context) error {
 func (e *Engine) RunFrom(ctx context.Context, startStep string, initialAttempt int) error {
 	sessions := adapterhost.NewSessionManager(e.loader)
 	sessions.SetGraph(e.graph)
+	sessions.Audit = e.auditWriter
 	if err := e.setLockfileOnSessions(sessions); err != nil {
 		return err
 	}

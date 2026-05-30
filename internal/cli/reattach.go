@@ -168,6 +168,8 @@ func resumePausedRun(ctx context.Context, log *slog.Logger, rc reattachTransport
 	if restoreErr != nil {
 		log.Warn("could not restore variable scope after pause reattach; starting with defaults", "error", restoreErr)
 	}
+	auditPath, _ := auditLogPath(cp.RunID)
+	auditWriter := adapterhost.NewFileAuditWriter(auditPath)
 	eng := engine.New(graph, loader, sink,
 		engine.WithResumedVars(restoredVars),
 		engine.WithResumedIter(restoredIter),
@@ -175,6 +177,7 @@ func resumePausedRun(ctx context.Context, log *slog.Logger, rc reattachTransport
 		engine.WithPendingSignal(resp.PendingSignal),
 		engine.WithWorkflowDir(workflowDirFromPath(cp.WorkflowPath)),
 		engine.WithLogger(log),
+		engine.WithAuditWriter(auditWriter),
 	)
 	if runErr := eng.RunFrom(ctx, resp.CurrentStep, int(resp.Attempt)); runErr != nil {
 		log.Error("paused run re-entry failed", "error", runErr)
@@ -204,11 +207,13 @@ func serviceResumeSignals(ctx context.Context, log *slog.Logger, rc reattachTran
 		}
 		pausedNode := sink.PausedAt()
 		sink.ClearPaused()
+		auditPath2, _ := auditLogPath(cp.RunID)
 		resumedEng := engine.New(graph, loader, sink,
 			engine.WithResumedVars(eng.VarScope()),
 			engine.WithResumedVisits(eng.VisitCounts()),
 			engine.WithResumePayload(resumeMsg.Payload),
 			engine.WithWorkflowDir(workflowDirFromPath(cp.WorkflowPath)),
+			engine.WithAuditWriter(adapterhost.NewFileAuditWriter(auditPath2)),
 		)
 		if runErr := resumedEng.RunFrom(ctx, pausedNode, 1); runErr != nil {
 			log.Error("run failed after resume", "error", runErr)
@@ -286,12 +291,15 @@ func resumeActiveRun(ctx context.Context, log *slog.Logger, rc reattachTransport
 		log.Warn("could not restore variable scope; starting with defaults", "error", restoreErr)
 	}
 
+	auditPath, _ := auditLogPath(cp.RunID)
+	auditWriter := adapterhost.NewFileAuditWriter(auditPath)
 	eng := engine.New(graph, loader, sink,
 		engine.WithResumedVars(restoredVars),
 		engine.WithResumedIter(restoredIter),
 		engine.WithResumedVisits(cp.Visits),
 		engine.WithWorkflowDir(workflowDirFromPath(cp.WorkflowPath)),
 		engine.WithLogger(log),
+		engine.WithAuditWriter(auditWriter),
 	)
 	if runErr := eng.RunFrom(ctx, resp.CurrentStep, nextAttempt); runErr != nil {
 		log.Error("resumed run failed", "error", runErr)
