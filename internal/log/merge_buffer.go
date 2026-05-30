@@ -44,6 +44,7 @@ type MergeBuffer struct {
 	queue    eventHeap
 	timer    *time.Timer
 	flushDue time.Time // zero when no timer is active
+	timerStopCh chan struct{}
 }
 
 // NewMergeBuffer creates a merge buffer that flushes to sink. maxDelay
@@ -104,19 +105,36 @@ func (m *MergeBuffer) scheduleFlushLocked() {
 		// Extend the timer if this event pushes the due time further out.
 		if due.After(m.flushDue) {
 			m.flushDue = due
-			if !m.timer.Stop() {
-				<-m.timer.C
+			m.timer.Stop()
+			if m.timerStopCh != nil {
+				close(m.timerStopCh)
 			}
-			m.timer.Reset(time.Until(due))
+			m.timerStopCh = make(chan struct{})
+			m.timer = time.NewTimer(time.Until(due))
+			go func(t *time.Timer, stopCh chan struct{}) {
+				select {
+				case <-t.C:
+					m.mu.Lock()
+					m.flushLocked()
+					m.mu.Unlock()
+				case <-stopCh:
+				}
+			}(m.timer, m.timerStopCh)
 		}
 		return
 	}
 	m.flushDue = due
-	m.timer = time.AfterFunc(time.Until(due), func() {
-		m.mu.Lock()
-		m.flushLocked()
-		m.mu.Unlock()
-	})
+	m.timerStopCh = make(chan struct{})
+	m.timer = time.NewTimer(time.Until(due))
+	go func(t *time.Timer, stopCh chan struct{}) {
+		select {
+		case <-t.C:
+			m.mu.Lock()
+			m.flushLocked()
+			m.mu.Unlock()
+		case <-stopCh:
+		}
+	}(m.timer, m.timerStopCh)
 }
 
 // flushLocked emits every event whose timestamp is <= now - maxDelay.
@@ -139,6 +157,10 @@ func (m *MergeBuffer) flushLocked() {
 	}
 	if m.timer != nil {
 		m.timer.Stop()
+		if m.timerStopCh != nil {
+			close(m.timerStopCh)
+			m.timerStopCh = nil
+		}
 		m.timer = nil
 	}
 	m.flushDue = time.Time{}
@@ -153,6 +175,10 @@ func (m *MergeBuffer) flushLocked() {
 func (m *MergeBuffer) flushAllLocked() {
 	if m.timer != nil {
 		m.timer.Stop()
+		if m.timerStopCh != nil {
+			close(m.timerStopCh)
+			m.timerStopCh = nil
+		}
 		m.timer = nil
 	}
 	m.flushDue = time.Time{}
