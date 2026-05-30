@@ -83,6 +83,115 @@ func NeedsChunking(data []byte, negotiatedMax uint32) bool {
 	return len(data) > int(negotiatedMax)
 }
 
+// DefaultChunkSize is the default size of each chunk emitted by SendChunks.
+// It is smaller than DefaultMaxChunkBytes so that even payloads just above the
+// 4 MiB threshold are split into manageable fragments.
+const DefaultChunkSize uint32 = 1 * 1024 * 1024
+
+// ChunkEnvelope carries a Chunk, its payload bytes, and an optional payload
+// identifier for reconnect-safe reassembly (WS19 Step 4).  payload_id is
+// reserved for future wire use; it is not serialized into the proto Chunk
+// message today, but callers may carry it out-of-band.
+type ChunkEnvelope struct {
+	Chunk     *Chunk
+	Payload   []byte
+	PayloadID string
+}
+
+// ChunkSink receives chunked fragments.
+type ChunkSink interface {
+	Send(env *ChunkEnvelope) error
+}
+
+// ChunkSource yields chunked fragments.
+type ChunkSource interface {
+	Recv() (*ChunkEnvelope, error)
+}
+
+// SendChunks splits body into ChunkEnvelope fragments and emits them on sink.
+// chunkSize == 0 uses DefaultChunkSize (1 MiB).  payloadID is optional; it is
+// copied into every envelope for future reconnect-resume support.
+func SendChunks(body []byte, payloadID string, chunkSize uint32, sink ChunkSink) error {
+	if chunkSize == 0 {
+		chunkSize = DefaultChunkSize
+	}
+	chunks, payloads := SplitChunks(body, chunkSize)
+	for i, c := range chunks {
+		if err := sink.Send(&ChunkEnvelope{
+			Chunk:     c,
+			Payload:   payloads[i],
+			PayloadID: payloadID,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// AssembleChunks accumulates chunks from stream until the final flag is seen
+// and returns the reassembled body.  It validates sequential ordering,
+// rejects duplicate seq values, and errors if the stream ends without a final
+// chunk.  The optional payloadID argument filters the stream to a single
+// logical payload; when empty, every chunk is accepted (legacy behaviour).
+func AssembleChunks(stream ChunkSource, payloadID string) ([]byte, error) {
+	var buf []byte
+	var expectSeq uint32
+	var inProgress bool
+	var lastTotal uint32
+
+	for {
+		env, err := stream.Recv()
+		if err != nil {
+			if errors.Is(err, ErrChunkStreamClosed) {
+				if inProgress {
+					return nil, fmt.Errorf("chunk stream closed without final chunk (seq %d/%d)", expectSeq, lastTotal)
+				}
+				return buf, nil
+			}
+			return nil, err
+		}
+		c := env.Chunk
+		if c == nil {
+			continue // skip non-chunk envelopes
+		}
+		if payloadID != "" && env.PayloadID != payloadID {
+			continue // skip envelopes for other payloads
+		}
+
+		seq := c.GetSeq()
+		if seq == 0 {
+			// New sequence start.
+			buf = nil
+			expectSeq = 1
+			inProgress = true
+			lastTotal = c.GetTotal()
+		} else {
+			if !inProgress {
+				return nil, fmt.Errorf("chunk seq %d received with no sequence in progress", seq)
+			}
+			if seq != expectSeq {
+				return nil, fmt.Errorf("chunk out-of-order: got seq %d, expected %d", seq, expectSeq)
+			}
+			expectSeq = seq + 1
+		}
+
+		buf = append(buf, env.Payload...)
+
+		if c.GetFinal() {
+			if expectSeq != lastTotal {
+				return nil, fmt.Errorf("chunk final flag with mismatched total: expected %d chunks, got %d", lastTotal, expectSeq)
+			}
+			inProgress = false
+			return buf, nil
+		}
+	}
+}
+
+// ErrChunkStreamClosed is returned by ChunkSource implementations to signal
+// graceful end-of-stream.  AssembleChunks treats it as a normal terminator
+// when no reassembly is in progress.
+var ErrChunkStreamClosed = errors.New("chunk stream closed")
+
 // ─── Structured chunking helpers ────────────────────────────────────────────
 //
 // These helpers implement the on-wire chunking contract for AdapterEvent and

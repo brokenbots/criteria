@@ -2,6 +2,7 @@ package criteriav2_test
 
 import (
 	"bytes"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -111,4 +112,157 @@ func TestNeedsChunking(t *testing.T) {
 	assert.False(t, criteriav2.NeedsChunking([]byte("small"), 1024))
 	assert.True(t, criteriav2.NeedsChunking(bytes.Repeat([]byte("x"), 1025), 1024))
 	assert.False(t, criteriav2.NeedsChunking(bytes.Repeat([]byte("x"), 1024), 1024))
+}
+
+// ─── SendChunks / AssembleChunks round-trip tests ───────────────────────────
+
+func TestSendChunks_AssembleChunks_RoundTrip(t *testing.T) {
+	sizes := []int{
+		0,          // empty
+		1,          // 1 byte
+		1 << 20,    // 1 MiB
+		4 << 20,    // 4 MiB
+		16 << 20,   // 16 MiB
+		100 << 20,  // 100 MiB
+	}
+	for _, size := range sizes {
+		t.Run(fmt.Sprintf("size_%d", size), func(t *testing.T) {
+			var data []byte
+			if size > 0 {
+				data = bytes.Repeat([]byte{0xAB}, size)
+			}
+			sink := &sliceChunkSink{payloadID: "pid-1"}
+			err := criteriav2.SendChunks(data, sink.payloadID, 0, sink)
+			require.NoError(t, err)
+
+			src := &sliceChunkSource{envelopes: sink.envelopes}
+			got, err := criteriav2.AssembleChunks(src, "pid-1")
+			require.NoError(t, err)
+			assert.Equal(t, data, got, "reassembled payload must match original")
+		})
+	}
+}
+
+func TestAssembleChunks_OutOfOrder(t *testing.T) {
+	data := []byte("0123456789")
+	sink := &sliceChunkSink{payloadID: "pid"}
+	err := criteriav2.SendChunks(data, sink.payloadID, 3, sink)
+	require.NoError(t, err)
+
+	// Swap last two chunks.
+	sink.envelopes[2], sink.envelopes[3] = sink.envelopes[3], sink.envelopes[2]
+
+	src := &sliceChunkSource{envelopes: sink.envelopes}
+	_, err = criteriav2.AssembleChunks(src, "pid")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "out-of-order")
+}
+
+func TestAssembleChunks_DuplicateSeq(t *testing.T) {
+	data := []byte("0123456789")
+	sink := &sliceChunkSink{payloadID: "pid"}
+	err := criteriav2.SendChunks(data, sink.payloadID, 3, sink)
+	require.NoError(t, err)
+
+	// Duplicate the second chunk.
+	sink.envelopes = append(sink.envelopes[:2], sink.envelopes[1:]...)
+
+	src := &sliceChunkSource{envelopes: sink.envelopes}
+	_, err = criteriav2.AssembleChunks(src, "pid")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "out-of-order")
+}
+
+func TestAssembleChunks_MissingFinal(t *testing.T) {
+	data := []byte("0123456789")
+	sink := &sliceChunkSink{payloadID: "pid"}
+	err := criteriav2.SendChunks(data, sink.payloadID, 3, sink)
+	require.NoError(t, err)
+
+	// Drop the final chunk.
+	sink.envelopes = sink.envelopes[:len(sink.envelopes)-1]
+
+	src := &sliceChunkSource{envelopes: sink.envelopes}
+	_, err = criteriav2.AssembleChunks(src, "pid")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "closed without final")
+}
+
+func TestAssembleChunks_NoSequenceInProgress(t *testing.T) {
+	src := &sliceChunkSource{envelopes: []*criteriav2.ChunkEnvelope{
+		{Chunk: &criteriav2.Chunk{Seq: 5, Total: 10, Final: false}, Payload: []byte("x")},
+	}}
+	_, err := criteriav2.AssembleChunks(src, "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no sequence in progress")
+}
+
+func TestAssembleChunks_PayloadIDFiltering(t *testing.T) {
+	sinkA := &sliceChunkSink{payloadID: "A"}
+	sinkB := &sliceChunkSink{payloadID: "B"}
+
+	dataA := []byte("payload-a")
+	dataB := []byte("payload-b")
+	require.NoError(t, criteriav2.SendChunks(dataA, "A", 3, sinkA))
+	require.NoError(t, criteriav2.SendChunks(dataB, "B", 3, sinkB))
+
+	// Interleave envelopes from both payloads.
+	var mixed []*criteriav2.ChunkEnvelope
+	for i := 0; i < max(len(sinkA.envelopes), len(sinkB.envelopes)); i++ {
+		if i < len(sinkA.envelopes) {
+			mixed = append(mixed, sinkA.envelopes[i])
+		}
+		if i < len(sinkB.envelopes) {
+			mixed = append(mixed, sinkB.envelopes[i])
+		}
+	}
+
+	src := &sliceChunkSource{envelopes: mixed}
+	gotA, err := criteriav2.AssembleChunks(src, "A")
+	require.NoError(t, err)
+	assert.Equal(t, dataA, gotA)
+
+	// Re-create source for B.
+	src = &sliceChunkSource{envelopes: mixed}
+	gotB, err := criteriav2.AssembleChunks(src, "B")
+	require.NoError(t, err)
+	assert.Equal(t, dataB, gotB)
+}
+
+func TestAssembleChunks_EmptyPayload(t *testing.T) {
+	sink := &sliceChunkSink{payloadID: "pid"}
+	err := criteriav2.SendChunks(nil, sink.payloadID, 0, sink)
+	require.NoError(t, err)
+	require.Len(t, sink.envelopes, 1)
+
+	src := &sliceChunkSource{envelopes: sink.envelopes}
+	got, err := criteriav2.AssembleChunks(src, "pid")
+	require.NoError(t, err)
+	assert.Nil(t, got)
+}
+
+// sliceChunkSink is a test-only ChunkSink that captures envelopes.
+type sliceChunkSink struct {
+	envelopes []*criteriav2.ChunkEnvelope
+	payloadID string
+}
+
+func (s *sliceChunkSink) Send(env *criteriav2.ChunkEnvelope) error {
+	s.envelopes = append(s.envelopes, env)
+	return nil
+}
+
+// sliceChunkSource is a test-only ChunkSource that replays captured envelopes.
+type sliceChunkSource struct {
+	envelopes []*criteriav2.ChunkEnvelope
+	idx       int
+}
+
+func (s *sliceChunkSource) Recv() (*criteriav2.ChunkEnvelope, error) {
+	if s.idx >= len(s.envelopes) {
+		return nil, criteriav2.ErrChunkStreamClosed
+	}
+	env := s.envelopes[s.idx]
+	s.idx++
+	return env, nil
 }
