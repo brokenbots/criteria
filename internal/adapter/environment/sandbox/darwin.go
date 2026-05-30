@@ -114,7 +114,7 @@ type LinuxPrepared struct {
 
 // RlimitConfig describes a single rlimit. Kept for interface parity
 // with Linux; rlimits cannot be applied directly on Darwin via
-// SysProcAttr, so they are TODO for the sandbox-exec-less fallback.
+// SysProcAttr, so they remain unimplemented for the sandbox-exec-less fallback.
 type RlimitConfig struct {
 	Resource int
 	Rlimit   syscall.Rlimit
@@ -244,7 +244,7 @@ func applyFallbackHardening(cmd *exec.Cmd) error {
 		cmd.Dir = filepath.Dir(cmd.Path)
 	}
 
-	// TODO: rlimits cannot be set directly on Darwin via SysProcAttr;
+	// NOTE: rlimits cannot be set directly on Darwin via SysProcAttr;
 	// a pre-exec shim would be required. Documented as a known gap
 	// for the sandbox-exec-less fallback path.
 	return nil
