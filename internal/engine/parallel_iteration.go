@@ -472,9 +472,12 @@ func (n *stepNode) runParallelSubworkflowIteration(ctx context.Context, st *RunS
 	iterDeps := deps
 	iterDeps.Sessions = adapterhost.NewSessionManager(deps.Loader)
 
-	swOutputs, runErr := runSubworkflow(ctx, swNode, st, stepInput, iterDeps)
+	swOutputs, terminalState, runErr := runSubworkflow(ctx, swNode, st, stepInput, iterDeps)
 	if runErr != nil {
 		return "failure", nil, runErr
+	}
+	if terminalState != workflow.ReturnSentinel && !swNode.Body.States[terminalState].Success {
+		return "failure", nil, nil
 	}
 
 	stringOutputs, renderErr := ctyOutputsToStrings(n.step.Name, swOutputs)
@@ -499,7 +502,7 @@ func parallelOutputKey(index int) cty.Value {
 func ctyOutputsToStrings(stepName string, outputs map[string]cty.Value) (map[string]string, error) {
 	result := make(map[string]string, len(outputs))
 	for k, v := range outputs {
-		if v.IsKnown() && v.Type() == cty.String {
+		if v.IsKnown() && !v.IsNull() && v.Type() == cty.String {
 			result[k] = v.AsString()
 			continue
 		}
