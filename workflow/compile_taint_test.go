@@ -565,3 +565,72 @@ state "done" { terminal = true }
 		t.Fatalf("expected taint error diagnostic, got: %s", diags.Error())
 	}
 }
+
+// TestTaintPass_SensitiveOutputInAdapterConfigFails verifies that referencing a
+// sensitive output field (steps.X.outputs.Y) in an adapter config block produces
+// a compile-time taint error (D65).
+func TestTaintPass_SensitiveOutputInAdapterConfigFails(t *testing.T) {
+	schemas := map[string]AdapterInfo{
+		"sensitive": {
+			InputSchema: map[string]ConfigField{
+				"command": {Required: true, Type: ConfigFieldString},
+			},
+			OutputSchema: map[string]ConfigField{
+				"token": {Sensitive: true, Type: ConfigFieldString},
+			},
+		},
+		"copilot": copilotSchema,
+	}
+
+	src := `
+workflow {
+  name = "x"
+  version       = "0.1"
+  initial_state = "first"
+  target_state  = "done"
+}
+
+adapter "sensitive" "default" {}
+
+adapter "copilot" "default" {
+  config {
+    system_prompt = steps.first.outputs.token
+  }
+}
+
+step "first" {
+  target = adapter.sensitive.default
+  input {
+    command = "echo hi"
+  }
+  outcome "success" { next = "second" }
+}
+
+step "second" {
+  target = adapter.copilot.default
+  input {
+    prompt = "hi"
+  }
+  outcome "success" { next = "done" }
+}
+
+state "done" { terminal = true }
+`
+	spec, diags := Parse("t.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	_, diags = Compile(spec, schemas)
+	if !diags.HasErrors() {
+		t.Fatal("expected compile error for tainted value in adapter config")
+	}
+	found := false
+	for _, d := range diags {
+		if d.Severity == hcl.DiagError && strings.Contains(d.Summary, "tainted value") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected taint error diagnostic, got: %s", diags.Error())
+	}
+}
