@@ -39,7 +39,9 @@ type fakeOutputAdapter struct {
 func (p *fakeOutputAdapter) Info(context.Context) (adapterhost.Info, error) {
 	return adapterhost.Info{Name: p.name, Version: "test"}, nil
 }
-func (p *fakeOutputAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error { return nil }
+func (p *fakeOutputAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
+	return nil
+}
 func (p *fakeOutputAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
 	return adapter.Result{Outcome: p.outcome, Outputs: p.outputs}, nil
 }

@@ -103,7 +103,9 @@ type highLogAdapter struct {
 func (p *highLogAdapter) Info(context.Context) (adapterhost.Info, error) {
 	return adapterhost.Info{Name: p.name, Version: "bench", Capabilities: []string{"parallel_safe"}}, nil
 }
-func (p *highLogAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error { return nil }
+func (p *highLogAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
+	return nil
+}
 func (p *highLogAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
 	for i := 0; i < benchEventsPerIter; i++ {
 		sink.Log("stdout", p.chunk)

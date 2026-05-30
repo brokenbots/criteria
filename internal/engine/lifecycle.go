@@ -6,9 +6,10 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/zclconf/go-cty/cty"
+
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/workflow"
-	"github.com/zclconf/go-cty/cty"
 )
 
 // initScopeAdapters provisions all adapters declared in the given FSMGraph at the start of its execution scope.

@@ -49,7 +49,7 @@ func StackFromEnvironment(env *workflow.EnvironmentNode) (*Stack, error) {
 		"sops":     SOPSProvider{},
 	}
 
-	var ordered []Provider
+	ordered := make([]Provider, 0, len(all))
 
 	// Primary provider.
 	if policy.Provider != "" {
@@ -68,7 +68,7 @@ func StackFromEnvironment(env *workflow.EnvironmentNode) (*Stack, error) {
 	}
 
 	// Remaining providers in deterministic order.
-	var remaining []string
+	remaining := make([]string, 0, len(all))
 	for name := range all {
 		remaining = append(remaining, name)
 	}

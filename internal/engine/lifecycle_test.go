@@ -33,7 +33,7 @@ type lifecycleTrackingAdapter struct {
 	sessionOpen bool
 }
 
-func (p *lifecycleTrackingAdapter) OpenSession(ctx context.Context, sessionID string, config map[string]string, secrets map[string]string) error {
+func (p *lifecycleTrackingAdapter) OpenSession(ctx context.Context, sessionID string, config, secrets map[string]string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.opensCount++
@@ -59,7 +59,7 @@ type failingInitAdapter struct {
 	shouldFail      bool   // whether to fail
 }
 
-func (p *failingInitAdapter) OpenSession(ctx context.Context, sessionID string, config map[string]string, secrets map[string]string) error {
+func (p *failingInitAdapter) OpenSession(ctx context.Context, sessionID string, config, secrets map[string]string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.opensCount++

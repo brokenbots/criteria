@@ -75,7 +75,9 @@ func newBarrierAdapter(name string, n int, outcome string) *barrierAdapter {
 func (p *barrierAdapter) Info(context.Context) (adapterhost.Info, error) {
 	return adapterhost.Info{Name: p.name, Version: "test", Capabilities: []string{"parallel_safe"}}, nil
 }
-func (p *barrierAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error { return nil }
+func (p *barrierAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
+	return nil
+}
 func (p *barrierAdapter) Execute(ctx context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
 	count := atomic.AddInt32(&p.ready, 1)
 	if count == p.n {
@@ -448,7 +450,9 @@ type declIdxAdapter struct{ name string }
 func (p *declIdxAdapter) Info(context.Context) (adapterhost.Info, error) {
 	return adapterhost.Info{Name: p.name, Version: "test", Capabilities: []string{"parallel_safe"}}, nil
 }
-func (p *declIdxAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error { return nil }
+func (p *declIdxAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
+	return nil
+}
 func (p *declIdxAdapter) Execute(_ context.Context, _ string, step *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
 	idx := step.Input["decl_idx"]
 	// Sleep inversely proportional to declaration index so that later items finish first.
@@ -1322,7 +1326,9 @@ type slowLogAdapter struct {
 func (p *slowLogAdapter) Info(context.Context) (adapterhost.Info, error) {
 	return adapterhost.Info{Name: p.name, Version: "test", Capabilities: []string{"parallel_safe"}}, nil
 }
-func (p *slowLogAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error { return nil }
+func (p *slowLogAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
+	return nil
+}
 func (p *slowLogAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
 	chunk := []byte("x")
 	for i := 0; i < p.logsPerCall; i++ {

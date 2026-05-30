@@ -328,17 +328,20 @@ func (m *SessionManager) Close(ctx context.Context, name string) error {
 	return err
 }
 
+func (m *SessionManager) wrapSink(sink adapter.EventSink) adapter.EventSink {
+	if m.RedactionRegistry == nil {
+		return sink
+	}
+	return &secrets.RedactingEventSink{Registry: m.RedactionRegistry, Inner: sink}
+}
+
 func (m *SessionManager) Execute(ctx context.Context, name string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
 	sess, err := m.lookup(name)
 	if err != nil {
 		return adapter.Result{Outcome: "failure"}, err
 	}
 
-	// WS13: wrap the event sink so adapter logs that contain secret values are
-	// redacted before reaching the engine sink.
-	if m.RedactionRegistry != nil {
-		sink = &secrets.RedactingEventSink{Registry: m.RedactionRegistry, Inner: sink}
-	}
+	sink = m.wrapSink(sink)
 
 	result, execErr := sess.handle.Execute(ctx, name, step, sink)
 	if execErr == nil {

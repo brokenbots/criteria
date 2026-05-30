@@ -360,53 +360,63 @@ func decodeSecretsPolicy(attr *hcl.Attribute) (*SecretsPolicy, hcl.Diagnostics) 
 		return nil, diags
 	}
 
-	if val.Type().IsObjectType() || val.Type().IsMapType() {
-		m := val.AsValueMap()
-		sp := &SecretsPolicy{}
-
-		if pv, ok := m["provider"]; ok {
-			if pv.Type() == cty.String && pv.IsKnown() && !pv.IsNull() {
-				sp.Provider = pv.AsString()
-			} else {
-				diags = append(diags, &hcl.Diagnostic{
-					Severity: hcl.DiagError,
-					Summary:  "secrets provider must be a string",
-					Subject:  attr.Expr.Range().Ptr(),
-				})
-			}
-		}
-
-		if fv, ok := m["fallback"]; ok {
-			if fv.Type().IsTupleType() || fv.Type().IsListType() {
-				for _, elem := range fv.AsValueSlice() {
-					if elem.Type() == cty.String && elem.IsKnown() && !elem.IsNull() {
-						sp.Fallback = append(sp.Fallback, elem.AsString())
-					} else {
-						diags = append(diags, &hcl.Diagnostic{
-							Severity: hcl.DiagError,
-							Summary:  "secrets fallback must be a list of strings",
-							Subject:  attr.Expr.Range().Ptr(),
-						})
-					}
-				}
-			} else {
-				diags = append(diags, &hcl.Diagnostic{
-					Severity: hcl.DiagError,
-					Summary:  "secrets fallback must be a list of strings",
-					Subject:  attr.Expr.Range().Ptr(),
-				})
-			}
-		}
-
-		return sp, diags
+	if !val.Type().IsObjectType() && !val.Type().IsMapType() {
+		diags = append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  "secrets must be an object with provider and optional fallback",
+			Subject:  attr.Expr.Range().Ptr(),
+		})
+		return nil, diags
 	}
 
+	m := val.AsValueMap()
+	sp := &SecretsPolicy{}
+
+	if pv, ok := m["provider"]; ok {
+		sp.Provider, diags = decodeSecretsProvider(pv, diags, attr)
+	}
+	if fv, ok := m["fallback"]; ok {
+		sp.Fallback, diags = decodeSecretsFallback(fv, diags, attr)
+	}
+
+	return sp, diags
+}
+
+func decodeSecretsProvider(pv cty.Value, diags hcl.Diagnostics, attr *hcl.Attribute) (string, hcl.Diagnostics) {
+	if pv.Type() == cty.String && pv.IsKnown() && !pv.IsNull() {
+		return pv.AsString(), diags
+	}
 	diags = append(diags, &hcl.Diagnostic{
 		Severity: hcl.DiagError,
-		Summary:  "secrets must be an object with provider and optional fallback",
+		Summary:  "secrets provider must be a string",
 		Subject:  attr.Expr.Range().Ptr(),
 	})
-	return nil, diags
+	return "", diags
+}
+
+func decodeSecretsFallback(fv cty.Value, diags hcl.Diagnostics, attr *hcl.Attribute) ([]string, hcl.Diagnostics) {
+	if !fv.Type().IsTupleType() && !fv.Type().IsListType() {
+		diags = append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  "secrets fallback must be a list of strings",
+			Subject:  attr.Expr.Range().Ptr(),
+		})
+		return nil, diags
+	}
+
+	var out []string
+	for _, elem := range fv.AsValueSlice() {
+		if elem.Type() == cty.String && elem.IsKnown() && !elem.IsNull() {
+			out = append(out, elem.AsString())
+			continue
+		}
+		diags = append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  "secrets fallback must be a list of strings",
+			Subject:  attr.Expr.Range().Ptr(),
+		})
+	}
+	return out, diags
 }
 
 // resolveEnvironmentExpr evaluates an environment expression (e.g. shell.ci) and

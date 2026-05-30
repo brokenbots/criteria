@@ -46,7 +46,9 @@ type adapterFunc struct {
 func (p *adapterFunc) Info(context.Context) (adapterhost.Info, error) {
 	return adapterhost.Info{Name: p.name, Version: "test"}, nil
 }
-func (p *adapterFunc) OpenSession(context.Context, string, map[string]string, map[string]string) error { return nil }
+func (p *adapterFunc) OpenSession(context.Context, string, map[string]string, map[string]string) error {
+	return nil
+}
 func (p *adapterFunc) Execute(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
 	return p.fn(ctx, sessionID, step, sink)
 }

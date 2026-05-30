@@ -99,6 +99,6 @@ func TestRegistry_DuplicateRegister(t *testing.T) {
 	r.Register("dup")
 	r.Register("dup")
 
-	out := r.Redact("dup dup")
-	require.Equal(t, "[REDACTED] [REDACTED]", out)
+	out := r.Redact("dup")
+	require.Equal(t, "[REDACTED]", out)
 }

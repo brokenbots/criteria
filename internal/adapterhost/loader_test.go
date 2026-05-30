@@ -99,7 +99,9 @@ type canceledCtxHandle struct{}
 func (c *canceledCtxHandle) Info(context.Context) (Info, error) {
 	return Info{Name: "cancel-stub"}, nil
 }
-func (c *canceledCtxHandle) OpenSession(context.Context, string, map[string]string, map[string]string) error { return nil }
+func (c *canceledCtxHandle) OpenSession(context.Context, string, map[string]string, map[string]string) error {
+	return nil
+}
 func (c *canceledCtxHandle) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
 	return adapter.Result{Outcome: "failure"}, context.Canceled
 }
@@ -145,8 +147,10 @@ func TestLoader_HostCanceledContextLogsAtDebug(t *testing.T) {
 // from Execute. Used to test log-level gating for expected closes (W12).
 type eofHandle struct{}
 
-func (e *eofHandle) Info(context.Context) (Info, error)                           { return Info{Name: "eof-stub"}, nil }
-func (e *eofHandle) OpenSession(context.Context, string, map[string]string, map[string]string) error { return nil }
+func (e *eofHandle) Info(context.Context) (Info, error) { return Info{Name: "eof-stub"}, nil }
+func (e *eofHandle) OpenSession(context.Context, string, map[string]string, map[string]string) error {
+	return nil
+}
 func (e *eofHandle) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
 	return adapter.Result{Outcome: "failure"}, errors.New("eof: connection terminated")
 }

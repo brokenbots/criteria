@@ -89,7 +89,9 @@ func (p *fakeAdapter) Info(context.Context) (adapterhost.Info, error) {
 	return adapterhost.Info{Name: p.name, Version: "test"}, nil
 }
 
-func (p *fakeAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error { return nil }
+func (p *fakeAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
+	return nil
+}
 
 func (p *fakeAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
 	return adapter.Result{Outcome: p.outcome}, p.err
@@ -909,7 +911,9 @@ type errAdapter struct {
 func (p *errAdapter) Info(context.Context) (adapterhost.Info, error) {
 	return adapterhost.Info{Name: p.name, Version: "test"}, nil
 }
-func (p *errAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error { return nil }
+func (p *errAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
+	return nil
+}
 func (p *errAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
 	return adapter.Result{}, p.err
 }

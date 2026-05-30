@@ -1602,7 +1602,9 @@ type callbackAdapter struct {
 func (p *callbackAdapter) Info(context.Context) (adapterhost.Info, error) {
 	return adapterhost.Info{Name: "callback", Version: "test"}, nil
 }
-func (p *callbackAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error { return nil }
+func (p *callbackAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
+	return nil
+}
 func (p *callbackAdapter) Execute(_ context.Context, _ string, step *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
 	outcome, outputs := p.fn(step.Input)
 	return adapter.Result{Outcome: outcome, Outputs: outputs}, nil
@@ -1620,7 +1622,9 @@ type outputAdapter struct {
 func (p *outputAdapter) Info(context.Context) (adapterhost.Info, error) {
 	return adapterhost.Info{Name: "output", Version: "test"}, nil
 }
-func (p *outputAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error { return nil }
+func (p *outputAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
+	return nil
+}
 func (p *outputAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
 	return adapter.Result{Outcome: p.outcome, Outputs: p.outputs}, nil
 }
