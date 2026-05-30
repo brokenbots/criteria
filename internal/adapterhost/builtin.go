@@ -7,6 +7,8 @@ import (
 
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/workflow"
+
+	v2 "github.com/brokenbots/criteria/sdk/pb/criteria/v2"
 )
 
 func BuiltinFactoryForAdapter(ad adapter.Adapter) BuiltinFactory {
@@ -81,6 +83,23 @@ func (p *builtinAdapter) CloseSession(_ context.Context, id string) error {
 
 func (p *builtinAdapter) StartLogStream(context.Context, string, LogEventSink) (func(), error) {
 	return func() {}, nil
+}
+
+func (p *builtinAdapter) StartPermissionStream(_ context.Context, _ string, requests <-chan *v2.PermissionEvent) (func(), error) {
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		for {
+			select {
+			case _, ok := <-requests:
+				if !ok {
+					return
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return cancel, nil
 }
 
 func (p *builtinAdapter) Kill() {}

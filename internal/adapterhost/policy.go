@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/brokenbots/criteria/workflow"
 )
 
 // PermissionRequest is the host-side view of an adapter's permission request.
@@ -24,6 +26,56 @@ type PermissionPolicy interface {
 	// explaining the decision (e.g. "matched: read_file" or
 	// "no matching allow_tools entry").
 	Decide(req PermissionRequest) (allow bool, reason string)
+}
+
+// CombinedPolicy wraps the legacy allow_tools matcher and optionally an
+// environment-level policy (network, filesystem, etc.) from WS09.
+// It implements PermissionPolicy so it can be used with the existing
+// permissionState.Evaluate path.
+type CombinedPolicy struct {
+	Tools   PermissionPolicy // allow_tools matcher (nil → deny-all)
+	Env     *workflow.ResolvedPolicy
+	Adapter string           // adapter name for alias resolution
+}
+
+// NewCombinedPolicy builds a CombinedPolicy from raw allow_tools patterns.
+// If env is non-nil, the returned policy also checks env-level constraints.
+func NewCombinedPolicy(adapterName string, patterns []string, env *workflow.ResolvedPolicy) *CombinedPolicy {
+	var aliases map[string]string
+	if adapterName != "" {
+		aliases = adapterPermissionAliases[adapterName]
+	}
+	return &CombinedPolicy{
+		Tools:   NewPolicyWithAliases(patterns, aliases),
+		Env:     env,
+		Adapter: adapterName,
+	}
+}
+
+// Decide evaluates the request against allow_tools first, then env policy.
+func (p *CombinedPolicy) Decide(req PermissionRequest) (allow bool, reason string) {
+	if p == nil {
+		return false, "no matching allow_tools entry"
+	}
+	// 1. allow_tools check
+	if p.Tools != nil {
+		allow, reason = p.Tools.Decide(req)
+	} else {
+		allow, reason = false, "no matching allow_tools entry"
+	}
+	if !allow {
+		return false, reason
+	}
+	// 2. env-policy checks (placeholder for WS09 full wiring)
+	if p.Env != nil {
+		if p.Env.Filesystem != nil && p.Env.Filesystem.ReadOnly {
+			// TODO(WS09): inspect req.Details for write operations
+		}
+		if p.Env.Network != nil && !p.Env.Network.AllowEgress {
+			// TODO(WS09): deny network-dependent tools
+		}
+	}
+	return true, reason
 }
 
 // adapterPermissionAliases maps adapter name → (user-facing allow_tools name → canonical SDK kind).

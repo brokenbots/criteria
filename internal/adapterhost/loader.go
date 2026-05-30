@@ -321,6 +321,24 @@ func (p *rpcHandle) StartLogStream(ctx context.Context, sessionID string, sink L
 	return cancel, nil
 }
 
+func (p *rpcHandle) StartPermissionStream(ctx context.Context, sessionID string, requests <-chan *v2.PermissionEvent) (cancel func(), err error) {
+	permCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	go func() {
+		err := p.rpc.Permissions(permCtx, requests)
+		if status.Code(err) == codes.Unimplemented {
+			// Drain the requests channel so Evaluate never blocks on a full
+			// buffer after the Permissions stream has exited.
+			for range requests {
+			}
+			return
+		}
+		if err != nil && !isExpectedStreamClose(err, codes.Unimplemented) {
+			slog.Warn("adapter permission stream closed unexpectedly", "adapter", p.name, "session", sessionID, "error", err)
+		}
+	}()
+	return cancel, nil
+}
+
 // isExpectedStreamClose reports whether err is a benign end-of-stream error
 // (nil, EOF, context cancellation, or an optionally supplied gRPC status code).
 func isExpectedStreamClose(err error, extra ...codes.Code) bool {
@@ -341,7 +359,7 @@ func isExpectedStreamClose(err error, extra ...codes.Code) bool {
 
 // Execute streams step execution via the RPC adapter, handling concurrent log streaming,
 // event routing, and partial failure recovery.
-func (p *rpcHandle) Execute(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) { //nolint:funlen // Permissions stream lifecycle, log stream, execute RPC, and result coercion are all required in one place
+func (p *rpcHandle) Execute(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
 	req := &v2.ExecuteRequest{
 		SessionId:       sessionID,
 		StepName:        step.Name,
@@ -350,75 +368,20 @@ func (p *rpcHandle) Execute(ctx context.Context, sessionID string, step *workflo
 		AllowedOutcomes: collectAllowedOutcomes(step),
 	}
 
-	// Build the host-side permission policy for this step.
-	allowTools := step.AllowTools
-	if allowTools == nil {
-		allowTools = []string{}
-	}
-	policy := NewPolicyWithAliases(allowTools, adapterPermissionAliases[p.name])
-
 	// serialized wraps sink so concurrent Adapter/Log calls from executeCaptureSink
 	// and logForwardSink are safe regardless of the sink implementation.
 	serialized := &serializedEventSink{inner: sink}
 
-	// execCtx is canceled if the Permissions stream fails for a non-expected
-	// reason, so that Execute is aborted rather than continuing with a broken
-	// decision channel. Unimplemented is treated as expected (adapter opts out).
-	execCtx, cancelExec := context.WithCancel(ctx)
-	defer cancelExec()
-
-	// Open the Permissions bidi stream. requests carries PermissionEvent to the
-	// adapter (allow/deny signals); adapter ACKs are discarded by the host.
-	requests := make(chan *v2.PermissionEvent, 16)
-	permCtx, cancelPerm := context.WithCancel(ctx)
-	permDone := make(chan error, 1)
-	go func() {
-		err := p.rpc.Permissions(permCtx, requests)
-		permDone <- err
-		if status.Code(err) == codes.Unimplemented {
-			// Drain the requests channel so handlePermissionRequest never
-			// blocks on a full buffer after the Permissions stream has
-			// already exited. The loop exits when Execute closes the channel.
-			for range requests {
-			}
-			return
-		}
-		if !isExpectedStreamClose(err) {
-			cancelExec()
-		}
-	}()
-
 	captureSink := &executeCaptureSink{
-		sink:        serialized,
-		policy:      policy,
-		allowTools:  allowTools,
-		adapterName: p.name,
-		requests:    requests,
-		ctx:         execCtx,
+		sink:       serialized,
+		policy:     NewPolicy(step.AllowTools),
+		allowTools: step.AllowTools,
 	}
 
-	execErr := p.rpc.Execute(execCtx, req, captureSink)
-
-	// Signal end of the Permissions stream and wait for the goroutine.
-	// Closing requests triggers CloseSend; cancelPerm ensures recvPermissionDecisions
-	// exits promptly regardless of whether the adapter has finished sending.
-	close(requests)
-	cancelPerm()
-	permErr := <-permDone
+	execErr := p.rpc.Execute(ctx, req, captureSink)
 
 	if execErr != nil {
-		// If execCtx was canceled by the Permissions goroutine (parent ctx still OK),
-		// the Permissions failure is the root cause; surface it instead of
-		// context.Canceled from the aborted Execute stream.
-		if errors.Is(execErr, context.Canceled) && ctx.Err() == nil {
-			if !isExpectedStreamClose(permErr) {
-				return adapter.Result{Outcome: "failure"}, fmt.Errorf("permissions stream failure aborted execute: %w", permErr)
-			}
-		}
 		return adapter.Result{Outcome: "failure"}, execErr
-	}
-	if !isExpectedStreamClose(permErr, codes.Unimplemented) {
-		return adapter.Result{Outcome: "failure"}, fmt.Errorf("adapter permissions stream: %w", permErr)
 	}
 	if !captureSink.done {
 		return adapter.Result{Outcome: "failure"}, errors.New("adapter execute stream ended without result")
@@ -426,12 +389,11 @@ func (p *rpcHandle) Execute(ctx context.Context, sessionID string, step *workflo
 
 	// When any permission request was denied and the adapter reported "success",
 	// override to "needs_review" so the run is not silently passed with unapproved
-	// tool calls. Adapters that terminate on first denial return "failure" themselves
-	// (e.g. copilot with blocking Permissions); this override applies to permissive
-	// adapters using UnimplementedPermissions.
+	// tool calls.
 	if captureSink.anyDenied && captureSink.result.Outcome == "success" {
 		captureSink.result.Outcome = "needs_review"
 	}
+
 	return captureSink.result, nil
 }
 
@@ -456,17 +418,10 @@ type executeCaptureSink struct {
 	// It triggers the outcome override (success → needs_review) after Execute.
 	anyDenied bool
 
-	// Host-side permission policy for this step.
-	policy      PermissionPolicy
-	allowTools  []string // echoed in permission.denied payloads
-	adapterName string   // used for alias-aware denial suggestions
-	// requests is the send side of the Permissions bidi stream; permission
-	// events (allow=request, deny=cancel) are forwarded to the adapter here.
-	// ctx is the Execute context; it unblocks permission signal sends when
-	// the execution is cancelled so that handlePermissionRequest never drops
-	// a signal silently.
-	requests chan<- *v2.PermissionEvent
-	ctx      context.Context
+	// Host-side permission policy for this step (fallback when called directly,
+	// bypassing SessionManager).
+	policy     PermissionPolicy
+	allowTools []string // echoed in permission.denied payloads
 
 	// Chunk reassembly buffers for the Execute stream.
 	// adapterChunkBuf accumulates AdapterEvent.payload_json fragments.
@@ -595,9 +550,9 @@ func (s *executeCaptureSink) emitResult(resultEvt *v2.ExecuteResult) error {
 	return nil
 }
 
-// emitAdapterEvent dispatches a fully assembled (non-chunked) AdapterEvent.
-// permission.request events are intercepted for host-side allow_tools evaluation;
-// all other events are forwarded directly to the upstream sink.
+// emitAdapterEvent dispatches a fully assembled (non-chunked) AdapterEvent
+// to the upstream sink. All events are forwarded directly; permission evaluation
+// is handled session-scoped by permissionInterceptSink in SessionManager.Execute.
 func (s *executeCaptureSink) emitAdapterEvent(adapterEvt *v2.AdapterEvent) error {
 	if adapterEvt.GetEventKind() == "permission.request" {
 		s.handlePermissionRequest(adapterEvt)
@@ -613,11 +568,9 @@ func (s *executeCaptureSink) emitAdapterEvent(adapterEvt *v2.AdapterEvent) error
 
 // handlePermissionRequest evaluates a permission.request AdapterEvent against
 // the host-side allow_tools policy. It emits either permission.granted or
-// permission.denied to the upstream sink, and forwards the corresponding
-// PermissionEvent to the adapter via the bidi Permissions stream (request=allow,
-// cancel=deny). A denied request sets anyDenied so Execute can override the
-// adapter's "success" outcome to "needs_review" after all events are processed.
-func (s *executeCaptureSink) handlePermissionRequest(adapterEvt *v2.AdapterEvent) { //nolint:funlen // grant/deny branches each require extracting payload, calling policy, emitting event, and forwarding to stream
+// permission.denied to the upstream sink. A denied request sets anyDenied so
+// Execute can override the adapter's "success" outcome to "needs_review".
+func (s *executeCaptureSink) handlePermissionRequest(adapterEvt *v2.AdapterEvent) {
 	var payload map[string]any
 	if adapterEvt.GetPayload() != nil {
 		payload = adapterEvt.GetPayload().AsMap()
@@ -634,7 +587,6 @@ func (s *executeCaptureSink) handlePermissionRequest(adapterEvt *v2.AdapterEvent
 
 	allow, reason := s.policy.Decide(req)
 	if allow {
-		// Strip "matched: " prefix to get the raw pattern for the payload.
 		pattern := strings.TrimPrefix(reason, "matched: ")
 		if idx := strings.Index(pattern, " (alias for "); idx >= 0 {
 			pattern = pattern[:idx]
@@ -644,44 +596,26 @@ func (s *executeCaptureSink) handlePermissionRequest(adapterEvt *v2.AdapterEvent
 			"tool":       tool,
 			"pattern":    pattern,
 		})
-		if s.requests != nil {
-			select {
-			case s.requests <- &v2.PermissionEvent{
-				Event: &v2.PermissionEvent_Request{
-					Request: &v2.PermissionRequest{RequestId: requestID},
-				},
-			}:
-			case <-s.ctx.Done():
-			}
-		}
 		return
 	}
 
-	// Denied.
 	s.anyDenied = true
+	suggestion := PermissionDenialSuggestion("", tool)
 	deniedPayload := map[string]any{
-		"request_id":  requestID,
-		"tool":        tool,
-		"reason":      reason,
-		"allow_tools": s.allowTools,
+		"request_id": requestID,
+		"tool":       tool,
+		"reason":     reason,
 	}
-	if s.adapterName != "" {
-		if suggestion := PermissionDenialSuggestion(s.adapterName, tool); suggestion != "" {
-			deniedPayload["suggestion"] = suggestion
-		}
+	if len(s.allowTools) > 0 {
+		deniedPayload["allow_tools"] = s.allowTools
+	}
+	if suggestion != "" {
+		deniedPayload["suggestion"] = suggestion
 	}
 	s.sink.Adapter("permission.denied", deniedPayload)
-	if s.requests != nil {
-		select {
-		case s.requests <- &v2.PermissionEvent{
-			Event: &v2.PermissionEvent_Cancel{
-				Cancel: &v2.PermissionCancel{RequestId: requestID, Reason: reason},
-			},
-		}:
-		case <-s.ctx.Done():
-		}
-	}
 }
+
+
 
 // maxLogLineBufBytes is the upper bound for a single log chunk reassembly
 // buffer or individual log line. Log content exceeding this limit is rejected

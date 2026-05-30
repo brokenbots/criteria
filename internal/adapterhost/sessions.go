@@ -65,6 +65,10 @@ type SessionManager struct {
 	// RedactionRegistry masks secret values from all host output streams.
 	RedactionRegistry *secrets.Registry
 
+	// Audit receives structured DecisionLogEntry records for every permission
+	// decision. If nil, audit logging is a no-op.
+	Audit AuditWriter
+
 	mu       sync.Mutex
 	sessions map[string]*Session
 }
@@ -85,10 +89,6 @@ func (m *SessionManager) SetLockfile(lf *lockfile.Lockfile) {
 	m.lockfile = lf
 }
 
-// PermissionState holds runtime permission audit data for a session.
-// Populated by WS16; present as a stub field in this workstream.
-type PermissionState struct{}
-
 type Session struct {
 	Name            string
 	Adapter         string
@@ -96,7 +96,7 @@ type Session struct {
 	Secrets         map[string]string // resolved secret values (WS13)
 	OnCrash         string
 	Capabilities    []string // cached from plug.Info() at Open time
-	PermissionState PermissionState
+	PermissionState *permissionState
 	handle          Handle
 	respawned       bool
 	closing         atomic.Bool
@@ -319,6 +319,17 @@ func (m *SessionManager) registerSession(ctx context.Context, name, adapterName,
 	}
 	m.sessions[name] = sess
 
+	// WS16: start the session-scoped Permissions stream if the adapter supports it.
+	sess.PermissionState = NewPermissionState(name, m.Audit)
+	if streamer, ok := plug.(PermissionStreamer); ok {
+		cancel, err := streamer.StartPermissionStream(ctx, name, sess.PermissionState.Requests())
+		if err != nil {
+			slog.Warn("adapter permission stream start failed", "session", name, "err", err)
+		} else {
+			sess.PermissionState.SetStreamCancel(cancel)
+		}
+	}
+
 	// WS15: start the dedicated per-session Log stream if the adapter supports it.
 	if starter, ok := plug.(LogStreamStarter); ok {
 		logAdapterSink := &sessionLogAdapterSink{sess: sess}
@@ -355,6 +366,9 @@ func (m *SessionManager) Close(ctx context.Context, name string) error {
 		return nil
 	}
 	sess.closing.Store(true)
+	if sess.PermissionState != nil {
+		sess.PermissionState.Stop()
+	}
 	if sess.cancelLog != nil {
 		sess.cancelLog()
 	}
@@ -438,6 +452,30 @@ func (m *SessionManager) Execute(ctx context.Context, name string, step *workflo
 		return m.handleCrash(ctx, name, step, sink, sess, errors.New("heartbeat stall (>90s)"))
 	}
 
+	// WS16: build combined policy for this step and wire it into the session's
+	// PermissionState.  EnvPolicy resolution from the graph is a future hook;
+	// for now only allow_tools is enforced.
+	var envPolicy *workflow.ResolvedPolicy
+	if m.graph != nil && step != nil && step.AdapterRef != "" {
+		adapterNode := m.graph.Adapters[step.AdapterRef]
+		if adapterNode != nil {
+			var envKey string
+			if step.Environment != "" {
+				envKey = step.Environment
+			} else if adapterNode.Environment != "" {
+				envKey = adapterNode.Environment
+			}
+			if envKey != "" && m.graph.ResolvedPolicies != nil {
+				policyKey := step.AdapterRef + ":" + envKey
+				envPolicy = m.graph.ResolvedPolicies[policyKey]
+			}
+		}
+	}
+	policy := NewCombinedPolicy(sess.Adapter, step.AllowTools, envPolicy)
+	if sess.PermissionState != nil {
+		sess.PermissionState.SetPolicy(policy)
+	}
+
 	// Route session-level log lines to this step's sink while Execute is in flight.
 	sess.currentSinkMu.Lock()
 	sess.currentSink = sink
@@ -458,7 +496,23 @@ func (m *SessionManager) Execute(ctx context.Context, name string, step *workflo
 		execSink = sess.mergeBuf
 	}
 
-	result, execErr := sess.handle.Execute(ctx, name, step, execSink)
+	// WS16: wrap the sink so permission.request events are intercepted and
+	// evaluated against the step's policy. Denied requests are tracked so the
+	// outcome can be overridden after Execute.
+	permSink := &permissionInterceptSink{
+		inner:     execSink,
+		permState: sess.PermissionState,
+		session:   sess,
+	}
+
+	result, execErr := sess.handle.Execute(ctx, name, step, permSink)
+
+	// WS16: if any permission was denied, override a success outcome to
+	// signal that review is needed.
+	if permSink.anyDenied && result.Outcome == "success" {
+		result.Outcome = "needs_review"
+	}
+
 	if execErr == nil {
 		m.registerSensitiveOutputs(result, step)
 		return result, nil
@@ -510,6 +564,9 @@ func (m *SessionManager) Shutdown(ctx context.Context) error {
 	var errs []error
 	for _, sess := range sessions {
 		sess.closing.Store(true)
+		if sess.PermissionState != nil {
+			sess.PermissionState.Stop()
+		}
 		if sess.cancelLog != nil {
 			sess.cancelLog()
 		}
@@ -584,6 +641,20 @@ func (m *SessionManager) respawn(ctx context.Context, sess *Session) error {
 	sess.handle = plug
 	sess.SandboxCleanup = cleanup
 	sess.respawned = true
+
+	// WS16: restart the permission stream for the new handle.
+	if sess.PermissionState != nil {
+		sess.PermissionState.Stop()
+		sess.PermissionState = NewPermissionState(sess.Name, m.Audit)
+		if streamer, ok := plug.(PermissionStreamer); ok {
+			cancel, err := streamer.StartPermissionStream(ctx, sess.Name, sess.PermissionState.Requests())
+			if err != nil {
+				slog.Warn("adapter permission stream restart failed after respawn", "session", sess.Name, "err", err)
+			} else {
+				sess.PermissionState.SetStreamCancel(cancel)
+			}
+		}
+	}
 
 	// WS15: restart the log stream for the new handle and reset heartbeat tracking.
 	m.restartLogStream(ctx, sess, plug)
