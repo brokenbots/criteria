@@ -290,6 +290,13 @@ type rpcHandle struct {
 
 	mu     sync.Once
 	onKill func()
+
+	// permMu guards permActive, which tracks session-scoped permission
+	// streams started via StartPermissionStream. Execute uses it to
+	// decide whether to start a fallback per-Execute permission stream
+	// for direct callers (e.g. conformance tests) that bypass SessionManager.
+	permMu     sync.Mutex
+	permActive map[string]bool
 }
 
 func (p *rpcHandle) Info(ctx context.Context) (Info, error) {
@@ -322,8 +329,20 @@ func (p *rpcHandle) StartLogStream(ctx context.Context, sessionID string, sink L
 }
 
 func (p *rpcHandle) StartPermissionStream(ctx context.Context, sessionID string, requests <-chan *v2.PermissionEvent) (cancel func(), err error) {
+	p.permMu.Lock()
+	if p.permActive == nil {
+		p.permActive = make(map[string]bool)
+	}
+	p.permActive[sessionID] = true
+	p.permMu.Unlock()
+
 	permCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	go func() {
+		defer func() {
+			p.permMu.Lock()
+			delete(p.permActive, sessionID)
+			p.permMu.Unlock()
+		}()
 		err := p.rpc.Permissions(permCtx, requests)
 		if status.Code(err) == codes.Unimplemented {
 			// Drain the requests channel so Evaluate never blocks on a full
@@ -372,6 +391,69 @@ func (p *rpcHandle) Execute(ctx context.Context, sessionID string, step *workflo
 	// and logForwardSink are safe regardless of the sink implementation.
 	serialized := &serializedEventSink{inner: sink}
 
+	p.permMu.Lock()
+	hasPermStream := p.permActive[sessionID]
+	p.permMu.Unlock()
+
+	if !hasPermStream {
+		// Fallback: direct callers (e.g. conformance tests) that bypass
+		// SessionManager need a per-Execute permission stream so the adapter
+		// receives PermissionEvent responses for permission.request events.
+		execCtx, cancelExec := context.WithCancel(ctx)
+		defer cancelExec()
+
+		requests := make(chan *v2.PermissionEvent, 16)
+		permCtx, cancelPerm := context.WithCancel(ctx)
+		permDone := make(chan error, 1)
+		go func() {
+			err := p.rpc.Permissions(permCtx, requests)
+			permDone <- err
+			if status.Code(err) == codes.Unimplemented {
+				for range requests {
+				}
+				return
+			}
+			if !isExpectedStreamClose(err) {
+				cancelExec()
+			}
+		}()
+
+		captureSink := &executeCaptureSink{
+			sink:        serialized,
+			policy:      NewPolicy(step.AllowTools),
+			allowTools:  step.AllowTools,
+			adapterName: p.name,
+			requests:    requests,
+			ctx:         execCtx,
+		}
+
+		execErr := p.rpc.Execute(execCtx, req, captureSink)
+
+		close(requests)
+		cancelPerm()
+		permErr := <-permDone
+
+		if execErr != nil {
+			if errors.Is(execErr, context.Canceled) && ctx.Err() == nil {
+				if !isExpectedStreamClose(permErr) {
+					return adapter.Result{Outcome: "failure"}, fmt.Errorf("permissions stream failure aborted execute: %w", permErr)
+				}
+			}
+			return adapter.Result{Outcome: "failure"}, execErr
+		}
+		if !isExpectedStreamClose(permErr, codes.Unimplemented) {
+			return adapter.Result{Outcome: "failure"}, fmt.Errorf("adapter permissions stream: %w", permErr)
+		}
+		if !captureSink.done {
+			return adapter.Result{Outcome: "failure"}, errors.New("adapter execute stream ended without result")
+		}
+		if captureSink.anyDenied && captureSink.result.Outcome == "success" {
+			captureSink.result.Outcome = "needs_review"
+		}
+		return captureSink.result, nil
+	}
+
+	// Session-scoped stream is active; Execute does not need to manage its own.
 	captureSink := &executeCaptureSink{
 		sink:       serialized,
 		policy:     NewPolicy(step.AllowTools),
@@ -422,6 +504,15 @@ type executeCaptureSink struct {
 	// bypassing SessionManager).
 	policy     PermissionPolicy
 	allowTools []string // echoed in permission.denied payloads
+
+	// adapterName is used for contextual permission-denial suggestions.
+	adapterName string
+
+	// requests and ctx are used in the fallback per-Execute permission stream
+	// path (when SessionManager has not started a session-scoped stream).
+	// When nil, permission responses are handled by the session-scoped stream.
+	requests chan<- *v2.PermissionEvent
+	ctx      context.Context
 
 	// Chunk reassembly buffers for the Execute stream.
 	// adapterChunkBuf accumulates AdapterEvent.payload_json fragments.
@@ -568,8 +659,11 @@ func (s *executeCaptureSink) emitAdapterEvent(adapterEvt *v2.AdapterEvent) error
 
 // handlePermissionRequest evaluates a permission.request AdapterEvent against
 // the host-side allow_tools policy. It emits either permission.granted or
-// permission.denied to the upstream sink. A denied request sets anyDenied so
-// Execute can override the adapter's "success" outcome to "needs_review".
+// permission.denied to the upstream sink, and forwards the corresponding
+// PermissionEvent to the adapter via the bidi Permissions stream when
+// requests is non-nil (fallback per-Execute path). A denied request sets
+// anyDenied so Execute can override the adapter's "success" outcome to
+// "needs_review".
 func (s *executeCaptureSink) handlePermissionRequest(adapterEvt *v2.AdapterEvent) {
 	var payload map[string]any
 	if adapterEvt.GetPayload() != nil {
@@ -596,11 +690,21 @@ func (s *executeCaptureSink) handlePermissionRequest(adapterEvt *v2.AdapterEvent
 			"tool":       tool,
 			"pattern":    pattern,
 		})
+		if s.requests != nil {
+			select {
+			case s.requests <- &v2.PermissionEvent{
+				Event: &v2.PermissionEvent_Request{
+					Request: &v2.PermissionRequest{RequestId: requestID},
+				},
+			}:
+			case <-s.ctx.Done():
+			}
+		}
 		return
 	}
 
 	s.anyDenied = true
-	suggestion := PermissionDenialSuggestion("", tool)
+	suggestion := PermissionDenialSuggestion(s.adapterName, tool)
 	deniedPayload := map[string]any{
 		"request_id": requestID,
 		"tool":       tool,
@@ -613,6 +717,16 @@ func (s *executeCaptureSink) handlePermissionRequest(adapterEvt *v2.AdapterEvent
 		deniedPayload["suggestion"] = suggestion
 	}
 	s.sink.Adapter("permission.denied", deniedPayload)
+	if s.requests != nil {
+		select {
+		case s.requests <- &v2.PermissionEvent{
+			Event: &v2.PermissionEvent_Cancel{
+				Cancel: &v2.PermissionCancel{RequestId: requestID, Reason: reason},
+			},
+		}:
+		case <-s.ctx.Done():
+		}
+	}
 }
 
 
