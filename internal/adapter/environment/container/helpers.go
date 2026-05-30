@@ -78,3 +78,19 @@ func validatePath(p string) error {
 	}
 	return nil
 }
+
+// makeNetworkName sanitizes an adapter reference into a valid Docker network
+// name. Docker network names must be alphanumeric plus hyphens/underscores.
+func makeNetworkName(adapterRef string) string {
+	// Replace common separator characters with hyphens.
+	name := strings.ReplaceAll(adapterRef, ".", "-")
+	name = strings.ReplaceAll(name, "/", "-")
+	name = strings.ReplaceAll(name, ":", "-")
+	name = strings.ReplaceAll(name, "_", "-")
+	name = "criteria-net-" + name
+	// Docker network names must be 2–64 chars.
+	if len(name) > 64 {
+		name = name[:64]
+	}
+	return name
+}

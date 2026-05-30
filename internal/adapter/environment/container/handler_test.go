@@ -1,7 +1,10 @@
 package container
 
 import (
+	"bytes"
 	"errors"
+	"flag"
+	"os"
 	"strings"
 	"testing"
 
@@ -30,6 +33,34 @@ func TestFailClosed_Error(t *testing.T) {
 	}
 	if !strings.Contains(msg, "Ask the publisher to enable image publishing") {
 		t.Errorf("error message missing guidance: %s", msg)
+	}
+}
+
+func TestFailClosed_GoldenFile(t *testing.T) {
+	fc := FailClosed{
+		Reason:    "adapter does not publish a container image",
+		Adapter:   "noop",
+		SourceURL: "https://github.com/brokenbots/criteria-adapter-noop",
+		Runtime:   "docker",
+	}
+	assertGoldenFile(t, "testdata/fail_closed.golden", []byte(fc.Error()))
+}
+
+var updateGolden = flag.Bool("update-golden", false, "update golden test files")
+
+func assertGoldenFile(t *testing.T, path string, got []byte) {
+	t.Helper()
+	if *updateGolden {
+		if err := os.WriteFile(path, got, 0o644); err != nil {
+			t.Fatalf("write golden: %v", err)
+		}
+	}
+	want, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read golden %s: %v", path, err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Errorf("golden mismatch:\n--- want ---\n%s\n--- got ---\n%s", want, got)
 	}
 }
 
@@ -122,8 +153,11 @@ func TestHandler_Prepare_PolicyArgs(t *testing.T) {
 	if p.Runtime != "podman" {
 		t.Errorf("runtime = %q, want podman", p.Runtime)
 	}
-	if p.Policy.NetworkMode != "bridge" {
-		t.Errorf("networkMode = %q, want bridge", p.Policy.NetworkMode)
+	if p.Policy.NetworkName != "criteria-net-noop-default" {
+		t.Errorf("networkName = %q, want criteria-net-noop-default", p.Policy.NetworkName)
+	}
+	if p.Policy.NetworkMode != "" {
+		t.Errorf("networkMode = %q, want empty", p.Policy.NetworkMode)
 	}
 	if len(p.Policy.VolumeMounts) != 2 {
 		t.Fatalf("expected 2 volume mounts, got %d", len(p.Policy.VolumeMounts))

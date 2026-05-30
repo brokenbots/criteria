@@ -140,12 +140,17 @@ func maybePullContainerImage(ctx context.Context, key string, m *manifest.Manife
 	if m.ContainerImage == nil {
 		return nil
 	}
-	if err := container.PullContainerImage(ctx, m.ContainerImage.Ref, "docker"); err != nil {
-		if err := container.PullContainerImage(ctx, m.ContainerImage.Ref, "podman"); err != nil {
-			return fmt.Errorf("adapter %q container image pull %s: %w", key, m.ContainerImage.Ref, err)
+	for _, runtime := range []string{"docker", "podman"} {
+		err := container.PullContainerImage(ctx, *m.ContainerImage, runtime)
+		if err == nil {
+			return nil
 		}
+		if isExecNotFound(err) {
+			continue
+		}
+		return fmt.Errorf("adapter %q container image pull %s: %w", key, m.ContainerImage.Ref, err)
 	}
-	return nil
+	return fmt.Errorf("adapter %q container image pull %s: no container runtime found", key, m.ContainerImage.Ref)
 }
 
 // hasOCIReferences scans the workflow HCL files for adapter blocks that

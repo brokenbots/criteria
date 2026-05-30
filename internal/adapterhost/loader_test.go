@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"log/slog"
 	"os/exec"
 	"strings"
@@ -12,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hashicorp/go-hclog"
+	"github.com/hashicorp/go-plugin/runner"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/structpb"
@@ -1106,4 +1109,79 @@ func TestSerializedEventSink_ConcurrentCallsAreOrdered(t *testing.T) {
 	if paniced {
 		t.Error("serializedEventSink allowed concurrent access to the underlying sink")
 	}
+}
+
+// testCmdRunner is a minimal runner.Runner implementation that delegates to an
+// exec.Cmd. It is used to verify ResolveWithRunnerFunc wires the RunnerFunc
+// into the go-plugin client correctly.
+type testCmdRunner struct {
+	cmd    *exec.Cmd
+	stdout io.ReadCloser
+	stderr io.ReadCloser
+}
+
+func newTestCmdRunner(_ hclog.Logger, cmd *exec.Cmd, _ string) (*testCmdRunner, error) {
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return nil, err
+	}
+	return &testCmdRunner{cmd: cmd, stdout: stdout, stderr: stderr}, nil
+}
+
+func (r *testCmdRunner) Start(_ context.Context) error { return r.cmd.Start() }
+func (r *testCmdRunner) Wait(_ context.Context) error  { return r.cmd.Wait() }
+func (r *testCmdRunner) Kill(_ context.Context) error {
+	if r.cmd.Process != nil {
+		return r.cmd.Process.Kill()
+	}
+	return nil
+}
+func (r *testCmdRunner) ID() string                        { return "test-runner" }
+func (r *testCmdRunner) Name() string                      { return r.cmd.Path }
+func (r *testCmdRunner) Stdout() io.ReadCloser             { return r.stdout }
+func (r *testCmdRunner) Stderr() io.ReadCloser             { return r.stderr }
+func (r *testCmdRunner) Diagnose(_ context.Context) string { return "" }
+func (r *testCmdRunner) PluginToHost(pluginNet, pluginAddr string) (string, string, error) { //nolint:gocritic // test helper; named results trigger paramTypeCombine false positive
+	return pluginNet, pluginAddr, nil
+}
+func (r *testCmdRunner) HostToPlugin(hostNet, hostAddr string) (string, string, error) { //nolint:gocritic // test helper; named results trigger paramTypeCombine false positive
+	return hostNet, hostAddr, nil
+}
+
+func TestLoaderResolveWithRunnerFunc(t *testing.T) {
+	adapterBin := buildNoopAdapter(t)
+	loader := NewLoaderWithDiscovery(func(string) (string, error) {
+		return adapterBin, nil
+	})
+	t.Cleanup(func() { _ = loader.Shutdown(context.Background()) })
+
+	// RunnerFunc that simply starts the cmd directly, bypassing discovery.
+	rf := func(_ hclog.Logger, cmd *exec.Cmd, socketDir string) (runner.Runner, error) {
+		// go-plugin passes an empty cmd when RunnerFunc is used; we must set
+		// the binary path ourselves.
+		cmd.Path = adapterBin
+		cmd.Args = []string{adapterBin}
+		return newTestCmdRunner(hclog.NewNullLogger(), cmd, socketDir)
+	}
+
+	handle, err := loader.ResolveWithRunnerFunc(context.Background(), "noop", rf)
+	if err != nil {
+		t.Fatalf("resolve with runner func: %v", err)
+	}
+	if handle == nil {
+		t.Fatal("expected non-nil handle")
+	}
+
+	info, err := handle.Info(context.Background())
+	if err != nil {
+		t.Fatalf("info: %v", err)
+	}
+	if info.Name != "noop" {
+		t.Errorf("adapter name=%q want noop", info.Name)
+	}
+	handle.Kill()
 }

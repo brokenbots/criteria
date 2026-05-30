@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -19,14 +20,16 @@ import (
 // dockerRunner implements runner.Runner for docker/podman containers.
 // It translates go-plugin lifecycle calls into docker CLI invocations.
 type dockerRunner struct {
-	runtime  string // "docker" or "podman"
+	runtime  string
 	imageRef string
 	cid      string
 	cidFile  string
+	timeout  string
 
-	cmd    *exec.Cmd
-	stdout io.ReadCloser
-	stderr io.ReadCloser
+	cmd     *exec.Cmd
+	stdout  io.ReadCloser
+	stderr  io.ReadCloser
+	waitErr error
 
 	done chan struct{}
 	wg   sync.WaitGroup
@@ -58,6 +61,7 @@ func NewDockerRunner(_ hclog.Logger, cmd *exec.Cmd, socketDir string, prepared *
 		runtime:  prepared.Runtime,
 		imageRef: prepared.ImageRef.Ref,
 		cidFile:  cidFile,
+		timeout:  prepared.Policy.Timeout,
 		cmd:      runtimeCmd,
 		stdout:   stdout,
 		stderr:   stderr,
@@ -69,19 +73,38 @@ func extractEnvVars(cmd *exec.Cmd) map[string]string {
 	envVars := make(map[string]string)
 	for _, e := range cmd.Env {
 		if k, v, ok := strings.Cut(e, "="); ok {
-			envVars[k] = v
+			// Whitelist only go-plugin handshake variables and the Criteria
+			// plugin cookie. This prevents accidental secret leakage into the
+			// container via -e flags (D72/D73).
+			if isHandshakeVar(k) {
+				envVars[k] = v
+			}
 		}
 	}
 	return envVars
 }
 
+// isHandshakeVar returns true for known go-plugin handshake environment
+// variables that are safe to forward into the container.
+func isHandshakeVar(k string) bool {
+	return k == "CRITERIA_PLUGIN" ||
+		strings.HasPrefix(k, "PLUGIN_")
+}
+
 func buildDockerArgs(envVars map[string]string, socketDir, cidFile string, prepared *Prepared) []string {
 	args := []string{"run", "--rm", "-i"}
 	args = append(args, "-v", socketDir+":"+socketDir)
-	for k, v := range envVars {
-		args = append(args, "-e", k+"="+v)
+	keys := make([]string, 0, len(envVars))
+	for k := range envVars {
+		keys = append(keys, k)
 	}
-	if prepared.Policy.NetworkMode != "" {
+	sort.Strings(keys)
+	for _, k := range keys {
+		args = append(args, "-e", k+"="+envVars[k])
+	}
+	if prepared.Policy.NetworkName != "" {
+		args = append(args, "--network", prepared.Policy.NetworkName)
+	} else if prepared.Policy.NetworkMode != "" {
 		args = append(args, "--network", prepared.Policy.NetworkMode)
 	}
 	for _, vm := range prepared.Policy.VolumeMounts {
@@ -102,12 +125,22 @@ func buildDockerArgs(envVars map[string]string, socketDir, cidFile string, prepa
 }
 
 // Start launches the container and waits for the CID file to appear.
-func (r *dockerRunner) Start(_ context.Context) error {
+func (r *dockerRunner) Start(ctx context.Context) error {
 	if err := r.cmd.Start(); err != nil {
 		return err
 	}
 
-	cid, err := r.waitForCID(5 * time.Second)
+	waitCtx := ctx
+	if r.timeout != "" {
+		d, err := time.ParseDuration(r.timeout)
+		if err == nil {
+			var cancel context.CancelFunc
+			waitCtx, cancel = context.WithTimeout(ctx, d)
+			defer cancel()
+		}
+	}
+
+	cid, err := r.waitForCID(waitCtx)
 	if err != nil {
 		_ = r.cmd.Process.Kill()
 		_ = os.Remove(r.cidFile)
@@ -118,7 +151,7 @@ func (r *dockerRunner) Start(_ context.Context) error {
 	r.wg.Add(1)
 	go func() {
 		defer r.wg.Done()
-		_ = r.cmd.Wait()
+		r.waitErr = r.cmd.Wait()
 		close(r.done)
 		_ = os.Remove(r.cidFile)
 	}()
@@ -126,30 +159,41 @@ func (r *dockerRunner) Start(_ context.Context) error {
 	return nil
 }
 
-func (r *dockerRunner) waitForCID(timeout time.Duration) (string, error) {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		data, err := os.ReadFile(r.cidFile)
-		if err == nil && len(data) > 0 {
-			return strings.TrimSpace(string(data)), nil
+func (r *dockerRunner) waitForCID(ctx context.Context) (string, error) {
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return "", fmt.Errorf("timed out waiting for cidfile %s: %w", r.cidFile, ctx.Err())
+		case <-ticker.C:
+			data, err := os.ReadFile(r.cidFile)
+			if err == nil && len(data) > 0 {
+				return strings.TrimSpace(string(data)), nil
+			}
 		}
-		time.Sleep(50 * time.Millisecond)
 	}
-	return "", fmt.Errorf("timed out waiting for cidfile %s", r.cidFile)
 }
 
-// Wait blocks until the container exits.
-func (r *dockerRunner) Wait(_ context.Context) error {
-	<-r.done
-	return r.cmd.Wait()
+// Wait blocks until the container exits or the context is cancelled.
+func (r *dockerRunner) Wait(ctx context.Context) error {
+	select {
+	case <-r.done:
+		return r.waitErr
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // Kill stops the container via docker kill (preferred) and falls back to
 // process kill.
-func (r *dockerRunner) Kill(_ context.Context) error {
+func (r *dockerRunner) Kill(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	var killErr error
 	if r.cid != "" {
-		cmd := exec.Command(r.runtime, "kill", r.cid)
+		cmd := exec.CommandContext(ctx, r.runtime, "kill", r.cid)
 		killErr = cmd.Run()
 	}
 	if r.cmd.Process != nil {

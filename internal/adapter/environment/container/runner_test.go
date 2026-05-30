@@ -109,7 +109,7 @@ func TestDockerRunner_Integration(t *testing.T) {
 	}
 
 	logger := hclog.NewNullLogger()
-	cmd := &exec.Cmd{Env: []string{"CRITERIA_PLUGIN=secret"}}
+	cmd := &exec.Cmd{Env: []string{"CRITERIA_PLUGIN=secret", "PLUGIN_PROTOCOL_VERSIONS=1,2"}}
 	prepared := Prepared{
 		Runtime:  "docker",
 		ImageRef: manifest.ContainerImageRef{Ref: "busybox:latest"},
@@ -119,9 +119,19 @@ func TestDockerRunner_Integration(t *testing.T) {
 	r, err := NewDockerRunner(logger, cmd, t.TempDir(), &prepared)
 	require.NoError(t, err)
 
+	// Validate that the constructed docker args contain expected flags
+	// before we override for the integration test.
+	dr := r.(*dockerRunner)
+	args := strings.Join(dr.cmd.Args, " ")
+	assert.Contains(t, args, "docker run")
+	assert.Contains(t, args, "--rm")
+	assert.Contains(t, args, "--network none")
+	assert.Contains(t, args, "-e CRITERIA_PLUGIN=secret")
+	assert.Contains(t, args, "-e PLUGIN_PROTOCOL_VERSIONS=1,2")
+	assert.Contains(t, args, "busybox:latest")
+
 	// Override the command to run a short-lived container so we can observe
 	// start/wait/kill without needing a real adapter.
-	dr := r.(*dockerRunner)
 	dr.cmd = exec.Command("docker", "run", "--rm", "-i", "busybox:latest", "sh", "-c", "sleep 30")
 
 	ctx, cancel := context.WithCancel(context.Background())

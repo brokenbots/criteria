@@ -1,0 +1,3 @@
+Error: adapter noop does not publish a container image; cannot run under environment.runtime = "docker".
+Ask the publisher to enable image publishing, or change the environment to runtime = "none".
+Publisher: https://github.com/brokenbots/criteria-adapter-noop

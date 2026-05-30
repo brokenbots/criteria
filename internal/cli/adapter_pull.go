@@ -74,7 +74,7 @@ func runPull(ctx context.Context, out io.Writer, rawRef string, allowUnsigned bo
 
 	// Container-image fetch (if applicable).
 	if m.ContainerImage != nil {
-		if err := pullContainerImage(ctx, out, m.ContainerImage.Ref); err != nil {
+		if err := pullContainerImage(ctx, out, *m.ContainerImage); err != nil {
 			return err
 		}
 	}
@@ -153,11 +153,11 @@ func printPullSummary(out io.Writer, ref oci.Reference, dg digest.Digest, signer
 
 // pullContainerImage tries docker pull, then podman pull, returning the first
 // success or a combined error if neither runtime is available.
-func pullContainerImage(ctx context.Context, out io.Writer, ref string) error {
+func pullContainerImage(ctx context.Context, out io.Writer, ref manifest.ContainerImageRef) error {
 	for _, runtime := range []string{"docker", "podman"} {
 		err := container.PullContainerImage(ctx, ref, runtime)
 		if err == nil {
-			fmt.Fprintf(out, "Container image pulled (%s): %s\n", runtime, ref)
+			fmt.Fprintf(out, "Container image pulled (%s): %s\n", runtime, ref.Ref)
 			return nil
 		}
 		if isExecNotFound(err) {
@@ -165,7 +165,7 @@ func pullContainerImage(ctx context.Context, out io.Writer, ref string) error {
 		}
 		return err // real pull failure
 	}
-	return fmt.Errorf("no container runtime (docker or podman) found to pull image %s", ref)
+	return fmt.Errorf("no container runtime (docker or podman) found to pull image %s", ref.Ref)
 }
 
 func isExecNotFound(err error) bool {

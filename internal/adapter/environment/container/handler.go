@@ -38,9 +38,11 @@ type Prepared struct {
 // PolicyArgs carries docker/podman flags derived from environment policy.
 type PolicyArgs struct {
 	NetworkMode  string
+	NetworkName  string
 	VolumeMounts []VolumeMount
 	CPUs         string
 	Memory       string
+	Timeout      string
 }
 
 // VolumeMount describes a host-to-container bind mount.
@@ -83,7 +85,7 @@ func (h *Handler) Prepare(ctx *PrepareContext) (Prepared, error) {
 		}
 	}
 
-	policy, err := buildPolicyArgs(ctx.Environment.TypeSpecific)
+	policy, err := buildPolicyArgs(ctx.Environment.TypeSpecific, ctx.AdapterRef)
 	if err != nil {
 		return Prepared{}, err
 	}
@@ -95,7 +97,7 @@ func (h *Handler) Prepare(ctx *PrepareContext) (Prepared, error) {
 	}, nil
 }
 
-func buildPolicyArgs(ts map[string]cty.Value) (PolicyArgs, error) {
+func buildPolicyArgs(ts map[string]cty.Value, adapterRef string) (PolicyArgs, error) {
 	policy := PolicyArgs{}
 
 	if net, ok := ts["network"]; ok && !net.IsNull() {
@@ -103,7 +105,10 @@ func buildPolicyArgs(ts map[string]cty.Value) (PolicyArgs, error) {
 		if len(allow) == 0 {
 			policy.NetworkMode = "none"
 		} else {
-			policy.NetworkMode = "bridge"
+			// Per-session bridge network naming. Full firewall rules are a
+			// future TODO (WS12 follow-up) but the network name itself scopes
+			// the adapter to a session-scoped bridge.
+			policy.NetworkName = makeNetworkName(adapterRef)
 		}
 	}
 
@@ -133,6 +138,7 @@ func buildPolicyArgs(ts map[string]cty.Value) (PolicyArgs, error) {
 	if res, ok := ts["resources"]; ok && !res.IsNull() {
 		policy.CPUs = stringFromObject(res, "cpu")
 		policy.Memory = stringFromObject(res, "memory")
+		policy.Timeout = stringFromObject(res, "timeout")
 	}
 
 	return policy, nil
