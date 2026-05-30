@@ -366,7 +366,8 @@ func (e *Engine) runLoop(ctx context.Context, sessions *adapterhost.SessionManag
 			return e.handleEvalError(st, err, sink)
 		}
 		if next == workflow.ReturnSentinel {
-			return e.handleReturnExit(st, sink)
+			e.handleReturnExit(st, sink)
+			return nil
 		}
 		e.advanceTo(st, next)
 	}
@@ -614,7 +615,7 @@ func (e *Engine) handleEvalError(st *RunState, err error, sink Sink) error {
 // handleReturnExit handles top-level runs that exit via next = "return".
 // The projected outputs in st.ReturnOutputs are emitted as OnRunOutputs
 // (if non-empty) and the run is completed successfully with no named final state.
-func (e *Engine) handleReturnExit(st *RunState, sink Sink) error {
+func (e *Engine) handleReturnExit(st *RunState, sink Sink) {
 	e.liveRunState = nil
 	e.lastVisits = st.Visits
 
@@ -625,7 +626,6 @@ func (e *Engine) handleReturnExit(st *RunState, sink Sink) error {
 		}
 	}
 	sink.OnRunCompleted("", true)
-	return nil
 }
 
 // formatReturnOutputs converts the ReturnOutputs cty.Value map to the

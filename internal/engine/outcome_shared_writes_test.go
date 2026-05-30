@@ -11,9 +11,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	v2 "github.com/brokenbots/criteria/sdk/pb/criteria/v2"
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapterhost"
+	v2 "github.com/brokenbots/criteria/sdk/pb/criteria/v2"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -38,11 +38,12 @@ func (p *sharedWritesAdapter) Permit(context.Context, string, string, bool, stri
 func (p *sharedWritesAdapter) CloseSession(context.Context, string) error { return nil }
 func (p *sharedWritesAdapter) Kill()                                      {}
 
-func (p *sharedWritesAdapter) Pause(context.Context, string) error                        { return nil }
-func (p *sharedWritesAdapter) Resume(context.Context, string) error                       { return nil }
+func (p *sharedWritesAdapter) Pause(context.Context, string) error  { return nil }
+func (p *sharedWritesAdapter) Resume(context.Context, string) error { return nil }
 func (p *sharedWritesAdapter) Inspect(context.Context, string) (*v2.InspectResponse, error) {
-return &v2.InspectResponse{}, nil
+	return &v2.InspectResponse{}, nil
 }
+
 // adapterFunc is a adapterhost.Handle backed by a function, for flexible test control.
 type adapterFunc struct {
 	name string
@@ -62,11 +63,12 @@ func (p *adapterFunc) Permit(context.Context, string, string, bool, string) erro
 func (p *adapterFunc) CloseSession(context.Context, string) error                 { return nil }
 func (p *adapterFunc) Kill()                                                      {}
 
-func (p *adapterFunc) Pause(context.Context, string) error                        { return nil }
-func (p *adapterFunc) Resume(context.Context, string) error                       { return nil }
+func (p *adapterFunc) Pause(context.Context, string) error  { return nil }
+func (p *adapterFunc) Resume(context.Context, string) error { return nil }
 func (p *adapterFunc) Inspect(context.Context, string) (*v2.InspectResponse, error) {
-return &v2.InspectResponse{}, nil
+	return &v2.InspectResponse{}, nil
 }
+
 // TestSharedWrites_AppliedAfterStep verifies that a workflow with shared_writes
 // compiles, runs, and completes successfully.
 func TestSharedWrites_AppliedAfterStep(t *testing.T) {

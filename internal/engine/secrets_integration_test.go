@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	v2 "github.com/brokenbots/criteria/sdk/pb/criteria/v2"
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapter/secrets"
 	"github.com/brokenbots/criteria/internal/adapterhost"
+	v2 "github.com/brokenbots/criteria/sdk/pb/criteria/v2"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -48,11 +48,12 @@ func (p *secretRecordingAdapter) Permit(context.Context, string, string, bool, s
 func (p *secretRecordingAdapter) CloseSession(context.Context, string) error { return nil }
 func (p *secretRecordingAdapter) Kill()                                      {}
 
-func (p *secretRecordingAdapter) Pause(context.Context, string) error                        { return nil }
-func (p *secretRecordingAdapter) Resume(context.Context, string) error                       { return nil }
+func (p *secretRecordingAdapter) Pause(context.Context, string) error  { return nil }
+func (p *secretRecordingAdapter) Resume(context.Context, string) error { return nil }
 func (p *secretRecordingAdapter) Inspect(context.Context, string) (*v2.InspectResponse, error) {
-return &v2.InspectResponse{}, nil
+	return &v2.InspectResponse{}, nil
 }
+
 // redactingSink records every OnStepOutcome error so we can assert redaction.
 type redactingSink struct {
 	fakeSink

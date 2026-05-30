@@ -105,8 +105,8 @@ func (c *canceledCtxHandle) Execute(_ context.Context, _ string, _ *workflow.Ste
 }
 func (c *canceledCtxHandle) CloseSession(context.Context, string) error { return nil }
 func (c *canceledCtxHandle) Kill()                                      {}
-func (c *canceledCtxHandle) Pause(context.Context, string) error         { return nil }
-func (c *canceledCtxHandle) Resume(context.Context, string) error     { return nil }
+func (c *canceledCtxHandle) Pause(context.Context, string) error        { return nil }
+func (c *canceledCtxHandle) Resume(context.Context, string) error       { return nil }
 func (c *canceledCtxHandle) Inspect(context.Context, string) (*v2.InspectResponse, error) {
 	return &v2.InspectResponse{}, nil
 }
@@ -159,8 +159,8 @@ func (e *eofHandle) Execute(_ context.Context, _ string, _ *workflow.StepNode, _
 }
 func (e *eofHandle) CloseSession(context.Context, string) error { return nil }
 func (e *eofHandle) Kill()                                      {}
-func (e *eofHandle) Pause(context.Context, string) error         { return nil }
-func (e *eofHandle) Resume(context.Context, string) error        { return nil }
+func (e *eofHandle) Pause(context.Context, string) error        { return nil }
+func (e *eofHandle) Resume(context.Context, string) error       { return nil }
 func (e *eofHandle) Inspect(context.Context, string) (*v2.InspectResponse, error) {
 	return &v2.InspectResponse{}, nil
 }

@@ -907,11 +907,12 @@ func (p *callCountAdapter) Permit(context.Context, string, string, bool, string)
 func (p *callCountAdapter) CloseSession(context.Context, string) error                 { return nil }
 func (p *callCountAdapter) Kill()                                                      {}
 
-func (p *callCountAdapter) Pause(context.Context, string) error                        { return nil }
-func (p *callCountAdapter) Resume(context.Context, string) error                       { return nil }
+func (p *callCountAdapter) Pause(context.Context, string) error  { return nil }
+func (p *callCountAdapter) Resume(context.Context, string) error { return nil }
 func (p *callCountAdapter) Inspect(context.Context, string) (*v2.InspectResponse, error) {
-return &v2.InspectResponse{}, nil
+	return &v2.InspectResponse{}, nil
 }
+
 // errAdapter is an adapter that always returns an error, used to exercise the
 // retry loop in runStepFromAttempt for max_visits retry-counting tests.
 type errAdapter struct {
@@ -932,11 +933,12 @@ func (p *errAdapter) Permit(context.Context, string, string, bool, string) error
 func (p *errAdapter) CloseSession(context.Context, string) error                 { return nil }
 func (p *errAdapter) Kill()                                                      {}
 
-func (p *errAdapter) Pause(context.Context, string) error                        { return nil }
-func (p *errAdapter) Resume(context.Context, string) error                       { return nil }
+func (p *errAdapter) Pause(context.Context, string) error  { return nil }
+func (p *errAdapter) Resume(context.Context, string) error { return nil }
 func (p *errAdapter) Inspect(context.Context, string) (*v2.InspectResponse, error) {
-return &v2.InspectResponse{}, nil
+	return &v2.InspectResponse{}, nil
 }
+
 // TestMaxVisits_CancelledAttemptDoesNotConsumeVisit verifies that a pre-cancelled
 // context returns a cancellation error WITHOUT incrementing the visit count in
 // runStepFromAttempt. This is a regression test for the ctx.Err() ordering in

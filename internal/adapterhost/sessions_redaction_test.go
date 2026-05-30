@@ -27,7 +27,7 @@ func (m *mockRedactionHandle) Execute(ctx context.Context, sessionID string, ste
 func (m *mockRedactionHandle) CloseSession(ctx context.Context, id string) error {
 	return nil
 }
-func (m *mockRedactionHandle) Kill() {}
+func (m *mockRedactionHandle) Kill()                                {}
 func (m *mockRedactionHandle) Pause(context.Context, string) error  { return nil }
 func (m *mockRedactionHandle) Resume(context.Context, string) error { return nil }
 func (m *mockRedactionHandle) Inspect(context.Context, string) (*v2.InspectResponse, error) {

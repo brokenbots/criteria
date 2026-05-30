@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	v2 "github.com/brokenbots/criteria/sdk/pb/criteria/v2"
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapterhost"
+	v2 "github.com/brokenbots/criteria/sdk/pb/criteria/v2"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -50,11 +50,12 @@ func (p *fakeOutputAdapter) Permit(context.Context, string, string, bool, string
 func (p *fakeOutputAdapter) CloseSession(context.Context, string) error                 { return nil }
 func (p *fakeOutputAdapter) Kill()                                                      {}
 
-func (p *fakeOutputAdapter) Pause(context.Context, string) error                        { return nil }
-func (p *fakeOutputAdapter) Resume(context.Context, string) error                       { return nil }
+func (p *fakeOutputAdapter) Pause(context.Context, string) error  { return nil }
+func (p *fakeOutputAdapter) Resume(context.Context, string) error { return nil }
 func (p *fakeOutputAdapter) Inspect(context.Context, string) (*v2.InspectResponse, error) {
-return &v2.InspectResponse{}, nil
+	return &v2.InspectResponse{}, nil
 }
+
 const outputWorkflow = `
 workflow {
   name = "outputs"
@@ -158,10 +159,10 @@ func (p *fakeConsumerAdapter) Permit(context.Context, string, string, bool, stri
 func (p *fakeConsumerAdapter) CloseSession(context.Context, string) error                 { return nil }
 func (p *fakeConsumerAdapter) Kill()                                                      {}
 
-func (p *fakeConsumerAdapter) Pause(context.Context, string) error                        { return nil }
-func (p *fakeConsumerAdapter) Resume(context.Context, string) error                       { return nil }
+func (p *fakeConsumerAdapter) Pause(context.Context, string) error  { return nil }
+func (p *fakeConsumerAdapter) Resume(context.Context, string) error { return nil }
 func (p *fakeConsumerAdapter) Inspect(context.Context, string) (*v2.InspectResponse, error) {
-return &v2.InspectResponse{}, nil
+	return &v2.InspectResponse{}, nil
 }
 func TestOutputCapture_ExpressionInterpolation(t *testing.T) {
 	adapterSchemas := map[string]workflow.AdapterInfo{

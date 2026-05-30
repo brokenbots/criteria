@@ -7,19 +7,19 @@ import (
 	"testing"
 
 	"github.com/brokenbots/criteria/internal/adapter"
-	"github.com/brokenbots/criteria/workflow"
 	v2 "github.com/brokenbots/criteria/sdk/pb/criteria/v2"
+	"github.com/brokenbots/criteria/workflow"
 )
 
 // pauseResumeMockHandle tracks Pause/Resume/Inspect calls.
 type pauseResumeMockHandle struct {
-	mu            sync.Mutex
-	pauseCount    int
-	resumeCount   int
-	inspectResp   *v2.InspectResponse
-	inspectErr    error
-	pauseErr      error
-	resumeErr     error
+	mu          sync.Mutex
+	pauseCount  int
+	resumeCount int
+	inspectResp *v2.InspectResponse
+	inspectErr  error
+	pauseErr    error
+	resumeErr   error
 }
 
 func (m *pauseResumeMockHandle) Info(context.Context) (Info, error) {
@@ -216,7 +216,7 @@ func TestSessionManager_PauseAll_FirstErrorReturned(t *testing.T) {
 	sm.sessions["s2"] = &Session{Name: "s2", handle: h2, PermissionState: ps2}
 
 	err := sm.PauseAll(context.Background())
-	if err != wantErr {
+	if !errors.Is(err, wantErr) {
 		t.Fatalf("expected %v, got %v", wantErr, err)
 	}
 	if h2.pauseCount != 1 {

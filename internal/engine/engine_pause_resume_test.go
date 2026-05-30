@@ -57,10 +57,10 @@ func (l *mockPauseResumeLoader) Resolve(_ context.Context, _ string) (adapterhos
 }
 func (l *mockPauseResumeLoader) Shutdown(_ context.Context) error { return nil }
 
-func openTestSession(t *testing.T, sm *adapterhost.SessionManager, h adapterhost.Handle, name string) {
+func openTestSession(t *testing.T, sm *adapterhost.SessionManager) {
 	t.Helper()
 	ctx := context.Background()
-	if err := sm.Open(ctx, name, "test", "fail", nil, nil); err != nil {
+	if err := sm.Open(ctx, "s1", "test", "fail", nil, nil); err != nil {
 		t.Fatalf("open session: %v", err)
 	}
 }
@@ -89,7 +89,7 @@ func TestEngine_InspectSession_NoActiveRun(t *testing.T) {
 func TestEngine_Pause_DelegatesToSessions(t *testing.T) {
 	h := &mockPauseResumeHandle{}
 	sm := adapterhost.NewSessionManager(&mockPauseResumeLoader{handle: h})
-	openTestSession(t, sm, h, "s1")
+	openTestSession(t, sm)
 
 	e := &Engine{}
 	e.mu.Lock()
@@ -107,7 +107,7 @@ func TestEngine_Pause_DelegatesToSessions(t *testing.T) {
 func TestEngine_Resume_DelegatesToSessions(t *testing.T) {
 	h := &mockPauseResumeHandle{}
 	sm := adapterhost.NewSessionManager(&mockPauseResumeLoader{handle: h})
-	openTestSession(t, sm, h, "s1")
+	openTestSession(t, sm)
 
 	e := &Engine{}
 	e.mu.Lock()
@@ -126,7 +126,7 @@ func TestEngine_InspectSession_DelegatesToSessions(t *testing.T) {
 	want := &v2.InspectResponse{CurrentStep: "step_1"}
 	h := &mockPauseResumeHandle{inspectResp: want}
 	sm := adapterhost.NewSessionManager(&mockPauseResumeLoader{handle: h})
-	openTestSession(t, sm, h, "s1")
+	openTestSession(t, sm)
 
 	e := &Engine{}
 	e.mu.Lock()
@@ -145,7 +145,7 @@ func TestEngine_InspectSession_DelegatesToSessions(t *testing.T) {
 func TestEngine_PauseResume_Reentrant(t *testing.T) {
 	h := &mockPauseResumeHandle{}
 	sm := adapterhost.NewSessionManager(&mockPauseResumeLoader{handle: h})
-	openTestSession(t, sm, h, "s1")
+	openTestSession(t, sm)
 
 	e := &Engine{}
 	e.mu.Lock()
@@ -173,7 +173,7 @@ func TestEngine_PauseResume_Reentrant(t *testing.T) {
 func TestEngine_PauseResume_Concurrent(t *testing.T) {
 	h := &mockPauseResumeHandle{}
 	sm := adapterhost.NewSessionManager(&mockPauseResumeLoader{handle: h})
-	openTestSession(t, sm, h, "s1")
+	openTestSession(t, sm)
 
 	e := &Engine{}
 	e.mu.Lock()

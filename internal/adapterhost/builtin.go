@@ -104,8 +104,8 @@ func (p *builtinAdapter) StartPermissionStream(ctx context.Context, _ string, re
 
 func (p *builtinAdapter) Kill() {}
 
-func (p *builtinAdapter) Pause(context.Context, string) error   { return nil }
-func (p *builtinAdapter) Resume(context.Context, string) error  { return nil }
+func (p *builtinAdapter) Pause(context.Context, string) error  { return nil }
+func (p *builtinAdapter) Resume(context.Context, string) error { return nil }
 func (p *builtinAdapter) Inspect(context.Context, string) (*v2.InspectResponse, error) {
 	return &v2.InspectResponse{}, nil
 }
