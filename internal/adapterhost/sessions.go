@@ -10,10 +10,12 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapter/environment/sandbox"
 	"github.com/brokenbots/criteria/internal/adapter/secrets"
+	"github.com/brokenbots/criteria/internal/log"
 	"github.com/brokenbots/criteria/workflow"
 	"github.com/brokenbots/criteria/workflow/lockfile"
 )
@@ -99,6 +101,15 @@ type Session struct {
 	respawned       bool
 	closing         atomic.Bool
 	SandboxCleanup  func() // removes transient cgroup dirs, etc.
+
+	// WS15: session-level log stream lifecycle and heartbeat tracking.
+	cancelLog     func()
+	lastHeartbeat atomic.Int64 // Unix nanoseconds
+	currentSink   adapter.EventSink
+	currentSinkMu sync.Mutex
+
+	// WS15: MergeBuffer interleaves log and adapter events by timestamp.
+	mergeBuf *log.MergeBuffer
 }
 
 func NewSessionManager(loader Loader) *SessionManager {
@@ -296,7 +307,7 @@ func (m *SessionManager) registerSession(ctx context.Context, name, adapterName,
 		}
 		return fmt.Errorf("%w: %s", ErrSessionAlreadyOpen, name)
 	}
-	m.sessions[name] = &Session{
+	sess := &Session{
 		Name:           name,
 		Adapter:        adapterName,
 		Config:         cloneConfig(config),
@@ -305,6 +316,28 @@ func (m *SessionManager) registerSession(ctx context.Context, name, adapterName,
 		Capabilities:   caps,
 		handle:         plug,
 		SandboxCleanup: cleanup,
+	}
+	m.sessions[name] = sess
+
+	// WS15: start the dedicated per-session Log stream if the adapter supports it.
+	if starter, ok := plug.(LogStreamStarter); ok {
+		logAdapterSink := &sessionLogAdapterSink{sess: sess}
+		// Wrap with redaction so idle-period log lines are also scrubbed.
+		redactedLogSink := m.wrapSink(logAdapterSink)
+		sess.mergeBuf = log.NewMergeBuffer(redactedLogSink, 500*time.Millisecond)
+		logSink := &logForwardSink{
+			sink: sess.mergeBuf,
+			onHeartbeat: func() {
+				sess.lastHeartbeat.Store(time.Now().UnixNano())
+			},
+		}
+		cancel, err := starter.StartLogStream(ctx, name, logSink)
+		if err != nil {
+			slog.Warn("adapter log stream start failed", "session", name, "err", err)
+		} else {
+			sess.cancelLog = cancel
+			sess.lastHeartbeat.Store(time.Now().UnixNano())
+		}
 	}
 	return nil
 }
@@ -322,6 +355,12 @@ func (m *SessionManager) Close(ctx context.Context, name string) error {
 		return nil
 	}
 	sess.closing.Store(true)
+	if sess.cancelLog != nil {
+		sess.cancelLog()
+	}
+	if sess.mergeBuf != nil {
+		sess.mergeBuf.Close()
+	}
 	if sess.SandboxCleanup != nil {
 		sess.SandboxCleanup()
 	}
@@ -361,7 +400,11 @@ func (m *SessionManager) handleCrash(ctx context.Context, name string, step *wor
 		if respawnErr := m.respawn(ctx, sess); respawnErr != nil {
 			return m.failResult(sink, sess, execErr)
 		}
-		result, retryErr := sess.handle.Execute(ctx, name, step, sink)
+		retrySink := sink
+		if sess.mergeBuf != nil {
+			retrySink = sess.mergeBuf
+		}
+		result, retryErr := sess.handle.Execute(ctx, name, step, retrySink)
 		if retryErr == nil {
 			m.registerSensitiveOutputs(result, step)
 			return result, nil
@@ -388,7 +431,34 @@ func (m *SessionManager) Execute(ctx context.Context, name string, step *workflo
 
 	sink = m.wrapSink(sink)
 
-	result, execErr := sess.handle.Execute(ctx, name, step, sink)
+	// WS15: heartbeat-stall detection. If no heartbeat has been received for
+	// >90s, treat the session as crashed before attempting the step.
+	lastHB := time.Unix(0, sess.lastHeartbeat.Load())
+	if sess.cancelLog != nil && time.Since(lastHB) > 90*time.Second {
+		return m.handleCrash(ctx, name, step, sink, sess, errors.New("heartbeat stall (>90s)"))
+	}
+
+	// Route session-level log lines to this step's sink while Execute is in flight.
+	sess.currentSinkMu.Lock()
+	sess.currentSink = sink
+	sess.currentSinkMu.Unlock()
+	defer func() {
+		if sess.mergeBuf != nil {
+			sess.mergeBuf.Flush()
+		}
+		sess.currentSinkMu.Lock()
+		sess.currentSink = nil
+		sess.currentSinkMu.Unlock()
+	}()
+
+	// Pass mergeBuf as the Execute sink so that adapter events also flow through
+	// the timestamp-ordered merge pipeline together with log stream events.
+	execSink := sink
+	if sess.mergeBuf != nil {
+		execSink = sess.mergeBuf
+	}
+
+	result, execErr := sess.handle.Execute(ctx, name, step, execSink)
 	if execErr == nil {
 		m.registerSensitiveOutputs(result, step)
 		return result, nil
@@ -440,6 +510,12 @@ func (m *SessionManager) Shutdown(ctx context.Context) error {
 	var errs []error
 	for _, sess := range sessions {
 		sess.closing.Store(true)
+		if sess.cancelLog != nil {
+			sess.cancelLog()
+		}
+		if sess.mergeBuf != nil {
+			sess.mergeBuf.Close()
+		}
 		if sess.SandboxCleanup != nil {
 			sess.SandboxCleanup()
 		}
@@ -508,7 +584,44 @@ func (m *SessionManager) respawn(ctx context.Context, sess *Session) error {
 	sess.handle = plug
 	sess.SandboxCleanup = cleanup
 	sess.respawned = true
+
+	// WS15: restart the log stream for the new handle and reset heartbeat tracking.
+	m.restartLogStream(ctx, sess, plug)
+
 	return nil
+}
+
+// restartLogStream cancels the old log stream, closes the old merge buffer, and
+// starts a new one for the given handle.
+func (m *SessionManager) restartLogStream(ctx context.Context, sess *Session, plug Handle) {
+	if sess.cancelLog != nil {
+		sess.cancelLog()
+	}
+	if sess.mergeBuf != nil {
+		sess.mergeBuf.Close()
+	}
+	if starter, ok := plug.(LogStreamStarter); ok {
+		logAdapterSink := &sessionLogAdapterSink{sess: sess}
+		redactedLogSink := m.wrapSink(logAdapterSink)
+		sess.mergeBuf = log.NewMergeBuffer(redactedLogSink, 500*time.Millisecond)
+		logSink := &logForwardSink{
+			sink: sess.mergeBuf,
+			onHeartbeat: func() {
+				sess.lastHeartbeat.Store(time.Now().UnixNano())
+			},
+		}
+		cancel, err := starter.StartLogStream(ctx, sess.Name, logSink)
+		if err != nil {
+			slog.Warn("adapter log stream restart failed after respawn", "session", sess.Name, "err", err)
+			sess.cancelLog = nil
+		} else {
+			sess.cancelLog = cancel
+			sess.lastHeartbeat.Store(time.Now().UnixNano())
+		}
+	} else {
+		sess.cancelLog = nil
+		sess.mergeBuf = nil
+	}
 }
 
 func (m *SessionManager) failResult(sink adapter.EventSink, sess *Session, err error) (adapter.Result, error) {
@@ -548,4 +661,32 @@ func isLikelySessionCrash(sess *Session, err error) bool {
 		strings.Contains(msg, "broken pipe") ||
 		strings.Contains(msg, "eof") ||
 		strings.Contains(msg, "terminated")
+}
+
+// sessionLogAdapterSink routes session-level log lines to the active step's
+// EventSink when a step is executing, or to structured logs otherwise.
+type sessionLogAdapterSink struct {
+	sess *Session
+}
+
+func (s *sessionLogAdapterSink) Log(stream string, chunk []byte) {
+	s.sess.currentSinkMu.Lock()
+	sink := s.sess.currentSink
+	s.sess.currentSinkMu.Unlock()
+	if sink != nil {
+		sink.Log(stream, chunk)
+	} else {
+		slog.Info("adapter log", "session", s.sess.Name, "stream", stream, "line", string(chunk))
+	}
+}
+
+func (s *sessionLogAdapterSink) Adapter(kind string, data any) {
+	s.sess.currentSinkMu.Lock()
+	sink := s.sess.currentSink
+	s.sess.currentSinkMu.Unlock()
+	if sink != nil {
+		sink.Adapter(kind, data)
+	} else {
+		slog.Info("adapter event", "session", s.sess.Name, "kind", kind, "data", data)
+	}
 }
