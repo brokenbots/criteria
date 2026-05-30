@@ -118,12 +118,12 @@ func TestNeedsChunking(t *testing.T) {
 
 func TestSendChunks_AssembleChunks_RoundTrip(t *testing.T) {
 	sizes := []int{
-		0,          // empty
-		1,          // 1 byte
-		1 << 20,    // 1 MiB
-		4 << 20,    // 4 MiB
-		16 << 20,   // 16 MiB
-		100 << 20,  // 100 MiB
+		0,         // empty
+		1,         // 1 byte
+		1 << 20,   // 1 MiB
+		4 << 20,   // 4 MiB
+		16 << 20,  // 16 MiB
+		100 << 20, // 100 MiB
 	}
 	for _, size := range sizes {
 		t.Run(fmt.Sprintf("size_%d", size), func(t *testing.T) {

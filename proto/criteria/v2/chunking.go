@@ -134,56 +134,78 @@ func SendChunks(body []byte, payloadID string, chunkSize uint32, sink ChunkSink)
 // chunk.  The optional payloadID argument filters the stream to a single
 // logical payload; when empty, every chunk is accepted (legacy behaviour).
 func AssembleChunks(stream ChunkSource, payloadID string) ([]byte, error) {
-	var buf []byte
-	var expectSeq uint32
-	var inProgress bool
-	var lastTotal uint32
+	var state assembleState
 
 	for {
-		env, err := stream.Recv()
+		env, err := recvChunk(stream, payloadID)
 		if err != nil {
 			if errors.Is(err, ErrChunkStreamClosed) {
-				if inProgress {
-					return nil, fmt.Errorf("chunk stream closed without final chunk (seq %d/%d)", expectSeq, lastTotal)
+				if state.inProgress {
+					return nil, fmt.Errorf("chunk stream closed without final chunk (seq %d/%d)", state.expectSeq, state.lastTotal)
 				}
-				return buf, nil
+				return state.buf, nil
 			}
 			return nil, err
 		}
+
 		c := env.Chunk
-		if c == nil {
+		if err := state.accept(c.GetSeq(), c.GetTotal()); err != nil {
+			return nil, err
+		}
+
+		state.buf = append(state.buf, env.Payload...)
+
+		if c.GetFinal() {
+			if state.expectSeq != state.lastTotal {
+				return nil, fmt.Errorf("chunk final flag with mismatched total: expected %d chunks, got %d", state.lastTotal, state.expectSeq)
+			}
+			return state.buf, nil
+		}
+	}
+}
+
+// assembleState tracks the reassembly progress for AssembleChunks.
+type assembleState struct {
+	buf        []byte
+	expectSeq  uint32
+	inProgress bool
+	lastTotal  uint32
+}
+
+// accept validates the next chunk sequence number and updates state.
+func (s *assembleState) accept(seq, total uint32) error {
+	if seq == 0 {
+		s.buf = nil
+		s.expectSeq = 1
+		s.inProgress = true
+		s.lastTotal = total
+		return nil
+	}
+	if !s.inProgress {
+		return fmt.Errorf("chunk seq %d received with no sequence in progress", seq)
+	}
+	if seq != s.expectSeq {
+		return fmt.Errorf("chunk out-of-order: got seq %d, expected %d", seq, s.expectSeq)
+	}
+	s.expectSeq = seq + 1
+	return nil
+}
+
+// recvChunk reads the next envelope from stream and filters out non-chunk
+// envelopes or envelopes belonging to a different payload.
+func recvChunk(stream ChunkSource, payloadID string) (*ChunkEnvelope, error) {
+	for {
+		env, err := stream.Recv()
+		if err != nil {
+			return nil, err
+		}
+		if env.Chunk == nil {
 			continue // skip non-chunk envelopes
 		}
 		if payloadID != "" && env.PayloadID != payloadID {
 			continue // skip envelopes for other payloads
 		}
-
-		seq := c.GetSeq()
-		if seq == 0 {
-			// New sequence start.
-			buf = nil
-			expectSeq = 1
-			inProgress = true
-			lastTotal = c.GetTotal()
-		} else {
-			if !inProgress {
-				return nil, fmt.Errorf("chunk seq %d received with no sequence in progress", seq)
-			}
-			if seq != expectSeq {
-				return nil, fmt.Errorf("chunk out-of-order: got seq %d, expected %d", seq, expectSeq)
-			}
-			expectSeq = seq + 1
-		}
-
-		buf = append(buf, env.Payload...)
-
-		if c.GetFinal() {
-			if expectSeq != lastTotal {
-				return nil, fmt.Errorf("chunk final flag with mismatched total: expected %d chunks, got %d", lastTotal, expectSeq)
-			}
-			inProgress = false
-			return buf, nil
-		}
+		return env, nil
 	}
 }
 
