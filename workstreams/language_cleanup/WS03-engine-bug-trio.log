@@ -82,3 +82,35 @@ WS03 implementation is complete and verified. All three bug fixes and the requir
 - The workstream file was **NOT modified**.
 
 Ready for review.
+WS03 implementation is complete and the CI gate (`make lint`) now passes.
+
+### What was fixed
+
+The CI gate failed on `gocritic unnamedResult` for `runSubworkflow` in `internal/engine/node_subworkflow.go`. The function's return values were unnamed:
+
+```go
+func runSubworkflow(...) (map[string]cty.Value, string, error)
+```
+
+I renamed them to `(outputs map[string]cty.Value, terminal string, err error)` and changed the `outputs, err := evalRunOutputsAsValues(...)` call site to `outputs, err = ...` to avoid a redeclaration error since `outputs` is now a pre-declared named result.
+
+### Validation run (after fix)
+- `make test` — **PASS** (all packages, race-detector enabled)
+- `make lint` — **PASS** (import-lint, golangci-lint, baseline-check, spec-check, no-todos)
+- `go build ./...` — **PASS**
+- `go vet ./...` — **PASS**
+
+### Summary of all changes on this branch
+1. `internal/engine/node_step.go` — null guard `!v.IsNull()` before `v.AsString()`; terminal-state success check in caller.
+2. `internal/engine/node_subworkflow.go` — `runSubworkflow` now returns terminal state alongside outputs; named return values for linter compliance.
+3. `internal/engine/node_workflow.go` — `SeedDataSnapshot` flush on `ErrTerminal` before returning child vars.
+4. `internal/engine/parallel_iteration.go` / `while_iteration.go` — updated callers to check terminal state success.
+5. `internal/engine/node_subworkflow_test.go` — 3 new tests (null string output, terminal failure, terminal success).
+6. `internal/engine/data_subworkflow_test.go` — 1 new test (last-step data write visible in output).
+7. `workstreams/language_cleanup/WS03-engine-bug-trio.log` — workstream log.
+
+### Git status
+- Working tree is fully clean.
+- The workstream file was **NOT modified**.
+
+Ready for review.
