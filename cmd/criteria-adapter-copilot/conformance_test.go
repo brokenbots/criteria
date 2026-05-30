@@ -139,7 +139,7 @@ func TestCopilotReasoningEffortOverride(t *testing.T) {
 	// Open with agent-level reasoning_effort = "medium".
 	if err := plug.OpenSession(ctx, sessionID, map[string]string{
 		"reasoning_effort": "medium",
-	}); err != nil {
+	}, nil); err != nil {
 		t.Fatalf("OpenSession with reasoning_effort=medium: %v", err)
 	}
 	t.Cleanup(func() {
@@ -216,7 +216,7 @@ func TestConformance_AllowedOutcomesPropagation(t *testing.T) {
 	}
 
 	sessionID := "allowed-outcomes-propagation-test"
-	if err := plug.OpenSession(ctx, sessionID, nil); err != nil {
+	if err := plug.OpenSession(ctx, sessionID, nil, nil); err != nil {
 		t.Fatalf("OpenSession: %v", err)
 	}
 	t.Cleanup(func() {
@@ -288,7 +288,7 @@ func TestConformance_AllowedOutcomesPropagation_SetProof(t *testing.T) {
 	}
 
 	sessionID := "allowed-outcomes-setproof-test"
-	if err := plug.OpenSession(ctx, sessionID, nil); err != nil {
+	if err := plug.OpenSession(ctx, sessionID, nil, nil); err != nil {
 		t.Fatalf("OpenSession: %v", err)
 	}
 	t.Cleanup(func() {
@@ -371,7 +371,7 @@ func openFixtureSession(t *testing.T, plug adapterhost.Handle, sessionID string)
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	t.Cleanup(cancel)
-	if err := plug.OpenSession(ctx, sessionID, nil); err != nil {
+	if err := plug.OpenSession(ctx, sessionID, nil, nil); err != nil {
 		t.Fatalf("OpenSession %q: %v", sessionID, err)
 	}
 	t.Cleanup(func() {

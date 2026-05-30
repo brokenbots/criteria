@@ -42,7 +42,7 @@ func (p *builtinAdapter) Info(context.Context) (Info, error) {
 	}, nil
 }
 
-func (p *builtinAdapter) OpenSession(_ context.Context, id string, config map[string]string) error {
+func (p *builtinAdapter) OpenSession(_ context.Context, id string, config, secrets map[string]string) error {
 	if p.adapter == nil {
 		return fmt.Errorf("builtin adapter implementation is nil")
 	}
@@ -51,7 +51,11 @@ func (p *builtinAdapter) OpenSession(_ context.Context, id string, config map[st
 	if _, exists := p.sessions[id]; exists {
 		return fmt.Errorf("session %q already open", id)
 	}
-	p.sessions[id] = cloneConfig(config)
+	merged := cloneConfig(config)
+	for k, v := range secrets {
+		merged[k] = v
+	}
+	p.sessions[id] = merged
 	return nil
 }
 

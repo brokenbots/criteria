@@ -13,6 +13,7 @@ import (
 
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapter/environment/sandbox"
+	"github.com/brokenbots/criteria/internal/adapter/secrets"
 	"github.com/brokenbots/criteria/workflow"
 	"github.com/brokenbots/criteria/workflow/lockfile"
 )
@@ -58,6 +59,9 @@ type SessionManager struct {
 
 	// lockfile holds the parsed lockfile for container-mode lookups.
 	lockfile *lockfile.Lockfile
+
+	// RedactionRegistry masks secret values from all host output streams.
+	RedactionRegistry *secrets.Registry
 
 	mu       sync.Mutex
 	sessions map[string]*Session
@@ -197,7 +201,7 @@ func (m *SessionManager) sandboxEnvAndPolicy(instanceID string) (envNode *workfl
 	return envNode, rp, true
 }
 
-func (m *SessionManager) Open(ctx context.Context, name, adapterName, onCrash string, config map[string]string) error {
+func (m *SessionManager) Open(ctx context.Context, name, adapterName, onCrash string, config, secrets map[string]string) error {
 	if strings.TrimSpace(name) == "" {
 		return errors.New("session name is required")
 	}
@@ -234,7 +238,7 @@ func (m *SessionManager) Open(ctx context.Context, name, adapterName, onCrash st
 		caps = append([]string(nil), info.Capabilities...)
 	}
 
-	if err := plug.OpenSession(ctx, name, config); err != nil {
+	if err := plug.OpenSession(ctx, name, config, secrets); err != nil {
 		plug.Kill()
 		if cleanup != nil {
 			cleanup()
@@ -328,6 +332,12 @@ func (m *SessionManager) Execute(ctx context.Context, name string, step *workflo
 	sess, err := m.lookup(name)
 	if err != nil {
 		return adapter.Result{Outcome: "failure"}, err
+	}
+
+	// WS13: wrap the event sink so adapter logs that contain secret values are
+	// redacted before reaching the engine sink.
+	if m.RedactionRegistry != nil {
+		sink = &secrets.RedactingEventSink{Registry: m.RedactionRegistry, Inner: sink}
 	}
 
 	result, execErr := sess.handle.Execute(ctx, name, step, sink)
@@ -466,7 +476,7 @@ func (m *SessionManager) respawn(ctx context.Context, sess *Session) error {
 		}
 		return err
 	}
-	if err := plug.OpenSession(ctx, sess.Name, sess.Config); err != nil {
+	if err := plug.OpenSession(ctx, sess.Name, sess.Config, nil); err != nil {
 		plug.Kill()
 		if cleanup != nil {
 			cleanup()

@@ -139,11 +139,21 @@ func compileEnvironmentBlock(g *FSMGraph, envSpec EnvironmentSpec, opts CompileO
 		return diags
 	}
 
+	// Decode secrets policy if present.
+	var secretsPolicy *SecretsPolicy
+	if attr, ok := attrs["secrets"]; ok {
+		sp, spDiags := decodeSecretsPolicy(attr)
+		diags = append(diags, spDiags...)
+		if !spDiags.HasErrors() {
+			secretsPolicy = sp
+		}
+	}
+
 	// Collect type-specific attributes (everything other than known ones).
 	typeSpecific := make(map[string]cty.Value)
 	for name, attr := range attrs {
 		switch name {
-		case "variables", "config", "policy_mode", "os":
+		case "variables", "config", "policy_mode", "os", "secrets":
 			continue
 		}
 		val, valDiags := attr.Expr.Value(nil)
@@ -164,6 +174,7 @@ func compileEnvironmentBlock(g *FSMGraph, envSpec EnvironmentSpec, opts CompileO
 		Config:       config,
 		PolicyMode:   policyMode,
 		OS:           osVal,
+		Secrets:      secretsPolicy,
 		TypeSpecific: typeSpecific,
 	}
 
@@ -337,6 +348,65 @@ func decodeEnvironmentConfig(attrs hcl.Attributes, opts CompileOpts) (map[string
 	}
 
 	return result, diags
+}
+
+// decodeSecretsPolicy parses the optional `secrets` attribute into a SecretsPolicy.
+func decodeSecretsPolicy(attr *hcl.Attribute) (*SecretsPolicy, hcl.Diagnostics) {
+	var diags hcl.Diagnostics
+
+	val, valDiags := attr.Expr.Value(nil)
+	diags = append(diags, valDiags...)
+	if valDiags.HasErrors() {
+		return nil, diags
+	}
+
+	if val.Type().IsObjectType() || val.Type().IsMapType() {
+		m := val.AsValueMap()
+		sp := &SecretsPolicy{}
+
+		if pv, ok := m["provider"]; ok {
+			if pv.Type() == cty.String && pv.IsKnown() && !pv.IsNull() {
+				sp.Provider = pv.AsString()
+			} else {
+				diags = append(diags, &hcl.Diagnostic{
+					Severity: hcl.DiagError,
+					Summary:  "secrets provider must be a string",
+					Subject:  attr.Expr.Range().Ptr(),
+				})
+			}
+		}
+
+		if fv, ok := m["fallback"]; ok {
+			if fv.Type().IsTupleType() || fv.Type().IsListType() {
+				for _, elem := range fv.AsValueSlice() {
+					if elem.Type() == cty.String && elem.IsKnown() && !elem.IsNull() {
+						sp.Fallback = append(sp.Fallback, elem.AsString())
+					} else {
+						diags = append(diags, &hcl.Diagnostic{
+							Severity: hcl.DiagError,
+							Summary:  "secrets fallback must be a list of strings",
+							Subject:  attr.Expr.Range().Ptr(),
+						})
+					}
+				}
+			} else {
+				diags = append(diags, &hcl.Diagnostic{
+					Severity: hcl.DiagError,
+					Summary:  "secrets fallback must be a list of strings",
+					Subject:  attr.Expr.Range().Ptr(),
+				})
+			}
+		}
+
+		return sp, diags
+	}
+
+	diags = append(diags, &hcl.Diagnostic{
+		Severity: hcl.DiagError,
+		Summary:  "secrets must be an object with provider and optional fallback",
+		Subject:  attr.Expr.Range().Ptr(),
+	})
+	return nil, diags
 }
 
 // resolveEnvironmentExpr evaluates an environment expression (e.g. shell.ci) and

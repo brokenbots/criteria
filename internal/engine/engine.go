@@ -12,6 +12,7 @@ import (
 	"github.com/zclconf/go-cty/cty"
 
 	"github.com/brokenbots/criteria/internal/adapter"
+	"github.com/brokenbots/criteria/internal/adapter/secrets"
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	engineruntime "github.com/brokenbots/criteria/internal/engine/runtime"
 	"github.com/brokenbots/criteria/workflow"
@@ -203,13 +204,23 @@ func (e *Engine) Run(ctx context.Context) error {
 	}
 	defer func() { _ = sessions.Shutdown(context.WithoutCancel(ctx)) }()
 
+	// Seed variables before adapter provisioning so secret expressions can be
+	// evaluated against the run scope (WS13).
+	vars := e.seedRunVars()
+
+	// Create a per-run redaction registry and wire it into the session manager
+	// and the engine sink so all secret values are masked before display or
+	// persistence.
+	redactionReg := secrets.NewRegistry()
+	sessions.RedactionRegistry = redactionReg
+
 	deps := Deps{
 		Sessions: sessions,
-		Sink:     e.sink,
+		Sink:     NewRedactingSink(e.sink, redactionReg),
 	}
 
 	// Provision adapter sessions at scope start (W12)
-	scopeOrder, err := initScopeAdapters(ctx, e.graph, deps)
+	scopeOrder, err := initScopeAdapters(ctx, e.graph, deps, vars)
 	if err != nil {
 		e.sink.OnRunFailed(err.Error(), e.graph.InitialState)
 		return err
@@ -218,7 +229,7 @@ func (e *Engine) Run(ctx context.Context) error {
 
 	current := e.graph.InitialState
 	e.sink.OnRunStarted(e.graph.Name, current)
-	return e.runLoop(ctx, sessions, current, 1)
+	return e.runLoop(ctx, sessions, current, 1, vars)
 }
 
 // RunFrom resumes a workflow at startStep with the given initialAttempt
@@ -236,14 +247,19 @@ func (e *Engine) RunFrom(ctx context.Context, startStep string, initialAttempt i
 	}
 	defer func() { _ = sessions.Shutdown(context.WithoutCancel(ctx)) }()
 
+	vars := e.seedRunVars()
+
+	redactionReg := secrets.NewRegistry()
+	sessions.RedactionRegistry = redactionReg
+
 	deps := Deps{
 		Sessions: sessions,
-		Sink:     e.sink,
+		Sink:     NewRedactingSink(e.sink, redactionReg),
 	}
 
 	// For resumed runs, provision adapter sessions at scope start (W12).
 	// Sessions are always provisioned fresh, not restored from a prior run.
-	scopeOrder, err := initScopeAdapters(ctx, e.graph, deps)
+	scopeOrder, err := initScopeAdapters(ctx, e.graph, deps, vars)
 	if err != nil {
 		e.sink.OnRunFailed(err.Error(), startStep)
 		return err
@@ -253,13 +269,12 @@ func (e *Engine) RunFrom(ctx context.Context, startStep string, initialAttempt i
 	if err := e.bootstrapSessionsForResume(ctx, sessions, startStep); err != nil {
 		return err
 	}
-	return e.runLoop(ctx, sessions, startStep, initialAttempt)
+	return e.runLoop(ctx, sessions, startStep, initialAttempt, vars)
 }
 
 // runLoop is the shared execution loop. firstStepAttempt is the attempt index
 // used for the initial step when resuming; subsequent steps start at attempt 1.
-func (e *Engine) runLoop(ctx context.Context, sessions *adapterhost.SessionManager, current string, firstStepAttempt int) error {
-	vars := e.seedRunVars()
+func (e *Engine) runLoop(ctx context.Context, sessions *adapterhost.SessionManager, current string, firstStepAttempt int, vars map[string]cty.Value) error {
 	st := &RunState{
 		Current:          current,
 		Vars:             vars,

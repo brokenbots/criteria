@@ -68,7 +68,10 @@ type FilesystemPolicy struct{ ReadOnly bool }
 type NetworkPolicy struct{ AllowEgress bool }
 
 // SecretsPolicy controls secret resolution for an environment.
-type SecretsPolicy struct{ Provider string }
+type SecretsPolicy struct {
+	Provider string   `json:"provider"`
+	Fallback []string `json:"fallback,omitempty"`
+}
 
 // ResourcesPolicy caps compute resources for an environment.
 type ResourcesPolicy struct{ MaxMemory string }
