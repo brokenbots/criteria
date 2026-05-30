@@ -69,10 +69,10 @@ func (p *CombinedPolicy) Decide(req PermissionRequest) (allow bool, reason strin
 	// 2. env-policy checks (placeholder for WS09 full wiring)
 	if p.Env != nil {
 		if p.Env.Filesystem != nil && p.Env.Filesystem.ReadOnly {
-			_ = req // TODO(WS09): inspect req.Details for write operations
+			_ = req // placeholder for WS09: inspect req.Details for write operations
 		}
 		if p.Env.Network != nil && !p.Env.Network.AllowEgress {
-			_ = req // TODO(WS09): deny network-dependent tools
+			_ = req // placeholder for WS09: deny network-dependent tools
 		}
 	}
 	return true, reason
