@@ -11,6 +11,7 @@ bootstrap: ## Install / sync Go workspace dependencies
 tidy: ## Run go mod tidy across all modules
 	go mod tidy
 	cd sdk      && go mod tidy
+	cd tools    && go mod tidy
 	cd workflow && go mod tidy
 
 build: ## Build the criteria binary (output: bin/criteria)
@@ -72,11 +73,13 @@ proto-check-drift: ## Fail if generated proto code is out of sync with proto sou
 test: ## Run all unit tests
 	go test -race ./...
 	cd sdk      && go test -race ./...
+	cd tools    && go test -race ./...
 	cd workflow && go test -race ./...
 
 test-cover: ## Run tests with race detector and coverage; outputs cover.out per module
 	go test -race -coverprofile=cover.out -covermode=atomic ./...
 	cd sdk      && go test -race -coverprofile=cover-sdk.out -covermode=atomic ./...
+	cd tools    && go test -race -coverprofile=cover-tools.out -covermode=atomic ./...
 	cd workflow && go test -race -coverprofile=cover-workflow.out -covermode=atomic ./...
 	go tool cover -func=cover.out | grep -E "^total|internal/cli|internal/run|criteria-adapter-mcp"
 	@echo "See cover.out, cover-sdk.out, cover-workflow.out for full details."
@@ -93,18 +96,21 @@ test-conformance: ## Run SDK conformance suite (in-memory Subject)
 	cd sdk && go test -race -run TestConformance ./conformance/...
 
 lint-imports: ## Enforce import-graph boundaries (see tools/import-lint/)
-	go run ./tools/import-lint .
+	go run github.com/brokenbots/criteria/tools/import-lint .
 	@echo "Import boundaries OK."
 
-lint-go: ## Run golangci-lint across all modules with the baseline allowlist
+bin/golangci-lint: tools/go.mod tools/go.sum
+	(cd tools && go build -o ../bin/golangci-lint github.com/golangci/golangci-lint/cmd/golangci-lint)
+
+lint-go: bin/golangci-lint ## Run golangci-lint across all modules with the baseline allowlist
 	@# Merge configs: .golangci.yml ends with exclude-rules:; strip the
 	@# "issues:\n  exclude-rules:\n" header from .golangci.baseline.yml and
 	@# append the remaining items so they extend the exclude-rules list.
 	@cat .golangci.yml > .golangci.merged.yml
 	@tail -n +3 .golangci.baseline.yml >> .golangci.merged.yml
-	go tool golangci-lint run --config .golangci.merged.yml ./...             || { rm -f .golangci.merged.yml; exit 1; }
-	(cd sdk      && go tool golangci-lint run --config ../.golangci.merged.yml ./...) || { rm -f .golangci.merged.yml; exit 1; }
-	(cd workflow && go tool golangci-lint run --config ../.golangci.merged.yml ./...) || { rm -f .golangci.merged.yml; exit 1; }
+	./bin/golangci-lint run --config .golangci.merged.yml ./...             || { rm -f .golangci.merged.yml; exit 1; }
+	(cd sdk      && ../bin/golangci-lint run --config ../.golangci.merged.yml ./...) || { rm -f .golangci.merged.yml; exit 1; }
+	(cd workflow && ../bin/golangci-lint run --config ../.golangci.merged.yml ./...) || { rm -f .golangci.merged.yml; exit 1; }
 	@rm -f .golangci.merged.yml
 
 lint-baseline-check: ## Fail if .golangci.baseline.yml exceeds the cap in tools/lint-baseline/cap.txt
@@ -118,7 +124,7 @@ lint-baseline-check: ## Fail if .golangci.baseline.yml exceeds the cap in tools/
 		echo "ERROR: $$cap_file must contain a single integer; got: $$cap"; \
 		exit 1; \
 	fi; \
-	count=$$(go run ./tools/lint-baseline -count .golangci.baseline.yml); \
+	count=$$(go run github.com/brokenbots/criteria/tools/lint-baseline -count .golangci.baseline.yml); \
 	if [ "$$count" -gt "$$cap" ]; then \
 		echo "ERROR: .golangci.baseline.yml has $$count entries; cap is $$cap ($$cap_file)."; \
 		echo "       Either fix the new findings or, with explicit reviewer agreement, raise the cap."; \
@@ -128,10 +134,10 @@ lint-baseline-check: ## Fail if .golangci.baseline.yml exceeds the cap in tools/
 
 .PHONY: spec-gen spec-check
 spec-gen: ## Regenerate the generated sections in docs/LANGUAGE-SPEC.md
-	go run ./tools/spec-gen -out docs/LANGUAGE-SPEC.md
+	go run github.com/brokenbots/criteria/tools/spec-gen -out docs/LANGUAGE-SPEC.md
 
 spec-check: ## Check that docs/LANGUAGE-SPEC.md is up to date with schema sources
-	go run ./tools/spec-gen -check -out docs/LANGUAGE-SPEC.md
+	go run github.com/brokenbots/criteria/tools/spec-gen -check -out docs/LANGUAGE-SPEC.md
 
 lint-no-todos: ## Fail if any TODO/FIXME/XXX marker appears in non-test production Go source
 	@if grep -rn 'TODO\|FIXME\|XXX' --include='*.go' \
