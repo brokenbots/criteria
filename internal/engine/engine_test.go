@@ -17,6 +17,7 @@ import (
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/internal/testutil"
+	v2 "github.com/brokenbots/criteria/sdk/pb/criteria/v2"
 	"github.com/brokenbots/criteria/workflow"
 	"github.com/brokenbots/criteria/workflow/lockfile"
 )
@@ -100,6 +101,11 @@ func (p *fakeAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode,
 func (p *fakeAdapter) Permit(context.Context, string, string, bool, string) error { return nil }
 func (p *fakeAdapter) CloseSession(context.Context, string) error                 { return nil }
 func (p *fakeAdapter) Kill()                                                      {}
+func (p *fakeAdapter) Pause(context.Context, string) error                        { return nil }
+func (p *fakeAdapter) Resume(context.Context, string) error                       { return nil }
+func (p *fakeAdapter) Inspect(context.Context, string) (*v2.InspectResponse, error) {
+	return &v2.InspectResponse{}, nil
+}
 
 type fakeLoader struct {
 	adapters map[string]adapterhost.Handle
@@ -901,6 +907,11 @@ func (p *callCountAdapter) Permit(context.Context, string, string, bool, string)
 func (p *callCountAdapter) CloseSession(context.Context, string) error                 { return nil }
 func (p *callCountAdapter) Kill()                                                      {}
 
+func (p *callCountAdapter) Pause(context.Context, string) error                        { return nil }
+func (p *callCountAdapter) Resume(context.Context, string) error                       { return nil }
+func (p *callCountAdapter) Inspect(context.Context, string) (*v2.InspectResponse, error) {
+return &v2.InspectResponse{}, nil
+}
 // errAdapter is an adapter that always returns an error, used to exercise the
 // retry loop in runStepFromAttempt for max_visits retry-counting tests.
 type errAdapter struct {
@@ -921,6 +932,11 @@ func (p *errAdapter) Permit(context.Context, string, string, bool, string) error
 func (p *errAdapter) CloseSession(context.Context, string) error                 { return nil }
 func (p *errAdapter) Kill()                                                      {}
 
+func (p *errAdapter) Pause(context.Context, string) error                        { return nil }
+func (p *errAdapter) Resume(context.Context, string) error                       { return nil }
+func (p *errAdapter) Inspect(context.Context, string) (*v2.InspectResponse, error) {
+return &v2.InspectResponse{}, nil
+}
 // TestMaxVisits_CancelledAttemptDoesNotConsumeVisit verifies that a pre-cancelled
 // context returns a cancellation error WITHOUT incrementing the visit count in
 // runStepFromAttempt. This is a regression test for the ctx.Err() ordering in

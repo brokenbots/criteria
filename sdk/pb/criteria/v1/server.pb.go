@@ -700,6 +700,327 @@ func (x *StopRunResponse) GetIssuedAt() *timestamppb.Timestamp {
 	return nil
 }
 
+type PauseRunRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	RunId         string                 `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PauseRunRequest) Reset() {
+	*x = PauseRunRequest{}
+	mi := &file_criteria_v1_server_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PauseRunRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PauseRunRequest) ProtoMessage() {}
+
+func (x *PauseRunRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_criteria_v1_server_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PauseRunRequest.ProtoReflect.Descriptor instead.
+func (*PauseRunRequest) Descriptor() ([]byte, []int) {
+	return file_criteria_v1_server_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *PauseRunRequest) GetRunId() string {
+	if x != nil {
+		return x.RunId
+	}
+	return ""
+}
+
+type PauseRunResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	IssuedAt      *timestamppb.Timestamp `protobuf:"bytes,1,opt,name=issued_at,json=issuedAt,proto3" json:"issued_at,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PauseRunResponse) Reset() {
+	*x = PauseRunResponse{}
+	mi := &file_criteria_v1_server_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PauseRunResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PauseRunResponse) ProtoMessage() {}
+
+func (x *PauseRunResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_criteria_v1_server_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PauseRunResponse.ProtoReflect.Descriptor instead.
+func (*PauseRunResponse) Descriptor() ([]byte, []int) {
+	return file_criteria_v1_server_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *PauseRunResponse) GetIssuedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.IssuedAt
+	}
+	return nil
+}
+
+type ResumeRunRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	RunId         string                 `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ResumeRunRequest) Reset() {
+	*x = ResumeRunRequest{}
+	mi := &file_criteria_v1_server_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ResumeRunRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ResumeRunRequest) ProtoMessage() {}
+
+func (x *ResumeRunRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_criteria_v1_server_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ResumeRunRequest.ProtoReflect.Descriptor instead.
+func (*ResumeRunRequest) Descriptor() ([]byte, []int) {
+	return file_criteria_v1_server_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *ResumeRunRequest) GetRunId() string {
+	if x != nil {
+		return x.RunId
+	}
+	return ""
+}
+
+type ResumeRunResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	IssuedAt      *timestamppb.Timestamp `protobuf:"bytes,1,opt,name=issued_at,json=issuedAt,proto3" json:"issued_at,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ResumeRunResponse) Reset() {
+	*x = ResumeRunResponse{}
+	mi := &file_criteria_v1_server_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ResumeRunResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ResumeRunResponse) ProtoMessage() {}
+
+func (x *ResumeRunResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_criteria_v1_server_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ResumeRunResponse.ProtoReflect.Descriptor instead.
+func (*ResumeRunResponse) Descriptor() ([]byte, []int) {
+	return file_criteria_v1_server_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *ResumeRunResponse) GetIssuedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.IssuedAt
+	}
+	return nil
+}
+
+type InspectRunRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	RunId         string                 `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	SessionId     string                 `protobuf:"bytes,2,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"` // optional; if empty the server may return a summary
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *InspectRunRequest) Reset() {
+	*x = InspectRunRequest{}
+	mi := &file_criteria_v1_server_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *InspectRunRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*InspectRunRequest) ProtoMessage() {}
+
+func (x *InspectRunRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_criteria_v1_server_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use InspectRunRequest.ProtoReflect.Descriptor instead.
+func (*InspectRunRequest) Descriptor() ([]byte, []int) {
+	return file_criteria_v1_server_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *InspectRunRequest) GetRunId() string {
+	if x != nil {
+		return x.RunId
+	}
+	return ""
+}
+
+func (x *InspectRunRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+type InspectRunResponse struct {
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	RunId              string                 `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	SessionId          string                 `protobuf:"bytes,2,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	Adapter            string                 `protobuf:"bytes,3,opt,name=adapter,proto3" json:"adapter,omitempty"`
+	CurrentStep        string                 `protobuf:"bytes,4,opt,name=current_step,json=currentStep,proto3" json:"current_step,omitempty"`
+	PendingPermissions int64                  `protobuf:"varint,5,opt,name=pending_permissions,json=pendingPermissions,proto3" json:"pending_permissions,omitempty"`
+	LastActivityAt     *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=last_activity_at,json=lastActivityAt,proto3" json:"last_activity_at,omitempty"`
+	// Opaque adapter state — the host pretty-prints any well-formed JSON.
+	StateJson     string `protobuf:"bytes,7,opt,name=state_json,json=stateJson,proto3" json:"state_json,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *InspectRunResponse) Reset() {
+	*x = InspectRunResponse{}
+	mi := &file_criteria_v1_server_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *InspectRunResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*InspectRunResponse) ProtoMessage() {}
+
+func (x *InspectRunResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_criteria_v1_server_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use InspectRunResponse.ProtoReflect.Descriptor instead.
+func (*InspectRunResponse) Descriptor() ([]byte, []int) {
+	return file_criteria_v1_server_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *InspectRunResponse) GetRunId() string {
+	if x != nil {
+		return x.RunId
+	}
+	return ""
+}
+
+func (x *InspectRunResponse) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *InspectRunResponse) GetAdapter() string {
+	if x != nil {
+		return x.Adapter
+	}
+	return ""
+}
+
+func (x *InspectRunResponse) GetCurrentStep() string {
+	if x != nil {
+		return x.CurrentStep
+	}
+	return ""
+}
+
+func (x *InspectRunResponse) GetPendingPermissions() int64 {
+	if x != nil {
+		return x.PendingPermissions
+	}
+	return 0
+}
+
+func (x *InspectRunResponse) GetLastActivityAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.LastActivityAt
+	}
+	return nil
+}
+
+func (x *InspectRunResponse) GetStateJson() string {
+	if x != nil {
+		return x.StateJson
+	}
+	return ""
+}
+
 type SendPromptRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	RunId         string                 `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
@@ -711,7 +1032,7 @@ type SendPromptRequest struct {
 
 func (x *SendPromptRequest) Reset() {
 	*x = SendPromptRequest{}
-	mi := &file_criteria_v1_server_proto_msgTypes[12]
+	mi := &file_criteria_v1_server_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -723,7 +1044,7 @@ func (x *SendPromptRequest) String() string {
 func (*SendPromptRequest) ProtoMessage() {}
 
 func (x *SendPromptRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_criteria_v1_server_proto_msgTypes[12]
+	mi := &file_criteria_v1_server_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -736,7 +1057,7 @@ func (x *SendPromptRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SendPromptRequest.ProtoReflect.Descriptor instead.
 func (*SendPromptRequest) Descriptor() ([]byte, []int) {
-	return file_criteria_v1_server_proto_rawDescGZIP(), []int{12}
+	return file_criteria_v1_server_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *SendPromptRequest) GetRunId() string {
@@ -769,7 +1090,7 @@ type SendPromptResponse struct {
 
 func (x *SendPromptResponse) Reset() {
 	*x = SendPromptResponse{}
-	mi := &file_criteria_v1_server_proto_msgTypes[13]
+	mi := &file_criteria_v1_server_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -781,7 +1102,7 @@ func (x *SendPromptResponse) String() string {
 func (*SendPromptResponse) ProtoMessage() {}
 
 func (x *SendPromptResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_criteria_v1_server_proto_msgTypes[13]
+	mi := &file_criteria_v1_server_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -794,7 +1115,7 @@ func (x *SendPromptResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SendPromptResponse.ProtoReflect.Descriptor instead.
 func (*SendPromptResponse) Descriptor() ([]byte, []int) {
-	return file_criteria_v1_server_proto_rawDescGZIP(), []int{13}
+	return file_criteria_v1_server_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *SendPromptResponse) GetIssuedAt() *timestamppb.Timestamp {
@@ -859,13 +1180,35 @@ const file_criteria_v1_server_proto_rawDesc = "" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x16\n" +
 	"\x06reason\x18\x02 \x01(\tR\x06reason\"J\n" +
 	"\x0fStopRunResponse\x127\n" +
-	"\tissued_at\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\bissuedAt\"V\n" +
+	"\tissued_at\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\bissuedAt\"(\n" +
+	"\x0fPauseRunRequest\x12\x15\n" +
+	"\x06run_id\x18\x01 \x01(\tR\x05runId\"K\n" +
+	"\x10PauseRunResponse\x127\n" +
+	"\tissued_at\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\bissuedAt\")\n" +
+	"\x10ResumeRunRequest\x12\x15\n" +
+	"\x06run_id\x18\x01 \x01(\tR\x05runId\"L\n" +
+	"\x11ResumeRunResponse\x127\n" +
+	"\tissued_at\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\bissuedAt\"I\n" +
+	"\x11InspectRunRequest\x12\x15\n" +
+	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x02 \x01(\tR\tsessionId\"\x9d\x02\n" +
+	"\x12InspectRunResponse\x12\x15\n" +
+	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x02 \x01(\tR\tsessionId\x12\x18\n" +
+	"\aadapter\x18\x03 \x01(\tR\aadapter\x12!\n" +
+	"\fcurrent_step\x18\x04 \x01(\tR\vcurrentStep\x12/\n" +
+	"\x13pending_permissions\x18\x05 \x01(\x03R\x12pendingPermissions\x12D\n" +
+	"\x10last_activity_at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\x0elastActivityAt\x12\x1d\n" +
+	"\n" +
+	"state_json\x18\a \x01(\tR\tstateJson\"V\n" +
 	"\x11SendPromptRequest\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x12\n" +
 	"\x04step\x18\x02 \x01(\tR\x04step\x12\x16\n" +
 	"\x06prompt\x18\x03 \x01(\tR\x06prompt\"M\n" +
 	"\x12SendPromptResponse\x127\n" +
-	"\tissued_at\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\bissuedAt2\xcd\x04\n" +
+	"\tissued_at\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\bissuedAt2\xb1\x06\n" +
 	"\rServerService\x12M\n" +
 	"\n" +
 	"ListAgents\x12\x1e.criteria.v1.ListAgentsRequest\x1a\x1f.criteria.v1.ListAgentsResponse\x12<\n" +
@@ -874,7 +1217,11 @@ const file_criteria_v1_server_proto_rawDesc = "" +
 	"\x06GetRun\x12\x1a.criteria.v1.GetRunRequest\x1a\x10.criteria.v1.Run\x12V\n" +
 	"\rListRunEvents\x12!.criteria.v1.ListRunEventsRequest\x1a\".criteria.v1.ListRunEventsResponse\x12A\n" +
 	"\bWatchRun\x12\x1c.criteria.v1.WatchRunRequest\x1a\x15.criteria.v1.Envelope0\x01\x12D\n" +
-	"\aStopRun\x12\x1b.criteria.v1.StopRunRequest\x1a\x1c.criteria.v1.StopRunResponse\x12M\n" +
+	"\aStopRun\x12\x1b.criteria.v1.StopRunRequest\x1a\x1c.criteria.v1.StopRunResponse\x12G\n" +
+	"\bPauseRun\x12\x1c.criteria.v1.PauseRunRequest\x1a\x1d.criteria.v1.PauseRunResponse\x12J\n" +
+	"\tResumeRun\x12\x1d.criteria.v1.ResumeRunRequest\x1a\x1e.criteria.v1.ResumeRunResponse\x12M\n" +
+	"\n" +
+	"InspectRun\x12\x1e.criteria.v1.InspectRunRequest\x1a\x1f.criteria.v1.InspectRunResponse\x12M\n" +
 	"\n" +
 	"SendPrompt\x12\x1e.criteria.v1.SendPromptRequest\x1a\x1f.criteria.v1.SendPromptResponseB>Z<github.com/brokenbots/criteria/sdk/pb/criteria/v1;criteriav1b\x06proto3"
 
@@ -890,7 +1237,7 @@ func file_criteria_v1_server_proto_rawDescGZIP() []byte {
 	return file_criteria_v1_server_proto_rawDescData
 }
 
-var file_criteria_v1_server_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
+var file_criteria_v1_server_proto_msgTypes = make([]protoimpl.MessageInfo, 21)
 var file_criteria_v1_server_proto_goTypes = []any{
 	(*Agent)(nil),                 // 0: criteria.v1.Agent
 	(*ListAgentsRequest)(nil),     // 1: criteria.v1.ListAgentsRequest
@@ -904,43 +1251,58 @@ var file_criteria_v1_server_proto_goTypes = []any{
 	(*WatchRunRequest)(nil),       // 9: criteria.v1.WatchRunRequest
 	(*StopRunRequest)(nil),        // 10: criteria.v1.StopRunRequest
 	(*StopRunResponse)(nil),       // 11: criteria.v1.StopRunResponse
-	(*SendPromptRequest)(nil),     // 12: criteria.v1.SendPromptRequest
-	(*SendPromptResponse)(nil),    // 13: criteria.v1.SendPromptResponse
-	nil,                           // 14: criteria.v1.Agent.LabelsEntry
-	(*timestamppb.Timestamp)(nil), // 15: google.protobuf.Timestamp
-	(*Run)(nil),                   // 16: criteria.v1.Run
-	(*Envelope)(nil),              // 17: criteria.v1.Envelope
+	(*PauseRunRequest)(nil),       // 12: criteria.v1.PauseRunRequest
+	(*PauseRunResponse)(nil),      // 13: criteria.v1.PauseRunResponse
+	(*ResumeRunRequest)(nil),      // 14: criteria.v1.ResumeRunRequest
+	(*ResumeRunResponse)(nil),     // 15: criteria.v1.ResumeRunResponse
+	(*InspectRunRequest)(nil),     // 16: criteria.v1.InspectRunRequest
+	(*InspectRunResponse)(nil),    // 17: criteria.v1.InspectRunResponse
+	(*SendPromptRequest)(nil),     // 18: criteria.v1.SendPromptRequest
+	(*SendPromptResponse)(nil),    // 19: criteria.v1.SendPromptResponse
+	nil,                           // 20: criteria.v1.Agent.LabelsEntry
+	(*timestamppb.Timestamp)(nil), // 21: google.protobuf.Timestamp
+	(*Run)(nil),                   // 22: criteria.v1.Run
+	(*Envelope)(nil),              // 23: criteria.v1.Envelope
 }
 var file_criteria_v1_server_proto_depIdxs = []int32{
-	14, // 0: criteria.v1.Agent.labels:type_name -> criteria.v1.Agent.LabelsEntry
-	15, // 1: criteria.v1.Agent.registered_at:type_name -> google.protobuf.Timestamp
-	15, // 2: criteria.v1.Agent.last_seen_at:type_name -> google.protobuf.Timestamp
+	20, // 0: criteria.v1.Agent.labels:type_name -> criteria.v1.Agent.LabelsEntry
+	21, // 1: criteria.v1.Agent.registered_at:type_name -> google.protobuf.Timestamp
+	21, // 2: criteria.v1.Agent.last_seen_at:type_name -> google.protobuf.Timestamp
 	0,  // 3: criteria.v1.ListAgentsResponse.agents:type_name -> criteria.v1.Agent
-	16, // 4: criteria.v1.ListRunsResponse.runs:type_name -> criteria.v1.Run
-	17, // 5: criteria.v1.ListRunEventsResponse.events:type_name -> criteria.v1.Envelope
-	15, // 6: criteria.v1.StopRunResponse.issued_at:type_name -> google.protobuf.Timestamp
-	15, // 7: criteria.v1.SendPromptResponse.issued_at:type_name -> google.protobuf.Timestamp
-	1,  // 8: criteria.v1.ServerService.ListAgents:input_type -> criteria.v1.ListAgentsRequest
-	3,  // 9: criteria.v1.ServerService.GetAgent:input_type -> criteria.v1.GetAgentRequest
-	4,  // 10: criteria.v1.ServerService.ListRuns:input_type -> criteria.v1.ListRunsRequest
-	6,  // 11: criteria.v1.ServerService.GetRun:input_type -> criteria.v1.GetRunRequest
-	7,  // 12: criteria.v1.ServerService.ListRunEvents:input_type -> criteria.v1.ListRunEventsRequest
-	9,  // 13: criteria.v1.ServerService.WatchRun:input_type -> criteria.v1.WatchRunRequest
-	10, // 14: criteria.v1.ServerService.StopRun:input_type -> criteria.v1.StopRunRequest
-	12, // 15: criteria.v1.ServerService.SendPrompt:input_type -> criteria.v1.SendPromptRequest
-	2,  // 16: criteria.v1.ServerService.ListAgents:output_type -> criteria.v1.ListAgentsResponse
-	0,  // 17: criteria.v1.ServerService.GetAgent:output_type -> criteria.v1.Agent
-	5,  // 18: criteria.v1.ServerService.ListRuns:output_type -> criteria.v1.ListRunsResponse
-	16, // 19: criteria.v1.ServerService.GetRun:output_type -> criteria.v1.Run
-	8,  // 20: criteria.v1.ServerService.ListRunEvents:output_type -> criteria.v1.ListRunEventsResponse
-	17, // 21: criteria.v1.ServerService.WatchRun:output_type -> criteria.v1.Envelope
-	11, // 22: criteria.v1.ServerService.StopRun:output_type -> criteria.v1.StopRunResponse
-	13, // 23: criteria.v1.ServerService.SendPrompt:output_type -> criteria.v1.SendPromptResponse
-	16, // [16:24] is the sub-list for method output_type
-	8,  // [8:16] is the sub-list for method input_type
-	8,  // [8:8] is the sub-list for extension type_name
-	8,  // [8:8] is the sub-list for extension extendee
-	0,  // [0:8] is the sub-list for field type_name
+	22, // 4: criteria.v1.ListRunsResponse.runs:type_name -> criteria.v1.Run
+	23, // 5: criteria.v1.ListRunEventsResponse.events:type_name -> criteria.v1.Envelope
+	21, // 6: criteria.v1.StopRunResponse.issued_at:type_name -> google.protobuf.Timestamp
+	21, // 7: criteria.v1.PauseRunResponse.issued_at:type_name -> google.protobuf.Timestamp
+	21, // 8: criteria.v1.ResumeRunResponse.issued_at:type_name -> google.protobuf.Timestamp
+	21, // 9: criteria.v1.InspectRunResponse.last_activity_at:type_name -> google.protobuf.Timestamp
+	21, // 10: criteria.v1.SendPromptResponse.issued_at:type_name -> google.protobuf.Timestamp
+	1,  // 11: criteria.v1.ServerService.ListAgents:input_type -> criteria.v1.ListAgentsRequest
+	3,  // 12: criteria.v1.ServerService.GetAgent:input_type -> criteria.v1.GetAgentRequest
+	4,  // 13: criteria.v1.ServerService.ListRuns:input_type -> criteria.v1.ListRunsRequest
+	6,  // 14: criteria.v1.ServerService.GetRun:input_type -> criteria.v1.GetRunRequest
+	7,  // 15: criteria.v1.ServerService.ListRunEvents:input_type -> criteria.v1.ListRunEventsRequest
+	9,  // 16: criteria.v1.ServerService.WatchRun:input_type -> criteria.v1.WatchRunRequest
+	10, // 17: criteria.v1.ServerService.StopRun:input_type -> criteria.v1.StopRunRequest
+	12, // 18: criteria.v1.ServerService.PauseRun:input_type -> criteria.v1.PauseRunRequest
+	14, // 19: criteria.v1.ServerService.ResumeRun:input_type -> criteria.v1.ResumeRunRequest
+	16, // 20: criteria.v1.ServerService.InspectRun:input_type -> criteria.v1.InspectRunRequest
+	18, // 21: criteria.v1.ServerService.SendPrompt:input_type -> criteria.v1.SendPromptRequest
+	2,  // 22: criteria.v1.ServerService.ListAgents:output_type -> criteria.v1.ListAgentsResponse
+	0,  // 23: criteria.v1.ServerService.GetAgent:output_type -> criteria.v1.Agent
+	5,  // 24: criteria.v1.ServerService.ListRuns:output_type -> criteria.v1.ListRunsResponse
+	22, // 25: criteria.v1.ServerService.GetRun:output_type -> criteria.v1.Run
+	8,  // 26: criteria.v1.ServerService.ListRunEvents:output_type -> criteria.v1.ListRunEventsResponse
+	23, // 27: criteria.v1.ServerService.WatchRun:output_type -> criteria.v1.Envelope
+	11, // 28: criteria.v1.ServerService.StopRun:output_type -> criteria.v1.StopRunResponse
+	13, // 29: criteria.v1.ServerService.PauseRun:output_type -> criteria.v1.PauseRunResponse
+	15, // 30: criteria.v1.ServerService.ResumeRun:output_type -> criteria.v1.ResumeRunResponse
+	17, // 31: criteria.v1.ServerService.InspectRun:output_type -> criteria.v1.InspectRunResponse
+	19, // 32: criteria.v1.ServerService.SendPrompt:output_type -> criteria.v1.SendPromptResponse
+	22, // [22:33] is the sub-list for method output_type
+	11, // [11:22] is the sub-list for method input_type
+	11, // [11:11] is the sub-list for extension type_name
+	11, // [11:11] is the sub-list for extension extendee
+	0,  // [0:11] is the sub-list for field type_name
 }
 
 func init() { file_criteria_v1_server_proto_init() }
@@ -956,7 +1318,7 @@ func file_criteria_v1_server_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_criteria_v1_server_proto_rawDesc), len(file_criteria_v1_server_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   15,
+			NumMessages:   21,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

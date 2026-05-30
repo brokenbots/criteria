@@ -16,6 +16,7 @@ import (
 	"github.com/brokenbots/criteria/internal/adapter/environment/sandbox"
 	"github.com/brokenbots/criteria/internal/adapter/secrets"
 	"github.com/brokenbots/criteria/internal/log"
+	v2 "github.com/brokenbots/criteria/sdk/pb/criteria/v2"
 	"github.com/brokenbots/criteria/workflow"
 	"github.com/brokenbots/criteria/workflow/lockfile"
 )
@@ -110,6 +111,32 @@ type Session struct {
 
 	// WS15: MergeBuffer interleaves log and adapter events by timestamp.
 	mergeBuf *log.MergeBuffer
+}
+
+// Pause halts work on the session without losing state.
+// It pauses the permission state first, then calls the adapter handle.
+func (s *Session) Pause(ctx context.Context) error {
+	if s.PermissionState != nil {
+		s.PermissionState.Pause()
+	}
+	return s.handle.Pause(ctx, s.Name)
+}
+
+// Resume continues the session from where it was paused.
+// It resumes the permission state after the adapter handle acknowledges.
+func (s *Session) Resume(ctx context.Context) error {
+	if err := s.handle.Resume(ctx, s.Name); err != nil {
+		return err
+	}
+	if s.PermissionState != nil {
+		s.PermissionState.Resume()
+	}
+	return nil
+}
+
+// Inspect returns a structured read-only view of the session's state.
+func (s *Session) Inspect(ctx context.Context) (*v2.InspectResponse, error) {
+	return s.handle.Inspect(ctx, s.Name)
 }
 
 func NewSessionManager(loader Loader) *SessionManager {
@@ -389,6 +416,53 @@ func (m *SessionManager) Close(ctx context.Context, name string) error {
 	err := sess.handle.CloseSession(ctx, name)
 	sess.handle.Kill()
 	return err
+}
+
+// PauseAll iterates over every open session and calls Pause on each.
+// It is reentrant and idempotent: pausing an already-paused session is a no-op.
+func (m *SessionManager) PauseAll(ctx context.Context) error {
+	m.mu.Lock()
+	sessions := make([]*Session, 0, len(m.sessions))
+	for _, s := range m.sessions {
+		sessions = append(sessions, s)
+	}
+	m.mu.Unlock()
+
+	var firstErr error
+	for _, s := range sessions {
+		if err := s.Pause(ctx); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
+// ResumeAll iterates over every open session and calls Resume on each.
+// It is reentrant and idempotent: resuming an already-active session is a no-op.
+func (m *SessionManager) ResumeAll(ctx context.Context) error {
+	m.mu.Lock()
+	sessions := make([]*Session, 0, len(m.sessions))
+	for _, s := range m.sessions {
+		sessions = append(sessions, s)
+	}
+	m.mu.Unlock()
+
+	var firstErr error
+	for _, s := range sessions {
+		if err := s.Resume(ctx); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
+// InspectSession returns the inspect response for a single session by name.
+func (m *SessionManager) InspectSession(ctx context.Context, name string) (*v2.InspectResponse, error) {
+	sess, err := m.lookup(name)
+	if err != nil {
+		return nil, err
+	}
+	return sess.Inspect(ctx)
 }
 
 func (m *SessionManager) wrapSink(sink adapter.EventSink) adapter.EventSink {

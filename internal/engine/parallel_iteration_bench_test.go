@@ -35,6 +35,7 @@ import (
 	"testing"
 	"time"
 
+	v2 "github.com/brokenbots/criteria/sdk/pb/criteria/v2"
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/workflow"
@@ -116,6 +117,11 @@ func (p *highLogAdapter) Permit(context.Context, string, string, bool, string) e
 func (p *highLogAdapter) CloseSession(context.Context, string) error                 { return nil }
 func (p *highLogAdapter) Kill()                                                      {}
 
+func (p *highLogAdapter) Pause(context.Context, string) error                        { return nil }
+func (p *highLogAdapter) Resume(context.Context, string) error                       { return nil }
+func (p *highLogAdapter) Inspect(context.Context, string) (*v2.InspectResponse, error) {
+return &v2.InspectResponse{}, nil
+}
 // buildParallelBenchWorkflow compiles a parallel step with n items all using
 // the "fake" adapter. Uses injectDefaultAdapters (same package) to resolve
 // the bare adapter reference.

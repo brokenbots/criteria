@@ -66,6 +66,12 @@ type Handle interface {
 	Execute(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error)
 	CloseSession(ctx context.Context, id string) error
 	Kill()
+	// Pause asks the adapter to halt work without losing state.
+	Pause(ctx context.Context, sessionID string) error
+	// Resume asks the adapter to continue from where it paused.
+	Resume(ctx context.Context, sessionID string) error
+	// Inspect returns structured read-only state about the session.
+	Inspect(ctx context.Context, sessionID string) (*v2.InspectResponse, error)
 }
 
 type Info struct {
@@ -912,6 +918,20 @@ func (p *rpcHandle) Kill() {
 			p.onKill()
 		}
 	})
+}
+
+func (p *rpcHandle) Pause(ctx context.Context, sessionID string) error {
+	_, err := p.rpc.Pause(ctx, &v2.PauseRequest{SessionId: sessionID})
+	return err
+}
+
+func (p *rpcHandle) Resume(ctx context.Context, sessionID string) error {
+	_, err := p.rpc.Resume(ctx, &v2.ResumeRequest{SessionId: sessionID})
+	return err
+}
+
+func (p *rpcHandle) Inspect(ctx context.Context, sessionID string) (*v2.InspectResponse, error) {
+	return p.rpc.Inspect(ctx, &v2.InspectRequest{SessionId: sessionID})
 }
 
 // structFromJSON unmarshals raw JSON bytes into a *structpb.Struct so that

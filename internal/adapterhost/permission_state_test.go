@@ -11,6 +11,7 @@ import (
 
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/workflow"
+	v2 "github.com/brokenbots/criteria/sdk/pb/criteria/v2"
 )
 
 // sliceAuditWriter collects DecisionLogEntry records in memory for test assertions.
@@ -463,6 +464,11 @@ func (a *permissionEmittingAdapter) OpenSession(_ context.Context, _ string, _, 
 }
 func (a *permissionEmittingAdapter) CloseSession(_ context.Context, _ string) error { return nil }
 func (a *permissionEmittingAdapter) Kill()                                          {}
+func (a *permissionEmittingAdapter) Pause(context.Context, string) error              { return nil }
+func (a *permissionEmittingAdapter) Resume(context.Context, string) error             { return nil }
+func (a *permissionEmittingAdapter) Inspect(context.Context, string) (*v2.InspectResponse, error) {
+	return &v2.InspectResponse{}, nil
+}
 func (a *permissionEmittingAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
 	sink.Adapter("permission.request", map[string]any{
 		"request_id": "req-1",

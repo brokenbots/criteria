@@ -41,6 +41,11 @@ func (m *loggingMockHandle) Execute(ctx context.Context, sessionID string, step 
 }
 func (m *loggingMockHandle) CloseSession(ctx context.Context, id string) error { return nil }
 func (m *loggingMockHandle) Kill()                                             {}
+func (m *loggingMockHandle) Pause(context.Context, string) error                     { return nil }
+func (m *loggingMockHandle) Resume(context.Context, string) error                    { return nil }
+func (m *loggingMockHandle) Inspect(context.Context, string) (*v2.InspectResponse, error) {
+	return &v2.InspectResponse{}, nil
+}
 
 func (m *loggingMockHandle) StartLogStream(ctx context.Context, sessionID string, sink LogEventSink) (func(), error) {
 	m.mu.Lock()

@@ -40,6 +40,9 @@ func main() {
 	root.AddCommand(cli.NewValidateCmd())
 	root.AddCommand(cli.NewStatusCmd())
 	root.AddCommand(cli.NewStopCmd())
+	root.AddCommand(cli.NewPauseCmd())
+	root.AddCommand(cli.NewResumeCmd())
+	root.AddCommand(cli.NewInspectCmd())
 	root.AddCommand(cli.NewAdapterCmd())
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
