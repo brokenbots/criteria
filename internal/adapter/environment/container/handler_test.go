@@ -5,9 +5,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/zclconf/go-cty/cty"
+
 	"github.com/brokenbots/criteria/internal/adapter/manifest"
 	"github.com/brokenbots/criteria/workflow"
-	"github.com/zclconf/go-cty/cty"
 )
 
 func TestFailClosed_Error(t *testing.T) {
@@ -34,7 +35,7 @@ func TestFailClosed_Error(t *testing.T) {
 
 func TestHandler_Prepare_RuntimeNone(t *testing.T) {
 	h := &Handler{}
-	_, err := h.Prepare(PrepareContext{
+	_, err := h.Prepare(&PrepareContext{
 		Environment: workflow.EnvironmentNode{
 			Name:         "dev",
 			TypeSpecific: map[string]cty.Value{"runtime": cty.StringVal("none")},
@@ -52,7 +53,7 @@ func TestHandler_Prepare_RuntimeNone(t *testing.T) {
 
 func TestHandler_Prepare_FailClosed(t *testing.T) {
 	h := &Handler{}
-	_, err := h.Prepare(PrepareContext{
+	_, err := h.Prepare(&PrepareContext{
 		Environment: workflow.EnvironmentNode{
 			Name:         "dev",
 			TypeSpecific: map[string]cty.Value{"runtime": cty.StringVal("docker")},
@@ -71,7 +72,7 @@ func TestHandler_Prepare_FailClosed(t *testing.T) {
 
 func TestHandler_Prepare_DefaultRuntime(t *testing.T) {
 	h := &Handler{}
-	p, err := h.Prepare(PrepareContext{
+	p, err := h.Prepare(&PrepareContext{
 		Environment: workflow.EnvironmentNode{
 			Name: "dev",
 		},
@@ -91,7 +92,7 @@ func TestHandler_Prepare_DefaultRuntime(t *testing.T) {
 
 func TestHandler_Prepare_PolicyArgs(t *testing.T) {
 	h := &Handler{}
-	p, err := h.Prepare(PrepareContext{
+	p, err := h.Prepare(&PrepareContext{
 		Environment: workflow.EnvironmentNode{
 			Name: "dev",
 			TypeSpecific: map[string]cty.Value{
@@ -143,7 +144,7 @@ func TestHandler_Prepare_PolicyArgs(t *testing.T) {
 
 func TestHandler_Prepare_NetworkDeny(t *testing.T) {
 	h := &Handler{}
-	p, err := h.Prepare(PrepareContext{
+	p, err := h.Prepare(&PrepareContext{
 		Environment: workflow.EnvironmentNode{
 			Name: "dev",
 			TypeSpecific: map[string]cty.Value{
@@ -168,7 +169,7 @@ func TestHandler_Prepare_NetworkDeny(t *testing.T) {
 
 func TestHandler_Prepare_InvalidPath(t *testing.T) {
 	h := &Handler{}
-	_, err := h.Prepare(PrepareContext{
+	_, err := h.Prepare(&PrepareContext{
 		Environment: workflow.EnvironmentNode{
 			Name: "dev",
 			TypeSpecific: map[string]cty.Value{

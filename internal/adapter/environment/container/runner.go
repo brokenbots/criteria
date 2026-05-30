@@ -28,7 +28,6 @@ type dockerRunner struct {
 	stdout io.ReadCloser
 	stderr io.ReadCloser
 
-	mu   sync.Mutex
 	done chan struct{}
 	wg   sync.WaitGroup
 }
@@ -37,49 +36,10 @@ type dockerRunner struct {
 // container. The plugin handshake env vars from cmd.Env are forwarded into the
 // container. socketDir is mounted at the same path so Unix socket paths need no
 // translation.
-func NewDockerRunner(_ hclog.Logger, cmd *exec.Cmd, socketDir string, prepared Prepared) (runner.Runner, error) {
-	// Extract env vars from cmd.Env.
-	envVars := make(map[string]string)
-	for _, e := range cmd.Env {
-		if k, v, ok := strings.Cut(e, "="); ok {
-			envVars[k] = v
-		}
-	}
-
-	args := []string{"run", "--rm", "-i"}
-
-	// Mount the Unix socket directory at the same path (identity mapping).
-	args = append(args, "-v", socketDir+":"+socketDir)
-
-	// Forward all plugin handshake env vars.
-	for k, v := range envVars {
-		args = append(args, "-e", k+"="+v)
-	}
-
-	// Policy-derived flags.
-	if prepared.Policy.NetworkMode != "" {
-		args = append(args, "--network", prepared.Policy.NetworkMode)
-	}
-	for _, vm := range prepared.Policy.VolumeMounts {
-		mount := vm.HostPath + ":" + vm.ContainerPath
-		if vm.ReadOnly {
-			mount += ":ro"
-		}
-		args = append(args, "-v", mount)
-	}
-	if prepared.Policy.CPUs != "" {
-		args = append(args, "--cpus", prepared.Policy.CPUs)
-	}
-	if prepared.Policy.Memory != "" {
-		args = append(args, "--memory", prepared.Policy.Memory)
-	}
-
-	// Capture container ID for lifecycle management.
+func NewDockerRunner(_ hclog.Logger, cmd *exec.Cmd, socketDir string, prepared *Prepared) (runner.Runner, error) {
+	envVars := extractEnvVars(cmd)
 	cidFile := filepath.Join(os.TempDir(), "criteria-cid-"+uniqueID()+".txt")
-	args = append(args, "--cidfile", cidFile)
-
-	// Image reference.
-	args = append(args, prepared.ImageRef.Ref)
+	args := buildDockerArgs(envVars, socketDir, cidFile, prepared)
 
 	runtimeCmd := exec.Command(prepared.Runtime, args...)
 	runtimeCmd.Stdin = os.Stdin
@@ -103,6 +63,42 @@ func NewDockerRunner(_ hclog.Logger, cmd *exec.Cmd, socketDir string, prepared P
 		stderr:   stderr,
 		done:     make(chan struct{}),
 	}, nil
+}
+
+func extractEnvVars(cmd *exec.Cmd) map[string]string {
+	envVars := make(map[string]string)
+	for _, e := range cmd.Env {
+		if k, v, ok := strings.Cut(e, "="); ok {
+			envVars[k] = v
+		}
+	}
+	return envVars
+}
+
+func buildDockerArgs(envVars map[string]string, socketDir, cidFile string, prepared *Prepared) []string {
+	args := []string{"run", "--rm", "-i"}
+	args = append(args, "-v", socketDir+":"+socketDir)
+	for k, v := range envVars {
+		args = append(args, "-e", k+"="+v)
+	}
+	if prepared.Policy.NetworkMode != "" {
+		args = append(args, "--network", prepared.Policy.NetworkMode)
+	}
+	for _, vm := range prepared.Policy.VolumeMounts {
+		mount := vm.HostPath + ":" + vm.ContainerPath
+		if vm.ReadOnly {
+			mount += ":ro"
+		}
+		args = append(args, "-v", mount)
+	}
+	if prepared.Policy.CPUs != "" {
+		args = append(args, "--cpus", prepared.Policy.CPUs)
+	}
+	if prepared.Policy.Memory != "" {
+		args = append(args, "--memory", prepared.Policy.Memory)
+	}
+	args = append(args, "--cidfile", cidFile, prepared.ImageRef.Ref)
+	return args
 }
 
 // Start launches the container and waits for the CID file to appear.
@@ -189,13 +185,13 @@ func (r *dockerRunner) Stderr() io.ReadCloser {
 
 // PluginToHost is an identity translator because socketDir is mounted at
 // the same path in host and container.
-func (r *dockerRunner) PluginToHost(pluginNet, pluginAddr string) (string, string, error) {
+func (r *dockerRunner) PluginToHost(pluginNet, pluginAddr string) (hostNet, hostAddr string, err error) {
 	return pluginNet, pluginAddr, nil
 }
 
 // HostToPlugin is an identity translator because socketDir is mounted at
 // the same path in host and container.
-func (r *dockerRunner) HostToPlugin(hostNet, hostAddr string) (string, string, error) {
+func (r *dockerRunner) HostToPlugin(hostNet, hostAddr string) (pluginNet, pluginAddr string, err error) {
 	return hostNet, hostAddr, nil
 }
 

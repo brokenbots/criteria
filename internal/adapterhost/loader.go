@@ -225,6 +225,10 @@ func (l *DefaultLoader) ResolveWithRunnerFunc(ctx context.Context, name string, 
 		RunnerFunc:       rf,
 	})
 
+	return l.startAdapterClient(name, client)
+}
+
+func (l *DefaultLoader) startAdapterClient(name string, client *hplugin.Client) (Handle, error) {
 	rpcClient, err := client.Client()
 	if err != nil {
 		client.Kill()

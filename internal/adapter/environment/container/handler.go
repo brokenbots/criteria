@@ -3,6 +3,8 @@ package container
 import (
 	"fmt"
 
+	"github.com/zclconf/go-cty/cty"
+
 	"github.com/brokenbots/criteria/internal/adapter/manifest"
 	"github.com/brokenbots/criteria/workflow"
 )
@@ -60,7 +62,7 @@ type PrepareContext struct {
 }
 
 // Prepare validates the container environment and builds the Prepared config.
-func (h *Handler) Prepare(ctx PrepareContext) (Prepared, error) {
+func (h *Handler) Prepare(ctx *PrepareContext) (Prepared, error) {
 	runtime := "docker" // default per D12c
 	if v, ok := ctx.Environment.TypeSpecific["runtime"]; ok && !v.IsNull() {
 		runtime = ctyString(v)
@@ -81,25 +83,34 @@ func (h *Handler) Prepare(ctx PrepareContext) (Prepared, error) {
 		}
 	}
 
+	policy, err := buildPolicyArgs(ctx.Environment.TypeSpecific)
+	if err != nil {
+		return Prepared{}, err
+	}
+
+	return Prepared{
+		Runtime:  runtime,
+		ImageRef: *ctx.Manifest.ContainerImage,
+		Policy:   policy,
+	}, nil
+}
+
+func buildPolicyArgs(ts map[string]cty.Value) (PolicyArgs, error) {
 	policy := PolicyArgs{}
 
-	// Network policy
-	if net, ok := ctx.Environment.TypeSpecific["network"]; ok && !net.IsNull() {
+	if net, ok := ts["network"]; ok && !net.IsNull() {
 		allow := stringListFromObject(net, "allow")
 		if len(allow) == 0 {
 			policy.NetworkMode = "none"
 		} else {
-			// Simplest correct option: bridge with a warning that egress
-			// filtering is not yet enforced.
 			policy.NetworkMode = "bridge"
 		}
 	}
 
-	// Filesystem policy
-	if fs, ok := ctx.Environment.TypeSpecific["filesystem"]; ok && !fs.IsNull() {
+	if fs, ok := ts["filesystem"]; ok && !fs.IsNull() {
 		for _, p := range stringListFromObject(fs, "read") {
 			if err := validatePath(p); err != nil {
-				return Prepared{}, fmt.Errorf("filesystem.read: %w", err)
+				return policy, fmt.Errorf("filesystem.read: %w", err)
 			}
 			policy.VolumeMounts = append(policy.VolumeMounts, VolumeMount{
 				HostPath:      p,
@@ -109,7 +120,7 @@ func (h *Handler) Prepare(ctx PrepareContext) (Prepared, error) {
 		}
 		for _, p := range stringListFromObject(fs, "write") {
 			if err := validatePath(p); err != nil {
-				return Prepared{}, fmt.Errorf("filesystem.write: %w", err)
+				return policy, fmt.Errorf("filesystem.write: %w", err)
 			}
 			policy.VolumeMounts = append(policy.VolumeMounts, VolumeMount{
 				HostPath:      p,
@@ -119,15 +130,10 @@ func (h *Handler) Prepare(ctx PrepareContext) (Prepared, error) {
 		}
 	}
 
-	// Resources policy
-	if res, ok := ctx.Environment.TypeSpecific["resources"]; ok && !res.IsNull() {
+	if res, ok := ts["resources"]; ok && !res.IsNull() {
 		policy.CPUs = stringFromObject(res, "cpu")
 		policy.Memory = stringFromObject(res, "memory")
 	}
 
-	return Prepared{
-		Runtime:  runtime,
-		ImageRef: *ctx.Manifest.ContainerImage,
-		Policy:   policy,
-	}, nil
+	return policy, nil
 }

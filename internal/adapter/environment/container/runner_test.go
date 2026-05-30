@@ -7,10 +7,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/brokenbots/criteria/internal/adapter/manifest"
 	"github.com/hashicorp/go-hclog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/brokenbots/criteria/internal/adapter/manifest"
 )
 
 func TestNewDockerRunner_CommandArgs(t *testing.T) {
@@ -27,13 +28,13 @@ func TestNewDockerRunner_CommandArgs(t *testing.T) {
 				{HostPath: "/data", ContainerPath: "/data", ReadOnly: true},
 				{HostPath: "/tmp", ContainerPath: "/tmp", ReadOnly: false},
 			},
-			CPUs:    "2",
-			Memory:  "1Gi",
+			CPUs:   "2",
+			Memory: "1Gi",
 		},
 	}
 
 	logger := hclog.NewNullLogger()
-	r, err := NewDockerRunner(logger, cmd, "/tmp/sock", prepared)
+	r, err := NewDockerRunner(logger, cmd, "/tmp/sock", &prepared)
 	require.NoError(t, err)
 
 	dr, ok := r.(*dockerRunner)
@@ -70,7 +71,9 @@ func TestNewDockerRunner_CommandArgs(t *testing.T) {
 
 	before := argsWithoutBinary[:cidIdx]
 	after := argsWithoutBinary[cidIdx+2:]
-	combined := append(before, after...)
+	combined := make([]string, 0, len(before)+len(after))
+	combined = append(combined, before...)
+	combined = append(combined, after...)
 	assert.Equal(t, want, combined)
 }
 
@@ -113,7 +116,7 @@ func TestDockerRunner_Integration(t *testing.T) {
 		Policy:   PolicyArgs{NetworkMode: "none"},
 	}
 
-	r, err := NewDockerRunner(logger, cmd, t.TempDir(), prepared)
+	r, err := NewDockerRunner(logger, cmd, t.TempDir(), &prepared)
 	require.NoError(t, err)
 
 	// Override the command to run a short-lived container so we can observe

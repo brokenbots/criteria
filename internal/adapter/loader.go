@@ -40,29 +40,10 @@ func BuildContainerRunner(graph *workflow.FSMGraph, lf *lockfile.Lockfile, ref s
 		return nil, nil // not a container environment
 	}
 
-	var mftSourceURL string
-	var imageRef *manifest.ContainerImageRef
-
-	if lf != nil {
-		entry := findLockedAdapter(lf, adaptr.Type, adaptr.Name)
-		if entry != nil {
-			mftSourceURL = entry.SourceURL
-			if entry.ContainerImage != nil {
-				imageRef = &manifest.ContainerImageRef{
-					Ref:    entry.ContainerImage.Ref,
-					Digest: entry.ContainerImage.Digest,
-				}
-			}
-		}
-	}
-
-	mft := &manifest.Manifest{
-		SourceURL:      mftSourceURL,
-		ContainerImage: imageRef,
-	}
+	mft := manifestFromLockfile(lf, adaptr.Type, adaptr.Name)
 
 	h := &container.Handler{}
-	prepared, err := h.Prepare(container.PrepareContext{
+	prepared, err := h.Prepare(&container.PrepareContext{
 		Environment: *envNode,
 		Manifest:    mft,
 		AdapterRef:  ref,
@@ -72,8 +53,27 @@ func BuildContainerRunner(graph *workflow.FSMGraph, lf *lockfile.Lockfile, ref s
 	}
 
 	return func(_ hclog.Logger, cmd *exec.Cmd, socketDir string) (runner.Runner, error) {
-		return container.NewDockerRunner(hclog.NewNullLogger(), cmd, socketDir, prepared)
+		return container.NewDockerRunner(hclog.NewNullLogger(), cmd, socketDir, &prepared)
 	}, nil
+}
+
+func manifestFromLockfile(lf *lockfile.Lockfile, typ, name string) *manifest.Manifest {
+	mft := &manifest.Manifest{}
+	if lf == nil {
+		return mft
+	}
+	entry := findLockedAdapter(lf, typ, name)
+	if entry == nil {
+		return mft
+	}
+	mft.SourceURL = entry.SourceURL
+	if entry.ContainerImage != nil {
+		mft.ContainerImage = &manifest.ContainerImageRef{
+			Ref:    entry.ContainerImage.Ref,
+			Digest: entry.ContainerImage.Digest,
+		}
+	}
+	return mft
 }
 
 func findLockedAdapter(lf *lockfile.Lockfile, typ, name string) *lockfile.LockedAdapter {

@@ -2,7 +2,6 @@ package container
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
 
 	"github.com/zclconf/go-cty/cty"
@@ -60,42 +59,6 @@ func stringListFromObject(obj cty.Value, field string) []string {
 		return nil
 	}
 	return ctyStringList(obj.GetAttr(field))
-}
-
-// parseMemoryLimit parses a human-readable memory limit string such as
-// "512M", "1Gi", "128K" and returns the value in bytes. Returns 0 for
-// empty/invalid strings.
-func parseMemoryLimit(s string) uint64 {
-	if s == "" {
-		return 0
-	}
-	s = strings.TrimSpace(s)
-	multiplier := uint64(1)
-	switch {
-	case strings.HasSuffix(s, "Gi") || strings.HasSuffix(s, "gi"):
-		multiplier = 1024 * 1024 * 1024
-		s = s[:len(s)-2]
-	case strings.HasSuffix(s, "G") || strings.HasSuffix(s, "g"):
-		multiplier = 1024 * 1024 * 1024
-		s = s[:len(s)-1]
-	case strings.HasSuffix(s, "Mi") || strings.HasSuffix(s, "mi"):
-		multiplier = 1024 * 1024
-		s = s[:len(s)-2]
-	case strings.HasSuffix(s, "M") || strings.HasSuffix(s, "m"):
-		multiplier = 1024 * 1024
-		s = s[:len(s)-1]
-	case strings.HasSuffix(s, "Ki") || strings.HasSuffix(s, "ki"):
-		multiplier = 1024
-		s = s[:len(s)-2]
-	case strings.HasSuffix(s, "K") || strings.HasSuffix(s, "k"):
-		multiplier = 1024
-		s = s[:len(s)-1]
-	}
-	n, err := strconv.ParseUint(strings.TrimSpace(s), 10, 64)
-	if err != nil {
-		return 0
-	}
-	return n * multiplier
 }
 
 // validatePath ensures a path is absolute and does not contain "..".

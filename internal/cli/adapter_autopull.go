@@ -133,12 +133,16 @@ func ensureAdapterCached(ctx context.Context, key string, wa *workflowAdapter, l
 		return fmt.Errorf("adapter %q extract binary: %w", key, err)
 	}
 
-	// Container-image pull (WS12) — pull if the manifest declares one.
-	if m.ContainerImage != nil {
-		if err := container.PullContainerImage(ctx, m.ContainerImage.Ref, "docker"); err != nil {
-			if err := container.PullContainerImage(ctx, m.ContainerImage.Ref, "podman"); err != nil {
-				return fmt.Errorf("adapter %q container image pull %s: %w", key, m.ContainerImage.Ref, err)
-			}
+	return maybePullContainerImage(ctx, key, m)
+}
+
+func maybePullContainerImage(ctx context.Context, key string, m *manifest.Manifest) error {
+	if m.ContainerImage == nil {
+		return nil
+	}
+	if err := container.PullContainerImage(ctx, m.ContainerImage.Ref, "docker"); err != nil {
+		if err := container.PullContainerImage(ctx, m.ContainerImage.Ref, "podman"); err != nil {
+			return fmt.Errorf("adapter %q container image pull %s: %w", key, m.ContainerImage.Ref, err)
 		}
 	}
 	return nil

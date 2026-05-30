@@ -9,7 +9,7 @@ import (
 // PullContainerImage ensures the image referenced in adapter.yaml is present
 // in the local docker/podman daemon. Uses docker pull / podman pull shelled
 // out via os/exec.
-func PullContainerImage(ctx context.Context, ref string, runtime string) error {
+func PullContainerImage(ctx context.Context, ref, runtime string) error {
 	if runtime == "" {
 		runtime = "docker"
 	}

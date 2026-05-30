@@ -219,24 +219,7 @@ func (m *SessionManager) Open(ctx context.Context, name, adapterName, onCrash st
 
 	var plug Handle
 	var err error
-	if dl, ok := m.loader.(*DefaultLoader); ok {
-		// Container-mode dispatch: if the adapter is bound to a container
-		// environment, use a docker/podman runner instead of a local binary.
-		runnerFunc, containerErr := adapter.BuildContainerRunner(m.graph, m.lockfile, name)
-		if containerErr != nil {
-			if cleanup != nil {
-				cleanup()
-			}
-			return containerErr
-		}
-		if runnerFunc != nil {
-			plug, err = dl.ResolveWithRunnerFunc(ctx, adapterName, runnerFunc)
-		} else {
-			plug, err = dl.ResolveWithCustomizer(ctx, adapterName, customizer)
-		}
-	} else {
-		plug, err = m.loader.Resolve(ctx, adapterName)
-	}
+	plug, err = m.resolveAdapterHandle(ctx, name, adapterName, customizer)
 	if err != nil {
 		if cleanup != nil {
 			cleanup()
@@ -260,6 +243,22 @@ func (m *SessionManager) Open(ctx context.Context, name, adapterName, onCrash st
 	}
 
 	return m.registerSession(ctx, name, adapterName, onCrash, config, caps, plug, cleanup)
+}
+
+func (m *SessionManager) resolveAdapterHandle(ctx context.Context, name, adapterName string, customizer func(string, *exec.Cmd)) (Handle, error) {
+	if dl, ok := m.loader.(*DefaultLoader); ok {
+		// Container-mode dispatch: if the adapter is bound to a container
+		// environment, use a docker/podman runner instead of a local binary.
+		runnerFunc, containerErr := adapter.BuildContainerRunner(m.graph, m.lockfile, name)
+		if containerErr != nil {
+			return nil, containerErr
+		}
+		if runnerFunc != nil {
+			return dl.ResolveWithRunnerFunc(ctx, adapterName, runnerFunc)
+		}
+		return dl.ResolveWithCustomizer(ctx, adapterName, customizer)
+	}
+	return m.loader.Resolve(ctx, adapterName)
 }
 
 // makeSandboxCustomizer builds the exec.Cmd customizer and cleanup from
