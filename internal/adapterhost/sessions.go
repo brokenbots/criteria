@@ -86,18 +86,6 @@ func NewSessionManager(loader Loader) *SessionManager {
 	}
 }
 
-// maybeSetSandboxCustomizer inspects the graph for a sandbox environment
-// bound to the given adapter instance. If one exists, it sets the loader's
-// command customizer to inject the sandbox configuration; otherwise it
-// clears any existing customizer. The caller must reset the customizer
-// after Resolve (typically with defer).
-func (m *SessionManager) maybeSetSandboxCustomizer(instanceID string) {
-	customizer, _ := m.buildSandboxCustomizer(instanceID)
-	if dl, ok := m.loader.(*DefaultLoader); ok {
-		dl.SetCommandCustomizer(customizer)
-	}
-}
-
 // buildSandboxCustomizer returns a function that applies the sandbox
 // configuration to an exec.Cmd, or nil if the adapter is not bound to a
 // sandbox environment. The second return value is an error that is only
@@ -152,7 +140,7 @@ func (m *SessionManager) buildSandboxCustomizer(instanceID string) (func(name st
 	}
 
 	return func(_ string, cmd *exec.Cmd) {
-		_ = prep.ApplyToCmd(cmd, os.Args[0])
+		_ = (&prep).ApplyToCmd(cmd, os.Args[0])
 	}, nil
 }
 
@@ -197,6 +185,10 @@ func (m *SessionManager) Open(ctx context.Context, name, adapterName, onCrash st
 		return err
 	}
 
+	return m.registerSession(ctx, name, adapterName, onCrash, config, caps, plug)
+}
+
+func (m *SessionManager) registerSession(ctx context.Context, name, adapterName, onCrash string, config map[string]string, caps []string, plug Handle) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, exists := m.sessions[name]; exists {

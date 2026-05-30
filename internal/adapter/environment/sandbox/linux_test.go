@@ -13,17 +13,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/brokenbots/criteria/workflow"
 	"github.com/zclconf/go-cty/cty"
 	"golang.org/x/sys/unix"
+
+	"github.com/brokenbots/criteria/workflow"
 )
 
 func TestBuildSysProcAttr(t *testing.T) {
-	ctx := PrepareContext{
-		Policy: &workflow.ResolvedPolicy{OS: "linux"},
-		Caps:   Capabilities{UserNamespaces: true},
-	}
-	attr := buildSysProcAttr(ctx)
+	attr := buildSysProcAttr()
 	if attr == nil {
 		t.Fatal("expected non-nil SysProcAttr")
 	}
@@ -77,7 +74,7 @@ func TestLinuxPrepared_ApplyToCmd(t *testing.T) {
 		ReadPaths:   []string{"/tmp"},
 	}
 	cmd := exec.Command("/bin/sh", "-c", "echo hello")
-	if err := prep.ApplyToCmd(cmd, ""); err != nil {
+	if err := (&prep).ApplyToCmd(cmd, ""); err != nil {
 		t.Fatalf("ApplyToCmd: %v", err)
 	}
 	if cmd.SysProcAttr == nil || cmd.SysProcAttr.Cloneflags != syscall.CLONE_NEWUSER {

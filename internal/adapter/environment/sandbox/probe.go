@@ -186,4 +186,3 @@ func (c Capabilities) String() string {
 	}
 	return strings.Join(parts, " ")
 }
-

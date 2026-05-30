@@ -13,11 +13,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/brokenbots/criteria/workflow"
 	"github.com/elastic/go-seccomp-bpf"
-	"github.com/landlock-lsm/go-landlock/landlock"
 	"github.com/zclconf/go-cty/cty"
 	"golang.org/x/sys/unix"
+
+	"github.com/brokenbots/criteria/workflow"
 )
 
 // Handler prepares Linux sandbox configuration from a ResolvedPolicy.
@@ -84,94 +84,109 @@ func (h Handler) Prepare(ctx PrepareContext) (LinuxPrepared, error) {
 	}
 
 	prep := LinuxPrepared{Mode: mode}
+	prep.SysProcAttr = buildSysProcAttr()
 
-	// ----- Namespaces -----
-	prep.SysProcAttr = buildSysProcAttr(ctx)
+	readPaths, writePaths, netAllow, allowNet, err := extractPolicyPaths(ctx.Policy)
+	if err != nil {
+		return LinuxPrepared{}, err
+	}
+	prep.AllowNetwork = allowNet
 
-	// ----- Filesystem paths (from TypeSpecific) -----
+	if err := applyLandlockToPrep(&prep, ctx.Caps, mode, readPaths, writePaths, netAllow); err != nil {
+		return LinuxPrepared{}, err
+	}
+	if err := applySeccompToPrep(&prep, ctx.Caps, mode, allowNet); err != nil {
+		return LinuxPrepared{}, err
+	}
+	if err := applyResourcesToPrep(&prep, ctx.Caps, mode, ctx.Policy); err != nil {
+		return LinuxPrepared{}, err
+	}
+
+	return prep, nil
+}
+
+func extractPolicyPaths(policy *workflow.ResolvedPolicy) (readPaths, writePaths, netAllow []string, allowNet bool, err error) {
 	fsObj := cty.NilVal
-	if ctx.Policy.TypeSpecific != nil {
-		if v, ok := ctx.Policy.TypeSpecific["filesystem"]; ok {
+	if policy.TypeSpecific != nil {
+		if v, ok := policy.TypeSpecific["filesystem"]; ok {
 			fsObj = v
 		}
 	}
-	readPaths := pathListFromObject(fsObj, "read")
-	writePaths := pathListFromObject(fsObj, "write")
-
+	readPaths = pathListFromObject(fsObj, "read")
+	writePaths = pathListFromObject(fsObj, "write")
 	for _, p := range append(readPaths, writePaths...) {
-		if err := validatePath(p); err != nil {
-			return LinuxPrepared{}, fmt.Errorf("sandbox filesystem path: %w", err)
+		if err = validatePath(p); err != nil {
+			return nil, nil, nil, false, fmt.Errorf("sandbox filesystem path: %w", err)
 		}
 	}
 
-	// ----- Landlock -----
 	netObj := cty.NilVal
-	if ctx.Policy.TypeSpecific != nil {
-		if v, ok := ctx.Policy.TypeSpecific["network"]; ok {
+	if policy.TypeSpecific != nil {
+		if v, ok := policy.TypeSpecific["network"]; ok {
 			netObj = v
 		}
 	}
-	netAllow := pathListFromObject(netObj, "allow")
-
-	if ctx.Caps.Landlock {
-		if err := validateLandlockConfig(readPaths, writePaths, netAllow, mode); err != nil {
-			if mode == "strict" {
-				return LinuxPrepared{}, fmt.Errorf("landlock config: %w", err)
-			}
-			// permissive: degradation logged by caller
-		} else {
-			prep.ReadPaths = readPaths
-			prep.WritePaths = writePaths
-			for _, ep := range netAllow {
-				_, portStr := splitHostPort(ep)
-				if portStr == "" {
-					continue
-				}
-				port, err := strconv.ParseUint(portStr, 10, 16)
-				if err != nil {
-					continue
-				}
-				prep.NetPorts = append(prep.NetPorts, uint16(port))
-			}
-		}
-	} else if mode == "strict" {
-		return LinuxPrepared{}, fmt.Errorf("landlock not available but policy_mode=strict")
-	}
-
-	// Determine network access for seccomp filter.
-	allowNet := false
-	if ctx.Policy.Network != nil {
-		allowNet = ctx.Policy.Network.AllowEgress
+	netAllow = pathListFromObject(netObj, "allow")
+	if policy.Network != nil {
+		allowNet = policy.Network.AllowEgress
 	}
 	if !allowNet && len(netAllow) > 0 {
 		allowNet = true
 	}
-	prep.AllowNetwork = allowNet
+	return readPaths, writePaths, netAllow, allowNet, nil
+}
 
-	// ----- Seccomp -----
-	if ctx.Caps.Seccomp {
-		filter, err := buildSeccompFilter(allowNet)
-		if err != nil {
-			if mode == "strict" {
-				return LinuxPrepared{}, fmt.Errorf("seccomp filter: %w", err)
-			}
-		} else {
-			prep.SeccompBPF = filter
+func applyLandlockToPrep(prep *LinuxPrepared, caps Capabilities, mode string, readPaths, writePaths, netAllow []string) error {
+	if !caps.Landlock {
+		if mode == "strict" {
+			return fmt.Errorf("landlock not available but policy_mode=strict")
 		}
-	} else if mode == "strict" {
-		return LinuxPrepared{}, fmt.Errorf("seccomp not available but policy_mode=strict")
+		return nil
 	}
+	prep.ReadPaths = readPaths
+	prep.WritePaths = writePaths
+	for _, ep := range netAllow {
+		_, portStr := splitHostPort(ep)
+		if portStr == "" {
+			continue
+		}
+		port, err := strconv.ParseUint(portStr, 10, 16)
+		if err != nil {
+			continue
+		}
+		prep.NetPorts = append(prep.NetPorts, uint16(port))
+	}
+	return nil
+}
 
-	// ----- Resources -----
+func applySeccompToPrep(prep *LinuxPrepared, caps Capabilities, mode string, allowNet bool) error {
+	if !caps.Seccomp {
+		if mode == "strict" {
+			return fmt.Errorf("seccomp not available but policy_mode=strict")
+		}
+		return nil
+	}
+	filter, err := buildSeccompFilter(allowNet)
+	if err != nil {
+		if mode == "strict" {
+			return fmt.Errorf("seccomp filter: %w", err)
+		}
+		return nil
+	}
+	prep.SeccompBPF = filter
+	return nil
+}
+
+func applyResourcesToPrep(prep *LinuxPrepared, caps Capabilities, mode string, policy *workflow.ResolvedPolicy) error {
 	resObj := cty.NilVal
-	if ctx.Policy.TypeSpecific != nil {
-		if v, ok := ctx.Policy.TypeSpecific["resources"]; ok {
+	if policy.TypeSpecific != nil {
+		if v, ok := policy.TypeSpecific["resources"]; ok {
 			resObj = v
 		}
 	}
 	memStr := stringFromObject(resObj, "memory")
-	if memStr == "" && ctx.Policy.Resources != nil {
-		memStr = ctx.Policy.Resources.MaxMemory
+	if memStr == "" && policy.Resources != nil {
+		memStr = policy.Resources.MaxMemory
 	}
 	cpuStr := stringFromObject(resObj, "cpu")
 	timeoutStr := stringFromObject(resObj, "timeout")
@@ -183,35 +198,34 @@ func (h Handler) Prepare(ctx PrepareContext) (LinuxPrepared, error) {
 
 	prep.Rlimits = buildRlimits(memBytes, timeoutDur)
 
-	if useCgroup && ctx.Caps.Cgroupv2 {
-		cg, err := prepareCgroupV2(cpuVal, memBytes)
-		if err != nil {
-			if mode == "strict" {
-				return LinuxPrepared{}, fmt.Errorf("cgroupv2 setup: %w", err)
-			}
-			// permissive: skip cgroup
-		} else {
-			prep.CgroupV2 = cg
-			prep.SysProcAttr.UseCgroupFD = true
-			fd, err := unix.Open(cg.CgroupDir, unix.O_PATH|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
-			if err != nil {
-				if mode == "strict" {
-					return LinuxPrepared{}, fmt.Errorf("open cgroup dir: %w", err)
-				}
-				prep.CgroupV2 = nil
-				prep.SysProcAttr.UseCgroupFD = false
-			} else {
-				prep.SysProcAttr.CgroupFD = fd
-			}
-		}
+	if !useCgroup || !caps.Cgroupv2 {
+		return nil
 	}
-
-	return prep, nil
+	cg, err := prepareCgroupV2(cpuVal, memBytes)
+	if err != nil {
+		if mode == "strict" {
+			return fmt.Errorf("cgroupv2 setup: %w", err)
+		}
+		return nil
+	}
+	prep.CgroupV2 = cg
+	prep.SysProcAttr.UseCgroupFD = true
+	fd, err := unix.Open(cg.CgroupDir, unix.O_PATH|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	if err != nil {
+		if mode == "strict" {
+			return fmt.Errorf("open cgroup dir: %w", err)
+		}
+		prep.CgroupV2 = nil
+		prep.SysProcAttr.UseCgroupFD = false
+		return nil
+	}
+	prep.SysProcAttr.CgroupFD = fd
+	return nil
 }
 
 // buildSysProcAttr creates a SysProcAttr that places the child in a new
 // user, mount, PID, network, IPC and UTS namespace.
-func buildSysProcAttr(ctx PrepareContext) *syscall.SysProcAttr {
+func buildSysProcAttr() *syscall.SysProcAttr {
 	uid := os.Getuid()
 	gid := os.Getgid()
 	// Map the current user to root (0) inside the user namespace.
@@ -233,141 +247,94 @@ func buildSysProcAttr(ctx PrepareContext) *syscall.SysProcAttr {
 	}
 }
 
-// validateLandlockConfig validates that the given paths and network
-// endpoints can be turned into landlock rules. It does a dry-run
-// restriction so that any kernel-incompatible settings surface early.
-func validateLandlockConfig(readPaths, writePaths, netAllow []string, mode string) error {
-	var cfg landlock.Config
-	if len(netAllow) > 0 {
-		cfg = landlock.V4
-	} else {
-		cfg = landlock.V1
-	}
+// baseSyscalls is the default-deny seccomp allow-list covering syscalls
+// needed by the Go runtime, gRPC plugin transport, and basic file/IPC
+// operations.
+var baseSyscalls = []string{
+	// File operations
+	"read", "write", "open", "openat", "openat2", "close",
+	"stat", "fstat", "lstat", "statx", "fstatfs", "statfs",
+	"access", "faccessat", "faccessat2",
+	"lseek", "pread64", "pwrite64", "readv", "writev",
+	"getdents64", "ioctl", "fcntl", "flock", "fsync", "fdatasync",
+	"dup", "dup2", "dup3", "pipe", "pipe2",
+	"unlink", "unlinkat", "rename", "renameat", "renameat2",
+	"link", "linkat", "symlink", "symlinkat", "readlink", "readlinkat",
+	"mkdir", "mkdirat", "rmdir",
+	"chmod", "fchmod", "fchmodat", "chown", "fchown", "lchown", "fchownat",
+	"truncate", "ftruncate", "fallocate", "sync", "syncfs",
+	"utime", "utimes", "futimesat", "utimensat",
+	"getxattr", "lgetxattr", "fgetxattr",
+	"listxattr", "llistxattr", "flistxattr",
+	"removexattr", "lremovexattr", "fremovexattr",
+	"setxattr", "lsetxattr", "fsetxattr",
+	"inotify_init1", "inotify_add_watch", "inotify_rm_watch",
 
-	if mode == "permissive" {
-		cfg = cfg.BestEffort()
-	}
+	// Memory / process
+	"mmap", "munmap", "mprotect", "madvise", "mlock", "munlock",
+	"brk",
+	"clone", "clone3", "fork", "vfork", "execve", "execveat",
+	"exit", "exit_group", "wait4", "waitid",
+	"getpid", "getppid", "gettid", "getpgrp", "getpgid", "getsid",
+	"getuid", "getgid", "geteuid", "getegid", "getgroups",
+	"getresuid", "getresgid", "getcwd",
+	"set_tid_address", "set_robust_list",
+	"rt_sigaction", "rt_sigreturn", "sigaltstack", "signalfd4",
+	"kill", "tkill", "tgkill",
+	"prctl", "arch_prctl", "capget", "capset", "personality",
+	"sched_yield", "sched_getaffinity", "sched_setaffinity",
+	"sched_getscheduler", "sched_setscheduler",
+	"sched_getparam", "sched_setparam",
+	"sched_get_priority_max", "sched_get_priority_min",
+	"sched_getattr", "sched_setattr",
+	"sysinfo", "uname", "getrlimit", "prlimit64", "setrlimit", "getrusage",
+	"umask", "alarm", "setitimer", "getitimer",
+	"nanosleep", "clock_nanosleep", "clock_gettime", "clock_getres", "clock_settime",
+	"gettimeofday", "time", "times",
+	"timer_create", "timer_settime", "timer_gettime", "timer_getoverrun", "timer_delete",
+	"timerfd_create", "timerfd_settime", "timerfd_gettime",
+	"getrandom", "memfd_create", "eventfd", "eventfd2", "userfaultfd",
+	"restart_syscall",
 
-	var rules []landlock.Rule
-	if len(readPaths) > 0 {
-		rules = append(rules, landlock.RODirs(readPaths...).IgnoreIfMissing())
-	}
-	if len(writePaths) > 0 {
-		rules = append(rules, landlock.RWDirs(writePaths...).IgnoreIfMissing())
-	}
-	for _, ep := range netAllow {
-		_, portStr := splitHostPort(ep)
-		if portStr == "" {
-			continue
-		}
-		port, err := strconv.ParseUint(portStr, 10, 16)
-		if err != nil {
-			continue
-		}
-		rules = append(rules, landlock.ConnectTCP(uint16(port)))
-	}
+	// Polling / events
+	"poll", "ppoll", "epoll_create1", "epoll_ctl", "epoll_pwait", "epoll_pwait2",
+	"select", "pselect6",
 
-	// Dry-run: apply to current process (temporarily) and then release.
-	// Since we are in the parent process, we do NOT want to actually
-	// restrict ourselves. The go-landlock library does not expose a
-	// "validate only" API, so we simply rely on NewConfig/RestrictPaths
-	// returning errors for invalid rules. The actual restriction happens
-	// in the child shim.
-	if len(rules) == 0 {
-		return nil
-	}
-	// We cannot call RestrictPaths here without side-effects on the parent.
-	// Instead, we just check that the rules are non-nil and the config is valid.
-	// Any kernel incompatibility will be caught in the child where BestEffort()
-	// is used in permissive mode.
-	_ = cfg
-	return nil
+	// Seccomp / landlock (self-referential)
+	"seccomp", "landlock_create_ruleset", "landlock_add_rule", "landlock_restrict_self",
+
+	// Misc
+	"open_by_handle_at", "name_to_handle_at",
+	"process_vm_readv", "process_vm_writev",
+	"io_setup", "io_destroy", "io_submit", "io_cancel", "io_getevents", "io_pgetevents",
+	"io_uring_setup", "io_uring_enter", "io_uring_register",
+	"pidfd_open", "pidfd_send_signal", "close_range",
+	"getcpu",
+	"futex",
+}
+
+// networkSyscalls are appended to baseSyscalls when AllowNetwork is true.
+var networkSyscalls = []string{
+	"socket", "socketpair", "bind", "connect", "listen", "accept", "accept4",
+	"getsockname", "getpeername", "setsockopt", "getsockopt", "shutdown",
+	"recvfrom", "recvmsg", "sendto", "sendmsg", "sendfile",
 }
 
 // buildSeccompFilter returns a default-deny seccomp filter with a base
 // allow-list covering the syscalls needed by the Go runtime, the gRPC
 // plugin transport, and basic file/network operations.
 func buildSeccompFilter(allowNetwork bool) (*seccomp.Filter, error) {
-	// Base allow-list: syscalls required for a Go program to start,
-	// run, and communicate over gRPC (go-plugin). This list is
-	// intentionally broad for compatibility; dangerous syscalls are
-	// left off the list so the default-deny action blocks them.
-	base := []string{
-		// File operations
-		"read", "write", "open", "openat", "openat2", "close",
-		"stat", "fstat", "lstat", "statx", "fstatfs", "statfs",
-		"access", "faccessat", "faccessat2",
-		"lseek", "pread64", "pwrite64", "readv", "writev",
-		"getdents64", "ioctl", "fcntl", "flock", "fsync", "fdatasync",
-		"dup", "dup2", "dup3", "pipe", "pipe2",
-		"unlink", "unlinkat", "rename", "renameat", "renameat2",
-		"link", "linkat", "symlink", "symlinkat", "readlink", "readlinkat",
-		"mkdir", "mkdirat", "rmdir",
-		"chmod", "fchmod", "fchmodat", "chown", "fchown", "lchown", "fchownat",
-		"truncate", "ftruncate", "fallocate", "sync", "syncfs",
-		"utime", "utimes", "futimesat", "utimensat",
-		"getxattr", "lgetxattr", "fgetxattr",
-		"listxattr", "llistxattr", "flistxattr",
-		"removexattr", "lremovexattr", "fremovexattr",
-		"setxattr", "lsetxattr", "fsetxattr",
-		"inotify_init1", "inotify_add_watch", "inotify_rm_watch",
-
-		// Memory / process
-		"mmap", "munmap", "mprotect", "madvise", "mlock", "munlock",
-		"brk",
-		"clone", "clone3", "fork", "vfork", "execve", "execveat",
-		"exit", "exit_group", "wait4", "waitid",
-		"getpid", "getppid", "gettid", "getpgrp", "getpgid", "getsid",
-		"getuid", "getgid", "geteuid", "getegid", "getgroups",
-		"getresuid", "getresgid", "getcwd",
-		"set_tid_address", "set_robust_list",
-		"rt_sigaction", "rt_sigreturn", "sigaltstack", "signalfd4",
-		"kill", "tkill", "tgkill",
-		"prctl", "arch_prctl", "capget", "capset", "personality",
-		"sched_yield", "sched_getaffinity", "sched_setaffinity",
-		"sched_getscheduler", "sched_setscheduler",
-		"sched_getparam", "sched_setparam",
-		"sched_get_priority_max", "sched_get_priority_min",
-		"sched_getattr", "sched_setattr",
-		"sysinfo", "uname", "getrlimit", "prlimit64", "setrlimit", "getrusage",
-		"umask", "alarm", "setitimer", "getitimer",
-		"nanosleep", "clock_nanosleep", "clock_gettime", "clock_getres", "clock_settime",
-		"gettimeofday", "time", "times",
-		"timer_create", "timer_settime", "timer_gettime", "timer_getoverrun", "timer_delete",
-		"timerfd_create", "timerfd_settime", "timerfd_gettime",
-		"getrandom", "memfd_create", "eventfd", "eventfd2", "userfaultfd",
-		"restart_syscall",
-
-		// Polling / events
-		"poll", "ppoll", "epoll_create1", "epoll_ctl", "epoll_pwait", "epoll_pwait2",
-		"select", "pselect6",
-
-		// Seccomp / landlock (self-referential)
-		"seccomp", "landlock_create_ruleset", "landlock_add_rule", "landlock_restrict_self",
-
-		// Misc
-		"open_by_handle_at", "name_to_handle_at",
-		"process_vm_readv", "process_vm_writev",
-		"io_setup", "io_destroy", "io_submit", "io_cancel", "io_getevents", "io_pgetevents",
-		"io_uring_setup", "io_uring_enter", "io_uring_register",
-		"pidfd_open", "pidfd_send_signal", "close_range",
-		"getcpu",
-		"futex",
-	}
-
+	syscalls := make([]string, len(baseSyscalls))
+	copy(syscalls, baseSyscalls)
 	if allowNetwork {
-		base = append(base, []string{
-			"socket", "socketpair", "bind", "connect", "listen", "accept", "accept4",
-			"getsockname", "getpeername", "setsockopt", "getsockopt", "shutdown",
-			"recvfrom", "recvmsg", "sendto", "sendmsg", "sendfile",
-		}...)
+		syscalls = append(syscalls, networkSyscalls...)
 	}
 
 	policy := seccomp.Policy{
 		DefaultAction: seccomp.ActionErrno,
 		Syscalls: []seccomp.SyscallGroup{
 			{
-				Names:  base,
+				Names:  syscalls,
 				Action: seccomp.ActionAllow,
 			},
 		},
@@ -412,14 +379,16 @@ func buildRlimits(memBytes uint64, timeout time.Duration) []RlimitConfig {
 	}
 
 	// Sensible defaults regardless of explicit policy.
-	out = append(out, RlimitConfig{
-		Resource: unix.RLIMIT_NOFILE,
-		Rlimit:   syscall.Rlimit{Cur: 1024, Max: 1024},
-	})
-	out = append(out, RlimitConfig{
-		Resource: unix.RLIMIT_NPROC,
-		Rlimit:   syscall.Rlimit{Cur: 64, Max: 64},
-	})
+	out = append(out,
+		RlimitConfig{
+			Resource: unix.RLIMIT_NOFILE,
+			Rlimit:   syscall.Rlimit{Cur: 1024, Max: 1024},
+		},
+		RlimitConfig{
+			Resource: unix.RLIMIT_NPROC,
+			Rlimit:   syscall.Rlimit{Cur: 64, Max: 64},
+		},
+	)
 
 	return out
 }
@@ -441,7 +410,7 @@ func prepareCgroupV2(cpuQuota float64, memMax uint64) (*CgroupV2Config, error) {
 	for _, line := range lines {
 		parts := strings.Split(line, ":")
 		if len(parts) >= 3 {
-			cgroupPath = filepath.Join("/sys/fs/cgroup", parts[2])
+			cgroupPath = "/sys/fs/cgroup" + parts[2]
 			break
 		}
 	}
@@ -483,7 +452,7 @@ func prepareCgroupV2(cpuQuota float64, memMax uint64) (*CgroupV2Config, error) {
 // replace cmd.Path with the criteria binary, set a magic env var that
 // tells the shim what to exec, and prepend shim args. The shim
 // applies landlock, seccomp and rlimits before calling syscall.Exec.
-func (prep LinuxPrepared) ApplyToCmd(cmd *exec.Cmd, criteriaBin string) error {
+func (prep *LinuxPrepared) ApplyToCmd(cmd *exec.Cmd, criteriaBin string) error {
 	if prep.SysProcAttr != nil {
 		cmd.SysProcAttr = prep.SysProcAttr
 	}
@@ -536,14 +505,14 @@ func (prep LinuxPrepared) ApplyToCmd(cmd *exec.Cmd, criteriaBin string) error {
 // environment slice.
 func scrubEnv(env []string) []string {
 	blocked := map[string]bool{
-		"SUDO_UID":       true,
-		"SUDO_GID":       true,
-		"SUDO_USER":      true,
-		"SUDO_COMMAND":   true,
-		"SUDO_EDITOR":    true,
+		"SUDO_UID":        true,
+		"SUDO_GID":        true,
+		"SUDO_USER":       true,
+		"SUDO_COMMAND":    true,
+		"SUDO_EDITOR":     true,
 		"CRITERIA_PLUGIN": true,
 	}
-	var out []string
+	out := make([]string, 0, len(env))
 	for _, e := range env {
 		name, _, _ := strings.Cut(e, "=")
 		if blocked[name] {

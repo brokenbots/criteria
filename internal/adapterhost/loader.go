@@ -69,11 +69,11 @@ type DiscoveryFunc func(name string) (string, error)
 type BuiltinFactory func() Handle
 
 type DefaultLoader struct {
-	mu             sync.Mutex
-	discover       DiscoveryFunc
-	builtins       map[string]BuiltinFactory
-	active         map[*rpcHandle]struct{}
-	cmdCustomizer  func(name string, cmd *exec.Cmd)
+	mu            sync.Mutex
+	discover      DiscoveryFunc
+	builtins      map[string]BuiltinFactory
+	active        map[*rpcHandle]struct{}
+	cmdCustomizer func(name string, cmd *exec.Cmd)
 }
 
 func NewLoader() *DefaultLoader {

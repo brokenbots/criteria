@@ -106,29 +106,8 @@ func applyShimRestrictions(cfg *ShimConfig) error {
 	}
 
 	// Build and apply Landlock restrictions.
-	if len(cfg.ReadPaths)+len(cfg.WritePaths)+len(cfg.NetPorts) > 0 {
-		var llcfg landlock.Config
-		if len(cfg.NetPorts) > 0 {
-			llcfg = landlock.V4
-		} else {
-			llcfg = landlock.V1
-		}
-		if cfg.Mode == "permissive" {
-			llcfg = llcfg.BestEffort()
-		}
-		var rules []landlock.Rule
-		if len(cfg.ReadPaths) > 0 {
-			rules = append(rules, landlock.RODirs(cfg.ReadPaths...).IgnoreIfMissing())
-		}
-		if len(cfg.WritePaths) > 0 {
-			rules = append(rules, landlock.RWDirs(cfg.WritePaths...).IgnoreIfMissing())
-		}
-		for _, port := range cfg.NetPorts {
-			rules = append(rules, landlock.ConnectTCP(port))
-		}
-		if err := llcfg.RestrictPaths(rules...); err != nil {
-			return fmt.Errorf("landlock restrict: %w", err)
-		}
+	if err := applyLandlock(cfg); err != nil {
+		return err
 	}
 
 	// Build and apply seccomp filter.
@@ -136,6 +115,43 @@ func applyShimRestrictions(cfg *ShimConfig) error {
 		if err := applySeccompFilter(cfg); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func applyLandlock(cfg *ShimConfig) error {
+	if len(cfg.ReadPaths)+len(cfg.WritePaths)+len(cfg.NetPorts) == 0 {
+		return nil
+	}
+	var llcfg landlock.Config
+	if len(cfg.NetPorts) > 0 {
+		llcfg = landlock.V4
+	} else {
+		llcfg = landlock.V1
+	}
+	if cfg.Mode == "permissive" {
+		llcfg = llcfg.BestEffort()
+	}
+	ruleCap := 0
+	if len(cfg.ReadPaths) > 0 {
+		ruleCap++
+	}
+	if len(cfg.WritePaths) > 0 {
+		ruleCap++
+	}
+	ruleCap += len(cfg.NetPorts)
+	rules := make([]landlock.Rule, 0, ruleCap)
+	if len(cfg.ReadPaths) > 0 {
+		rules = append(rules, landlock.RODirs(cfg.ReadPaths...).IgnoreIfMissing())
+	}
+	if len(cfg.WritePaths) > 0 {
+		rules = append(rules, landlock.RWDirs(cfg.WritePaths...).IgnoreIfMissing())
+	}
+	for _, port := range cfg.NetPorts {
+		rules = append(rules, landlock.ConnectTCP(port))
+	}
+	if err := llcfg.RestrictPaths(rules...); err != nil {
+		return fmt.Errorf("landlock restrict: %w", err)
 	}
 	return nil
 }
@@ -156,90 +172,24 @@ func applySeccompFilter(cfg *ShimConfig) error {
 // avoids surprises where the parent validates one set and the child
 // loads another.
 func seccompFilterForShim(cfg *ShimConfig) *seccomp.Filter {
-	base := []string{
-		// File operations
-		"read", "write", "open", "openat", "openat2", "close",
-		"stat", "fstat", "lstat", "statx", "fstatfs", "statfs",
-		"access", "faccessat", "faccessat2",
-		"lseek", "pread64", "pwrite64", "readv", "writev",
-		"getdents64", "ioctl", "fcntl", "flock", "fsync", "fdatasync",
-		"dup", "dup2", "dup3", "pipe", "pipe2",
-		"unlink", "unlinkat", "rename", "renameat", "renameat2",
-		"link", "linkat", "symlink", "symlinkat", "readlink", "readlinkat",
-		"mkdir", "mkdirat", "rmdir",
-		"chmod", "fchmod", "fchmodat", "chown", "fchown", "lchown", "fchownat",
-		"truncate", "ftruncate", "fallocate", "sync", "syncfs",
-		"utime", "utimes", "futimesat", "utimensat",
-		"getxattr", "lgetxattr", "fgetxattr",
-		"listxattr", "llistxattr", "flistxattr",
-		"removexattr", "lremovexattr", "fremovexattr",
-		"setxattr", "lsetxattr", "fsetxattr",
-		"inotify_init1", "inotify_add_watch", "inotify_rm_watch",
-
-		// Memory / process
-		"mmap", "munmap", "mprotect", "madvise", "mlock", "munlock",
-		"brk",
-		"clone", "clone3", "fork", "vfork", "execve", "execveat",
-		"exit", "exit_group", "wait4", "waitid",
-		"getpid", "getppid", "gettid", "getpgrp", "getpgid", "getsid",
-		"getuid", "getgid", "geteuid", "getegid", "getgroups",
-		"getresuid", "getresgid", "getcwd",
-		"set_tid_address", "set_robust_list",
-		"rt_sigaction", "rt_sigreturn", "sigaltstack", "signalfd4",
-		"kill", "tkill", "tgkill",
-		"prctl", "arch_prctl", "capget", "capset", "personality",
-		"sched_yield", "sched_getaffinity", "sched_setaffinity",
-		"sched_getscheduler", "sched_setscheduler",
-		"sched_getparam", "sched_setparam",
-		"sched_get_priority_max", "sched_get_priority_min",
-		"sched_getattr", "sched_setattr",
-		"sysinfo", "uname", "getrlimit", "prlimit64", "setrlimit", "getrusage",
-		"umask", "alarm", "setitimer", "getitimer",
-		"nanosleep", "clock_nanosleep", "clock_gettime", "clock_getres", "clock_settime",
-		"gettimeofday", "time", "times",
-		"timer_create", "timer_settime", "timer_gettime", "timer_getoverrun", "timer_delete",
-		"timerfd_create", "timerfd_settime", "timerfd_gettime",
-		"getrandom", "memfd_create", "eventfd", "eventfd2", "userfaultfd",
-		"restart_syscall",
-
-		// Polling / events
-		"poll", "ppoll", "epoll_create1", "epoll_ctl", "epoll_pwait", "epoll_pwait2",
-		"select", "pselect6",
-
-		// Seccomp / landlock (self-referential)
-		"seccomp", "landlock_create_ruleset", "landlock_add_rule", "landlock_restrict_self",
-
-		// Misc
-		"open_by_handle_at", "name_to_handle_at",
-		"process_vm_readv", "process_vm_writev",
-		"io_setup", "io_destroy", "io_submit", "io_cancel", "io_getevents", "io_pgetevents",
-		"io_uring_setup", "io_uring_enter", "io_uring_register",
-		"pidfd_open", "pidfd_send_signal", "close_range",
-		"getcpu",
-		"futex",
-	}
-
+	syscalls := make([]string, len(baseSyscalls))
+	copy(syscalls, baseSyscalls)
 	if cfg.AllowNetwork {
-		base = append(base, []string{
-			"socket", "socketpair", "bind", "connect", "listen", "accept", "accept4",
-			"getsockname", "getpeername", "setsockopt", "getsockopt", "shutdown",
-			"recvfrom", "recvmsg", "sendto", "sendmsg", "sendfile",
-		}...)
+		syscalls = append(syscalls, networkSyscalls...)
 	}
 
 	policy := seccomp.Policy{
 		DefaultAction: seccomp.ActionErrno,
 		Syscalls: []seccomp.SyscallGroup{
 			{
-				Names:  base,
+				Names:  syscalls,
 				Action: seccomp.ActionAllow,
 			},
 		},
 	}
 
-	filter := seccomp.Filter{
+	return &seccomp.Filter{
 		NoNewPrivs: true,
 		Policy:     policy,
 	}
-	return &filter
 }

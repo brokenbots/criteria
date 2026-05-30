@@ -19,8 +19,7 @@ func ctyStringList(v cty.Value) []string {
 		return nil
 	}
 	var out []string
-	switch {
-	case v.Type().IsListType() || v.Type().IsTupleType() || v.Type().IsSetType():
+	if v.Type().IsListType() || v.Type().IsTupleType() || v.Type().IsSetType() {
 		it := v.ElementIterator()
 		for it.Next() {
 			_, ev := it.Element()
@@ -52,19 +51,6 @@ func ctyBool(v cty.Value, fallback bool) bool {
 	}
 	if v.Type() == cty.Bool {
 		return v.True()
-	}
-	return fallback
-}
-
-// ctyInt extracts an int from a cty.Value. Returns the fallback if
-// the value is null, unknown, or not a number.
-func ctyInt(v cty.Value, fallback int) int {
-	if v.IsNull() || !v.IsKnown() {
-		return fallback
-	}
-	if v.Type() == cty.Number {
-		f, _ := v.AsBigFloat().Int64()
-		return int(f)
 	}
 	return fallback
 }
@@ -155,20 +141,9 @@ func boolFromObject(obj cty.Value, field string, fallback bool) bool {
 	return ctyBool(obj.GetAttr(field), fallback)
 }
 
-// intFromObject extracts an int from a nested object field.
-func intFromObject(obj cty.Value, field string, fallback int) int {
-	if obj.IsNull() || !obj.IsKnown() || !obj.Type().IsObjectType() {
-		return fallback
-	}
-	if !obj.Type().HasAttribute(field) {
-		return fallback
-	}
-	return ctyInt(obj.GetAttr(field), fallback)
-}
-
 // splitHostPort splits a network endpoint string "host:port" into host and
 // port. Returns empty strings if the input is malformed.
-func splitHostPort(s string) (host string, port string) {
+func splitHostPort(s string) (host, port string) {
 	idx := strings.LastIndex(s, ":")
 	if idx < 0 {
 		return "", ""

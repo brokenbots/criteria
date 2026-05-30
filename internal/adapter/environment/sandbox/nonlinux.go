@@ -33,7 +33,7 @@ func (h Handler) Prepare(_ PrepareContext) (LinuxPrepared, error) {
 type LinuxPrepared struct{}
 
 // ApplyToCmd is a no-op on non-Linux.
-func (prep LinuxPrepared) ApplyToCmd(cmd *exec.Cmd, criteriaBin string) error {
+func (prep *LinuxPrepared) ApplyToCmd(cmd *exec.Cmd, criteriaBin string) error {
 	return errors.New("sandbox environments are only supported on Linux")
 }
 
