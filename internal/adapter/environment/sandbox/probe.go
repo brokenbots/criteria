@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"unsafe"
+	"syscall"
 
 	"golang.org/x/sys/unix"
 )
@@ -64,22 +64,29 @@ func doProbe() Capabilities {
 
 func probeUserNamespaces() bool {
 	// The canonical check is /proc/sys/kernel/unprivileged_userns_clone
-	// (Debian/Ubuntu specific). If absent, assume namespaces are
-	// available because most modern kernels enable them by default.
+	// (Debian/Ubuntu specific). If absent, test in a child process so we
+	// never pollute the Go thread pool with a thread in a different
+	// user namespace.
 	b, err := os.ReadFile("/proc/sys/kernel/unprivileged_userns_clone")
 	if err == nil {
 		val, _ := strconv.Atoi(strings.TrimSpace(string(b)))
 		return val == 1
 	}
-	// Fallback: try to unshare a user namespace. This is lightweight.
-	err = unix.Unshare(unix.CLONE_NEWUSER)
-	if err == nil {
-		// We just created a user namespace in the current process.
-		// It is harmless; the process remains in the original
-		// namespaces for all other purposes.
-		return true
+	// Fallback: fork a child into a new user namespace and see if it
+	// survives.  The child runs /bin/true (should exist everywhere).
+	attr := &os.ProcAttr{
+		Sys: &syscall.SysProcAttr{
+			Cloneflags:  unix.CLONE_NEWUSER,
+			UidMappings: []syscall.SysProcIDMap{{ContainerID: 0, HostID: os.Getuid(), Size: 1}},
+			GidMappings: []syscall.SysProcIDMap{{ContainerID: 0, HostID: os.Getgid(), Size: 1}},
+		},
 	}
-	return false
+	proc, err := os.StartProcess("/bin/true", []string{"true"}, attr)
+	if err != nil {
+		return false
+	}
+	_, _ = proc.Wait()
+	return true
 }
 
 func probeLandlock() bool {
@@ -93,53 +100,34 @@ func probeLandlock() bool {
 }
 
 func probeSeccomp() bool {
-	// Check /proc/self/status for Seccomp: mode (2 = filter mode).
+	// Check /proc/self/status for Seccomp: mode.
+	// Mode 0 = disabled (available), mode 2 = filter active.
+	// We return true only for 0 or 2 because mode 1 (strict) does not
+	// allow installing a BPF filter.
 	b, err := os.ReadFile("/proc/self/status")
-	if err != nil {
-		return false
-	}
-	for _, line := range strings.Split(string(b), "\n") {
-		if strings.HasPrefix(line, "Seccomp:") {
-			fields := strings.Fields(line)
-			if len(fields) >= 2 {
-				mode, _ := strconv.Atoi(fields[1])
-				return mode >= 1 // seccomp is available; filter mode is 2
+	if err == nil {
+		for _, line := range strings.Split(string(b), "\n") {
+			if strings.HasPrefix(line, "Seccomp:") {
+				fields := strings.Fields(line)
+				if len(fields) >= 2 {
+					mode, _ := strconv.Atoi(fields[1])
+					return mode == 0 || mode == 2
+				}
 			}
 		}
 	}
-	// Fallback: attempt to install a trivial no-op filter. If it
-	// succeeds, seccomp is supported.
-	return probeSeccompViaFilter()
-}
-
-func probeSeccompViaFilter() bool {
-	// Fork a child to test because applying a seccomp filter to the
-	// current process could break subsequent syscalls.
-	pid, _, errno := unix.Syscall(unix.SYS_FORK, 0, 0, 0)
-	if errno != 0 {
-		return false
-	}
-	if pid == 0 {
-		// Child: try a minimal seccomp filter.
-		// We use prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, ...)
-		// with a trivial BPF program that allows everything.
-		bpf := []unix.SockFilter{
-			{Code: unix.BPF_RET + unix.BPF_K, K: unix.SECCOMP_RET_ALLOW},
-		}
-		prog := unix.SockFprog{Len: uint16(len(bpf)), Filter: &bpf[0]}
-		_, _, e1 := unix.Syscall(unix.SYS_PRCTL, unix.PR_SET_SECCOMP, unix.SECCOMP_MODE_FILTER, uintptr(unsafe.Pointer(&prog)))
-		if e1 == 0 {
-			unix.Exit(0)
-		}
-		unix.Exit(1)
-	}
-	var ws unix.WaitStatus
-	_, err := unix.Wait4(int(pid), &ws, 0, nil)
+	// Fallback: prctl(PR_GET_SECCOMP) returns the current mode.
+	// If seccomp is unsupported, prctl returns an error.
+	mode, err := unix.PrctlRetInt(unix.PR_GET_SECCOMP, 0, 0, 0, 0)
 	if err != nil {
 		return false
 	}
-	return ws.ExitStatus() == 0
+	return mode == 0 || mode == 2
 }
+
+// probeSeccompViaFilter was removed.  Raw SYS_FORK is unsafe in Go (only
+// the calling thread is duplicated; runtime state becomes inconsistent).
+// We now rely on /proc/self/status and prctl(PR_GET_SECCOMP) instead.
 
 func probeCgroupv2() bool {
 	// cgroup v2 unified hierarchy has a single mount with filesystem

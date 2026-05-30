@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/elastic/go-seccomp-bpf"
 	"github.com/zclconf/go-cty/cty"
 	"golang.org/x/sys/unix"
 
@@ -213,5 +214,235 @@ func TestPrepareDegradation(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "landlock") {
 		t.Fatalf("expected error to mention landlock, got: %v", err)
+	}
+}
+
+func TestValidatePath(t *testing.T) {
+	tests := []struct {
+		path string
+		want string // empty = no error; non-empty = error substring
+	}{
+		{"/etc/passwd", ""},
+		{"/tmp", ""},
+		{"/var/lib/app/data", ""},
+		{"", "empty"},
+		{"relative/path", "not absolute"},
+		{"/etc/../passwd", "parent-directory traversal"},
+		{"/valid/../invalid", "parent-directory traversal"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.path, func(t *testing.T) {
+			err := validatePath(tc.path)
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error %q does not contain %q", err.Error(), tc.want)
+			}
+		})
+	}
+}
+
+func TestScrubEnv(t *testing.T) {
+	in := []string{
+		"PATH=/usr/bin",
+		"HOME=/root",
+		"SUDO_UID=1000",
+		"SUDO_GID=1000",
+		"SUDO_USER=admin",
+		"SUDO_COMMAND=/bin/bash",
+		"SUDO_EDITOR=vim",
+		"CRITERIA_PLUGIN=/tmp/plugin",
+		"FOO=bar",
+	}
+	out := scrubEnv(in)
+	for _, e := range out {
+		name, _, _ := strings.Cut(e, "=")
+		switch name {
+		case "SUDO_UID", "SUDO_GID", "SUDO_USER", "SUDO_COMMAND", "SUDO_EDITOR", "CRITERIA_PLUGIN":
+			t.Fatalf("scrubEnv left blocked variable %q in output", name)
+		}
+	}
+	// Verify allowed vars are preserved.
+	allowed := map[string]bool{}
+	for _, e := range out {
+		allowed[strings.SplitN(e, "=", 2)[0]] = true
+	}
+	for _, want := range []string{"PATH", "HOME", "FOO"} {
+		if !allowed[want] {
+			t.Fatalf("scrubEnv removed allowed variable %q", want)
+		}
+	}
+	if len(out) != 3 {
+		t.Fatalf("expected 3 env vars, got %d: %v", len(out), out)
+	}
+}
+
+func TestParseMemoryLimit(t *testing.T) {
+	tests := []struct {
+		in   string
+		want uint64
+	}{
+		{"512M", 512 * 1024 * 1024},
+		{"1G", 1024 * 1024 * 1024},
+		{"128K", 128 * 1024},
+		{"", 0},
+		{"invalid", 0},
+		{"  256m  ", 256 * 1024 * 1024},
+	}
+	for _, tc := range tests {
+		t.Run(tc.in, func(t *testing.T) {
+			got := parseMemoryLimit(tc.in)
+			if got != tc.want {
+				t.Fatalf("parseMemoryLimit(%q) = %d, want %d", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestParseCPULimit(t *testing.T) {
+	tests := []struct {
+		in   string
+		want float64
+	}{
+		{"1", 1},
+		{"0.5", 0.5},
+		{"", 0},
+		{"invalid", 0},
+		{"  2.5  ", 2.5},
+	}
+	for _, tc := range tests {
+		t.Run(tc.in, func(t *testing.T) {
+			got := parseCPULimit(tc.in)
+			if got != tc.want {
+				t.Fatalf("parseCPULimit(%q) = %f, want %f", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestParseTimeout(t *testing.T) {
+	tests := []struct {
+		in   string
+		want time.Duration
+	}{
+		{"30s", 30 * time.Second},
+		{"1m", time.Minute},
+		{"", 0},
+		{"invalid", 0},
+		{"  5m30s  ", 5*time.Minute + 30*time.Second},
+	}
+	for _, tc := range tests {
+		t.Run(tc.in, func(t *testing.T) {
+			got := parseTimeout(tc.in)
+			if got != tc.want {
+				t.Fatalf("parseTimeout(%q) = %v, want %v", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestSplitHostPort(t *testing.T) {
+	tests := []struct {
+		in       string
+		wantHost string
+		wantPort string
+	}{
+		{"host:port", "host", "port"},
+		{"[::1]:8080", "::1", "8080"},
+		{"192.168.1.1:53", "192.168.1.1", "53"},
+		{"malformed", "", ""},
+		{"", "", ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.in, func(t *testing.T) {
+			host, port := splitHostPort(tc.in)
+			if host != tc.wantHost || port != tc.wantPort {
+				t.Fatalf("splitHostPort(%q) = (%q, %q), want (%q, %q)", tc.in, host, port, tc.wantHost, tc.wantPort)
+			}
+		})
+	}
+}
+
+func TestBuildSeccompFilter(t *testing.T) {
+	// With network allowed.
+	f, err := buildSeccompFilter(true)
+	if err != nil {
+		t.Fatalf("buildSeccompFilter(true): %v", err)
+	}
+	if f == nil {
+		t.Fatal("expected non-nil filter")
+	}
+	if !f.NoNewPrivs {
+		t.Fatal("expected NoNewPrivs")
+	}
+	if f.Policy.DefaultAction != seccomp.ActionErrno {
+		t.Fatalf("expected default-deny (ActionErrno), got %v", f.Policy.DefaultAction)
+	}
+	if len(f.Policy.Syscalls) != 1 {
+		t.Fatalf("expected 1 syscall group, got %d", len(f.Policy.Syscalls))
+	}
+	// Verify that the base syscalls are present.
+	asm, err := f.Policy.Assemble()
+	if err != nil {
+		t.Fatalf("assemble: %v", err)
+	}
+	if len(asm) == 0 {
+		t.Fatal("expected non-empty assembled BPF")
+	}
+
+	// Without network allowed.
+	f2, err := buildSeccompFilter(false)
+	if err != nil {
+		t.Fatalf("buildSeccompFilter(false): %v", err)
+	}
+	if f2 == nil {
+		t.Fatal("expected non-nil filter")
+	}
+}
+
+func TestMaybeUseBubblewrap(t *testing.T) {
+	// Non-bwrap environment: returns nil.
+	env := &workflow.EnvironmentNode{
+		Type:         "sandbox",
+		TypeSpecific: map[string]cty.Value{"sandbox": cty.StringVal("bwrap")},
+	}
+	prep := &LinuxPrepared{TargetPath: "/usr/bin/true"}
+
+	// If bwrap is not on PATH, MaybeUseBubblewrap returns nil.
+	cmd := MaybeUseBubblewrap(prep, env)
+	if cmd != nil {
+		// bwrap may be present in CI; validate the command structure.
+		if !strings.Contains(cmd.Path, "bwrap") {
+			t.Fatalf("expected bwrap in path, got %q", cmd.Path)
+		}
+		found := false
+		for _, a := range cmd.Args {
+			if a == "--unshare-all" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatal("expected --unshare-all in bwrap args")
+		}
+	}
+
+	// Without opt-in: returns nil.
+	envNoOpt := &workflow.EnvironmentNode{Type: "sandbox"}
+	if c := MaybeUseBubblewrap(prep, envNoOpt); c != nil {
+		t.Fatal("expected nil when not opted in")
+	}
+
+	// Wrong type: returns nil.
+	envWrong := &workflow.EnvironmentNode{Type: "docker"}
+	if c := MaybeUseBubblewrap(prep, envWrong); c != nil {
+		t.Fatal("expected nil for non-sandbox type")
 	}
 }

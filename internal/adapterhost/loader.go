@@ -111,7 +111,17 @@ func (l *DefaultLoader) RegisterBuiltin(name string, factory BuiltinFactory) {
 	l.builtins[name] = factory
 }
 
-func (l *DefaultLoader) Resolve(ctx context.Context, name string) (Handle, error) { //nolint:funlen // resolver must handle builtin registry, discovery, launch, handshake, and caching paths
+func (l *DefaultLoader) Resolve(ctx context.Context, name string) (Handle, error) {
+	l.mu.Lock()
+	customizer := l.cmdCustomizer
+	l.mu.Unlock()
+	return l.ResolveWithCustomizer(ctx, name, customizer)
+}
+
+// ResolveWithCustomizer is like Resolve but accepts a per-call command
+// customizer instead of the shared one set by SetCommandCustomizer.
+// This avoids races when multiple sessions open concurrently.
+func (l *DefaultLoader) ResolveWithCustomizer(ctx context.Context, name string, customizer func(name string, cmd *exec.Cmd)) (Handle, error) { //nolint:funlen // resolver must handle builtin registry, discovery, launch, handshake, and caching paths
 	if stringsTrim(name) == "" {
 		return nil, errors.New("adapter name is required")
 	}
@@ -134,8 +144,8 @@ func (l *DefaultLoader) Resolve(ctx context.Context, name string) (Handle, error
 
 	cmd := exec.Command(path)
 	// Apply sandbox or other per-adapter command customizations.
-	if l.cmdCustomizer != nil {
-		l.cmdCustomizer(name, cmd)
+	if customizer != nil {
+		customizer(name, cmd)
 	}
 
 	client := hplugin.NewClient(&hplugin.ClientConfig{
