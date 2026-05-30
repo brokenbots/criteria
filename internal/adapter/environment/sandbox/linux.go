@@ -579,4 +579,3 @@ func (prep *LinuxPrepared) ApplyToCmd(cmd *exec.Cmd, criteriaBin string) error {
 
 	return nil
 }
-
