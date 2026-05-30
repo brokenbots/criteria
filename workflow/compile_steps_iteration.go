@@ -81,8 +81,14 @@ func compileIteratingStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[str
 			diags = append(diags, validateWhileRefs(sp.Name, inputExprs)...)
 			diags = append(diags, validateWhileRefs(sp.Name, secretInputExprs)...)
 		}
+		outputSchema := map[string]ConfigField{}
+		if adapterRef != "" {
+			if info, ok := adapterInfo(schemas, adapterType); ok {
+				outputSchema = info.OutputSchema
+			}
+		}
 		// each.* references are valid inside iterating steps; no error emitted.
-		node = newAdapterStepNode(sp, spec, adapterRef, effectiveOnCrash, envKey, timeout, inputMap, inputExprs, secretInputMap, secretInputExprs)
+		node = newAdapterStepNode(sp, spec, adapterRef, effectiveOnCrash, envKey, timeout, inputMap, inputExprs, secretInputMap, secretInputExprs, outputSchema)
 		diags = append(diags, maybeCopilotAliasWarnings(sp.Name, adapterType, node.AllowTools)...)
 		// parallel_safe capability gate: when the step uses parallel = [...] the
 		// adapter must declare "parallel_safe". When the adapter is absent from the

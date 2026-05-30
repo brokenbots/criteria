@@ -337,6 +337,49 @@ func (m *SessionManager) wrapSink(sink adapter.EventSink) adapter.EventSink {
 	return &secrets.RedactingEventSink{Registry: m.RedactionRegistry, Inner: sink}
 }
 
+func (m *SessionManager) registerSensitiveOutputs(result adapter.Result, step *workflow.StepNode) {
+	if m.RedactionRegistry == nil {
+		return
+	}
+	for outName, outVal := range result.Outputs {
+		if f, ok := step.OutputSchema[outName]; ok && f.Sensitive {
+			m.RedactionRegistry.Register(outVal)
+		}
+	}
+}
+
+func (m *SessionManager) handleCrash(ctx context.Context, name string, step *workflow.StepNode, sink adapter.EventSink, sess *Session, execErr error) (adapter.Result, error) {
+	slog.Warn("adapter session crashed", "session", sess.Name, "adapter", sess.Adapter, "error", execErr)
+
+	switch sess.OnCrash {
+	case OnCrashRespawn:
+		sink.Adapter("session.respawned", map[string]any{
+			"session": sess.Name,
+			"adapter": sess.Adapter,
+			"error":   execErr.Error(),
+		})
+		if respawnErr := m.respawn(ctx, sess); respawnErr != nil {
+			return m.failResult(sink, sess, execErr)
+		}
+		result, retryErr := sess.handle.Execute(ctx, name, step, sink)
+		if retryErr == nil {
+			m.registerSensitiveOutputs(result, step)
+			return result, nil
+		}
+		return m.failResult(sink, sess, retryErr)
+	case OnCrashAbortRun:
+		sink.Adapter("session.crash", map[string]any{
+			"session": sess.Name,
+			"adapter": sess.Adapter,
+			"policy":  sess.OnCrash,
+			"error":   execErr.Error(),
+		})
+		return adapter.Result{Outcome: "failure"}, &FatalRunError{Err: fmt.Errorf("session %q crashed and on_crash=abort_run", name)}
+	default:
+		return m.failResult(sink, sess, execErr)
+	}
+}
+
 func (m *SessionManager) Execute(ctx context.Context, name string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
 	sess, err := m.lookup(name)
 	if err != nil {
@@ -347,6 +390,7 @@ func (m *SessionManager) Execute(ctx context.Context, name string, step *workflo
 
 	result, execErr := sess.handle.Execute(ctx, name, step, sink)
 	if execErr == nil {
+		m.registerSensitiveOutputs(result, step)
 		return result, nil
 	}
 
@@ -363,34 +407,7 @@ func (m *SessionManager) Execute(ctx context.Context, name string, step *workflo
 		return result, execErr
 	}
 
-	slog.Warn("adapter session crashed", "session", sess.Name, "adapter", sess.Adapter, "error", execErr)
-
-	switch sess.OnCrash {
-	case OnCrashRespawn:
-		sink.Adapter("session.respawned", map[string]any{
-			"session": sess.Name,
-			"adapter": sess.Adapter,
-			"error":   execErr.Error(),
-		})
-		if respawnErr := m.respawn(ctx, sess); respawnErr != nil {
-			return m.failResult(sink, sess, execErr)
-		}
-		result, retryErr := sess.handle.Execute(ctx, name, step, sink)
-		if retryErr == nil {
-			return result, nil
-		}
-		return m.failResult(sink, sess, retryErr)
-	case OnCrashAbortRun:
-		sink.Adapter("session.crash", map[string]any{
-			"session": sess.Name,
-			"adapter": sess.Adapter,
-			"policy":  sess.OnCrash,
-			"error":   execErr.Error(),
-		})
-		return adapter.Result{Outcome: "failure"}, &FatalRunError{Err: fmt.Errorf("session %q crashed and on_crash=abort_run", name)}
-	default:
-		return m.failResult(sink, sess, execErr)
-	}
+	return m.handleCrash(ctx, name, step, sink, sess, execErr)
 }
 
 // HasCapability reports whether the session identified by name has capName in

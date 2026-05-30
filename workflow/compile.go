@@ -65,7 +65,23 @@ func Compile(spec *Spec, schemas map[string]AdapterInfo) (*FSMGraph, hcl.Diagnos
 //
 // When opts.WorkflowDir is set, constant file() arguments in step input
 // expressions are validated at compile time (path existence + confinement).
-//
+func validateHeader(h *WorkflowHeaderSpec) hcl.Diagnostics {
+	var diags hcl.Diagnostics
+	if h.Version == "" {
+		diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: "workflow.version is required"})
+	}
+	if h.InitialState == "" {
+		diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: "workflow.initial_state is required"})
+	}
+	if h.TargetState == "" {
+		diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: "workflow.target_state is required"})
+	}
+	if h.Policy != nil && h.Policy.MaxVisitsWarnThreshold != nil && *h.Policy.MaxVisitsWarnThreshold < 0 {
+		diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: "policy.max_visits_warn_threshold must be >= 0 (use 0 to disable warnings, omit to use the default of 200)"})
+	}
+	return diags
+}
+
 // Subworkflow resolution uses context.Background(). For caller-context
 // propagation use CompileWithContext.
 func CompileWithOpts(spec *Spec, schemas map[string]AdapterInfo, opts CompileOpts) (*FSMGraph, hcl.Diagnostics) {
@@ -85,18 +101,7 @@ func CompileWithContext(ctx context.Context, spec *Spec, schemas map[string]Adap
 			Detail:   `each workflow directory must contain exactly one workflow { name = "..." version = "..." initial_state = "..." target_state = "..." } header block; none was found. Wrap the workflow header attributes in a workflow { ... } block.`,
 		}}
 	}
-	if spec.Header.Version == "" {
-		diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: "workflow.version is required"})
-	}
-	if spec.Header.InitialState == "" {
-		diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: "workflow.initial_state is required"})
-	}
-	if spec.Header.TargetState == "" {
-		diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: "workflow.target_state is required"})
-	}
-	if spec.Header.Policy != nil && spec.Header.Policy.MaxVisitsWarnThreshold != nil && *spec.Header.Policy.MaxVisitsWarnThreshold < 0 {
-		diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: "policy.max_visits_warn_threshold must be >= 0 (use 0 to disable warnings, omit to use the default of 200)"})
-	}
+	diags = append(diags, validateHeader(spec.Header)...)
 
 	g := newFSMGraph(spec)
 	diags = append(diags, compileVariables(g, spec)...)
@@ -114,6 +119,7 @@ func CompileWithContext(ctx context.Context, spec *Spec, schemas map[string]Adap
 	// Warn after all nodes are compiled so branch/wait/approval targets are
 	// available for the back-edge walk (W07).
 	diags = append(diags, warnBackEdges(g)...)
+	diags = append(diags, compileOutputRefs(g)...)
 	diags = append(diags, warnCrossStepFieldRefs(g, schemas)...)
 	// Secret-taint propagation pass: marks steps that transitively receive
 	// secret data via secret_input, input referencing secret variables, or

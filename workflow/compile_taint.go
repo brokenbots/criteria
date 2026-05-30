@@ -220,12 +220,18 @@ func checkExprForTaint(expr hcl.Expression, g *FSMGraph, schemas map[string]Adap
 				}
 			}
 			upstreamStep := g.Steps[stepName.Name]
-			if upstreamStep != nil && upstreamStep.AdapterRef != "" {
-				adapterType := adapterTypeFromRef(upstreamStep.AdapterRef)
-				if info, ok := adapterInfo(schemas, adapterType); ok {
-					if field, ok := info.OutputSchema[fieldAttr.Name]; ok && field.Sensitive {
-						return taintOrigin{kind: "sensitive_output", name: "steps." + stepName.Name + "." + fieldAttr.Name}, true
+			if upstreamStep != nil {
+				var outputSchema map[string]ConfigField
+				if len(upstreamStep.OutputSchema) > 0 {
+					outputSchema = upstreamStep.OutputSchema
+				} else if upstreamStep.AdapterRef != "" {
+					adapterType := adapterTypeFromRef(upstreamStep.AdapterRef)
+					if info, ok := adapterInfo(schemas, adapterType); ok {
+						outputSchema = info.OutputSchema
 					}
+				}
+				if field, ok := outputSchema[fieldAttr.Name]; ok && field.Sensitive {
+					return taintOrigin{kind: "sensitive_output", name: "steps." + stepName.Name + ".outputs." + fieldAttr.Name}, true
 				}
 			}
 		}

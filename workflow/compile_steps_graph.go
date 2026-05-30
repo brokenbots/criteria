@@ -384,6 +384,16 @@ func collectCrossStepExprs(g *FSMGraph) []namedExpr {
 	return exprs
 }
 
+// isStepsOutputsTraversal reports whether traversal is steps.X.outputs.Y, which
+// is validated by compileOutputRefs and should be skipped by other passes.
+func isStepsOutputsTraversal(traversal hcl.Traversal) bool {
+	if len(traversal) < 4 {
+		return false
+	}
+	outAttr, ok := traversal[2].(hcl.TraverseAttr)
+	return ok && outAttr.Name == "outputs"
+}
+
 // checkStepsFieldTraversals inspects expr for steps.<name>.<field> traversals
 // and emits warnings for fields absent from the step's OutputSchema.
 func checkStepsFieldTraversals(context string, expr hcl.Expression, g *FSMGraph, schemas map[string]AdapterInfo) hcl.Diagnostics {
@@ -400,6 +410,11 @@ func checkStepsFieldTraversals(context string, expr hcl.Expression, g *FSMGraph,
 			continue
 		}
 		if root.Name != "steps" {
+			continue
+		}
+
+		// steps.X.outputs.Y is validated by compileOutputRefs; skip here.
+		if isStepsOutputsTraversal(traversal) {
 			continue
 		}
 

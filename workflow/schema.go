@@ -585,9 +585,11 @@ type StepNode struct {
 	// block's environment and the workflow-level default for this step only.
 	// Applies env-var injection only; does not create a new adapter session.
 	Environment string
-	// Tainted is true when this step transitively receives secret data, either
-	// directly (via secret_input or input referencing secret variables) or from
-	// a predecessor step. Set by the TaintPass after compileSteps.
+	// OutputSchema is the adapter's declared output schema for this step.
+	// Populated during compilation when the step targets an adapter.
+	OutputSchema map[string]ConfigField
+	// Tainted is set by the taint compiler pass when this step receives secret
+	// data (secret_input, predecessor taint, or sensitive output references).
 	Tainted bool
 }
 
