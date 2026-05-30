@@ -1,90 +1,74 @@
+//go:build linux
+
 package adapterhost
 
 import (
 	"context"
 	"errors"
+	"os"
 	"os/exec"
 	"strings"
-	"sync"
 	"syscall"
 	"testing"
 
-	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapter/environment/sandbox"
 	"github.com/brokenbots/criteria/workflow"
 )
 
-type recordingLoader struct {
-	inner Loader
+func TestBuildSandboxCustomizer_EnvScrubIntegration(t *testing.T) {
+	// End-to-end env scrub: verify that after buildSandboxCustomizer →
+	// makeSandboxCustomizer → ApplyToCmd, blocked vars are absent from
+	// cmd.Env and the shim config path is present.
+	os.Setenv("SUDO_UID", "1000")
+	os.Setenv("CRITERIA_PLUGIN", "/tmp/fake-plugin")
+	defer os.Unsetenv("SUDO_UID")
+	defer os.Unsetenv("CRITERIA_PLUGIN")
 
-	mu      sync.Mutex
-	handles []Handle
-}
-
-func (l *recordingLoader) Resolve(ctx context.Context, name string) (Handle, error) {
-	p, err := l.inner.Resolve(ctx, name)
+	sm := NewSessionManager(nil)
+	sm.sandboxProbeOverride = func() sandbox.Capabilities {
+		return sandbox.Capabilities{UserNamespaces: true, Landlock: false, Seccomp: true, Cgroupv2: true}
+	}
+	sm.graph = &workflow.FSMGraph{
+		Adapters: map[string]*workflow.AdapterNode{
+			"noop.default": {Type: "noop", Name: "default", Environment: "sandbox.default"},
+		},
+		Environments: map[string]*workflow.EnvironmentNode{
+			"sandbox.default": {Type: "sandbox", Name: "default"},
+		},
+		ResolvedPolicies: map[string]*workflow.ResolvedPolicy{
+			"noop.default:sandbox.default": {PolicyMode: "permissive", OS: "linux"},
+		},
+	}
+	customizer, cleanup, err := sm.buildSandboxCustomizer("noop.default")
 	if err != nil {
-		return nil, err
+		t.Fatalf("unexpected error: %v", err)
 	}
-	l.mu.Lock()
-	l.handles = append(l.handles, p)
-	l.mu.Unlock()
-	return p, nil
-}
-
-func (l *recordingLoader) Shutdown(ctx context.Context) error { return l.inner.Shutdown(ctx) }
-
-func (l *recordingLoader) lastHandle() Handle {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if len(l.handles) == 0 {
-		return nil
+	if customizer == nil {
+		t.Fatal("expected non-nil customizer")
 	}
-	return l.handles[len(l.handles)-1]
-}
+	defer cleanup()
 
-type adapterEventCollector struct {
-	mu     sync.Mutex
-	events []adapterEvent
-}
+	cmd := exec.Command("/usr/bin/true")
+	customizer("noop", cmd)
 
-type adapterEvent struct {
-	kind string
-	data map[string]any
-}
-
-func (c *adapterEventCollector) Log(string, []byte) {}
-
-func (c *adapterEventCollector) Adapter(kind string, data any) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	var payload map[string]any
-	if m, ok := data.(map[string]any); ok {
-		payload = m
-	}
-	c.events = append(c.events, adapterEvent{kind: kind, data: payload})
-}
-
-func (c *adapterEventCollector) saw(kind string) bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	for _, evt := range c.events {
-		if evt.kind == kind {
-			return true
+	for _, e := range cmd.Env {
+		name, _, _ := strings.Cut(e, "=")
+		switch name {
+		case "SUDO_UID", "SUDO_GID", "SUDO_USER", "SUDO_COMMAND", "SUDO_EDITOR", "CRITERIA_PLUGIN":
+			t.Fatalf("blocked env var %q present after customizer", name)
 		}
 	}
-	return false
-}
 
-func (c *adapterEventCollector) first(kind string) (map[string]any, bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	for _, evt := range c.events {
-		if evt.kind == kind {
-			return evt.data, true
+	found := false
+	for _, e := range cmd.Env {
+		if strings.HasPrefix(e, "CRITERIA_SANDBOX_CONFIG_PATH=") {
+			found = true
+			break
 		}
 	}
-	return nil, false
+	if !found {
+		t.Fatal("expected CRITERIA_SANDBOX_CONFIG_PATH env var")
+	}
 }
 
 func TestBuildSandboxCustomizer_NonSandboxEnv(t *testing.T) {
@@ -408,8 +392,6 @@ func TestSessionManagerCrashPolicyAbortRun(t *testing.T) {
 		t.Fatalf("error=%v want FatalRunError", err)
 	}
 }
-
-var _ adapter.EventSink = (*adapterEventCollector)(nil)
 
 // TestSession_ClosingFlagSuppressesCrashHeuristic verifies that setting the
 // closing flag causes isLikelySessionCrash to return false even for

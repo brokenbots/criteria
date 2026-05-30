@@ -160,6 +160,10 @@ func (l *DefaultLoader) ResolveWithCustomizer(ctx context.Context, name string, 
 		// significantly. A typical local start takes well under 1 s.
 		StartTimeout: 30 * time.Second,
 		Logger:       adapterClientLogger(),
+		// When a customizer is active (e.g. sandbox env scrub) we must not
+		// let go-plugin re-append the host environment after the customizer
+		// has filtered it. SkipHostEnv prevents that re-addition.
+		SkipHostEnv: customizer != nil,
 	})
 
 	rpcClient, err := client.Client()

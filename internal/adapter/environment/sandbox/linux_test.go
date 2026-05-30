@@ -253,6 +253,77 @@ func TestShimIntegration(t *testing.T) {
 	}
 }
 
+func TestApplyToCmd_EnvScrubBlockedVarsAbsent(t *testing.T) {
+	// Verify that when cmd.Env is nil (the default from exec.Command),
+	// ApplyToCmd seeds it from os.Environ(), scrubs blocked vars, and
+	// the result contains no SUDO_* or CRITERIA_PLUGIN entries.
+	prep := LinuxPrepared{
+		SysProcAttr: &syscall.SysProcAttr{Cloneflags: syscall.CLONE_NEWUSER},
+		Mode:        "strict",
+		TargetPath:  "/usr/bin/true",
+	}
+	cmd := exec.Command("/bin/sh", "-c", "echo hello")
+	if cmd.Env != nil {
+		t.Fatal("expected cmd.Env to be nil before ApplyToCmd")
+	}
+	if err := prep.ApplyToCmd(cmd, ""); err != nil {
+		t.Fatalf("ApplyToCmd: %v", err)
+	}
+	defer prep.Cleanup()
+
+	for _, e := range cmd.Env {
+		name, _, _ := strings.Cut(e, "=")
+		switch name {
+		case "SUDO_UID", "SUDO_GID", "SUDO_USER", "SUDO_COMMAND", "SUDO_EDITOR", "CRITERIA_PLUGIN":
+			t.Fatalf("blocked env var %q present after ApplyToCmd", name)
+		}
+	}
+	// Verify the shim config path env var is present.
+	found := false
+	for _, e := range cmd.Env {
+		if strings.HasPrefix(e, "CRITERIA_SANDBOX_CONFIG_PATH=") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("expected CRITERIA_SANDBOX_CONFIG_PATH env var")
+	}
+}
+
+func TestCleanup_CgroupFDAndTempFile(t *testing.T) {
+	prep := LinuxPrepared{
+		SysProcAttr: &syscall.SysProcAttr{
+			Cloneflags:  syscall.CLONE_NEWUSER,
+			UseCgroupFD: true,
+			CgroupFD:    999, // synthetic fd; close will fail but we check it is attempted
+		},
+		ShimConfigPath: "/tmp/criteria-sandbox-fake.json",
+	}
+	// Create the fake temp file so removal succeeds.
+	f, err := os.Create(prep.ShimConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+
+	if err := prep.Cleanup(); err != nil {
+		t.Fatalf("Cleanup: %v", err)
+	}
+	if prep.SysProcAttr.CgroupFD != 0 {
+		t.Fatalf("expected CgroupFD zeroed, got %d", prep.SysProcAttr.CgroupFD)
+	}
+	if prep.SysProcAttr.UseCgroupFD {
+		t.Fatal("expected UseCgroupFD false after cleanup")
+	}
+	if prep.ShimConfigPath != "" {
+		t.Fatal("expected ShimConfigPath cleared after cleanup")
+	}
+	if _, err := os.Stat("/tmp/criteria-sandbox-fake.json"); !os.IsNotExist(err) {
+		t.Fatal("expected temp config file to be removed")
+	}
+}
+
 func TestPrepareDegradation(t *testing.T) {
 	// Simulate a host that lacks landlock.
 	h := &Handler{}

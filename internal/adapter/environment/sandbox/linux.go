@@ -96,6 +96,10 @@ type LinuxPrepared struct {
 	// AllowNetwork controls whether the seccomp filter includes
 	// socket/connect syscalls.
 	AllowNetwork bool
+
+	// ShimConfigPath is the temp JSON config file created by ApplyToCmd.
+	// Cleanup removes it.
+	ShimConfigPath string
 }
 
 // RlimitConfig describes a single rlimit to apply in the child.
@@ -490,13 +494,23 @@ func prepareCgroupV2(cpuQuota float64, memMax uint64) (*CgroupV2Config, error) {
 }
 
 // Cleanup removes transient resources created during preparation (e.g.
-// transient cgroup directories). It is safe to call multiple times.
+// transient cgroup directories and temp shim config files). It is safe
+// to call multiple times.
 func (prep *LinuxPrepared) Cleanup() error {
+	if prep.SysProcAttr != nil && prep.SysProcAttr.CgroupFD != 0 {
+		_ = unix.Close(prep.SysProcAttr.CgroupFD)
+		prep.SysProcAttr.CgroupFD = 0
+		prep.SysProcAttr.UseCgroupFD = false
+	}
 	if prep.CgroupV2 != nil && prep.CgroupV2.CgroupDir != "" {
 		if err := os.RemoveAll(prep.CgroupV2.CgroupDir); err != nil {
 			return err
 		}
 		prep.CgroupV2.CgroupDir = ""
+	}
+	if prep.ShimConfigPath != "" {
+		_ = os.Remove(prep.ShimConfigPath)
+		prep.ShimConfigPath = ""
 	}
 	return nil
 }
@@ -515,6 +529,13 @@ func (prep *LinuxPrepared) ApplyToCmd(cmd *exec.Cmd, criteriaBin string) error {
 
 	// Env var scrub: drop any variable that looks like a secret or
 	// that the sandbox should not inherit.
+	//
+	// go-plugin will append os.Environ() to cmd.Env if cmd.Env is nil
+	// and SkipHostEnv is false, so we must seed cmd.Env from the host
+	// environment before scrubbing so the filter has data to work on.
+	if cmd.Env == nil {
+		cmd.Env = os.Environ()
+	}
 	cmd.Env = scrubEnv(cmd.Env)
 
 	// Working directory: default to the adapter's own dir if empty.
@@ -551,6 +572,7 @@ func (prep *LinuxPrepared) ApplyToCmd(cmd *exec.Cmd, criteriaBin string) error {
 	}
 	tmpFile.Close()
 
+	prep.ShimConfigPath = tmpFile.Name()
 	cmd.Path = criteriaBin
 	cmd.Args = append([]string{criteriaBin, "_sandbox_shim_", prep.TargetPath}, cmd.Args[1:]...)
 	cmd.Env = append(cmd.Env, "CRITERIA_SANDBOX_CONFIG_PATH="+tmpFile.Name())
