@@ -296,7 +296,7 @@ func TestAwaitOutcomeSuccessOnFirstTurn(t *testing.T) {
 		{Data: &copilot.SessionIdleData{}},
 	}
 	// Simulate tool call via onSend hook.
-	fake.onSend = func(_ int, _ copilot.MessageOptions) {
+	fake.onSend = func(_ int, _ *copilot.MessageOptions) {
 		s.mu.Lock()
 		s.finalizedOutcome = "success"
 		s.mu.Unlock()
@@ -334,7 +334,7 @@ func TestAwaitOutcomeSuccessAfterOneReprompt(t *testing.T) {
 		},
 	}
 	// Simulate submit_outcome on second Send call.
-	fake.onSend = func(callIndex int, _ copilot.MessageOptions) {
+	fake.onSend = func(callIndex int, _ *copilot.MessageOptions) {
 		if callIndex == 1 {
 			s.mu.Lock()
 			s.finalizedOutcome = "success"
@@ -478,7 +478,7 @@ func TestAwaitOutcome_OutcomeAndReasonInOutputs(t *testing.T) {
 		{Data: &copilot.SessionIdleData{}},
 	}
 	p := outcomeAdapter(s)
-	fake.onSend = func(_ int, _ copilot.MessageOptions) {
+	fake.onSend = func(_ int, _ *copilot.MessageOptions) {
 		if _, err := p.handleSubmitOutcome("s1", SubmitOutcomeArgs{Outcome: "success", Reason: "all checks passed"}); err != nil {
 			t.Errorf("handleSubmitOutcome: unexpected error: %v", err)
 		}
@@ -548,7 +548,7 @@ func TestSubmitOutcome_RepromptTwice(t *testing.T) {
 	}
 	// Turn 1, 2: no outcome. Turn 3: outcome submitted.
 	fake.sendSequence = [][]copilot.SessionEvent{idle, idle, withIdle}
-	fake.onSend = func(callIndex int, _ copilot.MessageOptions) {
+	fake.onSend = func(callIndex int, _ *copilot.MessageOptions) {
 		if callIndex == 2 {
 			s.mu.Lock()
 			s.finalizedOutcome = "success"
@@ -585,7 +585,7 @@ func TestSubmitOutcome_InvalidEnumThenSuccess(t *testing.T) {
 	fake.sendSequence = [][]copilot.SessionEvent{idle, withIdle}
 
 	p := outcomeAdapter(s)
-	fake.onSend = func(callIndex int, _ copilot.MessageOptions) {
+	fake.onSend = func(callIndex int, _ *copilot.MessageOptions) {
 		switch callIndex {
 		case 0:
 			// Turn 1: model calls submit_outcome with a value outside the allowed
@@ -637,7 +637,7 @@ func TestSubmitOutcome_PermissionDeniedFailure(t *testing.T) {
 	fake.emitOnSend = []copilot.SessionEvent{
 		{Data: &copilot.SessionIdleData{}},
 	}
-	fake.onSend = func(_ int, _ copilot.MessageOptions) {
+	fake.onSend = func(_ int, _ *copilot.MessageOptions) {
 		s.mu.Lock()
 		s.permissionDeny = true
 		s.mu.Unlock()

@@ -19,7 +19,7 @@ import (
 // copilotSession abstracts the Copilot SDK session for testing.
 type copilotSession interface {
 	On(handler copilot.SessionEventHandler) func()
-	Send(ctx context.Context, options copilot.MessageOptions) (string, error)
+	Send(ctx context.Context, options *copilot.MessageOptions) (string, error)
 	SetModel(ctx context.Context, model string, opts *copilot.SetModelOptions) error
 	Disconnect() error
 	// Destroy is a force-close path used when Disconnect stalls; the real SDK
@@ -36,8 +36,8 @@ func (s *sdkSession) On(handler copilot.SessionEventHandler) func() {
 	return s.inner.On(handler)
 }
 
-func (s *sdkSession) Send(ctx context.Context, options copilot.MessageOptions) (string, error) {
-	return s.inner.Send(ctx, options)
+func (s *sdkSession) Send(ctx context.Context, options *copilot.MessageOptions) (string, error) {
+	return s.inner.Send(ctx, *options)
 }
 
 func (s *sdkSession) SetModel(ctx context.Context, model string, opts *copilot.SetModelOptions) error {
