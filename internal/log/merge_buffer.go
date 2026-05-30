@@ -198,7 +198,7 @@ type eventHeap []*eventItem
 func (h eventHeap) Len() int           { return len(h) }
 func (h eventHeap) Less(i, j int) bool { return h[i].ts.Before(h[j].ts) }
 func (h eventHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
-func (h *eventHeap) Push(x any)       { *h = append(*h, x.(*eventItem)) }
+func (h *eventHeap) Push(x any)        { *h = append(*h, x.(*eventItem)) }
 func (h *eventHeap) Pop() any {
 	old := *h
 	n := len(old)
@@ -215,7 +215,7 @@ var _ adapter.EventSink = (*MergeBuffer)(nil)
 // trailing newline if present.
 func FormatLogLine(stream string, chunk []byte) string {
 	line := string(chunk)
-	if len(line) > 0 && line[len(line)-1] == '\n' {
+	if line != "" && line[len(line)-1] == '\n' {
 		line = line[:len(line)-1]
 	}
 	return fmt.Sprintf("[%s] %s", stream, line)

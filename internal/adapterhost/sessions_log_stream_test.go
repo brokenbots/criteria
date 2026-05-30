@@ -9,11 +9,12 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/protobuf/types/known/timestamppb"
+
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapter/secrets"
 	v2 "github.com/brokenbots/criteria/sdk/pb/criteria/v2"
 	"github.com/brokenbots/criteria/workflow"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // loggingMockHandle is a mock Handle that also implements LogStreamStarter.
@@ -37,7 +38,7 @@ func (m *loggingMockHandle) Execute(ctx context.Context, sessionID string, step 
 	return adapter.Result{Outcome: "success"}, nil
 }
 func (m *loggingMockHandle) CloseSession(ctx context.Context, id string) error { return nil }
-func (m *loggingMockHandle) Kill() {}
+func (m *loggingMockHandle) Kill()                                             {}
 
 func (m *loggingMockHandle) StartLogStream(ctx context.Context, sessionID string, sink LogEventSink) (func(), error) {
 	m.mu.Lock()
@@ -232,8 +233,9 @@ func TestSessionManager_HeartbeatStall_DetectsCrash(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected heartbeat stall to produce an error")
 	}
-	if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
-		// Should be a crash error, not a context error.
+	// err should be a crash error, not a context cancellation.
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		t.Fatalf("expected crash error, got context error: %v", err)
 	}
 	if !collector.saw("session.crash") {
 		t.Fatal("expected session.crash event on heartbeat stall")
@@ -242,8 +244,8 @@ func TestSessionManager_HeartbeatStall_DetectsCrash(t *testing.T) {
 
 // logEventCollector is an EventSink that captures Log calls.
 type logEventCollector struct {
-	mu    sync.Mutex
-	logs  []logEntry
+	mu       sync.Mutex
+	logs     []logEntry
 	adapters []adapterEvent
 }
 
@@ -282,29 +284,10 @@ func (c *logEventCollector) allLogs() []logEntry {
 	return out
 }
 
-func (c *logEventCollector) saw(kind string) bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	for _, a := range c.adapters {
-		if a.kind == kind {
-			return true
-		}
-	}
-	return false
-}
-
 func (c *logEventCollector) adapterCount() int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return len(c.adapters)
-}
-
-func (c *logEventCollector) allAdapters() []adapterEvent {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	out := make([]adapterEvent, len(c.adapters))
-	copy(out, c.adapters)
-	return out
 }
 
 var _ adapter.EventSink = (*logEventCollector)(nil)

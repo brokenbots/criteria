@@ -102,10 +102,10 @@ type Session struct {
 	SandboxCleanup  func() // removes transient cgroup dirs, etc.
 
 	// WS15: session-level log stream lifecycle and heartbeat tracking.
-	cancelLog       func()
-	lastHeartbeat   atomic.Int64 // Unix nanoseconds
-	currentSink     adapter.EventSink
-	currentSinkMu   sync.Mutex
+	cancelLog     func()
+	lastHeartbeat atomic.Int64 // Unix nanoseconds
+	currentSink   adapter.EventSink
+	currentSinkMu sync.Mutex
 }
 
 func NewSessionManager(loader Loader) *SessionManager {
