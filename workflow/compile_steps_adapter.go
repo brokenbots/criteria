@@ -26,6 +26,22 @@ var copilotAllowToolsAliases = map[string]string{
 
 // compileAdapterStep compiles a non-iterating adapter-targeted step and registers
 // it in g. adapterRef is the pre-resolved "<type>.<name>" string from resolveStepTarget.
+func validateTopLevelStepRefs(stepName string, inputExprs, secretInputExprs map[string]hcl.Expression) hcl.Diagnostics {
+	var diags hcl.Diagnostics
+	diags = append(diags, validateEachRefs(stepName, inputExprs)...)
+	diags = append(diags, validateWhileRefs(stepName, inputExprs)...)
+	diags = append(diags, validateEachRefs(stepName, secretInputExprs)...)
+	diags = append(diags, validateWhileRefs(stepName, secretInputExprs)...)
+	return diags
+}
+
+func resolveOutputSchema(adapterType string, schemas map[string]AdapterInfo) map[string]ConfigField {
+	if info, ok := adapterInfo(schemas, adapterType); ok {
+		return info.OutputSchema
+	}
+	return map[string]ConfigField{}
+}
+
 func compileAdapterStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[string]AdapterInfo, opts CompileOpts, adapterRef string) hcl.Diagnostics {
 	var diags hcl.Diagnostics
 
@@ -62,18 +78,10 @@ func compileAdapterStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[strin
 	// each.* references are only valid inside iterating steps or workflow bodies
 	// (LoadDepth > 0). Non-iterating top-level steps must not reference them.
 	if opts.LoadDepth == 0 {
-		diags = append(diags, validateEachRefs(sp.Name, inputExprs)...)
-		diags = append(diags, validateWhileRefs(sp.Name, inputExprs)...)
-		diags = append(diags, validateEachRefs(sp.Name, secretInputExprs)...)
-		diags = append(diags, validateWhileRefs(sp.Name, secretInputExprs)...)
+		diags = append(diags, validateTopLevelStepRefs(sp.Name, inputExprs, secretInputExprs)...)
 	}
 
-	outputSchema := map[string]ConfigField{}
-	if adapterRef != "" {
-		if info, ok := adapterInfo(schemas, adapterType); ok {
-			outputSchema = info.OutputSchema
-		}
-	}
+	outputSchema := resolveOutputSchema(adapterType, schemas)
 
 	node := newAdapterStepNode(sp, spec, adapterRef, effectiveOnCrash, envKey, timeout, inputMap, inputExprs, secretInputMap, secretInputExprs, outputSchema)
 	diags = append(diags, maybeCopilotAliasWarnings(sp.Name, adapterType, node.AllowTools)...)

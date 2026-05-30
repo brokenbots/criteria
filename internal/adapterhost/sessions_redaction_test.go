@@ -38,14 +38,14 @@ func TestSessionManagerExecute_RegistersSensitiveOutputs(t *testing.T) {
 
 	// Manually inject a session with a mock handle.
 	sess := &Session{
-		Name:   "agent",
+		Name:    "agent",
 		Adapter: "test",
 		handle: &mockRedactionHandle{
 			result: adapter.Result{
 				Outcome: "success",
 				Outputs: map[string]string{
-					"token":   "secret123",
-					"public":  "hello",
+					"token":  "secret123",
+					"public": "hello",
 				},
 			},
 		},
@@ -81,7 +81,7 @@ func TestSessionManagerExecute_NoRegistryNilPanic(t *testing.T) {
 	// RedactionRegistry is nil.
 
 	sess := &Session{
-		Name:   "agent",
+		Name:    "agent",
 		Adapter: "test",
 		handle: &mockRedactionHandle{
 			result: adapter.Result{

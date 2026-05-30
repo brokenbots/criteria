@@ -25,9 +25,14 @@ func compileOutputRefs(g *FSMGraph) hcl.Diagnostics {
 	return diags
 }
 
-// collectOutputRefExprs gathers every expression site that may contain
-// steps.<name>.outputs.<field> traversals, in deterministic order.
-func collectOutputRefExprs(g *FSMGraph) []namedExpr {
+func appendIfNotNil(exprs []namedExpr, context string, expr hcl.Expression) []namedExpr {
+	if expr != nil {
+		exprs = append(exprs, namedExpr{context, expr})
+	}
+	return exprs
+}
+
+func collectStepOutputRefExprs(g *FSMGraph) []namedExpr {
 	var exprs []namedExpr
 	for _, name := range g.stepOrder {
 		step := g.Steps[name]
@@ -40,28 +45,22 @@ func collectOutputRefExprs(g *FSMGraph) []namedExpr {
 		for k, expr := range step.SecretInputExprs {
 			exprs = append(exprs, namedExpr{fmt.Sprintf("step %q secret_input %q", step.Name, k), expr})
 		}
-		if step.ForEach != nil {
-			exprs = append(exprs, namedExpr{fmt.Sprintf("step %q for_each", step.Name), step.ForEach})
-		}
-		if step.Count != nil {
-			exprs = append(exprs, namedExpr{fmt.Sprintf("step %q count", step.Name), step.Count})
-		}
-		if step.Parallel != nil {
-			exprs = append(exprs, namedExpr{fmt.Sprintf("step %q parallel", step.Name), step.Parallel})
-		}
-		if step.While != nil {
-			exprs = append(exprs, namedExpr{fmt.Sprintf("step %q while", step.Name), step.While})
-		}
+		exprs = appendIfNotNil(exprs, fmt.Sprintf("step %q for_each", step.Name), step.ForEach)
+		exprs = appendIfNotNil(exprs, fmt.Sprintf("step %q count", step.Name), step.Count)
+		exprs = appendIfNotNil(exprs, fmt.Sprintf("step %q parallel", step.Name), step.Parallel)
+		exprs = appendIfNotNil(exprs, fmt.Sprintf("step %q while", step.Name), step.While)
 		for outName, co := range step.Outcomes {
-			if co.OutputExpr != nil {
-				exprs = append(exprs, namedExpr{fmt.Sprintf("step %q outcome %q output", step.Name, outName), co.OutputExpr})
-			}
+			exprs = appendIfNotNil(exprs, fmt.Sprintf("step %q outcome %q output", step.Name, outName), co.OutputExpr)
 		}
-		if step.DefaultOutcome != nil && step.DefaultOutcome.OutputExpr != nil {
-			exprs = append(exprs, namedExpr{fmt.Sprintf("step %q default outcome output", step.Name), step.DefaultOutcome.OutputExpr})
+		if step.DefaultOutcome != nil {
+			exprs = appendIfNotNil(exprs, fmt.Sprintf("step %q default outcome output", step.Name), step.DefaultOutcome.OutputExpr)
 		}
 	}
+	return exprs
+}
 
+func collectSwitchOutputRefExprs(g *FSMGraph) []namedExpr {
+	var exprs []namedExpr
 	swNames := make([]string, 0, len(g.Switches))
 	for swName := range g.Switches {
 		swNames = append(swNames, swName)
@@ -81,14 +80,26 @@ func collectOutputRefExprs(g *FSMGraph) []namedExpr {
 			exprs = append(exprs, namedExpr{fmt.Sprintf("switch %q default output", swName), sw.DefaultOutput})
 		}
 	}
+	return exprs
+}
 
+func collectWorkflowOutputRefExprs(g *FSMGraph) []namedExpr {
+	var exprs []namedExpr
 	for _, name := range g.OutputOrder {
 		out := g.Outputs[name]
 		if out.Value != nil {
 			exprs = append(exprs, namedExpr{fmt.Sprintf("output %q value", name), out.Value})
 		}
 	}
+	return exprs
+}
 
+// collectOutputRefExprs gathers every expression site that may contain
+// steps.<name>.outputs.<field> traversals, in deterministic order.
+func collectOutputRefExprs(g *FSMGraph) []namedExpr {
+	exprs := collectStepOutputRefExprs(g)
+	exprs = append(exprs, collectSwitchOutputRefExprs(g)...)
+	exprs = append(exprs, collectWorkflowOutputRefExprs(g)...)
 	return exprs
 }
 
@@ -152,7 +163,7 @@ func suggestOutputFields(misspelled string, schema map[string]ConfigField) []str
 		name     string
 		distance int
 	}
-	var candidates []candidate
+	candidates := make([]candidate, 0, len(schema))
 	for name := range schema {
 		candidates = append(candidates, candidate{name: name, distance: levenshteinDistance(misspelled, name)})
 	}
@@ -171,10 +182,10 @@ func suggestOutputFields(misspelled string, schema map[string]ConfigField) []str
 
 // levenshteinDistance computes the edit distance between a and b.
 func levenshteinDistance(a, b string) int {
-	if len(a) == 0 {
+	if a == "" {
 		return len(b)
 	}
-	if len(b) == 0 {
+	if b == "" {
 		return len(a)
 	}
 	prev := make([]int, len(b)+1)

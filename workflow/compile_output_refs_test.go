@@ -14,10 +14,10 @@ var outputTestSchema = AdapterInfo{
 		"command": {Required: true, Type: ConfigFieldString},
 	},
 	OutputSchema: map[string]ConfigField{
-		"result":  {Type: ConfigFieldString},
-		"status":  {Type: ConfigFieldString},
-		"token":   {Type: ConfigFieldString, Sensitive: true},
-		"exit":    {Type: ConfigFieldNumber},
+		"result": {Type: ConfigFieldString},
+		"status": {Type: ConfigFieldString},
+		"token":  {Type: ConfigFieldString, Sensitive: true},
+		"exit":   {Type: ConfigFieldNumber},
 	},
 }
 
