@@ -65,9 +65,12 @@ func executeServerRun(ctx context.Context, log *slog.Logger, loader adapterhost.
 			return nil
 		})
 
+	auditPath, _ := auditLogPath(state.RunID)
+	auditWriter := adapterhost.NewFileAuditWriter(auditPath)
 	eng = engine.New(graph, loader, sink,
 		engine.WithVarOverrides(parseVarOverrides(opts.varOverrides)),
 		engine.WithWorkflowDir(workflowDirFromPath(opts.workflowPath)),
+		engine.WithAuditWriter(auditWriter),
 	)
 	if err := eng.Run(ctx); err != nil {
 		log.Error("run failed", "error", err)

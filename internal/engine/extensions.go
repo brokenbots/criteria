@@ -7,6 +7,7 @@ import (
 
 	"github.com/zclconf/go-cty/cty"
 
+	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/workflow"
 	"github.com/brokenbots/criteria/workflow/lockfile"
 )
@@ -112,6 +113,14 @@ func WithLockfile(lf *lockfile.Lockfile) Option {
 func WithLogger(log *slog.Logger) Option {
 	return func(e *Engine) {
 		e.log = log
+	}
+}
+
+// WithAuditWriter sets the audit writer used by the session manager to
+// record permission decisions. When nil, no audit entries are written.
+func WithAuditWriter(w adapterhost.AuditWriter) Option {
+	return func(e *Engine) {
+		e.auditWriter = w
 	}
 }
 

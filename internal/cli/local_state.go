@@ -71,6 +71,14 @@ func checkpointFilePath(runID string) (string, error) {
 	return filepath.Join(d, "runs", runID+".json"), nil
 }
 
+func auditLogPath(runID string) (string, error) {
+	d, err := stateDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(d, "runs", runID, "audit.log"), nil
+}
+
 func writeLocalRunState(st *localRunState) error {
 	p, err := stateFilePath()
 	if err != nil {
