@@ -105,6 +105,11 @@ func (c *canceledCtxHandle) Execute(_ context.Context, _ string, _ *workflow.Ste
 }
 func (c *canceledCtxHandle) CloseSession(context.Context, string) error { return nil }
 func (c *canceledCtxHandle) Kill()                                      {}
+func (c *canceledCtxHandle) Pause(context.Context, string) error        { return nil }
+func (c *canceledCtxHandle) Resume(context.Context, string) error       { return nil }
+func (c *canceledCtxHandle) Inspect(context.Context, string) (*v2.InspectResponse, error) {
+	return &v2.InspectResponse{}, nil
+}
 
 // TestLoader_HostCanceledContextLogsAtDebug verifies that when the surrounding
 // context is canceled by the host (and the session closing flag is NOT set),
@@ -154,6 +159,11 @@ func (e *eofHandle) Execute(_ context.Context, _ string, _ *workflow.StepNode, _
 }
 func (e *eofHandle) CloseSession(context.Context, string) error { return nil }
 func (e *eofHandle) Kill()                                      {}
+func (e *eofHandle) Pause(context.Context, string) error        { return nil }
+func (e *eofHandle) Resume(context.Context, string) error       { return nil }
+func (e *eofHandle) Inspect(context.Context, string) (*v2.InspectResponse, error) {
+	return &v2.InspectResponse{}, nil
+}
 
 // TestLoader_ExpectedCloseLogsAtDebug verifies that when the closing flag is
 // set on a session and Execute returns an EOF-like error, the session manager

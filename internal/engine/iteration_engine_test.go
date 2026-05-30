@@ -18,6 +18,7 @@ import (
 
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapterhost"
+	v2 "github.com/brokenbots/criteria/sdk/pb/criteria/v2"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -74,6 +75,12 @@ func (p *multiOutcomeAdapter) Execute(_ context.Context, _ string, _ *workflow.S
 func (p *multiOutcomeAdapter) Permit(context.Context, string, string, bool, string) error { return nil }
 func (p *multiOutcomeAdapter) CloseSession(context.Context, string) error                 { return nil }
 func (p *multiOutcomeAdapter) Kill()                                                      {}
+
+func (p *multiOutcomeAdapter) Pause(context.Context, string) error  { return nil }
+func (p *multiOutcomeAdapter) Resume(context.Context, string) error { return nil }
+func (p *multiOutcomeAdapter) Inspect(context.Context, string) (*v2.InspectResponse, error) {
+	return &v2.InspectResponse{}, nil
+}
 
 // --- for_each tests ---
 
@@ -537,6 +544,12 @@ func (p *captureInputAdapter) Permit(context.Context, string, string, bool, stri
 func (p *captureInputAdapter) CloseSession(context.Context, string) error                 { return nil }
 func (p *captureInputAdapter) Kill()                                                      {}
 
+func (p *captureInputAdapter) Pause(context.Context, string) error  { return nil }
+func (p *captureInputAdapter) Resume(context.Context, string) error { return nil }
+func (p *captureInputAdapter) Inspect(context.Context, string) (*v2.InspectResponse, error) {
+	return &v2.InspectResponse{}, nil
+}
+
 // TestIteration_VarScope_SerializeRestore verifies that iteration cursor state
 // can be serialized and restored (simulating a crash-resume scenario).
 func TestIteration_VarScope_SerializeRestore(t *testing.T) {
@@ -714,6 +727,12 @@ func (p *captureOutputAdapter) Permit(context.Context, string, string, bool, str
 }
 func (p *captureOutputAdapter) CloseSession(context.Context, string) error { return nil }
 func (p *captureOutputAdapter) Kill()                                      {}
+
+func (p *captureOutputAdapter) Pause(context.Context, string) error  { return nil }
+func (p *captureOutputAdapter) Resume(context.Context, string) error { return nil }
+func (p *captureOutputAdapter) Inspect(context.Context, string) (*v2.InspectResponse, error) {
+	return &v2.InspectResponse{}, nil
+}
 
 // TestIter_MapForEach_KeyAndTotal verifies that for_each over an HCL object map
 // binds each.key to the map key string and each._total to the map size.
@@ -1613,6 +1632,12 @@ func (p *callbackAdapter) Permit(context.Context, string, string, bool, string) 
 func (p *callbackAdapter) CloseSession(context.Context, string) error                 { return nil }
 func (p *callbackAdapter) Kill()                                                      {}
 
+func (p *callbackAdapter) Pause(context.Context, string) error  { return nil }
+func (p *callbackAdapter) Resume(context.Context, string) error { return nil }
+func (p *callbackAdapter) Inspect(context.Context, string) (*v2.InspectResponse, error) {
+	return &v2.InspectResponse{}, nil
+}
+
 // outputAdapter is a test adapter that always returns a fixed outcome and outputs map.
 type outputAdapter struct {
 	outcome string
@@ -1631,6 +1656,12 @@ func (p *outputAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNod
 func (p *outputAdapter) Permit(context.Context, string, string, bool, string) error { return nil }
 func (p *outputAdapter) CloseSession(context.Context, string) error                 { return nil }
 func (p *outputAdapter) Kill()                                                      {}
+
+func (p *outputAdapter) Pause(context.Context, string) error  { return nil }
+func (p *outputAdapter) Resume(context.Context, string) error { return nil }
+func (p *outputAdapter) Inspect(context.Context, string) (*v2.InspectResponse, error) {
+	return &v2.InspectResponse{}, nil
+}
 
 // represent map iteration keys stored in the W07/W10 cursor JSON so the SDK
 // can expose each.key on resume.

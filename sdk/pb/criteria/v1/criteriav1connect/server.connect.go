@@ -52,6 +52,13 @@ const (
 	ServerServiceWatchRunProcedure = "/criteria.v1.ServerService/WatchRun"
 	// ServerServiceStopRunProcedure is the fully-qualified name of the ServerService's StopRun RPC.
 	ServerServiceStopRunProcedure = "/criteria.v1.ServerService/StopRun"
+	// ServerServicePauseRunProcedure is the fully-qualified name of the ServerService's PauseRun RPC.
+	ServerServicePauseRunProcedure = "/criteria.v1.ServerService/PauseRun"
+	// ServerServiceResumeRunProcedure is the fully-qualified name of the ServerService's ResumeRun RPC.
+	ServerServiceResumeRunProcedure = "/criteria.v1.ServerService/ResumeRun"
+	// ServerServiceInspectRunProcedure is the fully-qualified name of the ServerService's InspectRun
+	// RPC.
+	ServerServiceInspectRunProcedure = "/criteria.v1.ServerService/InspectRun"
 	// ServerServiceSendPromptProcedure is the fully-qualified name of the ServerService's SendPrompt
 	// RPC.
 	ServerServiceSendPromptProcedure = "/criteria.v1.ServerService/SendPrompt"
@@ -76,6 +83,14 @@ type ServerServiceClient interface {
 	// Implementations MUST reject the request with PERMISSION_DENIED if the
 	// authenticated caller does not own the target run's agent.
 	StopRun(context.Context, *connect.Request[v1.StopRunRequest]) (*connect.Response[v1.StopRunResponse], error)
+	// PauseRun halts a run without losing state. The adapter session is
+	// paused via the v2 adapter Pause RPC.
+	PauseRun(context.Context, *connect.Request[v1.PauseRunRequest]) (*connect.Response[v1.PauseRunResponse], error)
+	// ResumeRun continues a previously paused run.
+	ResumeRun(context.Context, *connect.Request[v1.ResumeRunRequest]) (*connect.Response[v1.ResumeRunResponse], error)
+	// InspectRun returns structured read-only state for a run. If session_id
+	// is empty the server may return a summary across all sessions.
+	InspectRun(context.Context, *connect.Request[v1.InspectRunRequest]) (*connect.Response[v1.InspectRunResponse], error)
 	// SendPrompt — schema-only stub for Phase 2.3. UI clients can wire up
 	// against this method, but the server currently returns UNIMPLEMENTED.
 	SendPrompt(context.Context, *connect.Request[v1.SendPromptRequest]) (*connect.Response[v1.SendPromptResponse], error)
@@ -134,6 +149,24 @@ func NewServerServiceClient(httpClient connect.HTTPClient, baseURL string, opts 
 			connect.WithSchema(serverServiceMethods.ByName("StopRun")),
 			connect.WithClientOptions(opts...),
 		),
+		pauseRun: connect.NewClient[v1.PauseRunRequest, v1.PauseRunResponse](
+			httpClient,
+			baseURL+ServerServicePauseRunProcedure,
+			connect.WithSchema(serverServiceMethods.ByName("PauseRun")),
+			connect.WithClientOptions(opts...),
+		),
+		resumeRun: connect.NewClient[v1.ResumeRunRequest, v1.ResumeRunResponse](
+			httpClient,
+			baseURL+ServerServiceResumeRunProcedure,
+			connect.WithSchema(serverServiceMethods.ByName("ResumeRun")),
+			connect.WithClientOptions(opts...),
+		),
+		inspectRun: connect.NewClient[v1.InspectRunRequest, v1.InspectRunResponse](
+			httpClient,
+			baseURL+ServerServiceInspectRunProcedure,
+			connect.WithSchema(serverServiceMethods.ByName("InspectRun")),
+			connect.WithClientOptions(opts...),
+		),
 		sendPrompt: connect.NewClient[v1.SendPromptRequest, v1.SendPromptResponse](
 			httpClient,
 			baseURL+ServerServiceSendPromptProcedure,
@@ -152,6 +185,9 @@ type serverServiceClient struct {
 	listRunEvents *connect.Client[v1.ListRunEventsRequest, v1.ListRunEventsResponse]
 	watchRun      *connect.Client[v1.WatchRunRequest, v1.Envelope]
 	stopRun       *connect.Client[v1.StopRunRequest, v1.StopRunResponse]
+	pauseRun      *connect.Client[v1.PauseRunRequest, v1.PauseRunResponse]
+	resumeRun     *connect.Client[v1.ResumeRunRequest, v1.ResumeRunResponse]
+	inspectRun    *connect.Client[v1.InspectRunRequest, v1.InspectRunResponse]
 	sendPrompt    *connect.Client[v1.SendPromptRequest, v1.SendPromptResponse]
 }
 
@@ -190,6 +226,21 @@ func (c *serverServiceClient) StopRun(ctx context.Context, req *connect.Request[
 	return c.stopRun.CallUnary(ctx, req)
 }
 
+// PauseRun calls criteria.v1.ServerService.PauseRun.
+func (c *serverServiceClient) PauseRun(ctx context.Context, req *connect.Request[v1.PauseRunRequest]) (*connect.Response[v1.PauseRunResponse], error) {
+	return c.pauseRun.CallUnary(ctx, req)
+}
+
+// ResumeRun calls criteria.v1.ServerService.ResumeRun.
+func (c *serverServiceClient) ResumeRun(ctx context.Context, req *connect.Request[v1.ResumeRunRequest]) (*connect.Response[v1.ResumeRunResponse], error) {
+	return c.resumeRun.CallUnary(ctx, req)
+}
+
+// InspectRun calls criteria.v1.ServerService.InspectRun.
+func (c *serverServiceClient) InspectRun(ctx context.Context, req *connect.Request[v1.InspectRunRequest]) (*connect.Response[v1.InspectRunResponse], error) {
+	return c.inspectRun.CallUnary(ctx, req)
+}
+
 // SendPrompt calls criteria.v1.ServerService.SendPrompt.
 func (c *serverServiceClient) SendPrompt(ctx context.Context, req *connect.Request[v1.SendPromptRequest]) (*connect.Response[v1.SendPromptResponse], error) {
 	return c.sendPrompt.CallUnary(ctx, req)
@@ -214,6 +265,14 @@ type ServerServiceHandler interface {
 	// Implementations MUST reject the request with PERMISSION_DENIED if the
 	// authenticated caller does not own the target run's agent.
 	StopRun(context.Context, *connect.Request[v1.StopRunRequest]) (*connect.Response[v1.StopRunResponse], error)
+	// PauseRun halts a run without losing state. The adapter session is
+	// paused via the v2 adapter Pause RPC.
+	PauseRun(context.Context, *connect.Request[v1.PauseRunRequest]) (*connect.Response[v1.PauseRunResponse], error)
+	// ResumeRun continues a previously paused run.
+	ResumeRun(context.Context, *connect.Request[v1.ResumeRunRequest]) (*connect.Response[v1.ResumeRunResponse], error)
+	// InspectRun returns structured read-only state for a run. If session_id
+	// is empty the server may return a summary across all sessions.
+	InspectRun(context.Context, *connect.Request[v1.InspectRunRequest]) (*connect.Response[v1.InspectRunResponse], error)
 	// SendPrompt — schema-only stub for Phase 2.3. UI clients can wire up
 	// against this method, but the server currently returns UNIMPLEMENTED.
 	SendPrompt(context.Context, *connect.Request[v1.SendPromptRequest]) (*connect.Response[v1.SendPromptResponse], error)
@@ -268,6 +327,24 @@ func NewServerServiceHandler(svc ServerServiceHandler, opts ...connect.HandlerOp
 		connect.WithSchema(serverServiceMethods.ByName("StopRun")),
 		connect.WithHandlerOptions(opts...),
 	)
+	serverServicePauseRunHandler := connect.NewUnaryHandler(
+		ServerServicePauseRunProcedure,
+		svc.PauseRun,
+		connect.WithSchema(serverServiceMethods.ByName("PauseRun")),
+		connect.WithHandlerOptions(opts...),
+	)
+	serverServiceResumeRunHandler := connect.NewUnaryHandler(
+		ServerServiceResumeRunProcedure,
+		svc.ResumeRun,
+		connect.WithSchema(serverServiceMethods.ByName("ResumeRun")),
+		connect.WithHandlerOptions(opts...),
+	)
+	serverServiceInspectRunHandler := connect.NewUnaryHandler(
+		ServerServiceInspectRunProcedure,
+		svc.InspectRun,
+		connect.WithSchema(serverServiceMethods.ByName("InspectRun")),
+		connect.WithHandlerOptions(opts...),
+	)
 	serverServiceSendPromptHandler := connect.NewUnaryHandler(
 		ServerServiceSendPromptProcedure,
 		svc.SendPrompt,
@@ -290,6 +367,12 @@ func NewServerServiceHandler(svc ServerServiceHandler, opts ...connect.HandlerOp
 			serverServiceWatchRunHandler.ServeHTTP(w, r)
 		case ServerServiceStopRunProcedure:
 			serverServiceStopRunHandler.ServeHTTP(w, r)
+		case ServerServicePauseRunProcedure:
+			serverServicePauseRunHandler.ServeHTTP(w, r)
+		case ServerServiceResumeRunProcedure:
+			serverServiceResumeRunHandler.ServeHTTP(w, r)
+		case ServerServiceInspectRunProcedure:
+			serverServiceInspectRunHandler.ServeHTTP(w, r)
 		case ServerServiceSendPromptProcedure:
 			serverServiceSendPromptHandler.ServeHTTP(w, r)
 		default:
@@ -327,6 +410,18 @@ func (UnimplementedServerServiceHandler) WatchRun(context.Context, *connect.Requ
 
 func (UnimplementedServerServiceHandler) StopRun(context.Context, *connect.Request[v1.StopRunRequest]) (*connect.Response[v1.StopRunResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("criteria.v1.ServerService.StopRun is not implemented"))
+}
+
+func (UnimplementedServerServiceHandler) PauseRun(context.Context, *connect.Request[v1.PauseRunRequest]) (*connect.Response[v1.PauseRunResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("criteria.v1.ServerService.PauseRun is not implemented"))
+}
+
+func (UnimplementedServerServiceHandler) ResumeRun(context.Context, *connect.Request[v1.ResumeRunRequest]) (*connect.Response[v1.ResumeRunResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("criteria.v1.ServerService.ResumeRun is not implemented"))
+}
+
+func (UnimplementedServerServiceHandler) InspectRun(context.Context, *connect.Request[v1.InspectRunRequest]) (*connect.Response[v1.InspectRunResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("criteria.v1.ServerService.InspectRun is not implemented"))
 }
 
 func (UnimplementedServerServiceHandler) SendPrompt(context.Context, *connect.Request[v1.SendPromptRequest]) (*connect.Response[v1.SendPromptResponse], error) {

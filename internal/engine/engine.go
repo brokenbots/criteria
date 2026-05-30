@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/zclconf/go-cty/cty"
@@ -15,6 +16,7 @@ import (
 	"github.com/brokenbots/criteria/internal/adapter/secrets"
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	engineruntime "github.com/brokenbots/criteria/internal/engine/runtime"
+	v2 "github.com/brokenbots/criteria/sdk/pb/criteria/v2"
 	"github.com/brokenbots/criteria/workflow"
 	"github.com/brokenbots/criteria/workflow/lockfile"
 )
@@ -147,6 +149,11 @@ type Engine struct {
 	// auditWriter, when non-nil, is wired into the SessionManager so that
 	// permission decisions are recorded to a file (WS16).
 	auditWriter adapterhost.AuditWriter
+
+	// WS17: liveSessions holds the active SessionManager while a run is in
+	// progress, enabling Pause/Resume/Inspect from outside runLoop.
+	liveSessions *adapterhost.SessionManager
+	mu           sync.RWMutex
 }
 
 func New(graph *workflow.FSMGraph, loader adapterhost.Loader, sink Sink, opts ...Option) *Engine {
@@ -175,6 +182,41 @@ func (e *Engine) VisitCounts() map[string]int {
 		return e.liveRunState.Visits
 	}
 	return e.lastVisits
+}
+
+// Pause halts all open adapter sessions without losing state.
+// It is reentrant and idempotent.
+func (e *Engine) Pause(ctx context.Context) error {
+	e.mu.RLock()
+	sessions := e.liveSessions
+	e.mu.RUnlock()
+	if sessions == nil {
+		return errors.New("no active run to pause")
+	}
+	return sessions.PauseAll(ctx)
+}
+
+// Resume continues all paused adapter sessions.
+// It is reentrant and idempotent.
+func (e *Engine) Resume(ctx context.Context) error {
+	e.mu.RLock()
+	sessions := e.liveSessions
+	e.mu.RUnlock()
+	if sessions == nil {
+		return errors.New("no active run to resume")
+	}
+	return sessions.ResumeAll(ctx)
+}
+
+// InspectSession returns structured read-only state for a single session.
+func (e *Engine) InspectSession(ctx context.Context, name string) (*v2.InspectResponse, error) {
+	e.mu.RLock()
+	sessions := e.liveSessions
+	e.mu.RUnlock()
+	if sessions == nil {
+		return nil, errors.New("no active run to inspect")
+	}
+	return sessions.InspectSession(ctx, name)
 }
 
 // setLockfileOnSessions ensures the session manager has the lockfile needed
@@ -299,6 +341,15 @@ func (e *Engine) runLoop(ctx context.Context, sessions *adapterhost.SessionManag
 	}
 	deps := e.buildDeps(sessions, sink)
 
+	e.mu.Lock()
+	e.liveSessions = sessions
+	e.mu.Unlock()
+	defer func() {
+		e.mu.Lock()
+		e.liveSessions = nil
+		e.mu.Unlock()
+	}()
+
 	e.liveRunState = st
 	for {
 		node, err := nodeFor(e.graph, st.Current)
@@ -315,7 +366,8 @@ func (e *Engine) runLoop(ctx context.Context, sessions *adapterhost.SessionManag
 			return e.handleEvalError(st, err, sink)
 		}
 		if next == workflow.ReturnSentinel {
-			return e.handleReturnExit(st, sink)
+			e.handleReturnExit(st, sink)
+			return nil
 		}
 		e.advanceTo(st, next)
 	}
@@ -563,7 +615,7 @@ func (e *Engine) handleEvalError(st *RunState, err error, sink Sink) error {
 // handleReturnExit handles top-level runs that exit via next = "return".
 // The projected outputs in st.ReturnOutputs are emitted as OnRunOutputs
 // (if non-empty) and the run is completed successfully with no named final state.
-func (e *Engine) handleReturnExit(st *RunState, sink Sink) error {
+func (e *Engine) handleReturnExit(st *RunState, sink Sink) {
 	e.liveRunState = nil
 	e.lastVisits = st.Visits
 
@@ -574,7 +626,6 @@ func (e *Engine) handleReturnExit(st *RunState, sink Sink) error {
 		}
 	}
 	sink.OnRunCompleted("", true)
-	return nil
 }
 
 // formatReturnOutputs converts the ReturnOutputs cty.Value map to the

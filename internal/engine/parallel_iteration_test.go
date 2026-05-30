@@ -22,6 +22,7 @@ import (
 
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapterhost"
+	v2 "github.com/brokenbots/criteria/sdk/pb/criteria/v2"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -94,6 +95,12 @@ func (p *barrierAdapter) Permit(context.Context, string, string, bool, string) e
 func (p *barrierAdapter) CloseSession(context.Context, string) error                 { return nil }
 func (p *barrierAdapter) Kill()                                                      {}
 
+func (p *barrierAdapter) Pause(context.Context, string) error  { return nil }
+func (p *barrierAdapter) Resume(context.Context, string) error { return nil }
+func (p *barrierAdapter) Inspect(context.Context, string) (*v2.InspectResponse, error) {
+	return &v2.InspectResponse{}, nil
+}
+
 // concurrencyTrackingAdapter records the peak number of concurrent Execute calls.
 type concurrencyTrackingAdapter struct {
 	name          string
@@ -135,6 +142,12 @@ func (p *concurrencyTrackingAdapter) Permit(context.Context, string, string, boo
 func (p *concurrencyTrackingAdapter) CloseSession(context.Context, string) error { return nil }
 func (p *concurrencyTrackingAdapter) Kill()                                      {}
 
+func (p *concurrencyTrackingAdapter) Pause(context.Context, string) error  { return nil }
+func (p *concurrencyTrackingAdapter) Resume(context.Context, string) error { return nil }
+func (p *concurrencyTrackingAdapter) Inspect(context.Context, string) (*v2.InspectResponse, error) {
+	return &v2.InspectResponse{}, nil
+}
+
 // contextAwareAdapter calls fn with the goroutine-specific context and a
 // monotonic call index. Safe for concurrent use.
 type contextAwareAdapter struct {
@@ -158,6 +171,12 @@ func (p *contextAwareAdapter) Permit(context.Context, string, string, bool, stri
 }
 func (p *contextAwareAdapter) CloseSession(context.Context, string) error { return nil }
 func (p *contextAwareAdapter) Kill()                                      {}
+
+func (p *contextAwareAdapter) Pause(context.Context, string) error  { return nil }
+func (p *contextAwareAdapter) Resume(context.Context, string) error { return nil }
+func (p *contextAwareAdapter) Inspect(context.Context, string) (*v2.InspectResponse, error) {
+	return &v2.InspectResponse{}, nil
+}
 
 // parallelSafeAdapter is a fakeAdapter that declares the "parallel_safe" capability.
 // Use this instead of fakeAdapter for parallel steps in tests.
@@ -183,6 +202,12 @@ func (p *parallelSafeAdapter) Execute(_ context.Context, _ string, _ *workflow.S
 func (p *parallelSafeAdapter) Permit(context.Context, string, string, bool, string) error { return nil }
 func (p *parallelSafeAdapter) CloseSession(context.Context, string) error                 { return nil }
 func (p *parallelSafeAdapter) Kill()                                                      {}
+
+func (p *parallelSafeAdapter) Pause(context.Context, string) error  { return nil }
+func (p *parallelSafeAdapter) Resume(context.Context, string) error { return nil }
+func (p *parallelSafeAdapter) Inspect(context.Context, string) (*v2.InspectResponse, error) {
+	return &v2.InspectResponse{}, nil
+}
 
 // --- Tests ---
 
@@ -470,6 +495,12 @@ func (p *declIdxAdapter) Permit(context.Context, string, string, bool, string) e
 func (p *declIdxAdapter) CloseSession(context.Context, string) error                 { return nil }
 func (p *declIdxAdapter) Kill()                                                      {}
 
+func (p *declIdxAdapter) Pause(context.Context, string) error  { return nil }
+func (p *declIdxAdapter) Resume(context.Context, string) error { return nil }
+func (p *declIdxAdapter) Inspect(context.Context, string) (*v2.InspectResponse, error) {
+	return &v2.InspectResponse{}, nil
+}
+
 // TestParallelIteration_ContextCancellation verifies that cancelling the parent
 // context propagates to all in-flight parallel goroutines without leaking.
 // Goroutine leak detection is handled by goleak.VerifyTestMain in main_test.go.
@@ -639,6 +670,12 @@ func (p *loggingBarrierAdapter) Permit(context.Context, string, string, bool, st
 }
 func (p *loggingBarrierAdapter) CloseSession(context.Context, string) error { return nil }
 func (p *loggingBarrierAdapter) Kill()                                      {}
+
+func (p *loggingBarrierAdapter) Pause(context.Context, string) error  { return nil }
+func (p *loggingBarrierAdapter) Resume(context.Context, string) error { return nil }
+func (p *loggingBarrierAdapter) Inspect(context.Context, string) (*v2.InspectResponse, error) {
+	return &v2.InspectResponse{}, nil
+}
 
 // sharedLogSink is a test Sink whose StepEventSink returns an EventSink that
 // writes to a shared non-atomic counter. The counter is deliberately not
@@ -974,6 +1011,12 @@ func (p *statefulAdapter) Permit(context.Context, string, string, bool, string) 
 func (p *statefulAdapter) CloseSession(context.Context, string) error                 { return nil }
 func (p *statefulAdapter) Kill()                                                      {}
 
+func (p *statefulAdapter) Pause(context.Context, string) error  { return nil }
+func (p *statefulAdapter) Resume(context.Context, string) error { return nil }
+func (p *statefulAdapter) Inspect(context.Context, string) (*v2.InspectResponse, error) {
+	return &v2.InspectResponse{}, nil
+}
+
 // TestParallelSubworkflow_IsolatedSessions_ConcurrentExecution verifies that
 // parallel subworkflow iterations each receive a distinct adapter session (W19
 // isolation fix) and execute concurrently.
@@ -1083,6 +1126,12 @@ func (p *countingNotSafeAdapter) Permit(context.Context, string, string, bool, s
 }
 func (p *countingNotSafeAdapter) CloseSession(context.Context, string) error { return nil }
 func (p *countingNotSafeAdapter) Kill()                                      {}
+
+func (p *countingNotSafeAdapter) Pause(context.Context, string) error  { return nil }
+func (p *countingNotSafeAdapter) Resume(context.Context, string) error { return nil }
+func (p *countingNotSafeAdapter) Inspect(context.Context, string) (*v2.InspectResponse, error) {
+	return &v2.InspectResponse{}, nil
+}
 
 // TestEvaluateParallel_AdapterNotParallelSafe_RuntimeError verifies that when
 // an adapter step with parallel = [...] is backed by a session whose adapter
@@ -1339,6 +1388,12 @@ func (p *slowLogAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNo
 func (p *slowLogAdapter) Permit(context.Context, string, string, bool, string) error { return nil }
 func (p *slowLogAdapter) CloseSession(context.Context, string) error                 { return nil }
 func (p *slowLogAdapter) Kill()                                                      {}
+
+func (p *slowLogAdapter) Pause(context.Context, string) error  { return nil }
+func (p *slowLogAdapter) Resume(context.Context, string) error { return nil }
+func (p *slowLogAdapter) Inspect(context.Context, string) (*v2.InspectResponse, error) {
+	return &v2.InspectResponse{}, nil
+}
 
 // slowCountingSink is a Sink whose StepEventSink-produced EventSink sleeps
 // writeDelay on every Log call. This models gRPC/IO write latency and exposes
