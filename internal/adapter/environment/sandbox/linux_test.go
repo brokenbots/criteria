@@ -4,9 +4,11 @@ package sandbox
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"syscall"
@@ -93,6 +95,42 @@ func TestLinuxPrepared_ApplyToCmd(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("expected CRITERIA_SANDBOX_CONFIG_PATH env var")
+	}
+}
+
+func TestRunShimArgvNoDuplicateTarget(t *testing.T) {
+	cfg := ShimConfig{TargetPath: "/usr/bin/my-adapter"}
+	data, _ := json.Marshal(cfg)
+	tmpFile, err := os.CreateTemp("", "criteria-sandbox-*.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(tmpFile.Name())
+	if _, err := tmpFile.Write(data); err != nil {
+		t.Fatal(err)
+	}
+	tmpFile.Close()
+
+	oldArgs := os.Args
+	defer func() { os.Args = oldArgs }()
+	os.Args = []string{"/usr/bin/criteria", "_sandbox_shim_", "/usr/bin/my-adapter", "--flag", "value"}
+
+	var capturedArgv []string
+	oldExec := shimExecFunc
+	defer func() { shimExecFunc = oldExec }()
+	shimExecFunc = func(path string, argv []string, envv []string) error {
+		capturedArgv = argv
+		return errors.New("mock exec")
+	}
+
+	err = runShim(tmpFile.Name())
+	if err == nil {
+		t.Fatal("expected error from mock exec")
+	}
+
+	want := []string{"/usr/bin/my-adapter", "--flag", "value"}
+	if !reflect.DeepEqual(capturedArgv, want) {
+		t.Fatalf("argv = %v, want %v", capturedArgv, want)
 	}
 }
 

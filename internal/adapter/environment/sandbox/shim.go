@@ -62,6 +62,8 @@ func ApplyEnv() error {
 	return applyShimRestrictions(&cfg)
 }
 
+var shimExecFunc = syscall.Exec
+
 func runShim(configPath string) error {
 	data, err := os.ReadFile(configPath)
 	if err != nil {
@@ -82,10 +84,10 @@ func runShim(configPath string) error {
 	os.Unsetenv(shimEnvVar)
 	os.Remove(configPath)
 	argv := []string{cfg.TargetPath}
-	if len(os.Args) > 2 {
-		argv = append(argv, os.Args[2:]...)
+	if len(os.Args) > 3 {
+		argv = append(argv, os.Args[3:]...)
 	}
-	err = syscall.Exec(cfg.TargetPath, argv, os.Environ())
+	err = shimExecFunc(cfg.TargetPath, argv, os.Environ())
 	return fmt.Errorf("exec %s: %w", cfg.TargetPath, err)
 }
 

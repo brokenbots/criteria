@@ -62,6 +62,8 @@ func doProbe() Capabilities {
 	return c
 }
 
+var probeTruePath = "/bin/true"
+
 func probeUserNamespaces() bool {
 	// The canonical check is /proc/sys/kernel/unprivileged_userns_clone
 	// (Debian/Ubuntu specific). If absent, test in a child process so we
@@ -72,6 +74,10 @@ func probeUserNamespaces() bool {
 		val, _ := strconv.Atoi(strings.TrimSpace(string(b)))
 		return val == 1
 	}
+	return probeUserNamespacesFallback()
+}
+
+func probeUserNamespacesFallback() bool {
 	// Fallback: fork a child into a new user namespace and see if it
 	// survives.  The child runs /bin/true (should exist everywhere).
 	attr := &os.ProcAttr{
@@ -81,11 +87,14 @@ func probeUserNamespaces() bool {
 			GidMappings: []syscall.SysProcIDMap{{ContainerID: 0, HostID: os.Getgid(), Size: 1}},
 		},
 	}
-	proc, err := os.StartProcess("/bin/true", []string{"true"}, attr)
+	proc, err := os.StartProcess(probeTruePath, []string{"true"}, attr)
 	if err != nil {
 		return false
 	}
-	_, _ = proc.Wait()
+	state, err := proc.Wait()
+	if err != nil || !state.Success() {
+		return false
+	}
 	return true
 }
 

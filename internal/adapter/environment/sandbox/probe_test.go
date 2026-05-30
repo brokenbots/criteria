@@ -52,3 +52,13 @@ func TestCapabilitiesMissingNone(t *testing.T) {
 		t.Fatalf("expected 0 missing, got %d: %v", len(missing), missing)
 	}
 }
+
+func TestProbeUserNamespacesFallback(t *testing.T) {
+	orig := probeTruePath
+	defer func() { probeTruePath = orig }()
+
+	probeTruePath = "/nonexistent/path/to/true"
+	if probeUserNamespacesFallback() {
+		t.Fatal("expected false when true binary is missing")
+	}
+}
