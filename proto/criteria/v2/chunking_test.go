@@ -116,6 +116,20 @@ func TestNeedsChunking(t *testing.T) {
 
 // ─── SendChunks / AssembleChunks round-trip tests ───────────────────────────
 
+// TestSendChunks_SubThreshold_NotChunked verifies the regression requirement:
+// payloads below the 4 MiB threshold are delivered as a single unchunked
+// envelope when chunked at the threshold size itself, so local UDS paths work
+// unchanged.
+func TestSendChunks_SubThreshold_NotChunked(t *testing.T) {
+	data := bytes.Repeat([]byte{0xCD}, 4<<20-1) // 1 byte under threshold
+	chunks, payloads := criteriav2.SplitChunks(data, criteriav2.DefaultMaxChunkBytes)
+	require.Len(t, chunks, 1, "sub-threshold payload must produce exactly one chunk at threshold size")
+	assert.True(t, chunks[0].Final, "single chunk must be final")
+	assert.Equal(t, data, payloads[0], "single chunk must carry full payload")
+
+	assert.False(t, criteriav2.NeedsChunking(data, criteriav2.DefaultMaxChunkBytes), "NeedsChunking must be false for sub-threshold payload")
+}
+
 func TestSendChunks_AssembleChunks_RoundTrip(t *testing.T) {
 	sizes := []int{
 		0,         // empty
@@ -158,6 +172,9 @@ func TestAssembleChunks_OutOfOrder(t *testing.T) {
 	assert.Contains(t, err.Error(), "out-of-order")
 }
 
+// TestAssembleChunks_DuplicateSeq verifies that a duplicate sequence number
+// is detected via the out-of-order path (duplicate seq is a special case of
+// out-of-order because the expected next seq has already passed).
 func TestAssembleChunks_DuplicateSeq(t *testing.T) {
 	data := []byte("0123456789")
 	sink := &sliceChunkSink{payloadID: "pid"}

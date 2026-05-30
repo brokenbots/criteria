@@ -36,8 +36,7 @@ func (m *HeartbeatMonitor) Last() time.Time {
 
 // Stalled reports true when no heartbeat has been recorded in the last
 // `maxAge` duration.  If no heartbeat has ever been recorded, Stalled
-// returns true only after `maxAge` has elapsed since the zero time (i.e.
-// it behaves as if the first heartbeat was due immediately).
+// returns true (the first heartbeat is considered due immediately).
 func (m *HeartbeatMonitor) Stalled(maxAge time.Duration) bool {
 	ns := m.lastNs.Load()
 	if ns == 0 {

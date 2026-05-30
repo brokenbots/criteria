@@ -111,7 +111,7 @@ type Session struct {
 
 	// WS15: session-level log stream lifecycle and heartbeat tracking.
 	cancelLog     func()
-	lastHeartbeat atomic.Int64 // Unix nanoseconds
+	hbMonitor     adapter.HeartbeatMonitor
 	currentSink   adapter.EventSink
 	currentSinkMu sync.Mutex
 
@@ -416,7 +416,7 @@ func (m *SessionManager) startLogStream(ctx context.Context, sess *Session, plug
 		logSink := &logForwardSink{
 			sink: sess.mergeBuf,
 			onHeartbeat: func() {
-				sess.lastHeartbeat.Store(time.Now().UnixNano())
+				sess.hbMonitor.Record()
 			},
 		}
 		cancel, err := starter.StartLogStream(ctx, sess.Name, logSink)
@@ -424,7 +424,7 @@ func (m *SessionManager) startLogStream(ctx context.Context, sess *Session, plug
 			slog.Warn("adapter log stream start failed", "session", sess.Name, "err", err)
 		} else {
 			sess.cancelLog = cancel
-			sess.lastHeartbeat.Store(time.Now().UnixNano())
+			sess.hbMonitor.Record()
 		}
 	}
 }
@@ -570,8 +570,7 @@ func (m *SessionManager) Execute(ctx context.Context, name string, step *workflo
 
 	// WS15: heartbeat-stall detection. If no heartbeat has been received for
 	// >90s, treat the session as crashed before attempting the step.
-	lastHB := time.Unix(0, sess.lastHeartbeat.Load())
-	if sess.cancelLog != nil && time.Since(lastHB) > 90*time.Second {
+	if sess.cancelLog != nil && sess.hbMonitor.Stalled(90*time.Second) {
 		return m.handleCrash(ctx, name, step, sink, sess, errors.New("heartbeat stall (>90s)"))
 	}
 
@@ -811,7 +810,7 @@ func (m *SessionManager) restartLogStream(ctx context.Context, sess *Session, pl
 		logSink := &logForwardSink{
 			sink: sess.mergeBuf,
 			onHeartbeat: func() {
-				sess.lastHeartbeat.Store(time.Now().UnixNano())
+				sess.hbMonitor.Record()
 			},
 		}
 		cancel, err := starter.StartLogStream(ctx, sess.Name, logSink)
@@ -820,7 +819,7 @@ func (m *SessionManager) restartLogStream(ctx context.Context, sess *Session, pl
 			sess.cancelLog = nil
 		} else {
 			sess.cancelLog = cancel
-			sess.lastHeartbeat.Store(time.Now().UnixNano())
+			sess.hbMonitor.Record()
 		}
 	} else {
 		sess.cancelLog = nil
