@@ -12,6 +12,7 @@ import (
 	"github.com/zclconf/go-cty/cty"
 
 	"github.com/brokenbots/criteria/internal/adapter"
+	"github.com/brokenbots/criteria/internal/adapter/secrets"
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/workflow"
 )
@@ -265,7 +266,7 @@ func (n *stepNode) evaluateOnce(ctx context.Context, st *RunState, deps Deps) (s
 		return n.evaluateSubworkflowStep(ctx, st, deps)
 	}
 
-	effectiveStep, resolveErr := n.resolveInput(st.Vars, st.WorkflowDir)
+	effectiveStep, resolveErr := n.resolveInput(ctx, st.Vars, st.WorkflowDir, deps.Sessions.RedactionRegistry)
 	if resolveErr != nil {
 		return "", fmt.Errorf("step %q: input expression error: %w", n.step.Name, resolveErr)
 	}
@@ -540,11 +541,12 @@ func (n *stepNode) getStepEnvironment() *workflow.EnvironmentNode {
 	return nil
 }
 
-// resolveInput returns the step with Input populated from evaluated HCL
-// expressions. It returns an error if any expression fails to evaluate so
-// the caller can fail fast rather than silently using a placeholder value.
-// It also merges in environment variables if the step has a bound environment.
-func (n *stepNode) resolveInput(vars map[string]cty.Value, workflowDir string) (*workflow.StepNode, error) {
+// resolveInput returns the step with Input and SecretInputs populated from
+// evaluated HCL expressions. It returns an error if any expression fails to
+// evaluate so the caller can fail fast rather than silently using a placeholder
+// value. It also merges in environment variables if the step has a bound
+// environment.
+func (n *stepNode) resolveInput(ctx context.Context, vars map[string]cty.Value, workflowDir string, reg *secrets.Registry) (*workflow.StepNode, error) {
 	// Start with a copy of the step input.
 	merged := make(map[string]string, len(n.step.Input))
 	for k, v := range n.step.Input {
@@ -568,8 +570,15 @@ func (n *stepNode) resolveInput(vars map[string]cty.Value, workflowDir string) (
 	// like shell will parse and inject into the subprocess.
 	n.mergeEnvironmentVars(merged)
 
+	// Resolve secret_input expressions through the provider stack (WS13).
+	secretInputs, err := resolveStepSecretInputs(ctx, n.graph, n.step, vars, reg)
+	if err != nil {
+		return nil, err
+	}
+
 	cp := *n.step
 	cp.Input = merged
+	cp.SecretInputs = secretInputs
 	return &cp, nil
 }
 

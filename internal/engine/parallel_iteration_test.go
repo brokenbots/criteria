@@ -75,7 +75,9 @@ func newBarrierAdapter(name string, n int, outcome string) *barrierAdapter {
 func (p *barrierAdapter) Info(context.Context) (adapterhost.Info, error) {
 	return adapterhost.Info{Name: p.name, Version: "test", Capabilities: []string{"parallel_safe"}}, nil
 }
-func (p *barrierAdapter) OpenSession(context.Context, string, map[string]string) error { return nil }
+func (p *barrierAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
+	return nil
+}
 func (p *barrierAdapter) Execute(ctx context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
 	count := atomic.AddInt32(&p.ready, 1)
 	if count == p.n {
@@ -105,7 +107,7 @@ type concurrencyTrackingAdapter struct {
 func (p *concurrencyTrackingAdapter) Info(context.Context) (adapterhost.Info, error) {
 	return adapterhost.Info{Name: p.name, Version: "test", Capabilities: []string{"parallel_safe"}}, nil
 }
-func (p *concurrencyTrackingAdapter) OpenSession(context.Context, string, map[string]string) error {
+func (p *concurrencyTrackingAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
 	return nil
 }
 func (p *concurrencyTrackingAdapter) Execute(ctx context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
@@ -144,7 +146,7 @@ type contextAwareAdapter struct {
 func (p *contextAwareAdapter) Info(context.Context) (adapterhost.Info, error) {
 	return adapterhost.Info{Name: p.name, Version: "test", Capabilities: []string{"parallel_safe"}}, nil
 }
-func (p *contextAwareAdapter) OpenSession(context.Context, string, map[string]string) error {
+func (p *contextAwareAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
 	return nil
 }
 func (p *contextAwareAdapter) Execute(ctx context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
@@ -169,7 +171,7 @@ func (p *parallelSafeAdapter) Info(context.Context) (adapterhost.Info, error) {
 	return adapterhost.Info{Name: p.name, Version: "test", Capabilities: []string{"parallel_safe"}}, nil
 }
 
-func (p *parallelSafeAdapter) OpenSession(context.Context, string, map[string]string) error {
+func (p *parallelSafeAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
 	return nil
 }
 func (p *parallelSafeAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
@@ -448,7 +450,9 @@ type declIdxAdapter struct{ name string }
 func (p *declIdxAdapter) Info(context.Context) (adapterhost.Info, error) {
 	return adapterhost.Info{Name: p.name, Version: "test", Capabilities: []string{"parallel_safe"}}, nil
 }
-func (p *declIdxAdapter) OpenSession(context.Context, string, map[string]string) error { return nil }
+func (p *declIdxAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
+	return nil
+}
 func (p *declIdxAdapter) Execute(_ context.Context, _ string, step *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
 	idx := step.Input["decl_idx"]
 	// Sleep inversely proportional to declaration index so that later items finish first.
@@ -611,7 +615,7 @@ func newLoggingBarrierAdapter(name string, n int, outcome string) *loggingBarrie
 func (p *loggingBarrierAdapter) Info(context.Context) (adapterhost.Info, error) {
 	return adapterhost.Info{Name: p.name, Version: "test", Capabilities: []string{"parallel_safe"}}, nil
 }
-func (p *loggingBarrierAdapter) OpenSession(context.Context, string, map[string]string) error {
+func (p *loggingBarrierAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
 	return nil
 }
 func (p *loggingBarrierAdapter) Execute(ctx context.Context, _ string, _ *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
@@ -936,7 +940,7 @@ type statefulAdapter struct {
 func (p *statefulAdapter) Info(context.Context) (adapterhost.Info, error) {
 	return adapterhost.Info{Name: p.name, Version: "test"}, nil
 }
-func (p *statefulAdapter) OpenSession(context.Context, string, map[string]string) error {
+func (p *statefulAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
 	p.loader.opens.Add(1)
 	return nil
 }
@@ -1067,7 +1071,7 @@ func (p *countingNotSafeAdapter) Info(context.Context) (adapterhost.Info, error)
 	// Deliberately no Capabilities: parallel_safe — this adapter is not safe.
 	return adapterhost.Info{Name: p.name, Version: "test"}, nil
 }
-func (p *countingNotSafeAdapter) OpenSession(context.Context, string, map[string]string) error {
+func (p *countingNotSafeAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
 	return nil
 }
 func (p *countingNotSafeAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
@@ -1322,7 +1326,9 @@ type slowLogAdapter struct {
 func (p *slowLogAdapter) Info(context.Context) (adapterhost.Info, error) {
 	return adapterhost.Info{Name: p.name, Version: "test", Capabilities: []string{"parallel_safe"}}, nil
 }
-func (p *slowLogAdapter) OpenSession(context.Context, string, map[string]string) error { return nil }
+func (p *slowLogAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
+	return nil
+}
 func (p *slowLogAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
 	chunk := []byte("x")
 	for i := 0; i < p.logsPerCall; i++ {

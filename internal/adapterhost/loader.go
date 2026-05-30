@@ -53,7 +53,7 @@ type Loader interface {
 
 type Handle interface {
 	Info(ctx context.Context) (Info, error)
-	OpenSession(ctx context.Context, id string, config map[string]string) error
+	OpenSession(ctx context.Context, id string, config, secrets map[string]string) error
 	Execute(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error)
 	CloseSession(ctx context.Context, id string) error
 	Kill()
@@ -296,8 +296,8 @@ func (p *rpcHandle) Info(ctx context.Context) (Info, error) {
 	}, nil
 }
 
-func (p *rpcHandle) OpenSession(ctx context.Context, id string, config map[string]string) error {
-	_, err := p.rpc.OpenSession(ctx, &v2.OpenSessionRequest{SessionId: id, Config: cloneConfig(config)})
+func (p *rpcHandle) OpenSession(ctx context.Context, id string, config, secrets map[string]string) error {
+	_, err := p.rpc.OpenSession(ctx, &v2.OpenSessionRequest{SessionId: id, Config: cloneConfig(config), Secrets: cloneConfig(secrets)})
 	return err
 }
 
@@ -326,6 +326,7 @@ func (p *rpcHandle) Execute(ctx context.Context, sessionID string, step *workflo
 		SessionId:       sessionID,
 		StepName:        step.Name,
 		Input:           cloneConfig(step.Input),
+		SecretInputs:    cloneConfig(step.SecretInputs),
 		AllowedOutcomes: collectAllowedOutcomes(step),
 	}
 

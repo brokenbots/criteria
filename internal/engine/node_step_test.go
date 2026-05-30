@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 
@@ -37,7 +38,7 @@ func TestStepNode_ResolveInput_InjectsEnvironmentVars(t *testing.T) {
 		},
 	}
 
-	out, err := n.resolveInput(map[string]cty.Value{}, ".")
+	out, err := n.resolveInput(context.Background(), map[string]cty.Value{}, ".", nil)
 	require.NoError(t, err)
 
 	raw, ok := out.Input["env"]
@@ -85,7 +86,7 @@ func TestStepNode_ResolveInput_FiltersControlledEnvVars(t *testing.T) {
 		},
 	}
 
-	out, err := n.resolveInput(map[string]cty.Value{}, ".")
+	out, err := n.resolveInput(context.Background(), map[string]cty.Value{}, ".", nil)
 	require.NoError(t, err)
 
 	var got map[string]string

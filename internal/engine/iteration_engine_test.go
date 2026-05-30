@@ -60,7 +60,7 @@ type multiOutcomeAdapter struct {
 func (p *multiOutcomeAdapter) Info(context.Context) (adapterhost.Info, error) {
 	return adapterhost.Info{Name: p.name, Version: "test"}, nil
 }
-func (p *multiOutcomeAdapter) OpenSession(context.Context, string, map[string]string) error {
+func (p *multiOutcomeAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
 	return nil
 }
 func (p *multiOutcomeAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
@@ -520,7 +520,7 @@ type captureInputAdapter struct {
 func (p *captureInputAdapter) Info(context.Context) (adapterhost.Info, error) {
 	return adapterhost.Info{Name: "fake", Version: "test"}, nil
 }
-func (p *captureInputAdapter) OpenSession(context.Context, string, map[string]string) error {
+func (p *captureInputAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
 	return nil
 }
 func (p *captureInputAdapter) Execute(_ context.Context, _ string, step *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
@@ -687,7 +687,7 @@ type captureOutputAdapter struct {
 func (p *captureOutputAdapter) Info(context.Context) (adapterhost.Info, error) {
 	return adapterhost.Info{Name: "fake", Version: "test"}, nil
 }
-func (p *captureOutputAdapter) OpenSession(context.Context, string, map[string]string) error {
+func (p *captureOutputAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
 	return nil
 }
 func (p *captureOutputAdapter) Execute(_ context.Context, _ string, step *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
@@ -1602,7 +1602,9 @@ type callbackAdapter struct {
 func (p *callbackAdapter) Info(context.Context) (adapterhost.Info, error) {
 	return adapterhost.Info{Name: "callback", Version: "test"}, nil
 }
-func (p *callbackAdapter) OpenSession(context.Context, string, map[string]string) error { return nil }
+func (p *callbackAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
+	return nil
+}
 func (p *callbackAdapter) Execute(_ context.Context, _ string, step *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
 	outcome, outputs := p.fn(step.Input)
 	return adapter.Result{Outcome: outcome, Outputs: outputs}, nil
@@ -1620,7 +1622,9 @@ type outputAdapter struct {
 func (p *outputAdapter) Info(context.Context) (adapterhost.Info, error) {
 	return adapterhost.Info{Name: "output", Version: "test"}, nil
 }
-func (p *outputAdapter) OpenSession(context.Context, string, map[string]string) error { return nil }
+func (p *outputAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
+	return nil
+}
 func (p *outputAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
 	return adapter.Result{Outcome: p.outcome, Outputs: p.outputs}, nil
 }

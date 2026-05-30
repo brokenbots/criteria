@@ -142,7 +142,7 @@ func newAdapterTargetFactory(name string, loader adapterhost.Loader, opts *Optio
 		}
 
 		sessionID := newSessionID("conformance")
-		if err := plug.OpenSession(ctx, sessionID, cloneConfig(opts.OpenConfig)); err != nil {
+		if err := plug.OpenSession(ctx, sessionID, cloneConfig(opts.OpenConfig), nil); err != nil {
 			plug.Kill()
 			t.Fatalf("open session %q: %v", sessionID, err)
 		}

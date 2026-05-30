@@ -206,7 +206,7 @@ func (n *stepNode) runWhileStep(ctx context.Context, st *RunState, deps Deps) (a
 	if n.step.TargetKind == workflow.StepTargetSubworkflow {
 		return n.runWhileSubworkflowStep(ctx, st, deps)
 	}
-	effectiveStep, err := n.resolveInput(st.Vars, st.WorkflowDir)
+	effectiveStep, err := n.resolveInput(ctx, st.Vars, st.WorkflowDir, deps.Sessions.RedactionRegistry)
 	if err != nil {
 		return adapter.Result{}, fmt.Errorf("step %q: input expression error: %w", n.step.Name, err)
 	}

@@ -433,7 +433,7 @@ func (n *stepNode) runParallelIterationOnce(ctx context.Context, st *RunState, d
 // max_visits enforcement (via the shared Visits map + VisitsMu in st), per-step
 // timeout wrapping, retry behaviour, and fatal-error propagation.
 func (n *stepNode) runParallelAdapterIteration(ctx context.Context, st *RunState, deps Deps) (outcome string, outputs map[string]string, err error) {
-	effectiveStep, resolveErr := n.resolveInput(st.Vars, st.WorkflowDir)
+	effectiveStep, resolveErr := n.resolveInput(ctx, st.Vars, st.WorkflowDir, deps.Sessions.RedactionRegistry)
 	if resolveErr != nil {
 		return "", nil, fmt.Errorf("step %q: input expression error: %w", n.step.Name, resolveErr)
 	}

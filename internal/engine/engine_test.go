@@ -89,7 +89,9 @@ func (p *fakeAdapter) Info(context.Context) (adapterhost.Info, error) {
 	return adapterhost.Info{Name: p.name, Version: "test"}, nil
 }
 
-func (p *fakeAdapter) OpenSession(context.Context, string, map[string]string) error { return nil }
+func (p *fakeAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
+	return nil
+}
 
 func (p *fakeAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
 	return adapter.Result{Outcome: p.outcome}, p.err
@@ -885,7 +887,7 @@ type callCountAdapter struct {
 func (p *callCountAdapter) Info(context.Context) (adapterhost.Info, error) {
 	return adapterhost.Info{Name: p.name, Version: "test"}, nil
 }
-func (p *callCountAdapter) OpenSession(context.Context, string, map[string]string) error {
+func (p *callCountAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
 	return nil
 }
 func (p *callCountAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
@@ -909,7 +911,9 @@ type errAdapter struct {
 func (p *errAdapter) Info(context.Context) (adapterhost.Info, error) {
 	return adapterhost.Info{Name: p.name, Version: "test"}, nil
 }
-func (p *errAdapter) OpenSession(context.Context, string, map[string]string) error { return nil }
+func (p *errAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
+	return nil
+}
 func (p *errAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
 	return adapter.Result{}, p.err
 }
@@ -1091,7 +1095,7 @@ func TestEngineSetLockfileOnSessions(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if err := sessions.Open(ctx, "noop.default", "noop", "shutdown", nil); err != nil {
+	if err := sessions.Open(ctx, "noop.default", "noop", "shutdown", nil, nil); err != nil {
 		t.Fatalf("session open: %v", err)
 	}
 }
@@ -1124,7 +1128,7 @@ func TestEngineSetLockfileOnSessions_ReadFromDir(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if err := sessions.Open(ctx, "noop.default", "noop", "shutdown", nil); err != nil {
+	if err := sessions.Open(ctx, "noop.default", "noop", "shutdown", nil, nil); err != nil {
 		t.Fatalf("session open: %v", err)
 	}
 }

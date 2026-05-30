@@ -13,6 +13,7 @@ import (
 
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapter/environment/sandbox"
+	"github.com/brokenbots/criteria/internal/adapter/secrets"
 	"github.com/brokenbots/criteria/workflow"
 	"github.com/brokenbots/criteria/workflow/lockfile"
 )
@@ -59,6 +60,9 @@ type SessionManager struct {
 	// lockfile holds the parsed lockfile for container-mode lookups.
 	lockfile *lockfile.Lockfile
 
+	// RedactionRegistry masks secret values from all host output streams.
+	RedactionRegistry *secrets.Registry
+
 	mu       sync.Mutex
 	sessions map[string]*Session
 }
@@ -87,6 +91,7 @@ type Session struct {
 	Name            string
 	Adapter         string
 	Config          map[string]string
+	Secrets         map[string]string // resolved secret values (WS13)
 	OnCrash         string
 	Capabilities    []string // cached from plug.Info() at Open time
 	PermissionState PermissionState
@@ -197,7 +202,7 @@ func (m *SessionManager) sandboxEnvAndPolicy(instanceID string) (envNode *workfl
 	return envNode, rp, true
 }
 
-func (m *SessionManager) Open(ctx context.Context, name, adapterName, onCrash string, config map[string]string) error {
+func (m *SessionManager) Open(ctx context.Context, name, adapterName, onCrash string, config, secrets map[string]string) error {
 	if strings.TrimSpace(name) == "" {
 		return errors.New("session name is required")
 	}
@@ -234,7 +239,7 @@ func (m *SessionManager) Open(ctx context.Context, name, adapterName, onCrash st
 		caps = append([]string(nil), info.Capabilities...)
 	}
 
-	if err := plug.OpenSession(ctx, name, config); err != nil {
+	if err := plug.OpenSession(ctx, name, config, secrets); err != nil {
 		plug.Kill()
 		if cleanup != nil {
 			cleanup()
@@ -242,7 +247,7 @@ func (m *SessionManager) Open(ctx context.Context, name, adapterName, onCrash st
 		return err
 	}
 
-	return m.registerSession(ctx, name, adapterName, onCrash, config, caps, plug, cleanup)
+	return m.registerSession(ctx, name, adapterName, onCrash, config, secrets, caps, plug, cleanup)
 }
 
 func (m *SessionManager) resolveAdapterHandle(ctx context.Context, name, adapterName string, customizer func(string, *exec.Cmd)) (Handle, error) {
@@ -280,7 +285,7 @@ func makeSandboxCustomizer(prep *sandbox.LinuxPrepared, envNode *workflow.Enviro
 	}, cleanup
 }
 
-func (m *SessionManager) registerSession(ctx context.Context, name, adapterName, onCrash string, config map[string]string, caps []string, plug Handle, cleanup func()) error {
+func (m *SessionManager) registerSession(ctx context.Context, name, adapterName, onCrash string, config, secrets map[string]string, caps []string, plug Handle, cleanup func()) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, exists := m.sessions[name]; exists {
@@ -295,6 +300,7 @@ func (m *SessionManager) registerSession(ctx context.Context, name, adapterName,
 		Name:           name,
 		Adapter:        adapterName,
 		Config:         cloneConfig(config),
+		Secrets:        cloneConfig(secrets),
 		OnCrash:        normalizeOnCrash(onCrash),
 		Capabilities:   caps,
 		handle:         plug,
@@ -324,11 +330,20 @@ func (m *SessionManager) Close(ctx context.Context, name string) error {
 	return err
 }
 
+func (m *SessionManager) wrapSink(sink adapter.EventSink) adapter.EventSink {
+	if m.RedactionRegistry == nil {
+		return sink
+	}
+	return &secrets.RedactingEventSink{Registry: m.RedactionRegistry, Inner: sink}
+}
+
 func (m *SessionManager) Execute(ctx context.Context, name string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
 	sess, err := m.lookup(name)
 	if err != nil {
 		return adapter.Result{Outcome: "failure"}, err
 	}
+
+	sink = m.wrapSink(sink)
 
 	result, execErr := sess.handle.Execute(ctx, name, step, sink)
 	if execErr == nil {
@@ -466,7 +481,7 @@ func (m *SessionManager) respawn(ctx context.Context, sess *Session) error {
 		}
 		return err
 	}
-	if err := plug.OpenSession(ctx, sess.Name, sess.Config); err != nil {
+	if err := plug.OpenSession(ctx, sess.Name, sess.Config, sess.Secrets); err != nil {
 		plug.Kill()
 		if cleanup != nil {
 			cleanup()

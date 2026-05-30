@@ -83,7 +83,7 @@ func TestSessionManagerOpenExecuteClose(t *testing.T) {
 	})
 
 	sm := NewSessionManager(loader)
-	if err := sm.Open(context.Background(), "agent", "noop", OnCrashFail, map[string]string{"bootstrap": "1"}); err != nil {
+	if err := sm.Open(context.Background(), "agent", "noop", OnCrashFail, map[string]string{"bootstrap": "1"}, nil); err != nil {
 		t.Fatalf("open: %v", err)
 	}
 
@@ -115,10 +115,10 @@ func TestSessionManagerUnknownExecuteAndDoubleOpen(t *testing.T) {
 	if !errors.Is(err, ErrUnknownSession) {
 		t.Fatalf("execute unknown err=%v", err)
 	}
-	if err := sm.Open(context.Background(), "agent", "noop", OnCrashFail, nil); err != nil {
+	if err := sm.Open(context.Background(), "agent", "noop", OnCrashFail, nil, nil); err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	if err := sm.Open(context.Background(), "agent", "noop", OnCrashFail, nil); !errors.Is(err, ErrSessionAlreadyOpen) {
+	if err := sm.Open(context.Background(), "agent", "noop", OnCrashFail, nil, nil); !errors.Is(err, ErrSessionAlreadyOpen) {
 		t.Fatalf("double open err=%v", err)
 	}
 }
@@ -132,7 +132,7 @@ func TestSessionManagerCrashPolicyFail(t *testing.T) {
 	})
 
 	sm := NewSessionManager(loader)
-	if err := sm.Open(context.Background(), "agent", "noop", OnCrashFail, nil); err != nil {
+	if err := sm.Open(context.Background(), "agent", "noop", OnCrashFail, nil, nil); err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	if _, err := sm.Execute(context.Background(), "agent", &workflow.StepNode{Name: "first"}, &adapterEventCollector{}); err != nil {
@@ -162,7 +162,7 @@ func TestSessionManagerCrashPolicyRespawn(t *testing.T) {
 	})
 
 	sm := NewSessionManager(loader)
-	if err := sm.Open(context.Background(), "agent", "noop", OnCrashRespawn, nil); err != nil {
+	if err := sm.Open(context.Background(), "agent", "noop", OnCrashRespawn, nil, nil); err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	if _, err := sm.Execute(context.Background(), "agent", &workflow.StepNode{Name: "first"}, &adapterEventCollector{}); err != nil {
@@ -192,7 +192,7 @@ func TestSessionManagerCrashPolicyAbortRun(t *testing.T) {
 	})
 
 	sm := NewSessionManager(loader)
-	if err := sm.Open(context.Background(), "agent", "noop", OnCrashAbortRun, nil); err != nil {
+	if err := sm.Open(context.Background(), "agent", "noop", OnCrashAbortRun, nil, nil); err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	if _, err := sm.Execute(context.Background(), "agent", &workflow.StepNode{Name: "first"}, &adapterEventCollector{}); err != nil {
@@ -266,7 +266,7 @@ func TestSessionManager_HasCapability_AfterOpen(t *testing.T) {
 	t.Cleanup(func() { _ = loader.Shutdown(context.Background()) })
 
 	sm := NewSessionManager(loader)
-	if err := sm.Open(context.Background(), "agent", "noop", OnCrashFail, nil); err != nil {
+	if err := sm.Open(context.Background(), "agent", "noop", OnCrashFail, nil, nil); err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	defer sm.Close(context.Background(), "agent")

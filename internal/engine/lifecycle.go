@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/zclconf/go-cty/cty"
+
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/workflow"
 )
@@ -16,7 +18,7 @@ import (
 // an event is emitted, and the error is returned.
 // Returns the ordered slice of provisioned adapter IDs (for correct LIFO teardown)
 // and an error if any adapter failed to initialize.
-func initScopeAdapters(ctx context.Context, g *workflow.FSMGraph, deps Deps) (order []string, err error) {
+func initScopeAdapters(ctx context.Context, g *workflow.FSMGraph, deps Deps, vars map[string]cty.Value) (order []string, err error) {
 	if len(g.Adapters) == 0 {
 		return nil, nil
 	}
@@ -26,7 +28,18 @@ func initScopeAdapters(ctx context.Context, g *workflow.FSMGraph, deps Deps) (or
 	// Provision adapters in declaration order (from AdapterOrder)
 	for _, instanceID := range g.AdapterOrder {
 		adapter := g.Adapters[instanceID]
-		openErr := deps.Sessions.Open(ctx, instanceID, adapter.Type, adapter.OnCrash, adapter.Config)
+
+		// Resolve adapter secrets (WS13).
+		var secretMap map[string]string
+		if len(adapter.Secrets) > 0 {
+			secretMap, err = resolveAdapterSecrets(ctx, g, adapter, vars, deps.Sessions.RedactionRegistry)
+			if err != nil {
+				deps.Sink.OnAdapterLifecycle("", instanceID, "init_failed", err.Error())
+				return nil, fmt.Errorf("initialize adapter %q: %w", instanceID, err)
+			}
+		}
+
+		openErr := deps.Sessions.Open(ctx, instanceID, adapter.Type, adapter.OnCrash, adapter.Config, secretMap)
 
 		// Silently swallow ErrSessionAlreadyOpen to support subworkflow bodies that
 		// re-declare parent adapters for safety through re-declaration. Same-scope

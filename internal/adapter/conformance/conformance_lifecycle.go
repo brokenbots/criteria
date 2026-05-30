@@ -107,7 +107,7 @@ func testSessionLifecycle(t *testing.T, name string, loader adapterhost.Loader, 
 	defer plug.Kill()
 
 	sessionID := newSessionID("lifecycle")
-	if err := plug.OpenSession(ctx, sessionID, cloneConfig(opts.OpenConfig)); err != nil {
+	if err := plug.OpenSession(ctx, sessionID, cloneConfig(opts.OpenConfig), nil); err != nil {
 		t.Fatalf("open session: %v", err)
 	}
 
@@ -161,10 +161,10 @@ func testConcurrentSessions(t *testing.T, name string, loader adapterhost.Loader
 
 	sessionA := newSessionID("concurrent-a")
 	sessionB := newSessionID("concurrent-b")
-	if err := plugA.OpenSession(ctx, sessionA, cloneConfig(opts.OpenConfig)); err != nil {
+	if err := plugA.OpenSession(ctx, sessionA, cloneConfig(opts.OpenConfig), nil); err != nil {
 		t.Fatalf("open session A: %v", err)
 	}
-	if err := plugB.OpenSession(ctx, sessionB, cloneConfig(opts.OpenConfig)); err != nil {
+	if err := plugB.OpenSession(ctx, sessionB, cloneConfig(opts.OpenConfig), nil); err != nil {
 		t.Fatalf("open session B: %v", err)
 	}
 	defer func() {
@@ -231,7 +231,7 @@ func testSessionCrashDetection(t *testing.T, name string, loader adapterhost.Loa
 	defer plug.Kill()
 
 	sessionID := newSessionID("crash")
-	if err := plug.OpenSession(ctx, sessionID, cloneConfig(opts.OpenConfig)); err != nil {
+	if err := plug.OpenSession(ctx, sessionID, cloneConfig(opts.OpenConfig), nil); err != nil {
 		t.Fatalf("open session: %v", err)
 	}
 	defer func() {

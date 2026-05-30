@@ -51,7 +51,7 @@ func BenchmarkBuiltinAdapter_Execute(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		p := factory()
-		if err := p.OpenSession(ctx, "sess", nil); err != nil {
+		if err := p.OpenSession(ctx, "sess", nil, nil); err != nil {
 			b.Fatalf("OpenSession: %v", err)
 		}
 		if _, err := p.Execute(ctx, "sess", step, benchEventSink{}); err != nil {
@@ -76,7 +76,7 @@ func BenchmarkAdapterExecuteNoop(b *testing.B) {
 		Outcomes:   map[string]*workflow.CompiledOutcome{"success": {Next: "done"}},
 	}
 	p := factory()
-	if err := p.OpenSession(ctx, "sess", nil); err != nil {
+	if err := p.OpenSession(ctx, "sess", nil, nil); err != nil {
 		b.Fatalf("OpenSession: %v", err)
 	}
 	b.Cleanup(func() { _ = p.CloseSession(ctx, "sess") })
