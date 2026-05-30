@@ -403,6 +403,13 @@ func checkStepsFieldTraversals(context string, expr hcl.Expression, g *FSMGraph,
 			continue
 		}
 
+		// steps.X.outputs.Y is validated by compileOutputRefs; skip here.
+		if len(traversal) >= 4 {
+			if outAttr, ok := traversal[2].(hcl.TraverseAttr); ok && outAttr.Name == "outputs" {
+				continue
+			}
+		}
+
 		step, isStep := g.Steps[nameAttr.Name]
 		if !isStep {
 			// Unknown step name at this site — no other pass validates step

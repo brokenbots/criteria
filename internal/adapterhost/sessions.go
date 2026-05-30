@@ -347,6 +347,13 @@ func (m *SessionManager) Execute(ctx context.Context, name string, step *workflo
 
 	result, execErr := sess.handle.Execute(ctx, name, step, sink)
 	if execErr == nil {
+		if m.RedactionRegistry != nil {
+			for outName, outVal := range result.Outputs {
+				if f, ok := step.OutputSchema[outName]; ok && f.Sensitive {
+					m.RedactionRegistry.Register(outVal)
+				}
+			}
+		}
 		return result, nil
 	}
 
@@ -377,6 +384,13 @@ func (m *SessionManager) Execute(ctx context.Context, name string, step *workflo
 		}
 		result, retryErr := sess.handle.Execute(ctx, name, step, sink)
 		if retryErr == nil {
+			if m.RedactionRegistry != nil {
+				for outName, outVal := range result.Outputs {
+					if f, ok := step.OutputSchema[outName]; ok && f.Sensitive {
+						m.RedactionRegistry.Register(outVal)
+					}
+				}
+			}
 			return result, nil
 		}
 		return m.failResult(sink, sess, retryErr)

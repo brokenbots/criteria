@@ -114,6 +114,7 @@ func CompileWithContext(ctx context.Context, spec *Spec, schemas map[string]Adap
 	// Warn after all nodes are compiled so branch/wait/approval targets are
 	// available for the back-edge walk (W07).
 	diags = append(diags, warnBackEdges(g)...)
+	diags = append(diags, compileOutputRefs(g)...)
 	diags = append(diags, warnCrossStepFieldRefs(g, schemas)...)
 	// Secret-taint propagation pass: marks steps that transitively receive
 	// secret data via secret_input, input referencing secret variables, or
