@@ -79,4 +79,8 @@ func (p *builtinAdapter) CloseSession(_ context.Context, id string) error {
 	return nil
 }
 
+func (p *builtinAdapter) StartLogStream(context.Context, string, LogEventSink) (func(), error) {
+	return func() {}, nil
+}
+
 func (p *builtinAdapter) Kill() {}

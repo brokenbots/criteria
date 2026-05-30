@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"sort"
@@ -49,6 +50,13 @@ type Loader interface {
 	// distinct Handle values (one per session).
 	Resolve(ctx context.Context, name string) (Handle, error)
 	Shutdown(ctx context.Context) error
+}
+
+// LogStreamStarter is implemented by handles that support a dedicated
+// per-session Log server-stream RPC (v2 adapters). The host starts this
+// stream once at session open and cancels it at session close.
+type LogStreamStarter interface {
+	StartLogStream(ctx context.Context, sessionID string, sink LogEventSink) (cancel func(), err error)
 }
 
 type Handle interface {
@@ -301,6 +309,17 @@ func (p *rpcHandle) OpenSession(ctx context.Context, id string, config, secrets 
 	return err
 }
 
+func (p *rpcHandle) StartLogStream(ctx context.Context, sessionID string, sink LogEventSink) (cancel func(), err error) {
+	logCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	go func() {
+		err := p.rpc.Log(logCtx, &v2.LogRequest{SessionId: sessionID}, sink)
+		if err != nil && !isExpectedStreamClose(err) {
+			slog.Warn("adapter log stream closed unexpectedly", "adapter", p.name, "session", sessionID, "error", err)
+		}
+	}()
+	return cancel, nil
+}
+
 // isExpectedStreamClose reports whether err is a benign end-of-stream error
 // (nil, EOF, context cancellation, or an optionally supplied gRPC status code).
 func isExpectedStreamClose(err error, extra ...codes.Code) bool {
@@ -377,15 +396,6 @@ func (p *rpcHandle) Execute(ctx context.Context, sessionID string, step *workflo
 		ctx:         execCtx,
 	}
 
-	// Open the Log stream concurrently with Execute. Adapters may emit log lines
-	// at any time during Execute; we must be ready to receive them.
-	logCtx, cancelLog := context.WithCancel(ctx)
-	logDone := make(chan error, 1)
-	go func() {
-		logReq := &v2.LogRequest{SessionId: sessionID, StepName: step.Name}
-		logDone <- p.rpc.Log(logCtx, logReq, &logForwardSink{sink: serialized})
-	}()
-
 	execErr := p.rpc.Execute(execCtx, req, captureSink)
 
 	// Signal end of the Permissions stream and wait for the goroutine.
@@ -394,10 +404,6 @@ func (p *rpcHandle) Execute(ctx context.Context, sessionID string, step *workflo
 	close(requests)
 	cancelPerm()
 	permErr := <-permDone
-
-	// Cancel the log stream and wait for the goroutine regardless of execErr.
-	cancelLog()
-	logErr := <-logDone
 
 	if execErr != nil {
 		// If execCtx was canceled by the Permissions goroutine (parent ctx still OK),
@@ -412,9 +418,6 @@ func (p *rpcHandle) Execute(ctx context.Context, sessionID string, step *workflo
 	}
 	if !isExpectedStreamClose(permErr, codes.Unimplemented) {
 		return adapter.Result{Outcome: "failure"}, fmt.Errorf("adapter permissions stream: %w", permErr)
-	}
-	if !isExpectedStreamClose(logErr) {
-		return adapter.Result{Outcome: "failure"}, fmt.Errorf("adapter log stream: %w", logErr)
 	}
 	if !captureSink.done {
 		return adapter.Result{Outcome: "failure"}, errors.New("adapter execute stream ended without result")
@@ -695,9 +698,10 @@ const maxTotalLogBufBytes = 16 * 1024 * 1024 // 16 MiB total
 // aggregate memory caps plus seq-number validation to fail closed on
 // out-of-order or corrupt chunk sequences.
 type logForwardSink struct {
-	sink      adapter.EventSink
-	chunkBufs map[string][]byte // keyed by stream_name
-	chunkSeqs map[string]uint32 // expected next seq per stream (0 = no seq in progress)
+	sink        adapter.EventSink
+	chunkBufs   map[string][]byte // keyed by stream_name
+	chunkSeqs   map[string]uint32 // expected next seq per stream (0 = no seq in progress)
+	onHeartbeat func()            // called when a heartbeat is received
 }
 
 // totalLogBufSize returns the sum of all in-progress chunk buffer lengths.
@@ -711,6 +715,9 @@ func totalLogBufSize(m map[string][]byte) int {
 
 func (s *logForwardSink) Emit(ev *v2.LogEvent) error {
 	if ev.GetHeartbeat() != nil {
+		if s.onHeartbeat != nil {
+			s.onHeartbeat()
+		}
 		return nil
 	}
 	if chunk := ev.GetChunk(); chunk != nil {

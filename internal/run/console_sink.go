@@ -293,10 +293,15 @@ type consoleStepSink struct {
 	prefix string
 }
 
-// Log drops raw stdout/stderr/agent stream chunks. The complete assistant
-// message is rendered from AdapterEvent kind=agent.message instead, and tool
-// stdout is summarised by the outcome line.
-func (ss *consoleStepSink) Log(stream string, chunk []byte) {}
+// Log prints raw stdout/stderr/agent stream chunks interleaved with adapter
+// events. The step prefix is prepended so the source is identifiable.
+func (ss *consoleStepSink) Log(stream string, chunk []byte) {
+	line := strings.TrimSuffix(string(chunk), "\n")
+	if line == "" {
+		return
+	}
+	ss.parent.writeln(ss.prefix + "  " + stream + ": " + line)
+}
 
 func (ss *consoleStepSink) Adapter(kind string, data any) {
 	switch kind {

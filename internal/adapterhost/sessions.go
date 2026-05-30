@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapter/environment/sandbox"
@@ -99,6 +100,12 @@ type Session struct {
 	respawned       bool
 	closing         atomic.Bool
 	SandboxCleanup  func() // removes transient cgroup dirs, etc.
+
+	// WS15: session-level log stream lifecycle and heartbeat tracking.
+	cancelLog       func()
+	lastHeartbeat   atomic.Int64 // Unix nanoseconds
+	currentSink     adapter.EventSink
+	currentSinkMu   sync.Mutex
 }
 
 func NewSessionManager(loader Loader) *SessionManager {
@@ -296,7 +303,7 @@ func (m *SessionManager) registerSession(ctx context.Context, name, adapterName,
 		}
 		return fmt.Errorf("%w: %s", ErrSessionAlreadyOpen, name)
 	}
-	m.sessions[name] = &Session{
+	sess := &Session{
 		Name:           name,
 		Adapter:        adapterName,
 		Config:         cloneConfig(config),
@@ -305,6 +312,25 @@ func (m *SessionManager) registerSession(ctx context.Context, name, adapterName,
 		Capabilities:   caps,
 		handle:         plug,
 		SandboxCleanup: cleanup,
+	}
+	m.sessions[name] = sess
+
+	// WS15: start the dedicated per-session Log stream if the adapter supports it.
+	if starter, ok := plug.(LogStreamStarter); ok {
+		logAdapterSink := &sessionLogAdapterSink{sess: sess}
+		logSink := &logForwardSink{
+			sink: logAdapterSink,
+			onHeartbeat: func() {
+				sess.lastHeartbeat.Store(time.Now().UnixNano())
+			},
+		}
+		cancel, err := starter.StartLogStream(ctx, name, logSink)
+		if err != nil {
+			slog.Warn("adapter log stream start failed", "session", name, "err", err)
+		} else {
+			sess.cancelLog = cancel
+			sess.lastHeartbeat.Store(time.Now().UnixNano())
+		}
 	}
 	return nil
 }
@@ -322,6 +348,9 @@ func (m *SessionManager) Close(ctx context.Context, name string) error {
 		return nil
 	}
 	sess.closing.Store(true)
+	if sess.cancelLog != nil {
+		sess.cancelLog()
+	}
 	if sess.SandboxCleanup != nil {
 		sess.SandboxCleanup()
 	}
@@ -388,6 +417,23 @@ func (m *SessionManager) Execute(ctx context.Context, name string, step *workflo
 
 	sink = m.wrapSink(sink)
 
+	// WS15: heartbeat-stall detection. If no heartbeat has been received for
+	// >90s, treat the session as crashed before attempting the step.
+	lastHB := time.Unix(0, sess.lastHeartbeat.Load())
+	if sess.cancelLog != nil && time.Since(lastHB) > 90*time.Second {
+		return m.handleCrash(ctx, name, step, sink, sess, errors.New("heartbeat stall (>90s)"))
+	}
+
+	// Route session-level log lines to this step's sink while Execute is in flight.
+	sess.currentSinkMu.Lock()
+	sess.currentSink = sink
+	sess.currentSinkMu.Unlock()
+	defer func() {
+		sess.currentSinkMu.Lock()
+		sess.currentSink = nil
+		sess.currentSinkMu.Unlock()
+	}()
+
 	result, execErr := sess.handle.Execute(ctx, name, step, sink)
 	if execErr == nil {
 		m.registerSensitiveOutputs(result, step)
@@ -440,6 +486,9 @@ func (m *SessionManager) Shutdown(ctx context.Context) error {
 	var errs []error
 	for _, sess := range sessions {
 		sess.closing.Store(true)
+		if sess.cancelLog != nil {
+			sess.cancelLog()
+		}
 		if sess.SandboxCleanup != nil {
 			sess.SandboxCleanup()
 		}
@@ -548,4 +597,32 @@ func isLikelySessionCrash(sess *Session, err error) bool {
 		strings.Contains(msg, "broken pipe") ||
 		strings.Contains(msg, "eof") ||
 		strings.Contains(msg, "terminated")
+}
+
+// sessionLogAdapterSink routes session-level log lines to the active step's
+// EventSink when a step is executing, or to structured logs otherwise.
+type sessionLogAdapterSink struct {
+	sess *Session
+}
+
+func (s *sessionLogAdapterSink) Log(stream string, chunk []byte) {
+	s.sess.currentSinkMu.Lock()
+	sink := s.sess.currentSink
+	s.sess.currentSinkMu.Unlock()
+	if sink != nil {
+		sink.Log(stream, chunk)
+	} else {
+		slog.Info("adapter log", "session", s.sess.Name, "stream", stream, "line", string(chunk))
+	}
+}
+
+func (s *sessionLogAdapterSink) Adapter(kind string, data any) {
+	s.sess.currentSinkMu.Lock()
+	sink := s.sess.currentSink
+	s.sess.currentSinkMu.Unlock()
+	if sink != nil {
+		sink.Adapter(kind, data)
+	} else {
+		slog.Info("adapter event", "session", s.sess.Name, "kind", kind, "data", data)
+	}
 }
