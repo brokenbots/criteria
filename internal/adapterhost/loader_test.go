@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"os/exec"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -42,6 +43,48 @@ func TestLoaderResolveNoopAdapter(t *testing.T) {
 	}
 	if info.Version == "" {
 		t.Fatal("expected non-empty adapter version")
+	}
+}
+
+func TestLoaderResolveWithCustomizer(t *testing.T) {
+	adapterBin := buildNoopAdapter(t)
+	loader := NewLoaderWithDiscovery(func(string) (string, error) {
+		return adapterBin, nil
+	})
+	t.Cleanup(func() {
+		_ = loader.Shutdown(context.Background())
+	})
+
+	var gotName string
+	var gotCmd *exec.Cmd
+	customizer := func(name string, cmd *exec.Cmd) {
+		gotName = name
+		gotCmd = cmd
+	}
+
+	p, err := loader.ResolveWithCustomizer(context.Background(), "noop", customizer)
+	if err != nil {
+		t.Fatalf("ResolveWithCustomizer: %v", err)
+	}
+	defer p.Kill()
+
+	if gotName != "noop" {
+		t.Fatalf("customizer name=%q want noop", gotName)
+	}
+	if gotCmd == nil {
+		t.Fatal("expected customizer to receive non-nil exec.Cmd")
+	}
+	if gotCmd.Path != adapterBin {
+		t.Fatalf("customizer cmd.Path=%q want %q", gotCmd.Path, adapterBin)
+	}
+
+	// Verify the adapter still works (customizer didn't break the command).
+	info, err := p.Info(context.Background())
+	if err != nil {
+		t.Fatalf("info after customizer: %v", err)
+	}
+	if info.Name != "noop" {
+		t.Fatalf("adapter name=%q want noop", info.Name)
 	}
 }
 

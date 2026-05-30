@@ -134,6 +134,44 @@ func TestRunShimArgvNoDuplicateTarget(t *testing.T) {
 	}
 }
 
+func TestApplyToCmd_AllowNetworkRoundtrip(t *testing.T) {
+	prep := LinuxPrepared{
+		SysProcAttr:  &syscall.SysProcAttr{Cloneflags: syscall.CLONE_NEWUSER},
+		Mode:         "strict",
+		TargetPath:   "/usr/bin/my-adapter",
+		AllowNetwork: true,
+	}
+	cmd := exec.Command("/bin/sh", "-c", "echo hello")
+	if err := (&prep).ApplyToCmd(cmd, ""); err != nil {
+		t.Fatalf("ApplyToCmd: %v", err)
+	}
+
+	// Find the shim config env var.
+	var shimPath string
+	for _, e := range cmd.Env {
+		if strings.HasPrefix(e, "CRITERIA_SANDBOX_CONFIG_PATH=") {
+			shimPath = strings.TrimPrefix(e, "CRITERIA_SANDBOX_CONFIG_PATH=")
+			break
+		}
+	}
+	if shimPath == "" {
+		t.Fatal("expected CRITERIA_SANDBOX_CONFIG_PATH env var")
+	}
+	defer os.Remove(shimPath)
+
+	data, err := os.ReadFile(shimPath)
+	if err != nil {
+		t.Fatalf("read shim config: %v", err)
+	}
+	var cfg ShimConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("unmarshal shim config: %v", err)
+	}
+	if !cfg.AllowNetwork {
+		t.Fatal("expected AllowNetwork=true in serialized ShimConfig")
+	}
+}
+
 func TestHandlerPrepare(t *testing.T) {
 	caps := Probe()
 	ctx := PrepareContext{

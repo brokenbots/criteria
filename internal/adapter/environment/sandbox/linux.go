@@ -463,7 +463,7 @@ func prepareCgroupV2(cpuQuota float64, memMax uint64) (*CgroupV2Config, error) {
 	}
 
 	dir := filepath.Join(cgroupPath, fmt.Sprintf("criteria-sandbox-%d-%d", os.Getpid(), time.Now().UnixNano()))
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("mkdir cgroup: %w", err)
 	}
 
@@ -531,13 +531,14 @@ func (prep *LinuxPrepared) ApplyToCmd(cmd *exec.Cmd, criteriaBin string) error {
 	// Serialize shim configuration to a private temp file so the
 	// child can apply the same restrictions without re-deriving them.
 	shimCfg := ShimConfig{
-		TargetPath: prep.TargetPath,
-		Mode:       prep.Mode,
-		ReadPaths:  prep.ReadPaths,
-		WritePaths: prep.WritePaths,
-		NetPorts:   prep.NetPorts,
-		Seccomp:    prep.SeccompBPF != nil,
-		Rlimits:    prep.Rlimits,
+		TargetPath:   prep.TargetPath,
+		Mode:         prep.Mode,
+		ReadPaths:    prep.ReadPaths,
+		WritePaths:   prep.WritePaths,
+		NetPorts:     prep.NetPorts,
+		AllowNetwork: prep.AllowNetwork,
+		Seccomp:      prep.SeccompBPF != nil,
+		Rlimits:      prep.Rlimits,
 	}
 	tmpFile, err := os.CreateTemp("", "criteria-sandbox-*.json")
 	if err != nil {

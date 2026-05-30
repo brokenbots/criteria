@@ -51,6 +51,10 @@ type SessionManager struct {
 	loader Loader
 	graph  *workflow.FSMGraph
 
+	// sandboxProbeOverride is a test hook that replaces sandbox.Probe().
+	// When nil the real Probe() is used.
+	sandboxProbeOverride func() sandbox.Capabilities
+
 	mu       sync.Mutex
 	sessions map[string]*Session
 }
@@ -124,6 +128,9 @@ func (m *SessionManager) buildSandboxCustomizer(instanceID string) (customizer f
 	}
 
 	caps := sandbox.Probe()
+	if m.sandboxProbeOverride != nil {
+		caps = m.sandboxProbeOverride()
+	}
 	if missing := caps.Missing(); len(missing) > 0 {
 		slog.Info("sandbox primitives missing", "missing", missing, "instance", instanceID)
 	}
