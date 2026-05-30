@@ -234,9 +234,9 @@ func TestSessionManager_HeartbeatStall_DetectsCrash(t *testing.T) {
 	_ = sm.registerSession(context.Background(), "agent", "test", "fail", nil, nil, nil, nil, h, nil)
 	defer sm.Close(context.Background(), "agent")
 
-	// Artificially set lastHeartbeat to well in the past.
+	// Artificially set heartbeat to well in the past.
 	sess := sm.sessions["agent"]
-	sess.lastHeartbeat.Store(time.Now().Add(-2 * time.Minute).UnixNano())
+	sess.hbMonitor.RecordAt(time.Now().Add(-2 * time.Minute))
 
 	collector := &adapterEventCollector{}
 	step := &workflow.StepNode{Name: "run"}
@@ -311,7 +311,7 @@ func TestSessionManager_HeartbeatRecent_PreventsStall(t *testing.T) {
 	_ = sm.registerSession(context.Background(), "agent", "test", "fail", nil, nil, nil, nil, h, nil)
 	defer sm.Close(context.Background(), "agent")
 
-	// lastHeartbeat is set to now by registerSession.
+	// hbMonitor is seeded to now by startLogStream inside registerSession.
 	step := &workflow.StepNode{Name: "run"}
 	_, err := sm.Execute(context.Background(), "agent", step, &logEventCollector{})
 	if err != nil {
@@ -452,9 +452,9 @@ func TestSessionManager_RespawnRestartsLogStream(t *testing.T) {
 	if !h2.started {
 		t.Fatal("expected log stream started on respawned handle")
 	}
-	// Heartbeat should have been reset to a recent time.
+	// hbMonitor should have been reset to a recent time.
 	sess := sm.sessions["agent"]
-	lastHB := time.Unix(0, sess.lastHeartbeat.Load())
+	lastHB := sess.hbMonitor.Last()
 	if time.Since(lastHB) > 90*time.Second {
 		t.Fatalf("expected heartbeat reset after respawn, got lastHB=%v", lastHB)
 	}
