@@ -16,6 +16,18 @@ Migration strategy is **hard break with helpful errors** — same pattern as the
 
 WS01 may land first to absorb the small mechanical churn; WS02 then lands on a clean schema.go.
 
+WS03–WS06 are a second batch that lands on `main` before the final adapter-v2 rebase. They address engine correctness bugs, a switch syntax inconsistency, eval-context hardening, and CLI quality-of-life improvements:
+
+- **[WS03 — engine bug trio](WS03-engine-bug-trio.md)** — three correctness bugs in the subworkflow execution path: null panic on unwritten `data "internal"` outputs, terminal state success/failure discarded, and stale DataStore snapshot causing output expressions to see pre-write values.
+
+- **[WS04 — switch syntax rename](WS04-switch-syntax-rename.md)** — `condition { match = ... }` → `match { condition = ... }` to match how switch/case reads in mainstream languages. Hard break with migration message; all `.hcl` files migrated.
+
+- **[WS05 — compiler hardening and eval extensions](WS05-compiler-hardening-eval-extensions.md)** — invalid step references are now `DiagError` instead of `DiagWarning`; adds `path.workflow`/`path.root`/`path.cwd` variables and `abspath()`/`dirname()`/`basename()` path functions; adds `hasattr()`, `can()`, and `try()` for runtime error handling.
+
+- **[WS06 — `--var-file` and `.chcl` extension](WS06-var-file-and-chcl-extension.md)** — `--var-file` flag for loading variable overrides from a file; introduces `.chcl` as the criteria-native HCL extension recognized universally alongside `.hcl`.
+
+WS03 and WS04 are independent of each other. WS05 and WS06 are each independent. All four can be developed and reviewed in parallel.
+
 ## Out of scope (this phase)
 
 - Adapter v2 work — separate track on `adapter-v2` branch.
