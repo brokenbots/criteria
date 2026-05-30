@@ -1,9 +1,9 @@
 // copilot_permission_deny_test.go — denial-path tests for handlePermissionRequest.
-// Covers the three scenarios that previously used deprecated PermissionRequestResultKind values:
-//   - no session found   → PermissionRequestResultKindUserNotAvailable (was DeniedCouldNotRequestFromUser)
-//   - session inactive   → PermissionRequestResultKindUserNotAvailable (was DeniedCouldNotRequestFromUser)
-//   - sink.Send failure  → PermissionRequestResultKindUserNotAvailable + non-nil error (was DeniedCouldNotRequestFromUser)
-//   - interactive deny   → PermissionRequestResultKindRejected (was DeniedInteractivelyByUser)
+// Covers the three scenarios that map to rpc.PermissionDecision variants:
+//   - no session found   → PermissionDecisionUserNotAvailable
+//   - session inactive   → PermissionDecisionUserNotAvailable
+//   - sink.Send failure  → PermissionDecisionUserNotAvailable + non-nil error
+//   - interactive deny   → PermissionDecisionReject
 
 package main
 
@@ -14,6 +14,7 @@ import (
 	"time"
 
 	copilot "github.com/github/copilot-sdk/go"
+	"github.com/github/copilot-sdk/go/rpc"
 
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 )
@@ -37,8 +38,8 @@ func TestHandlePermissionRequestNoSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result.Kind != copilot.PermissionRequestResultKindUserNotAvailable {
-		t.Fatalf("result.Kind = %q, want %q", result.Kind, copilot.PermissionRequestResultKindUserNotAvailable)
+	if _, ok := result.(*rpc.PermissionDecisionUserNotAvailable); !ok {
+		t.Fatalf("result type = %T, want *rpc.PermissionDecisionUserNotAvailable", result)
 	}
 }
 
@@ -62,8 +63,8 @@ func TestHandlePermissionRequestInactiveSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result.Kind != copilot.PermissionRequestResultKindUserNotAvailable {
-		t.Fatalf("result.Kind = %q, want %q", result.Kind, copilot.PermissionRequestResultKindUserNotAvailable)
+	if _, ok := result.(*rpc.PermissionDecisionUserNotAvailable); !ok {
+		t.Fatalf("result type = %T, want *rpc.PermissionDecisionUserNotAvailable", result)
 	}
 	if got := sink.snapshot(); len(got) != 0 {
 		t.Fatalf("expected no events sent on sink, got %d event(s)", len(got))
@@ -91,8 +92,8 @@ func TestHandlePermissionRequestSendError(t *testing.T) {
 	if !errors.Is(err, sendErr) {
 		t.Fatalf("error = %v, want wrapping %v", err, sendErr)
 	}
-	if result.Kind != copilot.PermissionRequestResultKindUserNotAvailable {
-		t.Fatalf("result.Kind = %q, want %q", result.Kind, copilot.PermissionRequestResultKindUserNotAvailable)
+	if _, ok := result.(*rpc.PermissionDecisionUserNotAvailable); !ok {
+		t.Fatalf("result type = %T, want *rpc.PermissionDecisionUserNotAvailable", result)
 	}
 
 	// The pending entry must have been cleaned up after the send error.
@@ -118,7 +119,7 @@ func TestHandlePermissionRequestInteractiveDeny(t *testing.T) {
 	p := &copilotAdapter{sessions: map[string]*sessionState{"s1": s}}
 
 	req := copilot.PermissionRequestShell{}
-	resCh := make(chan copilot.PermissionRequestResult, 1)
+	resCh := make(chan rpc.PermissionDecision, 1)
 	go func() {
 		result, _ := p.handlePermissionRequest("s1", req)
 		resCh <- result
@@ -152,8 +153,8 @@ func TestHandlePermissionRequestInteractiveDeny(t *testing.T) {
 
 	select {
 	case result := <-resCh:
-		if result.Kind != copilot.PermissionRequestResultKindRejected {
-			t.Fatalf("result.Kind = %q, want %q", result.Kind, copilot.PermissionRequestResultKindRejected)
+		if _, ok := result.(*rpc.PermissionDecisionReject); !ok {
+			t.Fatalf("result type = %T, want *rpc.PermissionDecisionReject", result)
 		}
 	case <-time.After(300 * time.Millisecond):
 		t.Fatal("timeout waiting for permission handler result")

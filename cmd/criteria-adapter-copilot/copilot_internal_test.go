@@ -8,6 +8,7 @@ import (
 	"time"
 
 	copilot "github.com/github/copilot-sdk/go"
+	"github.com/github/copilot-sdk/go/rpc"
 
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 )
@@ -52,8 +53,8 @@ type fakeSession struct {
 	//   sendSequence — if non-nil, each element is the event slice to emit on
 	//                  the corresponding Send call (overrides emitOnSend).
 	sendCount    int
-	sentOpts     []copilot.MessageOptions
-	onSend       func(callIndex int, opts copilot.MessageOptions)
+	sentOpts     []*copilot.MessageOptions
+	onSend       func(callIndex int, opts *copilot.MessageOptions)
 	sendSequence [][]copilot.SessionEvent
 }
 
@@ -76,7 +77,7 @@ func (f *fakeSession) On(handler copilot.SessionEventHandler) func() {
 	}
 }
 
-func (f *fakeSession) Send(_ context.Context, opts copilot.MessageOptions) (string, error) {
+func (f *fakeSession) Send(_ context.Context, opts *copilot.MessageOptions) (string, error) {
 	if f.sendErr != nil {
 		return "", f.sendErr
 	}
@@ -107,10 +108,10 @@ func (f *fakeSession) Send(_ context.Context, opts copilot.MessageOptions) (stri
 	return "msg-1", nil
 }
 
-func (f *fakeSession) getSentOpts() []copilot.MessageOptions {
+func (f *fakeSession) getSentOpts() []*copilot.MessageOptions {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	out := make([]copilot.MessageOptions, len(f.sentOpts))
+	out := make([]*copilot.MessageOptions, len(f.sentOpts))
 	copy(out, f.sentOpts)
 	return out
 }
@@ -284,7 +285,7 @@ func TestPermissionPermitHandshake(t *testing.T) {
 		ToolCallID: &toolCallID,
 	}
 
-	resCh := make(chan copilot.PermissionRequestResult, 1)
+	resCh := make(chan rpc.PermissionDecision, 1)
 	go func() {
 		result, _ := p.handlePermissionRequest("s1", request)
 		resCh <- result
@@ -314,8 +315,8 @@ func TestPermissionPermitHandshake(t *testing.T) {
 
 	select {
 	case result := <-resCh:
-		if result.Kind != copilot.PermissionRequestResultKindApproved {
-			t.Fatalf("permission result kind = %q, want approved", result.Kind)
+		if _, ok := result.(*rpc.PermissionDecisionApproveOnce); !ok {
+			t.Fatalf("permission result type = %T, want *rpc.PermissionDecisionApproveOnce", result)
 		}
 	case <-time.After(300 * time.Millisecond):
 		t.Fatal("timeout waiting for permission handler result")
@@ -513,7 +514,7 @@ func TestExecutePerStepReasoningEffortRestoresDefault(t *testing.T) {
 
 	// W15: simulate submit_outcome tool by setting finalizedOutcome via onSend hook
 	// before session.idle fires, so awaitOutcome sees the outcome on the first attempt.
-	fake.onSend = func(_ int, _ copilot.MessageOptions) {
+	fake.onSend = func(_ int, _ *copilot.MessageOptions) {
 		s.mu.Lock()
 		s.finalizedOutcome = "success"
 		s.mu.Unlock()
@@ -579,7 +580,7 @@ func TestExecutePerStepEffortRestoresWhenNoDefault(t *testing.T) {
 	sender := &recordingSender{}
 
 	// W15: simulate submit_outcome tool via onSend hook.
-	fake.onSend = func(_ int, _ copilot.MessageOptions) {
+	fake.onSend = func(_ int, _ *copilot.MessageOptions) {
 		s.mu.Lock()
 		s.finalizedOutcome = "success"
 		s.mu.Unlock()
