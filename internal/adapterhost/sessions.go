@@ -5,11 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
+	"os/exec"
 	"strings"
 	"sync"
 	"sync/atomic"
 
 	"github.com/brokenbots/criteria/internal/adapter"
+	"github.com/brokenbots/criteria/internal/adapter/environment/sandbox"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -46,9 +49,18 @@ func (e *FatalRunError) Unwrap() error {
 
 type SessionManager struct {
 	loader Loader
+	graph  *workflow.FSMGraph
 
 	mu       sync.Mutex
 	sessions map[string]*Session
+}
+
+// SetGraph provides the compiled workflow graph so the session manager
+// can look up per-adapter environment policies (e.g. sandbox) at open time.
+func (m *SessionManager) SetGraph(g *workflow.FSMGraph) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.graph = g
 }
 
 // PermissionState holds runtime permission audit data for a session.
@@ -74,6 +86,76 @@ func NewSessionManager(loader Loader) *SessionManager {
 	}
 }
 
+// maybeSetSandboxCustomizer inspects the graph for a sandbox environment
+// bound to the given adapter instance. If one exists, it sets the loader's
+// command customizer to inject the sandbox configuration; otherwise it
+// clears any existing customizer. The caller must reset the customizer
+// after Resolve (typically with defer).
+func (m *SessionManager) maybeSetSandboxCustomizer(instanceID string) {
+	customizer, _ := m.buildSandboxCustomizer(instanceID)
+	if dl, ok := m.loader.(*DefaultLoader); ok {
+		dl.SetCommandCustomizer(customizer)
+	}
+}
+
+// buildSandboxCustomizer returns a function that applies the sandbox
+// configuration to an exec.Cmd, or nil if the adapter is not bound to a
+// sandbox environment. The second return value is an error that is only
+// non-nil when the sandbox policy is strict and a required primitive is
+// unavailable; in that case the caller must abort the session before
+// Resolve.
+func (m *SessionManager) buildSandboxCustomizer(instanceID string) (func(name string, cmd *exec.Cmd), error) {
+	if m.graph == nil {
+		return nil, nil
+	}
+	adapterNode, ok := m.graph.Adapters[instanceID]
+	if !ok {
+		return nil, nil
+	}
+	envKey := adapterNode.Environment
+	if envKey == "" {
+		envKey = m.graph.DefaultEnvironment
+	}
+	if envKey == "" {
+		return nil, nil
+	}
+	envNode, ok := m.graph.Environments[envKey]
+	if !ok {
+		return nil, nil
+	}
+	if envNode.Type != "sandbox" {
+		return nil, nil
+	}
+
+	cacheKey := instanceID + ":" + envKey
+	rp, ok := m.graph.ResolvedPolicies[cacheKey]
+	if !ok {
+		return nil, nil
+	}
+
+	caps := sandbox.Probe()
+	if missing := caps.Missing(); len(missing) > 0 {
+		slog.Info("sandbox primitives missing", "missing", missing, "instance", instanceID)
+	}
+
+	ctx := sandbox.PrepareContext{
+		Policy: rp,
+		Caps:   caps,
+	}
+	prep, err := sandbox.Handler{}.Prepare(ctx)
+	if err != nil {
+		if rp.PolicyMode == "strict" {
+			return nil, fmt.Errorf("sandbox strict mode: %w", err)
+		}
+		slog.Info("sandbox permissive degradation", "instance", instanceID, "error", err)
+		return nil, nil
+	}
+
+	return func(_ string, cmd *exec.Cmd) {
+		_ = prep.ApplyToCmd(cmd, os.Args[0])
+	}, nil
+}
+
 func (m *SessionManager) Open(ctx context.Context, name, adapterName, onCrash string, config map[string]string) error {
 	if strings.TrimSpace(name) == "" {
 		return errors.New("session name is required")
@@ -88,6 +170,15 @@ func (m *SessionManager) Open(ctx context.Context, name, adapterName, onCrash st
 		return fmt.Errorf("%w: %s", ErrSessionAlreadyOpen, name)
 	}
 	m.mu.Unlock()
+
+	customizer, sandboxErr := m.buildSandboxCustomizer(name)
+	if dl, ok := m.loader.(*DefaultLoader); ok {
+		dl.SetCommandCustomizer(customizer)
+		defer dl.SetCommandCustomizer(nil)
+	}
+	if sandboxErr != nil {
+		return fmt.Errorf("session %q: %w", name, sandboxErr)
+	}
 
 	plug, err := m.loader.Resolve(ctx, adapterName)
 	if err != nil {
@@ -249,6 +340,14 @@ func (m *SessionManager) lookup(name string) (*Session, error) {
 
 func (m *SessionManager) respawn(ctx context.Context, sess *Session) error {
 	sess.handle.Kill()
+	customizer, sandboxErr := m.buildSandboxCustomizer(sess.Name)
+	if dl, ok := m.loader.(*DefaultLoader); ok {
+		dl.SetCommandCustomizer(customizer)
+		defer dl.SetCommandCustomizer(nil)
+	}
+	if sandboxErr != nil {
+		return fmt.Errorf("session %q respawn: %w", sess.Name, sandboxErr)
+	}
 	plug, err := m.loader.Resolve(ctx, sess.Adapter)
 	if err != nil {
 		return err

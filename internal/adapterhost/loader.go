@@ -69,10 +69,11 @@ type DiscoveryFunc func(name string) (string, error)
 type BuiltinFactory func() Handle
 
 type DefaultLoader struct {
-	mu       sync.Mutex
-	discover DiscoveryFunc
-	builtins map[string]BuiltinFactory
-	active   map[*rpcHandle]struct{}
+	mu             sync.Mutex
+	discover       DiscoveryFunc
+	builtins       map[string]BuiltinFactory
+	active         map[*rpcHandle]struct{}
+	cmdCustomizer  func(name string, cmd *exec.Cmd)
 }
 
 func NewLoader() *DefaultLoader {
@@ -89,6 +90,16 @@ func NewLoaderWithDiscovery(discover DiscoveryFunc) *DefaultLoader {
 		ldr.discover = discover
 	}
 	return ldr
+}
+
+// SetCommandCustomizer sets a function that is called for every
+// non-builtin adapter process immediately after the exec.Cmd is
+// created and before it is started. Passing nil clears any existing
+// customizer.
+func (l *DefaultLoader) SetCommandCustomizer(fn func(name string, cmd *exec.Cmd)) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.cmdCustomizer = fn
 }
 
 func (l *DefaultLoader) RegisterBuiltin(name string, factory BuiltinFactory) {
@@ -121,12 +132,18 @@ func (l *DefaultLoader) Resolve(ctx context.Context, name string) (Handle, error
 		return nil, err
 	}
 
+	cmd := exec.Command(path)
+	// Apply sandbox or other per-adapter command customizations.
+	if l.cmdCustomizer != nil {
+		l.cmdCustomizer(name, cmd)
+	}
+
 	client := hplugin.NewClient(&hplugin.ClientConfig{
 		HandshakeConfig: HandshakeConfig,
 		Plugins:         AdapterMap(),
 		// Use a process command decoupled from per-step timeout contexts.
 		// Session and loader shutdown are the only teardown mechanisms.
-		Cmd:              exec.Command(path),
+		Cmd:              cmd,
 		AllowedProtocols: []hplugin.Protocol{hplugin.ProtocolGRPC},
 		// 30 s gives adapter binaries enough time to start on loaded CI machines
 		// and under the Go race detector, where process scheduling can be delayed
