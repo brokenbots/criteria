@@ -204,32 +204,35 @@ func (e *Engine) Run(ctx context.Context) error {
 	}
 	defer func() { _ = sessions.Shutdown(context.WithoutCancel(ctx)) }()
 
-	// Seed variables before adapter provisioning so secret expressions can be
-	// evaluated against the run scope (WS13).
-	vars := e.seedRunVars()
-
 	// Create a per-run redaction registry and wire it into the session manager
 	// and the engine sink so all secret values are masked before display or
 	// persistence.
 	redactionReg := secrets.NewRegistry()
 	sessions.RedactionRegistry = redactionReg
 
+	// Wrap the engine sink before any events are emitted.
+	sink := NewRedactingSink(e.sink, redactionReg)
+
+	// Seed variables before adapter provisioning so secret expressions can be
+	// evaluated against the run scope (WS13).
+	vars := e.seedRunVars(sink)
+
 	deps := Deps{
 		Sessions: sessions,
-		Sink:     NewRedactingSink(e.sink, redactionReg),
+		Sink:     sink,
 	}
 
 	// Provision adapter sessions at scope start (W12)
 	scopeOrder, err := initScopeAdapters(ctx, e.graph, deps, vars)
 	if err != nil {
-		e.sink.OnRunFailed(err.Error(), e.graph.InitialState)
+		sink.OnRunFailed(err.Error(), e.graph.InitialState)
 		return err
 	}
 	defer func() { tearDownScopeAdapters(ctx, scopeOrder, deps) }()
 
 	current := e.graph.InitialState
-	e.sink.OnRunStarted(e.graph.Name, current)
-	return e.runLoop(ctx, sessions, current, 1, vars)
+	sink.OnRunStarted(e.graph.Name, current)
+	return e.runLoop(ctx, sessions, current, 1, vars, sink)
 }
 
 // RunFrom resumes a workflow at startStep with the given initialAttempt
@@ -247,21 +250,23 @@ func (e *Engine) RunFrom(ctx context.Context, startStep string, initialAttempt i
 	}
 	defer func() { _ = sessions.Shutdown(context.WithoutCancel(ctx)) }()
 
-	vars := e.seedRunVars()
-
 	redactionReg := secrets.NewRegistry()
 	sessions.RedactionRegistry = redactionReg
 
+	sink := NewRedactingSink(e.sink, redactionReg)
+
+	vars := e.seedRunVars(sink)
+
 	deps := Deps{
 		Sessions: sessions,
-		Sink:     NewRedactingSink(e.sink, redactionReg),
+		Sink:     sink,
 	}
 
 	// For resumed runs, provision adapter sessions at scope start (W12).
 	// Sessions are always provisioned fresh, not restored from a prior run.
 	scopeOrder, err := initScopeAdapters(ctx, e.graph, deps, vars)
 	if err != nil {
-		e.sink.OnRunFailed(err.Error(), startStep)
+		sink.OnRunFailed(err.Error(), startStep)
 		return err
 	}
 	defer func() { tearDownScopeAdapters(ctx, scopeOrder, deps) }()
@@ -269,12 +274,12 @@ func (e *Engine) RunFrom(ctx context.Context, startStep string, initialAttempt i
 	if err := e.bootstrapSessionsForResume(ctx, sessions, startStep); err != nil {
 		return err
 	}
-	return e.runLoop(ctx, sessions, startStep, initialAttempt, vars)
+	return e.runLoop(ctx, sessions, startStep, initialAttempt, vars, sink)
 }
 
 // runLoop is the shared execution loop. firstStepAttempt is the attempt index
 // used for the initial step when resuming; subsequent steps start at attempt 1.
-func (e *Engine) runLoop(ctx context.Context, sessions *adapterhost.SessionManager, current string, firstStepAttempt int, vars map[string]cty.Value) error {
+func (e *Engine) runLoop(ctx context.Context, sessions *adapterhost.SessionManager, current string, firstStepAttempt int, vars map[string]cty.Value, sink Sink) error {
 	st := &RunState{
 		Current:          current,
 		Vars:             vars,
@@ -287,25 +292,25 @@ func (e *Engine) runLoop(ctx context.Context, sessions *adapterhost.SessionManag
 		firstStep:        true,
 		firstStepAttempt: firstStepAttempt,
 	}
-	deps := e.buildDeps(sessions)
+	deps := e.buildDeps(sessions, sink)
 
 	e.liveRunState = st
 	for {
 		node, err := nodeFor(e.graph, st.Current)
 		if err != nil {
-			e.sink.OnRunFailed(err.Error(), st.Current)
+			sink.OnRunFailed(err.Error(), st.Current)
 			return err
 		}
 		next, err := node.Evaluate(ctx, st, deps)
 		if err != nil {
-			return e.handleEvalError(st, err)
+			return e.handleEvalError(st, err, sink)
 		}
-		next, err = e.routeIteratingStep(st, next)
+		next, err = e.routeIteratingStep(st, next, sink)
 		if err != nil {
-			return e.handleEvalError(st, err)
+			return e.handleEvalError(st, err, sink)
 		}
 		if next == workflow.ReturnSentinel {
-			return e.handleReturnExit(st)
+			return e.handleReturnExit(st, sink)
 		}
 		e.advanceTo(st, next)
 	}
@@ -314,8 +319,8 @@ func (e *Engine) runLoop(ctx context.Context, sessions *adapterhost.SessionManag
 // routeIteratingStep handles post-step routing for steps with active iteration
 // cursors (W10). Delegates to routeIteratingStepInGraph using the engine's
 // own graph and sink. See routeIteratingStepInGraph for full semantics.
-func (e *Engine) routeIteratingStep(st *RunState, next string) (string, error) {
-	return routeIteratingStepInGraph(st, next, e.graph, e.sink)
+func (e *Engine) routeIteratingStep(st *RunState, next string, sink Sink) (string, error) {
+	return routeIteratingStepInGraph(st, next, e.graph, sink)
 }
 
 // routeIteratingStepInGraph is the graph-agnostic iteration router called by
@@ -462,7 +467,7 @@ func finishIterationInGraph(st *RunState, stepName string, graph *workflow.FSMGr
 
 // returns the restored scope unchanged. For fresh runs it seeds from graph
 // defaults, applies any CLI overrides, and emits OnVariableSet events.
-func (e *Engine) seedRunVars() map[string]cty.Value {
+func (e *Engine) seedRunVars(sink Sink) map[string]cty.Value {
 	if e.resumedVars != nil {
 		// Locals are compile-time constants that are never persisted in the
 		// scope snapshot. Always reseed them from the current graph so that
@@ -482,20 +487,20 @@ func (e *Engine) seedRunVars() map[string]cty.Value {
 	// Fresh run: emit OnVariableSet for each variable that has a value.
 	for name, node := range e.graph.Variables {
 		if ov, ok := e.varOverrides[name]; ok {
-			e.sink.OnVariableSet(name, ov, "override")
+			sink.OnVariableSet(name, ov, "override")
 		} else if node.Default != cty.NilVal {
-			e.sink.OnVariableSet(name, workflow.CtyValueToString(node.Default), "default")
+			sink.OnVariableSet(name, workflow.CtyValueToString(node.Default), "default")
 		}
 	}
 	return vars
 }
 
 // buildDeps constructs the Deps bundle injected into each node's Evaluate call.
-func (e *Engine) buildDeps(sessions *adapterhost.SessionManager) Deps {
+func (e *Engine) buildDeps(sessions *adapterhost.SessionManager, sink Sink) Deps {
 	return Deps{
 		Sessions:            sessions,
 		Loader:              e.loader,
-		Sink:                e.sink,
+		Sink:                sink,
 		SubWorkflowResolver: e.subWorkflowResolver,
 		BranchScheduler:     e.branchScheduler,
 	}
@@ -508,7 +513,7 @@ func (e *Engine) advanceTo(st *RunState, next string) {
 
 // handleEvalError dispatches errors from node.Evaluate. It handles ErrTerminal
 // and ErrPaused specially; all other errors are propagated as run failures.
-func (e *Engine) handleEvalError(st *RunState, err error) error {
+func (e *Engine) handleEvalError(st *RunState, err error, sink Sink) error {
 	// Capture the visit state and clear the live pointer so VisitCounts()
 	// returns a stable snapshot after the run ends (W07).
 	e.liveRunState = nil
@@ -517,21 +522,21 @@ func (e *Engine) handleEvalError(st *RunState, err error) error {
 		state, ok := e.graph.States[st.Current]
 		if !ok {
 			missing := fmt.Errorf("terminal node %q is not a state", st.Current)
-			e.sink.OnRunFailed(missing.Error(), st.Current)
+			sink.OnRunFailed(missing.Error(), st.Current)
 			return missing
 		}
 		// Evaluate outputs at terminal state (W09).
 		outputs, outErr := evalRunOutputs(e.graph, st)
 		if outErr != nil {
 			// Output evaluation failed; emit error and fail the run.
-			e.sink.OnRunFailed(outErr.Error(), st.Current)
+			sink.OnRunFailed(outErr.Error(), st.Current)
 			return outErr
 		}
 		// Emit outputs before run.completed if present.
 		if len(outputs) > 0 {
-			e.sink.OnRunOutputs(outputs)
+			sink.OnRunOutputs(outputs)
 		}
-		e.sink.OnRunCompleted(state.Name, state.Success)
+		sink.OnRunCompleted(state.Name, state.Success)
 		return nil
 	}
 	if errors.Is(err, engineruntime.ErrPaused) {
@@ -543,27 +548,27 @@ func (e *Engine) handleEvalError(st *RunState, err error) error {
 			mode = "duration"
 		}
 		e.lastVars = st.Vars
-		e.sink.OnRunPaused(st.Current, mode, st.PendingSignal)
+		sink.OnRunPaused(st.Current, mode, st.PendingSignal)
 		return nil
 	}
-	e.sink.OnRunFailed(err.Error(), st.Current)
+	sink.OnRunFailed(err.Error(), st.Current)
 	return err
 }
 
 // handleReturnExit handles top-level runs that exit via next = "return".
 // The projected outputs in st.ReturnOutputs are emitted as OnRunOutputs
 // (if non-empty) and the run is completed successfully with no named final state.
-func (e *Engine) handleReturnExit(st *RunState) error {
+func (e *Engine) handleReturnExit(st *RunState, sink Sink) error {
 	e.liveRunState = nil
 	e.lastVisits = st.Visits
 
 	if len(st.ReturnOutputs) > 0 {
 		outputs := formatReturnOutputs(st.ReturnOutputs)
 		if len(outputs) > 0 {
-			e.sink.OnRunOutputs(outputs)
+			sink.OnRunOutputs(outputs)
 		}
 	}
-	e.sink.OnRunCompleted("", true)
+	sink.OnRunCompleted("", true)
 	return nil
 }
 

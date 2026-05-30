@@ -44,7 +44,7 @@ func StackFromEnvironment(env *workflow.EnvironmentNode) (*Stack, error) {
 	all := map[string]Provider{
 		"env":      EnvProvider{},
 		"file":     &FileProvider{},
-		"keychain": &KeychainProvider{},
+		"keychain": &KeychainProvider{Fallbacks: []Provider{EnvProvider{}, &FileProvider{}}},
 		"vault":    VaultProvider{},
 		"sops":     SOPSProvider{},
 	}
@@ -86,7 +86,7 @@ func DefaultStack() *Stack {
 	return &Stack{providers: []Provider{
 		EnvProvider{},
 		&FileProvider{},
-		&KeychainProvider{},
+		&KeychainProvider{Fallbacks: []Provider{EnvProvider{}, &FileProvider{}}},
 		SOPSProvider{},
 		VaultProvider{},
 	}}

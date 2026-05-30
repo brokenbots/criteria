@@ -3,6 +3,7 @@ package secrets
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -28,15 +29,21 @@ func (p *KeychainProvider) Resolve(ctx context.Context, ref OriginRef) (string, 
 		return "", fmt.Errorf("keychain provider: empty reference")
 	}
 
+	slog.Debug("keychain provider resolving secret", "ref", ref.Ref, "os", runtime.GOOS)
+
 	// Try native keychain first.
 	val, err := p.resolveNative(ctx, ref)
 	if err == nil {
+		slog.Debug("keychain provider resolved via native keychain", "ref", ref.Ref)
 		return val, nil
 	}
+
+	slog.Debug("keychain provider native resolution failed", "ref", ref.Ref, "error", err)
 
 	// Fall back to other providers if configured.
 	for _, fb := range p.Fallbacks {
 		if fb.CanResolve(ref) {
+			slog.Debug("keychain provider falling back", "fallback", fb.Name(), "ref", ref.Ref)
 			return fb.Resolve(ctx, ref)
 		}
 	}

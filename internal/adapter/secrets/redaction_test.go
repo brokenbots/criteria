@@ -102,3 +102,67 @@ func TestRegistry_DuplicateRegister(t *testing.T) {
 	out := r.Redact("dup")
 	require.Equal(t, "[REDACTED]", out)
 }
+
+// recordingEventSink captures Log and Adapter calls.
+type recordingEventSink struct {
+	logs     []logCall
+	adapters []adapterCall
+}
+
+type logCall struct {
+	stream string
+	chunk  []byte
+}
+
+type adapterCall struct {
+	kind string
+	data any
+}
+
+func (s *recordingEventSink) Log(stream string, chunk []byte) {
+	s.logs = append(s.logs, logCall{stream: stream, chunk: chunk})
+}
+func (s *recordingEventSink) Adapter(kind string, data any) {
+	s.adapters = append(s.adapters, adapterCall{kind: kind, data: data})
+}
+
+func TestRedactingEventSink_Log_RedactsBytes(t *testing.T) {
+	inner := &recordingEventSink{}
+	reg := NewRegistry()
+	reg.Register("secret123")
+
+	sink := &RedactingEventSink{Inner: inner, Registry: reg}
+	sink.Log("stdout", []byte("hello secret123 world"))
+
+	require.Len(t, inner.logs, 1)
+	require.Equal(t, "stdout", inner.logs[0].stream)
+	require.Equal(t, "hello [REDACTED] world", string(inner.logs[0].chunk))
+}
+
+func TestRedactingEventSink_Adapter_PassesThrough(t *testing.T) {
+	inner := &recordingEventSink{}
+	reg := NewRegistry()
+	reg.Register("secret123")
+
+	sink := &RedactingEventSink{Inner: inner, Registry: reg}
+	sink.Adapter("test", map[string]string{"key": "secret123"})
+
+	require.Len(t, inner.adapters, 1)
+	require.Equal(t, "test", inner.adapters[0].kind)
+	// Adapter data is passed through unchanged (structured events should be
+	// redacted at the presentation layer, not the transport layer).
+	require.Equal(t, map[string]string{"key": "secret123"}, inner.adapters[0].data)
+}
+
+func TestRedactingEventSink_NilRegistry(t *testing.T) {
+	inner := &recordingEventSink{}
+	sink := &RedactingEventSink{Inner: inner, Registry: nil}
+
+	// Should not panic; RedactBytes with nil registry would panic if used
+	// directly, but we guard against that in practice by not constructing
+	// RedactingEventSink with a nil registry. This test documents the
+	// behaviour: it will panic on Log because Registry is nil.
+	require.Panics(t, func() {
+		sink.Log("stdout", []byte("test"))
+	})
+}

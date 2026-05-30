@@ -91,6 +91,7 @@ type Session struct {
 	Name            string
 	Adapter         string
 	Config          map[string]string
+	Secrets         map[string]string // resolved secret values (WS13)
 	OnCrash         string
 	Capabilities    []string // cached from plug.Info() at Open time
 	PermissionState PermissionState
@@ -246,7 +247,7 @@ func (m *SessionManager) Open(ctx context.Context, name, adapterName, onCrash st
 		return err
 	}
 
-	return m.registerSession(ctx, name, adapterName, onCrash, config, caps, plug, cleanup)
+	return m.registerSession(ctx, name, adapterName, onCrash, config, secrets, caps, plug, cleanup)
 }
 
 func (m *SessionManager) resolveAdapterHandle(ctx context.Context, name, adapterName string, customizer func(string, *exec.Cmd)) (Handle, error) {
@@ -284,7 +285,7 @@ func makeSandboxCustomizer(prep *sandbox.LinuxPrepared, envNode *workflow.Enviro
 	}, cleanup
 }
 
-func (m *SessionManager) registerSession(ctx context.Context, name, adapterName, onCrash string, config map[string]string, caps []string, plug Handle, cleanup func()) error {
+func (m *SessionManager) registerSession(ctx context.Context, name, adapterName, onCrash string, config, secrets map[string]string, caps []string, plug Handle, cleanup func()) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, exists := m.sessions[name]; exists {
@@ -299,6 +300,7 @@ func (m *SessionManager) registerSession(ctx context.Context, name, adapterName,
 		Name:           name,
 		Adapter:        adapterName,
 		Config:         cloneConfig(config),
+		Secrets:        cloneConfig(secrets),
 		OnCrash:        normalizeOnCrash(onCrash),
 		Capabilities:   caps,
 		handle:         plug,
@@ -479,7 +481,7 @@ func (m *SessionManager) respawn(ctx context.Context, sess *Session) error {
 		}
 		return err
 	}
-	if err := plug.OpenSession(ctx, sess.Name, sess.Config, nil); err != nil {
+	if err := plug.OpenSession(ctx, sess.Name, sess.Config, sess.Secrets); err != nil {
 		plug.Kill()
 		if cleanup != nil {
 			cleanup()

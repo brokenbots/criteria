@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/zclconf/go-cty/cty"
 
@@ -41,6 +42,7 @@ func resolveAdapterSecrets(
 	resolved := make(map[string]string, len(evaluated))
 	for name, val := range evaluated {
 		if val == "" {
+			slog.Debug("adapter secret resolved to empty string", "adapter", adapter.Name, "secret", name)
 			continue
 		}
 		resolvedVal, resolveErr := secrets.ResolveString(ctx, val, stack)
@@ -93,6 +95,7 @@ func resolveStepSecretInputs(
 	resolved := make(map[string]string, len(merged))
 	for name, val := range merged {
 		if val == "" {
+			slog.Debug("step secret_input resolved to empty string", "step", step.Name, "secret", name)
 			continue
 		}
 		resolvedVal, resolveErr := secrets.ResolveString(ctx, val, stack)
