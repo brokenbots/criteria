@@ -30,7 +30,7 @@ import (
 // stepInput contains per-call input bindings (from the step's input { } block)
 // that override the declaration-level bindings in node.Inputs. Pass nil when
 // there are no step-level overrides.
-func runSubworkflow(ctx context.Context, node *workflow.SubworkflowNode, parentSt *RunState, stepInput map[string]cty.Value, deps Deps) (map[string]cty.Value, string, error) {
+func runSubworkflow(ctx context.Context, node *workflow.SubworkflowNode, parentSt *RunState, stepInput map[string]cty.Value, deps Deps) (outputs map[string]cty.Value, terminal string, err error) {
 	// Evaluate each input expression against the parent scope.
 	evalOpts := workflow.DefaultFunctionOptions(parentSt.WorkflowDir)
 	inputVals, err := evaluateSubworkflowInputs(node, parentSt.Vars, evalOpts)
@@ -77,7 +77,7 @@ func runSubworkflow(ctx context.Context, node *workflow.SubworkflowNode, parentS
 		Vars:        finalVars,
 		WorkflowDir: calleeDir,
 	}
-	outputs, err := evalRunOutputsAsValues(node.Body, finalSt)
+	outputs, err = evalRunOutputsAsValues(node.Body, finalSt)
 	if err != nil {
 		return nil, "", fmt.Errorf("subworkflow %q: output evaluation: %w", node.Name, err)
 	}
