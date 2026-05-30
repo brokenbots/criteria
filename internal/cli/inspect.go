@@ -3,6 +3,8 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"io"
+	"os"
 	"strings"
 	"time"
 
@@ -37,7 +39,7 @@ func NewInspectCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("inspect: %w", err)
 			}
-			renderInspect(resp.Msg)
+			renderInspect(os.Stdout, resp.Msg)
 			return nil
 		},
 	}
@@ -47,36 +49,43 @@ func NewInspectCmd() *cobra.Command {
 	return cmd
 }
 
-func renderInspect(msg *pb.InspectRunResponse) {
-	fmt.Printf("session %s (%s)\n", msg.SessionId, msg.Adapter)
-	fmt.Printf("  current_step:           %s\n", msg.CurrentStep)
-	fmt.Printf("  pending_permissions:    %d\n", msg.PendingPermissions)
+func renderInspect(w io.Writer, msg *pb.InspectRunResponse) {
+	if msg.Adapter != "" {
+		fmt.Fprintf(w, "session %s (%s)\n", msg.SessionId, msg.Adapter)
+	} else {
+		fmt.Fprintf(w, "session %s\n", msg.SessionId)
+	}
+	fmt.Fprintf(w, "  current_step:           %s\n", msg.CurrentStep)
+	fmt.Fprintf(w, "  pending_permissions:    %d\n", msg.PendingPermissions)
 
 	if msg.LastActivityAt != nil && msg.LastActivityAt.IsValid() {
 		age := time.Since(msg.LastActivityAt.AsTime())
-		fmt.Printf("  last_activity:          %s (%s ago)\n", msg.LastActivityAt.AsTime().Format(time.RFC3339), roundDuration(age))
+		fmt.Fprintf(w, "  last_activity:          %s (%s ago)\n", msg.LastActivityAt.AsTime().Format(time.RFC3339), roundDuration(age))
 	}
 
 	if msg.StateJson != "" {
-		fmt.Printf("  state summary:\n")
-		renderStateJSON(msg.StateJson)
+		fmt.Fprintf(w, "  state summary:\n")
+		renderStateJSON(w, msg.StateJson)
 	}
 }
 
-func renderStateJSON(raw string) {
+func renderStateJSON(w io.Writer, raw string) {
+	if raw == "" {
+		return
+	}
 	var obj map[string]any
 	if err := json.Unmarshal([]byte(raw), &obj); err != nil {
-		fmt.Printf("    (raw): %s\n", strings.TrimSpace(raw))
+		fmt.Fprintf(w, "    (raw): %s\n", strings.TrimSpace(raw))
 		return
 	}
 	for k, v := range obj {
 		switch val := v.(type) {
 		case string:
-			fmt.Printf("    %s: %q\n", k, val)
+			fmt.Fprintf(w, "    %s: %q\n", k, val)
 		case []any:
-			fmt.Printf("    %s: %v\n", k, val)
+			fmt.Fprintf(w, "    %s: %v\n", k, val)
 		default:
-			fmt.Printf("    %s: %v\n", k, val)
+			fmt.Fprintf(w, "    %s: %v\n", k, val)
 		}
 	}
 }

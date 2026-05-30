@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/brokenbots/criteria/internal/adapter"
 	v2 "github.com/brokenbots/criteria/sdk/pb/criteria/v2"
@@ -51,7 +52,7 @@ func (m *pauseResumeMockHandle) Inspect(ctx context.Context, id string) (*v2.Ins
 	return m.inspectResp, m.inspectErr
 }
 
-func TestSession_Pause_ResumesPermissionState(t *testing.T) {
+func TestSession_Pause_CallsHandleThenPermissionState(t *testing.T) {
 	h := &pauseResumeMockHandle{}
 	ps := NewPermissionState("s1", nil)
 	ps.SetStreamCancel(func() {})
@@ -73,14 +74,15 @@ func TestSession_Pause_ResumesPermissionState(t *testing.T) {
 	ps.mu.Unlock()
 }
 
-func TestSession_Resume_ResumesPermissionState(t *testing.T) {
+func TestSession_Resume_CallsPermissionStateThenHandle(t *testing.T) {
 	h := &pauseResumeMockHandle{}
 	ps := NewPermissionState("s1", nil)
 	ps.SetStreamCancel(func() {})
 	ps.SetPolicy(denyAllPolicy{})
 	ps.active = false
 
-	sess := &Session{Name: "s1", handle: h, PermissionState: ps}
+	// Session starts paused so Resume is not a no-op.
+	sess := &Session{Name: "s1", handle: h, PermissionState: ps, paused: true}
 
 	if err := sess.Resume(context.Background()); err != nil {
 		t.Fatalf("resume: %v", err)
@@ -93,6 +95,39 @@ func TestSession_Resume_ResumesPermissionState(t *testing.T) {
 		t.Fatal("expected permission state to be active after resume")
 	}
 	ps.mu.Unlock()
+}
+
+func TestSession_Pause_Idempotent(t *testing.T) {
+	h := &pauseResumeMockHandle{}
+	sess := &Session{Name: "s1", handle: h}
+
+	if err := sess.Pause(context.Background()); err != nil {
+		t.Fatalf("pause 1: %v", err)
+	}
+	if err := sess.Pause(context.Background()); err != nil {
+		t.Fatalf("pause 2: %v", err)
+	}
+	if h.pauseCount != 1 {
+		t.Fatalf("expected 1 pause call (idempotent), got %d", h.pauseCount)
+	}
+}
+
+func TestSession_Resume_Idempotent(t *testing.T) {
+	h := &pauseResumeMockHandle{}
+	ps := NewPermissionState("s1", nil)
+	ps.SetStreamCancel(func() {})
+	// Session starts paused.
+	sess := &Session{Name: "s1", handle: h, PermissionState: ps, paused: true}
+
+	if err := sess.Resume(context.Background()); err != nil {
+		t.Fatalf("resume 1: %v", err)
+	}
+	if err := sess.Resume(context.Background()); err != nil {
+		t.Fatalf("resume 2: %v", err)
+	}
+	if h.resumeCount != 1 {
+		t.Fatalf("expected 1 resume call (idempotent), got %d", h.resumeCount)
+	}
 }
 
 func TestSession_Inspect_DelegatesToHandle(t *testing.T) {
@@ -109,7 +144,7 @@ func TestSession_Inspect_DelegatesToHandle(t *testing.T) {
 	}
 }
 
-func TestSessionManager_PauseAll_ResumesAllSessions(t *testing.T) {
+func TestSessionManager_PauseAll_PausesAllSessions(t *testing.T) {
 	sm := NewSessionManager(nil)
 	h1 := &pauseResumeMockHandle{}
 	h2 := &pauseResumeMockHandle{}
@@ -142,8 +177,9 @@ func TestSessionManager_ResumeAll_ResumesAllSessions(t *testing.T) {
 	ps2.SetStreamCancel(func() {})
 	ps2.active = false
 
-	sm.sessions["s1"] = &Session{Name: "s1", handle: h1, PermissionState: ps1}
-	sm.sessions["s2"] = &Session{Name: "s2", handle: h2, PermissionState: ps2}
+	// Sessions start paused so Resume is not a no-op.
+	sm.sessions["s1"] = &Session{Name: "s1", handle: h1, PermissionState: ps1, paused: true}
+	sm.sessions["s2"] = &Session{Name: "s2", handle: h2, PermissionState: ps2, paused: true}
 
 	if err := sm.ResumeAll(context.Background()); err != nil {
 		t.Fatalf("resume all: %v", err)
@@ -165,8 +201,8 @@ func TestSessionManager_PauseAll_Idempotent(t *testing.T) {
 	_ = sm.PauseAll(context.Background())
 	_ = sm.PauseAll(context.Background())
 
-	if h.pauseCount != 2 {
-		t.Fatalf("expected 2 pause calls (idempotent at handle level), got %d", h.pauseCount)
+	if h.pauseCount != 1 {
+		t.Fatalf("expected 1 pause call (idempotent), got %d", h.pauseCount)
 	}
 }
 
@@ -177,13 +213,14 @@ func TestSessionManager_ResumeAll_Idempotent(t *testing.T) {
 	ps.SetStreamCancel(func() {})
 	ps.active = false
 
-	sm.sessions["s1"] = &Session{Name: "s1", handle: h, PermissionState: ps}
+	// Session starts paused.
+	sm.sessions["s1"] = &Session{Name: "s1", handle: h, PermissionState: ps, paused: true}
 
 	_ = sm.ResumeAll(context.Background())
 	_ = sm.ResumeAll(context.Background())
 
-	if h.resumeCount != 2 {
-		t.Fatalf("expected 2 resume calls (idempotent at handle level), got %d", h.resumeCount)
+	if h.resumeCount != 1 {
+		t.Fatalf("expected 1 resume call (idempotent), got %d", h.resumeCount)
 	}
 }
 
@@ -247,10 +284,109 @@ func TestSessionManager_ConcurrentPauseResume(t *testing.T) {
 	}
 	wg.Wait()
 
-	if h.pauseCount != 10 {
-		t.Fatalf("expected 10 pause calls, got %d", h.pauseCount)
+	// With concurrent Pause/Resume interleaving, counts may exceed 1.
+	// This test exists to verify the race detector is clean.
+	_ = h.pauseCount
+	_ = h.resumeCount
+}
+
+// counterHandle increments a counter every 100ms. Pause stops the counter;
+// Resume resumes it. This validates that the host-level pause/resume
+// ordering actually stalls adapter work.
+type counterHandle struct {
+	mu      sync.Mutex
+	counter int
+	paused  bool
+	done    chan struct{}
+}
+
+func (c *counterHandle) Info(context.Context) (Info, error) { return Info{Name: "counter"}, nil }
+func (c *counterHandle) OpenSession(context.Context, string, map[string]string, map[string]string) error {
+	c.done = make(chan struct{})
+	ticker := time.NewTicker(100 * time.Millisecond)
+	go func() {
+		for {
+			select {
+			case <-ticker.C:
+				c.mu.Lock()
+				if !c.paused {
+					c.counter++
+				}
+				c.mu.Unlock()
+			case <-c.done:
+				ticker.Stop()
+				return
+			}
+		}
+	}()
+	return nil
+}
+func (c *counterHandle) Execute(context.Context, string, *workflow.StepNode, adapter.EventSink) (adapter.Result, error) {
+	return adapter.Result{}, nil
+}
+func (c *counterHandle) CloseSession(context.Context, string) error {
+	close(c.done)
+	return nil
+}
+func (c *counterHandle) Kill() {}
+func (c *counterHandle) Pause(context.Context, string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.paused = true
+	return nil
+}
+func (c *counterHandle) Resume(context.Context, string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.paused = false
+	return nil
+}
+func (c *counterHandle) Inspect(context.Context, string) (*v2.InspectResponse, error) {
+	return &v2.InspectResponse{}, nil
+}
+
+func (c *counterHandle) current() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.counter
+}
+
+func TestSession_PauseResume_CounterStalls(t *testing.T) {
+	h := &counterHandle{}
+	ps := NewPermissionState("s1", nil)
+	ps.SetStreamCancel(func() {})
+	sess := &Session{Name: "s1", handle: h, PermissionState: ps}
+
+	// Start the counter.
+	if err := h.OpenSession(context.Background(), "s1", nil, nil); err != nil {
+		t.Fatalf("open session: %v", err)
 	}
-	if h.resumeCount != 10 {
-		t.Fatalf("expected 10 resume calls, got %d", h.resumeCount)
+	defer h.CloseSession(context.Background(), "s1")
+
+	// Let it tick at least once.
+	time.Sleep(150 * time.Millisecond)
+	beforePause := h.current()
+	if beforePause < 1 {
+		t.Fatalf("expected counter to have incremented before pause, got %d", beforePause)
+	}
+
+	// Pause — counter should stall.
+	if err := sess.Pause(context.Background()); err != nil {
+		t.Fatalf("pause: %v", err)
+	}
+	time.Sleep(250 * time.Millisecond)
+	duringPause := h.current()
+	if duringPause != beforePause {
+		t.Fatalf("expected counter to stall during pause: before=%d during=%d", beforePause, duringPause)
+	}
+
+	// Resume — counter should increment again.
+	if err := sess.Resume(context.Background()); err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	time.Sleep(150 * time.Millisecond)
+	afterResume := h.current()
+	if afterResume <= duringPause {
+		t.Fatalf("expected counter to resume after resume: during=%d after=%d", duringPause, afterResume)
 	}
 }

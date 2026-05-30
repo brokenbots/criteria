@@ -111,26 +111,47 @@ type Session struct {
 
 	// WS15: MergeBuffer interleaves log and adapter events by timestamp.
 	mergeBuf *log.MergeBuffer
+
+	// WS17: session-level pause state for idempotency.
+	paused  bool
+	pauseMu sync.Mutex
 }
 
 // Pause halts work on the session without losing state.
-// It pauses the permission state first, then calls the adapter handle.
+// It calls the adapter handle first, then pauses the permission state.
+// Calling Pause on an already-paused session is a no-op.
 func (s *Session) Pause(ctx context.Context) error {
+	s.pauseMu.Lock()
+	defer s.pauseMu.Unlock()
+	if s.paused {
+		return nil
+	}
+	if err := s.handle.Pause(ctx, s.Name); err != nil {
+		return err
+	}
 	if s.PermissionState != nil {
 		s.PermissionState.Pause()
 	}
-	return s.handle.Pause(ctx, s.Name)
+	s.paused = true
+	return nil
 }
 
 // Resume continues the session from where it was paused.
-// It resumes the permission state after the adapter handle acknowledges.
+// It resumes the permission state first, then calls the adapter handle.
+// Calling Resume on an already-active session is a no-op.
 func (s *Session) Resume(ctx context.Context) error {
-	if err := s.handle.Resume(ctx, s.Name); err != nil {
-		return err
+	s.pauseMu.Lock()
+	defer s.pauseMu.Unlock()
+	if !s.paused {
+		return nil
 	}
 	if s.PermissionState != nil {
 		s.PermissionState.Resume()
 	}
+	if err := s.handle.Resume(ctx, s.Name); err != nil {
+		return err
+	}
+	s.paused = false
 	return nil
 }
 
