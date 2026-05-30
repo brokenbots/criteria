@@ -472,7 +472,9 @@ func (a *permissionEmittingAdapter) Inspect(context.Context, string) (*v2.Inspec
 func (a *permissionEmittingAdapter) Snapshot(context.Context, string) (*v2.SnapshotResponse, error) {
 	return &v2.SnapshotResponse{}, nil
 }
-func (a *permissionEmittingAdapter) Restore(context.Context, string, []byte, uint32) error { return nil }
+func (a *permissionEmittingAdapter) Restore(context.Context, string, []byte, uint32) error {
+	return nil
+}
 func (a *permissionEmittingAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
 	sink.Adapter("permission.request", map[string]any{
 		"request_id": "req-1",

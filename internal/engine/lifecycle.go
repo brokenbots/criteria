@@ -8,8 +8,8 @@ import (
 
 	"github.com/zclconf/go-cty/cty"
 
-	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/internal/adapter/secrets"
+	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -40,18 +40,10 @@ func initScopeAdapters(ctx context.Context, g *workflow.FSMGraph, deps Deps, var
 			}
 		}
 
-		// Build origin refs from evaluated expressions for snapshot/restore (WS18).
-		var originRefs map[string]secrets.OriginRef
-		if len(adapter.Secrets) > 0 {
-			evaluated, evalErr := workflow.ResolveInputExprs(adapter.Secrets, vars)
-			if evalErr != nil {
-				deps.Sink.OnAdapterLifecycle("", instanceID, "init_failed", evalErr.Error())
-				return nil, fmt.Errorf("initialize adapter %q: %w", instanceID, evalErr)
-			}
-			originRefs = make(map[string]secrets.OriginRef, len(evaluated))
-			for k, v := range evaluated {
-				originRefs[k] = secrets.ParseOriginRef(v)
-			}
+		originRefs, err := buildOriginRefs(adapter, vars)
+		if err != nil {
+			deps.Sink.OnAdapterLifecycle("", instanceID, "init_failed", err.Error())
+			return nil, fmt.Errorf("initialize adapter %q: %w", instanceID, err)
 		}
 
 		openErr := deps.Sessions.OpenWithOriginRefs(ctx, instanceID, adapter.Type, adapter.OnCrash, adapter.Config, secretMap, originRefs)
@@ -83,6 +75,23 @@ func initScopeAdapters(ctx context.Context, g *workflow.FSMGraph, deps Deps, var
 	}
 
 	return provisioned, nil
+}
+
+// buildOriginRefs evaluates an adapter's secret expressions and converts them into
+// unevaluated origin references for snapshot/restore (WS18).
+func buildOriginRefs(adapter *workflow.AdapterNode, vars map[string]cty.Value) (map[string]secrets.OriginRef, error) {
+	if len(adapter.Secrets) == 0 {
+		return nil, nil
+	}
+	evaluated, err := workflow.ResolveInputExprs(adapter.Secrets, vars)
+	if err != nil {
+		return nil, err
+	}
+	originRefs := make(map[string]secrets.OriginRef, len(evaluated))
+	for k, v := range evaluated {
+		originRefs[k] = secrets.ParseOriginRef(v)
+	}
+	return originRefs, nil
 }
 
 // tearDownScopeAdapters releases all adapter sessions in the given order in reverse (LIFO).

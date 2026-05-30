@@ -39,7 +39,7 @@ func (m *snapshotMockHandle) Execute(context.Context, string, *workflow.StepNode
 	return adapter.Result{Outcome: "success"}, nil
 }
 func (m *snapshotMockHandle) CloseSession(context.Context, string) error { return nil }
-func (m *snapshotMockHandle) Kill()                                       {}
+func (m *snapshotMockHandle) Kill()                                      {}
 func (m *snapshotMockHandle) Pause(context.Context, string) error        { return nil }
 func (m *snapshotMockHandle) Resume(context.Context, string) error       { return nil }
 func (m *snapshotMockHandle) Inspect(context.Context, string) (*v2.InspectResponse, error) {
@@ -62,12 +62,6 @@ func (m *snapshotMockHandle) Restore(context.Context, string, []byte, uint32) er
 		return m.restoreErr
 	}
 	return nil
-}
-
-func (m *snapshotMockHandle) currentState() []byte {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return append([]byte(nil), m.state...)
 }
 
 func makeTestSession(sm *SessionManager, name string, h Handle, refs map[string]secrets.OriginRef) *Session {

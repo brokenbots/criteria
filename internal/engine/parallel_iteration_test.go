@@ -154,7 +154,9 @@ func (p *concurrencyTrackingAdapter) Inspect(context.Context, string) (*v2.Inspe
 func (p *concurrencyTrackingAdapter) Snapshot(context.Context, string) (*v2.SnapshotResponse, error) {
 	return &v2.SnapshotResponse{}, nil
 }
-func (p *concurrencyTrackingAdapter) Restore(context.Context, string, []byte, uint32) error { return nil }
+func (p *concurrencyTrackingAdapter) Restore(context.Context, string, []byte, uint32) error {
+	return nil
+}
 
 // contextAwareAdapter calls fn with the goroutine-specific context and a
 // monotonic call index. Safe for concurrent use.

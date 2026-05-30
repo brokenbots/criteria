@@ -27,7 +27,7 @@ func (m *snapshotMockHandle) Execute(context.Context, string, *workflow.StepNode
 	return adapter.Result{Outcome: "success"}, nil
 }
 func (m *snapshotMockHandle) CloseSession(context.Context, string) error { return nil }
-func (m *snapshotMockHandle) Kill()                                       {}
+func (m *snapshotMockHandle) Kill()                                      {}
 func (m *snapshotMockHandle) Pause(context.Context, string) error        { return nil }
 func (m *snapshotMockHandle) Resume(context.Context, string) error       { return nil }
 func (m *snapshotMockHandle) Inspect(context.Context, string) (*v2.InspectResponse, error) {

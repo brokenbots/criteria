@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/internal/adapter/secrets"
+	"github.com/brokenbots/criteria/internal/adapterhost"
 )
 
 func TestWriteSnapshot_CreatesFiles(t *testing.T) {

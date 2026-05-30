@@ -94,18 +94,18 @@ func (m *SessionManager) SetLockfile(lf *lockfile.Lockfile) {
 }
 
 type Session struct {
-	Name            string
-	Adapter         string
-	Config          map[string]string
-	Secrets         map[string]string // resolved secret values (WS13)
+	Name             string
+	Adapter          string
+	Config           map[string]string
+	Secrets          map[string]string            // resolved secret values (WS13)
 	SecretOriginRefs map[string]secrets.OriginRef // unevaluated origin refs for snapshot/restore (WS18)
-	OnCrash         string
-	Capabilities    []string // cached from plug.Info() at Open time
-	PermissionState *permissionState
-	handle          Handle
-	respawned       bool
-	closing         atomic.Bool
-	SandboxCleanup  func() // removes transient cgroup dirs, etc.
+	OnCrash          string
+	Capabilities     []string // cached from plug.Info() at Open time
+	PermissionState  *permissionState
+	handle           Handle
+	respawned        bool
+	closing          atomic.Bool
+	SandboxCleanup   func() // removes transient cgroup dirs, etc.
 	// AdapterDigest is the lockfile digest at the time the session was opened.
 	AdapterDigest digest.Digest
 
@@ -377,7 +377,8 @@ func (m *SessionManager) registerSession(ctx context.Context, name, adapterName,
 		SandboxCleanup:   cleanup,
 	}
 	if m.lockfile != nil {
-		for _, a := range m.lockfile.Adapters {
+		for i := range m.lockfile.Adapters {
+			a := &m.lockfile.Adapters[i]
 			if a.Type == adapterName {
 				sess.AdapterDigest = digest.Digest(a.ResolvedDigest)
 				break
@@ -974,23 +975,12 @@ func (m *SessionManager) SnapshotAll(ctx context.Context) (map[string]*SessionSn
 	return out, errors.Join(errs...)
 }
 
-// Restore validates a snapshot against cross-host compatibility rules,
-// re-resolves secrets, opens a fresh adapter session, replays adapter state,
-// restores permission state, and registers the reconstructed session.
-func (m *SessionManager) Restore(ctx context.Context, name, adapterName, onCrash string, config map[string]string, envNode *workflow.EnvironmentNode, snap *SessionSnapshot) (*Session, error) {
-	if err := m.validateSnapshotCompatibility(name, snap); err != nil {
-		return nil, err
-	}
-
-	// Re-resolve secrets from origin refs (WS13).
-	resolvedSecrets, err := m.resolveSnapshotSecrets(ctx, envNode, snap.SecretOriginRefs)
-	if err != nil {
-		return nil, err
-	}
-
+// openAndRestoreAdapter resolves the adapter handle, opens a fresh session, and replays
+// the saved adapter state. On error it kills the plug and runs the cleanup func.
+func (m *SessionManager) openAndRestoreAdapter(ctx context.Context, name, adapterName string, config, resolvedSecrets map[string]string, snap *SessionSnapshot) (Handle, func(), error) {
 	customizer, cleanup, sandboxErr := m.buildSandboxCustomizer(name)
 	if sandboxErr != nil {
-		return nil, fmt.Errorf("session %q: %w", name, sandboxErr)
+		return nil, nil, fmt.Errorf("session %q: %w", name, sandboxErr)
 	}
 
 	plug, err := m.resolveAdapterHandle(ctx, name, adapterName, customizer)
@@ -998,12 +988,7 @@ func (m *SessionManager) Restore(ctx context.Context, name, adapterName, onCrash
 		if cleanup != nil {
 			cleanup()
 		}
-		return nil, err
-	}
-
-	var caps []string
-	if info, infoErr := plug.Info(ctx); infoErr == nil {
-		caps = append([]string(nil), info.Capabilities...)
+		return nil, nil, err
 	}
 
 	if err := plug.OpenSession(ctx, name, config, resolvedSecrets); err != nil {
@@ -1011,7 +996,7 @@ func (m *SessionManager) Restore(ctx context.Context, name, adapterName, onCrash
 		if cleanup != nil {
 			cleanup()
 		}
-		return nil, fmt.Errorf("open restored session: %w", err)
+		return nil, nil, fmt.Errorf("open restored session: %w", err)
 	}
 
 	if err := plug.Restore(ctx, name, snap.AdapterState, snap.SchemaVersion); err != nil {
@@ -1019,35 +1004,28 @@ func (m *SessionManager) Restore(ctx context.Context, name, adapterName, onCrash
 		if cleanup != nil {
 			cleanup()
 		}
-		return nil, fmt.Errorf("adapter restore: %w", err)
+		return nil, nil, fmt.Errorf("adapter restore: %w", err)
 	}
 
-	// Reconstruct permission state from snapshot blob (WS16).
-	var permState *permissionState
-	if len(snap.PermissionState) > 0 {
-		permState = NewPermissionState(name, m.Audit)
-		if err := permState.RestoreState(snap.PermissionState, nil, m.Audit); err != nil {
-			plug.Kill()
-			if cleanup != nil {
-				cleanup()
-			}
-			return nil, fmt.Errorf("restore permission state: %w", err)
-		}
-	}
+	return plug, cleanup, nil
+}
 
-	sess := &Session{
+func buildRestoredSession(name, adapterName, onCrash string, config, resolvedSecrets map[string]string, originRefs map[string]secrets.OriginRef, caps []string, plug Handle, cleanup func(), permState *permissionState) *Session {
+	return &Session{
 		Name:             name,
 		Adapter:          adapterName,
 		Config:           cloneConfig(config),
 		Secrets:          resolvedSecrets,
-		SecretOriginRefs: cloneOriginRefs(snap.SecretOriginRefs),
+		SecretOriginRefs: cloneOriginRefs(originRefs),
 		OnCrash:          normalizeOnCrash(onCrash),
 		Capabilities:     caps,
 		handle:           plug,
 		SandboxCleanup:   cleanup,
 		PermissionState:  permState,
 	}
+}
 
+func (m *SessionManager) registerRestoredSession(ctx context.Context, name string, plug Handle, cleanup func(), sess *Session) error {
 	m.mu.Lock()
 	if _, exists := m.sessions[name]; exists {
 		m.mu.Unlock()
@@ -1056,16 +1034,66 @@ func (m *SessionManager) Restore(ctx context.Context, name, adapterName, onCrash
 		if cleanup != nil {
 			cleanup()
 		}
-		return nil, fmt.Errorf("%w: %s", ErrSessionAlreadyOpen, name)
+		return fmt.Errorf("%w: %s", ErrSessionAlreadyOpen, name)
 	}
 	m.sessions[name] = sess
 	m.mu.Unlock()
+	return nil
+}
+
+// Restore validates a snapshot against cross-host compatibility rules,
+// re-resolves secrets, opens a fresh adapter session, replays adapter state,
+// restores permission state, and registers the reconstructed session.
+func (m *SessionManager) Restore(ctx context.Context, name, adapterName, onCrash string, config map[string]string, envNode *workflow.EnvironmentNode, snap *SessionSnapshot) (*Session, error) {
+	if err := m.validateSnapshotCompatibility(name, snap); err != nil {
+		return nil, err
+	}
+
+	resolvedSecrets, err := m.resolveSnapshotSecrets(ctx, envNode, snap.SecretOriginRefs)
+	if err != nil {
+		return nil, err
+	}
+
+	plug, cleanup, err := m.openAndRestoreAdapter(ctx, name, adapterName, config, resolvedSecrets, snap)
+	if err != nil {
+		return nil, err
+	}
+
+	var caps []string
+	if info, infoErr := plug.Info(ctx); infoErr == nil {
+		caps = append([]string(nil), info.Capabilities...)
+	}
+
+	permState, err := m.restorePermissionState(name, snap.PermissionState)
+	if err != nil {
+		plug.Kill()
+		if cleanup != nil {
+			cleanup()
+		}
+		return nil, err
+	}
+
+	sess := buildRestoredSession(name, adapterName, onCrash, config, resolvedSecrets, snap.SecretOriginRefs, caps, plug, cleanup, permState)
+	if err := m.registerRestoredSession(ctx, name, plug, cleanup, sess); err != nil {
+		return nil, err
+	}
 
 	if permState != nil {
 		m.startPermissionStream(ctx, sess, plug)
 	}
 	m.startLogStream(ctx, sess, plug)
 	return sess, nil
+}
+
+func (m *SessionManager) restorePermissionState(name string, blob []byte) (*permissionState, error) {
+	if len(blob) == 0 {
+		return nil, nil
+	}
+	permState := NewPermissionState(name, m.Audit)
+	if err := permState.RestoreState(blob, nil, m.Audit); err != nil {
+		return nil, fmt.Errorf("restore permission state: %w", err)
+	}
+	return permState, nil
 }
 
 func (m *SessionManager) validateSnapshotCompatibility(adapterKey string, snap *SessionSnapshot) error {
@@ -1083,7 +1111,8 @@ func (m *SessionManager) validateSnapshotCompatibility(adapterKey string, snap *
 	}
 
 	var currentDigest string
-	for _, a := range m.lockfile.Adapters {
+	for i := range m.lockfile.Adapters {
+		a := &m.lockfile.Adapters[i]
 		if a.Type+"."+a.Name == adapterKey {
 			currentDigest = a.ResolvedDigest
 			break
@@ -1125,5 +1154,3 @@ func (m *SessionManager) resolveSnapshotSecrets(ctx context.Context, envNode *wo
 	}
 	return resolved, nil
 }
-
-
