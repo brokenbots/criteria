@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"os"
+	"runtime"
 	"testing"
 
 	"github.com/brokenbots/criteria/internal/adapter"
@@ -94,7 +95,7 @@ func TestEngine_Resume_FromSnapshot(t *testing.T) {
 	snap := &adapterhost.SessionSnapshot{
 		AdapterState:  []byte("engine-resume-v1"),
 		SchemaVersion: 1,
-		HostArch:      "linux/amd64",
+		HostArch:      runtime.GOOS + "/" + runtime.GOARCH,
 	}
 	dir := state.SnapshotDir(tmp, "run-99", "s1")
 	if _, err := state.WriteSnapshot(dir, snap); err != nil {

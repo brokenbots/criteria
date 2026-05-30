@@ -1141,6 +1141,9 @@ func (m *SessionManager) resolveSnapshotSecrets(ctx context.Context, envNode *wo
 	for name, ref := range originRefs {
 		if ref.Kind == "literal" {
 			resolved[name] = ref.Ref
+			if m.RedactionRegistry != nil {
+				m.RedactionRegistry.Register(ref.Ref)
+			}
 			continue
 		}
 		val, err := stack.Resolve(ctx, ref)

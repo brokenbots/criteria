@@ -299,6 +299,40 @@ func TestSessionManager_Restore_ResolvesLiteralSecret(t *testing.T) {
 	}
 }
 
+func TestSessionManager_Restore_PopulatesRedactionRegistry(t *testing.T) {
+	ctx := context.Background()
+	const envKey = "SNAP_REDACT_TEST_88"
+	const envVal = "env-secret-value"
+	t.Setenv(envKey, envVal)
+
+	h := &snapshotMockHandle{}
+	sm := NewSessionManager(nil)
+	makeTestSession(sm, "s1", h, map[string]secrets.OriginRef{
+		"token":  {Kind: "literal", Ref: "literal-secret"},
+		"apiKey": {Kind: "env", Ref: envKey},
+	})
+
+	snap, err := sm.sessions["s1"].Snapshot(ctx)
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+
+	loader := &mockLoaderForRestore{handle: h}
+	sm2 := NewSessionManager(loader)
+	sm2.RedactionRegistry = secrets.NewRegistry()
+
+	_, err = sm2.Restore(ctx, "s1", "test", OnCrashFail, nil, nil, snap)
+	if err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+
+	// Both literal and env-based resolved secrets should be registered.
+	redacted := sm2.RedactionRegistry.Redact("literal-secret and env-secret-value")
+	if redacted != "[REDACTED] and [REDACTED]" {
+		t.Fatalf("redaction failed: %q", redacted)
+	}
+}
+
 func TestSessionManager_Restore_PermissionStateRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	h := &snapshotMockHandle{}

@@ -247,6 +247,7 @@ func (e *Engine) restoreSessionsFromSnapshots(ctx context.Context) (*adapterhost
 	sessions := adapterhost.NewSessionManager(e.loader)
 	sessions.SetGraph(e.graph)
 	sessions.SetLockfile(e.lockfile)
+	sessions.RedactionRegistry = secrets.NewRegistry()
 	if e.auditWriter != nil {
 		sessions.Audit = e.auditWriter
 	}
