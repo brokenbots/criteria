@@ -6,17 +6,26 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"time"
 
 	"github.com/zclconf/go-cty/cty"
 
 	"github.com/brokenbots/criteria/workflow"
 )
 
+// dnsCacheTTL is the maximum age of a cached DNS entry.
+const dnsCacheTTL = 5 * time.Minute
+
 // dnsCache stores per-process hostname → IP lookups.
 var (
 	dnsCacheMu sync.RWMutex
-	dnsCache   = make(map[string][]string)
+	dnsCache   = make(map[string]dnsEntry)
 )
+
+type dnsEntry struct {
+	ips       []string
+	cachedAt  time.Time
+}
 
 // FromPolicy translates a ResolvedPolicy into an SBPL Profile.
 func FromPolicy(p workflow.ResolvedPolicy, adapterBinary string) Profile {
@@ -86,7 +95,7 @@ func FromPolicy(p workflow.ResolvedPolicy, adapterBinary string) Profile {
 }
 
 // resolveHost resolves a hostname:port into "ip:port" strings.
-// Results are cached for the process lifetime.
+// Results are cached for up to dnsCacheTTL.
 func resolveHost(host string) []string {
 	// Strip port if present.
 	name, port, err := net.SplitHostPort(host)
@@ -96,10 +105,10 @@ func resolveHost(host string) []string {
 	}
 
 	dnsCacheMu.RLock()
-	cached, ok := dnsCache[name]
+	entry, ok := dnsCache[name]
 	dnsCacheMu.RUnlock()
-	if ok {
-		return formatResolved(cached, port)
+	if ok && time.Since(entry.cachedAt) < dnsCacheTTL {
+		return formatResolved(entry.ips, port)
 	}
 
 	ips, err := net.LookupHost(name)
@@ -108,7 +117,7 @@ func resolveHost(host string) []string {
 	}
 
 	dnsCacheMu.Lock()
-	dnsCache[name] = ips
+	dnsCache[name] = dnsEntry{ips: ips, cachedAt: time.Now()}
 	dnsCacheMu.Unlock()
 
 	return formatResolved(ips, port)

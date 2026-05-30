@@ -9,7 +9,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 
 	"github.com/brokenbots/criteria/workflow"
 )
@@ -112,17 +111,6 @@ type LinuxPrepared struct {
 	profilePath string // temp profile file path
 }
 
-// RlimitConfig describes a single rlimit. Kept for interface parity
-// with Linux; rlimits cannot be applied directly on Darwin via
-// SysProcAttr, so they remain unimplemented for the sandbox-exec-less fallback.
-type RlimitConfig struct {
-	Resource int
-	Rlimit   syscall.Rlimit
-}
-
-// ShimConfig is unused on Darwin (no in-process shim).
-type ShimConfig struct{}
-
 // Prepare converts a ResolvedPolicy into LinuxPrepared.
 func (h Handler) Prepare(ctx PrepareContext) (LinuxPrepared, error) {
 	if ctx.Policy == nil {
@@ -153,10 +141,10 @@ func (h Handler) Prepare(ctx PrepareContext) (LinuxPrepared, error) {
 			for _, w := range profile.resolveWarnings {
 				hosts = append(hosts, w.host)
 			}
-			return LinuxPrepared{}, fmt.Errorf("strict mode: hostname resolution failed for %v", hosts)
+			return LinuxPrepared{}, fmt.Errorf("strict mode: policy validation failed for %v", hosts)
 		}
 		for _, w := range profile.resolveWarnings {
-			slog.Warn("sandbox hostname resolution skipped", "host", w.host, "error", w.err)
+			slog.Warn("sandbox policy validation skipped", "host", w.host, "error", w.err)
 		}
 	}
 

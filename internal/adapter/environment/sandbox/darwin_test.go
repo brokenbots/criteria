@@ -4,7 +4,6 @@ package sandbox
 
 import (
 	"bytes"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -390,4 +389,166 @@ func main() {
 		t.Fatalf("build helper: %v\n%s", err, out)
 	}
 	return bin
+}
+
+func TestSanitizePathEnv(t *testing.T) {
+	tests := []struct {
+		name string
+		env  []string
+		want []string
+	}{
+		{
+			name: "mixed relative and absolute PATH",
+			env:  []string{"HOME=/Users/test", "PATH=/usr/local/bin::./relative:/bin", "SECRET=shh"},
+			want: []string{"HOME=/Users/test", "PATH=/usr/local/bin:/bin", "SECRET=shh"},
+		},
+		{
+			name: "all relative PATH entries",
+			env:  []string{"PATH=./bin:../lib:rel"},
+			want: []string{"PATH="},
+		},
+		{
+			name: "empty PATH",
+			env:  []string{"PATH="},
+			want: []string{"PATH="},
+		},
+		{
+			name: "no PATH variable",
+			env:  []string{"HOME=/Users/test"},
+			want: []string{"HOME=/Users/test"},
+		},
+		{
+			name: "only absolute PATH",
+			env:  []string{"PATH=/usr/bin:/bin"},
+			want: []string{"PATH=/usr/bin:/bin"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := sanitizePathEnv(tc.env)
+			if len(got) != len(tc.want) {
+				t.Fatalf("got %v, want %v", got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Errorf("entry %d: got %q, want %q", i, got[i], tc.want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestWriteProfile(t *testing.T) {
+	prof := Profile{
+		DefaultDeny:    true,
+		AllowExec:      []string{"/usr/local/bin/adapter"},
+		AllowFileReads: []string{"/tmp/allowed"},
+	}
+	path, err := writeProfile(prof)
+	if err != nil {
+		t.Fatalf("writeProfile: %v", err)
+	}
+	defer os.Remove(path)
+
+	if !strings.HasPrefix(path, os.TempDir()) {
+		t.Errorf("profile path %q not in temp dir", path)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read profile: %v", err)
+	}
+	if string(data) != prof.Render() {
+		t.Errorf("profile content mismatch\ngot:\n%s\nwant:\n%s", data, prof.Render())
+	}
+}
+
+func TestResolveHost_Caching(t *testing.T) {
+	// localhost always resolves; exercise the cache path.
+	resolved1 := resolveHost("localhost:443")
+	if len(resolved1) == 0 {
+		t.Fatal("expected localhost to resolve")
+	}
+	resolved2 := resolveHost("localhost:443")
+	if len(resolved2) == 0 {
+		t.Fatal("expected cached localhost to resolve")
+	}
+	if resolved1[0] != resolved2[0] {
+		t.Fatalf("cache mismatch: %v vs %v", resolved1, resolved2)
+	}
+
+	// Verify port stripping and re-attachment works.
+	resolvedNoPort := resolveHost("localhost")
+	if len(resolvedNoPort) == 0 {
+		t.Fatal("expected localhost without port to resolve")
+	}
+	for _, ip := range resolvedNoPort {
+		if strings.Contains(ip, ":") {
+			t.Errorf("expected no port in %q", ip)
+		}
+	}
+
+	// Invalid hostname should return nil.
+	invalid := resolveHost("this-host-does-not-exist-12345.invalid:80")
+	if invalid != nil {
+		t.Errorf("expected nil for invalid hostname, got %v", invalid)
+	}
+}
+
+func TestFromPolicy_DNSResolution(t *testing.T) {
+	prof := FromPolicy(workflow.ResolvedPolicy{
+		TypeSpecific: map[string]cty.Value{
+			"network": cty.ObjectVal(map[string]cty.Value{
+				"allow": cty.TupleVal([]cty.Value{cty.StringVal("localhost:443")}),
+			}),
+		},
+	}, "")
+	if len(prof.AllowNetworkHosts) == 0 {
+		t.Fatal("expected localhost:443 to resolve to at least one IP")
+	}
+	for _, h := range prof.AllowNetworkHosts {
+		if !strings.HasSuffix(h, ":443") {
+			t.Errorf("expected port 443 in %q", h)
+		}
+	}
+}
+
+func TestFromPolicy_DNSFailure_Warning(t *testing.T) {
+	prof := FromPolicy(workflow.ResolvedPolicy{
+		TypeSpecific: map[string]cty.Value{
+			"network": cty.ObjectVal(map[string]cty.Value{
+				"allow": cty.TupleVal([]cty.Value{cty.StringVal("this-host-does-not-exist-12345.invalid:80")}),
+			}),
+		},
+	}, "")
+	if len(prof.resolveWarnings) != 1 {
+		t.Fatalf("expected 1 resolve warning, got %d", len(prof.resolveWarnings))
+	}
+	if prof.resolveWarnings[0].host != "this-host-does-not-exist-12345.invalid:80" {
+		t.Errorf("unexpected warning host: %q", prof.resolveWarnings[0].host)
+	}
+}
+
+func TestPrepare_Strict_ResolveWarnings(t *testing.T) {
+	probeTestHook = func() Capabilities { return Capabilities{SandboxExec: true} }
+	defer func() { probeTestHook = nil; ResetProbeCache() }()
+
+	h := Handler{}
+	_, err := h.Prepare(PrepareContext{
+		Policy: &workflow.ResolvedPolicy{
+			PolicyMode: "strict",
+			TypeSpecific: map[string]cty.Value{
+				"network": cty.ObjectVal(map[string]cty.Value{
+					"allow": cty.TupleVal([]cty.Value{cty.StringVal("this-host-does-not-exist-12345.invalid:80")}),
+				}),
+			},
+		},
+		Caps: Probe(),
+	})
+	if err == nil {
+		t.Fatal("expected error in strict mode with unresolvable host")
+	}
+	if !strings.Contains(err.Error(), "policy validation failed") {
+		t.Errorf("expected 'policy validation failed' in error, got: %v", err)
+	}
 }

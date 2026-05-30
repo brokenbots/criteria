@@ -34,7 +34,7 @@ type PrepareContext struct {
 
 // Prepare always returns an error on non-Linux.
 func (h Handler) Prepare(_ PrepareContext) (LinuxPrepared, error) {
-	return LinuxPrepared{}, fmt.Errorf("sandbox environments are only supported on linux (current OS is %s)", runtime.GOOS)
+	return LinuxPrepared{}, fmt.Errorf("sandbox environments are not supported on this OS (current OS is %s)", runtime.GOOS)
 }
 
 // LinuxPrepared is a no-op placeholder on non-Linux.
@@ -50,7 +50,7 @@ func (prep *LinuxPrepared) Cleanup() error { return nil }
 
 // ApplyToCmd is a no-op on non-Linux.
 func (prep *LinuxPrepared) ApplyToCmd(cmd *exec.Cmd, criteriaBin string) error {
-	return errors.New("sandbox environments are only supported on Linux")
+	return errors.New("sandbox environments are not supported on this OS")
 }
 
 // MaybeUseBubblewrap always returns nil on non-Linux.
