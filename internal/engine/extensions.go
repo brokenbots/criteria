@@ -124,6 +124,22 @@ func WithAuditWriter(w adapterhost.AuditWriter) Option {
 	}
 }
 
+// WithSnapshotBase sets the base directory for persisting session snapshots
+// during Pause and reading them during Resume (WS18). When empty, snapshots
+// are not persisted.
+func WithSnapshotBase(dir string) Option {
+	return func(e *Engine) {
+		e.snapshotBase = dir
+	}
+}
+
+// WithRunID sets the run identifier used to namespace snapshot files.
+func WithRunID(id string) Option {
+	return func(e *Engine) {
+		e.runID = id
+	}
+}
+
 // isSuccessOutcome returns true when the outcome name indicates a successful
 // iteration. By convention, outcome names that equal "success" (case-
 // insensitive) are treated as successes; all other names set AnyFailed=true

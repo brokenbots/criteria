@@ -109,3 +109,7 @@ func (p *builtinAdapter) Resume(context.Context, string) error { return nil }
 func (p *builtinAdapter) Inspect(context.Context, string) (*v2.InspectResponse, error) {
 	return &v2.InspectResponse{}, nil
 }
+func (p *builtinAdapter) Snapshot(context.Context, string) (*v2.SnapshotResponse, error) {
+	return &v2.SnapshotResponse{}, nil
+}
+func (p *builtinAdapter) Restore(context.Context, string, []byte, uint32) error { return nil }

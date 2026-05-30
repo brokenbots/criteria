@@ -110,6 +110,10 @@ func (c *canceledCtxHandle) Resume(context.Context, string) error       { return
 func (c *canceledCtxHandle) Inspect(context.Context, string) (*v2.InspectResponse, error) {
 	return &v2.InspectResponse{}, nil
 }
+func (c *canceledCtxHandle) Snapshot(context.Context, string) (*v2.SnapshotResponse, error) {
+	return &v2.SnapshotResponse{}, nil
+}
+func (c *canceledCtxHandle) Restore(context.Context, string, []byte, uint32) error { return nil }
 
 // TestLoader_HostCanceledContextLogsAtDebug verifies that when the surrounding
 // context is canceled by the host (and the session closing flag is NOT set),
@@ -164,6 +168,10 @@ func (e *eofHandle) Resume(context.Context, string) error       { return nil }
 func (e *eofHandle) Inspect(context.Context, string) (*v2.InspectResponse, error) {
 	return &v2.InspectResponse{}, nil
 }
+func (e *eofHandle) Snapshot(context.Context, string) (*v2.SnapshotResponse, error) {
+	return &v2.SnapshotResponse{}, nil
+}
+func (e *eofHandle) Restore(context.Context, string, []byte, uint32) error { return nil }
 
 // TestLoader_ExpectedCloseLogsAtDebug verifies that when the closing flag is
 // set on a session and Execute returns an EOF-like error, the session manager

@@ -43,6 +43,10 @@ func (p *sharedWritesAdapter) Resume(context.Context, string) error { return nil
 func (p *sharedWritesAdapter) Inspect(context.Context, string) (*v2.InspectResponse, error) {
 	return &v2.InspectResponse{}, nil
 }
+func (p *sharedWritesAdapter) Snapshot(context.Context, string) (*v2.SnapshotResponse, error) {
+	return &v2.SnapshotResponse{}, nil
+}
+func (p *sharedWritesAdapter) Restore(context.Context, string, []byte, uint32) error { return nil }
 
 // adapterFunc is a adapterhost.Handle backed by a function, for flexible test control.
 type adapterFunc struct {
@@ -68,6 +72,10 @@ func (p *adapterFunc) Resume(context.Context, string) error { return nil }
 func (p *adapterFunc) Inspect(context.Context, string) (*v2.InspectResponse, error) {
 	return &v2.InspectResponse{}, nil
 }
+func (p *adapterFunc) Snapshot(context.Context, string) (*v2.SnapshotResponse, error) {
+	return &v2.SnapshotResponse{}, nil
+}
+func (p *adapterFunc) Restore(context.Context, string, []byte, uint32) error { return nil }
 
 // TestSharedWrites_AppliedAfterStep verifies that a workflow with shared_writes
 // compiles, runs, and completes successfully.

@@ -7,10 +7,13 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/opencontainers/go-digest"
 
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapter/environment/sandbox"
@@ -91,17 +94,20 @@ func (m *SessionManager) SetLockfile(lf *lockfile.Lockfile) {
 }
 
 type Session struct {
-	Name            string
-	Adapter         string
-	Config          map[string]string
-	Secrets         map[string]string // resolved secret values (WS13)
-	OnCrash         string
-	Capabilities    []string // cached from plug.Info() at Open time
-	PermissionState *permissionState
-	handle          Handle
-	respawned       bool
-	closing         atomic.Bool
-	SandboxCleanup  func() // removes transient cgroup dirs, etc.
+	Name             string
+	Adapter          string
+	Config           map[string]string
+	Secrets          map[string]string            // resolved secret values (WS13)
+	SecretOriginRefs map[string]secrets.OriginRef // unevaluated origin refs for snapshot/restore (WS18)
+	OnCrash          string
+	Capabilities     []string // cached from plug.Info() at Open time
+	PermissionState  *permissionState
+	handle           Handle
+	respawned        bool
+	closing          atomic.Bool
+	SandboxCleanup   func() // removes transient cgroup dirs, etc.
+	// AdapterDigest is the lockfile digest at the time the session was opened.
+	AdapterDigest digest.Digest
 
 	// WS15: session-level log stream lifecycle and heartbeat tracking.
 	cancelLog     func()
@@ -262,6 +268,10 @@ func (m *SessionManager) sandboxEnvAndPolicy(instanceID string) (envNode *workfl
 }
 
 func (m *SessionManager) Open(ctx context.Context, name, adapterName, onCrash string, config, secrets map[string]string) error {
+	return m.OpenWithOriginRefs(ctx, name, adapterName, onCrash, config, secrets, nil)
+}
+
+func (m *SessionManager) OpenWithOriginRefs(ctx context.Context, name, adapterName, onCrash string, config, secrets map[string]string, originRefs map[string]secrets.OriginRef) error {
 	if strings.TrimSpace(name) == "" {
 		return errors.New("session name is required")
 	}
@@ -306,7 +316,7 @@ func (m *SessionManager) Open(ctx context.Context, name, adapterName, onCrash st
 		return err
 	}
 
-	return m.registerSession(ctx, name, adapterName, onCrash, config, secrets, caps, plug, cleanup)
+	return m.registerSession(ctx, name, adapterName, onCrash, config, secrets, originRefs, caps, plug, cleanup)
 }
 
 func (m *SessionManager) resolveAdapterHandle(ctx context.Context, name, adapterName string, customizer func(string, *exec.Cmd)) (Handle, error) {
@@ -344,7 +354,7 @@ func makeSandboxCustomizer(prep *sandbox.LinuxPrepared, envNode *workflow.Enviro
 	}, cleanup
 }
 
-func (m *SessionManager) registerSession(ctx context.Context, name, adapterName, onCrash string, config, secrets map[string]string, caps []string, plug Handle, cleanup func()) error {
+func (m *SessionManager) registerSession(ctx context.Context, name, adapterName, onCrash string, config, secrets map[string]string, originRefs map[string]secrets.OriginRef, caps []string, plug Handle, cleanup func()) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, exists := m.sessions[name]; exists {
@@ -356,14 +366,24 @@ func (m *SessionManager) registerSession(ctx context.Context, name, adapterName,
 		return fmt.Errorf("%w: %s", ErrSessionAlreadyOpen, name)
 	}
 	sess := &Session{
-		Name:           name,
-		Adapter:        adapterName,
-		Config:         cloneConfig(config),
-		Secrets:        cloneConfig(secrets),
-		OnCrash:        normalizeOnCrash(onCrash),
-		Capabilities:   caps,
-		handle:         plug,
-		SandboxCleanup: cleanup,
+		Name:             name,
+		Adapter:          adapterName,
+		Config:           cloneConfig(config),
+		Secrets:          cloneConfig(secrets),
+		SecretOriginRefs: cloneOriginRefs(originRefs),
+		OnCrash:          normalizeOnCrash(onCrash),
+		Capabilities:     caps,
+		handle:           plug,
+		SandboxCleanup:   cleanup,
+	}
+	if m.lockfile != nil {
+		for i := range m.lockfile.Adapters {
+			a := &m.lockfile.Adapters[i]
+			if a.Type == adapterName {
+				sess.AdapterDigest = digest.Digest(a.ResolvedDigest)
+				break
+			}
+		}
 	}
 	m.sessions[name] = sess
 
@@ -873,4 +893,267 @@ func (s *sessionLogAdapterSink) Adapter(kind string, data any) {
 	} else {
 		slog.Info("adapter event", "session", s.sess.Name, "kind", kind, "data", data)
 	}
+}
+
+func cloneOriginRefs(m map[string]secrets.OriginRef) map[string]secrets.OriginRef {
+	if m == nil {
+		return nil
+	}
+	out := make(map[string]secrets.OriginRef, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
+}
+
+// SessionSnapshot records the complete host-visible state of a session at a
+// point in time, sufficient to restore it on the same or a restarted host.
+type SessionSnapshot struct {
+	AdapterState     []byte                       `json:"-"` // opaque to host (from adapter via Snapshot RPC)
+	SchemaVersion    uint32                       `json:"schema_version"`
+	PermissionState  []byte                       `json:"permission_state"`   // from PermissionState.MarshalState() (WS16)
+	SecretOriginRefs map[string]secrets.OriginRef `json:"secret_origin_refs"` // from sessions config; values not included
+	AdapterDigest    digest.Digest                `json:"adapter_digest"`     // adapter manifest digest at snapshot time
+	HostArch         string                       `json:"host_arch"`          // GOOS/GOARCH at snapshot
+	CreatedAt        time.Time                    `json:"created_at"`
+}
+
+const currentSnapshotSchemaVersion uint32 = 1
+
+// Snapshot pauses the session, captures adapter state, permission state, and
+// host metadata, and returns a SessionSnapshot. The session remains paused after
+// the call; the caller must Resume to continue execution.
+func (s *Session) Snapshot(ctx context.Context) (*SessionSnapshot, error) {
+	if err := s.Pause(ctx); err != nil {
+		return nil, fmt.Errorf("pause before snapshot: %w", err)
+	}
+
+	resp, err := s.handle.Snapshot(ctx, s.Name)
+	if err != nil {
+		return nil, fmt.Errorf("adapter snapshot: %w", err)
+	}
+
+	var permState []byte
+	if s.PermissionState != nil {
+		permState, err = s.PermissionState.MarshalState()
+		if err != nil {
+			return nil, fmt.Errorf("marshal permission state: %w", err)
+		}
+	}
+
+	return &SessionSnapshot{
+		AdapterState:     resp.State,
+		SchemaVersion:    currentSnapshotSchemaVersion,
+		PermissionState:  permState,
+		SecretOriginRefs: cloneOriginRefs(s.SecretOriginRefs),
+		AdapterDigest:    s.AdapterDigest,
+		HostArch:         runtime.GOOS + "/" + runtime.GOARCH,
+		CreatedAt:        time.Now(),
+	}, nil
+}
+
+// SnapshotAll iterates over every open session and calls Snapshot on each.
+// Errors from individual sessions are collected and returned joined.
+func (m *SessionManager) SnapshotAll(ctx context.Context) (map[string]*SessionSnapshot, error) {
+	m.mu.Lock()
+	sessions := make([]*Session, 0, len(m.sessions))
+	for _, s := range m.sessions {
+		sessions = append(sessions, s)
+	}
+	m.mu.Unlock()
+
+	out := make(map[string]*SessionSnapshot, len(sessions))
+	var errs []error
+	for _, s := range sessions {
+		snap, err := s.Snapshot(ctx)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("session %q: %w", s.Name, err))
+			continue
+		}
+		out[s.Name] = snap
+	}
+	return out, errors.Join(errs...)
+}
+
+// openAndRestoreAdapter resolves the adapter handle, opens a fresh session, and replays
+// the saved adapter state. On error it kills the plug and runs the cleanup func.
+func (m *SessionManager) openAndRestoreAdapter(ctx context.Context, name, adapterName string, config, resolvedSecrets map[string]string, snap *SessionSnapshot) (Handle, func(), error) {
+	customizer, cleanup, sandboxErr := m.buildSandboxCustomizer(name)
+	if sandboxErr != nil {
+		return nil, nil, fmt.Errorf("session %q: %w", name, sandboxErr)
+	}
+
+	plug, err := m.resolveAdapterHandle(ctx, name, adapterName, customizer)
+	if err != nil {
+		if cleanup != nil {
+			cleanup()
+		}
+		return nil, nil, err
+	}
+
+	if err := plug.OpenSession(ctx, name, config, resolvedSecrets); err != nil {
+		plug.Kill()
+		if cleanup != nil {
+			cleanup()
+		}
+		return nil, nil, fmt.Errorf("open restored session: %w", err)
+	}
+
+	if err := plug.Restore(ctx, name, snap.AdapterState, snap.SchemaVersion); err != nil {
+		plug.Kill()
+		if cleanup != nil {
+			cleanup()
+		}
+		return nil, nil, fmt.Errorf("adapter restore: %w", err)
+	}
+
+	return plug, cleanup, nil
+}
+
+func buildRestoredSession(name, adapterName, onCrash string, config, resolvedSecrets map[string]string, originRefs map[string]secrets.OriginRef, caps []string, plug Handle, cleanup func(), permState *permissionState) *Session {
+	return &Session{
+		Name:             name,
+		Adapter:          adapterName,
+		Config:           cloneConfig(config),
+		Secrets:          resolvedSecrets,
+		SecretOriginRefs: cloneOriginRefs(originRefs),
+		OnCrash:          normalizeOnCrash(onCrash),
+		Capabilities:     caps,
+		handle:           plug,
+		SandboxCleanup:   cleanup,
+		PermissionState:  permState,
+	}
+}
+
+func (m *SessionManager) registerRestoredSession(ctx context.Context, name string, plug Handle, cleanup func(), sess *Session) error {
+	m.mu.Lock()
+	if _, exists := m.sessions[name]; exists {
+		m.mu.Unlock()
+		_ = plug.CloseSession(ctx, name)
+		plug.Kill()
+		if cleanup != nil {
+			cleanup()
+		}
+		return fmt.Errorf("%w: %s", ErrSessionAlreadyOpen, name)
+	}
+	m.sessions[name] = sess
+	m.mu.Unlock()
+	return nil
+}
+
+// Restore validates a snapshot against cross-host compatibility rules,
+// re-resolves secrets, opens a fresh adapter session, replays adapter state,
+// restores permission state, and registers the reconstructed session.
+func (m *SessionManager) Restore(ctx context.Context, name, adapterName, onCrash string, config map[string]string, envNode *workflow.EnvironmentNode, snap *SessionSnapshot) (*Session, error) {
+	if err := m.validateSnapshotCompatibility(name, snap); err != nil {
+		return nil, err
+	}
+
+	resolvedSecrets, err := m.resolveSnapshotSecrets(ctx, envNode, snap.SecretOriginRefs)
+	if err != nil {
+		return nil, err
+	}
+
+	plug, cleanup, err := m.openAndRestoreAdapter(ctx, name, adapterName, config, resolvedSecrets, snap)
+	if err != nil {
+		return nil, err
+	}
+
+	var caps []string
+	if info, infoErr := plug.Info(ctx); infoErr == nil {
+		caps = append([]string(nil), info.Capabilities...)
+	}
+
+	permState, err := m.restorePermissionState(name, snap.PermissionState)
+	if err != nil {
+		plug.Kill()
+		if cleanup != nil {
+			cleanup()
+		}
+		return nil, err
+	}
+
+	sess := buildRestoredSession(name, adapterName, onCrash, config, resolvedSecrets, snap.SecretOriginRefs, caps, plug, cleanup, permState)
+	if err := m.registerRestoredSession(ctx, name, plug, cleanup, sess); err != nil {
+		return nil, err
+	}
+
+	if permState != nil {
+		m.startPermissionStream(ctx, sess, plug)
+	}
+	m.startLogStream(ctx, sess, plug)
+	return sess, nil
+}
+
+func (m *SessionManager) restorePermissionState(name string, blob []byte) (*permissionState, error) {
+	if len(blob) == 0 {
+		return nil, nil
+	}
+	permState := NewPermissionState(name, m.Audit)
+	if err := permState.RestoreState(blob, nil, m.Audit); err != nil {
+		return nil, fmt.Errorf("restore permission state: %w", err)
+	}
+	return permState, nil
+}
+
+func (m *SessionManager) validateSnapshotCompatibility(adapterKey string, snap *SessionSnapshot) error {
+	if snap.SchemaVersion != currentSnapshotSchemaVersion {
+		return fmt.Errorf("snapshot schema version %d is not supported (expected %d)", snap.SchemaVersion, currentSnapshotSchemaVersion)
+	}
+
+	wantArch := runtime.GOOS + "/" + runtime.GOARCH
+	if snap.HostArch != "" && snap.HostArch != wantArch {
+		return fmt.Errorf("snapshot host arch %q does not match current host %q", snap.HostArch, wantArch)
+	}
+
+	if m.lockfile == nil {
+		return nil // nothing to compare against
+	}
+
+	var currentDigest string
+	for i := range m.lockfile.Adapters {
+		a := &m.lockfile.Adapters[i]
+		if a.Type+"."+a.Name == adapterKey {
+			currentDigest = a.ResolvedDigest
+			break
+		}
+	}
+	if currentDigest == "" {
+		return nil // adapter not in lockfile; skip digest check
+	}
+	if snap.AdapterDigest != "" && snap.AdapterDigest.String() != currentDigest {
+		return fmt.Errorf("snapshot was taken against adapter %q@%s; current lockfile pins %q@%s. Resume requires the same adapter version", adapterKey, snap.AdapterDigest, adapterKey, currentDigest)
+	}
+	return nil
+}
+
+func (m *SessionManager) resolveSnapshotSecrets(ctx context.Context, envNode *workflow.EnvironmentNode, originRefs map[string]secrets.OriginRef) (map[string]string, error) {
+	if len(originRefs) == 0 {
+		return nil, nil
+	}
+
+	stack, err := secrets.StackFromEnvironment(envNode)
+	if err != nil {
+		return nil, fmt.Errorf("build secret stack for restore: %w", err)
+	}
+
+	resolved := make(map[string]string, len(originRefs))
+	for name, ref := range originRefs {
+		if ref.Kind == "literal" {
+			resolved[name] = ref.Ref
+			if m.RedactionRegistry != nil {
+				m.RedactionRegistry.Register(ref.Ref)
+			}
+			continue
+		}
+		val, err := stack.Resolve(ctx, ref)
+		if err != nil {
+			return nil, fmt.Errorf("missing secret %q: %w", name, err)
+		}
+		resolved[name] = val
+		if m.RedactionRegistry != nil {
+			m.RedactionRegistry.Register(val)
+		}
+	}
+	return resolved, nil
 }

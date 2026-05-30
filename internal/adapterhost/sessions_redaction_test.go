@@ -33,6 +33,10 @@ func (m *mockRedactionHandle) Resume(context.Context, string) error { return nil
 func (m *mockRedactionHandle) Inspect(context.Context, string) (*v2.InspectResponse, error) {
 	return &v2.InspectResponse{}, nil
 }
+func (m *mockRedactionHandle) Snapshot(context.Context, string) (*v2.SnapshotResponse, error) {
+	return &v2.SnapshotResponse{}, nil
+}
+func (m *mockRedactionHandle) Restore(context.Context, string, []byte, uint32) error { return nil }
 
 // TestSessionManagerExecute_RegistersSensitiveOutputs verifies that when an
 // adapter returns outputs and the step's OutputSchema marks a field as

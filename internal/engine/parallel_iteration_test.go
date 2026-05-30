@@ -100,6 +100,10 @@ func (p *barrierAdapter) Resume(context.Context, string) error { return nil }
 func (p *barrierAdapter) Inspect(context.Context, string) (*v2.InspectResponse, error) {
 	return &v2.InspectResponse{}, nil
 }
+func (p *barrierAdapter) Snapshot(context.Context, string) (*v2.SnapshotResponse, error) {
+	return &v2.SnapshotResponse{}, nil
+}
+func (p *barrierAdapter) Restore(context.Context, string, []byte, uint32) error { return nil }
 
 // concurrencyTrackingAdapter records the peak number of concurrent Execute calls.
 type concurrencyTrackingAdapter struct {
@@ -147,6 +151,12 @@ func (p *concurrencyTrackingAdapter) Resume(context.Context, string) error { ret
 func (p *concurrencyTrackingAdapter) Inspect(context.Context, string) (*v2.InspectResponse, error) {
 	return &v2.InspectResponse{}, nil
 }
+func (p *concurrencyTrackingAdapter) Snapshot(context.Context, string) (*v2.SnapshotResponse, error) {
+	return &v2.SnapshotResponse{}, nil
+}
+func (p *concurrencyTrackingAdapter) Restore(context.Context, string, []byte, uint32) error {
+	return nil
+}
 
 // contextAwareAdapter calls fn with the goroutine-specific context and a
 // monotonic call index. Safe for concurrent use.
@@ -177,6 +187,10 @@ func (p *contextAwareAdapter) Resume(context.Context, string) error { return nil
 func (p *contextAwareAdapter) Inspect(context.Context, string) (*v2.InspectResponse, error) {
 	return &v2.InspectResponse{}, nil
 }
+func (p *contextAwareAdapter) Snapshot(context.Context, string) (*v2.SnapshotResponse, error) {
+	return &v2.SnapshotResponse{}, nil
+}
+func (p *contextAwareAdapter) Restore(context.Context, string, []byte, uint32) error { return nil }
 
 // parallelSafeAdapter is a fakeAdapter that declares the "parallel_safe" capability.
 // Use this instead of fakeAdapter for parallel steps in tests.
@@ -208,6 +222,10 @@ func (p *parallelSafeAdapter) Resume(context.Context, string) error { return nil
 func (p *parallelSafeAdapter) Inspect(context.Context, string) (*v2.InspectResponse, error) {
 	return &v2.InspectResponse{}, nil
 }
+func (p *parallelSafeAdapter) Snapshot(context.Context, string) (*v2.SnapshotResponse, error) {
+	return &v2.SnapshotResponse{}, nil
+}
+func (p *parallelSafeAdapter) Restore(context.Context, string, []byte, uint32) error { return nil }
 
 // --- Tests ---
 
@@ -500,6 +518,10 @@ func (p *declIdxAdapter) Resume(context.Context, string) error { return nil }
 func (p *declIdxAdapter) Inspect(context.Context, string) (*v2.InspectResponse, error) {
 	return &v2.InspectResponse{}, nil
 }
+func (p *declIdxAdapter) Snapshot(context.Context, string) (*v2.SnapshotResponse, error) {
+	return &v2.SnapshotResponse{}, nil
+}
+func (p *declIdxAdapter) Restore(context.Context, string, []byte, uint32) error { return nil }
 
 // TestParallelIteration_ContextCancellation verifies that cancelling the parent
 // context propagates to all in-flight parallel goroutines without leaking.
@@ -676,6 +698,10 @@ func (p *loggingBarrierAdapter) Resume(context.Context, string) error { return n
 func (p *loggingBarrierAdapter) Inspect(context.Context, string) (*v2.InspectResponse, error) {
 	return &v2.InspectResponse{}, nil
 }
+func (p *loggingBarrierAdapter) Snapshot(context.Context, string) (*v2.SnapshotResponse, error) {
+	return &v2.SnapshotResponse{}, nil
+}
+func (p *loggingBarrierAdapter) Restore(context.Context, string, []byte, uint32) error { return nil }
 
 // sharedLogSink is a test Sink whose StepEventSink returns an EventSink that
 // writes to a shared non-atomic counter. The counter is deliberately not
@@ -1016,6 +1042,10 @@ func (p *statefulAdapter) Resume(context.Context, string) error { return nil }
 func (p *statefulAdapter) Inspect(context.Context, string) (*v2.InspectResponse, error) {
 	return &v2.InspectResponse{}, nil
 }
+func (p *statefulAdapter) Snapshot(context.Context, string) (*v2.SnapshotResponse, error) {
+	return &v2.SnapshotResponse{}, nil
+}
+func (p *statefulAdapter) Restore(context.Context, string, []byte, uint32) error { return nil }
 
 // TestParallelSubworkflow_IsolatedSessions_ConcurrentExecution verifies that
 // parallel subworkflow iterations each receive a distinct adapter session (W19
@@ -1132,6 +1162,10 @@ func (p *countingNotSafeAdapter) Resume(context.Context, string) error { return 
 func (p *countingNotSafeAdapter) Inspect(context.Context, string) (*v2.InspectResponse, error) {
 	return &v2.InspectResponse{}, nil
 }
+func (p *countingNotSafeAdapter) Snapshot(context.Context, string) (*v2.SnapshotResponse, error) {
+	return &v2.SnapshotResponse{}, nil
+}
+func (p *countingNotSafeAdapter) Restore(context.Context, string, []byte, uint32) error { return nil }
 
 // TestEvaluateParallel_AdapterNotParallelSafe_RuntimeError verifies that when
 // an adapter step with parallel = [...] is backed by a session whose adapter
@@ -1394,6 +1428,10 @@ func (p *slowLogAdapter) Resume(context.Context, string) error { return nil }
 func (p *slowLogAdapter) Inspect(context.Context, string) (*v2.InspectResponse, error) {
 	return &v2.InspectResponse{}, nil
 }
+func (p *slowLogAdapter) Snapshot(context.Context, string) (*v2.SnapshotResponse, error) {
+	return &v2.SnapshotResponse{}, nil
+}
+func (p *slowLogAdapter) Restore(context.Context, string, []byte, uint32) error { return nil }
 
 // slowCountingSink is a Sink whose StepEventSink-produced EventSink sleeps
 // writeDelay on every Log call. This models gRPC/IO write latency and exposes

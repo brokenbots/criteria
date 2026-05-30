@@ -51,6 +51,10 @@ func (m *pauseResumeMockHandle) Inspect(ctx context.Context, id string) (*v2.Ins
 	defer m.mu.Unlock()
 	return m.inspectResp, m.inspectErr
 }
+func (m *pauseResumeMockHandle) Snapshot(context.Context, string) (*v2.SnapshotResponse, error) {
+	return &v2.SnapshotResponse{}, nil
+}
+func (m *pauseResumeMockHandle) Restore(context.Context, string, []byte, uint32) error { return nil }
 
 func TestSession_Pause_CallsHandleThenPermissionState(t *testing.T) {
 	h := &pauseResumeMockHandle{}
@@ -344,6 +348,10 @@ func (c *counterHandle) Resume(context.Context, string) error {
 func (c *counterHandle) Inspect(context.Context, string) (*v2.InspectResponse, error) {
 	return &v2.InspectResponse{}, nil
 }
+func (c *counterHandle) Snapshot(context.Context, string) (*v2.SnapshotResponse, error) {
+	return &v2.SnapshotResponse{}, nil
+}
+func (c *counterHandle) Restore(context.Context, string, []byte, uint32) error { return nil }
 
 func (c *counterHandle) current() int {
 	c.mu.Lock()

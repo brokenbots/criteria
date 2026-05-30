@@ -81,6 +81,10 @@ func (p *multiOutcomeAdapter) Resume(context.Context, string) error { return nil
 func (p *multiOutcomeAdapter) Inspect(context.Context, string) (*v2.InspectResponse, error) {
 	return &v2.InspectResponse{}, nil
 }
+func (p *multiOutcomeAdapter) Snapshot(context.Context, string) (*v2.SnapshotResponse, error) {
+	return &v2.SnapshotResponse{}, nil
+}
+func (p *multiOutcomeAdapter) Restore(context.Context, string, []byte, uint32) error { return nil }
 
 // --- for_each tests ---
 
@@ -549,6 +553,10 @@ func (p *captureInputAdapter) Resume(context.Context, string) error { return nil
 func (p *captureInputAdapter) Inspect(context.Context, string) (*v2.InspectResponse, error) {
 	return &v2.InspectResponse{}, nil
 }
+func (p *captureInputAdapter) Snapshot(context.Context, string) (*v2.SnapshotResponse, error) {
+	return &v2.SnapshotResponse{}, nil
+}
+func (p *captureInputAdapter) Restore(context.Context, string, []byte, uint32) error { return nil }
 
 // TestIteration_VarScope_SerializeRestore verifies that iteration cursor state
 // can be serialized and restored (simulating a crash-resume scenario).
@@ -733,6 +741,10 @@ func (p *captureOutputAdapter) Resume(context.Context, string) error { return ni
 func (p *captureOutputAdapter) Inspect(context.Context, string) (*v2.InspectResponse, error) {
 	return &v2.InspectResponse{}, nil
 }
+func (p *captureOutputAdapter) Snapshot(context.Context, string) (*v2.SnapshotResponse, error) {
+	return &v2.SnapshotResponse{}, nil
+}
+func (p *captureOutputAdapter) Restore(context.Context, string, []byte, uint32) error { return nil }
 
 // TestIter_MapForEach_KeyAndTotal verifies that for_each over an HCL object map
 // binds each.key to the map key string and each._total to the map size.
@@ -1637,6 +1649,10 @@ func (p *callbackAdapter) Resume(context.Context, string) error { return nil }
 func (p *callbackAdapter) Inspect(context.Context, string) (*v2.InspectResponse, error) {
 	return &v2.InspectResponse{}, nil
 }
+func (p *callbackAdapter) Snapshot(context.Context, string) (*v2.SnapshotResponse, error) {
+	return &v2.SnapshotResponse{}, nil
+}
+func (p *callbackAdapter) Restore(context.Context, string, []byte, uint32) error { return nil }
 
 // outputAdapter is a test adapter that always returns a fixed outcome and outputs map.
 type outputAdapter struct {
@@ -1662,6 +1678,10 @@ func (p *outputAdapter) Resume(context.Context, string) error { return nil }
 func (p *outputAdapter) Inspect(context.Context, string) (*v2.InspectResponse, error) {
 	return &v2.InspectResponse{}, nil
 }
+func (p *outputAdapter) Snapshot(context.Context, string) (*v2.SnapshotResponse, error) {
+	return &v2.SnapshotResponse{}, nil
+}
+func (p *outputAdapter) Restore(context.Context, string, []byte, uint32) error { return nil }
 
 // represent map iteration keys stored in the W07/W10 cursor JSON so the SDK
 // can expose each.key on resume.

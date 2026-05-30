@@ -53,6 +53,10 @@ func (p *secretRecordingAdapter) Resume(context.Context, string) error { return 
 func (p *secretRecordingAdapter) Inspect(context.Context, string) (*v2.InspectResponse, error) {
 	return &v2.InspectResponse{}, nil
 }
+func (p *secretRecordingAdapter) Snapshot(context.Context, string) (*v2.SnapshotResponse, error) {
+	return &v2.SnapshotResponse{}, nil
+}
+func (p *secretRecordingAdapter) Restore(context.Context, string, []byte, uint32) error { return nil }
 
 // redactingSink records every OnStepOutcome error so we can assert redaction.
 type redactingSink struct {
