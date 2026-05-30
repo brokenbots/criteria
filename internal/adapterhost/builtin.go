@@ -85,8 +85,8 @@ func (p *builtinAdapter) StartLogStream(context.Context, string, LogEventSink) (
 	return func() {}, nil
 }
 
-func (p *builtinAdapter) StartPermissionStream(_ context.Context, _ string, requests <-chan *v2.PermissionEvent) (func(), error) {
-	ctx, cancel := context.WithCancel(context.Background())
+func (p *builtinAdapter) StartPermissionStream(ctx context.Context, _ string, requests <-chan *v2.PermissionEvent) (func(), error) {
+	permCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	go func() {
 		for {
 			select {
@@ -94,7 +94,7 @@ func (p *builtinAdapter) StartPermissionStream(_ context.Context, _ string, requ
 				if !ok {
 					return
 				}
-			case <-ctx.Done():
+			case <-permCtx.Done():
 				return
 			}
 		}

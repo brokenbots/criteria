@@ -396,64 +396,77 @@ func (p *rpcHandle) Execute(ctx context.Context, sessionID string, step *workflo
 	p.permMu.Unlock()
 
 	if !hasPermStream {
-		// Fallback: direct callers (e.g. conformance tests) that bypass
-		// SessionManager need a per-Execute permission stream so the adapter
-		// receives PermissionEvent responses for permission.request events.
-		execCtx, cancelExec := context.WithCancel(ctx)
-		defer cancelExec()
+		return p.executeWithFallbackStream(ctx, sessionID, step, serialized, req)
+	}
+	return p.executeWithActiveStream(ctx, step, serialized, req)
+}
 
-		requests := make(chan *v2.PermissionEvent, 16)
-		permCtx, cancelPerm := context.WithCancel(ctx)
-		permDone := make(chan error, 1)
-		go func() {
-			err := p.rpc.Permissions(permCtx, requests)
-			permDone <- err
-			if status.Code(err) == codes.Unimplemented {
-				for range requests {
-				}
-				return
-			}
-			if !isExpectedStreamClose(err) {
-				cancelExec()
-			}
-		}()
+// executeWithFallbackStream runs Execute with a per-Execute permission stream
+// for callers (e.g. conformance tests) that bypass SessionManager.
+func (p *rpcHandle) executeWithFallbackStream(ctx context.Context, _ string, step *workflow.StepNode, serialized *serializedEventSink, req *v2.ExecuteRequest) (adapter.Result, error) {
+	execCtx, cancelExec := context.WithCancel(ctx)
+	defer cancelExec()
 
-		captureSink := &executeCaptureSink{
-			sink:        serialized,
-			policy:      NewPolicy(step.AllowTools),
-			allowTools:  step.AllowTools,
-			adapterName: p.name,
-			requests:    requests,
-			ctx:         execCtx,
-		}
+	requests := make(chan *v2.PermissionEvent, 16)
+	_, cancelPerm, permDone := p.startFallbackPermStream(ctx, requests, cancelExec)
+	defer cancelPerm()
 
-		execErr := p.rpc.Execute(execCtx, req, captureSink)
-
-		close(requests)
-		cancelPerm()
-		permErr := <-permDone
-
-		if execErr != nil {
-			if errors.Is(execErr, context.Canceled) && ctx.Err() == nil {
-				if !isExpectedStreamClose(permErr) {
-					return adapter.Result{Outcome: "failure"}, fmt.Errorf("permissions stream failure aborted execute: %w", permErr)
-				}
-			}
-			return adapter.Result{Outcome: "failure"}, execErr
-		}
-		if !isExpectedStreamClose(permErr, codes.Unimplemented) {
-			return adapter.Result{Outcome: "failure"}, fmt.Errorf("adapter permissions stream: %w", permErr)
-		}
-		if !captureSink.done {
-			return adapter.Result{Outcome: "failure"}, errors.New("adapter execute stream ended without result")
-		}
-		if captureSink.anyDenied && captureSink.result.Outcome == "success" {
-			captureSink.result.Outcome = "needs_review"
-		}
-		return captureSink.result, nil
+	captureSink := &executeCaptureSink{
+		sink:        serialized,
+		policy:      NewPolicy(step.AllowTools),
+		allowTools:  step.AllowTools,
+		adapterName: p.name,
+		requests:    requests,
+		ctx:         execCtx,
 	}
 
-	// Session-scoped stream is active; Execute does not need to manage its own.
+	execErr := p.rpc.Execute(execCtx, req, captureSink)
+
+	close(requests)
+	cancelPerm()
+	permErr := <-permDone
+
+	if execErr != nil {
+		if errors.Is(execErr, context.Canceled) && ctx.Err() == nil {
+			if !isExpectedStreamClose(permErr) {
+				return adapter.Result{Outcome: "failure"}, fmt.Errorf("permissions stream failure aborted execute: %w", permErr)
+			}
+		}
+		return adapter.Result{Outcome: "failure"}, execErr
+	}
+	if !isExpectedStreamClose(permErr, codes.Unimplemented) {
+		return adapter.Result{Outcome: "failure"}, fmt.Errorf("adapter permissions stream: %w", permErr)
+	}
+	if !captureSink.done {
+		return adapter.Result{Outcome: "failure"}, errors.New("adapter execute stream ended without result")
+	}
+	if captureSink.anyDenied && captureSink.result.Outcome == "success" {
+		captureSink.result.Outcome = "needs_review"
+	}
+	return captureSink.result, nil
+}
+
+func (p *rpcHandle) startFallbackPermStream(ctx context.Context, requests chan *v2.PermissionEvent, cancelExec func()) (context.Context, context.CancelFunc, chan error) {
+	permCtx, cancelPerm := context.WithCancel(ctx)
+	permDone := make(chan error, 1)
+	go func() {
+		err := p.rpc.Permissions(permCtx, requests)
+		permDone <- err
+		if status.Code(err) == codes.Unimplemented {
+			for range requests {
+			}
+			return
+		}
+		if !isExpectedStreamClose(err) {
+			cancelExec()
+		}
+	}()
+	return permCtx, cancelPerm, permDone
+}
+
+// executeWithActiveStream runs Execute when a session-scoped permission stream
+// is already active.
+func (p *rpcHandle) executeWithActiveStream(ctx context.Context, step *workflow.StepNode, serialized *serializedEventSink, req *v2.ExecuteRequest) (adapter.Result, error) {
 	captureSink := &executeCaptureSink{
 		sink:       serialized,
 		policy:     NewPolicy(step.AllowTools),
@@ -468,14 +481,9 @@ func (p *rpcHandle) Execute(ctx context.Context, sessionID string, step *workflo
 	if !captureSink.done {
 		return adapter.Result{Outcome: "failure"}, errors.New("adapter execute stream ended without result")
 	}
-
-	// When any permission request was denied and the adapter reported "success",
-	// override to "needs_review" so the run is not silently passed with unapproved
-	// tool calls.
 	if captureSink.anyDenied && captureSink.result.Outcome == "success" {
 		captureSink.result.Outcome = "needs_review"
 	}
-
 	return captureSink.result, nil
 }
 
@@ -681,28 +689,36 @@ func (s *executeCaptureSink) handlePermissionRequest(adapterEvt *v2.AdapterEvent
 
 	allow, reason := s.policy.Decide(req)
 	if allow {
-		pattern := strings.TrimPrefix(reason, "matched: ")
-		if idx := strings.Index(pattern, " (alias for "); idx >= 0 {
-			pattern = pattern[:idx]
-		}
-		s.sink.Adapter("permission.granted", map[string]any{
-			"request_id": requestID,
-			"tool":       tool,
-			"pattern":    pattern,
-		})
-		if s.requests != nil {
-			select {
-			case s.requests <- &v2.PermissionEvent{
-				Event: &v2.PermissionEvent_Request{
-					Request: &v2.PermissionRequest{RequestId: requestID},
-				},
-			}:
-			case <-s.ctx.Done():
-			}
-		}
+		s.emitGranted(requestID, tool, reason)
 		return
 	}
+	s.emitDenied(requestID, tool, reason)
+}
 
+func (s *executeCaptureSink) emitGranted(requestID, tool, reason string) {
+	pattern := strings.TrimPrefix(reason, "matched: ")
+	if idx := strings.Index(pattern, " (alias for "); idx >= 0 {
+		pattern = pattern[:idx]
+	}
+	s.sink.Adapter("permission.granted", map[string]any{
+		"request_id": requestID,
+		"tool":       tool,
+		"pattern":    pattern,
+	})
+	if s.requests == nil {
+		return
+	}
+	select {
+	case s.requests <- &v2.PermissionEvent{
+		Event: &v2.PermissionEvent_Request{
+			Request: &v2.PermissionRequest{RequestId: requestID},
+		},
+	}:
+	case <-s.ctx.Done():
+	}
+}
+
+func (s *executeCaptureSink) emitDenied(requestID, tool, reason string) {
 	s.anyDenied = true
 	suggestion := PermissionDenialSuggestion(s.adapterName, tool)
 	deniedPayload := map[string]any{
@@ -717,19 +733,18 @@ func (s *executeCaptureSink) handlePermissionRequest(adapterEvt *v2.AdapterEvent
 		deniedPayload["suggestion"] = suggestion
 	}
 	s.sink.Adapter("permission.denied", deniedPayload)
-	if s.requests != nil {
-		select {
-		case s.requests <- &v2.PermissionEvent{
-			Event: &v2.PermissionEvent_Cancel{
-				Cancel: &v2.PermissionCancel{RequestId: requestID, Reason: reason},
-			},
-		}:
-		case <-s.ctx.Done():
-		}
+	if s.requests == nil {
+		return
+	}
+	select {
+	case s.requests <- &v2.PermissionEvent{
+		Event: &v2.PermissionEvent_Cancel{
+			Cancel: &v2.PermissionCancel{RequestId: requestID, Reason: reason},
+		},
+	}:
+	case <-s.ctx.Done():
 	}
 }
-
-
 
 // maxLogLineBufBytes is the upper bound for a single log chunk reassembly
 // buffer or individual log line. Log content exceeding this limit is rejected

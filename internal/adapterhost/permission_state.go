@@ -22,7 +22,7 @@ type PermissionStreamer interface {
 
 // AuditWriter receives structured decision log entries.
 type AuditWriter interface {
-	Write(entry DecisionLogEntry)
+	Write(entry *DecisionLogEntry)
 }
 
 // DecisionLogEntry is a single permission decision written to the audit log.
@@ -125,8 +125,18 @@ func (ps *permissionState) Evaluate(requestID, tool, argsDigest, fullCmd string)
 	}
 	allow, reason = policy.Decide(req)
 
+	decision := ps.recordDecision(requestID, tool, argsDigest, allow, reason)
+	ps.sendEvent(requestID, allow, reason)
+	ps.writeAudit(&decision)
+
+	return allow, reason
+}
+
+// recordDecision updates the inflight map and decisions window under mu.
+func (ps *permissionState) recordDecision(requestID, tool, argsDigest string, allow bool, reason string) DecisionLogEntry {
 	now := time.Now()
 	ps.mu.Lock()
+	defer ps.mu.Unlock()
 	if ps.inflight == nil {
 		ps.inflight = make(map[string]*requestState)
 	}
@@ -143,8 +153,7 @@ func (ps *permissionState) Evaluate(requestID, tool, argsDigest, fullCmd string)
 		rs.decision = "allow"
 	}
 	ps.inflight[requestID] = rs
-	// Keep a rolling window of recent decisions for snapshot replay.
-	ps.decisions = append(ps.decisions, DecisionLogEntry{
+	entry := DecisionLogEntry{
 		SessionID:   ps.sessionID,
 		RequestID:   requestID,
 		Tool:        tool,
@@ -152,30 +161,21 @@ func (ps *permissionState) Evaluate(requestID, tool, argsDigest, fullCmd string)
 		Decision:    rs.decision,
 		Reason:      reason,
 		EvaluatedAt: now,
-	})
+	}
+	ps.decisions = append(ps.decisions, entry)
 	const maxDecisions = 1000
 	if len(ps.decisions) > maxDecisions {
 		ps.decisions = ps.decisions[len(ps.decisions)-maxDecisions:]
 	}
-	ps.mu.Unlock()
+	return entry
+}
 
-	// Send the decision on the Permissions stream.
-	ps.sendEvent(requestID, allow, reason)
-
-	// Write audit entry.
-	if ps.audit != nil {
-		ps.audit.Write(DecisionLogEntry{
-			SessionID:   ps.sessionID,
-			RequestID:   requestID,
-			Tool:        tool,
-			ArgsDigest:  argsDigest,
-			Decision:    rs.decision,
-			Reason:      reason,
-			EvaluatedAt: now,
-		})
+// writeAudit writes a decision entry to the audit writer if configured.
+func (ps *permissionState) writeAudit(entry *DecisionLogEntry) {
+	if ps.audit == nil {
+		return
 	}
-
-	return allow, reason
+	ps.audit.Write(entry)
 }
 
 // sendEvent dispatches a PermissionEvent to the adapter stream without blocking
@@ -235,7 +235,7 @@ func (ps *permissionState) Stop() {
 	}
 
 	if len(inflight) > 0 && ps.audit != nil {
-		ps.audit.Write(DecisionLogEntry{
+		ps.audit.Write(&DecisionLogEntry{
 			SessionID:   ps.sessionID,
 			RequestID:   "session-close",
 			Decision:    "session_closed_with_pending",
@@ -322,7 +322,7 @@ func (ps *permissionState) RestoreState(data []byte, policy PermissionPolicy, au
 			// Previously answered — replay deterministically.
 			ps.sendEvent(req.RequestID, dec.Decision == "allow", dec.Reason)
 			if audit != nil {
-				audit.Write(DecisionLogEntry{
+				audit.Write(&DecisionLogEntry{
 					SessionID:   ps.sessionID,
 					RequestID:   req.RequestID,
 					Tool:        req.Tool,

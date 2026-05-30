@@ -14,10 +14,10 @@ import (
 // sliceAuditWriter collects DecisionLogEntry records in memory for test assertions.
 type sliceAuditWriter struct {
 	mu      sync.Mutex
-	entries []DecisionLogEntry
+	entries []*DecisionLogEntry
 }
 
-func (a *sliceAuditWriter) Write(e DecisionLogEntry) {
+func (a *sliceAuditWriter) Write(e *DecisionLogEntry) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.entries = append(a.entries, e)
@@ -33,7 +33,9 @@ func (a *sliceAuditWriter) all() []DecisionLogEntry {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	out := make([]DecisionLogEntry, len(a.entries))
-	copy(out, a.entries)
+	for i, e := range a.entries {
+		out[i] = *e
+	}
 	return out
 }
 
@@ -83,7 +85,7 @@ func TestPermissionState_CombinedPolicyEnvPolicy(t *testing.T) {
 
 	env := &workflow.ResolvedPolicy{
 		Filesystem: &workflow.FilesystemPolicy{ReadOnly: true},
-		Network:  &workflow.NetworkPolicy{AllowEgress: false},
+		Network:    &workflow.NetworkPolicy{AllowEgress: false},
 	}
 	cp := NewCombinedPolicy("noop", []string{"read_file"}, env)
 	ps.SetPolicy(cp)
@@ -223,7 +225,7 @@ func TestPermissionState_StopCancelsStream(t *testing.T) {
 	ps.Stop()
 
 	// Drain any queued event, then verify the channel is closed.
-	drain:
+drain:
 	for {
 		select {
 		case _, ok := <-ch:
@@ -348,9 +350,11 @@ type permissionEmittingAdapter struct {
 func (a *permissionEmittingAdapter) Info(_ context.Context) (Info, error) {
 	return Info{Capabilities: []string{"execute"}}, nil
 }
-func (a *permissionEmittingAdapter) OpenSession(_ context.Context, _ string, _, _ map[string]string) error { return nil }
-func (a *permissionEmittingAdapter) CloseSession(_ context.Context, _ string) error                     { return nil }
-func (a *permissionEmittingAdapter) Kill()                                                               {}
+func (a *permissionEmittingAdapter) OpenSession(_ context.Context, _ string, _, _ map[string]string) error {
+	return nil
+}
+func (a *permissionEmittingAdapter) CloseSession(_ context.Context, _ string) error { return nil }
+func (a *permissionEmittingAdapter) Kill()                                          {}
 func (a *permissionEmittingAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
 	sink.Adapter("permission.request", map[string]any{
 		"request_id": "req-1",
@@ -358,5 +362,3 @@ func (a *permissionEmittingAdapter) Execute(_ context.Context, _ string, _ *work
 	})
 	return adapter.Result{Outcome: "success"}, nil
 }
-
-

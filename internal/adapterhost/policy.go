@@ -35,7 +35,7 @@ type PermissionPolicy interface {
 type CombinedPolicy struct {
 	Tools   PermissionPolicy // allow_tools matcher (nil → deny-all)
 	Env     *workflow.ResolvedPolicy
-	Adapter string           // adapter name for alias resolution
+	Adapter string // adapter name for alias resolution
 }
 
 // NewCombinedPolicy builds a CombinedPolicy from raw allow_tools patterns.
@@ -69,10 +69,10 @@ func (p *CombinedPolicy) Decide(req PermissionRequest) (allow bool, reason strin
 	// 2. env-policy checks (placeholder for WS09 full wiring)
 	if p.Env != nil {
 		if p.Env.Filesystem != nil && p.Env.Filesystem.ReadOnly {
-			// TODO(WS09): inspect req.Details for write operations
+			_ = req // TODO(WS09): inspect req.Details for write operations
 		}
 		if p.Env.Network != nil && !p.Env.Network.AllowEgress {
-			// TODO(WS09): deny network-dependent tools
+			_ = req // TODO(WS09): deny network-dependent tools
 		}
 	}
 	return true, reason

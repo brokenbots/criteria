@@ -319,21 +319,30 @@ func (m *SessionManager) registerSession(ctx context.Context, name, adapterName,
 	}
 	m.sessions[name] = sess
 
-	// WS16: start the session-scoped Permissions stream if the adapter supports it.
-	sess.PermissionState = NewPermissionState(name, m.Audit)
+	m.startPermissionStream(ctx, sess, plug)
+	m.startLogStream(ctx, sess, plug)
+	return nil
+}
+
+// startPermissionStream starts the session-scoped Permissions stream if the
+// adapter supports it.
+func (m *SessionManager) startPermissionStream(ctx context.Context, sess *Session, plug Handle) {
+	sess.PermissionState = NewPermissionState(sess.Name, m.Audit)
 	if streamer, ok := plug.(PermissionStreamer); ok {
-		cancel, err := streamer.StartPermissionStream(ctx, name, sess.PermissionState.Requests())
+		cancel, err := streamer.StartPermissionStream(ctx, sess.Name, sess.PermissionState.Requests())
 		if err != nil {
-			slog.Warn("adapter permission stream start failed", "session", name, "err", err)
+			slog.Warn("adapter permission stream start failed", "session", sess.Name, "err", err)
 		} else {
 			sess.PermissionState.SetStreamCancel(cancel)
 		}
 	}
+}
 
-	// WS15: start the dedicated per-session Log stream if the adapter supports it.
+// startLogStream starts the dedicated per-session Log stream if the adapter
+// supports it.
+func (m *SessionManager) startLogStream(ctx context.Context, sess *Session, plug Handle) {
 	if starter, ok := plug.(LogStreamStarter); ok {
 		logAdapterSink := &sessionLogAdapterSink{sess: sess}
-		// Wrap with redaction so idle-period log lines are also scrubbed.
 		redactedLogSink := m.wrapSink(logAdapterSink)
 		sess.mergeBuf = log.NewMergeBuffer(redactedLogSink, 500*time.Millisecond)
 		logSink := &logForwardSink{
@@ -342,15 +351,14 @@ func (m *SessionManager) registerSession(ctx context.Context, name, adapterName,
 				sess.lastHeartbeat.Store(time.Now().UnixNano())
 			},
 		}
-		cancel, err := starter.StartLogStream(ctx, name, logSink)
+		cancel, err := starter.StartLogStream(ctx, sess.Name, logSink)
 		if err != nil {
-			slog.Warn("adapter log stream start failed", "session", name, "err", err)
+			slog.Warn("adapter log stream start failed", "session", sess.Name, "err", err)
 		} else {
 			sess.cancelLog = cancel
 			sess.lastHeartbeat.Store(time.Now().UnixNano())
 		}
 	}
-	return nil
 }
 
 // Close is intentionally idempotent: closing an unknown session is a no-op.
@@ -452,66 +460,16 @@ func (m *SessionManager) Execute(ctx context.Context, name string, step *workflo
 		return m.handleCrash(ctx, name, step, sink, sess, errors.New("heartbeat stall (>90s)"))
 	}
 
-	// WS16: build combined policy for this step and wire it into the session's
-	// PermissionState.  EnvPolicy resolution from the graph is a future hook;
-	// for now only allow_tools is enforced.
-	var envPolicy *workflow.ResolvedPolicy
-	if m.graph != nil && step != nil && step.AdapterRef != "" {
-		adapterNode := m.graph.Adapters[step.AdapterRef]
-		if adapterNode != nil {
-			var envKey string
-			if step.Environment != "" {
-				envKey = step.Environment
-			} else if adapterNode.Environment != "" {
-				envKey = adapterNode.Environment
-			}
-			if envKey != "" && m.graph.ResolvedPolicies != nil {
-				policyKey := step.AdapterRef + ":" + envKey
-				envPolicy = m.graph.ResolvedPolicies[policyKey]
-			}
-		}
-	}
-	policy := NewCombinedPolicy(sess.Adapter, step.AllowTools, envPolicy)
-	if sess.PermissionState != nil {
-		sess.PermissionState.SetPolicy(policy)
-	}
+	m.setStepPolicy(sess, step)
+	m.bindCurrentSink(sess, sink)
+	defer m.unbindCurrentSink(sess)
 
-	// Route session-level log lines to this step's sink while Execute is in flight.
-	sess.currentSinkMu.Lock()
-	sess.currentSink = sink
-	sess.currentSinkMu.Unlock()
-	defer func() {
-		if sess.mergeBuf != nil {
-			sess.mergeBuf.Flush()
-		}
-		sess.currentSinkMu.Lock()
-		sess.currentSink = nil
-		sess.currentSinkMu.Unlock()
-	}()
-
-	// Pass mergeBuf as the Execute sink so that adapter events also flow through
-	// the timestamp-ordered merge pipeline together with log stream events.
-	execSink := sink
-	if sess.mergeBuf != nil {
-		execSink = sess.mergeBuf
-	}
-
-	// WS16: wrap the sink so permission.request events are intercepted and
-	// evaluated against the step's policy. Denied requests are tracked so the
-	// outcome can be overridden after Execute.
-	permSink := &permissionInterceptSink{
-		inner:     execSink,
-		permState: sess.PermissionState,
-		session:   sess,
-	}
+	execSink := m.execSinkForSession(sess, sink)
+	permSink := newPermissionInterceptSink(execSink, sess)
 
 	result, execErr := sess.handle.Execute(ctx, name, step, permSink)
 
-	// WS16: if any permission was denied, override a success outcome to
-	// signal that review is needed.
-	if permSink.anyDenied && result.Outcome == "success" {
-		result.Outcome = "needs_review"
-	}
+	m.maybeOverrideOutcome(permSink, &result)
 
 	if execErr == nil {
 		m.registerSensitiveOutputs(result, step)
@@ -532,6 +490,67 @@ func (m *SessionManager) Execute(ctx context.Context, name string, step *workflo
 	}
 
 	return m.handleCrash(ctx, name, step, sink, sess, execErr)
+}
+
+// setStepPolicy builds the CombinedPolicy for this step and wires it into the
+// session's PermissionState.
+func (m *SessionManager) setStepPolicy(sess *Session, step *workflow.StepNode) {
+	var envPolicy *workflow.ResolvedPolicy
+	if m.graph != nil && step != nil && step.AdapterRef != "" {
+		adapterNode := m.graph.Adapters[step.AdapterRef]
+		if adapterNode != nil {
+			var envKey string
+			if step.Environment != "" {
+				envKey = step.Environment
+			} else if adapterNode.Environment != "" {
+				envKey = adapterNode.Environment
+			}
+			if envKey != "" && m.graph.ResolvedPolicies != nil {
+				policyKey := step.AdapterRef + ":" + envKey
+				envPolicy = m.graph.ResolvedPolicies[policyKey]
+			}
+		}
+	}
+	policy := NewCombinedPolicy(sess.Adapter, step.AllowTools, envPolicy)
+	if sess.PermissionState != nil {
+		sess.PermissionState.SetPolicy(policy)
+	}
+}
+
+func (m *SessionManager) bindCurrentSink(sess *Session, sink adapter.EventSink) {
+	sess.currentSinkMu.Lock()
+	sess.currentSink = sink
+	sess.currentSinkMu.Unlock()
+}
+
+func (m *SessionManager) unbindCurrentSink(sess *Session) {
+	if sess.mergeBuf != nil {
+		sess.mergeBuf.Flush()
+	}
+	sess.currentSinkMu.Lock()
+	sess.currentSink = nil
+	sess.currentSinkMu.Unlock()
+}
+
+func (m *SessionManager) execSinkForSession(sess *Session, sink adapter.EventSink) adapter.EventSink {
+	if sess.mergeBuf != nil {
+		return sess.mergeBuf
+	}
+	return sink
+}
+
+func newPermissionInterceptSink(inner adapter.EventSink, sess *Session) *permissionInterceptSink {
+	return &permissionInterceptSink{
+		inner:     inner,
+		permState: sess.PermissionState,
+		session:   sess,
+	}
+}
+
+func (m *SessionManager) maybeOverrideOutcome(permSink *permissionInterceptSink, result *adapter.Result) {
+	if permSink != nil && permSink.anyDenied && result.Outcome == "success" {
+		result.Outcome = "needs_review"
+	}
 }
 
 // HasCapability reports whether the session identified by name has capName in
@@ -607,24 +626,7 @@ func (m *SessionManager) respawn(ctx context.Context, sess *Session) error {
 		return fmt.Errorf("session %q respawn: %w", sess.Name, sandboxErr)
 	}
 
-	var plug Handle
-	var err error
-	if dl, ok := m.loader.(*DefaultLoader); ok {
-		runnerFunc, containerErr := adapter.BuildContainerRunner(m.graph, m.lockfile, sess.Name)
-		if containerErr != nil {
-			if cleanup != nil {
-				cleanup()
-			}
-			return containerErr
-		}
-		if runnerFunc != nil {
-			plug, err = dl.ResolveWithRunnerFunc(ctx, sess.Adapter, runnerFunc)
-		} else {
-			plug, err = dl.ResolveWithCustomizer(ctx, sess.Adapter, customizer)
-		}
-	} else {
-		plug, err = m.loader.Resolve(ctx, sess.Adapter)
-	}
+	plug, err := m.resolveAdapterForRespawn(ctx, sess, customizer)
 	if err != nil {
 		if cleanup != nil {
 			cleanup()
@@ -642,24 +644,40 @@ func (m *SessionManager) respawn(ctx context.Context, sess *Session) error {
 	sess.SandboxCleanup = cleanup
 	sess.respawned = true
 
-	// WS16: restart the permission stream for the new handle.
-	if sess.PermissionState != nil {
-		sess.PermissionState.Stop()
-		sess.PermissionState = NewPermissionState(sess.Name, m.Audit)
-		if streamer, ok := plug.(PermissionStreamer); ok {
-			cancel, err := streamer.StartPermissionStream(ctx, sess.Name, sess.PermissionState.Requests())
-			if err != nil {
-				slog.Warn("adapter permission stream restart failed after respawn", "session", sess.Name, "err", err)
-			} else {
-				sess.PermissionState.SetStreamCancel(cancel)
-			}
-		}
-	}
-
-	// WS15: restart the log stream for the new handle and reset heartbeat tracking.
+	m.restartPermissionStream(ctx, sess, plug)
 	m.restartLogStream(ctx, sess, plug)
 
 	return nil
+}
+
+func (m *SessionManager) resolveAdapterForRespawn(ctx context.Context, sess *Session, customizer func(string, *exec.Cmd)) (Handle, error) {
+	if dl, ok := m.loader.(*DefaultLoader); ok {
+		runnerFunc, containerErr := adapter.BuildContainerRunner(m.graph, m.lockfile, sess.Name)
+		if containerErr != nil {
+			return nil, containerErr
+		}
+		if runnerFunc != nil {
+			return dl.ResolveWithRunnerFunc(ctx, sess.Adapter, runnerFunc)
+		}
+		return dl.ResolveWithCustomizer(ctx, sess.Adapter, customizer)
+	}
+	return m.loader.Resolve(ctx, sess.Adapter)
+}
+
+func (m *SessionManager) restartPermissionStream(ctx context.Context, sess *Session, plug Handle) {
+	if sess.PermissionState == nil {
+		return
+	}
+	sess.PermissionState.Stop()
+	sess.PermissionState = NewPermissionState(sess.Name, m.Audit)
+	if streamer, ok := plug.(PermissionStreamer); ok {
+		cancel, err := streamer.StartPermissionStream(ctx, sess.Name, sess.PermissionState.Requests())
+		if err != nil {
+			slog.Warn("adapter permission stream restart failed after respawn", "session", sess.Name, "err", err)
+		} else {
+			sess.PermissionState.SetStreamCancel(cancel)
+		}
+	}
 }
 
 // restartLogStream cancels the old log stream, closes the old merge buffer, and
