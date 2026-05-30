@@ -1,5 +1,3 @@
-//go:build linux
-
 package sandbox
 
 import (
@@ -172,4 +170,26 @@ func validatePath(p string) error {
 		}
 	}
 	return nil
+}
+
+// scrubEnv removes sensitive or privilege-escalating variables from the
+// environment slice. Safe for use on both Linux and Darwin.
+func scrubEnv(env []string) []string {
+	blocked := map[string]bool{
+		"SUDO_UID":        true,
+		"SUDO_GID":        true,
+		"SUDO_USER":       true,
+		"SUDO_COMMAND":    true,
+		"SUDO_EDITOR":     true,
+		"CRITERIA_PLUGIN": true,
+	}
+	out := make([]string, 0, len(env))
+	for _, e := range env {
+		name, _, _ := strings.Cut(e, "=")
+		if blocked[name] {
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
 }

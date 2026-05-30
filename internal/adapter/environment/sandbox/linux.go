@@ -66,9 +66,10 @@ type Handler struct{}
 // PrepareContext carries the compile-time policy and runtime capabilities
 // needed to build a LinuxPrepared configuration.
 type PrepareContext struct {
-	Policy *workflow.ResolvedPolicy
-	Env    *workflow.EnvironmentNode
-	Caps   Capabilities
+	Policy        *workflow.ResolvedPolicy
+	Env           *workflow.EnvironmentNode
+	Caps          Capabilities
+	AdapterBinary string // populated at prepare time for darwin sandbox allow-listing; unused on linux
 }
 
 // LinuxPrepared is the result of translating a sandbox policy into
@@ -578,26 +579,4 @@ func (prep *LinuxPrepared) ApplyToCmd(cmd *exec.Cmd, criteriaBin string) error {
 	cmd.Env = append(cmd.Env, "CRITERIA_SANDBOX_CONFIG_PATH="+tmpFile.Name())
 
 	return nil
-}
-
-// scrubEnv removes sensitive or unnecessary variables from the
-// environment slice.
-func scrubEnv(env []string) []string {
-	blocked := map[string]bool{
-		"SUDO_UID":        true,
-		"SUDO_GID":        true,
-		"SUDO_USER":       true,
-		"SUDO_COMMAND":    true,
-		"SUDO_EDITOR":     true,
-		"CRITERIA_PLUGIN": true,
-	}
-	out := make([]string, 0, len(env))
-	for _, e := range env {
-		name, _, _ := strings.Cut(e, "=")
-		if blocked[name] {
-			continue
-		}
-		out = append(out, e)
-	}
-	return out
 }
