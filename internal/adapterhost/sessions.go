@@ -99,30 +99,7 @@ func NewSessionManager(loader Loader) *SessionManager {
 // sandbox policy is strict and a required primitive is unavailable; in
 // that case the caller must abort the session before Resolve.
 func (m *SessionManager) buildSandboxCustomizer(instanceID string) (customizer func(name string, cmd *exec.Cmd), cleanup func(), err error) {
-	if m.graph == nil {
-		return nil, nil, nil
-	}
-	adapterNode, ok := m.graph.Adapters[instanceID]
-	if !ok {
-		return nil, nil, nil
-	}
-	envKey := adapterNode.Environment
-	if envKey == "" {
-		envKey = m.graph.DefaultEnvironment
-	}
-	if envKey == "" {
-		return nil, nil, nil
-	}
-	envNode, ok := m.graph.Environments[envKey]
-	if !ok {
-		return nil, nil, nil
-	}
-	if envNode.Type != "sandbox" {
-		return nil, nil, nil
-	}
-
-	cacheKey := instanceID + ":" + envKey
-	rp, ok := m.graph.ResolvedPolicies[cacheKey]
+	envNode, rp, ok := m.sandboxEnvAndPolicy(instanceID)
 	if !ok {
 		return nil, nil, nil
 	}
@@ -151,6 +128,39 @@ func (m *SessionManager) buildSandboxCustomizer(instanceID string) (customizer f
 
 	customizer, cleanup = makeSandboxCustomizer(&prep, envNode)
 	return customizer, cleanup, nil
+}
+
+// sandboxEnvAndPolicy resolves the sandbox environment node and resolved
+// policy for the given adapter instance. It returns false if the adapter
+// is not bound to a sandbox environment or no policy is available.
+func (m *SessionManager) sandboxEnvAndPolicy(instanceID string) (envNode *workflow.EnvironmentNode, rp *workflow.ResolvedPolicy, ok bool) {
+	if m.graph == nil {
+		return nil, nil, false
+	}
+	adapterNode, ok := m.graph.Adapters[instanceID]
+	if !ok {
+		return nil, nil, false
+	}
+	envKey := adapterNode.Environment
+	if envKey == "" {
+		envKey = m.graph.DefaultEnvironment
+	}
+	if envKey == "" {
+		return nil, nil, false
+	}
+	envNode, ok = m.graph.Environments[envKey]
+	if !ok {
+		return nil, nil, false
+	}
+	if envNode.Type != "sandbox" {
+		return nil, nil, false
+	}
+	cacheKey := instanceID + ":" + envKey
+	rp, ok = m.graph.ResolvedPolicies[cacheKey]
+	if !ok {
+		return nil, nil, false
+	}
+	return envNode, rp, true
 }
 
 func (m *SessionManager) Open(ctx context.Context, name, adapterName, onCrash string, config map[string]string) error {
