@@ -173,6 +173,7 @@ func (e *Engine) VisitCounts() map[string]int {
 // step limit is exceeded, or ctx is cancelled.
 func (e *Engine) Run(ctx context.Context) error {
 	sessions := adapterhost.NewSessionManager(e.loader)
+	sessions.SetGraph(e.graph)
 	defer func() { _ = sessions.Shutdown(context.WithoutCancel(ctx)) }()
 
 	deps := Deps{
@@ -202,6 +203,7 @@ func (e *Engine) Run(ctx context.Context) error {
 // allowing the workflow to be resumed in a new process context.
 func (e *Engine) RunFrom(ctx context.Context, startStep string, initialAttempt int) error {
 	sessions := adapterhost.NewSessionManager(e.loader)
+	sessions.SetGraph(e.graph)
 	defer func() { _ = sessions.Shutdown(context.WithoutCancel(ctx)) }()
 
 	deps := Deps{

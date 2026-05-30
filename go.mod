@@ -6,12 +6,14 @@ require (
 	connectrpc.com/connect v1.19.2
 	github.com/brokenbots/criteria/sdk v0.0.0
 	github.com/brokenbots/criteria/workflow v0.0.0
+	github.com/elastic/go-seccomp-bpf v1.6.0
 	github.com/github/copilot-sdk/go v1.0.0-beta.6
 	github.com/golangci/golangci-lint v1.64.8
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/go-hclog v1.6.3
 	github.com/hashicorp/go-plugin v1.8.0
 	github.com/hashicorp/hcl/v2 v2.24.0
+	github.com/landlock-lsm/go-landlock v0.8.1
 	github.com/opencontainers/go-digest v1.0.0
 	github.com/opencontainers/image-spec v1.1.1
 	github.com/sigstore/cosign/v2 v2.6.3
@@ -301,6 +303,7 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260226221140-a57be14db171 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	honnef.co/go/tools v0.6.1 // indirect
+	kernel.org/pub/linux/libs/security/libcap/psx v1.2.77 // indirect
 	mvdan.cc/gofumpt v0.7.0 // indirect
 	mvdan.cc/unparam v0.0.0-20240528143540-8a5130ca722f // indirect
 )

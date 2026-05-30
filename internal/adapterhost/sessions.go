@@ -5,11 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
+	"os/exec"
 	"strings"
 	"sync"
 	"sync/atomic"
 
 	"github.com/brokenbots/criteria/internal/adapter"
+	"github.com/brokenbots/criteria/internal/adapter/environment/sandbox"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -46,9 +49,22 @@ func (e *FatalRunError) Unwrap() error {
 
 type SessionManager struct {
 	loader Loader
+	graph  *workflow.FSMGraph
+
+	// sandboxProbeOverride is a test hook that replaces sandbox.Probe().
+	// When nil the real Probe() is used.
+	sandboxProbeOverride func() sandbox.Capabilities
 
 	mu       sync.Mutex
 	sessions map[string]*Session
+}
+
+// SetGraph provides the compiled workflow graph so the session manager
+// can look up per-adapter environment policies (e.g. sandbox) at open time.
+func (m *SessionManager) SetGraph(g *workflow.FSMGraph) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.graph = g
 }
 
 // PermissionState holds runtime permission audit data for a session.
@@ -65,6 +81,7 @@ type Session struct {
 	handle          Handle
 	respawned       bool
 	closing         atomic.Bool
+	SandboxCleanup  func() // removes transient cgroup dirs, etc.
 }
 
 func NewSessionManager(loader Loader) *SessionManager {
@@ -72,6 +89,78 @@ func NewSessionManager(loader Loader) *SessionManager {
 		loader:   loader,
 		sessions: map[string]*Session{},
 	}
+}
+
+// buildSandboxCustomizer returns a function that applies the sandbox
+// configuration to an exec.Cmd, or nil if the adapter is not bound to a
+// sandbox environment. The second return value is a cleanup function
+// that removes transient resources (e.g. cgroup directories); it may be
+// nil. The third return value is an error that is only non-nil when the
+// sandbox policy is strict and a required primitive is unavailable; in
+// that case the caller must abort the session before Resolve.
+func (m *SessionManager) buildSandboxCustomizer(instanceID string) (customizer func(name string, cmd *exec.Cmd), cleanup func(), err error) {
+	envNode, rp, ok := m.sandboxEnvAndPolicy(instanceID)
+	if !ok {
+		return nil, nil, nil
+	}
+
+	caps := sandbox.Probe()
+	if m.sandboxProbeOverride != nil {
+		caps = m.sandboxProbeOverride()
+	}
+	if missing := caps.Missing(); len(missing) > 0 {
+		slog.Info("sandbox primitives missing", "missing", missing, "instance", instanceID)
+	}
+
+	ctx := sandbox.PrepareContext{
+		Policy: rp,
+		Env:    envNode,
+		Caps:   caps,
+	}
+	prep, err := sandbox.Handler{}.Prepare(ctx)
+	if err != nil {
+		if rp.PolicyMode == "strict" {
+			return nil, nil, fmt.Errorf("sandbox strict mode: %w", err)
+		}
+		slog.Info("sandbox permissive degradation", "instance", instanceID, "error", err)
+		return nil, nil, nil
+	}
+
+	customizer, cleanup = makeSandboxCustomizer(&prep, envNode)
+	return customizer, cleanup, nil
+}
+
+// sandboxEnvAndPolicy resolves the sandbox environment node and resolved
+// policy for the given adapter instance. It returns false if the adapter
+// is not bound to a sandbox environment or no policy is available.
+func (m *SessionManager) sandboxEnvAndPolicy(instanceID string) (envNode *workflow.EnvironmentNode, rp *workflow.ResolvedPolicy, ok bool) {
+	if m.graph == nil {
+		return nil, nil, false
+	}
+	adapterNode, ok := m.graph.Adapters[instanceID]
+	if !ok {
+		return nil, nil, false
+	}
+	envKey := adapterNode.Environment
+	if envKey == "" {
+		envKey = m.graph.DefaultEnvironment
+	}
+	if envKey == "" {
+		return nil, nil, false
+	}
+	envNode, ok = m.graph.Environments[envKey]
+	if !ok {
+		return nil, nil, false
+	}
+	if envNode.Type != "sandbox" {
+		return nil, nil, false
+	}
+	cacheKey := instanceID + ":" + envKey
+	rp, ok = m.graph.ResolvedPolicies[cacheKey]
+	if !ok {
+		return nil, nil, false
+	}
+	return envNode, rp, true
 }
 
 func (m *SessionManager) Open(ctx context.Context, name, adapterName, onCrash string, config map[string]string) error {
@@ -89,8 +178,22 @@ func (m *SessionManager) Open(ctx context.Context, name, adapterName, onCrash st
 	}
 	m.mu.Unlock()
 
-	plug, err := m.loader.Resolve(ctx, adapterName)
+	customizer, cleanup, sandboxErr := m.buildSandboxCustomizer(name)
+	if sandboxErr != nil {
+		return fmt.Errorf("session %q: %w", name, sandboxErr)
+	}
+
+	var plug Handle
+	var err error
+	if dl, ok := m.loader.(*DefaultLoader); ok {
+		plug, err = dl.ResolveWithCustomizer(ctx, adapterName, customizer)
+	} else {
+		plug, err = m.loader.Resolve(ctx, adapterName)
+	}
 	if err != nil {
+		if cleanup != nil {
+			cleanup()
+		}
 		return err
 	}
 
@@ -103,23 +206,53 @@ func (m *SessionManager) Open(ctx context.Context, name, adapterName, onCrash st
 
 	if err := plug.OpenSession(ctx, name, config); err != nil {
 		plug.Kill()
+		if cleanup != nil {
+			cleanup()
+		}
 		return err
 	}
 
+	return m.registerSession(ctx, name, adapterName, onCrash, config, caps, plug, cleanup)
+}
+
+// makeSandboxCustomizer builds the exec.Cmd customizer and cleanup from
+// a prepared LinuxPrepared config. It handles both the bubblewrap and
+// in-process shim paths.
+func makeSandboxCustomizer(prep *sandbox.LinuxPrepared, envNode *workflow.EnvironmentNode) (customizer func(name string, cmd *exec.Cmd), cleanup func()) {
+	cleanup = func() { _ = prep.Cleanup() }
+	if bwrapCmd := sandbox.MaybeUseBubblewrap(prep, envNode); bwrapCmd != nil {
+		return func(_ string, cmd *exec.Cmd) {
+			cmd.Path = bwrapCmd.Path
+			cmd.Args = bwrapCmd.Args
+			cmd.Env = bwrapCmd.Env
+			cmd.Dir = bwrapCmd.Dir
+			cmd.SysProcAttr = nil
+		}, cleanup
+	}
+	return func(_ string, cmd *exec.Cmd) {
+		_ = prep.ApplyToCmd(cmd, os.Args[0])
+	}, cleanup
+}
+
+func (m *SessionManager) registerSession(ctx context.Context, name, adapterName, onCrash string, config map[string]string, caps []string, plug Handle, cleanup func()) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, exists := m.sessions[name]; exists {
 		_ = plug.CloseSession(ctx, name)
 		plug.Kill()
+		if cleanup != nil {
+			cleanup()
+		}
 		return fmt.Errorf("%w: %s", ErrSessionAlreadyOpen, name)
 	}
 	m.sessions[name] = &Session{
-		Name:         name,
-		Adapter:      adapterName,
-		Config:       cloneConfig(config),
-		OnCrash:      normalizeOnCrash(onCrash),
-		Capabilities: caps,
-		handle:       plug,
+		Name:           name,
+		Adapter:        adapterName,
+		Config:         cloneConfig(config),
+		OnCrash:        normalizeOnCrash(onCrash),
+		Capabilities:   caps,
+		handle:         plug,
+		SandboxCleanup: cleanup,
 	}
 	return nil
 }
@@ -137,6 +270,9 @@ func (m *SessionManager) Close(ctx context.Context, name string) error {
 		return nil
 	}
 	sess.closing.Store(true)
+	if sess.SandboxCleanup != nil {
+		sess.SandboxCleanup()
+	}
 	err := sess.handle.CloseSession(ctx, name)
 	sess.handle.Kill()
 	return err
@@ -226,6 +362,9 @@ func (m *SessionManager) Shutdown(ctx context.Context) error {
 	var errs []error
 	for _, sess := range sessions {
 		sess.closing.Store(true)
+		if sess.SandboxCleanup != nil {
+			sess.SandboxCleanup()
+		}
 		if err := sess.handle.CloseSession(ctx, sess.Name); err != nil {
 			errs = append(errs, err)
 		}
@@ -249,15 +388,36 @@ func (m *SessionManager) lookup(name string) (*Session, error) {
 
 func (m *SessionManager) respawn(ctx context.Context, sess *Session) error {
 	sess.handle.Kill()
-	plug, err := m.loader.Resolve(ctx, sess.Adapter)
+	if sess.SandboxCleanup != nil {
+		sess.SandboxCleanup()
+	}
+	customizer, cleanup, sandboxErr := m.buildSandboxCustomizer(sess.Name)
+	if sandboxErr != nil {
+		return fmt.Errorf("session %q respawn: %w", sess.Name, sandboxErr)
+	}
+
+	var plug Handle
+	var err error
+	if dl, ok := m.loader.(*DefaultLoader); ok {
+		plug, err = dl.ResolveWithCustomizer(ctx, sess.Adapter, customizer)
+	} else {
+		plug, err = m.loader.Resolve(ctx, sess.Adapter)
+	}
 	if err != nil {
+		if cleanup != nil {
+			cleanup()
+		}
 		return err
 	}
 	if err := plug.OpenSession(ctx, sess.Name, sess.Config); err != nil {
 		plug.Kill()
+		if cleanup != nil {
+			cleanup()
+		}
 		return err
 	}
 	sess.handle = plug
+	sess.SandboxCleanup = cleanup
 	sess.respawned = true
 	return nil
 }
