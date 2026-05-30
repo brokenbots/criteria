@@ -40,10 +40,10 @@ type MergeBuffer struct {
 	inner    adapter.EventSink
 	maxDelay time.Duration
 
-	mu       sync.Mutex
-	queue    eventHeap
-	timer    *time.Timer
-	flushDue time.Time // zero when no timer is active
+	mu          sync.Mutex
+	queue       eventHeap
+	timer       *time.Timer
+	flushDue    time.Time // zero when no timer is active
 	timerStopCh chan struct{}
 }
 
