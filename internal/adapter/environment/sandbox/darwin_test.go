@@ -102,6 +102,7 @@ func TestFromPolicy(t *testing.T) {
 		wantReads     []string
 		wantWrites    []string
 		wantNetwork   []string
+		wantWarnings  int
 		wantBlockKext bool
 		wantBlockMach bool
 	}{
@@ -149,11 +150,23 @@ func TestFromPolicy(t *testing.T) {
 			policy: workflow.ResolvedPolicy{
 				TypeSpecific: map[string]cty.Value{
 					"network": cty.ObjectVal(map[string]cty.Value{
-						"allow": cty.TupleVal([]cty.Value{cty.StringVal("127.0.0.1:443"), cty.StringVal("::1:80")}),
+						"allow": cty.TupleVal([]cty.Value{cty.StringVal("127.0.0.1:443"), cty.StringVal("[::1]:80")}),
 					}),
 				},
 			},
-			wantNetwork: []string{"127.0.0.1:443", "::1:80"},
+			wantNetwork: []string{"127.0.0.1:443", "[::1]:80"},
+		},
+		{
+			name: "unresolvable network host",
+			policy: workflow.ResolvedPolicy{
+				TypeSpecific: map[string]cty.Value{
+					"network": cty.ObjectVal(map[string]cty.Value{
+						"allow": cty.TupleVal([]cty.Value{cty.StringVal("this-host-does-not-exist-12345.invalid:80")}),
+					}),
+				},
+			},
+			wantNetwork:  []string{},
+			wantWarnings: 1,
 		},
 		{
 			name: "block kext and mach",
@@ -193,6 +206,9 @@ func TestFromPolicy(t *testing.T) {
 			}
 			if prof.BlockMachLookup != tc.wantBlockMach {
 				t.Errorf("BlockMachLookup=%v, want %v", prof.BlockMachLookup, tc.wantBlockMach)
+			}
+			if len(prof.resolveWarnings) != tc.wantWarnings {
+				t.Errorf("resolveWarnings=%d, want %d", len(prof.resolveWarnings), tc.wantWarnings)
 			}
 		})
 	}

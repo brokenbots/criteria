@@ -112,6 +112,10 @@ type LinuxPrepared struct {
 	profilePath string // temp profile file path
 }
 
+// DarwinPrepared is an alias for LinuxPrepared on Darwin builds,
+// provided for call-site clarity.
+type DarwinPrepared = LinuxPrepared
+
 // Prepare converts a ResolvedPolicy into LinuxPrepared.
 func (h Handler) Prepare(ctx PrepareContext) (LinuxPrepared, error) {
 	if ctx.Policy == nil {
