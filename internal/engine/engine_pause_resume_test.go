@@ -47,6 +47,10 @@ func (m *mockPauseResumeHandle) Resume(context.Context, string) error {
 func (m *mockPauseResumeHandle) Inspect(context.Context, string) (*v2.InspectResponse, error) {
 	return m.inspectResp, nil
 }
+func (m *mockPauseResumeHandle) Snapshot(context.Context, string) (*v2.SnapshotResponse, error) {
+	return &v2.SnapshotResponse{}, nil
+}
+func (m *mockPauseResumeHandle) Restore(context.Context, string, []byte, uint32) error { return nil }
 
 type mockPauseResumeLoader struct {
 	handle adapterhost.Handle

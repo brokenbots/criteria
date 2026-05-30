@@ -9,6 +9,7 @@ import (
 	"github.com/zclconf/go-cty/cty"
 
 	"github.com/brokenbots/criteria/internal/adapterhost"
+	"github.com/brokenbots/criteria/internal/adapter/secrets"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -39,7 +40,21 @@ func initScopeAdapters(ctx context.Context, g *workflow.FSMGraph, deps Deps, var
 			}
 		}
 
-		openErr := deps.Sessions.Open(ctx, instanceID, adapter.Type, adapter.OnCrash, adapter.Config, secretMap)
+		// Build origin refs from evaluated expressions for snapshot/restore (WS18).
+		var originRefs map[string]secrets.OriginRef
+		if len(adapter.Secrets) > 0 {
+			evaluated, evalErr := workflow.ResolveInputExprs(adapter.Secrets, vars)
+			if evalErr != nil {
+				deps.Sink.OnAdapterLifecycle("", instanceID, "init_failed", evalErr.Error())
+				return nil, fmt.Errorf("initialize adapter %q: %w", instanceID, evalErr)
+			}
+			originRefs = make(map[string]secrets.OriginRef, len(evaluated))
+			for k, v := range evaluated {
+				originRefs[k] = secrets.ParseOriginRef(v)
+			}
+		}
+
+		openErr := deps.Sessions.OpenWithOriginRefs(ctx, instanceID, adapter.Type, adapter.OnCrash, adapter.Config, secretMap, originRefs)
 
 		// Silently swallow ErrSessionAlreadyOpen to support subworkflow bodies that
 		// re-declare parent adapters for safety through re-declaration. Same-scope

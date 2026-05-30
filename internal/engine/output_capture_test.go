@@ -55,6 +55,10 @@ func (p *fakeOutputAdapter) Resume(context.Context, string) error { return nil }
 func (p *fakeOutputAdapter) Inspect(context.Context, string) (*v2.InspectResponse, error) {
 	return &v2.InspectResponse{}, nil
 }
+func (p *fakeOutputAdapter) Snapshot(context.Context, string) (*v2.SnapshotResponse, error) {
+	return &v2.SnapshotResponse{}, nil
+}
+func (p *fakeOutputAdapter) Restore(context.Context, string, []byte, uint32) error { return nil }
 
 const outputWorkflow = `
 workflow {
@@ -164,6 +168,10 @@ func (p *fakeConsumerAdapter) Resume(context.Context, string) error { return nil
 func (p *fakeConsumerAdapter) Inspect(context.Context, string) (*v2.InspectResponse, error) {
 	return &v2.InspectResponse{}, nil
 }
+func (p *fakeConsumerAdapter) Snapshot(context.Context, string) (*v2.SnapshotResponse, error) {
+	return &v2.SnapshotResponse{}, nil
+}
+func (p *fakeConsumerAdapter) Restore(context.Context, string, []byte, uint32) error { return nil }
 func TestOutputCapture_ExpressionInterpolation(t *testing.T) {
 	adapterSchemas := map[string]workflow.AdapterInfo{
 		"fake_out.default": {

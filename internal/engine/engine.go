@@ -16,6 +16,7 @@ import (
 	"github.com/brokenbots/criteria/internal/adapter/secrets"
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	engineruntime "github.com/brokenbots/criteria/internal/engine/runtime"
+	"github.com/brokenbots/criteria/internal/runtime/state"
 	v2 "github.com/brokenbots/criteria/sdk/pb/criteria/v2"
 	"github.com/brokenbots/criteria/workflow"
 	"github.com/brokenbots/criteria/workflow/lockfile"
@@ -150,6 +151,12 @@ type Engine struct {
 	// permission decisions are recorded to a file (WS16).
 	auditWriter adapterhost.AuditWriter
 
+	// WS18: snapshotBase is the base directory for persisting session
+	// snapshots during Pause. When empty, snapshots are not persisted.
+	snapshotBase string
+	// WS18: runID namespaces snapshot files within snapshotBase.
+	runID string
+
 	// WS17: liveSessions holds the active SessionManager while a run is in
 	// progress, enabling Pause/Resume/Inspect from outside runLoop.
 	liveSessions *adapterhost.SessionManager
@@ -184,8 +191,9 @@ func (e *Engine) VisitCounts() map[string]int {
 	return e.lastVisits
 }
 
-// Pause halts all open adapter sessions without losing state.
-// It is reentrant and idempotent.
+// Pause halts all open adapter sessions without losing state, snapshots each
+// session, and persists the snapshots to disk (WS18). It is reentrant and
+// idempotent.
 func (e *Engine) Pause(ctx context.Context) error {
 	e.mu.RLock()
 	sessions := e.liveSessions
@@ -193,19 +201,79 @@ func (e *Engine) Pause(ctx context.Context) error {
 	if sessions == nil {
 		return errors.New("no active run to pause")
 	}
-	return sessions.PauseAll(ctx)
+	if err := sessions.PauseAll(ctx); err != nil {
+		return err
+	}
+	if e.snapshotBase == "" || e.runID == "" {
+		return nil
+	}
+	snaps, err := sessions.SnapshotAll(ctx)
+	if err != nil {
+		return fmt.Errorf("snapshot: %w", err)
+	}
+	for name, snap := range snaps {
+		dir := state.SnapshotDir(e.snapshotBase, e.runID, name)
+		if _, err := state.WriteSnapshot(dir, snap); err != nil {
+			return fmt.Errorf("persist snapshot for %q: %w", name, err)
+		}
+	}
+	return nil
 }
 
-// Resume continues all paused adapter sessions.
-// It is reentrant and idempotent.
+// Resume continues all paused adapter sessions. If the engine was restarted
+// and liveSessions is nil, it reconstructs sessions from the latest persisted
+// snapshots before resuming (WS18).
 func (e *Engine) Resume(ctx context.Context) error {
 	e.mu.RLock()
 	sessions := e.liveSessions
 	e.mu.RUnlock()
 	if sessions == nil {
-		return errors.New("no active run to resume")
+		if e.snapshotBase == "" || e.runID == "" {
+			return errors.New("no active run to resume")
+		}
+		restored, err := e.restoreSessionsFromSnapshots(ctx)
+		if err != nil {
+			return err
+		}
+		sessions = restored
+		e.mu.Lock()
+		e.liveSessions = sessions
+		e.mu.Unlock()
 	}
 	return sessions.ResumeAll(ctx)
+}
+
+func (e *Engine) restoreSessionsFromSnapshots(ctx context.Context) (*adapterhost.SessionManager, error) {
+	sessions := adapterhost.NewSessionManager(e.loader)
+	sessions.SetGraph(e.graph)
+	sessions.SetLockfile(e.lockfile)
+	if e.auditWriter != nil {
+		sessions.Audit = e.auditWriter
+	}
+	if e.graph == nil {
+		return nil, errors.New("cannot restore sessions: engine has no workflow graph")
+	}
+	ids, err := state.ListSnapshotSessions(e.snapshotBase, e.runID)
+	if err != nil {
+		return nil, fmt.Errorf("list snapshot sessions: %w", err)
+	}
+	for _, sid := range ids {
+		dir := state.SnapshotDir(e.snapshotBase, e.runID, sid)
+		snap, err := state.ReadLatestSnapshot(dir)
+		if err != nil {
+			return nil, fmt.Errorf("read snapshot for %q: %w", sid, err)
+		}
+		adapterNode := e.graph.Adapters[sid]
+		if adapterNode == nil {
+			return nil, fmt.Errorf("snapshot session %q not found in workflow graph", sid)
+		}
+		envNode := getEnvironmentNode(e.graph, adapterNode.Environment)
+		_, err = sessions.Restore(ctx, sid, adapterNode.Type, adapterNode.OnCrash, adapterNode.Config, envNode, snap)
+		if err != nil {
+			return nil, fmt.Errorf("restore session %q: %w", sid, err)
+		}
+	}
+	return sessions, nil
 }
 
 // InspectSession returns structured read-only state for a single session.

@@ -72,6 +72,10 @@ type Handle interface {
 	Resume(ctx context.Context, sessionID string) error
 	// Inspect returns structured read-only state about the session.
 	Inspect(ctx context.Context, sessionID string) (*v2.InspectResponse, error)
+	// Snapshot returns opaque adapter-defined state.
+	Snapshot(ctx context.Context, sessionID string) (*v2.SnapshotResponse, error)
+	// Restore re-establishes adapter state from a prior snapshot.
+	Restore(ctx context.Context, sessionID string, state []byte, schemaVersion uint32) error
 }
 
 type Info struct {
@@ -927,6 +931,15 @@ func (p *rpcHandle) Pause(ctx context.Context, sessionID string) error {
 
 func (p *rpcHandle) Resume(ctx context.Context, sessionID string) error {
 	_, err := p.rpc.Resume(ctx, &v2.ResumeRequest{SessionId: sessionID})
+	return err
+}
+
+func (p *rpcHandle) Snapshot(ctx context.Context, sessionID string) (*v2.SnapshotResponse, error) {
+	return p.rpc.Snapshot(ctx, &v2.SnapshotRequest{SessionId: sessionID})
+}
+
+func (p *rpcHandle) Restore(ctx context.Context, sessionID string, state []byte, schemaVersion uint32) error {
+	_, err := p.rpc.Restore(ctx, &v2.RestoreRequest{SessionId: sessionID, State: state, SchemaVersion: schemaVersion})
 	return err
 }
 

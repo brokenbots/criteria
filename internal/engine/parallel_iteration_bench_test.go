@@ -122,6 +122,10 @@ func (p *highLogAdapter) Resume(context.Context, string) error { return nil }
 func (p *highLogAdapter) Inspect(context.Context, string) (*v2.InspectResponse, error) {
 	return &v2.InspectResponse{}, nil
 }
+func (p *highLogAdapter) Snapshot(context.Context, string) (*v2.SnapshotResponse, error) {
+	return &v2.SnapshotResponse{}, nil
+}
+func (p *highLogAdapter) Restore(context.Context, string, []byte, uint32) error { return nil }
 
 // buildParallelBenchWorkflow compiles a parallel step with n items all using
 // the "fake" adapter. Uses injectDefaultAdapters (same package) to resolve
