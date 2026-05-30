@@ -5,6 +5,7 @@ package sandbox
 import (
 	"fmt"
 	"net"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -36,6 +37,11 @@ func FromPolicy(p workflow.ResolvedPolicy, adapterBinary string) Profile {
 
 	if adapterBinary != "" {
 		prof.AllowExec = append(prof.AllowExec, adapterBinary)
+		prof.AllowFileReads = append(prof.AllowFileReads, adapterBinary)
+		binDir := filepath.Dir(adapterBinary)
+		if binDir != "" && binDir != "/" {
+			prof.AllowFileReads = append(prof.AllowFileReads, binDir)
+		}
 	}
 
 	fsObj := cty.NilVal
@@ -88,7 +94,7 @@ func FromPolicy(p workflow.ResolvedPolicy, adapterBinary string) Profile {
 		}
 	}
 
-	prof.BlockSysctl = boolFromObject(fsObj, "block_sysctl", false)
+	prof.BlockKextLoad = boolFromObject(fsObj, "block_kext_load", false)
 	prof.BlockMachLookup = boolFromObject(fsObj, "block_mach_lookup", false)
 
 	return prof

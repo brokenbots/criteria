@@ -66,9 +66,10 @@ type Handler struct{}
 // PrepareContext carries the compile-time policy and runtime capabilities
 // needed to build a LinuxPrepared configuration.
 type PrepareContext struct {
-	Policy *workflow.ResolvedPolicy
-	Env    *workflow.EnvironmentNode
-	Caps   Capabilities
+	Policy        *workflow.ResolvedPolicy
+	Env           *workflow.EnvironmentNode
+	Caps          Capabilities
+	AdapterBinary string // populated at prepare time for darwin sandbox allow-listing; unused on linux
 }
 
 // LinuxPrepared is the result of translating a sandbox policy into

@@ -27,9 +27,10 @@ type Handler struct{}
 // struct shape so that cross-platform call sites compile without build
 // tags.
 type PrepareContext struct {
-	Policy *workflow.ResolvedPolicy
-	Env    *workflow.EnvironmentNode
-	Caps   Capabilities
+	Policy        *workflow.ResolvedPolicy
+	Env           *workflow.EnvironmentNode
+	Caps          Capabilities
+	AdapterBinary string // populated at prepare time for darwin sandbox allow-listing; unused on non-linux
 }
 
 // Prepare always returns an error on non-Linux.

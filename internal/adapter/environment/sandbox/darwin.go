@@ -22,7 +22,7 @@ type Profile struct {
 	AllowFileWrites   []string
 	AllowNetworkHosts []string
 	AllowExec         []string
-	BlockSysctl       bool
+	BlockKextLoad     bool
 	BlockMachLookup   bool
 	DefaultDeny       bool
 
@@ -80,7 +80,7 @@ func (p *Profile) Render() string {
 		b.WriteString(")\n")
 	}
 
-	if p.BlockSysctl {
+	if p.BlockKextLoad {
 		b.WriteString("(deny system-kext-load)\n")
 	}
 	if p.BlockMachLookup {
@@ -96,9 +96,10 @@ type Handler struct{}
 // PrepareContext carries the compile-time policy and runtime capabilities
 // needed to build a DarwinPrepared configuration.
 type PrepareContext struct {
-	Policy *workflow.ResolvedPolicy
-	Env    *workflow.EnvironmentNode
-	Caps   Capabilities
+	Policy        *workflow.ResolvedPolicy
+	Env           *workflow.EnvironmentNode
+	Caps          Capabilities
+	AdapterBinary string // resolved adapter plugin path; populated at prepare time
 }
 
 // LinuxPrepared is the Darwin-specific prepared sandbox configuration.
@@ -133,7 +134,7 @@ func (h Handler) Prepare(ctx PrepareContext) (LinuxPrepared, error) {
 		return LinuxPrepared{Mode: mode, fallback: true}, nil
 	}
 
-	profile := FromPolicy(*ctx.Policy, "")
+	profile := FromPolicy(*ctx.Policy, ctx.AdapterBinary)
 	profile.DefaultDeny = true
 	if len(profile.resolveWarnings) > 0 {
 		if mode == "strict" {
@@ -172,14 +173,9 @@ func (prep *LinuxPrepared) ApplyToCmd(cmd *exec.Cmd, criteriaBin string) error {
 	adapterPath := cmd.Path
 	adapterArgs := cmd.Args[1:]
 
-	// Ensure the adapter binary itself is allowed.
-	prep.Profile.AllowExec = append(prep.Profile.AllowExec, adapterPath)
-	// Also allow reading the binary and its directory for mmap/dlopen.
-	prep.Profile.AllowFileReads = append(prep.Profile.AllowFileReads, adapterPath)
-	binDir := filepath.Dir(adapterPath)
-	if binDir != "" && binDir != "/" {
-		prep.Profile.AllowFileReads = append(prep.Profile.AllowFileReads, binDir)
-	}
+	// The adapter binary and its directory were already allow-listed at
+	// prepare time (via PrepareContext.AdapterBinary → FromPolicy).
+	// ApplyToCmd must not mutate the receiver's Profile.
 
 	tmpPath, err := writeProfile(prep.Profile)
 	if err != nil {

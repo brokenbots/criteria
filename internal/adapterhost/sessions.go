@@ -104,6 +104,27 @@ func (m *SessionManager) buildSandboxCustomizer(instanceID string) (customizer f
 		return nil, nil, nil
 	}
 
+	// Resolve the adapter binary path so the sandbox profile can
+	// pre-allowlist it at prepare time (avoids mutating the profile
+	// inside ApplyToCmd).
+	var adapterBinary string
+	if m.graph != nil {
+		if adapterNode, ok := m.graph.Adapters[instanceID]; ok {
+			path, discoverErr := DiscoverBinary(adapterNode.Type)
+			if discoverErr == nil {
+				adapterBinary = path
+			} else {
+				var notFound *ErrAdapterNotFound
+				if !errors.As(discoverErr, &notFound) {
+					return nil, nil, fmt.Errorf("discover adapter binary: %w", discoverErr)
+				}
+				// Built-in adapter or missing plugin: leave adapterBinary empty.
+				// For built-ins the customizer is never invoked; for missing
+				// plugins ResolveWithCustomizer will fail later anyway.
+			}
+		}
+	}
+
 	caps := sandbox.Probe()
 	if m.sandboxProbeOverride != nil {
 		caps = m.sandboxProbeOverride()
@@ -113,9 +134,10 @@ func (m *SessionManager) buildSandboxCustomizer(instanceID string) (customizer f
 	}
 
 	ctx := sandbox.PrepareContext{
-		Policy: rp,
-		Env:    envNode,
-		Caps:   caps,
+		Policy:        rp,
+		Env:           envNode,
+		Caps:          caps,
+		AdapterBinary: adapterBinary,
 	}
 	prep, err := sandbox.Handler{}.Prepare(ctx)
 	if err != nil {

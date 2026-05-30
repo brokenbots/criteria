@@ -56,9 +56,9 @@ func TestProfile_Render(t *testing.T) {
 			},
 		},
 		{
-			name: "block sysctl and mach",
+			name: "block kext and mach",
 			profile: Profile{
-				BlockSysctl:     true,
+				BlockKextLoad:     true,
 				BlockMachLookup: true,
 				DefaultDeny:     true,
 			},
@@ -98,10 +98,11 @@ func TestFromPolicy(t *testing.T) {
 	tests := []struct {
 		name          string
 		policy        workflow.ResolvedPolicy
+		adapterBinary string
 		wantReads     []string
 		wantWrites    []string
 		wantNetwork   []string
-		wantBlockSys  bool
+		wantBlockKext bool
 		wantBlockMach bool
 	}{
 		{
@@ -132,6 +133,18 @@ func TestFromPolicy(t *testing.T) {
 			wantWrites: []string{"/tmp/log.txt", "/data/shared"},
 		},
 		{
+			name: "adapter binary pre-populated",
+			policy: workflow.ResolvedPolicy{
+				TypeSpecific: map[string]cty.Value{
+					"filesystem": cty.ObjectVal(map[string]cty.Value{
+						"read": cty.TupleVal([]cty.Value{cty.StringVal("/etc/config.yaml")}),
+					}),
+				},
+			},
+			adapterBinary: "/usr/local/bin/adapter",
+			wantReads:     []string{"/etc/config.yaml", "/usr/local/bin/adapter", "/usr/local/bin"},
+		},
+		{
 			name: "network allowed hosts",
 			policy: workflow.ResolvedPolicy{
 				TypeSpecific: map[string]cty.Value{
@@ -143,23 +156,23 @@ func TestFromPolicy(t *testing.T) {
 			wantNetwork: []string{"127.0.0.1:443", "::1:80"},
 		},
 		{
-			name: "block sysctl and mach",
+			name: "block kext and mach",
 			policy: workflow.ResolvedPolicy{
 				TypeSpecific: map[string]cty.Value{
 					"filesystem": cty.ObjectVal(map[string]cty.Value{
-						"block_sysctl":      cty.BoolVal(true),
+						"block_kext_load":   cty.BoolVal(true),
 						"block_mach_lookup": cty.BoolVal(true),
 					}),
 				},
 			},
-			wantBlockSys:  true,
+			wantBlockKext: true,
 			wantBlockMach: true,
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			prof := FromPolicy(tc.policy, "")
+			prof := FromPolicy(tc.policy, tc.adapterBinary)
 			for _, p := range tc.wantReads {
 				if !sliceContains(prof.AllowFileReads, p) {
 					t.Errorf("AllowFileReads missing %q, got %v", p, prof.AllowFileReads)
@@ -175,8 +188,8 @@ func TestFromPolicy(t *testing.T) {
 					t.Errorf("AllowNetworkHosts missing %q, got %v", h, prof.AllowNetworkHosts)
 				}
 			}
-			if prof.BlockSysctl != tc.wantBlockSys {
-				t.Errorf("BlockSysctl=%v, want %v", prof.BlockSysctl, tc.wantBlockSys)
+			if prof.BlockKextLoad != tc.wantBlockKext {
+				t.Errorf("BlockKextLoad=%v, want %v", prof.BlockKextLoad, tc.wantBlockKext)
 			}
 			if prof.BlockMachLookup != tc.wantBlockMach {
 				t.Errorf("BlockMachLookup=%v, want %v", prof.BlockMachLookup, tc.wantBlockMach)
