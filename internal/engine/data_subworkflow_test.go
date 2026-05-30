@@ -9,12 +9,16 @@ package engine
 // API level without requiring full HCL compilation.
 
 import (
+	"context"
 	"testing"
 
+	"github.com/hashicorp/hcl/v2"
+	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/zclconf/go-cty/cty"
 
+	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -150,4 +154,108 @@ func TestDataStore_SetBatch_AllOrNothing(t *testing.T) {
 
 	gotCount, _ := store.Get("internal", "count")
 	assert.Equal(t, cty.NumberIntVal(0), gotCount, "count must not be modified when batch fails")
+}
+
+// TestData_SubworkflowLastStepWriteVisibleInOutput verifies that a data write
+// performed in the last step before a terminal state is visible to the
+// subworkflow's output expressions. Without the DataStore snapshot flush in
+// runWorkflowBody, output evaluation would see the stale initial value.
+func TestData_SubworkflowLastStepWriteVisibleInOutput(t *testing.T) {
+	callee := &workflow.FSMGraph{
+		Name:         "callee",
+		InitialState: "write",
+		TargetState:  "done",
+		Policy:       workflow.DefaultPolicy,
+		Steps: map[string]*workflow.StepNode{
+			"write": {
+				Name:       "write",
+				TargetKind: workflow.StepTargetAdapter,
+				AdapterRef: "fake.default",
+				Outcomes: map[string]*workflow.CompiledOutcome{
+					"success": {
+						Name: "success",
+						Next: "done",
+						Writes: []workflow.CompiledWrite{
+							{
+								DataKind:  "internal",
+								DataName:  "msg",
+								ValueExpr: &hclsyntax.LiteralValueExpr{Val: cty.StringVal("written")},
+							},
+						},
+					},
+				},
+			},
+		},
+		States: map[string]*workflow.StateNode{
+			"done": {Name: "done", Terminal: true, Success: true},
+		},
+		Data: map[string]map[string]*workflow.DataNode{
+			"internal": {
+				"msg": {
+					Kind:         "internal",
+					Name:         "msg",
+					Type:         cty.String,
+					InitialValue: cty.StringVal("initial"),
+				},
+			},
+		},
+		DataOrder: []workflow.DataRef{{Kind: "internal", Name: "msg"}},
+		Outputs: map[string]*workflow.OutputNode{
+			"result": {Name: "result", Value: traversalExpr("data", "internal", "msg", "value")},
+		},
+		OutputOrder: []string{"result"},
+		Adapters: map[string]*workflow.AdapterNode{
+			"fake.default": {Type: "fake", Name: "default"},
+		},
+		AdapterOrder: []string{"fake.default"},
+		Variables:    map[string]*workflow.VariableNode{},
+	}
+	swNode := &workflow.SubworkflowNode{
+		Name:         "callee",
+		SourcePath:   t.TempDir(),
+		Body:         callee,
+		BodyEntry:    "write",
+		Inputs:       map[string]hcl.Expression{},
+		DeclaredVars: map[string]*workflow.VariableNode{},
+	}
+
+	parent := &workflow.FSMGraph{
+		Name:         "parent",
+		InitialState: "call",
+		TargetState:  "done",
+		Policy:       workflow.DefaultPolicy,
+		Steps: map[string]*workflow.StepNode{
+			"call": {
+				Name:           "call",
+				TargetKind:     workflow.StepTargetSubworkflow,
+				SubworkflowRef: "callee",
+				Outcomes:       map[string]*workflow.CompiledOutcome{"success": {Next: "done"}},
+			},
+		},
+		States: map[string]*workflow.StateNode{
+			"done": {Name: "done", Terminal: true, Success: true},
+		},
+		Subworkflows: map[string]*workflow.SubworkflowNode{"callee": swNode},
+		Variables:    map[string]*workflow.VariableNode{},
+	}
+
+	sink := &captureOutputSink{}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{
+		"fake": &fakeAdapter{name: "fake", outcome: "success"},
+	}}
+	if err := NewTestEngine(parent, loader, sink).Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if sink.terminal != "done" || !sink.terminalOK {
+		t.Errorf("terminal=%q ok=%v, want done/true", sink.terminal, sink.terminalOK)
+	}
+	sink.mu.Lock()
+	got := sink.outputs["call"]
+	sink.mu.Unlock()
+	if got == nil {
+		t.Fatal("step 'call' outputs not captured")
+	}
+	if got["result"] != "written" {
+		t.Errorf("subworkflow output after data write: want %q, got %q", "written", got["result"])
+	}
 }

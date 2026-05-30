@@ -529,10 +529,10 @@ func (n *stepNode) evaluateSubworkflowStep(ctx context.Context, st *RunState, de
 		stepInput = resolved
 	}
 
-	outputs, runErr := runSubworkflow(ctx, swNode, st, stepInput, deps)
+	outputs, terminalState, runErr := runSubworkflow(ctx, swNode, st, stepInput, deps)
 
 	outcome := "success"
-	if runErr != nil {
+	if runErr != nil || (terminalState != workflow.ReturnSentinel && !swNode.Body.States[terminalState].Success) {
 		outcome = "failure"
 	}
 
@@ -544,7 +544,7 @@ func (n *stepNode) evaluateSubworkflowStep(ctx context.Context, st *RunState, de
 	// expressions can reference subworkflow.*.
 	stringOutputs := make(map[string]string, len(outputs))
 	for k, v := range outputs {
-		if v.IsKnown() && v.Type() == cty.String {
+		if v.IsKnown() && !v.IsNull() && v.Type() == cty.String {
 			stringOutputs[k] = v.AsString()
 			continue
 		}

@@ -30,12 +30,12 @@ import (
 // stepInput contains per-call input bindings (from the step's input { } block)
 // that override the declaration-level bindings in node.Inputs. Pass nil when
 // there are no step-level overrides.
-func runSubworkflow(ctx context.Context, node *workflow.SubworkflowNode, parentSt *RunState, stepInput map[string]cty.Value, deps Deps) (map[string]cty.Value, error) {
+func runSubworkflow(ctx context.Context, node *workflow.SubworkflowNode, parentSt *RunState, stepInput map[string]cty.Value, deps Deps) (outputs map[string]cty.Value, terminal string, err error) {
 	// Evaluate each input expression against the parent scope.
 	evalOpts := workflow.DefaultFunctionOptions(parentSt.WorkflowDir)
 	inputVals, err := evaluateSubworkflowInputs(node, parentSt.Vars, evalOpts)
 	if err != nil {
-		return nil, fmt.Errorf("subworkflow %q: input evaluation: %w", node.Name, err)
+		return nil, "", fmt.Errorf("subworkflow %q: input evaluation: %w", node.Name, err)
 	}
 
 	// Step-level inputs override declaration-level bindings.
@@ -52,7 +52,7 @@ func runSubworkflow(ctx context.Context, node *workflow.SubworkflowNode, parentS
 	// apply the evaluated input bindings.
 	childVars, err := seedChildVarsFromBindings(node.Body, inputVals, parentSt.Vars)
 	if err != nil {
-		return nil, fmt.Errorf("subworkflow %q: %w", node.Name, err)
+		return nil, "", fmt.Errorf("subworkflow %q: %w", node.Name, err)
 	}
 
 	// Run the callee FSMGraph to a terminal state using the callee's source
@@ -62,13 +62,13 @@ func runSubworkflow(ctx context.Context, node *workflow.SubworkflowNode, parentS
 	calleeDir := node.SourcePath
 	terminal, returnOutputs, finalVars, err := runWorkflowBody(ctx, node.Body, node.BodyEntry, childVars, calleeDir, deps)
 	if err != nil {
-		return nil, fmt.Errorf("subworkflow %q: %w", node.Name, err)
+		return nil, "", fmt.Errorf("subworkflow %q: %w", node.Name, err)
 	}
 	// When the callee exited via next = step.return, return the projected outputs
 	// directly. returnOutputs may be nil (legitimate empty projection) — in
 	// that case return nil rather than falling through to evalRunOutputsAsValues.
 	if terminal == workflow.ReturnSentinel {
-		return returnOutputs, nil
+		return returnOutputs, terminal, nil
 	}
 
 	// Evaluate the callee's declared outputs against the final child state,
@@ -77,11 +77,11 @@ func runSubworkflow(ctx context.Context, node *workflow.SubworkflowNode, parentS
 		Vars:        finalVars,
 		WorkflowDir: calleeDir,
 	}
-	outputs, err := evalRunOutputsAsValues(node.Body, finalSt)
+	outputs, err = evalRunOutputsAsValues(node.Body, finalSt)
 	if err != nil {
-		return nil, fmt.Errorf("subworkflow %q: output evaluation: %w", node.Name, err)
+		return nil, "", fmt.Errorf("subworkflow %q: output evaluation: %w", node.Name, err)
 	}
-	return outputs, nil
+	return outputs, terminal, nil
 }
 
 // evaluateSubworkflowInputs evaluates each input expression stored in the node
