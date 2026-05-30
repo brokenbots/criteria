@@ -58,14 +58,6 @@ func NewMergeBuffer(sink adapter.EventSink, maxDelay time.Duration) *MergeBuffer
 	}
 }
 
-// SetInner replaces the downstream sink. Safe for use when the inner sink
-// changes per-Execute (e.g. from a step sink back to a slog fallback).
-func (m *MergeBuffer) SetInner(inner adapter.EventSink) {
-	m.mu.Lock()
-	m.inner = inner
-	m.mu.Unlock()
-}
-
 // Log buffers a log line with the given timestamp.
 func (m *MergeBuffer) LogAt(ts time.Time, stream string, chunk []byte) {
 	m.mu.Lock()

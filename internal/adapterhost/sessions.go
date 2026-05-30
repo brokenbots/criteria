@@ -400,7 +400,11 @@ func (m *SessionManager) handleCrash(ctx context.Context, name string, step *wor
 		if respawnErr := m.respawn(ctx, sess); respawnErr != nil {
 			return m.failResult(sink, sess, execErr)
 		}
-		result, retryErr := sess.handle.Execute(ctx, name, step, sink)
+		retrySink := sink
+		if sess.mergeBuf != nil {
+			retrySink = sess.mergeBuf
+		}
+		result, retryErr := sess.handle.Execute(ctx, name, step, retrySink)
 		if retryErr == nil {
 			m.registerSensitiveOutputs(result, step)
 			return result, nil

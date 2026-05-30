@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os/exec"
 	"strings"
 	"sync"
@@ -309,11 +310,52 @@ func TestSessionManager_HeartbeatRecent_PreventsStall(t *testing.T) {
 	}
 }
 
+// recordingSlogHandler is a slog.Handler that captures every formatted record.
+type recordingSlogHandler struct {
+	mu      sync.Mutex
+	records []string
+}
+
+func (h *recordingSlogHandler) Enabled(ctx context.Context, level slog.Level) bool { return true }
+
+//nolint:gocritic // slog.Handler interface requires value receiver for Record.
+func (h *recordingSlogHandler) Handle(ctx context.Context, r slog.Record) error {
+	var b strings.Builder
+	b.WriteString(r.Message + " ")
+	r.Attrs(func(a slog.Attr) bool {
+		b.WriteString(fmt.Sprintf("%s=%s ", a.Key, a.Value.String()))
+		return true
+	})
+	h.mu.Lock()
+	h.records = append(h.records, b.String())
+	h.mu.Unlock()
+	return nil
+}
+func (h *recordingSlogHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	return h
+}
+func (h *recordingSlogHandler) WithGroup(name string) slog.Handler {
+	return h
+}
+func (h *recordingSlogHandler) all() []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	out := make([]string, len(h.records))
+	copy(out, h.records)
+	return out
+}
+
 // TestSessionManager_IdleLogRedaction verifies that log lines emitted when no
 // Execute is in flight are still redacted.
 func TestSessionManager_IdleLogRedaction(t *testing.T) {
 	reg := secrets.NewRegistry()
 	reg.Register("hiddensecret")
+
+	// Capture slog output so we can assert redaction.
+	rec := &recordingSlogHandler{}
+	oldLogger := slog.Default()
+	slog.SetDefault(slog.New(rec))
+	defer slog.SetDefault(oldLogger)
 
 	trigger := make(chan struct{})
 	h := &loggingMockHandle{
@@ -342,13 +384,18 @@ func TestSessionManager_IdleLogRedaction(t *testing.T) {
 		sess.mergeBuf.Flush()
 	}
 
-	// Verify the secret is redacted by checking the sessionLogAdapterSink's
-	// inner redacted sink. Since idle logs go to slog, we can't intercept slog
-	// easily in this test. Instead, verify the mergeBuf inner sink (which is
-	// redacted) received a redacted line by querying the redaction registry.
-	// A more direct test: confirm that the merge buffer inner sink is wrapped.
-	if sess.mergeBuf == nil {
-		t.Fatal("expected mergeBuf to exist")
+	// Verify the secret is redacted in the captured slog output.
+	found := false
+	for _, line := range rec.all() {
+		if strings.Contains(line, "[REDACTED]") {
+			found = true
+		}
+		if strings.Contains(line, "hiddensecret") {
+			t.Fatalf("secret 'hiddensecret' leaked in idle-path log output: %q", line)
+		}
+	}
+	if !found {
+		t.Fatal("expected redacted token [REDACTED] in idle-path slog output")
 	}
 }
 
