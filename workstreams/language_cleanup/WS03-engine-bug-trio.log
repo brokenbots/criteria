@@ -114,3 +114,36 @@ I renamed them to `(outputs map[string]cty.Value, terminal string, err error)` a
 - The workstream file was **NOT modified**.
 
 Ready for review.
+#### Summary
+
+All four plan steps are correctly implemented, fully tested, and pass the quality/security bar. No findings requiring remediation.
+
+#### Plan Adherence
+
+- **Step 1 (Null guard):** ✅ `!v.IsNull()` guard added at `node_step.go:547` exactly as specified. Correctly extended to `parallel_iteration.go:505` and `while_iteration.go:247` where the same `IsKnown() && Type() == cty.String` pattern existed. Null strings now fall through to `renderCtyValue` which returns `"null"`.
+- **Step 2 (Terminal state propagation):** ✅ `runSubworkflow` signature updated to `(outputs map[string]cty.Value, terminal string, err error)` with named returns for linter compliance. All three callers (`node_step.go`, `parallel_iteration.go`, `while_iteration.go`) correctly guard with `terminalState != workflow.ReturnSentinel && !swNode.Body.States[terminalState].Success`, treating `ReturnSentinel` as success per spec.
+- **Step 3 (DataStore snapshot flush):** ✅ `SeedDataSnapshot` call added on `ErrTerminal` path in `node_workflow.go:152-154`, mirroring `node_step.go:45` pattern.
+- **Step 4 (Tests):** ✅ All four required tests present and passing: `TestRunSubworkflow_NullStringOutput`, `TestRunSubworkflow_TerminalStateFailure`, `TestRunSubworkflow_TerminalStateSuccess`, `TestData_SubworkflowLastStepWriteVisibleInOutput`.
+
+#### Test Intent Assessment
+
+- **Null panic test:** Strong — uses `cty.NullVal(cty.String)` directly, which is the exact panic trigger. Asserts rendered value `"null"`. A regression would panic or produce wrong output.
+- **Terminal failure test:** Strong — uses end-to-end engine run with a `success=false` terminal state, asserting parent reaches `failed` state. Tests the full `runSubworkflow → evaluateSubworkflowStep → outcome routing` path.
+- **Terminal success regression guard:** Strong — dual-outcome parent graph with both `success` and `failure` outcomes; asserts the correct path is taken. Would fail if `ReturnSentinel` guard or state lookup regressed.
+- **Data write visibility test:** Strong — sets initial value `"initial"`, writes `"written"` via CompiledWrite in last step, asserts output is `"written"`. Without the flush, output would be `"initial"`. Uses `captureOutputSink` to capture step outputs through the full engine.
+
+#### Security
+
+No security concerns. No new dependencies, no secrets, no unsafe operations. `renderCtyValue` is an existing safe JSON-rendering fallback.
+
+#### Validation Performed
+
+- `make build` — PASS
+- `make test` — PASS (all packages, race-detector enabled)
+- `go vet ./...` — PASS
+- `make lint` — PASS (import-lint, golangci-lint, baseline-check 22/22, spec-check, no-todos)
+- `make validate` — PASS
+- Targeted test runs for all 4 new tests — PASS
+- Full engine test suite — PASS
+- No `.golangci.baseline.yml` changes
+- No files modified during review
