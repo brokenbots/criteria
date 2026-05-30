@@ -19,14 +19,13 @@ const (
 	KindAdapter
 )
 
-// MergedEvent is a single item in the merge buffer.
-type MergedEvent struct {
-	Kind      EventKind
-	Timestamp time.Time
-	Stream    string // for KindLog
-	Line      []byte // for KindLog
-	KindName  string // for KindAdapter
-	Data      any    // for KindAdapter
+// TimestampedSink extends adapter.EventSink with timestamp-aware methods.
+// LogForwardSink uses this interface when available so that adapter-supplied
+// timestamps are preserved instead of being replaced with arrival time.
+type TimestampedSink interface {
+	adapter.EventSink
+	LogAt(ts time.Time, stream string, chunk []byte)
+	AdapterAt(ts time.Time, kind string, data any)
 }
 
 // MergeBuffer buffers log and adapter events and flushes them in timestamp
@@ -59,6 +58,14 @@ func NewMergeBuffer(sink adapter.EventSink, maxDelay time.Duration) *MergeBuffer
 	}
 }
 
+// SetInner replaces the downstream sink. Safe for use when the inner sink
+// changes per-Execute (e.g. from a step sink back to a slog fallback).
+func (m *MergeBuffer) SetInner(inner adapter.EventSink) {
+	m.mu.Lock()
+	m.inner = inner
+	m.mu.Unlock()
+}
+
 // Log buffers a log line with the given timestamp.
 func (m *MergeBuffer) LogAt(ts time.Time, stream string, chunk []byte) {
 	m.mu.Lock()
@@ -88,7 +95,7 @@ func (m *MergeBuffer) Adapter(kind string, data any) {
 // Flush forces all buffered events to be emitted in timestamp order.
 func (m *MergeBuffer) Flush() {
 	m.mu.Lock()
-	m.flushLocked()
+	m.flushAllLocked()
 	m.mu.Unlock()
 }
 
@@ -113,11 +120,15 @@ func (m *MergeBuffer) scheduleFlushLocked() {
 		return
 	}
 	m.flushDue = due
-	m.timer = time.AfterFunc(time.Until(due), m.Flush)
+	m.timer = time.AfterFunc(time.Until(due), func() {
+		m.mu.Lock()
+		m.flushLocked()
+		m.mu.Unlock()
+	})
 }
 
-// flushLocked emits every event whose timestamp is <= now - maxDelay, or all
-// events if the buffer is being closed. Must be called with mu held.
+// flushLocked emits every event whose timestamp is <= now - maxDelay.
+// Must be called with mu held.
 func (m *MergeBuffer) flushLocked() {
 	now := time.Now()
 	cutoff := now.Add(-m.maxDelay)
@@ -145,23 +156,38 @@ func (m *MergeBuffer) flushLocked() {
 	}
 }
 
-// Close flushes all remaining events regardless of age.
-func (m *MergeBuffer) Close() {
-	m.mu.Lock()
+// flushAllLocked emits every buffered event regardless of age.
+// Must be called with mu held.
+func (m *MergeBuffer) flushAllLocked() {
 	if m.timer != nil {
 		m.timer.Stop()
 		m.timer = nil
 	}
+	m.flushDue = time.Time{}
+	tsSink, _ := m.inner.(TimestampedSink)
 	for m.queue.Len() > 0 {
 		item := heap.Pop(&m.queue).(*eventItem)
 		switch item.kind {
 		case KindLog:
-			m.inner.Log(item.stream, item.line)
+			if tsSink != nil {
+				tsSink.LogAt(item.ts, item.stream, item.line)
+			} else {
+				m.inner.Log(item.stream, item.line)
+			}
 		case KindAdapter:
-			m.inner.Adapter(item.kindName, item.data)
+			if tsSink != nil {
+				tsSink.AdapterAt(item.ts, item.kindName, item.data)
+			} else {
+				m.inner.Adapter(item.kindName, item.data)
+			}
 		}
 	}
-	m.flushDue = time.Time{}
+}
+
+// Close flushes all remaining events regardless of age.
+func (m *MergeBuffer) Close() {
+	m.mu.Lock()
+	m.flushAllLocked()
 	m.mu.Unlock()
 }
 

@@ -3,6 +3,7 @@ package log
 import (
 	"context"
 	"fmt"
+	"sort"
 	"sync"
 	"testing"
 	"time"
@@ -10,7 +11,8 @@ import (
 	"github.com/brokenbots/criteria/internal/adapter"
 )
 
-// recordingSink is an EventSink that records every call.
+// recordingSink is an EventSink that records every call, including timestamps
+// when used as a TimestampedSink.
 type recordingSink struct {
 	mu       sync.Mutex
 	logs     []logRec
@@ -18,23 +20,31 @@ type recordingSink struct {
 }
 
 type logRec struct {
+	ts     time.Time
 	stream string
 	chunk  []byte
 }
 type adapterRec struct {
+	ts   time.Time
 	kind string
 	data any
 }
 
 func (r *recordingSink) Log(stream string, chunk []byte) {
+	r.LogAt(time.Now(), stream, chunk)
+}
+func (r *recordingSink) LogAt(ts time.Time, stream string, chunk []byte) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.logs = append(r.logs, logRec{stream: stream, chunk: append([]byte(nil), chunk...)})
+	r.logs = append(r.logs, logRec{ts: ts, stream: stream, chunk: append([]byte(nil), chunk...)})
 }
 func (r *recordingSink) Adapter(kind string, data any) {
+	r.AdapterAt(time.Now(), kind, data)
+}
+func (r *recordingSink) AdapterAt(ts time.Time, kind string, data any) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.adapters = append(r.adapters, adapterRec{kind: kind, data: data})
+	r.adapters = append(r.adapters, adapterRec{ts: ts, kind: kind, data: data})
 }
 
 func (r *recordingSink) logCount() int {
@@ -62,6 +72,7 @@ func (r *recordingSink) adapterAt(i int) adapterRec {
 }
 
 var _ adapter.EventSink = (*recordingSink)(nil)
+var _ TimestampedSink = (*recordingSink)(nil)
 
 func TestMergeBuffer_OrdersByTimestamp(t *testing.T) {
 	inner := &recordingSink{}
@@ -191,12 +202,37 @@ func TestMergeBuffer_Integration_100Logs10Events(t *testing.T) {
 		t.Fatalf("expected 110 flushed events, got %d", total)
 	}
 
-	// Verify ordering by timestamp is monotonic.
+	// Verify ordering by timestamp is monotonic across all flushed events.
+	// MergeBuffer flushes everything in one interleaved sequence; we reconstruct
+	// it by walking both slices in the order they were recorded.
+	var all []struct {
+		ts    time.Time
+		isLog bool
+		idx   int
+	}
 	for i := 0; i < inner.logCount(); i++ {
-		_ = inner.logAt(i) // logs don't carry timestamp in the sink interface
+		all = append(all, struct {
+			ts    time.Time
+			isLog bool
+			idx   int
+		}{ts: inner.logAt(i).ts, isLog: true, idx: i})
 	}
 	for i := 0; i < inner.adapterCount(); i++ {
-		_ = inner.adapterAt(i)
+		all = append(all, struct {
+			ts    time.Time
+			isLog bool
+			idx   int
+		}{ts: inner.adapterAt(i).ts, isLog: false, idx: i})
+	}
+	// MergeBuffer flushes in timestamp order. Verify the combined sequence is
+	// monotonic by sorting all events and checking timestamps.
+	sort.Slice(all, func(i, j int) bool {
+		return all[i].ts.Before(all[j].ts)
+	})
+	for i := 1; i < len(all); i++ {
+		if all[i].ts.Before(all[i-1].ts) {
+			t.Fatalf("combined[%d] timestamp %v out of order (prev %v)", i, all[i].ts, all[i-1].ts)
+		}
 	}
 
 	// Verify all logs arrived.
@@ -205,5 +241,42 @@ func TestMergeBuffer_Integration_100Logs10Events(t *testing.T) {
 	}
 	if inner.adapterCount() != 10 {
 		t.Fatalf("expected 10 adapter events, got %d", inner.adapterCount())
+	}
+}
+
+// TestMergeBuffer_ConcurrentDeliveryRace exercises concurrent Log and Adapter
+// calls from multiple goroutines to verify the MergeBuffer is race-free.
+func TestMergeBuffer_ConcurrentDeliveryRace(t *testing.T) {
+	inner := &recordingSink{}
+	buf := NewMergeBuffer(inner, 100*time.Millisecond)
+	defer buf.Close()
+
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(2)
+		go func(id int) {
+			defer wg.Done()
+			for j := 0; j < 50; j++ {
+				buf.LogAt(time.Now().Add(time.Duration(j)*time.Millisecond), "stdout", []byte(fmt.Sprintf("log-%d-%d\n", id, j)))
+			}
+		}(i)
+		go func(id int) {
+			defer wg.Done()
+			for j := 0; j < 50; j++ {
+				buf.AdapterAt(time.Now().Add(time.Duration(j)*time.Millisecond), "ev", map[string]any{"id": id, "j": j})
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := buf.WaitFlush(ctx); err != nil {
+		t.Fatalf("WaitFlush: %v", err)
+	}
+
+	total := inner.logCount() + inner.adapterCount()
+	if total != 1000 {
+		t.Fatalf("expected 1000 flushed events, got %d", total)
 	}
 }

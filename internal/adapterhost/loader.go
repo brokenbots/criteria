@@ -22,6 +22,7 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/brokenbots/criteria/internal/adapter"
+	"github.com/brokenbots/criteria/internal/log"
 	v2 "github.com/brokenbots/criteria/sdk/pb/criteria/v2"
 	"github.com/brokenbots/criteria/workflow"
 )
@@ -726,7 +727,15 @@ func (s *logForwardSink) Emit(ev *v2.LogEvent) error {
 	if len(ev.GetLine()) > maxLogLineBufBytes {
 		return fmt.Errorf("log event: stream %q line exceeds %d bytes", ev.GetStreamName(), maxLogLineBufBytes)
 	}
-	s.sink.Log(ev.GetStreamName(), ev.GetLine())
+	if tsSink, ok := s.sink.(log.TimestampedSink); ok {
+		ts := ev.GetTimestamp().AsTime()
+		if ts.IsZero() {
+			ts = time.Now()
+		}
+		tsSink.LogAt(ts, ev.GetStreamName(), ev.GetLine())
+	} else {
+		s.sink.Log(ev.GetStreamName(), ev.GetLine())
+	}
 	return nil
 }
 
@@ -769,7 +778,15 @@ func (s *logForwardSink) emitChunk(ev *v2.LogEvent, chunk *v2.Chunk) error {
 	line := s.chunkBufs[stream]
 	delete(s.chunkBufs, stream)
 	delete(s.chunkSeqs, stream)
-	s.sink.Log(stream, line)
+	if tsSink, ok := s.sink.(log.TimestampedSink); ok {
+		ts := ev.GetTimestamp().AsTime()
+		if ts.IsZero() {
+			ts = time.Now()
+		}
+		tsSink.LogAt(ts, stream, line)
+	} else {
+		s.sink.Log(stream, line)
+	}
 	return nil
 }
 
