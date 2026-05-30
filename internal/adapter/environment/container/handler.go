@@ -105,9 +105,9 @@ func buildPolicyArgs(ts map[string]cty.Value, adapterRef string) (PolicyArgs, er
 		if len(allow) == 0 {
 			policy.NetworkMode = "none"
 		} else {
-			// Per-session bridge network naming. Full firewall rules are a
-			// future TODO (WS12 follow-up) but the network name itself scopes
-			// the adapter to a session-scoped bridge.
+			// Per-session bridge network naming. Full firewall rules are
+			// deferred to a future workstream, but the network name itself
+			// scopes the adapter to a session-scoped bridge.
 			policy.NetworkName = makeNetworkName(adapterRef)
 		}
 	}
