@@ -6,7 +6,7 @@ require (
 	connectrpc.com/connect v1.19.2
 	github.com/brokenbots/criteria/sdk v0.0.0
 	github.com/brokenbots/criteria/workflow v0.0.0
-	github.com/github/copilot-sdk/go v1.0.0-beta.6
+	github.com/github/copilot-sdk/go v1.0.0-beta.10
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/go-hclog v1.6.3
 	github.com/hashicorp/go-plugin v1.8.0
