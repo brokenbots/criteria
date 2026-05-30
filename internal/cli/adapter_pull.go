@@ -2,13 +2,16 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"os/exec"
 	"runtime"
 
 	"github.com/opencontainers/go-digest"
 	"github.com/spf13/cobra"
 
+	"github.com/brokenbots/criteria/internal/adapter/environment/container"
 	"github.com/brokenbots/criteria/internal/adapter/manifest"
 	"github.com/brokenbots/criteria/internal/adapter/oci"
 	"github.com/brokenbots/criteria/internal/adapter/signing"
@@ -69,9 +72,12 @@ func runPull(ctx context.Context, out io.Writer, rawRef string, allowUnsigned bo
 		return err
 	}
 
-	// Container-image fetch (if applicable and env is container-mode).
-	// Container-image fetch is deferred until container-mode detection is implemented.
-	_ = m.ContainerImage
+	// Container-image fetch (if applicable).
+	if m.ContainerImage != nil {
+		if err := pullContainerImage(ctx, out, *m.ContainerImage); err != nil {
+			return err
+		}
+	}
 
 	// Update lockfile.  Since pull is not workflow-scoped, we cannot set
 	// Type/Name here.  The lockfile entry is written only when the caller
@@ -143,4 +149,28 @@ func printPullSummary(out io.Writer, ref oci.Reference, dg digest.Digest, signer
 		fmt.Fprintf(out, "Signer:    (unsigned)\n")
 	}
 	fmt.Fprintf(out, "Platforms: %v\n", m.Platforms)
+}
+
+// pullContainerImage tries docker pull, then podman pull, returning the first
+// success or a combined error if neither runtime is available.
+func pullContainerImage(ctx context.Context, out io.Writer, ref manifest.ContainerImageRef) error {
+	for _, runtime := range []string{"docker", "podman"} {
+		err := container.PullContainerImage(ctx, ref, runtime)
+		if err == nil {
+			fmt.Fprintf(out, "Container image pulled (%s): %s\n", runtime, ref.Ref)
+			return nil
+		}
+		if isExecNotFound(err) {
+			continue // try next runtime
+		}
+		return err // real pull failure
+	}
+	return fmt.Errorf("no container runtime (docker or podman) found to pull image %s", ref.Ref)
+}
+
+func isExecNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	return errors.Is(err, exec.ErrNotFound)
 }

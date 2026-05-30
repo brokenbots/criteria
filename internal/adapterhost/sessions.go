@@ -14,6 +14,7 @@ import (
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapter/environment/sandbox"
 	"github.com/brokenbots/criteria/workflow"
+	"github.com/brokenbots/criteria/workflow/lockfile"
 )
 
 const (
@@ -55,6 +56,9 @@ type SessionManager struct {
 	// When nil the real Probe() is used.
 	sandboxProbeOverride func() sandbox.Capabilities
 
+	// lockfile holds the parsed lockfile for container-mode lookups.
+	lockfile *lockfile.Lockfile
+
 	mu       sync.Mutex
 	sessions map[string]*Session
 }
@@ -65,6 +69,14 @@ func (m *SessionManager) SetGraph(g *workflow.FSMGraph) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.graph = g
+}
+
+// SetLockfile provides the parsed lockfile so the session manager can
+// resolve container images for adapters bound to container environments.
+func (m *SessionManager) SetLockfile(lf *lockfile.Lockfile) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.lockfile = lf
 }
 
 // PermissionState holds runtime permission audit data for a session.
@@ -207,11 +219,7 @@ func (m *SessionManager) Open(ctx context.Context, name, adapterName, onCrash st
 
 	var plug Handle
 	var err error
-	if dl, ok := m.loader.(*DefaultLoader); ok {
-		plug, err = dl.ResolveWithCustomizer(ctx, adapterName, customizer)
-	} else {
-		plug, err = m.loader.Resolve(ctx, adapterName)
-	}
+	plug, err = m.resolveAdapterHandle(ctx, name, adapterName, customizer)
 	if err != nil {
 		if cleanup != nil {
 			cleanup()
@@ -235,6 +243,22 @@ func (m *SessionManager) Open(ctx context.Context, name, adapterName, onCrash st
 	}
 
 	return m.registerSession(ctx, name, adapterName, onCrash, config, caps, plug, cleanup)
+}
+
+func (m *SessionManager) resolveAdapterHandle(ctx context.Context, name, adapterName string, customizer func(string, *exec.Cmd)) (Handle, error) {
+	if dl, ok := m.loader.(*DefaultLoader); ok {
+		// Container-mode dispatch: if the adapter is bound to a container
+		// environment, use a docker/podman runner instead of a local binary.
+		runnerFunc, containerErr := adapter.BuildContainerRunner(m.graph, m.lockfile, name)
+		if containerErr != nil {
+			return nil, containerErr
+		}
+		if runnerFunc != nil {
+			return dl.ResolveWithRunnerFunc(ctx, adapterName, runnerFunc)
+		}
+		return dl.ResolveWithCustomizer(ctx, adapterName, customizer)
+	}
+	return m.loader.Resolve(ctx, adapterName)
 }
 
 // makeSandboxCustomizer builds the exec.Cmd customizer and cleanup from
@@ -421,7 +445,18 @@ func (m *SessionManager) respawn(ctx context.Context, sess *Session) error {
 	var plug Handle
 	var err error
 	if dl, ok := m.loader.(*DefaultLoader); ok {
-		plug, err = dl.ResolveWithCustomizer(ctx, sess.Adapter, customizer)
+		runnerFunc, containerErr := adapter.BuildContainerRunner(m.graph, m.lockfile, sess.Name)
+		if containerErr != nil {
+			if cleanup != nil {
+				cleanup()
+			}
+			return containerErr
+		}
+		if runnerFunc != nil {
+			plug, err = dl.ResolveWithRunnerFunc(ctx, sess.Adapter, runnerFunc)
+		} else {
+			plug, err = dl.ResolveWithCustomizer(ctx, sess.Adapter, customizer)
+		}
 	} else {
 		plug, err = m.loader.Resolve(ctx, sess.Adapter)
 	}

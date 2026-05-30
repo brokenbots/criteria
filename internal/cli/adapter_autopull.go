@@ -14,6 +14,7 @@ import (
 	"github.com/opencontainers/go-digest"
 	"github.com/zclconf/go-cty/cty"
 
+	"github.com/brokenbots/criteria/internal/adapter/environment/container"
 	"github.com/brokenbots/criteria/internal/adapter/manifest"
 	"github.com/brokenbots/criteria/internal/adapter/oci"
 	"github.com/brokenbots/criteria/internal/adapter/signing"
@@ -131,7 +132,25 @@ func ensureAdapterCached(ctx context.Context, key string, wa *workflowAdapter, l
 	if err := extractOCIAdapterBinary(layout, pulledDg, wa.Type); err != nil {
 		return fmt.Errorf("adapter %q extract binary: %w", key, err)
 	}
-	return nil
+
+	return maybePullContainerImage(ctx, key, m)
+}
+
+func maybePullContainerImage(ctx context.Context, key string, m *manifest.Manifest) error {
+	if m.ContainerImage == nil {
+		return nil
+	}
+	for _, runtime := range []string{"docker", "podman"} {
+		err := container.PullContainerImage(ctx, *m.ContainerImage, runtime)
+		if err == nil {
+			return nil
+		}
+		if isExecNotFound(err) {
+			continue
+		}
+		return fmt.Errorf("adapter %q container image pull %s: %w", key, m.ContainerImage.Ref, err)
+	}
+	return fmt.Errorf("adapter %q container image pull %s: no container runtime found", key, m.ContainerImage.Ref)
 }
 
 // hasOCIReferences scans the workflow HCL files for adapter blocks that

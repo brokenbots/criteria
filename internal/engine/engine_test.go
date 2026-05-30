@@ -18,6 +18,7 @@ import (
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/internal/testutil"
 	"github.com/brokenbots/criteria/workflow"
+	"github.com/brokenbots/criteria/workflow/lockfile"
 )
 
 // fakeSink records engine callbacks for assertion.
@@ -1049,5 +1050,81 @@ state "done" { terminal = true }
 	visits := eng.VisitCounts()
 	if got := visits["process"]; got != 0 {
 		t.Errorf("visit count for cancelled workflow iteration = %d, want 0 (cancellation must not consume a visit)", got)
+	}
+}
+
+func TestEngineWithLockfile(t *testing.T) {
+	lf := &lockfile.Lockfile{
+		Adapters: []lockfile.LockedAdapter{
+			{Type: "noop", Name: "default", SourceURL: "https://example.com/noop"},
+		},
+	}
+	eng := NewTestEngine(nil, nil, &fakeSink{}, WithLockfile(lf))
+	if eng.lockfile == nil {
+		t.Fatal("expected lockfile to be set on engine")
+	}
+	if eng.lockfile.Adapters[0].SourceURL != "https://example.com/noop" {
+		t.Errorf("sourceURL = %q, want https://example.com/noop", eng.lockfile.Adapters[0].SourceURL)
+	}
+}
+
+func TestEngineSetLockfileOnSessions(t *testing.T) {
+	adapterBin := buildNoopAdapter(t)
+	loader := adapterhost.NewLoaderWithDiscovery(func(string) (string, error) {
+		return adapterBin, nil
+	})
+	t.Cleanup(func() { _ = loader.Shutdown(context.Background()) })
+
+	lf := &lockfile.Lockfile{
+		Adapters: []lockfile.LockedAdapter{
+			{Type: "noop", Name: "default", SourceURL: "https://example.com/noop"},
+		},
+	}
+
+	g := compileFile(t, "testdata/adapter_lifecycle_noop.hcl")
+	eng := NewTestEngine(g, loader, &fakeSink{}, WithLockfile(lf))
+
+	sessions := adapterhost.NewSessionManager(loader)
+	if err := eng.setLockfileOnSessions(sessions); err != nil {
+		t.Fatalf("setLockfileOnSessions: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := sessions.Open(ctx, "noop.default", "noop", "shutdown", nil); err != nil {
+		t.Fatalf("session open: %v", err)
+	}
+}
+
+func TestEngineSetLockfileOnSessions_ReadFromDir(t *testing.T) {
+	adapterBin := buildNoopAdapter(t)
+	loader := adapterhost.NewLoaderWithDiscovery(func(string) (string, error) {
+		return adapterBin, nil
+	})
+	t.Cleanup(func() { _ = loader.Shutdown(context.Background()) })
+
+	dir := t.TempDir()
+	lf := &lockfile.Lockfile{
+		Adapters: []lockfile.LockedAdapter{
+			{Type: "noop", Name: "default", SourceURL: "https://example.com/noop"},
+		},
+	}
+	if err := lockfile.Write(filepath.Join(dir, ".criteria.lock.hcl"), lf); err != nil {
+		t.Fatalf("write lockfile: %v", err)
+	}
+
+	g := compileFile(t, "testdata/adapter_lifecycle_noop.hcl")
+	eng := NewTestEngine(g, loader, &fakeSink{})
+	eng.workflowDir = dir
+
+	sessions := adapterhost.NewSessionManager(loader)
+	if err := eng.setLockfileOnSessions(sessions); err != nil {
+		t.Fatalf("setLockfileOnSessions: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := sessions.Open(ctx, "noop.default", "noop", "shutdown", nil); err != nil {
+		t.Fatalf("session open: %v", err)
 	}
 }

@@ -15,6 +15,7 @@ import (
 
 	"github.com/hashicorp/go-hclog"
 	hplugin "github.com/hashicorp/go-plugin"
+	"github.com/hashicorp/go-plugin/runner"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/structpb"
@@ -166,6 +167,68 @@ func (l *DefaultLoader) ResolveWithCustomizer(ctx context.Context, name string, 
 		SkipHostEnv: customizer != nil,
 	})
 
+	rpcClient, err := client.Client()
+	if err != nil {
+		client.Kill()
+		return nil, fmt.Errorf("start adapter %q: %w", name, err)
+	}
+	raw, err := rpcClient.Dispense(AdapterName)
+	if err != nil {
+		client.Kill()
+		return nil, fmt.Errorf("dispense adapter %q: %w", name, err)
+	}
+
+	adapterClient, ok := raw.(Client)
+	if !ok {
+		client.Kill()
+		return nil, fmt.Errorf("unexpected adapter client type %T for %q", raw, name)
+	}
+
+	rp := &rpcHandle{name: name, client: client, rpc: adapterClient}
+	l.mu.Lock()
+	l.active[rp] = struct{}{}
+	l.mu.Unlock()
+	rp.onKill = func() {
+		l.mu.Lock()
+		delete(l.active, rp)
+		l.mu.Unlock()
+	}
+
+	return rp, nil
+}
+
+// ResolveWithRunnerFunc resolves the adapter using a custom go-plugin RunnerFunc
+// instead of discovering a local binary. This is used for container-mode adapters
+// where the plugin runs inside docker/podman.
+func (l *DefaultLoader) ResolveWithRunnerFunc(ctx context.Context, name string, rf func(hclog.Logger, *exec.Cmd, string) (runner.Runner, error)) (Handle, error) {
+	if stringsTrim(name) == "" {
+		return nil, errors.New("adapter name is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	l.mu.Lock()
+	if factory, ok := l.builtins[name]; ok {
+		l.mu.Unlock()
+		return factory(), nil
+	}
+	l.mu.Unlock()
+
+	client := hplugin.NewClient(&hplugin.ClientConfig{
+		HandshakeConfig:  HandshakeConfig,
+		Plugins:          AdapterMap(),
+		AllowedProtocols: []hplugin.Protocol{hplugin.ProtocolGRPC},
+		StartTimeout:     30 * time.Second,
+		Logger:           adapterClientLogger(),
+		SkipHostEnv:      true,
+		RunnerFunc:       rf,
+	})
+
+	return l.startAdapterClient(name, client)
+}
+
+func (l *DefaultLoader) startAdapterClient(name string, client *hplugin.Client) (Handle, error) {
 	rpcClient, err := client.Client()
 	if err != nil {
 		client.Kill()

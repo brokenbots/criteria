@@ -15,6 +15,7 @@ import (
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	engineruntime "github.com/brokenbots/criteria/internal/engine/runtime"
 	"github.com/brokenbots/criteria/workflow"
+	"github.com/brokenbots/criteria/workflow/lockfile"
 )
 
 // Sink receives engine-level events. Implementations (typically the server
@@ -136,6 +137,9 @@ type Engine struct {
 	// workflowDir is the directory containing the HCL workflow file. Passed to
 	// RunState so that file() and fileexists() can resolve relative paths.
 	workflowDir string
+	// lockfile is the parsed adapter lockfile used for container-mode resolution.
+	// If nil and workflowDir is set, the engine auto-reads it at run start.
+	lockfile *lockfile.Lockfile
 	// log is an optional structured logger for internal engine warnings.
 	// Falls back to slog.Default() when nil.
 	log *slog.Logger
@@ -169,11 +173,34 @@ func (e *Engine) VisitCounts() map[string]int {
 	return e.lastVisits
 }
 
+// setLockfileOnSessions ensures the session manager has the lockfile needed
+// for container-mode adapter resolution. If the engine already has a lockfile
+// it is used directly; otherwise if workflowDir is set the lockfile is read
+// from the workflow directory.
+func (e *Engine) setLockfileOnSessions(sessions *adapterhost.SessionManager) error {
+	if e.lockfile != nil {
+		sessions.SetLockfile(e.lockfile)
+		return nil
+	}
+	if e.workflowDir == "" {
+		return nil
+	}
+	lf, err := lockfile.ReadFromDir(e.workflowDir)
+	if err != nil {
+		return fmt.Errorf("read lockfile: %w", err)
+	}
+	sessions.SetLockfile(lf)
+	return nil
+}
+
 // Run executes the workflow until a terminal state is reached, the global
 // step limit is exceeded, or ctx is cancelled.
 func (e *Engine) Run(ctx context.Context) error {
 	sessions := adapterhost.NewSessionManager(e.loader)
 	sessions.SetGraph(e.graph)
+	if err := e.setLockfileOnSessions(sessions); err != nil {
+		return err
+	}
 	defer func() { _ = sessions.Shutdown(context.WithoutCancel(ctx)) }()
 
 	deps := Deps{
@@ -204,6 +231,9 @@ func (e *Engine) Run(ctx context.Context) error {
 func (e *Engine) RunFrom(ctx context.Context, startStep string, initialAttempt int) error {
 	sessions := adapterhost.NewSessionManager(e.loader)
 	sessions.SetGraph(e.graph)
+	if err := e.setLockfileOnSessions(sessions); err != nil {
+		return err
+	}
 	defer func() { _ = sessions.Shutdown(context.WithoutCancel(ctx)) }()
 
 	deps := Deps{
