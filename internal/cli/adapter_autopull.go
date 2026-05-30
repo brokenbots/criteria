@@ -14,6 +14,7 @@ import (
 	"github.com/opencontainers/go-digest"
 	"github.com/zclconf/go-cty/cty"
 
+	"github.com/brokenbots/criteria/internal/adapter/environment/container"
 	"github.com/brokenbots/criteria/internal/adapter/manifest"
 	"github.com/brokenbots/criteria/internal/adapter/oci"
 	"github.com/brokenbots/criteria/internal/adapter/signing"
@@ -130,6 +131,15 @@ func ensureAdapterCached(ctx context.Context, key string, wa *workflowAdapter, l
 
 	if err := extractOCIAdapterBinary(layout, pulledDg, wa.Type); err != nil {
 		return fmt.Errorf("adapter %q extract binary: %w", key, err)
+	}
+
+	// Container-image pull (WS12) — pull if the manifest declares one.
+	if m.ContainerImage != nil {
+		if err := container.PullContainerImage(ctx, m.ContainerImage.Ref, "docker"); err != nil {
+			if err := container.PullContainerImage(ctx, m.ContainerImage.Ref, "podman"); err != nil {
+				return fmt.Errorf("adapter %q container image pull %s: %w", key, m.ContainerImage.Ref, err)
+			}
+		}
 	}
 	return nil
 }

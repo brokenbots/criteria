@@ -8,6 +8,7 @@ import (
 	"github.com/zclconf/go-cty/cty"
 
 	"github.com/brokenbots/criteria/workflow"
+	"github.com/brokenbots/criteria/workflow/lockfile"
 )
 
 // Option applies optional engine configuration.
@@ -92,6 +93,15 @@ func WithVarOverrides(overrides map[string]string) Option {
 func WithWorkflowDir(dir string) Option {
 	return func(e *Engine) {
 		e.workflowDir = dir
+	}
+}
+
+// WithLockfile sets the parsed adapter lockfile used for container-mode
+// adapter resolution. When nil and workflowDir is set, the engine auto-reads
+// the lockfile from the workflow directory at run start.
+func WithLockfile(lf *lockfile.Lockfile) Option {
+	return func(e *Engine) {
+		e.lockfile = lf
 	}
 }
 
