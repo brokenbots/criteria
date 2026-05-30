@@ -1,28 +1,16 @@
 # Develop Subworkflow
 # ===================
 # Implements one workstream end-to-end:
-#   prepare_branch → develop (LLM) → ci_gate (shell, with one auto-retry on
-#   flake) → cache_diff → 4-axis parallel reviews → verdict aggregate →
-#   (skip owner if unanimous approve) → owner adjudication → commit (shell) →
-#   finalize_ok (sets status="ok").
+#   prepare_branch → develop (LLM) → ci_gate (shell) → cache_diff →
+#   pair_review (LLM, single-pass: workstream adherence + security + quality +
+#   API conformance) → commit (shell) → finalize_ok (sets status="ok").
 #
-# Optimizations vs the v1 design:
-#   • ci_retry — one automatic retry of `make ci` before invoking the LLM
-#     repair agent (CI flakes are the most common transient failure).
-#   • cache_diff — runs `git diff origin/$base_branch...HEAD` once into a shared
-#     file; all four reviewers read the file instead of each invoking git diff.
-#   • verdict_aggregate + check_unanimous — when all four reviewers emit
-#     "VERDICT: approved", skip the owner adjudication LLM call and go
-#     straight to commit. Saves one expensive agent invocation on the happy
-#     path.
-#   • shell commit — git add/commit/push is deterministic; no LLM session
-#     needed once the owner has approved.
+# Deep multi-axis review (4-axis parallel + owner adjudication) lives in the
+# pr_review subworkflow and runs after the branch is committed and a PR is open.
+# This keeps the develop loop tight and avoids convergence issues from running
+# exhaustive multi-perspective reviews on every iteration.
 #
-# Failure-propagation workaround: the engine ignores a subworkflow's terminal
-# `success=false` flag at the parent (internal/engine/node_step.go:477-480).
-# Until that is fixed, we project `output "status"` based on a shared variable
-# that defaults to "failed" and is flipped to "ok" only along the success
-# path. The parent (bootstrap.hcl) switches on this status.
+
 
 workflow {
 
@@ -44,7 +32,7 @@ variable "workstream_file" {
 variable "max_retries" {
   type = number
   default     = 3
-  description = "Maximum developer→owner cycles before requesting operator assistance."
+  description = "Maximum developer→reviewer cycles before requesting operator assistance."
 }
 
 variable "project_dir" {
@@ -93,30 +81,17 @@ adapter "copilot" "developer" {
   }
 }
 
-adapter "copilot" "owner" {
+adapter "copilot" "pair" {
   config {
     model            = var.reviewer_model
     reasoning_effort = "high"
     max_turns        = 15
-    system_prompt    = trimfrontmatter(file("agents/owner.agent.md"))
-  }
-}
-
-adapter "copilot" "repair" {
-  config {
-    model            = var.developer_model
-    reasoning_effort = "high"
-    max_turns        = 15
-    system_prompt    = trimfrontmatter(file("agents/repair.agent.md"))
+    system_prompt    = trimfrontmatter(file("agents/pair.agent.md"))
   }
 }
 
 adapter "shell" "ci" {
   config {}
-}
-
-subworkflow "review_axis" {
-  source = "./review_axis"
 }
 
 # ── Restart-safe branch preparation ──────────────────────────────────────────
@@ -154,9 +129,23 @@ switch "route_branch_state" {
 step "develop_init" {
   target      = adapter.copilot.developer
   allow_tools = ["*"]
-  timeout     = "30m"
+  timeout     = "180m"
   input {
-    prompt = "Read ${var.workstream_file} for the full task scope. Branch state classifier: `${steps.prepare_branch.stdout}` (one of: created, existing_local, existing_remote, existing_dirty; the branch name is `basename '${var.workstream_file}' .md`). If `created`, implement every acceptance-criterion item from a clean slate. If `existing_*`, inspect the current state, preserve useful work, and complete only missing items. Write tests. Run `make build` to verify the code compiles clean before declaring ready — do not run the full test suite, the CI gate step handles that. Update ${var.workstream_file} with implementation notes and check off completed items.\n\nEnd your final message with exactly one of:\nRESULT: needs_review\nRESULT: failure"
+    prompt = <<-PROMPT
+      Read ${var.workstream_file} for the full task scope. 
+      Branch state classifier: `${steps.prepare_branch.stdout}` (one of: created, existing_local, existing_remote, existing_dirty; the branch name is `basename ${var.workstream_file}`). 
+      If `created`, implement every acceptance-criterion item from a clean slate. If `existing_*`, inspect the current state, preserve useful work, and complete only missing items. 
+      Write tests.
+      Run `make build` to verify the code compiles clean before declaring ready — do not run the full test suite, the CI gate step handles that. 
+      Update ${var.workstream_file} with implementation notes and check off completed items.
+      
+      ## Output Contract
+      Once you have completed your task, you **must** call the `submit_outcome` tool to finalize the step. You may only select from the following allowed outcomes: `needs_review`, `failure`.
+
+      The `reason` parameter in `submit_outcome` should contain a concise summary of your progress or a description of why you are failing.
+
+      Do not attempt to signal the outcome via text alone; the step will only progress if the tool is called.
+    PROMPT
   }
   outcome "needs_review" { next = "ci_gate" }
   outcome "failure"      { next = "failed" }
@@ -176,32 +165,9 @@ step "ci_gate" {
     working_directory = var.project_dir
   }
   outcome "success" { next = "cache_diff" }
-  outcome "failure" { next = "ci_retry" }
+  outcome "failure" { next = "develop" }
 }
 
-step "ci_retry" {
-  target     = adapter.shell.ci
-  timeout    = "1200s"
-  max_visits = 5
-  input {
-    command           = "echo '[ci_retry] re-running make ci once before invoking LLM repair'; make ci"
-    working_directory = var.project_dir
-  }
-  outcome "success" { next = "cache_diff" }
-  outcome "failure" { next = "repair_ci" }
-}
-
-step "repair_ci" {
-  target      = adapter.copilot.repair
-  allow_tools = ["read", "write", "edit", "execute", "shell"]
-  timeout     = "20m"
-  max_visits  = 10
-  input {
-    prompt = "`make ci` failed twice (initial + one retry). Fix all failures with the smallest correct changes; do not refactor or expand scope. Do not raise the lint baseline cap or add to .golangci.baseline.yml — fix the finding instead.\n\n--- ci stdout (last attempt) ---\n${steps.ci_retry.stdout}\n--- ci stderr (last attempt) ---\n${steps.ci_retry.stderr}\n--- end ---\n\nEnd your final message with exactly one of:\nRESULT: needs_review\nRESULT: failure"
-  }
-  outcome "needs_review" { next = "ci_gate" }
-  outcome "failure"      { next = "failed" }
-}
 
 # ── Cache the diff for reviewers ─────────────────────────────────────────────
 # Writes .criteria/tmp/diff.patch + diff.stat once so all 4 reviewers can read
@@ -226,77 +192,47 @@ switch "route_diff" {
   }
   condition {
     match = steps.cache_diff.stdout == "ok"
-    next  = step.specialized_reviews
+    next  = step.pair_review
   }
   default { next = state.failed }
 }
 
-# ── Parallel specialist reviews — 4 axes ─────────────────────────────────────
-# Reviewers always emit RESULT: success when their review is complete (regardless
-# of whether the verdict is approved or changes_requested) — see the comment in
-# review_axis/main.hcl explaining the engine's isSuccessOutcome strictness.
-# on_failure = "continue" so a real reviewer failure (broken tooling) doesn't
-# cancel the other in-flight reviewers; any_failed only fires if at least one
-# reviewer truly errors out.
+# ── Pair review: single-pass workstream + security + quality + API check ─────
+# A focused pair reviewer checks the diff before commit. Unlike the deep
+# multi-axis review in pr_review, this is a tight single-pass review designed
+# to keep the developer on track without over-constraining the loop. The pair
+# approves if things look broadly correct; it only blocks on concrete,
+# actionable must-fix issues.
 
-step "specialized_reviews" {
-  target       = subworkflow.review_axis
-  parallel     = ["security", "quality", "workstream", "api_compat"]
-  parallel_max = 4
-  on_failure   = "continue"
-  max_visits   = 20
-  input {
-    review_kind     = each.value
-    workstream_file = var.workstream_file
-    project_dir     = var.project_dir
-    reviewer_model  = var.reviewer_model
-  }
-  outcome "success"       { next = "_continue" }
-  outcome "failure"       { next = "_continue" }
-  outcome "all_succeeded" { next = "verdict_aggregate" }
-  outcome "any_failed"    { next = "failed" }
-}
-
-# ── Verdict aggregation: skip owner_review on unanimous approval ────────────
-
-step "verdict_aggregate" {
-  target     = adapter.shell.ci
-  timeout    = "30s"
-  max_visits = 10
-  input {
-    command           = <<-CMD
-      mkdir -p .criteria/tmp
-      cat > .criteria/tmp/verdict_agg_input.txt <<'CRITERIA_VERDICT_REPORTS_EOF'
-      ${steps.specialized_reviews[0].report}
-      ${steps.specialized_reviews[1].report}
-      ${steps.specialized_reviews[2].report}
-      ${steps.specialized_reviews[3].report}
-      CRITERIA_VERDICT_REPORTS_EOF
-      sh .criteria/workflows/develop/scripts/aggregate-verdicts.sh < .criteria/tmp/verdict_agg_input.txt
-    CMD
-    working_directory = var.project_dir
-  }
-  outcome "success" { next = "check_unanimous" }
-  outcome "failure" { next = "owner_review" }
-}
-
-switch "check_unanimous" {
-  condition {
-    match = steps.verdict_aggregate.stdout == "unanimous"
-    next  = step.commit
-  }
-  default { next = step.owner_review }
-}
-
-# ── Owner adjudication (only when reviewers disagree) ───────────────────────
-
-step "owner_review" {
-  target      = adapter.copilot.owner
-  allow_tools = ["read", "search", "write", "edit", "execute"]
-  timeout     = "20m"
+step "pair_review" {
+  target      = adapter.copilot.pair
+  allow_tools = ["read", "search", "execute"]
+  timeout     = "180m"
   max_visits  = 20
   input {
-    prompt = "You are the workstream owner for ${var.workstream_file}. Read the workstream and `.criteria/tmp/diff.patch` (pre-cached; do not run git diff). The four specialist reviewer reports are below — each contains a `VERDICT:` line and findings. Decide which requests are legitimate, in scope, and mandatory. Reject overreach, duplicates, speculative rewrites, or anything contradicting the workstream non-goals.\n\nRecord your verdict under `## Owner Review Notes` in ${var.workstream_file}. If changes are needed, write only must-fix items there.\n\nIn the submit_outcome reason, include a concise must-fix list (specific, actionable, file:line where possible) if requesting changes, or a brief 'approved' confirmation if complete. This reason is passed directly to the developer — keep it tight.\n\n--- security ---\n${steps.specialized_reviews[0].report}\n--- quality ---\n${steps.specialized_reviews[1].report}\n--- workstream ---\n${steps.specialized_reviews[2].report}\n--- api_compat ---\n${steps.specialized_reviews[3].report}\n--- end ---\n\nEnd your final message with exactly one of:\nRESULT: approved\nRESULT: changes_requested\nRESULT: failure"
+    prompt = <<-PROMPT
+      You are the pair reviewer for ${var.workstream_file}.
+      Read the workstream md and `.criteria/tmp/diff.patch` (pre-cached; do not run git diff).
+
+      Evaluate the diff across all four axes in a single focused pass:
+      1. **Workstream adherence** — does the diff implement the acceptance criteria and stay within the stated scope?
+      2. **Security** — any shell injection, path traversal, secret leakage, plugin trust-boundary issues, or allow-tools bypass?
+      3. **Code quality** — obvious structural problems, missing test coverage for new paths, or complexity spikes that create future risk?
+      4. **API conformance** — any unintended HCL DSL changes, proto field mutations, event-log schema breaks, or missing semver discipline?
+
+      Approve if things are broadly correct. Request changes only for concrete, blocking issues you can cite with file:line evidence.
+      Do not block on stylistic preferences, speculative concerns, or items outside the workstream scope.
+      Do not edit files.
+
+      In the submit_outcome reason, include a concise must-fix list (file:line + issue) if requesting changes, or a brief approval note if complete.
+      This reason is passed directly to the developer — keep it tight and actionable.
+
+      ## Output Contract
+      End your final message with exactly one of:
+      RESULT: approved
+      RESULT: changes_requested
+      RESULT: failure
+    PROMPT
   }
   outcome "approved"          { next = "commit" }
   outcome "changes_requested" { next = "count_cycle" }
@@ -329,7 +265,7 @@ switch "check_limit" {
 
 approval "request_user_assist" {
   approvers = ["operator"]
-  reason    = "The developer/owner loop has reached max_retries cycles without convergence. Inspect the workstream md for owner notes. Approve to continue with a fresh cycle, or reject to fail the workstream."
+  reason    = "The developer/reviewer loop has reached max_retries cycles without convergence. Inspect the workstream md for reviewer notes. Approve to continue with a fresh cycle, or reject to fail the workstream."
   outcome "approved" { next = "reset_counter" }
   outcome "rejected" { next = "failed" }
 }
@@ -348,22 +284,39 @@ step "reset_counter" {
   outcome "failure" { next = "failed" }
 }
 
-# ── Iteration loop: developer addresses owner must-fix list ──────────────────
+# ── Iteration loop: developer addresses reviewer must-fix list ──────────────────
 
 step "develop" {
   target      = adapter.copilot.developer
   allow_tools = ["*"]
-  timeout     = "30m"
+  timeout     = "180m"
   max_visits  = 20
   input {
-    prompt = "The workstream owner has requested changes for ${var.workstream_file}. Owner must-fix list:\n\n${steps.owner_review.reason}\n\nAddress every item above completely. Do not chase raw specialist reviewer suggestions the owner rejected. Run `make build` to verify compilation before declaring ready — the CI gate step handles the full test suite.\n\nIn the submit_outcome reason, briefly summarize the specific changes you made (file:line and what changed).\n\nEnd your final message with exactly one of:\nRESULT: needs_review\nRESULT: failure"
+    prompt = <<-PROMPT
+      The workstream reviewer has requested changes for ${var.workstream_file}.
+      Pair reviewer must-fix list:
+      
+      ${steps.pair_review.reason}
+      
+      Address every item above completely. 
+      Do not chase raw specialist reviewer suggestions the reviewer rejected. 
+      Run `make build` to verify compilation before declaring ready — the CI gate step handles the full test suite.
+      In the submit_outcome reason, briefly summarize the specific changes you made (file:line and what changed).
+
+      ## Output Contract
+      Once you have completed your task, you **must** call the `submit_outcome` tool to finalize the step. You may only select from the following allowed outcomes: `needs_review`, `failure`.
+
+      The `reason` parameter in `submit_outcome` should contain a concise summary of your progress or a description of why you are failing.
+
+      Do not attempt to signal the outcome via text alone; the step will only progress if the tool is called.
+    PROMPT
   }
   outcome "needs_review" { next = "ci_gate" }
   outcome "failure"      { next = "failed" }
 }
 
 # ── Commit + push (deterministic shell, no LLM) ──────────────────────────────
-# Owner approved (or unanimous specialist approval); the work is done. A
+# reviewer approved (or unanimous specialist approval); the work is done. A
 # deterministic shell step commits and pushes — no LLM judgment required.
 
 step "commit" {
