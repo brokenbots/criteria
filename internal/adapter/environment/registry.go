@@ -106,8 +106,8 @@ type SandboxHandler struct{}
 // Type returns "sandbox".
 func (h *SandboxHandler) Type() string { return "sandbox" }
 
-// SupportedOSes returns ["linux"] for now (macOS support in WS11).
-func (h *SandboxHandler) SupportedOSes() []string { return []string{"linux"} }
+// SupportedOSes returns ["linux", "darwin"].
+func (h *SandboxHandler) SupportedOSes() []string { return []string{"linux", "darwin"} }
 
 // ValidateFields checks accepted attributes.
 func (h *SandboxHandler) ValidateFields(body hcl.Body) hcl.Diagnostics {
