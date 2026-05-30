@@ -10,6 +10,7 @@ import (
 	"time"
 
 	copilot "github.com/github/copilot-sdk/go"
+	"github.com/github/copilot-sdk/go/rpc"
 
 	adapterhost "github.com/brokenbots/criteria/sdk/adapterhost"
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
@@ -138,7 +139,7 @@ func (p *copilotAdapter) buildSessionConfig(cfg map[string]string, adapterSessio
 	sc := &copilot.SessionConfig{
 		Streaming: copilot.Bool(true),
 		Model:     cfg["model"],
-		OnPermissionRequest: func(r copilot.PermissionRequest, _ copilot.PermissionInvocation) (copilot.PermissionRequestResult, error) {
+		OnPermissionRequest: func(r copilot.PermissionRequest, _ copilot.PermissionInvocation) (rpc.PermissionDecision, error) {
 			return p.handlePermissionRequest(adapterSessionID, r)
 		},
 		Tools: []copilot.Tool{submitTool},

@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	copilot "github.com/github/copilot-sdk/go"
+	"github.com/github/copilot-sdk/go/rpc"
 	"github.com/google/uuid"
 
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
@@ -33,10 +34,10 @@ func (p *copilotAdapter) Permit(_ context.Context, req *pb.PermitRequest) (*pb.P
 	return &pb.PermitResponse{}, nil
 }
 
-func (p *copilotAdapter) handlePermissionRequest(sessionID string, request copilot.PermissionRequest) (copilot.PermissionRequestResult, error) {
+func (p *copilotAdapter) handlePermissionRequest(sessionID string, request copilot.PermissionRequest) (rpc.PermissionDecision, error) {
 	s := p.getSession(sessionID)
 	if s == nil {
-		return copilot.PermissionRequestResult{Kind: copilot.PermissionRequestResultKindUserNotAvailable}, nil
+		return &rpc.PermissionDecisionUserNotAvailable{}, nil
 	}
 
 	permID := uuid.NewString()
@@ -48,7 +49,7 @@ func (p *copilotAdapter) handlePermissionRequest(sessionID string, request copil
 	done := s.activeCh
 	if !active || sink == nil {
 		s.mu.Unlock()
-		return copilot.PermissionRequestResult{Kind: copilot.PermissionRequestResultKindUserNotAvailable}, nil
+		return &rpc.PermissionDecisionUserNotAvailable{}, nil
 	}
 	ch := make(chan permDecision, 1)
 	s.pending[permID] = ch
@@ -59,7 +60,7 @@ func (p *copilotAdapter) handlePermissionRequest(sessionID string, request copil
 		s.mu.Lock()
 		delete(s.pending, permID)
 		s.mu.Unlock()
-		return copilot.PermissionRequestResult{Kind: copilot.PermissionRequestResultKindUserNotAvailable}, sendErr
+		return &rpc.PermissionDecisionUserNotAvailable{}, sendErr
 	}
 
 	select {
@@ -71,14 +72,14 @@ func (p *copilotAdapter) handlePermissionRequest(sessionID string, request copil
 		}
 		s.mu.Unlock()
 		if decision.allow {
-			return copilot.PermissionRequestResult{Kind: copilot.PermissionRequestResultKindApproved}, nil
+			return &rpc.PermissionDecisionApproveOnce{}, nil
 		}
-		return copilot.PermissionRequestResult{Kind: copilot.PermissionRequestResultKindRejected}, nil
+		return &rpc.PermissionDecisionReject{}, nil
 	case <-done:
 		s.mu.Lock()
 		delete(s.pending, permID)
 		s.mu.Unlock()
-		return copilot.PermissionRequestResult{Kind: copilot.PermissionRequestResultKindNoResult}, nil
+		return &rpc.PermissionDecisionNoResult{}, nil
 	}
 }
 

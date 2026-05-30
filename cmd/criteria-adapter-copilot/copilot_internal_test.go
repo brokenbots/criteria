@@ -8,6 +8,7 @@ import (
 	"time"
 
 	copilot "github.com/github/copilot-sdk/go"
+	"github.com/github/copilot-sdk/go/rpc"
 
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 )
@@ -284,7 +285,7 @@ func TestPermissionPermitHandshake(t *testing.T) {
 		ToolCallID: &toolCallID,
 	}
 
-	resCh := make(chan copilot.PermissionRequestResult, 1)
+	resCh := make(chan rpc.PermissionDecision, 1)
 	go func() {
 		result, _ := p.handlePermissionRequest("s1", request)
 		resCh <- result
@@ -314,8 +315,8 @@ func TestPermissionPermitHandshake(t *testing.T) {
 
 	select {
 	case result := <-resCh:
-		if result.Kind != copilot.PermissionRequestResultKindApproved {
-			t.Fatalf("permission result kind = %q, want approved", result.Kind)
+		if _, ok := result.(*rpc.PermissionDecisionApproveOnce); !ok {
+			t.Fatalf("permission result type = %T, want *rpc.PermissionDecisionApproveOnce", result)
 		}
 	case <-time.After(300 * time.Millisecond):
 		t.Fatal("timeout waiting for permission handler result")
