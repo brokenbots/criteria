@@ -14,4 +14,4 @@ ENV PYTHONUNBUFFERED=1
 ENV CRITERIA_REMOTE_HOST="criteria.example.com:7778"
 ENV CRITERIA_REMOTE_TOKEN=""
 
-CMD ["python", "-m", "criteria_adapter"]
+CMD ["python", "-m", "criteria_adapter_sdk"]

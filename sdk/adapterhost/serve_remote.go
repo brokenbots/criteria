@@ -102,7 +102,7 @@ type remoteHandshake struct {
 	SDKProtocolVersion int    `json:"sdk_protocol_version"`
 }
 
-// sendHandshakeMessage writes the identity handshake line to conn.
+// sendHandshake writes the identity handshake line to conn.
 func sendHandshake(conn net.Conn, identity RemoteIdentity, token string) error {
 	h := remoteHandshake{
 		Name:               identity.Name,

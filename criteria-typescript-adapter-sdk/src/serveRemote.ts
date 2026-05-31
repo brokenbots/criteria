@@ -149,8 +149,8 @@ export async function serveRemote(service: Service, opts: ServeRemoteOptions): P
     );
   });
 
-  let conn: net.Socket;
-  let local: net.Socket;
+  let conn: net.Socket | undefined;
+  let local: net.Socket | undefined;
   try {
     conn = await dialRemote(opts.host, opts.tls);
     await sendHandshake(conn, opts.identity, opts.acceptToken);

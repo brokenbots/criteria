@@ -9,7 +9,7 @@ RestartSec=5
 Environment="PYTHONUNBUFFERED=1"
 Environment="CRITERIA_REMOTE_HOST=criteria.example.com:7778"
 Environment="CRITERIA_REMOTE_TOKEN_FILE=/etc/criteria/token"
-ExecStart=/opt/criteria-venv/bin/python -m criteria_adapter
+ExecStart=/opt/criteria-venv/bin/python -m criteria_adapter_sdk
 WorkingDirectory=/opt/criteria-adapter
 User=criteria-adapter
 Group=criteria-adapter
