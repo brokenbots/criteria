@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: criteria-remote-config
+  namespace: criteria-remote
+data:
+  host: "host.docker.internal:7778"
