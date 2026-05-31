@@ -29,6 +29,7 @@ type handshakeMessage struct {
 	Name    string `json:"name"`
 	Version string `json:"version"`
 	Digest  string `json:"digest"`
+	Token   string `json:"token"`
 }
 
 // DigestVerifier checks whether a reported adapter digest is acceptable.
@@ -250,6 +251,12 @@ func (s *Shim) verifyAdapterIdentity(conn net.Conn, hs handshakeMessage) error {
 			return fmt.Errorf("digest verification: %w", err)
 		}
 	}
+	if s.acceptToken != "" {
+		if hs.Token != s.acceptToken {
+			_ = conn.Close()
+			return fmt.Errorf("accept_token verification failed")
+		}
+	}
 	return nil
 }
 
@@ -457,10 +464,6 @@ func (s *Shim) buildAndStoreHandle(
 
 	return nil
 }
-
-// session needs a cancelCtx helper for the cleanup goroutine.
-// We'll add a cancelCtx field to the session struct.
-// Actually, let me keep it simpler - use bridgeCtx/bridgeCancel.
 
 // WaitForHandle blocks until a remote adapter of the given type connects.
 func (s *Shim) WaitForHandle(ctx context.Context, adapterType string) (adapterhost.Handle, error) {

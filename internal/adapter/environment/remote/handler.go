@@ -37,21 +37,22 @@ func (h *RemoteHandler) Type() string { return "remote" }
 func (h *RemoteHandler) SupportedOSes() []string { return nil }
 
 // ValidateFields checks accepted attributes at compile time.
-// Blocks (mtls, network, filesystem, resources) are not visible to
-// JustAttributes and are validated at runtime in Prepare.
+// Blocks (mtls, network, filesystem, resources) are handled separately by
+// ParseConfig at runtime and tolerated here. mtls may also appear as a
+// boolean attribute (mtls = true).
 func (h *RemoteHandler) ValidateFields(body hcl.Body) hcl.Diagnostics {
-	attrs, diags := body.JustAttributes()
+	attrs, diags := workflow.BodyJustAttributesToleratingBlocks(body, workflow.HandlerAllowedBlocks(h.Type()))
 	for name := range attrs {
 		switch name {
 		case "variables", "policy_mode", "os",
-			"listen_address", "accept_token", "accept_digest_from":
+			"listen_address", "mtls", "accept_token", "accept_digest_from":
 			// accepted
 		default:
 			rng := attrs[name].Range
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagError,
 				Summary:  fmt.Sprintf("remote environment: unknown attribute %q", name),
-				Detail:   "remote environments accept variables, policy_mode, os, listen_address, accept_token, and accept_digest_from.",
+				Detail:   "remote environments accept variables, policy_mode, os, listen_address, mtls, accept_token, and accept_digest_from.",
 				Subject:  &rng,
 			})
 		}
@@ -87,6 +88,9 @@ func ParseConfig(rawBody hcl.Body) (*Config, error) {
 
 	if err := parseTopLevelAttrs(cfg, getAttr); err != nil {
 		return nil, err
+	}
+	if cfg.AcceptDigestFrom != "" && cfg.AcceptDigestFrom != "lockfile" {
+		return nil, fmt.Errorf("remote environment: accept_digest_from must be \"lockfile\" (got %q)", cfg.AcceptDigestFrom)
 	}
 	if err := parseMTLSBlock(cfg, rawBody); err != nil {
 		return nil, err

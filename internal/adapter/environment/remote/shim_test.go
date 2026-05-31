@@ -83,6 +83,7 @@ func generateTestCerts(t *testing.T) (serverCert, serverKey, clientCert, clientK
 	return serverCert, serverKey, clientCert, clientKey, caCert
 }
 
+//nolint:unparam // typ is always "CERTIFICATE" currently but kept for clarity
 func writePEM(t *testing.T, path, typ string, der []byte) {
 	t.Helper()
 	f, err := os.Create(path)
@@ -568,6 +569,294 @@ func TestShim_Reconnect(t *testing.T) {
 
 // trigger shim startup errors, and that a workflow with a remote env compiles.
 // This is a compile-time test using the workflow package.
+func TestShim_mTLSRejectBadCert(t *testing.T) {
+	serverCert, serverKey, _, _, caCert := generateTestCerts(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// For simplicity, just create a cert signed by a different CA.
+	badDir := t.TempDir()
+	badCAKey, _ := rsa.GenerateKey(rand.Reader, 2048)
+	badCATemplate := x509.Certificate{
+		SerialNumber:          big.NewInt(99),
+		Subject:               pkix.Name{CommonName: "Bad CA"},
+		NotBefore:             time.Now(),
+		NotAfter:              time.Now().Add(time.Hour),
+		IsCA:                  true,
+		BasicConstraintsValid: true,
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+	}
+	badCADER, _ := x509.CreateCertificate(rand.Reader, &badCATemplate, &badCATemplate, &badCAKey.PublicKey, badCAKey)
+	badCAPath := filepath.Join(badDir, "bad-ca.pem")
+	writePEM(t, badCAPath, "CERTIFICATE", badCADER)
+
+	badKey, _ := rsa.GenerateKey(rand.Reader, 2048)
+	badTemplate := x509.Certificate{
+		SerialNumber: big.NewInt(100),
+		Subject:      pkix.Name{CommonName: "evil-actor"},
+		NotBefore:    time.Now(),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}
+	badDER, _ := x509.CreateCertificate(rand.Reader, &badTemplate, &badCATemplate, &badKey.PublicKey, badCAKey)
+	badCertPath := filepath.Join(badDir, "bad-client.pem")
+	writePEM(t, badCertPath, "CERTIFICATE", badDER)
+	badKeyPath := filepath.Join(badDir, "bad-client-key.pem")
+	writeKey(t, badKeyPath, badKey)
+
+	verifier := &fixedDigestVerifier{allowed: map[string]string{"noop": "sha256:abcd1234"}}
+	shim, err := NewShim(&Config{
+		ListenAddress:         "127.0.0.1:0",
+		ServerCertPath:        serverCert,
+		ServerKeyPath:         serverKey,
+		ClientCAPath:          caCert,
+		ClientIdentityPattern: "CN=criteria-adapter-.*",
+	}, verifier)
+	if err != nil {
+		t.Fatalf("NewShim: %v", err)
+	}
+	if err := shim.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer func() { _ = shim.Stop(ctx) }()
+
+	addr := shim.listener.Addr().String()
+
+	// Bad client: cert not signed by our CA, and CN doesn't match.
+	badCert, _ := tls.LoadX509KeyPair(badCertPath, badKeyPath)
+	badRoot := x509.NewCertPool()
+	badCAPEM, _ := os.ReadFile(badCAPath)
+	badRoot.AppendCertsFromPEM(badCAPEM)
+	badTLS := &tls.Config{
+		Certificates: []tls.Certificate{badCert},
+		RootCAs:      badRoot,
+	}
+
+	conn, err := tls.Dial("tcp", addr, badTLS)
+	if err == nil {
+		// Server may accept the TCP+TLS connection because the client presents a cert,
+		// but the server will reject because the cert is not signed by its CA.
+		// In that case, conn is non-nil but handshake failed on server side.
+		// The server Accept will close the connection.
+		conn.Close()
+	}
+	// The important thing is that WaitForHandle should NOT succeed for "noop".
+	shortCtx, shortCancel := context.WithTimeout(ctx, 500*time.Millisecond)
+	defer shortCancel()
+	_, err = shim.WaitForHandle(shortCtx, "noop")
+	if err == nil {
+		t.Fatal("expected WaitForHandle to fail for bad cert")
+	}
+}
+
+func TestShim_AcceptToken(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	verifier := &fixedDigestVerifier{allowed: map[string]string{"noop": "sha256:abcd1234"}}
+	shim, err := NewShim(&Config{
+		ListenAddress: "127.0.0.1:0",
+		AcceptToken:   "secret-token",
+	}, verifier)
+	if err != nil {
+		t.Fatalf("NewShim: %v", err)
+	}
+	if err := shim.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer func() { _ = shim.Stop(ctx) }()
+
+	addr := shim.listener.Addr().String()
+
+	// 1. Missing token should be rejected.
+	go func() {
+		_ = dialFakeAdapter(addr, handshakeMessage{
+			Name:    "noop",
+			Version: "1.0.0",
+			Digest:  "sha256:abcd1234",
+			Token:   "",
+		}, nil)
+	}()
+	shortCtx, shortCancel := context.WithTimeout(ctx, 500*time.Millisecond)
+	_, err = shim.WaitForHandle(shortCtx, "noop")
+	shortCancel()
+	if err == nil {
+		t.Fatal("expected rejection for missing token")
+	}
+
+	// 2. Wrong token should be rejected.
+	go func() {
+		_ = dialFakeAdapter(addr, handshakeMessage{
+			Name:    "noop",
+			Version: "1.0.0",
+			Digest:  "sha256:abcd1234",
+			Token:   "wrong-token",
+		}, nil)
+	}()
+	shortCtx2, shortCancel2 := context.WithTimeout(ctx, 500*time.Millisecond)
+	_, err = shim.WaitForHandle(shortCtx2, "noop")
+	shortCancel2()
+	if err == nil {
+		t.Fatal("expected rejection for wrong token")
+	}
+
+	// 3. Correct token should be accepted.
+	go func() {
+		_ = dialFakeAdapter(addr, handshakeMessage{
+			Name:    "noop",
+			Version: "1.0.0",
+			Digest:  "sha256:abcd1234",
+			Token:   "secret-token",
+		}, nil)
+	}()
+	handle, err := shim.WaitForHandle(ctx, "noop")
+	if err != nil {
+		t.Fatalf("WaitForHandle correct token: %v", err)
+	}
+	handle.Kill()
+}
+
+func TestShim_UnixSocketListen(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	sockDir := t.TempDir()
+	sockPath := filepath.Join(sockDir, "criteria-remote.sock")
+
+	verifier := &fixedDigestVerifier{allowed: map[string]string{"noop": "sha256:abcd1234"}}
+	shim, err := NewShim(&Config{
+		ListenAddress: sockPath,
+	}, verifier)
+	if err != nil {
+		t.Fatalf("NewShim: %v", err)
+	}
+	if err := shim.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer func() { _ = shim.Stop(ctx) }()
+
+	// Verify socket file exists.
+	if _, err := os.Stat(sockPath); err != nil {
+		t.Fatalf("socket file not found: %v", err)
+	}
+
+	// Connect via Unix socket.
+	go func() {
+		conn, err := net.Dial("unix", sockPath)
+		if err != nil {
+			return
+		}
+		hs := handshakeMessage{Name: "noop", Version: "1.0.0", Digest: "sha256:abcd1234"}
+		hsBytes, _ := json.Marshal(hs)
+		_, _ = conn.Write(append(hsBytes, '\n'))
+		// Serve gRPC on this single connection.
+		grpcServer := grpc.NewServer()
+		v2.RegisterAdapterServiceServer(grpcServer, &fakeAdapterServer{infoName: "noop"})
+		lis := &singleConnListener{conn: conn}
+		go func() { _ = grpcServer.Serve(lis) }()
+	}()
+
+	handle, err := shim.WaitForHandle(ctx, "noop")
+	if err != nil {
+		t.Fatalf("WaitForHandle: %v", err)
+	}
+	defer handle.Kill()
+
+	info, err := handle.Info(ctx)
+	if err != nil {
+		t.Fatalf("Info: %v", err)
+	}
+	if info.Name != "noop" {
+		t.Errorf("info.Name = %q, want noop", info.Name)
+	}
+}
+
+func TestParseConfig_AcceptDigestFromValidation(t *testing.T) {
+	parser := hclparse.NewParser()
+	file, diags := parser.ParseHCL([]byte("listen_address = \"127.0.0.1:0\"\naccept_digest_from = \"unknown\"\n"), "test.hcl")
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	_, err := ParseConfig(file.Body)
+	if err == nil {
+		t.Fatal("expected error for accept_digest_from=unknown")
+	}
+	if err.Error() != `remote environment: accept_digest_from must be "lockfile" (got "unknown")` {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// TestCompileMTLSBlock verifies that a workflow with mtls { ... } compiles
+// and the parsed config contains TLS settings.
+func TestCompileMTLSBlock(t *testing.T) {
+	src := `
+workflow {
+  name = "remote-mtls-test"
+  version = "0.1"
+  initial_state = "start"
+  target_state = "done"
+}
+environment "remote" "prod" {
+  listen_address = "127.0.0.1:0"
+  accept_token = "tok"
+  mtls {
+    server_cert = "/certs/server.pem"
+    server_key  = "/certs/key.pem"
+    client_ca   = "/certs/ca.pem"
+    client_identity_pattern = "CN=adapter-.*"
+  }
+}
+adapter "noop" "default" {
+  environment = remote.prod
+}
+step "start" {
+  target = adapter.noop.default
+  outcome "success" { next = "done" }
+}
+state "done" { terminal = true }
+`
+	file, diags := workflow.Parse("test.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	graph, diags := workflow.Compile(file, nil)
+	if diags.HasErrors() {
+		t.Fatalf("compile: %s", diags.Error())
+	}
+	env := graph.Environments["remote.prod"]
+	if env == nil {
+		t.Fatal("remote.prod environment not found")
+	}
+	if env.RawBody == nil {
+		t.Fatal("expected RawBody")
+	}
+	cfg, err := ParseConfig(env.RawBody)
+	if err != nil {
+		t.Fatalf("ParseConfig: %v", err)
+	}
+	if cfg.ListenAddress != "127.0.0.1:0" {
+		t.Errorf("listen_address = %q", cfg.ListenAddress)
+	}
+	if cfg.AcceptToken != "tok" {
+		t.Errorf("accept_token = %q", cfg.AcceptToken)
+	}
+	if cfg.ServerCertPath != "/certs/server.pem" {
+		t.Errorf("server_cert = %q", cfg.ServerCertPath)
+	}
+	if cfg.ServerKeyPath != "/certs/key.pem" {
+		t.Errorf("server_key = %q", cfg.ServerKeyPath)
+	}
+	if cfg.ClientCAPath != "/certs/ca.pem" {
+		t.Errorf("client_ca = %q", cfg.ClientCAPath)
+	}
+	if cfg.ClientIdentityPattern != "CN=adapter-.*" {
+		t.Errorf("client_identity_pattern = %q", cfg.ClientIdentityPattern)
+	}
+}
+
+// TestCompileTimeFold verifies compile-time folding for remote environments.
 func TestCompileTimeFold(t *testing.T) {
 	src := `
 workflow {
