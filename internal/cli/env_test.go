@@ -128,6 +128,21 @@ func TestParseVarFile_NonStringValue(t *testing.T) {
 	}
 }
 
+func TestMergeVarSources_VarAndFileDisjointKeys(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "vars.json")
+	if err := os.WriteFile(path, []byte(`{"env": "prod"}`), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	got, err := mergeVarSources([]string{path}, []string{"region=us-west"})
+	if err != nil {
+		t.Fatalf("mergeVarSources: %v", err)
+	}
+	want := map[string]string{"env": "prod", "region": "us-west"}
+	assertMapEq(t, got, want)
+}
+
 func TestMergeVarSources_Precedence_VarOverridesVarFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "vars.json")

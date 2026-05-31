@@ -42,14 +42,13 @@ func parseVarOverrides(raw []string) map[string]string {
 //   - .chcl or .hcl: flat top-level attributes (key = "value")
 //   - .json: flat object { "key": "value" }
 func parseVarFile(path string) (map[string]string, error) {
-	ext := strings.ToLower(filepath.Ext(path))
-
 	switch {
-	case isHCLExtension(ext):
+	case hasHCLExtension(path):
 		return parseHCLVarFile(path)
-	case ext == ".json":
+	case filepath.Ext(path) == ".json":
 		return parseJSONVarFile(path)
 	default:
+		ext := filepath.Ext(path)
 		return nil, fmt.Errorf("unsupported var-file extension %q for %q; supported extensions are %s", ext, path, strings.Join(HCLExtensions, ", ")+", .json")
 	}
 }
@@ -97,16 +96,6 @@ func parseJSONVarFile(path string) (map[string]string, error) {
 		return nil, fmt.Errorf("failed to parse JSON var-file %q: %w", path, err)
 	}
 	return raw, nil
-}
-
-// isHCLExtension reports whether ext is one of the recognised HCL extensions.
-func isHCLExtension(ext string) bool {
-	for _, e := range HCLExtensions {
-		if ext == e {
-			return true
-		}
-	}
-	return false
 }
 
 // mergeVarSources merges variable overrides from --var-file and --var flags.
