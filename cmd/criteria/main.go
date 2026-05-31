@@ -21,6 +21,7 @@ func main() {
 	root.AddCommand(cli.NewApplyCmd())
 	root.AddCommand(cli.NewRunCmd())
 	root.AddCommand(cli.NewValidateCmd())
+	root.AddCommand(cli.NewSpecCmd())
 	root.AddCommand(cli.NewStatusCmd())
 	root.AddCommand(cli.NewStopCmd())
 	if err := root.Execute(); err != nil {
