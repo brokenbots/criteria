@@ -24,6 +24,7 @@ func main() {
 	root.AddCommand(cli.NewSpecCmd())
 	root.AddCommand(cli.NewStatusCmd())
 	root.AddCommand(cli.NewStopCmd())
+	root.AddCommand(cli.NewLangserverCmd())
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

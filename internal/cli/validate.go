@@ -3,10 +3,12 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 
+	"github.com/hashicorp/hcl/v2"
 	"github.com/spf13/cobra"
 
 	"github.com/brokenbots/criteria/internal/adapterhost"
@@ -15,7 +17,10 @@ import (
 )
 
 func NewValidateCmd() *cobra.Command {
-	var subworkflowRoots []string
+	var (
+		subworkflowRoots []string
+		diagJSONFlag     bool
+	)
 
 	cmd := &cobra.Command{
 		Use:   "validate <workflow.chcl|workflow.hcl|dir> [more ...]",
@@ -23,7 +28,7 @@ func NewValidateCmd() *cobra.Command {
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
-			if runValidate(args, subworkflowRoots) {
+			if runValidate(args, subworkflowRoots, diagJSONFlag) {
 				os.Exit(1)
 			}
 			return nil
@@ -31,17 +36,22 @@ func NewValidateCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringArrayVar(&subworkflowRoots, "subworkflow-root", nil, "Restrict subworkflow source resolution to this root path (repeatable; empty = no restriction)")
+	cmd.Flags().BoolVar(&diagJSONFlag, "diag-json", false, "Emit diagnostics as structured JSON to stdout instead of human-readable text to stderr")
 	return cmd
 }
 
-func runValidate(paths, subworkflowRoots []string) bool {
+func runValidate(paths, subworkflowRoots []string, diagJSON bool) bool {
 	ctx := context.Background()
 	anyErr := false
 	for _, path := range paths {
 		spec, diags := workflow.ParseFileOrDir(path)
 		if diags.HasErrors() {
 			anyErr = true
-			fmt.Fprintf(os.Stderr, "%s: parse failed:\n%s\n", path, formatDiagnostics(diags))
+			if diagJSON {
+				printDiagnosticsJSON(diags)
+			} else {
+				fmt.Fprintf(os.Stderr, "%s: parse failed:\n%s\n", path, formatDiagnostics(diags))
+			}
 			continue
 		}
 		info, _ := os.Stat(path)
@@ -61,13 +71,62 @@ func runValidate(paths, subworkflowRoots []string) bool {
 		})
 		if diags.HasErrors() {
 			anyErr = true
-			fmt.Fprintf(os.Stderr, "%s: compile failed:\n%s\n", path, formatDiagnostics(diags))
+			if diagJSON {
+				printDiagnosticsJSON(diags)
+			} else {
+				fmt.Fprintf(os.Stderr, "%s: compile failed:\n%s\n", path, formatDiagnostics(diags))
+			}
 			continue
 		}
-		fmt.Printf("%s: ok\n", path)
+		if !diagJSON {
+			fmt.Printf("%s: ok\n", path)
+		}
 		if len(diags) > 0 {
-			fmt.Fprintf(os.Stderr, "%s: warnings:\n%s\n", path, formatDiagnostics(diags))
+			if diagJSON {
+				printDiagnosticsJSON(diags)
+			} else {
+				fmt.Fprintf(os.Stderr, "%s: warnings:\n%s\n", path, formatDiagnostics(diags))
+			}
 		}
 	}
 	return anyErr
+}
+
+// validateDiagnostic is the JSON shape emitted by --diag-json.
+type validateDiagnostic struct {
+	Severity string `json:"severity"`
+	File     string `json:"file"`
+	Line     int    `json:"line"`
+	Col      int    `json:"col"`
+	EndLine  int    `json:"end_line"`
+	EndCol   int    `json:"end_col"`
+	Summary  string `json:"summary"`
+	Detail   string `json:"detail,omitempty"`
+}
+
+func printDiagnosticsJSON(diags hcl.Diagnostics) {
+	var out []validateDiagnostic
+	for _, d := range diags {
+		sev := "warning"
+		if d.Severity == hcl.DiagError {
+			sev = "error"
+		}
+		vd := validateDiagnostic{
+			Severity: sev,
+			Summary:  d.Summary,
+			Detail:   d.Detail,
+		}
+		if d.Subject != nil {
+			vd.File = d.Subject.Filename
+			vd.Line = d.Subject.Start.Line
+			vd.Col = d.Subject.Start.Column
+			vd.EndLine = d.Subject.End.Line
+			vd.EndCol = d.Subject.End.Column
+		}
+		out = append(out, vd)
+	}
+	if len(out) > 0 {
+		b, _ := json.Marshal(out)
+		fmt.Println(string(b))
+	}
 }
