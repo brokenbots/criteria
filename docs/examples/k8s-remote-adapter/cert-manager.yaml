@@ -1,0 +1,17 @@
+# Example cert-manager Certificate for the adapter client certificate.
+# Adjust the issuerRef to point at your cluster's CA issuer.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: greeter-adapter-tls
+  namespace: criteria-remote
+spec:
+  secretName: greeter-adapter-tls
+  issuerRef:
+    name: criteria-ca-issuer
+    kind: ClusterIssuer
+  commonName: criteria-adapter-greeter
+  dnsNames:
+    - greeter-adapter.criteria-remote.svc.cluster.local
+  usages:
+    - client auth
