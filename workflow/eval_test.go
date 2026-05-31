@@ -290,7 +290,7 @@ func TestBuildEvalContext_ExposesPath(t *testing.T) {
 		RootDir:     "/project",
 		Cwd:         "/current",
 	}
-	ctx := BuildEvalContextWithOpts(vars, opts)
+	ctx := BuildEvalContextWithOpts(vars, &opts)
 	if ctx == nil {
 		t.Fatal("nil eval context")
 	}

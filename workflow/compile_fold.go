@@ -16,9 +16,9 @@ var runtimeOnlyNamespaces = map[string]bool{
 	"each":        true,
 	"while":       true, // while-iteration binding (while.index, while.first, while._prev)
 	"steps":       true,
-	"data":        true,  // data block runtime values (WS02)
-	"step":        true,  // current adapter step outputs: step.output.<key> (W18)
-	"subworkflow": true,  // outputs from the subworkflow the step invoked
+	"data":        true, // data block runtime values (WS02)
+	"step":        true, // current adapter step outputs: step.output.<key> (W18)
+	"subworkflow": true, // outputs from the subworkflow the step invoked
 	"path":        true, // path variables are runtime-only (WS05)
 }
 

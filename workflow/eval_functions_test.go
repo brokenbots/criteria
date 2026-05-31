@@ -18,7 +18,7 @@ var testdataDir = filepath.Join("testdata", "eval_functions")
 
 // evalExpr is a test helper that compiles a single HCL expression string and
 // evaluates it against the given FunctionOptions with empty vars.
-func evalExpr(t *testing.T, expr string, opts workflow.FunctionOptions) (cty.Value, hcl.Diagnostics) {
+func evalExpr(t *testing.T, expr string, opts *workflow.FunctionOptions) (cty.Value, hcl.Diagnostics) {
 	t.Helper()
 	parsed, diags := hclsyntax.ParseExpression([]byte(expr), "test.hcl", hcl.Pos{Line: 1, Column: 1})
 	if diags.HasErrors() {
@@ -30,8 +30,8 @@ func evalExpr(t *testing.T, expr string, opts workflow.FunctionOptions) (cty.Val
 
 // opts returns a FunctionOptions with the given workflowDir and default
 // MaxBytes / no allowed paths.
-func opts(workflowDir string) workflow.FunctionOptions {
-	return workflow.FunctionOptions{
+func opts(workflowDir string) *workflow.FunctionOptions {
+	return &workflow.FunctionOptions{
 		WorkflowDir:  workflowDir,
 		MaxBytes:     1 * 1024 * 1024,
 		AllowedPaths: nil,
@@ -227,7 +227,7 @@ func TestFileFunction_AllowedPath(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(sharedDir, "extra.txt"), []byte("allowed\n"), 0o644); err != nil {
 		t.Fatalf("write extra.txt: %v", err)
 	}
-	o := workflow.FunctionOptions{
+	o := &workflow.FunctionOptions{
 		WorkflowDir:  workflowDir,
 		MaxBytes:     1 * 1024 * 1024,
 		AllowedPaths: []string{sharedDir},
@@ -285,7 +285,7 @@ func TestTrimFrontmatterFunction_NoCloseWithin64KiB(t *testing.T) {
 		t.Fatalf("write nofm.txt: %v", err)
 	}
 	val, diags := evalExpr(t, `trimfrontmatter(file("nofm.txt"))`,
-		workflow.FunctionOptions{WorkflowDir: dir, MaxBytes: 200 * 1024})
+		&workflow.FunctionOptions{WorkflowDir: dir, MaxBytes: 200 * 1024})
 	if diags.HasErrors() {
 		t.Fatalf("unexpected error: %s", diags.Error())
 	}
@@ -428,7 +428,7 @@ func TestFileFunction_AbsolutePath(t *testing.T) {
 
 func TestAbsPathFunction_RelativePath(t *testing.T) {
 	workflowDir := "/project/workflows"
-	val, diags := evalExpr(t, `abspath("./data.txt")`, workflow.FunctionOptions{WorkflowDir: workflowDir, Cwd: "/project"})
+	val, diags := evalExpr(t, `abspath("./data.txt")`, &workflow.FunctionOptions{WorkflowDir: workflowDir, Cwd: "/project"})
 	if diags.HasErrors() {
 		t.Fatalf("unexpected error: %s", diags.Error())
 	}

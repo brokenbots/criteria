@@ -18,8 +18,8 @@ import (
 
 // fsOpts returns a FunctionOptions pointing at workflowDir with no MaxBytes
 // constraint (fileset doesn't read file content) and no extra allowed paths.
-func fsOpts(workflowDir string) FunctionOptions {
-	return FunctionOptions{
+func fsOpts(workflowDir string) *FunctionOptions {
+	return &FunctionOptions{
 		WorkflowDir:  workflowDir,
 		MaxBytes:     defaultMaxBytes,
 		AllowedPaths: nil,
@@ -27,7 +27,7 @@ func fsOpts(workflowDir string) FunctionOptions {
 }
 
 // callFileset invokes filesetFunction and returns the []string result or error.
-func callFileset(opts FunctionOptions, path, pattern string) ([]string, error) {
+func callFileset(opts *FunctionOptions, path, pattern string) ([]string, error) {
 	val, err := filesetFunction(opts).Call([]cty.Value{
 		cty.StringVal(path),
 		cty.StringVal(pattern),
@@ -366,7 +366,7 @@ func TestFileset_AllowedPathsHonored(t *testing.T) {
 	writeFile(t, allowedDir, "x.md", "# x")
 	writeFile(t, allowedDir, "y.md", "# y")
 
-	opts := FunctionOptions{
+	opts := &FunctionOptions{
 		WorkflowDir:  wfDir,
 		MaxBytes:     defaultMaxBytes,
 		AllowedPaths: []string{allowedDir},
