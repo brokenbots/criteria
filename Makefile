@@ -1,5 +1,5 @@
 .PHONY: help bootstrap tidy build plugins install proto proto-lint proto-check-drift \
-	test test-cover test-conformance test-flake-watch lint-imports lint-go lint-baseline-check lint-no-todos lint validate validate-self-workflows example-plugin bench docker-runtime docker-runtime-smoke ci self self-loop clean
+	test test-cover test-conformance test-flake-watch lint-imports lint-go lint-baseline-check lint-no-todos lint validate validate-docs validate-self-workflows example-plugin bench docker-runtime docker-runtime-smoke ci self self-loop clean
 
 # Default target: list available targets.
 help:
@@ -179,6 +179,9 @@ validate: build ## Validate all example workflow directories
 		CRITERIA_WORKFLOW_ALLOWED_PATHS="$(CURDIR)" ./bin/criteria validate "$$f" || exit 1; \
 	done
 	@echo "All examples validated."
+
+validate-docs: build ## Validate HCL fenced blocks in docs/LANGUAGE-SPEC.md
+	@BINDIR=./bin ./tools/validate-docs.sh
 
 validate-self-workflows: build ## Validate + compile all .criteria/workflows/* trees
 	@for d in .criteria/workflows/*/; do \

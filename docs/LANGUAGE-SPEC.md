@@ -8,10 +8,10 @@ This document is the normative reference for the Criteria HCL workflow language,
 
 A workflow module is either:
 
-1. **Single-file:** one `.hcl` file containing all declarations.
-2. **Directory module:** a directory of `.hcl` files; exactly one must contain a `workflow` header block. All files are merged before compilation.
+1. **Single-file:** one `.chcl` or `.hcl` file containing all declarations.
+2. **Directory module:** a directory of `.chcl` and/or `.hcl` files; exactly one must contain a `workflow` header block. All files are merged before compilation.
 
-File names are arbitrary; the `.hcl` extension is required. A module must contain exactly one `workflow` block across all files; zero or more than one is a compile error.
+File names are arbitrary; the `.chcl` extension is preferred for new files (criteria-native tooling uses it for file-type association); `.hcl` is accepted for compatibility. A module must contain exactly one `workflow` block across all files; zero or more than one is a compile error.
 
 Encoding: UTF-8. Max file size: implementation-defined (default 64 MiB for file() reads; no hard limit on source files).
 
@@ -24,11 +24,13 @@ content_decl     := workflow_block | variable_block | local_block | data_block
                   | step_block | state_block | wait_block | approval_block
                   | switch_block | policy_block | permissions_block
 
-workflow_block   := "workflow" STRING "{" workflow_attr* "}"
-workflow_attr    := "version" "=" STRING
+workflow_block   := "workflow" "{" workflow_attr* "}"
+workflow_attr    := "name" "=" STRING
+                  | "version" "=" STRING
                   | "initial_state" "=" STRING
                   | "target_state" "=" STRING
-                  | "environment" "=" STRING
+                  | "environment" "=" traversal
+                  | policy_block
 
 variable_block   := "variable" STRING "{" variable_attr* "}"
 local_block      := "local" STRING "{" local_attr* "}"
@@ -41,7 +43,7 @@ step_block       := "step" STRING "{" step_attr* input_block? outcome_block* "}"
 state_block      := "state" STRING "{" state_attr* "}"
 wait_block       := "wait" STRING "{" wait_attr* outcome_block* "}"
 approval_block   := "approval" STRING "{" approval_attr* outcome_block* "}"
-switch_block     := "switch" STRING "{" condition_block* default_block? "}"
+switch_block     := "switch" STRING "{" match_block* default_block? "}"
 policy_block     := "policy" "{" policy_attr* "}"
 permissions_block:= "permissions" "{" permissions_attr* "}"
 
@@ -49,7 +51,7 @@ outcome_block    := "outcome" STRING "{" "next" "=" traversal write_block* "}"
 input_block      := "input" "{" (STRING "=" expr)* "}"
 config_block     := "config" "{" (STRING "=" expr)* "}"
 write_block      := "write" "{" "target" "=" traversal "value" "=" expr "}"
-condition_block  := "condition" "{" "match" "=" expr "next" "=" traversal "}"
+match_block      := "match" "{" "condition" "=" expr "next" "=" traversal ("output" "=" expr)? "}"
 default_block    := "default" "{" "next" "=" traversal "}"
 
 expr             := STRING | NUMBER | BOOL | hcl_template | traversal
@@ -318,7 +320,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 **`approval`** — Requires human approval (server mode only). `approvers` is a list of identity strings; `reason` is a human-readable prompt.
 
-**`switch`** — Conditional routing. `condition` sub-blocks are evaluated in declaration order; the first truthy `match` expression wins. `default` is the fallback; absence without an exhaustive condition set produces a runtime error.
+**`switch`** — Conditional routing. `match` sub-blocks are evaluated in declaration order; the first truthy `condition` expression wins. `default` is the fallback; absence without an exhaustive condition set produces a runtime error.
 
 **`policy`** — Global execution guards. Zero or one per module. Attributes set hard limits on step execution counts.
 
@@ -491,8 +493,11 @@ Each step, wait, and approval node declares one or more `outcome` blocks mapping
 ### 1. Linear two-step workflow
 
 ```hcl
-workflow "greet" {
+workflow {
+  name = "greet"
   version = "1"
+  initial_state = "hello"
+  target_state  = "done"
 }
 
 adapter "noop" "default" {}
@@ -502,15 +507,23 @@ step "hello" {
   outcome "success" { next = state.done }
 }
 
-state "done" { terminal = true  success = true }
+state "done" {
+  terminal = true
+  success  = true
+}
 ```
 
 ### 2. Branching switch
 
 ```hcl
-workflow "branch" { version = "1" }
+workflow {
+  name = "branch"
+  version = "1"
+  initial_state = "check"
+  target_state  = "deploy_prod"
+}
 
-variable "env" { type = "string" }
+variable "env" { type = string }
 
 adapter "noop" "default" {}
 
@@ -523,22 +536,36 @@ step "check" {
 switch "switch_env" {
   match {
     condition = var.env == "prod"
-    next  = "deploy_prod"
+    next  = state.deploy_prod
   }
   default { next = state.deploy_dev }
 }
 
-state "deploy_prod" { terminal = true  success = true }
-state "deploy_dev"  { terminal = true  success = true }
-state "failed"      { terminal = true  success = false }
+state "deploy_prod" {
+  terminal = true
+  success  = true
+}
+state "deploy_dev" {
+  terminal = true
+  success  = true
+}
+state "failed" {
+  terminal = true
+  success  = false
+}
 ```
 
 ### 3. `for_each` iteration
 
 ```hcl
-workflow "batch" { version = "1" }
+workflow {
+  name = "batch"
+  version = "1"
+  initial_state = "process"
+  target_state  = "done"
+}
 
-variable "items" { type = "list(string)" }
+variable "items" { type = list(string) }
 
 adapter "noop" "default" {}
 
@@ -546,36 +573,61 @@ step "process" {
   target   = adapter.noop.default
   for_each = var.items
   input    { item = each.value }
-  outcome "success" { next = state.done }
+  outcome "all_succeeded" { next = state.done }
+  outcome "any_failed"    { next = state.failed }
 }
 
-state "done" { terminal = true  success = true }
+state "done" {
+  terminal = true
+  success  = true
+}
+state "failed" {
+  terminal = true
+  success  = false
+}
 ```
 
 ### 4. Parallel iteration
 
 ```hcl
-workflow "parallel" { version = "1" }
+workflow {
+  name = "parallel"
+  version = "1"
+  initial_state = "fanout"
+  target_state  = "done"
+}
 
-variable "ids" { type = "list(string)" }
+variable "ids" { type = list(string) }
 
 adapter "noop" "default" {}
 
 step "fanout" {
   target   = adapter.noop.default
-  for_each = var.ids
-  parallel = true
+  parallel = var.ids
   input    { id = each.value }
-  outcome "success" { next = state.done }
+  outcome "all_succeeded" { next = state.done }
+  outcome "any_failed"    { next = state.failed }
 }
 
-state "done" { terminal = true  success = true }
+state "done" {
+  terminal = true
+  success  = true
+}
+state "failed" {
+  terminal = true
+  success  = false
+}
 ```
 
 ### 5. Subworkflow call
 
 ```hcl
-workflow "orchestrate" { version = "1" }
+workflow {
+  name = "orchestrate"
+  version = "1"
+  initial_state = "run_child"
+  target_state  = "done"
+}
 
 subworkflow "child" {
   source = "./child-workflow"
@@ -587,8 +639,14 @@ step "run_child" {
   outcome "failure" { next = state.failed }
 }
 
-state "done"   { terminal = true  success = true }
-state "failed" { terminal = true  success = false }
+state "done" {
+  terminal = true
+  success  = true
+}
+state "failed" {
+  terminal = true
+  success  = false
+}
 ```
 
 > For pattern-by-pattern guidance, see [docs/llm/](./llm/). Concatenate this spec with the prompt pack to assemble a complete LLM authoring system prompt.
