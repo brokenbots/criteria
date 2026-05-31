@@ -32,7 +32,8 @@ A Criteria workflow module consists of one or more `.hcl` files. In a **single-f
 
 <!-- validator: skip: illustrative header showing structure only; initial_state and target_state reference nodes not defined in this excerpt -->
 ```hcl
-workflow "deploy_pipeline" {
+workflow {
+  name          = "deploy_pipeline"
   version       = "1"
   initial_state = "validate"
   target_state  = "deployed"
@@ -64,27 +65,27 @@ permissions {
 
 ### Directory mode (multi-file workflows)
 
-A workflow can be split across multiple `.hcl` files in a directory. When `criteria apply` receives a directory path, it reads all `.hcl` files and merges their declarations:
+A workflow can be split across multiple `.hcl` or `.chcl` files in a directory. When `criteria apply` receives a directory path, it reads all `.hcl` and `.chcl` files and merges their declarations:
 
 ```
 my-workflow/
-  workflow.hcl    # contains the workflow header block
-  adapters.hcl    # adapter declarations
-  variables.hcl   # variable declarations
-  steps.hcl       # step, state, and other declarations
+  workflow.hcl    # contains the workflow header block (`.chcl` is equally valid)
+  adapters.hcl    # adapter declarations (`.chcl` is equally valid)
+  variables.hcl   # variable declarations (`.chcl` is equally valid)
+  steps.hcl       # step, state, and other declarations (`.chcl` is equally valid)
 ```
 
-Each file must be a valid standalone HCL document. The `workflow "name" { ... }` header block (with `version`, `initial_state`, `target_state`) must appear in **exactly one** file in the directory; all other files are content-only (no workflow block). All top-level blocks are merged across all files in alphabetical order. Duplicate name declarations across files produce a compile error.
+Each file must be a valid standalone HCL document. The `workflow { name = "..." }` header block (with `version`, `initial_state`, `target_state`) must appear in **exactly one** file in the directory; all other files are content-only (no workflow block). All top-level blocks are merged across all files in alphabetical order. Duplicate name declarations across files produce a compile error.
 
 See `examples/phase3-multi-file/` for a working example.
 
 #### File path entry points
 
-Passing a `.hcl` file path (e.g. `criteria apply my-workflow/workflow.hcl`) is equivalent to passing the parent directory: all `.hcl` files in the parent directory are merged together as one module. This lets you point any CLI command at a specific file within a split module.
+Passing a `.hcl` or `.chcl` file path (e.g. `criteria apply my-workflow/workflow.hcl`) is equivalent to passing the parent directory: all `.hcl` and `.chcl` files in the parent directory are merged together as one module. This lets you point any CLI command at a specific file within a split module.
 
-Every workflow must live in its own directory — a directory may contain exactly one `workflow` header block across all its `.hcl` files. If the parent directory contains multiple `workflow` header blocks, the command fails with a "duplicate workflow block" error.
+Every workflow must live in its own directory — a directory may contain exactly one `workflow` header block across all its `.hcl` and `.chcl` files. If the parent directory contains multiple `workflow` header blocks, the command fails with a "duplicate workflow block" error.
 
-Only `.hcl` files are accepted as file-path entry points. Passing a non-`.hcl` file is an error.
+Only `.hcl` and `.chcl` files are accepted as file-path entry points. Passing a non-HCL file is an error.
 
 ### Upgrading from the nested format
 
@@ -98,23 +99,23 @@ Older Criteria workflows used a nested format where steps, adapters, and states 
 
 ## Variables
 
-Variables are typed, read-only values declared at the workflow level. Per-run override support is a planned future enhancement; currently the `default` attribute is the only value source.
+Variables are typed, read-only values declared at the workflow level. The `default` attribute is the value source for most workflows. For per-run overrides, use `--var-file` (see [CLI reference](#standalone-cli)).
 
 <!-- validator: fragment -->
 ```hcl
 variable "env" {
-  type        = "string"
+  type        = string
   default     = "staging"
   description = "Target deployment environment"
 }
 
 variable "retries" {
-  type    = "number"
+  type    = number
   default = 3
 }
 
 variable "enabled" {
-  type    = "bool"
+  type    = bool
   default = true
 }
 ```
@@ -199,13 +200,14 @@ environment "shell" "staging" {
 
 If a workflow declares exactly one environment, that environment becomes the default and is automatically bound to all adapter steps. If multiple environments are declared, you must explicitly set the default:
 
-<!-- validator: fragment -->
+<!-- validator: skip: workflow header with environment attribute; states not defined in excerpt -->
 ```hcl
-workflow "multi_env_workflow" {
+workflow {
+  name          = "multi_env_workflow"
   version       = "1"
   initial_state = "start"
   target_state  = "done"
-  environment   = "shell.production"
+  environment   = shell.production
 
   # ... environments, steps, etc.
 }
@@ -588,10 +590,12 @@ switch "check_env" {
 
 ### Attributes
 
-- **`condition`** (zero or more): Conditional arms evaluated in order. First match wins.
-  - **`match`**: Boolean expression. See [Expressions](#expressions).
-  - **`next`**: Target node in traversal form (`step.name`, `state.name`, `wait.name`, `approval.name`, `switch.name`) or `"return"` to bubble out of a sub-workflow.
-  - **`output`** (optional): Object expression whose key/value pairs are stored under `steps.<switch_name>.*` before the target is entered.
+- **`match`** (zero or more): Conditional arms evaluated in order. First match wins.
+  - **`condition`**: Boolean HCL expression. See [Expressions](#expressions).
+  - **`next`**: Target node in traversal form (`step.name`, `state.name`, `wait.name`,
+    `approval.name`, `switch.name`) or bare keyword `return`.
+  - **`output`** (optional): Object expression whose key/value pairs are stored under
+    `steps.<switch_name>.*` before the target is entered.
 - **`default`** (recommended): Fallback when no condition matches. Omitting `default` is a compile warning unless one condition is provably always true; at runtime, a switch with no matching condition and no default block fails the run.
   - **`next`**: Same form as condition `next`.
   - **`output`** (optional): Same as condition `output`.
@@ -842,7 +846,7 @@ within the iterating step and any nested body steps.
 | `each._total` | number | Total number of items. |
 | `each._first` | bool | `true` on the first iteration. |
 | `each._last` | bool | `true` on the last iteration. |
-| `each._prev` | object or null | Output object of the immediately preceding iteration. `null` on the first iteration. For adapter steps, contains the adapter response outputs; for `type="workflow"` steps, contains the evaluated `output {}` block values. Persisted across crash-resume. |
+| `each._prev` | object or null | Output object of the immediately preceding iteration. `null` on the first iteration. For adapter steps, contains the adapter response outputs; for subworkflow-targeted steps, contains the subworkflow return outputs. Persisted across crash-resume. |
 
 > **`each._prev` under failure**: under `on_failure = "continue"`, `each._prev` on iteration N+1
 > contains the output object from iteration N **regardless of whether iteration N succeeded or
@@ -905,73 +909,39 @@ step "deploy" {
 }
 ```
 
-### `type = "workflow"` — inline body
+### Multi-step iteration via subworkflow
 
-A step with `type = "workflow"` embeds a multi-step iteration body declared
-inline. Each iteration runs the body as a sub-workflow; the body terminates
-by transitioning to the synthetic `_continue` state (normal completion) or
-to any other terminal state (early exit, counted as failure).
+For iterations that need multiple steps per item, declare a `subworkflow`
+block with the multi-step body and target it from an iterating step.
+Each iteration runs the subworkflow to completion; its terminal state
+determines success or failure for that item.
 
-<!-- validator: skip: illustrative excerpt; adapter and state blocks omitted -->
+<!-- validator: skip: subworkflow source path is illustrative; not present in this repo -->
 ```hcl
+subworkflow "process_one" {
+  source = "./subworkflows/process_one"
+}
+
 step "process_items" {
-  type     = "workflow"
+  target   = subworkflow.process_one
   for_each = var.items
-
-  workflow {
-    step "run" {
-      target = adapter.shell.default
-      input   { command = "process ${each.value}" }
-      outcome "success" { next = step.review }
-      outcome "failure" { next = continue }
-    }
-
-    step "review" {
-      target = adapter.copilot.assistant
-      input  { prompt = "Review result for ${each.value}" }
-      outcome "approved" { next = continue }
-      outcome "rejected" { next = continue }
-    }
+  input = {
+    item = each.value
   }
-
-  output "last_review" { value = steps.review.stdout }
-
   outcome "all_succeeded" { next = state.done }
   outcome "any_failed"    { next = step.handle_errors }
 }
 ```
 
-**Rules for workflow bodies:**
-- The body must have at least one step with a path to `_continue`; a body
-  with no path to `_continue` is rejected at compile time.
-- Body steps inherit `each.*`, `var.*`, and `steps.*` from the enclosing
-  scope. Changes to `steps.*` written inside the body are visible to steps
-  that run after the outer iterating step completes.
+**Rules for subworkflow iteration:**
+- The subworkflow must reach a terminal state; non-terminal completion is a runtime error.
+- Subworkflow steps inherit `var.*` from the parent scope for keys passed via the parent step's `input = { ... }` map.
+- `variable { }` blocks can be declared inside the subworkflow; required variables must be bound via the parent step's `input = { ... }` map.
 - Nesting is supported up to a depth of 4 levels.
-- `variable { }` blocks **cannot** be re-declared inside a workflow body; the
-  compiler rejects them. Body steps use the outer workflow's variables via
-  `var.*`.
 
-### `output {}` blocks
+### Per-iteration outputs
 
-An `output {}` block on a `type = "workflow"` step evaluates an expression
-after the body completes and stores the result as indexed step output under
-`steps.<name>[idx].<key>`. The most recent iteration's outputs are also
-stored as `steps.<name>.<key>` (overwriting each iteration).
-
-```hcl
-output "summary" { value = steps.run.stdout }
-output "score"   { value = steps.evaluate.result }
-```
-
-For non-workflow adapter steps, adapter response outputs are automatically
-accumulated per iteration (no `output {}` block needed); `each._prev`
-carries the previous iteration's adapter outputs.
-
-#### Indexed access patterns
-
-After an iterating step completes, downstream steps resolve per-iteration
-outputs through indexed expressions:
+After an iterating subworkflow step completes, downstream steps can access per-iteration outputs through indexed expressions:
 
 - **List / `count`** sources use **numeric** indexes:
   ```
@@ -985,7 +955,7 @@ outputs through indexed expressions:
   steps.deploy["b"].summary
   ```
 
-- **Non-iterating** steps use the flat form (today's behavior):
+- **Non-iterating** steps use the flat form:
   ```
   steps.deploy.summary
   ```
@@ -994,16 +964,14 @@ outputs through indexed expressions:
 
 ### The `_continue` target
 
-`_continue` is a reserved terminal state name for iteration bodies. It
-signals the engine to advance the cursor to the next item. It cannot be used
-as a transition target in non-iterating steps (compile error).
+`_continue` is a reserved terminal state name for per-iteration outcomes that signal the engine to advance the cursor to the next item. It is available in iterating steps (both adapter-targeted and subworkflow-targeted) but cannot be used as a transition target in non-iterating steps (compile error). The preferred bare keyword form is `continue`.
 
 ### Crash-resume
 
 The engine persists the iteration cursor — including the current index,
 failure status, map keys, and `each._prev` — as part of the run variable
 scope. On resume, the `for_each`/`count` expression is re-evaluated from the
-saved scope (Items are not persisted to keep the checkpoint compact). The
+saved scope (items are not persisted to keep the checkpoint compact). The
 `each.*` bindings including `_prev` are fully restored.
 
 ### Migration from W08 top-level `for_each` blocks
@@ -1023,7 +991,7 @@ W08 top-level `for_each` iteration blocks (with `items = …` and `do = "…"`) 
 #   outcome "success" { next = continue }
 # }
 
-# v0.3.0 equivalent:
+# v0.3.0 equivalent (single-step iteration):
 step "deploy" {
   target   = adapter.noop.default
   for_each = ["a", "b"]
@@ -1031,23 +999,19 @@ step "deploy" {
 }
 ```
 
-For multi-step bodies, inline the body steps inside a `workflow { }` block:
+For multi-step bodies, declare a `subworkflow` block and target it from the iterating step:
 
 ```hcl
+subworkflow "deploy" {
+  source = "./subworkflows/deploy"
+}
+
 step "deploy" {
-  type     = "workflow"
+  target   = subworkflow.deploy
   for_each = ["a", "b"]
-  workflow {
-    step "run_one" {
-      target = adapter.noop.default
-      outcome "success" { next = continue }
-    }
-  }
   outcome "all_succeeded" { next = state.done }
 }
 ```
-
-See `examples/for_each_review_loop.hcl` for a complete runnable example.
 
 ---
 
@@ -1373,13 +1337,17 @@ Criteria enforces a deny-by-default permission model for tool invocations (adapt
 
 ### Workflow-level permissions
 
-<!-- validator: skip: incomplete workflow block, missing version/initial_state/target_state -->
+<!-- validator: skip: workflow-level permissions example references states not defined in excerpt -->
 ```hcl
-workflow "secure_build" {
-  permissions {
-    allow_tools = ["shell:git*", "shell:make*"]
-  }
-  # ...
+workflow {
+  name          = "secure_build"
+  version       = "1"
+  initial_state = "build"
+  target_state  = "done"
+}
+
+permissions {
+  allow_tools = ["shell:git*", "shell:make*"]
 }
 ```
 
@@ -1441,6 +1409,11 @@ Prints:
 - States, wait nodes, approval nodes, switch nodes, for-each loops.
 - Plugins required.
 
+**Flags**:
+- **`--var-file <path>`** (repeatable): Load variable overrides from a `.chcl`, `.hcl`, or `.json`
+  file. Multiple `--var-file` flags are merged left-to-right; later files overwrite earlier
+  entries. `--var` individual overrides always take precedence over `--var-file` entries.
+
 ### `criteria apply`
 
 Executes the workflow.
@@ -1466,6 +1439,9 @@ Connects to the server, persists run state, supports resumption and approvals.
 - **`--events-file <path>`**: Write events to file instead of stdout (local mode).
 - **`--name <name>`: Criteria instance identifier (defaults to hostname).
 - **`--server-tls <mode>`: TLS mode (`disable`, `tls`, `mtls`).
+- **`--var-file <path>`** (repeatable): Load variable overrides from a `.chcl`, `.hcl`, or `.json`
+  file. Multiple `--var-file` flags are merged left-to-right; later files overwrite earlier
+  entries. `--var` individual overrides always take precedence over `--var-file` entries.
 
 ### ND-JSON event stream
 
@@ -1507,7 +1483,7 @@ The `make validate-docs` CI gate extracts every fenced HCL code block from `docs
 
 Place these HTML comment directives on the line immediately before the opening ` ```hcl ` fence (no blank line between the directive and the fence):
 
-- **`<!-- validator: fragment -->`** — the block is a partial workflow (a step, state, adapter, or other node declaration without a surrounding `workflow { }` block). The validator wraps it in a synthetic `workflow "doc_example" { ... }` shell and adds state stubs for any transition targets not defined in the fragment.
+- **`<!-- validator: fragment -->`** — the block is a partial workflow (a step, state, adapter, or other node declaration without a surrounding `workflow { }` block). The validator wraps it in a synthetic `workflow { name = "doc_example" }` shell and adds state stubs for any transition targets not defined in the fragment.
 
 - **`<!-- validator: skip: <reason> -->`** — skip this block entirely. Use sparingly. Always document why each skip exists. Valid reasons: the block is an incomplete `workflow { }` excerpt that references undeclared nodes; the block is a bare attribute or sub-block not valid at workflow level; the block shows a future language feature not yet implemented.
 
@@ -1576,19 +1552,19 @@ block. The engine manages locking — step code never sees a partial write.
 
 ```hcl
 data "internal" "counter" {
-  type  = "number"
+  type  = number
   value = 0
 }
 
 data "internal" "status_msg" {
-  type  = "string"
+  type  = string
   value = "pending"
 }
 ```
 
-`type` accepts the same type surface as `variable` declarations: `"string"`,
-`"number"`, `"bool"`, `"list(string)"`, `"list(number)"`, `"list(bool)"`, and
-`"map(string)"`.
+`type` accepts the same type surface as `variable` declarations: `string`,
+`number`, `bool`, `list(string)`, `list(number)`, `list(bool)`, and
+`map(string)`.
 
 `value` sets the initial value; it must be a literal (no expression references).
 If `value` is omitted the variable starts as a **typed `null`** for its declared
@@ -1696,46 +1672,45 @@ The `subworkflow "<name>"` block declares a reusable workflow fragment to be res
 
 ### Declaring a subworkflow
 
-<!-- validator: skip: subworkflow source path and environment reference are illustrative; environment declaration omitted for brevity -->
+<!-- validator: skip: subworkflow source path ./subworkflows/smoke is illustrative; not present in this repo -->
 ```hcl
-workflow "deploy_pipeline" {
+workflow {
+  name          = "deploy_pipeline"
   version       = "1"
   initial_state = "lint"
   target_state  = "done"
+}
 
-  # Declare an adapter the parent uses.
-  adapter "shell" "default" {
-    config { }
-  }
+variable "env" {
+  type    = string
+  default = "staging"
+}
 
-  # Declare the sub-workflow to deep-compile.
-  subworkflow "smoke_test" {
-    source      = "./subworkflows/smoke"   # local directory containing one or more .hcl files
-    environment = shell.ci                # optional: bind callee to a declared environment
-    input = {
-      target_env = var.env               # bind parent-scope expressions to callee variables
-      retries    = 3
-    }
-  }
+adapter "shell" "default" {
+  config { }
+}
 
-  variable "env" {
-    type    = "string"
-    default = "staging"
+subworkflow "smoke_test" {
+  source      = "./subworkflows/smoke"
+  environment = shell.ci
+  input = {
+    target_env = var.env
+    retries    = 3
   }
+}
 
-  step "lint" {
-    target = adapter.shell.default
-    input {
-      command = "run-lint"
-    }
-    outcome "success" { next = state.done }
-    outcome "failure" { next = state.done }
+step "lint" {
+  target = adapter.shell.default
+  input {
+    command = "run-lint"
   }
+  outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
+}
 
-  state "done" {
-    terminal = true
-    success  = true
-  }
+state "done" {
+  terminal = true
+  success  = true
 }
 ```
 
@@ -1746,10 +1721,10 @@ Each `source` path must point to a **directory** (not a file) containing at leas
 ```
 ./subworkflows/smoke/
   main.hcl        # workflow block, states, steps, outputs
-  variables.hcl   # optional: additional declarations in their own workflow {} block
+  variables.hcl   # optional: additional declarations (no workflow header)
 ```
 
-Multiple `.hcl` files in the directory are merged at compile time. Each file must be a complete, standalone HCL document with its own `workflow "<name>" { ... }` wrapper (the same format as any other workflow file). Declaration lists (states, steps, variables, outputs) from all files are combined; the `version`, `initial_state`, and `target_state` are taken from the first file read (alphabetical order). Duplicate name declarations across files produce a compile error.
+Multiple `.hcl` files in the directory are merged at compile time. Only one file (typically `main.hcl`) carries the `workflow { name = "..." }` header block; all other files contain declaration blocks only. Declaration lists (states, steps, variables, outputs) from all files are combined; the `version`, `initial_state`, and `target_state` are taken from the file that carries the workflow header. Duplicate name declarations across files produce a compile error.
 
 ### Input binding
 
@@ -1800,9 +1775,11 @@ Only local filesystem paths (`./relative/path` or `/absolute/path`) are supporte
 
 ---
 
-### Variable overrides at runtime (future enhancement)
+### Variable overrides at runtime
 
-Currently, variable defaults are the only source. Per-run overrides (e.g., `criteria apply --var env=prod`) are planned post-1.5.
+> **`--var-file <path>`** is available now (see [CLI reference](#standalone-cli)). Load overrides from a file for multi-variable configurations.
+>
+> **`--var key=value`** individual flag overrides are still planned for a future release.
 
 ### Repository layout
 
