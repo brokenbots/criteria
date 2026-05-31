@@ -15,6 +15,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sync"
 	"testing"
 	"time"
@@ -255,14 +256,18 @@ mtls {
 }
 
 func TestValidateClientIdentity(t *testing.T) {
-	if err := ValidateClientIdentity("CN=criteria-adapter-noop", "CN=criteria-adapter-.*"); err != nil {
+	re, err := regexp.Compile("CN=criteria-adapter-.*")
+	if err != nil {
+		t.Fatalf("compile regex: %v", err)
+	}
+	if err := ValidateClientIdentity("CN=criteria-adapter-noop", re); err != nil {
 		t.Errorf("expected match, got: %v", err)
 	}
-	if err := ValidateClientIdentity("CN=other", "CN=criteria-adapter-.*"); err == nil {
+	if err := ValidateClientIdentity("CN=other", re); err == nil {
 		t.Error("expected mismatch error")
 	}
-	if err := ValidateClientIdentity("CN=anything", ""); err != nil {
-		t.Errorf("empty pattern should always match: %v", err)
+	if err := ValidateClientIdentity("CN=anything", nil); err != nil {
+		t.Errorf("nil regexp should always match: %v", err)
 	}
 }
 
@@ -901,5 +906,146 @@ state "done" { terminal = true }
 	}
 	if cfg.ListenAddress != "127.0.0.1:0" {
 		t.Errorf("listen_address = %q", cfg.ListenAddress)
+	}
+}
+
+// TestCompileAdvisoryBlocks verifies that network, filesystem, and resources
+// blocks are tolerated in a remote environment definition.
+func TestCompileAdvisoryBlocks(t *testing.T) {
+	src := `
+workflow {
+  name = "advisory-blocks-test"
+  version = "0.1"
+  initial_state = "start"
+  target_state = "done"
+}
+environment "remote" "prod" {
+  listen_address = "127.0.0.1:0"
+  network {
+    allow = ["*"]
+  }
+  filesystem {
+    read  = ["/tmp"]
+    write = ["/tmp"]
+  }
+  resources {
+    timeout = "10m"
+  }
+}
+adapter "noop" "default" {
+  environment = remote.prod
+}
+step "start" {
+  target = adapter.noop.default
+  outcome "success" { next = "done" }
+}
+state "done" { terminal = true }
+`
+	file, diags := workflow.Parse("test.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	graph, diags := workflow.Compile(file, nil)
+	if diags.HasErrors() {
+		t.Fatalf("compile: %s", diags.Error())
+	}
+	env := graph.Environments["remote.prod"]
+	if env == nil {
+		t.Fatal("remote.prod environment not found")
+	}
+	cfg, err := ParseConfig(env.RawBody)
+	if err != nil {
+		t.Fatalf("ParseConfig: %v", err)
+	}
+	if cfg.ListenAddress != "127.0.0.1:0" {
+		t.Errorf("listen_address = %q", cfg.ListenAddress)
+	}
+}
+
+// TestShim_ConcurrentAccept verifies that two adapters of the same type
+// dialing in rapid succession are handled correctly: the second session
+// replaces the first, waiters receive the new handle, and the old handle is
+// terminated. This directly exercises the TOCTOU fix in buildAndStoreHandle.
+func TestShim_ConcurrentAccept(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	verifier := &fixedDigestVerifier{allowed: map[string]string{"noop": "sha256:abcd1234"}}
+	shim, err := NewShim(
+		&Config{ListenAddress: "127.0.0.1:0"},
+		verifier,
+	)
+	if err != nil {
+		t.Fatalf("NewShim: %v", err)
+	}
+	if err := shim.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer func() { _ = shim.Stop(ctx) }()
+
+	addr := shim.listener.Addr().String()
+
+	// First connection.
+	go func() {
+		_ = dialFakeAdapter(addr, handshakeMessage{
+			Name:    "noop",
+			Version: "1.0.0",
+			Digest:  "sha256:abcd1234",
+		}, nil)
+	}()
+
+	h1, err := shim.WaitForHandle(ctx, "noop")
+	if err != nil {
+		t.Fatalf("first WaitForHandle: %v", err)
+	}
+
+	// Immediately dial a second adapter of the same type before the first
+	// cleanup goroutine finishes. This is the TOCTOU window.
+	secondReady := make(chan struct{})
+	go func() {
+		defer close(secondReady)
+		if err := dialFakeAdapter(addr, handshakeMessage{
+			Name:    "noop",
+			Version: "2.0.0",
+			Digest:  "sha256:abcd1234",
+		}, nil); err != nil {
+			t.Errorf("second dialFakeAdapter: %v", err)
+		}
+	}()
+
+	select {
+	case <-secondReady:
+	case <-ctx.Done():
+		t.Fatal("timeout waiting for second connection")
+	}
+
+	// Poll until the old handle is killed by buildAndStoreHandle, proving
+	// the replacement completed under the lock without a TOCTOU window.
+	killed := false
+	for i := 0; i < 50; i++ {
+		_, err = h1.Info(ctx)
+		if err != nil {
+			killed = true
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !killed {
+		t.Fatal("expected first handle to be killed after replacement, but Info kept succeeding")
+	}
+
+	// The map should now hold the newly replaced handle.
+	h2, err := shim.WaitForHandle(ctx, "noop")
+	if err != nil {
+		t.Fatalf("second WaitForHandle: %v", err)
+	}
+	defer h2.Kill()
+
+	info, err := h2.Info(ctx)
+	if err != nil {
+		t.Fatalf("Info after concurrent accept: %v", err)
+	}
+	if info.Version != "2.0.0" {
+		t.Errorf("version after concurrent accept = %q, want 2.0.0", info.Version)
 	}
 }

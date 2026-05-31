@@ -196,11 +196,12 @@ func attrRangePtr(attrs hcl.Attributes, name string) *hcl.Range {
 }
 
 // HandlerAllowedBlocks returns the block types that a given environment type
-// is permitted to contain. Only remote currently allows mtls blocks.
+// is permitted to contain. Remote tolerates mtls, network, filesystem, and
+// resources blocks; only mtls is actively parsed at this time.
 func HandlerAllowedBlocks(envType string) []string {
 	switch envType {
 	case "remote":
-		return []string{"mtls"}
+		return []string{"mtls", "network", "filesystem", "resources"}
 	default:
 		return nil
 	}

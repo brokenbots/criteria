@@ -5,6 +5,7 @@ package remote
 import (
 	"bufio"
 	"context"
+	"crypto/subtle"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
@@ -15,6 +16,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sync"
 	"time"
 
@@ -44,6 +46,7 @@ type Shim struct {
 	tlsConfig             *tls.Config
 	acceptToken           string
 	clientIdentityPattern string
+	clientIdentityRe      *regexp.Regexp
 	digestVerifier        DigestVerifier
 
 	mu       sync.Mutex
@@ -71,11 +74,19 @@ func NewShim(cfg *Config, verifier DigestVerifier) (*Shim, error) {
 	if err != nil {
 		return nil, fmt.Errorf("remote shim: build tls config: %w", err)
 	}
+	var re *regexp.Regexp
+	if cfg.ClientIdentityPattern != "" {
+		re, err = regexp.Compile(cfg.ClientIdentityPattern)
+		if err != nil {
+			return nil, fmt.Errorf("remote shim: invalid client_identity_pattern: %w", err)
+		}
+	}
 	return &Shim{
 		listenAddr:            cfg.ListenAddress,
 		tlsConfig:             tlsConf,
 		acceptToken:           cfg.AcceptToken,
 		clientIdentityPattern: cfg.ClientIdentityPattern,
+		clientIdentityRe:      re,
 		digestVerifier:        verifier,
 		sessions:              make(map[string]*session),
 		waiters:               make(map[string][]chan waitResult),
@@ -212,7 +223,7 @@ func (s *Shim) performHandshake(ctx context.Context, conn net.Conn) (string, err
 			certSubject = state.PeerCertificates[0].Subject.String()
 		}
 	}
-	if err := ValidateClientIdentity(certSubject, s.clientIdentityPattern); err != nil {
+	if err := ValidateClientIdentity(certSubject, s.clientIdentityRe); err != nil {
 		_ = conn.Close()
 		return "", err
 	}
@@ -252,7 +263,7 @@ func (s *Shim) verifyAdapterIdentity(conn net.Conn, hs handshakeMessage) error {
 		}
 	}
 	if s.acceptToken != "" {
-		if hs.Token != s.acceptToken {
+		if subtle.ConstantTimeCompare([]byte(hs.Token), []byte(s.acceptToken)) != 1 {
 			_ = conn.Close()
 			return fmt.Errorf("accept_token verification failed")
 		}

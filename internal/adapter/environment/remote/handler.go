@@ -37,9 +37,9 @@ func (h *RemoteHandler) Type() string { return "remote" }
 func (h *RemoteHandler) SupportedOSes() []string { return nil }
 
 // ValidateFields checks accepted attributes at compile time.
-// Blocks (mtls, network, filesystem, resources) are handled separately by
-// ParseConfig at runtime and tolerated here. mtls may also appear as a
-// boolean attribute (mtls = true).
+// Blocks (mtls, network, filesystem, resources) are tolerated here because
+// they are handled separately by ParseConfig at runtime. mtls may also appear
+// as a boolean attribute (mtls = true).
 func (h *RemoteHandler) ValidateFields(body hcl.Body) hcl.Diagnostics {
 	attrs, diags := workflow.BodyJustAttributesToleratingBlocks(body, workflow.HandlerAllowedBlocks(h.Type()))
 	for name := range attrs {
@@ -182,17 +182,13 @@ func parseMTLSBlock(cfg *Config, rawBody hcl.Body) error {
 }
 
 // ValidateClientIdentity checks whether the extracted certificate subject
-// matches the configured regex pattern.
-func ValidateClientIdentity(subject, pattern string) error {
-	if pattern == "" {
+// matches the compiled regex. A nil regexp always matches.
+func ValidateClientIdentity(subject string, re *regexp.Regexp) error {
+	if re == nil {
 		return nil
 	}
-	re, err := regexp.Compile(pattern)
-	if err != nil {
-		return fmt.Errorf("invalid client_identity_pattern: %w", err)
-	}
 	if !re.MatchString(subject) {
-		return fmt.Errorf("certificate subject %q does not match pattern %q", subject, pattern)
+		return fmt.Errorf("certificate subject %q does not match pattern", subject)
 	}
 	return nil
 }
