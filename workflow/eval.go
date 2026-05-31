@@ -75,6 +75,13 @@ func BuildEvalContextWithOpts(vars map[string]cty.Value, opts FunctionOptions) *
 		ctxVars["data"] = data
 	}
 
+	// Expose path variables for workflow-relative path construction (WS05).
+	ctxVars["path"] = cty.ObjectVal(map[string]cty.Value{
+		"workflow": cty.StringVal(opts.WorkflowDir),
+		"root":     cty.StringVal(opts.RootDir),
+		"cwd":      cty.StringVal(opts.Cwd),
+	})
+
 	return &hcl.EvalContext{
 		Variables: ctxVars,
 		Functions: workflowFunctions(opts),

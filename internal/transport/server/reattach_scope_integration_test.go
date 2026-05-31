@@ -38,17 +38,26 @@ func (s *scopeServer) ReattachRun(_ context.Context, req *connect.Request[pb.Rea
 	}), nil
 }
 
-// resumeWorkflow has a single "deploy" step whose command is interpolated from
-// a prior step output: ${steps.build.stdout}.
+// resumeWorkflow has "build" as the initial step and "deploy" as a dependent
+// step. In the reattach test "build" is treated as already completed; the
+// engine resumes from "deploy" via RunFrom so that ${steps.build.stdout}
+// is resolved from the restored variable scope rather than from a fresh
+// execution of "build".
 const resumeWorkflow = `
 workflow {
   name = "resume"
   version       = "0.1"
-  initial_state = "deploy"
+  initial_state = "build"
   target_state  = "__done__"
 }
 
 adapter "shell" "default" {}
+
+step "build" {
+  target = adapter.shell.default
+  input { command = "echo build" }
+  outcome "success" { next = step.deploy }
+}
 
 step "deploy" {
   target = adapter.shell.default
@@ -145,8 +154,10 @@ func TestReattachRun_RestoresVarScope(t *testing.T) {
 	}}
 	sink := &integrationSink{}
 	eng := engine.New(graph, loader, sink, engine.WithResumedVars(restoredVars))
-	if runErr := eng.Run(ctx); runErr != nil {
-		t.Fatalf("engine.Run: %v", runErr)
+	// Resume from "deploy" so that "build" (already completed on the server)
+	// is not re-executed; its output is supplied solely by WithResumedVars.
+	if runErr := eng.RunFrom(ctx, "deploy", 1); runErr != nil {
+		t.Fatalf("engine.RunFrom: %v", runErr)
 	}
 
 	// Assert that the resolved command interpolated steps.build.stdout correctly.

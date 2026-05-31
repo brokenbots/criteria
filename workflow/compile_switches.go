@@ -375,7 +375,7 @@ func validateSwitchStepFieldRef(seg hcl.Traverser, stepName string, g *FSMGraph,
 	}
 	r := fieldAttr.SrcRange
 	return hcl.Diagnostics{&hcl.Diagnostic{
-		Severity: hcl.DiagWarning,
+		Severity: hcl.DiagError,
 		Summary:  fmt.Sprintf("switch %q match[%d]: field %q is not declared in the output schema of step %q", switchName, condIdx, fieldAttr.Name, stepName),
 		Subject:  &r,
 	}}

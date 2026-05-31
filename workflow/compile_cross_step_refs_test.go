@@ -154,10 +154,22 @@ func countWarnings(diags hcl.Diagnostics, substr string) int {
 	return n
 }
 
+// countErrors returns the number of DiagError diagnostics whose Summary
+// contains substr.
+func countErrors(diags hcl.Diagnostics, substr string) int {
+	n := 0
+	for _, d := range diags {
+		if d.Severity == hcl.DiagError && strings.Contains(d.Summary, substr) {
+			n++
+		}
+	}
+	return n
+}
+
 // TestWarnCrossStepField_SwitchKnownField verifies that a switch condition
 // referencing a field that IS declared in the step's OutputSchema produces
 // no diagnostic and still returns a valid graph.
-func TestWarnCrossStepField_SwitchKnownField(t *testing.T) {
+func TestCheckCrossStepField_SwitchKnownField(t *testing.T) {
 	g, diags := compileWithSchemas(t, crossStepSwitchSrc("stdout"), outputSchemaFor("stdout"))
 	if diags.HasErrors() {
 		t.Fatalf("unexpected compile error: %s", diags.Error())
@@ -170,25 +182,25 @@ func TestWarnCrossStepField_SwitchKnownField(t *testing.T) {
 	}
 }
 
-// TestWarnCrossStepField_SwitchUnknownField verifies that a switch condition
+// TestCheckCrossStepField_SwitchUnknownField verifies that a switch condition
 // referencing a misspelled field (stddout) not in the OutputSchema produces
-// exactly one DiagWarning containing the field name and still returns a valid graph.
-func TestWarnCrossStepField_SwitchUnknownField(t *testing.T) {
+// exactly one DiagError and returns a nil graph.
+func TestCheckCrossStepField_SwitchUnknownField(t *testing.T) {
 	g, diags := compileWithSchemas(t, crossStepSwitchSrc("stddout"), outputSchemaFor("stdout"))
-	if diags.HasErrors() {
-		t.Fatalf("unexpected compile error: %s", diags.Error())
+	if !diags.HasErrors() {
+		t.Fatalf("expected compile error, got none; diags: %v", diags)
 	}
-	if g == nil {
-		t.Fatal("warning-only compile must return a non-nil FSMGraph")
+	if g != nil {
+		t.Fatal("error compile must return a nil FSMGraph")
 	}
-	if n := countWarnings(diags, "stddout"); n != 1 {
-		t.Errorf("expected exactly 1 warning mentioning %q, got %d; diags: %v", "stddout", n, diags)
+	if n := countErrors(diags, "stddout"); n != 1 {
+		t.Errorf("expected exactly 1 error mentioning %q, got %d; diags: %v", "stddout", n, diags)
 	}
 }
 
 // TestWarnCrossStepField_StepInputKnownField verifies that a step input
 // expression referencing a known field produces no diagnostic and returns a valid graph.
-func TestWarnCrossStepField_StepInputKnownField(t *testing.T) {
+func TestCheckCrossStepField_StepInputKnownField(t *testing.T) {
 	g, diags := compileWithSchemas(t, crossStepInputSrc("stdout"), outputSchemaFor("stdout"))
 	if diags.HasErrors() {
 		t.Fatalf("unexpected compile error: %s", diags.Error())
@@ -201,26 +213,26 @@ func TestWarnCrossStepField_StepInputKnownField(t *testing.T) {
 	}
 }
 
-// TestWarnCrossStepField_StepInputUnknownField verifies that a step input
+// TestCheckCrossStepField_StepInputUnknownField verifies that a step input
 // expression referencing a misspelled field (stddout) produces exactly one
-// DiagWarning and still returns a valid graph.
-func TestWarnCrossStepField_StepInputUnknownField(t *testing.T) {
+// DiagError and returns a nil graph.
+func TestCheckCrossStepField_StepInputUnknownField(t *testing.T) {
 	g, diags := compileWithSchemas(t, crossStepInputSrc("stddout"), outputSchemaFor("stdout"))
-	if diags.HasErrors() {
-		t.Fatalf("unexpected compile error: %s", diags.Error())
+	if !diags.HasErrors() {
+		t.Fatalf("expected compile error, got none; diags: %v", diags)
 	}
-	if g == nil {
-		t.Fatal("warning-only compile must return a non-nil FSMGraph")
+	if g != nil {
+		t.Fatal("error compile must return a nil FSMGraph")
 	}
-	if n := countWarnings(diags, "stddout"); n != 1 {
-		t.Errorf("expected exactly 1 warning mentioning %q, got %d; diags: %v", "stddout", n, diags)
+	if n := countErrors(diags, "stddout"); n != 1 {
+		t.Errorf("expected exactly 1 error mentioning %q, got %d; diags: %v", "stddout", n, diags)
 	}
 }
 
 // TestWarnCrossStepField_NoSchema verifies that when schemas is nil (permissive
 // mode), no diagnostic is produced regardless of the field name, and the graph
 // is non-nil.
-func TestWarnCrossStepField_NoSchema(t *testing.T) {
+func TestCheckCrossStepField_NoSchema(t *testing.T) {
 	g, diags := compileWithSchemas(t, crossStepSwitchSrc("nonexistent"), nil)
 	if diags.HasErrors() {
 		t.Fatalf("unexpected compile error: %s", diags.Error())
@@ -236,7 +248,7 @@ func TestWarnCrossStepField_NoSchema(t *testing.T) {
 // TestWarnCrossStepField_OutcomeOutputCrossStep verifies that an outcome output
 // projection referencing a known cross-step field produces no diagnostic and
 // returns a valid graph.
-func TestWarnCrossStepField_OutcomeOutputCrossStep(t *testing.T) {
+func TestCheckCrossStepField_OutcomeOutputCrossStep(t *testing.T) {
 	g, diags := compileWithSchemas(t, crossStepOutcomeSrc("stdout"), outputSchemaFor("stdout"))
 	if diags.HasErrors() {
 		t.Fatalf("unexpected compile error: %s", diags.Error())
@@ -249,26 +261,26 @@ func TestWarnCrossStepField_OutcomeOutputCrossStep(t *testing.T) {
 	}
 }
 
-// TestWarnCrossStepField_OutcomeOutputCrossStepUnknown verifies that an outcome
+// TestCheckCrossStepField_OutcomeOutputCrossStepUnknown verifies that an outcome
 // output projection referencing an undeclared field ("ghost") produces exactly
-// one DiagWarning and still returns a valid graph.
-func TestWarnCrossStepField_OutcomeOutputCrossStepUnknown(t *testing.T) {
+// one DiagError and returns a nil graph.
+func TestCheckCrossStepField_OutcomeOutputCrossStepUnknown(t *testing.T) {
 	g, diags := compileWithSchemas(t, crossStepOutcomeSrc("ghost"), outputSchemaFor("stdout"))
-	if diags.HasErrors() {
-		t.Fatalf("unexpected compile error: %s", diags.Error())
+	if !diags.HasErrors() {
+		t.Fatalf("expected compile error, got none; diags: %v", diags)
 	}
-	if g == nil {
-		t.Fatal("warning-only compile must return a non-nil FSMGraph")
+	if g != nil {
+		t.Fatal("error compile must return a nil FSMGraph")
 	}
-	if n := countWarnings(diags, "ghost"); n != 1 {
-		t.Errorf("expected exactly 1 warning mentioning %q, got %d; diags: %v", "ghost", n, diags)
+	if n := countErrors(diags, "ghost"); n != 1 {
+		t.Errorf("expected exactly 1 error mentioning %q, got %d; diags: %v", "ghost", n, diags)
 	}
 }
 
 // TestWarnCrossStepField_SwitchCondOutputKnownField verifies that a switch
 // condition arm output projection referencing a known field produces no
 // diagnostic and returns a valid graph.
-func TestWarnCrossStepField_SwitchCondOutputKnownField(t *testing.T) {
+func TestCheckCrossStepField_SwitchCondOutputKnownField(t *testing.T) {
 	g, diags := compileWithSchemas(t, crossStepSwitchCondOutputSrc("stdout"), outputSchemaFor("stdout"))
 	if diags.HasErrors() {
 		t.Fatalf("unexpected compile error: %s", diags.Error())
@@ -281,26 +293,25 @@ func TestWarnCrossStepField_SwitchCondOutputKnownField(t *testing.T) {
 	}
 }
 
-// TestWarnCrossStepField_SwitchCondOutputUnknownField verifies that a switch
+// TestCheckCrossStepField_SwitchCondOutputUnknownField verifies that a switch
 // condition arm output projection referencing an undeclared field produces
-// exactly one DiagWarning and still returns a valid graph.
-func TestWarnCrossStepField_SwitchCondOutputUnknownField(t *testing.T) {
+// exactly one DiagError and returns a nil graph.
+func TestCheckCrossStepField_SwitchCondOutputUnknownField(t *testing.T) {
 	g, diags := compileWithSchemas(t, crossStepSwitchCondOutputSrc("typo"), outputSchemaFor("stdout"))
-	if diags.HasErrors() {
-		t.Fatalf("unexpected compile error: %s", diags.Error())
+	if !diags.HasErrors() {
+		t.Fatalf("expected compile error, got none; diags: %v", diags)
 	}
-	if g == nil {
-		t.Fatal("warning-only compile must return a non-nil FSMGraph")
+	if g != nil {
+		t.Fatal("error compile must return a nil FSMGraph")
 	}
-	if n := countWarnings(diags, "typo"); n != 1 {
-		t.Errorf("expected exactly 1 warning mentioning %q, got %d; diags: %v", "typo", n, diags)
+	if n := countErrors(diags, "typo"); n != 1 {
+		t.Errorf("expected exactly 1 error mentioning %q, got %d; diags: %v", "typo", n, diags)
 	}
 }
 
-// TestWarnCrossStepField_UnknownStepName verifies that a step input expression
-// referencing an unknown step name produces exactly one DiagWarning and still
-// returns a valid graph.
-func TestWarnCrossStepField_UnknownStepName(t *testing.T) {
+// TestCheckCrossStepField_UnknownStepName verifies that a step input expression
+// referencing an unknown step name produces exactly one DiagError and returns a nil graph.
+func TestCheckCrossStepField_UnknownStepName(t *testing.T) {
 	src := `
 workflow {
   name = "t"
@@ -319,13 +330,13 @@ step "run" {
 state "done" { terminal = true }
 `
 	g, diags := compileWithSchemas(t, src, outputSchemaFor("stdout"))
-	if diags.HasErrors() {
-		t.Fatalf("unexpected compile error: %s", diags.Error())
+	if !diags.HasErrors() {
+		t.Fatalf("expected compile error, got none; diags: %v", diags)
 	}
-	if g == nil {
-		t.Fatal("warning-only compile must return a non-nil FSMGraph")
+	if g != nil {
+		t.Fatal("error compile must return a nil FSMGraph")
 	}
-	if n := countWarnings(diags, "bulid"); n != 1 {
-		t.Errorf("expected exactly 1 warning mentioning %q, got %d; diags: %v", "bulid", n, diags)
+	if n := countErrors(diags, "bulid"); n != 1 {
+		t.Errorf("expected exactly 1 error mentioning %q, got %d; diags: %v", "bulid", n, diags)
 	}
 }

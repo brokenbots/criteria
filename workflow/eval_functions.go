@@ -15,6 +15,7 @@ import (
 	"text/template"
 	"unicode/utf8"
 
+	"github.com/hashicorp/hcl/v2/ext/tryfunc"
 	"github.com/zclconf/go-cty/cty"
 	"github.com/zclconf/go-cty/cty/function"
 	"github.com/zclconf/go-cty/cty/function/stdlib"
@@ -37,6 +38,8 @@ const (
 //     file(), fileexists(), and templatefile() resolve paths relative to
 //     this directory. When empty, these functions always error with
 //     "workflow directory not configured".
+//   - RootDir is the project root directory (criteria invocation cwd).
+//   - Cwd is the process working directory at evaluation time.
 //   - MaxBytes is the read cap for file() and templatefile(). Sourced from
 //     CRITERIA_FILE_FUNC_MAX_BYTES; defaults to 1 MiB.
 //   - AllowedPaths is the list of directories that file(), fileexists(),
@@ -44,6 +47,8 @@ const (
 //     CRITERIA_WORKFLOW_ALLOWED_PATHS (OS path-list separator).
 type FunctionOptions struct {
 	WorkflowDir  string
+	RootDir      string
+	Cwd          string
 	MaxBytes     int64
 	AllowedPaths []string
 }
@@ -64,6 +69,8 @@ func DefaultFunctionOptions(workflowDir string) FunctionOptions {
 			workflowDir = abs
 		}
 	}
+	cwd, _ := os.Getwd()
+	rootDir := cwd
 	maxBytes := defaultMaxBytes
 	if raw := os.Getenv("CRITERIA_FILE_FUNC_MAX_BYTES"); raw != "" {
 		if v, err := strconv.ParseInt(raw, 10, 64); err == nil {
@@ -93,6 +100,8 @@ func DefaultFunctionOptions(workflowDir string) FunctionOptions {
 
 	return FunctionOptions{
 		WorkflowDir:  workflowDir,
+		RootDir:      rootDir,
+		Cwd:          cwd,
 		MaxBytes:     maxBytes,
 		AllowedPaths: allowed,
 	}
@@ -127,6 +136,12 @@ func workflowFunctions(opts FunctionOptions) map[string]function.Function {
 	out["fileset"] = filesetFunction(opts)
 	out["templatefile"] = templatefileFunction(opts)
 	out["trimfrontmatter"] = trimFrontmatterFunction()
+	out["abspath"] = absPathFunction(opts)
+	out["dirname"] = dirNameFunction(opts)
+	out["basename"] = baseNameFunction(opts)
+	out["can"] = tryfunc.CanFunc
+	out["try"] = tryfunc.TryFunc
+	out["hasattr"] = hasAttributeFunction()
 	return out
 }
 
@@ -656,6 +671,87 @@ func resolveConfinedDir(raw, base string, allowed []string) (string, error) {
 		return "", fmt.Errorf("fileset(): %q is not a directory", raw)
 	}
 	return resolved, nil
+}
+
+// absPathFunction implements abspath(path) → string. Resolves a path relative
+// to WorkflowDir and returns an absolute path.
+func absPathFunction(opts FunctionOptions) function.Function {
+	return function.New(&function.Spec{
+		Params: []function.Parameter{{Name: "path", Type: cty.String}},
+		Type:   function.StaticReturnType(cty.String),
+		Impl: func(args []cty.Value, _ cty.Type) (cty.Value, error) {
+			raw := args[0].AsString()
+			if filepath.IsAbs(raw) {
+				return cty.StringVal(filepath.Clean(raw)), nil
+			}
+			base := opts.WorkflowDir
+			if base == "" {
+				base = opts.Cwd
+			}
+			if base == "" {
+				return cty.NilVal, fmt.Errorf("abspath(): workflow directory not configured")
+			}
+			abs := filepath.Clean(filepath.Join(base, raw))
+			return cty.StringVal(abs), nil
+		},
+	})
+}
+
+// dirNameFunction implements dirname(path) → string. Returns the parent directory
+// component of the given path.
+func dirNameFunction(opts FunctionOptions) function.Function {
+	return function.New(&function.Spec{
+		Params: []function.Parameter{{Name: "path", Type: cty.String}},
+		Type:   function.StaticReturnType(cty.String),
+		Impl: func(args []cty.Value, _ cty.Type) (cty.Value, error) {
+			return cty.StringVal(filepath.Dir(args[0].AsString())), nil
+		},
+	})
+}
+
+// baseNameFunction implements basename(path) → string. Returns the last element
+// of the given path.
+func baseNameFunction(opts FunctionOptions) function.Function {
+	return function.New(&function.Spec{
+		Params: []function.Parameter{{Name: "path", Type: cty.String}},
+		Type:   function.StaticReturnType(cty.String),
+		Impl: func(args []cty.Value, _ cty.Type) (cty.Value, error) {
+			return cty.StringVal(filepath.Base(args[0].AsString())), nil
+		},
+	})
+}
+
+// hasAttributeFunction implements hasattr(obj, name) → bool. Returns true if
+// the given object value has an attribute with the given name. For object
+// types the check is static; for dynamic/unknown values the result is unknown.
+func hasAttributeFunction() function.Function {
+	return function.New(&function.Spec{
+		Params: []function.Parameter{
+			{Name: "obj", Type: cty.DynamicPseudoType},
+			{Name: "name", Type: cty.String},
+		},
+		Type: function.StaticReturnType(cty.Bool),
+		Impl: func(args []cty.Value, _ cty.Type) (cty.Value, error) {
+			obj := args[0]
+			name := args[1].AsString()
+
+			if !obj.IsKnown() {
+				return cty.UnknownVal(cty.Bool), nil
+			}
+			if obj.IsNull() {
+				return cty.False, nil
+			}
+
+			ty := obj.Type()
+			if ty == cty.DynamicPseudoType {
+				return cty.UnknownVal(cty.Bool), nil
+			}
+			if ty.IsObjectType() {
+				return cty.BoolVal(ty.HasAttribute(name)), nil
+			}
+			return cty.False, nil
+		},
+	})
 }
 
 // trimFrontmatterFunction implements the trimfrontmatter(content) → string
