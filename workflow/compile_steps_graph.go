@@ -324,10 +324,11 @@ func nodeTargets(name string, g *FSMGraph) []string {
 	return nil
 }
 
-// warnCrossStepFieldRefs walks every compiled expression that may contain
-// steps.<name>.<field> traversals and emits DiagWarning when <field> is absent
-// from the referenced step's declared OutputSchema. Only fires when a schema is
-// available; steps with no OutputSchema are skipped (permissive).
+// checkCrossStepFieldRefs walks every compiled expression that may contain
+// steps.<name>.<field> traversals and emits DiagError when <field> is absent
+// from the referenced step's declared OutputSchema or when the step name is
+// unknown. Only fires when a schema is available; steps with no OutputSchema
+// are skipped (permissive).
 //
 // Expression sites checked:
 //   - StepNode.InputExprs (step input block attribute expressions)
@@ -338,11 +339,11 @@ func nodeTargets(name string, g *FSMGraph) []string {
 // Switch condition match expressions are intentionally excluded: they are
 // already checked inline by validateSwitchExprRefs during compileSwitches,
 // which runs after all steps are registered. Including them here would produce
-// duplicate warnings for the same traversal.
+// duplicate diagnostics for the same traversal.
 //
 // This is a post-compilation pass: all steps must be registered in g.Steps
 // before it runs so forward-references resolve correctly.
-func warnCrossStepFieldRefs(g *FSMGraph, schemas map[string]AdapterInfo) hcl.Diagnostics {
+func checkCrossStepFieldRefs(g *FSMGraph, schemas map[string]AdapterInfo) hcl.Diagnostics {
 	var diags hcl.Diagnostics
 	for _, ne := range collectCrossStepExprs(g) {
 		diags = append(diags, checkStepsFieldTraversals(ne.context, ne.expr, g, schemas)...)
@@ -392,7 +393,7 @@ func collectCrossStepExprs(g *FSMGraph) []namedExpr {
 }
 
 // checkStepsFieldTraversals inspects expr for steps.<name>.<field> traversals
-// and emits warnings for fields absent from the step's OutputSchema.
+// and emits errors for fields absent from the step's OutputSchema.
 func checkStepsFieldTraversals(context string, expr hcl.Expression, g *FSMGraph, schemas map[string]AdapterInfo) hcl.Diagnostics {
 	var diags hcl.Diagnostics
 	for _, traversal := range expr.Variables() {
@@ -414,10 +415,10 @@ func checkStepsFieldTraversals(context string, expr hcl.Expression, g *FSMGraph,
 		if !isStep {
 			// Unknown step name at this site — no other pass validates step
 			// input, outcome output, or switch output expressions at compile
-			// time, so emit a warning here for early feedback.
+			// time, so emit an error here for early feedback.
 			r := nameAttr.SrcRange
 			diags = append(diags, &hcl.Diagnostic{
-				Severity: hcl.DiagWarning,
+				Severity: hcl.DiagError,
 				Summary: fmt.Sprintf(
 					"%s: references unknown step %q",
 					context, nameAttr.Name,
@@ -436,7 +437,7 @@ func checkStepsFieldTraversals(context string, expr hcl.Expression, g *FSMGraph,
 		if _, known := info.OutputSchema[fieldAttr.Name]; !known {
 			r := fieldAttr.SrcRange
 			diags = append(diags, &hcl.Diagnostic{
-				Severity: hcl.DiagWarning,
+				Severity: hcl.DiagError,
 				Summary: fmt.Sprintf(
 					"%s: field %q is not declared in the output schema of step %q (adapter %q)",
 					context, fieldAttr.Name, nameAttr.Name, step.AdapterRef,

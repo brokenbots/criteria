@@ -16,8 +16,8 @@ import (
 
 // tmplOpts returns a FunctionOptions with the given workflowDir and a 1 KiB
 // MaxBytes cap (small enough to exercise the size-cap path in tests).
-func tmplOpts(workflowDir string) FunctionOptions {
-	return FunctionOptions{
+func tmplOpts(workflowDir string) *FunctionOptions {
+	return &FunctionOptions{
 		WorkflowDir:  workflowDir,
 		MaxBytes:     1024,
 		AllowedPaths: nil,
@@ -26,7 +26,7 @@ func tmplOpts(workflowDir string) FunctionOptions {
 
 // callTemplateFile is a thin helper that invokes templatefileFunction and
 // returns the string result or error, keeping individual tests terse.
-func callTemplateFile(opts FunctionOptions, path string, vars cty.Value) (string, error) {
+func callTemplateFile(opts *FunctionOptions, path string, vars cty.Value) (string, error) {
 	val, err := templatefileFunction(opts).Call([]cty.Value{cty.StringVal(path), vars})
 	if err != nil {
 		return "", err
@@ -372,7 +372,7 @@ func TestTemplatefile_AllowedPathsHonored(t *testing.T) {
 	}
 	writeTmpl(t, sharedDir, "common.tmpl", "shared: {{ .key }}")
 
-	opts := FunctionOptions{
+	opts := &FunctionOptions{
 		WorkflowDir:  workflowDir,
 		MaxBytes:     1024,
 		AllowedPaths: []string{sharedDir},

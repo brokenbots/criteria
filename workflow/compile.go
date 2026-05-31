@@ -114,7 +114,9 @@ func CompileWithContext(ctx context.Context, spec *Spec, schemas map[string]Adap
 	// Warn after all nodes are compiled so branch/wait/approval targets are
 	// available for the back-edge walk (W07).
 	diags = append(diags, warnBackEdges(g)...)
-	diags = append(diags, warnCrossStepFieldRefs(g, schemas)...)
+	// Check cross-step field references after all nodes are compiled so
+	// forward-references resolve correctly.
+	diags = append(diags, checkCrossStepFieldRefs(g, schemas)...)
 	// Reserved-name checks only apply to user-authored top-level workflows.
 	// Sub-workflow bodies (LoadDepth > 0) are synthetic and intentionally use
 	// the "_continue" name as a terminal state.

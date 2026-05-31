@@ -86,7 +86,7 @@ func runSubworkflow(ctx context.Context, node *workflow.SubworkflowNode, parentS
 
 // evaluateSubworkflowInputs evaluates each input expression stored in the node
 // against the parent's eval context and returns the resulting cty.Value map.
-func evaluateSubworkflowInputs(node *workflow.SubworkflowNode, parentVars map[string]cty.Value, opts workflow.FunctionOptions) (map[string]cty.Value, error) {
+func evaluateSubworkflowInputs(node *workflow.SubworkflowNode, parentVars map[string]cty.Value, opts *workflow.FunctionOptions) (map[string]cty.Value, error) {
 	if len(node.Inputs) == 0 {
 		return nil, nil
 	}

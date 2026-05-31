@@ -15,6 +15,7 @@ import (
 	"text/template"
 	"unicode/utf8"
 
+	"github.com/hashicorp/hcl/v2/ext/tryfunc"
 	"github.com/zclconf/go-cty/cty"
 	"github.com/zclconf/go-cty/cty/function"
 	"github.com/zclconf/go-cty/cty/function/stdlib"
@@ -37,6 +38,8 @@ const (
 //     file(), fileexists(), and templatefile() resolve paths relative to
 //     this directory. When empty, these functions always error with
 //     "workflow directory not configured".
+//   - RootDir is the project root directory (criteria invocation cwd).
+//   - Cwd is the process working directory at evaluation time.
 //   - MaxBytes is the read cap for file() and templatefile(). Sourced from
 //     CRITERIA_FILE_FUNC_MAX_BYTES; defaults to 1 MiB.
 //   - AllowedPaths is the list of directories that file(), fileexists(),
@@ -44,6 +47,8 @@ const (
 //     CRITERIA_WORKFLOW_ALLOWED_PATHS (OS path-list separator).
 type FunctionOptions struct {
 	WorkflowDir  string
+	RootDir      string
+	Cwd          string
 	MaxBytes     int64
 	AllowedPaths []string
 }
@@ -58,12 +63,14 @@ type FunctionOptions struct {
 // Environment variables read:
 //   - CRITERIA_FILE_FUNC_MAX_BYTES: integer, clamped to [1024, 64 MiB]; applies to file() and templatefile().
 //   - CRITERIA_WORKFLOW_ALLOWED_PATHS: OS path-list-separated list of directories (filepath.SplitList); applies to file(), fileexists(), and templatefile().
-func DefaultFunctionOptions(workflowDir string) FunctionOptions {
+func DefaultFunctionOptions(workflowDir string) *FunctionOptions {
 	if workflowDir != "" {
 		if abs, err := filepath.Abs(workflowDir); err == nil {
 			workflowDir = abs
 		}
 	}
+	cwd, _ := os.Getwd()
+	rootDir := cwd
 	maxBytes := defaultMaxBytes
 	if raw := os.Getenv("CRITERIA_FILE_FUNC_MAX_BYTES"); raw != "" {
 		if v, err := strconv.ParseInt(raw, 10, 64); err == nil {
@@ -91,8 +98,10 @@ func DefaultFunctionOptions(workflowDir string) FunctionOptions {
 		}
 	}
 
-	return FunctionOptions{
+	return &FunctionOptions{
 		WorkflowDir:  workflowDir,
+		RootDir:      rootDir,
+		Cwd:          cwd,
 		MaxBytes:     maxBytes,
 		AllowedPaths: allowed,
 	}
@@ -105,7 +114,7 @@ func DefaultFunctionOptions(workflowDir string) FunctionOptions {
 // are layered on top. This means our custom implementations (file, fileexists,
 // etc.) take precedence if a name collision ever occurs. In practice we rely on
 // community stdlib implementations and do not intentionally override.
-func workflowFunctions(opts FunctionOptions) map[string]function.Function {
+func workflowFunctions(opts *FunctionOptions) map[string]function.Function {
 	out := map[string]function.Function{}
 	for k, v := range stdlibFunctions() {
 		out[k] = v
@@ -127,6 +136,12 @@ func workflowFunctions(opts FunctionOptions) map[string]function.Function {
 	out["fileset"] = filesetFunction(opts)
 	out["templatefile"] = templatefileFunction(opts)
 	out["trimfrontmatter"] = trimFrontmatterFunction()
+	out["abspath"] = absPathFunction(opts)
+	out["dirname"] = dirNameFunction()
+	out["basename"] = baseNameFunction()
+	out["can"] = tryfunc.CanFunc
+	out["try"] = tryfunc.TryFunc
+	out["hasattr"] = hasAttributeFunction()
 	return out
 }
 
@@ -322,7 +337,7 @@ func stdlibDateFunctions() map[string]function.Function {
 // fileFunction implements the file(path) → string expression function.
 // Reads the UTF-8 file at path (resolved relative to WorkflowDir),
 // enforcing path confinement and the MaxBytes size cap.
-func fileFunction(opts FunctionOptions) function.Function {
+func fileFunction(opts *FunctionOptions) function.Function {
 	return function.New(&function.Spec{
 		Params: []function.Parameter{{Name: "path", Type: cty.String}},
 		Type:   function.StaticReturnType(cty.String),
@@ -380,7 +395,7 @@ func fileFunction(opts FunctionOptions) function.Function {
 //
 // Note: vars size is not capped; only the template file size is bounded by
 // MaxBytes. For large vars objects, callers own the performance consequences.
-func templatefileFunction(opts FunctionOptions) function.Function {
+func templatefileFunction(opts *FunctionOptions) function.Function {
 	return function.New(&function.Spec{
 		Params: []function.Parameter{
 			{Name: "path", Type: cty.String},
@@ -395,7 +410,7 @@ func templatefileFunction(opts FunctionOptions) function.Function {
 
 // renderTemplateFile is the core implementation of templatefile(). It is
 // extracted from the Impl closure to keep cognitive complexity manageable.
-func renderTemplateFile(opts FunctionOptions, raw string, varsVal cty.Value) (cty.Value, error) {
+func renderTemplateFile(opts *FunctionOptions, raw string, varsVal cty.Value) (cty.Value, error) {
 	if opts.WorkflowDir == "" {
 		return cty.StringVal(""), fmt.Errorf("templatefile(): workflow directory not configured")
 	}
@@ -455,7 +470,7 @@ func renderTemplateFile(opts FunctionOptions, raw string, varsVal cty.Value) (ct
 // fileExistsFunction implements the fileexists(path) → bool expression function.
 // Returns true only when path resolves to a readable regular file.
 // Directories return false. Errors other than "not exists" propagate.
-func fileExistsFunction(opts FunctionOptions) function.Function {
+func fileExistsFunction(opts *FunctionOptions) function.Function {
 	return function.New(&function.Spec{
 		Params: []function.Parameter{{Name: "path", Type: cty.String}},
 		Type:   function.StaticReturnType(cty.Bool),
@@ -476,7 +491,7 @@ func fileExistsFunction(opts FunctionOptions) function.Function {
 // fileExistsResolved checks whether raw resolves to an existing regular file
 // within the confined directories, following symlinks and performing a
 // post-symlink confinement check. Returns (false, nil) for not-found paths.
-func fileExistsResolved(raw string, opts FunctionOptions) (bool, error) {
+func fileExistsResolved(raw string, opts *FunctionOptions) (bool, error) {
 	if filepath.IsAbs(raw) {
 		return false, fmt.Errorf("fileexists(): absolute paths are not supported; use a path relative to the workflow directory")
 	}
@@ -539,7 +554,7 @@ func fileExistsResolved(raw string, opts FunctionOptions) (bool, error) {
 // Returns an empty list if no files match. Returns an error if path does not
 // exist, is not a directory, escapes the workflow directory, or pattern is
 // syntactically invalid.
-func filesetFunction(opts FunctionOptions) function.Function {
+func filesetFunction(opts *FunctionOptions) function.Function {
 	return function.New(&function.Spec{
 		Params: []function.Parameter{
 			{Name: "path", Type: cty.String},
@@ -656,6 +671,87 @@ func resolveConfinedDir(raw, base string, allowed []string) (string, error) {
 		return "", fmt.Errorf("fileset(): %q is not a directory", raw)
 	}
 	return resolved, nil
+}
+
+// absPathFunction implements abspath(path) → string. Resolves a path relative
+// to WorkflowDir and returns an absolute path.
+func absPathFunction(opts *FunctionOptions) function.Function {
+	return function.New(&function.Spec{
+		Params: []function.Parameter{{Name: "path", Type: cty.String}},
+		Type:   function.StaticReturnType(cty.String),
+		Impl: func(args []cty.Value, _ cty.Type) (cty.Value, error) {
+			raw := args[0].AsString()
+			if filepath.IsAbs(raw) {
+				return cty.StringVal(filepath.Clean(raw)), nil
+			}
+			base := opts.WorkflowDir
+			if base == "" {
+				base = opts.Cwd
+			}
+			if base == "" {
+				return cty.NilVal, fmt.Errorf("abspath(): workflow directory not configured")
+			}
+			abs := filepath.Clean(filepath.Join(base, raw))
+			return cty.StringVal(abs), nil
+		},
+	})
+}
+
+// dirNameFunction implements dirname(path) → string. Returns the parent directory
+// component of the given path.
+func dirNameFunction() function.Function {
+	return function.New(&function.Spec{
+		Params: []function.Parameter{{Name: "path", Type: cty.String}},
+		Type:   function.StaticReturnType(cty.String),
+		Impl: func(args []cty.Value, _ cty.Type) (cty.Value, error) {
+			return cty.StringVal(filepath.Dir(args[0].AsString())), nil
+		},
+	})
+}
+
+// baseNameFunction implements basename(path) → string. Returns the last element
+// of the given path.
+func baseNameFunction() function.Function {
+	return function.New(&function.Spec{
+		Params: []function.Parameter{{Name: "path", Type: cty.String}},
+		Type:   function.StaticReturnType(cty.String),
+		Impl: func(args []cty.Value, _ cty.Type) (cty.Value, error) {
+			return cty.StringVal(filepath.Base(args[0].AsString())), nil
+		},
+	})
+}
+
+// hasAttributeFunction implements hasattr(obj, name) → bool. Returns true if
+// the given object value has an attribute with the given name. For object
+// types the check is static; for dynamic/unknown values the result is unknown.
+func hasAttributeFunction() function.Function {
+	return function.New(&function.Spec{
+		Params: []function.Parameter{
+			{Name: "obj", Type: cty.DynamicPseudoType, AllowNull: true, AllowDynamicType: true},
+			{Name: "name", Type: cty.String},
+		},
+		Type: function.StaticReturnType(cty.Bool),
+		Impl: func(args []cty.Value, _ cty.Type) (cty.Value, error) {
+			obj := args[0]
+			name := args[1].AsString()
+
+			if !obj.IsKnown() {
+				return cty.UnknownVal(cty.Bool), nil
+			}
+			if obj.IsNull() {
+				return cty.False, nil
+			}
+
+			ty := obj.Type()
+			if ty == cty.DynamicPseudoType {
+				return cty.UnknownVal(cty.Bool), nil
+			}
+			if ty.IsObjectType() {
+				return cty.BoolVal(ty.HasAttribute(name)), nil
+			}
+			return cty.False, nil
+		},
+	})
 }
 
 // trimFrontmatterFunction implements the trimfrontmatter(content) → string

@@ -19,6 +19,7 @@ var runtimeOnlyNamespaces = map[string]bool{
 	"data":        true, // data block runtime values (WS02)
 	"step":        true, // current adapter step outputs: step.output.<key> (W18)
 	"subworkflow": true, // outputs from the subworkflow the step invoked
+	"path":        true, // path variables are runtime-only (WS05)
 }
 
 // FoldExpr evaluates expr in the closure (var ∪ local ∪ literal ∪ funcs).

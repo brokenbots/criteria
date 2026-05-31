@@ -337,6 +337,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 | `while.*` | while-modified-step expressions only | Per-iteration bindings for while-driven steps; see While iteration. |
 | `local.*` | all expressions | Compile-time constants declared with `local` blocks. |
 | `data.<kind>.<name>.value` | all expressions; mutable via `write` blocks | Runtime-mutable values declared with `data` blocks (e.g. `data "internal"`); write via `write` blocks. |
+| `path.*` | all expressions | Workflow-relative, project-root, and working-directory paths for file construction. |
 <!-- END GENERATED:namespaces -->
 
 ### Operator precedence (HCL)
@@ -377,9 +378,9 @@ Expression functions available in all HCL attribute values within a workflow. Fu
 | `yamldecode` | `yamldecode(value: string)` | `unknown` | [workflow/eval_functions_encoding.go:88](../workflow/eval_functions_encoding.go#L88) |
 | `uuid` | `uuid()` | `string` | [workflow/eval_functions_dynamic.go:28](../workflow/eval_functions_dynamic.go#L28) |
 | `timestamp` | `timestamp()` | `string` | [workflow/eval_functions_dynamic.go:41](../workflow/eval_functions_dynamic.go#L41) |
-| `startswith` | `startswith(string: string, prefix: string)` | `bool` | [workflow/eval_functions.go:143](../workflow/eval_functions.go#L143) |
-| `endswith` | `endswith(string: string, suffix: string)` | `bool` | [workflow/eval_functions.go:156](../workflow/eval_functions.go#L156) |
-| `strrev` | `strrev(string: string)` | `string` | [workflow/eval_functions.go:169](../workflow/eval_functions.go#L169) |
+| `startswith` | `startswith(string: string, prefix: string)` | `bool` | [workflow/eval_functions.go:158](../workflow/eval_functions.go#L158) |
+| `endswith` | `endswith(string: string, suffix: string)` | `bool` | [workflow/eval_functions.go:171](../workflow/eval_functions.go#L171) |
+| `strrev` | `strrev(string: string)` | `string` | [workflow/eval_functions.go:184](../workflow/eval_functions.go#L184) |
 <!-- END GENERATED:functions -->
 
 ### Standard library functions

@@ -18,7 +18,7 @@ var testdataDir = filepath.Join("testdata", "eval_functions")
 
 // evalExpr is a test helper that compiles a single HCL expression string and
 // evaluates it against the given FunctionOptions with empty vars.
-func evalExpr(t *testing.T, expr string, opts workflow.FunctionOptions) (cty.Value, hcl.Diagnostics) {
+func evalExpr(t *testing.T, expr string, opts *workflow.FunctionOptions) (cty.Value, hcl.Diagnostics) {
 	t.Helper()
 	parsed, diags := hclsyntax.ParseExpression([]byte(expr), "test.hcl", hcl.Pos{Line: 1, Column: 1})
 	if diags.HasErrors() {
@@ -30,8 +30,8 @@ func evalExpr(t *testing.T, expr string, opts workflow.FunctionOptions) (cty.Val
 
 // opts returns a FunctionOptions with the given workflowDir and default
 // MaxBytes / no allowed paths.
-func opts(workflowDir string) workflow.FunctionOptions {
-	return workflow.FunctionOptions{
+func opts(workflowDir string) *workflow.FunctionOptions {
+	return &workflow.FunctionOptions{
 		WorkflowDir:  workflowDir,
 		MaxBytes:     1 * 1024 * 1024,
 		AllowedPaths: nil,
@@ -227,7 +227,7 @@ func TestFileFunction_AllowedPath(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(sharedDir, "extra.txt"), []byte("allowed\n"), 0o644); err != nil {
 		t.Fatalf("write extra.txt: %v", err)
 	}
-	o := workflow.FunctionOptions{
+	o := &workflow.FunctionOptions{
 		WorkflowDir:  workflowDir,
 		MaxBytes:     1 * 1024 * 1024,
 		AllowedPaths: []string{sharedDir},
@@ -285,7 +285,7 @@ func TestTrimFrontmatterFunction_NoCloseWithin64KiB(t *testing.T) {
 		t.Fatalf("write nofm.txt: %v", err)
 	}
 	val, diags := evalExpr(t, `trimfrontmatter(file("nofm.txt"))`,
-		workflow.FunctionOptions{WorkflowDir: dir, MaxBytes: 200 * 1024})
+		&workflow.FunctionOptions{WorkflowDir: dir, MaxBytes: 200 * 1024})
 	if diags.HasErrors() {
 		t.Fatalf("unexpected error: %s", diags.Error())
 	}
@@ -421,5 +421,157 @@ func TestFileFunction_AbsolutePath(t *testing.T) {
 	}
 	if !strings.Contains(diags.Error(), "absolute paths are not supported") {
 		t.Errorf("error %q should mention 'absolute paths are not supported'", diags.Error())
+	}
+}
+
+// ——— Path function tests (WS05) ———
+
+func TestAbsPathFunction_RelativePath(t *testing.T) {
+	workflowDir := "/project/workflows"
+	val, diags := evalExpr(t, `abspath("./data.txt")`, &workflow.FunctionOptions{WorkflowDir: workflowDir, Cwd: "/project"})
+	if diags.HasErrors() {
+		t.Fatalf("unexpected error: %s", diags.Error())
+	}
+	want := filepath.Join(workflowDir, "data.txt")
+	if got := val.AsString(); got != want {
+		t.Errorf("abspath() = %q, want %q", got, want)
+	}
+}
+
+func TestAbsPathFunction_AbsolutePath(t *testing.T) {
+	val, diags := evalExpr(t, `abspath("/etc/passwd")`, opts(""))
+	if diags.HasErrors() {
+		t.Fatalf("unexpected error: %s", diags.Error())
+	}
+	if got := val.AsString(); got != "/etc/passwd" {
+		t.Errorf("abspath() = %q, want '/etc/passwd'", got)
+	}
+}
+
+// TestAbsPathFunction_NoWorkflowDir verifies abspath errors when both
+// WorkflowDir and Cwd are empty.
+func TestAbsPathFunction_NoWorkflowDir(t *testing.T) {
+	_, diags := evalExpr(t, `abspath("./rel")`, &workflow.FunctionOptions{WorkflowDir: "", Cwd: ""})
+	if !diags.HasErrors() {
+		t.Fatal("expected error when workflow directory not configured; got none")
+	}
+	msg := diags.Error()
+	if !strings.Contains(msg, "workflow directory not configured") {
+		t.Errorf("error message = %q, want 'workflow directory not configured'", msg)
+	}
+}
+
+// TestAbsPathFunction_FallbackToCwd verifies abspath falls back to Cwd when
+// WorkflowDir is empty.
+func TestAbsPathFunction_FallbackToCwd(t *testing.T) {
+	val, diags := evalExpr(t, `abspath("./rel")`, &workflow.FunctionOptions{WorkflowDir: "", Cwd: "/fallback"})
+	if diags.HasErrors() {
+		t.Fatalf("unexpected error: %s", diags.Error())
+	}
+	want := filepath.FromSlash("/fallback/rel")
+	if got := val.AsString(); got != want {
+		t.Errorf("abspath() = %q, want %q", got, want)
+	}
+}
+
+func TestDirNameFunction(t *testing.T) {
+	val, diags := evalExpr(t, `dirname("/foo/bar/baz.hcl")`, opts(""))
+	if diags.HasErrors() {
+		t.Fatalf("unexpected error: %s", diags.Error())
+	}
+	if got := val.AsString(); got != filepath.FromSlash("/foo/bar") {
+		t.Errorf("dirname() = %q, want '/foo/bar'", got)
+	}
+}
+
+func TestBaseNameFunction(t *testing.T) {
+	val, diags := evalExpr(t, `basename("/foo/bar/baz.hcl")`, opts(""))
+	if diags.HasErrors() {
+		t.Fatalf("unexpected error: %s", diags.Error())
+	}
+	if got := val.AsString(); got != "baz.hcl" {
+		t.Errorf("basename() = %q, want 'baz.hcl'", got)
+	}
+}
+
+// ——— hasattr / can / try tests (WS05) ———
+
+func TestHasAttributeFunction_KnownKey(t *testing.T) {
+	val, diags := evalExpr(t, `hasattr({a = 1, b = 2}, "a")`, opts(""))
+	if diags.HasErrors() {
+		t.Fatalf("unexpected error: %s", diags.Error())
+	}
+	if !val.True() {
+		t.Error("hasattr({a=1,b=2}, 'a') should be true")
+	}
+}
+
+func TestHasAttributeFunction_UnknownKey(t *testing.T) {
+	val, diags := evalExpr(t, `hasattr({a = 1, b = 2}, "c")`, opts(""))
+	if diags.HasErrors() {
+		t.Fatalf("unexpected error: %s", diags.Error())
+	}
+	if val.True() {
+		t.Error("hasattr({a=1,b=2}, 'c') should be false")
+	}
+}
+
+func TestHasAttributeFunction_NonObject(t *testing.T) {
+	val, diags := evalExpr(t, `hasattr("hello", "x")`, opts(""))
+	if diags.HasErrors() {
+		t.Fatalf("unexpected error: %s", diags.Error())
+	}
+	if val.True() {
+		t.Error("hasattr('hello', 'x') should be false")
+	}
+}
+
+func TestHasAttributeFunction_NullObject(t *testing.T) {
+	val, diags := evalExpr(t, `hasattr(null, "x")`, opts(""))
+	if diags.HasErrors() {
+		t.Fatalf("unexpected error: %s", diags.Error())
+	}
+	if val.True() {
+		t.Error("hasattr(null, \"x\") should be false")
+	}
+}
+
+func TestCanFunction_ValidExpression(t *testing.T) {
+	val, diags := evalExpr(t, `can(1 + 2)`, opts(""))
+	if diags.HasErrors() {
+		t.Fatalf("unexpected error: %s", diags.Error())
+	}
+	if !val.True() {
+		t.Error("can(1 + 2) should be true")
+	}
+}
+
+func TestCanFunction_InvalidExpression(t *testing.T) {
+	val, diags := evalExpr(t, `can(1 + "oops")`, opts(""))
+	if diags.HasErrors() {
+		t.Fatalf("unexpected error: %s", diags.Error())
+	}
+	if val.True() {
+		t.Error("can(1 + 'oops') should be false")
+	}
+}
+
+func TestTryFunction_FirstGood(t *testing.T) {
+	val, diags := evalExpr(t, `try(1 + 2, 99)`, opts(""))
+	if diags.HasErrors() {
+		t.Fatalf("unexpected error: %s", diags.Error())
+	}
+	if got := val.AsBigFloat().String(); got != "3" {
+		t.Errorf("try(1+2, 99) = %q, want 3", got)
+	}
+}
+
+func TestTryFunction_SecondGood(t *testing.T) {
+	val, diags := evalExpr(t, `try(1 + "bad", 42)`, opts(""))
+	if diags.HasErrors() {
+		t.Fatalf("unexpected error: %s", diags.Error())
+	}
+	if got := val.AsBigFloat().String(); got != "42" {
+		t.Errorf("try(1+'bad', 42) = %q, want 42", got)
 	}
 }
