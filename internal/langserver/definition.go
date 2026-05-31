@@ -28,6 +28,62 @@ func (idx symbolIndex) get(kind, name string) (protocol.Location, bool) {
 	return loc, ok
 }
 
+var indexBlockKinds = map[string]string{
+	"step":        "step",
+	"state":       "state",
+	"switch":      "switch",
+	"variable":    "variable",
+	"local":       "local",
+	"subworkflow": "subworkflow",
+	"wait":        "wait",
+	"approval":    "approval",
+}
+
+func indexBlock(idx symbolIndex, block *hclsyntax.Block, loc protocol.Location) {
+	if len(block.Labels) == 0 {
+		return
+	}
+	switch block.Type {
+	case "adapter":
+		if len(block.Labels) >= 2 {
+			idx.add("adapter", block.Labels[0]+"."+block.Labels[1], loc)
+		}
+	case "data":
+		if len(block.Labels) >= 2 {
+			idx.add("data", block.Labels[0]+"."+block.Labels[1], loc)
+		}
+	default:
+		if kind, ok := indexBlockKinds[block.Type]; ok {
+			idx.add(kind, block.Labels[0], loc)
+		}
+	}
+}
+
+func indexFile(idx symbolIndex, path string) error {
+	src, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+
+	file, diags := hclsyntax.ParseConfig(src, path, hcl.Pos{Line: 1, Column: 1})
+	if diags.HasErrors() || file == nil {
+		return fmt.Errorf("parse error")
+	}
+	body, ok := file.Body.(*hclsyntax.Body)
+	if !ok {
+		return fmt.Errorf("not hclsyntax body")
+	}
+
+	for _, block := range body.Blocks {
+		loc := protocol.Location{
+			URI:   pathToURI(path),
+			Range: hclRangeToProtocol(block.DefRange()),
+		}
+		indexBlock(idx, block, loc)
+	}
+	return nil
+}
+
 func buildIndex(dir string) (symbolIndex, error) {
 	idx := make(symbolIndex)
 
@@ -45,54 +101,8 @@ func buildIndex(dir string) (symbolIndex, error) {
 			continue
 		}
 		path := filepath.Join(dir, entry.Name())
-		src, err := os.ReadFile(path)
-		if err != nil {
+		if err := indexFile(idx, path); err != nil {
 			continue
-		}
-
-		file, diags := hclsyntax.ParseConfig(src, path, hcl.Pos{Line: 1, Column: 1})
-		if diags.HasErrors() || file == nil {
-			continue
-		}
-		body, ok := file.Body.(*hclsyntax.Body)
-		if !ok {
-			continue
-		}
-
-		for _, block := range body.Blocks {
-			if len(block.Labels) == 0 {
-				continue
-			}
-			loc := protocol.Location{
-				URI:   pathToURI(path),
-				Range: hclRangeToProtocol(block.DefRange()),
-			}
-			switch block.Type {
-			case "step":
-				idx.add("step", block.Labels[0], loc)
-			case "state":
-				idx.add("state", block.Labels[0], loc)
-			case "adapter":
-				if len(block.Labels) >= 2 {
-					idx.add("adapter", block.Labels[0]+"."+block.Labels[1], loc)
-				}
-			case "switch":
-				idx.add("switch", block.Labels[0], loc)
-			case "variable":
-				idx.add("variable", block.Labels[0], loc)
-			case "local":
-				idx.add("local", block.Labels[0], loc)
-			case "data":
-				if len(block.Labels) >= 2 {
-					idx.add("data", block.Labels[0]+"."+block.Labels[1], loc)
-				}
-			case "subworkflow":
-				idx.add("subworkflow", block.Labels[0], loc)
-			case "wait":
-				idx.add("wait", block.Labels[0], loc)
-			case "approval":
-				idx.add("approval", block.Labels[0], loc)
-			}
 		}
 	}
 

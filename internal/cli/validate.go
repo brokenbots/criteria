@@ -40,53 +40,58 @@ func NewValidateCmd() *cobra.Command {
 	return cmd
 }
 
+func validatePath(ctx context.Context, path string, subworkflowRoots []string, diagJSON bool) (ok bool) {
+	spec, diags := workflow.ParseFileOrDir(path)
+	if diags.HasErrors() {
+		if diagJSON {
+			printDiagnosticsJSON(diags)
+		} else {
+			fmt.Fprintf(os.Stderr, "%s: parse failed:\n%s\n", path, formatDiagnostics(diags))
+		}
+		return false
+	}
+	info, _ := os.Stat(path)
+	workflowDir := path
+	if info != nil && !info.IsDir() {
+		workflowDir = filepath.Dir(path)
+	}
+	loader := adapterhost.NewLoader()
+	loader.RegisterBuiltin(shell.Name, adapterhost.BuiltinFactoryForAdapter(shell.New()))
+	schemas := collectSchemas(ctx, loader, spec, nil)
+	_ = loader.Shutdown(ctx)
+
+	_, diags = workflow.CompileWithContext(ctx, spec, schemas, workflow.CompileOpts{
+		WorkflowDir:         workflowDir,
+		SubWorkflowResolver: &workflow.LocalSubWorkflowResolver{AllowedRoots: subworkflowRoots},
+		Schemas:             schemas,
+	})
+	if diags.HasErrors() {
+		if diagJSON {
+			printDiagnosticsJSON(diags)
+		} else {
+			fmt.Fprintf(os.Stderr, "%s: compile failed:\n%s\n", path, formatDiagnostics(diags))
+		}
+		return false
+	}
+	if !diagJSON {
+		fmt.Printf("%s: ok\n", path)
+	}
+	if len(diags) > 0 {
+		if diagJSON {
+			printDiagnosticsJSON(diags)
+		} else {
+			fmt.Fprintf(os.Stderr, "%s: warnings:\n%s\n", path, formatDiagnostics(diags))
+		}
+	}
+	return true
+}
+
 func runValidate(paths, subworkflowRoots []string, diagJSON bool) bool {
 	ctx := context.Background()
 	anyErr := false
 	for _, path := range paths {
-		spec, diags := workflow.ParseFileOrDir(path)
-		if diags.HasErrors() {
+		if !validatePath(ctx, path, subworkflowRoots, diagJSON) {
 			anyErr = true
-			if diagJSON {
-				printDiagnosticsJSON(diags)
-			} else {
-				fmt.Fprintf(os.Stderr, "%s: parse failed:\n%s\n", path, formatDiagnostics(diags))
-			}
-			continue
-		}
-		info, _ := os.Stat(path)
-		workflowDir := path
-		if info != nil && !info.IsDir() {
-			workflowDir = filepath.Dir(path)
-		}
-		loader := adapterhost.NewLoader()
-		loader.RegisterBuiltin(shell.Name, adapterhost.BuiltinFactoryForAdapter(shell.New()))
-		schemas := collectSchemas(ctx, loader, spec, nil)
-		_ = loader.Shutdown(ctx)
-
-		_, diags = workflow.CompileWithContext(ctx, spec, schemas, workflow.CompileOpts{
-			WorkflowDir:         workflowDir,
-			SubWorkflowResolver: &workflow.LocalSubWorkflowResolver{AllowedRoots: subworkflowRoots},
-			Schemas:             schemas,
-		})
-		if diags.HasErrors() {
-			anyErr = true
-			if diagJSON {
-				printDiagnosticsJSON(diags)
-			} else {
-				fmt.Fprintf(os.Stderr, "%s: compile failed:\n%s\n", path, formatDiagnostics(diags))
-			}
-			continue
-		}
-		if !diagJSON {
-			fmt.Printf("%s: ok\n", path)
-		}
-		if len(diags) > 0 {
-			if diagJSON {
-				printDiagnosticsJSON(diags)
-			} else {
-				fmt.Fprintf(os.Stderr, "%s: warnings:\n%s\n", path, formatDiagnostics(diags))
-			}
 		}
 	}
 	return anyErr
@@ -105,7 +110,7 @@ type validateDiagnostic struct {
 }
 
 func printDiagnosticsJSON(diags hcl.Diagnostics) {
-	var out []validateDiagnostic
+	out := make([]validateDiagnostic, 0, len(diags))
 	for _, d := range diags {
 		sev := "warning"
 		if d.Severity == hcl.DiagError {

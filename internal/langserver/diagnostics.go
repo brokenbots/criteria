@@ -26,51 +26,44 @@ type compileDiagnostic struct {
 	message  string
 }
 
-func (s *server) compileDiagnostics(dir string) []compileDiagnostic {
-	var result []compileDiagnostic
+func makeDirDiag(dir string, severity hcl.DiagnosticSeverity, message string) compileDiagnostic {
+	return compileDiagnostic{
+		severity: severity,
+		file:     dir,
+		line:     1,
+		col:      1,
+		endLine:  1,
+		endCol:   1,
+		message:  message,
+	}
+}
 
+func findFirstHCLFile(dir string) (string, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		result = append(result, compileDiagnostic{
-			severity: hcl.DiagError,
-			file:     dir,
-			line:     1,
-			col:      1,
-			endLine:  1,
-			endCol:   1,
-			message:  fmt.Sprintf("cannot read directory: %v", err),
-		})
-		return result
+		return "", err
 	}
-
-	var entryPath string
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
 		}
 		ext := filepath.Ext(entry.Name())
 		if ext == ".chcl" || ext == ".hcl" {
-			entryPath = filepath.Join(dir, entry.Name())
-			break
+			return filepath.Join(dir, entry.Name()), nil
 		}
 	}
-	if entryPath == "" {
-		result = append(result, compileDiagnostic{
-			severity: hcl.DiagError,
-			file:     dir,
-			line:     1,
-			col:      1,
-			endLine:  1,
-			endCol:   1,
-			message:  "no .chcl or .hcl files in directory",
-		})
-		return result
+	return "", fmt.Errorf("no .chcl or .hcl files in directory")
+}
+
+func (s *server) compileDiagnostics(dir string) []compileDiagnostic {
+	entryPath, err := findFirstHCLFile(dir)
+	if err != nil {
+		return []compileDiagnostic{makeDirDiag(dir, hcl.DiagError, err.Error())}
 	}
 
 	spec, diags := workflow.ParseFileOrDir(entryPath)
 	if diags.HasErrors() {
-		result = append(result, hclDiagsToCompileDiags(diags)...)
-		return result
+		return hclDiagsToCompileDiags(diags)
 	}
 
 	ctx := context.Background()
@@ -84,8 +77,7 @@ func (s *server) compileDiagnostics(dir string) []compileDiagnostic {
 		SubWorkflowResolver: &workflow.LocalSubWorkflowResolver{},
 		Schemas:             schemas,
 	})
-	result = append(result, hclDiagsToCompileDiags(compileDiags)...)
-	return result
+	return hclDiagsToCompileDiags(compileDiags)
 }
 
 // collectLangserverSchemas resolves Info() for every adapter referenced in spec
@@ -135,7 +127,7 @@ func collectLangserverSchemas(ctx context.Context, loader adapterhost.Loader, sp
 }
 
 func hclDiagsToCompileDiags(diags hcl.Diagnostics) []compileDiagnostic {
-	var result []compileDiagnostic
+	result := make([]compileDiagnostic, 0, len(diags))
 	for _, d := range diags {
 		cd := compileDiagnostic{
 			severity: d.Severity,

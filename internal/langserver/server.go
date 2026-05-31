@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -85,7 +86,7 @@ func (s *server) run() error {
 
 		msg, err := s.conn.readMessage()
 		if err != nil {
-			if err == io.EOF {
+			if errors.Is(err, io.EOF) {
 				return nil
 			}
 			slog.Error("read message", "error", err)
@@ -183,69 +184,91 @@ func (s *server) handleMessage(msg *jsonRPCMessage) {
 
 	switch msg.Method {
 	case "initialize":
-		var params protocol.InitializeParams
-		if err := json.Unmarshal(msg.Params, &params); err != nil {
-			s.replyError(id, -32602, "Invalid params")
-			return
-		}
-		result := s.handleInitialize(&params)
-		s.conn.reply(id, result, nil)
-
+		s.handleInitializeRequest(id, msg.Params)
 	case "initialized":
 		// No-op.
-
 	case "shutdown":
-		s.mu.Lock()
-		s.shutdown = true
-		s.mu.Unlock()
-		s.conn.reply(id, nil, nil)
-
+		s.handleShutdownRequest(id)
 	case "exit":
 		s.cancel()
-
-	case "textDocument/didOpen":
-		var params protocol.DidOpenTextDocumentParams
-		if err := json.Unmarshal(msg.Params, &params); err != nil {
-			return
-		}
-		s.handleDidOpen(&params)
-
-	case "textDocument/didChange":
-		var params protocol.DidChangeTextDocumentParams
-		if err := json.Unmarshal(msg.Params, &params); err != nil {
-			return
-		}
-		s.handleDidChange(&params)
-
-	case "textDocument/didSave":
-		var params protocol.DidSaveTextDocumentParams
-		if err := json.Unmarshal(msg.Params, &params); err != nil {
-			return
-		}
-		s.handleDidSave(&params)
-
+	case "textDocument/didOpen", "textDocument/didChange", "textDocument/didSave":
+		s.handleDocumentNotification(msg.Method, msg.Params)
 	case "textDocument/documentSymbol":
-		var params protocol.DocumentSymbolParams
-		if err := json.Unmarshal(msg.Params, &params); err != nil {
-			s.replyError(id, -32602, "Invalid params")
-			return
-		}
-		result := s.handleDocumentSymbol(&params)
-		s.conn.reply(id, result, nil)
-
+		s.handleDocumentSymbolRequest(id, msg.Params)
 	case "textDocument/definition":
-		var params protocol.DefinitionParams
-		if err := json.Unmarshal(msg.Params, &params); err != nil {
-			s.replyError(id, -32602, "Invalid params")
-			return
-		}
-		result := s.handleDefinition(&params)
-		s.conn.reply(id, result, nil)
-
+		s.handleDefinitionRequest(id, msg.Params)
 	default:
 		if id != nil {
 			s.replyError(id, -32601, fmt.Sprintf("method not found: %s", msg.Method))
 		}
+	}
+}
+
+func (s *server) handleInitializeRequest(id, params json.RawMessage) {
+	var p protocol.InitializeParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		s.replyError(id, -32602, "Invalid params")
+		return
+	}
+	result := s.handleInitialize(&p)
+	if err := s.conn.reply(id, result, nil); err != nil {
+		slog.Error("reply initialize", "error", err)
+	}
+}
+
+func (s *server) handleShutdownRequest(id json.RawMessage) {
+	s.mu.Lock()
+	s.shutdown = true
+	s.mu.Unlock()
+	if err := s.conn.reply(id, nil, nil); err != nil {
+		slog.Error("reply shutdown", "error", err)
+	}
+}
+
+func (s *server) handleDocumentNotification(method string, params json.RawMessage) {
+	switch method {
+	case "textDocument/didOpen":
+		var p protocol.DidOpenTextDocumentParams
+		if err := json.Unmarshal(params, &p); err != nil {
+			return
+		}
+		s.handleDidOpen(&p)
+	case "textDocument/didChange":
+		var p protocol.DidChangeTextDocumentParams
+		if err := json.Unmarshal(params, &p); err != nil {
+			return
+		}
+		s.handleDidChange(&p)
+	case "textDocument/didSave":
+		var p protocol.DidSaveTextDocumentParams
+		if err := json.Unmarshal(params, &p); err != nil {
+			return
+		}
+		s.handleDidSave(&p)
+	}
+}
+
+func (s *server) handleDocumentSymbolRequest(id, params json.RawMessage) {
+	var p protocol.DocumentSymbolParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		s.replyError(id, -32602, "Invalid params")
+		return
+	}
+	result := s.handleDocumentSymbol(&p)
+	if err := s.conn.reply(id, result, nil); err != nil {
+		slog.Error("reply documentSymbol", "error", err)
+	}
+}
+
+func (s *server) handleDefinitionRequest(id, params json.RawMessage) {
+	var p protocol.DefinitionParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		s.replyError(id, -32602, "Invalid params")
+		return
+	}
+	result := s.handleDefinition(&p)
+	if err := s.conn.reply(id, result, nil); err != nil {
+		slog.Error("reply definition", "error", err)
 	}
 }
 

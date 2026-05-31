@@ -28,7 +28,7 @@ step "fetch" {
 
 state "done" { terminal = true }
 `
-	err := os.WriteFile(path, []byte(src), 0644)
+	err := os.WriteFile(path, []byte(src), 0o644)
 	require.NoError(t, err)
 
 	idx, err := buildTestIndex(dir)
@@ -45,8 +45,8 @@ state "done" { terminal = true }
 
 func TestExtractTraversalAt(t *testing.T) {
 	tests := []struct {
-		line string
-		col  int
+		line     string
+		col      int
 		wantKind string
 		wantName string
 	}{

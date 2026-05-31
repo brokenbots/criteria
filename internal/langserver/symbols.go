@@ -9,8 +9,6 @@ import (
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"go.lsp.dev/protocol"
-
-	"github.com/brokenbots/criteria/workflow"
 )
 
 func (s *server) handleDocumentSymbol(params *protocol.DocumentSymbolParams) []protocol.DocumentSymbol {
@@ -49,6 +47,49 @@ func (s *server) handleDocumentSymbol(params *protocol.DocumentSymbolParams) []p
 	return symbols
 }
 
+var blockKindMap = map[string]protocol.SymbolKind{
+	"step":        protocol.SymbolKindFunction,
+	"state":       protocol.SymbolKindEnum,
+	"switch":      protocol.SymbolKindInterface,
+	"variable":    protocol.SymbolKindVariable,
+	"local":       protocol.SymbolKindConstant,
+	"output":      protocol.SymbolKindProperty,
+	"wait":        protocol.SymbolKindEvent,
+	"approval":    protocol.SymbolKindEvent,
+	"subworkflow": protocol.SymbolKindModule,
+}
+
+func compoundName(labels []string, sep string) string {
+	if len(labels) >= 2 {
+		return labels[0] + sep + labels[1]
+	}
+	return labels[0]
+}
+
+func blockSymbolInfo(block *hclsyntax.Block) (name string, kind protocol.SymbolKind, ok bool) {
+	if len(block.Labels) == 0 {
+		return "", 0, false
+	}
+	name = block.Labels[0]
+	switch block.Type {
+	case "adapter":
+		name = compoundName(block.Labels, ".")
+		kind = protocol.SymbolKindClass
+	case "data":
+		name = compoundName(block.Labels, ".")
+		kind = protocol.SymbolKindObject
+	case "environment":
+		name = compoundName(block.Labels, ".")
+		kind = protocol.SymbolKindNamespace
+	default:
+		kind, ok = blockKindMap[block.Type]
+		if !ok {
+			return "", 0, false
+		}
+	}
+	return name, kind, true
+}
+
 func fileSymbols(path string) ([]protocol.DocumentSymbol, error) {
 	src, err := os.ReadFile(path)
 	if err != nil {
@@ -64,57 +105,15 @@ func fileSymbols(path string) ([]protocol.DocumentSymbol, error) {
 		return nil, fmt.Errorf("not hclsyntax body")
 	}
 
-	var symbols []protocol.DocumentSymbol
+	symbols := make([]protocol.DocumentSymbol, 0, len(body.Blocks))
 	for _, block := range body.Blocks {
-		if len(block.Labels) == 0 {
+		name, kind, ok := blockSymbolInfo(block)
+		if !ok {
 			continue
 		}
-		name := block.Labels[0]
-		var kind protocol.SymbolKind
-		var detail string
-
-		switch block.Type {
-		case "step":
-			kind = protocol.SymbolKindFunction
-		case "state":
-			kind = protocol.SymbolKindEnum
-		case "adapter":
-			if len(block.Labels) >= 2 {
-				name = block.Labels[0] + "." + block.Labels[1]
-			}
-			kind = protocol.SymbolKindClass
-		case "switch":
-			kind = protocol.SymbolKindInterface
-		case "variable":
-			kind = protocol.SymbolKindVariable
-		case "local":
-			kind = protocol.SymbolKindConstant
-		case "data":
-			if len(block.Labels) >= 2 {
-				name = block.Labels[0] + "." + block.Labels[1]
-			}
-			kind = protocol.SymbolKindObject
-		case "output":
-			kind = protocol.SymbolKindProperty
-		case "wait":
-			kind = protocol.SymbolKindEvent
-		case "approval":
-			kind = protocol.SymbolKindEvent
-		case "subworkflow":
-			kind = protocol.SymbolKindModule
-		case "environment":
-			if len(block.Labels) >= 2 {
-				name = block.Labels[0] + "." + block.Labels[1]
-			}
-			kind = protocol.SymbolKindNamespace
-		default:
-			continue
-		}
-
 		rng := block.DefRange()
 		symbols = append(symbols, protocol.DocumentSymbol{
 			Name:           name,
-			Detail:         detail,
 			Kind:           kind,
 			Range:          hclRangeToProtocol(rng),
 			SelectionRange: hclRangeToProtocol(rng),
@@ -135,14 +134,4 @@ func hclRangeToProtocol(r hcl.Range) protocol.Range {
 			Character: uint32(r.End.Column - 1),
 		},
 	}
-}
-
-// buildSymbolsFromSpec builds document symbols from a parsed workflow.Spec.
-// This is used by tests to avoid filesystem access.
-func buildSymbolsFromSpec(spec *workflow.Spec) []protocol.DocumentSymbol {
-	var symbols []protocol.DocumentSymbol
-	// Note: Spec does not carry per-block source ranges, so this function
-	// is not used for real LSP responses; fileSymbols is used instead.
-	_ = spec
-	return symbols
 }

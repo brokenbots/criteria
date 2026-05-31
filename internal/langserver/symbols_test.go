@@ -60,24 +60,24 @@ subworkflow "child" {
   source = "./child"
 }
 `
-	err := os.WriteFile(path, []byte(src), 0644)
+	err := os.WriteFile(path, []byte(src), 0o644)
 	require.NoError(t, err)
 
 	syms, err := fileSymbols(path)
 	require.NoError(t, err)
 
 	want := map[string]protocol.SymbolKind{
-		"shell.default": protocol.SymbolKindClass,
-		"name":          protocol.SymbolKindVariable,
-		"greeting":      protocol.SymbolKindConstant,
+		"shell.default":    protocol.SymbolKindClass,
+		"name":             protocol.SymbolKindVariable,
+		"greeting":         protocol.SymbolKindConstant,
 		"internal.counter": protocol.SymbolKindObject,
-		"result":        protocol.SymbolKindProperty,
-		"fetch":         protocol.SymbolKindFunction,
-		"done":          protocol.SymbolKindEnum,
-		"pause":         protocol.SymbolKindEvent,
-		"signoff":       protocol.SymbolKindEvent,
-		"branch":        protocol.SymbolKindInterface,
-		"child":         protocol.SymbolKindModule,
+		"result":           protocol.SymbolKindProperty,
+		"fetch":            protocol.SymbolKindFunction,
+		"done":             protocol.SymbolKindEnum,
+		"pause":            protocol.SymbolKindEvent,
+		"signoff":          protocol.SymbolKindEvent,
+		"branch":           protocol.SymbolKindInterface,
+		"child":            protocol.SymbolKindModule,
 	}
 
 	got := make(map[string]protocol.SymbolKind, len(syms))
@@ -97,7 +97,7 @@ func TestFileSymbolsSortsByPosition(t *testing.T) {
 	src := `step "beta" {}
 step "alpha" {}
 `
-	err := os.WriteFile(path, []byte(src), 0644)
+	err := os.WriteFile(path, []byte(src), 0o644)
 	require.NoError(t, err)
 
 	syms, err := fileSymbols(path)
