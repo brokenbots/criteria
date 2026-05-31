@@ -9,6 +9,7 @@ import (
 
 	"github.com/hashicorp/hcl/v2"
 
+	"github.com/brokenbots/criteria/internal/adapter/environment/remote"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -58,7 +59,7 @@ var DefaultRegistry = NewRegistry(
 	&ShellHandler{},
 	&SandboxHandler{},
 	&ContainerHandler{},
-	&RemoteHandler{},
+	&remote.RemoteHandler{},
 )
 
 // --- Shell handler ---
@@ -178,41 +179,3 @@ func (h *ContainerHandler) IsolationKind() workflow.EnvIsolationKind {
 
 // Prepare is a no-op skeleton for the container handler.
 func (h *ContainerHandler) Prepare(_ context.Context, _ hcl.Body) error { return nil }
-
-// --- Remote handler (skeleton) ---
-
-// RemoteHandler validates remote environment blocks.
-type RemoteHandler struct{}
-
-// Type returns "remote".
-func (h *RemoteHandler) Type() string { return "remote" }
-
-// SupportedOSes returns nil (all OSes supported for remote).
-func (h *RemoteHandler) SupportedOSes() []string { return nil }
-
-// ValidateFields checks accepted attributes.
-func (h *RemoteHandler) ValidateFields(body hcl.Body) hcl.Diagnostics {
-	attrs, diags := body.JustAttributes()
-	for name := range attrs {
-		switch name {
-		case "variables", "policy_mode", "os",
-			"listen_address", "mtls", "accept_token", "config":
-			// accepted
-		default:
-			rng := attrs[name].Range
-			diags = append(diags, &hcl.Diagnostic{
-				Severity: hcl.DiagError,
-				Summary:  fmt.Sprintf("remote environment: unknown attribute %q", name),
-				Detail:   "remote environments accept variables, policy_mode, os, listen_address, mtls, and accept_token.",
-				Subject:  &rng,
-			})
-		}
-	}
-	return diags
-}
-
-// IsolationKind returns workflow.EnvIsolationRemote.
-func (h *RemoteHandler) IsolationKind() workflow.EnvIsolationKind { return workflow.EnvIsolationRemote }
-
-// Prepare is a no-op skeleton for the remote handler.
-func (h *RemoteHandler) Prepare(_ context.Context, _ hcl.Body) error { return nil }

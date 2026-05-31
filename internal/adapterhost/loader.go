@@ -216,6 +216,15 @@ func (l *DefaultLoader) ResolveWithCustomizer(ctx context.Context, name string, 
 	return rp, nil
 }
 
+// NewRPCHandle creates a Handle from an existing go-plugin client and its
+// dispensed Client interface. This is used by the remote shim (WS20) to wrap
+// a reattached adapter into a session-manager-compatible Handle.
+func NewRPCHandle(name string, client *hplugin.Client, rpc Client) Handle {
+	rp := &rpcHandle{name: name, client: client, rpc: rpc}
+	rp.onKill = func() {}
+	return rp
+}
+
 // ResolveWithRunnerFunc resolves the adapter using a custom go-plugin RunnerFunc
 // instead of discovering a local binary. This is used for container-mode adapters
 // where the plugin runs inside docker/podman.

@@ -176,6 +176,7 @@ func compileEnvironmentBlock(g *FSMGraph, envSpec EnvironmentSpec, opts CompileO
 		OS:           osVal,
 		Secrets:      secretsPolicy,
 		TypeSpecific: typeSpecific,
+		RawBody:      envSpec.Remain,
 	}
 
 	return diags

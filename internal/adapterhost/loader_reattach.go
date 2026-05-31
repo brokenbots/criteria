@@ -66,11 +66,17 @@ func LocalSocketDialer(ctx context.Context, socketPath string) (adapterClient Cl
 // remote shim in WS20 or a test helper that started the server separately).
 func externalProcessReattach(socketPath string) runner.ReattachFunc {
 	return func() (runner.AttachedRunner, error) {
-		conn, err := net.Dial("unix", socketPath)
+		// Verify the socket file exists and is a socket (not a stale file).
+		// We avoid net.Dial here because a single-accept UDS listener (used by
+		// the remote shim bridge) can only accept one connection; consuming
+		// that slot for verification would leave no slot for the gRPC transport.
+		info, err := os.Stat(socketPath)
 		if err != nil {
 			return nil, fmt.Errorf("verify socket %q: %w", socketPath, err)
 		}
-		_ = conn.Close()
+		if info.Mode()&os.ModeSocket == 0 {
+			return nil, fmt.Errorf("verify socket %q: not a socket", socketPath)
+		}
 		return newNoopAttachedRunner(), nil
 	}
 }
