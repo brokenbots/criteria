@@ -24,7 +24,7 @@ type LocalSubWorkflowResolver struct {
 // 2. If source is absolute, use it directly. Reject if AllowedRoots is non-empty and path is not under any allowed root.
 // 3. If source is relative, resolve against callerDir.
 // 4. Verify the resolved path is a directory; error if not.
-// 5. Verify the directory contains at least one .hcl file; error if empty.
+// 5. Verify the directory contains at least one .chcl or .hcl file; error if empty.
 // 6. Return the absolute path.
 func (r *LocalSubWorkflowResolver) ResolveSource(ctx context.Context, callerDir, source string) (string, error) {
 	// Check for remote schemes.
@@ -115,7 +115,7 @@ func (r *LocalSubWorkflowResolver) checkDirectory(resolvedPath string) error {
 	return nil
 }
 
-// checkHCLFiles verifies the directory contains at least one .hcl file.
+// checkHCLFiles verifies the directory contains at least one .chcl or .hcl file.
 func (r *LocalSubWorkflowResolver) checkHCLFiles(resolvedPath string) error {
 	entries, err := os.ReadDir(resolvedPath)
 	if err != nil {

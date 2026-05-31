@@ -252,3 +252,86 @@ func TestRunApplyLocal_InvalidOutputMode_ReturnsError(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+// TestApplyLocal_VarFileOverridesVariable proves that --var-file values flow
+// through to the engine and affect workflow execution. A variable with a
+// default is overridden by a .chcl var-file; the overridden value appears in
+// the run output event.
+func TestApplyLocal_VarFileOverridesVariable(t *testing.T) {
+	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
+
+	workflowPath := writeWorkflowFile(t, `
+workflow {
+  name          = "var_file_override"
+  version       = "1"
+  initial_state = "start"
+  target_state  = "done"
+}
+
+variable "greeting" {
+  type    = string
+  default = "hello"
+}
+
+output "greeting" {
+  value = var.greeting
+}
+
+state "start" {}
+state "done" {
+  terminal = true
+  success  = true
+}
+`)
+
+	varFilePath := filepath.Join(t.TempDir(), "vars.chcl")
+	if err := os.WriteFile(varFilePath, []byte(`greeting = "world"`+"\n"), 0o600); err != nil {
+		t.Fatalf("write var-file: %v", err)
+	}
+
+	eventsFile := filepath.Join(t.TempDir(), "events.ndjson")
+	if err := runApply(context.Background(), applyOptions{
+		workflowPath: workflowPath,
+		eventsPath:   eventsFile,
+		varFiles:     []string{varFilePath},
+	}); err != nil {
+		t.Fatalf("runApply failed: %v", err)
+	}
+
+	events, err := parseNDJSON(eventsFile)
+	if err != nil {
+		t.Fatalf("parse events: %v", err)
+	}
+
+	var greetingValue string
+	for _, evt := range events {
+		typ, ok := evt["payload_type"].(string)
+		if !ok || typ != "run.outputs" {
+			continue
+		}
+		payload, ok := evt["payload"].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		outList, ok := payload["outputs"].([]interface{})
+		if !ok {
+			continue
+		}
+		for _, o := range outList {
+			outMap, ok := o.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if outMap["name"] == "greeting" {
+				if v, ok := outMap["value"].(string); ok {
+					greetingValue = v
+				}
+			}
+		}
+	}
+
+	// renderCtyValue JSON-marshals string values, so "world" becomes "\"world\"".
+	if greetingValue != `"world"` {
+		t.Fatalf("expected output greeting=%q from var-file override, got %q", `"world"`, greetingValue)
+	}
+}

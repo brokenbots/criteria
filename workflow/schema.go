@@ -87,8 +87,8 @@ type OutputNode struct {
 
 // WorkflowHeaderSpec carries the workflow identity and routing fields declared
 // in the `workflow { ... }` header block. In a directory module, exactly
-// one .hcl file must contain this block; across multiple files, exactly one
-// WorkflowHeaderSpec may be non-nil after merging.
+// one .chcl or .hcl file must contain this block; across multiple files, exactly
+// one WorkflowHeaderSpec may be non-nil after merging.
 type WorkflowHeaderSpec struct {
 	Name string `hcl:"name"`
 	// Version is the HCL schema version string. Use "1".

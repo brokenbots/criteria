@@ -19,7 +19,7 @@ const (
 
 // SubWorkflowResolver resolves subworkflow source directories.
 // ResolveSource resolves a source string ("./path" or "scheme://...")
-// to a directory containing one or more .hcl files.
+// to a directory containing one or more .chcl or .hcl files.
 // callerDir is the directory containing the parent workflow (used to resolve relative paths).
 // For local paths, the returned dir is the absolute path; for remote sources,
 // the resolver fetches into a cache dir.

@@ -25,7 +25,7 @@ func TestCompileGolden_JSONAndDOT(t *testing.T) {
 	for _, path := range fixtures {
 		path := path
 		relPath, _ := filepath.Rel(repoRoot, path)
-		name := strings.TrimSuffix(filepath.Base(path), ".hcl") + "__" + sanitizeFixturePath(relPath)
+		name := stripHCLExt(filepath.Base(path)) + "__" + sanitizeFixturePath(relPath)
 		t.Run(name+"_json", func(t *testing.T) {
 			out, err := compileWorkflowOutput(context.Background(), path, "json", nil)
 			if err != nil {
