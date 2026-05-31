@@ -13,6 +13,7 @@ import (
 
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/internal/adapters/shell"
+	"github.com/brokenbots/criteria/internal/diagutil"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -57,7 +58,7 @@ func validatePath(ctx context.Context, path string, subworkflowRoots []string, d
 	}
 	loader := adapterhost.NewLoader()
 	loader.RegisterBuiltin(shell.Name, adapterhost.BuiltinFactoryForAdapter(shell.New()))
-	schemas := collectSchemas(ctx, loader, spec, nil)
+	schemas := diagutil.CollectSchemas(ctx, loader, spec, nil)
 	_ = loader.Shutdown(ctx)
 
 	_, diags = workflow.CompileWithContext(ctx, spec, schemas, workflow.CompileOpts{
@@ -75,6 +76,8 @@ func validatePath(ctx context.Context, path string, subworkflowRoots []string, d
 	}
 	if !diagJSON {
 		fmt.Printf("%s: ok\n", path)
+	} else {
+		printDiagnosticsJSON(nil)
 	}
 	if len(diags) > 0 {
 		if diagJSON {
@@ -130,8 +133,10 @@ func printDiagnosticsJSON(diags hcl.Diagnostics) {
 		}
 		out = append(out, vd)
 	}
-	if len(out) > 0 {
-		b, _ := json.Marshal(out)
-		fmt.Println(string(b))
+	b, err := json.Marshal(out)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to marshal diagnostics: %v\n", err)
+		return
 	}
+	fmt.Println(string(b))
 }

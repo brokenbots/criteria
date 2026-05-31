@@ -2,11 +2,16 @@ package langserver
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"go.lsp.dev/protocol"
@@ -100,6 +105,175 @@ func TestShutdownThenExit(t *testing.T) {
 	output := out.String()
 	require.Contains(t, output, "Content-Length:")
 	require.Contains(t, output, `"id":2`)
+}
+
+// TestEndToEndDidOpenPublishDiagnostics sends initialize → initialized →
+// textDocument/didOpen through the JSON-RPC wire and verifies that
+// textDocument/publishDiagnostics notifications are produced.
+func TestEndToEndDidOpenPublishDiagnostics(t *testing.T) {
+	dir := t.TempDir()
+	wfPath := filepath.Join(dir, "workflow.hcl")
+	src := `workflow {
+  name = "test"
+  version = "1.0"
+  initial_state = "hello"
+  target_state = "hello"
+}
+
+adapter "shell" "default" {
+  config {}
+}
+
+step "hello" {
+  target = adapter.shell.default
+  input { command = "echo hi" }
+  outcome "success" { next = state.hello }
+}
+`
+	err := os.WriteFile(wfPath, []byte(src), 0o644)
+	require.NoError(t, err)
+
+	stdinR, stdinW := io.Pipe()
+	var outBuf bytes.Buffer
+	stdoutW := &safeWriter{w: &outBuf}
+
+	s := newServer()
+	s.conn = &stdioConn{
+		stdin:  bufio.NewReader(stdinR),
+		stdout: stdoutW,
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.run()
+	}()
+
+	// 1. initialize
+	initReq := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "initialize",
+		"params":  map[string]any{},
+	}
+	writeJSON(t, stdinW, initReq)
+	// Give the server time to process and respond.
+	time.Sleep(100 * time.Millisecond)
+
+	// 2. initialized notification
+	writeJSON(t, stdinW, map[string]any{
+		"jsonrpc": "2.0",
+		"method":  "initialized",
+		"params":  map[string]any{},
+	})
+
+	// 3. textDocument/didOpen
+	writeJSON(t, stdinW, map[string]any{
+		"jsonrpc": "2.0",
+		"method":  "textDocument/didOpen",
+		"params": map[string]any{
+			"textDocument": map[string]any{
+				"uri":        string(pathToURI(wfPath)),
+				"languageId": "hcl",
+				"version":    1,
+				"text":       src,
+			},
+		},
+	})
+
+	// Wait for diagnostics to be published.
+	time.Sleep(200 * time.Millisecond)
+
+	// 4. Signal exit.
+	writeJSON(t, stdinW, map[string]any{
+		"jsonrpc": "2.0",
+		"method":  "exit",
+	})
+	_ = stdinW.Close()
+	<-done
+
+	// Parse all messages from the output buffer.
+	notes := readAllNotifications(t, &outBuf)
+	require.NotEmpty(t, notes, "expected at least one message from the server")
+
+	// Find the initialize response.
+	var initResp map[string]any
+	for _, n := range notes {
+		if n["id"] != nil && n["method"] == nil {
+			initResp = n
+			break
+		}
+	}
+	require.NotNil(t, initResp, "expected initialize response")
+
+	// Find publishDiagnostics notification.
+	var found bool
+	for _, n := range notes {
+		m, ok := n["method"].(string)
+		if !ok || m != "textDocument/publishDiagnostics" {
+			continue
+		}
+		found = true
+		params, ok := n["params"].(map[string]any)
+		require.True(t, ok, "publishDiagnostics params should be an object")
+		uri, ok := params["uri"].(string)
+		require.True(t, ok, "publishDiagnostics should contain uri")
+		require.NotEmpty(t, uri)
+		break
+	}
+	require.True(t, found, "expected textDocument/publishDiagnostics notification")
+}
+
+// safeWriter wraps an io.Writer with a mutex so concurrent writes from
+// diagnostics goroutines are safe.
+type safeWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (sw *safeWriter) Write(p []byte) (int, error) {
+	sw.mu.Lock()
+	defer sw.mu.Unlock()
+	return sw.w.Write(p)
+}
+
+func readAllNotifications(t *testing.T, r io.Reader) []map[string]any {
+	t.Helper()
+	var notes []map[string]any
+	reader := bufio.NewReader(r)
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			break
+		}
+		line = strings.TrimRight(line, "\r\n")
+		if line == "" {
+			continue
+		}
+		if !strings.HasPrefix(line, "Content-Length: ") {
+			continue
+		}
+		v, err := parseInt(strings.TrimPrefix(line, "Content-Length: "))
+		if err != nil {
+			continue
+		}
+		// Skip the empty line after the header.
+		_, err = reader.ReadString('\n')
+		if err != nil {
+			break
+		}
+		body := make([]byte, v)
+		_, err = io.ReadFull(reader, body)
+		if err != nil {
+			break
+		}
+		var msg map[string]any
+		if err := json.Unmarshal(body, &msg); err != nil {
+			continue
+		}
+		notes = append(notes, msg)
+	}
+	return notes
 }
 
 func writeJSON(t *testing.T, w io.Writer, v map[string]any) {

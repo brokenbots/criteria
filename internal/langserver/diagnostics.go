@@ -3,15 +3,14 @@ package langserver
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/hashicorp/hcl/v2"
 
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/internal/adapters/shell"
+	"github.com/brokenbots/criteria/internal/diagutil"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -69,7 +68,7 @@ func (s *server) compileDiagnostics(dir string) []compileDiagnostic {
 	ctx := context.Background()
 	loader := adapterhost.NewLoader()
 	loader.RegisterBuiltin(shell.Name, adapterhost.BuiltinFactoryForAdapter(shell.New()))
-	schemas := collectLangserverSchemas(ctx, loader, spec)
+	schemas := diagutil.CollectSchemas(ctx, loader, spec, nil)
 	_ = loader.Shutdown(ctx)
 
 	_, compileDiags := workflow.CompileWithContext(ctx, spec, schemas, workflow.CompileOpts{
@@ -78,52 +77,6 @@ func (s *server) compileDiagnostics(dir string) []compileDiagnostic {
 		Schemas:             schemas,
 	})
 	return hclDiagsToCompileDiags(compileDiags)
-}
-
-// collectLangserverSchemas resolves Info() for every adapter referenced in spec
-// and returns a schemas map suitable for workflow.Compile. Adapters that cannot
-// be resolved are silently skipped so compile still runs in permissive mode.
-func collectLangserverSchemas(ctx context.Context, loader adapterhost.Loader, spec *workflow.Spec) map[string]workflow.AdapterInfo {
-	if loader == nil || spec == nil {
-		return nil
-	}
-
-	seen := map[string]bool{}
-	for _, ad := range spec.Adapters {
-		if ad.Type != "" {
-			seen[ad.Type] = true
-		}
-	}
-	for i := range spec.Steps {
-		st := &spec.Steps[i]
-		if adapterRef, present, _ := workflow.ResolveStepAdapterRef(st.Remain); present && adapterRef != "" {
-			parts := strings.Split(adapterRef, ".")
-			if len(parts) == 2 && parts[0] != "" {
-				seen[parts[0]] = true
-			}
-		}
-	}
-
-	if len(seen) == 0 {
-		return nil
-	}
-
-	schemas := make(map[string]workflow.AdapterInfo, len(seen))
-	for typeName := range seen {
-		p, err := loader.Resolve(ctx, typeName)
-		if err != nil {
-			slog.Debug("schema collection: could not resolve adapter", "adapter_type", typeName, "err", err)
-			continue
-		}
-		info, err := p.Info(ctx)
-		p.Kill()
-		if err != nil {
-			slog.Debug("schema collection: Info() failed", "adapter_type", typeName, "err", err)
-			continue
-		}
-		schemas[typeName] = info.AdapterInfo
-	}
-	return schemas
 }
 
 func hclDiagsToCompileDiags(diags hcl.Diagnostics) []compileDiagnostic {

@@ -31,16 +31,16 @@ state "done" { terminal = true }
 	err := os.WriteFile(path, []byte(src), 0o644)
 	require.NoError(t, err)
 
-	idx, err := buildTestIndex(dir)
+	idx, err := buildIndex(dir)
 	require.NoError(t, err)
 
 	loc, ok := idx.get("step", "fetch")
 	require.True(t, ok)
-	require.Equal(t, uri.URI(path), loc.URI)
+	require.Equal(t, uri.File(path), loc.URI)
 
 	loc, ok = idx.get("state", "done")
 	require.True(t, ok)
-	require.Equal(t, uri.URI(path), loc.URI)
+	require.Equal(t, uri.File(path), loc.URI)
 }
 
 func TestExtractTraversalAt(t *testing.T) {
@@ -77,6 +77,8 @@ func TestResolveDefinition(t *testing.T) {
 	idx := make(symbolIndex)
 	idx.add("step", "greet", protocol.Location{URI: "file:///test.hcl"})
 	idx.add("variable", "name", protocol.Location{URI: "file:///test.hcl"})
+	idx.add("output", "result", protocol.Location{URI: "file:///test.hcl"})
+	idx.add("environment", "prod", protocol.Location{URI: "file:///test.hcl"})
 
 	loc := resolveDefinition(idx, "next = step.greet", 10)
 	require.NotNil(t, loc)
@@ -86,6 +88,44 @@ func TestResolveDefinition(t *testing.T) {
 	require.NotNil(t, loc)
 	require.Equal(t, uri.URI("file:///test.hcl"), loc.URI)
 
+	loc = resolveDefinition(idx, "value = output.result", 12)
+	require.NotNil(t, loc)
+	require.Equal(t, uri.URI("file:///test.hcl"), loc.URI)
+
+	loc = resolveDefinition(idx, "value = environment.prod", 17)
+	require.NotNil(t, loc)
+	require.Equal(t, uri.URI("file:///test.hcl"), loc.URI)
+
 	loc = resolveDefinition(idx, "return", 1)
 	require.Nil(t, loc)
+}
+
+func TestResolveDefinition_MultiSegmentSteps(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "workflow.hcl")
+	src := `workflow {
+  name = "test"
+  version = "1"
+  initial_state = "fetch"
+  target_state = "done"
+}
+
+step "fetch" {
+  target = adapter.shell.default
+  input { command = "echo hi" }
+  outcome "success" { next = state.done }
+}
+
+state "done" { terminal = true }
+`
+	err := os.WriteFile(path, []byte(src), 0o644)
+	require.NoError(t, err)
+
+	idx, err := buildIndex(dir)
+	require.NoError(t, err)
+
+	// steps.fetch.stdout resolves to step "fetch"
+	loc := resolveDefinition(idx, "value = steps.fetch.stdout", 14)
+	require.NotNil(t, loc)
+	require.Equal(t, uri.File(path), loc.URI)
 }

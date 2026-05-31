@@ -10,6 +10,7 @@ import (
 
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/internal/adapters/shell"
+	"github.com/brokenbots/criteria/internal/diagutil"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -86,7 +87,7 @@ func compileForExecution(ctx context.Context, workflowPath string, log *slog.Log
 
 	loader := adapterhost.NewLoader()
 	loader.RegisterBuiltin(shell.Name, adapterhost.BuiltinFactoryForAdapter(shell.New()))
-	schemas := collectSchemas(ctx, loader, spec, log)
+	schemas := diagutil.CollectSchemas(ctx, loader, spec, log)
 
 	workflowDir := workflowDirFromPath(workflowPath)
 

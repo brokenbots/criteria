@@ -72,9 +72,11 @@ func newServer() *server {
 }
 
 func (s *server) run() error {
-	s.conn = &stdioConn{
-		stdin:  bufio.NewReader(os.Stdin),
-		stdout: os.Stdout,
+	if s.conn == nil {
+		s.conn = &stdioConn{
+			stdin:  bufio.NewReader(os.Stdin),
+			stdout: os.Stdout,
+		}
 	}
 
 	for {
@@ -94,8 +96,8 @@ func (s *server) run() error {
 		}
 
 		if msg.Method != "" {
-			// Request or notification.
-			go s.handleMessage(msg)
+			// Process messages serially to avoid races on s.docs and preserve ordering.
+			s.handleMessage(msg)
 		}
 	}
 }
@@ -245,6 +247,12 @@ func (s *server) handleDocumentNotification(method string, params json.RawMessag
 			return
 		}
 		s.handleDidSave(&p)
+	case "textDocument/didClose":
+		var p protocol.DidCloseTextDocumentParams
+		if err := json.Unmarshal(params, &p); err != nil {
+			return
+		}
+		s.handleDidClose(&p)
 	}
 }
 
@@ -318,6 +326,17 @@ func (s *server) handleDidSave(params *protocol.DidSaveTextDocumentParams) {
 	s.publishDiagnostics(params.TextDocument.URI)
 }
 
+func (s *server) handleDidClose(params *protocol.DidCloseTextDocumentParams) {
+	s.mu.Lock()
+	delete(s.docs, params.TextDocument.URI)
+	s.mu.Unlock()
+	// Publish empty diagnostics so the client clears any stale ones.
+	_ = s.conn.notify("textDocument/publishDiagnostics", protocol.PublishDiagnosticsParams{
+		URI:         params.TextDocument.URI,
+		Diagnostics: nil,
+	})
+}
+
 func (s *server) publishDiagnostics(docURI uri.URI) {
 	dir := filepath.Dir(uriToPath(docURI))
 	diags := s.compileDiagnostics(dir)
@@ -370,9 +389,9 @@ func severityToLSP(sev hcl.DiagnosticSeverity) protocol.DiagnosticSeverity {
 }
 
 func uriToPath(u uri.URI) string {
-	return string(u)
+	return u.Filename()
 }
 
 func pathToURI(path string) uri.URI {
-	return uri.URI(path)
+	return uri.File(path)
 }

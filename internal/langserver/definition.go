@@ -37,6 +37,8 @@ var indexBlockKinds = map[string]string{
 	"subworkflow": "subworkflow",
 	"wait":        "wait",
 	"approval":    "approval",
+	"output":      "output",
+	"environment": "environment",
 }
 
 func indexBlock(idx symbolIndex, block *hclsyntax.Block, loc protocol.Location) {
@@ -109,7 +111,7 @@ func buildIndex(dir string) (symbolIndex, error) {
 	return idx, nil
 }
 
-var traversalRegex = regexp.MustCompile(`\b(step|state|adapter|switch|variable|local|data|subworkflow|wait|approval|steps|var)\s*\.\s*([a-zA-Z_][a-zA-Z0-9_-]*(?:\s*\.\s*[a-zA-Z_][a-zA-Z0-9_-]*)?)`)
+var traversalRegex = regexp.MustCompile(`\b(step|state|adapter|switch|variable|local|data|subworkflow|wait|approval|steps|var|output|environment)\s*\.\s*([a-zA-Z_][a-zA-Z0-9_-]*(?:\s*\.\s*[a-zA-Z_][a-zA-Z0-9_-]*)?)`)
 
 func (s *server) handleDefinition(params *protocol.DefinitionParams) []protocol.LocationLink {
 	docPath := uriToPath(params.TextDocument.URI)
@@ -201,9 +203,4 @@ func resolveDefinition(idx symbolIndex, line string, col int) *protocol.Location
 		return nil
 	}
 	return &loc
-}
-
-// buildTestIndex creates a symbolIndex from a workflow directory for tests.
-func buildTestIndex(dir string) (symbolIndex, error) {
-	return buildIndex(dir)
 }
