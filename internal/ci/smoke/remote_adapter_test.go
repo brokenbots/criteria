@@ -429,23 +429,24 @@ func hostIPReachableFromKind(t *testing.T) string {
 // packages it as a minimal scratch Docker image with the given tag.
 func buildFixtureAdapterImage(t *testing.T, moduleRoot, tag string) {
 	t.Helper()
-	binPath := filepath.Join(moduleRoot, "internal", "ci", "smoke", "testdata", "criteria-adapter-remote-smoke")
+	buildDir := t.TempDir()
+	srcDir := filepath.Join(moduleRoot, "internal", "ci", "smoke", "testdata", "criteria-adapter-remote-smoke")
 	// Cross-compile for the Linux container.
-	cmd := exec.Command("go", "build", "-o", "adapter", ".")
-	cmd.Dir = binPath
-	cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOARCH=amd64")
+	cmd := exec.Command("go", "build", "-o", filepath.Join(buildDir, "adapter"), ".")
+	cmd.Dir = srcDir
+	cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOARCH=amd64", "GOWORK=off")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("build fixture adapter binary: %v\n%s", err, out)
 	}
 	// Write a minimal Dockerfile.
-	dockerfile := filepath.Join(binPath, "Dockerfile")
+	dockerfile := filepath.Join(buildDir, "Dockerfile")
 	if err := os.WriteFile(dockerfile, []byte("FROM scratch\nCOPY adapter /adapter\nENTRYPOINT [\"/adapter\"]\n"), 0o644); err != nil {
 		t.Fatalf("write Dockerfile: %v", err)
 	}
-	// Build the image.
+	// Build the image from the build directory.
 	buildCmd := exec.Command("docker", "build", "-t", tag, ".")
-	buildCmd.Dir = binPath
+	buildCmd.Dir = buildDir
 	out, err = buildCmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("build fixture adapter image: %v\n%s", err, out)
@@ -503,6 +504,21 @@ func kubectlDeletePod(t *testing.T, labelSelector, namespace string) {
 	if err != nil {
 		t.Fatalf("kubectl delete pod: %v\n%s", err, out)
 	}
+}
+
+// waitForPodLog polls kubectl logs until the given substring appears or the
+// timeout expires.
+func waitForPodLog(t *testing.T, namespace, labelSelector, substring string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		out, _ := exec.Command("kubectl", "logs", "-n", namespace, "-l", labelSelector, "--tail=50").CombinedOutput()
+		if strings.Contains(string(out), substring) {
+			return
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	t.Fatalf("timeout waiting for pod log containing %q", substring)
 }
 
 func TestRemoteAdapter_K8sHappyPath(t *testing.T) {
@@ -615,14 +631,16 @@ spec:
         - secretRef:
             name: greeter-token
         env:
+        - name: CRITERIA_ADAPTER_NAME
+          value: fixture
         - name: CRITERIA_REMOTE_DIGEST
           value: %s
 `, namespace, namespace, adapterHostAddr, namespace, namespace, imageTag, digest))
 
 	kubectlWaitForDeployment(t, "greeter", namespace, 60*time.Second)
 
-	// Give the adapter a moment to phone home.
-	time.Sleep(2 * time.Second)
+	// Wait for the adapter pod to phone home.
+	waitForPodLog(t, namespace, "app=greeter", "serving gRPC", 30*time.Second)
 
 	sink := &testSink{}
 	eng := engine.New(graph, adapterhost.NewLoader(), sink,
@@ -750,14 +768,16 @@ spec:
         - secretRef:
             name: greeter-token
         env:
+        - name: CRITERIA_ADAPTER_NAME
+          value: fixture
         - name: CRITERIA_REMOTE_DIGEST
           value: %s
 `, namespace, namespace, adapterHostAddr, namespace, namespace, imageTag, digest))
 
 	kubectlWaitForDeployment(t, "greeter", namespace, 60*time.Second)
 
-	// Give the adapter a moment to phone home.
-	time.Sleep(2 * time.Second)
+	// Wait for the adapter pod to phone home.
+	waitForPodLog(t, namespace, "app=greeter", "serving gRPC", 30*time.Second)
 
 	sink := &testSink{}
 	eng := engine.New(graph, adapterhost.NewLoader(), sink,
@@ -771,7 +791,7 @@ spec:
 	}()
 
 	// Wait for the step to start executing (delay_ms = 15s).
-	time.Sleep(4 * time.Second)
+	waitForPodLog(t, namespace, "app=greeter", "step execution started", 30*time.Second)
 
 	// Delete the adapter pod mid-execution.
 	kubectlDeletePod(t, "app=greeter", namespace)

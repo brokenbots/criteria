@@ -36,11 +36,13 @@ type smokeAdapter struct {
 	v2.UnimplementedAdapterServiceServer
 	mu       sync.Mutex
 	sessions map[string]struct{}
+	name     string
+	log      *slog.Logger
 }
 
 func (s *smokeAdapter) Info(context.Context, *v2.InfoRequest) (*v2.InfoResponse, error) {
 	return &v2.InfoResponse{
-		Name:         "remote-smoke",
+		Name:         s.name,
 		Version:      "0.1.0",
 		Capabilities: []string{"execute", "parallel_safe"},
 	}, nil
@@ -68,6 +70,8 @@ func (s *smokeAdapter) Execute(req *v2.ExecuteRequest, stream v2.AdapterService_
 	if marker := os.Getenv("CRITERIA_REMOTE_STEP_STARTED_FILE"); marker != "" {
 		_ = os.WriteFile(marker, []byte("started"), 0o600)
 	}
+
+	s.log.Info("step execution started", "session_id", req.GetSessionId())
 
 	ctx := stream.Context()
 
@@ -169,6 +173,10 @@ func main() {
 	if digest == "" {
 		digest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
 	}
+	name := os.Getenv("CRITERIA_ADAPTER_NAME")
+	if name == "" {
+		name = "remote-smoke"
+	}
 
 	tlsCertPath := os.Getenv("CRITERIA_REMOTE_TLS_CERT")
 	tlsKeyPath := os.Getenv("CRITERIA_REMOTE_TLS_KEY")
@@ -185,20 +193,15 @@ func main() {
 	}
 
 	for {
-		if err := dialAndServe(host, token, digest, tlsConf, log); err != nil {
+		if err := dialAndServe(host, token, digest, name, tlsConf, log); err != nil {
 			log.Error("connection lost", "error", err)
 		}
 		// Back-off before reconnecting so crash-looping doesn't hammer the host.
-		select {
-		case <-time.After(2 * time.Second):
-		case <-time.After(30 * time.Second):
-			log.Error("reconnect timeout, exiting")
-			os.Exit(1)
-		}
+		time.Sleep(2 * time.Second)
 	}
 }
 
-func dialAndServe(host, token, digest string, tlsConf *tls.Config, log *slog.Logger) error {
+func dialAndServe(host, token, digest, name string, tlsConf *tls.Config, log *slog.Logger) error {
 	var conn net.Conn
 	var err error
 	if tlsConf != nil {
@@ -211,7 +214,7 @@ func dialAndServe(host, token, digest string, tlsConf *tls.Config, log *slog.Log
 	}
 
 	hs := remoteHandshakeMessage{
-		Name:    "remote-smoke",
+		Name:    name,
 		Version: "0.1.0",
 		Digest:  digest,
 		Token:   token,
@@ -228,16 +231,11 @@ func dialAndServe(host, token, digest string, tlsConf *tls.Config, log *slog.Log
 	// The shim reads the handshake line, validates it, then bridges the
 	// remaining bytes to a local UDS where the go-plugin client connects.
 	grpcServer := grpc.NewServer()
-	v2.RegisterAdapterServiceServer(grpcServer, &smokeAdapter{sessions: map[string]struct{}{}})
+	v2.RegisterAdapterServiceServer(grpcServer, &smokeAdapter{sessions: map[string]struct{}{}, name: name, log: log})
 
 	lis := &singleConnListener{conn: conn}
 	log.Info("serving gRPC", "host", host)
-	go func() {
-		if err := grpcServer.Serve(lis); err != nil {
-			log.Error("gRPC server stopped", "error", err)
-		}
-	}()
-	return nil
+	return grpcServer.Serve(lis)
 }
 
 func buildTLSConfig(certPath, keyPath, caPath string) (*tls.Config, error) {
