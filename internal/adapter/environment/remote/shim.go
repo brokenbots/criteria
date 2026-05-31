@@ -417,17 +417,9 @@ func (s *Shim) buildAndStoreHandle(
 	})
 
 	s.mu.Lock()
-	if old, ok := s.sessions[adapterName]; ok {
-		s.mu.Unlock()
-		if old.cancel != nil {
-			old.cancel()
-		}
-		if old.handle != nil {
-			_ = old.handle.CloseSession(ctx, "")
-			old.handle.Kill()
-		}
-		_ = os.RemoveAll(filepath.Dir(old.socketPath))
-		s.mu.Lock()
+	var old *session
+	if existing, ok := s.sessions[adapterName]; ok {
+		old = existing
 	}
 
 	sess := &session{
@@ -445,6 +437,17 @@ func (s *Shim) buildAndStoreHandle(
 		delete(s.waiters, adapterName)
 	}
 	s.mu.Unlock()
+
+	if old != nil {
+		if old.cancel != nil {
+			old.cancel()
+		}
+		if old.handle != nil {
+			_ = old.handle.CloseSession(ctx, "")
+			old.handle.Kill()
+		}
+		_ = os.RemoveAll(filepath.Dir(old.socketPath))
+	}
 
 	go func() {
 		<-bridgeCtx.Done()
