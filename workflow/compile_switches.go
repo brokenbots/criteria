@@ -113,16 +113,7 @@ func compileSwitchMatchBlock(cs MatchSpec, idx int, switchName string, sourceByt
 
 	attrs, attrDiags := cs.Remain.JustAttributes()
 	diags = append(diags, attrDiags...)
-
-	for attrName := range attrs {
-		if attrName != "condition" && attrName != "next" && attrName != "output" {
-			diags = append(diags, &hcl.Diagnostic{
-				Severity: hcl.DiagError,
-				Summary:  fmt.Sprintf("switch %q %s: unknown attribute %q (allowed: condition, next, output)", switchName, location, attrName),
-				Subject:  &attrs[attrName].NameRange,
-			})
-		}
-	}
+	diags = append(diags, checkSwitchMatchUnknownAttrs(attrs, switchName, location)...)
 
 	conditionAttr, hasCondition := attrs["condition"]
 	if !hasCondition {
@@ -163,6 +154,22 @@ func compileSwitchMatchBlock(cs MatchSpec, idx int, switchName string, sourceByt
 	}
 
 	return cond, diags
+}
+
+// checkSwitchMatchUnknownAttrs returns diagnostics for any attribute in a match
+// block that is not one of the allowed names: condition, next, output.
+func checkSwitchMatchUnknownAttrs(attrs hcl.Attributes, switchName, location string) hcl.Diagnostics {
+	var diags hcl.Diagnostics
+	for attrName := range attrs {
+		if attrName != "condition" && attrName != "next" && attrName != "output" {
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  fmt.Sprintf("switch %q %s: unknown attribute %q (allowed: condition, next, output)", switchName, location, attrName),
+				Subject:  &attrs[attrName].NameRange,
+			})
+		}
+	}
+	return diags
 }
 
 // isSwitchProvedExhaustive reports whether the given matches are provably

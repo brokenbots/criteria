@@ -605,7 +605,7 @@ state "done" { terminal = true }
 
 // TestSwitchCompile_NewMatchSyntax compiles cleanly with the new match { condition = ... } shape.
 func TestSwitchCompile_NewMatchSyntax(t *testing.T) {
-src := `
+	src := `
 workflow {
   name = "w"
   version       = "0.1"
@@ -622,22 +622,22 @@ switch "check" {
 
 state "done" { terminal = true }
 `
-g := mustParseAndCompile(t, src)
-sw, ok := g.Switches["check"]
-if !ok {
-	t.Fatal("switch node 'check' missing from compiled graph")
-}
-if len(sw.Conditions) != 1 {
-	t.Fatalf("expected 1 condition, got %d", len(sw.Conditions))
-}
-if sw.Conditions[0].Next != "done" {
-	t.Errorf("Conditions[0].Next = %q, want \"done\"", sw.Conditions[0].Next)
-}
+	g := mustParseAndCompile(t, src)
+	sw, ok := g.Switches["check"]
+	if !ok {
+		t.Fatal("switch node 'check' missing from compiled graph")
+	}
+	if len(sw.Conditions) != 1 {
+		t.Fatalf("expected 1 condition, got %d", len(sw.Conditions))
+	}
+	if sw.Conditions[0].Next != "done" {
+		t.Errorf("Conditions[0].Next = %q, want \"done\"", sw.Conditions[0].Next)
+	}
 }
 
 // TestSwitchCompile_NewMatchSyntaxWithVariable compiles cleanly with a variable expression.
 func TestSwitchCompile_NewMatchSyntaxWithVariable(t *testing.T) {
-src := `
+	src := `
 workflow {
   name = "w"
   version       = "0.1"
@@ -668,18 +668,18 @@ step "foo" {
 
 state "done" { terminal = true }
 `
-g := mustParseAndCompile(t, src)
-sw, ok := g.Switches["check"]
-if !ok {
-	t.Fatal("switch node 'check' missing from compiled graph")
-}
-if len(sw.Conditions) != 1 {
-	t.Fatalf("expected 1 condition, got %d", len(sw.Conditions))
-}
-if sw.Conditions[0].Next != "foo" {
-	t.Errorf("Conditions[0].Next = %q, want \"foo\"", sw.Conditions[0].Next)
-}
-if sw.DefaultNext != "done" {
-	t.Errorf("DefaultNext = %q, want \"done\"", sw.DefaultNext)
-}
+	g := mustParseAndCompile(t, src)
+	sw, ok := g.Switches["check"]
+	if !ok {
+		t.Fatal("switch node 'check' missing from compiled graph")
+	}
+	if len(sw.Conditions) != 1 {
+		t.Fatalf("expected 1 condition, got %d", len(sw.Conditions))
+	}
+	if sw.Conditions[0].Next != "foo" {
+		t.Errorf("Conditions[0].Next = %q, want \"foo\"", sw.Conditions[0].Next)
+	}
+	if sw.DefaultNext != "done" {
+		t.Errorf("DefaultNext = %q, want \"done\"", sw.DefaultNext)
+	}
 }
