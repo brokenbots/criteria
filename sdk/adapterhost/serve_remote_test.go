@@ -77,7 +77,7 @@ func TestServeRemote_Info(t *testing.T) {
 	// Run the adapter in the background.
 	adapterErr := make(chan error, 1)
 	go func() {
-		adapterErr <- ServeRemote(adapter, ServeRemoteOptions{
+		adapterErr <- ServeRemote(adapter, &ServeRemoteOptions{
 			Host: addr,
 			Identity: RemoteIdentity{
 				Name:    "test-adapter",
@@ -123,7 +123,7 @@ func TestServeRemote_Info(t *testing.T) {
 // TestServeRemote_MissingHost verifies that ServeRemote rejects an empty Host.
 func TestServeRemote_MissingHost(t *testing.T) {
 	adapter := &fakeRemoteAdapter{}
-	err := ServeRemote(adapter, ServeRemoteOptions{})
+	err := ServeRemote(adapter, &ServeRemoteOptions{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "Host is required")
 }

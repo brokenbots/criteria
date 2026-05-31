@@ -26,7 +26,7 @@
 // it) call [ServeRemote] with the host address and identity credentials:
 //
 //	func main() {
-//		adapterhost.ServeRemote(&myAdapter{}, adapterhost.ServeRemoteOptions{
+//		adapterhost.ServeRemote(&myAdapter{}, &adapterhost.ServeRemoteOptions{
 //			Host: "wss://criteria.example.com:7778",
 //			Identity: adapterhost.RemoteIdentity{
 //				Name:    "my-adapter",

@@ -43,7 +43,10 @@ type ServeRemoteOptions struct {
 //
 // This is the remote counterpart to [Serve]; callers should invoke exactly one
 // of Serve or ServeRemote from main().
-func ServeRemote(impl Service, opts ServeRemoteOptions) error {
+func ServeRemote(impl Service, opts *ServeRemoteOptions) error {
+	if opts == nil {
+		return errors.New("ServeRemote: opts is required")
+	}
 	if opts.Host == "" {
 		return errors.New("ServeRemote: Host is required")
 	}
