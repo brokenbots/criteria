@@ -2,7 +2,7 @@
 FROM oven/bun:1-alpine AS builder
 
 WORKDIR /app
-COPY package.json bun.lockb tsconfig.json ./
+COPY package.json bun.lock tsconfig.json ./
 COPY src ./src
 RUN bun install --frozen-lockfile && bun run build
 
