@@ -28,3 +28,8 @@ workstreams/**/*.log
 *.test
 *.out
 coverage.out
+
+# python and node
+node_modules
+__python_cache__
+
