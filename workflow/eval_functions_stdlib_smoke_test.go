@@ -25,7 +25,7 @@ step "run" {
   input {
     command = format("echo %s", substr(join("-", ["hello", "world"]), 0, 5))
   }
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 
 state "done" { terminal = true }
@@ -63,16 +63,16 @@ step "check" {
   input {
     command = "echo hello"
   }
-  outcome "success" { next = "decide" }
+  outcome "success" { next = step.decide }
 }
 
 switch "decide" {
-  condition {
-    match = startswith(steps.check.stdout, var.prefix) && length(steps.check.stdout) > 3
-    next  = "done"
+  match {
+    condition = startswith(steps.check.stdout, var.prefix) && length(steps.check.stdout) > 3
+    next = step.done
   }
   default {
-    next = "skip"
+    next = step.skip
   }
 }
 

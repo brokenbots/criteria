@@ -29,7 +29,7 @@ step "print_env" {
     command = "printenv"
   }
   outcome "success" {
-    next = "done"
+    next = state.done
   }
 }
 

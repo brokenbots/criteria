@@ -5,6 +5,7 @@ package sandbox
 import (
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -41,41 +42,33 @@ func (p *Profile) Render() string {
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("; criteria sandbox profile version %d\n", ProfileVersion))
 	b.WriteString("(version 1)\n")
+	// Import Apple's base system profile so the dynamic linker can map the
+	// dyld shared cache and system frameworks; without this no dynamically
+	// linked binary (i.e. every adapter) can start under (deny default).
+	// Explicit (deny default) below still governs application-specific
+	// file/network access — system.sb only grants the OS read closure.
+	b.WriteString("(import \"system.sb\")\n")
 	if p.DefaultDeny {
 		b.WriteString("(deny default)\n")
 	}
 	b.WriteString("(allow process-fork)\n")
 
 	if len(p.AllowExec) > 0 {
-		b.WriteString("(allow process-exec\n")
-		for _, path := range p.AllowExec {
-			b.WriteString(fmt.Sprintf("  (literal %q)\n", path))
-		}
-		b.WriteString(")\n")
+		writeFileRule(&b, "process-exec", p.AllowExec)
 	} else {
 		b.WriteString("(deny process-exec)\n")
 	}
-
 	if len(p.AllowFileReads) > 0 {
-		b.WriteString("(allow file-read*\n")
-		for _, path := range p.AllowFileReads {
-			b.WriteString(fmt.Sprintf("  (literal %q)\n", path))
-		}
-		b.WriteString(")\n")
+		writeFileRule(&b, "file-read*", p.AllowFileReads)
 	}
-
 	if len(p.AllowFileWrites) > 0 {
-		b.WriteString("(allow file-write*\n")
-		for _, path := range p.AllowFileWrites {
-			b.WriteString(fmt.Sprintf("  (literal %q)\n", path))
-		}
-		b.WriteString(")\n")
+		writeFileRule(&b, "file-write*", p.AllowFileWrites)
 	}
 
 	if len(p.AllowNetworkHosts) > 0 {
 		b.WriteString("(allow network-outbound\n")
 		for _, host := range p.AllowNetworkHosts {
-			b.WriteString(fmt.Sprintf("  (remote ip %q)\n", host))
+			b.WriteString(fmt.Sprintf("  (remote ip %q)\n", sandboxRemoteAddr(host)))
 		}
 		b.WriteString(")\n")
 	}
@@ -88,6 +81,75 @@ func (p *Profile) Render() string {
 	}
 
 	return b.String()
+}
+
+// writeFileRule emits an (allow <op> (literal <path>)...) block with every
+// path symlink-resolved so the literals match the kernel's resolved view.
+func writeFileRule(b *strings.Builder, op string, paths []string) {
+	b.WriteString("(allow " + op + "\n")
+	for _, path := range paths {
+		fmt.Fprintf(b, "  (literal %q)\n", resolveSandboxPath(path))
+	}
+	b.WriteString(")\n")
+}
+
+// resolveSandboxPath returns p with symlinks evaluated, so profile literals
+// match the real paths the kernel checks. macOS firmlinks /tmp -> /private/tmp,
+// /var -> /private/var, /etc -> /private/etc; an allow-list entry under any of
+// these silently fails to match unless resolved. EvalSymlinks needs the path to
+// exist, so for a missing leaf we resolve the longest existing ancestor and
+// re-append the remainder.
+func resolveSandboxPath(p string) string {
+	if !filepath.IsAbs(p) {
+		return p
+	}
+	if resolved, err := filepath.EvalSymlinks(p); err == nil {
+		return resolved
+	}
+	// Leaf may not exist yet (e.g. a write target). Resolve the deepest
+	// existing ancestor and re-attach the unresolved tail.
+	dir, rest := filepath.Dir(p), filepath.Base(p)
+	for dir != "/" && dir != "." {
+		if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+			return filepath.Join(resolved, rest)
+		}
+		rest = filepath.Join(filepath.Base(dir), rest)
+		dir = filepath.Dir(dir)
+	}
+	return p
+}
+
+// sandboxRemoteAddr maps an allowed "host[:port]" entry to a form accepted by
+// the macOS sandbox-exec network filter, which only permits "localhost" or "*"
+// as the host and requires a port.
+//
+// Mapping:
+//   - loopback hosts (127.0.0.1, ::1, "localhost") -> "localhost:<port>"
+//   - any other host                                -> "*:<port>"
+//   - missing port                                  -> "<host>:*"
+//
+// macOS sandbox-exec cannot filter outbound traffic by arbitrary remote IP;
+// the `remote ip` filter only understands localhost/*. Non-loopback hosts are
+// therefore restricted by port only ("*:<port>"). Callers that need true
+// per-IP egress control must run under the Linux sandbox.
+func sandboxRemoteAddr(hostPort string) string {
+	host, port, err := net.SplitHostPort(hostPort)
+	if err != nil {
+		// No port present: treat the whole string as the host.
+		host = hostPort
+		port = "*"
+	}
+	if port == "" {
+		port = "*"
+	}
+
+	mapped := "*"
+	if host == "localhost" {
+		mapped = "localhost"
+	} else if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+		mapped = "localhost"
+	}
+	return mapped + ":" + port
 }
 
 // Handler prepares Darwin sandbox configuration from a ResolvedPolicy.
@@ -181,7 +243,7 @@ func (prep *LinuxPrepared) ApplyToCmd(cmd *exec.Cmd, criteriaBin string) error {
 	// prepare time (via PrepareContext.AdapterBinary → FromPolicy).
 	// ApplyToCmd must not mutate the receiver's Profile.
 
-	tmpPath, err := writeProfile(prep.Profile)
+	tmpPath, err := writeProfile(&prep.Profile)
 	if err != nil {
 		return err
 	}
@@ -204,7 +266,7 @@ func (prep *LinuxPrepared) ApplyToCmd(cmd *exec.Cmd, criteriaBin string) error {
 }
 
 // writeProfile serializes profile to a private temp file.
-func writeProfile(profile Profile) (string, error) {
+func writeProfile(profile *Profile) (string, error) {
 	tmpFile, err := os.CreateTemp(os.TempDir(), "criteria-sb-*.sb")
 	if err != nil {
 		return "", fmt.Errorf("create sandbox profile: %w", err)

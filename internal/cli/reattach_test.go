@@ -124,8 +124,8 @@ step "greet" {
   input {
     command = "echo hello"
   }
-  outcome "success" { next = "done" }
-  outcome "failure" { next = "failed" }
+  outcome "success" { next = step.done }
+  outcome "failure" { next = step.failed }
 }
 
 state "done" {
@@ -157,8 +157,8 @@ step "greet" {
   input {
     command = "echo hi"
   }
-  outcome "success" { next = "done" }
-  outcome "failure" { next = "failed" }
+  outcome "success" { next = step.done }
+  outcome "failure" { next = step.failed }
 }
 
 state "done" {
@@ -981,8 +981,8 @@ step "work" {
   input {
     command = "echo hi"
   }
-  outcome "success" { next = "done" }
-  outcome "failure" { next = "failed" }
+  outcome "success" { next = step.done }
+  outcome "failure" { next = step.failed }
 }
 
 state "done" {
@@ -1139,8 +1139,8 @@ workflow {
 approval "review" {
   approvers = ["alice"]
   reason    = "ship it?"
-  outcome "approved" { next = "done" }
-  outcome "rejected" { next = "done" }
+  outcome "approved" { next = step.done }
+  outcome "rejected" { next = step.done }
 }
 
 state "done" {
@@ -1199,8 +1199,8 @@ adapter "noop" "default" {}
 step "execute" {
   target = adapter.noop.default
   for_each  = ["a", "b"]
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "done" }
+  outcome "all_succeeded" { next = step.done }
+  outcome "any_failed"    { next = step.done }
 }
 
 state "done" {

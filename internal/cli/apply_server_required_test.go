@@ -24,8 +24,8 @@ step "execute" {
   input {
     command = "echo hello"
   }
-  outcome "success" { next = "wait_for_signal" }
-  outcome "failure" { next = "failed" }
+  outcome "success" { next = step.wait_for_signal }
+  outcome "failure" { next = step.failed }
 }
 
 state "wait_for_signal" {
@@ -68,7 +68,7 @@ workflow {
 
 wait "gate" {
   signal = "ready"
-  outcome "received" { next = "done" }
+  outcome "received" { next = step.done }
 }
 
 state "done" {
@@ -104,8 +104,8 @@ workflow {
 approval "review" {
   approvers = ["alice"]
   reason    = "ship it?"
-  outcome "approved" { next = "done" }
-  outcome "rejected" { next = "done" }
+  outcome "approved" { next = step.done }
+  outcome "rejected" { next = step.done }
 }
 
 state "done" {

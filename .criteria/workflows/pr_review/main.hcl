@@ -78,20 +78,18 @@ variable "require_workflow_approval" {
   default     = "false"
   description = "Set to 'true' to require explicit workflow-node approval before merge (for main-targeting PRs). Default 'false' uses async GitHub approval polling."
 }
-
-shared_variable "review_attempts" {
+data "internal" "review_attempts" {
   type = number
   value = 0
 }
-
-shared_variable "terminal_status" {
+data "internal" "terminal_status" {
   type = string
   value = "failed"
 }
 
 output "status" {
   type = string
-  value = shared.terminal_status
+  value = data.internal.terminal_status.value
 }
 
 adapter "shell" "gh" {
@@ -117,8 +115,8 @@ step "open_pr" {
     command           = "BASE_BRANCH='${var.base_branch}' sh .criteria/workflows/pr_review/scripts/open-or-update-pr.sh \"${var.workstream_file}\""
     working_directory = var.project_dir
   }
-  outcome "success" { next = "warm_up" }
-  outcome "failure" { next = "failed" }
+  outcome "success" { next = step.warm_up }
+  outcome "failure" { next = state.failed }
 }
 
 step "warm_up" {
@@ -129,8 +127,8 @@ step "warm_up" {
     command           = "echo 'warming up CI before first status poll (90s)'; sleep 90"
     working_directory = var.project_dir
   }
-  outcome "success" { next = "pr_status" }
-  outcome "failure" { next = "pr_status" }
+  outcome "success" { next = step.pr_status }
+  outcome "failure" { next = step.pr_status }
 }
 
 # ── Deterministic status gate ─────────────────────────────────────────────────
@@ -143,34 +141,34 @@ step "pr_status" {
     command           = "sh .criteria/workflows/pr_review/scripts/pr-status.sh"
     working_directory = var.project_dir
   }
-  outcome "success" { next = "route_status" }
-  outcome "failure" { next = "failed" }
+  outcome "success" { next = switch.route_status }
+  outcome "failure" { next = state.failed }
 }
 
 switch "route_status" {
-  condition {
-    match = steps.pr_status.stdout == "merged"
-    next  = step.sync_base
+  match {
+    condition = steps.pr_status.stdout == "merged"
+    next = step.sync_base
   }
-  condition {
-    match = steps.pr_status.stdout == "ready"
-    next  = step.pr_review
+  match {
+    condition = steps.pr_status.stdout == "ready"
+    next = step.pr_review
   }
-  condition {
-    match = steps.pr_status.stdout == "threads_open"
-    next  = step.pr_review
+  match {
+    condition = steps.pr_status.stdout == "threads_open"
+    next = step.pr_review
   }
-  condition {
-    match = steps.pr_status.stdout == "pending"
-    next  = step.backoff
+  match {
+    condition = steps.pr_status.stdout == "pending"
+    next = step.backoff
   }
-  condition {
-    match = steps.pr_status.stdout == "changes_requested"
-    next  = step.count_review_attempt
+  match {
+    condition = steps.pr_status.stdout == "changes_requested"
+    next = step.count_review_attempt
   }
-  condition {
-    match = steps.pr_status.stdout == "checks_failed"
-    next  = state.escalated
+  match {
+    condition = steps.pr_status.stdout == "checks_failed"
+    next = state.escalated
   }
   default { next = state.failed }
 }
@@ -183,8 +181,8 @@ step "backoff" {
     command           = "echo 'CI still pending; sleeping 60s before re-poll'; sleep 60"
     working_directory = var.project_dir
   }
-  outcome "success" { next = "pr_status" }
-  outcome "failure" { next = "pr_status" }
+  outcome "success" { next = step.pr_status }
+  outcome "failure" { next = step.pr_status }
 }
 
 # ── Cold PR review ────────────────────────────────────────────────────────────
@@ -200,9 +198,9 @@ step "pr_review" {
   input {
     prompt = "Review the open PR for ${var.workstream_file}. The deterministic status gate classifier was `${steps.pr_status.stdout}` with context:\n\n--- pr-status.sh stderr ---\n${steps.pr_status.stderr}\n--- end ---\n\nThe full diff is cached at `.criteria/tmp/diff.patch` from the develop workflow; read it instead of running `gh pr diff` (saves a network call). For each unresolved (and !outdated) review thread, either reply with citation evidence and resolve via `sh .criteria/workflows/pr_review/scripts/resolve-thread.sh <thread_id>`, or leave it open and request changes.\n\nIf the diff meets the bar and all addressable threads are resolved: post a recommendation comment via `gh pr comment <pr_number> --body \"<your summary>\"` summarizing what you verified and that you recommend approval. Then emit RESULT: approve. DO NOT run `gh pr review --approve` — branch protection forbids self-approval by the PR author; a human must click Approve on GitHub before merging.\n\nIf code changes are required: emit a `### Required Changes` section in your final message and RESULT: changes_requested.\n\nDO NOT run `gh pr merge` — a deterministic shell step handles merge after human approval.\n\nEnd your final message with exactly one of:\nRESULT: approve\nRESULT: changes_requested\nRESULT: failure"
   }
-  outcome "approve"           { next = "route_after_cold_review" }
-  outcome "changes_requested" { next = "count_review_attempt" }
-  outcome "failure"           { next = "failed" }
+  outcome "approve"           { next = switch.route_after_cold_review }
+  outcome "changes_requested" { next = step.count_review_attempt }
+  outcome "failure"           { next = state.failed }
 }
 
 # ── Approval routing — workflow node vs. async GitHub poll ───────────────────
@@ -210,9 +208,9 @@ step "pr_review" {
 # require_workflow_approval=false → poll GitHub for APPROVED status (default)
 
 switch "route_after_cold_review" {
-  condition {
-    match = var.require_workflow_approval == "true"
-    next  = approval.human_approval_required
+  match {
+    condition = var.require_workflow_approval == "true"
+    next = approval.human_approval_required
   }
   default { next = step.await_github_approval }
 }
@@ -224,8 +222,8 @@ switch "route_after_cold_review" {
 approval "human_approval_required" {
   approvers = ["operator"]
   reason    = "The pr_reviewer agent recommends approval and has posted its summary as a PR comment. GitHub branch protection requires approval from someone other than the PR author. To continue: (1) open the PR in GitHub, (2) review the agent's recommendation comment, (3) click `Approve` on the PR, (4) approve this workflow node. The next step verifies that GitHub's reviewDecision is APPROVED before merging — if you approve here without clicking Approve on GitHub, the merge step will fail cleanly and loop back."
-  outcome "approved" { next = "await_github_approval" }
-  outcome "rejected" { next = "escalated" }
+  outcome "approved" { next = step.await_github_approval }
+  outcome "rejected" { next = state.escalated }
 }
 
 # ── Async GitHub approval poll ────────────────────────────────────────────────
@@ -241,8 +239,8 @@ step "await_github_approval" {
     command           = "set -eu; branch=$(git branch --show-current); pr_num=$(gh pr view \"$branch\" --json number --jq '.number'); decision=$(gh pr view \"$pr_num\" --json reviewDecision --jq '.reviewDecision // \"NONE\"'); echo \"review_decision=$decision\"; if [ \"$decision\" = \"APPROVED\" ]; then exit 0; fi; echo 'Waiting for human to click Approve on GitHub...'; exit 1"
     working_directory = var.project_dir
   }
-  outcome "success" { next = "merge_pr" }
-  outcome "failure" { next = "backoff_await_approval" }
+  outcome "success" { next = step.merge_pr }
+  outcome "failure" { next = step.backoff_await_approval }
 }
 
 step "backoff_await_approval" {
@@ -253,8 +251,8 @@ step "backoff_await_approval" {
     command           = "echo 'GitHub approval not yet detected; sleeping 120s'; sleep 120"
     working_directory = var.project_dir
   }
-  outcome "success" { next = "await_github_approval" }
-  outcome "failure" { next = "await_github_approval" }
+  outcome "success" { next = step.await_github_approval }
+  outcome "failure" { next = step.await_github_approval }
 }
 
 # ── Merge — shell step, not agent ────────────────────────────────────────────
@@ -267,8 +265,8 @@ step "merge_pr" {
     command           = "set -eu; branch=$(git branch --show-current); pr_number=$(gh pr view \"$branch\" --json number --jq '.number'); gh pr merge \"$pr_number\" --squash --delete-branch; echo merged_pr_number=\"$pr_number\""
     working_directory = var.project_dir
   }
-  outcome "success" { next = "sync_base" }
-  outcome "failure" { next = "failed" }
+  outcome "success" { next = step.sync_base }
+  outcome "failure" { next = state.failed }
 }
 
 # ── Local base-branch sync ───────────────────────────────────────────────────
@@ -281,8 +279,8 @@ step "sync_base" {
     command           = "set -eu; git fetch origin '${var.base_branch}'; git checkout '${var.base_branch}'; git pull --ff-only origin '${var.base_branch}'"
     working_directory = var.project_dir
   }
-  outcome "success" { next = "verify_base_in_sync" }
-  outcome "failure" { next = "failed" }
+  outcome "success" { next = step.verify_base_in_sync }
+  outcome "failure" { next = state.failed }
 }
 
 step "verify_base_in_sync" {
@@ -293,8 +291,8 @@ step "verify_base_in_sync" {
     command           = "set -eu; branch=$(basename \"${var.workstream_file}\" .md); if git show-ref --verify --quiet refs/remotes/origin/$branch; then echo \"remote_branch_still_exists=$branch (gh pr merge --delete-branch may have skipped it)\" >&2; fi; echo \"${var.base_branch}_at=$(git rev-parse HEAD)\"; echo \"origin_${var.base_branch}_at=$(git rev-parse origin/${var.base_branch})\""
     working_directory = var.project_dir
   }
-  outcome "success" { next = "finalize_ok" }
-  outcome "failure" { next = "failed" }
+  outcome "success" { next = step.finalize_ok }
+  outcome "failure" { next = state.failed }
 }
 
 # ── Status output ────────────────────────────────────────────────────────────
@@ -308,10 +306,13 @@ step "finalize_ok" {
     working_directory = var.project_dir
   }
   outcome "success" {
-    next          = "returned"
-    shared_writes = { terminal_status = "stdout" }
+    next = state.returned
+      write {
+    target = data.internal.terminal_status.value
+    value  = output.stdout
   }
-  outcome "failure" { next = "failed" }
+  }
+  outcome "failure" { next = state.failed }
 }
 
 # ── Changes-requested counter → escalate after N attempts ────────────────────
@@ -320,20 +321,23 @@ step "count_review_attempt" {
   target     = adapter.shell.gh
   max_visits = 10
   input {
-    command           = "echo $(( ${shared.review_attempts} + 1 ))"
+    command           = "echo $(( ${data.internal.review_attempts.value} + 1 ))"
     working_directory = var.project_dir
   }
   outcome "success" {
-    next          = "check_review_limit"
-    shared_writes = { review_attempts = "stdout" }
+    next = switch.check_review_limit
+      write {
+    target = data.internal.review_attempts.value
+    value  = output.stdout
   }
-  outcome "failure" { next = "failed" }
+  }
+  outcome "failure" { next = state.failed }
 }
 
 switch "check_review_limit" {
-  condition {
-    match = shared.review_attempts >= var.max_review_attempts
-    next  = state.escalated
+  match {
+    condition = data.internal.review_attempts.value >= var.max_review_attempts
+    next = state.escalated
   }
   default { next = step.pr_status }
 }

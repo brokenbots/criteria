@@ -132,13 +132,13 @@ func runWorkflowBody(ctx context.Context, body *workflow.FSMGraph, bodyEntry str
 	defer func() { tearDownScopeAdapters(ctx, bodyOrder, deps) }()
 
 	childSt := &RunState{
-		Current:        bodyEntry,
-		Vars:           childVars,
-		WorkflowDir:    workflowDir,
-		PendingSignal:  "",
-		ResumePayload:  nil,
-		SharedVarStore: NewSharedVarStore(body),
-		firstStep:      false,
+		Current:       bodyEntry,
+		Vars:          childVars,
+		WorkflowDir:   workflowDir,
+		PendingSignal: "",
+		ResumePayload: nil,
+		DataStore:     NewDataStore(body),
+		firstStep:     false,
 	}
 
 	for {
@@ -149,6 +149,9 @@ func runWorkflowBody(ctx context.Context, body *workflow.FSMGraph, bodyEntry str
 		next, err := node.Evaluate(ctx, childSt, deps)
 		if err != nil {
 			if errors.Is(err, engineruntime.ErrTerminal) {
+				if childSt.DataStore != nil {
+					childSt.Vars = workflow.SeedDataSnapshot(childSt.Vars, childSt.DataStore.Snapshot())
+				}
 				return childSt.Current, nil, childSt.Vars, nil
 			}
 			return "", nil, nil, fmt.Errorf("workflow body step %q: %w", childSt.Current, err)

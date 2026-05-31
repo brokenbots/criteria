@@ -29,8 +29,9 @@ Create a workflow file:
 
 ```hcl
 # hello.hcl
-workflow "hello" {
-  version       = "0.1"
+workflow {
+  name          = "hello"
+  version       = "1"
   initial_state = "greet"
   target_state  = "done"
 }
@@ -85,8 +86,9 @@ Expected output:
 ## Workflow language
 
 ```hcl
-workflow "deploy" {
-  version       = "0.1"
+workflow {
+  name          = "deploy"
+  version       = "1"
   initial_state = "build"
   target_state  = "deployed"
 }
@@ -159,7 +161,7 @@ Phase 3 (v0.3.0) is a **clean break** from v0.2.0. The HCL language and adapter 
 - `step.adapter = "<bare type>"` → `step.target = adapter.<type>.<name>`.
 - `transition_to` → `next`.
 - `branch` block → `switch` block.
-- Top-level workflow attributes moved into `workflow "<name>" { ... }` block.
+- Top-level workflow attributes moved into `workflow { name = "..." }` block.
 - Inline `step.workflow { ... }` replaced by first-class `subworkflow` blocks.
 - `lifecycle = "open"|"close"` removed (auto-managed).
 

@@ -15,13 +15,18 @@ import (
 
 func NewPlanCmd() *cobra.Command {
 	var varOverrides []string
+	var varFiles []string
 	cmd := &cobra.Command{
-		Use:   "plan <workflow.hcl|dir>",
+		Use:   "plan <workflow.chcl|workflow.hcl|dir>",
 		Short: "Render a human-readable execution preview",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
-			out, err := renderPlanOutput(cmd.Context(), args[0], parseVarOverrides(varOverrides))
+			merged, err := mergeVarSources(varFiles, varOverrides)
+			if err != nil {
+				return err
+			}
+			out, err := renderPlanOutput(cmd.Context(), args[0], merged)
 			if err != nil {
 				return err
 			}
@@ -30,6 +35,7 @@ func NewPlanCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringArrayVar(&varOverrides, "var", nil, "Override a workflow variable: key=value (repeatable)")
+	cmd.Flags().StringArrayVar(&varFiles, "var-file", nil, "Load variable overrides from a .chcl, .hcl, or .json file (repeatable; --var takes precedence)")
 	return cmd
 }
 

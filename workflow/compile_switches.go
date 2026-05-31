@@ -27,16 +27,16 @@ func compileSwitches(g *FSMGraph, spec *Spec, schemas map[string]AdapterInfo, op
 			diags = append(diags, defDiags...)
 			node.DefaultNext = defaultNext
 			node.DefaultOutput = defaultOut
-		} else if !isSwitchProvedExhaustive(ss.Conditions, g, opts) {
+		} else if !isSwitchProvedExhaustive(ss.Matches, g, opts) {
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagWarning,
-				Summary:  fmt.Sprintf("switch %q: default block is required when conditions are not provably exhaustive", name),
-				Detail:   "A switch without a default block will fail at runtime if no condition matches. Add a default block or ensure one condition has match = true.",
+				Summary:  fmt.Sprintf("switch %q: default block is required when matches are not provably exhaustive", name),
+				Detail:   "A switch without a default block will fail at runtime if no match matches. Add a default block or ensure one match has condition = true.",
 			})
 		}
 
-		for i, cs := range ss.Conditions {
-			cond, condDiags := compileSwitchConditionBlock(cs, i, name, spec.SourceBytes, g, schemas, opts)
+		for i, cs := range ss.Matches {
+			cond, condDiags := compileSwitchMatchBlock(cs, i, name, spec.SourceBytes, g, schemas, opts)
 			diags = append(diags, condDiags...)
 			if cond != nil {
 				node.Conditions = append(node.Conditions, *cond)
@@ -105,30 +105,21 @@ func compileSwitchDefaultBlock(def *SwitchDefaultSpec, switchName string, g *FSM
 	return defaultNext, outExpr, diags
 }
 
-// compileSwitchConditionBlock compiles a single condition block within a switch.
+// compileSwitchMatchBlock compiles a single match block within a switch.
 // Returns a SwitchCondition (or nil on critical error) and diagnostics.
-func compileSwitchConditionBlock(cs ConditionSpec, idx int, switchName string, sourceBytes []byte, g *FSMGraph, schemas map[string]AdapterInfo, opts CompileOpts) (*SwitchCondition, hcl.Diagnostics) {
+func compileSwitchMatchBlock(cs MatchSpec, idx int, switchName string, sourceBytes []byte, g *FSMGraph, schemas map[string]AdapterInfo, opts CompileOpts) (*SwitchCondition, hcl.Diagnostics) {
 	var diags hcl.Diagnostics
-	location := fmt.Sprintf("condition[%d]", idx)
+	location := fmt.Sprintf("match[%d]", idx)
 
 	attrs, attrDiags := cs.Remain.JustAttributes()
 	diags = append(diags, attrDiags...)
+	diags = append(diags, checkSwitchMatchUnknownAttrs(attrs, switchName, location)...)
 
-	for attrName := range attrs {
-		if attrName != "match" && attrName != "next" && attrName != "output" {
-			diags = append(diags, &hcl.Diagnostic{
-				Severity: hcl.DiagError,
-				Summary:  fmt.Sprintf("switch %q %s: unknown attribute %q (allowed: match, next, output)", switchName, location, attrName),
-				Subject:  &attrs[attrName].NameRange,
-			})
-		}
-	}
-
-	matchAttr, hasMatch := attrs["match"]
-	if !hasMatch {
+	conditionAttr, hasCondition := attrs["condition"]
+	if !hasCondition {
 		diags = append(diags, &hcl.Diagnostic{
 			Severity: hcl.DiagError,
-			Summary:  fmt.Sprintf("switch %q %s: match is required", switchName, location),
+			Summary:  fmt.Sprintf("switch %q %s: condition is required", switchName, location),
 		})
 		return nil, diags
 	}
@@ -142,18 +133,18 @@ func compileSwitchConditionBlock(cs ConditionSpec, idx int, switchName string, s
 		return nil, diags
 	}
 
-	matchExpr := matchAttr.Expr
-	diags = append(diags, validateSwitchExprRefs(matchExpr, g, schemas, switchName, idx)...)
-	if _, foldable, fd := FoldExpr(matchExpr, graphVars(g), graphLocals(g), opts.WorkflowDir); foldable {
-		diags = append(diags, errorDiagsWithFallbackSubject(fd, matchExpr)...)
+	conditionExpr := conditionAttr.Expr
+	diags = append(diags, validateSwitchExprRefs(conditionExpr, g, schemas, switchName, idx)...)
+	if _, foldable, fd := FoldExpr(conditionExpr, graphVars(g), graphLocals(g), opts.WorkflowDir); foldable {
+		diags = append(diags, errorDiagsWithFallbackSubject(fd, conditionExpr)...)
 	}
 
 	condNext, condNextDiags := resolveNextAttr(nextCondAttr.Expr, switchName, location)
 	diags = append(diags, condNextDiags...)
 
 	cond := &SwitchCondition{
-		Match:    matchExpr,
-		MatchSrc: extractExprSource(matchExpr, sourceBytes),
+		Match:    conditionExpr,
+		MatchSrc: extractExprSource(conditionExpr, sourceBytes),
 		Next:     condNext,
 	}
 
@@ -165,16 +156,32 @@ func compileSwitchConditionBlock(cs ConditionSpec, idx int, switchName string, s
 	return cond, diags
 }
 
-// isSwitchProvedExhaustive reports whether the given conditions are provably
-// exhaustive — i.e. at least one condition folds to the constant true.
-func isSwitchProvedExhaustive(conditions []ConditionSpec, g *FSMGraph, opts CompileOpts) bool {
-	for _, cs := range conditions {
+// checkSwitchMatchUnknownAttrs returns diagnostics for any attribute in a match
+// block that is not one of the allowed names: condition, next, output.
+func checkSwitchMatchUnknownAttrs(attrs hcl.Attributes, switchName, location string) hcl.Diagnostics {
+	var diags hcl.Diagnostics
+	for attrName := range attrs {
+		if attrName != "condition" && attrName != "next" && attrName != "output" {
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  fmt.Sprintf("switch %q %s: unknown attribute %q (allowed: condition, next, output)", switchName, location, attrName),
+				Subject:  &attrs[attrName].NameRange,
+			})
+		}
+	}
+	return diags
+}
+
+// isSwitchProvedExhaustive reports whether the given matches are provably
+// exhaustive — i.e. at least one match folds to the constant true.
+func isSwitchProvedExhaustive(matches []MatchSpec, g *FSMGraph, opts CompileOpts) bool {
+	for _, cs := range matches {
 		attrs, _ := cs.Remain.JustAttributes()
-		matchAttr, ok := attrs["match"]
+		conditionAttr, ok := attrs["condition"]
 		if !ok {
 			continue
 		}
-		val, foldable, _ := FoldExpr(matchAttr.Expr, graphVars(g), graphLocals(g), opts.WorkflowDir)
+		val, foldable, _ := FoldExpr(conditionAttr.Expr, graphVars(g), graphLocals(g), opts.WorkflowDir)
 		if foldable && val == cty.True {
 			return true
 		}
@@ -209,67 +216,92 @@ func validateSwitchOutputExpr(switchName, location string, attr *hcl.Attribute, 
 }
 
 // resolveNextAttr resolves a `next` attribute expression to a node name string.
-// Accepts traversal form (step.foo, state.done) or bare string ("done", "return").
-// Traversals must be exactly two parts: <kind>.<name>. Extra segments are rejected.
+// Accepts:
+//   - Two-segment traversals: step.<name>, state.<name>, switch.<name>,
+//     wait.<name>, approval.<name>.
+//   - Single-segment bare keywords: return, continue.
+//
+// Rejects legacy quoted-string form with a migration hint.
 // Returns the resolved name and any diagnostics.
-func resolveNextAttr(expr hcl.Expression, switchName, location string) (string, hcl.Diagnostics) {
+func resolveNextAttr(expr hcl.Expression, context, location string) (string, hcl.Diagnostics) {
 	var diags hcl.Diagnostics
 
 	vars := expr.Variables()
 	if len(vars) == 0 {
-		// Literal string form: next = "done" or next = "return".
-		val, evalDiags := expr.Value(nil)
-		if evalDiags.HasErrors() {
-			diags = append(diags, &hcl.Diagnostic{
-				Severity: hcl.DiagError,
-				Summary:  fmt.Sprintf("switch %q %s: could not evaluate next: %s", switchName, location, evalDiags.Error()),
-				Subject:  expr.StartRange().Ptr(),
-			})
-			return "", diags
-		}
-		if val.Type() != cty.String {
-			diags = append(diags, &hcl.Diagnostic{
-				Severity: hcl.DiagError,
-				Summary:  fmt.Sprintf("switch %q %s: next must be a string or traversal, got %s", switchName, location, val.Type().FriendlyName()),
-				Subject:  expr.StartRange().Ptr(),
-			})
-			return "", diags
-		}
-		return val.AsString(), diags
+		return resolveLiteralNext(expr, context, location)
 	}
 
-	// Traversal form: next = step.foo  or  next = state.done.
-	// Must be exactly two segments: <kind>.<name>. Reject step.foo.bar etc.
 	if len(vars) == 1 {
-		traversal := vars[0]
-		if len(traversal) != 2 {
-			diags = append(diags, &hcl.Diagnostic{
-				Severity: hcl.DiagError,
-				Summary:  fmt.Sprintf("switch %q %s: next traversal must be exactly <kind>.<name> (e.g. step.foo, state.done); got %d segments", switchName, location, len(traversal)),
-				Subject:  expr.StartRange().Ptr(),
-			})
-			return "", diags
-		}
-		root, rootOK := traversal[0].(hcl.TraverseRoot)
-		attr, attrOK := traversal[1].(hcl.TraverseAttr)
-		if rootOK && attrOK {
-			switch root.Name {
-			case "step", "state", "wait", "approval", "switch":
-				return attr.Name, diags
-			}
+		if name, ok := resolveTraversalNext(vars[0]); ok {
+			return name, diags
 		}
 	}
 
 	diags = append(diags, &hcl.Diagnostic{
 		Severity: hcl.DiagError,
-		Summary:  fmt.Sprintf("switch %q %s: next must be a string literal (\"name\") or a node traversal (step.name, state.name)", switchName, location),
+		Summary:  fmt.Sprintf("%s %s: next must be a node traversal (step.name, state.name, switch.name, wait.name, approval.name) or bare keyword (return, continue)", context, location),
 		Subject:  expr.StartRange().Ptr(),
 	})
 	return "", diags
 }
 
+// resolveLiteralNext handles the zero-variables case: literal strings are
+// legacy syntax; other literals are rejected with a type error.
+func resolveLiteralNext(expr hcl.Expression, context, location string) (string, hcl.Diagnostics) {
+	var diags hcl.Diagnostics
+	val, evalDiags := expr.Value(nil)
+	if evalDiags.HasErrors() {
+		diags = append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  fmt.Sprintf("%s %s: could not evaluate next: %s", context, location, evalDiags.Error()),
+			Subject:  expr.StartRange().Ptr(),
+		})
+		return "", diags
+	}
+	if val.Type() == cty.String {
+		diags = append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  fmt.Sprintf("%s %s: next is now a node reference: write next = step.foo, next = state.done, next = return, or next = continue", context, location),
+			Subject:  expr.StartRange().Ptr(),
+		})
+		return "", diags
+	}
+	diags = append(diags, &hcl.Diagnostic{
+		Severity: hcl.DiagError,
+		Summary:  fmt.Sprintf("%s %s: next must be a node traversal (step.name, state.name) or bare keyword (return, continue), got %s", context, location, val.Type().FriendlyName()),
+		Subject:  expr.StartRange().Ptr(),
+	})
+	return "", diags
+}
+
+// resolveTraversalNext resolves a single traversal to a next-target name.
+// Returns (name, true) for valid traversals, ("", false) otherwise.
+func resolveTraversalNext(traversal hcl.Traversal) (string, bool) {
+	if len(traversal) == 1 {
+		if root, ok := traversal[0].(hcl.TraverseRoot); ok {
+			switch root.Name {
+			case "return":
+				return ReturnSentinel, true
+			case "continue":
+				return "_continue", true
+			}
+		}
+	}
+	if len(traversal) == 2 {
+		root, rootOK := traversal[0].(hcl.TraverseRoot)
+		attr, attrOK := traversal[1].(hcl.TraverseAttr)
+		if rootOK && attrOK {
+			switch root.Name {
+			case "step", "state", "wait", "approval", "switch":
+				return attr.Name, true
+			}
+		}
+	}
+	return "", false
+}
+
 // validateSwitchExprRefs validates that variable and step traversals referenced
-// in a switch condition match expression are declared in the graph. When schemas
+// in a switch match condition expression are declared in the graph. When schemas
 // is non-nil and the referenced step has an OutputSchema, it also warns when the
 // field name is not declared in that schema.
 func validateSwitchExprRefs(expr hcl.Expression, g *FSMGraph, schemas map[string]AdapterInfo, switchName string, condIdx int) hcl.Diagnostics {
@@ -291,7 +323,7 @@ func validateSwitchExprRefs(expr hcl.Expression, g *FSMGraph, schemas map[string
 			if _, known := g.Variables[attr.Name]; !known {
 				diags = append(diags, &hcl.Diagnostic{
 					Severity: hcl.DiagError,
-					Summary:  fmt.Sprintf("switch %q condition[%d]: undefined variable %q", switchName, condIdx, attr.Name),
+					Summary:  fmt.Sprintf("switch %q match[%d]: undefined variable %q", switchName, condIdx, attr.Name),
 				})
 			}
 		case "steps":
@@ -302,13 +334,13 @@ func validateSwitchExprRefs(expr hcl.Expression, g *FSMGraph, schemas map[string
 }
 
 // validateSwitchStepTraversal validates a steps.<name>[.<field>] traversal in a
-// switch condition. It checks for self-references, unknown step names, and — when
+// switch match. It checks for self-references, unknown step names, and — when
 // a schema is available — unknown output field names.
 func validateSwitchStepTraversal(traversal hcl.Traversal, stepName string, g *FSMGraph, schemas map[string]AdapterInfo, switchName string, condIdx int) hcl.Diagnostics {
 	if stepName == switchName {
 		return hcl.Diagnostics{&hcl.Diagnostic{
 			Severity: hcl.DiagError,
-			Summary:  fmt.Sprintf("switch %q condition[%d]: self-reference steps.%s is always empty at match time; use a variable or a prior step instead", switchName, condIdx, switchName),
+			Summary:  fmt.Sprintf("switch %q match[%d]: self-reference steps.%s is always empty at match time; use a variable or a prior step instead", switchName, condIdx, switchName),
 		}}
 	}
 	_, isStep := g.Steps[stepName]
@@ -316,7 +348,7 @@ func validateSwitchStepTraversal(traversal hcl.Traversal, stepName string, g *FS
 	if !isStep && !isSwitch {
 		return hcl.Diagnostics{&hcl.Diagnostic{
 			Severity: hcl.DiagError,
-			Summary:  fmt.Sprintf("switch %q condition[%d]: unknown step %q referenced in match expression", switchName, condIdx, stepName),
+			Summary:  fmt.Sprintf("switch %q match[%d]: unknown step %q referenced in condition expression", switchName, condIdx, stepName),
 		}}
 	}
 	if !isStep || len(traversal) < 3 {
@@ -349,8 +381,8 @@ func validateSwitchStepFieldRef(seg hcl.Traverser, stepName string, g *FSMGraph,
 	}
 	r := fieldAttr.SrcRange
 	return hcl.Diagnostics{&hcl.Diagnostic{
-		Severity: hcl.DiagWarning,
-		Summary:  fmt.Sprintf("switch %q condition[%d]: field %q is not declared in the output schema of step %q", switchName, condIdx, fieldAttr.Name, stepName),
+		Severity: hcl.DiagError,
+		Summary:  fmt.Sprintf("switch %q match[%d]: field %q is not declared in the output schema of step %q", switchName, condIdx, fieldAttr.Name, stepName),
 		Subject:  &r,
 	}}
 }

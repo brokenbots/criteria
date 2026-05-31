@@ -170,7 +170,7 @@ func TestCompileSubworkflows_DirNotExist(t *testing.T) {
 	}
 }
 
-// TestCompileSubworkflows_DirEmptyOfHCL verifies that a directory with no .hcl files
+// TestCompileSubworkflows_DirEmptyOfHCL verifies that a directory with no workflow files
 // produces a compile error.
 func TestCompileSubworkflows_DirEmptyOfHCL(t *testing.T) {
 	tmpDir := t.TempDir()
@@ -182,7 +182,7 @@ func TestCompileSubworkflows_DirEmptyOfHCL(t *testing.T) {
 	parentHCL := parentHCLWithSubworkflow("empty_sw", "./empty", "")
 	_, diags := compileParentSpec(t, parentHCL, tmpDir)
 	if !diags.HasErrors() {
-		t.Fatal("expected error for directory with no .hcl files, got none")
+		t.Fatal("expected error for directory with no workflow files, got none")
 	}
 }
 

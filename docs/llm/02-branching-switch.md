@@ -20,36 +20,36 @@ adapter "noop" "default" {}
 
 step "classify" {
   target = adapter.noop.default
-  outcome "success" { next = "route" }
-  outcome "failure" { next = "failed" }
+  outcome "success" { next = switch.route }
+  outcome "failure" { next = state.failed }
 }
 
 switch "route" {
   # steps.classify.label is a placeholder — replace with your adapter's actual output key
-  condition {
-    match = steps.classify.label == "urgent"
-    next  = "handle_urgent"
+  match {
+    condition = steps.classify.label == "urgent"
+    next = step.handle_urgent
   }
-  condition {
-    match = steps.classify.label == "normal"
-    next  = "handle_normal"
+  match {
+    condition = steps.classify.label == "normal"
+    next = step.handle_normal
   }
-  default { next = "handle_other" }
+  default { next = step.handle_other }
 }
 
 step "handle_urgent" {
   target = adapter.noop.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = state.done }
 }
 
 step "handle_normal" {
   target = adapter.noop.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = state.done }
 }
 
 step "handle_other" {
   target = adapter.noop.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = state.done }
 }
 
 state "done" {
@@ -66,14 +66,14 @@ state "failed" {
 ## Key idioms
 
 - **`switch "route" { ... }`** — a named routing node; a step's outcome points `next` at it.
-- **`condition { match = <bool expr> next = "..." }`** — evaluated in declaration order; first truthy match wins.
+- **`match { condition = <bool expr> next = "..." }`** — evaluated in declaration order; first truthy match wins.
 - **`steps.<name>.<key>`** — reads an output field from a previously executed step.
-- **`default { next = "..." }`** — required when conditions are not exhaustive; omitting it risks a runtime routing error.
+- **`default { next = "..." }`** — required when matches are not exhaustive; omitting it risks a runtime routing error.
 
 ## Common pitfalls
 
-- **Missing `default`** — if no condition matches and `default` is absent, the run fails with a routing error at runtime.
-- **Order matters** — conditions are tested top-to-bottom; place more specific conditions before general ones.
+- **Missing `default`** — if no match matches and `default` is absent, the run fails with a routing error at runtime.
+- **Order matters** — matches are tested top-to-bottom; place more specific matches before general ones.
 
 ## See also
 

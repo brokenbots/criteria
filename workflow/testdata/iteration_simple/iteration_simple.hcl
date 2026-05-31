@@ -20,8 +20,8 @@ step "process" {
     label  = "item:${each.value}"
     result = "success"
   }
-  outcome "all_succeeded" { next = "count_phase" }
-  outcome "any_failed"    { next = "done" }
+  outcome "all_succeeded" { next = step.count_phase }
+  outcome "any_failed"    { next = state.done }
 }
 
 step "count_phase" {
@@ -32,8 +32,8 @@ step "count_phase" {
     label  = "idx:${each._idx}"
     result = "success"
   }
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "done" }
+  outcome "all_succeeded" { next = state.done }
+  outcome "any_failed"    { next = state.done }
 }
 
 state "done" {

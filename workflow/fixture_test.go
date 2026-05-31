@@ -9,6 +9,13 @@ import (
 // TestFixtures_V2 validates every .hcl fixture under testdata/v2/* by parsing
 // and compiling it. Each subdirectory is treated as a separate module.
 func TestFixtures_V2(t *testing.T) {
+	// The v2 fixtures model Linux-targeted environments (container, sandbox,
+	// os = "linux"). Pin the host OS so the compile-time OS gate is satisfied
+	// regardless of the test host (these compile on the Linux CI as-is).
+	old := envRegistryHostOS
+	envRegistryHostOS = "linux"
+	defer func() { envRegistryHostOS = old }()
+
 	fixtureDir := filepath.Join("testdata", "v2")
 	entries, err := os.ReadDir(fixtureDir)
 	if err != nil {

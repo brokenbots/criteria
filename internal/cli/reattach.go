@@ -8,6 +8,7 @@ import (
 
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/internal/adapters/shell"
+	"github.com/brokenbots/criteria/internal/diagutil"
 	"github.com/brokenbots/criteria/internal/engine"
 	"github.com/brokenbots/criteria/internal/run"
 	servertrans "github.com/brokenbots/criteria/internal/transport/server"
@@ -321,7 +322,7 @@ func parseWorkflowFromPath(ctx context.Context, path string) (*workflow.FSMGraph
 	// Collect adapter schemas for compile-time validation.
 	loader := adapterhost.NewLoader()
 	loader.RegisterBuiltin(shell.Name, adapterhost.BuiltinFactoryForAdapter(shell.New()))
-	schemas := collectSchemas(ctx, loader, spec, nil)
+	schemas := diagutil.CollectSchemas(ctx, loader, spec, nil)
 	_ = loader.Shutdown(ctx)
 
 	graph, diags := workflow.CompileWithContext(ctx, spec, schemas, workflow.CompileOpts{

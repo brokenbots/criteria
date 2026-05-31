@@ -26,7 +26,7 @@ func TestParseFileOrDir_FilePath_DelegatesToParentDir(t *testing.T) {
 
 step "run" {
   target = adapter.noop.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 
 state "done" { terminal = true }
@@ -91,7 +91,7 @@ func TestParseFileOrDir_DirPath(t *testing.T) {
 
 step "run" {
   target = adapter.noop.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 
 state "done" { terminal = true }
@@ -121,6 +121,31 @@ func TestParseFileOrDir_NonexistentPath_Error(t *testing.T) {
 	}
 }
 
+// TestParseFileOrDir_CHCLFile_Accepted verifies that a .chcl workflow file is
+// accepted just like a .hcl file when passed as a file path.
+func TestParseFileOrDir_CHCLFile_Accepted(t *testing.T) {
+	dir := t.TempDir()
+
+	chclPath := filepath.Join(dir, "workflow.chcl")
+	if err := os.WriteFile(chclPath, []byte(singleFileContent), 0o644); err != nil {
+		t.Fatalf("write workflow.chcl: %v", err)
+	}
+
+	spec, diags := ParseFileOrDir(chclPath)
+	if diags.HasErrors() {
+		t.Fatalf("ParseFileOrDir(.chcl): %s", diags.Error())
+	}
+	if spec == nil || spec.Header == nil {
+		t.Fatal("expected non-nil spec with Header")
+	}
+	if spec.Header.Name != "test" {
+		t.Errorf("Header.Name = %q, want %q", spec.Header.Name, "test")
+	}
+	if len(spec.Steps) != 1 {
+		t.Errorf("expected 1 step, got %d", len(spec.Steps))
+	}
+}
+
 // TestParseFileOrDir_NonHCLFile_Error verifies that a regular file without a
 // .hcl suffix is rejected with a descriptive error rather than silently
 // succeeding by parsing the parent directory.
@@ -146,13 +171,13 @@ func TestParseFileOrDir_NonHCLFile_Error(t *testing.T) {
 	}
 	found := false
 	for _, d := range diags {
-		if strings.Contains(d.Detail, ".hcl") {
+		if strings.Contains(d.Detail, ".chcl") || strings.Contains(d.Detail, ".hcl") {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Errorf("expected diagnostic detail mentioning .hcl requirement, got: %s", diags.Error())
+		t.Errorf("expected diagnostic detail mentioning .chcl/.hcl requirement, got: %s", diags.Error())
 	}
 }
 
@@ -179,7 +204,7 @@ adapter "noop" "default" {}
 
 step "run" {
   target = adapter.noop.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 
 state "done" { terminal = true }

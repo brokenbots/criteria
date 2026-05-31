@@ -453,7 +453,12 @@ func TestCompileEnvironments_InvalidPolicyMode(t *testing.T) {
 }
 
 func TestCompileEnvironments_OSAttribute(t *testing.T) {
-	// Environment with os attribute should parse correctly.
+	// Environment with os attribute should parse correctly. Pin the host OS so
+	// the compile-time OS gate is satisfied regardless of the test host.
+	old := envRegistryHostOS
+	envRegistryHostOS = "linux"
+	defer func() { envRegistryHostOS = old }()
+
 	src := environmentWorkflow(`
   environment "shell" "linux_env" {
     os = "linux"

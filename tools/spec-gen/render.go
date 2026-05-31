@@ -92,7 +92,7 @@ func blockLabelStr(b BlockDoc) string {
 
 // blockAnchor computes the GitHub Markdown heading anchor for a BlockDoc.
 //
-// GitHub's slugifier applied to `` ### `name labelStr` `` works as follows:
+// GitHub's slugifier applied to “ ### `name labelStr` “ works as follows:
 //  1. Extract the text content of the rendered heading (backtick code span
 //     content: `name labelStr`).
 //  2. Lowercase the text.
@@ -185,30 +185,33 @@ func renderNamespaces(namespaces []NamespaceDoc) string {
 // namespaceColumnFormat defines the "Namespace" column text for keys whose
 // column is a static pattern rather than a dynamic sub-key list.
 var namespaceColumnFormat = map[string]string{
-	"var":    "`var.*`",
-	"steps":  "`steps.<name>.<key>`",
-	"local":  "`local.*`",
-	"shared": "`shared.*`",
-	"while":  "`while.*`",
+	"var":   "`var.*`",
+	"steps": "`steps.<name>.<key>`",
+	"local": "`local.*`",
+	"data":  "`data.<kind>.<name>.value`",
+	"while": "`while.*`",
+	"path":  "`path.*`",
 }
 
 // namespaceAvailableIn gives the "Available in" column text per namespace key.
 var namespaceAvailableIn = map[string]string{
-	"var":    "all expressions",
-	"steps":  "post-completion of `<name>`",
-	"each":   "iterating-step expressions only",
-	"local":  "all expressions",
-	"shared": "all expressions; mutable via `shared_writes`",
-	"while":  "while-modified-step expressions only",
+	"var":   "all expressions",
+	"steps": "post-completion of `<name>`",
+	"each":  "iterating-step expressions only",
+	"local": "all expressions",
+	"data":  "all expressions; mutable via `write` blocks",
+	"while": "while-modified-step expressions only",
+	"path":  "all expressions",
 }
 
 // namespaceDescription gives the description column text per namespace key.
 // Text is hand-curated here; keys are discovered from workflow/eval.go.
 var namespaceDescription = map[string]string{
-	"var":    "Read-only typed input variables declared with `variable` blocks.",
-	"steps":  "Captured outputs from a prior step.",
-	"each":   "Per-iteration bindings; see Iteration semantics.",
-	"local":  "Compile-time constants declared with `local` blocks.",
-	"shared": "Runtime-mutable shared values declared with `shared_variable` blocks.",
-	"while":  "Per-iteration bindings for while-driven steps; see While iteration.",
+	"var":   "Read-only typed input variables declared with `variable` blocks.",
+	"steps": "Captured outputs from a prior step.",
+	"each":  "Per-iteration bindings; see Iteration semantics.",
+	"local": "Compile-time constants declared with `local` blocks.",
+	"data":  "Runtime-mutable values declared with `data` blocks (e.g. `data \"internal\"`); write via `write` blocks.",
+	"while": "Per-iteration bindings for while-driven steps; see While iteration.",
+	"path":  "Workflow-relative, project-root, and working-directory paths for file construction.",
 }

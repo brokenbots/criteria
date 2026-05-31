@@ -45,7 +45,7 @@ issues:
     - path: internal/cli/apply.go
       linters:
         - gocritic
-      text: 'hugeParam: opts is heavy \(232 bytes\); consider passing it by pointer' # W13: applyOptions grew to 232 bytes when subworkflowRoots []string was added; by-pointer conversion is W02-split-cli-apply scope
+      text: 'hugeParam: opts is heavy \(\d+ bytes\); consider passing it by pointer' # WS06: applyOptions grew to 256 bytes when varFiles []string was added; by-pointer conversion is W02-split-cli-apply scope
     # --- W16: nodeTargets gocognit: grew from 21 to 22 when switch case was added alongside steps/waits/approvals ---
     - path: compile_steps_graph.go
       linters:
@@ -85,19 +85,19 @@ issues:
       linters:
         - funlen
       text: 'Function ''runApplyLocal''' # td-02: 41-statement apply orchestrator; converting applyOptions to pointer is W02-split-cli-apply scope
-    # kept: applyOptions is a 232-byte struct that threads through the apply pipeline; converting to pointer is W02-split-cli-apply scope and not safe to do piecemeal
+    # kept: applyOptions is a 256-byte struct that threads through the apply pipeline; converting to pointer is W02-split-cli-apply scope and not safe to do piecemeal
     - path: internal/cli/apply_local\.go
       linters:
         - gocritic
-      text: 'hugeParam: opts is heavy \(232 bytes\); consider passing it by pointer' # td-02: applyOptions grew to 232 bytes; by-pointer conversion is W02-split-cli-apply scope
+      text: 'hugeParam: opts is heavy \(\d+ bytes\); consider passing it by pointer' # WS06: applyOptions grew to 256 bytes when varFiles []string was added; by-pointer conversion is W02-split-cli-apply scope
     - path: internal/cli/apply_resume\.go
       linters:
         - gocritic
-      text: 'hugeParam: opts is heavy \(232 bytes\); consider passing it by pointer' # td-02: applyOptions passed by value; by-pointer conversion is W02-split-cli-apply scope
+      text: 'hugeParam: opts is heavy \(\d+ bytes\); consider passing it by pointer' # WS06: applyOptions passed by value; by-pointer conversion is W02-split-cli-apply scope
     - path: internal/cli/apply_server\.go
       linters:
         - gocritic
-      text: 'hugeParam: opts is heavy \(232 bytes\); consider passing it by pointer' # td-02: applyOptions passed by value across 4 server-apply functions; by-pointer conversion is W02-split-cli-apply scope
+      text: 'hugeParam: opts is heavy \(\d+ bytes\); consider passing it by pointer' # applyOptions passed by value across server-apply functions; by-pointer conversion is W02-split-cli-apply scope (size varies with merged audit+var-file fields)
     # --- WS06: Verify public API signature defines policy as value parameter per workstream spec; changing to pointer would break callers ---
     - path: internal/adapter/signing/verify\.go
       linters:

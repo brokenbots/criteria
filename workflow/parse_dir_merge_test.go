@@ -77,7 +77,7 @@ func TestMergeSpecs_SingletonConflict_WorkflowHeader_TwoFiles(t *testing.T) {
 adapter "noop" "default" {}
 step "run" {
   target = adapter.noop.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `,
@@ -116,7 +116,7 @@ func TestMergeSpecs_LegacyTopLevelPolicy_TwoFiles(t *testing.T) {
 adapter "noop" "default" {}
 step "run" {
   target = adapter.noop.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 policy { max_total_steps = 10 }
@@ -156,7 +156,7 @@ func TestMergeSpecs_SingletonConflict_Permissions_TwoFiles(t *testing.T) {
 adapter "noop" "default" {}
 step "run" {
   target = adapter.noop.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 permissions { allow_tools = ["*"] }
@@ -192,13 +192,13 @@ func TestMergeSpecs_DuplicateNamedBlock_Step(t *testing.T) {
 adapter "noop" "default" {}
 step "build" {
   target = adapter.noop.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `,
 		"b.hcl": `step "build" {
   target = adapter.noop.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 `,
 	})
@@ -244,7 +244,7 @@ func TestMergeSpecs_DuplicateNamedBlock_Adapter_SameTypeAndName(t *testing.T) {
 adapter "shell" "primary" {}
 step "run" {
   target = adapter.shell.primary
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `,
@@ -270,13 +270,13 @@ func TestMergeSpecs_DistinctBlocksAcrossFiles_NoConflict(t *testing.T) {
 adapter "noop" "default" {}
 step "step_a" {
   target = adapter.noop.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `,
 		"b.hcl": `step "step_b" {
   target = adapter.noop.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 `,
 	})
@@ -315,18 +315,18 @@ func TestMergeSpecs_AlphabeticalMergeOrder_DiagnosticsStable(t *testing.T) {
 adapter "noop" "default" {}
 step "a_step" {
   target = adapter.noop.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `,
 		"b.hcl": `step "b_step" {
   target = adapter.noop.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 `,
 		"c.hcl": `step "c_step" {
   target = adapter.noop.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 `,
 	})
@@ -364,13 +364,13 @@ func TestMergeSpecs_AlphabeticalMergeOrder_ConflictDiagnostic_StableSourceFile(t
 adapter "noop" "default" {}
 step "build" {
   target = adapter.noop.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `,
 		"b.hcl": `step "build" {
   target = adapter.noop.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 `,
 	})
@@ -393,12 +393,12 @@ state "done" { terminal = true }
 }
 
 // TestMergeSpecs_EmptyDirectory_NoSpec_NoDiagnostics tests that ParseDir on a
-// directory containing no .hcl files returns a "no .hcl files" error diagnostic.
+// directory containing no workflow files returns a "no workflow files" error diagnostic.
 // (mergeSpecs itself returns nil,nil for an empty entries slice, but that code
 // path is unreachable via the public API — ParseDir exits early with an error
 // before calling mergeSpecs when no files are present.)
 func TestMergeSpecs_EmptyDirectory_NoSpec_NoDiagnostics(t *testing.T) {
-	dir := t.TempDir() // empty directory: no .hcl files
+	dir := t.TempDir() // empty directory: no workflow files
 	spec, diags := ParseDir(dir)
 	if spec != nil {
 		t.Errorf("expected nil spec for empty directory, got %+v", spec)
@@ -406,16 +406,16 @@ func TestMergeSpecs_EmptyDirectory_NoSpec_NoDiagnostics(t *testing.T) {
 	if !diags.HasErrors() {
 		t.Fatal("expected error diagnostic for empty directory, got none")
 	}
-	// ParseDir must specifically report "no .hcl files" — not a generic failure.
+	// ParseDir must specifically report "no workflow files" — not a generic failure.
 	found := false
 	for _, d := range diags {
-		if d.Severity == hcl.DiagError && strings.Contains(d.Summary, "no .hcl files") {
+		if d.Severity == hcl.DiagError && strings.Contains(d.Summary, "no workflow files") {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Errorf("expected 'no .hcl files' error; got: %s", diags.Error())
+		t.Errorf("expected 'no workflow files' error; got: %s", diags.Error())
 	}
 }
 
@@ -435,11 +435,11 @@ adapter "noop" "default" {}
 adapter "shell" "runner" {}
 step "run" {
   target = adapter.noop.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 step "cleanup" {
   target = adapter.shell.runner
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 state "failed" { terminal = true }
@@ -501,7 +501,7 @@ func TestMergeSpecs_MultipleNonHCLFiles_Ignored(t *testing.T) {
 adapter "noop" "default" {}
 step "run" {
   target = adapter.noop.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `,

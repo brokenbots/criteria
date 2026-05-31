@@ -17,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sync"
 	"time"
 
@@ -104,7 +105,10 @@ func (s *Shim) Start(ctx context.Context) error {
 	} else {
 		// Support both TCP and Unix socket addresses.
 		if filepath.IsAbs(s.listenAddr) || s.listenAddr != "" && s.listenAddr[0] == '/' {
-			// Try unix socket for absolute paths
+			// Try unix socket for absolute paths.
+			if err := checkUnixSocketPath(s.listenAddr); err != nil {
+				return fmt.Errorf("remote shim: %w", err)
+			}
 			lis, err = net.Listen("unix", s.listenAddr)
 		} else {
 			lis, err = net.Listen("tcp", s.listenAddr)
@@ -122,6 +126,21 @@ func (s *Shim) Start(ctx context.Context) error {
 	slog.Info("remote shim listening", "addr", lis.Addr().String())
 
 	go s.serve(ctx, lis)
+	return nil
+}
+
+// checkUnixSocketPath validates that addr fits within the platform's
+// sockaddr_un.sun_path limit. net.Listen otherwise fails with an opaque
+// "bind: invalid argument"; this returns a clear, actionable error. macOS caps
+// sun_path at 104 bytes (103 usable + NUL); Linux/BSD allow 108.
+func checkUnixSocketPath(addr string) error {
+	maxLen := 107 // Linux/BSD: 108-byte sun_path, 107 usable.
+	if runtime.GOOS == "darwin" {
+		maxLen = 103 // macOS: 104-byte sun_path, 103 usable.
+	}
+	if len(addr) > maxLen {
+		return fmt.Errorf("unix socket path %q is %d bytes, exceeding the %d-byte limit on %s; use a shorter listen_address (e.g. under /tmp)", addr, len(addr), maxLen, runtime.GOOS)
+	}
 	return nil
 }
 

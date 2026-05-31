@@ -16,6 +16,7 @@ import (
 
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/internal/adapters/shell"
+	"github.com/brokenbots/criteria/internal/diagutil"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -27,7 +28,7 @@ func NewCompileCmd() *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:   "compile <workflow.hcl|dir>",
+		Use:   "compile <workflow.chcl|workflow.hcl|dir>",
 		Short: "Parse and compile a workflow to JSON or DOT",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -486,7 +487,7 @@ func dotWriteSwitchEdges(b *strings.Builder, graph *workflow.FSMGraph, indent, n
 	for _, switchName := range sortedSwitchNames(graph) {
 		sw := graph.Switches[switchName]
 		for i, cond := range sw.Conditions {
-			label := fmt.Sprintf("condition[%d]", i)
+			label := fmt.Sprintf("match[%d]", i)
 			if cond.Next != workflow.ReturnSentinel {
 				nextRef := dotResolveRef(graph, namespace, cond.Next)
 				fmt.Fprintf(b, "%s%q -> %q [label=%q];\n", indent, namespace+switchName, nextRef, label)
@@ -624,7 +625,7 @@ func parseCompileForCli(ctx context.Context, workflowPath string, subworkflowRoo
 
 	loader := adapterhost.NewLoader()
 	loader.RegisterBuiltin(shell.Name, adapterhost.BuiltinFactoryForAdapter(shell.New()))
-	schemas := collectSchemas(ctx, loader, spec, nil)
+	schemas := diagutil.CollectSchemas(ctx, loader, spec, nil)
 	defer func() { _ = loader.Shutdown(ctx) }()
 
 	workflowDir := workflowPath

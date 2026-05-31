@@ -26,7 +26,7 @@ workflow {
 adapter "noop" "default" {}
 step "s" {
 ` + stepBody + `
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -74,7 +74,7 @@ subworkflow "inner" {
 }
 step "s" {
   target = subworkflow.inner
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -128,7 +128,7 @@ workflow {
 adapter "noop" "default" {}
 step "s" {
   target = subworkflow.nonexistent
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -157,7 +157,7 @@ workflow {
 adapter "noop" "default" {}
 step "s" {
   adapter = adapter.noop.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -200,7 +200,7 @@ workflow {
 
 adapter "noop" "default" {}
 step "s" {
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -231,7 +231,7 @@ environment "shell" "ci" {}
 step "s" {
   target      = adapter.noop.default
   environment = shell.ci
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -265,7 +265,7 @@ adapter "noop" "default" {}
 step "s" {
   target      = adapter.noop.default
   environment = shell.missing
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -299,7 +299,7 @@ environment "shell" "ci" {}
 step "s" {
   target      = adapter.noop.default
   environment = "shell.ci"
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -363,7 +363,7 @@ environment "shell" "ci" {}
 step "s" {
   target      = adapter.noop.default
   environment = "shell.ci"
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -418,7 +418,7 @@ step "s" {
   input {
     greeting = "hello"
   }
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -473,7 +473,7 @@ step "s" {
   input {
     typo = "oops"
   }
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -518,7 +518,7 @@ step "s" {
   input {
     typo = each.value
   }
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -568,7 +568,7 @@ subworkflow "inner" {
 step "s" {
   target      = subworkflow.inner
   environment = shell.ci
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -611,7 +611,7 @@ step "s" {
   for_each    = ["a"]
   target      = subworkflow.inner
   environment = shell.ci
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `

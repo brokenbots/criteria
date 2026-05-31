@@ -37,13 +37,13 @@ adapter "shell" "default" {}
 step "first" {
   target = adapter.shell.default
   input { command = "echo hi" }
-  outcome "success" { next = "second" }
+  outcome "success" { next = step.second }
 }
 
 step "second" {
   target = adapter.shell.default
   input { command = steps.first.outputs.result }
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 
 state "done" { terminal = true }
@@ -77,13 +77,13 @@ adapter "shell" "default" {}
 step "first" {
   target = adapter.shell.default
   input { command = "echo hi" }
-  outcome "success" { next = "second" }
+  outcome "success" { next = step.second }
 }
 
 step "second" {
   target = adapter.shell.default
   input { command = steps.first.outputs.not_a_field }
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 
 state "done" { terminal = true }
@@ -123,13 +123,13 @@ adapter "shell" "default" {}
 step "first" {
   target = adapter.shell.default
   input { command = "echo hi" }
-  outcome "success" { next = "second" }
+  outcome "success" { next = step.second }
 }
 
 step "second" {
   target = adapter.shell.default
   input { command = steps.first.outputs.reslt }
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 
 state "done" { terminal = true }
@@ -168,16 +168,16 @@ adapter "shell" "default" {}
 step "first" {
   target = adapter.shell.default
   input { command = "echo hi" }
-  outcome "success" { next = "sw" }
+  outcome "success" { next = step.sw }
 }
 
 switch "sw" {
-  condition {
-    match = steps.first.outputs.status == "ok"
-    next  = "done"
+  match {
+    condition = steps.first.outputs.status == "ok"
+    next      = step.done
   }
   default {
-    next = "done"
+    next = step.done
   }
 }
 
@@ -212,16 +212,16 @@ adapter "shell" "default" {}
 step "first" {
   target = adapter.shell.default
   input { command = "echo hi" }
-  outcome "success" { next = "sw" }
+  outcome "success" { next = step.sw }
 }
 
 switch "sw" {
-  condition {
-    match = steps.first.outputs.bad == "ok"
-    next  = "done"
+  match {
+    condition = steps.first.outputs.bad == "ok"
+    next      = step.done
   }
   default {
-    next = "done"
+    next = step.done
   }
 }
 
@@ -261,7 +261,7 @@ adapter "shell" "default" {}
 step "first" {
   target = adapter.shell.default
   input { command = "echo hi" }
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 
 state "done" { terminal = true }
@@ -296,7 +296,7 @@ adapter "shell" "default" {}
 step "first" {
   target = adapter.shell.default
   input { command = "echo hi" }
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 
 state "done" { terminal = true }
@@ -363,13 +363,13 @@ adapter "noop" "default" {}
 
 step "first" {
   target = adapter.noop.default
-  outcome "success" { next = "second" }
+  outcome "success" { next = step.second }
 }
 
 step "second" {
   target = adapter.noop.default
   input { command = steps.first.outputs.result }
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 
 state "done" { terminal = true }
@@ -407,7 +407,7 @@ step "first" {
   input { command = "echo hi" }
   outcome "success" {
     output = { copied = steps.first.outputs.status }
-    next   = "done"
+    next = step.done
   }
 }
 
@@ -441,7 +441,7 @@ step "first" {
   input { command = "echo hi" }
   outcome "success" {
     output = { copied = steps.first.outputs.bogus }
-    next   = "done"
+    next = step.done
   }
 }
 

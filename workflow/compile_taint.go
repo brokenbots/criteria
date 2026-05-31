@@ -20,8 +20,8 @@ import (
 
 // taintOrigin describes where a tainted value came from.
 type taintOrigin struct {
-	kind string // "variable", "shared_variable", "adapter_secret", "sensitive_output"
-	name string // e.g. "var.api_key", "shared.token", "adapter.shell.default.secrets"
+	kind string // "variable", "data_secret", "adapter_secret", "sensitive_output"
+	name string // e.g. "var.api_key", "data.internal.token", "adapter.shell.default.secrets"
 }
 
 // newTaintError builds the hard compile-error diagnostic required by D65.
@@ -152,7 +152,7 @@ func buildPredecessors(g *FSMGraph) map[string][]string {
 // checkExprForTaint inspects every variable traversal in expr and returns
 // (origin, true) if any traversal references a tainted origin.
 //
-//nolint:gocognit,gocyclo,funlen // WS09: traversal type-switch for var/shared/adapter/steps namespaces
+//nolint:gocognit,gocyclo,funlen // WS09: traversal type-switch for var/data/adapter/steps namespaces
 func checkExprForTaint(expr hcl.Expression, g *FSMGraph, schemas map[string]AdapterInfo) (taintOrigin, bool) {
 	for _, traversal := range expr.Variables() {
 		if len(traversal) < 2 {
@@ -171,9 +171,21 @@ func checkExprForTaint(expr hcl.Expression, g *FSMGraph, schemas map[string]Adap
 			if v, ok := g.Variables[attr.Name]; ok && v.Secret {
 				return taintOrigin{kind: "variable", name: "var." + attr.Name}, true
 			}
-		case "shared":
-			if sv, ok := g.SharedVariables[attr.Name]; ok && sv.Secret {
-				return taintOrigin{kind: "shared_variable", name: "shared." + attr.Name}, true
+		case "data":
+			// data.<kind>.<name>.value — a data block declared secret = true
+			// is a taint source.
+			if len(traversal) < 3 {
+				continue
+			}
+			kindAttr, ok2 := traversal[1].(hcl.TraverseAttr)
+			nameAttr, ok3 := traversal[2].(hcl.TraverseAttr)
+			if !ok2 || !ok3 {
+				continue
+			}
+			if m, ok := g.Data[kindAttr.Name]; ok {
+				if dn, ok := m[nameAttr.Name]; ok && dn.Secret {
+					return taintOrigin{kind: "data_secret", name: "data." + kindAttr.Name + "." + nameAttr.Name}, true
+				}
 			}
 		case "adapter":
 			// adapter.TYPE.NAME.secrets.KEY

@@ -1,4 +1,5 @@
-package cli
+// Package diagutil holds shared diagnostic helpers used by the CLI and langserver.
+package diagutil
 
 import (
 	"context"
@@ -9,14 +10,14 @@ import (
 	"github.com/brokenbots/criteria/workflow"
 )
 
-// collectSchemas resolves Info() for every adapter referenced in spec and
+// CollectSchemas resolves Info() for every adapter referenced in spec and
 // returns a schemas map suitable for workflow.Compile. Adapters that cannot be
 // resolved (binary not found, network error, etc.) are silently skipped so that
 // compile still runs in permissive mode for those adapters — a missing binary
 // should not block validation. If log is nil, failures are suppressed silently.
 //
 //nolint:gocognit,gocyclo // inherently complex: error handling branches per adapter type with partial failure tolerance
-func collectSchemas(ctx context.Context, loader adapterhost.Loader, spec *workflow.Spec, log *slog.Logger) map[string]workflow.AdapterInfo {
+func CollectSchemas(ctx context.Context, loader adapterhost.Loader, spec *workflow.Spec, log *slog.Logger) map[string]workflow.AdapterInfo {
 	if loader == nil || spec == nil {
 		return nil
 	}

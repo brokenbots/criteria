@@ -150,7 +150,7 @@ func TestHasOCIReferences_NoReference(t *testing.T) {
 step "run" {
   target = adapter.noop.default
   input { command = "echo hi" }
-  outcome "ok" { next = "done" }
+  outcome "ok" { next = step.done }
 }
 
 state "done" {

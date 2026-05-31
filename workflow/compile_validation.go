@@ -104,7 +104,7 @@ func errorDiagsWithFallbackSubject(in hcl.Diagnostics, expr hcl.Expression) hcl.
 // validateFoldableAttrs validates all attributes in attrs using FoldExpr,
 // catching unknown var/local references, type errors, and bad file() calls at
 // compile time. Expressions that reference runtime-only namespaces (each,
-// steps, shared_variable) are silently deferred — they are not errors.
+// steps, data) are silently deferred — they are not errors.
 //
 // vars is the flat name→value map for the "var" namespace (may be nil).
 // locals is the flat name→value map for the "local" namespace (may be nil).

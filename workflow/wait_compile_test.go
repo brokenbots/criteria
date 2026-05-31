@@ -18,7 +18,7 @@ workflow {
 
 wait "pause" {
   duration = "2s"
-  outcome "elapsed" { next = "done" }
+  outcome "elapsed" { next = step.done }
 }
 
 state "done" {
@@ -60,8 +60,8 @@ workflow {
 
 wait "gating" {
   signal = "approve"
-  outcome "approved" { next = "done" }
-  outcome "rejected" { next = "done" }
+  outcome "approved" { next = step.done }
+  outcome "rejected" { next = step.done }
 }
 
 state "done" {
@@ -98,7 +98,7 @@ workflow {
 wait "pause" {
   duration = "1s"
   signal   = "go"
-  outcome "elapsed" { next = "done" }
+  outcome "elapsed" { next = step.done }
 }
 
 state "done" {
@@ -156,8 +156,8 @@ workflow {
 approval "check" {
   approvers = ["alice"]
   reason    = "LGTM?"
-  outcome "approved"  { next = "done" }
-  outcome "rejected"  { next = "done" }
+  outcome "approved"  { next = step.done }
+  outcome "rejected"  { next = step.done }
 }
 
 state "done" {
@@ -198,12 +198,12 @@ adapter "noop" "default" {}
 
 step "start" {
   target = adapter.noop.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 
 wait "orphan" {
   signal = "go"
-  outcome "received" { next = "done" }
+  outcome "received" { next = step.done }
 }
 
 state "done" {
@@ -243,14 +243,14 @@ adapter "noop" "default" {}
 
 step "start" {
   target = adapter.noop.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 
 approval "orphan" {
   approvers = ["alice"]
   reason    = "LGTM?"
-  outcome "approved" { next = "done" }
-  outcome "rejected" { next = "done" }
+  outcome "approved" { next = step.done }
+  outcome "rejected" { next = step.done }
 }
 
 state "done" {
@@ -288,8 +288,8 @@ workflow {
 
 wait "pause" {
   signal  = "go"
-  outcome "received" { next = "done" }
-  outcome "received" { next = "done" }
+  outcome "received" { next = step.done }
+  outcome "received" { next = step.done }
 }
 
 state "done" { terminal = true }
@@ -319,9 +319,9 @@ workflow {
 approval "gate" {
   approvers = ["alice"]
   reason    = "LGTM?"
-  outcome "approved" { next = "done" }
-  outcome "approved" { next = "done" }
-  outcome "rejected" { next = "done" }
+  outcome "approved" { next = step.done }
+  outcome "approved" { next = step.done }
+  outcome "rejected" { next = step.done }
 }
 
 state "done" { terminal = true }
@@ -351,7 +351,7 @@ workflow {
 approval "check" {
   approvers = ["alice"]
   reason    = "LGTM?"
-  outcome "approved" { next = "done" }
+  outcome "approved" { next = step.done }
 }
 
 state "done" {

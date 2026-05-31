@@ -144,13 +144,13 @@ variable "env" {
 }
 
 switch "check" {
-  condition {
-    match = var.env == "prod"
-    next  = state.deploy
+  match {
+    condition = var.env == "prod"
+    next = state.deploy
   }
-  condition {
-    match = var.env == "staging"
-    next  = state.deploy_staging
+  match {
+    condition = var.env == "staging"
+    next = state.deploy_staging
   }
   default {
     next = state.done
@@ -184,9 +184,9 @@ workflow {
 }
 
 switch "check" {
-  condition {
-    match = var.env == "prod"
-    next  = state.done
+  match {
+    condition = var.env == "prod"
+    next = state.done
   }
 }
 
@@ -226,9 +226,9 @@ workflow {
 }
 
 switch "check" {
-  condition {
-    match = true
-    next  = "nonexistent"
+  match {
+    condition = true
+    next = step.nonexistent
   }
   default {
     next = state.done
@@ -250,12 +250,12 @@ workflow {
 }
 
 switch "check" {
-  condition {
-    match = true
-    next  = state.done
+  match {
+    condition = true
+    next = state.done
   }
   default {
-    next = "missing"
+    next = step.missing
   }
 }
 
@@ -274,9 +274,9 @@ workflow {
 }
 
 switch "check" {
-  condition {
-    match = var.undeclared == "x"
-    next  = state.done
+  match {
+    condition = var.undeclared == "x"
+    next = state.done
   }
   default {
     next = state.done
@@ -298,9 +298,9 @@ workflow {
 }
 
 switch "check" {
-  condition {
-    match = steps.ghoststep.exit_code == "0"
-    next  = state.done
+  match {
+    condition = steps.ghoststep.exit_code == "0"
+    next = state.done
   }
   default {
     next = state.done
@@ -324,9 +324,9 @@ workflow {
 adapter "noop" "default" {}
 
 switch "check" {
-  condition {
-    match = steps.check.exit_code == "0"
-    next  = state.done
+  match {
+    condition = steps.check.exit_code == "0"
+    next = state.done
   }
   default {
     next = state.done
@@ -352,13 +352,13 @@ adapter "noop" "default" {}
 
 step "start" {
   target = adapter.noop.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 
 switch "orphan" {
-  condition {
-    match = true
-    next  = state.done
+  match {
+    condition = true
+    next = state.done
   }
   default {
     next = state.done
@@ -474,9 +474,9 @@ workflow {
 }
 
 switch "_continue" {
-  condition {
-    match = true
-    next  = state.done
+  match {
+    condition = true
+    next = state.done
   }
   default {
     next = state.done
@@ -489,7 +489,7 @@ state "done"  { terminal = true  }
 	compileExpectError(t, src, `"_continue"`)
 }
 
-// TestCompileSwitch_NextIsReturn verifies that next = "return" is accepted by
+// TestCompileSwitch_NextIsReturn verifies that next = step.return is accepted by
 // the compiler and stored as the condition's Next target.
 func TestCompileSwitch_NextIsReturn(t *testing.T) {
 	src := `
@@ -501,9 +501,9 @@ workflow {
 }
 
 switch "check" {
-  condition {
-    match = true
-    next  = "return"
+  match {
+    condition = true
+    next = step.return
   }
   default {
     next = state.done
@@ -537,9 +537,9 @@ workflow {
 }
 
 switch "check" {
-  condition {
-    match         = true
-    next          = state.done
+  match {
+    condition         = true
+    next = state.done
     transition_to = "done"
   }
   default {
@@ -565,9 +565,9 @@ workflow {
 }
 
 switch "check" {
-  condition {
-    match  = true
-    next   = state.done
+  match {
+    condition  = true
+    next = state.done
     output = "oops"
   }
   default {
@@ -588,9 +588,9 @@ workflow {
 }
 
 switch "check" {
-  condition {
-    match  = true
-    next   = state.done
+  match {
+    condition  = true
+    next = state.done
     output = { tier = "prod" }
   }
   default {
@@ -601,4 +601,85 @@ switch "check" {
 state "done" { terminal = true }
 `
 	mustParseAndCompile(t, good)
+}
+
+// TestSwitchCompile_NewMatchSyntax compiles cleanly with the new match { condition = ... } shape.
+func TestSwitchCompile_NewMatchSyntax(t *testing.T) {
+	src := `
+workflow {
+  name = "w"
+  version       = "0.1"
+  initial_state = "check"
+  target_state  = "done"
+}
+
+switch "check" {
+  match {
+    condition = true
+    next = state.done
+  }
+}
+
+state "done" { terminal = true }
+`
+	g := mustParseAndCompile(t, src)
+	sw, ok := g.Switches["check"]
+	if !ok {
+		t.Fatal("switch node 'check' missing from compiled graph")
+	}
+	if len(sw.Conditions) != 1 {
+		t.Fatalf("expected 1 condition, got %d", len(sw.Conditions))
+	}
+	if sw.Conditions[0].Next != "done" {
+		t.Errorf("Conditions[0].Next = %q, want \"done\"", sw.Conditions[0].Next)
+	}
+}
+
+// TestSwitchCompile_NewMatchSyntaxWithVariable compiles cleanly with a variable expression.
+func TestSwitchCompile_NewMatchSyntaxWithVariable(t *testing.T) {
+	src := `
+workflow {
+  name = "w"
+  version       = "0.1"
+  initial_state = "check"
+  target_state  = "done"
+}
+
+variable "x" {
+  type = string
+}
+
+adapter "noop" "default" {}
+
+switch "check" {
+  match {
+    condition = var.x == "foo"
+    next = step.foo
+  }
+  default {
+    next = state.done
+  }
+}
+
+step "foo" {
+  target = adapter.noop.default
+  outcome "success" { next = state.done }
+}
+
+state "done" { terminal = true }
+`
+	g := mustParseAndCompile(t, src)
+	sw, ok := g.Switches["check"]
+	if !ok {
+		t.Fatal("switch node 'check' missing from compiled graph")
+	}
+	if len(sw.Conditions) != 1 {
+		t.Fatalf("expected 1 condition, got %d", len(sw.Conditions))
+	}
+	if sw.Conditions[0].Next != "foo" {
+		t.Errorf("Conditions[0].Next = %q, want \"foo\"", sw.Conditions[0].Next)
+	}
+	if sw.DefaultNext != "done" {
+		t.Errorf("DefaultNext = %q, want \"done\"", sw.DefaultNext)
+	}
 }

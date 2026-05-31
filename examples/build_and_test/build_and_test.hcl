@@ -22,8 +22,8 @@ step "build" {
   }
   timeout = "5m"
 
-  outcome "success" { next = "test" }
-  outcome "failure" { next = "failed" }
+  outcome "success" { next = step.test }
+  outcome "failure" { next = state.failed }
 }
 
 step "test" {
@@ -33,8 +33,8 @@ step "test" {
   }
   timeout = "10m"
 
-  outcome "success" { next = "verified" }
-  outcome "failure" { next = "failed" }
+  outcome "success" { next = state.verified }
+  outcome "failure" { next = state.failed }
 }
 
 state "verified" { terminal = true }

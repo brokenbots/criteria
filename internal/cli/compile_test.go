@@ -25,7 +25,7 @@ func TestCompileGolden_JSONAndDOT(t *testing.T) {
 	for _, path := range fixtures {
 		path := path
 		relPath, _ := filepath.Rel(repoRoot, path)
-		name := strings.TrimSuffix(filepath.Base(path), ".hcl") + "__" + sanitizeFixturePath(relPath)
+		name := stripHCLExt(filepath.Base(path)) + "__" + sanitizeFixturePath(relPath)
 		t.Run(name+"_json", func(t *testing.T) {
 			out, err := compileWorkflowOutput(context.Background(), path, "json", nil)
 			if err != nil {
@@ -75,14 +75,14 @@ func workflowFixtures(t *testing.T) (repoRoot string, fixtures []string) {
 				continue
 			}
 			subDir := filepath.Join(dir, ent.Name())
-			// Include only directories that contain at least one .hcl file
+			// Include only directories that contain at least one .chcl or .hcl file
 			// at the top level — those are workflow module directories.
 			subEntries, readErr := os.ReadDir(subDir)
 			if readErr != nil {
 				continue
 			}
 			for _, sub := range subEntries {
-				if !sub.IsDir() && filepath.Ext(sub.Name()) == ".hcl" {
+				if !sub.IsDir() && hasHCLExtension(sub.Name()) {
 					out = append(out, subDir)
 					break
 				}
@@ -274,7 +274,7 @@ step "run" {
   input {
     command = "echo hi"
   }
-  outcome "ok" { next = "done" }
+  outcome "ok" { next = step.done }
 }
 `
 	if err := os.WriteFile(filepath.Join(dir, "multi_error.hcl"), []byte(hclContent), 0o600); err != nil {

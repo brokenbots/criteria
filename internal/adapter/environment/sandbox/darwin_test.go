@@ -4,6 +4,7 @@ package sandbox
 
 import (
 	"bytes"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,10 +18,10 @@ import (
 
 func TestProfile_Render(t *testing.T) {
 	tests := []struct {
-		name     string
-		profile  Profile
-		want     []string
-		wantNot  []string
+		name    string
+		profile Profile
+		want    []string
+		wantNot []string
 	}{
 		{
 			name: "basic default deny",
@@ -46,19 +47,23 @@ func TestProfile_Render(t *testing.T) {
 				AllowNetworkHosts: []string{"127.0.0.1:443"},
 				DefaultDeny:       true,
 			},
+			// Paths are emitted symlink-resolved (/tmp -> /private/tmp) and the
+			// network host is mapped to a macOS-accepted form (literal IPs are
+			// rejected by sandbox-exec; 127.0.0.1 is loopback -> localhost).
 			want: []string{
+				"(import \"system.sb\")",
 				"(allow file-read*",
-				"(literal \"/tmp/allowed\")",
+				"(literal \"/private/tmp/allowed\")",
 				"(allow file-write*",
-				"(literal \"/tmp/out\")",
+				"(literal \"/private/tmp/out\")",
 				"(allow network-outbound",
-				"(remote ip \"127.0.0.1:443\")",
+				"(remote ip \"localhost:443\")",
 			},
 		},
 		{
 			name: "block kext and mach",
 			profile: Profile{
-				BlockKextLoad:     true,
+				BlockKextLoad:   true,
 				BlockMachLookup: true,
 				DefaultDeny:     true,
 			},
@@ -323,13 +328,13 @@ func TestSandboxProfile_Integration(t *testing.T) {
 	os.WriteFile(blockedFile, []byte("no"), 0o644)
 
 	prof := Profile{
-		DefaultDeny:     true,
-		AllowExec:       []string{helper},
-		AllowFileReads:  []string{allowedFile, helper, filepath.Dir(helper)},
+		DefaultDeny:       true,
+		AllowExec:         []string{helper},
+		AllowFileReads:    []string{allowedFile, helper, filepath.Dir(helper)},
 		AllowNetworkHosts: []string{"127.0.0.1:55555"},
 	}
 
-	tmpPath, err := writeProfile(prof)
+	tmpPath, err := writeProfile(&prof)
 	if err != nil {
 		t.Fatalf("writeProfile: %v", err)
 	}
@@ -473,7 +478,7 @@ func TestWriteProfile(t *testing.T) {
 		AllowExec:      []string{"/usr/local/bin/adapter"},
 		AllowFileReads: []string{"/tmp/allowed"},
 	}
-	path, err := writeProfile(prof)
+	path, err := writeProfile(&prof)
 	if err != nil {
 		t.Fatalf("writeProfile: %v", err)
 	}
@@ -506,14 +511,16 @@ func TestResolveHost_Caching(t *testing.T) {
 		t.Fatalf("cache mismatch: %v vs %v", resolved1, resolved2)
 	}
 
-	// Verify port stripping and re-attachment works.
+	// Verify port stripping works: with no input port the results must be bare
+	// addresses. net.ParseIP distinguishes a bare IP (including IPv6 such as
+	// "::1", which legitimately contains colons) from an "ip:port" form.
 	resolvedNoPort := resolveHost("localhost")
 	if len(resolvedNoPort) == 0 {
 		t.Fatal("expected localhost without port to resolve")
 	}
 	for _, ip := range resolvedNoPort {
-		if strings.Contains(ip, ":") {
-			t.Errorf("expected no port in %q", ip)
+		if net.ParseIP(ip) == nil {
+			t.Errorf("expected bare IP without port, got %q", ip)
 		}
 	}
 
