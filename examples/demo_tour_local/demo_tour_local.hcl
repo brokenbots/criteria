@@ -70,8 +70,8 @@ wait "wait_brief" {
 }
 
 switch "decide" {
-  condition {
-    match = steps.review.exit_code == "0"
+  match {
+    condition = steps.review.exit_code == "0"
     next = step.celebrate
   }
   default {

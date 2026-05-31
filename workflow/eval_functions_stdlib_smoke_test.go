@@ -67,8 +67,8 @@ step "check" {
 }
 
 switch "decide" {
-  condition {
-    match = startswith(steps.check.stdout, var.prefix) && length(steps.check.stdout) > 3
+  match {
+    condition = startswith(steps.check.stdout, var.prefix) && length(steps.check.stdout) > 3
     next = step.done
   }
   default {

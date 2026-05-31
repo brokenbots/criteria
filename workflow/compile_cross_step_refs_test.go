@@ -42,8 +42,8 @@ step "build" {
   outcome "success" { next = step.check }
 }
 switch "check" {
-  condition {
-    match = steps.build.` + field + ` == "ok"
+  match {
+    condition = steps.build.` + field + ` == "ok"
     next = state.done
   }
   default { next = state.done }
@@ -68,8 +68,8 @@ step "build" {
   outcome "success" { next = step.check }
 }
 switch "check" {
-  condition {
-    match  = true
+  match {
+    condition  = true
     next = state.done
     output = { x = steps.build.` + field + ` }
   }

@@ -341,21 +341,21 @@ type StateSpec struct {
 	Requires string `hcl:"requires,optional"`
 }
 
-// SwitchSpec declares a switch node. Conditions are evaluated in declaration order;
-// the first truthy condition wins. Default is recommended; absence produces a
-// compile warning when no condition is provably exhaustive at compile time, and
-// a runtime error when no condition matches.
+// SwitchSpec declares a switch node. Matches are evaluated in declaration order;
+// the first truthy match wins. Default is recommended; absence produces a
+// compile warning when no match is provably exhaustive at compile time, and
+// a runtime error when no match matches.
 type SwitchSpec struct {
-	Name       string             `hcl:"name,label"`
-	Conditions []ConditionSpec    `hcl:"condition,block"`
-	Default    *SwitchDefaultSpec `hcl:"default,block"`
+	Name    string             `hcl:"name,label"`
+	Matches []MatchSpec        `hcl:"match,block"`
+	Default *SwitchDefaultSpec `hcl:"default,block"`
 }
 
-// ConditionSpec holds a single conditional arm inside a switch block.
-// The `match` (required), `next` (required), and `output` (optional) attributes
+// MatchSpec holds a single match arm inside a switch block.
+// The `condition` (required), `next` (required), and `output` (optional) attributes
 // are captured via Remain and extracted by the compiler.
-type ConditionSpec struct {
-	Remain hcl.Body `hcl:",remain"` // captures: match (required), next (required), output (optional)
+type MatchSpec struct {
+	Remain hcl.Body `hcl:",remain"` // captures: condition (required), next (required), output (optional)
 }
 
 // SwitchDefaultSpec holds the fallback transition for a switch block.

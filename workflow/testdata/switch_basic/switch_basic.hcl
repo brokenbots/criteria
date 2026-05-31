@@ -22,16 +22,16 @@ step "build" {
 }
 
 switch "decide" {
-  condition {
-    match = var.env == "prod"
+  match {
+    condition = var.env == "prod"
     next = state.deploy
   }
-  condition {
-    match = var.env == "staging"
+  match {
+    condition = var.env == "staging"
     next = state.deploy_staging
   }
-  condition {
-    match = steps.build.exit_code == "0"
+  match {
+    condition = steps.build.exit_code == "0"
     next = state.deploy_staging
   }
   default {

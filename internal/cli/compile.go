@@ -486,7 +486,7 @@ func dotWriteSwitchEdges(b *strings.Builder, graph *workflow.FSMGraph, indent, n
 	for _, switchName := range sortedSwitchNames(graph) {
 		sw := graph.Switches[switchName]
 		for i, cond := range sw.Conditions {
-			label := fmt.Sprintf("condition[%d]", i)
+			label := fmt.Sprintf("match[%d]", i)
 			if cond.Next != workflow.ReturnSentinel {
 				nextRef := dotResolveRef(graph, namespace, cond.Next)
 				fmt.Fprintf(b, "%s%q -> %q [label=%q];\n", indent, namespace+switchName, nextRef, label)

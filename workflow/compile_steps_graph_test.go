@@ -209,8 +209,8 @@ step "work" {
   outcome "done"  { next = step.done }
 }
 switch "decide" {
-  condition {
-    match = true
+  match {
+    condition = true
     next = state.work
   }
   default {

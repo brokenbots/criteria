@@ -150,8 +150,8 @@ step "count_execute_cycle" {
 }
 
 switch "check_execute_cycles" {
-  condition {
-    match = data.internal.execute_cycle_count.value >= var.max_execute_cycles
+  match {
+    condition = data.internal.execute_cycle_count.value >= var.max_execute_cycles
     next = state.request_user_assist
   }
   default {

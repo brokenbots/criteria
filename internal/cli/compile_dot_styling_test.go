@@ -268,8 +268,8 @@ step "build" {
   outcome "success" { next = step.decide }
 }
 switch "decide" {
-  condition {
-    match = true
+  match {
+    condition = true
     next = state.done
   }
   default { next = state.done }

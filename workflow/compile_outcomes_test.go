@@ -580,8 +580,8 @@ step "step1" {
   outcome "success" { next = step.done }
 }
 switch "return" {
-  condition {
-    match = true
+  match {
+    condition = true
     next = state.done
   }
   default { next = state.done }

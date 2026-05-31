@@ -546,6 +546,43 @@ func rejectLegacyEnvironmentString(body hcl.Body) hcl.Diagnostics {
 	return diags
 }
 
+// rejectLegacySwitchConditionBlock checks for and rejects the old `condition { ... }`
+// block inside `switch` blocks, renamed to `match { ... }` in WS04. The `match`
+// attribute inside was also renamed to `condition`.
+func rejectLegacySwitchConditionBlock(body hcl.Body) hcl.Diagnostics {
+	var diags hcl.Diagnostics
+	schema := &hcl.BodySchema{
+		Blocks: []hcl.BlockHeaderSchema{
+			{Type: "switch", LabelNames: []string{"name"}},
+		},
+	}
+	content, _, _ := body.PartialContent(schema)
+	for _, block := range content.Blocks {
+		conditionSchema := &hcl.BodySchema{
+			Blocks: []hcl.BlockHeaderSchema{
+				{Type: "condition", LabelNames: nil},
+			},
+		}
+		condContent, _, _ := block.Body.PartialContent(conditionSchema)
+		for _, condBlock := range condContent.Blocks {
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  fmt.Sprintf("switch %q: condition blocks have been renamed to match", block.Labels[0]),
+				Detail: `condition blocks have been renamed to match, and the match attribute inside them has been renamed to condition:
+
+  match {
+    condition = <expr>
+    next      = <ref>
+  }
+
+See CHANGELOG.md migration note.`,
+				Subject: &condBlock.DefRange,
+			})
+		}
+	}
+	return diags
+}
+
 // isStringLiteralExpr reports whether expr is a literal string expression.
 // HCL v2 parses "string" as *hclsyntax.TemplateExpr containing a single
 // *hclsyntax.LiteralValueExpr part, so both shapes must be checked.

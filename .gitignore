@@ -25,3 +25,6 @@ tmp/
 *.test
 *.out
 coverage.out
+
+# Workstream auto-generated log files
+workstreams/language_cleanup/*.log
