@@ -393,12 +393,12 @@ state "done" { terminal = true }
 }
 
 // TestMergeSpecs_EmptyDirectory_NoSpec_NoDiagnostics tests that ParseDir on a
-// directory containing no .hcl files returns a "no .hcl files" error diagnostic.
+// directory containing no workflow files returns a "no workflow files" error diagnostic.
 // (mergeSpecs itself returns nil,nil for an empty entries slice, but that code
 // path is unreachable via the public API — ParseDir exits early with an error
 // before calling mergeSpecs when no files are present.)
 func TestMergeSpecs_EmptyDirectory_NoSpec_NoDiagnostics(t *testing.T) {
-	dir := t.TempDir() // empty directory: no .hcl files
+	dir := t.TempDir() // empty directory: no workflow files
 	spec, diags := ParseDir(dir)
 	if spec != nil {
 		t.Errorf("expected nil spec for empty directory, got %+v", spec)
@@ -406,16 +406,16 @@ func TestMergeSpecs_EmptyDirectory_NoSpec_NoDiagnostics(t *testing.T) {
 	if !diags.HasErrors() {
 		t.Fatal("expected error diagnostic for empty directory, got none")
 	}
-	// ParseDir must specifically report "no .hcl files" — not a generic failure.
+	// ParseDir must specifically report "no workflow files" — not a generic failure.
 	found := false
 	for _, d := range diags {
-		if d.Severity == hcl.DiagError && strings.Contains(d.Summary, "no .hcl files") {
+		if d.Severity == hcl.DiagError && strings.Contains(d.Summary, "no workflow files") {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Errorf("expected 'no .hcl files' error; got: %s", diags.Error())
+		t.Errorf("expected 'no workflow files' error; got: %s", diags.Error())
 	}
 }
 

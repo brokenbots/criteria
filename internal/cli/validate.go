@@ -18,7 +18,7 @@ func NewValidateCmd() *cobra.Command {
 	var subworkflowRoots []string
 
 	cmd := &cobra.Command{
-		Use:   "validate <workflow.hcl|dir> [more ...]",
+		Use:   "validate <workflow.chcl|workflow.hcl|dir> [more ...]",
 		Short: "Parse and validate a workflow HCL file or directory without executing it",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {

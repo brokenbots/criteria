@@ -70,7 +70,7 @@ func newLocalRunState(runID, graphName, serverURL string) *localRunState {
 
 // workflowDirFromPath returns the workflow module directory for path.
 // If path is a directory it is returned as-is; if it is a file, its parent
-// directory is returned — all sibling .hcl files form the same module.
+// directory is returned — all sibling .chcl and .hcl files form the same module.
 func workflowDirFromPath(path string) string {
 	if info, err := os.Stat(path); err == nil && info.IsDir() {
 		return path

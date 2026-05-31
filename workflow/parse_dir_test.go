@@ -126,10 +126,10 @@ func TestParseDir_NoHCLFiles_Error(t *testing.T) {
 
 	_, diags := ParseDir(dir)
 	if !diags.HasErrors() {
-		t.Fatal("expected error for directory with no .hcl files")
+		t.Fatal("expected error for directory with no workflow files")
 	}
-	if !strings.Contains(diags.Error(), "no .hcl files") {
-		t.Errorf("expected 'no .hcl files' in error, got: %s", diags.Error())
+	if !strings.Contains(diags.Error(), "no workflow files") {
+		t.Errorf("expected 'no workflow files' in error, got: %s", diags.Error())
 	}
 }
 

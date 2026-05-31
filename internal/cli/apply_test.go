@@ -252,3 +252,157 @@ func TestRunApplyLocal_InvalidOutputMode_ReturnsError(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+// TestApplyLocal_CHCLWorkflowFile verifies that a .chcl workflow file is
+// accepted end-to-end through the local apply pipeline.
+func TestApplyLocal_CHCLWorkflowFile(t *testing.T) {
+	adapterBin := buildNoopAdapterBinary(t)
+	adapterDir := t.TempDir()
+	pluginPath := filepath.Join(adapterDir, "criteria-adapter-noop")
+	b, err := os.ReadFile(adapterBin)
+	if err != nil {
+		t.Fatalf("read adapter binary: %v", err)
+	}
+	if err := os.WriteFile(pluginPath, b, 0o755); err != nil {
+		t.Fatalf("write adapter binary: %v", err)
+	}
+
+	t.Setenv("CRITERIA_PLUGINS", adapterDir)
+	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
+
+	dir := t.TempDir()
+	workflowPath := filepath.Join(dir, "workflow.chcl")
+	if err := os.WriteFile(workflowPath, []byte(`
+workflow {
+  name = "chcl_wf"
+  version = "0.1"
+  initial_state = "run_adapter"
+  target_state  = "done"
+}
+
+adapter "noop" "demo" {
+  config {
+    bootstrap = "true"
+  }
+}
+
+step "run_adapter" {
+  target = adapter.noop.demo
+  input {
+    prompt = "hello"
+  }
+  outcome "success" { next = step.done }
+  outcome "failure" { next = step.failed }
+}
+
+state "done" {
+  terminal = true
+  success  = true
+}
+state "failed" {
+  terminal = true
+  success  = false
+}
+`), 0o600); err != nil {
+		t.Fatalf("write workflow.chcl: %v", err)
+	}
+
+	eventsFile := filepath.Join(t.TempDir(), "events.ndjson")
+	if err := runApply(context.Background(), applyOptions{workflowPath: workflowPath, eventsPath: eventsFile}); err != nil {
+		t.Fatalf("runApply local: %v", err)
+	}
+
+	types, err := readPayloadTypes(eventsFile)
+	if err != nil {
+		t.Fatalf("read events: %v", err)
+	}
+	if countPayloadType(types, "RunStarted") != 1 {
+		t.Fatalf("expected exactly one RunStarted, got %d", countPayloadType(types, "RunStarted"))
+	}
+	if countPayloadType(types, "RunCompleted") != 1 {
+		t.Fatalf("expected exactly one RunCompleted, got %d", countPayloadType(types, "RunCompleted"))
+	}
+}
+
+// TestApplyLocal_VarFileOverridesVariable proves that --var-file values flow
+// through to the engine and affect workflow execution. A variable with a
+// default is overridden by a .chcl var-file; the overridden value appears in
+// the run output event.
+func TestApplyLocal_VarFileOverridesVariable(t *testing.T) {
+	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
+
+	workflowPath := writeWorkflowFile(t, `
+workflow {
+  name          = "var_file_override"
+  version       = "1"
+  initial_state = "start"
+  target_state  = "done"
+}
+
+variable "greeting" {
+  type    = string
+  default = "hello"
+}
+
+output "greeting" {
+  value = var.greeting
+}
+
+state "start" {}
+state "done" {
+  terminal = true
+  success  = true
+}
+`)
+
+	varFilePath := filepath.Join(t.TempDir(), "vars.chcl")
+	if err := os.WriteFile(varFilePath, []byte(`greeting = "world"`+"\n"), 0o600); err != nil {
+		t.Fatalf("write var-file: %v", err)
+	}
+
+	eventsFile := filepath.Join(t.TempDir(), "events.ndjson")
+	if err := runApply(context.Background(), applyOptions{
+		workflowPath: workflowPath,
+		eventsPath:   eventsFile,
+		varFiles:     []string{varFilePath},
+	}); err != nil {
+		t.Fatalf("runApply failed: %v", err)
+	}
+
+	events, err := parseNDJSON(eventsFile)
+	if err != nil {
+		t.Fatalf("parse events: %v", err)
+	}
+
+	var greetingValue string
+	for _, evt := range events {
+		typ, ok := evt["payload_type"].(string)
+		if !ok || typ != "run.outputs" {
+			continue
+		}
+		payload, ok := evt["payload"].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		outList, ok := payload["outputs"].([]interface{})
+		if !ok {
+			continue
+		}
+		for _, o := range outList {
+			outMap, ok := o.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if outMap["name"] == "greeting" {
+				if v, ok := outMap["value"].(string); ok {
+					greetingValue = v
+				}
+			}
+		}
+	}
+
+	// renderCtyValue JSON-marshals string values, so "world" becomes "\"world\"".
+	if greetingValue != `"world"` {
+		t.Fatalf("expected output greeting=%q from var-file override, got %q", `"world"`, greetingValue)
+	}
+}

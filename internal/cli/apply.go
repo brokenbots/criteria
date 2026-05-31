@@ -24,6 +24,7 @@ type applyOptions struct {
 	tlsCert          string
 	tlsKey           string
 	varOverrides     []string     // raw "key=value" pairs from --var flags
+	varFiles         []string     // paths from --var-file flags
 	output           string       // "auto" | "concise" | "json"
 	subworkflowRoots []string     // --subworkflow-root flag (repeatable); populates AllowedRoots on LocalSubWorkflowResolver
 	stdin            io.Reader    // stdin for local-mode approval prompts; nil → os.Stdin
@@ -34,7 +35,7 @@ func NewApplyCmd() *cobra.Command {
 	var opts applyOptions
 
 	cmd := &cobra.Command{
-		Use:   "apply <workflow.hcl|dir>",
+		Use:   "apply <workflow.chcl|workflow.hcl|dir>",
 		Short: "Execute a workflow locally or against a server",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -56,6 +57,7 @@ func NewApplyCmd() *cobra.Command {
 	cmd.Flags().StringVar(&opts.tlsCert, "tls-cert", envOrDefault("CRITERIA_TLS_CERT", ""), "Path to client cert PEM")
 	cmd.Flags().StringVar(&opts.tlsKey, "tls-key", envOrDefault("CRITERIA_TLS_KEY", ""), "Path to client key PEM")
 	cmd.Flags().StringArrayVar(&opts.varOverrides, "var", nil, "Override a workflow variable: key=value (repeatable)")
+	cmd.Flags().StringArrayVar(&opts.varFiles, "var-file", nil, "Load variable overrides from a .chcl, .hcl, or .json file (repeatable; --var takes precedence)")
 	cmd.Flags().StringVar(&opts.output, "output", envOrDefault("CRITERIA_OUTPUT", "auto"), "Standalone output format: auto|concise|json (auto: concise on TTY, json when piped)")
 	cmd.Flags().StringArrayVar(&opts.subworkflowRoots, "subworkflow-root", nil, "Restrict subworkflow source resolution to this root path (repeatable; empty = no restriction)")
 	return cmd

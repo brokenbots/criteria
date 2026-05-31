@@ -27,7 +27,7 @@ func NewCompileCmd() *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:   "compile <workflow.hcl|dir>",
+		Use:   "compile <workflow.chcl|workflow.hcl|dir>",
 		Short: "Parse and compile a workflow to JSON or DOT",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {

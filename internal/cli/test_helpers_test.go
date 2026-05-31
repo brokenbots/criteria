@@ -35,3 +35,13 @@ func writeWorkflowFile(t *testing.T, contents string) string {
 	}
 	return p
 }
+
+// stripHCLExt removes a recognised HCL extension (.chcl or .hcl) from name.
+func stripHCLExt(name string) string {
+	for _, ext := range HCLExtensions {
+		if strings.HasSuffix(name, ext) {
+			return strings.TrimSuffix(name, ext)
+		}
+	}
+	return name
+}
