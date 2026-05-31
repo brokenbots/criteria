@@ -128,6 +128,14 @@ func TestServeRemote_MissingHost(t *testing.T) {
 	assert.Contains(t, err.Error(), "Host is required")
 }
 
+// TestServeRemote_NilOpts verifies that ServeRemote rejects a nil opts pointer.
+func TestServeRemote_NilOpts(t *testing.T) {
+	adapter := &fakeRemoteAdapter{}
+	err := ServeRemote(adapter, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "opts is required")
+}
+
 // TestRemoteHandshakeRoundTrip verifies handshake JSON encoding/decoding.
 func TestRemoteHandshakeRoundTrip(t *testing.T) {
 	h := remoteHandshake{

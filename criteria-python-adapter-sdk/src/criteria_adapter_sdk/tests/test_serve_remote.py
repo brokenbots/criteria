@@ -100,3 +100,9 @@ def test_handshake_and_info_round_trip():
         os.unlink(adapter_sock)
     except FileNotFoundError:
         pass
+
+
+def test_serve_remote_rejects_empty_host():
+    svc = _FakeService(RemoteIdentity(name="a", version="1", digest="sha256:x"))
+    with pytest.raises(ValueError, match="host is required"):
+        serve_remote(svc, ServeRemoteOptions(host="", identity=svc.identity))

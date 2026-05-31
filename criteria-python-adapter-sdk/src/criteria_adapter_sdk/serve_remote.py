@@ -36,9 +36,39 @@ class _AdapterServicer(adapter_pb2_grpc.AdapterServiceServicer):
     def Info(self, request, context):
         return self._handler.info(request, context)
 
+    def OpenSession(self, request, context):
+        return self._handler.open_session(request, context)
+
+    def Execute(self, request_iterator, context):
+        return self._handler.execute(request_iterator, context)
+
+    def Log(self, request_iterator, context):
+        return self._handler.log(request_iterator, context)
+
+    def Permissions(self, request_iterator, context):
+        return self._handler.permissions(request_iterator, context)
+
+    def CloseSession(self, request, context):
+        return self._handler.close_session(request, context)
+
 
 class Service:
     def info(self, request, context):
+        raise NotImplementedError
+
+    def open_session(self, request, context):
+        raise NotImplementedError
+
+    def execute(self, request_iterator, context):
+        raise NotImplementedError
+
+    def log(self, request_iterator, context):
+        raise NotImplementedError
+
+    def permissions(self, request_iterator, context):
+        raise NotImplementedError
+
+    def close_session(self, request, context):
         raise NotImplementedError
 
 

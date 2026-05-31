@@ -99,6 +99,11 @@ describe("serveRemote", () => {
           max_chunk_bytes: 0,
         });
       },
+      openSession(_call, callback) { callback(null, {}); },
+      execute(_call, callback) { callback(null, {}); },
+      log(_call, callback) { callback(null, {}); },
+      permissions(_call) { /* duplex, no-op */ },
+      closeSession(_call, callback) { callback(null, {}); },
     };
 
     // Start adapter in background.
@@ -143,5 +148,14 @@ describe("serveRemote", () => {
 
     try { fs.unlinkSync(hostSock); } catch {}
     try { fs.unlinkSync(adapterSock); } catch {}
+  });
+
+  test("throws when host is missing", async () => {
+    await expect(
+      serveRemote(
+        { info(_call, cb) { cb(null, {}); } } as any,
+        { host: "", identity: { name: "a", version: "1", digest: "sha256:x" } }
+      )
+    ).rejects.toThrow("host is required");
   });
 });

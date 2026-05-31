@@ -7,7 +7,7 @@ Type=simple
 Restart=always
 RestartSec=5
 Environment="PYTHONUNBUFFERED=1"
-Environment="CRITERIA_REMOTE_HOST=wss://criteria.example.com:7778"
+Environment="CRITERIA_REMOTE_HOST=criteria.example.com:7778"
 Environment="CRITERIA_REMOTE_TOKEN_FILE=/etc/criteria/token"
 ExecStart=/opt/criteria-venv/bin/python -m criteria_adapter
 WorkingDirectory=/opt/criteria-adapter

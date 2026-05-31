@@ -27,7 +27,7 @@
 //
 //	func main() {
 //		adapterhost.ServeRemote(&myAdapter{}, &adapterhost.ServeRemoteOptions{
-//			Host: "wss://criteria.example.com:7778",
+//			Host: "criteria.example.com:7778",
 //			Identity: adapterhost.RemoteIdentity{
 //				Name:    "my-adapter",
 //				Version: "1.0.0",

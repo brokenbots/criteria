@@ -15,6 +15,5 @@ COPY package.json ./
 # The adapter runs as a remote adapter; it dials out to the criteria host.
 ENV NODE_ENV=production
 ENV CRITERIA_REMOTE_TOKEN=""
-EXPOSE 8080
 
 CMD ["bun", "run", "dist/index.js"]

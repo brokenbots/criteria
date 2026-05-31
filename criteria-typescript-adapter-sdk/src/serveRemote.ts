@@ -25,6 +25,11 @@ export interface ServeRemoteOptions {
 
 export interface Service {
   info(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>): void;
+  openSession(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>): void;
+  execute(call: grpc.ServerReadableStream<any, any>, callback: grpc.sendUnaryData<any>): void;
+  log(call: grpc.ServerReadableStream<any, any>, callback: grpc.sendUnaryData<any>): void;
+  permissions(call: grpc.ServerDuplexStream<any, any>): void;
+  closeSession(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>): void;
 }
 
 // ─── Proto loading ──────────────────────────────────────────────────────────
@@ -99,8 +104,18 @@ function pickUnixSocketPath(): string {
 
 async function bridgeSockets(a: net.Socket, b: net.Socket): Promise<void> {
   await Promise.all([
-    pipeline(a, b).catch(() => {}),
-    pipeline(b, a).catch(() => {}),
+    pipeline(a, b).catch((err) => {
+      if ((err as Error)?.message !== "The operation was aborted") {
+        // eslint-disable-next-line no-console
+        console.error("bridge error:", err);
+      }
+    }),
+    pipeline(b, a).catch((err) => {
+      if ((err as Error)?.message !== "The operation was aborted") {
+        // eslint-disable-next-line no-console
+        console.error("bridge error:", err);
+      }
+    }),
   ]);
 }
 
@@ -116,6 +131,11 @@ export async function serveRemote(service: Service, opts: ServeRemoteOptions): P
   const server = new grpc.Server();
   server.addService(adapterService, {
     info: service.info.bind(service),
+    openSession: (service as any).openSession?.bind(service),
+    execute: (service as any).execute?.bind(service),
+    log: (service as any).log?.bind(service),
+    permissions: (service as any).permissions?.bind(service),
+    closeSession: (service as any).closeSession?.bind(service),
   } as any);
 
   await new Promise<void>((resolve, reject) => {
@@ -129,17 +149,18 @@ export async function serveRemote(service: Service, opts: ServeRemoteOptions): P
     );
   });
 
-  server.start();
-
-  const conn = await dialRemote(opts.host, opts.tls);
+  let conn: net.Socket;
+  let local: net.Socket;
   try {
+    conn = await dialRemote(opts.host, opts.tls);
     await sendHandshake(conn, opts.identity, opts.acceptToken);
   } catch (err) {
-    conn.destroy();
+    conn?.destroy();
+    server.forceShutdown();
     throw new Error(`serveRemote: handshake failed: ${err}`);
   }
 
-  const local = net.createConnection(unixPath);
+  local = net.createConnection(unixPath);
 
   // When either side closes, clean up the server and socket.
   conn.on("close", () => {
