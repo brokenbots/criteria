@@ -846,7 +846,7 @@ within the iterating step and any nested body steps.
 | `each._total` | number | Total number of items. |
 | `each._first` | bool | `true` on the first iteration. |
 | `each._last` | bool | `true` on the last iteration. |
-| `each._prev` | object or null | Output object of the immediately preceding iteration. `null` on the first iteration. For adapter steps, contains the adapter response outputs; for `type="workflow"` steps, contains the evaluated `output {}` block values. Persisted across crash-resume. |
+| `each._prev` | object or null | Output object of the immediately preceding iteration. `null` on the first iteration. For adapter steps, contains the adapter response outputs; for subworkflow-targeted steps, contains the subworkflow return outputs. Persisted across crash-resume. |
 
 > **`each._prev` under failure**: under `on_failure = "continue"`, `each._prev` on iteration N+1
 > contains the output object from iteration N **regardless of whether iteration N succeeded or
@@ -1350,7 +1350,6 @@ permissions {
   allow_tools = ["shell:git*", "shell:make*"]
 }
 ```
-```
 
 Applies to all adapter steps unless overridden.
 
@@ -1484,7 +1483,7 @@ The `make validate-docs` CI gate extracts every fenced HCL code block from `docs
 
 Place these HTML comment directives on the line immediately before the opening ` ```hcl ` fence (no blank line between the directive and the fence):
 
-- **`<!-- validator: fragment -->`** — the block is a partial workflow (a step, state, adapter, or other node declaration without a surrounding `workflow { }` block). The validator wraps it in a synthetic `workflow "doc_example" { ... }` shell and adds state stubs for any transition targets not defined in the fragment.
+- **`<!-- validator: fragment -->`** — the block is a partial workflow (a step, state, adapter, or other node declaration without a surrounding `workflow { }` block). The validator wraps it in a synthetic `workflow { name = "doc_example" }` shell and adds state stubs for any transition targets not defined in the fragment.
 
 - **`<!-- validator: skip: <reason> -->`** — skip this block entirely. Use sparingly. Always document why each skip exists. Valid reasons: the block is an incomplete `workflow { }` excerpt that references undeclared nodes; the block is a bare attribute or sub-block not valid at workflow level; the block shows a future language feature not yet implemented.
 
