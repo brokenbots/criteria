@@ -65,8 +65,12 @@ func executeServerRun(ctx context.Context, log *slog.Logger, loader adapterhost.
 			return nil
 		})
 
+	mergedVars, err := mergeVarSources(opts.varFiles, opts.varOverrides)
+	if err != nil {
+		return err
+	}
 	eng = engine.New(graph, loader, sink,
-		engine.WithVarOverrides(parseVarOverrides(opts.varOverrides)),
+		engine.WithVarOverrides(mergedVars),
 		engine.WithWorkflowDir(workflowDirFromPath(opts.workflowPath)),
 	)
 	if err := eng.Run(ctx); err != nil {

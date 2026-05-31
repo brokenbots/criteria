@@ -20,13 +20,14 @@ func NewRunCmd() *cobra.Command {
 		tlsCA        string
 		tlsCert      string
 		tlsKey       string
+		varFiles     []string
 	)
 	cmd := &cobra.Command{
 		Use:   "run",
 		Short: "Deprecated alias for apply --server",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
-			fmt.Fprintln(os.Stderr, "warning: `criteria run` is deprecated; use `criteria apply <workflow.hcl> --server <url>`")
+			fmt.Fprintln(os.Stderr, "warning: `criteria run` is deprecated; use `criteria apply <workflow.chcl|workflow.hcl> --server <url>`")
 
 			if workflowPath == "" {
 				return fmt.Errorf("--workflow is required")
@@ -47,10 +48,12 @@ func NewRunCmd() *cobra.Command {
 				tlsCA:        tlsCA,
 				tlsCert:      tlsCert,
 				tlsKey:       tlsKey,
+				varFiles:     varFiles,
 			})
 		},
 	}
-	cmd.Flags().StringVar(&workflowPath, "workflow", envOrDefault("CRITERIA_WORKFLOW", ""), "Path to workflow .hcl file (or CRITERIA_WORKFLOW)")
+	cmd.Flags().StringVar(&workflowPath, "workflow", envOrDefault("CRITERIA_WORKFLOW", ""), "Path to workflow .chcl or .hcl file (or CRITERIA_WORKFLOW)")
+	cmd.Flags().StringArrayVar(&varFiles, "var-file", nil, "Load variable overrides from a .chcl, .hcl, or .json file (repeatable)")
 	cmd.Flags().StringVar(&serverURL, "server", envOrDefault("CRITERIA_SERVER_URL", "http://localhost:8080"), "Server base URL (or CRITERIA_SERVER_URL)")
 	cmd.Flags().StringVar(&name, "name", envOrDefault("CRITERIA_NAME", ""), "Agent name (defaults to hostname, or CRITERIA_NAME)")
 	cmd.Flags().StringVar(&codec, "server-codec", envOrDefault("CRITERIA_SERVER_CODEC", "proto"), "Connect codec: 'proto' (default) or 'json' (or CRITERIA_SERVER_CODEC)")

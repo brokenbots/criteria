@@ -91,8 +91,12 @@ func runApplyLocal(
 	// src (raw HCL bytes) is consumed only by server mode for signed payload delivery;
 	// local mode has no signing step, so src is intentionally unused here.
 	_ = src
+	mergedVars, err := mergeVarSources(opts.varFiles, opts.varOverrides)
+	if err != nil {
+		return err
+	}
 	eng = engine.New(graph, loader, tracker,
-		engine.WithVarOverrides(parseVarOverrides(opts.varOverrides)),
+		engine.WithVarOverrides(mergedVars),
 		engine.WithWorkflowDir(workflowDirFromPath(opts.workflowPath)),
 	)
 	if err := eng.Run(ctx); err != nil {

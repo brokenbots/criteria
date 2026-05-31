@@ -146,13 +146,13 @@ func TestParseFileOrDir_NonHCLFile_Error(t *testing.T) {
 	}
 	found := false
 	for _, d := range diags {
-		if strings.Contains(d.Detail, ".hcl") {
+		if strings.Contains(d.Detail, ".chcl") || strings.Contains(d.Detail, ".hcl") {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Errorf("expected diagnostic detail mentioning .hcl requirement, got: %s", diags.Error())
+		t.Errorf("expected diagnostic detail mentioning .chcl/.hcl requirement, got: %s", diags.Error())
 	}
 }
 

@@ -123,10 +123,10 @@ func (r *LocalSubWorkflowResolver) checkHCLFiles(resolvedPath string) error {
 	}
 
 	for _, entry := range entries {
-		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".hcl") {
+		if !entry.IsDir() && hasHCLExtension(entry.Name()) {
 			return nil
 		}
 	}
 
-	return fmt.Errorf("subworkflow directory %q contains no .hcl files", resolvedPath)
+	return fmt.Errorf("subworkflow directory %q contains no .chcl or .hcl files", resolvedPath)
 }

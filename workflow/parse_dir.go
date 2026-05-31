@@ -81,10 +81,10 @@ func ParseDir(dir string) (*Spec, hcl.Diagnostics) { //nolint:funlen // file dis
 		}}
 	}
 
-	// Collect .hcl files in lexicographic order (ReadDir already returns sorted).
+	// Collect HCL files in lexicographic order (ReadDir already returns sorted).
 	hclFiles := make([]string, 0, len(dirEntries))
 	for _, entry := range dirEntries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".hcl") {
+		if entry.IsDir() || !hasHCLExtension(entry.Name()) {
 			continue
 		}
 		hclFiles = append(hclFiles, filepath.Join(dir, entry.Name()))
@@ -93,8 +93,8 @@ func ParseDir(dir string) (*Spec, hcl.Diagnostics) { //nolint:funlen // file dis
 	if len(hclFiles) == 0 {
 		return nil, hcl.Diagnostics{{
 			Severity: hcl.DiagError,
-			Summary:  "no .hcl files in workflow directory",
-			Detail:   fmt.Sprintf("directory %q contains no .hcl files", dir),
+			Summary:  "no workflow files in directory",
+			Detail:   fmt.Sprintf("directory %q contains no .chcl or .hcl files", dir),
 		}}
 	}
 
@@ -156,18 +156,28 @@ func ParseFileOrDir(path string) (*Spec, hcl.Diagnostics) {
 		return ParseDir(path)
 	}
 
-	// Only .hcl files are valid workflow entry points.
-	if !strings.HasSuffix(path, ".hcl") {
+	// Only .chcl or .hcl files are valid workflow entry points.
+	if !hasHCLExtension(path) {
 		return nil, hcl.Diagnostics{{
 			Severity: hcl.DiagError,
 			Summary:  "invalid workflow file",
-			Detail:   fmt.Sprintf("%q is not a .hcl file; workflow entry points must be a directory or a .hcl file", path),
+			Detail:   fmt.Sprintf("%q is not a .chcl or .hcl file; workflow entry points must be a directory or a .chcl/.hcl file", path),
 		}}
 	}
 
 	// Parse the parent directory as the module root. All .hcl files in the
 	// directory are merged; the named file must be part of that set.
 	return ParseDir(filepath.Dir(path))
+}
+
+// hasHCLExtension reports whether name has one of the recognised HCL extensions.
+func hasHCLExtension(name string) bool {
+	for _, ext := range HCLExtensions {
+		if strings.HasSuffix(name, ext) {
+			return true
+		}
+	}
+	return false
 }
 
 // mergeSpecs merges a slice of parsed file entries into a single Spec.
