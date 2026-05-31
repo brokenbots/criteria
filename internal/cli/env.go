@@ -65,6 +65,9 @@ func parseHCLVarFile(path string) (map[string]string, error) {
 	if diags.HasErrors() {
 		return nil, fmt.Errorf("failed to parse HCL var-file %q: %w", path, diags)
 	}
+	if f == nil {
+		return nil, fmt.Errorf("failed to parse HCL var-file %q: parser returned nil file without errors", path)
+	}
 	attrs, diags := f.Body.JustAttributes()
 	if diags.HasErrors() {
 		return nil, fmt.Errorf("failed to read attributes from HCL var-file %q: %w", path, diags)
