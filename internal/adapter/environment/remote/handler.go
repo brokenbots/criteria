@@ -80,10 +80,24 @@ func ParseConfig(rawBody hcl.Body) (*Config, error) {
 		AcceptDigestFrom: "lockfile",
 	}
 
-	// Extract attributes, ignoring blocks (mtls, network, etc.).
-	var getAttr func(name string) (*hcl.Attribute, bool)
+	getAttr, err := buildAttrGetter(rawBody)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := parseTopLevelAttrs(cfg, getAttr); err != nil {
+		return nil, err
+	}
+	if err := parseMTLSBlock(cfg, rawBody); err != nil {
+		return nil, err
+	}
+
+	return cfg, nil
+}
+
+func buildAttrGetter(rawBody hcl.Body) (func(string) (*hcl.Attribute, bool), error) {
 	if raw, ok := rawBody.(*hclsyntax.Body); ok {
-		getAttr = func(name string) (*hcl.Attribute, bool) {
+		return func(name string) (*hcl.Attribute, bool) {
 			if a, ok := raw.Attributes[name]; ok {
 				return &hcl.Attribute{
 					Name:      a.Name,
@@ -93,48 +107,40 @@ func ParseConfig(rawBody hcl.Body) (*Config, error) {
 				}, true
 			}
 			return nil, false
-		}
-	} else {
-		attrs, diags := rawBody.JustAttributes()
-		if diags.HasErrors() {
-			return nil, fmt.Errorf("remote environment: parse attributes: %w", diags)
-		}
-		getAttr = func(name string) (*hcl.Attribute, bool) {
-			a, ok := attrs[name]
-			return a, ok
-		}
+		}, nil
 	}
+	attrs, diags := rawBody.JustAttributes()
+	if diags.HasErrors() {
+		return nil, fmt.Errorf("remote environment: parse attributes: %w", diags)
+	}
+	return func(name string) (*hcl.Attribute, bool) {
+		a, ok := attrs[name]
+		return a, ok
+	}, nil
+}
 
-	if v, ok := getAttr("listen_address"); ok {
-		val, err := attrAsString(v)
-		if err != nil {
-			return nil, fmt.Errorf("remote environment: listen_address: %w", err)
+func parseTopLevelAttrs(cfg *Config, getAttr func(string) (*hcl.Attribute, bool)) error {
+	for _, mapping := range []struct {
+		name   string
+		target *string
+	}{
+		{"listen_address", &cfg.ListenAddress},
+		{"accept_token", &cfg.AcceptToken},
+		{"policy_mode", &cfg.PolicyMode},
+		{"accept_digest_from", &cfg.AcceptDigestFrom},
+	} {
+		if v, ok := getAttr(mapping.name); ok {
+			val, err := attrAsString(v)
+			if err != nil {
+				return fmt.Errorf("remote environment: %s: %w", mapping.name, err)
+			}
+			*mapping.target = val
 		}
-		cfg.ListenAddress = val
 	}
-	if v, ok := getAttr("accept_token"); ok {
-		val, err := attrAsString(v)
-		if err != nil {
-			return nil, fmt.Errorf("remote environment: accept_token: %w", err)
-		}
-		cfg.AcceptToken = val
-	}
-	if v, ok := getAttr("policy_mode"); ok {
-		val, err := attrAsString(v)
-		if err != nil {
-			return nil, fmt.Errorf("remote environment: policy_mode: %w", err)
-		}
-		cfg.PolicyMode = val
-	}
-	if v, ok := getAttr("accept_digest_from"); ok {
-		val, err := attrAsString(v)
-		if err != nil {
-			return nil, fmt.Errorf("remote environment: accept_digest_from: %w", err)
-		}
-		cfg.AcceptDigestFrom = val
-	}
+	return nil
+}
 
-	// Parse the mtls { ... } block
+func parseMTLSBlock(cfg *Config, rawBody hcl.Body) error {
 	var mtlsBlock hcl.Body
 	if raw, ok := rawBody.(*hclsyntax.Body); ok {
 		for _, block := range raw.Blocks {
@@ -144,47 +150,36 @@ func ParseConfig(rawBody hcl.Body) (*Config, error) {
 			}
 		}
 	}
-	if mtlsBlock != nil {
-		mtlsAttrs, mtlsDiags := mtlsBlock.JustAttributes()
-		if mtlsDiags.HasErrors() {
-			return nil, fmt.Errorf("remote environment: mtls block: %w", mtlsDiags)
-		}
-		if v, ok := mtlsAttrs["server_cert"]; ok {
+	if mtlsBlock == nil {
+		return nil
+	}
+	mtlsAttrs, mtlsDiags := mtlsBlock.JustAttributes()
+	if mtlsDiags.HasErrors() {
+		return fmt.Errorf("remote environment: mtls block: %w", mtlsDiags)
+	}
+	for _, mapping := range []struct {
+		name   string
+		target *string
+	}{
+		{"server_cert", &cfg.ServerCertPath},
+		{"server_key", &cfg.ServerKeyPath},
+		{"client_ca", &cfg.ClientCAPath},
+		{"client_identity_pattern", &cfg.ClientIdentityPattern},
+	} {
+		if v, ok := mtlsAttrs[mapping.name]; ok {
 			val, err := attrAsString(v)
 			if err != nil {
-				return nil, fmt.Errorf("remote environment: mtls.server_cert: %w", err)
+				return fmt.Errorf("remote environment: mtls.%s: %w", mapping.name, err)
 			}
-			cfg.ServerCertPath = val
-		}
-		if v, ok := mtlsAttrs["server_key"]; ok {
-			val, err := attrAsString(v)
-			if err != nil {
-				return nil, fmt.Errorf("remote environment: mtls.server_key: %w", err)
-			}
-			cfg.ServerKeyPath = val
-		}
-		if v, ok := mtlsAttrs["client_ca"]; ok {
-			val, err := attrAsString(v)
-			if err != nil {
-				return nil, fmt.Errorf("remote environment: mtls.client_ca: %w", err)
-			}
-			cfg.ClientCAPath = val
-		}
-		if v, ok := mtlsAttrs["client_identity_pattern"]; ok {
-			val, err := attrAsString(v)
-			if err != nil {
-				return nil, fmt.Errorf("remote environment: mtls.client_identity_pattern: %w", err)
-			}
-			cfg.ClientIdentityPattern = val
+			*mapping.target = val
 		}
 	}
-
-	return cfg, nil
+	return nil
 }
 
 // ValidateClientIdentity checks whether the extracted certificate subject
 // matches the configured regex pattern.
-func ValidateClientIdentity(subject string, pattern string) error {
+func ValidateClientIdentity(subject, pattern string) error {
 	if pattern == "" {
 		return nil
 	}

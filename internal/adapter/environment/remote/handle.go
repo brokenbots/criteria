@@ -3,8 +3,9 @@
 package remote
 
 import (
-	"github.com/brokenbots/criteria/internal/adapterhost"
 	hplugin "github.com/hashicorp/go-plugin"
+
+	"github.com/brokenbots/criteria/internal/adapterhost"
 )
 
 // makeHandle wraps a Client + pluginClient into a session-manager-compatible

@@ -20,9 +20,10 @@ import (
 	"time"
 
 	"github.com/hashicorp/hcl/v2/hclparse"
+	"google.golang.org/grpc"
+
 	v2 "github.com/brokenbots/criteria/sdk/pb/criteria/v2"
 	"github.com/brokenbots/criteria/workflow"
-	"google.golang.org/grpc"
 )
 
 // --- Helpers ---
@@ -149,11 +150,6 @@ func (f *fakeAdapterServer) Execute(req *v2.ExecuteRequest, stream v2.AdapterSer
 	return nil
 }
 
-func mustMarshalJSON(v any) []byte {
-	b, _ := json.Marshal(v)
-	return b
-}
-
 // singleConnListener returns a single connection and then EOFs.
 type singleConnListener struct {
 	conn net.Conn
@@ -176,7 +172,7 @@ func (l *singleConnListener) Addr() net.Addr { return l.conn.LocalAddr() }
 
 // dialFakeAdapter connects to the shim, sends the handshake, and serves a
 // minimal gRPC adapter on the connection.
-func dialFakeAdapter(t *testing.T, addr string, hs handshakeMessage, tlsConf *tls.Config) {
+func dialFakeAdapter(addr string, hs handshakeMessage, tlsConf *tls.Config) error {
 	var conn net.Conn
 	var err error
 	if tlsConf != nil {
@@ -185,12 +181,13 @@ func dialFakeAdapter(t *testing.T, addr string, hs handshakeMessage, tlsConf *tl
 		conn, err = net.Dial("tcp", addr)
 	}
 	if err != nil {
-		t.Fatalf("dial shim: %v", err)
+		return fmt.Errorf("dial shim: %w", err)
 	}
 
 	hsBytes, _ := json.Marshal(hs)
 	if _, err := conn.Write(append(hsBytes, '\n')); err != nil {
-		t.Fatalf("write handshake: %v", err)
+		_ = conn.Close()
+		return fmt.Errorf("write handshake: %w", err)
 	}
 
 	// Serve gRPC on this single connection.
@@ -201,12 +198,12 @@ func dialFakeAdapter(t *testing.T, addr string, hs handshakeMessage, tlsConf *tl
 	})
 	lis := &singleConnListener{conn: conn}
 	go func() {
-		if err := grpcServer.Serve(lis); err != nil {
-			// Expected when connection closes.
-		}
+		_ = grpcServer.Serve(lis)
 	}()
 	// Ensure server stops when connection closes.
-	t.Cleanup(func() { grpcServer.Stop() })
+	// Keep grpcServer alive in background; caller can stop via conn close.
+	_ = lis // silence unused if not referenced
+	return nil
 }
 
 // --- Unit tests ---
@@ -312,11 +309,13 @@ func TestShim_AcceptAndCallInfo(t *testing.T) {
 	addr := shim.listener.Addr().String()
 
 	// Dial fake adapter in background.
-	go dialFakeAdapter(t, addr, handshakeMessage{
-		Name:    "noop",
-		Version: "1.0.0",
-		Digest:  "sha256:abcd1234",
-	}, nil)
+	go func() {
+		_ = dialFakeAdapter(addr, handshakeMessage{
+			Name:    "noop",
+			Version: "1.0.0",
+			Digest:  "sha256:abcd1234",
+		}, nil)
+	}()
 
 	// Wait for handle from session manager perspective.
 	handle, err := shim.WaitForHandle(ctx, "noop")
@@ -414,11 +413,13 @@ func TestShim_mTLSAcceptAndReject(t *testing.T) {
 		RootCAs:      caPool,
 	}
 
-	go dialFakeAdapter(t, addr, handshakeMessage{
-		Name:    "noop",
-		Version: "1.0.0",
-		Digest:  "sha256:abcd1234",
-	}, goodTLS)
+	go func() {
+		_ = dialFakeAdapter(addr, handshakeMessage{
+			Name:    "noop",
+			Version: "1.0.0",
+			Digest:  "sha256:abcd1234",
+		}, goodTLS)
+	}()
 
 	handle, err := shim.WaitForHandle(ctx, "noop")
 	if err != nil {
@@ -453,11 +454,13 @@ func TestShim_ExecuteThroughBridge(t *testing.T) {
 
 	addr := shim.listener.Addr().String()
 
-	go dialFakeAdapter(t, addr, handshakeMessage{
-		Name:    "noop",
-		Version: "1.0.0",
-		Digest:  "sha256:abcd1234",
-	}, nil)
+	go func() {
+		_ = dialFakeAdapter(addr, handshakeMessage{
+			Name:    "noop",
+			Version: "1.0.0",
+			Digest:  "sha256:abcd1234",
+		}, nil)
+	}()
 
 	handle, err := shim.WaitForHandle(ctx, "noop")
 	if err != nil {
@@ -484,8 +487,8 @@ func TestShim_ExecuteThroughBridge(t *testing.T) {
 
 type nopSink struct{}
 
-func (n *nopSink) Log(stream string, chunk []byte)       {}
-func (n *nopSink) Adapter(kind string, data any)         {}
+func (n *nopSink) Log(stream string, chunk []byte) {}
+func (n *nopSink) Adapter(kind string, data any)   {}
 
 // TestShim_Reconnect verifies that after a connection is dropped, WaitForHandle
 // blocks until a new adapter dials in.
@@ -509,11 +512,13 @@ func TestShim_Reconnect(t *testing.T) {
 	addr := shim.listener.Addr().String()
 
 	// First connection.
-	go dialFakeAdapter(t, addr, handshakeMessage{
-		Name:    "noop",
-		Version: "1.0.0",
-		Digest:  "sha256:abcd1234",
-	}, nil)
+	go func() {
+		_ = dialFakeAdapter(addr, handshakeMessage{
+			Name:    "noop",
+			Version: "1.0.0",
+			Digest:  "sha256:abcd1234",
+		}, nil)
+	}()
 
 	h1, err := shim.WaitForHandle(ctx, "noop")
 	if err != nil {
@@ -530,11 +535,13 @@ func TestShim_Reconnect(t *testing.T) {
 	reconnected := make(chan struct{})
 	go func() {
 		defer close(reconnected)
-		dialFakeAdapter(t, addr, handshakeMessage{
+		if err := dialFakeAdapter(addr, handshakeMessage{
 			Name:    "noop",
 			Version: "2.0.0",
 			Digest:  "sha256:abcd1234",
-		}, nil)
+		}, nil); err != nil {
+			t.Errorf("dialFakeAdapter: %v", err)
+		}
 	}()
 
 	// WaitForHandle should block until the second connection arrives.

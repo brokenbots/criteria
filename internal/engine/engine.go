@@ -794,11 +794,12 @@ type lockfileDigestVerifier struct {
 	lockfile *lockfile.Lockfile
 }
 
-func (v *lockfileDigestVerifier) Verify(adapterType string, digest string) error {
+func (v *lockfileDigestVerifier) Verify(adapterType, digest string) error {
 	if v.lockfile == nil {
 		return fmt.Errorf("no lockfile available")
 	}
-	for _, a := range v.lockfile.Adapters {
+	for i := range v.lockfile.Adapters {
+		a := &v.lockfile.Adapters[i]
 		if a.Type == adapterType {
 			if a.ResolvedDigest == digest {
 				return nil

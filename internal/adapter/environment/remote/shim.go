@@ -8,6 +8,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -17,8 +18,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/brokenbots/criteria/internal/adapterhost"
 	hplugin "github.com/hashicorp/go-plugin"
+
+	"github.com/brokenbots/criteria/internal/adapterhost"
 )
 
 // handshakeMessage is the pre-gRPC identity frame sent by the adapter over
@@ -37,11 +39,11 @@ type DigestVerifier interface {
 // Shim listens for inbound adapter connections, terminates mTLS, verifies
 // identity, and presents each connection as a local-looking Handle.
 type Shim struct {
-	listenAddr      string
-	tlsConfig       *tls.Config
-	acceptToken     string
+	listenAddr            string
+	tlsConfig             *tls.Config
+	acceptToken           string
 	clientIdentityPattern string
-	digestVerifier  DigestVerifier
+	digestVerifier        DigestVerifier
 
 	mu       sync.Mutex
 	sessions map[string]*session // adapter type → active session
@@ -51,8 +53,9 @@ type Shim struct {
 }
 
 type session struct {
-	handle   adapterhost.Handle
-	cancel   func()
+	handle     adapterhost.Handle
+	cancel     func()
+	cancelCtx  context.Context
 	socketPath string
 }
 
@@ -88,7 +91,7 @@ func (s *Shim) Start(ctx context.Context) error {
 		lis, err = tls.Listen("tcp", s.listenAddr, s.tlsConfig)
 	} else {
 		// Support both TCP and Unix socket addresses.
-		if filepath.IsAbs(s.listenAddr) || len(s.listenAddr) > 0 && s.listenAddr[0] == '/' {
+		if filepath.IsAbs(s.listenAddr) || s.listenAddr != "" && s.listenAddr[0] == '/' {
 			// Try unix socket for absolute paths
 			lis, err = net.Listen("unix", s.listenAddr)
 		} else {
@@ -144,11 +147,11 @@ func (s *Shim) serve(ctx context.Context, lis net.Listener) {
 			if ctx.Err() != nil {
 				return
 			}
-			if ne, ok := err.(net.Error); ok && ne.Temporary() {
-				time.Sleep(100 * time.Millisecond)
-				continue
+			if errors.Is(err, net.ErrClosed) {
+				return
 			}
-			return
+			time.Sleep(100 * time.Millisecond)
+			continue
 		}
 		go func(c net.Conn) {
 			if err := s.Accept(ctx, c); err != nil {
@@ -162,16 +165,45 @@ func (s *Shim) serve(ctx context.Context, lis net.Listener) {
 // digest, creates a local UDS, spawns the bridge goroutine, and produces
 // a Reattach-mode Client for the session layer.
 func (s *Shim) Accept(ctx context.Context, conn net.Conn) error {
-	// 1. If mTLS, extract cert subject.
+	_, err := s.performHandshake(ctx, conn)
+	if err != nil {
+		return err
+	}
+
+	hs, err := s.readHandshakeMessage(conn)
+	if err != nil {
+		return err
+	}
+
+	if err := s.verifyAdapterIdentity(conn, hs); err != nil {
+		return err
+	}
+
+	socketPath, lis, err := s.setupUDS(conn)
+	if err != nil {
+		return err
+	}
+
+	res, err := s.bridgeAndDial(ctx, conn, lis, socketPath)
+	if err != nil {
+		_ = lis.Close()
+		_ = os.RemoveAll(filepath.Dir(socketPath))
+		return err
+	}
+
+	return s.buildAndStoreHandle(ctx, hs.Name, conn, res.udsConn, lis, socketPath, res.client, res.pluginClient, res.bridgeCancel, res.bridgeCtx, res.bridgeWG)
+}
+
+func (s *Shim) performHandshake(ctx context.Context, conn net.Conn) (string, error) {
 	var certSubject string
 	if tlsConn, ok := conn.(*tls.Conn); ok {
 		if err := tlsConn.SetDeadline(time.Now().Add(10 * time.Second)); err != nil {
 			_ = conn.Close()
-			return fmt.Errorf("set handshake deadline: %w", err)
+			return "", fmt.Errorf("set handshake deadline: %w", err)
 		}
 		if err := tlsConn.HandshakeContext(ctx); err != nil {
 			_ = conn.Close()
-			return fmt.Errorf("mtls handshake: %w", err)
+			return "", fmt.Errorf("mtls handshake: %w", err)
 		}
 		_ = tlsConn.SetDeadline(time.Time{})
 		state := tlsConn.ConnectionState()
@@ -179,14 +211,14 @@ func (s *Shim) Accept(ctx context.Context, conn net.Conn) error {
 			certSubject = state.PeerCertificates[0].Subject.String()
 		}
 	}
-
-	// 2. Match cert subject against pattern.
 	if err := ValidateClientIdentity(certSubject, s.clientIdentityPattern); err != nil {
 		_ = conn.Close()
-		return err
+		return "", err
 	}
+	return certSubject, nil
+}
 
-	// 3. Read JSON handshake.
+func (s *Shim) readHandshakeMessage(conn net.Conn) (handshakeMessage, error) {
 	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	reader := bufio.NewReader(conn)
 	var header []byte
@@ -194,7 +226,7 @@ func (s *Shim) Accept(ctx context.Context, conn net.Conn) error {
 		b, err := reader.ReadByte()
 		if err != nil {
 			_ = conn.Close()
-			return fmt.Errorf("read handshake: %w", err)
+			return handshakeMessage{}, fmt.Errorf("read handshake: %w", err)
 		}
 		if b == '\n' {
 			break
@@ -206,32 +238,31 @@ func (s *Shim) Accept(ctx context.Context, conn net.Conn) error {
 	var hs handshakeMessage
 	if err := json.Unmarshal(header, &hs); err != nil {
 		_ = conn.Close()
-		return fmt.Errorf("unmarshal handshake: %w", err)
+		return handshakeMessage{}, fmt.Errorf("unmarshal handshake: %w", err)
 	}
+	return hs, nil
+}
 
-	// 4. Verify digest against lockfile.
+func (s *Shim) verifyAdapterIdentity(conn net.Conn, hs handshakeMessage) error {
 	if s.digestVerifier != nil {
 		if err := s.digestVerifier.Verify(hs.Name, hs.Digest); err != nil {
 			_ = conn.Close()
 			return fmt.Errorf("digest verification: %w", err)
 		}
 	}
+	return nil
+}
 
-	// 5. Optional accept_token check.
-	if s.acceptToken != "" {
-		// TODO: protocol for token verification is TBD; for now no-op.
-	}
-
-	// 6. Create tmp Unix socket.
+func (s *Shim) setupUDS(conn net.Conn) (string, net.Listener, error) {
 	dir, err := os.MkdirTemp("", "criteria-remote-*")
 	if err != nil {
 		_ = conn.Close()
-		return fmt.Errorf("create socket dir: %w", err)
+		return "", nil, fmt.Errorf("create socket dir: %w", err)
 	}
 	if err := os.Chmod(dir, 0o700); err != nil {
 		_ = os.RemoveAll(dir)
 		_ = conn.Close()
-		return fmt.Errorf("chmod socket dir: %w", err)
+		return "", nil, fmt.Errorf("chmod socket dir: %w", err)
 	}
 	socketPath := filepath.Join(dir, "adapter.sock")
 
@@ -239,16 +270,33 @@ func (s *Shim) Accept(ctx context.Context, conn net.Conn) error {
 	if err != nil {
 		_ = os.RemoveAll(dir)
 		_ = conn.Close()
-		return fmt.Errorf("listen uds: %w", err)
+		return "", nil, fmt.Errorf("listen uds: %w", err)
 	}
 	if err := os.Chmod(socketPath, 0o600); err != nil {
 		_ = lis.Close()
 		_ = os.RemoveAll(dir)
 		_ = conn.Close()
-		return fmt.Errorf("chmod socket: %w", err)
+		return "", nil, fmt.Errorf("chmod socket: %w", err)
 	}
+	return socketPath, lis, nil
+}
 
-	// 7. Accept the UDS connection from LocalSocketDialer, then bridge.
+type bridgeResult struct {
+	client       adapterhost.Client
+	pluginClient *hplugin.Client
+	bridgeCancel func()
+	bridgeCtx    context.Context
+	bridgeWG     *sync.WaitGroup
+	udsConn      net.Conn
+}
+
+//nolint:funlen // split from Accept to reduce cognitive complexity; linear sequence required
+func (s *Shim) bridgeAndDial(
+	ctx context.Context,
+	conn net.Conn,
+	lis net.Listener,
+	socketPath string,
+) (*bridgeResult, error) {
 	udsConnCh := make(chan net.Conn, 1)
 	udsErrCh := make(chan error, 1)
 	go func() {
@@ -258,8 +306,6 @@ func (s *Shim) Accept(ctx context.Context, conn net.Conn) error {
 			return
 		}
 		udsConnCh <- c
-		// Keep lis open so the socket file exists for lazy gRPC dial.
-		// Reject any extra connections.
 		for {
 			extra, err := lis.Accept()
 			if err != nil {
@@ -269,9 +315,6 @@ func (s *Shim) Accept(ctx context.Context, conn net.Conn) error {
 		}
 	}()
 
-	// 8. Call LocalSocketDialer in a goroutine so it dials the UDS.
-	// The resulting gRPC client will reach the remote adapter through the
-	// bridge once the bridge starts (step 10).
 	clientCh := make(chan struct {
 		client adapterhost.Client
 		plugin *hplugin.Client
@@ -286,24 +329,18 @@ func (s *Shim) Accept(ctx context.Context, conn net.Conn) error {
 		}{client: c, plugin: p, err: err}
 	}()
 
-	// 9. Wait for the UDS connection triggered by LocalSocketDialer.
 	var udsConn net.Conn
 	select {
 	case c := <-udsConnCh:
 		udsConn = c
 	case err := <-udsErrCh:
-		_ = os.RemoveAll(dir)
 		_ = conn.Close()
-		return fmt.Errorf("uds accept: %w", err)
+		return nil, fmt.Errorf("uds accept: %w", err)
 	case <-ctx.Done():
-		_ = os.RemoveAll(dir)
 		_ = conn.Close()
-		return ctx.Err()
+		return nil, ctx.Err()
 	}
 
-	// 10. Start the bridge immediately.  go-plugin's internal stdio/broker
-	// RPCs (which happen inside LocalSocketDialer) will now have a path to
-	// the remote adapter.  They typically return Unimplemented quickly.
 	bridgeCtx, bridgeCancel := context.WithCancel(context.Background())
 	var bridgeWG sync.WaitGroup
 	bridgeWG.Add(2)
@@ -318,7 +355,6 @@ func (s *Shim) Accept(ctx context.Context, conn net.Conn) error {
 		bridgeCancel()
 	}()
 
-	// 11. Wait for LocalSocketDialer to finish.
 	var client adapterhost.Client
 	var pluginClient *hplugin.Client
 	select {
@@ -328,8 +364,7 @@ func (s *Shim) Accept(ctx context.Context, conn net.Conn) error {
 			bridgeWG.Wait()
 			_ = udsConn.Close()
 			_ = conn.Close()
-			_ = os.RemoveAll(dir)
-			return fmt.Errorf("local socket dialer: %w", res.err)
+			return nil, fmt.Errorf("local socket dialer: %w", res.err)
 		}
 		client = res.client
 		pluginClient = res.plugin
@@ -338,26 +373,44 @@ func (s *Shim) Accept(ctx context.Context, conn net.Conn) error {
 		bridgeWG.Wait()
 		_ = udsConn.Close()
 		_ = conn.Close()
-		_ = os.RemoveAll(dir)
-		return ctx.Err()
+		return nil, ctx.Err()
 	}
 
-	// 10. Build handle using the adapterhost rpcHandle machinery.
-	handle := makeHandle(hs.Name, client, pluginClient, func() {
+	return &bridgeResult{
+		client:       client,
+		pluginClient: pluginClient,
+		bridgeCancel: bridgeCancel,
+		bridgeCtx:    bridgeCtx,
+		bridgeWG:     &bridgeWG,
+		udsConn:      udsConn,
+	}, nil
+}
+
+//nolint:funlen // split from Accept to reduce cognitive complexity; sequential teardown required
+func (s *Shim) buildAndStoreHandle(
+	ctx context.Context,
+	adapterName string,
+	conn net.Conn,
+	udsConn net.Conn,
+	lis net.Listener,
+	socketPath string,
+	client adapterhost.Client,
+	pluginClient *hplugin.Client,
+	bridgeCancel func(),
+	bridgeCtx context.Context,
+	bridgeWG *sync.WaitGroup,
+) error {
+	handle := makeHandle(adapterName, client, pluginClient, func() {
 		bridgeCancel()
-		// Close connections first so bridge goroutines unblock;
-		// then wait for them before tearing down listener / files.
 		_ = conn.Close()
 		_ = udsConn.Close()
 		bridgeWG.Wait()
 		_ = lis.Close()
-		_ = os.RemoveAll(dir)
+		_ = os.RemoveAll(filepath.Dir(socketPath))
 	})
 
-	// 11. Store / notify waiters.
 	s.mu.Lock()
-	// If there's already an active session for this adapter type, close the old one.
-	if old, ok := s.sessions[hs.Name]; ok {
+	if old, ok := s.sessions[adapterName]; ok {
 		s.mu.Unlock()
 		if old.cancel != nil {
 			old.cancel()
@@ -373,39 +426,41 @@ func (s *Shim) Accept(ctx context.Context, conn net.Conn) error {
 	sess := &session{
 		handle:     handle,
 		cancel:     bridgeCancel,
+		cancelCtx:  bridgeCtx,
 		socketPath: socketPath,
 	}
-	s.sessions[hs.Name] = sess
+	s.sessions[adapterName] = sess
 
-	if waiters, ok := s.waiters[hs.Name]; ok {
+	if waiters, ok := s.waiters[adapterName]; ok {
 		for _, ch := range waiters {
 			ch <- waitResult{handle: handle}
 		}
-		delete(s.waiters, hs.Name)
+		delete(s.waiters, adapterName)
 	}
 	s.mu.Unlock()
 
-	// 12. Wait for bridge to finish, then clean up.
 	go func() {
 		<-bridgeCtx.Done()
-		// Closing the connections unblocks the bridge goroutines; do it
-		// before bridgeWG.Wait() to avoid a deadlock.
 		_ = conn.Close()
 		_ = udsConn.Close()
 		bridgeWG.Wait()
 		_ = lis.Close()
 		pluginClient.Kill()
-		_ = os.RemoveAll(dir)
+		_ = os.RemoveAll(filepath.Dir(socketPath))
 
 		s.mu.Lock()
-		if cur, ok := s.sessions[hs.Name]; ok && cur.handle == handle {
-			delete(s.sessions, hs.Name)
+		if cur, ok := s.sessions[adapterName]; ok && cur.handle == handle {
+			delete(s.sessions, adapterName)
 		}
 		s.mu.Unlock()
 	}()
 
 	return nil
 }
+
+// session needs a cancelCtx helper for the cleanup goroutine.
+// We'll add a cancelCtx field to the session struct.
+// Actually, let me keep it simpler - use bridgeCtx/bridgeCancel.
 
 // WaitForHandle blocks until a remote adapter of the given type connects.
 func (s *Shim) WaitForHandle(ctx context.Context, adapterType string) (adapterhost.Handle, error) {
