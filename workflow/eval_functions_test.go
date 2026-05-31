@@ -448,6 +448,32 @@ func TestAbsPathFunction_AbsolutePath(t *testing.T) {
 	}
 }
 
+// TestAbsPathFunction_NoWorkflowDir verifies abspath errors when both
+// WorkflowDir and Cwd are empty.
+func TestAbsPathFunction_NoWorkflowDir(t *testing.T) {
+	_, diags := evalExpr(t, `abspath("./rel")`, &workflow.FunctionOptions{WorkflowDir: "", Cwd: ""})
+	if !diags.HasErrors() {
+		t.Fatal("expected error when workflow directory not configured; got none")
+	}
+	msg := diags.Error()
+	if !strings.Contains(msg, "workflow directory not configured") {
+		t.Errorf("error message = %q, want 'workflow directory not configured'", msg)
+	}
+}
+
+// TestAbsPathFunction_FallbackToCwd verifies abspath falls back to Cwd when
+// WorkflowDir is empty.
+func TestAbsPathFunction_FallbackToCwd(t *testing.T) {
+	val, diags := evalExpr(t, `abspath("./rel")`, &workflow.FunctionOptions{WorkflowDir: "", Cwd: "/fallback"})
+	if diags.HasErrors() {
+		t.Fatalf("unexpected error: %s", diags.Error())
+	}
+	want := filepath.FromSlash("/fallback/rel")
+	if got := val.AsString(); got != want {
+		t.Errorf("abspath() = %q, want %q", got, want)
+	}
+}
+
 func TestDirNameFunction(t *testing.T) {
 	val, diags := evalExpr(t, `dirname("/foo/bar/baz.hcl")`, opts(""))
 	if diags.HasErrors() {
@@ -497,6 +523,16 @@ func TestHasAttributeFunction_NonObject(t *testing.T) {
 	}
 	if val.True() {
 		t.Error("hasattr('hello', 'x') should be false")
+	}
+}
+
+func TestHasAttributeFunction_NullObject(t *testing.T) {
+	val, diags := evalExpr(t, `hasattr(null, "x")`, opts(""))
+	if diags.HasErrors() {
+		t.Fatalf("unexpected error: %s", diags.Error())
+	}
+	if val.True() {
+		t.Error("hasattr(null, \"x\") should be false")
 	}
 }
 

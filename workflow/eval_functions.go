@@ -727,7 +727,7 @@ func baseNameFunction() function.Function {
 func hasAttributeFunction() function.Function {
 	return function.New(&function.Spec{
 		Params: []function.Parameter{
-			{Name: "obj", Type: cty.DynamicPseudoType},
+			{Name: "obj", Type: cty.DynamicPseudoType, AllowNull: true, AllowDynamicType: true},
 			{Name: "name", Type: cty.String},
 		},
 		Type: function.StaticReturnType(cty.Bool),

@@ -337,7 +337,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 | `while.*` | while-modified-step expressions only | Per-iteration bindings for while-driven steps; see While iteration. |
 | `local.*` | all expressions | Compile-time constants declared with `local` blocks. |
 | `data.<kind>.<name>.value` | all expressions; mutable via `write` blocks | Runtime-mutable values declared with `data` blocks (e.g. `data "internal"`); write via `write` blocks. |
-| `path.*` | _(unknown)_ | _(no description)_ |
+| `path.*` | all expressions | Workflow-relative, project-root, and working-directory paths for file construction. |
 <!-- END GENERATED:namespaces -->
 
 ### Operator precedence (HCL)

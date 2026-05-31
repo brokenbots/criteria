@@ -1,6 +1,6 @@
 package workflow
 
-// compile_cross_step_refs_test.go — tests for the warnCrossStepFieldRefs
+// compile_cross_step_refs_test.go — tests for the checkCrossStepFieldRefs
 // post-compilation pass (BF-03). Verifies that steps.<name>.<field> traversals
 // are checked against the referenced step's OutputSchema, and that the pass is
 // permissive when no schema is provided.

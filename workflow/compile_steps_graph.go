@@ -393,7 +393,7 @@ func collectCrossStepExprs(g *FSMGraph) []namedExpr {
 }
 
 // checkStepsFieldTraversals inspects expr for steps.<name>.<field> traversals
-// and emits warnings for fields absent from the step's OutputSchema.
+// and emits errors for fields absent from the step's OutputSchema.
 func checkStepsFieldTraversals(context string, expr hcl.Expression, g *FSMGraph, schemas map[string]AdapterInfo) hcl.Diagnostics {
 	var diags hcl.Diagnostics
 	for _, traversal := range expr.Variables() {
