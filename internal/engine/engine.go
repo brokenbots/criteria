@@ -13,6 +13,7 @@ import (
 	"github.com/zclconf/go-cty/cty"
 
 	"github.com/brokenbots/criteria/internal/adapter"
+	"github.com/brokenbots/criteria/internal/adapter/environment/remote"
 	"github.com/brokenbots/criteria/internal/adapter/secrets"
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	engineruntime "github.com/brokenbots/criteria/internal/engine/runtime"
@@ -332,6 +333,12 @@ func (e *Engine) Run(ctx context.Context) error {
 	// evaluated against the run scope (WS13).
 	vars := e.seedRunVars(sink)
 
+	// WS20: if any environment is remote, start the phone-home shim before
+	// provisioning adapters.
+	if err := e.maybeStartRemoteShim(ctx, sessions); err != nil {
+		return err
+	}
+
 	deps := Deps{
 		Sessions: sessions,
 		Sink:     sink,
@@ -372,6 +379,12 @@ func (e *Engine) RunFrom(ctx context.Context, startStep string, initialAttempt i
 	sink := NewRedactingSink(e.sink, redactionReg)
 
 	vars := e.seedRunVars(sink)
+
+	// WS20: if any environment is remote, start the phone-home shim before
+	// provisioning adapters.
+	if err := e.maybeStartRemoteShim(ctx, sessions); err != nil {
+		return err
+	}
 
 	deps := Deps{
 		Sessions: sessions,
@@ -736,6 +749,65 @@ func (e *Engine) bootstrapSessionsForResume(ctx context.Context, sessions *adapt
 	// any explicit lifecycle="open"/"close" steps. This function is kept for compatibility
 	// but does nothing.
 	return nil
+}
+
+// maybeStartRemoteShim checks whether the workflow references any remote
+// environments. If so, it parses each remote env config, builds a shim, and
+// starts listening for inbound adapter connections before adapter provisioning.
+func (e *Engine) maybeStartRemoteShim(ctx context.Context, sessions *adapterhost.SessionManager) error {
+	if e.graph == nil || len(e.graph.Environments) == 0 {
+		return nil
+	}
+	var remoteEnvs []*workflow.EnvironmentNode
+	for _, env := range e.graph.Environments {
+		if env.Type == "remote" {
+			remoteEnvs = append(remoteEnvs, env)
+		}
+	}
+	if len(remoteEnvs) == 0 {
+		return nil
+	}
+
+	lf := e.lockfile
+	verifier := &lockfileDigestVerifier{lockfile: lf}
+
+	for _, env := range remoteEnvs {
+		cfg, err := remote.ParseConfig(env.RawBody)
+		if err != nil {
+			return fmt.Errorf("remote environment %q: %w", env.Name, err)
+		}
+		shim, err := remote.NewShim(cfg, verifier)
+		if err != nil {
+			return fmt.Errorf("remote environment %q: %w", env.Name, err)
+		}
+		if err := shim.Start(ctx); err != nil {
+			return fmt.Errorf("remote environment %q: %w", env.Name, err)
+		}
+		sessions.SetRemoteShim(shim)
+	}
+	return nil
+}
+
+// lockfileDigestVerifier implements remote.DigestVerifier using the workflow
+// lockfile to validate adapter digests.
+type lockfileDigestVerifier struct {
+	lockfile *lockfile.Lockfile
+}
+
+func (v *lockfileDigestVerifier) Verify(adapterType, digest string) error {
+	if v.lockfile == nil {
+		return fmt.Errorf("no lockfile available")
+	}
+	for i := range v.lockfile.Adapters {
+		a := &v.lockfile.Adapters[i]
+		if a.Type == adapterType {
+			if a.ResolvedDigest == digest {
+				return nil
+			}
+			return fmt.Errorf("digest mismatch for adapter %q: got %q, want %q", adapterType, digest, a.ResolvedDigest)
+		}
+	}
+	return fmt.Errorf("adapter %q not found in lockfile", adapterType)
 }
 
 // ErrCancelled is returned when the run context is cancelled mid-step.

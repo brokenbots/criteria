@@ -190,18 +190,22 @@ func (h *builtinRemoteHandler) IsolationKind() EnvIsolationKind             { re
 func (h *builtinRemoteHandler) Prepare(_ context.Context, _ hcl.Body) error { return nil }
 
 func (h *builtinRemoteHandler) ValidateFields(body hcl.Body) hcl.Diagnostics {
-	attrs, diags := body.JustAttributes()
+	// Remote environments allow mtls, network, filesystem, and resources
+	// blocks; tolerate them while validating attributes. Only mtls is
+	// actively parsed at this time. mtls may also appear as a boolean
+	// attribute (mtls = true) for simple on/off configuration.
+	attrs, diags := BodyJustAttributesToleratingBlocks(body, HandlerAllowedBlocks(h.Type()))
 	for name := range attrs {
 		switch name {
 		case "variables", "policy_mode", "os",
-			"listen_address", "mtls", "accept_token", "config":
+			"listen_address", "mtls", "accept_token", "accept_digest_from", "config":
 			// accepted
 		default:
 			rng := attrs[name].Range
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagError,
 				Summary:  fmt.Sprintf("remote environment: unknown attribute %q", name),
-				Detail:   "remote environments accept variables, policy_mode, os, listen_address, mtls, accept_token, and config.",
+				Detail:   "remote environments accept variables, policy_mode, os, listen_address, mtls, accept_token, accept_digest_from, and config.",
 				Subject:  &rng,
 			})
 		}

@@ -73,8 +73,18 @@ type SessionManager struct {
 	// decision. If nil, audit logging is a no-op.
 	Audit AuditWriter
 
+	// remoteShim is set when the workflow references a remote environment.
+	// It provides phone-home adapter handles instead of local binaries.
+	remoteShim RemoteShim
+
 	mu       sync.Mutex
 	sessions map[string]*Session
+}
+
+// RemoteShim is the interface the session manager uses to wait for remote
+// adapter connections.
+type RemoteShim interface {
+	WaitForHandle(ctx context.Context, adapterType string) (Handle, error)
 }
 
 // SetGraph provides the compiled workflow graph so the session manager
@@ -83,6 +93,14 @@ func (m *SessionManager) SetGraph(g *workflow.FSMGraph) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.graph = g
+}
+
+// SetRemoteShim provides the remote shim so the session manager can dispatch
+// adapters bound to remote environments to the phone-home listener.
+func (m *SessionManager) SetRemoteShim(shim RemoteShim) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.remoteShim = shim
 }
 
 // SetLockfile provides the parsed lockfile so the session manager can
@@ -320,6 +338,12 @@ func (m *SessionManager) OpenWithOriginRefs(ctx context.Context, name, adapterNa
 }
 
 func (m *SessionManager) resolveAdapterHandle(ctx context.Context, name, adapterName string, customizer func(string, *exec.Cmd)) (Handle, error) {
+	// Remote-mode dispatch: if the adapter is bound to a remote environment,
+	// wait for the adapter to phone home via the shim.
+	if m.remoteShim != nil && m.isRemoteAdapter(name) {
+		return m.remoteShim.WaitForHandle(ctx, adapterName)
+	}
+
 	if dl, ok := m.loader.(*DefaultLoader); ok {
 		// Container-mode dispatch: if the adapter is bound to a container
 		// environment, use a docker/podman runner instead of a local binary.
@@ -333,6 +357,30 @@ func (m *SessionManager) resolveAdapterHandle(ctx context.Context, name, adapter
 		return dl.ResolveWithCustomizer(ctx, adapterName, customizer)
 	}
 	return m.loader.Resolve(ctx, adapterName)
+}
+
+// isRemoteAdapter returns true when the adapter declaration is bound to a
+// remote environment (or the default environment is remote).
+func (m *SessionManager) isRemoteAdapter(instanceID string) bool {
+	if m.graph == nil {
+		return false
+	}
+	adapterNode, ok := m.graph.Adapters[instanceID]
+	if !ok {
+		return false
+	}
+	envKey := adapterNode.Environment
+	if envKey == "" {
+		envKey = m.graph.DefaultEnvironment
+	}
+	if envKey == "" {
+		return false
+	}
+	envNode, ok := m.graph.Environments[envKey]
+	if !ok {
+		return false
+	}
+	return envNode.Type == "remote"
 }
 
 // makeSandboxCustomizer builds the exec.Cmd customizer and cleanup from
@@ -765,6 +813,12 @@ func (m *SessionManager) respawn(ctx context.Context, sess *Session) error {
 }
 
 func (m *SessionManager) resolveAdapterForRespawn(ctx context.Context, sess *Session, customizer func(string, *exec.Cmd)) (Handle, error) {
+	// Remote-mode dispatch: if the adapter is bound to a remote environment,
+	// wait for the adapter to phone home via the shim (respawn = reconnect).
+	if m.remoteShim != nil && m.isRemoteAdapter(sess.Name) {
+		return m.remoteShim.WaitForHandle(ctx, sess.Adapter)
+	}
+
 	if dl, ok := m.loader.(*DefaultLoader); ok {
 		runnerFunc, containerErr := adapter.BuildContainerRunner(m.graph, m.lockfile, sess.Name)
 		if containerErr != nil {

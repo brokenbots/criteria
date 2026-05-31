@@ -116,6 +116,10 @@ type EnvironmentNode struct {
 	Secrets      *SecretsPolicy
 	Resources    *ResourcesPolicy
 	TypeSpecific map[string]cty.Value // e.g. runtime="docker"
+	// RawBody preserves the original HCL body so runtime handlers can parse
+	// type-specific blocks (e.g. mtls { ... }) that the generic compiler does
+	// not decode into typed fields.
+	RawBody hcl.Body
 }
 
 // OutputNode is a compiled output declaration. The value expression is

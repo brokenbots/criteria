@@ -9,6 +9,7 @@ import (
 	"regexp"
 
 	"github.com/hashicorp/hcl/v2"
+	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/zclconf/go-cty/cty"
 )
 
@@ -77,8 +78,10 @@ func compileEnvironmentBlock(g *FSMGraph, envSpec EnvironmentSpec, opts CompileO
 	// Validate known fields via handler.
 	diags = append(diags, handler.ValidateFields(envSpec.Remain)...)
 
-	// Parse variables and config attributes
-	attrs, d := envSpec.Remain.JustAttributes()
+	// Parse variables and config attributes.
+	// Remote environments may contain mtls { ... } blocks which JustAttributes()
+	// rejects; tolerate them here since ValidateFields already checked them.
+	attrs, d := BodyJustAttributesToleratingBlocks(envSpec.Remain, HandlerAllowedBlocks(envSpec.Type))
 	diags = append(diags, d...)
 
 	// Parse optional policy_mode (default "permissive").
@@ -176,6 +179,7 @@ func compileEnvironmentBlock(g *FSMGraph, envSpec EnvironmentSpec, opts CompileO
 		OS:           osVal,
 		Secrets:      secretsPolicy,
 		TypeSpecific: typeSpecific,
+		RawBody:      envSpec.Remain,
 	}
 
 	return diags
@@ -189,6 +193,53 @@ func attrRangePtr(attrs hcl.Attributes, name string) *hcl.Range {
 		return &r
 	}
 	return nil
+}
+
+// HandlerAllowedBlocks returns the block types that a given environment type
+// is permitted to contain. Remote tolerates mtls, network, filesystem, and
+// resources blocks; only mtls is actively parsed at this time.
+func HandlerAllowedBlocks(envType string) []string {
+	switch envType {
+	case "remote":
+		return []string{"mtls", "network", "filesystem", "resources"}
+	default:
+		return nil
+	}
+}
+
+// BodyJustAttributesToleratingBlocks extracts attributes from an HCL body.
+// For *hclsyntax.Body it ignores blocks whose type is in allowedBlockTypes
+// and returns diagnostics for any unexpected blocks. For other body types it
+// falls back to hcl.Body.JustAttributes.
+func BodyJustAttributesToleratingBlocks(body hcl.Body, allowedBlockTypes []string) (hcl.Attributes, hcl.Diagnostics) {
+	if raw, ok := body.(*hclsyntax.Body); ok {
+		attrs := make(hcl.Attributes)
+		for name, attr := range raw.Attributes {
+			attrs[name] = attr.AsHCLAttribute()
+		}
+		var diags hcl.Diagnostics
+		for _, block := range raw.Blocks {
+			if !isAllowedBlockType(block.Type, allowedBlockTypes) {
+				diags = append(diags, &hcl.Diagnostic{
+					Severity: hcl.DiagError,
+					Summary:  fmt.Sprintf("Unexpected %q block", block.Type),
+					Detail:   "Blocks are not allowed here.",
+					Subject:  &block.OpenBraceRange,
+				})
+			}
+		}
+		return attrs, diags
+	}
+	return body.JustAttributes()
+}
+
+func isAllowedBlockType(blockType string, allowed []string) bool {
+	for _, a := range allowed {
+		if a == blockType {
+			return true
+		}
+	}
+	return false
 }
 
 // validateEnvironmentBasics validates type, name, and duplicate checks for an environment block.
