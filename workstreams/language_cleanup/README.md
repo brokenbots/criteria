@@ -28,11 +28,25 @@ WS03–WS06 are a second batch that lands on `main` before the final adapter-v2 
 
 WS03 and WS04 are independent of each other. WS05 and WS06 are each independent. All four can be developed and reviewed in parallel.
 
+WS07–WS11 are the final batch, closing out the language_cleanup track with documentation alignment, LLM ergonomics, and editor tooling:
+
+- **[WS07 — LANGUAGE-SPEC.md alignment](WS07-language-spec-alignment.md)** — fixes the hand-written sections of the normative spec (EBNF grammar, worked examples, switch prose note, file extension mention) to match the current language. Must land before WS10 (extension) and WS11 (LSP server) so the spec is authoritative.
+
+- **[WS08 — workflow.md and README alignment](WS08-workflow-doc-alignment.md)** — fixes `docs/workflow.md` throughout: workflow header examples, variable type examples, inverted switch attribute names, subworkflow example (old nested format), directory mode `.chcl` mentions, `--var-file` documentation, and data block type examples. Also corrects the `README.md` quickstart version.
+
+- **[WS09 — `criteria spec` command](WS09-criteria-spec-command.md)** — adds `criteria spec` (print the language spec) and `criteria spec --with-patterns` (print spec + all 8 LLM pattern files) for LLM-friendly access. Files are embedded at compile time with `go:embed`.
+
+- **[WS10 — VSCode extension language sync](WS10-vscode-extension-language-sync.md)** — updates `criteria-vscode-extension-v1` for current language syntax (WS01–WS06 changes broke diagnostics, go-to-definition, and workspace index) and adds `.chcl` file extension support throughout.
+
+- **[WS11 — `criteria langserver` (Minimal LSP)](WS11-criteria-langserver-minimal-lsp.md)** — adds `criteria langserver` subcommand that speaks LSP JSON-RPC over stdin/stdout, delivering diagnostics, document symbols, and go-to-definition to Neovim, Emacs, Zed, and any other LSP-capable editor. ~2–3 weeks effort.
+
+Recommended order: WS07 first, then WS08 and WS09 in parallel, then WS10 (depends on WS07 for spec authority), then WS11 (depends on WS09 and WS10).
+
 ## Out of scope (this phase)
 
 - Adapter v2 work — separate track on `adapter-v2` branch.
 - New language features (loop primitives, error-handling blocks, etc.).
-- Editor tooling beyond the existing TextMate grammar.
+- LSP Standard tier (completions, hover docs, rename symbol) — deferred post WS11.
 
 ## References
 
