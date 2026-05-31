@@ -256,10 +256,7 @@ mtls {
 }
 
 func TestValidateClientIdentity(t *testing.T) {
-	re, err := regexp.Compile("CN=criteria-adapter-.*")
-	if err != nil {
-		t.Fatalf("compile regex: %v", err)
-	}
+	re := regexp.MustCompile("CN=criteria-adapter-.*")
 	if err := ValidateClientIdentity("CN=criteria-adapter-noop", re); err != nil {
 		t.Errorf("expected match, got: %v", err)
 	}
