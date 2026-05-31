@@ -244,7 +244,7 @@ func resolveTransitions(g *FSMGraph) hcl.Diagnostics {
 			if _, ok := g.Lookup(cond.Next); !ok {
 				diags = append(diags, &hcl.Diagnostic{
 					Severity: hcl.DiagError,
-					Summary:  fmt.Sprintf("switch %q condition[%d] -> unknown target %q", sw.Name, i, cond.Next),
+					Summary:  fmt.Sprintf("switch %q match[%d] -> unknown target %q", sw.Name, i, cond.Next),
 				})
 			}
 		}

@@ -810,3 +810,67 @@ state "done" { terminal = true }
 	_, diags = Compile(spec, nil)
 	assertDiagnosticContains(t, diags, "next is now a node reference")
 }
+
+// ------------------------------------------------------------------
+// WS04 — switch syntax rename: condition { match = ... } → match { condition = ... }
+// ------------------------------------------------------------------
+
+func TestLegacyReject_SwitchConditionBlock(t *testing.T) {
+	src := `
+workflow {
+  name = "w"
+  version       = "0.1"
+  initial_state = "check"
+  target_state  = "done"
+}
+
+switch "check" {
+  condition {
+    match = true
+    next = state.done
+  }
+}
+
+state "done" { terminal = true }
+`
+	_, diags := Parse("test.hcl", []byte(src))
+	assertDiagnosticContains(t, diags, "condition blocks have been renamed to match")
+}
+
+func TestLegacyReject_SwitchConditionBlock_Multiple(t *testing.T) {
+	src := `
+workflow {
+  name = "w"
+  version       = "0.1"
+  initial_state = "check"
+  target_state  = "done"
+}
+
+switch "check" {
+  condition {
+    match = true
+    next = state.a
+  }
+  condition {
+    match = false
+    next = state.b
+  }
+}
+
+state "a" { terminal = true }
+state "b" { terminal = true }
+`
+	_, diags := Parse("test.hcl", []byte(src))
+	if !diags.HasErrors() {
+		t.Fatal("expected parse error for legacy 'condition' blocks, got none")
+	}
+	count := 0
+	for _, d := range diags {
+		if d.Severity == hcl.DiagError && strings.Contains(d.Summary, "condition blocks have been renamed to match") {
+			count++
+		}
+	}
+	if count != 2 {
+		t.Fatalf("expected 2 legacy condition block errors, got %d", count)
+	}
+}

@@ -568,16 +568,16 @@ parse time.
 <!-- validator: skip: switch conditions reference var.env and steps.build which are declared outside this excerpt -->
 ```hcl
 switch "check_env" {
-  condition {
-    match = var.env == "prod"
+  match {
+    condition = var.env == "prod"
     next  = state.deploy_prod
   }
-  condition {
-    match = var.env == "staging"
+  match {
+    condition = var.env == "staging"
     next  = state.deploy_staging
   }
-  condition {
-    match = steps.build.exit_code == "0"
+  match {
+    condition = steps.build.exit_code == "0"
     next  = state.deploy_dev
   }
   default {

@@ -128,8 +128,8 @@ step "checkout_branch" {
 }
 
 switch "route_branch_state" {
-  condition {
-    match = steps.checkout_branch.stdout == "already_merged"
+  match {
+    condition = steps.checkout_branch.stdout == "already_merged"
     next = state.done
   }
   default { next = step.execute_init }
@@ -346,28 +346,28 @@ step "pr_status_check" {
 }
 
 switch "route_pr_status" {
-  condition {
-    match = steps.pr_status_check.stdout == "merged"
+  match {
+    condition = steps.pr_status_check.stdout == "merged"
     next = step.sync_base
   }
-  condition {
-    match = steps.pr_status_check.stdout == "ready"
+  match {
+    condition = steps.pr_status_check.stdout == "ready"
     next = step.cold_review
   }
-  condition {
-    match = steps.pr_status_check.stdout == "threads_open"
+  match {
+    condition = steps.pr_status_check.stdout == "threads_open"
     next = step.cold_review
   }
-  condition {
-    match = steps.pr_status_check.stdout == "pending"
+  match {
+    condition = steps.pr_status_check.stdout == "pending"
     next = step.pr_backoff
   }
-  condition {
-    match = steps.pr_status_check.stdout == "changes_requested"
+  match {
+    condition = steps.pr_status_check.stdout == "changes_requested"
     next = step.execute_pr_feedback
   }
-  condition {
-    match = steps.pr_status_check.stdout == "checks_failed"
+  match {
+    condition = steps.pr_status_check.stdout == "checks_failed"
     next = state.failed
   }
   default { next = state.failed }
@@ -403,8 +403,8 @@ step "cold_review" {
 # ── Approval routing ──────────────────────────────────────────────────────────
 
 switch "route_after_cold_review" {
-  condition {
-    match = var.require_workflow_approval == "true"
+  match {
+    condition = var.require_workflow_approval == "true"
     next = approval.human_approval_required
   }
   default { next = step.await_github_approval }

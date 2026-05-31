@@ -468,8 +468,8 @@ step "get_version" {
 }
 
 switch "check_version" {
-  condition {
-    match = startswith(steps.get_version.stdout, "v1.")
+  match {
+    condition = startswith(steps.get_version.stdout, "v1.")
     next  = state.deploy_v1
   }
   default {

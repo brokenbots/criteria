@@ -132,16 +132,16 @@ step "prepare_branch" {
 }
 
 switch "route_branch_state" {
-  condition {
-    match = steps.prepare_branch.stdout == "already_merged"
+  match {
+    condition = steps.prepare_branch.stdout == "already_merged"
     next = step.finalize_ok
   }
-  condition {
-    match = steps.prepare_branch.stdout == "existing_local"
+  match {
+    condition = steps.prepare_branch.stdout == "existing_local"
     next = step.ci_gate
   }
-  condition {
-    match = steps.prepare_branch.stdout == "existing_remote"
+  match {
+    condition = steps.prepare_branch.stdout == "existing_remote"
     next = step.ci_gate
   }
   default { next = step.develop_init }
@@ -218,12 +218,12 @@ step "cache_diff" {
 }
 
 switch "route_diff" {
-  condition {
-    match = steps.cache_diff.stdout == "no_changes"
+  match {
+    condition = steps.cache_diff.stdout == "no_changes"
     next = step.commit
   }
-  condition {
-    match = steps.cache_diff.stdout == "ok"
+  match {
+    condition = steps.cache_diff.stdout == "ok"
     next = step.specialized_reviews
   }
   default { next = state.failed }
@@ -279,8 +279,8 @@ step "verdict_aggregate" {
 }
 
 switch "check_unanimous" {
-  condition {
-    match = steps.verdict_aggregate.stdout == "unanimous"
+  match {
+    condition = steps.verdict_aggregate.stdout == "unanimous"
     next = step.commit
   }
   default { next = step.owner_review }
@@ -321,8 +321,8 @@ step "count_cycle" {
 }
 
 switch "check_limit" {
-  condition {
-    match = data.internal.cycle_count.value >= var.max_retries
+  match {
+    condition = data.internal.cycle_count.value >= var.max_retries
     next = approval.request_user_assist
   }
   default { next = step.develop }

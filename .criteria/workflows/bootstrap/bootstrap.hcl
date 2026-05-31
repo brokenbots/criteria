@@ -111,8 +111,8 @@ step "preflight" {
 }
 
 switch "route_preflight" {
-  condition {
-    match = steps.preflight.stdout == "ok"
+  match {
+    condition = steps.preflight.stdout == "ok"
     next = step.develop
   }
   default { next = state.failed }
@@ -135,8 +135,8 @@ step "develop" {
 }
 
 switch "after_develop" {
-  condition {
-    match = steps.develop.status == "ok"
+  match {
+    condition = steps.develop.status == "ok"
     next = step.pr_review
   }
   default { next = state.failed }
@@ -158,8 +158,8 @@ step "pr_review" {
 }
 
 switch "after_pr_review" {
-  condition {
-    match = steps.pr_review.status == "ok"
+  match {
+    condition = steps.pr_review.status == "ok"
     next = state.done
   }
   default { next = state.escalated }

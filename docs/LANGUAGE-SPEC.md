@@ -226,7 +226,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 - **Source:** [`workflow/schema.go:348`](../workflow/schema.go#L348)
 - **Labels:** `name`
-- **Nested blocks:** [`condition`](#condition---), [`default`](#default---)
+- **Nested blocks:** [`match`](#match---), [`default`](#default---)
 
 ### `permissions { ... }`
 
@@ -271,10 +271,10 @@ The following block types are defined. Tables are auto-generated from [`workflow
 - **Additional attributes:** captures the optional "output" expression
 - **Nested blocks:** [`write`](#write---)
 
-### `condition { ... }`
+### `match { ... }`
 
 - **Source:** [`workflow/schema.go:357`](../workflow/schema.go#L357)
-- **Additional attributes:** captures: match (required), next (required), output (optional)
+- **Additional attributes:** captures: condition (required), next (required), output (optional)
 
 ### `default { ... }`
 
@@ -520,8 +520,8 @@ step "check" {
 }
 
 switch "switch_env" {
-  condition {
-    match = var.env == "prod"
+  match {
+    condition = var.env == "prod"
     next  = "deploy_prod"
   }
   default { next = state.deploy_dev }

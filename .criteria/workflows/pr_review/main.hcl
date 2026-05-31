@@ -146,28 +146,28 @@ step "pr_status" {
 }
 
 switch "route_status" {
-  condition {
-    match = steps.pr_status.stdout == "merged"
+  match {
+    condition = steps.pr_status.stdout == "merged"
     next = step.sync_base
   }
-  condition {
-    match = steps.pr_status.stdout == "ready"
+  match {
+    condition = steps.pr_status.stdout == "ready"
     next = step.pr_review
   }
-  condition {
-    match = steps.pr_status.stdout == "threads_open"
+  match {
+    condition = steps.pr_status.stdout == "threads_open"
     next = step.pr_review
   }
-  condition {
-    match = steps.pr_status.stdout == "pending"
+  match {
+    condition = steps.pr_status.stdout == "pending"
     next = step.backoff
   }
-  condition {
-    match = steps.pr_status.stdout == "changes_requested"
+  match {
+    condition = steps.pr_status.stdout == "changes_requested"
     next = step.count_review_attempt
   }
-  condition {
-    match = steps.pr_status.stdout == "checks_failed"
+  match {
+    condition = steps.pr_status.stdout == "checks_failed"
     next = state.escalated
   }
   default { next = state.failed }
@@ -208,8 +208,8 @@ step "pr_review" {
 # require_workflow_approval=false → poll GitHub for APPROVED status (default)
 
 switch "route_after_cold_review" {
-  condition {
-    match = var.require_workflow_approval == "true"
+  match {
+    condition = var.require_workflow_approval == "true"
     next = approval.human_approval_required
   }
   default { next = step.await_github_approval }
@@ -335,8 +335,8 @@ step "count_review_attempt" {
 }
 
 switch "check_review_limit" {
-  condition {
-    match = data.internal.review_attempts.value >= var.max_review_attempts
+  match {
+    condition = data.internal.review_attempts.value >= var.max_review_attempts
     next = state.escalated
   }
   default { next = step.pr_status }

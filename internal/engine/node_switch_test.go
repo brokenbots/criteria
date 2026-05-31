@@ -95,12 +95,12 @@ variable "env" {
 }
 
 switch "decide" {
-  condition {
-    match = var.env == "prod"
+  match {
+    condition = var.env == "prod"
     next = state.deploy
   }
-  condition {
-    match = var.env == "staging"
+  match {
+    condition = var.env == "staging"
     next = state.staging_deploy
   }
   default {
@@ -136,8 +136,8 @@ state "done"           { terminal = true }
 	if ev.node != "decide" {
 		t.Errorf("event.node = %q, want \"decide\"", ev.node)
 	}
-	if ev.matchedArm != "condition[1]" {
-		t.Errorf("event.matchedArm = %q, want \"condition[1]\"", ev.matchedArm)
+	if ev.matchedArm != "match[1]" {
+		t.Errorf("event.matchedArm = %q, want \"match[1]\"", ev.matchedArm)
 	}
 	if ev.target != "staging_deploy" {
 		t.Errorf("event.target = %q, want \"staging_deploy\"", ev.target)
@@ -170,12 +170,12 @@ variable "env" {
 }
 
 switch "decide" {
-  condition {
-    match = var.env == "prod"
+  match {
+    condition = var.env == "prod"
     next = state.deploy
   }
-  condition {
-    match = var.env == "staging"
+  match {
+    condition = var.env == "staging"
     next = state.staging_deploy
   }
   default {
@@ -237,8 +237,8 @@ variable "env" {
 }
 
 switch "decide" {
-  condition {
-    match = var.env
+  match {
+    condition = var.env
     next = state.done
   }
   default {
@@ -293,8 +293,8 @@ variable "env" {
 }
 
 switch "decide" {
-  condition {
-    match  = var.env == "prod"
+  match {
+    condition  = var.env == "prod"
     next = switch.check_tier
     output = { tier = "production" }
   }
@@ -304,8 +304,8 @@ switch "decide" {
 }
 
 switch "check_tier" {
-  condition {
-    match = steps.decide.tier == "production"
+  match {
+    condition = steps.decide.tier == "production"
     next = state.tier_ok
   }
   default {
@@ -368,8 +368,8 @@ workflow {
 }
 
 switch "decide" {
-  condition {
-    match = true
+  match {
+    condition = true
     next = step.return
   }
   default {
@@ -419,12 +419,12 @@ variable "result" {
 }
 
 switch "decide" {
-  condition {
-    match = var.result == "pass"
+  match {
+    condition = var.result == "pass"
     next = state.succeeded
   }
-  condition {
-    match = var.result == "fail"
+  match {
+    condition = var.result == "fail"
     next = state.failed
   }
   default {
@@ -485,8 +485,8 @@ variable "early_exit" {
 }
 
 switch "gate" {
-  condition {
-    match = var.early_exit == "yes"
+  match {
+    condition = var.early_exit == "yes"
     next = step.return
   }
   default {
@@ -532,7 +532,7 @@ state "done" { terminal = true }
 	if ev.target != "return" {
 		t.Errorf("branch event target = %q, want \"return\"", ev.target)
 	}
-	if ev.matchedArm != "condition[0]" {
-		t.Errorf("branch event matchedArm = %q, want \"condition[0]\"", ev.matchedArm)
+	if ev.matchedArm != "match[0]" {
+		t.Errorf("branch event matchedArm = %q, want \"match[0]\"", ev.matchedArm)
 	}
 }

@@ -26,12 +26,12 @@ step "classify" {
 
 switch "route" {
   # steps.classify.label is a placeholder — replace with your adapter's actual output key
-  condition {
-    match = steps.classify.label == "urgent"
+  match {
+    condition = steps.classify.label == "urgent"
     next = step.handle_urgent
   }
-  condition {
-    match = steps.classify.label == "normal"
+  match {
+    condition = steps.classify.label == "normal"
     next = step.handle_normal
   }
   default { next = step.handle_other }
@@ -66,14 +66,14 @@ state "failed" {
 ## Key idioms
 
 - **`switch "route" { ... }`** — a named routing node; a step's outcome points `next` at it.
-- **`condition { match = <bool expr> next = "..." }`** — evaluated in declaration order; first truthy match wins.
+- **`match { condition = <bool expr> next = "..." }`** — evaluated in declaration order; first truthy match wins.
 - **`steps.<name>.<key>`** — reads an output field from a previously executed step.
-- **`default { next = "..." }`** — required when conditions are not exhaustive; omitting it risks a runtime routing error.
+- **`default { next = "..." }`** — required when matches are not exhaustive; omitting it risks a runtime routing error.
 
 ## Common pitfalls
 
-- **Missing `default`** — if no condition matches and `default` is absent, the run fails with a routing error at runtime.
-- **Order matters** — conditions are tested top-to-bottom; place more specific conditions before general ones.
+- **Missing `default`** — if no match matches and `default` is absent, the run fails with a routing error at runtime.
+- **Order matters** — matches are tested top-to-bottom; place more specific matches before general ones.
 
 ## See also
 

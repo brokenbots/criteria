@@ -66,6 +66,7 @@ func checkLegacyAttributes(body hcl.Body) hcl.Diagnostics {
 		rejectLegacyWorkflowLabel,
 		rejectLegacyPolicyBlock,
 		rejectLegacyBlocks,
+		rejectLegacySwitchConditionBlock,
 		rejectLegacySharedVariableBlock,
 		rejectLegacyStepAgentAttr,
 		rejectLegacyStepAdapterAttr,

@@ -15,12 +15,12 @@ step "classify" {
 
 switch "route" {
   # steps.classify.label is a placeholder — replace with your adapter's actual output key
-  condition {
-    match = steps.classify.label == "urgent"
+  match {
+    condition = steps.classify.label == "urgent"
     next = step.handle_urgent
   }
-  condition {
-    match = steps.classify.label == "normal"
+  match {
+    condition = steps.classify.label == "normal"
     next = step.handle_normal
   }
   default { next = step.handle_other }

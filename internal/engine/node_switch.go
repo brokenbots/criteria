@@ -37,7 +37,7 @@ func (n *switchNode) Evaluate(ctx context.Context, st *RunState, deps Deps) (str
 	for i, cond := range n.node.Conditions {
 		val, diags := cond.Match.Value(ec)
 		if diags.HasErrors() {
-			return "", fmt.Errorf("switch %q condition[%d]: %s", n.node.Name, i, diags.Error())
+			return "", fmt.Errorf("switch %q match[%d]: %s", n.node.Name, i, diags.Error())
 		}
 		if !val.IsKnown() || val.IsNull() {
 			// Unknown or null: skip (treated as false). Sequential execution
@@ -46,13 +46,13 @@ func (n *switchNode) Evaluate(ctx context.Context, st *RunState, deps Deps) (str
 			continue
 		}
 		if val.Type() != cty.Bool {
-			return "", fmt.Errorf("switch %q condition[%d]: match must be boolean, got %s", n.node.Name, i, val.Type().FriendlyName())
+			return "", fmt.Errorf("switch %q match[%d]: condition must be boolean, got %s", n.node.Name, i, val.Type().FriendlyName())
 		}
 		if val.True() {
 			if err := n.applyOutputProjection(cond.OutputExpr, st, deps); err != nil {
-				return "", fmt.Errorf("switch %q condition[%d]: output projection: %w", n.node.Name, i, err)
+				return "", fmt.Errorf("switch %q match[%d]: output projection: %w", n.node.Name, i, err)
 			}
-			matchedLabel := fmt.Sprintf("condition[%d]", i)
+			matchedLabel := fmt.Sprintf("match[%d]", i)
 			deps.Sink.OnBranchEvaluated(n.node.Name, matchedLabel, cond.Next, cond.MatchSrc)
 			return cond.Next, nil
 		}

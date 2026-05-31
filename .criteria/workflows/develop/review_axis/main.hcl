@@ -86,20 +86,20 @@ adapter "copilot" "api_compat_reviewer" {
 }
 
 switch "select_reviewer" {
-  condition {
-    match = var.review_kind == "security"
+  match {
+    condition = var.review_kind == "security"
     next = step.security_review
   }
-  condition {
-    match = var.review_kind == "quality"
+  match {
+    condition = var.review_kind == "quality"
     next = step.quality_review
   }
-  condition {
-    match = var.review_kind == "workstream"
+  match {
+    condition = var.review_kind == "workstream"
     next = step.workstream_review
   }
-  condition {
-    match = var.review_kind == "api_compat"
+  match {
+    condition = var.review_kind == "api_compat"
     next = step.api_compat_review
   }
   default { next = state.failed }

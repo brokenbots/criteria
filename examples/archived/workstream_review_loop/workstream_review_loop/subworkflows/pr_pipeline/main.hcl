@@ -117,12 +117,12 @@ step "check_ci_status" {
 }
 
 switch "route_ci_status" {
-  condition {
-    match = steps.check_ci_status.exit_code == "0"
+  match {
+    condition = steps.check_ci_status.exit_code == "0"
     next = state.backoff_ci
   }
-  condition {
-    match = steps.check_ci_status.exit_code == "1"
+  match {
+    condition = steps.check_ci_status.exit_code == "1"
     next = state.check_pr_comments
   }
   default {
@@ -190,8 +190,8 @@ step "check_pr_comments" {
 }
 
 switch "route_pr_comments" {
-  condition {
-    match = steps.check_pr_comments.exit_code == "0"
+  match {
+    condition = steps.check_pr_comments.exit_code == "0"
     next = state.count_pr_cycle
   }
   default {
@@ -233,12 +233,12 @@ step "check_merge_readiness" {
 }
 
 switch "route_merge_readiness" {
-  condition {
-    match = steps.check_merge_readiness.exit_code == "2"
+  match {
+    condition = steps.check_merge_readiness.exit_code == "2"
     next = state.merge_pr_and_sync_main
   }
-  condition {
-    match = steps.check_merge_readiness.exit_code == "0"
+  match {
+    condition = steps.check_merge_readiness.exit_code == "0"
     next = state.merge_pr_and_sync_main
   }
   default {
@@ -264,8 +264,8 @@ step "count_pr_cycle" {
 }
 
 switch "check_pr_cycles" {
-  condition {
-    match = data.internal.pr_cycle_count.value >= var.max_pr_cycles
+  match {
+    condition = data.internal.pr_cycle_count.value >= var.max_pr_cycles
     next = state.request_pr_assist
   }
   default {
