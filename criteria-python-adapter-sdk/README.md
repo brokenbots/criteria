@@ -120,6 +120,30 @@ CLI:
 python -m criteria_adapter_sdk.testing my_adapter:config --step-name step-1
 ```
 
+### Proto generation
+
+The vendored `.proto` files live in `protos/criteria/v2/`. To regenerate Python bindings after a proto change:
+
+```bash
+make proto
+```
+
+This requires `grpcio-tools` (`pip install grpcio-tools`).
+
+### Binary builds
+
+The Makefile includes a `build-binaries` target that produces Nuitka onefile executables:
+
+```bash
+make build-binaries
+```
+
+Supported targets:
+- `linux-x64` — native Linux x86_64
+- `linux-arm64` — cross-compile or build on arm64 host
+- `darwin-arm64` — build on Apple Silicon macOS host
+- `windows-x64` — future-ready (requires Windows host or cross toolchain)
+
 ### Noop adapter CLI
 
 The package includes a minimal noop adapter runnable as a module:

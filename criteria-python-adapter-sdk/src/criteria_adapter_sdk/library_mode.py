@@ -55,3 +55,7 @@ def run_in_process(
         outcome=result.outcome,
         outputs_json=json.dumps(result.output).encode("utf-8") if result.output else b"",
     )
+
+
+# Backward-compatible alias.
+library_mode = run_in_process

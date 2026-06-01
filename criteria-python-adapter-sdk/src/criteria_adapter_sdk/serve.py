@@ -6,15 +6,15 @@ until the host disconnects.
 """
 
 import asyncio
+import inspect
 import os
 import sys
 import tempfile
 from concurrent import futures
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Protocol
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Protocol, Union
 
 import grpc
-from google.protobuf import struct_pb2
 
 from criteria.v2 import adapter_pb2, adapter_pb2_grpc
 
@@ -22,36 +22,40 @@ from .helpers import Helpers
 from .schema import dict_to_schema_proto
 
 
+# Handler return types
+ExecuteResultLike = Union[adapter_pb2.ExecuteResult, dict, None]
+
+
 class OpenSessionHandler(Protocol):
-    def __call__(self, session_id: str, config: dict, helpers: Helpers) -> Awaitable[None]: ...
+    def __call__(self, session_id: str, config: dict, helpers: Helpers) -> Union[None, Awaitable[None]]: ...
 
 
 class ExecuteHandler(Protocol):
-    def __call__(self, req: adapter_pb2.ExecuteRequest, helpers: Helpers) -> Awaitable[None]: ...
+    def __call__(self, req: adapter_pb2.ExecuteRequest, helpers: Helpers) -> Union[ExecuteResultLike, Awaitable[ExecuteResultLike]]: ...
 
 
 class CloseSessionHandler(Protocol):
-    def __call__(self, session_id: str, helpers: Helpers) -> Awaitable[None]: ...
+    def __call__(self, session_id: str, helpers: Helpers) -> Union[None, Awaitable[None]]: ...
 
 
 class SnapshotHandler(Protocol):
-    def __call__(self, session_id: str, helpers: Helpers) -> Awaitable[bytes]: ...
+    def __call__(self, session_id: str, helpers: Helpers) -> Union[bytes, Awaitable[bytes]]: ...
 
 
 class RestoreHandler(Protocol):
-    def __call__(self, session_id: str, state: bytes, helpers: Helpers) -> Awaitable[None]: ...
+    def __call__(self, session_id: str, state: bytes, helpers: Helpers) -> Union[None, Awaitable[None]]: ...
 
 
 class InspectHandler(Protocol):
-    def __call__(self, session_id: str, helpers: Helpers) -> Awaitable[adapter_pb2.InspectResponse]: ...
+    def __call__(self, session_id: str, helpers: Helpers) -> Union[adapter_pb2.InspectResponse, Awaitable[adapter_pb2.InspectResponse]]: ...
 
 
 class LogHandler(Protocol):
-    def __call__(self, session_id: str, step_name: str, helpers: Helpers) -> Awaitable[None]: ...
+    def __call__(self, session_id: str, step_name: str, helpers: Helpers) -> Union[None, Awaitable[None]]: ...
 
 
 class PermissionHandler(Protocol):
-    def __call__(self, session_id: str, helpers: Helpers) -> Awaitable[None]: ...
+    def __call__(self, request_iterator, context) -> Any: ...
 
 
 @dataclass
@@ -147,6 +151,13 @@ class _AdapterServicer(adapter_pb2_grpc.AdapterServiceServicer):
         self._config = config
         self._sessions: Dict[str, Helpers] = {}
 
+    @staticmethod
+    def _run_handler(handler_result: Any) -> Any:
+        """Await a coroutine if the handler is async, otherwise return directly."""
+        if inspect.isawaitable(handler_result):
+            return asyncio.run(handler_result)
+        return handler_result
+
     def Info(self, request, context):
         resp = adapter_pb2.InfoResponse(
             name=self._config.name,
@@ -177,18 +188,18 @@ class _AdapterServicer(adapter_pb2_grpc.AdapterServiceServicer):
         config = dict(request.config)
         helpers = Helpers(
             session_id=sid,
-            secrets=secrets,
+            secrets_map=secrets,
             config=config,
             allowed_outcomes=list(request.allowed_outcomes),
         )
         self._sessions[sid] = helpers
         if self._config.open_session is not None:
             try:
-                asyncio.run(self._config.open_session(sid, config, helpers))
+                self._run_handler(self._config.open_session(sid, config, helpers))
             except Exception as e:
                 context.set_code(grpc.StatusCode.INTERNAL)
                 context.set_details(str(e))
-                raise
+                return adapter_pb2.OpenSessionResponse()
         return adapter_pb2.OpenSessionResponse()
 
     def Execute(self, request, context):
@@ -197,21 +208,47 @@ class _AdapterServicer(adapter_pb2_grpc.AdapterServiceServicer):
         if helpers is None:
             context.set_code(grpc.StatusCode.FAILED_PRECONDITION)
             context.set_details("session not found")
-            raise RuntimeError("session not found")
+            return
         if self._config.execute is None:
             context.set_code(grpc.StatusCode.UNIMPLEMENTED)
             context.set_details("execute not implemented")
-            raise NotImplementedError("execute not implemented")
+            return
+
+        # Merge execute-time secret_inputs into the session secrets
+        for k, v in request.secret_inputs.items():
+            helpers.secrets._secrets[k] = v
+
         try:
-            asyncio.run(self._config.execute(request, helpers))
+            result = self._run_handler(self._config.execute(request, helpers))
         except Exception as e:
             context.set_code(grpc.StatusCode.INTERNAL)
             context.set_details(str(e))
-            raise
-        # If handler did not send a result, emit a default success
-        yield adapter_pb2.ExecuteEvent(
-            result=adapter_pb2.ExecuteResult(outcome="success")
-        )
+            return
+
+        # Flush any log events buffered during the handler
+        for ev in helpers.log._flush():
+            yield ev
+
+        # Normalise handler result into an ExecuteResult proto
+        if result is None:
+            yield adapter_pb2.ExecuteEvent(
+                result=adapter_pb2.ExecuteResult(outcome="success")
+            )
+        elif isinstance(result, adapter_pb2.ExecuteResult):
+            yield adapter_pb2.ExecuteEvent(result=result)
+        elif isinstance(result, dict):
+            outcome = result.get("outcome", "success")
+            outputs_json = b""
+            if "output" in result:
+                import json
+                outputs_json = json.dumps(result["output"]).encode("utf-8")
+            yield adapter_pb2.ExecuteEvent(
+                result=adapter_pb2.ExecuteResult(outcome=outcome, outputs_json=outputs_json)
+            )
+        else:
+            context.set_code(grpc.StatusCode.INTERNAL)
+            context.set_details(f"handler returned unexpected type {type(result)}")
+            return
 
     def Log(self, request, context):
         sid = request.session_id
@@ -219,17 +256,27 @@ class _AdapterServicer(adapter_pb2_grpc.AdapterServiceServicer):
         if helpers is None:
             context.set_code(grpc.StatusCode.FAILED_PRECONDITION)
             context.set_details("session not found")
-            raise RuntimeError("session not found")
+            return
         if self._config.log is not None:
             try:
-                asyncio.run(self._config.log(sid, request.step_name, helpers))
+                self._run_handler(self._config.log(sid, request.step_name, helpers))
             except Exception as e:
                 context.set_code(grpc.StatusCode.INTERNAL)
                 context.set_details(str(e))
-                raise
-        return iter([])
+                return
+        # TODO: yield actual log events when stream-based logging is implemented.
+        return
 
     def Permissions(self, request_iterator, context):
+        if self._config.permissions_handler is not None:
+            try:
+                yield from self._config.permissions_handler(request_iterator, context)
+                return
+            except Exception as e:
+                context.set_code(grpc.StatusCode.INTERNAL)
+                context.set_details(str(e))
+                return
+
         # Default permissive handler: allow all permission requests
         for ev in request_iterator:
             req = ev.request
@@ -250,12 +297,12 @@ class _AdapterServicer(adapter_pb2_grpc.AdapterServiceServicer):
         helpers = self._sessions.get(sid)
         if self._config.snapshot is not None and helpers is not None:
             try:
-                state = asyncio.run(self._config.snapshot(sid, helpers))
+                state = self._run_handler(self._config.snapshot(sid, helpers))
                 return adapter_pb2.SnapshotResponse(state=state, schema_version=1)
             except Exception as e:
                 context.set_code(grpc.StatusCode.INTERNAL)
                 context.set_details(str(e))
-                raise
+                return adapter_pb2.SnapshotResponse(state=b"", schema_version=1)
         return adapter_pb2.SnapshotResponse(state=b"", schema_version=1)
 
     def Restore(self, request, context):
@@ -263,11 +310,11 @@ class _AdapterServicer(adapter_pb2_grpc.AdapterServiceServicer):
         helpers = self._sessions.get(sid)
         if self._config.restore is not None and helpers is not None:
             try:
-                asyncio.run(self._config.restore(sid, request.state, helpers))
+                self._run_handler(self._config.restore(sid, request.state, helpers))
             except Exception as e:
                 context.set_code(grpc.StatusCode.INTERNAL)
                 context.set_details(str(e))
-                raise
+                return adapter_pb2.RestoreResponse()
         return adapter_pb2.RestoreResponse()
 
     def Inspect(self, request, context):
@@ -275,11 +322,11 @@ class _AdapterServicer(adapter_pb2_grpc.AdapterServiceServicer):
         helpers = self._sessions.get(sid)
         if self._config.inspect is not None and helpers is not None:
             try:
-                return asyncio.run(self._config.inspect(sid, helpers))
+                return self._run_handler(self._config.inspect(sid, helpers))
             except Exception as e:
                 context.set_code(grpc.StatusCode.INTERNAL)
                 context.set_details(str(e))
-                raise
+                return adapter_pb2.InspectResponse()
         return adapter_pb2.InspectResponse()
 
     def CloseSession(self, request, context):
@@ -287,16 +334,20 @@ class _AdapterServicer(adapter_pb2_grpc.AdapterServiceServicer):
         helpers = self._sessions.pop(sid, None)
         if self._config.close_session is not None and helpers is not None:
             try:
-                asyncio.run(self._config.close_session(sid, helpers))
+                self._run_handler(self._config.close_session(sid, helpers))
             except Exception as e:
                 context.set_code(grpc.StatusCode.INTERNAL)
                 context.set_details(str(e))
-                raise
+                return adapter_pb2.CloseSessionResponse()
         return adapter_pb2.CloseSessionResponse()
 
 
-def serve(config: ServeConfig) -> int:
+def serve(config: Union[dict, ServeConfig]) -> int:
     """Start the adapter in local (go-plugin) mode.
+
+    Accepts either a ``ServeConfig`` dataclass or a plain ``dict`` (matching the
+    workstream specification).  When a dict is passed it is converted to
+    ``ServeConfig`` automatically.
 
     Checks the magic-cookie environment variable, starts a gRPC server on a
     Unix socket, prints the go-plugin protocol line to stdout, and blocks
@@ -304,6 +355,9 @@ def serve(config: ServeConfig) -> int:
 
     Returns the process exit code.
     """
+    if isinstance(config, dict):
+        config = ServeConfig(**config)
+
     if len(sys.argv) > 1 and sys.argv[1] == "--emit-manifest":
         return _emit_manifest(config)
 

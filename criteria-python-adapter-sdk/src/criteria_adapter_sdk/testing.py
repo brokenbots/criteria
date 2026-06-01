@@ -20,7 +20,9 @@ Usage (CLI):
 """
 
 import argparse
+import asyncio
 import importlib
+import inspect
 import json
 import sys
 import traceback
@@ -31,6 +33,17 @@ from criteria.v2 import adapter_pb2
 
 from .helpers import Helpers, LogSender, SecretsHelper
 from .schema import pydantic_to_schema, dict_to_schema_proto
+
+
+def _maybe_await(result: Any) -> Any:
+    """Await a coroutine if needed, otherwise return the value directly."""
+    if inspect.isawaitable(result):
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(result)
+        return loop.run_until_complete(result)
+    return result
 
 
 @dataclass
@@ -74,12 +87,14 @@ class _FakePermissions:
         return "allow"
 
 
-class TestHost:
+class AdapterTestHost:
     """In-process test harness for adapter handlers.
 
     Mimics the host side of the AdapterService gRPC contract by calling
     the user-supplied handler functions directly.
     """
+
+    __test__ = False  # Prevent pytest from collecting this as a test class.
 
     def __init__(self, config: Any):
         """Create a TestHost wrapping a `ServeConfig`-style dict or dataclass.
@@ -157,7 +172,7 @@ class TestHost:
                     req.config[k] = str(v)
             for k, v in sec.items():
                 req.secrets[k] = str(v)
-            handler(req, None)
+            _maybe_await(handler(req, None))
 
     def execute(
         self,
@@ -208,7 +223,7 @@ class TestHost:
             req.secret_inputs[k] = str(v)
 
         try:
-            result = handler(req, helpers)
+            result = _maybe_await(handler(req, helpers))
         except Exception as exc:
             traceback.print_exc()
             return ExecuteResult(outcome="error", output={"error": str(exc)}, logs=log_sender.lines, permission_requests=permissions_collector)
@@ -231,7 +246,7 @@ class TestHost:
         handler = getattr(self._config, "close_session", None) or self._config.get("close_session")
         if handler is not None:
             req = adapter_pb2.CloseSessionRequest(session_id=session_id)
-            handler(req, None)
+            _maybe_await(handler(req, None))
         self._sessions.pop(session_id, None)
 
 
@@ -254,7 +269,7 @@ def _main() -> None:
     args = parser.parse_args()
 
     cfg = _load_config(args.config)
-    host = TestHost(cfg)
+    host = AdapterTestHost(cfg)
     host.open_session(session_id=args.session_id)
     result = host.execute(
         session_id=args.session_id,
@@ -264,6 +279,10 @@ def _main() -> None:
     )
     print(json.dumps({"outcome": result.outcome, "output": result.output, "logs": result.logs}, indent=2))
     host.close_session(args.session_id)
+
+
+# Backward-compatible alias used by the initial implementation.
+TestHost = AdapterTestHost
 
 
 if __name__ == "__main__":

@@ -62,7 +62,10 @@ def _field_info_to_proto(field_info: Any) -> adapter_pb2.ConfigFieldProto:
 
 
 def _python_type_to_schema_type(annotation: Any) -> str:
-    """Map Python type annotations to schema type strings."""
+    """Map Python type annotations to schema type strings.
+
+    Raises TypeError for unsupported or unhandled annotations.
+    """
     if annotation is str:
         return "string"
     if annotation is int:
@@ -72,18 +75,22 @@ def _python_type_to_schema_type(annotation: Any) -> str:
     if annotation is bool:
         return "bool"
 
-    # list[str] or List[str]
     origin = get_origin(annotation)
     args = get_args(annotation)
-    if origin is list or origin is list:
+
+    # list[str]
+    if origin is list:
         if args and args[0] is str:
             return "list_string"
+        raise TypeError(
+            f"unsupported list element type: {args[0]!r} (only list[str] is supported)"
+        )
 
     # Nested model
     if hasattr(annotation, "model_fields"):
         return "object"
 
-    return "string"
+    raise TypeError(f"unsupported schema type annotation: {annotation!r}")
 
 
 def dict_to_schema_proto(fields: Optional[Dict[str, Any]]) -> Optional[adapter_pb2.AdapterSchemaProto]:

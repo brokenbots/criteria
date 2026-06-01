@@ -62,11 +62,16 @@ class PermissionCorrelator:
 
 @dataclass
 class LogSender:
-    """Send log events to the host via the Log RPC stream."""
+    """Send log events to the host via the Execute RPC stream.
+
+    Log events are buffered while the handler runs and flushed at the end of
+    the ``Execute`` call.  Future versions may support real-time streaming.
+    """
 
     _session_id: str = ""
     _step_name: str = ""
-    _stream: Optional[Any] = None  # grpc stream context
+    _stream: Optional[Any] = None  # grpc stream context (reserved for future)
+    _buffer: List[adapter_pb2.ExecuteEvent] = field(default_factory=list)
 
     def stdout(self, line: str) -> None:
         """Send a stdout line."""
@@ -84,14 +89,34 @@ class LogSender:
         """Emit a structured adapter event."""
         import json
 
-        if self._stream is not None:
-            # In a future async implementation this writes to the Execute stream.
-            pass
+        data = json.dumps({"kind": kind, "payload": payload}).encode("utf-8")
+        self._buffer.append(
+            adapter_pb2.ExecuteEvent(
+                adapter=adapter_pb2.AdapterEvent(
+                    event_kind="adapter",
+                    payload_json=data,
+                )
+            )
+        )
 
     def _send(self, stream_name: str, data: bytes) -> None:
-        if self._stream is not None:
-            # In a future async implementation this yields LogEvent messages.
-            pass
+        import json
+
+        payload = json.dumps({"stream": stream_name, "line": data.decode("utf-8", "replace")}).encode("utf-8")
+        self._buffer.append(
+            adapter_pb2.ExecuteEvent(
+                adapter=adapter_pb2.AdapterEvent(
+                    event_kind="log",
+                    payload_json=payload,
+                )
+            )
+        )
+
+    def _flush(self) -> List[adapter_pb2.ExecuteEvent]:
+        """Drain the buffer and return pending events."""
+        events = self._buffer[:]
+        self._buffer.clear()
+        return events
 
 
 @dataclass
@@ -100,7 +125,7 @@ class SecretsHelper:
 
     _secrets: Dict[str, str] = field(default_factory=dict)
 
-    def get(self, name: str) -> Optional[str]:
+    async def get(self, name: str) -> Optional[str]:
         """Return the secret value for `name` or None.
 
         There is no env-var fallback — secret values come exclusively
