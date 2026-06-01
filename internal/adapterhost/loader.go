@@ -79,10 +79,11 @@ type Handle interface {
 }
 
 type Info struct {
-	Name         string
-	Version      string
-	Capabilities []string
-	AdapterInfo  workflow.AdapterInfo
+	Name              string
+	Version           string
+	Capabilities      []string
+	SupportedFeatures []string // NEW v2 (D76)
+	AdapterInfo       workflow.AdapterInfo
 }
 
 type DiscoveryFunc func(name string) (string, error)
@@ -324,10 +325,11 @@ func (p *rpcHandle) Info(ctx context.Context) (Info, error) {
 		return Info{}, err
 	}
 	return Info{
-		Name:         resp.GetName(),
-		Version:      resp.GetVersion(),
-		Capabilities: append([]string(nil), resp.GetCapabilities()...),
-		AdapterInfo:  AdapterInfoFromProto(resp),
+		Name:              resp.GetName(),
+		Version:           resp.GetVersion(),
+		Capabilities:      append([]string(nil), resp.GetCapabilities()...),
+		SupportedFeatures: append([]string(nil), resp.GetSupportedFeatures()...),
+		AdapterInfo:       AdapterInfoFromProto(resp),
 	}, nil
 }
 
@@ -1030,6 +1032,7 @@ func AdapterInfoFromProto(resp *v2.InfoResponse) workflow.AdapterInfo {
 		InputSchema:            protoToConfigSchema(resp.GetInputSchema()),
 		Capabilities:           append([]string(nil), resp.GetCapabilities()...),
 		CompatibleEnvironments: append([]string(nil), resp.GetCompatibleEnvironments()...),
+		SupportedFeatures:      append([]string(nil), resp.GetSupportedFeatures()...),
 	}
 }
 

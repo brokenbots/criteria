@@ -102,6 +102,42 @@ func TestAdapterInfoFromProto_EmptyCapabilities(t *testing.T) {
 	}
 }
 
+// TestAdapterInfoFromProto_PropagatesSupportedFeatures verifies that
+// supported_features in the InfoResponse are copied into
+// AdapterInfo.SupportedFeatures by AdapterInfoFromProto.
+func TestAdapterInfoFromProto_PropagatesSupportedFeatures(t *testing.T) {
+	resp := &v2.InfoResponse{
+		Name:              "test-adapter",
+		Version:           "1.0.0",
+		SupportedFeatures: []string{"pause", "resume", "inspect"},
+	}
+
+	info := adapterhostpkg.AdapterInfoFromProto(resp)
+
+	if len(info.SupportedFeatures) != 3 {
+		t.Fatalf("SupportedFeatures len = %d; want 3", len(info.SupportedFeatures))
+	}
+	found := map[string]bool{}
+	for _, f := range info.SupportedFeatures {
+		found[f] = true
+	}
+	for _, want := range []string{"pause", "resume", "inspect"} {
+		if !found[want] {
+			t.Errorf("SupportedFeatures does not contain %q; got %v", want, info.SupportedFeatures)
+		}
+	}
+}
+
+// TestAdapterInfoFromProto_EmptySupportedFeatures verifies that when
+// InfoResponse has no supported_features, AdapterInfo.SupportedFeatures is nil.
+func TestAdapterInfoFromProto_EmptySupportedFeatures(t *testing.T) {
+	resp := &v2.InfoResponse{Name: "bare", Version: "0.1"}
+	info := adapterhostpkg.AdapterInfoFromProto(resp)
+	if len(info.SupportedFeatures) != 0 {
+		t.Errorf("expected empty SupportedFeatures for bare InfoResponse; got %v", info.SupportedFeatures)
+	}
+}
+
 func TestInfoResponseBoolAndListTypes(t *testing.T) {
 	resp := &v2.InfoResponse{
 		InputSchema: &v2.AdapterSchemaProto{Fields: map[string]*v2.ConfigFieldProto{

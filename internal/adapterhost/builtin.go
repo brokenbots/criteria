@@ -37,10 +37,11 @@ func (p *builtinAdapter) Info(context.Context) (Info, error) {
 	}
 	adInfo := p.adapter.Info()
 	return Info{
-		Name:         p.adapter.Name(),
-		Version:      "builtin",
-		Capabilities: append([]string(nil), adInfo.Capabilities...),
-		AdapterInfo:  adInfo,
+		Name:              p.adapter.Name(),
+		Version:           "builtin",
+		Capabilities:      append([]string(nil), adInfo.Capabilities...),
+		SupportedFeatures: append([]string(nil), adInfo.SupportedFeatures...),
+		AdapterInfo:       adInfo,
 	}, nil
 }
 
