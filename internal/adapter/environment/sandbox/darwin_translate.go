@@ -24,8 +24,8 @@ var (
 )
 
 type dnsEntry struct {
-	ips       []string
-	cachedAt  time.Time
+	ips      []string
+	cachedAt time.Time
 }
 
 // FromPolicy translates a ResolvedPolicy into an SBPL Profile.
@@ -44,60 +44,62 @@ func FromPolicy(p workflow.ResolvedPolicy, adapterBinary string) Profile {
 		}
 	}
 
-	fsObj := cty.NilVal
-	if p.TypeSpecific != nil {
-		if v, ok := p.TypeSpecific["filesystem"]; ok {
-			fsObj = v
-		}
-	}
-	readPaths := pathListFromObject(fsObj, "read")
-	writePaths := pathListFromObject(fsObj, "write")
-	for _, path := range readPaths {
-		prof.AllowFileReads = append(prof.AllowFileReads, path)
-	}
-	for _, path := range writePaths {
-		prof.AllowFileWrites = append(prof.AllowFileWrites, path)
-	}
-	// Also support read_write as a combined key for convenience.
-	rwPaths := pathListFromObject(fsObj, "read_write")
-	for _, path := range rwPaths {
-		prof.AllowFileReads = append(prof.AllowFileReads, path)
-		prof.AllowFileWrites = append(prof.AllowFileWrites, path)
-	}
-	for _, path := range append(readPaths, append(writePaths, rwPaths...)...) {
-		if err := validatePath(path); err != nil {
-			prof.resolveWarnings = append(prof.resolveWarnings, resolveWarn{
-				host: path,
-				err:  err,
-			})
-		}
-	}
-
-	netObj := cty.NilVal
-	if p.TypeSpecific != nil {
-		if v, ok := p.TypeSpecific["network"]; ok {
-			netObj = v
-		}
-	}
-	netAllow := pathListFromObject(netObj, "allow")
-	for _, host := range netAllow {
-		resolved := resolveHost(host)
-		if len(resolved) > 0 {
-			for _, ip := range resolved {
-				prof.AllowNetworkHosts = append(prof.AllowNetworkHosts, ip)
-			}
-		} else {
-			prof.resolveWarnings = append(prof.resolveWarnings, resolveWarn{
-				host: host,
-				err:  fmt.Errorf("no IP addresses resolved"),
-			})
-		}
-	}
+	fsObj := typeSpecific(p, "filesystem")
+	applyFilesystemPolicy(&prof, fsObj)
+	applyNetworkPolicy(&prof, typeSpecific(p, "network"))
 
 	prof.BlockKextLoad = boolFromObject(fsObj, "block_kext_load", false)
 	prof.BlockMachLookup = boolFromObject(fsObj, "block_mach_lookup", false)
 
 	return prof
+}
+
+// typeSpecific returns the named entry from a policy's TypeSpecific map, or
+// cty.NilVal when absent.
+func typeSpecific(p workflow.ResolvedPolicy, key string) cty.Value {
+	if p.TypeSpecific == nil {
+		return cty.NilVal
+	}
+	if v, ok := p.TypeSpecific[key]; ok {
+		return v
+	}
+	return cty.NilVal
+}
+
+// applyFilesystemPolicy translates the filesystem object's read/write/read_write
+// path lists into the profile's allow lists and records validation warnings.
+func applyFilesystemPolicy(prof *Profile, fsObj cty.Value) {
+	readPaths := pathListFromObject(fsObj, "read")
+	writePaths := pathListFromObject(fsObj, "write")
+	rwPaths := pathListFromObject(fsObj, "read_write")
+
+	prof.AllowFileReads = append(prof.AllowFileReads, readPaths...)
+	prof.AllowFileWrites = append(prof.AllowFileWrites, writePaths...)
+	// read_write is a combined key for convenience.
+	prof.AllowFileReads = append(prof.AllowFileReads, rwPaths...)
+	prof.AllowFileWrites = append(prof.AllowFileWrites, rwPaths...)
+
+	for _, path := range append(readPaths, append(writePaths, rwPaths...)...) {
+		if err := validatePath(path); err != nil {
+			prof.resolveWarnings = append(prof.resolveWarnings, resolveWarn{host: path, err: err})
+		}
+	}
+}
+
+// applyNetworkPolicy resolves the network object's allow hosts to IPs and
+// records warnings for hosts that fail to resolve.
+func applyNetworkPolicy(prof *Profile, netObj cty.Value) {
+	for _, host := range pathListFromObject(netObj, "allow") {
+		resolved := resolveHost(host)
+		if len(resolved) == 0 {
+			prof.resolveWarnings = append(prof.resolveWarnings, resolveWarn{
+				host: host,
+				err:  fmt.Errorf("no IP addresses resolved"),
+			})
+			continue
+		}
+		prof.AllowNetworkHosts = append(prof.AllowNetworkHosts, resolved...)
+	}
 }
 
 // resolveHost resolves a hostname:port into "ip:port" strings.

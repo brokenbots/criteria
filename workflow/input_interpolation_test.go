@@ -26,8 +26,8 @@ step "clone" {
   input {
     command = "echo ${var.repo}"
   }
-  outcome "success" { next = "__done__" }
-  outcome "failure" { next = "__done__" }
+  outcome "success" { next = step.__done__ }
+  outcome "failure" { next = step.__done__ }
 }
 state "__done__" { terminal = true }
 `
@@ -48,14 +48,14 @@ step "build" {
   input {
     command = "echo building"
   }
-  outcome "success" { next = "publish" }
+  outcome "success" { next = step.publish }
 }
 step "publish" {
   target = adapter.shell.default
   input {
     command = "echo ${steps.build.stdout}"
   }
-  outcome "success" { next = "__done__" }
+  outcome "success" { next = step.__done__ }
 }
 state "__done__" { terminal = true }
 `

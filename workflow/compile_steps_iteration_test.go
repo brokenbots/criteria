@@ -42,8 +42,8 @@ func TestStep_ParallelMutualExclusion_ForEach_Error(t *testing.T) {
 	src := parallelWorkflow(`
   parallel  = ["a", "b"]
   for_each  = ["x", "y"]
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "failed" }
+  outcome "all_succeeded" { next = step.done }
+  outcome "any_failed"    { next = step.failed }
 `)
 	spec, diags := Parse("test.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -64,8 +64,8 @@ func TestStep_ParallelMutualExclusion_Count_Error(t *testing.T) {
 	src := parallelWorkflow(`
   parallel = ["a", "b"]
   count    = 3
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "failed" }
+  outcome "all_succeeded" { next = step.done }
+  outcome "any_failed"    { next = step.failed }
 `)
 	spec, diags := Parse("test.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -85,8 +85,8 @@ func TestStep_ParallelMaxZero_Error(t *testing.T) {
 	src := parallelWorkflow(`
   parallel     = ["a", "b"]
   parallel_max = 0
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "failed" }
+  outcome "all_succeeded" { next = step.done }
+  outcome "any_failed"    { next = step.failed }
 `)
 	spec, diags := Parse("test.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -107,8 +107,8 @@ func TestStep_ParallelMaxAttribute_CompilesAndCaps(t *testing.T) {
 	src := parallelWorkflow(`
   parallel     = ["a", "b", "c"]
   parallel_max = 2
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "failed" }
+  outcome "all_succeeded" { next = step.done }
+  outcome "any_failed"    { next = step.failed }
 `)
 	spec, diags := Parse("test.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -135,8 +135,8 @@ func TestStep_ParallelMaxAttribute_CompilesAndCaps(t *testing.T) {
 func TestStep_ParallelDefaultMax_IsGOMAXPROCS(t *testing.T) {
 	src := parallelWorkflow(`
   parallel = ["a"]
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "failed" }
+  outcome "all_succeeded" { next = step.done }
+  outcome "any_failed"    { next = step.failed }
 `)
 	spec, diags := Parse("test.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -161,8 +161,8 @@ func TestStep_ParallelDefaultMax_IsGOMAXPROCS(t *testing.T) {
 func TestStep_ParallelExpressionFolds(t *testing.T) {
 	src := parallelWorkflow(`
   parallel = ["task_a", "task_b", "task_c"]
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "failed" }
+  outcome "all_succeeded" { next = step.done }
+  outcome "any_failed"    { next = step.failed }
 `)
 	spec, diags := Parse("test.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -190,7 +190,7 @@ func TestStep_ParallelExpressionFolds(t *testing.T) {
 func TestStep_ParallelRequiresAllSucceededOutcome(t *testing.T) {
 	src := parallelWorkflow(`
   parallel = ["a"]
-  outcome "any_failed" { next = "failed" }
+  outcome "any_failed" { next = step.failed }
 `)
 	spec, diags := Parse("test.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -224,8 +224,8 @@ step "work" {
   target       = adapter.noop.default
   parallel     = ["a", "b", "c"]
   parallel_max = var.cap
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "failed" }
+  outcome "all_succeeded" { next = step.done }
+  outcome "any_failed"    { next = step.failed }
 }
 state "done" {
   terminal = true
@@ -255,8 +255,8 @@ func TestStep_ParallelMaxRuntimeExpr_Rejected(t *testing.T) {
 	src := parallelWorkflow(`
   parallel     = ["a", "b"]
   parallel_max = each.index
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "failed" }
+  outcome "all_succeeded" { next = step.done }
+  outcome "any_failed"    { next = step.failed }
 `)
 	spec, diags := Parse("test.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -276,8 +276,8 @@ func TestStep_ParallelMaxRuntimeExpr_Rejected(t *testing.T) {
 func TestStep_ParallelMapSyntax_Rejected(t *testing.T) {
 	src := parallelWorkflow(`
   parallel = { task_a = "x", task_b = "y" }
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "failed" }
+  outcome "all_succeeded" { next = step.done }
+  outcome "any_failed"    { next = step.failed }
 `)
 	spec, diags := Parse("test.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -298,8 +298,8 @@ func TestStep_ParallelMapSyntax_Rejected(t *testing.T) {
 func TestStep_Parallel_AdapterNotParallelSafe_CompileError(t *testing.T) {
 	src := parallelWorkflow(`
   parallel = ["a", "b"]
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "failed" }
+  outcome "all_succeeded" { next = step.done }
+  outcome "any_failed"    { next = step.failed }
 `)
 	spec, diags := Parse("test.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -324,8 +324,8 @@ func TestStep_Parallel_AdapterNotParallelSafe_CompileError(t *testing.T) {
 func TestStep_Parallel_AdapterParallelSafe_NoError(t *testing.T) {
 	src := parallelWorkflow(`
   parallel = ["a", "b"]
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "failed" }
+  outcome "all_succeeded" { next = step.done }
+  outcome "any_failed"    { next = step.failed }
 `)
 	spec, diags := Parse("test.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -346,8 +346,8 @@ func TestStep_Parallel_AdapterParallelSafe_NoError(t *testing.T) {
 func TestStep_Parallel_AdapterAbsentFromSchemas_NoCompileError(t *testing.T) {
 	src := parallelWorkflow(`
   parallel = ["a", "b"]
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "failed" }
+  outcome "all_succeeded" { next = step.done }
+  outcome "any_failed"    { next = step.failed }
 `)
 	spec, diags := Parse("test.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -364,7 +364,7 @@ func TestStep_Parallel_AdapterAbsentFromSchemas_NoCompileError(t *testing.T) {
 }
 
 // parallelWorkflowWithSharedVar wraps a parallel step body in a minimal
-// compilable workflow that declares a shared_variable "counter".
+// compilable workflow that declares a data block "counter".
 func parallelWorkflowWithSharedVar(stepBody string) string {
 	return `
 workflow {
@@ -373,7 +373,7 @@ workflow {
   initial_state = "work"
   target_state  = "done"
 }
-shared_variable "counter" {
+data "internal" "counter" {
   type = number
 }
 adapter "noop" "default" {}
@@ -393,17 +393,20 @@ state "failed" {
 }
 
 // TestStep_Parallel_PerIterationSharedWrites_Warning verifies that a parallel
-// step with shared_writes on a _continue (per-iteration) outcome emits exactly
-// one DiagWarning whose summary mentions "parallel" and "shared_writes".
+// step with write blocks on a _continue (per-iteration) outcome emits exactly
+// one DiagWarning whose summary mentions "parallel" and "write blocks".
 func TestStep_Parallel_PerIterationSharedWrites_Warning(t *testing.T) {
 	src := parallelWorkflowWithSharedVar(`
   parallel = ["a", "b"]
   outcome "success" {
-    next          = "_continue"
-    shared_writes = { counter = "result" }
+    next = continue
+      write {
+    target = data.internal.counter.value
+    value  = output.result
   }
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "failed" }
+  }
+  outcome "all_succeeded" { next = step.done }
+  outcome "any_failed"    { next = step.failed }
 `)
 	spec, diags := Parse("test.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -425,23 +428,26 @@ func TestStep_Parallel_PerIterationSharedWrites_Warning(t *testing.T) {
 	if !strings.Contains(warnings[0], "parallel") {
 		t.Errorf("warning summary = %q; want mention of 'parallel'", warnings[0])
 	}
-	if !strings.Contains(warnings[0], "shared_writes") {
-		t.Errorf("warning summary = %q; want mention of 'shared_writes'", warnings[0])
+	if !strings.Contains(warnings[0], "write blocks") {
+		t.Errorf("warning summary = %q; want mention of 'write blocks'", warnings[0])
 	}
 }
 
 // TestStep_ForEach_PerIterationSharedWrites_NoWarning verifies that a for_each
-// step with shared_writes on a _continue outcome does NOT emit the parallel
-// shared_writes warning (sequential per-iteration semantics are safe).
+// step with write blocks on a _continue outcome does NOT emit the parallel
+// write blocks warning (sequential per-iteration semantics are safe).
 func TestStep_ForEach_PerIterationSharedWrites_NoWarning(t *testing.T) {
 	src := parallelWorkflowWithSharedVar(`
   for_each = ["a", "b"]
   outcome "success" {
-    next          = "_continue"
-    shared_writes = { counter = "result" }
+    next = continue
+      write {
+    target = data.internal.counter.value
+    value  = output.result
   }
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "failed" }
+  }
+  outcome "all_succeeded" { next = step.done }
+  outcome "any_failed"    { next = step.failed }
 `)
 	spec, diags := Parse("test.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -453,29 +459,32 @@ func TestStep_ForEach_PerIterationSharedWrites_NoWarning(t *testing.T) {
 	}
 	for _, d := range diags {
 		if d.Severity == hcl.DiagWarning {
-			t.Errorf("unexpected warning on for_each step with per-iteration shared_writes: %q", d.Summary)
+			t.Errorf("unexpected warning on for_each step with per-iteration write blocks: %q", d.Summary)
 		}
 	}
 }
 
 // TestStep_Parallel_AggregateSharedWrites_NoWarning verifies that a parallel
-// step with shared_writes only on an aggregate outcome (all_succeeded, which
-// has next != "_continue") does NOT emit the per-iteration shared_writes
-// warning. Aggregate shared_writes are the recommended safe pattern.
+// step with write blocks only on an aggregate outcome (all_succeeded, which
+// has next != "_continue") does NOT emit the per-iteration write blocks
+// warning. Aggregate write blocks are the recommended safe pattern.
 func TestStep_Parallel_AggregateSharedWrites_NoWarning(t *testing.T) {
 	src := parallelWorkflowWithSharedVar(`
   parallel = ["a", "b"]
   outcome "success" {
-    next = "_continue"
+    next = continue
   }
   outcome "all_succeeded" {
-    next   = "done"
+    next = step.done
     output = {
       total = 2
     }
-    shared_writes = { counter = "total" }
+      write {
+    target = data.internal.counter.value
+    value  = output.total
   }
-  outcome "any_failed" { next = "failed" }
+  }
+  outcome "any_failed" { next = step.failed }
 `)
 	spec, diags := Parse("test.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -487,7 +496,7 @@ func TestStep_Parallel_AggregateSharedWrites_NoWarning(t *testing.T) {
 	}
 	for _, d := range diags {
 		if d.Severity == hcl.DiagWarning {
-			t.Errorf("unexpected warning on parallel step with aggregate-only shared_writes: %q", d.Summary)
+			t.Errorf("unexpected warning on parallel step with aggregate-only write blocks: %q", d.Summary)
 		}
 	}
 }

@@ -19,7 +19,7 @@ const (
 
 // SubWorkflowResolver resolves subworkflow source directories.
 // ResolveSource resolves a source string ("./path" or "scheme://...")
-// to a directory containing one or more .hcl files.
+// to a directory containing one or more .chcl or .hcl files.
 // callerDir is the directory containing the parent workflow (used to resolve relative paths).
 // For local paths, the returned dir is the absolute path; for remote sources,
 // the resolver fetches into a cache dir.
@@ -106,7 +106,7 @@ func CompileWithContext(ctx context.Context, spec *Spec, schemas map[string]Adap
 	g := newFSMGraph(spec)
 	diags = append(diags, compileVariables(g, spec)...)
 	diags = append(diags, compileLocals(g, spec, opts)...)
-	diags = append(diags, compileSharedVariables(g, spec, opts)...)
+	diags = append(diags, compileData(g, spec, opts)...)
 	diags = append(diags, compileEnvironments(g, spec, opts, builtinEnvRegistry())...)
 	diags = append(diags, compileSubworkflows(ctx, g, spec, opts)...)
 	diags = append(diags, compileOutputs(g, spec, opts)...)
@@ -120,7 +120,9 @@ func CompileWithContext(ctx context.Context, spec *Spec, schemas map[string]Adap
 	// available for the back-edge walk (W07).
 	diags = append(diags, warnBackEdges(g)...)
 	diags = append(diags, compileOutputRefs(g)...)
-	diags = append(diags, warnCrossStepFieldRefs(g, schemas)...)
+	// Check cross-step field references after all nodes are compiled so
+	// forward-references resolve correctly.
+	diags = append(diags, checkCrossStepFieldRefs(g, schemas)...)
 	// Secret-taint propagation pass: marks steps that transitively receive
 	// secret data via secret_input, input referencing secret variables, or
 	// predecessor taint propagation.
@@ -150,7 +152,7 @@ func newFSMGraph(spec *Spec) *FSMGraph {
 		TargetState:      spec.Header.TargetState,
 		Variables:        map[string]*VariableNode{},
 		Locals:           map[string]*LocalNode{},
-		SharedVariables:  map[string]*SharedVariableNode{},
+		Data:             map[string]map[string]*DataNode{},
 		Environments:     map[string]*EnvironmentNode{},
 		Outputs:          map[string]*OutputNode{},
 		OutputOrder:      []string{},
@@ -255,7 +257,7 @@ func resolveTransitions(g *FSMGraph) hcl.Diagnostics {
 			if _, ok := g.Lookup(cond.Next); !ok {
 				diags = append(diags, &hcl.Diagnostic{
 					Severity: hcl.DiagError,
-					Summary:  fmt.Sprintf("switch %q condition[%d] -> unknown target %q", sw.Name, i, cond.Next),
+					Summary:  fmt.Sprintf("switch %q match[%d] -> unknown target %q", sw.Name, i, cond.Next),
 				})
 			}
 		}

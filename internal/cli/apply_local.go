@@ -93,8 +93,12 @@ func runApplyLocal(
 	_ = src
 	auditPath, _ := auditLogPath(runID)
 	auditWriter := adapterhost.NewFileAuditWriter(auditPath)
+	mergedVars, err := mergeVarSources(opts.varFiles, opts.varOverrides)
+	if err != nil {
+		return err
+	}
 	eng = engine.New(graph, loader, tracker,
-		engine.WithVarOverrides(parseVarOverrides(opts.varOverrides)),
+		engine.WithVarOverrides(mergedVars),
 		engine.WithWorkflowDir(workflowDirFromPath(opts.workflowPath)),
 		engine.WithAuditWriter(auditWriter),
 	)

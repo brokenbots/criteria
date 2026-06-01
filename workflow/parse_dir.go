@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
@@ -58,7 +57,7 @@ func collectFileBlockRanges(src []byte, filename string) map[string]hcl.Range {
 	return result
 }
 
-// ParseDir parses every .hcl file in dir (lexicographic order, non-recursive),
+// ParseDir parses every .chcl or .hcl file in dir (lexicographic order, non-recursive),
 // merges them into a single Spec, and returns the result.
 //
 // Merge rules:
@@ -81,10 +80,10 @@ func ParseDir(dir string) (*Spec, hcl.Diagnostics) { //nolint:funlen // file dis
 		}}
 	}
 
-	// Collect .hcl files in lexicographic order (ReadDir already returns sorted).
+	// Collect HCL files in lexicographic order (ReadDir already returns sorted).
 	hclFiles := make([]string, 0, len(dirEntries))
 	for _, entry := range dirEntries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".hcl") {
+		if entry.IsDir() || !hasHCLExtension(entry.Name()) {
 			continue
 		}
 		hclFiles = append(hclFiles, filepath.Join(dir, entry.Name()))
@@ -93,8 +92,8 @@ func ParseDir(dir string) (*Spec, hcl.Diagnostics) { //nolint:funlen // file dis
 	if len(hclFiles) == 0 {
 		return nil, hcl.Diagnostics{{
 			Severity: hcl.DiagError,
-			Summary:  "no .hcl files in workflow directory",
-			Detail:   fmt.Sprintf("directory %q contains no .hcl files", dir),
+			Summary:  "no workflow files in directory",
+			Detail:   fmt.Sprintf("directory %q contains no .chcl or .hcl files", dir),
 		}}
 	}
 
@@ -136,13 +135,13 @@ func ParseDir(dir string) (*Spec, hcl.Diagnostics) { //nolint:funlen // file dis
 }
 
 // ParseFileOrDir is the unified CLI entry point. If path is a directory, it
-// calls ParseDir. If path is a regular file it must have a ".hcl" suffix;
-// ParseFileOrDir then calls ParseDir on the file's parent directory so that
-// all sibling .hcl files are merged as one directory module. Every workflow
-// must live in its own directory — a directory must contain exactly one
-// workflow header block across all its .hcl files.
+// calls ParseDir. If path is a regular file it must have a ".chcl" or ".hcl"
+// suffix; ParseFileOrDir then calls ParseDir on the file's parent directory so
+// that all sibling .chcl or .hcl files are merged as one directory module.
+// Every workflow must live in its own directory — a directory must contain
+// exactly one workflow header block across all its .chcl or .hcl files.
 //
-// Non-".hcl" regular file paths are rejected immediately with an error.
+// Non-".chcl"/".hcl" regular file paths are rejected immediately with an error.
 func ParseFileOrDir(path string) (*Spec, hcl.Diagnostics) {
 	info, err := os.Stat(path)
 	if err != nil {
@@ -156,18 +155,28 @@ func ParseFileOrDir(path string) (*Spec, hcl.Diagnostics) {
 		return ParseDir(path)
 	}
 
-	// Only .hcl files are valid workflow entry points.
-	if !strings.HasSuffix(path, ".hcl") {
+	// Only .chcl or .hcl files are valid workflow entry points.
+	if !hasHCLExtension(path) {
 		return nil, hcl.Diagnostics{{
 			Severity: hcl.DiagError,
 			Summary:  "invalid workflow file",
-			Detail:   fmt.Sprintf("%q is not a .hcl file; workflow entry points must be a directory or a .hcl file", path),
+			Detail:   fmt.Sprintf("%q is not a .chcl or .hcl file; workflow entry points must be a directory or a .chcl/.hcl file", path),
 		}}
 	}
 
-	// Parse the parent directory as the module root. All .hcl files in the
-	// directory are merged; the named file must be part of that set.
+	// Parse the parent directory as the module root. All .chcl and .hcl files
+	// in the directory are merged; the named file must be part of that set.
 	return ParseDir(filepath.Dir(path))
+}
+
+// hasHCLExtension reports whether name has one of the recognised HCL extensions.
+func hasHCLExtension(name string) bool {
+	for _, ext := range HCLExtensions {
+		if filepath.Ext(name) == ext {
+			return true
+		}
+	}
+	return false
 }
 
 // mergeSpecs merges a slice of parsed file entries into a single Spec.
@@ -204,12 +213,12 @@ func mergeSpecs(dir string, entries []fileEntry) (*Spec, hcl.Diagnostics) { //no
 		merged.Switches = append(merged.Switches, s.Switches...)
 		merged.Environments = append(merged.Environments, s.Environments...)
 		merged.Subworkflows = append(merged.Subworkflows, s.Subworkflows...)
-		merged.SharedVariables = append(merged.SharedVariables, s.SharedVariables...)
+		merged.Data = append(merged.Data, s.Data...)
 
 		// Merge singleton: Header.
 		if s.Header != nil {
 			if merged.Header != nil {
-				detail := fmt.Sprintf("directory %q contains more than one workflow { ... } header block; only one is allowed across all .hcl files in a directory module", dir)
+				detail := fmt.Sprintf("directory %q contains more than one workflow { ... } header block; only one is allowed across all .chcl or .hcl files in a directory module", dir)
 				if headerRange != nil {
 					detail += fmt.Sprintf("; previously declared at %s", headerRange.String())
 				}
@@ -233,7 +242,7 @@ func mergeSpecs(dir string, entries []fileEntry) (*Spec, hcl.Diagnostics) { //no
 		// Merge singleton: Permissions.
 		if s.Permissions != nil {
 			if merged.Permissions != nil {
-				detail := fmt.Sprintf("directory %q contains more than one permissions { ... } block; only one is allowed across all .hcl files in a directory module", dir)
+				detail := fmt.Sprintf("directory %q contains more than one permissions { ... } block; only one is allowed across all .chcl or .hcl files in a directory module", dir)
 				if permissionsRange != nil {
 					detail += fmt.Sprintf("; previously declared at %s", permissionsRange.String())
 				}
@@ -263,7 +272,7 @@ func mergeSpecs(dir string, entries []fileEntry) (*Spec, hcl.Diagnostics) { //no
 		diags = append(diags, &hcl.Diagnostic{
 			Severity: hcl.DiagError,
 			Summary:  "no workflow block declared",
-			Detail:   fmt.Sprintf("directory %q contains no workflow { name = \"...\" ... } header block; exactly one is required. Add a workflow block (typically in workflow.hcl) with name, version, initial_state, and target_state attributes.", dir),
+			Detail:   fmt.Sprintf("directory %q contains no workflow { name = \"...\" ... } header block; exactly one is required. Add a workflow block (typically in workflow.chcl or workflow.hcl) with name, version, initial_state, and target_state attributes.", dir),
 		})
 	}
 

@@ -23,8 +23,8 @@ step "execute" {
   input {
     command = "echo 'Processing task'"
   }
-  outcome "success" { next = "complete" }
-  outcome "failure" { next = "complete" }
+  outcome "success" { next = state.complete }
+  outcome "failure" { next = state.complete }
 }
 
 state "complete" {

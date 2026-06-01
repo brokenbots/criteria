@@ -2,9 +2,7 @@ package sandbox
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
-	"time"
 
 	"github.com/zclconf/go-cty/cty"
 )
@@ -29,18 +27,6 @@ func ctyStringList(v cty.Value) []string {
 	return out
 }
 
-// ctyString extracts a string from a cty.Value. Returns the empty string
-// if the value is null or unknown.
-func ctyString(v cty.Value) string {
-	if v.IsNull() || !v.IsKnown() {
-		return ""
-	}
-	if v.Type() == cty.String {
-		return v.AsString()
-	}
-	return ""
-}
-
 // ctyBool extracts a bool from a cty.Value. Returns the fallback if
 // the value is null, unknown, or not a bool.
 func ctyBool(v cty.Value, fallback bool) bool {
@@ -51,58 +37,6 @@ func ctyBool(v cty.Value, fallback bool) bool {
 		return v.True()
 	}
 	return fallback
-}
-
-// parseMemoryLimit parses a human-readable memory limit string such as
-// "512M", "1G", "128K" and returns the value in bytes. Returns 0 for
-// empty/invalid strings.
-func parseMemoryLimit(s string) uint64 {
-	if s == "" {
-		return 0
-	}
-	s = strings.TrimSpace(s)
-	multiplier := uint64(1)
-	switch {
-	case strings.HasSuffix(s, "G") || strings.HasSuffix(s, "g"):
-		multiplier = 1024 * 1024 * 1024
-		s = s[:len(s)-1]
-	case strings.HasSuffix(s, "M") || strings.HasSuffix(s, "m"):
-		multiplier = 1024 * 1024
-		s = s[:len(s)-1]
-	case strings.HasSuffix(s, "K") || strings.HasSuffix(s, "k"):
-		multiplier = 1024
-		s = s[:len(s)-1]
-	}
-	n, err := strconv.ParseUint(strings.TrimSpace(s), 10, 64)
-	if err != nil {
-		return 0
-	}
-	return n * multiplier
-}
-
-// parseCPULimit parses a CPU limit string such as "1" or "0.5" and
-// returns the value as a float64. Returns 0 for empty/invalid strings.
-func parseCPULimit(s string) float64 {
-	if s == "" {
-		return 0
-	}
-	f, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
-	if err != nil {
-		return 0
-	}
-	return f
-}
-
-// parseTimeout parses a duration string. Returns 0 for empty/invalid strings.
-func parseTimeout(s string) time.Duration {
-	if s == "" {
-		return 0
-	}
-	d, err := time.ParseDuration(strings.TrimSpace(s))
-	if err != nil {
-		return 0
-	}
-	return d
 }
 
 // pathListFromObject extracts a string list from a nested object field.
@@ -117,17 +51,6 @@ func pathListFromObject(obj cty.Value, field string) []string {
 	return ctyStringList(obj.GetAttr(field))
 }
 
-// stringFromObject extracts a string from a nested object field.
-func stringFromObject(obj cty.Value, field string) string {
-	if obj.IsNull() || !obj.IsKnown() || !obj.Type().IsObjectType() {
-		return ""
-	}
-	if !obj.Type().HasAttribute(field) {
-		return ""
-	}
-	return ctyString(obj.GetAttr(field))
-}
-
 // boolFromObject extracts a bool from a nested object field.
 func boolFromObject(obj cty.Value, field string, fallback bool) bool {
 	if obj.IsNull() || !obj.IsKnown() || !obj.Type().IsObjectType() {
@@ -137,21 +60,6 @@ func boolFromObject(obj cty.Value, field string, fallback bool) bool {
 		return fallback
 	}
 	return ctyBool(obj.GetAttr(field), fallback)
-}
-
-// splitHostPort splits a network endpoint string "host:port" into host and
-// port. Returns empty strings if the input is malformed.
-func splitHostPort(s string) (host, port string) {
-	idx := strings.LastIndex(s, ":")
-	if idx < 0 {
-		return "", ""
-	}
-	host = s[:idx]
-	port = s[idx+1:]
-	if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
-		host = host[1 : len(host)-1]
-	}
-	return host, port
 }
 
 // validatePath ensures a path is absolute and does not contain "..".
@@ -173,7 +81,10 @@ func validatePath(p string) error {
 }
 
 // scrubEnv removes sensitive or privilege-escalating variables from the
-// environment slice. Safe for use on both Linux and Darwin.
+// environment slice. Safe for use on both Linux and Darwin. It drops a fixed
+// set of privilege-escalation variables (SUDO_*, CRITERIA_PLUGIN) and any
+// variable whose name looks like it carries a secret (see looksLikeSecret), so
+// the sandboxed adapter does not inherit host credentials it was not granted.
 func scrubEnv(env []string) []string {
 	blocked := map[string]bool{
 		"SUDO_UID":        true,
@@ -186,10 +97,25 @@ func scrubEnv(env []string) []string {
 	out := make([]string, 0, len(env))
 	for _, e := range env {
 		name, _, _ := strings.Cut(e, "=")
-		if blocked[name] {
+		if blocked[name] || looksLikeSecret(name) {
 			continue
 		}
 		out = append(out, e)
 	}
 	return out
+}
+
+// looksLikeSecret reports whether an environment variable name suggests it
+// carries a credential and should not be inherited by a sandboxed adapter.
+func looksLikeSecret(name string) bool {
+	upper := strings.ToUpper(name)
+	for _, marker := range []string{
+		"SECRET", "TOKEN", "PASSWORD", "PASSWD",
+		"APIKEY", "API_KEY", "ACCESS_KEY", "PRIVATE_KEY", "CREDENTIAL",
+	} {
+		if strings.Contains(upper, marker) {
+			return true
+		}
+	}
+	return false
 }

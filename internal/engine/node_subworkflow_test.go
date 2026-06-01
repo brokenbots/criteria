@@ -73,7 +73,7 @@ func TestRunSubworkflow_ReachesTerminalState(t *testing.T) {
 		WorkflowDir: t.TempDir(),
 	}
 
-	outputs, err := runSubworkflow(context.Background(), node, parentSt, nil, testDeps(t))
+	outputs, _, err := runSubworkflow(context.Background(), node, parentSt, nil, testDeps(t))
 	if err != nil {
 		t.Fatalf("runSubworkflow: %v", err)
 	}
@@ -108,7 +108,7 @@ func TestRunSubworkflow_OutputsEvaluated(t *testing.T) {
 		WorkflowDir: t.TempDir(),
 	}
 
-	outputs, err := runSubworkflow(context.Background(), node, parentSt, nil, testDeps(t))
+	outputs, _, err := runSubworkflow(context.Background(), node, parentSt, nil, testDeps(t))
 	if err != nil {
 		t.Fatalf("runSubworkflow: %v", err)
 	}
@@ -146,7 +146,7 @@ func TestRunSubworkflow_InputBoundToOutput(t *testing.T) {
 		WorkflowDir: t.TempDir(),
 	}
 
-	outputs, err := runSubworkflow(context.Background(), node, parentSt, nil, testDeps(t))
+	outputs, _, err := runSubworkflow(context.Background(), node, parentSt, nil, testDeps(t))
 	if err != nil {
 		t.Fatalf("runSubworkflow: %v", err)
 	}
@@ -190,7 +190,7 @@ func TestRunSubworkflow_EachThreadedToOutput(t *testing.T) {
 		WorkflowDir: t.TempDir(),
 	}
 
-	outputs, err := runSubworkflow(context.Background(), node, parentSt, nil, testDeps(t))
+	outputs, _, err := runSubworkflow(context.Background(), node, parentSt, nil, testDeps(t))
 	if err != nil {
 		t.Fatalf("runSubworkflow: %v", err)
 	}
@@ -223,7 +223,7 @@ func TestRunSubworkflow_MissingRequiredInput(t *testing.T) {
 		WorkflowDir: t.TempDir(),
 	}
 
-	_, err := runSubworkflow(context.Background(), node, parentSt, nil, testDeps(t))
+	_, _, err := runSubworkflow(context.Background(), node, parentSt, nil, testDeps(t))
 	if err == nil {
 		t.Fatal("expected error for missing required input, got none")
 	}
@@ -278,7 +278,7 @@ func TestRunSubworkflow_FileFromCalleeDir(t *testing.T) {
 		WorkflowDir: parentDir,
 	}
 
-	outputs, err := runSubworkflow(context.Background(), node, parentSt, nil, testDeps(t))
+	outputs, _, err := runSubworkflow(context.Background(), node, parentSt, nil, testDeps(t))
 	if err != nil {
 		t.Fatalf("runSubworkflow: %v", err)
 	}
@@ -380,7 +380,7 @@ func TestRunSubworkflow_AdaptersIsolatedFromParent(t *testing.T) {
 		WorkflowDir: t.TempDir(),
 	}
 
-	_, err := runSubworkflow(context.Background(), node, parentSt, nil, depsWithLoader(t, loader))
+	_, _, err := runSubworkflow(context.Background(), node, parentSt, nil, depsWithLoader(t, loader))
 	if err != nil {
 		t.Fatalf("runSubworkflow: %v", err)
 	}
@@ -414,7 +414,7 @@ func TestRunSubworkflow_ErrorPropagatesToParent(t *testing.T) {
 		WorkflowDir: t.TempDir(),
 	}
 
-	_, err := runSubworkflow(context.Background(), node, parentSt, nil, depsWithLoader(t, loader))
+	_, _, err := runSubworkflow(context.Background(), node, parentSt, nil, depsWithLoader(t, loader))
 	if err == nil {
 		t.Fatal("expected error from failing callee step, got nil")
 	}
@@ -444,7 +444,7 @@ func TestRunSubworkflow_CalleeCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err := runSubworkflow(ctx, node, parentSt, nil, depsWithLoader(t, loader))
+	_, _, err := runSubworkflow(ctx, node, parentSt, nil, depsWithLoader(t, loader))
 	if err == nil {
 		t.Fatal("expected error after context cancellation, got nil")
 	}
@@ -454,12 +454,12 @@ func TestRunSubworkflow_CalleeCancellation(t *testing.T) {
 }
 
 // TestRunSubworkflow_ReturnSentinelWithNilOutputs verifies that when a
-// subworkflow exits via next = "return" with no output projection, runSubworkflow
+// subworkflow exits via next = step.return with no output projection, runSubworkflow
 // returns (nil, nil) rather than falling through to evalRunOutputsAsValues.
 // Prior to the fix, `_ = terminal` and `if returnOutputs != nil` caused the
 // nil-output return path to silently evaluate the callee's output blocks instead.
 func TestRunSubworkflow_ReturnSentinelWithNilOutputs(t *testing.T) {
-	// Callee: single step with next = "return" but no output = {...} projection.
+	// Callee: single step with next = step.return but no output = {...} projection.
 	// The callee also declares an output block so we can detect a fall-through:
 	// if evalRunOutputsAsValues is called it would populate "leaked" in the output.
 	returnStep := &workflow.StepNode{
@@ -496,12 +496,175 @@ func TestRunSubworkflow_ReturnSentinelWithNilOutputs(t *testing.T) {
 	}
 	deps := depsWithLoader(t, loader)
 
-	outputs, err := runSubworkflow(context.Background(), swNode, parentSt, nil, deps)
+	outputs, _, err := runSubworkflow(context.Background(), swNode, parentSt, nil, deps)
 	if err != nil {
 		t.Fatalf("runSubworkflow: %v", err)
 	}
 	// Nil outputs is the correct result for a no-projection return.
 	if outputs != nil {
 		t.Errorf("expected nil outputs on no-projection return, got %v", outputs)
+	}
+}
+
+// TestRunSubworkflow_NullStringOutput verifies that a subworkflow whose declared
+// output evaluates to a null string does not panic during the parent step's
+// cty-to-string conversion. The null guard in evaluateSubworkflowStep causes the
+// value to fall through to renderCtyValue, which returns "null".
+func TestRunSubworkflow_NullStringOutput(t *testing.T) {
+	body := &workflow.FSMGraph{
+		InitialState: "done",
+		States:       map[string]*workflow.StateNode{"done": {Name: "done", Terminal: true, Success: true}},
+		Outputs: map[string]*workflow.OutputNode{
+			"result": {Name: "result", Value: &hclsyntax.LiteralValueExpr{Val: cty.NullVal(cty.String)}},
+		},
+		OutputOrder: []string{"result"},
+	}
+	swNode := &workflow.SubworkflowNode{
+		Name:         "null-out",
+		SourcePath:   t.TempDir(),
+		Body:         body,
+		BodyEntry:    "done",
+		Inputs:       map[string]hcl.Expression{},
+		DeclaredVars: map[string]*workflow.VariableNode{},
+	}
+
+	g := &workflow.FSMGraph{
+		Name:         "parent",
+		InitialState: "call",
+		TargetState:  "done",
+		Policy:       workflow.DefaultPolicy,
+		Steps: map[string]*workflow.StepNode{
+			"call": {
+				Name:           "call",
+				TargetKind:     workflow.StepTargetSubworkflow,
+				SubworkflowRef: "null-out",
+				Outcomes:       map[string]*workflow.CompiledOutcome{"success": {Next: "done"}},
+			},
+		},
+		States: map[string]*workflow.StateNode{
+			"done": {Name: "done", Terminal: true, Success: true},
+		},
+		Subworkflows: map[string]*workflow.SubworkflowNode{"null-out": swNode},
+		Variables:    map[string]*workflow.VariableNode{},
+	}
+
+	sink := &captureOutputSink{}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{}}
+	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if sink.terminal != "done" || !sink.terminalOK {
+		t.Errorf("terminal=%q ok=%v, want done/true", sink.terminal, sink.terminalOK)
+	}
+	sink.mu.Lock()
+	got := sink.outputs["call"]
+	sink.mu.Unlock()
+	if got == nil {
+		t.Fatal("step 'call' outputs not captured")
+	}
+	if got["result"] != "null" {
+		t.Errorf("null string output rendered: want %q, got %q", "null", got["result"])
+	}
+}
+
+// TestRunSubworkflow_TerminalStateFailure verifies that when a subworkflow reaches
+// a terminal state with success=false, the parent step receives outcome="failure"
+// and routes accordingly.
+func TestRunSubworkflow_TerminalStateFailure(t *testing.T) {
+	body := &workflow.FSMGraph{
+		InitialState: "fail",
+		States:       map[string]*workflow.StateNode{"fail": {Name: "fail", Terminal: true, Success: false}},
+	}
+	swNode := &workflow.SubworkflowNode{
+		Name:         "failing-callee",
+		SourcePath:   t.TempDir(),
+		Body:         body,
+		BodyEntry:    "fail",
+		Inputs:       map[string]hcl.Expression{},
+		DeclaredVars: map[string]*workflow.VariableNode{},
+	}
+
+	g := &workflow.FSMGraph{
+		Name:         "parent",
+		InitialState: "call",
+		TargetState:  "done",
+		Policy:       workflow.DefaultPolicy,
+		Steps: map[string]*workflow.StepNode{
+			"call": {
+				Name:           "call",
+				TargetKind:     workflow.StepTargetSubworkflow,
+				SubworkflowRef: "failing-callee",
+				Outcomes: map[string]*workflow.CompiledOutcome{
+					"success": {Next: "done"},
+					"failure": {Next: "failed"},
+				},
+			},
+		},
+		States: map[string]*workflow.StateNode{
+			"done":   {Name: "done", Terminal: true, Success: true},
+			"failed": {Name: "failed", Terminal: true, Success: false},
+		},
+		Subworkflows: map[string]*workflow.SubworkflowNode{"failing-callee": swNode},
+		Variables:    map[string]*workflow.VariableNode{},
+	}
+
+	sink := &fakeSink{}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{}}
+	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if sink.terminal != "failed" || sink.terminalOK {
+		t.Errorf("terminal=%q ok=%v, want failed/false", sink.terminal, sink.terminalOK)
+	}
+}
+
+// TestRunSubworkflow_TerminalStateSuccess is a regression guard that verifies a
+// subworkflow reaching a success=true terminal state still produces outcome="success"
+// in the parent step.
+func TestRunSubworkflow_TerminalStateSuccess(t *testing.T) {
+	body := &workflow.FSMGraph{
+		InitialState: "done",
+		States:       map[string]*workflow.StateNode{"done": {Name: "done", Terminal: true, Success: true}},
+	}
+	swNode := &workflow.SubworkflowNode{
+		Name:         "happy-callee",
+		SourcePath:   t.TempDir(),
+		Body:         body,
+		BodyEntry:    "done",
+		Inputs:       map[string]hcl.Expression{},
+		DeclaredVars: map[string]*workflow.VariableNode{},
+	}
+
+	g := &workflow.FSMGraph{
+		Name:         "parent",
+		InitialState: "call",
+		TargetState:  "done",
+		Policy:       workflow.DefaultPolicy,
+		Steps: map[string]*workflow.StepNode{
+			"call": {
+				Name:           "call",
+				TargetKind:     workflow.StepTargetSubworkflow,
+				SubworkflowRef: "happy-callee",
+				Outcomes: map[string]*workflow.CompiledOutcome{
+					"success": {Next: "done"},
+					"failure": {Next: "failed"},
+				},
+			},
+		},
+		States: map[string]*workflow.StateNode{
+			"done":   {Name: "done", Terminal: true, Success: true},
+			"failed": {Name: "failed", Terminal: true, Success: false},
+		},
+		Subworkflows: map[string]*workflow.SubworkflowNode{"happy-callee": swNode},
+		Variables:    map[string]*workflow.VariableNode{},
+	}
+
+	sink := &fakeSink{}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{}}
+	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if sink.terminal != "done" || !sink.terminalOK {
+		t.Errorf("terminal=%q ok=%v, want done/true", sink.terminal, sink.terminalOK)
 	}
 }

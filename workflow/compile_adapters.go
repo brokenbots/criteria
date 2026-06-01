@@ -15,7 +15,7 @@ import (
 // attributes at compile time. file(), fileexists(), and trimfrontmatter() are
 // registered so prompt files can be inlined. var.* and local.* are included so
 // that config expressions can reference declared variables and compiled locals.
-// steps.*, each.*, and shared_variable.* are intentionally absent — expressions
+// steps.*, each.*, and data.* are intentionally absent — expressions
 // that reference those namespaces fail with "Variables not allowed", which is
 // the correct compile error since adapter config has no runtime resolution path.
 //

@@ -95,13 +95,13 @@ variable "env" {
 }
 
 switch "decide" {
-  condition {
-    match = var.env == "prod"
-    next  = state.deploy
+  match {
+    condition = var.env == "prod"
+    next = state.deploy
   }
-  condition {
-    match = var.env == "staging"
-    next  = state.staging_deploy
+  match {
+    condition = var.env == "staging"
+    next = state.staging_deploy
   }
   default {
     next = state.skip
@@ -136,8 +136,8 @@ state "done"           { terminal = true }
 	if ev.node != "decide" {
 		t.Errorf("event.node = %q, want \"decide\"", ev.node)
 	}
-	if ev.matchedArm != "condition[1]" {
-		t.Errorf("event.matchedArm = %q, want \"condition[1]\"", ev.matchedArm)
+	if ev.matchedArm != "match[1]" {
+		t.Errorf("event.matchedArm = %q, want \"match[1]\"", ev.matchedArm)
 	}
 	if ev.target != "staging_deploy" {
 		t.Errorf("event.target = %q, want \"staging_deploy\"", ev.target)
@@ -170,13 +170,13 @@ variable "env" {
 }
 
 switch "decide" {
-  condition {
-    match = var.env == "prod"
-    next  = state.deploy
+  match {
+    condition = var.env == "prod"
+    next = state.deploy
   }
-  condition {
-    match = var.env == "staging"
-    next  = state.staging_deploy
+  match {
+    condition = var.env == "staging"
+    next = state.staging_deploy
   }
   default {
     next = state.done
@@ -237,9 +237,9 @@ variable "env" {
 }
 
 switch "decide" {
-  condition {
-    match = var.env
-    next  = state.done
+  match {
+    condition = var.env
+    next = state.done
   }
   default {
     next = state.done
@@ -293,9 +293,9 @@ variable "env" {
 }
 
 switch "decide" {
-  condition {
-    match  = var.env == "prod"
-    next   = switch.check_tier
+  match {
+    condition  = var.env == "prod"
+    next = switch.check_tier
     output = { tier = "production" }
   }
   default {
@@ -304,9 +304,9 @@ switch "decide" {
 }
 
 switch "check_tier" {
-  condition {
-    match = steps.decide.tier == "production"
-    next  = state.tier_ok
+  match {
+    condition = steps.decide.tier == "production"
+    next = state.tier_ok
   }
   default {
     next = state.tier_fail
@@ -355,7 +355,7 @@ state "tier_fail" {
 	}
 }
 
-// TestSwitch_ReturnFromCondition_BubblesToCaller verifies that next = "return"
+// TestSwitch_ReturnFromCondition_BubblesToCaller verifies that next = step.return
 // in a switch condition causes the run to complete at the top level with
 // empty terminal state and success = true.
 func TestSwitch_ReturnFromCondition_BubblesToCaller(t *testing.T) {
@@ -368,9 +368,9 @@ workflow {
 }
 
 switch "decide" {
-  condition {
-    match = true
-    next  = "return"
+  match {
+    condition = true
+    next = step.return
   }
   default {
     next = state.done
@@ -419,13 +419,13 @@ variable "result" {
 }
 
 switch "decide" {
-  condition {
-    match = var.result == "pass"
-    next  = state.succeeded
+  match {
+    condition = var.result == "pass"
+    next = state.succeeded
   }
-  condition {
-    match = var.result == "fail"
-    next  = state.failed
+  match {
+    condition = var.result == "fail"
+    next = state.failed
   }
   default {
     next = state.failed
@@ -465,7 +465,7 @@ state "failed" {
 }
 
 // TestSwitch_EndToEnd_ReturnExitsWorkflow is an end-to-end test verifying that
-// a switch with next = "return" terminates the full workflow execution cleanly.
+// a switch with next = step.return terminates the full workflow execution cleanly.
 //
 // This validates the complete contract boundary: parse → compile → engine run
 // → OnRunCompleted, with the return sentinel propagating through the engine's
@@ -485,9 +485,9 @@ variable "early_exit" {
 }
 
 switch "gate" {
-  condition {
-    match = var.early_exit == "yes"
-    next  = "return"
+  match {
+    condition = var.early_exit == "yes"
+    next = step.return
   }
   default {
     next = state.done
@@ -532,7 +532,7 @@ state "done" { terminal = true }
 	if ev.target != "return" {
 		t.Errorf("branch event target = %q, want \"return\"", ev.target)
 	}
-	if ev.matchedArm != "condition[0]" {
-		t.Errorf("branch event matchedArm = %q, want \"condition[0]\"", ev.matchedArm)
+	if ev.matchedArm != "match[0]" {
+		t.Errorf("branch event matchedArm = %q, want \"match[0]\"", ev.matchedArm)
 	}
 }

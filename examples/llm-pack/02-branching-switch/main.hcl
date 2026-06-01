@@ -9,36 +9,36 @@ adapter "noop" "default" {}
 
 step "classify" {
   target = adapter.noop.default
-  outcome "success" { next = "route" }
-  outcome "failure" { next = "failed" }
+  outcome "success" { next = switch.route }
+  outcome "failure" { next = state.failed }
 }
 
 switch "route" {
   # steps.classify.label is a placeholder — replace with your adapter's actual output key
-  condition {
-    match = steps.classify.label == "urgent"
-    next  = "handle_urgent"
+  match {
+    condition = steps.classify.label == "urgent"
+    next = step.handle_urgent
   }
-  condition {
-    match = steps.classify.label == "normal"
-    next  = "handle_normal"
+  match {
+    condition = steps.classify.label == "normal"
+    next = step.handle_normal
   }
-  default { next = "handle_other" }
+  default { next = step.handle_other }
 }
 
 step "handle_urgent" {
   target = adapter.noop.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = state.done }
 }
 
 step "handle_normal" {
   target = adapter.noop.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = state.done }
 }
 
 step "handle_other" {
   target = adapter.noop.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = state.done }
 }
 
 state "done" {

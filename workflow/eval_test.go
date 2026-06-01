@@ -181,7 +181,7 @@ step "s" {
   input {
     command = "${each.value}"
   }
-  outcome "success" { next = "__done__" }
+  outcome "success" { next = step.__done__ }
 }
 state "__done__" { terminal = true }
 `
@@ -275,6 +275,37 @@ func TestBuildEvalContext_ExposesLocals(t *testing.T) {
 	}
 	if localObj.GetAttr("greeting").AsString() != "Hello, world!" {
 		t.Errorf("local.greeting = %q, want 'Hello, world!'", localObj.GetAttr("greeting").AsString())
+	}
+}
+
+// TestBuildEvalContext_ExposesPath verifies that BuildEvalContextWithOpts exposes
+// the path namespace with workflow, root, and cwd values.
+func TestBuildEvalContext_ExposesPath(t *testing.T) {
+	vars := map[string]cty.Value{
+		"var":   cty.EmptyObjectVal,
+		"steps": cty.EmptyObjectVal,
+	}
+	opts := FunctionOptions{
+		WorkflowDir: "/workflows",
+		RootDir:     "/project",
+		Cwd:         "/current",
+	}
+	ctx := BuildEvalContextWithOpts(vars, &opts)
+	if ctx == nil {
+		t.Fatal("nil eval context")
+	}
+	pathObj, ok := ctx.Variables["path"]
+	if !ok {
+		t.Fatal("'path' namespace missing from eval context")
+	}
+	if pathObj.GetAttr("workflow").AsString() != "/workflows" {
+		t.Errorf("path.workflow = %q, want '/workflows'", pathObj.GetAttr("workflow").AsString())
+	}
+	if pathObj.GetAttr("root").AsString() != "/project" {
+		t.Errorf("path.root = %q, want '/project'", pathObj.GetAttr("root").AsString())
+	}
+	if pathObj.GetAttr("cwd").AsString() != "/current" {
+		t.Errorf("path.cwd = %q, want '/current'", pathObj.GetAttr("cwd").AsString())
 	}
 }
 

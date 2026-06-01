@@ -27,8 +27,8 @@ step "build" {
   }
   timeout = "30s"
 
-  outcome "success" { next = "test" }
-  outcome "failure" { next = "failed" }
+  outcome "success" { next = step.test }
+  outcome "failure" { next = step.failed }
 }
 
 step "test" {
@@ -37,8 +37,8 @@ step "test" {
     command = "echo test"
   }
 
-  outcome "success" { next = "verified" }
-  outcome "failure" { next = "failed" }
+  outcome "success" { next = step.verified }
+  outcome "failure" { next = step.failed }
 }
 
 state "verified" { terminal = true }
@@ -86,7 +86,7 @@ workflow {
 adapter "shell" "default" {}
 step "a" {
   target = adapter.shell.default
-  outcome "success" { next = "missing" }
+  outcome "success" { next = step.missing }
 }
 state "done" { terminal = true }
 `
@@ -115,7 +115,7 @@ workflow {
 adapter "shell" "default" {}
 step "a" {
   target = adapter.shell.default
-  outcome "success" { next = "halfway" }
+  outcome "success" { next = step.halfway }
 }
 state "halfway" {}
 `
@@ -138,11 +138,11 @@ workflow {
 adapter "shell" "default" {}
 step "a" {
   target = adapter.shell.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 step "orphan" {
   target = adapter.shell.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -190,11 +190,11 @@ step "open" {
   target = adapter.copilot.default
   lifecycle   = "open"
   allow_tools = ["read_file"]
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 step "close" {
   target = adapter.copilot.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -221,7 +221,7 @@ workflow {
 step "run" {
   target      = adapter.shell.default
   allow_tools = ["shell:git status"]
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -252,7 +252,7 @@ adapter "copilot" "default" {}
 step "run" {
   target = adapter.copilot.default
   allow_tools = ["read_file"]
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 

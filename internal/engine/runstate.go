@@ -42,16 +42,16 @@ type RunState struct {
 	VisitsMu *sync.Mutex
 
 	// ReturnOutputs holds the projected output values when a step exits via
-	// next = "return". Set by stepNode.evaluateOnce; consumed by
+	// next = step.return. Set by stepNode.evaluateOnce; consumed by
 	// handleReturnExit (top-level) or runSubworkflow (nested). Nil means
 	// no return exit has occurred.
 	ReturnOutputs map[string]cty.Value
 
-	// SharedVarStore is the workflow-scoped store for shared_variable values.
+	// DataStore is the workflow-scoped store for data block values.
 	// Each top-level workflow and each subworkflow body receives its own fresh
-	// store populated from the compiled graph's SharedVariables. Nil when the
-	// workflow declares no shared_variable blocks.
-	SharedVarStore *SharedVarStore
+	// store populated from the compiled graph's Data. Nil when the workflow
+	// declares no data blocks.
+	DataStore *DataStore
 
 	firstStep        bool
 	firstStepAttempt int

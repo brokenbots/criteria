@@ -39,7 +39,7 @@ func BuildEvalContext(vars map[string]cty.Value) *hcl.EvalContext {
 // If vars["local"] is present and is a non-nil object, it is exposed as the
 // "local" namespace in the context so runtime expressions can read compiled
 // locals.
-func BuildEvalContextWithOpts(vars map[string]cty.Value, opts FunctionOptions) *hcl.EvalContext {
+func BuildEvalContextWithOpts(vars map[string]cty.Value, opts *FunctionOptions) *hcl.EvalContext {
 	varObj := cty.EmptyObjectVal
 	stepsObj := cty.EmptyObjectVal
 
@@ -70,10 +70,17 @@ func BuildEvalContextWithOpts(vars map[string]cty.Value, opts FunctionOptions) *
 		ctxVars["local"] = local
 	}
 
-	// Expose shared_variable values as "shared.*" when a snapshot is present (W18).
-	if shared, ok := objectFromVars(vars, "shared"); ok {
-		ctxVars["shared"] = shared
+	// Expose data block values as "data.*" when a snapshot is present.
+	if data, ok := objectFromVars(vars, "data"); ok {
+		ctxVars["data"] = data
 	}
+
+	// Expose path variables for workflow-relative path construction (WS05).
+	ctxVars["path"] = cty.ObjectVal(map[string]cty.Value{
+		"workflow": cty.StringVal(opts.WorkflowDir),
+		"root":     cty.StringVal(opts.RootDir),
+		"cwd":      cty.StringVal(opts.Cwd),
+	})
 
 	return &hcl.EvalContext{
 		Variables: ctxVars,
@@ -83,7 +90,7 @@ func BuildEvalContextWithOpts(vars map[string]cty.Value, opts FunctionOptions) *
 
 // objectFromVars retrieves a named value from vars and returns it only if it is
 // a non-nil, known, object-typed value. Used to populate optional eval context
-// namespaces (var, steps, each, local, shared).
+// namespaces (var, steps, each, local, data).
 func objectFromVars(vars map[string]cty.Value, key string) (cty.Value, bool) {
 	v, ok := vars[key]
 	return v, ok && v != cty.NilVal && v.Type().IsObjectType()
@@ -104,7 +111,7 @@ func ResolveInputExprs(exprs map[string]hcl.Expression, vars map[string]cty.Valu
 // to evaluate, the error is returned so callers can fail fast. References to
 // each.* are detected via expression variable analysis and produce the planned
 // message "each is only valid inside for_each".
-func ResolveInputExprsWithOpts(exprs map[string]hcl.Expression, vars map[string]cty.Value, opts FunctionOptions) (map[string]string, error) {
+func ResolveInputExprsWithOpts(exprs map[string]hcl.Expression, vars map[string]cty.Value, opts *FunctionOptions) (map[string]string, error) {
 	if len(exprs) == 0 {
 		return nil, nil
 	}
@@ -139,7 +146,7 @@ func ResolveInputExprsWithOpts(exprs map[string]hcl.Expression, vars map[string]
 // vars map and returns the raw cty.Value map. Unlike ResolveInputExprsWithOpts,
 // values are not coerced to strings — callers that need cty.Value (e.g. subworkflow
 // step input binding) use this form.
-func ResolveInputExprsAsCty(exprs map[string]hcl.Expression, vars map[string]cty.Value, opts FunctionOptions) (map[string]cty.Value, error) {
+func ResolveInputExprsAsCty(exprs map[string]hcl.Expression, vars map[string]cty.Value, opts *FunctionOptions) (map[string]cty.Value, error) {
 	if len(exprs) == 0 {
 		return nil, nil
 	}
@@ -263,11 +270,11 @@ func SeedLocalsFromGraph(g *FSMGraph) cty.Value {
 	return cty.ObjectVal(m)
 }
 
-// SeedSharedSnapshot wraps a snapshot from SharedVarStore.Snapshot() into a
-// cty object and stores it under vars["shared"]. Returns an unmodified vars
-// when snap is nil or empty. Call this before building the eval context to
-// expose shared.* in HCL expressions.
-func SeedSharedSnapshot(vars, snap map[string]cty.Value) map[string]cty.Value {
+// SeedDataSnapshot wraps a snapshot from DataStore.Snapshot() into a cty
+// object and stores it under vars["data"]. Returns an unmodified vars when
+// snap is nil or empty. Call this before building the eval context to expose
+// data.* in HCL expressions.
+func SeedDataSnapshot(vars, snap map[string]cty.Value) map[string]cty.Value {
 	if len(snap) == 0 {
 		return vars
 	}
@@ -275,7 +282,7 @@ func SeedSharedSnapshot(vars, snap map[string]cty.Value) map[string]cty.Value {
 	for k, v := range vars {
 		newVars[k] = v
 	}
-	newVars["shared"] = cty.ObjectVal(snap)
+	newVars["data"] = cty.ObjectVal(snap)
 	return newVars
 }
 

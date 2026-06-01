@@ -16,7 +16,7 @@ import (
 // context (no workflowDir; default options).
 func funcFromContext(t *testing.T, name string) function.Function {
 	t.Helper()
-	ctx := workflow.BuildEvalContextWithOpts(nil, workflow.FunctionOptions{})
+	ctx := workflow.BuildEvalContextWithOpts(nil, &workflow.FunctionOptions{})
 	fn, ok := ctx.Functions[name]
 	if !ok {
 		t.Fatalf("function %q not registered in workflow eval context", name)

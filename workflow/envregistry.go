@@ -218,6 +218,6 @@ func builtinEnvRegistry() EnvRegistry {
 	return defaultEnvRegistry{}
 }
 
-// envRegistryHostOS returns the host operating system name used for compile-time
-// gating. It is a variable so tests can override it.
+// envRegistryHostOS is the host operating system name used for compile-time OS
+// gating. It is a variable so tests can override it to exercise cross-OS paths.
 var envRegistryHostOS = runtime.GOOS

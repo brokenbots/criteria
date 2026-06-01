@@ -185,7 +185,7 @@ local "bad" {
 
 step "step1" {
   target = adapter.a.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 `
 	spec, diags := Parse("test.hcl", []byte(src))
@@ -219,7 +219,7 @@ local "prompt" {
 adapter "noop" "default" {}
 step "open" {
   target = adapter.noop.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `

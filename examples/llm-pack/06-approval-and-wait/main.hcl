@@ -9,21 +9,21 @@ adapter "noop" "default" {}
 
 wait "deploy_window" {
   signal = "deploy-ready"
-  outcome "received" { next = "release_gate" }
-  outcome "expired"  { next = "failed" }
+  outcome "received" { next = approval.release_gate }
+  outcome "expired"  { next = state.failed }
 }
 
 approval "release_gate" {
   approvers = ["ops-lead", "security-lead"]
   reason    = "Production release requires dual approval."
-  outcome "approved" { next = "deploy" }
-  outcome "rejected" { next = "failed" }
+  outcome "approved" { next = step.deploy }
+  outcome "rejected" { next = state.failed }
 }
 
 step "deploy" {
   target = adapter.noop.default
-  outcome "success" { next = "done" }
-  outcome "failure" { next = "failed" }
+  outcome "success" { next = state.done }
+  outcome "failure" { next = state.failed }
 }
 
 state "done" {

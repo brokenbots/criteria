@@ -10,6 +10,7 @@ import (
 
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/internal/adapters/shell"
+	"github.com/brokenbots/criteria/internal/diagutil"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -70,7 +71,7 @@ func newLocalRunState(runID, graphName, serverURL string) *localRunState {
 
 // workflowDirFromPath returns the workflow module directory for path.
 // If path is a directory it is returned as-is; if it is a file, its parent
-// directory is returned — all sibling .hcl files form the same module.
+// directory is returned — all sibling .chcl and .hcl files form the same module.
 func workflowDirFromPath(path string) string {
 	if info, err := os.Stat(path); err == nil && info.IsDir() {
 		return path
@@ -86,7 +87,7 @@ func compileForExecution(ctx context.Context, workflowPath string, log *slog.Log
 
 	loader := adapterhost.NewLoader()
 	loader.RegisterBuiltin(shell.Name, adapterhost.BuiltinFactoryForAdapter(shell.New()))
-	schemas := collectSchemas(ctx, loader, spec, log)
+	schemas := diagutil.CollectSchemas(ctx, loader, spec, log)
 
 	workflowDir := workflowDirFromPath(workflowPath)
 

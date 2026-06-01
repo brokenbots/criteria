@@ -31,7 +31,7 @@ step "run" {
   secret_input {
     key = var.api_key
   }
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -76,7 +76,7 @@ step "run" {
   input {
     command = var.api_key
   }
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -99,9 +99,10 @@ state "done" { terminal = true }
 	}
 }
 
-// TestTaintPass_SharedVariableSecretInInput verifies that a step referencing a
-// secret shared_variable in input fails to compile (D65).
-func TestTaintPass_SharedVariableSecretInInput(t *testing.T) {
+// TestTaintPass_SecretDataInInput verifies that a step referencing a secret
+// data block in a non-secret input fails to compile (D65). Secret-tainting was
+// ported from the removed shared_variable feature onto data "internal" blocks.
+func TestTaintPass_SecretDataInInput(t *testing.T) {
 	src := `
 workflow {
   name = "x"
@@ -110,7 +111,7 @@ workflow {
   target_state  = "done"
 }
 
-shared_variable "token" {
+data "internal" "token" {
   type   = string
   secret = true
 }
@@ -120,9 +121,140 @@ adapter "shell" "default" {}
 step "run" {
   target = adapter.shell.default
   input {
-    command = shared.token
+    command = data.internal.token.value
   }
-  outcome "success" { next = "done" }
+  outcome "success" { next = state.done }
+}
+state "done" { terminal = true }
+`
+	spec, diags := Parse("t.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	_, diags = Compile(spec, testSchemas)
+	if !diags.HasErrors() {
+		t.Fatal("expected compile error for tainted secret data in non-secret channel")
+	}
+	found := false
+	for _, d := range diags {
+		if d.Severity == hcl.DiagError && strings.Contains(d.Summary, "tainted value") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected taint error diagnostic, got: %s", diags.Error())
+	}
+}
+
+// TestTaintPass_SecretDataInSecretInput verifies that a secret data block
+// referenced in a secret_input compiles and marks the step Tainted (the value
+// flows through an allowed secret channel).
+func TestTaintPass_SecretDataInSecretInput(t *testing.T) {
+	src := `
+workflow {
+  name = "x"
+  version       = "0.1"
+  initial_state = "run"
+  target_state  = "done"
+}
+
+data "internal" "token" {
+  type   = string
+  secret = true
+}
+
+adapter "noop" "default" {}
+
+step "run" {
+  target = adapter.noop.default
+  secret_input {
+    key = data.internal.token.value
+  }
+  outcome "success" { next = state.done }
+}
+state "done" { terminal = true }
+`
+	spec, diags := Parse("t.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	g, diags := Compile(spec, nil)
+	if diags.HasErrors() {
+		t.Fatalf("compile: %s", diags.Error())
+	}
+	step := g.Steps["run"]
+	if step == nil {
+		t.Fatal("step 'run' not found")
+	}
+	if !step.Tainted {
+		t.Error("expected step 'run' to be Tainted via secret data in secret_input")
+	}
+}
+
+// TestTaintPass_NonSecretDataNotTainted verifies that a non-secret data block
+// referenced in a regular input does NOT taint the step.
+func TestTaintPass_NonSecretDataNotTainted(t *testing.T) {
+	src := `
+workflow {
+  name = "x"
+  version       = "0.1"
+  initial_state = "run"
+  target_state  = "done"
+}
+
+data "internal" "greeting" {
+  type  = string
+  value = "hello"
+}
+
+adapter "shell" "default" {}
+
+step "run" {
+  target = adapter.shell.default
+  input {
+    command = data.internal.greeting.value
+  }
+  outcome "success" { next = state.done }
+}
+state "done" { terminal = true }
+`
+	spec, diags := Parse("t.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	g, diags := Compile(spec, testSchemas)
+	if diags.HasErrors() {
+		t.Fatalf("compile: %s", diags.Error())
+	}
+	if g.Steps["run"].Tainted {
+		t.Error("expected step 'run' NOT to be Tainted")
+	}
+}
+
+// TestTaintPass_SecretVariableInInput verifies that a step referencing a
+// secret variable in input fails to compile (D65).
+func TestTaintPass_SecretVariableInInput(t *testing.T) {
+	src := `
+workflow {
+  name = "x"
+  version       = "0.1"
+  initial_state = "run"
+  target_state  = "done"
+}
+
+variable "token" {
+  type   = string
+  secret = true
+}
+
+adapter "shell" "default" {}
+
+step "run" {
+  target = adapter.shell.default
+  input {
+    command = var.token
+  }
+  outcome "success" { next = state.done }
 }
 state "done" { terminal = true }
 `
@@ -171,12 +303,12 @@ step "first" {
   secret_input {
     command = var.api_key
   }
-  outcome "success" { next = "second" }
+  outcome "success" { next = step.second }
 }
 
 step "second" {
   target = adapter.noop.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 
 state "done" { terminal = true }
@@ -220,7 +352,7 @@ step "run" {
   input {
     command = var.greeting
   }
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -256,18 +388,18 @@ adapter "noop" "default" {}
 
 step "first" {
   target = adapter.noop.default
-  outcome "ok"   { next = "second" }
-  outcome "skip" { next = "third" }
+  outcome "ok"   { next = step.second }
+  outcome "skip" { next = step.third }
 }
 
 step "second" {
   target = adapter.noop.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 
 step "third" {
   target = adapter.noop.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 
 state "done" { terminal = true }
@@ -313,7 +445,7 @@ step "run" {
   input {
     command = "echo hi"
   }
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -361,7 +493,7 @@ step "first" {
   input {
     command = "echo hi"
   }
-  outcome "success" { next = "second" }
+  outcome "success" { next = step.second }
 }
 
 step "second" {
@@ -369,7 +501,7 @@ step "second" {
   secret_input {
     command = steps.first.token
   }
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 
 state "done" { terminal = true }
@@ -422,7 +554,7 @@ step "first" {
   input {
     command = "echo hi"
   }
-  outcome "success" { next = "second" }
+  outcome "success" { next = step.second }
 }
 
 step "second" {
@@ -430,7 +562,7 @@ step "second" {
   secret_input {
     command = steps.first.outputs.token
   }
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 
 state "done" { terminal = true }
@@ -483,7 +615,7 @@ step "first" {
   input {
     command = "echo hi"
   }
-  outcome "success" { next = "second" }
+  outcome "success" { next = step.second }
 }
 
 step "second" {
@@ -491,7 +623,7 @@ step "second" {
   input {
     command = steps.first.outputs.token
   }
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 
 state "done" { terminal = true }
@@ -543,7 +675,7 @@ step "run" {
   input {
     prompt = "hi"
   }
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -603,7 +735,7 @@ step "first" {
   input {
     command = "echo hi"
   }
-  outcome "success" { next = "second" }
+  outcome "success" { next = step.second }
 }
 
 step "second" {
@@ -611,7 +743,7 @@ step "second" {
   input {
     prompt = "hi"
   }
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 
 state "done" { terminal = true }

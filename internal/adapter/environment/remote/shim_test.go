@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -724,7 +725,14 @@ func TestShim_UnixSocketListen(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	sockDir := t.TempDir()
+	// Use a short base dir for the socket: macOS caps sockaddr_un.sun_path at
+	// ~104 bytes, and the default /var/folders TMPDIR overflows it. /tmp keeps
+	// the path well under the limit on both macOS and Linux.
+	sockDir, err := os.MkdirTemp("/tmp", "criteria-shim")
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(sockDir) })
 	sockPath := filepath.Join(sockDir, "criteria-remote.sock")
 
 	verifier := &fixedDigestVerifier{allowed: map[string]string{"noop": "sha256:abcd1234"}}
@@ -775,6 +783,28 @@ func TestShim_UnixSocketListen(t *testing.T) {
 	}
 }
 
+func TestShim_UnixSocketPathTooLong(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// A socket path well beyond every platform's sun_path limit must fail fast
+	// with a clear, actionable error rather than an opaque "invalid argument".
+	longPath := "/tmp/" + strings.Repeat("x", 200) + "/criteria-remote.sock"
+	verifier := &fixedDigestVerifier{allowed: map[string]string{"noop": "sha256:abcd1234"}}
+	shim, err := NewShim(&Config{ListenAddress: longPath}, verifier)
+	if err != nil {
+		t.Fatalf("NewShim: %v", err)
+	}
+	err = shim.Start(ctx)
+	if err == nil {
+		_ = shim.Stop(ctx)
+		t.Fatal("expected Start to fail for an over-limit unix socket path")
+	}
+	if !strings.Contains(err.Error(), "exceeding") && !strings.Contains(err.Error(), "exceed") {
+		t.Errorf("expected a clear path-length error, got: %v", err)
+	}
+}
+
 func TestParseConfig_AcceptDigestFromValidation(t *testing.T) {
 	parser := hclparse.NewParser()
 	file, diags := parser.ParseHCL([]byte("listen_address = \"127.0.0.1:0\"\naccept_digest_from = \"unknown\"\n"), "test.hcl")
@@ -815,7 +845,7 @@ adapter "noop" "default" {
 }
 step "start" {
   target = adapter.noop.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -875,7 +905,7 @@ adapter "noop" "default" {
 }
 step "start" {
   target = adapter.noop.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -934,7 +964,7 @@ adapter "noop" "default" {
 }
 step "start" {
   target = adapter.noop.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `

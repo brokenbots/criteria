@@ -27,8 +27,7 @@ variable "max_pr_cycles" {
   default = 3
   description = "Maximum PR triage cycles before requesting user assistance."
 }
-
-shared_variable "pr_cycle_count" {
+data "internal" "pr_cycle_count" {
   type = number
   value = 0
 }
@@ -62,10 +61,10 @@ step "open_or_update_pr" {
   input {
     prompt = "Read ${var.workstream_file}. Ensure branch is pushed, then create or update the PR from the current branch to main.\n\nInclude a concise summary and test evidence from the workstream notes/reviewer notes.\n\nEnd your final line with exactly one of:\nRESULT: watch_pr\nRESULT: failure"
   }
-  outcome "watch_pr"       { next = "warmup_ci" }
-  outcome "needs_review"   { next = "warmup_ci" }
-  outcome "needs_approval" { next = "warmup_ci" }
-  outcome "failure"        { next = "failed" }
+  outcome "watch_pr"       { next = step.warmup_ci }
+  outcome "needs_review"   { next = step.warmup_ci }
+  outcome "needs_approval" { next = step.warmup_ci }
+  outcome "failure"        { next = state.failed }
 }
 
 step "warmup_ci" {
@@ -74,8 +73,8 @@ step "warmup_ci" {
     command = "set -euo pipefail; branch=$(git branch --show-current | tr '/ ' '__'); mkdir -p .criteria/tmp; echo 0 > .criteria/tmp/pr_watch_backoff_$branch.txt; echo 'warming up CI checks before first poll (90s)'; sleep 90"
   }
   timeout = "3m"
-  outcome "success" { next = "check_ci_status" }
-  outcome "failure" { next = "check_ci_status" }
+  outcome "success" { next = step.check_ci_status }
+  outcome "failure" { next = step.check_ci_status }
 }
 
 # ── Granular check: CI actions status ────────────────────────────────────────
@@ -113,18 +112,18 @@ step "check_ci_status" {
     SHELL
   }
   timeout = "45m"
-  outcome "success" { next = "route_ci_status" }
-  outcome "failure" { next = "route_ci_status" }
+  outcome "success" { next = switch.route_ci_status }
+  outcome "failure" { next = switch.route_ci_status }
 }
 
 switch "route_ci_status" {
-  condition {
-    match = steps.check_ci_status.exit_code == "0"
-    next  = state.backoff_ci
+  match {
+    condition = steps.check_ci_status.exit_code == "0"
+    next = state.backoff_ci
   }
-  condition {
-    match = steps.check_ci_status.exit_code == "1"
-    next  = state.check_pr_comments
+  match {
+    condition = steps.check_ci_status.exit_code == "1"
+    next = state.check_pr_comments
   }
   default {
     next = state.check_pr_comments
@@ -155,8 +154,8 @@ step "backoff_ci" {
     SHELL
   }
   timeout = "5m"
-  outcome "success" { next = "check_ci_status" }
-  outcome "failure" { next = "check_ci_status" }
+  outcome "success" { next = step.check_ci_status }
+  outcome "failure" { next = step.check_ci_status }
 }
 
 # ── Granular check: PR review threads ────────────────────────────────────────
@@ -186,14 +185,14 @@ step "check_pr_comments" {
     SHELL
   }
   timeout = "30s"
-  outcome "success" { next = "route_pr_comments" }
-  outcome "failure" { next = "route_pr_comments" }
+  outcome "success" { next = switch.route_pr_comments }
+  outcome "failure" { next = switch.route_pr_comments }
 }
 
 switch "route_pr_comments" {
-  condition {
-    match = steps.check_pr_comments.exit_code == "0"
-    next  = state.count_pr_cycle
+  match {
+    condition = steps.check_pr_comments.exit_code == "0"
+    next = state.count_pr_cycle
   }
   default {
     next = state.check_merge_readiness
@@ -229,18 +228,18 @@ step "check_merge_readiness" {
     SHELL
   }
   timeout = "30s"
-  outcome "success" { next = "route_merge_readiness" }
-  outcome "failure" { next = "route_merge_readiness" }
+  outcome "success" { next = switch.route_merge_readiness }
+  outcome "failure" { next = switch.route_merge_readiness }
 }
 
 switch "route_merge_readiness" {
-  condition {
-    match = steps.check_merge_readiness.exit_code == "2"
-    next  = state.merge_pr_and_sync_main
+  match {
+    condition = steps.check_merge_readiness.exit_code == "2"
+    next = state.merge_pr_and_sync_main
   }
-  condition {
-    match = steps.check_merge_readiness.exit_code == "0"
-    next  = state.merge_pr_and_sync_main
+  match {
+    condition = steps.check_merge_readiness.exit_code == "0"
+    next = state.merge_pr_and_sync_main
   }
   default {
     next = state.backoff_ci
@@ -252,19 +251,22 @@ switch "route_merge_readiness" {
 step "count_pr_cycle" {
   target = adapter.shell.default
   input {
-    command = "echo $(( ${shared.pr_cycle_count} + 1 ))"
+    command = "echo $(( ${data.internal.pr_cycle_count.value} + 1 ))"
   }
   outcome "success" {
-    next          = "check_pr_cycles"
-    shared_writes = { pr_cycle_count = "stdout" }
+    next = switch.check_pr_cycles
+      write {
+    target = data.internal.pr_cycle_count.value
+    value  = output.stdout
   }
-  outcome "failure" { next = "failed" }
+  }
+  outcome "failure" { next = state.failed }
 }
 
 switch "check_pr_cycles" {
-  condition {
-    match = shared.pr_cycle_count >= var.max_pr_cycles
-    next  = state.request_pr_assist
+  match {
+    condition = data.internal.pr_cycle_count.value >= var.max_pr_cycles
+    next = state.request_pr_assist
   }
   default {
     next = state.triage_pr_feedback
@@ -274,8 +276,8 @@ switch "check_pr_cycles" {
 approval "request_pr_assist" {
   approvers = ["operator"]
   reason    = "PR triage has cycled without convergence. Continue with another cycle or abort?"
-  outcome "approved" { next = "reset_pr_counter" }
-  outcome "rejected" { next = "failed" }
+  outcome "approved" { next = step.reset_pr_counter }
+  outcome "rejected" { next = state.failed }
 }
 
 step "reset_pr_counter" {
@@ -284,10 +286,13 @@ step "reset_pr_counter" {
     command = "echo 0"
   }
   outcome "success" {
-    next          = "triage_pr_feedback"
-    shared_writes = { pr_cycle_count = "stdout" }
+    next = step.triage_pr_feedback
+      write {
+    target = data.internal.pr_cycle_count.value
+    value  = output.stdout
   }
-  outcome "failure" { next = "failed" }
+  }
+  outcome "failure" { next = state.failed }
 }
 
 # ── PR triage: agent handles feedback ────────────────────────────────────────
@@ -335,13 +340,13 @@ step "triage_pr_feedback" {
       RESULT: failure
     EOT
   }
-  outcome "merged"         { next = "merge_pr_and_sync_main" }
-  outcome "needs_executor" { next = "execute_pr_feedback" }
-  outcome "recheck"        { next = "backoff_ci" }
-  outcome "watch_pr"       { next = "backoff_ci" }
-  outcome "needs_review"   { next = "backoff_ci" }
-  outcome "needs_approval" { next = "backoff_ci" }
-  outcome "failure"        { next = "failed" }
+  outcome "merged"         { next = step.merge_pr_and_sync_main }
+  outcome "needs_executor" { next = step.execute_pr_feedback }
+  outcome "recheck"        { next = step.backoff_ci }
+  outcome "watch_pr"       { next = step.backoff_ci }
+  outcome "needs_review"   { next = step.backoff_ci }
+  outcome "needs_approval" { next = step.backoff_ci }
+  outcome "failure"        { next = state.failed }
 }
 
 # ── PR feedback: executor makes code changes ────────────────────────────────
@@ -373,10 +378,10 @@ step "execute_pr_feedback" {
       The repository requires zero unresolved threads before merge. Do not leave any addressed thread unresolved. Do not resolve threads you have not actually addressed.
     EOT
   }
-  outcome "success"        { next = "verify_pr" }
-  outcome "needs_review"   { next = "verify_pr" }
-  outcome "needs_approval" { next = "verify_pr" }
-  outcome "failure"        { next = "failed" }
+  outcome "success"        { next = step.verify_pr }
+  outcome "needs_review"   { next = step.verify_pr }
+  outcome "needs_approval" { next = step.verify_pr }
+  outcome "failure"        { next = state.failed }
 }
 
 step "verify_pr" {
@@ -385,8 +390,8 @@ step "verify_pr" {
     command = "make ci 2>&1"
   }
   timeout = "120s"
-  outcome "success" { next = "backoff_ci" }
-  outcome "failure" { next = "fix_verify_pr" }
+  outcome "success" { next = step.backoff_ci }
+  outcome "failure" { next = step.fix_verify_pr }
 }
 
 step "fix_verify_pr" {
@@ -396,10 +401,10 @@ step "fix_verify_pr" {
   input {
     prompt = "CI verification failed after PR feedback changes. Fix all failures, then commit and push.\n\n--- verify output ---\n${steps.verify_pr.stdout}\n--- end ---"
   }
-  outcome "success"        { next = "verify_pr" }
-  outcome "needs_review"   { next = "verify_pr" }
-  outcome "needs_approval" { next = "verify_pr" }
-  outcome "failure"        { next = "failed" }
+  outcome "success"        { next = step.verify_pr }
+  outcome "needs_review"   { next = step.verify_pr }
+  outcome "needs_approval" { next = step.verify_pr }
+  outcome "failure"        { next = state.failed }
 }
 
 # ── Merge and sync ───────────────────────────────────────────────────────────
@@ -433,8 +438,8 @@ step "merge_pr_and_sync_main" {
     SHELL
   }
   timeout = "5m"
-  outcome "success" { next = "merged" }
-  outcome "failure" { next = "merged" }
+  outcome "success" { next = state.merged }
+  outcome "failure" { next = state.merged }
 }
 
 # ── Terminal states ──────────────────────────────────────────────────────────

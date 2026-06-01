@@ -8,10 +8,10 @@ This document is the normative reference for the Criteria HCL workflow language,
 
 A workflow module is either:
 
-1. **Single-file:** one `.hcl` file containing all declarations.
-2. **Directory module:** a directory of `.hcl` files; exactly one must contain a `workflow` header block. All files are merged before compilation.
+1. **Single-file:** one `.chcl` or `.hcl` file containing all declarations.
+2. **Directory module:** a directory of `.chcl` and/or `.hcl` files; exactly one must contain a `workflow` header block. All files are merged before compilation.
 
-File names are arbitrary; the `.hcl` extension is required. A module must contain exactly one `workflow` block across all files; zero or more than one is a compile error.
+File names are arbitrary; the `.chcl` extension is preferred for new files (criteria-native tooling uses it for file-type association); `.hcl` is accepted for compatibility. A module must contain exactly one `workflow` block across all files; zero or more than one is a compile error.
 
 Encoding: UTF-8. Max file size: implementation-defined (default 64 MiB for file() reads; no hard limit on source files).
 
@@ -19,20 +19,22 @@ Encoding: UTF-8. Max file size: implementation-defined (default 64 MiB for file(
 
 ```ebnf
 workflow_module  := content_decl*
-content_decl     := workflow_block | variable_block | local_block | shared_var_block
+content_decl     := workflow_block | variable_block | local_block | data_block
                   | environment_block | output_block | adapter_block | subworkflow_block
                   | step_block | state_block | wait_block | approval_block
                   | switch_block | policy_block | permissions_block
 
-workflow_block   := "workflow" STRING "{" workflow_attr* "}"
-workflow_attr    := "version" "=" STRING
+workflow_block   := "workflow" "{" workflow_attr* "}"
+workflow_attr    := "name" "=" STRING
+                  | "version" "=" STRING
                   | "initial_state" "=" STRING
                   | "target_state" "=" STRING
-                  | "environment" "=" STRING
+                  | "environment" "=" traversal
+                  | policy_block
 
 variable_block   := "variable" STRING "{" variable_attr* "}"
 local_block      := "local" STRING "{" local_attr* "}"
-shared_var_block := "shared_variable" STRING "{" shared_var_attr* "}"
+data_block       := "data" STRING STRING "{" data_attr* "}"
 environment_block:= "environment" STRING STRING "{" "}"
 output_block     := "output" STRING "{" output_attr* "}"
 adapter_block    := "adapter" STRING STRING "{" adapter_attr* config_block? "}"
@@ -41,15 +43,16 @@ step_block       := "step" STRING "{" step_attr* input_block? outcome_block* "}"
 state_block      := "state" STRING "{" state_attr* "}"
 wait_block       := "wait" STRING "{" wait_attr* outcome_block* "}"
 approval_block   := "approval" STRING "{" approval_attr* outcome_block* "}"
-switch_block     := "switch" STRING "{" condition_block* default_block? "}"
+switch_block     := "switch" STRING "{" match_block* default_block? "}"
 policy_block     := "policy" "{" policy_attr* "}"
 permissions_block:= "permissions" "{" permissions_attr* "}"
 
-outcome_block    := "outcome" STRING "{" "next" "=" STRING "}"
+outcome_block    := "outcome" STRING "{" "next" "=" traversal write_block* "}"
 input_block      := "input" "{" (STRING "=" expr)* "}"
 config_block     := "config" "{" (STRING "=" expr)* "}"
-condition_block  := "condition" "{" "match" "=" expr "next" "=" STRING "}"
-default_block    := "default" "{" "next" "=" STRING "}"
+write_block      := "write" "{" "target" "=" traversal "value" "=" expr "}"
+match_block      := "match" "{" "condition" "=" expr "next" "=" traversal ("output" "=" expr)? "}"
+default_block    := "default" "{" "next" "=" traversal "}"
 
 expr             := STRING | NUMBER | BOOL | hcl_template | traversal
                   | func_call | binary_op | unary_op | tuple | object
@@ -68,7 +71,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 <!-- BEGIN GENERATED:blocks -->
 ### `workflow { ... }`
 
-- **Source:** [`workflow/schema.go:139`](../workflow/schema.go#L139)
+- **Source:** [`workflow/schema.go:142`](../workflow/schema.go#L142)
 - **Attributes:**
 
 | Attribute | Type | Required | Description |
@@ -83,7 +86,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `variable "name" { ... }`
 
-- **Source:** [`workflow/schema.go:180`](../workflow/schema.go#L180)
+- **Source:** [`workflow/schema.go:183`](../workflow/schema.go#L183)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -106,28 +109,28 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 - **Additional attributes:** captures the "value" expression
 
-### `shared_variable "name" { ... }`
+### `data "kind" "name" { ... }`
 
-- **Source:** [`workflow/schema.go:28`](../workflow/schema.go#L28)
-- **Labels:** `name`
+- **Source:** [`workflow/schema.go:23`](../workflow/schema.go#L23)
+- **Labels:** `kind` `name`
 - **Attributes:**
 
 | Attribute | Type | Required | Description |
 |---|---|---|---|
 | `description` | string | no | _(no description)_ |
-| `type` | hcl.Expression | no | _(no description)_ |
+| `type` | hcl.Expression | yes | _(no description)_ |
 
 - **Additional attributes:** captures the optional "value" expression
 
 ### `environment "type" "name" { ... }`
 
-- **Source:** [`workflow/schema.go:57`](../workflow/schema.go#L57)
+- **Source:** [`workflow/schema.go:60`](../workflow/schema.go#L60)
 - **Labels:** `type` `name`
 - **Additional attributes:** Captures: variables (optional, map of string env-vars), config (optional, type-specific config map).
 
 ### `output "name" { ... }`
 
-- **Source:** [`workflow/schema.go:295`](../workflow/schema.go#L295)
+- **Source:** [`workflow/schema.go:298`](../workflow/schema.go#L298)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -140,7 +143,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `adapter "type" "name" { ... }`
 
-- **Source:** [`workflow/schema.go:207`](../workflow/schema.go#L207)
+- **Source:** [`workflow/schema.go:210`](../workflow/schema.go#L210)
 - **Labels:** `type` `name`
 - **Attributes:**
 
@@ -153,7 +156,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `subworkflow "name" { ... }`
 
-- **Source:** [`workflow/schema.go:305`](../workflow/schema.go#L305)
+- **Source:** [`workflow/schema.go:308`](../workflow/schema.go#L308)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -166,7 +169,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `step "name" { ... }`
 
-- **Source:** [`workflow/schema.go:217`](../workflow/schema.go#L217)
+- **Source:** [`workflow/schema.go:220`](../workflow/schema.go#L220)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -184,7 +187,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `state "name" { ... }`
 
-- **Source:** [`workflow/schema.go:371`](../workflow/schema.go#L371)
+- **Source:** [`workflow/schema.go:392`](../workflow/schema.go#L392)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -197,7 +200,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `wait "name" { ... }`
 
-- **Source:** [`workflow/schema.go:354`](../workflow/schema.go#L354)
+- **Source:** [`workflow/schema.go:375`](../workflow/schema.go#L375)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -210,7 +213,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `approval "name" { ... }`
 
-- **Source:** [`workflow/schema.go:363`](../workflow/schema.go#L363)
+- **Source:** [`workflow/schema.go:384`](../workflow/schema.go#L384)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -223,13 +226,13 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `switch "name" { ... }`
 
-- **Source:** [`workflow/schema.go:382`](../workflow/schema.go#L382)
+- **Source:** [`workflow/schema.go:403`](../workflow/schema.go#L403)
 - **Labels:** `name`
-- **Nested blocks:** [`condition`](#condition---), [`default`](#default---)
+- **Nested blocks:** [`match`](#match---), [`default`](#default---)
 
 ### `permissions { ... }`
 
-- **Source:** [`workflow/schema.go:421`](../workflow/schema.go#L421)
+- **Source:** [`workflow/schema.go:442`](../workflow/schema.go#L442)
 - **Attributes:**
 
 | Attribute | Type | Required | Description |
@@ -239,7 +242,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `policy { ... }`
 
-- **Source:** [`workflow/schema.go:402`](../workflow/schema.go#L402)
+- **Source:** [`workflow/schema.go:423`](../workflow/schema.go#L423)
 - **Attributes:**
 
 | Attribute | Type | Required | Description |
@@ -251,41 +254,52 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `config { ... }`
 
-- **Source:** [`workflow/schema.go:190`](../workflow/schema.go#L190)
+- **Source:** [`workflow/schema.go:193`](../workflow/schema.go#L193)
 
 ### `secrets { ... }`
 
-- **Source:** [`workflow/schema.go:190`](../workflow/schema.go#L190)
+- **Source:** [`workflow/schema.go:193`](../workflow/schema.go#L193)
 
 ### `input { ... }`
 
-- **Source:** [`workflow/schema.go:200`](../workflow/schema.go#L200)
+- **Source:** [`workflow/schema.go:203`](../workflow/schema.go#L203)
 
 ### `secret_input { ... }`
 
-- **Source:** [`workflow/schema.go:200`](../workflow/schema.go#L200)
+- **Source:** [`workflow/schema.go:203`](../workflow/schema.go#L203)
 
 ### `outcome "name" { ... }`
 
-- **Source:** [`workflow/schema.go:347`](../workflow/schema.go#L347)
+- **Source:** [`workflow/schema.go:353`](../workflow/schema.go#L353)
 - **Labels:** `name`
 - **Attributes:**
 
 | Attribute | Type | Required | Description |
 |---|---|---|---|
-| `next` | string | yes | _(no description)_ |
+| `next` | hcl.Expression | yes | _(no description)_ |
 
 - **Additional attributes:** captures the optional "output" expression
+- **Nested blocks:** [`write`](#write---)
 
-### `condition { ... }`
+### `match { ... }`
 
-- **Source:** [`workflow/schema.go:391`](../workflow/schema.go#L391)
-- **Additional attributes:** captures: match (required), next (required), output (optional)
+- **Source:** [`workflow/schema.go:412`](../workflow/schema.go#L412)
+- **Additional attributes:** captures: condition (required), next (required), output (optional)
 
 ### `default { ... }`
 
-- **Source:** [`workflow/schema.go:397`](../workflow/schema.go#L397)
+- **Source:** [`workflow/schema.go:418`](../workflow/schema.go#L418)
 - **Additional attributes:** captures: next (required), output (optional)
+
+### `write { ... }`
+
+- **Source:** [`workflow/schema.go:361`](../workflow/schema.go#L361)
+- **Attributes:**
+
+| Attribute | Type | Required | Description |
+|---|---|---|---|
+| `target` | hcl.Expression | yes | _(no description)_ |
+| `value` | hcl.Expression | yes | _(no description)_ |
 <!-- END GENERATED:blocks -->
 
 ### Notes on specific blocks
@@ -296,7 +310,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 **`local`** — Compile-time constant. Evaluate a single `value` expression; the result is frozen for the run. No side effects.
 
-**`shared_variable`** — Runtime-mutable, workflow-scoped value. `type` declares the cty type; `value` is the optional initial expression. Reads via `shared.<name>`; writes via `shared_writes` in outcome blocks.
+**`data "internal" "<name>"`** — Runtime-mutable, workflow-scoped value. `type` declares the cty type; `value` is the optional initial expression. Reads via `data.internal.<name>.value`; writes via `write { }` blocks in outcomes.
 
 **`environment`** — Declares an execution environment. First label is type (e.g. `shell`), second is name. Attributes are free-form and type-specific; no fixed schema beyond the two labels.
 
@@ -314,7 +328,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 **`approval`** — Requires human approval (server mode only). `approvers` is a list of identity strings; `reason` is a human-readable prompt.
 
-**`switch`** — Conditional routing. `condition` sub-blocks are evaluated in declaration order; the first truthy `match` expression wins. `default` is the fallback; absence without an exhaustive condition set produces a runtime error.
+**`switch`** — Conditional routing. `match` sub-blocks are evaluated in declaration order; the first truthy `condition` expression wins. `default` is the fallback; absence without an exhaustive condition set produces a runtime error.
 
 **`policy`** — Global execution guards. Zero or one per module. Attributes set hard limits on step execution counts.
 
@@ -332,7 +346,8 @@ The following block types are defined. Tables are auto-generated from [`workflow
 | `each.value` / `each.key` / `each._idx` / `each._total` / `each._first` / `each._last` / `each._prev` | iterating-step expressions only | Per-iteration bindings; see Iteration semantics. |
 | `while.*` | while-modified-step expressions only | Per-iteration bindings for while-driven steps; see While iteration. |
 | `local.*` | all expressions | Compile-time constants declared with `local` blocks. |
-| `shared.*` | all expressions; mutable via `shared_writes` | Runtime-mutable shared values declared with `shared_variable` blocks. |
+| `data.<kind>.<name>.value` | all expressions; mutable via `write` blocks | Runtime-mutable values declared with `data` blocks (e.g. `data "internal"`); write via `write` blocks. |
+| `path.*` | all expressions | Workflow-relative, project-root, and working-directory paths for file construction. |
 <!-- END GENERATED:namespaces -->
 
 ### Operator precedence (HCL)
@@ -373,9 +388,9 @@ Expression functions available in all HCL attribute values within a workflow. Fu
 | `yamldecode` | `yamldecode(value: string)` | `unknown` | [workflow/eval_functions_encoding.go:88](../workflow/eval_functions_encoding.go#L88) |
 | `uuid` | `uuid()` | `string` | [workflow/eval_functions_dynamic.go:28](../workflow/eval_functions_dynamic.go#L28) |
 | `timestamp` | `timestamp()` | `string` | [workflow/eval_functions_dynamic.go:41](../workflow/eval_functions_dynamic.go#L41) |
-| `startswith` | `startswith(string: string, prefix: string)` | `bool` | [workflow/eval_functions.go:143](../workflow/eval_functions.go#L143) |
-| `endswith` | `endswith(string: string, suffix: string)` | `bool` | [workflow/eval_functions.go:156](../workflow/eval_functions.go#L156) |
-| `strrev` | `strrev(string: string)` | `string` | [workflow/eval_functions.go:169](../workflow/eval_functions.go#L169) |
+| `startswith` | `startswith(string: string, prefix: string)` | `bool` | [workflow/eval_functions.go:158](../workflow/eval_functions.go#L158) |
+| `endswith` | `endswith(string: string, suffix: string)` | `bool` | [workflow/eval_functions.go:171](../workflow/eval_functions.go#L171) |
+| `strrev` | `strrev(string: string)` | `string` | [workflow/eval_functions.go:184](../workflow/eval_functions.go#L184) |
 <!-- END GENERATED:functions -->
 
 ### Standard library functions
@@ -408,7 +423,7 @@ Steps support three iteration forms, specified via attributes captured in the st
 
 1. **`for_each`** — Iterates over a list or map expression. One adapter call per element.
 2. **`count`** — Iterates a fixed number of times. `count = N` produces iterations `0` through `N-1`.
-3. **`while`** — Iterates while a boolean expression remains true. The expression is re-evaluated against the live eval context (including current `shared.*` values) before each iteration; when false, the loop exits via the aggregate outcome. The cursor's `Total = -1` signals the unbounded form. See [docs/workflow.md](workflow.md#while--condition-driven-iteration) for the full contract.
+3. **`while`** — Iterates while a boolean expression remains true. The expression is re-evaluated against the live eval context (including current `data.*` values) before each iteration; when false, the loop exits via the aggregate outcome. The cursor's `Total = -1` signals the unbounded form. See [docs/workflow.md](workflow.md#while--condition-driven-iteration) for the full contract.
 
 **`each.*` bindings (available only inside iterating steps):**
 
@@ -460,7 +475,7 @@ Each step, wait, and approval node declares one or more `outcome` blocks mapping
 
 **`output` projection:** An `outcome` block may include an `output = {...}` expression to project a custom output map. If absent, the adapter's full output is passed downstream as `steps.<name>.*`.
 
-**`shared_writes`:** An `outcome` block may include `shared_writes = { key = expr, ... }` to atomically update shared variables on that transition. Write ordering within a single outcome block is deterministic (declaration order).
+**`write`:** An `outcome` block may include one or more `write { target = data.<kind>.<name>.value, value = expr }` blocks to atomically update data values on that transition. Write ordering within a single outcome block is deterministic (declaration order).
 
 **Terminal routing:** A `state` block with `terminal = true` terminates the run. `success = true` marks the run as succeeded; `success = false` marks it as failed. A run that reaches no terminal state is a runtime error (infinite loop guard via `policy.max_total_steps`).
 
@@ -486,54 +501,79 @@ Each step, wait, and approval node declares one or more `outcome` blocks mapping
 ### 1. Linear two-step workflow
 
 ```hcl
-workflow "greet" {
+workflow {
+  name = "greet"
   version = "1"
+  initial_state = "hello"
+  target_state  = "done"
 }
 
 adapter "noop" "default" {}
 
 step "hello" {
   target = adapter.noop.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = state.done }
 }
 
-state "done" { terminal = true  success = true }
+state "done" {
+  terminal = true
+  success  = true
+}
 ```
 
 ### 2. Branching switch
 
 ```hcl
-workflow "branch" { version = "1" }
+workflow {
+  name = "branch"
+  version = "1"
+  initial_state = "check"
+  target_state  = "deploy_prod"
+}
 
-variable "env" { type = "string" }
+variable "env" { type = string }
 
 adapter "noop" "default" {}
 
 step "check" {
   target = adapter.noop.default
-  outcome "ok"   { next = "switch_env" }
-  outcome "fail" { next = "failed" }
+  outcome "ok"   { next = step.switch_env }
+  outcome "fail" { next = state.failed }
 }
 
 switch "switch_env" {
-  condition {
-    match = var.env == "prod"
-    next  = "deploy_prod"
+  match {
+    condition = var.env == "prod"
+    next  = state.deploy_prod
   }
-  default { next = "deploy_dev" }
+  default { next = state.deploy_dev }
 }
 
-state "deploy_prod" { terminal = true  success = true }
-state "deploy_dev"  { terminal = true  success = true }
-state "failed"      { terminal = true  success = false }
+state "deploy_prod" {
+  terminal = true
+  success  = true
+}
+state "deploy_dev" {
+  terminal = true
+  success  = true
+}
+state "failed" {
+  terminal = true
+  success  = false
+}
 ```
 
 ### 3. `for_each` iteration
 
 ```hcl
-workflow "batch" { version = "1" }
+workflow {
+  name = "batch"
+  version = "1"
+  initial_state = "process"
+  target_state  = "done"
+}
 
-variable "items" { type = "list(string)" }
+variable "items" { type = list(string) }
 
 adapter "noop" "default" {}
 
@@ -541,36 +581,61 @@ step "process" {
   target   = adapter.noop.default
   for_each = var.items
   input    { item = each.value }
-  outcome "success" { next = "done" }
+  outcome "all_succeeded" { next = state.done }
+  outcome "any_failed"    { next = state.failed }
 }
 
-state "done" { terminal = true  success = true }
+state "done" {
+  terminal = true
+  success  = true
+}
+state "failed" {
+  terminal = true
+  success  = false
+}
 ```
 
 ### 4. Parallel iteration
 
 ```hcl
-workflow "parallel" { version = "1" }
+workflow {
+  name = "parallel"
+  version = "1"
+  initial_state = "fanout"
+  target_state  = "done"
+}
 
-variable "ids" { type = "list(string)" }
+variable "ids" { type = list(string) }
 
 adapter "noop" "default" {}
 
 step "fanout" {
   target   = adapter.noop.default
-  for_each = var.ids
-  parallel = true
+  parallel = var.ids
   input    { id = each.value }
-  outcome "success" { next = "done" }
+  outcome "all_succeeded" { next = state.done }
+  outcome "any_failed"    { next = state.failed }
 }
 
-state "done" { terminal = true  success = true }
+state "done" {
+  terminal = true
+  success  = true
+}
+state "failed" {
+  terminal = true
+  success  = false
+}
 ```
 
 ### 5. Subworkflow call
 
 ```hcl
-workflow "orchestrate" { version = "1" }
+workflow {
+  name = "orchestrate"
+  version = "1"
+  initial_state = "run_child"
+  target_state  = "done"
+}
 
 subworkflow "child" {
   source = "./child-workflow"
@@ -578,12 +643,18 @@ subworkflow "child" {
 
 step "run_child" {
   target = subworkflow.child
-  outcome "success" { next = "done" }
-  outcome "failure" { next = "failed" }
+  outcome "success" { next = state.done }
+  outcome "failure" { next = state.failed }
 }
 
-state "done"   { terminal = true  success = true }
-state "failed" { terminal = true  success = false }
+state "done" {
+  terminal = true
+  success  = true
+}
+state "failed" {
+  terminal = true
+  success  = false
+}
 ```
 
 > For pattern-by-pattern guidance, see [docs/llm/](./llm/). Concatenate this spec with the prompt pack to assemble a complete LLM authoring system prompt.

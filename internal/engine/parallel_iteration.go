@@ -357,11 +357,11 @@ func runOneParallelItem(
 // visitsMu serializes concurrent check-and-increment in incrementVisit.
 func buildParallelIterState(i, total int, item, key cty.Value, st *RunState, visitsMu *sync.Mutex) *RunState {
 	return &RunState{
-		Current:        st.Current,
-		WorkflowDir:    st.WorkflowDir,
-		SharedVarStore: st.SharedVarStore,
-		Visits:         st.Visits,
-		VisitsMu:       visitsMu,
+		Current:     st.Current,
+		WorkflowDir: st.WorkflowDir,
+		DataStore:   st.DataStore,
+		Visits:      st.Visits,
+		VisitsMu:    visitsMu,
 		Vars: workflow.WithEachBinding(st.Vars, &workflow.EachBinding{
 			Value: item,
 			Key:   key,
@@ -447,7 +447,7 @@ func (n *stepNode) runParallelAdapterIteration(ctx context.Context, st *RunState
 
 // runParallelSubworkflowIteration evaluates the step's input expressions and
 // spawns a fresh subworkflow execution per iteration. Each subworkflow gets its
-// own child scope and SharedVarStore, matching the sequential subworkflow step
+// own child scope and DataStore, matching the sequential subworkflow step
 // semantics. Returns the raw outcome string and string-encoded outputs.
 func (n *stepNode) runParallelSubworkflowIteration(ctx context.Context, st *RunState, deps Deps) (outcome string, outputs map[string]string, err error) {
 	swNode, ok := n.graph.Subworkflows[n.step.SubworkflowRef]
@@ -472,9 +472,12 @@ func (n *stepNode) runParallelSubworkflowIteration(ctx context.Context, st *RunS
 	iterDeps := deps
 	iterDeps.Sessions = adapterhost.NewSessionManager(deps.Loader)
 
-	swOutputs, runErr := runSubworkflow(ctx, swNode, st, stepInput, iterDeps)
+	swOutputs, terminalState, runErr := runSubworkflow(ctx, swNode, st, stepInput, iterDeps)
 	if runErr != nil {
 		return "failure", nil, runErr
+	}
+	if terminalState != workflow.ReturnSentinel && !swNode.Body.States[terminalState].Success {
+		return "failure", nil, nil
 	}
 
 	stringOutputs, renderErr := ctyOutputsToStrings(n.step.Name, swOutputs)
@@ -499,7 +502,7 @@ func parallelOutputKey(index int) cty.Value {
 func ctyOutputsToStrings(stepName string, outputs map[string]cty.Value) (map[string]string, error) {
 	result := make(map[string]string, len(outputs))
 	for k, v := range outputs {
-		if v.IsKnown() && v.Type() == cty.String {
+		if v.IsKnown() && !v.IsNull() && v.Type() == cty.String {
 			result[k] = v.AsString()
 			continue
 		}
@@ -512,9 +515,6 @@ func ctyOutputsToStrings(stepName string, outputs map[string]cty.Value) (map[str
 	return result, nil
 }
 
-// evaluateParallel implements the parallel = [...] step modifier. It evaluates
-// the list expression, fans out the step body concurrently up to ParallelMax
-// goroutines, aggregates indexed outputs, applies per-iteration shared_writes,
 // classifyIterError interprets a parallelIterResult error for aggregation.
 // Returns (isRunError, isFailure) where:
 //   - isRunError means the error must propagate as a run failure (not outcome routing).
@@ -539,7 +539,7 @@ func classifyIterError(r parallelIterResult) (isRunError, isFailure bool) {
 }
 
 // aggregateParallelResults iterates over results, accumulates per-iteration
-// outputs and shared_writes, and returns whether any iteration failed.
+// outputs and write blocks, and returns whether any iteration failed.
 func (n *stepNode) aggregateParallelResults(results []parallelIterResult, st *RunState, sink Sink) (anyFailed bool, err error) {
 	for _, r := range results {
 		if r.err != nil {
@@ -558,7 +558,7 @@ func (n *stepNode) aggregateParallelResults(results []parallelIterResult, st *Ru
 			st.Vars = workflow.WithIndexedStepOutput(st.Vars, n.step.Name, key, r.outputs)
 		}
 		if r.err == nil && r.outcome != "" {
-			if writeErr := n.applyIterationSharedWrites(r.outcome, r.outputs, st, sink); writeErr != nil {
+			if writeErr := n.applyIterationDataWrites(r.outcome, r.outputs, st, sink); writeErr != nil {
 				return anyFailed, writeErr
 			}
 		}
@@ -567,7 +567,7 @@ func (n *stepNode) aggregateParallelResults(results []parallelIterResult, st *Ru
 }
 
 // finishParallelOutcome resolves the aggregate outcome, emits sink events, and
-// applies output projection and aggregate-level shared_writes.
+// applies output projection and aggregate-level write blocks.
 func (n *stepNode) finishParallelOutcome(anyFailed bool, st *RunState, deps Deps) (string, error) {
 	aggregateOutcome := "all_succeeded"
 	if anyFailed && n.step.OnFailure != "ignore" {
@@ -593,8 +593,8 @@ func (n *stepNode) finishParallelOutcome(anyFailed bool, st *RunState, deps Deps
 		}
 	}
 
-	if len(co.SharedWrites) > 0 && st.SharedVarStore != nil {
-		if writeErr := applySharedWrites(n.step.Name, aggregateOutcome, co.SharedWrites, projectedCty, nil, st, deps.Sink); writeErr != nil {
+	if len(co.Writes) > 0 && st.DataStore != nil {
+		if writeErr := applyDataWrites(n.step.Name, aggregateOutcome, co.Writes, projectedCty, nil, st, deps.Sink); writeErr != nil {
 			return "", writeErr
 		}
 	}
@@ -604,11 +604,11 @@ func (n *stepNode) finishParallelOutcome(anyFailed bool, st *RunState, deps Deps
 
 // evaluateParallel implements the parallel = [...] step modifier. It evaluates
 // the list expression, fans out the step body concurrently up to ParallelMax
-// goroutines, aggregates indexed outputs, applies per-iteration shared_writes,
+// goroutines, aggregates indexed outputs, applies per-iteration write blocks,
 // and routes via the aggregate outcome (all_succeeded / any_failed).
 //
 // The function mirrors finishIterationInGraph for aggregate outcome projection
-// and shared_writes so that parallel steps behave consistently with for_each/count.
+// and write blocks so that parallel steps behave consistently with for_each/count.
 func (n *stepNode) evaluateParallel(ctx context.Context, st *RunState, deps Deps) (string, error) {
 	evalCtx := workflow.BuildEvalContextWithOpts(st.Vars, workflow.DefaultFunctionOptions(st.WorkflowDir))
 	items, keys, err := buildForEachItems(n.step.Parallel, evalCtx)

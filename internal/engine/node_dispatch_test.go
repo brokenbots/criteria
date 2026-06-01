@@ -19,7 +19,7 @@ workflow {
 }
 step "a" {
   target = adapter.fake
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }`)
 
@@ -56,7 +56,7 @@ workflow {
 }
 step "a" {
   target = adapter.fake
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }`)
 
@@ -85,7 +85,7 @@ workflow {
 }
 step "a" {
   target = adapter.fake
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }`)
 
@@ -111,7 +111,7 @@ state "done" { terminal = true }`)
 		t.Fatalf("step evaluate: %v", err)
 	}
 	if next != "done" {
-		t.Fatalf("next=%q want done", next)
+		t.Fatalf("next=step.%q want done", next)
 	}
 	if st.TotalSteps != 1 {
 		t.Fatalf("after step total steps=%d want 1", st.TotalSteps)
@@ -143,7 +143,7 @@ workflow {
 }
 step "a" {
   target = adapter.fake
-  outcome "again" { next = "a" }
+  outcome "again" { next = step.a }
 }
 state "done" { terminal = true }
 `)
@@ -170,7 +170,7 @@ workflow {
 }
 step "a" {
   target = adapter.fake
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" {
   terminal = true

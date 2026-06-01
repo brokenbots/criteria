@@ -1,15 +1,15 @@
 # mode: standalone
-# Example: demonstrates `shared_variable` blocks for runtime-mutable workflow state.
+# Example: demonstrates `data` blocks for runtime-mutable workflow state.
 #
-# shared_variable provides engine-managed, workflow-scoped mutable state.
-# Steps can read the current value via shared.<name> in any HCL expression,
-# and write a new value by mapping an adapter output key in shared_writes.
+# data provides engine-managed, workflow-scoped mutable state.
+# Steps can read the current value via data.<kind>.<name>.value in any HCL expression,
+# and write a new value using a write block inside an outcome.
 #
 # This workflow simulates a pipeline that tracks a message through processing:
-# - shared_variable "status" starts as "pending"
-# - step "start" writes "processing" into status via shared_writes
-# - step "finish" writes "complete" into status via shared_writes
-# - step "report" reads shared.status in its input expression
+# - data "internal" "status" starts as "pending"
+# - step "start" writes "processing" into status via a write block
+# - step "finish" writes "complete" into status via a write block
+# - step "report" reads data.internal.status.value in its input expression
 workflow {
   name = "shared-variable-demo"
   version       = "0.1"
@@ -20,7 +20,7 @@ workflow {
 adapter "noop" "default" {}
 
 # Runtime-mutable workflow-scoped variable, initialised to "pending".
-shared_variable "status" {
+data "internal" "status" {
   type = string
   value = "pending"
 }
@@ -29,9 +29,12 @@ step "start" {
   target = adapter.noop.default
 
   outcome "success" {
-    next = "finish"
-    # Write the "next_status" output from the noop adapter into shared.status.
-    shared_writes = { status = "next_status" }
+    next = step.finish
+    # Write a literal value into data.internal.status.value.
+    write {
+      target = data.internal.status.value
+      value  = "processing"
+    }
   }
 }
 
@@ -39,19 +42,22 @@ step "finish" {
   target = adapter.noop.default
 
   outcome "success" {
-    next = "report"
-    shared_writes = { status = "next_status" }
+    next = step.report
+    write {
+      target = data.internal.status.value
+      value  = "complete"
+    }
   }
 }
 
 step "report" {
   target = adapter.noop.default
   input {
-    # Read the current value of shared.status into the step input.
-    message = "Pipeline status is: ${shared.status}"
+    # Read the current value of data.internal.status.value into the step input.
+    message = "Pipeline status is: ${data.internal.status.value}"
   }
 
-  outcome "success" { next = "done" }
+  outcome "success" { next = state.done }
 }
 
 state "done" { terminal = true }

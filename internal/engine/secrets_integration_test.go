@@ -97,7 +97,7 @@ adapter "fake" "default" {
 
 step "run" {
   target = adapter.fake.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 
 state "done" { terminal = true }`)
@@ -195,7 +195,7 @@ adapter "fake" "default" {
 
 step "run" {
   target = adapter.fake.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 
 state "done" { terminal = true }`)

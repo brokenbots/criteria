@@ -26,7 +26,7 @@ adapter "noop" "default" {}
 
 step "run" {
   target = adapter.noop.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 
 state "done" { terminal = true }
@@ -82,12 +82,12 @@ func TestParseDir_MultipleFiles(t *testing.T) {
 `)
 	writeHCLFile(t, dir, "steps", `step "step_a" {
   target = adapter.noop.default
-  outcome "success" { next = "step_b" }
+  outcome "success" { next = step.step_b }
 }
 
 step "step_b" {
   target = adapter.noop.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 `)
 	writeHCLFile(t, dir, "states", `state "done" { terminal = true }
@@ -126,10 +126,10 @@ func TestParseDir_NoHCLFiles_Error(t *testing.T) {
 
 	_, diags := ParseDir(dir)
 	if !diags.HasErrors() {
-		t.Fatal("expected error for directory with no .hcl files")
+		t.Fatal("expected error for directory with no workflow files")
 	}
-	if !strings.Contains(diags.Error(), "no .hcl files") {
-		t.Errorf("expected 'no .hcl files' in error, got: %s", diags.Error())
+	if !strings.Contains(diags.Error(), "no workflow files") {
+		t.Errorf("expected 'no workflow files' in error, got: %s", diags.Error())
 	}
 }
 
@@ -162,7 +162,7 @@ adapter "noop" "default" {}
 
 step "run" {
   target = adapter.noop.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 
 state "done" { terminal = true }
@@ -170,7 +170,7 @@ state "done" { terminal = true }
 	// steps2.hcl declares the same step "run" → merge collision.
 	writeHCLFile(t, dir, "steps2", `step "run" {
   target = adapter.noop.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 `)
 
@@ -248,7 +248,7 @@ func TestParseDir_NoWorkflowBlock_Error(t *testing.T) {
 
 step "run" {
   target = adapter.noop.default
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `)

@@ -5,7 +5,7 @@ workflow {
   target_state  = "done"
 }
 
-shared_variable "token" {
+data "internal" "token" {
   type   = string
   secret = true
 }
@@ -15,9 +15,9 @@ adapter "noop" "default" {}
 step "run" {
   target = adapter.noop.default
   secret_input {
-    key = shared.token
+    key = data.internal.token.value
   }
-  outcome "success" { next = "done" }
+  outcome "success" { next = state.done }
 }
 
 state "done" { terminal = true }

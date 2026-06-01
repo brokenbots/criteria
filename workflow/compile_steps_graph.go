@@ -15,20 +15,20 @@ import (
 
 // compileOutcomeBlock populates node.Outcomes from sp.Outcomes. It validates:
 //   - no duplicate outcome names
-//   - "next" is present (non-empty)
+//   - "next" is present and resolves to a valid node target
 //   - "return" is not used as a step name (reserved sentinel)
 //   - outcome "default" block, if present, has a valid next target
 //   - the optional "output" expression, when present, references only known
 //     vars/locals (runtime-only refs like steps.* are deferred, not errors)
 //     and, when foldable at compile time, evaluates to an object type.
-//   - the optional "shared_writes" map, when present, references only declared
-//     shared_variable names (unknown keys are compile errors), and maps to
-//     output keys that exist in the output projection (when declared) or in
-//     the adapter's output schema (when adapterOutputSchema is non-nil).
+//   - the optional "write" blocks, when present, reference declared data blocks
+//     and map to output keys that exist in the output projection (when
+//     declared) or in the adapter's output schema (when adapterOutputSchema
+//     is non-nil).
 //
 // The optional "output" expression is extracted from the outcome's Remain body
-// and stored in CompiledOutcome.OutputExpr. The optional "shared_writes" map
-// is extracted from Remain and stored in CompiledOutcome.SharedWrites.
+// and stored in CompiledOutcome.OutputExpr. The optional "write" blocks are
+// stored in CompiledOutcome.Writes.
 func compileOutcomeBlock(sp *StepSpec, node *StepNode, g *FSMGraph, opts CompileOpts, adapterOutputSchema map[string]ConfigField) hcl.Diagnostics {
 	var diags hcl.Diagnostics
 	seen := map[string]bool{}
@@ -39,20 +39,23 @@ func compileOutcomeBlock(sp *StepSpec, node *StepNode, g *FSMGraph, opts Compile
 			continue
 		}
 		seen[o.Name] = true
-		if o.Next == "" {
+		if o.Next == nil {
 			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q outcome %q: next is required", sp.Name, o.Name)})
 			continue
 		}
-		compiled := &CompiledOutcome{Name: o.Name, Next: o.Next}
-		if o.Remain != nil {
-			// Aggregate iterating outcomes (next != "_continue") fire after all
-			// iterations complete; the engine has no raw adapter outputs at that
-			// point. shared_writes on these outcomes must use an explicit
-			// output = { ... } projection block — never the adapter output schema.
-			isAggregateIter := isIter && o.Next != "_continue"
-			d := compileOutcomeRemain(sp.Name, o.Name, o.Remain, g, opts, adapterOutputSchema, compiled, isAggregateIter)
-			diags = append(diags, d...)
+		nextStr, d := resolveNextAttr(o.Next, fmt.Sprintf("step %q", sp.Name), fmt.Sprintf("outcome %q", o.Name))
+		diags = append(diags, d...)
+		if nextStr == "" {
+			continue
 		}
+		compiled := &CompiledOutcome{Name: o.Name, Next: nextStr}
+		// Aggregate iterating outcomes (next != "_continue") fire after all
+		// iterations complete; the engine has no raw adapter outputs at that
+		// point. write blocks on these outcomes must use an explicit
+		// output = { ... } projection block — never the adapter output schema.
+		isAggregateIter := isIter && nextStr != "_continue"
+		d = compileOutcomeRemain(sp.Name, o.Name, o.Remain, o.Writes, g, opts, adapterOutputSchema, compiled, isAggregateIter)
+		diags = append(diags, d...)
 		if o.Name == "default" {
 			node.DefaultOutcome = compiled
 		} else {
@@ -160,55 +163,59 @@ func staticObjectExprKeys(expr hcl.Expression) map[string]bool {
 }
 
 // compileOutcomeRemain processes the Remain body of an outcome block, extracting
-// the optional "output" and "shared_writes" attributes and populating compiled.
+// the optional "output" attribute and compiling "write" blocks into compiled.
 // isAggregateIter must be true when this outcome is an aggregate outcome on an
 // iterating step (next != "_continue"): in that case the engine has no raw
-// adapter outputs at the time the outcome fires, so shared_writes entries can
-// only reference keys from an explicit output = { ... } projection block.
-func compileOutcomeRemain(stepName, outcomeName string, remain hcl.Body, g *FSMGraph, opts CompileOpts, adapterOutputSchema map[string]ConfigField, compiled *CompiledOutcome, isAggregateIter bool) hcl.Diagnostics {
-	content, _, diags := remain.PartialContent(&hcl.BodySchema{
-		Attributes: []hcl.AttributeSchema{
-			{Name: "output", Required: false},
-			{Name: "shared_writes", Required: false},
-		},
-	})
+// adapter outputs at the time the outcome fires, so write blocks can only
+// reference keys from an explicit output = { ... } projection block.
+func compileOutcomeRemain(stepName, outcomeName string, remain hcl.Body, writes []WriteSpec, g *FSMGraph, opts CompileOpts, adapterOutputSchema map[string]ConfigField, compiled *CompiledOutcome, isAggregateIter bool) hcl.Diagnostics {
+	var diags hcl.Diagnostics
 
 	var knownOutputKeys map[string]bool
-	if attr, ok := content.Attributes["output"]; ok {
-		compiled.OutputExpr = attr.Expr
-		diags = append(diags, validateOutcomeOutputExpr(stepName, outcomeName, attr, g, opts)...)
-		if !isAggregateIter {
-			diags = append(diags, validateOutputExprStepOutputRefs(stepName, outcomeName, attr.Expr, adapterOutputSchema)...)
+	if remain != nil {
+		content, _, d := remain.PartialContent(&hcl.BodySchema{
+			Attributes: []hcl.AttributeSchema{
+				{Name: "output", Required: false},
+			},
+		})
+		diags = append(diags, d...)
+
+		if attr, ok := content.Attributes["output"]; ok {
+			compiled.OutputExpr = attr.Expr
+			diags = append(diags, validateOutcomeOutputExpr(stepName, outcomeName, attr, g, opts)...)
+			if !isAggregateIter {
+				diags = append(diags, validateOutputExprStepOutputRefs(stepName, outcomeName, attr.Expr, adapterOutputSchema)...)
+			}
+			knownOutputKeys = staticObjectExprKeys(attr.Expr)
 		}
-		knownOutputKeys = staticObjectExprKeys(attr.Expr)
 	}
 
-	if attr, ok := content.Attributes["shared_writes"]; ok {
+	if len(writes) > 0 {
 		if isAggregateIter && knownOutputKeys == nil {
 			// Aggregate outcomes have no raw adapter outputs at runtime.
 			// Require an explicit output = { ... } projection so the compiler
 			// can validate the keys and the engine has values to write from.
-			r := attr.Expr.StartRange()
+			r := writes[0].Target.StartRange()
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagError,
-				Summary:  fmt.Sprintf("step %q outcome %q: shared_writes on aggregate outcomes require an output = { ... } projection block", stepName, outcomeName),
-				Detail:   `Aggregate outcomes (e.g. "all_succeeded", "any_failed") fire after all iterations complete and have no single adapter output available. Add an output = { ... } block inside this outcome to project the values you want to write, then reference those projection keys in shared_writes.`,
+				Summary:  fmt.Sprintf("step %q outcome %q: write blocks on aggregate outcomes require an output = { ... } projection block", stepName, outcomeName),
+				Detail:   `Aggregate outcomes (e.g. "all_succeeded", "any_failed") fire after all iterations complete and have no single adapter output available. Add an output = { ... } block inside this outcome to project the values you want to write, then reference those projection keys in write blocks.`,
 				Subject:  &r,
 			})
 		} else {
-			effectiveKeys := resolveSharedWritesKeys(knownOutputKeys, adapterOutputSchema)
-			writes, d := compileSharedWritesAttr(stepName, outcomeName, attr, g, effectiveKeys)
+			effectiveKeys := resolveWriteKeys(knownOutputKeys, adapterOutputSchema)
+			compiledWrites, d := compileWrites(stepName, outcomeName, writes, g, effectiveKeys)
 			diags = append(diags, d...)
-			compiled.SharedWrites = writes
+			compiled.Writes = compiledWrites
 		}
 	}
 
 	return diags
 }
 
-// resolveSharedWritesKeys returns the set of known output keys for shared_writes
+// resolveWriteKeys returns the set of known output keys for write block
 // validation. Prefers projection keys; falls back to the adapter output schema.
-func resolveSharedWritesKeys(projectionKeys map[string]bool, schema map[string]ConfigField) map[string]bool {
+func resolveWriteKeys(projectionKeys map[string]bool, schema map[string]ConfigField) map[string]bool {
 	if projectionKeys != nil {
 		return projectionKeys
 	}
@@ -229,7 +236,7 @@ func validateStepNameNotReturn(sp *StepSpec) hcl.Diagnostics {
 		return hcl.Diagnostics{&hcl.Diagnostic{
 			Severity: hcl.DiagError,
 			Summary:  `step "return": "return" is a reserved name; steps cannot be named "return"`,
-			Detail:   `The name "return" is reserved as a sentinel for outcome routing (next = "return"). Choose a different step name.`,
+			Detail:   `The name "return" is reserved as a sentinel for outcome routing (next = step.return). Choose a different step name.`,
 		}}
 	}
 	return nil
@@ -317,10 +324,11 @@ func nodeTargets(name string, g *FSMGraph) []string {
 	return nil
 }
 
-// warnCrossStepFieldRefs walks every compiled expression that may contain
-// steps.<name>.<field> traversals and emits DiagWarning when <field> is absent
-// from the referenced step's declared OutputSchema. Only fires when a schema is
-// available; steps with no OutputSchema are skipped (permissive).
+// checkCrossStepFieldRefs walks every compiled expression that may contain
+// steps.<name>.<field> traversals and emits DiagError when <field> is absent
+// from the referenced step's declared OutputSchema or when the step name is
+// unknown. Only fires when a schema is available; steps with no OutputSchema
+// are skipped (permissive).
 //
 // Expression sites checked:
 //   - StepNode.InputExprs (step input block attribute expressions)
@@ -331,11 +339,11 @@ func nodeTargets(name string, g *FSMGraph) []string {
 // Switch condition match expressions are intentionally excluded: they are
 // already checked inline by validateSwitchExprRefs during compileSwitches,
 // which runs after all steps are registered. Including them here would produce
-// duplicate warnings for the same traversal.
+// duplicate diagnostics for the same traversal.
 //
 // This is a post-compilation pass: all steps must be registered in g.Steps
 // before it runs so forward-references resolve correctly.
-func warnCrossStepFieldRefs(g *FSMGraph, schemas map[string]AdapterInfo) hcl.Diagnostics {
+func checkCrossStepFieldRefs(g *FSMGraph, schemas map[string]AdapterInfo) hcl.Diagnostics {
 	var diags hcl.Diagnostics
 	for _, ne := range collectCrossStepExprs(g) {
 		diags = append(diags, checkStepsFieldTraversals(ne.context, ne.expr, g, schemas)...)
@@ -395,7 +403,7 @@ func isStepsOutputsTraversal(traversal hcl.Traversal) bool {
 }
 
 // checkStepsFieldTraversals inspects expr for steps.<name>.<field> traversals
-// and emits warnings for fields absent from the step's OutputSchema.
+// and emits errors for fields absent from the step's OutputSchema.
 func checkStepsFieldTraversals(context string, expr hcl.Expression, g *FSMGraph, schemas map[string]AdapterInfo) hcl.Diagnostics {
 	var diags hcl.Diagnostics
 	for _, traversal := range expr.Variables() {
@@ -422,10 +430,10 @@ func checkStepsFieldTraversals(context string, expr hcl.Expression, g *FSMGraph,
 		if !isStep {
 			// Unknown step name at this site — no other pass validates step
 			// input, outcome output, or switch output expressions at compile
-			// time, so emit a warning here for early feedback.
+			// time, so emit an error here for early feedback.
 			r := nameAttr.SrcRange
 			diags = append(diags, &hcl.Diagnostic{
-				Severity: hcl.DiagWarning,
+				Severity: hcl.DiagError,
 				Summary: fmt.Sprintf(
 					"%s: references unknown step %q",
 					context, nameAttr.Name,
@@ -444,7 +452,7 @@ func checkStepsFieldTraversals(context string, expr hcl.Expression, g *FSMGraph,
 		if _, known := info.OutputSchema[fieldAttr.Name]; !known {
 			r := fieldAttr.SrcRange
 			diags = append(diags, &hcl.Diagnostic{
-				Severity: hcl.DiagWarning,
+				Severity: hcl.DiagError,
 				Summary: fmt.Sprintf(
 					"%s: field %q is not declared in the output schema of step %q (adapter %q)",
 					context, fieldAttr.Name, nameAttr.Name, step.AdapterRef,

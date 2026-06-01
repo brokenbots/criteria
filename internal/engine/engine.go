@@ -417,7 +417,7 @@ func (e *Engine) runLoop(ctx context.Context, sessions *adapterhost.SessionManag
 		IterStack:        append([]workflow.IterCursor{}, e.resumedIterStack...),
 		Visits:           cloneVisits(e.resumedVisits),
 		WorkflowDir:      e.workflowDir,
-		SharedVarStore:   NewSharedVarStore(e.graph),
+		DataStore:        NewDataStore(e.graph),
 		firstStep:        true,
 		firstStepAttempt: firstStepAttempt,
 	}
@@ -552,7 +552,7 @@ func advanceIteration(st *RunState, cur *workflow.IterCursor, stepName string, s
 // finishIterationInGraph closes out an iteration loop: pops the cursor, clears
 // each.* bindings, emits OnStepIterationCompleted, and returns the aggregate
 // outcome target looked up from graph. When the aggregate outcome routes via
-// next = "return" and declares an output expression, the expression is
+// next = step.return and declares an output expression, the expression is
 // evaluated and the result stored in st.ReturnOutputs before the sentinel is
 // returned — matching the single-step return path in applyOutcome.
 func finishIterationInGraph(st *RunState, stepName string, graph *workflow.FSMGraph, sink Sink) (string, error) {
@@ -580,7 +580,7 @@ func finishIterationInGraph(st *RunState, stepName string, graph *workflow.FSMGr
 	sink.OnStepIterationCompleted(stepName, aggregateOutcome, co.Next)
 
 	// Evaluate output projection for the aggregate outcome. This is used by both
-	// the return path (st.ReturnOutputs) and any shared_writes declared on the
+	// the return path (st.ReturnOutputs) and any write blocks declared on the
 	// aggregate outcome. Evaluated once and shared between both paths.
 	var aggregateProjectedCty map[string]cty.Value
 	if co.OutputExpr != nil {
@@ -594,9 +594,9 @@ func finishIterationInGraph(st *RunState, stepName string, graph *workflow.FSMGr
 		}
 	}
 
-	// Apply shared_writes for the aggregate outcome if declared.
-	if len(co.SharedWrites) > 0 && st.SharedVarStore != nil {
-		if err := applySharedWrites(stepName, aggregateOutcome, co.SharedWrites, aggregateProjectedCty, nil, st, sink); err != nil {
+	// Apply write blocks for the aggregate outcome if declared.
+	if len(co.Writes) > 0 && st.DataStore != nil {
+		if err := applyDataWrites(stepName, aggregateOutcome, co.Writes, aggregateProjectedCty, nil, st, sink); err != nil {
 			return "", err
 		}
 	}
@@ -694,7 +694,7 @@ func (e *Engine) handleEvalError(st *RunState, err error, sink Sink) error {
 	return err
 }
 
-// handleReturnExit handles top-level runs that exit via next = "return".
+// handleReturnExit handles top-level runs that exit via next = step.return.
 // The projected outputs in st.ReturnOutputs are emitted as OnRunOutputs
 // (if non-empty) and the run is completed successfully with no named final state.
 func (e *Engine) handleReturnExit(st *RunState, sink Sink) {

@@ -53,8 +53,8 @@ step "count" {
     command = "ls -1 | wc -l"
   }
 
-  outcome "success" { next = "done" }
-  outcome "failure" { next = "failed" }
+  outcome "success" { next = state.done }
+  outcome "failure" { next = state.failed }
 }
 
 state "done" {

@@ -18,7 +18,7 @@ step "run" {
   secret_input {
     key = var.api_key
   }
-  outcome "success" { next = "done" }
+  outcome "success" { next = state.done }
 }
 
 state "done" { terminal = true }

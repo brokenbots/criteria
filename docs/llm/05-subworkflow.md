@@ -27,14 +27,14 @@ subworkflow "process_one" {
 
 step "prepare" {
   target = adapter.noop.default
-  outcome "success" { next = "invoke" }
-  outcome "failure" { next = "failed" }
+  outcome "success" { next = step.invoke }
+  outcome "failure" { next = state.failed }
 }
 
 step "invoke" {
   target = subworkflow.process_one
-  outcome "success" { next = "finish" }
-  outcome "failure" { next = "failed" }
+  outcome "success" { next = step.finish }
+  outcome "failure" { next = state.failed }
 }
 
 step "finish" {
@@ -42,7 +42,7 @@ step "finish" {
   input {
     processed = steps.invoke.result
   }
-  outcome "success" { next = "done" }
+  outcome "success" { next = state.done }
 }
 
 state "done" {

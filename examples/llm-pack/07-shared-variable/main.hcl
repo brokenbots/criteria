@@ -6,8 +6,7 @@ workflow {
 }
 
 adapter "noop" "default" {}
-
-shared_variable "counter" {
+data "internal" "counter" {
   type = string
   value = "0"
 }
@@ -15,19 +14,25 @@ shared_variable "counter" {
 step "increment" {
   target = adapter.noop.default
   outcome "success" {
-    next          = "double"
-    shared_writes = { counter = "next_value" }  # "next_value" is a placeholder adapter output key
+    next = step.double
+    write {
+      target = data.internal.counter.value
+      value  = "1"
+    }
   }
 }
 
 step "double" {
   target = adapter.noop.default
   input {
-    current = shared.counter
+    current = data.internal.counter.value
   }
   outcome "success" {
-    next          = "done"
-    shared_writes = { counter = "next_value" }
+    next = state.done
+    write {
+      target = data.internal.counter.value
+      value  = "2"
+    }
   }
 }
 

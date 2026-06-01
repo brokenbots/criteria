@@ -67,8 +67,12 @@ func executeServerRun(ctx context.Context, log *slog.Logger, loader adapterhost.
 
 	auditPath, _ := auditLogPath(state.RunID)
 	auditWriter := adapterhost.NewFileAuditWriter(auditPath)
+	mergedVars, err := mergeVarSources(opts.varFiles, opts.varOverrides)
+	if err != nil {
+		return err
+	}
 	eng = engine.New(graph, loader, sink,
-		engine.WithVarOverrides(parseVarOverrides(opts.varOverrides)),
+		engine.WithVarOverrides(mergedVars),
 		engine.WithWorkflowDir(workflowDirFromPath(opts.workflowPath)),
 		engine.WithAuditWriter(auditWriter),
 	)

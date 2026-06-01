@@ -11,8 +11,8 @@ digraph "switch_basic" {
   "__start__" [shape=point,width=0.12,label=""];
   "__start__" -> "build" [label="initial"];
   "build" -> "decide" [label="success"];
-  "decide" -> "deploy" [label="condition[0]"];
-  "decide" -> "deploy_staging" [label="condition[1]"];
-  "decide" -> "deploy_staging" [label="condition[2]"];
+  "decide" -> "deploy" [label="match[0]"];
+  "decide" -> "deploy_staging" [label="match[1]"];
+  "decide" -> "deploy_staging" [label="match[2]"];
   "decide" -> "skip_deploy" [label="default"];
 }

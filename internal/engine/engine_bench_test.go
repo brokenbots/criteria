@@ -69,8 +69,8 @@ func buildNStepWorkflow(b *testing.B, n int) *workflow.FSMGraph {
   step "step_%d" {
     target = adapter.fake
     input { prompt = "step %d" }
-    outcome "success" { next = "%s" }
-    outcome "failure" { next = "done" }
+    outcome "success" { next = step.%s }
+    outcome "failure" { next = step.done }
   }
 `, i, i, next)
 	}

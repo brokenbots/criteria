@@ -241,8 +241,8 @@ func TestParallelIteration_DefaultMax_RunsConcurrently(t *testing.T) {
 step "work" {
   target   = adapter.fake
   parallel = ["a", "b", "c", "d"]
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "failed" }
+  outcome "all_succeeded" { next = step.done }
+  outcome "any_failed"    { next = step.failed }
 }`))
 	sink := &parallelSink{}
 	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": barrier}}
@@ -281,8 +281,8 @@ step "work" {
   target       = adapter.fake
   parallel     = ["a", "b", "c", "d", "e", "f"]
   parallel_max = 2
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "failed" }
+  outcome "all_succeeded" { next = step.done }
+  outcome "any_failed"    { next = step.failed }
 }`))
 	sink := &parallelSink{}
 	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": p}}
@@ -306,8 +306,8 @@ func TestParallelIteration_AbortOnFirstFailure(t *testing.T) {
 step "work" {
   target     = adapter.fake
   parallel   = ["a", "b", "c", "d"]
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "failed" }
+  outcome "all_succeeded" { next = step.done }
+  outcome "any_failed"    { next = step.failed }
 }`))
 
 	// First goroutine to execute fails immediately; the rest block until
@@ -347,8 +347,8 @@ step "work" {
   target     = adapter.fake
   parallel   = ["a", "b", "c"]
   on_failure = "continue"
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "failed" }
+  outcome "all_succeeded" { next = step.done }
+  outcome "any_failed"    { next = step.failed }
 }`))
 
 	var callCount int32
@@ -389,8 +389,8 @@ step "work" {
   target     = adapter.fake
   parallel   = ["a", "b"]
   on_failure = "ignore"
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "failed" }
+  outcome "all_succeeded" { next = step.done }
+  outcome "any_failed"    { next = step.failed }
 }`))
 
 	p := &parallelSafeAdapter{name: "fake", outcome: "failure"}
@@ -431,8 +431,8 @@ step "work" {
   input {
     decl_idx = "${each._idx}"
   }
-  outcome "all_succeeded" { next = "check" }
-  outcome "any_failed"    { next = "failed" }
+  outcome "all_succeeded" { next = step.check }
+  outcome "any_failed"    { next = step.failed }
 }
 step "check" {
   target = adapter.fake_check
@@ -441,7 +441,7 @@ step "check" {
     idx1 = steps.work[1].idx
     idx2 = steps.work[2].idx
   }
-  outcome "success" { next = "done" }
+  outcome "success" { next = step.done }
 }
 state "done" {
   terminal = true
@@ -531,8 +531,8 @@ func TestParallelIteration_ContextCancellation(t *testing.T) {
 step "work" {
   target   = adapter.fake
   parallel = ["a", "b", "c", "d"]
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "failed" }
+  outcome "all_succeeded" { next = step.done }
+  outcome "any_failed"    { next = step.failed }
 }`))
 
 	// Adapter blocks until ctx is cancelled.
@@ -567,8 +567,8 @@ func TestParallelIteration_EmptyList(t *testing.T) {
 step "work" {
   target   = adapter.fake
   parallel = []
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "failed" }
+  outcome "all_succeeded" { next = step.done }
+  outcome "any_failed"    { next = step.failed }
 }`))
 
 	p := &parallelSafeAdapter{name: "fake", outcome: "success"}
@@ -600,8 +600,8 @@ step "work" {
   target       = adapter.fake
   parallel     = ["a", "b", "c", "d", "e", "f", "g", "h"]
   parallel_max = 8
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "failed" }
+  outcome "all_succeeded" { next = step.done }
+  outcome "any_failed"    { next = step.failed }
 }`))
 
 	// Use parallelSink (which embeds fakeSink) as the outer sink.
@@ -629,8 +629,8 @@ step "work" {
   target       = adapter.fake
   parallel     = ["a", "b", "c", "d", "e", "f"]
   parallel_max = 6
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "failed" }
+  outcome "all_succeeded" { next = step.done }
+  outcome "any_failed"    { next = step.failed }
 }`))
 
 	// loggingBarrierAdapter waits for all n goroutines then emits a Log event
@@ -737,8 +737,8 @@ step "work" {
   target     = adapter.fake
   parallel   = ["a", "b"]
   max_visits = 1
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "failed" }
+  outcome "all_succeeded" { next = step.done }
+  outcome "any_failed"    { next = step.failed }
 }`))
 
 	p := &parallelSafeAdapter{name: "fake", outcome: "success"}
@@ -772,8 +772,8 @@ step "work" {
   target   = adapter.fake
   parallel = ["a", "b"]
   timeout  = "100ms"
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "failed" }
+  outcome "all_succeeded" { next = step.done }
+  outcome "any_failed"    { next = step.failed }
 }
 state "done" {
   terminal = true
@@ -941,8 +941,8 @@ func TestParallelIteration_FatalErrorPropagated(t *testing.T) {
 step "work" {
   target   = adapter.fake
   parallel = ["a", "b"]
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "failed" }
+  outcome "all_succeeded" { next = step.done }
+  outcome "any_failed"    { next = step.failed }
 }`))
 
 	// Adapter returns a FatalRunError on every call.
@@ -1176,8 +1176,8 @@ func TestEvaluateParallel_AdapterNotParallelSafe_RuntimeError(t *testing.T) {
 step "work" {
   target   = adapter.fake
   parallel = ["a", "b"]
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "failed" }
+  outcome "all_succeeded" { next = step.done }
+  outcome "any_failed"    { next = step.failed }
 }`))
 
 	// countingNotSafeAdapter does not declare "parallel_safe" and counts Execute
@@ -1213,8 +1213,8 @@ func TestEvaluateParallel_AdapterParallelSafe_Runs(t *testing.T) {
 step "work" {
   target   = adapter.fake
   parallel = ["a", "b"]
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "failed" }
+  outcome "all_succeeded" { next = step.done }
+  outcome "any_failed"    { next = step.failed }
 }`))
 
 	p := &parallelSafeAdapter{name: "fake", outcome: "success"}
@@ -1306,8 +1306,8 @@ step "work" {
   target       = adapter.fake
   parallel     = ["a", "b", "c", "d", "e", "f", "g", "h"]
   parallel_max = 8
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "failed" }
+  outcome "all_succeeded" { next = step.done }
+  outcome "any_failed"    { next = step.failed }
 }`))
 
 	p := newLoggingBarrierAdapter("fake", n, "success")
@@ -1376,8 +1376,8 @@ step "work" {
   target       = adapter.fake
   parallel     = ["a", "b", "c", "d"]
   parallel_max = 4
-  outcome "all_succeeded" { next = "done" }
-  outcome "any_failed"    { next = "failed" }
+  outcome "all_succeeded" { next = step.done }
+  outcome "any_failed"    { next = step.failed }
 }`))
 
 	p := &slowLogAdapter{name: "fake", logsPerCall: logsPerItem}
