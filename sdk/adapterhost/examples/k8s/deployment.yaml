@@ -1,0 +1,42 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: criteria-adapter-go
+  labels:
+    app: criteria-adapter-go
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: criteria-adapter-go
+  template:
+    metadata:
+      labels:
+        app: criteria-adapter-go
+    spec:
+      containers:
+        - name: adapter
+          image: criteria-adapter-go:latest
+          env:
+            - name: CRITERIA_REMOTE_HOST
+              value: "criteria.example.com:7778"
+            - name: CRITERIA_REMOTE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: criteria-adapter-secrets
+                  key: token
+          volumeMounts:
+            - name: tls-certs
+              mountPath: /etc/criteria/tls
+              readOnly: true
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              memory: "128Mi"
+              cpu: "100m"
+      volumes:
+        - name: tls-certs
+          secret:
+            secretName: criteria-adapter-tls

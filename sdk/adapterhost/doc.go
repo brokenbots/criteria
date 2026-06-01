@@ -20,6 +20,22 @@
 //
 //	func main() { adapterhost.Serve(&myAdapter{}) }
 //
+// # Remote entrypoint
+//
+// Adapters that phone home to a criteria host (instead of being spawned by
+// it) call [ServeRemote] with the host address and identity credentials:
+//
+//	func main() {
+//		adapterhost.ServeRemote(&myAdapter{}, &adapterhost.ServeRemoteOptions{
+//			Host: "criteria.example.com:7778",
+//			Identity: adapterhost.RemoteIdentity{
+//				Name:    "my-adapter",
+//				Version: "1.0.0",
+//				Digest:  "sha256:...",
+//			},
+//		})
+//	}
+//
 // # v1 → v2 protocol break (WS03)
 //
 // WS03 migrated the host wire layer to v2 proto types and deleted the v1
