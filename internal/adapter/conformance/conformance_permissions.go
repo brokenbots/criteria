@@ -4,6 +4,7 @@ package conformance
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -56,6 +57,11 @@ func testDenyWithError(t *testing.T, name string, loader adapterhost.Loader, opt
 
 	if execErr == nil {
 		t.Fatal("expected error when permission is denied with error, got nil")
+	}
+	// Assert the error is structured and indicates a permission denial.
+	errStr := execErr.Error()
+	if !strings.Contains(errStr, "permission") && !strings.Contains(errStr, "denied") && !strings.Contains(errStr, "unauthorized") {
+		t.Fatalf("expected structured permission-denied error, got: %v", execErr)
 	}
 }
 

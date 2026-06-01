@@ -71,6 +71,7 @@ issues:
       text: 'testAdapterSessionEventsRoundTrip' # W12: SDK conformance test; 48-line function validates round-trip events exhaustively
     # --- td-02: structural suppressions moved from inline nolint directives ---
     # kept: Run and RunPlugin are public API exported by the conformance package; converting opts to *Options would require every external caller to pass an address
+    # WS26: regex widened from `80 bytes` to `\d+ bytes` because Options struct grew from 80 to 144 bytes when capability fields were added.
     - path: internal/adapter/conformance/conformance\.go
       linters:
         - gocritic

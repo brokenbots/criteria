@@ -13,8 +13,8 @@ import (
 func testHeartbeats(t *testing.T, name string, loader adapterhost.Loader, opts *Options, info *adapterhost.Info) {
 	t.Helper()
 
-	if !opts.Streaming {
-		t.Skipf("%s: streaming not enabled; heartbeat test requires Log stream", name)
+	if !opts.Streaming || !opts.Heartbeats {
+		t.Skipf("%s: streaming or heartbeats not enabled in options", name)
 	}
 
 	// 30 s matches the StartTimeout in the loader.
@@ -61,6 +61,6 @@ func testHeartbeats(t *testing.T, name string, loader adapterhost.Loader, opts *
 
 	// We expect either a heartbeat-timeout error or a normal timeout.
 	if execErr == nil {
-		t.Skipf("%s: adapter did not stall or host did not detect heartbeat loss — skipping heartbeat assertion", name)
+		t.Fatalf("%s: adapter did not stall or host did not detect heartbeat loss — expected an error", name)
 	}
 }

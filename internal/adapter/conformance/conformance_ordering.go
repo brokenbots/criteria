@@ -31,10 +31,10 @@ func testOrdering(t *testing.T, name string, loader adapterhost.Loader, opts *Op
 		t.Fatalf("execute: %v", execErr)
 	}
 
-	assertLifecycleSubsequence(t, name, sink, opts.LifecycleOrder)
+	assertLifecycleOrder(t, name, sink, opts.LifecycleOrder)
 }
 
-func assertLifecycleSubsequence(t *testing.T, name string, sink *recordingSink, expected []string) {
+func assertLifecycleOrder(t *testing.T, name string, sink *recordingSink, expected []string) {
 	t.Helper()
 	canonical := []string{"session_opened", "execute_started", "execute_finished", "session_closed"}
 	var observed []string
@@ -46,18 +46,11 @@ func assertLifecycleSubsequence(t *testing.T, name string, sink *recordingSink, 
 	if len(observed) == 0 {
 		t.Skipf("%s: no lifecycle events observed in sink", name)
 	}
-	if len(observed) > len(expected) {
-		t.Fatalf("observed more lifecycle events (%d) than expected (%d): %v vs %v", len(observed), len(expected), observed, expected)
-	}
 
-	expIdx := 0
-	for _, obs := range observed {
-		for expIdx < len(expected) && expected[expIdx] != obs {
-			expIdx++
-		}
-		if expIdx >= len(expected) {
-			t.Fatalf("unexpected lifecycle event %q in observed sequence %v (expected %v)", obs, observed, expected)
-		}
-		expIdx++
+	// Exact equality: the adapter's declared LifecycleOrder must match
+	// the observed canonical events precisely. Adapters that intentionally
+	// omit events must declare a shorter LifecycleOrder.
+	if !slices.Equal(observed, expected) {
+		t.Fatalf("lifecycle order mismatch: observed %v, expected %v", observed, expected)
 	}
 }

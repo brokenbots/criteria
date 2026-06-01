@@ -35,7 +35,9 @@ type Options struct {
 	// post-W15) should set this to "failure".
 	PermissionDenialOutcome string
 
-	// --- WS26 capability declarations ---
+	// Heartbeats, when true, enables the heartbeats suite (requires the
+	// adapter to support log-stream stall detection).
+	Heartbeats bool
 
 	// ErrorInjection, when true, enables the error_injection suite.
 	ErrorInjection bool

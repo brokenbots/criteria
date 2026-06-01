@@ -10,41 +10,46 @@ import (
 	"github.com/brokenbots/criteria/internal/adapterhost"
 )
 
+func hasSensitiveField(info *adapterhost.Info) bool {
+	for _, f := range info.AdapterInfo.OutputSchema {
+		if f.Sensitive {
+			return true
+		}
+	}
+	return false
+}
+
+func assertTaintPropagated(t *testing.T, name string, sink *recordingSink) {
+	t.Helper()
+	for _, evt := range sink.adapterEvents {
+		if evt.kind == "taint" || evt.kind == "sensitive" || evt.kind == "redacted" {
+			return
+		}
+	}
+	// TODO: host-facing log redaction cannot be asserted from the harness
+	// because the adapter runs out-of-process. The host-side engine is
+	// responsible for redacting sensitive values in its own logs. Add a
+	// dedicated host-log integration test when the engine exposes a
+	// testable log sink.
+	t.Skipf("%s: adapter did not emit taint/redacted event — cannot validate taint propagation without host-log access", name)
+}
+
 func testSensitiveOutput(t *testing.T, name string, loader adapterhost.Loader, opts *Options, info *adapterhost.Info) {
 	t.Helper()
 
 	if len(info.AdapterInfo.OutputSchema) == 0 {
 		t.Skipf("%s: adapter does not declare an output_schema", name)
 	}
-
-	hasSensitive := false
-	for _, f := range info.AdapterInfo.OutputSchema {
-		if f.Sensitive {
-			hasSensitive = true
-			break
-		}
-	}
-	if !hasSensitive {
+	if !hasSensitiveField(info) {
 		t.Skipf("%s: output_schema has no sensitive fields", name)
 	}
 
-	// 30 s matches the StartTimeout in the loader.
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	plug, err := loader.Resolve(ctx, name)
-	if err != nil {
-		t.Fatalf("resolve adapter: %v", err)
-	}
+	plug, sessionID := resolveAndOpen(t, ctx, loader, name, opts.OpenConfig)
 	defer plug.Kill()
-
-	sessionID := newSessionID("sensitive")
-	if err := plug.OpenSession(ctx, sessionID, cloneConfig(opts.OpenConfig), nil); err != nil {
-		t.Fatalf("open session: %v", err)
-	}
-	defer func() {
-		_ = plug.CloseSession(context.Background(), sessionID)
-	}()
+	defer func() { _ = plug.CloseSession(context.Background(), sessionID) }()
 
 	cfg := cloneConfig(opts.StepConfig)
 	cfg["emit_sensitive_output"] = "true"
@@ -55,14 +60,10 @@ func testSensitiveOutput(t *testing.T, name string, loader adapterhost.Loader, o
 		t.Fatalf("execute: %v", execErr)
 	}
 
-	// Assert the sensitive value is redacted in the host-facing output.
-	// The harness records the adapter's raw output in the sink; if the
-	// adapter itself redacts before sending, the sink will not contain
-	// the plaintext. We verify that the result outputs do not appear in
-	// log chunks in plaintext.
 	for key, val := range res.Outputs {
 		if info.AdapterInfo.OutputSchema[key].Sensitive && sink.containsText(val) {
 			t.Fatalf("sensitive output %q appeared in plaintext in event sink", key)
 		}
 	}
+	assertTaintPropagated(t, name, sink)
 }

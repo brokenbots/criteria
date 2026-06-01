@@ -5,6 +5,7 @@ package conformance
 import (
 	"context"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -57,7 +58,7 @@ func testSecrets(t *testing.T, name string, loader adapterhost.Loader, opts *Opt
 	// environment directly from the harness, so we rely on the adapter's
 	// own declaration (e.g. via an adapter event).
 	if pid, ok := adapterhost.ProcessPID(plug); ok && pid > 0 {
-		env, err := os.ReadFile("/proc/" + string(rune(pid)) + "/environ")
+		env, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/environ")
 		if err == nil && strings.Contains(string(env), "hunter2") {
 			t.Fatal("secret value found in adapter process environment — must not leak")
 		}
