@@ -1,4 +1,3 @@
-import json
 import os
 import sys
 
@@ -32,7 +31,8 @@ def main() -> int:
     token_file = os.environ.get("CRITERIA_REMOTE_TOKEN_FILE", "")
     if token_file:
         try:
-            token = open(token_file, "r").read().strip()
+            with open(token_file, "r") as f:
+                token = f.read().strip()
         except OSError as e:
             print(f"criteria_adapter_sdk: cannot read token file: {e}", file=sys.stderr)
             return 1
