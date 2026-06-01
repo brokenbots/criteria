@@ -34,6 +34,24 @@ type Options struct {
 	// that explicitly return "failure" on denial (e.g. the copilot adapter
 	// post-W15) should set this to "failure".
 	PermissionDenialOutcome string
+
+	// Heartbeats, when true, enables the heartbeats suite (requires the
+	// adapter to support log-stream stall detection).
+	Heartbeats bool
+
+	// ErrorInjection, when true, enables the error_injection suite.
+	ErrorInjection bool
+	// PermissionDenyPaths, when true, enables the three deny-path sub-tests.
+	PermissionDenyPaths bool
+	// ConcurrentStressN is the number of concurrent sessions for the stress
+	// test. Zero disables the suite.
+	ConcurrentStressN int
+	// LifecycleOrder is the canonical lifecycle event-type sequence this
+	// adapter emits. Empty disables the ordering suite.
+	LifecycleOrder []string
+	// SupportedFeatures is the adapter's supported_features list (from v2
+	// InfoResponse). The harness uses this to gate optional suites.
+	SupportedFeatures []string
 }
 
 type executeTarget interface {
@@ -93,20 +111,34 @@ func RunAdapter(t *testing.T, name, binaryPath string, opts Options) {
 	}
 	probe.Kill()
 
-	runContractTests(t, name, &opts, newAdapterTargetFactory(name, loader, &opts))
+	// Auto-populate supported features from the adapter so capability-gated
+	// suites skip correctly even when the caller leaves opts empty.
+	if len(opts.SupportedFeatures) == 0 {
+		opts.SupportedFeatures = append([]string(nil), info.SupportedFeatures...)
+	}
 
-	t.Run("session_lifecycle", func(t *testing.T) {
-		testSessionLifecycle(t, name, loader, &opts, &info)
-	})
-	t.Run("concurrent_sessions", func(t *testing.T) {
-		testConcurrentSessions(t, name, loader, &opts, &info)
-	})
-	t.Run("session_crash_detection", func(t *testing.T) {
-		testSessionCrashDetection(t, name, loader, &opts, &info)
-	})
-	t.Run("permission_request_shape", func(t *testing.T) {
-		testPermissionRequestShape(t, name, loader, &opts, &info)
-	})
+	runContractTests(t, name, &opts, newAdapterTargetFactory(name, loader, &opts))
+	runV2Suites(t, name, loader, &opts, &info)
+}
+
+func runV2Suites(t *testing.T, name string, loader adapterhost.Loader, opts *Options, info *adapterhost.Info) {
+	t.Run("session_lifecycle", func(t *testing.T) { testSessionLifecycle(t, name, loader, opts, info) })
+	t.Run("concurrent_sessions", func(t *testing.T) { testConcurrentSessions(t, name, loader, opts, info) })
+	t.Run("session_crash_detection", func(t *testing.T) { testSessionCrashDetection(t, name, loader, opts, info) })
+	t.Run("permission_request_shape", func(t *testing.T) { testPermissionRequestShape(t, name, loader, opts, info) })
+
+	t.Run("permissions", func(t *testing.T) { testPermissions(t, name, loader, opts, info) })
+	t.Run("logging", func(t *testing.T) { testLogging(t, name, loader, opts, info) })
+	t.Run("pause_resume", func(t *testing.T) { testPauseResume(t, name, loader, opts, info) })
+	t.Run("snapshot_restore", func(t *testing.T) { testSnapshotRestore(t, name, loader, opts, info) })
+	t.Run("inspect", func(t *testing.T) { testInspect(t, name, loader, opts, info) })
+	t.Run("secrets", func(t *testing.T) { testSecrets(t, name, loader, opts, info) })
+	t.Run("sensitive_output", func(t *testing.T) { testSensitiveOutput(t, name, loader, opts, info) })
+	t.Run("heartbeats", func(t *testing.T) { testHeartbeats(t, name, loader, opts, info) })
+	t.Run("chunking", func(t *testing.T) { testChunking(t, name, loader, opts, info) })
+	t.Run("error_injection", func(t *testing.T) { testErrorInjection(t, name, loader, opts, info) })
+	t.Run("ordering", func(t *testing.T) { testOrdering(t, name, loader, opts, info) })
+	t.Run("concurrent_stress", func(t *testing.T) { testConcurrentStress(t, name, loader, opts, info) })
 }
 
 func runContractTests(t *testing.T, name string, opts *Options, factory targetFactory) {

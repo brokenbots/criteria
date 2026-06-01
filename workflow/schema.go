@@ -341,6 +341,10 @@ type AdapterInfo struct {
 	Capabilities           []string               // well-known capability strings (e.g. "parallel_safe")
 	CompatibleEnvironments []string               // nil/empty means any (default)
 	PolicyHints            *PolicyHints           // D36 manifest hints for environment policy fields
+	// SupportedFeatures lists optional capabilities this adapter implements.
+	// Well-known values: "pause", "resume", "snapshot", "restore", "inspect".
+	// The host gates UI and behavior on this list; unknown values are ignored.
+	SupportedFeatures []string // NEW v2 (D76)
 }
 
 // OutcomeSpec maps an adapter outcome name to the next node.
