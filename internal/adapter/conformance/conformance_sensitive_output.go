@@ -26,11 +26,11 @@ func assertTaintPropagated(t *testing.T, name string, sink *recordingSink) {
 			return
 		}
 	}
-	// TODO: host-facing log redaction cannot be asserted from the harness
+	// NOTE: host-facing log redaction cannot be asserted from the harness
 	// because the adapter runs out-of-process. The host-side engine is
-	// responsible for redacting sensitive values in its own logs. Add a
-	// dedicated host-log integration test when the engine exposes a
-	// testable log sink.
+	// responsible for redacting sensitive values in its own logs. A
+	// dedicated host-log integration test should be added when the engine
+	// exposes a testable log sink.
 	t.Skipf("%s: adapter did not emit taint/redacted event — cannot validate taint propagation without host-log access", name)
 }
 
