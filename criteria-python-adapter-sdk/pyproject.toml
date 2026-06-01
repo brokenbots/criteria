@@ -4,14 +4,19 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "criteria-python-adapter-sdk"
-version = "0.1.0"
-description = "Criteria adapter SDK for Python — remote and local adapter entrypoints"
+version = "2.0.0rc1"
+description = "Criteria adapter SDK for Python — remote and local adapter entrypoints (protocol v2)"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "grpcio>=1.60.0",
     "protobuf>=5.0.0",
+    "pydantic>=2.0.0",
+    "pyyaml>=6.0.0",
 ]
+
+[project.scripts]
+criteria-py-adapter-test = "criteria_adapter_sdk.testing:_main"
 
 [project.optional-dependencies]
 dev = [

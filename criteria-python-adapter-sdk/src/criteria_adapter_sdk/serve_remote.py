@@ -48,6 +48,21 @@ class _AdapterServicer(adapter_pb2_grpc.AdapterServiceServicer):
     def Permissions(self, request_iterator, context):
         return self._handler.permissions(request_iterator, context)
 
+    def Pause(self, request, context):
+        return self._handler.pause(request, context)
+
+    def Resume(self, request, context):
+        return self._handler.resume(request, context)
+
+    def Snapshot(self, request, context):
+        return self._handler.snapshot(request, context)
+
+    def Restore(self, request, context):
+        return self._handler.restore(request, context)
+
+    def Inspect(self, request, context):
+        return self._handler.inspect(request, context)
+
     def CloseSession(self, request, context):
         return self._handler.close_session(request, context)
 
@@ -66,6 +81,21 @@ class Service:
         raise NotImplementedError
 
     def permissions(self, request_iterator, context):
+        raise NotImplementedError
+
+    def pause(self, request, context):
+        raise NotImplementedError
+
+    def resume(self, request, context):
+        raise NotImplementedError
+
+    def snapshot(self, request, context):
+        raise NotImplementedError
+
+    def restore(self, request, context):
+        raise NotImplementedError
+
+    def inspect(self, request, context):
         raise NotImplementedError
 
     def close_session(self, request, context):
