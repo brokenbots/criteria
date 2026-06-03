@@ -184,7 +184,7 @@ func (n *stepNode) finishWhileOutcome(cur *workflow.IterCursor, st *RunState, de
 	}
 
 	if len(co.Writes) > 0 && st.DataStore != nil {
-		if writeErr := applyDataWrites(n.step.Name, aggregateOutcome, co.Writes, projectedCty, nil, st, deps.Sink); writeErr != nil {
+		if writeErr := applyDataWrites(n.step.Name, aggregateOutcome, co.Writes, projectedCty, nil, nil, st, deps.Sink); writeErr != nil {
 			return "", writeErr
 		}
 	}

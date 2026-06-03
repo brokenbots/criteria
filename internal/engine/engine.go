@@ -596,7 +596,7 @@ func finishIterationInGraph(st *RunState, stepName string, graph *workflow.FSMGr
 
 	// Apply write blocks for the aggregate outcome if declared.
 	if len(co.Writes) > 0 && st.DataStore != nil {
-		if err := applyDataWrites(stepName, aggregateOutcome, co.Writes, aggregateProjectedCty, nil, st, sink); err != nil {
+		if err := applyDataWrites(stepName, aggregateOutcome, co.Writes, aggregateProjectedCty, nil, nil, st, sink); err != nil {
 			return "", err
 		}
 	}

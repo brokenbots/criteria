@@ -475,7 +475,7 @@ Each step, wait, and approval node declares one or more `outcome` blocks mapping
 
 **`output` projection:** An `outcome` block may include an `output = {...}` expression to project a custom output map. If absent, the adapter's full output is passed downstream as `steps.<name>.*`.
 
-**`write`:** An `outcome` block may include one or more `write { target = data.<kind>.<name>.value, value = expr }` blocks to atomically update data values on that transition. Write ordering within a single outcome block is deterministic (declaration order).
+**`write`:** An `outcome` block may include one or more `write { target = data.<kind>.<name>.value, value = expr }` blocks to atomically update data values on that transition. The `value` expression is evaluated against the same context as the outcome's `output = {...}` projection — it may reference `var.*`, `local.*`, `data.<kind>.<name>.value`, `step.output.<key>`, `output.<key>` (projection keys), `subworkflow.<key>`, and the standard functions. `data.*` reads resolve to the **step-entry snapshot**: a write never observes a value written earlier in the same step (its own pending write or a sibling write's), so the entire write set is atomic against that snapshot and independent of write order. The compiler emits a warning (non-fatal) when a write reads a data value the same step also writes. To observe one write's result in another, split the writes across separate steps.
 
 **Terminal routing:** A `state` block with `terminal = true` terminates the run. `success = true` marks the run as succeeded; `success = false` marks it as failed. A run that reaches no terminal state is a runtime error (infinite loop guard via `policy.max_total_steps`).
 

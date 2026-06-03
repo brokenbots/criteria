@@ -63,7 +63,79 @@ func compileOutcomeBlock(sp *StepSpec, node *StepNode, g *FSMGraph, opts Compile
 		}
 	}
 
+	diags = append(diags, warnWritesReadingWrittenData(sp.Name, node)...)
+
 	return diags
+}
+
+// warnWritesReadingWrittenData emits an informational diagnostic for every
+// write whose value expression reads a data.<kind>.<name> value that the same
+// step also writes. This is legal and well-defined — data.* in a write value
+// resolves to the step-entry snapshot, not to any value written earlier in the
+// step, so the write set is atomic against that snapshot — but the read-vs-write
+// distinction is subtle, so we surface it to aid troubleshooting.
+func warnWritesReadingWrittenData(stepName string, node *StepNode) hcl.Diagnostics {
+	var diags hcl.Diagnostics
+
+	// Collect every (kind, name) the step writes, across all outcomes.
+	written := map[[2]string]bool{}
+	forEachOutcome(node, func(co *CompiledOutcome) {
+		for _, w := range co.Writes {
+			written[[2]string{w.DataKind, w.DataName}] = true
+		}
+	})
+	if len(written) == 0 {
+		return nil
+	}
+
+	forEachOutcome(node, func(co *CompiledOutcome) {
+		for _, w := range co.Writes {
+			seen := map[[2]string]bool{}
+			for _, tr := range w.ValueExpr.Variables() {
+				kind, name, ok := dataRefKindName(tr)
+				if !ok || !written[[2]string{kind, name}] || seen[[2]string{kind, name}] {
+					continue
+				}
+				seen[[2]string{kind, name}] = true
+				r := tr.SourceRange()
+				diags = append(diags, &hcl.Diagnostic{
+					Severity: hcl.DiagWarning,
+					Summary:  fmt.Sprintf("step %q outcome %q: write to data %q %q reads data.%s.%s, which this step also writes", stepName, co.Name, w.DataKind, w.DataName, kind, name),
+					Detail:   fmt.Sprintf("data.%s.%s resolves to the step-entry snapshot, not to any value written earlier in this step. All writes in a step are applied atomically against that snapshot, so this read is well-defined and deterministic. This message is informational; no change is required if that is the intended behavior.", kind, name),
+					Subject:  r.Ptr(),
+				})
+			}
+		}
+	})
+
+	return diags
+}
+
+// forEachOutcome invokes fn for every compiled outcome on the node, including
+// the default outcome when present.
+func forEachOutcome(node *StepNode, fn func(*CompiledOutcome)) {
+	for _, co := range node.Outcomes {
+		fn(co)
+	}
+	if node.DefaultOutcome != nil {
+		fn(node.DefaultOutcome)
+	}
+}
+
+// dataRefKindName extracts (kind, name) from a data.<kind>.<name>[.value...]
+// traversal. ok is false for any traversal that is not a data reference of at
+// least three segments.
+func dataRefKindName(tr hcl.Traversal) (kind, name string, ok bool) {
+	if len(tr) < 3 {
+		return "", "", false
+	}
+	root, ok1 := tr[0].(hcl.TraverseRoot)
+	kindSeg, ok2 := tr[1].(hcl.TraverseAttr)
+	nameSeg, ok3 := tr[2].(hcl.TraverseAttr)
+	if !ok1 || !ok2 || !ok3 || root.Name != "data" {
+		return "", "", false
+	}
+	return kindSeg.Name, nameSeg.Name, true
 }
 
 // validateOutcomeOutputExpr validates the output = { ... } expression on an
