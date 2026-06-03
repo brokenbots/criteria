@@ -580,3 +580,153 @@ state "done" {
 	require.NotNil(t, readBackOutputs, "read_back outputs not captured")
 	assert.Equal(t, `"completed"`, readBackOutputs["result"])
 }
+
+// TestWrites_FullContext verifies that a write value expression can reference
+// the full outcome eval context — var.*, data.* (snapshot), and step.output.* —
+// without an output = { ... } projection. counter starts at 10; the write
+// computes counter + var.bump (5) + step.output.delta (3) = 18.
+func TestWrites_FullContext(t *testing.T) {
+	const src = `
+workflow {
+  name = "t"
+  version       = "0.1"
+  initial_state = "compute"
+  target_state  = "done"
+}
+
+variable "bump" {
+  type    = number
+  default = 5
+}
+
+data "internal" "counter" {
+  type  = number
+  value = 10
+}
+
+adapter "sw" "default" {}
+
+step "compute" {
+  target = adapter.sw.default
+  outcome "success" {
+    next = step.read_back
+    write {
+      target = data.internal.counter.value
+      value  = data.internal.counter.value + var.bump + step.output.delta
+    }
+  }
+}
+
+step "read_back" {
+  target = adapter.sw.default
+  outcome "success" {
+    next   = step.done
+    output = { result = data.internal.counter.value }
+  }
+}
+
+state "done" {
+  terminal = true
+  success  = true
+}
+`
+	spec, diags := workflow.Parse("t.hcl", []byte(src))
+	require.False(t, diags.HasErrors(), "parse: %s", diags.Error())
+	g, diags := workflow.Compile(spec, nil)
+	require.False(t, diags.HasErrors(), "compile: %s", diags.Error())
+
+	callNum := 0
+	capturedSink := &outputCaptureSink{}
+	plug := &adapterFunc{
+		name: "sw",
+		fn: func(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+			callNum++
+			if callNum == 1 {
+				return adapter.Result{Outcome: "success", Outputs: map[string]string{"delta": "3"}}, nil
+			}
+			return adapter.Result{Outcome: "success"}, nil
+		},
+	}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"sw": plug}}
+
+	eng := NewTestEngine(g, loader, capturedSink)
+	require.NoError(t, eng.Run(context.Background()))
+	assert.Equal(t, "done", capturedSink.terminal)
+
+	readBack := capturedSink.captured["read_back"]
+	require.NotNil(t, readBack, "read_back outputs not captured")
+	assert.Equal(t, "18", readBack["result"])
+}
+
+// TestWrites_SnapshotAtomicity verifies that when a step writes two data values
+// and one write reads the other, the read sees the step-entry snapshot — not the
+// value written earlier in the same step. a starts at 1; the step writes a = 2
+// and b = data.internal.a.value. b must observe the snapshot value (1), proving
+// the write set is atomic against the snapshot regardless of write order.
+func TestWrites_SnapshotAtomicity(t *testing.T) {
+	const src = `
+workflow {
+  name = "t"
+  version       = "0.1"
+  initial_state = "mutate"
+  target_state  = "done"
+}
+
+data "internal" "a" {
+  type  = number
+  value = 1
+}
+
+data "internal" "b" {
+  type  = number
+  value = 0
+}
+
+adapter "sw" "default" {}
+
+step "mutate" {
+  target = adapter.sw.default
+  outcome "success" {
+    next = step.read_back
+    write {
+      target = data.internal.a.value
+      value  = 2
+    }
+    write {
+      target = data.internal.b.value
+      value  = data.internal.a.value
+    }
+  }
+}
+
+step "read_back" {
+  target = adapter.sw.default
+  outcome "success" {
+    next   = step.done
+    output = { a_val = data.internal.a.value, b_val = data.internal.b.value }
+  }
+}
+
+state "done" {
+  terminal = true
+  success  = true
+}
+`
+	spec, diags := workflow.Parse("t.hcl", []byte(src))
+	require.False(t, diags.HasErrors(), "parse: %s", diags.Error())
+	g, diags := workflow.Compile(spec, nil)
+	require.False(t, diags.HasErrors(), "compile: %s", diags.Error())
+
+	capturedSink := &outputCaptureSink{}
+	plug := &sharedWritesAdapter{outcome: "success", outputs: map[string]string{}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"sw": plug}}
+
+	eng := NewTestEngine(g, loader, capturedSink)
+	require.NoError(t, eng.Run(context.Background()))
+	assert.Equal(t, "done", capturedSink.terminal)
+
+	readBack := capturedSink.captured["read_back"]
+	require.NotNil(t, readBack, "read_back outputs not captured")
+	assert.Equal(t, "2", readBack["a_val"], "a should be updated to 2")
+	assert.Equal(t, "1", readBack["b_val"], "b should observe the step-entry snapshot of a (1), not the in-step write (2)")
+}

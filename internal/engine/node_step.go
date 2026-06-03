@@ -329,7 +329,7 @@ func (n *stepNode) applyIterationDataWrites(outcomeName string, rawOutputs map[s
 		}
 		projectedCty = proj
 	}
-	return applyDataWrites(n.step.Name, outcomeName, compiled.Writes, projectedCty, rawOutputs, st, sink)
+	return applyDataWrites(n.step.Name, outcomeName, compiled.Writes, projectedCty, rawOutputs, nil, st, sink)
 }
 
 // applyOutcome resolves the compiled outcome for the given adapter outcome name,
@@ -378,7 +378,7 @@ func (n *stepNode) applyOutcome(outcomeName string, rawOutputs map[string]string
 	// Apply write blocks: update data store with values from the step's outputs.
 	// Uses SetBatch to commit the full write set atomically.
 	if len(compiled.Writes) > 0 && st.DataStore != nil {
-		if err := applyDataWrites(n.step.Name, outcomeName, compiled.Writes, projectedCty, rawOutputs, st, deps.Sink); err != nil {
+		if err := applyDataWrites(n.step.Name, outcomeName, compiled.Writes, projectedCty, rawOutputs, swOutputs, st, deps.Sink); err != nil {
 			return "", err
 		}
 	}
@@ -409,20 +409,26 @@ func captureReturnOutputs(rawOutputs map[string]string, projectedCty map[string]
 }
 
 // applyDataWrites resolves the write set from the outcome's write blocks
-// and commits all entries atomically via SetBatch. Each entry maps a data
-// target (kind, name) to an HCL expression evaluated against projectedCty
-// (typed) when present, or coerced from rawOutputs (string) otherwise.
+// and commits all entries atomically via SetBatch. Each value expression is
+// evaluated against the full outcome eval context (see resolveDataWriteValue):
+// a bare output.* traversal is resolved directly from projectedCty/rawOutputs,
+// and any richer expression sees var.*, local.*, data.*, step.output.*,
+// subworkflow.*, and output.*. swOutputs carries subworkflow return values
+// (nil for adapter and aggregate-iteration outcomes). Because resolution reads
+// the step-entry data snapshot and SetBatch commits only after every value is
+// resolved, the entire write set is atomic against that snapshot.
 func applyDataWrites(
 	stepName, outcomeName string,
 	writes []workflow.CompiledWrite,
 	projectedCty map[string]cty.Value,
 	rawOutputs map[string]string,
+	swOutputs map[string]cty.Value,
 	st *RunState,
 	sink Sink,
 ) error {
 	batch := make([]DataWrite, 0, len(writes))
 	for _, w := range writes {
-		v, err := resolveDataWriteValue(w, projectedCty, rawOutputs, st.DataStore)
+		v, err := resolveDataWriteValue(w, projectedCty, rawOutputs, swOutputs, st)
 		if err != nil {
 			msg := fmt.Sprintf("step %q outcome %q: write %q %q: %v", stepName, outcomeName, w.DataKind, w.DataName, err)
 			sink.OnRunFailed(msg, stepName)
@@ -448,11 +454,11 @@ func applyDataWrites(
 // output.* traversal; falls back to coercing the raw adapter string from
 // rawOutputs. Returns (cty.NilVal, nil) if the key is absent, or (cty.NilVal, err)
 // if coercion fails.
-func resolveDataWriteValue(w workflow.CompiledWrite, projectedCty map[string]cty.Value, rawOutputs map[string]string, store *DataStore) (cty.Value, error) {
-	if v, ok, err := resolveBareOutputTraversal(w, projectedCty, rawOutputs, store); ok || err != nil {
+func resolveDataWriteValue(w workflow.CompiledWrite, projectedCty map[string]cty.Value, rawOutputs map[string]string, swOutputs map[string]cty.Value, st *RunState) (cty.Value, error) {
+	if v, ok, err := resolveBareOutputTraversal(w, projectedCty, rawOutputs, st.DataStore); ok || err != nil {
 		return v, err
 	}
-	return resolveExprDataWriteValue(w.ValueExpr, projectedCty, rawOutputs)
+	return resolveExprDataWriteValue(w.ValueExpr, projectedCty, rawOutputs, swOutputs, st)
 }
 
 // resolveBareOutputTraversal handles the common case where the write value
@@ -487,8 +493,28 @@ func resolveBareOutputTraversal(w workflow.CompiledWrite, projectedCty map[strin
 }
 
 // resolveExprDataWriteValue evaluates a non-bare write value expression against
-// an eval context built from the available output variables.
-func resolveExprDataWriteValue(expr hcl.Expression, projectedCty map[string]cty.Value, rawOutputs map[string]string) (cty.Value, error) {
+// the full outcome eval context. The expression may reference any namespace
+// available to an outcome's output = { ... } projection: var.*, local.*,
+// data.*, each.*, steps.*, plus step.output.* (raw adapter outputs),
+// subworkflow.* (subworkflow return values), output.* (this outcome's
+// projection keys), and the standard functions.
+//
+// data.* values come from st.Vars, which is seeded once at step entry from
+// DataStore.Snapshot(). Writes from the current step are not committed to the
+// store until after every write value is resolved (SetBatch), so a write that
+// reads data.<kind>.<name> always sees the step-entry snapshot — never a value
+// written earlier in the same step. This makes the whole write set atomic
+// against the snapshot.
+func resolveExprDataWriteValue(expr hcl.Expression, projectedCty map[string]cty.Value, rawOutputs map[string]string, swOutputs map[string]cty.Value, st *RunState) (cty.Value, error) {
+	evalOpts := workflow.DefaultFunctionOptions(st.WorkflowDir)
+	evalCtx := workflow.BuildEvalContextWithOpts(st.Vars, evalOpts)
+	if len(swOutputs) > 0 {
+		evalCtx.Variables["subworkflow"] = cty.ObjectVal(swOutputs)
+	} else {
+		evalCtx.Variables["subworkflow"] = cty.EmptyObjectVal
+	}
+	evalCtx.Variables["step"] = buildStepOutputVar(rawOutputs)
+
 	outputVars := make(map[string]cty.Value)
 	if projectedCty != nil {
 		for k, v := range projectedCty {
@@ -499,10 +525,9 @@ func resolveExprDataWriteValue(expr hcl.Expression, projectedCty map[string]cty.
 			outputVars[k] = cty.StringVal(v)
 		}
 	}
-	ctx := &hcl.EvalContext{
-		Variables: map[string]cty.Value{"output": cty.ObjectVal(outputVars)},
-	}
-	val, diags := expr.Value(ctx)
+	evalCtx.Variables["output"] = cty.ObjectVal(outputVars)
+
+	val, diags := expr.Value(evalCtx)
 	if diags.HasErrors() {
 		return cty.NilVal, fmt.Errorf("evaluating value expression: %s", diags.Error())
 	}

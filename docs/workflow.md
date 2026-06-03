@@ -1594,8 +1594,8 @@ updates the variable during execution.
 
 ### Writing a data value (write blocks)
 
-Use `write` on an outcome block to write one or more variables when
-that outcome is reached. The value maps a `data "internal"` name to an output
+Use `write` on an outcome block to write one or more data values when
+that outcome is reached. In the simplest form the value is an output
 key from the step's adapter output:
 
 ```hcl
@@ -1612,14 +1612,72 @@ step "count_lines" {
 ```
 
 `counter` is a declared `data "internal"`; `"line_count"` is the key in the
-adapter's output map. All writes in one `write` block are committed
+adapter's output map. All writes on one outcome are committed
 atomically — partial writes are never observable.
 
 When an `output = { ... }` projection is also declared on the outcome, the
-engine validates at **compile time** that every `write` value key
-appears in the projection. When no projection is present but the adapter
-declares an output schema, the compiler validates against that schema instead.
-If neither is available the check is deferred to runtime.
+engine validates at **compile time** that every `output.<key>` reference in a
+`write` value appears in the projection. When no projection is present but the
+adapter declares an output schema, the compiler validates against that schema
+instead. If neither is available the check is deferred to runtime.
+
+#### The write `value` expression has the full outcome context
+
+A `write` value is not limited to `output.<key>`. It is an arbitrary HCL
+expression evaluated against the **same context as the outcome's
+`output = { ... }` projection**, so it may reference:
+
+- `var.*`, `local.*` — workflow inputs and locals
+- `data.<kind>.<name>.value` — other data values (see snapshot semantics below)
+- `step.output.<key>` — the current step's raw adapter outputs (strings)
+- `output.<key>` — keys from this outcome's `output = { ... }` projection
+- `subworkflow.<key>` — return values of a subworkflow step
+- the standard functions
+
+This means you can compute a write inline without first routing everything
+through a projection:
+
+```hcl
+outcome "success" {
+  next = state.done
+  write {
+    target = data.internal.counter.value
+    value  = data.internal.counter.value + var.bump + step.output.delta
+  }
+}
+```
+
+This is the recommended way to update a data value after a `for_each`, `while`,
+or `parallel` step: read the accumulated state in the write value directly,
+rather than relying on a fan-in step (which today often lands on a `noop`
+adapter that produces no output to project).
+
+#### Snapshot semantics — reads see the step-entry snapshot
+
+> **Important.** When a write `value` reads `data.<kind>.<name>.value`, it
+> always observes the value as of **step entry** — the point-in-time snapshot
+> captured before the step ran — *not* any value written earlier in the same
+> step.
+
+The `data.*` namespace is refreshed once per step entry. Writes produced by a
+step are resolved against that snapshot and then committed together (atomically)
+*after* the step finishes. Consequently, within a single step:
+
+- A write that reads the data value it is updating sees the **previous** value,
+  not its own pending write — so `value = data.internal.counter.value + 1`
+  increments relative to the step-entry value.
+- When one write reads a data value that **another write in the same step** is
+  also updating, the read still sees the step-entry snapshot, never the sibling
+  write's new value. The full write set is atomic against the snapshot, so write
+  order within the step never affects the result.
+
+This makes writes deterministic and order-independent. The compiler emits an
+informational warning when a write reads a data value the same step also writes,
+so the behavior is easy to spot while troubleshooting; it is not an error.
+
+For ordering that *must* be observed (each write seeing the prior write's
+result), split the writes across separate steps, since the snapshot is
+refreshed on each step entry.
 
 ### Type enforcement
 

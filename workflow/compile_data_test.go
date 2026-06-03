@@ -6,6 +6,8 @@ package workflow
 import (
 	"strings"
 	"testing"
+
+	"github.com/hashicorp/hcl/v2"
 )
 
 // minimalWorkflowWithData is a minimal compilable workflow preamble that
@@ -195,6 +197,76 @@ outcome "success" {
 	}
 	if !strings.Contains(diags.Error(), "is not declared") {
 		t.Errorf("error should mention 'is not declared', got: %s", diags.Error())
+	}
+}
+
+// TestCompileWrite_ReadsWrittenData_Warns verifies that a write whose value
+// reads a data value the same step also writes produces an informational
+// warning (not an error) explaining the snapshot semantics.
+func TestCompileWrite_ReadsWrittenData_Warns(t *testing.T) {
+	src := minimalWorkflowWithData(`
+data "internal" "counter" {
+  type  = number
+  value = 0
+}
+`, `
+outcome "success" {
+  next = step.done
+  write {
+    target = data.internal.counter.value
+    value  = data.internal.counter.value + 1
+  }
+}
+`)
+	spec, diags := Parse("t.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	_, diags = Compile(spec, nil)
+	if diags.HasErrors() {
+		t.Fatalf("compile should not error, got: %s", diags.Error())
+	}
+	var found bool
+	for _, d := range diags {
+		if d.Severity == hcl.DiagWarning && strings.Contains(d.Summary, "reads data.internal.counter, which this step also writes") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected snapshot-semantics warning, got diags: %s", diags.Error())
+	}
+}
+
+// TestCompileWrite_ReadsOtherData_NoWarn verifies that reading a data value the
+// step does not write produces no snapshot-semantics warning.
+func TestCompileWrite_ReadsOtherData_NoWarn(t *testing.T) {
+	src := minimalWorkflowWithData(`
+data "internal" "counter" {
+  type  = number
+  value = 0
+}
+data "internal" "seed" {
+  type  = number
+  value = 5
+}
+`, `
+outcome "success" {
+  next = step.done
+  write {
+    target = data.internal.counter.value
+    value  = data.internal.seed.value + 1
+  }
+}
+`)
+	spec, diags := Parse("t.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	_, diags = Compile(spec, nil)
+	for _, d := range diags {
+		if d.Severity == hcl.DiagWarning && strings.Contains(d.Summary, "which this step also writes") {
+			t.Errorf("did not expect snapshot-semantics warning, got: %s", d.Summary)
+		}
 	}
 }
 

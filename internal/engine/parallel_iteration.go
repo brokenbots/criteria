@@ -594,7 +594,7 @@ func (n *stepNode) finishParallelOutcome(anyFailed bool, st *RunState, deps Deps
 	}
 
 	if len(co.Writes) > 0 && st.DataStore != nil {
-		if writeErr := applyDataWrites(n.step.Name, aggregateOutcome, co.Writes, projectedCty, nil, st, deps.Sink); writeErr != nil {
+		if writeErr := applyDataWrites(n.step.Name, aggregateOutcome, co.Writes, projectedCty, nil, nil, st, deps.Sink); writeErr != nil {
 			return "", writeErr
 		}
 	}
