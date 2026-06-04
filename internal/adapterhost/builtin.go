@@ -82,8 +82,21 @@ func (p *builtinAdapter) CloseSession(_ context.Context, id string) error {
 	return nil
 }
 
-func (p *builtinAdapter) StartLogStream(context.Context, string, LogEventSink) (func(), error) {
-	return func() {}, nil
+func (p *builtinAdapter) StartLogStream(ctx context.Context, _ string, sink LogEventSink) (func(), error) {
+	// In-process builtin adapters have no real Log RPC stream, but the host
+	// arms its heartbeat-stall detector as soon as StartLogStream returns a
+	// non-nil cancel. Without a heartbeat source the monitor freezes at the
+	// timestamp recorded at session open, so any idle builtin session (e.g. a
+	// shell session waiting behind a long-running agent step) is falsely
+	// declared crashed once 90s elapse. Emit heartbeats on the same cadence as
+	// RPC adapters to keep the monitor fresh.
+	logCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	go func() {
+		_ = v2.RunHeartbeat(logCtx, "log", func(hb *v2.Heartbeat) error {
+			return sink.Emit(&v2.LogEvent{Heartbeat: hb})
+		})
+	}()
+	return cancel, nil
 }
 
 func (p *builtinAdapter) StartPermissionStream(ctx context.Context, _ string, requests <-chan *v2.PermissionEvent) (func(), error) {
