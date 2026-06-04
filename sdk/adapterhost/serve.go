@@ -68,8 +68,25 @@ func (s *grpcAdapterServer) Execute(req *v2.ExecuteRequest, stream v2.AdapterSer
 }
 
 // Log adapts the generated server-streaming signature to LogEventSender.
+//
+// It runs a background heartbeat ticker on the Log stream for the lifetime of
+// the adapter's Log call. The host's heartbeat-stall detector is fed solely by
+// the per-session Log stream, and it declares a session crashed after 90s of
+// silence. An idle adapter session (e.g. a reviewer waiting behind a long
+// developer or CI step on another session) emits no log lines on its own, so
+// without these heartbeats it is falsely declared crashed. Sends are serialised
+// by grpcLogEventServer's mutex, so the heartbeat goroutine is safe alongside
+// any log lines the adapter's Log implementation emits.
 func (s *grpcAdapterServer) Log(req *v2.LogRequest, stream v2.AdapterService_LogServer) error {
-	return s.impl.Log(stream.Context(), req, &grpcLogEventServer{stream: stream})
+	sender := &grpcLogEventServer{stream: stream}
+	hbCtx, cancel := context.WithCancel(stream.Context())
+	defer cancel()
+	go func() {
+		_ = v2.RunHeartbeat(hbCtx, "log", func(hb *v2.Heartbeat) error {
+			return sender.Send(&v2.LogEvent{Heartbeat: hb})
+		})
+	}()
+	return s.impl.Log(stream.Context(), req, sender)
 }
 
 // Permissions adapts the generated bidi-streaming signature to PermissionsStream.
