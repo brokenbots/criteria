@@ -12,7 +12,7 @@ import (
 	copilot "github.com/github/copilot-sdk/go"
 
 	adapterhost "github.com/brokenbots/criteria/sdk/adapterhost"
-	v2 "github.com/brokenbots/criteria/sdk/pb/criteria/v2"
+	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 )
 
 const maxFinalizeAttempts = 3
