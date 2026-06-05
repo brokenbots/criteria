@@ -405,6 +405,12 @@ adapter "shell" "default" {}
 step "first" {
   target = adapter.shell.default
   input { command = "echo hi" }
+  outcome "success" { next = step.second }
+}
+
+step "second" {
+  target = adapter.shell.default
+  input { command = "echo hi" }
   outcome "success" {
     output = { copied = steps.first.outputs.status }
     next = step.done
@@ -437,6 +443,12 @@ workflow {
 adapter "shell" "default" {}
 
 step "first" {
+  target = adapter.shell.default
+  input { command = "echo hi" }
+  outcome "success" { next = step.second }
+}
+
+step "second" {
   target = adapter.shell.default
   input { command = "echo hi" }
   outcome "success" {
