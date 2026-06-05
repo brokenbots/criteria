@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/brokenbots/criteria/internal/adapter/manifest"
 	"github.com/brokenbots/criteria/internal/adapter/publish"
 )
 
@@ -103,6 +104,17 @@ func emitManifestToTemp(ctx context.Context, binPath string) (mfPath string, cle
 	if err := os.WriteFile(mfPath, outBytes, 0o644); err != nil {
 		os.RemoveAll(tmpDir)
 		return "", nil, fmt.Errorf("write manifest: %w", err)
+	}
+	// Validate before publishing so we fail fast with a clear error rather than
+	// pushing an artifact the host would later reject at pull time.
+	m, err := manifest.ParseFile(mfPath)
+	if err != nil {
+		os.RemoveAll(tmpDir)
+		return "", nil, fmt.Errorf("parse emitted manifest: %w", err)
+	}
+	if err := m.Validate(); err != nil {
+		os.RemoveAll(tmpDir)
+		return "", nil, fmt.Errorf("emitted manifest is invalid: %w", err)
 	}
 	return mfPath, func() { os.RemoveAll(tmpDir) }, nil
 }
