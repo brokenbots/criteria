@@ -19,7 +19,7 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/brokenbots/criteria/internal/adapter"
-	v2 "github.com/brokenbots/criteria/sdk/pb/criteria/v2"
+	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 	"github.com/brokenbots/criteria/workflow"
 )
 

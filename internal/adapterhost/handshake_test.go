@@ -8,7 +8,7 @@ import (
 
 	hplugin "github.com/hashicorp/go-plugin"
 
-	v2 "github.com/brokenbots/criteria/sdk/pb/criteria/v2"
+	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 )
 
 func TestHandshakeInfo(t *testing.T) {

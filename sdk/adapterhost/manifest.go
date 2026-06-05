@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	v2 "github.com/brokenbots/criteria/sdk/pb/criteria/v2"
+	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 )
 
 // manifestSchemaVersion is the adapter.yaml schema version for protocol v2.

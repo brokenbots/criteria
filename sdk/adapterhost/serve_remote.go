@@ -11,7 +11,7 @@ import (
 
 	"google.golang.org/grpc"
 
-	v2 "github.com/brokenbots/criteria/sdk/pb/criteria/v2"
+	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 )
 
 // RemoteIdentity is the adapter identity sent during the remote handshake.

@@ -1,9 +1,10 @@
 module github.com/brokenbots/criteria
 
-go 1.26
+go 1.26.3
 
 require (
 	connectrpc.com/connect v1.20.0
+	github.com/brokenbots/criteria-adapter-proto v0.5.1
 	github.com/brokenbots/criteria/sdk v0.0.0
 	github.com/brokenbots/criteria/workflow v0.0.0
 	github.com/elastic/go-seccomp-bpf v1.6.0

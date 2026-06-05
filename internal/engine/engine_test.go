@@ -19,7 +19,7 @@ import (
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/internal/testutil"
-	v2 "github.com/brokenbots/criteria/sdk/pb/criteria/v2"
+	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 	"github.com/brokenbots/criteria/workflow"
 	"github.com/brokenbots/criteria/workflow/lockfile"
 )

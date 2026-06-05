@@ -20,7 +20,7 @@ import (
 
 	"google.golang.org/grpc"
 
-	v2 "github.com/brokenbots/criteria/sdk/pb/criteria/v2"
+	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 )
 
 // remoteHandshakeMessage is the pre-gRPC identity frame sent to the host shim.

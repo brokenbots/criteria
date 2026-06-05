@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	v2 "github.com/brokenbots/criteria/sdk/pb/criteria/v2"
+	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 )
 
 func TestBuildManifestDoc_MapsInfoResponse(t *testing.T) {

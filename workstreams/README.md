@@ -189,6 +189,31 @@ referenced by the monorepo build; both are designed to live in their own repos (
   (`@criteria/adapter-sdk`, `criteria-python-adapter-sdk`, `criteria-go-adapter-sdk`); the
   monorepo no longer carries SDK source. Next: proto/Go-SDK switchover.
 
+### Proto switchover — v2 bindings now external (2026-06-05, session 3)
+
+The adapter **protocol v2** bindings no longer live in the monorepo.
+
+- **Divergence reconciled.** The two in-tree copies (`proto/criteria/v2`,
+  `sdk/pb/criteria/v2`) were byte-identical generated bindings; only the consumed copy
+  (`sdk/pb/criteria/v2`, 57 importers) mattered — the root copy had zero real Go importers.
+  Their only real drift was helper code: the root copy's remote-chunk surface
+  (`SendChunks`/`AssembleChunks`/`ChunkEnvelope`/…, no live consumers — deferred WS19) and the
+  sdk copy's `outputs.go`. Both, plus the full v2 test suite, were folded into
+  [`criteria-adapter-proto`](https://github.com/brokenbots/criteria-adapter-proto) and tagged
+  **`v0.5.1`** (additive over v0.5.0).
+- **Host repointed.** All 57 files now import
+  `github.com/brokenbots/criteria-adapter-proto/criteria/v2` (alias `v2` preserved);
+  `criteria-adapter-proto v0.5.1` added to the root + `sdk` module `go.mod`. In-tree
+  `proto/criteria/v2` + `sdk/pb/criteria/v2` **deleted**; the **v1 server API**
+  (`proto/criteria/v1`, `sdk/pb/criteria/v1`) **stays** in the monorepo (to be broken out
+  later). Makefile `proto`/`proto-check-drift` repointed to v1; obsolete `buf.gen.v2.yaml`
+  removed. All four workspace modules build; full test suite green; import boundaries OK.
+- **Deferred to the Go-SDK switchover:** the `sdk/` module still conflates the adapter SDK
+  (`sdk/adapterhost`, incl. an in-tree `serve_remote*` that the external go-sdk dropped) with
+  the events/v1 server-API client. `go mod tidy` on `sdk/` fails because
+  `sdk/adapterhost/serve_remote_test.go` imports host `internal/…/remote` — a pre-existing
+  cross-dependency to untangle when `sdk/adapterhost` is repointed to `criteria-go-adapter-sdk`.
+
 ## Language cleanup — Terraform-shaping the HCL (archived 2026-06-05)
 
 A focused sub-effort (WS01–WS11) that landed on `main` and merged into `adapter-v2`

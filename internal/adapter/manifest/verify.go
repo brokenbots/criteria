@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	v2 "github.com/brokenbots/criteria/sdk/pb/criteria/v2"
+	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 )
 
 // Verify compares the static manifest from adapter.yaml to the runtime
