@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/brokenbots/criteria/internal/adapter"
-	"github.com/brokenbots/criteria/internal/adapters/shell"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -18,8 +17,10 @@ func (benchEventSink) Adapter(string, any) {}
 var _ adapter.EventSink = benchEventSink{}
 
 // noopAdapter is an in-process adapter that returns "success" immediately
-// without spawning any subprocess. It lets BenchmarkAdapterExecuteNoop
-// measure pure adapter-dispatch overhead.
+// without spawning any subprocess. It is the canonical in-process builtin used
+// to measure pure adapter-dispatch overhead. (Real adapters — including shell —
+// run out-of-process via discovery; their cost is dominated by subprocess spawn
+// and is not meaningful to micro-benchmark here.)
 type noopAdapter struct{}
 
 func (noopAdapter) Name() string               { return "noop" }
@@ -28,25 +29,22 @@ func (noopAdapter) Execute(_ context.Context, _ *workflow.StepNode, _ adapter.Ev
 	return adapter.Result{Outcome: "success"}, nil
 }
 
-// minimalStep returns a minimal StepNode for the shell adapter that runs a
-// no-op command (true(1)) so process spawn dominates, not command duration.
-func minimalStep(name string) *workflow.StepNode {
+// noopStep returns a minimal adapter step for the noop builtin.
+func noopStep(name string) *workflow.StepNode {
 	return &workflow.StepNode{
 		Name:       name,
 		TargetKind: workflow.StepTargetAdapter,
-		AdapterRef: "shell",
-		Input:      map[string]string{"command": "true"},
-		Outcomes:   map[string]*workflow.CompiledOutcome{"success": {Next: "done"}, "failure": {Next: "done"}},
+		AdapterRef: "noop",
+		Outcomes:   map[string]*workflow.CompiledOutcome{"success": {Next: "done"}},
 	}
 }
 
-// BenchmarkBuiltinAdapter_Execute measures the full per-step dispatch cost
-// (OpenSession → Execute → CloseSession) through the shell builtin adapter.
-// Subprocess spawn dominates the ~18 ms cost.
+// BenchmarkBuiltinAdapter_Execute measures the per-step dispatch cost
+// (OpenSession → Execute → CloseSession) through an in-process builtin adapter.
 func BenchmarkBuiltinAdapter_Execute(b *testing.B) {
-	factory := BuiltinFactoryForAdapter(shell.New())
+	factory := BuiltinFactoryForAdapter(noopAdapter{})
 	ctx := context.Background()
-	step := minimalStep("bench-step")
+	step := noopStep("bench-step")
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
@@ -69,12 +67,7 @@ func BenchmarkBuiltinAdapter_Execute(b *testing.B) {
 func BenchmarkAdapterExecuteNoop(b *testing.B) {
 	factory := BuiltinFactoryForAdapter(noopAdapter{})
 	ctx := context.Background()
-	step := &workflow.StepNode{
-		Name:       "noop-step",
-		TargetKind: workflow.StepTargetAdapter,
-		AdapterRef: "noop",
-		Outcomes:   map[string]*workflow.CompiledOutcome{"success": {Next: "done"}},
-	}
+	step := noopStep("noop-step")
 	p := factory()
 	if err := p.OpenSession(ctx, "sess", nil, nil); err != nil {
 		b.Fatalf("OpenSession: %v", err)
@@ -92,7 +85,7 @@ func BenchmarkAdapterExecuteNoop(b *testing.B) {
 // BenchmarkBuiltinAdapter_Info measures the Info() call overhead — called
 // during schema collection before every workflow execution.
 func BenchmarkBuiltinAdapter_Info(b *testing.B) {
-	factory := BuiltinFactoryForAdapter(shell.New())
+	factory := BuiltinFactoryForAdapter(noopAdapter{})
 	p := factory()
 	ctx := context.Background()
 	b.ResetTimer()
@@ -108,13 +101,13 @@ func BenchmarkBuiltinAdapter_Info(b *testing.B) {
 // builtin adapter from the DefaultLoader.
 func BenchmarkLoaderResolveBuiltin(b *testing.B) {
 	loader := NewLoader()
-	loader.RegisterBuiltin(shell.Name, BuiltinFactoryForAdapter(shell.New()))
+	loader.RegisterBuiltin("noop", BuiltinFactoryForAdapter(noopAdapter{}))
 	ctx := context.Background()
 	b.Cleanup(func() { _ = loader.Shutdown(ctx) })
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		if _, err := loader.Resolve(ctx, shell.Name); err != nil {
+		if _, err := loader.Resolve(ctx, "noop"); err != nil {
 			b.Fatalf("Resolve: %v", err)
 		}
 	}

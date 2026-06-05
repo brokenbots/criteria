@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -41,9 +42,12 @@ type sandboxConfig struct {
 }
 
 // buildSandboxConfig reads the step Input map and returns the resolved sandbox
-// configuration. Errors are returned for out-of-range timeout/output_limit_bytes
+// configuration. extraEnv holds resolved secret values (from the OpenSession
+// secrets channel and per-step secret inputs); they are injected verbatim into
+// the child environment after the allowlist, so the shell command can reference
+// them by name. Errors are returned for out-of-range timeout/output_limit_bytes
 // values so the adapter can surface them as step failures rather than panics.
-func buildSandboxConfig(input map[string]string) (sandboxConfig, error) {
+func buildSandboxConfig(input, extraEnv map[string]string) (sandboxConfig, error) {
 	cfg := sandboxConfig{
 		timeout:          defaultTimeout,
 		outputLimitBytes: defaultOutputLimitBytes,
@@ -71,7 +75,7 @@ func buildSandboxConfig(input map[string]string) (sandboxConfig, error) {
 	if err != nil {
 		return cfg, fmt.Errorf("shell adapter: invalid env: %w", err)
 	}
-	cfg.env = buildAllowlistedEnv(envDecl, buildSanitizedPath(input["command_path"]))
+	cfg.env = buildAllowlistedEnv(envDecl, buildSanitizedPath(input["command_path"]), extraEnv)
 
 	return cfg, nil
 }
@@ -152,8 +156,9 @@ var allowedBaseEnvPrefixes = []string{"LC_"}
 // TERM (if stdin is a TTY) are inherited. PATH is set to sanitizedPath.
 // Additional vars declared in envDecl are appended; a value starting with "$"
 // means "resolve from parent environment" (e.g. "$GOFLAGS" → os.Getenv("GOFLAGS")).
-func buildAllowlistedEnv(envDecl map[string]string, sanitizedPath string) []string {
-	env := make([]string, 0, len(allowedBaseEnvExact)+len(envDecl)+2)
+// extraEnv (resolved secrets) is appended last as literal KEY=VALUE pairs.
+func buildAllowlistedEnv(envDecl map[string]string, sanitizedPath string, extraEnv map[string]string) []string {
+	env := make([]string, 0, len(allowedBaseEnvExact)+len(envDecl)+len(extraEnv)+2)
 
 	for _, kv := range os.Environ() {
 		idx := strings.IndexByte(kv, '=')
@@ -190,6 +195,21 @@ func buildAllowlistedEnv(envDecl map[string]string, sanitizedPath string) []stri
 		}
 	}
 
+	return appendSecretEnv(env, extraEnv)
+}
+
+// appendSecretEnv appends resolved secrets as literal KEY=VALUE pairs in sorted
+// order (deterministic). Later duplicate keys win in exec, so secrets take
+// precedence over declared env.
+func appendSecretEnv(env []string, extraEnv map[string]string) []string {
+	keys := make([]string, 0, len(extraEnv))
+	for k := range extraEnv {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		env = append(env, k+"="+extraEnv[k])
+	}
 	return env
 }
 

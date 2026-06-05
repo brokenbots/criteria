@@ -500,6 +500,15 @@ func (p *rpcHandle) executeWithActiveStream(ctx context.Context, step *workflow.
 	execErr := p.rpc.Execute(ctx, req, captureSink)
 
 	if execErr != nil {
+		// When the caller's context is cancelled (run teardown) or times out,
+		// the adapter's Execute crosses the gRPC boundary as a codes.Canceled /
+		// codes.DeadlineExceeded status, which does not satisfy
+		// errors.Is(err, context.Canceled). Surface the canonical context error
+		// so callers can detect cancellation/timeout uniformly across in- and
+		// out-of-process adapters.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return adapter.Result{Outcome: "failure"}, ctxErr
+		}
 		return adapter.Result{Outcome: "failure"}, execErr
 	}
 	if !captureSink.done {

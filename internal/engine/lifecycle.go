@@ -46,7 +46,17 @@ func initScopeAdapters(ctx context.Context, g *workflow.FSMGraph, deps Deps, var
 			return nil, fmt.Errorf("initialize adapter %q: %w", instanceID, err)
 		}
 
-		openErr := deps.Sessions.OpenWithOriginRefs(ctx, instanceID, adapter.Type, adapter.OnCrash, adapter.Config, secretMap, originRefs)
+		// Resolve the bound environment's working_directory against the runtime
+		// closure now, at adapter init, so the cwd can be dynamic (e.g.
+		// var.worktree supplied via --var). The resolved value becomes the
+		// adapter process launch cwd.
+		workingDir, err := resolveAdapterWorkingDir(g, adapter, vars)
+		if err != nil {
+			deps.Sink.OnAdapterLifecycle("", instanceID, "init_failed", err.Error())
+			return nil, fmt.Errorf("initialize adapter %q: resolve working_directory: %w", instanceID, err)
+		}
+
+		openErr := deps.Sessions.OpenWithOriginRefs(ctx, instanceID, adapter.Type, adapter.OnCrash, adapter.Config, secretMap, originRefs, workingDir)
 
 		// Silently swallow ErrSessionAlreadyOpen to support subworkflow bodies that
 		// re-declare parent adapters for safety through re-declaration. Same-scope
@@ -75,6 +85,21 @@ func initScopeAdapters(ctx context.Context, g *workflow.FSMGraph, deps Deps, var
 	}
 
 	return provisioned, nil
+}
+
+// resolveAdapterWorkingDir resolves the working_directory of the environment
+// bound to the adapter (its declared environment, or the workflow default)
+// against the runtime vars. It returns "" when no environment is bound or the
+// environment declares no working_directory.
+func resolveAdapterWorkingDir(g *workflow.FSMGraph, ad *workflow.AdapterNode, vars map[string]cty.Value) (string, error) {
+	envKey := ad.Environment
+	if envKey == "" {
+		envKey = g.DefaultEnvironment
+	}
+	if envKey == "" {
+		return "", nil
+	}
+	return g.Environments[envKey].ResolveWorkingDir(vars)
 }
 
 // buildOriginRefs evaluates an adapter's secret expressions and converts them into

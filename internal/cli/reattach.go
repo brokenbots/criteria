@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/brokenbots/criteria/internal/adapterhost"
-	"github.com/brokenbots/criteria/internal/adapters/shell"
 	"github.com/brokenbots/criteria/internal/diagutil"
 	"github.com/brokenbots/criteria/internal/engine"
 	"github.com/brokenbots/criteria/internal/run"
@@ -163,7 +162,6 @@ func resumePausedRun(ctx context.Context, log *slog.Logger, rc reattachTransport
 	}
 	sink := &run.Sink{RunID: cp.RunID, Client: rc, Log: log, Ctx: ctx}
 	loader := adapterhost.NewLoader()
-	loader.RegisterBuiltin(shell.Name, adapterhost.BuiltinFactoryForAdapter(shell.New()))
 
 	restoredVars, restoredIter, restoreErr := workflow.RestoreVarScope(resp.VariableScope, graph)
 	if restoreErr != nil {
@@ -284,7 +282,6 @@ func resumeActiveRun(ctx context.Context, log *slog.Logger, rc reattachTransport
 	sink := &run.Sink{RunID: cp.RunID, Client: rc, Log: log, Ctx: ctx}
 	sink.StepResumed(ctx, resp.CurrentStep, nextAttempt, "criteria_restart")
 	loader := adapterhost.NewLoader()
-	loader.RegisterBuiltin(shell.Name, adapterhost.BuiltinFactoryForAdapter(shell.New()))
 
 	// Restore variable scope and iter cursor from the server (W04/W07).
 	restoredVars, restoredIter, restoreErr := workflow.RestoreVarScope(resp.VariableScope, graph)
@@ -321,7 +318,6 @@ func parseWorkflowFromPath(ctx context.Context, path string) (*workflow.FSMGraph
 
 	// Collect adapter schemas for compile-time validation.
 	loader := adapterhost.NewLoader()
-	loader.RegisterBuiltin(shell.Name, adapterhost.BuiltinFactoryForAdapter(shell.New()))
 	schemas := diagutil.CollectSchemas(ctx, loader, spec, nil)
 	_ = loader.Shutdown(ctx)
 

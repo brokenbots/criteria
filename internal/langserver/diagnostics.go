@@ -9,7 +9,6 @@ import (
 	"github.com/hashicorp/hcl/v2"
 
 	"github.com/brokenbots/criteria/internal/adapterhost"
-	"github.com/brokenbots/criteria/internal/adapters/shell"
 	"github.com/brokenbots/criteria/internal/diagutil"
 	"github.com/brokenbots/criteria/workflow"
 )
@@ -67,7 +66,6 @@ func (s *server) compileDiagnostics(dir string) []compileDiagnostic {
 
 	ctx := context.Background()
 	loader := adapterhost.NewLoader()
-	loader.RegisterBuiltin(shell.Name, adapterhost.BuiltinFactoryForAdapter(shell.New()))
 	schemas := diagutil.CollectSchemas(ctx, loader, spec, nil)
 	_ = loader.Shutdown(ctx)
 

@@ -55,7 +55,9 @@ func (prep *LinuxPrepared) ApplyToCmd(cmd *exec.Cmd, criteriaBin string) error {
 }
 
 // MaybeUseBubblewrap always returns nil on non-Linux.
-func MaybeUseBubblewrap(_ *LinuxPrepared, _ *workflow.EnvironmentNode) *exec.Cmd { return nil }
+func MaybeUseBubblewrap(_ *LinuxPrepared, _ *workflow.EnvironmentNode, _ string) *exec.Cmd {
+	return nil
+}
 
 // ShimConfig is unused on non-Linux.
 type ShimConfig struct{}

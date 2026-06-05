@@ -82,6 +82,10 @@ jobs:
   e2e:
     name: Build & E2E
     runs-on: ubuntu-latest
+    env:
+      # The shell adapter is now an out-of-process discovered binary (not an
+      # in-process builtin), so e2e steps must find the built adapter plugins.
+      CRITERIA_PLUGINS: ${{ github.workspace }}/bin
     steps:
       - uses: actions/checkout@v4
 
@@ -101,8 +105,8 @@ jobs:
       - name: Sync workspace
         run: go work sync
 
-      - name: Build binary
-        run: make build
+      - name: Build binary and adapter plugins
+        run: make build plugins
 
       - name: CLI smoke test
         run: ./bin/criteria apply examples/hello --events-file /tmp/events.ndjson
