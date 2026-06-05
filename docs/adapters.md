@@ -13,7 +13,12 @@ A Criteria adapter is an out-of-process binary named `criteria-adapter-<name>`. 
 
 Criteria does not look on `PATH`. The host starts the adapter with HashiCorp `go-plugin`; the adapter then speaks the shared gRPC adapter protocol over a local transport. The binary stays outside the Criteria process boundary, so adapter-specific runtime failures are isolated from the engine.
 
-The first production adapter in this repo is `copilot`, shipped as `bin/criteria-adapter-copilot`.
+The `copilot` adapter now lives in its own repository,
+[`criteria-adapter-copilot`](https://github.com/brokenbots/criteria-adapter-copilot), and is
+distributed as a signed OCI artifact (`ghcr.io/brokenbots/criteria-adapter-copilot`) rather
+than built in this repo. The build/install/layout examples below that reference
+`bin/criteria-adapter-copilot` are pending a refresh (WS39); the protocol and HCL usage they
+illustrate are still accurate.
 
 ## Installing an Adapter
 
