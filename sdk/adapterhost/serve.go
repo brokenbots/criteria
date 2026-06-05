@@ -13,7 +13,15 @@ import (
 
 // Serve starts the adapter process using the shared [HandshakeConfig].
 // Call this from your adapter's main() function.
+//
+// When the process is invoked with --emit-manifest, Serve writes the adapter's
+// adapter.yaml (derived from its Info response) to stdout and exits, instead of
+// starting the plugin server. The build pipeline and `criteria adapter publish`
+// use this to extract the manifest.
 func Serve(impl Service) {
+	if runEmitManifestIfRequested(impl) {
+		return
+	}
 	hplugin.Serve(&hplugin.ServeConfig{
 		HandshakeConfig: HandshakeConfig,
 		Plugins: map[string]hplugin.Plugin{
