@@ -11,6 +11,7 @@ import (
 	"time"
 
 	copilot "github.com/github/copilot-sdk/go"
+	"github.com/github/copilot-sdk/go/rpc"
 
 	v2 "github.com/brokenbots/criteria/sdk/pb/criteria/v2"
 )
@@ -34,8 +35,8 @@ func TestHandlePermissionRequestNoSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result.Kind != copilot.PermissionRequestResultKindUserNotAvailable {
-		t.Fatalf("result.Kind = %q, want %q", result.Kind, copilot.PermissionRequestResultKindUserNotAvailable)
+	if result.Kind() != rpc.PermissionDecisionKindUserNotAvailable {
+		t.Fatalf("result.Kind = %q, want %q", result.Kind(), rpc.PermissionDecisionKindUserNotAvailable)
 	}
 }
 
@@ -57,8 +58,8 @@ func TestHandlePermissionRequestInactiveSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result.Kind != copilot.PermissionRequestResultKindUserNotAvailable {
-		t.Fatalf("result.Kind = %q, want %q", result.Kind, copilot.PermissionRequestResultKindUserNotAvailable)
+	if result.Kind() != rpc.PermissionDecisionKindUserNotAvailable {
+		t.Fatalf("result.Kind = %q, want %q", result.Kind(), rpc.PermissionDecisionKindUserNotAvailable)
 	}
 	if got := sink.snapshot(); len(got) != 0 {
 		t.Fatalf("expected no events sent on sink, got %d event(s)", len(got))
@@ -83,8 +84,8 @@ func TestHandlePermissionRequestSendError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error (non-nil means SDK-level failure): %v", err)
 	}
-	if result.Kind != copilot.PermissionRequestResultKindUserNotAvailable {
-		t.Fatalf("result.Kind = %q, want %q (fail-closed when observability send fails)", result.Kind, copilot.PermissionRequestResultKindUserNotAvailable)
+	if result.Kind() != rpc.PermissionDecisionKindUserNotAvailable {
+		t.Fatalf("result.Kind = %q, want %q (fail-closed when observability send fails)", result.Kind(), rpc.PermissionDecisionKindUserNotAvailable)
 	}
 }
 
@@ -132,8 +133,8 @@ func TestHandlePermissionRequestAutoApproveActive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result.Kind != copilot.PermissionRequestResultKindApproved {
-		t.Fatalf("result.Kind = %q, want %q", result.Kind, copilot.PermissionRequestResultKindApproved)
+	if result.Kind() != rpc.PermissionDecisionKindApproveOnce {
+		t.Fatalf("result.Kind = %q, want %q", result.Kind(), rpc.PermissionDecisionKindApproveOnce)
 	}
 
 	var found bool
