@@ -194,6 +194,7 @@ environment "shell" "staging" {
 - **`<type>`** (required label): The environment type. In v0.3.0, only `"shell"` is supported. Future versions will support additional types like `"docker"`, `"firecracker"`, etc., for isolated execution contexts.
 - **`<name>`** (required label): The environment name. Must match `^[a-zA-Z][a-zA-Z0-9_-]*$` (starts with a letter; can contain letters, digits, underscores, hyphens).
 - **`variables`** (optional): Map of environment variable names to string values. Numbers and booleans are coerced to strings. All variables must fold at compile time (no runtime-only references like `each.value` or `steps.X.outputs.Y`).
+- **`working_directory`** (optional): Launch directory for the adapter process. Shell and copilot adapters bound to the environment run in this directory by default (it becomes the process cwd). Accepted by `shell`, `sandbox`, and `remote` environments; **not** accepted by `container` environments, which isolate paths rather than relocate the process cwd. For `sandbox` environments the path must also be permitted by the filesystem policy so the chdir succeeds inside the sandbox.
 - **`config`** (optional): Map of type-specific configuration. Shape is not validated in v0.3.0 (validation lands in Phase 4 with a per-type schema registry). The config is parsed and stored but does not affect adapter behavior in v0.3.0. This slot is reserved for Phase 4 implementation.
 
 ### Default environment

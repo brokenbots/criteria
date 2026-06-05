@@ -78,14 +78,14 @@ func (h *ShellHandler) ValidateFields(body hcl.Body) hcl.Diagnostics {
 	attrs, diags := body.JustAttributes()
 	for name := range attrs {
 		switch name {
-		case "variables", "policy_mode", "os", "config":
+		case "variables", "policy_mode", "os", "working_directory", "config":
 			// accepted; config is deprecated but tolerated with its own diagnostic path
 		default:
 			rng := attrs[name].Range
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagError,
 				Summary:  fmt.Sprintf("shell environment: unknown attribute %q", name),
-				Detail:   "shell environments accept only variables, policy_mode, and os.",
+				Detail:   "shell environments accept only variables, policy_mode, os, and working_directory.",
 				Subject:  &rng,
 			})
 		}
@@ -115,7 +115,7 @@ func (h *SandboxHandler) ValidateFields(body hcl.Body) hcl.Diagnostics {
 	attrs, diags := body.JustAttributes()
 	for name := range attrs {
 		switch name {
-		case "variables", "policy_mode", "os",
+		case "variables", "policy_mode", "os", "working_directory",
 			"filesystem", "network", "resources", "secrets", "config":
 			// accepted
 		default:
@@ -123,7 +123,7 @@ func (h *SandboxHandler) ValidateFields(body hcl.Body) hcl.Diagnostics {
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagError,
 				Summary:  fmt.Sprintf("sandbox environment: unknown attribute %q", name),
-				Detail:   "sandbox environments accept variables, policy_mode, os, filesystem, network, resources, and secrets.",
+				Detail:   "sandbox environments accept variables, policy_mode, os, working_directory, filesystem, network, resources, and secrets.",
 				Subject:  &rng,
 			})
 		}

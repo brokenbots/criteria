@@ -103,14 +103,14 @@ func (h *builtinShellHandler) ValidateFields(body hcl.Body) hcl.Diagnostics {
 	attrs, diags := body.JustAttributes()
 	for name := range attrs {
 		switch name {
-		case "variables", "policy_mode", "os", "config":
+		case "variables", "policy_mode", "os", "working_directory", "config":
 			// accepted; config is deprecated but tolerated with its own diagnostic path
 		default:
 			rng := attrs[name].Range
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagError,
 				Summary:  fmt.Sprintf("shell environment: unknown attribute %q", name),
-				Detail:   "shell environments accept only variables, policy_mode, and os.",
+				Detail:   "shell environments accept only variables, policy_mode, os, and working_directory.",
 				Subject:  &rng,
 			})
 		}
@@ -132,7 +132,7 @@ func (h *builtinSandboxHandler) ValidateFields(body hcl.Body) hcl.Diagnostics {
 	attrs, diags := body.JustAttributes()
 	for name := range attrs {
 		switch name {
-		case "variables", "policy_mode", "os",
+		case "variables", "policy_mode", "os", "working_directory",
 			"filesystem", "network", "resources", "secrets", "config":
 			// accepted
 		default:
@@ -140,7 +140,7 @@ func (h *builtinSandboxHandler) ValidateFields(body hcl.Body) hcl.Diagnostics {
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagError,
 				Summary:  fmt.Sprintf("sandbox environment: unknown attribute %q", name),
-				Detail:   "sandbox environments accept variables, policy_mode, os, filesystem, network, resources, and secrets.",
+				Detail:   "sandbox environments accept variables, policy_mode, os, working_directory, filesystem, network, resources, and secrets.",
 				Subject:  &rng,
 			})
 		}
@@ -197,7 +197,7 @@ func (h *builtinRemoteHandler) ValidateFields(body hcl.Body) hcl.Diagnostics {
 	attrs, diags := BodyJustAttributesToleratingBlocks(body, HandlerAllowedBlocks(h.Type()))
 	for name := range attrs {
 		switch name {
-		case "variables", "policy_mode", "os",
+		case "variables", "policy_mode", "os", "working_directory",
 			"listen_address", "mtls", "accept_token", "accept_digest_from", "config":
 			// accepted
 		default:
@@ -205,7 +205,7 @@ func (h *builtinRemoteHandler) ValidateFields(body hcl.Body) hcl.Diagnostics {
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagError,
 				Summary:  fmt.Sprintf("remote environment: unknown attribute %q", name),
-				Detail:   "remote environments accept variables, policy_mode, os, listen_address, mtls, accept_token, accept_digest_from, and config.",
+				Detail:   "remote environments accept variables, policy_mode, os, working_directory, listen_address, mtls, accept_token, accept_digest_from, and config.",
 				Subject:  &rng,
 			})
 		}

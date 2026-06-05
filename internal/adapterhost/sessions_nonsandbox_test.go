@@ -3,11 +3,71 @@ package adapterhost
 import (
 	"context"
 	"errors"
+	"os/exec"
 	"strings"
 	"testing"
 
 	"github.com/brokenbots/criteria/workflow"
 )
+
+// TestBuildCommandCustomizer_ShellWorkingDirectory verifies that an environment
+// with a working_directory produces a customizer that sets the adapter process
+// launch cwd, even for a non-sandbox (shell) environment, while preserving the
+// host environment so the adapter keeps PATH and friends.
+func TestBuildCommandCustomizer_ShellWorkingDirectory(t *testing.T) {
+	sm := NewSessionManager(nil)
+	sm.graph = &workflow.FSMGraph{
+		Adapters: map[string]*workflow.AdapterNode{
+			"shell.default": {Type: "shell", Name: "default", Environment: "shell.ci"},
+		},
+		Environments: map[string]*workflow.EnvironmentNode{
+			"shell.ci": {Type: "shell", Name: "ci", WorkingDirectory: "/tmp/worktree"},
+		},
+	}
+	customizer, cleanup, err := sm.buildCommandCustomizer("shell.default")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cleanup != nil {
+		t.Fatal("expected nil cleanup for non-sandbox env")
+	}
+	if customizer == nil {
+		t.Fatal("expected non-nil customizer when working_directory is set")
+	}
+	cmd := exec.Command("true")
+	customizer("shell", cmd)
+	if cmd.Dir != "/tmp/worktree" {
+		t.Errorf("cmd.Dir = %q, want %q", cmd.Dir, "/tmp/worktree")
+	}
+	if len(cmd.Env) == 0 {
+		t.Error("expected host env to be preserved (non-empty cmd.Env) when SkipHostEnv is forced on")
+	}
+}
+
+// TestBuildCommandCustomizer_NoWorkingDirectory verifies that a non-sandbox
+// environment without a working_directory yields no customizer (so go-plugin's
+// default host-env handling is left intact).
+func TestBuildCommandCustomizer_NoWorkingDirectory(t *testing.T) {
+	sm := NewSessionManager(nil)
+	sm.graph = &workflow.FSMGraph{
+		Adapters: map[string]*workflow.AdapterNode{
+			"shell.default": {Type: "shell", Name: "default", Environment: "shell.ci"},
+		},
+		Environments: map[string]*workflow.EnvironmentNode{
+			"shell.ci": {Type: "shell", Name: "ci"},
+		},
+	}
+	customizer, cleanup, err := sm.buildCommandCustomizer("shell.default")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if customizer != nil {
+		t.Fatal("expected nil customizer when no working_directory on a non-sandbox env")
+	}
+	if cleanup != nil {
+		t.Fatal("expected nil cleanup")
+	}
+}
 
 func TestBuildSandboxCustomizer_NonSandboxEnv(t *testing.T) {
 	sm := NewSessionManager(nil)

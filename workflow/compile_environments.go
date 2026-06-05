@@ -119,6 +119,22 @@ func compileEnvironmentBlock(g *FSMGraph, envSpec EnvironmentSpec, opts CompileO
 		}
 	}
 
+	// Parse optional working_directory attribute. Container environments reject
+	// it in their ValidateFields (they isolate paths rather than relocate cwd);
+	// shell, sandbox, and remote environments inject it into the step's
+	// working_directory input at runtime.
+	var workingDir string
+	if attr, ok := attrs["working_directory"]; ok {
+		val, valDiags := attr.Expr.Value(nil)
+		diags = append(diags, valDiags...)
+		if valDiags.HasErrors() {
+			return diags
+		}
+		if val.Type() == cty.String && val.IsKnown() && !val.IsNull() {
+			workingDir = val.AsString()
+		}
+	}
+
 	// OS gate: if os is set and does not match the host GOOS, emit error.
 	if osVal != "" && osVal != envRegistryHostOS {
 		var supportedList string
@@ -156,7 +172,7 @@ func compileEnvironmentBlock(g *FSMGraph, envSpec EnvironmentSpec, opts CompileO
 	typeSpecific := make(map[string]cty.Value)
 	for name, attr := range attrs {
 		switch name {
-		case "variables", "config", "policy_mode", "os", "secrets":
+		case "variables", "config", "policy_mode", "os", "working_directory", "secrets":
 			continue
 		}
 		val, valDiags := attr.Expr.Value(nil)
@@ -171,15 +187,16 @@ func compileEnvironmentBlock(g *FSMGraph, envSpec EnvironmentSpec, opts CompileO
 
 	// Store the compiled environment.
 	g.Environments[key] = &EnvironmentNode{
-		Type:         envSpec.Type,
-		Name:         envSpec.Name,
-		Variables:    variables,
-		Config:       config,
-		PolicyMode:   policyMode,
-		OS:           osVal,
-		Secrets:      secretsPolicy,
-		TypeSpecific: typeSpecific,
-		RawBody:      envSpec.Remain,
+		Type:             envSpec.Type,
+		Name:             envSpec.Name,
+		Variables:        variables,
+		Config:           config,
+		PolicyMode:       policyMode,
+		OS:               osVal,
+		WorkingDirectory: workingDir,
+		Secrets:          secretsPolicy,
+		TypeSpecific:     typeSpecific,
+		RawBody:          envSpec.Remain,
 	}
 
 	return diags
