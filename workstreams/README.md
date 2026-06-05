@@ -88,30 +88,49 @@ active set focused. Archiving is gated on *validated landed code*, not the plan 
 archived WS has an in-repo merge plus visible host/engine/proto code. The remaining set was
 then reviewed WS-by-WS against the tree and CI (see findings below).
 
-- **Done & archived** (host/engine/proto/wire, merged + code-verified): **WS01–WS20, WS22,
-  WS26, WS31, WS37**. (WS37 confirmed during review — the adapter v1 protocol is fully
-  removed; the `proto/criteria/v1` that remains is the unrelated server/run API.)
-- **Remaining in [`adapter_v2/`](adapter_v2/), grouped by the release critical path:**
-  - *Publishing infra (the real remaining release blocker — Gate 4):* **WS28** reusable
-    publish action (no `.github/actions` yet), **WS27** starter repos, **WS29** GitLab/Makefile.
-  - *SDKs (each owns its own conformance per ADR-0003 — no longer gate the host):* **WS23** TS
-    (`--emit-manifest` flagged missing), **WS24** Python, **WS25** Go author-SDK
-    (`criteria-go-adapter-sdk` is external — the in-tree `sdk/` is the *host* SDK; PR #205
-    closed unmerged). **WS21** serveRemote: Go side done in-tree (`adapterhost.ServeRemote`),
-    TS/Py external.
-  - *External TS adapter migrations (separate repos, pushed in Track A; logs show complete,
-    tests passing):* WS30, WS32, WS33, WS34, WS35.
+- **Done & archived:**
+  - *Host/engine/proto/wire (merged + code-verified):* **WS01–WS20, WS22, WS26, WS31, WS37**.
+    (WS37 confirmed during review — the adapter v1 protocol is fully removed; the
+    `proto/criteria/v1` that remains is the unrelated server/run API.)
+  - *SDK / publishing / adapter migrations (sessions 2–3, verified 2026-06-05):* **WS25** Go SDK
+    (`criteria-go-adapter-sdk` v0.5.1 — extracted, switched over #228, host consumers compile),
+    **WS28** publish action (`brokenbots/publish-adapter@v0.1.0` — proven against all 5 adapter
+    repos; the WS27-starter-repo linkage in its exit criteria is superseded by the real adapter
+    repos), **WS30 / WS32 / WS33 / WS34 / WS35** the five TS adapter migrations (greeter, claude,
+    claude-agent, codex, openai — each published as a signed `v0.5.0` OCI artifact via the action,
+    in its own repo; *Publish* runs green).
+- **Remaining in [`adapter_v2/`](adapter_v2/), grouped by the release critical path** (each entry
+  states the *specific* work left, reviewed against the tree/repos 2026-06-05 session 3):
+  - *SDKs — work landed, blocked on owner-held tokens / follow-on packaging:*
+    - **WS23** TS SDK: published as `@criteria/adapter-sdk@0.5.0` in its own repo with a publish
+      workflow. **Remaining: actual npm publish** (needs `NPM_TOKEN` + the `@criteria` npm scope —
+      owner step). This is the current cause of red `test` CI in the adapter repos (their
+      `bun install` of `@criteria/adapter-sdk` from npm 404s; *Publish* is unaffected — it builds
+      the SDK sibling locally).
+    - **WS24** Python SDK: published as `criteria-python-adapter-sdk@0.5.0` (repo `main` + tag
+      `v0.5.0`, 42 tests pass). **Remaining: PyPI publish.**
+    - **WS21** serveRemote: Go `ServeRemote` ships on `criteria-go-adapter-sdk` `main` but has
+      **zero callers** (remote path deferred; its test + the TS `serveRemote.ts` live on each
+      repo's `deferred/serve-remote` branch). **Remaining: un-defer the remote path + a reference
+      example (ties to WS27).**
+  - *Publishing infra:* **WS27** starter repos (none exist yet), **WS29** GitLab template +
+    Makefile paths + runtime container image.
+  - *Independence + hardening:*
+    - **WS41** proto extraction: **Go switchover done** (`criteria-adapter-proto` v0.5.1, #227;
+      `proto/criteria/v2` deleted). **Remaining: TS/Python proto packages + multi-language CI**
+      (exit criteria wants all four consumer repos on the *published* package — TS/Py still bundle
+      their own proto).
+    - **WS42** shell: de-builtin'd to `cmd/`. **Remaining: its own `criteria-adapter-shell` repo,
+      published + signed.**
+    - **WS43** independence verification, **WS44** CI coverage ratchet, **WS39** docs refresh
+      (`adapters.md` exists; lockfile/CLI/migration-guide thin) — all open.
   - *Release gates — reassessed 2026-06-05 (see WS40 note):* Gate 1 conformance **done**
     (rescoped, [ADR-0003](../docs/adrs/ADR-0003-conformance-scope.md)); Gate 2 in-tree adapters
     covered in `ci.yml` e2e, rescope pending; Gate 3 **WS38** `remote-e2e.yml` real but only
-    runs on tag/weekly/dispatch; Gate 4 publishing = WS28/WS27. **WS40** still needs Gate 4 +
-    a Gate 3 validation run + the v2 tag.
-  - *Independence + hardening:* **WS41** proto extraction (still in-tree), **WS42** shell
-    extraction (de-builtin'd to `cmd/`, not its own repo), **WS43** independence verify,
-    **WS44** coverage ratchet, **WS39** docs refresh (`adapters.md` exists; lockfile/CLI/
-    migration-guide thin).
+    runs on tag/weekly/dispatch; Gate 4 publishing infra = WS27/WS29. **WS40** still needs Gate 4
+    + a Gate 3 validation run + the v2 tag.
   - *Bugfix / gap found in review:* **WS36** copilot still reads `GH_TOKEN` via `os.Getenv`
-    (no secrets channel), and **WS45** (new) — the in-tree Go adapter SDK exposes no
+    (no secrets channel), and **WS45** — the in-tree Go adapter SDK exposes no
     secrets API, so no in-tree adapter consumes the wired secret channel. WS45 unblocks WS36.
 
 ### Publishing + extraction progress (2026-06-05, session 2)

@@ -1,6 +1,6 @@
 # WS27 — Starter GitHub template repos (TS / Python / Go)
 
-**Phase:** Adapter v2 · **Track:** CI scaffolding · **Owner:** Workstream executor · **Depends on:** [WS23](WS23-typescript-sdk-v2.md), [WS24](WS24-python-sdk-v2.md), [WS25](WS25-go-sdk-v1.md), [WS28](WS28-reusable-publish-action.md). · **Unblocks:** [WS40](WS40-v2-release-gate.md) verification gate 4. · **Base branch:** `adapter-v2`
+**Phase:** Adapter v2 · **Track:** CI scaffolding · **Owner:** Workstream executor · **Depends on:** [WS23](WS23-typescript-sdk-v2.md), [WS24](WS24-python-sdk-v2.md), [WS25](../archived/v4/adapter-v2/WS25-go-sdk-v1.md), [WS28](../archived/v4/adapter-v2/WS28-reusable-publish-action.md). · **Unblocks:** [WS40](WS40-v2-release-gate.md) verification gate 4. · **Base branch:** `adapter-v2`
 
 ## Context
 
