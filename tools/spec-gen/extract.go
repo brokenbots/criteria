@@ -214,7 +214,6 @@ func extractNamespaces(evalFile string) ([]NamespaceDoc, error) {
 			"BuildEvalContextWithOpts: variable 'ctxVars' not found in function body — has the symbol been renamed?")
 	}
 
-
 	var eachSubKeys []string
 	if bindFn, ok := funcDecls["WithEachBinding"]; ok {
 		eachSubKeys = extractEachMapKeys(bindFn)

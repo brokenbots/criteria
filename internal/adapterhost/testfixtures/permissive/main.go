@@ -23,8 +23,8 @@ import (
 
 	"google.golang.org/protobuf/types/known/structpb"
 
-	adapterhost "github.com/brokenbots/criteria/sdk/adapterhost"
 	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
+	adapterhost "github.com/brokenbots/criteria-go-adapter-sdk/adapterhost"
 )
 
 type permissiveService struct {

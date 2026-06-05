@@ -1,19 +1,12 @@
 module example.com/criteria-adapter-greeter
 
-go 1.26
+go 1.26.3
 
-// TODO(WS08): Remove this replace directive after the first criteria/sdk tag is cut.
-// Until then, the example builds against the in-tree SDK via this local path override.
-// External plugin authors should pin a published version instead of using replace.
-replace github.com/brokenbots/criteria/sdk => ../../../sdk
-
-// TODO(WS08): Remove this replace directive after the first criteria tag is cut.
-// Until then, the example builds against the in-tree root module via this local path override.
-replace github.com/brokenbots/criteria => ../../..
-
+// This example builds against the published external SDK + proto modules, the
+// same way an external adapter author would — no local replace directives.
 require (
-	github.com/brokenbots/criteria v0.3.0
-	github.com/brokenbots/criteria/sdk v0.0.0
+	github.com/brokenbots/criteria-adapter-proto v0.5.1
+	github.com/brokenbots/criteria-go-adapter-sdk v0.5.1
 )
 
 require (

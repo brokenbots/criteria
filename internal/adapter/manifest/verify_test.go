@@ -6,8 +6,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/brokenbots/criteria/internal/adapter/manifest"
 	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
+	"github.com/brokenbots/criteria/internal/adapter/manifest"
 )
 
 func staticManifest() *manifest.Manifest {

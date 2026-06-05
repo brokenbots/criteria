@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/brokenbots/criteria/internal/adapter"
 	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
+	"github.com/brokenbots/criteria/internal/adapter"
 )
 
 // PermissionStreamer is implemented by handles that support a dedicated

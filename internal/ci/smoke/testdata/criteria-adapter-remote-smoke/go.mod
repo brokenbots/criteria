@@ -1,9 +1,9 @@
 module criteria-adapter-remote-smoke
 
-go 1.26
+go 1.26.3
 
 require (
-	github.com/brokenbots/criteria/sdk v0.0.0
+	github.com/brokenbots/criteria-adapter-proto v0.5.1
 	google.golang.org/grpc v1.81.1
 )
 
@@ -14,5 +14,3 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260226221140-a57be14db171 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 )
-
-replace github.com/brokenbots/criteria/sdk => ../../../../../sdk

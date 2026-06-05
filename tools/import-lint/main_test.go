@@ -83,7 +83,7 @@ func TestInternalImportsSDKOther_Forbidden(t *testing.T) {
 func TestInternalImportsSDKAdapterhost_Clean(t *testing.T) {
 	root := tempRepoWith(t, map[string]string{
 		"internal/adapterhost/testfixtures/foo.go": `package foo
-import _ "github.com/brokenbots/criteria/sdk/adapterhost"
+import _ "github.com/brokenbots/criteria-go-adapter-sdk/adapterhost"
 `,
 	})
 	vs, err := lint(root)
@@ -100,7 +100,7 @@ import _ "github.com/brokenbots/criteria/sdk/adapterhost"
 func TestInternalNonFixtureImportsSDKAdapterhost_Forbidden(t *testing.T) {
 	root := tempRepoWith(t, map[string]string{
 		"internal/engine/foo.go": `package foo
-import _ "github.com/brokenbots/criteria/sdk/adapterhost"
+import _ "github.com/brokenbots/criteria-go-adapter-sdk/adapterhost"
 `,
 	})
 	vs, err := lint(root)

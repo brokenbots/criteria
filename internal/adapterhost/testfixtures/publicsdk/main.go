@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	adapterhost "github.com/brokenbots/criteria/sdk/adapterhost"
 	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
+	adapterhost "github.com/brokenbots/criteria-go-adapter-sdk/adapterhost"
 )
 
 // publicSDKAdapter is the reference implementation that exercises every method
