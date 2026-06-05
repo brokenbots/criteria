@@ -167,8 +167,8 @@ func TestExecuteEvent_ResultVariant_RoundTrip(t *testing.T) {
 	msg := &criteriav2.ExecuteEvent{
 		Event: &criteriav2.ExecuteEvent_Result{
 			Result: &criteriav2.ExecuteResult{
-				Outcome: "success",
-				Outputs: map[string]string{"out": "value"},
+				Outcome:     "success",
+				OutputsJson: []byte(`{"out":"value"}`),
 			},
 		},
 	}
@@ -444,7 +444,6 @@ func TestExecuteResult_ChunkedOutputs_FullRoundTrip(t *testing.T) {
 		require.NoError(t, proto.Unmarshal(b, &decoded))
 		assert.NotNil(t, decoded.Chunk, "fragment[%d] must carry Chunk metadata", i)
 		assert.Equal(t, base.Outcome, decoded.Outcome)
-		assert.Nil(t, decoded.Outputs, "outputs must be nil on chunked fragment")
 		reconstituted[i] = &decoded
 	}
 

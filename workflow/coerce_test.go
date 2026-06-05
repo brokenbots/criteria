@@ -6,6 +6,45 @@ import (
 	"github.com/zclconf/go-cty/cty"
 )
 
+func TestDecodeTypedJSON(t *testing.T) {
+	t.Run("undeclared infers native number", func(t *testing.T) {
+		v, err := DecodeTypedJSON([]byte(`42`), cty.NilType)
+		if err != nil || !v.RawEquals(cty.NumberIntVal(42)) {
+			t.Fatalf("got %#v err=%v, want number 42", v, err)
+		}
+	})
+
+	t.Run("undeclared infers native object", func(t *testing.T) {
+		v, err := DecodeTypedJSON([]byte(`{"id":7,"name":"x"}`), cty.NilType)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !v.Type().IsObjectType() || !v.GetAttr("id").RawEquals(cty.NumberIntVal(7)) {
+			t.Errorf("got %#v, want object with id=7", v)
+		}
+	})
+
+	t.Run("dynamic declared infers native array", func(t *testing.T) {
+		v, err := DecodeTypedJSON([]byte(`[1,2,3]`), cty.DynamicPseudoType)
+		if err != nil || v.LengthInt() != 3 {
+			t.Fatalf("got %#v err=%v, want 3-tuple", v, err)
+		}
+	})
+
+	t.Run("concrete declared type decodes strictly", func(t *testing.T) {
+		v, err := DecodeTypedJSON([]byte(`"hello"`), cty.String)
+		if err != nil || !v.RawEquals(cty.StringVal("hello")) {
+			t.Fatalf("got %#v err=%v, want string hello", v, err)
+		}
+	})
+
+	t.Run("concrete type mismatch errors", func(t *testing.T) {
+		if _, err := DecodeTypedJSON([]byte(`"notnum"`), cty.Number); err == nil {
+			t.Error("expected error decoding JSON string against number type")
+		}
+	})
+}
+
 // ctyStrs wraps a string-keyed map as the typed cty map that the step-output
 // storage helpers now accept (all values cty.String).
 func ctyStrs(m map[string]string) map[string]cty.Value {

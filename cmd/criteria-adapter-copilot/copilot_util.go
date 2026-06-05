@@ -18,17 +18,12 @@ import (
 // `submit_outcome` with one (e.g. permission denial, reprompt exhaustion,
 // max_turns).
 func resultEvent(outcome, reason string) *v2.ExecuteEvent {
-	return &v2.ExecuteEvent{
-		Event: &v2.ExecuteEvent_Result{
-			Result: &v2.ExecuteResult{
-				Outcome: outcome,
-				Outputs: map[string]string{
-					"outcome": outcome,
-					"reason":  reason,
-				},
-			},
-		},
-	}
+	// outcome/reason are plain strings, so JSON marshaling cannot fail.
+	ev, _ := v2.NewExecuteResultEvent(outcome, map[string]any{
+		"outcome": outcome,
+		"reason":  reason,
+	})
+	return ev
 }
 
 func adapterEvent(kind string, data map[string]any) *v2.ExecuteEvent {

@@ -41,15 +41,13 @@ func (g *greeterService) Execute(_ context.Context, req *v2.ExecuteRequest, sink
 	greeting := fmt.Sprintf("hello, %s", name)
 
 	// Return the greeting as a named output so downstream steps can reference
-	// it via steps.<step_name>.greeting.
-	return sink.Send(&v2.ExecuteEvent{
-		Event: &v2.ExecuteEvent_Result{
-			Result: &v2.ExecuteResult{
-				Outcome: "success",
-				Outputs: map[string]string{"greeting": greeting},
-			},
-		},
-	})
+	// it via steps.<step_name>.greeting. Outputs travel on the typed outputs_json
+	// channel; values keep their native JSON type.
+	ev, err := v2.NewExecuteResultEvent("success", map[string]any{"greeting": greeting})
+	if err != nil {
+		return err
+	}
+	return sink.Send(ev)
 }
 
 // Log blocks until the host closes the stream; greeter has no log lines to emit.

@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -466,6 +467,22 @@ func resultFromSender(sender *recordingSender) *v2.ExecuteResult {
 	return nil
 }
 
+// outputsOf decodes the native outputs_json channel into a string map for
+// assertions. The copilot adapter emits only string-valued outputs (outcome,
+// reason), so map[string]string is sufficient.
+func outputsOf(t *testing.T, result *v2.ExecuteResult) map[string]string {
+	t.Helper()
+	oj := result.GetOutputsJson()
+	if len(oj) == 0 {
+		return map[string]string{}
+	}
+	var m map[string]string
+	if err := json.Unmarshal(oj, &m); err != nil {
+		t.Fatalf("decode outputs_json: %v", err)
+	}
+	return m
+}
+
 // Successful finalization must surface both the outcome and the model-supplied
 // reason as step outputs so downstream workflow expressions can reference
 // steps.<name>.outcome and steps.<name>.reason.
@@ -496,10 +513,11 @@ func TestAwaitOutcome_OutcomeAndReasonInOutputs(t *testing.T) {
 	if result == nil {
 		t.Fatal("no result event emitted")
 	}
-	if got := result.GetOutputs()["outcome"]; got != "success" {
+	outputs := outputsOf(t, result)
+	if got := outputs["outcome"]; got != "success" {
 		t.Errorf("outputs[outcome] = %q, want %q", got, "success")
 	}
-	if got := result.GetOutputs()["reason"]; got != "all checks passed" {
+	if got := outputs["reason"]; got != "all checks passed" {
 		t.Errorf("outputs[reason] = %q, want %q", got, "all checks passed")
 	}
 }
@@ -526,10 +544,11 @@ func TestAwaitOutcome_FailurePathPopulatesOutcomeOutput(t *testing.T) {
 	if result == nil {
 		t.Fatal("no result event emitted")
 	}
-	if got := result.GetOutputs()["outcome"]; got != "failure" {
+	outputs := outputsOf(t, result)
+	if got := outputs["outcome"]; got != "failure" {
 		t.Errorf("outputs[outcome] = %q, want %q", got, "failure")
 	}
-	if got, ok := result.GetOutputs()["reason"]; !ok || got != "" {
+	if got, ok := outputs["reason"]; !ok || got != "" {
 		t.Errorf("outputs[reason] = (%q, present=%v), want (\"\", true)", got, ok)
 	}
 }

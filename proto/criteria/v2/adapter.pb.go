@@ -907,12 +907,13 @@ func (x *ToolInvocation) GetInvokedAt() *timestamppb.Timestamp {
 type ExecuteResult struct {
 	state   protoimpl.MessageState `protogen:"open.v1"`
 	Outcome string                 `protobuf:"bytes,1,opt,name=outcome,proto3" json:"outcome,omitempty"`
-	// outputs is set when chunk == nil (non-chunked or single-message payload).
-	Outputs map[string]string `protobuf:"bytes,2,rep,name=outputs,proto3" json:"outputs,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	Chunk   *Chunk            `protobuf:"bytes,3,opt,name=chunk,proto3" json:"chunk,omitempty"`
-	// outputs_json carries the JSON-encoded bytes of an outputs map fragment when
-	// chunk is non-nil.  Collect all fragments in Chunk.seq order, concatenate,
-	// then unmarshal to map<string,string>.
+	Chunk   *Chunk                 `protobuf:"bytes,3,opt,name=chunk,proto3" json:"chunk,omitempty"`
+	// outputs_json is the sole output channel: the JSON-encoded bytes of the
+	// outputs object. Values are encoded with their native JSON type
+	// (string/number/bool/object/array), so the host decodes them to native cty
+	// types — no jsondecode() needed in workflows. When chunk is non-nil, collect
+	// all fragments in Chunk.seq order and concatenate before decoding; when chunk
+	// is nil, outputs_json is the whole object in one message.
 	OutputsJson   []byte `protobuf:"bytes,4,opt,name=outputs_json,json=outputsJson,proto3" json:"outputs_json,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -953,13 +954,6 @@ func (x *ExecuteResult) GetOutcome() string {
 		return x.Outcome
 	}
 	return ""
-}
-
-func (x *ExecuteResult) GetOutputs() map[string]string {
-	if x != nil {
-		return x.Outputs
-	}
-	return nil
 }
 
 func (x *ExecuteResult) GetChunk() *Chunk {
@@ -2207,15 +2201,11 @@ const file_criteria_v2_adapter_proto_rawDesc = "" +
 	"\ttool_name\x18\x01 \x01(\tR\btoolName\x12+\n" +
 	"\x04args\x18\x02 \x01(\v2\x17.google.protobuf.StructR\x04args\x129\n" +
 	"\n" +
-	"invoked_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\tinvokedAtJ\x05\bd\x10\xe8\a\"\xfc\x01\n" +
+	"invoked_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\tinvokedAtJ\x05\bd\x10\xe8\a\"\x8c\x01\n" +
 	"\rExecuteResult\x12\x18\n" +
-	"\aoutcome\x18\x01 \x01(\tR\aoutcome\x12A\n" +
-	"\aoutputs\x18\x02 \x03(\v2'.criteria.v2.ExecuteResult.OutputsEntryR\aoutputs\x12(\n" +
+	"\aoutcome\x18\x01 \x01(\tR\aoutcome\x12(\n" +
 	"\x05chunk\x18\x03 \x01(\v2\x12.criteria.v2.ChunkR\x05chunk\x12!\n" +
-	"\foutputs_json\x18\x04 \x01(\fR\voutputsJson\x1a:\n" +
-	"\fOutputsEntry\x12\x10\n" +
-	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01J\x05\bd\x10\xe8\a\"\xf6\x01\n" +
+	"\foutputs_json\x18\x04 \x01(\fR\voutputsJsonJ\x04\b\x02\x10\x03J\x05\bd\x10\xe8\aR\aoutputs\"\xf6\x01\n" +
 	"\fExecuteEvent\x125\n" +
 	"\aadapter\x18\x01 \x01(\v2\x19.criteria.v2.AdapterEventH\x00R\aadapter\x121\n" +
 	"\x04tool\x18\x02 \x01(\v2\x1b.criteria.v2.ToolInvocationH\x00R\x04tool\x124\n" +
@@ -2319,7 +2309,7 @@ func file_criteria_v2_adapter_proto_rawDescGZIP() []byte {
 	return file_criteria_v2_adapter_proto_rawDescData
 }
 
-var file_criteria_v2_adapter_proto_msgTypes = make([]protoimpl.MessageInfo, 40)
+var file_criteria_v2_adapter_proto_msgTypes = make([]protoimpl.MessageInfo, 39)
 var file_criteria_v2_adapter_proto_goTypes = []any{
 	(*Chunk)(nil),                   // 0: criteria.v2.Chunk
 	(*Heartbeat)(nil),               // 1: criteria.v2.Heartbeat
@@ -2360,13 +2350,12 @@ var file_criteria_v2_adapter_proto_goTypes = []any{
 	nil,                             // 36: criteria.v2.OpenSessionRequest.SecretsEntry
 	nil,                             // 37: criteria.v2.ExecuteRequest.InputEntry
 	nil,                             // 38: criteria.v2.ExecuteRequest.SecretInputsEntry
-	nil,                             // 39: criteria.v2.ExecuteResult.OutputsEntry
-	(*timestamppb.Timestamp)(nil),   // 40: google.protobuf.Timestamp
-	(*structpb.Struct)(nil),         // 41: google.protobuf.Struct
-	(*structpb.Value)(nil),          // 42: google.protobuf.Value
+	(*timestamppb.Timestamp)(nil),   // 39: google.protobuf.Timestamp
+	(*structpb.Struct)(nil),         // 40: google.protobuf.Struct
+	(*structpb.Value)(nil),          // 41: google.protobuf.Value
 }
 var file_criteria_v2_adapter_proto_depIdxs = []int32{
-	40, // 0: criteria.v2.Heartbeat.sent_at:type_name -> google.protobuf.Timestamp
+	39, // 0: criteria.v2.Heartbeat.sent_at:type_name -> google.protobuf.Timestamp
 	33, // 1: criteria.v2.AdapterSchemaProto.fields:type_name -> criteria.v2.AdapterSchemaProto.FieldsEntry
 	3,  // 2: criteria.v2.InfoResponse.config_schema:type_name -> criteria.v2.AdapterSchemaProto
 	3,  // 3: criteria.v2.InfoResponse.input_schema:type_name -> criteria.v2.AdapterSchemaProto
@@ -2376,55 +2365,54 @@ var file_criteria_v2_adapter_proto_depIdxs = []int32{
 	36, // 7: criteria.v2.OpenSessionRequest.secrets:type_name -> criteria.v2.OpenSessionRequest.SecretsEntry
 	37, // 8: criteria.v2.ExecuteRequest.input:type_name -> criteria.v2.ExecuteRequest.InputEntry
 	38, // 9: criteria.v2.ExecuteRequest.secret_inputs:type_name -> criteria.v2.ExecuteRequest.SecretInputsEntry
-	41, // 10: criteria.v2.AdapterEvent.payload:type_name -> google.protobuf.Struct
-	40, // 11: criteria.v2.AdapterEvent.emitted_at:type_name -> google.protobuf.Timestamp
+	40, // 10: criteria.v2.AdapterEvent.payload:type_name -> google.protobuf.Struct
+	39, // 11: criteria.v2.AdapterEvent.emitted_at:type_name -> google.protobuf.Timestamp
 	0,  // 12: criteria.v2.AdapterEvent.chunk:type_name -> criteria.v2.Chunk
-	41, // 13: criteria.v2.ToolInvocation.args:type_name -> google.protobuf.Struct
-	40, // 14: criteria.v2.ToolInvocation.invoked_at:type_name -> google.protobuf.Timestamp
-	39, // 15: criteria.v2.ExecuteResult.outputs:type_name -> criteria.v2.ExecuteResult.OutputsEntry
-	0,  // 16: criteria.v2.ExecuteResult.chunk:type_name -> criteria.v2.Chunk
-	11, // 17: criteria.v2.ExecuteEvent.adapter:type_name -> criteria.v2.AdapterEvent
-	12, // 18: criteria.v2.ExecuteEvent.tool:type_name -> criteria.v2.ToolInvocation
-	13, // 19: criteria.v2.ExecuteEvent.result:type_name -> criteria.v2.ExecuteResult
-	1,  // 20: criteria.v2.ExecuteEvent.heartbeat:type_name -> criteria.v2.Heartbeat
-	40, // 21: criteria.v2.LogEvent.timestamp:type_name -> google.protobuf.Timestamp
-	1,  // 22: criteria.v2.LogEvent.heartbeat:type_name -> criteria.v2.Heartbeat
-	0,  // 23: criteria.v2.LogEvent.chunk:type_name -> criteria.v2.Chunk
-	17, // 24: criteria.v2.PermissionEvent.request:type_name -> criteria.v2.PermissionRequest
-	18, // 25: criteria.v2.PermissionEvent.cancel:type_name -> criteria.v2.PermissionCancel
-	1,  // 26: criteria.v2.PermissionDecision.heartbeat:type_name -> criteria.v2.Heartbeat
-	42, // 27: criteria.v2.InspectField.value:type_name -> google.protobuf.Value
-	40, // 28: criteria.v2.InspectResponse.last_activity_at:type_name -> google.protobuf.Timestamp
-	31, // 29: criteria.v2.InspectResponse.fields:type_name -> criteria.v2.InspectField
-	41, // 30: criteria.v2.InspectResponse.extra:type_name -> google.protobuf.Struct
-	2,  // 31: criteria.v2.AdapterSchemaProto.FieldsEntry.value:type_name -> criteria.v2.ConfigFieldProto
-	4,  // 32: criteria.v2.AdapterService.Info:input_type -> criteria.v2.InfoRequest
-	6,  // 33: criteria.v2.AdapterService.OpenSession:input_type -> criteria.v2.OpenSessionRequest
-	10, // 34: criteria.v2.AdapterService.Execute:input_type -> criteria.v2.ExecuteRequest
-	15, // 35: criteria.v2.AdapterService.Log:input_type -> criteria.v2.LogRequest
-	19, // 36: criteria.v2.AdapterService.Permissions:input_type -> criteria.v2.PermissionEvent
-	21, // 37: criteria.v2.AdapterService.Pause:input_type -> criteria.v2.PauseRequest
-	23, // 38: criteria.v2.AdapterService.Resume:input_type -> criteria.v2.ResumeRequest
-	25, // 39: criteria.v2.AdapterService.Snapshot:input_type -> criteria.v2.SnapshotRequest
-	27, // 40: criteria.v2.AdapterService.Restore:input_type -> criteria.v2.RestoreRequest
-	30, // 41: criteria.v2.AdapterService.Inspect:input_type -> criteria.v2.InspectRequest
-	8,  // 42: criteria.v2.AdapterService.CloseSession:input_type -> criteria.v2.CloseSessionRequest
-	5,  // 43: criteria.v2.AdapterService.Info:output_type -> criteria.v2.InfoResponse
-	7,  // 44: criteria.v2.AdapterService.OpenSession:output_type -> criteria.v2.OpenSessionResponse
-	14, // 45: criteria.v2.AdapterService.Execute:output_type -> criteria.v2.ExecuteEvent
-	16, // 46: criteria.v2.AdapterService.Log:output_type -> criteria.v2.LogEvent
-	20, // 47: criteria.v2.AdapterService.Permissions:output_type -> criteria.v2.PermissionDecision
-	22, // 48: criteria.v2.AdapterService.Pause:output_type -> criteria.v2.PauseResponse
-	24, // 49: criteria.v2.AdapterService.Resume:output_type -> criteria.v2.ResumeResponse
-	26, // 50: criteria.v2.AdapterService.Snapshot:output_type -> criteria.v2.SnapshotResponse
-	28, // 51: criteria.v2.AdapterService.Restore:output_type -> criteria.v2.RestoreResponse
-	32, // 52: criteria.v2.AdapterService.Inspect:output_type -> criteria.v2.InspectResponse
-	9,  // 53: criteria.v2.AdapterService.CloseSession:output_type -> criteria.v2.CloseSessionResponse
-	43, // [43:54] is the sub-list for method output_type
-	32, // [32:43] is the sub-list for method input_type
-	32, // [32:32] is the sub-list for extension type_name
-	32, // [32:32] is the sub-list for extension extendee
-	0,  // [0:32] is the sub-list for field type_name
+	40, // 13: criteria.v2.ToolInvocation.args:type_name -> google.protobuf.Struct
+	39, // 14: criteria.v2.ToolInvocation.invoked_at:type_name -> google.protobuf.Timestamp
+	0,  // 15: criteria.v2.ExecuteResult.chunk:type_name -> criteria.v2.Chunk
+	11, // 16: criteria.v2.ExecuteEvent.adapter:type_name -> criteria.v2.AdapterEvent
+	12, // 17: criteria.v2.ExecuteEvent.tool:type_name -> criteria.v2.ToolInvocation
+	13, // 18: criteria.v2.ExecuteEvent.result:type_name -> criteria.v2.ExecuteResult
+	1,  // 19: criteria.v2.ExecuteEvent.heartbeat:type_name -> criteria.v2.Heartbeat
+	39, // 20: criteria.v2.LogEvent.timestamp:type_name -> google.protobuf.Timestamp
+	1,  // 21: criteria.v2.LogEvent.heartbeat:type_name -> criteria.v2.Heartbeat
+	0,  // 22: criteria.v2.LogEvent.chunk:type_name -> criteria.v2.Chunk
+	17, // 23: criteria.v2.PermissionEvent.request:type_name -> criteria.v2.PermissionRequest
+	18, // 24: criteria.v2.PermissionEvent.cancel:type_name -> criteria.v2.PermissionCancel
+	1,  // 25: criteria.v2.PermissionDecision.heartbeat:type_name -> criteria.v2.Heartbeat
+	41, // 26: criteria.v2.InspectField.value:type_name -> google.protobuf.Value
+	39, // 27: criteria.v2.InspectResponse.last_activity_at:type_name -> google.protobuf.Timestamp
+	31, // 28: criteria.v2.InspectResponse.fields:type_name -> criteria.v2.InspectField
+	40, // 29: criteria.v2.InspectResponse.extra:type_name -> google.protobuf.Struct
+	2,  // 30: criteria.v2.AdapterSchemaProto.FieldsEntry.value:type_name -> criteria.v2.ConfigFieldProto
+	4,  // 31: criteria.v2.AdapterService.Info:input_type -> criteria.v2.InfoRequest
+	6,  // 32: criteria.v2.AdapterService.OpenSession:input_type -> criteria.v2.OpenSessionRequest
+	10, // 33: criteria.v2.AdapterService.Execute:input_type -> criteria.v2.ExecuteRequest
+	15, // 34: criteria.v2.AdapterService.Log:input_type -> criteria.v2.LogRequest
+	19, // 35: criteria.v2.AdapterService.Permissions:input_type -> criteria.v2.PermissionEvent
+	21, // 36: criteria.v2.AdapterService.Pause:input_type -> criteria.v2.PauseRequest
+	23, // 37: criteria.v2.AdapterService.Resume:input_type -> criteria.v2.ResumeRequest
+	25, // 38: criteria.v2.AdapterService.Snapshot:input_type -> criteria.v2.SnapshotRequest
+	27, // 39: criteria.v2.AdapterService.Restore:input_type -> criteria.v2.RestoreRequest
+	30, // 40: criteria.v2.AdapterService.Inspect:input_type -> criteria.v2.InspectRequest
+	8,  // 41: criteria.v2.AdapterService.CloseSession:input_type -> criteria.v2.CloseSessionRequest
+	5,  // 42: criteria.v2.AdapterService.Info:output_type -> criteria.v2.InfoResponse
+	7,  // 43: criteria.v2.AdapterService.OpenSession:output_type -> criteria.v2.OpenSessionResponse
+	14, // 44: criteria.v2.AdapterService.Execute:output_type -> criteria.v2.ExecuteEvent
+	16, // 45: criteria.v2.AdapterService.Log:output_type -> criteria.v2.LogEvent
+	20, // 46: criteria.v2.AdapterService.Permissions:output_type -> criteria.v2.PermissionDecision
+	22, // 47: criteria.v2.AdapterService.Pause:output_type -> criteria.v2.PauseResponse
+	24, // 48: criteria.v2.AdapterService.Resume:output_type -> criteria.v2.ResumeResponse
+	26, // 49: criteria.v2.AdapterService.Snapshot:output_type -> criteria.v2.SnapshotResponse
+	28, // 50: criteria.v2.AdapterService.Restore:output_type -> criteria.v2.RestoreResponse
+	32, // 51: criteria.v2.AdapterService.Inspect:output_type -> criteria.v2.InspectResponse
+	9,  // 52: criteria.v2.AdapterService.CloseSession:output_type -> criteria.v2.CloseSessionResponse
+	42, // [42:53] is the sub-list for method output_type
+	31, // [31:42] is the sub-list for method input_type
+	31, // [31:31] is the sub-list for extension type_name
+	31, // [31:31] is the sub-list for extension extendee
+	0,  // [0:31] is the sub-list for field type_name
 }
 
 func init() { file_criteria_v2_adapter_proto_init() }
@@ -2449,7 +2437,7 @@ func file_criteria_v2_adapter_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_criteria_v2_adapter_proto_rawDesc), len(file_criteria_v2_adapter_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   40,
+			NumMessages:   39,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -61,6 +61,21 @@ func (p *publicSDKAdapter) Execute(ctx context.Context, req *v2.ExecuteRequest, 
 			}
 		}
 	}
+	// emit_typed exercises the native outputs_json channel end to end: structured
+	// and scalar values are emitted with their JSON-native type so the host can
+	// decode them to native cty types.
+	if req.GetInput()["emit_typed"] == "true" {
+		ev, err := v2.NewExecuteResultEvent("success", map[string]any{
+			"meta":  map[string]any{"id": 7, "name": "widget"},
+			"count": 42,
+			"ok":    true,
+		})
+		if err != nil {
+			return err
+		}
+		return sink.Send(ev)
+	}
+
 	return sink.Send(&v2.ExecuteEvent{
 		Event: &v2.ExecuteEvent_Result{
 			Result: &v2.ExecuteResult{Outcome: "success"},

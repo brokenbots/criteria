@@ -15,12 +15,74 @@ import (
 
 	"github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/go-plugin/runner"
+	"github.com/zclconf/go-cty/cty"
 	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/brokenbots/criteria/internal/adapter"
 	v2 "github.com/brokenbots/criteria/sdk/pb/criteria/v2"
 	"github.com/brokenbots/criteria/workflow"
 )
+
+// TestEmitResult_NativeTypedOutputs verifies the WS-C wire path: an adapter emits
+// native JSON on outputs_json (numbers, nested objects, arrays), and the host
+// decodes each value to its native cty type — declared keys against their schema
+// type, undeclared keys by inference. No legacy string-map field is involved.
+func TestEmitResult_NativeTypedOutputs(t *testing.T) {
+	cs := &executeCaptureSink{
+		sink: &adapterEventCollector{},
+		outputSchema: map[string]workflow.ConfigField{
+			"count": {CtyType: cty.Number},
+			"meta":  {CtyType: cty.DynamicPseudoType},
+			// "extra" is intentionally undeclared — decoded by inference.
+		},
+	}
+
+	oj := []byte(`{"count":42,"meta":{"id":7,"name":"x"},"extra":[1,2,3]}`)
+	if err := cs.emitResult(&v2.ExecuteResult{Outcome: "success", OutputsJson: oj}); err != nil {
+		t.Fatalf("emitResult: %v", err)
+	}
+	out := cs.result.Outputs
+
+	if !out["count"].RawEquals(cty.NumberIntVal(42)) {
+		t.Errorf("count = %#v, want number 42", out["count"])
+	}
+	meta := out["meta"]
+	if !meta.Type().IsObjectType() || !meta.GetAttr("id").RawEquals(cty.NumberIntVal(7)) {
+		t.Errorf("meta = %#v, want object with id=7", meta)
+	}
+	if extra := out["extra"]; !extra.Type().IsTupleType() || extra.LengthInt() != 3 {
+		t.Errorf("extra = %#v, want 3-tuple (inferred)", out["extra"])
+	}
+}
+
+// TestEmitResult_NativeTypedOutputs_Chunked verifies that the same native typing
+// holds when outputs_json arrives split across chunk fragments.
+func TestEmitResult_NativeTypedOutputs_Chunked(t *testing.T) {
+	cs := &executeCaptureSink{
+		sink:         &adapterEventCollector{},
+		outputSchema: map[string]workflow.ConfigField{"count": {CtyType: cty.Number}},
+	}
+
+	oj := []byte(`{"count":99,"label":"done"}`)
+	fragments := v2.ChunkExecuteResultOutputs(&v2.ExecuteResult{Outcome: "success"}, oj, 8)
+	if len(fragments) < 2 {
+		t.Fatalf("expected multiple fragments, got %d", len(fragments))
+	}
+	for i, frag := range fragments {
+		if err := cs.emitResult(frag); err != nil {
+			t.Fatalf("emitResult fragment %d: %v", i, err)
+		}
+	}
+	if !cs.done {
+		t.Fatal("result not captured after final fragment")
+	}
+	if !cs.result.Outputs["count"].RawEquals(cty.NumberIntVal(99)) {
+		t.Errorf("count = %#v, want number 99", cs.result.Outputs["count"])
+	}
+	if cs.result.Outputs["label"].AsString() != "done" {
+		t.Errorf("label = %#v, want \"done\"", cs.result.Outputs["label"])
+	}
+}
 
 func TestLoaderResolveNoopAdapter(t *testing.T) {
 	adapterBin := buildNoopAdapter(t)

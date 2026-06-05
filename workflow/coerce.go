@@ -60,6 +60,24 @@ func CoerceStringToCty(s string, t cty.Type) (cty.Value, error) {
 	}
 }
 
+// DecodeTypedJSON decodes a single JSON-encoded output value against its declared
+// cty type. For a concrete declared type (number, bool, string, object/list shape)
+// it decodes strictly against that type. For cty.NilType (undeclared) or
+// cty.DynamicPseudoType (declared object/array with no sub-schema) it infers the
+// type from the JSON content, so natively-encoded structured values keep their
+// shape. This is the wire counterpart to CoerceStringToCty for adapters that emit
+// native JSON (ExecuteResult.outputs_json) rather than stringified outputs.
+func DecodeTypedJSON(raw []byte, t cty.Type) (cty.Value, error) {
+	if t != cty.NilType && t != cty.DynamicPseudoType {
+		return ctyjson.Unmarshal(raw, t)
+	}
+	ty, err := ctyjson.ImpliedType(raw)
+	if err != nil {
+		return cty.NilVal, err
+	}
+	return ctyjson.Unmarshal(raw, ty)
+}
+
 // RenderOutputValue converts a typed step output cty.Value to the string form
 // used by the string-based event surface (OnStepOutputCaptured) and redaction
 // registration. Plain strings are rendered raw (unquoted) to match the historical
