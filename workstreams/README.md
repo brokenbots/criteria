@@ -82,6 +82,31 @@ Phase 4 opens the full adapter-system rewrite. Workstream files are in
 [`adapter_v2/`](adapter_v2/). See [`adapter_v2/README.md`](adapter_v2/README.md)
 for scope, goals, and workstream index.
 
+**Mid-phase archive (2026-06-05).** The phase is still open (WS37–WS44 unstarted),
+but completed in-repo workstreams have been archived to
+[`archived/v4/adapter-v2/`](archived/v4/adapter-v2/) to keep the active set focused.
+Archiving was gated on *validated landed code*, not the plan — each archived WS has
+an in-repo merge plus visible host/engine/proto code.
+
+- **Done & archived** (host/engine/proto, merged + code-verified): **WS01–WS20, WS22,
+  WS26, WS31**.
+- **Remaining in [`adapter_v2/`](adapter_v2/) for review** (21 WSes):
+  - *SDKs / cross-repo, not verifiable from this repo:* WS21, WS23 (TS SDK — `--emit-manifest`
+    flagged missing in WS30/WS23 logs), WS24, WS25 (its PR was closed unmerged though the
+    Go SDK lives in-tree at [`sdk/`](../sdk/)).
+  - *CI / distribution:* WS27, WS28, WS29.
+  - *External adapter migrations (separate TS repos):* WS30, WS32, WS33, WS34, WS35.
+  - *In-repo, validated NOT done:* WS36 (copilot speaks v2 but still reads
+    `provider_api_key` from `config`, not the secrets channel — D69 migration likely
+    incomplete), WS37 (`proto/criteria/v1` still present), WS38, WS39, WS40,
+    WS41 (proto still in-repo), WS42 (shell still in-repo), WS43, WS44.
+
+## Language cleanup — Terraform-shaping the HCL (archived 2026-06-05)
+
+A focused sub-effort (WS01–WS11) that landed on `main` and merged into `adapter-v2`
+(#203). All eleven workstreams complete; files archived to
+[`archived/v4/language-cleanup/`](archived/v4/language-cleanup/).
+
 ## Workstream conventions
 
 Every workstream file declares:
@@ -126,6 +151,10 @@ forward-pointer note in its reviewer log.
 - Phase 3 — [`archived/v3/`](archived/v3/) (closed 2026-05-06, `v0.3.0`).
 - v0.3.1 — [`archived/v3.1/`](archived/v3.1/) (post-Phase-3 bugfixes + parallel).
 - v0.3.2 — [`archived/v3.2/`](archived/v3.2/) (pre-Phase-4 feature + tech-debt prep, closed 2026-05-13).
+- Phase 4 (partial) — [`archived/v4/adapter-v2/`](archived/v4/adapter-v2/) (completed
+  in-repo WSes; phase still open — see the Phase 4 section above).
+- Language cleanup — [`archived/v4/language-cleanup/`](archived/v4/language-cleanup/)
+  (WS01–WS11, landed on `main`, merged via #203).
 
 The pre-separation v1.x phases live in the orchestrator repo's
 `workstreams/archived/`; they are not copied here.
