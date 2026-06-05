@@ -114,6 +114,57 @@ then reviewed WS-by-WS against the tree and CI (see findings below).
     (no secrets channel), and **WS45** (new) — the in-tree Go adapter SDK exposes no
     secrets API, so no in-tree adapter consumes the wired secret channel. WS45 unblocks WS36.
 
+### Publishing + extraction progress (2026-06-05, session 2)
+
+Worked the publishing critical path end-to-end and started the independence extraction.
+
+**Versioning correction (important).** These artifacts are **not** v2 products — "v2" is the
+*protocol* version (from the proto rework). No stable release exists, so everything is
+versioned **`0.5.0`** to track the next criteria release line, not `2.0.0`.
+
+- **WS28 — publish action: DONE.** Reusable **publish-only** composite action
+  [`brokenbots/publish-adapter@v0`](https://github.com/brokenbots/publish-adapter) (tagged
+  `v0.1.0`). Wraps `criteria adapter publish` (manifest emit → validate → OCI push → optional
+  cosign sign). Building stays with the adapter. Self-test green against GHCR.
+  - Supporting host fixes landed on `adapter-v2`: cosign signing in `criteria adapter publish`
+    (#222), `adapterhost --emit-manifest` (#223), validate-before-push + noop fixture (#224).
+- **WS30, WS32–WS36(TS) — adapters PUBLISHED:** greeter, claude, claude-agent, codex, openai
+  each build via the action and are **published as `v0.5.0` OCI artifacts on GHCR**. Their
+  `publish.yml` was rewired (build SDK sibling → build adapter → publish). First real release
+  artifacts. *(Cleanup: prune the earlier `2.0.0-rc.1` test packages + the
+  `criteria-adapter-selftest` package — needs `delete:packages` scope.)*
+- **WS23 — TS SDK: publish-READY.** `@criteria/adapter-sdk@0.5.0` builds/tests; added manifest
+  type-vocab normalization (`bool→boolean`, `list_string→array`) + an npm publish workflow
+  (skips gracefully until `NPM_TOKEN` + the `@criteria` npm scope are configured — owner step).
+- **WS41 — proto extraction: FOUNDATION done.** New repo
+  [`criteria-adapter-proto`](https://github.com/brokenbots/criteria-adapter-proto) (`v0.5.0`):
+  standalone Go module with the v2 `.proto` sources + bindings (`package criteriav2`), seeded
+  from the live `sdk/pb` copy, smoke-tested. **Switchover not done** (see below).
+- **WS25 — Go SDK: FOUNDATION done.** New repo
+  [`criteria-go-adapter-sdk`](https://github.com/brokenbots/criteria-go-adapter-sdk) (`v0.5.0`):
+  `adapterhost` extracted, builds/tests standalone against `criteria-adapter-proto`. Confirms the
+  Go adapter SDK is cleanly separable (only proto + go-plugin + grpc).
+- **WS24 — Python SDK: still entirely v1** (only `criteria/v1` bindings). Needs a full v2 port.
+
+**Remaining for the extraction switchover (deliberately deferred — the risky half):**
+- The in-tree proto **diverged into two copies** (`proto/criteria/v2` vs `sdk/pb/criteria/v2`);
+  reconcile the helper drift (host `chunking.go` exports `SendChunks`/`AssembleChunks` the SDK
+  copy lacks; divergent grpc bindings) into the proto repo before deleting in-tree.
+- The in-tree `sdk/` module **conflates two SDKs**: the adapter SDK (`adapterhost`, extracted)
+  and an unrelated **events/v1 server-API client** (root pkg + `pb/criteria/v1` + connectrpc,
+  importing host `internal/`). Only `adapterhost` belongs in the Go adapter SDK; the rest stays
+  with the host or becomes its own client package.
+- `serve_remote_test.go` dropped from the Go SDK (imported host `internal/adapter/environment/remote`;
+  serveRemote deferred).
+- **Switchover (WS41/WS25/WS42):** repoint host consumers (`cmd/criteria-adapter-*`,
+  `adapters/shell`, `internal/adapter/*`) + the Go SDK to the new modules, then **delete in-tree
+  `proto/` + `sdk/`** and prove the host still builds/tests. Plus TS/Python proto packages
+  (`@criteria/adapter-proto`, PyPI). Each new repo's `RECONCILE.md` has the details.
+
+**Next planned sequence (user):** finish SDK publishing → all adapters (incl. in-branch copilot +
+shell) in their own repos and published → proto switchover → then archive most remaining
+workstreams and return to the release gate (WS40).
+
 ## Language cleanup — Terraform-shaping the HCL (archived 2026-06-05)
 
 A focused sub-effort (WS01–WS11) that landed on `main` and merged into `adapter-v2`
