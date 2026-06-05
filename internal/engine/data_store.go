@@ -8,8 +8,6 @@ package engine
 
 import (
 	"fmt"
-	"strconv"
-	"strings"
 	"sync"
 
 	"github.com/hashicorp/hcl/v2/ext/typeexpr"
@@ -172,27 +170,9 @@ func (s *DataStore) TypeOf(kind, name string) (cty.Type, bool) {
 }
 
 // coerceStringToCty converts a raw adapter string output to the given cty type.
-// Supports string, number, and bool. Returns an error if conversion fails.
+// It delegates to workflow.CoerceStringToCty, the shared coercion primitive, so
+// data writes and typed-output storage stay consistent. (The primitive lives in
+// the workflow package because engine depends on workflow, not the reverse.)
 func coerceStringToCty(s string, t cty.Type) (cty.Value, error) {
-	switch t {
-	case cty.String:
-		return cty.StringVal(s), nil
-	case cty.Number:
-		f, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
-		if err != nil {
-			return cty.NilVal, fmt.Errorf("cannot coerce %q to type number: %w", s, err)
-		}
-		return cty.NumberFloatVal(f), nil
-	case cty.Bool:
-		switch strings.TrimSpace(s) {
-		case "true", "1":
-			return cty.BoolVal(true), nil
-		case "false", "0":
-			return cty.BoolVal(false), nil
-		default:
-			return cty.NilVal, fmt.Errorf("cannot coerce %q to type bool: expected true/false/1/0", s)
-		}
-	default:
-		return cty.NilVal, fmt.Errorf("unsupported type %s for string coercion", t.FriendlyName())
-	}
+	return workflow.CoerceStringToCty(s, t)
 }

@@ -17,6 +17,7 @@ import (
 	"github.com/hashicorp/go-hclog"
 	hplugin "github.com/hashicorp/go-plugin"
 	"github.com/hashicorp/go-plugin/runner"
+	"github.com/zclconf/go-cty/cty"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/structpb"
@@ -1030,6 +1031,7 @@ func AdapterInfoFromProto(resp *v2.InfoResponse) workflow.AdapterInfo {
 	return workflow.AdapterInfo{
 		ConfigSchema:           protoToConfigSchema(resp.GetConfigSchema()),
 		InputSchema:            protoToConfigSchema(resp.GetInputSchema()),
+		OutputSchema:           protoToConfigSchema(resp.GetOutputSchema()),
 		Capabilities:           append([]string(nil), resp.GetCapabilities()...),
 		CompatibleEnvironments: append([]string(nil), resp.GetCompatibleEnvironments()...),
 		SupportedFeatures:      append([]string(nil), resp.GetSupportedFeatures()...),
@@ -1045,6 +1047,7 @@ func protoToConfigSchema(s *v2.AdapterSchemaProto) map[string]workflow.ConfigFie
 		out[k] = workflow.ConfigField{
 			Required:  f.GetRequired(),
 			Type:      protoToConfigFieldType(f.GetType()),
+			CtyType:   protoToCtyType(f.GetType()),
 			Doc:       f.GetDescription(),
 			Sensitive: f.GetSensitive(),
 		}
@@ -1062,5 +1065,28 @@ func protoToConfigFieldType(t string) workflow.ConfigFieldType {
 		return workflow.ConfigFieldListString
 	default:
 		return workflow.ConfigFieldString
+	}
+}
+
+// protoToCtyType maps an adapter schema field's declared type string to a full
+// cty.Type. It is the authoritative type model for OutputSchema fields, driving
+// typed coercion of step outputs. "object"/"array" carry no sub-schema on the
+// wire, so they map to cty.DynamicPseudoType (decode-anything against JSON). An
+// empty or unrecognised type yields cty.NilType (permissive — value preserved as
+// a raw string).
+func protoToCtyType(t string) cty.Type {
+	switch t {
+	case "string":
+		return cty.String
+	case "number":
+		return cty.Number
+	case "bool", "boolean":
+		return cty.Bool
+	case "list_string":
+		return cty.List(cty.String)
+	case "object", "array":
+		return cty.DynamicPseudoType
+	default:
+		return cty.NilType
 	}
 }

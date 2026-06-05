@@ -3,6 +3,8 @@ package adapterhost_test
 import (
 	"testing"
 
+	"github.com/zclconf/go-cty/cty"
+
 	adapterhostpkg "github.com/brokenbots/criteria/internal/adapterhost"
 	v2 "github.com/brokenbots/criteria/sdk/pb/criteria/v2"
 	"github.com/brokenbots/criteria/workflow"
@@ -161,6 +163,46 @@ func TestInfoResponseBoolAndListTypes(t *testing.T) {
 	}
 	if items.Type != workflow.ConfigFieldListString {
 		t.Errorf("items type: got %v, want ConfigFieldListString", items.Type)
+	}
+}
+
+// TestAdapterInfoFromProto_PopulatesOutputSchema verifies that output_schema is
+// translated into AdapterInfo.OutputSchema and that each field carries a full
+// cty.Type (CtyType), including structured types mapped to DynamicPseudoType.
+// Previously OutputSchema was dropped entirely on the host side.
+func TestAdapterInfoFromProto_PopulatesOutputSchema(t *testing.T) {
+	resp := &v2.InfoResponse{
+		Name:    "test-adapter",
+		Version: "1.0.0",
+		OutputSchema: &v2.AdapterSchemaProto{Fields: map[string]*v2.ConfigFieldProto{
+			"message": {Type: "string", Description: "human-readable summary"},
+			"count":   {Type: "number"},
+			"ok":      {Type: "boolean"},
+			"meta":    {Type: "object"},
+			"items":   {Type: "array"},
+		}},
+	}
+
+	info := adapterhostpkg.AdapterInfoFromProto(resp)
+	if info.OutputSchema == nil {
+		t.Fatal("OutputSchema was not populated")
+	}
+
+	cases := map[string]cty.Type{
+		"message": cty.String,
+		"count":   cty.Number,
+		"ok":      cty.Bool,
+		"meta":    cty.DynamicPseudoType,
+		"items":   cty.DynamicPseudoType,
+	}
+	for name, want := range cases {
+		f, ok := info.OutputSchema[name]
+		if !ok {
+			t.Fatalf("OutputSchema missing %q", name)
+		}
+		if !f.CtyType.Equals(want) {
+			t.Errorf("%s CtyType: got %s, want %s", name, f.CtyType.FriendlyName(), want.FriendlyName())
+		}
 	}
 }
 
