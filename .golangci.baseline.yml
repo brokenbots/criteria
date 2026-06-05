@@ -51,6 +51,13 @@ issues:
       linters:
         - gocognit
       text: '`nodeTargets`' # W16: switch case added; full refactor is out of scope for this workstream
+    # --- WS31: checkStepsFieldTraversals gocognit/gocyclo/funlen: pre-existing complexity on adapter-v2 base branch; refactor deferred ---
+    - path: compile_steps_graph.go
+      linters:
+        - gocognit
+        - gocyclo
+        - funlen
+      text: 'checkStepsFieldTraversals' # WS31: pre-existing on adapter-v2 base branch; refactor deferred to future workstream
     # --- W16: compileSwitchConditionBlock funlen: 55-line function validates attrs, match, next, and output for a condition block ---
     - path: compile_switches.go
       linters:
