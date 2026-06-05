@@ -119,13 +119,14 @@ func compileEnvironmentBlock(g *FSMGraph, envSpec EnvironmentSpec, opts CompileO
 		}
 	}
 
-	// Parse optional working_directory attribute. It folds against the
-	// compile-time closure (var + local + literal + funcs) like variables/config,
-	// so it can be templated (e.g. working_directory = var.worktree). Container
-	// environments reject it in their ValidateFields (they isolate paths rather
-	// than relocate cwd); shell, sandbox, and remote environments apply it as the
-	// adapter launch cwd at runtime.
-	workingDir, d := decodeEnvironmentWorkingDir(g, attrs, opts)
+	// Parse optional working_directory attribute. Unlike variables/config it is
+	// NOT folded at compile time: the raw expression is stored and evaluated at
+	// runtime when the adapter session is initialized, so the cwd can reference
+	// run-time values (e.g. working_directory = var.worktree supplied via --var).
+	// Container environments reject it in their ValidateFields (they isolate
+	// paths rather than relocate cwd); shell, sandbox, and remote environments
+	// apply the resolved value as the adapter launch cwd at runtime.
+	workingDirExpr, d := decodeEnvironmentWorkingDir(g, attrs, opts)
 	diags = append(diags, d...)
 
 	// OS gate: if os is set and does not match the host GOOS, emit error.
@@ -180,16 +181,16 @@ func compileEnvironmentBlock(g *FSMGraph, envSpec EnvironmentSpec, opts CompileO
 
 	// Store the compiled environment.
 	g.Environments[key] = &EnvironmentNode{
-		Type:             envSpec.Type,
-		Name:             envSpec.Name,
-		Variables:        variables,
-		Config:           config,
-		PolicyMode:       policyMode,
-		OS:               osVal,
-		WorkingDirectory: workingDir,
-		Secrets:          secretsPolicy,
-		TypeSpecific:     typeSpecific,
-		RawBody:          envSpec.Remain,
+		Type:                 envSpec.Type,
+		Name:                 envSpec.Name,
+		Variables:            variables,
+		Config:               config,
+		PolicyMode:           policyMode,
+		OS:                   osVal,
+		WorkingDirectoryExpr: workingDirExpr,
+		Secrets:              secretsPolicy,
+		TypeSpecific:         typeSpecific,
+		RawBody:              envSpec.Remain,
 	}
 
 	return diags
@@ -293,39 +294,45 @@ func validateEnvironmentBasics(envSpec EnvironmentSpec, envReg EnvRegistry, seen
 	return diags
 }
 
-// decodeEnvironmentWorkingDir extracts and folds the optional "working_directory"
-// attribute against the compile-time closure (var + local + literal + funcs), so
-// it can reference declared variables and locals. Must fold to a string.
-func decodeEnvironmentWorkingDir(g *FSMGraph, attrs hcl.Attributes, opts CompileOpts) (string, hcl.Diagnostics) {
-	var diags hcl.Diagnostics
-
+// decodeEnvironmentWorkingDir extracts the optional "working_directory"
+// attribute and returns its raw, unevaluated expression. Unlike variables and
+// config, working_directory is NOT folded at compile time — it is resolved at
+// runtime when the adapter session is initialized, so it may reference run-time
+// values (e.g. var.* supplied via --var). As a best-effort compile-time check,
+// if the expression happens to fold now to a known non-string value, an error
+// is emitted; runtime-only references are accepted.
+func decodeEnvironmentWorkingDir(g *FSMGraph, attrs hcl.Attributes, opts CompileOpts) (hcl.Expression, hcl.Diagnostics) {
 	attr, ok := attrs["working_directory"]
 	if !ok {
-		return "", nil
+		return nil, nil
 	}
 
-	val, foldable, d := FoldExpr(attr.Expr, graphVars(g), graphLocals(g), opts.WorkflowDir)
-	diags = append(diags, d...)
-	if !foldable {
-		diags = append(diags, &hcl.Diagnostic{
-			Severity: hcl.DiagError,
-			Summary:  "environment working_directory must fold at compile time (no runtime-only references like each.value or steps.X.outputs.Y)",
-			Subject:  attr.Expr.Range().Ptr(),
-		})
-		return "", diags
+	var diags hcl.Diagnostics
+	if val, foldable, d := FoldExpr(attr.Expr, graphVars(g), graphLocals(g), opts.WorkflowDir); foldable && !d.HasErrors() {
+		if val.IsKnown() && !val.IsNull() && val.Type() != cty.String {
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  fmt.Sprintf("environment working_directory must be a string; got %s", val.Type().FriendlyName()),
+				Subject:  attr.Expr.Range().Ptr(),
+			})
+		}
 	}
-	if diags.HasErrors() {
-		return "", diags
+	return attr.Expr, diags
+}
+
+// ResolveWorkingDir evaluates the environment's working_directory expression
+// against the runtime closure (var + local + run inputs present in vars). It
+// returns "" when no working_directory is declared. Resolution happens at
+// adapter-init time so the cwd can be dynamic (e.g. var.* supplied via --var).
+func (e *EnvironmentNode) ResolveWorkingDir(vars map[string]cty.Value) (string, error) {
+	if e == nil || e.WorkingDirectoryExpr == nil {
+		return "", nil
 	}
-	if val.Type() != cty.String || val.IsNull() || !val.IsKnown() {
-		diags = append(diags, &hcl.Diagnostic{
-			Severity: hcl.DiagError,
-			Summary:  fmt.Sprintf("environment working_directory must be a known string; got %s", val.Type().FriendlyName()),
-			Subject:  attr.Expr.Range().Ptr(),
-		})
-		return "", diags
+	resolved, err := ResolveInputExprs(map[string]hcl.Expression{"working_directory": e.WorkingDirectoryExpr}, vars)
+	if err != nil {
+		return "", err
 	}
-	return val.AsString(), diags
+	return resolved["working_directory"], nil
 }
 
 // decodeEnvironmentVariables extracts and folds the optional "variables" attribute.

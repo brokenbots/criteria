@@ -90,7 +90,7 @@ func TestSessionManager_LogStreamStartsAtOpen(t *testing.T) {
 		t.Fatal("expected log stream not started before Open")
 	}
 
-	_ = sm.registerSession(context.Background(), "agent", "test", "fail", nil, nil, nil, nil, h, nil)
+	_ = sm.registerSession(context.Background(), "agent", "test", "fail", nil, nil, nil, nil, h, nil, "")
 	defer sm.Close(context.Background(), "agent")
 
 	if !h.started {
@@ -102,7 +102,7 @@ func TestSessionManager_LogStreamCancelledAtClose(t *testing.T) {
 	h := &loggingMockHandle{}
 	sm := NewSessionManager(nil)
 
-	_ = sm.registerSession(context.Background(), "agent", "test", "fail", nil, nil, nil, nil, h, nil)
+	_ = sm.registerSession(context.Background(), "agent", "test", "fail", nil, nil, nil, nil, h, nil, "")
 
 	_ = sm.Close(context.Background(), "agent")
 
@@ -144,7 +144,7 @@ func TestSessionManager_Integration_100Logs10Events_Redaction(t *testing.T) {
 	}
 	sm := NewSessionManager(nil)
 	sm.RedactionRegistry = reg
-	_ = sm.registerSession(context.Background(), "agent", "test", "fail", nil, nil, nil, nil, h, nil)
+	_ = sm.registerSession(context.Background(), "agent", "test", "fail", nil, nil, nil, nil, h, nil, "")
 	defer sm.Close(context.Background(), "agent")
 
 	collector := &logEventCollector{}
@@ -186,7 +186,7 @@ func TestSessionManager_LogLinesRoutedToStepSink(t *testing.T) {
 		},
 	}
 	sm := NewSessionManager(nil)
-	_ = sm.registerSession(context.Background(), "agent", "test", "fail", nil, nil, nil, nil, h, nil)
+	_ = sm.registerSession(context.Background(), "agent", "test", "fail", nil, nil, nil, nil, h, nil, "")
 	defer sm.Close(context.Background(), "agent")
 
 	// The log stream goroutine from registerSession is already running.
@@ -231,7 +231,7 @@ func TestSessionManager_LogLinesRoutedToStepSink(t *testing.T) {
 func TestSessionManager_HeartbeatStall_DetectsCrash(t *testing.T) {
 	h := &loggingMockHandle{}
 	sm := NewSessionManager(nil)
-	_ = sm.registerSession(context.Background(), "agent", "test", "fail", nil, nil, nil, nil, h, nil)
+	_ = sm.registerSession(context.Background(), "agent", "test", "fail", nil, nil, nil, nil, h, nil, "")
 	defer sm.Close(context.Background(), "agent")
 
 	// Artificially set heartbeat to well in the past.
@@ -308,7 +308,7 @@ var _ adapter.EventSink = (*logEventCollector)(nil)
 func TestSessionManager_HeartbeatRecent_PreventsStall(t *testing.T) {
 	h := &loggingMockHandle{}
 	sm := NewSessionManager(nil)
-	_ = sm.registerSession(context.Background(), "agent", "test", "fail", nil, nil, nil, nil, h, nil)
+	_ = sm.registerSession(context.Background(), "agent", "test", "fail", nil, nil, nil, nil, h, nil, "")
 	defer sm.Close(context.Background(), "agent")
 
 	// hbMonitor is seeded to now by startLogStream inside registerSession.
@@ -379,7 +379,7 @@ func TestSessionManager_IdleLogRedaction(t *testing.T) {
 	}
 	sm := NewSessionManager(nil)
 	sm.RedactionRegistry = reg
-	_ = sm.registerSession(context.Background(), "agent", "test", "fail", nil, nil, nil, nil, h, nil)
+	_ = sm.registerSession(context.Background(), "agent", "test", "fail", nil, nil, nil, nil, h, nil, "")
 	defer sm.Close(context.Background(), "agent")
 
 	sess := sm.sessions["agent"]
@@ -439,7 +439,7 @@ func TestSessionManager_RespawnRestartsLogStream(t *testing.T) {
 	loader := &mockLoaderForRespawn{handles: []*loggingMockHandle{h2}}
 	sm := NewSessionManager(loader)
 	sm.SetGraph(&workflow.FSMGraph{})
-	_ = sm.registerSession(context.Background(), "agent", "test", OnCrashRespawn, nil, nil, nil, nil, h1, nil)
+	_ = sm.registerSession(context.Background(), "agent", "test", OnCrashRespawn, nil, nil, nil, nil, h1, nil, "")
 	defer sm.Close(context.Background(), "agent")
 
 	step := &workflow.StepNode{Name: "run"}

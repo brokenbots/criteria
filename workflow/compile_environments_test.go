@@ -494,8 +494,17 @@ func TestCompileEnvironments_WorkingDirectory(t *testing.T) {
 			if env == nil {
 				t.Fatalf("environment %s.wd not found", tc.envType)
 			}
-			if env.WorkingDirectory != "/tmp/worktree" {
-				t.Errorf("WorkingDirectory = %q, want %q", env.WorkingDirectory, "/tmp/worktree")
+			if env.WorkingDirectoryExpr == nil {
+				t.Fatal("WorkingDirectoryExpr not stored")
+			}
+			// working_directory is resolved at runtime; a literal resolves with
+			// no vars.
+			got, err := env.ResolveWorkingDir(nil)
+			if err != nil {
+				t.Fatalf("ResolveWorkingDir: %v", err)
+			}
+			if got != "/tmp/worktree" {
+				t.Errorf("resolved working_directory = %q, want %q", got, "/tmp/worktree")
 			}
 			// working_directory must not leak into TypeSpecific.
 			if _, ok := env.TypeSpecific["working_directory"]; ok {
@@ -506,8 +515,9 @@ func TestCompileEnvironments_WorkingDirectory(t *testing.T) {
 }
 
 func TestCompileEnvironments_WorkingDirectory_VarAndLocalRefs(t *testing.T) {
-	// working_directory folds against the compile-time closure, so it can
-	// reference declared variables and locals and use interpolation.
+	// working_directory is stored unevaluated and resolved at runtime against the
+	// var + local closure, so it can reference declared variables and locals and
+	// use interpolation.
 	src := `workflow {
   name          = "t"
   version       = "1"
@@ -537,13 +547,24 @@ state "done" {
 	if diags.HasErrors() {
 		t.Fatalf("compile: %s", diags.Error())
 	}
-	if got := g.Environments["shell.e"].WorkingDirectory; got != "/work/sub/wt" {
-		t.Errorf("WorkingDirectory = %q, want %q", got, "/work/sub/wt")
+	vars := map[string]cty.Value{
+		"var":   cty.ObjectVal(map[string]cty.Value{"root": cty.StringVal("/work")}),
+		"local": cty.ObjectVal(map[string]cty.Value{"sub": cty.StringVal("/work/sub")}),
+	}
+	got, err := g.Environments["shell.e"].ResolveWorkingDir(vars)
+	if err != nil {
+		t.Fatalf("ResolveWorkingDir: %v", err)
+	}
+	if got != "/work/sub/wt" {
+		t.Errorf("resolved working_directory = %q, want %q", got, "/work/sub/wt")
 	}
 }
 
-func TestCompileEnvironments_WorkingDirectory_RuntimeRefRejected(t *testing.T) {
-	// Runtime-only references (each.*, steps.*) are not foldable and must error.
+func TestCompileEnvironments_WorkingDirectory_RuntimeRefDeferred(t *testing.T) {
+	// working_directory is no longer folded at compile time: even a runtime-only
+	// reference compiles (the expression is stored and resolved at adapter init).
+	// If the reference cannot be resolved at init (e.g. each.* outside a for_each),
+	// runtime resolution returns a clear error rather than failing at compile.
 	src := environmentWorkflow(`
   environment "shell" "e" {
     working_directory = each.value
@@ -553,12 +574,17 @@ func TestCompileEnvironments_WorkingDirectory_RuntimeRefRejected(t *testing.T) {
 	if diags.HasErrors() {
 		t.Fatalf("parse: %s", diags.Error())
 	}
-	_, diags = Compile(spec, nil)
-	if !diags.HasErrors() {
-		t.Fatal("expected compile error for runtime-only working_directory reference")
+	g, diags := Compile(spec, nil)
+	if diags.HasErrors() {
+		t.Fatalf("compile must defer runtime-only working_directory, got: %s", diags.Error())
 	}
-	if !strings.Contains(diags.Error(), "working_directory") {
-		t.Errorf("expected error to mention working_directory, got: %s", diags.Error())
+	env := g.Environments["shell.e"]
+	if env.WorkingDirectoryExpr == nil {
+		t.Fatal("WorkingDirectoryExpr not stored")
+	}
+	// Resolving at init without an each binding fails cleanly.
+	if _, err := env.ResolveWorkingDir(nil); err == nil {
+		t.Error("expected runtime resolution error for each.value outside for_each")
 	}
 }
 

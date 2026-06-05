@@ -19,7 +19,7 @@ import (
 // (environment.sandbox = "bwrap"), this returns a command wrapper
 // that exec's `bwrap` with the appropriate args, replacing the in-process
 // namespace setup. Returns nil if not applicable.
-func MaybeUseBubblewrap(prep *LinuxPrepared, env *workflow.EnvironmentNode) *exec.Cmd {
+func MaybeUseBubblewrap(prep *LinuxPrepared, env *workflow.EnvironmentNode, workingDir string) *exec.Cmd {
 	if env == nil || !isBubblewrapOptIn(env) {
 		return nil
 	}
@@ -36,11 +36,11 @@ func MaybeUseBubblewrap(prep *LinuxPrepared, env *workflow.EnvironmentNode) *exe
 	args = append(args, bwrapNetworkArgs(env)...)
 	args = append(args, "--tmpfs", "/tmp")
 	args = append(args, bwrapResourceArgs(prep, env)...)
-	// Honor the environment's working_directory as the sandboxed process cwd.
-	// The path must also be made available via the filesystem policy for the
-	// chdir to succeed inside the namespace.
-	if env.WorkingDirectory != "" {
-		args = append(args, "--chdir", env.WorkingDirectory)
+	// Honor the resolved working_directory as the sandboxed process cwd. The
+	// path must also be made available via the filesystem policy for the chdir
+	// to succeed inside the namespace.
+	if workingDir != "" {
+		args = append(args, "--chdir", workingDir)
 	}
 	timeoutStr := stringFromObject(getObject(env.TypeSpecific, "resources"), "timeout")
 	if timeoutDur := parseTimeout(timeoutStr); timeoutDur > 0 {

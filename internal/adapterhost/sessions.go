@@ -124,6 +124,10 @@ type Session struct {
 	respawned        bool
 	closing          atomic.Bool
 	SandboxCleanup   func() // removes transient cgroup dirs, etc.
+	// WorkingDir is the resolved environment working_directory (the adapter
+	// process launch cwd), evaluated at adapter init. Persisted so respawn and
+	// snapshot/restore relaunch the adapter in the same directory.
+	WorkingDir string
 	// AdapterDigest is the lockfile digest at the time the session was opened.
 	AdapterDigest digest.Digest
 
@@ -198,7 +202,7 @@ func NewSessionManager(loader Loader) *SessionManager {
 // nil. The third return value is an error that is only non-nil when the
 // sandbox policy is strict and a required primitive is unavailable; in
 // that case the caller must abort the session before Resolve.
-func (m *SessionManager) buildSandboxCustomizer(instanceID string) (customizer func(name string, cmd *exec.Cmd), cleanup func(), err error) {
+func (m *SessionManager) buildSandboxCustomizer(instanceID, workingDir string) (customizer func(name string, cmd *exec.Cmd), cleanup func(), err error) {
 	envNode, rp, ok := m.sandboxEnvAndPolicy(instanceID)
 	if !ok {
 		return nil, nil, nil
@@ -248,7 +252,7 @@ func (m *SessionManager) buildSandboxCustomizer(instanceID string) (customizer f
 		return nil, nil, nil
 	}
 
-	customizer, cleanup = makeSandboxCustomizer(&prep, envNode)
+	customizer, cleanup = makeSandboxCustomizer(&prep, envNode, workingDir)
 	return customizer, cleanup, nil
 }
 
@@ -285,27 +289,6 @@ func (m *SessionManager) sandboxEnvAndPolicy(instanceID string) (envNode *workfl
 	return envNode, rp, true
 }
 
-// boundEnvironment resolves the environment node bound to the given adapter
-// instance (its declared environment, or the workflow default). It returns nil
-// when no environment is bound or the graph is unavailable.
-func (m *SessionManager) boundEnvironment(instanceID string) *workflow.EnvironmentNode {
-	if m.graph == nil {
-		return nil
-	}
-	adapterNode, ok := m.graph.Adapters[instanceID]
-	if !ok {
-		return nil
-	}
-	envKey := adapterNode.Environment
-	if envKey == "" {
-		envKey = m.graph.DefaultEnvironment
-	}
-	if envKey == "" {
-		return nil
-	}
-	return m.graph.Environments[envKey]
-}
-
 // buildCommandCustomizer composes the sandbox command customizer (if any) with a
 // working-directory customizer derived from the bound environment. The
 // environment's working_directory becomes the adapter process launch cwd, which
@@ -315,16 +298,12 @@ func (m *SessionManager) boundEnvironment(instanceID string) *workflow.Environme
 // runner) and never carry a working_directory; remote environments apply their
 // working_directory on the remote host. So this only adjusts cwd for locally
 // launched shell and sandbox adapters.
-func (m *SessionManager) buildCommandCustomizer(instanceID string) (customizer func(name string, cmd *exec.Cmd), cleanup func(), err error) {
-	sandboxCust, cleanup, err := m.buildSandboxCustomizer(instanceID)
+func (m *SessionManager) buildCommandCustomizer(instanceID, workingDir string) (customizer func(name string, cmd *exec.Cmd), cleanup func(), err error) {
+	sandboxCust, cleanup, err := m.buildSandboxCustomizer(instanceID, workingDir)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	var workingDir string
-	if env := m.boundEnvironment(instanceID); env != nil {
-		workingDir = env.WorkingDirectory
-	}
 	if workingDir == "" {
 		return sandboxCust, cleanup, nil
 	}
@@ -349,10 +328,13 @@ func (m *SessionManager) buildCommandCustomizer(instanceID string) (customizer f
 }
 
 func (m *SessionManager) Open(ctx context.Context, name, adapterName, onCrash string, config, secrets map[string]string) error {
-	return m.OpenWithOriginRefs(ctx, name, adapterName, onCrash, config, secrets, nil)
+	return m.OpenWithOriginRefs(ctx, name, adapterName, onCrash, config, secrets, nil, "")
 }
 
-func (m *SessionManager) OpenWithOriginRefs(ctx context.Context, name, adapterName, onCrash string, config, secrets map[string]string, originRefs map[string]secrets.OriginRef) error {
+// OpenWithOriginRefs opens an adapter session. workingDir is the resolved
+// environment working_directory (evaluated at adapter init); it becomes the
+// adapter process launch cwd. Pass "" for no working-directory override.
+func (m *SessionManager) OpenWithOriginRefs(ctx context.Context, name, adapterName, onCrash string, config, secrets map[string]string, originRefs map[string]secrets.OriginRef, workingDir string) error {
 	if strings.TrimSpace(name) == "" {
 		return errors.New("session name is required")
 	}
@@ -367,7 +349,7 @@ func (m *SessionManager) OpenWithOriginRefs(ctx context.Context, name, adapterNa
 	}
 	m.mu.Unlock()
 
-	customizer, cleanup, sandboxErr := m.buildCommandCustomizer(name)
+	customizer, cleanup, sandboxErr := m.buildCommandCustomizer(name, workingDir)
 	if sandboxErr != nil {
 		return fmt.Errorf("session %q: %w", name, sandboxErr)
 	}
@@ -397,7 +379,7 @@ func (m *SessionManager) OpenWithOriginRefs(ctx context.Context, name, adapterNa
 		return err
 	}
 
-	return m.registerSession(ctx, name, adapterName, onCrash, config, secrets, originRefs, caps, plug, cleanup)
+	return m.registerSession(ctx, name, adapterName, onCrash, config, secrets, originRefs, caps, plug, cleanup, workingDir)
 }
 
 func (m *SessionManager) resolveAdapterHandle(ctx context.Context, name, adapterName string, customizer func(string, *exec.Cmd)) (Handle, error) {
@@ -449,9 +431,9 @@ func (m *SessionManager) isRemoteAdapter(instanceID string) bool {
 // makeSandboxCustomizer builds the exec.Cmd customizer and cleanup from
 // a prepared LinuxPrepared config. It handles both the bubblewrap and
 // in-process shim paths.
-func makeSandboxCustomizer(prep *sandbox.LinuxPrepared, envNode *workflow.EnvironmentNode) (customizer func(name string, cmd *exec.Cmd), cleanup func()) {
+func makeSandboxCustomizer(prep *sandbox.LinuxPrepared, envNode *workflow.EnvironmentNode, workingDir string) (customizer func(name string, cmd *exec.Cmd), cleanup func()) {
 	cleanup = func() { _ = prep.Cleanup() }
-	if bwrapCmd := sandbox.MaybeUseBubblewrap(prep, envNode); bwrapCmd != nil {
+	if bwrapCmd := sandbox.MaybeUseBubblewrap(prep, envNode, workingDir); bwrapCmd != nil {
 		return func(_ string, cmd *exec.Cmd) {
 			cmd.Path = bwrapCmd.Path
 			cmd.Args = bwrapCmd.Args
@@ -465,7 +447,7 @@ func makeSandboxCustomizer(prep *sandbox.LinuxPrepared, envNode *workflow.Enviro
 	}, cleanup
 }
 
-func (m *SessionManager) registerSession(ctx context.Context, name, adapterName, onCrash string, config, secrets map[string]string, originRefs map[string]secrets.OriginRef, caps []string, plug Handle, cleanup func()) error {
+func (m *SessionManager) registerSession(ctx context.Context, name, adapterName, onCrash string, config, secrets map[string]string, originRefs map[string]secrets.OriginRef, caps []string, plug Handle, cleanup func(), workingDir string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, exists := m.sessions[name]; exists {
@@ -486,6 +468,7 @@ func (m *SessionManager) registerSession(ctx context.Context, name, adapterName,
 		Capabilities:     caps,
 		handle:           plug,
 		SandboxCleanup:   cleanup,
+		WorkingDir:       workingDir,
 	}
 	if m.lockfile != nil {
 		for i := range m.lockfile.Adapters {
@@ -850,7 +833,7 @@ func (m *SessionManager) respawn(ctx context.Context, sess *Session) error {
 	if sess.SandboxCleanup != nil {
 		sess.SandboxCleanup()
 	}
-	customizer, cleanup, sandboxErr := m.buildCommandCustomizer(sess.Name)
+	customizer, cleanup, sandboxErr := m.buildCommandCustomizer(sess.Name, sess.WorkingDir)
 	if sandboxErr != nil {
 		return fmt.Errorf("session %q respawn: %w", sess.Name, sandboxErr)
 	}
@@ -1035,6 +1018,7 @@ type SessionSnapshot struct {
 	SecretOriginRefs map[string]secrets.OriginRef `json:"secret_origin_refs"` // from sessions config; values not included
 	AdapterDigest    digest.Digest                `json:"adapter_digest"`     // adapter manifest digest at snapshot time
 	HostArch         string                       `json:"host_arch"`          // GOOS/GOARCH at snapshot
+	WorkingDir       string                       `json:"working_dir"`        // resolved environment working_directory at snapshot
 	CreatedAt        time.Time                    `json:"created_at"`
 }
 
@@ -1068,6 +1052,7 @@ func (s *Session) Snapshot(ctx context.Context) (*SessionSnapshot, error) {
 		SecretOriginRefs: cloneOriginRefs(s.SecretOriginRefs),
 		AdapterDigest:    s.AdapterDigest,
 		HostArch:         runtime.GOOS + "/" + runtime.GOARCH,
+		WorkingDir:       s.WorkingDir,
 		CreatedAt:        time.Now(),
 	}, nil
 }
@@ -1098,7 +1083,7 @@ func (m *SessionManager) SnapshotAll(ctx context.Context) (map[string]*SessionSn
 // openAndRestoreAdapter resolves the adapter handle, opens a fresh session, and replays
 // the saved adapter state. On error it kills the plug and runs the cleanup func.
 func (m *SessionManager) openAndRestoreAdapter(ctx context.Context, name, adapterName string, config, resolvedSecrets map[string]string, snap *SessionSnapshot) (Handle, func(), error) {
-	customizer, cleanup, sandboxErr := m.buildCommandCustomizer(name)
+	customizer, cleanup, sandboxErr := m.buildCommandCustomizer(name, snap.WorkingDir)
 	if sandboxErr != nil {
 		return nil, nil, fmt.Errorf("session %q: %w", name, sandboxErr)
 	}
@@ -1130,7 +1115,7 @@ func (m *SessionManager) openAndRestoreAdapter(ctx context.Context, name, adapte
 	return plug, cleanup, nil
 }
 
-func buildRestoredSession(name, adapterName, onCrash string, config, resolvedSecrets map[string]string, originRefs map[string]secrets.OriginRef, caps []string, plug Handle, cleanup func(), permState *permissionState) *Session {
+func buildRestoredSession(name, adapterName, onCrash string, config, resolvedSecrets map[string]string, originRefs map[string]secrets.OriginRef, caps []string, plug Handle, cleanup func(), permState *permissionState, workingDir string) *Session {
 	return &Session{
 		Name:             name,
 		Adapter:          adapterName,
@@ -1142,6 +1127,7 @@ func buildRestoredSession(name, adapterName, onCrash string, config, resolvedSec
 		handle:           plug,
 		SandboxCleanup:   cleanup,
 		PermissionState:  permState,
+		WorkingDir:       workingDir,
 	}
 }
 
@@ -1193,7 +1179,7 @@ func (m *SessionManager) Restore(ctx context.Context, name, adapterName, onCrash
 		return nil, err
 	}
 
-	sess := buildRestoredSession(name, adapterName, onCrash, config, resolvedSecrets, snap.SecretOriginRefs, caps, plug, cleanup, permState)
+	sess := buildRestoredSession(name, adapterName, onCrash, config, resolvedSecrets, snap.SecretOriginRefs, caps, plug, cleanup, permState, snap.WorkingDir)
 	if err := m.registerRestoredSession(ctx, name, plug, cleanup, sess); err != nil {
 		return nil, err
 	}

@@ -42,18 +42,16 @@ workflow {
   target_state  = "done"
 }
 
-adapter "shell" "default" {}
+adapter "noop" "default" {}
 
 step "step_one" {
-  target = adapter.shell.default
-  input { command = "echo step_one" }
+  target = adapter.noop.default
   outcome "success" { next = step.step_two }
   outcome "failure" { next = step.done }
 }
 
 step "step_two" {
-  target = adapter.shell.default
-  input { command = "echo step_two" }
+  target = adapter.noop.default
   outcome "success" { next = step.done }
   outcome "failure" { next = step.done }
 }
@@ -64,9 +62,10 @@ state "done" {
 }
 `
 
-// cancelWorkflow has a slow step_two so a RunCancel can arrive before it completes.
-// step_two intentionally has no "failure" outcome so context.Canceled propagates
-// as an error instead of being silently routed through the failure transition.
+// cancelWorkflow has a slow step_two (noop with a long delay) so a RunCancel can
+// arrive before it completes. step_two intentionally has no "failure" outcome so
+// context.Canceled propagates as an error instead of being silently routed
+// through the failure transition.
 const cancelWorkflow = `
 workflow {
   name = "cancel_test"
@@ -75,18 +74,17 @@ workflow {
   target_state  = "done"
 }
 
-adapter "shell" "default" {}
+adapter "noop" "default" {}
 
 step "step_one" {
-  target = adapter.shell.default
-  input { command = "echo step_one" }
+  target = adapter.noop.default
   outcome "success" { next = step.step_two }
   outcome "failure" { next = step.done }
 }
 
 step "step_two" {
-  target = adapter.shell.default
-  input { command = "sleep 30" }
+  target = adapter.noop.default
+  input { delay_ms = "30000" }
   outcome "success" { next = step.done }
 }
 
@@ -105,11 +103,10 @@ workflow {
   target_state  = "done"
 }
 
-adapter "shell" "default" {}
+adapter "noop" "default" {}
 
 step "step_one" {
-  target = adapter.shell.default
-  input { command = "echo step_one" }
+  target = adapter.noop.default
   outcome "success" { next = step.gate }
   outcome "failure" { next = step.done }
 }
@@ -120,8 +117,7 @@ wait "gate" {
 }
 
 step "step_three" {
-  target = adapter.shell.default
-  input { command = "echo step_three" }
+  target = adapter.noop.default
   outcome "success" { next = step.done }
   outcome "failure" { next = step.done }
 }

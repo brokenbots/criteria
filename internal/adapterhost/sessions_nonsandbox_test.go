@@ -21,10 +21,10 @@ func TestBuildCommandCustomizer_ShellWorkingDirectory(t *testing.T) {
 			"shell.default": {Type: "shell", Name: "default", Environment: "shell.ci"},
 		},
 		Environments: map[string]*workflow.EnvironmentNode{
-			"shell.ci": {Type: "shell", Name: "ci", WorkingDirectory: "/tmp/worktree"},
+			"shell.ci": {Type: "shell", Name: "ci"},
 		},
 	}
-	customizer, cleanup, err := sm.buildCommandCustomizer("shell.default")
+	customizer, cleanup, err := sm.buildCommandCustomizer("shell.default", "/tmp/worktree")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -57,7 +57,7 @@ func TestBuildCommandCustomizer_NoWorkingDirectory(t *testing.T) {
 			"shell.ci": {Type: "shell", Name: "ci"},
 		},
 	}
-	customizer, cleanup, err := sm.buildCommandCustomizer("shell.default")
+	customizer, cleanup, err := sm.buildCommandCustomizer("shell.default", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -79,7 +79,7 @@ func TestBuildSandboxCustomizer_NonSandboxEnv(t *testing.T) {
 			"docker.default": {Type: "docker", Name: "default"},
 		},
 	}
-	customizer, cleanup, err := sm.buildSandboxCustomizer("noop.default")
+	customizer, cleanup, err := sm.buildSandboxCustomizer("noop.default", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -93,7 +93,7 @@ func TestBuildSandboxCustomizer_NonSandboxEnv(t *testing.T) {
 
 func TestBuildSandboxCustomizer_NoGraph(t *testing.T) {
 	sm := NewSessionManager(nil)
-	customizer, cleanup, err := sm.buildSandboxCustomizer("noop.default")
+	customizer, cleanup, err := sm.buildSandboxCustomizer("noop.default", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -109,7 +109,7 @@ func TestBuildSandboxCustomizer_NoAdapter(t *testing.T) {
 			"sandbox.default": {Type: "sandbox", Name: "default"},
 		},
 	}
-	customizer, cleanup, err := sm.buildSandboxCustomizer("noop.default")
+	customizer, cleanup, err := sm.buildSandboxCustomizer("noop.default", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -125,7 +125,7 @@ func TestBuildSandboxCustomizer_NoEnvKey(t *testing.T) {
 			"noop.default": {Type: "noop", Name: "default"},
 		},
 	}
-	customizer, cleanup, err := sm.buildSandboxCustomizer("noop.default")
+	customizer, cleanup, err := sm.buildSandboxCustomizer("noop.default", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

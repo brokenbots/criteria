@@ -13,7 +13,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/brokenbots/criteria/internal/adapterhost"
-	"github.com/brokenbots/criteria/internal/adapters/shell"
 	"github.com/brokenbots/criteria/internal/cli/localresume"
 	"github.com/brokenbots/criteria/internal/engine"
 	"github.com/brokenbots/criteria/workflow"
@@ -156,7 +155,6 @@ func prepareReattach(ctx context.Context, log *slog.Logger, cp *StepCheckpoint) 
 		return nil, nil, nil, false
 	}
 	loader := adapterhost.NewLoader()
-	loader.RegisterBuiltin(shell.Name, adapterhost.BuiltinFactoryForAdapter(shell.New()))
 	return graph, loader, resumer, true
 }
 

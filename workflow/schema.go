@@ -114,18 +114,21 @@ type EnvironmentNode struct {
 	PolicyMode string
 	// OS is "" (any) or a specific GOOS value like "linux" or "darwin".
 	OS string
-	// WorkingDirectory is the launch cwd applied to the adapter process so that
-	// shell/copilot adapters operate in that directory by default. It is folded
-	// at compile time and may reference declared variables and locals (e.g.
-	// var.worktree). Supported by shell, sandbox, and remote environments;
-	// container environments reject it (they isolate paths rather than relocate
-	// the process cwd).
-	WorkingDirectory string
-	Filesystem       *FilesystemPolicy
-	Network          *NetworkPolicy
-	Secrets          *SecretsPolicy
-	Resources        *ResourcesPolicy
-	TypeSpecific     map[string]cty.Value // e.g. runtime="docker"
+	// WorkingDirectoryExpr is the environment's optional working_directory
+	// attribute, kept as an unevaluated expression and resolved at runtime when
+	// the adapter session is initialized (against the run's var + local + input
+	// closure). Deferring evaluation lets the workflow set the adapter launch cwd
+	// dynamically (e.g. working_directory = var.worktree supplied via --var at
+	// run time). The resolved value becomes the adapter process launch cwd so
+	// shell/copilot adapters operate in that directory by default. Supported by
+	// shell, sandbox, and remote environments; container environments reject it
+	// (they isolate paths rather than relocate the process cwd).
+	WorkingDirectoryExpr hcl.Expression
+	Filesystem           *FilesystemPolicy
+	Network              *NetworkPolicy
+	Secrets              *SecretsPolicy
+	Resources            *ResourcesPolicy
+	TypeSpecific         map[string]cty.Value // e.g. runtime="docker"
 	// RawBody preserves the original HCL body so runtime handlers can parse
 	// type-specific blocks (e.g. mtls { ... }) that the generic compiler does
 	// not decode into typed fields.

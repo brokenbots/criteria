@@ -14,7 +14,6 @@ import (
 
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapterhost"
-	"github.com/brokenbots/criteria/internal/adapters/shell"
 	"github.com/brokenbots/criteria/internal/engine"
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 	"github.com/brokenbots/criteria/sdk/pb/criteria/v1/criteriav1connect"
@@ -148,7 +147,7 @@ func TestReattachRun_RestoresVarScope(t *testing.T) {
 	// Run the engine with the restored vars. Use a recording adapter that
 	// captures the resolved "command" input so we can assert interpolation
 	// produced the expected string at execution time.
-	rec := &recordingAdapter{inner: shell.New()}
+	rec := &recordingAdapter{}
 	loader := &integrationLoader{plugins: map[string]adapterhost.Handle{
 		"shell": adapterhost.BuiltinFactoryForAdapter(rec)(),
 	}}
@@ -232,16 +231,23 @@ func (s *integrationSink) StepEventSink(step string) adapter.EventSink          
 func (s *integrationSink) Log(stream string, line []byte)                               {}
 func (s *integrationSink) Adapter(kind string, data any)                                {}
 
-// recordingAdapter wraps an adapter.Adapter and records the resolved "command"
-// input so tests can assert interpolation produced the expected string.
+// recordingAdapter is a minimal in-process adapter that records the resolved
+// "command" input so tests can assert interpolation produced the expected
+// string. It does not execute anything — the test asserts on the resolved input,
+// not on command output.
 type recordingAdapter struct {
-	inner       adapter.Adapter
 	lastCommand string
 }
 
-func (r *recordingAdapter) Name() string               { return r.inner.Name() }
-func (r *recordingAdapter) Info() workflow.AdapterInfo { return r.inner.Info() }
-func (r *recordingAdapter) Execute(ctx context.Context, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+func (r *recordingAdapter) Name() string               { return "shell" }
+func (r *recordingAdapter) Info() workflow.AdapterInfo { return workflow.AdapterInfo{} }
+func (r *recordingAdapter) Execute(_ context.Context, step *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
 	r.lastCommand = step.Input["command"]
-	return r.inner.Execute(ctx, step, sink)
+	return adapter.Result{
+		Outcome: "success",
+		Outputs: map[string]cty.Value{
+			"stdout":    cty.StringVal(""),
+			"exit_code": cty.StringVal("0"),
+		},
+	}, nil
 }
