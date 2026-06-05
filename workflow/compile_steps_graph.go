@@ -7,6 +7,7 @@ package workflow
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
@@ -440,9 +441,10 @@ func collectCrossStepExprs(g *FSMGraph) []namedExpr {
 			exprs = append(exprs, namedExpr{fmt.Sprintf("step %q input %q", step.Name, k), expr})
 		}
 		for outName, co := range step.Outcomes {
-			if co.OutputExpr != nil {
-				exprs = append(exprs, namedExpr{fmt.Sprintf("step %q outcome %q output", step.Name, outName), co.OutputExpr})
-			}
+			exprs = appendOutcomeRefExprs(exprs, step.Name, outName, co)
+		}
+		if step.DefaultOutcome != nil {
+			exprs = appendOutcomeRefExprs(exprs, step.Name, "default", step.DefaultOutcome)
 		}
 	}
 	swNames := make([]string, 0, len(g.Switches))
@@ -460,6 +462,19 @@ func collectCrossStepExprs(g *FSMGraph) []namedExpr {
 				exprs = append(exprs, namedExpr{fmt.Sprintf("switch %q condition %d output", swName, i), cond.OutputExpr})
 			}
 		}
+	}
+	return exprs
+}
+
+// appendOutcomeRefExprs adds the output projection and every write value
+// expression of one outcome to exprs, so cross-step field references in both
+// are validated.
+func appendOutcomeRefExprs(exprs []namedExpr, stepName, outName string, co *CompiledOutcome) []namedExpr {
+	if co.OutputExpr != nil {
+		exprs = append(exprs, namedExpr{fmt.Sprintf("step %q outcome %q output", stepName, outName), co.OutputExpr})
+	}
+	for _, w := range co.Writes {
+		exprs = append(exprs, namedExpr{fmt.Sprintf("step %q outcome %q write %q %q", stepName, outName, w.DataKind, w.DataName), w.ValueExpr})
 	}
 	return exprs
 }
@@ -515,25 +530,87 @@ func checkStepsFieldTraversals(context string, expr hcl.Expression, g *FSMGraph,
 			continue
 		}
 
-		// Look up the step's OutputSchema via its AdapterRef.
-		info, hasSchema := adapterInfo(schemas, adapterTypeFromRef(step.AdapterRef))
-		if !hasSchema || len(info.OutputSchema) == 0 {
+		// Iterating steps expose an indexed namespace (steps.<name>[idx].<field>),
+		// not a flat field set; a bare field traversal can't be validated here.
+		if step.ForEach != nil || step.Count != nil || step.Parallel != nil || step.While != nil {
+			continue
+		}
+
+		declared, hasContract := declaredStepOutputNames(step, g, schemas)
+		if !hasContract {
 			continue // no declared contract; permissive
 		}
 
-		if _, known := info.OutputSchema[fieldAttr.Name]; !known {
+		if _, known := declared[fieldAttr.Name]; !known {
 			r := fieldAttr.SrcRange
+			detail := fmt.Sprintf("step %q does not declare an output named %q", nameAttr.Name, fieldAttr.Name)
+			if s := suggestFromNameSet(fieldAttr.Name, declared); len(s) > 0 {
+				detail += fmt.Sprintf("; did you mean %s?", strings.Join(s, ", "))
+			}
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagError,
 				Summary: fmt.Sprintf(
-					"%s: field %q is not declared in the output schema of step %q (adapter %q)",
-					context, fieldAttr.Name, nameAttr.Name, step.AdapterRef,
+					"%s: field %q is not declared in the outputs of step %q",
+					context, fieldAttr.Name, nameAttr.Name,
 				),
+				Detail:  detail,
 				Subject: &r,
 			})
 		}
 	}
 	return diags
+}
+
+// declaredStepOutputNames returns the set of output field names a step declares
+// and whether it has a declared contract at all. Adapter steps use their
+// adapter's OutputSchema; subworkflow steps use the callee's declared output
+// names. A step with no declared outputs returns (nil, false) so references to
+// it stay permissive (no false positives against an unknown contract).
+func declaredStepOutputNames(step *StepNode, g *FSMGraph, schemas map[string]AdapterInfo) (map[string]bool, bool) {
+	if step.TargetKind == StepTargetSubworkflow {
+		sw := g.Subworkflows[step.SubworkflowRef]
+		if sw == nil || sw.Body == nil || len(sw.Body.Outputs) == 0 {
+			return nil, false
+		}
+		names := make(map[string]bool, len(sw.Body.Outputs))
+		for n := range sw.Body.Outputs {
+			names[n] = true
+		}
+		return names, true
+	}
+	info, ok := adapterInfo(schemas, adapterTypeFromRef(step.AdapterRef))
+	if !ok || len(info.OutputSchema) == 0 {
+		return nil, false
+	}
+	names := make(map[string]bool, len(info.OutputSchema))
+	for n := range info.OutputSchema {
+		names[n] = true
+	}
+	return names, true
+}
+
+// suggestFromNameSet returns up to 3 candidate names from the set, sorted by
+// Levenshtein distance to the misspelled name then lexically.
+func suggestFromNameSet(misspelled string, names map[string]bool) []string {
+	type candidate struct {
+		name     string
+		distance int
+	}
+	candidates := make([]candidate, 0, len(names))
+	for name := range names {
+		candidates = append(candidates, candidate{name: name, distance: levenshteinDistance(misspelled, name)})
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].distance != candidates[j].distance {
+			return candidates[i].distance < candidates[j].distance
+		}
+		return candidates[i].name < candidates[j].name
+	})
+	var out []string
+	for i := 0; i < len(candidates) && i < 3; i++ {
+		out = append(out, fmt.Sprintf("%q", candidates[i].name))
+	}
+	return out
 }
 
 // stepHasBackEdge reports whether the named step can reach itself via outcome

@@ -119,14 +119,14 @@ workflow {
 adapter "noop" "default" {}
 step "build" {
   target = adapter.noop.default
-  outcome "success" {
-    next = step.run
-    output = { x = steps.build.` + field + ` }
-  }
+  outcome "success" { next = step.run }
 }
 step "run" {
   target = adapter.noop.default
-  outcome "success" { next = step.done }
+  outcome "success" {
+    next = step.done
+    output = { x = steps.build.` + field + ` }
+  }
 }
 state "done" { terminal = true }
 `

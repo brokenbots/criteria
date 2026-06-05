@@ -214,14 +214,14 @@ workflow {
 adapter "noop" "default" {}
 step "a" {
   target = adapter.noop.default
-  outcome "success" {
-    next = step.b
-    output = { result = steps.a.exit_code }
-  }
+  outcome "success" { next = step.b }
 }
 step "b" {
   target = adapter.noop.default
-  outcome "success" { next = step.done }
+  outcome "success" {
+    next = step.done
+    output = { result = steps.a.exit_code }
+  }
 }
 state "done" {
   terminal = true

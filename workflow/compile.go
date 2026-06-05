@@ -123,6 +123,9 @@ func CompileWithContext(ctx context.Context, spec *Spec, schemas map[string]Adap
 	// Check cross-step field references after all nodes are compiled so
 	// forward-references resolve correctly.
 	diags = append(diags, checkCrossStepFieldRefs(g, schemas)...)
+	// Reject a step reading its own outputs via steps.<self>.* in its own
+	// outcome blocks — that namespace is not reliably populated mid-step.
+	diags = append(diags, checkSelfStepOutputRefs(g)...)
 	// Secret-taint propagation pass: marks steps that transitively receive
 	// secret data via secret_input, input referencing secret variables, or
 	// predecessor taint propagation.
