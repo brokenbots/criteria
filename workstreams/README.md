@@ -165,6 +165,30 @@ versioned **`0.5.0`** to track the next criteria release line, not `2.0.0`.
 shell) in their own repos and published → proto switchover → then archive most remaining
 workstreams and return to the release gate (WS40).
 
+### SDK-folder disentanglement (2026-06-05, session 3)
+
+Resolved the two in-tree SDK folders (`criteria-typescript-adapter-sdk/`,
+`criteria-python-adapter-sdk/`), which were in **opposite** states. Neither was
+referenced by the monorepo build; both are designed to live in their own repos (WS23/WS24).
+
+- **TypeScript — in-tree was stale; repo is canonical.** The in-tree folder was the old
+  WS21 `serveRemote`-only skeleton (`criteria-typescript-adapter-sdk@0.1.0`); the real SDK
+  already ships as [`@criteria/adapter-sdk@0.5.0`](https://github.com/brokenbots/criteria-typescript-adapter-sdk)
+  (tagged, published session 2). Its one unique asset — `serveRemote.ts` (the **deferred**
+  WS21 remote-serve path, absent from the published `main`) — was preserved on the
+  [`deferred/serve-remote`](https://github.com/brokenbots/criteria-typescript-adapter-sdk/tree/deferred/serve-remote)
+  branch with a `DEFERRED.md` provenance note. In-tree folder deleted.
+- **Python — in-tree was canonical; repo was a stale skeleton.** The repo
+  ([`criteria-python-adapter-sdk`](https://github.com/brokenbots/criteria-python-adapter-sdk))
+  was a May-6 husk predating v2; the full v2 SDK (WS24/#204) lived in-tree at the **wrong**
+  version `2.0.0rc1`. Corrected to **`0.5.0`** (per the session-2 policy: v2 = protocol, not
+  product; artifacts track the 0.5.0 line), seeded into the repo over the skeleton (repo
+  LICENSE retained), **42 tests pass**, pushed to `main`, tagged **`v0.5.0`**. In-tree folder
+  deleted.
+- **Net:** all three adapter SDKs now live solely in their own repos at `0.5.0`
+  (`@criteria/adapter-sdk`, `criteria-python-adapter-sdk`, `criteria-go-adapter-sdk`); the
+  monorepo no longer carries SDK source. Next: proto/Go-SDK switchover.
+
 ## Language cleanup — Terraform-shaping the HCL (archived 2026-06-05)
 
 A focused sub-effort (WS01–WS11) that landed on `main` and merged into `adapter-v2`
