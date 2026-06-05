@@ -76,7 +76,7 @@ func PushArtifact(ctx context.Context, ref oci.Reference, binPath, manifestPath 
 	}
 
 	if opts.Signer != nil {
-		if _, err := signArtifact(ctx, repo, ref, pushedDesc, opts.Signer); err != nil {
+		if _, err := signArtifact(ctx, repo, ref, &pushedDesc, opts.Signer); err != nil {
 			return "", err
 		}
 	}

@@ -66,7 +66,7 @@ func TestSign_KeyMode_RoundTripVerifies(t *testing.T) {
 	if certPEM != "" || chainPEM != "" {
 		t.Fatalf("key signer must not emit cert/chain, got cert=%q chain=%q", certPEM, chainPEM)
 	}
-	manifestJSON, payloadBytes := buildSignatureManifest(artifactDesc, payload, sig, certPEM, chainPEM)
+	manifestJSON, payloadBytes := buildSignatureManifest(&artifactDesc, payload, sig, certPEM, chainPEM)
 
 	payloadDigest := digest.FromBytes(payloadBytes)
 	sigDigest := digest.FromBytes(manifestJSON)

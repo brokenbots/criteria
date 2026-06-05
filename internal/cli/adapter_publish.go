@@ -40,46 +40,29 @@ func runPublish(ctx context.Context, binPath, registry, signKey string, withImag
 	if out == nil {
 		out = os.Stdout
 	}
+	if registry == "" {
+		return fmt.Errorf("--registry is required (provide a fully-qualified reference or alias)")
+	}
+	if withImage {
+		return fmt.Errorf("--with-image is not yet implemented")
+	}
 	binPath, err := filepath.Abs(binPath)
 	if err != nil {
 		return fmt.Errorf("resolve path: %w", err)
 	}
-
-	// Verify binary exists.
 	if _, err := os.Stat(binPath); err != nil {
 		return fmt.Errorf("stat binary: %w", err)
 	}
 
-	// Run binary with --emit-manifest to extract adapter.yaml.
-	outBytes, err := exec.CommandContext(ctx, binPath, "--emit-manifest").Output()
+	mfPath, cleanup, err := emitManifestToTemp(ctx, binPath)
 	if err != nil {
-		return fmt.Errorf("--emit-manifest failed: %w", err)
+		return err
 	}
-
-	// Write manifest to a temporary file for the publish package.
-	tmpDir, err := os.MkdirTemp("", "criteria-publish-")
-	if err != nil {
-		return fmt.Errorf("create temp dir: %w", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	mfPath := filepath.Join(tmpDir, "adapter.yaml")
-	if err := os.WriteFile(mfPath, outBytes, 0o644); err != nil {
-		return fmt.Errorf("write manifest: %w", err)
-	}
-
-	// Resolve registry reference.
-	if registry == "" {
-		return fmt.Errorf("--registry is required (provide a fully-qualified reference or alias)")
-	}
+	defer cleanup()
 
 	ref, err := Resolve(ResolveContext{}, registry)
 	if err != nil {
 		return fmt.Errorf("resolve registry: %w", err)
-	}
-
-	if withImage {
-		return fmt.Errorf("--with-image is not yet implemented")
 	}
 
 	opts := publish.Options{}
@@ -103,4 +86,23 @@ func runPublish(ctx context.Context, binPath, registry, signKey string, withImag
 	}
 	fmt.Fprintf(out, "Published %s to %s (digest: %s)%s\n", filepath.Base(binPath), ref, dg, signedNote)
 	return nil
+}
+
+// emitManifestToTemp runs the adapter binary with --emit-manifest and writes the
+// resulting adapter.yaml to a temp file. The returned cleanup removes it.
+func emitManifestToTemp(ctx context.Context, binPath string) (mfPath string, cleanup func(), err error) {
+	outBytes, err := exec.CommandContext(ctx, binPath, "--emit-manifest").Output()
+	if err != nil {
+		return "", nil, fmt.Errorf("--emit-manifest failed: %w", err)
+	}
+	tmpDir, err := os.MkdirTemp("", "criteria-publish-")
+	if err != nil {
+		return "", nil, fmt.Errorf("create temp dir: %w", err)
+	}
+	mfPath = filepath.Join(tmpDir, "adapter.yaml")
+	if err := os.WriteFile(mfPath, outBytes, 0o644); err != nil {
+		os.RemoveAll(tmpDir)
+		return "", nil, fmt.Errorf("write manifest: %w", err)
+	}
+	return mfPath, func() { os.RemoveAll(tmpDir) }, nil
 }
