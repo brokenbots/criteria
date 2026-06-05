@@ -10,6 +10,7 @@ import (
 
 	"github.com/hashicorp/hcl/v2"
 	"github.com/zclconf/go-cty/cty"
+	"github.com/zclconf/go-cty/cty/convert"
 
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapter/secrets"
@@ -299,9 +300,9 @@ func (n *stepNode) evaluateOnce(ctx context.Context, st *RunState, deps Deps) (s
 		cur := st.TopCursor()
 		if len(result.Outputs) > 0 {
 			st.Vars = workflow.WithIndexedStepOutput(st.Vars, n.step.Name, iterOutputKey(cur), result.Outputs)
-			cur.Prev = stringMapToCtyObject(result.Outputs)
+			cur.Prev = ctyMapToObject(result.Outputs)
 		}
-		deps.Sink.OnStepOutputCaptured(n.step.Name, result.Outputs)
+		deps.Sink.OnStepOutputCaptured(n.step.Name, workflow.RenderOutputs(result.Outputs))
 		deps.Sink.OnStepTransition(n.step.Name, result.Outcome, result.Outcome)
 		if err := n.applyIterationDataWrites(result.Outcome, result.Outputs, st, deps.Sink); err != nil {
 			return "", err
@@ -316,7 +317,7 @@ func (n *stepNode) evaluateOnce(ctx context.Context, st *RunState, deps Deps) (s
 // outcome (if declared) during a for_each / count step. It is called on every
 // adapter result inside the iteration loop — before the aggregate outcome fires.
 // projectedCty is computed from the outcome's OutputExpr when present.
-func (n *stepNode) applyIterationDataWrites(outcomeName string, rawOutputs map[string]string, st *RunState, sink Sink) error {
+func (n *stepNode) applyIterationDataWrites(outcomeName string, rawOutputs map[string]cty.Value, st *RunState, sink Sink) error {
 	compiled, ok := n.step.Outcomes[outcomeName]
 	if !ok || len(compiled.Writes) == 0 || st.DataStore == nil {
 		return nil
@@ -341,7 +342,7 @@ func (n *stepNode) applyIterationDataWrites(outcomeName string, rawOutputs map[s
 // adapter steps). When non-nil they are exposed as the "subworkflow" namespace
 // inside any outcome.output expression, so callers can write
 // output = { result = subworkflow.val }.
-func (n *stepNode) applyOutcome(outcomeName string, rawOutputs map[string]string, swOutputs map[string]cty.Value, st *RunState, deps Deps) (string, error) {
+func (n *stepNode) applyOutcome(outcomeName string, rawOutputs, swOutputs map[string]cty.Value, st *RunState, deps Deps) (string, error) {
 	compiled, ok := n.step.Outcomes[outcomeName]
 	if !ok {
 		if n.step.DefaultOutcome != nil {
@@ -354,8 +355,9 @@ func (n *stepNode) applyOutcome(outcomeName string, rawOutputs map[string]string
 		}
 	}
 
-	// Apply output projection if the outcome declares one. Projection returns
-	// raw cty values so numeric/bool types survive the return path unaltered.
+	// Apply output projection if the outcome declares one. Projection returns raw
+	// cty values; both the projection and the raw adapter outputs are already
+	// typed, so they are stored under steps.<name>.* with their native types.
 	stepOutputs := rawOutputs
 	var projectedCty map[string]cty.Value
 	if compiled.OutputExpr != nil {
@@ -364,15 +366,12 @@ func (n *stepNode) applyOutcome(outcomeName string, rawOutputs map[string]string
 			return "", fmt.Errorf("step %q outcome %q: output projection: %w", n.step.Name, outcomeName, err)
 		}
 		projectedCty = projected
-		stepOutputs, err = ctyValsToStrings(projected)
-		if err != nil {
-			return "", fmt.Errorf("step %q outcome %q: output projection render: %w", n.step.Name, outcomeName, err)
-		}
+		stepOutputs = projected
 	}
 
 	if len(stepOutputs) > 0 {
 		st.Vars = workflow.WithStepOutputs(st.Vars, n.step.Name, stepOutputs)
-		deps.Sink.OnStepOutputCaptured(n.step.Name, stepOutputs)
+		deps.Sink.OnStepOutputCaptured(n.step.Name, workflow.RenderOutputs(stepOutputs))
 	}
 
 	// Apply write blocks: update data store with values from the step's outputs.
@@ -395,16 +394,13 @@ func (n *stepNode) applyOutcome(outcomeName string, rawOutputs map[string]string
 
 // captureReturnOutputs stores the step's final outputs into st.ReturnOutputs
 // so subworkflow callers can access them via the "subworkflow.*" namespace.
-// Prefers typed cty projections over raw adapter string outputs.
-func captureReturnOutputs(rawOutputs map[string]string, projectedCty map[string]cty.Value, st *RunState) {
+// Prefers the typed cty projection; otherwise the raw adapter outputs, which are
+// already typed against the adapter's OutputSchema.
+func captureReturnOutputs(rawOutputs, projectedCty map[string]cty.Value, st *RunState) {
 	if projectedCty != nil {
 		st.ReturnOutputs = projectedCty
 	} else if len(rawOutputs) > 0 {
-		retVals := make(map[string]cty.Value, len(rawOutputs))
-		for k, v := range rawOutputs {
-			retVals[k] = cty.StringVal(v)
-		}
-		st.ReturnOutputs = retVals
+		st.ReturnOutputs = rawOutputs
 	}
 }
 
@@ -421,7 +417,7 @@ func applyDataWrites(
 	stepName, outcomeName string,
 	writes []workflow.CompiledWrite,
 	projectedCty map[string]cty.Value,
-	rawOutputs map[string]string,
+	rawOutputs map[string]cty.Value,
 	swOutputs map[string]cty.Value,
 	st *RunState,
 	sink Sink,
@@ -454,7 +450,7 @@ func applyDataWrites(
 // output.* traversal; falls back to coercing the raw adapter string from
 // rawOutputs. Returns (cty.NilVal, nil) if the key is absent, or (cty.NilVal, err)
 // if coercion fails.
-func resolveDataWriteValue(w workflow.CompiledWrite, projectedCty map[string]cty.Value, rawOutputs map[string]string, swOutputs map[string]cty.Value, st *RunState) (cty.Value, error) {
+func resolveDataWriteValue(w workflow.CompiledWrite, projectedCty, rawOutputs, swOutputs map[string]cty.Value, st *RunState) (cty.Value, error) {
 	if v, ok, err := resolveBareOutputTraversal(w, projectedCty, rawOutputs, st.DataStore); ok || err != nil {
 		return v, err
 	}
@@ -465,7 +461,7 @@ func resolveDataWriteValue(w workflow.CompiledWrite, projectedCty map[string]cty
 // expression is a bare output.* traversal. It returns (value, true, nil) on
 // success, (cty.NilVal, false, nil) when the expression is not a bare
 // traversal, and (cty.NilVal, false, error) on lookup/coercion failure.
-func resolveBareOutputTraversal(w workflow.CompiledWrite, projectedCty map[string]cty.Value, rawOutputs map[string]string, store *DataStore) (cty.Value, bool, error) {
+func resolveBareOutputTraversal(w workflow.CompiledWrite, projectedCty, rawOutputs map[string]cty.Value, store *DataStore) (cty.Value, bool, error) {
 	vars := w.ValueExpr.Variables()
 	if len(vars) != 1 || len(vars[0]) != 2 {
 		return cty.NilVal, false, nil
@@ -484,10 +480,19 @@ func resolveBareOutputTraversal(w workflow.CompiledWrite, projectedCty map[strin
 			return pv, true, nil
 		}
 	}
-	if sv, ok := rawOutputs[key]; ok {
-		declaredType, _ := store.TypeOf(w.DataKind, w.DataName)
-		v, err := coerceStringToCty(sv, declaredType)
-		return v, true, err
+	if ov, ok := rawOutputs[key]; ok {
+		// The adapter output is already typed against the adapter's OutputSchema.
+		// Convert it to the data block's declared type when one is set; otherwise
+		// pass the value through unchanged.
+		declaredType, found := store.TypeOf(w.DataKind, w.DataName)
+		if !found || declaredType == cty.NilType || declaredType == cty.DynamicPseudoType {
+			return ov, true, nil
+		}
+		v, err := convert.Convert(ov, declaredType)
+		if err != nil {
+			return cty.NilVal, true, fmt.Errorf("output key %q: cannot convert to type %s: %w", key, declaredType.FriendlyName(), err)
+		}
+		return v, true, nil
 	}
 	return cty.NilVal, true, fmt.Errorf("output key %q not found", key)
 }
@@ -505,7 +510,7 @@ func resolveBareOutputTraversal(w workflow.CompiledWrite, projectedCty map[strin
 // reads data.<kind>.<name> always sees the step-entry snapshot — never a value
 // written earlier in the same step. This makes the whole write set atomic
 // against the snapshot.
-func resolveExprDataWriteValue(expr hcl.Expression, projectedCty map[string]cty.Value, rawOutputs map[string]string, swOutputs map[string]cty.Value, st *RunState) (cty.Value, error) {
+func resolveExprDataWriteValue(expr hcl.Expression, projectedCty, rawOutputs, swOutputs map[string]cty.Value, st *RunState) (cty.Value, error) {
 	evalOpts := workflow.DefaultFunctionOptions(st.WorkflowDir)
 	evalCtx := workflow.BuildEvalContextWithOpts(st.Vars, evalOpts)
 	if len(swOutputs) > 0 {
@@ -522,7 +527,7 @@ func resolveExprDataWriteValue(expr hcl.Expression, projectedCty map[string]cty.
 		}
 	} else {
 		for k, v := range rawOutputs {
-			outputVars[k] = cty.StringVal(v)
+			outputVars[k] = v
 		}
 	}
 	evalCtx.Variables["output"] = cty.ObjectVal(outputVars)
@@ -562,29 +567,15 @@ func (n *stepNode) evaluateSubworkflowStep(ctx context.Context, st *RunState, de
 		outcome = "failure"
 	}
 
-	// Convert subworkflow cty outputs to a string map for pass-through storage
-	// (steps.<name>.*). String values are stored as raw strings to match the
-	// adapter output convention (adapters return map[string]string directly).
-	// Non-string values are rendered via renderCtyValue (JSON encoding).
-	// The raw cty map is passed separately as swOutputs so outcome.output
-	// expressions can reference subworkflow.*.
-	stringOutputs := make(map[string]string, len(outputs))
-	for k, v := range outputs {
-		if v.IsKnown() && !v.IsNull() && v.Type() == cty.String {
-			stringOutputs[k] = v.AsString()
-			continue
-		}
-		rendered, err := renderCtyValue(v)
-		if err != nil {
-			return "", fmt.Errorf("step %q: subworkflow output %q: %w", n.step.Name, k, err)
-		}
-		stringOutputs[k] = rendered
-	}
-
-	// Route through applyOutcome so DefaultOutcome mapping, OutputExpr
-	// evaluation (including subworkflow.* references), and the return sentinel
-	// are all handled uniformly with adapter steps.
-	return n.applyOutcome(outcome, stringOutputs, outputs, st, deps)
+	// Subworkflow outputs are already typed cty values; pass them through to
+	// applyOutcome both as the step's raw outputs (stored under steps.<name>.*
+	// with their native types) and as swOutputs so outcome.output expressions can
+	// reference subworkflow.*.
+	//
+	// Route through applyOutcome so DefaultOutcome mapping, OutputExpr evaluation
+	// (including subworkflow.* references), and the return sentinel are all handled
+	// uniformly with adapter steps.
+	return n.applyOutcome(outcome, outputs, outputs, st, deps)
 }
 
 // Per-step environment override (n.step.Environment) takes precedence over
@@ -794,36 +785,35 @@ func (n *stepNode) stepAdapterName() string {
 	return ""
 }
 
-// stringMapToCtyObject converts a string-keyed map to a cty object value.
+// ctyMapToObject wraps a typed output map in a cty object value.
 // Used to store adapter step outputs as cur.Prev for each._prev binding.
-func stringMapToCtyObject(m map[string]string) cty.Value {
+func ctyMapToObject(m map[string]cty.Value) cty.Value {
 	if len(m) == 0 {
 		return cty.EmptyObjectVal
 	}
 	vals := make(map[string]cty.Value, len(m))
 	for k, v := range m {
-		vals[k] = cty.StringVal(v)
+		vals[k] = v
 	}
 	return cty.ObjectVal(vals)
 }
 
 // evalOutcomeOutputProjection evaluates an outcome's output expression against
 // the current run state and returns the raw cty attribute values. The expression
-// must evaluate to a cty object; each attribute becomes an output key. Callers
-// use ctyValsToStrings when they need a map[string]string for WithStepOutputs
-// or OnStepOutputCaptured; st.ReturnOutputs receives the raw cty values so that
-// top-level return preserves numeric/bool types in OnRunOutputs, matching the
-// encoding produced by the normal output-block evaluation path.
+// must evaluate to a cty object; each attribute becomes an output key. The
+// returned typed values are stored under steps.<name>.* and rendered to strings
+// only for the event sink; st.ReturnOutputs receives the raw cty values so that
+// top-level return preserves numeric/bool/object types in OnRunOutputs.
 //
 // swOutputs, when non-nil, is exposed as the "subworkflow" variable in the eval
 // context so that outcome expressions can reference subworkflow.* keys.
 //
 // adapterOutputs, when non-nil, is exposed as the "step.output" variable in the
 // eval context so that outcome expressions can reference step.output.<key>. Each
-// value is a cty.String (raw adapter output string). This is the mechanism for
+// value carries its native adapter-declared type. This is the mechanism for
 // outcome projections that need to reference the current step's adapter result —
 // for example to transform or accumulate values into a data block.
-func evalOutcomeOutputProjection(expr hcl.Expression, swOutputs map[string]cty.Value, adapterOutputs map[string]string, st *RunState) (map[string]cty.Value, error) {
+func evalOutcomeOutputProjection(expr hcl.Expression, swOutputs, adapterOutputs map[string]cty.Value, st *RunState) (map[string]cty.Value, error) {
 	evalOpts := workflow.DefaultFunctionOptions(st.WorkflowDir)
 	evalCtx := workflow.BuildEvalContextWithOpts(st.Vars, evalOpts)
 	if len(swOutputs) > 0 {
@@ -848,9 +838,9 @@ func evalOutcomeOutputProjection(expr hcl.Expression, swOutputs map[string]cty.V
 
 // buildStepOutputVar constructs the cty object exposed as the "step" variable
 // in outcome output projection expressions. It has a single "output" attribute
-// that is an object of string-valued adapter output keys. When adapterOutputs is
+// that is an object of the adapter's typed output keys. When adapterOutputs is
 // empty, "step.output" is an empty object (no keys).
-func buildStepOutputVar(adapterOutputs map[string]string) cty.Value {
+func buildStepOutputVar(adapterOutputs map[string]cty.Value) cty.Value {
 	if len(adapterOutputs) == 0 {
 		return cty.ObjectVal(map[string]cty.Value{
 			"output": cty.EmptyObjectVal,
@@ -858,26 +848,11 @@ func buildStepOutputVar(adapterOutputs map[string]string) cty.Value {
 	}
 	attrs := make(map[string]cty.Value, len(adapterOutputs))
 	for k, v := range adapterOutputs {
-		attrs[k] = cty.StringVal(v)
+		attrs[k] = v
 	}
 	return cty.ObjectVal(map[string]cty.Value{
 		"output": cty.ObjectVal(attrs),
 	})
-}
-
-// ctyValsToStrings converts a map[string]cty.Value to map[string]string using
-// renderCtyValue for each value. Used to produce the string form needed by
-// WithStepOutputs and OnStepOutputCaptured.
-func ctyValsToStrings(vals map[string]cty.Value) (map[string]string, error) {
-	result := make(map[string]string, len(vals))
-	for k, v := range vals {
-		rendered, err := renderCtyValue(v)
-		if err != nil {
-			return nil, fmt.Errorf("output key %q: %w", k, err)
-		}
-		result[k] = rendered
-	}
-	return result, nil
 }
 
 // Map for_each iterations use the string key so callers can look up outputs

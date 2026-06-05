@@ -728,7 +728,7 @@ func (p *captureOutputAdapter) Execute(_ context.Context, _ string, step *workfl
 		outs = p.outputs[i]
 	}
 	p.call++
-	return adapter.Result{Outcome: p.outcomes[i], Outputs: outs}, nil
+	return adapter.Result{Outcome: p.outcomes[i], Outputs: ctyOut(outs)}, nil
 }
 func (p *captureOutputAdapter) Permit(context.Context, string, string, bool, string) error {
 	return nil
@@ -1638,7 +1638,7 @@ func (p *callbackAdapter) OpenSession(context.Context, string, map[string]string
 }
 func (p *callbackAdapter) Execute(_ context.Context, _ string, step *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
 	outcome, outputs := p.fn(step.Input)
-	return adapter.Result{Outcome: outcome, Outputs: outputs}, nil
+	return adapter.Result{Outcome: outcome, Outputs: ctyOut(outputs)}, nil
 }
 func (p *callbackAdapter) Permit(context.Context, string, string, bool, string) error { return nil }
 func (p *callbackAdapter) CloseSession(context.Context, string) error                 { return nil }
@@ -1667,7 +1667,7 @@ func (p *outputAdapter) OpenSession(context.Context, string, map[string]string, 
 	return nil
 }
 func (p *outputAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
-	return adapter.Result{Outcome: p.outcome, Outputs: p.outputs}, nil
+	return adapter.Result{Outcome: p.outcome, Outputs: ctyOut(p.outputs)}, nil
 }
 func (p *outputAdapter) Permit(context.Context, string, string, bool, string) error { return nil }
 func (p *outputAdapter) CloseSession(context.Context, string) error                 { return nil }

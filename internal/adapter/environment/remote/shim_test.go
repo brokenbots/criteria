@@ -484,7 +484,7 @@ func TestShim_ExecuteThroughBridge(t *testing.T) {
 	if result.Outcome != "success" {
 		t.Errorf("outcome = %q, want success", result.Outcome)
 	}
-	if result.Outputs["greeting"] != "hello" {
+	if g, ok := result.Outputs["greeting"]; !ok || g.AsString() != "hello" {
 		t.Errorf("outputs = %v", result.Outputs)
 	}
 }

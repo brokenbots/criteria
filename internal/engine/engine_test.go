@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/zclconf/go-cty/cty"
+
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/internal/testutil"
@@ -21,6 +23,21 @@ import (
 	"github.com/brokenbots/criteria/workflow"
 	"github.com/brokenbots/criteria/workflow/lockfile"
 )
+
+// ctyOut wraps a string-keyed test output map as the typed cty map that adapters
+// now return. All values become cty.String — the engine treats them as typed
+// values keyed against the step's OutputSchema. Test fixtures keep declaring
+// string maps for brevity and wrap them at the Execute return.
+func ctyOut(m map[string]string) map[string]cty.Value {
+	if m == nil {
+		return nil
+	}
+	out := make(map[string]cty.Value, len(m))
+	for k, v := range m {
+		out[k] = cty.StringVal(v)
+	}
+	return out
+}
 
 // fakeSink records engine callbacks for assertion.
 type fakeSink struct {

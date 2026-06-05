@@ -126,9 +126,9 @@ func (n *stepNode) runWhileIteration(ctx context.Context, st *RunState, deps Dep
 	if len(result.Outputs) > 0 {
 		key := cty.NumberIntVal(int64(cur.Index))
 		st.Vars = workflow.WithIndexedStepOutput(st.Vars, n.step.Name, key, result.Outputs)
-		cur.Prev = stringMapToCtyObject(result.Outputs)
+		cur.Prev = ctyMapToObject(result.Outputs)
 	}
-	deps.Sink.OnStepOutputCaptured(n.step.Name, result.Outputs)
+	deps.Sink.OnStepOutputCaptured(n.step.Name, workflow.RenderOutputs(result.Outputs))
 	deps.Sink.OnStepTransition(n.step.Name, result.Outcome, result.Outcome)
 
 	if err := n.applyIterationDataWrites(result.Outcome, result.Outputs, st, deps.Sink); err != nil {
@@ -242,17 +242,7 @@ func (n *stepNode) runWhileSubworkflowStep(ctx context.Context, st *RunState, de
 		outcome = "failure"
 	}
 
-	stringOutputs := make(map[string]string, len(outputs))
-	for k, v := range outputs {
-		if v.IsKnown() && !v.IsNull() && v.Type() == cty.String {
-			stringOutputs[k] = v.AsString()
-			continue
-		}
-		rendered, err := renderCtyValue(v)
-		if err != nil {
-			return adapter.Result{}, fmt.Errorf("step %q: subworkflow output %q: %w", n.step.Name, k, err)
-		}
-		stringOutputs[k] = rendered
-	}
-	return adapter.Result{Outcome: outcome, Outputs: stringOutputs}, nil
+	// Subworkflow outputs are already typed cty values; carry them through with
+	// their native types.
+	return adapter.Result{Outcome: outcome, Outputs: outputs}, nil
 }

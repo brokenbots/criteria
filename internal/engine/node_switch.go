@@ -83,22 +83,11 @@ func (n *switchNode) applyOutputProjection(expr hcl.Expression, st *RunState, de
 	if !val.Type().IsObjectType() {
 		return fmt.Errorf("output must be an object; got %s", val.Type().FriendlyName())
 	}
-	projected := make(map[string]string, len(val.Type().AttributeTypes()))
+	projected := make(map[string]cty.Value, len(val.Type().AttributeTypes()))
 	for k := range val.Type().AttributeTypes() {
-		attr := val.GetAttr(k)
-		var rendered string
-		if attr.Type() == cty.String {
-			rendered = attr.AsString()
-		} else {
-			var err error
-			rendered, err = renderCtyValue(attr)
-			if err != nil {
-				return fmt.Errorf("output key %q: %w", k, err)
-			}
-		}
-		projected[k] = rendered
+		projected[k] = val.GetAttr(k)
 	}
 	st.Vars = workflow.WithStepOutputs(st.Vars, n.node.Name, projected)
-	deps.Sink.OnStepOutputCaptured(n.node.Name, projected)
+	deps.Sink.OnStepOutputCaptured(n.node.Name, workflow.RenderOutputs(projected))
 	return nil
 }

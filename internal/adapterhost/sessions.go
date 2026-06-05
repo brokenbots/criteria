@@ -567,7 +567,11 @@ func (m *SessionManager) registerSensitiveOutputs(result adapter.Result, step *w
 	}
 	for outName, outVal := range result.Outputs {
 		if f, ok := step.OutputSchema[outName]; ok && f.Sensitive {
-			m.RedactionRegistry.Register(outVal)
+			rendered, err := workflow.RenderOutputValue(outVal)
+			if err != nil {
+				continue
+			}
+			m.RedactionRegistry.Register(rendered)
 		}
 	}
 }

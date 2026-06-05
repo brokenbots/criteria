@@ -6,6 +6,16 @@ import (
 	"github.com/zclconf/go-cty/cty"
 )
 
+// ctyStrs wraps a string-keyed map as the typed cty map that the step-output
+// storage helpers now accept (all values cty.String).
+func ctyStrs(m map[string]string) map[string]cty.Value {
+	out := make(map[string]cty.Value, len(m))
+	for k, v := range m {
+		out[k] = cty.StringVal(v)
+	}
+	return out
+}
+
 func TestCoerceStringToCty_Scalars(t *testing.T) {
 	t.Run("nil type preserves string", func(t *testing.T) {
 		v, err := CoerceStringToCty("hello", cty.NilType)

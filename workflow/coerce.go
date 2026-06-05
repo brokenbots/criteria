@@ -60,6 +60,47 @@ func CoerceStringToCty(s string, t cty.Type) (cty.Value, error) {
 	}
 }
 
+// RenderOutputValue converts a typed step output cty.Value to the string form
+// used by the string-based event surface (OnStepOutputCaptured) and redaction
+// registration. Plain strings are rendered raw (unquoted) to match the historical
+// adapter-output convention; all other types are JSON-encoded via the cty codec
+// so structured values remain machine-parseable. Unknown values render as "null".
+//
+// This is intentionally distinct from the RunOutputs rendering path, which
+// JSON-encodes strings (quoted) per its documented typed-consumer contract.
+func RenderOutputValue(val cty.Value) (string, error) {
+	if !val.IsKnown() {
+		return "null", nil
+	}
+	if !val.IsNull() && val.Type() == cty.String {
+		return val.AsString(), nil
+	}
+	b, err := ctyjson.Marshal(val, val.Type())
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+// RenderOutputs renders a typed output map to the flat string map used by the
+// event sink. It is best-effort: a value that fails to render is replaced with
+// the cty codec's null token rather than failing the run, since events are a
+// display surface, not the canonical store.
+func RenderOutputs(outputs map[string]cty.Value) map[string]string {
+	if len(outputs) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(outputs))
+	for k, v := range outputs {
+		s, err := RenderOutputValue(v)
+		if err != nil {
+			s = "null"
+		}
+		out[k] = s
+	}
+	return out
+}
+
 // coerceDynamicJSON decodes s as JSON to whatever cty type the content implies,
 // falling back to a bare string when s is not valid JSON.
 func coerceDynamicJSON(s string) (cty.Value, error) {

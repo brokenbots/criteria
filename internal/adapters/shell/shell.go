@@ -16,6 +16,8 @@ import (
 	"strconv"
 	"sync"
 
+	"github.com/zclconf/go-cty/cty"
+
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/workflow"
 )
@@ -218,11 +220,13 @@ func resolveWait(
 // buildOutputs assembles the Outputs map from captured buffers and exit code.
 // Emits an "output_truncated" adapter event for any stream whose buffer was
 // truncated, and adds a _truncated_<stream>: "true" sentinel to outputs.
-func buildOutputs(stdoutCS, stderrCS *captureState, exitCode int, limit int64, sink adapter.EventSink) map[string]string {
-	outputs := map[string]string{
-		"stdout":    stdoutCS.content(),
-		"stderr":    stderrCS.content(),
-		"exit_code": strconv.Itoa(exitCode),
+func buildOutputs(stdoutCS, stderrCS *captureState, exitCode int, limit int64, sink adapter.EventSink) map[string]cty.Value {
+	// Shell outputs are declared as strings in OutputSchema (exit_code included),
+	// so emit cty.StringVal directly to honor that contract.
+	outputs := map[string]cty.Value{
+		"stdout":    cty.StringVal(stdoutCS.content()),
+		"stderr":    cty.StringVal(stderrCS.content()),
+		"exit_code": cty.StringVal(strconv.Itoa(exitCode)),
 	}
 	if d := stdoutCS.droppedBytes(); d > 0 {
 		sink.Adapter("adapter", map[string]any{
@@ -231,7 +235,7 @@ func buildOutputs(stdoutCS, stderrCS *captureState, exitCode int, limit int64, s
 			"dropped_bytes": d,
 			"limit_bytes":   limit,
 		})
-		outputs["_truncated_stdout"] = "true"
+		outputs["_truncated_stdout"] = cty.StringVal("true")
 	}
 	if d := stderrCS.droppedBytes(); d > 0 {
 		sink.Adapter("adapter", map[string]any{
@@ -240,7 +244,7 @@ func buildOutputs(stdoutCS, stderrCS *captureState, exitCode int, limit int64, s
 			"dropped_bytes": d,
 			"limit_bytes":   limit,
 		})
-		outputs["_truncated_stderr"] = "true"
+		outputs["_truncated_stderr"] = cty.StringVal("true")
 	}
 	return outputs
 }

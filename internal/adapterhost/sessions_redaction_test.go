@@ -5,6 +5,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/zclconf/go-cty/cty"
+
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapter/secrets"
 	v2 "github.com/brokenbots/criteria/sdk/pb/criteria/v2"
@@ -53,9 +55,9 @@ func TestSessionManagerExecute_RegistersSensitiveOutputs(t *testing.T) {
 		handle: &mockRedactionHandle{
 			result: adapter.Result{
 				Outcome: "success",
-				Outputs: map[string]string{
-					"token":  "secret123",
-					"public": "hello",
+				Outputs: map[string]cty.Value{
+					"token":  cty.StringVal("secret123"),
+					"public": cty.StringVal("hello"),
 				},
 			},
 		},
@@ -96,8 +98,8 @@ func TestSessionManagerExecute_NoRegistryNilPanic(t *testing.T) {
 		handle: &mockRedactionHandle{
 			result: adapter.Result{
 				Outcome: "success",
-				Outputs: map[string]string{
-					"token": "secret123",
+				Outputs: map[string]cty.Value{
+					"token": cty.StringVal("secret123"),
 				},
 			},
 		},

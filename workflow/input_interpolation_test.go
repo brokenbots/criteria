@@ -110,7 +110,7 @@ func TestInputInterpolation_StepOutputReference(t *testing.T) {
 
 	// Seed vars then inject fake build output.
 	vars := SeedVarsFromGraph(g)
-	vars = WithStepOutputs(vars, "build", map[string]string{"stdout": "artifact.tar.gz\n"})
+	vars = WithStepOutputs(vars, "build", ctyStrs(map[string]string{"stdout": "artifact.tar.gz\n"}))
 
 	resolved, err := ResolveInputExprs(publishStep.InputExprs, vars)
 	if err != nil {

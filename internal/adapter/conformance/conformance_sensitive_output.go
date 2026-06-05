@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/brokenbots/criteria/internal/adapterhost"
+	"github.com/brokenbots/criteria/workflow"
 )
 
 func hasSensitiveField(info *adapterhost.Info) bool {
@@ -61,7 +62,11 @@ func testSensitiveOutput(t *testing.T, name string, loader adapterhost.Loader, o
 	}
 
 	for key, val := range res.Outputs {
-		if info.AdapterInfo.OutputSchema[key].Sensitive && sink.containsText(val) {
+		plain, err := workflow.RenderOutputValue(val)
+		if err != nil {
+			continue
+		}
+		if info.AdapterInfo.OutputSchema[key].Sensitive && sink.containsText(plain) {
 			t.Fatalf("sensitive output %q appeared in plaintext in event sink", key)
 		}
 	}
