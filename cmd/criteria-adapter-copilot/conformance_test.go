@@ -43,6 +43,7 @@ func TestMain(m *testing.M) {
 //	COPILOT_E2E=1 go test ./cmd/criteria-adapter-copilot/... -run Conformance
 func TestCopilotAdapterConformance(t *testing.T) {
 	opts := conformance.Options{
+		Secrets: fixtureSecrets(),
 		StepConfig: map[string]string{
 			"prompt": "Reply with only: RESULT: success",
 		},
@@ -139,7 +140,7 @@ func TestCopilotReasoningEffortOverride(t *testing.T) {
 	// Open with agent-level reasoning_effort = "medium".
 	if err := plug.OpenSession(ctx, sessionID, map[string]string{
 		"reasoning_effort": "medium",
-	}, nil); err != nil {
+	}, fixtureSecrets()); err != nil {
 		t.Fatalf("OpenSession with reasoning_effort=medium: %v", err)
 	}
 	t.Cleanup(func() {
@@ -216,7 +217,7 @@ func TestConformance_AllowedOutcomesPropagation(t *testing.T) {
 	}
 
 	sessionID := "allowed-outcomes-propagation-test"
-	if err := plug.OpenSession(ctx, sessionID, nil, nil); err != nil {
+	if err := plug.OpenSession(ctx, sessionID, nil, fixtureSecrets()); err != nil {
 		t.Fatalf("OpenSession: %v", err)
 	}
 	t.Cleanup(func() {
@@ -288,7 +289,7 @@ func TestConformance_AllowedOutcomesPropagation_SetProof(t *testing.T) {
 	}
 
 	sessionID := "allowed-outcomes-setproof-test"
-	if err := plug.OpenSession(ctx, sessionID, nil, nil); err != nil {
+	if err := plug.OpenSession(ctx, sessionID, nil, fixtureSecrets()); err != nil {
 		t.Fatalf("OpenSession: %v", err)
 	}
 	t.Cleanup(func() {
@@ -365,13 +366,21 @@ func newFixtureHandle(t *testing.T) adapterhost.Handle {
 	return plug
 }
 
+// fixtureSecrets is the secret map the conformance fixtures deliver on
+// OpenSession. Copilot resolves its GitHub token from the secret channel
+// (D69/WS45) and fails closed without one, so every fixture session supplies a
+// stub token; the fake CLI does not validate it.
+func fixtureSecrets() map[string]string {
+	return map[string]string{"GITHUB_TOKEN": "fixture-token"}
+}
+
 // openFixtureSession opens a session on plug and registers cleanup. Returns
 // a context with a 30-second deadline.
 func openFixtureSession(t *testing.T, plug adapterhost.Handle, sessionID string) context.Context {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	t.Cleanup(cancel)
-	if err := plug.OpenSession(ctx, sessionID, nil, nil); err != nil {
+	if err := plug.OpenSession(ctx, sessionID, nil, fixtureSecrets()); err != nil {
 		t.Fatalf("OpenSession %q: %v", sessionID, err)
 	}
 	t.Cleanup(func() {

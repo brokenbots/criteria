@@ -11,6 +11,7 @@ import (
 	"github.com/github/copilot-sdk/go/rpc"
 
 	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
+	adapterhost "github.com/brokenbots/criteria-go-adapter-sdk/adapterhost"
 )
 
 type recordingSender struct {
@@ -231,42 +232,55 @@ func TestPermissionDetailsSensitiveOptIn(t *testing.T) {
 	}
 }
 
+// TestResolveGitHubTokenPrecedence checks the GitHub token is resolved from the
+// secret channel in the documented precedence order, never from process env.
 func TestResolveGitHubTokenPrecedence(t *testing.T) {
-	t.Run("copilot_token_precedence", func(t *testing.T) {
-		t.Setenv("COPILOT_GITHUB_TOKEN", "copilot-token")
-		t.Setenv("GH_TOKEN", "gh-token")
-		t.Setenv("GITHUB_TOKEN", "github-token")
-		if got := resolveGitHubToken(); got != "copilot-token" {
-			t.Fatalf("resolveGitHubToken() = %q, want %q", got, "copilot-token")
-		}
-	})
+	declared := declaredGitHubTokenSecrets()
+	cases := []struct {
+		name      string
+		delivered map[string]string
+		want      string
+	}{
+		{"copilot_token_precedence", map[string]string{"COPILOT_GITHUB_TOKEN": "copilot-token", "GH_TOKEN": "gh-token", "GITHUB_TOKEN": "github-token"}, "copilot-token"},
+		{"gh_token_fallback", map[string]string{"GH_TOKEN": "gh-token", "GITHUB_TOKEN": "github-token"}, "gh-token"},
+		{"github_token_fallback", map[string]string{"GITHUB_TOKEN": "github-token"}, "github-token"},
+		{"empty_when_absent", nil, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			sec := adapterhost.NewSecrets(declared, tc.delivered)
+			if got := resolveGitHubToken(sec); got != tc.want {
+				t.Fatalf("resolveGitHubToken() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
 
-	t.Run("gh_token_fallback", func(t *testing.T) {
-		t.Setenv("COPILOT_GITHUB_TOKEN", "")
-		t.Setenv("GH_TOKEN", "gh-token")
-		t.Setenv("GITHUB_TOKEN", "github-token")
-		if got := resolveGitHubToken(); got != "gh-token" {
-			t.Fatalf("resolveGitHubToken() = %q, want %q", got, "gh-token")
-		}
-	})
+// TestResolveGitHubTokenIgnoresEnv proves the token comes from the secret
+// channel, not the process environment (D69): an env var must not leak in even
+// when the channel delivered nothing.
+func TestResolveGitHubTokenIgnoresEnv(t *testing.T) {
+	t.Setenv("COPILOT_GITHUB_TOKEN", "from-env")
+	t.Setenv("GH_TOKEN", "from-env")
+	t.Setenv("GITHUB_TOKEN", "from-env")
+	sec := adapterhost.NewSecrets(declaredGitHubTokenSecrets(), nil)
+	if got := resolveGitHubToken(sec); got != "" {
+		t.Fatalf("resolveGitHubToken must ignore process env; got %q", got)
+	}
+}
 
-	t.Run("github_token_fallback", func(t *testing.T) {
-		t.Setenv("COPILOT_GITHUB_TOKEN", "")
-		t.Setenv("GH_TOKEN", "")
-		t.Setenv("GITHUB_TOKEN", "github-token")
-		if got := resolveGitHubToken(); got != "github-token" {
-			t.Fatalf("resolveGitHubToken() = %q, want %q", got, "github-token")
-		}
-	})
-
-	t.Run("empty_when_absent", func(t *testing.T) {
-		t.Setenv("COPILOT_GITHUB_TOKEN", "")
-		t.Setenv("GH_TOKEN", "")
-		t.Setenv("GITHUB_TOKEN", "")
-		if got := resolveGitHubToken(); got != "" {
-			t.Fatalf("resolveGitHubToken() = %q, want empty", got)
-		}
-	})
+// TestEnsureClientFailsClosedWithoutSecret verifies ensureClient returns a
+// clear missing-secret error (before any CLI is started) when no token was
+// delivered over the secret channel.
+func TestEnsureClientFailsClosedWithoutSecret(t *testing.T) {
+	t.Setenv("GITHUB_TOKEN", "from-env") // present in env, absent from the channel
+	p := &copilotAdapter{}
+	sec := adapterhost.NewSecrets(declaredGitHubTokenSecrets(), nil)
+	if _, err := p.ensureClient(context.Background(), sec); err == nil {
+		t.Fatal("ensureClient must fail closed when no GitHub token is delivered")
+	} else if !strings.Contains(err.Error(), "secret channel") {
+		t.Fatalf("error should mention the secret channel; got %v", err)
+	}
 }
 
 // TestPermissionAutoApprove verifies that handlePermissionRequest returns

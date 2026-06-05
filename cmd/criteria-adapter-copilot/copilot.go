@@ -130,6 +130,10 @@ func (p *copilotAdapter) Info(_ context.Context, _ *v2.InfoRequest) (*v2.InfoRes
 			"max_turns":        {Type: "number", Description: "Per-step override for max assistant turns."},
 			"reasoning_effort": {Type: "string", Description: "Per-step override for reasoning effort. Resets to the session default after this step. Valid: low, medium, high, xhigh."},
 		}},
+		// Declared so the host resolves these from the workflow's secret stack
+		// and delivers them over the secret channel (D69); copilot no longer
+		// reads the GitHub token from the process environment.
+		Secrets: declaredGitHubTokenSecrets(),
 	}, nil
 }
 
@@ -215,11 +219,21 @@ func (p *copilotAdapter) sendPermDecision(id, decision string) {
 	}
 }
 
-func (p *copilotAdapter) ensureClient(ctx context.Context) (*copilot.Client, error) {
+func (p *copilotAdapter) ensureClient(ctx context.Context, secrets *adapterhost.Secrets) (*copilot.Client, error) {
 	p.clientMu.Lock()
 	defer p.clientMu.Unlock()
 	if p.client != nil {
 		return p.client, nil
+	}
+
+	// The GitHub token must arrive over the secret channel (D69). Fail closed
+	// with a clear, actionable message rather than starting an unauthenticated
+	// client that fails later with a cryptic CLI error.
+	token := resolveGitHubToken(secrets)
+	if token == "" {
+		return nil, fmt.Errorf("copilot: no GitHub token delivered via the secret channel; "+
+			"supply one of %v in the adapter's secrets, e.g. "+
+			"adapter.copilot.default.secrets { GITHUB_TOKEN = ... }", githubTokenSecretNames)
 	}
 
 	cliPath := os.Getenv(defaultBinEnv)
@@ -227,14 +241,11 @@ func (p *copilotAdapter) ensureClient(ctx context.Context) (*copilot.Client, err
 		cliPath = defaultBin
 	}
 
-	token := resolveGitHubToken()
 	options := &copilot.ClientOptions{
-		Connection: copilot.StdioConnection{Path: cliPath},
-		LogLevel:   "info",
-	}
-	if token != "" {
-		options.GitHubToken = token
-		options.UseLoggedInUser = copilot.Bool(false)
+		Connection:      copilot.StdioConnection{Path: cliPath},
+		LogLevel:        "info",
+		GitHubToken:     token,
+		UseLoggedInUser: copilot.Bool(false),
 	}
 
 	client := copilot.NewClient(options)
@@ -245,15 +256,35 @@ func (p *copilotAdapter) ensureClient(ctx context.Context) (*copilot.Client, err
 	return p.client, nil
 }
 
-func resolveGitHubToken() string {
-	if token := strings.TrimSpace(os.Getenv("COPILOT_GITHUB_TOKEN")); token != "" {
-		return token
+// githubTokenSecretNames are the accepted secret names for the Copilot GitHub
+// token, in precedence order. The adapter declares all three (see
+// [declaredGitHubTokenSecrets]) so a workflow can supply whichever it uses;
+// [resolveGitHubToken] returns the first one the host delivered.
+var githubTokenSecretNames = []string{"COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"}
+
+// declaredGitHubTokenSecrets is the adapter's InfoResponse.Secrets declaration:
+// the GitHub token names the host is allowed to resolve and deliver over the
+// secret channel. Declaring all three preserves the historical env precedence
+// while routing the values through the channel (D69) instead of process env.
+func declaredGitHubTokenSecrets() map[string]string {
+	return map[string]string{
+		"COPILOT_GITHUB_TOKEN": "GitHub token for Copilot authentication (highest precedence).",
+		"GH_TOKEN":             "GitHub token for Copilot authentication (used if COPILOT_GITHUB_TOKEN is unset).",
+		"GITHUB_TOKEN":         "GitHub token for Copilot authentication (used if the others are unset).",
 	}
-	if token := strings.TrimSpace(os.Getenv("GH_TOKEN")); token != "" {
-		return token
-	}
-	if token := strings.TrimSpace(os.Getenv("GITHUB_TOKEN")); token != "" {
-		return token
+}
+
+// resolveGitHubToken returns the GitHub token from the secret channel, trying
+// the accepted names in precedence order. It never reads the process
+// environment: in a sandboxed adapter the env is scrubbed (D29/D32), so an env
+// fallback would silently lose auth (D69). Returns "" if none were delivered.
+func resolveGitHubToken(secrets *adapterhost.Secrets) string {
+	for _, name := range githubTokenSecretNames {
+		if token, ok := secrets.Get(name); ok {
+			if t := strings.TrimSpace(token); t != "" {
+				return t
+			}
+		}
 	}
 	return ""
 }

@@ -101,7 +101,7 @@ func testPartialFailureRecovery(t *testing.T, name string, loader adapterhost.Lo
 	defer plug.Kill()
 
 	sessionID := newSessionID("partial-fail")
-	if err := plug.OpenSession(ctx, sessionID, cloneConfig(opts.OpenConfig), nil); err != nil {
+	if err := plug.OpenSession(ctx, sessionID, cloneConfig(opts.OpenConfig), cloneConfig(opts.Secrets)); err != nil {
 		t.Fatalf("open session: %v", err)
 	}
 	defer func() {

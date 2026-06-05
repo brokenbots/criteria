@@ -48,7 +48,7 @@ func testSensitiveOutput(t *testing.T, name string, loader adapterhost.Loader, o
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	plug, sessionID := resolveAndOpen(t, ctx, loader, name, opts.OpenConfig)
+	plug, sessionID := resolveAndOpen(t, ctx, loader, name, opts.OpenConfig, opts.Secrets)
 	defer plug.Kill()
 	defer func() { _ = plug.CloseSession(context.Background(), sessionID) }()
 

@@ -198,7 +198,7 @@ type recordedAdapterEvent struct {
 
 // resolveAndOpen resolves the named adapter, opens a new session, and returns
 // the handle and session ID. It fatals on any error.
-func resolveAndOpen(t *testing.T, ctx context.Context, loader adapterhost.Loader, name string, openConfig map[string]string) (plug adapterhost.Handle, sessionID string) {
+func resolveAndOpen(t *testing.T, ctx context.Context, loader adapterhost.Loader, name string, openConfig, secrets map[string]string) (plug adapterhost.Handle, sessionID string) {
 	t.Helper()
 	var err error
 	plug, err = loader.Resolve(ctx, name)
@@ -206,7 +206,7 @@ func resolveAndOpen(t *testing.T, ctx context.Context, loader adapterhost.Loader
 		t.Fatalf("resolve adapter: %v", err)
 	}
 	sessionID = newSessionID(name)
-	if err := plug.OpenSession(ctx, sessionID, cloneConfig(openConfig), nil); err != nil {
+	if err := plug.OpenSession(ctx, sessionID, cloneConfig(openConfig), cloneConfig(secrets)); err != nil {
 		plug.Kill()
 		t.Fatalf("open session: %v", err)
 	}
