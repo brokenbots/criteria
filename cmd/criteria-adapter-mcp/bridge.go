@@ -19,7 +19,7 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/brokenbots/criteria/cmd/criteria-adapter-mcp/mcpclient"
-	adapterhost "github.com/brokenbots/criteria/sdk/adapterhost"
+	adapterhost "github.com/brokenbots/criteria-go-adapter-sdk/adapterhost"
 	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 )
 

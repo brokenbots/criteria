@@ -1,6 +1,6 @@
 module github.com/brokenbots/criteria/tools
 
-go 1.26
+go 1.26.3
 
 // golangci-lint is a tool dep: pinned here so go mod tidy keeps it, compiled
 // into bin/ by the Makefile rather than invoked via go tool.

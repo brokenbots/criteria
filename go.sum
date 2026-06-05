@@ -83,6 +83,8 @@ github.com/blang/semver v3.5.1+incompatible h1:cQNTCjp13qL8KC3Nbxr/y2Bqb63oX6wdn
 github.com/blang/semver v3.5.1+incompatible/go.mod h1:kRBLl5iJ+tD4TcOOxsy/0fnwebNt5EWlYSAyrTnjyyk=
 github.com/brokenbots/criteria-adapter-proto v0.5.1 h1:URfvObjuA0S+AUSUyhXwfeikExEuqZeBzRGoHVZbicY=
 github.com/brokenbots/criteria-adapter-proto v0.5.1/go.mod h1:ZlnbfwK9phBl6XndXSjeaaCwwW3Y/pXTtq6ag2qqFjo=
+github.com/brokenbots/criteria-go-adapter-sdk v0.5.1 h1:LWu0qz06T2wj/XYHxivFyOylvRpPMwTasskE9iHtIGw=
+github.com/brokenbots/criteria-go-adapter-sdk v0.5.1/go.mod h1:3pQRFTvoNJpgF6j09wVPA/n6XZnQGdnJ9jQyY5mGAjo=
 github.com/bufbuild/protocompile v0.14.1 h1:iA73zAf/fyljNjQKwYzUHD6AD4R8KMasmwa/FBatYVw=
 github.com/bufbuild/protocompile v0.14.1/go.mod h1:ppVdAIhbr2H8asPk6k4pY7t9zB1OU5DoEw9xY/FUi1c=
 github.com/cenkalti/backoff/v4 v4.3.0 h1:MyRJ/UdXutAwSAT+s3wNd7MfTIcy71VQueUuFK343L8=

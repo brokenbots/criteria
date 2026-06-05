@@ -214,6 +214,32 @@ The adapter **protocol v2** bindings no longer live in the monorepo.
   `sdk/adapterhost/serve_remote_test.go` imports host `internal/…/remote` — a pre-existing
   cross-dependency to untangle when `sdk/adapterhost` is repointed to `criteria-go-adapter-sdk`.
 
+### Go-SDK switchover — adapterhost now external (2026-06-05, session 3)
+
+The Go **adapter SDK** (`adapterhost`) no longer lives in the monorepo.
+
+- **go-sdk repo brought current → `v0.5.1`.** Carried the clean unit tests (`serve_test`,
+  `manifest_test` — proto-only deps) into
+  [`criteria-go-adapter-sdk`](https://github.com/brokenbots/criteria-go-adapter-sdk) (it was
+  test-free) and bumped its proto dep to `v0.5.1`. `serve_remote.go` already shipped on `main`;
+  only `serve_remote_test.go` (imports host `internal/…/remote`) was preserved on the
+  [`deferred/serve-remote`](https://github.com/brokenbots/criteria-go-adapter-sdk/tree/deferred/serve-remote)
+  branch. `ServeRemote` has **zero in-tree callers** (truly deferred).
+- **Host repointed.** All `sdk/adapterhost` importers (adapters `cmd/criteria-adapter-*`,
+  `adapters/shell`, examples, conformance testfixtures) now import
+  `github.com/brokenbots/criteria-go-adapter-sdk/adapterhost`; `criteria-go-adapter-sdk v0.5.1`
+  added to the root + `tools` modules. In-tree `sdk/adapterhost` **deleted**.
+- **import-lint updated.** The boundary rule (production `internal/` must not import the adapter
+  SDK; testfixture adapter binaries may) was repointed to the external path and split into its
+  own rule, since `criteria-go-adapter-sdk` no longer matches the `criteria/sdk` prefix; unit
+  tests + whole-repo boundary check pass.
+- **`sdk/` module after extraction.** Now holds only the **events/v1 server-API client**
+  (root pkg + `pb/criteria/v1` + connectrpc + conformance). `go mod tidy` on `sdk/` succeeds
+  again (the host-internal cross-dep left with the deferred test). It still requires the host
+  module for `github.com/brokenbots/criteria/events` — the next conflation to untangle when the
+  server API is broken out.
+- All four workspace modules build; full test suite green; import boundaries OK.
+
 ## Language cleanup — Terraform-shaping the HCL (archived 2026-06-05)
 
 A focused sub-effort (WS01–WS11) that landed on `main` and merged into `adapter-v2`

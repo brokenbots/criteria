@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/brokenbots/criteria/sdk/adapterhost"
+	"github.com/brokenbots/criteria-go-adapter-sdk/adapterhost"
 	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 )
 

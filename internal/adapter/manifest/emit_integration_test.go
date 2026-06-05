@@ -11,7 +11,7 @@ import (
 )
 
 // TestEmitManifest_RoundTripsThroughHostParser builds the in-tree noop adapter
-// (which uses sdk/adapterhost.Serve), runs it with --emit-manifest, and parses
+// (which uses criteria-go-adapter-sdk/adapterhost.Serve), runs it with --emit-manifest, and parses
 // the output with the host manifest parser. This proves the cross-module
 // contract: the JSON the sdk emits is accepted as adapter.yaml by the host,
 // even though the sdk module cannot import the host's manifest package.
