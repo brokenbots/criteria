@@ -44,7 +44,7 @@ func (h *RemoteHandler) ValidateFields(body hcl.Body) hcl.Diagnostics {
 	attrs, diags := workflow.BodyJustAttributesToleratingBlocks(body, workflow.HandlerAllowedBlocks(h.Type()))
 	for name := range attrs {
 		switch name {
-		case "variables", "policy_mode", "os",
+		case "variables", "policy_mode", "os", "working_directory",
 			"listen_address", "mtls", "accept_token", "accept_digest_from":
 			// accepted
 		default:
@@ -52,7 +52,7 @@ func (h *RemoteHandler) ValidateFields(body hcl.Body) hcl.Diagnostics {
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagError,
 				Summary:  fmt.Sprintf("remote environment: unknown attribute %q", name),
-				Detail:   "remote environments accept variables, policy_mode, os, listen_address, mtls, accept_token, and accept_digest_from.",
+				Detail:   "remote environments accept variables, policy_mode, os, working_directory, listen_address, mtls, accept_token, and accept_digest_from.",
 				Subject:  &rng,
 			})
 		}

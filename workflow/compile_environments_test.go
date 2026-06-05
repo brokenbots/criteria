@@ -452,6 +452,59 @@ func TestCompileEnvironments_InvalidPolicyMode(t *testing.T) {
 	}
 }
 
+func TestCompileEnvironments_WorkingDirectory(t *testing.T) {
+	// shell, sandbox, and remote environments accept working_directory and store
+	// it on the compiled node; container environments reject it.
+	cases := []struct {
+		name      string
+		envType   string
+		extra     string
+		wantError bool
+	}{
+		{name: "shell", envType: "shell"},
+		{name: "sandbox", envType: "sandbox"},
+		{name: "remote", envType: "remote", extra: "    listen_address = \"127.0.0.1:0\"\n"},
+		{name: "container rejected", envType: "container", extra: "    image = \"alpine\"\n", wantError: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			src := environmentWorkflow(`
+  environment "`+tc.envType+`" "wd" {
+    working_directory = "/tmp/worktree"
+`+tc.extra+`  }
+`, "")
+			spec, diags := Parse("test.hcl", []byte(src))
+			if diags.HasErrors() {
+				t.Fatalf("parse: %s", diags.Error())
+			}
+			g, diags := Compile(spec, nil)
+			if tc.wantError {
+				if !diags.HasErrors() {
+					t.Fatal("expected compile error for container working_directory")
+				}
+				if !strings.Contains(diags.Error(), "working_directory") {
+					t.Errorf("expected error to mention working_directory, got: %s", diags.Error())
+				}
+				return
+			}
+			if diags.HasErrors() {
+				t.Fatalf("compile: %s", diags.Error())
+			}
+			env := g.Environments[tc.envType+".wd"]
+			if env == nil {
+				t.Fatalf("environment %s.wd not found", tc.envType)
+			}
+			if env.WorkingDirectory != "/tmp/worktree" {
+				t.Errorf("WorkingDirectory = %q, want %q", env.WorkingDirectory, "/tmp/worktree")
+			}
+			// working_directory must not leak into TypeSpecific.
+			if _, ok := env.TypeSpecific["working_directory"]; ok {
+				t.Error("working_directory should not be stored in TypeSpecific")
+			}
+		})
+	}
+}
+
 func TestCompileEnvironments_OSAttribute(t *testing.T) {
 	// Environment with os attribute should parse correctly. Pin the host OS so
 	// the compile-time OS gate is satisfied regardless of the test host.

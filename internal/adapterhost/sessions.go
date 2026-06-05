@@ -285,6 +285,69 @@ func (m *SessionManager) sandboxEnvAndPolicy(instanceID string) (envNode *workfl
 	return envNode, rp, true
 }
 
+// boundEnvironment resolves the environment node bound to the given adapter
+// instance (its declared environment, or the workflow default). It returns nil
+// when no environment is bound or the graph is unavailable.
+func (m *SessionManager) boundEnvironment(instanceID string) *workflow.EnvironmentNode {
+	if m.graph == nil {
+		return nil
+	}
+	adapterNode, ok := m.graph.Adapters[instanceID]
+	if !ok {
+		return nil
+	}
+	envKey := adapterNode.Environment
+	if envKey == "" {
+		envKey = m.graph.DefaultEnvironment
+	}
+	if envKey == "" {
+		return nil
+	}
+	return m.graph.Environments[envKey]
+}
+
+// buildCommandCustomizer composes the sandbox command customizer (if any) with a
+// working-directory customizer derived from the bound environment. The
+// environment's working_directory becomes the adapter process launch cwd, which
+// shell/copilot adapters inherit as the default directory for their work.
+//
+// Container environments never reach this path (they launch via a container
+// runner) and never carry a working_directory; remote environments apply their
+// working_directory on the remote host. So this only adjusts cwd for locally
+// launched shell and sandbox adapters.
+func (m *SessionManager) buildCommandCustomizer(instanceID string) (func(string, *exec.Cmd), func(), error) {
+	sandboxCust, cleanup, err := m.buildSandboxCustomizer(instanceID)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	var workingDir string
+	if env := m.boundEnvironment(instanceID); env != nil {
+		workingDir = env.WorkingDirectory
+	}
+	if workingDir == "" {
+		return sandboxCust, cleanup, nil
+	}
+
+	customizer := func(name string, cmd *exec.Cmd) {
+		if sandboxCust != nil {
+			// Sandbox customizers set cmd.Env (scrubbed) and may set cmd.Dir.
+			// Run it first, then override the launch cwd so it wins over the
+			// sandbox default (ApplyToCmd only sets Dir when empty; the bwrap
+			// path manages the inner cwd via --chdir).
+			sandboxCust(name, cmd)
+		} else {
+			// No sandbox customizer, but providing any customizer flips
+			// go-plugin's SkipHostEnv to true (see loader.go). Preserve the host
+			// environment ourselves so the adapter keeps PATH and friends;
+			// go-plugin still appends its handshake vars.
+			cmd.Env = os.Environ()
+		}
+		cmd.Dir = workingDir
+	}
+	return customizer, cleanup, nil
+}
+
 func (m *SessionManager) Open(ctx context.Context, name, adapterName, onCrash string, config, secrets map[string]string) error {
 	return m.OpenWithOriginRefs(ctx, name, adapterName, onCrash, config, secrets, nil)
 }
@@ -304,7 +367,7 @@ func (m *SessionManager) OpenWithOriginRefs(ctx context.Context, name, adapterNa
 	}
 	m.mu.Unlock()
 
-	customizer, cleanup, sandboxErr := m.buildSandboxCustomizer(name)
+	customizer, cleanup, sandboxErr := m.buildCommandCustomizer(name)
 	if sandboxErr != nil {
 		return fmt.Errorf("session %q: %w", name, sandboxErr)
 	}
@@ -787,7 +850,7 @@ func (m *SessionManager) respawn(ctx context.Context, sess *Session) error {
 	if sess.SandboxCleanup != nil {
 		sess.SandboxCleanup()
 	}
-	customizer, cleanup, sandboxErr := m.buildSandboxCustomizer(sess.Name)
+	customizer, cleanup, sandboxErr := m.buildCommandCustomizer(sess.Name)
 	if sandboxErr != nil {
 		return fmt.Errorf("session %q respawn: %w", sess.Name, sandboxErr)
 	}
@@ -1035,7 +1098,7 @@ func (m *SessionManager) SnapshotAll(ctx context.Context) (map[string]*SessionSn
 // openAndRestoreAdapter resolves the adapter handle, opens a fresh session, and replays
 // the saved adapter state. On error it kills the plug and runs the cleanup func.
 func (m *SessionManager) openAndRestoreAdapter(ctx context.Context, name, adapterName string, config, resolvedSecrets map[string]string, snap *SessionSnapshot) (Handle, func(), error) {
-	customizer, cleanup, sandboxErr := m.buildSandboxCustomizer(name)
+	customizer, cleanup, sandboxErr := m.buildCommandCustomizer(name)
 	if sandboxErr != nil {
 		return nil, nil, fmt.Errorf("session %q: %w", name, sandboxErr)
 	}

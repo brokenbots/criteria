@@ -36,6 +36,12 @@ func MaybeUseBubblewrap(prep *LinuxPrepared, env *workflow.EnvironmentNode) *exe
 	args = append(args, bwrapNetworkArgs(env)...)
 	args = append(args, "--tmpfs", "/tmp")
 	args = append(args, bwrapResourceArgs(prep, env)...)
+	// Honor the environment's working_directory as the sandboxed process cwd.
+	// The path must also be made available via the filesystem policy for the
+	// chdir to succeed inside the namespace.
+	if env.WorkingDirectory != "" {
+		args = append(args, "--chdir", env.WorkingDirectory)
+	}
 	timeoutStr := stringFromObject(getObject(env.TypeSpecific, "resources"), "timeout")
 	if timeoutDur := parseTimeout(timeoutStr); timeoutDur > 0 {
 		args = append(args, "--timeout", fmt.Sprintf("%d", int(timeoutDur.Seconds())),

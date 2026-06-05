@@ -113,12 +113,17 @@ type EnvironmentNode struct {
 	// PolicyMode is "permissive" (default) or "strict".
 	PolicyMode string
 	// OS is "" (any) or a specific GOOS value like "linux" or "darwin".
-	OS           string
-	Filesystem   *FilesystemPolicy
-	Network      *NetworkPolicy
-	Secrets      *SecretsPolicy
-	Resources    *ResourcesPolicy
-	TypeSpecific map[string]cty.Value // e.g. runtime="docker"
+	OS string
+	// WorkingDirectory is the launch cwd applied to the adapter process so that
+	// shell/copilot adapters operate in that directory by default. Supported by
+	// shell, sandbox, and remote environments; container environments reject it
+	// (they isolate paths rather than relocate the process cwd).
+	WorkingDirectory string
+	Filesystem       *FilesystemPolicy
+	Network          *NetworkPolicy
+	Secrets          *SecretsPolicy
+	Resources        *ResourcesPolicy
+	TypeSpecific     map[string]cty.Value // e.g. runtime="docker"
 	// RawBody preserves the original HCL body so runtime handlers can parse
 	// type-specific blocks (e.g. mtls { ... }) that the generic compiler does
 	// not decode into typed fields.
