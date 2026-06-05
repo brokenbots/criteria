@@ -315,7 +315,7 @@ func (m *SessionManager) boundEnvironment(instanceID string) *workflow.Environme
 // runner) and never carry a working_directory; remote environments apply their
 // working_directory on the remote host. So this only adjusts cwd for locally
 // launched shell and sandbox adapters.
-func (m *SessionManager) buildCommandCustomizer(instanceID string) (func(string, *exec.Cmd), func(), error) {
+func (m *SessionManager) buildCommandCustomizer(instanceID string) (customizer func(name string, cmd *exec.Cmd), cleanup func(), err error) {
 	sandboxCust, cleanup, err := m.buildSandboxCustomizer(instanceID)
 	if err != nil {
 		return nil, nil, err
@@ -329,7 +329,7 @@ func (m *SessionManager) buildCommandCustomizer(instanceID string) (func(string,
 		return sandboxCust, cleanup, nil
 	}
 
-	customizer := func(name string, cmd *exec.Cmd) {
+	customizer = func(name string, cmd *exec.Cmd) {
 		if sandboxCust != nil {
 			// Sandbox customizers set cmd.Env (scrubbed) and may set cmd.Dir.
 			// Run it first, then override the launch cwd so it wins over the
