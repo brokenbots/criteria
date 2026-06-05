@@ -92,17 +92,17 @@ func (s *smokeAdapter) Execute(req *v2.ExecuteRequest, stream v2.AdapterService_
 		}
 	}
 
-	// Echo semantics: send every input key back as an output key.
-	outputs := make(map[string]string, len(req.GetInput()))
+	// Echo semantics: send every input key back as an output key on the typed
+	// outputs_json channel.
+	outputs := make(map[string]any, len(req.GetInput()))
 	for k, v := range req.GetInput() {
 		outputs[k] = v
 	}
-
-	return stream.Send(&v2.ExecuteEvent{
-		Event: &v2.ExecuteEvent_Result{
-			Result: &v2.ExecuteResult{Outcome: "success", Outputs: outputs},
-		},
-	})
+	ev, err := v2.NewExecuteResultEvent("success", outputs)
+	if err != nil {
+		return err
+	}
+	return stream.Send(ev)
 }
 
 func (s *smokeAdapter) Log(_ *v2.LogRequest, _ v2.AdapterService_LogServer) error {

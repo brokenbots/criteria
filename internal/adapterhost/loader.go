@@ -657,23 +657,20 @@ func (s *executeCaptureSink) emitResult(resultEvt *v2.ExecuteResult) error {
 		if !chunk.GetFinal() {
 			return nil
 		}
-		outputs, err := outputsFromJSON(s.resultChunkBuf)
+		buf := s.resultChunkBuf
 		s.resultChunkBuf = nil
 		s.resultChunkNextSeq = 0
+		typed, err := s.decodeOutputsJSON(buf)
 		if err != nil {
 			return fmt.Errorf("execute result chunk reassembly: %w", err)
-		}
-		typed, err := s.coerceWireOutputs(outputs)
-		if err != nil {
-			return fmt.Errorf("execute result outputs: %w", err)
 		}
 		s.result = adapter.Result{Outcome: s.resultOutcome, Outputs: typed}
 		s.done = true
 		return nil
 	}
 	s.result = adapter.Result{Outcome: resultEvt.GetOutcome()}
-	if outs := resultEvt.GetOutputs(); len(outs) > 0 {
-		typed, err := s.coerceWireOutputs(outs)
+	if oj := resultEvt.GetOutputsJson(); len(oj) > 0 {
+		typed, err := s.decodeOutputsJSON(oj)
 		if err != nil {
 			return fmt.Errorf("execute result outputs: %w", err)
 		}
@@ -683,24 +680,33 @@ func (s *executeCaptureSink) emitResult(resultEvt *v2.ExecuteResult) error {
 	return nil
 }
 
-// coerceWireOutputs converts the raw string outputs decoded from the wire into
-// typed cty values against the step's declared OutputSchema. Keys with no
-// declared type (cty.NilType) are preserved as strings.
-func (s *executeCaptureSink) coerceWireOutputs(raw map[string]string) (map[string]cty.Value, error) {
+// decodeOutputsJSON decodes a complete outputs_json object into typed cty values.
+// Each value is decoded against the step's declared OutputSchema type, falling
+// back to native type inference for undeclared keys or declared object/array
+// fields. This is the preferred (natively-typed) wire path; the legacy string-map
+// outputs field is handled by coerceWireOutputs.
+func (s *executeCaptureSink) decodeOutputsJSON(b []byte) (map[string]cty.Value, error) {
+	if len(b) == 0 {
+		return nil, nil
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return nil, fmt.Errorf("decode outputs_json: %w", err)
+	}
 	if len(raw) == 0 {
 		return nil, nil
 	}
 	out := make(map[string]cty.Value, len(raw))
-	for k, v := range raw {
+	for k, rm := range raw {
 		var t cty.Type
 		if f, ok := s.outputSchema[k]; ok {
 			t = f.CtyType
 		}
-		cv, err := workflow.CoerceStringToCty(v, t)
+		v, err := workflow.DecodeTypedJSON(rm, t)
 		if err != nil {
 			return nil, fmt.Errorf("output %q: %w", k, err)
 		}
-		out[k] = cv
+		out[k] = v
 	}
 	return out, nil
 }
@@ -1002,19 +1008,6 @@ func structFromJSON(b []byte) (*structpb.Struct, error) {
 		return nil, err
 	}
 	return structpb.NewStruct(m)
-}
-
-// outputsFromJSON unmarshals raw JSON bytes (ExecuteResult.outputs_json)
-// into the flat string map used by adapter.Result.Outputs.
-func outputsFromJSON(b []byte) (map[string]string, error) {
-	if len(b) == 0 {
-		return nil, nil
-	}
-	var m map[string]string
-	if err := json.Unmarshal(b, &m); err != nil {
-		return nil, err
-	}
-	return m, nil
 }
 
 // collectAllowedOutcomes returns the declared outcome names for a step,

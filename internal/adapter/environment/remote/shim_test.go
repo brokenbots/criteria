@@ -146,8 +146,8 @@ func (f *fakeAdapterServer) OpenSession(ctx context.Context, req *v2.OpenSession
 func (f *fakeAdapterServer) Execute(req *v2.ExecuteRequest, stream v2.AdapterService_ExecuteServer) error {
 	_ = stream.Send(&v2.ExecuteEvent{Event: &v2.ExecuteEvent_Result{
 		Result: &v2.ExecuteResult{
-			Outcome: "success",
-			Outputs: map[string]string{"greeting": "hello"},
+			Outcome:     "success",
+			OutputsJson: []byte(`{"greeting":"hello"}`),
 		},
 	}})
 	return nil
