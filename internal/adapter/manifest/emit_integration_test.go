@@ -39,6 +39,12 @@ func TestEmitManifest_RoundTripsThroughHostParser(t *testing.T) {
 		t.Fatalf("host parser rejected emitted manifest: %v\n%s", err, out)
 	}
 
+	// The emitted manifest must also pass full validation — otherwise the host
+	// would reject it at pull time (this is the publish→pull contract).
+	if err := m.Validate(); err != nil {
+		t.Fatalf("emitted manifest failed Validate(): %v\n%s", err, out)
+	}
+
 	if m.Name != "noop" {
 		t.Errorf("name = %q, want noop", m.Name)
 	}

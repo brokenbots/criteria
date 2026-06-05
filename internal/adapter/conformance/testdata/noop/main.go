@@ -20,9 +20,12 @@ type noopService struct {
 
 func (s *noopService) Info(_ context.Context, _ *v2.InfoRequest) (*v2.InfoResponse, error) {
 	return &v2.InfoResponse{
-		Name:         "noop",
-		Version:      "0.1.0",
-		Capabilities: []string{"parallel_safe", "permission_gating", "permission_request_forwarding"},
+		Name:               "noop",
+		Version:            "0.1.0",
+		SourceUrl:          "https://github.com/brokenbots/criteria",
+		SdkProtocolVersion: "2",
+		Platforms:          []string{"linux/amd64", "linux/arm64", "darwin/arm64"},
+		Capabilities:       []string{"parallel_safe", "permission_gating", "permission_request_forwarding"},
 	}, nil
 }
 
