@@ -505,6 +505,63 @@ func TestCompileEnvironments_WorkingDirectory(t *testing.T) {
 	}
 }
 
+func TestCompileEnvironments_WorkingDirectory_VarAndLocalRefs(t *testing.T) {
+	// working_directory folds against the compile-time closure, so it can
+	// reference declared variables and locals and use interpolation.
+	src := `workflow {
+  name          = "t"
+  version       = "1"
+  initial_state = "done"
+  target_state  = "done"
+}
+variable "root" {
+  type    = string
+  default = "/work"
+}
+local "sub" {
+  value = "${var.root}/sub"
+}
+environment "shell" "e" {
+  working_directory = "${local.sub}/wt"
+}
+state "done" {
+  terminal = true
+  success  = true
+}
+`
+	spec, diags := Parse("test.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	g, diags := Compile(spec, nil)
+	if diags.HasErrors() {
+		t.Fatalf("compile: %s", diags.Error())
+	}
+	if got := g.Environments["shell.e"].WorkingDirectory; got != "/work/sub/wt" {
+		t.Errorf("WorkingDirectory = %q, want %q", got, "/work/sub/wt")
+	}
+}
+
+func TestCompileEnvironments_WorkingDirectory_RuntimeRefRejected(t *testing.T) {
+	// Runtime-only references (each.*, steps.*) are not foldable and must error.
+	src := environmentWorkflow(`
+  environment "shell" "e" {
+    working_directory = each.value
+  }
+`, "")
+	spec, diags := Parse("test.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	_, diags = Compile(spec, nil)
+	if !diags.HasErrors() {
+		t.Fatal("expected compile error for runtime-only working_directory reference")
+	}
+	if !strings.Contains(diags.Error(), "working_directory") {
+		t.Errorf("expected error to mention working_directory, got: %s", diags.Error())
+	}
+}
+
 func TestCompileEnvironments_OSAttribute(t *testing.T) {
 	// Environment with os attribute should parse correctly. Pin the host OS so
 	// the compile-time OS gate is satisfied regardless of the test host.
