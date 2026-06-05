@@ -14,5 +14,7 @@ final.
 | ADR | Title | Status |
 |---|---|---|
 | [ADR-0001](ADR-0001-naming-convention.md) | Naming convention — adopt `criteria` as the top-level brand | Accepted |
+| [ADR-0002](ADR-0002-while-step-iteration.md) | `while` step iteration modifier | Accepted |
+| [ADR-0003](ADR-0003-conformance-scope.md) | Conformance scope — host + imported SDK, not every SDK | Accepted |
 
 [template]: https://github.com/joelparkerhenderson/architecture-decision-record

@@ -2,7 +2,10 @@ package conformance_test
 
 // external_adapter_test.go — runs the conformance suite against an adapter
 // binary provided via the CRITERIA_CONFORMANCE_ADAPTER environment variable.
-// This is the entry point used by the cross-language CI matrix.
+// Opt-in tool for ad-hoc validation of an arbitrary adapter binary; skips when
+// the env var is unset. Not wired into CI — per ADR-0003 this repo's conformance
+// is scoped to the host plus the imported Go SDK (see noop_adapter_test.go), and
+// each other-language SDK owns its own conformance against the proto package.
 
 import (
 	"os"
