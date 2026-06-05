@@ -17,6 +17,7 @@ func newAdapterPublishCmd() *cobra.Command {
 	var (
 		registry  string
 		withImage bool
+		signKey   string
 	)
 
 	cmd := &cobra.Command{
@@ -25,67 +26,83 @@ func newAdapterPublishCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
-			return runPublish(cmd.Context(), args[0], registry, withImage, cmd.OutOrStdout())
+			return runPublish(cmd.Context(), args[0], registry, signKey, withImage, cmd.OutOrStdout())
 		},
 	}
 
 	cmd.Flags().StringVar(&registry, "registry", "", "Registry alias or full reference to push to")
 	cmd.Flags().BoolVar(&withImage, "with-image", false, "Also build and push a runnable container image")
+	cmd.Flags().StringVar(&signKey, "sign-key", "", "Path to a PEM Ed25519 private key; attaches a cosign signature (keyless OIDC signing is CI-only)")
 	return cmd
 }
 
-func runPublish(ctx context.Context, binPath, registry string, withImage bool, out io.Writer) error {
+func runPublish(ctx context.Context, binPath, registry, signKey string, withImage bool, out io.Writer) error {
 	if out == nil {
 		out = os.Stdout
+	}
+	if registry == "" {
+		return fmt.Errorf("--registry is required (provide a fully-qualified reference or alias)")
+	}
+	if withImage {
+		return fmt.Errorf("--with-image is not yet implemented")
 	}
 	binPath, err := filepath.Abs(binPath)
 	if err != nil {
 		return fmt.Errorf("resolve path: %w", err)
 	}
-
-	// Verify binary exists.
 	if _, err := os.Stat(binPath); err != nil {
 		return fmt.Errorf("stat binary: %w", err)
 	}
 
-	// Run binary with --emit-manifest to extract adapter.yaml.
-	outBytes, err := exec.CommandContext(ctx, binPath, "--emit-manifest").Output()
+	mfPath, cleanup, err := emitManifestToTemp(ctx, binPath)
 	if err != nil {
-		return fmt.Errorf("--emit-manifest failed: %w", err)
+		return err
 	}
-
-	// Write manifest to a temporary file for the publish package.
-	tmpDir, err := os.MkdirTemp("", "criteria-publish-")
-	if err != nil {
-		return fmt.Errorf("create temp dir: %w", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	mfPath := filepath.Join(tmpDir, "adapter.yaml")
-	if err := os.WriteFile(mfPath, outBytes, 0o644); err != nil {
-		return fmt.Errorf("write manifest: %w", err)
-	}
-
-	// Resolve registry reference.
-	if registry == "" {
-		return fmt.Errorf("--registry is required (provide a fully-qualified reference or alias)")
-	}
+	defer cleanup()
 
 	ref, err := Resolve(ResolveContext{}, registry)
 	if err != nil {
 		return fmt.Errorf("resolve registry: %w", err)
 	}
 
-	if withImage {
-		return fmt.Errorf("--with-image is not yet implemented")
+	opts := publish.Options{}
+	if signKey != "" {
+		signer, err := publish.LoadKeySignerPEM(signKey)
+		if err != nil {
+			return err
+		}
+		opts.Signer = signer
 	}
 
-	// Push the artifact.
-	dg, err := publish.PushArtifact(ctx, ref, binPath, mfPath, publish.Options{})
+	// Push the artifact (and attach a cosign signature when --sign-key is set).
+	dg, err := publish.PushArtifact(ctx, ref, binPath, mfPath, opts)
 	if err != nil {
 		return fmt.Errorf("publish artifact: %w", err)
 	}
 
-	fmt.Fprintf(out, "Published %s to %s (digest: %s)\n", filepath.Base(binPath), ref, dg)
+	signedNote := ""
+	if signKey != "" {
+		signedNote = " (signed)"
+	}
+	fmt.Fprintf(out, "Published %s to %s (digest: %s)%s\n", filepath.Base(binPath), ref, dg, signedNote)
 	return nil
+}
+
+// emitManifestToTemp runs the adapter binary with --emit-manifest and writes the
+// resulting adapter.yaml to a temp file. The returned cleanup removes it.
+func emitManifestToTemp(ctx context.Context, binPath string) (mfPath string, cleanup func(), err error) {
+	outBytes, err := exec.CommandContext(ctx, binPath, "--emit-manifest").Output()
+	if err != nil {
+		return "", nil, fmt.Errorf("--emit-manifest failed: %w", err)
+	}
+	tmpDir, err := os.MkdirTemp("", "criteria-publish-")
+	if err != nil {
+		return "", nil, fmt.Errorf("create temp dir: %w", err)
+	}
+	mfPath = filepath.Join(tmpDir, "adapter.yaml")
+	if err := os.WriteFile(mfPath, outBytes, 0o644); err != nil {
+		os.RemoveAll(tmpDir)
+		return "", nil, fmt.Errorf("write manifest: %w", err)
+	}
+	return mfPath, func() { os.RemoveAll(tmpDir) }, nil
 }

@@ -37,6 +37,10 @@ type Options struct {
 
 	// Auth resolves registry credentials. If nil, anonymous access is used.
 	Auth oci.AuthProvider
+
+	// Signer, when non-nil, signs the pushed artifact and attaches a cosign
+	// signature manifest as an OCI referrer. nil means publish unsigned.
+	Signer Signer
 }
 
 // PushArtifact packages a single-platform adapter binary and its manifest
@@ -57,12 +61,27 @@ func PushArtifact(ctx context.Context, ref oci.Reference, binPath, manifestPath 
 	}
 
 	store := memory.New()
-	_, err = buildManifestInStore(ctx, store, ref, binData, mfData, binPath)
+	if _, err = buildManifestInStore(ctx, store, ref, binData, mfData, binPath); err != nil {
+		return "", err
+	}
+
+	repo, err := newRepository(ref, opts)
 	if err != nil {
 		return "", err
 	}
 
-	return pushToRemote(ctx, store, ref, opts)
+	pushedDesc, err := oras.Copy(ctx, store, ref.Tag, repo, ref.Tag, oras.DefaultCopyOptions)
+	if err != nil {
+		return "", fmt.Errorf("publish: push to registry: %w", err)
+	}
+
+	if opts.Signer != nil {
+		if _, err := signArtifact(ctx, repo, ref, &pushedDesc, opts.Signer); err != nil {
+			return "", err
+		}
+	}
+
+	return pushedDesc.Digest, nil
 }
 
 func readArtifactInputs(binPath, manifestPath string) (binData, mfData []byte, err error) {
@@ -144,19 +163,6 @@ func stageConfig(ctx context.Context, store *memory.Store) (ocispec.Descriptor, 
 		return ocispec.Descriptor{}, fmt.Errorf("publish: push config: %w", err)
 	}
 	return desc, nil
-}
-
-func pushToRemote(ctx context.Context, store *memory.Store, ref oci.Reference, opts Options) (digest.Digest, error) {
-	repo, err := newRepository(ref, opts)
-	if err != nil {
-		return "", err
-	}
-
-	pushedDesc, err := oras.Copy(ctx, store, ref.Tag, repo, ref.Tag, oras.DefaultCopyOptions)
-	if err != nil {
-		return "", fmt.Errorf("publish: push to registry: %w", err)
-	}
-	return pushedDesc.Digest, nil
 }
 
 // runtimeGOOS and runtimeGOARCH are overridden by tests.
