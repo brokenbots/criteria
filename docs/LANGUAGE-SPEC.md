@@ -71,7 +71,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 <!-- BEGIN GENERATED:blocks -->
 ### `workflow { ... }`
 
-- **Source:** [`workflow/schema.go:147`](../workflow/schema.go#L147)
+- **Source:** [`workflow/schema.go:149`](../workflow/schema.go#L149)
 - **Attributes:**
 
 | Attribute | Type | Required | Description |
@@ -86,7 +86,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `variable "name" { ... }`
 
-- **Source:** [`workflow/schema.go:188`](../workflow/schema.go#L188)
+- **Source:** [`workflow/schema.go:190`](../workflow/schema.go#L190)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -130,7 +130,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `output "name" { ... }`
 
-- **Source:** [`workflow/schema.go:303`](../workflow/schema.go#L303)
+- **Source:** [`workflow/schema.go:305`](../workflow/schema.go#L305)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -143,7 +143,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `adapter "type" "name" { ... }`
 
-- **Source:** [`workflow/schema.go:215`](../workflow/schema.go#L215)
+- **Source:** [`workflow/schema.go:217`](../workflow/schema.go#L217)
 - **Labels:** `type` `name`
 - **Attributes:**
 
@@ -156,7 +156,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `subworkflow "name" { ... }`
 
-- **Source:** [`workflow/schema.go:313`](../workflow/schema.go#L313)
+- **Source:** [`workflow/schema.go:315`](../workflow/schema.go#L315)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -169,7 +169,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `step "name" { ... }`
 
-- **Source:** [`workflow/schema.go:225`](../workflow/schema.go#L225)
+- **Source:** [`workflow/schema.go:227`](../workflow/schema.go#L227)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -187,7 +187,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `state "name" { ... }`
 
-- **Source:** [`workflow/schema.go:407`](../workflow/schema.go#L407)
+- **Source:** [`workflow/schema.go:409`](../workflow/schema.go#L409)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -200,7 +200,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `wait "name" { ... }`
 
-- **Source:** [`workflow/schema.go:390`](../workflow/schema.go#L390)
+- **Source:** [`workflow/schema.go:392`](../workflow/schema.go#L392)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -213,7 +213,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `approval "name" { ... }`
 
-- **Source:** [`workflow/schema.go:399`](../workflow/schema.go#L399)
+- **Source:** [`workflow/schema.go:401`](../workflow/schema.go#L401)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -226,13 +226,13 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `switch "name" { ... }`
 
-- **Source:** [`workflow/schema.go:418`](../workflow/schema.go#L418)
+- **Source:** [`workflow/schema.go:420`](../workflow/schema.go#L420)
 - **Labels:** `name`
 - **Nested blocks:** [`match`](#match---), [`default`](#default---)
 
 ### `permissions { ... }`
 
-- **Source:** [`workflow/schema.go:457`](../workflow/schema.go#L457)
+- **Source:** [`workflow/schema.go:459`](../workflow/schema.go#L459)
 - **Attributes:**
 
 | Attribute | Type | Required | Description |
@@ -242,7 +242,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `policy { ... }`
 
-- **Source:** [`workflow/schema.go:438`](../workflow/schema.go#L438)
+- **Source:** [`workflow/schema.go:440`](../workflow/schema.go#L440)
 - **Attributes:**
 
 | Attribute | Type | Required | Description |
@@ -254,23 +254,23 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `config { ... }`
 
-- **Source:** [`workflow/schema.go:198`](../workflow/schema.go#L198)
+- **Source:** [`workflow/schema.go:200`](../workflow/schema.go#L200)
 
 ### `secrets { ... }`
 
-- **Source:** [`workflow/schema.go:198`](../workflow/schema.go#L198)
+- **Source:** [`workflow/schema.go:200`](../workflow/schema.go#L200)
 
 ### `input { ... }`
 
-- **Source:** [`workflow/schema.go:208`](../workflow/schema.go#L208)
+- **Source:** [`workflow/schema.go:210`](../workflow/schema.go#L210)
 
 ### `secret_input { ... }`
 
-- **Source:** [`workflow/schema.go:208`](../workflow/schema.go#L208)
+- **Source:** [`workflow/schema.go:210`](../workflow/schema.go#L210)
 
 ### `outcome "name" { ... }`
 
-- **Source:** [`workflow/schema.go:368`](../workflow/schema.go#L368)
+- **Source:** [`workflow/schema.go:370`](../workflow/schema.go#L370)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -283,17 +283,17 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `match { ... }`
 
-- **Source:** [`workflow/schema.go:427`](../workflow/schema.go#L427)
+- **Source:** [`workflow/schema.go:429`](../workflow/schema.go#L429)
 - **Additional attributes:** captures: condition (required), next (required), output (optional)
 
 ### `default { ... }`
 
-- **Source:** [`workflow/schema.go:433`](../workflow/schema.go#L433)
+- **Source:** [`workflow/schema.go:435`](../workflow/schema.go#L435)
 - **Additional attributes:** captures: next (required), output (optional)
 
 ### `write { ... }`
 
-- **Source:** [`workflow/schema.go:376`](../workflow/schema.go#L376)
+- **Source:** [`workflow/schema.go:378`](../workflow/schema.go#L378)
 - **Attributes:**
 
 | Attribute | Type | Required | Description |

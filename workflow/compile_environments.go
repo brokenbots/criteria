@@ -119,21 +119,14 @@ func compileEnvironmentBlock(g *FSMGraph, envSpec EnvironmentSpec, opts CompileO
 		}
 	}
 
-	// Parse optional working_directory attribute. Container environments reject
-	// it in their ValidateFields (they isolate paths rather than relocate cwd);
-	// shell, sandbox, and remote environments inject it into the step's
-	// working_directory input at runtime.
-	var workingDir string
-	if attr, ok := attrs["working_directory"]; ok {
-		val, valDiags := attr.Expr.Value(nil)
-		diags = append(diags, valDiags...)
-		if valDiags.HasErrors() {
-			return diags
-		}
-		if val.Type() == cty.String && val.IsKnown() && !val.IsNull() {
-			workingDir = val.AsString()
-		}
-	}
+	// Parse optional working_directory attribute. It folds against the
+	// compile-time closure (var + local + literal + funcs) like variables/config,
+	// so it can be templated (e.g. working_directory = var.worktree). Container
+	// environments reject it in their ValidateFields (they isolate paths rather
+	// than relocate cwd); shell, sandbox, and remote environments apply it as the
+	// adapter launch cwd at runtime.
+	workingDir, d := decodeEnvironmentWorkingDir(g, attrs, opts)
+	diags = append(diags, d...)
 
 	// OS gate: if os is set and does not match the host GOOS, emit error.
 	if osVal != "" && osVal != envRegistryHostOS {
@@ -149,9 +142,9 @@ func compileEnvironmentBlock(g *FSMGraph, envSpec EnvironmentSpec, opts CompileO
 	}
 
 	// Decode variables and config.
-	variables, d := decodeEnvironmentVariables(attrs, opts)
+	variables, d := decodeEnvironmentVariables(g, attrs, opts)
 	diags = append(diags, d...)
-	config, d := decodeEnvironmentConfig(attrs, opts)
+	config, d := decodeEnvironmentConfig(g, attrs, opts)
 	diags = append(diags, d...)
 
 	if diags.HasErrors() {
@@ -300,9 +293,44 @@ func validateEnvironmentBasics(envSpec EnvironmentSpec, envReg EnvRegistry, seen
 	return diags
 }
 
+// decodeEnvironmentWorkingDir extracts and folds the optional "working_directory"
+// attribute against the compile-time closure (var + local + literal + funcs), so
+// it can reference declared variables and locals. Must fold to a string.
+func decodeEnvironmentWorkingDir(g *FSMGraph, attrs hcl.Attributes, opts CompileOpts) (string, hcl.Diagnostics) {
+	var diags hcl.Diagnostics
+
+	attr, ok := attrs["working_directory"]
+	if !ok {
+		return "", nil
+	}
+
+	val, foldable, d := FoldExpr(attr.Expr, graphVars(g), graphLocals(g), opts.WorkflowDir)
+	diags = append(diags, d...)
+	if !foldable {
+		diags = append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  "environment working_directory must fold at compile time (no runtime-only references like each.value or steps.X.outputs.Y)",
+			Subject:  attr.Expr.Range().Ptr(),
+		})
+		return "", diags
+	}
+	if diags.HasErrors() {
+		return "", diags
+	}
+	if val.Type() != cty.String || val.IsNull() || !val.IsKnown() {
+		diags = append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  fmt.Sprintf("environment working_directory must be a known string; got %s", val.Type().FriendlyName()),
+			Subject:  attr.Expr.Range().Ptr(),
+		})
+		return "", diags
+	}
+	return val.AsString(), diags
+}
+
 // decodeEnvironmentVariables extracts and folds the optional "variables" attribute.
 // Must fold to cty.Map(cty.String) (every value coerced to string).
-func decodeEnvironmentVariables(attrs hcl.Attributes, opts CompileOpts) (map[string]string, hcl.Diagnostics) {
+func decodeEnvironmentVariables(g *FSMGraph, attrs hcl.Attributes, opts CompileOpts) (map[string]string, hcl.Diagnostics) {
 	var diags hcl.Diagnostics
 	result := make(map[string]string)
 
@@ -312,10 +340,10 @@ func decodeEnvironmentVariables(attrs hcl.Attributes, opts CompileOpts) (map[str
 	}
 
 	// Fold the variables expression in the compile-time closure (var + local + literal + funcs).
-	// Note: environments are compiled before agents/steps, so we only have variables/locals available.
-	// We pass nil for the graph here; the fold happens in the context of declared variables/locals,
-	// and environment expressions cannot reference steps or runtime-only values anyway.
-	val, foldable, d := FoldExpr(varAttr.Expr, nil, nil, opts.WorkflowDir)
+	// Environments are compiled after variables and locals (see CompileWithContext order),
+	// so declared var.* and local.* references resolve here; only runtime-only namespaces
+	// (each.*, steps.*) are deferred and rejected as non-foldable below.
+	val, foldable, d := FoldExpr(varAttr.Expr, graphVars(g), graphLocals(g), opts.WorkflowDir)
 	diags = append(diags, d...)
 
 	if !foldable {
@@ -378,7 +406,7 @@ func coerceEnvironmentVariablesToString(val cty.Value, result map[string]string,
 
 // decodeEnvironmentConfig extracts and folds the optional "config" attribute.
 // For v0.3.0, shape is unenforced; the config is stored as-is for Phase 4 consumption.
-func decodeEnvironmentConfig(attrs hcl.Attributes, opts CompileOpts) (map[string]cty.Value, hcl.Diagnostics) {
+func decodeEnvironmentConfig(g *FSMGraph, attrs hcl.Attributes, opts CompileOpts) (map[string]cty.Value, hcl.Diagnostics) {
 	var diags hcl.Diagnostics
 	result := make(map[string]cty.Value)
 
@@ -388,7 +416,7 @@ func decodeEnvironmentConfig(attrs hcl.Attributes, opts CompileOpts) (map[string
 	}
 
 	// Fold the config expression in the compile-time closure (var + local + literal + funcs).
-	val, foldable, d := FoldExpr(cfgAttr.Expr, nil, nil, opts.WorkflowDir)
+	val, foldable, d := FoldExpr(cfgAttr.Expr, graphVars(g), graphLocals(g), opts.WorkflowDir)
 	diags = append(diags, d...)
 
 	if !foldable {

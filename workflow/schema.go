@@ -115,9 +115,11 @@ type EnvironmentNode struct {
 	// OS is "" (any) or a specific GOOS value like "linux" or "darwin".
 	OS string
 	// WorkingDirectory is the launch cwd applied to the adapter process so that
-	// shell/copilot adapters operate in that directory by default. Supported by
-	// shell, sandbox, and remote environments; container environments reject it
-	// (they isolate paths rather than relocate the process cwd).
+	// shell/copilot adapters operate in that directory by default. It is folded
+	// at compile time and may reference declared variables and locals (e.g.
+	// var.worktree). Supported by shell, sandbox, and remote environments;
+	// container environments reject it (they isolate paths rather than relocate
+	// the process cwd).
 	WorkingDirectory string
 	Filesystem       *FilesystemPolicy
 	Network          *NetworkPolicy
