@@ -44,7 +44,7 @@ func testDenyWithError(t *testing.T, name string, loader adapterhost.Loader, opt
 	defer plug.Kill()
 
 	sessionID := newSessionID("deny-err")
-	if err := plug.OpenSession(ctx, sessionID, cloneConfig(opts.OpenConfig), nil); err != nil {
+	if err := plug.OpenSession(ctx, sessionID, cloneConfig(opts.OpenConfig), cloneConfig(opts.Secrets)); err != nil {
 		t.Fatalf("open session: %v", err)
 	}
 	defer func() {
@@ -78,7 +78,7 @@ func testDenyAfterTimeout(t *testing.T, name string, loader adapterhost.Loader, 
 	defer plug.Kill()
 
 	sessionID := newSessionID("deny-to")
-	if err := plug.OpenSession(ctx, sessionID, cloneConfig(opts.OpenConfig), nil); err != nil {
+	if err := plug.OpenSession(ctx, sessionID, cloneConfig(opts.OpenConfig), cloneConfig(opts.Secrets)); err != nil {
 		t.Fatalf("open session: %v", err)
 	}
 	defer func() {
@@ -113,7 +113,7 @@ func testDenyAfterSessionClose(t *testing.T, name string, loader adapterhost.Loa
 	defer plug.Kill()
 
 	sessionID := newSessionID("deny-close")
-	if err := plug.OpenSession(ctx, sessionID, cloneConfig(opts.OpenConfig), nil); err != nil {
+	if err := plug.OpenSession(ctx, sessionID, cloneConfig(opts.OpenConfig), cloneConfig(opts.Secrets)); err != nil {
 		t.Fatalf("open session: %v", err)
 	}
 

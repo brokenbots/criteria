@@ -44,7 +44,7 @@ func openStressSessions(t *testing.T, ctx context.Context, loader adapterhost.Lo
 			t.Fatalf("resolve adapter %d: %v", i, err)
 		}
 		sessionID := newSessionID(fmt.Sprintf("stress-%d", i))
-		if err := plug.OpenSession(ctx, sessionID, cloneConfig(opts.OpenConfig), nil); err != nil {
+		if err := plug.OpenSession(ctx, sessionID, cloneConfig(opts.OpenConfig), cloneConfig(opts.Secrets)); err != nil {
 			plug.Kill()
 			t.Fatalf("open session %d: %v", i, err)
 		}

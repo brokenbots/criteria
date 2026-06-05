@@ -90,7 +90,11 @@ type sessionState struct {
 }
 
 func (p *copilotAdapter) OpenSession(ctx context.Context, req *v2.OpenSessionRequest) (*v2.OpenSessionResponse, error) {
-	client, err := p.ensureClient(ctx)
+	// Resolved secrets for this session, constrained to the names the adapter
+	// declared in Info().Secrets. The GitHub token is sourced from here, never
+	// from the process environment (D69).
+	secrets := adapterhost.NewSecrets(declaredGitHubTokenSecrets(), req.GetSecrets())
+	client, err := p.ensureClient(ctx, secrets)
 	if err != nil {
 		return nil, err
 	}

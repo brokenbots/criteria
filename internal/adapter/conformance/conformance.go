@@ -18,6 +18,10 @@ import (
 type Options struct {
 	// OpenConfig is optional adapter OpenSession config for RunAdapter tests.
 	OpenConfig map[string]string
+	// Secrets is optional resolved secrets delivered on every OpenSession the
+	// harness opens. Adapters that require a secret to open a session (e.g.
+	// copilot's GitHub token, D69) must set this, or every suite fails closed.
+	Secrets map[string]string
 	// StepConfig is the HCL-style config passed to the step node under test.
 	StepConfig map[string]string
 	// PermissionConfig optionally overrides StepConfig for permission_request_shape.
@@ -174,7 +178,7 @@ func newAdapterTargetFactory(name string, loader adapterhost.Loader, opts *Optio
 		}
 
 		sessionID := newSessionID("conformance")
-		if err := plug.OpenSession(ctx, sessionID, cloneConfig(opts.OpenConfig), nil); err != nil {
+		if err := plug.OpenSession(ctx, sessionID, cloneConfig(opts.OpenConfig), cloneConfig(opts.Secrets)); err != nil {
 			plug.Kill()
 			t.Fatalf("open session %q: %v", sessionID, err)
 		}

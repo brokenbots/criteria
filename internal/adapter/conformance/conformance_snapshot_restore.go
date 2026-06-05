@@ -29,7 +29,7 @@ func testSnapshotRestore(t *testing.T, name string, loader adapterhost.Loader, o
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	plug, sessionID := resolveAndOpen(t, ctx, loader, name, opts.OpenConfig)
+	plug, sessionID := resolveAndOpen(t, ctx, loader, name, opts.OpenConfig, opts.Secrets)
 	defer plug.Kill()
 	defer func() { _ = plug.CloseSession(context.Background(), sessionID) }()
 
@@ -40,7 +40,7 @@ func testSnapshotRestore(t *testing.T, name string, loader adapterhost.Loader, o
 		t.Fatalf("snapshot: %v", err)
 	}
 
-	plug2, sessionID2 := resolveAndOpen(t, ctx, loader, name, opts.OpenConfig)
+	plug2, sessionID2 := resolveAndOpen(t, ctx, loader, name, opts.OpenConfig, opts.Secrets)
 	defer plug2.Kill()
 	defer func() { _ = plug2.CloseSession(context.Background(), sessionID2) }()
 
