@@ -82,24 +82,35 @@ Phase 4 opens the full adapter-system rewrite. Workstream files are in
 [`adapter_v2/`](adapter_v2/). See [`adapter_v2/README.md`](adapter_v2/README.md)
 for scope, goals, and workstream index.
 
-**Mid-phase archive (2026-06-05).** The phase is still open (WS37–WS44 unstarted),
-but completed in-repo workstreams have been archived to
-[`archived/v4/adapter-v2/`](archived/v4/adapter-v2/) to keep the active set focused.
-Archiving was gated on *validated landed code*, not the plan — each archived WS has
-an in-repo merge plus visible host/engine/proto code.
+**Mid-phase archive + review (2026-06-05).** The phase is still open. Completed in-repo
+workstreams are archived to [`archived/v4/adapter-v2/`](archived/v4/adapter-v2/) to keep the
+active set focused. Archiving is gated on *validated landed code*, not the plan — each
+archived WS has an in-repo merge plus visible host/engine/proto code. The remaining set was
+then reviewed WS-by-WS against the tree and CI (see findings below).
 
-- **Done & archived** (host/engine/proto, merged + code-verified): **WS01–WS20, WS22,
-  WS26, WS31**.
-- **Remaining in [`adapter_v2/`](adapter_v2/) for review** (21 WSes):
-  - *SDKs / cross-repo, not verifiable from this repo:* WS21, WS23 (TS SDK — `--emit-manifest`
-    flagged missing in WS30/WS23 logs), WS24, WS25 (its PR was closed unmerged though the
-    Go SDK lives in-tree at [`sdk/`](../sdk/)).
-  - *CI / distribution:* WS27, WS28, WS29.
-  - *External adapter migrations (separate TS repos):* WS30, WS32, WS33, WS34, WS35.
-  - *In-repo, validated NOT done:* WS36 (copilot speaks v2 but still reads
-    `provider_api_key` from `config`, not the secrets channel — D69 migration likely
-    incomplete), WS37 (`proto/criteria/v1` still present), WS38, WS39, WS40,
-    WS41 (proto still in-repo), WS42 (shell still in-repo), WS43, WS44.
+- **Done & archived** (host/engine/proto/wire, merged + code-verified): **WS01–WS20, WS22,
+  WS26, WS31, WS37**. (WS37 confirmed during review — the adapter v1 protocol is fully
+  removed; the `proto/criteria/v1` that remains is the unrelated server/run API.)
+- **Remaining in [`adapter_v2/`](adapter_v2/), grouped by the release critical path:**
+  - *Publishing infra (blocks everything downstream):* **WS28** reusable publish action
+    (no `.github/actions` yet), **WS27** starter repos, **WS29** GitLab/Makefile paths.
+  - *SDKs — must publish reference adapters to un-stub the conformance gate:* **WS23** TS
+    (`--emit-manifest` flagged missing), **WS24** Python, **WS25** Go author-SDK
+    (`criteria-go-adapter-sdk` is external — the in-tree `sdk/` is the *host* SDK; PR #205
+    closed unmerged). **WS21** serveRemote: Go side done in-tree (`adapterhost.ServeRemote`),
+    TS/Py external.
+  - *External TS adapter migrations (separate repos; logs show complete, tests passing):*
+    WS30, WS32, WS33, WS34, WS35.
+  - *Release gates (blocked on the above):* **WS38** e2e+publish gate (`remote-e2e.yml`
+    real but never run), **WS40** v2 release gate (conformance matrix is an `exit 1`
+    placeholder awaiting SDK reference adapters; no v0.4 tag).
+  - *Independence + hardening:* **WS41** proto extraction (still in-tree), **WS42** shell
+    extraction (de-builtin'd to `cmd/`, not its own repo), **WS43** independence verify,
+    **WS44** coverage ratchet, **WS39** docs refresh (`adapters.md` exists; lockfile/CLI/
+    migration-guide thin).
+  - *Bugfix / gap found in review:* **WS36** copilot still reads `GH_TOKEN` via `os.Getenv`
+    (no secrets channel), and **WS45** (new) — the in-tree Go adapter SDK exposes no
+    secrets API, so no in-tree adapter consumes the wired secret channel. WS45 unblocks WS36.
 
 ## Language cleanup — Terraform-shaping the HCL (archived 2026-06-05)
 
