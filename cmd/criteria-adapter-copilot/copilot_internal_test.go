@@ -77,14 +77,14 @@ func (f *fakeSession) On(handler copilot.SessionEventHandler) func() {
 	}
 }
 
-func (f *fakeSession) Send(_ context.Context, opts copilot.MessageOptions) (string, error) {
+func (f *fakeSession) Send(_ context.Context, opts *copilot.MessageOptions) (string, error) {
 	if f.sendErr != nil {
 		return "", f.sendErr
 	}
 	f.mu.Lock()
 	callIndex := f.sendCount
 	f.sendCount++
-	f.sentOpts = append(f.sentOpts, opts)
+	f.sentOpts = append(f.sentOpts, *opts)
 	onSend := f.onSend
 	var events []copilot.SessionEvent
 	if f.sendSequence != nil && callIndex < len(f.sendSequence) {
@@ -96,7 +96,7 @@ func (f *fakeSession) Send(_ context.Context, opts copilot.MessageOptions) (stri
 	f.mu.Unlock()
 
 	if onSend != nil {
-		onSend(callIndex, opts)
+		onSend(callIndex, *opts)
 	}
 	for _, event := range events {
 		for _, handler := range handlers {
