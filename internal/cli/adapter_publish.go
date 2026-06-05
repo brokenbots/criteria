@@ -17,6 +17,7 @@ func newAdapterPublishCmd() *cobra.Command {
 	var (
 		registry  string
 		withImage bool
+		signKey   string
 	)
 
 	cmd := &cobra.Command{
@@ -25,16 +26,17 @@ func newAdapterPublishCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
-			return runPublish(cmd.Context(), args[0], registry, withImage, cmd.OutOrStdout())
+			return runPublish(cmd.Context(), args[0], registry, signKey, withImage, cmd.OutOrStdout())
 		},
 	}
 
 	cmd.Flags().StringVar(&registry, "registry", "", "Registry alias or full reference to push to")
 	cmd.Flags().BoolVar(&withImage, "with-image", false, "Also build and push a runnable container image")
+	cmd.Flags().StringVar(&signKey, "sign-key", "", "Path to a PEM Ed25519 private key; attaches a cosign signature (keyless OIDC signing is CI-only)")
 	return cmd
 }
 
-func runPublish(ctx context.Context, binPath, registry string, withImage bool, out io.Writer) error {
+func runPublish(ctx context.Context, binPath, registry, signKey string, withImage bool, out io.Writer) error {
 	if out == nil {
 		out = os.Stdout
 	}
@@ -80,12 +82,25 @@ func runPublish(ctx context.Context, binPath, registry string, withImage bool, o
 		return fmt.Errorf("--with-image is not yet implemented")
 	}
 
-	// Push the artifact.
-	dg, err := publish.PushArtifact(ctx, ref, binPath, mfPath, publish.Options{})
+	opts := publish.Options{}
+	if signKey != "" {
+		signer, err := publish.LoadKeySignerPEM(signKey)
+		if err != nil {
+			return err
+		}
+		opts.Signer = signer
+	}
+
+	// Push the artifact (and attach a cosign signature when --sign-key is set).
+	dg, err := publish.PushArtifact(ctx, ref, binPath, mfPath, opts)
 	if err != nil {
 		return fmt.Errorf("publish artifact: %w", err)
 	}
 
-	fmt.Fprintf(out, "Published %s to %s (digest: %s)\n", filepath.Base(binPath), ref, dg)
+	signedNote := ""
+	if signKey != "" {
+		signedNote = " (signed)"
+	}
+	fmt.Fprintf(out, "Published %s to %s (digest: %s)%s\n", filepath.Base(binPath), ref, dg, signedNote)
 	return nil
 }
