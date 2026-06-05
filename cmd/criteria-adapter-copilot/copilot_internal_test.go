@@ -8,6 +8,7 @@ import (
 	"time"
 
 	copilot "github.com/github/copilot-sdk/go"
+	"github.com/github/copilot-sdk/go/rpc"
 
 	v2 "github.com/brokenbots/criteria/sdk/pb/criteria/v2"
 )
@@ -314,8 +315,8 @@ func TestPermissionAutoApprove(t *testing.T) {
 	if err != nil {
 		t.Fatalf("handlePermissionRequest returned error: %v", err)
 	}
-	if result.Kind != copilot.PermissionRequestResultKindApproved {
-		t.Fatalf("permission result kind = %q, want approved", result.Kind)
+	if result.Kind() != rpc.PermissionDecisionKindApproveOnce {
+		t.Fatalf("permission result kind = %q, want approve-once", result.Kind())
 	}
 
 	// Verify the permission.request AdapterEvent was emitted.
@@ -653,8 +654,8 @@ func TestBuildProviderConfig(t *testing.T) {
 	if azure == nil {
 		t.Fatal("azure config: got nil, want provider")
 	}
-	if azure.Type != "azure" || azure.WireApi != "responses" {
-		t.Errorf("Type/WireApi = %q/%q, want azure/responses", azure.Type, azure.WireApi)
+	if azure.Type != "azure" || azure.WireAPI != "responses" {
+		t.Errorf("Type/WireAPI = %q/%q, want azure/responses", azure.Type, azure.WireAPI)
 	}
 	if azure.APIKey != "secret" || azure.BearerToken != "bearer" {
 		t.Errorf("APIKey/BearerToken = %q/%q, want secret/bearer", azure.APIKey, azure.BearerToken)

@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	copilot "github.com/github/copilot-sdk/go"
+	"github.com/github/copilot-sdk/go/rpc"
 	"github.com/google/uuid"
 )
 
@@ -22,10 +23,10 @@ import (
 //  4. Blocks until the host sends a decision via the Permissions bidi stream
 //     or the active Execute call ends.
 //  5. Returns Approved or Rejected to the Copilot SDK based on the host decision.
-func (p *copilotAdapter) handlePermissionRequest(sessionID string, request copilot.PermissionRequest) (copilot.PermissionRequestResult, error) {
+func (p *copilotAdapter) handlePermissionRequest(sessionID string, request copilot.PermissionRequest) (rpc.PermissionDecision, error) {
 	s := p.getSession(sessionID)
 	if s == nil {
-		return copilot.PermissionRequestResult{Kind: copilot.PermissionRequestResultKindUserNotAvailable}, nil
+		return &rpc.PermissionDecisionUserNotAvailable{}, nil
 	}
 
 	s.mu.Lock()
@@ -35,7 +36,7 @@ func (p *copilotAdapter) handlePermissionRequest(sessionID string, request copil
 	s.mu.Unlock()
 
 	if !active || sink == nil {
-		return copilot.PermissionRequestResult{Kind: copilot.PermissionRequestResultKindUserNotAvailable}, nil
+		return &rpc.PermissionDecisionUserNotAvailable{}, nil
 	}
 
 	payload, requestID := buildPermEventPayload(request)
@@ -45,18 +46,18 @@ func (p *copilotAdapter) handlePermissionRequest(sessionID string, request copil
 
 	if err := sink.Send(adapterEvent("permission.request", payload)); err != nil {
 		p.resolvePendingPerm(requestID)
-		return copilot.PermissionRequestResult{Kind: copilot.PermissionRequestResultKindUserNotAvailable}, nil //nolint:nilerr // fail closed at the SDK boundary; the host-visible result carries the denial reason
+		return &rpc.PermissionDecisionUserNotAvailable{}, nil //nolint:nilerr // fail closed at the SDK boundary; the host-visible result carries the denial reason
 	}
 
 	select {
 	case decision := <-decisionCh:
 		if decision == "allow" {
-			return copilot.PermissionRequestResult{Kind: copilot.PermissionRequestResultKindApproved}, nil
+			return &rpc.PermissionDecisionApproveOnce{}, nil
 		}
-		return copilot.PermissionRequestResult{Kind: copilot.PermissionRequestResultKindRejected}, nil
+		return &rpc.PermissionDecisionReject{}, nil
 	case <-activeCh:
 		p.resolvePendingPerm(requestID)
-		return copilot.PermissionRequestResult{Kind: copilot.PermissionRequestResultKindRejected}, nil
+		return &rpc.PermissionDecisionReject{}, nil
 	}
 }
 
@@ -120,7 +121,7 @@ func permissionDetails(request copilot.PermissionRequest) map[string]string { //
 		if includeSensitive && req.ToolArgs != nil {
 			details["tool_args"] = stringifyAny(req.ToolArgs)
 		}
-	case copilot.PermissionRequestMcp:
+	case copilot.PermissionRequestMCP:
 		setString(details, "tool_call_id", req.ToolCallID)
 		if req.ServerName != "" {
 			details["server_name"] = req.ServerName
@@ -218,7 +219,7 @@ func permissionTool(request copilot.PermissionRequest) string {
 		if req.ToolName != "" {
 			return req.ToolName
 		}
-	case copilot.PermissionRequestMcp:
+	case copilot.PermissionRequestMCP:
 		if req.ToolName != "" {
 			return req.ToolName
 		}
