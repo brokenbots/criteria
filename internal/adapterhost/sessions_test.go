@@ -37,7 +37,7 @@ func TestBuildSandboxCustomizer_EnvScrubIntegration(t *testing.T) {
 			"noop.default:sandbox.default": {PolicyMode: "permissive", OS: "linux"},
 		},
 	}
-	customizer, cleanup, err := sm.buildSandboxCustomizer("noop.default")
+	customizer, cleanup, err := sm.buildSandboxCustomizer("noop.default", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestBuildSandboxCustomizer_PermissiveMissingCaps(t *testing.T) {
 			"noop.default:sandbox.default": {PolicyMode: "permissive", OS: "linux"},
 		},
 	}
-	customizer, cleanup, err := sm.buildSandboxCustomizer("noop.default")
+	customizer, cleanup, err := sm.buildSandboxCustomizer("noop.default", "")
 	if err != nil {
 		t.Fatalf("unexpected error in permissive mode: %v", err)
 	}
@@ -116,7 +116,7 @@ func TestBuildSandboxCustomizer_StrictMissingCaps(t *testing.T) {
 			"noop.default:sandbox.default": {PolicyMode: "strict", OS: "linux"},
 		},
 	}
-	customizer, cleanup, err := sm.buildSandboxCustomizer("noop.default")
+	customizer, cleanup, err := sm.buildSandboxCustomizer("noop.default", "")
 	if err == nil {
 		t.Fatal("expected error in strict mode when landlock is missing")
 	}
@@ -134,7 +134,7 @@ func TestMakeSandboxCustomizer_BwrapNotOptedIn(t *testing.T) {
 		TargetPath:  "/usr/bin/true",
 	}
 	env := &workflow.EnvironmentNode{Type: "sandbox", Name: "default"}
-	customizer, cleanup := makeSandboxCustomizer(prep, env)
+	customizer, cleanup := makeSandboxCustomizer(prep, env, "")
 	if customizer == nil {
 		t.Fatal("expected non-nil customizer")
 	}
@@ -162,7 +162,7 @@ func TestMakeSandboxCustomizer_ShimCallsApplyToCmd(t *testing.T) {
 		AllowNetwork: true,
 	}
 	env := &workflow.EnvironmentNode{Type: "sandbox", Name: "default"}
-	customizer, cleanup := makeSandboxCustomizer(prep, env)
+	customizer, cleanup := makeSandboxCustomizer(prep, env, "")
 	if customizer == nil {
 		t.Fatal("expected non-nil customizer")
 	}
