@@ -259,6 +259,27 @@ The Go **adapter SDK** (`adapterhost`) no longer lives in the monorepo.
   server API is broken out.
 - All four workspace modules build; full test suite green; import boundaries OK.
 
+### Copilot secrets + extraction (WS45, WS36 — 2026-06-05, session 4)
+
+- **WS45 — copilot secret channel (DONE, merged #229).** Added a redaction-aware
+  `adapterhost.Secrets` accessor (`Get` / `SpawnEnv` / `WithStepSecrets`) to
+  `criteria-go-adapter-sdk` (**v0.5.2**) — the D69/D75 surface for Go adapters. (WS45's spec
+  targeted the in-tree `sdk/adapterhost`, which no longer exists after #228; it correctly
+  landed in the external SDK.) Copilot now resolves its GitHub token from the secret channel
+  (declared in `InfoResponse.Secrets`), **fails closed** with a clear error when absent, and
+  no longer reads `os.Getenv`. The shared conformance harness gained an `Options.Secrets`
+  field; other adapters are unaffected.
+- **WS36 — copilot extraction (DONE).** [`criteria-adapter-copilot`](https://github.com/brokenbots/criteria-adapter-copilot)
+  repo created (`main` + tag **v0.5.0**), consuming `criteria-adapter-proto` +
+  `criteria-go-adapter-sdk`, published as a signed OCI artifact via `publish-adapter`. The
+  host-dependent `conformance_test.go` is preserved on the repo's `deferred/conformance`
+  branch (it needs the host's internal harness). Manifest gained `source_url` + `platforms`
+  (required by publish validation; copilot had never declared them since it was never
+  published). The in-tree `cmd/criteria-adapter-copilot/` is removed in a follow-up PR —
+  build/test/validate/spec-check all pass without it (the host-side copilot permission-alias
+  policy stays). `docs/adapters.md` still uses copilot as its worked example and is left to
+  the **WS39** documentation refresh.
+
 ## Language cleanup — Terraform-shaping the HCL (archived 2026-06-05)
 
 A focused sub-effort (WS01–WS11) that landed on `main` and merged into `adapter-v2`
