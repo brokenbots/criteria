@@ -5,8 +5,8 @@ import (
 
 	"github.com/zclconf/go-cty/cty"
 
-	adapterhostpkg "github.com/brokenbots/criteria/internal/adapterhost"
 	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
+	adapterhostpkg "github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/workflow"
 )
 

@@ -12,8 +12,8 @@ import (
 
 	hplugin "github.com/hashicorp/go-plugin"
 
-	"github.com/brokenbots/criteria/internal/testutil"
 	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
+	"github.com/brokenbots/criteria/internal/testutil"
 )
 
 // TestNoopAttachedRunnerWaitBlocksUntilKill verifies that Wait does not return

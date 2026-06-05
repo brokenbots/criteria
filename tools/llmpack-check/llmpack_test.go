@@ -360,4 +360,3 @@ func firstLine(lines []string) string {
 	}
 	return lines[0]
 }
-

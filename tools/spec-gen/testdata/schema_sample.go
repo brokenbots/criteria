@@ -14,19 +14,19 @@ type Spec struct {
 // WidgetSpec defines a widget block.
 type WidgetSpec struct {
 	// Name of the widget instance.
-	Name    string `hcl:"name,label"`
+	Name string `hcl:"name,label"`
 	// Title is the display label shown in the UI.
-	Title   string `hcl:"title,attr"`
+	Title string `hcl:"title,attr"`
 	// Enabled controls whether the widget is active.
-	Enabled *bool    `hcl:"enabled,optional"`
+	Enabled *bool `hcl:"enabled,optional"`
 	// Captures: style (optional, one of "compact" or "expanded"); icon (optional, string).
-	Remain  hcl.Body `hcl:",remain"`
+	Remain hcl.Body `hcl:",remain"`
 }
 
 // RuleSpec defines a rule block.
 type RuleSpec struct {
 	// ID uniquely identifies this rule.
-	ID       string `hcl:"id,label"`
+	ID string `hcl:"id,label"`
 	// Priority sets the evaluation order; higher values run first.
-	Priority int    `hcl:"priority,attr"`
+	Priority int `hcl:"priority,attr"`
 }
