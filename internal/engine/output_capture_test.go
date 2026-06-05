@@ -44,7 +44,7 @@ func (p *fakeOutputAdapter) OpenSession(context.Context, string, map[string]stri
 	return nil
 }
 func (p *fakeOutputAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
-	return adapter.Result{Outcome: p.outcome, Outputs: p.outputs}, nil
+	return adapter.Result{Outcome: p.outcome, Outputs: ctyOut(p.outputs)}, nil
 }
 func (p *fakeOutputAdapter) Permit(context.Context, string, string, bool, string) error { return nil }
 func (p *fakeOutputAdapter) CloseSession(context.Context, string) error                 { return nil }

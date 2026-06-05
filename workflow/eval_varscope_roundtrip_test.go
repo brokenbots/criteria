@@ -118,11 +118,11 @@ func TestVarScope_RoundTrip_ListAndMap(t *testing.T) {
 	t.Run("step_outputs_round_trip", func(t *testing.T) {
 		g := &FSMGraph{Variables: map[string]*VariableNode{}}
 		vars := SeedVarsFromGraph(g)
-		vars = WithStepOutputs(vars, "fetch", map[string]string{
+		vars = WithStepOutputs(vars, "fetch", ctyStrs(map[string]string{
 			"url":    "https://example.com",
 			"status": "200",
 			"body":   "ok",
-		})
+		}))
 
 		scopeJSON, err := SerializeVarScope(vars)
 		if err != nil {
@@ -157,6 +157,64 @@ func TestVarScope_RoundTrip_ListAndMap(t *testing.T) {
 			"CtyValueToString is lossy for non-primitive types and overrides would be silently dropped. " +
 			"Tracked as [ARCH-REVIEW] in workstreams/test-02-hcl-parsing-eval-coverage.md.")
 	})
+}
+
+// TestVarScope_RoundTrip_TypedStepOutputs verifies that structured/native step
+// output types (object, list, number, bool) survive a SerializeVarScope ->
+// RestoreVarScope cycle as their original cty types — not flattened to strings.
+// This is the round-trip guarantee that makes typed outputs durable across
+// checkpoint/reattach.
+func TestVarScope_RoundTrip_TypedStepOutputs(t *testing.T) {
+	g := &FSMGraph{Variables: map[string]*VariableNode{}}
+	vars := SeedVarsFromGraph(g)
+
+	meta := cty.ObjectVal(map[string]cty.Value{
+		"id":    cty.NumberIntVal(7),
+		"name":  cty.StringVal("widget"),
+		"tags":  cty.TupleVal([]cty.Value{cty.StringVal("a"), cty.StringVal("b")}),
+		"ready": cty.True,
+	})
+	vars = WithStepOutputs(vars, "fetch", map[string]cty.Value{
+		"meta":  meta,
+		"count": cty.NumberIntVal(42),
+		"ok":    cty.False,
+	})
+
+	scopeJSON, err := SerializeVarScope(vars)
+	if err != nil {
+		t.Fatalf("SerializeVarScope: %v", err)
+	}
+
+	restored, _, err := RestoreVarScope(scopeJSON, g)
+	if err != nil {
+		t.Fatalf("RestoreVarScope: %v", err)
+	}
+
+	fetch := restored["steps"].GetAttr("fetch")
+
+	// count and ok keep their scalar types (not cty.String).
+	if got := fetch.GetAttr("count"); !got.RawEquals(cty.NumberIntVal(42)) {
+		t.Errorf("count = %#v, want number 42", got)
+	}
+	if got := fetch.GetAttr("ok"); !got.RawEquals(cty.False) {
+		t.Errorf("ok = %#v, want bool false", got)
+	}
+
+	// meta keeps its nested object structure; nested attribute access works with
+	// the correct types — no jsondecode required.
+	gotMeta := fetch.GetAttr("meta")
+	if !gotMeta.Type().IsObjectType() {
+		t.Fatalf("meta type = %s, want object", gotMeta.Type().FriendlyName())
+	}
+	if id := gotMeta.GetAttr("id"); !id.RawEquals(cty.NumberIntVal(7)) {
+		t.Errorf("meta.id = %#v, want number 7", id)
+	}
+	if !gotMeta.GetAttr("ready").RawEquals(cty.True) {
+		t.Errorf("meta.ready = %#v, want bool true", gotMeta.GetAttr("ready"))
+	}
+	if !gotMeta.RawEquals(meta) {
+		t.Errorf("meta did not round-trip bit-exact:\n got %#v\nwant %#v", gotMeta, meta)
+	}
 }
 
 // TestVarScope_RoundTrip_CursorPrev_NestedObject verifies that a cursor Prev value

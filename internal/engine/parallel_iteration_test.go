@@ -8,17 +8,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"reflect"
 	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"github.com/hashicorp/hcl/v2"
-	"github.com/hashicorp/hcl/v2/hclsyntax"
-	"github.com/zclconf/go-cty/cty"
 
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapterhost"
@@ -507,7 +502,7 @@ func (p *declIdxAdapter) Execute(_ context.Context, _ string, step *workflow.Ste
 	default: // "2" and any others
 		// no sleep — finishes first
 	}
-	return adapter.Result{Outcome: "success", Outputs: map[string]string{"idx": idx}}, nil
+	return adapter.Result{Outcome: "success", Outputs: ctyOut(map[string]string{"idx": idx})}, nil
 }
 func (p *declIdxAdapter) Permit(context.Context, string, string, bool, string) error { return nil }
 func (p *declIdxAdapter) CloseSession(context.Context, string) error                 { return nil }
@@ -816,122 +811,6 @@ state "failed" {
 	// Timeout must cause a non-success outcome (not "done").
 	if sink.terminal == "done" && sink.terminalOK {
 		t.Error("expected non-success terminal: step timeout should have caused failure; got 'done'")
-	}
-}
-
-// TestCtyOutputsToStrings_RenderFailurePropagated verifies that
-// ctyOutputsToStrings returns an error when a subworkflow output value cannot
-// be JSON-rendered, instead of silently substituting an empty string. Before the
-// fix, renderCtyValue errors were discarded (result[k] = "") so the parallel
-// subworkflow output path could silently lose output data and continue — weaker
-// than the non-parallel evaluateSubworkflowStep path which returns an error.
-//
-// A capsule type wrapping a Go channel is used because encoding/json cannot
-// serialize channel types, so renderCtyValue reliably returns an error for it.
-func TestCtyOutputsToStrings_RenderFailurePropagated(t *testing.T) {
-	type withChannel struct{ Ch chan int }
-	capsuleType := cty.Capsule("withchan", reflect.TypeOf(withChannel{}))
-	val := cty.CapsuleVal(capsuleType, &withChannel{Ch: make(chan int)})
-
-	_, err := ctyOutputsToStrings("test_step", map[string]cty.Value{"out": val})
-	if err == nil {
-		t.Error("expected error from unrenderable capsule output value; got nil (silent failure)")
-	}
-}
-
-// TestParallelIteration_SubworkflowOutputRenderErrorPropagated is an E2E test
-// verifying that Engine.Run returns an error when a parallel subworkflow
-// iteration produces an output value that cannot be JSON-rendered. Before the
-// aggregateParallelResults fix, the error was downgraded to anyFailed=true and
-// the engine would route to "any_failed" (or continue) instead of aborting.
-//
-// The callee subworkflow declares a single output whose value expression is a
-// literal capsule wrapping a Go channel. encoding/json cannot serialize channel
-// types, so renderCtyValue reliably errors.
-func TestParallelIteration_SubworkflowOutputRenderErrorPropagated(t *testing.T) {
-	type withChannel struct{ Ch chan int }
-	capsuleType := cty.Capsule("withchan", reflect.TypeOf(withChannel{}))
-	capsuleVal := cty.CapsuleVal(capsuleType, &withChannel{Ch: make(chan int)})
-
-	// Callee subworkflow: one terminal state with an output whose value is the
-	// unserializable capsule literal.
-	calleeStep := &workflow.StepNode{
-		Name: "done_step",
-		// Immediately terminal — no adapter needed.
-		TargetKind: workflow.StepTargetSubworkflow,
-		Outcomes: map[string]*workflow.CompiledOutcome{
-			"success": {Next: workflow.ReturnSentinel},
-		},
-	}
-	// A tiny callee with a single terminal state reached directly (no real step).
-	calleeDoneState := &workflow.StateNode{Name: "callee_done", Terminal: true, Success: true}
-	_ = calleeStep
-
-	calleeGraph := &workflow.FSMGraph{
-		Name:         "callee",
-		InitialState: "callee_done",
-		TargetState:  "callee_done",
-		Policy:       workflow.DefaultPolicy,
-		Steps:        map[string]*workflow.StepNode{},
-		States: map[string]*workflow.StateNode{
-			"callee_done": calleeDoneState,
-		},
-		Adapters:     map[string]*workflow.AdapterNode{},
-		Subworkflows: map[string]*workflow.SubworkflowNode{},
-		Variables:    map[string]*workflow.VariableNode{},
-		Environments: map[string]*workflow.EnvironmentNode{},
-		Outputs: map[string]*workflow.OutputNode{
-			"out": {
-				Name:  "out",
-				Value: &hclsyntax.LiteralValueExpr{Val: capsuleVal, SrcRange: hcl.Range{}},
-			},
-		},
-		OutputOrder: []string{"out"},
-	}
-
-	swNode := &workflow.SubworkflowNode{
-		Name:         "callee",
-		Body:         calleeGraph,
-		BodyEntry:    "callee_done",
-		Inputs:       map[string]hcl.Expression{},
-		DeclaredVars: map[string]*workflow.VariableNode{},
-	}
-
-	// Parent graph: one parallel subworkflow step over a single-element list.
-	// parseExpr is defined in node_step_w15_test.go within package engine.
-	parallelExpr := parseExpr(t, `["item"]`)
-	parentStep := &workflow.StepNode{
-		Name:           "call",
-		TargetKind:     workflow.StepTargetSubworkflow,
-		SubworkflowRef: "callee",
-		Parallel:       parallelExpr,
-		ParallelMax:    1,
-		Outcomes: map[string]*workflow.CompiledOutcome{
-			"all_succeeded": {Next: "done"},
-			"any_failed":    {Next: "failed"},
-		},
-	}
-	parentGraph := &workflow.FSMGraph{
-		Name:         "parent",
-		InitialState: "call",
-		TargetState:  "done",
-		Policy:       workflow.DefaultPolicy,
-		Steps:        map[string]*workflow.StepNode{"call": parentStep},
-		States: map[string]*workflow.StateNode{
-			"done":   {Name: "done", Terminal: true, Success: true},
-			"failed": {Name: "failed", Terminal: true, Success: false},
-		},
-		Adapters:     map[string]*workflow.AdapterNode{},
-		Subworkflows: map[string]*workflow.SubworkflowNode{"callee": swNode},
-		Variables:    map[string]*workflow.VariableNode{},
-		Environments: map[string]*workflow.EnvironmentNode{},
-	}
-
-	sink := &parallelSink{}
-	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{}}
-	err := New(parentGraph, loader, sink).Run(context.Background())
-	if err == nil {
-		t.Error("expected Engine.Run to return an error for unrenderable subworkflow output; got nil")
 	}
 }
 

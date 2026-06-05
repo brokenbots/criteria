@@ -113,7 +113,7 @@ state "done" {
 	plug := &adapterFunc{fn: func(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
 		out := countdowns[call]
 		call++
-		return adapter.Result{Outcome: "success", Outputs: map[string]string{"remaining": out}}, nil
+		return adapter.Result{Outcome: "success", Outputs: ctyOut(map[string]string{"remaining": out})}, nil
 	}}
 
 	sink := &iterSink{}
@@ -376,7 +376,7 @@ state "done" {
 	plug := &adapterFunc{fn: func(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
 		r := outcomes[call]
 		call++
-		return adapter.Result{Outcome: r.o, Outputs: map[string]string{"remaining": r.rem}}, nil
+		return adapter.Result{Outcome: r.o, Outputs: ctyOut(map[string]string{"remaining": r.rem})}, nil
 	}}
 
 	sink := &iterSink{}
@@ -457,7 +457,7 @@ state "done" {
 	plug := &adapterFunc{fn: func(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
 		r := outcomes[call]
 		call++
-		return adapter.Result{Outcome: r.o, Outputs: map[string]string{"remaining": r.rem}}, nil
+		return adapter.Result{Outcome: r.o, Outputs: ctyOut(map[string]string{"remaining": r.rem})}, nil
 	}}
 
 	sink := &iterSink{}
@@ -667,7 +667,7 @@ state "done" {
 		if call < len(decrements)-1 {
 			call++
 		}
-		return adapter.Result{Outcome: "success", Outputs: map[string]string{"n_out": out}}, nil
+		return adapter.Result{Outcome: "success", Outputs: ctyOut(map[string]string{"n_out": out})}, nil
 	}}
 
 	sink := &iterSink{}

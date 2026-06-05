@@ -73,8 +73,8 @@ func TestSandbox_EnvAllowlist_SecretDropped(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if strings.TrimSpace(result.Outputs["stdout"]) != "" {
-		t.Errorf("expected empty stdout (SECRET must not leak); got %q", result.Outputs["stdout"])
+	if strings.TrimSpace(result.Outputs["stdout"].AsString()) != "" {
+		t.Errorf("expected empty stdout (SECRET must not leak); got %q", result.Outputs["stdout"].AsString())
 	}
 }
 
@@ -93,7 +93,7 @@ func TestSandbox_EnvAllowlist_DeclaredSecretPropagated(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	got := strings.TrimSpace(result.Outputs["stdout"])
+	got := strings.TrimSpace(result.Outputs["stdout"].AsString())
 	if got != "super-secret-value" {
 		t.Errorf("expected stdout %q; got %q", "super-secret-value", got)
 	}
@@ -146,7 +146,7 @@ func TestSandbox_CommandPathHygiene_DotInPathDropped(t *testing.T) {
 		t.Fatalf("Execute returned error: %v", err)
 	}
 	// "." was stripped from PATH; "evil" must not have run.
-	if strings.Contains(result.Outputs["stdout"], "EVIL_RAN") {
+	if strings.Contains(result.Outputs["stdout"].AsString(), "EVIL_RAN") {
 		t.Error("expected 'evil' to not run; sandbox did not strip '.' from PATH")
 	}
 	// Missing command should produce a failure outcome with a non-zero exit code.
@@ -154,10 +154,10 @@ func TestSandbox_CommandPathHygiene_DotInPathDropped(t *testing.T) {
 		t.Errorf("expected outcome 'failure' for missing command; got %q", result.Outcome)
 	}
 	exitCode, ok := result.Outputs["exit_code"]
-	if !ok || exitCode == "" {
+	if !ok || exitCode.AsString() == "" {
 		t.Fatalf("expected exit_code output for missing command; outputs=%v", result.Outputs)
 	}
-	if exitCode == "0" {
+	if exitCode.AsString() == "0" {
 		t.Fatalf("expected non-zero exit_code for missing command; outputs=%v", result.Outputs)
 	}
 }
@@ -185,8 +185,8 @@ func TestSandbox_CommandPathHygiene_ExplicitPathRuns(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute returned error: %v", err)
 	}
-	if !strings.Contains(result.Outputs["stdout"], "MYBIN_RAN") {
-		t.Errorf("expected 'mybin' to run with explicit command_path; stdout=%q", result.Outputs["stdout"])
+	if !strings.Contains(result.Outputs["stdout"].AsString(), "MYBIN_RAN") {
+		t.Errorf("expected 'mybin' to run with explicit command_path; stdout=%q", result.Outputs["stdout"].AsString())
 	}
 }
 
@@ -250,12 +250,12 @@ func TestSandbox_BoundedOutput_TruncatesAtLimit(t *testing.T) {
 		t.Errorf("expected success (truncation is non-fatal); got %q", result.Outcome)
 	}
 
-	stdoutLen := len(result.Outputs["stdout"])
+	stdoutLen := len(result.Outputs["stdout"].AsString())
 	if stdoutLen != limitBytes {
 		t.Errorf("stdout length %d; expected exactly %d (limit)", stdoutLen, limitBytes)
 	}
 
-	if result.Outputs["_truncated_stdout"] != "true" {
+	if v, ok := result.Outputs["_truncated_stdout"]; !ok || v.AsString() != "true" {
 		t.Error("expected _truncated_stdout sentinel to be set")
 	}
 
@@ -345,8 +345,8 @@ func TestSandbox_WorkingDirectory_AllowedPathAccepted(t *testing.T) {
 	if result.Outcome != "success" {
 		t.Errorf("expected success for /etc in CRITERIA_SHELL_ALLOWED_PATHS; outcome=%q", result.Outcome)
 	}
-	if !strings.Contains(result.Outputs["stdout"], "/etc") {
-		t.Errorf("expected stdout to contain /etc; got %q", result.Outputs["stdout"])
+	if !strings.Contains(result.Outputs["stdout"].AsString(), "/etc") {
+		t.Errorf("expected stdout to contain /etc; got %q", result.Outputs["stdout"].AsString())
 	}
 }
 
@@ -372,7 +372,7 @@ func TestSandbox_LegacyEnvVarIgnored(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if got := strings.TrimSpace(result.Outputs["stdout"]); got != "" {
+	if got := strings.TrimSpace(result.Outputs["stdout"].AsString()); got != "" {
 		t.Errorf("env allowlist must be enforced even with CRITERIA_SHELL_LEGACY=1; SECRET leaked: %q", got)
 	}
 }

@@ -17,6 +17,7 @@ import (
 	"github.com/hashicorp/go-hclog"
 	hplugin "github.com/hashicorp/go-plugin"
 	"github.com/hashicorp/go-plugin/runner"
+	"github.com/zclconf/go-cty/cty"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/structpb"
@@ -433,12 +434,13 @@ func (p *rpcHandle) executeWithFallbackStream(ctx context.Context, _ string, ste
 	defer cancelPerm()
 
 	captureSink := &executeCaptureSink{
-		sink:        serialized,
-		policy:      NewPolicy(step.AllowTools),
-		allowTools:  step.AllowTools,
-		adapterName: p.name,
-		requests:    requests,
-		ctx:         execCtx,
+		sink:         serialized,
+		policy:       NewPolicy(step.AllowTools),
+		allowTools:   step.AllowTools,
+		adapterName:  p.name,
+		outputSchema: step.OutputSchema,
+		requests:     requests,
+		ctx:          execCtx,
 	}
 
 	execErr := p.rpc.Execute(execCtx, req, captureSink)
@@ -489,9 +491,10 @@ func (p *rpcHandle) startFallbackPermStream(ctx context.Context, requests chan *
 // is already active.
 func (p *rpcHandle) executeWithActiveStream(ctx context.Context, step *workflow.StepNode, serialized *serializedEventSink, req *v2.ExecuteRequest) (adapter.Result, error) {
 	captureSink := &executeCaptureSink{
-		sink:       serialized,
-		policy:     NewPolicy(step.AllowTools),
-		allowTools: step.AllowTools,
+		sink:         serialized,
+		policy:       NewPolicy(step.AllowTools),
+		allowTools:   step.AllowTools,
+		outputSchema: step.OutputSchema,
 	}
 
 	execErr := p.rpc.Execute(ctx, req, captureSink)
@@ -536,6 +539,11 @@ type executeCaptureSink struct {
 
 	// adapterName is used for contextual permission-denial suggestions.
 	adapterName string
+
+	// outputSchema is the step's declared adapter OutputSchema, used to coerce the
+	// raw string wire outputs into their native cty types (object/array/number/
+	// bool/string). Undeclared keys are preserved as strings.
+	outputSchema map[string]workflow.ConfigField
 
 	// requests and ctx are used in the fallback per-Execute permission stream
 	// path (when SessionManager has not started a session-scoped stream).
@@ -655,19 +663,46 @@ func (s *executeCaptureSink) emitResult(resultEvt *v2.ExecuteResult) error {
 		if err != nil {
 			return fmt.Errorf("execute result chunk reassembly: %w", err)
 		}
-		s.result = adapter.Result{Outcome: s.resultOutcome, Outputs: outputs}
+		typed, err := s.coerceWireOutputs(outputs)
+		if err != nil {
+			return fmt.Errorf("execute result outputs: %w", err)
+		}
+		s.result = adapter.Result{Outcome: s.resultOutcome, Outputs: typed}
 		s.done = true
 		return nil
 	}
 	s.result = adapter.Result{Outcome: resultEvt.GetOutcome()}
 	if outs := resultEvt.GetOutputs(); len(outs) > 0 {
-		s.result.Outputs = make(map[string]string, len(outs))
-		for k, v := range outs {
-			s.result.Outputs[k] = v
+		typed, err := s.coerceWireOutputs(outs)
+		if err != nil {
+			return fmt.Errorf("execute result outputs: %w", err)
 		}
+		s.result.Outputs = typed
 	}
 	s.done = true
 	return nil
+}
+
+// coerceWireOutputs converts the raw string outputs decoded from the wire into
+// typed cty values against the step's declared OutputSchema. Keys with no
+// declared type (cty.NilType) are preserved as strings.
+func (s *executeCaptureSink) coerceWireOutputs(raw map[string]string) (map[string]cty.Value, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	out := make(map[string]cty.Value, len(raw))
+	for k, v := range raw {
+		var t cty.Type
+		if f, ok := s.outputSchema[k]; ok {
+			t = f.CtyType
+		}
+		cv, err := workflow.CoerceStringToCty(v, t)
+		if err != nil {
+			return nil, fmt.Errorf("output %q: %w", k, err)
+		}
+		out[k] = cv
+	}
+	return out, nil
 }
 
 // emitAdapterEvent dispatches a fully assembled (non-chunked) AdapterEvent
@@ -1030,6 +1065,7 @@ func AdapterInfoFromProto(resp *v2.InfoResponse) workflow.AdapterInfo {
 	return workflow.AdapterInfo{
 		ConfigSchema:           protoToConfigSchema(resp.GetConfigSchema()),
 		InputSchema:            protoToConfigSchema(resp.GetInputSchema()),
+		OutputSchema:           protoToConfigSchema(resp.GetOutputSchema()),
 		Capabilities:           append([]string(nil), resp.GetCapabilities()...),
 		CompatibleEnvironments: append([]string(nil), resp.GetCompatibleEnvironments()...),
 		SupportedFeatures:      append([]string(nil), resp.GetSupportedFeatures()...),
@@ -1045,6 +1081,7 @@ func protoToConfigSchema(s *v2.AdapterSchemaProto) map[string]workflow.ConfigFie
 		out[k] = workflow.ConfigField{
 			Required:  f.GetRequired(),
 			Type:      protoToConfigFieldType(f.GetType()),
+			CtyType:   protoToCtyType(f.GetType()),
 			Doc:       f.GetDescription(),
 			Sensitive: f.GetSensitive(),
 		}
@@ -1062,5 +1099,28 @@ func protoToConfigFieldType(t string) workflow.ConfigFieldType {
 		return workflow.ConfigFieldListString
 	default:
 		return workflow.ConfigFieldString
+	}
+}
+
+// protoToCtyType maps an adapter schema field's declared type string to a full
+// cty.Type. It is the authoritative type model for OutputSchema fields, driving
+// typed coercion of step outputs. "object"/"array" carry no sub-schema on the
+// wire, so they map to cty.DynamicPseudoType (decode-anything against JSON). An
+// empty or unrecognised type yields cty.NilType (permissive — value preserved as
+// a raw string).
+func protoToCtyType(t string) cty.Type {
+	switch t {
+	case "string":
+		return cty.String
+	case "number":
+		return cty.Number
+	case "bool", "boolean":
+		return cty.Bool
+	case "list_string":
+		return cty.List(cty.String)
+	case "object", "array":
+		return cty.DynamicPseudoType
+	default:
+		return cty.NilType
 	}
 }

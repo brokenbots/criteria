@@ -30,7 +30,7 @@ func (p *sharedWritesAdapter) OpenSession(context.Context, string, map[string]st
 	return nil
 }
 func (p *sharedWritesAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
-	return adapter.Result{Outcome: p.outcome, Outputs: p.outputs}, nil
+	return adapter.Result{Outcome: p.outcome, Outputs: ctyOut(p.outputs)}, nil
 }
 func (p *sharedWritesAdapter) CloseSession(context.Context, string) error { return nil }
 func (p *sharedWritesAdapter) Kill()                                      {}
@@ -179,7 +179,7 @@ state "done" {
 			callNum++
 			if callNum == 1 {
 				// set_val: return the_msg output
-				return adapter.Result{Outcome: "success", Outputs: map[string]string{"the_msg": "hello-from-shared"}}, nil
+				return adapter.Result{Outcome: "success", Outputs: ctyOut(map[string]string{"the_msg": "hello-from-shared"})}, nil
 			}
 			// read_val: return no outputs (output block reads data.internal.msg.value)
 			return adapter.Result{Outcome: "success"}, nil
@@ -195,7 +195,7 @@ state "done" {
 	// String values in output projection are JSON-encoded (with quotes).
 	readValOutputs := capturedSink.captured["read_val"]
 	require.NotNil(t, readValOutputs, "read_val outputs not captured")
-	assert.Equal(t, `"hello-from-shared"`, readValOutputs["result"])
+	assert.Equal(t, `hello-from-shared`, readValOutputs["result"])
 }
 
 // TestSharedWrites_OutputKeyMissing verifies that a missing output key in
@@ -366,7 +366,7 @@ state "done" {
 			callNum++
 			if callNum == 1 {
 				// collect: return tag1 and tag2 raw outputs
-				return adapter.Result{Outcome: "success", Outputs: map[string]string{"tag1": "foo", "tag2": "bar"}}, nil
+				return adapter.Result{Outcome: "success", Outputs: ctyOut(map[string]string{"tag1": "foo", "tag2": "bar"})}, nil
 			}
 			// read_back: no adapter outputs needed; projection reads data.internal.items.value
 			return adapter.Result{Outcome: "success"}, nil
@@ -381,8 +381,8 @@ state "done" {
 	// read_back's projected outputs should carry the list elements.
 	readBackOutputs := capturedSink.captured["read_back"]
 	require.NotNil(t, readBackOutputs, "read_back outputs not captured")
-	assert.Equal(t, `"foo"`, readBackOutputs["first"])
-	assert.Equal(t, `"bar"`, readBackOutputs["second"])
+	assert.Equal(t, `foo`, readBackOutputs["first"])
+	assert.Equal(t, `bar`, readBackOutputs["second"])
 }
 
 // initial value is readable in HCL expressions via data.internal.*.value at the first step.
@@ -430,7 +430,7 @@ state "done" {
 
 	outputs := capturedSink.captured["read_initial"]
 	require.NotNil(t, outputs)
-	assert.Equal(t, `"hello"`, outputs["val"])
+	assert.Equal(t, `hello`, outputs["val"])
 }
 
 // TestSharedWrites_PerIterationOutcome proves that a for_each step's per-iteration
@@ -496,7 +496,7 @@ state "done" {
 			if callNum < len(items) {
 				tag := items[callNum]
 				callNum++
-				return adapter.Result{Outcome: "success", Outputs: map[string]string{"tag": tag}}, nil
+				return adapter.Result{Outcome: "success", Outputs: ctyOut(map[string]string{"tag": tag})}, nil
 			}
 			callNum++
 			return adapter.Result{Outcome: "success"}, nil
@@ -511,7 +511,7 @@ state "done" {
 	// data.internal.last_tag.value should hold the final iteration's value ("gamma").
 	readBackOutputs := capturedSink.captured["read_back"]
 	require.NotNil(t, readBackOutputs, "read_back outputs not captured")
-	assert.Equal(t, `"gamma"`, readBackOutputs["result"])
+	assert.Equal(t, `gamma`, readBackOutputs["result"])
 }
 
 // TestSharedWrites_AggregateOutcome proves that write blocks declared on an
@@ -578,7 +578,7 @@ state "done" {
 	// data.internal.done_flag.value should be "completed" — written by the aggregate outcome.
 	readBackOutputs := capturedSink.captured["read_back"]
 	require.NotNil(t, readBackOutputs, "read_back outputs not captured")
-	assert.Equal(t, `"completed"`, readBackOutputs["result"])
+	assert.Equal(t, `completed`, readBackOutputs["result"])
 }
 
 // TestWrites_FullContext verifies that a write value expression can reference
@@ -642,7 +642,7 @@ state "done" {
 		fn: func(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
 			callNum++
 			if callNum == 1 {
-				return adapter.Result{Outcome: "success", Outputs: map[string]string{"delta": "3"}}, nil
+				return adapter.Result{Outcome: "success", Outputs: ctyOut(map[string]string{"delta": "3"})}, nil
 			}
 			return adapter.Result{Outcome: "success"}, nil
 		},

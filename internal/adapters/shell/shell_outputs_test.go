@@ -43,15 +43,15 @@ func TestShellAdapter_CapturesStdout(t *testing.T) {
 		t.Fatal("missing 'stdout' in Outputs")
 	}
 	// chunk-based reader preserves exact output; printf without \n produces no trailing newline.
-	if stdout != "hello world" {
-		t.Errorf("stdout = %q, want 'hello world'", stdout)
+	if stdout.AsString() != "hello world" {
+		t.Errorf("stdout = %q, want 'hello world'", stdout.AsString())
 	}
 	exitCode, ok := result.Outputs["exit_code"]
 	if !ok {
 		t.Fatal("missing 'exit_code' in Outputs")
 	}
-	if exitCode != "0" {
-		t.Errorf("exit_code = %q, want '0'", exitCode)
+	if exitCode.AsString() != "0" {
+		t.Errorf("exit_code = %q, want '0'", exitCode.AsString())
 	}
 }
 
@@ -70,8 +70,8 @@ func TestShellAdapter_CapturesExitCode(t *testing.T) {
 	if !ok {
 		t.Fatal("missing 'exit_code' in Outputs")
 	}
-	if exitCode != "2" {
-		t.Errorf("exit_code = %q, want '2'", exitCode)
+	if exitCode.AsString() != "2" {
+		t.Errorf("exit_code = %q, want '2'", exitCode.AsString())
 	}
 }
 
@@ -123,7 +123,7 @@ func TestShellAdapter_StdoutCappedAtDefaultLimit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	stdout := result.Outputs["stdout"]
+	stdout := result.Outputs["stdout"].AsString()
 	const defaultCap = 4 * 1024 * 1024
 	if len(stdout) > defaultCap {
 		t.Errorf("stdout length %d exceeds default cap of %d bytes", len(stdout), defaultCap)
@@ -132,7 +132,7 @@ func TestShellAdapter_StdoutCappedAtDefaultLimit(t *testing.T) {
 		t.Error("stdout is empty; expected some captured output")
 	}
 	// No truncation sentinel should be present.
-	if result.Outputs["_truncated_stdout"] != "" {
+	if _, ok := result.Outputs["_truncated_stdout"]; ok {
 		t.Errorf("unexpected truncation sentinel; stdout len=%d", len(stdout))
 	}
 }
@@ -151,14 +151,14 @@ func TestShellAdapter_StdoutExplicitSmallCapTriggersEvent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	stdout := result.Outputs["stdout"]
+	stdout := result.Outputs["stdout"].AsString()
 	if len(stdout) > 1024 {
 		t.Errorf("stdout length %d exceeds explicit cap of 1024", len(stdout))
 	}
 	if stdout == "" {
 		t.Error("stdout is empty; expected some captured output")
 	}
-	if result.Outputs["_truncated_stdout"] != "true" {
+	if v, ok := result.Outputs["_truncated_stdout"]; !ok || v.AsString() != "true" {
 		t.Error("expected _truncated_stdout sentinel to be set")
 	}
 	found := false

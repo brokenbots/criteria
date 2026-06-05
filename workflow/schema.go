@@ -328,6 +328,12 @@ type ConfigField struct {
 	Type      ConfigFieldType
 	Doc       string
 	Sensitive bool // marks the field as a taint-source for downstream tools
+	// CtyType is the full declared cty type for the field. For OutputSchema it is
+	// authoritative and drives typed coercion of step outputs (object/array/number/
+	// bool/string). cty.NilType means "no declared type" (permissive — value is
+	// preserved as a raw string). Config/input validation still uses Type; CtyType
+	// is the richer model needed for structured outputs.
+	CtyType cty.Type
 }
 
 // AdapterInfo describes an adapter's declared configuration schema.

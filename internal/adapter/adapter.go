@@ -5,6 +5,8 @@ package adapter
 import (
 	"context"
 
+	"github.com/zclconf/go-cty/cty"
+
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -28,9 +30,14 @@ type Result struct {
 	// On error, the engine treats the result as the conventional "failure"
 	// outcome (if mapped) regardless of this value.
 	Outcome string
-	// Outputs carries key/value pairs captured from the step execution (W04).
-	// Keys are defined by the adapter's OutputSchema. Nil means no outputs.
-	Outputs map[string]string
+	// Outputs carries the typed key/value pairs captured from the step execution
+	// (W04). Keys are defined by the adapter's OutputSchema; values carry their
+	// native cty type (object/array/number/bool/string) so structured outputs
+	// flow through steps.<name>.<key> without jsondecode(). Nil means no outputs.
+	//
+	// Producers that decode a string wire (the remote host) coerce raw strings to
+	// these types against the step's OutputSchema via workflow.CoerceStringToCty.
+	Outputs map[string]cty.Value
 }
 
 // Adapter executes a single step. The engine calls Execute once per step

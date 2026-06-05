@@ -297,12 +297,12 @@ func (f *fanInEventSink) close() {
 	<-f.done
 }
 
-// parallelIterResult holds the raw outcome and string outputs for one parallel
+// parallelIterResult holds the raw outcome and typed outputs for one parallel
 // iteration, keyed by its list index.
 type parallelIterResult struct {
 	index   int
 	outcome string
-	outputs map[string]string
+	outputs map[string]cty.Value
 	err     error
 }
 
@@ -420,7 +420,7 @@ func runParallelIterations(ctx context.Context, n *stepNode, items, keys []cty.V
 // adapter or a subworkflow step. It does not use the sequential cursor machinery
 // or outcome routing — it returns the raw outcome string and string-encoded
 // outputs so evaluateParallel can aggregate them.
-func (n *stepNode) runParallelIterationOnce(ctx context.Context, st *RunState, deps Deps) (outcome string, outputs map[string]string, err error) {
+func (n *stepNode) runParallelIterationOnce(ctx context.Context, st *RunState, deps Deps) (outcome string, outputs map[string]cty.Value, err error) {
 	if n.step.TargetKind == workflow.StepTargetSubworkflow {
 		return n.runParallelSubworkflowIteration(ctx, st, deps)
 	}
@@ -432,7 +432,7 @@ func (n *stepNode) runParallelIterationOnce(ctx context.Context, st *RunState, d
 // This preserves the same step-execution semantics as non-parallel adapter steps:
 // max_visits enforcement (via the shared Visits map + VisitsMu in st), per-step
 // timeout wrapping, retry behaviour, and fatal-error propagation.
-func (n *stepNode) runParallelAdapterIteration(ctx context.Context, st *RunState, deps Deps) (outcome string, outputs map[string]string, err error) {
+func (n *stepNode) runParallelAdapterIteration(ctx context.Context, st *RunState, deps Deps) (outcome string, outputs map[string]cty.Value, err error) {
 	effectiveStep, resolveErr := n.resolveInput(ctx, st.Vars, st.WorkflowDir, deps.Sessions.RedactionRegistry)
 	if resolveErr != nil {
 		return "", nil, fmt.Errorf("step %q: input expression error: %w", n.step.Name, resolveErr)
@@ -449,7 +449,7 @@ func (n *stepNode) runParallelAdapterIteration(ctx context.Context, st *RunState
 // spawns a fresh subworkflow execution per iteration. Each subworkflow gets its
 // own child scope and DataStore, matching the sequential subworkflow step
 // semantics. Returns the raw outcome string and string-encoded outputs.
-func (n *stepNode) runParallelSubworkflowIteration(ctx context.Context, st *RunState, deps Deps) (outcome string, outputs map[string]string, err error) {
+func (n *stepNode) runParallelSubworkflowIteration(ctx context.Context, st *RunState, deps Deps) (outcome string, outputs map[string]cty.Value, err error) {
 	swNode, ok := n.graph.Subworkflows[n.step.SubworkflowRef]
 	if !ok {
 		return "", nil, fmt.Errorf("step %q: subworkflow %q not found", n.step.Name, n.step.SubworkflowRef)
@@ -480,11 +480,8 @@ func (n *stepNode) runParallelSubworkflowIteration(ctx context.Context, st *RunS
 		return "failure", nil, nil
 	}
 
-	stringOutputs, renderErr := ctyOutputsToStrings(n.step.Name, swOutputs)
-	if renderErr != nil {
-		return "", nil, renderErr
-	}
-	return "success", stringOutputs, nil
+	// Subworkflow outputs are already typed cty values; carry them through.
+	return "success", swOutputs, nil
 }
 
 // parallelOutputKey returns the output accumulation key for a parallel
@@ -493,26 +490,6 @@ func (n *stepNode) runParallelSubworkflowIteration(ctx context.Context, st *RunS
 // index of the item in the list.
 func parallelOutputKey(index int) cty.Value {
 	return cty.NumberIntVal(int64(index))
-}
-
-// ctyOutputsToStrings converts a map[string]cty.Value (subworkflow outputs) to
-// map[string]string using renderCtyValue. Non-string cty values are JSON-encoded.
-// Returns an error if any value cannot be rendered, matching the non-parallel
-// subworkflow output path in evaluateSubworkflowStep.
-func ctyOutputsToStrings(stepName string, outputs map[string]cty.Value) (map[string]string, error) {
-	result := make(map[string]string, len(outputs))
-	for k, v := range outputs {
-		if v.IsKnown() && !v.IsNull() && v.Type() == cty.String {
-			result[k] = v.AsString()
-			continue
-		}
-		rendered, err := renderCtyValue(v)
-		if err != nil {
-			return nil, fmt.Errorf("step %q: subworkflow output %q: %w", stepName, k, err)
-		}
-		result[k] = rendered
-	}
-	return result, nil
 }
 
 // classifyIterError interprets a parallelIterResult error for aggregation.

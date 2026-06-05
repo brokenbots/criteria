@@ -4,6 +4,7 @@ package workflow
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -333,7 +334,7 @@ func ApplyVarOverrides(g *FSMGraph, vars map[string]cty.Value, overrides map[str
 
 // WithStepOutputs returns a new vars map with the given step's outputs merged
 // under vars["steps"][stepName]. Existing step entries are preserved.
-func WithStepOutputs(vars map[string]cty.Value, stepName string, outputs map[string]string) map[string]cty.Value {
+func WithStepOutputs(vars map[string]cty.Value, stepName string, outputs map[string]cty.Value) map[string]cty.Value {
 	if vars == nil {
 		vars = map[string]cty.Value{
 			"var":   cty.EmptyObjectVal,
@@ -341,10 +342,12 @@ func WithStepOutputs(vars map[string]cty.Value, stepName string, outputs map[str
 		}
 	}
 
-	// Build the step output object.
+	// Build the step output object. Values are stored with their native cty type
+	// (object/array/number/bool/string) so downstream expressions see structured
+	// data without jsondecode().
 	stepVals := make(map[string]cty.Value, len(outputs))
 	for k, v := range outputs {
-		stepVals[k] = cty.StringVal(v)
+		stepVals[k] = v
 	}
 
 	// Merge into the existing steps object.
@@ -494,7 +497,7 @@ func ClearWhileBinding(vars map[string]cty.Value) map[string]cty.Value {
 //
 // Internally, indexed outputs are stored under vars["steps"][stepName] as a
 // cty map or tuple. The engine accumulates entries across iterations.
-func WithIndexedStepOutput(vars map[string]cty.Value, stepName string, index cty.Value, outputs map[string]string) map[string]cty.Value {
+func WithIndexedStepOutput(vars map[string]cty.Value, stepName string, index cty.Value, outputs map[string]cty.Value) map[string]cty.Value {
 	if vars == nil {
 		vars = map[string]cty.Value{
 			"var":   cty.EmptyObjectVal,
@@ -502,10 +505,11 @@ func WithIndexedStepOutput(vars map[string]cty.Value, stepName string, index cty
 		}
 	}
 
-	// Build the new entry object for this iteration's outputs.
+	// Build the new entry object for this iteration's outputs, preserving the
+	// native cty type of each value.
 	entryVals := make(map[string]cty.Value, len(outputs))
 	for k, v := range outputs {
-		entryVals[k] = cty.StringVal(v)
+		entryVals[k] = v
 	}
 	var entry cty.Value
 	if len(entryVals) > 0 {
@@ -579,19 +583,18 @@ func SerializeVarScope(vars map[string]cty.Value, cursorStack ...[]IterCursor) (
 		scope["var"] = varMap
 	}
 	if stepsObj, ok := vars["steps"]; ok && stepsObj != cty.NilVal && stepsObj.Type().IsObjectType() {
-		stepsMap := map[string]map[string]string{}
-		for stepName := range stepsObj.Type().AttributeTypes() {
-			stepObj := stepsObj.GetAttr(stepName)
-			if !stepObj.Type().IsObjectType() {
-				continue
-			}
-			stepOutputs := map[string]string{}
-			for k := range stepObj.Type().AttributeTypes() {
-				stepOutputs[k] = CtyValueToString(stepObj.GetAttr(k))
-			}
-			stepsMap[stepName] = stepOutputs
+		// Step outputs are stored with their native cty type. Serialize the whole
+		// steps object as a cty-JSON value plus its type so structured/typed
+		// outputs (object/array/number/bool) round-trip losslessly on reattach.
+		// A legacy string-map "steps" form is still read on restore for in-flight
+		// runs checkpointed before this format existed.
+		valBytes, errV := ctyjson.Marshal(stepsObj, stepsObj.Type())
+		typeBytes, errT := ctyjson.MarshalType(stepsObj.Type())
+		if err := errors.Join(errV, errT); err != nil {
+			return "", fmt.Errorf("cannot serialize step outputs: %w", err)
 		}
-		scope["steps"] = stepsMap
+		scope["steps_typed"] = string(valBytes)
+		scope["steps_typed_type"] = string(typeBytes)
 	}
 	// Encode the iteration cursor stack when provided. Items are intentionally
 	// omitted from each cursor (re-evaluated on reattach).
@@ -632,6 +635,64 @@ func SerializeVarScope(vars map[string]cty.Value, cursorStack ...[]IterCursor) (
 	return string(b), err
 }
 
+// typedStepsFromScope extracts the typed (cty-JSON) step-output value and type
+// bytes from a decoded scope map. It returns ok=false when the typed form is
+// absent (e.g. a legacy checkpoint), so callers can fall back to the string form.
+func typedStepsFromScope(raw map[string]interface{}) (valBytes, typeBytes []byte, ok bool) {
+	v, vok := raw["steps_typed"].(string)
+	t, tok := raw["steps_typed_type"].(string)
+	if !vok || !tok {
+		return nil, nil, false
+	}
+	return []byte(v), []byte(t), true
+}
+
+// restoreStepOutputs rebuilds the vars["steps"] object from a decoded scope map.
+// It prefers the typed (cty-JSON) form, which preserves structured/native types,
+// and falls back to the legacy string-map form for runs checkpointed before the
+// typed format existed. Returns cty.NilVal when no step outputs are present.
+func restoreStepOutputs(raw map[string]interface{}) (cty.Value, error) {
+	if stepsVal, stepsTypeBytes, ok := typedStepsFromScope(raw); ok {
+		stepsType, err := ctyjson.UnmarshalType(stepsTypeBytes)
+		if err != nil {
+			return cty.NilVal, fmt.Errorf("restore typed step outputs: type: %w", err)
+		}
+		v, err := ctyjson.Unmarshal(stepsVal, stepsType)
+		if err != nil {
+			return cty.NilVal, fmt.Errorf("restore typed step outputs: %w", err)
+		}
+		if v.Type().IsObjectType() {
+			return v, nil
+		}
+		return cty.NilVal, nil
+	}
+
+	stepsData, ok := raw["steps"].(map[string]interface{})
+	if !ok {
+		return cty.NilVal, nil
+	}
+	stepsAttrs := map[string]cty.Value{}
+	for stepName, stepOutputsRaw := range stepsData {
+		outputMap, ok := stepOutputsRaw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		stepVals := make(map[string]cty.Value, len(outputMap))
+		for k, v := range outputMap {
+			if sv, ok := v.(string); ok {
+				stepVals[k] = cty.StringVal(sv)
+			}
+		}
+		if len(stepVals) > 0 {
+			stepsAttrs[stepName] = cty.ObjectVal(stepVals)
+		}
+	}
+	if len(stepsAttrs) > 0 {
+		return cty.ObjectVal(stepsAttrs), nil
+	}
+	return cty.NilVal, nil
+}
+
 // RestoreVarScope rebuilds a run's vars map and iteration cursor stack from
 // a JSON-encoded scope snapshot and the compiled workflow graph. Variable
 // defaults come from the graph; step outputs are restored from the JSON scope.
@@ -639,7 +700,7 @@ func SerializeVarScope(vars map[string]cty.Value, cursorStack ...[]IterCursor) (
 // The returned []IterCursor is non-nil only when the scope JSON contains an
 // "iter" field. Each cursor's Items field is nil; the step re-evaluates the
 // expression on re-entry.
-func RestoreVarScope(scopeJSON string, g *FSMGraph) (map[string]cty.Value, []IterCursor, error) { //nolint:gocognit // scope restoration must handle iter cursors, nested vars, and multiple scope shapes
+func RestoreVarScope(scopeJSON string, g *FSMGraph) (map[string]cty.Value, []IterCursor, error) {
 	vars := SeedVarsFromGraph(g)
 
 	if scopeJSON == "" {
@@ -651,25 +712,11 @@ func RestoreVarScope(scopeJSON string, g *FSMGraph) (map[string]cty.Value, []Ite
 		return vars, nil, fmt.Errorf("restore scope: %w", err)
 	}
 
-	// Restore steps outputs.
-	if stepsData, ok := raw["steps"].(map[string]interface{}); ok {
-		stepsAttrs := map[string]cty.Value{}
-		for stepName, stepOutputsRaw := range stepsData {
-			if outputMap, ok := stepOutputsRaw.(map[string]interface{}); ok {
-				stepVals := make(map[string]cty.Value, len(outputMap))
-				for k, v := range outputMap {
-					if sv, ok := v.(string); ok {
-						stepVals[k] = cty.StringVal(sv)
-					}
-				}
-				if len(stepVals) > 0 {
-					stepsAttrs[stepName] = cty.ObjectVal(stepVals)
-				}
-			}
-		}
-		if len(stepsAttrs) > 0 {
-			vars["steps"] = cty.ObjectVal(stepsAttrs)
-		}
+	// Restore step outputs (typed cty-JSON form, or legacy string-map fallback).
+	if steps, err := restoreStepOutputs(raw); err != nil {
+		return vars, nil, err
+	} else if steps != cty.NilVal {
+		vars["steps"] = steps
 	}
 
 	// Restore iteration cursor stack.
