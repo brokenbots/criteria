@@ -2,6 +2,14 @@
 
 **Phase:** Adapter v2 · **Track:** Release gate · **Owner:** Workstream executor · **Depends on:** WS01–WS39 (all). · **Unblocks:** [WS41](WS41-extract-adapter-proto-repo.md), [WS42](WS42-extract-shell-adapter.md), [WS43](WS43-independence-verification.md). · **Base branch:** `adapter-v2`
 
+> **Reassessment (2026-06-05).** The four gates were re-scoped against current reality:
+> - **Gate 1 (conformance) — DONE, rescoped.** Per [ADR-0003](../../docs/adrs/ADR-0003-conformance-scope.md) the host validates host + the imported Go SDK + `proto-drift`, all green in `ci.yml`. It no longer requires every SDK's reference adapter on every platform; each SDK owns its own conformance.
+> - **Gate 2 (migrated adapters in CI) — rescope to match.** `ci.yml` e2e already builds and exercises the in-tree adapters (shell/copilot/noop/mcp) + example workflows. The host should not run all five external TS adapters in its own CI; it should run the in-tree set plus **one representative external adapter via the OCI pull path** (available once WS28 lands). External adapters self-test in their repos.
+> - **Gate 3 (remote e2e) — real, needs a run.** `remote-e2e.yml` builds the remote smoke adapter, dockerizes it, and runs `go test ./internal/ci/smoke/...`. It triggers only on `tag v*` / weekly / `workflow_dispatch`, so it has not run on `adapter-v2`. Validate via dispatch and wire into the RC flow.
+> - **Gate 4 (publishing-flow) — the real remaining blocker.** Needs **WS28** (publish action) + **WS27** (starters). This is the next work item.
+>
+> Net: only Gate 4 (WS28/WS27) is substantive; Gate 3 needs one validation run; Gates 1–2 are done/rescoped.
+
 ## Context
 
 `README.md` D57. Stand up the four verification gates, confirm they pass on the tip of main, and tag the v2 release.

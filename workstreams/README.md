@@ -92,18 +92,20 @@ then reviewed WS-by-WS against the tree and CI (see findings below).
   WS26, WS31, WS37**. (WS37 confirmed during review — the adapter v1 protocol is fully
   removed; the `proto/criteria/v1` that remains is the unrelated server/run API.)
 - **Remaining in [`adapter_v2/`](adapter_v2/), grouped by the release critical path:**
-  - *Publishing infra (blocks everything downstream):* **WS28** reusable publish action
-    (no `.github/actions` yet), **WS27** starter repos, **WS29** GitLab/Makefile paths.
-  - *SDKs — must publish reference adapters to un-stub the conformance gate:* **WS23** TS
+  - *Publishing infra (the real remaining release blocker — Gate 4):* **WS28** reusable
+    publish action (no `.github/actions` yet), **WS27** starter repos, **WS29** GitLab/Makefile.
+  - *SDKs (each owns its own conformance per ADR-0003 — no longer gate the host):* **WS23** TS
     (`--emit-manifest` flagged missing), **WS24** Python, **WS25** Go author-SDK
     (`criteria-go-adapter-sdk` is external — the in-tree `sdk/` is the *host* SDK; PR #205
     closed unmerged). **WS21** serveRemote: Go side done in-tree (`adapterhost.ServeRemote`),
     TS/Py external.
-  - *External TS adapter migrations (separate repos; logs show complete, tests passing):*
-    WS30, WS32, WS33, WS34, WS35.
-  - *Release gates (blocked on the above):* **WS38** e2e+publish gate (`remote-e2e.yml`
-    real but never run), **WS40** v2 release gate (conformance matrix is an `exit 1`
-    placeholder awaiting SDK reference adapters; no v0.4 tag).
+  - *External TS adapter migrations (separate repos, pushed in Track A; logs show complete,
+    tests passing):* WS30, WS32, WS33, WS34, WS35.
+  - *Release gates — reassessed 2026-06-05 (see WS40 note):* Gate 1 conformance **done**
+    (rescoped, [ADR-0003](../docs/adrs/ADR-0003-conformance-scope.md)); Gate 2 in-tree adapters
+    covered in `ci.yml` e2e, rescope pending; Gate 3 **WS38** `remote-e2e.yml` real but only
+    runs on tag/weekly/dispatch; Gate 4 publishing = WS28/WS27. **WS40** still needs Gate 4 +
+    a Gate 3 validation run + the v2 tag.
   - *Independence + hardening:* **WS41** proto extraction (still in-tree), **WS42** shell
     extraction (de-builtin'd to `cmd/`, not its own repo), **WS43** independence verify,
     **WS44** coverage ratchet, **WS39** docs refresh (`adapters.md` exists; lockfile/CLI/
