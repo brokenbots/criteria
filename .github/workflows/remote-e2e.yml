@@ -1,13 +1,12 @@
 name: Remote E2E
 
 on:
-  push:
-    tags:
-      - 'v*'
   schedule:
     - cron: '0 0 * * 0'
   workflow_dispatch:
-  # Allow release-gates.yml to invoke this as Gate 3 (D57.3) on a release tag.
+  # Invoked as Gate 3 (D57.3) by release.yml on a release/pre-release tag. The
+  # release pipeline owns the tag trigger so the release cannot publish unless
+  # this gate (and the others) pass.
   workflow_call:
 
 jobs:
@@ -56,12 +55,12 @@ jobs:
           # (which the Go tool ignores in workspace mode). The smoke test builds
           # it the same way (see buildFixtureAdapter in remote_adapter_test.go).
           GOWORK=off GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o /tmp/criteria-adapter-remote-smoke .
+          # The binary is already built into /tmp (the docker build context).
           cat > /tmp/Dockerfile <<'EOF'
           FROM scratch
           COPY criteria-adapter-remote-smoke /usr/local/bin/criteria-adapter-remote-smoke
           ENTRYPOINT ["/usr/local/bin/criteria-adapter-remote-smoke"]
           EOF
-          cp /tmp/criteria-adapter-remote-smoke /tmp/
           docker build -f /tmp/Dockerfile -t criteria-adapter-remote-smoke:dev /tmp
 
       - name: Run remote smoke tests

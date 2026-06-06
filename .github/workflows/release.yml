@@ -60,10 +60,93 @@ jobs:
               ;;
           esac
 
+  # ── Verification gates (D57) — the release cannot publish unless all pass ────
+  # build/docker-image (and therefore sign + publish) depend on every gate, so a
+  # failed gate skips the entire release. Heavy gates (remote/publish) run here
+  # on the tag rather than on every PR.
+  gate-conformance:
+    name: Gate 1 — conformance
+    runs-on: ubuntu-latest
+    needs: guard
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Sync workspace
+        run: go work sync
+      - name: Conformance suite
+        run: make test-conformance
+
+  gate-e2e:
+    name: Gate 2 — in-tree adapters e2e
+    runs-on: ubuntu-latest
+    needs: guard
+    env:
+      CRITERIA_ADAPTERS: ${{ github.workspace }}/bin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Sync workspace
+        run: go work sync
+      - name: Build binary and adapter plugins
+        run: make build plugins
+      - name: CLI smoke test
+        run: ./bin/criteria apply examples/hello --events-file /tmp/events.ndjson
+      - name: Validate example workflows
+        run: make validate
+      - name: Example plugin end-to-end
+        run: make example-plugin
+
+  gate-remote:
+    name: Gate 3 — remote transport e2e
+    needs: guard
+    uses: ./.github/workflows/remote-e2e.yml
+
+  gate-publish:
+    name: Gate 4 — publishing flow
+    runs-on: ubuntu-latest
+    needs: guard
+    services:
+      registry:
+        image: registry:2
+        ports:
+          - 5000:5000
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build the criteria CLI and the in-tree noop adapter
+        run: |
+          set -euo pipefail
+          go build -o /usr/local/bin/criteria ./cmd/criteria
+          go build -o "${RUNNER_TEMP}/criteria-adapter-noop" ./cmd/criteria-adapter-noop
+      - name: Publish noop to the local registry
+        run: |
+          set -euo pipefail
+          criteria adapter publish "${RUNNER_TEMP}/criteria-adapter-noop" \
+            --registry localhost:5000/noop:v1.0.0
+      - name: Pull it back and verify the round-trip
+        env:
+          CRITERIA_STATE_DIR: ${{ runner.temp }}/criteria-state
+        run: |
+          set -euo pipefail
+          criteria adapter pull --allow-unsigned localhost:5000/noop:v1.0.0
+          criteria adapter info noop
+          binary=$(criteria adapter where noop)
+          echo "pulled binary: $binary"
+          test -s "$binary"
+
   build:
     name: Build binaries
     runs-on: ubuntu-latest
-    needs: guard
+    needs: [guard, gate-conformance, gate-e2e, gate-remote, gate-publish]
     strategy:
       matrix:
         include:
@@ -119,7 +202,7 @@ jobs:
   docker-image:
     name: Build Docker image tar
     runs-on: ubuntu-latest
-    needs: guard
+    needs: [guard, gate-conformance, gate-e2e, gate-remote, gate-publish]
     steps:
       - uses: actions/checkout@v4
 

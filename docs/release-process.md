@@ -8,34 +8,39 @@ in each adapter's / SDK's own repo, not here.
 
 | Gate | What it checks | Where it runs |
 |------|----------------|---------------|
-| **Gate 1** — conformance | Host ⇆ imported Go SDK + proto compatibility (per [ADR-0003](adrs/ADR-0003-conformance-scope.md)): `TestNoopAdapterConformance` (subprocess), the in-memory SDK suite, and `proto-drift`. | [`ci.yml`](../.github/workflows/ci.yml) `unit-tests` + `proto-drift` jobs (every push/PR) |
-| **Gate 2** — in-tree adapters | Builds the in-tree adapters (`noop`, `mcp`) and validates + runs the example workflows end-to-end. | [`ci.yml`](../.github/workflows/ci.yml) `e2e` job (every push/PR) |
-| **Gate 3** — remote transport e2e | Spins up a remote fixture adapter that phones home over mTLS, runs a representative workflow, and exercises crash-policy recovery. | [`remote-e2e.yml`](../.github/workflows/remote-e2e.yml), reused by [`release-gates.yml`](../.github/workflows/release-gates.yml) |
-| **Gate 4** — publishing flow | Publishes the in-tree `noop` adapter to an ephemeral local OCI registry via `criteria adapter publish`, then pulls it back and verifies the manifest / `Info()` round-trip. | [`release-gates.yml`](../.github/workflows/release-gates.yml) `gate-4-publish-flow` job |
+| **Gate 1** — conformance | Host ⇆ imported Go SDK + proto compatibility (per [ADR-0003](adrs/ADR-0003-conformance-scope.md)): `TestNoopAdapterConformance` (subprocess) + the in-memory SDK suite. | `release.yml` `gate-conformance` (also `ci.yml` `unit-tests` + `proto-drift` on every push/PR) |
+| **Gate 2** — in-tree adapters | Builds the in-tree adapters (`noop`, `mcp`) and validates + runs the example workflows end-to-end. | `release.yml` `gate-e2e` (also `ci.yml` `e2e` on every push/PR) |
+| **Gate 3** — remote transport e2e | Spins up a remote fixture adapter that phones home over mTLS, runs a representative workflow, and exercises crash-policy recovery. | `release.yml` `gate-remote` → reuses [`remote-e2e.yml`](../.github/workflows/remote-e2e.yml) |
+| **Gate 4** — publishing flow | Publishes the in-tree `noop` adapter to an ephemeral local OCI registry via `criteria adapter publish`, then pulls it back and verifies the manifest / `Info()` round-trip. | `release.yml` `gate-publish` |
 
-## Running the gates
+## The release is gated on the gates
 
-- **Gates 1 & 2** run automatically on every push and pull request via `ci.yml`.
-- **Gates 3 & 4** run on every `v*` tag push and on demand via `workflow_dispatch`
-  on [`release-gates.yml`](../.github/workflows/release-gates.yml). The
-  `gates-passed` aggregation job requires **both** to succeed.
+On a release or pre-release tag, [`release.yml`](../.github/workflows/release.yml)
+runs **all four gates first**; the `build`, `docker-image`, `checksum-and-sign`,
+and `release` (publish) jobs `needs:` every gate. **If any gate fails, the build
+and publish jobs are skipped — a release can never be published when a gate is
+red.** This is the single source of truth on tags; there is no separate
+release-gates workflow.
 
-To validate the tag-only gates on a release-candidate branch before tagging:
+Gates 1 & 2 also run on every push/PR via `ci.yml` for fast feedback; the heavier
+Gates 3 & 4 run only on a tag (inside `release.yml`) and on demand
+(`workflow_dispatch` / weekly schedule for `remote-e2e.yml`).
+
+To validate the heavy gates on a branch before tagging, dispatch the remote gate
+directly, or simply cut a pre-release tag (which runs the full gated pipeline):
 
 ```sh
-gh workflow run release-gates.yml --ref <branch>
-# or just the remote gate on its own:
-gh workflow run remote-e2e.yml --ref <branch>
+gh workflow run remote-e2e.yml --ref <branch>   # Gate 3 only
+# or cut a pre-release to exercise all four gates + the gated publish:
+git tag -a vX.Y.Z-rc1 -m "rc" && git push origin vX.Y.Z-rc1
 ```
 
 ## Gate 3 — remote transport end-to-end
 
 Gate 3 reuses the WS22 remote smoke ([`remote-e2e.yml`](../.github/workflows/remote-e2e.yml)),
-which builds the in-tree remote fixture adapter, dockerizes it, and runs
-`go test ./internal/ci/smoke/...` with `CRITERIA_REMOTE_E2E=1`. It is gated to
-tags / weekly schedule / dispatch (not every push) because it is heavier than the
-PR suite. **Trigger it via `workflow_dispatch` on the release-candidate branch and
-confirm green before tagging.**
+which builds the in-tree remote fixture adapter (`GOWORK=off`, since it is a nested
+module under `testdata/`), dockerizes it, and runs `go test ./internal/ci/smoke/...`
+with `CRITERIA_REMOTE_E2E=1`. `release.yml` invokes it as the `gate-remote` job.
 
 ## Gate 4 — publishing flow (self-contained)
 
@@ -59,27 +64,22 @@ signature verification at pull) is validated in each adapter repo's own
 registry namespace exist. Keeping that out of the criteria repo's CI is deliberate:
 the host repo depends only on itself.
 
-## Enforcing the gates on a release
-
-Wire `Release gates passed` as a **required status check** on tag/release
-protection so a failed gate blocks publishing the release. The
-[`release.yml`](../.github/workflows/release.yml) build runs in parallel; the
-required check is what prevents promoting a tag whose gates are red.
-
 ## Tagging the release (WS40)
 
-Once all four gates are green on the candidate and out-of-band manual testing has
-signed off, tag the release. **"v2" is the adapter _protocol_ version, not the
-product version** — this release is tagged on the `0.5.0` line:
+Once out-of-band manual testing has signed off, tag the release. **"v2" is the
+adapter _protocol_ version, not the product version** — this release is tagged on
+the `0.5.0` line:
 
 ```sh
 git tag -s v0.5.0 -m "Criteria v0.5.0 (adapter protocol v2)"
 git push origin v0.5.0
 ```
 
-The signed tag triggers `release.yml` (binaries, Homebrew tap) and
-`release-gates.yml` (Gates 3 & 4). Generate the GitHub Release notes from the
-`CHANGELOG.md` v0.5.0 section.
+The signed tag triggers `release.yml`, which runs the four gates and — only if
+they all pass — builds, signs, and publishes the release (binaries, Homebrew
+tap). The release-source guard additionally requires a full-release tag to point
+at a commit on `main`. Generate the GitHub Release notes from the `CHANGELOG.md`
+v0.5.0 section.
 
 ## Verifying independence (WS43)
 
