@@ -1,57 +1,78 @@
 version: 2
+
+# Dependency-freshness & supply-chain policy: docs/dependency-policy.md
+#
+# Dependabot owns only the routine minor/patch lane. Majors are SIGNALS here, not
+# merge-ready PRs — a Go major is a module-path (/vN) change driven by `gomajor`
+# (see `make deps-majors`), which Dependabot cannot perform. Freshness is tracked
+# by `make deps-outdated` (go-mod-outdated), not by this file.
+#
+# Every ecosystem carries a 7-day cooldown so a freshly-published (possibly
+# compromised) release is not ingested immediately. Security updates are exempt
+# from the cooldown by Dependabot's design. Majors are no longer ignored.
+
 updates:
   # Root module
   - package-ecosystem: gomod
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     groups:
       minor-and-patch:
         update-types:
           - minor
           - patch
-    ignore:
-      - dependency-name: "*"
-        update-types: ["version-update:semver-major"]
 
   # SDK sub-module
   - package-ecosystem: gomod
     directory: /sdk
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     groups:
       minor-and-patch:
         update-types:
           - minor
           - patch
-    ignore:
-      - dependency-name: "*"
-        update-types: ["version-update:semver-major"]
+
+  # Tools sub-module (golangci-lint, gomajor, go-mod-outdated, spec-gen deps)
+  - package-ecosystem: gomod
+    directory: /tools
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
 
   # Workflow sub-module
   - package-ecosystem: gomod
     directory: /workflow
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     groups:
       minor-and-patch:
         update-types:
           - minor
           - patch
-    ignore:
-      - dependency-name: "*"
-        update-types: ["version-update:semver-major"]
 
   # GitHub Actions
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     groups:
       minor-and-patch:
         update-types:
           - minor
           - patch
-    ignore:
-      - dependency-name: "*"
-        update-types: ["version-update:semver-major"]

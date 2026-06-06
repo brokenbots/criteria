@@ -1,5 +1,5 @@
 .PHONY: help bootstrap tidy build plugins install proto proto-lint proto-check-drift \
-	test test-cover test-conformance test-flake-watch lint-imports lint-go lint-baseline-check lint-no-todos lint vuln-scan validate validate-docs validate-self-workflows example-plugin bench docker-runtime docker-runtime-smoke ci self self-loop clean
+	test test-cover test-conformance test-flake-watch lint-imports lint-go lint-baseline-check lint-no-todos lint vuln-scan deps-outdated deps-majors validate validate-docs validate-self-workflows example-plugin bench docker-runtime docker-runtime-smoke ci self self-loop clean
 
 # Default target: list available targets.
 help:
@@ -158,6 +158,23 @@ lint: lint-imports lint-go lint-baseline-check spec-check lint-no-todos ## Run a
 OSV_SCANNER_VERSION := v2.3.8
 vuln-scan: ## Scan all workspace modules for known vulnerabilities (osv-scanner; local parity with CI osv-scan)
 	go run github.com/google/osv-scanner/v2/cmd/osv-scanner@$(OSV_SCANNER_VERSION) scan source -r .
+
+# Dependency-freshness tooling (WS50). gomajor + go-mod-outdated are pinned in
+# tools/go.mod, so these `go run` invocations resolve via the workspace (no
+# floating @latest). This is the source of truth for "are we on latest
+# major.minor", not Dependabot. See docs/dependency-policy.md.
+MODULES := . sdk tools workflow
+deps-outdated: ## Report direct deps behind their latest minor/patch (workspace-wide; go-mod-outdated)
+	@# The go.work graph unifies all four modules (., sdk, tools, workflow), so a
+	@# single workspace-wide listing covers them all. Per-module GOWORK=off does
+	@# not work here: the modules require each other by local path, not a tag.
+	go list -u -m -json all | go run github.com/psampaz/go-mod-outdated -update -direct
+
+deps-majors: ## List available major-version (/vN) upgrades per module (gomajor); WS51 applies them
+	@for m in $(MODULES); do \
+		echo "== $$m =="; \
+		( cd $$m && go run github.com/icholy/gomajor list ) ; \
+	done
 
 validate: build ## Validate all example workflow directories
 	@for d in examples/build_and_test examples/copilot_planning_then_execution \
