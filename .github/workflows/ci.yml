@@ -85,7 +85,7 @@ jobs:
     env:
       # The shell adapter is now an out-of-process discovered binary (not an
       # in-process builtin), so e2e steps must find the built adapter plugins.
-      CRITERIA_PLUGINS: ${{ github.workspace }}/bin
+      CRITERIA_ADAPTERS: ${{ github.workspace }}/bin
     steps:
       - uses: actions/checkout@v4
 

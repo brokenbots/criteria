@@ -14,7 +14,7 @@ A Criteria workflow defines:
 ### Architecture model
 
 - **Criteria** compiles HCL workflows to FSM graphs and executes them by invoking adapters.
-- **Adapters** are out-of-process plugins discovered from `$CRITERIA_PLUGINS` or `~/.criteria/plugins` (see [plugins.md](plugins.md)).
+- **Adapters** are out-of-process plugins discovered from `$CRITERIA_ADAPTERS` or `~/.criteria/adapters` (see [plugins.md](plugins.md)).
 - **Server** (optional) is the orchestrator server that persists runs, enables resumption after crashes, and provides UI and approval RPCs.
 
 ### Execution modes
@@ -292,8 +292,8 @@ Explicit `lifecycle = "open"` and `lifecycle = "close"` steps from v0.2.0 are no
 
 Adapters resolve to plugin binaries named `criteria-adapter-<name>`. Discovery order:
 
-1. `$CRITERIA_PLUGINS/<name>`
-2. `~/.criteria/plugins/<name>`
+1. `$CRITERIA_ADAPTERS/<name>`
+2. `~/.criteria/adapters/<name>`
 
 See [plugins.md](plugins.md) for the plugin wire protocol and adapter development guide.
 

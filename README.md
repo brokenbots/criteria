@@ -122,14 +122,14 @@ Full language reference: [docs/workflow.md](docs/workflow.md)
 
 ## Plugins
 
-Adapter plugins are out-of-process binaries named `criteria-adapter-<name>`, discovered from `${CRITERIA_PLUGINS}/` or `~/.criteria/plugins/`.
+Adapter plugins are out-of-process binaries named `criteria-adapter-<name>`, discovered from `${CRITERIA_ADAPTERS}/` or `~/.criteria/adapters/`.
 
 ```bash
 # Build the bundled adapters (shell, noop, copilot, mcp)
 make plugins
 
 # Install the Copilot adapter
-cp bin/criteria-adapter-copilot ~/.criteria/plugins/
+cp bin/criteria-adapter-copilot ~/.criteria/adapters/
 ```
 
 Write your own plugin by following [docs/plugins.md](docs/plugins.md). Bundled adapters in `cmd/criteria-adapter-*` are the best starting reference — the plugin host contract (`internal/plugin`) is not importable by external modules.

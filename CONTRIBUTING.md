@@ -88,7 +88,7 @@ Additive changes (new fields, new events, new conformance test cases) are non-br
 
 ## Adapter plugins
 
-Plugin binaries are named `criteria-adapter-<name>` and must be placed in `${CRITERIA_PLUGINS}/` or `~/.criteria/plugins/`. Build the bundled adapters with `make plugins`. See [docs/plugins.md](docs/plugins.md) for the plugin wire protocol and development guide.
+Plugin binaries are named `criteria-adapter-<name>` and must be placed in `${CRITERIA_ADAPTERS}/` or `~/.criteria/adapters/`. Build the bundled adapters with `make plugins`. See [docs/plugins.md](docs/plugins.md) for the plugin wire protocol and development guide.
 
 ## Code style
 

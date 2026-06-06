@@ -68,8 +68,8 @@ here.
   surface or to event field numbers is a **breaking SDK change** —
   see [CONTRIBUTING.md](CONTRIBUTING.md) for the bump policy.
 - **Plugin model**: adapter plugins run out-of-process and are discovered
-  as `criteria-adapter-<name>` from `${CRITERIA_PLUGINS}/` first, then
-  `~/.criteria/plugins/`. Use `make plugins` to build all bundled adapter
+  as `criteria-adapter-<name>` from `${CRITERIA_ADAPTERS}/` first, then
+  `~/.criteria/adapters/`. Use `make plugins` to build all bundled adapter
   binaries. The plugin handshake cookie is `CRITERIA_PLUGIN`.
 - **HCL workflow syntax**: step-level adapter input uses `input { ... }`
   blocks; agent-level configuration stays on the `agent { }` block.
@@ -96,7 +96,7 @@ here.
 ## Common pitfalls
 
 - Copilot adapter execution requires installing `criteria-adapter-copilot`
-  into `${CRITERIA_PLUGINS}/` or `~/.criteria/plugins/`, plus the
+  into `${CRITERIA_ADAPTERS}/` or `~/.criteria/adapters/`, plus the
   `copilot` CLI on `PATH` (or pointed at via `CRITERIA_COPILOT_BIN`).
   There is no in-binary adapter code.
 - Server run/event ordering depends on server-assigned monotonic `seq`
