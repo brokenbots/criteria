@@ -44,7 +44,7 @@ var copilotSchema = AdapterInfo{
 }
 
 var testSchemas = map[string]AdapterInfo{
-	"shell":   shellSchema,
+	"exec":    shellSchema,
 	"copilot": copilotSchema,
 	"listy":   listSchema,
 	"noop":    noopSchema,
@@ -59,9 +59,9 @@ workflow {
   target_state  = "done"
 }
 
-adapter "shell" "default" {}
+adapter "exec" "default" {}
 step "run" {
-  target = adapter.shell.default
+  target = adapter.exec.default
   input {}
   outcome "success" { next = step.done }
   outcome "failure" { next = step.done }
@@ -93,9 +93,9 @@ workflow {
   target_state  = "done"
 }
 
-adapter "shell" "default" {}
+adapter "exec" "default" {}
 step "run" {
-  target = adapter.shell.default
+  target = adapter.exec.default
   input {
     command = "echo hi"
     unknown_key = "bad"
@@ -196,9 +196,9 @@ workflow {
   target_state  = "done"
 }
 
-adapter "shell" "default" {}
+adapter "exec" "default" {}
 step "run" {
-  target = adapter.shell.default
+  target = adapter.exec.default
   config = {
     command = "echo old"
   }
@@ -236,9 +236,9 @@ workflow {
   target_state  = "done"
 }
 
-adapter "shell" "default" {}
+adapter "exec" "default" {}
 step "run" {
-  target = adapter.shell.default
+  target = adapter.exec.default
   input {
     command  = "echo hi"
     extra    = "ok"
@@ -270,9 +270,9 @@ workflow {
   target_state  = "done"
 }
 
-adapter "shell" "default" {}
+adapter "exec" "default" {}
 step "run" {
-  target = adapter.shell.default
+  target = adapter.exec.default
   input {
     command = "echo hi"
   }

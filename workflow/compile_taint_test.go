@@ -69,10 +69,10 @@ variable "api_key" {
   default = "key"
 }
 
-adapter "shell" "default" {}
+adapter "exec" "default" {}
 
 step "run" {
-  target = adapter.shell.default
+  target = adapter.exec.default
   input {
     command = var.api_key
   }
@@ -116,10 +116,10 @@ data "internal" "token" {
   secret = true
 }
 
-adapter "shell" "default" {}
+adapter "exec" "default" {}
 
 step "run" {
-  target = adapter.shell.default
+  target = adapter.exec.default
   input {
     command = data.internal.token.value
   }
@@ -207,10 +207,10 @@ data "internal" "greeting" {
   value = "hello"
 }
 
-adapter "shell" "default" {}
+adapter "exec" "default" {}
 
 step "run" {
-  target = adapter.shell.default
+  target = adapter.exec.default
   input {
     command = data.internal.greeting.value
   }
@@ -247,10 +247,10 @@ variable "token" {
   secret = true
 }
 
-adapter "shell" "default" {}
+adapter "exec" "default" {}
 
 step "run" {
-  target = adapter.shell.default
+  target = adapter.exec.default
   input {
     command = var.token
   }
@@ -295,11 +295,11 @@ variable "api_key" {
   default = "key"
 }
 
-adapter "shell" "default" {}
+adapter "exec" "default" {}
 adapter "noop" "default" {}
 
 step "first" {
-  target = adapter.shell.default
+  target = adapter.exec.default
   secret_input {
     command = var.api_key
   }
@@ -345,10 +345,10 @@ variable "greeting" {
   default = "hello"
 }
 
-adapter "shell" "default" {}
+adapter "exec" "default" {}
 
 step "run" {
-  target = adapter.shell.default
+  target = adapter.exec.default
   input {
     command = var.greeting
   }
@@ -434,14 +434,14 @@ workflow {
   target_state  = "done"
 }
 
-adapter "shell" "default" {
+adapter "exec" "default" {
   secrets {
     api_key = "key"
   }
 }
 
 step "run" {
-  target = adapter.shell.default
+  target = adapter.exec.default
   input {
     command = "echo hi"
   }

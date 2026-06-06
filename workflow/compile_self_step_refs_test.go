@@ -20,10 +20,10 @@ data "internal" "slot" {
   type = string
 }
 
-adapter "shell" "default" {}
+adapter "exec" "default" {}
 
 step "first" {
-  target = adapter.shell.default
+  target = adapter.exec.default
   input { command = "echo hi" }
   outcome "success" {
     next = step.done
@@ -69,16 +69,16 @@ data "internal" "slot" {
   type = string
 }
 
-adapter "shell" "default" {}
+adapter "exec" "default" {}
 
 step "first" {
-  target = adapter.shell.default
+  target = adapter.exec.default
   input { command = "echo hi" }
   outcome "success" { next = step.second }
 }
 
 step "second" {
-  target = adapter.shell.default
+  target = adapter.exec.default
   input { command = "echo hi" }
   outcome "success" {
     next = step.done

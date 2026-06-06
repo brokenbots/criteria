@@ -270,7 +270,7 @@ func TestCompileCmd_MultiErrorFormat(t *testing.T) {
 }
 
 step "run" {
-  target = adapter.shell.default
+  target = adapter.noop.default
   input {
     command = "echo hi"
   }

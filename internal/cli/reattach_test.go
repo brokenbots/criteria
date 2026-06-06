@@ -117,10 +117,10 @@ workflow {
   target_state  = "done"
 }
 
-adapter "shell" "default" {}
+adapter "noop" "default" {}
 
 step "greet" {
-  target = adapter.shell.default
+  target = adapter.noop.default
   input {
     command = "echo hello"
   }
@@ -150,10 +150,10 @@ workflow {
   }
 }
 
-adapter "shell" "default" {}
+adapter "noop" "default" {}
 
 step "greet" {
-  target = adapter.shell.default
+  target = adapter.noop.default
   input {
     command = "echo hi"
   }

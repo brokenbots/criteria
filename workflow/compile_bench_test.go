@@ -43,7 +43,7 @@ func BenchmarkCompile_Hello(b *testing.B) {
 }
 
 // gen1000StepHCL generates a deterministic HCL workflow with n sequential
-// step nodes, each using adapter "shell" with a no-op echo command. The
+// step nodes, each using adapter "exec" with a no-op echo command. The
 // generated string exercises the HCL parser and compiler at scale.
 func gen1000StepHCL(n int) []byte {
 	var b strings.Builder
@@ -61,7 +61,7 @@ func gen1000StepHCL(n int) []byte {
 		}
 		fmt.Fprintf(&b, `
   step "step_%d" {
-    target = adapter.shell.default
+    target = adapter.exec.default
     input { command = "echo step_%d" }
     outcome "success" { next = step.%s }
     outcome "failure" { next = step.done }

@@ -50,16 +50,16 @@ workflow {
   target_state  = "__done__"
 }
 
-adapter "shell" "default" {}
+adapter "noop" "default" {}
 
 step "build" {
-  target = adapter.shell.default
+  target = adapter.noop.default
   input { command = "echo build" }
   outcome "success" { next = step.deploy }
 }
 
 step "deploy" {
-  target = adapter.shell.default
+  target = adapter.noop.default
   input {
     command = "echo ${steps.build.stdout}"
   }
@@ -113,7 +113,7 @@ func TestReattachRun_RestoresVarScope(t *testing.T) {
 		t.Fatalf("workflow.Parse: %s", diags)
 	}
 	graph, diags := workflow.Compile(spec, map[string]workflow.AdapterInfo{
-		"shell.default": {
+		"noop.default": {
 			InputSchema: map[string]workflow.ConfigField{
 				"command": {Type: workflow.ConfigFieldString, Required: true},
 			},
@@ -149,7 +149,7 @@ func TestReattachRun_RestoresVarScope(t *testing.T) {
 	// produced the expected string at execution time.
 	rec := &recordingAdapter{}
 	loader := &integrationLoader{plugins: map[string]adapterhost.Handle{
-		"shell": adapterhost.BuiltinFactoryForAdapter(rec)(),
+		"noop": adapterhost.BuiltinFactoryForAdapter(rec)(),
 	}}
 	sink := &integrationSink{}
 	eng := engine.New(graph, loader, sink, engine.WithResumedVars(restoredVars))
@@ -239,7 +239,7 @@ type recordingAdapter struct {
 	lastCommand string
 }
 
-func (r *recordingAdapter) Name() string               { return "shell" }
+func (r *recordingAdapter) Name() string               { return "noop" }
 func (r *recordingAdapter) Info() workflow.AdapterInfo { return workflow.AdapterInfo{} }
 func (r *recordingAdapter) Execute(_ context.Context, step *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
 	r.lastCommand = step.Input["command"]

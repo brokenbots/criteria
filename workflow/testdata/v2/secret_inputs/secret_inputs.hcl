@@ -11,10 +11,10 @@ variable "api_key" {
   default = "key"
 }
 
-adapter "shell" "default" {}
+adapter "exec" "default" {}
 
 step "run" {
-  target = adapter.shell.default
+  target = adapter.exec.default
   secret_input {
     command = var.api_key
   }

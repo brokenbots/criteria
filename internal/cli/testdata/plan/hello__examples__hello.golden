@@ -6,12 +6,12 @@ variables:
   (none)
 
 adapters:
-  shell.default   type=shell   on_crash=fail
+  noop.default   type=noop   on_crash=fail
     config: (none)
 
 steps (declaration order):
-  say_hello   adapter=shell.default
-    input keys: command
+  say_hello   adapter=noop.default
+    input keys: (none)
     allow_tools: (none)
     outcomes: success -> done, failure -> failed
 
@@ -20,4 +20,4 @@ states:
   failed    terminal=true   success=false
 
 adapters required:
-  shell   (search: $CRITERIA_PLUGINS, ~/.criteria/plugins)
+  noop   (search: $CRITERIA_PLUGINS, ~/.criteria/plugins)

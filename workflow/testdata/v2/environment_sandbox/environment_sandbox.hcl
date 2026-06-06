@@ -18,12 +18,12 @@ environment "sandbox" "secure" {
   }
 }
 
-adapter "shell" "default" {
+adapter "exec" "default" {
   environment = sandbox.secure
 }
 
 step "run" {
-  target = adapter.shell.default
+  target = adapter.exec.default
   input {
     command = "echo hi"
   }

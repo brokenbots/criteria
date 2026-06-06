@@ -280,6 +280,27 @@ The Go **adapter SDK** (`adapterhost`) no longer lives in the monorepo.
   policy stays). `docs/adapters.md` still uses copilot as its worked example and is left to
   the **WS39** documentation refresh.
 
+### Shell extraction (WS42 — 2026-06-05, session 4)
+
+- **WS42a — shell extraction (DONE).** [`criteria-adapter-shell`](https://github.com/brokenbots/criteria-adapter-shell)
+  repo created (`main` + tag **v0.5.0**, flattened to `package main`), published as a signed OCI
+  artifact (`ghcr.io/brokenbots/criteria-adapter-shell`); `conformance_test.go` preserved on the
+  repo's `deferred/conformance` branch; manifest gained `source_url` + `platforms`.
+- **WS42b — in-tree removal + test decoupling (DONE).** Per owner guidance, the monorepo must be
+  **self-contained**: no test fixture may depend on the extracted shell adapter (the WS42-spec
+  "pull shell + default registry ref for tests" approach was rejected — see
+  [[feedback-self-contained-tests]]). Findings: nothing imported `adapters/shell`; the
+  `--builtin-shell` dispatch no longer exists; removing the in-tree shell **broke no tests or
+  gates** (fixtures used `"shell"` as a string with mock executors). Reworked the ~30 affected
+  test files to neutral in-tree test adapters — **`noop`** for generic adapter refs, and a
+  dedicated **`exec`** command-adapter (carrying the old shell input/output/policy schema) for
+  the workflow-compiler tests that assert on `command`/`stdout`/`exit_code`/policy. The shell
+  **environment** type (`environment "shell"`, hardcoded in `compile_environments.go`) and
+  `allow_tools "shell:…"` tool grants are unchanged. Examples + `.criteria/workflows` keep using
+  `adapter "shell"` — that's correct real usage of the now-published external adapter. All four
+  modules build; full test suite, `make lint`, `make validate`, `make validate-self-workflows`
+  green.
+
 ## Language cleanup — Terraform-shaping the HCL (archived 2026-06-05)
 
 A focused sub-effort (WS01–WS11) that landed on `main` and merged into `adapter-v2`

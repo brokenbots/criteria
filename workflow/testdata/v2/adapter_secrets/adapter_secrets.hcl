@@ -5,14 +5,14 @@ workflow {
   target_state  = "done"
 }
 
-adapter "shell" "default" {
+adapter "exec" "default" {
   secrets {
     api_key = "key"
   }
 }
 
 step "run" {
-  target = adapter.shell.default
+  target = adapter.exec.default
   input {
     command = "echo hi"
   }

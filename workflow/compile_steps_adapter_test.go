@@ -69,9 +69,9 @@ workflow {
   target_state  = "done"
 }
 
-adapter "shell" "default" {}
+adapter "exec" "default" {}
 step "run" {
-  target = adapter.shell.default
+  target = adapter.exec.default
   input {
     command       = "echo hi"
     system_prompt = "not-valid-for-shell"
@@ -280,10 +280,10 @@ workflow {
 
 variable "api_key" { type = string }
 
-adapter "shell" "default" {}
+adapter "exec" "default" {}
 
 step "run" {
-  target = adapter.shell.default
+  target = adapter.exec.default
   input {
     command = "echo hi"
   }

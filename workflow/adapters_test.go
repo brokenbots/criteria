@@ -164,17 +164,17 @@ workflow {
   initial_state = "a"
   target_state = "done"
 }
-adapter "shell" "default" {
+adapter "exec" "default" {
   on_crash = "explode"
   config { }
 }
 step "a" {
-  target = adapter.shell.default
+  target = adapter.exec.default
   outcome "ok" { next = step.done }
 }
 state "done" { terminal = true }
 `,
-			wantSummary: `adapter "shell.default": invalid on_crash "explode"`,
+			wantSummary: `adapter "exec.default": invalid on_crash "explode"`,
 		},
 	}
 

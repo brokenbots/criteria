@@ -23,12 +23,12 @@ workflow {
   target_state = "hello"
 }
 
-adapter "shell" "default" {
+adapter "noop" "default" {
   config {}
 }
 
 step "hello" {
-  target = adapter.shell.default
+  target = adapter.noop.default
   input { command = "echo hi" }
   outcome "success" { next = state.hello }
 }
@@ -58,12 +58,12 @@ workflow {
   target_state = "hello"
 }
 
-adapter "shell" "default" {
+adapter "noop" "default" {
   config {}
 }
 
 step "hello" {
-  target = adapter.shell.default
+  target = adapter.noop.default
   input { command = "echo hi"
   // missing closing brace for input block
 }
@@ -98,12 +98,12 @@ workflow {
   target_state = "hello"
 }
 
-adapter "shell" "default" {
+adapter "noop" "default" {
   config {}
 }
 
 step "hello" {
-  target = adapter.shell.default
+  target = adapter.noop.default
   input { command = "echo hi" }
   next = ["bye"]
 }

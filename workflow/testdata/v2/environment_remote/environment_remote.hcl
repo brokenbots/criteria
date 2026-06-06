@@ -11,12 +11,12 @@ environment "remote" "cluster" {
   accept_token   = "token"
 }
 
-adapter "shell" "default" {
+adapter "exec" "default" {
   environment = remote.cluster
 }
 
 step "run" {
-  target = adapter.shell.default
+  target = adapter.exec.default
   input {
     command = "echo hi"
   }

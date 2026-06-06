@@ -183,14 +183,14 @@ workflow {
   target_state  = "done"
 }
 
-adapter "shell" "bot" {
+adapter "exec" "bot" {
   secrets {
     api_key = "key123"
   }
 }
 
 step "work" {
-  target = adapter.shell.bot
+  target = adapter.exec.bot
   outcome "success" { next = state.done }
 }
 state "done" { terminal = true }
@@ -203,7 +203,7 @@ state "done" { terminal = true }
 	if diags.HasErrors() {
 		t.Fatalf("expected adapter secrets to compile without error, got: %s", diags.Error())
 	}
-	ad := g.Adapters["shell.bot"]
+	ad := g.Adapters["exec.bot"]
 	if ad == nil {
 		t.Fatal("adapter 'shell.bot' not found")
 	}
@@ -227,10 +227,10 @@ environment "shell" "default" {
   variables = { CI = "true" }
 }
 
-adapter "shell" "bot" {}
+adapter "exec" "bot" {}
 
 step "work" {
-  target = adapter.shell.bot
+  target = adapter.exec.bot
   outcome "success" { next = state.done }
 }
 state "done" { terminal = true }
@@ -240,7 +240,7 @@ state "done" { terminal = true }
 		t.Fatalf("parse: %s", diags.Error())
 	}
 	schemas := map[string]AdapterInfo{
-		"shell": {
+		"exec": {
 			CompatibleEnvironments: []string{"shell"},
 		},
 	}
@@ -263,12 +263,12 @@ workflow {
 
 environment "shell" "default" {}
 
-adapter "shell" "bot" {
+adapter "exec" "bot" {
   environment = shell.default
 }
 
 step "work" {
-  target = adapter.shell.bot
+  target = adapter.exec.bot
   outcome "success" { next = state.done }
 }
 state "done" { terminal = true }
@@ -278,7 +278,7 @@ state "done" { terminal = true }
 		t.Fatalf("parse: %s", diags.Error())
 	}
 	schemas := map[string]AdapterInfo{
-		"shell": {
+		"exec": {
 			CompatibleEnvironments: []string{"container"},
 		},
 	}
@@ -303,10 +303,10 @@ workflow {
 }
 
 environment "shell" "default" {}
-adapter "shell" "main" {}
+adapter "exec" "main" {}
 
 step "run" {
-  target = adapter.shell.main
+  target = adapter.exec.main
   outcome "success" { next = state.done }
 }
 state "done" { terminal = true }
@@ -316,7 +316,7 @@ state "done" { terminal = true }
 		t.Fatalf("parse: %s", diags.Error())
 	}
 	schemas := map[string]AdapterInfo{
-		"shell": {
+		"exec": {
 			CompatibleEnvironments: []string{"*"},
 		},
 	}
