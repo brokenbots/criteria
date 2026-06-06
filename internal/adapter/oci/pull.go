@@ -10,6 +10,7 @@ import (
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	oras "oras.land/oras-go/v2"
 	"oras.land/oras-go/v2/content/oci"
+	"oras.land/oras-go/v2/registry"
 	"oras.land/oras-go/v2/registry/remote"
 	"oras.land/oras-go/v2/registry/remote/auth"
 	"oras.land/oras-go/v2/registry/remote/credentials"
@@ -92,6 +93,15 @@ func (p *Puller) Pull(ctx context.Context, ref Reference) (digest.Digest, error)
 		return "", fmt.Errorf("oci: pull %s: %w", ref, err)
 	}
 
+	// Copy any referrers (e.g. cosign signature manifests) of the artifact into
+	// the local layout so signature verification — which scans the local
+	// index.json for manifests whose Subject matches the artifact — can find
+	// them. Referrers are optional metadata: a discovery failure must not fail an
+	// otherwise-successful pull (strict verification still fails closed if a
+	// required signature is absent, and --allow-unsigned pulls don't need them),
+	// so this is best-effort.
+	_ = copyReferrers(ctx, repo, store, &desc)
+
 	// Annotate the index descriptor with the protocol/schema version so
 	// the host loader can discriminate cached artifacts without re-parsing
 	// adapter.yaml.
@@ -100,6 +110,32 @@ func (p *Puller) Pull(ctx context.Context, ref Reference) (digest.Digest, error)
 	}
 
 	return desc.Digest, nil
+}
+
+// referrerSource is a registry or store that can both list the referrers of a
+// descriptor and serve content for copying. *remote.Repository and an in-memory
+// content/oci.Store both satisfy it.
+type referrerSource interface {
+	oras.ReadOnlyTarget
+	Predecessors(ctx context.Context, node ocispec.Descriptor) ([]ocispec.Descriptor, error)
+}
+
+// copyReferrers discovers the referrers of subject in src (via the Referrers
+// API, with oras's tag-schema/predecessor fallback) and copies each referrer
+// manifest and its blobs into dst. The copied manifests carry a Subject
+// back-reference, so they land in dst's index and become discoverable by
+// signature verification.
+func copyReferrers(ctx context.Context, src referrerSource, dst oras.Target, subject *ocispec.Descriptor) error {
+	refs, err := registry.Referrers(ctx, src, *subject, "")
+	if err != nil {
+		return err
+	}
+	for _, r := range refs {
+		if _, err := oras.Copy(ctx, src, r.Digest.String(), dst, r.Digest.String(), oras.DefaultCopyOptions); err != nil {
+			return fmt.Errorf("oci: copy referrer %s: %w", r.Digest, err)
+		}
+	}
+	return nil
 }
 
 // Resolve queries the registry for the canonical digest of ref without
