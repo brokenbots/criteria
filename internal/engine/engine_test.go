@@ -502,7 +502,7 @@ func buildNoopAdapter(t *testing.T) string {
 	moduleRoot := filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
 	adapterBin := filepath.Join(t.TempDir(), "criteria-adapter-noop")
 
-	cmd := exec.Command("go", "build", "-o", adapterBin, "./cmd/criteria-adapter-noop")
+	cmd := exec.Command("go", "build", "-o", adapterBin, "./internal/adapter/conformance/testdata/noop")
 	cmd.Dir = moduleRoot
 	output, err := cmd.CombinedOutput()
 	if err != nil {

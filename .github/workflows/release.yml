@@ -126,7 +126,7 @@ jobs:
         run: |
           set -euo pipefail
           go build -o /usr/local/bin/criteria ./cmd/criteria
-          go build -o "${RUNNER_TEMP}/criteria-adapter-noop" ./cmd/criteria-adapter-noop
+          go build -o "${RUNNER_TEMP}/criteria-adapter-noop" ./internal/adapter/conformance/testdata/noop
       - name: Publish noop to the local registry
         run: |
           set -euo pipefail

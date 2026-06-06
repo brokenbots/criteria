@@ -93,8 +93,8 @@ write a new one, start from a starter template
 ([typescript](https://github.com/brokenbots/criteria-adapter-starter-typescript) /
 [python](https://github.com/brokenbots/criteria-adapter-starter-python) /
 [go](https://github.com/brokenbots/criteria-adapter-starter-go)) rather than
-implementing the protocol by hand. The in-tree `cmd/criteria-adapter-noop` and
-`cmd/criteria-adapter-mcp` (built with `make plugins`) are minimal references.
+implementing the protocol by hand. The in-tree `cmd/criteria-adapter-mcp`
+(built with `make plugins`) is a minimal reference.
 See [docs/adapters.md](docs/adapters.md) for the wire protocol, publishing, and
 development guide.
 
