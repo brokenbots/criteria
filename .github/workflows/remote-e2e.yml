@@ -52,7 +52,10 @@ jobs:
       - name: Build fixture adapter image
         run: |
           cd internal/ci/smoke/testdata/criteria-adapter-remote-smoke
-          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o /tmp/criteria-adapter-remote-smoke .
+          # GOWORK=off: the fixture is a separate nested module under testdata/
+          # (which the Go tool ignores in workspace mode). The smoke test builds
+          # it the same way (see buildFixtureAdapter in remote_adapter_test.go).
+          GOWORK=off GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o /tmp/criteria-adapter-remote-smoke .
           cat > /tmp/Dockerfile <<'EOF'
           FROM scratch
           COPY criteria-adapter-remote-smoke /usr/local/bin/criteria-adapter-remote-smoke

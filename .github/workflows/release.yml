@@ -3,17 +3,67 @@ name: Release
 on:
   push:
     tags:
-      - 'v[0-9]*.[0-9]*.[0-9]*'    # full releases: v1.2.3
-      - 'v[0-9]*.[0-9]*.[0-9]*-*'  # pre-releases:  v1.2.3-rc.1 (published as GitHub pre-releases)
+      - 'v[0-9]+.[0-9]+.[0-9]+'           # full releases: v1.2.3 (must be on main)
+      - 'v[0-9]+.[0-9]+.[0-9]+-rc[0-9]+'  # rc pre-releases: v1.2.3-rc1 (branch w/ open PR vs main)
+      - 'v[0-9]+.[0-9]+.[0-9]+-beta[0-9]+' # beta pre-releases: v1.2.3-beta1 (branch w/ open PR vs main)
 
 permissions:
   contents: write   # create GitHub Release + upload assets
   id-token: write   # cosign keyless OIDC signing
+  pull-requests: read # guard checks for an open PR against main
 
 jobs:
+  # ── Release-source policy gate ─────────────────────────────────────────────
+  # Full releases (vX.Y.Z) may only come from a commit on `main`. Pre-releases
+  # (vX.Y.Z-rc/beta N) may only come from a branch with an open PR against `main`.
+  # This keeps `main` the sole source of full releases while letting in-flight
+  # branches cut rc/beta builds.
+  guard:
+    name: Validate release source
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Enforce release-source policy
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${{ github.ref_name }}"
+          SHA="${{ github.sha }}"
+          git fetch --quiet origin main
+          case "$TAG" in
+            *-rc[0-9]*|*-beta[0-9]*)
+              mapfile -t branches < <(gh pr list --base main --state open --json headRefName --jq '.[].headRefName')
+              if [ "${#branches[@]}" -eq 0 ]; then
+                echo "::error::pre-release $TAG requires an open PR against main; none found."
+                exit 1
+              fi
+              ok=0
+              for b in "${branches[@]}"; do
+                git fetch --quiet origin "$b" || continue
+                if git merge-base --is-ancestor "$SHA" "origin/$b"; then ok=1; break; fi
+              done
+              if [ "$ok" -ne 1 ]; then
+                echo "::error::pre-release $TAG ($SHA) is not contained in any branch with an open PR against main."
+                exit 1
+              fi
+              echo "OK: pre-release from a branch with an open PR against main."
+              ;;
+            *)
+              if ! git merge-base --is-ancestor "$SHA" origin/main; then
+                echo "::error::full release $TAG ($SHA) must point at a commit on main."
+                exit 1
+              fi
+              echo "OK: full release from main."
+              ;;
+          esac
+
   build:
     name: Build binaries
     runs-on: ubuntu-latest
+    needs: guard
     strategy:
       matrix:
         include:
@@ -21,8 +71,6 @@ jobs:
             goarch: amd64
           - goos: linux
             goarch: arm64
-          - goos: darwin
-            goarch: amd64
           - goos: darwin
             goarch: arm64
     steps:
@@ -71,6 +119,7 @@ jobs:
   docker-image:
     name: Build Docker image tar
     runs-on: ubuntu-latest
+    needs: guard
     steps:
       - uses: actions/checkout@v4
 

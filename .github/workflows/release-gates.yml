@@ -83,7 +83,10 @@ jobs:
           criteria adapter info noop
           binary=$(criteria adapter where noop)
           echo "pulled binary: $binary"
-          test -x "$binary"
+          # `where` returns the read-only content-addressed cache blob; the host
+          # stages an executable 0755 copy at launch (see adapter_autopull.go), so
+          # assert the blob exists and is non-empty rather than checking +x.
+          test -s "$binary"
 
   # ── Aggregation — single required status check for the release ──────────────
   gates-passed:
