@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"strconv"
 	"sync"
 	"time"
@@ -19,9 +20,12 @@ type noopService struct {
 
 func (s *noopService) Info(context.Context, *v2.InfoRequest) (*v2.InfoResponse, error) {
 	return &v2.InfoResponse{
-		Name:         "noop",
-		Version:      "0.1.0",
-		Capabilities: []string{"parallel_safe"},
+		Name:               "noop",
+		Version:            "0.1.0",
+		SourceUrl:          "https://github.com/brokenbots/criteria",
+		SdkProtocolVersion: "2",
+		Platforms:          []string{runtime.GOOS + "/" + runtime.GOARCH},
+		Capabilities:       []string{"parallel_safe"},
 	}, nil
 }
 

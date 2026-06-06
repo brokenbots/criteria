@@ -180,7 +180,7 @@ func newRepository(ref oci.Reference, opts Options) (*remote.Repository, error) 
 	if err != nil {
 		return nil, fmt.Errorf("publish: build remote repository for %q: %w", repoRef, err)
 	}
-	repo.PlainHTTP = opts.PlainHTTP
+	repo.PlainHTTP = opts.PlainHTTP || oci.IsLocalhost(ref.Registry)
 
 	ap := opts.Auth
 	if ap == nil {
