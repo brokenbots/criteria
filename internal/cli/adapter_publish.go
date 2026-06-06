@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -65,44 +66,16 @@ func runPublish(ctx context.Context, path string, f *publishFlags, out io.Writer
 	if err != nil {
 		return fmt.Errorf("resolve path: %w", err)
 	}
-	info, err := os.Stat(path)
+	bins, manifestBin, err := resolvePlatformBinaries(path)
 	if err != nil {
-		return fmt.Errorf("stat path: %w", err)
+		return err
 	}
 
-	// A directory is a multi-platform bin tree (bin/<os>/<arch>/<name>); a file
-	// is a single host-platform binary.
-	var bins []publish.PlatformBinary
-	var manifestBin string
-	if info.IsDir() {
-		bins, manifestBin, err = collectPlatformBinaries(path)
-		if err != nil {
-			return err
-		}
-	} else {
-		bins = []publish.PlatformBinary{{OS: runtime.GOOS, Arch: runtime.GOARCH, Path: path}}
-		manifestBin = path
-	}
-
-	// The manifest (adapter.yaml) is emitted by running a binary with
-	// --emit-manifest, so it must be runnable on the publish host. Its content
-	// (incl. the platforms list) is declared in the adapter's Info() and is the
-	// same regardless of which platform's binary emits it.
-	mfPath, cleanup, err := emitManifestToTemp(ctx, manifestBin)
+	mfPath, cleanup, err := f.prepareManifest(ctx, manifestBin)
 	if err != nil {
 		return err
 	}
 	defer cleanup()
-
-	// Record an already-pushed runnable container image (D12) into the manifest
-	// before it is embedded in the artifact, so the host can run the adapter
-	// under environment.runtime. publish does not build the image — the
-	// adapter's CI does, exactly as it builds the binary.
-	if f.imageRef != "" {
-		if err := publish.RecordContainerImage(ctx, mfPath, f.imageRef, publish.Options{}); err != nil {
-			return err
-		}
-	}
 
 	ref, err := Resolve(ResolveContext{}, f.registry)
 	if err != nil {
@@ -124,13 +97,51 @@ func runPublish(ctx context.Context, path string, f *publishFlags, out io.Writer
 	if signer != nil {
 		signedNote = " (signed)"
 	}
+	fmt.Fprintf(out, "Published %s [%s] to %s (digest: %s)%s\n",
+		filepath.Base(manifestBin), formatPlatforms(bins), ref, dg, signedNote)
+	return nil
+}
+
+// prepareManifest emits the adapter manifest (adapter.yaml) from manifestBin —
+// which must be runnable on the publish host; its content, including the
+// platforms list, is declared in the adapter's Info() and is identical
+// regardless of which platform's binary emits it — and records an optional
+// already-pushed container image (D12) into it so the host can run the adapter
+// under environment.runtime. The caller must invoke the returned cleanup.
+func (f *publishFlags) prepareManifest(ctx context.Context, manifestBin string) (mfPath string, cleanup func(), err error) {
+	mfPath, cleanup, err = emitManifestToTemp(ctx, manifestBin)
+	if err != nil {
+		return "", nil, err
+	}
+	if f.imageRef != "" {
+		if err := publish.RecordContainerImage(ctx, mfPath, f.imageRef, publish.Options{}); err != nil {
+			cleanup()
+			return "", nil, err
+		}
+	}
+	return mfPath, cleanup, nil
+}
+
+func formatPlatforms(bins []publish.PlatformBinary) string {
 	plats := make([]string, len(bins))
 	for i, b := range bins {
 		plats[i] = b.OS + "/" + b.Arch
 	}
-	fmt.Fprintf(out, "Published %s [%s] to %s (digest: %s)%s\n",
-		filepath.Base(manifestBin), strings.Join(plats, ", "), ref, dg, signedNote)
-	return nil
+	return strings.Join(plats, ", ")
+}
+
+// resolvePlatformBinaries maps the publish argument to the binaries to package
+// and the binary used to emit the manifest. A directory is a multi-platform bin
+// tree (bin/<os>/<arch>/<name>); a regular file is a single host-platform binary.
+func resolvePlatformBinaries(path string) (bins []publish.PlatformBinary, manifestBin string, err error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, "", fmt.Errorf("stat path: %w", err)
+	}
+	if info.IsDir() {
+		return collectPlatformBinaries(path)
+	}
+	return []publish.PlatformBinary{{OS: runtime.GOOS, Arch: runtime.GOARCH, Path: path}}, path, nil
 }
 
 // collectPlatformBinaries discovers adapter binaries laid out as
@@ -140,39 +151,31 @@ func runPublish(ctx context.Context, path string, f *publishFlags, out io.Writer
 // on the publish host.
 func collectPlatformBinaries(root string) (bins []publish.PlatformBinary, hostBin string, err error) {
 	binRoot := filepath.Join(root, "bin")
-	osDirs, err := os.ReadDir(binRoot)
-	if err != nil {
-		return nil, "", fmt.Errorf("read bin tree %s: %w", binRoot, err)
-	}
-	for _, osEnt := range osDirs {
-		if !osEnt.IsDir() {
-			continue
-		}
-		goos := osEnt.Name()
-		archDirs, err := os.ReadDir(filepath.Join(binRoot, goos))
+	walkErr := filepath.WalkDir(binRoot, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
-			return nil, "", fmt.Errorf("read %s: %w", filepath.Join(binRoot, goos), err)
+			return err
 		}
-		for _, archEnt := range archDirs {
-			if !archEnt.IsDir() {
-				continue
-			}
-			goarch := archEnt.Name()
-			files, err := os.ReadDir(filepath.Join(binRoot, goos, goarch))
-			if err != nil {
-				return nil, "", fmt.Errorf("read %s: %w", filepath.Join(binRoot, goos, goarch), err)
-			}
-			for _, fe := range files {
-				if fe.IsDir() {
-					continue
-				}
-				p := filepath.Join(binRoot, goos, goarch, fe.Name())
-				bins = append(bins, publish.PlatformBinary{OS: goos, Arch: goarch, Path: p})
-				if goos == runtime.GOOS && goarch == runtime.GOARCH {
-					hostBin = p
-				}
-			}
+		if d.IsDir() {
+			return nil
 		}
+		// Only files at exactly bin/<os>/<arch>/<name> are platform binaries.
+		rel, relErr := filepath.Rel(binRoot, p)
+		if relErr != nil {
+			return relErr
+		}
+		parts := strings.Split(filepath.ToSlash(rel), "/")
+		if len(parts) != 3 {
+			return nil
+		}
+		goos, goarch := parts[0], parts[1]
+		bins = append(bins, publish.PlatformBinary{OS: goos, Arch: goarch, Path: p})
+		if goos == runtime.GOOS && goarch == runtime.GOARCH {
+			hostBin = p
+		}
+		return nil
+	})
+	if walkErr != nil {
+		return nil, "", fmt.Errorf("scan bin tree %s: %w", binRoot, walkErr)
 	}
 	if len(bins) == 0 {
 		return nil, "", fmt.Errorf("no binaries found under %s (expected bin/<os>/<arch>/<name>)", binRoot)

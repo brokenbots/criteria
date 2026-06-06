@@ -119,41 +119,11 @@ func buildManifestInStore(ctx context.Context, store *memory.Store, ref oci.Refe
 		return ocispec.Descriptor{}, err
 	}
 
-	// One binary layer per platform, titled bin/<os>/<arch>/<name>. All
-	// platforms must share the same binary basename (the adapter type's
-	// canonical name, e.g. criteria-adapter-copilot) so the host can resolve
-	// bin/<goos>/<goarch>/criteria-adapter-<type> uniformly.
-	layers := []ocispec.Descriptor{mfDesc}
-	seen := make(map[string]bool, len(bins))
-	var binBase string
-	for _, b := range bins {
-		if b.OS == "" || b.Arch == "" {
-			return ocispec.Descriptor{}, fmt.Errorf("publish: platform binary %q is missing os/arch", b.Path)
-		}
-		key := b.OS + "/" + b.Arch
-		if seen[key] {
-			return ocispec.Descriptor{}, fmt.Errorf("publish: duplicate platform %q", key)
-		}
-		seen[key] = true
-
-		base := filepath.Base(b.Path)
-		if binBase == "" {
-			binBase = base
-		} else if base != binBase {
-			return ocispec.Descriptor{}, fmt.Errorf("publish: platform binaries must share one basename; got %q and %q", binBase, base)
-		}
-
-		binData, err := os.ReadFile(b.Path)
-		if err != nil {
-			return ocispec.Descriptor{}, fmt.Errorf("publish: read binary %s: %w", b.Path, err)
-		}
-		binTitle := filepath.ToSlash(filepath.Join("bin", b.OS, b.Arch, base))
-		binDesc, err := stageLayer(ctx, store, binData, mediaTypeAdapterBinary, binTitle)
-		if err != nil {
-			return ocispec.Descriptor{}, err
-		}
-		layers = append(layers, binDesc)
+	binLayers, err := stageBinaryLayers(ctx, store, bins)
+	if err != nil {
+		return ocispec.Descriptor{}, err
 	}
+	layers := append([]ocispec.Descriptor{mfDesc}, binLayers...)
 
 	cfgDesc, err := stageConfig(ctx, store)
 	if err != nil {
@@ -182,6 +152,45 @@ func buildManifestInStore(ctx context.Context, store *memory.Store, ref oci.Refe
 		return ocispec.Descriptor{}, fmt.Errorf("publish: tag manifest: %w", err)
 	}
 	return manifestDesc, nil
+}
+
+// stageBinaryLayers stages one adapter-binary layer per platform, titled
+// bin/<os>/<arch>/<name>. All platforms must share the same binary basename (the
+// adapter type's canonical name, e.g. criteria-adapter-copilot) so the host can
+// resolve bin/<goos>/<goarch>/criteria-adapter-<type> uniformly.
+func stageBinaryLayers(ctx context.Context, store *memory.Store, bins []PlatformBinary) ([]ocispec.Descriptor, error) {
+	layers := make([]ocispec.Descriptor, 0, len(bins))
+	seen := make(map[string]bool, len(bins))
+	var binBase string
+	for _, b := range bins {
+		if b.OS == "" || b.Arch == "" {
+			return nil, fmt.Errorf("publish: platform binary %q is missing os/arch", b.Path)
+		}
+		key := b.OS + "/" + b.Arch
+		if seen[key] {
+			return nil, fmt.Errorf("publish: duplicate platform %q", key)
+		}
+		seen[key] = true
+
+		base := filepath.Base(b.Path)
+		if binBase == "" {
+			binBase = base
+		} else if base != binBase {
+			return nil, fmt.Errorf("publish: platform binaries must share one basename; got %q and %q", binBase, base)
+		}
+
+		binData, err := os.ReadFile(b.Path)
+		if err != nil {
+			return nil, fmt.Errorf("publish: read binary %s: %w", b.Path, err)
+		}
+		binTitle := filepath.ToSlash(filepath.Join("bin", b.OS, b.Arch, base))
+		binDesc, err := stageLayer(ctx, store, binData, mediaTypeAdapterBinary, binTitle)
+		if err != nil {
+			return nil, err
+		}
+		layers = append(layers, binDesc)
+	}
+	return layers, nil
 }
 
 func stageLayer(ctx context.Context, store *memory.Store, data []byte, mediaType, title string) (ocispec.Descriptor, error) {

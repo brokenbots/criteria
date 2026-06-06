@@ -28,9 +28,9 @@ func writeFile(t *testing.T, dir, name string, data []byte) string {
 }
 
 // fetchManifest reads back the assembled image manifest from the memory store.
-func fetchManifest(t *testing.T, store *memory.Store, desc ocispec.Descriptor) ocispec.Manifest {
+func fetchManifest(t *testing.T, store *memory.Store, desc *ocispec.Descriptor) ocispec.Manifest {
 	t.Helper()
-	rc, err := store.Fetch(context.Background(), desc)
+	rc, err := store.Fetch(context.Background(), *desc)
 	if err != nil {
 		t.Fatalf("fetch manifest: %v", err)
 	}
@@ -59,7 +59,7 @@ func TestBuildManifestInStore_MultiPlatformLayers(t *testing.T) {
 		{"darwin", "amd64"},
 		{"darwin", "arm64"},
 	}
-	var bins []PlatformBinary
+	bins := make([]PlatformBinary, 0, len(plats))
 	for _, p := range plats {
 		// distinct content per platform, same basename
 		path := writeFile(t, dir, filepath.Join(p.os, p.arch, "criteria-adapter-copilot"),
@@ -73,7 +73,7 @@ func TestBuildManifestInStore_MultiPlatformLayers(t *testing.T) {
 		t.Fatalf("buildManifestInStore: %v", err)
 	}
 
-	m := fetchManifest(t, store, desc)
+	m := fetchManifest(t, store, &desc)
 
 	// config is the empty adapter config object.
 	if m.Config.MediaType != mediaTypeAdapterConfig {
