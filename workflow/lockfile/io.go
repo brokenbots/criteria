@@ -10,6 +10,8 @@ import (
 	"github.com/hashicorp/hcl/v2/hclparse"
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/zclconf/go-cty/cty"
+
+	"github.com/brokenbots/criteria/workflow"
 )
 
 // Read parses a .criteria.lock.hcl file from disk.
@@ -132,7 +134,7 @@ func writeAdapterBlock(body *hclwrite.Body, a *LockedAdapter) { //nolint:funlen 
 // and returns the parsed Lockfile. If the file does not exist, it returns
 // (nil, nil).
 func ReadFromDir(workflowDir string) (*Lockfile, error) {
-	path := filepath.Join(workflowDir, ".criteria.lock.hcl")
+	path := filepath.Join(workflowDir, workflow.LockfileName)
 	if _, err := os.Stat(path); err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
