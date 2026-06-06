@@ -59,6 +59,20 @@ func defaultGlobalConfigPath() (string, error) {
 	return filepath.Join(base, "config.hcl"), nil
 }
 
+// defaultTrustConfigPath returns the default global trust-config file path
+// (~/.criteria/trust.hcl), honoring CRITERIA_STATE_DIR.
+func defaultTrustConfigPath() (string, error) {
+	base := os.Getenv("CRITERIA_STATE_DIR")
+	if base == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("resolve home dir: %w", err)
+		}
+		base = filepath.Join(home, ".criteria")
+	}
+	return filepath.Join(base, "trust.hcl"), nil
+}
+
 // resolveRefOrName attempts to turn a user-supplied string into a digest.
 // If the string is already a digest it is returned as-is.  Otherwise the
 // cached adapters are searched by reading adapter.yaml and matching on

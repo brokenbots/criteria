@@ -20,8 +20,9 @@ import (
 
 func newAdapterPullCmd() *cobra.Command {
 	var (
-		allowUnsigned bool
-		registryAlias string
+		allowUnsigned   bool
+		registryAlias   string
+		trustedKeyPaths []string
 	)
 
 	cmd := &cobra.Command{
@@ -30,16 +31,17 @@ func newAdapterPullCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
-			return runPull(cmd.Context(), cmd.OutOrStdout(), args[0], allowUnsigned, registryAlias)
+			return runPull(cmd.Context(), cmd.OutOrStdout(), args[0], allowUnsigned, registryAlias, trustedKeyPaths)
 		},
 	}
 
 	cmd.Flags().BoolVar(&allowUnsigned, "allow-unsigned", false, "Skip signature verification for this pull")
 	cmd.Flags().StringVar(&registryAlias, "registry", "", "Registry alias to use for short-name resolution")
+	cmd.Flags().StringArrayVar(&trustedKeyPaths, "trusted-key", nil, "Path to a trusted PEM public key for key-mode verification (repeatable)")
 	return cmd
 }
 
-func runPull(ctx context.Context, out io.Writer, rawRef string, allowUnsigned bool, registryAlias string) error {
+func runPull(ctx context.Context, out io.Writer, rawRef string, allowUnsigned bool, registryAlias string, trustedKeyPaths []string) error {
 	layout, err := openDefaultCache()
 	if err != nil {
 		return err
@@ -52,7 +54,12 @@ func runPull(ctx context.Context, out io.Writer, rawRef string, allowUnsigned bo
 
 	// pull is not workflow-scoped, so there is no workflow `verification` attr;
 	// the shared resolver still honors --allow-unsigned and CRITERIA_ALLOW_UNSIGNED.
-	policy, err := resolveSigningPolicy(allowUnsigned, "")
+	// Trusted keys come from the global trust config plus any --trusted-key flags.
+	trustedKeys, err := loadTrustedKeys("", trustedKeyPaths)
+	if err != nil {
+		return fmt.Errorf("load trusted keys: %w", err)
+	}
+	policy, err := resolveSigningPolicy(allowUnsigned, "", trustedKeys)
 	if err != nil {
 		return fmt.Errorf("signing policy: %w", err)
 	}

@@ -67,7 +67,11 @@ func autoPullCompileAdapters(ctx context.Context, workflowDir string, spec *work
 	if spec.Header != nil {
 		workflowVerification = spec.Header.Verification
 	}
-	policy, err := resolveSigningPolicy(allowUnsigned, workflowVerification)
+	trustedKeys, err := loadTrustedKeys(workflowDir, nil)
+	if err != nil {
+		return fmt.Errorf("load trusted keys: %w", err)
+	}
+	policy, err := resolveSigningPolicy(allowUnsigned, workflowVerification, trustedKeys)
 	if err != nil {
 		return fmt.Errorf("signing policy: %w", err)
 	}
@@ -96,8 +100,13 @@ func ensureAdapterCached(ctx context.Context, key string, wa *workflowAdapter, l
 		return fmt.Errorf("adapter %q lockfile entry has empty digest", key)
 	}
 
-	// If binary already cached, ensure it's in the plugin directory.
+	// If binary already cached, re-verify against the pinned signer before use so
+	// the trust anchor is enforced on every run (not just the first pull), then
+	// ensure it's in the plugin directory.
 	if layout.HasBlob(dg) {
+		if err := verifyAgainstPin(ctx, key, layout, dg, entry, policy); err != nil {
+			return err
+		}
 		if err := extractOCIAdapterBinary(layout, dg, wa.Type); err != nil {
 			return fmt.Errorf("adapter %q extract binary: %w", key, err)
 		}
@@ -126,9 +135,8 @@ func ensureAdapterCached(ctx context.Context, key string, wa *workflowAdapter, l
 	if err := m.Validate(); err != nil {
 		return fmt.Errorf("adapter %q validate manifest: %w", key, err)
 	}
-	_, err = signing.Verify(ctx, layout, pulledDg, *policy)
-	if err != nil {
-		return fmt.Errorf("adapter %q signature verification: %w", key, err)
+	if err := verifyAgainstPin(ctx, key, layout, pulledDg, entry, policy); err != nil {
+		return err
 	}
 
 	if err := extractOCIAdapterBinary(layout, pulledDg, wa.Type); err != nil {
@@ -136,6 +144,19 @@ func ensureAdapterCached(ctx context.Context, key string, wa *workflowAdapter, l
 	}
 
 	return maybePullContainerImage(ctx, key, m)
+}
+
+// verifyAgainstPin verifies the cached artifact under a policy tightened to the
+// lockfile-pinned signer (the trust anchor), then confirms the verified signer
+// matches the pin. A nil signer (ModeOff, or a ModeWarn failure) skips the pin
+// check; see policyForPin and assertSignerMatchesPin.
+func verifyAgainstPin(ctx context.Context, key string, layout *oci.Layout, dg digest.Digest, entry *lockfile.LockedAdapter, policy *signing.Policy) error {
+	effective := policyForPin(*policy, entry.Signature)
+	signer, err := signing.Verify(ctx, layout, dg, effective)
+	if err != nil {
+		return fmt.Errorf("adapter %q signature verification: %w", key, err)
+	}
+	return assertSignerMatchesPin(key, signer, entry.Signature)
 }
 
 func maybePullContainerImage(ctx context.Context, key string, m *manifest.Manifest) error {

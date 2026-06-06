@@ -77,7 +77,7 @@ func TestResolveVerification_Precedence(t *testing.T) {
 				t.Setenv(allowUnsignedEnv, tt.env)
 			}
 
-			got := resolveVerification(tt.flag, tt.workflowAttr)
+			got := resolveVerification(tt.flag, tt.workflowAttr, nil)
 			if got.AllowUnsigned != tt.wantAllow {
 				t.Errorf("AllowUnsigned = %v, want %v", got.AllowUnsigned, tt.wantAllow)
 			}
@@ -110,7 +110,7 @@ func TestResolveSigningPolicy_Modes(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv(allowUnsignedEnv, tt.env)
 
-			policy, err := resolveSigningPolicy(tt.flag, tt.workflowAttr)
+			policy, err := resolveSigningPolicy(tt.flag, tt.workflowAttr, nil)
 			if err != nil {
 				t.Fatalf("resolveSigningPolicy: %v", err)
 			}
@@ -126,7 +126,7 @@ func TestResolveSigningPolicy_Modes(t *testing.T) {
 // the runtime path).
 func TestResolveSigningPolicy_InvalidWorkflowMode(t *testing.T) {
 	t.Setenv(allowUnsignedEnv, "")
-	if _, err := resolveSigningPolicy(false, "bogus"); err == nil {
+	if _, err := resolveSigningPolicy(false, "bogus", nil); err == nil {
 		t.Fatal("expected error for invalid workflow verification mode, got nil")
 	}
 }

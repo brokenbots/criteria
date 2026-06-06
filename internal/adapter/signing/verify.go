@@ -273,7 +273,17 @@ func mergeAnnotations(manifestAnns map[string]string, layers []ocispec.Descripto
 }
 
 func verifyOne(ctx context.Context, manifestDigest digest.Digest, rec *signatureRecord, policy *Policy) (*SignerIdentity, error) {
+	// Dispatch on the signature record's shape, not solely on the policy, so a
+	// mixed environment (some adapters key-signed, some keyless) verifies under a
+	// single policy: a keyless signature carries a Fulcio certificate or a
+	// Sigstore bundle; a key-mode signature carries neither and is matched
+	// against Policy.TrustedKeys.
+	if rec.certPEM != "" || rec.bundleJSON != "" {
+		return verifyKeyless(ctx, manifestDigest, rec, policy)
+	}
 	if policy.IsKeyless() {
+		// No trusted keys configured and no keyless material: fall through to the
+		// keyless path so the failure message is meaningful.
 		return verifyKeyless(ctx, manifestDigest, rec, policy)
 	}
 	return verifyKeyBased(rec, policy)

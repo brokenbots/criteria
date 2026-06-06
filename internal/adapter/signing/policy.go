@@ -20,6 +20,12 @@ type PullContext struct {
 	// GlobalConfigPath is the path to the global HCL config file. When empty
 	// the default ~/.criteria/config.hcl is used.
 	GlobalConfigPath string
+
+	// TrustedKeys are explicit public keys (enterprise key mode, WS47) resolved
+	// by the CLI from the global trust config, the workflow-dir trust config,
+	// and ad-hoc --trusted-key flags. When non-empty they are copied onto the
+	// resolved Policy so key-signed artifacts verify against them.
+	TrustedKeys []KeyIdentity
 }
 
 // PolicyFor resolves the effective Policy for a pull operation, combining:
@@ -49,9 +55,12 @@ func PolicyFor(ctx PullContext) (Policy, error) {
 		}
 	}
 
-	// Deferred: parse global config file (HCL) and merge trusted_issuers,
-	// subject_patterns, and trusted_keys. This will be handled once WS08/WS09
-	// provide config parsing helpers or the global config schema is stable.
+	// Attach the CLI-resolved trusted keys (enterprise key mode, WS47). The CLI
+	// loads these from the global + workflow trust config and --trusted-key
+	// flags; verifyKeyBased matches a signature against them by fingerprint.
+	if len(ctx.TrustedKeys) > 0 {
+		policy.TrustedKeys = append([]KeyIdentity(nil), ctx.TrustedKeys...)
+	}
 
 	return policy, nil
 }
