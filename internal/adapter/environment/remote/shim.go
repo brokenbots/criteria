@@ -510,16 +510,25 @@ func (s *Shim) WaitForHandle(ctx context.Context, adapterType string) (adapterho
 // wait for a genuinely new connection rather than receiving the dead one back.
 func (s *Shim) WaitForFreshHandle(ctx context.Context, adapterType string, stale adapterhost.Handle) (adapterhost.Handle, error) {
 	s.mu.Lock()
+	cur, ok := s.sessions[adapterType]
+	var curPtr adapterhost.Handle
+	if ok {
+		curPtr = cur.handle
+	}
+	slog.Warn("DBG WaitForFresh", "type", adapterType, "hasCur", ok, "curEqStale", ok && cur.handle == stale, "staleNil", stale == nil, "curPtr", fmt.Sprintf("%p", curPtr), "stalePtr", fmt.Sprintf("%p", stale))
 	if sess, ok := s.sessions[adapterType]; ok && sess.handle != stale {
 		s.mu.Unlock()
+		slog.Warn("DBG WaitForFresh returning current (not stale)")
 		return sess.handle, nil
 	}
 	ch := make(chan waitResult, 1)
 	s.waiters[adapterType] = append(s.waiters[adapterType], ch)
 	s.mu.Unlock()
+	slog.Warn("DBG WaitForFresh blocking for fresh connection")
 
 	select {
 	case res := <-ch:
+		slog.Warn("DBG WaitForFresh got fresh from waiter")
 		return res.handle, res.err
 	case <-ctx.Done():
 		// Remove ourselves from waiters on cancellation.
