@@ -1,6 +1,6 @@
 # WS43 — Independence verification
 
-**Phase:** Adapter v2 · **Track:** End-state independence · **Owner:** Workstream executor · **Depends on:** [WS41](WS41-extract-adapter-proto-repo.md), [WS42](WS42-extract-shell-adapter.md). · **Unblocks:** end of phase. · **Base branch:** `main`
+**Phase:** Adapter v2 · **Track:** End-state independence · **Owner:** Workstream executor · **Depends on:** [WS41](../archived/v4/adapter-v2/WS41-extract-adapter-proto-repo.md), [WS42](../archived/v4/adapter-v2/WS42-extract-shell-adapter.md). · **Unblocks:** end of phase. · **Base branch:** `main`
 
 ## Context
 

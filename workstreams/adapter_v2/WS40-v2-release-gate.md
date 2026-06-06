@@ -1,6 +1,6 @@
 # WS40 — v2 release gate: tag and ship
 
-**Phase:** Adapter v2 · **Track:** Release gate · **Owner:** Workstream executor · **Depends on:** WS01–WS39 (all). · **Unblocks:** [WS41](WS41-extract-adapter-proto-repo.md), [WS42](WS42-extract-shell-adapter.md), [WS43](WS43-independence-verification.md). · **Base branch:** `adapter-v2`
+**Phase:** Adapter v2 · **Track:** Release gate · **Owner:** Workstream executor · **Depends on:** WS01–WS39 (all). · **Unblocks:** [WS41](../archived/v4/adapter-v2/WS41-extract-adapter-proto-repo.md), [WS42](../archived/v4/adapter-v2/WS42-extract-shell-adapter.md), [WS43](WS43-independence-verification.md). · **Base branch:** `adapter-v2`
 
 > **Reassessment (2026-06-05).** The four gates were re-scoped against current reality:
 > - **Gate 1 (conformance) — DONE, rescoped.** Per [ADR-0003](../../docs/adrs/ADR-0003-conformance-scope.md) the host validates host + the imported Go SDK + `proto-drift`, all green in `ci.yml`. It no longer requires every SDK's reference adapter on every platform; each SDK owns its own conformance.
