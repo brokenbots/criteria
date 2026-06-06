@@ -4,9 +4,12 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -31,8 +34,8 @@ func newAdapterPublishCmd() *cobra.Command {
 	var f publishFlags
 
 	cmd := &cobra.Command{
-		Use:   "publish <path>",
-		Short: "Publish a built adapter binary to an OCI registry (developer convenience)",
+		Use:   "publish <binary | bin-tree-dir>",
+		Short: "Publish a built adapter binary (or a bin/<os>/<arch>/ multi-platform tree) to an OCI registry",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
@@ -49,7 +52,7 @@ func newAdapterPublishCmd() *cobra.Command {
 	return cmd
 }
 
-func runPublish(ctx context.Context, binPath string, f *publishFlags, out io.Writer) error {
+func runPublish(ctx context.Context, path string, f *publishFlags, out io.Writer) error {
 	if out == nil {
 		out = os.Stdout
 	}
@@ -59,29 +62,20 @@ func runPublish(ctx context.Context, binPath string, f *publishFlags, out io.Wri
 	if f.keyless && f.signKey != "" {
 		return fmt.Errorf("--keyless and --sign-key are mutually exclusive")
 	}
-	binPath, err := filepath.Abs(binPath)
+	path, err := filepath.Abs(path)
 	if err != nil {
 		return fmt.Errorf("resolve path: %w", err)
 	}
-	if _, err := os.Stat(binPath); err != nil {
-		return fmt.Errorf("stat binary: %w", err)
+	bins, manifestBin, err := resolvePlatformBinaries(path)
+	if err != nil {
+		return err
 	}
 
-	mfPath, cleanup, err := emitManifestToTemp(ctx, binPath)
+	mfPath, cleanup, err := f.prepareManifest(ctx, manifestBin)
 	if err != nil {
 		return err
 	}
 	defer cleanup()
-
-	// Record an already-pushed runnable container image (D12) into the manifest
-	// before it is embedded in the artifact, so the host can run the adapter
-	// under environment.runtime. publish does not build the image — the
-	// adapter's CI does, exactly as it builds the binary.
-	if f.imageRef != "" {
-		if err := publish.RecordContainerImage(ctx, mfPath, f.imageRef, publish.Options{}); err != nil {
-			return err
-		}
-	}
 
 	ref, err := Resolve(ResolveContext{}, f.registry)
 	if err != nil {
@@ -94,7 +88,7 @@ func runPublish(ctx context.Context, binPath string, f *publishFlags, out io.Wri
 	}
 
 	// Push the artifact (and attach a cosign signature when signing was requested).
-	dg, err := publish.PushArtifact(ctx, ref, binPath, mfPath, publish.Options{Signer: signer})
+	dg, err := publish.PushMultiPlatformArtifact(ctx, ref, bins, mfPath, publish.Options{Signer: signer})
 	if err != nil {
 		return fmt.Errorf("publish artifact: %w", err)
 	}
@@ -103,8 +97,93 @@ func runPublish(ctx context.Context, binPath string, f *publishFlags, out io.Wri
 	if signer != nil {
 		signedNote = " (signed)"
 	}
-	fmt.Fprintf(out, "Published %s to %s (digest: %s)%s\n", filepath.Base(binPath), ref, dg, signedNote)
+	fmt.Fprintf(out, "Published %s [%s] to %s (digest: %s)%s\n",
+		filepath.Base(manifestBin), formatPlatforms(bins), ref, dg, signedNote)
 	return nil
+}
+
+// prepareManifest emits the adapter manifest (adapter.yaml) from manifestBin —
+// which must be runnable on the publish host; its content, including the
+// platforms list, is declared in the adapter's Info() and is identical
+// regardless of which platform's binary emits it — and records an optional
+// already-pushed container image (D12) into it so the host can run the adapter
+// under environment.runtime. The caller must invoke the returned cleanup.
+func (f *publishFlags) prepareManifest(ctx context.Context, manifestBin string) (mfPath string, cleanup func(), err error) {
+	mfPath, cleanup, err = emitManifestToTemp(ctx, manifestBin)
+	if err != nil {
+		return "", nil, err
+	}
+	if f.imageRef != "" {
+		if err := publish.RecordContainerImage(ctx, mfPath, f.imageRef, publish.Options{}); err != nil {
+			cleanup()
+			return "", nil, err
+		}
+	}
+	return mfPath, cleanup, nil
+}
+
+func formatPlatforms(bins []publish.PlatformBinary) string {
+	plats := make([]string, len(bins))
+	for i, b := range bins {
+		plats[i] = b.OS + "/" + b.Arch
+	}
+	return strings.Join(plats, ", ")
+}
+
+// resolvePlatformBinaries maps the publish argument to the binaries to package
+// and the binary used to emit the manifest. A directory is a multi-platform bin
+// tree (bin/<os>/<arch>/<name>); a regular file is a single host-platform binary.
+func resolvePlatformBinaries(path string) (bins []publish.PlatformBinary, manifestBin string, err error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, "", fmt.Errorf("stat path: %w", err)
+	}
+	if info.IsDir() {
+		return collectPlatformBinaries(path)
+	}
+	return []publish.PlatformBinary{{OS: runtime.GOOS, Arch: runtime.GOARCH, Path: path}}, path, nil
+}
+
+// collectPlatformBinaries discovers adapter binaries laid out as
+// <root>/bin/<os>/<arch>/<name> and returns them as PlatformBinary entries plus
+// the binary matching the publish host (used to emit the manifest). It is an
+// error if no host-matching binary is present, since --emit-manifest must run
+// on the publish host.
+func collectPlatformBinaries(root string) (bins []publish.PlatformBinary, hostBin string, err error) {
+	binRoot := filepath.Join(root, "bin")
+	walkErr := filepath.WalkDir(binRoot, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		// Only files at exactly bin/<os>/<arch>/<name> are platform binaries.
+		rel, relErr := filepath.Rel(binRoot, p)
+		if relErr != nil {
+			return relErr
+		}
+		parts := strings.Split(filepath.ToSlash(rel), "/")
+		if len(parts) != 3 {
+			return nil
+		}
+		goos, goarch := parts[0], parts[1]
+		bins = append(bins, publish.PlatformBinary{OS: goos, Arch: goarch, Path: p})
+		if goos == runtime.GOOS && goarch == runtime.GOARCH {
+			hostBin = p
+		}
+		return nil
+	})
+	if walkErr != nil {
+		return nil, "", fmt.Errorf("scan bin tree %s: %w", binRoot, walkErr)
+	}
+	if len(bins) == 0 {
+		return nil, "", fmt.Errorf("no binaries found under %s (expected bin/<os>/<arch>/<name>)", binRoot)
+	}
+	if hostBin == "" {
+		return nil, "", fmt.Errorf("bin tree has no binary for the publish host %s/%s; include it so --emit-manifest can run", runtime.GOOS, runtime.GOARCH)
+	}
+	return bins, hostBin, nil
 }
 
 // buildSigner resolves the requested signing mode into a publish.Signer, or nil

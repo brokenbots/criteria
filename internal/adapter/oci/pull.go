@@ -216,3 +216,8 @@ func isLocalhost(host string) bool {
 	}
 	return host == "localhost" || host == "127.0.0.1" || host == "::1"
 }
+
+// IsLocalhost reports whether host (optionally with a :port suffix) refers to
+// the local machine. Publishers default to PlainHTTP for these so local test
+// registries work without an explicit flag (parity with the puller).
+func IsLocalhost(host string) bool { return isLocalhost(host) }
