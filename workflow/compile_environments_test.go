@@ -887,7 +887,7 @@ func TestResolveEnvironmentPolicy_ThreeRules(t *testing.T) {
 // to an environment stores a ResolvedPolicy in FSMGraph.ResolvedPolicies.
 func TestResolvedPolicy_CachedOnFSMGraph(t *testing.T) {
 	schemas := map[string]AdapterInfo{
-		"shell": {
+		"exec": {
 			ConfigSchema: map[string]ConfigField{},
 			PolicyHints: &PolicyHints{
 				OS:         "linux",
@@ -912,7 +912,7 @@ environment "shell" "prod" {
   os = "linux"
 }
 
-adapter "shell" "default" {
+adapter "exec" "default" {
   environment = shell.prod
 }
 
@@ -927,7 +927,7 @@ state "done" { terminal = true }
 		t.Fatalf("compile: %s", diags.Error())
 	}
 
-	cacheKey := "shell.default:shell.prod"
+	cacheKey := "exec.default:shell.prod"
 	rp, ok := g.ResolvedPolicies[cacheKey]
 	if !ok {
 		t.Fatalf("expected ResolvedPolicies[%q] to exist", cacheKey)

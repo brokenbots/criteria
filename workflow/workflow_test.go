@@ -18,10 +18,10 @@ workflow {
   }
 }
 
-adapter "shell" "default" {}
+adapter "exec" "default" {}
 
 step "build" {
-  target = adapter.shell.default
+  target = adapter.exec.default
   input {
     command = "echo build"
   }
@@ -32,7 +32,7 @@ step "build" {
 }
 
 step "test" {
-  target = adapter.shell.default
+  target = adapter.exec.default
   input {
     command = "echo test"
   }
@@ -83,9 +83,9 @@ workflow {
   target_state  = "done"
 }
 
-adapter "shell" "default" {}
+adapter "exec" "default" {}
 step "a" {
-  target = adapter.shell.default
+  target = adapter.exec.default
   outcome "success" { next = step.missing }
 }
 state "done" { terminal = true }
@@ -112,9 +112,9 @@ workflow {
   target_state  = "halfway"
 }
 
-adapter "shell" "default" {}
+adapter "exec" "default" {}
 step "a" {
-  target = adapter.shell.default
+  target = adapter.exec.default
   outcome "success" { next = step.halfway }
 }
 state "halfway" {}
@@ -135,13 +135,13 @@ workflow {
   target_state  = "done"
 }
 
-adapter "shell" "default" {}
+adapter "exec" "default" {}
 step "a" {
-  target = adapter.shell.default
+  target = adapter.exec.default
   outcome "success" { next = step.done }
 }
 step "orphan" {
-  target = adapter.shell.default
+  target = adapter.exec.default
   outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
@@ -162,9 +162,9 @@ workflow {
   target_state  = "done"
 }
 
-adapter "shell" "default" {}
+adapter "exec" "default" {}
 step "a" {
-  target = adapter.shell.default
+  target = adapter.exec.default
 }
 state "done" { terminal = true }
 `
@@ -219,7 +219,7 @@ workflow {
 }
 
 step "run" {
-  target      = adapter.shell.default
+  target      = adapter.exec.default
   allow_tools = ["shell:git status"]
   outcome "success" { next = step.done }
 }
@@ -233,7 +233,7 @@ state "done" { terminal = true }
 	if !diags.HasErrors() {
 		t.Fatal("expected compile error for undefined adapter")
 	}
-	if !strings.Contains(diags.Error(), `adapter "shell.default" is not declared`) {
+	if !strings.Contains(diags.Error(), `adapter "exec.default" is not declared`) {
 		t.Fatalf("expected adapter not declared error, got: %s", diags.Error())
 	}
 }

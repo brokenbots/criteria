@@ -21,7 +21,7 @@ func TestBuildIndexAndResolve(t *testing.T) {
 }
 
 step "fetch" {
-  target = adapter.shell.default
+  target = adapter.noop.default
   input { command = "echo hi" }
   outcome "success" { next = state.done }
 }
@@ -52,7 +52,7 @@ func TestExtractTraversalAt(t *testing.T) {
 	}{
 		{"next = step.greet", 10, "step", "greet"},
 		{"next = state.done", 10, "state", "done"},
-		{"target = adapter.shell.default", 15, "adapter", "shell.default"},
+		{"target = adapter.noop.default", 15, "adapter", "noop.default"},
 		{"value = var.name", 12, "variable", "name"},
 		{"value = local.greeting", 14, "local", "greeting"},
 		{"value = data.internal.counter", 18, "data", "internal.counter"},
@@ -111,7 +111,7 @@ func TestResolveDefinition_MultiSegmentSteps(t *testing.T) {
 }
 
 step "fetch" {
-  target = adapter.shell.default
+  target = adapter.noop.default
   input { command = "echo hi" }
   outcome "success" { next = state.done }
 }

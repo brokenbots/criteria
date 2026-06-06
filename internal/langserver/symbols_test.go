@@ -19,7 +19,7 @@ func TestFileSymbols(t *testing.T) {
   target_state = "done"
 }
 
-adapter "shell" "default" {
+adapter "noop" "default" {
   config {}
 }
 
@@ -40,7 +40,7 @@ output "result" {
 }
 
 step "fetch" {
-  target = adapter.shell.default
+  target = adapter.noop.default
   input { command = "echo hi" }
   outcome "success" { next = state.done }
 }
@@ -67,7 +67,7 @@ subworkflow "child" {
 	require.NoError(t, err)
 
 	want := map[string]protocol.SymbolKind{
-		"shell.default":    protocol.SymbolKindClass,
+		"noop.default":     protocol.SymbolKindClass,
 		"name":             protocol.SymbolKindVariable,
 		"greeting":         protocol.SymbolKindConstant,
 		"internal.counter": protocol.SymbolKindObject,

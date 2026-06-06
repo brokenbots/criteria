@@ -141,7 +141,7 @@ workflow {
   target_state  = "done"
 }
 adapter "noop" "a" {}
-adapter "shell" "b" {
+adapter "fake" "b" {
   config { }
 }
 step "step_a" {
@@ -149,7 +149,7 @@ step "step_a" {
   outcome "success" { next = step.step_b }
 }
 step "step_b" {
-  target = adapter.shell.b
+  target = adapter.fake.b
   outcome "success" { next = step.done }
 }
 state "done" {
@@ -401,11 +401,11 @@ workflow {
   initial_state = "do_shell"
   target_state  = "done"
 }
-adapter "shell" "default" {
+adapter "noop" "default" {
   config { }
 }
 step "do_shell" {
-  target = adapter.shell.default
+  target = adapter.noop.default
   outcome "success" { next = step.done }
 }
 state "done" {

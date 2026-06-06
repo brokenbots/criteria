@@ -32,16 +32,16 @@ workflow {
   target_state  = "done"
 }
 
-adapter "shell" "default" {}
+adapter "exec" "default" {}
 
 step "first" {
-  target = adapter.shell.default
+  target = adapter.exec.default
   input { command = "echo hi" }
   outcome "success" { next = step.second }
 }
 
 step "second" {
-  target = adapter.shell.default
+  target = adapter.exec.default
   input { command = steps.first.outputs.result }
   outcome "success" { next = step.done }
 }
@@ -52,7 +52,7 @@ state "done" { terminal = true }
 	if diags.HasErrors() {
 		t.Fatalf("parse: %s", diags.Error())
 	}
-	g, diags := Compile(spec, map[string]AdapterInfo{"shell": outputTestSchema})
+	g, diags := Compile(spec, map[string]AdapterInfo{"exec": outputTestSchema})
 	if diags.HasErrors() {
 		t.Fatalf("compile: %s", diags.Error())
 	}
@@ -72,16 +72,16 @@ workflow {
   target_state  = "done"
 }
 
-adapter "shell" "default" {}
+adapter "exec" "default" {}
 
 step "first" {
-  target = adapter.shell.default
+  target = adapter.exec.default
   input { command = "echo hi" }
   outcome "success" { next = step.second }
 }
 
 step "second" {
-  target = adapter.shell.default
+  target = adapter.exec.default
   input { command = steps.first.outputs.not_a_field }
   outcome "success" { next = step.done }
 }
@@ -92,7 +92,7 @@ state "done" { terminal = true }
 	if diags.HasErrors() {
 		t.Fatalf("parse: %s", diags.Error())
 	}
-	_, diags = Compile(spec, map[string]AdapterInfo{"shell": outputTestSchema})
+	_, diags = Compile(spec, map[string]AdapterInfo{"exec": outputTestSchema})
 	if !diags.HasErrors() {
 		t.Fatal("expected compile error for output field")
 	}
@@ -118,16 +118,16 @@ workflow {
   target_state  = "done"
 }
 
-adapter "shell" "default" {}
+adapter "exec" "default" {}
 
 step "first" {
-  target = adapter.shell.default
+  target = adapter.exec.default
   input { command = "echo hi" }
   outcome "success" { next = step.second }
 }
 
 step "second" {
-  target = adapter.shell.default
+  target = adapter.exec.default
   input { command = steps.first.outputs.reslt }
   outcome "success" { next = step.done }
 }
@@ -138,7 +138,7 @@ state "done" { terminal = true }
 	if diags.HasErrors() {
 		t.Fatalf("parse: %s", diags.Error())
 	}
-	_, diags = Compile(spec, map[string]AdapterInfo{"shell": outputTestSchema})
+	_, diags = Compile(spec, map[string]AdapterInfo{"exec": outputTestSchema})
 	if !diags.HasErrors() {
 		t.Fatal("expected compile error for misspelled output field")
 	}
@@ -163,10 +163,10 @@ workflow {
   target_state  = "done"
 }
 
-adapter "shell" "default" {}
+adapter "exec" "default" {}
 
 step "first" {
-  target = adapter.shell.default
+  target = adapter.exec.default
   input { command = "echo hi" }
   outcome "success" { next = step.sw }
 }
@@ -187,7 +187,7 @@ state "done" { terminal = true }
 	if diags.HasErrors() {
 		t.Fatalf("parse: %s", diags.Error())
 	}
-	g, diags := Compile(spec, map[string]AdapterInfo{"shell": outputTestSchema})
+	g, diags := Compile(spec, map[string]AdapterInfo{"exec": outputTestSchema})
 	if diags.HasErrors() {
 		t.Fatalf("compile: %s", diags.Error())
 	}
@@ -207,10 +207,10 @@ workflow {
   target_state  = "done"
 }
 
-adapter "shell" "default" {}
+adapter "exec" "default" {}
 
 step "first" {
-  target = adapter.shell.default
+  target = adapter.exec.default
   input { command = "echo hi" }
   outcome "success" { next = step.sw }
 }
@@ -231,7 +231,7 @@ state "done" { terminal = true }
 	if diags.HasErrors() {
 		t.Fatalf("parse: %s", diags.Error())
 	}
-	_, diags = Compile(spec, map[string]AdapterInfo{"shell": outputTestSchema})
+	_, diags = Compile(spec, map[string]AdapterInfo{"exec": outputTestSchema})
 	if !diags.HasErrors() {
 		t.Fatal("expected compile error for invalid output field in switch match")
 	}
@@ -256,10 +256,10 @@ output "result" {
   value = steps.first.outputs.result
 }
 
-adapter "shell" "default" {}
+adapter "exec" "default" {}
 
 step "first" {
-  target = adapter.shell.default
+  target = adapter.exec.default
   input { command = "echo hi" }
   outcome "success" { next = step.done }
 }
@@ -270,7 +270,7 @@ state "done" { terminal = true }
 	if diags.HasErrors() {
 		t.Fatalf("parse: %s", diags.Error())
 	}
-	_, diags = Compile(spec, map[string]AdapterInfo{"shell": outputTestSchema})
+	_, diags = Compile(spec, map[string]AdapterInfo{"exec": outputTestSchema})
 	if diags.HasErrors() {
 		t.Fatalf("compile: %s", diags.Error())
 	}
@@ -291,10 +291,10 @@ output "result" {
   value = steps.first.outputs.nope
 }
 
-adapter "shell" "default" {}
+adapter "exec" "default" {}
 
 step "first" {
-  target = adapter.shell.default
+  target = adapter.exec.default
   input { command = "echo hi" }
   outcome "success" { next = step.done }
 }
@@ -305,7 +305,7 @@ state "done" { terminal = true }
 	if diags.HasErrors() {
 		t.Fatalf("parse: %s", diags.Error())
 	}
-	_, diags = Compile(spec, map[string]AdapterInfo{"shell": outputTestSchema})
+	_, diags = Compile(spec, map[string]AdapterInfo{"exec": outputTestSchema})
 	if !diags.HasErrors() {
 		t.Fatal("expected compile error for invalid output field in top-level output")
 	}
@@ -337,7 +337,7 @@ state "done" { terminal = true }
 	if diags.HasErrors() {
 		t.Fatalf("parse: %s", diags.Error())
 	}
-	_, diags = Compile(spec, map[string]AdapterInfo{"shell": outputTestSchema})
+	_, diags = Compile(spec, map[string]AdapterInfo{"exec": outputTestSchema})
 	// Should NOT error from compileOutputRefs because the step is unknown.
 	if diags.HasErrors() {
 		for _, d := range diags {
@@ -400,16 +400,16 @@ workflow {
   target_state  = "done"
 }
 
-adapter "shell" "default" {}
+adapter "exec" "default" {}
 
 step "first" {
-  target = adapter.shell.default
+  target = adapter.exec.default
   input { command = "echo hi" }
   outcome "success" { next = step.second }
 }
 
 step "second" {
-  target = adapter.shell.default
+  target = adapter.exec.default
   input { command = "echo hi" }
   outcome "success" {
     output = { copied = steps.first.outputs.status }
@@ -423,7 +423,7 @@ state "done" { terminal = true }
 	if diags.HasErrors() {
 		t.Fatalf("parse: %s", diags.Error())
 	}
-	_, diags = Compile(spec, map[string]AdapterInfo{"shell": outputTestSchema})
+	_, diags = Compile(spec, map[string]AdapterInfo{"exec": outputTestSchema})
 	if diags.HasErrors() {
 		t.Fatalf("compile: %s", diags.Error())
 	}
@@ -440,16 +440,16 @@ workflow {
   target_state  = "done"
 }
 
-adapter "shell" "default" {}
+adapter "exec" "default" {}
 
 step "first" {
-  target = adapter.shell.default
+  target = adapter.exec.default
   input { command = "echo hi" }
   outcome "success" { next = step.second }
 }
 
 step "second" {
-  target = adapter.shell.default
+  target = adapter.exec.default
   input { command = "echo hi" }
   outcome "success" {
     output = { copied = steps.first.outputs.bogus }
@@ -463,7 +463,7 @@ state "done" { terminal = true }
 	if diags.HasErrors() {
 		t.Fatalf("parse: %s", diags.Error())
 	}
-	_, diags = Compile(spec, map[string]AdapterInfo{"shell": outputTestSchema})
+	_, diags = Compile(spec, map[string]AdapterInfo{"exec": outputTestSchema})
 	if !diags.HasErrors() {
 		t.Fatal("expected compile error for invalid output field in outcome output")
 	}

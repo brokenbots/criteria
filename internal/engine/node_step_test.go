@@ -33,7 +33,7 @@ func TestStepNode_ResolveInput_InjectsEnvironmentVars(t *testing.T) {
 		step: &workflow.StepNode{
 			Name:       "s",
 			TargetKind: workflow.StepTargetAdapter,
-			AdapterRef: "shell",
+			AdapterRef: "noop",
 			Input:      map[string]string{},
 		},
 	}
@@ -81,7 +81,7 @@ func TestStepNode_ResolveInput_FiltersControlledEnvVars(t *testing.T) {
 		step: &workflow.StepNode{
 			Name:       "s",
 			TargetKind: workflow.StepTargetAdapter,
-			AdapterRef: "shell",
+			AdapterRef: "noop",
 			Input:      map[string]string{},
 		},
 	}

@@ -14,12 +14,12 @@ environment "container" "docker" {
   }
 }
 
-adapter "shell" "default" {
+adapter "exec" "default" {
   environment = container.docker
 }
 
 step "run" {
-  target = adapter.shell.default
+  target = adapter.exec.default
   input {
     command = "echo hi"
   }

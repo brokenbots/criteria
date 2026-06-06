@@ -218,13 +218,13 @@ state "done" { terminal = true }
 // TestMergeSpecs_DuplicateNamedBlock_Adapter_DifferentTypes documents that the
 // workstream specification required same-name adapters to conflict regardless of
 // type label, but the current parser uses "<type>.<name>" as the adapter identity
-// key — so adapter "shell" "primary" and adapter "copilot" "primary" are distinct.
+// key — so adapter "exec" "primary" and adapter "copilot" "primary" are distinct.
 //
 // This test is skipped pending an architecture decision. The executor has
 // escalated the contract mismatch: see [ARCH-REVIEW] in the workstream file.
 func TestMergeSpecs_DuplicateNamedBlock_Adapter_DifferentTypes(t *testing.T) {
 	t.Skip("ARCH-REVIEW pending: workstream requires same-name different-type adapters to conflict, " +
-		"but the parser uses type+name as the adapter identity key (adapter.shell.primary ≠ " +
+		"but the parser uses type+name as the adapter identity key (adapter.exec.primary ≠ " +
 		"adapter.copilot.primary). Changing this would be a breaking contract change; see " +
 		"[ARCH-REVIEW] in workstreams/test-02-hcl-parsing-eval-coverage.md.")
 }
@@ -241,19 +241,19 @@ func TestMergeSpecs_DuplicateNamedBlock_Adapter_SameTypeAndName(t *testing.T) {
   initial_state = "run"
   target_state  = "done"
 }
-adapter "shell" "primary" {}
+adapter "exec" "primary" {}
 step "run" {
-  target = adapter.shell.primary
+  target = adapter.exec.primary
   outcome "success" { next = step.done }
 }
 state "done" { terminal = true }
 `,
-		"b.hcl": `adapter "shell" "primary" {}
+		"b.hcl": `adapter "exec" "primary" {}
 `,
 	})
 
 	_, diags := ParseDir(dir)
-	assertMergeDiag(t, diags, "duplicate adapter name", "shell.primary")
+	assertMergeDiag(t, diags, "duplicate adapter name", "exec.primary")
 }
 
 // TestMergeSpecs_DistinctBlocksAcrossFiles_NoConflict verifies that non-overlapping
@@ -432,13 +432,13 @@ func TestMergeSpecs_SingleFile_NoMergeNeeded(t *testing.T) {
   target_state  = "done"
 }
 adapter "noop" "default" {}
-adapter "shell" "runner" {}
+adapter "exec" "runner" {}
 step "run" {
   target = adapter.noop.default
   outcome "success" { next = step.done }
 }
 step "cleanup" {
-  target = adapter.shell.runner
+  target = adapter.exec.runner
   outcome "success" { next = step.done }
 }
 state "done" { terminal = true }

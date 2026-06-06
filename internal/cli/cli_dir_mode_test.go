@@ -225,7 +225,7 @@ workflow {
   target_state  = "done"
 }
 
-adapter "shell" "default" {
+adapter "noop" "default" {
   config {}
 }
 
@@ -241,7 +241,7 @@ state "failed" {
 
 	content := strings.TrimSpace(`
 step "run" {
-  target = adapter.shell.default
+  target = adapter.noop.default
   input {
     command = file("./payload.txt")
   }
