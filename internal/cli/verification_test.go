@@ -11,12 +11,12 @@ import (
 // attr > transition default.
 func TestResolveVerification_Precedence(t *testing.T) {
 	tests := []struct {
-		name          string
-		flag          bool
-		env           string // value for CRITERIA_ALLOW_UNSIGNED ("" = unset)
-		workflowAttr  string
-		wantAllow     bool
-		wantWorkflow  string
+		name         string
+		flag         bool
+		env          string // value for CRITERIA_ALLOW_UNSIGNED ("" = unset)
+		workflowAttr string
+		wantAllow    bool
+		wantWorkflow string
 	}{
 		{
 			name:         "default is warn transition",

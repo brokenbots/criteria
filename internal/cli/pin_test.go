@@ -17,7 +17,7 @@ func TestPolicyForPin_KeyRestrictsToPinnedFingerprint(t *testing.T) {
 	}
 	pin := &lockfile.LockedSignature{Key: &lockfile.LockedKey{Algorithm: "ed25519", Fingerprint: "bbb"}}
 
-	got := policyForPin(base, pin)
+	got := policyForPin(&base, pin)
 	if len(got.TrustedKeys) != 1 || got.TrustedKeys[0].Fingerprint != "bbb" {
 		t.Fatalf("expected only the pinned key bbb, got %+v", got.TrustedKeys)
 	}
@@ -34,7 +34,7 @@ func TestPolicyForPin_KeyNoMatchFailsClosed(t *testing.T) {
 	}
 	pin := &lockfile.LockedSignature{Key: &lockfile.LockedKey{Fingerprint: "zzz"}}
 
-	got := policyForPin(base, pin)
+	got := policyForPin(&base, pin)
 	if len(got.TrustedKeys) != 0 {
 		t.Fatalf("expected no trusted keys when pin has no match, got %+v", got.TrustedKeys)
 	}
@@ -51,7 +51,7 @@ func TestPolicyForPin_KeylessNarrowsIdentity(t *testing.T) {
 		Subject: "https://github.com/acme/repo/.github/workflows/release.yml@refs/heads/main",
 	}}
 
-	got := policyForPin(base, pin)
+	got := policyForPin(&base, pin)
 	if len(got.TrustedIssuers) != 1 || got.TrustedIssuers[0] != pin.Keyless.Issuer {
 		t.Errorf("issuer not narrowed: %+v", got.TrustedIssuers)
 	}
@@ -62,7 +62,7 @@ func TestPolicyForPin_KeylessNarrowsIdentity(t *testing.T) {
 
 func TestPolicyForPin_NilPinReturnsBase(t *testing.T) {
 	base := signing.Policy{Mode: signing.ModeWarn}
-	if got := policyForPin(base, nil); got.Mode != signing.ModeWarn {
+	if got := policyForPin(&base, nil); got.Mode != signing.ModeWarn {
 		t.Errorf("expected base returned unchanged, got %+v", got)
 	}
 }

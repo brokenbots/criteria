@@ -69,7 +69,7 @@ func TestSign_KeyMode_RoundTripVerifies(t *testing.T) {
 	if len(res.Bundle) != 0 {
 		t.Fatalf("key signer must not emit a bundle, got %d bytes", len(res.Bundle))
 	}
-	manifestJSON, payloadBytes := buildSignatureManifest(&artifactDesc, payload, res)
+	manifestJSON, payloadBytes := buildSignatureManifest(&artifactDesc, payload, &res)
 
 	payloadDigest := digest.FromBytes(payloadBytes)
 	sigDigest := digest.FromBytes(manifestJSON)
@@ -152,7 +152,7 @@ func TestBuildSignatureManifest_HasEmptyConfigAndSchemaVersion(t *testing.T) {
 		Digest:    digest.FromString("artifact"),
 		Size:      123,
 	}
-	manifestJSON, _ := buildSignatureManifest(artifactDesc, []byte("payload"), SignResult{Signature: []byte("sig")})
+	manifestJSON, _ := buildSignatureManifest(artifactDesc, []byte("payload"), &SignResult{Signature: []byte("sig")})
 
 	var m ocispec.Manifest
 	if err := json.Unmarshal(manifestJSON, &m); err != nil {

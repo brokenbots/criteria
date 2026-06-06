@@ -25,7 +25,7 @@ import (
 // the canonical fingerprint. It mirrors the cosign signature shape the verifier
 // reads (an OCI referrer carrying the simple-signing payload + signature
 // annotation).
-func writeKeySignedArtifact(t *testing.T) (*oci.Layout, digest.Digest, []byte, string) {
+func writeKeySignedArtifact(t *testing.T) (layout *oci.Layout, dg digest.Digest, pubKeyDER []byte, fingerprint string) {
 	t.Helper()
 	root := t.TempDir()
 	l, err := oci.Open(root)

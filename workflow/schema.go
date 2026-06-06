@@ -480,13 +480,13 @@ type PermissionsSpec struct {
 
 // FSMGraph is the validated, executable representation of a workflow.
 type FSMGraph struct {
-	Name               string
-	InitialState       string
-	TargetState        string
+	Name         string
+	InitialState string
+	TargetState  string
 	// Verification is the workflow-level signature-verification posture
 	// (off|warn|strict) copied from the header; empty means the CLI transition
 	// default applies. Consumed by the runtime adapter-pin enforcement path.
-	Verification string
+	Verification       string
 	Variables          map[string]*VariableNode        // compiled variable declarations (W04)
 	Locals             map[string]*LocalNode           // compiled local declarations (W07)
 	Data               map[string]map[string]*DataNode // compiled data declarations; keyed by kind then name (W02)

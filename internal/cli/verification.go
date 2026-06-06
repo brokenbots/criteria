@@ -65,11 +65,11 @@ func resolveSigningPolicy(allowUnsigned bool, workflowVerification string, trust
 //     issuer/subject so only that identity verifies.
 //
 // base is returned unchanged when nothing is pinned.
-func policyForPin(base signing.Policy, pin *lockfile.LockedSignature) signing.Policy {
+func policyForPin(base *signing.Policy, pin *lockfile.LockedSignature) signing.Policy {
 	if pin == nil {
-		return base
+		return *base
 	}
-	p := base
+	p := *base
 	switch {
 	case pin.Key != nil:
 		var kept []signing.KeyIdentity

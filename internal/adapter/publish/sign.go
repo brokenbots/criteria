@@ -234,7 +234,7 @@ func simpleSigningPayload(ref oci.Reference, artifactDigest digest.Digest) []byt
 // referrer of artifactDesc) and its payload blob. Returned as in-memory bytes
 // so callers can stage them in a store (remote push) or an on-disk layout
 // (tests) identically.
-func buildSignatureManifest(artifactDesc *ocispec.Descriptor, payload []byte, res SignResult) (manifestJSON, payloadOut []byte) {
+func buildSignatureManifest(artifactDesc *ocispec.Descriptor, payload []byte, res *SignResult) (manifestJSON, payloadOut []byte) {
 	payloadDesc := ocispec.Descriptor{
 		MediaType: ctypes.SimpleSigningMediaType,
 		Digest:    digest.FromBytes(payload),
@@ -288,7 +288,7 @@ func signArtifact(ctx context.Context, pusher content.Pusher, ref oci.Reference,
 		return ocispec.Descriptor{}, fmt.Errorf("publish: sign: %w", err)
 	}
 
-	manifestJSON, payloadBytes := buildSignatureManifest(artifactDesc, payload, res)
+	manifestJSON, payloadBytes := buildSignatureManifest(artifactDesc, payload, &res)
 
 	payloadDesc := ocispec.Descriptor{
 		MediaType: ctypes.SimpleSigningMediaType,

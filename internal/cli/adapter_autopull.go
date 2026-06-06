@@ -37,21 +37,10 @@ func autoPullCompileAdapters(ctx context.Context, workflowDir string, spec *work
 		return fmt.Errorf("workflow uses OCI adapter references but %q is missing; run `criteria adapter lock`", filepath.Join(workflowDir, ".criteria.lock.hcl"))
 	}
 
-	// Build set of OCI-referenced adapters.
+	// Build set of OCI-referenced adapters and validate the lockfile covers them.
 	ociAdapters := collectWorkflowAdapters(spec)
-
-	// Validate lockfile covers all workflow adapters.
-	missing := []string{}
-	for key, wa := range ociAdapters {
-		if wa.Source == "" {
-			continue // not OCI-based
-		}
-		if findLocked(lf, wa.Type, wa.Name) == nil {
-			missing = append(missing, key)
-		}
-	}
-	if len(missing) > 0 {
-		return fmt.Errorf("lockfile missing entries for adapters: %v; run `criteria adapter lock`", missing)
+	if err := assertLockfileCoversAdapters(lf, ociAdapters); err != nil {
+		return err
 	}
 
 	cacheRoot, err := defaultCacheRoot()
@@ -63,17 +52,9 @@ func autoPullCompileAdapters(ctx context.Context, workflowDir string, spec *work
 		return fmt.Errorf("open OCI cache: %w", err)
 	}
 
-	workflowVerification := ""
-	if spec.Header != nil {
-		workflowVerification = spec.Header.Verification
-	}
-	trustedKeys, err := loadTrustedKeys(workflowDir, nil)
+	policy, err := autoPullPolicy(workflowDir, spec, allowUnsigned)
 	if err != nil {
-		return fmt.Errorf("load trusted keys: %w", err)
-	}
-	policy, err := resolveSigningPolicy(allowUnsigned, workflowVerification, trustedKeys)
-	if err != nil {
-		return fmt.Errorf("signing policy: %w", err)
+		return err
 	}
 	puller := &oci.Puller{Layout: layout}
 
@@ -87,6 +68,42 @@ func autoPullCompileAdapters(ctx context.Context, workflowDir string, spec *work
 	}
 
 	return nil
+}
+
+// assertLockfileCoversAdapters errors when any OCI-referenced workflow adapter
+// has no entry in the lockfile.
+func assertLockfileCoversAdapters(lf *lockfile.Lockfile, ociAdapters map[string]*workflowAdapter) error {
+	var missing []string
+	for key, wa := range ociAdapters {
+		if wa.Source == "" {
+			continue // not OCI-based
+		}
+		if findLocked(lf, wa.Type, wa.Name) == nil {
+			missing = append(missing, key)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("lockfile missing entries for adapters: %v; run `criteria adapter lock`", missing)
+	}
+	return nil
+}
+
+// autoPullPolicy resolves the signing policy for the auto-pull path from the
+// override flag, the workflow `verification` attribute, and the trusted keys.
+func autoPullPolicy(workflowDir string, spec *workflow.Spec, allowUnsigned bool) (signing.Policy, error) {
+	workflowVerification := ""
+	if spec.Header != nil {
+		workflowVerification = spec.Header.Verification
+	}
+	trustedKeys, err := loadTrustedKeys(workflowDir, nil)
+	if err != nil {
+		return signing.Policy{}, fmt.Errorf("load trusted keys: %w", err)
+	}
+	policy, err := resolveSigningPolicy(allowUnsigned, workflowVerification, trustedKeys)
+	if err != nil {
+		return signing.Policy{}, fmt.Errorf("signing policy: %w", err)
+	}
+	return policy, nil
 }
 
 func ensureAdapterCached(ctx context.Context, key string, wa *workflowAdapter, lf *lockfile.Lockfile, layout *oci.Layout, puller *oci.Puller, policy *signing.Policy) error {
@@ -151,7 +168,7 @@ func ensureAdapterCached(ctx context.Context, key string, wa *workflowAdapter, l
 // matches the pin. A nil signer (ModeOff, or a ModeWarn failure) skips the pin
 // check; see policyForPin and assertSignerMatchesPin.
 func verifyAgainstPin(ctx context.Context, key string, layout *oci.Layout, dg digest.Digest, entry *lockfile.LockedAdapter, policy *signing.Policy) error {
-	effective := policyForPin(*policy, entry.Signature)
+	effective := policyForPin(policy, entry.Signature)
 	signer, err := signing.Verify(ctx, layout, dg, effective)
 	if err != nil {
 		return fmt.Errorf("adapter %q signature verification: %w", key, err)
