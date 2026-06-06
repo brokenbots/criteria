@@ -121,13 +121,20 @@ then reviewed WS-by-WS against the tree and CI (see findings below).
     `workflow_call`-able `remote-e2e.yml`; Gate 4 publishing-flow loop guarded behind
     `CRITERIA_CI_ENABLED` until the `criteria-ci` org + three `adapter-test-*` clones are
     provisioned; `docs/release-process.md` added).
-- **Remaining in [`adapter_v2/`](adapter_v2/)** — the non-extraction backlog:
-  - *Publishing infra:* **WS29 — DONE.** All three starter repos ship
+  - *Publishing infra (verified DONE 2026-06-06):* **WS29** — all three starter repos ship
     `.gitlab-ci.yml.example` (keyless via GitLab `id_tokens`) + a `make publish` target, and
     `docs/adapters.md` documents the three publishing paths (GitHub Actions / GitLab CI / local
     `make publish`). The WS29 Step-3 `criteria/publish-adapter` runtime container image and the
     `scripts/*.sh` are **not built** — `criteria adapter publish` (the CLI) performs manifest
     emit → validate → OCI push → sign in one binary, so a separate runtime image is unnecessary.
+  - *Signing completion — WS06 follow-up (PR #244, CI green, 2026-06-06):* **WS46** uniform
+    verification override (`--allow-unsigned`/`CRITERIA_ALLOW_UNSIGNED`/workflow `verification`
+    attr, `warn` transition default D-WS46-1), **WS47** explicit-key trust + lockfile-as-trust-
+    anchor (`trust.hcl`, `policyForPin`/`assertSignerMatchesPin`), **WS48** keyless signing with
+    a Rekor transparency-log bundle (verifiable post-cert-expiry; legacy path fails closed). The
+    Step-5 flip of the transition default back to `strict` is **deferred** to a follow-up gated on
+    the real-OIDC CI run.
+- **Remaining in [`adapter_v2/`](adapter_v2/)** — the non-extraction backlog:
   - *Independence + hardening:* **WS43** independence verification (base `main`, post-merge),
     **WS44** CI coverage ratchet (base `main`, floors captured after WS40), **WS39** docs refresh.
   - *Release gates (see WS40 note) — all four now self-contained:* Gate 1 conformance **done**
@@ -141,6 +148,12 @@ then reviewed WS-by-WS against the tree and CI (see findings below).
     each adapter repo's own `publish.yml`. **WS40 deliberately holds the `v0.5.0` tag + merge to
     `main`** pending out-of-band manual testing; only the Gate 3/Gate 4 validation runs remain
     before the candidate is green.
+  - *Security hardening (new track, scoped 2026-06-06):* **WS49** osv-scanner vulnerability gate
+    in CI, **WS50** dependency-freshness policy + automation (latest major.minor + 7-day
+    supply-chain cooldown; Go tooling `go list`/`go-mod-outdated`/`gomajor` as the primary
+    mechanism, Dependabot demoted to routine minor/patch), **WS51** catch-up upgrades to clear
+    the backlog and flip the osv gate to blocking. WS51's actual dependency bumps are sequenced to
+    run **after** the v0.5.0 candidate clears manual testing so the RC under test is not disturbed.
 
 ### Publishing + extraction progress (2026-06-05, session 2)
 
