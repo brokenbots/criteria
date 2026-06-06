@@ -19,10 +19,21 @@ product version). The release tag and date are finalized by the release gate.
 - **Per-workflow lockfile.** `.criteria.lock.hcl` pins every referenced adapter by
   digest and records the signer identity, for run-to-run reproducibility.
   Populated by `criteria adapter lock`.
-- **Signing & verification.** cosign signatures attached as OCI referrers;
-  **keyless** (Sigstore/Fulcio OIDC) is the default CI path, with explicit Ed25519
-  keys also supported. The host verifies at pull time against a configurable trust
-  policy (`verification = "strict" | "warn" | "off"`, default `strict`).
+- **Signing & verification.** cosign signatures attached as OCI referrers, with
+  the **lockfile as the trust anchor**: `lock` pins the signer and
+  `pull`/`compile`/`apply` re-verify against the pin (a changed signer is a
+  `SignerChanged` diff). **Keyless** (Sigstore/Fulcio OIDC) is the default CI
+  path — signatures are now recorded in the **Rekor transparency log** and shipped
+  as a Sigstore bundle, so they remain verifiable after the ephemeral Fulcio
+  certificate expires; an adapter signed by its own repo's CI verifies with no
+  per-consumer config. **Explicit Ed25519 keys** are supported for offline/
+  enterprise trust via a `trusted_key` config (`~/.criteria/trust.hcl`, a
+  workflow-dir `trust.hcl`, or `--trusted-key`). A uniform unsigned-override
+  (`--allow-unsigned` / `CRITERIA_ALLOW_UNSIGNED`) and the workflow-level
+  `verification = "strict" | "warn" | "off"` attribute are honored across
+  `pull`/`lock`/`compile`/`apply`. The effective default is `warn` during the
+  signing-completion transition and returns to `strict` once keyless verification
+  is confirmed in CI.
 - **New `criteria adapter` CLI group:** `pull`, `lock`, `list`, `info`, `where`,
   `remove`, `prune`, `dev`, `publish`. `publish` supports `--keyless`,
   `--sign-key`, and `--image` (record an already-pushed runnable container image).
