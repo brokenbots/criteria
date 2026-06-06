@@ -85,6 +85,9 @@ type SessionManager struct {
 // adapter connections.
 type RemoteShim interface {
 	WaitForHandle(ctx context.Context, adapterType string) (Handle, error)
+	// WaitForFreshHandle waits for a connection whose handle is not `stale`,
+	// used on crash-respawn so the dead handle is never handed back.
+	WaitForFreshHandle(ctx context.Context, adapterType string, stale Handle) (Handle, error)
 }
 
 // SetGraph provides the compiled workflow graph so the session manager
@@ -647,7 +650,16 @@ func (m *SessionManager) registerSensitiveOutputs(result adapter.Result, step *w
 func (m *SessionManager) handleCrash(ctx context.Context, name string, step *workflow.StepNode, sink adapter.EventSink, sess *Session, execErr error) (adapter.Result, error) {
 	slog.Warn("adapter session crashed", "session", sess.Name, "adapter", sess.Adapter, "error", execErr)
 
-	switch sess.OnCrash {
+	// The effective crash policy is the step's (the compiler resolves it as
+	// step-overrides-adapter), falling back to the session's adapter-level policy.
+	// Without this, an on_crash declared only on the step would be ignored at
+	// runtime (sess.OnCrash is captured from the adapter block at open time).
+	onCrash := sess.OnCrash
+	if step != nil && step.OnCrash != "" {
+		onCrash = normalizeOnCrash(step.OnCrash)
+	}
+
+	switch onCrash {
 	case OnCrashRespawn:
 		sink.Adapter("session.respawned", map[string]any{
 			"session": sess.Name,
@@ -655,7 +667,7 @@ func (m *SessionManager) handleCrash(ctx context.Context, name string, step *wor
 			"error":   execErr.Error(),
 		})
 		if respawnErr := m.respawn(ctx, sess); respawnErr != nil {
-			return m.failResult(sink, sess, execErr)
+			return m.failResult(sink, sess, fmt.Errorf("respawn after crash failed: %w (original crash: %w)", respawnErr, execErr))
 		}
 		retrySink := sink
 		if sess.mergeBuf != nil {
@@ -671,7 +683,7 @@ func (m *SessionManager) handleCrash(ctx context.Context, name string, step *wor
 		sink.Adapter("session.crash", map[string]any{
 			"session": sess.Name,
 			"adapter": sess.Adapter,
-			"policy":  sess.OnCrash,
+			"policy":  onCrash,
 			"error":   execErr.Error(),
 		})
 		return adapter.Result{Outcome: "failure"}, &FatalRunError{Err: fmt.Errorf("session %q crashed and on_crash=abort_run", name)}
@@ -888,7 +900,9 @@ func (m *SessionManager) resolveAdapterForRespawn(ctx context.Context, sess *Ses
 	// Remote-mode dispatch: if the adapter is bound to a remote environment,
 	// wait for the adapter to phone home via the shim (respawn = reconnect).
 	if m.remoteShim != nil && m.isRemoteAdapter(sess.Name) {
-		return m.remoteShim.WaitForHandle(ctx, sess.Adapter)
+		// Exclude the just-crashed handle so we wait for the replacement
+		// connection rather than the dead session still in the shim's map.
+		return m.remoteShim.WaitForFreshHandle(ctx, sess.Adapter, sess.handle)
 	}
 
 	if dl, ok := m.loader.(*DefaultLoader); ok {

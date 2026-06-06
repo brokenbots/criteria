@@ -403,12 +403,17 @@ func pickFreeHostAddr(t *testing.T) string {
 // and falls back to the default route source address.
 func hostIPReachableFromKind(t *testing.T) string {
 	t.Helper()
-	// Try the gateway of the kind network first.
-	out, err := exec.Command("docker", "network", "inspect", "kind", "-f", "{{(index .IPAM.Config 0).Gateway}}").Output()
+	// Prefer an IPv4 gateway of the kind network. Docker Desktop frequently lists
+	// an IPv6 subnet first, and an IPv6 literal both (a) is awkward to route to the
+	// host listener and (b) renders as "[addr]:port" which breaks the unquoted YAML
+	// host value. So scan all gateways and pick the first IPv4 one.
+	out, err := exec.Command("docker", "network", "inspect", "kind", "-f",
+		"{{range .IPAM.Config}}{{.Gateway}} {{end}}").Output()
 	if err == nil {
-		ip := strings.TrimSpace(string(out))
-		if ip != "" && ip != "<no value>" {
-			return ip
+		for _, g := range strings.Fields(string(out)) {
+			if ip := net.ParseIP(g); ip != nil && ip.To4() != nil {
+				return g
+			}
 		}
 	}
 	// Fallback: source IP used to reach an external address.
@@ -511,14 +516,19 @@ func kubectlDeletePod(t *testing.T, labelSelector, namespace string) {
 func waitForPodLog(t *testing.T, namespace, labelSelector, substring string, timeout time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
+	var lastOut []byte
 	for time.Now().Before(deadline) {
 		out, _ := exec.Command("kubectl", "logs", "-n", namespace, "-l", labelSelector, "--tail=50").CombinedOutput()
+		lastOut = out
 		if strings.Contains(string(out), substring) {
 			return
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
-	t.Fatalf("timeout waiting for pod log containing %q", substring)
+	// Surface the pod's actual logs + status so a timeout is diagnosable rather
+	// than blind (e.g. a dial error phoning home, or a crash-loop).
+	desc, _ := exec.Command("kubectl", "describe", "pods", "-n", namespace, "-l", labelSelector).CombinedOutput()
+	t.Fatalf("timeout waiting for pod log containing %q\n--- pod logs ---\n%s\n--- pod describe ---\n%s", substring, lastOut, desc)
 }
 
 func TestRemoteAdapter_K8sHappyPath(t *testing.T) {
@@ -639,16 +649,22 @@ spec:
 
 	kubectlWaitForDeployment(t, "greeter", namespace, 60*time.Second)
 
-	// Wait for the adapter pod to phone home.
-	waitForPodLog(t, namespace, "app=greeter", "serving gRPC", 30*time.Second)
-
 	sink := &testSink{}
 	eng := engine.New(graph, adapterhost.NewLoader(), sink,
 		engine.WithWorkflowDir(workflowDir),
 		engine.WithLockfile(lf),
 	)
 
-	if err := eng.Run(ctx); err != nil {
+	// Start the engine first: it brings up the remote shim listener. The pod
+	// phones home on a reconnect backoff, so the listener must exist before we
+	// wait for the pod to connect.
+	errCh := make(chan error, 1)
+	go func() { errCh <- eng.Run(ctx) }()
+
+	// Confirm the pod connected (now that the shim is listening).
+	waitForPodLog(t, namespace, "app=greeter", "serving gRPC", 60*time.Second)
+
+	if err := <-errCh; err != nil {
 		t.Fatalf("engine run: %v", err)
 	}
 
@@ -776,19 +792,21 @@ spec:
 
 	kubectlWaitForDeployment(t, "greeter", namespace, 60*time.Second)
 
-	// Wait for the adapter pod to phone home.
-	waitForPodLog(t, namespace, "app=greeter", "serving gRPC", 30*time.Second)
-
 	sink := &testSink{}
 	eng := engine.New(graph, adapterhost.NewLoader(), sink,
 		engine.WithWorkflowDir(workflowDir),
 		engine.WithLockfile(lf),
 	)
 
+	// Start the engine first so the remote shim is listening before the pod
+	// phones home (the pod retries on a backoff until the listener is up).
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- eng.Run(ctx)
 	}()
+
+	// Wait for the adapter pod to phone home (shim is now listening).
+	waitForPodLog(t, namespace, "app=greeter", "serving gRPC", 60*time.Second)
 
 	// Wait for the step to start executing (delay_ms = 15s).
 	waitForPodLog(t, namespace, "app=greeter", "step execution started", 30*time.Second)

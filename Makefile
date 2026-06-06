@@ -51,8 +51,10 @@ install: build plugins ## Install criteria to ~/.criteria (binary → ~/.criteri
 	@echo '    set -gx CRITERIA_ADAPTERS $$HOME/.criteria/adapters'
 	@echo ""
 
-docker-runtime-smoke: docker-runtime ## Run a workflow inside the runtime image
+docker-runtime: ## Build the runtime Docker image (criteria/runtime:dev)
 	docker build -t criteria/runtime:dev -f Dockerfile.runtime .
+
+docker-runtime-smoke: docker-runtime ## Run a workflow inside the runtime image
 	docker run --rm -v "$$PWD/examples:/workspace/examples:ro" \
 		criteria/runtime:dev apply /workspace/examples/hello
 

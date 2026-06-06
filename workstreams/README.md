@@ -122,16 +122,25 @@ then reviewed WS-by-WS against the tree and CI (see findings below).
     `CRITERIA_CI_ENABLED` until the `criteria-ci` org + three `adapter-test-*` clones are
     provisioned; `docs/release-process.md` added).
 - **Remaining in [`adapter_v2/`](adapter_v2/)** — the non-extraction backlog:
-  - *Publishing infra:* **WS29** GitLab template + Makefile paths + runtime container image.
-  - *Independence + hardening:* **WS43** independence verification, **WS44** CI coverage ratchet,
-    **WS39** docs refresh (`docs/adapters.md` still uses copilot/shell as in-tree worked examples;
-    a pointer notes copilot is external).
-  - *Release gates (see WS40 note):* Gate 1 conformance **done** (rescoped,
-    [ADR-0003](../docs/adrs/ADR-0003-conformance-scope.md)); Gate 2 in-tree adapters covered in
-    `ci.yml` e2e; Gate 3 **WS38** wired into `release-gates.yml` (reuses `remote-e2e.yml`); Gate 4
-    `release-gates.yml` loop exists but stays skipped until the `criteria-ci` org is provisioned
-    (`CRITERIA_CI_ENABLED`/`CRITERIA_CI_TOKEN`) and **WS29** lands the remaining publishing paths.
-    **WS40** still needs the Gate 4 org provisioning + a Gate 3 validation run + the `v0.5.0` tag.
+  - *Publishing infra:* **WS29 — DONE.** All three starter repos ship
+    `.gitlab-ci.yml.example` (keyless via GitLab `id_tokens`) + a `make publish` target, and
+    `docs/adapters.md` documents the three publishing paths (GitHub Actions / GitLab CI / local
+    `make publish`). The WS29 Step-3 `criteria/publish-adapter` runtime container image and the
+    `scripts/*.sh` are **not built** — `criteria adapter publish` (the CLI) performs manifest
+    emit → validate → OCI push → sign in one binary, so a separate runtime image is unnecessary.
+  - *Independence + hardening:* **WS43** independence verification (base `main`, post-merge),
+    **WS44** CI coverage ratchet (base `main`, floors captured after WS40), **WS39** docs refresh.
+  - *Release gates (see WS40 note) — all four now self-contained:* Gate 1 conformance **done**
+    (rescoped, [ADR-0003](../docs/adrs/ADR-0003-conformance-scope.md)); Gate 2 in-tree adapters
+    (`noop`/`mcp` + examples) covered in `ci.yml` e2e; Gate 3 **WS38** wired into
+    `release-gates.yml` (reuses `remote-e2e.yml`) — **needs one `workflow_dispatch` validation
+    run on the branch**; Gate 4 **rescoped to a self-contained publish→pull round-trip** (build
+    in-tree `noop` → `criteria adapter publish` to an ephemeral local `registry:2` → pull back →
+    verify). The `criteria-ci` org + `adapter-test-*` clones + `CRITERIA_CI_ENABLED`/
+    `CRITERIA_CI_TOKEN` are **no longer needed** — the real keyless→GHCR publish is validated in
+    each adapter repo's own `publish.yml`. **WS40 deliberately holds the `v0.5.0` tag + merge to
+    `main`** pending out-of-band manual testing; only the Gate 3/Gate 4 validation runs remain
+    before the candidate is green.
 
 ### Publishing + extraction progress (2026-06-05, session 2)
 

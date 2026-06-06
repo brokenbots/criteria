@@ -489,6 +489,18 @@ Added after the WS02–WS05 risk review. Each item closes a forward-extensibilit
 
 ## Workstreams
 
+> **Status (2026-06-06).** WS01–WS38, WS41, WS42, WS45 are merged and archived under
+> [`../archived/v4/adapter-v2/`](../archived/v4/adapter-v2/). **WS29 (GitLab + Makefile publishing
+> paths) is done.** **WS39 (docs refresh) — content done:** `docs/adapters.md`, `docs/adapter-v2-migration.md`,
+> and `docs/release-process.md` (all four self-contained release gates) reflect the v2 state; the
+> `CHANGELOG.md` `[Unreleased]` → `[v0.5.0]` stamp and the `PLAN.md` / WS-archival close-out are
+> deferred to the WS40 tag (version is set at tag time).
+> Remaining: **WS40** holds the `v0.5.0` tag + merge to `main` until out-of-band testing signs off
+> (only the Gate 3/Gate 4 validation runs remain to make the candidate green); **WS43** (independence
+> verification) and **WS44** (coverage ratchet) are post-merge, based on `main`. See the
+> [top-level workstreams tracker](../README.md#phase-4--adapter-system-v2-active) for the authoritative
+> status.
+
 The team works workstreams **in order**. Each workstream is sized to a **single PR**. Foundational items come first, higher-level items later, adapter migrations and CI scaffolding at the top of the stack. Individual workstream files (one per WS) will be authored in the criteria project's `workstreams/` directory using its established format.
 
 ### Foundation (must land before anything else)

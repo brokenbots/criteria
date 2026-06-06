@@ -198,7 +198,7 @@ func (p *Puller) newRepository(ref Reference) (*remote.Repository, error) {
 	if err != nil {
 		return nil, fmt.Errorf("oci: build remote repository for %q: %w", repoRef, err)
 	}
-	repo.PlainHTTP = p.PlainHTTP || isLocalhost(ref.Registry)
+	repo.PlainHTTP = p.PlainHTTP || IsLocalhost(ref.Registry)
 
 	ap := p.Auth
 	if ap == nil {
@@ -242,18 +242,13 @@ func (p *Puller) annotateIndex(desc *ocispec.Descriptor) error {
 	return fmt.Errorf("oci: annotateIndex: descriptor %s not found in index.json after pull", desc.Digest)
 }
 
-// isLocalhost reports whether host (which may include a :port suffix) refers
-// to the local machine. When true, the puller defaults to PlainHTTP so that
-// local test registries work without an explicit flag.
-func isLocalhost(host string) bool {
+// IsLocalhost reports whether host (which may include a :port suffix) refers
+// to the local machine. When true, the puller (and the publisher) default to
+// PlainHTTP so that local test registries work without an explicit flag.
+func IsLocalhost(host string) bool {
 	host = strings.ToLower(host)
 	if idx := strings.LastIndex(host, ":"); idx != -1 {
 		host = host[:idx]
 	}
 	return host == "localhost" || host == "127.0.0.1" || host == "::1"
 }
-
-// IsLocalhost reports whether host (optionally with a :port suffix) refers to
-// the local machine. Publishers default to PlainHTTP for these so local test
-// registries work without an explicit flag (parity with the puller).
-func IsLocalhost(host string) bool { return isLocalhost(host) }

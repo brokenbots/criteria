@@ -14,8 +14,10 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"os/signal"
 	"strconv"
 	"sync"
+	"syscall"
 	"time"
 
 	"google.golang.org/grpc"
@@ -140,25 +142,57 @@ func (s *smokeAdapter) CloseSession(_ context.Context, req *v2.CloseSessionReque
 	return &v2.CloseSessionResponse{}, nil
 }
 
-// singleConnListener returns a single connection and then EOFs.
+// singleConnListener hands out exactly one connection. The second Accept blocks
+// until that connection is actually closed, then returns io.EOF.
+//
+// Blocking (rather than returning EOF immediately) is essential: grpc.Server.Serve
+// loops on Accept, and if the second Accept returned EOF right away, Serve would
+// return while the connection is still live — causing dialAndServe to return and
+// the reconnect loop to redial spuriously every backoff interval. Each spurious
+// reconnect would make the host shim clobber its own active session (it keys
+// sessions by adapter type), killing an in-flight Execute. Blocking until the
+// served connection closes means we redial only on a real disconnect.
 type singleConnListener struct {
-	conn net.Conn
-	mu   sync.Mutex
-	done bool
+	conn   net.Conn
+	mu     sync.Mutex
+	served bool
+	closed chan struct{}
+}
+
+func newSingleConnListener(conn net.Conn) *singleConnListener {
+	l := &singleConnListener{closed: make(chan struct{})}
+	l.conn = &notifyConn{Conn: conn, onClose: func() { close(l.closed) }}
+	return l
 }
 
 func (l *singleConnListener) Accept() (net.Conn, error) {
 	l.mu.Lock()
-	defer l.mu.Unlock()
-	if l.done {
-		return nil, io.EOF
+	if !l.served {
+		l.served = true
+		c := l.conn
+		l.mu.Unlock()
+		return c, nil
 	}
-	l.done = true
-	return l.conn, nil
+	l.mu.Unlock()
+	<-l.closed // block until the served connection is closed
+	return nil, io.EOF
 }
 
 func (l *singleConnListener) Close() error   { return nil }
 func (l *singleConnListener) Addr() net.Addr { return l.conn.LocalAddr() }
+
+// notifyConn signals (once) when the connection is closed, so the listener knows
+// when to release the blocked Accept.
+type notifyConn struct {
+	net.Conn
+	once    sync.Once
+	onClose func()
+}
+
+func (c *notifyConn) Close() error {
+	c.once.Do(c.onClose)
+	return c.Conn.Close()
+}
 
 func main() {
 	log := slog.New(slog.NewJSONHandler(os.Stderr, nil))
@@ -192,16 +226,27 @@ func main() {
 		}
 	}
 
-	for {
-		if err := dialAndServe(host, token, digest, name, tlsConf, log); err != nil {
+	// Stop phoning home on SIGTERM/SIGINT. When a deployment deletes this pod
+	// (e.g. the crash-recovery test), Kubernetes sends SIGTERM with a grace
+	// period; without this, the terminating pod would keep reconnecting and
+	// clobber the replacement pod's session on the host shim.
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer stop()
+
+	for ctx.Err() == nil {
+		if err := dialAndServe(ctx, host, token, digest, name, tlsConf, log); err != nil {
 			log.Error("connection lost", "error", err)
 		}
 		// Back-off before reconnecting so crash-looping doesn't hammer the host.
-		time.Sleep(2 * time.Second)
+		select {
+		case <-ctx.Done():
+		case <-time.After(2 * time.Second):
+		}
 	}
+	log.Info("shutting down on signal")
 }
 
-func dialAndServe(host, token, digest, name string, tlsConf *tls.Config, log *slog.Logger) error {
+func dialAndServe(ctx context.Context, host, token, digest, name string, tlsConf *tls.Config, log *slog.Logger) error {
 	var conn net.Conn
 	var err error
 	if tlsConf != nil {
@@ -233,7 +278,14 @@ func dialAndServe(host, token, digest, name string, tlsConf *tls.Config, log *sl
 	grpcServer := grpc.NewServer()
 	v2.RegisterAdapterServiceServer(grpcServer, &smokeAdapter{sessions: map[string]struct{}{}, name: name, log: log})
 
-	lis := &singleConnListener{conn: conn}
+	// Stop the server (closing the connection) when the process is signalled,
+	// so the reconnect loop exits instead of redialing during pod termination.
+	go func() {
+		<-ctx.Done()
+		grpcServer.Stop()
+	}()
+
+	lis := newSingleConnListener(conn)
 	log.Info("serving gRPC", "host", host)
 	return grpcServer.Serve(lis)
 }
