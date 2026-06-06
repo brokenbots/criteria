@@ -12,20 +12,17 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
-	"encoding/pem"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/brokenbots/criteria/internal/adapter/oci"
 
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	ctypes "github.com/sigstore/cosign/v2/pkg/types"
-	protobundle "github.com/sigstore/protobuf-specs/gen/pb-go/bundle/v1"
 	"github.com/sigstore/sigstore-go/pkg/bundle"
 	"github.com/sigstore/sigstore-go/pkg/fulcio/certificate"
 	"github.com/sigstore/sigstore-go/pkg/root"
@@ -273,58 +270,66 @@ func mergeAnnotations(manifestAnns map[string]string, layers []ocispec.Descripto
 }
 
 func verifyOne(ctx context.Context, manifestDigest digest.Digest, rec *signatureRecord, policy *Policy) (*SignerIdentity, error) {
+	_ = manifestDigest // the signature is bound to the artifact via the OCI subject referrer
 	// Dispatch on the signature record's shape, not solely on the policy, so a
 	// mixed environment (some adapters key-signed, some keyless) verifies under a
 	// single policy: a keyless signature carries a Fulcio certificate or a
 	// Sigstore bundle; a key-mode signature carries neither and is matched
 	// against Policy.TrustedKeys.
 	if rec.certPEM != "" || rec.bundleJSON != "" {
-		return verifyKeyless(ctx, manifestDigest, rec, policy)
+		return verifyKeyless(ctx, rec, policy)
 	}
 	if policy.IsKeyless() {
 		// No trusted keys configured and no keyless material: fall through to the
 		// keyless path so the failure message is meaningful.
-		return verifyKeyless(ctx, manifestDigest, rec, policy)
+		return verifyKeyless(ctx, rec, policy)
 	}
 	return verifyKeyBased(rec, policy)
 }
 
-// verifyKeyless verifies a keyless cosign signature.
-func verifyKeyless(ctx context.Context, manifestDigest digest.Digest, rec *signatureRecord, policy *Policy) (*SignerIdentity, error) {
+// verifyKeyless verifies a keyless cosign signature. It requires the Sigstore
+// bundle path: a keyless signature is only durably verifiable via its
+// transparency-log proof (the Fulcio certificate is ephemeral, ~10 min). A
+// signature with no bundle fails closed (verifyKeylessLegacy).
+func verifyKeyless(ctx context.Context, rec *signatureRecord, policy *Policy) (*SignerIdentity, error) {
 	if rec.bundleJSON != "" {
-		id, err := verifyKeylessBundle(ctx, manifestDigest, rec, policy)
-		if err == nil {
-			return id, nil
-		}
+		return verifyKeylessBundle(ctx, rec, policy)
 	}
-
-	if rec.certPEM == "" {
-		return nil, fmt.Errorf("keyless signature missing certificate")
-	}
-
-	return verifyKeylessLegacy(ctx, rec, policy)
+	return verifyKeylessLegacy(rec)
 }
 
-// verifyKeylessBundle verifies a cosign signature that includes a sigstore
-// bundle (protobundle format).
-func verifyKeylessBundle(ctx context.Context, manifestDigest digest.Digest, rec *signatureRecord, policy *Policy) (*SignerIdentity, error) {
-	var pb protobundle.Bundle
-	if err := json.Unmarshal([]byte(rec.bundleJSON), &pb); err != nil {
+// verifyKeylessBundle verifies a cosign signature that includes a Sigstore
+// bundle. The bundle carries the Fulcio certificate plus a Rekor inclusion proof
+// (and/or signed timestamp), letting the verifier check the certificate at the
+// log timestamp rather than at time.Now() — so the signature stays verifiable
+// after the certificate expires.
+func verifyKeylessBundle(ctx context.Context, rec *signatureRecord, policy *Policy) (*SignerIdentity, error) {
+	var b bundle.Bundle
+	if err := b.UnmarshalJSON([]byte(rec.bundleJSON)); err != nil {
 		return nil, fmt.Errorf("unmarshal bundle: %w", err)
 	}
+	// The bundle's message signature is over the simple-signing payload, which is
+	// itself bound to the artifact by the OCI subject referrer (findSignatures).
+	payloadDigest := sha256.Sum256(rec.payload)
+	return verifyBundleEntity(ctx, &b, payloadDigest[:], policy)
+}
 
-	b, err := bundle.NewBundle(&pb)
-	if err != nil {
-		return nil, fmt.Errorf("load bundle: %w", err)
-	}
-
+// verifyBundleEntity runs the sigstore-go verifier over a signed entity (a real
+// bundle in production, a synthetic one in tests), then applies our issuer +
+// subject policy to the certificate. Identity matching is done here (not via the
+// sigstore-go policy) so it shares one implementation with the legacy path and
+// is governed by Policy.TrustedIssuers / Policy.SubjectPatterns.
+func verifyBundleEntity(ctx context.Context, entity verify.SignedEntity, artifactSHA256 []byte, policy *Policy) (*SignerIdentity, error) {
 	tm, err := trustedMaterial(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("trusted material: %w", err)
 	}
 
+	// Require a transparency-log entry and an observer timestamp: together they
+	// fix the cert at the log time, so a keyless signature stays verifiable after
+	// the ephemeral Fulcio certificate expires. (Certificate-transparency SCTs
+	// are not required here; the Rekor inclusion proof is the trust anchor.)
 	v, err := verify.NewVerifier(tm,
-		verify.WithSignedCertificateTimestamps(1),
 		verify.WithTransparencyLog(1),
 		verify.WithObserverTimestamps(1),
 	)
@@ -332,24 +337,16 @@ func verifyKeylessBundle(ctx context.Context, manifestDigest digest.Digest, rec 
 		return nil, fmt.Errorf("create verifier: %w", err)
 	}
 
-	digestHex := strings.TrimPrefix(manifestDigest.String(), "sha256:")
-	digestBytes, err := hex.DecodeString(digestHex)
-	if err != nil {
-		return nil, fmt.Errorf("decode digest: %w", err)
-	}
-
 	policyBuilder := verify.NewPolicy(
-		verify.WithArtifactDigest("sha256", digestBytes),
+		verify.WithArtifactDigest("sha256", artifactSHA256),
+		verify.WithoutIdentitiesUnsafe(),
 	)
 
-	res, err := v.Verify(b, policyBuilder)
-	if err != nil {
+	if _, err := v.Verify(entity, policyBuilder); err != nil {
 		return nil, fmt.Errorf("bundle verify: %w", err)
 	}
-	if res.Signature == nil || res.Signature.Certificate == nil {
-		return nil, fmt.Errorf("bundle missing certificate")
-	}
-	vc, err := b.VerificationContent()
+
+	vc, err := entity.VerificationContent()
 	if err != nil {
 		return nil, fmt.Errorf("bundle verification content: %w", err)
 	}
@@ -360,35 +357,18 @@ func verifyKeylessBundle(ctx context.Context, manifestDigest digest.Digest, rec 
 	return identityFromCert(cert, policy)
 }
 
-// verifyKeylessLegacy verifies a keyless signature using the certificate and
-// raw signature (no bundle).
-func verifyKeylessLegacy(ctx context.Context, rec *signatureRecord, policy *Policy) (*SignerIdentity, error) {
-	certBlock, _ := pem.Decode([]byte(rec.certPEM))
-	if certBlock == nil {
-		return nil, fmt.Errorf("invalid certificate PEM")
+// verifyKeylessLegacy is the no-bundle path. A keyless signature without a
+// transparency-log proof cannot be verified once the Fulcio certificate expires
+// (~10 min), so it fails closed with an actionable message rather than the
+// misleading "leaf certificate verification failed" that a time.Now() check
+// would produce.
+func verifyKeylessLegacy(rec *signatureRecord) (*SignerIdentity, error) {
+	if rec.certPEM == "" {
+		return nil, fmt.Errorf("keyless signature missing certificate")
 	}
-	cert, err := x509.ParseCertificate(certBlock.Bytes)
-	if err != nil {
-		return nil, fmt.Errorf("parse certificate: %w", err)
-	}
-
-	tm, err := trustedMaterial(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("trusted material: %w", err)
-	}
-
-	// Verify certificate chain against Fulcio roots.
-	_, err = verify.VerifyLeafCertificate(time.Now(), cert, tm)
-	if err != nil {
-		return nil, fmt.Errorf("certificate verification failed: %w", err)
-	}
-
-	// Verify the signature was produced by the certificate's public key.
-	if err := verifySignatureWithCert(rec, cert); err != nil {
-		return nil, fmt.Errorf("signature verification failed: %w", err)
-	}
-
-	return identityFromCert(cert, policy)
+	return nil, fmt.Errorf("keyless signature has no transparency-log proof (Sigstore bundle); " +
+		"it cannot be verified after the signing certificate expires — re-publish with Rekor enabled, " +
+		"or use --allow-unsigned for local development")
 }
 
 // verifyKeyBased verifies a signature against an explicit set of trusted
@@ -442,31 +422,6 @@ func verifyKeyBased(rec *signatureRecord, policy *Policy) (*SignerIdentity, erro
 	}
 
 	return nil, fmt.Errorf("no trusted key matched signature")
-}
-
-// verifySignatureWithCert verifies that rec.signatureB64 is a valid signature
-// over rec.payload produced by the public key in cert.
-func verifySignatureWithCert(rec *signatureRecord, cert *x509.Certificate) error {
-	if rec.signatureB64 == "" {
-		return fmt.Errorf("missing signature")
-	}
-	sigBytes, err := base64.StdEncoding.DecodeString(rec.signatureB64)
-	if err != nil {
-		return fmt.Errorf("decode signature: %w", err)
-	}
-
-	verifier, err := sigsignature.LoadVerifier(cert.PublicKey, crypto.SHA256)
-	if err != nil {
-		return fmt.Errorf("load verifier: %w", err)
-	}
-
-	if err := verifier.VerifySignature(
-		bytes.NewReader(sigBytes),
-		bytes.NewReader(rec.payload),
-	); err != nil {
-		return fmt.Errorf("verify signature: %w", err)
-	}
-	return nil
 }
 
 func fingerprintBytes(raw []byte) string {
@@ -534,9 +489,16 @@ func matchGlob(pattern, s string) bool {
 // Sigstore trusted root. When nil, the production TUF root is used.
 var trustedMaterialOverride root.TrustedMaterial
 
-// trustedMaterial returns the Sigstore trusted root. In production this
-// fetches the live TUF root; for air-gapped environments a vendored fallback
-// may be used. The root is cached at ~/.criteria/cache/sigstore/.
+// trustedMaterial returns the Sigstore trusted root used to verify keyless
+// bundles.
+//
+// TUF root policy (decision D-WS48-TUF): the root is fetched via TUF and cached
+// on disk at ~/.criteria/cache/sigstore/ (honoring CRITERIA_STATE_DIR); once
+// cached, verification reuses it for reproducibility. Refresh happens by
+// clearing that cache directory (an explicit `criteria adapter trust refresh`
+// command is future work). Air-gapped consumers cannot keyless-verify (the TUF
+// root and a was-online-at-sign Rekor entry are required); they use WS47 key
+// mode or --allow-unsigned.
 func trustedMaterial(_ context.Context) (root.TrustedMaterial, error) {
 	if trustedMaterialOverride != nil {
 		return trustedMaterialOverride, nil

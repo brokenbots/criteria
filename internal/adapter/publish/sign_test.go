@@ -59,14 +59,17 @@ func TestSign_KeyMode_RoundTripVerifies(t *testing.T) {
 
 	// Sign via the publish builders.
 	payload := simpleSigningPayload(ref, artifactDigest)
-	sig, certPEM, chainPEM, err := KeySigner{Priv: priv}.Sign(payload)
+	res, err := KeySigner{Priv: priv}.Sign(payload)
 	if err != nil {
 		t.Fatalf("sign: %v", err)
 	}
-	if certPEM != "" || chainPEM != "" {
-		t.Fatalf("key signer must not emit cert/chain, got cert=%q chain=%q", certPEM, chainPEM)
+	if res.CertPEM != "" || res.ChainPEM != "" {
+		t.Fatalf("key signer must not emit cert/chain, got cert=%q chain=%q", res.CertPEM, res.ChainPEM)
 	}
-	manifestJSON, payloadBytes := buildSignatureManifest(&artifactDesc, payload, sig, certPEM, chainPEM)
+	if len(res.Bundle) != 0 {
+		t.Fatalf("key signer must not emit a bundle, got %d bytes", len(res.Bundle))
+	}
+	manifestJSON, payloadBytes := buildSignatureManifest(&artifactDesc, payload, res)
 
 	payloadDigest := digest.FromBytes(payloadBytes)
 	sigDigest := digest.FromBytes(manifestJSON)
@@ -149,7 +152,7 @@ func TestBuildSignatureManifest_HasEmptyConfigAndSchemaVersion(t *testing.T) {
 		Digest:    digest.FromString("artifact"),
 		Size:      123,
 	}
-	manifestJSON, _ := buildSignatureManifest(artifactDesc, []byte("payload"), []byte("sig"), "", "")
+	manifestJSON, _ := buildSignatureManifest(artifactDesc, []byte("payload"), SignResult{Signature: []byte("sig")})
 
 	var m ocispec.Manifest
 	if err := json.Unmarshal(manifestJSON, &m); err != nil {

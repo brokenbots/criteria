@@ -37,7 +37,14 @@ func PolicyFor(ctx PullContext) (Policy, error) {
 		return Policy{Mode: ModeOff}, nil
 	}
 
-	// Start from defaults.
+	// Start from defaults (decision D-WS48-1): trust the well-known CI OIDC
+	// issuers (DefaultTrustedIssuers, incl. GitHub Actions) and accept any
+	// subject ("*") at first lock. The *specific* identity is then pinned into
+	// the lockfile (LockedSignature.Keyless) and enforced on every subsequent
+	// pull/apply (cli.policyForPin narrows issuer+subject to the pin), so "an
+	// adapter signed by its own repo's CI" verifies with no per-consumer config
+	// while the lockfile remains the trust anchor. Enterprises tighten via the
+	// trust config.
 	policy := Policy{
 		Mode:            ModeStrict,
 		TrustedIssuers:  append([]string(nil), DefaultTrustedIssuers...),
