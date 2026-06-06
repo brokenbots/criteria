@@ -116,10 +116,10 @@ then reviewed WS-by-WS against the tree and CI (see findings below).
   - *Publishing infra:* **WS27** starter repos (none exist yet), **WS29** GitLab template +
     Makefile paths + runtime container image.
   - *Independence + hardening:*
-    - **WS41** proto extraction: **Go switchover done** (`criteria-adapter-proto` v0.5.1, #227;
-      `proto/criteria/v2` deleted). **Remaining: TS/Python proto packages + multi-language CI**
-      (exit criteria wants all four consumer repos on the *published* package — TS/Py still bundle
-      their own proto).
+    - **WS41** proto extraction: **infrastructure done** (Go switchover #227; TS/Python packaging
+      + gated multi-language CI, session 4 — see below). **Owner-gated remainder:** the actual
+      npm/PyPI publish (needs `NPM_TOKEN`+`@criteria` scope / `PYPI_API_TOKEN`) and the consequent
+      TS/Python SDK consumer-switch (blocked on that publish; SDKs bundle their own proto today).
     - **WS42** shell: de-builtin'd to `cmd/`. **Remaining: its own `criteria-adapter-shell` repo,
       published + signed.**
     - **WS43** independence verification, **WS44** CI coverage ratchet, **WS39** docs refresh
@@ -300,6 +300,27 @@ The Go **adapter SDK** (`adapterhost`) no longer lives in the monorepo.
   `adapter "shell"` — that's correct real usage of the now-published external adapter. All four
   modules build; full test suite, `make lint`, `make validate`, `make validate-self-workflows`
   green.
+
+### Multi-language proto packaging (WS41 — 2026-06-05, session 4)
+
+Completed the multi-language **infrastructure** in
+[`criteria-adapter-proto`](https://github.com/brokenbots/criteria-adapter-proto) (the Go
+switchover landed earlier via #227):
+
+- **`buf.gen.multi.yaml`** generates TS ([protobuf-es](https://github.com/bufbuild/protobuf-es))
+  + Python (protoc python/grpc) bindings from the `.proto` sources. Verified: TS compiles
+  (`tsc`), Python imports + wheel builds — locally **and** in CI.
+- **`npm/` (`@criteria/adapter-proto`)** + **`python/` (`criteria-adapter-proto`)** package
+  manifests; generated bindings are produced at publish time, not committed (avoids drift).
+- **`publish-langs.yml`**: on tag, generates + builds + publishes npm + PyPI, each **gated** on
+  its credential (`NPM_TOKEN`/`PYPI_API_TOKEN`) and skipping gracefully when unset. Verified via
+  `workflow_dispatch`: both jobs generated + built (`criteria_adapter_proto-0.5.1.whl`+`.tar.gz`,
+  npm `tsc`) and skipped publish. Go needs no publish step (module proxy).
+- **Versioning policy** (SemVer, one version across all languages) in the README; **`DEPENDENCIES.md`**
+  consumer pin-table.
+- **Owner-gated remainder:** the real npm/PyPI publish (needs the tokens + `@criteria` scope) and
+  the TS/Python SDK consumer-switch (blocked on that publish — both SDKs bundle their own proto
+  today and pass their own CI).
 
 ## Language cleanup — Terraform-shaping the HCL (archived 2026-06-05)
 
