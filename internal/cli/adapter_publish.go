@@ -13,8 +13,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/sigstore/cosign/v2/pkg/providers"
-	_ "github.com/sigstore/cosign/v2/pkg/providers/github" // register GitHub Actions ambient OIDC provider
+	"github.com/sigstore/cosign/v3/pkg/providers"
+	_ "github.com/sigstore/cosign/v3/pkg/providers/github" // register GitHub Actions ambient OIDC provider
 
 	"github.com/brokenbots/criteria/internal/adapter/manifest"
 	"github.com/brokenbots/criteria/internal/adapter/publish"

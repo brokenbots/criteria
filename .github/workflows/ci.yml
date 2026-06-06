@@ -147,10 +147,9 @@ jobs:
   osv-scan:
     name: Vulnerability scan (osv-scanner)
     runs-on: ubuntu-latest
-    # WS49: report-only for now. The dependency tree is behind (WS50/WS51), so a
-    # blocking gate would turn CI red immediately. WS51 clears the findings, then
-    # flips this to blocking (remove continue-on-error + add to all-checks).
-    continue-on-error: true
+    # WS51 cleared the dependency backlog and flipped this gate to blocking: it is
+    # now a required check in all-checks. A PR introducing a dependency with a
+    # known OSV advisory fails CI until upgraded or time-boxed in osv-scanner.toml.
     steps:
       - uses: actions/checkout@v4
 
@@ -292,6 +291,6 @@ jobs:
   all-checks:
     name: All checks passed
     runs-on: ubuntu-latest
-    needs: [lint, unit-tests, e2e, proto-drift]
+    needs: [lint, unit-tests, e2e, proto-drift, osv-scan]
     steps:
       - run: echo "All required checks passed."

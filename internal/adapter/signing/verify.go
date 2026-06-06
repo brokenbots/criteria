@@ -22,7 +22,7 @@ import (
 
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
-	ctypes "github.com/sigstore/cosign/v2/pkg/types"
+	ctypes "github.com/sigstore/cosign/v3/pkg/types"
 	"github.com/sigstore/sigstore-go/pkg/bundle"
 	"github.com/sigstore/sigstore-go/pkg/fulcio/certificate"
 	"github.com/sigstore/sigstore-go/pkg/root"
