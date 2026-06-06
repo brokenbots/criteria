@@ -511,14 +511,19 @@ func kubectlDeletePod(t *testing.T, labelSelector, namespace string) {
 func waitForPodLog(t *testing.T, namespace, labelSelector, substring string, timeout time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
+	var lastOut []byte
 	for time.Now().Before(deadline) {
 		out, _ := exec.Command("kubectl", "logs", "-n", namespace, "-l", labelSelector, "--tail=50").CombinedOutput()
+		lastOut = out
 		if strings.Contains(string(out), substring) {
 			return
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
-	t.Fatalf("timeout waiting for pod log containing %q", substring)
+	// Surface the pod's actual logs + status so a timeout is diagnosable rather
+	// than blind (e.g. a dial error phoning home, or a crash-loop).
+	desc, _ := exec.Command("kubectl", "describe", "pods", "-n", namespace, "-l", labelSelector).CombinedOutput()
+	t.Fatalf("timeout waiting for pod log containing %q\n--- pod logs ---\n%s\n--- pod describe ---\n%s", substring, lastOut, desc)
 }
 
 func TestRemoteAdapter_K8sHappyPath(t *testing.T) {
@@ -639,16 +644,22 @@ spec:
 
 	kubectlWaitForDeployment(t, "greeter", namespace, 60*time.Second)
 
-	// Wait for the adapter pod to phone home.
-	waitForPodLog(t, namespace, "app=greeter", "serving gRPC", 30*time.Second)
-
 	sink := &testSink{}
 	eng := engine.New(graph, adapterhost.NewLoader(), sink,
 		engine.WithWorkflowDir(workflowDir),
 		engine.WithLockfile(lf),
 	)
 
-	if err := eng.Run(ctx); err != nil {
+	// Start the engine first: it brings up the remote shim listener. The pod
+	// phones home on a reconnect backoff, so the listener must exist before we
+	// wait for the pod to connect.
+	errCh := make(chan error, 1)
+	go func() { errCh <- eng.Run(ctx) }()
+
+	// Confirm the pod connected (now that the shim is listening).
+	waitForPodLog(t, namespace, "app=greeter", "serving gRPC", 60*time.Second)
+
+	if err := <-errCh; err != nil {
 		t.Fatalf("engine run: %v", err)
 	}
 
@@ -776,19 +787,21 @@ spec:
 
 	kubectlWaitForDeployment(t, "greeter", namespace, 60*time.Second)
 
-	// Wait for the adapter pod to phone home.
-	waitForPodLog(t, namespace, "app=greeter", "serving gRPC", 30*time.Second)
-
 	sink := &testSink{}
 	eng := engine.New(graph, adapterhost.NewLoader(), sink,
 		engine.WithWorkflowDir(workflowDir),
 		engine.WithLockfile(lf),
 	)
 
+	// Start the engine first so the remote shim is listening before the pod
+	// phones home (the pod retries on a backoff until the listener is up).
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- eng.Run(ctx)
 	}()
+
+	// Wait for the adapter pod to phone home (shim is now listening).
+	waitForPodLog(t, namespace, "app=greeter", "serving gRPC", 60*time.Second)
 
 	// Wait for the step to start executing (delay_ms = 15s).
 	waitForPodLog(t, namespace, "app=greeter", "step execution started", 30*time.Second)
