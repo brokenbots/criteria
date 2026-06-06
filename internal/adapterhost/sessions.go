@@ -85,6 +85,9 @@ type SessionManager struct {
 // adapter connections.
 type RemoteShim interface {
 	WaitForHandle(ctx context.Context, adapterType string) (Handle, error)
+	// WaitForFreshHandle waits for a connection whose handle is not `stale`,
+	// used on crash-respawn so the dead handle is never handed back.
+	WaitForFreshHandle(ctx context.Context, adapterType string, stale Handle) (Handle, error)
 }
 
 // SetGraph provides the compiled workflow graph so the session manager
@@ -655,7 +658,7 @@ func (m *SessionManager) handleCrash(ctx context.Context, name string, step *wor
 			"error":   execErr.Error(),
 		})
 		if respawnErr := m.respawn(ctx, sess); respawnErr != nil {
-			return m.failResult(sink, sess, execErr)
+			return m.failResult(sink, sess, fmt.Errorf("respawn after crash failed: %w (original crash: %w)", respawnErr, execErr))
 		}
 		retrySink := sink
 		if sess.mergeBuf != nil {
@@ -888,7 +891,9 @@ func (m *SessionManager) resolveAdapterForRespawn(ctx context.Context, sess *Ses
 	// Remote-mode dispatch: if the adapter is bound to a remote environment,
 	// wait for the adapter to phone home via the shim (respawn = reconnect).
 	if m.remoteShim != nil && m.isRemoteAdapter(sess.Name) {
-		return m.remoteShim.WaitForHandle(ctx, sess.Adapter)
+		// Exclude the just-crashed handle so we wait for the replacement
+		// connection rather than the dead session still in the shim's map.
+		return m.remoteShim.WaitForFreshHandle(ctx, sess.Adapter, sess.handle)
 	}
 
 	if dl, ok := m.loader.(*DefaultLoader); ok {

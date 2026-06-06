@@ -500,8 +500,17 @@ func (s *Shim) buildAndStoreHandle(
 
 // WaitForHandle blocks until a remote adapter of the given type connects.
 func (s *Shim) WaitForHandle(ctx context.Context, adapterType string) (adapterhost.Handle, error) {
+	return s.WaitForFreshHandle(ctx, adapterType, nil)
+}
+
+// WaitForFreshHandle blocks until a remote adapter of the given type connects,
+// returning a handle that is not `stale`. On a crash-respawn the just-crashed
+// handle may still be the current session entry (its bridge-teardown runs
+// asynchronously), so callers pass the dead handle as `stale` to ensure they
+// wait for a genuinely new connection rather than receiving the dead one back.
+func (s *Shim) WaitForFreshHandle(ctx context.Context, adapterType string, stale adapterhost.Handle) (adapterhost.Handle, error) {
 	s.mu.Lock()
-	if sess, ok := s.sessions[adapterType]; ok {
+	if sess, ok := s.sessions[adapterType]; ok && sess.handle != stale {
 		s.mu.Unlock()
 		return sess.handle, nil
 	}
