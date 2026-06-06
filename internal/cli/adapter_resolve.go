@@ -62,6 +62,31 @@ func Resolve(ctx ResolveContext, raw string) (oci.Reference, error) {
 	return oci.Parse(fq)
 }
 
+// ResolveSource turns an adapter `source` (a location, decoupled from version)
+// into an oci.Reference carrying only Registry+Repo (no tag/digest). The source
+// may be a full "registry/repo" path or a registry alias defined in the
+// workflow or ~/.criteria/config.hcl.
+func ResolveSource(ctx ResolveContext, source string) (oci.Reference, error) {
+	source = strings.TrimSpace(source)
+	if source == "" {
+		return oci.Reference{}, fmt.Errorf("resolve: empty source")
+	}
+	// A full "registry/repo" path contains a slash; parse it directly.
+	if strings.Contains(source, "/") {
+		ref, err := oci.Parse(source)
+		if err != nil {
+			return oci.Reference{}, err
+		}
+		return ref, nil
+	}
+	// Otherwise treat the source as a registry alias.
+	resolved, err := lookupAlias(ctx, source)
+	if err != nil {
+		return oci.Reference{}, fmt.Errorf("resolve: %w", err)
+	}
+	return oci.Parse(resolved)
+}
+
 // lookupAlias searches workflow aliases first, then global config.
 func lookupAlias(ctx ResolveContext, alias string) (string, error) {
 	if ctx.WorkflowAliases != nil {

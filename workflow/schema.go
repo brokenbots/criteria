@@ -218,8 +218,15 @@ type InputSpec struct {
 // This is the HCL schema for the `adapter "<type>" "<name>"` block.
 // Note: This is distinct from AdapterInfo, which describes an adapter's schema.
 type AdapterDeclSpec struct {
-	Type        string         `hcl:"type,label"`           // first label: adapter type
-	Name        string         `hcl:"name,label"`           // second label: instance name
+	Type string `hcl:"type,label"` // first label: adapter type
+	Name string `hcl:"name,label"` // second label: instance name
+	// Source is the adapter's OCI location (a registry/repo path or a registry
+	// alias), decoupled from the version. Required for OCI-backed adapters.
+	Source string `hcl:"source,optional"`
+	// Version is the semver constraint resolved at lock time: exact ("1.2.3"),
+	// caret ("^1.2"), tilde ("~1.2.0"), wildcard ("1.x"), or "latest". The
+	// lockfile pins the resolved digest for run-to-run reproducibility.
+	Version     string         `hcl:"version,optional"`
 	Environment hcl.Expression `hcl:"environment,optional"` // bare traversal reference (e.g. shell.default)
 	OnCrash     string         `hcl:"on_crash,optional"`
 	Config      *ConfigSpec    `hcl:"config,block"`

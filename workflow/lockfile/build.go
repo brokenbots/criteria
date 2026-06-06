@@ -36,6 +36,7 @@ func BuildEntry(ref oci.Reference, dg digest.Digest, m *manifest.Manifest, signe
 
 	return LockedAdapter{
 		Reference:          ref.String(),
+		Version:            ref.Tag,
 		ResolvedDigest:     dg.String(),
 		SourceURL:          m.SourceURL,
 		SDKProtocolVersion: m.SDKProtocolVersion,

@@ -24,4 +24,4 @@ states:
   failed    terminal=true   success=false
 
 adapters required:
-  copilot   (search: $CRITERIA_PLUGINS, ~/.criteria/plugins)
+  copilot   (search: $CRITERIA_ADAPTERS, ~/.criteria/adapters)

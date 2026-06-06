@@ -12,7 +12,7 @@
 |---|---|---|
 | **Operator** | The person who runs `./bin/criteria apply` on the host machine. Owns the filesystem, the process UID, and the environment of the parent process. | — |
 | **Workflow author** | Any party who controls the content of an HCL workflow file and who is **not** simultaneously the operator. In multi-tenant or CI environments this is the common case. | ✓ — treat as untrusted. |
-| **Adapter plugin author** | A third party whose plugin binary is installed in `CRITERIA_PLUGINS/` or `~/.criteria/plugins/`. The plugin contract is gRPC over a local transport (the `criteria-adapter-*` binary); anything outside the SDK contract is untrusted. | ✓ — for the shell adapter this is not applicable; the shell adapter is built-in. |
+| **Adapter plugin author** | A third party whose plugin binary is installed in `CRITERIA_ADAPTERS/` or `~/.criteria/adapters/`. The plugin contract is gRPC over a local transport (the `criteria-adapter-*` binary); anything outside the SDK contract is untrusted. | ✓ — for the shell adapter this is not applicable; the shell adapter is built-in. |
 | **Workflow input values** | Values provided by the operator at invocation time via `--var`, ND-JSON event content, or server-mode payloads. Even operator-supplied values should be treated as potentially adversarial after the initial invocation because they flow through external event channels in server mode. | Partially trusted — validate before forwarding to shell. |
 
 **Summary:** only the operator is trusted. Everyone else who can influence the

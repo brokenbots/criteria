@@ -24,6 +24,7 @@ func NewCompileCmd() *cobra.Command {
 		outPath          string
 		format           string
 		subworkflowRoots []string
+		warnsAsErrors    bool
 	)
 
 	cmd := &cobra.Command{
@@ -33,7 +34,7 @@ func NewCompileCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
 			workflowPath := args[0]
-			output, err := compileWorkflowOutput(cmd.Context(), workflowPath, format, subworkflowRoots)
+			output, err := compileWorkflowOutput(cmd.Context(), workflowPath, format, subworkflowRoots, warnsAsErrors)
 			if err != nil {
 				return err
 			}
@@ -44,11 +45,12 @@ func NewCompileCmd() *cobra.Command {
 	cmd.Flags().StringVar(&outPath, "out", "", "Write output to file (default stdout)")
 	cmd.Flags().StringVar(&format, "format", "json", "Output format: json or dot")
 	cmd.Flags().StringArrayVar(&subworkflowRoots, "subworkflow-root", nil, "Restrict subworkflow source resolution to this root path (repeatable; empty = no restriction)")
+	cmd.Flags().BoolVar(&warnsAsErrors, "warnings-as-errors", false, "Treat warnings (e.g. an adapter whose schema could not be verified) as errors")
 	return cmd
 }
 
-func compileWorkflowOutput(ctx context.Context, workflowPath, format string, subworkflowRoots []string) ([]byte, error) {
-	spec, graph, err := parseCompileForCli(ctx, workflowPath, subworkflowRoots)
+func compileWorkflowOutput(ctx context.Context, workflowPath, format string, subworkflowRoots []string, warnsAsErrors bool) ([]byte, error) {
+	spec, graph, err := parseCompileForCli(ctx, workflowPath, subworkflowRoots, warnsAsErrors)
 	if err != nil {
 		return nil, err
 	}
@@ -616,14 +618,14 @@ func dotStepAttrs(name string, st *workflow.StepNode, adapterColors map[string]s
 	return b.String()
 }
 
-func parseCompileForCli(ctx context.Context, workflowPath string, subworkflowRoots []string) (*workflow.Spec, *workflow.FSMGraph, error) {
+func parseCompileForCli(ctx context.Context, workflowPath string, subworkflowRoots []string, warnsAsErrors bool) (*workflow.Spec, *workflow.FSMGraph, error) {
 	spec, diags := workflow.ParseFileOrDir(workflowPath)
 	if diags.HasErrors() {
 		return nil, nil, fmt.Errorf("parse errors in %s:\n%w", workflowPath, newDiagsError(diags))
 	}
 
 	loader := adapterhost.NewLoader()
-	schemas := diagutil.CollectSchemas(ctx, loader, spec, nil)
+	schemas, schemaDiags := diagutil.CollectSchemas(ctx, loader, spec, nil)
 	defer func() { _ = loader.Shutdown(ctx) }()
 
 	workflowDir := workflowPath
@@ -631,9 +633,9 @@ func parseCompileForCli(ctx context.Context, workflowPath string, subworkflowRoo
 		workflowDir = filepath.Dir(workflowPath)
 	}
 
-	// Compile-time auto-pull: if the workflow declares OCI adapter references,
+	// Compile-time auto-pull: if the workflow declares OCI adapter sources,
 	// ensure the lockfile is present, complete, and binaries are cached.
-	if oci, err := hasOCIReferences(workflowDir, spec); err == nil && oci {
+	if hasOCIReferences(spec) {
 		if err := autoPullCompileAdapters(ctx, workflowDir, spec); err != nil {
 			return nil, nil, err
 		}
@@ -646,6 +648,16 @@ func parseCompileForCli(ctx context.Context, workflowPath string, subworkflowRoo
 	})
 	if diags.HasErrors() {
 		return nil, nil, fmt.Errorf("compile errors in %s:\n%w", workflowPath, newDiagsError(diags))
+	}
+
+	// Unverified-adapter warnings: surface them, and fail when promoted by
+	// --warnings-as-errors so callers build verified graphs.
+	schemaDiags = promoteWarnings(schemaDiags, warnsAsErrors)
+	if err := newDiagsError(schemaDiags); err != nil {
+		return nil, nil, fmt.Errorf("compile errors in %s:\n%w", workflowPath, err)
+	}
+	if len(schemaDiags) > 0 {
+		fmt.Fprintln(os.Stderr, formatDiagnostics(schemaDiags))
 	}
 	return spec, graph, nil
 }

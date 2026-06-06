@@ -34,6 +34,27 @@ func newDiagsError(diags hcl.Diagnostics) error {
 	return &diagsError{diags: errs}
 }
 
+// promoteWarnings rewrites every DiagWarning in diags to DiagError when enabled
+// is true. Used to implement --warnings-as-errors: a warning (e.g. an adapter
+// whose schema could not be verified at compile time) becomes a hard error so
+// callers building verified graphs fail fast instead of at runtime.
+func promoteWarnings(diags hcl.Diagnostics, enabled bool) hcl.Diagnostics {
+	if !enabled || len(diags) == 0 {
+		return diags
+	}
+	out := make(hcl.Diagnostics, len(diags))
+	for i, d := range diags {
+		if d.Severity == hcl.DiagWarning {
+			promoted := *d
+			promoted.Severity = hcl.DiagError
+			out[i] = &promoted
+			continue
+		}
+		out[i] = d
+	}
+	return out
+}
+
 // formatDiagnostics formats all diagnostics in diags, one per block, with
 // file path and line/column information when available.
 func formatDiagnostics(diags hcl.Diagnostics) string {

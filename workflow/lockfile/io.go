@@ -69,6 +69,9 @@ func writeAdapterBlock(body *hclwrite.Body, a *LockedAdapter) { //nolint:funlen 
 	ab := blk.Body()
 
 	ab.SetAttributeValue("reference", cty.StringVal(a.Reference))
+	if a.Version != "" {
+		ab.SetAttributeValue("version", cty.StringVal(a.Version))
+	}
 	ab.SetAttributeValue("resolved_digest", cty.StringVal(a.ResolvedDigest))
 	ab.SetAttributeValue("source_url", cty.StringVal(a.SourceURL))
 	ab.SetAttributeValue("sdk_protocol_version", cty.NumberIntVal(int64(a.SDKProtocolVersion)))

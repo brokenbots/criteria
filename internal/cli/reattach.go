@@ -316,9 +316,11 @@ func parseWorkflowFromPath(ctx context.Context, path string) (*workflow.FSMGraph
 		return nil, fmt.Errorf("parse workflow:\n%w", newDiagsError(diags))
 	}
 
-	// Collect adapter schemas for compile-time validation.
+	// Collect adapter schemas for compile-time validation. This is crash
+	// recovery for an already-validated graph, so unverified-adapter warnings
+	// are not surfaced here.
 	loader := adapterhost.NewLoader()
-	schemas := diagutil.CollectSchemas(ctx, loader, spec, nil)
+	schemas, _ := diagutil.CollectSchemas(ctx, loader, spec, nil)
 	_ = loader.Shutdown(ctx)
 
 	graph, diags := workflow.CompileWithContext(ctx, spec, schemas, workflow.CompileOpts{

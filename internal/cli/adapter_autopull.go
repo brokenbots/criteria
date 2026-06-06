@@ -8,24 +8,21 @@ import (
 	"path/filepath"
 	"runtime"
 
-	"github.com/hashicorp/hcl/v2"
-	"github.com/hashicorp/hcl/v2/hclparse"
-	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/opencontainers/go-digest"
-	"github.com/zclconf/go-cty/cty"
 
 	"github.com/brokenbots/criteria/internal/adapter/environment/container"
 	"github.com/brokenbots/criteria/internal/adapter/manifest"
 	"github.com/brokenbots/criteria/internal/adapter/oci"
 	"github.com/brokenbots/criteria/internal/adapter/signing"
+	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/workflow"
 	"github.com/brokenbots/criteria/workflow/lockfile"
 )
 
 // autoPullCompileAdapters is called by parseCompileForCli when the workflow
-// contains adapter blocks with `reference` attributes.  It validates the
+// contains adapter blocks with a `source` attribute.  It validates the
 // lockfile, pulls any missing cached binaries, and extracts the platform binary
-// to the plugin directory so adapterhost.Loader can resolve them.
+// to the digest-addressed install dir so adapterhost can resolve them.
 func autoPullCompileAdapters(ctx context.Context, workflowDir string, spec *workflow.Spec) error {
 	// Read lockfile.
 	lf, err := lockfile.ReadFromDir(workflowDir)
@@ -37,15 +34,12 @@ func autoPullCompileAdapters(ctx context.Context, workflowDir string, spec *work
 	}
 
 	// Build set of OCI-referenced adapters.
-	ociAdapters, err := collectWorkflowAdapters(workflowDir, spec)
-	if err != nil {
-		return err
-	}
+	ociAdapters := collectWorkflowAdapters(spec)
 
 	// Validate lockfile covers all workflow adapters.
 	missing := []string{}
 	for key, wa := range ociAdapters {
-		if wa.Reference == "" {
+		if wa.Source == "" {
 			continue // not OCI-based
 		}
 		if findLocked(lf, wa.Type, wa.Name) == nil {
@@ -72,7 +66,7 @@ func autoPullCompileAdapters(ctx context.Context, workflowDir string, spec *work
 	puller := &oci.Puller{Layout: layout}
 
 	for key, wa := range ociAdapters {
-		if wa.Reference == "" {
+		if wa.Source == "" {
 			continue
 		}
 		if err := ensureAdapterCached(ctx, key, wa, lf, layout, puller, &policy); err != nil {
@@ -153,25 +147,23 @@ func maybePullContainerImage(ctx context.Context, key string, m *manifest.Manife
 	return fmt.Errorf("adapter %q container image pull %s: no container runtime found", key, m.ContainerImage.Ref)
 }
 
-// hasOCIReferences scans the workflow HCL files for adapter blocks that
-// carry a `reference` attribute.  If none are found the workflow does not
-// require a lockfile for compilation.
-func hasOCIReferences(workflowDir string, spec *workflow.Spec) (bool, error) {
-	adapters, err := collectWorkflowAdapters(workflowDir, spec)
-	if err != nil {
-		return false, err
-	}
-	for _, wa := range adapters {
-		if wa.Reference != "" {
-			return true, nil
+// hasOCIReferences reports whether any adapter block declares a `source`
+// (OCI location).  If none do, the workflow does not require a lockfile for
+// compilation.
+func hasOCIReferences(spec *workflow.Spec) bool {
+	for _, wa := range collectWorkflowAdapters(spec) {
+		if wa.Source != "" {
+			return true
 		}
 	}
-	return false, nil
+	return false
 }
 
 // extractOCIAdapterBinary reads the platform-specific binary from the OCI
-// artifact and copies it into ~/.criteria/plugins/ so adapterhost.Loader
-// can discover it.
+// artifact and copies it into a digest-addressed directory under the adapter
+// install root (~/.criteria/adapters/<digest>/) so that multiple versions of
+// the same adapter type can coexist and adapterhost.DiscoverBinaryAt can
+// resolve the exact pinned binary.
 func extractOCIAdapterBinary(layout *oci.Layout, dg digest.Digest, adapterType string) error {
 	artFS, err := layout.Open(dg)
 	if err != nil {
@@ -185,16 +177,14 @@ func extractOCIAdapterBinary(layout *oci.Layout, dg digest.Digest, adapterType s
 	}
 	defer f.Close()
 
-	home, err := os.UserHomeDir()
+	dest, err := adapterhost.AdapterInstallPath(adapterType, adapterhost.EncodeDigest(dg))
 	if err != nil {
 		return err
 	}
-	pluginDir := filepath.Join(home, ".criteria", "plugins")
-	if err := os.MkdirAll(pluginDir, 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 		return err
 	}
 
-	dest := filepath.Join(pluginDir, "criteria-adapter-"+adapterType)
 	tmp := dest + ".tmp"
 	out, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
 	if err != nil {
@@ -212,62 +202,17 @@ func extractOCIAdapterBinary(layout *oci.Layout, dg digest.Digest, adapterType s
 	return os.Rename(tmp, dest)
 }
 
-// collectWorkflowAdapters merges spec.Adapters with any `reference` attributes
-// found in raw HCL blocks.  The returned map key is "type.name".
-func collectWorkflowAdapters(workflowDir string, spec *workflow.Spec) (map[string]*workflowAdapter, error) {
+// collectWorkflowAdapters reads the adapter declarations from the parsed spec.
+// The `source`/`version` attributes decode directly onto AdapterDeclSpec, so no
+// raw-HCL re-scan is needed. The returned map key is "type.name".
+func collectWorkflowAdapters(spec *workflow.Spec) map[string]*workflowAdapter {
 	out := make(map[string]*workflowAdapter, len(spec.Adapters))
-	for _, a := range spec.Adapters {
+	for i := range spec.Adapters {
+		a := &spec.Adapters[i]
 		key := a.Type + "." + a.Name
-		out[key] = &workflowAdapter{Type: a.Type, Name: a.Name}
+		out[key] = &workflowAdapter{Type: a.Type, Name: a.Name, Source: a.Source, Version: a.Version}
 	}
-
-	hclFiles, err := listHCLFiles(workflowDir)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, path := range hclFiles {
-		if err := scanFileForReferences(path, out); err != nil {
-			continue
-		}
-	}
-
-	return out, nil
-}
-
-func scanFileForReferences(path string, out map[string]*workflowAdapter) error {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	file, diags := hclparse.NewParser().ParseHCL(data, path)
-	if diags.HasErrors() {
-		return nil
-	}
-	body, ok := file.Body.(*hclsyntax.Body)
-	if !ok {
-		return nil
-	}
-	for _, block := range body.Blocks {
-		if block.Type != "adapter" || len(block.Labels) != 2 {
-			continue
-		}
-		key := block.Labels[0] + "." + block.Labels[1]
-		wa, ok := out[key]
-		if !ok {
-			continue
-		}
-		attrs, _, _ := block.Body.PartialContent(&hcl.BodySchema{
-			Attributes: []hcl.AttributeSchema{{Name: "reference"}},
-		})
-		if attr, ok := attrs.Attributes["reference"]; ok {
-			val, valDiags := attr.Expr.Value(nil)
-			if !valDiags.HasErrors() && val.Type() == cty.String && !val.IsNull() {
-				wa.Reference = val.AsString()
-			}
-		}
-	}
-	return nil
+	return out
 }
 
 // listHCLFiles returns all .hcl files in a directory (not recursive).

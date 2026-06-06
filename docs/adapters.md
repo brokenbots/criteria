@@ -8,8 +8,8 @@ This document is the reference for running adapter-backed workflows with Criteri
 
 A Criteria adapter is an out-of-process binary named `criteria-adapter-<name>`. Criteria discovers adapters in this order:
 
-1. `${CRITERIA_PLUGINS}/criteria-adapter-<name>`
-2. `~/.criteria/plugins/criteria-adapter-<name>`
+1. `${CRITERIA_ADAPTERS}/criteria-adapter-<name>`
+2. `~/.criteria/adapters/criteria-adapter-<name>`
 
 Criteria does not look on `PATH`. The host starts the adapter with HashiCorp `go-plugin`; the adapter then speaks the shared gRPC adapter protocol over a local transport. The binary stays outside the Criteria process boundary, so adapter-specific runtime failures are isolated from the engine.
 
@@ -31,9 +31,9 @@ make build
 Install the adapter by copying the built binary into an adapter directory:
 
 ```bash
-mkdir -p ~/.criteria/plugins
-cp bin/criteria-adapter-copilot ~/.criteria/plugins/
-chmod +x ~/.criteria/plugins/criteria-adapter-copilot
+mkdir -p ~/.criteria/adapters
+cp bin/criteria-adapter-copilot ~/.criteria/adapters/
+chmod +x ~/.criteria/adapters/criteria-adapter-copilot
 ```
 
 To use a temporary adapter directory instead, point Criteria at it explicitly:
@@ -42,7 +42,7 @@ To use a temporary adapter directory instead, point Criteria at it explicitly:
 tmpdir="$(mktemp -d)"
 cp bin/criteria-adapter-copilot "$tmpdir/"
 chmod +x "$tmpdir/criteria-adapter-copilot"
-CRITERIA_PLUGINS="$tmpdir" ./bin/criteria status --server http://localhost:8080
+CRITERIA_ADAPTERS="$tmpdir" ./bin/criteria status --server http://localhost:8080
 ```
 
 For local Copilot-backed runs you also need the `copilot` CLI available. The repo helper script documents the expected setup:
@@ -398,9 +398,9 @@ The shortest manual path for `examples/agent_hello.hcl` is:
 
 ```bash
 make build
-mkdir -p ~/.criteria/plugins
-cp bin/criteria-adapter-copilot ~/.criteria/plugins/
-chmod +x ~/.criteria/plugins/criteria-adapter-copilot
+mkdir -p ~/.criteria/adapters
+cp bin/criteria-adapter-copilot ~/.criteria/adapters/
+chmod +x ~/.criteria/adapters/criteria-adapter-copilot
 # Start a Criteria-compatible orchestrator server (e.g., from github.com/brokenbots/orchestrator)
 # listening on 127.0.0.1:8080
 ```

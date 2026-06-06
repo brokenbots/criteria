@@ -24,4 +24,4 @@ states:
   verified    terminal=true   success=true
 
 adapters required:
-  shell   (search: $CRITERIA_PLUGINS, ~/.criteria/plugins)
+  shell   (search: $CRITERIA_ADAPTERS, ~/.criteria/adapters)

@@ -40,7 +40,7 @@ func NewPlanCmd() *cobra.Command {
 }
 
 func renderPlanOutput(ctx context.Context, workflowPath string, overrides map[string]string) (string, error) { //nolint:funlen,gocognit,gocyclo // renders full plan tree with agent/step/outcome formatting across multiple output paths
-	spec, graph, err := parseCompileForCli(ctx, workflowPath, nil)
+	spec, graph, err := parseCompileForCli(ctx, workflowPath, nil, false)
 	if err != nil {
 		return "", err
 	}
@@ -145,7 +145,7 @@ func renderPlanOutput(ctx context.Context, workflowPath string, overrides map[st
 		b.WriteString("  (none)\n")
 	} else {
 		for _, p := range adapts {
-			b.WriteString(fmt.Sprintf("  %s   (search: $CRITERIA_PLUGINS, ~/.criteria/plugins)\n", p))
+			b.WriteString(fmt.Sprintf("  %s   (search: $CRITERIA_ADAPTERS, ~/.criteria/adapters)\n", p))
 		}
 	}
 

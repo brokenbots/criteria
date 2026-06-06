@@ -78,14 +78,14 @@ func workflowDirFromPath(path string) string {
 	return filepath.Dir(path)
 }
 
-func compileForExecution(ctx context.Context, workflowPath string, log *slog.Logger, subworkflowRoots ...string) ([]byte, *workflow.FSMGraph, *adapterhost.DefaultLoader, error) {
+func compileForExecution(ctx context.Context, workflowPath string, log *slog.Logger, warnsAsErrors bool, subworkflowRoots ...string) ([]byte, *workflow.FSMGraph, *adapterhost.DefaultLoader, error) {
 	spec, diags := workflow.ParseFileOrDir(workflowPath)
 	if diags.HasErrors() {
 		return nil, nil, nil, fmt.Errorf("parse errors:\n%w", newDiagsError(diags))
 	}
 
 	loader := adapterhost.NewLoader()
-	schemas := diagutil.CollectSchemas(ctx, loader, spec, log)
+	schemas, schemaDiags := diagutil.CollectSchemas(ctx, loader, spec, log)
 
 	workflowDir := workflowDirFromPath(workflowPath)
 
@@ -98,6 +98,19 @@ func compileForExecution(ctx context.Context, workflowPath string, log *slog.Log
 	if diags.HasErrors() {
 		_ = loader.Shutdown(ctx)
 		return nil, nil, nil, fmt.Errorf("compile errors:\n%w", newDiagsError(diags))
+	}
+
+	// Unverified-adapter warnings: with --warnings-as-errors, refuse to run a
+	// graph that could fail mid-execution; otherwise log them and continue.
+	schemaDiags = promoteWarnings(schemaDiags, warnsAsErrors)
+	if err := newDiagsError(schemaDiags); err != nil {
+		_ = loader.Shutdown(ctx)
+		return nil, nil, nil, fmt.Errorf("compile errors:\n%w", err)
+	}
+	if log != nil {
+		for _, d := range schemaDiags {
+			log.Warn("adapter schema unverified", "summary", d.Summary, "detail", d.Detail)
+		}
 	}
 
 	return spec.SourceBytes, graph, loader, nil

@@ -27,11 +27,11 @@ plugins: ## Build adapter plugin binaries (output: bin/criteria-adapter-*)
 		fi; \
 	done
 
-install: build plugins ## Install criteria to ~/.criteria (binary → ~/.criteria/bin, plugins → ~/.criteria/plugins)
-	@install -d "$$HOME/.criteria/bin" "$$HOME/.criteria/plugins"
+install: build plugins ## Install criteria to ~/.criteria (binary → ~/.criteria/bin, plugins → ~/.criteria/adapters)
+	@install -d "$$HOME/.criteria/bin" "$$HOME/.criteria/adapters"
 	@install -m 755 bin/criteria "$$HOME/.criteria/bin/criteria"
 	@for f in bin/criteria-adapter-*; do \
-		[ -f "$$f" ] && install -m 755 "$$f" "$$HOME/.criteria/plugins/"; \
+		[ -f "$$f" ] && install -m 755 "$$f" "$$HOME/.criteria/adapters/"; \
 	done
 	@echo ""
 	@echo "criteria installed to $$HOME/.criteria"
@@ -40,15 +40,15 @@ install: build plugins ## Install criteria to ~/.criteria (binary → ~/.criteri
 	@echo ""
 	@echo "  bash  (~/.bashrc or ~/.bash_profile):"
 	@echo '    export PATH="$$HOME/.criteria/bin:$$PATH"'
-	@echo '    export CRITERIA_PLUGINS="$$HOME/.criteria/plugins"'
+	@echo '    export CRITERIA_ADAPTERS="$$HOME/.criteria/adapters"'
 	@echo ""
 	@echo "  zsh   (~/.zshrc):"
 	@echo '    export PATH="$$HOME/.criteria/bin:$$PATH"'
-	@echo '    export CRITERIA_PLUGINS="$$HOME/.criteria/plugins"'
+	@echo '    export CRITERIA_ADAPTERS="$$HOME/.criteria/adapters"'
 	@echo ""
 	@echo "  fish  (~/.config/fish/config.fish):"
 	@echo '    fish_add_path $$HOME/.criteria/bin'
-	@echo '    set -gx CRITERIA_PLUGINS $$HOME/.criteria/plugins'
+	@echo '    set -gx CRITERIA_ADAPTERS $$HOME/.criteria/adapters'
 	@echo ""
 
 docker-runtime-smoke: docker-runtime ## Run a workflow inside the runtime image
@@ -213,7 +213,7 @@ self: build plugins ## Pick the next pending workstream and run the full self-de
 	fi; \
 	echo "[self] processing $$ws"; \
 	CRITERIA_LOCAL_APPROVAL="$${CRITERIA_LOCAL_APPROVAL:-stdin}" \
-	CRITERIA_PLUGINS="$(CURDIR)/bin" \
+	CRITERIA_ADAPTERS="$(CURDIR)/bin" \
 	CRITERIA_WORKFLOW_ALLOWED_PATHS=".criteria/workflows" \
 		./bin/criteria apply .criteria/workflows/bootstrap \
 			--var workstream_file=$$ws \
@@ -231,7 +231,7 @@ self-loop: build plugins ## Drain the workstream backlog: run `make self` repeat
 	done
 
 workflow_%: build plugins ## Run a single subworkflow by name (.criteria/workflows/<name>); pass vars via WORKFLOW_VARS="--var k=v ..."
-	@CRITERIA_PLUGINS="$(CURDIR)/bin" \
+	@CRITERIA_ADAPTERS="$(CURDIR)/bin" \
 	CRITERIA_WORKFLOW_ALLOWED_PATHS=".criteria/workflows" \
 		./bin/criteria apply .criteria/workflows/$* \
 			--var project_dir=$(CURDIR) \
@@ -244,7 +244,7 @@ example-plugin: build ## Build and run the greeter example plugin end-to-end
 	cp bin/criteria-adapter-greeter "$$tmpdir/"; \
 	chmod +x "$$tmpdir/criteria-adapter-greeter"; \
 	eventsfile=$$(mktemp); \
-	CRITERIA_PLUGINS="$$tmpdir" ./bin/criteria apply examples/plugins/greeter/example.hcl \
+	CRITERIA_ADAPTERS="$$tmpdir" ./bin/criteria apply examples/plugins/greeter/example.hcl \
 		--events-file "$$eventsfile" 2>&1; \
 	rc=$$?; \
 	if [ $$rc -ne 0 ]; then \

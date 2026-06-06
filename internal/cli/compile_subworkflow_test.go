@@ -54,7 +54,7 @@ func writeParent(t *testing.T, dir, content string) string {
 // map so individual fields can be inspected without importing compileJSON.
 func compileToMap(t *testing.T, path string) map[string]any {
 	t.Helper()
-	b, err := compileWorkflowOutput(context.Background(), path, "json", nil)
+	b, err := compileWorkflowOutput(context.Background(), path, "json", nil, false)
 	if err != nil {
 		t.Fatalf("compileWorkflowOutput: %v", err)
 	}
@@ -339,7 +339,7 @@ state "done" {
   success  = true
 }
 `
-	b, err := compileWorkflowOutput(context.Background(), writeParent(t, dir, hcl), "json", nil)
+	b, err := compileWorkflowOutput(context.Background(), writeParent(t, dir, hcl), "json", nil, false)
 	if err != nil {
 		t.Fatalf("compileWorkflowOutput: %v", err)
 	}

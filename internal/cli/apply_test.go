@@ -24,7 +24,7 @@ func TestApplyLocal_NoopAdapter_EmitsExpectedEvents(t *testing.T) {
 		t.Fatalf("write adapter binary: %v", err)
 	}
 
-	t.Setenv("CRITERIA_PLUGINS", adapterDir)
+	t.Setenv("CRITERIA_ADAPTERS", adapterDir)
 	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
 
 	workflowPath := writeWorkflowFile(t, `
@@ -267,7 +267,7 @@ func TestApplyLocal_CHCLWorkflowFile(t *testing.T) {
 		t.Fatalf("write adapter binary: %v", err)
 	}
 
-	t.Setenv("CRITERIA_PLUGINS", adapterDir)
+	t.Setenv("CRITERIA_ADAPTERS", adapterDir)
 	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
 
 	dir := t.TempDir()
