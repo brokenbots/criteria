@@ -144,6 +144,36 @@ jobs:
       - name: Check proto drift
         run: make proto-check-drift
 
+  osv-scan:
+    name: Vulnerability scan (osv-scanner)
+    runs-on: ubuntu-latest
+    # WS49: report-only for now. The dependency tree is behind (WS50/WS51), so a
+    # blocking gate would turn CI red immediately. WS51 clears the findings, then
+    # flips this to blocking (remove continue-on-error + add to all-checks).
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Cache Go build cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/go-build
+          key: go-build-osv-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            go-build-osv-${{ runner.os }}-
+
+      # Pinned version (no @latest) for reproducibility and local parity with
+      # `make vuln-scan`. Covers every Go module in the workspace via -r. (GitHub
+      # Actions advisories are covered by the Dependabot github-actions ecosystem,
+      # WS50: osv-scanner v2.3.8 does not bundle a workflow extractor.)
+      - name: Run osv-scanner
+        run: make vuln-scan
+
   release-artifacts:
     name: Release artifacts (RC PRs only)
     runs-on: ubuntu-latest
