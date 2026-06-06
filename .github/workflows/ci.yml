@@ -174,6 +174,47 @@ jobs:
       - name: Run osv-scanner
         run: make vuln-scan
 
+  deps-report:
+    name: Dependency freshness report
+    runs-on: ubuntu-latest
+    # WS50: non-blocking by design. Enforcement of "latest major.minor" lives
+    # with review + the catch-up workstream (WS51); a hard gate would flap on
+    # upstream release cadence. This job only surfaces drift on every PR.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Cache Go build cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/go-build
+          key: go-build-deps-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            go-build-deps-${{ runner.os }}-
+
+      - name: Sync workspace
+        run: go work sync
+
+      - name: Outdated direct dependencies (latest minor/patch)
+        run: |
+          {
+            echo '## Dependency freshness report'
+            echo
+            echo '### Outdated direct deps (`make deps-outdated`)'
+            echo '```'
+            make deps-outdated 2>&1 || true
+            echo '```'
+            echo '### Available major upgrades (`make deps-majors`)'
+            echo '```'
+            make deps-majors 2>&1 || true
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
   release-artifacts:
     name: Release artifacts (RC PRs only)
     runs-on: ubuntu-latest

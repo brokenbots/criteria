@@ -2,9 +2,16 @@ module github.com/brokenbots/criteria/tools
 
 go 1.26.3
 
-// golangci-lint is a tool dep: pinned here so go mod tidy keeps it, compiled
-// into bin/ by the Makefile rather than invoked via go tool.
-tool github.com/golangci/golangci-lint/cmd/golangci-lint
+// Tool deps: pinned here (no floating @latest) so `go mod tidy` keeps them and
+// the workspace resolves a single version for both CI and local runs.
+//   - golangci-lint   : compiled into bin/ by the Makefile.
+//   - gomajor         : drives major-version (/vN) upgrades (WS50/WS51).
+//   - go-mod-outdated : filterable freshness report for direct deps (WS50).
+tool (
+	github.com/golangci/golangci-lint/cmd/golangci-lint
+	github.com/icholy/gomajor
+	github.com/psampaz/go-mod-outdated
+)
 
 require gopkg.in/yaml.v3 v3.0.1
 
@@ -86,6 +93,7 @@ require (
 	github.com/hashicorp/go-version v1.7.0 // indirect
 	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
 	github.com/hexops/gotextdiff v1.0.3 // indirect
+	github.com/icholy/gomajor v0.15.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/jgautheron/goconst v1.7.1 // indirect
 	github.com/jingyugao/rowserrcheck v1.1.1 // indirect
@@ -126,6 +134,7 @@ require (
 	github.com/prometheus/client_model v0.6.2 // indirect
 	github.com/prometheus/common v0.67.4 // indirect
 	github.com/prometheus/procfs v0.17.0 // indirect
+	github.com/psampaz/go-mod-outdated v0.9.0 // indirect
 	github.com/quasilyte/go-ruleguard v0.4.3-0.20240823090925-0fe6f58b47b1 // indirect
 	github.com/quasilyte/go-ruleguard/dsl v0.3.22 // indirect
 	github.com/quasilyte/gogrep v0.5.0 // indirect
