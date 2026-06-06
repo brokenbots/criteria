@@ -68,5 +68,15 @@ jobs:
         env:
           CRITERIA_REMOTE_E2E: "1"
 
-      - name: Dry-run k8s manifests
-        run: kubectl apply --dry-run=client -f docs/examples/k8s-remote-adapter/
+      - name: Validate k8s example manifests parse
+        # The smoke test deletes its kind cluster on completion, so a
+        # `kubectl --dry-run=client` would fail: it still contacts the API server
+        # for resource discovery (and the examples include cert-manager CRDs).
+        # This step is a doc-example smoke check, so validate the manifests parse
+        # as YAML offline — no cluster or extra tooling required.
+        run: |
+          set -euo pipefail
+          for f in docs/examples/k8s-remote-adapter/*.yaml; do
+            python3 -c "import yaml,sys; list(yaml.safe_load_all(open(sys.argv[1])))" "$f"
+            echo "ok: $f"
+          done
