@@ -51,10 +51,10 @@ here.
 - SDK conformance suite: [sdk/conformance/](sdk/conformance/) — the
   in-memory reference Subject lives at
   [sdk/conformance/inmem_subject_test.go](sdk/conformance/inmem_subject_test.go).
-- Adapter plugin loader (host side): [internal/plugin/](internal/plugin/)
-- Bundled adapter plugins: [cmd/criteria-adapter-noop/](cmd/criteria-adapter-noop/),
-  [cmd/criteria-adapter-copilot/](cmd/criteria-adapter-copilot/),
+- Host-side adapter loader, OCI cache, signing, manifest, environments: [internal/adapter/](internal/adapter/)
+- In-tree adapters: [cmd/criteria-adapter-noop/](cmd/criteria-adapter-noop/),
   [cmd/criteria-adapter-mcp/](cmd/criteria-adapter-mcp/)
+  (copilot and shell were extracted to their own repos)
 - Project planning: [PLAN.md](PLAN.md), [workstreams/README.md](workstreams/README.md)
 
 ## Conventions agents should follow
@@ -67,12 +67,14 @@ here.
   in-tree call sites. Any change to the `Subject`/`ServiceHandler`
   surface or to event field numbers is a **breaking SDK change** —
   see [CONTRIBUTING.md](CONTRIBUTING.md) for the bump policy.
-- **Plugin model**: adapter plugins run out-of-process and are discovered
-  as `criteria-adapter-<name>` from `${CRITERIA_ADAPTERS}/` first, then
-  `~/.criteria/adapters/`. Use `make plugins` to build all bundled adapter
-  binaries. The plugin handshake cookie is `CRITERIA_PLUGIN`.
+- **Adapter model**: adapters run out-of-process and are distributed as signed
+  OCI artifacts, pulled into `~/.criteria/cache/oci` and pinned per workflow in
+  `.criteria.lock.hcl`. The adapter wire protocol is **v2** and lives in the
+  external [`criteria-adapter-proto`](https://github.com/brokenbots/criteria-adapter-proto)
+  repo; the in-tree `proto/criteria/v1` is the unrelated server/run API. For
+  local iteration, `criteria adapter dev <binary>` registers a binary directly.
 - **HCL workflow syntax**: step-level adapter input uses `input { ... }`
-  blocks; agent-level configuration stays on the `agent { }` block.
+  blocks; adapter-level configuration stays on the `adapter { }` block.
   The legacy `config = {...}` shape for step input is not accepted.
 - **Local mode constraints**: `wait { signal = "..." }` and `approval { ... }`
   nodes require a server-compatible orchestrator (`criteria apply --server ...`).

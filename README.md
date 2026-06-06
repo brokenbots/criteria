@@ -120,21 +120,31 @@ state "failed" {
 
 Full language reference: [docs/workflow.md](docs/workflow.md)
 
-## Plugins
+## Adapters
 
-Adapter plugins are out-of-process binaries named `criteria-adapter-<name>`, discovered from `${CRITERIA_ADAPTERS}/` or `~/.criteria/adapters/`.
+Adapters are out-of-process binaries distributed as signed OCI artifacts.
+Reference one by `source` + `version` in your workflow and let Criteria pull and
+pin it:
 
 ```bash
-# Build the bundled adapters (shell, noop, copilot, mcp)
-make plugins
-
-# Install the Copilot adapter
-cp bin/criteria-adapter-copilot ~/.criteria/adapters/
+# Pin every adapter a workflow references (writes .criteria.lock.hcl) and run.
+criteria adapter lock
+criteria apply workflow.hcl
 ```
 
-Write your own plugin by following [docs/plugins.md](docs/plugins.md). Bundled adapters in `cmd/criteria-adapter-*` are the best starting reference — the plugin host contract (`internal/plugin`) is not importable by external modules.
+Adapters are pulled into a local cache, signature-verified, and pinned by digest
+in `.criteria.lock.hcl` so the workflow reproduces identically anywhere. Manage
+the cache directly with `criteria adapter pull|list|info|where|remove|prune`.
 
-Full plugin reference: [docs/plugins.md](docs/plugins.md)
+Write your own adapter from a starter template
+([typescript](https://github.com/brokenbots/criteria-adapter-starter-typescript) /
+[python](https://github.com/brokenbots/criteria-adapter-starter-python) /
+[go](https://github.com/brokenbots/criteria-adapter-starter-go)) — each is a
+buildable hello-world with a publish workflow. The in-tree `cmd/criteria-adapter-noop`
+and `cmd/criteria-adapter-mcp` are minimal references.
+
+Full reference: [docs/adapters.md](docs/adapters.md) ·
+upgrading from v0.3: [docs/adapter-v2-migration.md](docs/adapter-v2-migration.md)
 
 ## Talking to a server-compatible orchestrator
 

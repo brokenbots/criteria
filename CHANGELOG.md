@@ -2,6 +2,57 @@
 
 All notable changes to Criteria are recorded here.
 
+## [Unreleased] — Adapter system v2 (protocol v2; clean break from v0.3.0)
+
+**Headline**: The adapter system was rewritten end to end. Adapters are now
+signed **OCI artifacts** pulled from any registry and pinned per workflow, the
+wire **protocol is v2** (a hard cut — v1 adapters no longer load), and a single
+term — "adapter" — is used throughout. Existing adapters were migrated in
+parallel; artifacts track the **0.5.0** line (v2 is the *protocol* version, not a
+product version). The release tag and date are finalized by the release gate.
+
+### Adapter system rewrite
+
+- **OCI-based distribution.** Adapters publish as multi-platform OCI artifacts
+  (per-platform binary blobs + an `adapter.yaml` manifest) to any OCI-compliant
+  registry. No central registry; adapters are referenced by `source` + `version`.
+- **Per-workflow lockfile.** `.criteria.lock.hcl` pins every referenced adapter by
+  digest and records the signer identity, for run-to-run reproducibility.
+  Populated by `criteria adapter lock`.
+- **Signing & verification.** cosign signatures attached as OCI referrers;
+  **keyless** (Sigstore/Fulcio OIDC) is the default CI path, with explicit Ed25519
+  keys also supported. The host verifies at pull time against a configurable trust
+  policy (`verification = "strict" | "warn" | "off"`, default `strict`).
+- **New `criteria adapter` CLI group:** `pull`, `lock`, `list`, `info`, `where`,
+  `remove`, `prune`, `dev`, `publish`. `publish` supports `--keyless`,
+  `--sign-key`, and `--image` (record an already-pushed runnable container image).
+- **Environment block expanded.** New types `sandbox` (Linux namespaces + landlock
+  + seccomp, or bubblewrap; macOS `sandbox-exec`), `container` (docker/podman), and
+  `remote` (phone-home) join `shell`, with policy fields (`policy_mode`, `sandbox`,
+  `filesystem`, `network`, `secrets`, `resources`, `os`).
+- **Lifecycle operations.** Protocol v2 adds Pause/Resume, Snapshot/Restore, and
+  Inspect, driven by the host and exercised by the shared conformance suite.
+- **Secrets channel.** Declared secrets resolve through a provider stack and flow
+  over a dedicated channel (never `config`/process env), with automatic log
+  redaction and compile-time taint propagation.
+- **Three SDKs** with consistent helper APIs and single-binary builds —
+  TypeScript (Bun), Python (Nuitka), Go — each in its own repo, plus starter
+  templates and a reusable `publish-adapter` action.
+
+### Breaking changes
+
+- v1 adapters no longer load; rebuild against the v2 SDKs.
+- `adapter` blocks require `source` (+ optional `version`); name-only discovery is
+  gone. Workflows referencing OCI adapters need a committed `.criteria.lock.hcl`.
+- Secrets move from the `config` map to a `secrets { … }` block / `secret_input`;
+  interpolating a secret-tagged value into `config`/`input` is a compile error.
+- The in-tree `copilot` and `shell` adapters were extracted to their own repos and
+  are pulled like any other adapter.
+
+### Migration
+
+See [docs/adapter-v2-migration.md](docs/adapter-v2-migration.md).
+
 ## [v0.3.0] — 2026-05-06 — Phase 3: HCL/runtime rework, subworkflow features, clean break from v0.2.0
 
 **Headline**: Clean break from v0.2.0: HCL language rework, subworkflows first-class, automatic adapter lifecycle, parallel execution, shared variables, top-level outputs, and environment blocks. **All v0.2.0 workflows must be updated before running on v0.3.0.**
