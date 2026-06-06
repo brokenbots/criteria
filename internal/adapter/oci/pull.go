@@ -130,6 +130,28 @@ func (p *Puller) Resolve(ctx context.Context, ref Reference) (digest.Digest, err
 	return desc.Digest, nil
 }
 
+// ListTags returns every tag published for ref's registry+repo. It is used by
+// the lockfile command to resolve a semver constraint (e.g. "^1.2") to a
+// concrete tag before pinning the digest. Tag/digest components of ref are
+// ignored; only Registry+Repo matter.
+func (p *Puller) ListTags(ctx context.Context, ref Reference) ([]string, error) {
+	if ref.Registry == "" || ref.Repo == "" {
+		return nil, fmt.Errorf("oci: list tags requires a registry and repo (got %q)", ref)
+	}
+	repo, err := p.newRepository(ref)
+	if err != nil {
+		return nil, err
+	}
+	var tags []string
+	if err := repo.Tags(ctx, "", func(page []string) error {
+		tags = append(tags, page...)
+		return nil
+	}); err != nil {
+		return nil, fmt.Errorf("oci: list tags for %s: %w", ref, err)
+	}
+	return tags, nil
+}
+
 // newRepository builds the oras-go remote.Repository for ref.
 func (p *Puller) newRepository(ref Reference) (*remote.Repository, error) {
 	repoRef := ref.Registry

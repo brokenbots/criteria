@@ -121,6 +121,7 @@ func TestWrite_RoundTrip(t *testing.T) {
 				Type:               "claude",
 				Name:               "default",
 				Reference:          "ghcr.io/criteria-adapters/claude:1.2.3",
+				Version:            "1.2.3",
 				ResolvedDigest:     "sha256:abc123",
 				SourceURL:          "https://github.com/criteria-adapters/claude",
 				SDKProtocolVersion: 2,
@@ -169,6 +170,7 @@ func TestWrite_RoundTrip(t *testing.T) {
 	a := reloaded.Adapters[0]
 	assert.Equal(t, "claude", a.Type)
 	assert.Equal(t, "default", a.Name)
+	assert.Equal(t, "1.2.3", a.Version)
 	assert.Equal(t, "sha256:abc123", a.ResolvedDigest)
 	assert.Equal(t, []string{"linux/amd64", "linux/arm64"}, a.Platforms)
 	require.NotNil(t, a.Signature)

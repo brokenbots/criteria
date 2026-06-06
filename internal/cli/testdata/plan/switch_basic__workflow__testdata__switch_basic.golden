@@ -25,4 +25,4 @@ switches:
   decide    conditions=3   default=skip_deploy
 
 adapters required:
-  noop   (search: $CRITERIA_PLUGINS, ~/.criteria/plugins)
+  noop   (search: $CRITERIA_ADAPTERS, ~/.criteria/adapters)

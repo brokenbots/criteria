@@ -6,6 +6,7 @@ type LockedAdapter struct {
 	Type                           string                `hcl:"type,label"`
 	Name                           string                `hcl:"name,label"`
 	Reference                      string                `hcl:"reference"`
+	Version                        string                `hcl:"version,optional"` // concrete resolved tag (e.g. "1.2.3"), for readable diffs
 	ResolvedDigest                 string                `hcl:"resolved_digest"`
 	SourceURL                      string                `hcl:"source_url"`
 	SDKProtocolVersion             int                   `hcl:"sdk_protocol_version"`

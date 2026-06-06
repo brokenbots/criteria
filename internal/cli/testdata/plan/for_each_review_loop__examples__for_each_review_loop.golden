@@ -24,4 +24,4 @@ states:
   failed    terminal=true   success=false
 
 adapters required:
-  noop   (search: $CRITERIA_PLUGINS, ~/.criteria/plugins)
+  noop   (search: $CRITERIA_ADAPTERS, ~/.criteria/adapters)

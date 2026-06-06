@@ -143,7 +143,26 @@ func (l *DefaultLoader) Resolve(ctx context.Context, name string) (Handle, error
 // ResolveWithCustomizer is like Resolve but accepts a per-call command
 // customizer instead of the shared one set by SetCommandCustomizer.
 // This avoids races when multiple sessions open concurrently.
-func (l *DefaultLoader) ResolveWithCustomizer(ctx context.Context, name string, customizer func(name string, cmd *exec.Cmd)) (Handle, error) { //nolint:funlen // resolver must handle builtin registry, discovery, launch, handshake, and caching paths
+func (l *DefaultLoader) ResolveWithCustomizer(ctx context.Context, name string, customizer func(name string, cmd *exec.Cmd)) (Handle, error) {
+	l.mu.Lock()
+	discover := l.discover
+	l.mu.Unlock()
+	return l.resolveWith(ctx, name, discover, customizer)
+}
+
+// ResolveWithDiscovery is like ResolveWithCustomizer but uses a per-call binary
+// discovery function (e.g. a digest-addressed lookup that lets multiple
+// versions of the same adapter type coexist) instead of the loader's default.
+// Registered builtins still take precedence over discovery. A nil discover
+// falls back to the loader's default discovery.
+func (l *DefaultLoader) ResolveWithDiscovery(ctx context.Context, name string, discover DiscoveryFunc, customizer func(name string, cmd *exec.Cmd)) (Handle, error) {
+	if discover == nil {
+		return l.ResolveWithCustomizer(ctx, name, customizer)
+	}
+	return l.resolveWith(ctx, name, discover, customizer)
+}
+
+func (l *DefaultLoader) resolveWith(ctx context.Context, name string, discover DiscoveryFunc, customizer func(name string, cmd *exec.Cmd)) (Handle, error) { //nolint:funlen // resolver must handle builtin registry, discovery, launch, handshake, and caching paths
 	if stringsTrim(name) == "" {
 		return nil, errors.New("adapter name is required")
 	}
@@ -156,7 +175,6 @@ func (l *DefaultLoader) ResolveWithCustomizer(ctx context.Context, name string, 
 		l.mu.Unlock()
 		return factory(), nil
 	}
-	discover := l.discover
 	l.mu.Unlock()
 
 	path, err := discover(name)

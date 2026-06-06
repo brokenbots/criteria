@@ -399,9 +399,37 @@ func (m *SessionManager) resolveAdapterHandle(ctx context.Context, name, adapter
 		if runnerFunc != nil {
 			return dl.ResolveWithRunnerFunc(ctx, adapterName, runnerFunc)
 		}
+		// Digest-addressed dispatch: when the instance is pinned in the
+		// lockfile, resolve the exact binary by digest so that two instances of
+		// the same adapter type at different versions launch distinct binaries.
+		if a := m.lockedAdapterFor(name); a != nil && a.ResolvedDigest != "" {
+			enc := EncodeDigest(digest.Digest(a.ResolvedDigest))
+			discover := func(t string) (string, error) { return DiscoverBinaryAt(t, enc) }
+			return dl.ResolveWithDiscovery(ctx, adapterName, discover, customizer)
+		}
 		return dl.ResolveWithCustomizer(ctx, adapterName, customizer)
 	}
 	return m.loader.Resolve(ctx, adapterName)
+}
+
+// lockedAdapterFor returns the lockfile entry for the adapter instance keyed by
+// the session instanceID ("<type>.<name>"), matching BOTH type and name so that
+// multiple versions of the same adapter type resolve to distinct entries.
+func (m *SessionManager) lockedAdapterFor(instanceID string) *lockfile.LockedAdapter {
+	if m.lockfile == nil {
+		return nil
+	}
+	typ, nm, ok := strings.Cut(instanceID, ".")
+	if !ok {
+		return nil
+	}
+	for i := range m.lockfile.Adapters {
+		a := &m.lockfile.Adapters[i]
+		if a.Type == typ && a.Name == nm {
+			return a
+		}
+	}
+	return nil
 }
 
 // isRemoteAdapter returns true when the adapter declaration is bound to a
@@ -470,14 +498,8 @@ func (m *SessionManager) registerSession(ctx context.Context, name, adapterName,
 		SandboxCleanup:   cleanup,
 		WorkingDir:       workingDir,
 	}
-	if m.lockfile != nil {
-		for i := range m.lockfile.Adapters {
-			a := &m.lockfile.Adapters[i]
-			if a.Type == adapterName {
-				sess.AdapterDigest = digest.Digest(a.ResolvedDigest)
-				break
-			}
-		}
+	if a := m.lockedAdapterFor(name); a != nil {
+		sess.AdapterDigest = digest.Digest(a.ResolvedDigest)
 	}
 	m.sessions[name] = sess
 

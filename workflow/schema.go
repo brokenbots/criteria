@@ -220,6 +220,8 @@ type InputSpec struct {
 type AdapterDeclSpec struct {
 	Type        string         `hcl:"type,label"`           // first label: adapter type
 	Name        string         `hcl:"name,label"`           // second label: instance name
+	Source      string         `hcl:"source,optional"`      // OCI location: registry/repo or a registry alias (decoupled from version)
+	Version     string         `hcl:"version,optional"`     // semver constraint: exact "1.2.3", "^1.2", "~1.2.0", "1.x", or "latest"
 	Environment hcl.Expression `hcl:"environment,optional"` // bare traversal reference (e.g. shell.default)
 	OnCrash     string         `hcl:"on_crash,optional"`
 	Config      *ConfigSpec    `hcl:"config,block"`

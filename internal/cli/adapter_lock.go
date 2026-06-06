@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/hclparse"
@@ -69,10 +70,7 @@ func prepareLockState(workflowDir string, upgrade bool) (*lockState, error) {
 		return nil, fmt.Errorf("read lockfile: %w", err)
 	}
 
-	wfAdapters, err := collectWorkflowAdapters(workflowDir, spec)
-	if err != nil {
-		return nil, err
-	}
+	wfAdapters := collectWorkflowAdapters(spec)
 
 	aliases, err := collectWorkflowAliases(workflowDir, spec)
 	if err != nil {
@@ -152,26 +150,23 @@ func runLock(ctx context.Context, workflowDir string, upgrade bool, out io.Write
 func resolveOneAdapter(ctx context.Context, wa *workflowAdapter, oldLF *lockfile.Lockfile, layout *oci.Layout, puller *oci.Puller, aliases map[string]string, upgrade bool, policy *signing.Policy, out io.Writer) (lockfile.LockedAdapter, error) {
 	var entry lockfile.LockedAdapter
 
-	if wa.Reference == "" {
+	if wa.Source == "" {
 		if oldLF != nil {
 			if oldA := findLocked(oldLF, wa.Type, wa.Name); oldA != nil {
 				return *oldA, nil
 			}
 		}
-		return entry, fmt.Errorf("no OCI reference in workflow HCL and no existing lockfile entry; add a `reference = \"...\"` attribute or run `criteria adapter pull \u003cref\u003e` manually")
+		return entry, fmt.Errorf("adapter has no `source` and no existing lockfile entry; add `source = \"...\"` + `version = \"...\"` to the adapter block, or run `criteria adapter pull <ref>` manually")
 	}
 
-	ref, err := resolveWithAliases(aliases, wa.Reference)
-	if err != nil {
-		return entry, err
+	// Reuse an existing pin unless --upgrade re-resolves the constraint.
+	if reused, ok, err := tryReusePin(ctx, wa, oldLF, layout, puller, upgrade, policy); ok || err != nil {
+		return reused, err
 	}
 
-	entry, reused, err := tryReuseEntry(ctx, wa, oldLF, layout, puller, ref, upgrade, policy)
+	ref, err := resolveSourceVersion(ctx, ResolveContext{WorkflowAliases: aliases}, puller, wa.Source, wa.Version)
 	if err != nil {
-		return entry, err
-	}
-	if reused {
-		return entry, nil
+		return entry, fmt.Errorf("resolve %s@%s: %w", wa.Source, versionOrLatest(wa.Version), err)
 	}
 
 	dg, pulledEntry, err := pullAndBuild(ctx, puller, layout, ref, policy)
@@ -181,14 +176,19 @@ func resolveOneAdapter(ctx context.Context, wa *workflowAdapter, oldLF *lockfile
 	entry = pulledEntry
 	entry.Reference = ref.String()
 	entry.ResolvedDigest = dg.String()
+	entry.Version = ref.Tag
 	entry.Type = wa.Type
 	entry.Name = wa.Name
 
-	fmt.Fprintf(out, "locked %s.%s -> %s\n", wa.Type, wa.Name, entry.ResolvedDigest)
+	fmt.Fprintf(out, "locked %s.%s -> %s (%s)\n", wa.Type, wa.Name, entry.ResolvedDigest, ref.Tag)
 	return entry, nil
 }
 
-func tryReuseEntry(ctx context.Context, wa *workflowAdapter, oldLF *lockfile.Lockfile, layout *oci.Layout, puller *oci.Puller, ref oci.Reference, upgrade bool, policy *signing.Policy) (lockfile.LockedAdapter, bool, error) {
+// tryReusePin reuses an existing lockfile entry without re-evaluating the
+// version constraint. Returns ok=true when the caller should return the entry.
+// When the pinned blob is missing from the cache it is re-pulled from the
+// entry's pinned reference (still no constraint re-evaluation).
+func tryReusePin(ctx context.Context, wa *workflowAdapter, oldLF *lockfile.Lockfile, layout *oci.Layout, puller *oci.Puller, upgrade bool, policy *signing.Policy) (lockfile.LockedAdapter, bool, error) {
 	var entry lockfile.LockedAdapter
 	if oldLF == nil || upgrade {
 		return entry, false, nil
@@ -198,20 +198,59 @@ func tryReuseEntry(ctx context.Context, wa *workflowAdapter, oldLF *lockfile.Loc
 		return entry, false, nil
 	}
 	if layout.HasBlob(digest.Digest(oldA.ResolvedDigest)) {
-		entry = *oldA
-		entry.Reference = ref.String()
-	} else {
-		dg, pulledEntry, pullErr := pullAndBuild(ctx, puller, layout, ref, policy)
-		if pullErr != nil {
-			return entry, false, pullErr
-		}
-		entry = pulledEntry
-		entry.Reference = ref.String()
-		entry.ResolvedDigest = dg.String()
+		return *oldA, true, nil
 	}
+	// Pinned blob evicted from cache: re-pull the exact pinned reference.
+	ref, err := oci.Parse(oldA.Reference)
+	if err != nil {
+		return entry, false, fmt.Errorf("parse pinned reference %q: %w", oldA.Reference, err)
+	}
+	dg, pulledEntry, err := pullAndBuild(ctx, puller, layout, ref, policy)
+	if err != nil {
+		return entry, false, err
+	}
+	entry = pulledEntry
+	entry.Reference = ref.String()
+	entry.ResolvedDigest = dg.String()
+	entry.Version = oldA.Version
 	entry.Type = wa.Type
 	entry.Name = wa.Name
 	return entry, true, nil
+}
+
+// resolveSourceVersion resolves an adapter's location + version constraint into
+// a fully-qualified, tagged oci.Reference. Exact versions skip registry tag
+// listing; constraints (^, ~, x, latest) list tags and pick the highest match.
+func resolveSourceVersion(ctx context.Context, rctx ResolveContext, puller *oci.Puller, source, version string) (oci.Reference, error) {
+	base, err := ResolveSource(rctx, source)
+	if err != nil {
+		return oci.Reference{}, err
+	}
+	v := versionOrLatest(version)
+	if oci.IsExactVersion(v) {
+		base.Tag = strings.TrimSpace(v)
+		return base, nil
+	}
+	if puller == nil {
+		return oci.Reference{}, fmt.Errorf("version constraint %q requires registry access", v)
+	}
+	tags, err := puller.ListTags(ctx, base)
+	if err != nil {
+		return oci.Reference{}, err
+	}
+	chosen, err := oci.SelectVersion(v, tags)
+	if err != nil {
+		return oci.Reference{}, err
+	}
+	base.Tag = chosen
+	return base, nil
+}
+
+func versionOrLatest(v string) string {
+	if strings.TrimSpace(v) == "" {
+		return "latest"
+	}
+	return v
 }
 
 func printLockDiff(oldLF, newLF *lockfile.Lockfile, out io.Writer) {
@@ -242,12 +281,13 @@ func printLockDiff(oldLF, newLF *lockfile.Lockfile, out io.Writer) {
 	}
 }
 
-// workflowAdapter holds the parsed adapter declaration plus an optional OCI
-// reference extracted from raw HCL.
+// workflowAdapter holds the parsed adapter declaration: its OCI location
+// (Source) and version constraint, decoded directly from the `adapter` block.
 type workflowAdapter struct {
-	Type      string
-	Name      string
-	Reference string // from raw HCL attribute, may be empty
+	Type    string
+	Name    string
+	Source  string // OCI location (registry/repo or alias); empty means non-OCI
+	Version string // semver constraint (exact, ^, ~, x, latest); empty == latest
 }
 
 // collectWorkflowAliases extracts registry alias blocks from workflow HCL.
@@ -364,9 +404,4 @@ func pullAndBuild(ctx context.Context, puller *oci.Puller, layout *oci.Layout, r
 		return "", zero, fmt.Errorf("build lockfile entry: %w", err)
 	}
 	return dg, entry, nil
-}
-
-func resolveWithAliases(aliases map[string]string, raw string) (oci.Reference, error) {
-	ctx := ResolveContext{WorkflowAliases: aliases}
-	return Resolve(ctx, raw)
 }

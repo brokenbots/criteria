@@ -12,7 +12,7 @@
 // to trigger permission request events before returning the outcome.
 //
 // This adapter is only built and used by tests. It is NOT registered with
-// `make plugins` and must not be installed in ~/.criteria/plugins/.
+// `make plugins` and must not be installed in ~/.criteria/adapters/.
 package main
 
 import (
