@@ -86,15 +86,23 @@ Human contributors follow the same convention: pick up a workstream file, implem
 
 Additive changes (new fields, new events, new conformance test cases) are non-breaking at minor or patch level.
 
-## Adapter plugins
+## Adapters
 
-Plugin binaries are named `criteria-adapter-<name>` and must be placed in `${CRITERIA_ADAPTERS}/` or `~/.criteria/adapters/`. Build the bundled adapters with `make plugins`. See [docs/plugins.md](docs/plugins.md) for the plugin wire protocol and development guide.
+Adapters are out-of-process binaries distributed as signed OCI artifacts. To
+write a new one, start from a starter template
+([typescript](https://github.com/brokenbots/criteria-adapter-starter-typescript) /
+[python](https://github.com/brokenbots/criteria-adapter-starter-python) /
+[go](https://github.com/brokenbots/criteria-adapter-starter-go)) rather than
+implementing the protocol by hand. The in-tree `cmd/criteria-adapter-noop` and
+`cmd/criteria-adapter-mcp` (built with `make plugins`) are minimal references.
+See [docs/adapters.md](docs/adapters.md) for the wire protocol, publishing, and
+development guide.
 
 ## Code style
 
 - Structured logging only: use `slog` (JSON output in production entrypoints).
 - No CGO: use pure-Go alternatives (e.g., `modernc.org/sqlite` if storage is needed).
-- Adapter plugin source lives in `cmd/criteria-adapter-*/`; the internal plugin loader lives in `internal/plugin/` and `internal/adapter*/`.
+- In-tree adapter source lives in `cmd/criteria-adapter-*/`; the host-side adapter loader, OCI cache, signing, manifest, and environment handlers live under `internal/adapter/`.
 - `make lint-imports` enforces the import boundary: `sdk/pb/...` is the only permitted reach into the SDK tree from `internal/`.
 
 ## Lint baseline and burn-down contract
