@@ -93,6 +93,33 @@ product/runtime behavior changes.
 - The job is **blocking** and in `all-checks` — done here if the tree is already
   clean, otherwise completed by WS51 after the catch-up upgrades.
 
+## Open findings (report-only landing — handed to WS51)
+
+The first scan was **not clean**, so per Step 3 the `osv-scan` job landed
+report-only (`continue-on-error: true`, not in `all-checks`). osv-scanner v2.3.8
+reports **26 known vulnerabilities** across the workspace go.mods (run
+`make vuln-scan` to reproduce). WS51 clears these and flips the gate to blocking:
+
+| Package | Current | Fixed in | Advisories |
+| --- | --- | --- | --- |
+| `github.com/in-toto/in-toto-golang` | 0.9.0 | 0.11.0 | GHSA-pmwq-pjrm-6p5r |
+| `github.com/sigstore/cosign/v2` | 2.6.3 | 3.0.5 *(major: `/v2`→`/v3`)* | GO-2026-4529 |
+| `github.com/sigstore/rekor` | 1.4.3 | 1.5.0 | GHSA-273p-m2cw-6833, GHSA-4c4x-jm2x-pf9j, GO-2026-4354, GO-2026-4355 |
+| `github.com/sigstore/sigstore` | 1.10.3 | 1.10.4 | GHSA-fcv2-xgw5-pqxf, GO-2026-4358 |
+| `github.com/sigstore/timestamp-authority/v2` | 2.0.3 | 2.0.6 | GHSA-xm5m-wgh2-rrg3 |
+| `github.com/theupdateframework/go-tuf/v2` | 2.3.0 | 2.4.1 | GHSA-846p-jg2w-w324, GHSA-fphv-w9fq-2525, GHSA-jqc5-w2xx-5vq4, GO-2026-4348, GO-2026-4349, GO-2026-4377 |
+| `golang.org/x/crypto` | 0.51.0 | 0.52.0 | GO-2026-5005, -5006, -5013..-5021, -5023, -5033 (13) |
+| `golang.org/x/net` | 0.54.0 | 0.55.0 | GO-2026-5025..-5030 (6) |
+| `stdlib` | 1.26.3 | 1.26.4 | GO-2026-5037, GO-2026-5038, GO-2026-5039 |
+
+Most originate from the WS46–48 signing dependency tree (sigstore/in-toto/tuf)
+plus a Go toolchain bump (`stdlib` 1.26.3→1.26.4). No `osv-scanner.toml` ignores
+were added — every finding is fixable by upgrade in WS51.
+
+> **GitHub Actions note:** osv-scanner v2.3.8 does not bundle a workflow
+> extractor, so action advisories are covered by the Dependabot `github-actions`
+> ecosystem (WS50) rather than this job.
+
 ## Files this workstream may modify
 
 - `.github/workflows/ci.yml` (new `osv-scan` job; `all-checks` `needs`)

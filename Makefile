@@ -1,5 +1,5 @@
 .PHONY: help bootstrap tidy build plugins install proto proto-lint proto-check-drift \
-	test test-cover test-conformance test-flake-watch lint-imports lint-go lint-baseline-check lint-no-todos lint validate validate-docs validate-self-workflows example-plugin bench docker-runtime docker-runtime-smoke ci self self-loop clean
+	test test-cover test-conformance test-flake-watch lint-imports lint-go lint-baseline-check lint-no-todos lint vuln-scan validate validate-docs validate-self-workflows example-plugin bench docker-runtime docker-runtime-smoke ci self self-loop clean
 
 # Default target: list available targets.
 help:
@@ -151,6 +151,13 @@ lint-no-todos: ## Fail if any TODO/FIXME/XXX marker appears in non-test producti
 	@echo "OK: no TODO/FIXME/XXX markers in production code"
 
 lint: lint-imports lint-go lint-baseline-check spec-check lint-no-todos ## Run all linters
+
+# Pinned osv-scanner version — keep in sync with the osv-scan CI job. Run via
+# `go run pkg@version` so it does not touch any module's go.mod/go.sum (the build
+# is module-aware but ignores the main module).
+OSV_SCANNER_VERSION := v2.3.8
+vuln-scan: ## Scan all workspace modules for known vulnerabilities (osv-scanner; local parity with CI osv-scan)
+	go run github.com/google/osv-scanner/v2/cmd/osv-scanner@$(OSV_SCANNER_VERSION) scan source -r .
 
 validate: build ## Validate all example workflow directories
 	@for d in examples/build_and_test examples/copilot_planning_then_execution \
