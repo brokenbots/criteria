@@ -1,5 +1,6 @@
 # mode: standalone
-# Example: trivial single-step workflow used by smoke tests.
+# Example: trivial single-step workflow used by smoke tests. Uses the in-tree
+# `noop` adapter so the smoke test is self-contained (no external adapter).
 workflow {
   name = "hello"
   version       = "0.1"
@@ -7,7 +8,7 @@ workflow {
   target_state  = "done"
 }
 
-adapter "shell" "default" {
+adapter "noop" "default" {
   config { }
 }
 
@@ -18,10 +19,8 @@ output "greeting" {
 }
 
 step "say_hello" {
-  target = adapter.shell.default
-  input {
-    command = "echo hello from criteria"
-  }
+  target = adapter.noop.default
+  input {}
 
   outcome "success" { next = state.done }
   outcome "failure" { next = state.failed }
