@@ -650,7 +650,16 @@ func (m *SessionManager) registerSensitiveOutputs(result adapter.Result, step *w
 func (m *SessionManager) handleCrash(ctx context.Context, name string, step *workflow.StepNode, sink adapter.EventSink, sess *Session, execErr error) (adapter.Result, error) {
 	slog.Warn("adapter session crashed", "session", sess.Name, "adapter", sess.Adapter, "error", execErr)
 
-	switch sess.OnCrash {
+	// The effective crash policy is the step's (the compiler resolves it as
+	// step-overrides-adapter), falling back to the session's adapter-level policy.
+	// Without this, an on_crash declared only on the step would be ignored at
+	// runtime (sess.OnCrash is captured from the adapter block at open time).
+	onCrash := sess.OnCrash
+	if step != nil && step.OnCrash != "" {
+		onCrash = normalizeOnCrash(step.OnCrash)
+	}
+
+	switch onCrash {
 	case OnCrashRespawn:
 		sink.Adapter("session.respawned", map[string]any{
 			"session": sess.Name,
@@ -674,7 +683,7 @@ func (m *SessionManager) handleCrash(ctx context.Context, name string, step *wor
 		sink.Adapter("session.crash", map[string]any{
 			"session": sess.Name,
 			"adapter": sess.Adapter,
-			"policy":  sess.OnCrash,
+			"policy":  onCrash,
 			"error":   execErr.Error(),
 		})
 		return adapter.Result{Outcome: "failure"}, &FatalRunError{Err: fmt.Errorf("session %q crashed and on_crash=abort_run", name)}
