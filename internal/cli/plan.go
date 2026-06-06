@@ -40,7 +40,10 @@ func NewPlanCmd() *cobra.Command {
 }
 
 func renderPlanOutput(ctx context.Context, workflowPath string, overrides map[string]string) (string, error) { //nolint:funlen,gocognit,gocyclo // renders full plan tree with agent/step/outcome formatting across multiple output paths
-	spec, graph, err := parseCompileForCli(ctx, workflowPath, nil, false)
+	// plan is a read-only preview; honor the CRITERIA_ALLOW_UNSIGNED env for the
+	// auto-pull verification but expose no flag (the override resolver reads the
+	// env regardless of the bool passed here).
+	spec, graph, err := parseCompileForCli(ctx, workflowPath, nil, false, false)
 	if err != nil {
 		return "", err
 	}

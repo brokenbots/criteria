@@ -162,6 +162,11 @@ type WorkflowHeaderSpec struct {
 	TargetState        string         `hcl:"target_state,optional"`
 	DefaultEnvironment hcl.Expression `hcl:"environment,optional"` // bare traversal reference to the workflow's default environment (e.g. shell.default)
 	Policy             *PolicySpec    `hcl:"policy,block"`
+	// Verification is the workflow-level signature-verification posture for OCI
+	// adapters: off|warn|strict. Empty means the CLI transition default applies.
+	// The CLI override (--allow-unsigned / CRITERIA_ALLOW_UNSIGNED) takes
+	// precedence over this attribute.
+	Verification string `hcl:"verification,optional"`
 }
 
 // Spec is the parsed (but unvalidated) HCL workflow document. After workstream
@@ -478,6 +483,10 @@ type FSMGraph struct {
 	Name               string
 	InitialState       string
 	TargetState        string
+	// Verification is the workflow-level signature-verification posture
+	// (off|warn|strict) copied from the header; empty means the CLI transition
+	// default applies. Consumed by the runtime adapter-pin enforcement path.
+	Verification string
 	Variables          map[string]*VariableNode        // compiled variable declarations (W04)
 	Locals             map[string]*LocalNode           // compiled local declarations (W07)
 	Data               map[string]map[string]*DataNode // compiled data declarations; keyed by kind then name (W02)

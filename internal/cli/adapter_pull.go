@@ -50,9 +50,9 @@ func runPull(ctx context.Context, out io.Writer, rawRef string, allowUnsigned bo
 		return err
 	}
 
-	policy, err := signing.PolicyFor(signing.PullContext{
-		AllowUnsigned: allowUnsigned,
-	})
+	// pull is not workflow-scoped, so there is no workflow `verification` attr;
+	// the shared resolver still honors --allow-unsigned and CRITERIA_ALLOW_UNSIGNED.
+	policy, err := resolveSigningPolicy(allowUnsigned, "")
 	if err != nil {
 		return fmt.Errorf("signing policy: %w", err)
 	}

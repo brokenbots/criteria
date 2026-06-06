@@ -78,7 +78,7 @@ func workflowDirFromPath(path string) string {
 	return filepath.Dir(path)
 }
 
-func compileForExecution(ctx context.Context, workflowPath string, log *slog.Logger, warnsAsErrors bool, subworkflowRoots ...string) ([]byte, *workflow.FSMGraph, *adapterhost.DefaultLoader, error) {
+func compileForExecution(ctx context.Context, workflowPath string, log *slog.Logger, warnsAsErrors, allowUnsigned bool, subworkflowRoots ...string) ([]byte, *workflow.FSMGraph, *adapterhost.DefaultLoader, error) {
 	spec, diags := workflow.ParseFileOrDir(workflowPath)
 	if diags.HasErrors() {
 		return nil, nil, nil, fmt.Errorf("parse errors:\n%w", newDiagsError(diags))
@@ -88,6 +88,15 @@ func compileForExecution(ctx context.Context, workflowPath string, log *slog.Log
 	schemas, schemaDiags := diagutil.CollectSchemas(ctx, loader, spec, log)
 
 	workflowDir := workflowDirFromPath(workflowPath)
+
+	// Execution-time auto-pull: ensure OCI adapters are present, verified against
+	// the resolved signing policy, and extracted before the run starts.
+	if hasOCIReferences(spec) {
+		if err := autoPullCompileAdapters(ctx, workflowDir, spec, allowUnsigned); err != nil {
+			_ = loader.Shutdown(ctx)
+			return nil, nil, nil, err
+		}
+	}
 
 	resolver := &workflow.LocalSubWorkflowResolver{AllowedRoots: subworkflowRoots}
 	graph, diags := workflow.CompileWithContext(ctx, spec, schemas, workflow.CompileOpts{

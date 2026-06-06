@@ -17,7 +17,7 @@ func compileDOTFromHCL(t *testing.T, hclContent string) string {
 	if err := os.WriteFile(filepath.Join(dir, "main.hcl"), []byte(hclContent), 0o644); err != nil {
 		t.Fatalf("write hcl: %v", err)
 	}
-	out, err := compileWorkflowOutput(context.Background(), dir, "dot", nil, false)
+	out, err := compileWorkflowOutput(context.Background(), dir, "dot", nil, false, false)
 	if err != nil {
 		t.Fatalf("compile dot: %v", err)
 	}
@@ -205,7 +205,7 @@ state "done" {
 		t.Fatalf("write parent hcl: %v", err)
 	}
 
-	out, err := compileWorkflowOutput(context.Background(), tmpDir, "dot", nil, false)
+	out, err := compileWorkflowOutput(context.Background(), tmpDir, "dot", nil, false, false)
 	if err != nil {
 		t.Fatalf("compile dot: %v", err)
 	}
@@ -278,7 +278,7 @@ state "done" {
 		t.Fatalf("write parent hcl: %v", err)
 	}
 
-	out, err := compileWorkflowOutput(context.Background(), tmpDir, "dot", nil, false)
+	out, err := compileWorkflowOutput(context.Background(), tmpDir, "dot", nil, false, false)
 	if err != nil {
 		t.Fatalf("compile dot: %v", err)
 	}
@@ -397,7 +397,7 @@ state "done" {
 		t.Fatalf("write parent: %v", err)
 	}
 
-	out, err := compileWorkflowOutput(context.Background(), tmpDir, "dot", nil, false)
+	out, err := compileWorkflowOutput(context.Background(), tmpDir, "dot", nil, false, false)
 	if err != nil {
 		t.Fatalf("compile dot: %v", err)
 	}
@@ -451,7 +451,7 @@ state "done" {
 		t.Fatalf("write parent: %v", err)
 	}
 
-	out, err := compileWorkflowOutput(context.Background(), tmpDir, "dot", nil, false)
+	out, err := compileWorkflowOutput(context.Background(), tmpDir, "dot", nil, false, false)
 	if err != nil {
 		t.Fatalf("compile dot: %v", err)
 	}
@@ -535,7 +535,7 @@ state "done" {
 		t.Fatalf("write main.hcl: %v", err)
 	}
 
-	out, err := compileWorkflowOutput(context.Background(), tmpDir, "dot", nil, false)
+	out, err := compileWorkflowOutput(context.Background(), tmpDir, "dot", nil, false, false)
 	if err != nil {
 		t.Fatalf("compile dot: %v", err)
 	}
@@ -597,7 +597,7 @@ state "done" {
 		t.Fatalf("write main.hcl: %v", err)
 	}
 
-	out, err := compileWorkflowOutput(context.Background(), tmpDir, "dot", nil, false)
+	out, err := compileWorkflowOutput(context.Background(), tmpDir, "dot", nil, false, false)
 	if err != nil {
 		t.Fatalf("compile dot: %v", err)
 	}

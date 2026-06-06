@@ -39,7 +39,7 @@ func runApplyLocal(
 
 	resumeLocalInFlightRuns(ctx, log, jsonOut, mode)
 
-	src, graph, loader, err := compileForExecution(ctx, opts.workflowPath, log, opts.warnsAsErrors, opts.subworkflowRoots...)
+	src, graph, loader, err := compileForExecution(ctx, opts.workflowPath, log, opts.warnsAsErrors, opts.allowUnsigned, opts.subworkflowRoots...)
 	if err != nil {
 		return err
 	}

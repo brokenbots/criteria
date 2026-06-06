@@ -19,11 +19,15 @@ import (
 	"github.com/brokenbots/criteria/workflow/lockfile"
 )
 
-// autoPullCompileAdapters is called by parseCompileForCli when the workflow
-// contains adapter blocks with a `source` attribute.  It validates the
+// autoPullCompileAdapters is called by the compile and apply paths when the
+// workflow contains adapter blocks with a `source` attribute.  It validates the
 // lockfile, pulls any missing cached binaries, and extracts the platform binary
 // to the digest-addressed install dir so adapterhost can resolve them.
-func autoPullCompileAdapters(ctx context.Context, workflowDir string, spec *workflow.Spec) error {
+//
+// allowUnsigned forces the unsigned-override (WS46); the workflow-level
+// `verification` attribute (off|warn|strict) is read from the spec header. The
+// resolved policy governs signature verification of every pulled artifact.
+func autoPullCompileAdapters(ctx context.Context, workflowDir string, spec *workflow.Spec, allowUnsigned bool) error {
 	// Read lockfile.
 	lf, err := lockfile.ReadFromDir(workflowDir)
 	if err != nil {
@@ -59,7 +63,11 @@ func autoPullCompileAdapters(ctx context.Context, workflowDir string, spec *work
 		return fmt.Errorf("open OCI cache: %w", err)
 	}
 
-	policy, err := signing.PolicyFor(signing.PullContext{})
+	workflowVerification := ""
+	if spec.Header != nil {
+		workflowVerification = spec.Header.Verification
+	}
+	policy, err := resolveSigningPolicy(allowUnsigned, workflowVerification)
 	if err != nil {
 		return fmt.Errorf("signing policy: %w", err)
 	}
