@@ -111,20 +111,27 @@ then reviewed WS-by-WS against the tree and CI (see findings below).
     WS23/WS24/WS41 — and the consequent TS/Python SDK proto consumer-switch — are owner-token-gated
     and handled out of band; the publish workflows are wired and skip gracefully until the tokens
     (`NPM_TOKEN`+`@criteria` scope / `PYPI_API_TOKEN`) land.
+  - *Remote serving + starter repos + release gates (session 5, 2026-06-06):* **WS21** serveRemote
+    across all three SDKs (TS `serveRemote.ts`, Python `serve_remote` reconnect parity, Go
+    `ServeRemote` reconnect + `LoadClientTLS` — each merged to its SDK `main`, with tests, README
+    sections, and k8s/docker-compose/systemd examples); **WS27** the three starter template repos
+    (`criteria-adapter-starter-{typescript,python,go}` — created under `brokenbots`, marked GitHub
+    templates, each a build-able hello-world adapter with `publish.yml` + commented `Dockerfile` +
+    `examples/remote/`); **WS38** release gates (`release-gates.yml` — Gate 3 reuses the
+    `workflow_call`-able `remote-e2e.yml`; Gate 4 publishing-flow loop guarded behind
+    `CRITERIA_CI_ENABLED` until the `criteria-ci` org + three `adapter-test-*` clones are
+    provisioned; `docs/release-process.md` added).
 - **Remaining in [`adapter_v2/`](adapter_v2/)** — the non-extraction backlog:
-  - **WS21** serveRemote: Go `ServeRemote` ships on `criteria-go-adapter-sdk` `main` but has
-    **zero callers** (remote path deferred; the TS `serveRemote.ts` + the Go/TS host-harness tests
-    live on each repo's `deferred/serve-remote` / `deferred/conformance` branches). Remaining:
-    un-defer the remote path + a reference example (ties to WS27).
-  - *Publishing infra:* **WS27** starter repos (none exist yet), **WS29** GitLab template +
-    Makefile paths + runtime container image.
+  - *Publishing infra:* **WS29** GitLab template + Makefile paths + runtime container image.
   - *Independence + hardening:* **WS43** independence verification, **WS44** CI coverage ratchet,
     **WS39** docs refresh (`docs/adapters.md` still uses copilot/shell as in-tree worked examples;
     a pointer notes copilot is external).
   - *Release gates (see WS40 note):* Gate 1 conformance **done** (rescoped,
     [ADR-0003](../docs/adrs/ADR-0003-conformance-scope.md)); Gate 2 in-tree adapters covered in
-    `ci.yml` e2e; Gate 3 **WS38** `remote-e2e.yml` real but runs on tag/weekly/dispatch; Gate 4
-    publishing infra = WS27/WS29. **WS40** still needs Gate 4 + a Gate 3 validation run + the `v0.5.0` tag.
+    `ci.yml` e2e; Gate 3 **WS38** wired into `release-gates.yml` (reuses `remote-e2e.yml`); Gate 4
+    `release-gates.yml` loop exists but stays skipped until the `criteria-ci` org is provisioned
+    (`CRITERIA_CI_ENABLED`/`CRITERIA_CI_TOKEN`) and **WS29** lands the remaining publishing paths.
+    **WS40** still needs the Gate 4 org provisioning + a Gate 3 validation run + the `v0.5.0` tag.
 
 ### Publishing + extraction progress (2026-06-05, session 2)
 
