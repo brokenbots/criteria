@@ -14,8 +14,10 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"os/signal"
 	"strconv"
 	"sync"
+	"syscall"
 	"time"
 
 	"google.golang.org/grpc"
@@ -224,16 +226,27 @@ func main() {
 		}
 	}
 
-	for {
-		if err := dialAndServe(host, token, digest, name, tlsConf, log); err != nil {
+	// Stop phoning home on SIGTERM/SIGINT. When a deployment deletes this pod
+	// (e.g. the crash-recovery test), Kubernetes sends SIGTERM with a grace
+	// period; without this, the terminating pod would keep reconnecting and
+	// clobber the replacement pod's session on the host shim.
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer stop()
+
+	for ctx.Err() == nil {
+		if err := dialAndServe(ctx, host, token, digest, name, tlsConf, log); err != nil {
 			log.Error("connection lost", "error", err)
 		}
 		// Back-off before reconnecting so crash-looping doesn't hammer the host.
-		time.Sleep(2 * time.Second)
+		select {
+		case <-ctx.Done():
+		case <-time.After(2 * time.Second):
+		}
 	}
+	log.Info("shutting down on signal")
 }
 
-func dialAndServe(host, token, digest, name string, tlsConf *tls.Config, log *slog.Logger) error {
+func dialAndServe(ctx context.Context, host, token, digest, name string, tlsConf *tls.Config, log *slog.Logger) error {
 	var conn net.Conn
 	var err error
 	if tlsConf != nil {
@@ -264,6 +277,13 @@ func dialAndServe(host, token, digest, name string, tlsConf *tls.Config, log *sl
 	// remaining bytes to a local UDS where the go-plugin client connects.
 	grpcServer := grpc.NewServer()
 	v2.RegisterAdapterServiceServer(grpcServer, &smokeAdapter{sessions: map[string]struct{}{}, name: name, log: log})
+
+	// Stop the server (closing the connection) when the process is signalled,
+	// so the reconnect loop exits instead of redialing during pod termination.
+	go func() {
+		<-ctx.Done()
+		grpcServer.Stop()
+	}()
 
 	lis := newSingleConnListener(conn)
 	log.Info("serving gRPC", "host", host)

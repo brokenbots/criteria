@@ -403,12 +403,17 @@ func pickFreeHostAddr(t *testing.T) string {
 // and falls back to the default route source address.
 func hostIPReachableFromKind(t *testing.T) string {
 	t.Helper()
-	// Try the gateway of the kind network first.
-	out, err := exec.Command("docker", "network", "inspect", "kind", "-f", "{{(index .IPAM.Config 0).Gateway}}").Output()
+	// Prefer an IPv4 gateway of the kind network. Docker Desktop frequently lists
+	// an IPv6 subnet first, and an IPv6 literal both (a) is awkward to route to the
+	// host listener and (b) renders as "[addr]:port" which breaks the unquoted YAML
+	// host value. So scan all gateways and pick the first IPv4 one.
+	out, err := exec.Command("docker", "network", "inspect", "kind", "-f",
+		"{{range .IPAM.Config}}{{.Gateway}} {{end}}").Output()
 	if err == nil {
-		ip := strings.TrimSpace(string(out))
-		if ip != "" && ip != "<no value>" {
-			return ip
+		for _, g := range strings.Fields(string(out)) {
+			if ip := net.ParseIP(g); ip != nil && ip.To4() != nil {
+				return g
+			}
 		}
 	}
 	// Fallback: source IP used to reach an external address.
