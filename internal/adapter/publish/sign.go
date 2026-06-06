@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -17,6 +18,7 @@ import (
 	ctypes "github.com/sigstore/cosign/v2/pkg/types"
 	"github.com/sigstore/sigstore-go/pkg/sign"
 	"oras.land/oras-go/v2/content"
+	"oras.land/oras-go/v2/errdef"
 
 	"github.com/brokenbots/criteria/internal/adapter/oci"
 )
@@ -193,6 +195,13 @@ func buildSignatureManifest(artifactDesc *ocispec.Descriptor, payload, sig []byt
 
 	sigManifest := ocispec.Manifest{
 		MediaType: ocispec.MediaTypeImageManifest,
+		// An OCI image manifest requires a valid config descriptor. Without one
+		// the zero value marshals as {"mediaType":"","digest":"","size":0},
+		// which strict registries (notably GHCR) reject with a 500 on push. Use
+		// the standard OCI 1.1 empty-JSON config (the same shape cosign/oras
+		// produce for referrer artifacts); the empty blob is pushed in
+		// signArtifact.
+		Config: ocispec.DescriptorEmptyJSON,
 		Subject: &ocispec.Descriptor{
 			MediaType: artifactDesc.MediaType,
 			Digest:    artifactDesc.Digest,
@@ -200,6 +209,9 @@ func buildSignatureManifest(artifactDesc *ocispec.Descriptor, payload, sig []byt
 		},
 		Layers: []ocispec.Descriptor{payloadDesc},
 	}
+	// SchemaVersion 2 is mandatory; set via the promoted field to avoid importing
+	// specs-go just for the struct literal.
+	sigManifest.SchemaVersion = 2
 	manifestJSON, _ = json.Marshal(sigManifest)
 	return manifestJSON, payload
 }
@@ -225,6 +237,14 @@ func signArtifact(ctx context.Context, pusher content.Pusher, ref oci.Reference,
 	}
 	if err := pusher.Push(ctx, payloadDesc, bytes.NewReader(payloadBytes)); err != nil {
 		return ocispec.Descriptor{}, fmt.Errorf("publish: push signature payload: %w", err)
+	}
+
+	// Push the empty-JSON config blob the signature manifest references. It is
+	// content-addressed by digest, so it may already exist in the repo (the
+	// artifact's own config is also "{}"); treat already-exists as success.
+	emptyCfg := ocispec.DescriptorEmptyJSON
+	if err := pusher.Push(ctx, emptyCfg, bytes.NewReader(emptyCfg.Data)); err != nil && !errors.Is(err, errdef.ErrAlreadyExists) {
+		return ocispec.Descriptor{}, fmt.Errorf("publish: push signature config: %w", err)
 	}
 
 	sigDesc := ocispec.Descriptor{
