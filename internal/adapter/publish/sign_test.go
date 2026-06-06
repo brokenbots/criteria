@@ -137,3 +137,34 @@ func TestSimpleSigningPayload_BindsDigest(t *testing.T) {
 		t.Fatalf("payload is not valid JSON: %v", err)
 	}
 }
+
+// TestBuildSignatureManifest_HasEmptyConfigAndSchemaVersion guards the GHCR
+// compatibility fix: the cosign signature manifest must carry schemaVersion 2
+// and a valid (empty-JSON) config descriptor. Without these the zero-value
+// config marshals as {"mediaType":"","digest":"","size":0}, which strict
+// registries (GHCR) reject with a 500 on push.
+func TestBuildSignatureManifest_HasEmptyConfigAndSchemaVersion(t *testing.T) {
+	artifactDesc := &ocispec.Descriptor{
+		MediaType: ocispec.MediaTypeImageManifest,
+		Digest:    digest.FromString("artifact"),
+		Size:      123,
+	}
+	manifestJSON, _ := buildSignatureManifest(artifactDesc, []byte("payload"), []byte("sig"), "", "")
+
+	var m ocispec.Manifest
+	if err := json.Unmarshal(manifestJSON, &m); err != nil {
+		t.Fatalf("manifest is not valid JSON: %v", err)
+	}
+	if m.SchemaVersion != 2 {
+		t.Errorf("schemaVersion = %d, want 2", m.SchemaVersion)
+	}
+	if m.Config.MediaType != ocispec.MediaTypeEmptyJSON {
+		t.Errorf("config mediaType = %q, want %q", m.Config.MediaType, ocispec.MediaTypeEmptyJSON)
+	}
+	if m.Config.Digest != ocispec.DescriptorEmptyJSON.Digest {
+		t.Errorf("config digest = %q, want empty-JSON digest %q", m.Config.Digest, ocispec.DescriptorEmptyJSON.Digest)
+	}
+	if m.Subject == nil || m.Subject.Digest != artifactDesc.Digest {
+		t.Errorf("subject must reference the artifact digest")
+	}
+}

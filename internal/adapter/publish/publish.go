@@ -43,25 +43,54 @@ type Options struct {
 	Signer Signer
 }
 
-// PushArtifact packages a single-platform adapter binary and its manifest
-// into an OCI artifact and pushes it to the registry identified by ref.
+// PlatformBinary is one platform's (cross-)compiled adapter binary, used to
+// assemble a multi-platform artifact. OS/Arch are GOOS/GOARCH values (e.g.
+// "linux"/"amd64", "darwin"/"arm64"); Path is the local binary on disk.
+type PlatformBinary struct {
+	OS   string
+	Arch string
+	Path string
+}
+
+// PushArtifact packages a single adapter binary (for the publish host's
+// platform) and its manifest into an OCI artifact and pushes it to ref. It is a
+// thin wrapper over PushMultiPlatformArtifact for the common single-platform
+// case.
 //
 // binPath is the local adapter binary.
 // manifestPath is the adapter.yaml emitted by `--emit-manifest`.
 //
 // Returns the digest of the published manifest.
 func PushArtifact(ctx context.Context, ref oci.Reference, binPath, manifestPath string, opts Options) (digest.Digest, error) {
+	return PushMultiPlatformArtifact(ctx, ref,
+		[]PlatformBinary{{OS: runtimeGOOS, Arch: runtimeGOARCH, Path: binPath}},
+		manifestPath, opts)
+}
+
+// PushMultiPlatformArtifact packages one or more per-platform adapter binaries
+// and a single shared manifest into ONE OCI artifact and pushes it to ref. Each
+// binary becomes its own layer titled bin/<os>/<arch>/<name>; the host selects
+// the layer matching its platform at pull time. The manifest (adapter.yaml) is
+// shared across platforms — its `platforms:` list must enumerate every platform
+// supplied here (the adapter declares this in Info(); the publisher cross-builds
+// the matching binaries).
+//
+// Returns the digest of the published manifest.
+func PushMultiPlatformArtifact(ctx context.Context, ref oci.Reference, bins []PlatformBinary, manifestPath string, opts Options) (digest.Digest, error) {
 	if !ref.FullyQualified() {
 		return "", fmt.Errorf("publish: reference must be fully-qualified (got %q)", ref)
 	}
+	if len(bins) == 0 {
+		return "", fmt.Errorf("publish: at least one platform binary is required")
+	}
 
-	binData, mfData, err := readArtifactInputs(binPath, manifestPath)
+	mfData, err := os.ReadFile(manifestPath)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("publish: read manifest: %w", err)
 	}
 
 	store := memory.New()
-	if _, err = buildManifestInStore(ctx, store, ref, binData, mfData, binPath); err != nil {
+	if _, err = buildManifestInStore(ctx, store, ref, bins, mfData); err != nil {
 		return "", err
 	}
 
@@ -84,29 +113,17 @@ func PushArtifact(ctx context.Context, ref oci.Reference, binPath, manifestPath 
 	return pushedDesc.Digest, nil
 }
 
-func readArtifactInputs(binPath, manifestPath string) (binData, mfData []byte, err error) {
-	binData, err = os.ReadFile(binPath)
-	if err != nil {
-		return nil, nil, fmt.Errorf("publish: read binary: %w", err)
-	}
-	mfData, err = os.ReadFile(manifestPath)
-	if err != nil {
-		return nil, nil, fmt.Errorf("publish: read manifest: %w", err)
-	}
-	return binData, mfData, nil
-}
-
-func buildManifestInStore(ctx context.Context, store *memory.Store, ref oci.Reference, binData, mfData []byte, binPath string) (ocispec.Descriptor, error) {
-	binTitle := filepath.ToSlash(filepath.Join("bin", runtimeGOOS, runtimeGOARCH, filepath.Base(binPath)))
-	binDesc, err := stageLayer(ctx, store, binData, mediaTypeAdapterBinary, binTitle)
-	if err != nil {
-		return ocispec.Descriptor{}, err
-	}
-
+func buildManifestInStore(ctx context.Context, store *memory.Store, ref oci.Reference, bins []PlatformBinary, mfData []byte) (ocispec.Descriptor, error) {
 	mfDesc, err := stageLayer(ctx, store, mfData, ocispec.MediaTypeImageLayer, "adapter.yaml")
 	if err != nil {
 		return ocispec.Descriptor{}, err
 	}
+
+	binLayers, err := stageBinaryLayers(ctx, store, bins)
+	if err != nil {
+		return ocispec.Descriptor{}, err
+	}
+	layers := append([]ocispec.Descriptor{mfDesc}, binLayers...)
 
 	cfgDesc, err := stageConfig(ctx, store)
 	if err != nil {
@@ -117,7 +134,7 @@ func buildManifestInStore(ctx context.Context, store *memory.Store, ref oci.Refe
 		Versioned: specs.Versioned{SchemaVersion: 2},
 		MediaType: ocispec.MediaTypeImageManifest,
 		Config:    cfgDesc,
-		Layers:    []ocispec.Descriptor{mfDesc, binDesc},
+		Layers:    layers,
 	}
 	manifestJSON, err := json.Marshal(manifest)
 	if err != nil {
@@ -135,6 +152,45 @@ func buildManifestInStore(ctx context.Context, store *memory.Store, ref oci.Refe
 		return ocispec.Descriptor{}, fmt.Errorf("publish: tag manifest: %w", err)
 	}
 	return manifestDesc, nil
+}
+
+// stageBinaryLayers stages one adapter-binary layer per platform, titled
+// bin/<os>/<arch>/<name>. All platforms must share the same binary basename (the
+// adapter type's canonical name, e.g. criteria-adapter-copilot) so the host can
+// resolve bin/<goos>/<goarch>/criteria-adapter-<type> uniformly.
+func stageBinaryLayers(ctx context.Context, store *memory.Store, bins []PlatformBinary) ([]ocispec.Descriptor, error) {
+	layers := make([]ocispec.Descriptor, 0, len(bins))
+	seen := make(map[string]bool, len(bins))
+	var binBase string
+	for _, b := range bins {
+		if b.OS == "" || b.Arch == "" {
+			return nil, fmt.Errorf("publish: platform binary %q is missing os/arch", b.Path)
+		}
+		key := b.OS + "/" + b.Arch
+		if seen[key] {
+			return nil, fmt.Errorf("publish: duplicate platform %q", key)
+		}
+		seen[key] = true
+
+		base := filepath.Base(b.Path)
+		if binBase == "" {
+			binBase = base
+		} else if base != binBase {
+			return nil, fmt.Errorf("publish: platform binaries must share one basename; got %q and %q", binBase, base)
+		}
+
+		binData, err := os.ReadFile(b.Path)
+		if err != nil {
+			return nil, fmt.Errorf("publish: read binary %s: %w", b.Path, err)
+		}
+		binTitle := filepath.ToSlash(filepath.Join("bin", b.OS, b.Arch, base))
+		binDesc, err := stageLayer(ctx, store, binData, mediaTypeAdapterBinary, binTitle)
+		if err != nil {
+			return nil, err
+		}
+		layers = append(layers, binDesc)
+	}
+	return layers, nil
 }
 
 func stageLayer(ctx context.Context, store *memory.Store, data []byte, mediaType, title string) (ocispec.Descriptor, error) {
