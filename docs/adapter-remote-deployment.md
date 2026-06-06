@@ -329,27 +329,38 @@ Your adapter binary should use the SDK's remote entrypoint. In Go this looks lik
 package main
 
 import (
-    adapterhost "github.com/brokenbots/criteria/sdk/adapterhost"
+    "os"
+
+    "github.com/brokenbots/criteria-go-adapter-sdk/adapterhost"
 )
 
 func main() {
-    adapterhost.ServeRemote(adapterhost.ServeRemoteOptions{
+    tlsConf, err := adapterhost.LoadClientTLS(
+        os.Getenv("CRITERIA_REMOTE_TLS_CERT"),
+        os.Getenv("CRITERIA_REMOTE_TLS_KEY"),
+        os.Getenv("CRITERIA_REMOTE_CA"),
+    )
+    if err != nil {
+        panic(err)
+    }
+    if err := adapterhost.ServeRemote(&myAdapter{}, &adapterhost.ServeRemoteOptions{
         Host:        os.Getenv("CRITERIA_REMOTE_HOST"),
+        TLSConfig:   tlsConf,
         AcceptToken: os.Getenv("CRITERIA_REMOTE_TOKEN"),
-        TLS: adapterhost.TLSConfig{
-            CertPath: os.Getenv("CRITERIA_REMOTE_TLS_CERT"),
-            KeyPath:  os.Getenv("CRITERIA_REMOTE_TLS_KEY"),
-            CAPath:   os.Getenv("CRITERIA_REMOTE_CA"),
-        },
-        Identity: adapterhost.AdapterIdentity{
+        Identity: adapterhost.RemoteIdentity{
             Name:    "greeter",
             Version: "0.1.0",
+            Digest:  os.Getenv("CRITERIA_REMOTE_DIGEST"),
         },
-    }, &myAdapter{})
+        Reconnect: true,
+    }); err != nil {
+        panic(err)
+    }
 }
 ```
 
-Equivalent entrypoints exist in the TypeScript and Python SDK packages.
+Equivalent entrypoints exist in the TypeScript (`serveRemote`) and Python
+(`serve_remote`) SDK packages.
 
 ## Troubleshooting
 
