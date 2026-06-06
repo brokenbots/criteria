@@ -3,8 +3,8 @@ name: Release
 on:
   push:
     tags:
-      - 'v[0-9]*.[0-9]*.[0-9]*'   # release tags only
-      - '!v*-*'                    # exclude pre-release tags (e.g. v0.3.0-rc1)
+      - 'v[0-9]*.[0-9]*.[0-9]*'    # full releases: v1.2.3
+      - 'v[0-9]*.[0-9]*.[0-9]*-*'  # pre-releases:  v1.2.3-rc.1 (published as GitHub pre-releases)
 
 permissions:
   contents: write   # create GitHub Release + upload assets
@@ -193,15 +193,17 @@ jobs:
         id: notes
         run: |
           TAG="${{ github.ref_name }}"
-          # Extract the block between ## [TAG] and the next ## heading.
+          # Prefer the ## [TAG] section; for pre-releases (no dedicated section
+          # yet) fall back to ## [Unreleased]; finally a bare "Release <tag>".
           python3 - "$TAG" CHANGELOG.md <<'EOF'
           import sys, re
           tag, path = sys.argv[1], sys.argv[2]
           text = open(path).read()
-          # Match the section starting with ## [TAG] through the next ## heading (exclusive).
-          pattern = rf'(^## \[{re.escape(tag)}\].*?)(?=^## |\Z)'
-          m = re.search(pattern, text, re.MULTILINE | re.DOTALL)
-          body = m.group(1).strip() if m else f"Release {tag}"
+          def section(heading):
+              pattern = rf'(^## \[{re.escape(heading)}\].*?)(?=^## |\Z)'
+              m = re.search(pattern, text, re.MULTILINE | re.DOTALL)
+              return m.group(1).strip() if m else None
+          body = section(tag) or section("Unreleased") or f"Release {tag}"
           # Write to a file to avoid shell quoting issues.
           open("release-notes.md", "w").write(body)
           EOF
@@ -211,7 +213,14 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${{ github.ref_name }}"
+          # Tags with a hyphen (v1.2.3-rc.1) are pre-releases; mark them so they
+          # don't show as "Latest" and downstream tooling can distinguish them.
+          PRERELEASE=()
+          case "$TAG" in
+            *-*) PRERELEASE=(--prerelease) ;;
+          esac
           gh release create "$TAG" \
             --title "$TAG" \
             --notes-file release-notes.md \
+            "${PRERELEASE[@]}" \
             release-assets/*
