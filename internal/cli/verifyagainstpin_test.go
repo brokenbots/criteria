@@ -13,7 +13,7 @@ import (
 
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
-	ctypes "github.com/sigstore/cosign/v2/pkg/types"
+	ctypes "github.com/sigstore/cosign/v3/pkg/types"
 
 	"github.com/brokenbots/criteria/internal/adapter/oci"
 	"github.com/brokenbots/criteria/internal/adapter/signing"
