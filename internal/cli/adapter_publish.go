@@ -28,6 +28,7 @@ type publishFlags struct {
 	keyless   bool
 	idToken   string
 	fulcioURL string
+	rekorURL  string
 }
 
 func newAdapterPublishCmd() *cobra.Command {
@@ -49,6 +50,7 @@ func newAdapterPublishCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&f.keyless, "keyless", false, "Sign keyless via Sigstore Fulcio using an ambient OIDC identity (CI); mutually exclusive with --sign-key")
 	cmd.Flags().StringVar(&f.idToken, "identity-token", "", "OIDC identity token for --keyless (defaults to SIGSTORE_ID_TOKEN or the ambient CI provider)")
 	cmd.Flags().StringVar(&f.fulcioURL, "fulcio-url", publish.DefaultFulcioURL, "Fulcio CA URL for --keyless signing")
+	cmd.Flags().StringVar(&f.rekorURL, "rekor-url", publish.DefaultRekorURL, "Rekor transparency-log URL for --keyless signing (the inclusion proof keeps the signature verifiable after the Fulcio cert expires)")
 	return cmd
 }
 
@@ -198,7 +200,7 @@ func (f *publishFlags) buildSigner(ctx context.Context) (publish.Signer, error) 
 		if err != nil {
 			return nil, err
 		}
-		return publish.NewKeylessSigner(ctx, publish.KeylessOptions{IDToken: token, FulcioURL: f.fulcioURL})
+		return publish.NewKeylessSigner(ctx, publish.KeylessOptions{IDToken: token, FulcioURL: f.fulcioURL, RekorURL: f.rekorURL})
 	default:
 		return nil, nil
 	}

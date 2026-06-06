@@ -142,18 +142,56 @@ digest in the manifest. See [Environments → container](#container) and
 
 ### Signing and trust
 
-- **Keyless (default in CI).** `criteria adapter publish --keyless` obtains an
-  ephemeral key, has Fulcio certify it against the workflow's OIDC identity, and
-  attaches the cosign signature as an OCI referrer. Token resolution order:
+The model is **"the lockfile is the trust anchor"**: `criteria adapter lock`
+verifies the artifact's signature and pins the signer (key fingerprint, or
+keyless issuer + subject); `pull`/`compile`/`apply` then re-verify against that
+pin on every run. A changed signer surfaces as a `SignerChanged` lockfile diff.
+
+- **Keyless (default in CI, public).** `criteria adapter publish --keyless`
+  obtains an ephemeral key, has Fulcio certify it against the workflow's OIDC
+  identity, **records the signature in the Rekor transparency log**, and attaches
+  the resulting Sigstore bundle (certificate + inclusion proof) as an OCI
+  referrer. The Rekor entry is what keeps the signature verifiable after the
+  ~10-minute Fulcio certificate expires — the verifier checks the certificate at
+  the log timestamp, not at verification time. Token resolution order:
   `--identity-token`, then `SIGSTORE_ID_TOKEN`, then the ambient GitHub Actions
-  provider.
-- **Explicit key.** `--sign-key <pem>` signs with an Ed25519 key; the lockfile
-  records the key fingerprint.
-- **Verification.** At pull time the host verifies the signature against a trust
-  policy. The workflow-level setting `verification = "strict" | "warn" | "off"`
-  (default `strict`; CI should stay `strict`) controls failure handling, and
-  `--allow-unsigned` opts a single pull out. Unsigned pulls are recorded in the
-  lockfile so accidental promotion to a strict project fails loudly.
+  provider. Override the log with `--rekor-url` (default the public Sigstore
+  Rekor). By default any subject from a well-known CI OIDC issuer (e.g. GitHub
+  Actions) is accepted at first lock and then pinned, so **an adapter signed by
+  its own repo's CI verifies with no per-consumer configuration**.
+- **Explicit key (enterprise, offline).** `--sign-key <pem>` signs with an
+  Ed25519 key; the lockfile records the key fingerprint. Consumers declare which
+  public keys they trust in a **trust config** — a global `~/.criteria/trust.hcl`
+  and/or a `trust.hcl` beside the workflow (their union is used), or ad-hoc
+  `--trusted-key <pem>` on `pull`/`lock`:
+
+  ```hcl
+  # ~/.criteria/trust.hcl
+  trusted_key {
+    key = <<-EOT
+    -----BEGIN PUBLIC KEY-----
+    ...
+    -----END PUBLIC KEY-----
+    EOT
+  }
+  trusted_key { path = "keys/team.pem" }  # path is relative to this file
+  ```
+
+  Generate a key pair with, e.g., `openssl genpkey -algorithm ed25519`. Key mode
+  verifies fully offline (no Fulcio, Rekor, or TUF).
+- **Verification posture.** The workflow-level setting
+  `verification = "strict" | "warn" | "off"` controls failure handling. The CLI
+  override `--allow-unsigned` (or `CRITERIA_ALLOW_UNSIGNED=1`) skips verification
+  for a single invocation; it is available on `pull`, `lock`, `compile`, and
+  `apply` for local development and CI. Precedence: `--allow-unsigned` > env >
+  workflow `verification` > the built-in default. During the signing-completion
+  transition the effective default is `warn` (log, don't fail) so legacy/unsigned
+  artifacts don't break `lock`/`apply`; it returns to `strict` once keyless
+  verification is confirmed in CI.
+- **TUF / air-gapped.** Keyless verification needs the Sigstore TUF root (fetched
+  via TUF and cached at `~/.criteria/cache/sigstore/`; clear that directory to
+  refresh) and a Rekor entry created while online at signing time. Fully
+  air-gapped consumers use explicit-key mode or `--allow-unsigned`.
 
 ## Secrets
 

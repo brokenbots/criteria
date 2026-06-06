@@ -56,6 +56,7 @@ permissions {
 - **`version`** (required): Schema version. Use `"1"` for v1.5 workflows.
 - **`initial_state`** (required): The starting node or state name.
 - **`target_state`** (required): The intended terminal state. Must reference a terminal state.
+- **`verification`** (optional): Signature-verification posture for OCI adapters — `"strict"`, `"warn"`, or `"off"`. Governs how a failed/missing adapter signature is handled at `lock`/`compile`/`apply`. The CLI override `--allow-unsigned` (or `CRITERIA_ALLOW_UNSIGNED=1`) takes precedence over this attribute. When omitted, the CLI transition default applies (currently `warn`; returns to `strict` once keyless verification is confirmed). See [adapters.md → Signing and trust](adapters.md).
 - **`policy`** (optional, top-level block): Execution guards.
   - **`max_total_steps`** (default 100): Caps the total number of step executions across the run, including retries and iteration steps. Set this to a positive integer to override the cap. If unset, or set to `0`, the default cap of `100` applies. Acts as a coarse backstop; for fine-grained loop control, prefer `max_visits` on individual steps.
   - **`max_step_retries`** (default 0 = no retries): Per-step retry limit for transient failures.

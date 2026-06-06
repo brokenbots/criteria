@@ -207,7 +207,7 @@ func TestExecuteServerRun_Cancellation(t *testing.T) {
 
 	log := newApplyLogger()
 	wfPath := writeWorkflowFile(t, cancelWorkflow)
-	src, graph, loader, err := compileForExecution(ctx, wfPath, log, false)
+	src, graph, loader, err := compileForExecution(ctx, wfPath, log, false, false)
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}
@@ -294,7 +294,7 @@ func TestExecuteServerRun_TimeoutPropagation(t *testing.T) {
 
 	log := newApplyLogger()
 	wfPath := writeWorkflowFile(t, pauseResumeWorkflow)
-	src, graph, loader, err := compileForExecution(bgCtx, wfPath, log, false)
+	src, graph, loader, err := compileForExecution(bgCtx, wfPath, log, false, false)
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}
@@ -334,7 +334,7 @@ func TestSetupServerRun_TLSDisable(t *testing.T) {
 
 	log := newApplyLogger()
 	wfPath := writeWorkflowFile(t, twoStepWorkflow)
-	src, graph, loader, err := compileForExecution(ctx, wfPath, log, false)
+	src, graph, loader, err := compileForExecution(ctx, wfPath, log, false, false)
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}
@@ -377,7 +377,7 @@ func TestSetupServerRun_TLSEnable(t *testing.T) {
 
 	log := newApplyLogger()
 	wfPath := writeWorkflowFile(t, twoStepWorkflow)
-	src, graph, loader, err := compileForExecution(ctx, wfPath, log, false)
+	src, graph, loader, err := compileForExecution(ctx, wfPath, log, false, false)
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}
@@ -428,7 +428,7 @@ func TestSetupServerRun_MTLS(t *testing.T) {
 
 	log := newApplyLogger()
 	wfPath := writeWorkflowFile(t, twoStepWorkflow)
-	src, graph, loader, err := compileForExecution(ctx, wfPath, log, false)
+	src, graph, loader, err := compileForExecution(ctx, wfPath, log, false, false)
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}
@@ -504,7 +504,7 @@ func TestSetupServerRun_MTLSRejectsCACert(t *testing.T) {
 
 	log := newApplyLogger()
 	wfPath := writeWorkflowFile(t, twoStepWorkflow)
-	src, graph, loader, err := compileForExecution(ctx, wfPath, log, false)
+	src, graph, loader, err := compileForExecution(ctx, wfPath, log, false, false)
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}
@@ -544,7 +544,7 @@ func TestDrainResumeCycles_PauseThenResume(t *testing.T) {
 
 	log := newApplyLogger()
 	wfPath := writeWorkflowFile(t, pauseResumeWorkflow)
-	src, graph, loader, err := compileForExecution(ctx, wfPath, log, false)
+	src, graph, loader, err := compileForExecution(ctx, wfPath, log, false, false)
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}
@@ -646,7 +646,7 @@ func TestDrainResumeCycles_StreamDropAndReconnect(t *testing.T) {
 
 	log := newApplyLogger()
 	wfPath := writeWorkflowFile(t, pauseResumeWorkflow)
-	src, graph, loader, err := compileForExecution(ctx, wfPath, log, false)
+	src, graph, loader, err := compileForExecution(ctx, wfPath, log, false, false)
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}

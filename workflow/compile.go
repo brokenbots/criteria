@@ -79,6 +79,15 @@ func validateHeader(h *WorkflowHeaderSpec) hcl.Diagnostics {
 	if h.Policy != nil && h.Policy.MaxVisitsWarnThreshold != nil && *h.Policy.MaxVisitsWarnThreshold < 0 {
 		diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: "policy.max_visits_warn_threshold must be >= 0 (use 0 to disable warnings, omit to use the default of 200)"})
 	}
+	switch h.Verification {
+	case "", "off", "warn", "strict":
+	default:
+		diags = append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  "workflow.verification must be one of off|warn|strict",
+			Detail:   fmt.Sprintf("got %q", h.Verification),
+		})
+	}
 	return diags
 }
 
@@ -153,6 +162,7 @@ func newFSMGraph(spec *Spec) *FSMGraph {
 		Name:             spec.Header.Name,
 		InitialState:     spec.Header.InitialState,
 		TargetState:      spec.Header.TargetState,
+		Verification:     spec.Header.Verification,
 		Variables:        map[string]*VariableNode{},
 		Locals:           map[string]*LocalNode{},
 		Data:             map[string]map[string]*DataNode{},

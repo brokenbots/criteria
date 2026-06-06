@@ -19,11 +19,15 @@ import (
 	"github.com/brokenbots/criteria/workflow/lockfile"
 )
 
-// autoPullCompileAdapters is called by parseCompileForCli when the workflow
-// contains adapter blocks with a `source` attribute.  It validates the
+// autoPullCompileAdapters is called by the compile and apply paths when the
+// workflow contains adapter blocks with a `source` attribute.  It validates the
 // lockfile, pulls any missing cached binaries, and extracts the platform binary
 // to the digest-addressed install dir so adapterhost can resolve them.
-func autoPullCompileAdapters(ctx context.Context, workflowDir string, spec *workflow.Spec) error {
+//
+// allowUnsigned forces the unsigned-override (WS46); the workflow-level
+// `verification` attribute (off|warn|strict) is read from the spec header. The
+// resolved policy governs signature verification of every pulled artifact.
+func autoPullCompileAdapters(ctx context.Context, workflowDir string, spec *workflow.Spec, allowUnsigned bool) error {
 	// Read lockfile.
 	lf, err := lockfile.ReadFromDir(workflowDir)
 	if err != nil {
@@ -33,21 +37,10 @@ func autoPullCompileAdapters(ctx context.Context, workflowDir string, spec *work
 		return fmt.Errorf("workflow uses OCI adapter references but %q is missing; run `criteria adapter lock`", filepath.Join(workflowDir, ".criteria.lock.hcl"))
 	}
 
-	// Build set of OCI-referenced adapters.
+	// Build set of OCI-referenced adapters and validate the lockfile covers them.
 	ociAdapters := collectWorkflowAdapters(spec)
-
-	// Validate lockfile covers all workflow adapters.
-	missing := []string{}
-	for key, wa := range ociAdapters {
-		if wa.Source == "" {
-			continue // not OCI-based
-		}
-		if findLocked(lf, wa.Type, wa.Name) == nil {
-			missing = append(missing, key)
-		}
-	}
-	if len(missing) > 0 {
-		return fmt.Errorf("lockfile missing entries for adapters: %v; run `criteria adapter lock`", missing)
+	if err := assertLockfileCoversAdapters(lf, ociAdapters); err != nil {
+		return err
 	}
 
 	cacheRoot, err := defaultCacheRoot()
@@ -59,9 +52,9 @@ func autoPullCompileAdapters(ctx context.Context, workflowDir string, spec *work
 		return fmt.Errorf("open OCI cache: %w", err)
 	}
 
-	policy, err := signing.PolicyFor(signing.PullContext{})
+	policy, err := autoPullPolicy(workflowDir, spec, allowUnsigned)
 	if err != nil {
-		return fmt.Errorf("signing policy: %w", err)
+		return err
 	}
 	puller := &oci.Puller{Layout: layout}
 
@@ -77,6 +70,42 @@ func autoPullCompileAdapters(ctx context.Context, workflowDir string, spec *work
 	return nil
 }
 
+// assertLockfileCoversAdapters errors when any OCI-referenced workflow adapter
+// has no entry in the lockfile.
+func assertLockfileCoversAdapters(lf *lockfile.Lockfile, ociAdapters map[string]*workflowAdapter) error {
+	var missing []string
+	for key, wa := range ociAdapters {
+		if wa.Source == "" {
+			continue // not OCI-based
+		}
+		if findLocked(lf, wa.Type, wa.Name) == nil {
+			missing = append(missing, key)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("lockfile missing entries for adapters: %v; run `criteria adapter lock`", missing)
+	}
+	return nil
+}
+
+// autoPullPolicy resolves the signing policy for the auto-pull path from the
+// override flag, the workflow `verification` attribute, and the trusted keys.
+func autoPullPolicy(workflowDir string, spec *workflow.Spec, allowUnsigned bool) (signing.Policy, error) {
+	workflowVerification := ""
+	if spec.Header != nil {
+		workflowVerification = spec.Header.Verification
+	}
+	trustedKeys, err := loadTrustedKeys(workflowDir, nil)
+	if err != nil {
+		return signing.Policy{}, fmt.Errorf("load trusted keys: %w", err)
+	}
+	policy, err := resolveSigningPolicy(allowUnsigned, workflowVerification, trustedKeys)
+	if err != nil {
+		return signing.Policy{}, fmt.Errorf("signing policy: %w", err)
+	}
+	return policy, nil
+}
+
 func ensureAdapterCached(ctx context.Context, key string, wa *workflowAdapter, lf *lockfile.Lockfile, layout *oci.Layout, puller *oci.Puller, policy *signing.Policy) error {
 	entry := findLocked(lf, wa.Type, wa.Name)
 	if entry == nil {
@@ -88,8 +117,13 @@ func ensureAdapterCached(ctx context.Context, key string, wa *workflowAdapter, l
 		return fmt.Errorf("adapter %q lockfile entry has empty digest", key)
 	}
 
-	// If binary already cached, ensure it's in the plugin directory.
+	// If binary already cached, re-verify against the pinned signer before use so
+	// the trust anchor is enforced on every run (not just the first pull), then
+	// ensure it's in the plugin directory.
 	if layout.HasBlob(dg) {
+		if err := verifyAgainstPin(ctx, key, layout, dg, entry, policy); err != nil {
+			return err
+		}
 		if err := extractOCIAdapterBinary(layout, dg, wa.Type); err != nil {
 			return fmt.Errorf("adapter %q extract binary: %w", key, err)
 		}
@@ -118,9 +152,8 @@ func ensureAdapterCached(ctx context.Context, key string, wa *workflowAdapter, l
 	if err := m.Validate(); err != nil {
 		return fmt.Errorf("adapter %q validate manifest: %w", key, err)
 	}
-	_, err = signing.Verify(ctx, layout, pulledDg, *policy)
-	if err != nil {
-		return fmt.Errorf("adapter %q signature verification: %w", key, err)
+	if err := verifyAgainstPin(ctx, key, layout, pulledDg, entry, policy); err != nil {
+		return err
 	}
 
 	if err := extractOCIAdapterBinary(layout, pulledDg, wa.Type); err != nil {
@@ -128,6 +161,19 @@ func ensureAdapterCached(ctx context.Context, key string, wa *workflowAdapter, l
 	}
 
 	return maybePullContainerImage(ctx, key, m)
+}
+
+// verifyAgainstPin verifies the cached artifact under a policy tightened to the
+// lockfile-pinned signer (the trust anchor), then confirms the verified signer
+// matches the pin. A nil signer (ModeOff, or a ModeWarn failure) skips the pin
+// check; see policyForPin and assertSignerMatchesPin.
+func verifyAgainstPin(ctx context.Context, key string, layout *oci.Layout, dg digest.Digest, entry *lockfile.LockedAdapter, policy *signing.Policy) error {
+	effective := policyForPin(policy, entry.Signature)
+	signer, err := signing.Verify(ctx, layout, dg, effective)
+	if err != nil {
+		return fmt.Errorf("adapter %q signature verification: %w", key, err)
+	}
+	return assertSignerMatchesPin(key, signer, entry.Signature)
 }
 
 func maybePullContainerImage(ctx context.Context, key string, m *manifest.Manifest) error {

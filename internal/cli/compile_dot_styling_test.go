@@ -367,7 +367,7 @@ state "failed" {
 // compileDOTFromDir compiles the workflow rooted at dir and returns the DOT output.
 func compileDOTFromDir(t *testing.T, dir string) string {
 	t.Helper()
-	out, err := compileWorkflowOutput(context.Background(), dir, "dot", nil, false)
+	out, err := compileWorkflowOutput(context.Background(), dir, "dot", nil, false, false)
 	if err != nil {
 		t.Fatalf("compile dot: %v", err)
 	}
@@ -805,7 +805,7 @@ state "done" {
 	if err := os.WriteFile(filepath.Join(dir, "main.hcl"), []byte(hcl2), 0o644); err != nil {
 		t.Fatalf("write hcl: %v", err)
 	}
-	out, err := compileWorkflowOutput(context.Background(), dir, "dot", nil, false)
+	out, err := compileWorkflowOutput(context.Background(), dir, "dot", nil, false, false)
 	if err != nil {
 		t.Fatalf("compile dot: %v", err)
 	}

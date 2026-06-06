@@ -163,7 +163,7 @@ adapter "noop" "default" {
 	if err := writeFile(filepath.Join(dir, "test.hcl"), []byte(hcl)); err != nil {
 		t.Fatal(err)
 	}
-	spec, _, err := parseCompileForCli(context.Background(), dir, nil, false)
+	spec, _, err := parseCompileForCli(context.Background(), dir, nil, false, false)
 	if err != nil {
 		t.Fatalf("parse failed: %v", err)
 	}

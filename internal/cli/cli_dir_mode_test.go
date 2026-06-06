@@ -67,7 +67,7 @@ state "failed" {
 func TestCompileDir_DirectoryPath(t *testing.T) {
 	dir, _ := writeMultiFileWorkflow(t)
 
-	out, err := compileWorkflowOutput(context.Background(), dir, "json", nil, false)
+	out, err := compileWorkflowOutput(context.Background(), dir, "json", nil, false, false)
 	if err != nil {
 		t.Fatalf("compileWorkflowOutput(dir): %v", err)
 	}
@@ -84,7 +84,7 @@ func TestCompileDir_DirectoryPath(t *testing.T) {
 func TestCompileDir_FilePathDelegatesToParentDir(t *testing.T) {
 	_, filePath := writeMultiFileWorkflow(t)
 
-	out, err := compileWorkflowOutput(context.Background(), filePath, "json", nil, false)
+	out, err := compileWorkflowOutput(context.Background(), filePath, "json", nil, false, false)
 	if err != nil {
 		// This specific error means steps weren't merged — the blocker is still present.
 		t.Fatalf("compileWorkflowOutput(file): %v", err)
@@ -267,7 +267,7 @@ step "run" {
 func TestCompileDir_FileFunction_DirectoryPath(t *testing.T) {
 	dir, _ := writeFileFunctionWorkflow(t)
 
-	out, err := compileWorkflowOutput(context.Background(), dir, "json", nil, false)
+	out, err := compileWorkflowOutput(context.Background(), dir, "json", nil, false, false)
 	if err != nil {
 		t.Fatalf("compileWorkflowOutput(dir) with file(): %v", err)
 	}
@@ -284,7 +284,7 @@ func TestCompileDir_FileFunction_DirectoryPath(t *testing.T) {
 func TestCompileDir_FileFunction_FilePath(t *testing.T) {
 	_, filePath := writeFileFunctionWorkflow(t)
 
-	out, err := compileWorkflowOutput(context.Background(), filePath, "json", nil, false)
+	out, err := compileWorkflowOutput(context.Background(), filePath, "json", nil, false, false)
 	if err != nil {
 		t.Fatalf("compileWorkflowOutput(file path) with file(): %v", err)
 	}

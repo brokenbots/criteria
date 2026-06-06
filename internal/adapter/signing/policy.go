@@ -20,6 +20,12 @@ type PullContext struct {
 	// GlobalConfigPath is the path to the global HCL config file. When empty
 	// the default ~/.criteria/config.hcl is used.
 	GlobalConfigPath string
+
+	// TrustedKeys are explicit public keys (enterprise key mode, WS47) resolved
+	// by the CLI from the global trust config, the workflow-dir trust config,
+	// and ad-hoc --trusted-key flags. When non-empty they are copied onto the
+	// resolved Policy so key-signed artifacts verify against them.
+	TrustedKeys []KeyIdentity
 }
 
 // PolicyFor resolves the effective Policy for a pull operation, combining:
@@ -31,7 +37,14 @@ func PolicyFor(ctx PullContext) (Policy, error) {
 		return Policy{Mode: ModeOff}, nil
 	}
 
-	// Start from defaults.
+	// Start from defaults (decision D-WS48-1): trust the well-known CI OIDC
+	// issuers (DefaultTrustedIssuers, incl. GitHub Actions) and accept any
+	// subject ("*") at first lock. The *specific* identity is then pinned into
+	// the lockfile (LockedSignature.Keyless) and enforced on every subsequent
+	// pull/apply (cli.policyForPin narrows issuer+subject to the pin), so "an
+	// adapter signed by its own repo's CI" verifies with no per-consumer config
+	// while the lockfile remains the trust anchor. Enterprises tighten via the
+	// trust config.
 	policy := Policy{
 		Mode:            ModeStrict,
 		TrustedIssuers:  append([]string(nil), DefaultTrustedIssuers...),
@@ -49,9 +62,12 @@ func PolicyFor(ctx PullContext) (Policy, error) {
 		}
 	}
 
-	// Deferred: parse global config file (HCL) and merge trusted_issuers,
-	// subject_patterns, and trusted_keys. This will be handled once WS08/WS09
-	// provide config parsing helpers or the global config schema is stable.
+	// Attach the CLI-resolved trusted keys (enterprise key mode, WS47). The CLI
+	// loads these from the global + workflow trust config and --trusted-key
+	// flags; verifyKeyBased matches a signature against them by fingerprint.
+	if len(ctx.TrustedKeys) > 0 {
+		policy.TrustedKeys = append([]KeyIdentity(nil), ctx.TrustedKeys...)
+	}
 
 	return policy, nil
 }

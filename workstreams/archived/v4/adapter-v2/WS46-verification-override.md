@@ -44,6 +44,15 @@ Add a single helper (e.g. `internal/cli/verification.go`) that resolves the effe
 
 Until WS47/WS48 land, set the *effective default* to `warn` (log, do not fail) so existing unsigned/legacy artifacts don't break `lock`/`apply`, while still surfacing the gap. Enterprise opts into `strict` via the workflow attr or a future global config. Record this as a dated decision in this file; revert to `strict` default once WS48 ships verifiable keyless.
 
+> **Decision D-WS46-1 (2026-06-06):** The CLI transition default is `warn`,
+> implemented as the single constant `transitionDefaultMode` in
+> `internal/cli/verification.go`. `signing.PolicyFor`'s own secure default stays
+> `strict`; the resolver injects `warn` only when no explicit override or workflow
+> `verification` attribute is set. **Flip back to `strict`** by changing that one
+> constant to `signing.ModeStrict`, in the WS48 Step 5 follow-up PR, once keyless
+> is verifiable end-to-end and the real-OIDC CI integration job is green on
+> `adapter-v2`.
+
 ## Out of scope
 
 - Producing or verifying signatures correctly (WS47, WS48).

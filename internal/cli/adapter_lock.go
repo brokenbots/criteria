@@ -24,7 +24,11 @@ import (
 )
 
 func newAdapterLockCmd() *cobra.Command {
-	var upgrade bool
+	var (
+		upgrade         bool
+		allowUnsigned   bool
+		trustedKeyPaths []string
+	)
 
 	cmd := &cobra.Command{
 		Use:   "lock [workflow-dir]",
@@ -36,11 +40,13 @@ func newAdapterLockCmd() *cobra.Command {
 			if len(args) > 0 {
 				workflowDir = args[0]
 			}
-			return runLock(cmd.Context(), workflowDir, upgrade, cmd.OutOrStdout())
+			return runLock(cmd.Context(), workflowDir, upgrade, allowUnsigned, trustedKeyPaths, cmd.OutOrStdout())
 		},
 	}
 
 	cmd.Flags().BoolVar(&upgrade, "upgrade", false, "Re-resolve all adapters and update to latest digest")
+	cmd.Flags().BoolVar(&allowUnsigned, "allow-unsigned", false, "Skip adapter signature verification (also via CRITERIA_ALLOW_UNSIGNED)")
+	cmd.Flags().StringArrayVar(&trustedKeyPaths, "trusted-key", nil, "Path to a trusted PEM public key for key-mode verification (repeatable)")
 	return cmd
 }
 
@@ -54,7 +60,7 @@ type lockState struct {
 	policy      signing.Policy
 }
 
-func prepareLockState(workflowDir string, upgrade bool) (*lockState, error) {
+func prepareLockState(workflowDir string, upgrade, allowUnsigned bool, trustedKeyPaths []string) (*lockState, error) {
 	workflowDir, err := filepath.Abs(workflowDir)
 	if err != nil {
 		return nil, fmt.Errorf("resolve workflow dir: %w", err)
@@ -77,7 +83,15 @@ func prepareLockState(workflowDir string, upgrade bool) (*lockState, error) {
 		return nil, err
 	}
 
-	layout, policy, err := openCacheAndPolicy()
+	workflowVerification := ""
+	if spec.Header != nil {
+		workflowVerification = spec.Header.Verification
+	}
+	trustedKeys, err := loadTrustedKeys(workflowDir, trustedKeyPaths)
+	if err != nil {
+		return nil, fmt.Errorf("load trusted keys: %w", err)
+	}
+	layout, policy, err := openCacheAndPolicy(allowUnsigned, workflowVerification, trustedKeys)
 	if err != nil {
 		return nil, err
 	}
@@ -98,7 +112,7 @@ func prepareLockState(workflowDir string, upgrade bool) (*lockState, error) {
 	}, nil
 }
 
-func openCacheAndPolicy() (*oci.Layout, signing.Policy, error) {
+func openCacheAndPolicy(allowUnsigned bool, workflowVerification string, trustedKeys []signing.KeyIdentity) (*oci.Layout, signing.Policy, error) {
 	var policy signing.Policy
 	cacheRoot, err := defaultCacheRoot()
 	if err != nil {
@@ -108,18 +122,18 @@ func openCacheAndPolicy() (*oci.Layout, signing.Policy, error) {
 	if err != nil {
 		return nil, policy, fmt.Errorf("open OCI cache: %w", err)
 	}
-	policy, err = signing.PolicyFor(signing.PullContext{})
+	policy, err = resolveSigningPolicy(allowUnsigned, workflowVerification, trustedKeys)
 	if err != nil {
 		return nil, policy, fmt.Errorf("signing policy: %w", err)
 	}
 	return layout, policy, nil
 }
 
-func runLock(ctx context.Context, workflowDir string, upgrade bool, out io.Writer) error {
+func runLock(ctx context.Context, workflowDir string, upgrade, allowUnsigned bool, trustedKeyPaths []string, out io.Writer) error {
 	if out == nil {
 		out = os.Stderr
 	}
-	state, err := prepareLockState(workflowDir, upgrade)
+	state, err := prepareLockState(workflowDir, upgrade, allowUnsigned, trustedKeyPaths)
 	if err != nil {
 		return err
 	}

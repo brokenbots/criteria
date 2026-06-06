@@ -161,18 +161,26 @@ func TestKeylessSigner_RoundTrip(t *testing.T) {
 	payload := simpleSigningPayload(ref, "sha256:"+
 		"abcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabca")
 
-	sig, certPEM, chainPEM, err := signer.Sign(payload)
+	// No RekorURL is configured, so this offline round-trip produces a bundle
+	// without a transparency-log entry; the cert + signature assertions below
+	// still hold. Full bundle verification is exercised in TestVerifyBundle_*
+	// (offline VirtualSigstore) and the CI keyless integration job.
+	res, err := signer.Sign(payload)
 	if err != nil {
 		t.Fatalf("Sign: %v", err)
 	}
-	if chainPEM != "" {
-		t.Fatalf("keyless signer should not emit a chain PEM; got %q", chainPEM)
+	sig := res.Signature
+	if res.ChainPEM != "" {
+		t.Fatalf("keyless signer should not emit a chain PEM; got %q", res.ChainPEM)
 	}
-	if certPEM == "" {
+	if res.CertPEM == "" {
 		t.Fatal("keyless signer returned an empty certificate")
 	}
+	if len(res.Bundle) == 0 {
+		t.Fatal("keyless signer returned an empty bundle")
+	}
 
-	block, _ := pem.Decode([]byte(certPEM))
+	block, _ := pem.Decode([]byte(res.CertPEM))
 	if block == nil {
 		t.Fatal("certificate is not valid PEM")
 	}

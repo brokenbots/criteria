@@ -47,6 +47,33 @@ WS46 (override + transition default), WS47 (lockfile→policy wiring, reused her
 
 - Flip the WS46 transition default from `warn` back to `strict` now that keyless is verifiable.
 
+> **Decision D-WS48-1 (2026-06-06):** Default keyless policy trusts the well-known
+> CI OIDC issuers (`signing.DefaultTrustedIssuers`, incl. the GitHub Actions
+> issuer `https://token.actions.githubusercontent.com`) and accepts any subject
+> (`*`) at first `lock`. The concrete identity is pinned into the lockfile
+> (`LockedSignature.Keyless{Issuer,Subject}`) and enforced on every subsequent
+> pull/apply via `cli.policyForPin` (narrows issuer+subject to the pin) +
+> `cli.assertSignerMatchesPin`. Net effect: an adapter signed by its own repo's CI
+> verifies with no per-consumer config, and the lockfile is the trust anchor.
+> Enterprises tighten via the trust config / workflow `verification = "strict"`.
+>
+> **Decision D-WS48-TUF (2026-06-06):** The Sigstore TUF root is fetched via TUF
+> and **cached** at `~/.criteria/cache/sigstore/` (honoring `CRITERIA_STATE_DIR`);
+> once cached it is reused for reproducibility. Refresh = clear that directory (an
+> explicit `criteria adapter trust refresh` command is future work). Air-gapped
+> consumers cannot keyless-verify (TUF root + was-online-at-sign Rekor entry
+> required) and use WS47 key mode or `--allow-unsigned`.
+>
+> **Verifier config:** `verifyBundleEntity` requires `WithTransparencyLog(1)` +
+> `WithObserverTimestamps(1)` — the Rekor inclusion proof fixes the certificate at
+> log time, so a keyless signature stays verifiable after the ~10-min Fulcio cert
+> expires. (CT-log SCTs are not required; Rekor is the anchor.)
+>
+> **Step 5 status:** deferred to a follow-up PR. Per the release decision, the
+> transition default stays `warn` (D-WS46-1) until the real-OIDC CI integration
+> job is green on `adapter-v2`; the flip is the one-line change in
+> `internal/cli/verification.go` (`transitionDefaultMode` → `signing.ModeStrict`).
+
 ## Out of scope
 
 - Explicit-key mode (WS47).

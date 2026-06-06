@@ -790,6 +790,15 @@ func (e *Engine) maybeStartRemoteShim(ctx context.Context, sessions *adapterhost
 
 // lockfileDigestVerifier implements remote.DigestVerifier using the workflow
 // lockfile to validate adapter digests.
+//
+// For remote adapters the digest is the runtime trust anchor: the artifact's
+// signature is verified at pull/lock time and during the apply auto-pull
+// (internal/cli.verifyAgainstPin, which builds a verify policy from the
+// lockfile-pinned signer via policyForPin and confirms it with
+// assertSignerMatchesPin). A remote adapter presents only its type and digest
+// over mTLS — no signature material is available here — so this verifier
+// enforces the pinned digest, which binds the connection to the exact verified
+// bytes recorded in the lockfile.
 type lockfileDigestVerifier struct {
 	lockfile *lockfile.Lockfile
 }

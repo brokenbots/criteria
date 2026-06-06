@@ -76,13 +76,18 @@ var _ TimestampedSink = (*recordingSink)(nil)
 
 func TestMergeBuffer_OrdersByTimestamp(t *testing.T) {
 	inner := &recordingSink{}
-	buf := NewMergeBuffer(inner, 50*time.Millisecond)
+	// Use a large reorder window and near-now timestamps so the only flush is the
+	// explicit one below. (With epoch-1970 timestamps the window is always already
+	// expired, so the background flush timer fires immediately and can emit events
+	// before all three are queued — a timing flake under slow CI.)
+	buf := NewMergeBuffer(inner, time.Hour)
 	defer buf.Close()
 
-	// Emit out of order.
-	buf.LogAt(time.Unix(0, 300), "stdout", []byte("third\n"))
-	buf.LogAt(time.Unix(0, 100), "stdout", []byte("first\n"))
-	buf.AdapterAt(time.Unix(0, 200), "agent.message", map[string]any{"text": "second"})
+	// Emit out of order (offsets ordered 100 < 200 < 300 ns from a common base).
+	base := time.Now()
+	buf.LogAt(base.Add(300), "stdout", []byte("third\n"))
+	buf.LogAt(base.Add(100), "stdout", []byte("first\n"))
+	buf.AdapterAt(base.Add(200), "agent.message", map[string]any{"text": "second"})
 
 	// Flush explicitly.
 	buf.Flush()
@@ -101,11 +106,10 @@ func TestMergeBuffer_OrdersByTimestamp(t *testing.T) {
 	for i := 0; i < inner.adapterCount(); i++ {
 		order = append(order, inner.adapterAt(i).kind)
 	}
-	// Because the two log records are both older than the adapter record
-	// at 200 when we Flush after emitting all three, the flush order should
-	// be: first (100), agent.message (200), third (300).
-	// Actually, Flush flushes everything <= now - maxDelay. Since we call
-	// Flush immediately, all three are flushed regardless of age.
+	// Flush emits all buffered events in timestamp order regardless of age, so the
+	// emit order is first (base+100), agent.message (base+200), third (base+300).
+	// The two log records land in the log sink as [first, third]; the adapter
+	// record lands in the adapter sink as [agent.message].
 	expected := []string{"first\n", "third\n", "agent.message"}
 	for i, want := range expected {
 		var got string
