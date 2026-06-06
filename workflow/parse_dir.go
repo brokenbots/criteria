@@ -86,6 +86,10 @@ func ParseDir(dir string) (*Spec, hcl.Diagnostics) { //nolint:funlen // file dis
 		if entry.IsDir() || !hasHCLExtension(entry.Name()) {
 			continue
 		}
+		// The lockfile carries an .hcl suffix but is not a workflow source file.
+		if entry.Name() == LockfileName {
+			continue
+		}
 		hclFiles = append(hclFiles, filepath.Join(dir, entry.Name()))
 	}
 

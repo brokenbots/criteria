@@ -40,7 +40,7 @@ func buildTestNoopAdapter() string {
 		panic("adapterhost/main_test.go: create temp dir: " + err.Error())
 	}
 	bin := filepath.Join(dir, "criteria-adapter-noop")
-	cmd := exec.Command("go", "build", "-o", bin, "./cmd/criteria-adapter-noop")
+	cmd := exec.Command("go", "build", "-o", bin, "./internal/adapter/conformance/testdata/noop")
 	cmd.Dir = moduleRoot
 	if out, err := cmd.CombinedOutput(); err != nil {
 		panic("adapterhost/main_test.go: build noop adapter: " + err.Error() + "\n" + string(out))

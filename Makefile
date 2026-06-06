@@ -26,6 +26,10 @@ plugins: ## Build adapter plugin binaries (output: bin/criteria-adapter-*)
 			go build -o bin/$$name $$d; \
 		fi; \
 	done
+	@# noop was extracted to its own repo (ghcr.io/brokenbots/criteria-adapter-noop);
+	@# build the in-tree conformance fixture as bin/criteria-adapter-noop so the
+	@# examples and the CLI smoke test stay self-contained (no external OCI pull).
+	go build -o bin/criteria-adapter-noop ./internal/adapter/conformance/testdata/noop
 
 install: build plugins ## Install criteria to ~/.criteria (binary → ~/.criteria/bin, plugins → ~/.criteria/adapters)
 	@install -d "$$HOME/.criteria/bin" "$$HOME/.criteria/adapters"

@@ -52,9 +52,8 @@ here.
   in-memory reference Subject lives at
   [sdk/conformance/inmem_subject_test.go](sdk/conformance/inmem_subject_test.go).
 - Host-side adapter loader, OCI cache, signing, manifest, environments: [internal/adapter/](internal/adapter/)
-- In-tree adapters: [cmd/criteria-adapter-noop/](cmd/criteria-adapter-noop/),
-  [cmd/criteria-adapter-mcp/](cmd/criteria-adapter-mcp/)
-  (copilot and shell were extracted to their own repos)
+- In-tree adapters: [cmd/criteria-adapter-mcp/](cmd/criteria-adapter-mcp/)
+  (copilot, shell, and noop were extracted to their own repos)
 - Project planning: [PLAN.md](PLAN.md), [workstreams/README.md](workstreams/README.md)
 
 ## Conventions agents should follow

@@ -43,7 +43,7 @@ func buildNoopPluginsDir() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	cmd := exec.Command("go", "build", "-o", filepath.Join(dir, "criteria-adapter-noop"), "./cmd/criteria-adapter-noop")
+	cmd := exec.Command("go", "build", "-o", filepath.Join(dir, "criteria-adapter-noop"), "./internal/adapter/conformance/testdata/noop")
 	cmd.Dir = moduleRoot
 	if out, buildErr := cmd.CombinedOutput(); buildErr != nil {
 		return "", fmt.Errorf("build noop adapter: %w\n%s", buildErr, out)

@@ -18,7 +18,7 @@ func buildNoopAdapterBinary(t *testing.T) string {
 	moduleRoot := filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
 	binary := filepath.Join(t.TempDir(), "criteria-adapter-noop")
 
-	cmd := exec.Command("go", "build", "-o", binary, "./cmd/criteria-adapter-noop")
+	cmd := exec.Command("go", "build", "-o", binary, "./internal/adapter/conformance/testdata/noop")
 	cmd.Dir = moduleRoot
 	out, err := cmd.CombinedOutput()
 	if err != nil {

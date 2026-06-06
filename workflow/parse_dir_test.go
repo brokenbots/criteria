@@ -68,6 +68,34 @@ func TestParseDir_SingleFile(t *testing.T) {
 // TestParseDir_MultipleFiles verifies that multiple .hcl files in a directory
 // are merged into a single Spec: slice fields concatenated, singleton Header
 // preserved from the one file that declares it.
+// TestParseDir_IgnoresLockfile verifies that an adjacent .criteria.lock.hcl —
+// which carries an .hcl suffix but is not workflow source — is excluded from the
+// directory module, so a locked workflow still parses cleanly.
+func TestParseDir_IgnoresLockfile(t *testing.T) {
+	dir := t.TempDir()
+	writeHCLFile(t, dir, "main", singleFileContent)
+	lock := `schema_version = 1
+adapter "noop" "default" {
+  reference       = "ghcr.io/brokenbots/criteria-adapter-noop:0.5.1"
+  version         = "0.5.1"
+  resolved_digest = "sha256:deadbeef"
+}`
+	if err := os.WriteFile(filepath.Join(dir, LockfileName), []byte(lock), 0o644); err != nil {
+		t.Fatalf("write lockfile: %v", err)
+	}
+
+	spec, diags := ParseDir(dir)
+	if diags.HasErrors() {
+		t.Fatalf("ParseDir with adjacent lockfile: %s", diags.Error())
+	}
+	if spec == nil || spec.Header == nil {
+		t.Fatal("expected non-nil spec with header")
+	}
+	if len(spec.Steps) != 1 {
+		t.Errorf("expected 1 step, got %d (lockfile leaked into module?)", len(spec.Steps))
+	}
+}
+
 func TestParseDir_MultipleFiles(t *testing.T) {
 	dir := t.TempDir()
 

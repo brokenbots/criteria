@@ -34,7 +34,7 @@ func autoPullCompileAdapters(ctx context.Context, workflowDir string, spec *work
 		return fmt.Errorf("read lockfile: %w", err)
 	}
 	if lf == nil {
-		return fmt.Errorf("workflow uses OCI adapter references but %q is missing; run `criteria adapter lock`", filepath.Join(workflowDir, ".criteria.lock.hcl"))
+		return fmt.Errorf("workflow uses OCI adapter references but %q is missing; run `criteria adapter lock`", filepath.Join(workflowDir, workflow.LockfileName))
 	}
 
 	// Build set of OCI-referenced adapters and validate the lockfile covers them.
@@ -270,6 +270,10 @@ func listHCLFiles(dir string) ([]string, error) {
 	out := make([]string, 0, len(entries))
 	for _, e := range entries {
 		if e.IsDir() || !hasSuffix(e.Name(), ".hcl") {
+			continue
+		}
+		// The lockfile ends in .hcl but is not a workflow source file.
+		if e.Name() == workflow.LockfileName {
 			continue
 		}
 		out = append(out, filepath.Join(dir, e.Name()))

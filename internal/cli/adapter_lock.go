@@ -153,7 +153,7 @@ func runLock(ctx context.Context, workflowDir string, upgrade, allowUnsigned boo
 
 	printLockDiff(state.oldLF, newLF, out)
 
-	lockPath := filepath.Join(state.workflowDir, ".criteria.lock.hcl")
+	lockPath := filepath.Join(state.workflowDir, workflow.LockfileName)
 	if err := lockfile.Write(lockPath, newLF); err != nil {
 		return fmt.Errorf("write lockfile: %w", err)
 	}

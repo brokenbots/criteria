@@ -140,8 +140,8 @@ Write your own adapter from a starter template
 ([typescript](https://github.com/brokenbots/criteria-adapter-starter-typescript) /
 [python](https://github.com/brokenbots/criteria-adapter-starter-python) /
 [go](https://github.com/brokenbots/criteria-adapter-starter-go)) — each is a
-buildable hello-world with a publish workflow. The in-tree `cmd/criteria-adapter-noop`
-and `cmd/criteria-adapter-mcp` are minimal references.
+buildable hello-world with a publish workflow. The in-tree `cmd/criteria-adapter-mcp`
+is a minimal reference.
 
 Full reference: [docs/adapters.md](docs/adapters.md) ·
 upgrading from v0.3: [docs/adapter-v2-migration.md](docs/adapter-v2-migration.md)
