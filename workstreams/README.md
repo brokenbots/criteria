@@ -124,7 +124,7 @@ then reviewed WS-by-WS against the tree and CI (see findings below).
   - *Release gates (see WS40 note):* Gate 1 conformance **done** (rescoped,
     [ADR-0003](../docs/adrs/ADR-0003-conformance-scope.md)); Gate 2 in-tree adapters covered in
     `ci.yml` e2e; Gate 3 **WS38** `remote-e2e.yml` real but runs on tag/weekly/dispatch; Gate 4
-    publishing infra = WS27/WS29. **WS40** still needs Gate 4 + a Gate 3 validation run + the v2 tag.
+    publishing infra = WS27/WS29. **WS40** still needs Gate 4 + a Gate 3 validation run + the `v0.5.0` tag.
 
 ### Publishing + extraction progress (2026-06-05, session 2)
 

@@ -1,4 +1,4 @@
-# WS40 — v2 release gate: tag and ship
+# WS40 — release gate: tag the v0.5.0 release and ship
 
 **Phase:** Adapter v2 · **Track:** Release gate · **Owner:** Workstream executor · **Depends on:** WS01–WS39 (all). · **Unblocks:** [WS41](../archived/v4/adapter-v2/WS41-extract-adapter-proto-repo.md), [WS42](../archived/v4/adapter-v2/WS42-extract-shell-adapter.md), [WS43](WS43-independence-verification.md). · **Base branch:** `adapter-v2`
 
@@ -12,7 +12,11 @@
 
 ## Context
 
-`README.md` D57. Stand up the four verification gates, confirm they pass on the tip of main, and tag the v2 release.
+`README.md` D57. Stand up the four verification gates, confirm they pass on the tip of main, and tag the release.
+
+> **Versioning (settled during the adapter updates).** "v2" is the adapter **protocol** version,
+> not the product version. This release is tagged on the **`0.5.0`** release line (`v0.5.0`) —
+> matching every adapter / SDK / proto artifact already published at `0.5.0` — **not** `v2.0.0`.
 
 The four gates:
 
@@ -34,18 +38,18 @@ Trigger the four CI workflows manually against `main` (or against a candidate re
 ### Step 2 — Tag
 
 ```sh
-git tag -s v2.0.0 -m "Adapter v2 release"
-git push origin v2.0.0
+git tag -s v0.5.0 -m "Criteria v0.5.0 (adapter protocol v2)"
+git push origin v0.5.0
 ```
 
 The signed tag triggers the existing release-tag CI (which produces the criteria binary releases, publishes to Homebrew tap, etc. — existing infrastructure, unchanged).
 
 ### Step 3 — GitHub Release notes
 
-Generate from `CHANGELOG.md` v2.0.0 section (written in WS39). Include links to:
+Generate from `CHANGELOG.md` v0.5.0 section (written in WS39). Include links to:
 
-- Each migrated adapter's published v2 artifact.
-- Each SDK's npm/pypi/Go module published v2 release.
+- Each migrated adapter's published `v0.5.0` artifact.
+- Each SDK's npm/pypi/Go module published `v0.5.0` release.
 - The starter templates.
 - The migration guide.
 
@@ -69,7 +73,7 @@ After release: move `workstreams/adapter_v2/` to `workstreams/archived/v2-adapte
 
 ## Exit criteria
 
-- v2.0.0 tagged, signed, released.
+- `v0.5.0` tagged, signed, released.
 - `workstreams/adapter_v2/` archived.
 
 ## Files this workstream may modify
