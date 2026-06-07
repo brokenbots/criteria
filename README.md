@@ -1,37 +1,65 @@
 # Criteria
 
-> **Status — active development.** The workflow HCL language and the adapter
-> design are **stabilizing**: breaking changes are now rare but still possible
-> before a 1.0 release. Adapters execute arbitrary code and should be treated as
-> **trusted** — run them inside a container or a sandboxed environment.
+> **⚠️ Early work in progress — not production-ready.** Criteria is under active,
+> heavily AI-driven development. The workflow language and adapter model are
+> stabilizing, but large parts are only lightly tested — see
+> [Project status](#project-status) for an honest breakdown. Adapters execute
+> arbitrary code and should be treated as **trusted**: run them inside a
+> container or a sandboxed environment.
 
-Criteria is a workflow engine that runs multi-step processes — shell commands,
-AI coding agents, MCP tools, or anything you wrap in an adapter — as
-deterministic state machines, from a single binary with no service to deploy.
+Criteria is a workflow engine for building **agent-based workflows** on top of an
+extensible adapter system. You describe a workflow in a small HCL language;
+Criteria compiles it to a state machine and runs it from a single binary,
+driving each step through a swappable out-of-process **adapter** — a shell
+runner, an AI coding agent, an MCP tool bridge, or your own.
 
-You describe a workflow in HCL; Criteria compiles it to a finite-state machine
-and executes it with `criteria apply`. Each step drives a swappable
-out-of-process **adapter**, and every run emits a schema-versioned ND-JSON event
-stream you can pipe, store, or watch live.
+It is two things at once: an **exploration** of how to build fully agentic
+development, security, and research workflows, and an **effort** to grow that
+into a production-quality workflow tool that is easy to use and easy for AI to
+author.
 
-## The problem it solves
+## What it's trying to be
 
-Real workflows — CI-style build/test/deploy pipelines, or agentic loops where an
-AI agent does work, gets reviewed, and retries — need durable state, retries,
-branching, approvals, and observability. The usual tools (Temporal, Argo, and
-friends) provide that, but they require standing up infrastructure that is
-overkill for local development and fast iteration.
+These are the design goals. Some are working today, some are still ahead:
 
-Criteria gives you the same execution model — FSM semantics, retries, waits,
-branching, parallelism, sub-workflows — as a **single local binary**. When you
-genuinely need durability, point the *same* workflow at a server-compatible
-orchestrator over a published gRPC SDK for persistence, crash recovery, human
-approval gates, and signal-based waits — or build your own server and verify it
-against the bundled conformance suite.
+- **A small, deliberately limited language that compiles to real state
+  machines.** Not just a DAG — a fully directed graph, loops included, with
+  built-in safety mechanics (visit bounds, required terminal states) so a
+  workflow can't quietly run away.
+- **Safe and reproducible by construction.** The compiler prioritizes
+  consistency and stability: it rejects ambiguous or unsafe graphs *before*
+  anything runs, and adapters are pinned by signed digest so a workflow
+  reproduces identically anywhere.
+- **Technology-agnostic, reusable end-to-end workflows.** Every step is just an
+  adapter, so the same workflow shape composes shell commands, AI agents, and
+  bespoke tools without coupling to any one of them.
+- **AI-friendly authoring.** Workflows should be buildable *by* AI. `criteria
+  spec` prints the full language specification (optionally a ready-to-use LLM
+  system prompt) so an agent can author correct workflows directly, and a
+  `langserver` (LSP) gives humans the same assistance.
+- **Verifiable and debuggable graphs.** `criteria compile` emits the compiled
+  graph as JSON or DOT, `criteria plan` previews execution, and every run streams
+  schema-versioned ND-JSON events.
+- **Durable, pausable runs (aspirational).** Long-term, a compiled workflow
+  should pause and resume cleanly. Orchestrator mode has the beginnings of this —
+  pause/resume, crash recovery, approval gates — but it is not yet battle-tested.
 
-Reproducibility and safety are built in: adapters are distributed as **signed
-OCI artifacts**, pinned by digest in a lockfile, and can run directly, in a
-sandbox, in a container, or on a remote host.
+## Project status
+
+This is research-grade software. An honest state of the world:
+
+- **Engine + compiler** — the core HCL → state-machine path is the most
+  exercised part and is reasonably solid for the features it covers.
+- **Adapters** — only **copilot** and **shell** have seen real use. The adapter
+  model was **recently reworked** and needs substantial testing; the other
+  adapters are largely unproven.
+- **TypeScript & Python SDKs / adapters** — smoke-tested at best inside a
+  workflow, not yet trustworthy for real work.
+- **Execution environments** (sandbox / container / remote) — implemented but
+  only lightly tested.
+
+Expect rough edges, gaps, and breaking changes. Issues, findings, and test cases
+are very welcome.
 
 ## Install
 
@@ -103,27 +131,12 @@ Each run streams structured ND-JSON events to stdout (or `--events-file`):
 {"schema_version":1,"seq":6,...,"payload_type":"RunCompleted","payload":{"finalState":"done","success":true}}
 ```
 
-## What's in the box
+Inspect the compiled graph instead of running it:
 
-- **HCL → FSM compiler.** Workflows are HCL; the engine compiles them to
-  finite-state machines before executing.
-- **Local execution.** Run any workflow from a single binary with no external
-  service.
-- **Out-of-process adapters.** Drive shell commands, AI coding agents, an MCP
-  bridge, or your own backend through a versioned plugin protocol. Adapters are
-  distributed as signed OCI artifacts and pinned by digest in
-  `.criteria.lock.hcl`.
-- **Execution environments.** Run an adapter directly, in an OS sandbox, in a
-  container, or on a remote host that phones home over mTLS.
-- **Rich control flow.** Retries, duration-based waits, `switch` branching,
-  parallel regions, `for_each` iteration, first-class sub-workflows, shared and
-  local variables, and top-level outputs.
-- **Structured event stream.** Every run emits schema-versioned ND-JSON events.
-- **Orchestrator mode.** Connect to a server-compatible orchestrator for run
-  persistence, crash recovery, human approval gates, and signal-based waits.
-- **Published Go SDK.** Build a compatible orchestrator with
-  `github.com/brokenbots/criteria/sdk` and validate it with the included
-  conformance suite.
+```bash
+criteria compile hello.hcl --format dot | dot -Tsvg > hello.svg   # visualize
+criteria plan hello.hcl                                           # execution preview
+```
 
 ## Workflow language
 
@@ -161,22 +174,37 @@ state "failed" {
 }
 ```
 
-Full language reference: [docs/workflow.md](docs/workflow.md)
+The language supports retries, duration waits, `switch` branching, parallel
+regions, `for_each` iteration, first-class sub-workflows, shared and local
+variables, and top-level outputs. Full reference:
+[docs/workflow.md](docs/workflow.md).
+
+## Authoring workflows with AI
+
+Criteria is meant to be driven by AI as much as by humans. The tooling hands the
+model everything it needs to write correct workflows:
+
+```bash
+criteria spec                  # the full language specification, as Markdown
+criteria spec --with-patterns  # spec + prompt-pack patterns = an LLM system prompt
+```
+
+Pipe that into an agent's context and it can author workflows directly; the
+compiler then verifies the result before anything runs.
 
 ## Adapters
 
 Adapters are out-of-process binaries distributed as signed OCI artifacts.
-Reference one by `source` (version-decoupled) in your workflow and let Criteria
-resolve, pull, verify, and pin it:
+Reference one by `source` (version-decoupled) and let Criteria resolve, pull,
+verify, and pin it:
 
 ```bash
-# Pin every adapter a workflow references (writes .criteria.lock.hcl) and run.
-criteria adapter lock
+criteria adapter lock      # pin every adapter a workflow references
 criteria apply workflow.hcl
 ```
 
 Adapters are pulled into a local cache, signature-verified, and pinned by digest
-so the workflow reproduces identically anywhere. Manage the cache directly with
+so the workflow reproduces identically anywhere. Manage the cache with
 `criteria adapter pull|list|info|where|remove|prune`, and register a local
 binary during development with `criteria adapter dev <binary>`.
 
@@ -186,32 +214,35 @@ Write your own from a starter template
 [go](https://github.com/brokenbots/criteria-adapter-starter-go)) — each is a
 buildable hello-world with a publish workflow. The in-tree
 [`cmd/criteria-adapter-mcp`](cmd/criteria-adapter-mcp/) is a minimal reference
-(it bridges any MCP server in as an adapter).
+that bridges any MCP server in as an adapter.
 
-Full reference: [docs/adapters.md](docs/adapters.md)
+Full reference: [docs/adapters.md](docs/adapters.md). (Note: the TypeScript and
+Python paths are early and lightly tested — see [Project status](#project-status).)
 
-## Talking to a server-compatible orchestrator
+## Orchestrator mode (optional, early)
+
+By default everything runs locally. For durability — run persistence, crash
+recovery, human approval gates, and signal-based waits — a workflow can target a
+server-compatible orchestrator:
+
+```bash
+criteria apply workflow.hcl --server <url>
+```
 
 The `sdk/` sub-module publishes a Go SDK
-(`github.com/brokenbots/criteria/sdk`) defining the orchestrator gRPC contract.
-Any server implementing that contract can receive runs from
-`criteria apply --server <url>`, stream events, handle approval gates, and resume
-crashed runs.
-
-The reference implementation is
-[github.com/brokenbots/orchestrator](https://github.com/brokenbots/orchestrator).
-Validate your own implementation with the included conformance suite:
+(`github.com/brokenbots/criteria/sdk`) defining the orchestrator gRPC contract,
+with a conformance suite so an implementation can verify itself:
 
 ```go
 import "github.com/brokenbots/criteria/sdk/conformance"
 
-func TestMyCriteria(t *testing.T) {
+func TestMyServer(t *testing.T) {
     conformance.Run(t, &mySubject{})
 }
 ```
 
-See [`sdk/conformance/`](sdk/conformance/) for the full interface and the
-in-memory reference Subject.
+This path is early; treat it as a contract under development rather than a
+finished feature.
 
 ## License
 
