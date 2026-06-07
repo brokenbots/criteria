@@ -15,7 +15,7 @@ jobs:
     name: Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6.0.2
 
       - uses: actions/setup-go@v5
         with:
@@ -52,7 +52,7 @@ jobs:
     name: Unit tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6.0.2
 
       - uses: actions/setup-go@v5
         with:
@@ -87,7 +87,7 @@ jobs:
       # in-process builtin), so e2e steps must find the built adapter plugins.
       CRITERIA_ADAPTERS: ${{ github.workspace }}/bin
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6.0.2
 
       - uses: actions/setup-go@v5
         with:
@@ -121,7 +121,7 @@ jobs:
     name: Proto drift check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6.0.2
 
       - uses: bufbuild/buf-setup-action@v1
         with:
@@ -151,7 +151,7 @@ jobs:
     # now a required check in all-checks. A PR introducing a dependency with a
     # known OSV advisory fails CI until upgraded or time-boxed in osv-scanner.toml.
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6.0.2
 
       - uses: actions/setup-go@v5
         with:
@@ -181,7 +181,7 @@ jobs:
     # upstream release cadence. This job only surfaces drift on every PR.
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6.0.2
 
       - uses: actions/setup-go@v5
         with:
@@ -224,7 +224,7 @@ jobs:
       )
     needs: [unit-tests, e2e]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6.0.2
 
       - uses: actions/setup-go@v5
         with:
