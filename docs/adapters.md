@@ -5,6 +5,13 @@ authoring your own adapters. For the workflow language itself (variables, step
 outputs, branching, iteration, wait nodes, approval gates) see
 [workflow.md](workflow.md).
 
+> **Status.** The adapter protocol (v2) and Go SDK are recently reworked and need
+> broad testing; only the `copilot` and `shell` adapters have real use. The
+> TypeScript/Python SDKs and the `sandbox`/`container`/`remote` environments are
+> lightly tested at best. This document describes the intended model; see
+> [README → Component status](../README.md#component-status) for what is exercised
+> today.
+
 ## Concepts
 
 - **Adapter** — an out-of-process program that performs work for a workflow step
@@ -38,7 +45,8 @@ Declare an adapter by its OCI reference and bind steps to it:
 
 <!-- validator: skip: illustrative excerpt only -->
 ```hcl
-workflow "agent_hello" {
+workflow {
+  name          = "agent_hello"
   version       = "1"
   initial_state = "ask"
   target_state  = "done"
@@ -57,12 +65,15 @@ step "ask" {
   input {
     prompt = "Summarize the repository's README in two sentences."
   }
-  outcome "success" { next = "done" }
-  outcome "failure" { next = "failed" }
+  outcome "success" { next = state.done }
+  outcome "failure" { next = state.failed }
 }
 
-state "done"   { terminal = true }
-state "failed" { terminal = true; success = false }
+state "done" { terminal = true }
+state "failed" {
+  terminal = true
+  success  = false
+}
 ```
 
 - The first label is the adapter **type**, the second an instance **name**; steps

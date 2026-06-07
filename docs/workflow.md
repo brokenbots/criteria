@@ -1,28 +1,39 @@
 # Workflow Language Reference
 
-The Criteria workflow language is a declarative HCL-based language for orchestrating multi-step processes with complex control flow. Workflows compile to finite state machines (FSMs) that the Criteria execution engine interprets.
+The Criteria workflow language is a declarative HCL language for multi-step
+processes with branching and iteration. Workflows compile to a finite-state
+machine (FSM) that the engine interprets.
+
+For the dense, normative reference (every block, attribute, function, and
+binding) see [LANGUAGE-SPEC.md](LANGUAGE-SPEC.md), or run `criteria spec`. This
+document is the prose companion.
 
 ## Overview
 
-A Criteria workflow defines:
+A workflow declares:
 
-- **Nodes**: steps (adapter invocations), waits (time or signal gates), approvals (human decisions), switches (conditional routing), and iterating steps (for_each / count / parallel).
-- **States**: named terminal or intermediate targets. The workflow FSM transitions between nodes and states based on outcomes.
-- **Variables**: read-only typed values that seed the workflow execution. Per-run variable overrides are a future enhancement.
-- **Adapters**: out-of-process plugin sessions that execute steps. Declared with `adapter "<type>" "<name>" { }` and referenced via `step.target`. Lifecycle is automatic — the engine opens and closes sessions as steps enter and exit scope.
-
-### Architecture model
-
-- **Criteria** compiles HCL workflows to FSM graphs and executes them by invoking adapters.
-- **Adapters** are out-of-process plugins discovered from `$CRITERIA_ADAPTERS` or `~/.criteria/adapters` (see [adapters.md](adapters.md)).
-- **Server** (optional) is the orchestrator server that persists runs, enables resumption after crashes, and provides UI and approval RPCs.
+- **Steps** — adapter or subworkflow invocations. Iterate with `for_each`,
+  `count`, `parallel`, or `while`.
+- **States** — named nodes, usually terminal. The FSM transitions between nodes
+  and states based on step outcomes.
+- **Waits, approvals, switches** — time/signal gates, human decision gates, and
+  conditional routing.
+- **Variables, locals, data values, outputs** — typed values that seed and
+  thread state through a run.
+- **Adapters** — out-of-process sessions that execute steps. Declared with
+  `adapter "<type>" "<name>" { }` and referenced via `target`. The engine opens
+  and closes sessions automatically as steps enter and exit scope.
 
 ### Execution modes
 
-- **Local mode**: `criteria apply <workflow.hcl|dir>` — runs in-process. Duration-based waits work; signal-based waits and approvals require `--server`.
-- **Orchestrator mode**: `criteria apply <workflow.hcl|dir> --server <url>` — connects to a server instance for persistence, crash recovery, and approval support.
+- **Local** — `criteria apply <workflow.hcl|dir>`: runs in-process, no server.
+  Duration waits work. Signal waits and approvals require either a server or
+  `CRITERIA_LOCAL_APPROVAL` (see [Local-mode approval and signal wait](#local-mode-approval-and-signal-wait)).
+- **Server** — `criteria apply <workflow.hcl|dir> --server <url>`: connects to an
+  orchestrator for run persistence, crash recovery, and approval delivery. Server
+  mode is early and server-oriented; see [README → Component status](../README.md#component-status).
 
-See [Standalone CLI](#standalone-cli) for command reference.
+See [Standalone CLI](#standalone-cli) for the command reference.
 
 ---
 
@@ -53,7 +64,7 @@ permissions {
 
 ### Attributes
 
-- **`version`** (required): Schema version. Use `"1"` for v1.5 workflows.
+- **`version`** (required): Language version. Use `"1"`.
 - **`initial_state`** (required): The starting node or state name.
 - **`target_state`** (required): The intended terminal state. Must reference a terminal state.
 - **`verification`** (optional): Signature-verification posture for OCI adapters — `"strict"`, `"warn"`, or `"off"`. Governs how a failed/missing adapter signature is handled at `lock`/`compile`/`apply`. The CLI override `--allow-unsigned` (or `CRITERIA_ALLOW_UNSIGNED=1`) takes precedence over this attribute. When omitted, the CLI transition default applies (currently `warn`; returns to `strict` once keyless verification is confirmed). See [adapters.md → Signing and trust](adapters.md).
@@ -88,19 +99,13 @@ Every workflow must live in its own directory — a directory may contain exactl
 
 Only `.hcl` and `.chcl` files are accepted as file-path entry points. Passing a non-HCL file is an error.
 
-### Upgrading from the nested format
-
-Older Criteria workflows used a nested format where steps, adapters, and states appeared _inside_ the `workflow { ... }` block. The current format places all declarations at the top level. To migrate:
-
-1. Move all blocks except `version`, `initial_state`, `target_state`, and `environment` out of the `workflow { }` block.
-2. Remove one level of indentation from the moved blocks.
-3. The `workflow { }` block now contains only the four header attributes.
-
 ---
 
 ## Variables
 
-Variables are typed, read-only values declared at the workflow level. The `default` attribute is the value source for most workflows. For per-run overrides, use `--var-file` (see [CLI reference](#standalone-cli)).
+Variables are typed, read-only values declared at the workflow level. The
+`default` attribute is the usual value source; override per run with `--var` or
+`--var-file` (see [CLI reference](#standalone-cli)).
 
 <!-- validator: fragment -->
 ```hcl
@@ -131,7 +136,8 @@ variable "enabled" {
 
 ### Default values
 
-The `default` attribute is optional. If omitted, the variable must be provided at runtime (future enhancement; currently default-only semantics apply).
+The `default` attribute is optional. If omitted, the variable must be supplied at
+runtime via `--var` or `--var-file`.
 
 **Note**: In HCL, literal list syntax `["a", "b"]` produces a tuple. The compiler accepts tuple literals where a list type is declared and the element types are compatible — no explicit `tolist()` cast is needed.
 
@@ -160,7 +166,13 @@ See [Expressions](#expressions) for interpolation rules.
 
 ## Environments
 
-Environments declare typed execution contexts that can inject environment variables and configuration into adapter executions. They enable centralized management of environment-specific settings.
+> **Status: Untested.** Environment blocks are implemented but have had minimal
+> real testing (see [README → Component status](../README.md#component-status)).
+> The `shell` type is the only one exercised; `sandbox`, `container`, and
+> `remote` isolation are described in [adapters.md → Environments](adapters.md#environments).
+
+Environments declare typed execution contexts bound to adapter steps. They inject
+environment variables and select an isolation boundary for the adapter process.
 
 ### Declaring environments
 
@@ -192,11 +204,11 @@ environment "shell" "staging" {
 
 ### Attributes
 
-- **`<type>`** (required label): The environment type. In v0.3.0, only `"shell"` is supported. Future versions will support additional types like `"docker"`, `"firecracker"`, etc., for isolated execution contexts.
-- **`<name>`** (required label): The environment name. Must match `^[a-zA-Z][a-zA-Z0-9_-]*$` (starts with a letter; can contain letters, digits, underscores, hyphens).
-- **`variables`** (optional): Map of environment variable names to string values. Numbers and booleans are coerced to strings. All variables must fold at compile time (no runtime-only references like `each.value` or `steps.X.outputs.Y`).
-- **`working_directory`** (optional): Launch directory for the adapter process. Shell and copilot adapters bound to the environment run in this directory by default (it becomes the process cwd). Resolved at runtime when the adapter session is initialized — not folded at compile time — so it can be set dynamically from the run's variables and locals (e.g. `working_directory = var.worktree`, where `var.worktree` may be supplied via `--var` at run time). References that cannot be resolved at adapter init (e.g. `steps.X.outputs.Y`, since adapters initialize before any step runs) produce a clear runtime error. Accepted by `shell`, `sandbox`, and `remote` environments; **not** accepted by `container` environments, which isolate paths rather than relocate the process cwd. For `sandbox` environments the path must also be permitted by the filesystem policy so the chdir succeeds inside the sandbox.
-- **`config`** (optional): Map of type-specific configuration. Shape is not validated in v0.3.0 (validation lands in Phase 4 with a per-type schema registry). The config is parsed and stored but does not affect adapter behavior in v0.3.0. This slot is reserved for Phase 4 implementation.
+- **`<type>`** (required label): The environment type — `shell`, `sandbox`, `container`, or `remote`. Only `shell` is exercised; see [adapters.md → Environments](adapters.md#environments) for the isolation semantics of the others.
+- **`<name>`** (required label): The environment name. Must match `^[a-zA-Z][a-zA-Z0-9_-]*$` (starts with a letter; then letters, digits, underscores, hyphens).
+- **`variables`** (optional): Map of environment variable names to string values. Numbers and booleans are coerced to strings. All values must fold at compile time (no runtime-only references like `each.value` or `steps.X.outputs.Y`).
+- **`working_directory`** (optional): Launch directory (cwd) for the adapter process. Resolved at adapter-session init, not folded at compile time, so it can be set from run variables and locals (e.g. `working_directory = var.worktree`). References that cannot resolve at init (e.g. `steps.X.outputs.Y`) produce a runtime error. Accepted by `shell`, `sandbox`, and `remote`; **not** `container` (which isolates paths rather than relocating cwd). Under `sandbox`, the path must also be permitted by the filesystem policy.
+- **`config`** (optional): Map of type-specific configuration, parsed and stored. Shape is not validated.
 
 ### Default environment
 
@@ -217,32 +229,25 @@ workflow {
 
 In the workflow header, the `environment = <type>.<name>` attribute serves as the explicit default environment for the workflow. If no environment is set and multiple environments are declared, the workflow is valid at compile time, but runtime execution may fail if steps expect an environment to be bound.
 
-### Runtime behavior (v0.3.0)
+### Runtime behavior
 
-When an adapter step runs under an environment, the environment's `variables` map is injected into the adapter subprocess's environment. For the shell adapter, these become environment variables in the spawned shell process:
+When a step runs under an environment, the environment's `variables` map is
+injected into the adapter subprocess. For the shell adapter these become shell
+environment variables:
 
 ```hcl
 step "deploy" {
   target = adapter.shell.default
   input {
-    command = "echo $LOG_LEVEL"  # will print "debug" (or "info" for prod env)
+    command = "echo $LOG_LEVEL"  # prints "debug" or "info" per env
   }
   outcome "success" { next = state.done }
 }
 ```
 
-The controlled environment allowlist is preserved; environment-injected variables are added to the safe set. If an injected variable conflicts with a security-critical variable (e.g., `PATH`), the controlled set wins and a compile-time warning is emitted.
-
-### Phase 4 forward-pointer (v0.4.0+)
-
-The `config` map and per-type schema enforcement are deferred to Phase 4, which will introduce:
-
-- Per-type config schemas (e.g., `shell` type defines expected config keys like `timeout`, `retry_strategy`).
-- Environment-type plugin registry for custom isolation models (sandboxing, containerization, resource limits).
-- Per-step and per-adapter environment overrides (currently all steps use the workflow default).
-- Per-environment lifecycle hooks (open, close) for setup and teardown.
-
-For now, the `config` is parsed and stored but ignored at runtime. A v0.3.0 workflow declaring `config` will continue to work unchanged under v0.4.0.
+The controlled-environment allowlist is preserved; injected variables are added
+to the safe set. If an injected variable conflicts with a security-critical
+variable (e.g. `PATH`), the controlled set wins and the compiler emits a warning.
 
 ---
 
@@ -253,6 +258,7 @@ Adapters are out-of-process plugin sessions declared at the workflow level and r
 <!-- validator: skip: illustrative excerpt; workflow header and state blocks omitted -->
 ```hcl
 adapter "copilot" "assistant" {
+  source   = "ghcr.io/brokenbots/criteria-adapter-copilot"
   on_crash = "fail"
   config {
     model            = "claude-sonnet-4.6"
@@ -274,10 +280,12 @@ step "list_files" {
 
 ### Adapter block attributes
 
-- **`<type>`** (first label, required): Plugin type. Determines which `criteria-adapter-<type>` binary is loaded.
-- **`<name>`** (second label, required): Logical instance name. Multiple adapters of the same type may be declared with different names.
-- **`on_crash`** (optional): Crash recovery policy: `"fail"` (default), `"respawn"`, `"abort_run"`.
-- **`config`** (optional): Session-open configuration block. Attributes are adapter-specific. See [adapters.md](adapters.md) for per-adapter config schemas.
+- **`<type>`** (first label, required): Adapter type (e.g. `shell`, `copilot`).
+- **`<name>`** (second label, required): Instance name. Multiple instances of one type may be declared with different names.
+- **`source`** (optional): OCI location of the adapter artifact (registry/repo path or registry alias), decoupled from version. Required for OCI-backed adapters; omit when registering a binary with `criteria adapter dev`.
+- **`version`** (optional): Semver constraint resolved at lock time — exact (`"1.2.3"`), caret (`"^1.2"`), tilde (`"~1.2.0"`), wildcard (`"1.x"`), or `"latest"`. The lockfile pins the resolved digest.
+- **`on_crash`** (optional): Crash policy: `"fail"` (default), `"respawn"`, `"abort_run"`.
+- **`config`** (optional): Session-open configuration. Attributes are adapter-specific. See [adapters.md](adapters.md) for the distribution, signing, and per-adapter config model.
 
 ### Automatic lifecycle
 
@@ -287,16 +295,14 @@ The engine manages the full adapter session lifecycle without any explicit workf
 - **Close**: the session is closed after the last step targeting this adapter in the current scope exits (including error paths).
 - **LIFO order**: when multiple adapters are declared, they close in reverse declaration order.
 
-Explicit `lifecycle = "open"` and `lifecycle = "close"` steps from v0.2.0 are no longer accepted and produce a compile error (`lifecycle attribute removed in v0.3.0`).
+### Resolution and distribution
 
-### Plugin discovery
-
-Adapters resolve to plugin binaries named `criteria-adapter-<name>`. Discovery order:
-
-1. `$CRITERIA_ADAPTERS/<name>`
-2. `~/.criteria/adapters/<name>`
-
-See [adapters.md](adapters.md) for the plugin wire protocol and adapter development guide.
+Adapters are out-of-process binaries distributed as cosign-signed OCI artifacts.
+A workflow references one by `source`; `criteria adapter lock` resolves, pulls,
+verifies, and pins it by digest in `.criteria.lock.hcl`. For local iteration,
+`criteria adapter dev <binary>` registers a binary directly (skipping the
+lockfile and signature checks). See [adapters.md](adapters.md) for the full
+distribution, signing, and wire-protocol model.
 
 ---
 
@@ -442,7 +448,7 @@ state "failed" {
 
 - **`terminal`** (default `false`): If `true`, reaching this state ends the run.
 - **`success`** (default = `terminal`): If `true`, terminal state counts as successful. Non-terminal states ignore this attribute.
-- **`requires`** (optional, future): Human approval or condition gate (future enhancement).
+- **`requires`** (optional): Names a prerequisite state. **Not enforced** — parsed and stored but the engine does not yet gate on it.
 
 Terminal states must be reachable from `initial_state` (enforced by compiler reachability analysis).
 
@@ -784,13 +790,12 @@ aggregate outcome fires immediately.
 
 ```hcl
 step "poll" {
-  target     = adapter.http.default
+  target     = adapter.shell.default
   while      = data.internal.queue_empty.value == false
   on_failure = "abort"
 
   input {
-    url        = "https://api.example.com/queue"
-    iteration  = while.index
+    command = "poll-queue --attempt ${while.index}"
   }
 
   outcome "success"       { next = continue }
@@ -866,7 +871,7 @@ on the first iteration, guard with `each._first` or a null check:
 <!-- validator: skip: illustrative fragment; adapter block not included in this excerpt -->
 ```hcl
 step "running_total" {
-  target   = adapter.compute.default
+  target   = adapter.shell.default
   for_each = var.amounts
   input {
     accumulator = each._first ? 0 : each._prev.total
@@ -976,50 +981,13 @@ scope. On resume, the `for_each`/`count` expression is re-evaluated from the
 saved scope (items are not persisted to keep the checkpoint compact). The
 `each.*` bindings including `_prev` are fully restored.
 
-### Migration from W08 top-level `for_each` blocks
-
-W08 top-level `for_each` iteration blocks (with `items = …` and `do = "…"`) have been removed. Rewrite them as:
-
-```hcl
-# W08 (removed) — note: this syntax no longer compiles:
-# for_each "deploy"
-# {
-#   items = ["a", "b"]
-#   do    = "run_one"
-#   outcome "all_succeeded" { next = state.done }
-# }
-# step "run_one" {
-#   adapter = "noop"
-#   outcome "success" { next = continue }
-# }
-
-# v0.3.0 equivalent (single-step iteration):
-step "deploy" {
-  target   = adapter.noop.default
-  for_each = ["a", "b"]
-  outcome "all_succeeded" { next = state.done }
-}
-```
-
-For multi-step bodies, declare a `subworkflow` block and target it from the iterating step:
-
-```hcl
-subworkflow "deploy" {
-  source = "./subworkflows/deploy"
-}
-
-step "deploy" {
-  target   = subworkflow.deploy
-  for_each = ["a", "b"]
-  outcome "all_succeeded" { next = state.done }
-}
-```
-
 ---
 
 ## Expressions
 
-Expressions are used in `when` conditions, `items` lists, and `input { }` attribute values.
+Expressions appear in `input { }` attribute values, `switch`/`while` conditions,
+`for_each`/`count`/`parallel` collections, `output` projections, and `write`
+values.
 
 ### String interpolation
 
@@ -1047,7 +1015,7 @@ input {
 ### Compile-time vs. runtime evaluation
 
 - **Compile-time**: Variable defaults, static list literals.
-- **Runtime**: Variable overrides (future), step outputs, `each.*` scope (evaluated per iteration).
+- **Runtime**: step outputs, data values, and `each.*` / `while.*` scope (evaluated per iteration).
 
 Expressions that reference step outputs or `each.*` are stored as raw HCL expressions in the compiled graph and evaluated at step entry.
 
@@ -1381,67 +1349,51 @@ See [adapters.md](adapters.md) for the tool invocation wire protocol.
 
 ## Standalone CLI
 
-Criteria provides three commands for workflow operations:
+A workflow path may be a single `.hcl`/`.chcl` file or a directory module. Run
+`criteria <command> --help` for the full flag set.
+
+| Command | Purpose |
+|---|---|
+| `criteria validate <wf>` | Parse and type-check without executing (`--diag-json` for structured output). |
+| `criteria compile <wf>` | Emit the FSM graph (`--format json` default, or `--format dot`; `--out <path>`). |
+| `criteria plan <wf>` | Human-readable execution preview. |
+| `criteria apply <wf>` | Execute the workflow. |
+| `criteria spec` | Print the language specification (`--with-patterns` appends the LLM prompt pack). |
+| `criteria adapter …` | Manage adapters: `lock`, `pull`, `publish`, `list`, `info`, `where`, `remove`, `prune`, `dev`. |
+| `criteria pause` / `resume` / `inspect` / `status` / `stop` | Run-lifecycle and introspection (server-oriented). |
+| `criteria langserver` | LSP server over stdin/stdout (experimental). |
+
+Variable overrides (on `plan` and `apply`):
+
+- **`--var key=value`** (repeatable): Override a single variable.
+- **`--var-file <path>`** (repeatable): Load overrides from a `.chcl`, `.hcl`, or `.json` file. Multiple files merge left-to-right; later files win. `--var` takes precedence over any `--var-file` entry.
 
 ### `criteria compile`
-
-Parses and validates a workflow, outputs JSON or DOT graph.
 
 ```bash
 bin/criteria compile examples/tour/tour.hcl
 bin/criteria compile examples/tour/tour.hcl --format dot --out workflow.dot
 ```
 
-**Outputs**:
 - **JSON** (default): FSM graph with nodes, outcomes, and metadata.
 - **DOT**: Graphviz-compatible directed graph for visualization.
 
-### `criteria plan`
-
-Human-readable summary of the workflow structure.
-
-```bash
-bin/criteria plan examples/tour/tour.hcl
-```
-
-Prints:
-- Variables, adapters, steps (in declaration order).
-- States, wait nodes, approval nodes, switch nodes, for-each loops.
-- Plugins required.
-
-**Flags**:
-- **`--var-file <path>`** (repeatable): Load variable overrides from a `.chcl`, `.hcl`, or `.json`
-  file. Multiple `--var-file` flags are merged left-to-right; later files overwrite earlier
-  entries. `--var` individual overrides always take precedence over `--var-file` entries.
-
 ### `criteria apply`
 
-Executes the workflow.
-
-**Local mode** (no server):
+Execute the workflow.
 
 ```bash
-bin/criteria apply examples/build_and_test.hcl
-```
+# Local (no server): streams ND-JSON events to stdout.
+bin/criteria apply examples/build_and_test/build_and_test.hcl
 
-Streams ND-JSON events to stdout. Duration waits work; signal waits and approvals abort.
-
-**Orchestrator mode** (with server):
-
-```bash
+# Server mode: persists run state, supports resume and approvals.
 bin/criteria apply <workflow.hcl> --server http://localhost:8080
 ```
 
-Connects to the server, persists run state, supports resumption and approvals.
-
-**Flags**:
-- **`--server <url>`: Server base URL (orchestrator mode).
-- **`--events-file <path>`**: Write events to file instead of stdout (local mode).
-- **`--name <name>`: Criteria instance identifier (defaults to hostname).
-- **`--server-tls <mode>`: TLS mode (`disable`, `tls`, `mtls`).
-- **`--var-file <path>`** (repeatable): Load variable overrides from a `.chcl`, `.hcl`, or `.json`
-  file. Multiple `--var-file` flags are merged left-to-right; later files overwrite earlier
-  entries. `--var` individual overrides always take precedence over `--var-file` entries.
+Notable flags: `--server <url>`, `--server-tls disable|tls|mtls`,
+`--events-file <path>` (write events to a file instead of stdout),
+`--output auto|concise|json`, `--name <id>` (server-mode agent name),
+`--subworkflow-root <path>`.
 
 ### ND-JSON event stream
 
@@ -1467,7 +1419,7 @@ See [`proto/criteria/v1/`](../proto/criteria/v1/) for proto definitions and even
 
 - Duration-based waits work.
 - Signal-based waits and approval nodes require `CRITERIA_LOCAL_APPROVAL` (see **Local-mode approval and signal wait**) or `--server`.
-- Local runs write step checkpoints and persisted approval/signal decisions to `$CRITERIA_STATE_DIR` so that a restarted run (or `criteria apply --reattach`) can resume from where it left off without re-prompting. For full crash recovery and distributed persistence, use `--server`.
+- Local runs write step checkpoints and persisted approval/signal decisions under `$CRITERIA_STATE_DIR` (default `~/.criteria`) so a restarted run can reuse captured decisions without re-prompting. For full crash recovery and distributed persistence, use `--server`.
 
 For examples demonstrating each command, see:
 - Linear shell pipeline: [examples/build_and_test/build_and_test.hcl](../examples/build_and_test/build_and_test.hcl)
@@ -1475,72 +1427,19 @@ For examples demonstrating each command, see:
 
 ---
 
-## Doc-Example Validation
+## Doc-example validation
 
-The `make validate-docs` CI gate extracts every fenced HCL code block from `docs/*.md` and runs `bin/criteria validate` against each. This catches syntax regressions before they reach users.
+The `make validate-docs` gate ([`tools/validate-docs.sh`](../tools/validate-docs.sh))
+extracts every full-workflow ` ```hcl ` block (one containing a `workflow { }`
+header) from [LANGUAGE-SPEC.md](LANGUAGE-SPEC.md) and runs `criteria validate` on
+each, stubbing any referenced subworkflow directories. Keep the worked examples
+in that file compiling.
 
-### Directives
+Snippets in this document are mostly illustrative fragments (a step, adapter, or
+node in isolation) and are not individually compiled; the
+`<!-- validator: ... -->` comments preceding some blocks are authoring hints, not
+an enforced gate.
 
-Place these HTML comment directives on the line immediately before the opening ` ```hcl ` fence (no blank line between the directive and the fence):
-
-- **`<!-- validator: fragment -->`** — the block is a partial workflow (a step, state, adapter, or other node declaration without a surrounding `workflow { }` block). The validator wraps it in a synthetic `workflow { name = "doc_example" }` shell and adds state stubs for any transition targets not defined in the fragment.
-
-- **`<!-- validator: skip: <reason> -->`** — skip this block entirely. Use sparingly. Always document why each skip exists. Valid reasons: the block is an incomplete `workflow { }` excerpt that references undeclared nodes; the block is a bare attribute or sub-block not valid at workflow level; the block shows a future language feature not yet implemented.
-
-### Examples
-
-Fragment wrapping (most step/state/adapter snippets):
-
-```
-<!-- validator: fragment -->
-` ``` `hcl
-step "build" {
-  target = adapter.shell.default
-  ...
-}
-` ``` `
-```
-
-Explicit skip (when fragment wrapping cannot resolve references):
-
-```
-<!-- validator: skip: switch references var.env declared outside this excerpt -->
-` ``` `hcl
-switch "check_env" {
-  ...
-}
-` ``` `
-```
-
-Blocks with no directive and a top-level `workflow { }` are validated as-is. Blocks with no directive and no top-level `workflow { }` are automatically treated as fragments.
-
----
-
-## Future Shape (Appendix)
-
-This section outlines language features planned for post-1.5 phases. **None of these are implemented in v1.5**; they are noted here to set expectations and demonstrate forward-thinking design.
-
-### Parallel regions (future)
-
-Parallel execution of independent step sequences:
-
-<!-- validator: skip: not implemented in v1.5; parallel block is not a recognized workflow node type -->
-```hcl
-parallel "build_and_test" {
-  region "build" {
-    steps = ["compile", "package"]
-  }
-  region "test" {
-    steps = ["unit_tests", "integration_tests"]
-  }
-  outcome "all_succeeded" { next = step.deploy }
-  outcome "any_failed"    { next = state.failed }
-}
-```
-
-**Not implemented in v1.5**. Requires engine scheduler enhancements and cross-region synchronization primitives.
-
----
 
 ## Data Values
 
@@ -1792,22 +1691,29 @@ The `input = { ... }` map binds parent-scope expressions to the callee's `variab
 - Extra input keys that don't match any callee variable produce a compile error.
 - Input values are parent-scope HCL expressions; `var.*`, `local.*`, and literal values are all valid.
 
-### Output access (W14+)
+### Output access
 
-After W14 (universal step target) lands, the callee's `output` blocks are accessible in the parent scope as `subworkflow.<name>.output.<output_name>`:
+A subworkflow step's return values are exposed through the `subworkflow.<key>`
+namespace, available **only** in that step's own outcome `output = { ... }`
+projection and `write` expressions. Project them to make them visible downstream
+as `steps.<step>.*`:
 
+<!-- validator: skip: illustrative excerpt; subworkflow source and states omitted -->
 ```hcl
-# After W14 — step targeting a subworkflow
 step "run_smoke" {
   target = subworkflow.smoke_test
+  outcome "success" {
+    next   = step.report
+    output = { status = subworkflow.status }   # project the callee's return value
+  }
 }
 
-# Then in a subsequent step's input:
 step "report" {
   target = adapter.shell.default
   input {
-    result = subworkflow.smoke_test.output.status
+    result = steps.run_smoke.status            # read the projected output
   }
+  outcome "success" { next = state.done }
 }
 ```
 
@@ -1829,22 +1735,15 @@ step "report" {
 
 ### Source schemes
 
-Only local filesystem paths (`./relative/path` or `/absolute/path`) are supported in v0.3.0. Remote schemes (`git://`, `https://`, etc.) are reserved for Phase 4.
+Only local filesystem paths (`./relative/path` or `/absolute/path`) are
+supported. Remote schemes (`git://`, `https://`, `url://`) are **not supported**.
 
 ---
 
-### Variable overrides at runtime
-
-> **`--var-file <path>`** is available now (see [CLI reference](#standalone-cli)). Load overrides from a file for multi-variable configurations.
->
-> **`--var key=value`** individual flag overrides are still planned for a future release.
-
 ### Repository layout
 
-The criteria project ships as a single repository:
+- **`github.com/brokenbots/criteria`** — workflow engine, compiler, and standalone CLI (this document); the in-tree `cmd/criteria-adapter-mcp` adapter lives here too.
+- **`github.com/brokenbots/criteria/sdk`** — published Go SDK; the server transport contract and event schemas live under `sdk/pb/criteria/v1`.
 
-- **`github.com/brokenbots/criteria`** — workflow engine, compiler, and standalone CLI (this document); the `cmd/criteria-adapter-*` plugin binaries live here too.
-- **`github.com/brokenbots/criteria/sdk`** — published Go SDK; shared protobuf contracts and event schemas live under `sdk/pb/criteria/v1`.
-
-The orchestrator side is developed separately at [github.com/brokenbots/orchestrator](https://github.com/brokenbots/orchestrator) and consumes the published SDK. Parallel regions are targeted as future language work.
+The orchestrator is developed separately at [github.com/brokenbots/orchestrator](https://github.com/brokenbots/orchestrator) and consumes the published SDK.
 

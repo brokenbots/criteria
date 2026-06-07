@@ -1,5 +1,9 @@
 # Remote Adapter Deployment Guide
 
+> **Status: Untested.** The `remote` environment is implemented but has had
+> minimal real-world testing (see [README → Component status](../README.md#component-status)).
+> Treat this guide as a design reference, not a hardened deployment runbook.
+
 This guide explains how to deploy a Criteria adapter that runs outside the Criteria host process and "phones home" over a TLS-backed TCP connection.
 
 ## Concepts
@@ -303,7 +307,7 @@ step "run" {
   input {
     name = "world"
   }
-  outcome "success" { next = "done" }
+  outcome "success" { next = state.done }
 }
 
 state "done" {
