@@ -14,7 +14,7 @@ A Criteria workflow defines:
 ### Architecture model
 
 - **Criteria** compiles HCL workflows to FSM graphs and executes them by invoking adapters.
-- **Adapters** are out-of-process plugins discovered from `$CRITERIA_ADAPTERS` or `~/.criteria/adapters` (see [plugins.md](plugins.md)).
+- **Adapters** are out-of-process plugins discovered from `$CRITERIA_ADAPTERS` or `~/.criteria/adapters` (see [adapters.md](adapters.md)).
 - **Server** (optional) is the orchestrator server that persists runs, enables resumption after crashes, and provides UI and approval RPCs.
 
 ### Execution modes
@@ -277,7 +277,7 @@ step "list_files" {
 - **`<type>`** (first label, required): Plugin type. Determines which `criteria-adapter-<type>` binary is loaded.
 - **`<name>`** (second label, required): Logical instance name. Multiple adapters of the same type may be declared with different names.
 - **`on_crash`** (optional): Crash recovery policy: `"fail"` (default), `"respawn"`, `"abort_run"`.
-- **`config`** (optional): Session-open configuration block. Attributes are adapter-specific. See [plugins.md](plugins.md) for per-adapter config schemas.
+- **`config`** (optional): Session-open configuration block. Attributes are adapter-specific. See [adapters.md](adapters.md) for per-adapter config schemas.
 
 ### Automatic lifecycle
 
@@ -296,7 +296,7 @@ Adapters resolve to plugin binaries named `criteria-adapter-<name>`. Discovery o
 1. `$CRITERIA_ADAPTERS/<name>`
 2. `~/.criteria/adapters/<name>`
 
-See [plugins.md](plugins.md) for the plugin wire protocol and adapter development guide.
+See [adapters.md](adapters.md) for the plugin wire protocol and adapter development guide.
 
 ---
 
@@ -714,7 +714,7 @@ Adapters that are safe for concurrent `Execute` calls must declare the
 `"parallel_safe"` capability in their `InfoResponse.Capabilities`. The engine
 rejects `parallel = [...]` steps that target an adapter lacking this
 declaration — at compile time when the adapter binary is resolvable, at runtime
-otherwise. See [docs/plugins.md](plugins.md) for details on declaring
+otherwise. See [docs/adapters.md](adapters.md) for details on declaring
 capabilities.
 
 Subworkflow steps that use `parallel` receive fully isolated adapter sessions
@@ -1375,7 +1375,7 @@ Tool names are matched against glob patterns using `filepath.Match` semantics:
 - `shell:*` permits all shell commands.
 - `*` permits all tools (use with caution).
 
-See [plugins.md](plugins.md) for the tool invocation wire protocol.
+See [adapters.md](adapters.md) for the tool invocation wire protocol.
 
 ---
 

@@ -42,7 +42,7 @@ here.
 - Engine node interpreters:
   [internal/engine/node_step.go](internal/engine/node_step.go),
   [internal/engine/node_wait.go](internal/engine/node_wait.go),
-  [internal/engine/node_branch.go](internal/engine/node_branch.go),
+  [internal/engine/node_switch.go](internal/engine/node_switch.go),
   [internal/engine/node_workflow.go](internal/engine/node_workflow.go),
   [internal/engine/node_approval.go](internal/engine/node_approval.go)
 - HCL parser / FSM compiler (Go sub-module): [workflow/](workflow/)

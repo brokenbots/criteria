@@ -327,10 +327,10 @@ back.
 - A small host-side shim bridges the inbound mTLS connection to a local UDS so
   the session layer treats it like any local adapter; no other host code is
   remote-aware.
-- Launch and reachability are yours to arrange. The starter repos ship
-  copy-pasteable k8s `Deployment`, `docker-compose`, and `systemd` examples under
-  `examples/remote/`. See [docs/adapter-remote-deployment.md](adapter-remote-deployment.md)
-  for the full deployment guide.
+- Launch and reachability are yours to arrange. Copy-pasteable k8s `Deployment`
+  and `docker-compose` examples live under [`docs/examples/`](examples/); see
+  [docs/adapter-remote-deployment.md](adapter-remote-deployment.md) for the full
+  deployment guide.
 
 Host-side sandbox primitives do not apply to `remote` environments (the host did
 not launch the process); `network`/`filesystem`/`resources` are advisory there,
