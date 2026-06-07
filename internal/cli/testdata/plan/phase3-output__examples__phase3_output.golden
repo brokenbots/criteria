@@ -20,4 +20,4 @@ states:
   failed    terminal=true   success=false
 
 adapters required:
-  shell   (search: $CRITERIA_PLUGINS, ~/.criteria/plugins)
+  shell   (search: $CRITERIA_ADAPTERS, ~/.criteria/adapters)

@@ -71,7 +71,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 <!-- BEGIN GENERATED:blocks -->
 ### `workflow { ... }`
 
-- **Source:** [`workflow/schema.go:92`](../workflow/schema.go#L92)
+- **Source:** [`workflow/schema.go:152`](../workflow/schema.go#L152)
 - **Attributes:**
 
 | Attribute | Type | Required | Description |
@@ -81,12 +81,13 @@ The following block types are defined. Tables are auto-generated from [`workflow
 | `initial_state` | string | yes | InitialState names the step or state where workflow execution begins. |
 | `target_state` | string | no | _(no description)_ |
 | `environment` | hcl.Expression | no | _(no description)_ |
+| `verification` | string | no | Verification is the workflow-level signature-verification posture for OCI adapters: off|warn|strict. Empty means the CLI transition default applies. The CLI override (--allow-unsigned / CRITERIA_ALLOW_UNSIGNED) takes precedence over this attribute. |
 
 - **Nested blocks:** [`policy`](#policy---)
 
 ### `variable "name" { ... }`
 
-- **Source:** [`workflow/schema.go:133`](../workflow/schema.go#L133)
+- **Source:** [`workflow/schema.go:198`](../workflow/schema.go#L198)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -111,7 +112,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `data "kind" "name" { ... }`
 
-- **Source:** [`workflow/schema.go:27`](../workflow/schema.go#L27)
+- **Source:** [`workflow/schema.go:23`](../workflow/schema.go#L23)
 - **Labels:** `kind` `name`
 - **Attributes:**
 
@@ -124,13 +125,13 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `environment "type" "name" { ... }`
 
-- **Source:** [`workflow/schema.go:63`](../workflow/schema.go#L63)
+- **Source:** [`workflow/schema.go:60`](../workflow/schema.go#L60)
 - **Labels:** `type` `name`
 - **Additional attributes:** Captures: variables (optional, map of string env-vars), config (optional, type-specific config map).
 
 ### `output "name" { ... }`
 
-- **Source:** [`workflow/schema.go:246`](../workflow/schema.go#L246)
+- **Source:** [`workflow/schema.go:320`](../workflow/schema.go#L320)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -143,20 +144,22 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `adapter "type" "name" { ... }`
 
-- **Source:** [`workflow/schema.go:160`](../workflow/schema.go#L160)
+- **Source:** [`workflow/schema.go:225`](../workflow/schema.go#L225)
 - **Labels:** `type` `name`
 - **Attributes:**
 
 | Attribute | Type | Required | Description |
 |---|---|---|---|
+| `source` | string | no | Source is the adapter's OCI location (a registry/repo path or a registry alias), decoupled from the version. Required for OCI-backed adapters. |
+| `version` | string | no | Version is the semver constraint resolved at lock time: exact ("1.2.3"), caret ("^1.2"), tilde ("~1.2.0"), wildcard ("1.x"), or "latest". The lockfile pins the resolved digest for run-to-run reproducibility. |
 | `environment` | hcl.Expression | no | _(no description)_ |
 | `on_crash` | string | no | _(no description)_ |
 
-- **Nested blocks:** [`config`](#config---)
+- **Nested blocks:** [`config`](#config---), [`secrets`](#secrets---)
 
 ### `subworkflow "name" { ... }`
 
-- **Source:** [`workflow/schema.go:256`](../workflow/schema.go#L256)
+- **Source:** [`workflow/schema.go:330`](../workflow/schema.go#L330)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -169,7 +172,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `step "name" { ... }`
 
-- **Source:** [`workflow/schema.go:169`](../workflow/schema.go#L169)
+- **Source:** [`workflow/schema.go:242`](../workflow/schema.go#L242)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -183,11 +186,11 @@ The following block types are defined. Tables are auto-generated from [`workflow
 | `allow_tools` | list(string) | no | _(no description)_ |
 
 - **Additional attributes:** Captures: target (required — adapter traversal e.g. adapter.copilot.main, or subworkflow.<name>); for_each, count, parallel, while (optional iteration controls); environment (optional, bare traversal e.g. shell.ci).
-- **Nested blocks:** [`input`](#input---), [`outcome`](#outcome-name---)
+- **Nested blocks:** [`input`](#input---), [`secret_input`](#secret_input---), [`outcome`](#outcome-name---)
 
 ### `state "name" { ... }`
 
-- **Source:** [`workflow/schema.go:337`](../workflow/schema.go#L337)
+- **Source:** [`workflow/schema.go:424`](../workflow/schema.go#L424)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -200,7 +203,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `wait "name" { ... }`
 
-- **Source:** [`workflow/schema.go:320`](../workflow/schema.go#L320)
+- **Source:** [`workflow/schema.go:407`](../workflow/schema.go#L407)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -213,7 +216,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `approval "name" { ... }`
 
-- **Source:** [`workflow/schema.go:329`](../workflow/schema.go#L329)
+- **Source:** [`workflow/schema.go:416`](../workflow/schema.go#L416)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -226,13 +229,13 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `switch "name" { ... }`
 
-- **Source:** [`workflow/schema.go:348`](../workflow/schema.go#L348)
+- **Source:** [`workflow/schema.go:435`](../workflow/schema.go#L435)
 - **Labels:** `name`
 - **Nested blocks:** [`match`](#match---), [`default`](#default---)
 
 ### `permissions { ... }`
 
-- **Source:** [`workflow/schema.go:387`](../workflow/schema.go#L387)
+- **Source:** [`workflow/schema.go:474`](../workflow/schema.go#L474)
 - **Attributes:**
 
 | Attribute | Type | Required | Description |
@@ -242,7 +245,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `policy { ... }`
 
-- **Source:** [`workflow/schema.go:368`](../workflow/schema.go#L368)
+- **Source:** [`workflow/schema.go:455`](../workflow/schema.go#L455)
 - **Attributes:**
 
 | Attribute | Type | Required | Description |
@@ -254,15 +257,23 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `config { ... }`
 
-- **Source:** [`workflow/schema.go:143`](../workflow/schema.go#L143)
+- **Source:** [`workflow/schema.go:208`](../workflow/schema.go#L208)
+
+### `secrets { ... }`
+
+- **Source:** [`workflow/schema.go:208`](../workflow/schema.go#L208)
 
 ### `input { ... }`
 
-- **Source:** [`workflow/schema.go:153`](../workflow/schema.go#L153)
+- **Source:** [`workflow/schema.go:218`](../workflow/schema.go#L218)
+
+### `secret_input { ... }`
+
+- **Source:** [`workflow/schema.go:218`](../workflow/schema.go#L218)
 
 ### `outcome "name" { ... }`
 
-- **Source:** [`workflow/schema.go:298`](../workflow/schema.go#L298)
+- **Source:** [`workflow/schema.go:385`](../workflow/schema.go#L385)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -275,17 +286,17 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `match { ... }`
 
-- **Source:** [`workflow/schema.go:357`](../workflow/schema.go#L357)
+- **Source:** [`workflow/schema.go:444`](../workflow/schema.go#L444)
 - **Additional attributes:** captures: condition (required), next (required), output (optional)
 
 ### `default { ... }`
 
-- **Source:** [`workflow/schema.go:363`](../workflow/schema.go#L363)
+- **Source:** [`workflow/schema.go:450`](../workflow/schema.go#L450)
 - **Additional attributes:** captures: next (required), output (optional)
 
 ### `write { ... }`
 
-- **Source:** [`workflow/schema.go:306`](../workflow/schema.go#L306)
+- **Source:** [`workflow/schema.go:393`](../workflow/schema.go#L393)
 - **Attributes:**
 
 | Attribute | Type | Required | Description |
@@ -467,7 +478,7 @@ Each step, wait, and approval node declares one or more `outcome` blocks mapping
 
 **`output` projection:** An `outcome` block may include an `output = {...}` expression to project a custom output map. If absent, the adapter's full output is passed downstream as `steps.<name>.*`.
 
-**`write`:** An `outcome` block may include one or more `write { target = data.<kind>.<name>.value, value = expr }` blocks to atomically update data values on that transition. Write ordering within a single outcome block is deterministic (declaration order).
+**`write`:** An `outcome` block may include one or more `write { target = data.<kind>.<name>.value, value = expr }` blocks to atomically update data values on that transition. The `value` expression is evaluated against the same context as the outcome's `output = {...}` projection — it may reference `var.*`, `local.*`, `data.<kind>.<name>.value`, `step.output.<key>`, `output.<key>` (projection keys), `subworkflow.<key>`, and the standard functions. `data.*` reads resolve to the **step-entry snapshot**: a write never observes a value written earlier in the same step (its own pending write or a sibling write's), so the entire write set is atomic against that snapshot and independent of write order. The compiler emits a warning (non-fatal) when a write reads a data value the same step also writes. To observe one write's result in another, split the writes across separate steps.
 
 **Terminal routing:** A `state` block with `terminal = true` terminates the run. `success = true` marks the run as succeeded; `success = false` marks it as failed. A run that reaches no terminal state is a runtime error (infinite loop guard via `policy.max_total_steps`).
 

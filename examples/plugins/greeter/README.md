@@ -19,9 +19,9 @@ The greeter accepts one input key (`name`) and returns:
 go build -o bin/criteria-adapter-greeter .
 
 # Install into your personal plugin directory:
-mkdir -p ~/.criteria/plugins
-cp bin/criteria-adapter-greeter ~/.criteria/plugins/
-chmod +x ~/.criteria/plugins/criteria-adapter-greeter
+mkdir -p ~/.criteria/adapters
+cp bin/criteria-adapter-greeter ~/.criteria/adapters/
+chmod +x ~/.criteria/adapters/criteria-adapter-greeter
 ```
 
 Or use a temporary directory to avoid touching your home directory:
@@ -30,7 +30,7 @@ Or use a temporary directory to avoid touching your home directory:
 tmpdir=$(mktemp -d)
 go build -o "$tmpdir/criteria-adapter-greeter" .
 chmod +x "$tmpdir/criteria-adapter-greeter"
-CRITERIA_PLUGINS="$tmpdir" criteria apply example.hcl
+CRITERIA_ADAPTERS="$tmpdir" criteria apply example.hcl
 ```
 
 ## Run the example workflow

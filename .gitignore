@@ -17,6 +17,9 @@ tmp/
 # Ephemeral lint config produced by make lint-go; never commit this.
 .golangci.merged.yml
 
+# Workstream generated logs
+workstreams/**/*.log
+
 # Editor directories
 .idea/
 .vscode/
@@ -26,5 +29,6 @@ tmp/
 *.out
 coverage.out
 
-# Workstream auto-generated log files
-workstreams/language_cleanup/*.log
+# python and node
+node_modules
+__python_cache__

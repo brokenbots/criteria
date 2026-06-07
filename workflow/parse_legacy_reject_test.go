@@ -567,7 +567,7 @@ state "done" { terminal = true }
 
 func TestLegacyReject_EnvironmentString_QuotedOnAdapter(t *testing.T) {
 	src := minimalWorkflowHCL + `
-adapter "shell" "ci" {
+adapter "exec" "ci" {
   environment = "shell.ci"
 }
 `

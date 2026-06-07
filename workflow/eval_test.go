@@ -87,7 +87,7 @@ func TestWithStepOutputs(t *testing.T) {
 		"var":   cty.EmptyObjectVal,
 		"steps": cty.EmptyObjectVal,
 	}
-	updated := WithStepOutputs(vars, "step1", map[string]string{"stdout": "hello", "exit_code": "0"})
+	updated := WithStepOutputs(vars, "step1", ctyStrs(map[string]string{"stdout": "hello", "exit_code": "0"}))
 	stepsObj := updated["steps"]
 	if !stepsObj.Type().IsObjectType() {
 		t.Fatal("steps not an object")
@@ -100,7 +100,7 @@ func TestWithStepOutputs(t *testing.T) {
 		t.Error("expected stdout='hello'")
 	}
 	// Add a second step and ensure step1 is preserved.
-	updated2 := WithStepOutputs(updated, "step2", map[string]string{"result": "ok"})
+	updated2 := WithStepOutputs(updated, "step2", ctyStrs(map[string]string{"result": "ok"}))
 	if !updated2["steps"].Type().HasAttribute("step1") {
 		t.Error("step1 was lost after adding step2")
 	}
@@ -111,7 +111,7 @@ func TestSerializeAndRestoreVarScope(t *testing.T) {
 		"var":   cty.ObjectVal(map[string]cty.Value{"greeting": cty.StringVal("hi")}),
 		"steps": cty.EmptyObjectVal,
 	}
-	vars = WithStepOutputs(vars, "build", map[string]string{"artifact": "app.bin"})
+	vars = WithStepOutputs(vars, "build", ctyStrs(map[string]string{"artifact": "app.bin"}))
 
 	scopeJSON, err := SerializeVarScope(vars)
 	if err != nil {
@@ -121,15 +121,22 @@ func TestSerializeAndRestoreVarScope(t *testing.T) {
 		t.Fatal("expected non-empty scope JSON")
 	}
 
-	// Validate JSON structure.
+	// Validate JSON structure. Step outputs are persisted in the typed (cty-JSON)
+	// form under "steps_typed" so structured/native types round-trip losslessly.
 	var raw map[string]interface{}
 	if err := json.Unmarshal([]byte(scopeJSON), &raw); err != nil {
 		t.Fatalf("invalid JSON: %v", err)
 	}
-	steps, _ := raw["steps"].(map[string]interface{})
-	build, _ := steps["build"].(map[string]interface{})
-	if build["artifact"] != "app.bin" {
-		t.Errorf("steps.build.artifact = %v, want 'app.bin'", build["artifact"])
+	stepsTyped, ok := raw["steps_typed"].(string)
+	if !ok {
+		t.Fatalf("expected steps_typed string in scope JSON; got %v", raw)
+	}
+	var stepsDecoded map[string]map[string]interface{}
+	if err := json.Unmarshal([]byte(stepsTyped), &stepsDecoded); err != nil {
+		t.Fatalf("invalid steps_typed JSON: %v", err)
+	}
+	if stepsDecoded["build"]["artifact"] != "app.bin" {
+		t.Errorf("steps.build.artifact = %v, want 'app.bin'", stepsDecoded["build"]["artifact"])
 	}
 
 	g := &FSMGraph{
@@ -175,9 +182,9 @@ workflow {
   target_state  = "__done__"
 }
 
-adapter "shell" "default" {}
+adapter "exec" "default" {}
 step "s" {
-  target = adapter.shell.default
+  target = adapter.exec.default
   input {
     command = "${each.value}"
   }
@@ -456,7 +463,7 @@ func TestWithIndexedStepOutput_SingleIteration(t *testing.T) {
 		"var":   cty.EmptyObjectVal,
 		"steps": cty.EmptyObjectVal,
 	}
-	got := WithIndexedStepOutput(vars, "run", cty.NumberIntVal(0), map[string]string{"result": "hello"})
+	got := WithIndexedStepOutput(vars, "run", cty.NumberIntVal(0), ctyStrs(map[string]string{"result": "hello"}))
 	steps, ok := got["steps"]
 	if !ok {
 		t.Fatal("steps key missing after WithIndexedStepOutput")
@@ -479,7 +486,7 @@ func TestWithIndexedStepOutput_SingleIteration(t *testing.T) {
 // TestWithIndexedStepOutput_NilVarsInitializes verifies that a nil vars map is
 // treated as empty rather than panicking.
 func TestWithIndexedStepOutput_NilVarsInitializes(t *testing.T) {
-	got := WithIndexedStepOutput(nil, "step1", cty.NumberIntVal(0), map[string]string{"x": "1"})
+	got := WithIndexedStepOutput(nil, "step1", cty.NumberIntVal(0), ctyStrs(map[string]string{"x": "1"}))
 	if got == nil {
 		t.Fatal("WithIndexedStepOutput(nil vars) returned nil")
 	}

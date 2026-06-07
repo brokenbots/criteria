@@ -354,6 +354,12 @@ func validateSwitchStepTraversal(traversal hcl.Traversal, stepName string, g *FS
 	if !isStep || len(traversal) < 3 {
 		return nil
 	}
+	// steps.X.outputs.Y is validated by compileOutputRefs; skip here.
+	if len(traversal) >= 4 {
+		if outAttr, ok := traversal[2].(hcl.TraverseAttr); ok && outAttr.Name == "outputs" {
+			return nil
+		}
+	}
 	return validateSwitchStepFieldRef(traversal[2], stepName, g, schemas, switchName, condIdx)
 }
 

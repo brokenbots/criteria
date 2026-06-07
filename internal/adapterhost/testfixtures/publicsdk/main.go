@@ -1,7 +1,7 @@
 // Package main is a minimal adapter that imports only the public
-// sdk/adapterhost surface plus sdk/pb. It exists to prove that an external
-// author needs no internal/ reach-through to write a functioning Criteria
-// adapter, and is exercised by the adapter conformance harness.
+// sdk/adapterhost surface plus proto/criteria/v2. It exists to prove that an
+// external author needs no internal/ reach-through to write a functioning
+// Criteria adapter, and is exercised by the adapter conformance harness.
 package main
 
 import (
@@ -11,32 +11,33 @@ import (
 	"sync"
 	"time"
 
-	adapterhost "github.com/brokenbots/criteria/sdk/adapterhost"
-	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
+	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
+	adapterhost "github.com/brokenbots/criteria-go-adapter-sdk/adapterhost"
 )
 
 // publicSDKAdapter is the reference implementation that exercises every method
 // in adapterhost.Service using only the public SDK.
 type publicSDKAdapter struct {
+	adapterhost.UnimplementedPermissions
 	mu       sync.Mutex
 	sessions map[string]struct{}
 }
 
-func (p *publicSDKAdapter) Info(_ context.Context, _ *pb.InfoRequest) (*pb.InfoResponse, error) {
-	return &pb.InfoResponse{
+func (p *publicSDKAdapter) Info(_ context.Context, _ *v2.InfoRequest) (*v2.InfoResponse, error) {
+	return &v2.InfoResponse{
 		Name:    "public-sdk-fixture",
 		Version: "0.1.0",
 	}, nil
 }
 
-func (p *publicSDKAdapter) OpenSession(_ context.Context, req *pb.OpenSessionRequest) (*pb.OpenSessionResponse, error) {
+func (p *publicSDKAdapter) OpenSession(_ context.Context, req *v2.OpenSessionRequest) (*v2.OpenSessionResponse, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.sessions[req.GetSessionId()] = struct{}{}
-	return &pb.OpenSessionResponse{}, nil
+	return &v2.OpenSessionResponse{}, nil
 }
 
-func (p *publicSDKAdapter) Execute(ctx context.Context, req *pb.ExecuteRequest, sink adapterhost.ExecuteEventSender) error {
+func (p *publicSDKAdapter) Execute(ctx context.Context, req *v2.ExecuteRequest, sink adapterhost.ExecuteEventSender) error {
 	p.mu.Lock()
 	_, ok := p.sessions[req.GetSessionId()]
 	p.mu.Unlock()
@@ -45,7 +46,7 @@ func (p *publicSDKAdapter) Execute(ctx context.Context, req *pb.ExecuteRequest, 
 	}
 	// delay_ms support allows context_cancellation and step_timeout conformance
 	// tests to exercise cross-process cancellation propagation.
-	if raw := req.GetConfig()["delay_ms"]; raw != "" {
+	if raw := req.GetInput()["delay_ms"]; raw != "" {
 		ms, err := strconv.Atoi(raw)
 		if err != nil || ms < 0 {
 			return fmt.Errorf("invalid delay_ms %q", raw)
@@ -60,22 +61,37 @@ func (p *publicSDKAdapter) Execute(ctx context.Context, req *pb.ExecuteRequest, 
 			}
 		}
 	}
-	return sink.Send(&pb.ExecuteEvent{
-		Event: &pb.ExecuteEvent_Result{
-			Result: &pb.ExecuteResult{Outcome: "success"},
+	// emit_typed exercises the native outputs_json channel end to end: structured
+	// and scalar values are emitted with their JSON-native type so the host can
+	// decode them to native cty types.
+	if req.GetInput()["emit_typed"] == "true" {
+		ev, err := v2.NewExecuteResultEvent("success", map[string]any{
+			"meta":  map[string]any{"id": 7, "name": "widget"},
+			"count": 42,
+			"ok":    true,
+		})
+		if err != nil {
+			return err
+		}
+		return sink.Send(ev)
+	}
+
+	return sink.Send(&v2.ExecuteEvent{
+		Event: &v2.ExecuteEvent_Result{
+			Result: &v2.ExecuteResult{Outcome: "success"},
 		},
 	})
 }
 
-func (p *publicSDKAdapter) Permit(_ context.Context, _ *pb.PermitRequest) (*pb.PermitResponse, error) {
-	return &pb.PermitResponse{}, nil
+func (p *publicSDKAdapter) Log(_ context.Context, _ *v2.LogRequest, _ adapterhost.LogEventSender) error {
+	return nil
 }
 
-func (p *publicSDKAdapter) CloseSession(_ context.Context, req *pb.CloseSessionRequest) (*pb.CloseSessionResponse, error) {
+func (p *publicSDKAdapter) CloseSession(_ context.Context, req *v2.CloseSessionRequest) (*v2.CloseSessionResponse, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	delete(p.sessions, req.GetSessionId())
-	return &pb.CloseSessionResponse{}, nil
+	return &v2.CloseSessionResponse{}, nil
 }
 
 func main() {

@@ -1,74 +1,95 @@
-// Package main implements a configurable test adapter that emits N permission
-// requests and returns an outcome based on the grant/deny decisions it receives.
+// Package main implements a simple test adapter that returns an outcome based on
+// the step input configuration. In v2, permission requests are emitted as
+// AdapterEvent(kind="permission.request") on the Execute stream; the host
+// evaluates them and emits permission.granted / permission.denied events.
 //
 // # Configuration
 //
-// The adapter reads perm_tools from the step config (comma-separated list of
-// permission specs) or from the PERM_TOOLS environment variable.
+// Set "outcome" in the step input to control the returned outcome.
+// Defaults to "success" if unset.
 //
-// Supported spec forms:
-//   - "read_file" -> Permission="read_file"
-//   - "shell|git status" -> Permission="shell", Details["commands"]="git status"
-//
-// If neither source is set the adapter emits no permission requests and returns
-// "success".
-//
-// Outcome semantics:
-//   - All requests granted → "success"
-//   - Any request denied   → "needs_review"
+// Set "perm_tools" to a comma-separated list of "tool[|fingerprint]" entries
+// to trigger permission request events before returning the outcome.
 //
 // This adapter is only built and used by tests. It is NOT registered with
-// `make plugins` and must not be installed in ~/.criteria/plugins/.
+// `make plugins` and must not be installed in ~/.criteria/adapters/.
 package main
 
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 	"sync"
 
-	"github.com/google/uuid"
+	"google.golang.org/protobuf/types/known/structpb"
 
-	adapterhost "github.com/brokenbots/criteria/sdk/adapterhost"
-	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
+	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
+	adapterhost "github.com/brokenbots/criteria-go-adapter-sdk/adapterhost"
 )
 
-type permitDecision struct {
-	allow  bool
-	reason string
-}
-
-type permissionSpec struct {
-	tool    string
-	details map[string]string
-}
-
 type permissiveService struct {
+	adapterhost.UnimplementedPermissions
 	mu       sync.Mutex
 	sessions map[string]struct{}
-	pending  map[string]chan permitDecision
 }
 
-func (s *permissiveService) Info(_ context.Context, _ *pb.InfoRequest) (*pb.InfoResponse, error) {
-	return &pb.InfoResponse{
-		Name:         "permissive",
-		Version:      "0.1.0",
-		Capabilities: []string{"permission_gating"},
+func (s *permissiveService) Info(_ context.Context, _ *v2.InfoRequest) (*v2.InfoResponse, error) {
+	return &v2.InfoResponse{
+		Name:    "permissive",
+		Version: "0.1.0",
 	}, nil
 }
 
-func (s *permissiveService) OpenSession(_ context.Context, req *pb.OpenSessionRequest) (*pb.OpenSessionResponse, error) {
+func (s *permissiveService) OpenSession(_ context.Context, req *v2.OpenSessionRequest) (*v2.OpenSessionResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.sessions[req.GetSessionId()] = struct{}{}
-	return &pb.OpenSessionResponse{}, nil
+	return &v2.OpenSessionResponse{}, nil
 }
 
-// Execute emits one PermissionRequest event per configured tool and waits for
-// the host to respond via Permit before proceeding to the next tool. The final
-// result is "needs_review" if any request was denied, "success" otherwise.
-func (s *permissiveService) Execute(ctx context.Context, req *pb.ExecuteRequest, sink adapterhost.ExecuteEventSender) error {
+func (s *permissiveService) emitPermissionRequests(req *v2.ExecuteRequest, sink adapterhost.ExecuteEventSender) error {
+	permTools := req.GetInput()["perm_tools"]
+	if permTools == "" {
+		return nil
+	}
+	for i, entry := range strings.Split(permTools, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		var tool, fingerprint string
+		if idx := strings.Index(entry, "|"); idx >= 0 {
+			tool = entry[:idx]
+			fingerprint = entry[idx+1:]
+		} else {
+			tool = entry
+		}
+		fields := map[string]any{
+			"request_id": fmt.Sprintf("perm-%d", i),
+			"tool":       tool,
+		}
+		if fingerprint != "" {
+			fields["full_command_text"] = fingerprint
+		}
+		payload, err := structpb.NewStruct(fields)
+		if err != nil {
+			return fmt.Errorf("build permission.request payload: %w", err)
+		}
+		if err := sink.Send(&v2.ExecuteEvent{
+			Event: &v2.ExecuteEvent_Adapter{
+				Adapter: &v2.AdapterEvent{
+					EventKind: "permission.request",
+					Payload:   payload,
+				},
+			},
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *permissiveService) Execute(_ context.Context, req *v2.ExecuteRequest, sink adapterhost.ExecuteEventSender) error {
 	s.mu.Lock()
 	_, ok := s.sessions[req.GetSessionId()]
 	s.mu.Unlock()
@@ -76,126 +97,54 @@ func (s *permissiveService) Execute(ctx context.Context, req *pb.ExecuteRequest,
 		return fmt.Errorf("unknown session %q", req.GetSessionId())
 	}
 
-	requests := requestsFromConfig(req.GetConfig())
-
-	anyDenied := false
-	for _, requested := range requests {
-		decision, err := s.sendPermissionRoundTrip(ctx, sink, requested)
-		if err != nil {
-			return err
-		}
-		if !decision.allow {
-			anyDenied = true
-		}
+	if err := s.emitPermissionRequests(req, sink); err != nil {
+		return err
 	}
 
-	outcome := "success"
-	if anyDenied {
-		outcome = "needs_review"
+	outcome := req.GetInput()["outcome"]
+	if outcome == "" {
+		outcome = "success"
 	}
-	return sink.Send(&pb.ExecuteEvent{
-		Event: &pb.ExecuteEvent_Result{
-			Result: &pb.ExecuteResult{Outcome: outcome},
+	return sink.Send(&v2.ExecuteEvent{
+		Event: &v2.ExecuteEvent_Result{
+			Result: &v2.ExecuteResult{Outcome: outcome},
 		},
 	})
 }
 
-// sendPermissionRoundTrip sends a single permission request for the given spec,
-// waits for the host decision, and returns the decision or any error.
-func (s *permissiveService) sendPermissionRoundTrip(ctx context.Context, sink adapterhost.ExecuteEventSender, requested permissionSpec) (permitDecision, error) {
-	id := uuid.New().String()
-	ch := make(chan permitDecision, 1)
-
-	s.mu.Lock()
-	s.pending[id] = ch
-	s.mu.Unlock()
-
-	if err := sink.Send(&pb.ExecuteEvent{
-		Event: &pb.ExecuteEvent_Permission{
-			Permission: &pb.PermissionRequest{
-				Id:         id,
-				Permission: requested.tool,
-				Details:    requested.details,
-			},
-		},
-	}); err != nil {
-		s.mu.Lock()
-		delete(s.pending, id)
-		s.mu.Unlock()
-		return permitDecision{}, fmt.Errorf("send permission request: %w", err)
-	}
-
-	select {
-	case decision := <-ch:
-		return decision, nil
-	case <-ctx.Done():
-		s.mu.Lock()
-		delete(s.pending, id)
-		s.mu.Unlock()
-		return permitDecision{}, ctx.Err()
-	}
-}
-
-func (s *permissiveService) Permit(_ context.Context, req *pb.PermitRequest) (*pb.PermitResponse, error) {
-	s.mu.Lock()
-	ch, ok := s.pending[req.GetPermissionId()]
-	if ok {
-		delete(s.pending, req.GetPermissionId())
-	}
-	s.mu.Unlock()
-	if ok {
-		ch <- permitDecision{allow: req.GetAllow(), reason: req.GetReason()}
-	}
-	return &pb.PermitResponse{}, nil
-}
-
-func (s *permissiveService) CloseSession(_ context.Context, req *pb.CloseSessionRequest) (*pb.CloseSessionResponse, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.sessions, req.GetSessionId())
-	return &pb.CloseSessionResponse{}, nil
-}
-
-// requestsFromConfig returns the list of permission requests to emit.
-func requestsFromConfig(config map[string]string) []permissionSpec {
-	if v := config["perm_tools"]; v != "" {
-		return parsePermissionSpecs(v)
-	}
-	if v := os.Getenv("PERM_TOOLS"); v != "" {
-		return parsePermissionSpecs(v)
-	}
+func (s *permissiveService) Log(_ context.Context, _ *v2.LogRequest, _ adapterhost.LogEventSender) error {
 	return nil
 }
 
-func parsePermissionSpecs(s string) []permissionSpec {
-	parts := strings.Split(s, ",")
-	out := make([]permissionSpec, 0, len(parts))
-	for _, p := range parts {
-		p = strings.TrimSpace(p)
-		if p == "" {
-			continue
-		}
-		if strings.Contains(p, "|") {
-			chunk := strings.SplitN(p, "|", 2)
-			tool := strings.TrimSpace(chunk[0])
-			fingerprint := strings.TrimSpace(chunk[1])
-			if tool != "" {
-				spec := permissionSpec{tool: tool}
-				if fingerprint != "" {
-					spec.details = map[string]string{"commands": fingerprint}
-				}
-				out = append(out, spec)
-			}
-			continue
-		}
-		out = append(out, permissionSpec{tool: p})
-	}
-	return out
+func (s *permissiveService) Pause(_ context.Context, _ *v2.PauseRequest) (*v2.PauseResponse, error) {
+	return &v2.PauseResponse{}, nil
+}
+
+func (s *permissiveService) Resume(_ context.Context, _ *v2.ResumeRequest) (*v2.ResumeResponse, error) {
+	return &v2.ResumeResponse{}, nil
+}
+
+func (s *permissiveService) Snapshot(_ context.Context, _ *v2.SnapshotRequest) (*v2.SnapshotResponse, error) {
+	return &v2.SnapshotResponse{}, nil
+}
+
+func (s *permissiveService) Restore(_ context.Context, _ *v2.RestoreRequest) (*v2.RestoreResponse, error) {
+	return &v2.RestoreResponse{}, nil
+}
+
+func (s *permissiveService) Inspect(_ context.Context, _ *v2.InspectRequest) (*v2.InspectResponse, error) {
+	return &v2.InspectResponse{}, nil
+}
+
+func (s *permissiveService) CloseSession(_ context.Context, req *v2.CloseSessionRequest) (*v2.CloseSessionResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.sessions, req.GetSessionId())
+	return &v2.CloseSessionResponse{}, nil
 }
 
 func main() {
 	adapterhost.Serve(&permissiveService{
 		sessions: map[string]struct{}{},
-		pending:  map[string]chan permitDecision{},
 	})
 }

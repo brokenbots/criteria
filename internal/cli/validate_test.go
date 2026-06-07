@@ -23,12 +23,12 @@ workflow {
   target_state = "hello"
 }
 
-adapter "shell" "default" {
+adapter "noop" "default" {
   config {}
 }
 
 step "hello" {
-  target = adapter.shell.default
+  target = adapter.noop.default
   input { command = "echo hi" }
   outcome "success" { next = state.hello }
 }
@@ -37,7 +37,7 @@ step "hello" {
 	require.NoError(t, err)
 
 	out := captureOutput(t, func() {
-		ok := validatePath(context.Background(), path, nil, true)
+		ok := validatePath(context.Background(), path, nil, true, false)
 		assert.True(t, ok)
 	})
 
@@ -58,12 +58,12 @@ workflow {
   target_state = "hello"
 }
 
-adapter "shell" "default" {
+adapter "noop" "default" {
   config {}
 }
 
 step "hello" {
-  target = adapter.shell.default
+  target = adapter.noop.default
   input { command = "echo hi"
   // missing closing brace for input block
 }
@@ -72,7 +72,7 @@ step "hello" {
 	require.NoError(t, err)
 
 	out := captureOutput(t, func() {
-		ok := validatePath(context.Background(), path, nil, true)
+		ok := validatePath(context.Background(), path, nil, true, false)
 		assert.False(t, ok)
 	})
 
@@ -98,12 +98,12 @@ workflow {
   target_state = "hello"
 }
 
-adapter "shell" "default" {
+adapter "noop" "default" {
   config {}
 }
 
 step "hello" {
-  target = adapter.shell.default
+  target = adapter.noop.default
   input { command = "echo hi" }
   next = ["bye"]
 }
@@ -112,7 +112,7 @@ step "hello" {
 	require.NoError(t, err)
 
 	out := captureOutput(t, func() {
-		ok := validatePath(context.Background(), path, nil, true)
+		ok := validatePath(context.Background(), path, nil, true, false)
 		assert.False(t, ok) // unresolved next reference is treated as error by current compiler
 	})
 

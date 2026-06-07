@@ -17,10 +17,10 @@ workflow {
   target_state  = "done"
 }
 
-adapter "shell" "default" {}
+adapter "noop" "default" {}
 
 step "execute" {
-  target = adapter.shell.default
+  target = adapter.noop.default
   input {
     command = "echo hello"
   }
@@ -53,6 +53,9 @@ state "failed" {
 
 func TestApplyLocal_WaitSignalNode(t *testing.T) {
 	// W05: first-class wait { signal } node must be rejected in local mode.
+	// Clear CRITERIA_LOCAL_APPROVAL so the global env value does not
+	// auto-approve the signal wait and cause the test to pass spuriously.
+	t.Setenv("CRITERIA_LOCAL_APPROVAL", "")
 	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
 	t.Setenv("CRITERIA_LOCAL_APPROVAL", "")
 	workflowPath := writeWorkflowFile(t, `
@@ -85,6 +88,9 @@ state "done" {
 
 func TestApplyLocal_ApprovalNode(t *testing.T) {
 	// W05: approval nodes must be rejected in local mode.
+	// Clear CRITERIA_LOCAL_APPROVAL so the global env value does not
+	// auto-approve the approval node and cause the test to pass spuriously.
+	t.Setenv("CRITERIA_LOCAL_APPROVAL", "")
 	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
 	t.Setenv("CRITERIA_LOCAL_APPROVAL", "")
 	workflowPath := writeWorkflowFile(t, `

@@ -8,7 +8,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"reflect"
 	"runtime"
 	"strings"
 	"sync"
@@ -16,10 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hashicorp/hcl/v2"
-	"github.com/hashicorp/hcl/v2/hclsyntax"
-	"github.com/zclconf/go-cty/cty"
-
+	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/workflow"
@@ -75,7 +71,9 @@ func newBarrierAdapter(name string, n int, outcome string) *barrierAdapter {
 func (p *barrierAdapter) Info(context.Context) (adapterhost.Info, error) {
 	return adapterhost.Info{Name: p.name, Version: "test", Capabilities: []string{"parallel_safe"}}, nil
 }
-func (p *barrierAdapter) OpenSession(context.Context, string, map[string]string) error { return nil }
+func (p *barrierAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
+	return nil
+}
 func (p *barrierAdapter) Execute(ctx context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
 	count := atomic.AddInt32(&p.ready, 1)
 	if count == p.n {
@@ -92,6 +90,16 @@ func (p *barrierAdapter) Permit(context.Context, string, string, bool, string) e
 func (p *barrierAdapter) CloseSession(context.Context, string) error                 { return nil }
 func (p *barrierAdapter) Kill()                                                      {}
 
+func (p *barrierAdapter) Pause(context.Context, string) error  { return nil }
+func (p *barrierAdapter) Resume(context.Context, string) error { return nil }
+func (p *barrierAdapter) Inspect(context.Context, string) (*v2.InspectResponse, error) {
+	return &v2.InspectResponse{}, nil
+}
+func (p *barrierAdapter) Snapshot(context.Context, string) (*v2.SnapshotResponse, error) {
+	return &v2.SnapshotResponse{}, nil
+}
+func (p *barrierAdapter) Restore(context.Context, string, []byte, uint32) error { return nil }
+
 // concurrencyTrackingAdapter records the peak number of concurrent Execute calls.
 type concurrencyTrackingAdapter struct {
 	name          string
@@ -105,7 +113,7 @@ type concurrencyTrackingAdapter struct {
 func (p *concurrencyTrackingAdapter) Info(context.Context) (adapterhost.Info, error) {
 	return adapterhost.Info{Name: p.name, Version: "test", Capabilities: []string{"parallel_safe"}}, nil
 }
-func (p *concurrencyTrackingAdapter) OpenSession(context.Context, string, map[string]string) error {
+func (p *concurrencyTrackingAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
 	return nil
 }
 func (p *concurrencyTrackingAdapter) Execute(ctx context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
@@ -133,6 +141,18 @@ func (p *concurrencyTrackingAdapter) Permit(context.Context, string, string, boo
 func (p *concurrencyTrackingAdapter) CloseSession(context.Context, string) error { return nil }
 func (p *concurrencyTrackingAdapter) Kill()                                      {}
 
+func (p *concurrencyTrackingAdapter) Pause(context.Context, string) error  { return nil }
+func (p *concurrencyTrackingAdapter) Resume(context.Context, string) error { return nil }
+func (p *concurrencyTrackingAdapter) Inspect(context.Context, string) (*v2.InspectResponse, error) {
+	return &v2.InspectResponse{}, nil
+}
+func (p *concurrencyTrackingAdapter) Snapshot(context.Context, string) (*v2.SnapshotResponse, error) {
+	return &v2.SnapshotResponse{}, nil
+}
+func (p *concurrencyTrackingAdapter) Restore(context.Context, string, []byte, uint32) error {
+	return nil
+}
+
 // contextAwareAdapter calls fn with the goroutine-specific context and a
 // monotonic call index. Safe for concurrent use.
 type contextAwareAdapter struct {
@@ -144,7 +164,7 @@ type contextAwareAdapter struct {
 func (p *contextAwareAdapter) Info(context.Context) (adapterhost.Info, error) {
 	return adapterhost.Info{Name: p.name, Version: "test", Capabilities: []string{"parallel_safe"}}, nil
 }
-func (p *contextAwareAdapter) OpenSession(context.Context, string, map[string]string) error {
+func (p *contextAwareAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
 	return nil
 }
 func (p *contextAwareAdapter) Execute(ctx context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
@@ -156,6 +176,16 @@ func (p *contextAwareAdapter) Permit(context.Context, string, string, bool, stri
 }
 func (p *contextAwareAdapter) CloseSession(context.Context, string) error { return nil }
 func (p *contextAwareAdapter) Kill()                                      {}
+
+func (p *contextAwareAdapter) Pause(context.Context, string) error  { return nil }
+func (p *contextAwareAdapter) Resume(context.Context, string) error { return nil }
+func (p *contextAwareAdapter) Inspect(context.Context, string) (*v2.InspectResponse, error) {
+	return &v2.InspectResponse{}, nil
+}
+func (p *contextAwareAdapter) Snapshot(context.Context, string) (*v2.SnapshotResponse, error) {
+	return &v2.SnapshotResponse{}, nil
+}
+func (p *contextAwareAdapter) Restore(context.Context, string, []byte, uint32) error { return nil }
 
 // parallelSafeAdapter is a fakeAdapter that declares the "parallel_safe" capability.
 // Use this instead of fakeAdapter for parallel steps in tests.
@@ -169,7 +199,7 @@ func (p *parallelSafeAdapter) Info(context.Context) (adapterhost.Info, error) {
 	return adapterhost.Info{Name: p.name, Version: "test", Capabilities: []string{"parallel_safe"}}, nil
 }
 
-func (p *parallelSafeAdapter) OpenSession(context.Context, string, map[string]string) error {
+func (p *parallelSafeAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
 	return nil
 }
 func (p *parallelSafeAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
@@ -181,6 +211,16 @@ func (p *parallelSafeAdapter) Execute(_ context.Context, _ string, _ *workflow.S
 func (p *parallelSafeAdapter) Permit(context.Context, string, string, bool, string) error { return nil }
 func (p *parallelSafeAdapter) CloseSession(context.Context, string) error                 { return nil }
 func (p *parallelSafeAdapter) Kill()                                                      {}
+
+func (p *parallelSafeAdapter) Pause(context.Context, string) error  { return nil }
+func (p *parallelSafeAdapter) Resume(context.Context, string) error { return nil }
+func (p *parallelSafeAdapter) Inspect(context.Context, string) (*v2.InspectResponse, error) {
+	return &v2.InspectResponse{}, nil
+}
+func (p *parallelSafeAdapter) Snapshot(context.Context, string) (*v2.SnapshotResponse, error) {
+	return &v2.SnapshotResponse{}, nil
+}
+func (p *parallelSafeAdapter) Restore(context.Context, string, []byte, uint32) error { return nil }
 
 // --- Tests ---
 
@@ -448,7 +488,9 @@ type declIdxAdapter struct{ name string }
 func (p *declIdxAdapter) Info(context.Context) (adapterhost.Info, error) {
 	return adapterhost.Info{Name: p.name, Version: "test", Capabilities: []string{"parallel_safe"}}, nil
 }
-func (p *declIdxAdapter) OpenSession(context.Context, string, map[string]string) error { return nil }
+func (p *declIdxAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
+	return nil
+}
 func (p *declIdxAdapter) Execute(_ context.Context, _ string, step *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
 	idx := step.Input["decl_idx"]
 	// Sleep inversely proportional to declaration index so that later items finish first.
@@ -460,11 +502,21 @@ func (p *declIdxAdapter) Execute(_ context.Context, _ string, step *workflow.Ste
 	default: // "2" and any others
 		// no sleep — finishes first
 	}
-	return adapter.Result{Outcome: "success", Outputs: map[string]string{"idx": idx}}, nil
+	return adapter.Result{Outcome: "success", Outputs: ctyOut(map[string]string{"idx": idx})}, nil
 }
 func (p *declIdxAdapter) Permit(context.Context, string, string, bool, string) error { return nil }
 func (p *declIdxAdapter) CloseSession(context.Context, string) error                 { return nil }
 func (p *declIdxAdapter) Kill()                                                      {}
+
+func (p *declIdxAdapter) Pause(context.Context, string) error  { return nil }
+func (p *declIdxAdapter) Resume(context.Context, string) error { return nil }
+func (p *declIdxAdapter) Inspect(context.Context, string) (*v2.InspectResponse, error) {
+	return &v2.InspectResponse{}, nil
+}
+func (p *declIdxAdapter) Snapshot(context.Context, string) (*v2.SnapshotResponse, error) {
+	return &v2.SnapshotResponse{}, nil
+}
+func (p *declIdxAdapter) Restore(context.Context, string, []byte, uint32) error { return nil }
 
 // TestParallelIteration_ContextCancellation verifies that cancelling the parent
 // context propagates to all in-flight parallel goroutines without leaking.
@@ -611,7 +663,7 @@ func newLoggingBarrierAdapter(name string, n int, outcome string) *loggingBarrie
 func (p *loggingBarrierAdapter) Info(context.Context) (adapterhost.Info, error) {
 	return adapterhost.Info{Name: p.name, Version: "test", Capabilities: []string{"parallel_safe"}}, nil
 }
-func (p *loggingBarrierAdapter) OpenSession(context.Context, string, map[string]string) error {
+func (p *loggingBarrierAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
 	return nil
 }
 func (p *loggingBarrierAdapter) Execute(ctx context.Context, _ string, _ *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
@@ -635,6 +687,16 @@ func (p *loggingBarrierAdapter) Permit(context.Context, string, string, bool, st
 }
 func (p *loggingBarrierAdapter) CloseSession(context.Context, string) error { return nil }
 func (p *loggingBarrierAdapter) Kill()                                      {}
+
+func (p *loggingBarrierAdapter) Pause(context.Context, string) error  { return nil }
+func (p *loggingBarrierAdapter) Resume(context.Context, string) error { return nil }
+func (p *loggingBarrierAdapter) Inspect(context.Context, string) (*v2.InspectResponse, error) {
+	return &v2.InspectResponse{}, nil
+}
+func (p *loggingBarrierAdapter) Snapshot(context.Context, string) (*v2.SnapshotResponse, error) {
+	return &v2.SnapshotResponse{}, nil
+}
+func (p *loggingBarrierAdapter) Restore(context.Context, string, []byte, uint32) error { return nil }
 
 // sharedLogSink is a test Sink whose StepEventSink returns an EventSink that
 // writes to a shared non-atomic counter. The counter is deliberately not
@@ -752,122 +814,6 @@ state "failed" {
 	}
 }
 
-// TestCtyOutputsToStrings_RenderFailurePropagated verifies that
-// ctyOutputsToStrings returns an error when a subworkflow output value cannot
-// be JSON-rendered, instead of silently substituting an empty string. Before the
-// fix, renderCtyValue errors were discarded (result[k] = "") so the parallel
-// subworkflow output path could silently lose output data and continue — weaker
-// than the non-parallel evaluateSubworkflowStep path which returns an error.
-//
-// A capsule type wrapping a Go channel is used because encoding/json cannot
-// serialize channel types, so renderCtyValue reliably returns an error for it.
-func TestCtyOutputsToStrings_RenderFailurePropagated(t *testing.T) {
-	type withChannel struct{ Ch chan int }
-	capsuleType := cty.Capsule("withchan", reflect.TypeOf(withChannel{}))
-	val := cty.CapsuleVal(capsuleType, &withChannel{Ch: make(chan int)})
-
-	_, err := ctyOutputsToStrings("test_step", map[string]cty.Value{"out": val})
-	if err == nil {
-		t.Error("expected error from unrenderable capsule output value; got nil (silent failure)")
-	}
-}
-
-// TestParallelIteration_SubworkflowOutputRenderErrorPropagated is an E2E test
-// verifying that Engine.Run returns an error when a parallel subworkflow
-// iteration produces an output value that cannot be JSON-rendered. Before the
-// aggregateParallelResults fix, the error was downgraded to anyFailed=true and
-// the engine would route to "any_failed" (or continue) instead of aborting.
-//
-// The callee subworkflow declares a single output whose value expression is a
-// literal capsule wrapping a Go channel. encoding/json cannot serialize channel
-// types, so renderCtyValue reliably errors.
-func TestParallelIteration_SubworkflowOutputRenderErrorPropagated(t *testing.T) {
-	type withChannel struct{ Ch chan int }
-	capsuleType := cty.Capsule("withchan", reflect.TypeOf(withChannel{}))
-	capsuleVal := cty.CapsuleVal(capsuleType, &withChannel{Ch: make(chan int)})
-
-	// Callee subworkflow: one terminal state with an output whose value is the
-	// unserializable capsule literal.
-	calleeStep := &workflow.StepNode{
-		Name: "done_step",
-		// Immediately terminal — no adapter needed.
-		TargetKind: workflow.StepTargetSubworkflow,
-		Outcomes: map[string]*workflow.CompiledOutcome{
-			"success": {Next: workflow.ReturnSentinel},
-		},
-	}
-	// A tiny callee with a single terminal state reached directly (no real step).
-	calleeDoneState := &workflow.StateNode{Name: "callee_done", Terminal: true, Success: true}
-	_ = calleeStep
-
-	calleeGraph := &workflow.FSMGraph{
-		Name:         "callee",
-		InitialState: "callee_done",
-		TargetState:  "callee_done",
-		Policy:       workflow.DefaultPolicy,
-		Steps:        map[string]*workflow.StepNode{},
-		States: map[string]*workflow.StateNode{
-			"callee_done": calleeDoneState,
-		},
-		Adapters:     map[string]*workflow.AdapterNode{},
-		Subworkflows: map[string]*workflow.SubworkflowNode{},
-		Variables:    map[string]*workflow.VariableNode{},
-		Environments: map[string]*workflow.EnvironmentNode{},
-		Outputs: map[string]*workflow.OutputNode{
-			"out": {
-				Name:  "out",
-				Value: &hclsyntax.LiteralValueExpr{Val: capsuleVal, SrcRange: hcl.Range{}},
-			},
-		},
-		OutputOrder: []string{"out"},
-	}
-
-	swNode := &workflow.SubworkflowNode{
-		Name:         "callee",
-		Body:         calleeGraph,
-		BodyEntry:    "callee_done",
-		Inputs:       map[string]hcl.Expression{},
-		DeclaredVars: map[string]*workflow.VariableNode{},
-	}
-
-	// Parent graph: one parallel subworkflow step over a single-element list.
-	// parseExpr is defined in node_step_w15_test.go within package engine.
-	parallelExpr := parseExpr(t, `["item"]`)
-	parentStep := &workflow.StepNode{
-		Name:           "call",
-		TargetKind:     workflow.StepTargetSubworkflow,
-		SubworkflowRef: "callee",
-		Parallel:       parallelExpr,
-		ParallelMax:    1,
-		Outcomes: map[string]*workflow.CompiledOutcome{
-			"all_succeeded": {Next: "done"},
-			"any_failed":    {Next: "failed"},
-		},
-	}
-	parentGraph := &workflow.FSMGraph{
-		Name:         "parent",
-		InitialState: "call",
-		TargetState:  "done",
-		Policy:       workflow.DefaultPolicy,
-		Steps:        map[string]*workflow.StepNode{"call": parentStep},
-		States: map[string]*workflow.StateNode{
-			"done":   {Name: "done", Terminal: true, Success: true},
-			"failed": {Name: "failed", Terminal: true, Success: false},
-		},
-		Adapters:     map[string]*workflow.AdapterNode{},
-		Subworkflows: map[string]*workflow.SubworkflowNode{"callee": swNode},
-		Variables:    map[string]*workflow.VariableNode{},
-		Environments: map[string]*workflow.EnvironmentNode{},
-	}
-
-	sink := &parallelSink{}
-	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{}}
-	err := New(parentGraph, loader, sink).Run(context.Background())
-	if err == nil {
-		t.Error("expected Engine.Run to return an error for unrenderable subworkflow output; got nil")
-	}
-}
-
 // collapsed r.err into anyFailed so Engine.Run returned nil even for fatal errors.
 func TestParallelIteration_FatalErrorPropagated(t *testing.T) {
 	g := compile(t, parallelWorkflowHCL(`
@@ -936,7 +882,7 @@ type statefulAdapter struct {
 func (p *statefulAdapter) Info(context.Context) (adapterhost.Info, error) {
 	return adapterhost.Info{Name: p.name, Version: "test"}, nil
 }
-func (p *statefulAdapter) OpenSession(context.Context, string, map[string]string) error {
+func (p *statefulAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
 	p.loader.opens.Add(1)
 	return nil
 }
@@ -969,6 +915,16 @@ func (p *statefulAdapter) Execute(ctx context.Context, _ string, _ *workflow.Ste
 func (p *statefulAdapter) Permit(context.Context, string, string, bool, string) error { return nil }
 func (p *statefulAdapter) CloseSession(context.Context, string) error                 { return nil }
 func (p *statefulAdapter) Kill()                                                      {}
+
+func (p *statefulAdapter) Pause(context.Context, string) error  { return nil }
+func (p *statefulAdapter) Resume(context.Context, string) error { return nil }
+func (p *statefulAdapter) Inspect(context.Context, string) (*v2.InspectResponse, error) {
+	return &v2.InspectResponse{}, nil
+}
+func (p *statefulAdapter) Snapshot(context.Context, string) (*v2.SnapshotResponse, error) {
+	return &v2.SnapshotResponse{}, nil
+}
+func (p *statefulAdapter) Restore(context.Context, string, []byte, uint32) error { return nil }
 
 // TestParallelSubworkflow_IsolatedSessions_ConcurrentExecution verifies that
 // parallel subworkflow iterations each receive a distinct adapter session (W19
@@ -1067,7 +1023,7 @@ func (p *countingNotSafeAdapter) Info(context.Context) (adapterhost.Info, error)
 	// Deliberately no Capabilities: parallel_safe — this adapter is not safe.
 	return adapterhost.Info{Name: p.name, Version: "test"}, nil
 }
-func (p *countingNotSafeAdapter) OpenSession(context.Context, string, map[string]string) error {
+func (p *countingNotSafeAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
 	return nil
 }
 func (p *countingNotSafeAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
@@ -1079,6 +1035,16 @@ func (p *countingNotSafeAdapter) Permit(context.Context, string, string, bool, s
 }
 func (p *countingNotSafeAdapter) CloseSession(context.Context, string) error { return nil }
 func (p *countingNotSafeAdapter) Kill()                                      {}
+
+func (p *countingNotSafeAdapter) Pause(context.Context, string) error  { return nil }
+func (p *countingNotSafeAdapter) Resume(context.Context, string) error { return nil }
+func (p *countingNotSafeAdapter) Inspect(context.Context, string) (*v2.InspectResponse, error) {
+	return &v2.InspectResponse{}, nil
+}
+func (p *countingNotSafeAdapter) Snapshot(context.Context, string) (*v2.SnapshotResponse, error) {
+	return &v2.SnapshotResponse{}, nil
+}
+func (p *countingNotSafeAdapter) Restore(context.Context, string, []byte, uint32) error { return nil }
 
 // TestEvaluateParallel_AdapterNotParallelSafe_RuntimeError verifies that when
 // an adapter step with parallel = [...] is backed by a session whose adapter
@@ -1322,7 +1288,9 @@ type slowLogAdapter struct {
 func (p *slowLogAdapter) Info(context.Context) (adapterhost.Info, error) {
 	return adapterhost.Info{Name: p.name, Version: "test", Capabilities: []string{"parallel_safe"}}, nil
 }
-func (p *slowLogAdapter) OpenSession(context.Context, string, map[string]string) error { return nil }
+func (p *slowLogAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
+	return nil
+}
 func (p *slowLogAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
 	chunk := []byte("x")
 	for i := 0; i < p.logsPerCall; i++ {
@@ -1333,6 +1301,16 @@ func (p *slowLogAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNo
 func (p *slowLogAdapter) Permit(context.Context, string, string, bool, string) error { return nil }
 func (p *slowLogAdapter) CloseSession(context.Context, string) error                 { return nil }
 func (p *slowLogAdapter) Kill()                                                      {}
+
+func (p *slowLogAdapter) Pause(context.Context, string) error  { return nil }
+func (p *slowLogAdapter) Resume(context.Context, string) error { return nil }
+func (p *slowLogAdapter) Inspect(context.Context, string) (*v2.InspectResponse, error) {
+	return &v2.InspectResponse{}, nil
+}
+func (p *slowLogAdapter) Snapshot(context.Context, string) (*v2.SnapshotResponse, error) {
+	return &v2.SnapshotResponse{}, nil
+}
+func (p *slowLogAdapter) Restore(context.Context, string, []byte, uint32) error { return nil }
 
 // slowCountingSink is a Sink whose StepEventSink-produced EventSink sleeps
 // writeDelay on every Log call. This models gRPC/IO write latency and exposes

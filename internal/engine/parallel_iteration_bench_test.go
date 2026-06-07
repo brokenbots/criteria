@@ -35,6 +35,7 @@ import (
 	"testing"
 	"time"
 
+	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/workflow"
@@ -103,7 +104,9 @@ type highLogAdapter struct {
 func (p *highLogAdapter) Info(context.Context) (adapterhost.Info, error) {
 	return adapterhost.Info{Name: p.name, Version: "bench", Capabilities: []string{"parallel_safe"}}, nil
 }
-func (p *highLogAdapter) OpenSession(context.Context, string, map[string]string) error { return nil }
+func (p *highLogAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
+	return nil
+}
 func (p *highLogAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
 	for i := 0; i < benchEventsPerIter; i++ {
 		sink.Log("stdout", p.chunk)
@@ -113,6 +116,16 @@ func (p *highLogAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNo
 func (p *highLogAdapter) Permit(context.Context, string, string, bool, string) error { return nil }
 func (p *highLogAdapter) CloseSession(context.Context, string) error                 { return nil }
 func (p *highLogAdapter) Kill()                                                      {}
+
+func (p *highLogAdapter) Pause(context.Context, string) error  { return nil }
+func (p *highLogAdapter) Resume(context.Context, string) error { return nil }
+func (p *highLogAdapter) Inspect(context.Context, string) (*v2.InspectResponse, error) {
+	return &v2.InspectResponse{}, nil
+}
+func (p *highLogAdapter) Snapshot(context.Context, string) (*v2.SnapshotResponse, error) {
+	return &v2.SnapshotResponse{}, nil
+}
+func (p *highLogAdapter) Restore(context.Context, string, []byte, uint32) error { return nil }
 
 // buildParallelBenchWorkflow compiles a parallel step with n items all using
 // the "fake" adapter. Uses injectDefaultAdapters (same package) to resolve

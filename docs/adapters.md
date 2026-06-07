@@ -1,114 +1,40 @@
 # Adapters
 
-For containerized execution, see [docs/runtime/docker.md](runtime/docker.md).
+This is the reference for running adapter-backed workflows with Criteria and for
+authoring your own adapters. For the workflow language itself (variables, step
+outputs, branching, iteration, wait nodes, approval gates) see
+[workflow.md](workflow.md).
 
-This document is the reference for running adapter-backed workflows with Criteria. For the full workflow language reference (variables, step outputs, branching, iteration, wait nodes, approval gates), see [workflow.md](workflow.md).
+## Concepts
 
-## What Adapters Are
+- **Adapter** — an out-of-process program that performs work for a workflow step
+  (an LLM agent, a shell runner, an API client). The host speaks a versioned
+  gRPC protocol (v2) to it over a local transport; the adapter stays outside the
+  Criteria process boundary, so its failures are isolated from the engine.
+- **OCI artifact** — the distribution unit. An adapter version is published as a
+  multi-platform OCI artifact (per-platform binary blobs + an `adapter.yaml`
+  manifest), to any OCI-compliant registry (GHCR, ECR, GAR, Harbor, self-hosted).
+  There is no central registry; you reference adapters by their registry URL.
+- **Manifest (`adapter.yaml`)** — code-declared metadata the adapter emits about
+  itself: name, version, capabilities, config/input/output schemas, declared
+  secrets, supported platforms, and an optional container-image reference. The
+  host reads it at pull time without launching the adapter.
+- **Lockfile (`.criteria.lock.hcl`)** — a Terraform-style file committed next to
+  your workflow that pins every referenced adapter by digest, records the signer
+  identity, and makes the workflow reproduce identically anywhere.
+- **Signing** — published artifacts are signed with cosign. The default CI path
+  is **keyless** (Sigstore/Fulcio, no long-lived keys); explicit Ed25519 keys are
+  also supported. The host verifies signatures at pull time against a
+  configurable trust policy.
+- **Environment** — the sandbox/policy boundary a step's adapter runs under
+  (`shell`, `sandbox`, `container`, `remote`). Declared in HCL and bound to
+  adapters or steps.
 
-A Criteria adapter is an out-of-process binary named `criteria-adapter-<name>`. Criteria discovers adapters in this order:
+## Quickstart
 
-1. `${CRITERIA_PLUGINS}/criteria-adapter-<name>`
-2. `~/.criteria/plugins/criteria-adapter-<name>`
+### 1. Reference an adapter and run a workflow
 
-Criteria does not look on `PATH`. The host starts the adapter with HashiCorp `go-plugin`; the adapter then speaks the shared gRPC adapter protocol over a local transport. The binary stays outside the Criteria process boundary, so adapter-specific runtime failures are isolated from the engine.
-
-The first production adapter in this repo is `copilot`, shipped as `bin/criteria-adapter-copilot`.
-
-## Installing an Adapter
-
-Build the repo first:
-
-```bash
-make build
-```
-
-Install the adapter by copying the built binary into an adapter directory:
-
-```bash
-mkdir -p ~/.criteria/plugins
-cp bin/criteria-adapter-copilot ~/.criteria/plugins/
-chmod +x ~/.criteria/plugins/criteria-adapter-copilot
-```
-
-To use a temporary adapter directory instead, point Criteria at it explicitly:
-
-```bash
-tmpdir="$(mktemp -d)"
-cp bin/criteria-adapter-copilot "$tmpdir/"
-chmod +x "$tmpdir/criteria-adapter-copilot"
-CRITERIA_PLUGINS="$tmpdir" ./bin/criteria status --server http://localhost:8080
-```
-
-For local Copilot-backed runs you also need the `copilot` CLI available. The repo helper script documents the expected setup:
-
-```bash
-gh extension install github/gh-copilot
-```
-
-If the CLI is installed somewhere non-standard, set `CRITERIA_COPILOT_BIN=/path/to/copilot`.
-
-## HCL Surface — Shell Adapter
-
-The built-in `shell` adapter runs `input.command` via `sh -c` (Unix) or `cmd /C` (Windows).
-
-### New input attributes (W05 hardening)
-
-All attributes below are optional. The security defaults are unconditional;
-there is no escape hatch.
-
-| Attribute | Type | Default | Description |
-|---|---|---|---|
-| `command` | `string` | (required) | Shell command to run. |
-| `env` | `string` | `""` (inherit allowlist only) | JSON-encoded `map[string]string` of additional env vars to pass to the child. Values starting with `$` inherit from the parent (e.g. `"$GOFLAGS"` → `os.Getenv("GOFLAGS")`). `PATH` is reserved — use `command_path` instead. Use `jsonencode({...})` in HCL. |
-| `command_path` | `string` | `""` (sanitized parent PATH) | OS path-list-separator delimited PATH for the child process (`:` on Unix, `;` on Windows). When set, replaces the inherited PATH entirely. When absent, the parent PATH is passed through with empty and non-absolute segments (including `.`) removed. |
-| `timeout` | `string` | `"5m"` | Hard step timeout (e.g. `"10m"`, `"1h"`). Range: `1s`–`1h`. On timeout the spawned shell receives SIGTERM; after 5 s it receives SIGKILL. |
-| `output_limit_bytes` | `string` | `"4194304"` (4 MiB) | Per-stream stdout/stderr capture limit. Range: `1024`–`67108864`. Overflow is non-fatal; a `_truncated_<stream>: "true"` sentinel is set in step outputs. |
-| `working_directory` | `string` | `""` (inherit operator CWD) | CWD for the spawned process. Must resolve under `$HOME` or `CRITERIA_SHELL_ALLOWED_PATHS` (OS path-list-separator delimited env var). |
-
-### Example with env and timeout
-
-<!-- validator: skip: illustrative excerpt only -->
-```hcl
-step "build" {
-  target = adapter.shell.default
-  input {
-    command = "make build"
-    env     = jsonencode({GOFLAGS: "$GOFLAGS", CGO_ENABLED: "0"})
-    timeout = "10m"
-  }
-  outcome "success" { next = "test" }
-  outcome "failure" { next = "failed" }
-}
-```
-
-### Security defaults
-
-The shell adapter applies five hardening defaults from W05. See
-[`docs/security/shell-adapter-threat-model.md`](security/shell-adapter-threat-model.md)
-for the full design.
-
-1. **Environment allowlist** — only `PATH`, `HOME`, `USER`, `LOGNAME`, `LANG`,
-   `LC_*`, `TZ`, and `TERM` (when stdin is a TTY) are inherited by default.
-   All other parent vars are dropped unless declared in `input.env`.
-2. **PATH sanitization** — empty and non-absolute segments (including `.`) are
-   removed from the inherited PATH before the child sees it. Use `command_path`
-   to declare an explicit PATH.
-3. **Hard timeout** — default 5 minutes. The spawned shell process receives
-   SIGTERM then (after 5 s) SIGKILL. Note that grandchildren spawned by `sh -c`
-   are not joined to a separate process group and may not be signalled directly;
-   pipe read-ends are closed on cancellation so capture goroutines unblock
-   promptly. A `timeout` adapter event is emitted in the run stream.
-4. **Bounded output capture** — default 4 MiB per stream. Overflow is truncated
-   (not fatal); an `output_truncated` adapter event records `dropped_bytes`.
-5. **Working-directory confinement** — `working_directory` must be under `$HOME`
-   or explicitly allowed via `CRITERIA_SHELL_ALLOWED_PATHS`.
-
-## HCL Surface — Adapter-backed Workflows
-
-Adapter-backed workflows declare one or more `adapter "<type>" "<name>" { }` blocks at the top level and reference them from steps via `step.target`. The engine manages the full session lifecycle automatically — no explicit open or close steps are needed.
-
-A minimal Copilot-backed workflow:
+Declare an adapter by its OCI reference and bind steps to it:
 
 <!-- validator: skip: illustrative excerpt only -->
 ```hcl
@@ -118,513 +44,347 @@ workflow "agent_hello" {
   target_state  = "done"
 }
 
-adapter "copilot" "assistant" {
+adapter "claude" "assistant" {
+  source  = "ghcr.io/your-org/criteria-adapter-claude" # repo path, version-decoupled
+  version = "0.5.0"                                     # semver: "1.2.3", "^1.2", "latest"
   config {
     max_turns = 4
   }
 }
 
 step "ask" {
-  target      = adapter.copilot.assistant
-  allow_tools = ["shell:git status"]
+  target = adapter.claude.assistant
   input {
-    prompt = "Run `git status` in the current directory. Summarize the result in one short paragraph. Call submit_outcome with 'success' if you successfully ran `git status`, otherwise 'failure'."
+    prompt = "Summarize the repository's README in two sentences."
   }
-
-  outcome "success"      { next = "done" }
-  outcome "needs_review" { next = "done" }
-  outcome "failure"      { next = "failed" }
+  outcome "success" { next = "done" }
+  outcome "failure" { next = "failed" }
 }
 
 state "done"   { terminal = true }
 state "failed" { terminal = true; success = false }
 ```
 
-Key points:
+- The first label is the adapter **type**, the second an instance **name**; steps
+  bind via `target = adapter.<type>.<name>` (a traversal, not a string).
+- The engine opens the session before the step runs and closes it afterward — no
+  explicit open/close steps.
 
-- `adapter "copilot" "assistant"` declares a named adapter session. The first label is the adapter type (`copilot`); the second is the instance name (`assistant`). The engine resolves this to the `criteria-adapter-copilot` binary.
-- `step.target = adapter.copilot.assistant` binds the step to the declared adapter instance. This is a traversal expression, not a string.
-- The session is opened automatically before `ask` runs and closed automatically after it completes (success or failure). No explicit `lifecycle = "open"` or `lifecycle = "close"` steps exist in v0.3.0.
-- For the Copilot adapter, `input.prompt` is the required step-level input. `max_turns` in the `config` block limits conversation turns; see "Outcome finalization" below for how the step outcome is determined.
+### 2. Pin adapters in the lockfile
 
-See [docs/workflow.md — Adapters](workflow.md#adapters) for the full adapter block reference.
-
-## Copilot Adapter Reference
-
-### Adapter-level configuration (`config {}` block)
-
-These fields are declared on the `adapter { config { ... } }` block and apply for the lifetime of the session:
-
-| Field | Type | Default | Description |
-|---|---|---|---|
-| `model` | `string` | Copilot default | Model identifier (e.g. `"claude-sonnet-4.6"`). |
-| `reasoning_effort` | `string` | Copilot default | Reasoning budget for the session. One of `low`, `medium`, `high`, `xhigh`. |
-| `system_prompt` | `string` | `""` | System prompt injected at session open. |
-| `max_turns` | `number` | Copilot default | Maximum conversation turns per step. If the cap is reached, the adapter returns `needs_review` when that outcome is declared for the step, otherwise `failure`. |
-| `working_directory` | `string` | CWD of the criteria process | Working directory for tool invocations inside the adapter session. |
-| `provider_type` | `string` | `openai` | Custom provider type when `provider_base_url` is set. One of `openai`, `azure`, `anthropic`. |
-| `provider_base_url` | `string` | `""` | OpenAI-compatible endpoint for BYOK mode (e.g. `http://localhost:11434/v1` for Ollama, your vLLM endpoint). When set, `model` is required and Copilot's default backend is bypassed. |
-| `provider_api_key` | `string` | `""` | API key for the custom provider. Optional for local providers (Ollama). Use `env()` in HCL to keep secrets out of source. |
-| `provider_bearer_token` | `string` | `""` | Bearer token; takes precedence over `provider_api_key`. |
-| `provider_wire_api` | `string` | `completions` | Wire format for `openai`/`azure` providers: `completions` or `responses`. |
-| `provider_azure_api_version` | `string` | `2024-10-21` | Azure API version; only used when `provider_type = "azure"`. |
-
-#### Hosting on vLLM / Ollama
-
-The custom-provider fields make it possible to point a Copilot adapter session
-at any OpenAI-compatible endpoint, including local model servers like
-[Ollama](https://ollama.com/) and [vLLM](https://docs.vllm.ai/):
-
-<!-- validator: skip: illustrative excerpt only -->
-```hcl
-adapter "copilot" "local" {
-  config {
-    provider_base_url = "http://localhost:11434/v1"  # Ollama
-    model             = "deepseek-coder-v2:16b"      # required with custom provider
-  }
-}
-
-adapter "copilot" "vllm" {
-  config {
-    provider_base_url = "http://vllm.internal:8000/v1"
-    provider_api_key  = env("VLLM_API_KEY")
-    model             = "meta-llama/Llama-3.1-70B-Instruct"
-  }
-}
+```bash
+criteria adapter lock        # resolve every referenced adapter, pin digests
 ```
 
-The adapter does not enable OpenTelemetry export: it never sets the Copilot
-SDK's `Telemetry` config, so `COPILOT_OTEL_ENABLED` stays unset and the CLI
-process does not emit traces to an OTLP collector.
+This writes `.criteria.lock.hcl` next to the workflow. Commit it. From then on
+the workflow resolves to the exact pinned digests; `criteria adapter lock
+--upgrade` re-resolves to the latest matching versions.
 
-Example:
+If a workflow references OCI adapters but no lockfile exists, compilation tells
+you to run `criteria adapter lock`. Missing adapters are pulled into the local
+cache (`~/.criteria/cache/oci`) automatically during compile.
 
-<!-- validator: skip: illustrative excerpt only -->
-```hcl
-adapter "copilot" "planner" {
-  config {
-    model            = "claude-sonnet-4.6"
-    reasoning_effort = "medium"
-    system_prompt    = "You are a senior software engineer. Think carefully before writing code."
-    max_turns        = 8
-  }
-}
-```
+### 3. Manage the local cache directly (optional)
 
-### Step-level input overrides (`input {}` block)
+| Command | Purpose |
+|---|---|
+| `criteria adapter pull <ref>` | Fetch an artifact into the cache (verifies signature). `--allow-unsigned` to skip; `--registry <alias>` for short-name resolution. |
+| `criteria adapter list` | List cached (`--installed`) or workflow-referenced (`--referenced`) adapters. |
+| `criteria adapter info <name>` | Print the cached manifest and verified signer identity. |
+| `criteria adapter where <name>` | Print the on-disk binary path for this platform. |
+| `criteria adapter remove <name>` | Remove an adapter from the cache (`--prune` to GC blobs). |
+| `criteria adapter prune` | Reclaim cache space (`--older-than 30d`, `--max-size <bytes>`). |
+| `criteria adapter dev <binary>` | Register a local binary as an adapter, skipping lockfile + signature checks — the fast inner-loop path. |
 
-Some fields can be overridden per step in the `input {}` block. The override applies only for that step; subsequent steps revert to the adapter-level default.
+## Authoring an adapter
 
-| Field | Type | Description |
+Start from a template rather than wiring the protocol by hand:
+
+- [`criteria-adapter-starter-typescript`](https://github.com/brokenbots/criteria-adapter-starter-typescript)
+- [`criteria-adapter-starter-python`](https://github.com/brokenbots/criteria-adapter-starter-python)
+- [`criteria-adapter-starter-go`](https://github.com/brokenbots/criteria-adapter-starter-go)
+
+`gh repo create --template …` (or "Use this template") gives a buildable
+hello-world adapter with a publish workflow, a commented Dockerfile, and remote
+deployment examples. Each SDK exposes the same `serve({...})` shape — a
+config/input/output schema plus an `execute` handler — and helpers for session
+state, outcome validation, permission correlation, a redaction-aware logger, and
+manifest emission (`--emit-manifest`).
+
+| Language | SDK | Single-binary build |
 |---|---|---|
-| `prompt` | `string` | **(Required)** The user message sent to the adapter for this step. |
-| `max_turns` | `number` | Per-step turn limit override. |
-| `reasoning_effort` | `string` | Per-step reasoning effort override. One of `low`, `medium`, `high`, `xhigh`. |
+| TypeScript | [`@criteria/adapter-sdk`](https://github.com/brokenbots/criteria-typescript-adapter-sdk) | Bun `--compile` |
+| Python | [`criteria-python-adapter-sdk`](https://github.com/brokenbots/criteria-python-adapter-sdk) | Nuitka `--onefile` |
+| Go | [`criteria-go-adapter-sdk`](https://github.com/brokenbots/criteria-go-adapter-sdk) | `go build` |
 
-Example with per-step `reasoning_effort` override:
+### Publishing
 
-<!-- validator: skip: illustrative excerpt only -->
-```hcl
-adapter "copilot" "planner" {
-  config {
-    model            = "claude-sonnet-4.6"
-    reasoning_effort = "medium"  # default for all steps
+Building is the adapter's own job (its toolchain); publishing is uniform. The
+[`brokenbots/publish-adapter`](https://github.com/brokenbots/publish-adapter)
+action wraps `criteria adapter publish`: emit manifest → validate → construct
+the OCI artifact → cosign-sign → push. The starters ship three equivalent paths:
+
+- **GitHub Actions** — push a `v*` tag; `publish.yml` signs **keyless** via the
+  job's OIDC identity (`id-token: write`).
+- **GitLab CI** — `.gitlab-ci.yml.example`, signing keyless via GitLab
+  `id_tokens`.
+- **Local / other CI** — `make publish REGISTRY=…`, calling
+  `criteria adapter publish out/adapter --registry <ref>` (add `--keyless` in CI,
+  `--sign-key <key>` for explicit-key signing, or publish unsigned for local
+  experiments).
+
+To also ship a runnable container image (for `environment.runtime = "docker"`),
+build and push the image from your own CI, then record it with
+`criteria adapter publish … --image <ref>` (or the action's `image:` input). The
+publish step does not build images — it records the already-pushed image's
+digest in the manifest. See [Environments → container](#container) and
+[docs/runtime/docker.md](runtime/docker.md).
+
+### Signing and trust
+
+The model is **"the lockfile is the trust anchor"**: `criteria adapter lock`
+verifies the artifact's signature and pins the signer (key fingerprint, or
+keyless issuer + subject); `pull`/`compile`/`apply` then re-verify against that
+pin on every run. A changed signer surfaces as a `SignerChanged` lockfile diff.
+
+- **Keyless (default in CI, public).** `criteria adapter publish --keyless`
+  obtains an ephemeral key, has Fulcio certify it against the workflow's OIDC
+  identity, **records the signature in the Rekor transparency log**, and attaches
+  the resulting Sigstore bundle (certificate + inclusion proof) as an OCI
+  referrer. The Rekor entry is what keeps the signature verifiable after the
+  ~10-minute Fulcio certificate expires — the verifier checks the certificate at
+  the log timestamp, not at verification time. Token resolution order:
+  `--identity-token`, then `SIGSTORE_ID_TOKEN`, then the ambient GitHub Actions
+  provider. Override the log with `--rekor-url` (default the public Sigstore
+  Rekor). By default any subject from a well-known CI OIDC issuer (e.g. GitHub
+  Actions) is accepted at first lock and then pinned, so **an adapter signed by
+  its own repo's CI verifies with no per-consumer configuration**.
+- **Explicit key (enterprise, offline).** `--sign-key <pem>` signs with an
+  Ed25519 key; the lockfile records the key fingerprint. Consumers declare which
+  public keys they trust in a **trust config** — a global `~/.criteria/trust.hcl`
+  and/or a `trust.hcl` beside the workflow (their union is used), or ad-hoc
+  `--trusted-key <pem>` on `pull`/`lock`:
+
+  ```hcl
+  # ~/.criteria/trust.hcl
+  trusted_key {
+    key = <<-EOT
+    -----BEGIN PUBLIC KEY-----
+    ...
+    -----END PUBLIC KEY-----
+    EOT
   }
-}
+  trusted_key { path = "keys/team.pem" }  # path is relative to this file
+  ```
 
-# Planning step uses higher reasoning effort.
-step "plan" {
-  target = adapter.copilot.planner
-  input {
-    prompt           = "Draft a step-by-step implementation plan."
-    reasoning_effort = "high"   # overrides "medium" for this step only
-  }
-  outcome "success" { next = "execute" }
-  outcome "failure" { next = "failed" }
-}
+  Generate a key pair with, e.g., `openssl genpkey -algorithm ed25519`. Key mode
+  verifies fully offline (no Fulcio, Rekor, or TUF).
+- **Verification posture.** The workflow-level setting
+  `verification = "strict" | "warn" | "off"` controls failure handling. The CLI
+  override `--allow-unsigned` (or `CRITERIA_ALLOW_UNSIGNED=1`) skips verification
+  for a single invocation; it is available on `pull`, `lock`, `compile`, and
+  `apply` for local development and CI. Precedence: `--allow-unsigned` > env >
+  workflow `verification` > the built-in default. During the signing-completion
+  transition the effective default is `warn` (log, don't fail) so legacy/unsigned
+  artifacts don't break `lock`/`apply`; it returns to `strict` once keyless
+  verification is confirmed in CI.
+- **TUF / air-gapped.** Keyless verification needs the Sigstore TUF root (fetched
+  via TUF and cached at `~/.criteria/cache/sigstore/`; clear that directory to
+  refresh) and a Rekor entry created while online at signing time. Fully
+  air-gapped consumers use explicit-key mode or `--allow-unsigned`.
 
-# Execution steps inherit the adapter default ("medium").
-step "execute" {
-  target = adapter.copilot.planner
-  input {
-    prompt = "Implement the plan from the previous step."
-  }
-  outcome "success" { next = "done" }
-  outcome "failure" { next = "failed" }
-}
-```
+## Secrets
 
-### Common mistake: adapter config fields in step input
+Adapters declare the secrets they need in their manifest; the host resolves and
+delivers them over a **dedicated channel** that is structurally separate from
+non-sensitive config, so values cannot leak through naive logging or
+serialization.
 
-Fields like `system_prompt`, `model`, and `working_directory` belong in the `adapter { config { ... } }` block, not in a step's `input {}` block. Placing them in `input {}` is a compile error. For the Copilot adapter the diagnostic names the correct location:
+- **Declared secrets.** The manifest lists `secrets: [{ name, description,
+  required }]`. The host resolves each from a configured provider stack (env,
+  file, OS keychain, vault, sops) and passes values only via the protocol's
+  dedicated secret fields — never via `config` or `input`.
+- **Workflow-level tagging.** A `variable` (or `shared_variable`) marked
+  `secret = true` is tainted from the moment it enters the workflow: never
+  logged, never written to plan output, lockfile, or checkpoint — only its
+  origin reference is persisted, and it is re-resolved on resume.
+- **Binding into an adapter.** Satisfy declared secrets from a workflow variable,
+  a sensitive step output, or a provider reference:
 
-```
-step "plan" input: field "system_prompt" is not valid in step input for adapter "copilot"; it belongs in the adapter config block:
-  adapter "copilot" "<name>" {
-    config {
-      system_prompt = ...
+  <!-- validator: skip: illustrative excerpt only -->
+  ```hcl
+  adapter "anthropic" "default" {
+    source  = "ghcr.io/your-org/criteria-adapter-anthropic"
+    version = "0.5.0"
+    secrets {
+      ANTHROPIC_API_KEY = var.api_key                    # secret-tagged variable
+      VAULT_TOKEN       = step.vault_fetch.outputs.token  # sensitive output
+      OTHER             = "env:OTHER_SECRET"              # provider reference
     }
   }
-```
+  ```
 
-The only step-overrideable Copilot fields are `prompt`, `max_turns`, and `reasoning_effort`.
+- **Taint propagation.** Once a value is secret, every value derived from it is
+  too. The compiler refuses to interpolate a tainted value into `config`,
+  `input`, a log/template string, or any non-secret destination, with a hint to
+  bind it via `secrets { … }` or a step's `secret_input { … }` instead.
+- **Log redaction.** Each secret is registered with the redaction registry at
+  session open; any value crossing the host log pipeline (workflow/run/audit log,
+  terminal) is masked. SDKs ship a redaction-aware logger so adapter-side logs
+  flow through the masker too.
+- **Shelling out to a child program.** Because secrets are *not* placed in the
+  adapter's process environment, an adapter that exec's a child needing a secret
+  in *its* env (e.g. an upstream CLI) must pass it explicitly. Each SDK provides
+  a `secrets.spawnEnv([...])` helper that returns a child env containing only the
+  named, declared secrets and re-registers them for redaction. This is by design
+  — it forces a deliberate decision about which secret crosses which boundary.
 
-## Permission Gating
+## Environments
 
-Permission gating is deny-by-default.
+The environment block is the sandbox/policy boundary. It keeps the two-label
+form `environment "<type>" "<name>" { … }`: the **type** selects the runtime
+isolation path; the **name** distinguishes instances. Bind an environment per
+adapter (or per step) by reference:
 
-- If a step does not declare `allow_tools`, every tool request is denied.
-- `allow_tools` is only valid on execute-shape adapter steps. Placing `allow_tools` on any other node type is a compile error.
-- Patterns use Go `filepath.Match` semantics. That makes exact matches and prefix globs useful:
-  - `read` (or `read_file` — Copilot alias, see below)
-  - `shell:git status`
-  - `shell:go test*`
-  - `shell:*`
-
-The host evaluates adapter permission requests against those patterns. When a request matches, the run emits `permission.granted`; otherwise it emits `permission.denied` with reason `no matching allow_tools entry` and (for the Copilot adapter) includes a `suggestion` field only when a relevant canonical-kind suggestion exists (for example, for denied kinds with known aliases such as `read`/`write`). The Copilot adapter then surfaces the denied turn as `failure`.
-
-### Copilot permission-kind aliases
-
-The Copilot SDK reports permission requests using short kind names (`read`, `write`, `shell`, `mcp`, `url`, `memory`, `custom-tool`, `hook`). For convenience, two user-friendly aliases are recognised in `allow_tools` entries for Copilot-backed steps:
-
-| Alias | Canonical SDK kind |
-|---|---|
-| `read_file` | `read` |
-| `write_file` | `write` |
-
-Both forms resolve identically at runtime. The canonical forms are shorter and appear verbatim in SDK documentation; using an alias produces a compile-time warning:
-
-```
-step "run" allow_tools: "read_file" is a recognized alias for the Copilot SDK kind "read"; consider using the canonical form for clarity
-```
-
-The hello example uses the narrowest possible allowlist:
-
-<!-- validator: skip: bare attribute snippet, not a standalone HCL workflow -->
+<!-- validator: skip: illustrative excerpt only -->
 ```hcl
-allow_tools = ["shell:git status"]
+environment "container" "prod" {
+  policy_mode = "strict"
+  runtime     = "docker"
+  network  { allow = ["api.anthropic.com:443"] }
+  secrets  { provider = "vault:secret/anthropic" }
+  resources { cpu = "2", memory = "1Gi", timeout = "5m" }
+}
+
+adapter "anthropic" "default" {
+  source      = "ghcr.io/your-org/criteria-adapter-anthropic"
+  version     = "0.5.0"
+  environment = var.deploy_env == "prod" ? container.prod : sandbox.dev
+}
 ```
 
-That allows exactly `git status` and nothing else.
+### Types
 
-## Outcome Finalization (Copilot Adapter)
-
-The Copilot adapter determines step outcomes via a structured `submit_outcome` tool rather than parsing free-form prose from the assistant's final message.
-
-### How it works
-
-1. **Tool registration** — at `OpenSession`, the adapter registers a `submit_outcome` tool on the SDK session. The tool has `SkipPermission = true` so it does not trigger a permission request.
-
-2. **Prompt preamble** — when `AllowedOutcomes` is non-empty for a step (i.e., the step declares at least one `outcome` block), the adapter prepends the following preamble to the user prompt before sending it to the model:
-   ```
-   You must finalize the outcome for this step by calling the `submit_outcome` tool exactly once before ending the turn. The allowed outcomes are: <comma-separated list>. If you do not call the tool with a valid outcome, the step will fail.
-   ```
-
-3. **Tool validation** — the `submit_outcome` handler validates the `outcome` argument against the active allowed set. Invalid or empty outcomes return a `failure` `ToolResult` (not a Go error) so the model can retry within the same turn.
-
-4. **Reprompt loop** — if the model ends a turn without calling `submit_outcome` with a valid outcome, the adapter reprompts up to 2 additional times (3 attempts total) with:
-   ```
-   You must call the `submit_outcome` tool with one of the allowed outcomes: <list>. Do not return a final answer without calling the tool. ...
-   ```
-
-5. **Exhaustion** — if all 3 attempts fail, the adapter emits an `outcome.failure` adapter event and returns `"failure"`.
-
-   The `outcome.failure` event payload contains:
-
-   | Field | Type | Description |
-   |---|---|---|
-   | `reason` | `string` | Human-readable category: `"missing finalize"`, `"invalid outcome"`, `"duplicate finalize"`, or `"step has no declared outcomes"` |
-   | `kind` | `string` | Machine-readable category: `"missing"`, `"invalid_outcome"`, `"duplicate"`, or `"no_outcomes"` |
-   | `allowed_outcomes` | `[]string` | Sorted list of the step's declared outcomes (for operator alerting/debugging) |
-   | `attempts` | `int` | Number of `submit_outcome` invocations made during this step |
-
-### Outcome semantics
-
-| Situation | Returned outcome |
+| Type | Isolation |
 |---|---|
-| Model calls `submit_outcome("success")` | `"success"` |
-| Model calls `submit_outcome("failure")` | `"failure"` |
-| Model calls `submit_outcome("needs_review")` | `"needs_review"` |
-| All 3 attempts exhausted without valid call | `"failure"` |
-| `max_turns` reached, `needs_review` in allowed set | `"needs_review"` |
-| `max_turns` reached, `needs_review` not in allowed set | `"failure"` |
-| Permission request denied | `"failure"` |
+| `shell` | No added isolation; the adapter runs as a plain subprocess with env injection. The lightest path. |
+| `sandbox` | OS-native isolation. **Linux:** user/mount/pid/net/IPC/UTS namespaces + landlock + seccomp (in-process, no cgo, no helper binary); `bubblewrap` is used instead when present and opted in. **macOS:** an auto-generated `sandbox-exec` profile. |
+| `container` | `docker run` / `podman run` of the adapter's published runnable image (`environment.runtime = "docker" \| "podman"`). The same cross-platform "stronger than host-native" path. |
+| `remote` | The adapter is not launched by the host; it dials in (phone-home). See [Remote execution](#remote-execution). |
 
-### Duplicate calls
+The type label is an open enum — `vm`, `firecracker`, etc. can be added without
+grammar changes; the registry gates which types a given host OS supports.
 
-If the model calls `submit_outcome` more than once in the same turn, the first valid call wins. Subsequent calls return a `failure` `ToolResult` with a message indicating the outcome was already finalized.
+### Policy resolution
 
-### Steps without declared outcomes
+Each policy field resolves per session:
 
-If a step declares no `outcome` blocks, `AllowedOutcomes` is empty: no preamble is prepended and the model receives no `submit_outcome` instructions. If the model calls `submit_outcome` anyway, every outcome is rejected (empty allowed set). When the first idle turn arrives, the adapter fails immediately with `outcome.failure` kind `"no_outcomes"` — it does not reprompt, because reprompting can never succeed when there are no valid outcomes. To avoid this, always declare at least one outcome on steps backed by the Copilot adapter.
+1. **Set explicitly in the environment block** → the environment is
+   authoritative; the adapter's manifest hint for that field is ignored.
+2. **Unset** → the adapter's manifest hint provides the default (permissive
+   mode).
+3. **`policy_mode = "strict"`** → unset fields default to deny-all; adapter hints
+   are never trusted as defaults. This is the zero-trust/enterprise opt-in.
 
-### Iteration contexts
+Fields: `policy_mode` (`permissive` default / `strict`), `sandbox`
+(`strict`/`permissive`/`off`), `filesystem { read, write }`,
+`network { allow }` (host:port list, `"any"`, or `"none"`), `secrets { provider,
+allow }`, `resources { cpu, memory, timeout }`, `os` (compile-time host gate),
+and type-specific extras such as `runtime` for `container`. Compatibility between
+an adapter and an environment type is checked at compile time only when the
+adapter declares a `compatible_environments` constraint.
 
-`submit_outcome` is used only for workflow `step` nodes. Iteration/`for_each` cursor outcomes (`all_succeeded`, `any_failed`) are computed by the engine from individual step results and are **not** finalized via `submit_outcome`.
+### Per-OS support matrix
 
-### Step outputs
-
-The adapter emits the following output keys on every result, success or failure, so downstream workflow expressions have a consistent shape:
-
-| Key | Type | Description |
+| Capability | Linux | macOS |
 |---|---|---|
-| `outcome` | `string` | The finalized outcome name (mirrors the FSM transition outcome). |
-| `reason` | `string` | The optional `reason` argument the model passed to `submit_outcome`. Empty on failure paths (reprompt exhaustion, permission denial, `max_turns` reached) since the model did not supply one. |
-
-Downstream steps can read these as `steps.<step_name>.outcome` and `steps.<step_name>.reason`.
-
-## Running the Demo
-
-The shortest manual path for `examples/agent_hello.hcl` is:
-
-```bash
-make build
-mkdir -p ~/.criteria/plugins
-cp bin/criteria-adapter-copilot ~/.criteria/plugins/
-chmod +x ~/.criteria/plugins/criteria-adapter-copilot
-# Start a Criteria-compatible orchestrator server (e.g., from github.com/brokenbots/orchestrator)
-# listening on 127.0.0.1:8080
-```
-
-In a second terminal, run:
-
-```bash
-./bin/criteria apply examples/agent_hello.hcl --server http://127.0.0.1:8080 --server-codec proto
-```
-
-Expected result on the success path:
-
-1. Criteria logs a `starting run` line with a `run_id`.
-2. The Copilot adapter opens a session, requests permission for `shell:git status`, and receives a grant because the step allowlist matches.
-3. The assistant reports the repository status and calls `submit_outcome("success")`.
-4. Criteria closes the session and the server records the run as `succeeded`.
-
-For a one-command smoke check, use:
-
-```bash
-COPILOT_E2E=1 ./scripts/smoke-agent-hello.sh
-```
-
-That script builds the repo, installs the adapter into a temp directory, starts a local server, runs `agent_hello.hcl`, and asserts that the server run status becomes `succeeded`.
-
-## The Two-Adapter Loop Pattern
-
-`examples/workstream_review_loop/workstream_review_loop.hcl` demonstrates the executor/reviewer loop pattern using two named adapter sessions.
-
-Key traits:
-
-- Two named adapters (`executor` and `reviewer`) both bind to the `copilot` type.
-- The engine opens both sessions automatically on first use and closes them automatically when the workflow terminates.
-- The executor gets a wider allowlist; the reviewer gets a narrow allowlist.
-- The review step drives the loop with `approved`, `changes_requested`, or the conservative `needs_review` fallback used when the `max_turns` cap is reached and `needs_review` is in the step's allowed set.
-- `policy { max_total_steps = 120 }` prevents an infinite reviewer loop.
-
-The control flow is:
-
-1. Executor implements the workstream tasks.
-2. Reviewer reviews the changes.
-3. If review returns `changes_requested` or `needs_review`, go back to execute.
-4. If review returns `approved`, executor commits and the workflow finishes.
-
-This is the right pattern when you want distinct tool budgets per role and an explicit safety brake on the conversation. No explicit adapter open or close steps are needed — the engine handles the session lifecycle automatically.
-
-## Adapter Contract and Step Outputs (Phase 1.5)
-
-Adapters implement the `AdapterService` gRPC service defined in `proto/criteria/v1/adapter_plugin.proto`. The `Info()` RPC returns metadata about the adapter including:
-
-- `ConfigSchema` — JSON schema for adapter-level configuration (on the `adapter { }` block)
-- `InputSchema` — JSON schema for step-level input (in the `input { }` block on each step)
-
-### `Execute` request fields
-
-The host sends an `ExecuteRequest` to the adapter on every step execution. The fields are:
-
-| Field | Type | Description |
-|---|---|---|
-| `session_id` | `string` | Session identifier, stable for the lifetime of the adapter session. |
-| `step_name` | `string` | Name of the step being executed. |
-| `config` | `map<string, string>` | Step-level input key-value pairs (from the step's `input {}` block). |
-| `allowed_outcomes` | `repeated string` (sorted ascending) | The set of outcome names the workflow declares for this step. See below. |
-
-**`allowed_outcomes`** *(repeated string, sorted ascending)* — The set of outcome names the workflow declares for this step. Adapters may use this list to constrain or validate outcome selection (e.g. by exposing it to a model as a structured tool schema). Adapters are not required to consume the field; the host independently validates the returned outcome against the same set. The list is deterministic — sorted ascending — so adapter implementations may rely on stable ordering across runs. For compatibility, adapters must treat a missing/`nil` `allowed_outcomes` field the same as an empty list: both mean "no declared outcomes". This can occur for steps with zero outcomes and when talking to older hosts, so adapters should not use `nil`/missing versus empty to infer host version or behavior.
-
-The host validation guard in `internal/engine/node_step.go` is unchanged: adapters that ignore `allowed_outcomes` continue to function exactly as before. The Copilot adapter is the first consumer: it exposes `allowed_outcomes` to the model as a `submit_outcome` tool schema, constraining the model to declared outcomes only.
-
-When an adapter completes execution, it returns a `Result` containing:
-
-- `Outcome` — the named outcome that determines the FSM transition (e.g., `"success"`, `"failure"`, `"needs_review"`)
-- `Outputs` — a `map[string]string` of key-value pairs that flow into the run's variable scope
-
-Outputs are accessible in downstream workflow expressions as `steps.<step_name>.<output_key>`. For example:
-
-<!-- validator: fragment -->
-```hcl
-step "get_version" {
-  target = adapter.shell.default
-  input {
-    command = "git describe --tags --always"
-  }
-  outcome "success" { next = "check_version" }
-}
-
-switch "check_version" {
-  match {
-    condition = startswith(steps.get_version.stdout, "v1.")
-    next  = state.deploy_v1
-  }
-  default {
-    next = state.deploy_next
-  }
-}
-```
-
-In this example:
-- The `get_version` step runs a shell command and captures its output
-- The shell adapter returns `stdout` as an output key
-- The `branch` node evaluates `steps.get_version.stdout` to decide which path to take
-- HCL expression functions like `startswith()` work against step outputs
-
-Step outputs also flow into `for_each` iteration contexts. See [workflow.md](workflow.md) for the full expression reference.
-
-## Writing Your Own Adapter
-
-The canonical third-party adapter example is [`examples/plugins/greeter/`](../examples/plugins/greeter/). It lives in its own Go module (no `replace` directive once an SDK tag exists), imports only `sdk/adapterhost` and the generated proto bindings, and demonstrates the full workflow from `go build` to `criteria apply`. Read that directory first — it is the minimum viable adapter.
-
-### Concurrency requirements for `parallel` steps
-
-When a workflow step uses the `parallel = [...]` modifier, the engine calls your
-adapter's `Execute` method **concurrently from multiple goroutines** — one per
-parallel item, bounded by `parallel_max`. Session handles (from `OpenSession`)
-are shared across all parallel executions for the same step.
-
-#### Declaring `parallel_safe`
-
-To opt in to parallel execution, return `"parallel_safe"` in your `Info()` capabilities:
-
-```go
-func (p *myAdapter) Info(ctx context.Context, req *pb.InfoRequest) (*pb.InfoResponse, error) {
-    return &pb.InfoResponse{
-        Name:         "my-adapter",
-        Version:      "0.1.0",
-        Capabilities: []string{"parallel_safe"},
-    }, nil
-}
-```
-
-Without this declaration, the engine **rejects** `parallel = [...]` steps targeting
-your adapter:
-
-- **At compile time** (when the adapter binary is resolvable during schema
-  collection): the compiler emits a `DiagError`, so the workflow author learns
-  immediately.
-- **At runtime** (when the adapter was not resolvable at compile time): the engine
-  returns an error before any goroutine is launched.
-
-`parallel_safe` means: `Execute` may be called concurrently on **the same session**
-from multiple goroutines. The adapter must not hold shared mutable state that is
-unprotected within a single session.
-
-If your adapter needs per-request state that cannot be shared, open a new session
-per call (model it as separate `adapter { }` blocks in HCL) or do not declare
-`parallel_safe` and use `for_each` for sequential iteration.
-
-Adapter authors must ensure:
-
-1. **`Execute` is goroutine-safe.** If your implementation touches any shared
-   state (maps, counters, file handles), protect it with a `sync.Mutex` or use
-   atomic operations.
-2. **Session handles are treated as read-only or are protected.** If the
-   session handle wraps a stateful connection (e.g. a gRPC stream), protect it
-   or open a fresh connection per `Execute` call.
-3. **Context cancellation is respected.** When the engine cancels the context
-   (e.g. on `on_failure = "abort"`), `Execute` should return promptly. Long
-   operations should select on `ctx.Done()`.
-
-Adapters that are already stateless (no shared mutable state) need no changes.
-The `noop` and `shell` bundled adapters are both goroutine-safe and declare
-`parallel_safe`.
-
-The public adapter SDK lives in `sdk/adapterhost`. External authors import:
-
-```
-github.com/brokenbots/criteria/sdk/adapterhost
-```
-
-The smallest adapter entrypoint is:
-
-```go
-package main
-
-import (
-    "context"
-    adapterhost "github.com/brokenbots/criteria/sdk/adapterhost"
-    pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
-)
-
-type myAdapter struct{}
-
-func (p *myAdapter) Info(ctx context.Context, req *pb.InfoRequest) (*pb.InfoResponse, error) {
-    return &pb.InfoResponse{Name: "my-adapter", Version: "0.1.0"}, nil
-}
-
-// ... implement OpenSession, Execute, Permit, CloseSession ...
-
-func main() {
-    adapterhost.Serve(&myAdapter{})
-}
-```
-
-Implement `adapterhost.Service` and call `adapterhost.Serve` from `main()`. The
-`Execute` method receives an `adapterhost.ExecuteEventSender`; send at least one
-`*pb.ExecuteResult` event before returning `nil`, or return a non-nil error.
-
-See [`examples/plugins/greeter/main.go`](../examples/plugins/greeter/main.go) for a complete, runnable example. For more complex references:
-
-- `cmd/criteria-adapter-copilot/main.go`
-- `cmd/criteria-adapter-mcp/main.go`
-- `cmd/criteria-adapter-noop/main.go`
-
-If you add a new adapter, wire it through the conformance harness before relying on it in a real workflow. That is the fastest way to confirm `Info`, `OpenSession`, `Execute`, `Permit`, and `CloseSession` all obey the host contract.
-
-## Adapter lifecycle logs
-
-When an adapter session is opened, executes, or exits, Criteria records the
-event and renders a compact status tag on each step's output line in concise
-mode:
-
-```
-  ✓ success in 2.3s  [adapter: started → exited]
-  ✗ failure (8.1s)  [adapter: started → crashed: connection refused]
-```
-
-### Log levels
-
-| Event                                                     | Level   | Message |
-|-----------------------------------------------------------|---------|---------| 
-| Expected close (closing flag set or context canceled)     | `DEBUG` | `adapter stream closed (expected)` |
-| Unexpected exit / crash heuristic                         | `WARN`  | `adapter session crashed` |
-
-An **expected close** is one where `SessionManager.Close` or `Shutdown` was
-called by the host before the adapter's gRPC stream ended, **or** the
-surrounding execute context was canceled by the host (run timeout, user abort).
-An **unexpected exit** is an EOF or broken-pipe error received when neither
-condition holds.
-
-### Tuning verbosity
-
-The `apply` command creates its slog logger at a fixed `INFO` level (see
-`newApplyLogger` in `internal/cli/apply.go`). There is no `--log-level` CLI
-flag, so debug-level adapter lifecycle messages (e.g. `adapter stream closed
-(expected)`) are not surfaced in normal CLI output.
-
-To see debug-level lifecycle messages in tests, swap the `slog` default handler
-before the call:
-
-```go
-slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr,
-    &slog.HandlerOptions{Level: slog.LevelDebug})))
-```
-
-The `CRITERIA_LOG_LEVEL` environment variable (`trace`|`debug`|`info`|`warn`|
-`error`) controls only the `go-plugin` framework's RPC-layer logger; it does
-**not** affect the slog lifecycle messages above.
+| `shell` | ✅ | ✅ |
+| `sandbox` host-native | ✅ namespaces + landlock + seccomp | ✅ `sandbox-exec` (best-effort; Apple-deprecated) |
+| `sandbox` soft alternative | ✅ bubblewrap (opt-in) | — (use `container`) |
+| `container` | ✅ docker/podman | ✅ docker/podman (Docker Desktop, Colima, Lima, podman-machine) |
+| `remote` | ✅ | ✅ |
+
+Windows is not a supported host; run Criteria under WSL2. When a sandbox
+primitive is unavailable (e.g. an older kernel without landlock), the host logs
+which protections were skipped and continues — unless `sandbox = "strict"`, which
+fails closed. See [docs/security/](security/) for the threat models.
+
+## Remote execution
+
+Remote adapters use a **reverse phone-home** model: the adapter dials into the
+host, not the other way around. Criteria contains no k8s/ECS/SSH client code —
+you start the adapter however you run any long-running service, and it connects
+back.
+
+- The `remote` environment configures only the host's inbound listener and auth
+  (`listen_address`, `mtls { … }`, optional `accept_token`, and
+  `accept_digest_from = lockfile` so a connecting adapter's reported digest must
+  match the pinned one).
+- The adapter calls the SDK's `serveRemote(...)` (one function-name change from
+  `serve(...)`): dial out over mTLS gRPC, complete the auth + identity handshake,
+  then serve `Info`/`OpenSession`/`Execute`/… on the held connection. Available
+  in all three SDKs.
+- A small host-side shim bridges the inbound mTLS connection to a local UDS so
+  the session layer treats it like any local adapter; no other host code is
+  remote-aware.
+- Launch and reachability are yours to arrange. The starter repos ship
+  copy-pasteable k8s `Deployment`, `docker-compose`, and `systemd` examples under
+  `examples/remote/`. See [docs/adapter-remote-deployment.md](adapter-remote-deployment.md)
+  for the full deployment guide.
+
+Host-side sandbox primitives do not apply to `remote` environments (the host did
+not launch the process); `network`/`filesystem`/`resources` are advisory there,
+and the compiler warns (errors under `policy_mode = "strict"`).
+
+## Lifecycle
+
+Beyond `OpenSession`/`Execute`/`CloseSession`, protocol v2 defines lifecycle
+operations the host drives on a session:
+
+- **Pause / Resume** — suspend and resume a long-running session; the host also
+  pauses the permission-handling goroutine and resumes it from persisted state.
+- **Snapshot / Restore** — `Snapshot` returns opaque adapter state (plus the
+  host's permission state and recent-decision window); `Restore` rehydrates it,
+  re-resolving any tainted secrets from their origins first. This is the durable
+  story for long-running agents across host restarts and remote handoffs.
+- **Inspect** — a read-only structured view of session state (current step,
+  pending permissions, last activity) for operators and UIs.
+
+Adapters opt into these via the SDK; the shared conformance suite exercises
+pause/resume, snapshot/restore, and inspect against every adapter so behavior is
+uniform.
+
+## Security model
+
+- **Process scrub.** The sandbox setup scrubs the adapter's process environment;
+  secret-looking inherited variables are removed unless explicitly listed in
+  `environment.variables`. Secrets never arrive as env vars — only via the
+  dedicated channel.
+- **Sandbox primitives.** Per-OS isolation as in the matrix above: Linux
+  namespaces + landlock + seccomp (pure-Go, no cgo); macOS `sandbox-exec`;
+  container mode as the cross-platform escape hatch. Capability degradation is
+  logged and fails closed only under `sandbox = "strict"`.
+- **Redaction registry.** Every tainted value — adapter-declared secrets,
+  secret-tagged variables, and `sensitive: true` outputs — is registered and
+  masked across all host log surfaces before display or persistence. Secrets are
+  never written to the lockfile, compiled FSM, or checkpoints; only origin
+  references are persisted.
+- **Permission stream.** Tool-permission requests flow over a bidirectional
+  stream handled inside the session, evaluated against the `allow_tools` policy
+  (extended by environment policy fields), with one audit entry per decision at
+  `~/.criteria/runs/<run-id>/audit.log`.
+
+## Troubleshooting
+
+| Symptom | Likely cause / fix |
+|---|---|
+| `workflow uses OCI adapter references but .criteria.lock.hcl is missing` | Run `criteria adapter lock`, then commit the lockfile. |
+| Pull fails: *adapter does not support `<goos>/<goarch>`* | The publisher didn't build your platform. Ask them to add it, or use a different adapter (no cross-arch emulation). |
+| Pull fails: *does not publish a container image; cannot run under runtime = "…"* | The adapter is artifact-only. Set `environment.runtime = "none"`, or ask the publisher to publish an image. |
+| Signature verification failed at pull | The artifact is unsigned or the signer is outside the trust policy. Fix the publisher's signing, adjust the trust policy, or (dev only) `--allow-unsigned` / `verification = "warn"`. |
+| Compile error: *value `var.x` is marked secret* | A tainted value was used in `config`/`input`/a string. Bind it via `adapter.X.secrets { … }` or `step.X.secret_input { … }`. |
+| Adapter's child process can't see a secret | Secrets aren't in the process env by design. Pass them explicitly via the SDK's `secrets.spawnEnv([...])` helper. |
+| Sandbox protections "skipped" in logs | A primitive is unavailable on this host/kernel. Acceptable under `permissive`; set `sandbox = "strict"` to fail closed instead. |
+
+For upgrading an existing project from v0.3, see
+[adapter-v2-migration.md](adapter-v2-migration.md).

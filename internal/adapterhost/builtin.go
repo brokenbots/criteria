@@ -7,6 +7,8 @@ import (
 
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/workflow"
+
+	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 )
 
 func BuiltinFactoryForAdapter(ad adapter.Adapter) BuiltinFactory {
@@ -35,14 +37,15 @@ func (p *builtinAdapter) Info(context.Context) (Info, error) {
 	}
 	adInfo := p.adapter.Info()
 	return Info{
-		Name:         p.adapter.Name(),
-		Version:      "builtin",
-		Capabilities: append([]string(nil), adInfo.Capabilities...),
-		AdapterInfo:  adInfo,
+		Name:              p.adapter.Name(),
+		Version:           "builtin",
+		Capabilities:      append([]string(nil), adInfo.Capabilities...),
+		SupportedFeatures: append([]string(nil), adInfo.SupportedFeatures...),
+		AdapterInfo:       adInfo,
 	}, nil
 }
 
-func (p *builtinAdapter) OpenSession(_ context.Context, id string, config map[string]string) error {
+func (p *builtinAdapter) OpenSession(_ context.Context, id string, config, secrets map[string]string) error {
 	if p.adapter == nil {
 		return fmt.Errorf("builtin adapter implementation is nil")
 	}
@@ -51,7 +54,11 @@ func (p *builtinAdapter) OpenSession(_ context.Context, id string, config map[st
 	if _, exists := p.sessions[id]; exists {
 		return fmt.Errorf("session %q already open", id)
 	}
-	p.sessions[id] = cloneConfig(config)
+	merged := cloneConfig(config)
+	for k, v := range secrets {
+		merged[k] = v
+	}
+	p.sessions[id] = merged
 	return nil
 }
 
@@ -68,10 +75,6 @@ func (p *builtinAdapter) Execute(ctx context.Context, sessionID string, step *wo
 	return p.adapter.Execute(ctx, step, sink)
 }
 
-func (p *builtinAdapter) Permit(context.Context, string, string, bool, string) error {
-	return fmt.Errorf("permission gating is not implemented for builtin adapters")
-}
-
 func (p *builtinAdapter) CloseSession(_ context.Context, id string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -79,4 +82,48 @@ func (p *builtinAdapter) CloseSession(_ context.Context, id string) error {
 	return nil
 }
 
+func (p *builtinAdapter) StartLogStream(ctx context.Context, _ string, sink LogEventSink) (func(), error) {
+	// In-process builtin adapters have no real Log RPC stream, but the host
+	// arms its heartbeat-stall detector as soon as StartLogStream returns a
+	// non-nil cancel. Without a heartbeat source the monitor freezes at the
+	// timestamp recorded at session open, so any idle builtin session (e.g. a
+	// shell session waiting behind a long-running agent step) is falsely
+	// declared crashed once 90s elapse. Emit heartbeats on the same cadence as
+	// RPC adapters to keep the monitor fresh.
+	logCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	go func() {
+		_ = v2.RunHeartbeat(logCtx, "log", func(hb *v2.Heartbeat) error {
+			return sink.Emit(&v2.LogEvent{Heartbeat: hb})
+		})
+	}()
+	return cancel, nil
+}
+
+func (p *builtinAdapter) StartPermissionStream(ctx context.Context, _ string, requests <-chan *v2.PermissionEvent) (func(), error) {
+	permCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	go func() {
+		for {
+			select {
+			case _, ok := <-requests:
+				if !ok {
+					return
+				}
+			case <-permCtx.Done():
+				return
+			}
+		}
+	}()
+	return cancel, nil
+}
+
 func (p *builtinAdapter) Kill() {}
+
+func (p *builtinAdapter) Pause(context.Context, string) error  { return nil }
+func (p *builtinAdapter) Resume(context.Context, string) error { return nil }
+func (p *builtinAdapter) Inspect(context.Context, string) (*v2.InspectResponse, error) {
+	return &v2.InspectResponse{}, nil
+}
+func (p *builtinAdapter) Snapshot(context.Context, string) (*v2.SnapshotResponse, error) {
+	return &v2.SnapshotResponse{}, nil
+}
+func (p *builtinAdapter) Restore(context.Context, string, []byte, uint32) error { return nil }

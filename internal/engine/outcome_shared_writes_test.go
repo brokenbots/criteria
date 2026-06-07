@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/workflow"
@@ -25,17 +26,23 @@ type sharedWritesAdapter struct {
 func (p *sharedWritesAdapter) Info(context.Context) (adapterhost.Info, error) {
 	return adapterhost.Info{Name: "sw", Version: "test"}, nil
 }
-func (p *sharedWritesAdapter) OpenSession(context.Context, string, map[string]string) error {
+func (p *sharedWritesAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
 	return nil
 }
 func (p *sharedWritesAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
-	return adapter.Result{Outcome: p.outcome, Outputs: p.outputs}, nil
-}
-func (p *sharedWritesAdapter) Permit(context.Context, string, string, bool, string) error {
-	return nil
+	return adapter.Result{Outcome: p.outcome, Outputs: ctyOut(p.outputs)}, nil
 }
 func (p *sharedWritesAdapter) CloseSession(context.Context, string) error { return nil }
 func (p *sharedWritesAdapter) Kill()                                      {}
+func (p *sharedWritesAdapter) Pause(context.Context, string) error        { return nil }
+func (p *sharedWritesAdapter) Resume(context.Context, string) error       { return nil }
+func (p *sharedWritesAdapter) Inspect(context.Context, string) (*v2.InspectResponse, error) {
+	return &v2.InspectResponse{}, nil
+}
+func (p *sharedWritesAdapter) Snapshot(context.Context, string) (*v2.SnapshotResponse, error) {
+	return &v2.SnapshotResponse{}, nil
+}
+func (p *sharedWritesAdapter) Restore(context.Context, string, []byte, uint32) error { return nil }
 
 // adapterFunc is a adapterhost.Handle backed by a function, for flexible test control.
 type adapterFunc struct {
@@ -46,13 +53,23 @@ type adapterFunc struct {
 func (p *adapterFunc) Info(context.Context) (adapterhost.Info, error) {
 	return adapterhost.Info{Name: p.name, Version: "test"}, nil
 }
-func (p *adapterFunc) OpenSession(context.Context, string, map[string]string) error { return nil }
+func (p *adapterFunc) OpenSession(context.Context, string, map[string]string, map[string]string) error {
+	return nil
+}
 func (p *adapterFunc) Execute(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
 	return p.fn(ctx, sessionID, step, sink)
 }
-func (p *adapterFunc) Permit(context.Context, string, string, bool, string) error { return nil }
-func (p *adapterFunc) CloseSession(context.Context, string) error                 { return nil }
-func (p *adapterFunc) Kill()                                                      {}
+func (p *adapterFunc) CloseSession(context.Context, string) error { return nil }
+func (p *adapterFunc) Kill()                                      {}
+func (p *adapterFunc) Pause(context.Context, string) error        { return nil }
+func (p *adapterFunc) Resume(context.Context, string) error       { return nil }
+func (p *adapterFunc) Inspect(context.Context, string) (*v2.InspectResponse, error) {
+	return &v2.InspectResponse{}, nil
+}
+func (p *adapterFunc) Snapshot(context.Context, string) (*v2.SnapshotResponse, error) {
+	return &v2.SnapshotResponse{}, nil
+}
+func (p *adapterFunc) Restore(context.Context, string, []byte, uint32) error { return nil }
 
 // TestSharedWrites_AppliedAfterStep verifies that a workflow with write blocks
 // compiles, runs, and completes successfully.
@@ -162,7 +179,7 @@ state "done" {
 			callNum++
 			if callNum == 1 {
 				// set_val: return the_msg output
-				return adapter.Result{Outcome: "success", Outputs: map[string]string{"the_msg": "hello-from-shared"}}, nil
+				return adapter.Result{Outcome: "success", Outputs: ctyOut(map[string]string{"the_msg": "hello-from-shared"})}, nil
 			}
 			// read_val: return no outputs (output block reads data.internal.msg.value)
 			return adapter.Result{Outcome: "success"}, nil
@@ -178,7 +195,7 @@ state "done" {
 	// String values in output projection are JSON-encoded (with quotes).
 	readValOutputs := capturedSink.captured["read_val"]
 	require.NotNil(t, readValOutputs, "read_val outputs not captured")
-	assert.Equal(t, `"hello-from-shared"`, readValOutputs["result"])
+	assert.Equal(t, `hello-from-shared`, readValOutputs["result"])
 }
 
 // TestSharedWrites_OutputKeyMissing verifies that a missing output key in
@@ -349,7 +366,7 @@ state "done" {
 			callNum++
 			if callNum == 1 {
 				// collect: return tag1 and tag2 raw outputs
-				return adapter.Result{Outcome: "success", Outputs: map[string]string{"tag1": "foo", "tag2": "bar"}}, nil
+				return adapter.Result{Outcome: "success", Outputs: ctyOut(map[string]string{"tag1": "foo", "tag2": "bar"})}, nil
 			}
 			// read_back: no adapter outputs needed; projection reads data.internal.items.value
 			return adapter.Result{Outcome: "success"}, nil
@@ -364,8 +381,8 @@ state "done" {
 	// read_back's projected outputs should carry the list elements.
 	readBackOutputs := capturedSink.captured["read_back"]
 	require.NotNil(t, readBackOutputs, "read_back outputs not captured")
-	assert.Equal(t, `"foo"`, readBackOutputs["first"])
-	assert.Equal(t, `"bar"`, readBackOutputs["second"])
+	assert.Equal(t, `foo`, readBackOutputs["first"])
+	assert.Equal(t, `bar`, readBackOutputs["second"])
 }
 
 // initial value is readable in HCL expressions via data.internal.*.value at the first step.
@@ -413,7 +430,7 @@ state "done" {
 
 	outputs := capturedSink.captured["read_initial"]
 	require.NotNil(t, outputs)
-	assert.Equal(t, `"hello"`, outputs["val"])
+	assert.Equal(t, `hello`, outputs["val"])
 }
 
 // TestSharedWrites_PerIterationOutcome proves that a for_each step's per-iteration
@@ -479,7 +496,7 @@ state "done" {
 			if callNum < len(items) {
 				tag := items[callNum]
 				callNum++
-				return adapter.Result{Outcome: "success", Outputs: map[string]string{"tag": tag}}, nil
+				return adapter.Result{Outcome: "success", Outputs: ctyOut(map[string]string{"tag": tag})}, nil
 			}
 			callNum++
 			return adapter.Result{Outcome: "success"}, nil
@@ -494,7 +511,7 @@ state "done" {
 	// data.internal.last_tag.value should hold the final iteration's value ("gamma").
 	readBackOutputs := capturedSink.captured["read_back"]
 	require.NotNil(t, readBackOutputs, "read_back outputs not captured")
-	assert.Equal(t, `"gamma"`, readBackOutputs["result"])
+	assert.Equal(t, `gamma`, readBackOutputs["result"])
 }
 
 // TestSharedWrites_AggregateOutcome proves that write blocks declared on an
@@ -561,5 +578,155 @@ state "done" {
 	// data.internal.done_flag.value should be "completed" — written by the aggregate outcome.
 	readBackOutputs := capturedSink.captured["read_back"]
 	require.NotNil(t, readBackOutputs, "read_back outputs not captured")
-	assert.Equal(t, `"completed"`, readBackOutputs["result"])
+	assert.Equal(t, `completed`, readBackOutputs["result"])
+}
+
+// TestWrites_FullContext verifies that a write value expression can reference
+// the full outcome eval context — var.*, data.* (snapshot), and step.output.* —
+// without an output = { ... } projection. counter starts at 10; the write
+// computes counter + var.bump (5) + step.output.delta (3) = 18.
+func TestWrites_FullContext(t *testing.T) {
+	const src = `
+workflow {
+  name = "t"
+  version       = "0.1"
+  initial_state = "compute"
+  target_state  = "done"
+}
+
+variable "bump" {
+  type    = number
+  default = 5
+}
+
+data "internal" "counter" {
+  type  = number
+  value = 10
+}
+
+adapter "sw" "default" {}
+
+step "compute" {
+  target = adapter.sw.default
+  outcome "success" {
+    next = step.read_back
+    write {
+      target = data.internal.counter.value
+      value  = data.internal.counter.value + var.bump + step.output.delta
+    }
+  }
+}
+
+step "read_back" {
+  target = adapter.sw.default
+  outcome "success" {
+    next   = step.done
+    output = { result = data.internal.counter.value }
+  }
+}
+
+state "done" {
+  terminal = true
+  success  = true
+}
+`
+	spec, diags := workflow.Parse("t.hcl", []byte(src))
+	require.False(t, diags.HasErrors(), "parse: %s", diags.Error())
+	g, diags := workflow.Compile(spec, nil)
+	require.False(t, diags.HasErrors(), "compile: %s", diags.Error())
+
+	callNum := 0
+	capturedSink := &outputCaptureSink{}
+	plug := &adapterFunc{
+		name: "sw",
+		fn: func(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+			callNum++
+			if callNum == 1 {
+				return adapter.Result{Outcome: "success", Outputs: ctyOut(map[string]string{"delta": "3"})}, nil
+			}
+			return adapter.Result{Outcome: "success"}, nil
+		},
+	}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"sw": plug}}
+
+	eng := NewTestEngine(g, loader, capturedSink)
+	require.NoError(t, eng.Run(context.Background()))
+	assert.Equal(t, "done", capturedSink.terminal)
+
+	readBack := capturedSink.captured["read_back"]
+	require.NotNil(t, readBack, "read_back outputs not captured")
+	assert.Equal(t, "18", readBack["result"])
+}
+
+// TestWrites_SnapshotAtomicity verifies that when a step writes two data values
+// and one write reads the other, the read sees the step-entry snapshot — not the
+// value written earlier in the same step. a starts at 1; the step writes a = 2
+// and b = data.internal.a.value. b must observe the snapshot value (1), proving
+// the write set is atomic against the snapshot regardless of write order.
+func TestWrites_SnapshotAtomicity(t *testing.T) {
+	const src = `
+workflow {
+  name = "t"
+  version       = "0.1"
+  initial_state = "mutate"
+  target_state  = "done"
+}
+
+data "internal" "a" {
+  type  = number
+  value = 1
+}
+
+data "internal" "b" {
+  type  = number
+  value = 0
+}
+
+adapter "sw" "default" {}
+
+step "mutate" {
+  target = adapter.sw.default
+  outcome "success" {
+    next = step.read_back
+    write {
+      target = data.internal.a.value
+      value  = 2
+    }
+    write {
+      target = data.internal.b.value
+      value  = data.internal.a.value
+    }
+  }
+}
+
+step "read_back" {
+  target = adapter.sw.default
+  outcome "success" {
+    next   = step.done
+    output = { a_val = data.internal.a.value, b_val = data.internal.b.value }
+  }
+}
+
+state "done" {
+  terminal = true
+  success  = true
+}
+`
+	spec, diags := workflow.Parse("t.hcl", []byte(src))
+	require.False(t, diags.HasErrors(), "parse: %s", diags.Error())
+	g, diags := workflow.Compile(spec, nil)
+	require.False(t, diags.HasErrors(), "compile: %s", diags.Error())
+
+	capturedSink := &outputCaptureSink{}
+	plug := &sharedWritesAdapter{outcome: "success", outputs: map[string]string{}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"sw": plug}}
+
+	eng := NewTestEngine(g, loader, capturedSink)
+	require.NoError(t, eng.Run(context.Background()))
+	assert.Equal(t, "done", capturedSink.terminal)
+
+	readBack := capturedSink.captured["read_back"]
+	require.NotNil(t, readBack, "read_back outputs not captured")
+	assert.Equal(t, "2", readBack["a_val"], "a should be updated to 2")
+	assert.Equal(t, "1", readBack["b_val"], "b should observe the step-entry snapshot of a (1), not the in-step write (2)")
 }

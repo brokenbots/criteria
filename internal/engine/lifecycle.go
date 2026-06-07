@@ -6,6 +6,9 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/zclconf/go-cty/cty"
+
+	"github.com/brokenbots/criteria/internal/adapter/secrets"
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/workflow"
 )
@@ -16,7 +19,7 @@ import (
 // an event is emitted, and the error is returned.
 // Returns the ordered slice of provisioned adapter IDs (for correct LIFO teardown)
 // and an error if any adapter failed to initialize.
-func initScopeAdapters(ctx context.Context, g *workflow.FSMGraph, deps Deps) (order []string, err error) {
+func initScopeAdapters(ctx context.Context, g *workflow.FSMGraph, deps Deps, vars map[string]cty.Value) (order []string, err error) {
 	if len(g.Adapters) == 0 {
 		return nil, nil
 	}
@@ -26,7 +29,34 @@ func initScopeAdapters(ctx context.Context, g *workflow.FSMGraph, deps Deps) (or
 	// Provision adapters in declaration order (from AdapterOrder)
 	for _, instanceID := range g.AdapterOrder {
 		adapter := g.Adapters[instanceID]
-		openErr := deps.Sessions.Open(ctx, instanceID, adapter.Type, adapter.OnCrash, adapter.Config)
+
+		// Resolve adapter secrets (WS13).
+		var secretMap map[string]string
+		if len(adapter.Secrets) > 0 {
+			secretMap, err = resolveAdapterSecrets(ctx, g, adapter, vars, deps.Sessions.RedactionRegistry)
+			if err != nil {
+				deps.Sink.OnAdapterLifecycle("", instanceID, "init_failed", err.Error())
+				return nil, fmt.Errorf("initialize adapter %q: %w", instanceID, err)
+			}
+		}
+
+		originRefs, err := buildOriginRefs(adapter, vars)
+		if err != nil {
+			deps.Sink.OnAdapterLifecycle("", instanceID, "init_failed", err.Error())
+			return nil, fmt.Errorf("initialize adapter %q: %w", instanceID, err)
+		}
+
+		// Resolve the bound environment's working_directory against the runtime
+		// closure now, at adapter init, so the cwd can be dynamic (e.g.
+		// var.worktree supplied via --var). The resolved value becomes the
+		// adapter process launch cwd.
+		workingDir, err := resolveAdapterWorkingDir(g, adapter, vars)
+		if err != nil {
+			deps.Sink.OnAdapterLifecycle("", instanceID, "init_failed", err.Error())
+			return nil, fmt.Errorf("initialize adapter %q: resolve working_directory: %w", instanceID, err)
+		}
+
+		openErr := deps.Sessions.OpenWithOriginRefs(ctx, instanceID, adapter.Type, adapter.OnCrash, adapter.Config, secretMap, originRefs, workingDir)
 
 		// Silently swallow ErrSessionAlreadyOpen to support subworkflow bodies that
 		// re-declare parent adapters for safety through re-declaration. Same-scope
@@ -55,6 +85,38 @@ func initScopeAdapters(ctx context.Context, g *workflow.FSMGraph, deps Deps) (or
 	}
 
 	return provisioned, nil
+}
+
+// resolveAdapterWorkingDir resolves the working_directory of the environment
+// bound to the adapter (its declared environment, or the workflow default)
+// against the runtime vars. It returns "" when no environment is bound or the
+// environment declares no working_directory.
+func resolveAdapterWorkingDir(g *workflow.FSMGraph, ad *workflow.AdapterNode, vars map[string]cty.Value) (string, error) {
+	envKey := ad.Environment
+	if envKey == "" {
+		envKey = g.DefaultEnvironment
+	}
+	if envKey == "" {
+		return "", nil
+	}
+	return g.Environments[envKey].ResolveWorkingDir(vars)
+}
+
+// buildOriginRefs evaluates an adapter's secret expressions and converts them into
+// unevaluated origin references for snapshot/restore (WS18).
+func buildOriginRefs(adapter *workflow.AdapterNode, vars map[string]cty.Value) (map[string]secrets.OriginRef, error) {
+	if len(adapter.Secrets) == 0 {
+		return nil, nil
+	}
+	evaluated, err := workflow.ResolveInputExprs(adapter.Secrets, vars)
+	if err != nil {
+		return nil, err
+	}
+	originRefs := make(map[string]secrets.OriginRef, len(evaluated))
+	for k, v := range evaluated {
+		originRefs[k] = secrets.ParseOriginRef(v)
+	}
+	return originRefs, nil
 }
 
 // tearDownScopeAdapters releases all adapter sessions in the given order in reverse (LIFO).

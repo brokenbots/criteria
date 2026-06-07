@@ -31,13 +31,23 @@ func compileVariables(g *FSMGraph, spec *Spec) hcl.Diagnostics {
 			diags = append(diags, defaultDiags...)
 			continue
 		}
-		g.Variables[name] = &VariableNode{
+		node := &VariableNode{
 			Name:         name,
 			Type:         typ,
 			TypeDefaults: defs,
 			Default:      defaultVal,
 			Description:  vs.Description,
 		}
+		if vs.Remain != nil {
+			attrs, _ := vs.Remain.JustAttributes()
+			if secretAttr, ok := attrs["secret"]; ok {
+				val, valDiags := secretAttr.Expr.Value(nil)
+				if !valDiags.HasErrors() && val.Type() == cty.Bool && val.IsKnown() && !val.IsNull() {
+					node.Secret = val.True()
+				}
+			}
+		}
+		g.Variables[name] = node
 	}
 	return diags
 }

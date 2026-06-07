@@ -33,6 +33,17 @@ service ServerService {
   // authenticated caller does not own the target run's agent.
   rpc StopRun(StopRunRequest) returns (StopRunResponse);
 
+  // PauseRun halts a run without losing state. The adapter session is
+  // paused via the v2 adapter Pause RPC.
+  rpc PauseRun(PauseRunRequest) returns (PauseRunResponse);
+
+  // ResumeRun continues a previously paused run.
+  rpc ResumeRun(ResumeRunRequest) returns (ResumeRunResponse);
+
+  // InspectRun returns structured read-only state for a run. If session_id
+  // is empty the server may return a summary across all sessions.
+  rpc InspectRun(InspectRunRequest) returns (InspectRunResponse);
+
   // SendPrompt — schema-only stub for Phase 2.3. UI clients can wire up
   // against this method, but the server currently returns UNIMPLEMENTED.
   rpc SendPrompt(SendPromptRequest) returns (SendPromptResponse);
@@ -113,6 +124,40 @@ message StopRunResponse {
   // ServerTime when the cancel was issued; the run may still take time to
   // observe and react to the cancel.
   google.protobuf.Timestamp issued_at = 1;
+}
+
+// --- Pause / Resume / Inspect types ---
+
+message PauseRunRequest {
+  string run_id = 1;
+}
+
+message PauseRunResponse {
+  google.protobuf.Timestamp issued_at = 1;
+}
+
+message ResumeRunRequest {
+  string run_id = 1;
+}
+
+message ResumeRunResponse {
+  google.protobuf.Timestamp issued_at = 1;
+}
+
+message InspectRunRequest {
+  string run_id = 1;
+  string session_id = 2; // optional; if empty the server may return a summary
+}
+
+message InspectRunResponse {
+  string run_id = 1;
+  string session_id = 2;
+  string adapter = 3;
+  string current_step = 4;
+  int64 pending_permissions = 5;
+  google.protobuf.Timestamp last_activity_at = 6;
+  // Opaque adapter state — the host pretty-prints any well-formed JSON.
+  string state_json = 7;
 }
 
 message SendPromptRequest {

@@ -27,6 +27,8 @@ type applyOptions struct {
 	varFiles         []string     // paths from --var-file flags
 	output           string       // "auto" | "concise" | "json"
 	subworkflowRoots []string     // --subworkflow-root flag (repeatable); populates AllowedRoots on LocalSubWorkflowResolver
+	warnsAsErrors    bool         // --warnings-as-errors: refuse to run when an adapter schema can't be verified
+	allowUnsigned    bool         // --allow-unsigned: skip adapter signature verification (WS46)
 	stdin            io.Reader    // stdin for local-mode approval prompts; nil → os.Stdin
 	log              *slog.Logger // nil → newApplyLogger(); injectable for tests
 }
@@ -60,6 +62,8 @@ func NewApplyCmd() *cobra.Command {
 	cmd.Flags().StringArrayVar(&opts.varFiles, "var-file", nil, "Load variable overrides from a .chcl, .hcl, or .json file (repeatable; --var takes precedence)")
 	cmd.Flags().StringVar(&opts.output, "output", envOrDefault("CRITERIA_OUTPUT", "auto"), "Standalone output format: auto|concise|json (auto: concise on TTY, json when piped)")
 	cmd.Flags().StringArrayVar(&opts.subworkflowRoots, "subworkflow-root", nil, "Restrict subworkflow source resolution to this root path (repeatable; empty = no restriction)")
+	cmd.Flags().BoolVar(&opts.warnsAsErrors, "warnings-as-errors", false, "Refuse to run when a warning is raised (e.g. an adapter whose schema could not be verified)")
+	cmd.Flags().BoolVar(&opts.allowUnsigned, "allow-unsigned", false, "Skip adapter signature verification (also via CRITERIA_ALLOW_UNSIGNED)")
 	return cmd
 }
 

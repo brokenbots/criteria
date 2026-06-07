@@ -5,6 +5,7 @@ package workflow
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/hashicorp/hcl/v2"
 	"github.com/zclconf/go-cty/cty"
@@ -46,14 +47,14 @@ func compileAdapters(g *FSMGraph, spec *Spec, schemas map[string]AdapterInfo, op
 	var diags hcl.Diagnostics
 	configEvalCtx := adapterConfigEvalContext(graphVars(g), graphLocals(g), opts.WorkflowDir)
 	for _, ad := range spec.Adapters {
-		diags = append(diags, compileOneAdapter(g, ad, schemas, configEvalCtx)...)
+		diags = append(diags, compileOneAdapter(g, &ad, schemas, configEvalCtx)...)
 	}
 	return diags
 }
 
 // compileOneAdapter compiles a single adapter declaration into g.Adapters and
 // g.AdapterOrder. Returns any diagnostics.
-func compileOneAdapter(g *FSMGraph, ad AdapterDeclSpec, schemas map[string]AdapterInfo, configEvalCtx *hcl.EvalContext) hcl.Diagnostics {
+func compileOneAdapter(g *FSMGraph, ad *AdapterDeclSpec, schemas map[string]AdapterInfo, configEvalCtx *hcl.EvalContext) hcl.Diagnostics {
 	var diags hcl.Diagnostics
 	typeName := ad.Type
 	instanceName := ad.Name
@@ -83,8 +84,17 @@ func compileOneAdapter(g *FSMGraph, ad AdapterDeclSpec, schemas map[string]Adapt
 	effectiveEnv, d := resolveAdapterEnv(g, key, envKey)
 	diags = append(diags, d...)
 
-	adapterConfig, d := resolveAdapterConfig(key, ad, schemas, typeName, configEvalCtx)
+	adapterConfig, configExprs, d := resolveAdapterConfig(key, ad, schemas, typeName, configEvalCtx)
 	diags = append(diags, d...)
+
+	secrets, d := resolveAdapterSecrets(key, ad)
+	diags = append(diags, d...)
+
+	if info, ok := adapterInfo(schemas, typeName); ok {
+		diags = append(diags, checkAdapterEnvCompatibility(key, &info, effectiveEnv)...)
+	}
+
+	cacheResolvedPolicy(g, key, effectiveEnv, typeName, schemas)
 
 	g.Adapters[key] = &AdapterNode{
 		Type:        typeName,
@@ -92,6 +102,8 @@ func compileOneAdapter(g *FSMGraph, ad AdapterDeclSpec, schemas map[string]Adapt
 		Environment: effectiveEnv,
 		OnCrash:     effectiveOnCrash,
 		Config:      adapterConfig,
+		ConfigExprs: configExprs,
+		Secrets:     secrets,
 	}
 	// Track adapter declaration order for stable iteration
 	g.AdapterOrder = append(g.AdapterOrder, key)
@@ -130,26 +142,90 @@ func resolveAdapterEnv(g *FSMGraph, key, envRef string) (string, hcl.Diagnostics
 	return envRef, nil
 }
 
+// cacheResolvedPolicy resolves and caches the environment policy for an
+// (adapter, environment) pair when both are valid.
+func cacheResolvedPolicy(g *FSMGraph, adapterKey, envKey, typeName string, schemas map[string]AdapterInfo) {
+	if envKey == "" {
+		return
+	}
+	var hints *PolicyHints
+	if info, ok := adapterInfo(schemas, typeName); ok {
+		hints = info.PolicyHints
+	}
+	if envNode, ok := g.Environments[envKey]; ok {
+		g.ResolvedPolicies[adapterKey+":"+envKey] = resolveEnvironmentPolicy(envNode, hints)
+	}
+}
+
 // resolveAdapterConfig decodes the adapter config block. When the adapter type
 // has a registered schema, it validates attribute types and required fields.
 // Without a schema, it falls back to a permissive string-map decode.
-func resolveAdapterConfig(key string, ad AdapterDeclSpec, schemas map[string]AdapterInfo, typeName string, configEvalCtx *hcl.EvalContext) (map[string]string, hcl.Diagnostics) {
+// Returns the folded string map, the raw expression map, and any diagnostics.
+func resolveAdapterConfig(key string, ad *AdapterDeclSpec, schemas map[string]AdapterInfo, typeName string, configEvalCtx *hcl.EvalContext) (folded map[string]string, raw map[string]hcl.Expression, diags hcl.Diagnostics) {
 	if ad.Config == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
-	var diags hcl.Diagnostics
 	attrs, d := ad.Config.Remain.JustAttributes()
 	diags = append(diags, d...)
+
+	exprs := make(map[string]hcl.Expression, len(attrs))
+	for k, attr := range attrs {
+		exprs[k] = attr.Expr
+	}
+
 	ctxLabel := fmt.Sprintf("adapter %q config", key)
 	missingRange := ad.Config.Remain.MissingItemRange()
-	var adapterConfig map[string]string
 	if info, ok := adapterInfo(schemas, typeName); ok {
-		adapterConfig, d = validateSchemaAttrs(ctxLabel, attrs, info.ConfigSchema, missingRange, "", configEvalCtx)
+		folded, d = validateSchemaAttrs(ctxLabel, attrs, info.ConfigSchema, missingRange, "", configEvalCtx)
 	} else {
-		adapterConfig, d = decodeAttrsToStringMap(attrs, configEvalCtx)
+		folded, d = decodeAttrsToStringMap(attrs, configEvalCtx)
 	}
 	diags = append(diags, d...)
-	return adapterConfig, diags
+	return folded, exprs, diags
+}
+
+// resolveAdapterSecrets extracts the optional `secrets { }` block from the
+// adapter declaration. Each attribute in the block is preserved as an
+// hcl.Expression so that it can be evaluated at runtime.
+func resolveAdapterSecrets(_key string, ad *AdapterDeclSpec) (map[string]hcl.Expression, hcl.Diagnostics) {
+	if ad.Secrets == nil {
+		return nil, nil
+	}
+	attrs, diags := ad.Secrets.Remain.JustAttributes()
+	if diags.HasErrors() {
+		return nil, diags
+	}
+	out := make(map[string]hcl.Expression, len(attrs))
+	for k, attr := range attrs {
+		out[k] = attr.Expr
+	}
+	return out, nil
+}
+
+// checkAdapterEnvCompatibility emits a diagnostic when an adapter's schema
+// declares a set of compatible environments and the resolved environment type
+// is not among them. A wildcard "*" in the compatible list matches any type.
+func checkAdapterEnvCompatibility(key string, info *AdapterInfo, envKey string) hcl.Diagnostics {
+	if len(info.CompatibleEnvironments) == 0 {
+		return nil
+	}
+	if envKey == "" {
+		return nil
+	}
+	// Extract environment type from "env_type.env_name" key.
+	envType := envKey
+	if idx := strings.LastIndex(envKey, "."); idx != -1 {
+		envType = envKey[:idx]
+	}
+	for _, compat := range info.CompatibleEnvironments {
+		if compat == envType || compat == "*" {
+			return nil
+		}
+	}
+	return hcl.Diagnostics{{
+		Severity: hcl.DiagError,
+		Summary:  fmt.Sprintf("adapter %q: environment type %q is not in the adapter's compatible_environments %v", key, envType, info.CompatibleEnvironments),
+	}}
 }
 
 // adapterInfo looks up the AdapterInfo for a given adapter type in the schemas
@@ -165,7 +241,7 @@ func adapterInfo(schemas map[string]AdapterInfo, adapterType string) (AdapterInf
 
 // adapterHasCapability reports whether info declares capName in its Capabilities
 // slice. Used to gate parallel = [...] steps at compile time.
-func adapterHasCapability(info AdapterInfo, capName string) bool {
+func adapterHasCapability(info *AdapterInfo, capName string) bool {
 	for _, c := range info.Capabilities {
 		if c == capName {
 			return true

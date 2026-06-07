@@ -730,4 +730,3 @@ func TestRenderFunctions_NoDescriptionColumn(t *testing.T) {
 		t.Errorf("functions table must have a Signature column, got:\n%s", got)
 	}
 }
-

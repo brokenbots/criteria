@@ -7,7 +7,9 @@ import (
 
 	"github.com/zclconf/go-cty/cty"
 
+	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/workflow"
+	"github.com/brokenbots/criteria/workflow/lockfile"
 )
 
 // Option applies optional engine configuration.
@@ -95,6 +97,15 @@ func WithWorkflowDir(dir string) Option {
 	}
 }
 
+// WithLockfile sets the parsed adapter lockfile used for container-mode
+// adapter resolution. When nil and workflowDir is set, the engine auto-reads
+// the lockfile from the workflow directory at run start.
+func WithLockfile(lf *lockfile.Lockfile) Option {
+	return func(e *Engine) {
+		e.lockfile = lf
+	}
+}
+
 // WithLogger sets the structured logger used for internal engine warnings.
 // When not set, slog.Default() is used.
 // Pass the same logger used by the surrounding CLI command for consistent
@@ -102,6 +113,30 @@ func WithWorkflowDir(dir string) Option {
 func WithLogger(log *slog.Logger) Option {
 	return func(e *Engine) {
 		e.log = log
+	}
+}
+
+// WithAuditWriter sets the audit writer used by the session manager to
+// record permission decisions. When nil, no audit entries are written.
+func WithAuditWriter(w adapterhost.AuditWriter) Option {
+	return func(e *Engine) {
+		e.auditWriter = w
+	}
+}
+
+// WithSnapshotBase sets the base directory for persisting session snapshots
+// during Pause and reading them during Resume (WS18). When empty, snapshots
+// are not persisted.
+func WithSnapshotBase(dir string) Option {
+	return func(e *Engine) {
+		e.snapshotBase = dir
+	}
+}
+
+// WithRunID sets the run identifier used to namespace snapshot files.
+func WithRunID(id string) Option {
+	return func(e *Engine) {
+		e.runID = id
 	}
 }
 

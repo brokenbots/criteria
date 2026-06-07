@@ -1,0 +1,65 @@
+schema_version: 1
+name: example-adapter
+version: 1.2.3
+description: A canonical example adapter.yaml used for testing and documentation.
+source_url: https://github.com/brokenbots/criteria/tree/main/examples/plugins/greeter
+capabilities:
+  - parallel_safe
+  - pause
+  - resume
+platforms:
+  - os: linux
+    arch: amd64
+  - os: linux
+    arch: arm64
+  - os: darwin
+    arch: amd64
+  - os: darwin
+    arch: arm64
+sdk_protocol_version: 2
+config_schema:
+  fields:
+    api_key:
+      type: string
+      required: true
+      description: API key for the upstream service.
+      sensitive: true
+    timeout_seconds:
+      type: number
+      required: false
+      description: Request timeout in seconds.
+      default: 30
+input_schema:
+  fields:
+    prompt:
+      type: string
+      required: true
+      description: The user prompt to process.
+    temperature:
+      type: number
+      required: false
+      description: Sampling temperature.
+      default: 0.7
+output_schema:
+  fields:
+    response:
+      type: string
+      required: true
+      description: The generated response text.
+    tokens_used:
+      type: number
+      required: false
+      description: Number of tokens consumed.
+secrets:
+  - name: api_key
+    description: API key for the upstream service.
+    required: true
+  - name: webhook_token
+    description: Optional webhook authentication token.
+    required: false
+permissions:
+  - file.read
+  - network.outbound
+compatible_environments:
+  - local
+  - ci

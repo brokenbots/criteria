@@ -9,7 +9,7 @@
   },
   "adapters": [
     {
-      "type": "shell",
+      "type": "noop",
       "name": "default",
       "on_crash": "fail",
       "config_keys": null
@@ -18,10 +18,8 @@
   "steps": [
     {
       "name": "say_hello",
-      "adapter": "shell.default",
-      "input_keys": [
-        "command"
-      ],
+      "adapter": "noop.default",
+      "input_keys": null,
       "allow_tools": null,
       "outcomes": [
         {
@@ -59,7 +57,7 @@
     "say_hello"
   ],
   "plugins_required": [
-    "shell"
+    "noop"
   ],
   "metadata": {
     "schema_version": 1

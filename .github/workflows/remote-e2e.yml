@@ -1,0 +1,82 @@
+name: Remote E2E
+
+on:
+  schedule:
+    - cron: '0 0 * * 0'
+  workflow_dispatch:
+  # Invoked as Gate 3 (D57.3) by release.yml on a release/pre-release tag. The
+  # release pipeline owns the tag trigger so the release cannot publish unless
+  # this gate (and the others) pass.
+  workflow_call:
+
+jobs:
+  remote-e2e:
+    name: Remote adapter end-to-end
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Cache Go build cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/go-build
+          key: go-build-remote-e2e-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            go-build-remote-e2e-${{ runner.os }}-
+
+      - name: Sync workspace
+        run: go work sync
+
+      - name: Install kind
+        run: |
+          KIND_VERSION=v0.23.0
+          curl -sLo /tmp/kind "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64"
+          chmod +x /tmp/kind
+          sudo mv /tmp/kind /usr/local/bin/kind
+          kind version
+
+      - name: Install kubectl
+        run: |
+          KUBECTL_VERSION=v1.30.0
+          curl -sLo /tmp/kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+          chmod +x /tmp/kubectl
+          sudo mv /tmp/kubectl /usr/local/bin/kubectl
+          kubectl version --client
+
+      - name: Build fixture adapter image
+        run: |
+          cd internal/ci/smoke/testdata/criteria-adapter-remote-smoke
+          # GOWORK=off: the fixture is a separate nested module under testdata/
+          # (which the Go tool ignores in workspace mode). The smoke test builds
+          # it the same way (see buildFixtureAdapter in remote_adapter_test.go).
+          GOWORK=off GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o /tmp/criteria-adapter-remote-smoke .
+          # The binary is already built into /tmp (the docker build context).
+          cat > /tmp/Dockerfile <<'EOF'
+          FROM scratch
+          COPY criteria-adapter-remote-smoke /usr/local/bin/criteria-adapter-remote-smoke
+          ENTRYPOINT ["/usr/local/bin/criteria-adapter-remote-smoke"]
+          EOF
+          docker build -f /tmp/Dockerfile -t criteria-adapter-remote-smoke:dev /tmp
+
+      - name: Run remote smoke tests
+        run: go test -v -timeout 10m ./internal/ci/smoke/...
+        env:
+          CRITERIA_REMOTE_E2E: "1"
+
+      - name: Validate k8s example manifests parse
+        # The smoke test deletes its kind cluster on completion, so a
+        # `kubectl --dry-run=client` would fail: it still contacts the API server
+        # for resource discovery (and the examples include cert-manager CRDs).
+        # This step is a doc-example smoke check, so validate the manifests parse
+        # as YAML offline — no cluster or extra tooling required.
+        run: |
+          set -euo pipefail
+          for f in docs/examples/k8s-remote-adapter/*.yaml; do
+            python3 -c "import yaml,sys; list(yaml.safe_load_all(open(sys.argv[1])))" "$f"
+            echo "ok: $f"
+          done

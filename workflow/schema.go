@@ -18,12 +18,8 @@ type LocalSpec struct {
 	Remain      hcl.Body `hcl:",remain"` // captures the "value" expression
 }
 
-// DataSpec is the parsed (but unvalidated) data block declaration.
-// data blocks declare workflow-scoped values. The "internal" kind is
-// runtime-mutable under engine-managed locking; future kinds (e.g. "http")
-// would be read-only.
-//
-// The optional "value" initial expression is decoded by the compiler via Remain.
+// DataSpec is the WS02 form: data "<kind>" "<name>" { ... }.
+// Only kind = "internal" is currently supported.
 type DataSpec struct {
 	Kind        string         `hcl:"kind,label"` // first label, e.g. "internal"
 	Name        string         `hcl:"name,label"` // second label
@@ -40,6 +36,7 @@ type DataNode struct {
 	TypeDefaults *typeexpr.Defaults // nil when type has no optional defaults
 	InitialValue cty.Value          // compile-folded; cty.NullVal(Type) if not declared
 	Description  string
+	Secret       bool
 }
 
 // DataRef identifies a data block by kind and name for stable ordering.
@@ -67,12 +64,75 @@ type EnvironmentSpec struct {
 	Remain hcl.Body `hcl:",remain"`
 }
 
+// FilesystemPolicy controls filesystem access for sandboxed/container environments.
+type FilesystemPolicy struct{ ReadOnly bool }
+
+// NetworkPolicy controls network access for sandboxed/container environments.
+type NetworkPolicy struct{ AllowEgress bool }
+
+// SecretsPolicy controls secret resolution for an environment.
+type SecretsPolicy struct {
+	Provider string   `json:"provider"`
+	Fallback []string `json:"fallback,omitempty"`
+}
+
+// ResourcesPolicy caps compute resources for an environment.
+type ResourcesPolicy struct{ MaxMemory string }
+
+// PolicyHints provides default values for environment policy fields that an
+// adapter manifest may declare. These hints are consumed by the three-rule
+// field resolver when policy_mode = "permissive".
+type PolicyHints struct {
+	PolicyMode   string
+	OS           string
+	Filesystem   *FilesystemPolicy
+	Network      *NetworkPolicy
+	Secrets      *SecretsPolicy
+	Resources    *ResourcesPolicy
+	TypeSpecific map[string]cty.Value
+}
+
+// ResolvedPolicy is the result of resolving an environment block against an
+// adapter's manifest hints and the three D37 rules.
+type ResolvedPolicy struct {
+	PolicyMode   string
+	OS           string
+	Filesystem   *FilesystemPolicy
+	Network      *NetworkPolicy
+	Secrets      *SecretsPolicy
+	Resources    *ResourcesPolicy
+	TypeSpecific map[string]cty.Value
+}
+
 // EnvironmentNode is a compiled environment declaration.
 type EnvironmentNode struct {
 	Type      string
 	Name      string
 	Variables map[string]string    // resolved env vars (compile-folded)
 	Config    map[string]cty.Value // type-specific config (compile-folded; shape unenforced for v0.3.0)
+	// PolicyMode is "permissive" (default) or "strict".
+	PolicyMode string
+	// OS is "" (any) or a specific GOOS value like "linux" or "darwin".
+	OS string
+	// WorkingDirectoryExpr is the environment's optional working_directory
+	// attribute, kept as an unevaluated expression and resolved at runtime when
+	// the adapter session is initialized (against the run's var + local + input
+	// closure). Deferring evaluation lets the workflow set the adapter launch cwd
+	// dynamically (e.g. working_directory = var.worktree supplied via --var at
+	// run time). The resolved value becomes the adapter process launch cwd so
+	// shell/copilot adapters operate in that directory by default. Supported by
+	// shell, sandbox, and remote environments; container environments reject it
+	// (they isolate paths rather than relocate the process cwd).
+	WorkingDirectoryExpr hcl.Expression
+	Filesystem           *FilesystemPolicy
+	Network              *NetworkPolicy
+	Secrets              *SecretsPolicy
+	Resources            *ResourcesPolicy
+	TypeSpecific         map[string]cty.Value // e.g. runtime="docker"
+	// RawBody preserves the original HCL body so runtime handlers can parse
+	// type-specific blocks (e.g. mtls { ... }) that the generic compiler does
+	// not decode into typed fields.
+	RawBody hcl.Body
 }
 
 // OutputNode is a compiled output declaration. The value expression is
@@ -102,6 +162,11 @@ type WorkflowHeaderSpec struct {
 	TargetState        string         `hcl:"target_state,optional"`
 	DefaultEnvironment hcl.Expression `hcl:"environment,optional"` // bare traversal reference to the workflow's default environment (e.g. shell.default)
 	Policy             *PolicySpec    `hcl:"policy,block"`
+	// Verification is the workflow-level signature-verification posture for OCI
+	// adapters: off|warn|strict. Empty means the CLI transition default applies.
+	// The CLI override (--allow-unsigned / CRITERIA_ALLOW_UNSIGNED) takes
+	// precedence over this attribute.
+	Verification string `hcl:"verification,optional"`
 }
 
 // Spec is the parsed (but unvalidated) HCL workflow document. After workstream
@@ -158,11 +223,19 @@ type InputSpec struct {
 // This is the HCL schema for the `adapter "<type>" "<name>"` block.
 // Note: This is distinct from AdapterInfo, which describes an adapter's schema.
 type AdapterDeclSpec struct {
-	Type        string         `hcl:"type,label"`           // first label: adapter type
-	Name        string         `hcl:"name,label"`           // second label: instance name
+	Type string `hcl:"type,label"` // first label: adapter type
+	Name string `hcl:"name,label"` // second label: instance name
+	// Source is the adapter's OCI location (a registry/repo path or a registry
+	// alias), decoupled from the version. Required for OCI-backed adapters.
+	Source string `hcl:"source,optional"`
+	// Version is the semver constraint resolved at lock time: exact ("1.2.3"),
+	// caret ("^1.2"), tilde ("~1.2.0"), wildcard ("1.x"), or "latest". The
+	// lockfile pins the resolved digest for run-to-run reproducibility.
+	Version     string         `hcl:"version,optional"`
 	Environment hcl.Expression `hcl:"environment,optional"` // bare traversal reference (e.g. shell.default)
 	OnCrash     string         `hcl:"on_crash,optional"`
 	Config      *ConfigSpec    `hcl:"config,block"`
+	Secrets     *ConfigSpec    `hcl:"secrets,block"` // optional secrets block
 }
 
 // StepSpec describes a single step in the workflow.
@@ -178,10 +251,11 @@ type StepSpec struct {
 	MaxVisits int `hcl:"max_visits,optional"`
 	// Config is the legacy map attribute; retained for parse-time detection so the
 	// compiler can emit a helpful "use input { } block" diagnostic.
-	Config     map[string]string `hcl:"config,optional"`
-	Input      *InputSpec        `hcl:"input,block"`
-	Timeout    string            `hcl:"timeout,optional"`
-	AllowTools []string          `hcl:"allow_tools,optional"`
+	Config      map[string]string `hcl:"config,optional"`
+	Input       *InputSpec        `hcl:"input,block"`
+	SecretInput *InputSpec        `hcl:"secret_input,block"`
+	Timeout     string            `hcl:"timeout,optional"`
+	AllowTools  []string          `hcl:"allow_tools,optional"`
 	// Outcomes lists the declared outcome blocks for this step.
 	// Environment (e.g. shell.ci) is not decoded as a struct field; it is a bare
 	// traversal captured from Remain by resolveStepEnvironmentOverride. A
@@ -272,9 +346,16 @@ const (
 
 // ConfigField describes a single field in an adapter's config or input schema.
 type ConfigField struct {
-	Required bool
-	Type     ConfigFieldType
-	Doc      string
+	Required  bool
+	Type      ConfigFieldType
+	Doc       string
+	Sensitive bool // marks the field as a taint-source for downstream tools
+	// CtyType is the full declared cty type for the field. For OutputSchema it is
+	// authoritative and drives typed coercion of step outputs (object/array/number/
+	// bool/string). cty.NilType means "no declared type" (permissive — value is
+	// preserved as a raw string). Config/input validation still uses Type; CtyType
+	// is the richer model needed for structured outputs.
+	CtyType cty.Type
 }
 
 // AdapterInfo describes an adapter's declared configuration schema.
@@ -282,10 +363,16 @@ type ConfigField struct {
 // step input blocks against the adapter's declared requirements.
 // An empty (zero-value) AdapterInfo means "any keys accepted" (permissive).
 type AdapterInfo struct {
-	ConfigSchema map[string]ConfigField // schema for adapter-level `config { }` blocks
-	InputSchema  map[string]ConfigField // schema for per-step `input { }` blocks
-	OutputSchema map[string]ConfigField // declared outputs the adapter promises to populate (W04)
-	Capabilities []string               // well-known capability strings (e.g. "parallel_safe")
+	ConfigSchema           map[string]ConfigField // schema for adapter-level `config { }` blocks
+	InputSchema            map[string]ConfigField // schema for per-step `input { }` blocks
+	OutputSchema           map[string]ConfigField // declared outputs the adapter promises to populate (W04)
+	Capabilities           []string               // well-known capability strings (e.g. "parallel_safe")
+	CompatibleEnvironments []string               // nil/empty means any (default)
+	PolicyHints            *PolicyHints           // D36 manifest hints for environment policy fields
+	// SupportedFeatures lists optional capabilities this adapter implements.
+	// Well-known values: "pause", "resume", "snapshot", "restore", "inspect".
+	// The host gates UI and behavior on this list; unknown values are ignored.
+	SupportedFeatures []string // NEW v2 (D76)
 }
 
 // OutcomeSpec maps an adapter outcome name to the next node.
@@ -393,9 +480,13 @@ type PermissionsSpec struct {
 
 // FSMGraph is the validated, executable representation of a workflow.
 type FSMGraph struct {
-	Name               string
-	InitialState       string
-	TargetState        string
+	Name         string
+	InitialState string
+	TargetState  string
+	// Verification is the workflow-level signature-verification posture
+	// (off|warn|strict) copied from the header; empty means the CLI transition
+	// default applies. Consumed by the runtime adapter-pin enforcement path.
+	Verification       string
 	Variables          map[string]*VariableNode        // compiled variable declarations (W04)
 	Locals             map[string]*LocalNode           // compiled local declarations (W07)
 	Data               map[string]map[string]*DataNode // compiled data declarations; keyed by kind then name (W02)
@@ -413,6 +504,7 @@ type FSMGraph struct {
 	Waits              map[string]*WaitNode            // by wait node name (W05)
 	Approvals          map[string]*ApprovalNode        // by approval node name (W05)
 	Switches           map[string]*SwitchNode          // by switch node name (W16)
+	ResolvedPolicies   map[string]*ResolvedPolicy      // cached per (adapter, environment); key = "adapterRef:envKey"
 	Policy             Policy
 	// Order of step declarations (stable for diagnostics).
 	stepOrder []string
@@ -426,6 +518,7 @@ type VariableNode struct {
 	TypeDefaults *typeexpr.Defaults // nil when type has no optional defaults
 	Default      cty.Value          // cty.NilVal when no default was declared
 	Description  string
+	Secret       bool
 }
 
 // IsRequired returns true when the variable has no declared default.
@@ -440,6 +533,13 @@ type AdapterNode struct {
 	Environment string            // optional "<env_type>.<env_name>" reference; resolved to default at scope start if not set
 	OnCrash     string            // "fail" (default) or "continue"
 	Config      map[string]string // compile-folded config from adapter.config { }
+	// Secrets holds raw HCL expressions from the adapter-level `secrets { }` block.
+	// These are treated as taint sources.
+	Secrets map[string]hcl.Expression
+	// ConfigExprs holds the raw HCL attribute expressions from the adapter-level
+	// `config { }` block. Preserved so that TaintPass can detect tainted values
+	// flowing into non-secret adapter config channels (D65).
+	ConfigExprs map[string]hcl.Expression
 }
 
 // StepTargetKind enumerates the kinds of compiled step targets.
@@ -505,8 +605,13 @@ type StepNode struct {
 	// produce the effective input map passed to the adapter. If nil, Input is
 	// used directly (static-only inputs, e.g. lifecycle steps).
 	InputExprs map[string]hcl.Expression
-	Timeout    time.Duration               // zero = no timeout
-	Outcomes   map[string]*CompiledOutcome // outcome name -> compiled outcome
+	// SecretInputs holds the per-step adapter secret input from the `secret_input { }` block.
+	// These values are treated as taint sources and may only flow through secret channels.
+	SecretInputs map[string]string
+	// SecretInputExprs holds the raw HCL attribute expressions from the secret_input{} block.
+	SecretInputExprs map[string]hcl.Expression
+	Timeout          time.Duration               // zero = no timeout
+	Outcomes         map[string]*CompiledOutcome // outcome name -> compiled outcome
 	// DefaultOutcome, when set, is applied when the adapter returns an
 	// outcome name not present in Outcomes. The unknown name is silently mapped
 	// to this outcome. When nil, an unknown outcome is a runtime error.
@@ -539,6 +644,12 @@ type StepNode struct {
 	// block's environment and the workflow-level default for this step only.
 	// Applies env-var injection only; does not create a new adapter session.
 	Environment string
+	// OutputSchema is the adapter's declared output schema for this step.
+	// Populated during compilation when the step targets an adapter.
+	OutputSchema map[string]ConfigField
+	// Tainted is set by the taint compiler pass when this step receives secret
+	// data (secret_input, predecessor taint, or sensitive output references).
+	Tainted bool
 }
 
 // SubworkflowNode is a compiled subworkflow declaration with resolved source,

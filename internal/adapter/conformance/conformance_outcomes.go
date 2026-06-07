@@ -4,7 +4,6 @@ package conformance
 
 import (
 	"context"
-	"strings"
 	"testing"
 	"time"
 
@@ -34,8 +33,8 @@ func testOutcomeDomain(t *testing.T, name string, factory targetFactory, opts *O
 
 func testPermissionRequestShape(t *testing.T, name string, loader adapterhost.Loader, opts *Options, info *adapterhost.Info) {
 	t.Helper()
-	if !hasCapability(info.Capabilities, "permission_gating") {
-		t.Skip("permission_request_shape skipped: adapter does not advertise permission_gating")
+	if !hasCapability(info.Capabilities, "permission_gating") && !hasCapability(info.Capabilities, "permission_request_forwarding") {
+		t.Skip("permission_request_shape skipped: adapter does not advertise permission_gating or permission_request_forwarding")
 	}
 
 	// 30 s matches the StartTimeout in the loader.
@@ -49,7 +48,7 @@ func testPermissionRequestShape(t *testing.T, name string, loader adapterhost.Lo
 	defer plug.Kill()
 
 	sessionID := newSessionID("permission")
-	if err := plug.OpenSession(ctx, sessionID, cloneConfig(opts.OpenConfig)); err != nil {
+	if err := plug.OpenSession(ctx, sessionID, cloneConfig(opts.OpenConfig), cloneConfig(opts.Secrets)); err != nil {
 		t.Fatalf("open session: %v", err)
 	}
 	defer func() {
@@ -60,42 +59,42 @@ func testPermissionRequestShape(t *testing.T, name string, loader adapterhost.Lo
 	if len(cfg) == 0 {
 		cfg = opts.StepConfig
 	}
-	// No allow_tools on the step → default deny-all policy applies.
+	// No allow_tools on the step; the adapter emits permission.request events
+	// which the host forwards upstream. The adapter's own handling determines
+	// the outcome (WS16 adds full grant/deny policy).
 	step := baseStep(name, info.Name, cfg)
 	sink := &recordingSink{}
-	res, err := executeNoPanic(t, adapterSessionTarget{handle: plug, sessionID: sessionID, name: info.Name}, context.Background(), step, sink)
+	_, err = executeNoPanic(t, adapterSessionTarget{handle: plug, sessionID: sessionID, name: info.Name}, context.Background(), step, sink)
 	if err != nil {
 		t.Fatalf("execute with permission request config: %v", err)
-	}
-	wantOutcome := opts.PermissionDenialOutcome
-	if wantOutcome == "" {
-		wantOutcome = "needs_review"
-	}
-	if res.Outcome != wantOutcome {
-		t.Fatalf("permission denial must end with %q, got %q", wantOutcome, res.Outcome)
 	}
 	assertPermissionDeniedEvent(t, sink)
 }
 
 // assertPermissionDeniedEvent verifies that the recording sink contains a
-// well-formed permission.denied adapter event (non-empty request_id and tool).
+// permission.denied adapter event, confirming that the host applied the
+// allow_tools policy and denied the request. It checks the minimal payload
+// shape: request_id and tool fields must be present and non-empty.
 func assertPermissionDeniedEvent(t *testing.T, sink *recordingSink) {
 	t.Helper()
-	// The host policy emits permission.denied (not the legacy permission.request)
-	// for every denied request. Verify the event carries the request_id so the
-	// adapter's original request can be correlated.
-	deniedEvent, ok := sink.firstAdapterEvent("permission.denied")
+	// WS03: the host evaluates allow_tools policy; with no allow_tools the
+	// policy denies all requests and the host emits permission.denied.
+	data, ok := sink.firstAdapterEvent("permission.denied")
 	if !ok {
-		t.Fatal("expected permission.denied adapter event from host deny policy")
+		t.Fatal("expected permission.denied adapter event in upstream sink (allow_tools policy denied the request)")
 	}
-	// Use type assertion so a missing or nil field (which fmt.Sprint renders as
-	// "<nil>") is correctly treated as an absent value.
-	requestID, _ := deniedEvent["request_id"].(string)
-	tool, _ := deniedEvent["tool"].(string)
-	if strings.TrimSpace(requestID) == "" {
-		t.Fatal("permission.denied event must include non-empty request_id")
+	reqID, hasID := data["request_id"]
+	if !hasID {
+		t.Fatal("permission.denied payload missing required \"request_id\" field")
 	}
-	if strings.TrimSpace(tool) == "" {
-		t.Fatal("permission.denied event must include non-empty tool")
+	if s, _ := reqID.(string); s == "" {
+		t.Fatal("permission.denied payload \"request_id\" must be non-empty")
+	}
+	tool, hasTool := data["tool"]
+	if !hasTool {
+		t.Fatal("permission.denied payload missing required \"tool\" field")
+	}
+	if s, _ := tool.(string); s == "" {
+		t.Fatal("permission.denied payload \"tool\" must be non-empty")
 	}
 }

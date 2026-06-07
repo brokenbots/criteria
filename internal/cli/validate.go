@@ -12,7 +12,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/brokenbots/criteria/internal/adapterhost"
-	"github.com/brokenbots/criteria/internal/adapters/shell"
 	"github.com/brokenbots/criteria/internal/diagutil"
 	"github.com/brokenbots/criteria/workflow"
 )
@@ -21,6 +20,7 @@ func NewValidateCmd() *cobra.Command {
 	var (
 		subworkflowRoots []string
 		diagJSONFlag     bool
+		warnsAsErrors    bool
 	)
 
 	cmd := &cobra.Command{
@@ -29,7 +29,7 @@ func NewValidateCmd() *cobra.Command {
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
-			if runValidate(args, subworkflowRoots, diagJSONFlag) {
+			if runValidate(args, subworkflowRoots, diagJSONFlag, warnsAsErrors) {
 				os.Exit(1)
 			}
 			return nil
@@ -38,10 +38,11 @@ func NewValidateCmd() *cobra.Command {
 
 	cmd.Flags().StringArrayVar(&subworkflowRoots, "subworkflow-root", nil, "Restrict subworkflow source resolution to this root path (repeatable; empty = no restriction)")
 	cmd.Flags().BoolVar(&diagJSONFlag, "diag-json", false, "Emit diagnostics as structured JSON to stdout instead of human-readable text to stderr")
+	cmd.Flags().BoolVar(&warnsAsErrors, "warnings-as-errors", false, "Treat warnings (e.g. an adapter whose schema could not be verified) as errors")
 	return cmd
 }
 
-func validatePath(ctx context.Context, path string, subworkflowRoots []string, diagJSON bool) (ok bool) {
+func validatePath(ctx context.Context, path string, subworkflowRoots []string, diagJSON, warnsAsErrors bool) (ok bool) {
 	spec, diags := workflow.ParseFileOrDir(path)
 	if diags.HasErrors() {
 		if diagJSON {
@@ -57,8 +58,7 @@ func validatePath(ctx context.Context, path string, subworkflowRoots []string, d
 		workflowDir = filepath.Dir(path)
 	}
 	loader := adapterhost.NewLoader()
-	loader.RegisterBuiltin(shell.Name, adapterhost.BuiltinFactoryForAdapter(shell.New()))
-	schemas := diagutil.CollectSchemas(ctx, loader, spec, nil)
+	schemas, schemaDiags := diagutil.CollectSchemas(ctx, loader, spec, nil)
 	_ = loader.Shutdown(ctx)
 
 	_, diags = workflow.CompileWithContext(ctx, spec, schemas, workflow.CompileOpts{
@@ -66,6 +66,9 @@ func validatePath(ctx context.Context, path string, subworkflowRoots []string, d
 		SubWorkflowResolver: &workflow.LocalSubWorkflowResolver{AllowedRoots: subworkflowRoots},
 		Schemas:             schemas,
 	})
+	// Fold unverified-adapter warnings into the diagnostics; --warnings-as-errors
+	// promotes them so they fail validation rather than only printing.
+	diags = append(diags, promoteWarnings(schemaDiags, warnsAsErrors)...)
 	if diags.HasErrors() {
 		if diagJSON {
 			printDiagnosticsJSON(diags)
@@ -89,11 +92,11 @@ func validatePath(ctx context.Context, path string, subworkflowRoots []string, d
 	return true
 }
 
-func runValidate(paths, subworkflowRoots []string, diagJSON bool) bool {
+func runValidate(paths, subworkflowRoots []string, diagJSON, warnsAsErrors bool) bool {
 	ctx := context.Background()
 	anyErr := false
 	for _, path := range paths {
-		if !validatePath(ctx, path, subworkflowRoots, diagJSON) {
+		if !validatePath(ctx, path, subworkflowRoots, diagJSON, warnsAsErrors) {
 			anyErr = true
 		}
 	}

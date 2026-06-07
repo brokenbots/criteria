@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 
@@ -32,12 +33,12 @@ func TestStepNode_ResolveInput_InjectsEnvironmentVars(t *testing.T) {
 		step: &workflow.StepNode{
 			Name:       "s",
 			TargetKind: workflow.StepTargetAdapter,
-			AdapterRef: "shell",
+			AdapterRef: "noop",
 			Input:      map[string]string{},
 		},
 	}
 
-	out, err := n.resolveInput(map[string]cty.Value{}, ".")
+	out, err := n.resolveInput(context.Background(), map[string]cty.Value{}, ".", nil)
 	require.NoError(t, err)
 
 	raw, ok := out.Input["env"]
@@ -80,12 +81,12 @@ func TestStepNode_ResolveInput_FiltersControlledEnvVars(t *testing.T) {
 		step: &workflow.StepNode{
 			Name:       "s",
 			TargetKind: workflow.StepTargetAdapter,
-			AdapterRef: "shell",
+			AdapterRef: "noop",
 			Input:      map[string]string{},
 		},
 	}
 
-	out, err := n.resolveInput(map[string]cty.Value{}, ".")
+	out, err := n.resolveInput(context.Background(), map[string]cty.Value{}, ".", nil)
 	require.NoError(t, err)
 
 	var got map[string]string

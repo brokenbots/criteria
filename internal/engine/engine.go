@@ -7,14 +7,20 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/zclconf/go-cty/cty"
 
+	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 	"github.com/brokenbots/criteria/internal/adapter"
+	"github.com/brokenbots/criteria/internal/adapter/environment/remote"
+	"github.com/brokenbots/criteria/internal/adapter/secrets"
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	engineruntime "github.com/brokenbots/criteria/internal/engine/runtime"
+	"github.com/brokenbots/criteria/internal/runtime/state"
 	"github.com/brokenbots/criteria/workflow"
+	"github.com/brokenbots/criteria/workflow/lockfile"
 )
 
 // Sink receives engine-level events. Implementations (typically the server
@@ -136,9 +142,26 @@ type Engine struct {
 	// workflowDir is the directory containing the HCL workflow file. Passed to
 	// RunState so that file() and fileexists() can resolve relative paths.
 	workflowDir string
+	// lockfile is the parsed adapter lockfile used for container-mode resolution.
+	// If nil and workflowDir is set, the engine auto-reads it at run start.
+	lockfile *lockfile.Lockfile
 	// log is an optional structured logger for internal engine warnings.
 	// Falls back to slog.Default() when nil.
 	log *slog.Logger
+	// auditWriter, when non-nil, is wired into the SessionManager so that
+	// permission decisions are recorded to a file (WS16).
+	auditWriter adapterhost.AuditWriter
+
+	// WS18: snapshotBase is the base directory for persisting session
+	// snapshots during Pause. When empty, snapshots are not persisted.
+	snapshotBase string
+	// WS18: runID namespaces snapshot files within snapshotBase.
+	runID string
+
+	// WS17: liveSessions holds the active SessionManager while a run is in
+	// progress, enabling Pause/Resume/Inspect from outside runLoop.
+	liveSessions *adapterhost.SessionManager
+	mu           sync.RWMutex
 }
 
 func New(graph *workflow.FSMGraph, loader adapterhost.Loader, sink Sink, opts ...Option) *Engine {
@@ -169,28 +192,169 @@ func (e *Engine) VisitCounts() map[string]int {
 	return e.lastVisits
 }
 
+// Pause halts all open adapter sessions without losing state, snapshots each
+// session, and persists the snapshots to disk (WS18). It is reentrant and
+// idempotent.
+func (e *Engine) Pause(ctx context.Context) error {
+	e.mu.RLock()
+	sessions := e.liveSessions
+	e.mu.RUnlock()
+	if sessions == nil {
+		return errors.New("no active run to pause")
+	}
+	if err := sessions.PauseAll(ctx); err != nil {
+		return err
+	}
+	if e.snapshotBase == "" || e.runID == "" {
+		return nil
+	}
+	snaps, err := sessions.SnapshotAll(ctx)
+	if err != nil {
+		return fmt.Errorf("snapshot: %w", err)
+	}
+	for name, snap := range snaps {
+		dir := state.SnapshotDir(e.snapshotBase, e.runID, name)
+		if _, err := state.WriteSnapshot(dir, snap); err != nil {
+			return fmt.Errorf("persist snapshot for %q: %w", name, err)
+		}
+	}
+	return nil
+}
+
+// Resume continues all paused adapter sessions. If the engine was restarted
+// and liveSessions is nil, it reconstructs sessions from the latest persisted
+// snapshots before resuming (WS18).
+func (e *Engine) Resume(ctx context.Context) error {
+	e.mu.RLock()
+	sessions := e.liveSessions
+	e.mu.RUnlock()
+	if sessions == nil {
+		if e.snapshotBase == "" || e.runID == "" {
+			return errors.New("no active run to resume")
+		}
+		restored, err := e.restoreSessionsFromSnapshots(ctx)
+		if err != nil {
+			return err
+		}
+		sessions = restored
+		e.mu.Lock()
+		e.liveSessions = sessions
+		e.mu.Unlock()
+	}
+	return sessions.ResumeAll(ctx)
+}
+
+func (e *Engine) restoreSessionsFromSnapshots(ctx context.Context) (*adapterhost.SessionManager, error) {
+	sessions := adapterhost.NewSessionManager(e.loader)
+	sessions.SetGraph(e.graph)
+	sessions.SetLockfile(e.lockfile)
+	sessions.RedactionRegistry = secrets.NewRegistry()
+	if e.auditWriter != nil {
+		sessions.Audit = e.auditWriter
+	}
+	if e.graph == nil {
+		return nil, errors.New("cannot restore sessions: engine has no workflow graph")
+	}
+	ids, err := state.ListSnapshotSessions(e.snapshotBase, e.runID)
+	if err != nil {
+		return nil, fmt.Errorf("list snapshot sessions: %w", err)
+	}
+	for _, sid := range ids {
+		dir := state.SnapshotDir(e.snapshotBase, e.runID, sid)
+		snap, err := state.ReadLatestSnapshot(dir)
+		if err != nil {
+			return nil, fmt.Errorf("read snapshot for %q: %w", sid, err)
+		}
+		adapterNode := e.graph.Adapters[sid]
+		if adapterNode == nil {
+			return nil, fmt.Errorf("snapshot session %q not found in workflow graph", sid)
+		}
+		envNode := getEnvironmentNode(e.graph, adapterNode.Environment)
+		_, err = sessions.Restore(ctx, sid, adapterNode.Type, adapterNode.OnCrash, adapterNode.Config, envNode, snap)
+		if err != nil {
+			return nil, fmt.Errorf("restore session %q: %w", sid, err)
+		}
+	}
+	return sessions, nil
+}
+
+// InspectSession returns structured read-only state for a single session.
+func (e *Engine) InspectSession(ctx context.Context, name string) (*v2.InspectResponse, error) {
+	e.mu.RLock()
+	sessions := e.liveSessions
+	e.mu.RUnlock()
+	if sessions == nil {
+		return nil, errors.New("no active run to inspect")
+	}
+	return sessions.InspectSession(ctx, name)
+}
+
+// setLockfileOnSessions ensures the session manager has the lockfile needed
+// for container-mode adapter resolution. If the engine already has a lockfile
+// it is used directly; otherwise if workflowDir is set the lockfile is read
+// from the workflow directory.
+func (e *Engine) setLockfileOnSessions(sessions *adapterhost.SessionManager) error {
+	if e.lockfile != nil {
+		sessions.SetLockfile(e.lockfile)
+		return nil
+	}
+	if e.workflowDir == "" {
+		return nil
+	}
+	lf, err := lockfile.ReadFromDir(e.workflowDir)
+	if err != nil {
+		return fmt.Errorf("read lockfile: %w", err)
+	}
+	sessions.SetLockfile(lf)
+	return nil
+}
+
 // Run executes the workflow until a terminal state is reached, the global
 // step limit is exceeded, or ctx is cancelled.
 func (e *Engine) Run(ctx context.Context) error {
 	sessions := adapterhost.NewSessionManager(e.loader)
+	sessions.SetGraph(e.graph)
+	sessions.Audit = e.auditWriter
+	if err := e.setLockfileOnSessions(sessions); err != nil {
+		return err
+	}
 	defer func() { _ = sessions.Shutdown(context.WithoutCancel(ctx)) }()
+
+	// Create a per-run redaction registry and wire it into the session manager
+	// and the engine sink so all secret values are masked before display or
+	// persistence.
+	redactionReg := secrets.NewRegistry()
+	sessions.RedactionRegistry = redactionReg
+
+	// Wrap the engine sink before any events are emitted.
+	sink := NewRedactingSink(e.sink, redactionReg)
+
+	// Seed variables before adapter provisioning so secret expressions can be
+	// evaluated against the run scope (WS13).
+	vars := e.seedRunVars(sink)
+
+	// WS20: if any environment is remote, start the phone-home shim before
+	// provisioning adapters.
+	if err := e.maybeStartRemoteShim(ctx, sessions); err != nil {
+		return err
+	}
 
 	deps := Deps{
 		Sessions: sessions,
-		Sink:     e.sink,
+		Sink:     sink,
 	}
 
 	// Provision adapter sessions at scope start (W12)
-	scopeOrder, err := initScopeAdapters(ctx, e.graph, deps)
+	scopeOrder, err := initScopeAdapters(ctx, e.graph, deps, vars)
 	if err != nil {
-		e.sink.OnRunFailed(err.Error(), e.graph.InitialState)
+		sink.OnRunFailed(err.Error(), e.graph.InitialState)
 		return err
 	}
 	defer func() { tearDownScopeAdapters(ctx, scopeOrder, deps) }()
 
 	current := e.graph.InitialState
-	e.sink.OnRunStarted(e.graph.Name, current)
-	return e.runLoop(ctx, sessions, current, 1)
+	sink.OnRunStarted(e.graph.Name, current)
+	return e.runLoop(ctx, sessions, current, 1, vars, sink)
 }
 
 // RunFrom resumes a workflow at startStep with the given initialAttempt
@@ -202,18 +366,36 @@ func (e *Engine) Run(ctx context.Context) error {
 // allowing the workflow to be resumed in a new process context.
 func (e *Engine) RunFrom(ctx context.Context, startStep string, initialAttempt int) error {
 	sessions := adapterhost.NewSessionManager(e.loader)
+	sessions.SetGraph(e.graph)
+	sessions.Audit = e.auditWriter
+	if err := e.setLockfileOnSessions(sessions); err != nil {
+		return err
+	}
 	defer func() { _ = sessions.Shutdown(context.WithoutCancel(ctx)) }()
+
+	redactionReg := secrets.NewRegistry()
+	sessions.RedactionRegistry = redactionReg
+
+	sink := NewRedactingSink(e.sink, redactionReg)
+
+	vars := e.seedRunVars(sink)
+
+	// WS20: if any environment is remote, start the phone-home shim before
+	// provisioning adapters.
+	if err := e.maybeStartRemoteShim(ctx, sessions); err != nil {
+		return err
+	}
 
 	deps := Deps{
 		Sessions: sessions,
-		Sink:     e.sink,
+		Sink:     sink,
 	}
 
 	// For resumed runs, provision adapter sessions at scope start (W12).
 	// Sessions are always provisioned fresh, not restored from a prior run.
-	scopeOrder, err := initScopeAdapters(ctx, e.graph, deps)
+	scopeOrder, err := initScopeAdapters(ctx, e.graph, deps, vars)
 	if err != nil {
-		e.sink.OnRunFailed(err.Error(), startStep)
+		sink.OnRunFailed(err.Error(), startStep)
 		return err
 	}
 	defer func() { tearDownScopeAdapters(ctx, scopeOrder, deps) }()
@@ -221,13 +403,12 @@ func (e *Engine) RunFrom(ctx context.Context, startStep string, initialAttempt i
 	if err := e.bootstrapSessionsForResume(ctx, sessions, startStep); err != nil {
 		return err
 	}
-	return e.runLoop(ctx, sessions, startStep, initialAttempt)
+	return e.runLoop(ctx, sessions, startStep, initialAttempt, vars, sink)
 }
 
 // runLoop is the shared execution loop. firstStepAttempt is the attempt index
 // used for the initial step when resuming; subsequent steps start at attempt 1.
-func (e *Engine) runLoop(ctx context.Context, sessions *adapterhost.SessionManager, current string, firstStepAttempt int) error {
-	vars := e.seedRunVars()
+func (e *Engine) runLoop(ctx context.Context, sessions *adapterhost.SessionManager, current string, firstStepAttempt int, vars map[string]cty.Value, sink Sink) error {
 	st := &RunState{
 		Current:          current,
 		Vars:             vars,
@@ -240,25 +421,35 @@ func (e *Engine) runLoop(ctx context.Context, sessions *adapterhost.SessionManag
 		firstStep:        true,
 		firstStepAttempt: firstStepAttempt,
 	}
-	deps := e.buildDeps(sessions)
+	deps := e.buildDeps(sessions, sink)
+
+	e.mu.Lock()
+	e.liveSessions = sessions
+	e.mu.Unlock()
+	defer func() {
+		e.mu.Lock()
+		e.liveSessions = nil
+		e.mu.Unlock()
+	}()
 
 	e.liveRunState = st
 	for {
 		node, err := nodeFor(e.graph, st.Current)
 		if err != nil {
-			e.sink.OnRunFailed(err.Error(), st.Current)
+			sink.OnRunFailed(err.Error(), st.Current)
 			return err
 		}
 		next, err := node.Evaluate(ctx, st, deps)
 		if err != nil {
-			return e.handleEvalError(st, err)
+			return e.handleEvalError(st, err, sink)
 		}
-		next, err = e.routeIteratingStep(st, next)
+		next, err = e.routeIteratingStep(st, next, sink)
 		if err != nil {
-			return e.handleEvalError(st, err)
+			return e.handleEvalError(st, err, sink)
 		}
 		if next == workflow.ReturnSentinel {
-			return e.handleReturnExit(st)
+			e.handleReturnExit(st, sink)
+			return nil
 		}
 		e.advanceTo(st, next)
 	}
@@ -267,8 +458,8 @@ func (e *Engine) runLoop(ctx context.Context, sessions *adapterhost.SessionManag
 // routeIteratingStep handles post-step routing for steps with active iteration
 // cursors (W10). Delegates to routeIteratingStepInGraph using the engine's
 // own graph and sink. See routeIteratingStepInGraph for full semantics.
-func (e *Engine) routeIteratingStep(st *RunState, next string) (string, error) {
-	return routeIteratingStepInGraph(st, next, e.graph, e.sink)
+func (e *Engine) routeIteratingStep(st *RunState, next string, sink Sink) (string, error) {
+	return routeIteratingStepInGraph(st, next, e.graph, sink)
 }
 
 // routeIteratingStepInGraph is the graph-agnostic iteration router called by
@@ -405,7 +596,7 @@ func finishIterationInGraph(st *RunState, stepName string, graph *workflow.FSMGr
 
 	// Apply write blocks for the aggregate outcome if declared.
 	if len(co.Writes) > 0 && st.DataStore != nil {
-		if err := applyDataWrites(stepName, aggregateOutcome, co.Writes, aggregateProjectedCty, nil, st, sink); err != nil {
+		if err := applyDataWrites(stepName, aggregateOutcome, co.Writes, aggregateProjectedCty, nil, nil, st, sink); err != nil {
 			return "", err
 		}
 	}
@@ -415,7 +606,7 @@ func finishIterationInGraph(st *RunState, stepName string, graph *workflow.FSMGr
 
 // returns the restored scope unchanged. For fresh runs it seeds from graph
 // defaults, applies any CLI overrides, and emits OnVariableSet events.
-func (e *Engine) seedRunVars() map[string]cty.Value {
+func (e *Engine) seedRunVars(sink Sink) map[string]cty.Value {
 	if e.resumedVars != nil {
 		// Locals are compile-time constants that are never persisted in the
 		// scope snapshot. Always reseed them from the current graph so that
@@ -435,20 +626,20 @@ func (e *Engine) seedRunVars() map[string]cty.Value {
 	// Fresh run: emit OnVariableSet for each variable that has a value.
 	for name, node := range e.graph.Variables {
 		if ov, ok := e.varOverrides[name]; ok {
-			e.sink.OnVariableSet(name, ov, "override")
+			sink.OnVariableSet(name, ov, "override")
 		} else if node.Default != cty.NilVal {
-			e.sink.OnVariableSet(name, workflow.CtyValueToString(node.Default), "default")
+			sink.OnVariableSet(name, workflow.CtyValueToString(node.Default), "default")
 		}
 	}
 	return vars
 }
 
 // buildDeps constructs the Deps bundle injected into each node's Evaluate call.
-func (e *Engine) buildDeps(sessions *adapterhost.SessionManager) Deps {
+func (e *Engine) buildDeps(sessions *adapterhost.SessionManager, sink Sink) Deps {
 	return Deps{
 		Sessions:            sessions,
 		Loader:              e.loader,
-		Sink:                e.sink,
+		Sink:                sink,
 		SubWorkflowResolver: e.subWorkflowResolver,
 		BranchScheduler:     e.branchScheduler,
 	}
@@ -461,7 +652,7 @@ func (e *Engine) advanceTo(st *RunState, next string) {
 
 // handleEvalError dispatches errors from node.Evaluate. It handles ErrTerminal
 // and ErrPaused specially; all other errors are propagated as run failures.
-func (e *Engine) handleEvalError(st *RunState, err error) error {
+func (e *Engine) handleEvalError(st *RunState, err error, sink Sink) error {
 	// Capture the visit state and clear the live pointer so VisitCounts()
 	// returns a stable snapshot after the run ends (W07).
 	e.liveRunState = nil
@@ -470,21 +661,21 @@ func (e *Engine) handleEvalError(st *RunState, err error) error {
 		state, ok := e.graph.States[st.Current]
 		if !ok {
 			missing := fmt.Errorf("terminal node %q is not a state", st.Current)
-			e.sink.OnRunFailed(missing.Error(), st.Current)
+			sink.OnRunFailed(missing.Error(), st.Current)
 			return missing
 		}
 		// Evaluate outputs at terminal state (W09).
 		outputs, outErr := evalRunOutputs(e.graph, st)
 		if outErr != nil {
 			// Output evaluation failed; emit error and fail the run.
-			e.sink.OnRunFailed(outErr.Error(), st.Current)
+			sink.OnRunFailed(outErr.Error(), st.Current)
 			return outErr
 		}
 		// Emit outputs before run.completed if present.
 		if len(outputs) > 0 {
-			e.sink.OnRunOutputs(outputs)
+			sink.OnRunOutputs(outputs)
 		}
-		e.sink.OnRunCompleted(state.Name, state.Success)
+		sink.OnRunCompleted(state.Name, state.Success)
 		return nil
 	}
 	if errors.Is(err, engineruntime.ErrPaused) {
@@ -496,28 +687,27 @@ func (e *Engine) handleEvalError(st *RunState, err error) error {
 			mode = "duration"
 		}
 		e.lastVars = st.Vars
-		e.sink.OnRunPaused(st.Current, mode, st.PendingSignal)
+		sink.OnRunPaused(st.Current, mode, st.PendingSignal)
 		return nil
 	}
-	e.sink.OnRunFailed(err.Error(), st.Current)
+	sink.OnRunFailed(err.Error(), st.Current)
 	return err
 }
 
 // handleReturnExit handles top-level runs that exit via next = step.return.
 // The projected outputs in st.ReturnOutputs are emitted as OnRunOutputs
 // (if non-empty) and the run is completed successfully with no named final state.
-func (e *Engine) handleReturnExit(st *RunState) error {
+func (e *Engine) handleReturnExit(st *RunState, sink Sink) {
 	e.liveRunState = nil
 	e.lastVisits = st.Visits
 
 	if len(st.ReturnOutputs) > 0 {
 		outputs := formatReturnOutputs(st.ReturnOutputs)
 		if len(outputs) > 0 {
-			e.sink.OnRunOutputs(outputs)
+			sink.OnRunOutputs(outputs)
 		}
 	}
-	e.sink.OnRunCompleted("", true)
-	return nil
+	sink.OnRunCompleted("", true)
 }
 
 // formatReturnOutputs converts the ReturnOutputs cty.Value map to the
@@ -559,6 +749,74 @@ func (e *Engine) bootstrapSessionsForResume(ctx context.Context, sessions *adapt
 	// any explicit lifecycle="open"/"close" steps. This function is kept for compatibility
 	// but does nothing.
 	return nil
+}
+
+// maybeStartRemoteShim checks whether the workflow references any remote
+// environments. If so, it parses each remote env config, builds a shim, and
+// starts listening for inbound adapter connections before adapter provisioning.
+func (e *Engine) maybeStartRemoteShim(ctx context.Context, sessions *adapterhost.SessionManager) error {
+	if e.graph == nil || len(e.graph.Environments) == 0 {
+		return nil
+	}
+	var remoteEnvs []*workflow.EnvironmentNode
+	for _, env := range e.graph.Environments {
+		if env.Type == "remote" {
+			remoteEnvs = append(remoteEnvs, env)
+		}
+	}
+	if len(remoteEnvs) == 0 {
+		return nil
+	}
+
+	lf := e.lockfile
+	verifier := &lockfileDigestVerifier{lockfile: lf}
+
+	for _, env := range remoteEnvs {
+		cfg, err := remote.ParseConfig(env.RawBody)
+		if err != nil {
+			return fmt.Errorf("remote environment %q: %w", env.Name, err)
+		}
+		shim, err := remote.NewShim(cfg, verifier)
+		if err != nil {
+			return fmt.Errorf("remote environment %q: %w", env.Name, err)
+		}
+		if err := shim.Start(ctx); err != nil {
+			return fmt.Errorf("remote environment %q: %w", env.Name, err)
+		}
+		sessions.SetRemoteShim(shim)
+	}
+	return nil
+}
+
+// lockfileDigestVerifier implements remote.DigestVerifier using the workflow
+// lockfile to validate adapter digests.
+//
+// For remote adapters the digest is the runtime trust anchor: the artifact's
+// signature is verified at pull/lock time and during the apply auto-pull
+// (internal/cli.verifyAgainstPin, which builds a verify policy from the
+// lockfile-pinned signer via policyForPin and confirms it with
+// assertSignerMatchesPin). A remote adapter presents only its type and digest
+// over mTLS — no signature material is available here — so this verifier
+// enforces the pinned digest, which binds the connection to the exact verified
+// bytes recorded in the lockfile.
+type lockfileDigestVerifier struct {
+	lockfile *lockfile.Lockfile
+}
+
+func (v *lockfileDigestVerifier) Verify(adapterType, digest string) error {
+	if v.lockfile == nil {
+		return fmt.Errorf("no lockfile available")
+	}
+	for i := range v.lockfile.Adapters {
+		a := &v.lockfile.Adapters[i]
+		if a.Type == adapterType {
+			if a.ResolvedDigest == digest {
+				return nil
+			}
+			return fmt.Errorf("digest mismatch for adapter %q: got %q, want %q", adapterType, digest, a.ResolvedDigest)
+		}
+	}
+	return fmt.Errorf("adapter %q not found in lockfile", adapterType)
 }
 
 // ErrCancelled is returned when the run context is cancelled mid-step.

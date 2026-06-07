@@ -65,6 +65,8 @@ func executeServerRun(ctx context.Context, log *slog.Logger, loader adapterhost.
 			return nil
 		})
 
+	auditPath, _ := auditLogPath(state.RunID)
+	auditWriter := adapterhost.NewFileAuditWriter(auditPath)
 	mergedVars, err := mergeVarSources(opts.varFiles, opts.varOverrides)
 	if err != nil {
 		return err
@@ -72,6 +74,7 @@ func executeServerRun(ctx context.Context, log *slog.Logger, loader adapterhost.
 	eng = engine.New(graph, loader, sink,
 		engine.WithVarOverrides(mergedVars),
 		engine.WithWorkflowDir(workflowDirFromPath(opts.workflowPath)),
+		engine.WithAuditWriter(auditWriter),
 	)
 	if err := eng.Run(ctx); err != nil {
 		log.Error("run failed", "error", err)
@@ -129,7 +132,7 @@ func runApplyServer(ctx context.Context, opts applyOptions) error {
 	defer cancelRun()
 
 	log := newApplyLogger()
-	src, graph, loader, err := compileForExecution(runCtx, opts.workflowPath, log, opts.subworkflowRoots...)
+	src, graph, loader, err := compileForExecution(runCtx, opts.workflowPath, log, opts.warnsAsErrors, opts.allowUnsigned, opts.subworkflowRoots...)
 	if err != nil {
 		return err
 	}

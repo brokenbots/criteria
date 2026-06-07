@@ -65,6 +65,16 @@ func isDeadlineLikeError(err error) bool {
 		strings.Contains(s, "code = deadlineexceeded")
 }
 
+// hasFeature reports whether feature is in opts.SupportedFeatures.
+func hasFeature(opts *Options, feature string) bool {
+	for _, f := range opts.SupportedFeatures {
+		if f == feature {
+			return true
+		}
+	}
+	return false
+}
+
 // hasCapability reports whether capability is in capabilities.
 func hasCapability(capabilities []string, capability string) bool {
 	for _, c := range capabilities {

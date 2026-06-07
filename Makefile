@@ -1,5 +1,5 @@
 .PHONY: help bootstrap tidy build plugins install proto proto-lint proto-check-drift \
-	test test-cover test-conformance test-flake-watch lint-imports lint-go lint-baseline-check lint-no-todos lint validate validate-docs validate-self-workflows example-plugin bench docker-runtime docker-runtime-smoke ci self self-loop clean
+	test test-cover test-conformance test-flake-watch lint-imports lint-go lint-baseline-check lint-no-todos lint vuln-scan deps-outdated deps-majors validate validate-docs validate-self-workflows example-plugin bench docker-runtime docker-runtime-smoke ci self self-loop clean
 
 # Default target: list available targets.
 help:
@@ -26,12 +26,16 @@ plugins: ## Build adapter plugin binaries (output: bin/criteria-adapter-*)
 			go build -o bin/$$name $$d; \
 		fi; \
 	done
+	@# noop was extracted to its own repo (ghcr.io/brokenbots/criteria-adapter-noop);
+	@# build the in-tree conformance fixture as bin/criteria-adapter-noop so the
+	@# examples and the CLI smoke test stay self-contained (no external OCI pull).
+	go build -o bin/criteria-adapter-noop ./internal/adapter/conformance/testdata/noop
 
-install: build plugins ## Install criteria to ~/.criteria (binary → ~/.criteria/bin, plugins → ~/.criteria/plugins)
-	@install -d "$$HOME/.criteria/bin" "$$HOME/.criteria/plugins"
+install: build plugins ## Install criteria to ~/.criteria (binary → ~/.criteria/bin, plugins → ~/.criteria/adapters)
+	@install -d "$$HOME/.criteria/bin" "$$HOME/.criteria/adapters"
 	@install -m 755 bin/criteria "$$HOME/.criteria/bin/criteria"
 	@for f in bin/criteria-adapter-*; do \
-		[ -f "$$f" ] && install -m 755 "$$f" "$$HOME/.criteria/plugins/"; \
+		[ -f "$$f" ] && install -m 755 "$$f" "$$HOME/.criteria/adapters/"; \
 	done
 	@echo ""
 	@echo "criteria installed to $$HOME/.criteria"
@@ -40,34 +44,34 @@ install: build plugins ## Install criteria to ~/.criteria (binary → ~/.criteri
 	@echo ""
 	@echo "  bash  (~/.bashrc or ~/.bash_profile):"
 	@echo '    export PATH="$$HOME/.criteria/bin:$$PATH"'
-	@echo '    export CRITERIA_PLUGINS="$$HOME/.criteria/plugins"'
+	@echo '    export CRITERIA_ADAPTERS="$$HOME/.criteria/adapters"'
 	@echo ""
 	@echo "  zsh   (~/.zshrc):"
 	@echo '    export PATH="$$HOME/.criteria/bin:$$PATH"'
-	@echo '    export CRITERIA_PLUGINS="$$HOME/.criteria/plugins"'
+	@echo '    export CRITERIA_ADAPTERS="$$HOME/.criteria/adapters"'
 	@echo ""
 	@echo "  fish  (~/.config/fish/config.fish):"
 	@echo '    fish_add_path $$HOME/.criteria/bin'
-	@echo '    set -gx CRITERIA_PLUGINS $$HOME/.criteria/plugins'
+	@echo '    set -gx CRITERIA_ADAPTERS $$HOME/.criteria/adapters'
 	@echo ""
 
-docker-runtime-smoke: docker-runtime ## Run a workflow inside the runtime image
+docker-runtime: ## Build the runtime Docker image (criteria/runtime:dev)
 	docker build -t criteria/runtime:dev -f Dockerfile.runtime .
+
+docker-runtime-smoke: docker-runtime ## Run a workflow inside the runtime image
 	docker run --rm -v "$$PWD/examples:/workspace/examples:ro" \
 		criteria/runtime:dev apply /workspace/examples/hello
 
-proto: ## Regenerate Go bindings from proto files (requires buf)
-	buf generate --path proto/criteria/v1
-	buf generate --template buf.gen.v2.yaml --path proto/criteria/v2
-	@echo "Generated SDK proto bindings."
+proto: ## Regenerate Go bindings from in-tree proto files (v1 server API; adapter protocol v2 lives in the criteria-adapter-proto module)
+	buf generate --template buf.gen.yaml --path proto/criteria/v1
+	@echo "Generated v1 server-API proto bindings."
 
 proto-lint: ## Lint proto files
 	buf lint
 
 proto-check-drift: ## Fail if generated proto code is out of sync with proto sources
-	buf generate --path proto/criteria/v1
-	buf generate --template buf.gen.v2.yaml --path proto/criteria/v2
-	@git diff --exit-code sdk/pb/ proto/criteria/v2/ || \
+	buf generate --template buf.gen.yaml --path proto/criteria/v1
+	@git diff --exit-code sdk/pb/criteria/v1/ || \
 		(echo "ERROR: Generated proto files are out of sync. Run 'make proto' and commit."; exit 1)
 
 test: ## Run all unit tests
@@ -152,6 +156,30 @@ lint-no-todos: ## Fail if any TODO/FIXME/XXX marker appears in non-test producti
 
 lint: lint-imports lint-go lint-baseline-check spec-check lint-no-todos ## Run all linters
 
+# Pinned osv-scanner version — keep in sync with the osv-scan CI job. Run via
+# `go run pkg@version` so it does not touch any module's go.mod/go.sum (the build
+# is module-aware but ignores the main module).
+OSV_SCANNER_VERSION := v2.3.8
+vuln-scan: ## Scan all workspace modules for known vulnerabilities (osv-scanner; local parity with CI osv-scan)
+	go run github.com/google/osv-scanner/v2/cmd/osv-scanner@$(OSV_SCANNER_VERSION) scan source -r .
+
+# Dependency-freshness tooling (WS50). gomajor + go-mod-outdated are pinned in
+# tools/go.mod, so these `go run` invocations resolve via the workspace (no
+# floating @latest). This is the source of truth for "are we on latest
+# major.minor", not Dependabot. See docs/dependency-policy.md.
+MODULES := . sdk tools workflow
+deps-outdated: ## Report direct deps behind their latest minor/patch (workspace-wide; go-mod-outdated)
+	@# The go.work graph unifies all four modules (., sdk, tools, workflow), so a
+	@# single workspace-wide listing covers them all. Per-module GOWORK=off does
+	@# not work here: the modules require each other by local path, not a tag.
+	go list -u -m -json all | go run github.com/psampaz/go-mod-outdated -update -direct
+
+deps-majors: ## List available major-version (/vN) upgrades per module (gomajor); WS51 applies them
+	@for m in $(MODULES); do \
+		echo "== $$m =="; \
+		( cd $$m && go run github.com/icholy/gomajor list ) ; \
+	done
+
 validate: build ## Validate all example workflow directories
 	@for d in examples/build_and_test examples/copilot_planning_then_execution \
 		examples/demo_tour_local examples/file_function examples/hello \
@@ -215,7 +243,7 @@ self: build plugins ## Pick the next pending workstream and run the full self-de
 	fi; \
 	echo "[self] processing $$ws"; \
 	CRITERIA_LOCAL_APPROVAL="$${CRITERIA_LOCAL_APPROVAL:-stdin}" \
-	CRITERIA_PLUGINS="$(CURDIR)/bin" \
+	CRITERIA_ADAPTERS="$(CURDIR)/bin" \
 	CRITERIA_WORKFLOW_ALLOWED_PATHS=".criteria/workflows" \
 		./bin/criteria apply .criteria/workflows/bootstrap \
 			--var workstream_file=$$ws \
@@ -233,7 +261,7 @@ self-loop: build plugins ## Drain the workstream backlog: run `make self` repeat
 	done
 
 workflow_%: build plugins ## Run a single subworkflow by name (.criteria/workflows/<name>); pass vars via WORKFLOW_VARS="--var k=v ..."
-	@CRITERIA_PLUGINS="$(CURDIR)/bin" \
+	@CRITERIA_ADAPTERS="$(CURDIR)/bin" \
 	CRITERIA_WORKFLOW_ALLOWED_PATHS=".criteria/workflows" \
 		./bin/criteria apply .criteria/workflows/$* \
 			--var project_dir=$(CURDIR) \
@@ -246,7 +274,7 @@ example-plugin: build ## Build and run the greeter example plugin end-to-end
 	cp bin/criteria-adapter-greeter "$$tmpdir/"; \
 	chmod +x "$$tmpdir/criteria-adapter-greeter"; \
 	eventsfile=$$(mktemp); \
-	CRITERIA_PLUGINS="$$tmpdir" ./bin/criteria apply examples/plugins/greeter/example.hcl \
+	CRITERIA_ADAPTERS="$$tmpdir" ./bin/criteria apply examples/plugins/greeter/example.hcl \
 		--events-file "$$eventsfile" 2>&1; \
 	rc=$$?; \
 	if [ $$rc -ne 0 ]; then \

@@ -10,7 +10,9 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"testing"
 
+	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/workflow"
@@ -130,6 +132,18 @@ func (s *recordingSink) Adapter(kind string, data any) {
 	}
 }
 
+// Emit implements adapterhost.LogEventSink so the sink can be used with
+// StartLogStream.
+func (s *recordingSink) Emit(event *v2.LogEvent) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.logEvents++
+	if len(event.GetLine()) > 0 {
+		s.chunks = append(s.chunks, append([]byte(nil), event.GetLine()...))
+	}
+	return nil
+}
+
 func (s *recordingSink) totalEvents() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -180,4 +194,21 @@ func (s *recordingSink) firstAdapterEvent(kind string) (map[string]any, bool) {
 type recordedAdapterEvent struct {
 	kind string
 	data map[string]any
+}
+
+// resolveAndOpen resolves the named adapter, opens a new session, and returns
+// the handle and session ID. It fatals on any error.
+func resolveAndOpen(t *testing.T, ctx context.Context, loader adapterhost.Loader, name string, openConfig, secrets map[string]string) (plug adapterhost.Handle, sessionID string) {
+	t.Helper()
+	var err error
+	plug, err = loader.Resolve(ctx, name)
+	if err != nil {
+		t.Fatalf("resolve adapter: %v", err)
+	}
+	sessionID = newSessionID(name)
+	if err := plug.OpenSession(ctx, sessionID, cloneConfig(openConfig), cloneConfig(secrets)); err != nil {
+		plug.Kill()
+		t.Fatalf("open session: %v", err)
+	}
+	return plug, sessionID
 }

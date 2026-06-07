@@ -374,7 +374,6 @@ workflow {
   target_state  = "done"
 }
 data "internal" "counter" {
-
   type = number
 }
 adapter "noop" "default" {}

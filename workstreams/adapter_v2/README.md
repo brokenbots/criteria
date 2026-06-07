@@ -489,6 +489,18 @@ Added after the WS02–WS05 risk review. Each item closes a forward-extensibilit
 
 ## Workstreams
 
+> **Status (2026-06-06).** WS01–WS38, WS41, WS42, WS45 are merged and archived under
+> [`../archived/v4/adapter-v2/`](../archived/v4/adapter-v2/). **WS29 (GitLab + Makefile publishing
+> paths) is done.** **WS39 (docs refresh) — content done:** `docs/adapters.md`, `docs/adapter-v2-migration.md`,
+> and `docs/release-process.md` (all four self-contained release gates) reflect the v2 state; the
+> `CHANGELOG.md` `[Unreleased]` → `[v0.5.0]` stamp and the `PLAN.md` / WS-archival close-out are
+> deferred to the WS40 tag (version is set at tag time).
+> Remaining: **WS40** holds the `v0.5.0` tag + merge to `main` until out-of-band testing signs off
+> (only the Gate 3/Gate 4 validation runs remain to make the candidate green); **WS43** (independence
+> verification) and **WS44** (coverage ratchet) are post-merge, based on `main`. See the
+> [top-level workstreams tracker](../README.md#phase-4--adapter-system-v2-active) for the authoritative
+> status.
+
 The team works workstreams **in order**. Each workstream is sized to a **single PR**. Foundational items come first, higher-level items later, adapter migrations and CI scaffolding at the top of the stack. Individual workstream files (one per WS) will be authored in the criteria project's `workstreams/` directory using its established format.
 
 ### Foundation (must land before anything else)
@@ -572,6 +584,15 @@ All adapter-migration workstreams must replace any `process.env.X` (or equivalen
 ### Post-release hardening
 
 - **WS44 — CI coverage ratchet gate.** Establish a per-package coverage floor in `tools/coverage-floors.txt` and a CI step that fails if coverage falls below it. Deferred from the pre-Phase-4 `test-03-ci-coverage-gate.md` because applying the ratchet during the rewrite would cause friction (WS37 deletions, WS30–WS36 new code paths, new packages from WS04 / WS05 / WS07 / WS10 / WS11 / WS12). Captured *after* WS40 so the locked-in numbers reflect the steady-state codebase.
+- **WS45 — Go adapter SDK secrets channel + in-tree adapter consumption.** *(Added 2026-06-05 during workstream review — not in the original WS01–WS44 plan.)* WS13 wired the host secret channel and the proto carries it, but `sdk/adapterhost` never surfaced it to adapters, so no in-tree adapter consumes it and `copilot` reads its GitHub token from `os.Getenv` (a D69 violation that breaks once the sandbox scrubs the process env). Adds a redaction-safe `Get` / `SpawnEnv` accessor to `adapterhost` (the Go-path analogue of D69/D75) and migrates `copilot` to resolve its token via the secret channel, declaring it in the manifest. Unblocks WS36. See [WS45-go-sdk-secrets-channel.md](../archived/v4/adapter-v2/WS45-go-sdk-secrets-channel.md).
+
+### Signing completion (WS06 follow-up — added 2026-06-06)
+
+*WS06 shipped the signing/verification scaffolding (modes, lockfile signer slots, `--allow-unsigned` on `pull`), but multi-arch publishing in production surfaced three gaps once verification actually ran end-to-end. Two adjacent fixes already merged: signature-manifest push shape ([#241](https://github.com/brokenbots/criteria/pull/241)) and pull-side referrer discovery ([#242](https://github.com/brokenbots/criteria/pull/242)). These three WS complete the chain. The lockfile is the shared trust anchor: `lock` pins the signer, `apply`/`pull` enforce it.*
+
+- **WS46 — Verification override on every consuming command.** The unsigned/verification override is only wired into `criteria adapter pull`; `lock`/`compile`/`apply` are hardwired to strict (`signing.PolicyFor(PullContext{})`). Make `--allow-unsigned` + `CRITERIA_ALLOW_UNSIGNED` + a workflow-level `verification = "off"|"warn"|"strict"` attribute uniform across all consuming commands (product requirement: the override must always be available for dev/CI). See [WS46-verification-override.md](WS46-verification-override.md).
+- **WS47 — Explicit-key signing + lockfile trust anchor (enterprise).** `KeySigner` (publish) and `verifyKeyBased` (verify) exist, but nothing populates `Policy.TrustedKeys` and the engine's `lockfileDigestVerifier` checks only the digest, never feeding the lockfile's pinned signer into the verify policy. Add a trusted-keys config, pin the key fingerprint on `lock`, and enforce it at runtime — offline, reproducible strong validation for enterprise. Builds the shared lock→policy wiring. See [WS47-explicit-key-trust.md](WS47-explicit-key-trust.md).
+- **WS48 — Keyless signing with transparency-log bundle (public).** Keyless signatures are unverifiable after ~10 min: the signer records no Rekor entry / bundle, and `verifyKeylessLegacy` checks the ephemeral Fulcio cert at `time.Now()`. The correct path (`verifyKeylessBundle`, with tlog/observer/SCT timestamps) already exists but is never reached. Make the signer emit a Sigstore bundle, require the bundle path, anchor identity in the lockfile, decide the TUF-root policy, and restore the `strict` default. See [WS48-keyless-transparency-log.md](WS48-keyless-transparency-log.md).
 
 ---
 

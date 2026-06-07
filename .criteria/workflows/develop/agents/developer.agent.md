@@ -13,7 +13,7 @@ Your job is to execute one workstream markdown file end-to-end with strong quali
 - **Language**: Go (modules: root, `sdk/`, `workflow/`)
 - **CLI**: `bin/criteria` — `apply`, `validate`, `compile`, `plan`, `status`, `stop`
 - **Adapter plugins**: `bin/criteria-adapter-{copilot,mcp,noop,shell-builtin}` (gRPC over Hashicorp go-plugin)
-- **Workflow DSL**: HCL — `workflow {}` block, `adapter`, `step`, `state`, `switch`, `approval`, `wait`, `shared_variable`, `subworkflow`
+- **Workflow DSL**: HCL — `workflow {}` block, `adapter`, `step`, `state`, `switch`, `approval`, `wait`, `data`, `subworkflow`
 - **Testing**: Go `testing` with race detector; conformance suite in `sdk/conformance/`
 - **Linting**: golangci-lint with baseline allowlist (`.golangci.baseline.yml` + cap in `tools/lint-baseline/cap.txt`)
 - **Proto**: `buf generate`; bindings live in `sdk/pb/`

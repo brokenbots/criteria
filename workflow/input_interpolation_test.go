@@ -15,14 +15,14 @@ workflow {
   target_state  = "__done__"
 }
 
-adapter "shell" "default" {}
+adapter "exec" "default" {}
 
 variable "repo" {
   type = string
   default = "orchestrator"
 }
 step "clone" {
-  target = adapter.shell.default
+  target = adapter.exec.default
   input {
     command = "echo ${var.repo}"
   }
@@ -41,17 +41,17 @@ workflow {
   target_state  = "__done__"
 }
 
-adapter "shell" "default" {}
+adapter "exec" "default" {}
 
 step "build" {
-  target = adapter.shell.default
+  target = adapter.exec.default
   input {
     command = "echo building"
   }
   outcome "success" { next = step.publish }
 }
 step "publish" {
-  target = adapter.shell.default
+  target = adapter.exec.default
   input {
     command = "echo ${steps.build.stdout}"
   }
@@ -110,7 +110,7 @@ func TestInputInterpolation_StepOutputReference(t *testing.T) {
 
 	// Seed vars then inject fake build output.
 	vars := SeedVarsFromGraph(g)
-	vars = WithStepOutputs(vars, "build", map[string]string{"stdout": "artifact.tar.gz\n"})
+	vars = WithStepOutputs(vars, "build", ctyStrs(map[string]string{"stdout": "artifact.tar.gz\n"}))
 
 	resolved, err := ResolveInputExprs(publishStep.InputExprs, vars)
 	if err != nil {

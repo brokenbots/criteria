@@ -6,10 +6,11 @@
 //
 //  1. No file in internal/ may import github.com/brokenbots/criteria/sdk
 //     top-level; only sdk/pb subtree is permitted for production code.
-//     Exception: sdk/adapterhost is permitted from internal/*/testfixtures/
-//     paths only (these are standalone adapter binaries that must use the
-//     public surface to prove external authors need no internal/ reach-through).
-//  2. No file in workflow/ may import github.com/brokenbots/criteria/internal/.
+//  2. No file in internal/ may import the external adapter SDK
+//     github.com/brokenbots/criteria-go-adapter-sdk/adapterhost, except from
+//     internal/*/testfixtures/ paths (standalone adapter binaries that must use
+//     the public surface to prove external authors need no internal/ reach-through).
+//  3. No file in workflow/ may import github.com/brokenbots/criteria/internal/.
 //
 // Usage:
 //
@@ -49,6 +50,11 @@ var rules = []rule{
 		filePrefix: "internal/",
 		forbidden:  "github.com/brokenbots/criteria/sdk",
 		message:    "internal/ must not import sdk/ top-level; only sdk/pb subtree is permitted",
+	},
+	{
+		filePrefix: "internal/",
+		forbidden:  "github.com/brokenbots/criteria-go-adapter-sdk/adapterhost",
+		message:    "internal/ must not import the adapter SDK (criteria-go-adapter-sdk/adapterhost); only testfixture adapter binaries may",
 	},
 	{
 		filePrefix: "workflow/",
@@ -160,18 +166,20 @@ outer:
 			if !strings.HasPrefix(relPath, r.filePrefix) {
 				continue
 			}
-			// For the sdk rule: allow sdk/pb subtree everywhere in internal/; allow
-			// sdk/adapterhost only from testfixtures/ adapter binaries (which are
-			// standalone processes that must use the public surface). Block all other
-			// sdk imports from production internal/ code.
-			if r.filePrefix == "internal/" && strings.Contains(impPath, "github.com/brokenbots/criteria/sdk") {
-				if strings.Contains(impPath, "github.com/brokenbots/criteria/sdk/pb") {
-					continue // sdk/pb subtree is permitted everywhere in internal/
-				}
-				if strings.Contains(impPath, "github.com/brokenbots/criteria/sdk/adapterhost") &&
-					strings.Contains(relPath, "testfixtures/") {
-					continue // sdk/adapterhost is permitted only in testfixture adapter binaries
-				}
+			// Allow the sdk/pb subtree everywhere in internal/ (v1 server-API
+			// bindings); the broader internal/ -> criteria/sdk ban still applies to
+			// the rest of the in-tree sdk module.
+			if r.filePrefix == "internal/" && strings.Contains(impPath, "github.com/brokenbots/criteria/sdk/pb") {
+				continue // sdk/pb subtree is permitted everywhere in internal/
+			}
+			// The external adapter SDK (criteria-go-adapter-sdk/adapterhost) is the
+			// public adapter-building surface; production internal/ code must not
+			// import it, but testfixture adapter binaries (standalone processes that
+			// must use the public surface) may.
+			if r.filePrefix == "internal/" &&
+				strings.Contains(impPath, "github.com/brokenbots/criteria-go-adapter-sdk/adapterhost") &&
+				strings.Contains(relPath, "testfixtures/") {
+				continue // adapterhost is permitted only in testfixture adapter binaries
 			}
 			if strings.Contains(impPath, r.forbidden) || impPath == strings.TrimSuffix(r.forbidden, "/") {
 				pos := fset.Position(imp.Path.Pos())

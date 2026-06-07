@@ -1,0 +1,25 @@
+services:
+  criteria:
+    image: ghcr.io/brokenbots/criteria:latest
+    command: ["apply", "/workspace/workflow.hcl"]
+    ports:
+      - "7778:7778"
+    volumes:
+      - ./workflow.hcl:/workspace/workflow.hcl:ro
+      - ./certs:/etc/criteria/certs:ro
+    environment:
+      - CRITERIA_REMOTE_TOKEN=${CRITERIA_REMOTE_TOKEN:-smoke-token}
+    healthcheck:
+      test: ["CMD", "criteria", "version"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  adapter:
+    image: ghcr.io/your-org/criteria-adapter-greeter:v0.1.0
+    environment:
+      - CRITERIA_REMOTE_HOST=criteria:7778
+      - CRITERIA_REMOTE_TOKEN=${CRITERIA_REMOTE_TOKEN:-smoke-token}
+    depends_on:
+      criteria:
+        condition: service_healthy

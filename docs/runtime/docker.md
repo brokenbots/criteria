@@ -24,8 +24,8 @@ docker run --rm \
 Notes:
 
 - The container only has host filesystem access through mounted volumes.
-- Plugins are baked into `/home/criteria/.criteria/plugins/`.
-- To use custom plugins, build a derived image that adds binaries under `/home/criteria/.criteria/plugins/`.
+- Plugins are baked into `/home/criteria/.criteria/adapters/`.
+- To use custom plugins, build a derived image that adds binaries under `/home/criteria/.criteria/adapters/`.
 
 ## Known limitations
 

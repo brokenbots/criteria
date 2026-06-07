@@ -22,50 +22,56 @@ func compileData(g *FSMGraph, spec *Spec, opts CompileOpts) hcl.Diagnostics {
 	}
 
 	var diags hcl.Diagnostics
+	for i := range spec.Data {
+		diags = append(diags, compileDataBlock(g, &spec.Data[i], opts)...)
+	}
+	return diags
+}
 
-	for _, ds := range spec.Data {
-		kind := ds.Kind
-		name := ds.Name
+// compileDataBlock compiles a single data block and registers it on g.
+func compileDataBlock(g *FSMGraph, ds *DataSpec, opts CompileOpts) hcl.Diagnostics {
+	kind := ds.Kind
+	name := ds.Name
 
-		if kind != "internal" {
-			diags = append(diags, &hcl.Diagnostic{
-				Severity: hcl.DiagError,
-				Summary:  fmt.Sprintf("unsupported data kind %q; only \"internal\" is currently supported", kind),
-			})
-			continue
-		}
-
-		if d := checkDataNameCollisions(g, kind, name); d != nil {
-			diags = append(diags, d)
-			continue
-		}
-
-		typ, defs, typDiags := compileDataType(kind, name, ds.Type)
-		diags = append(diags, typDiags...)
-		if typDiags.HasErrors() {
-			continue
-		}
-
-		initialVal, valDiags, skip := compileDataInitialValue(kind, name, ds.Remain, typ, defs, g, opts)
-		diags = append(diags, valDiags...)
-		if skip {
-			continue
-		}
-
-		if g.Data[kind] == nil {
-			g.Data[kind] = make(map[string]*DataNode)
-		}
-		g.Data[kind][name] = &DataNode{
-			Kind:         kind,
-			Name:         name,
-			Type:         typ,
-			TypeDefaults: defs,
-			InitialValue: initialVal,
-			Description:  ds.Description,
-		}
-		g.DataOrder = append(g.DataOrder, DataRef{Kind: kind, Name: name})
+	if kind != "internal" {
+		return hcl.Diagnostics{&hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  fmt.Sprintf("unsupported data kind %q; only \"internal\" is currently supported", kind),
+		}}
 	}
 
+	if d := checkDataNameCollisions(g, kind, name); d != nil {
+		return hcl.Diagnostics{d}
+	}
+
+	typ, defs, typDiags := compileDataType(kind, name, ds.Type)
+	if typDiags.HasErrors() {
+		return typDiags
+	}
+	diags := typDiags
+
+	initialVal, valDiags, skip := compileDataInitialValue(kind, name, ds.Remain, typ, defs, g, opts)
+	diags = append(diags, valDiags...)
+	if skip {
+		return diags
+	}
+
+	secret, secretDiags := compileDataSecret(kind, name, ds.Remain)
+	diags = append(diags, secretDiags...)
+
+	if g.Data[kind] == nil {
+		g.Data[kind] = make(map[string]*DataNode)
+	}
+	g.Data[kind][name] = &DataNode{
+		Kind:         kind,
+		Name:         name,
+		Type:         typ,
+		TypeDefaults: defs,
+		InitialValue: initialVal,
+		Description:  ds.Description,
+		Secret:       secret,
+	}
+	g.DataOrder = append(g.DataOrder, DataRef{Kind: kind, Name: name})
 	return diags
 }
 
@@ -92,6 +98,37 @@ func checkDataNameCollisions(g *FSMGraph, kind, name string) *hcl.Diagnostic {
 		}
 	}
 	return nil
+}
+
+// compileDataSecret reads the optional "secret" boolean attribute from a data
+// block body. A secret data block is treated as a taint source by TaintPass:
+// its value may only flow through secret channels (secret_input, adapter
+// secrets) and is rejected in non-secret inputs (D65). Defaults to false.
+func compileDataSecret(kind, name string, remain hcl.Body) (bool, hcl.Diagnostics) {
+	if remain == nil {
+		return false, nil
+	}
+	var diags hcl.Diagnostics
+	attrs, _ := remain.JustAttributes()
+	secretAttr, ok := attrs["secret"]
+	if !ok {
+		return false, nil
+	}
+	val, valDiags := secretAttr.Expr.Value(nil)
+	if valDiags.HasErrors() {
+		diags = append(diags, valDiags...)
+		return false, diags
+	}
+	if val.Type() != cty.Bool || val.IsNull() || !val.IsKnown() {
+		r := secretAttr.NameRange
+		diags = append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  fmt.Sprintf("data %q %q: \"secret\" must be a constant boolean", kind, name),
+			Subject:  &r,
+		})
+		return false, diags
+	}
+	return val.True(), diags
 }
 
 // compileDataType parses the Type expression of a data block and returns the
@@ -125,11 +162,11 @@ func compileDataInitialValue(kind, name string, remain hcl.Body, typ cty.Type, d
 	diags = append(diags, d...)
 
 	for k, attr := range attrs {
-		if k != "value" && k != "description" {
+		if k != "value" && k != "description" && k != "secret" {
 			r := attr.NameRange
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagError,
-				Summary:  fmt.Sprintf("data %q %q: unknown attribute %q; only \"value\" and \"description\" are allowed", kind, name, k),
+				Summary:  fmt.Sprintf("data %q %q: unknown attribute %q; only \"value\", \"description\", and \"secret\" are allowed", kind, name, k),
 				Subject:  &r,
 			})
 		}

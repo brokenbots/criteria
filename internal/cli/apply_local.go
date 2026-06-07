@@ -13,7 +13,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/brokenbots/criteria/internal/adapterhost"
-	"github.com/brokenbots/criteria/internal/adapters/shell"
 	"github.com/brokenbots/criteria/internal/cli/localresume"
 	"github.com/brokenbots/criteria/internal/engine"
 	"github.com/brokenbots/criteria/workflow"
@@ -40,7 +39,7 @@ func runApplyLocal(
 
 	resumeLocalInFlightRuns(ctx, log, jsonOut, mode)
 
-	src, graph, loader, err := compileForExecution(ctx, opts.workflowPath, log, opts.subworkflowRoots...)
+	src, graph, loader, err := compileForExecution(ctx, opts.workflowPath, log, opts.warnsAsErrors, opts.allowUnsigned, opts.subworkflowRoots...)
 	if err != nil {
 		return err
 	}
@@ -91,6 +90,8 @@ func runApplyLocal(
 	// src (raw HCL bytes) is consumed only by server mode for signed payload delivery;
 	// local mode has no signing step, so src is intentionally unused here.
 	_ = src
+	auditPath, _ := auditLogPath(runID)
+	auditWriter := adapterhost.NewFileAuditWriter(auditPath)
 	mergedVars, err := mergeVarSources(opts.varFiles, opts.varOverrides)
 	if err != nil {
 		return err
@@ -98,6 +99,7 @@ func runApplyLocal(
 	eng = engine.New(graph, loader, tracker,
 		engine.WithVarOverrides(mergedVars),
 		engine.WithWorkflowDir(workflowDirFromPath(opts.workflowPath)),
+		engine.WithAuditWriter(auditWriter),
 	)
 	if err := eng.Run(ctx); err != nil {
 		log.Error("local run failed", "run_id", runID, "error", err)
@@ -153,7 +155,6 @@ func prepareReattach(ctx context.Context, log *slog.Logger, cp *StepCheckpoint) 
 		return nil, nil, nil, false
 	}
 	loader := adapterhost.NewLoader()
-	loader.RegisterBuiltin(shell.Name, adapterhost.BuiltinFactoryForAdapter(shell.New()))
 	return graph, loader, resumer, true
 }
 

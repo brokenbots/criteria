@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/workflow"
@@ -39,13 +40,25 @@ type fakeOutputAdapter struct {
 func (p *fakeOutputAdapter) Info(context.Context) (adapterhost.Info, error) {
 	return adapterhost.Info{Name: p.name, Version: "test"}, nil
 }
-func (p *fakeOutputAdapter) OpenSession(context.Context, string, map[string]string) error { return nil }
+func (p *fakeOutputAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
+	return nil
+}
 func (p *fakeOutputAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
-	return adapter.Result{Outcome: p.outcome, Outputs: p.outputs}, nil
+	return adapter.Result{Outcome: p.outcome, Outputs: ctyOut(p.outputs)}, nil
 }
 func (p *fakeOutputAdapter) Permit(context.Context, string, string, bool, string) error { return nil }
 func (p *fakeOutputAdapter) CloseSession(context.Context, string) error                 { return nil }
 func (p *fakeOutputAdapter) Kill()                                                      {}
+
+func (p *fakeOutputAdapter) Pause(context.Context, string) error  { return nil }
+func (p *fakeOutputAdapter) Resume(context.Context, string) error { return nil }
+func (p *fakeOutputAdapter) Inspect(context.Context, string) (*v2.InspectResponse, error) {
+	return &v2.InspectResponse{}, nil
+}
+func (p *fakeOutputAdapter) Snapshot(context.Context, string) (*v2.SnapshotResponse, error) {
+	return &v2.SnapshotResponse{}, nil
+}
+func (p *fakeOutputAdapter) Restore(context.Context, string, []byte, uint32) error { return nil }
 
 const outputWorkflow = `
 workflow {
@@ -139,7 +152,7 @@ type fakeConsumerAdapter struct {
 func (p *fakeConsumerAdapter) Info(context.Context) (adapterhost.Info, error) {
 	return adapterhost.Info{Name: p.name, Version: "test"}, nil
 }
-func (p *fakeConsumerAdapter) OpenSession(context.Context, string, map[string]string) error {
+func (p *fakeConsumerAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
 	return nil
 }
 func (p *fakeConsumerAdapter) Execute(_ context.Context, _ string, step *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
@@ -150,6 +163,15 @@ func (p *fakeConsumerAdapter) Permit(context.Context, string, string, bool, stri
 func (p *fakeConsumerAdapter) CloseSession(context.Context, string) error                 { return nil }
 func (p *fakeConsumerAdapter) Kill()                                                      {}
 
+func (p *fakeConsumerAdapter) Pause(context.Context, string) error  { return nil }
+func (p *fakeConsumerAdapter) Resume(context.Context, string) error { return nil }
+func (p *fakeConsumerAdapter) Inspect(context.Context, string) (*v2.InspectResponse, error) {
+	return &v2.InspectResponse{}, nil
+}
+func (p *fakeConsumerAdapter) Snapshot(context.Context, string) (*v2.SnapshotResponse, error) {
+	return &v2.SnapshotResponse{}, nil
+}
+func (p *fakeConsumerAdapter) Restore(context.Context, string, []byte, uint32) error { return nil }
 func TestOutputCapture_ExpressionInterpolation(t *testing.T) {
 	adapterSchemas := map[string]workflow.AdapterInfo{
 		"fake_out.default": {

@@ -1,6 +1,7 @@
 package adapterhost_test
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -8,7 +9,11 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/zclconf/go-cty/cty"
+
 	"github.com/brokenbots/criteria/internal/adapter/conformance"
+	"github.com/brokenbots/criteria/internal/adapterhost"
+	"github.com/brokenbots/criteria/workflow"
 )
 
 // TestPublicSDKFixtureConformance proves that an adapter built exclusively
@@ -30,6 +35,70 @@ func TestPublicSDKFixtureConformance(t *testing.T) {
 		},
 	)
 }
+
+// TestPublicSDKFixture_NativeTypedOutputs is the WS-C end-to-end proof: a real
+// out-of-process adapter binary emits structured + scalar outputs on the native
+// outputs_json channel, and the host decodes them — through the full gRPC wire —
+// to native cty types against the step's OutputSchema. No legacy string-map
+// field and no jsondecode() are involved anywhere in the chain.
+func TestPublicSDKFixture_NativeTypedOutputs(t *testing.T) {
+	bin := buildPublicSDKFixture(t)
+	ctx := context.Background()
+
+	loader := adapterhost.NewLoaderWithDiscovery(func(string) (string, error) { return bin, nil })
+	t.Cleanup(func() { _ = loader.Shutdown(ctx) })
+
+	handle, err := loader.Resolve(ctx, "public-sdk-fixture")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if err := handle.OpenSession(ctx, "sess", nil, nil); err != nil {
+		t.Fatalf("OpenSession: %v", err)
+	}
+	t.Cleanup(func() { _ = handle.CloseSession(ctx, "sess") })
+
+	step := &workflow.StepNode{
+		Name:       "produce",
+		TargetKind: workflow.StepTargetAdapter,
+		AdapterRef: "public-sdk-fixture",
+		Input:      map[string]string{"emit_typed": "true"},
+		OutputSchema: map[string]workflow.ConfigField{
+			"meta":  {CtyType: cty.DynamicPseudoType},
+			"count": {CtyType: cty.Number},
+			// "ok" is undeclared — decoded by inference.
+		},
+		Outcomes: map[string]*workflow.CompiledOutcome{"success": {Next: "done"}},
+	}
+
+	result, err := handle.Execute(ctx, "sess", step, noopExecSink{})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if result.Outcome != "success" {
+		t.Fatalf("outcome = %q, want success", result.Outcome)
+	}
+
+	if got := result.Outputs["count"]; !got.RawEquals(cty.NumberIntVal(42)) {
+		t.Errorf("count = %#v, want number 42", got)
+	}
+	if got := result.Outputs["ok"]; !got.RawEquals(cty.True) {
+		t.Errorf("ok = %#v, want bool true (inferred)", got)
+	}
+	meta := result.Outputs["meta"]
+	if !meta.Type().IsObjectType() || !meta.GetAttr("id").RawEquals(cty.NumberIntVal(7)) {
+		t.Errorf("meta = %#v, want object with id=7", meta)
+	}
+	if name := meta.GetAttr("name"); name.AsString() != "widget" {
+		t.Errorf("meta.name = %#v, want \"widget\"", name)
+	}
+}
+
+// noopExecSink is a no-op EventSink for the typed-outputs e2e test; the result
+// is read from Execute's return value, not the event stream.
+type noopExecSink struct{}
+
+func (noopExecSink) Log(string, []byte)  {}
+func (noopExecSink) Adapter(string, any) {}
 
 var (
 	buildPublicSDKOnce sync.Once

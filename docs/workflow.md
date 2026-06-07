@@ -14,7 +14,7 @@ A Criteria workflow defines:
 ### Architecture model
 
 - **Criteria** compiles HCL workflows to FSM graphs and executes them by invoking adapters.
-- **Adapters** are out-of-process plugins discovered from `$CRITERIA_PLUGINS` or `~/.criteria/plugins` (see [plugins.md](plugins.md)).
+- **Adapters** are out-of-process plugins discovered from `$CRITERIA_ADAPTERS` or `~/.criteria/adapters` (see [plugins.md](plugins.md)).
 - **Server** (optional) is the orchestrator server that persists runs, enables resumption after crashes, and provides UI and approval RPCs.
 
 ### Execution modes
@@ -56,6 +56,7 @@ permissions {
 - **`version`** (required): Schema version. Use `"1"` for v1.5 workflows.
 - **`initial_state`** (required): The starting node or state name.
 - **`target_state`** (required): The intended terminal state. Must reference a terminal state.
+- **`verification`** (optional): Signature-verification posture for OCI adapters — `"strict"`, `"warn"`, or `"off"`. Governs how a failed/missing adapter signature is handled at `lock`/`compile`/`apply`. The CLI override `--allow-unsigned` (or `CRITERIA_ALLOW_UNSIGNED=1`) takes precedence over this attribute. When omitted, the CLI transition default applies (currently `warn`; returns to `strict` once keyless verification is confirmed). See [adapters.md → Signing and trust](adapters.md).
 - **`policy`** (optional, top-level block): Execution guards.
   - **`max_total_steps`** (default 100): Caps the total number of step executions across the run, including retries and iteration steps. Set this to a positive integer to override the cap. If unset, or set to `0`, the default cap of `100` applies. Acts as a coarse backstop; for fine-grained loop control, prefer `max_visits` on individual steps.
   - **`max_step_retries`** (default 0 = no retries): Per-step retry limit for transient failures.
@@ -194,6 +195,7 @@ environment "shell" "staging" {
 - **`<type>`** (required label): The environment type. In v0.3.0, only `"shell"` is supported. Future versions will support additional types like `"docker"`, `"firecracker"`, etc., for isolated execution contexts.
 - **`<name>`** (required label): The environment name. Must match `^[a-zA-Z][a-zA-Z0-9_-]*$` (starts with a letter; can contain letters, digits, underscores, hyphens).
 - **`variables`** (optional): Map of environment variable names to string values. Numbers and booleans are coerced to strings. All variables must fold at compile time (no runtime-only references like `each.value` or `steps.X.outputs.Y`).
+- **`working_directory`** (optional): Launch directory for the adapter process. Shell and copilot adapters bound to the environment run in this directory by default (it becomes the process cwd). Resolved at runtime when the adapter session is initialized — not folded at compile time — so it can be set dynamically from the run's variables and locals (e.g. `working_directory = var.worktree`, where `var.worktree` may be supplied via `--var` at run time). References that cannot be resolved at adapter init (e.g. `steps.X.outputs.Y`, since adapters initialize before any step runs) produce a clear runtime error. Accepted by `shell`, `sandbox`, and `remote` environments; **not** accepted by `container` environments, which isolate paths rather than relocate the process cwd. For `sandbox` environments the path must also be permitted by the filesystem policy so the chdir succeeds inside the sandbox.
 - **`config`** (optional): Map of type-specific configuration. Shape is not validated in v0.3.0 (validation lands in Phase 4 with a per-type schema registry). The config is parsed and stored but does not affect adapter behavior in v0.3.0. This slot is reserved for Phase 4 implementation.
 
 ### Default environment
@@ -291,8 +293,8 @@ Explicit `lifecycle = "open"` and `lifecycle = "close"` steps from v0.2.0 are no
 
 Adapters resolve to plugin binaries named `criteria-adapter-<name>`. Discovery order:
 
-1. `$CRITERIA_PLUGINS/<name>`
-2. `~/.criteria/plugins/<name>`
+1. `$CRITERIA_ADAPTERS/<name>`
+2. `~/.criteria/adapters/<name>`
 
 See [plugins.md](plugins.md) for the plugin wire protocol and adapter development guide.
 
@@ -1594,8 +1596,8 @@ updates the variable during execution.
 
 ### Writing a data value (write blocks)
 
-Use `write` on an outcome block to write one or more variables when
-that outcome is reached. The value maps a `data "internal"` name to an output
+Use `write` on an outcome block to write one or more data values when
+that outcome is reached. In the simplest form the value is an output
 key from the step's adapter output:
 
 ```hcl
@@ -1612,14 +1614,72 @@ step "count_lines" {
 ```
 
 `counter` is a declared `data "internal"`; `"line_count"` is the key in the
-adapter's output map. All writes in one `write` block are committed
+adapter's output map. All writes on one outcome are committed
 atomically — partial writes are never observable.
 
 When an `output = { ... }` projection is also declared on the outcome, the
-engine validates at **compile time** that every `write` value key
-appears in the projection. When no projection is present but the adapter
-declares an output schema, the compiler validates against that schema instead.
-If neither is available the check is deferred to runtime.
+engine validates at **compile time** that every `output.<key>` reference in a
+`write` value appears in the projection. When no projection is present but the
+adapter declares an output schema, the compiler validates against that schema
+instead. If neither is available the check is deferred to runtime.
+
+#### The write `value` expression has the full outcome context
+
+A `write` value is not limited to `output.<key>`. It is an arbitrary HCL
+expression evaluated against the **same context as the outcome's
+`output = { ... }` projection**, so it may reference:
+
+- `var.*`, `local.*` — workflow inputs and locals
+- `data.<kind>.<name>.value` — other data values (see snapshot semantics below)
+- `step.output.<key>` — the current step's raw adapter outputs (strings)
+- `output.<key>` — keys from this outcome's `output = { ... }` projection
+- `subworkflow.<key>` — return values of a subworkflow step
+- the standard functions
+
+This means you can compute a write inline without first routing everything
+through a projection:
+
+```hcl
+outcome "success" {
+  next = state.done
+  write {
+    target = data.internal.counter.value
+    value  = data.internal.counter.value + var.bump + step.output.delta
+  }
+}
+```
+
+This is the recommended way to update a data value after a `for_each`, `while`,
+or `parallel` step: read the accumulated state in the write value directly,
+rather than relying on a fan-in step (which today often lands on a `noop`
+adapter that produces no output to project).
+
+#### Snapshot semantics — reads see the step-entry snapshot
+
+> **Important.** When a write `value` reads `data.<kind>.<name>.value`, it
+> always observes the value as of **step entry** — the point-in-time snapshot
+> captured before the step ran — *not* any value written earlier in the same
+> step.
+
+The `data.*` namespace is refreshed once per step entry. Writes produced by a
+step are resolved against that snapshot and then committed together (atomically)
+*after* the step finishes. Consequently, within a single step:
+
+- A write that reads the data value it is updating sees the **previous** value,
+  not its own pending write — so `value = data.internal.counter.value + 1`
+  increments relative to the step-entry value.
+- When one write reads a data value that **another write in the same step** is
+  also updating, the read still sees the step-entry snapshot, never the sibling
+  write's new value. The full write set is atomic against the snapshot, so write
+  order within the step never affects the result.
+
+This makes writes deterministic and order-independent. The compiler emits an
+informational warning when a write reads a data value the same step also writes,
+so the behavior is easy to spot while troubleshooting; it is not an error.
+
+For ordering that *must* be observed (each write seeing the prior write's
+result), split the writes across separate steps, since the snapshot is
+refreshed on each step entry.
 
 ### Type enforcement
 

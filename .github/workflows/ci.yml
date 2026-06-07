@@ -82,6 +82,10 @@ jobs:
   e2e:
     name: Build & E2E
     runs-on: ubuntu-latest
+    env:
+      # The shell adapter is now an out-of-process discovered binary (not an
+      # in-process builtin), so e2e steps must find the built adapter plugins.
+      CRITERIA_ADAPTERS: ${{ github.workspace }}/bin
     steps:
       - uses: actions/checkout@v4
 
@@ -101,8 +105,8 @@ jobs:
       - name: Sync workspace
         run: go work sync
 
-      - name: Build binary
-        run: make build
+      - name: Build binary and adapter plugins
+        run: make build plugins
 
       - name: CLI smoke test
         run: ./bin/criteria apply examples/hello --events-file /tmp/events.ndjson
@@ -139,6 +143,76 @@ jobs:
 
       - name: Check proto drift
         run: make proto-check-drift
+
+  osv-scan:
+    name: Vulnerability scan (osv-scanner)
+    runs-on: ubuntu-latest
+    # WS51 cleared the dependency backlog and flipped this gate to blocking: it is
+    # now a required check in all-checks. A PR introducing a dependency with a
+    # known OSV advisory fails CI until upgraded or time-boxed in osv-scanner.toml.
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Cache Go build cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/go-build
+          key: go-build-osv-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            go-build-osv-${{ runner.os }}-
+
+      # Pinned version (no @latest) for reproducibility and local parity with
+      # `make vuln-scan`. Covers every Go module in the workspace via -r. (GitHub
+      # Actions advisories are covered by the Dependabot github-actions ecosystem,
+      # WS50: osv-scanner v2.3.8 does not bundle a workflow extractor.)
+      - name: Run osv-scanner
+        run: make vuln-scan
+
+  deps-report:
+    name: Dependency freshness report
+    runs-on: ubuntu-latest
+    # WS50: non-blocking by design. Enforcement of "latest major.minor" lives
+    # with review + the catch-up workstream (WS51); a hard gate would flap on
+    # upstream release cadence. This job only surfaces drift on every PR.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Cache Go build cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/go-build
+          key: go-build-deps-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            go-build-deps-${{ runner.os }}-
+
+      - name: Sync workspace
+        run: go work sync
+
+      - name: Outdated direct dependencies (latest minor/patch)
+        run: |
+          {
+            echo '## Dependency freshness report'
+            echo
+            echo '### Outdated direct deps (`make deps-outdated`)'
+            echo '```'
+            make deps-outdated 2>&1 || true
+            echo '```'
+            echo '### Available major upgrades (`make deps-majors`)'
+            echo '```'
+            make deps-majors 2>&1 || true
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
 
   release-artifacts:
     name: Release artifacts (RC PRs only)
@@ -217,6 +291,6 @@ jobs:
   all-checks:
     name: All checks passed
     runs-on: ubuntu-latest
-    needs: [lint, unit-tests, e2e, proto-drift]
+    needs: [lint, unit-tests, e2e, proto-drift, osv-scan]
     steps:
       - run: echo "All required checks passed."

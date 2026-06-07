@@ -16,6 +16,7 @@ import (
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/zclconf/go-cty/cty"
 
+	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/workflow"
@@ -60,7 +61,7 @@ type multiOutcomeAdapter struct {
 func (p *multiOutcomeAdapter) Info(context.Context) (adapterhost.Info, error) {
 	return adapterhost.Info{Name: p.name, Version: "test"}, nil
 }
-func (p *multiOutcomeAdapter) OpenSession(context.Context, string, map[string]string) error {
+func (p *multiOutcomeAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
 	return nil
 }
 func (p *multiOutcomeAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
@@ -74,6 +75,16 @@ func (p *multiOutcomeAdapter) Execute(_ context.Context, _ string, _ *workflow.S
 func (p *multiOutcomeAdapter) Permit(context.Context, string, string, bool, string) error { return nil }
 func (p *multiOutcomeAdapter) CloseSession(context.Context, string) error                 { return nil }
 func (p *multiOutcomeAdapter) Kill()                                                      {}
+
+func (p *multiOutcomeAdapter) Pause(context.Context, string) error  { return nil }
+func (p *multiOutcomeAdapter) Resume(context.Context, string) error { return nil }
+func (p *multiOutcomeAdapter) Inspect(context.Context, string) (*v2.InspectResponse, error) {
+	return &v2.InspectResponse{}, nil
+}
+func (p *multiOutcomeAdapter) Snapshot(context.Context, string) (*v2.SnapshotResponse, error) {
+	return &v2.SnapshotResponse{}, nil
+}
+func (p *multiOutcomeAdapter) Restore(context.Context, string, []byte, uint32) error { return nil }
 
 // --- for_each tests ---
 
@@ -520,7 +531,7 @@ type captureInputAdapter struct {
 func (p *captureInputAdapter) Info(context.Context) (adapterhost.Info, error) {
 	return adapterhost.Info{Name: "fake", Version: "test"}, nil
 }
-func (p *captureInputAdapter) OpenSession(context.Context, string, map[string]string) error {
+func (p *captureInputAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
 	return nil
 }
 func (p *captureInputAdapter) Execute(_ context.Context, _ string, step *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
@@ -536,6 +547,16 @@ func (p *captureInputAdapter) Execute(_ context.Context, _ string, step *workflo
 func (p *captureInputAdapter) Permit(context.Context, string, string, bool, string) error { return nil }
 func (p *captureInputAdapter) CloseSession(context.Context, string) error                 { return nil }
 func (p *captureInputAdapter) Kill()                                                      {}
+
+func (p *captureInputAdapter) Pause(context.Context, string) error  { return nil }
+func (p *captureInputAdapter) Resume(context.Context, string) error { return nil }
+func (p *captureInputAdapter) Inspect(context.Context, string) (*v2.InspectResponse, error) {
+	return &v2.InspectResponse{}, nil
+}
+func (p *captureInputAdapter) Snapshot(context.Context, string) (*v2.SnapshotResponse, error) {
+	return &v2.SnapshotResponse{}, nil
+}
+func (p *captureInputAdapter) Restore(context.Context, string, []byte, uint32) error { return nil }
 
 // TestIteration_VarScope_SerializeRestore verifies that iteration cursor state
 // can be serialized and restored (simulating a crash-resume scenario).
@@ -687,7 +708,7 @@ type captureOutputAdapter struct {
 func (p *captureOutputAdapter) Info(context.Context) (adapterhost.Info, error) {
 	return adapterhost.Info{Name: "fake", Version: "test"}, nil
 }
-func (p *captureOutputAdapter) OpenSession(context.Context, string, map[string]string) error {
+func (p *captureOutputAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
 	return nil
 }
 func (p *captureOutputAdapter) Execute(_ context.Context, _ string, step *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
@@ -707,13 +728,23 @@ func (p *captureOutputAdapter) Execute(_ context.Context, _ string, step *workfl
 		outs = p.outputs[i]
 	}
 	p.call++
-	return adapter.Result{Outcome: p.outcomes[i], Outputs: outs}, nil
+	return adapter.Result{Outcome: p.outcomes[i], Outputs: ctyOut(outs)}, nil
 }
 func (p *captureOutputAdapter) Permit(context.Context, string, string, bool, string) error {
 	return nil
 }
 func (p *captureOutputAdapter) CloseSession(context.Context, string) error { return nil }
 func (p *captureOutputAdapter) Kill()                                      {}
+
+func (p *captureOutputAdapter) Pause(context.Context, string) error  { return nil }
+func (p *captureOutputAdapter) Resume(context.Context, string) error { return nil }
+func (p *captureOutputAdapter) Inspect(context.Context, string) (*v2.InspectResponse, error) {
+	return &v2.InspectResponse{}, nil
+}
+func (p *captureOutputAdapter) Snapshot(context.Context, string) (*v2.SnapshotResponse, error) {
+	return &v2.SnapshotResponse{}, nil
+}
+func (p *captureOutputAdapter) Restore(context.Context, string, []byte, uint32) error { return nil }
 
 // TestIter_MapForEach_KeyAndTotal verifies that for_each over an HCL object map
 // binds each.key to the map key string and each._total to the map size.
@@ -1602,14 +1633,26 @@ type callbackAdapter struct {
 func (p *callbackAdapter) Info(context.Context) (adapterhost.Info, error) {
 	return adapterhost.Info{Name: "callback", Version: "test"}, nil
 }
-func (p *callbackAdapter) OpenSession(context.Context, string, map[string]string) error { return nil }
+func (p *callbackAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
+	return nil
+}
 func (p *callbackAdapter) Execute(_ context.Context, _ string, step *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
 	outcome, outputs := p.fn(step.Input)
-	return adapter.Result{Outcome: outcome, Outputs: outputs}, nil
+	return adapter.Result{Outcome: outcome, Outputs: ctyOut(outputs)}, nil
 }
 func (p *callbackAdapter) Permit(context.Context, string, string, bool, string) error { return nil }
 func (p *callbackAdapter) CloseSession(context.Context, string) error                 { return nil }
 func (p *callbackAdapter) Kill()                                                      {}
+
+func (p *callbackAdapter) Pause(context.Context, string) error  { return nil }
+func (p *callbackAdapter) Resume(context.Context, string) error { return nil }
+func (p *callbackAdapter) Inspect(context.Context, string) (*v2.InspectResponse, error) {
+	return &v2.InspectResponse{}, nil
+}
+func (p *callbackAdapter) Snapshot(context.Context, string) (*v2.SnapshotResponse, error) {
+	return &v2.SnapshotResponse{}, nil
+}
+func (p *callbackAdapter) Restore(context.Context, string, []byte, uint32) error { return nil }
 
 // outputAdapter is a test adapter that always returns a fixed outcome and outputs map.
 type outputAdapter struct {
@@ -1620,13 +1663,25 @@ type outputAdapter struct {
 func (p *outputAdapter) Info(context.Context) (adapterhost.Info, error) {
 	return adapterhost.Info{Name: "output", Version: "test"}, nil
 }
-func (p *outputAdapter) OpenSession(context.Context, string, map[string]string) error { return nil }
+func (p *outputAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
+	return nil
+}
 func (p *outputAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
-	return adapter.Result{Outcome: p.outcome, Outputs: p.outputs}, nil
+	return adapter.Result{Outcome: p.outcome, Outputs: ctyOut(p.outputs)}, nil
 }
 func (p *outputAdapter) Permit(context.Context, string, string, bool, string) error { return nil }
 func (p *outputAdapter) CloseSession(context.Context, string) error                 { return nil }
 func (p *outputAdapter) Kill()                                                      {}
+
+func (p *outputAdapter) Pause(context.Context, string) error  { return nil }
+func (p *outputAdapter) Resume(context.Context, string) error { return nil }
+func (p *outputAdapter) Inspect(context.Context, string) (*v2.InspectResponse, error) {
+	return &v2.InspectResponse{}, nil
+}
+func (p *outputAdapter) Snapshot(context.Context, string) (*v2.SnapshotResponse, error) {
+	return &v2.SnapshotResponse{}, nil
+}
+func (p *outputAdapter) Restore(context.Context, string, []byte, uint32) error { return nil }
 
 // represent map iteration keys stored in the W07/W10 cursor JSON so the SDK
 // can expose each.key on resume.

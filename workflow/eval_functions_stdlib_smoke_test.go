@@ -18,10 +18,10 @@ workflow {
   target_state  = "done"
 }
 
-adapter "shell" "default" {}
+adapter "exec" "default" {}
 
 step "run" {
-  target = adapter.shell.default
+  target = adapter.exec.default
   input {
     command = format("echo %s", substr(join("-", ["hello", "world"]), 0, 5))
   }
@@ -51,7 +51,7 @@ workflow {
   target_state  = "done"
 }
 
-adapter "shell" "default" {}
+adapter "exec" "default" {}
 
 variable "prefix" {
   type    = string
@@ -59,7 +59,7 @@ variable "prefix" {
 }
 
 step "check" {
-  target = adapter.shell.default
+  target = adapter.exec.default
   input {
     command = "echo hello"
   }

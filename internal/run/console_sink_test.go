@@ -54,6 +54,7 @@ func TestConsoleSink_HappyPath(t *testing.T) {
 		"▶ [2/3 run · demo(?)]",
 		"[2/3 run · demo(?)] agent: hello there",
 		"[2/3 run · demo(?)] ✏️ edit path=foo.go",
+		"[2/3 run · demo(?)]   agent: noisy stdout chunk",
 		"[2/3 run · demo(?)] ✓ success in 1.5s",
 		"▶ [3/3 close · demo(?)]",
 		"→ done",
@@ -64,8 +65,8 @@ func TestConsoleSink_HappyPath(t *testing.T) {
 			t.Errorf("missing %q in output:\n%s", want, out)
 		}
 	}
-	// Per-token deltas and raw stdout chunks must NOT appear.
-	for _, banned := range []string{"hel\n", "noisy stdout chunk", "assistant.message_delta"} {
+	// Per-token deltas must NOT appear.
+	for _, banned := range []string{"hel\n", "assistant.message_delta"} {
 		if strings.Contains(out, banned) {
 			t.Errorf("forbidden token %q present in concise output:\n%s", banned, out)
 		}

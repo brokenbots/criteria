@@ -141,7 +141,7 @@ workflow {
   target_state  = "done"
 }
 adapter "noop" "a" {}
-adapter "shell" "b" {
+adapter "fake" "b" {
   config { }
 }
 step "step_a" {
@@ -149,7 +149,7 @@ step "step_a" {
   outcome "success" { next = step.step_b }
 }
 step "step_b" {
-  target = adapter.shell.b
+  target = adapter.fake.b
   outcome "success" { next = step.done }
 }
 state "done" {
@@ -367,7 +367,7 @@ state "failed" {
 // compileDOTFromDir compiles the workflow rooted at dir and returns the DOT output.
 func compileDOTFromDir(t *testing.T, dir string) string {
 	t.Helper()
-	out, err := compileWorkflowOutput(context.Background(), dir, "dot", nil)
+	out, err := compileWorkflowOutput(context.Background(), dir, "dot", nil, false, false)
 	if err != nil {
 		t.Fatalf("compile dot: %v", err)
 	}
@@ -401,11 +401,11 @@ workflow {
   initial_state = "do_shell"
   target_state  = "done"
 }
-adapter "shell" "default" {
+adapter "noop" "default" {
   config { }
 }
 step "do_shell" {
-  target = adapter.shell.default
+  target = adapter.noop.default
   outcome "success" { next = step.done }
 }
 state "done" {
@@ -805,7 +805,7 @@ state "done" {
 	if err := os.WriteFile(filepath.Join(dir, "main.hcl"), []byte(hcl2), 0o644); err != nil {
 		t.Fatalf("write hcl: %v", err)
 	}
-	out, err := compileWorkflowOutput(context.Background(), dir, "dot", nil)
+	out, err := compileWorkflowOutput(context.Background(), dir, "dot", nil, false, false)
 	if err != nil {
 		t.Fatalf("compile dot: %v", err)
 	}

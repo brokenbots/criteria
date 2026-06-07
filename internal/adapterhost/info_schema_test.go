@@ -3,23 +3,25 @@ package adapterhost_test
 import (
 	"testing"
 
+	"github.com/zclconf/go-cty/cty"
+
+	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 	adapterhostpkg "github.com/brokenbots/criteria/internal/adapterhost"
-	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 	"github.com/brokenbots/criteria/workflow"
 )
 
 // TestInfoResponseSchemaRoundTrip exercises the production AdapterInfoFromProto
 // translation used by the loader when an adapter responds to an Info() call.
 func TestInfoResponseSchemaRoundTrip(t *testing.T) {
-	resp := &pb.InfoResponse{
+	resp := &v2.InfoResponse{
 		Name:    "test-adapter",
 		Version: "1.0.0",
-		ConfigSchema: &pb.AdapterSchemaProto{Fields: map[string]*pb.ConfigFieldProto{
-			"max_turns":     {Type: "number", Doc: "max turns"},
+		ConfigSchema: &v2.AdapterSchemaProto{Fields: map[string]*v2.ConfigFieldProto{
+			"max_turns":     {Type: "number", Description: "max turns"},
 			"system_prompt": {Required: false, Type: "string"},
 		}},
-		InputSchema: &pb.AdapterSchemaProto{Fields: map[string]*pb.ConfigFieldProto{
-			"prompt": {Required: true, Type: "string", Doc: "user prompt"},
+		InputSchema: &v2.AdapterSchemaProto{Fields: map[string]*v2.ConfigFieldProto{
+			"prompt": {Required: true, Type: "string", Description: "user prompt"},
 		}},
 	}
 
@@ -68,7 +70,7 @@ func TestInfoResponseSchemaRoundTrip(t *testing.T) {
 // the InfoResponse are copied into AdapterInfo.Capabilities by AdapterInfoFromProto.
 // This covers the production proto→schema translation path used by collectSchemas.
 func TestAdapterInfoFromProto_PropagatesCapabilities(t *testing.T) {
-	resp := &pb.InfoResponse{
+	resp := &v2.InfoResponse{
 		Name:         "test-adapter",
 		Version:      "1.0.0",
 		Capabilities: []string{"parallel_safe", "some_other_cap"},
@@ -95,16 +97,52 @@ func TestAdapterInfoFromProto_PropagatesCapabilities(t *testing.T) {
 // no capabilities, AdapterInfo.Capabilities is nil (not an empty non-nil slice)
 // so the compiler treats the adapter as having no declared capabilities.
 func TestAdapterInfoFromProto_EmptyCapabilities(t *testing.T) {
-	resp := &pb.InfoResponse{Name: "bare", Version: "0.1"}
+	resp := &v2.InfoResponse{Name: "bare", Version: "0.1"}
 	info := adapterhostpkg.AdapterInfoFromProto(resp)
 	if len(info.Capabilities) != 0 {
 		t.Errorf("expected empty Capabilities for bare InfoResponse; got %v", info.Capabilities)
 	}
 }
 
+// TestAdapterInfoFromProto_PropagatesSupportedFeatures verifies that
+// supported_features in the InfoResponse are copied into
+// AdapterInfo.SupportedFeatures by AdapterInfoFromProto.
+func TestAdapterInfoFromProto_PropagatesSupportedFeatures(t *testing.T) {
+	resp := &v2.InfoResponse{
+		Name:              "test-adapter",
+		Version:           "1.0.0",
+		SupportedFeatures: []string{"pause", "resume", "inspect"},
+	}
+
+	info := adapterhostpkg.AdapterInfoFromProto(resp)
+
+	if len(info.SupportedFeatures) != 3 {
+		t.Fatalf("SupportedFeatures len = %d; want 3", len(info.SupportedFeatures))
+	}
+	found := map[string]bool{}
+	for _, f := range info.SupportedFeatures {
+		found[f] = true
+	}
+	for _, want := range []string{"pause", "resume", "inspect"} {
+		if !found[want] {
+			t.Errorf("SupportedFeatures does not contain %q; got %v", want, info.SupportedFeatures)
+		}
+	}
+}
+
+// TestAdapterInfoFromProto_EmptySupportedFeatures verifies that when
+// InfoResponse has no supported_features, AdapterInfo.SupportedFeatures is nil.
+func TestAdapterInfoFromProto_EmptySupportedFeatures(t *testing.T) {
+	resp := &v2.InfoResponse{Name: "bare", Version: "0.1"}
+	info := adapterhostpkg.AdapterInfoFromProto(resp)
+	if len(info.SupportedFeatures) != 0 {
+		t.Errorf("expected empty SupportedFeatures for bare InfoResponse; got %v", info.SupportedFeatures)
+	}
+}
+
 func TestInfoResponseBoolAndListTypes(t *testing.T) {
-	resp := &pb.InfoResponse{
-		InputSchema: &pb.AdapterSchemaProto{Fields: map[string]*pb.ConfigFieldProto{
+	resp := &v2.InfoResponse{
+		InputSchema: &v2.AdapterSchemaProto{Fields: map[string]*v2.ConfigFieldProto{
 			"flag":  {Type: "bool"},
 			"items": {Type: "list_string"},
 		}},
@@ -128,10 +166,50 @@ func TestInfoResponseBoolAndListTypes(t *testing.T) {
 	}
 }
 
+// TestAdapterInfoFromProto_PopulatesOutputSchema verifies that output_schema is
+// translated into AdapterInfo.OutputSchema and that each field carries a full
+// cty.Type (CtyType), including structured types mapped to DynamicPseudoType.
+// Previously OutputSchema was dropped entirely on the host side.
+func TestAdapterInfoFromProto_PopulatesOutputSchema(t *testing.T) {
+	resp := &v2.InfoResponse{
+		Name:    "test-adapter",
+		Version: "1.0.0",
+		OutputSchema: &v2.AdapterSchemaProto{Fields: map[string]*v2.ConfigFieldProto{
+			"message": {Type: "string", Description: "human-readable summary"},
+			"count":   {Type: "number"},
+			"ok":      {Type: "boolean"},
+			"meta":    {Type: "object"},
+			"items":   {Type: "array"},
+		}},
+	}
+
+	info := adapterhostpkg.AdapterInfoFromProto(resp)
+	if info.OutputSchema == nil {
+		t.Fatal("OutputSchema was not populated")
+	}
+
+	cases := map[string]cty.Type{
+		"message": cty.String,
+		"count":   cty.Number,
+		"ok":      cty.Bool,
+		"meta":    cty.DynamicPseudoType,
+		"items":   cty.DynamicPseudoType,
+	}
+	for name, want := range cases {
+		f, ok := info.OutputSchema[name]
+		if !ok {
+			t.Fatalf("OutputSchema missing %q", name)
+		}
+		if !f.CtyType.Equals(want) {
+			t.Errorf("%s CtyType: got %s, want %s", name, f.CtyType.FriendlyName(), want.FriendlyName())
+		}
+	}
+}
+
 func TestLegacyInfoResponseWithoutSchema(t *testing.T) {
 	// A legacy adapter that does not populate schema fields should yield a
 	// permissive (nil-schema) AdapterInfo so the compiler does not block it.
-	resp := &pb.InfoResponse{
+	resp := &v2.InfoResponse{
 		Name:    "legacy",
 		Version: "0.0.1",
 	}
@@ -147,8 +225,8 @@ func TestLegacyInfoResponseWithoutSchema(t *testing.T) {
 }
 
 func TestUnknownFieldTypeDefaultsToString(t *testing.T) {
-	resp := &pb.InfoResponse{
-		InputSchema: &pb.AdapterSchemaProto{Fields: map[string]*pb.ConfigFieldProto{
+	resp := &v2.InfoResponse{
+		InputSchema: &v2.AdapterSchemaProto{Fields: map[string]*v2.ConfigFieldProto{
 			"future_type": {Type: "some_future_type"},
 		}},
 	}

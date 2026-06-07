@@ -1,7 +1,7 @@
 // Package main is the greeter adapter — a minimal example of a
 // third-party Criteria adapter that lives in its own module, imports only
-// the public adapter SDK, and is discovered at runtime from CRITERIA_PLUGINS
-// or ~/.criteria/plugins/.
+// the public adapter SDK, and is discovered at runtime from CRITERIA_ADAPTERS
+// or ~/.criteria/adapters/.
 //
 // The adapter accepts one input key, "name", and returns:
 //   - outcome:           "success"
@@ -14,60 +14,50 @@ import (
 	"context"
 	"fmt"
 
-	adapterhost "github.com/brokenbots/criteria/sdk/adapterhost"
-	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
+	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
+	adapterhost "github.com/brokenbots/criteria-go-adapter-sdk/adapterhost"
 )
 
-type greeterService struct{}
+type greeterService struct {
+	adapterhost.UnimplementedPermissions
+}
 
-func (g *greeterService) Info(_ context.Context, _ *pb.InfoRequest) (*pb.InfoResponse, error) {
-	return &pb.InfoResponse{
+func (g *greeterService) Info(_ context.Context, _ *v2.InfoRequest) (*v2.InfoResponse, error) {
+	return &v2.InfoResponse{
 		Name:    "greeter",
 		Version: "0.1.0",
 	}, nil
 }
 
-func (g *greeterService) OpenSession(_ context.Context, _ *pb.OpenSessionRequest) (*pb.OpenSessionResponse, error) {
-	return &pb.OpenSessionResponse{}, nil
+func (g *greeterService) OpenSession(_ context.Context, _ *v2.OpenSessionRequest) (*v2.OpenSessionResponse, error) {
+	return &v2.OpenSessionResponse{}, nil
 }
 
-func (g *greeterService) Execute(_ context.Context, req *pb.ExecuteRequest, sink adapterhost.ExecuteEventSender) error {
-	name := req.GetConfig()["name"]
+func (g *greeterService) Execute(_ context.Context, req *v2.ExecuteRequest, sink adapterhost.ExecuteEventSender) error {
+	name := req.GetInput()["name"]
 	if name == "" {
 		name = "world"
 	}
 	greeting := fmt.Sprintf("hello, %s", name)
 
-	// Emit the greeting as a log line so it is visible in the run output.
-	if err := sink.Send(&pb.ExecuteEvent{
-		Event: &pb.ExecuteEvent_Log{
-			Log: &pb.LogEvent{
-				Stream: "stdout",
-				Chunk:  []byte(greeting + "\n"),
-			},
-		},
-	}); err != nil {
+	// Return the greeting as a named output so downstream steps can reference
+	// it via steps.<step_name>.greeting. Outputs travel on the typed outputs_json
+	// channel; values keep their native JSON type.
+	ev, err := v2.NewExecuteResultEvent("success", map[string]any{"greeting": greeting})
+	if err != nil {
 		return err
 	}
-
-	// Return the greeting as a named output so downstream steps can reference
-	// it via steps.<step_name>.greeting.
-	return sink.Send(&pb.ExecuteEvent{
-		Event: &pb.ExecuteEvent_Result{
-			Result: &pb.ExecuteResult{
-				Outcome: "success",
-				Outputs: map[string]string{"greeting": greeting},
-			},
-		},
-	})
+	return sink.Send(ev)
 }
 
-func (g *greeterService) Permit(_ context.Context, _ *pb.PermitRequest) (*pb.PermitResponse, error) {
-	return &pb.PermitResponse{}, nil
+// Log blocks until the host closes the stream; greeter has no log lines to emit.
+func (g *greeterService) Log(ctx context.Context, _ *v2.LogRequest, _ adapterhost.LogEventSender) error {
+	<-ctx.Done()
+	return nil
 }
 
-func (g *greeterService) CloseSession(_ context.Context, _ *pb.CloseSessionRequest) (*pb.CloseSessionResponse, error) {
-	return &pb.CloseSessionResponse{}, nil
+func (g *greeterService) CloseSession(_ context.Context, _ *v2.CloseSessionRequest) (*v2.CloseSessionResponse, error) {
+	return &v2.CloseSessionResponse{}, nil
 }
 
 func main() {

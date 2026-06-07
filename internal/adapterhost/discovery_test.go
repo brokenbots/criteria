@@ -27,15 +27,15 @@ func TestDiscoverBinaryPrefersEnvOverHome(t *testing.T) {
 	if err := os.MkdirAll(envDir, 0o755); err != nil {
 		t.Fatalf("mkdir env: %v", err)
 	}
-	if err := os.MkdirAll(filepath.Join(homeDir, ".criteria", "plugins"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(homeDir, ".criteria", "adapters"), 0o755); err != nil {
 		t.Fatalf("mkdir home plugins: %v", err)
 	}
 	envPath := filepath.Join(envDir, "criteria-adapter-noop")
-	homePath := filepath.Join(homeDir, ".criteria", "plugins", "criteria-adapter-noop")
+	homePath := filepath.Join(homeDir, ".criteria", "adapters", "criteria-adapter-noop")
 	writeExecutable(t, envPath)
 	writeExecutable(t, homePath)
 
-	t.Setenv("CRITERIA_PLUGINS", envDir)
+	t.Setenv("CRITERIA_ADAPTERS", envDir)
 	t.Setenv("HOME", homeDir)
 
 	got, err := DiscoverBinary("noop")
@@ -49,13 +49,13 @@ func TestDiscoverBinaryPrefersEnvOverHome(t *testing.T) {
 
 func TestDiscoverBinaryFallsBackToHome(t *testing.T) {
 	homeDir := filepath.Join(t.TempDir(), "home")
-	if err := os.MkdirAll(filepath.Join(homeDir, ".criteria", "plugins"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(homeDir, ".criteria", "adapters"), 0o755); err != nil {
 		t.Fatalf("mkdir home plugins: %v", err)
 	}
-	homePath := filepath.Join(homeDir, ".criteria", "plugins", "criteria-adapter-noop")
+	homePath := filepath.Join(homeDir, ".criteria", "adapters", "criteria-adapter-noop")
 	writeExecutable(t, homePath)
 
-	t.Setenv("CRITERIA_PLUGINS", filepath.Join(t.TempDir(), "missing"))
+	t.Setenv("CRITERIA_ADAPTERS", filepath.Join(t.TempDir(), "missing"))
 	t.Setenv("HOME", homeDir)
 
 	got, err := DiscoverBinary("noop")
@@ -70,7 +70,7 @@ func TestDiscoverBinaryFallsBackToHome(t *testing.T) {
 func TestDiscoverBinaryNotFoundIncludesSearchedPaths(t *testing.T) {
 	envDir := filepath.Join(t.TempDir(), "env")
 	homeDir := filepath.Join(t.TempDir(), "home")
-	t.Setenv("CRITERIA_PLUGINS", envDir)
+	t.Setenv("CRITERIA_ADAPTERS", envDir)
 	t.Setenv("HOME", homeDir)
 
 	_, err := DiscoverBinary("copilot")
@@ -84,7 +84,7 @@ func TestDiscoverBinaryNotFoundIncludesSearchedPaths(t *testing.T) {
 	}
 	want := []string{
 		filepath.Join(envDir, "criteria-adapter-copilot"),
-		filepath.Join(homeDir, ".criteria", "plugins", "criteria-adapter-copilot"),
+		filepath.Join(homeDir, ".criteria", "adapters", "criteria-adapter-copilot"),
 	}
 	if !reflect.DeepEqual(notFound.Searched, want) {
 		t.Fatalf("searched=%v want=%v", notFound.Searched, want)

@@ -14,11 +14,30 @@ import (
 	"testing"
 	"time"
 
+	"github.com/zclconf/go-cty/cty"
+
+	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/internal/testutil"
 	"github.com/brokenbots/criteria/workflow"
+	"github.com/brokenbots/criteria/workflow/lockfile"
 )
+
+// ctyOut wraps a string-keyed test output map as the typed cty map that adapters
+// now return. All values become cty.String — the engine treats them as typed
+// values keyed against the step's OutputSchema. Test fixtures keep declaring
+// string maps for brevity and wrap them at the Execute return.
+func ctyOut(m map[string]string) map[string]cty.Value {
+	if m == nil {
+		return nil
+	}
+	out := make(map[string]cty.Value, len(m))
+	for k, v := range m {
+		out[k] = cty.StringVal(v)
+	}
+	return out
+}
 
 // fakeSink records engine callbacks for assertion.
 type fakeSink struct {
@@ -88,7 +107,9 @@ func (p *fakeAdapter) Info(context.Context) (adapterhost.Info, error) {
 	return adapterhost.Info{Name: p.name, Version: "test"}, nil
 }
 
-func (p *fakeAdapter) OpenSession(context.Context, string, map[string]string) error { return nil }
+func (p *fakeAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
+	return nil
+}
 
 func (p *fakeAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
 	return adapter.Result{Outcome: p.outcome}, p.err
@@ -97,6 +118,15 @@ func (p *fakeAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode,
 func (p *fakeAdapter) Permit(context.Context, string, string, bool, string) error { return nil }
 func (p *fakeAdapter) CloseSession(context.Context, string) error                 { return nil }
 func (p *fakeAdapter) Kill()                                                      {}
+func (p *fakeAdapter) Pause(context.Context, string) error                        { return nil }
+func (p *fakeAdapter) Resume(context.Context, string) error                       { return nil }
+func (p *fakeAdapter) Inspect(context.Context, string) (*v2.InspectResponse, error) {
+	return &v2.InspectResponse{}, nil
+}
+func (p *fakeAdapter) Snapshot(context.Context, string) (*v2.SnapshotResponse, error) {
+	return &v2.SnapshotResponse{}, nil
+}
+func (p *fakeAdapter) Restore(context.Context, string, []byte, uint32) error { return nil }
 
 type fakeLoader struct {
 	adapters map[string]adapterhost.Handle
@@ -403,17 +433,6 @@ func (s *captureStepEventSink) StepEventSink(string) adapter.EventSink {
 	return captureEventSink{s: s}
 }
 
-func (s *captureStepEventSink) sawAdapterKind(kind string) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for _, evt := range s.events {
-		if evt.kind == kind {
-			return true
-		}
-	}
-	return false
-}
-
 func (s *captureStepEventSink) firstAdapterEvent(kind string) (map[string]any, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -423,6 +442,17 @@ func (s *captureStepEventSink) firstAdapterEvent(kind string) (map[string]any, b
 		}
 	}
 	return nil, false
+}
+
+func (s *captureStepEventSink) sawAdapterKind(kind string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, evt := range s.events {
+		if evt.kind == kind {
+			return true
+		}
+	}
+	return false
 }
 
 type captureEventSink struct {
@@ -472,7 +502,7 @@ func buildNoopAdapter(t *testing.T) string {
 	moduleRoot := filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
 	adapterBin := filepath.Join(t.TempDir(), "criteria-adapter-noop")
 
-	cmd := exec.Command("go", "build", "-o", adapterBin, "./cmd/criteria-adapter-noop")
+	cmd := exec.Command("go", "build", "-o", adapterBin, "./internal/adapter/conformance/testdata/noop")
 	cmd.Dir = moduleRoot
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -884,7 +914,7 @@ type callCountAdapter struct {
 func (p *callCountAdapter) Info(context.Context) (adapterhost.Info, error) {
 	return adapterhost.Info{Name: p.name, Version: "test"}, nil
 }
-func (p *callCountAdapter) OpenSession(context.Context, string, map[string]string) error {
+func (p *callCountAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
 	return nil
 }
 func (p *callCountAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
@@ -898,6 +928,16 @@ func (p *callCountAdapter) Permit(context.Context, string, string, bool, string)
 func (p *callCountAdapter) CloseSession(context.Context, string) error                 { return nil }
 func (p *callCountAdapter) Kill()                                                      {}
 
+func (p *callCountAdapter) Pause(context.Context, string) error  { return nil }
+func (p *callCountAdapter) Resume(context.Context, string) error { return nil }
+func (p *callCountAdapter) Inspect(context.Context, string) (*v2.InspectResponse, error) {
+	return &v2.InspectResponse{}, nil
+}
+func (p *callCountAdapter) Snapshot(context.Context, string) (*v2.SnapshotResponse, error) {
+	return &v2.SnapshotResponse{}, nil
+}
+func (p *callCountAdapter) Restore(context.Context, string, []byte, uint32) error { return nil }
+
 // errAdapter is an adapter that always returns an error, used to exercise the
 // retry loop in runStepFromAttempt for max_visits retry-counting tests.
 type errAdapter struct {
@@ -908,13 +948,25 @@ type errAdapter struct {
 func (p *errAdapter) Info(context.Context) (adapterhost.Info, error) {
 	return adapterhost.Info{Name: p.name, Version: "test"}, nil
 }
-func (p *errAdapter) OpenSession(context.Context, string, map[string]string) error { return nil }
+func (p *errAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
+	return nil
+}
 func (p *errAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
 	return adapter.Result{}, p.err
 }
 func (p *errAdapter) Permit(context.Context, string, string, bool, string) error { return nil }
 func (p *errAdapter) CloseSession(context.Context, string) error                 { return nil }
 func (p *errAdapter) Kill()                                                      {}
+
+func (p *errAdapter) Pause(context.Context, string) error  { return nil }
+func (p *errAdapter) Resume(context.Context, string) error { return nil }
+func (p *errAdapter) Inspect(context.Context, string) (*v2.InspectResponse, error) {
+	return &v2.InspectResponse{}, nil
+}
+func (p *errAdapter) Snapshot(context.Context, string) (*v2.SnapshotResponse, error) {
+	return &v2.SnapshotResponse{}, nil
+}
+func (p *errAdapter) Restore(context.Context, string, []byte, uint32) error { return nil }
 
 // TestMaxVisits_CancelledAttemptDoesNotConsumeVisit verifies that a pre-cancelled
 // context returns a cancellation error WITHOUT incrementing the visit count in
@@ -1049,5 +1101,81 @@ state "done" { terminal = true }
 	visits := eng.VisitCounts()
 	if got := visits["process"]; got != 0 {
 		t.Errorf("visit count for cancelled workflow iteration = %d, want 0 (cancellation must not consume a visit)", got)
+	}
+}
+
+func TestEngineWithLockfile(t *testing.T) {
+	lf := &lockfile.Lockfile{
+		Adapters: []lockfile.LockedAdapter{
+			{Type: "noop", Name: "default", SourceURL: "https://example.com/noop"},
+		},
+	}
+	eng := NewTestEngine(nil, nil, &fakeSink{}, WithLockfile(lf))
+	if eng.lockfile == nil {
+		t.Fatal("expected lockfile to be set on engine")
+	}
+	if eng.lockfile.Adapters[0].SourceURL != "https://example.com/noop" {
+		t.Errorf("sourceURL = %q, want https://example.com/noop", eng.lockfile.Adapters[0].SourceURL)
+	}
+}
+
+func TestEngineSetLockfileOnSessions(t *testing.T) {
+	adapterBin := buildNoopAdapter(t)
+	loader := adapterhost.NewLoaderWithDiscovery(func(string) (string, error) {
+		return adapterBin, nil
+	})
+	t.Cleanup(func() { _ = loader.Shutdown(context.Background()) })
+
+	lf := &lockfile.Lockfile{
+		Adapters: []lockfile.LockedAdapter{
+			{Type: "noop", Name: "default", SourceURL: "https://example.com/noop"},
+		},
+	}
+
+	g := compileFile(t, "testdata/adapter_lifecycle_noop.hcl")
+	eng := NewTestEngine(g, loader, &fakeSink{}, WithLockfile(lf))
+
+	sessions := adapterhost.NewSessionManager(loader)
+	if err := eng.setLockfileOnSessions(sessions); err != nil {
+		t.Fatalf("setLockfileOnSessions: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := sessions.Open(ctx, "noop.default", "noop", "shutdown", nil, nil); err != nil {
+		t.Fatalf("session open: %v", err)
+	}
+}
+
+func TestEngineSetLockfileOnSessions_ReadFromDir(t *testing.T) {
+	adapterBin := buildNoopAdapter(t)
+	loader := adapterhost.NewLoaderWithDiscovery(func(string) (string, error) {
+		return adapterBin, nil
+	})
+	t.Cleanup(func() { _ = loader.Shutdown(context.Background()) })
+
+	dir := t.TempDir()
+	lf := &lockfile.Lockfile{
+		Adapters: []lockfile.LockedAdapter{
+			{Type: "noop", Name: "default", SourceURL: "https://example.com/noop"},
+		},
+	}
+	if err := lockfile.Write(filepath.Join(dir, ".criteria.lock.hcl"), lf); err != nil {
+		t.Fatalf("write lockfile: %v", err)
+	}
+
+	g := compileFile(t, "testdata/adapter_lifecycle_noop.hcl")
+	eng := NewTestEngine(g, loader, &fakeSink{})
+	eng.workflowDir = dir
+
+	sessions := adapterhost.NewSessionManager(loader)
+	if err := eng.setLockfileOnSessions(sessions); err != nil {
+		t.Fatalf("setLockfileOnSessions: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := sessions.Open(ctx, "noop.default", "noop", "shutdown", nil, nil); err != nil {
+		t.Fatalf("session open: %v", err)
 	}
 }
