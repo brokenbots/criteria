@@ -41,7 +41,6 @@ See [Standalone CLI](#standalone-cli) for the command reference.
 
 A Criteria workflow module consists of one or more `.hcl` files. In a **single-file workflow**, the file contains both the `workflow` header block and all content declarations. In a **multi-file (directory) module**, exactly one file contains the `workflow` header block and sibling files contain only content declarations (steps, states, adapters, etc.).
 
-<!-- validator: skip: illustrative header showing structure only; initial_state and target_state reference nodes not defined in this excerpt -->
 ```hcl
 workflow {
   name          = "deploy_pipeline"
@@ -107,7 +106,6 @@ Variables are typed, read-only values declared at the workflow level. The
 `default` attribute is the usual value source; override per run with `--var` or
 `--var-file` (see [CLI reference](#standalone-cli)).
 
-<!-- validator: fragment -->
 ```hcl
 variable "env" {
   type        = string
@@ -145,7 +143,6 @@ runtime via `--var` or `--var-file`.
 
 Reference variables with `var.<name>`:
 
-<!-- validator: skip: illustrative fragment; adapter block not included in this excerpt -->
 ```hcl
 adapter "shell" "default" {
   config {}
@@ -176,7 +173,6 @@ environment variables and select an isolation boundary for the adapter process.
 
 ### Declaring environments
 
-<!-- validator: fragment -->
 ```hcl
 environment "shell" "production" {
   variables = {
@@ -214,7 +210,6 @@ environment "shell" "staging" {
 
 If a workflow declares exactly one environment, that environment becomes the default and is automatically bound to all adapter steps. If multiple environments are declared, you must explicitly set the default:
 
-<!-- validator: skip: workflow header with environment attribute; states not defined in excerpt -->
 ```hcl
 workflow {
   name          = "multi_env_workflow"
@@ -255,7 +250,6 @@ variable (e.g. `PATH`), the controlled set wins and the compiler emits a warning
 
 Adapters are out-of-process plugin sessions declared at the workflow level and referenced from steps via `step.target`. The engine opens a session automatically when the first step that uses the adapter is entered and closes it automatically when the last step exits scope (LIFO order). No explicit open or close steps are needed.
 
-<!-- validator: skip: illustrative excerpt; workflow header and state blocks omitted -->
 ```hcl
 adapter "copilot" "assistant" {
   source   = "ghcr.io/brokenbots/criteria-adapter-copilot"
@@ -310,7 +304,6 @@ distribution, signing, and wire-protocol model.
 
 Steps are the primary execution units. Each step invokes an adapter (or a subworkflow) and transitions to the next node based on the outcome.
 
-<!-- validator: fragment -->
 ```hcl
 step "build" {
   target  = adapter.shell.default
@@ -340,7 +333,6 @@ step "build" {
 
 The `input { }` block passes adapter-specific configuration. Attributes support string interpolation for variables and step outputs:
 
-<!-- validator: fragment -->
 ```hcl
 step "publish" {
   target = adapter.shell.default
@@ -431,7 +423,6 @@ step "call_agent" {
 
 States are named targets, typically terminal nodes:
 
-<!-- validator: fragment -->
 ```hcl
 state "done" {
   terminal = true
@@ -460,7 +451,6 @@ Wait nodes pause execution for a duration or external signal.
 
 ### Duration-based wait
 
-<!-- validator: fragment -->
 ```hcl
 wait "cool_down" {
   duration = "10s"
@@ -475,7 +465,6 @@ wait "cool_down" {
 
 ### Signal-based wait
 
-<!-- validator: fragment -->
 ```hcl
 wait "approval_gate" {
   signal = "deploy_approved"
@@ -495,7 +484,6 @@ wait "approval_gate" {
 
 Approval nodes are human decision gates. Paused runs wait for an approver to submit a decision via the server (UI or RPC).
 
-<!-- validator: fragment -->
 ```hcl
 approval "ship_to_prod" {
   approvers = ["alice", "bob"]
@@ -575,7 +563,6 @@ arm, or fall back to the `default` block when one is present. The `branch` block
 earlier releases has been replaced by `switch`; `branch` is now rejected at
 parse time.
 
-<!-- validator: skip: switch conditions reference var.env and steps.build which are declared outside this excerpt -->
 ```hcl
 switch "check_env" {
   match {
@@ -633,7 +620,6 @@ separate `for_each` block type.
 
 ### `for_each` — iterate over a collection
 
-<!-- validator: skip: illustrative fragment; adapter block not included in this excerpt -->
 ```hcl
 step "deploy_services" {
   target   = adapter.shell.default
@@ -652,7 +638,6 @@ step "deploy_services" {
 
 ### `count` — iterate N times
 
-<!-- validator: skip: illustrative fragment; adapter block not included in this excerpt -->
 ```hcl
 step "batch" {
   target = adapter.noop.default
@@ -675,7 +660,6 @@ in declaration order regardless of completion order.
 
 `parallel` is mutually exclusive with `for_each` and `count`.
 
-<!-- validator: fragment -->
 ```hcl
 step "fetch" {
   target       = adapter.noop.default
@@ -746,7 +730,6 @@ Consequences:
 For safe parallel accumulation, collect results into indexed outputs and compute
 the final value in an aggregate outcome's `output = { ... }` projection:
 
-<!-- validator: fragment -->
 ```hcl
 step "fetch_all" {
   target       = adapter.noop.default
@@ -868,7 +851,6 @@ Referencing `each.*` outside any iterating step is a compile error.
 `each._prev` enables accumulation patterns across iterations. Because `_prev` is `null`
 on the first iteration, guard with `each._first` or a null check:
 
-<!-- validator: skip: illustrative fragment; adapter block not included in this excerpt -->
 ```hcl
 step "running_total" {
   target   = adapter.shell.default
@@ -904,7 +886,6 @@ Controls what happens when an iteration produces a non-success outcome.
 | `"abort"` | Stop immediately after the first failure. Route to `any_failed`. |
 | `"ignore"` | Run all iterations; treat all failures as successes. Always route to `all_succeeded`. |
 
-<!-- validator: skip: illustrative fragment; adapter block not included in this excerpt -->
 ```hcl
 step "deploy" {
   target     = adapter.shell.default
@@ -923,7 +904,6 @@ block with the multi-step body and target it from an iterating step.
 Each iteration runs the subworkflow to completion; its terminal state
 determines success or failure for that item.
 
-<!-- validator: skip: subworkflow source path is illustrative; not present in this repo -->
 ```hcl
 subworkflow "process_one" {
   source = "./subworkflows/process_one"
@@ -993,7 +973,6 @@ values.
 
 Use `${...}` inside string literals:
 
-<!-- validator: skip: bare input block; sub-block of step, not valid at workflow level -->
 ```hcl
 input {
   command = "deploy --env ${var.env} --build ${steps.build.stdout}"
@@ -1305,7 +1284,6 @@ Criteria enforces a deny-by-default permission model for tool invocations (adapt
 
 ### Workflow-level permissions
 
-<!-- validator: skip: workflow-level permissions example references states not defined in excerpt -->
 ```hcl
 workflow {
   name          = "secure_build"
@@ -1323,7 +1301,6 @@ Applies to all adapter steps unless overridden.
 
 ### Step-level permissions
 
-<!-- validator: skip: step targets adapter.copilot.assistant which is declared outside this excerpt -->
 ```hcl
 step "build" {
   target      = adapter.copilot.assistant
@@ -1436,10 +1413,7 @@ each, stubbing any referenced subworkflow directories. Keep the worked examples
 in that file compiling.
 
 Snippets in this document are mostly illustrative fragments (a step, adapter, or
-node in isolation) and are not individually compiled; the
-`<!-- validator: ... -->` comments preceding some blocks are authoring hints, not
-an enforced gate.
-
+node in isolation) and are not individually compiled.
 
 ## Data Values
 
@@ -1629,7 +1603,6 @@ The `subworkflow "<name>"` block declares a reusable workflow fragment to be res
 
 ### Declaring a subworkflow
 
-<!-- validator: skip: subworkflow source path ./subworkflows/smoke is illustrative; not present in this repo -->
 ```hcl
 workflow {
   name          = "deploy_pipeline"
@@ -1698,7 +1671,6 @@ namespace, available **only** in that step's own outcome `output = { ... }`
 projection and `write` expressions. Project them to make them visible downstream
 as `steps.<step>.*`:
 
-<!-- validator: skip: illustrative excerpt; subworkflow source and states omitted -->
 ```hcl
 step "run_smoke" {
   target = subworkflow.smoke_test

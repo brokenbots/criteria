@@ -43,7 +43,6 @@ outputs, branching, iteration, wait nodes, approval gates) see
 
 Declare an adapter by its OCI reference and bind steps to it:
 
-<!-- validator: skip: illustrative excerpt only -->
 ```hcl
 workflow {
   name          = "agent_hello"
@@ -222,7 +221,6 @@ serialization.
 - **Binding into an adapter.** Satisfy declared secrets from a workflow variable,
   a sensitive step output, or a provider reference:
 
-  <!-- validator: skip: illustrative excerpt only -->
   ```hcl
   adapter "anthropic" "default" {
     source  = "ghcr.io/your-org/criteria-adapter-anthropic"
@@ -257,7 +255,6 @@ form `environment "<type>" "<name>" { … }`: the **type** selects the runtime
 isolation path; the **name** distinguishes instances. Bind an environment per
 adapter (or per step) by reference:
 
-<!-- validator: skip: illustrative excerpt only -->
 ```hcl
 environment "container" "prod" {
   policy_mode = "strict"
