@@ -6,7 +6,7 @@ The `criteria/runtime` image is the interim sandbox for running Criteria workflo
 
 ## What this is not
 
-This is not the Phase 3 per-adapter environment-plug abstraction, and it is not Phase 4 OS-level isolation controls. Those are separate planned deliverables tracked in [PLAN.md](../../PLAN.md):
+This is not the Phase 3 per-adapter environment-plug abstraction, and it is not Phase 4 OS-level isolation controls. Those are separate deliverables:
 
 - Phase 3: environments/plugs architecture in plugin loading.
 - Phase 4: OS-level isolation controls (for example seccomp/sandbox-exec/Job Objects).

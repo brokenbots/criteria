@@ -1,4 +1,4 @@
-# Criteria Workflow Language — Specification (v0.3)
+# Criteria Workflow Language — Specification
 
 ## Purpose & Audience
 
@@ -13,7 +13,7 @@ A workflow module is either:
 
 File names are arbitrary; the `.chcl` extension is preferred for new files (criteria-native tooling uses it for file-type association); `.hcl` is accepted for compatibility. A module must contain exactly one `workflow` block across all files; zero or more than one is a compile error.
 
-Encoding: UTF-8. Max file size: implementation-defined (default 64 MiB for file() reads; no hard limit on source files).
+Encoding: UTF-8. `file()` reads default to a 1 MiB cap (overridable via `CRITERIA_FILE_FUNC_MAX_BYTES`, clamped to [1 KiB, 64 MiB]); no hard limit on source files.
 
 ## Grammar (EBNF-ish)
 
@@ -309,7 +309,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 **`workflow`** — Exactly one per module. `version` must be `"1"`. `initial_state` names the starting state; defaults to the first declared state if absent. `target_state` names the expected terminal success state used by `make validate`.
 
-**`variable`** — Compile-time typed inputs. Type must be one of `string`, `bool`, `number`, `list(string)`, or `map(string)`. A `default` expression may follow the declared attributes; absence makes the variable required.
+**`variable`** — Compile-time typed inputs. Type must be one of `string`, `bool`, `number`, `list(string)`, `list(number)`, `list(bool)`, or `map(string)`. A `default` expression may follow the declared attributes; absence makes the variable required (supply via `--var`/`--var-file`).
 
 **`local`** — Compile-time constant. Evaluate a single `value` expression; the result is frozen for the run. No side effects.
 
@@ -319,7 +319,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 **`output`** — Declares a named output value surfaced at run completion. `value` expression is evaluated at termination time.
 
-**`adapter`** — Declares a long-lived adapter session. `type`/`name` labels route steps; `config` sub-block provides adapter-specific configuration as string key-value pairs. `on_crash` controls crash semantics: `abort` (default) or `ignore`.
+**`adapter`** — Declares a long-lived adapter session. `type`/`name` labels route steps; `source`/`version` locate the OCI artifact; `config` sub-block provides adapter-specific configuration. `on_crash` controls crash semantics: `fail` (default), `respawn`, or `abort_run`.
 
 **`subworkflow`** — Declares a reusable sub-workflow. `source` is a local directory path. Invoked via a step with `target = subworkflow.<name>`.
 
@@ -450,7 +450,7 @@ Steps support three iteration forms, specified via attributes captured in the st
 
 **Mutual exclusion:** `for_each`, `count`, `parallel`, and `while` are mutually exclusive — at most one per step.
 
-**Parallelism:** Set `parallel = true` (remain attribute) on a step to run all iterations concurrently. Default is sequential.
+**Parallelism:** `parallel = <list>` runs one iteration per element concurrently (the value is a list/tuple, not a boolean; object/map form is rejected). `parallel_max` bounds concurrency (default `GOMAXPROCS`). `parallel` is mutually exclusive with `for_each`, `count`, and `while`; the targeted adapter must declare the `parallel_safe` capability.
 
 **`on_failure` semantics:**
 
@@ -490,7 +490,7 @@ Each step, wait, and approval node declares one or more `outcome` blocks mapping
 
 **Runtime errors** are non-fatal by default unless they propagate to a terminal routing failure. Categories:
 
-- **Adapter crash** — the adapter process exited unexpectedly. Controlled by `on_crash` on the step or adapter block: `abort` (default, fails the run) or `ignore` (routes to the `outcome "default"` block).
+- **Adapter crash** — the adapter process exited unexpectedly. Controlled by `on_crash` on the step or adapter block: `fail` (default, fails the run), `respawn` (restart the session and retry), or `abort_run`.
 - **Expression evaluation error** — a namespace binding is missing or a function throws. The run fails with a diagnostic including the source location.
 - **Routing error** — no matching outcome and no `outcome "default"` block. Always fatal.
 - **Policy violation** — `max_total_steps` exceeded. Always fatal.

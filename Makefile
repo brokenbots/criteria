@@ -1,5 +1,5 @@
 .PHONY: help bootstrap tidy build plugins install proto proto-lint proto-check-drift \
-	test test-cover coverage-check test-conformance test-flake-watch lint-imports lint-go lint-baseline-check lint-no-todos lint vuln-scan deps-outdated deps-majors validate validate-docs validate-self-workflows example-plugin bench docker-runtime docker-runtime-smoke ci self self-loop clean
+	test test-cover coverage-check test-conformance test-flake-watch lint-imports lint-go lint-baseline-check lint-no-todos lint vuln-scan deps-outdated deps-majors validate validate-docs example-plugin bench docker-runtime docker-runtime-smoke ci clean
 
 # Default target: list available targets.
 help:
@@ -184,16 +184,8 @@ deps-majors: ## List available major-version (/vN) upgrades per module (gomajor)
 	done
 
 validate: build ## Validate all example workflow directories
-	@for d in examples/build_and_test examples/copilot_planning_then_execution \
-		examples/demo_tour_local examples/file_function examples/hello \
-		examples/fileset \
-		examples/perf_1000_logs \
-		examples/phase3-environment examples/phase3-fold examples/phase3-multi-file \
-		examples/phase3-output examples/phase3-subworkflow examples/phase3-shared-variable \
-		examples/phase3-parallel \
-		examples/templatefile \
-		examples/hash-encoding \
-		examples/while \
+	@for d in examples/hello examples/tour examples/subworkflow \
+		examples/build_and_test examples/copilot_planning_then_execution \
 		examples/llm-pack/01-linear \
 		examples/llm-pack/02-branching-switch \
 		examples/llm-pack/03-iteration-for-each \
@@ -213,62 +205,6 @@ validate: build ## Validate all example workflow directories
 
 validate-docs: build ## Validate HCL fenced blocks in docs/LANGUAGE-SPEC.md
 	@BINDIR=./bin ./tools/validate-docs.sh
-
-validate-self-workflows: build ## Validate + compile all .criteria/workflows/* trees
-	@for d in .criteria/workflows/*/; do \
-		echo "Validating $$d..."; \
-		CRITERIA_WORKFLOW_ALLOWED_PATHS=".criteria/workflows" \
-			./bin/criteria validate "$$d" || exit 1; \
-		CRITERIA_WORKFLOW_ALLOWED_PATHS=".criteria/workflows" \
-			./bin/criteria compile "$$d" >/dev/null || exit 1; \
-	done
-	@echo "All self-development workflows validated."
-
-self: build plugins ## Pick the next pending workstream and run the full self-development cycle (interactive: pauses on operator approval gates)
-	@mkdir -p .criteria/tmp; \
-	lock=.criteria/tmp/self.lock; \
-	if [ -f "$$lock" ]; then \
-		pid=$$(cat "$$lock" 2>/dev/null || echo); \
-		if [ -n "$$pid" ] && kill -0 "$$pid" 2>/dev/null; then \
-			echo "[self] another run is in progress (pid=$$pid); refusing to start"; \
-			echo "[self] if you are sure no run is active: rm $$lock"; \
-			exit 1; \
-		fi; \
-		echo "[self] removing stale lock (no live pid=$$pid)"; \
-		rm -f "$$lock"; \
-	fi; \
-	echo $$$$ > "$$lock"; \
-	trap 'rm -f "$$lock"' EXIT INT TERM; \
-	ws=$$(sh .criteria/workflows/bootstrap/scripts/pick-next-workstream.sh); \
-	if [ -z "$$ws" ]; then \
-		echo "[self] no pending workstreams — main is up to date."; \
-		exit 0; \
-	fi; \
-	echo "[self] processing $$ws"; \
-	CRITERIA_LOCAL_APPROVAL="$${CRITERIA_LOCAL_APPROVAL:-stdin}" \
-	CRITERIA_ADAPTERS="$(CURDIR)/bin" \
-	CRITERIA_WORKFLOW_ALLOWED_PATHS=".criteria/workflows" \
-		./bin/criteria apply .criteria/workflows/bootstrap \
-			--var workstream_file=$$ws \
-			--var project_dir=$(CURDIR)
-
-self-loop: build plugins ## Drain the workstream backlog: run `make self` repeatedly until the picker returns empty
-	@while :; do \
-		ws=$$(sh .criteria/workflows/bootstrap/scripts/pick-next-workstream.sh); \
-		if [ -z "$$ws" ]; then \
-			echo "[self-loop] backlog empty — exiting clean."; \
-			exit 0; \
-		fi; \
-		echo "[self-loop] next workstream: $$ws"; \
-		$(MAKE) self || { echo "[self-loop] make self failed; stopping"; exit 1; }; \
-	done
-
-workflow_%: build plugins ## Run a single subworkflow by name (.criteria/workflows/<name>); pass vars via WORKFLOW_VARS="--var k=v ..."
-	@CRITERIA_ADAPTERS="$(CURDIR)/bin" \
-	CRITERIA_WORKFLOW_ALLOWED_PATHS=".criteria/workflows" \
-		./bin/criteria apply .criteria/workflows/$* \
-			--var project_dir=$(CURDIR) \
-			$(WORKFLOW_VARS)
 
 example-plugin: build ## Build and run the greeter example plugin end-to-end
 	@echo "Building greeter example plugin..."
@@ -292,7 +228,7 @@ example-plugin: build ## Build and run the greeter example plugin end-to-end
 	rm -rf "$$tmpdir" "$$eventsfile"; \
 	echo "example-plugin: OK"
 
-ci: build test lint validate validate-self-workflows example-plugin ## Run all CI gates (build, test, lint, validate, validate-self-workflows, example-plugin)
+ci: build test lint validate example-plugin ## Run all CI gates (build, test, lint, validate, example-plugin)
 
 clean: ## Remove build artifacts
 	rm -rf bin conformance.test

@@ -1,8 +1,8 @@
 # SDK Changelog
 
 All notable changes to the `github.com/brokenbots/criteria/sdk` module are
-documented here. The SDK follows the bump policy in
-[CONTRIBUTING.md](../CONTRIBUTING.md).
+documented here. The SDK follows semantic versioning: additive changes are
+non-breaking; any change to an exported surface requires a major-version bump.
 
 ---
 
@@ -61,9 +61,8 @@ Phase 3 W11 introduces a proto field rename (breaking for generated code) but th
 - **Adapter behaviour**: adapters may consume `AllowedOutcomes` to constrain or
   validate outcome selection (e.g. by exposing the list to a model as a
   structured tool schema). Adapters are **not** required to consume the field;
-  no runtime semantics change in this workstream. The first adapter consumer is
-  the Copilot `submit_outcome` tool, shipping in
-  [W15](../workstreams/15-copilot-submit-outcome-adapter.md).
+  no runtime semantics change here. The first adapter consumer is
+  the Copilot `submit_outcome` tool.
 - **Backward compatibility**: existing adapters that ignore the new field
   continue to function unchanged. Adapters built against older generated
   bindings silently ignore field 4 when decoding, though they may drop it if
@@ -71,9 +70,9 @@ Phase 3 W11 introduces a proto field rename (breaking for generated code) but th
 
 ### Bump rationale
 
-Adding a field to `ExecuteRequest` is an additive proto change. Per
-[CONTRIBUTING.md](../CONTRIBUTING.md), additive changes are non-breaking at
-minor or patch level. This change is treated as a **minor** bump (new
+Adding a field to `ExecuteRequest` is an additive proto change. Additive
+changes are non-breaking at minor or patch level. This change is treated as a
+**minor** bump (new
 observable field on a request message that plugin authors hand-constructing
 `ExecuteRequest` will see in the generated struct). The bump ships in `v0.2.0`
 alongside the Phase 1 + Phase 2 release.

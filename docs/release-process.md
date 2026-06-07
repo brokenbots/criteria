@@ -1,7 +1,7 @@
 # Release process
 
-Criteria's adapter-protocol-v2 release is guarded by **four verification gates**
-(README D57). All four are self-contained — they depend only on this repository,
+Criteria's adapter-protocol-v2 release is guarded by **four verification gates**.
+All four are self-contained — they depend only on this repository,
 with no reach-out to external adapter repos or a CI-owned registry org. Per-adapter
 end-to-end coverage (real keyless publishing, language-specific conformance) lives
 in each adapter's / SDK's own repo, not here.
@@ -9,7 +9,7 @@ in each adapter's / SDK's own repo, not here.
 | Gate | What it checks | Where it runs |
 |------|----------------|---------------|
 | **Gate 1** — conformance | Host ⇆ imported Go SDK + proto compatibility (per [ADR-0003](adrs/ADR-0003-conformance-scope.md)): `TestNoopAdapterConformance` (subprocess) + the in-memory SDK suite. | `release.yml` `gate-conformance` (also `ci.yml` `unit-tests` + `proto-drift` on every push/PR) |
-| **Gate 2** — in-tree adapters | Builds the in-tree adapters (`noop`, `mcp`) and validates + runs the example workflows end-to-end. | `release.yml` `gate-e2e` (also `ci.yml` `e2e` on every push/PR) |
+| **Gate 2** — in-tree adapters | Builds the in-tree `mcp` adapter and the `noop` conformance fixture, then validates and runs the example workflows end-to-end. | `release.yml` `gate-e2e` (also `ci.yml` `e2e` on every push/PR) |
 | **Gate 3** — remote transport e2e | Spins up a remote fixture adapter that phones home over mTLS, runs a representative workflow, and exercises crash-policy recovery. | `release.yml` `gate-remote` → reuses [`remote-e2e.yml`](../.github/workflows/remote-e2e.yml) |
 | **Gate 4** — publishing flow | Publishes the in-tree `noop` adapter to an ephemeral local OCI registry via `criteria adapter publish`, then pulls it back and verifies the manifest / `Info()` round-trip. | `release.yml` `gate-publish` |
 
@@ -37,7 +37,7 @@ git tag -a vX.Y.Z-rc1 -m "rc" && git push origin vX.Y.Z-rc1
 
 ## Gate 3 — remote transport end-to-end
 
-Gate 3 reuses the WS22 remote smoke ([`remote-e2e.yml`](../.github/workflows/remote-e2e.yml)),
+Gate 3 reuses the remote smoke ([`remote-e2e.yml`](../.github/workflows/remote-e2e.yml)),
 which builds the in-tree remote fixture adapter (`GOWORK=off`, since it is a nested
 module under `testdata/`), dockerizes it, and runs `go test ./internal/ci/smoke/...`
 with `CRITERIA_REMOTE_E2E=1`. `release.yml` invokes it as the `gate-remote` job.
@@ -64,7 +64,7 @@ signature verification at pull) is validated in each adapter repo's own
 registry namespace exist. Keeping that out of the criteria repo's CI is deliberate:
 the host repo depends only on itself.
 
-## Tagging the release (WS40)
+## Tagging the release
 
 Once out-of-band manual testing has signed off, tag the release. **"v2" is the
 adapter _protocol_ version, not the product version** — this release is tagged on
@@ -81,15 +81,14 @@ tap). The release-source guard additionally requires a full-release tag to point
 at a commit on `main`. Generate the GitHub Release notes from the `CHANGELOG.md`
 v0.5.0 section.
 
-## Verifying independence (WS43)
+## Verifying independence
 
-After the proto and adapters are extracted to their own repos, re-run the
-independence audits to confirm the criteria repo carries only host / engine / CLI
-code:
+The proto and the standalone adapters live in their own repos. These audits
+confirm the criteria repo carries only host / engine / CLI code:
 
 ```sh
-# No in-tree adapter implementations (noop/mcp test fixtures excepted):
-find internal/builtin -type d -name '*adapter*' -not -empty   # expect: nothing
+# The only in-tree adapter is the mcp bridge; noop is a conformance fixture:
+ls -d cmd/criteria-adapter-*/                                        # expect: cmd/criteria-adapter-mcp/ only
 # The adapter wire contract is consumed as an external module, not vendored:
 grep -rn 'github.com/brokenbots/criteria/proto' --include='*.go' .   # expect: nothing
 grep -rn 'criteria-adapter-proto' go.mod                            # expect: a pinned version
@@ -102,5 +101,4 @@ external.
 
 The clean-machine three-SDK-family full-chain smoke (`criteria pull` of a workflow
 whose lockfile references one TypeScript, one Python, and one Go adapter, then
-`criteria apply`) is the canonical cross-repo demonstration. See
-[WS43](../workstreams/adapter_v2/WS43-independence-verification.md).
+`criteria apply`) is the canonical cross-repo demonstration.

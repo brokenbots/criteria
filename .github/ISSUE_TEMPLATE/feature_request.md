@@ -20,4 +20,4 @@ labels: enhancement
 
 <!-- Mockups, references, related issues, or anything else that helps. -->
 
-<!-- First-time contributor? See docs/contributing/your-first-pr.md and the "good first issue" label. -->
+<!-- First-time contributor? See the "good first issue" label. -->

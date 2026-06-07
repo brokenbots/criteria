@@ -3,7 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-04-27
 - **Deciders:** Project lead (this repo) + overlord-team reviewer
-- **Workstream:** [W01 — Naming convention review](../../workstreams/01-naming-convention-review.md)
+- **Workstream:** W01 — Naming convention review
 
 ## Context
 

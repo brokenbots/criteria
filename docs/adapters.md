@@ -5,6 +5,13 @@ authoring your own adapters. For the workflow language itself (variables, step
 outputs, branching, iteration, wait nodes, approval gates) see
 [workflow.md](workflow.md).
 
+> **Status.** The adapter protocol (v2) and Go SDK are recently reworked and need
+> broad testing; only the `copilot` and `shell` adapters have real use. The
+> TypeScript/Python SDKs and the `sandbox`/`container`/`remote` environments are
+> lightly tested at best. This document describes the intended model; see
+> [README → Component status](../README.md#component-status) for what is exercised
+> today.
+
 ## Concepts
 
 - **Adapter** — an out-of-process program that performs work for a workflow step
@@ -36,9 +43,9 @@ outputs, branching, iteration, wait nodes, approval gates) see
 
 Declare an adapter by its OCI reference and bind steps to it:
 
-<!-- validator: skip: illustrative excerpt only -->
 ```hcl
-workflow "agent_hello" {
+workflow {
+  name          = "agent_hello"
   version       = "1"
   initial_state = "ask"
   target_state  = "done"
@@ -57,12 +64,15 @@ step "ask" {
   input {
     prompt = "Summarize the repository's README in two sentences."
   }
-  outcome "success" { next = "done" }
-  outcome "failure" { next = "failed" }
+  outcome "success" { next = state.done }
+  outcome "failure" { next = state.failed }
 }
 
-state "done"   { terminal = true }
-state "failed" { terminal = true; success = false }
+state "done" { terminal = true }
+state "failed" {
+  terminal = true
+  success  = false
+}
 ```
 
 - The first label is the adapter **type**, the second an instance **name**; steps
@@ -211,7 +221,6 @@ serialization.
 - **Binding into an adapter.** Satisfy declared secrets from a workflow variable,
   a sensitive step output, or a provider reference:
 
-  <!-- validator: skip: illustrative excerpt only -->
   ```hcl
   adapter "anthropic" "default" {
     source  = "ghcr.io/your-org/criteria-adapter-anthropic"
@@ -246,7 +255,6 @@ form `environment "<type>" "<name>" { … }`: the **type** selects the runtime
 isolation path; the **name** distinguishes instances. Bind an environment per
 adapter (or per step) by reference:
 
-<!-- validator: skip: illustrative excerpt only -->
 ```hcl
 environment "container" "prod" {
   policy_mode = "strict"
@@ -307,7 +315,7 @@ adapter declares a `compatible_environments` constraint.
 Windows is not a supported host; run Criteria under WSL2. When a sandbox
 primitive is unavailable (e.g. an older kernel without landlock), the host logs
 which protections were skipped and continues — unless `sandbox = "strict"`, which
-fails closed. See [docs/security/](security/) for the threat models.
+fails closed.
 
 ## Remote execution
 
@@ -327,10 +335,10 @@ back.
 - A small host-side shim bridges the inbound mTLS connection to a local UDS so
   the session layer treats it like any local adapter; no other host code is
   remote-aware.
-- Launch and reachability are yours to arrange. The starter repos ship
-  copy-pasteable k8s `Deployment`, `docker-compose`, and `systemd` examples under
-  `examples/remote/`. See [docs/adapter-remote-deployment.md](adapter-remote-deployment.md)
-  for the full deployment guide.
+- Launch and reachability are yours to arrange. Copy-pasteable k8s `Deployment`
+  and `docker-compose` examples live under [`docs/examples/`](examples/); see
+  [docs/adapter-remote-deployment.md](adapter-remote-deployment.md) for the full
+  deployment guide.
 
 Host-side sandbox primitives do not apply to `remote` environments (the host did
 not launch the process); `network`/`filesystem`/`resources` are advisory there,

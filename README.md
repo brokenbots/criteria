@@ -1,10 +1,74 @@
 # Criteria
 
-**Status: This project is under heavy development use with caution, run in a container for safety as adapter should be considered trusted code**
+> **Status: work in progress — not production-ready.** Development is heavily
+> AI-driven. The HCL language and adapter protocol are still changing, and large
+> parts are lightly tested or unverified (see [Component status](#component-status)
+> and [Language features](#language-features)). Adapters execute arbitrary code;
+> treat them as trusted and isolate them in a container or sandbox.
 
-Criteria is a standalone workflow execution engine. Write a workflow in HCL, run it with `criteria apply` — no external service required. Each workflow compiles to a finite-state machine; execution drives through swappable adapter plugins and streams structured ND-JSON events to stdout or a file.
+Criteria is a workflow engine for agent-based workflows built on an extensible
+adapter system. Workflows are written in HCL, compiled to a finite-state
+machine, and executed from a single binary. Each step runs through a swappable
+out-of-process adapter (a shell runner, an AI coding agent, an MCP bridge, or a
+custom one). It is developed primarily as an AI-authorable workflow tool and as a
+testbed for agentic development, security, and research workflows.
 
-*Criteria targets teams who want a Temporal- or Argo-style execution model without the infrastructure dependency for everyday development, and orchestrator authors who need a well-defined client SDK to build against.*
+## Model
+
+- Workflows are HCL, compiled to a finite-state machine: a directed graph that
+  permits loops. The compiler requires a terminal state and enforces a per-run
+  step budget and per-state visit bounds, so a run cannot loop unbounded.
+- Steps execute through out-of-process adapters that speak a versioned gRPC
+  protocol over a local socket.
+- Adapters are distributed as OCI artifacts, cosign-signed, and pinned by digest
+  in `.criteria.lock.hcl` for reproducible resolution.
+- Execution is local by default; an optional, early server mode adds durability
+  (see the note at the end).
+- Every run emits schema-versioned ND-JSON events.
+
+## Component status
+
+Status legend: **Working** = implemented and exercised; **Experimental** =
+implemented, lightly tested; **Untested** = implemented, essentially unverified;
+**Partial** = incomplete; **Not implemented** = not functional yet.
+
+| Component | Status | Notes |
+|---|---|---|
+| HCL compiler / FSM engine | Working | Most-exercised part of the codebase. |
+| Local execution (`apply`) | Working | Single binary, no server. |
+| Event stream (ND-JSON) | Working | Schema-versioned. |
+| `compile` (JSON/DOT), `plan`, `validate` | Working | Graph output and previews. |
+| `criteria spec` (language spec for LLMs) | Working | See [Authoring with AI](#authoring-workflows-with-ai). |
+| `langserver` (LSP) | Experimental | Basic diagnostics/definitions. |
+| Adapter protocol (v2) + Go SDK | Experimental | Protocol recently reworked; needs broad testing. |
+| `copilot`, `shell` adapters | Experimental | The only adapters with real use. |
+| `mcp` adapter (in-tree) | Experimental | Reference bridge for MCP servers. |
+| Other adapters | Untested | Not validated beyond build. |
+| TypeScript / Python SDKs + adapters | Untested | Smoke-tested at best inside a workflow. |
+| Execution environments (sandbox/container/remote) | Untested | Implemented; minimal real testing. |
+| Server / orchestrator mode + conformance suite | Experimental | Contract under development. |
+| Pause / resume, crash recovery | Partial | Server-oriented; not battle-tested. |
+| `criteria adapter dev` | Partial | Registers a binary but is not yet wired into `apply`. |
+
+## Language features
+
+| Construct | Status | Notes |
+|---|---|---|
+| `workflow`, `state`, `step`, `outcome` | Working | Core FSM. |
+| `adapter` blocks + `target = adapter.<type>.<name>` | Working | Out-of-process adapters. |
+| `target = subworkflow.<name>` | Working | First-class sub-workflows. |
+| `switch` branching | Working | |
+| `for_each` iteration | Working | |
+| `parallel = [...]` regions | Working | List form only. |
+| `variable`, `shared_variable`, local values, `output` | Working | |
+| `wait { duration = ... }` | Working | Local. |
+| `wait { signal = ... }`, `approval { ... }` | Partial | Oriented to server mode; local support is limited. |
+| `environment` blocks | Untested | shell / sandbox / container / remote; see status table. |
+| Secret inputs / tainting | Experimental | |
+| `parallel` map/object form | Not supported | Use the list form. |
+| Remote subworkflow sources (`url://`) | Not supported | |
+
+The authoritative reference is `criteria spec` (and [docs/workflow.md](docs/workflow.md)).
 
 ## Install
 
@@ -14,18 +78,19 @@ Requires Go 1.26 or later.
 go install github.com/brokenbots/criteria/cmd/criteria@latest
 ```
 
-Or build from source:
+Build from source:
 
 ```bash
 git clone https://github.com/brokenbots/criteria.git
 cd criteria && make build   # produces bin/criteria
 ```
 
-Pre-built binaries will be published with the first tagged release (see [Status](#status)).
+Release binaries: [GitHub Releases](https://github.com/brokenbots/criteria/releases).
 
 ## Quickstart
 
-Create a workflow file:
+The CLI ships without adapters; a workflow references the ones it needs and
+Criteria pulls, verifies, and pins them.
 
 ```hcl
 # hello.hcl
@@ -37,16 +102,15 @@ workflow {
 }
 
 adapter "shell" "default" {
-  config { }
+  source = "ghcr.io/brokenbots/criteria-adapter-shell"
+  config {}
 }
 
 step "greet" {
   target = adapter.shell.default
-  input {
-    command = "echo hello from criteria"
-  }
-  outcome "success" { next = "done" }
-  outcome "failure" { next = "failed" }
+  input { command = "echo hello from criteria" }
+  outcome "success" { next = state.done }
+  outcome "failure" { next = state.failed }
 }
 
 state "done" { terminal = true }
@@ -56,140 +120,56 @@ state "failed" {
 }
 ```
 
-Run it:
+```bash
+criteria adapter lock          # resolve, pull, verify, and pin → .criteria.lock.hcl
+criteria apply hello.hcl       # execute; ND-JSON events to stdout (or --events-file)
+criteria compile hello.hcl --format dot | dot -Tsvg > hello.svg   # inspect the graph
+```
+
+## Authoring workflows with AI
+
+`criteria spec` prints the language specification for use as model context:
 
 ```bash
-criteria apply hello.hcl
+criteria spec                  # specification only
+criteria spec --with-patterns  # specification + prompt-pack patterns (LLM system prompt)
 ```
 
-Expected output:
-
-```
-{"schema_version":1,"seq":1,...,"payload_type":"RunStarted","payload":{"workflowName":"hello","initialStep":"greet"}}
-{"schema_version":1,"seq":2,...,"payload_type":"StepEntered","payload":{"step":"greet","adapter":"shell","attempt":1}}
-{"schema_version":1,"seq":3,...,"payload_type":"StepLog","payload":{"step":"greet","stream":"LOG_STREAM_STDOUT","chunk":"hello from criteria\n"}}
-{"schema_version":1,"seq":4,...,"payload_type":"StepOutcome","payload":{"step":"greet","outcome":"success","durationMs":"..."}}
-{"schema_version":1,"seq":5,...,"payload_type":"StepTransition","payload":{"from":"greet","to":"done","viaOutcome":"success"}}
-{"schema_version":1,"seq":6,...,"payload_type":"RunCompleted","payload":{"finalState":"done","success":true}}
-```
-
-## What's in the box
-
-- **HCL → FSM compiler.** Workflows are HCL; the engine compiles them to finite-state machines before executing.
-- **Local execution.** Run any workflow on your laptop with no external service.
-- **Adapter plugin model.** Swap execution backends (shell, Copilot, MCP, or your own) via an out-of-process plugin protocol.
-- **Structured event stream.** Every run emits schema-versioned ND-JSON events.
-- **Duration-based waits, branching, and for-each loops.** Workflows can sleep, branch on conditions, and iterate over lists.
-- **Orchestrator mode.** Connect to a server-compatible orchestrator for run persistence, crash recovery, human approval gates, and signal-based waits.
-- **Published Go SDK.** Build a compatible orchestrator with `github.com/brokenbots/criteria/sdk` and validate it with the included conformance suite.
-
-## Workflow language
-
-```hcl
-workflow {
-  name          = "deploy"
-  version       = "1"
-  initial_state = "build"
-  target_state  = "deployed"
-}
-
-adapter "shell" "default" {
-  config {}
-}
-
-step "build" {
-  target = adapter.shell.default
-  input { command = "go build ./..." }
-  outcome "success" { next = "test" }
-  outcome "failure" { next = "failed" }
-}
-
-step "test" {
-  target = adapter.shell.default
-  input { command = "go test ./..." }
-  outcome "success" { next = "deployed" }
-  outcome "failure" { next = "failed" }
-}
-
-state "deployed" { terminal = true }
-state "failed" {
-  terminal = true
-  success  = false
-}
-```
-
-Full language reference: [docs/workflow.md](docs/workflow.md)
+A model given that context can author workflows directly; the compiler then
+validates them before execution.
 
 ## Adapters
 
-Adapters are out-of-process binaries distributed as signed OCI artifacts.
-Reference one by `source` + `version` in your workflow and let Criteria pull and
-pin it:
+Adapters are out-of-process binaries distributed as cosign-signed OCI artifacts.
+Reference one by `source` (version-decoupled); Criteria resolves, pulls,
+verifies, and pins it by digest:
 
 ```bash
-# Pin every adapter a workflow references (writes .criteria.lock.hcl) and run.
 criteria adapter lock
 criteria apply workflow.hcl
 ```
 
-Adapters are pulled into a local cache, signature-verified, and pinned by digest
-in `.criteria.lock.hcl` so the workflow reproduces identically anywhere. Manage
-the cache directly with `criteria adapter pull|list|info|where|remove|prune`.
+Cache management: `criteria adapter pull|list|info|where|remove|prune`.
 
-Write your own adapter from a starter template
+Adapter authoring uses starter templates
 ([typescript](https://github.com/brokenbots/criteria-adapter-starter-typescript) /
 [python](https://github.com/brokenbots/criteria-adapter-starter-python) /
-[go](https://github.com/brokenbots/criteria-adapter-starter-go)) — each is a
-buildable hello-world with a publish workflow. The in-tree `cmd/criteria-adapter-mcp`
-is a minimal reference.
+[go](https://github.com/brokenbots/criteria-adapter-starter-go)); the TypeScript
+and Python paths are untested (see [Component status](#component-status)). The
+in-tree [`cmd/criteria-adapter-mcp`](cmd/criteria-adapter-mcp/) bridges an MCP
+server in as an adapter and serves as a reference.
 
-Full reference: [docs/adapters.md](docs/adapters.md) ·
-upgrading from v0.3: [docs/adapter-v2-migration.md](docs/adapter-v2-migration.md)
-
-## Talking to a server-compatible orchestrator
-
-The `sdk/` sub-module publishes a Go SDK (`github.com/brokenbots/criteria/sdk`) defining the `CriteriaService` gRPC contract. Any server implementing that contract can receive runs from `criteria apply --server <url>`, stream events, handle approval gates, and resume crashed runs.
-
-The reference implementation is [github.com/brokenbots/orchestrator](https://github.com/brokenbots/orchestrator). Validate your own implementation with the included conformance suite:
-
-```go
-import "github.com/brokenbots/criteria/sdk/conformance"
-
-func TestMyCriteria(t *testing.T) {
-    conformance.Run(t, &mySubject{})
-}
-```
-
-See [`sdk/conformance/`](sdk/conformance/) for the full interface and in-memory reference Subject.
-
-## Migrating from v0.2.0 to v0.3.0
-
-Phase 3 (v0.3.0) is a **clean break** from v0.2.0. The HCL language and adapter model were reworked to improve usability and architecture. No v0.2.0 workflows parse without updates.
-
-**Key changes:**
-- `agent` block → `adapter "<type>" "<name>"` block.
-- `step.adapter = "<bare type>"` → `step.target = adapter.<type>.<name>`.
-- `transition_to` → `next`.
-- `branch` block → `switch` block.
-- Top-level workflow attributes moved into `workflow { name = "..." }` block.
-- Inline `step.workflow { ... }` replaced by first-class `subworkflow` blocks.
-- `lifecycle = "open"|"close"` removed (auto-managed).
-
-See the [v0.2.0 → v0.3.0 migration guide](CHANGELOG.md#v0.2.0--v0.3.0-migration-guide) for comprehensive before/after examples.
-
-## Status
-
-**v0.3.0** (tagged 2026-05-06) closes Phase 3 — the HCL/runtime rework. Key accomplishments:
-
-- **Phase 3 — HCL and runtime rework.** Clean break from v0.2.0: `adapter` block model replaces `agent`; `switch` replaces `branch`; `next` replaces `transition_to`; workflow attributes wrap in a `workflow` block; subworkflows are first-class; adapter lifecycle is automatic; parallel execution, shared variables, top-level outputs, local variables, environment blocks, and universal step `target` attribute are all added. Lint baseline burn-down complete (≤ 50); Maintainability and Tech Debt both lifted to B. Release process integrity ([tag-claim-check](docs/contributing/release-process.md) CI guard) shipping.
-
-Prior phases:
-- **Phase 2** (v0.2.0, 2026-05-02) — Maintainability + unattended MVP + Copilot tool-call finalization. Local-mode approval, signal waits, `max_visits` loop bounding, `~/.criteria/` hardened, Copilot `submit_outcome` RPC replacing prose parsing, runtime Docker image.
-- **Phase 1** (v0.2.0, 2026-04-29) — Stabilization and critical user fixes. Deterministic CI, golangci-lint, coverage/benchmark baselines, `file()` functions, `for_each`, Copilot `reasoning_effort`, step-level workflow nesting.
-- **Phase 0** (v0.1.0, 2026-04-27) — Post-separation cleanup. Repo hygiene, public plugin SDK, shell adapter sandboxing, brand rename completion.
-
-Binary releases are published on GitHub Releases. For installation, see [Install](#install).
+Reference: [docs/adapters.md](docs/adapters.md).
 
 ## License
 
 See [LICENSE](LICENSE).
+
+---
+
+> **Note — server mode (early, subject to significant change).** Execution is
+> local by default. An optional server can provide durability — run persistence,
+> crash recovery, approval gates, and signal waits — via `criteria apply --server
+> <url>`. The gRPC contract and a conformance suite live in the `sdk/` module
+> (`github.com/brokenbots/criteria/sdk`). This contract is unstable and expected
+> to change substantially.

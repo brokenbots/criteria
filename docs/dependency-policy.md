@@ -40,13 +40,12 @@ pinned in `tools/go.mod` (no floating `@latest`):
 | --- | --- | --- |
 | `make deps-outdated` | [`go-mod-outdated`](https://github.com/psampaz/go-mod-outdated) | Which **direct** deps are behind their latest minor/patch (workspace-wide). |
 | `make deps-majors` | [`gomajor`](https://github.com/icholy/gomajor) | Which **major** (`/vN`) upgrades are available, per module. |
-| `make vuln-scan` | [`osv-scanner`](https://github.com/google/osv-scanner) | Which deps carry a known advisory (WS49). |
+| `make vuln-scan` | [`osv-scanner`](https://github.com/google/osv-scanner) | Which deps carry a known advisory. |
 
 A non-blocking `deps-report` CI job runs `make deps-outdated` on every PR and
 posts the result to the job summary, so drift is visible without flaking the
-build. Enforcement of "latest" stays with review + the catch-up upgrade
-workstream, not a hard gate — upstream release cadence would make a hard gate
-flap.
+build. Enforcement of "latest" stays with review, not a hard gate — upstream
+release cadence would make a hard gate flap.
 
 Applying the upgrades:
 
@@ -75,7 +74,7 @@ Applying the upgrades:
 ## Holding a dependency below latest
 
 To pin a dependency below its latest version, record it as a dated exception so
-the decision is auditable and re-reviewed — mirroring the WS49 `osv-scanner.toml`
+the decision is auditable and re-reviewed — mirroring the `osv-scanner.toml`
 "documented + dated" convention. Add an entry to the table below **and** the
 matching `ignore` constraint in `.github/dependabot.yml`, citing the advisory or
 bug id and a review date.

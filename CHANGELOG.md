@@ -316,11 +316,11 @@ This is the first tag pushed to remote since `v0.1.0`. It bundles two phases of 
 Hardening CI, adopting a per-workstream lint burn-down contract, sandboxing the shell adapter, shipping coverage/benchmark/GoDoc baselines, and unblocking four user-reported gaps.
 
 - **P1-W01** — Deterministic CI: `go test -count=2` in CI (`goleak` for goroutine-leak checks). Flaky race in `internal/engine` and `internal/plugin` eliminated.
-- **P1-W02** — golangci-lint adoption with `.golangci.baseline.yml` and a per-workstream burn-down contract documented in [docs/contributing/lint-baseline.md](docs/contributing/lint-baseline.md). `make lint-go` is now a hard PR gate.
+- **P1-W02** — golangci-lint adoption with `.golangci.baseline.yml` and a per-workstream burn-down contract. `make lint-go` is now a hard PR gate.
 - **P1-W03** — God-function refactor: `resumeOneRun`, `copilotPlugin.Execute`, `Engine.runLoop`, and `runApplyServer` each split into ≤ 50-line single-concern helpers. No behavior change.
 - **P1-W04** — Oversized-file splits in `workflow/compile.go`, `internal/adapter/conformance/`, and `internal/transport/server/`. No behavior change.
-- **P1-W05** — Shell adapter first-pass hardening: configurable allow/deny list, PATH restriction, env-var filtering. `CRITERIA_SHELL_LEGACY=1` opt-out available *(removed in this same release by P2-W10 below)*. Threat model at [docs/security/shell-adapter-threat-model.md](docs/security/shell-adapter-threat-model.md).
-- **P1-W06** — Coverage thresholds (`internal/cli` ≥ 60%, `internal/run` ≥ 60%, `cmd/criteria-adapter-mcp` ≥ 50%), benchmark baselines, and GoDoc on all public packages. Performance baseline at [docs/perf/baseline-v0.2.0.md](docs/perf/baseline-v0.2.0.md).
+- **P1-W05** — Shell adapter first-pass hardening: configurable allow/deny list, PATH restriction, env-var filtering. `CRITERIA_SHELL_LEGACY=1` opt-out available *(removed in this same release by P2-W10 below)*.
+- **P1-W06** — Coverage thresholds (`internal/cli` ≥ 60%, `internal/run` ≥ 60%, `cmd/criteria-adapter-mcp` ≥ 50%), benchmark baselines, and GoDoc on all public packages.
 - **P1-W07** — `file()`, `fileexists()`, `trimfrontmatter()` HCL expression functions. `CRITERIA_FILE_FUNC_MAX_BYTES` and `CRITERIA_WORKFLOW_ALLOWED_PATHS` env-var controls.
 - **P1-W08** — Multi-step `for_each` iteration bodies (top-level `for_each "name" { ... }` block). **Superseded within Phase 1 by P1-W10**; the user story remains satisfied via P1-W10's step-level model.
 - **P1-W09** — Copilot `reasoning_effort` no longer silently dropped; per-step override semantics; targeted diagnostic for misplaced agent-config fields.
@@ -346,7 +346,7 @@ Active set:
 - **P2-W07** — Per-step `max_visits` to bound runaway loops (UF#08).
 - **P2-W08** — Contributor on-ramp: `docs/contributing/your-first-pr.md`, `good-first-issue` labels, numeric Phase 2 contributor goal in PLAN.
 - **P2-W09** — VS Code dev container + operator runtime image (`Dockerfile.runtime`) as the interim runtime sandbox.
-- **P2-W10** — `CRITERIA_SHELL_LEGACY=1` shell-sandbox opt-out **removed**, honoring the v0.2.0 threat-model commitment. Setting the env var no longer affects sandbox enforcement. Behavior change disclosed in [docs/security/shell-adapter-threat-model.md §6](docs/security/shell-adapter-threat-model.md).
+- **P2-W10** — `CRITERIA_SHELL_LEGACY=1` shell-sandbox opt-out **removed**, honoring the v0.2.0 threat-model commitment. Setting the env var no longer affects sandbox enforcement.
 - **P2-W12** — Adapter lifecycle log clarity; new `OnAdapterLifecycle` sink hook (UF#06).
 - **P2-W13** — Release-candidate artifact upload on PRs marked `release/*` or with `-rc<N>` titles.
 - **P2-W14** — Copilot tool-call wire contract: additive `pb.ExecuteRequest.allowed_outcomes` (field 4); SDK bump per [sdk/CHANGELOG.md](sdk/CHANGELOG.md).
@@ -357,7 +357,7 @@ Active set:
 - **P1-W05**: Any shell workflow that relied on unrestricted PATH or broad env passthrough must migrate to explicit allow-lists. The `CRITERIA_SHELL_LEGACY=1` escape hatch existed in Phase 1 but is **removed** in this same release by P2-W10 — there is no transitional path on a single release boundary.
 - **P1-W09**: `reasoning_effort` on a step that specifies no `model` now produces a diagnostic and the field is rejected (previously silently dropped). Fix: add a `model` field or move `reasoning_effort` to the agent config block.
 - **P1-W10**: The P1-W08 top-level `for_each "name" { ... }` block syntax is removed. Migrate by moving `for_each` (with the list value) to the step declaration: `step "name" { for_each = [...]; ... }`.
-- **P2-W10**: `CRITERIA_SHELL_LEGACY=1` is no longer recognized. The Phase 1 sandbox defaults are now unconditional. Audit existing shell workflows for unrestricted-PATH or env-passthrough assumptions before upgrading; see [docs/security/shell-adapter-threat-model.md §6](docs/security/shell-adapter-threat-model.md) for the full migration checklist.
+- **P2-W10**: `CRITERIA_SHELL_LEGACY=1` is no longer recognized. The Phase 1 sandbox defaults are now unconditional. Audit existing shell workflows for unrestricted-PATH or env-passthrough assumptions before upgrading.
 - **P2-W15**: Copilot adapter terminal outcomes are now derived from a structured `submit_outcome` tool call, not from `result:` prose. Workflows whose Copilot steps used an outcome name not declared in the workflow's `step.outcome` set will now finalize with `failure` (after three reprompt attempts) rather than `needs_review`. Declare every outcome the model is allowed to choose in the step's `outcome` blocks.
 
 ### Install

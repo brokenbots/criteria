@@ -32,4 +32,4 @@ labels: bug
 
 <!-- Anything else that might help: workflow file snippet, adapter in use, etc. -->
 
-<!-- First-time contributor? See docs/contributing/your-first-pr.md and the "good first issue" label. -->
+<!-- First-time contributor? See the "good first issue" label. -->
