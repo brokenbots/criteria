@@ -20,7 +20,6 @@ criteria apply examples/<name>.hcl
 | [`file_function.hcl`](file_function.hcl) | Uses the `file()` expression function to read content from a local file. |
 | [`for_each_review_loop.hcl`](for_each_review_loop.hcl) | **Multi-step for_each iteration body**: `execute → review → cleanup → _continue`. Canonical example for W08 multi-step iteration. Uses the `noop` adapter. |
 | [`perf_1000_logs.hcl`](perf_1000_logs.hcl) | Performance fixture — runs 1000 no-op steps to benchmark step throughput. |
-| [`workstream_review_loop.hcl`](workstream_review_loop.hcl) | Two-agent executor/reviewer loop for workstream files. Requires the `copilot` adapter. |
 
 ## Multi-step for_each (featured example)
 

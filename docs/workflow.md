@@ -231,7 +231,7 @@ step "deploy" {
 }
 ```
 
-The controlled environment allowlist (see [security/shell-adapter-threat-model.md](../security/shell-adapter-threat-model.md)) is preserved; environment-injected variables are added to the safe set. If an injected variable conflicts with a security-critical variable (e.g., `PATH`), the controlled set wins and a compile-time warning is emitted.
+The controlled environment allowlist is preserved; environment-injected variables are added to the safe set. If an injected variable conflicts with a security-critical variable (e.g., `PATH`), the controlled set wins and a compile-time warning is emitted.
 
 ### Phase 4 forward-pointer (v0.4.0+)
 
@@ -1848,5 +1848,5 @@ The criteria project ships as a single repository:
 - **`github.com/brokenbots/criteria`** — workflow engine, compiler, and standalone CLI (this document); the `cmd/criteria-adapter-*` plugin binaries live here too.
 - **`github.com/brokenbots/criteria/sdk`** — published Go SDK; shared protobuf contracts and event schemas live under `sdk/pb/criteria/v1`.
 
-The orchestrator side is developed separately at [github.com/brokenbots/orchestrator](https://github.com/brokenbots/orchestrator) and consumes the published SDK. Parallel regions are targeted as future language work — see [PLAN.md](../PLAN.md).
+The orchestrator side is developed separately at [github.com/brokenbots/orchestrator](https://github.com/brokenbots/orchestrator) and consumes the published SDK. Parallel regions are targeted as future language work.
 

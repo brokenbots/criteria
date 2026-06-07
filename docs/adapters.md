@@ -307,7 +307,7 @@ adapter declares a `compatible_environments` constraint.
 Windows is not a supported host; run Criteria under WSL2. When a sandbox
 primitive is unavailable (e.g. an older kernel without landlock), the host logs
 which protections were skipped and continues — unless `sandbox = "strict"`, which
-fails closed. See [docs/security/](security/) for the threat models.
+fails closed.
 
 ## Remote execution
 

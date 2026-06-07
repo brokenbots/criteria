@@ -23,8 +23,7 @@ import (
 //  4. Approval: ApprovalRequested puts run in paused state; Resume with
 //     decision=approved returns accepted=true and persists ApprovalDecision.
 //  5. (Skipped) Durable resume across orchestrator restart — deferred until
-//     the durable-resume capability lands (tracked in PLAN.md as a future
-//     conformance lane).
+//     the durable-resume capability lands.
 func testResumeCorrectness(t *testing.T, s Subject) {
 	t.Run("WaitSignalResume", func(t *testing.T) {
 		testResumeWaitSignal(t, s)
@@ -42,8 +41,8 @@ func testResumeCorrectness(t *testing.T, s Subject) {
 	t.Run("DurableAcrossRestart", func(t *testing.T) {
 		// Deferred: when the durable-resume path lands, this skip lifts and
 		// the test asserts that a Resume call from a disconnected agent
-		// can recover the signal on reconnect. Tracked in PLAN.md.
-		t.Skip("durable resume across orchestrator restart not yet implemented; tracked in PLAN.md")
+		// can recover the signal on reconnect.
+		t.Skip("durable resume across orchestrator restart not yet implemented")
 	})
 }
 

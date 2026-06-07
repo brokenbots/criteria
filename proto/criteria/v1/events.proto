@@ -2,8 +2,8 @@
 //
 // The `Envelope` message is the wire format for every event flowing between
 // Criteria agents, the server, and UI clients. Field numbers in `payload` are **stable** once
-// assigned (see CONTRIBUTING.md for the proto versioning policy). A new event
-// type must use the next unused field number and never reuse an old one.
+// assigned. A new event type must use the next unused field number and never
+// reuse an old one.
 syntax = "proto3";
 
 package criteria.v1;

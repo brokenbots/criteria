@@ -152,10 +152,10 @@ func TestVarScope_RoundTrip_ListAndMap(t *testing.T) {
 		//
 		// This means CLI var overrides for list/map/object types (even if
 		// ApplyVarOverrides were extended to support them) would be silently lost
-		// on crash-resume. See [ARCH-REVIEW] in workstreams/test-02-hcl-parsing-eval-coverage.md.
+		// on crash-resume. See the [ARCH-REVIEW] note below.
 		t.Skip("known limitation: list/map/object vars fall back to FSMGraph defaults on restore; " +
 			"CtyValueToString is lossy for non-primitive types and overrides would be silently dropped. " +
-			"Tracked as [ARCH-REVIEW] in workstreams/test-02-hcl-parsing-eval-coverage.md.")
+			"Tracked as [ARCH-REVIEW].")
 	})
 }
 
@@ -505,12 +505,10 @@ func TestRestoreVarScope_MalformedJSON_ReturnsError(t *testing.T) {
 // workstream requires rejection of JSON step references absent from *FSMGraph,
 // but the current implementation accepts them to tolerate crash-resume across
 // schema drift. The architecture decision is tracked as
-// [ARCH-REVIEW][major] Unknown-step restore contract in
-// workstreams/test-02-hcl-parsing-eval-coverage.md.
+// [ARCH-REVIEW][major] Unknown-step restore contract.
 func TestRestoreVarScope_UnknownStepReference_UnknownStepContract(t *testing.T) {
 	t.Skip("step-name validation contract unresolved; " +
-		"see [ARCH-REVIEW][major] Unknown-step restore contract in " +
-		"workstreams/test-02-hcl-parsing-eval-coverage.md")
+		"see [ARCH-REVIEW][major] Unknown-step restore contract")
 }
 
 // TestRestoreVarScope_VarValues_RestoredFromJSON verifies that variable values

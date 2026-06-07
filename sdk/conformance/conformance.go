@@ -20,8 +20,8 @@
 // # Documented limitations (t.Skip)
 //
 // Some behavioural properties cannot be enforced at v0.1.0 because the
-// underlying capability is deferred (e.g. durability across restarts, tracked
-// in PLAN.md). Each skip has a named test path and a forward-pointer comment.
+// underlying capability is deferred (e.g. durability across restarts). Each
+// skip has a named test path and a forward-pointer comment.
 package conformance
 
 import (

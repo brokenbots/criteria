@@ -223,10 +223,10 @@ state "done" { terminal = true }
 // This test is skipped pending an architecture decision. The executor has
 // escalated the contract mismatch: see [ARCH-REVIEW] in the workstream file.
 func TestMergeSpecs_DuplicateNamedBlock_Adapter_DifferentTypes(t *testing.T) {
-	t.Skip("ARCH-REVIEW pending: workstream requires same-name different-type adapters to conflict, " +
+	t.Skip("ARCH-REVIEW pending: same-name different-type adapters should conflict, " +
 		"but the parser uses type+name as the adapter identity key (adapter.exec.primary ≠ " +
 		"adapter.copilot.primary). Changing this would be a breaking contract change; see " +
-		"[ARCH-REVIEW] in workstreams/test-02-hcl-parsing-eval-coverage.md.")
+		"[ARCH-REVIEW].")
 }
 
 // TestMergeSpecs_DuplicateNamedBlock_Adapter_SameTypeAndName verifies that

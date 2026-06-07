@@ -71,6 +71,6 @@ Criteria discovers the binary as `criteria-adapter-<name>` and manages the subpr
 
 ## SDK version note
 
-The `go.mod` in this directory currently uses a `replace` directive that points to the in-tree `sdk/` module. This is a **temporary workaround** until the first `github.com/brokenbots/criteria/sdk` tag is published (tracked in [W09](../../../workstreams/09-phase0-cleanup-gate.md)). Once a tag exists, remove the `replace` directive and update the `require` line to the published version.
+The `go.mod` in this directory currently uses a `replace` directive that points to the in-tree `sdk/` module. This is a **temporary workaround** until the first `github.com/brokenbots/criteria/sdk` tag is published. Once a tag exists, remove the `replace` directive and update the `require` line to the published version.
 
 For local development against an unreleased SDK, add a `go.work` file (gitignored) that includes the SDK module. This lets you test changes without modifying `go.mod`.

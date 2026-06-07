@@ -1,9 +1,9 @@
 ## What changed and why?
 
 <!-- Describe what this PR does and the motivation behind it.
-     Link to a relevant issue or workstream file if applicable. -->
+     Link to a relevant issue if applicable. -->
 
-Workstream / issue: <!-- e.g. workstreams/07-repo-hygiene.md or #123 -->
+Issue: <!-- e.g. #123 -->
 
 ## How is this tested?
 

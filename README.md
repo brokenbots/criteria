@@ -181,7 +181,7 @@ See the [v0.2.0 → v0.3.0 migration guide](CHANGELOG.md#v0.2.0--v0.3.0-migratio
 
 **v0.3.0** (tagged 2026-05-06) closes Phase 3 — the HCL/runtime rework. Key accomplishments:
 
-- **Phase 3 — HCL and runtime rework.** Clean break from v0.2.0: `adapter` block model replaces `agent`; `switch` replaces `branch`; `next` replaces `transition_to`; workflow attributes wrap in a `workflow` block; subworkflows are first-class; adapter lifecycle is automatic; parallel execution, shared variables, top-level outputs, local variables, environment blocks, and universal step `target` attribute are all added. Lint baseline burn-down complete (≤ 50); Maintainability and Tech Debt both lifted to B. Release process integrity ([tag-claim-check](docs/contributing/release-process.md) CI guard) shipping.
+- **Phase 3 — HCL and runtime rework.** Clean break from v0.2.0: `adapter` block model replaces `agent`; `switch` replaces `branch`; `next` replaces `transition_to`; workflow attributes wrap in a `workflow` block; subworkflows are first-class; adapter lifecycle is automatic; parallel execution, shared variables, top-level outputs, local variables, environment blocks, and universal step `target` attribute are all added. Lint baseline burn-down complete (≤ 50); Maintainability and Tech Debt both lifted to B.
 
 Prior phases:
 - **Phase 2** (v0.2.0, 2026-05-02) — Maintainability + unattended MVP + Copilot tool-call finalization. Local-mode approval, signal waits, `max_visits` loop bounding, `~/.criteria/` hardened, Copilot `submit_outcome` RPC replacing prose parsing, runtime Docker image.

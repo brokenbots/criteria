@@ -102,5 +102,4 @@ external.
 
 The clean-machine three-SDK-family full-chain smoke (`criteria pull` of a workflow
 whose lockfile references one TypeScript, one Python, and one Go adapter, then
-`criteria apply`) is the canonical cross-repo demonstration. See
-[WS43](../workstreams/adapter_v2/WS43-independence-verification.md).
+`criteria apply`) is the canonical cross-repo demonstration.

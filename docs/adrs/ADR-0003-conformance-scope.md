@@ -53,8 +53,7 @@ adapter binary, but it is not wired into a CI matrix and skips when the env var
 is unset.
 
 Each SDK repository owns its own conformance: it depends on the published proto
-package (see [WS41](../../workstreams/adapter_v2/WS41-extract-adapter-proto-repo.md))
-and runs the conformance contract against itself in its own CI.
+package and runs the conformance contract against itself in its own CI.
 
 ## Consequences
 

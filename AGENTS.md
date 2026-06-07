@@ -54,7 +54,6 @@ here.
 - Host-side adapter loader, OCI cache, signing, manifest, environments: [internal/adapter/](internal/adapter/)
 - In-tree adapters: [cmd/criteria-adapter-mcp/](cmd/criteria-adapter-mcp/)
   (copilot, shell, and noop were extracted to their own repos)
-- Project planning: [PLAN.md](PLAN.md), [workstreams/README.md](workstreams/README.md)
 
 ## Conventions agents should follow
 
@@ -64,8 +63,8 @@ here.
 - **Wire contract changes**: edit a file under `proto/criteria/v1/` first,
   run `make proto` to regenerate the Go bindings, then update the
   in-tree call sites. Any change to the `Subject`/`ServiceHandler`
-  surface or to event field numbers is a **breaking SDK change** —
-  see [CONTRIBUTING.md](CONTRIBUTING.md) for the bump policy.
+  surface or to event field numbers is a **breaking SDK change** and
+  requires an SDK major-version bump.
 - **Adapter model**: adapters run out-of-process and are distributed as signed
   OCI artifacts, pulled into `~/.criteria/cache/oci` and pinned per workflow in
   `.criteria.lock.hcl`. The adapter wire protocol is **v2** and lives in the
@@ -78,16 +77,6 @@ here.
 - **Local mode constraints**: `wait { signal = "..." }` and `approval { ... }`
   nodes require a server-compatible orchestrator (`criteria apply --server ...`).
   Local-only execution rejects these node kinds with a clear error.
-- **Workstream Reviewer role**: the reviewer agent is an audit-only
-  quality gate and must not edit code; it enforces quality, security, and
-  acceptance bars, validates that tests prove intended behavior (not just
-  that they pass), and requires the executor to remediate all findings
-  including nits before approval.
-- **Files reviewer/executor agents may NOT modify**: `README.md`,
-  `PLAN.md`, `AGENTS.md`, `CHANGELOG.md`, `CONTRIBUTING.md`,
-  `workstreams/README.md`, `sdk/CHANGELOG.md`, and any workstream
-  files other than the one the agent is currently working on. The
-  cleanup agent (or a human) is the only writer for these.
 - Keep logs structured (`slog` JSON style in entrypoints).
 - Preserve existing adapter boundaries (`internal/adapter`,
   `internal/adapters/*`, `internal/plugin`). Do not import `sdk/` from
