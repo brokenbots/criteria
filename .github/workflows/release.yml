@@ -22,7 +22,7 @@ jobs:
     name: Validate release source
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6.0.2
         with:
           fetch-depth: 0
       - name: Enforce release-source policy
@@ -69,7 +69,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: guard
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6.0.2
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -86,7 +86,7 @@ jobs:
     env:
       CRITERIA_ADAPTERS: ${{ github.workspace }}/bin
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6.0.2
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -117,7 +117,7 @@ jobs:
         ports:
           - 5000:5000
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6.0.2
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -157,7 +157,7 @@ jobs:
           - goos: darwin
             goarch: arm64
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6.0.2
 
       - uses: actions/setup-go@v5
         with:
@@ -204,7 +204,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [guard, gate-conformance, gate-e2e, gate-remote, gate-publish]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6.0.2
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -239,7 +239,7 @@ jobs:
       RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
       RELEASE_SIGNING_PASSWORD: ${{ secrets.RELEASE_SIGNING_PASSWORD }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6.0.2
 
       - name: Download all release artifacts
         uses: actions/download-artifact@v4
@@ -306,7 +306,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [checksum-and-sign]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6.0.2
         with:
           fetch-depth: 0
 
