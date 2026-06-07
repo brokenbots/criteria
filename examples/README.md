@@ -1,35 +1,21 @@
 # Examples
 
-Standalone workflow files that demonstrate Criteria features. All examples
-are validated by `make validate` and can be run locally with the `noop` or
-`shell` adapter unless noted otherwise.
+Standalone workflows validated by `make validate`. Adapters referenced by
+`source` are pulled and pinned on `criteria adapter lock`; the in-tree `noop`
+fixture and the `plugins/greeter` adapter run without a registry.
 
-## Running an example
+Run one with:
 
 ```sh
-criteria apply examples/<name>.hcl
+criteria apply examples/<name>/<file>.hcl
 ```
 
-## Example index
-
-| File | Description |
-|------|-------------|
-| [`hello.hcl`](hello.hcl) | Minimal single-step workflow — smoke test baseline. |
-| [`demo_tour_local.hcl`](demo_tour_local.hcl) | Demonstrates variables, for_each, wait (duration), and branch without requiring a server. |
-| [`build_and_test.hcl`](build_and_test.hcl) | Build-and-test pipeline with shell steps and retry policy. |
-| [`file_function.hcl`](file_function.hcl) | Uses the `file()` expression function to read content from a local file. |
-| [`for_each_review_loop.hcl`](for_each_review_loop.hcl) | **Multi-step for_each iteration body**: `execute → review → cleanup → _continue`. Canonical example for W08 multi-step iteration. Uses the `noop` adapter. |
-| [`perf_1000_logs.hcl`](perf_1000_logs.hcl) | Performance fixture — runs 1000 no-op steps to benchmark step throughput. |
-
-## Multi-step for_each (featured example)
-
-`for_each_review_loop.hcl` is the canonical example for the W08 multi-step
-iteration feature. It shows a loop whose body spans three steps:
-
-```
-execute → review → cleanup → _continue
-```
-
-All three steps have access to `each.value` and `each.index`. See the
-[for_each documentation](../docs/workflow.md#for-each) for details on
-iteration body semantics and `each.*` lifetime.
+| Example | Demonstrates |
+|---|---|
+| [`hello/hello.hcl`](hello/hello.hcl) | Minimal single-step workflow (smoke-test baseline). |
+| [`tour/tour.hcl`](tour/tour.hcl) | Variables, `for_each` iteration, `parallel` fan-out, a duration `wait`, a `switch`, and a top-level `output` — in one workflow. |
+| [`subworkflow/parent.hcl`](subworkflow/parent.hcl) | A parent workflow invoking a sub-workflow via `target = subworkflow.<name>` (multi-file). |
+| [`build_and_test/build_and_test.hcl`](build_and_test/build_and_test.hcl) | Linear shell build → test pipeline with a retry policy. |
+| [`copilot_planning_then_execution/`](copilot_planning_then_execution/copilot_planning_then_execution.hcl) | Two-phase agent workflow (plan, then execute) using the `copilot` adapter. |
+| [`plugins/greeter/`](plugins/greeter/) | A minimal adapter implementation plus a workflow that runs it (`make example-plugin`). |
+| [`llm-pack/`](llm-pack/) | Prompt-pack patterns surfaced by `criteria spec --with-patterns`. |

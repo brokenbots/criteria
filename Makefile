@@ -184,16 +184,8 @@ deps-majors: ## List available major-version (/vN) upgrades per module (gomajor)
 	done
 
 validate: build ## Validate all example workflow directories
-	@for d in examples/build_and_test examples/copilot_planning_then_execution \
-		examples/demo_tour_local examples/file_function examples/hello \
-		examples/fileset \
-		examples/perf_1000_logs \
-		examples/phase3-environment examples/phase3-fold examples/phase3-multi-file \
-		examples/phase3-output examples/phase3-subworkflow examples/phase3-shared-variable \
-		examples/phase3-parallel \
-		examples/templatefile \
-		examples/hash-encoding \
-		examples/while \
+	@for d in examples/hello examples/tour examples/subworkflow \
+		examples/build_and_test examples/copilot_planning_then_execution \
 		examples/llm-pack/01-linear \
 		examples/llm-pack/02-branching-switch \
 		examples/llm-pack/03-iteration-for-each \

@@ -47,7 +47,7 @@
   "subworkflows": [
     {
       "name": "inner_task",
-      "source_path": "<repo>/examples/phase3-subworkflow/subworkflows/inner",
+      "source_path": "<repo>/examples/subworkflow/subworkflows/inner",
       "body": {
         "name": "inner_task",
         "initial_state": "execute",

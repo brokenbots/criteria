@@ -1,0 +1,24 @@
+digraph "tour" {
+  rankdir=LR;
+
+  "boot" [shape=box, style="filled", fillcolor="#D6EAF8"];
+  "process_each" [shape=box, style="filled,dashed", fillcolor="#D6EAF8", label="process_each\n[for_each]"];
+  "fan_out" [shape=box, style="filled", fillcolor="#D6EAF8", peripheries=2, label="fan_out\n[parallel]"];
+  "finish" [shape=box, style="filled", fillcolor="#D6EAF8"];
+  "decide" [shape=diamond, style=filled, fillcolor="#FEF9E7"];
+  "aborted" [shape=doublecircle, style=filled, fillcolor="#FADBD8"];
+  "done" [shape=doublecircle, style=filled, fillcolor="#D5F5E3"];
+
+  "__start__" [shape=point,width=0.12,label=""];
+  "__start__" -> "boot" [label="initial"];
+  "boot" -> "aborted" [label="failure"];
+  "boot" -> "process_each" [label="success"];
+  "process_each" -> "fan_out" [label="all_succeeded"];
+  "process_each" -> "aborted" [label="any_failed"];
+  "fan_out" -> "settle" [label="all_succeeded"];
+  "fan_out" -> "aborted" [label="any_failed"];
+  "finish" -> "aborted" [label="failure"];
+  "finish" -> "done" [label="success"];
+  "decide" -> "finish" [label="match[0]"];
+  "decide" -> "aborted" [label="default"];
+}

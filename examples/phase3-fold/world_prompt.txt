@@ -1,1 +1,0 @@
-Greetings from the compile-time fold-demo example.

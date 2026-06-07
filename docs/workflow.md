@@ -78,7 +78,7 @@ my-workflow/
 
 Each file must be a valid standalone HCL document. The `workflow { name = "..." }` header block (with `version`, `initial_state`, `target_state`) must appear in **exactly one** file in the directory; all other files are content-only (no workflow block). All top-level blocks are merged across all files in alphabetical order. Duplicate name declarations across files produce a compile error.
 
-See `examples/phase3-multi-file/` for a working example.
+See `examples/subworkflow/` for a working multi-file example.
 
 #### File path entry points
 
@@ -1148,7 +1148,7 @@ step "run_prompts" {
 }
 ```
 
-`each.value` is a path relative to the workflow directory, so it can be passed directly to `file()` without further manipulation. See `examples/fileset/` for a working end-to-end example.
+`each.value` is a path relative to the workflow directory, so it can be passed directly to `file()` without further manipulation.
 
 #### `trimfrontmatter(content)`
 
@@ -1171,8 +1171,6 @@ input {
   prompt = trimfrontmatter(file("./prompts/task.md"))
 }
 ```
-
-The `examples/file_function.hcl` workflow demonstrates this pattern end-to-end.
 
 **Environment variables:**
 
@@ -1390,8 +1388,8 @@ Criteria provides three commands for workflow operations:
 Parses and validates a workflow, outputs JSON or DOT graph.
 
 ```bash
-bin/criteria compile examples/demo_tour_local.hcl
-bin/criteria compile examples/demo_tour_local.hcl --format dot --out workflow.dot
+bin/criteria compile examples/tour/tour.hcl
+bin/criteria compile examples/tour/tour.hcl --format dot --out workflow.dot
 ```
 
 **Outputs**:
@@ -1403,7 +1401,7 @@ bin/criteria compile examples/demo_tour_local.hcl --format dot --out workflow.do
 Human-readable summary of the workflow structure.
 
 ```bash
-bin/criteria plan examples/demo_tour_local.hcl
+bin/criteria plan examples/tour/tour.hcl
 ```
 
 Prints:
@@ -1472,8 +1470,8 @@ See [`proto/criteria/v1/`](../proto/criteria/v1/) for proto definitions and even
 - Local runs write step checkpoints and persisted approval/signal decisions to `$CRITERIA_STATE_DIR` so that a restarted run (or `criteria apply --reattach`) can resume from where it left off without re-prompting. For full crash recovery and distributed persistence, use `--server`.
 
 For examples demonstrating each command, see:
-- Local-only workflow: [examples/build_and_test.hcl](../examples/build_and_test.hcl)
-- Full-featured local demo: [examples/demo_tour_local.hcl](../examples/demo_tour_local.hcl)
+- Linear shell pipeline: [examples/build_and_test/build_and_test.hcl](../examples/build_and_test/build_and_test.hcl)
+- Feature tour: [examples/tour/tour.hcl](../examples/tour/tour.hcl)
 
 ---
 
