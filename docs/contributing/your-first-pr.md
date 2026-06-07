@@ -236,3 +236,31 @@ Once your first PR is merged:
 - Check `make help` for the full list of available development targets.
 
 Thank you for contributing. Every PR matters.
+
+## Coverage ratchet
+
+CI enforces per-package coverage floors stored in
+[`tools/coverage-floors.txt`](../../tools/coverage-floors.txt). If your PR drops
+coverage for a listed package below its floor, the `Coverage ratchet` check
+fails.
+
+Run it locally before pushing:
+
+```sh
+make coverage-check
+```
+
+If it fails, you have two options:
+
+1. **Add tests.** Most regressions are accidental. The failure names the
+   regressed package and its floor — add tests until coverage meets the floor
+   again.
+2. **Lower the floor.** If the drop is intentional (e.g. you removed a
+   well-covered function and the package average shifts down), edit
+   `tools/coverage-floors.txt` to lower that package's floor and justify it in
+   PR review.
+
+The floor only ever ratchets **up** over time. A PR that raises coverage is
+encouraged to also raise the floor. Floors are statement-weighted and rounded
+down to the nearest 0.5%; if two PRs raise the same package's floor and conflict,
+resolve by keeping the **higher** floor.

@@ -1,0 +1,24 @@
+# Per-package coverage floors (WS44 ratchet). Statement-weighted,
+# rounded down to the nearest 0.5%, taken as the min across Linux (CI) and
+# macOS so the gate passes both in CI and for local 'make coverage-check'.
+# The floor only ever rises: a PR that drops a package below its floor must
+# add tests, or lower the floor here with a documented reason in review.
+# On conflict, keep the higher floor for each package.
+internal/adapter/conformance 38.0
+internal/adapter/environment/container 59.0
+internal/adapter/environment/remote 76.0
+internal/adapter/manifest 95.5
+internal/adapter/oci 67.0
+internal/adapter/publish 59.5
+internal/adapter/secrets 59.0
+internal/adapter/signing 66.0
+internal/cli 62.5
+internal/cli/localresume 85.5
+internal/engine 79.0
+internal/langserver 59.5
+internal/log 80.0
+internal/run 74.5
+internal/transport/server 79.5
+sdk/conformance 83.5
+workflow 84.5
+workflow/lockfile 93.0

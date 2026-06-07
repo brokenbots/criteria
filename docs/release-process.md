@@ -90,9 +90,15 @@ code:
 ```sh
 # No in-tree adapter implementations (noop/mcp test fixtures excepted):
 find internal/builtin -type d -name '*adapter*' -not -empty   # expect: nothing
-# Proto consumed as an external module, not vendored in-tree:
+# The adapter wire contract is consumed as an external module, not vendored:
 grep -rn 'github.com/brokenbots/criteria/proto' --include='*.go' .   # expect: nothing
+grep -rn 'criteria-adapter-proto' go.mod                            # expect: a pinned version
 ```
+
+Note: `proto/criteria/v1/` (generated into `sdk/pb/criteria/v1/`) is the criteria
+**server's** own transport API — host code, not an adapter contract — so it is
+intentionally in-tree. Only the *adapter* protocol (`criteria-adapter-proto`) is
+external.
 
 The clean-machine three-SDK-family full-chain smoke (`criteria pull` of a workflow
 whose lockfile references one TypeScript, one Python, and one Go adapter, then
