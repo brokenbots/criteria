@@ -288,9 +288,39 @@ jobs:
           retention-days: 30
           if-no-files-found: error
 
+  coverage-check:
+    name: Coverage ratchet
+    runs-on: ubuntu-latest
+    # WS44: per-package non-regression gate. Runs after unit-tests so a test
+    # failure surfaces before a coverage failure. Floors live in
+    # tools/coverage-floors.txt; a PR that drops below floor must add tests or
+    # lower the floor with a documented reason.
+    needs: unit-tests
+    steps:
+      - uses: actions/checkout@v6.0.2
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Cache Go build cache
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/go-build
+          key: go-build-cover-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            go-build-cover-${{ runner.os }}-
+
+      - name: Sync workspace
+        run: go work sync
+
+      - name: Enforce coverage floor
+        run: make coverage-check
+
   all-checks:
     name: All checks passed
     runs-on: ubuntu-latest
-    needs: [lint, unit-tests, e2e, proto-drift, osv-scan]
+    needs: [lint, unit-tests, e2e, proto-drift, osv-scan, coverage-check]
     steps:
       - run: echo "All required checks passed."

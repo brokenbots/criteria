@@ -1,5 +1,5 @@
 .PHONY: help bootstrap tidy build plugins install proto proto-lint proto-check-drift \
-	test test-cover test-conformance test-flake-watch lint-imports lint-go lint-baseline-check lint-no-todos lint vuln-scan deps-outdated deps-majors validate validate-docs validate-self-workflows example-plugin bench docker-runtime docker-runtime-smoke ci self self-loop clean
+	test test-cover coverage-check test-conformance test-flake-watch lint-imports lint-go lint-baseline-check lint-no-todos lint vuln-scan deps-outdated deps-majors validate validate-docs validate-self-workflows example-plugin bench docker-runtime docker-runtime-smoke ci self self-loop clean
 
 # Default target: list available targets.
 help:
@@ -87,6 +87,9 @@ test-cover: ## Run tests with race detector and coverage; outputs cover.out per 
 	cd workflow && go test -race -coverprofile=cover-workflow.out -covermode=atomic ./...
 	go tool cover -func=cover.out | grep -E "^total|internal/cli|internal/run|criteria-adapter-mcp"
 	@echo "See cover.out, cover-sdk.out, cover-workflow.out for full details."
+
+coverage-check: test-cover ## Enforce the per-package coverage ratchet (WS44); floors in tools/coverage-floors.txt
+	go run ./tools/coverage-check -floors tools/coverage-floors.txt cover.out sdk/cover-sdk.out workflow/cover-workflow.out
 
 bench: ## Run benchmarks for workflow, engine, and plugin packages (targeted; see notes)
 	go test -run='^$$' -bench=. -benchmem ./workflow/...
