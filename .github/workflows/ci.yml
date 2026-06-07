@@ -281,7 +281,7 @@ jobs:
           cp bin/criteria bin/criteria-adapter-* bin/criteria-runtime.tar bin/SHA256SUMS artifact/
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: criteria-${{ steps.rc.outputs.tag }}
           path: artifact/

@@ -193,7 +193,7 @@ jobs:
           echo "tarball=${TARBALL}" >> "$GITHUB_ENV"
 
       - name: Upload tarball artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: criteria-${{ github.ref_name }}-${{ matrix.goos }}-${{ matrix.goarch }}
           path: criteria-${{ github.ref_name }}-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz
@@ -223,7 +223,7 @@ jobs:
           docker save -o "$TARBALL" "criteria/runtime:${TAG}"
 
       - name: Upload Docker image artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: criteria-runtime-${{ github.ref_name }}
           path: criteria-runtime-${{ github.ref_name }}.tar
@@ -292,7 +292,7 @@ jobs:
           fi
 
       - name: Upload checksums and signatures
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: checksums-and-signatures
           path: |
