@@ -22,8 +22,8 @@ testbed for agentic development, security, and research workflows.
   protocol over a local socket.
 - Adapters are distributed as OCI artifacts, cosign-signed, and pinned by digest
   in `.criteria.lock.hcl` for reproducible resolution.
-- Execution is local by default. An optional server (orchestrator) adds run
-  persistence, crash recovery, approval gates, and signal waits.
+- Execution is local by default; an optional, early server mode adds durability
+  (see the note at the end).
 - Every run emits schema-versioned ND-JSON events.
 
 ## Component status
@@ -66,7 +66,6 @@ implemented, lightly tested; **Untested** = implemented, essentially unverified;
 | `environment` blocks | Untested | shell / sandbox / container / remote; see status table. |
 | Secret inputs / tainting | Experimental | |
 | `parallel` map/object form | Not supported | Use the list form. |
-| `target = step.<name>` | Not supported | Removed in v0.3.0. |
 | Remote subworkflow sources (`url://`) | Not supported | |
 
 The authoritative reference is `criteria spec` (and [docs/workflow.md](docs/workflow.md)).
@@ -162,28 +161,15 @@ server in as an adapter and serves as a reference.
 
 Reference: [docs/adapters.md](docs/adapters.md).
 
-## Orchestrator mode
-
-Optional. A workflow can target a server-compatible orchestrator for run
-persistence, crash recovery, approval gates, and signal waits:
-
-```bash
-criteria apply workflow.hcl --server <url>
-```
-
-The `sdk/` module (`github.com/brokenbots/criteria/sdk`) defines the gRPC
-contract and ships a conformance suite for implementations:
-
-```go
-import "github.com/brokenbots/criteria/sdk/conformance"
-
-func TestMyServer(t *testing.T) {
-    conformance.Run(t, &mySubject{})
-}
-```
-
-The contract is still under development.
-
 ## License
 
 See [LICENSE](LICENSE).
+
+---
+
+> **Note — server mode (early, subject to significant change).** Execution is
+> local by default. An optional server can provide durability — run persistence,
+> crash recovery, approval gates, and signal waits — via `criteria apply --server
+> <url>`. The gRPC contract and a conformance suite live in the `sdk/` module
+> (`github.com/brokenbots/criteria/sdk`). This contract is unstable and expected
+> to change substantially.
