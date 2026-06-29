@@ -17,13 +17,13 @@ jobs:
     steps:
       - uses: actions/checkout@v6.0.2
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v6.4.0
         with:
           go-version-file: go.mod
           cache: true
 
       - name: Cache Go build cache
-        uses: actions/cache@v5
+        uses: actions/cache@v5.0.5
         with:
           path: ~/.cache/go-build
           key: go-build-lint-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
@@ -54,13 +54,13 @@ jobs:
     steps:
       - uses: actions/checkout@v6.0.2
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v6.4.0
         with:
           go-version-file: go.mod
           cache: true
 
       - name: Cache Go build cache
-        uses: actions/cache@v5
+        uses: actions/cache@v5.0.5
         with:
           path: ~/.cache/go-build
           key: go-build-unit-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
@@ -89,13 +89,13 @@ jobs:
     steps:
       - uses: actions/checkout@v6.0.2
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v6.4.0
         with:
           go-version-file: go.mod
           cache: true
 
       - name: Cache Go build cache
-        uses: actions/cache@v5
+        uses: actions/cache@v5.0.5
         with:
           path: ~/.cache/go-build
           key: go-build-e2e-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
@@ -131,7 +131,7 @@ jobs:
         run: buf lint
         continue-on-error: false
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v6.4.0
         with:
           go-version-file: go.mod
           cache: true
@@ -153,13 +153,13 @@ jobs:
     steps:
       - uses: actions/checkout@v6.0.2
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v6.4.0
         with:
           go-version-file: go.mod
           cache: true
 
       - name: Cache Go build cache
-        uses: actions/cache@v5
+        uses: actions/cache@v5.0.5
         with:
           path: ~/.cache/go-build
           key: go-build-osv-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
@@ -183,13 +183,13 @@ jobs:
     steps:
       - uses: actions/checkout@v6.0.2
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v6.4.0
         with:
           go-version-file: go.mod
           cache: true
 
       - name: Cache Go build cache
-        uses: actions/cache@v5
+        uses: actions/cache@v5.0.5
         with:
           path: ~/.cache/go-build
           key: go-build-deps-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
@@ -226,7 +226,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6.0.2
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v6.4.0
         with:
           go-version-file: go.mod
           cache: true
@@ -299,13 +299,13 @@ jobs:
     steps:
       - uses: actions/checkout@v6.0.2
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v6.4.0
         with:
           go-version-file: go.mod
           cache: true
 
       - name: Cache Go build cache
-        uses: actions/cache@v5
+        uses: actions/cache@v5.0.5
         with:
           path: ~/.cache/go-build
           key: go-build-cover-${{ runner.os }}-${{ hashFiles('**/go.sum') }}

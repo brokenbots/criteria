@@ -70,7 +70,7 @@ jobs:
     needs: guard
     steps:
       - uses: actions/checkout@v6.0.2
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v6.4.0
         with:
           go-version-file: go.mod
           cache: true
@@ -87,7 +87,7 @@ jobs:
       CRITERIA_ADAPTERS: ${{ github.workspace }}/bin
     steps:
       - uses: actions/checkout@v6.0.2
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v6.4.0
         with:
           go-version-file: go.mod
           cache: true
@@ -118,7 +118,7 @@ jobs:
           - 5000:5000
     steps:
       - uses: actions/checkout@v6.0.2
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v6.4.0
         with:
           go-version-file: go.mod
           cache: true
@@ -159,7 +159,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6.0.2
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v6.4.0
         with:
           go-version-file: go.mod
           cache: true
