@@ -155,9 +155,11 @@ func buildManifestInStore(ctx context.Context, store *memory.Store, ref oci.Refe
 }
 
 // stageBinaryLayers stages one adapter-binary layer per platform, titled
-// bin/<os>/<arch>/<name>. All platforms must share the same binary basename (the
-// adapter type's canonical name, e.g. criteria-adapter-copilot) so the host can
-// resolve bin/<goos>/<goarch>/criteria-adapter-<type> uniformly.
+// bin/<os>/<arch>/<name>. All platforms must share the same binary basename so
+// the host resolves bin/<goos>/<goarch>/ uniformly. That basename should be
+// criteria-adapter-<manifest name> (e.g. criteria-adapter-copilot): the host
+// prefers it when a platform directory holds more than one file. It is
+// unrelated to the `adapter "<type>" "<name>"` label a workflow chooses.
 func stageBinaryLayers(ctx context.Context, store *memory.Store, bins []PlatformBinary) ([]ocispec.Descriptor, error) {
 	layers := make([]ocispec.Descriptor, 0, len(bins))
 	seen := make(map[string]bool, len(bins))
