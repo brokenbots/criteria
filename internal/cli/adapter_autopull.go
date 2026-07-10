@@ -282,7 +282,7 @@ func artifactBinaryPath(artFS fs.FS) (string, error) {
 			runtime.GOOS, runtime.GOARCH, strings.Join(artifactPlatforms(artFS), ", "))
 	}
 
-	var found []string
+	found := make([]string, 0, len(entries))
 	for _, e := range entries {
 		if e.IsDir() || strings.ContainsRune(e.Name(), '/') {
 			continue
