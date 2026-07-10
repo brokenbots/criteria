@@ -1,6 +1,6 @@
 module criteria-adapter-remote-smoke
 
-go 1.26.4
+go 1.26.5
 
 require (
 	github.com/brokenbots/criteria-adapter-proto v0.5.1

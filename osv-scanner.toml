@@ -20,3 +20,33 @@
 # id = "GO-2026-1234"
 # reason = "Vulnerable function not reachable from our code paths; tracked in WS51."
 # ignoreUntil = "2026-09-01T00:00:00Z"
+
+# Both entries below have NO upstream fix: each advisory's affected range is
+# open-ended and the module is already pinned to its newest release. They are
+# not upgradeable, only reviewable. Re-check on expiry: if a fixed version has
+# shipped, upgrade and delete the entry.
+
+[[IgnoredVulns]]
+id = "GO-2026-5932"
+reason = """golang.org/x/crypto/openpgp is deprecated with no fixed version — the \
+advisory covers every release, so no upgrade clears it. We never parse PGP: the \
+package is linked only because sigstore-go/pkg/sign imports rekor's pki registry, \
+which registers a pgp backend we never select (criteria verifies cosign keyless \
+and key-pair signatures via x509/fulcio). govulncheck finds no call into openpgp \
+from our code — every trace is a package init reached through sign.init, or \
+interface-dispatch noise (io.ReadAll onto armor.lineReader.Read). Dropping the \
+dependency would mean dropping signature verification, which is the trust anchor \
+for `criteria adapter lock` pinning. Re-check whether rekor has split its pgp \
+backend out of pkg/pki."""
+ignoreUntil = "2026-07-16T00:00:00Z"
+
+[[IgnoredVulns]]
+id = "GHSA-fxhp-mv3v-67qp"
+reason = """oras-go tar extraction: a hardlink entry with a relative Linkname can \
+escape the extract dir. Affects every release through 2.6.1, which is the latest \
+— no fixed version exists yet. The vulnerable code is in oras-go/v2/content/file, \
+which criteria does not import: we use content/memory and content/oci and read \
+blobs directly, never extracting a tar to disk (`go list -deps ./...` shows no \
+content/file, and govulncheck reports no reachable symbol). Re-check for a 2.6.2 \
+release."""
+ignoreUntil = "2026-07-16T00:00:00Z"
