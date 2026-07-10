@@ -63,6 +63,12 @@ func EncodeDigest(d digest.Digest) string {
 	return strings.ReplaceAll(d.String(), ":", "-")
 }
 
+// AdapterBinaryName renders the conventional binary basename for an adapter,
+// e.g. "claude-agent" -> "criteria-adapter-claude-agent".
+func AdapterBinaryName(name string) string {
+	return adapterBinaryPrefix + name
+}
+
 // AdapterInstallPath returns the on-disk path where the binary for adapterType
 // pinned to digestEncoded is installed under the primary install root.
 func AdapterInstallPath(adapterType, digestEncoded string) (string, error) {
@@ -70,7 +76,7 @@ func AdapterInstallPath(adapterType, digestEncoded string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(root, digestEncoded, adapterBinaryPrefix+adapterType), nil
+	return filepath.Join(root, digestEncoded, AdapterBinaryName(adapterType)), nil
 }
 
 // DiscoverBinary resolves an adapter binary by type from the flat install root

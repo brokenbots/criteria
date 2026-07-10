@@ -4,9 +4,12 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
+	"strings"
 
 	"github.com/opencontainers/go-digest"
 
@@ -210,13 +213,22 @@ func hasOCIReferences(spec *workflow.Spec) bool {
 // install root (~/.criteria/adapters/<digest>/) so that multiple versions of
 // the same adapter type can coexist and adapterhost.DiscoverBinaryAt can
 // resolve the exact pinned binary.
+//
+// adapterType is the workflow's `adapter "<type>" "<name>"` label. It names the
+// binary at the *destination* (that is the identity adapterhost routes on), but
+// it never selects the source path inside the artifact: the artifact says where
+// its own binary lives. A workflow is free to label an adapter whatever it
+// likes, so the two names need not agree.
 func extractOCIAdapterBinary(layout *oci.Layout, dg digest.Digest, adapterType string) error {
 	artFS, err := layout.Open(dg)
 	if err != nil {
 		return err
 	}
 
-	platformPath := fmt.Sprintf("bin/%s/%s/criteria-adapter-%s", runtime.GOOS, runtime.GOARCH, adapterType)
+	platformPath, err := artifactBinaryPath(artFS)
+	if err != nil {
+		return err
+	}
 	f, err := artFS.Open(platformPath)
 	if err != nil {
 		return fmt.Errorf("open %s in artifact: %w", platformPath, err)
@@ -246,6 +258,70 @@ func extractOCIAdapterBinary(layout *oci.Layout, dg digest.Digest, adapterType s
 		return err
 	}
 	return os.Rename(tmp, dest)
+}
+
+// artifactBinaryPath locates this host's platform binary inside an adapter
+// artifact. The name is supplied by the adapter: preferentially the manifest's
+// own `name` field, otherwise the sole file published under bin/<os>/<arch>/.
+//
+// Manifest.Validate constrains name to ^[a-z][a-z0-9-]*$, so it cannot escape
+// the artifact FS; the directory scan only accepts plain, non-directory names.
+func artifactBinaryPath(artFS fs.FS) (string, error) {
+	dir := path.Join("bin", runtime.GOOS, runtime.GOARCH)
+
+	if m, err := manifest.ParseFromFS(artFS, "adapter.yaml"); err == nil && m.Validate() == nil {
+		named := path.Join(dir, adapterhost.AdapterBinaryName(m.Name))
+		if info, err := fs.Stat(artFS, named); err == nil && !info.IsDir() {
+			return named, nil
+		}
+	}
+
+	entries, err := fs.ReadDir(artFS, dir)
+	if err != nil {
+		return "", fmt.Errorf("artifact has no binary for %s/%s (published platforms: %s)",
+			runtime.GOOS, runtime.GOARCH, strings.Join(artifactPlatforms(artFS), ", "))
+	}
+
+	found := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if e.IsDir() || strings.ContainsRune(e.Name(), '/') {
+			continue
+		}
+		found = append(found, e.Name())
+	}
+	switch len(found) {
+	case 1:
+		return path.Join(dir, found[0]), nil
+	case 0:
+		return "", fmt.Errorf("artifact has no binary for %s/%s (published platforms: %s)",
+			runtime.GOOS, runtime.GOARCH, strings.Join(artifactPlatforms(artFS), ", "))
+	default:
+		return "", fmt.Errorf("artifact publishes %d files under %s (%s); its adapter.yaml `name` must select one",
+			len(found), dir, strings.Join(found, ", "))
+	}
+}
+
+// artifactPlatforms lists the os/arch pairs the artifact ships binaries for, so
+// a platform miss can say what it does have. Best effort: used only in errors.
+func artifactPlatforms(artFS fs.FS) []string {
+	oses, err := fs.ReadDir(artFS, "bin")
+	if err != nil {
+		return []string{"none"}
+	}
+	var out []string
+	for _, osEntry := range oses {
+		arches, err := fs.ReadDir(artFS, path.Join("bin", osEntry.Name()))
+		if err != nil {
+			continue
+		}
+		for _, arch := range arches {
+			out = append(out, osEntry.Name()+"/"+arch.Name())
+		}
+	}
+	if len(out) == 0 {
+		return []string{"none"}
+	}
+	return out
 }
 
 // collectWorkflowAdapters reads the adapter declarations from the parsed spec.
