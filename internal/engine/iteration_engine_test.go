@@ -1800,3 +1800,103 @@ func TestIter_AggregateOutcome_ReturnOutputProjection(t *testing.T) {
 		t.Errorf("aggregate return output: done = %q, want %q", got, want)
 	}
 }
+
+// TestIteration_ForEach_Subworkflow verifies that a for_each step with
+// target = subworkflow.inner correctly iterates over all items and routes to
+// the "all_succeeded" aggregate outcome — not the now-removed "success"/"failure"
+// outcomes that caused a panic before the fix in evaluateSubworkflowStep.
+func TestIteration_ForEach_Subworkflow(t *testing.T) {
+	// Build the callee subworkflow: a single step → "done".
+	calleeBody := &workflow.FSMGraph{
+		Name:         "inner",
+		InitialState: "work",
+		TargetState:  "done",
+		Policy:       workflow.DefaultPolicy,
+		Steps: map[string]*workflow.StepNode{
+			"work": {
+				Name:       "work",
+				TargetKind: workflow.StepTargetAdapter,
+				AdapterRef: "noop.default",
+				Outcomes: map[string]*workflow.CompiledOutcome{
+					"success": {Name: "success", Next: "done"},
+				},
+			},
+		},
+		States: map[string]*workflow.StateNode{
+			"done": {Name: "done", Terminal: true, Success: true},
+		},
+		Adapters:     map[string]*workflow.AdapterNode{"noop.default": {Type: "noop", Name: "default"}},
+		AdapterOrder: []string{"noop.default"},
+		Subworkflows: map[string]*workflow.SubworkflowNode{},
+		Variables:    map[string]*workflow.VariableNode{},
+		Environments: map[string]*workflow.EnvironmentNode{},
+	}
+	swNode := &workflow.SubworkflowNode{
+		Name:         "inner",
+		SourcePath:   t.TempDir(),
+		Body:         calleeBody,
+		BodyEntry:    "work",
+		Inputs:       map[string]hcl.Expression{},
+		DeclaredVars: map[string]*workflow.VariableNode{},
+	}
+
+	// Build the ForEach expression: ["a", "b", "c"]
+	forEachExpr, diags := hclsyntax.ParseExpression(
+		[]byte(`["a", "b", "c"]`), "test.hcl", hcl.Pos{Line: 1, Column: 1},
+	)
+	if diags.HasErrors() {
+		t.Fatalf("parse for_each expr: %s", diags.Error())
+	}
+
+	// Build parent graph with a for_each step targeting the subworkflow.
+	iterStep := &workflow.StepNode{
+		Name:           "items",
+		TargetKind:     workflow.StepTargetSubworkflow,
+		SubworkflowRef: "inner",
+		ForEach:        forEachExpr,
+		OnFailure:      "continue",
+		Outcomes: map[string]*workflow.CompiledOutcome{
+			"all_succeeded": {Name: "all_succeeded", Next: "done"},
+			"any_failed":    {Name: "any_failed", Next: "done"},
+		},
+	}
+
+	g := &workflow.FSMGraph{
+		Name:         "parent",
+		InitialState: "items",
+		TargetState:  "done",
+		Policy:       workflow.DefaultPolicy,
+		Steps: map[string]*workflow.StepNode{
+			"items": iterStep,
+		},
+		States: map[string]*workflow.StateNode{
+			"done": {Name: "done", Terminal: true, Success: true},
+		},
+		Adapters:     map[string]*workflow.AdapterNode{},
+		AdapterOrder: []string{},
+		Subworkflows: map[string]*workflow.SubworkflowNode{"inner": swNode},
+		Variables:    map[string]*workflow.VariableNode{},
+		Environments: map[string]*workflow.EnvironmentNode{},
+	}
+
+	sink := &iterSink{}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{
+		"noop": &fakeAdapter{name: "noop", outcome: "success"},
+	}}
+	if err := New(g, loader, sink).Run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	if sink.terminal != "done" || !sink.terminalOK {
+		t.Errorf("terminal: %q ok=%v, want done/true", sink.terminal, sink.terminalOK)
+	}
+	if len(sink.iterationsStarted) != 3 {
+		t.Errorf("iterations started: got %d, want 3", len(sink.iterationsStarted))
+	}
+	if len(sink.iterationsCompleted) != 1 {
+		t.Fatalf("iterations completed: got %d, want 1", len(sink.iterationsCompleted))
+	}
+	if sink.iterationsCompleted[0].outcome != "all_succeeded" {
+		t.Errorf("aggregate outcome: got %q, want %q", sink.iterationsCompleted[0].outcome, "all_succeeded")
+	}
+}

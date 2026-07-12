@@ -19,6 +19,7 @@ import (
 	"github.com/zclconf/go-cty/cty"
 
 	"github.com/brokenbots/criteria/workflow"
+	"github.com/brokenbots/criteria/workflow/lockfile"
 )
 
 // runSubworkflow executes the subworkflow identified by node against the parent
@@ -60,6 +61,20 @@ func runSubworkflow(ctx context.Context, node *workflow.SubworkflowNode, parentS
 	// the callee resolve relative paths against the subworkflow directory, not
 	// the parent workflow directory.
 	calleeDir := node.SourcePath
+
+	// Merge the subworkflow's lockfile into the session manager so that
+	// digest-addressed adapter binary resolution works for adapters declared
+	// in the subworkflow. The subworkflow has its own lockfile with its own
+	// adapter entries (e.g. claude-agent.reviewer) that are absent from the
+	// parent's lockfile.
+	if prevLF := deps.Sessions.GetLockfile(); deps.Sessions != nil {
+		if subLF, readErr := lockfile.ReadFromDir(calleeDir); readErr == nil && subLF != nil {
+			merged := mergeLockfiles(prevLF, subLF)
+			deps.Sessions.SetLockfile(merged)
+			defer deps.Sessions.SetLockfile(prevLF)
+		}
+	}
+
 	terminal, returnOutputs, finalVars, err := runWorkflowBody(ctx, node.Body, node.BodyEntry, childVars, calleeDir, deps)
 	if err != nil {
 		return nil, "", fmt.Errorf("subworkflow %q: %w", node.Name, err)
@@ -150,4 +165,29 @@ func buildInputObj(inputVals map[string]cty.Value) cty.Value {
 		return cty.NilVal
 	}
 	return cty.ObjectVal(inputVals)
+}
+
+// mergeLockfiles returns a new lockfile whose adapter set is the union of base
+// and overlay. Entries in overlay take precedence when (type, name) collide.
+// base may be nil, in which case overlay is returned directly.
+func mergeLockfiles(base, overlay *lockfile.Lockfile) *lockfile.Lockfile {
+	if base == nil {
+		return overlay
+	}
+	// Index overlay entries by "type.name" for O(1) lookup.
+	overKeys := make(map[string]bool, len(overlay.Adapters))
+	for _, a := range overlay.Adapters {
+		overKeys[a.Type+"."+a.Name] = true
+	}
+	merged := &lockfile.Lockfile{
+		SchemaVersion: base.SchemaVersion,
+		Adapters:      make([]lockfile.LockedAdapter, 0, len(base.Adapters)+len(overlay.Adapters)),
+	}
+	for _, a := range base.Adapters {
+		if !overKeys[a.Type+"."+a.Name] {
+			merged.Adapters = append(merged.Adapters, a)
+		}
+	}
+	merged.Adapters = append(merged.Adapters, overlay.Adapters...)
+	return merged
 }

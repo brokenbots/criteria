@@ -11,13 +11,13 @@ import (
 	"github.com/zclconf/go-cty/cty"
 )
 
-// adapterConfigEvalContext builds the eval context used to resolve adapter.config{}
-// attributes at compile time. file(), fileexists(), and trimfrontmatter() are
-// registered so prompt files can be inlined. var.* and local.* are included so
-// that config expressions can reference declared variables and compiled locals.
-// steps.*, each.*, and data.* are intentionally absent — expressions
-// that reference those namespaces fail with "Variables not allowed", which is
-// the correct compile error since adapter config has no runtime resolution path.
+// adapterConfigEvalContext builds the eval context used to validate adapter.config{}
+// attributes at compile time (schema checks, type checks, required-field enforcement).
+// file(), fileexists(), and trimfrontmatter() are registered so prompt files can be
+// inlined. var.* and local.* are included so expressions are validated against
+// declared defaults. steps.*, each.*, and data.* are intentionally absent —
+// expressions that reference those namespaces correctly fail with a compile error.
+// At runtime, the engine re-evaluates ConfigExprs against actual runtime vars.
 //
 // Always returns a non-nil context — even when workflowDir is empty — so that
 // adapter.config expressions are never silently emptied. file()/fileexists()
@@ -35,10 +35,11 @@ func adapterConfigEvalContext(vars, locals map[string]cty.Value, workflowDir str
 
 // compileAdapters compiles all adapter blocks from spec into g.Adapters.
 //
-// Adapter config is resolved at compile time: unlike step.input{}, there is no
-// runtime evaluation pass for adapter.config{}, so any expression here must
-// reduce to a constant. opts.WorkflowDir is used to register file(),
-// fileexists(), and trimfrontmatter() so prompt files can be inlined.
+// Adapter config is evaluated against variable defaults at compile time for
+// schema validation. The engine re-evaluates ConfigExprs against runtime vars
+// at session-open time (initScopeAdapters), so var.* references in config
+// resolve to their actual runtime values. opts.WorkflowDir is used to register
+// file(), fileexists(), and trimfrontmatter() so prompt files can be inlined.
 //
 // The key in g.Adapters is "<type>.<name>" (both labels concatenated with a dot).
 // Environment references are validated against g.Environments at this time.

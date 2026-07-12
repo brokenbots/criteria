@@ -345,7 +345,7 @@ func (e *Engine) Run(ctx context.Context) error {
 	}
 
 	// Provision adapter sessions at scope start (W12)
-	scopeOrder, err := initScopeAdapters(ctx, e.graph, deps, vars)
+	scopeOrder, err := initScopeAdapters(ctx, e.graph, deps, vars, e.workflowDir)
 	if err != nil {
 		sink.OnRunFailed(err.Error(), e.graph.InitialState)
 		return err
@@ -393,7 +393,7 @@ func (e *Engine) RunFrom(ctx context.Context, startStep string, initialAttempt i
 
 	// For resumed runs, provision adapter sessions at scope start (W12).
 	// Sessions are always provisioned fresh, not restored from a prior run.
-	scopeOrder, err := initScopeAdapters(ctx, e.graph, deps, vars)
+	scopeOrder, err := initScopeAdapters(ctx, e.graph, deps, vars, e.workflowDir)
 	if err != nil {
 		sink.OnRunFailed(err.Error(), startStep)
 		return err

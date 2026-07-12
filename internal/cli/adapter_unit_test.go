@@ -171,3 +171,36 @@ func TestResolveRefOrName_Ambiguous(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "ambiguous")
 }
+
+// TestResolveSubworkflowSourceDir verifies the pure path-resolution function
+// used by pullSubworkflowAdapters.
+func TestResolveSubworkflowSourceDir(t *testing.T) {
+	t.Run("absolute_source_returned_as_is", func(t *testing.T) {
+		callerDir := "/some/caller/dir"
+		source := "/absolute/path/to/subworkflow"
+		got := resolveSubworkflowSourceDir(callerDir, source)
+		if got != source {
+			t.Errorf("resolveSubworkflowSourceDir(%q, %q) = %q, want %q", callerDir, source, got, source)
+		}
+	})
+
+	t.Run("relative_source_joined_with_callerDir", func(t *testing.T) {
+		callerDir := "/some/caller/dir"
+		source := "subworkflow"
+		want := filepath.Join(callerDir, source)
+		got := resolveSubworkflowSourceDir(callerDir, source)
+		if got != want {
+			t.Errorf("resolveSubworkflowSourceDir(%q, %q) = %q, want %q", callerDir, source, got, want)
+		}
+	})
+
+	t.Run("relative_with_parent_traversal", func(t *testing.T) {
+		callerDir := "/projects/myworkflow"
+		source := "../sibling"
+		want := filepath.Join(callerDir, source)
+		got := resolveSubworkflowSourceDir(callerDir, source)
+		if got != want {
+			t.Errorf("resolveSubworkflowSourceDir(%q, %q) = %q, want %q", callerDir, source, got, want)
+		}
+	})
+}

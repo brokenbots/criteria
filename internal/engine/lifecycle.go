@@ -19,7 +19,7 @@ import (
 // an event is emitted, and the error is returned.
 // Returns the ordered slice of provisioned adapter IDs (for correct LIFO teardown)
 // and an error if any adapter failed to initialize.
-func initScopeAdapters(ctx context.Context, g *workflow.FSMGraph, deps Deps, vars map[string]cty.Value) (order []string, err error) {
+func initScopeAdapters(ctx context.Context, g *workflow.FSMGraph, deps Deps, vars map[string]cty.Value, workflowDir string) (order []string, err error) {
 	if len(g.Adapters) == 0 {
 		return nil, nil
 	}
@@ -56,7 +56,21 @@ func initScopeAdapters(ctx context.Context, g *workflow.FSMGraph, deps Deps, var
 			return nil, fmt.Errorf("initialize adapter %q: resolve working_directory: %w", instanceID, err)
 		}
 
-		openErr := deps.Sessions.OpenWithOriginRefs(ctx, instanceID, adapter.Type, adapter.OnCrash, adapter.Config, secretMap, originRefs, workingDir)
+		// Re-evaluate adapter config against runtime vars so that var.* references
+		// in config blocks resolve to actual runtime values, not compile-time defaults.
+		config := adapter.Config
+		if len(adapter.ConfigExprs) > 0 {
+			runtimeConfig, evalErr := workflow.ResolveInputExprsWithOpts(
+				adapter.ConfigExprs, vars, workflow.DefaultFunctionOptions(workflowDir),
+			)
+			if evalErr != nil {
+				deps.Sink.OnAdapterLifecycle("", instanceID, "init_failed", evalErr.Error())
+				return nil, fmt.Errorf("initialize adapter %q: evaluate config: %w", instanceID, evalErr)
+			}
+			config = runtimeConfig
+		}
+
+		openErr := deps.Sessions.OpenWithOriginRefs(ctx, instanceID, adapter.Type, adapter.OnCrash, config, secretMap, originRefs, workingDir)
 
 		// Silently swallow ErrSessionAlreadyOpen to support subworkflow bodies that
 		// re-declare parent adapters for safety through re-declaration. Same-scope

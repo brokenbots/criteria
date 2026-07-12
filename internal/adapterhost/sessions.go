@@ -114,6 +114,13 @@ func (m *SessionManager) SetLockfile(lf *lockfile.Lockfile) {
 	m.lockfile = lf
 }
 
+// GetLockfile returns the current lockfile (may be nil).
+func (m *SessionManager) GetLockfile() *lockfile.Lockfile {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.lockfile
+}
+
 type Session struct {
 	Name             string
 	Adapter          string

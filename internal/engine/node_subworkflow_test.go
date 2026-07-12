@@ -21,6 +21,7 @@ import (
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/workflow"
+	"github.com/brokenbots/criteria/workflow/lockfile"
 )
 
 // minimalSubworkflowNode builds a SubworkflowNode with the simplest possible
@@ -667,4 +668,112 @@ func TestRunSubworkflow_TerminalStateSuccess(t *testing.T) {
 	if sink.terminal != "done" || !sink.terminalOK {
 		t.Errorf("terminal=%q ok=%v, want done/true", sink.terminal, sink.terminalOK)
 	}
+}
+
+// TestMergeLockfiles verifies the mergeLockfiles helper that unions two lockfiles,
+// with overlay entries taking precedence on (type, name) collisions.
+func TestMergeLockfiles(t *testing.T) {
+	baseAdapter := lockfile.LockedAdapter{
+		Type:           "shell",
+		Name:           "main",
+		ResolvedDigest: "aaa",
+		Reference:      "oci://example.com/shell:1",
+		SourceURL:      "https://example.com/shell",
+	}
+	overlayAdapter := lockfile.LockedAdapter{
+		Type:           "claude-agent",
+		Name:           "reviewer",
+		ResolvedDigest: "bbb",
+		Reference:      "oci://example.com/claude-agent:1",
+		SourceURL:      "https://example.com/claude-agent",
+	}
+	conflictingAdapter := lockfile.LockedAdapter{
+		Type:           "shell",
+		Name:           "main",
+		ResolvedDigest: "bbb", // overlay wins with digest "bbb"
+		Reference:      "oci://example.com/shell:2",
+		SourceURL:      "https://example.com/shell",
+	}
+
+	t.Run("nil_base", func(t *testing.T) {
+		overlay := &lockfile.Lockfile{
+			Adapters: []lockfile.LockedAdapter{overlayAdapter},
+		}
+		got := mergeLockfiles(nil, overlay)
+		if got != overlay {
+			t.Errorf("nil base: expected overlay returned unchanged")
+		}
+	})
+
+	t.Run("nil_overlay", func(t *testing.T) {
+		base := &lockfile.Lockfile{
+			Adapters: []lockfile.LockedAdapter{baseAdapter},
+		}
+		// The function only nil-checks base, not overlay. Passing nil overlay currently
+		// panics on overlay.Adapters field access. Use defer/recover so this subtest
+		// fails gracefully rather than crashing the test binary.
+		var got *lockfile.Lockfile
+		panicked := func() (panicked bool) {
+			defer func() {
+				if r := recover(); r != nil {
+					panicked = true
+				}
+			}()
+			got = mergeLockfiles(base, nil)
+			return false
+		}()
+		if panicked {
+			t.Error("nil overlay: mergeLockfiles(base, nil) panicked — the function should handle nil overlay without panicking")
+			return
+		}
+		if got == nil {
+			t.Error("nil overlay: expected non-nil result")
+		}
+	})
+
+	t.Run("overlay_wins", func(t *testing.T) {
+		base := &lockfile.Lockfile{
+			Adapters: []lockfile.LockedAdapter{baseAdapter},
+		}
+		overlay := &lockfile.Lockfile{
+			Adapters: []lockfile.LockedAdapter{overlayAdapter},
+		}
+		got := mergeLockfiles(base, overlay)
+		if got == nil {
+			t.Fatal("expected non-nil merged lockfile")
+		}
+		if len(got.Adapters) != 2 {
+			t.Errorf("expected 2 adapters in merged lockfile, got %d: %v", len(got.Adapters), got.Adapters)
+		}
+		// Both adapters should be present.
+		types := make(map[string]string) // "type.name" -> digest
+		for _, a := range got.Adapters {
+			types[a.Type+"."+a.Name] = a.ResolvedDigest
+		}
+		if _, ok := types["shell.main"]; !ok {
+			t.Error("shell.main missing from merged lockfile")
+		}
+		if _, ok := types["claude-agent.reviewer"]; !ok {
+			t.Error("claude-agent.reviewer missing from merged lockfile")
+		}
+	})
+
+	t.Run("overlay_replaces_same_key", func(t *testing.T) {
+		base := &lockfile.Lockfile{
+			Adapters: []lockfile.LockedAdapter{baseAdapter},
+		}
+		overlay := &lockfile.Lockfile{
+			Adapters: []lockfile.LockedAdapter{conflictingAdapter},
+		}
+		got := mergeLockfiles(base, overlay)
+		if got == nil {
+			t.Fatal("expected non-nil merged lockfile")
+		}
+		if len(got.Adapters) != 1 {
+			t.Errorf("expected exactly 1 adapter (overlay replaces base), got %d: %v", len(got.Adapters), got.Adapters)
+		}
+		if got.Adapters[0].ResolvedDigest != "bbb" {
+			t.Errorf("expected overlay digest %q, got %q", "bbb", got.Adapters[0].ResolvedDigest)
+		}
+	})
 }
