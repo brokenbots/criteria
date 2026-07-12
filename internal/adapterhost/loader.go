@@ -710,8 +710,9 @@ func (s *executeCaptureSink) emitResult(resultEvt *v2.ExecuteResult) error {
 // decodeOutputsJSON decodes a complete outputs_json object into typed cty values.
 // Each value is decoded against the step's declared OutputSchema type, falling
 // back to native type inference for undeclared keys or declared object/array
-// fields. This is the preferred (natively-typed) wire path; the legacy string-map
-// outputs field is handled by coerceWireOutputs.
+// fields. outputs_json is the sole output channel since the v2 typed-outputs
+// cutover (the legacy map<string,string> outputs field was removed; field 2
+// is reserved in criteria-adapter-proto).
 func (s *executeCaptureSink) decodeOutputsJSON(b []byte) (map[string]cty.Value, error) {
 	if len(b) == 0 {
 		return nil, nil
