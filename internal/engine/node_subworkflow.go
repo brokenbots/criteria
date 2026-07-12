@@ -174,6 +174,9 @@ func mergeLockfiles(base, overlay *lockfile.Lockfile) *lockfile.Lockfile {
 	if base == nil {
 		return overlay
 	}
+	if overlay == nil {
+		return base
+	}
 	// Index overlay entries by "type.name" for O(1) lookup.
 	overKeys := make(map[string]bool, len(overlay.Adapters))
 	for _, a := range overlay.Adapters {
