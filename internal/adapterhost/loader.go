@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/hashicorp/go-hclog"
@@ -187,6 +188,13 @@ func (l *DefaultLoader) resolveWith(ctx context.Context, name string, discover D
 	if customizer != nil {
 		customizer(name, cmd)
 	}
+	// Put the adapter in its own process group unless a customizer (e.g. the
+	// sandbox, which manages child lifecycle via cgroups) already owns process
+	// setup. This lets teardown signal and reap the whole process tree — the
+	// adapter plus any grandchildren it spawns — instead of orphaning them.
+	if customizer == nil {
+		setProcessGroup(cmd)
+	}
 
 	client := hplugin.NewClient(&hplugin.ClientConfig{
 		HandshakeConfig: HandshakeConfig,
@@ -223,7 +231,7 @@ func (l *DefaultLoader) resolveWith(ctx context.Context, name string, discover D
 		return nil, fmt.Errorf("unexpected adapter client type %T for %q", raw, name)
 	}
 
-	rp := &rpcHandle{name: name, client: client, rpc: adapterClient}
+	rp := &rpcHandle{name: name, client: client, rpc: adapterClient, cmd: cmd}
 	l.mu.Lock()
 	l.active[rp] = struct{}{}
 	l.mu.Unlock()
@@ -326,6 +334,10 @@ type rpcHandle struct {
 	name   string
 	client *hplugin.Client
 	rpc    Client
+	// cmd is the adapter's exec.Cmd, retained so Kill can signal the process
+	// group it leads. nil on paths that don't own the process (WS20 reattach,
+	// container RunnerFunc).
+	cmd *exec.Cmd
 
 	mu     sync.Once
 	onKill func()
@@ -995,9 +1007,22 @@ func (p *rpcHandle) CloseSession(ctx context.Context, id string) error {
 
 func (p *rpcHandle) Kill() {
 	p.mu.Do(func() {
+		// Signal the whole process group first so grandchildren (e.g. the
+		// claude-agent adapter's Claude Code subprocess) receive the interrupt,
+		// close any inherited stdio pipes, and exit. go-plugin's Kill only
+		// signals the adapter PID; without this, orphaned grandchildren keep
+		// the host's log pipes open, which is what produces the
+		// "plugin failed to exit gracefully" / "signal: killed" teardown noise.
+		// SIGINT (not SIGTERM) matches go-plugin's own graceful signal, so the
+		// adapter's go-plugin/SDK server-side handler runs and the process exits
+		// cleanly instead of being terminated by the signal's default action.
+		signalProcessGroup(p.cmd, syscall.SIGINT)
 		if p.client != nil {
 			p.client.Kill()
 		}
+		// Backstop: force-reap anything in the group that didn't exit on the
+		// graceful signal, so no adapter subtree outlives the host.
+		signalProcessGroup(p.cmd, syscall.SIGKILL)
 		if p.onKill != nil {
 			p.onKill()
 		}
