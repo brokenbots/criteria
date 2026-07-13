@@ -70,6 +70,11 @@ func autoPullCompileAdapters(ctx context.Context, workflowDir string, spec *work
 		}
 	}
 
+	// Also pull adapters declared in subworkflows, which have their own lockfiles.
+	if err := pullSubworkflowAdapters(ctx, workflowDir, spec, layout, puller, &policy); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -324,6 +329,46 @@ func artifactPlatforms(artFS fs.FS) []string {
 	return out
 }
 
+// pullSubworkflowAdapters recursively processes subworkflows declared in spec
+// and ensures their OCI adapter binaries are extracted. Each subworkflow has
+// its own lockfile; this is necessary because autoPullCompileAdapters only
+// sees the top-level spec's adapters.
+func pullSubworkflowAdapters(ctx context.Context, workflowDir string, spec *workflow.Spec, layout *oci.Layout, puller *oci.Puller, policy *signing.Policy) error {
+	for _, swSpec := range spec.Subworkflows {
+		subDir := resolveSubworkflowSourceDir(workflowDir, swSpec.Source)
+		subLF, err := lockfile.ReadFromDir(subDir)
+		if err != nil || subLF == nil {
+			continue // no lockfile means no OCI adapters in this subworkflow
+		}
+		for i := range subLF.Adapters {
+			entry := &subLF.Adapters[i]
+			wa := &workflowAdapter{Type: entry.Type, Name: entry.Name, Source: entry.Reference}
+			key := entry.Type + "." + entry.Name
+			if err := ensureAdapterCached(ctx, key, wa, subLF, layout, puller, policy); err != nil {
+				return fmt.Errorf("subworkflow %q adapter %s: %w", swSpec.Name, key, err)
+			}
+		}
+		// Recurse: this subworkflow may itself declare subworkflows.
+		subSpec, diags := workflow.ParseDir(subDir)
+		if diags.HasErrors() || subSpec == nil {
+			continue
+		}
+		if err := pullSubworkflowAdapters(ctx, subDir, subSpec, layout, puller, policy); err != nil {
+			return fmt.Errorf("subworkflow %q: %w", swSpec.Name, err)
+		}
+	}
+	return nil
+}
+
+// resolveSubworkflowSourceDir resolves a subworkflow source path (relative or
+// absolute) against the caller's workflow directory.
+func resolveSubworkflowSourceDir(callerDir, source string) string {
+	if filepath.IsAbs(source) {
+		return source
+	}
+	return filepath.Join(callerDir, source)
+}
+
 // collectWorkflowAdapters reads the adapter declarations from the parsed spec.
 // The `source`/`version` attributes decode directly onto AdapterDeclSpec, so no
 // raw-HCL re-scan is needed. The returned map key is "type.name".
@@ -345,7 +390,7 @@ func listHCLFiles(dir string) ([]string, error) {
 	}
 	out := make([]string, 0, len(entries))
 	for _, e := range entries {
-		if e.IsDir() || !hasSuffix(e.Name(), ".hcl") {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".hcl") {
 			continue
 		}
 		// The lockfile ends in .hcl but is not a workflow source file.
@@ -355,8 +400,4 @@ func listHCLFiles(dir string) ([]string, error) {
 		out = append(out, filepath.Join(dir, e.Name()))
 	}
 	return out, nil
-}
-
-func hasSuffix(s, suffix string) bool {
-	return len(s) >= len(suffix) && s[len(s)-len(suffix):] == suffix
 }

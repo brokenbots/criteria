@@ -479,3 +479,92 @@ state "done" {
 		t.Errorf("adapter B: expected 0 closes (never opened), got %d", bCloses)
 	}
 }
+
+// configCapturingAdapter records the config map passed to OpenSession.
+type configCapturingAdapter struct {
+	fakeAdapter
+	mu             sync.Mutex
+	capturedConfig map[string]string
+}
+
+func (p *configCapturingAdapter) OpenSession(_ context.Context, _ string, config, _ map[string]string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.capturedConfig = make(map[string]string, len(config))
+	for k, v := range config {
+		p.capturedConfig[k] = v
+	}
+	return nil
+}
+
+// TestInitScopeAdapters_RuntimeConfigFromVar verifies that var.* references in
+// adapter config blocks resolve to actual runtime values — not the compile-time
+// defaults — when initScopeAdapters is called with runtime-overridden vars.
+func TestInitScopeAdapters_RuntimeConfigFromVar(t *testing.T) {
+	// Compile a workflow where the adapter config references var.model.
+	// The variable default is "compile-default"; we override it at runtime to
+	// "runtime-model" and assert the adapter's OpenSession receives the latter.
+	g := compile(t, `
+workflow {
+  name          = "test"
+  version       = "0.1"
+  initial_state = "step1"
+  target_state  = "done"
+}
+
+variable "model" {
+  type    = string
+  default = "compile-default"
+}
+
+adapter "noop" "default" {
+  config {
+    model = var.model
+  }
+}
+
+step "step1" {
+  target = adapter.noop.default
+  outcome "success" { next = step.done }
+}
+
+state "done" {
+  terminal = true
+  success  = true
+}`)
+
+	// Sanity-check: the compile-folded Config should reflect the variable default.
+	adapterNode := g.Adapters["noop.default"]
+	if adapterNode == nil {
+		t.Fatal("adapter 'noop.default' not found in compiled graph")
+	}
+	if adapterNode.Config["model"] != "compile-default" {
+		t.Errorf("compile-time config[model] = %q, want %q", adapterNode.Config["model"], "compile-default")
+	}
+
+	capturer := &configCapturingAdapter{
+		fakeAdapter: fakeAdapter{name: "noop", outcome: "success"},
+	}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{
+		"noop": capturer,
+	}}
+
+	sink := &fakeSink{}
+	// Use WithVarOverrides to supply the runtime value of var.model.
+	eng := New(g, loader, sink, WithVarOverrides(map[string]string{"model": "runtime-model"}))
+	if err := eng.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	capturer.mu.Lock()
+	gotConfig := capturer.capturedConfig
+	capturer.mu.Unlock()
+
+	if gotConfig == nil {
+		t.Fatal("OpenSession was not called on the config-capturing adapter")
+	}
+	got := gotConfig["model"]
+	if got != "runtime-model" {
+		t.Errorf("adapter config[model] = %q, want %q (runtime var resolution failed)", got, "runtime-model")
+	}
+}

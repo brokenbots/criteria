@@ -19,7 +19,7 @@ import (
 // an event is emitted, and the error is returned.
 // Returns the ordered slice of provisioned adapter IDs (for correct LIFO teardown)
 // and an error if any adapter failed to initialize.
-func initScopeAdapters(ctx context.Context, g *workflow.FSMGraph, deps Deps, vars map[string]cty.Value) (order []string, err error) {
+func initScopeAdapters(ctx context.Context, g *workflow.FSMGraph, deps Deps, vars map[string]cty.Value, workflowDir string) (order []string, err error) {
 	if len(g.Adapters) == 0 {
 		return nil, nil
 	}
@@ -30,33 +30,15 @@ func initScopeAdapters(ctx context.Context, g *workflow.FSMGraph, deps Deps, var
 	for _, instanceID := range g.AdapterOrder {
 		adapter := g.Adapters[instanceID]
 
-		// Resolve adapter secrets (WS13).
-		var secretMap map[string]string
-		if len(adapter.Secrets) > 0 {
-			secretMap, err = resolveAdapterSecrets(ctx, g, adapter, vars, deps.Sessions.RedactionRegistry)
-			if err != nil {
-				deps.Sink.OnAdapterLifecycle("", instanceID, "init_failed", err.Error())
-				return nil, fmt.Errorf("initialize adapter %q: %w", instanceID, err)
-			}
+		// Prepare the adapter inputs (secrets, origin refs, working dir, runtime
+		// config). A prepare error means the adapter was never opened, so we emit
+		// init_failed and return without rolling back already-provisioned peers.
+		config, secretMap, originRefs, workingDir, perr := prepareScopeAdapter(ctx, g, instanceID, adapter, vars, workflowDir, deps)
+		if perr != nil {
+			return nil, perr
 		}
 
-		originRefs, err := buildOriginRefs(adapter, vars)
-		if err != nil {
-			deps.Sink.OnAdapterLifecycle("", instanceID, "init_failed", err.Error())
-			return nil, fmt.Errorf("initialize adapter %q: %w", instanceID, err)
-		}
-
-		// Resolve the bound environment's working_directory against the runtime
-		// closure now, at adapter init, so the cwd can be dynamic (e.g.
-		// var.worktree supplied via --var). The resolved value becomes the
-		// adapter process launch cwd.
-		workingDir, err := resolveAdapterWorkingDir(g, adapter, vars)
-		if err != nil {
-			deps.Sink.OnAdapterLifecycle("", instanceID, "init_failed", err.Error())
-			return nil, fmt.Errorf("initialize adapter %q: resolve working_directory: %w", instanceID, err)
-		}
-
-		openErr := deps.Sessions.OpenWithOriginRefs(ctx, instanceID, adapter.Type, adapter.OnCrash, adapter.Config, secretMap, originRefs, workingDir)
+		openErr := deps.Sessions.OpenWithOriginRefs(ctx, instanceID, adapter.Type, adapter.OnCrash, config, secretMap, originRefs, workingDir)
 
 		// Silently swallow ErrSessionAlreadyOpen to support subworkflow bodies that
 		// re-declare parent adapters for safety through re-declaration. Same-scope
@@ -67,10 +49,8 @@ func initScopeAdapters(ctx context.Context, g *workflow.FSMGraph, deps Deps, var
 		if openErr != nil && !errors.Is(openErr, adapterhost.ErrSessionAlreadyOpen) {
 			// Rollback: tear down all successfully provisioned adapters in reverse order
 			for i := len(provisioned) - 1; i >= 0; i-- {
-				adapterID := provisioned[i]
-				_ = deps.Sessions.Close(ctx, adapterID) // ignore teardown errors during rollback
+				_ = deps.Sessions.Close(ctx, provisioned[i]) // ignore teardown errors during rollback
 			}
-			// Emit lifecycle event for the failure
 			deps.Sink.OnAdapterLifecycle("", instanceID, "init_failed", openErr.Error())
 			return nil, fmt.Errorf("initialize adapter %q: %w", instanceID, openErr)
 		}
@@ -78,13 +58,67 @@ func initScopeAdapters(ctx context.Context, g *workflow.FSMGraph, deps Deps, var
 		// This prevents tearing down adapters that belong to a parent scope
 		if openErr == nil {
 			provisioned = append(provisioned, instanceID)
-
-			// Emit lifecycle event for successful provisioning
 			deps.Sink.OnAdapterLifecycle("", instanceID, "opened", "")
 		}
 	}
 
 	return provisioned, nil
+}
+
+// prepareScopeAdapter resolves everything an adapter needs before it is opened:
+// secrets, origin refs, the bound environment's working directory, and the
+// runtime-evaluated config. On any failure it emits an init_failed lifecycle
+// event and returns a wrapped error; the caller must return that error without
+// rolling back already-provisioned adapters (the adapter was never opened).
+func prepareScopeAdapter(
+	ctx context.Context,
+	g *workflow.FSMGraph,
+	instanceID string,
+	adapter *workflow.AdapterNode,
+	vars map[string]cty.Value,
+	workflowDir string,
+	deps Deps,
+) (config, secretMap map[string]string, originRefs map[string]secrets.OriginRef, workingDir string, err error) {
+	// Resolve adapter secrets (WS13).
+	if len(adapter.Secrets) > 0 {
+		secretMap, err = resolveAdapterSecrets(ctx, g, adapter, vars, deps.Sessions.RedactionRegistry)
+		if err != nil {
+			deps.Sink.OnAdapterLifecycle("", instanceID, "init_failed", err.Error())
+			return nil, nil, nil, "", fmt.Errorf("initialize adapter %q: %w", instanceID, err)
+		}
+	}
+
+	originRefs, err = buildOriginRefs(adapter, vars)
+	if err != nil {
+		deps.Sink.OnAdapterLifecycle("", instanceID, "init_failed", err.Error())
+		return nil, nil, nil, "", fmt.Errorf("initialize adapter %q: %w", instanceID, err)
+	}
+
+	// Resolve the bound environment's working_directory against the runtime
+	// closure now, at adapter init, so the cwd can be dynamic (e.g.
+	// var.worktree supplied via --var). The resolved value becomes the
+	// adapter process launch cwd.
+	workingDir, err = resolveAdapterWorkingDir(g, adapter, vars)
+	if err != nil {
+		deps.Sink.OnAdapterLifecycle("", instanceID, "init_failed", err.Error())
+		return nil, nil, nil, "", fmt.Errorf("initialize adapter %q: resolve working_directory: %w", instanceID, err)
+	}
+
+	// Re-evaluate adapter config against runtime vars so that var.* references
+	// in config blocks resolve to actual runtime values, not compile-time defaults.
+	config = adapter.Config
+	if len(adapter.ConfigExprs) > 0 {
+		runtimeConfig, evalErr := workflow.ResolveInputExprsWithOpts(
+			adapter.ConfigExprs, vars, workflow.DefaultFunctionOptions(workflowDir),
+		)
+		if evalErr != nil {
+			deps.Sink.OnAdapterLifecycle("", instanceID, "init_failed", evalErr.Error())
+			return nil, nil, nil, "", fmt.Errorf("initialize adapter %q: evaluate config: %w", instanceID, evalErr)
+		}
+		config = runtimeConfig
+	}
+
+	return config, secretMap, originRefs, workingDir, nil
 }
 
 // resolveAdapterWorkingDir resolves the working_directory of the environment

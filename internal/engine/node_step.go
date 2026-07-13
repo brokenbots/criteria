@@ -567,6 +567,24 @@ func (n *stepNode) evaluateSubworkflowStep(ctx context.Context, st *RunState, de
 		outcome = "failure"
 	}
 
+	// Mirror the adapter iteration path: set LastOutcome so routeIteratingStep
+	// can read it, then skip applyOutcome for per-iteration routing. The
+	// aggregate outcome ("all_succeeded"/"any_failed") fires via
+	// finishIterationInGraph once all iterations complete.
+	st.LastOutcome = outcome
+	if cur := st.TopCursor(); cur != nil && cur.StepName == n.step.Name {
+		if len(outputs) > 0 {
+			st.Vars = workflow.WithIndexedStepOutput(st.Vars, n.step.Name, iterOutputKey(cur), outputs)
+			cur.Prev = ctyMapToObject(outputs)
+		}
+		deps.Sink.OnStepOutputCaptured(n.step.Name, workflow.RenderOutputs(outputs))
+		deps.Sink.OnStepTransition(n.step.Name, outcome, outcome)
+		if err := n.applyIterationDataWrites(outcome, outputs, st, deps.Sink); err != nil {
+			return "", err
+		}
+		return outcome, nil
+	}
+
 	// Subworkflow outputs are already typed cty values; pass them through to
 	// applyOutcome both as the step's raw outputs (stored under steps.<name>.*
 	// with their native types) and as swOutputs so outcome.output expressions can
