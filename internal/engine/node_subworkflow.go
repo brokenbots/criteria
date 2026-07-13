@@ -179,16 +179,18 @@ func mergeLockfiles(base, overlay *lockfile.Lockfile) *lockfile.Lockfile {
 	}
 	// Index overlay entries by "type.name" for O(1) lookup.
 	overKeys := make(map[string]bool, len(overlay.Adapters))
-	for _, a := range overlay.Adapters {
+	for i := range overlay.Adapters {
+		a := &overlay.Adapters[i]
 		overKeys[a.Type+"."+a.Name] = true
 	}
 	merged := &lockfile.Lockfile{
 		SchemaVersion: base.SchemaVersion,
 		Adapters:      make([]lockfile.LockedAdapter, 0, len(base.Adapters)+len(overlay.Adapters)),
 	}
-	for _, a := range base.Adapters {
+	for i := range base.Adapters {
+		a := &base.Adapters[i]
 		if !overKeys[a.Type+"."+a.Name] {
-			merged.Adapters = append(merged.Adapters, a)
+			merged.Adapters = append(merged.Adapters, *a)
 		}
 	}
 	merged.Adapters = append(merged.Adapters, overlay.Adapters...)

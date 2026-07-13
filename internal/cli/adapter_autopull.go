@@ -390,7 +390,7 @@ func listHCLFiles(dir string) ([]string, error) {
 	}
 	out := make([]string, 0, len(entries))
 	for _, e := range entries {
-		if e.IsDir() || !hasSuffix(e.Name(), ".hcl") {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".hcl") {
 			continue
 		}
 		// The lockfile ends in .hcl but is not a workflow source file.
@@ -400,8 +400,4 @@ func listHCLFiles(dir string) ([]string, error) {
 		out = append(out, filepath.Join(dir, e.Name()))
 	}
 	return out, nil
-}
-
-func hasSuffix(s, suffix string) bool {
-	return len(s) >= len(suffix) && s[len(s)-len(suffix):] == suffix
 }
