@@ -132,6 +132,56 @@ func (s *varEventSink) OnVariableSet(name, value, source string) {
 // TestVarOverrides_EmitsConvertedValueAndRedactsSecrets verifies that
 // OnVariableSet emits the converted run-scope value (not the raw override) and
 // that secret variables are reported as (sensitive).
+// TestVarOverrides_SecretParseErrorRedactsRawValue verifies that a parse error
+// for a secret complex-typed variable does not echo the raw override value.
+func TestVarOverrides_SecretParseErrorRedactsRawValue(t *testing.T) {
+	g := compile(t, `
+workflow {
+  name = "seam"
+  version       = "0.1"
+  initial_state = "pause"
+  target_state  = "done"
+}
+
+variable "creds" {
+  type = object({ user = string, pass = string })
+  secret = true
+}
+
+wait "pause" {
+  signal = "resume"
+  outcome "resumed" { next = step.done }
+}
+
+state "done" {
+  terminal = true
+  success  = true
+}
+`)
+
+	sink := &fakeSink{}
+	overrides := map[string]cty.Value{
+		"creds": cty.StringVal(`{user="a",pass="hunter2"`),
+	}
+	eng := NewTestEngine(g, &fakeLoader{}, sink, WithVarOverrides(overrides))
+
+	err := eng.Run(context.Background())
+	if err == nil {
+		t.Fatal("expected error for malformed secret override")
+	}
+
+	msg := err.Error()
+	if !strings.Contains(msg, `"creds"`) {
+		t.Errorf("error = %q, want it to name variable creds", msg)
+	}
+	if strings.Contains(msg, "hunter2") {
+		t.Errorf("error leaked raw secret value: %q", msg)
+	}
+	if !strings.Contains(msg, "(value withheld)") {
+		t.Errorf("error = %q, want masked secret parse error", msg)
+	}
+}
+
 func TestVarOverrides_EmitsConvertedValueAndRedactsSecrets(t *testing.T) {
 	g := compile(t, `
 workflow {

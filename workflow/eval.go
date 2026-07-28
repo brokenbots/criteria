@@ -341,6 +341,9 @@ func ParseAndConvertVarOverride(val cty.Value, node *VariableNode) (cty.Value, e
 	if val.IsKnown() && !val.IsNull() && val.Type() == cty.String {
 		parsed, err := parseOverrideString(val.AsString(), node.Type)
 		if err != nil {
+			if node.Secret {
+				return cty.NilVal, fmt.Errorf("invalid value for secret variable (value withheld); expected %s", node.Type.FriendlyName())
+			}
 			return cty.NilVal, err
 		}
 		val = parsed
