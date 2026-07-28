@@ -69,13 +69,13 @@ func renderPlanOutput(ctx context.Context, workflowPath string, overrides map[st
 				if v.Secret {
 					displayVal = "(sensitive)"
 				} else {
-					displayVal = workflow.CtyValueToString(ov)
+					displayVal = workflow.CtyValueForDisplay(ov)
 				}
 			} else if v.Default != cty.NilVal {
 				if v.Secret {
 					displayVal = "(sensitive)"
 				} else {
-					displayVal = workflow.CtyValueToString(v.Default)
+					displayVal = workflow.CtyValueForDisplay(v.Default)
 				}
 			}
 			b.WriteString(fmt.Sprintf("  %s: %s = %s%s\n", name, typeName, displayVal, suffix))

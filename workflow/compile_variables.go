@@ -58,7 +58,7 @@ func resolveVariableType(vs VariableSpec) (cty.Type, *typeexpr.Defaults, hcl.Dia
 	if isAbsentExpr(vs.Type) {
 		return cty.String, nil, nil
 	}
-	return ResolveTypeConstraint(vs.Type)
+	return resolveTypeConstraint(vs.Type)
 }
 
 // resolveVariableDefault extracts and coerces the optional default value from

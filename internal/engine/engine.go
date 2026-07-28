@@ -610,8 +610,9 @@ func finishIterationInGraph(st *RunState, stepName string, graph *workflow.FSMGr
 	return co.Next, nil
 }
 
-// returns the restored scope unchanged. For fresh runs it seeds from graph
-// defaults, applies any CLI overrides, and emits OnVariableSet events.
+// seedRunVars returns the restored scope unchanged for resumed runs. For fresh
+// runs it seeds from graph defaults, applies any CLI overrides, and emits
+// OnVariableSet events.
 func (e *Engine) seedRunVars(sink Sink) (map[string]cty.Value, error) {
 	if e.resumedVars != nil {
 		return e.seedResumedVars(), nil
@@ -658,23 +659,22 @@ func (e *Engine) emitVarSetEvents(vars map[string]cty.Value, sink Sink) {
 		}
 		// Read the value back from the run scope so the event matches what
 		// downstream expressions actually observe.
-		val := e.varValueFromScope(varObj, name, source, node)
+		val := e.varValueFromScope(varObj, name, node)
 		display := "(sensitive)"
 		if !node.Secret {
-			display = workflow.CtyValueToString(val)
+			display = workflow.CtyValueForDisplay(val)
 		}
 		sink.OnVariableSet(name, display, source)
 	}
 }
 
-func (e *Engine) varValueFromScope(varObj cty.Value, name, source string, node *workflow.VariableNode) cty.Value {
+func (e *Engine) varValueFromScope(varObj cty.Value, name string, node *workflow.VariableNode) cty.Value {
 	if varObj != cty.NilVal && varObj.Type().IsObjectType() && varObj.Type().HasAttribute(name) {
 		return varObj.GetAttr(name)
 	}
-	// Fallback should never happen, but keeps the event useful if it does.
-	if source == "override" {
-		return e.varOverrides[name]
-	}
+	// By the time emitVarSetEvents runs, SeedVarsFromGraph/ApplyVarOverrides
+	// have guaranteed that every declared variable exists as an attribute in
+	// vars["var"], so this fallback is defensive.
 	return node.Default
 }
 

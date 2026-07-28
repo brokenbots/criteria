@@ -94,3 +94,47 @@ variable "region" {
 		t.Errorf("plan output did not render non-secret override; got:\n%s", out)
 	}
 }
+
+// TestPlanOutput_ComplexTypesRenderAsJSON verifies that map and object variable
+// overrides/defaults render as compact JSON in plan output instead of cty Go
+// debug syntax.
+func TestPlanOutput_ComplexTypesRenderAsJSON(t *testing.T) {
+	path := writeWorkflowFile(t, `
+workflow {
+  name          = "complex-plan-test"
+  version       = "0.0.1"
+  initial_state = "start"
+  target_state  = "start"
+}
+
+state "start" {
+  terminal = true
+  success  = true
+}
+
+variable "labels" {
+  type = map(string)
+  default = { env = "dev" }
+}
+
+variable "cfg" {
+  type = object({ env = string })
+}
+`)
+
+	overrides := map[string]cty.Value{
+		"cfg": cty.ObjectVal(map[string]cty.Value{"env": cty.StringVal("prod")}),
+	}
+
+	out, err := renderPlanOutput(context.Background(), path, overrides)
+	if err != nil {
+		t.Fatalf("renderPlanOutput: %v", err)
+	}
+
+	if !strings.Contains(out, `labels: map of string = {"env":"dev"}`) {
+		t.Errorf("plan output did not render map default as JSON; got:\n%s", out)
+	}
+	if !strings.Contains(out, `cfg: object = {"env":"prod"}  (override)`) {
+		t.Errorf("plan output did not render object override as JSON; got:\n%s", out)
+	}
+}

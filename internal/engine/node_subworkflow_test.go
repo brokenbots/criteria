@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/hashicorp/hcl/v2"
+	"github.com/hashicorp/hcl/v2/ext/typeexpr"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/zclconf/go-cty/cty"
 
@@ -270,11 +271,11 @@ func TestRunSubworkflow_ObjectOptionalDefaultsApplied(t *testing.T) {
 		OutputOrder: []string{"cfg"},
 	}
 
-	// Build real type defaults for optional({a=string, b=optional(string,"x")}).
+	// Build real type defaults for object({a=string, b=optional(string,"x")}).
 	expr := parseExpr(t, `object({ a = string, b = optional(string, "x") })`)
-	typ, defs, diags := workflow.ResolveTypeConstraint(expr)
-	if diags.HasErrors() {
-		t.Fatalf("resolve type: %s", diags.Error())
+	typ, defs, typeDiags := typeexpr.TypeConstraintWithDefaults(expr)
+	if typeDiags.HasErrors() {
+		t.Fatalf("resolve type: %s", typeDiags.Error())
 	}
 	body.Variables["cfg"].Type = typ
 	body.Variables["cfg"].TypeDefaults = defs

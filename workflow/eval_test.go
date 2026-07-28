@@ -56,6 +56,32 @@ func TestCtyValueToString(t *testing.T) {
 	}
 }
 
+func TestCtyValueForDisplay(t *testing.T) {
+	cases := []struct {
+		val  cty.Value
+		want string
+	}{
+		{cty.StringVal("hello"), "hello"},
+		{cty.NumberIntVal(42), "42"},
+		{cty.NumberFloatVal(1.5), "1.5"},
+		{cty.True, "true"},
+		{cty.False, "false"},
+		{cty.NilVal, ""},
+		{cty.NullVal(cty.String), ""},
+		{cty.UnknownVal(cty.String), ""},
+		{cty.ListVal([]cty.Value{cty.StringVal("a"), cty.StringVal("b")}), `[a,b]`},
+		{cty.MapVal(map[string]cty.Value{"env": cty.StringVal("prod")}), `{"env":"prod"}`},
+		{cty.ObjectVal(map[string]cty.Value{"env": cty.StringVal("prod")}), `{"env":"prod"}`},
+		{cty.SetVal([]cty.Value{cty.StringVal("a"), cty.StringVal("b")}), `["a","b"]`},
+	}
+	for _, tc := range cases {
+		got := CtyValueForDisplay(tc.val)
+		if got != tc.want {
+			t.Errorf("CtyValueForDisplay(%v) = %q, want %q", tc.val, got, tc.want)
+		}
+	}
+}
+
 func TestSeedVarsFromGraph_Defaults(t *testing.T) {
 	g := &FSMGraph{
 		Variables: map[string]*VariableNode{
@@ -684,11 +710,43 @@ func TestParseAndConvertVarOverride_NullAndUnknownStringReturnsError(t *testing.
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := ParseAndConvertVarOverride(tc.val, node)
+			_, err := parseAndConvertVarOverride(tc.val, node)
 			if err == nil {
 				t.Fatal("expected error for null/unknown string override")
 			}
 		})
+	}
+}
+
+// TestApplyVarOverrides_SecretConversionErrorRedactsRawValue verifies that a
+// secret variable whose value parses but fails conversion is reported without
+// echoing the supplied text.
+func TestApplyVarOverrides_SecretConversionErrorRedactsRawValue(t *testing.T) {
+	g := &FSMGraph{
+		Variables: map[string]*VariableNode{
+			"creds": {
+				Name:   "creds",
+				Type:   cty.Object(map[string]cty.Type{"user": cty.String, "pass": cty.String}),
+				Secret: true,
+			},
+		},
+	}
+
+	_, err := ApplyVarOverrides(g, SeedVarsFromGraph(g), map[string]cty.Value{
+		"creds": cty.StringVal(`{user = "a"}`),
+	})
+	if err == nil {
+		t.Fatal("expected error for secret conversion failure")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, `"creds"`) {
+		t.Errorf("error = %q, want it to name variable creds", msg)
+	}
+	if strings.Contains(msg, `user = "a"`) {
+		t.Errorf("error leaked raw secret value: %q", msg)
+	}
+	if !strings.Contains(msg, "(sensitive)") {
+		t.Errorf("error = %q, want masked secret conversion error", msg)
 	}
 }
 

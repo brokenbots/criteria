@@ -227,16 +227,72 @@ state "done" {
 		byName[e.name] = e.value
 	}
 
-	// The converted list value renders via CtyValueToString as comma-joined text.
+	// The converted list value renders as compact JSON so non-scalar values are
+	// readable in the event stream.
 	if got, ok := byName["tags"]; !ok {
 		t.Error("no OnVariableSet event for tags")
-	} else if got != "a,b" {
-		t.Errorf("tags event value = %q, want a,b", got)
+	} else if got != `[a,b]` {
+		t.Errorf("tags event value = %q, want [a,b]", got)
 	}
 
 	if got, ok := byName["token"]; !ok {
 		t.Error("no OnVariableSet event for token")
 	} else if got != "(sensitive)" {
 		t.Errorf("secret token event value = %q, want (sensitive)", got)
+	}
+}
+
+// TestVarOverrides_DisplayComplexValuesInEvents verifies that map and object
+// variable overrides render as compact JSON in OnVariableSet events rather than
+// cty Go debug syntax.
+func TestVarOverrides_DisplayComplexValuesInEvents(t *testing.T) {
+	g := compile(t, `
+workflow {
+  name = "seam"
+  version       = "0.1"
+  initial_state = "pause"
+  target_state  = "done"
+}
+
+variable "labels" { type = map(string) }
+variable "cfg"    { type = object({ env = string }) }
+
+wait "pause" {
+  signal = "resume"
+  outcome "resumed" { next = step.done }
+}
+
+state "done" {
+  terminal = true
+  success  = true
+}
+`)
+
+	sink := &varEventSink{}
+	overrides := map[string]cty.Value{
+		"labels": cty.StringVal(`{env="prod",tier="web"}`),
+		"cfg":    cty.StringVal(`{env="prod"}`),
+	}
+	eng := NewTestEngine(g, &fakeLoader{}, sink, WithVarOverrides(overrides))
+
+	if err := eng.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	byName := make(map[string]string, len(sink.events))
+	for _, e := range sink.events {
+		byName[e.name] = e.value
+	}
+
+	if got, ok := byName["labels"]; !ok {
+		t.Error("no OnVariableSet event for labels")
+	} else if got != `{"env":"prod","tier":"web"}` {
+		t.Errorf("labels event value = %q, want compact JSON", got)
+	}
+
+	if got, ok := byName["cfg"]; !ok {
+		t.Error("no OnVariableSet event for cfg")
+	} else if got != `{"env":"prod"}` {
+		t.Errorf("cfg event value = %q, want compact JSON", got)
 	}
 }
