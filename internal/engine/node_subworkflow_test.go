@@ -314,6 +314,124 @@ func TestRunSubworkflow_ObjectOptionalDefaultsApplied(t *testing.T) {
 	}
 }
 
+// TestRunSubworkflow_NullInputFallsBackToDefault verifies that a null parent
+// binding for a child variable that has a declared default leaves the child
+// with that default.
+func TestRunSubworkflow_NullInputFallsBackToDefault(t *testing.T) {
+	body := &workflow.FSMGraph{
+		InitialState: "done",
+		States:       map[string]*workflow.StateNode{"done": {Name: "done", Terminal: true, Success: true}},
+		Variables: map[string]*workflow.VariableNode{
+			"greeting": {
+				Name:    "greeting",
+				Type:    cty.String,
+				Default: cty.StringVal("hello"),
+			},
+		},
+		Outputs: map[string]*workflow.OutputNode{
+			"result": {Name: "result", Value: traversalExpr("var", "greeting")},
+		},
+		OutputOrder: []string{"result"},
+	}
+	node := &workflow.SubworkflowNode{
+		Name:      "null-default",
+		Body:      body,
+		BodyEntry: "done",
+		Inputs: map[string]hcl.Expression{
+			"greeting": &hclsyntax.LiteralValueExpr{Val: cty.NullVal(cty.String)},
+		},
+		DeclaredVars: map[string]*workflow.VariableNode{
+			"greeting": {Name: "greeting", Type: cty.String, Default: cty.StringVal("hello")},
+		},
+	}
+	parentSt := &RunState{
+		Vars:        map[string]cty.Value{"var": cty.EmptyObjectVal},
+		WorkflowDir: t.TempDir(),
+	}
+
+	outputs, _, err := runSubworkflow(context.Background(), node, parentSt, nil, testDeps(t))
+	if err != nil {
+		t.Fatalf("runSubworkflow: %v", err)
+	}
+	got := outputs["result"]
+	if got.AsString() != "hello" {
+		t.Errorf("output 'result': want %q, got %q", "hello", got.AsString())
+	}
+}
+
+// TestRunSubworkflow_NullRequiredInputReportsMissing verifies that a null parent
+// binding for a required child variable is caught by checkRequiredVars and
+// reported as a missing required input, not as a conversion error.
+func TestRunSubworkflow_NullRequiredInputReportsMissing(t *testing.T) {
+	body := &workflow.FSMGraph{
+		InitialState: "done",
+		States:       map[string]*workflow.StateNode{"done": {Name: "done", Terminal: true, Success: true}},
+		Variables: map[string]*workflow.VariableNode{
+			"greeting": {Name: "greeting", Type: cty.String},
+		},
+	}
+	node := &workflow.SubworkflowNode{
+		Name:      "null-required",
+		Body:      body,
+		BodyEntry: "done",
+		Inputs: map[string]hcl.Expression{
+			"greeting": &hclsyntax.LiteralValueExpr{Val: cty.NullVal(cty.String)},
+		},
+		DeclaredVars: map[string]*workflow.VariableNode{
+			"greeting": {Name: "greeting", Type: cty.String},
+		},
+	}
+	parentSt := &RunState{
+		Vars:        map[string]cty.Value{"var": cty.EmptyObjectVal},
+		WorkflowDir: t.TempDir(),
+	}
+
+	_, _, err := runSubworkflow(context.Background(), node, parentSt, nil, testDeps(t))
+	if err == nil {
+		t.Fatal("expected error for null required input")
+	}
+	if !strings.Contains(err.Error(), "required input(s): greeting") {
+		t.Errorf("error = %q, want required input(s): greeting", err.Error())
+	}
+}
+
+// TestRunSubworkflow_StringBindingToNumberRejectsGarbage verifies that a string
+// parent binding passed to a child number variable is converted strictly (via
+// convert.Convert) and rejects trailing garbage instead of the lenient Sscanf
+// used for raw CLI values.
+func TestRunSubworkflow_StringBindingToNumberRejectsGarbage(t *testing.T) {
+	body := &workflow.FSMGraph{
+		InitialState: "done",
+		States:       map[string]*workflow.StateNode{"done": {Name: "done", Terminal: true, Success: true}},
+		Variables: map[string]*workflow.VariableNode{
+			"retries": {Name: "retries", Type: cty.Number},
+		},
+	}
+	node := &workflow.SubworkflowNode{
+		Name:      "string-to-number",
+		Body:      body,
+		BodyEntry: "done",
+		Inputs: map[string]hcl.Expression{
+			"retries": &hclsyntax.LiteralValueExpr{Val: cty.StringVal("3abc")},
+		},
+		DeclaredVars: map[string]*workflow.VariableNode{
+			"retries": {Name: "retries", Type: cty.Number},
+		},
+	}
+	parentSt := &RunState{
+		Vars:        map[string]cty.Value{"var": cty.EmptyObjectVal},
+		WorkflowDir: t.TempDir(),
+	}
+
+	_, _, err := runSubworkflow(context.Background(), node, parentSt, nil, testDeps(t))
+	if err == nil {
+		t.Fatal("expected error for invalid number string")
+	}
+	if !strings.Contains(err.Error(), "subworkflow input \"retries\"") {
+		t.Errorf("error = %q, want it to name subworkflow input retries", err.Error())
+	}
+}
+
 // TestRunSubworkflow_EachThreadedToOutput verifies that each.* from the parent
 // scope is visible inside the subworkflow and can be captured via an output.
 func TestRunSubworkflow_EachThreadedToOutput(t *testing.T) {

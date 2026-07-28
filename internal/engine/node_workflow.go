@@ -80,13 +80,17 @@ func overrideVarsFromInput(vars map[string]cty.Value, body *workflow.FSMGraph, p
 }
 
 // checkRequiredVars returns an error if any required body variable (no default)
-// lacks a binding in parentInput. This is the runtime complement to the
-// compile-time check in compileWorkflowStep.
+// lacks a binding in parentInput, or if its binding is null. This is the
+// runtime complement to the compile-time check in compileWorkflowStep.
 func checkRequiredVars(body *workflow.FSMGraph, parentInput cty.Value) error {
 	hasInput := parentInput != cty.NilVal && parentInput.IsKnown() && !parentInput.IsNull() && parentInput.Type().IsObjectType()
 	var missing []string
 	for name, node := range body.Variables {
-		if node.IsRequired() && !(hasInput && parentInput.Type().HasAttribute(name)) {
+		if !node.IsRequired() {
+			continue
+		}
+		supplied := hasInput && parentInput.Type().HasAttribute(name) && !parentInput.GetAttr(name).IsNull()
+		if !supplied {
 			missing = append(missing, name)
 		}
 	}

@@ -668,10 +668,8 @@ func (e *Engine) emitVarSetEvents(vars map[string]cty.Value, sink Sink) {
 }
 
 func (e *Engine) varValueFromScope(varObj cty.Value, name, source string, node *workflow.VariableNode) cty.Value {
-	if varObj != cty.NilVal && varObj.Type().IsObjectType() {
-		if atys := varObj.Type().AttributeTypes(); atys[name] != cty.NilType {
-			return varObj.GetAttr(name)
-		}
+	if varObj != cty.NilVal && varObj.Type().IsObjectType() && varObj.Type().HasAttribute(name) {
+		return varObj.GetAttr(name)
 	}
 	// Fallback should never happen, but keeps the event useful if it does.
 	if source == "override" {

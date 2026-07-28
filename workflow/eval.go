@@ -292,9 +292,7 @@ func SeedDataSnapshot(vars, snap map[string]cty.Value) map[string]cty.Value {
 // ApplyVarOverrides merges CLI/file-supplied overrides into an existing vars
 // map produced by SeedVarsFromGraph. Only keys that match declared variables
 // are applied; unknown keys are silently ignored. Each override is converted
-// to the declared variable type (and optional object defaults are applied)
-// so that raw --var strings, typed var-file values, and subworkflow bindings
-// all arrive with the right shape.
+// to the declared variable type (and optional object defaults are applied).
 func ApplyVarOverrides(g *FSMGraph, vars, overrides map[string]cty.Value) (map[string]cty.Value, error) {
 	if len(overrides) == 0 {
 		return vars, nil
@@ -311,7 +309,7 @@ func ApplyVarOverrides(g *FSMGraph, vars, overrides map[string]cty.Value) (map[s
 		if !ok {
 			continue
 		}
-		converted, err := ConvertVarOverrideValue(val, node)
+		converted, err := ParseAndConvertVarOverride(val, node)
 		if err != nil {
 			return nil, fmt.Errorf("variable %q: %w", name, err)
 		}
@@ -330,12 +328,11 @@ func ApplyVarOverrides(g *FSMGraph, vars, overrides map[string]cty.Value) (map[s
 	return out, nil
 }
 
-// ConvertVarOverrideValue coerces an override value to a variable's declared
-// type. It accepts raw CLI strings (cty.String) and already-typed values from
-// var-files or subworkflow bindings. Optional object defaults are applied
-// before type conversion so that partially-specified object overrides receive
-// their declared defaults.
-func ConvertVarOverrideValue(val cty.Value, node *VariableNode) (cty.Value, error) {
+// ParseAndConvertVarOverride handles the raw-string CLI case: it parses the
+// override string according to the declared variable type (verbatim for string,
+// legacy scalar parsing for number/bool, HCL expression for everything else),
+// applies optional object defaults, then converts to the declared type.
+func ParseAndConvertVarOverride(val cty.Value, node *VariableNode) (cty.Value, error) {
 	if node.Type == cty.NilType {
 		return val, nil
 	}
@@ -354,6 +351,25 @@ func ConvertVarOverrideValue(val cty.Value, node *VariableNode) (cty.Value, erro
 			return cty.NilVal, err
 		}
 		val = parsed
+	}
+
+	return ConvertVarOverrideValue(val, node)
+}
+
+// ConvertVarOverrideValue coerces an already-typed override value to a
+// variable's declared type, applying optional object defaults before type
+// conversion so that partially-specified object overrides receive their
+// declared defaults. It is used by var-file values, subworkflow bindings, and
+// ParseAndConvertVarOverride after raw CLI parsing.
+func ConvertVarOverrideValue(val cty.Value, node *VariableNode) (cty.Value, error) {
+	if node.Type == cty.NilType {
+		return val, nil
+	}
+	if !val.IsKnown() {
+		return cty.NilVal, fmt.Errorf("override value is unknown")
+	}
+	if val.IsNull() {
+		return cty.NilVal, fmt.Errorf("override value is null")
 	}
 
 	// Apply object optional() defaults before conversion.
@@ -399,14 +415,14 @@ func parseOverrideString(raw string, want cty.Type) (cty.Value, error) {
 
 	expr, diags := hclsyntax.ParseExpression([]byte(raw), "<var>", hcl.Pos{Line: 1, Column: 1})
 	if diags.HasErrors() {
-		return cty.NilVal, fmt.Errorf("cannot parse --var value %q: %w", raw, diags)
+		return cty.NilVal, fmt.Errorf("cannot parse override value %q: %w", raw, diags)
 	}
 	parsed, diags := expr.Value(nil)
 	if diags.HasErrors() {
-		return cty.NilVal, fmt.Errorf("cannot parse --var value %q: %w", raw, diags)
+		return cty.NilVal, fmt.Errorf("cannot parse override value %q: %w", raw, diags)
 	}
 	if !parsed.IsKnown() {
-		return cty.NilVal, fmt.Errorf("cannot parse --var value %q: value is unknown", raw)
+		return cty.NilVal, fmt.Errorf("cannot parse override value %q: value is unknown", raw)
 	}
 	return parsed, nil
 }

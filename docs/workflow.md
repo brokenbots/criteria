@@ -1343,7 +1343,7 @@ A workflow path may be a single `.hcl`/`.chcl` file or a directory module. Run
 
 Variable overrides (on `plan` and `apply`):
 
-- **`--var key=value`** (repeatable): Override a single variable. The raw value is preserved until the workflow's declared variable type is known, so values supplied for `string` variables are taken verbatim (including JSON blobs, quoted text, and leading zeros). Values for complex-typed variables (`list`, `map`, `object`) are parsed as HCL expressions at conversion time.
+- **`--var key=value`** (repeatable): Override a single variable. The raw value is preserved until the workflow's declared variable type is known, so values supplied for `string` variables are taken verbatim (including JSON blobs, quoted text, and leading zeros). Values for complex-typed variables (`list`, `map`, `object`) are parsed as HCL expressions at conversion time. Number variables accept decimal/integer literals (`1`, `1.5`); bool variables accept only `true`, `false`, `1`, or `0`.
 - **`--var-file <path>`** (repeatable): Load overrides from a `.chcl`, `.hcl`, or `.json` file. Multiple files merge left-to-right; later files win. `--var` takes precedence over any `--var-file` entry.
 
 Examples:

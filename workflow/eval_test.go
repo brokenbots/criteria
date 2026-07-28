@@ -650,6 +650,22 @@ func TestApplyVarOverrides_ConversionError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for incompatible override")
 	}
+	if !strings.Contains(err.Error(), `"count"`) {
+		t.Errorf("error = %q, want it to name variable count", err.Error())
+	}
+}
+
+// TestConvertVarOverrideValue_StringBindingToNumberRejectsGarbage verifies that
+// an already-typed string value supplied to a number variable is converted
+// strictly by convert.Convert, not via the lenient Sscanf used for raw CLI
+// text. This is the path taken by subworkflow input bindings and var-file
+// values.
+func TestConvertVarOverrideValue_StringBindingToNumberRejectsGarbage(t *testing.T) {
+	node := &VariableNode{Name: "retries", Type: cty.Number}
+	_, err := ConvertVarOverrideValue(cty.StringVal("3abc"), node)
+	if err == nil {
+		t.Fatal("expected error for invalid number string")
+	}
 }
 
 // TestApplyVarOverrides_NumberToString verifies that a numeric override can be

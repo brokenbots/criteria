@@ -106,8 +106,9 @@ func parseJSONVarFile(path string) (map[string]cty.Value, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse JSON var-file %q: %w", path, err)
 	}
-	out := make(map[string]cty.Value, len(root.AsValueMap()))
-	for name, val := range root.AsValueMap() {
+	attrs := root.AsValueMap()
+	out := make(map[string]cty.Value, len(attrs))
+	for name, val := range attrs {
 		if val.IsNull() {
 			return nil, fmt.Errorf("JSON var-file %q: key %q has a null value", path, name)
 		}

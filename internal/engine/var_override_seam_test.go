@@ -180,9 +180,6 @@ state "done" {
 	// The converted list value renders via CtyValueToString as comma-joined text.
 	if got, ok := byName["tags"]; !ok {
 		t.Error("no OnVariableSet event for tags")
-	} else if got == `["a","b"]` || got == `"[\\"a\\",\\"b\\"]"` {
-		// If we see the raw CLI string, the event is pre-conversion.
-		t.Errorf("tags event value = %q, expected converted list representation", got)
 	} else if got != "a,b" {
 		t.Errorf("tags event value = %q, want a,b", got)
 	}
