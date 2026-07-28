@@ -6,10 +6,10 @@ import (
 	"github.com/zclconf/go-cty/cty"
 )
 
-// resolveTypeConstraint parses an HCL type expression that may contain optional
+// ResolveTypeConstraint parses an HCL type expression that may contain optional
 // attribute modifiers with default values (e.g. object({ a = optional(string, "hello") })).
 // Returns cty.String and nil defaults when expr is absent.
-func resolveTypeConstraint(expr hcl.Expression) (cty.Type, *typeexpr.Defaults, hcl.Diagnostics) {
+func ResolveTypeConstraint(expr hcl.Expression) (cty.Type, *typeexpr.Defaults, hcl.Diagnostics) {
 	if isAbsentExpr(expr) {
 		return cty.String, nil, nil
 	}

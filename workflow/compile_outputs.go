@@ -72,7 +72,7 @@ func compileOneOutput(g *FSMGraph, os OutputSpec, opts CompileOpts) hcl.Diagnost
 	declaredType := cty.NilType
 	var typeDefaults *typeexpr.Defaults
 	if !isAbsentExpr(os.Type) {
-		parsedType, defs, typeDiags := resolveTypeConstraint(os.Type)
+		parsedType, defs, typeDiags := ResolveTypeConstraint(os.Type)
 		if typeDiags.HasErrors() {
 			diags = append(diags, typeDiags...)
 			return diags

@@ -140,7 +140,7 @@ func compileDataType(kind, name string, typeExpr hcl.Expression) (cty.Type, *typ
 			Summary:  fmt.Sprintf("data %q %q: attribute \"type\" is required", kind, name),
 		}}
 	}
-	typ, defs, typeDiags := resolveTypeConstraint(typeExpr)
+	typ, defs, typeDiags := ResolveTypeConstraint(typeExpr)
 	if typeDiags.HasErrors() {
 		return cty.NilType, nil, typeDiags
 	}

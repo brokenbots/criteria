@@ -131,13 +131,16 @@ func TestParseVarOverrides(t *testing.T) {
 		{"nil input", nil, nil},
 		{"empty slice", []string{}, nil},
 		{"valid k=v", []string{"key=value"}, map[string]cty.Value{"key": cty.StringVal("value")}},
-		{"multiple", []string{"a=1", "b=2"}, map[string]cty.Value{"a": cty.NumberIntVal(1), "b": cty.NumberIntVal(2)}},
+		{"multiple", []string{"a=1", "b=2"}, map[string]cty.Value{"a": cty.StringVal("1"), "b": cty.StringVal("2")}},
 		{"value with equals", []string{"url=http://x=y"}, map[string]cty.Value{"url": cty.StringVal("http://x=y")}},
 		{"no equals skipped", []string{"noequals"}, map[string]cty.Value{}},
 		{"empty key skipped", []string{"=value"}, map[string]cty.Value{}},
-		{"mixed", []string{"a=1", "bad", "=skip", "c=3"}, map[string]cty.Value{"a": cty.NumberIntVal(1), "c": cty.NumberIntVal(3)}},
-		{"list literal", []string{"tags=[\"a\",\"b\"]"}, map[string]cty.Value{"tags": cty.TupleVal([]cty.Value{cty.StringVal("a"), cty.StringVal("b")})}},
-		{"map literal", []string{"cfg={a=1}"}, map[string]cty.Value{"cfg": cty.ObjectVal(map[string]cty.Value{"a": cty.NumberIntVal(1)})}},
+		{"mixed", []string{"a=1", "bad", "=skip", "c=3"}, map[string]cty.Value{"a": cty.StringVal("1"), "c": cty.StringVal("3")}},
+		{"list literal kept as raw string", []string{"tags=[\"a\",\"b\"]"}, map[string]cty.Value{"tags": cty.StringVal("[\"a\",\"b\"]")}},
+		{"map literal kept as raw string", []string{"cfg={a=1}"}, map[string]cty.Value{"cfg": cty.StringVal("{a=1}")}},
+		{"json blob kept verbatim", []string{"payload={\"a\":1}"}, map[string]cty.Value{"payload": cty.StringVal("{\"a\":1}")}},
+		{"quoted string kept verbatim", []string{"name=\"quoted\""}, map[string]cty.Value{"name": cty.StringVal("\"quoted\"")}},
+		{"leading zeros kept verbatim", []string{"id=007"}, map[string]cty.Value{"id": cty.StringVal("007")}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

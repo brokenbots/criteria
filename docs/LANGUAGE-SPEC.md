@@ -309,7 +309,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 **`workflow`** — Exactly one per module. `version` must be `"1"`. `initial_state` names the starting state; defaults to the first declared state if absent. `target_state` names the expected terminal success state used by `make validate`.
 
-**`variable`** — Compile-time typed inputs. Type must be one of `string`, `bool`, `number`, `list(string)`, `list(number)`, `list(bool)`, or `map(string)`. A `default` expression may follow the declared attributes; absence makes the variable required (supply via `--var`/`--var-file`).
+**`variable`** — Compile-time typed inputs. Type may be any HCL type expression that the compiler resolves, including `string`, `bool`, `number`, `list(...)`, `map(...)`, and `object({...})` with `optional(<type>, <default>)` attributes. A `default` expression may follow the declared attributes; absence makes the variable required (supply via `--var`/`--var-file`).
 
 **`local`** — Compile-time constant. Evaluate a single `value` expression; the result is frozen for the run. No side effects.
 

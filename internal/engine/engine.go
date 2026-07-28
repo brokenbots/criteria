@@ -634,12 +634,37 @@ func (e *Engine) seedRunVars(sink Sink) (map[string]cty.Value, error) {
 		}
 	}
 	// Fresh run: emit OnVariableSet for each variable that has a value.
+	varObj := vars["var"]
 	for name, node := range e.graph.Variables {
-		if ov, ok := e.varOverrides[name]; ok {
-			sink.OnVariableSet(name, workflow.CtyValueToString(ov), "override")
+		var source string
+		if _, ok := e.varOverrides[name]; ok {
+			source = "override"
 		} else if node.Default != cty.NilVal {
-			sink.OnVariableSet(name, workflow.CtyValueToString(node.Default), "default")
+			source = "default"
+		} else {
+			continue
 		}
+		// Read the value back from the run scope so the event matches what
+		// downstream expressions actually observe.
+		var val cty.Value
+		if varObj != cty.NilVal && varObj.Type().IsObjectType() {
+			if atys := varObj.Type().AttributeTypes(); atys[name] != cty.NilType {
+				val = varObj.GetAttr(name)
+			}
+		}
+		if val == cty.NilVal {
+			// Fallback should never happen, but keeps the event useful if it does.
+			if source == "override" {
+				val = e.varOverrides[name]
+			} else {
+				val = node.Default
+			}
+		}
+		display := workflow.CtyValueToString(val)
+		if node.Secret {
+			display = "(sensitive)"
+		}
+		sink.OnVariableSet(name, display, source)
 	}
 	return vars, nil
 }

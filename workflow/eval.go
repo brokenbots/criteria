@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/hashicorp/hcl/v2"
+	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/zclconf/go-cty/cty"
 	"github.com/zclconf/go-cty/cty/convert"
 	ctyjson "github.com/zclconf/go-cty/cty/json"
@@ -288,11 +289,12 @@ func SeedDataSnapshot(vars, snap map[string]cty.Value) map[string]cty.Value {
 	return newVars
 }
 
-// ApplyVarOverrides merges CLI-supplied typed values into an existing vars
+// ApplyVarOverrides merges CLI/file-supplied overrides into an existing vars
 // map produced by SeedVarsFromGraph. Only keys that match declared variables
 // are applied; unknown keys are silently ignored. Each override is converted
-// to the declared variable type using cty's conversion rules so that scalar,
-// list, map, and object inputs all arrive with the right shape.
+// to the declared variable type (and optional object defaults are applied)
+// so that raw --var strings, typed var-file values, and subworkflow bindings
+// all arrive with the right shape.
 func ApplyVarOverrides(g *FSMGraph, vars, overrides map[string]cty.Value) (map[string]cty.Value, error) {
 	if len(overrides) == 0 {
 		return vars, nil
@@ -309,7 +311,7 @@ func ApplyVarOverrides(g *FSMGraph, vars, overrides map[string]cty.Value) (map[s
 		if !ok {
 			continue
 		}
-		converted, err := convertVarOverrideValue(val, node.Type)
+		converted, err := ConvertVarOverrideValue(val, node)
 		if err != nil {
 			return nil, fmt.Errorf("variable %q: %w", name, err)
 		}
@@ -328,44 +330,85 @@ func ApplyVarOverrides(g *FSMGraph, vars, overrides map[string]cty.Value) (map[s
 	return out, nil
 }
 
-// convertVarOverrideValue coerces a CLI-supplied cty.Value to a variable's
-// declared type. Scalar string overrides retain legacy parsing behavior for
-// number/bool so that plain-text overrides like "1" or "true" keep working.
-func convertVarOverrideValue(val cty.Value, want cty.Type) (cty.Value, error) {
-	if want == cty.NilType {
+// ConvertVarOverrideValue coerces an override value to a variable's declared
+// type. It accepts raw CLI strings (cty.String) and already-typed values from
+// var-files or subworkflow bindings. Optional object defaults are applied
+// before type conversion so that partially-specified object overrides receive
+// their declared defaults.
+func ConvertVarOverrideValue(val cty.Value, node *VariableNode) (cty.Value, error) {
+	if node.Type == cty.NilType {
 		return val, nil
 	}
-	// Preserve legacy scalar parsing semantics for raw string overrides.
+	if !val.IsKnown() {
+		return cty.NilVal, fmt.Errorf("override value is unknown")
+	}
+	if val.IsNull() {
+		return cty.NilVal, fmt.Errorf("override value is null")
+	}
+
+	// Raw CLI strings are parsed according to the declared type so that string
+	// variables keep the exact text supplied on the command line.
 	if val.Type() == cty.String {
-		s := val.AsString()
-		switch want {
-		case cty.String:
-			return val, nil
-		case cty.Number:
-			var f float64
-			if _, err := fmt.Sscanf(s, "%g", &f); err != nil {
-				return cty.NilVal, fmt.Errorf("cannot parse %q as number: %w", s, err)
-			}
-			return cty.NumberFloatVal(f), nil
-		case cty.Bool:
-			switch s {
-			case "true", "1":
-				return cty.BoolVal(true), nil
-			case "false", "0":
-				return cty.BoolVal(false), nil
-			default:
-				return cty.NilVal, fmt.Errorf("cannot parse %q as bool: expected true/false/1/0", s)
-			}
+		parsed, err := parseOverrideString(val.AsString(), node.Type)
+		if err != nil {
+			return cty.NilVal, err
 		}
+		val = parsed
 	}
-	if val.Type().Equals(want) {
+
+	// Apply object optional() defaults before conversion.
+	if node.TypeDefaults != nil {
+		val = ApplyDefaultsIfAny(val, node.TypeDefaults)
+	}
+
+	if val.Type().Equals(node.Type) {
 		return val, nil
 	}
-	converted, err := convert.Convert(val, want)
+	converted, err := convert.Convert(val, node.Type)
 	if err != nil {
-		return cty.NilVal, fmt.Errorf("cannot convert %s to %s: %w", val.Type().FriendlyName(), want.FriendlyName(), err)
+		return cty.NilVal, fmt.Errorf("cannot convert %s to %s: %w", val.Type().FriendlyName(), node.Type.FriendlyName(), err)
 	}
 	return converted, nil
+}
+
+// parseOverrideString parses a raw --var value according to the declared
+// variable type. String variables receive the text verbatim; number and bool
+// variables use legacy scalar parsing; everything else is parsed as an HCL
+// expression so that list/map/object literals work on the CLI.
+func parseOverrideString(raw string, want cty.Type) (cty.Value, error) {
+	if want == cty.String {
+		return cty.StringVal(raw), nil
+	}
+	if want == cty.Number {
+		var f float64
+		if _, err := fmt.Sscanf(raw, "%g", &f); err != nil {
+			return cty.NilVal, fmt.Errorf("cannot parse %q as number: %w", raw, err)
+		}
+		return cty.NumberFloatVal(f), nil
+	}
+	if want == cty.Bool {
+		switch raw {
+		case "true", "1":
+			return cty.BoolVal(true), nil
+		case "false", "0":
+			return cty.BoolVal(false), nil
+		default:
+			return cty.NilVal, fmt.Errorf("cannot parse %q as bool: expected true/false/1/0", raw)
+		}
+	}
+
+	expr, diags := hclsyntax.ParseExpression([]byte(raw), "<var>", hcl.Pos{Line: 1, Column: 1})
+	if diags.HasErrors() {
+		return cty.NilVal, fmt.Errorf("cannot parse --var value %q: %w", raw, diags)
+	}
+	parsed, diags := expr.Value(nil)
+	if diags.HasErrors() {
+		return cty.NilVal, fmt.Errorf("cannot parse --var value %q: %w", raw, diags)
+	}
+	if !parsed.IsKnown() {
+		return cty.NilVal, fmt.Errorf("cannot parse --var value %q: value is unknown", raw)
+	}
+	return parsed, nil
 }
 
 // WithStepOutputs returns a new vars map with the given step's outputs merged

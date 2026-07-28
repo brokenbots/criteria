@@ -673,3 +673,172 @@ func TestApplyVarOverrides_NumberToString(t *testing.T) {
 		t.Errorf("var.name = %q, want %q", got, "42")
 	}
 }
+
+// compileEvalTest compiles a minimal workflow from HCL for tests that need
+// real type constraints (e.g. object optional defaults).
+func compileEvalTest(t *testing.T, src string) *FSMGraph {
+	t.Helper()
+	spec, diags := Parse("t.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	g, diags := Compile(spec, nil)
+	if diags.HasErrors() {
+		t.Fatalf("compile: %s", diags.Error())
+	}
+	return g
+}
+
+// TestApplyVarOverrides_StringVariablesKeepRawText verifies that raw --var
+// strings supplied for string-typed variables are preserved byte-for-byte,
+// including JSON blobs, quoted strings, and leading zeros.
+func TestApplyVarOverrides_StringVariablesKeepRawText(t *testing.T) {
+	g := &FSMGraph{
+		Variables: map[string]*VariableNode{
+			"version": {Name: "version", Type: cty.String},
+			"payload": {Name: "payload", Type: cty.String},
+			"name":    {Name: "name", Type: cty.String},
+			"id":      {Name: "id", Type: cty.String},
+		},
+	}
+
+	after, err := ApplyVarOverrides(g, SeedVarsFromGraph(g), map[string]cty.Value{
+		"version": cty.StringVal("1.0"),
+		"payload": cty.StringVal(`{"a":1}`),
+		"name":    cty.StringVal(`"quoted"`),
+		"id":      cty.StringVal("007"),
+	})
+	if err != nil {
+		t.Fatalf("ApplyVarOverrides: %v", err)
+	}
+
+	cases := map[string]string{
+		"version": "1.0",
+		"payload": `{"a":1}`,
+		"name":    `"quoted"`,
+		"id":      "007",
+	}
+	for name, want := range cases {
+		got := after["var"].GetAttr(name).AsString()
+		if got != want {
+			t.Errorf("var.%s = %q, want %q", name, got, want)
+		}
+	}
+}
+
+// TestApplyVarOverrides_RawComplexTypesParsedAndConverted verifies that raw
+// --var strings for list/map/object variables are HCL-parsed and converted to
+// the declared type.
+func TestApplyVarOverrides_RawComplexTypesParsedAndConverted(t *testing.T) {
+	g := &FSMGraph{
+		Variables: map[string]*VariableNode{
+			"tags": {
+				Name: "tags",
+				Type: cty.List(cty.String),
+			},
+			"labels": {
+				Name: "labels",
+				Type: cty.Map(cty.String),
+			},
+			"config": {
+				Name: "config",
+				Type: cty.Object(map[string]cty.Type{
+					"enabled": cty.Bool,
+					"retries": cty.Number,
+				}),
+			},
+		},
+	}
+
+	after, err := ApplyVarOverrides(g, SeedVarsFromGraph(g), map[string]cty.Value{
+		"tags":   cty.StringVal(`["a","b"]`),
+		"labels": cty.StringVal(`{env="prod"}`),
+		"config": cty.StringVal(`{enabled=true, retries=3}`),
+	})
+	if err != nil {
+		t.Fatalf("ApplyVarOverrides: %v", err)
+	}
+
+	tags := after["var"].GetAttr("tags")
+	if !tags.Type().IsListType() {
+		t.Errorf("tags type = %s; want list", tags.Type().FriendlyName())
+	}
+	if l := tags.LengthInt(); l != 2 {
+		t.Errorf("tags length = %d; want 2", l)
+	}
+
+	labels := after["var"].GetAttr("labels")
+	if !labels.Type().IsMapType() {
+		t.Errorf("labels type = %s; want map", labels.Type().FriendlyName())
+	}
+	if got := labels.Index(cty.StringVal("env")).AsString(); got != "prod" {
+		t.Errorf("labels.env = %q, want prod", got)
+	}
+
+	cfg := after["var"].GetAttr("config")
+	if !cfg.Type().IsObjectType() {
+		t.Errorf("config type = %s; want object", cfg.Type().FriendlyName())
+	}
+	if !cfg.GetAttr("enabled").True() {
+		t.Errorf("config.enabled = %v, want true", cfg.GetAttr("enabled"))
+	}
+}
+
+// TestApplyVarOverrides_ObjectOptionalDefaults verifies that object variables
+// with optional() attributes receive their declared defaults when a CLI
+// override omits those attributes.
+func TestApplyVarOverrides_ObjectOptionalDefaults(t *testing.T) {
+	g := compileEvalTest(t, `
+workflow {
+  name = "t"
+  version = "0.1"
+  initial_state = "s"
+  target_state  = "s"
+}
+state "s" { terminal = true }
+variable "cfg" {
+  type = object({ a = string, b = optional(string, "x") })
+}
+`)
+
+	after, err := ApplyVarOverrides(g, SeedVarsFromGraph(g), map[string]cty.Value{
+		"cfg": cty.StringVal(`{a="1"}`),
+	})
+	if err != nil {
+		t.Fatalf("ApplyVarOverrides: %v", err)
+	}
+
+	cfg := after["var"].GetAttr("cfg")
+	if got := cfg.GetAttr("a").AsString(); got != "1" {
+		t.Errorf("cfg.a = %q, want 1", got)
+	}
+	if got := cfg.GetAttr("b").AsString(); got != "x" {
+		t.Errorf("cfg.b = %q, want x", got)
+	}
+}
+
+// TestApplyVarOverrides_MalformedCollectionError verifies that a malformed
+// collection literal supplied for a complex-typed variable surfaces a clear
+// error naming the variable.
+func TestApplyVarOverrides_MalformedCollectionError(t *testing.T) {
+	g := compileEvalTest(t, `
+workflow {
+  name = "t"
+  version = "0.1"
+  initial_state = "s"
+  target_state  = "s"
+}
+state "s" { terminal = true }
+variable "tags" { type = list(string) }
+`)
+
+	_, err := ApplyVarOverrides(g, SeedVarsFromGraph(g), map[string]cty.Value{
+		"tags": cty.StringVal(`["a",`),
+	})
+	if err == nil {
+		t.Fatal("expected error for malformed list literal")
+	}
+	if !strings.Contains(err.Error(), `"tags"`) || !strings.Contains(err.Error(), "cannot parse") {
+		t.Errorf("error = %q, want it to mention variable and parse failure", err.Error())
+	}
+}

@@ -6,9 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/hclparse"
-	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/zclconf/go-cty/cty"
 	ctyjson "github.com/zclconf/go-cty/cty/json"
 )
@@ -23,9 +21,10 @@ func envOrDefault(key, fallback string) string {
 }
 
 // parseVarOverrides converts a slice of "key=value" strings (from --var flags)
-// into typed cty.Values. Each value is parsed as an HCL expression first, so
-// structured literals like ["a", "b"] and {a = 1} are preserved; values that do
-// not parse as HCL (or reference variables) fall back to plain strings.
+// into cty.Values. Values are kept as raw strings here; the engine applies the
+// declared variable type later so that string variables receive the exact text
+// supplied on the command line (e.g. JSON blobs or quoted strings) while list,
+// map, and object variables are parsed as HCL at conversion time.
 // Entries without "=" are silently ignored.
 func parseVarOverrides(raw []string) map[string]cty.Value {
 	if len(raw) == 0 {
@@ -37,34 +36,9 @@ func parseVarOverrides(raw []string) map[string]cty.Value {
 		if !ok || k == "" {
 			continue
 		}
-		val, err := parseVarOverrideValue(v)
-		if err != nil {
-			// Defensive fallback: treat the raw text as a string so scalar overrides
-			// always have a value even if HCL parsing surprises us.
-			out[k] = cty.StringVal(v)
-			continue
-		}
-		out[k] = val
+		out[k] = cty.StringVal(v)
 	}
 	return out
-}
-
-// parseVarOverrideValue parses a raw --var value as an HCL expression. If the
-// expression references variables or cannot be parsed, it returns an error and
-// the caller should fall back to a plain string.
-func parseVarOverrideValue(raw string) (cty.Value, error) {
-	expr, diags := hclsyntax.ParseExpression([]byte(raw), "<var>", hcl.Pos{Line: 1, Column: 1})
-	if diags.HasErrors() {
-		return cty.NilVal, diags
-	}
-	val, diags := expr.Value(nil)
-	if diags.HasErrors() {
-		return cty.NilVal, diags
-	}
-	if !val.IsKnown() {
-		return cty.NilVal, fmt.Errorf("value is unknown")
-	}
-	return val, nil
 }
 
 // parseVarFile reads variable overrides from a file.
@@ -114,7 +88,8 @@ func parseHCLVarFile(path string) (map[string]cty.Value, error) {
 }
 
 // parseJSONVarFile reads a JSON object and decodes each value with the cty JSON
-// codec so structured values survive the file round-trip.
+// codec so structured values survive the file round-trip. Null entries are
+// rejected because they would silently become typed nulls after conversion.
 func parseJSONVarFile(path string) (map[string]cty.Value, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -131,9 +106,12 @@ func parseJSONVarFile(path string) (map[string]cty.Value, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse JSON var-file %q: %w", path, err)
 	}
-	out := make(map[string]cty.Value, len(ty.AttributeTypes()))
-	for name := range ty.AttributeTypes() {
-		out[name] = root.GetAttr(name)
+	out := make(map[string]cty.Value, len(root.AsValueMap()))
+	for name, val := range root.AsValueMap() {
+		if val.IsNull() {
+			return nil, fmt.Errorf("JSON var-file %q: key %q has a null value", path, name)
+		}
+		out[name] = val
 	}
 	return out, nil
 }

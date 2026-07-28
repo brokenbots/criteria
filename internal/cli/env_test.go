@@ -177,6 +177,22 @@ func TestParseVarFile_NumericValue(t *testing.T) {
 	assertCtyMapEq(t, got, map[string]cty.Value{"foo": cty.NumberIntVal(42)})
 }
 
+func TestParseVarFile_JSON_NullRejected(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "vars.json")
+	if err := os.WriteFile(path, []byte(`{"foo": null}`), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	_, err := parseVarFile(path)
+	if err == nil {
+		t.Fatal("expected error for null JSON value")
+	}
+	if !strings.Contains(err.Error(), "foo") || !strings.Contains(err.Error(), "null") {
+		t.Errorf("error = %q, want it to mention key and null", err.Error())
+	}
+}
+
 func TestMergeVarSources_VarAndFileDisjointKeys(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "vars.json")
@@ -275,48 +291,41 @@ func assertCtyMapEq(t *testing.T, got, want map[string]cty.Value) {
 	}
 }
 
-func TestParseVarOverrides_List(t *testing.T) {
+func TestParseVarOverrides_ListKeptAsRawString(t *testing.T) {
 	got := parseVarOverrides([]string{`tags=["a", "b"]`})
-	want := cty.TupleVal([]cty.Value{cty.StringVal("a"), cty.StringVal("b")})
+	want := cty.StringVal(`["a", "b"]`)
 	if !got["tags"].RawEquals(want) {
 		t.Errorf("tags = %#v, want %#v", got["tags"], want)
 	}
 }
 
-func TestParseVarOverrides_Map(t *testing.T) {
+func TestParseVarOverrides_MapKeptAsRawString(t *testing.T) {
 	got := parseVarOverrides([]string{`labels={"env"="prod", "app"="demo"}`})
-	want := cty.ObjectVal(map[string]cty.Value{
-		"env": cty.StringVal("prod"),
-		"app": cty.StringVal("demo"),
-	})
+	want := cty.StringVal(`{"env"="prod", "app"="demo"}`)
 	if !got["labels"].RawEquals(want) {
 		t.Errorf("labels = %#v, want %#v", got["labels"], want)
 	}
 }
 
-func TestParseVarOverrides_Object(t *testing.T) {
+func TestParseVarOverrides_ObjectKeptAsRawString(t *testing.T) {
 	got := parseVarOverrides([]string{`config={enabled=true, retries=3}`})
-	want := cty.ObjectVal(map[string]cty.Value{
-		"enabled": cty.True,
-		"retries": cty.NumberIntVal(3),
-	})
+	want := cty.StringVal(`{enabled=true, retries=3}`)
 	if !got["config"].RawEquals(want) {
 		t.Errorf("config = %#v, want %#v", got["config"], want)
 	}
 }
 
-func TestParseVarOverrides_StringFallback(t *testing.T) {
-	// us-west is not a valid HCL expression, so it falls back to a plain string.
+func TestParseVarOverrides_StringKeptVerbatim(t *testing.T) {
 	got := parseVarOverrides([]string{"region=us-west"})
 	assertCtyMapEq(t, got, map[string]cty.Value{
 		"region": cty.StringVal("us-west"),
 	})
 }
 
-func TestParseVarOverrides_BoolAndNumber(t *testing.T) {
+func TestParseVarOverrides_BoolAndNumberKeptAsRawString(t *testing.T) {
 	got := parseVarOverrides([]string{"enabled=true", "count=42"})
 	assertCtyMapEq(t, got, map[string]cty.Value{
-		"enabled": cty.True,
-		"count":   cty.NumberIntVal(42),
+		"enabled": cty.StringVal("true"),
+		"count":   cty.StringVal("42"),
 	})
 }

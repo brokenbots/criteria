@@ -129,8 +129,9 @@ variable "enabled" {
 - **`string`**: Text value.
 - **`number`**: Numeric value (integers or floating-point).
 - **`bool`**: Boolean (`true` or `false`).
-- **`list(string)`**, **`list(number)`**, **`list(bool)`**: Lists of the specified element type.
-- **`map(string)`**: String-keyed map with string values.
+- **`list(...)`**: List of a compatible element type, e.g. `list(string)` or `list(number)`.
+- **`map(...)`**: String-keyed map, e.g. `map(string)` or `map(number)`.
+- **`object({...})`**: Object type with named attributes. Supports `optional(<type>, <default>)` attributes just like Terraform variable type constraints.
 
 ### Default values
 
@@ -1342,8 +1343,18 @@ A workflow path may be a single `.hcl`/`.chcl` file or a directory module. Run
 
 Variable overrides (on `plan` and `apply`):
 
-- **`--var key=value`** (repeatable): Override a single variable.
+- **`--var key=value`** (repeatable): Override a single variable. The raw value is preserved until the workflow's declared variable type is known, so values supplied for `string` variables are taken verbatim (including JSON blobs, quoted text, and leading zeros). Values for complex-typed variables (`list`, `map`, `object`) are parsed as HCL expressions at conversion time.
 - **`--var-file <path>`** (repeatable): Load overrides from a `.chcl`, `.hcl`, or `.json` file. Multiple files merge left-to-right; later files win. `--var` takes precedence over any `--var-file` entry.
+
+Examples:
+
+```bash
+# String value — passed verbatim, quotes are not special
+bin/criteria apply example.hcl --var 'payload={"a":1}' --var 'name="quoted"'
+
+# Complex values — parsed against the declared variable type
+bin/criteria apply example.hcl --var 'tags=["a", "b"]' --var 'labels={env="prod"}'
+```
 
 ### `criteria compile`
 

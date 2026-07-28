@@ -136,9 +136,15 @@ func seedChildVarsFromBindings(body *workflow.FSMGraph, inputVals, parentVars ma
 			}
 		}
 		for name, val := range inputVals {
-			if _, declared := body.Variables[name]; declared {
-				varAttrs[name] = val
+			node, declared := body.Variables[name]
+			if !declared {
+				continue
 			}
+			converted, err := workflow.ConvertVarOverrideValue(val, node)
+			if err != nil {
+				return nil, fmt.Errorf("subworkflow input %q: %w", name, err)
+			}
+			varAttrs[name] = converted
 		}
 		if len(varAttrs) > 0 {
 			vars["var"] = cty.ObjectVal(varAttrs)

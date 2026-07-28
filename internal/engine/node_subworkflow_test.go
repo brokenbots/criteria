@@ -160,10 +160,11 @@ func TestRunSubworkflow_InputBoundToOutput(t *testing.T) {
 	}
 }
 
-// TestRunSubworkflow_ComplexInputPreserved verifies that list, map, and object
-// values passed through a subworkflow input block arrive in the child workflow
-// unchanged in both value and type.
-func TestRunSubworkflow_ComplexInputPreserved(t *testing.T) {
+// TestRunSubworkflow_ComplexInputConverted verifies that real HCL expressions
+// in a subworkflow input block are converted to the child's declared variable
+// type. A parent tuple([string,string]) becomes a child list(string), and a
+// parent object becomes the child object type.
+func TestRunSubworkflow_ComplexInputConverted(t *testing.T) {
 	listVarType := cty.List(cty.String)
 	mapVarType := cty.Map(cty.String)
 	objVarType := cty.Object(map[string]cty.Type{
@@ -187,21 +188,14 @@ func TestRunSubworkflow_ComplexInputPreserved(t *testing.T) {
 		OutputOrder: []string{"tags", "labels", "config"},
 	}
 
-	tags := cty.ListVal([]cty.Value{cty.StringVal("a"), cty.StringVal("b")})
-	labels := cty.MapVal(map[string]cty.Value{"env": cty.StringVal("prod")})
-	config := cty.ObjectVal(map[string]cty.Value{
-		"enabled": cty.True,
-		"retries": cty.NumberIntVal(3),
-	})
-
 	node := &workflow.SubworkflowNode{
 		Name:      "complex-input",
 		Body:      body,
 		BodyEntry: "done",
 		Inputs: map[string]hcl.Expression{
-			"tags":   &hclsyntax.LiteralValueExpr{Val: tags},
-			"labels": &hclsyntax.LiteralValueExpr{Val: labels},
-			"config": &hclsyntax.LiteralValueExpr{Val: config},
+			"tags":   parseExpr(t, `["a", "b"]`),
+			"labels": parseExpr(t, `{env = "prod"}`),
+			"config": parseExpr(t, `{enabled = true, retries = 3}`),
 		},
 		DeclaredVars: map[string]*workflow.VariableNode{
 			"tags":   {Name: "tags", Type: listVarType},
@@ -219,14 +213,104 @@ func TestRunSubworkflow_ComplexInputPreserved(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runSubworkflow: %v", err)
 	}
-	if !outputs["tags"].RawEquals(tags) {
-		t.Errorf("tags output = %#v, want %#v", outputs["tags"], tags)
+
+	tags := outputs["tags"]
+	if !tags.Type().IsListType() {
+		t.Errorf("tags type = %s, want list", tags.Type().FriendlyName())
 	}
-	if !outputs["labels"].RawEquals(labels) {
-		t.Errorf("labels output = %#v, want %#v", outputs["labels"], labels)
+	wantList := cty.ListVal([]cty.Value{cty.StringVal("a"), cty.StringVal("b")})
+	if !tags.RawEquals(wantList) {
+		t.Errorf("tags output = %#v, want %#v", tags, wantList)
 	}
-	if !outputs["config"].RawEquals(config) {
-		t.Errorf("config output = %#v, want %#v", outputs["config"], config)
+
+	labels := outputs["labels"]
+	if !labels.Type().IsMapType() {
+		t.Errorf("labels type = %s, want map", labels.Type().FriendlyName())
+	}
+	wantMap := cty.MapVal(map[string]cty.Value{"env": cty.StringVal("prod")})
+	if !labels.RawEquals(wantMap) {
+		t.Errorf("labels output = %#v, want %#v", labels, wantMap)
+	}
+
+	cfg := outputs["config"]
+	if !cfg.Type().IsObjectType() {
+		t.Errorf("config type = %s, want object", cfg.Type().FriendlyName())
+	}
+	wantObj := cty.ObjectVal(map[string]cty.Value{
+		"enabled": cty.True,
+		"retries": cty.NumberIntVal(3),
+	})
+	if !cfg.RawEquals(wantObj) {
+		t.Errorf("config output = %#v, want %#v", cfg, wantObj)
+	}
+}
+
+// TestRunSubworkflow_ObjectOptionalDefaultsApplied verifies that object
+// variables with optional() attributes in the child workflow receive their
+// declared defaults when the parent input omits those attributes.
+func TestRunSubworkflow_ObjectOptionalDefaultsApplied(t *testing.T) {
+	objType := cty.Object(map[string]cty.Type{
+		"a": cty.String,
+		"b": cty.String,
+	})
+
+	body := &workflow.FSMGraph{
+		InitialState: "done",
+		States:       map[string]*workflow.StateNode{"done": {Name: "done", Terminal: true, Success: true}},
+		Variables: map[string]*workflow.VariableNode{
+			"cfg": {
+				Name:         "cfg",
+				Type:         objType,
+				TypeDefaults: nil, // set below after construction
+			},
+		},
+		Outputs: map[string]*workflow.OutputNode{
+			"cfg": {Name: "cfg", Value: traversalExpr("var", "cfg")},
+		},
+		OutputOrder: []string{"cfg"},
+	}
+
+	// Build real type defaults for optional({a=string, b=optional(string,"x")}).
+	expr := parseExpr(t, `object({ a = string, b = optional(string, "x") })`)
+	typ, defs, diags := workflow.ResolveTypeConstraint(expr)
+	if diags.HasErrors() {
+		t.Fatalf("resolve type: %s", diags.Error())
+	}
+	body.Variables["cfg"].Type = typ
+	body.Variables["cfg"].TypeDefaults = defs
+
+	node := &workflow.SubworkflowNode{
+		Name:      "optional-defaults",
+		Body:      body,
+		BodyEntry: "done",
+		Inputs: map[string]hcl.Expression{
+			"cfg": parseExpr(t, `{a = "1"}`),
+		},
+		DeclaredVars: map[string]*workflow.VariableNode{
+			"cfg": {
+				Name:         "cfg",
+				Type:         typ,
+				TypeDefaults: defs,
+			},
+		},
+	}
+
+	parentSt := &RunState{
+		Vars:        map[string]cty.Value{"var": cty.EmptyObjectVal},
+		WorkflowDir: t.TempDir(),
+	}
+
+	outputs, _, err := runSubworkflow(context.Background(), node, parentSt, nil, testDeps(t))
+	if err != nil {
+		t.Fatalf("runSubworkflow: %v", err)
+	}
+
+	cfg := outputs["cfg"]
+	if got := cfg.GetAttr("a").AsString(); got != "1" {
+		t.Errorf("cfg.a = %q, want 1", got)
+	}
+	if got := cfg.GetAttr("b").AsString(); got != "x" {
+		t.Errorf("cfg.b = %q, want x", got)
 	}
 }
 
