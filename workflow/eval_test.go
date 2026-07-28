@@ -330,7 +330,10 @@ func TestApplyVarOverrides_PreservesLocals(t *testing.T) {
 	vars := SeedVarsFromGraph(g)
 	vars["local"] = SeedLocalsFromGraph(g)
 
-	after := ApplyVarOverrides(g, vars, map[string]string{"name": "alice"})
+	after, err := ApplyVarOverrides(g, vars, map[string]cty.Value{"name": cty.StringVal("alice")})
+	if err != nil {
+		t.Fatalf("ApplyVarOverrides: %v", err)
+	}
 
 	if _, ok := after["local"]; !ok {
 		t.Fatal("ApplyVarOverrides dropped vars[\"local\"]; expected it to be preserved")
@@ -362,7 +365,10 @@ func TestApplyVarOverrides_NoOverrides_PreservesLocals(t *testing.T) {
 	vars["local"] = SeedLocalsFromGraph(g)
 
 	// No overrides — the function short-circuits and returns vars unchanged.
-	after := ApplyVarOverrides(g, vars, nil)
+	after, err := ApplyVarOverrides(g, vars, nil)
+	if err != nil {
+		t.Fatalf("ApplyVarOverrides(nil overrides): %v", err)
+	}
 
 	if _, ok := after["local"]; !ok {
 		t.Fatal("ApplyVarOverrides(nil overrides) dropped vars[\"local\"]")
@@ -568,5 +574,102 @@ func TestVarScope_RoundTrip_WhileCursor(t *testing.T) {
 	wantCount := "7"
 	if got := c.Prev.GetAttr("count"); got == cty.NilVal || got.AsString() != wantCount {
 		t.Errorf("Prev.count = %v; want %q", got, wantCount)
+	}
+}
+
+// TestApplyVarOverrides_ComplexTypes verifies that typed CLI overrides for
+// list, map, and object variables are converted to the declared variable type.
+func TestApplyVarOverrides_ComplexTypes(t *testing.T) {
+	g := &FSMGraph{
+		Variables: map[string]*VariableNode{
+			"tags": {
+				Name: "tags",
+				Type: cty.List(cty.String),
+				Default: cty.ListVal([]cty.Value{
+					cty.StringVal("default"),
+				}),
+			},
+			"labels": {
+				Name: "labels",
+				Type: cty.Map(cty.String),
+			},
+			"config": {
+				Name: "config",
+				Type: cty.Object(map[string]cty.Type{
+					"enabled": cty.Bool,
+					"retries": cty.Number,
+				}),
+			},
+		},
+	}
+
+	overrides := map[string]cty.Value{
+		"tags":   cty.TupleVal([]cty.Value{cty.StringVal("a"), cty.StringVal("b")}),
+		"labels": cty.ObjectVal(map[string]cty.Value{"env": cty.StringVal("prod")}),
+		"config": cty.ObjectVal(map[string]cty.Value{
+			"enabled": cty.True,
+			"retries": cty.NumberIntVal(3),
+		}),
+	}
+
+	after, err := ApplyVarOverrides(g, SeedVarsFromGraph(g), overrides)
+	if err != nil {
+		t.Fatalf("ApplyVarOverrides: %v", err)
+	}
+
+	varObj := after["var"]
+	if got := varObj.GetAttr("tags"); !got.Type().IsListType() {
+		t.Errorf("tags type = %s; want list", got.Type().FriendlyName())
+	} else if l := got.LengthInt(); l != 2 {
+		t.Errorf("tags length = %d; want 2", l)
+	}
+	if got := varObj.GetAttr("labels"); !got.Type().IsMapType() {
+		t.Errorf("labels type = %s; want map", got.Type().FriendlyName())
+	} else if v := got.Index(cty.StringVal("env")); v.AsString() != "prod" {
+		t.Errorf("labels.env = %q; want 'prod'", v.AsString())
+	}
+	if got := varObj.GetAttr("config"); !got.Type().IsObjectType() {
+		t.Errorf("config type = %s; want object", got.Type().FriendlyName())
+	} else if enabled := got.GetAttr("enabled"); !enabled.True() {
+		t.Errorf("config.enabled = %v; want true", enabled)
+	}
+}
+
+// TestApplyVarOverrides_ConversionError verifies that an incompatible override
+// produces a clear error instead of silently being ignored.
+func TestApplyVarOverrides_ConversionError(t *testing.T) {
+	g := &FSMGraph{
+		Variables: map[string]*VariableNode{
+			"count": {Name: "count", Type: cty.Number},
+		},
+	}
+
+	_, err := ApplyVarOverrides(g, SeedVarsFromGraph(g), map[string]cty.Value{
+		"count": cty.StringVal("not-a-number"),
+	})
+	if err == nil {
+		t.Fatal("expected error for incompatible override")
+	}
+}
+
+// TestApplyVarOverrides_NumberToString verifies that a numeric override can be
+// supplied to a string-typed variable and is converted to its string form,
+// matching the common CLI pattern of passing an unquoted number for a string
+// variable.
+func TestApplyVarOverrides_NumberToString(t *testing.T) {
+	g := &FSMGraph{
+		Variables: map[string]*VariableNode{
+			"name": {Name: "name", Type: cty.String},
+		},
+	}
+
+	after, err := ApplyVarOverrides(g, SeedVarsFromGraph(g), map[string]cty.Value{
+		"name": cty.NumberIntVal(42),
+	})
+	if err != nil {
+		t.Fatalf("ApplyVarOverrides: %v", err)
+	}
+	if got := after["var"].GetAttr("name").AsString(); got != "42" {
+		t.Errorf("var.name = %q, want %q", got, "42")
 	}
 }

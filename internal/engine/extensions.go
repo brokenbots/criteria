@@ -79,10 +79,11 @@ func WithBranchScheduler(s BranchScheduler) Option {
 	}
 }
 
-// WithVarOverrides applies CLI-supplied key=value pairs on top of the
-// variable defaults at run start. Values are always treated as strings and
-// coerced to the declared variable type by the eval layer.
-func WithVarOverrides(overrides map[string]string) Option {
+// WithVarOverrides applies CLI-supplied variable values on top of the
+// variable defaults at run start. Values are typed cty.Values produced by the
+// CLI parsing layer and are coerced to each declared variable type by the
+// eval layer.
+func WithVarOverrides(overrides map[string]cty.Value) Option {
 	return func(e *Engine) {
 		e.varOverrides = overrides
 	}

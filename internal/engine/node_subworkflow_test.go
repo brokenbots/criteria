@@ -160,6 +160,76 @@ func TestRunSubworkflow_InputBoundToOutput(t *testing.T) {
 	}
 }
 
+// TestRunSubworkflow_ComplexInputPreserved verifies that list, map, and object
+// values passed through a subworkflow input block arrive in the child workflow
+// unchanged in both value and type.
+func TestRunSubworkflow_ComplexInputPreserved(t *testing.T) {
+	listVarType := cty.List(cty.String)
+	mapVarType := cty.Map(cty.String)
+	objVarType := cty.Object(map[string]cty.Type{
+		"enabled": cty.Bool,
+		"retries": cty.Number,
+	})
+
+	body := &workflow.FSMGraph{
+		InitialState: "done",
+		States:       map[string]*workflow.StateNode{"done": {Name: "done", Terminal: true, Success: true}},
+		Variables: map[string]*workflow.VariableNode{
+			"tags":   {Name: "tags", Type: listVarType},
+			"labels": {Name: "labels", Type: mapVarType},
+			"config": {Name: "config", Type: objVarType},
+		},
+		Outputs: map[string]*workflow.OutputNode{
+			"tags":   {Name: "tags", Value: traversalExpr("var", "tags")},
+			"labels": {Name: "labels", Value: traversalExpr("var", "labels")},
+			"config": {Name: "config", Value: traversalExpr("var", "config")},
+		},
+		OutputOrder: []string{"tags", "labels", "config"},
+	}
+
+	tags := cty.ListVal([]cty.Value{cty.StringVal("a"), cty.StringVal("b")})
+	labels := cty.MapVal(map[string]cty.Value{"env": cty.StringVal("prod")})
+	config := cty.ObjectVal(map[string]cty.Value{
+		"enabled": cty.True,
+		"retries": cty.NumberIntVal(3),
+	})
+
+	node := &workflow.SubworkflowNode{
+		Name:      "complex-input",
+		Body:      body,
+		BodyEntry: "done",
+		Inputs: map[string]hcl.Expression{
+			"tags":   &hclsyntax.LiteralValueExpr{Val: tags},
+			"labels": &hclsyntax.LiteralValueExpr{Val: labels},
+			"config": &hclsyntax.LiteralValueExpr{Val: config},
+		},
+		DeclaredVars: map[string]*workflow.VariableNode{
+			"tags":   {Name: "tags", Type: listVarType},
+			"labels": {Name: "labels", Type: mapVarType},
+			"config": {Name: "config", Type: objVarType},
+		},
+	}
+
+	parentSt := &RunState{
+		Vars:        map[string]cty.Value{"var": cty.EmptyObjectVal},
+		WorkflowDir: t.TempDir(),
+	}
+
+	outputs, _, err := runSubworkflow(context.Background(), node, parentSt, nil, testDeps(t))
+	if err != nil {
+		t.Fatalf("runSubworkflow: %v", err)
+	}
+	if !outputs["tags"].RawEquals(tags) {
+		t.Errorf("tags output = %#v, want %#v", outputs["tags"], tags)
+	}
+	if !outputs["labels"].RawEquals(labels) {
+		t.Errorf("labels output = %#v, want %#v", outputs["labels"], labels)
+	}
+	if !outputs["config"].RawEquals(config) {
+		t.Errorf("config output = %#v, want %#v", outputs["config"], config)
+	}
+}
+
 // TestRunSubworkflow_EachThreadedToOutput verifies that each.* from the parent
 // scope is visible inside the subworkflow and can be captured via an output.
 func TestRunSubworkflow_EachThreadedToOutput(t *testing.T) {

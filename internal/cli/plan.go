@@ -39,7 +39,7 @@ func NewPlanCmd() *cobra.Command {
 	return cmd
 }
 
-func renderPlanOutput(ctx context.Context, workflowPath string, overrides map[string]string) (string, error) { //nolint:funlen,gocognit,gocyclo // renders full plan tree with agent/step/outcome formatting across multiple output paths
+func renderPlanOutput(ctx context.Context, workflowPath string, overrides map[string]cty.Value) (string, error) { //nolint:funlen,gocognit,gocyclo // renders full plan tree with agent/step/outcome formatting across multiple output paths
 	// plan is a read-only preview; honor the CRITERIA_ALLOW_UNSIGNED env for the
 	// auto-pull verification but expose no flag (the override resolver reads the
 	// env regardless of the bool passed here).
@@ -64,7 +64,7 @@ func renderPlanOutput(ctx context.Context, workflowPath string, overrides map[st
 			typeName := v.Type.FriendlyName()
 			displayVal := "(required)"
 			if ov, ok := overrides[name]; ok {
-				displayVal = ov + "  (override)"
+				displayVal = workflow.CtyValueToString(ov) + "  (override)"
 			} else if v.Default != cty.NilVal {
 				displayVal = workflow.CtyValueToString(v.Default)
 			}

@@ -10,6 +10,7 @@ import (
 
 	"github.com/hashicorp/hcl/v2"
 	"github.com/zclconf/go-cty/cty"
+	"github.com/zclconf/go-cty/cty/convert"
 	ctyjson "github.com/zclconf/go-cty/cty/json"
 )
 
@@ -287,13 +288,14 @@ func SeedDataSnapshot(vars, snap map[string]cty.Value) map[string]cty.Value {
 	return newVars
 }
 
-// ApplyVarOverrides merges CLI-supplied key=value pairs into an existing vars
+// ApplyVarOverrides merges CLI-supplied typed values into an existing vars
 // map produced by SeedVarsFromGraph. Only keys that match declared variables
-// are applied; unknown keys are silently ignored. Values are coerced to the
-// declared variable type (only string is supported today).
-func ApplyVarOverrides(g *FSMGraph, vars map[string]cty.Value, overrides map[string]string) map[string]cty.Value {
+// are applied; unknown keys are silently ignored. Each override is converted
+// to the declared variable type using cty's conversion rules so that scalar,
+// list, map, and object inputs all arrive with the right shape.
+func ApplyVarOverrides(g *FSMGraph, vars, overrides map[string]cty.Value) (map[string]cty.Value, error) {
 	if len(overrides) == 0 {
-		return vars
+		return vars, nil
 	}
 	varObj := vars["var"]
 	existing := map[string]cty.Value{}
@@ -302,22 +304,16 @@ func ApplyVarOverrides(g *FSMGraph, vars map[string]cty.Value, overrides map[str
 			existing[k] = varObj.GetAttr(k)
 		}
 	}
-	for name, raw := range overrides {
+	for name, val := range overrides {
 		node, ok := g.Variables[name]
 		if !ok {
 			continue
 		}
-		switch node.Type {
-		case cty.String:
-			existing[name] = cty.StringVal(raw)
-		case cty.Number:
-			var f float64
-			if _, err := fmt.Sscanf(raw, "%g", &f); err == nil {
-				existing[name] = cty.NumberFloatVal(f)
-			}
-		case cty.Bool:
-			existing[name] = cty.BoolVal(raw == "true" || raw == "1")
+		converted, err := convertVarOverrideValue(val, node.Type)
+		if err != nil {
+			return nil, fmt.Errorf("variable %q: %w", name, err)
 		}
+		existing[name] = converted
 	}
 	out := map[string]cty.Value{"steps": vars["steps"]}
 	// Preserve compiled locals (compile-time constants; not affected by var overrides).
@@ -329,7 +325,47 @@ func ApplyVarOverrides(g *FSMGraph, vars map[string]cty.Value, overrides map[str
 	} else {
 		out["var"] = cty.EmptyObjectVal
 	}
-	return out
+	return out, nil
+}
+
+// convertVarOverrideValue coerces a CLI-supplied cty.Value to a variable's
+// declared type. Scalar string overrides retain legacy parsing behavior for
+// number/bool so that plain-text overrides like "1" or "true" keep working.
+func convertVarOverrideValue(val cty.Value, want cty.Type) (cty.Value, error) {
+	if want == cty.NilType {
+		return val, nil
+	}
+	// Preserve legacy scalar parsing semantics for raw string overrides.
+	if val.Type() == cty.String {
+		s := val.AsString()
+		switch want {
+		case cty.String:
+			return val, nil
+		case cty.Number:
+			var f float64
+			if _, err := fmt.Sscanf(s, "%g", &f); err != nil {
+				return cty.NilVal, fmt.Errorf("cannot parse %q as number: %w", s, err)
+			}
+			return cty.NumberFloatVal(f), nil
+		case cty.Bool:
+			switch s {
+			case "true", "1":
+				return cty.BoolVal(true), nil
+			case "false", "0":
+				return cty.BoolVal(false), nil
+			default:
+				return cty.NilVal, fmt.Errorf("cannot parse %q as bool: expected true/false/1/0", s)
+			}
+		}
+	}
+	if val.Type().Equals(want) {
+		return val, nil
+	}
+	converted, err := convert.Convert(val, want)
+	if err != nil {
+		return cty.NilVal, fmt.Errorf("cannot convert %s to %s: %w", val.Type().FriendlyName(), want.FriendlyName(), err)
+	}
+	return converted, nil
 }
 
 // WithStepOutputs returns a new vars map with the given step's outputs merged
