@@ -614,16 +614,24 @@ func finishIterationInGraph(st *RunState, stepName string, graph *workflow.FSMGr
 // defaults, applies any CLI overrides, and emits OnVariableSet events.
 func (e *Engine) seedRunVars(sink Sink) (map[string]cty.Value, error) {
 	if e.resumedVars != nil {
-		// Locals are compile-time constants that are never persisted in the
-		// scope snapshot. Always reseed them from the current graph so that
-		// resumed runs have the same local.* bindings as fresh runs.
-		resumed := make(map[string]cty.Value, len(e.resumedVars)+1)
-		for k, v := range e.resumedVars {
-			resumed[k] = v
-		}
-		resumed["local"] = workflow.SeedLocalsFromGraph(e.graph)
-		return resumed, nil
+		return e.seedResumedVars(), nil
 	}
+	return e.seedFreshVars(sink)
+}
+
+func (e *Engine) seedResumedVars() map[string]cty.Value {
+	// Locals are compile-time constants that are never persisted in the
+	// scope snapshot. Always reseed them from the current graph so that
+	// resumed runs have the same local.* bindings as fresh runs.
+	resumed := make(map[string]cty.Value, len(e.resumedVars)+1)
+	for k, v := range e.resumedVars {
+		resumed[k] = v
+	}
+	resumed["local"] = workflow.SeedLocalsFromGraph(e.graph)
+	return resumed
+}
+
+func (e *Engine) seedFreshVars(sink Sink) (map[string]cty.Value, error) {
 	vars := workflow.SeedVarsFromGraph(e.graph)
 	vars["local"] = workflow.SeedLocalsFromGraph(e.graph)
 	if len(e.varOverrides) > 0 {
@@ -633,7 +641,11 @@ func (e *Engine) seedRunVars(sink Sink) (map[string]cty.Value, error) {
 			return nil, err
 		}
 	}
-	// Fresh run: emit OnVariableSet for each variable that has a value.
+	e.emitVarSetEvents(vars, sink)
+	return vars, nil
+}
+
+func (e *Engine) emitVarSetEvents(vars map[string]cty.Value, sink Sink) {
 	varObj := vars["var"]
 	for name, node := range e.graph.Variables {
 		var source string
@@ -646,27 +658,26 @@ func (e *Engine) seedRunVars(sink Sink) (map[string]cty.Value, error) {
 		}
 		// Read the value back from the run scope so the event matches what
 		// downstream expressions actually observe.
-		var val cty.Value
-		if varObj != cty.NilVal && varObj.Type().IsObjectType() {
-			if atys := varObj.Type().AttributeTypes(); atys[name] != cty.NilType {
-				val = varObj.GetAttr(name)
-			}
-		}
-		if val == cty.NilVal {
-			// Fallback should never happen, but keeps the event useful if it does.
-			if source == "override" {
-				val = e.varOverrides[name]
-			} else {
-				val = node.Default
-			}
-		}
+		val := e.varValueFromScope(varObj, name, source, node)
 		display := workflow.CtyValueToString(val)
 		if node.Secret {
 			display = "(sensitive)"
 		}
 		sink.OnVariableSet(name, display, source)
 	}
-	return vars, nil
+}
+
+func (e *Engine) varValueFromScope(varObj cty.Value, name, source string, node *workflow.VariableNode) cty.Value {
+	if varObj != cty.NilVal && varObj.Type().IsObjectType() {
+		if atys := varObj.Type().AttributeTypes(); atys[name] != cty.NilType {
+			return varObj.GetAttr(name)
+		}
+	}
+	// Fallback should never happen, but keeps the event useful if it does.
+	if source == "override" {
+		return e.varOverrides[name]
+	}
+	return node.Default
 }
 
 // buildDeps constructs the Deps bundle injected into each node's Evaluate call.
