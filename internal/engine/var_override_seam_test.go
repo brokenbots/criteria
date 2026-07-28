@@ -129,9 +129,6 @@ func (s *varEventSink) OnVariableSet(name, value, source string) {
 	}{name, value, source})
 }
 
-// TestVarOverrides_EmitsConvertedValueAndRedactsSecrets verifies that
-// OnVariableSet emits the converted run-scope value (not the raw override) and
-// that secret variables are reported as (sensitive).
 // TestVarOverrides_SecretParseErrorRedactsRawValue verifies that a parse error
 // for a secret complex-typed variable does not echo the raw override value.
 func TestVarOverrides_SecretParseErrorRedactsRawValue(t *testing.T) {
@@ -177,11 +174,14 @@ state "done" {
 	if strings.Contains(msg, "hunter2") {
 		t.Errorf("error leaked raw secret value: %q", msg)
 	}
-	if !strings.Contains(msg, "(value withheld)") {
+	if !strings.Contains(msg, "(sensitive)") {
 		t.Errorf("error = %q, want masked secret parse error", msg)
 	}
 }
 
+// TestVarOverrides_EmitsConvertedValueAndRedactsSecrets verifies that
+// OnVariableSet emits the converted run-scope value (not the raw override) and
+// that secret variables are reported as (sensitive).
 func TestVarOverrides_EmitsConvertedValueAndRedactsSecrets(t *testing.T) {
 	g := compile(t, `
 workflow {

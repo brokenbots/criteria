@@ -659,9 +659,9 @@ func (e *Engine) emitVarSetEvents(vars map[string]cty.Value, sink Sink) {
 		// Read the value back from the run scope so the event matches what
 		// downstream expressions actually observe.
 		val := e.varValueFromScope(varObj, name, source, node)
-		display := workflow.CtyValueToString(val)
-		if node.Secret {
-			display = "(sensitive)"
+		display := "(sensitive)"
+		if !node.Secret {
+			display = workflow.CtyValueToString(val)
 		}
 		sink.OnVariableSet(name, display, source)
 	}

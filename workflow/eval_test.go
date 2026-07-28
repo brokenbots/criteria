@@ -919,3 +919,50 @@ variable "tags" { type = list(string) }
 		t.Errorf("error = %q, want it to mention variable and parse failure", err.Error())
 	}
 }
+
+// TestApplyVarOverrides_BoolStrictParsing verifies that raw --var bool values
+// are parsed strictly: only true/false/1/0 are accepted, and other common
+// spellings (yes, TRUE, empty) return an error naming the variable.
+func TestApplyVarOverrides_BoolStrictParsing(t *testing.T) {
+	g := &FSMGraph{
+		Variables: map[string]*VariableNode{
+			"enabled": {Name: "enabled", Type: cty.Bool},
+		},
+	}
+
+	valid := map[string]bool{
+		"true":  true,
+		"1":     true,
+		"false": false,
+		"0":     false,
+	}
+	for raw, want := range valid {
+		t.Run(raw, func(t *testing.T) {
+			after, err := ApplyVarOverrides(g, SeedVarsFromGraph(g), map[string]cty.Value{
+				"enabled": cty.StringVal(raw),
+			})
+			if err != nil {
+				t.Fatalf("ApplyVarOverrides: %v", err)
+			}
+			got := after["var"].GetAttr("enabled").True()
+			if got != want {
+				t.Errorf("enabled = %v, want %v", got, want)
+			}
+		})
+	}
+
+	invalid := []string{"yes", "TRUE", ""}
+	for _, raw := range invalid {
+		t.Run("invalid_"+raw, func(t *testing.T) {
+			_, err := ApplyVarOverrides(g, SeedVarsFromGraph(g), map[string]cty.Value{
+				"enabled": cty.StringVal(raw),
+			})
+			if err == nil {
+				t.Fatal("expected error for invalid bool override")
+			}
+			if !strings.Contains(err.Error(), `"enabled"`) {
+				t.Errorf("error = %q, want it to name variable enabled", err.Error())
+			}
+		})
+	}
+}

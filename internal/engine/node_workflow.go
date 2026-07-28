@@ -20,66 +20,6 @@ import (
 	"github.com/brokenbots/criteria/workflow"
 )
 
-// seedChildVars is a legacy helper retained only for a handful of unit tests.
-// It is not used by production code: the live body-execution path is
-// seedChildVarsFromBindings (node_subworkflow.go), which was fixed by this
-// workstream to convert input values to the child's declared variable type and
-// to treat null bindings as "not supplied" (falling back to the default).
-//
-// This helper differs on both points: it assigns parentInput attributes
-// directly without type conversion, and a null binding overwrites the declared
-// default with null. Do not rewire it for production use without aligning it
-// with seedChildVarsFromBindings.
-func seedChildVars(body *workflow.FSMGraph, parentInput cty.Value, parentVars map[string]cty.Value) (map[string]cty.Value, error) {
-	vars := workflow.SeedVarsFromGraph(body)
-	if len(body.Locals) > 0 {
-		vars["local"] = workflow.SeedLocalsFromGraph(body)
-	}
-	// Validate the input type before applying it. The compile-time check via
-	// FoldExpr only catches statically-foldable non-object values; this catches
-	// runtime-evaluated ones (e.g. input = each.value when each.value is "a").
-	if parentInput != cty.NilVal && parentInput.IsKnown() && !parentInput.IsNull() && !parentInput.Type().IsObjectType() {
-		return nil, fmt.Errorf("body input must be an object value; got %s (use a map literal: input = { key = val })", parentInput.Type().FriendlyName())
-	}
-	vars = overrideVarsFromInput(vars, body, parentInput)
-	if err := checkRequiredVars(body, parentInput); err != nil {
-		return nil, err
-	}
-	// Thread each.* from parent scope so iteration variables remain accessible
-	// inside the body (read-only; no back-propagation to outer scope).
-	if each, ok := parentVars["each"]; ok && each != cty.NilVal {
-		vars["each"] = each
-	}
-	return vars, nil
-}
-
-// overrideVarsFromInput is a legacy helper retained only for seedChildVars
-// tests. It is not used by production code and diverges from the live path
-// (seedChildVarsFromBindings) by assigning parentInput attributes directly
-// without converting them to the child's declared variable type. See the
-// seedChildVars comment for the full divergence warning.
-func overrideVarsFromInput(vars map[string]cty.Value, body *workflow.FSMGraph, parentInput cty.Value) map[string]cty.Value {
-	if parentInput == cty.NilVal || !parentInput.IsKnown() || parentInput.IsNull() || !parentInput.Type().IsObjectType() {
-		return vars
-	}
-	varObj := vars["var"]
-	varAttrs := map[string]cty.Value{}
-	if varObj.Type().IsObjectType() {
-		for k := range varObj.Type().AttributeTypes() {
-			varAttrs[k] = varObj.GetAttr(k)
-		}
-	}
-	for name := range body.Variables {
-		if parentInput.Type().HasAttribute(name) {
-			varAttrs[name] = parentInput.GetAttr(name)
-		}
-	}
-	if len(varAttrs) > 0 {
-		vars["var"] = cty.ObjectVal(varAttrs)
-	}
-	return vars
-}
-
 // checkRequiredVars returns an error if any required body variable (no default)
 // lacks a binding in parentInput, or if its binding is null. This is the
 // runtime complement to the compile-time check in compileWorkflowStep.
@@ -109,7 +49,7 @@ func checkRequiredVars(body *workflow.FSMGraph, parentInput cty.Value) error {
 //
 //   - body is the compiled FSMGraph of the sub-workflow body.
 //   - bodyEntry is the initial state name for the body run.
-//   - childVars is the pre-seeded child scope built by seedChildVars.
+//   - childVars is the pre-seeded child scope built by seedChildVarsFromBindings.
 //   - workflowDir is forwarded for file() resolution in eval contexts.
 //   - deps carries the same session manager and event sink as the outer loop.
 //

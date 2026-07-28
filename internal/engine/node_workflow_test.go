@@ -1,12 +1,9 @@
 package engine
 
-// node_workflow_test.go — unit and integration tests for seedChildVars and
-// runWorkflowBody behavior introduced by the schema-unification workstream
-// (phase3/08-schema-unification). The tests cover:
+// node_workflow_test.go — integration tests for runWorkflowBody behavior
+// introduced by the schema-unification workstream (phase3/08-schema-unification).
+// The tests cover:
 //
-//   - seedChildVars threads each.* from parent scope into child scope (unit).
-//   - seedChildVars returns an error when a required body variable has no
-//     parentInput binding (unit).
 //   - A body variable declared in the body and passed via input={} is resolved
 //     correctly inside body step inputs (integration).
 //   - Output block expressions are evaluated against the child's final scope
@@ -17,70 +14,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zclconf/go-cty/cty"
-
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/workflow"
 )
-
-// --- unit tests for seedChildVars ---
-
-// TestSeedChildVars_EachThreaded verifies that each.value and each._idx from
-// the parent scope are copied into the child scope by seedChildVars, so that
-// body steps can reference each.* without explicit input declarations.
-func TestSeedChildVars_EachThreaded(t *testing.T) {
-	body := &workflow.FSMGraph{
-		Variables: map[string]*workflow.VariableNode{},
-	}
-
-	parentVars := map[string]cty.Value{
-		"var":   cty.EmptyObjectVal,
-		"steps": cty.EmptyObjectVal,
-		"each": cty.ObjectVal(map[string]cty.Value{
-			"value": cty.StringVal("item-x"),
-			"_idx":  cty.NumberIntVal(2),
-		}),
-	}
-
-	child, err := seedChildVars(body, cty.NilVal, parentVars)
-	if err != nil {
-		t.Fatalf("seedChildVars: %v", err)
-	}
-
-	each, ok := child["each"]
-	if !ok {
-		t.Fatal("each not present in child vars")
-	}
-	if got := each.GetAttr("value").AsString(); got != "item-x" {
-		t.Errorf("each.value: want %q, got %q", "item-x", got)
-	}
-	idx, _ := each.GetAttr("_idx").AsBigFloat().Int64()
-	if idx != 2 {
-		t.Errorf("each._idx: want 2, got %d", idx)
-	}
-}
-
-// TestSeedChildVars_MissingRequiredVar verifies that seedChildVars returns an
-// error when the body declares a required variable (no default) that is absent
-// from the parentInput object. This is the runtime safety net complementing the
-// compile-time check in compileWorkflowStep.
-func TestSeedChildVars_MissingRequiredVar(t *testing.T) {
-	body := &workflow.FSMGraph{
-		Variables: map[string]*workflow.VariableNode{
-			"topic": {Name: "topic", Type: cty.String, Default: cty.NilVal},
-		},
-	}
-
-	parentVars := map[string]cty.Value{
-		"var":   cty.EmptyObjectVal,
-		"steps": cty.EmptyObjectVal,
-	}
-
-	_, err := seedChildVars(body, cty.NilVal, parentVars)
-	if err == nil {
-		t.Fatal("expected error for missing required variable, got nil")
-	}
-}
 
 // --- integration tests (full compile + engine run) ---
 

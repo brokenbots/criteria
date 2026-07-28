@@ -342,7 +342,7 @@ func ParseAndConvertVarOverride(val cty.Value, node *VariableNode) (cty.Value, e
 		parsed, err := parseOverrideString(val.AsString(), node.Type)
 		if err != nil {
 			if node.Secret {
-				return cty.NilVal, fmt.Errorf("invalid value for secret variable (value withheld); expected %s", node.Type.FriendlyName())
+				return cty.NilVal, fmt.Errorf("invalid value for secret variable (sensitive); expected %s", node.Type.FriendlyName())
 			}
 			return cty.NilVal, err
 		}
@@ -391,22 +391,8 @@ func parseOverrideString(raw string, want cty.Type) (cty.Value, error) {
 	if want == cty.String {
 		return cty.StringVal(raw), nil
 	}
-	if want == cty.Number {
-		converted, err := convert.Convert(cty.StringVal(raw), cty.Number)
-		if err != nil {
-			return cty.NilVal, fmt.Errorf("cannot parse %q as number: %w", raw, err)
-		}
-		return converted, nil
-	}
-	if want == cty.Bool {
-		switch raw {
-		case "true", "1":
-			return cty.BoolVal(true), nil
-		case "false", "0":
-			return cty.BoolVal(false), nil
-		default:
-			return cty.NilVal, fmt.Errorf("cannot parse %q as bool: expected true/false/1/0", raw)
-		}
+	if want == cty.Number || want == cty.Bool {
+		return parseScalarString(raw, want)
 	}
 
 	expr, diags := hclsyntax.ParseExpression([]byte(raw), "<var>", hcl.Pos{Line: 1, Column: 1})

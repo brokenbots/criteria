@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/zclconf/go-cty/cty"
+
+	"github.com/brokenbots/criteria/workflow"
 )
 
 func TestParseVarFile_JSON(t *testing.T) {
@@ -328,4 +330,41 @@ func TestParseVarOverrides_BoolAndNumberKeptAsRawString(t *testing.T) {
 		"enabled": cty.StringVal("true"),
 		"count":   cty.StringVal("42"),
 	})
+}
+
+// TestMergeVarSourcesToApplyVarOverrides_CLIComplexTypesReachScope is a seam
+// test joining the CLI parsing layer (mergeVarSources/parseVarOverrides) to the
+// workflow conversion layer (ApplyVarOverrides). It verifies that a --var
+// value written as an HCL collection literal is parsed as raw text by the CLI
+// and then converted to the declared variable type by the engine seeding path.
+func TestMergeVarSourcesToApplyVarOverrides_CLIComplexTypesReachScope(t *testing.T) {
+	merged, err := mergeVarSources(nil, []string{`tags=["a","b"]`})
+	if err != nil {
+		t.Fatalf("mergeVarSources: %v", err)
+	}
+
+	g := &workflow.FSMGraph{
+		Variables: map[string]*workflow.VariableNode{
+			"tags": {Name: "tags", Type: cty.List(cty.String)},
+		},
+	}
+
+	after, err := workflow.ApplyVarOverrides(g, workflow.SeedVarsFromGraph(g), merged)
+	if err != nil {
+		t.Fatalf("ApplyVarOverrides: %v", err)
+	}
+
+	tags := after["var"].GetAttr("tags")
+	if !tags.Type().IsListType() {
+		t.Fatalf("var.tags type = %s, want list", tags.Type().FriendlyName())
+	}
+	if l := tags.LengthInt(); l != 2 {
+		t.Errorf("var.tags length = %d, want 2", l)
+	}
+	if got := tags.Index(cty.NumberIntVal(0)).AsString(); got != "a" {
+		t.Errorf("var.tags[0] = %q, want a", got)
+	}
+	if got := tags.Index(cty.NumberIntVal(1)).AsString(); got != "b" {
+		t.Errorf("var.tags[1] = %q, want b", got)
+	}
 }
