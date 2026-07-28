@@ -335,8 +335,10 @@ func ApplyVarOverrides(g *FSMGraph, vars, overrides map[string]cty.Value) (map[s
 // and declared-type conversion.
 func ParseAndConvertVarOverride(val cty.Value, node *VariableNode) (cty.Value, error) {
 	// Raw CLI strings are parsed according to the declared type so that string
-	// variables keep the exact text supplied on the command line.
-	if val.Type() == cty.String {
+	// variables keep the exact text supplied on the command line. The string
+	// branch must be known and non-null before calling AsString; ConvertVarOverrideValue
+	// is the single place that reports null/unknown errors.
+	if val.IsKnown() && !val.IsNull() && val.Type() == cty.String {
 		parsed, err := parseOverrideString(val.AsString(), node.Type)
 		if err != nil {
 			return cty.NilVal, err

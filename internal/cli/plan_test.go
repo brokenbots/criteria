@@ -29,9 +29,9 @@ func TestPlanGolden(t *testing.T) {
 }
 
 // TestPlanOutput_SecretVariablesRedacted verifies that variables declared with
-// secret = true are rendered as (sensitive) in plan output, both when supplied
-// via --var and when using the declared default, while non-secret variables
-// continue to render normally.
+// secret = true are rendered as (sensitive) in plan output when supplied via
+// --var or via a declared default, while an unset secret variable still shows
+// (required). Non-secret variables continue to render normally.
 func TestPlanOutput_SecretVariablesRedacted(t *testing.T) {
 	path := writeWorkflowFile(t, `
 workflow {
@@ -51,6 +51,17 @@ variable "token" {
   secret = true
 }
 
+variable "api_key" {
+  type   = string
+  secret = true
+}
+
+variable "secret_region" {
+  type    = string
+  secret  = true
+  default = "eu-central-1"
+}
+
 variable "region" {
   type    = string
   default = "us-east-1"
@@ -67,11 +78,17 @@ variable "region" {
 		t.Fatalf("renderPlanOutput: %v", err)
 	}
 
-	if strings.Contains(out, "ghp_realsecret") {
+	if strings.Contains(out, "ghp_realsecret") || strings.Contains(out, "eu-central-1") {
 		t.Errorf("plan output leaks secret value:\n%s", out)
 	}
-	if !strings.Contains(out, "token: string = (sensitive)") {
-		t.Errorf("plan output did not mask secret variable; want 'token: string = (sensitive)', got:\n%s", out)
+	if !strings.Contains(out, "token: string = (sensitive)  (override)") {
+		t.Errorf("plan output did not mask secret override; want 'token: string = (sensitive)  (override)', got:\n%s", out)
+	}
+	if !strings.Contains(out, "api_key: string = (required)") {
+		t.Errorf("plan output did not show unset secret as required; want 'api_key: string = (required)', got:\n%s", out)
+	}
+	if !strings.Contains(out, "secret_region: string = (sensitive)") {
+		t.Errorf("plan output did not mask secret default; want 'secret_region: string = (sensitive)', got:\n%s", out)
 	}
 	if !strings.Contains(out, "region: string = us-west-2  (override)") {
 		t.Errorf("plan output did not render non-secret override; got:\n%s", out)

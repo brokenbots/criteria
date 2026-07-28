@@ -63,14 +63,22 @@ func renderPlanOutput(ctx context.Context, workflowPath string, overrides map[st
 			v := graph.Variables[name]
 			typeName := v.Type.FriendlyName()
 			displayVal := "(required)"
-			if v.Secret {
-				displayVal = "(sensitive)"
-			} else if ov, ok := overrides[name]; ok {
-				displayVal = workflow.CtyValueToString(ov) + "  (override)"
+			suffix := ""
+			if ov, ok := overrides[name]; ok {
+				suffix = "  (override)"
+				if v.Secret {
+					displayVal = "(sensitive)"
+				} else {
+					displayVal = workflow.CtyValueToString(ov)
+				}
 			} else if v.Default != cty.NilVal {
-				displayVal = workflow.CtyValueToString(v.Default)
+				if v.Secret {
+					displayVal = "(sensitive)"
+				} else {
+					displayVal = workflow.CtyValueToString(v.Default)
+				}
 			}
-			b.WriteString(fmt.Sprintf("  %s: %s = %s\n", name, typeName, displayVal))
+			b.WriteString(fmt.Sprintf("  %s: %s = %s%s\n", name, typeName, displayVal, suffix))
 		}
 	}
 	b.WriteString("\n")

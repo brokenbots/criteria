@@ -667,6 +667,31 @@ func TestConvertVarOverrideValue_StringBindingToNumberRejectsGarbage(t *testing.
 	}
 }
 
+// TestParseAndConvertVarOverride_NullAndUnknownStringReturnsError verifies that
+// a null or unknown string value does not panic in ParseAndConvertVarOverride
+// and instead returns a clear error from ConvertVarOverrideValue. This covers
+// exported-package callers that may pass such values directly.
+func TestParseAndConvertVarOverride_NullAndUnknownStringReturnsError(t *testing.T) {
+	node := &VariableNode{Name: "count", Type: cty.Number}
+
+	cases := []struct {
+		name string
+		val  cty.Value
+	}{
+		{"null string", cty.NullVal(cty.String)},
+		{"unknown string", cty.UnknownVal(cty.String)},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := ParseAndConvertVarOverride(tc.val, node)
+			if err == nil {
+				t.Fatal("expected error for null/unknown string override")
+			}
+		})
+	}
+}
+
 // TestApplyVarOverrides_NumberStrictParsing verifies that raw --var number
 // values use strict parsing: partial input is rejected, decimals work, and
 // arbitrarily large integers keep their exact precision.
