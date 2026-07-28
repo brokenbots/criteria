@@ -330,19 +330,10 @@ func ApplyVarOverrides(g *FSMGraph, vars, overrides map[string]cty.Value) (map[s
 
 // ParseAndConvertVarOverride handles the raw-string CLI case: it parses the
 // override string according to the declared variable type (verbatim for string,
-// legacy scalar parsing for number/bool, HCL expression for everything else),
-// applies optional object defaults, then converts to the declared type.
+// strict scalar parsing for number/bool, HCL expression for everything else),
+// then delegates to ConvertVarOverrideValue for optional-default application
+// and declared-type conversion.
 func ParseAndConvertVarOverride(val cty.Value, node *VariableNode) (cty.Value, error) {
-	if node.Type == cty.NilType {
-		return val, nil
-	}
-	if !val.IsKnown() {
-		return cty.NilVal, fmt.Errorf("override value is unknown")
-	}
-	if val.IsNull() {
-		return cty.NilVal, fmt.Errorf("override value is null")
-	}
-
 	// Raw CLI strings are parsed according to the declared type so that string
 	// variables keep the exact text supplied on the command line.
 	if val.Type() == cty.String {
@@ -396,11 +387,11 @@ func parseOverrideString(raw string, want cty.Type) (cty.Value, error) {
 		return cty.StringVal(raw), nil
 	}
 	if want == cty.Number {
-		var f float64
-		if _, err := fmt.Sscanf(raw, "%g", &f); err != nil {
+		converted, err := convert.Convert(cty.StringVal(raw), cty.Number)
+		if err != nil {
 			return cty.NilVal, fmt.Errorf("cannot parse %q as number: %w", raw, err)
 		}
-		return cty.NumberFloatVal(f), nil
+		return converted, nil
 	}
 	if want == cty.Bool {
 		switch raw {

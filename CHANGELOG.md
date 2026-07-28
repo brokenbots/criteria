@@ -70,6 +70,7 @@ See [docs/adapter-v2-migration.md](docs/adapter-v2-migration.md).
 - `--var-file` JSON and HCL files may now supply structured values (`list`, `map`, `object`) in addition to scalars.
 - `optional()` attributes inside `object({...})` variable type constraints are now honored when applying overrides from `--var`/`--var-file` and from parent `subworkflow` input bindings.
 - `OnVariableSet` events now report the converted run-scope value and emit `(sensitive)` for variables declared with `secret = true`.
+- Malformed `--var`/`--var-file` scalar values (e.g. `--var retries=3abc` for a `number` variable, or `--var flag=yes` for a `bool` variable) now abort the run with a clear error instead of being silently accepted or defaulted. Number overrides use the same strict parsing as other variable-override paths, preserving arbitrary precision for integer literals.
 
 ## [v0.3.0] — 2026-05-06 — Phase 3: HCL/runtime rework, subworkflow features, clean break from v0.2.0
 

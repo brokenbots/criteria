@@ -656,15 +656,51 @@ func TestApplyVarOverrides_ConversionError(t *testing.T) {
 }
 
 // TestConvertVarOverrideValue_StringBindingToNumberRejectsGarbage verifies that
-// an already-typed string value supplied to a number variable is converted
-// strictly by convert.Convert, not via the lenient Sscanf used for raw CLI
-// text. This is the path taken by subworkflow input bindings and var-file
-// values.
+// a string value supplied to a number variable is converted strictly by
+// convert.Convert on every override path (var-file, subworkflow bindings, and
+// raw --var after parseOverrideString).
 func TestConvertVarOverrideValue_StringBindingToNumberRejectsGarbage(t *testing.T) {
 	node := &VariableNode{Name: "retries", Type: cty.Number}
 	_, err := ConvertVarOverrideValue(cty.StringVal("3abc"), node)
 	if err == nil {
 		t.Fatal("expected error for invalid number string")
+	}
+}
+
+// TestApplyVarOverrides_NumberStrictParsing verifies that raw --var number
+// values use strict parsing: partial input is rejected, decimals work, and
+// arbitrarily large integers keep their exact precision.
+func TestApplyVarOverrides_NumberStrictParsing(t *testing.T) {
+	g := &FSMGraph{
+		Variables: map[string]*VariableNode{
+			"retries": {Name: "retries", Type: cty.Number},
+			"big":     {Name: "big", Type: cty.Number},
+		},
+	}
+
+	_, err := ApplyVarOverrides(g, SeedVarsFromGraph(g), map[string]cty.Value{
+		"retries": cty.StringVal("3abc"),
+	})
+	if err == nil {
+		t.Fatal("expected error for partial number override")
+	}
+
+	after, err := ApplyVarOverrides(g, SeedVarsFromGraph(g), map[string]cty.Value{
+		"retries": cty.StringVal("1.5"),
+		"big":     cty.StringVal("12345678901234567890"),
+	})
+	if err != nil {
+		t.Fatalf("ApplyVarOverrides: %v", err)
+	}
+
+	retries := after["var"].GetAttr("retries").AsBigFloat()
+	if retries.Text('f', -1) != "1.5" {
+		t.Errorf("retries = %s, want 1.5", retries.Text('f', -1))
+	}
+
+	big := after["var"].GetAttr("big").AsBigFloat()
+	if big.Text('f', -1) != "12345678901234567890" {
+		t.Errorf("big = %s, want exact integer 12345678901234567890", big.Text('f', -1))
 	}
 }
 

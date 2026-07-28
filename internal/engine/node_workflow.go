@@ -20,17 +20,16 @@ import (
 	"github.com/brokenbots/criteria/workflow"
 )
 
-// seedChildVars builds the initial vars map for a workflow body run.
+// seedChildVars is a legacy helper retained only for a handful of unit tests.
+// It is not used by production code: the live body-execution path is
+// seedChildVarsFromBindings (node_subworkflow.go), which was fixed by this
+// workstream to convert input values to the child's declared variable type and
+// to treat null bindings as "not supplied" (falling back to the default).
 //
-// It starts from the body's compiled variable defaults (via SeedVarsFromGraph),
-// then applies any parentInput bindings to override var.* values. The body's
-// compiled locals (always compile-time constants) are seeded from the graph.
-// The parent's each.* binding is threaded through so iteration variables
-// remain accessible inside the body without explicit input declaration.
-//
-// Returns an error when a required body variable (no declared default) is
-// absent from parentInput. This is the runtime safety net; the compiler also
-// catches the case where no input expression is present at all.
+// This helper differs on both points: it assigns parentInput attributes
+// directly without type conversion, and a null binding overwrites the declared
+// default with null. Do not rewire it for production use without aligning it
+// with seedChildVarsFromBindings.
 func seedChildVars(body *workflow.FSMGraph, parentInput cty.Value, parentVars map[string]cty.Value) (map[string]cty.Value, error) {
 	vars := workflow.SeedVarsFromGraph(body)
 	if len(body.Locals) > 0 {
@@ -54,9 +53,11 @@ func seedChildVars(body *workflow.FSMGraph, parentInput cty.Value, parentVars ma
 	return vars, nil
 }
 
-// overrideVarsFromInput applies parentInput object bindings to the var.*
-// entries in vars. Only keys that match declared body variables are applied.
-// Returns an unmodified vars when parentInput is absent or not an object.
+// overrideVarsFromInput is a legacy helper retained only for seedChildVars
+// tests. It is not used by production code and diverges from the live path
+// (seedChildVarsFromBindings) by assigning parentInput attributes directly
+// without converting them to the child's declared variable type. See the
+// seedChildVars comment for the full divergence warning.
 func overrideVarsFromInput(vars map[string]cty.Value, body *workflow.FSMGraph, parentInput cty.Value) map[string]cty.Value {
 	if parentInput == cty.NilVal || !parentInput.IsKnown() || parentInput.IsNull() || !parentInput.Type().IsObjectType() {
 		return vars

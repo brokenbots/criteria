@@ -3,7 +3,10 @@ package cli
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/zclconf/go-cty/cty"
 )
 
 func TestPlanGolden(t *testing.T) {
@@ -22,5 +25,55 @@ func TestPlanGolden(t *testing.T) {
 			}
 			assertGoldenFile(t, filepath.Join("testdata", "plan", name+".golden"), []byte(out))
 		})
+	}
+}
+
+// TestPlanOutput_SecretVariablesRedacted verifies that variables declared with
+// secret = true are rendered as (sensitive) in plan output, both when supplied
+// via --var and when using the declared default, while non-secret variables
+// continue to render normally.
+func TestPlanOutput_SecretVariablesRedacted(t *testing.T) {
+	path := writeWorkflowFile(t, `
+workflow {
+  name          = "secret-plan-test"
+  version       = "0.0.1"
+  initial_state = "start"
+  target_state  = "start"
+}
+
+state "start" {
+  terminal = true
+  success  = true
+}
+
+variable "token" {
+  type   = string
+  secret = true
+}
+
+variable "region" {
+  type    = string
+  default = "us-east-1"
+}
+`)
+
+	overrides := map[string]cty.Value{
+		"token":  cty.StringVal("ghp_realsecret"),
+		"region": cty.StringVal("us-west-2"),
+	}
+
+	out, err := renderPlanOutput(context.Background(), path, overrides)
+	if err != nil {
+		t.Fatalf("renderPlanOutput: %v", err)
+	}
+
+	if strings.Contains(out, "ghp_realsecret") {
+		t.Errorf("plan output leaks secret value:\n%s", out)
+	}
+	if !strings.Contains(out, "token: string = (sensitive)") {
+		t.Errorf("plan output did not mask secret variable; want 'token: string = (sensitive)', got:\n%s", out)
+	}
+	if !strings.Contains(out, "region: string = us-west-2  (override)") {
+		t.Errorf("plan output did not render non-secret override; got:\n%s", out)
 	}
 }
