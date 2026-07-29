@@ -1,18 +1,44 @@
 package workflow
 
-// coerce.go — the single primitive for turning a raw adapter string output into
-// a typed cty.Value against a declared type. Lives in the workflow package so
-// both the engine (data writes) and the typed-output storage helpers can share
-// one implementation; the engine package depends on workflow, not the reverse.
+// coerce.go — shared scalar parsing and the single primitive for turning a raw
+// adapter string output into a typed cty.Value against a declared type. Lives in
+// the workflow package so both the engine (data writes) and the typed-output
+// storage helpers can share one implementation; the engine package depends on
+// workflow, not the reverse.
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
 
 	"github.com/zclconf/go-cty/cty"
+	"github.com/zclconf/go-cty/cty/convert"
 	ctyjson "github.com/zclconf/go-cty/cty/json"
 )
+
+// parseScalarString parses a raw string into a cty scalar bool or number.
+// It does not trim whitespace; callers that need lenient whitespace handling
+// (e.g. adapter output coercion) should trim before calling.
+func parseScalarString(raw string, want cty.Type) (cty.Value, error) {
+	switch want {
+	case cty.Number:
+		converted, err := convert.Convert(cty.StringVal(raw), cty.Number)
+		if err != nil {
+			return cty.NilVal, fmt.Errorf("cannot parse %q as number: %w", raw, err)
+		}
+		return converted, nil
+	case cty.Bool:
+		switch raw {
+		case "true", "1":
+			return cty.BoolVal(true), nil
+		case "false", "0":
+			return cty.BoolVal(false), nil
+		default:
+			return cty.NilVal, fmt.Errorf("cannot parse %q as bool: expected true/false/1/0", raw)
+		}
+	default:
+		return cty.NilVal, fmt.Errorf("unsupported scalar type %s", want.FriendlyName())
+	}
+}
 
 // CoerceStringToCty converts a raw adapter string output to the given cty type.
 //
@@ -33,20 +59,14 @@ func CoerceStringToCty(s string, t cty.Type) (cty.Value, error) {
 	case cty.String:
 		return cty.StringVal(s), nil
 	case cty.Number:
-		f, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
-		if err != nil {
-			return cty.NilVal, fmt.Errorf("cannot coerce %q to type number: %w", s, err)
-		}
-		return cty.NumberFloatVal(f), nil
+		// Adapter output strings may carry surrounding whitespace from shell
+		// commands; trim before applying strict scalar parsing. Precision is kept
+		// exact via convert.Convert rather than lossy float64.
+		return parseScalarString(strings.TrimSpace(s), cty.Number)
 	case cty.Bool:
-		switch strings.TrimSpace(s) {
-		case "true", "1":
-			return cty.BoolVal(true), nil
-		case "false", "0":
-			return cty.BoolVal(false), nil
-		default:
-			return cty.NilVal, fmt.Errorf("cannot coerce %q to type bool: expected true/false/1/0", s)
-		}
+		// Adapter output strings may carry surrounding whitespace from shell
+		// commands; trim before applying strict bool parsing.
+		return parseScalarString(strings.TrimSpace(s), cty.Bool)
 	case cty.DynamicPseudoType:
 		return coerceDynamicJSON(s)
 	default:

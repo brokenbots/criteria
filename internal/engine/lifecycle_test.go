@@ -7,6 +7,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/zclconf/go-cty/cty"
+
 	"github.com/brokenbots/criteria/internal/adapterhost"
 )
 
@@ -551,7 +553,7 @@ state "done" {
 
 	sink := &fakeSink{}
 	// Use WithVarOverrides to supply the runtime value of var.model.
-	eng := New(g, loader, sink, WithVarOverrides(map[string]string{"model": "runtime-model"}))
+	eng := New(g, loader, sink, WithVarOverrides(map[string]cty.Value{"model": cty.StringVal("runtime-model")}))
 	if err := eng.Run(context.Background()); err != nil {
 		t.Fatalf("Run: %v", err)
 	}

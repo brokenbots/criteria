@@ -5,12 +5,16 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/zclconf/go-cty/cty"
+
+	"github.com/brokenbots/criteria/workflow"
 )
 
 func TestParseVarFile_JSON(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "vars.json")
-	content := `{"foo": "bar", "count": "42"}`
+	content := `{"foo": "bar", "count": 42}`
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write file: %v", err)
 	}
@@ -19,15 +23,18 @@ func TestParseVarFile_JSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseVarFile: %v", err)
 	}
-	want := map[string]string{"foo": "bar", "count": "42"}
-	assertMapEq(t, got, want)
+	want := map[string]cty.Value{
+		"foo":   cty.StringVal("bar"),
+		"count": cty.NumberIntVal(42),
+	}
+	assertCtyMapEq(t, got, want)
 }
 
 func TestParseVarFile_CHCL(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "vars.chcl")
 	content := `foo = "bar"
-count = "42"
+count = 42
 `
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write file: %v", err)
@@ -37,15 +44,18 @@ count = "42"
 	if err != nil {
 		t.Fatalf("parseVarFile: %v", err)
 	}
-	want := map[string]string{"foo": "bar", "count": "42"}
-	assertMapEq(t, got, want)
+	want := map[string]cty.Value{
+		"foo":   cty.StringVal("bar"),
+		"count": cty.NumberIntVal(42),
+	}
+	assertCtyMapEq(t, got, want)
 }
 
 func TestParseVarFile_HCL(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "vars.hcl")
 	content := `foo = "bar"
-count = "42"
+count = 42
 `
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write file: %v", err)
@@ -55,8 +65,51 @@ count = "42"
 	if err != nil {
 		t.Fatalf("parseVarFile: %v", err)
 	}
-	want := map[string]string{"foo": "bar", "count": "42"}
-	assertMapEq(t, got, want)
+	want := map[string]cty.Value{
+		"foo":   cty.StringVal("bar"),
+		"count": cty.NumberIntVal(42),
+	}
+	assertCtyMapEq(t, got, want)
+}
+
+func TestParseVarFile_JSON_Structured(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "vars.json")
+	content := `{"tags":["a","b"],"cfg":{"a":"1"}}`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	got, err := parseVarFile(path)
+	if err != nil {
+		t.Fatalf("parseVarFile: %v", err)
+	}
+	want := map[string]cty.Value{
+		"tags": cty.TupleVal([]cty.Value{cty.StringVal("a"), cty.StringVal("b")}),
+		"cfg":  cty.ObjectVal(map[string]cty.Value{"a": cty.StringVal("1")}),
+	}
+	assertCtyMapEq(t, got, want)
+}
+
+func TestParseVarFile_HCL_Structured(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "vars.hcl")
+	content := `tags = ["a", "b"]
+cfg  = { a = "1" }
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	got, err := parseVarFile(path)
+	if err != nil {
+		t.Fatalf("parseVarFile: %v", err)
+	}
+	want := map[string]cty.Value{
+		"tags": cty.TupleVal([]cty.Value{cty.StringVal("a"), cty.StringVal("b")}),
+		"cfg":  cty.ObjectVal(map[string]cty.Value{"a": cty.StringVal("1")}),
+	}
+	assertCtyMapEq(t, got, want)
 }
 
 func TestParseVarFile_UnsupportedExtension(t *testing.T) {
@@ -111,7 +164,7 @@ func TestParseVarFile_MalformedHCL(t *testing.T) {
 	}
 }
 
-func TestParseVarFile_NonStringValue(t *testing.T) {
+func TestParseVarFile_NumericValue(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "vars.hcl")
 	content := `foo = 42`
@@ -119,12 +172,26 @@ func TestParseVarFile_NonStringValue(t *testing.T) {
 		t.Fatalf("write file: %v", err)
 	}
 
+	got, err := parseVarFile(path)
+	if err != nil {
+		t.Fatalf("parseVarFile: %v", err)
+	}
+	assertCtyMapEq(t, got, map[string]cty.Value{"foo": cty.NumberIntVal(42)})
+}
+
+func TestParseVarFile_JSON_NullRejected(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "vars.json")
+	if err := os.WriteFile(path, []byte(`{"foo": null}`), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
 	_, err := parseVarFile(path)
 	if err == nil {
-		t.Fatal("expected error for non-string value")
+		t.Fatal("expected error for null JSON value")
 	}
-	if !strings.Contains(err.Error(), "non-string value") {
-		t.Errorf("expected error mentioning non-string value, got: %v", err)
+	if !strings.Contains(err.Error(), "foo") || !strings.Contains(err.Error(), "null") {
+		t.Errorf("error = %q, want it to mention key and null", err.Error())
 	}
 }
 
@@ -139,8 +206,11 @@ func TestMergeVarSources_VarAndFileDisjointKeys(t *testing.T) {
 	if err != nil {
 		t.Fatalf("mergeVarSources: %v", err)
 	}
-	want := map[string]string{"env": "prod", "region": "us-west"}
-	assertMapEq(t, got, want)
+	want := map[string]cty.Value{
+		"env":    cty.StringVal("prod"),
+		"region": cty.StringVal("us-west"),
+	}
+	assertCtyMapEq(t, got, want)
 }
 
 func TestMergeVarSources_Precedence_VarOverridesVarFile(t *testing.T) {
@@ -154,8 +224,8 @@ func TestMergeVarSources_Precedence_VarOverridesVarFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("mergeVarSources: %v", err)
 	}
-	if got["foo"] != "cli" {
-		t.Errorf("foo = %q, want %q", got["foo"], "cli")
+	if !got["foo"].RawEquals(cty.StringVal("cli")) {
+		t.Errorf("foo = %#v, want %#v", got["foo"], cty.StringVal("cli"))
 	}
 }
 
@@ -174,8 +244,8 @@ func TestMergeVarSources_Precedence_LaterFileWins(t *testing.T) {
 	if err != nil {
 		t.Fatalf("mergeVarSources: %v", err)
 	}
-	if got["foo"] != "b" {
-		t.Errorf("foo = %q, want %q", got["foo"], "b")
+	if !got["foo"].RawEquals(cty.StringVal("b")) {
+		t.Errorf("foo = %#v, want %#v", got["foo"], cty.StringVal("b"))
 	}
 }
 
@@ -194,7 +264,10 @@ func TestMergeVarSources_MergesMultipleFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("mergeVarSources: %v", err)
 	}
-	assertMapEq(t, got, map[string]string{"x": "a", "y": "b"})
+	assertCtyMapEq(t, got, map[string]cty.Value{
+		"x": cty.StringVal("a"),
+		"y": cty.StringVal("b"),
+	})
 }
 
 func TestMergeVarSources_VarFileErrorPropagated(t *testing.T) {
@@ -204,14 +277,94 @@ func TestMergeVarSources_VarFileErrorPropagated(t *testing.T) {
 	}
 }
 
-func assertMapEq(t *testing.T, got, want map[string]string) {
+func assertCtyMapEq(t *testing.T, got, want map[string]cty.Value) {
 	t.Helper()
 	if len(got) != len(want) {
 		t.Fatalf("len=%d want %d (got=%v want=%v)", len(got), len(want), got, want)
 	}
 	for k, v := range want {
-		if got[k] != v {
-			t.Fatalf("key %q: got %q want %q", k, got[k], v)
+		gv, ok := got[k]
+		if !ok {
+			t.Fatalf("missing key %q", k)
 		}
+		if !gv.RawEquals(v) {
+			t.Fatalf("key %q: got %#v want %#v", k, gv, v)
+		}
+	}
+}
+
+func TestParseVarOverrides_ListKeptAsRawString(t *testing.T) {
+	got := parseVarOverrides([]string{`tags=["a", "b"]`})
+	want := cty.StringVal(`["a", "b"]`)
+	if !got["tags"].RawEquals(want) {
+		t.Errorf("tags = %#v, want %#v", got["tags"], want)
+	}
+}
+
+func TestParseVarOverrides_MapKeptAsRawString(t *testing.T) {
+	got := parseVarOverrides([]string{`labels={"env"="prod", "app"="demo"}`})
+	want := cty.StringVal(`{"env"="prod", "app"="demo"}`)
+	if !got["labels"].RawEquals(want) {
+		t.Errorf("labels = %#v, want %#v", got["labels"], want)
+	}
+}
+
+func TestParseVarOverrides_ObjectKeptAsRawString(t *testing.T) {
+	got := parseVarOverrides([]string{`config={enabled=true, retries=3}`})
+	want := cty.StringVal(`{enabled=true, retries=3}`)
+	if !got["config"].RawEquals(want) {
+		t.Errorf("config = %#v, want %#v", got["config"], want)
+	}
+}
+
+func TestParseVarOverrides_StringKeptVerbatim(t *testing.T) {
+	got := parseVarOverrides([]string{"region=us-west"})
+	assertCtyMapEq(t, got, map[string]cty.Value{
+		"region": cty.StringVal("us-west"),
+	})
+}
+
+func TestParseVarOverrides_BoolAndNumberKeptAsRawString(t *testing.T) {
+	got := parseVarOverrides([]string{"enabled=true", "count=42"})
+	assertCtyMapEq(t, got, map[string]cty.Value{
+		"enabled": cty.StringVal("true"),
+		"count":   cty.StringVal("42"),
+	})
+}
+
+// TestMergeVarSourcesToApplyVarOverrides_CLIComplexTypesReachScope is a seam
+// test joining the CLI parsing layer (mergeVarSources/parseVarOverrides) to the
+// workflow conversion layer (ApplyVarOverrides). It verifies that a --var
+// value written as an HCL collection literal is parsed as raw text by the CLI
+// and then converted to the declared variable type by the engine seeding path.
+func TestMergeVarSourcesToApplyVarOverrides_CLIComplexTypesReachScope(t *testing.T) {
+	merged, err := mergeVarSources(nil, []string{`tags=["a","b"]`})
+	if err != nil {
+		t.Fatalf("mergeVarSources: %v", err)
+	}
+
+	g := &workflow.FSMGraph{
+		Variables: map[string]*workflow.VariableNode{
+			"tags": {Name: "tags", Type: cty.List(cty.String)},
+		},
+	}
+
+	after, err := workflow.ApplyVarOverrides(g, workflow.SeedVarsFromGraph(g), merged)
+	if err != nil {
+		t.Fatalf("ApplyVarOverrides: %v", err)
+	}
+
+	tags := after["var"].GetAttr("tags")
+	if !tags.Type().IsListType() {
+		t.Fatalf("var.tags type = %s, want list", tags.Type().FriendlyName())
+	}
+	if l := tags.LengthInt(); l != 2 {
+		t.Errorf("var.tags length = %d, want 2", l)
+	}
+	if got := tags.Index(cty.NumberIntVal(0)).AsString(); got != "a" {
+		t.Errorf("var.tags[0] = %q, want a", got)
+	}
+	if got := tags.Index(cty.NumberIntVal(1)).AsString(); got != "b" {
+		t.Errorf("var.tags[1] = %q, want b", got)
 	}
 }

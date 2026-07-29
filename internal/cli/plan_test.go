@@ -3,7 +3,10 @@ package cli
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/zclconf/go-cty/cty"
 )
 
 func TestPlanGolden(t *testing.T) {
@@ -22,5 +25,116 @@ func TestPlanGolden(t *testing.T) {
 			}
 			assertGoldenFile(t, filepath.Join("testdata", "plan", name+".golden"), []byte(out))
 		})
+	}
+}
+
+// TestPlanOutput_SecretVariablesRedacted verifies that variables declared with
+// secret = true are rendered as (sensitive) in plan output when supplied via
+// --var or via a declared default, while an unset secret variable still shows
+// (required). Non-secret variables continue to render normally.
+func TestPlanOutput_SecretVariablesRedacted(t *testing.T) {
+	path := writeWorkflowFile(t, `
+workflow {
+  name          = "secret-plan-test"
+  version       = "0.0.1"
+  initial_state = "start"
+  target_state  = "start"
+}
+
+state "start" {
+  terminal = true
+  success  = true
+}
+
+variable "token" {
+  type   = string
+  secret = true
+}
+
+variable "api_key" {
+  type   = string
+  secret = true
+}
+
+variable "secret_region" {
+  type    = string
+  secret  = true
+  default = "eu-central-1"
+}
+
+variable "region" {
+  type    = string
+  default = "us-east-1"
+}
+`)
+
+	overrides := map[string]cty.Value{
+		"token":  cty.StringVal("ghp_realsecret"),
+		"region": cty.StringVal("us-west-2"),
+	}
+
+	out, err := renderPlanOutput(context.Background(), path, overrides)
+	if err != nil {
+		t.Fatalf("renderPlanOutput: %v", err)
+	}
+
+	if strings.Contains(out, "ghp_realsecret") || strings.Contains(out, "eu-central-1") {
+		t.Errorf("plan output leaks secret value:\n%s", out)
+	}
+	if !strings.Contains(out, "token: string = (sensitive)  (override)") {
+		t.Errorf("plan output did not mask secret override; want 'token: string = (sensitive)  (override)', got:\n%s", out)
+	}
+	if !strings.Contains(out, "api_key: string = (required)") {
+		t.Errorf("plan output did not show unset secret as required; want 'api_key: string = (required)', got:\n%s", out)
+	}
+	if !strings.Contains(out, "secret_region: string = (sensitive)") {
+		t.Errorf("plan output did not mask secret default; want 'secret_region: string = (sensitive)', got:\n%s", out)
+	}
+	if !strings.Contains(out, "region: string = us-west-2  (override)") {
+		t.Errorf("plan output did not render non-secret override; got:\n%s", out)
+	}
+}
+
+// TestPlanOutput_ComplexTypesRenderAsJSON verifies that map and object variable
+// overrides/defaults render as compact JSON in plan output instead of cty Go
+// debug syntax.
+func TestPlanOutput_ComplexTypesRenderAsJSON(t *testing.T) {
+	path := writeWorkflowFile(t, `
+workflow {
+  name          = "complex-plan-test"
+  version       = "0.0.1"
+  initial_state = "start"
+  target_state  = "start"
+}
+
+state "start" {
+  terminal = true
+  success  = true
+}
+
+variable "labels" {
+  type = map(string)
+  default = { env = "dev" }
+}
+
+variable "cfg" {
+  type = object({ env = string })
+}
+`)
+
+	overrides := map[string]cty.Value{
+		"cfg": cty.ObjectVal(map[string]cty.Value{"env": cty.StringVal("prod")}),
+	}
+
+	out, err := renderPlanOutput(context.Background(), path, overrides)
+	if err != nil {
+		t.Fatalf("renderPlanOutput: %v", err)
+	}
+
+	if !strings.Contains(out, `labels: map of string = {"env":"dev"}`) {
+		t.Errorf("plan output did not render map default as JSON; got:\n%s", out)
+	}
+	if !strings.Contains(out, `cfg: object = {"env":"prod"}  (override)`) {
+		t.Errorf("plan output did not render object override as JSON; got:\n%s", out)
 	}
 }

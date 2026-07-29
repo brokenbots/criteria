@@ -9,7 +9,9 @@ import (
 	"strings"
 
 	"github.com/hashicorp/hcl/v2"
+	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/zclconf/go-cty/cty"
+	"github.com/zclconf/go-cty/cty/convert"
 	ctyjson "github.com/zclconf/go-cty/cty/json"
 )
 
@@ -202,6 +204,10 @@ func refsWhile(expr hcl.Expression) bool {
 
 // CtyValueToString converts a cty.Value to its string representation.
 // Lists are rendered as comma-separated values. Unknown/null values yield "".
+//
+// This helper is used for persisted iteration cursors and step-output
+// stringification, where stability matters more than readability. For
+// user-facing display of variable values, use CtyValueForDisplay instead.
 func CtyValueToString(v cty.Value) string {
 	if v == cty.NilVal || v.IsNull() {
 		return ""
@@ -231,6 +237,48 @@ func CtyValueToString(v cty.Value) string {
 		}
 		return v.GoString()
 	}
+}
+
+// CtyValueForDisplay returns a readable, compact representation of a cty.Value
+// for user-facing output (plan rendering and variable-set events). Primitives
+// render the same as CtyValueToString; maps, objects, sets, and lists render as
+// compact JSON so that values like {env="prod"} are readable instead of Go
+// debug syntax.
+func CtyValueForDisplay(v cty.Value) string {
+	if v == cty.NilVal || v.IsNull() || !v.IsKnown() {
+		return ""
+	}
+	switch v.Type() {
+	case cty.String:
+		return v.AsString()
+	case cty.Number:
+		bf := v.AsBigFloat()
+		return bf.Text('f', -1)
+	case cty.Bool:
+		if v.True() {
+			return "true"
+		}
+		return "false"
+	}
+
+	if v.Type().IsListType() || v.Type().IsTupleType() {
+		return ctyListForDisplay(v)
+	}
+	if v.Type().IsMapType() || v.Type().IsObjectType() || v.Type().IsSetType() {
+		if b, err := ctyjson.Marshal(v, v.Type()); err == nil {
+			return string(b)
+		}
+	}
+	return v.GoString()
+}
+
+func ctyListForDisplay(v cty.Value) string {
+	var parts []string
+	for it := v.ElementIterator(); it.Next(); {
+		_, elem := it.Element()
+		parts = append(parts, CtyValueForDisplay(elem))
+	}
+	return "[" + strings.Join(parts, ",") + "]"
 }
 
 // SeedVarsFromGraph initialises the run-scoped vars map from a compiled
@@ -287,13 +335,13 @@ func SeedDataSnapshot(vars, snap map[string]cty.Value) map[string]cty.Value {
 	return newVars
 }
 
-// ApplyVarOverrides merges CLI-supplied key=value pairs into an existing vars
+// ApplyVarOverrides merges CLI/file-supplied overrides into an existing vars
 // map produced by SeedVarsFromGraph. Only keys that match declared variables
-// are applied; unknown keys are silently ignored. Values are coerced to the
-// declared variable type (only string is supported today).
-func ApplyVarOverrides(g *FSMGraph, vars map[string]cty.Value, overrides map[string]string) map[string]cty.Value {
+// are applied; unknown keys are silently ignored. Each override is converted
+// to the declared variable type (and optional object defaults are applied).
+func ApplyVarOverrides(g *FSMGraph, vars, overrides map[string]cty.Value) (map[string]cty.Value, error) {
 	if len(overrides) == 0 {
-		return vars
+		return vars, nil
 	}
 	varObj := vars["var"]
 	existing := map[string]cty.Value{}
@@ -302,22 +350,16 @@ func ApplyVarOverrides(g *FSMGraph, vars map[string]cty.Value, overrides map[str
 			existing[k] = varObj.GetAttr(k)
 		}
 	}
-	for name, raw := range overrides {
+	for name, val := range overrides {
 		node, ok := g.Variables[name]
 		if !ok {
 			continue
 		}
-		switch node.Type {
-		case cty.String:
-			existing[name] = cty.StringVal(raw)
-		case cty.Number:
-			var f float64
-			if _, err := fmt.Sscanf(raw, "%g", &f); err == nil {
-				existing[name] = cty.NumberFloatVal(f)
-			}
-		case cty.Bool:
-			existing[name] = cty.BoolVal(raw == "true" || raw == "1")
+		converted, err := parseAndConvertVarOverride(val, node)
+		if err != nil {
+			return nil, fmt.Errorf("variable %q: %w", name, err)
 		}
+		existing[name] = converted
 	}
 	out := map[string]cty.Value{"steps": vars["steps"]}
 	// Preserve compiled locals (compile-time constants; not affected by var overrides).
@@ -329,7 +371,91 @@ func ApplyVarOverrides(g *FSMGraph, vars map[string]cty.Value, overrides map[str
 	} else {
 		out["var"] = cty.EmptyObjectVal
 	}
-	return out
+	return out, nil
+}
+
+// parseAndConvertVarOverride handles the raw-string CLI case: it parses the
+// override string according to the declared variable type (verbatim for string,
+// strict scalar parsing for number/bool, HCL expression for everything else),
+// then delegates to ConvertVarOverrideValue for optional-default application
+// and declared-type conversion.
+func parseAndConvertVarOverride(val cty.Value, node *VariableNode) (cty.Value, error) {
+	// Raw CLI strings are parsed according to the declared type so that string
+	// variables keep the exact text supplied on the command line. The string
+	// branch must be known and non-null before calling AsString; ConvertVarOverrideValue
+	// is the single place that reports null/unknown errors.
+	if val.IsKnown() && !val.IsNull() && val.Type() == cty.String {
+		parsed, err := parseOverrideString(val.AsString(), node.Type)
+		if err != nil {
+			if node.Secret {
+				return cty.NilVal, fmt.Errorf("invalid value for secret variable (sensitive); expected %s", node.Type.FriendlyName())
+			}
+			return cty.NilVal, err
+		}
+		val = parsed
+	}
+
+	return ConvertVarOverrideValue(val, node)
+}
+
+// ConvertVarOverrideValue coerces an already-typed override value to a
+// variable's declared type, applying optional object defaults before type
+// conversion so that partially-specified object overrides receive their
+// declared defaults. It is used by var-file values, subworkflow bindings, and
+// ParseAndConvertVarOverride after raw CLI parsing.
+func ConvertVarOverrideValue(val cty.Value, node *VariableNode) (cty.Value, error) {
+	if node.Type == cty.NilType {
+		return val, nil
+	}
+	if !val.IsKnown() {
+		return cty.NilVal, fmt.Errorf("override value is unknown")
+	}
+	if val.IsNull() {
+		return cty.NilVal, fmt.Errorf("override value is null")
+	}
+
+	// Apply object optional() defaults before conversion.
+	if node.TypeDefaults != nil {
+		val = ApplyDefaultsIfAny(val, node.TypeDefaults)
+	}
+
+	if val.Type().Equals(node.Type) {
+		return val, nil
+	}
+	converted, err := convert.Convert(val, node.Type)
+	if err != nil {
+		if node.Secret {
+			return cty.NilVal, fmt.Errorf("invalid value for secret variable (sensitive); expected %s", node.Type.FriendlyName())
+		}
+		return cty.NilVal, fmt.Errorf("cannot convert %s to %s: %w", val.Type().FriendlyName(), node.Type.FriendlyName(), err)
+	}
+	return converted, nil
+}
+
+// parseOverrideString parses a raw --var value according to the declared
+// variable type. String variables receive the text verbatim; number and bool
+// variables use legacy scalar parsing; everything else is parsed as an HCL
+// expression so that list/map/object literals work on the CLI.
+func parseOverrideString(raw string, want cty.Type) (cty.Value, error) {
+	if want == cty.String {
+		return cty.StringVal(raw), nil
+	}
+	if want == cty.Number || want == cty.Bool {
+		return parseScalarString(raw, want)
+	}
+
+	expr, diags := hclsyntax.ParseExpression([]byte(raw), "<var>", hcl.Pos{Line: 1, Column: 1})
+	if diags.HasErrors() {
+		return cty.NilVal, fmt.Errorf("cannot parse override value %q: %w", raw, diags)
+	}
+	parsed, diags := expr.Value(nil)
+	if diags.HasErrors() {
+		return cty.NilVal, fmt.Errorf("cannot parse override value %q: %w", raw, diags)
+	}
+	if !parsed.IsKnown() {
+		return cty.NilVal, fmt.Errorf("cannot parse override value %q: value is unknown", raw)
+	}
+	return parsed, nil
 }
 
 // WithStepOutputs returns a new vars map with the given step's outputs merged

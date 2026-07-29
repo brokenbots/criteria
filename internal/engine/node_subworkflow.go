@@ -126,19 +126,22 @@ func seedChildVarsFromBindings(body *workflow.FSMGraph, inputVals, parentVars ma
 		vars["local"] = workflow.SeedLocalsFromGraph(body)
 	}
 
-	// Apply input bindings into the var.* namespace.
+	// Apply input bindings into the var.* namespace. Null bindings are treated as
+	// "not supplied" so the child variable falls back to its declared default;
+	// a null binding for a required child variable is caught by checkRequiredVars
+	// below rather than failing during conversion.
 	if len(inputVals) > 0 {
-		varObj := vars["var"]
-		varAttrs := map[string]cty.Value{}
-		if varObj.Type().IsObjectType() {
-			for k := range varObj.Type().AttributeTypes() {
-				varAttrs[k] = varObj.GetAttr(k)
-			}
-		}
+		varAttrs := cloneVarAttrs(vars["var"])
 		for name, val := range inputVals {
-			if _, declared := body.Variables[name]; declared {
-				varAttrs[name] = val
+			node, declared := body.Variables[name]
+			if !declared || val.IsNull() {
+				continue
 			}
+			converted, err := workflow.ConvertVarOverrideValue(val, node)
+			if err != nil {
+				return nil, fmt.Errorf("subworkflow input %q: %w", name, err)
+			}
+			varAttrs[name] = converted
 		}
 		if len(varAttrs) > 0 {
 			vars["var"] = cty.ObjectVal(varAttrs)
@@ -156,6 +159,18 @@ func seedChildVarsFromBindings(body *workflow.FSMGraph, inputVals, parentVars ma
 	}
 
 	return vars, nil
+}
+
+// cloneVarAttrs returns the attributes of vars["var"] as a mutable map, or an
+// empty map when the var scope is missing or not an object.
+func cloneVarAttrs(varObj cty.Value) map[string]cty.Value {
+	out := map[string]cty.Value{}
+	if varObj != cty.NilVal && varObj.Type().IsObjectType() {
+		for k := range varObj.Type().AttributeTypes() {
+			out[k] = varObj.GetAttr(k)
+		}
+	}
+	return out
 }
 
 // buildInputObj converts a flat string→cty.Value map to a cty object value

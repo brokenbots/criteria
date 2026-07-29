@@ -117,9 +117,9 @@ type Engine struct {
 	// resumedVisits, when non-nil, seeds RunState.Visits at run start (W07).
 	// Used during crash-recovery reattach to restore per-step visit counts.
 	resumedVisits map[string]int
-	// varOverrides, when non-nil, overlays CLI-supplied key=value pairs on top
+	// varOverrides, when non-nil, overlays CLI-supplied typed variable values on top
 	// of the graph variable defaults at run start.
-	varOverrides map[string]string
+	varOverrides map[string]cty.Value
 	// resumedIterStack, when non-empty, seeds RunState.IterStack at run start
 	// (W10). Used during crash-recovery reattach when a step iteration was active.
 	resumedIterStack []workflow.IterCursor
@@ -331,7 +331,10 @@ func (e *Engine) Run(ctx context.Context) error {
 
 	// Seed variables before adapter provisioning so secret expressions can be
 	// evaluated against the run scope (WS13).
-	vars := e.seedRunVars(sink)
+	vars, err := e.seedRunVars(sink)
+	if err != nil {
+		return err
+	}
 
 	// WS20: if any environment is remote, start the phone-home shim before
 	// provisioning adapters.
@@ -378,7 +381,10 @@ func (e *Engine) RunFrom(ctx context.Context, startStep string, initialAttempt i
 
 	sink := NewRedactingSink(e.sink, redactionReg)
 
-	vars := e.seedRunVars(sink)
+	vars, err := e.seedRunVars(sink)
+	if err != nil {
+		return err
+	}
 
 	// WS20: if any environment is remote, start the phone-home shim before
 	// provisioning adapters.
@@ -604,34 +610,72 @@ func finishIterationInGraph(st *RunState, stepName string, graph *workflow.FSMGr
 	return co.Next, nil
 }
 
-// returns the restored scope unchanged. For fresh runs it seeds from graph
-// defaults, applies any CLI overrides, and emits OnVariableSet events.
-func (e *Engine) seedRunVars(sink Sink) map[string]cty.Value {
+// seedRunVars returns the restored scope unchanged for resumed runs. For fresh
+// runs it seeds from graph defaults, applies any CLI overrides, and emits
+// OnVariableSet events.
+func (e *Engine) seedRunVars(sink Sink) (map[string]cty.Value, error) {
 	if e.resumedVars != nil {
-		// Locals are compile-time constants that are never persisted in the
-		// scope snapshot. Always reseed them from the current graph so that
-		// resumed runs have the same local.* bindings as fresh runs.
-		resumed := make(map[string]cty.Value, len(e.resumedVars)+1)
-		for k, v := range e.resumedVars {
-			resumed[k] = v
-		}
-		resumed["local"] = workflow.SeedLocalsFromGraph(e.graph)
-		return resumed
+		return e.seedResumedVars(), nil
 	}
+	return e.seedFreshVars(sink)
+}
+
+func (e *Engine) seedResumedVars() map[string]cty.Value {
+	// Locals are compile-time constants that are never persisted in the
+	// scope snapshot. Always reseed them from the current graph so that
+	// resumed runs have the same local.* bindings as fresh runs.
+	resumed := make(map[string]cty.Value, len(e.resumedVars)+1)
+	for k, v := range e.resumedVars {
+		resumed[k] = v
+	}
+	resumed["local"] = workflow.SeedLocalsFromGraph(e.graph)
+	return resumed
+}
+
+func (e *Engine) seedFreshVars(sink Sink) (map[string]cty.Value, error) {
 	vars := workflow.SeedVarsFromGraph(e.graph)
 	vars["local"] = workflow.SeedLocalsFromGraph(e.graph)
 	if len(e.varOverrides) > 0 {
-		vars = workflow.ApplyVarOverrides(e.graph, vars, e.varOverrides)
-	}
-	// Fresh run: emit OnVariableSet for each variable that has a value.
-	for name, node := range e.graph.Variables {
-		if ov, ok := e.varOverrides[name]; ok {
-			sink.OnVariableSet(name, ov, "override")
-		} else if node.Default != cty.NilVal {
-			sink.OnVariableSet(name, workflow.CtyValueToString(node.Default), "default")
+		var err error
+		vars, err = workflow.ApplyVarOverrides(e.graph, vars, e.varOverrides)
+		if err != nil {
+			return nil, err
 		}
 	}
-	return vars
+	e.emitVarSetEvents(vars, sink)
+	return vars, nil
+}
+
+func (e *Engine) emitVarSetEvents(vars map[string]cty.Value, sink Sink) {
+	varObj := vars["var"]
+	for name, node := range e.graph.Variables {
+		var source string
+		if _, ok := e.varOverrides[name]; ok {
+			source = "override"
+		} else if node.Default != cty.NilVal {
+			source = "default"
+		} else {
+			continue
+		}
+		// Read the value back from the run scope so the event matches what
+		// downstream expressions actually observe.
+		val := e.varValueFromScope(varObj, name, node)
+		display := "(sensitive)"
+		if !node.Secret {
+			display = workflow.CtyValueForDisplay(val)
+		}
+		sink.OnVariableSet(name, display, source)
+	}
+}
+
+func (e *Engine) varValueFromScope(varObj cty.Value, name string, node *workflow.VariableNode) cty.Value {
+	if varObj != cty.NilVal && varObj.Type().IsObjectType() && varObj.Type().HasAttribute(name) {
+		return varObj.GetAttr(name)
+	}
+	// By the time emitVarSetEvents runs, SeedVarsFromGraph/ApplyVarOverrides
+	// have guaranteed that every declared variable exists as an attribute in
+	// vars["var"], so this fallback is defensive.
+	return node.Default
 }
 
 // buildDeps constructs the Deps bundle injected into each node's Evaluate call.

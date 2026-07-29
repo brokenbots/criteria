@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/hashicorp/hcl/v2"
+	"github.com/hashicorp/hcl/v2/ext/typeexpr"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/zclconf/go-cty/cty"
 
@@ -157,6 +158,278 @@ func TestRunSubworkflow_InputBoundToOutput(t *testing.T) {
 	}
 	if got.AsString() != "hello" {
 		t.Errorf("output 'result': want %q, got %q", "hello", got.AsString())
+	}
+}
+
+// TestRunSubworkflow_ComplexInputConverted verifies that real HCL expressions
+// in a subworkflow input block are converted to the child's declared variable
+// type. A parent tuple([string,string]) becomes a child list(string), and a
+// parent object becomes the child object type.
+func TestRunSubworkflow_ComplexInputConverted(t *testing.T) {
+	listVarType := cty.List(cty.String)
+	mapVarType := cty.Map(cty.String)
+	objVarType := cty.Object(map[string]cty.Type{
+		"enabled": cty.Bool,
+		"retries": cty.Number,
+	})
+
+	body := &workflow.FSMGraph{
+		InitialState: "done",
+		States:       map[string]*workflow.StateNode{"done": {Name: "done", Terminal: true, Success: true}},
+		Variables: map[string]*workflow.VariableNode{
+			"tags":   {Name: "tags", Type: listVarType},
+			"labels": {Name: "labels", Type: mapVarType},
+			"config": {Name: "config", Type: objVarType},
+		},
+		Outputs: map[string]*workflow.OutputNode{
+			"tags":   {Name: "tags", Value: traversalExpr("var", "tags")},
+			"labels": {Name: "labels", Value: traversalExpr("var", "labels")},
+			"config": {Name: "config", Value: traversalExpr("var", "config")},
+		},
+		OutputOrder: []string{"tags", "labels", "config"},
+	}
+
+	node := &workflow.SubworkflowNode{
+		Name:      "complex-input",
+		Body:      body,
+		BodyEntry: "done",
+		Inputs: map[string]hcl.Expression{
+			"tags":   parseExpr(t, `["a", "b"]`),
+			"labels": parseExpr(t, `{env = "prod"}`),
+			"config": parseExpr(t, `{enabled = true, retries = 3}`),
+		},
+		DeclaredVars: map[string]*workflow.VariableNode{
+			"tags":   {Name: "tags", Type: listVarType},
+			"labels": {Name: "labels", Type: mapVarType},
+			"config": {Name: "config", Type: objVarType},
+		},
+	}
+
+	parentSt := &RunState{
+		Vars:        map[string]cty.Value{"var": cty.EmptyObjectVal},
+		WorkflowDir: t.TempDir(),
+	}
+
+	outputs, _, err := runSubworkflow(context.Background(), node, parentSt, nil, testDeps(t))
+	if err != nil {
+		t.Fatalf("runSubworkflow: %v", err)
+	}
+
+	tags := outputs["tags"]
+	if !tags.Type().IsListType() {
+		t.Errorf("tags type = %s, want list", tags.Type().FriendlyName())
+	}
+	wantList := cty.ListVal([]cty.Value{cty.StringVal("a"), cty.StringVal("b")})
+	if !tags.RawEquals(wantList) {
+		t.Errorf("tags output = %#v, want %#v", tags, wantList)
+	}
+
+	labels := outputs["labels"]
+	if !labels.Type().IsMapType() {
+		t.Errorf("labels type = %s, want map", labels.Type().FriendlyName())
+	}
+	wantMap := cty.MapVal(map[string]cty.Value{"env": cty.StringVal("prod")})
+	if !labels.RawEquals(wantMap) {
+		t.Errorf("labels output = %#v, want %#v", labels, wantMap)
+	}
+
+	cfg := outputs["config"]
+	if !cfg.Type().IsObjectType() {
+		t.Errorf("config type = %s, want object", cfg.Type().FriendlyName())
+	}
+	wantObj := cty.ObjectVal(map[string]cty.Value{
+		"enabled": cty.True,
+		"retries": cty.NumberIntVal(3),
+	})
+	if !cfg.RawEquals(wantObj) {
+		t.Errorf("config output = %#v, want %#v", cfg, wantObj)
+	}
+}
+
+// TestRunSubworkflow_ObjectOptionalDefaultsApplied verifies that object
+// variables with optional() attributes in the child workflow receive their
+// declared defaults when the parent input omits those attributes.
+func TestRunSubworkflow_ObjectOptionalDefaultsApplied(t *testing.T) {
+	objType := cty.Object(map[string]cty.Type{
+		"a": cty.String,
+		"b": cty.String,
+	})
+
+	body := &workflow.FSMGraph{
+		InitialState: "done",
+		States:       map[string]*workflow.StateNode{"done": {Name: "done", Terminal: true, Success: true}},
+		Variables: map[string]*workflow.VariableNode{
+			"cfg": {
+				Name:         "cfg",
+				Type:         objType,
+				TypeDefaults: nil, // set below after construction
+			},
+		},
+		Outputs: map[string]*workflow.OutputNode{
+			"cfg": {Name: "cfg", Value: traversalExpr("var", "cfg")},
+		},
+		OutputOrder: []string{"cfg"},
+	}
+
+	// Build real type defaults for object({a=string, b=optional(string,"x")}).
+	expr := parseExpr(t, `object({ a = string, b = optional(string, "x") })`)
+	typ, defs, typeDiags := typeexpr.TypeConstraintWithDefaults(expr)
+	if typeDiags.HasErrors() {
+		t.Fatalf("resolve type: %s", typeDiags.Error())
+	}
+	body.Variables["cfg"].Type = typ
+	body.Variables["cfg"].TypeDefaults = defs
+
+	node := &workflow.SubworkflowNode{
+		Name:      "optional-defaults",
+		Body:      body,
+		BodyEntry: "done",
+		Inputs: map[string]hcl.Expression{
+			"cfg": parseExpr(t, `{a = "1"}`),
+		},
+		DeclaredVars: map[string]*workflow.VariableNode{
+			"cfg": {
+				Name:         "cfg",
+				Type:         typ,
+				TypeDefaults: defs,
+			},
+		},
+	}
+
+	parentSt := &RunState{
+		Vars:        map[string]cty.Value{"var": cty.EmptyObjectVal},
+		WorkflowDir: t.TempDir(),
+	}
+
+	outputs, _, err := runSubworkflow(context.Background(), node, parentSt, nil, testDeps(t))
+	if err != nil {
+		t.Fatalf("runSubworkflow: %v", err)
+	}
+
+	cfg := outputs["cfg"]
+	if got := cfg.GetAttr("a").AsString(); got != "1" {
+		t.Errorf("cfg.a = %q, want 1", got)
+	}
+	if got := cfg.GetAttr("b").AsString(); got != "x" {
+		t.Errorf("cfg.b = %q, want x", got)
+	}
+}
+
+// TestRunSubworkflow_NullInputFallsBackToDefault verifies that a null parent
+// binding for a child variable that has a declared default leaves the child
+// with that default.
+func TestRunSubworkflow_NullInputFallsBackToDefault(t *testing.T) {
+	body := &workflow.FSMGraph{
+		InitialState: "done",
+		States:       map[string]*workflow.StateNode{"done": {Name: "done", Terminal: true, Success: true}},
+		Variables: map[string]*workflow.VariableNode{
+			"greeting": {
+				Name:    "greeting",
+				Type:    cty.String,
+				Default: cty.StringVal("hello"),
+			},
+		},
+		Outputs: map[string]*workflow.OutputNode{
+			"result": {Name: "result", Value: traversalExpr("var", "greeting")},
+		},
+		OutputOrder: []string{"result"},
+	}
+	node := &workflow.SubworkflowNode{
+		Name:      "null-default",
+		Body:      body,
+		BodyEntry: "done",
+		Inputs: map[string]hcl.Expression{
+			"greeting": &hclsyntax.LiteralValueExpr{Val: cty.NullVal(cty.String)},
+		},
+		DeclaredVars: map[string]*workflow.VariableNode{
+			"greeting": {Name: "greeting", Type: cty.String, Default: cty.StringVal("hello")},
+		},
+	}
+	parentSt := &RunState{
+		Vars:        map[string]cty.Value{"var": cty.EmptyObjectVal},
+		WorkflowDir: t.TempDir(),
+	}
+
+	outputs, _, err := runSubworkflow(context.Background(), node, parentSt, nil, testDeps(t))
+	if err != nil {
+		t.Fatalf("runSubworkflow: %v", err)
+	}
+	got := outputs["result"]
+	if got.AsString() != "hello" {
+		t.Errorf("output 'result': want %q, got %q", "hello", got.AsString())
+	}
+}
+
+// TestRunSubworkflow_NullRequiredInputReportsMissing verifies that a null parent
+// binding for a required child variable is caught by checkRequiredVars and
+// reported as a missing required input, not as a conversion error.
+func TestRunSubworkflow_NullRequiredInputReportsMissing(t *testing.T) {
+	body := &workflow.FSMGraph{
+		InitialState: "done",
+		States:       map[string]*workflow.StateNode{"done": {Name: "done", Terminal: true, Success: true}},
+		Variables: map[string]*workflow.VariableNode{
+			"greeting": {Name: "greeting", Type: cty.String},
+		},
+	}
+	node := &workflow.SubworkflowNode{
+		Name:      "null-required",
+		Body:      body,
+		BodyEntry: "done",
+		Inputs: map[string]hcl.Expression{
+			"greeting": &hclsyntax.LiteralValueExpr{Val: cty.NullVal(cty.String)},
+		},
+		DeclaredVars: map[string]*workflow.VariableNode{
+			"greeting": {Name: "greeting", Type: cty.String},
+		},
+	}
+	parentSt := &RunState{
+		Vars:        map[string]cty.Value{"var": cty.EmptyObjectVal},
+		WorkflowDir: t.TempDir(),
+	}
+
+	_, _, err := runSubworkflow(context.Background(), node, parentSt, nil, testDeps(t))
+	if err == nil {
+		t.Fatal("expected error for null required input")
+	}
+	if !strings.Contains(err.Error(), "required input(s): greeting") {
+		t.Errorf("error = %q, want required input(s): greeting", err.Error())
+	}
+}
+
+// TestRunSubworkflow_StringBindingToNumberRejectsGarbage verifies that a string
+// parent binding passed to a child number variable is converted strictly (via
+// convert.Convert) and rejects trailing garbage instead of the lenient Sscanf
+// used for raw CLI values.
+func TestRunSubworkflow_StringBindingToNumberRejectsGarbage(t *testing.T) {
+	body := &workflow.FSMGraph{
+		InitialState: "done",
+		States:       map[string]*workflow.StateNode{"done": {Name: "done", Terminal: true, Success: true}},
+		Variables: map[string]*workflow.VariableNode{
+			"retries": {Name: "retries", Type: cty.Number},
+		},
+	}
+	node := &workflow.SubworkflowNode{
+		Name:      "string-to-number",
+		Body:      body,
+		BodyEntry: "done",
+		Inputs: map[string]hcl.Expression{
+			"retries": &hclsyntax.LiteralValueExpr{Val: cty.StringVal("3abc")},
+		},
+		DeclaredVars: map[string]*workflow.VariableNode{
+			"retries": {Name: "retries", Type: cty.Number},
+		},
+	}
+	parentSt := &RunState{
+		Vars:        map[string]cty.Value{"var": cty.EmptyObjectVal},
+		WorkflowDir: t.TempDir(),
+	}
+
+	_, _, err := runSubworkflow(context.Background(), node, parentSt, nil, testDeps(t))
+	if err == nil {
+		t.Fatal("expected error for invalid number string")
+	}
+	if !strings.Contains(err.Error(), "subworkflow input \"retries\"") {
+		t.Errorf("error = %q, want it to name subworkflow input retries", err.Error())
 	}
 }
 

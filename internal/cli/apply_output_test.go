@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/zclconf/go-cty/cty"
 )
 
 func TestResolveOutputMode(t *testing.T) {
@@ -124,16 +126,21 @@ func TestParseVarOverrides(t *testing.T) {
 	tests := []struct {
 		name  string
 		input []string
-		want  map[string]string
+		want  map[string]cty.Value
 	}{
 		{"nil input", nil, nil},
 		{"empty slice", []string{}, nil},
-		{"valid k=v", []string{"key=value"}, map[string]string{"key": "value"}},
-		{"multiple", []string{"a=1", "b=2"}, map[string]string{"a": "1", "b": "2"}},
-		{"value with equals", []string{"url=http://x=y"}, map[string]string{"url": "http://x=y"}},
-		{"no equals skipped", []string{"noequals"}, map[string]string{}},
-		{"empty key skipped", []string{"=value"}, map[string]string{}},
-		{"mixed", []string{"a=1", "bad", "=skip", "c=3"}, map[string]string{"a": "1", "c": "3"}},
+		{"valid k=v", []string{"key=value"}, map[string]cty.Value{"key": cty.StringVal("value")}},
+		{"multiple", []string{"a=1", "b=2"}, map[string]cty.Value{"a": cty.StringVal("1"), "b": cty.StringVal("2")}},
+		{"value with equals", []string{"url=http://x=y"}, map[string]cty.Value{"url": cty.StringVal("http://x=y")}},
+		{"no equals skipped", []string{"noequals"}, map[string]cty.Value{}},
+		{"empty key skipped", []string{"=value"}, map[string]cty.Value{}},
+		{"mixed", []string{"a=1", "bad", "=skip", "c=3"}, map[string]cty.Value{"a": cty.StringVal("1"), "c": cty.StringVal("3")}},
+		{"list literal kept as raw string", []string{"tags=[\"a\",\"b\"]"}, map[string]cty.Value{"tags": cty.StringVal("[\"a\",\"b\"]")}},
+		{"map literal kept as raw string", []string{"cfg={a=1}"}, map[string]cty.Value{"cfg": cty.StringVal("{a=1}")}},
+		{"json blob kept verbatim", []string{"payload={\"a\":1}"}, map[string]cty.Value{"payload": cty.StringVal("{\"a\":1}")}},
+		{"quoted string kept verbatim", []string{"name=\"quoted\""}, map[string]cty.Value{"name": cty.StringVal("\"quoted\"")}},
+		{"leading zeros kept verbatim", []string{"id=007"}, map[string]cty.Value{"id": cty.StringVal("007")}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -141,9 +148,13 @@ func TestParseVarOverrides(t *testing.T) {
 			if len(got) != len(tc.want) {
 				t.Fatalf("len=%d want %d (got=%v want=%v)", len(got), len(tc.want), got, tc.want)
 			}
-			for k, v := range tc.want {
-				if got[k] != v {
-					t.Fatalf("key %q: got %q want %q", k, got[k], v)
+			for k, wantVal := range tc.want {
+				gotVal, ok := got[k]
+				if !ok {
+					t.Fatalf("key %q missing", k)
+				}
+				if !gotVal.RawEquals(wantVal) {
+					t.Fatalf("key %q: got %#v want %#v", k, gotVal, wantVal)
 				}
 			}
 		})
