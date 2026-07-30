@@ -7,6 +7,7 @@ import (
 
 	"github.com/zclconf/go-cty/cty"
 
+	"github.com/brokenbots/criteria/internal/adapter/environment/sandbox"
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/workflow"
 	"github.com/brokenbots/criteria/workflow/lockfile"
@@ -138,6 +139,26 @@ func WithSnapshotBase(dir string) Option {
 func WithRunID(id string) Option {
 	return func(e *Engine) {
 		e.runID = id
+	}
+}
+
+// WithWorkingDirAllowedRoots restricts the directories an environment may bind
+// to. A resolved working_directory that lies outside every configured root is
+// rejected at run start, before any step executes. Empty (the default) disables
+// the additional root check; paths containing ".." are always rejected.
+func WithWorkingDirAllowedRoots(roots []string) Option {
+	return func(e *Engine) {
+		e.workingDirAllowedRoots = append([]string(nil), roots...)
+	}
+}
+
+// WithSandboxProbeOverride is a test-only option that replaces the host sandbox
+// capability probe used by the session manager. It allows tests to simulate a
+// host with missing sandbox primitives (for example, a strict-mode sandbox
+// adapter running on a kernel without landlock).
+func WithSandboxProbeOverride(fn func() sandbox.Capabilities) Option {
+	return func(e *Engine) {
+		e.sandboxProbeOverride = fn
 	}
 }
 

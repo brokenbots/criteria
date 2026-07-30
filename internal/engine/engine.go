@@ -15,6 +15,7 @@ import (
 	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapter/environment/remote"
+	"github.com/brokenbots/criteria/internal/adapter/environment/sandbox"
 	"github.com/brokenbots/criteria/internal/adapter/secrets"
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	engineruntime "github.com/brokenbots/criteria/internal/engine/runtime"
@@ -162,6 +163,15 @@ type Engine struct {
 	// progress, enabling Pause/Resume/Inspect from outside runLoop.
 	liveSessions *adapterhost.SessionManager
 	mu           sync.RWMutex
+	// workingDirAllowedRoots restricts environment working_directory values at
+	// run start. A resolved path that is not under one of these roots (when any
+	// are configured) or that contains ".." is rejected eagerly during adapter
+	// verification, before any step runs. Empty means no additional root checks.
+	workingDirAllowedRoots []string
+
+	// sandboxProbeOverride, when non-nil, is propagated to the SessionManager so
+	// tests can simulate a host with missing sandbox primitives.
+	sandboxProbeOverride func() sandbox.Capabilities
 }
 
 func New(graph *workflow.FSMGraph, loader adapterhost.Loader, sink Sink, opts ...Option) *Engine {
@@ -249,6 +259,11 @@ func (e *Engine) restoreSessionsFromSnapshots(ctx context.Context) (*adapterhost
 	sessions.SetGraph(e.graph)
 	sessions.SetLockfile(e.lockfile)
 	sessions.RedactionRegistry = secrets.NewRegistry()
+	sessions.LifecycleSink = e.sink
+	sessions.SetAllowedWorkingDirRoots(e.workingDirAllowedRoots)
+	if e.sandboxProbeOverride != nil {
+		sessions.SetSandboxProbeOverride(e.sandboxProbeOverride)
+	}
 	if e.auditWriter != nil {
 		sessions.Audit = e.auditWriter
 	}
@@ -315,6 +330,9 @@ func (e *Engine) Run(ctx context.Context) error {
 	sessions := adapterhost.NewSessionManager(e.loader)
 	sessions.SetGraph(e.graph)
 	sessions.Audit = e.auditWriter
+	if e.sandboxProbeOverride != nil {
+		sessions.SetSandboxProbeOverride(e.sandboxProbeOverride)
+	}
 	if err := e.setLockfileOnSessions(sessions); err != nil {
 		return err
 	}
@@ -328,6 +346,8 @@ func (e *Engine) Run(ctx context.Context) error {
 
 	// Wrap the engine sink before any events are emitted.
 	sink := NewRedactingSink(e.sink, redactionReg)
+	sessions.LifecycleSink = sink
+	sessions.SetAllowedWorkingDirRoots(e.workingDirAllowedRoots)
 
 	// Seed variables before adapter provisioning so secret expressions can be
 	// evaluated against the run scope (WS13).
@@ -371,6 +391,9 @@ func (e *Engine) RunFrom(ctx context.Context, startStep string, initialAttempt i
 	sessions := adapterhost.NewSessionManager(e.loader)
 	sessions.SetGraph(e.graph)
 	sessions.Audit = e.auditWriter
+	if e.sandboxProbeOverride != nil {
+		sessions.SetSandboxProbeOverride(e.sandboxProbeOverride)
+	}
 	if err := e.setLockfileOnSessions(sessions); err != nil {
 		return err
 	}
@@ -380,6 +403,8 @@ func (e *Engine) RunFrom(ctx context.Context, startStep string, initialAttempt i
 	sessions.RedactionRegistry = redactionReg
 
 	sink := NewRedactingSink(e.sink, redactionReg)
+	sessions.LifecycleSink = sink
+	sessions.SetAllowedWorkingDirRoots(e.workingDirAllowedRoots)
 
 	vars, err := e.seedRunVars(sink)
 	if err != nil {

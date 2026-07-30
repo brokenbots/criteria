@@ -162,6 +162,9 @@ type PrepareContext struct {
 	Env           *workflow.EnvironmentNode
 	Caps          Capabilities
 	AdapterBinary string // resolved adapter plugin path; populated at prepare time
+	// ValidateOnly is ignored on Darwin; present for cross-platform call-site
+	// compatibility and to keep the struct shape consistent with Linux builds.
+	ValidateOnly bool
 }
 
 // LinuxPrepared is the Darwin-specific prepared sandbox configuration.

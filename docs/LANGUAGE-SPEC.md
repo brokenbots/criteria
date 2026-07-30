@@ -319,7 +319,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 **`output`** — Declares a named output value surfaced at run completion. `value` expression is evaluated at termination time.
 
-**`adapter`** — Declares a long-lived adapter session. `type`/`name` labels route steps; `source`/`version` locate the OCI artifact; `config` sub-block provides adapter-specific configuration. `on_crash` controls crash semantics: `fail` (default), `respawn`, or `abort_run`.
+**`adapter`** — Declares a long-lived adapter session. `type`/`name` labels route steps; `source`/`version` locate the OCI artifact; `config` sub-block provides adapter-specific configuration. `on_crash` controls crash semantics: `fail` (default), `respawn`, or `abort_run`. Adapter initialization is two-phase: every adapter is verified eagerly at run start (binary, signature, handshake, config schema, secrets), but the working-directory session binding is deferred until the first step that targets it.
 
 **`subworkflow`** — Declares a reusable sub-workflow. `source` is a local directory path. Invoked via a step with `target = subworkflow.<name>`.
 

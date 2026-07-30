@@ -38,27 +38,37 @@ func initScopeAdapters(ctx context.Context, g *workflow.FSMGraph, deps Deps, var
 			return nil, perr
 		}
 
-		openErr := deps.Sessions.OpenWithOriginRefs(ctx, instanceID, adapter.Type, adapter.OnCrash, config, secretMap, originRefs, workingDir)
+		// Reject working_directory values that are structurally invalid before any
+		// step runs. A path containing ".." or falling outside the configured
+		// allowed roots is an error that a later step cannot fix; only a missing
+		// directory is deferred to session binding.
+		if fvErr := deps.Sessions.ValidateWorkingDirFaceValue(workingDir); fvErr != nil {
+			deps.Sink.OnAdapterLifecycle(scopeName, instanceID, "init_failed", fvErr.Error())
+			return nil, fmt.Errorf("initialize adapter %q: %w", instanceID, fvErr)
+		}
+
+		verifyErr := deps.Sessions.Verify(ctx, instanceID, adapter.Type, adapter.OnCrash, config, secretMap, originRefs, workingDir, scopeName)
 
 		// Silently swallow ErrSessionAlreadyOpen to support subworkflow bodies that
 		// re-declare parent adapters for safety through re-declaration. Same-scope
 		// duplicate adapters are rejected at compile time by compileAdapters
 		// (in workflow/compile_adapters.go:57-61), so already-open here always means
 		// a parent-scope adapter being re-opened in a child scope.
-		// Only adapters we newly opened are tracked for teardown.
-		if openErr != nil && !errors.Is(openErr, adapterhost.ErrSessionAlreadyOpen) {
-			// Rollback: tear down all successfully provisioned adapters in reverse order
+		// Only adapters we newly verified are tracked for teardown.
+		if verifyErr != nil && !errors.Is(verifyErr, adapterhost.ErrSessionAlreadyOpen) {
+			// Rollback: tear down any sessions that were already bound. Verified-only
+			// records hold no process, so they need no explicit cleanup.
 			for i := len(provisioned) - 1; i >= 0; i-- {
 				_ = deps.Sessions.Close(ctx, provisioned[i]) // ignore teardown errors during rollback
 			}
-			deps.Sink.OnAdapterLifecycle(scopeName, instanceID, "init_failed", openErr.Error())
-			return nil, fmt.Errorf("initialize adapter %q: %w", instanceID, openErr)
+			deps.Sink.OnAdapterLifecycle(scopeName, instanceID, "init_failed", verifyErr.Error())
+			return nil, fmt.Errorf("initialize adapter %q: %w", instanceID, verifyErr)
 		}
-		// Only track adapters that we newly opened (not already-open ones)
-		// This prevents tearing down adapters that belong to a parent scope
-		if openErr == nil {
+		// Only track adapters that we newly verified (not already-verified ones)
+		// This prevents tearing down adapters that belong to a parent scope.
+		if verifyErr == nil {
 			provisioned = append(provisioned, instanceID)
-			deps.Sink.OnAdapterLifecycle(scopeName, instanceID, "opened", "")
+			deps.Sink.OnAdapterLifecycle(scopeName, instanceID, "verified", "")
 		}
 	}
 

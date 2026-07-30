@@ -74,10 +74,16 @@ func (s *captureSink) OnStepOutputCaptured(step string, outputs map[string]strin
 	s.stepOutputs = append(s.stepOutputs, stepOutputEvent{step: step, outputs: outputs})
 }
 
-// failingOpenAdapter fails during OpenSession with a deterministic message.
+// failingOpenAdapter fails during eager verification (Info) with a deterministic
+// message. This keeps the test exercising startup-time adapter failure
+// propagation even though session binding is now deferred to first use.
 type failingOpenAdapter struct {
 	fakeAdapter
 	openErr error
+}
+
+func (p *failingOpenAdapter) Info(context.Context) (adapterhost.Info, error) {
+	return adapterhost.Info{}, p.openErr
 }
 
 func (p *failingOpenAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
